@@ -164,9 +164,10 @@ RUN install -m 0755 -d /etc/apt/keyrings && \
 # /usr/local); Alpine uses the community nodejs/npm packages (installed under
 # /usr/bin) because musl prebuilt source-builds are too heavy for the arm64
 # image build path. Either way `node` lands on the default PATH. npm's global
-# prefix is preconfigured below (/usr/local/share/npm-global, owned by
-# ${USERNAME}) so `npm install -g ...` works for the unprivileged user without
-# further setup — matches the anthropics/claude-code devcontainer pattern.
+# prefix is set per-user via .npmrc (written further down) so `npm install -g`
+# writes under /home/${USERNAME}/.npm-global without root — and never appears
+# on root's PATH/env because the configuration lives in user dotfiles, not
+# Docker ENV.
 ARG NODE_VERSION=24.15.0
 {{if .IsAlpine -}}
 {{- if $.BuildKitEnabled}}
@@ -268,9 +269,9 @@ RUN groupadd -g 999 docker 2>/dev/null || groupadd docker 2>/dev/null || true &&
 # marker that clawkerd-as-root writes; the HEALTHCHECK probe itself runs as root
 # (final USER directive at the bottom of this file) and stats the ready marker
 # regardless of ownership.
-RUN mkdir -p /home/${USERNAME}/.claude /home/${USERNAME}/.clawker-share /home/${USERNAME}/.gnupg /home/${USERNAME}/.ssh {{.WorkspacePath}} /run/clawker /var/log/clawker /var/run/clawker /usr/local/share/npm-global && \
+RUN mkdir -p /home/${USERNAME}/.claude /home/${USERNAME}/.clawker-share /home/${USERNAME}/.gnupg /home/${USERNAME}/.ssh {{.WorkspacePath}} /run/clawker /var/log/clawker /var/run/clawker && \
     chmod 700 /home/${USERNAME}/.gnupg /home/${USERNAME}/.ssh && \
-    chown -R ${USERNAME}:${USERNAME} {{.WorkspacePath}} /home/${USERNAME}/.claude /home/${USERNAME}/.clawker-share /home/${USERNAME}/.gnupg /home/${USERNAME}/.ssh /var/run/clawker /usr/local/share/npm-global
+    chown -R ${USERNAME}:${USERNAME} {{.WorkspacePath}} /home/${USERNAME}/.claude /home/${USERNAME}/.clawker-share /home/${USERNAME}/.gnupg /home/${USERNAME}/.ssh /var/run/clawker
 
 # Persist bash history
 RUN SNIPPET="export PROMPT_COMMAND='history -a' && export HISTFILE=/commandhistory/.bash_history" \
@@ -344,11 +345,17 @@ ENV CLAWKER_USER=${USERNAME}
 
 # Set static environment (PATH, SHELL, BROWSER — not config-dependent)
 ENV SHELL={{.Shell}}
-# npm global prefix points at a user-owned dir (created+chowned above) so
-# `npm install -g ...` succeeds without root. Mirrors anthropics/claude-code
-# devcontainer Dockerfile.
-ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global
-ENV PATH=/usr/local/share/npm-global/bin:/home/${USERNAME}/.local/bin:$PATH
+ENV PATH=/home/${USERNAME}/.local/bin:$PATH
+
+# Per-user dotfiles: .npmrc sets npm's global prefix under HOME (so
+# `npm install -g ...` works without root); .zshenv puts the resulting
+# bin dir on PATH for every zsh invocation (Claude Code's tool-use Bash
+# runs as `/bin/zsh -c` per ENV SHELL above — so .zshenv is sourced for
+# every claude tool call and every user terminal session).
+# Net: npm prefix + PATH addition are scoped to the user; root's env
+# stays clean.
+RUN echo 'prefix=/home/${USERNAME}/.npm-global' > /home/${USERNAME}/.npmrc && \
+    echo 'export PATH="$PATH:$HOME/.npm-global/bin"' > /home/${USERNAME}/.zshenv
 # Set BROWSER so CLI tools (like Claude Code) use host-open for URLs
 ENV BROWSER=/usr/local/bin/host-open
 # Tell Claude Code where its config lives — must match the config volume mount.
@@ -423,11 +430,17 @@ RUN wget -O /tmp/zsh-in-docker.sh "https://github.com/deluan/zsh-in-docker/relea
     rm /tmp/zsh-in-docker.sh
 {{end}}
 
-{{/* User-mode RUN commands (as claude user) */}}
-{{- if .Instructions}}
+{{/* User-mode RUN commands (as claude user).
+     Switch the RUN shell to zsh so each user_run instruction sources
+     /home/${USERNAME}/.zshenv (which puts /home/${USERNAME}/.npm-global/bin
+     on PATH). Restored to /bin/sh -c immediately after so subsequent RUNs
+     (claude install, USER root section, etc.) behave normally. */}}
+{{- if and .Instructions .Instructions.UserRun}}
+SHELL ["/bin/zsh", "-c"]
 {{- range .Instructions.UserRun}}
 RUN {{.}}
 {{- end}}
+SHELL ["/bin/sh", "-c"]
 {{- end}}
 
 # Install Claude Code
