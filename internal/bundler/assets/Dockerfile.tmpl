@@ -354,7 +354,7 @@ ENV PATH=/home/${USERNAME}/.local/bin:$PATH
 # every claude tool call and every user terminal session).
 # Net: npm prefix + PATH addition are scoped to the user; root's env
 # stays clean.
-RUN echo 'prefix=/home/${USERNAME}/.npm-global' > /home/${USERNAME}/.npmrc && \
+RUN echo 'prefix=${HOME}/.npm-global' > /home/${USERNAME}/.npmrc && \
     echo 'export PATH="$PATH:$HOME/.npm-global/bin"' > /home/${USERNAME}/.zshenv
 # Set BROWSER so CLI tools (like Claude Code) use host-open for URLs
 ENV BROWSER=/usr/local/bin/host-open
