@@ -188,7 +188,6 @@ type Project struct {
     Workspace WorkspaceConfig `yaml:"workspace"`
     Security  SecurityConfig  `yaml:"security"`
     Agent     AgentConfig     `yaml:"agent"`
-    Loop      *LoopConfig     `yaml:"loop,omitempty"`
 }
 ```
 

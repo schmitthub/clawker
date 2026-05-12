@@ -199,7 +199,7 @@ Do not guess at config syntax, field names, or behavior.
     mentioning space, or asks about cleaning up Docker resources, read
     `reference/docker-hygiene.md` for the diagnosis and cleanup methodology.
 
-12. **Other topics** — For monitoring, worktrees, loop mode, or other features,
+12. **Other topics** — For monitoring, worktrees, or other features,
     fetch `https://docs.clawker.dev/llms.txt` for the docs index, then fetch
     the relevant page.
 

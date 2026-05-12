@@ -100,7 +100,7 @@ Single entry point for container creation, shared by `run` and `create`. Perform
 
 ## Home Directory Safety
 
-Before container creation, `run` and `create` check if CWD is at or above `$HOME` via `shared.IsOutsideHome(".")`. If true, the user is prompted for confirmation (default: No). Loop commands (`iterate`/`tasks`) hard-error instead of prompting — loop mode is not supported outside of, or in, the home directory.
+Before container creation, `run` and `create` check if CWD is at or above `$HOME` via `shared.IsOutsideHome(".")`. If true, the user is prompted for confirmation (default: No).
 
 ## Workspace Setup
 

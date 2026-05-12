@@ -54,7 +54,7 @@ type AddOptions struct {
 - If branch exists but not checked out elsewhere → check it out in new worktree
 - If branch doesn't exist → create from base ref
 
-For idempotent "get or create" behavior, use `--worktree` on container/loop commands instead (see `internal/cmd/container/shared/CLAUDE.md`).
+For idempotent "get or create" behavior, use `--worktree` on container commands instead (see `internal/cmd/container/shared/CLAUDE.md`).
 
 Delegates orchestration to `project.ProjectManager.CurrentProject(ctx).CreateWorktree(...)`.
 

@@ -110,8 +110,6 @@ const ModeSnapshot Mode = "snapshot"
 
 **Workspace/Security**: `WorkspaceConfig` (`DefaultMode`), `SecurityConfig`, `FirewallConfig`, `GitCredentialsConfig`
 
-**Loop**: `LoopConfig` (max_loops, stagnation_threshold, timeout_minutes, circuit breaker params)
-
 **Registry**: `ProjectRegistry`, `ProjectEntry`, `WorktreeEntry`
 
 **Errors**: `ErrNotInProject`, `KeyNotFoundError` (struct with `Key string` field, implements `error`)
@@ -132,7 +130,7 @@ Import as `configmocks "github.com/schmitthub/clawker/internal/config/mocks"`.
 
 - **Unknown fields are silently accepted** by `NewFromString`/`NewConfig`.
 - **`NewFromString` has NO defaults** — only caller-provided values. `NewBlankConfig` has defaults. This mirrors storage's `NewFromString` vs `NewStore` distinction.
-- **Project vs Settings scope** — Project keys: `build`, `agent`, `workspace`, `security`, `loop`. Settings keys: `logging`, `monitoring`, `host_proxy`. Project identity (name) is resolved at runtime via `project.ProjectManager.CurrentProject(ctx).Name()`, not stored in config.
+- **Project vs Settings scope** — Project keys: `build`, `agent`, `workspace`, `security`. Settings keys: `logging`, `monitoring`, `host_proxy`. Project identity (name) is resolved at runtime via `project.ProjectManager.CurrentProject(ctx).Name()`, not stored in config.
 - **`*bool` pointers in schema** — Nil means "not set" (defaults apply). Non-nil `false` means "explicitly disabled". Callers must handle nil when accessing raw schema fields. Typed accessors like `FirewallEnabled()` handle nil-to-default conversion.
 - **Nil vs zero** — Nil pointers/slices mean "not set" (excluded from storage tree). Non-nil zero values mean "explicitly set to zero" (included). This is a semantic distinction in schema design.
 - **No env var overrides** — The old Viper-based `CLAWKER_*` env var binding has been removed. Env vars only affect directory resolution (`CLAWKER_CONFIG_DIR`, etc.), not config values.

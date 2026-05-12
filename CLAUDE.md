@@ -178,7 +178,7 @@ See `.claude/docs/KEY-CONCEPTS.md` for the full type/abstraction index. Package-
 
 See `docs/cli-reference/` for auto-generated command reference.
 
-**Top-level shortcuts**: `init`, `build`, `run`, `start`, `monitor *`, `generate`, `loop`, `version`
+**Top-level shortcuts**: `init`, `build`, `run`, `start`, `monitor *`, `generate`, `version`
 **Management**: `auth *`, `container *`, `volume *`, `network *`, `image *`, `project *`, `worktree *`, `firewall *`, `controlplane *`, `settings *`, `skill *`
 
 ## Configuration
@@ -196,7 +196,6 @@ build:
 agent: { env_file: [], from_env: [], env: {}, post_init: "" }
 workspace: { default_mode: "bind" }
 security: { firewall: { add_domains: [], rules: [] }, docker_socket: false, git_credentials: { forward_https: true, forward_ssh: true, forward_gpg: true, copy_git_config: true } }
-loop: { max_loops: 50, stagnation_threshold: 3, timeout_minutes: 15, skip_permissions: false, hooks_file: "", append_system_prompt: "" }
 ```
 
 ## Design Decisions

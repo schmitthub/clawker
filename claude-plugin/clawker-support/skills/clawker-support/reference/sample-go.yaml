@@ -78,19 +78,6 @@ build:
     - shellcheck
     - nodejs
     - npm
-loop:
-  calls_per_hour: 100
-  completion_threshold: 2
-  loop_delay_seconds: 3
-  max_consecutive_test_loops: 3
-  max_loops: 50
-  output_decline_threshold: 70
-  safety_completion_threshold: 5
-  same_error_threshold: 5
-  session_expiration_hours: 24
-  skip_permissions: true
-  stagnation_threshold: 3
-  timeout_minutes: 15
 security:
   docker_socket: false
   firewall:

@@ -207,7 +207,7 @@ Thin domain wrapper composing `storage.Store[Project]` + `storage.Store[Settings
 **Two independent schemas, one interface:**
 
 - `Settings` — host infrastructure (logging, host_proxy, monitoring)
-- `Project` — project defaults (build, workspace, security, agent, loop). Tiered via walk-up.
+- `Project` — project defaults (build, workspace, security, agent). Tiered via walk-up.
 - Callers access both through namespaced sub-accessors: `cfg.Settings().Logging`, `cfg.Project().Build.Image`, `cfg.ConfigDir()`
 
 **File layout (full XDG — walk-up bounded at project root, never reaches HOME):**
@@ -271,13 +271,12 @@ Thin domain wrapper composing `storage.Store[Project]` + `storage.Store[Settings
 | `firewall/` | (single package — status, list, add, remove, reload, up, down, enable, disable, bypass, rotate-ca — all route through `f.AdminClient` gRPC to the CP daemon) |
 | `controlplane/` | up, down, status (break-glass host-side CP container lifecycle; normal CLI paths bring the CP up transparently on first `AdminClient` call) |
 | `monitor/` | init, up, down, status |
-| `loop/` | iterate, status, tasks, reset |
 | `settings/` | edit |
 | `skill/` | install, show, remove |
 
 **Top-level shortcuts**: `init` → `project init`, `build` → `image build`, `run`/`start` → `container run`/`start`, `generate`, `version`
 
-**Shared packages**: `container/shared/`, `loop/shared/`, and `skill/shared/` contain domain orchestration logic shared across subcommands within their group.
+**Shared packages**: `container/shared/` and `skill/shared/` contain domain orchestration logic shared across subcommands within their group.
 
 ### internal/cmdutil - CLI Utilities
 
@@ -361,7 +360,7 @@ User interaction utilities with TTY and CI awareness.
 | `internal/tui` | Reusable TUI components (BubbleTea/Lipgloss) - lists, panels, spinners, layouts, tables, field browser, list editor, textarea editor |
 | `internal/storeui` | Generic orchestration layer bridging `Store[T]` and TUI field editing: reflection-based field discovery, domain override merging, per-field save with layer targeting. See `internal/storeui/CLAUDE.md` |
 | `internal/config/storeui/settings` | Domain adapter for `storeui.Edit[Settings]`: field overrides (labels, descriptions, hidden complex types), layer targets (local/user/original) |
-| `internal/config/storeui/project` | Domain adapter for `storeui.Edit[Project]`: field overrides for build/agent/workspace/security/loop sections, layer targets |
+| `internal/config/storeui/project` | Domain adapter for `storeui.Edit[Project]`: field overrides for build/agent/workspace/security sections, layer targets |
 | `internal/bundler` | Image building, Dockerfile generation, semver, npm registry client |
 | `internal/docs` | CLI documentation generation (used by cmd/gen-docs) |
 | `internal/git` | Git operations, worktree management (leaf — stdlib + go-git only, no internal imports) |
@@ -418,21 +417,6 @@ HTTP service mesh mediating container-to-host interactions. See `internal/hostpr
 - OAuth: Container detects auth URL → registers callback session → rewrites URL → captures redirect
 - Git HTTPS: `git-credential-clawker` → POST /git/credential → host credential store
 - SSH/GPG: `socketbridge.Manager` → `docker exec` muxrpc → `clawker-socket-server` → Unix sockets
-
-### internal/cmd/loop/shared - Autonomous Loop Engine
-
-Runs Claude Code in per-iteration Docker containers with stream-json parsing and circuit breaker protection. See `internal/cmd/loop/CLAUDE.md` for implementation details.
-
-**Core types:**
-
-- `Runner` - Main loop orchestrator (per-iteration container lifecycle)
-- `CircuitBreaker` - CLOSED/TRIPPED with multiple trip conditions
-- `Session` / `SessionStore` - Persistent session state
-- `RateLimiter` - Sliding window rate limiting
-- `Analyzer` - LOOP_STATUS parser and completion detection
-- `StreamHandler` / `ParseStream` - NDJSON stream-json parser for real-time output
-- `TextAccumulator` - Aggregates assistant text across stream events
-- `ResultEvent` - Cost, tokens, turns from Claude API result
 
 ### Firewall Subsystem (CP-owned)
 

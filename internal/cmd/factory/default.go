@@ -220,7 +220,7 @@ func clientFunc(f *cmdutil.Factory) func(context.Context) (*docker.Client, error
 // or Shutdown, in which case the closure rebuilds.
 //
 // Keepalive params (Time: 30s, Timeout: 10s, PermitWithoutStream: false)
-// let long-running CLI processes (loop, monitor, bypass dashboard) detect
+// let long-running CLI processes (monitor, bypass dashboard) detect
 // dead paths before the next RPC hangs. Values match the CP server-side
 // configuration.
 func adminClientFunc(f *cmdutil.Factory) func(context.Context) (adminv1.AdminServiceClient, error) {

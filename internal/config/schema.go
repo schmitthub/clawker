@@ -16,7 +16,6 @@ type Project struct {
 	Agent     AgentConfig     `yaml:"agent"`
 	Workspace WorkspaceConfig `yaml:"workspace"`
 	Security  SecurityConfig  `yaml:"security"`
-	Loop      *LoopConfig     `yaml:"loop,omitempty"`
 }
 
 // Fields implements [storage.Schema] for Project.
@@ -240,64 +239,6 @@ func (g *GitCredentialsConfig) GPGEnabled() bool {
 		return true // Default to enabled
 	}
 	return *g.ForwardGPG
-}
-
-// LoopConfig defines configuration for autonomous agent loops.
-type LoopConfig struct {
-	MaxLoops                  int    `yaml:"max_loops,omitempty" label:"Max Loops" desc:"Hard cap on iterations to prevent runaway loops"`
-	StagnationThreshold       int    `yaml:"stagnation_threshold,omitempty" label:"Stagnation Threshold" desc:"Stop early if this many consecutive loops make no progress"`
-	TimeoutMinutes            int    `yaml:"timeout_minutes,omitempty" label:"Timeout (min)" desc:"Kill the loop after this long regardless of progress"`
-	CallsPerHour              int    `yaml:"calls_per_hour,omitempty" label:"Calls per Hour" desc:"Throttle API calls to control cost"`
-	CompletionThreshold       int    `yaml:"completion_threshold,omitempty" label:"Completion Threshold" desc:"Quality score at which the task is considered done"`
-	SessionExpirationHours    int    `yaml:"session_expiration_hours,omitempty" label:"Session Expiration (hrs)" desc:"Discard loop state after this many hours of inactivity"`
-	SameErrorThreshold        int    `yaml:"same_error_threshold,omitempty" label:"Same Error Threshold" desc:"Stop if the same error repeats this many times (stuck in a loop)"`
-	OutputDeclineThreshold    int    `yaml:"output_decline_threshold,omitempty" label:"Output Decline Threshold" desc:"Stop if output quality drops by this amount between iterations"`
-	MaxConsecutiveTestLoops   int    `yaml:"max_consecutive_test_loops,omitempty" label:"Max Consecutive Test Loops" desc:"Stop if the agent only runs tests for this many loops without code changes"`
-	LoopDelaySeconds          int    `yaml:"loop_delay_seconds,omitempty" label:"Loop Delay (sec)" desc:"Pause between iterations (e.g. to avoid rate limits)"`
-	SafetyCompletionThreshold int    `yaml:"safety_completion_threshold,omitempty" label:"Safety Completion Threshold" desc:"Minimum safety score required before marking a task complete"`
-	SkipPermissions           bool   `yaml:"skip_permissions,omitempty" label:"Skip Permissions" desc:"Run Claude Code with --dangerously-skip-permissions for fully autonomous loops"`
-	HooksFile                 string `yaml:"hooks_file,omitempty" label:"Hooks File" desc:"Script called on loop events (start, complete, error) for custom integrations"`
-	AppendSystemPrompt        string `yaml:"append_system_prompt,omitempty" label:"Append System Prompt" desc:"Extra instructions appended to Claude's system prompt in each loop iteration"`
-}
-
-// GetHooksFile returns the hooks file path (empty string if not configured).
-func (r *LoopConfig) GetHooksFile() string {
-	if r == nil {
-		return ""
-	}
-	return r.HooksFile
-}
-
-// GetAppendSystemPrompt returns the additional system prompt (empty string if not configured).
-func (r *LoopConfig) GetAppendSystemPrompt() string {
-	if r == nil {
-		return ""
-	}
-	return r.AppendSystemPrompt
-}
-
-// GetMaxLoops returns the max loops with default fallback.
-func (r *LoopConfig) GetMaxLoops() int {
-	if r == nil || r.MaxLoops <= 0 {
-		return 50
-	}
-	return r.MaxLoops
-}
-
-// GetStagnationThreshold returns the stagnation threshold with default fallback.
-func (r *LoopConfig) GetStagnationThreshold() int {
-	if r == nil || r.StagnationThreshold <= 0 {
-		return 3
-	}
-	return r.StagnationThreshold
-}
-
-// GetTimeoutMinutes returns the timeout in minutes with default fallback.
-func (r *LoopConfig) GetTimeoutMinutes() int {
-	if r == nil || r.TimeoutMinutes <= 0 {
-		return 15
-	}
-	return r.TimeoutMinutes
 }
 
 // ParseMode converts a string to a Mode, returning an error if invalid

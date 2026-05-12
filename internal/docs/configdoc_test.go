@@ -13,7 +13,7 @@ func TestRenderYAMLSchema_ProjectContainsNestedStructTypes(t *testing.T) {
 	schema := renderYAMLSchema(reflect.TypeOf(config.Project{}), 0)
 
 	// Verify top-level sections exist.
-	for _, section := range []string{"build:", "agent:", "workspace:", "security:", "loop:"} {
+	for _, section := range []string{"build:", "agent:", "workspace:", "security:"} {
 		if !strings.Contains(schema, section) {
 			t.Errorf("schema missing top-level section %q", section)
 		}

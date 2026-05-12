@@ -401,7 +401,7 @@ COPY clawker-agent-prompt.md /etc/claude-code/CLAUDE.md
 RUN cat > /etc/claude-code/managed-settings.json <<EOF
 {
   "env": {
-    "PATH": "/home/${USERNAME}/.local/bin:/home/${USERNAME}/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    "PATH": "/home/${USERNAME}/.local/bin:${PATH}:/home/${USERNAME}/.npm-global/bin"
   }
 }
 EOF

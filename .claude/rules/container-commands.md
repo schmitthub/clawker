@@ -15,7 +15,7 @@ paths: ["internal/cmd/container/**"]
 - `shared.CreateContainer(ctx, opts, events)` is the single entry point for container creation — performs all init steps (workspace, config, env, create, inject). Inputs/outputs via `CreateContainerOptions`/`CreateContainerResult`; progress streamed on `chan<- CreateContainerEvent` (Step/Status/Type/Message). Shared by `run` and `create`
 - `--disable-firewall` flag overrides project config to skip firewall setup; `--workdir` overrides container working directory
 - Three-phase command structure: Phase A (pre-progress: config+Docker+image+safety checks), Phase B (progress: CreateContainer with events channel), Phase C (post-progress: warnings+output)
-- Home directory safety: `shared.IsOutsideHome(".")` before Phase B — `run`/`create` prompt for confirmation, `loop` commands hard-error
+- Home directory safety: `shared.IsOutsideHome(".")` before Phase B — `run`/`create` prompt for confirmation
 - Low-level helpers: `InitContainerConfig(ctx, opts)` copies host Claude config to volume; `InjectPostInitScript(ctx, opts)` writes post-init script
 - Onboarding bypass (`hasCompletedOnboarding`) is handled at image level via `claude-config.json` → entrypoint seeds `~/.claude/.config.json` on first boot
 - Init is one-time: only runs on container creation, not on start/restart
