@@ -541,14 +541,13 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		MinVersion:   tls.VersionTLS13,
 	}
 	// IdentityInterceptor runs AFTER AuthInterceptor: token + scope
-	// pass first, then identity resolves the peer cert thumbprint to
-	// a registered agent (or rejects). AgentService is empty in this
-	// branch (Register was retired); the interceptor is wired so the
-	// listener stays correctly configured for any future inbound
-	// agent RPC.
+	// pass first, then the universal identity gate grounds trust in
+	// the kernel-attested peer IP (peer-IP → Docker → labels) and
+	// verifies the cert's urn:clawker:agent: URI SAN against the
+	// label-derived AgentFullName. Applies to every RPC including
+	// Register — no opt-out exists.
 	identityUnary, identityStream := agent.IdentityInterceptor(
-		agentReg,
-		agent.IdentityOptedOutMethods(),
+		agentPeerLookup,
 		log.With("component", "agent-identity"),
 	)
 	agentServer := grpc.NewServer(

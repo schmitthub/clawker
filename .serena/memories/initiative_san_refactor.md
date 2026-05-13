@@ -12,7 +12,7 @@
 |------|--------|-------|
 | Task 0: Goose migrations adopted (00001_init.sql baseline) | `complete` | — |
 | Task 1: Build `ContainerByPeerIP` resolver + interface seam | `complete` | — |
-| Task 2: Redesign `IdentityInterceptor` as universal peer-IP→Docker→label middleware | `pending` | — |
+| Task 2: Redesign `IdentityInterceptor` as universal peer-IP→Docker→label middleware | `complete` | — |
 | Task 3: Refactor `Register` handler — drop redundant checks, use middleware-resolved labels | `pending` | — |
 | Task 4: Drop `Registry.Lookup`, simplify Registry surface, rework `Dialer.classifyRegistry` | `pending` | — |
 | Task 5: Migration `00002_drop_canonical_cn.sql` | `pending` | — |
@@ -38,6 +38,13 @@
   - Structured logs added with `peer_ip` + `container_id` fields: `event=peer_lookup_list_failed` (daemon list failure), `event=peer_lookup_inspect_failed` (per-container; continues), `event=peer_lookup_invalid_labels` (matched but unusable).
   - `StartDeps.PeerLookup` is required; `Start` returns error on nil (mirrors Registry/DockerLister/Bus/Dialer guards). Test helper `noopPeerLookup` in `start_test.go` for tests that don't exercise the resolver path.
   - Constructor: `NewMobyPeerLookup(cli mobyclient.APIClient, log *logger.Logger) *MobyPeerLookup`. Concrete return (not interface) — matches `NewMobyContainerInspector` shape.
+- **Task 2 refinements (review-driven, deviate from spec):**
+  - `WithResolvedContainer` does NOT panic on empty `ContainerID` — that violates the root CLAUDE.md CP no-panic-on-serving-path rule. Instead: zero-value `ResolvedContainer` is silently dropped (ctx returned unchanged), and `ResolvedContainerFromContext` returns `ok=false` for both absent and empty-ID cases. The "silent identity vacuum" floor moves to the read side. Test pins this contract: `TestWithResolvedContainer_EmptyContainerIDIsNoOp`.
+  - Empty cert SAN gets an **explicit** reject stage (2a) with its own `event=agent_identity_no_agent_san` log — rather than relying on the stage-3 `subtle.ConstantTimeCompare` natural-fail on length mismatch. Explicit check gives operators better diagnostic fidelity AND short-circuits the Docker round-trip when the cert is malformed.
+  - `peerIdentity.Raw` field removed (was unused — speculation-based YAGNI). `peerIdentityFromContext` delegates to `peerLeafFromContext` instead of duplicating the cert extraction, dropping ~10 lines of duplication.
+  - `remoteAddrToNetip` moved from `register_handler.go` to `handler.go` (single source of truth in the same package). Task 3 will sweep `peerLeafAndIP` to share `peerIdentityFromContext`'s extraction path.
+  - Test file dropped two linter-replaceable tests (nil-peer-lookup constructor guard, absent-ctx-key returns-false) and merged the two stage-2 resolver-error tests into a 3-row table-driven test that also covers the generic-daemon-error default branch.
+  - Five distinct `event=` log fields per reject stage for operator triage: `agent_identity_peer_auth_missing`, `agent_identity_cn_mismatch`, `agent_identity_no_agent_san`, `agent_identity_peer_lookup_no_match` / `_invalid_labels` / `_error`, `agent_identity_san_label_mismatch`. Wire envelope stays uniform `"registration rejected"` regardless.
 
 ---
 

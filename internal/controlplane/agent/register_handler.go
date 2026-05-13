@@ -6,8 +6,6 @@ import (
 	"crypto/subtle"
 	"crypto/x509"
 	"errors"
-	"fmt"
-	"net"
 	"net/netip"
 	"time"
 
@@ -301,26 +299,6 @@ func peerLeafAndIP(ctx context.Context) (*x509.Certificate, netip.Addr, error) {
 		return nil, netip.Addr{}, err
 	}
 	return leaf, addr, nil
-}
-
-// remoteAddrToNetip parses a net.Addr (typically *net.TCPAddr) into
-// a netip.Addr. Failure means the gRPC server is configured with a
-// transport this handler doesn't understand — fail-secure.
-func remoteAddrToNetip(a net.Addr) (netip.Addr, error) {
-	if a == nil {
-		return netip.Addr{}, errors.New("peer addr is nil")
-	}
-	host, _, err := net.SplitHostPort(a.String())
-	if err != nil {
-		// Some transports (unix domain) don't carry host:port.
-		// Treat as no IP — caller maps to PermissionDenied.
-		return netip.Addr{}, fmt.Errorf("split peer host:port: %w", err)
-	}
-	addr, parseErr := netip.ParseAddr(host)
-	if parseErr != nil {
-		return netip.Addr{}, fmt.Errorf("parse peer addr %q: %w", host, parseErr)
-	}
-	return addr, nil
 }
 
 // labelsMatchRequest checks the container's dev.clawker.agent and
