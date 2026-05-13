@@ -128,6 +128,14 @@ var shortNameRE = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
 // deterministic consts.ContainerClawkerd literal.
 const shortNameMax = 50
 
+// MaxShortNameLen returns the upper bound NewProjectSlug / NewAgentName
+// enforce on the user-typed short name (the agent / project string
+// before it's composed into an AgentFullName). Exported as a function
+// rather than the const so downstream packages can pin budget tests
+// against it (e.g. docker.VolumeName composition headroom) without the
+// constant leaking into the public surface.
+func MaxShortNameLen() int { return shortNameMax }
+
 // agentFullNamePrefix is the literal prefix that distinguishes an
 // AgentFullName from a user-typed short name. Reject inputs that already
 // look like an AgentFullName so a wrapping layer never produces

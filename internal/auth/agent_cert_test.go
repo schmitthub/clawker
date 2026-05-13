@@ -55,18 +55,18 @@ func TestMintAgentCert_HappyPath(t *testing.T) {
 	want := sha256.Sum256(leaf.Raw)
 	assert.Equal(t, want, got.Thumbprint)
 
-	// CN is the deterministic clawkerd binary identity. Per-agent
-	// canonical lives in the urn:clawker:agent: URI SAN — keeping it
-	// out of the CN frees long random docker.GenerateRandomName output
-	// from x509's 64-byte CN limit.
+	// CN is the deterministic clawkerd binary identity. The per-agent
+	// AgentFullName lives in the urn:clawker:agent: URI SAN — keeping
+	// it out of the CN frees long random docker.GenerateRandomName
+	// output from x509's 64-byte CN limit.
 	assert.Equal(t, consts.ContainerClawkerd, leaf.Subject.CommonName)
 
-	// Agent canonical must be in a URI SAN, read back via
-	// AgentCanonicalFromCert. CP-side IdentityInterceptor + Register
+	// AgentFullName must be in a URI SAN, read back via
+	// AgentFullNameFromCert. CP-side IdentityInterceptor + Register
 	// handler key off this string.
-	gotCanonical, ok := AgentFullNameFromCert(leaf)
+	gotAgentFullName, ok := AgentFullNameFromCert(leaf)
 	require.True(t, ok, "MintAgentCert must populate the agent URI SAN")
-	assert.Equal(t, "clawker.alpha.bravo", gotCanonical)
+	assert.Equal(t, "clawker.alpha.bravo", gotAgentFullName)
 
 	// Cert must verify against the CA — same trust chain the CP server
 	// will use for ClientCAs at the agent listener.
@@ -114,15 +114,16 @@ func TestMintAgentCert_EmptyAgentName(t *testing.T) {
 func TestMintAgentCert_EmptyProjectStillMints(t *testing.T) {
 	// 2-segment naming case (empty project) is legitimate — match
 	// docker.ContainerName behavior. CN remains the binary literal;
-	// the agent SAN encodes the 2-segment canonical "clawker.<agent>".
+	// the agent SAN encodes the 2-segment "clawker.<agent>"
+	// AgentFullName.
 	caCertPath, caKeyPath := caPaths(t)
 	got, err := MintAgentCert(caCertPath, caKeyPath, ProjectSlug{}, MustAgentName("solo"), "abc1234567890def")
 	require.NoError(t, err)
 	leaf := mustParse(t, got.CertPEM)
 	assert.Equal(t, consts.ContainerClawkerd, leaf.Subject.CommonName)
-	gotCanonical, ok := AgentFullNameFromCert(leaf)
+	gotAgentFullName, ok := AgentFullNameFromCert(leaf)
 	require.True(t, ok)
-	assert.Equal(t, "clawker.solo", gotCanonical)
+	assert.Equal(t, "clawker.solo", gotAgentFullName)
 }
 
 func TestMintAgentCert_MissingCAPaths(t *testing.T) {

@@ -66,11 +66,11 @@ func resolvedFor(t *testing.T, project, agentName, containerID string) ResolvedC
 }
 
 // signTestLeaf produces a leaf cert chained to caCert/caKey with the
-// given CN and (optionally) agent-canonical + container_id encoded as
+// given CN and (optionally) AgentFullName + container_id encoded as
 // URI SANs. Production leaves carry CN=consts.ContainerClawkerd plus
 // both SANs; tests that need to drive a specific failure path pass
 // deliberately-bogus or empty values for the relevant input.
-func signTestLeaf(t *testing.T, caCert *x509.Certificate, caKey *ecdsa.PrivateKey, cn, agentCanonical, containerID string) *x509.Certificate {
+func signTestLeaf(t *testing.T, caCert *x509.Certificate, caKey *ecdsa.PrivateKey, cn, agentFullName, containerID string) *x509.Certificate {
 	t.Helper()
 	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -86,8 +86,8 @@ func signTestLeaf(t *testing.T, caCert *x509.Certificate, caKey *ecdsa.PrivateKe
 		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
 	}
-	if agentCanonical != "" {
-		uri, err := url.Parse(auth.AgentSANScheme + agentCanonical)
+	if agentFullName != "" {
+		uri, err := url.Parse(auth.AgentSANScheme + agentFullName)
 		require.NoError(t, err)
 		tmpl.URIs = append(tmpl.URIs, uri)
 	}
@@ -223,12 +223,12 @@ func TestRegister_CtxGates(t *testing.T) {
 func TestRegister_IdentityCrossChecks(t *testing.T) {
 	caCert, caKey := genTestCA(t)
 	const goodProject, goodAgent, goodContainerID = "myapp", "dev", "ctr-resolved"
-	goodCanonical := auth.AgentFullName(auth.MustProjectSlug(goodProject), auth.MustAgentName(goodAgent))
+	goodAgentFullName := auth.AgentFullName(auth.MustProjectSlug(goodProject), auth.MustAgentName(goodAgent))
 
 	cases := []struct {
 		name              string
 		leafContainerSAN  string // empty → no urn:clawker:container: SAN
-		certAgentCN       string // SAN canonical baked into the leaf
+		certAgentSAN      string // AgentFullName baked into the leaf's urn:clawker:agent: URI SAN
 		reqProject        string
 		reqAgent          string
 		resolvedContainer string
@@ -236,7 +236,7 @@ func TestRegister_IdentityCrossChecks(t *testing.T) {
 		{
 			name:              "request project disagrees with resolved",
 			leafContainerSAN:  goodContainerID,
-			certAgentCN:       goodCanonical,
+			certAgentSAN:      goodAgentFullName,
 			reqProject:        "different",
 			reqAgent:          goodAgent,
 			resolvedContainer: goodContainerID,
@@ -244,7 +244,7 @@ func TestRegister_IdentityCrossChecks(t *testing.T) {
 		{
 			name:              "request agent disagrees with resolved",
 			leafContainerSAN:  goodContainerID,
-			certAgentCN:       goodCanonical,
+			certAgentSAN:      goodAgentFullName,
 			reqProject:        goodProject,
 			reqAgent:          "other",
 			resolvedContainer: goodContainerID,
@@ -252,7 +252,7 @@ func TestRegister_IdentityCrossChecks(t *testing.T) {
 		{
 			name:              "cert missing container URI SAN",
 			leafContainerSAN:  "",
-			certAgentCN:       goodCanonical,
+			certAgentSAN:      goodAgentFullName,
 			reqProject:        goodProject,
 			reqAgent:          goodAgent,
 			resolvedContainer: goodContainerID,
@@ -260,7 +260,7 @@ func TestRegister_IdentityCrossChecks(t *testing.T) {
 		{
 			name:              "cert container SAN disagrees with resolved",
 			leafContainerSAN:  "ctr-cert-claim",
-			certAgentCN:       goodCanonical,
+			certAgentSAN:      goodAgentFullName,
 			reqProject:        goodProject,
 			reqAgent:          goodAgent,
 			resolvedContainer: "ctr-resolved-truth",
@@ -269,7 +269,7 @@ func TestRegister_IdentityCrossChecks(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			leaf := signTestLeaf(t, caCert, caKey, consts.ContainerClawkerd, tc.certAgentCN, tc.leafContainerSAN)
+			leaf := signTestLeaf(t, caCert, caKey, consts.ContainerClawkerd, tc.certAgentSAN, tc.leafContainerSAN)
 			addCalled := false
 			reg := &RegistryMock{
 				LookupByContainerIDFunc: func(string) (*Entry, error) { return nil, ErrUnknownAgent },

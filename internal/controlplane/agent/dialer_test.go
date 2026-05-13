@@ -23,7 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/internal/auth"
-
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane/overseer"
 	"github.com/schmitthub/clawker/internal/logger"
 )
@@ -69,20 +69,18 @@ func genCA(t *testing.T, cn string, validity time.Duration) (*x509.Certificate, 
 	return cert, key
 }
 
-// signLeaf issues a leaf cert for cn signed by parent (the CA).
-//
-// cn doubles as the agent-canonical SAN value so capturePeer (which
-// sources PeerAgentFullName from the urn:clawker:agent: URI SAN, not from
-// Subject.CommonName) sees the same string the assertions read off
-// the cert. Production leaves have CN=consts.ContainerClawkerd and a
-// distinct canonical in the SAN; these dialer-side tests collapse the
-// two because they're exercising capture mechanics, not the
-// production CN-vs-SAN split.
-func signLeaf(t *testing.T, cn string, notAfter time.Time, parent *x509.Certificate, parentKey *ecdsa.PrivateKey) ([]byte, *x509.Certificate) {
+// signLeaf issues a leaf cert with cn as Subject.CommonName and
+// sanFullName as the urn:clawker:agent: URI SAN value, signed by
+// parent (the CA). Callers that don't care about the production
+// CN-vs-SAN split (capturePeer chain-mechanics tests) pass cn for
+// sanFullName; TestCapturePeer_DistinctCNAndSAN passes the two
+// distinct strings to pin that capturePeer reads PeerAgentFullName
+// from the SAN, not from Subject.CommonName.
+func signLeaf(t *testing.T, cn, sanFullName string, notAfter time.Time, parent *x509.Certificate, parentKey *ecdsa.PrivateKey) ([]byte, *x509.Certificate) {
 	t.Helper()
 	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
-	agentSAN, err := url.Parse(auth.AgentSANScheme + cn)
+	agentSAN, err := url.Parse(auth.AgentSANScheme + sanFullName)
 	require.NoError(t, err)
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(2),
@@ -107,7 +105,7 @@ func signLeaf(t *testing.T, cn string, notAfter time.Time, parent *x509.Certific
 
 func TestCapturePeer_ValidChain(t *testing.T) {
 	caCert, caKey := genCA(t, "clawker-ca", 24*time.Hour)
-	leafDER, leaf := signLeaf(t, "clawker.proj.dev", time.Now().Add(time.Hour), caCert, caKey)
+	leafDER, leaf := signLeaf(t, "clawker.proj.dev", "clawker.proj.dev", time.Now().Add(time.Hour), caCert, caKey)
 
 	pool := x509.NewCertPool()
 	pool.AddCert(caCert)
@@ -125,7 +123,7 @@ func TestCapturePeer_ValidChain(t *testing.T) {
 
 func TestCapturePeer_UntrustedRoot_DoesNotAbort(t *testing.T) {
 	wrongCA, wrongKey := genCA(t, "wrong-ca", 24*time.Hour)
-	leafDER, leaf := signLeaf(t, "clawker.proj.dev", time.Now().Add(time.Hour), wrongCA, wrongKey)
+	leafDER, leaf := signLeaf(t, "clawker.proj.dev", "clawker.proj.dev", time.Now().Add(time.Hour), wrongCA, wrongKey)
 
 	trustedCA, _ := genCA(t, "trusted-ca", 24*time.Hour)
 	pool := x509.NewCertPool()
@@ -144,7 +142,7 @@ func TestCapturePeer_UntrustedRoot_DoesNotAbort(t *testing.T) {
 
 func TestCapturePeer_ExpiredLeaf_DoesNotAbort(t *testing.T) {
 	caCert, caKey := genCA(t, "clawker-ca", 24*time.Hour)
-	leafDER, _ := signLeaf(t, "clawker.proj.dev", time.Now().Add(-time.Minute), caCert, caKey)
+	leafDER, _ := signLeaf(t, "clawker.proj.dev", "clawker.proj.dev", time.Now().Add(-time.Minute), caCert, caKey)
 
 	pool := x509.NewCertPool()
 	pool.AddCert(caCert)
@@ -181,6 +179,32 @@ func TestCapturePeer_BadCertBytes_SetsReason(t *testing.T) {
 	assert.Empty(t, peer.PeerAgentFullName)
 	assert.Equal(t, [sha256.Size]byte{}, peer.PeerThumbprint)
 	assert.Contains(t, peer.CaptureReason, "leaf parse failed")
+}
+
+// TestCapturePeer_DistinctCNAndSAN pins that capturePeer sources
+// PeerAgentFullName from the urn:clawker:agent: URI SAN, NOT from
+// Subject.CommonName. Production leaves carry CN=clawker-clawkerd
+// (a fixed binary identity that yields the same string for every
+// agent) and the per-agent AgentFullName in the SAN. A regression
+// that reads CN would silently make every connecting agent look
+// like clawker-clawkerd to subscribers — this test fails fast on
+// that drift.
+func TestCapturePeer_DistinctCNAndSAN(t *testing.T) {
+	caCert, caKey := genCA(t, "clawker-ca", 24*time.Hour)
+	const cn = consts.ContainerClawkerd
+	const sanFullName = "clawker.myapp.dev"
+	leafDER, _ := signLeaf(t, cn, sanFullName, time.Now().Add(time.Hour), caCert, caKey)
+
+	pool := x509.NewCertPool()
+	pool.AddCert(caCert)
+	d := &Dialer{caPool: pool}
+
+	var peer peerInfo
+	d.capturePeer([][]byte{leafDER}, &peer)
+
+	assert.True(t, peer.ChainVerified, "trusted-CA chain must verify")
+	assert.Equal(t, sanFullName, peer.PeerAgentFullName,
+		"PeerAgentFullName must come from the SAN, not Subject.CommonName")
 }
 
 // --- classifyRegistry: registry-row cross-check ---------------------

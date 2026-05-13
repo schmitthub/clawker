@@ -17,7 +17,7 @@
 | Task 4: Drop `Registry.Lookup`, simplify Registry surface, rework `Dialer.classifyRegistry` | `complete` | — |
 | Task 5: Migration `00002_drop_canonical_cn.sql` | `complete` | — |
 | Task 6: Rename `Canonical*` → `AgentFullName*` everywhere (auth + agent + sweeps) + typed `Entry` fields | `complete` | — |
-| Task 7: Update existing tests + add missing tests | `pending` | — |
+| Task 7: Update existing tests + add missing tests | `complete` | — |
 | Task 8: Update CLAUDE.md docs + final test run | `pending` | — |
 
 ## Key Learnings
@@ -77,6 +77,25 @@
   - `remoteAddrToNetip` moved from `register_handler.go` to `handler.go` (single source of truth in the same package). Task 3 will sweep `peerLeafAndIP` to share `peerIdentityFromContext`'s extraction path.
   - Test file dropped two linter-replaceable tests (nil-peer-lookup constructor guard, absent-ctx-key returns-false) and merged the two stage-2 resolver-error tests into a 3-row table-driven test that also covers the generic-daemon-error default branch.
   - Five distinct `event=` log fields per reject stage for operator triage: `agent_identity_peer_auth_missing`, `agent_identity_cn_mismatch`, `agent_identity_no_agent_san`, `agent_identity_peer_lookup_no_match` / `_invalid_labels` / `_error`, `agent_identity_san_label_mismatch`. Wire envelope stays uniform `"registration rejected"` regardless.
+
+- **Task 7 refinements (review-driven, deviate from spec):**
+  - **All 6 IdentityInterceptor tests required by the spec already existed** post-Task 2 (HappyPath_AttachesResolvedContainer, WrongCN_PermissionDenied, EmptyCertSAN_PermissionDenied, CertSANvsLabelMismatch_PermissionDenied, Stage2_ResolverErrors_PermissionDenied which covers NoContainerForPeerIP, Register_HitsTrustCheck). No new IdentityInterceptor tests added in Task 7. Verified by `get_symbols_overview` on `identity_interceptor_test.go`.
+  - **TestAgentCert_MultipleAgentURISANs deleted per test-hunter** — was originally added per spec but pinned phantom behavior. Production `MintAgentCert` only ever emits ONE `urn:clawker:agent:` SAN, so the "first-match-wins" contract had no production consumer. Test-hunter rated DELETE; silent-failure-hunter also flagged a latent gap (no non-matching URI preceding the match). Test removed; `net/url` import removed alongside.
+  - **`signLeafCNSAN` helper collapsed into `signLeaf`** per code-simplifier. Original Task 7 commit added a near-duplicate helper for the new `TestCapturePeer_DistinctCNAndSAN` test (only difference: distinct CN vs SAN args + hardcoded notAfter). Refactor: `signLeaf` signature now takes `(cn, sanFullName, notAfter, ...)`. Three existing callers pass cn for both params (chain-mechanics tests don't care); the new distinct-CN-vs-SAN test passes the two distinct strings. Saves ~25 lines + the explanatory comment about why two helpers exist.
+  - **`auth.MaxShortNameLen()` accessor added** (`internal/auth/identity.go`) per type-design-analyzer. The first cut of `TestContainerName_HeadroomForMaxFields` hardcoded `maxField = 50` with a runtime `auth.NewProjectSlug(50-char string)` guard. The guard caught a SHRINK of `shortNameMax` but NOT a BUMP — exactly the regression the test claims to catch. Exporting an accessor function (not the const itself; keeps `shortNameMax` private) lets the test consume the source of truth. The dual-assertion dance is gone; the test now actually fails when shortNameMax bumps past the 128-char budget.
+  - **`TestCapturePeer_DistinctCNAndSAN` KEPT** as load-bearing — existing `TestCapturePeer_ValidChain` collapses CN==SAN, so a regression that read PeerAgentFullName from `Subject.CommonName` would still pass it. This test is the only one that fails when every agent silently appears as `clawker-clawkerd` to subscribers.
+  - **`TestContainerName_HeadroomForMaxFields` KEPT** — values flow through real `auth.NewProjectSlug`/`NewAgentName` / `ContainerName` / `VolumeName`; pins the exact "agent name too long" regression the branch fixes. Walks all three production purposes (`config`, `history`, `workspace`) so adding a longer suffix without re-checking the budget fails here.
+  - **Comment scrubs (mechanical, "canonical" → "AgentFullName" in identity contexts):**
+    - `internal/auth/identity_test.go:109-112` — `TestCanonicalAgentCN_TwoVsThreeSegment` → `TestAgentFullName_TwoVsThreeSegment`.
+    - `internal/auth/agent_cert_test.go:59-65, 117, 123-125` — doc comments + `gotCanonical` → `gotAgentFullName`.
+    - `internal/cmd/container/shared/agent_bootstrap_test.go:48, 54` — doc comments.
+    - `internal/controlplane/agent/register_handler_test.go:69, 89-90, 226-272` — `agentCanonical` → `agentFullName` (signTestLeaf param), `goodCanonical` → `goodAgentFullName`, `certAgentCN` field → `certAgentSAN` (the old name was the rot — value always held a SAN, never a CN).
+    - `internal/controlplane/agent/dialer_test.go:72-81` — `signLeaf` doc trimmed and reframed around the cn/sanFullName split.
+    - `internal/cmd/container/shared/agent_bootstrap_test.go:55` — `auth.AgentCanonicalFromCert` ref removed (was already done in Task 6 production code).
+    - `internal/docker/names_test.go:358` — "canonical-CN composition" → "urn:clawker:agent: SAN AgentFullName composition" in `TestGenerateRandomName_AlwaysValidAsAgentName`.
+  - **Generic-English "canonical" KEPT** in `internal/auth/identity_test.go:98` ("one canonical invalid + one canonical valid per type") — describes test-shape, not identity. Code-reviewer NIT noted ambiguity in the now-AgentFullName-named context; left as-is per initiative spec ("Generic-English canonical may stay").
+  - **Test-hunter Finding 1 (latent gap)** — `TestAgentFullNameFromCert_MultipleAgentURISANs` didn't cover the case where a non-matching URI precedes the matching one. Made moot by the test's deletion.
+  - **CLAUDE.md doc updates deferred to Task 8** — `internal/auth/CLAUDE.md` and `internal/controlplane/agent/CLAUDE.md` still reference dead symbols `CanonicalAgentCN` / `AgentCanonicalFromCert` in prose. Code-reviewer flagged but per the initiative spec Task 8 is the doc-sweep task.
 
 - **Task 6 refinements (review-driven, deviate from spec):**
   - **Serena `rename_symbol` corrupted `register_handler.go` during `AgentCanonicalFromCert → AgentFullNameFromCert`** — mangled two regions (one comment, one log message + return statement). Restored from `git show HEAD`, re-applied only the typed-field edit. **Lesson:** always `go vet ./...` after each `rename_symbol`. Failure mode silently lands corrupted bytes that pass schematic checks but error at compile.

@@ -45,13 +45,13 @@ func TestGenerateAgentBootstrap_HappyPath(t *testing.T) {
 	require.NotNil(t, b)
 
 	// Cert decodes; CN is the deterministic clawkerd binary identity.
-	// The per-agent canonical lives in the urn:clawker:agent: URI SAN
-	// so long random docker.GenerateRandomName outputs don't push the
-	// cert past x509's 64-byte CN limit.
+	// The per-agent AgentFullName lives in the urn:clawker:agent: URI
+	// SAN so long random docker.GenerateRandomName outputs don't push
+	// the cert past x509's 64-byte CN limit.
 	leaf := mustParseCert(t, b.CertPEM)
 	assert.Equal(t, consts.ContainerClawkerd, leaf.Subject.CommonName)
 
-	// Canonical agent identity rides in the agent URI SAN.
+	// AgentFullName rides in the agent URI SAN.
 	gotAgentFullName, ok := auth.AgentFullNameFromCert(leaf)
 	require.True(t, ok, "cert must carry agent URI SAN")
 	assert.Equal(t, "clawker.alpha.bravo", gotAgentFullName)

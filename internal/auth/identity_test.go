@@ -106,10 +106,10 @@ func TestMust_PanicWrapsValidation(t *testing.T) {
 	assert.Panics(t, func() { MustProjectSlug("dot.app") })
 }
 
-// TestCanonicalAgentCN_TwoVsThreeSegment confirms the rule lives in
+// TestAgentFullName_TwoVsThreeSegment confirms the rule lives in
 // exactly one place and produces the expected forms for both the
 // scoped (3-segment) and unscoped (2-segment) cases.
-func TestCanonicalAgentCN_TwoVsThreeSegment(t *testing.T) {
+func TestAgentFullName_TwoVsThreeSegment(t *testing.T) {
 	assert.Equal(t,
 		"clawker.myapp.dev",
 		AgentFullName(MustProjectSlug("myapp"), MustAgentName("dev")))

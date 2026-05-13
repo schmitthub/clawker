@@ -354,11 +354,12 @@ func TestNamePrefix(t *testing.T) {
 // the original "agent name too long" regression broke. Container
 // creation falls back to GenerateRandomName when no --agent flag was
 // supplied (internal/cmd/container/shared/container_create.go), then
-// pipes the result through auth.NewAgentName for the leaf cert
-// canonical-CN composition. If a word-list addition pushes the
-// adj-noun combo past auth.shortNameMax (or violates the charset),
-// CreateContainer fails with "agent bootstrap: invalid agent name"
-// — the exact symptom this test was added to prevent re-introducing.
+// pipes the result through auth.NewAgentName for the leaf cert's
+// urn:clawker:agent: SAN AgentFullName composition. If a word-list
+// addition pushes the adj-noun combo past auth.shortNameMax (or
+// violates the charset), CreateContainer fails with "agent
+// bootstrap: invalid agent name" — the exact symptom this test was
+// added to prevent re-introducing.
 //
 // The walk is the cartesian product of the two unexported word
 // lists, not a random sample of GenerateRandomName output, so a new
@@ -371,6 +372,57 @@ func TestGenerateRandomName_AlwaysValidAsAgentName(t *testing.T) {
 			if _, err := auth.NewAgentName(combo); err != nil {
 				t.Fatalf("auth.NewAgentName(%q) rejected a GenerateRandomName output: %v", combo, err)
 			}
+		}
+	}
+}
+
+// TestContainerName_HeadroomForMaxFields locks the volume / container
+// name budget against auth.shortNameMax (the validated upper bound on
+// both project slug and agent name). The longest resource name the
+// system can produce is a VolumeName built from a max-length project,
+// a max-length agent, and the longest purpose suffix ("workspace"):
+//
+//	clawker.<50 chars>.<50 chars>-workspace
+//	└─────┘ └──────┘ └──────┘ └────────┘
+//	   7      50       50         9      = 119 (after dots/dash)
+//
+// Docker's resource-name limit is 128 chars. ValidateResourceName
+// enforces this and is called by both ContainerName and VolumeName,
+// so a future word-list change (e.g. longer purpose like "workspace-
+// cache") or a bumped shortNameMax that crosses 128 fails this test
+// instead of producing "name too long" errors at container creation.
+//
+// The test deliberately walks every purpose currently used in
+// production so adding a longer one without re-checking the budget
+// fails here.
+func TestContainerName_HeadroomForMaxFields(t *testing.T) {
+	// auth.MaxShortNameLen() is the upper bound NewProjectSlug /
+	// NewAgentName enforce. A future bump that pushes the composed
+	// name past Docker's 128-byte resource-name limit lands here —
+	// reading the source of truth (rather than hardcoding 50) keeps
+	// the test honest in both directions.
+	maxField := auth.MaxShortNameLen()
+	project := strings.Repeat("a", maxField)
+	agent := strings.Repeat("b", maxField)
+
+	cn, err := ContainerName(project, agent)
+	if err != nil {
+		t.Fatalf("ContainerName(maxProject, maxAgent) error: %v", err)
+	}
+	if len(cn) > 128 {
+		t.Errorf("ContainerName(maxProject, maxAgent) = %q (len %d), exceeds Docker's 128-char limit", cn, len(cn))
+	}
+
+	// Walks every purpose currently in production. Adding a longer
+	// suffix without re-checking the budget fails here.
+	for _, purpose := range []string{"config", "history", "workspace"} {
+		vn, err := VolumeName(project, agent, purpose)
+		if err != nil {
+			t.Errorf("VolumeName(maxProject, maxAgent, %q) error: %v", purpose, err)
+			continue
+		}
+		if len(vn) > 128 {
+			t.Errorf("VolumeName(maxProject, maxAgent, %q) = %q (len %d), exceeds Docker's 128-char limit", purpose, vn, len(vn))
 		}
 	}
 }
