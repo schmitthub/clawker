@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"math/big"
 	"net/url"
@@ -53,6 +54,35 @@ const AgentSANScheme = "urn:clawker:agent:"
 // into the cert SAN — the Register handler reads this back via
 // ContainerIDFromCert and uses it to look up a docker container, so an
 // unvalidated value is a producer-side bug surface.
+// sanState is the three-state classification sanTailFromCert returns
+// so AgentFullNameFromCert can distinguish a cert with no agent URI
+// SAN from one whose SAN scheme is present but tail is empty. The
+// distinction lets the CP-side IdentityInterceptor emit
+// `event=agent_identity_no_agent_san` vs
+// `event=agent_identity_malformed_agent_san` separately while keeping
+// the wire envelope a uniform PermissionDenied.
+type sanState int
+
+const (
+	sanMissing sanState = iota
+	sanMalformed
+	sanFound
+)
+
+// ErrAgentSANMissing means the leaf cert carries no urn:clawker:agent:
+// URI SAN at all. Surfaced by AgentFullNameFromCert; the
+// IdentityInterceptor maps it to a generic PermissionDenied wire
+// reply and emits `event=agent_identity_no_agent_san`.
+var ErrAgentSANMissing = errors.New("auth: cert has no urn:clawker:agent URI SAN")
+
+// ErrAgentSANMalformed means the cert carries a URI with the
+// urn:clawker:agent: scheme but its tail (the AgentFullName) is empty
+// — a producer-side bug we want to surface separately from a clean
+// missing-SAN case. Surfaced by AgentFullNameFromCert; the
+// IdentityInterceptor maps it to a generic PermissionDenied wire
+// reply and emits `event=agent_identity_malformed_agent_san`.
+var ErrAgentSANMalformed = errors.New("auth: urn:clawker:agent URI SAN has empty tail")
+
 func BuildContainerSAN(containerID string) (*url.URL, error) {
 	if containerID == "" {
 		return nil, fmt.Errorf("container id required")
@@ -87,8 +117,14 @@ func isHexLower(s string) bool {
 // of the form urn:clawker:container:<id>. Returns ("", false) when no
 // such SAN is present so callers can branch on a clean missing-binding
 // signal rather than parsing strings.
+// ContainerIDFromCert extracts the container_id encoded as a URI SAN
+// of the form urn:clawker:container:<id>. Returns ("", false) for both
+// the no-SAN and malformed-SAN cases — the Register handler maps the
+// pair to a single PermissionDenied envelope without needing to
+// distinguish.
 func ContainerIDFromCert(cert *x509.Certificate) (string, bool) {
-	return sanTailFromCert(cert, ContainerSANScheme)
+	tail, st := sanTailFromCert(cert, ContainerSANScheme)
+	return tail, st == sanFound
 }
 
 // BuildAgentSAN composes the URI SAN that carries the AgentFullName
@@ -112,28 +148,59 @@ func BuildAgentSAN(project ProjectSlug, agent AgentName) (*url.URL, error) {
 // false) when no such SAN is present — callers map a missing binding
 // to a generic PermissionDenied without leaking which structural check
 // failed.
-func AgentFullNameFromCert(cert *x509.Certificate) (string, bool) {
-	return sanTailFromCert(cert, AgentSANScheme)
+// AgentFullNameFromCert extracts the AgentFullName encoded as a URI
+// SAN of the form urn:clawker:agent:<agent_full_name>. Returns three
+// states the IdentityInterceptor needs to classify:
+//
+//   - ("name", nil)                       — SAN present and valid
+//   - ("", ErrAgentSANMissing)           — no urn:clawker:agent: SAN on the cert
+//   - ("", ErrAgentSANMalformed)         — scheme present but empty tail
+//
+// The interceptor maps both error cases to a generic PermissionDenied
+// over the wire (no leak about which check failed) but emits distinct
+// structured-log events so operators can tell missing-binding from
+// producer-side malformation.
+func AgentFullNameFromCert(cert *x509.Certificate) (string, error) {
+	tail, st := sanTailFromCert(cert, AgentSANScheme)
+	switch st {
+	case sanFound:
+		return tail, nil
+	case sanMalformed:
+		return "", ErrAgentSANMalformed
+	default:
+		return "", ErrAgentSANMissing
+	}
 }
 
 // sanTailFromCert walks the cert's URI SANs and returns the tail of
 // the first URI whose string-form starts with prefix. Shared by
 // ContainerIDFromCert + AgentFullNameFromCert so the empty-tail
 // rejection (len(s) > len(prefix)) is implemented once.
-func sanTailFromCert(cert *x509.Certificate, prefix string) (string, bool) {
+// sanTailFromCert walks the cert's URI SANs and returns the tail of
+// the first URI whose string-form starts with prefix along with a
+// three-state classification (missing / malformed / found). Shared by
+// ContainerIDFromCert + AgentFullNameFromCert; only the agent helper
+// surfaces the malformed state to its caller — the container helper
+// folds both reject states into a single bool.
+func sanTailFromCert(cert *x509.Certificate, prefix string) (string, sanState) {
 	if cert == nil {
-		return "", false
+		return "", sanMissing
 	}
 	for _, u := range cert.URIs {
 		if u == nil {
 			continue
 		}
 		s := u.String()
-		if len(s) > len(prefix) && s[:len(prefix)] == prefix {
-			return s[len(prefix):], true
+		if len(s) < len(prefix) || s[:len(prefix)] != prefix {
+			continue
 		}
+		tail := s[len(prefix):]
+		if tail == "" {
+			return "", sanMalformed
+		}
+		return tail, sanFound
 	}
-	return "", false
+	return "", sanMissing
 }
 
 // AgentFullName composes the agent identity string carried in the

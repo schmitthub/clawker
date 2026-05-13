@@ -189,8 +189,14 @@ func (h *Handler) Register(ctx context.Context, req *agentv1.RegisterRequest) (*
 	// already accepted this container's cert in a prior call; the
 	// Session retry that triggered another RegisterRequired needn't
 	// rewrite. A row with a DIFFERENT thumbprint is a replay attempt —
-	// reject.
-	if existing, lookupErr := h.registry.LookupByContainerID(resolved.ContainerID); lookupErr == nil && existing != nil {
+	// reject. A row whose stored identity columns are malformed
+	// (ErrMalformedEntry from scanEntry) is treated as unusable: evict
+	// it so the Add below re-writes using the middleware-resolved
+	// (and freshly validated) identity. The eviction is idempotent;
+	// the subsequent Add is the normal write path.
+	existing, lookupErr := h.registry.LookupByContainerID(resolved.ContainerID)
+	switch {
+	case lookupErr == nil && existing != nil:
 		if existing.Thumbprint == thumbprint {
 			h.log.Info().
 				Str("event", "agent_register_idempotent").
@@ -203,7 +209,25 @@ func (h *Handler) Register(ctx context.Context, req *agentv1.RegisterRequest) (*
 			Str("container_id", resolved.ContainerID).
 			Msg("existing row has different thumbprint; rejecting")
 		return nil, status.Error(codes.PermissionDenied, "register: identity check failed")
-	} else if lookupErr != nil && !errors.Is(lookupErr, ErrUnknownAgent) {
+	case errors.Is(lookupErr, ErrMalformedEntry):
+		// Row exists but its persisted identity tuple is unreadable.
+		// Evict + re-write rather than refusing the Register: the
+		// middleware just verified the live cert against daemon labels,
+		// so the row we're about to write is more trustworthy than the
+		// malformed legacy one. Failing the evict is fatal — Add would
+		// hit the same row.
+		h.log.Warn().Err(lookupErr).
+			Str("event", "agent_register_malformed_row_evicted").
+			Str("container_id", resolved.ContainerID).
+			Msg("registry row malformed; evicting before re-write")
+		if evictErr := h.registry.EvictByContainerID(resolved.ContainerID); evictErr != nil {
+			h.log.Error().Err(evictErr).
+				Str("event", "agent_register_malformed_row_evict_failed").
+				Str("container_id", resolved.ContainerID).
+				Msg("evict of malformed row failed; cannot proceed with Add")
+			return nil, status.Error(codes.Internal, "register: evict malformed row failed")
+		}
+	case lookupErr != nil && !errors.Is(lookupErr, ErrUnknownAgent):
 		h.log.Warn().Err(lookupErr).
 			Str("event", "agent_register_lookup_error").
 			Str("container_id", resolved.ContainerID).

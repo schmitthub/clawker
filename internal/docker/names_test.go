@@ -413,9 +413,11 @@ func TestContainerName_HeadroomForMaxFields(t *testing.T) {
 		t.Errorf("ContainerName(maxProject, maxAgent) = %q (len %d), exceeds Docker's 128-char limit", cn, len(cn))
 	}
 
-	// Walks every purpose currently in production. Adding a longer
-	// suffix without re-checking the budget fails here.
-	for _, purpose := range []string{"config", "history", "workspace"} {
+	// Iterate the canonical VolumePurposes list from names.go so a
+	// new purpose only needs to be appended in one place to be
+	// auto-exercised here. Adding a longer suffix without re-checking
+	// the budget fails this loop.
+	for _, purpose := range VolumePurposes {
 		vn, err := VolumeName(project, agent, purpose)
 		if err != nil {
 			t.Errorf("VolumeName(maxProject, maxAgent, %q) error: %v", purpose, err)

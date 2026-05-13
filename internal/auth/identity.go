@@ -67,6 +67,16 @@ func MustAgentName(s string) AgentName {
 // unknown provenance.
 func (a AgentName) IsZero() bool { return a.s == "" }
 
+// Less reports whether a sorts before other in lexicographic order on
+// the underlying short name. Lives on AgentName so the sort sites
+// under internal/controlplane/agent/registry*.go don't reach for
+// `.String() < .String()` (which silently drops the type safety the
+// rest of this file enforces). Treats the zero value as the smallest
+// element — there is no real AgentName whose String() returns the
+// empty form, but a zero-value comparison must remain well-ordered
+// for snapshot output to stay deterministic.
+func (a AgentName) Less(other AgentName) bool { return a.s < other.s }
+
 // ProjectSlug is the user-typed project slug (e.g. "myapp"). Like
 // AgentName but allows the empty value (matches docker.ContainerName's
 // 2-segment naming case where no project is configured).
@@ -104,6 +114,12 @@ func MustProjectSlug(s string) ProjectSlug {
 // the underlying representation doesn't silently break the empty
 // check.
 func (p ProjectSlug) IsEmpty() bool { return p.s == "" }
+
+// Less reports whether p sorts before other in lexicographic order on
+// the underlying slug. The empty/unscoped slug sorts before every
+// non-empty value, which keeps Snapshot output deterministic for the
+// docker.ContainerName 2-segment case.
+func (p ProjectSlug) Less(other ProjectSlug) bool { return p.s < other.s }
 
 // shortNameRE matches the strict subset of characters allowed in
 // AgentName / ProjectSlug. Stricter than docker.ValidateResourceName:

@@ -69,6 +69,16 @@ type Entry struct {
 // dialer's job, not the registry's.
 var ErrUnknownAgent = errors.New("agentregistry: unknown agent")
 
+// ErrMalformedEntry is returned by sqlite reads when a row's
+// agent_name / project / thumbprint fails re-validation (a value that
+// landed pre-typed-boundary, a hand-edited DB, or a corrupted column).
+// The Register handler treats this sentinel as "evict + re-write":
+// the row's identity is unusable so it gets purged and replaced by
+// the typed identity the middleware just resolved off the live peer
+// IP + cert. Wrapped via fmt.Errorf so errors.Is on the wrapped error
+// works for callers that don't unwrap themselves.
+var ErrMalformedEntry = errors.New("agentregistry: malformed registry row")
+
 // Registry is the consumer-facing contract.
 //
 //go:generate moq -rm -pkg agent -out registry_mock_test.go . Registry
@@ -116,7 +126,14 @@ type Registry interface {
 	// (project, agent)). Used by AdminService.ListAgents and the
 	// `clawker controlplane agents` CLI; both rely on stable ordering
 	// for diffability.
-	Snapshot() []Entry
+	//
+	// Returns a non-nil error on persistence failure (sqlite db.Query
+	// or rows.Err non-nil). Callers must NOT treat an empty result as
+	// authoritative when err != nil — reapOrphans would otherwise
+	// evict every registered agent on a transient query failure;
+	// ListAgents would surface "no agents" to operators while the
+	// registry is intact but unreadable.
+	Snapshot() ([]Entry, error)
 }
 
 type registryImpl struct {
@@ -139,7 +156,9 @@ func NewRegistry(log *logger.Logger) Registry {
 }
 
 func (r *registryImpl) Add(entry Entry) error {
-	validateEntry(entry)
+	if err := validateEntry(entry); err != nil {
+		return err
+	}
 	if entry.LastSeen.IsZero() {
 		entry.LastSeen = entry.RegisteredAt
 	}
@@ -155,35 +174,32 @@ func (r *registryImpl) Add(entry Entry) error {
 }
 
 // validateEntry runs the programming-error invariants shared by every
-// Registry.Add path. Failure is a wiring bug — panic so it surfaces
-// during development rather than corrupting the registry. AgentName
-// and Project string-validity is enforced by the typed Entry fields
-// (auth.AgentName / auth.ProjectSlug). The checks below cover the
-// invariants the type system cannot express: non-zero thumbprint,
-// non-empty ContainerID, non-zero RegisteredAt, and a non-zero
-// AgentName (a struct-literal Entry{} could otherwise omit it and
-// land an empty agent slot in the registry).
+// Registry.Add path. AgentName and Project string-validity is enforced
+// by the typed Entry fields (auth.AgentName / auth.ProjectSlug). The
+// checks below cover the invariants the type system cannot express:
+// non-zero thumbprint, non-empty ContainerID, non-zero RegisteredAt,
+// and a non-zero AgentName (a struct-literal Entry{} could otherwise
+// omit it and land an empty agent slot in the registry).
 //
-// FIXME(cp-serve-path): These panics are on the gRPC handler goroutine
-// reachable post-SetReady from Register. Per root CLAUDE.md, a CP
-// panic strands eBPF — a future cleanup should convert to error
-// returns. Today the production caller (register_handler.go::Register)
-// constructs Entry from middleware-resolved typed values that cannot
-// trip any of these gates, but the safety belongs in the API, not in
-// the call-site discipline.
-func validateEntry(entry Entry) {
+// Returns an error rather than panicking — Add lives on the gRPC
+// handler goroutine reachable post-SetReady from Register, and a
+// panic on that path would strand eBPF programs with no supervisor
+// (see root CLAUDE.md). Both Add implementations propagate the error;
+// Register maps it to codes.InvalidArgument.
+func validateEntry(entry Entry) error {
 	if entry.Thumbprint == ([sha256.Size]byte{}) {
-		panic("agentregistry: Add called with zero thumbprint")
+		return errors.New("agentregistry: Add called with zero thumbprint")
 	}
 	if entry.ContainerID == "" {
-		panic("agentregistry: Add called with empty ContainerID")
+		return errors.New("agentregistry: Add called with empty ContainerID")
 	}
 	if entry.AgentName.IsZero() {
-		panic("agentregistry: Add called with zero AgentName")
+		return errors.New("agentregistry: Add called with zero AgentName")
 	}
 	if entry.RegisteredAt.IsZero() {
-		panic("agentregistry: Add called with zero RegisteredAt")
+		return errors.New("agentregistry: Add called with zero RegisteredAt")
 	}
+	return nil
 }
 
 func (r *registryImpl) LookupByContainerID(containerID string) (*Entry, error) {
@@ -220,22 +236,29 @@ func (r *registryImpl) EvictByContainerID(containerID string) error {
 	return nil
 }
 
-func (r *registryImpl) Snapshot() []Entry {
+func (r *registryImpl) Snapshot() ([]Entry, error) {
 	r.mu.RLock()
 	out := make([]Entry, 0, len(r.entries))
 	for _, e := range r.entries {
 		out = append(out, e)
 	}
 	r.mu.RUnlock()
-	// Sort by (Project, AgentName) — the composite identity. Two
-	// projects can register the same short AgentName, so AgentName
-	// alone is not a unique key and sorting by it leaves the
-	// inter-project order undefined (Go map iteration order).
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Project.String() != out[j].Project.String() {
-			return out[i].Project.String() < out[j].Project.String()
+	sortEntries(out)
+	return out, nil
+}
+
+// sortEntries orders entries by (Project, AgentName) — the composite
+// identity. Two projects can register the same short AgentName, so
+// AgentName alone is not a unique key and sorting by it would leave
+// the inter-project order undefined (Go map iteration order). Shared
+// between the in-memory and sqlite Snapshot implementations so the
+// ordering rule has one home; Less methods on the typed identity
+// values keep the comparison free of `.String() < .String()`.
+func sortEntries(entries []Entry) {
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].Project != entries[j].Project {
+			return entries[i].Project.Less(entries[j].Project)
 		}
-		return out[i].AgentName.String() < out[j].AgentName.String()
+		return entries[i].AgentName.Less(entries[j].AgentName)
 	})
-	return out
 }

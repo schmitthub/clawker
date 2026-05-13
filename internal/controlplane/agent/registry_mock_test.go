@@ -26,7 +26,7 @@ var _ Registry = &RegistryMock{}
 //			LookupByContainerIDFunc: func(containerID string) (*Entry, error) {
 //				panic("mock out the LookupByContainerID method")
 //			},
-//			SnapshotFunc: func() []Entry {
+//			SnapshotFunc: func() ([]Entry, error) {
 //				panic("mock out the Snapshot method")
 //			},
 //		}
@@ -46,7 +46,7 @@ type RegistryMock struct {
 	LookupByContainerIDFunc func(containerID string) (*Entry, error)
 
 	// SnapshotFunc mocks the Snapshot method.
-	SnapshotFunc func() []Entry
+	SnapshotFunc func() ([]Entry, error)
 
 	// calls tracks calls to the methods.
 	calls struct {
@@ -172,7 +172,7 @@ func (mock *RegistryMock) LookupByContainerIDCalls() []struct {
 }
 
 // Snapshot calls SnapshotFunc.
-func (mock *RegistryMock) Snapshot() []Entry {
+func (mock *RegistryMock) Snapshot() ([]Entry, error) {
 	if mock.SnapshotFunc == nil {
 		panic("RegistryMock.SnapshotFunc: method is nil but Registry.Snapshot was just called")
 	}

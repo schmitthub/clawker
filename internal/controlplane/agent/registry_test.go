@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/internal/auth"
 )
@@ -37,6 +38,14 @@ func validEntry(project, agent, containerID, certSeed string) Entry {
 // other caller violating these is a wiring bug that must surface
 // loudly. Each subtest uses recover() to assert a panic occurred and
 // no entry made it into the registry.
+// TestRegistry_Add_RejectsInvariantViolations pins the contract that
+// Add returns an error on programming-error invariants — zero
+// thumbprint, empty container_id, zero RegisteredAt. The legitimate
+// caller (the in-package Register handler) has already verified each
+// invariant via the identity-binding cross-checks; any other caller
+// violating these gets a typed reject rather than a panic, because Add
+// runs on the gRPC handler goroutine and a panic on the CP serve path
+// strands eBPF programs (see root CLAUDE.md).
 func TestRegistry_Add_RejectsInvariantViolations(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -73,16 +82,25 @@ func TestRegistry_Add_RejectsInvariantViolations(t *testing.T) {
 				// agent slot must surface as a wiring bug.
 			},
 		},
+		{
+			name: "zero RegisteredAt",
+			entry: Entry{
+				AgentName:   auth.MustAgentName("x"),
+				ContainerID: "ctr",
+				Thumbprint:  tp("cert"),
+				// RegisteredAt left zero — Snapshot ordering and
+				// LastSeen derivation both rely on a real timestamp.
+			},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			r := NewRegistry(nil)
-			defer func() {
-				rec := recover()
-				assert.NotNil(t, rec, "Add must panic on %s", tc.name)
-			}()
-			_ = r.Add(tc.entry)
-			t.Fatal("Add did not panic on invalid entry")
+			err := r.Add(tc.entry)
+			require.Error(t, err, "Add must reject %s", tc.name)
+			snap, snapErr := r.Snapshot()
+			require.NoError(t, snapErr)
+			assert.Empty(t, snap, "rejected entry must not land in the registry")
 		})
 	}
 }

@@ -116,7 +116,8 @@ func TestSQLiteRegistry_Snapshot_Sorted(t *testing.T) {
 	require.NoError(t, r.Add(validEntry("aproj", "dev", "ctr-2", "cert-2")))
 	require.NoError(t, r.Add(validEntry("aproj", "bot", "ctr-3", "cert-3")))
 
-	snap := r.Snapshot()
+	snap, err := r.Snapshot()
+	require.NoError(t, err)
 	require.Len(t, snap, 3)
 	got := make([][2]string, len(snap))
 	for i, e := range snap {
@@ -162,7 +163,8 @@ func TestSQLiteRegistry_ConcurrentWriters(t *testing.T) {
 
 	// Both writers raced into the same set of rows; UNIQUE rejected
 	// every duplicate.
-	snap := w1.Snapshot()
+	snap, snapErr := w1.Snapshot()
+	require.NoError(t, snapErr)
 	assert.GreaterOrEqual(t, len(snap), 1)
 	assert.LessOrEqual(t, len(snap), n)
 	assert.EqualValues(t, 2*n-len(snap), dupes.Load(), "every collision must surface as Add error")
@@ -201,7 +203,9 @@ func TestSQLiteRegistry_SchemaMigration_FromOldDB(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { closeRegistry(t, r) })
 
-	assert.Empty(t, r.Snapshot(), "legacy rows must be dropped on schema migration")
+	legacySnap, legacyErr := r.Snapshot()
+	require.NoError(t, legacyErr)
+	assert.Empty(t, legacySnap, "legacy rows must be dropped on schema migration")
 
 	// New Adds against the migrated schema work.
 	require.NoError(t, r.Add(validEntry("p", "a", "ctr-1", "cert-1")))
@@ -272,7 +276,8 @@ func TestMigration_002_DropsCanonicalCN(t *testing.T) {
 	// Row pre-existing at goose-v1 must survive the column drop —
 	// guards against a 00002 that drops the whole table or otherwise
 	// loses data.
-	snap := r.Snapshot()
+	snap, err := r.Snapshot()
+	require.NoError(t, err)
 	require.Len(t, snap, 1)
 	assert.Equal(t, "legacy-agent", snap[0].AgentName.String())
 }

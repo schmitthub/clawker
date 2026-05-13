@@ -52,8 +52,8 @@ func TestGenerateAgentBootstrap_HappyPath(t *testing.T) {
 	assert.Equal(t, consts.ContainerClawkerd, leaf.Subject.CommonName)
 
 	// AgentFullName rides in the agent URI SAN.
-	gotAgentFullName, ok := auth.AgentFullNameFromCert(leaf)
-	require.True(t, ok, "cert must carry agent URI SAN")
+	gotAgentFullName, err := auth.AgentFullNameFromCert(leaf)
+	require.NoError(t, err, "cert must carry agent URI SAN")
 	assert.Equal(t, "clawker.alpha.bravo", gotAgentFullName)
 
 	// Container_id must be embedded as a URI SAN — the load-bearing
@@ -79,8 +79,8 @@ func TestGenerateAgentBootstrap_EmptyProjectStillWorks(t *testing.T) {
 	require.NoError(t, err)
 	leaf := mustParseCert(t, b.CertPEM)
 	assert.Equal(t, consts.ContainerClawkerd, leaf.Subject.CommonName)
-	gotAgentFullName, ok := auth.AgentFullNameFromCert(leaf)
-	require.True(t, ok)
+	gotAgentFullName, err := auth.AgentFullNameFromCert(leaf)
+	require.NoError(t, err)
 	assert.Equal(t, "clawker.solo", gotAgentFullName)
 }
 

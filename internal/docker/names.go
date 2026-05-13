@@ -164,6 +164,31 @@ func ContainerNamePrefix(project string) string {
 // VolumeName generates volume name: clawker.project.agent-purpose
 // Returns an error if project or agent names contain invalid characters.
 // The purpose parameter is not validated as it is always a hardcoded internal string.
+// Volume-name purpose suffixes. VolumeName composes container names
+// as "clawker.<project>.<agent>-<purpose>", so the purpose suffix
+// adds (1 + len(purpose)) bytes on top of the field-length budget
+// `auth.MaxShortNameLen()` enforces for project + agent. The headroom
+// test in names_test.go iterates VolumePurposes against the
+// auth.MaxShortNameLen() worst case so a new purpose that pushes the
+// composed name past Docker's 128-byte resource-name limit fails the
+// suite at the longest-suffix site.
+//
+// When adding a new volume purpose: declare it as a const here AND
+// append to VolumePurposes — both so the test picks it up and so any
+// future caller can reference the typed name instead of a stringly
+// literal.
+const (
+	VolumePurposeConfig    = "config"
+	VolumePurposeHistory   = "history"
+	VolumePurposeWorkspace = "workspace"
+)
+
+var VolumePurposes = []string{
+	VolumePurposeConfig,
+	VolumePurposeHistory,
+	VolumePurposeWorkspace,
+}
+
 func VolumeName(project, agent, purpose string) (string, error) {
 	if err := ValidateResourceName(agent); err != nil {
 		return "", fmt.Errorf("invalid agent name: %w", err)

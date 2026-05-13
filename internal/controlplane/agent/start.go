@@ -98,17 +98,33 @@ func Start(ctx context.Context, deps StartDeps) (func(), error) {
 		return nil, fmt.Errorf("agent.Start: subscribe evict: %w", err)
 	}
 
-	// Step 3: container/start|restart|unpause → dial agent.
+	// Step 3: container/{die,stop,kill,oom,destroy} → cancel the
+	// in-flight CP→clawkerd Session. The docker event is the source
+	// of truth for "clawkerd is no longer serving"; without this,
+	// the dialer would only notice on its next reconnect attempt
+	// (outcomeContainerGone) and the doomed stream would linger.
+	// Independent of the evict subscriber — evict reflects row
+	// state (destroy only), cancel reflects connectivity state
+	// (any exit transition).
+	cancelCleanup, err := subscribeSessionCancel(ctx, deps.Dialer, deps.Bus, log)
+	if err != nil {
+		evictCleanup()
+		return nil, fmt.Errorf("agent.Start: subscribe session cancel: %w", err)
+	}
+
+	// Step 4: container/start|restart|unpause → dial agent.
 	dialCleanup, err := subscribeDial(ctx, deps.Dialer, deps.Bus, log)
 	if err != nil {
+		cancelCleanup()
 		evictCleanup()
 		return nil, fmt.Errorf("agent.Start: subscribe dial: %w", err)
 	}
 
 	cleanup := func() {
-		// Reverse-order unwind so the dial-side stops fan-in before
-		// the evict-side stops draining destroys.
+		// Reverse-order unwind so each subscriber drains before the
+		// next stops fan-in.
 		dialCleanup()
+		cancelCleanup()
 		evictCleanup()
 	}
 	return cleanup, nil
@@ -135,7 +151,14 @@ func reapOrphans(ctx context.Context, reg Registry, lister ContainerLister, log 
 		live[id] = struct{}{}
 	}
 
-	snap := reg.Snapshot()
+	snap, err := reg.Snapshot()
+	if err != nil {
+		// Critical: abort reap rather than treat the (likely truncated
+		// or nil) snap as authoritative. Iterating an empty result on a
+		// query failure would evict every registered agent on the next
+		// reap pass — see Registry.Snapshot contract.
+		return 0, fmt.Errorf("snapshot registry: %w", err)
+	}
 	evicted := 0
 	var evictErrs []error
 	for _, e := range snap {
@@ -227,6 +250,14 @@ var evictEscalationThreshold = 5
 // Stop/die/kill/oom do NOT evict: the container still exists in the
 // daemon and may be `docker start`-ed back into life. The registry
 // row survives so a subsequent restart finds its existing identity.
+// sessionCanceller is the narrow projection of the Dialer that the
+// session-cancel subscriber needs. Defining it as an interface
+// (rather than taking *Dialer directly) keeps the consumer testable
+// without constructing a real dialer + grpc transport.
+type sessionCanceller interface {
+	CancelDial(containerID string)
+}
+
 func subscribeEvict(ctx context.Context, reg Registry, bus *overseer.Overseer, log *logger.Logger) (func(), error) {
 	sub, ok := overseer.SubscribeFiltered(bus, "agent.evict", func(ev dockerevents.DockerEvent) bool {
 		return ev.Type == events.ContainerEventType && ev.Action == events.ActionDestroy
@@ -288,6 +319,81 @@ func drainEvictOnce(ctx context.Context, ch <-chan dockerevents.DockerEvent, reg
 				consecutiveFailures = 0
 				escalated = false
 			}
+		}
+	}
+}
+
+// sessionCancelEventPredicate matches every container-level docker
+// event that means "clawkerd in this container can no longer serve":
+// die/stop/kill/oom (process gone but container may be docker
+// start-able) and destroy (container removed). The dial subscriber's
+// counterpart fires on start/restart/unpause; together they keep
+// the Session connection-state aligned with docker truth without
+// going through the registry.
+//
+// Distinct from dialEventPredicate (which fires on
+// start/restart/unpause) and from the evict predicate (destroy only,
+// because evict semantics are tied to row deletion, not connectivity).
+func sessionCancelEventPredicate(ev dockerevents.DockerEvent) bool {
+	if ev.Type != events.ContainerEventType {
+		return false
+	}
+	switch ev.Action {
+	case events.ActionDie, events.ActionStop, events.ActionKill,
+		events.ActionOOM, events.ActionDestroy:
+		return true
+	}
+	return false
+}
+
+// subscribeSessionCancel wires CancelDial to docker container lifecycle
+// events. The docker event is the source of truth for "clawkerd is
+// no longer serving"; canceling at this layer keeps the dialer
+// independent of registry state.
+func subscribeSessionCancel(ctx context.Context, dialer sessionCanceller, bus *overseer.Overseer, log *logger.Logger) (func(), error) {
+	if dialer == nil {
+		return func() {}, nil
+	}
+	sub, ok := overseer.SubscribeFiltered(bus, "agent.session_cancel", sessionCancelEventPredicate)
+	if !ok {
+		return nil, fmt.Errorf("bus closed before subscribe")
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		runWithBackoff(ctx, log, "agent.session_cancel", func() bool {
+			return drainSessionCancelOnce(ctx, sub.C, dialer, log)
+		})
+	}()
+	return func() {
+		sub.Unsubscribe()
+		<-done
+	}, nil
+}
+
+func drainSessionCancelOnce(ctx context.Context, ch <-chan dockerevents.DockerEvent, dialer sessionCanceller, log *logger.Logger) (terminate bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Error().Interface("panic", r).Msg("agent.session_cancel consumer panicked; resuming")
+			terminate = false
+		}
+	}()
+	for {
+		select {
+		case <-ctx.Done():
+			return true
+		case ev, ok := <-ch:
+			if !ok {
+				return true
+			}
+			cid := ev.Actor.ID
+			if cid == "" {
+				continue
+			}
+			// CancelDial is a no-op when no dial is in flight; safe
+			// to call on every transition.
+			dialer.CancelDial(cid)
 		}
 	}
 }

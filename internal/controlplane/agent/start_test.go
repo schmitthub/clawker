@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/netip"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -44,7 +45,8 @@ func TestReapOrphans_DropsRowsForGoneContainers(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 2, evicted)
 
-	got := reg.Snapshot()
+	got, snapErr := reg.Snapshot()
+	require.NoError(t, snapErr)
 	require.Len(t, got, 1)
 	assert.Equal(t, "ctr-live", got[0].ContainerID)
 }
@@ -58,7 +60,9 @@ func TestReapOrphans_EmptyDockerListEvictsAll(t *testing.T) {
 	evicted, err := reapOrphans(context.Background(), reg, lister, logger.Nop())
 	require.NoError(t, err)
 	assert.Equal(t, 2, evicted)
-	assert.Empty(t, reg.Snapshot())
+	snap, snapErr := reg.Snapshot()
+	require.NoError(t, snapErr)
+	assert.Empty(t, snap)
 }
 
 func TestReapOrphans_RetriesTransientListerFailure(t *testing.T) {
@@ -90,7 +94,9 @@ func TestReapOrphans_ReportsListerExhaustion(t *testing.T) {
 	require.Error(t, err)
 	// Registry must NOT be wiped on lister failure — orphans persist
 	// until a future successful reap (or destroy event).
-	assert.Len(t, reg.Snapshot(), 1)
+	snap, snapErr := reg.Snapshot()
+	require.NoError(t, snapErr)
+	assert.Len(t, snap, 1)
 }
 
 // --- subscribeEvict: filter contract -------------------------------------
@@ -131,7 +137,10 @@ func TestSubscribeEvict_OnlyDestroyEvicts(t *testing.T) {
 			}})
 
 			require.Eventually(t, func() bool {
-				snap := reg.Snapshot()
+				snap, err := reg.Snapshot()
+				if err != nil {
+					return false
+				}
 				if tc.wantEvicted {
 					return len(snap) == 0
 				}
@@ -139,6 +148,98 @@ func TestSubscribeEvict_OnlyDestroyEvicts(t *testing.T) {
 			}, 500*time.Millisecond, 10*time.Millisecond)
 		})
 	}
+}
+
+// fakeCanceller records every CancelDial call so tests can pin the
+// session-cancel subscriber's behavior without a real *Dialer.
+type fakeCanceller struct {
+	mu  sync.Mutex
+	ids []string
+}
+
+func (f *fakeCanceller) CancelDial(id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ids = append(f.ids, id)
+}
+
+func (f *fakeCanceller) calls() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]string, len(f.ids))
+	copy(out, f.ids)
+	return out
+}
+
+// TestSubscribeSessionCancel_CancelsOnExitTransitions pins the docker
+// events that trigger CancelDial. The trust anchor is the docker
+// event, NOT registry state — die/stop/kill/oom/destroy all mean
+// clawkerd is gone (or about to be), so the Session should tear down
+// regardless of whether the registry row gets evicted (only destroy
+// evicts).
+func TestSubscribeSessionCancel_CancelsOnExitTransitions(t *testing.T) {
+	cases := []struct {
+		name       string
+		action     mobyevents.Action
+		wantCancel bool
+	}{
+		{"die cancels", mobyevents.ActionDie, true},
+		{"stop cancels", mobyevents.ActionStop, true},
+		{"kill cancels", mobyevents.ActionKill, true},
+		{"oom cancels", mobyevents.ActionOOM, true},
+		{"destroy cancels", mobyevents.ActionDestroy, true},
+		{"start does not cancel", mobyevents.ActionStart, false},
+		{"restart does not cancel", mobyevents.ActionRestart, false},
+		{"unpause does not cancel", mobyevents.ActionUnPause, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			bus, cleanup := startTestBus(t)
+			defer cleanup()
+			canc := &fakeCanceller{}
+
+			cancelSub, err := subscribeSessionCancel(t.Context(), canc, bus, logger.Nop())
+			require.NoError(t, err)
+			defer cancelSub()
+
+			overseer.Publish(bus, dockerevents.DockerEvent{Message: mobyevents.Message{
+				Type:   mobyevents.ContainerEventType,
+				Action: tc.action,
+				Actor:  mobyevents.Actor{ID: "ctr-target"},
+			}})
+
+			if tc.wantCancel {
+				require.Eventually(t, func() bool {
+					calls := canc.calls()
+					return len(calls) == 1 && calls[0] == "ctr-target"
+				}, 500*time.Millisecond, 10*time.Millisecond)
+			} else {
+				time.Sleep(100 * time.Millisecond)
+				assert.Empty(t, canc.calls(), "non-exit transition must not cancel")
+			}
+		})
+	}
+}
+
+// TestSubscribeSessionCancel_NonContainerEventsIgnored: network/volume
+// events with matching action names must not trigger CancelDial.
+func TestSubscribeSessionCancel_NonContainerEventsIgnored(t *testing.T) {
+	bus, cleanup := startTestBus(t)
+	defer cleanup()
+	canc := &fakeCanceller{}
+
+	cancelSub, err := subscribeSessionCancel(t.Context(), canc, bus, logger.Nop())
+	require.NoError(t, err)
+	defer cancelSub()
+
+	overseer.Publish(bus, dockerevents.DockerEvent{Message: mobyevents.Message{
+		Type:   mobyevents.NetworkEventType,
+		Action: mobyevents.ActionDie,
+		Actor:  mobyevents.Actor{ID: "ctr-target"},
+	}})
+
+	time.Sleep(100 * time.Millisecond)
+	assert.Empty(t, canc.calls())
 }
 
 // TestSubscribeEvict_NonContainerEventsIgnored: network/volume events
@@ -164,7 +265,9 @@ func TestSubscribeEvict_NonContainerEventsIgnored(t *testing.T) {
 
 	// Sleep briefly for the bus loop to run; row must persist.
 	time.Sleep(100 * time.Millisecond)
-	assert.Len(t, reg.Snapshot(), 1)
+	snap, snapErr := reg.Snapshot()
+	require.NoError(t, snapErr)
+	assert.Len(t, snap, 1)
 }
 
 // --- subscribeDial: filter contract --------------------------------------
@@ -278,7 +381,7 @@ func TestStart_RejectsNilDeps(t *testing.T) {
 	bus, cleanup := startTestBus(t)
 	defer cleanup()
 	reg := NewRegistry(nil)
-	dialer := &Dialer{log: logger.Nop(), dialing: make(map[string]struct{})}
+	dialer := &Dialer{log: logger.Nop(), dialing: make(map[string]context.CancelFunc)}
 	lister := ContainerLister(func(context.Context) ([]string, error) { return nil, nil })
 	peerLookup := noopPeerLookup{}
 
@@ -314,7 +417,7 @@ func TestStart_PublishesReapDegradedOnListerFailure(t *testing.T) {
 
 	reg := NewRegistry(nil)
 	mustAddTestEntry(t, reg, "ctr-orphan", "a", "p")
-	dialer := &Dialer{log: logger.Nop(), dialing: make(map[string]struct{})}
+	dialer := &Dialer{log: logger.Nop(), dialing: make(map[string]context.CancelFunc)}
 	lister := ContainerLister(func(context.Context) ([]string, error) {
 		return nil, errors.New("daemon down")
 	})

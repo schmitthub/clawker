@@ -10,6 +10,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"errors"
+	"fmt"
 	"math/big"
 	"net"
 	"net/url"
@@ -372,4 +373,77 @@ func TestRegister_RegistryBranches(t *testing.T) {
 			assert.Equal(t, tc.wantAddCalled, addCalled, "Add call expectation mismatch")
 		})
 	}
+}
+
+// TestRegister_MalformedRowEvictThenRewrite pins T5's recovery path:
+// when LookupByContainerID returns ErrMalformedEntry (a row whose
+// agent_name / project / thumbprint failed re-validation at scan
+// time), the handler must evict the row and proceed with the normal
+// Add path. The Welcome surfaces to the agent; the registry ends up
+// holding the middleware-resolved (and freshly validated) identity.
+func TestRegister_MalformedRowEvictThenRewrite(t *testing.T) {
+	caCert, caKey := genTestCA(t)
+	const containerID, project, agentName = "ctr-malformed", "myapp", "dev"
+	leaf := signTestLeaf(t, caCert, caKey, consts.ContainerClawkerd,
+		auth.AgentFullName(auth.MustProjectSlug(project), auth.MustAgentName(agentName)), containerID)
+
+	var (
+		evicted   bool
+		addCalled bool
+	)
+	reg := &RegistryMock{
+		LookupByContainerIDFunc: func(string) (*Entry, error) {
+			return nil, fmt.Errorf("agentregistry: query LookupByContainerID: %w", ErrMalformedEntry)
+		},
+		EvictByContainerIDFunc: func(id string) error {
+			evicted = true
+			assert.Equal(t, containerID, id, "evict must target the resolved container_id")
+			return nil
+		},
+		AddFunc: func(e Entry) error {
+			addCalled = true
+			// Re-written row carries the middleware-resolved identity,
+			// not whatever was malformed on the old row.
+			assert.Equal(t, containerID, e.ContainerID)
+			assert.Equal(t, agentName, e.AgentName.String())
+			assert.Equal(t, project, e.Project.String())
+			return nil
+		},
+	}
+	h := newTestHandler(reg)
+
+	ctx := resolvedCtx(t, leaf, resolvedFor(t, project, agentName, containerID))
+	resp, err := h.Register(ctx, &agentv1.RegisterRequest{AgentName: agentName, Project: project})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.True(t, evicted, "EvictByContainerID must be called on malformed row")
+	assert.True(t, addCalled, "Add must be called after evict to re-write the row")
+}
+
+// TestRegister_MalformedRowEvictFailure pins the failure branch of the
+// recovery path: if the registry's evict itself fails on a malformed
+// row, the handler must NOT proceed to Add — Add would hit the same
+// stale row and either re-fail or land a misaligned upsert. Surface
+// as Internal so the operator's structured log line carries the
+// classification.
+func TestRegister_MalformedRowEvictFailure(t *testing.T) {
+	caCert, caKey := genTestCA(t)
+	const containerID, project, agentName = "ctr-malformed-evict-fail", "myapp", "dev"
+	leaf := signTestLeaf(t, caCert, caKey, consts.ContainerClawkerd,
+		auth.AgentFullName(auth.MustProjectSlug(project), auth.MustAgentName(agentName)), containerID)
+
+	reg := &RegistryMock{
+		LookupByContainerIDFunc: func(string) (*Entry, error) {
+			return nil, fmt.Errorf("read: %w", ErrMalformedEntry)
+		},
+		EvictByContainerIDFunc: func(string) error { return errors.New("evict disk i/o") },
+		AddFunc:                func(Entry) error { t.Fatal("Add must not run after evict failure"); return nil },
+	}
+	h := newTestHandler(reg)
+
+	ctx := resolvedCtx(t, leaf, resolvedFor(t, project, agentName, containerID))
+	_, err := h.Register(ctx, &agentv1.RegisterRequest{AgentName: agentName, Project: project})
+	require.Error(t, err)
+	st, _ := status.FromError(err)
+	assert.Equal(t, codes.Internal, st.Code())
 }

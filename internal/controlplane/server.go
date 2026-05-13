@@ -9,6 +9,9 @@ import (
 	"context"
 	"encoding/hex"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/controlplane/agent"
 	fwhandler "github.com/schmitthub/clawker/internal/controlplane/firewall"
@@ -62,8 +65,16 @@ func (s *adminServer) ListAgents(_ context.Context, _ *adminv1.ListAgentsRequest
 	// Snapshot's interface contract guarantees (Project, AgentName)
 	// ordering — trust it on the wire rather than re-sorting (avoids
 	// duplicating the comparator across in-memory + sqlite impls and
-	// this consumer).
-	snap := s.agents.Snapshot()
+	// this consumer). A non-nil error surfaces as codes.Internal so the
+	// CLI doesn't silently print "no agents" while the registry is
+	// intact but the underlying sqlite query failed.
+	snap, err := s.agents.Snapshot()
+	if err != nil {
+		s.log.Error().Err(err).
+			Str("event", "list_agents_snapshot_failed").
+			Msg("controlplane: ListAgents snapshot failed")
+		return nil, status.Error(codes.Internal, "list agents: snapshot unavailable")
+	}
 
 	out := make([]*adminv1.Agent, len(snap))
 	for i, e := range snap {

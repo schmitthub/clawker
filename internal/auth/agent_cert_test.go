@@ -13,6 +13,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math/big"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -64,8 +65,8 @@ func TestMintAgentCert_HappyPath(t *testing.T) {
 	// AgentFullName must be in a URI SAN, read back via
 	// AgentFullNameFromCert. CP-side IdentityInterceptor + Register
 	// handler key off this string.
-	gotAgentFullName, ok := AgentFullNameFromCert(leaf)
-	require.True(t, ok, "MintAgentCert must populate the agent URI SAN")
+	gotAgentFullName, err := AgentFullNameFromCert(leaf)
+	require.NoError(t, err, "MintAgentCert must populate the agent URI SAN")
 	assert.Equal(t, "clawker.alpha.bravo", gotAgentFullName)
 
 	// Cert must verify against the CA — same trust chain the CP server
@@ -121,8 +122,8 @@ func TestMintAgentCert_EmptyProjectStillMints(t *testing.T) {
 	require.NoError(t, err)
 	leaf := mustParse(t, got.CertPEM)
 	assert.Equal(t, consts.ContainerClawkerd, leaf.Subject.CommonName)
-	gotAgentFullName, ok := AgentFullNameFromCert(leaf)
-	require.True(t, ok)
+	gotAgentFullName, err := AgentFullNameFromCert(leaf)
+	require.NoError(t, err)
 	assert.Equal(t, "clawker.solo", gotAgentFullName)
 }
 
@@ -209,6 +210,51 @@ func TestMintAgentCert_AdversarialCAInputs(t *testing.T) {
 
 		_, err = MintAgentCert(certPath, rsaKeyPath, MustProjectSlug("x"), MustAgentName("y"), "abc1234567890def")
 		require.Error(t, err)
+	})
+}
+
+// TestAgentFullNameFromCert_TriState pins the three return states the
+// CP-side IdentityInterceptor relies on to emit
+// agent_identity_no_agent_san vs agent_identity_malformed_agent_san
+// as distinct structured-log events. Wire envelope is uniform
+// PermissionDenied either way; structured-log differentiation is what
+// lets operators triage missing-binding (cert was never minted with a
+// SAN) vs producer-side bug (cert minted with an empty tail).
+func TestAgentFullNameFromCert_TriState(t *testing.T) {
+	t.Run("nil cert → missing", func(t *testing.T) {
+		_, err := AgentFullNameFromCert(nil)
+		require.ErrorIs(t, err, ErrAgentSANMissing)
+	})
+
+	t.Run("cert without any URI SANs → missing", func(t *testing.T) {
+		cert := &x509.Certificate{}
+		_, err := AgentFullNameFromCert(cert)
+		require.ErrorIs(t, err, ErrAgentSANMissing)
+	})
+
+	t.Run("cert with unrelated URI SAN → missing", func(t *testing.T) {
+		u, parseErr := url.Parse("https://example.com/other")
+		require.NoError(t, parseErr)
+		cert := &x509.Certificate{URIs: []*url.URL{u}}
+		_, err := AgentFullNameFromCert(cert)
+		require.ErrorIs(t, err, ErrAgentSANMissing)
+	})
+
+	t.Run("cert with agent SAN scheme but empty tail → malformed", func(t *testing.T) {
+		u, parseErr := url.Parse(AgentSANScheme)
+		require.NoError(t, parseErr)
+		cert := &x509.Certificate{URIs: []*url.URL{u}}
+		_, err := AgentFullNameFromCert(cert)
+		require.ErrorIs(t, err, ErrAgentSANMalformed)
+	})
+
+	t.Run("cert with well-formed agent SAN → no error", func(t *testing.T) {
+		u, parseErr := url.Parse(AgentSANScheme + "clawker.proj.dev")
+		require.NoError(t, parseErr)
+		cert := &x509.Certificate{URIs: []*url.URL{u}}
+		name, err := AgentFullNameFromCert(cert)
+		require.NoError(t, err)
+		assert.Equal(t, "clawker.proj.dev", name)
 	})
 }
 

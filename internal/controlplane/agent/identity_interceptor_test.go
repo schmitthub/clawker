@@ -196,6 +196,45 @@ func TestIdentityInterceptor_EmptyCertSAN_PermissionDenied(t *testing.T) {
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
+// TestIdentityInterceptor_MalformedCertSAN_PermissionDenied pins
+// stage 2a's malformed-SAN branch. A cert that carries a URI with
+// scheme urn:clawker:agent: but an empty tail is a producer-side bug;
+// the interceptor short-circuits with PermissionDenied just like the
+// missing-SAN case, but the structured log surface emits
+// event=agent_identity_malformed_agent_san so operators can
+// distinguish it from a clean no-SAN cert.
+func TestIdentityInterceptor_MalformedCertSAN_PermissionDenied(t *testing.T) {
+	unary, _ := IdentityInterceptor(okPeerLookup(), nil)
+
+	// Cert has the agent SAN scheme but empty tail.
+	u, err := url.Parse(auth.AgentSANScheme)
+	require.NoError(t, err)
+	cert := &x509.Certificate{
+		Raw:     []byte("cert-der"),
+		Subject: pkix.Name{CommonName: consts.ContainerClawkerd},
+		URIs:    []*url.URL{u},
+	}
+	tlsInfo := credentials.TLSInfo{}
+	tlsInfo.State.PeerCertificates = []*x509.Certificate{cert}
+	addr := &net.TCPAddr{IP: net.ParseIP(testPeerIP), Port: 1234}
+	ctx := peer.NewContext(context.Background(), &peer.Peer{
+		Addr:     addr,
+		AuthInfo: tlsInfo,
+	})
+
+	_, err = unary(
+		ctx,
+		"req",
+		&grpc.UnaryServerInfo{FullMethod: registerMethod()},
+		func(_ context.Context, _ any) (any, error) {
+			t.Fatal("handler must NOT run when agent SAN is malformed")
+			return nil, nil
+		},
+	)
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
 // --- Stage 2b: peer IP resolve (table-driven across error sentinels) ---
 
 func TestIdentityInterceptor_Stage2_ResolverErrors_PermissionDenied(t *testing.T) {

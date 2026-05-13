@@ -106,14 +106,21 @@ const closeErrCeiling = 5
 // Dialer captures the CP-side material every dial needs. Construct
 // once at CP startup; share across all agent dials.
 //
-// dialing is the dedup set: containerIDs currently being dialed (or
-// already-Session-established). Initial poll and the dockerevents
-// subscriber both call DialAgent for the same running container; the
-// dedup keeps the second call from spinning a duplicate goroutine
-// against an already-open Session. Membership lasts the lifetime of
-// the dial goroutine — after the Session closes (peer drop, ctx
-// cancel, retry timeout), the entry is removed and a future event
-// for the same containerID dials fresh.
+// dialing is the dedup + cancel map: containerIDs currently being
+// dialed (or already-Session-established) mapped to the cancel func
+// for their per-dial ctx. Initial poll and the dockerevents subscriber
+// both call DialAgent for the same running container; the dedup keeps
+// the second call from spinning a duplicate goroutine against an
+// already-open Session. Membership lasts the lifetime of the dial
+// goroutine — after the Session closes (peer drop, ctx cancel, retry
+// timeout), the entry is removed and a future event for the same
+// containerID dials fresh.
+//
+// CancelDial uses the stored cancel func to tear down a Session
+// synchronously with a registry-evict (container/destroy) — without
+// it, the dialer's runDial loop only notices the disappearance on the
+// next reconnect attempt via outcomeContainerGone, leaving a doomed
+// stream open during the interval.
 type Dialer struct {
 	log    *logger.Logger
 	docker mobyclient.APIClient
@@ -138,7 +145,7 @@ type Dialer struct {
 	caPool       *x509.CertPool
 
 	mu      sync.Mutex
-	dialing map[string]struct{}
+	dialing map[string]context.CancelFunc
 }
 
 // New constructs a Dialer. Returns an error if the CP client cert /
@@ -181,7 +188,7 @@ func New(log *logger.Logger, docker mobyclient.APIClient, bus *overseer.Overseer
 		initExec:     initExec,
 		cpClientCert: cert,
 		caPool:       caPool,
-		dialing:      make(map[string]struct{}),
+		dialing:      make(map[string]context.CancelFunc),
 	}, nil
 }
 
@@ -203,12 +210,14 @@ func New(log *logger.Logger, docker mobyclient.APIClient, bus *overseer.Overseer
 // drain — a stream break ends the goroutine and removes the dedup
 // entry, so a subsequent restart event re-dials.
 func (d *Dialer) DialAgent(ctx context.Context, containerID string) {
+	dialCtx, cancel := context.WithCancel(ctx)
 	d.mu.Lock()
 	if _, exists := d.dialing[containerID]; exists {
 		d.mu.Unlock()
+		cancel()
 		return
 	}
-	d.dialing[containerID] = struct{}{}
+	d.dialing[containerID] = cancel
 	d.mu.Unlock()
 
 	go func() {
@@ -263,9 +272,30 @@ func (d *Dialer) DialAgent(ctx context.Context, containerID string) {
 			d.mu.Lock()
 			delete(d.dialing, containerID)
 			d.mu.Unlock()
+			// Release the per-dial ctx resources. Safe to call after
+			// CancelDial already cancelled it — context.CancelFunc is
+			// idempotent.
+			cancel()
 		}()
-		d.runDial(ctx, containerID)
+		d.runDial(dialCtx, containerID)
 	}()
+}
+
+// CancelDial synchronously cancels the in-flight Session for
+// containerID, if any. Called by the registry-evict subscriber on
+// container/destroy so the dialer tears down the doomed stream
+// immediately rather than waiting for the next reconnect to classify
+// outcomeContainerGone. Safe to call when no dial is in flight
+// (no-op) and concurrent-safe (mu-guarded). The goroutine's own
+// cleanup runs the deferred delete after runDial returns.
+func (d *Dialer) CancelDial(containerID string) {
+	d.mu.Lock()
+	cancel, ok := d.dialing[containerID]
+	d.mu.Unlock()
+	if !ok {
+		return
+	}
+	cancel()
 }
 
 func (d *Dialer) runDial(ctx context.Context, containerID string) {

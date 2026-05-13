@@ -3,11 +3,11 @@
 -- the literal consts.ContainerClawkerd. Trust derives from the
 -- kernel-attested peer IP via Docker labels, not from cached
 -- strings. The canonical_cn pre-compute column has no readers.
+--
+-- One-way migration: registry state is regenerable from Docker
+-- ground truth (peer IP → labels) and reapOrphans heals on the next
+-- CP boot, matching the policy migrateFromPreGoose enforces — there
+-- is no Down half. Adding one would re-introduce a NOT NULL column
+-- with an empty default and pretend trust state was preserved
+-- across the round-trip; it wasn't.
 ALTER TABLE agents DROP COLUMN canonical_cn;
-
--- +goose Down
--- Best-effort restore. Original column was NOT NULL with no default;
--- restoring requires a default so existing rows back-fill cleanly.
--- Rows that survived an up→down round-trip carry an empty
--- canonical_cn — acceptable for alpha rollback.
-ALTER TABLE agents ADD COLUMN canonical_cn TEXT NOT NULL DEFAULT '';

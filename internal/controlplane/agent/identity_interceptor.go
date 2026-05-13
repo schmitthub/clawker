@@ -56,15 +56,25 @@ func IdentityInterceptor(peerLookup ContainerByPeerIP, log *logger.Logger) (grpc
 			return nil, status.Error(codes.PermissionDenied, "registration rejected")
 		}
 
-		// Stage 2a: cert must carry an agent SAN. Explicit check (rather
-		// than relying on the stage-3 constant-time compare's natural
-		// length-mismatch fail) gives operators a distinct event for the
-		// missing-SAN case and short-circuits the Docker round-trip.
-		if pid.AgentFullName == "" {
+		// Stage 2a: cert must carry a well-formed agent SAN. Explicit
+		// check (rather than relying on the stage-3 constant-time compare's
+		// natural length-mismatch fail) gives operators a distinct event
+		// per failure shape and short-circuits the Docker round-trip.
+		// The wire envelope stays uniform PermissionDenied either way;
+		// only the structured-log `event=` field differentiates a clean
+		// missing-SAN case from a producer-side malformed-SAN case
+		// (urn:clawker:agent: scheme present but empty tail).
+		if pid.AgentSANErr != nil {
+			event := "agent_identity_no_agent_san"
+			msg := "agent identity: cert presents no agent URI SAN"
+			if errors.Is(pid.AgentSANErr, auth.ErrAgentSANMalformed) {
+				event = "agent_identity_malformed_agent_san"
+				msg = "agent identity: cert presents agent URI SAN with empty tail"
+			}
 			log.Warn().
 				Str("method", method).
-				Str("event", "agent_identity_no_agent_san").
-				Msg("agent identity: cert presents no agent URI SAN")
+				Str("event", event).
+				Msg(msg)
 			return nil, status.Error(codes.PermissionDenied, "registration rejected")
 		}
 

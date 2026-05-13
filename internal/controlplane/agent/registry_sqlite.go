@@ -11,7 +11,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
 	"time"
 
 	"github.com/pressly/goose/v3"
@@ -220,7 +219,9 @@ func (r *sqliteRegistry) countRows() (int, error) {
 }
 
 func (r *sqliteRegistry) Add(entry Entry) error {
-	validateEntry(entry)
+	if err := validateEntry(entry); err != nil {
+		return err
+	}
 
 	tpHex := hex.EncodeToString(entry.Thumbprint[:])
 	if entry.LastSeen.IsZero() {
@@ -272,22 +273,23 @@ func scanEntry(s rowScanner) (Entry, error) {
 	var tp [sha256.Size]byte
 	raw, err := hex.DecodeString(tpHex)
 	if err != nil || len(raw) != sha256.Size {
-		return Entry{}, fmt.Errorf("agentregistry: malformed thumbprint_hex %q", tpHex)
+		return Entry{}, fmt.Errorf("%w: malformed thumbprint_hex %q", ErrMalformedEntry, tpHex)
 	}
 	copy(tp[:], raw)
 	// Re-validate agent_name / project at read time. The typed fields
 	// guarantee the strings WERE valid at write time, but a hand-edited
 	// DB row (or a future writer that bypasses the typed boundary)
-	// could otherwise land an invariant-violating value here. Returning
-	// an error lets Snapshot's row loop log and skip; LookupByContainerID
-	// surfaces it to its caller via the existing query-error path.
+	// could otherwise land an invariant-violating value here. Wrap
+	// ErrMalformedEntry so LookupByContainerID + Snapshot callers can
+	// classify the failure mode (Register evicts the row and re-writes
+	// using the middleware-resolved identity; Snapshot logs + skips).
 	agentTyped, err := auth.NewAgentName(agentName)
 	if err != nil {
-		return Entry{}, fmt.Errorf("agentregistry: malformed agent_name %q: %w", agentName, err)
+		return Entry{}, fmt.Errorf("%w: agent_name %q: %v", ErrMalformedEntry, agentName, err)
 	}
 	projectTyped, err := auth.NewProjectSlug(project)
 	if err != nil {
-		return Entry{}, fmt.Errorf("agentregistry: malformed project %q: %w", project, err)
+		return Entry{}, fmt.Errorf("%w: project %q: %v", ErrMalformedEntry, project, err)
 	}
 	return Entry{
 		AgentName:    agentTyped,
@@ -342,11 +344,11 @@ func (r *sqliteRegistry) EvictByContainerID(containerID string) error {
 	return nil
 }
 
-func (r *sqliteRegistry) Snapshot() []Entry {
+func (r *sqliteRegistry) Snapshot() ([]Entry, error) {
 	rows, err := r.db.Query(`SELECT ` + selectEntryCols + ` FROM agents`)
 	if err != nil {
 		r.log.Error().Err(err).Msg("agentregistry: query snapshot failed")
-		return nil
+		return nil, fmt.Errorf("agentregistry: query snapshot: %w", err)
 	}
 	defer rows.Close()
 
@@ -374,14 +376,10 @@ func (r *sqliteRegistry) Snapshot() []Entry {
 	}
 	if err := rows.Err(); err != nil {
 		r.log.Error().Err(err).Msg("agentregistry: snapshot rows iteration failed")
+		return nil, fmt.Errorf("agentregistry: iterate snapshot rows: %w", err)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Project.String() != out[j].Project.String() {
-			return out[i].Project.String() < out[j].Project.String()
-		}
-		return out[i].AgentName.String() < out[j].AgentName.String()
-	})
-	return out
+	sortEntries(out)
+	return out, nil
 }
 
 // Close releases the underlying sql.DB handle. Used by tests; the CP

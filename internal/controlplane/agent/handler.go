@@ -59,7 +59,14 @@ import (
 type peerIdentity struct {
 	CommonName    string
 	AgentFullName string
-	PeerAddr      netip.Addr
+	// AgentSANErr classifies the cert's urn:clawker:agent: URI SAN:
+	//   - nil                      — SAN present and valid, AgentFullName populated
+	//   - auth.ErrAgentSANMissing  — cert presents no agent URI SAN
+	//   - auth.ErrAgentSANMalformed — scheme present but tail empty
+	// IdentityInterceptor reads this to emit distinct structured-log
+	// events while keeping the wire reply a uniform PermissionDenied.
+	AgentSANErr error
+	PeerAddr    netip.Addr
 }
 
 var errNoPeerInfo = errors.New("agent: no peer info in context")
@@ -104,10 +111,11 @@ func peerIdentityFromContext(ctx context.Context) (*peerIdentity, error) {
 	if err != nil {
 		return nil, err
 	}
-	agentFullName, _ := auth.AgentFullNameFromCert(leaf) // empty when SAN missing; interceptor classifies
+	agentFullName, sanErr := auth.AgentFullNameFromCert(leaf)
 	return &peerIdentity{
 		CommonName:    leaf.Subject.CommonName,
 		AgentFullName: agentFullName,
+		AgentSANErr:   sanErr,
 		PeerAddr:      addr,
 	}, nil
 }
