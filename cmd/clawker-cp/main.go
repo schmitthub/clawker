@@ -516,6 +516,12 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		return fmt.Errorf("step 8 (agent sqlite): %w", err)
 	}
 
+	// Peer-IP→Docker→labels resolver. Maps a live mTLS peer IP to
+	// the `purpose=agent` container owning that endpoint on
+	// clawker-net so the identity surface can ground its trust check
+	// on a kernel-attested source instead of cert claims.
+	agentPeerLookup := agent.NewMobyPeerLookup(dockerCli.APIClient, log.With("component", "agent-peer-lookup"))
+
 	adminv1.RegisterAdminServiceServer(grpcServer, controlplane.NewAdminServer(handler, agentReg, log))
 
 	grpcLis, err := net.Listen("tcp", "0.0.0.0:"+strconv.Itoa(cp.AdminPort))
@@ -840,9 +846,10 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 			DockerLister: func(ctx context.Context) ([]string, error) {
 				return listAgentIDs(ctx, listAgentsOpts{All: true})
 			},
-			Dialer: dialer,
-			Bus:    bus,
-			Log:    log.With("component", "agent"),
+			PeerLookup: agentPeerLookup,
+			Dialer:     dialer,
+			Bus:        bus,
+			Log:        log.With("component", "agent"),
 		})
 		if err != nil {
 			log.Error().Err(err).Msg("agent.Start failed; agent-axis subscriptions disabled")

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"net/netip"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -16,6 +17,15 @@ import (
 	"github.com/schmitthub/clawker/internal/controlplane/overseer"
 	"github.com/schmitthub/clawker/internal/logger"
 )
+
+// noopPeerLookup satisfies ContainerByPeerIP for tests that don't
+// exercise the resolver path. Current Start() doesn't invoke
+// LookupByIP; the dep is held for downstream consumers.
+type noopPeerLookup struct{}
+
+func (noopPeerLookup) LookupByIP(_ context.Context, _ netip.Addr) (ResolvedContainer, error) {
+	return ResolvedContainer{}, ErrNoContainerForPeerIP
+}
 
 // --- reapOrphans ---------------------------------------------------------
 
@@ -269,15 +279,17 @@ func TestStart_RejectsNilDeps(t *testing.T) {
 	reg := NewRegistry(nil)
 	dialer := &Dialer{log: logger.Nop(), dialing: make(map[string]struct{})}
 	lister := ContainerLister(func(context.Context) ([]string, error) { return nil, nil })
+	peerLookup := noopPeerLookup{}
 
 	cases := []struct {
 		name string
 		deps StartDeps
 	}{
-		{"nil registry", StartDeps{Bus: bus, DockerLister: lister, Dialer: dialer}},
-		{"nil docker lister", StartDeps{Bus: bus, Registry: reg, Dialer: dialer}},
-		{"nil bus", StartDeps{Registry: reg, DockerLister: lister, Dialer: dialer}},
-		{"nil dialer", StartDeps{Bus: bus, Registry: reg, DockerLister: lister}},
+		{"nil registry", StartDeps{Bus: bus, DockerLister: lister, Dialer: dialer, PeerLookup: peerLookup}},
+		{"nil docker lister", StartDeps{Bus: bus, Registry: reg, Dialer: dialer, PeerLookup: peerLookup}},
+		{"nil bus", StartDeps{Registry: reg, DockerLister: lister, Dialer: dialer, PeerLookup: peerLookup}},
+		{"nil dialer", StartDeps{Bus: bus, Registry: reg, DockerLister: lister, PeerLookup: peerLookup}},
+		{"nil peer lookup", StartDeps{Bus: bus, Registry: reg, DockerLister: lister, Dialer: dialer}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -309,6 +321,7 @@ func TestStart_PublishesReapDegradedOnListerFailure(t *testing.T) {
 	cleanupStart, err := Start(t.Context(), StartDeps{
 		Registry:     reg,
 		DockerLister: lister,
+		PeerLookup:   noopPeerLookup{},
 		Dialer:       dialer,
 		Bus:          bus,
 		Log:          logger.Nop(),

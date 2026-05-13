@@ -54,6 +54,8 @@ now unexported helpers behind `Start`.
 | `events_session.go` | `SessionConnecting`, `SessionConnected`, `SessionFailed`, `SessionBroken` — all implement `overseer.applier` mutating `State.Agents` |
 | `events_agent.go` | `AgentRegistered{Ok, Reason}`, `AgentUntrusted{Reason UntrustedReason, Detail}` — also implement `applier` |
 | `register_handler.go` | `Handler` (AgentService.Register handler) + `ContainerInspector` interface + `NewMobyContainerInspector` |
+| `peer_lookup.go` | `ContainerByPeerIP` interface + `ResolvedContainer` struct + sentinels (`ErrNoContainerForPeerIP`, `ErrInvalidAgentLabels`) — peer-IP-grounded trust resolver |
+| `peer_lookup_moby.go` | `MobyPeerLookup`, the production `ContainerByPeerIP` backed by the Docker daemon |
 | `handler.go` | `peerIdentity` projection + `peerIdentityFromContext` (used by IdentityInterceptor) |
 | `identity_interceptor.go` | `IdentityInterceptor(reg, optedOut, log)` + `IdentityOptedOutMethods()` (Register is opt-out — registry row doesn't exist pre-call) + `WithEntry` / `EntryFromContext` |
 | `registry_mock_test.go` | moq-generated `RegistryMock` (test-only file; lives in `agent` package itself to break import cycle that prevented an `agent/mocks` subpackage from working) |

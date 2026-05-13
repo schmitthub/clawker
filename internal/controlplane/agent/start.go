@@ -23,12 +23,14 @@ import (
 type ContainerLister func(ctx context.Context) ([]string, error)
 
 // StartDeps bundles the dependencies the umbrella `Start` procedure
-// needs. Bus + Registry + Dialer + Docker lister are all owned by the
-// CP startup path; passing them as a single struct keeps the call site
-// in cmd/clawker-cp/main.go a single function call.
+// needs. Bus + Registry + Dialer + Docker lister + peer-IP resolver
+// are all owned by the CP startup path; passing them as a single
+// struct keeps the call site in cmd/clawker-cp/main.go a single
+// function call. All fields are required.
 type StartDeps struct {
 	Registry     Registry
 	DockerLister ContainerLister
+	PeerLookup   ContainerByPeerIP
 	Dialer       *Dialer
 	Bus          *overseer.Overseer
 	Log          *logger.Logger
@@ -69,6 +71,9 @@ func Start(ctx context.Context, deps StartDeps) (func(), error) {
 	}
 	if deps.Dialer == nil {
 		return nil, fmt.Errorf("agent.Start: Dialer is required")
+	}
+	if deps.PeerLookup == nil {
+		return nil, fmt.Errorf("agent.Start: PeerLookup is required")
 	}
 
 	// Step 1: Reap orphan registry rows against the live docker view.
