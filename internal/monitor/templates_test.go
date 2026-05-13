@@ -6,6 +6,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/consts"
 )
 
 // testMonitoringConfig creates a config.Config with monitoring settings and returns
@@ -23,13 +24,12 @@ func TestNewMonitorTemplateData(t *testing.T) {
 monitoring:
   otel_collector_port: 4318
   otel_collector_host: "localhost"
-  otel_collector_internal: "otel-collector"
   otel_grpc_port: 4317
-  loki_port: 3100
   prometheus_port: 9090
-  jaeger_port: 16686
-  grafana_port: 3000
   prometheus_metrics_port: 8889
+  opensearch_port: 9200
+  opensearch_dashboards_port: 5601
+  opensearch_heap_mb: 512
 `)
 
 	data := NewMonitorTemplateData(mon)
@@ -40,8 +40,25 @@ monitoring:
 	if data.OtelGRPCPort != 4317 {
 		t.Errorf("OtelGRPCPort = %d, want 4317 (from config)", data.OtelGRPCPort)
 	}
-	if data.OtelCollectorInternal != "otel-collector" {
-		t.Errorf("OtelCollectorInternal = %q, want %q", data.OtelCollectorInternal, "otel-collector")
+	if data.OpenSearchPort != 9200 {
+		t.Errorf("OpenSearchPort = %d, want 9200", data.OpenSearchPort)
+	}
+	if data.OpenSearchDashboardsPort != 5601 {
+		t.Errorf("OpenSearchDashboardsPort = %d, want 5601", data.OpenSearchDashboardsPort)
+	}
+	if data.OpenSearchHeapMB != 512 {
+		t.Errorf("OpenSearchHeapMB = %d, want 512", data.OpenSearchHeapMB)
+	}
+
+	// Service hostnames pulled from consts — not knobs.
+	if data.OtelCollectorService != consts.MonitoringServiceOtelCollector {
+		t.Errorf("OtelCollectorService = %q, want %q", data.OtelCollectorService, consts.MonitoringServiceOtelCollector)
+	}
+	if data.OpenSearchNodeService != consts.MonitoringServiceOpenSearchNode {
+		t.Errorf("OpenSearchNodeService = %q, want %q", data.OpenSearchNodeService, consts.MonitoringServiceOpenSearchNode)
+	}
+	if data.OpenSearchDashboardsService != consts.MonitoringServiceOpenSearchDashboards {
+		t.Errorf("OpenSearchDashboardsService = %q, want %q", data.OpenSearchDashboardsService, consts.MonitoringServiceOpenSearchDashboards)
 	}
 }
 
@@ -59,32 +76,16 @@ monitoring:
 	}
 }
 
-func TestNewMonitorTemplateData_DefaultGRPCPort(t *testing.T) {
-	// When OtelGRPCPort is not specified, NewFromString does not merge defaults,
-	// so this test explicitly includes the default value.
-	mon := testMonitoringConfig(t, `
-monitoring:
-  otel_collector_port: 4318
-  otel_grpc_port: 4317
-`)
-
-	data := NewMonitorTemplateData(mon)
-	if data.OtelGRPCPort != 4317 {
-		t.Errorf("OtelGRPCPort = %d, want 4317", data.OtelGRPCPort)
-	}
-}
-
 func TestRenderTemplate_Compose(t *testing.T) {
 	mon := testMonitoringConfig(t, `
 monitoring:
   otel_collector_port: 5318
   otel_grpc_port: 5317
-  loki_port: 4100
   prometheus_port: 10090
-  jaeger_port: 17686
-  grafana_port: 4000
   prometheus_metrics_port: 9889
-  otel_collector_internal: "my-collector"
+  opensearch_port: 19200
+  opensearch_dashboards_port: 15601
+  opensearch_heap_mb: 1024
 `)
 
 	data := NewMonitorTemplateData(mon)
@@ -93,28 +94,35 @@ monitoring:
 		t.Fatalf("RenderTemplate failed: %v", err)
 	}
 
-	// Verify custom ports appear in output (not defaults)
-	checks := []struct {
+	// Verify custom ports + heap + new services appear, old services do not.
+	mustContain := []struct {
 		desc    string
 		contain string
 	}{
 		{"OTEL HTTP port", "5318:5318"},
 		{"OTEL gRPC port", "5317:5317"},
-		{"Jaeger port", "17686:17686"},
 		{"Prometheus port", "10090:10090"},
-		{"Loki port", "4100:4100"},
-		{"Grafana port", "4000:4000"},
+		{"OpenSearch REST host bind", "127.0.0.1:19200:9200"},
+		{"OpenSearch Dashboards host bind", "127.0.0.1:15601:5601"},
+		{"OpenSearch heap", "-Xms1024m -Xmx1024m"},
+		{"OTEL collector service key", consts.MonitoringServiceOtelCollector + ":"},
+		{"Prometheus service key", consts.MonitoringServicePrometheus + ":"},
+		{"OpenSearch node service key", consts.MonitoringServiceOpenSearchNode + ":"},
+		{"OpenSearch dashboards service key", consts.MonitoringServiceOpenSearchDashboards + ":"},
+		{"dashboards points at opensearch-node", `OPENSEARCH_HOSTS=["http://` + consts.MonitoringServiceOpenSearchNode + `:9200"]`},
 	}
-
-	for _, check := range checks {
+	for _, check := range mustContain {
 		if !strings.Contains(result, check.contain) {
-			t.Errorf("compose.yaml should contain %s (%s), output:\n%s", check.contain, check.desc, result)
+			t.Errorf("compose.yaml should contain %q (%s)", check.contain, check.desc)
 		}
 	}
 
-	// Verify no hardcoded defaults remain
-	if strings.Contains(result, "4318:4318") {
-		t.Error("compose.yaml should not contain default port 4318 when custom port is set")
+	// Verify removed services are gone.
+	mustNotContain := []string{"jaeger", "loki", "grafana", "promtail"}
+	for _, banned := range mustNotContain {
+		if strings.Contains(result, banned) {
+			t.Errorf("compose.yaml should not contain %q after stack swap", banned)
+		}
 	}
 }
 
@@ -123,8 +131,8 @@ func TestRenderTemplate_OtelConfig(t *testing.T) {
 monitoring:
   otel_collector_port: 5318
   otel_grpc_port: 5317
-  loki_port: 4100
   prometheus_metrics_port: 9889
+  opensearch_port: 9200
 `)
 
 	data := NewMonitorTemplateData(mon)
@@ -133,17 +141,27 @@ monitoring:
 		t.Fatalf("RenderTemplate failed: %v", err)
 	}
 
-	checks := []string{
-		"0.0.0.0:5317",   // gRPC endpoint
-		"0.0.0.0:5318",   // HTTP endpoint
-		"jaeger:5317",    // jaeger exporter
-		"0.0.0.0:9889",   // prometheus exporter
-		"loki:4100/otlp", // loki exporter
+	mustContain := []string{
+		"0.0.0.0:5317", // gRPC endpoint
+		"0.0.0.0:5318", // HTTP endpoint
+		"0.0.0.0:9889", // prometheus exporter
+		"opensearch/logs:",
+		"opensearch/traces:",
+		"http://" + consts.MonitoringServiceOpenSearchNode + ":9200",
+		"exporters: [opensearch/traces]",
+		"exporters: [opensearch/logs]",
+		"exporters: [prometheus]",
 	}
-
-	for _, check := range checks {
+	for _, check := range mustContain {
 		if !strings.Contains(result, check) {
 			t.Errorf("otel-config.yaml should contain %q", check)
+		}
+	}
+
+	mustNotContain := []string{"jaeger", "loki", "otlphttp/loki", "otlp/jaeger"}
+	for _, banned := range mustNotContain {
+		if strings.Contains(result, banned) {
+			t.Errorf("otel-config.yaml should not contain %q after stack swap", banned)
 		}
 	}
 }
@@ -152,7 +170,6 @@ func TestRenderTemplate_Prometheus(t *testing.T) {
 	mon := testMonitoringConfig(t, `
 monitoring:
   prometheus_metrics_port: 9889
-  otel_collector_internal: "my-otel"
 `)
 
 	data := NewMonitorTemplateData(mon)
@@ -161,84 +178,30 @@ monitoring:
 		t.Fatalf("RenderTemplate failed: %v", err)
 	}
 
-	if !strings.Contains(result, "my-otel:9889") {
-		t.Errorf("prometheus.yaml should contain 'my-otel:9889', got:\n%s", result)
+	target := consts.MonitoringServiceOtelCollector + ":9889"
+	if !strings.Contains(result, target) {
+		t.Errorf("prometheus.yaml should contain %q, got:\n%s", target, result)
 	}
 }
 
-func TestRenderTemplate_GrafanaDatasources(t *testing.T) {
-	mon := testMonitoringConfig(t, `
-monitoring:
-  prometheus_port: 10090
-  jaeger_port: 17686
-  loki_port: 4100
-`)
-
-	data := NewMonitorTemplateData(mon)
-	result, err := RenderTemplate("grafana-datasources.yaml", GrafanaDatasourcesTemplate, data)
-	if err != nil {
-		t.Fatalf("RenderTemplate failed: %v", err)
-	}
-
-	checks := []string{
-		"prometheus:10090",
-		"jaeger:17686",
-		"loki:4100",
-	}
-
-	for _, check := range checks {
-		if !strings.Contains(result, check) {
-			t.Errorf("grafana-datasources.yaml should contain %q", check)
-		}
-	}
-}
-
-func TestRenderTemplate_PromtailConfig(t *testing.T) {
-	mon := testMonitoringConfig(t, `
-monitoring:
-  loki_port: 4100
-`)
-
-	data := NewMonitorTemplateData(mon)
-	result, err := RenderTemplate("promtail-config.yaml", PromtailConfigTemplate, data)
-	if err != nil {
-		t.Fatalf("RenderTemplate failed: %v", err)
-	}
-
-	checks := []struct {
-		desc    string
-		contain string
-	}{
-		{"Loki push URL", "loki:4100/loki/api/v1/push"},
-		{"Docker socket", "/var/run/docker.sock"},
-		{"firewall label filter", "dev.clawker.purpose=firewall"},
-		{"service_name relabel", "service_name"},
-		{"envoy match selector", `service_name="envoy"`},
-		{"coredns match selector", `service_name="coredns"`},
-		{"json stage", "json:"},
-		{"regex stage for coredns", "regex:"},
-		{"domain label", "domain:"},
-		{"proto label", "proto:"},
-		{"rcode label", "rcode:"},
-		{"agent label", "agent:"},
-		{"client_ip label", "client_ip:"},
-	}
-
-	for _, check := range checks {
-		if !strings.Contains(result, check.contain) {
-			t.Errorf("promtail-config.yaml should contain %q (%s)", check.contain, check.desc)
-		}
-	}
-}
-
-func TestNewMonitorTemplateData_PromtailImage(t *testing.T) {
+func TestNewMonitorTemplateData_OpenSearchImages(t *testing.T) {
 	mon := testMonitoringConfig(t, `
 monitoring:
   otel_collector_port: 4318
 `)
 	data := NewMonitorTemplateData(mon)
-	if data.PromtailImage != PromtailImage {
-		t.Errorf("PromtailImage = %q, want %q", data.PromtailImage, PromtailImage)
+	if data.OpenSearchImage != OpenSearchImage {
+		t.Errorf("OpenSearchImage = %q, want %q", data.OpenSearchImage, OpenSearchImage)
+	}
+	if data.OpenSearchDashboardsImage != OpenSearchDashboardsImage {
+		t.Errorf("OpenSearchDashboardsImage = %q, want %q", data.OpenSearchDashboardsImage, OpenSearchDashboardsImage)
+	}
+	// Defensive: pins must include the @sha256 digest delimiter so a
+	// future bump can't silently regress to a tag-only reference.
+	for _, img := range []string{OpenSearchImage, OpenSearchDashboardsImage} {
+		if !strings.Contains(img, "@sha256:") {
+			t.Errorf("image pin must include @sha256: digest, got %q", img)
+		}
 	}
 }
 

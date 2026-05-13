@@ -12,10 +12,9 @@ Starts the monitoring stack using Docker Compose.
 
 This launches the following services:
   - OpenTelemetry Collector (ports 4317, 4318)
-  - Jaeger UI (port 16686)
+  - OpenSearch (port 9200)
+  - OpenSearch Dashboards (port 5601)
   - Prometheus (port 9090)
-  - Loki (port 3100)
-  - Grafana (port 3000)
 
 The stack connects to the clawker-net Docker network, allowing
 Claude Code containers to send telemetry automatically.

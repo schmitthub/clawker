@@ -40,13 +40,12 @@ This command generates:
   - compose.yaml        Docker Compose stack definition
   - otel-config.yaml    OpenTelemetry Collector configuration
   - prometheus.yaml     Prometheus scrape configuration
-  - grafana-datasources.yaml  Pre-configured Grafana datasources
 
 The monitoring stack includes:
-  - OpenTelemetry Collector (receives traces/metrics from Claude Code)
-  - Jaeger (trace visualization)
-  - Prometheus (metrics storage)
-  - Grafana (unified dashboard)`,
+  - OpenTelemetry Collector (receives logs/traces/metrics from Claude Code)
+  - OpenSearch (log + trace storage)
+  - OpenSearch Dashboards (UI for logs + traces)
+  - Prometheus (metrics storage + UI)`,
 		Example: `  # Initialize monitoring configuration
   clawker monitor init
 
@@ -128,11 +127,6 @@ func initRun(_ context.Context, opts *InitOptions) error {
 		{monitor.ComposeFileName, monitor.ComposeTemplate, true},
 		{monitor.OtelConfigFileName, monitor.OtelConfigTemplate, true},
 		{monitor.PrometheusFileName, monitor.PrometheusTemplate, true},
-		{monitor.GrafanaDatasourcesFileName, monitor.GrafanaDatasourcesTemplate, true},
-		{monitor.GrafanaDashboardsFileName, monitor.GrafanaDashboardsTemplate, false},
-		{monitor.GrafanaDashboardFileName, monitor.GrafanaDashboardTemplate, false},
-		{monitor.GrafanaDashboardCPFileName, monitor.GrafanaDashboardCPTemplate, false},
-		{monitor.PromtailConfigFileName, monitor.PromtailConfigTemplate, true},
 	}
 
 	// Write each file
@@ -166,8 +160,8 @@ func initRun(_ context.Context, opts *InitOptions) error {
 	fmt.Fprintln(ios.ErrOut, "Next Steps:")
 	fmt.Fprintln(ios.ErrOut, "  1. Start the stack:")
 	fmt.Fprintln(ios.ErrOut, "     clawker monitor up")
-	fmt.Fprintf(ios.ErrOut, "  2. Open Grafana at %s (No login required)\n", cfg.GrafanaURL("localhost", false))
-	fmt.Fprintf(ios.ErrOut, "  3. Open Jaeger at %s\n", cfg.JaegerURL("localhost", false))
+	fmt.Fprintf(ios.ErrOut, "  2. Open OpenSearch Dashboards at %s\n", cfg.OpenSearchDashboardsURL("localhost", false))
+	fmt.Fprintf(ios.ErrOut, "  3. Open Prometheus at %s\n", cfg.PrometheusURL("localhost", false))
 	fmt.Fprintln(ios.ErrOut)
 	fmt.Fprintln(ios.ErrOut, "Note: The monitoring stack uses the clawker-net Docker network.")
 	fmt.Fprintln(ios.ErrOut, "      Run 'clawker start' or 'clawker run' to create the network if needed.")

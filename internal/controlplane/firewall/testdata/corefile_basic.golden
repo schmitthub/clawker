@@ -52,15 +52,6 @@ otel-collector {
     forward . 127.0.0.11
 }
 
-jaeger {
-    log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
-    template IN AAAA . {
-        rcode NOERROR
-    }
-    dnsbpf
-    forward . 127.0.0.11
-}
-
 prometheus {
     log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
     template IN AAAA . {
@@ -70,7 +61,7 @@ prometheus {
     forward . 127.0.0.11
 }
 
-loki {
+opensearch-node {
     log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
     template IN AAAA . {
         rcode NOERROR
@@ -79,7 +70,7 @@ loki {
     forward . 127.0.0.11
 }
 
-grafana {
+opensearch-dashboards {
     log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
     template IN AAAA . {
         rcode NOERROR

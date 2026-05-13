@@ -1,6 +1,6 @@
 services:
-  otel-collector:
-    container_name: otel-collector
+  {{.OtelCollectorService}}:
+    container_name: {{.OtelCollectorService}}
     image: {{.OtelCollectorImage}}
     command: ["--config=/etc/otel-collector-config.yaml"]
     volumes:
@@ -16,7 +16,7 @@ services:
     ports:
       # Existing receivers — published all-interfaces for parity with
       # earlier behaviour. Agent containers push to these via clawker-net
-      # DNS (`otel-collector:<port>`); host-side debugging uses the
+      # DNS (`{{.OtelCollectorService}}:<port>`); host-side debugging uses the
       # published mapping.
       - "{{.OtelGRPCPort}}:{{.OtelGRPCPort}}"
       - "{{.OtelCollectorPort}}:{{.OtelCollectorPort}}"
@@ -36,22 +36,8 @@ services:
     networks:
       - clawker-net
 
-  jaeger:
-    container_name: jaeger
-    image: {{.JaegerImage}}
-    ports:
-      - "127.0.0.1:{{.JaegerPort}}:{{.JaegerPort}}" # UI (host-loopback only)
-      - "{{.OtelGRPCPort}}"        # OTLP gRPC internal (clawker-net only, no host publish)
-    environment:
-      - COLLECTOR_OTLP_ENABLED=true
-    labels:
-      dev.clawker.managed: "true"
-      dev.clawker.purpose: "monitoring"
-    networks:
-      - clawker-net
-
-  prometheus:
-    container_name: prometheus
+  {{.PrometheusService}}:
+    container_name: {{.PrometheusService}}
     image: {{.PrometheusImage}}
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
@@ -67,53 +53,45 @@ services:
     networks:
       - clawker-net
 
-  loki:
-    container_name: loki
-    image: {{.LokiImage}}
-    ports:
-      - "127.0.0.1:{{.LokiPort}}:{{.LokiPort}}"
-    command: -config.file=/etc/loki/local-config.yaml
-    volumes:
-      - clawker-loki:/loki
-    labels:
-      dev.clawker.managed: "true"
-      dev.clawker.purpose: "monitoring"
-    networks:
-      - clawker-net
-
-  grafana:
-    container_name: grafana
-    image: {{.GrafanaImage}}
-    ports:
-      - "127.0.0.1:{{.GrafanaPort}}:{{.GrafanaPort}}"
+  {{.OpenSearchNodeService}}:
+    container_name: {{.OpenSearchNodeService}}
+    image: {{.OpenSearchImage}}
     environment:
-      # Enable anonymous access so users don't need to login locally
-      - GF_AUTH_ANONYMOUS_ENABLED=true
-      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
-      # Set the home dashboard so Grafana loads it on startup
-      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/etc/grafana/provisioning/dashboards/claude-code.json
+      - cluster.name=clawker-observability
+      - node.name={{.OpenSearchNodeService}}
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - DISABLE_SECURITY_PLUGIN=true
+      - DISABLE_INSTALL_DEMO_CONFIG=true
+      - plugins.security.disabled=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms{{.OpenSearchHeapMB}}m -Xmx{{.OpenSearchHeapMB}}m"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - "127.0.0.1:{{.OpenSearchPort}}:9200"
     volumes:
-      # Auto-provision datasources and dashboards
-      - ./grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml
-      - ./grafana-dashboards.yaml:/etc/grafana/provisioning/dashboards/dashboards.yaml
-      - ./grafana-dashboard.json:/etc/grafana/provisioning/dashboards/claude-code.json
-      - ./grafana-dashboard-cp.json:/etc/grafana/provisioning/dashboards/clawker-cp.json
-      - clawker-grafana:/var/lib/grafana
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - clawker-opensearch:/usr/share/opensearch/data
     labels:
       dev.clawker.managed: "true"
       dev.clawker.purpose: "monitoring"
     networks:
       - clawker-net
 
-  promtail:
-    container_name: promtail
-    image: {{.PromtailImage}}
-    command: -config.file=/etc/promtail/config.yaml
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./promtail-config.yaml:/etc/promtail/config.yaml
+  {{.OpenSearchDashboardsService}}:
+    container_name: {{.OpenSearchDashboardsService}}
+    image: {{.OpenSearchDashboardsImage}}
+    environment:
+      - 'OPENSEARCH_HOSTS=["http://{{.OpenSearchNodeService}}:9200"]'
+      - DISABLE_SECURITY_DASHBOARDS_PLUGIN=true
+    ports:
+      - "127.0.0.1:{{.OpenSearchDashboardsPort}}:5601"
+    depends_on:
+      - {{.OpenSearchNodeService}}
     labels:
       dev.clawker.managed: "true"
       dev.clawker.purpose: "monitoring"
@@ -125,11 +103,7 @@ volumes:
     labels:
       dev.clawker.managed: "true"
       dev.clawker.purpose: "monitoring"
-  clawker-loki:
-    labels:
-      dev.clawker.managed: "true"
-      dev.clawker.purpose: "monitoring"
-  clawker-grafana:
+  clawker-opensearch:
     labels:
       dev.clawker.managed: "true"
       dev.clawker.purpose: "monitoring"

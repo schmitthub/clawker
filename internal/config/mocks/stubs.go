@@ -72,8 +72,8 @@ func newMockFrom(cfg config.Config) *ConfigMock {
 	mock.EngineLabelPrefixFunc = cfg.EngineLabelPrefix
 	mock.EngineManagedLabelFunc = cfg.EngineManagedLabel
 	mock.ManagedLabelValueFunc = cfg.ManagedLabelValue
-	mock.GrafanaURLFunc = cfg.GrafanaURL
-	mock.JaegerURLFunc = cfg.JaegerURL
+	mock.OpenSearchURLFunc = cfg.OpenSearchURL
+	mock.OpenSearchDashboardsURLFunc = cfg.OpenSearchDashboardsURL
 	mock.PrometheusURLFunc = cfg.PrometheusURL
 	mock.EnvoyIPLastOctetFunc = cfg.EnvoyIPLastOctet
 	mock.CoreDNSIPLastOctetFunc = cfg.CoreDNSIPLastOctet

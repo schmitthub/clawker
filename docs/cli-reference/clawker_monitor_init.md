@@ -14,13 +14,12 @@ This command generates:
   - compose.yaml        Docker Compose stack definition
   - otel-config.yaml    OpenTelemetry Collector configuration
   - prometheus.yaml     Prometheus scrape configuration
-  - grafana-datasources.yaml  Pre-configured Grafana datasources
 
 The monitoring stack includes:
-  - OpenTelemetry Collector (receives traces/metrics from Claude Code)
-  - Jaeger (trace visualization)
-  - Prometheus (metrics storage)
-  - Grafana (unified dashboard)
+  - OpenTelemetry Collector (receives logs/traces/metrics from Claude Code)
+  - OpenSearch (log + trace storage)
+  - OpenSearch Dashboards (UI for logs + traces)
+  - Prometheus (metrics storage + UI)
 
 ```
 clawker monitor init [flags]

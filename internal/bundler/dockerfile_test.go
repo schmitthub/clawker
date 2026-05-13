@@ -159,23 +159,25 @@ func removeMonitoringFromProject(yaml string) (string, string) {
 }
 
 func TestBuildContext_CustomMonitoringEndpoints(t *testing.T) {
+	// OtelCollectorInternal was promoted to consts.MonitoringServiceOtelCollector
+	// (the firewall plane needs the same hostname, so it's no longer a config
+	// knob). The port override is still honored — assert that.
 	cfg := testConfig(t, `
 version: "1"
 build:
   image: "buildpack-deps:bookworm-scm"
 monitoring:
   otel_collector_port: 9999
-  otel_collector_internal: "custom-collector"
 `)
 	gen := NewProjectGenerator(cfg, t.TempDir())
 	dockerfile, err := gen.Generate()
 	require.NoError(t, err)
 
 	content := string(dockerfile)
-	assert.Contains(t, content, "http://custom-collector:9999/v1/metrics")
-	assert.Contains(t, content, "http://custom-collector:9999/v1/logs")
+	assert.Contains(t, content, "http://otel-collector:9999/v1/metrics")
+	assert.Contains(t, content, "http://otel-collector:9999/v1/logs")
 	assert.NotContains(t, content, "otel-collector:4318",
-		"default OTEL endpoint should not appear when custom settings are provided")
+		"default OTEL port should not appear when custom port is provided")
 }
 
 func TestBuildContext_NodeInstall_Debian(t *testing.T) {

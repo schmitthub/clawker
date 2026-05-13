@@ -1,6 +1,6 @@
 # Monitor Command Package
 
-Manage local observability stack (OpenTelemetry, Jaeger, Prometheus, Grafana).
+Manage local observability stack (OpenTelemetry Collector + OpenSearch / OpenSearch Dashboards for logs + traces + Prometheus for metrics).
 
 ## Files
 
@@ -80,4 +80,4 @@ Shows monitoring stack status (running/stopped), container details, and service 
 
 ## Config Access Pattern
 
-Subcommands use `config.Config` interface via `opts.Config()` (multi-return). Monitor directory resolved via `cfg.MonitorSubdir()`, network name via `cfg.ClawkerNetwork()`, service URLs via `cfg.GrafanaURL(host, https)` / `cfg.JaegerURL(host, https)` / `cfg.PrometheusURL(host, https)`.
+Subcommands use `config.Config` interface via `opts.Config()` (multi-return). Monitor directory resolved via `cfg.MonitorSubdir()`, network name via `cfg.ClawkerNetwork()`, service URLs via `cfg.OpenSearchURL(host, https)` / `cfg.OpenSearchDashboardsURL(host, https)` / `cfg.PrometheusURL(host, https)`.

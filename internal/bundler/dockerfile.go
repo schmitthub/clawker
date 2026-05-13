@@ -26,6 +26,7 @@ import (
 	"github.com/schmitthub/clawker/internal/bundler/registry"
 	"github.com/schmitthub/clawker/internal/clawkerd"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/hostproxy/internals"
 )
 
@@ -283,12 +284,14 @@ func (m *DockerfileManager) GenerateDockerfiles(versions *registry.VersionsFile)
 }
 
 // otelBaseEndpoint returns the OTEL collector base URL.
-// Uses OtelCollectorEndpoint if set, otherwise constructs from internal host + port.
+// Uses OtelCollectorEndpoint if set, otherwise constructs from the
+// canonical collector hostname ([consts.MonitoringServiceOtelCollector])
+// + configured port.
 func otelBaseEndpoint(mon config.MonitoringConfig) string {
 	if mon.OtelCollectorEndpoint != "" {
 		return mon.OtelCollectorEndpoint
 	}
-	return "http://" + net.JoinHostPort(mon.OtelCollectorInternal, strconv.Itoa(mon.OtelCollectorPort))
+	return "http://" + net.JoinHostPort(consts.MonitoringServiceOtelCollector, strconv.Itoa(mon.OtelCollectorPort))
 }
 
 // createContext creates a DockerfileContext for a given version and variant.

@@ -76,8 +76,8 @@ type Config interface {
 	EngineManagedLabel() string
 	ContainerUID() int
 	ContainerGID() int
-	GrafanaURL(host string, https bool) string
-	JaegerURL(host string, https bool) string
+	OpenSearchURL(host string, https bool) string
+	OpenSearchDashboardsURL(host string, https bool) string
 	PrometheusURL(host string, https bool) string
 	RequiredFirewallDomains() []string
 	EgressRulesFileName() string

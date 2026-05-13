@@ -6,15 +6,17 @@ import (
 	"strings"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 )
 
 // Upstream DNS servers: Cloudflare malware-blocking resolvers.
 var upstreamDNS = []string{"1.1.1.2", "1.0.0.2"}
 
 // corefileLogFormat is the custom log format for DNS query logging.
-// Uses logfmt-compatible key=value pairs for easy parsing by Promtail.
-// CoreDNS placeholders: {name}=queried domain, {type}=query type (A/AAAA),
-// {rcode}=response code (NOERROR/NXDOMAIN), {duration}=resolution time.
+// Uses logfmt-compatible key=value pairs for easy parsing by the OTEL
+// collector / OpenSearch pipeline. CoreDNS placeholders: {name}=queried
+// domain, {type}=query type (A/AAAA), {rcode}=response code
+// (NOERROR/NXDOMAIN), {duration}=resolution time.
 const corefileLogFormat = `source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}`
 
 // GenerateCorefile produces a CoreDNS Corefile from the given egress rules.
@@ -32,14 +34,14 @@ func GenerateCorefile(rules []config.EgressRule, healthPort int) ([]byte, error)
 	// These zones ensure Docker networking works when resolv.conf points to CoreDNS.
 	// They are reserved — egress rules matching these names are skipped from the
 	// per-domain zones to avoid duplicate zone definitions that crash CoreDNS.
-	internalHosts := []string{
-		"docker.internal", // host.docker.internal, gateway.docker.internal
-		"otel-collector",  // monitoring: OpenTelemetry collector
-		"jaeger",          // monitoring: Jaeger tracing
-		"prometheus",      // monitoring: Prometheus metrics
-		"loki",            // monitoring: Loki log aggregation
-		"grafana",         // monitoring: Grafana dashboards
-	}
+	//
+	// Monitoring hostnames live in [consts.MonitoringServiceHostnames] so the
+	// compose template and this list cannot drift — rename one and the other
+	// follows by construction.
+	internalHosts := append(
+		[]string{"docker.internal"}, // host.docker.internal, gateway.docker.internal
+		consts.MonitoringServiceHostnames...,
+	)
 
 	// Reserved zones — internal hosts get their own zones forwarding to Docker DNS.
 	// Egress rules matching these names are skipped to avoid duplicate CoreDNS zones.

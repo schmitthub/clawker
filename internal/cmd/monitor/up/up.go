@@ -39,10 +39,9 @@ func NewCmdUp(f *cmdutil.Factory, runF func(context.Context, *UpOptions) error) 
 
 This launches the following services:
   - OpenTelemetry Collector (ports 4317, 4318)
-  - Jaeger UI (port 16686)
+  - OpenSearch (port 9200)
+  - OpenSearch Dashboards (port 5601)
   - Prometheus (port 9090)
-  - Loki (port 3100)
-  - Grafana (port 3000)
 
 The stack connects to the clawker-net Docker network, allowing
 Claude Code containers to send telemetry automatically.`,
@@ -136,9 +135,9 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 		fmt.Fprintf(ios.ErrOut, "%s Monitoring stack started successfully!\n", cs.SuccessIcon())
 		fmt.Fprintln(ios.ErrOut)
 		fmt.Fprintln(ios.ErrOut, "Service URLs:")
-		fmt.Fprintf(ios.ErrOut, "  Grafana:    %s (No login required)\n", cs.Cyan(cfg.GrafanaURL("localhost", false)))
-		fmt.Fprintf(ios.ErrOut, "  Jaeger:     %s\n", cs.Cyan(cfg.JaegerURL("localhost", false)))
-		fmt.Fprintf(ios.ErrOut, "  Prometheus: %s\n", cs.Cyan(cfg.PrometheusURL("localhost", false)))
+		fmt.Fprintf(ios.ErrOut, "  OpenSearch Dashboards: %s\n", cs.Cyan(cfg.OpenSearchDashboardsURL("localhost", false)))
+		fmt.Fprintf(ios.ErrOut, "  OpenSearch API:        %s\n", cs.Cyan(cfg.OpenSearchURL("localhost", false)))
+		fmt.Fprintf(ios.ErrOut, "  Prometheus:            %s\n", cs.Cyan(cfg.PrometheusURL("localhost", false)))
 		fmt.Fprintln(ios.ErrOut)
 		fmt.Fprintln(ios.ErrOut, "To stop the stack: clawker monitor down")
 	}

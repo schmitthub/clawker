@@ -31,7 +31,6 @@ type RuntimeEnvOpts struct {
 	// when FirewallEnabled=false). Reachable via Docker's bridge DNS
 	// because the agent container and CP share clawker-net.
 	CPHealthzURL string
-	LokiPort     int // Configured Loki port for container-side telemetry (0 = default 3100)
 
 	// clawkerd bootstrap targets. clawkerd reads these to find the CP's
 	// Hydra public endpoint (token exchange) and the CP's agent gRPC
@@ -106,9 +105,6 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 	}
 	if opts.CPHealthzURL != "" {
 		m["CLAWKER_CP_HEALTHZ_URL"] = opts.CPHealthzURL
-	}
-	if opts.LokiPort != 0 && opts.LokiPort != 3100 {
-		m["CLAWKER_LOKI_PORT"] = fmt.Sprintf("%d", opts.LokiPort)
 	}
 
 	// clawkerd bootstrap env vars — only what the daemon can authoritatively

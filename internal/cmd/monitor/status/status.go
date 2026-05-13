@@ -9,6 +9,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	internalmonitor "github.com/schmitthub/clawker/internal/monitor"
@@ -103,14 +104,14 @@ func statusRun(_ context.Context, opts *StatusOptions) error {
 
 	// Check which services are actually running and print relevant URLs
 	fmt.Fprintln(ios.ErrOut, "Service URLs:")
-	if strings.Contains(outputStr, "grafana") {
-		fmt.Fprintf(ios.ErrOut, "  Grafana:    %s (No login required)\n", cs.Cyan(cfg.GrafanaURL("localhost", false)))
+	if strings.Contains(outputStr, consts.MonitoringServiceOpenSearchDashboards) {
+		fmt.Fprintf(ios.ErrOut, "  OpenSearch Dashboards: %s\n", cs.Cyan(cfg.OpenSearchDashboardsURL("localhost", false)))
 	}
-	if strings.Contains(outputStr, "jaeger") {
-		fmt.Fprintf(ios.ErrOut, "  Jaeger:     %s\n", cs.Cyan(cfg.JaegerURL("localhost", false)))
+	if strings.Contains(outputStr, consts.MonitoringServiceOpenSearchNode) {
+		fmt.Fprintf(ios.ErrOut, "  OpenSearch API:        %s\n", cs.Cyan(cfg.OpenSearchURL("localhost", false)))
 	}
-	if strings.Contains(outputStr, "prometheus") {
-		fmt.Fprintf(ios.ErrOut, "  Prometheus: %s\n", cs.Cyan(cfg.PrometheusURL("localhost", false)))
+	if strings.Contains(outputStr, consts.MonitoringServicePrometheus) {
+		fmt.Fprintf(ios.ErrOut, "  Prometheus:            %s\n", cs.Cyan(cfg.PrometheusURL("localhost", false)))
 	}
 
 	// Check network status

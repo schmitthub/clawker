@@ -405,20 +405,18 @@ monitoring:
   otel_collector_port: <integer>  # default: 4318 | required: false
   # Hostname for reaching the collector from the host
   otel_collector_host: <string>  # default: localhost | required: false
-  # Docker network hostname containers use to reach the collector
-  otel_collector_internal: <string>  # default: otel-collector | required: false
   # Host port for the OTEL gRPC receiver
   otel_grpc_port: <integer>  # default: 4317 | required: false
   # Host-loopback port for the mTLS-gated OTLP receiver dedicated to clawker-cp push (gates with the CLI-issued OTEL keypair; agents on clawker-net cannot present a client cert and so the TLS handshake fails)
   otel_cp_port: <integer>  # default: 4319 | required: false
-  # Host port for Loki log ingestion
-  loki_port: <integer>  # default: 3100 | required: false
+  # Host port for the OpenSearch REST API (logs + traces backend)
+  opensearch_port: <integer>  # default: 9200 | required: false
+  # Host port for the OpenSearch Dashboards UI
+  opensearch_dashboards_port: <integer>  # default: 5601 | required: false
+  # JVM -Xms/-Xmx for the OpenSearch node; raise on memory-hungry workloads
+  opensearch_heap_mb: <integer>  # default: 512 | required: false
   # Host port for Prometheus metrics UI
   prometheus_port: <integer>  # default: 9090 | required: false
-  # Host port for Jaeger tracing UI
-  jaeger_port: <integer>  # default: 16686 | required: false
-  # Host port for Grafana dashboards
-  grafana_port: <integer>  # default: 3000 | required: false
   # Host port for Prometheus internal metrics
   prometheus_metrics_port: <integer>  # default: 8889 | required: false
   telemetry:
@@ -508,13 +506,12 @@ Global settings live at `~/.config/clawker/settings.yaml`. The following tables 
 | `otel_collector_endpoint` | string | — | Override the auto-detected OTEL collector URL (e.g. for a remote collector) |
 | `otel_collector_port` | integer | `4318` | Host port for the OTEL HTTP receiver |
 | `otel_collector_host` | string | `localhost` | Hostname for reaching the collector from the host |
-| `otel_collector_internal` | string | `otel-collector` | Docker network hostname containers use to reach the collector |
 | `otel_grpc_port` | integer | `4317` | Host port for the OTEL gRPC receiver |
 | `otel_cp_port` | integer | `4319` | Host-loopback port for the mTLS-gated OTLP receiver dedicated to clawker-cp push (gates with the CLI-issued OTEL keypair; agents on clawker-net cannot present a client cert and so the TLS handshake fails) |
-| `loki_port` | integer | `3100` | Host port for Loki log ingestion |
+| `opensearch_port` | integer | `9200` | Host port for the OpenSearch REST API (logs + traces backend) |
+| `opensearch_dashboards_port` | integer | `5601` | Host port for the OpenSearch Dashboards UI |
+| `opensearch_heap_mb` | integer | `512` | JVM -Xms/-Xmx for the OpenSearch node; raise on memory-hungry workloads |
 | `prometheus_port` | integer | `9090` | Host port for Prometheus metrics UI |
-| `jaeger_port` | integer | `16686` | Host port for Jaeger tracing UI |
-| `grafana_port` | integer | `3000` | Host port for Grafana dashboards |
 | `prometheus_metrics_port` | integer | `8889` | Host port for Prometheus internal metrics |
 
 

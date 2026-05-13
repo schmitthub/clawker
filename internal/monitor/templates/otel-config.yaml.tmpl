@@ -65,21 +65,28 @@ processors:
 {{- end}}
 
 exporters:
-  otlp/jaeger:
-    endpoint: jaeger:{{.OtelGRPCPort}}
-    tls:
-      insecure: true
+  # Traces → OpenSearch (Simple Schema for Observability data model).
+  opensearch/traces:
+    http:
+      endpoint: "http://{{.OpenSearchNodeService}}:9200"
+    dataset: traces
+    namespace: clawker
+  # Logs → OpenSearch. Single index for both agent and CP streams;
+  # ingest_source attribute distinguishes them at query time.
+  opensearch/logs:
+    http:
+      endpoint: "http://{{.OpenSearchNodeService}}:9200"
+    logs_index: clawker-logs
+  # Metrics → Prometheus scrape endpoint.
   prometheus:
     endpoint: "0.0.0.0:{{.PrometheusMetricsPort}}"
-  otlphttp/loki:
-    endpoint: "http://loki:{{.LokiPort}}/otlp"
 
 service:
   pipelines:
     traces:
       receivers: [otlp]
       processors: [batch]
-      exporters: [otlp/jaeger]
+      exporters: [opensearch/traces]
     metrics:
       receivers: [otlp]
       processors: [batch, transform/metrics]
@@ -91,7 +98,7 @@ service:
     logs/agents:
       receivers: [otlp]
       processors: [resource/agent, batch]
-      exporters: [otlphttp/loki]
+      exporters: [opensearch/logs]
 {{- if .OtelCPPort}}
     # CP-side logs pipeline: separate receiver, separate processor
     # chain. service.name and ingest_source are both forced post-
@@ -100,5 +107,5 @@ service:
     logs/cp:
       receivers: [otlp/cp]
       processors: [resource/cp, batch]
-      exporters: [otlphttp/loki]
+      exporters: [opensearch/logs]
 {{- end}}

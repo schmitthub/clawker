@@ -1910,10 +1910,6 @@ func buildCreateTimeEnv(ctx context.Context, opts *CreateContainerOptions, conta
 			strconv.Itoa(opts.Config.Settings().ControlPlane.HealthPort),
 		) + "/healthz"
 	}
-	// Pass configured Loki port so container-side telemetry targets the right endpoint.
-	if lokiPort := opts.Config.Settings().Monitoring.LokiPort; lokiPort != 0 {
-		envOpts.LokiPort = lokiPort
-	}
 
 	if projectCfg.Security.GitCredentials != nil {
 		envOpts.GPGForwardingEnabled = projectCfg.Security.GitCredentials.GPGEnabled()

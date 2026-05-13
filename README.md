@@ -203,7 +203,7 @@ clawker monitor status
 clawker monitor down
 ```
 
-Now I can go to the grafana dashboard at http://localhost:3000 and see all my agents, containers, resource usage, costs, tool executions, decisions, prompts, api calls, etc from every agent. (you can also set env vars in your host shell and it will report to this stack)
+Now I can go to OpenSearch Dashboards at http://localhost:5601 and inspect logs + traces from every agent — costs, tokens, tool executions, decisions, prompts, api calls — and pull metrics from Prometheus at http://localhost:9090. (you can also set env vars in your host shell and it will report to this stack)
 
 ```bash
 # Host ENV var example

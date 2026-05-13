@@ -9,7 +9,7 @@
 //
 // What stays here (genuinely config-backed):
 //   - RequiredFirewallRules() — backed by requiredFirewallRules in defaults.go
-//   - GrafanaURL/JaegerURL/PrometheusURL — read MonitoringConfig() ports
+//   - OpenSearchURL/OpenSearchDashboardsURL/PrometheusURL — read MonitoringConfig() ports
 //   - The Mode type and ModeBind/ModeSnapshot values (config-domain enum;
 //     ParseMode lives in schema.go)
 
@@ -224,16 +224,16 @@ func (c *configImpl) ContainerUID() int { return consts.ContainerUID }
 // Deprecated: use consts.ContainerGID.
 func (c *configImpl) ContainerGID() int { return consts.ContainerGID }
 
-// GrafanaURL returns the Grafana dashboard URL for the given host.
+// OpenSearchURL returns the OpenSearch REST API URL for the given host.
 // Uses the port from the loaded settings file.
-func (c *configImpl) GrafanaURL(host string, https bool) string {
-	return consts.ServiceURL(host, c.MonitoringConfig().GrafanaPort, https)
+func (c *configImpl) OpenSearchURL(host string, https bool) string {
+	return consts.ServiceURL(host, c.MonitoringConfig().OpenSearchPort, https)
 }
 
-// JaegerURL returns the Jaeger UI URL for the given host.
+// OpenSearchDashboardsURL returns the OpenSearch Dashboards UI URL for the given host.
 // Uses the port from the loaded settings file.
-func (c *configImpl) JaegerURL(host string, https bool) string {
-	return consts.ServiceURL(host, c.MonitoringConfig().JaegerPort, https)
+func (c *configImpl) OpenSearchDashboardsURL(host string, https bool) string {
+	return consts.ServiceURL(host, c.MonitoringConfig().OpenSearchDashboardsPort, https)
 }
 
 // PrometheusURL returns the Prometheus UI URL for the given host.

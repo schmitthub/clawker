@@ -7,6 +7,7 @@ import (
 	"text/template"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 )
 
 // Embedded templates for monitoring stack configuration.
@@ -19,57 +20,50 @@ var ComposeTemplate string
 //go:embed templates/otel-config.yaml.tmpl
 var OtelConfigTemplate string
 
-//go:embed templates/grafana-datasources.yaml.tmpl
-var GrafanaDatasourcesTemplate string
-
 //go:embed templates/prometheus.yaml.tmpl
 var PrometheusTemplate string
 
-//go:embed templates/grafana-dashboards.yaml
-var GrafanaDashboardsTemplate string
-
-//go:embed templates/grafana-dashboard.json
-var GrafanaDashboardTemplate string
-
-//go:embed templates/grafana-dashboard-cp.json
-var GrafanaDashboardCPTemplate string
-
-//go:embed templates/promtail-config.yaml.tmpl
-var PromtailConfigTemplate string
-
 // Template file names for writing to disk
 const (
-	ComposeFileName            = "compose.yaml"
-	OtelConfigFileName         = "otel-config.yaml"
-	GrafanaDatasourcesFileName = "grafana-datasources.yaml"
-	PrometheusFileName         = "prometheus.yaml"
-	GrafanaDashboardsFileName  = "grafana-dashboards.yaml"
-	GrafanaDashboardFileName   = "grafana-dashboard.json"
-	GrafanaDashboardCPFileName = "grafana-dashboard-cp.json"
-	PromtailConfigFileName     = "promtail-config.yaml"
+	ComposeFileName    = "compose.yaml"
+	OtelConfigFileName = "otel-config.yaml"
+	PrometheusFileName = "prometheus.yaml"
 )
 
-// Monitoring stack container images — pinned to version + SHA256 digest.
+// Monitoring stack container images — pinned to version + SHA256 manifest-list digest.
+// All digests are multi-arch (linux/amd64 + linux/arm64) — verify with
+// `docker buildx imagetools inspect <pin>` before bumping.
 const (
-	OtelCollectorImage = "otel/opentelemetry-collector-contrib:0.148.0@sha256:8164eab2e6bca9c9b0837a8d2f118a6618489008a839db7f9d6510e66be3923c"
-	JaegerImage        = "jaegertracing/all-in-one:1.76.0@sha256:ab6f1a1f0fb49ea08bcd19f6b84f6081d0d44b364b6de148e1798eb5816bacac"
-	PrometheusImage    = "prom/prometheus:v3.10.0@sha256:4a61322ac1103a0e3aea2a61ef1718422a48fa046441f299d71e660a3bc71ae9"
-	LokiImage          = "grafana/loki:3.7.0@sha256:c316b7c7589a5eeca843b6926c7446149d18300b79ac8538dc4ae063bc478da2"
-	GrafanaImage       = "grafana/grafana:12.4.2@sha256:83749231c3835e390a3144e5e940203e42b9589761f20ef3169c716e734ad505"
-	PromtailImage      = "grafana/promtail:3.6.0@sha256:2aafa34b3d5fba888c51081d3a22c234906ffd3cafc5def11c581549b297d449"
+	OtelCollectorImage        = "otel/opentelemetry-collector-contrib:0.148.0@sha256:8164eab2e6bca9c9b0837a8d2f118a6618489008a839db7f9d6510e66be3923c"
+	PrometheusImage           = "prom/prometheus:v3.10.0@sha256:4a61322ac1103a0e3aea2a61ef1718422a48fa046441f299d71e660a3bc71ae9"
+	OpenSearchImage           = "opensearchproject/opensearch:3.6.0@sha256:57bd3c879ad27123a9a6cd75e2adba504189d3131d00a669f3baf9210bc4538c"
+	OpenSearchDashboardsImage = "opensearchproject/opensearch-dashboards:3.6.0@sha256:9fe2cbf1d82c3f66a0860ed140415692ce55de4711ed7877ab738e5da1a357c0"
 )
 
 // MonitorTemplateData provides values for rendering monitoring stack templates.
+//
+// Service hostnames are sourced from [consts.MonitoringService*] so the
+// compose template, otel-config endpoints, and the CoreDNS internalHosts
+// list in `internal/controlplane/firewall/coredns_config.go` cannot drift.
 type MonitorTemplateData struct {
-	OtelCollectorPort     int
-	OtelGRPCPort          int // independent of HTTP port — from config.GetOtelGRPCPort()
-	OtelCPPort            int // mTLS-gated host-loopback receiver for clawker-cp push
-	LokiPort              int
-	PrometheusPort        int
-	JaegerPort            int
-	GrafanaPort           int
-	PrometheusMetricsPort int
-	OtelCollectorInternal string
+	// Ports
+	OtelCollectorPort        int
+	OtelGRPCPort             int // independent of HTTP port
+	OtelCPPort               int // mTLS-gated host-loopback receiver for clawker-cp push
+	PrometheusPort           int
+	PrometheusMetricsPort    int
+	OpenSearchPort           int
+	OpenSearchDashboardsPort int
+
+	// OpenSearch JVM heap (MB) for both -Xms and -Xmx.
+	OpenSearchHeapMB int
+
+	// Service hostnames on clawker-net (compose service keys + cross-service
+	// references). Mirror consts.MonitoringService*.
+	OtelCollectorService        string
+	PrometheusService           string
+	OpenSearchNodeService       string
+	OpenSearchDashboardsService string
 
 	// Host-side paths for CLI-issued mTLS material that gates the
 	// CP-only OTLP receiver. Populated by the monitor init command from
@@ -81,32 +75,33 @@ type MonitorTemplateData struct {
 	OtelCAHostPath         string
 
 	// Container images — version + SHA256 pinned.
-	OtelCollectorImage string
-	JaegerImage        string
-	PrometheusImage    string
-	LokiImage          string
-	GrafanaImage       string
-	PromtailImage      string
+	OtelCollectorImage        string
+	PrometheusImage           string
+	OpenSearchImage           string
+	OpenSearchDashboardsImage string
 }
 
 // NewMonitorTemplateData constructs template data from MonitoringConfig.
+// Service hostnames are populated from [consts.MonitoringService*] —
+// changing a hostname in consts propagates here without further edits.
 func NewMonitorTemplateData(cfg *config.MonitoringConfig) MonitorTemplateData {
 	return MonitorTemplateData{
-		OtelCollectorPort:     cfg.OtelCollectorPort,
-		OtelGRPCPort:          cfg.OtelGRPCPort,
-		OtelCPPort:            cfg.OtelCPPort,
-		LokiPort:              cfg.LokiPort,
-		PrometheusPort:        cfg.PrometheusPort,
-		JaegerPort:            cfg.JaegerPort,
-		GrafanaPort:           cfg.GrafanaPort,
-		PrometheusMetricsPort: cfg.PrometheusMetricsPort,
-		OtelCollectorInternal: cfg.OtelCollectorInternal,
-		OtelCollectorImage:    OtelCollectorImage,
-		JaegerImage:           JaegerImage,
-		PrometheusImage:       PrometheusImage,
-		LokiImage:             LokiImage,
-		GrafanaImage:          GrafanaImage,
-		PromtailImage:         PromtailImage,
+		OtelCollectorPort:           cfg.OtelCollectorPort,
+		OtelGRPCPort:                cfg.OtelGRPCPort,
+		OtelCPPort:                  cfg.OtelCPPort,
+		PrometheusPort:              cfg.PrometheusPort,
+		PrometheusMetricsPort:       cfg.PrometheusMetricsPort,
+		OpenSearchPort:              cfg.OpenSearchPort,
+		OpenSearchDashboardsPort:    cfg.OpenSearchDashboardsPort,
+		OpenSearchHeapMB:            cfg.OpenSearchHeapMB,
+		OtelCollectorService:        consts.MonitoringServiceOtelCollector,
+		PrometheusService:           consts.MonitoringServicePrometheus,
+		OpenSearchNodeService:       consts.MonitoringServiceOpenSearchNode,
+		OpenSearchDashboardsService: consts.MonitoringServiceOpenSearchDashboards,
+		OtelCollectorImage:          OtelCollectorImage,
+		PrometheusImage:             PrometheusImage,
+		OpenSearchImage:             OpenSearchImage,
+		OpenSearchDashboardsImage:   OpenSearchDashboardsImage,
 	}
 }
 

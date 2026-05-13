@@ -11,7 +11,8 @@ Manage local observability stack
 Commands for managing the local observability stack.
 
 The monitoring stack provides local telemetry visualization for Claude Code
-sessions using OpenTelemetry, Jaeger, Prometheus, and Grafana.
+sessions using OpenTelemetry Collector + OpenSearch (logs + traces) +
+OpenSearch Dashboards + Prometheus (metrics).
 
 Available commands:
   init    Scaffold monitoring configuration files

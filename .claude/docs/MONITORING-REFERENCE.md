@@ -2,6 +2,8 @@
 
 > For essential rules, see `.claude/rules/monitoring.md`.
 
+> **Backend update:** logs and traces are now stored in **OpenSearch** (index `clawker-logs` for logs; SS4O dataset `traces` / namespace `clawker` for spans). Metrics still live in **Prometheus**. The OTEL event schemas below are unchanged — only the query syntax differs. Translate the historical Loki LogQL examples here to OpenSearch DSL / PPL / Lucene as needed; `service_name`, `event_name`, `tool_name`, `project`, `agent`, etc. are still the field names.
+
 ## Complete Event Schemas
 
 > Validated against live data as of 2026-02-13 (Claude Code v2.1.42). Subject to change — consider valid first before querying for updates.
