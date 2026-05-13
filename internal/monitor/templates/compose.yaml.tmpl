@@ -3,6 +3,12 @@ services:
     container_name: {{.OtelCollectorService}}
     image: {{.OtelCollectorImage}}
     command: ["--config=/etc/otel-collector-config.yaml"]
+    deploy:
+      resources:
+        limits:
+          memory: 200M
+    restart: unless-stopped
+    user: 0:0
     volumes:
       - ./otel-config.yaml:/etc/otel-collector-config.yaml
       # Host root → /hostfs (RO). Feeds the hostmetrics receiver (cpu/
@@ -51,11 +57,24 @@ services:
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--web.enable-remote-write-receiver"
+      - "--enable-feature=otlp-write-receiver"
+      - "--web.console.templates=/etc/prometheus/consoles"
+      - "--web.console.libraries=/etc/prometheus/console_libraries"
+      - "--storage.tsdb.retention.time=1h"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+      - "--web.route-prefix=/"
+      - "--enable-feature=exemplar-storage"
     ports:
       - "127.0.0.1:{{.PrometheusPort}}:{{.PrometheusPort}}"
     volumes:
       - ./prometheus.yaml:/etc/prometheus/prometheus.yml
       - clawker-prometheus:/prometheus
+    deploy:
+      resources:
+        limits:
+          memory: 300M
+    restart: unless-stopped
     labels:
       dev.clawker.managed: "true"
       dev.clawker.purpose: "monitoring"
@@ -72,7 +91,6 @@ services:
       - bootstrap.memory_lock=true
       - DISABLE_SECURITY_PLUGIN=true
       - DISABLE_INSTALL_DEMO_CONFIG=true
-      - plugins.security.disabled=true
       - "OPENSEARCH_JAVA_OPTS=-Xms{{.OpenSearchHeapMB}}m -Xmx{{.OpenSearchHeapMB}}m"
     ulimits:
       memlock:
@@ -98,7 +116,9 @@ services:
       - 'OPENSEARCH_HOSTS=["http://{{.OpenSearchNodeService}}:9200"]'
       - DISABLE_SECURITY_DASHBOARDS_PLUGIN=true
     ports:
-      - "127.0.0.1:{{.OpenSearchDashboardsPort}}:5601"
+      - "{{.OpenSearchDashboardsPort}}:{{.OpenSearchDashboardsPort}}"
+    expose:
+      - "{{.OpenSearchDashboardsPort}}"
     depends_on:
       - {{.OpenSearchNodeService}}
     labels:
