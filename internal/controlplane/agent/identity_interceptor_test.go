@@ -98,8 +98,21 @@ func registerMethod() string {
 
 // --- Unary happy path ---
 
+// TestIdentityInterceptor_NilPeerLookup_ReturnsError pins the
+// constructor contract: a nil resolver returns a wiring error rather
+// than panicking. Panicking would strand pinned eBPF programs with no
+// supervisor (root CLAUDE.md hard rule); returning an error lets
+// main.go log event=agent_identity_unavailable and degrade the
+// AgentService surface while CP/firewall/admin stay up.
+func TestIdentityInterceptor_NilPeerLookup_ReturnsError(t *testing.T) {
+	unary, stream, err := IdentityInterceptor(nil, nil)
+	require.Error(t, err)
+	assert.Nil(t, unary, "no interceptor must be returned on wiring error")
+	assert.Nil(t, stream, "no interceptor must be returned on wiring error")
+}
+
 func TestIdentityInterceptor_HappyPath_AttachesResolvedContainer(t *testing.T) {
-	unary, _ := IdentityInterceptor(okPeerLookup(), nil)
+	unary, _, _ := IdentityInterceptor(okPeerLookup(), nil)
 
 	var (
 		gotResolved ResolvedContainer
@@ -127,7 +140,7 @@ func TestIdentityInterceptor_HappyPath_AttachesResolvedContainer(t *testing.T) {
 // handler. A future regression that re-introduces an opt-out for
 // Register would make this test fail.
 func TestIdentityInterceptor_Register_HitsTrustCheck(t *testing.T) {
-	unary, _ := IdentityInterceptor(errPeerLookup(ErrNoContainerForPeerIP), nil)
+	unary, _, _ := IdentityInterceptor(errPeerLookup(ErrNoContainerForPeerIP), nil)
 
 	_, err := unary(
 		fixturePeerCtx(),
@@ -145,7 +158,7 @@ func TestIdentityInterceptor_Register_HitsTrustCheck(t *testing.T) {
 // --- Stage 1: CN pin ---
 
 func TestIdentityInterceptor_WrongCN_PermissionDenied(t *testing.T) {
-	unary, _ := IdentityInterceptor(okPeerLookup(), nil)
+	unary, _, _ := IdentityInterceptor(okPeerLookup(), nil)
 
 	wrongCN := ctxWithPeer("not-clawkerd", testAgentFullName, net.ParseIP(testPeerIP))
 	_, err := unary(
@@ -162,7 +175,7 @@ func TestIdentityInterceptor_WrongCN_PermissionDenied(t *testing.T) {
 }
 
 func TestIdentityInterceptor_NoPeerCert_PermissionDenied(t *testing.T) {
-	unary, _ := IdentityInterceptor(okPeerLookup(), nil)
+	unary, _, _ := IdentityInterceptor(okPeerLookup(), nil)
 
 	_, err := unary(
 		context.Background(),
@@ -180,7 +193,7 @@ func TestIdentityInterceptor_NoPeerCert_PermissionDenied(t *testing.T) {
 // --- Stage 2a: empty agent SAN ---
 
 func TestIdentityInterceptor_EmptyCertSAN_PermissionDenied(t *testing.T) {
-	unary, _ := IdentityInterceptor(okPeerLookup(), nil)
+	unary, _, _ := IdentityInterceptor(okPeerLookup(), nil)
 
 	noSAN := ctxWithPeer(consts.ContainerClawkerd, "", net.ParseIP(testPeerIP))
 	_, err := unary(
@@ -204,7 +217,7 @@ func TestIdentityInterceptor_EmptyCertSAN_PermissionDenied(t *testing.T) {
 // event=agent_identity_malformed_agent_san so operators can
 // distinguish it from a clean no-SAN cert.
 func TestIdentityInterceptor_MalformedCertSAN_PermissionDenied(t *testing.T) {
-	unary, _ := IdentityInterceptor(okPeerLookup(), nil)
+	unary, _, _ := IdentityInterceptor(okPeerLookup(), nil)
 
 	// Cert has the agent SAN scheme but empty tail.
 	u, err := url.Parse(auth.AgentSANScheme)
@@ -248,7 +261,7 @@ func TestIdentityInterceptor_Stage2_ResolverErrors_PermissionDenied(t *testing.T
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			unary, _ := IdentityInterceptor(errPeerLookup(tc.err), nil)
+			unary, _, _ := IdentityInterceptor(errPeerLookup(tc.err), nil)
 			_, err := unary(
 				fixturePeerCtx(),
 				"req",
@@ -267,7 +280,7 @@ func TestIdentityInterceptor_Stage2_ResolverErrors_PermissionDenied(t *testing.T
 // --- Stage 3: SAN vs label compare ---
 
 func TestIdentityInterceptor_CertSANvsLabelMismatch_PermissionDenied(t *testing.T) {
-	unary, _ := IdentityInterceptor(okPeerLookup(), nil)
+	unary, _, _ := IdentityInterceptor(okPeerLookup(), nil)
 
 	// Cert SAN claims "clawker.p.beta" but labels resolve to "clawker.p.alpha".
 	wrongSAN := ctxWithPeer(consts.ContainerClawkerd, "clawker.p.beta", net.ParseIP(testPeerIP))
@@ -299,7 +312,7 @@ func (s *streamFake) Context() context.Context { return s.ctx }
 // handler reads the original ctx without the resolved container,
 // silently breaking identity binding for every streaming RPC.
 func TestIdentityInterceptor_Stream_HappyPath_WrappedContextCarriesResolvedContainer(t *testing.T) {
-	_, stream := IdentityInterceptor(okPeerLookup(), nil)
+	_, stream, _ := IdentityInterceptor(okPeerLookup(), nil)
 
 	ss := &streamFake{ctx: fixturePeerCtx()}
 	var (
@@ -325,7 +338,7 @@ func TestIdentityInterceptor_Stream_HappyPath_WrappedContextCarriesResolvedConta
 // of swallowing it inside the wrapper (distinct from the unary case
 // because the stream wrapper is its own load-bearing seam).
 func TestIdentityInterceptor_Stream_NoPeerCert_PermissionDenied(t *testing.T) {
-	_, stream := IdentityInterceptor(okPeerLookup(), nil)
+	_, stream, _ := IdentityInterceptor(okPeerLookup(), nil)
 
 	ss := &streamFake{ctx: context.Background()}
 	err := stream(

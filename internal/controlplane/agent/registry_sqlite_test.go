@@ -130,6 +130,28 @@ func TestSQLiteRegistry_Snapshot_Sorted(t *testing.T) {
 	}, got)
 }
 
+// TestSQLiteRegistry_Snapshot_ReturnsErrOnDBFailure pins the
+// eviction-cascade-prevention contract: Snapshot MUST surface a
+// non-nil error when the underlying sqlite query fails, never
+// silently return an empty slice. A regression that mapped the
+// query error back to (nil, nil) would cause reapOrphans to evict
+// every registered agent on a transient hiccup, and ListAgents
+// would show operators "no agents" while the registry is intact but
+// unreadable — both are silent security regressions.
+func TestSQLiteRegistry_Snapshot_ReturnsErrOnDBFailure(t *testing.T) {
+	r, err := NewSQLiteWriter(dbPath(t, "agents.db"), logger.Nop())
+	require.NoError(t, err)
+	concrete, ok := r.(*sqliteRegistry)
+	require.True(t, ok)
+
+	require.NoError(t, r.Add(validEntry("p", "a", "ctr-1", "cert-1")))
+	require.NoError(t, concrete.Close())
+
+	snap, err := r.Snapshot()
+	require.Error(t, err)
+	assert.Nil(t, snap, "Snapshot must not return a partial slice alongside a non-nil error")
+}
+
 func TestSQLiteRegistry_ConcurrentWriters(t *testing.T) {
 	// Two NewSQLiteWriter opens against the same DB path. modernc/
 	// sqlite uses the file-system lock + busy_timeout to serialize

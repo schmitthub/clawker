@@ -19,17 +19,25 @@ import (
 // handler.go. Wired AFTER AuthInterceptor on the agent listener so
 // token validation runs first.
 //
-// peerLookup is required (panic on nil — wiring regression caught
-// pre-SetReady). log defaults to logger.Nop() if nil so the
-// panic-recovery path of grpc-go never sees a nil deref.
+// peerLookup is required — a nil resolver would silently disable the
+// trust gate and admit every RPC. Returns a non-nil error rather than
+// panicking: this constructor runs post-eBPF-load in main.go, so a
+// panic here would strand pinned eBPF programs with no supervisor.
+// main.go logs the error structurally
+// (event=agent_identity_unavailable) and refuses to bring up the
+// agent listener, degrading the AgentService surface while CP +
+// firewall + admin listener stay up.
+//
+// log defaults to logger.Nop() if nil so the panic-recovery path of
+// grpc-go never sees a nil deref.
 //
 // Every rejection returns codes.PermissionDenied with the same
 // generic envelope ("registration rejected") — attackers must not
 // learn which check failed. The structured log carries the
 // classification via a unique event= field per stage.
-func IdentityInterceptor(peerLookup ContainerByPeerIP, log *logger.Logger) (grpc.UnaryServerInterceptor, grpc.StreamServerInterceptor) {
+func IdentityInterceptor(peerLookup ContainerByPeerIP, log *logger.Logger) (grpc.UnaryServerInterceptor, grpc.StreamServerInterceptor, error) {
 	if peerLookup == nil {
-		panic("agent: identity interceptor requires non-nil peer lookup")
+		return nil, nil, errors.New("agent: identity interceptor requires non-nil peer lookup")
 	}
 	if log == nil {
 		log = logger.Nop()
@@ -79,10 +87,11 @@ func IdentityInterceptor(peerLookup ContainerByPeerIP, log *logger.Logger) (grpc
 		}
 
 		// Stage 2b: peer IP → Docker → labels. Distinguishing
-		// ErrInvalidAgentLabels (daemon-state corruption) from
-		// ErrNoContainerForPeerIP (clean no-match) on the log surface
-		// lets operators triage; the wire envelope stays uniform
-		// PermissionDenied either way.
+		// ErrNoContainerForPeerIP (clean no-match),
+		// ErrInvalidAgentLabels (daemon-state corruption), and
+		// ErrAmbiguousPeerIP (multiple containers advertising the same
+		// peer IP) on the log surface lets operators triage; the wire
+		// envelope stays uniform PermissionDenied either way.
 		resolved, err := peerLookup.LookupByIP(ctx, pid.PeerAddr)
 		if err != nil {
 			switch {
@@ -98,6 +107,12 @@ func IdentityInterceptor(peerLookup ContainerByPeerIP, log *logger.Logger) (grpc
 					Str("event", "agent_identity_invalid_labels").
 					Str("peer_ip", pid.PeerAddr.String()).
 					Msg("agent identity: matched container carries invalid identity labels")
+			case errors.Is(err, ErrAmbiguousPeerIP):
+				log.Error().
+					Str("method", method).
+					Str("event", "agent_identity_ambiguous_peer_ip").
+					Str("peer_ip", pid.PeerAddr.String()).
+					Msg("agent identity: multiple purpose=agent containers advertise peer IP — failing closed")
 			default:
 				log.Error().Err(err).
 					Str("method", method).
@@ -143,7 +158,7 @@ func IdentityInterceptor(peerLookup ContainerByPeerIP, log *logger.Logger) (grpc
 		return handler(srv, &identityServerStream{ServerStream: ss, ctx: newCtx})
 	}
 
-	return unary, stream
+	return unary, stream, nil
 }
 
 // identityServerStream wraps a grpc.ServerStream so the handler sees

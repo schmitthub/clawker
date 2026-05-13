@@ -806,6 +806,14 @@ func clawkerNetAddr(c mobycontainer.InspectResponse) (string, error) {
 // "no such row" return outcomeRegistryNotQueried and a non-empty
 // detail string — these indicate a sqlite/IO regression visible to
 // operators even though the connection proceeds.
+//
+// ErrMalformedEntry (a stored row that no longer re-validates as a
+// typed identity) is classified as outcomeRegistryMiss so the dial
+// drives the Register handshake — the Register handler will evict
+// the malformed row and re-write it from the middleware-resolved
+// identity. Without this, a malformed row self-perpetuates: the
+// dialer would publish AgentUntrusted on every reconnect and never
+// trigger the cleanup path.
 func (d *Dialer) classifyRegistry(peerThumbprint [sha256.Size]byte, containerID string) (registryOutcome, string) {
 	if d.agents == nil {
 		// Wiring bug — New rejected nil agents, so this can only
@@ -814,7 +822,15 @@ func (d *Dialer) classifyRegistry(peerThumbprint [sha256.Size]byte, containerID 
 	}
 
 	entry, err := d.agents.LookupByContainerID(containerID)
-	if err != nil && !errors.Is(err, ErrUnknownAgent) {
+	switch {
+	case err == nil:
+		// fall through to entry checks below.
+	case errors.Is(err, ErrUnknownAgent):
+		return outcomeRegistryMiss, ""
+	case errors.Is(err, ErrMalformedEntry):
+		// Recover by driving Register — handler evicts + rewrites.
+		return outcomeRegistryMiss, ""
+	default:
 		return outcomeRegistryNotQueried, "registry lookup error: " + err.Error()
 	}
 	if entry == nil {

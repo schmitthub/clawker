@@ -288,6 +288,67 @@ func TestContainerByPeerIP_InspectError_StillFindsMatchAfter(t *testing.T) {
 	assert.Equal(t, match.containerID, got.ContainerID)
 }
 
+// TestContainerByPeerIP_AmbiguousMatch pins the trust-anchor
+// fail-closed contract: when two purpose=agent containers advertise
+// endpoints on the same clawker-net IP (transient stale endpoints
+// during a restart cycle), the resolver returns ErrAmbiguousPeerIP
+// rather than picking the first match. Grounding the trust anchor
+// on first-match-wins would create a race window where an attacker
+// could plant a stale endpoint and inherit a victim's identity.
+func TestContainerByPeerIP_AmbiguousMatch(t *testing.T) {
+	wantIP := "10.0.0.5"
+	first := inspectFixture{containerID: "first", project: "p", agentName: "a", ip: wantIP}
+	second := inspectFixture{containerID: "second", project: "p", agentName: "b", ip: wantIP}
+	api := &fakePeerLookupAPI{
+		listFn: func(_ context.Context, _ mobyclient.ContainerListOptions) (mobyclient.ContainerListResult, error) {
+			return mobyclient.ContainerListResult{Items: []mobycontainer.Summary{
+				{ID: first.containerID}, {ID: second.containerID},
+			}}, nil
+		},
+		inspectFn: func(_ context.Context, id string, _ mobyclient.ContainerInspectOptions) (mobyclient.ContainerInspectResult, error) {
+			switch id {
+			case first.containerID:
+				return makeInspect(first), nil
+			case second.containerID:
+				return makeInspect(second), nil
+			}
+			t.Fatalf("unexpected inspect for %q", id)
+			return mobyclient.ContainerInspectResult{}, nil
+		},
+	}
+	_, err := newTestLookup(api).LookupByIP(context.Background(), netip.MustParseAddr(wantIP))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrAmbiguousPeerIP)
+}
+
+// TestContainerByPeerIP_InspectError_WithOtherCleanNoMatch pins the
+// classification fix: if a single inspect failed but at least one
+// other candidate inspected cleanly and didn't match, the absence is
+// authoritative. Returning ErrNoContainerForPeerIP rather than the
+// wrapped daemon error keeps the peer_lookup_no_match audit signal
+// useful — operators relying on it to spot "agents connecting from
+// unexpected IPs" would miss the case otherwise.
+func TestContainerByPeerIP_InspectError_WithOtherCleanNoMatch(t *testing.T) {
+	clean := inspectFixture{containerID: "clean", project: "p", agentName: "a", ip: "10.0.0.9"}
+	api := &fakePeerLookupAPI{
+		listFn: func(_ context.Context, _ mobyclient.ContainerListOptions) (mobyclient.ContainerListResult, error) {
+			return mobyclient.ContainerListResult{Items: []mobycontainer.Summary{
+				{ID: "boom"}, {ID: clean.containerID},
+			}}, nil
+		},
+		inspectFn: func(_ context.Context, id string, _ mobyclient.ContainerInspectOptions) (mobyclient.ContainerInspectResult, error) {
+			if id == "boom" {
+				return mobyclient.ContainerInspectResult{}, errors.New("transient daemon hiccup")
+			}
+			return makeInspect(clean), nil
+		},
+	}
+	_, err := newTestLookup(api).LookupByIP(context.Background(), netip.MustParseAddr("10.0.0.5"))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrNoContainerForPeerIP,
+		"one clean inspect with no match outweighs a transient inspect failure")
+}
+
 // Compile-time guard: mobyclient.APIClient must satisfy peerLookupAPI.
 // Catches a moby signature drift before it becomes a runtime wiring
 // failure in NewMobyPeerLookup.

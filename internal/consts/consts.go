@@ -35,7 +35,7 @@ import (
 // Domain and label namespace.
 const (
 	// NamePrefix is the leading segment of every clawker resource name
-	// (containers, volumes, images, canonical agent identities). Two-segment
+	// (containers, volumes, images, AgentFullName values). Two-segment
 	// names are NamePrefix.agent (empty project), three-segment names are
 	// NamePrefix.project.agent.
 	NamePrefix = "clawker"
@@ -163,9 +163,10 @@ const (
 	// ContainerClawkerd is the deterministic Subject.CommonName baked
 	// into every per-agent leaf cert minted by the CLI. It identifies
 	// the clawkerd binary as the cert holder; the per-agent identity
-	// (canonical CN "clawker.<project>.<agent>") lives in a URI SAN so
-	// it isn't pinned to x509's 64-byte CN limit. CP-side gates pin the
-	// peer CN to this constant; agent identity is read from the SAN.
+	// (the AgentFullName "clawker.<project>.<agent>") lives in a URI
+	// SAN so it isn't pinned to x509's 64-byte CN limit. CP-side gates
+	// pin the peer CN to this constant; agent identity is read from
+	// the SAN and verified against label-derived ground truth.
 	ContainerClawkerd = "clawker-clawkerd"
 )
 
@@ -331,8 +332,9 @@ const (
 // Container env vars for clawkerd bootstrap. clawkerd reads only what
 // it can authoritatively assert: container_id is server-derived from
 // the registry row keyed by container_id, and project + agent_name
-// travel via env vars only for log binding (the canonical CN comes
-// from the pre-computed registry column on the CP side).
+// travel via env vars only for log binding (the AgentFullName is
+// reconstructed on demand from the registry row's project +
+// agent_name columns; there is no pre-computed identity column).
 // Adding a CLAWKER_CONTAINER_ID env would let a coerced clawkerd lie
 // to itself; resist that temptation.
 const (

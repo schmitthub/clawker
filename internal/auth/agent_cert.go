@@ -114,10 +114,6 @@ func isHexLower(s string) bool {
 }
 
 // ContainerIDFromCert extracts the container_id encoded as a URI SAN
-// of the form urn:clawker:container:<id>. Returns ("", false) when no
-// such SAN is present so callers can branch on a clean missing-binding
-// signal rather than parsing strings.
-// ContainerIDFromCert extracts the container_id encoded as a URI SAN
 // of the form urn:clawker:container:<id>. Returns ("", false) for both
 // the no-SAN and malformed-SAN cases — the Register handler maps the
 // pair to a single PermissionDenied envelope without needing to
@@ -144,11 +140,6 @@ func BuildAgentSAN(project ProjectSlug, agent AgentName) (*url.URL, error) {
 }
 
 // AgentFullNameFromCert extracts the AgentFullName encoded as a URI
-// SAN of the form urn:clawker:agent:<agent_full_name>. Returns ("",
-// false) when no such SAN is present — callers map a missing binding
-// to a generic PermissionDenied without leaking which structural check
-// failed.
-// AgentFullNameFromCert extracts the AgentFullName encoded as a URI
 // SAN of the form urn:clawker:agent:<agent_full_name>. Returns three
 // states the IdentityInterceptor needs to classify:
 //
@@ -172,10 +163,6 @@ func AgentFullNameFromCert(cert *x509.Certificate) (string, error) {
 	}
 }
 
-// sanTailFromCert walks the cert's URI SANs and returns the tail of
-// the first URI whose string-form starts with prefix. Shared by
-// ContainerIDFromCert + AgentFullNameFromCert so the empty-tail
-// rejection (len(s) > len(prefix)) is implemented once.
 // sanTailFromCert walks the cert's URI SANs and returns the tail of
 // the first URI whose string-form starts with prefix along with a
 // three-state classification (missing / malformed / found). Shared by

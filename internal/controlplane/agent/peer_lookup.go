@@ -33,6 +33,15 @@ var ErrNoContainerForPeerIP = errors.New("no purpose=agent container with matchi
 // generic auth reject.
 var ErrInvalidAgentLabels = errors.New("agent container has invalid identity labels")
 
+// ErrAmbiguousPeerIP is returned when two or more `purpose=agent`
+// containers on clawker-net advertise endpoints with the same peer
+// IP. Docker can transiently leave stale endpoints in
+// NetworkSettings.Networks during restart cycles, and grounding the
+// trust anchor on the first match would create a race window. Fail
+// closed instead — operators see a distinct event and the trust gate
+// rejects the RPC until the daemon state converges.
+var ErrAmbiguousPeerIP = errors.New("multiple purpose=agent containers match peer IP")
+
 // ContainerByPeerIP resolves a live mTLS peer IP to the
 // `purpose=agent` container owning that IP on clawker-net. Returns
 // ErrNoContainerForPeerIP when nothing matches, ErrInvalidAgentLabels

@@ -11,6 +11,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"math/big"
 	"net/url"
 	"os"
@@ -269,6 +270,27 @@ func TestClassifyRegistry_LookupErrorReturnsNotQueried(t *testing.T) {
 	outcome, detail := d.classifyRegistry(sha256.Sum256([]byte("p")), "ctr-5")
 	assert.Equal(t, outcomeRegistryNotQueried, outcome)
 	assert.Contains(t, detail, "registry lookup error")
+}
+
+// TestClassifyRegistry_MalformedEntryReturnsMiss pins the recovery
+// contract for malformed registry rows: a hand-edited or otherwise
+// invalid row returns ErrMalformedEntry from LookupByContainerID,
+// and the dialer must classify it as Miss so the Register handshake
+// drives an evict+rewrite of the row. Treating it as
+// NotQueried would publish AgentUntrusted on every reconnect and
+// leave the row stranded forever — the dialer's path is the only
+// natural trigger for the Register-side cleanup.
+func TestClassifyRegistry_MalformedEntryReturnsMiss(t *testing.T) {
+	reg := &RegistryMock{
+		LookupByContainerIDFunc: func(id string) (*Entry, error) {
+			return nil, fmt.Errorf("scan row: %w", ErrMalformedEntry)
+		},
+	}
+	d := &Dialer{agents: reg}
+
+	outcome, detail := d.classifyRegistry(sha256.Sum256([]byte("p")), "ctr-malformed")
+	assert.Equal(t, outcomeRegistryMiss, outcome)
+	assert.Empty(t, detail)
 }
 
 func TestClassifyRegistry_NilRegistryReturnsNotQueried(t *testing.T) {

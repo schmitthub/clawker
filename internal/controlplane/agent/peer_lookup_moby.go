@@ -43,12 +43,16 @@ func NewMobyPeerLookup(cli mobyclient.APIClient, log *logger.Logger) *MobyPeerLo
 	return &MobyPeerLookup{cli: cli, log: log}
 }
 
-// LookupByIP iterates `purpose=agent` containers and returns the
-// first one whose clawker-net endpoint IP matches ip. A transient
-// per-container inspect failure is logged and the iteration
-// continues; if no match is found and any candidate erred during
-// inspect, the wrapped daemon error is returned so callers can
-// distinguish "no agent owns this IP" from "we couldn't tell".
+// LookupByIP walks every `purpose=agent` container and returns the
+// one whose clawker-net endpoint IP matches ip. The walk is
+// exhaustive: ambiguous-IP advertisements (multiple containers with
+// overlapping endpoint state during restart cycles) return
+// ErrAmbiguousPeerIP rather than picking the first match. A
+// transient per-container inspect failure is logged and iteration
+// continues. A daemon-error wrap is returned only when NO candidate
+// could be inspected — a real no-match is reported as
+// ErrNoContainerForPeerIP even when one inspect along the way
+// failed, so the peer_lookup_no_match audit signal stays useful.
 func (m *MobyPeerLookup) LookupByIP(ctx context.Context, ip netip.Addr) (ResolvedContainer, error) {
 	lookupCtx, cancel := context.WithTimeout(context.Background(), peerLookupTimeout)
 	defer cancel()
@@ -65,7 +69,18 @@ func (m *MobyPeerLookup) LookupByIP(ctx context.Context, ip netip.Addr) (Resolve
 	}
 
 	wanted := ip.Unmap()
-	var inspectErr error
+	// Walk every candidate even after finding a match so we can detect
+	// ambiguous peer-IP advertisements (stale endpoints during restart
+	// cycles). matches holds (container_id, labels) for the typed-identity
+	// validation that follows the duplicate check.
+	type match struct {
+		containerID string
+		labels      map[string]string
+	}
+	var matches []match
+	var inspectedOK int
+	var lastInspectErr error
+
 	for _, summary := range res.Items {
 		inspect, err := m.cli.ContainerInspect(lookupCtx, summary.ID, mobyclient.ContainerInspectOptions{})
 		if err != nil {
@@ -74,9 +89,10 @@ func (m *MobyPeerLookup) LookupByIP(ctx context.Context, ip netip.Addr) (Resolve
 				Stringer("peer_ip", ip).
 				Str("event", "peer_lookup_inspect_failed").
 				Msg("docker ContainerInspect failed during peer-IP resolution; continuing to next candidate")
-			inspectErr = err
+			lastInspectErr = err
 			continue
 		}
+		inspectedOK++
 		c := inspect.Container
 		if c.NetworkSettings == nil {
 			continue
@@ -88,37 +104,61 @@ func (m *MobyPeerLookup) LookupByIP(ctx context.Context, ip netip.Addr) (Resolve
 		if endpoint.IPAddress.Unmap() != wanted {
 			continue
 		}
-
 		var labels map[string]string
 		if c.Config != nil {
 			labels = c.Config.Labels
 		}
-		project, perr := auth.NewProjectSlug(labels[consts.LabelProject])
+		matches = append(matches, match{containerID: c.ID, labels: labels})
+	}
+
+	if len(matches) > 1 {
+		ids := make([]string, 0, len(matches))
+		for _, mm := range matches {
+			ids = append(ids, mm.containerID)
+		}
+		m.log.Error().
+			Stringer("peer_ip", ip).
+			Strs("container_ids", ids).
+			Str("event", "peer_lookup_ambiguous_match").
+			Msg("multiple purpose=agent containers advertise the same clawker-net IP — failing closed")
+		return ResolvedContainer{}, ErrAmbiguousPeerIP
+	}
+
+	if len(matches) == 1 {
+		mm := matches[0]
+		project, perr := auth.NewProjectSlug(mm.labels[consts.LabelProject])
 		if perr != nil {
 			m.log.Error().Err(perr).
-				Str("container_id", c.ID).
+				Str("container_id", mm.containerID).
 				Stringer("peer_ip", ip).
 				Str("event", "peer_lookup_invalid_labels").
 				Msg("matched container has malformed project label")
-			return ResolvedContainer{}, fmt.Errorf("%w: container %s project: %w", ErrInvalidAgentLabels, c.ID, perr)
+			return ResolvedContainer{}, fmt.Errorf("%w: container %s project: %w", ErrInvalidAgentLabels, mm.containerID, perr)
 		}
-		agentName, aerr := auth.NewAgentName(labels[consts.LabelAgent])
+		agentName, aerr := auth.NewAgentName(mm.labels[consts.LabelAgent])
 		if aerr != nil {
 			m.log.Error().Err(aerr).
-				Str("container_id", c.ID).
+				Str("container_id", mm.containerID).
 				Stringer("peer_ip", ip).
 				Str("event", "peer_lookup_invalid_labels").
 				Msg("matched container has malformed agent label")
-			return ResolvedContainer{}, fmt.Errorf("%w: container %s agent: %w", ErrInvalidAgentLabels, c.ID, aerr)
+			return ResolvedContainer{}, fmt.Errorf("%w: container %s agent: %w", ErrInvalidAgentLabels, mm.containerID, aerr)
 		}
 		return ResolvedContainer{
-			ContainerID: c.ID,
+			ContainerID: mm.containerID,
 			Project:     project,
 			AgentName:   agentName,
 		}, nil
 	}
-	if inspectErr != nil {
-		return ResolvedContainer{}, fmt.Errorf("peer lookup: no match and at least one inspect failed: %w", inspectErr)
+
+	// No match. Only escalate to a daemon-error wrap when NO candidate
+	// inspected cleanly — otherwise we have a complete view of the
+	// `purpose=agent` containers' endpoints and the absence is
+	// authoritative. Misclassifying a real no-match as "daemon error"
+	// would suppress the peer_lookup_no_match audit signal operators
+	// rely on for "agents connecting from unexpected IPs".
+	if inspectedOK == 0 && lastInspectErr != nil {
+		return ResolvedContainer{}, fmt.Errorf("peer lookup: all candidate inspects failed: %w", lastInspectErr)
 	}
 	return ResolvedContainer{}, ErrNoContainerForPeerIP
 }

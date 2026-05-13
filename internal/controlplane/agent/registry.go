@@ -93,10 +93,16 @@ type Registry interface {
 	// stale row that hasn't been evicted yet. Callers translate the
 	// error into the appropriate gRPC status.
 	//
-	// Add panics on programming-error invariants (zero thumbprint,
-	// empty ContainerID, zero RegisteredAt). Identity-string validity
-	// (project slug / agent name format) is enforced upstream by the
-	// Register handler at the wire boundary.
+	// Add returns an error on programming-error invariants (zero
+	// thumbprint, empty ContainerID, zero AgentName, zero
+	// RegisteredAt). Both Registry implementations (in-memory and
+	// sqlite) propagate the error from `validateEntry` rather than
+	// panicking — Add lives on a gRPC handler goroutine reachable
+	// post-SetReady from Register, and a panic on that path would
+	// strand eBPF programs with no supervisor (see root CLAUDE.md).
+	// Register maps the error to codes.InvalidArgument.
+	// Identity-string validity (project slug / agent name format) is
+	// enforced upstream by the Register handler at the wire boundary.
 	Add(entry Entry) error
 	// LookupByContainerID returns the entry whose ContainerID matches.
 	// Used by the Register handler (idempotency / replay-protection)
