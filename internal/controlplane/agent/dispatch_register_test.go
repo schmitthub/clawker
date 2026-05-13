@@ -476,9 +476,9 @@ func TestDispatchAgentEvents_Match_PublishesNoExtraEvent(t *testing.T) {
 }
 
 // TestDispatchAgentEvents_OutcomesPinned pins the typed Reason for
-// each non-Match outcome — a regression that swapped CNMismatch/
-// ThumbprintMismatch in the switch would silently mis-classify
-// containment policy.
+// each non-Match outcome — a regression that swapped
+// ThumbprintMismatch and LookupError in the switch would silently
+// mis-classify containment policy.
 func TestDispatchAgentEvents_OutcomesPinned(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -500,22 +500,6 @@ func TestDispatchAgentEvents_OutcomesPinned(t *testing.T) {
 			},
 			peer:       peerInfo{PeerAgentFullName: "clawker.myapp.dev", PeerThumbprint: sha256.Sum256([]byte("live-cert"))},
 			wantReason: overseer.UntrustedReasonThumbprintMismatch,
-		},
-		{
-			name: "CNMismatch",
-			reg: &RegistryMock{
-				LookupByContainerIDFunc: func(string) (*Entry, error) {
-					thumb := sha256.Sum256([]byte("c"))
-					return &Entry{
-						ContainerID: "abc",
-						AgentName:   "dev",
-						Project:     "actual",
-						Thumbprint:  thumb,
-					}, nil
-				},
-			},
-			peer:       peerInfo{PeerAgentFullName: "clawker.different.dev", PeerThumbprint: sha256.Sum256([]byte("c"))},
-			wantReason: overseer.UntrustedReasonCNMismatch,
 		},
 		{
 			name: "LookupError",

@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"crypto/sha256"
-	"crypto/subtle"
 	"database/sql"
 	"embed"
 	"encoding/hex"
@@ -218,10 +217,6 @@ func (r *sqliteRegistry) countRows() (int, error) {
 
 func (r *sqliteRegistry) Add(entry Entry) error {
 	validateEntry(entry)
-	cn, err := canonicalCNFromEntry(entry)
-	if err != nil {
-		return err
-	}
 
 	tpHex := hex.EncodeToString(entry.Thumbprint[:])
 	if entry.LastSeen.IsZero() {
@@ -232,7 +227,12 @@ func (r *sqliteRegistry) Add(entry Entry) error {
 	// row for the same thumbprint OR container_id surfaces as a
 	// constraint violation and the handler chooses how to react
 	// (typically: alert + evict by container_id + retry).
-	_, err = r.db.Exec(`
+	//
+	// canonical_cn is written empty: the column survives only until
+	// Task 5 of the SAN refactor drops it via migration 00002. The
+	// column is NOT NULL with no DEFAULT, so an empty string keeps the
+	// INSERT valid in the interim. No reader consults it.
+	_, err := r.db.Exec(`
 		INSERT INTO agents (thumbprint_hex, container_id, agent_name, project, canonical_cn, registered_at, last_seen)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 	`,
@@ -240,7 +240,7 @@ func (r *sqliteRegistry) Add(entry Entry) error {
 		entry.ContainerID,
 		entry.AgentName,
 		entry.Project,
-		cn,
+		"",
 		entry.RegisteredAt.Unix(),
 		entry.LastSeen.Unix(),
 	)
@@ -302,35 +302,6 @@ func (r *sqliteRegistry) LookupByContainerID(containerID string) (*Entry, error)
 		return nil, fmt.Errorf("agentregistry: query LookupByContainerID: %w", err)
 	}
 	return &e, nil
-}
-
-func (r *sqliteRegistry) Lookup(thumbprint [sha256.Size]byte, cn string) (*Entry, error) {
-	tpHex := hex.EncodeToString(thumbprint[:])
-	var (
-		containerID, agentName, project, canonical string
-		registeredAt, lastSeen                     int64
-	)
-	err := r.db.QueryRow(`
-		SELECT container_id, agent_name, project, canonical_cn, registered_at, last_seen
-		FROM agents WHERE thumbprint_hex = ?`, tpHex,
-	).Scan(&containerID, &agentName, &project, &canonical, &registeredAt, &lastSeen)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrUnknownAgent
-	}
-	if err != nil {
-		return nil, fmt.Errorf("agentregistry: query Lookup: %w", err)
-	}
-	if subtle.ConstantTimeCompare([]byte(cn), []byte(canonical)) != 1 {
-		return nil, ErrUnknownAgent
-	}
-	return &Entry{
-		AgentName:    agentName,
-		Project:      project,
-		ContainerID:  containerID,
-		Thumbprint:   thumbprint,
-		RegisteredAt: time.Unix(registeredAt, 0).UTC(),
-		LastSeen:     time.Unix(lastSeen, 0).UTC(),
-	}, nil
 }
 
 func (r *sqliteRegistry) EvictByContainerID(containerID string) error {

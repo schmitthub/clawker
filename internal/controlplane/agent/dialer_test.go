@@ -187,7 +187,6 @@ func TestCapturePeer_BadCertBytes_SetsReason(t *testing.T) {
 
 func TestClassifyRegistry_Match(t *testing.T) {
 	thumb := sha256.Sum256([]byte("peer-cert-bytes"))
-	expectedCN := auth.CanonicalAgentCN(auth.MustProjectSlug("myproj"), auth.MustAgentName("dev"))
 	reg := &RegistryMock{
 		LookupByContainerIDFunc: func(id string) (*Entry, error) {
 			return &Entry{
@@ -200,7 +199,7 @@ func TestClassifyRegistry_Match(t *testing.T) {
 	}
 	d := &Dialer{agents: reg}
 
-	outcome, _ := d.classifyRegistry(peerInfo{PeerAgentFullName: expectedCN, PeerThumbprint: thumb}, "ctr-1")
+	outcome, _ := d.classifyRegistry(thumb, "ctr-1")
 	assert.Equal(t, outcomeRegistryMatch, outcome)
 }
 
@@ -212,8 +211,7 @@ func TestClassifyRegistry_Miss(t *testing.T) {
 	}
 	d := &Dialer{agents: reg}
 
-	thumb := sha256.Sum256([]byte("peer"))
-	outcome, _ := d.classifyRegistry(peerInfo{PeerAgentFullName: "clawker.x.y", PeerThumbprint: thumb}, "ctr-2")
+	outcome, _ := d.classifyRegistry(sha256.Sum256([]byte("peer")), "ctr-2")
 	assert.Equal(t, outcomeRegistryMiss, outcome)
 }
 
@@ -232,26 +230,8 @@ func TestClassifyRegistry_ThumbprintMismatch(t *testing.T) {
 	}
 	d := &Dialer{agents: reg}
 
-	outcome, _ := d.classifyRegistry(peerInfo{PeerAgentFullName: "clawker.myproj.dev", PeerThumbprint: peerThumb}, "ctr-3")
+	outcome, _ := d.classifyRegistry(peerThumb, "ctr-3")
 	assert.Equal(t, outcomeRegistryThumbprintMismatch, outcome)
-}
-
-func TestClassifyRegistry_CNMismatch(t *testing.T) {
-	thumb := sha256.Sum256([]byte("peer"))
-	reg := &RegistryMock{
-		LookupByContainerIDFunc: func(id string) (*Entry, error) {
-			return &Entry{
-				AgentName:   "dev",
-				Project:     "actual",
-				ContainerID: id,
-				Thumbprint:  thumb,
-			}, nil
-		},
-	}
-	d := &Dialer{agents: reg}
-
-	outcome, _ := d.classifyRegistry(peerInfo{PeerAgentFullName: "clawker.different.dev", PeerThumbprint: thumb}, "ctr-4")
-	assert.Equal(t, outcomeRegistryCNMismatch, outcome)
 }
 
 func TestClassifyRegistry_LookupErrorReturnsNotQueried(t *testing.T) {
@@ -262,7 +242,7 @@ func TestClassifyRegistry_LookupErrorReturnsNotQueried(t *testing.T) {
 	}
 	d := &Dialer{agents: reg}
 
-	outcome, detail := d.classifyRegistry(peerInfo{PeerAgentFullName: "clawker.x.y", PeerThumbprint: sha256.Sum256([]byte("p"))}, "ctr-5")
+	outcome, detail := d.classifyRegistry(sha256.Sum256([]byte("p")), "ctr-5")
 	assert.Equal(t, outcomeRegistryNotQueried, outcome)
 	assert.Contains(t, detail, "registry lookup error")
 }
@@ -270,38 +250,9 @@ func TestClassifyRegistry_LookupErrorReturnsNotQueried(t *testing.T) {
 func TestClassifyRegistry_NilRegistryReturnsNotQueried(t *testing.T) {
 	d := &Dialer{agents: nil}
 
-	outcome, detail := d.classifyRegistry(peerInfo{PeerAgentFullName: "clawker.x.y", PeerThumbprint: sha256.Sum256([]byte("p"))}, "ctr-6")
+	outcome, detail := d.classifyRegistry(sha256.Sum256([]byte("p")), "ctr-6")
 	assert.Equal(t, outcomeRegistryNotQueried, outcome)
 	assert.Equal(t, "registry not wired", detail)
-}
-
-// --- computeCNPinMatch: cert-vs-labels CN derivation ----------------
-
-func TestComputeCNPinMatch(t *testing.T) {
-	cases := []struct {
-		name    string
-		peerCN  string
-		project string
-		agent   string
-		want    bool
-	}{
-		// Hand-written CN strings rather than auth.CanonicalAgentCN
-		// composer: feeding the composer into both sides of the match
-		// reduces the assertion to `x == x` and would pass even if
-		// computeCNPinMatch returned `peerCN != ""`. Hand strings keep
-		// computeCNPinMatch as the system under test, not the composer.
-		{name: "match scoped 3-segment", peerCN: "clawker.foo.bar", project: "foo", agent: "bar", want: true},
-		{name: "match unscoped 2-segment", peerCN: "clawker.solo", project: "", agent: "solo", want: true},
-		{name: "peer CN differs", peerCN: "clawker.other.bar", project: "foo", agent: "bar", want: false},
-		{name: "wrong prefix", peerCN: "notclawker.foo.bar", project: "foo", agent: "bar", want: false},
-		{name: "extra segment", peerCN: "clawker.foo.bar.baz", project: "foo", agent: "bar", want: false},
-		{name: "missing project segment when scoped", peerCN: "clawker.bar", project: "foo", agent: "bar", want: false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, computeCNPinMatch(tc.peerCN, tc.project, tc.agent))
-		})
-	}
 }
 
 // TestPublishConnected_DeliversPeerIntact pins the bus payload
@@ -419,9 +370,9 @@ func TestCloseAndCheckLeak_LogsCloseFailure(t *testing.T) {
 // These tests cover the runDial outer orchestration: dedup map,
 // resolveAgent failure → outcomeContainerGone → SessionFailed event
 // publication, and ctx-cancel teardown. Leaf functions
-// (capturePeerProvenance, fillRegistryProvenance, computeCNPinMatch,
-// closeAndCheckLeak) are exercised independently above; this layer
-// proves the wiring between them and the overseer event publishers.
+// (capturePeer, classifyRegistry, closeAndCheckLeak) are exercised
+// independently above; this layer proves the wiring between them and
+// the overseer event publishers.
 
 // fakeMobyForDialer satisfies mobyclient.APIClient via embedding —
 // the embedded nil interface is fine because every test path here

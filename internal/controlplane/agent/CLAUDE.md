@@ -74,8 +74,12 @@ A registry row's identity is `(thumbprint, container_id)` — both
 UNIQUE in sqlite. The handler captures the thumbprint at the gate
 that writes it (defense-in-depth: no surfacing via ctx, so a future
 interceptor change can't substitute the value the registry stores).
-`AgentFullName` is persisted as the displayed/queried identity; the
-canonical_cn pre-compute column is dropped (Task 5).
+Rows store the `(thumbprint, container_id, project, agent_name,
+registered_at, last_seen)` tuple; `Snapshot()` and `ListAgents`
+reconstruct the displayed AgentFullName on demand from project +
+agent_name. The legacy `canonical_cn` pre-compute column is unused
+(writes go to empty string in Task 4) and dropped by Task 5's goose
+migration 00002.
 
 CP is the SOLE writer of registry rows. The CLI never opens the
 sqlite DB — that's what fixes the WAL coherence bug across the
@@ -140,8 +144,13 @@ CP CN pin + Client-Auth EKU + CA chain enforced at TLS layer.
 | Match | `SessionConnected` (with PeerAgentFullName/PeerThumbprint) |
 | Miss | `SessionConnected` → drive Register handshake → `AgentRegistered` (+ `AgentUntrusted{ReasonRegisterFailed}` on failure) |
 | ThumbprintMismatch | `SessionConnected` + `AgentUntrusted{ReasonThumbprintMismatch}` |
-| CNMismatch | `SessionConnected` + `AgentUntrusted{ReasonCNMismatch}` |
 | Lookup error | `SessionConnected` + `AgentUntrusted{ReasonCertInvalid, Detail: <err>}` |
+
+Note: cert SAN AgentFullName vs label-derived AgentFullName drift is
+NOT classified here — the dialer is the OUTBOUND CP→clawkerd path and
+compares only thumbprints against the row. Trust-anchor drift is
+caught upstream by `IdentityInterceptor` on the agent's next inbound
+RPC (e.g. a subsequent Register retry).
 
 `SessionConnected.ApplyTo` populates `State.Agents[containerID]` with
 session lifecycle + identity fields. `AgentRegistered.ApplyTo` sets

@@ -28,30 +28,6 @@ func closeRegistry(t *testing.T, r Registry) {
 	}
 }
 
-func TestSQLiteWriter_Add_PersistsCanonicalCN(t *testing.T) {
-	path := dbPath(t, "agents.db")
-
-	w, err := NewSQLiteWriter(path, logger.Nop())
-	require.NoError(t, err)
-
-	entry := validEntry("alpha", "dev", "ctr-1", "cert-1")
-	require.NoError(t, w.Add(entry))
-	closeRegistry(t, w)
-
-	// Re-open and verify the CN-gated Lookup round-trips against the
-	// pre-computed canonical_cn column.
-	r, err := NewSQLiteWriter(path, logger.Nop())
-	require.NoError(t, err)
-	t.Cleanup(func() { closeRegistry(t, r) })
-
-	got, err := r.Lookup(entry.Thumbprint, canonical("alpha", "dev"))
-	require.NoError(t, err)
-	require.NotNil(t, got)
-	assert.Equal(t, "dev", got.AgentName)
-	assert.Equal(t, "alpha", got.Project)
-	assert.Equal(t, "ctr-1", got.ContainerID)
-}
-
 func TestSQLiteWriter_Add_RejectsDuplicates(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -84,53 +60,6 @@ func TestSQLiteWriter_Add_RejectsDuplicates(t *testing.T) {
 	}
 }
 
-func TestSQLiteRegistry_Lookup_CNMismatch_ReturnsUnknownAgent(t *testing.T) {
-	r, err := NewSQLiteWriter(dbPath(t, "agents.db"), logger.Nop())
-	require.NoError(t, err)
-	t.Cleanup(func() { closeRegistry(t, r) })
-
-	require.NoError(t, r.Add(validEntry("alpha", "dev", "ctr", "cert")))
-
-	// Right thumbprint, wrong CN — must collapse to ErrUnknownAgent so
-	// handlers can't probe which half of the composite identity failed.
-	_, err = r.Lookup(tp("cert"), canonical("beta", "dev"))
-	assert.ErrorIs(t, err, ErrUnknownAgent)
-	_, err = r.Lookup(tp("cert"), canonical("alpha", "other"))
-	assert.ErrorIs(t, err, ErrUnknownAgent)
-
-	// Right thumbprint + right CN — must succeed.
-	got, err := r.Lookup(tp("cert"), canonical("alpha", "dev"))
-	require.NoError(t, err)
-	assert.Equal(t, "dev", got.AgentName)
-}
-
-func TestSQLiteRegistry_Lookup_UnknownThumbprint(t *testing.T) {
-	r, err := NewSQLiteWriter(dbPath(t, "agents.db"), logger.Nop())
-	require.NoError(t, err)
-	t.Cleanup(func() { closeRegistry(t, r) })
-
-	_, err = r.Lookup(tp("never-registered"), "clawker.x.y")
-	assert.ErrorIs(t, err, ErrUnknownAgent)
-}
-
-func TestSQLiteRegistry_LookupByContainerID(t *testing.T) {
-	r, err := NewSQLiteWriter(dbPath(t, "agents.db"), logger.Nop())
-	require.NoError(t, err)
-	t.Cleanup(func() { closeRegistry(t, r) })
-
-	require.NoError(t, r.Add(validEntry("p", "a", "ctr-1", "cert-1")))
-
-	got, err := r.LookupByContainerID("ctr-1")
-	require.NoError(t, err)
-	assert.Equal(t, "a", got.AgentName)
-
-	_, err = r.LookupByContainerID("ctr-missing")
-	assert.ErrorIs(t, err, ErrUnknownAgent)
-
-	_, err = r.LookupByContainerID("")
-	assert.ErrorIs(t, err, ErrUnknownAgent)
-}
-
 func TestSQLiteRegistry_EvictByContainerID_DeletesRow(t *testing.T) {
 	r, err := NewSQLiteWriter(dbPath(t, "agents.db"), logger.Nop())
 	require.NoError(t, err)
@@ -139,12 +68,26 @@ func TestSQLiteRegistry_EvictByContainerID_DeletesRow(t *testing.T) {
 	require.NoError(t, r.Add(validEntry("p", "a", "ctr-1", "cert-1")))
 	require.NoError(t, r.Add(validEntry("p", "b", "ctr-2", "cert-2")))
 
+	// Empty-string and missing-row paths collapse to ErrUnknownAgent —
+	// the registry's idempotency contract for the Register handler.
+	_, err = r.LookupByContainerID("ctr-missing")
+	assert.ErrorIs(t, err, ErrUnknownAgent)
+	_, err = r.LookupByContainerID("")
+	assert.ErrorIs(t, err, ErrUnknownAgent)
+
+	// Pre-evict lookup exercises the sqlite hex→[32]byte thumbprint
+	// round-trip — a regression in scanEntry's hex.DecodeString /
+	// length check would silently return zero-thumbprint entries.
+	got, err := r.LookupByContainerID("ctr-1")
+	require.NoError(t, err)
+	assert.Equal(t, tp("cert-1"), got.Thumbprint, "thumbprint round-trips through sqlite")
+
 	require.NoError(t, r.EvictByContainerID("ctr-1"))
 
-	_, err = r.Lookup(tp("cert-1"), canonical("p", "a"))
+	_, err = r.LookupByContainerID("ctr-1")
 	assert.ErrorIs(t, err, ErrUnknownAgent)
-	_, err = r.Lookup(tp("cert-2"), canonical("p", "b"))
-	assert.NoError(t, err)
+	_, err = r.LookupByContainerID("ctr-2")
+	require.NoError(t, err)
 }
 
 func TestSQLiteRegistry_EvictByContainerID_ReturnsErrOnDBFailure(t *testing.T) {
@@ -226,9 +169,11 @@ func TestSQLiteRegistry_ConcurrentWriters(t *testing.T) {
 }
 
 func TestSQLiteRegistry_SchemaMigration_FromOldDB(t *testing.T) {
-	// Open a sqlite DB with the OLD schema (no canonical_cn) and seed
-	// a row. The next NewSQLiteWriter open must detect the drift,
-	// drop+recreate the table, and continue.
+	// Open a sqlite DB with a pre-goose schema and seed a row. The
+	// next NewSQLiteWriter open must detect the missing goose_db_version
+	// table, drop the legacy agents table (alpha policy — registry
+	// state regenerates on re-Register), and apply the embedded
+	// migrations cleanly.
 	path := dbPath(t, "agents.db")
 	const oldSchema = `
 		CREATE TABLE agents (
@@ -260,7 +205,8 @@ func TestSQLiteRegistry_SchemaMigration_FromOldDB(t *testing.T) {
 
 	// New Adds against the migrated schema work.
 	require.NoError(t, r.Add(validEntry("p", "a", "ctr-1", "cert-1")))
-	got, err := r.Lookup(tp("cert-1"), canonical("p", "a"))
+	got, err := r.LookupByContainerID("ctr-1")
 	require.NoError(t, err)
 	require.NotNil(t, got)
+	assert.Equal(t, "a", got.AgentName)
 }
