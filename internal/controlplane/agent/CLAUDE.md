@@ -77,9 +77,18 @@ interceptor change can't substitute the value the registry stores).
 Rows store the `(thumbprint, container_id, project, agent_name,
 registered_at, last_seen)` tuple; `Snapshot()` and `ListAgents`
 reconstruct the displayed AgentFullName on demand from project +
-agent_name. The legacy `canonical_cn` pre-compute column is unused
-(writes go to empty string in Task 4) and dropped by Task 5's goose
+agent_name. There is no precomputed identity column on the row —
+the historical `canonical_cn` column was dropped by goose
 migration 00002.
+
+`Entry.Project` and `Entry.AgentName` are typed
+(`auth.ProjectSlug` / `auth.AgentName`). Construction goes through
+`auth.NewProjectSlug` / `auth.NewAgentName` at the wire boundary,
+and `scanEntry` re-validates on sqlite read so a hand-edited or
+corrupted row cannot land an invariant-violating value — `Snapshot()`
+logs and skips rows that fail validation (`event=agentregistry_row_skipped`
+plus a per-snapshot `event=agentregistry_snapshot_skipped_rows`
+summary).
 
 CP is the SOLE writer of registry rows. The CLI never opens the
 sqlite DB — that's what fixes the WAL coherence bug across the
@@ -89,7 +98,7 @@ macOS bind-mount boundary.
 
 1. **Container creation** (`clawker run`): CLI mints a leaf cert with
    `Subject.CommonName = consts.ContainerClawkerd` (binary identity),
-   the canonical agent identity in a `urn:clawker:agent:<canonical>`
+   the per-agent `AgentFullName` in a `urn:clawker:agent:<full-name>`
    URI SAN, and the container_id in a `urn:clawker:container:<id>`
    URI SAN. Tars cert+key+ca+assertion JWT into the container, starts
    it. No registry row written here.
@@ -185,8 +194,8 @@ session lifecycle + identity fields. `AgentRegistered.ApplyTo` sets
 
 ## Imports
 
-**Uses**: `internal/auth` (CanonicalAgentCN, NewAgentName,
-NewProjectSlug, ContainerIDFromCert, AgentCanonicalFromCert,
+**Uses**: `internal/auth` (AgentFullName, NewAgentName,
+NewProjectSlug, ContainerIDFromCert, AgentFullNameFromCert,
 AgentSANScheme, ContainerSANScheme), `internal/consts` (Network,
 LabelAgent/Project/Purpose, ContainerCP, ContainerClawkerd,
 ScopeAgentSelfRegister),
