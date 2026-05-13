@@ -20,7 +20,7 @@
 // Cert chain verification, peer CN match, and registry classification
 // outcomes are captured on the establishResult and surfaced through
 // the typed event surface — SessionConnected carries flat
-// PeerCN/PeerThumbprint fields; AgentRegistered/AgentUntrusted carry
+// PeerAgentFullName/PeerThumbprint fields; AgentRegistered/AgentUntrusted carry
 // the policy outcomes. Subscribers consume those events to enact
 // policy (containment, alerting, eviction); the dialer holds no
 // policy itself.
@@ -470,10 +470,16 @@ type establishResult struct {
 // enum, not on this struct, since the dial flow drives event
 // publication directly off the outcome rather than threading a
 // unified payload.
+//
+// PeerAgentFullName is the canonical agent identity
+// ("clawker.<project>.<agent>") read from the peer's URI SAN
+// (urn:clawker:agent:<canonical>) — NOT from Subject.CommonName,
+// which is the deterministic consts.ContainerClawkerd literal and
+// carries no per-agent information.
 type peerInfo struct {
-	PeerCN         string
-	PeerThumbprint [sha256.Size]byte
-	ChainVerified  bool
+	PeerAgentFullName string
+	PeerThumbprint    [sha256.Size]byte
+	ChainVerified     bool
 	// CaptureReason is set when capturePeer hit an unusual case (no
 	// peer certs, leaf parse failed, chain verify failed). Empty on
 	// the happy path. Stays purely diagnostic — the dialer never
@@ -673,7 +679,7 @@ func nextBackoff(backoff time.Duration) time.Duration {
 // peerInfo (cert-related fields populated by VerifyPeerCertificate)
 // on success, or an error describing which step failed.
 //
-// Cert-related fields (PeerCN, PeerThumbprint, ChainVerified) are
+// Cert-related fields (PeerAgentFullName, PeerThumbprint, ChainVerified) are
 // captured during the TLS handshake via VerifyPeerCertificate that
 // always returns nil — the dialer is permissive and never aborts on
 // cert grounds. The dial flow drives registry classification +
@@ -794,7 +800,7 @@ func (d *Dialer) classifyRegistry(peer peerInfo, containerID string) (registryOu
 	if cnErr != nil {
 		return outcomeRegistryNotQueried, "registry row CN compose failed: " + cnErr.Error()
 	}
-	if expectedCN != peer.PeerCN {
+	if expectedCN != peer.PeerAgentFullName {
 		return outcomeRegistryCNMismatch, ""
 	}
 	return outcomeRegistryMatch, ""
@@ -850,7 +856,7 @@ func agentLabels(c mobycontainer.InspectResponse) (agent, project string) {
 // clawkerd to issue containment commands; cert mismatch is a data
 // point, not an abort condition".
 //
-// peer is populated during the handshake with PeerCN,
+// peer is populated during the handshake with PeerAgentFullName,
 // PeerThumbprint, and ChainVerified. The handshake is lazy under
 // grpc.NewClient — these fields are not filled until the first RPC
 // (Session open) triggers the underlying TLS dial.
@@ -882,7 +888,7 @@ func (d *Dialer) dial(_ context.Context, addr string, peer *peerInfo) (*grpc.Cli
 	)
 }
 
-// capturePeer populates PeerCN / PeerThumbprint / ChainVerified on
+// capturePeer populates PeerAgentFullName / PeerThumbprint / ChainVerified on
 // peer from the peer's TLS handshake material. Permissive: every
 // code path returns without error; outcomes flow into peer fields
 // (and peer.CaptureReason for unusual cases). Extracted from the
@@ -907,7 +913,14 @@ func (d *Dialer) capturePeer(rawCerts [][]byte, peer *peerInfo) {
 		certs = append(certs, c)
 	}
 	leaf := certs[0]
-	peer.PeerCN = leaf.Subject.CommonName
+	// Source PeerAgentFullName from the urn:clawker:agent:<canonical> URI
+	// SAN. Subject.CommonName is the deterministic clawkerd binary
+	// literal (consts.ContainerClawkerd) and would yield the same
+	// string for every agent — the per-agent identity that
+	// classifyRegistry compares against the registry row's
+	// canonical_cn lives in the SAN. An empty value here flows into
+	// the CN-mismatch path; the dialer never aborts.
+	peer.PeerAgentFullName, _ = auth.AgentCanonicalFromCert(leaf)
 	peer.PeerThumbprint = sha256.Sum256(rawCerts[0])
 
 	// Chain-verify against the CLI CA. Outcome is a data point;
@@ -1294,7 +1307,7 @@ func (d *Dialer) publishConnecting(ctx context.Context, containerID, agent, proj
 
 // publishConnected records that the Session handshake succeeded
 // (mTLS + Hello + HelloAck) on the given attempt. peer carries the
-// captured cert identity (PeerCN, PeerThumbprint) flat on the event.
+// captured cert identity (PeerAgentFullName, PeerThumbprint) flat on the event.
 // Trust/registration outcomes are published via separate events
 // (AgentRegistered, AgentUntrusted).
 func (d *Dialer) publishConnected(ctx context.Context, containerID, agent, project, addr string, attempt int, peer peerInfo) {
@@ -1302,14 +1315,14 @@ func (d *Dialer) publishConnected(ctx context.Context, containerID, agent, proje
 		return
 	}
 	overseer.Publish(d.bus, SessionConnected{
-		ContainerID:    containerID,
-		AgentName:      agent,
-		Project:        project,
-		Address:        addr,
-		Attempts:       attempt,
-		PeerCN:         peer.PeerCN,
-		PeerThumbprint: peer.PeerThumbprint,
-		At:             time.Now(),
+		ContainerID:       containerID,
+		AgentName:         agent,
+		Project:           project,
+		Address:           addr,
+		Attempts:          attempt,
+		PeerAgentFullName: peer.PeerAgentFullName,
+		PeerThumbprint:    peer.PeerThumbprint,
+		At:                time.Now(),
 	})
 }
 

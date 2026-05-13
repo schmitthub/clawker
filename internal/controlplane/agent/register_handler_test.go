@@ -86,8 +86,11 @@ func happyContainer(containerID, project, agentName, ip string) mobycontainer.In
 }
 
 // signTestLeaf produces a leaf cert chained to caCert/caKey with the
-// given CN and (optionally) container_id encoded as a URI SAN.
-func signTestLeaf(t *testing.T, caCert *x509.Certificate, caKey *ecdsa.PrivateKey, cn, containerID string) *x509.Certificate {
+// given CN and (optionally) agent-canonical + container_id encoded as
+// URI SANs. Production leaves carry CN=consts.ContainerClawkerd plus
+// both SANs; tests that need to drive a specific failure path pass
+// deliberately-bogus or empty values for the relevant input.
+func signTestLeaf(t *testing.T, caCert *x509.Certificate, caKey *ecdsa.PrivateKey, cn, agentCanonical, containerID string) *x509.Certificate {
 	t.Helper()
 	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -103,10 +106,15 @@ func signTestLeaf(t *testing.T, caCert *x509.Certificate, caKey *ecdsa.PrivateKe
 		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
 	}
+	if agentCanonical != "" {
+		uri, err := url.Parse(auth.AgentSANScheme + agentCanonical)
+		require.NoError(t, err)
+		tmpl.URIs = append(tmpl.URIs, uri)
+	}
 	if containerID != "" {
 		uri, err := url.Parse(auth.ContainerSANScheme + containerID)
 		require.NoError(t, err)
-		tmpl.URIs = []*url.URL{uri}
+		tmpl.URIs = append(tmpl.URIs, uri)
 	}
 
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &leafKey.PublicKey, caKey)
@@ -153,7 +161,7 @@ func TestRegister_HappyPath(t *testing.T) {
 	caCert, caKey := genTestCA(t)
 	const containerID = "ctr-happy-path"
 	const project, agentName = "myapp", "dev"
-	leaf := signTestLeaf(t, caCert, caKey, auth.CanonicalAgentCN(auth.MustProjectSlug(project), auth.MustAgentName(agentName)), containerID)
+	leaf := signTestLeaf(t, caCert, caKey, consts.ContainerClawkerd, auth.CanonicalAgentCN(auth.MustProjectSlug(project), auth.MustAgentName(agentName)), containerID)
 
 	var added Entry
 	reg := &RegistryMock{
@@ -212,17 +220,19 @@ func TestRegister_NoPeerInfo_PermissionDenied(t *testing.T) {
 	assert.Equal(t, codes.PermissionDenied, st.Code())
 }
 
-func TestRegister_CNMismatch(t *testing.T) {
+func TestRegister_AgentSANMismatch(t *testing.T) {
 	caCert, caKey := genTestCA(t)
-	const containerID = "ctr-cn-mismatch"
-	// Cert CN reflects "actual" project; request claims "different"
-	// project. Handler must reject before reaching docker.
-	leaf := signTestLeaf(t, caCert, caKey, "clawker.actual.dev", containerID)
+	const containerID = "ctr-san-mismatch"
+	// Cert agent SAN reflects "actual" project; request claims
+	// "different" project. Handler must reject before reaching docker.
+	// (Subject.CommonName is the binary literal — the interceptor pins
+	// it; this test exercises the handler's own SAN-vs-request gate.)
+	leaf := signTestLeaf(t, caCert, caKey, consts.ContainerClawkerd, "clawker.actual.dev", containerID)
 
 	reg := &RegistryMock{}
 	inspector := &fakeContainerInspector{
 		inspectFn: func(_ context.Context, _ string) (mobycontainer.InspectResponse, error) {
-			t.Fatalf("Inspect must not be called when CN mismatches")
+			t.Fatalf("Inspect must not be called when agent SAN mismatches")
 			return mobycontainer.InspectResponse{}, nil
 		},
 	}
@@ -235,11 +245,27 @@ func TestRegister_CNMismatch(t *testing.T) {
 	assert.Equal(t, codes.PermissionDenied, st.Code())
 }
 
+func TestRegister_NoAgentSAN(t *testing.T) {
+	caCert, caKey := genTestCA(t)
+	const containerID = "ctr-no-agent-san"
+	// Cert is missing the urn:clawker:agent: SAN. Handler must reject
+	// — without a canonical to compare against the request, no
+	// identity gate can fire.
+	leaf := signTestLeaf(t, caCert, caKey, consts.ContainerClawkerd, "", containerID)
+
+	h := newTestHandler(&RegistryMock{}, &fakeContainerInspector{})
+	ctx := peerCtxFromCertAndIP(t, leaf, "10.20.0.5")
+	_, err := h.Register(ctx, &agentv1.RegisterRequest{AgentName: "dev", Project: "p"})
+	require.Error(t, err)
+	st, _ := status.FromError(err)
+	assert.Equal(t, codes.PermissionDenied, st.Code())
+}
+
 func TestRegister_NoContainerSAN(t *testing.T) {
 	caCert, caKey := genTestCA(t)
 	// signTestLeaf with empty containerID skips the SAN. Handler must
 	// reject because it can't bind to a container_id.
-	leaf := signTestLeaf(t, caCert, caKey, auth.CanonicalAgentCN(auth.MustProjectSlug("p"), auth.MustAgentName("dev")), "")
+	leaf := signTestLeaf(t, caCert, caKey, consts.ContainerClawkerd, auth.CanonicalAgentCN(auth.MustProjectSlug("p"), auth.MustAgentName("dev")), "")
 
 	h := newTestHandler(&RegistryMock{}, &fakeContainerInspector{})
 
@@ -253,7 +279,7 @@ func TestRegister_NoContainerSAN(t *testing.T) {
 func TestRegister_ContainerLabelMismatch(t *testing.T) {
 	caCert, caKey := genTestCA(t)
 	const containerID = "ctr-label-mismatch"
-	leaf := signTestLeaf(t, caCert, caKey, auth.CanonicalAgentCN(auth.MustProjectSlug("myapp"), auth.MustAgentName("dev")), containerID)
+	leaf := signTestLeaf(t, caCert, caKey, consts.ContainerClawkerd, auth.CanonicalAgentCN(auth.MustProjectSlug("myapp"), auth.MustAgentName("dev")), containerID)
 
 	inspector := &fakeContainerInspector{
 		inspectFn: func(_ context.Context, _ string) (mobycontainer.InspectResponse, error) {
@@ -274,7 +300,7 @@ func TestRegister_ContainerLabelMismatch(t *testing.T) {
 func TestRegister_PeerIPMismatch(t *testing.T) {
 	caCert, caKey := genTestCA(t)
 	const containerID = "ctr-ip-mismatch"
-	leaf := signTestLeaf(t, caCert, caKey, auth.CanonicalAgentCN(auth.MustProjectSlug("myapp"), auth.MustAgentName("dev")), containerID)
+	leaf := signTestLeaf(t, caCert, caKey, consts.ContainerClawkerd, auth.CanonicalAgentCN(auth.MustProjectSlug("myapp"), auth.MustAgentName("dev")), containerID)
 
 	inspector := &fakeContainerInspector{
 		inspectFn: func(_ context.Context, _ string) (mobycontainer.InspectResponse, error) {
@@ -294,7 +320,7 @@ func TestRegister_PeerIPMismatch(t *testing.T) {
 func TestRegister_IdempotentRetry_MatchingThumbprint(t *testing.T) {
 	caCert, caKey := genTestCA(t)
 	const containerID = "ctr-idempotent"
-	leaf := signTestLeaf(t, caCert, caKey, auth.CanonicalAgentCN(auth.MustProjectSlug("myapp"), auth.MustAgentName("dev")), containerID)
+	leaf := signTestLeaf(t, caCert, caKey, consts.ContainerClawkerd, auth.CanonicalAgentCN(auth.MustProjectSlug("myapp"), auth.MustAgentName("dev")), containerID)
 	thumb := sha256.Sum256(leaf.Raw)
 
 	addCalled := false
@@ -329,7 +355,7 @@ func TestRegister_IdempotentRetry_MatchingThumbprint(t *testing.T) {
 func TestRegister_ThumbprintReplay_Rejected(t *testing.T) {
 	caCert, caKey := genTestCA(t)
 	const containerID = "ctr-replay"
-	leaf := signTestLeaf(t, caCert, caKey, auth.CanonicalAgentCN(auth.MustProjectSlug("myapp"), auth.MustAgentName("dev")), containerID)
+	leaf := signTestLeaf(t, caCert, caKey, consts.ContainerClawkerd, auth.CanonicalAgentCN(auth.MustProjectSlug("myapp"), auth.MustAgentName("dev")), containerID)
 
 	differentThumb := sha256.Sum256([]byte("a-different-cert"))
 	reg := &RegistryMock{
@@ -367,7 +393,7 @@ func TestRegister_ThumbprintReplay_Rejected(t *testing.T) {
 func TestRegister_InspectError_PermissionDenied(t *testing.T) {
 	caCert, caKey := genTestCA(t)
 	const containerID = "ctr-inspect-err"
-	leaf := signTestLeaf(t, caCert, caKey, auth.CanonicalAgentCN(auth.MustProjectSlug("myapp"), auth.MustAgentName("dev")), containerID)
+	leaf := signTestLeaf(t, caCert, caKey, consts.ContainerClawkerd, auth.CanonicalAgentCN(auth.MustProjectSlug("myapp"), auth.MustAgentName("dev")), containerID)
 
 	addCalled := false
 	reg := &RegistryMock{
@@ -399,7 +425,7 @@ func TestRegister_InspectError_PermissionDenied(t *testing.T) {
 func TestRegister_AddError_Internal(t *testing.T) {
 	caCert, caKey := genTestCA(t)
 	const containerID = "ctr-add-err"
-	leaf := signTestLeaf(t, caCert, caKey, auth.CanonicalAgentCN(auth.MustProjectSlug("myapp"), auth.MustAgentName("dev")), containerID)
+	leaf := signTestLeaf(t, caCert, caKey, consts.ContainerClawkerd, auth.CanonicalAgentCN(auth.MustProjectSlug("myapp"), auth.MustAgentName("dev")), containerID)
 
 	reg := &RegistryMock{
 		LookupByContainerIDFunc: func(string) (*Entry, error) { return nil, ErrUnknownAgent },
@@ -427,7 +453,7 @@ func TestRegister_AddError_Internal(t *testing.T) {
 func TestRegister_LookupIOError_Internal(t *testing.T) {
 	caCert, caKey := genTestCA(t)
 	const containerID = "ctr-lookup-err"
-	leaf := signTestLeaf(t, caCert, caKey, auth.CanonicalAgentCN(auth.MustProjectSlug("myapp"), auth.MustAgentName("dev")), containerID)
+	leaf := signTestLeaf(t, caCert, caKey, consts.ContainerClawkerd, auth.CanonicalAgentCN(auth.MustProjectSlug("myapp"), auth.MustAgentName("dev")), containerID)
 
 	addCalled := false
 	reg := &RegistryMock{

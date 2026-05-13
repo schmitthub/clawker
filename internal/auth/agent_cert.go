@@ -25,6 +25,23 @@ import (
 // Example: urn:clawker:container:abc123def456...
 const ContainerSANScheme = "urn:clawker:container:"
 
+// AgentSANScheme is the URI SAN scheme that carries the canonical
+// agent identity ("clawker.<project>.<agent>" or "clawker.<agent>" in
+// the unscoped case). It lives in a URI SAN — not Subject.CommonName —
+// because the composed canonical can exceed x509's 64-byte CN limit
+// once a long project slug + a long agent name (or a random
+// docker.GenerateRandomName output) are concatenated. The cert's
+// Subject.CommonName is the deterministic consts.ContainerClawkerd
+// binary-identity literal instead.
+//
+// CP-side gates (IdentityInterceptor, Register handler, dialer
+// classifyRegistry) read this SAN via AgentCanonicalFromCert and
+// compare it against the per-row canonical_cn (registry) or against
+// the request-derived canonical (Register).
+//
+// Example: urn:clawker:agent:clawker.myapp.dev
+const AgentSANScheme = "urn:clawker:agent:"
+
 // BuildContainerSAN composes the URI SAN for a given container_id. The
 // returned *url.URL embeds in x509.Certificate.URIs.
 //
@@ -69,6 +86,39 @@ func isHexLower(s string) bool {
 // such SAN is present so callers can branch on a clean missing-binding
 // signal rather than parsing strings.
 func ContainerIDFromCert(cert *x509.Certificate) (string, bool) {
+	return sanTailFromCert(cert, ContainerSANScheme)
+}
+
+// BuildAgentSAN composes the URI SAN that carries the canonical agent
+// identity ("clawker.<project>.<agent>"). Takes typed ProjectSlug +
+// AgentName so the canonical-form rule is enforced once by
+// CanonicalAgentCN and the helper trusts its inputs.
+func BuildAgentSAN(project ProjectSlug, agent AgentName) (*url.URL, error) {
+	if agent.IsZero() {
+		return nil, fmt.Errorf("agent name required")
+	}
+	canonical := CanonicalAgentCN(project, agent)
+	u, err := url.Parse(AgentSANScheme + canonical)
+	if err != nil {
+		return nil, fmt.Errorf("build agent SAN: %w", err)
+	}
+	return u, nil
+}
+
+// AgentCanonicalFromCert extracts the canonical agent identity encoded
+// as a URI SAN of the form urn:clawker:agent:<canonical>. Returns ("",
+// false) when no such SAN is present — callers map a missing binding
+// to a generic PermissionDenied without leaking which structural check
+// failed.
+func AgentCanonicalFromCert(cert *x509.Certificate) (string, bool) {
+	return sanTailFromCert(cert, AgentSANScheme)
+}
+
+// sanTailFromCert walks the cert's URI SANs and returns the tail of
+// the first URI whose string-form starts with prefix. Shared by
+// ContainerIDFromCert + AgentCanonicalFromCert so the empty-tail
+// rejection (len(s) > len(prefix)) is implemented once.
+func sanTailFromCert(cert *x509.Certificate, prefix string) (string, bool) {
 	if cert == nil {
 		return "", false
 	}
@@ -77,8 +127,8 @@ func ContainerIDFromCert(cert *x509.Certificate) (string, bool) {
 			continue
 		}
 		s := u.String()
-		if len(s) > len(ContainerSANScheme) && s[:len(ContainerSANScheme)] == ContainerSANScheme {
-			return s[len(ContainerSANScheme):], true
+		if len(s) > len(prefix) && s[:len(prefix)] == prefix {
+			return s[len(prefix):], true
 		}
 	}
 	return "", false
@@ -137,19 +187,21 @@ func (AgentCert) GoString() string { return "AgentCert{<redacted>}" }
 // to the agent container's writable layer via Docker's CopyToContainer
 // API (see consts.BootstrapDir) and never persisted on the host.
 //
-// CN is composed inside the function from (project, agent) via
-// CanonicalAgentCN — callers MUST pass the user-typed short names and let
-// the helper apply the consts.NamePrefix prefix and the 2-vs-3-segment
-// rule. This keeps every cert minted by the CLI in a single canonical
-// shape so the agent handler's CN cross-check has a single equality to
-// enforce.
+// Subject.CommonName is the deterministic consts.ContainerClawkerd
+// literal so the CN length is fixed regardless of project / agent
+// inputs. The per-agent canonical identity ("clawker.<project>.<agent>"
+// — composed via CanonicalAgentCN from the typed inputs) lives in a
+// URI SAN (urn:clawker:agent:<canonical>) instead, so a long project
+// slug or a long random docker.GenerateRandomName output can't push
+// the cert past x509's 64-byte CN limit. CP-side gates read the
+// canonical via AgentCanonicalFromCert.
 //
 // containerID is the docker container_id this cert is being minted for.
-// MintAgentCert embeds it as a URI SAN (urn:clawker:container:<id>) so
-// the CP-side Register handler can read the binding directly off the
-// peer cert at handler entry. A leaked cert presented for a different
-// container_id is rejected because the SAN won't match the docker
-// container the peer IP resolves to.
+// MintAgentCert embeds it as a second URI SAN (urn:clawker:container:
+// <id>) so the CP-side Register handler can read the binding directly
+// off the peer cert at handler entry. A leaked cert presented for a
+// different container_id is rejected because the SAN won't match the
+// docker container the peer IP resolves to.
 //
 // The 24h lifetime is intentional — thumbprint pinning at registry
 // lookup time makes longer-lived certs safe, but a tight ceiling caps
@@ -194,12 +246,21 @@ func MintAgentCert(caCertPath, caKeyPath string, project ProjectSlug, agent Agen
 	if err != nil {
 		return nil, fmt.Errorf("build container SAN: %w", err)
 	}
+	agentSAN, err := BuildAgentSAN(project, agent)
+	if err != nil {
+		return nil, fmt.Errorf("build agent SAN: %w", err)
+	}
 
 	now := time.Now().UTC()
 	tmpl := &x509.Certificate{
 		SerialNumber: serial,
 		Subject: pkix.Name{
-			CommonName:   CanonicalAgentCN(project, agent),
+			// Deterministic binary identity. The per-agent canonical
+			// ("clawker.<project>.<agent>") lives in a URI SAN —
+			// keeping it out of the CN frees agent names from x509's
+			// 64-byte CN limit (which used to force a 24-char cap on
+			// docker.GenerateRandomName output).
+			CommonName:   consts.ContainerClawkerd,
 			Organization: []string{"clawker"},
 		},
 		NotBefore: now.Add(-5 * time.Minute),
@@ -213,9 +274,12 @@ func MintAgentCert(caCertPath, caKeyPath string, project ProjectSlug, agent Agen
 		// ExtKeyUsageServerAuth — without ServerAuth here, every
 		// CP→clawkerd dial fails with "incompatible key usage".
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
-		// URI SAN binds this cert to its container_id. Register
-		// handler reads it via auth.ContainerIDFromCert.
-		URIs: []*url.URL{containerSAN},
+		// URI SANs carry the two channel-bound identities: the
+		// docker container_id (Register handler reads via
+		// auth.ContainerIDFromCert) and the canonical agent
+		// identity (IdentityInterceptor + Register read via
+		// auth.AgentCanonicalFromCert).
+		URIs: []*url.URL{agentSAN, containerSAN},
 	}
 
 	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &leafKey.PublicKey, caKey)

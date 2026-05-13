@@ -114,10 +114,19 @@ func (p ProjectSlug) IsEmpty() bool { return p.s == "" }
 // start with a non-printable run.
 var shortNameRE = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
 
-// shortNameMax caps the length so the composed canonical CN
-// ("clawker.project.agent") fits comfortably under x509's 64-byte
-// CommonName limit even when both project and agent are populated.
-const shortNameMax = 24
+// shortNameMax caps the length so the composed Docker container name
+// ("clawker.<project>.<agent>") and volume name
+// ("clawker.<project>.<agent>-<purpose>") stay under Docker's 128-byte
+// resource-name limit. 50 leaves comfortable headroom for the prefix +
+// purpose suffixes (longest is "workspace") while accepting any
+// docker.GenerateRandomName output (worst-case adj-noun ≈ 27 chars).
+//
+// The canonical agent CN ("clawker.<project>.<agent>") is no longer
+// constrained by x509's 64-byte CommonName limit because MintAgentCert
+// embeds it as a URI SAN (urn:clawker:agent:<canonical>) rather than as
+// the cert's Subject.CommonName. The cert CN is the deterministic
+// consts.ContainerClawkerd literal.
+const shortNameMax = 50
 
 // canonicalPrefix is the literal prefix that distinguishes a canonical
 // agent name from a user-typed short name. Reject inputs that already

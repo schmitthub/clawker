@@ -74,9 +74,11 @@ coherence bug across the macOS bind-mount boundary.
 ## Register flow (CP-driven, one-time per container)
 
 1. **Container creation** (`clawker run`): CLI mints a leaf cert with
-   the container_id baked into a URI SAN (`urn:clawker:container:<id>`),
-   tars cert+key+ca+assertion JWT into the container, starts it. No
-   registry row written here.
+   `Subject.CommonName = consts.ContainerClawkerd` (binary identity),
+   the canonical agent identity in a `urn:clawker:agent:<canonical>`
+   URI SAN, and the container_id in a `urn:clawker:container:<id>`
+   URI SAN. Tars cert+key+ca+assertion JWT into the container, starts
+   it. No registry row written here.
 2. **Session establishment**: CP dials clawkerd via `agentdial.Dialer`,
    completes mTLS + Hello, runs `classifyRegistry` → returns
    `outcomeRegistryMiss` because no row exists.
@@ -87,10 +89,14 @@ coherence bug across the macOS bind-mount boundary.
    `client_assertion` JWT for an access token, mTLS-dials CP's
    AgentPort with `bearerCreds`, calls `AgentService.Register`.
 5. **CP Register handler**: captures peer thumbprint, reads
-   container_id from cert URI SAN, validates CN (constant-time
-   compare against canonical CN), inspects container via
-   `ContainerInspector`, cross-checks labels + peer-IP-vs-clawker-net
-   IP, idempotently writes the row, returns Welcome.
+   container_id from `urn:clawker:container:` URI SAN, reads canonical
+   agent identity from `urn:clawker:agent:` URI SAN and constant-time
+   compares against `CanonicalAgentCN(project, agent)` from the
+   request. The `Subject.CommonName == consts.ContainerClawkerd` pin
+   already ran in `IdentityInterceptor` (universal — no opt-out for
+   that check). Inspects container via `ContainerInspector`,
+   cross-checks labels + peer-IP-vs-clawker-net IP, idempotently writes
+   the row, returns Welcome.
 6. **clawkerd replies** with `Response{RegisterDone{ok:true}}`.
 7. **CP confirms** by re-looking-up the row, publishes
    `AgentRegistered{Ok:true}` on the bus.
@@ -117,7 +123,7 @@ CP CN pin + Client-Auth EKU + CA chain enforced at TLS layer.
 
 | Hello-time outcome | Events published |
 |---|---|
-| Match | `SessionConnected` (with PeerCN/PeerThumbprint) |
+| Match | `SessionConnected` (with PeerAgentFullName/PeerThumbprint) |
 | Miss | `SessionConnected` → drive Register handshake → `AgentRegistered` (+ `AgentUntrusted{ReasonRegisterFailed}` on failure) |
 | ThumbprintMismatch | `SessionConnected` + `AgentUntrusted{ReasonThumbprintMismatch}` |
 | CNMismatch | `SessionConnected` + `AgentUntrusted{ReasonCNMismatch}` |
@@ -134,19 +140,34 @@ session lifecycle + identity fields. `AgentRegistered.ApplyTo` sets
   `/clawker.agent.v1.AgentService/Register` →
   `consts.ScopeAgentSelfRegister`. AuthInterceptor on the agent
   listener fails closed on unmapped methods.
-- `IdentityOptedOutMethods()` includes the Register method path.
-  Justification: the registry row keyed by peer thumbprint doesn't
-  exist yet at Register-call time — that's the entire purpose of
-  the call. Going through IdentityInterceptor would reject every
-  legitimate Register with `PermissionDenied`. The Register handler
-  does its own peer-cert capture + cross-checks, so opt-out
-  relocates the gate from interceptor to handler, not strips it.
+- `IdentityInterceptor` runs a two-stage gate on every RPC:
+  1. **Universal CN pin** — `leaf.Subject.CommonName` must equal
+     `consts.ContainerClawkerd` (constant-time compare). Applies to
+     every method including Register. Rejects any peer presenting a
+     non-clawkerd cert before reaching any handler.
+  2. **Registry lookup** — for non-opt-out methods, the interceptor
+     hashes `leaf.Raw` to a thumbprint, reads the canonical agent
+     identity from the `urn:clawker:agent:` URI SAN, and calls
+     `Registry.Lookup(thumbprint, agentFullName)`. The resolved
+     `*Entry` is attached to ctx via `WithEntry`.
+- `IdentityOptedOutMethods()` includes the Register method path —
+  but opt-out applies ONLY to the registry-lookup half. The
+  universal CN pin still runs. Justification for the registry-lookup
+  opt-out: the row keyed by peer thumbprint doesn't exist yet at
+  Register-call time — that's the entire purpose of the call.
+  Going through Lookup would reject every legitimate Register with
+  `PermissionDenied`. The Register handler does its own
+  SAN-canonical + container_id SAN + peer-IP + label cross-checks,
+  so opt-out relocates the registry gate from interceptor to
+  handler, not strips it.
 
 ## Imports
 
 **Uses**: `internal/auth` (CanonicalAgentCN, NewAgentName,
-NewProjectSlug, ContainerIDFromCert), `internal/consts` (Network,
-LabelAgent/Project/Purpose, ContainerCP, ScopeAgentSelfRegister),
+NewProjectSlug, ContainerIDFromCert, AgentCanonicalFromCert,
+AgentSANScheme, ContainerSANScheme), `internal/consts` (Network,
+LabelAgent/Project/Purpose, ContainerCP, ContainerClawkerd,
+ScopeAgentSelfRegister),
 `internal/controlplane/dockerevents`, `internal/controlplane/overseer`,
 `internal/logger`, `api/agent/v1`, `api/clawkerd/v1`,
 `modernc.org/sqlite`, `github.com/moby/moby/api/types/{container,

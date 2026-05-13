@@ -36,6 +36,12 @@ func TestNewAgentName_Validation(t *testing.T) {
 		{"slash rejected", "dev/main", true, "must match"},
 		{"space rejected", "dev main", true, "must match"},
 		{"too long rejected", strings.Repeat("a", shortNameMax+1), true, "too long"},
+		// Regression pin: docker.GenerateRandomName's worst-case output
+		// (longest adjective "compassionate" + longest noun
+		// "chandrasekhar" + hyphen = 27 chars) must validate. The cap
+		// used to be 24 — random names exceeded it and CreateContainer
+		// failed with "agent bootstrap: invalid agent name".
+		{"docker-random worst case accepted", "compassionate-chandrasekhar", false, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -175,7 +175,7 @@ func happyEstablishResult(stream *fakeSessionStream, peerCN string, peerThumb [s
 		Addr:     "10.0.0.1:7700",
 		Attempt:  1,
 		Outcome:  outcomeSuccess,
-		PeerInfo: peerInfo{PeerCN: peerCN, PeerThumbprint: peerThumb},
+		PeerInfo: peerInfo{PeerAgentFullName: peerCN, PeerThumbprint: peerThumb},
 	}
 }
 
@@ -498,7 +498,7 @@ func TestDispatchAgentEvents_OutcomesPinned(t *testing.T) {
 					}, nil
 				},
 			},
-			peer:       peerInfo{PeerCN: "clawker.myapp.dev", PeerThumbprint: sha256.Sum256([]byte("live-cert"))},
+			peer:       peerInfo{PeerAgentFullName: "clawker.myapp.dev", PeerThumbprint: sha256.Sum256([]byte("live-cert"))},
 			wantReason: overseer.UntrustedReasonThumbprintMismatch,
 		},
 		{
@@ -514,7 +514,7 @@ func TestDispatchAgentEvents_OutcomesPinned(t *testing.T) {
 					}, nil
 				},
 			},
-			peer:       peerInfo{PeerCN: "clawker.different.dev", PeerThumbprint: sha256.Sum256([]byte("c"))},
+			peer:       peerInfo{PeerAgentFullName: "clawker.different.dev", PeerThumbprint: sha256.Sum256([]byte("c"))},
 			wantReason: overseer.UntrustedReasonCNMismatch,
 		},
 		{
@@ -524,7 +524,7 @@ func TestDispatchAgentEvents_OutcomesPinned(t *testing.T) {
 					return nil, errors.New("disk i/o failure")
 				},
 			},
-			peer:       peerInfo{PeerCN: "clawker.x.y", PeerThumbprint: sha256.Sum256([]byte("p"))},
+			peer:       peerInfo{PeerAgentFullName: "clawker.x.y", PeerThumbprint: sha256.Sum256([]byte("p"))},
 			wantReason: overseer.UntrustedReasonCertInvalid,
 		},
 	}
@@ -580,8 +580,8 @@ func TestDispatchAgentEvents_AsymmetricTrust_StreamStaysOpen(t *testing.T) {
 		Agent:        "dev",
 		Project:      "myapp",
 		PeerInfo: peerInfo{
-			PeerCN:         "clawker.myapp.dev",
-			PeerThumbprint: sha256.Sum256([]byte("live")),
+			PeerAgentFullName: "clawker.myapp.dev",
+			PeerThumbprint:    sha256.Sum256([]byte("live")),
 		},
 	}
 

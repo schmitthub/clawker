@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"errors"
 
 	"google.golang.org/grpc"
@@ -11,21 +12,25 @@ import (
 
 	agentv1 "github.com/schmitthub/clawker/api/agent/v1"
 
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // IdentityOptedOutMethods returns the data-driven policy map of agent
-// RPC methods that are EXEMPT from the identity-required default. Only
-// bootstrap RPCs that authenticate themselves belong here.
+// RPC methods that are EXEMPT from the REGISTRY-LOOKUP half of the
+// identity check. The binary-CN pin (Subject.CommonName ==
+// consts.ContainerClawkerd) still runs for every method on this list
+// — opt-out only relaxes the thumbprint→Entry lookup, not the cert-
+// subject pin.
 //
 // Register is exempt because the registry row keyed by the peer cert
 // thumbprint does not exist yet — the entire point of the call is to
-// CREATE that row. Going through the identity interceptor would
+// CREATE that row. Going through the registry-lookup half would
 // reject every legitimate Register call with PermissionDenied. The
-// Register handler does its own peer-cert capture and cross-checks
-// (CN + container_id SAN + peer IP + container labels) so this
-// opt-out doesn't strip security; it just relocates the gate from
-// the interceptor to the handler.
+// Register handler does its own per-call cross-checks (SAN-canonical
+// vs request fields + container_id SAN + peer IP + container labels)
+// so opt-out doesn't strip security; it relocates the registry gate
+// from the interceptor to the handler.
 //
 // The shape mirrors AgentMethodScopes(): a build-time test walks the
 // AgentService_ServiceDesc and asserts every method has either an
@@ -130,22 +135,50 @@ func IdentityInterceptor(reg Registry, optedOut map[string]bool, log *logger.Log
 	}
 
 	resolve := func(ctx context.Context, method string) (context.Context, error) {
-		if optedOut[method] {
-			return ctx, nil
-		}
+		// Universal: read the peer's leaf cert and pin
+		// Subject.CommonName to the deterministic clawkerd binary
+		// identity. Runs BEFORE the opt-out branch so Register also
+		// goes through this gate — a peer presenting a non-clawkerd
+		// cert is rejected before reaching any handler.
 		pid, err := peerIdentityFromContext(ctx)
 		if err != nil {
 			log.Warn().Err(err).Str("method", method).Msg("agent identity: missing peer auth info")
 			return nil, status.Error(codes.PermissionDenied, "registration rejected")
 		}
+		if subtle.ConstantTimeCompare([]byte(pid.CommonName), []byte(consts.ContainerClawkerd)) != 1 {
+			log.Warn().
+				Str("method", method).
+				Str("peer_cn", pid.CommonName).
+				Str("expected_cn", consts.ContainerClawkerd).
+				Msg("agent identity: peer CN not authorized")
+			return nil, status.Error(codes.PermissionDenied, "registration rejected")
+		}
+
+		// Opt-out methods (Register) skip only the registry lookup —
+		// they self-authenticate via per-handler cross-checks. The
+		// CN pin above still ran.
+		if optedOut[method] {
+			return ctx, nil
+		}
+
+		// Reject peers whose cert is missing the agent URI SAN —
+		// non-opt-out RPCs need a canonical identity to feed into
+		// Registry.Lookup. Empty AgentFullName here means MintAgentCert
+		// didn't run or a legacy cert is in play; either way, refuse.
+		if pid.AgentFullName == "" {
+			log.Warn().Str("method", method).Msg("agent identity: missing agent URI SAN")
+			return nil, status.Error(codes.PermissionDenied, "registration rejected")
+		}
+
 		thumbprint := sha256.Sum256(pid.Raw)
-		// Pass the peer cert CN through so the registry can verify it
-		// against the entry's stored canonical (Project, AgentName).
-		// Without this cross-check a future regression that re-keys the
-		// registry by thumbprint alone would silently authorize any peer
-		// presenting a registered thumbprint regardless of the cert
-		// subject — defense-in-depth against thumbprint reuse.
-		entry, err := reg.Lookup(thumbprint, pid.CommonName)
+		// Pass the SAN-sourced canonical agent identity through so the
+		// registry can verify it against the entry's stored canonical
+		// (Project, AgentName short-form). Without this cross-check a
+		// future regression that re-keys the registry by thumbprint
+		// alone would silently authorize any peer presenting a
+		// registered thumbprint regardless of the cert SAN —
+		// defense-in-depth against thumbprint reuse.
+		entry, err := reg.Lookup(thumbprint, pid.AgentFullName)
 		if err != nil {
 			// Differentiate the unknown-thumbprint case (operator-
 			// expected: agent never registered or already evicted) from

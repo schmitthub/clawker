@@ -155,6 +155,12 @@ func (h *Handler) Register(ctx context.Context, req *agentv1.RegisterRequest) (*
 
 	// Capture peer cert + thumbprint at handler entry. The thumbprint
 	// is the load-bearing identity binding we write to the registry.
+	//
+	// IdentityInterceptor already pinned leaf.Subject.CommonName to
+	// consts.ContainerClawkerd before reaching this handler, so we
+	// don't re-check it here. The remaining identity gate is the
+	// agent URI SAN: the canonical the cert carries must match the
+	// canonical derived from the request's (project, agentName).
 	leaf, peerIP, err := peerLeafAndIP(ctx)
 	if err != nil {
 		h.log.Warn().Err(err).Str("event", "agent_register_no_peer").Msg("peer cert/IP unavailable")
@@ -162,16 +168,18 @@ func (h *Handler) Register(ctx context.Context, req *agentv1.RegisterRequest) (*
 	}
 	thumbprint := sha256.Sum256(leaf.Raw)
 
-	// Cross-check the cert's CN against the canonical CN derived from
-	// the request's identity. Constant-time compare to defend against
-	// any future timing-channel attack on this surface.
-	expectedCN := auth.CanonicalAgentCN(project, agentName)
-	if subtle.ConstantTimeCompare([]byte(leaf.Subject.CommonName), []byte(expectedCN)) != 1 {
+	certCanonical, ok := auth.AgentCanonicalFromCert(leaf)
+	if !ok {
+		h.log.Warn().Str("event", "agent_register_no_agent_san").Msg("cert missing agent URI SAN")
+		return nil, status.Error(codes.PermissionDenied, "register: identity check failed")
+	}
+	expectedCanonical := auth.CanonicalAgentCN(project, agentName)
+	if subtle.ConstantTimeCompare([]byte(certCanonical), []byte(expectedCanonical)) != 1 {
 		h.log.Warn().
-			Str("event", "agent_register_cn_mismatch").
-			Str("peer_cn", leaf.Subject.CommonName).
-			Str("expected_cn", expectedCN).
-			Msg("cert CN does not match request identity")
+			Str("event", "agent_register_canonical_mismatch").
+			Str("cert_canonical", certCanonical).
+			Str("expected_canonical", expectedCanonical).
+			Msg("cert agent SAN does not match request identity")
 		return nil, status.Error(codes.PermissionDenied, "register: identity check failed")
 	}
 

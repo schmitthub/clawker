@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"net"
+	"net/url"
 	"testing"
 	"time"
 
@@ -19,14 +20,28 @@ import (
 
 	agentv1 "github.com/schmitthub/clawker/api/agent/v1"
 
+	"github.com/schmitthub/clawker/internal/auth"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
+// testAgentCanonical is the agent SAN value baked into fixturePeerCtx.
+// IdentityInterceptor forwards this to Registry.Lookup for the
+// canonical-vs-thumbprint cross-check.
+const testAgentCanonical = "clawker.p.alpha"
+
 // ctxWithPeer builds a fake gRPC context carrying TLS peer info — the
 // minimum surface peerIdentityFromContext reads (PeerCertificates +
-// peer.Addr).
-func ctxWithPeer(certRaw []byte, cn string, ip net.IP) context.Context {
+// peer.Addr). The cert has an urn:clawker:agent: URI SAN so
+// peerIdentityFromContext can populate pid.AgentName.
+func ctxWithPeer(certRaw []byte, cn, agentCanonical string, ip net.IP) context.Context {
 	cert := &x509.Certificate{Raw: certRaw, Subject: pkix.Name{CommonName: cn}}
+	if agentCanonical != "" {
+		u, err := url.Parse(auth.AgentSANScheme + agentCanonical)
+		if err == nil {
+			cert.URIs = []*url.URL{u}
+		}
+	}
 	tlsInfo := credentials.TLSInfo{}
 	tlsInfo.State.PeerCertificates = []*x509.Certificate{cert}
 	addr := &net.TCPAddr{IP: ip, Port: 1234}
@@ -47,10 +62,12 @@ func hypotheticalIdentityRequiredMethod() string {
 }
 
 // fixturePeerCtx returns a ctx that looks like a real mTLS-authenticated
-// gRPC call: peer cert with the supplied raw bytes, peer IP set so
-// peerIdentityFromContext succeeds.
+// gRPC call: peer cert with the supplied raw bytes, CN pinned to the
+// production clawkerd-binary literal so the interceptor's universal
+// CN gate passes, agent-canonical SAN populated so the registry-lookup
+// branch sees a non-empty pid.AgentName.
 func fixturePeerCtx(certRaw []byte) context.Context {
-	return ctxWithPeer(certRaw, "test-cn", net.IPv4(10, 0, 0, 1))
+	return ctxWithPeer(certRaw, consts.ContainerClawkerd, testAgentCanonical, net.IPv4(10, 0, 0, 1))
 }
 
 // --- Unary interceptor cases ---
@@ -91,7 +108,7 @@ func TestIdentityInterceptor_Unary_RegistryHit_AttachesEntry(t *testing.T) {
 	)
 	require.NoError(t, err)
 	assert.Equal(t, wantThumb, lookupArg, "interceptor must hash peer cert and pass to Lookup")
-	assert.Equal(t, "test-cn", gotCN, "interceptor must forward peer cert CN to Lookup for the cross-check")
+	assert.Equal(t, testAgentCanonical, gotCN, "interceptor must forward SAN-canonical to Lookup, not Subject.CommonName")
 	require.NotNil(t, gotEntry)
 	assert.Equal(t, wantEntry.AgentName, gotEntry.AgentName)
 }

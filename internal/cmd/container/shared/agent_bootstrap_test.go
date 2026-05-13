@@ -44,11 +44,17 @@ func TestGenerateAgentBootstrap_HappyPath(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, b)
 
-	// Cert decodes; CN must be canonical "clawker.<project>.<agent>" —
-	// composed inside MintAgentCert so the agent handler's CN cross-check
-	// has a single equality to enforce.
+	// Cert decodes; CN is the deterministic clawkerd binary identity.
+	// The per-agent canonical lives in the urn:clawker:agent: URI SAN
+	// so long random docker.GenerateRandomName outputs don't push the
+	// cert past x509's 64-byte CN limit.
 	leaf := mustParseCert(t, b.CertPEM)
-	assert.Equal(t, "clawker.alpha.bravo", leaf.Subject.CommonName)
+	assert.Equal(t, consts.ContainerClawkerd, leaf.Subject.CommonName)
+
+	// Canonical agent identity rides in the agent URI SAN.
+	gotCanonical, ok := auth.AgentCanonicalFromCert(leaf)
+	require.True(t, ok, "cert must carry agent URI SAN")
+	assert.Equal(t, "clawker.alpha.bravo", gotCanonical)
 
 	// Container_id must be embedded as a URI SAN — the load-bearing
 	// binding the Register handler reads to identify which container
@@ -65,13 +71,17 @@ func TestGenerateAgentBootstrap_HappyPath(t *testing.T) {
 }
 
 func TestGenerateAgentBootstrap_EmptyProjectStillWorks(t *testing.T) {
-	// 2-segment naming case: empty project, short agent. Canonical CN is
-	// "clawker.<agent>" — same convention as docker.ContainerName.
+	// 2-segment naming case: empty project, short agent. The agent
+	// SAN encodes "clawker.<agent>" (matching docker.ContainerName);
+	// CN remains the binary literal.
 	caCert, caKey, signing := setupAuthEnv(t)
 	b, err := GenerateAgentBootstrap(caCert, caKey, auth.ProjectSlug{}, auth.MustAgentName("solo"), "fedcba9876543210", "https://h.example/o/t", signing)
 	require.NoError(t, err)
 	leaf := mustParseCert(t, b.CertPEM)
-	assert.Equal(t, "clawker.solo", leaf.Subject.CommonName)
+	assert.Equal(t, consts.ContainerClawkerd, leaf.Subject.CommonName)
+	gotCanonical, ok := auth.AgentCanonicalFromCert(leaf)
+	require.True(t, ok)
+	assert.Equal(t, "clawker.solo", gotCanonical)
 }
 
 func TestGenerateAgentBootstrap_Validation(t *testing.T) {

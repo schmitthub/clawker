@@ -1,8 +1,11 @@
 package docker
 
 import (
+	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/schmitthub/clawker/internal/auth"
 )
 
 func TestValidateResourceName(t *testing.T) {
@@ -344,5 +347,30 @@ func TestGlobalVolumeName(t *testing.T) {
 func TestNamePrefix(t *testing.T) {
 	if NamePrefix != "clawker" {
 		t.Errorf("NamePrefix = %q, want %q", NamePrefix, "clawker")
+	}
+}
+
+// TestGenerateRandomName_AlwaysValidAsAgentName locks the contract
+// the original "agent name too long" regression broke. Container
+// creation falls back to GenerateRandomName when no --agent flag was
+// supplied (internal/cmd/container/shared/container_create.go), then
+// pipes the result through auth.NewAgentName for the leaf cert
+// canonical-CN composition. If a word-list addition pushes the
+// adj-noun combo past auth.shortNameMax (or violates the charset),
+// CreateContainer fails with "agent bootstrap: invalid agent name"
+// — the exact symptom this test was added to prevent re-introducing.
+//
+// The walk is the cartesian product of the two unexported word
+// lists, not a random sample of GenerateRandomName output, so a new
+// max-length adjective (or noun) shipped to the list fails the test
+// deterministically rather than depending on rand.Intn alignment.
+func TestGenerateRandomName_AlwaysValidAsAgentName(t *testing.T) {
+	for _, adj := range adjectives {
+		for _, noun := range nouns {
+			combo := fmt.Sprintf("%s-%s", adj, noun)
+			if _, err := auth.NewAgentName(combo); err != nil {
+				t.Fatalf("auth.NewAgentName(%q) rejected a GenerateRandomName output: %v", combo, err)
+			}
+		}
 	}
 }

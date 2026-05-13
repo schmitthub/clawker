@@ -160,6 +160,13 @@ const (
 	ContainerCP      = "clawker-controlplane"
 	ContainerEnvoy   = "clawker-envoy"
 	ContainerCoreDNS = "clawker-coredns"
+	// ContainerClawkerd is the deterministic Subject.CommonName baked
+	// into every per-agent leaf cert minted by the CLI. It identifies
+	// the clawkerd binary as the cert holder; the per-agent identity
+	// (canonical CN "clawker.<project>.<agent>") lives in a URI SAN so
+	// it isn't pinned to x509's 64-byte CN limit. CP-side gates pin the
+	// peer CN to this constant; agent identity is read from the SAN.
+	ContainerClawkerd = "clawker-clawkerd"
 )
 
 // Container images.
