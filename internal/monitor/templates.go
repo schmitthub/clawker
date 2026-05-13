@@ -74,6 +74,14 @@ type MonitorTemplateData struct {
 	OtelServerKeyHostPath  string
 	OtelCAHostPath         string
 
+	// Host paths consumed by the otel-collector's hostmetrics +
+	// docker_stats receivers. HostFilesystem is hardcoded to "/" — Linux
+	// host root or Docker Desktop VM root; mounted RO at /hostfs.
+	// DockerSocketPath comes from Settings.Docker.Socket (defaults to
+	// /var/run/docker.sock); mounted RO at /var/run/docker.sock.
+	HostFilesystem   string
+	DockerSocketPath string
+
 	// Container images — version + SHA256 pinned.
 	OtelCollectorImage        string
 	PrometheusImage           string
@@ -81,23 +89,28 @@ type MonitorTemplateData struct {
 	OpenSearchDashboardsImage string
 }
 
-// NewMonitorTemplateData constructs template data from MonitoringConfig.
+// NewMonitorTemplateData constructs template data from Settings.
 // Service hostnames are populated from [consts.MonitoringService*] —
 // changing a hostname in consts propagates here without further edits.
-func NewMonitorTemplateData(cfg *config.MonitoringConfig) MonitorTemplateData {
+// Settings.Monitoring drives ports/heap; Settings.Docker.Socket feeds
+// the otel-collector docker_stats receiver mount.
+func NewMonitorTemplateData(s *config.Settings) MonitorTemplateData {
+	mon := s.Monitoring
 	return MonitorTemplateData{
-		OtelCollectorPort:           cfg.OtelCollectorPort,
-		OtelGRPCPort:                cfg.OtelGRPCPort,
-		OtelCPPort:                  cfg.OtelCPPort,
-		PrometheusPort:              cfg.PrometheusPort,
-		PrometheusMetricsPort:       cfg.PrometheusMetricsPort,
-		OpenSearchPort:              cfg.OpenSearchPort,
-		OpenSearchDashboardsPort:    cfg.OpenSearchDashboardsPort,
-		OpenSearchHeapMB:            cfg.OpenSearchHeapMB,
+		OtelCollectorPort:           mon.OtelCollectorPort,
+		OtelGRPCPort:                mon.OtelGRPCPort,
+		OtelCPPort:                  mon.OtelCPPort,
+		PrometheusPort:              mon.PrometheusPort,
+		PrometheusMetricsPort:       mon.PrometheusMetricsPort,
+		OpenSearchPort:              mon.OpenSearchPort,
+		OpenSearchDashboardsPort:    mon.OpenSearchDashboardsPort,
+		OpenSearchHeapMB:            mon.OpenSearchHeapMB,
 		OtelCollectorService:        consts.MonitoringServiceOtelCollector,
 		PrometheusService:           consts.MonitoringServicePrometheus,
 		OpenSearchNodeService:       consts.MonitoringServiceOpenSearchNode,
 		OpenSearchDashboardsService: consts.MonitoringServiceOpenSearchDashboards,
+		HostFilesystem:              "/",
+		DockerSocketPath:            s.Docker.Socket,
 		OtelCollectorImage:          OtelCollectorImage,
 		PrometheusImage:             PrometheusImage,
 		OpenSearchImage:             OpenSearchImage,

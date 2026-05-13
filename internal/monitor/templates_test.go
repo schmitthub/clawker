@@ -9,18 +9,17 @@ import (
 	"github.com/schmitthub/clawker/internal/consts"
 )
 
-// testMonitoringConfig creates a config.Config with monitoring settings and returns
-// a pointer to its MonitoringConfig. The provided yaml string represents the
-// full monitoring settings (overrides all defaults), not a partial merge.
-func testMonitoringConfig(t *testing.T, yaml string) *config.MonitoringConfig {
+// testSettings creates a config.Config from the given settings YAML and
+// returns a pointer to its Settings. The yaml string represents the
+// full settings (overrides all defaults), not a partial merge.
+func testSettings(t *testing.T, yaml string) *config.Settings {
 	t.Helper()
 	cfg := configmocks.NewFromString("", yaml)
-	mon := cfg.MonitoringConfig()
-	return &mon
+	return cfg.SettingsStore().Read()
 }
 
 func TestNewMonitorTemplateData(t *testing.T) {
-	mon := testMonitoringConfig(t, `
+	mon := testSettings(t, `
 monitoring:
   otel_collector_port: 4318
   otel_collector_host: "localhost"
@@ -64,7 +63,7 @@ monitoring:
 
 func TestNewMonitorTemplateData_CustomGRPCPort(t *testing.T) {
 	// gRPC port is independent — not derived from HTTP port
-	mon := testMonitoringConfig(t, `
+	mon := testSettings(t, `
 monitoring:
   otel_collector_port: 5318
   otel_grpc_port: 5317
@@ -77,7 +76,7 @@ monitoring:
 }
 
 func TestRenderTemplate_Compose(t *testing.T) {
-	mon := testMonitoringConfig(t, `
+	mon := testSettings(t, `
 monitoring:
   otel_collector_port: 5318
   otel_grpc_port: 5317
@@ -86,6 +85,8 @@ monitoring:
   opensearch_port: 19200
   opensearch_dashboards_port: 15601
   opensearch_heap_mb: 1024
+docker:
+  socket: /var/run/docker.sock
 `)
 
 	data := NewMonitorTemplateData(mon)
@@ -110,6 +111,8 @@ monitoring:
 		{"OpenSearch node service key", consts.MonitoringServiceOpenSearchNode + ":"},
 		{"OpenSearch dashboards service key", consts.MonitoringServiceOpenSearchDashboards + ":"},
 		{"dashboards points at opensearch-node", `OPENSEARCH_HOSTS=["http://` + consts.MonitoringServiceOpenSearchNode + `:9200"]`},
+		{"hostfs bind mount", "/:/hostfs:ro"},
+		{"docker socket bind mount", "/var/run/docker.sock:/var/run/docker.sock:ro"},
 	}
 	for _, check := range mustContain {
 		if !strings.Contains(result, check.contain) {
@@ -127,7 +130,7 @@ monitoring:
 }
 
 func TestRenderTemplate_OtelConfig(t *testing.T) {
-	mon := testMonitoringConfig(t, `
+	mon := testSettings(t, `
 monitoring:
   otel_collector_port: 5318
   otel_grpc_port: 5317
@@ -148,9 +151,16 @@ monitoring:
 		"opensearch/logs:",
 		"opensearch/traces:",
 		"http://" + consts.MonitoringServiceOpenSearchNode + ":9200",
-		"exporters: [opensearch/traces]",
-		"exporters: [opensearch/logs]",
-		"exporters: [prometheus]",
+		"exporters: [opensearch/traces, spanmetrics, debug]",
+		"exporters: [opensearch/logs, debug]",
+		"exporters: [prometheus, debug]",
+		"prometheus/self:",
+		"spanmetrics:",
+		"docker_stats:",
+		"hostmetrics:",
+		"unix:///var/run/docker.sock",
+		"root_path: /hostfs",
+		"receivers: [otlp, prometheus/self, docker_stats, hostmetrics, spanmetrics]",
 	}
 	for _, check := range mustContain {
 		if !strings.Contains(result, check) {
@@ -167,7 +177,7 @@ monitoring:
 }
 
 func TestRenderTemplate_Prometheus(t *testing.T) {
-	mon := testMonitoringConfig(t, `
+	mon := testSettings(t, `
 monitoring:
   prometheus_metrics_port: 9889
 `)
@@ -185,7 +195,7 @@ monitoring:
 }
 
 func TestNewMonitorTemplateData_OpenSearchImages(t *testing.T) {
-	mon := testMonitoringConfig(t, `
+	mon := testSettings(t, `
 monitoring:
   otel_collector_port: 4318
 `)

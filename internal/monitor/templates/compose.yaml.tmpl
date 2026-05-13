@@ -5,6 +5,12 @@ services:
     command: ["--config=/etc/otel-collector-config.yaml"]
     volumes:
       - ./otel-config.yaml:/etc/otel-collector-config.yaml
+      # Host root → /hostfs (RO). Feeds the hostmetrics receiver (cpu/
+      # mem/disk/network for the underlying host or Docker Desktop VM).
+      - {{.HostFilesystem}}:/hostfs:ro
+      # Docker daemon socket → /var/run/docker.sock (RO). Feeds the
+      # docker_stats receiver. Path-on-host comes from Settings.Docker.Socket.
+      - {{.DockerSocketPath}}:/var/run/docker.sock:ro
 {{- if .OtelCPPort}}
       # CLI-issued mTLS material for the CP-only receiver. Bound RO from
       # the CLI auth dir on the host. The CA bundle gates client certs
@@ -30,6 +36,9 @@ services:
 {{- end}}
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    depends_on:
+      {{.OpenSearchNodeService}}:
+        condition: service_started
     labels:
       dev.clawker.managed: "true"
       dev.clawker.purpose: "monitoring"

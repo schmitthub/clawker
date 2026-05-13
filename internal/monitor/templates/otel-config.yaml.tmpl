@@ -5,6 +5,10 @@ receivers:
         endpoint: 0.0.0.0:{{.OtelGRPCPort}}
       http:
         endpoint: 0.0.0.0:{{.OtelCollectorPort}}
+        cors:
+          allowed_origins:
+            - "http://*"
+            - "https://*"
 {{- if .OtelCPPort}}
   # mTLS-gated receiver dedicated to clawker-cp. Listens on
   # 0.0.0.0:<port> inside the container; the published mapping in
@@ -22,6 +26,84 @@ receivers:
           key_file: /etc/otel/tls/server.key
           client_ca_file: /etc/otel/tls/ca.pem
 {{- end}}
+  # Collector self-telemetry. The otel-collector exposes its own
+  # process/pipeline metrics as a Prometheus endpoint on :8888 by
+  # default; scraping them here lets the metrics pipeline ship them
+  # downstream to the same Prometheus instance operators already use.
+  prometheus/self:
+    config:
+      scrape_configs:
+        - job_name: 'otelcol'
+          scrape_interval: 10s
+          static_configs:
+            - targets: ['0.0.0.0:8888']
+  # Container-level metrics scraped from the Docker daemon. Reads via
+  # the RO-mounted socket at /var/run/docker.sock (compose maps host
+  # Settings.Docker.Socket → this path).
+  docker_stats:
+    endpoint: unix:///var/run/docker.sock
+    collection_interval: 10s
+  # Host metrics for the machine running the otel-collector. On Linux
+  # this is the actual host; on Docker Desktop it's the Linux VM (the
+  # constraint operators care about). Reads via the RO-mounted host
+  # root at /hostfs.
+  hostmetrics:
+    root_path: /hostfs
+    scrapers:
+      cpu:
+        metrics:
+          system.cpu.utilization:
+            enabled: true
+      disk:
+      load:
+      filesystem:
+        exclude_mount_points:
+          mount_points:
+            - /dev/*
+            - /proc/*
+            - /sys/*
+            - /run/k3s/containerd/*
+            - /var/lib/docker/*
+            - /var/lib/kubelet/*
+            - /snap/*
+          match_type: regexp
+        exclude_fs_types:
+          fs_types:
+            - autofs
+            - binfmt_misc
+            - bpf
+            - cgroup2
+            - configfs
+            - debugfs
+            - devpts
+            - devtmpfs
+            - fusectl
+            - hugetlbfs
+            - iso9660
+            - mqueue
+            - nsfs
+            - overlay
+            - proc
+            - procfs
+            - pstore
+            - rpc_pipefs
+            - securityfs
+            - selinuxfs
+            - squashfs
+            - sysfs
+            - tracefs
+          match_type: strict
+      memory:
+        metrics:
+          system.memory.utilization:
+            enabled: true
+      network:
+      paging:
+      processes:
+      process:
+        mute_process_exe_error: true
+        mute_process_io_error: true
+        mute_process_user_error: true
 
 processors:
   batch:
@@ -65,6 +147,9 @@ processors:
 {{- end}}
 
 exporters:
+  # Stdout pipe-through for diagnosis. Surfaces in `docker logs
+  # clawker-otel-collector`; verbose by design.
+  debug:
   # Traces → OpenSearch (Simple Schema for Observability data model).
   opensearch/traces:
     http:
@@ -81,16 +166,22 @@ exporters:
   prometheus:
     endpoint: "0.0.0.0:{{.PrometheusMetricsPort}}"
 
+connectors:
+  # Derives RED metrics (rate, errors, duration) from spans flowing
+  # through the traces pipeline and re-emits them into the metrics
+  # pipeline. Empty-series until traces actually flow.
+  spanmetrics:
+
 service:
   pipelines:
     traces:
       receivers: [otlp]
       processors: [batch]
-      exporters: [opensearch/traces]
+      exporters: [opensearch/traces, spanmetrics, debug]
     metrics:
-      receivers: [otlp]
+      receivers: [otlp, prometheus/self, docker_stats, hostmetrics, spanmetrics]
       processors: [batch, transform/metrics]
-      exporters: [prometheus]
+      exporters: [prometheus, debug]
     # Agent-side logs pipeline: receiver-isolated from the CP pipeline.
     # An agent pushing here cannot reach the otlp/cp receiver
     # (mTLS-gated) and cannot get its log stamped ingest_source=cp —
@@ -98,7 +189,7 @@ service:
     logs/agents:
       receivers: [otlp]
       processors: [resource/agent, batch]
-      exporters: [opensearch/logs]
+      exporters: [opensearch/logs, debug]
 {{- if .OtelCPPort}}
     # CP-side logs pipeline: separate receiver, separate processor
     # chain. service.name and ingest_source are both forced post-
@@ -107,5 +198,5 @@ service:
     logs/cp:
       receivers: [otlp/cp]
       processors: [resource/cp, batch]
-      exporters: [opensearch/logs]
+      exporters: [opensearch/logs, debug]
 {{- end}}

@@ -56,11 +56,13 @@ Struct providing values for `{{.FieldName}}` placeholders. Service hostname fiel
 | `OpenSearchNodeService` | `string` | Hostname for OpenSearch node — from `consts.MonitoringServiceOpenSearchNode` |
 | `OpenSearchDashboardsService` | `string` | Hostname for OpenSearch Dashboards — from `consts.MonitoringServiceOpenSearchDashboards` |
 | `OtelServerCertHostPath` / `OtelServerKeyHostPath` / `OtelCAHostPath` | `string` | Host paths to CLI-issued mTLS material gating the CP-only OTLP receiver (empty disables) |
+| `HostFilesystem` | `string` | Host path mounted at `/hostfs` for the hostmetrics receiver. Hardcoded `/` |
+| `DockerSocketPath` | `string` | Host path to the Docker daemon socket; mounted at `/var/run/docker.sock` for the docker_stats receiver. Sourced from `Settings.Docker.Socket` |
 | `OtelCollectorImage` / `PrometheusImage` / `OpenSearchImage` / `OpenSearchDashboardsImage` | `string` | Pinned image refs |
 
-### NewMonitorTemplateData(cfg *config.MonitoringConfig) MonitorTemplateData
+### NewMonitorTemplateData(s *config.Settings) MonitorTemplateData
 
-Constructor that populates `MonitorTemplateData` from a `config.MonitoringConfig`. Service hostnames come from the consts package; ports + heap come from `cfg`.
+Constructor that populates `MonitorTemplateData` from full `config.Settings`. Service hostnames come from the consts package; ports + heap come from `s.Monitoring`; `DockerSocketPath` comes from `s.Docker.Socket`; `HostFilesystem` is hardcoded `/`.
 
 ### RenderTemplate(name, tmplContent string, data MonitorTemplateData) (string, error)
 
@@ -74,11 +76,17 @@ All symbols are in `templates.go`.
 
 ## OTEL Pipelines (otel-config.yaml.tmpl)
 
-| Pipeline | Receiver | Exporter |
-|----------|----------|----------|
-| `traces` | `otlp` | `opensearch/traces` (SS4O — dataset=traces, namespace=clawker) |
-| `metrics` | `otlp` | `prometheus` (scrape endpoint on `PrometheusMetricsPort`) |
-| `logs/agents` | `otlp` (resource/agent stamps `ingest_source=agent`) | `opensearch/logs` (index `clawker-logs`) |
-| `logs/cp` (conditional on `OtelCPPort`) | `otlp/cp` (mTLS-gated; resource/cp stamps `service.name=clawker-cp` + `ingest_source=cp`) | `opensearch/logs` |
+| Pipeline | Receivers | Exporters |
+|----------|-----------|-----------|
+| `traces` | `otlp` | `opensearch/traces` (SS4O — dataset=traces, namespace=clawker), `spanmetrics` (→ metrics pipeline), `debug` |
+| `metrics` | `otlp`, `prometheus/self` (collector self-scrape on :8888), `docker_stats` (unix socket), `hostmetrics` (`/hostfs`), `spanmetrics` (RED from traces) | `prometheus` (scrape endpoint on `PrometheusMetricsPort`), `debug` |
+| `logs/agents` | `otlp` (resource/agent stamps `ingest_source=agent`) | `opensearch/logs` (index `clawker-logs`), `debug` |
+| `logs/cp` (conditional on `OtelCPPort`) | `otlp/cp` (mTLS-gated; resource/cp stamps `service.name=clawker-cp` + `ingest_source=cp`) | `opensearch/logs`, `debug` |
+
+`docker_stats` reads container metrics from the Docker daemon socket bind-mounted RO at `/var/run/docker.sock` (host path from `Settings.Docker.Socket`). `hostmetrics` reads cpu/disk/load/filesystem/memory/network/paging/process metrics from `/hostfs` (host path hardcoded to `/`; the Linux VM root on Docker Desktop).
+
+`spanmetrics` is a connector — traces flow through it and re-emerge as RED (rate / errors / duration) metrics on the metrics pipeline. `prometheus/self` scrapes the collector's own telemetry endpoint so operational metrics for the collector itself land in Prometheus alongside agent telemetry. `debug` writes every batch to the collector's stdout — surfaces in `docker logs clawker-otel-collector`, verbose by design.
+
+The `otlp` HTTP receiver has CORS allow-all wildcards (`http://*`, `https://*`) so browser-based UIs (OpenSearch Dashboards, future SPAs) can POST OTLP/HTTP directly.
 
 OpenSearch's security plugin is disabled in the compose template (`DISABLE_SECURITY_PLUGIN=true`) so the collector talks plain HTTP to it on the docker network. OpenSearch Dashboards runs with its security plugin disabled too — no login required for local development.

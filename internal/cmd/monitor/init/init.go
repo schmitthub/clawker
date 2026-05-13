@@ -86,9 +86,9 @@ func initRun(_ context.Context, opts *InitOptions) error {
 
 	log.Debug().Str("monitor_dir", monitorDir).Msg("initializing monitor stack")
 
-	// Get monitoring config for template rendering
-	monCfg := cfg.SettingsStore().Read().Monitoring
-	tmplData := monitor.NewMonitorTemplateData(&monCfg)
+	// Build template data from full settings (Monitoring + Docker).
+	settings := cfg.SettingsStore().Read()
+	tmplData := monitor.NewMonitorTemplateData(settings)
 
 	// Bake the CLI-issued OTEL mTLS material on demand. EnsureAuthMaterial
 	// is idempotent — if the certs are already present from a previous

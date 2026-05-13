@@ -267,6 +267,14 @@ type Settings struct {
 	HostProxy    HostProxyConfig      `yaml:"host_proxy,omitempty"`
 	Firewall     FirewallSettings     `yaml:"firewall,omitempty"`
 	ControlPlane ControlPlaneSettings `yaml:"control_plane,omitempty"`
+	Docker       DockerSettings       `yaml:"docker,omitempty"`
+}
+
+// DockerSettings configures host Docker access. Per-project Docker
+// socket exposure to agent containers lives separately under
+// SecurityConfig.DockerSocket — these knobs are unrelated.
+type DockerSettings struct {
+	Socket string `yaml:"socket,omitempty" label:"Docker Socket" desc:"Host path to the Docker daemon socket" default:"/var/run/docker.sock"`
 }
 
 // ControlPlaneSettings configures the control plane in settings.yaml.
