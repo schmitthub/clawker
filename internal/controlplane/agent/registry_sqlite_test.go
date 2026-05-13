@@ -210,3 +210,69 @@ func TestSQLiteRegistry_SchemaMigration_FromOldDB(t *testing.T) {
 	require.NotNil(t, got)
 	assert.Equal(t, "a", got.AgentName)
 }
+
+func TestMigration_002_DropsCanonicalCN(t *testing.T) {
+	// Seed a DB at goose-version-1: the v1 agents schema (with
+	// canonical_cn) plus a goose_db_version row marking 00001 as
+	// applied. Opening via the production path then runs ONLY
+	// migration 00002. Asserting against an empty fresh DB would not
+	// distinguish "00002 dropped the column" from "the column was
+	// never there" — seeding pre-002 state pins the actual migration
+	// effect.
+	path := dbPath(t, "agents.db")
+	raw, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)")
+	require.NoError(t, err)
+	_, err = raw.Exec(`
+		CREATE TABLE agents (
+		  thumbprint_hex TEXT NOT NULL,
+		  container_id   TEXT NOT NULL,
+		  agent_name     TEXT NOT NULL,
+		  project        TEXT NOT NULL,
+		  canonical_cn   TEXT NOT NULL,
+		  registered_at  INTEGER NOT NULL,
+		  last_seen      INTEGER NOT NULL,
+		  PRIMARY KEY (thumbprint_hex, container_id),
+		  UNIQUE (thumbprint_hex),
+		  UNIQUE (container_id)
+		);
+		CREATE INDEX idx_name_project ON agents(project, agent_name);
+		CREATE TABLE goose_db_version (
+		  id INTEGER PRIMARY KEY AUTOINCREMENT,
+		  version_id INTEGER NOT NULL,
+		  is_applied INTEGER NOT NULL,
+		  tstamp TIMESTAMP DEFAULT (datetime('now'))
+		);
+		INSERT INTO goose_db_version (version_id, is_applied) VALUES (0, 1), (1, 1);
+		INSERT INTO agents VALUES (
+		  '0000000000000000000000000000000000000000000000000000000000000001',
+		  'legacy-ctr', 'legacy-agent', 'legacy-proj',
+		  'clawker.legacy-proj.legacy-agent', 1, 1
+		);
+	`)
+	require.NoError(t, err)
+	require.NoError(t, raw.Close())
+
+	r, err := NewSQLiteWriter(path, logger.Nop())
+	require.NoError(t, err)
+	t.Cleanup(func() { closeRegistry(t, r) })
+
+	rows, err := r.(*sqliteRegistry).db.Query(`PRAGMA table_info(agents)`)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = rows.Close() })
+	var cols []string
+	for rows.Next() {
+		var name string
+		var ign any
+		require.NoError(t, rows.Scan(&ign, &name, &ign, &ign, &ign, &ign))
+		cols = append(cols, name)
+	}
+	require.NoError(t, rows.Err())
+	assert.NotContains(t, cols, "canonical_cn", "migration 00002 must drop canonical_cn")
+
+	// Row pre-existing at goose-v1 must survive the column drop —
+	// guards against a 00002 that drops the whole table or otherwise
+	// loses data.
+	snap := r.Snapshot()
+	require.Len(t, snap, 1)
+	assert.Equal(t, "legacy-agent", snap[0].AgentName)
+}

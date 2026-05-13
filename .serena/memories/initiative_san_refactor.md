@@ -15,7 +15,7 @@
 | Task 2: Redesign `IdentityInterceptor` as universal peer-IP→Docker→label middleware | `complete` | — |
 | Task 3: Refactor `Register` handler — drop redundant checks, use middleware-resolved labels | `complete` | — |
 | Task 4: Drop `Registry.Lookup`, simplify Registry surface, rework `Dialer.classifyRegistry` | `complete` | — |
-| Task 5: Migration `00002_drop_canonical_cn.sql` | `pending` | — |
+| Task 5: Migration `00002_drop_canonical_cn.sql` | `complete` | — |
 | Task 6: Rename `Canonical*` → `AgentFullName*` everywhere (auth + agent + sweeps) | `pending` | — |
 | Task 7: Update existing tests + add missing tests | `pending` | — |
 | Task 8: Update CLAUDE.md docs + final test run | `pending` | — |
@@ -38,6 +38,14 @@
   - Structured logs added with `peer_ip` + `container_id` fields: `event=peer_lookup_list_failed` (daemon list failure), `event=peer_lookup_inspect_failed` (per-container; continues), `event=peer_lookup_invalid_labels` (matched but unusable).
   - `StartDeps.PeerLookup` is required; `Start` returns error on nil (mirrors Registry/DockerLister/Bus/Dialer guards). Test helper `noopPeerLookup` in `start_test.go` for tests that don't exercise the resolver path.
   - Constructor: `NewMobyPeerLookup(cli mobyclient.APIClient, log *logger.Logger) *MobyPeerLookup`. Concrete return (not interface) — matches `NewMobyContainerInspector` shape.
+- **Task 5 refinements (review-driven, deviate from spec):**
+  - **Test seeds DB at goose-version-1 + a populated `canonical_cn` row** rather than running on a fresh DB. Silent-failure-hunter CRITICAL: a fresh-DB test cannot distinguish "00002 dropped the column" from "00001 was rewritten and the column never existed". Seeding pre-002 state (manually creating `goose_db_version` with `(0,1)` + `(1,1)` rows, then the v1 `agents` schema with `canonical_cn`, then a row with a valid 64-hex thumbprint) pins the actual migration effect. `migrateFromPreGoose` sees `goose_db_version` exists and no-ops; goose.Up applies ONLY 00002. Test then asserts (a) column gone via `PRAGMA table_info`, (b) the pre-existing row survives via `Snapshot()` — catches stub 00002, accidental `DROP TABLE`, or wrong-column drop.
+  - **Seed thumbprint MUST be valid hex of `sha256.Size` (32 bytes / 64 hex chars).** `scanEntry` rejects malformed thumbprints with `agentregistry: malformed thumbprint_hex` and `Snapshot()` skips them — so a placeholder like `'legacy-hex'` makes the row invisible to `Snapshot` and the data-preservation assertion fails for the wrong reason. Use `'00...01'` (62 zeros + `01`).
+  - **`applySchema` partial-apply fix (out-of-spec, drive-by improvement):** previously logged `results` only on the success branch — on partial failure the operator only saw the wrapped error, not which version had landed. Iterate `results` before checking `upErr` so a stuck DB triages cleanly. Silent-failure-hunter MEDIUM.
+  - **Skipped:** SQLite `ALTER TABLE DROP COLUMN` version probe. modernc.org/sqlite v1.x ships SQLite 3.45+ for years; alpha YAGNI. If a downgrade ever lands, the migration fails with a clear sqlite error on `ALTER TABLE DROP COLUMN`.
+  - **Migration Up comment framed as design-state, not historical transition** (comment-analyzer). Reads as "AgentFullName lives in a urn:clawker:agent: URI SAN; trust derives from peer IP via Docker labels" rather than "the SAN refactor moved...". Migration files are read in isolation later; the comment must stand alone.
+  - **No `selectEntryCols` change needed** — column list already excluded `canonical_cn` since Task 4. The migration just makes the on-disk schema agree with what readers were already expecting.
+
 - **Task 4 refinements (review-driven, deviate from spec):**
   - **`outcomeRegistryCNMismatch` enum value DELETED** — not "renamed to ThumbprintMismatch" (that variant already existed). Post-Task-4 `classifyRegistry` is thumbprint-only; the CN-compare logic moved entirely upstream to `IdentityInterceptor`. `dispatchAgentEvents` lost its CNMismatch case; the default branch was folded into `outcomeRegistryNotQueried` (same `AgentUntrusted{ReasonCertInvalid}` payload, distinct Detail strings for triage).
   - **`computeCNPinMatch` + `canonicalCNFromStrings` DELETED** as orphan/dead code — `computeCNPinMatch` had no production callers (only its own test exercised it), and `canonicalCNFromStrings` was only used by `computeCNPinMatch` and the deleted CN branch in `classifyRegistry`.

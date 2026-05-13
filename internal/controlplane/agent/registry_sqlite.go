@@ -140,15 +140,18 @@ func applySchema(ctx context.Context, db *sql.DB, log *logger.Logger) error {
 	if err != nil {
 		return fmt.Errorf("agentregistry: build goose provider: %w", err)
 	}
-	results, err := provider.Up(ctx)
-	if err != nil {
-		return fmt.Errorf("agentregistry: apply migrations: %w", err)
-	}
+	results, upErr := provider.Up(ctx)
+	// Log every applied migration regardless of whether Up returned an
+	// error: on partial failure the operator needs to see the last
+	// successful version to triage a stuck DB.
 	for _, r := range results {
 		log.Info().
 			Int64("version", r.Source.Version).
 			Str("file", r.Source.Path).
 			Msg("agentregistry: migration applied")
+	}
+	if upErr != nil {
+		return fmt.Errorf("agentregistry: apply migrations: %w", upErr)
 	}
 	return nil
 }
@@ -227,20 +230,14 @@ func (r *sqliteRegistry) Add(entry Entry) error {
 	// row for the same thumbprint OR container_id surfaces as a
 	// constraint violation and the handler chooses how to react
 	// (typically: alert + evict by container_id + retry).
-	//
-	// canonical_cn is written empty: the column survives only until
-	// Task 5 of the SAN refactor drops it via migration 00002. The
-	// column is NOT NULL with no DEFAULT, so an empty string keeps the
-	// INSERT valid in the interim. No reader consults it.
 	_, err := r.db.Exec(`
-		INSERT INTO agents (thumbprint_hex, container_id, agent_name, project, canonical_cn, registered_at, last_seen)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO agents (thumbprint_hex, container_id, agent_name, project, registered_at, last_seen)
+		VALUES (?, ?, ?, ?, ?, ?)
 	`,
 		tpHex,
 		entry.ContainerID,
 		entry.AgentName,
 		entry.Project,
-		"",
 		entry.RegisteredAt.Unix(),
 		entry.LastSeen.Unix(),
 	)
