@@ -16,8 +16,8 @@ import (
 // peerLookupTimeout bounds the read-only docker calls inside the
 // resolver. Decoupled from the per-RPC ctx (parent = Background) so a
 // CP-side cancel does not abort the lookup mid-flight and turn it
-// into a spurious ErrNoContainerForPeerIP. Mirrors inspectTimeout in
-// register_handler.go.
+// into a spurious ErrNoContainerForPeerIP. 5s is comfortably more than
+// docker daemon p99 inspect latency.
 const peerLookupTimeout = 5 * time.Second
 
 // peerLookupAPI is the subset of mobyclient.APIClient the resolver

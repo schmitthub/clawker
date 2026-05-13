@@ -560,15 +560,15 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		return fmt.Errorf("step 8 (agent grpc listen): %w", err)
 	}
 
-	// Register the AgentService.Register handler. Captures the live
-	// mTLS peer's cert thumbprint at handler entry, reads
-	// container_id from the cert URI SAN, cross-checks against the
-	// docker container's labels + clawker-net IP, and writes the
-	// agentregistry row. The handler is the SOLE writer of the
-	// agentregistry sqlite DB.
+	// Register the AgentService.Register handler. IdentityInterceptor
+	// has already grounded the peer in a daemon-resolved container
+	// identity and attached it to ctx; the handler captures the cert
+	// thumbprint, cross-checks the cert's container_id SAN + request
+	// fields against the resolved truth, and writes the agentregistry
+	// row. The handler is the SOLE writer of the agentregistry sqlite
+	// DB.
 	registerHandler, err := agent.NewHandler(
 		agentReg,
-		agent.NewMobyContainerInspector(dockerCli.APIClient),
 		log.With("component", "agent-register"),
 	)
 	if err != nil {
