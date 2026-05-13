@@ -1,54 +1,33 @@
 package agent
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"database/sql"
+	"embed"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"time"
 
+	"github.com/pressly/goose/v3"
 	_ "modernc.org/sqlite"
 
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
-// schemaSQL pins the agents table layout. Both thumbprint_hex and
-// container_id are individually UNIQUE: a given cert can bind to
-// exactly one container, a given container can host exactly one
-// registration. The composite PK makes the binding intent explicit
-// and prevents orphan rows where one half is set without the other.
+// migrationsFS embeds the goose-format SQL migration files. Co-located
+// with the registry so the schema definitions ship inside the CP binary
+// — the CP container has no bind mount for source assets, so loose .sql
+// files on the host filesystem would not be reachable at runtime.
 //
-// canonical_cn is the pre-computed "clawker[.<project>].<agent>"
-// composed by auth.CanonicalAgentCN at Add time from typed inputs.
-// Storing it as a column eliminates the historical Lookup-time panic
-// vector where MustProjectSlug/MustAgentName reconstructed the CN
-// against on-disk strings — a single malformed row used to crash CP.
-//
-// The (project, agent_name) index serves diagnostic and CLI listing
-// queries; uniqueness is NOT enforced at the schema layer because
-// Docker container name uniqueness handles the real conflict upstream
-// and the dockerevents eviction race may briefly leave two rows with
-// the same (project, agent_name) before the old one is deleted.
-const schemaSQL = `
-CREATE TABLE IF NOT EXISTS agents (
-  thumbprint_hex TEXT NOT NULL,
-  container_id   TEXT NOT NULL,
-  agent_name     TEXT NOT NULL,
-  project        TEXT NOT NULL,
-  canonical_cn   TEXT NOT NULL,
-  registered_at  INTEGER NOT NULL,
-  last_seen      INTEGER NOT NULL,
-  PRIMARY KEY (thumbprint_hex, container_id),
-  UNIQUE (thumbprint_hex),
-  UNIQUE (container_id)
-);
-CREATE INDEX IF NOT EXISTS idx_name_project ON agents(project, agent_name);
-`
+//go:embed migrations/*.sql
+var migrationsFS embed.FS
 
 // sqliteRegistry is a Registry whose authoritative state lives in a
 // sqlite database. There is no in-memory cache: every read hits sqlite
@@ -115,7 +94,7 @@ func openSQLite(dbPath string, log *logger.Logger) (Registry, error) {
 	// a single connection serialises writes which matches the
 	// single-writer model the design assumes.
 	db.SetMaxOpenConns(1)
-	if err := applySchema(db, log); err != nil {
+	if err := applySchema(context.Background(), db, log); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("agentregistry: apply schema: %w", err)
 	}
@@ -142,65 +121,91 @@ func openSQLite(dbPath string, log *logger.Logger) (Registry, error) {
 	return r, nil
 }
 
-// applySchema applies the schema atomically. If an existing DB lacks
-// the canonical_cn column (pre-Task-01 schema), the table is dropped
-// and recreated — alpha-only migration policy: the registry is
-// regenerable from the next clawker run/start, and a partial migration
-// is worse than a forced re-create of every affected container.
-func applySchema(db *sql.DB, log *logger.Logger) error {
-	if needsMigration, err := schemaMissingCanonicalCN(db); err != nil {
-		return fmt.Errorf("inspect schema: %w", err)
-	} else if needsMigration {
-		log.Warn().Msg("agentregistry: schema mismatch (missing canonical_cn); dropping and recreating agents table")
-		if _, err := db.Exec(`DROP TABLE IF EXISTS agents`); err != nil {
-			return fmt.Errorf("drop legacy agents table: %w", err)
-		}
+// applySchema runs every embedded goose migration through goose.Up.
+// goose tracks applied versions in its own `goose_db_version` table,
+// so re-running on an up-to-date DB is a no-op. Migrations live in
+// migrations/*.sql co-located with this file and are baked into the
+// binary via migrationsFS (see CP container has no host-side asset
+// bind mount).
+func applySchema(ctx context.Context, db *sql.DB, log *logger.Logger) error {
+	if err := migrateFromPreGoose(ctx, db, log); err != nil {
+		return fmt.Errorf("agentregistry: pre-goose cleanup: %w", err)
 	}
-	tx, err := db.Begin()
+	subFS, err := fs.Sub(migrationsFS, "migrations")
 	if err != nil {
-		return fmt.Errorf("begin schema tx: %w", err)
+		return fmt.Errorf("agentregistry: sub migrations FS: %w", err)
 	}
-	if _, err := tx.Exec(schemaSQL); err != nil {
-		_ = tx.Rollback()
-		return fmt.Errorf("exec schema: %w", err)
+	provider, err := goose.NewProvider(goose.DialectSQLite3, db, subFS,
+		goose.WithLogger(&gooseLoggerAdapter{log: log}),
+	)
+	if err != nil {
+		return fmt.Errorf("agentregistry: build goose provider: %w", err)
 	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit schema tx: %w", err)
+	results, err := provider.Up(ctx)
+	if err != nil {
+		return fmt.Errorf("agentregistry: apply migrations: %w", err)
+	}
+	for _, r := range results {
+		log.Info().
+			Int64("version", r.Source.Version).
+			Str("file", r.Source.Path).
+			Msg("agentregistry: migration applied")
 	}
 	return nil
 }
 
-// schemaMissingCanonicalCN returns true when an `agents` table exists
-// but does NOT carry the canonical_cn column. Returns false when the
-// table is absent (fresh DB — schemaSQL CREATE-IF-NOT-EXISTS handles
-// it) or when the column is present.
-func schemaMissingCanonicalCN(db *sql.DB) (bool, error) {
-	rows, err := db.Query(`PRAGMA table_info(agents)`)
+// migrateFromPreGoose handles the one-time transition from the
+// hand-rolled `agents` table (no goose_db_version sibling) to a
+// goose-managed schema. If the DB has an `agents` table but no
+// `goose_db_version`, the table is dropped — alpha policy: registry
+// state is regenerable from the next clawker run's Register handshake,
+// and adopting goose mid-life-of-a-DB by faking a baseline version is
+// fragile across future schema changes. After this point, goose owns
+// migration state exclusively.
+func migrateFromPreGoose(ctx context.Context, db *sql.DB, log *logger.Logger) error {
+	var hasGoose int
+	err := db.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='goose_db_version')`,
+	).Scan(&hasGoose)
 	if err != nil {
-		return false, err
+		return fmt.Errorf("inspect goose_db_version: %w", err)
 	}
-	defer rows.Close()
-	hasCanonical := false
-	hasAnyColumn := false
-	for rows.Next() {
-		var (
-			cid            int
-			name, typeName string
-			notNull, pk    int
-			dfltValue      sql.NullString
-		)
-		if err := rows.Scan(&cid, &name, &typeName, &notNull, &dfltValue, &pk); err != nil {
-			return false, err
-		}
-		hasAnyColumn = true
-		if name == "canonical_cn" {
-			hasCanonical = true
+	if hasGoose == 1 {
+		return nil
+	}
+	var hasAgents int
+	err = db.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='agents')`,
+	).Scan(&hasAgents)
+	if err != nil {
+		return fmt.Errorf("inspect agents table: %w", err)
+	}
+	if hasAgents == 1 {
+		log.Warn().Msg("agentregistry: pre-goose schema detected; dropping agents table (alpha policy — agents will re-Register on next clawker run)")
+		if _, err := db.ExecContext(ctx, `DROP TABLE agents`); err != nil {
+			return fmt.Errorf("drop pre-goose agents: %w", err)
 		}
 	}
-	if err := rows.Err(); err != nil {
-		return false, err
-	}
-	return hasAnyColumn && !hasCanonical, nil
+	return nil
+}
+
+// gooseLoggerAdapter routes goose's internal Printf/Fatalf calls into
+// the project zerolog. goose's interface predates structured logging;
+// the format strings are passed through opaquely.
+type gooseLoggerAdapter struct {
+	log *logger.Logger
+}
+
+func (g *gooseLoggerAdapter) Printf(format string, v ...any) {
+	g.log.Info().Msgf("goose: "+format, v...)
+}
+
+func (g *gooseLoggerAdapter) Fatalf(format string, v ...any) {
+	// goose never calls Fatalf in NewProvider/Up paths we use; if a
+	// future goose version changes that, demote to Error rather than
+	// honouring the Fatal semantic — this is on the CP boot path and
+	// os.Exit would strand eBPF.
+	g.log.Error().Msgf("goose (would-be-fatal): "+format, v...)
 }
 
 func (r *sqliteRegistry) countRows() (int, error) {

@@ -54,6 +54,7 @@ github.com/prometheus/client_model/go                                          A
 github.com/prometheus/common                                                   Apache-2.0
 github.com/prometheus/exporter-toolkit/web                                     Apache-2.0
 github.com/prometheus/procfs                                                   Apache-2.0
+github.com/sethvargo/go-retry                                                  Apache-2.0
 github.com/shibumi/go-pathspec                                                 Apache-2.0
 github.com/spf13/cobra                                                         Apache-2.0
 go.opentelemetry.io/auto/sdk                                                   Apache-2.0
@@ -175,10 +176,12 @@ github.com/mattn/go-isatty                                                     M
 github.com/mattn/go-runewidth                                                  MIT
 github.com/mdlayher/socket                                                     MIT
 github.com/mdlayher/vsock                                                      MIT
+github.com/mfridman/interpolate                                                MIT
 github.com/muesli/ansi                                                         MIT
 github.com/muesli/cancelreader                                                 MIT
 github.com/muesli/termenv                                                      MIT
 github.com/ncruces/go-strftime                                                 MIT
+github.com/pressly/goose/v3                                                    MIT
 github.com/quic-go/qpack                                                       MIT
 github.com/quic-go/quic-go                                                     MIT
 github.com/rivo/uniseg                                                         MIT
@@ -192,6 +195,7 @@ github.com/xo/terminfo                                                         M
 github.com/zalando/go-keyring                                                  MIT
 github.com/zalando/go-keyring/internal/shellescape                             MIT
 go.uber.org/automaxprocs                                                       MIT
+go.uber.org/multierr                                                           MIT
 gopkg.in/natefinch/lumberjack.v2                                               MIT
 gopkg.in/yaml.v3                                                               MIT
 
