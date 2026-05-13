@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="Brainstorm document for refactoring clawker network monitoring from Envoy/Promtail logs to eBPF ring-buffer event stream with agent attribution.">
+<meta name="brainstorm:status" content="Active">
+<meta name="brainstorm:created" content="2026-05-13">
+<meta name="brainstorm:updated" content="2026-05-13">
+<meta name="brainstorm:scope" content="visibility-only">
+<meta name="brainstorm:phase" content="Architecture committed — event stream via BPF ringbuf → Loki logs. Ready for implementation.">
+<title>Brainstorm: OTel Network Monitoring — eBPF Event Stream</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #1a1a1a;
+    --fg-soft: #2e2e2e;
+    --muted: #555555;
+    --accent: #BF5700;
+    --accent-soft: #d97a30;
+    --ok: #1a1a1a;
+    --warn: #804000;
+    --err: #8B2500;
+    --code-bg: #F7F2EC;
+    --border: #E5DED5;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.55;
+    color: var(--fg);
+    background: var(--bg);
+    max-width: 980px;
+    margin: 2rem auto;
+    padding: 0 1.5rem;
+  }
+  header.doc-header {
+    border-bottom: 2px solid var(--accent);
+    padding-bottom: 1rem;
+    margin-bottom: 1.5rem;
+  }
+  h1 { font-size: 1.85rem; margin: 0 0 0.5rem; }
+  h2 {
+    margin-top: 2.25rem;
+    padding-bottom: 0.3rem;
+    border-bottom: 1px solid var(--border);
+    color: var(--accent);
+  }
+  h3 { margin-top: 1.5rem; }
+  dl.metadata {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.25rem 1rem;
+    margin: 0.5rem 0 0;
+    font-size: 0.92rem;
+    color: var(--muted);
+  }
+  dl.metadata dt { font-weight: 600; }
+  nav.toc {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.75rem 1.25rem;
+    margin-bottom: 1.5rem;
+  }
+  nav.toc ol { margin: 0.25rem 0 0; padding-left: 1.25rem; }
+  nav.toc li { margin: 0.2rem 0; }
+  code, pre { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  code { background: var(--code-bg); padding: 0.1em 0.35em; border-radius: 4px; font-size: 0.92em; }
+  pre {
+    background: var(--code-bg);
+    padding: 0.85rem 1rem;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-size: 0.88rem;
+    line-height: 1.4;
+    border: 1px solid var(--border);
+  }
+  pre code { background: transparent; padding: 0; }
+  table {
+    border-collapse: collapse;
+    margin: 1rem 0;
+    width: 100%;
+    font-size: 0.92rem;
+  }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 0.5rem 0.75rem;
+    text-align: left;
+    vertical-align: top;
+  }
+  th { background: var(--code-bg); font-weight: 600; }
+  ul.findings li, ul.decisions li, ul.gotchas li, ul.unknowns li, ul.next li, ul.questions li {
+    margin: 0.45rem 0;
+  }
+  .tag {
+    display: inline-block;
+    padding: 0.1rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .tag-decision  { background: rgba(191,87,0,0.12);  color: var(--accent); }
+  .tag-gotcha    { background: rgba(160,82,0,0.12);  color: var(--warn); }
+  .tag-bug       { background: rgba(139,37,0,0.12);  color: var(--err); }
+  .tag-insight   { background: rgba(26,26,26,0.08);  color: var(--fg); }
+  .tag-deferred  { background: rgba(85,85,85,0.15);  color: var(--muted); }
+  blockquote.callout {
+    border-left: 4px solid var(--accent);
+    background: var(--code-bg);
+    padding: 0.6rem 1rem;
+    margin: 1rem 0;
+    border-radius: 0 6px 6px 0;
+  }
+  blockquote.callout.warn { border-left-color: var(--warn); }
+  blockquote.callout.err  { border-left-color: var(--err); }
+  blockquote.callout.ok   { border-left-color: var(--ok); }
+  footer {
+    margin-top: 3rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+  .source-link { color: var(--muted); font-size: 0.85rem; }
+  .why, .how {
+    display: block;
+    font-size: 0.9rem;
+    color: var(--muted);
+    margin-left: 0.5rem;
+  }
+</style>
+</head>
+<body>
+
+<article itemscope itemtype="https://schema.org/TechArticle">
+
+<header class="doc-header">
+  <h1 itemprop="headline">Brainstorm: OTel Network Monitoring &mdash; eBPF Event Stream</h1>
+  <dl class="metadata">
+    <dt>Status</dt><dd><strong>Active</strong></dd>
+    <dt>Created</dt><dd><time itemprop="dateCreated" datetime="2026-05-13">2026-05-13</time></dd>
+    <dt>Last Updated</dt><dd><time itemprop="dateModified" datetime="2026-05-13">2026-05-13 (event-stream commit)</time></dd>
+    <dt>Scope</dt><dd>Visibility only &mdash; no detection / policy / alerting layer</dd>
+    <dt>Phase</dt><dd>Architecture committed; ready for implementation</dd>
+    <dt>Source of truth</dt><dd>This file is the brainstorm memory. Edit directly; no parallel <code>.md</code>.</dd>
+  </dl>
+</header>
+
+<nav class="toc" aria-label="Table of contents">
+  <strong>Sections</strong>
+  <ol>
+    <li><a href="#problem">Problem &amp; Topic</a></li>
+    <li><a href="#architecture">Committed Architecture</a></li>
+    <li><a href="#prior-art">Prior Art (Tetragon / Hubble / Pixie)</a></li>
+    <li><a href="#bpf-recon">Current BPF Surface</a></li>
+    <li><a href="#decisions">Decisions Made</a></li>
+    <li><a href="#conclusions">Conclusions &amp; Insights</a></li>
+    <li><a href="#gotchas">Gotchas &amp; Risks</a></li>
+    <li><a href="#open-questions">Open Items &amp; Questions</a></li>
+    <li><a href="#unknowns">Unknowns</a></li>
+    <li><a href="#next-steps">Next Steps</a></li>
+  </ol>
+</nav>
+
+<section id="problem" aria-labelledby="problem-h">
+  <h2 id="problem-h">Problem &amp; Topic</h2>
+  <p>Today's network monitoring pipeline cannot answer <em>"which of my 5 running agents is compromised?"</em> The root cause is architectural: agent attribution belongs at the source-event layer, but logs come from Envoy/CoreDNS which have no agent-identity scope.</p>
+  <p>User burned hours trying to bolt agent labels onto Envoy access logs / Promtail relabel pipelines. The <code>agent:</code> and <code>project:</code> labels visible in <code>promtail-config.yaml.tmpl</code> are vestigial from those attempts &mdash; Envoy never emits those fields, so the labels are always blank.</p>
+
+  <h3>Real requirement</h3>
+  <ul>
+    <li>Time-series stream of <strong>connection log events</strong>, filterable in Grafana's log explorer.</li>
+    <li>Humans filter freely: failures only, single container, single proto, single domain, custom combinations.</li>
+    <li>Per-agent attribution at the source &mdash; not joined post-hoc.</li>
+    <li>Cover <strong>all L4 protocols</strong> &mdash; TCP, UDP, SSH, FTP, QUIC, raw sockets.</li>
+    <li>Include bypass-mode traffic (today: forensic black hole).</li>
+    <li>Pure visibility for v1. No baseline learning, no alerts, no &ldquo;weird domain&rdquo; classifier. <strong>No metric counters</strong> &mdash; counters give graphs; logs give the filter/transform UX.</li>
+  </ul>
+</section>
+
+<section id="architecture" aria-labelledby="arch-h">
+  <h2 id="arch-h">Committed Architecture</h2>
+<pre><code>BPF program (every connect/sendmsg/sock_create decision)
+    │  bpf_ringbuf_reserve + submit
+    ▼
+events_ringbuf  (BPF_MAP_TYPE_RINGBUF, ~1 MB)
+    │
+    ▼
+CP-side reader goroutine  (cilium/ebpf ringbuf.NewReader)
+    │  cgroup_id → docker label cache → agent, project
+    │  domain_hash → dns_cache reverse map → domain
+    ▼
+clawker logger.Info()  →  OTel bridge  →  Loki
+    │  stream labels: service_name=ebpf-firewall, agent, verdict   (LOW CARD)
+    │  metadata:      domain, dst_ip, dst_port, l4_proto, bypass, ts_ns
+    ▼
+Grafana log explorer  →  humans filter/transform freely</code></pre>
+
+  <h3>Event struct (BPF C)</h3>
+<pre><code>struct egress_event {
+    __u64 ts_ns;        // bpf_ktime_get_ns()
+    __u64 cgroup_id;    // attribution key
+    __u32 domain_hash;  // 0 = no DNS resolution
+    __u32 dst_ip;       // pre-redirect destination, network byte order
+    __u16 dst_port;     // host byte order
+    __u8  action;       // 0=allow 1=deny 2=bypass
+    __u8  flags;        // bit0=bypass-pass-through, bit1=IPv6
+    __u8  l4_proto;     // SOCK_STREAM/DGRAM/RAW
+    __u8  _pad[3];
+};</code></pre>
+</section>
+
+<section id="prior-art" aria-labelledby="prior-art-h">
+  <h2 id="prior-art-h">Prior Art (Tetragon / Hubble / Pixie)</h2>
+  <p>eBPF-for-monitoring is a mature pattern in k8s, not an experimental bet. Three reference implementations checked via DeepWiki:</p>
+  <table>
+    <caption>Patterns relevant to clawker</caption>
+    <thead>
+      <tr><th>Pattern</th><th>Tetragon</th><th>Hubble</th><th>Pixie</th><th>Take for clawker</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>BPF ring buffer (modern primitive)</td><td>default v5.11+</td><td>yes</td><td>uses perf buf</td><td>Use ringbuf; perf-buf fallback only if needed</td></tr>
+      <tr><td><code>cgroup_id</code> as attribution key</td><td>yes (<code>cgidmap</code>)</td><td>yes in Flow proto</td><td>uses <code>upid</code></td><td>cgroup_id &mdash; native; CP owns Docker label map</td></tr>
+      <tr><td>Explicit <code>verdict</code> field</td><td>n/a</td><td><code>FORWARDED/DROPPED/AUDIT/ERROR</code></td><td>n/a</td><td><strong>steal directly</strong> as stream label</td></tr>
+      <tr><td><code>drop_reason</code> enum</td><td>n/a</td><td>yes</td><td>n/a</td><td>v2 nice-to-have; v1 conveys via <code>action</code> + dst</td></tr>
+      <tr><td>Drop counters non-negotiable</td><td><code>events_lost_total</code> + <code>queue_lost</code></td><td>event queue size knob</td><td><code>probe_loss_fn</code> callback</td><td><strong>required day 1</strong></td></tr>
+      <tr><td>Export sinks (not direct OTel)</td><td>Prom + JSON + gRPC</td><td>same</td><td>same</td><td>Reuse clawker logger OTel bridge</td></tr>
+      <tr><td>L7 visibility from BPF</td><td>uprobes only</td><td>parser hooks</td><td>uprobes</td><td>Don't try; keep Envoy MITM for L7</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="bpf-recon" aria-labelledby="recon-h">
+  <h2 id="recon-h">Current BPF Surface</h2>
+  <p>Seven cgroup programs in <code>bpf/clawker.c</code>: <code>connect4</code>, <code>sendmsg4</code>, <code>recvmsg4</code>, <code>connect6</code>, <code>sendmsg6</code>, <code>recvmsg6</code>, <code>sock_create</code>. Every decision point already invokes <code>metric_inc()</code> &mdash; same call sites become ringbuf emission points.</p>
+
+  <h3>Existing pinned maps</h3>
+  <table>
+    <thead><tr><th>Map</th><th>Key</th><th>Value</th><th>Used by event-stream change?</th></tr></thead>
+    <tbody>
+      <tr><td><code>container_map</code></td><td>cgroup_id</td><td>container_config</td><td>presence gate for enforcement (no change)</td></tr>
+      <tr><td><code>bypass_map</code></td><td>cgroup_id</td><td>u8 flag</td><td>no change; bypass still counted as ACTION_BYPASS</td></tr>
+      <tr><td><code>dns_cache</code></td><td>IP</td><td>{domain_hash, expire_ts}</td><td><strong>reader walks this to build hash→domain reverse map</strong></td></tr>
+      <tr><td><code>route_map</code></td><td>{domain_hash, dst_port}</td><td>{envoy_port}</td><td>no change</td></tr>
+      <tr><td><code>metrics_map</code></td><td>{cgroup_id, hash, port, action}</td><td>counter</td><td>stays for break-glass <code>ebpf-manager dump</code>; NOT exported as Prom counters</td></tr>
+      <tr><td><strong><code>events_ringbuf</code></strong></td><td>(none)</td><td>egress_event records</td><td><strong>NEW &mdash; this change adds it</strong></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="decisions" aria-labelledby="decisions-h">
+  <h2 id="decisions-h">Decisions Made</h2>
+  <ul class="decisions">
+    <li><span class="tag tag-decision">Primary signal</span> <strong>BPF ring buffer event stream &rarr; structured Loki logs.</strong> NOT counters. Counters give graphs; logs give Grafana's filter/transform UX. User explicitly chose this shape &mdash; visibility/investigation system, not alert/metric system.</li>
+    <li><span class="tag tag-decision">One log line per L4 decision.</span> <code>bpf_ringbuf_submit</code> at every site that currently calls <code>metric_inc</code>. Userspace reader emits structured log via <code>logger.Info()</code>.</li>
+    <li><span class="tag tag-decision">Loki labels vs metadata.</span> Stream labels = <code>service_name=ebpf-firewall</code>, <code>agent</code>, <code>verdict</code> (low cardinality, stream selector). Structured metadata = <code>domain</code>, <code>dst_ip</code>, <code>dst_port</code>, <code>l4_proto</code>, <code>bypass</code>, <code>ts_ns</code> (high cardinality, <code>|</code> operator filters).</li>
+    <li><span class="tag tag-decision">Attribution at read time</span> in CP-side reader: <code>cgroup_id</code> &rarr; cached Docker labels &rarr; agent/project. <code>domain_hash</code> &rarr; <code>dns_cache</code> reverse lookup.
+      <span class="why">Why: BPF emits the cheap kernel-scope thing (cgroup_id); CP owns the Docker-label and dns_cache state. Both lookups happen in the same process &mdash; no cross-container IPC, no IP-recycling races.</span>
+    </li>
+    <li><span class="tag tag-decision">metrics_map stays</span> as break-glass debug surface for the existing <code>ebpf-manager dump</code> CLI. Not exported as Prom counters in this change.</li>
+    <li><span class="tag tag-decision">BPF C changes ARE required.</span> New ringbuf map; new <code>event_emit()</code> helper; ringbuf_submit calls at every decision point. Verifier work minimal (one reserve/submit per site).</li>
+    <li><span class="tag tag-decision">Drop the "fix Envoy attribution" path</span> entirely. Architectural mismatch; sunk cost.</li>
+    <li><span class="tag tag-decision">Keep Envoy MITM</span> for enforcement (path_rules) and L7 forensic logs. No longer the primary observability source.</li>
+    <li><span class="tag tag-decision">Universal L4 coverage</span> via existing connect4/sendmsg4/connect6/sendmsg6/sock_create &mdash; TCP/UDP/SSH/FTP/QUIC/raw all covered.</li>
+    <li><span class="tag tag-decision">DNS attribution = small additive change.</span> dnsbpf plugin (or sibling probe) resolves client_ip &rarr; container labels and emits structured DNS query log with <code>agent</code> label. Pairs with ringbuf reader work.</li>
+    <li><span class="tag tag-decision">Drop instrumentation non-negotiable.</span> Kernel ringbuf drop counter + reader parse failures surfaced via Prom gauge or periodic warn-log. Tetragon convention.</li>
+    <li><span class="tag tag-deferred">Per-cgroup rate limit</span> as v2; v1 trusts ringbuf size + drop counter.</li>
+    <li><span class="tag tag-decision">Scope = visibility only.</span> No baselining, alerts, classifier. Human eyeballs Grafana log panel.</li>
+  </ul>
+</section>
+
+<section id="conclusions" aria-labelledby="conclusions-h">
+  <h2 id="conclusions-h">Conclusions &amp; Insights</h2>
+  <ul>
+    <li><span class="tag tag-insight">Architecture</span> The Envoy/Promtail attribution struggle was <em>architectural</em>, not configuration. Identity must be resolved in scope. BPF <code>cgroup_id</code> is in scope inside BPF; CP's reader has the Docker label map in scope. Two layers, both have the info they need without cross-process gymnastics.</li>
+    <li><span class="tag tag-insight">Bypass forensic black hole</span> fixed for free with eBPF: BPF programs stay attached during bypass and still emit ACTION_BYPASS events. Today bypass = no Envoy logs = blind. Justifies the project on its own.</li>
+    <li><span class="tag tag-insight">Logs &gt; counters for THIS UX</span> Investigation/filter/transform is what Loki log explorer does. Counters are for graphs and alerts &mdash; explicitly not the scope.</li>
+    <li><span class="tag tag-insight">Loki labels vs metadata</span> <code>agent</code> + <code>verdict</code> as stream labels (low card). Domain / IP / port / proto as structured metadata. Don't repeat the high-card label bug in current Envoy promtail pipeline.</li>
+    <li><span class="tag tag-insight">L4 vs L7 semantics</span> &ldquo;Response code&rdquo; means different things at different layers. L4 outcome (RST/timeout/refused) for everything; HTTP response code only through MITM Envoy. Acceptable since volume isn't the signal &mdash; failure-vs-success is.</li>
+    <li><span class="tag tag-insight">Universal proto coverage</span> Envoy is TCP-only; eBPF at connect4 sees TCP + UDP + raw sockets + dual-stack IPv6. SSH/FTP/QUIC/reverse-shell-on-port-4444 all visible without per-proto config.</li>
+  </ul>
+</section>
+
+<section id="gotchas" aria-labelledby="gotchas-h">
+  <h2 id="gotchas-h">Gotchas &amp; Risks</h2>
+  <ul class="gotchas">
+    <li><span class="tag tag-gotcha">BPF verifier complexity</span> new ringbuf map + emit helper means a verifier re-run. Keep event struct flat (no pointers, fixed size). Reserve/submit pattern well-trodden &mdash; should pass on first try.</li>
+    <li><span class="tag tag-gotcha">Event flood from misbehaving agent</span> tight-loop connect attempts can fill ringbuf. Mitigation order: (1) size ringbuf generously (1 MB initial); (2) surface kernel drop counter; (3) v2 add userspace per-cgroup rate limit with drop emission.</li>
+    <li><span class="tag tag-gotcha">Drop instrumentation MUST exist day 1</span> ringbuf drop counter (kernel) + reader parse-fail counter. Surface via Prom gauge or periodic warn log. Silent drops = security false confidence.</li>
+    <li><span class="tag tag-gotcha">CP no-panic invariant applies to reader.</span> Goroutine in CP (PID 1). <code>defer recover()</code>. On unrecoverable error, log <code>event=egress_monitor_unavailable</code> and degrade; do not crash CP. eBPF stays attached.</li>
+    <li><span class="tag tag-gotcha">cgroup_id &rarr; agent lookup cost</span> Docker inspect per event = too expensive. Cache <code>cgroup_id</code> &rarr; {agent, project} with TTL or invalidation on docker-die event. Use existing dockerevents bus.</li>
+    <li><span class="tag tag-gotcha">cgroup_id reuse</span> kernel may reuse cgroup_id after container dies. Cache must invalidate on die-event or a new container could inherit old labels.</li>
+    <li><span class="tag tag-gotcha">domain_hash reverse lookup</span> <code>dns_cache</code> is keyed by IP, not hash. Reader maintains hash &rarr; domain reverse map by periodic scan of dns_cache (16384 max entries; cheap). Direct-IP connects = <code>domain=""</code>; don't drop the event.</li>
+    <li><span class="tag tag-gotcha">Loki structured metadata version</span> requires Loki 2.9+. Verify monitor stack pin in <code>internal/monitor/templates/</code> before depending on structured metadata semantics.</li>
+    <li><span class="tag tag-bug">Pre-existing: <code>metric_inc</code> silent drop on full <code>metrics_map</code></span> Uses <code>BPF_NOEXIST</code>; new tuples after 16384-entry max are silently dropped. Worth filing as separate issue (switch to <code>BPF_MAP_TYPE_LRU_PERCPU_HASH</code>, or scraper deletes dead-cgroup entries). Not part of this change but should be noted.</li>
+  </ul>
+</section>
+
+<section id="open-questions" aria-labelledby="oq-h">
+  <h2 id="oq-h">Open Items &amp; Questions</h2>
+  <ul class="questions">
+    <li>Event struct: include raw <code>dst_ip</code> (pre-redirect) so logs show what the agent actually tried? Useful for forensics &mdash; yes, locked in.</li>
+    <li>Ring buffer size: 1 MB single global, or per-CPU perf buffer for parallel reads? Start with RINGBUF (simpler, single reader, works on 5.8+); revisit if drops show up.</li>
+    <li>Keep <code>metrics_map</code> + <code>metric_inc</code> alongside <code>event_emit</code>, or replace? Decision: <strong>keep</strong> for break-glass debug. Cheap.</li>
+    <li>DNS attribution path: extend dnsbpf plugin (CoreDNS side, has client_ip) or new BPF probe at DNS packet level? Probably plugin route; less BPF.</li>
+    <li>Logger OTel bridge structured-metadata wiring: does it emit per-event metadata to Loki, or does it concatenate into the message? Verify before relying on it.</li>
+    <li>Scraper home: <code>internal/controlplane/firewall/ebpf</code> (close to map definitions) or new <code>internal/controlplane/firewall/eventstream/</code> package?</li>
+  </ul>
+</section>
+
+<section id="unknowns" aria-labelledby="unknowns-h">
+  <h2 id="unknowns-h">Unknowns</h2>
+  <ul class="unknowns">
+    <li>Existing Grafana "Egress Traffic" panel layout (IDs 54&ndash;58) &mdash; what to delete/replace?</li>
+    <li>Does CP wire a logger that emits to OTel collector for Loki ingestion already, or is that path untested for structured fields?</li>
+    <li>Kernel-floor reality &mdash; clawker's actual support matrix. Ringbuf requires &ge; 5.8. Verify.</li>
+    <li>Whether <code>dockerevents</code> bus is already a subscriber-friendly surface for the cgroup cache invalidator.</li>
+  </ul>
+</section>
+
+<section id="next-steps" aria-labelledby="next-h">
+  <h2 id="next-h">Next Steps</h2>
+  <ol class="next">
+    <li><strong>BPF C changes</strong>: add <code>events_ringbuf</code> (BPF_MAP_TYPE_RINGBUF, ~1MB) to <code>bpf/common.h</code>; add <code>event_emit()</code> helper using <code>bpf_ringbuf_reserve</code>/<code>submit</code>; call alongside every <code>metric_inc</code> site in <code>bpf/clawker.c</code>. Define <code>struct egress_event</code>.</li>
+    <li><strong>Regenerate Go bindings</strong>: <code>make ebpf</code> produces updated <code>clawker_*_bpfel.{go,o}</code>.</li>
+    <li><strong>CP reader goroutine</strong>: new file in <code>internal/controlplane/firewall/ebpf</code> (or sibling package). Uses <code>ringbuf.NewReader</code>. Per event: resolve labels via cached Docker lookup; resolve domain via cached dns_cache reverse map; emit via clawker logger with structured fields. Wrap loop with <code>defer recover()</code>.</li>
+    <li><strong>cgroup → agent cache</strong>: TTL cache invalidated by dockerevents bus (container die). Lives in CP, near AgentWatcher.</li>
+    <li><strong>Drop instrumentation</strong>: surface kernel ringbuf drop counter + reader parse failures via Prom gauge <code>clawker_egress_events_dropped_total</code>. Warn-log on nonzero.</li>
+    <li><strong>Wire into <code>cmd/clawker-cp/main.go</code></strong>: subsystem degradation path mirrors <code>wireInitExecutor</code> pattern. On construction error, log <code>event=egress_monitor_unavailable</code> and proceed.</li>
+    <li><strong>Grafana panels</strong>: replace existing Envoy "Egress Traffic" row with log-panels. Default view = all events; pre-built filters for <code>verdict=DROPPED</code>, per-agent drilldown, per-proto, per-domain.</li>
+    <li><strong>DNS attribution PR</strong> (additive, after primary lands): extend dnsbpf plugin to resolve client_ip &rarr; container labels and emit structured DNS query log on the same stream.</li>
+    <li><strong>Separately filed</strong>: pre-existing <code>metrics_map</code> silent-drop bug. Not part of this change.</li>
+  </ol>
+</section>
+
+<footer>
+  <p>This document is a living state &mdash; sections reflect current understanding, not chat history. Reversed decisions get updated in place, not appended. This HTML file <strong>is</strong> the Serena memory for this brainstorm; there is no parallel <code>.md</code>.</p>
+  <p class="source-link">Source files referenced: <code>internal/controlplane/firewall/envoy_config.go</code>, <code>internal/monitor/templates/promtail-config.yaml.tmpl</code>, <code>internal/controlplane/firewall/ebpf/bpf/{clawker.c,common.h}</code>, <code>internal/controlplane/firewall/ebpf/CLAUDE.md</code>, <code>internal/dnsbpf/CLAUDE.md</code>.</p>
+</footer>
+
+</article>
+
+</body>
+</html>
