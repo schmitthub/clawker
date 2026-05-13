@@ -104,7 +104,7 @@ func peerIdentityFromContext(ctx context.Context) (*peerIdentity, error) {
 	if err != nil {
 		return nil, err
 	}
-	agentFullName, _ := auth.AgentCanonicalFromCert(leaf) // empty when SAN missing; interceptor classifies
+	agentFullName, _ := auth.AgentFullNameFromCert(leaf) // empty when SAN missing; interceptor classifies
 	return &peerIdentity{
 		CommonName:    leaf.Subject.CommonName,
 		AgentFullName: agentFullName,

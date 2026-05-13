@@ -140,7 +140,7 @@ func TestRegister_HappyPath(t *testing.T) {
 	caCert, caKey := genTestCA(t)
 	const containerID = "ctr-happy-path"
 	const project, agentName = "myapp", "dev"
-	leaf := signTestLeaf(t, caCert, caKey, consts.ContainerClawkerd, auth.CanonicalAgentCN(auth.MustProjectSlug(project), auth.MustAgentName(agentName)), containerID)
+	leaf := signTestLeaf(t, caCert, caKey, consts.ContainerClawkerd, auth.AgentFullName(auth.MustProjectSlug(project), auth.MustAgentName(agentName)), containerID)
 
 	var added Entry
 	reg := &RegistryMock{
@@ -160,8 +160,8 @@ func TestRegister_HappyPath(t *testing.T) {
 	wantThumbprint := sha256.Sum256(leaf.Raw)
 	assert.Equal(t, wantThumbprint, added.Thumbprint)
 	assert.Equal(t, containerID, added.ContainerID)
-	assert.Equal(t, agentName, added.AgentName)
-	assert.Equal(t, project, added.Project)
+	assert.Equal(t, agentName, added.AgentName.String())
+	assert.Equal(t, project, added.Project.String())
 }
 
 // TestRegister_RequestValidation pins that request-body validation
@@ -223,7 +223,7 @@ func TestRegister_CtxGates(t *testing.T) {
 func TestRegister_IdentityCrossChecks(t *testing.T) {
 	caCert, caKey := genTestCA(t)
 	const goodProject, goodAgent, goodContainerID = "myapp", "dev", "ctr-resolved"
-	goodCanonical := auth.CanonicalAgentCN(auth.MustProjectSlug(goodProject), auth.MustAgentName(goodAgent))
+	goodCanonical := auth.AgentFullName(auth.MustProjectSlug(goodProject), auth.MustAgentName(goodAgent))
 
 	cases := []struct {
 		name              string
@@ -300,7 +300,7 @@ func TestRegister_IdentityCrossChecks(t *testing.T) {
 func TestRegister_RegistryBranches(t *testing.T) {
 	caCert, caKey := genTestCA(t)
 	const containerID, project, agentName = "ctr-reg-branches", "myapp", "dev"
-	leaf := signTestLeaf(t, caCert, caKey, consts.ContainerClawkerd, auth.CanonicalAgentCN(auth.MustProjectSlug(project), auth.MustAgentName(agentName)), containerID)
+	leaf := signTestLeaf(t, caCert, caKey, consts.ContainerClawkerd, auth.AgentFullName(auth.MustProjectSlug(project), auth.MustAgentName(agentName)), containerID)
 	thumb := sha256.Sum256(leaf.Raw)
 	otherThumb := sha256.Sum256([]byte("a-different-cert"))
 

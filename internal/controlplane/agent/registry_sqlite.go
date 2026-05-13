@@ -17,6 +17,7 @@ import (
 	"github.com/pressly/goose/v3"
 	_ "modernc.org/sqlite"
 
+	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -236,8 +237,8 @@ func (r *sqliteRegistry) Add(entry Entry) error {
 	`,
 		tpHex,
 		entry.ContainerID,
-		entry.AgentName,
-		entry.Project,
+		entry.AgentName.String(),
+		entry.Project.String(),
 		entry.RegisteredAt.Unix(),
 		entry.LastSeen.Unix(),
 	)
@@ -246,8 +247,8 @@ func (r *sqliteRegistry) Add(entry Entry) error {
 	}
 
 	r.log.Info().
-		Str("agent", entry.AgentName).
-		Str("project", entry.Project).
+		Str("agent", entry.AgentName.String()).
+		Str("project", entry.Project.String()).
 		Str("container_id", entry.ContainerID).
 		Msg("agentregistry: agent registered")
 	return nil
@@ -274,9 +275,23 @@ func scanEntry(s rowScanner) (Entry, error) {
 		return Entry{}, fmt.Errorf("agentregistry: malformed thumbprint_hex %q", tpHex)
 	}
 	copy(tp[:], raw)
+	// Re-validate agent_name / project at read time. The typed fields
+	// guarantee the strings WERE valid at write time, but a hand-edited
+	// DB row (or a future writer that bypasses the typed boundary)
+	// could otherwise land an invariant-violating value here. Returning
+	// an error lets Snapshot's row loop log and skip; LookupByContainerID
+	// surfaces it to its caller via the existing query-error path.
+	agentTyped, err := auth.NewAgentName(agentName)
+	if err != nil {
+		return Entry{}, fmt.Errorf("agentregistry: malformed agent_name %q: %w", agentName, err)
+	}
+	projectTyped, err := auth.NewProjectSlug(project)
+	if err != nil {
+		return Entry{}, fmt.Errorf("agentregistry: malformed project %q: %w", project, err)
+	}
 	return Entry{
-		AgentName:    agentName,
-		Project:      project,
+		AgentName:    agentTyped,
+		Project:      projectTyped,
 		ContainerID:  containerID,
 		Thumbprint:   tp,
 		RegisteredAt: time.Unix(registeredAt, 0).UTC(),
@@ -335,25 +350,36 @@ func (r *sqliteRegistry) Snapshot() []Entry {
 	}
 	defer rows.Close()
 
-	var out []Entry
+	var (
+		out         []Entry
+		skippedRows int
+	)
 	for rows.Next() {
 		e, err := scanEntry(rows)
 		if err != nil {
+			skippedRows++
 			r.log.Error().
 				Err(err).
+				Str("event", "agentregistry_row_skipped").
 				Msg("agentregistry: skipping malformed row in Snapshot")
 			continue
 		}
 		out = append(out, e)
 	}
+	if skippedRows > 0 {
+		r.log.Warn().
+			Int("skipped_rows", skippedRows).
+			Str("event", "agentregistry_snapshot_skipped_rows").
+			Msg("agentregistry: Snapshot omitted malformed rows — listed agents may be incomplete")
+	}
 	if err := rows.Err(); err != nil {
 		r.log.Error().Err(err).Msg("agentregistry: snapshot rows iteration failed")
 	}
 	sort.Slice(out, func(i, j int) bool {
-		if out[i].Project != out[j].Project {
-			return out[i].Project < out[j].Project
+		if out[i].Project.String() != out[j].Project.String() {
+			return out[i].Project.String() < out[j].Project.String()
 		}
-		return out[i].AgentName < out[j].AgentName
+		return out[i].AgentName.String() < out[j].AgentName.String()
 	})
 	return out
 }

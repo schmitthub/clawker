@@ -110,7 +110,7 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 	// clawkerd bootstrap env vars — only what the daemon can authoritatively
 	// assert. Container ID is server-derived from the slot at Connect;
 	// project + agent travel as separate wire fields and the CP composes
-	// the canonical name on its side via auth.CanonicalAgentCN.
+	// the AgentFullName on its side via auth.AgentFullName.
 	if opts.ClawkerdHydraURL != "" {
 		m[consts.EnvClawkerdHydraURL] = opts.ClawkerdHydraURL
 	}

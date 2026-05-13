@@ -62,10 +62,11 @@ func (*AgentBootstrap) GoString() string { return "AgentBootstrap{<redacted>}" }
 // endpoint as clawkerd will see it from inside the container).
 //
 // project + agent are the user-typed short identifiers (e.g. "myapp",
-// "dev") — never the canonical "clawker.project.agent" form. The cert's
-// CN is composed inside MintAgentCert via auth.CanonicalAgentCN so every
-// CLI caller produces the same canonical shape and the agent handler's
-// peer-cert CN cross-check has a single equality to enforce.
+// "dev") — never the AgentFullName "clawker.project.agent" form. The
+// cert's urn:clawker:agent: URI SAN is composed inside MintAgentCert
+// via auth.AgentFullName so every CLI caller produces the same
+// AgentFullName shape and the CP-side IdentityInterceptor's
+// cert-SAN-vs-label cross-check has a single equality to enforce.
 //
 // containerID is the docker container_id returned by ContainerCreate —
 // MintAgentCert embeds it as a URI SAN so the CP-side Register handler
@@ -118,7 +119,7 @@ func GenerateAgentBootstrap(caCertPath, caKeyPath string, project auth.ProjectSl
 type InstallAgentBootstrapOptions struct {
 	// Project + Agent are the typed (project, agent_name) identity
 	// validated upstream at the CLI flag boundary. Used to compose the
-	// canonical CN in the leaf cert.
+	// AgentFullName carried in the leaf cert's urn:clawker:agent: URI SAN.
 	Project auth.ProjectSlug
 	Agent   auth.AgentName
 	// ContainerID is the ID returned by client.ContainerCreate. Embedded

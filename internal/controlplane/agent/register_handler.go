@@ -217,8 +217,8 @@ func (h *Handler) Register(ctx context.Context, req *agentv1.RegisterRequest) (*
 	// daemon's view, not a client claim.
 	now := h.clock()
 	if err := h.registry.Add(Entry{
-		AgentName:    resolved.AgentName.String(),
-		Project:      resolved.Project.String(),
+		AgentName:    resolved.AgentName,
+		Project:      resolved.Project,
 		ContainerID:  resolved.ContainerID,
 		Thumbprint:   thumbprint,
 		RegisteredAt: now,

@@ -233,7 +233,7 @@ func (d *Dialer) DialAgent(ctx context.Context, containerID string) {
 			agentName, project := "", ""
 			if d.agents != nil {
 				if entry, lerr := d.agents.LookupByContainerID(containerID); lerr == nil && entry != nil {
-					agentName, project = entry.AgentName, entry.Project
+					agentName, project = entry.AgentName.String(), entry.Project.String()
 				}
 			}
 			d.log.Error().
@@ -471,9 +471,9 @@ type establishResult struct {
 // publication directly off the outcome rather than threading a
 // unified payload.
 //
-// PeerAgentFullName is the canonical agent identity
+// PeerAgentFullName is the AgentFullName
 // ("clawker.<project>.<agent>") read from the peer's URI SAN
-// (urn:clawker:agent:<canonical>) — NOT from Subject.CommonName,
+// (urn:clawker:agent:<agent_full_name>) — NOT from Subject.CommonName,
 // which is the deterministic consts.ContainerClawkerd literal and
 // carries no per-agent information.
 type peerInfo struct {
@@ -872,7 +872,7 @@ func (d *Dialer) capturePeer(rawCerts [][]byte, peer *peerInfo) {
 		certs = append(certs, c)
 	}
 	leaf := certs[0]
-	// Source PeerAgentFullName from the urn:clawker:agent:<canonical> URI
+	// Source PeerAgentFullName from the urn:clawker:agent:<agent_full_name> URI
 	// SAN. Subject.CommonName is the deterministic clawkerd binary
 	// literal (consts.ContainerClawkerd) and would yield the same
 	// string for every agent — the per-agent identity lives in the
@@ -881,7 +881,7 @@ func (d *Dialer) capturePeer(rawCerts [][]byte, peer *peerInfo) {
 	// diagnostic so subscribers can log "which agent connected" without
 	// a separate registry lookup. SAN-vs-label drift detection lives
 	// upstream in IdentityInterceptor.
-	peer.PeerAgentFullName, _ = auth.AgentCanonicalFromCert(leaf)
+	peer.PeerAgentFullName, _ = auth.AgentFullNameFromCert(leaf)
 	peer.PeerThumbprint = sha256.Sum256(rawCerts[0])
 
 	// Chain-verify against the CLI CA. Outcome is a data point;

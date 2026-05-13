@@ -8,7 +8,6 @@ package controlplane
 import (
 	"context"
 	"encoding/hex"
-	"sort"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/controlplane/agent"
@@ -60,21 +59,17 @@ func NewAdminServer(fw *fwhandler.Handler, agents agent.Registry, log *logger.Lo
 // avoid pulling google.protobuf.Timestamp into the AdminService surface
 // for one read-only RPC.
 func (s *adminServer) ListAgents(_ context.Context, _ *adminv1.ListAgentsRequest) (*adminv1.ListAgentsResult, error) {
+	// Snapshot's interface contract guarantees (Project, AgentName)
+	// ordering — trust it on the wire rather than re-sorting (avoids
+	// duplicating the comparator across in-memory + sqlite impls and
+	// this consumer).
 	snap := s.agents.Snapshot()
-	// Snapshot is documented to return entries sorted by (Project,
-	// AgentName); preserve that ordering on the wire.
-	sort.Slice(snap, func(i, j int) bool {
-		if snap[i].Project != snap[j].Project {
-			return snap[i].Project < snap[j].Project
-		}
-		return snap[i].AgentName < snap[j].AgentName
-	})
 
 	out := make([]*adminv1.Agent, len(snap))
 	for i, e := range snap {
 		out[i] = &adminv1.Agent{
-			AgentName:        e.AgentName,
-			Project:          e.Project,
+			AgentName:        e.AgentName.String(),
+			Project:          e.Project.String(),
 			ContainerId:      e.ContainerID,
 			CertThumbprint:   hex.EncodeToString(e.Thumbprint[:]),
 			RegisteredAtUnix: e.RegisteredAt.Unix(),

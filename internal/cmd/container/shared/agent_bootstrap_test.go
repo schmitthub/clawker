@@ -52,9 +52,9 @@ func TestGenerateAgentBootstrap_HappyPath(t *testing.T) {
 	assert.Equal(t, consts.ContainerClawkerd, leaf.Subject.CommonName)
 
 	// Canonical agent identity rides in the agent URI SAN.
-	gotCanonical, ok := auth.AgentCanonicalFromCert(leaf)
+	gotAgentFullName, ok := auth.AgentFullNameFromCert(leaf)
 	require.True(t, ok, "cert must carry agent URI SAN")
-	assert.Equal(t, "clawker.alpha.bravo", gotCanonical)
+	assert.Equal(t, "clawker.alpha.bravo", gotAgentFullName)
 
 	// Container_id must be embedded as a URI SAN — the load-bearing
 	// binding the Register handler reads to identify which container
@@ -79,9 +79,9 @@ func TestGenerateAgentBootstrap_EmptyProjectStillWorks(t *testing.T) {
 	require.NoError(t, err)
 	leaf := mustParseCert(t, b.CertPEM)
 	assert.Equal(t, consts.ContainerClawkerd, leaf.Subject.CommonName)
-	gotCanonical, ok := auth.AgentCanonicalFromCert(leaf)
+	gotAgentFullName, ok := auth.AgentFullNameFromCert(leaf)
 	require.True(t, ok)
-	assert.Equal(t, "clawker.solo", gotCanonical)
+	assert.Equal(t, "clawker.solo", gotAgentFullName)
 }
 
 func TestGenerateAgentBootstrap_Validation(t *testing.T) {

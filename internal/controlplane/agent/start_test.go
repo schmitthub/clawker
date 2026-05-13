@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane/dockerevents"
 	"github.com/schmitthub/clawker/internal/controlplane/overseer"
@@ -342,8 +343,8 @@ func TestStart_PublishesReapDegradedOnListerFailure(t *testing.T) {
 func mustAddTestEntry(t *testing.T, reg Registry, containerID, agentName, project string) {
 	t.Helper()
 	entry := Entry{
-		AgentName:    agentName,
-		Project:      project,
+		AgentName:    auth.MustAgentName(agentName),
+		Project:      auth.MustProjectSlug(project),
 		ContainerID:  containerID,
 		Thumbprint:   testThumb(containerID),
 		RegisteredAt: time.Unix(1000, 0),

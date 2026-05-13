@@ -190,8 +190,8 @@ func TestClassifyRegistry_Match(t *testing.T) {
 	reg := &RegistryMock{
 		LookupByContainerIDFunc: func(id string) (*Entry, error) {
 			return &Entry{
-				AgentName:   "dev",
-				Project:     "myproj",
+				AgentName:   auth.MustAgentName("dev"),
+				Project:     auth.MustProjectSlug("myproj"),
 				ContainerID: id,
 				Thumbprint:  thumb,
 			}, nil
@@ -221,8 +221,8 @@ func TestClassifyRegistry_ThumbprintMismatch(t *testing.T) {
 	reg := &RegistryMock{
 		LookupByContainerIDFunc: func(id string) (*Entry, error) {
 			return &Entry{
-				AgentName:   "dev",
-				Project:     "myproj",
+				AgentName:   auth.MustAgentName("dev"),
+				Project:     auth.MustProjectSlug("myproj"),
 				ContainerID: id,
 				Thumbprint:  rowThumb,
 			}, nil

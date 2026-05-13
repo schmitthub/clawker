@@ -27,10 +27,11 @@ type CommandOpts struct {
 	Logger         func() (*logger.Logger, error)
 
 	// AgentName is the user-typed short agent name (e.g. "dev", "test").
-	// NOT the canonical "clawker.project.agent" form — the canonical name
-	// is composed downstream (in MintAgentCert and as the registry row's
-	// canonical_cn column) from (Project, AgentName) so it has a single
-	// home. New-container start paths MUST set this; without it
+	// NOT the AgentFullName "clawker.project.agent" form — the
+	// AgentFullName is composed downstream (in MintAgentCert's URI SAN
+	// and reconstructed on demand from the registry row's
+	// (project, agent_name) columns) from (Project, AgentName) so it
+	// has a single home. New-container start paths MUST set this; without it
 	// ContainerStart skips the bootstrap-delivery + registry-write and
 	// the entrypoint silently skips clawkerd launch. Existing-container
 	// start/restart paths leave it empty by design — those containers'
@@ -43,7 +44,7 @@ type CommandOpts struct {
 	// agentregistry entries by. Empty string for the 2-segment unscoped
 	// naming case — same convention as docker.ContainerName. Must be set
 	// whenever AgentName is set on a new-container start path so
-	// MintAgentCert composes the right canonical CN.
+	// MintAgentCert composes the right AgentFullName URI SAN.
 	Project string
 }
 

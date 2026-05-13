@@ -64,7 +64,7 @@ func TestMintAgentCert_HappyPath(t *testing.T) {
 	// Agent canonical must be in a URI SAN, read back via
 	// AgentCanonicalFromCert. CP-side IdentityInterceptor + Register
 	// handler key off this string.
-	gotCanonical, ok := AgentCanonicalFromCert(leaf)
+	gotCanonical, ok := AgentFullNameFromCert(leaf)
 	require.True(t, ok, "MintAgentCert must populate the agent URI SAN")
 	assert.Equal(t, "clawker.alpha.bravo", gotCanonical)
 
@@ -120,7 +120,7 @@ func TestMintAgentCert_EmptyProjectStillMints(t *testing.T) {
 	require.NoError(t, err)
 	leaf := mustParse(t, got.CertPEM)
 	assert.Equal(t, consts.ContainerClawkerd, leaf.Subject.CommonName)
-	gotCanonical, ok := AgentCanonicalFromCert(leaf)
+	gotCanonical, ok := AgentFullNameFromCert(leaf)
 	require.True(t, ok)
 	assert.Equal(t, "clawker.solo", gotCanonical)
 }

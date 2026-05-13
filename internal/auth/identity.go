@@ -10,13 +10,13 @@ import (
 
 // AgentName is the user-typed short agent name (e.g. "dev"). It is
 // distinct from a `string` so callers cannot accidentally pass:
-//   - the canonical form ("clawker.foo.bar") — the helpers compose
+//   - the AgentFullName form ("clawker.foo.bar") — the helpers compose
 //     that themselves;
 //   - a name containing "." — segment counting breaks downstream
-//     wherever the canonical "clawker.<project>.<agent>" form is parsed
+//     wherever the AgentFullName "clawker.<project>.<agent>" form is parsed
 //     or filtered;
 //   - arbitrary characters that wouldn't survive Docker's container/
-//     volume naming or the canonical-CN compose rules.
+//     volume naming or the AgentFullName compose rules.
 //
 // Construction goes through NewAgentName, which enforces the contract.
 // In-package code that already trusts a value can convert via the
@@ -26,7 +26,7 @@ type AgentName struct{ s string }
 
 // NewAgentName parses + validates a user-typed agent short name and
 // returns a typed value. Returns an error on empty input, names that
-// look like the canonical form ("clawker.<...>"), names containing
+// look like the AgentFullName form ("clawker.<...>"), names containing
 // disallowed characters, or names exceeding the length cap. The error
 // message names the offending input so a CLI surfaces the violation
 // without the user guessing what was wrong.
@@ -107,10 +107,10 @@ func (p ProjectSlug) IsEmpty() bool { return p.s == "" }
 
 // shortNameRE matches the strict subset of characters allowed in
 // AgentName / ProjectSlug. Stricter than docker.ValidateResourceName:
-// no dot characters allowed, because the canonical CN format
+// no dot characters allowed, because the AgentFullName format
 // "clawker.<project>.<agent>" relies on dots being segment separators
 // — a dot inside a name corrupts every downstream parser. First
-// character must be alphanumeric so the resulting canonical CN doesn't
+// character must be alphanumeric so the resulting AgentFullName doesn't
 // start with a non-printable run.
 var shortNameRE = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
 
@@ -121,25 +121,25 @@ var shortNameRE = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
 // purpose suffixes (longest is "workspace") while accepting any
 // docker.GenerateRandomName output (worst-case adj-noun ≈ 27 chars).
 //
-// The canonical agent CN ("clawker.<project>.<agent>") is no longer
+// The AgentFullName ("clawker.<project>.<agent>") is no longer
 // constrained by x509's 64-byte CommonName limit because MintAgentCert
-// embeds it as a URI SAN (urn:clawker:agent:<canonical>) rather than as
-// the cert's Subject.CommonName. The cert CN is the deterministic
-// consts.ContainerClawkerd literal.
+// embeds it as a URI SAN (urn:clawker:agent:<agent_full_name>) rather
+// than as the cert's Subject.CommonName. The cert CN is the
+// deterministic consts.ContainerClawkerd literal.
 const shortNameMax = 50
 
-// canonicalPrefix is the literal prefix that distinguishes a canonical
-// agent name from a user-typed short name. Reject inputs that already
-// look canonical so a wrapping layer never produces "clawker.clawker.
-// <project>.<agent>" by accident.
-const canonicalPrefix = consts.NamePrefix + "."
+// agentFullNamePrefix is the literal prefix that distinguishes an
+// AgentFullName from a user-typed short name. Reject inputs that already
+// look like an AgentFullName so a wrapping layer never produces
+// "clawker.clawker.<project>.<agent>" by accident.
+const agentFullNamePrefix = consts.NamePrefix + "."
 
 func validateShortName(role, s string) error {
 	if len(s) > shortNameMax {
 		return fmt.Errorf("%s %q: too long (max %d chars)", role, s, shortNameMax)
 	}
-	if strings.HasPrefix(s, canonicalPrefix) {
-		return fmt.Errorf("%s %q: must be the user-typed short name, not the canonical %q form", role, s, canonicalPrefix+"...")
+	if strings.HasPrefix(s, agentFullNamePrefix) {
+		return fmt.Errorf("%s %q: must be the user-typed short name, not the AgentFullName %q form", role, s, agentFullNamePrefix+"...")
 	}
 	if !shortNameRE.MatchString(s) {
 		return fmt.Errorf("%s %q: must match [a-zA-Z0-9][a-zA-Z0-9_-]* (no dots, no spaces, alphanumeric start)", role, s)

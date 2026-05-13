@@ -189,8 +189,8 @@ func TestDriveRegister_HappyPath(t *testing.T) {
 		LookupByContainerIDFunc: func(string) (*Entry, error) {
 			return &Entry{
 				ContainerID: "abc",
-				AgentName:   "dev",
-				Project:     "myapp",
+				AgentName:   auth.MustAgentName("dev"),
+				Project:     auth.MustProjectSlug("myapp"),
 				Thumbprint:  thumb,
 			}, nil
 		},
@@ -248,8 +248,8 @@ func TestDriveRegister_DiscardsUnsolicitedFrames(t *testing.T) {
 		LookupByContainerIDFunc: func(string) (*Entry, error) {
 			return &Entry{
 				ContainerID: "abc",
-				AgentName:   "dev",
-				Project:     "myapp",
+				AgentName:   auth.MustAgentName("dev"),
+				Project:     auth.MustProjectSlug("myapp"),
 				Thumbprint:  thumb,
 			}, nil
 		},
@@ -449,13 +449,13 @@ func TestDriveRegister_MissingRowAfterRegisterDone(t *testing.T) {
 // extra (SessionConnected already populated worldview).
 func TestDispatchAgentEvents_Match_PublishesNoExtraEvent(t *testing.T) {
 	thumb := sha256.Sum256([]byte("peer"))
-	expectedCN := auth.CanonicalAgentCN(auth.MustProjectSlug("myapp"), auth.MustAgentName("dev"))
+	expectedAgentFullName := auth.AgentFullName(auth.MustProjectSlug("myapp"), auth.MustAgentName("dev"))
 	reg := &RegistryMock{
 		LookupByContainerIDFunc: func(string) (*Entry, error) {
 			return &Entry{
 				ContainerID: "abc",
-				AgentName:   "dev",
-				Project:     "myapp",
+				AgentName:   auth.MustAgentName("dev"),
+				Project:     auth.MustProjectSlug("myapp"),
 				Thumbprint:  thumb,
 			}, nil
 		},
@@ -465,7 +465,7 @@ func TestDispatchAgentEvents_Match_PublishesNoExtraEvent(t *testing.T) {
 	streamCtx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	stream := newFakeStream(streamCtx)
-	res := happyEstablishResult(stream, expectedCN, thumb)
+	res := happyEstablishResult(stream, expectedAgentFullName, thumb)
 	res.StreamCancel = cancel
 
 	d.dispatchAgentEvents(t.Context(), "abc", res, logger.Nop())
@@ -492,8 +492,8 @@ func TestDispatchAgentEvents_OutcomesPinned(t *testing.T) {
 				LookupByContainerIDFunc: func(string) (*Entry, error) {
 					return &Entry{
 						ContainerID: "abc",
-						AgentName:   "dev",
-						Project:     "myapp",
+						AgentName:   auth.MustAgentName("dev"),
+						Project:     auth.MustProjectSlug("myapp"),
 						Thumbprint:  sha256.Sum256([]byte("registered-cert")),
 					}, nil
 				},
@@ -547,8 +547,8 @@ func TestDispatchAgentEvents_AsymmetricTrust_StreamStaysOpen(t *testing.T) {
 		LookupByContainerIDFunc: func(string) (*Entry, error) {
 			return &Entry{
 				ContainerID: "abc",
-				AgentName:   "dev",
-				Project:     "myapp",
+				AgentName:   auth.MustAgentName("dev"),
+				Project:     auth.MustProjectSlug("myapp"),
 				Thumbprint:  sha256.Sum256([]byte("registered")),
 			}, nil
 		},

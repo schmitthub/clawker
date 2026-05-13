@@ -35,6 +35,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -44,12 +45,19 @@ import (
 // handshake). LastSeen currently equals RegisteredAt; future per-agent
 // RPCs will refresh LastSeen at their own boundary.
 type Entry struct {
-	// AgentName is the user-typed short name (e.g. "dev").
-	AgentName string
+	// AgentName is the user-typed short name (typed so the registry
+	// cannot hold a string that failed auth.NewAgentName validation —
+	// e.g. a slug containing a dot, the "clawker." prefix, or chars
+	// outside the allowed charset). Constructed upstream by the
+	// Register handler via auth.NewAgentName at the wire boundary;
+	// reconstructed via auth.NewAgentName during sqlite Snapshot reads
+	// (malformed rows are skipped, never panicked on).
+	AgentName auth.AgentName
 	// Project is the clawker project slug under which the agent
-	// registered. Empty string is allowed and matches the unscoped
-	// 2-segment naming case (docker.ContainerName).
-	Project      string
+	// registered. The zero value (auth.ProjectSlug{}) is the unscoped
+	// 2-segment naming case (matches docker.ContainerName when no
+	// project is set). Typed for the same reason as AgentName.
+	Project      auth.ProjectSlug
 	ContainerID  string
 	Thumbprint   [sha256.Size]byte
 	RegisteredAt time.Time
@@ -139,8 +147,8 @@ func (r *registryImpl) Add(entry Entry) error {
 	r.entries[entry.Thumbprint] = entry
 	r.mu.Unlock()
 	r.log.Info().
-		Str("agent", entry.AgentName).
-		Str("project", entry.Project).
+		Str("agent", entry.AgentName.String()).
+		Str("project", entry.Project.String()).
 		Str("container_id", entry.ContainerID).
 		Msg("agentregistry: agent registered")
 	return nil
@@ -149,15 +157,29 @@ func (r *registryImpl) Add(entry Entry) error {
 // validateEntry runs the programming-error invariants shared by every
 // Registry.Add path. Failure is a wiring bug — panic so it surfaces
 // during development rather than corrupting the registry. AgentName
-// and Project string-validity are enforced upstream by the Register
-// handler via auth.NewProjectSlug / auth.NewAgentName at the wire
-// boundary.
+// and Project string-validity is enforced by the typed Entry fields
+// (auth.AgentName / auth.ProjectSlug). The checks below cover the
+// invariants the type system cannot express: non-zero thumbprint,
+// non-empty ContainerID, non-zero RegisteredAt, and a non-zero
+// AgentName (a struct-literal Entry{} could otherwise omit it and
+// land an empty agent slot in the registry).
+//
+// FIXME(cp-serve-path): These panics are on the gRPC handler goroutine
+// reachable post-SetReady from Register. Per root CLAUDE.md, a CP
+// panic strands eBPF — a future cleanup should convert to error
+// returns. Today the production caller (register_handler.go::Register)
+// constructs Entry from middleware-resolved typed values that cannot
+// trip any of these gates, but the safety belongs in the API, not in
+// the call-site discipline.
 func validateEntry(entry Entry) {
 	if entry.Thumbprint == ([sha256.Size]byte{}) {
 		panic("agentregistry: Add called with zero thumbprint")
 	}
 	if entry.ContainerID == "" {
 		panic("agentregistry: Add called with empty ContainerID")
+	}
+	if entry.AgentName.IsZero() {
+		panic("agentregistry: Add called with zero AgentName")
 	}
 	if entry.RegisteredAt.IsZero() {
 		panic("agentregistry: Add called with zero RegisteredAt")
@@ -191,7 +213,7 @@ func (r *registryImpl) EvictByContainerID(containerID string) error {
 	r.mu.Unlock()
 	for _, entry := range evicted {
 		r.log.Info().
-			Str("agent", entry.AgentName).
+			Str("agent", entry.AgentName.String()).
 			Str("container_id", entry.ContainerID).
 			Msg("agentregistry: agent evicted")
 	}
@@ -210,10 +232,10 @@ func (r *registryImpl) Snapshot() []Entry {
 	// alone is not a unique key and sorting by it leaves the
 	// inter-project order undefined (Go map iteration order).
 	sort.Slice(out, func(i, j int) bool {
-		if out[i].Project != out[j].Project {
-			return out[i].Project < out[j].Project
+		if out[i].Project.String() != out[j].Project.String() {
+			return out[i].Project.String() < out[j].Project.String()
 		}
-		return out[i].AgentName < out[j].AgentName
+		return out[i].AgentName.String() < out[j].AgentName.String()
 	})
 	return out
 }

@@ -24,14 +24,14 @@ func TestNewAgentName_Validation(t *testing.T) {
 		{"valid with hyphen", "dev-main", false, ""},
 		{"valid mixed case", "DevAgent", false, ""},
 		{"empty rejected", "", true, "agent name required"},
-		// Dot is the segment separator in the canonical CN — a dot inside
-		// the short name corrupts every downstream parser.
+		// Dot is the segment separator in the AgentFullName — a dot
+		// inside the short name corrupts every downstream parser.
 		{"dot rejected", "dev.bot", true, "must match"},
-		// Canonical-form prefix would produce "clawker.clawker.<...>" if
+		// AgentFullName prefix would produce "clawker.clawker.<...>" if
 		// composed inside MintAgentCert.
-		{"canonical prefix rejected", "clawker.dev", true, "canonical"},
+		{"agent-full-name prefix rejected", "clawker.dev", true, "AgentFullName"},
 		// Exact prefix without trailing segment is also caught.
-		{"bare clawker prefix rejected", "clawker.", true, "canonical"},
+		{"bare clawker prefix rejected", "clawker.", true, "AgentFullName"},
 		{"leading hyphen rejected", "-dev", true, "must match"},
 		{"slash rejected", "dev/main", true, "must match"},
 		{"space rejected", "dev main", true, "must match"},
@@ -72,7 +72,7 @@ func TestNewProjectSlug_Validation(t *testing.T) {
 		{"valid alnum", "myapp1", false},
 		{"valid with hyphen", "my-app", false},
 		{"dot rejected", "my.app", true},
-		{"canonical prefix rejected", "clawker.app", true},
+		{"agent-full-name prefix rejected", "clawker.app", true},
 		{"slash rejected", "my/app", true},
 		{"too long rejected", strings.Repeat("p", shortNameMax+1), true},
 	}
@@ -112,9 +112,9 @@ func TestMust_PanicWrapsValidation(t *testing.T) {
 func TestCanonicalAgentCN_TwoVsThreeSegment(t *testing.T) {
 	assert.Equal(t,
 		"clawker.myapp.dev",
-		CanonicalAgentCN(MustProjectSlug("myapp"), MustAgentName("dev")))
+		AgentFullName(MustProjectSlug("myapp"), MustAgentName("dev")))
 
 	assert.Equal(t,
 		"clawker.solo",
-		CanonicalAgentCN(ProjectSlug{}, MustAgentName("solo")))
+		AgentFullName(ProjectSlug{}, MustAgentName("solo")))
 }

@@ -16,7 +16,7 @@
 | Task 3: Refactor `Register` handler — drop redundant checks, use middleware-resolved labels | `complete` | — |
 | Task 4: Drop `Registry.Lookup`, simplify Registry surface, rework `Dialer.classifyRegistry` | `complete` | — |
 | Task 5: Migration `00002_drop_canonical_cn.sql` | `complete` | — |
-| Task 6: Rename `Canonical*` → `AgentFullName*` everywhere (auth + agent + sweeps) | `pending` | — |
+| Task 6: Rename `Canonical*` → `AgentFullName*` everywhere (auth + agent + sweeps) + typed `Entry` fields | `complete` | — |
 | Task 7: Update existing tests + add missing tests | `pending` | — |
 | Task 8: Update CLAUDE.md docs + final test run | `pending` | — |
 
@@ -78,6 +78,23 @@
   - Test file dropped two linter-replaceable tests (nil-peer-lookup constructor guard, absent-ctx-key returns-false) and merged the two stage-2 resolver-error tests into a 3-row table-driven test that also covers the generic-daemon-error default branch.
   - Five distinct `event=` log fields per reject stage for operator triage: `agent_identity_peer_auth_missing`, `agent_identity_cn_mismatch`, `agent_identity_no_agent_san`, `agent_identity_peer_lookup_no_match` / `_invalid_labels` / `_error`, `agent_identity_san_label_mismatch`. Wire envelope stays uniform `"registration rejected"` regardless.
 
+- **Task 6 refinements (review-driven, deviate from spec):**
+  - **Serena `rename_symbol` corrupted `register_handler.go` during `AgentCanonicalFromCert → AgentFullNameFromCert`** — mangled two regions (one comment, one log message + return statement). Restored from `git show HEAD`, re-applied only the typed-field edit. **Lesson:** always `go vet ./...` after each `rename_symbol`. Failure mode silently lands corrupted bytes that pass schematic checks but error at compile.
+  - **`Entry.AgentName`/`Project` typed as `auth.AgentName`/`auth.ProjectSlug`** — closes the Task 4 silent-failure-hunter MEDIUM. Construction is unforgeable outside `internal/auth`; the compiler now rejects raw-string writers. Test sites updated to wrap literals via `auth.MustAgentName("dev")` / `auth.MustProjectSlug("p")`. Verified `MustAgentName`/`MustProjectSlug` have ZERO non-test callers (production goes through `auth.NewAgentName`).
+  - **`scanEntry` re-validates strings on read** via `auth.NewAgentName` / `auth.NewProjectSlug`. Returns an error that `Snapshot()` logs and skips (now with `event=agentregistry_row_skipped` + a per-Snapshot `event=agentregistry_snapshot_skipped_rows` summary line carrying the count — silent-failure-hunter MEDIUM). `LookupByContainerID` propagates the validation error up; Register handler currently maps to `codes.Internal` and the agent's container is stuck until manual eviction — a DOS path against re-registration if a row ever corrupts. **Deferred** as a Task 7+ follow-up: typed sentinel `ErrMalformedEntry` + handler evicts-and-retries.
+  - **`validateEntry`'s panic family stayed as-is** (with new `entry.AgentName.IsZero()` gate added). Pre-existing tech debt: `validateEntry` is reachable from the CP gRPC handler goroutine post-`SetReady`, violating the root CLAUDE.md "no panic on CP serve path" rule. Today the sole production caller (`register_handler.go::Register`) sources Entry from middleware-resolved typed values that cannot trip any gate, but the safety belongs in the API. `FIXME(cp-serve-path)` doc-comment block added so the next reader doesn't dismiss the issue. **Deferred** to a follow-up cleanup; out of Task 6 scope (rename + typed fields, not error-handling rewrite).
+  - **`server.go::ListAgents` re-sort deleted** (code-simplifier finding). Snapshot's interface contract guarantees `(Project, AgentName)` ordering; re-sorting on the wire just duplicated the comparator across in-memory + sqlite + this consumer. Drops `sort` import. The two registry impls' sort closures remain duplicates of each other — extracting `sortEntries` is nice-to-have but out of Task 6 scope.
+  - **`auth.AgentName.Less` / `ProjectSlug.Less` typed comparators NOT added** (type-design-analyzer + code-simplifier nice-to-have). Three sort sites still use `.String() < .String()`. Trade-off was small win for moderate API surface expansion; left for a future refactor.
+  - **`auth.AgentSANScheme` doc** updated to mention dialer's `capturePeer` reads the SAN as a diagnostic for `SessionConnected` events (not for trust gating). The earlier comment dropped the dialer entirely; would have misled a future reader into thinking the dialer is decoupled from the SAN.
+  - **Comments scrubbed:** `internal/auth/{agent_cert,identity}.go`, `internal/controlplane/agent/{registry,registry_sqlite,dialer}.go`, `internal/cmd/container/shared/{agent_bootstrap,container_start}.go`, `internal/docker/env.go` — all identity-context "canonical" residue swept. Generic-English "canonical container ID" / "canonical aud claim" intentionally kept.
+  - **Skipped intentionally:** test-file comment cleanup (`identity_test.go:98`, `agent_cert_test.go:59,64,117`, `register_handler_test.go:69,231`, `dialer_test.go:74,78`, `identity_interceptor_test.go:88`). These are Task 7 scope.
+  - **CLAUDE.md doc updates NOT done in Task 6** (deferred to Task 8 per the initiative spec). Stale references to track in Task 8:
+    - `internal/controlplane/agent/CLAUDE.md:80, 188-189` — `canonical_cn` column past tense; `CanonicalAgentCN`/`AgentCanonicalFromCert` symbol renames in Imports section.
+    - `internal/auth/CLAUDE.md:31` — `CanonicalAgentCN`, `AgentCanonicalFromCert`, `urn:clawker:agent:<canonical>`, `canonical_cn` column references.
+    - `internal/cmd/container/shared/CLAUDE.md:57` — `auth.CanonicalAgentCN` symbol + "canonical CN" framing.
+    - `.claude/docs/KEY-CONCEPTS.md:41,46,47,49` — `canonical_cn` column, `Lookup(thumbprint, cn)`, `CanonicalAgentCN`, pre-computed canonical column writes.
+  - **Tests pinning new behavior:** added "zero agent name" subtest to `TestRegistry_Add_RejectsInvariantViolations` (pins the new `validateEntry` IsZero gate). Test-hunter rated KEEP/borderline — the gate catches direct struct-literal omission, which the type system alone cannot. Other test changes are mechanical type adaptation (string → typed wrapper).
+
 ---
 
 ## Context Window Management
@@ -120,17 +137,17 @@ The redesign establishes a universal trust middleware grounded in the kernel-att
 
 | File | Role |
 |------|------|
-| `internal/auth/agent_cert.go` | `MintAgentCert`, `BuildAgentSAN`, `AgentCanonicalFromCert` (→ rename `AgentFullNameFromCert`), `CanonicalAgentCN` (→ rename `AgentFullName`) |
-| `internal/auth/identity.go` | `ProjectSlug`, `AgentName`, `shortNameMax`, `canonicalPrefix` (rename optional) |
-| `internal/controlplane/agent/identity_interceptor.go` | The thing being redesigned |
-| `internal/controlplane/agent/handler.go` | `peerIdentity`, `peerIdentityFromContext` — needs the new resolved-container ctx helper |
-| `internal/controlplane/agent/register_handler.go` | `Handler.Register` — drops cert↔request compare, drops `labelsMatchRequest` |
-| `internal/controlplane/agent/registry.go` + `registry_sqlite.go` | Registry interface; drop `Lookup`, keep `LookupByContainerID`, `Add`, `EvictByContainerID`, `Snapshot` |
-| `internal/controlplane/agent/dialer.go` | `classifyRegistry` reworked to use `LookupByContainerID` + thumbprint compare |
-| `internal/controlplane/agent/start.go` | `Start(ctx, StartDeps)` — needs new dep: `ContainerByPeerIP` resolver |
-| `internal/controlplane/agent/migrations/` | Goose migrations; add 00002 to drop `canonical_cn` |
-| `cmd/clawker-cp/main.go` | Wires `agent.Start` — pass new `ContainerByPeerIP` constructed from moby client |
-| `internal/auth/CLAUDE.md`, `internal/controlplane/agent/CLAUDE.md`, `internal/cmd/container/shared/CLAUDE.md` | Doc updates |
+| `internal/auth/agent_cert.go` | `MintAgentCert`, `BuildAgentSAN`, `AgentFullNameFromCert`, `AgentFullName` |
+| `internal/auth/identity.go` | `ProjectSlug`, `AgentName`, `shortNameMax`, `agentFullNamePrefix` |
+| `internal/controlplane/agent/identity_interceptor.go` | Universal peer-IP→Docker→label middleware |
+| `internal/controlplane/agent/handler.go` | `peerIdentity`, `peerIdentityFromContext`, `WithResolvedContainer` / `ResolvedContainerFromContext` |
+| `internal/controlplane/agent/register_handler.go` | `Handler.Register` — consumes middleware-resolved identity from ctx |
+| `internal/controlplane/agent/registry.go` + `registry_sqlite.go` | Registry interface; `Entry` carries typed `auth.AgentName` / `auth.ProjectSlug` fields; `Add`, `LookupByContainerID`, `EvictByContainerID`, `Snapshot` |
+| `internal/controlplane/agent/dialer.go` | `classifyRegistry` uses thumbprint compare; `capturePeer` reads agent SAN as diagnostic |
+| `internal/controlplane/agent/start.go` | `Start(ctx, StartDeps)` with `PeerLookup ContainerByPeerIP` dep |
+| `internal/controlplane/agent/migrations/` | Goose migrations; 00001 init + 00002 drop canonical_cn |
+| `cmd/clawker-cp/main.go` | Wires `agent.Start` with the moby-backed peer-IP resolver |
+| `internal/auth/CLAUDE.md`, `internal/controlplane/agent/CLAUDE.md`, `internal/cmd/container/shared/CLAUDE.md` | Doc updates (Task 8) |
 
 ### Design Patterns
 
@@ -140,332 +157,26 @@ The redesign establishes a universal trust middleware grounded in the kernel-att
 - **Constant-time compares** for every identity equality check (`crypto/subtle.ConstantTimeCompare`). Defense-in-depth against future timing channels.
 - **Structured logs** with `event=<kebab_case>` and `peer_ip`, `expected_<thing>`, `cert_<thing>` fields.
 - **Generic rejection envelope:** All `PermissionDenied` returns use `"registration rejected"` (or `"register: identity check failed"` in Register) — attackers must not learn which check failed; the structured log carries the classification.
+- **Typed identity fields:** `agent.Entry.AgentName` is `auth.AgentName`; `agent.Entry.Project` is `auth.ProjectSlug`. Construction requires `auth.NewAgentName` / `auth.NewProjectSlug` (or `Must*` in tests). `scanEntry` re-runs `NewAgentName` / `NewProjectSlug` on sqlite reads so a malformed row cannot land an invariant-violating value; `Snapshot()` logs and skips on validation failure.
 
 ### Rules
 
 - Read root `CLAUDE.md`, `.claude/rules/` files (code-style, testing, dependency-placement), and package `CLAUDE.md` files before starting any task
 - Use Serena tools for code exploration — `find_symbol`, `find_referencing_symbols`, `get_symbols_overview` — read symbol bodies only when needed
+- **`rename_symbol` corruption risk:** Serena's `rename_symbol` can silently mangle file regions during cross-file renames (encountered in Task 6 on `register_handler.go` during `AgentCanonicalFromCert → AgentFullNameFromCert`). ALWAYS `go vet ./...` after each rename to catch corruption before further edits compound the damage. If corruption is found, restore the affected file from `git show HEAD:<path>` and re-apply only the intended edit.
 - All new code must compile; relevant tests must pass (`go test ./internal/auth/... ./internal/controlplane/agent/... ./internal/docker/... ./internal/cmd/container/shared/...`)
 - NEVER run `go test ./...` from inside a clawker container — the e2e suite tears down the host CP. Run targeted package tests.
 - Follow existing test patterns: `iostreams.Test()`, `configmocks`, moq-generated mocks, table-driven tests with `assert`/`require` from testify
 - CP code must NOT panic or `log.Fatal` after `SetReady` — return errors, degrade subsystems with `event=<subsystem>_unavailable` structured logs
 - Output streams: data → `ios.Out`, warnings/errors → `ios.ErrOut`. Logger is FILE LOGGING ONLY — never user-visible output.
-- No "canonical" in new identifier names — use `AgentFullName`. The sqlite column `canonical_cn` is migrated away in Task 5.
-
----
-
-## Task 1: Build `ContainerByPeerIP` resolver + interface seam
-
-**Creates/modifies:**
-- `internal/controlplane/agent/peer_lookup.go` (new) — `ContainerByPeerIP` interface + `ResolvedContainer` struct
-- `internal/controlplane/agent/peer_lookup_moby.go` (new) — moby-backed implementation
-- `internal/controlplane/agent/peer_lookup_test.go` (new) — fake + table-driven tests
-- `internal/controlplane/agent/start.go` — add `ContainerByPeerIP` to `StartDeps`
-- `cmd/clawker-cp/main.go` — construct moby-backed resolver and pass to `agent.Start`
-
-**Depends on:** Task 0 (goose adoption — complete)
-
-### Implementation Phase
-
-1. Define `ResolvedContainer` struct: `{ ContainerID string; Project string; AgentName string }` — the truth source for downstream consumers.
-2. Define `ContainerByPeerIP` interface:
-   ```go
-   type ContainerByPeerIP interface {
-       LookupByIP(ctx context.Context, ip netip.Addr) (ResolvedContainer, error)
-   }
-   ```
-   Return a sentinel `ErrNoContainerForPeerIP` when no `purpose=agent` container on clawker-net has the given endpoint IP.
-3. Moby-backed impl: `ContainerList` with filter `label=dev.clawker.purpose=agent`, iterate results, for each call `ContainerInspect` and check `NetworkSettings.Networks[consts.Network].IPAddress.Unmap() == ip.Unmap()`. Return the first match's labels.
-4. Add a 5s timeout on the docker calls (mirrors `register_handler.go:32` `inspectTimeout`).
-5. Wire into `agent.StartDeps` as a new required field `PeerLookup ContainerByPeerIP`.
-6. In `cmd/clawker-cp/main.go`, construct the moby-backed resolver from the existing `*docker.Client` (whail-wrapped) and pass it to `agent.Start`.
-
-### Acceptance Criteria
-
-```bash
-go build ./internal/controlplane/agent/...
-go build ./cmd/clawker-cp
-go test -run TestContainerByPeerIP ./internal/controlplane/agent/... -v
-```
-
-Tests cover:
-- Match on first container with matching IP
-- No match → `ErrNoContainerForPeerIP`
-- Multiple `purpose=agent` containers, only one matches → correct one returned
-- Container without clawker-net endpoint → skipped
-- Docker error → wrapped and returned (no panic)
-
-### Wrap Up
-
-1. Update Progress Tracker: Task 1 → `complete`
-2. Append key learnings
-3. Run `pr-review-toolkit:code-reviewer`, `pr-review-toolkit:silent-failure-hunter`, `test-hunter`, `pr-review-toolkit:code-simplifier`, `pr-review-toolkit:comment-analyzer`, `pr-review-toolkit:type-design-analyzer` subagents; fix all findings
-4. Commit: `feat(agent): add ContainerByPeerIP resolver for trust-anchor lookup`
-5. **STOP.** Present handoff:
-
-> **Next agent prompt:** "Continue the SAN-refactor initiative. Read the Serena memory `initiative_san_refactor` — Task 1 is complete. Begin Task 2: Redesign IdentityInterceptor as universal peer-IP→Docker→label middleware."
-
----
-
-## Task 2: Redesign `IdentityInterceptor` as universal peer-IP→Docker→label middleware
-
-**Creates/modifies:**
-- `internal/controlplane/agent/identity_interceptor.go` — full rewrite of `resolve` closure
-- `internal/controlplane/agent/handler.go` — add `WithResolvedContainer` / `ResolvedContainerFromContext`
-- `internal/controlplane/agent/identity_interceptor_test.go` — rewrite tests for new flow
-
-**Depends on:** Task 1
-
-### Implementation Phase
-
-1. Add `WithResolvedContainer(ctx, ResolvedContainer)` and `ResolvedContainerFromContext(ctx) (ResolvedContainer, bool)` to `handler.go`. Unexported ctx key struct. Panic on nil; ok=false on typed-nil.
-2. Update `IdentityInterceptor` signature: drop `Registry` and `optedOut` parameters; add `PeerLookup ContainerByPeerIP`:
-   ```go
-   func IdentityInterceptor(peerLookup ContainerByPeerIP, log *logger.Logger) (UnaryServerInterceptor, StreamServerInterceptor)
-   ```
-3. Delete `IdentityOptedOutMethods()` entirely. Delete `WithEntry`/`EntryFromContext` (Registry no longer attached).
-4. New `resolve` flow:
-   ```go
-   resolve := func(ctx, method) (ctx, error) {
-       pid, err := peerIdentityFromContext(ctx)
-       if err != nil { reject }
-       // 1. Universal CN pin (constant-time, log peer_cn + expected_cn + agent_full_name).
-       if subtle.ConstantTimeCompare([]byte(pid.CommonName), []byte(consts.ContainerClawkerd)) != 1 { reject }
-       // 2. Peer IP → Docker → labels.
-       resolved, err := peerLookup.LookupByIP(ctx, peerAddr(ctx))
-       if err != nil { reject + structured log }
-       // 3. Cross-check cert SAN AgentFullName against label-derived AgentFullName.
-       labelFullName := auth.AgentFullName(auth.MustProjectSlug(resolved.Project), auth.MustAgentName(resolved.AgentName))
-       if subtle.ConstantTimeCompare([]byte(pid.AgentFullName), []byte(labelFullName)) != 1 { reject + structured log }
-       return WithResolvedContainer(ctx, resolved), nil
-   }
-   ```
-   NOTE: `auth.AgentFullName` is the renamed `CanonicalAgentCN` (rename happens in Task 6 — for Task 2, keep calling `auth.CanonicalAgentCN` and let Task 6 sweep). Don't use `Must*` constructors on Docker labels — labels are user-supplied at container create time and could be malformed in pathological cases. Use `auth.NewProjectSlug` / `auth.NewAgentName` and reject on error.
-5. Rewrite `identity_interceptor_test.go`:
-   - Drop tests using `Registry.Lookup`
-   - Add: wrong-CN → rejected; missing labels → rejected; cert SAN ≠ label AgentFullName → rejected; happy path → ctx carries `ResolvedContainer`; **Register opt-out variant gone** — Register hits the same middleware now
-   - Fake `ContainerByPeerIP` in test (hand-rolled, not moq — one method)
-6. Update `cmd/clawker-cp/main.go` wiring for new `IdentityInterceptor` signature.
-
-### Acceptance Criteria
-
-```bash
-go build ./internal/controlplane/agent/...
-go build ./cmd/clawker-cp
-go test -run TestIdentityInterceptor ./internal/controlplane/agent/... -v
-```
-
-All identity-interceptor tests pass. Register no longer opts out of the trust check (it's still opt-out of registry lookup, but registry lookup is gone — Task 4).
-
-### Wrap Up
-
-1. Update Progress Tracker: Task 2 → `complete`
-2. Append key learnings
-3. Run review subagents; fix findings
-4. Commit: `refactor(agent): IdentityInterceptor as universal peer-IP-grounded middleware`
-5. **STOP.** Present handoff:
-
-> **Next agent prompt:** "Continue the SAN-refactor initiative. Read Serena memory `initiative_san_refactor` — Tasks 1-2 complete. Begin Task 3: Refactor Register handler to use middleware-resolved labels."
-
----
-
-## Task 3: Refactor `Register` handler — drop redundant checks, use middleware-resolved labels
-
-**Creates/modifies:**
-- `internal/controlplane/agent/register_handler.go` — drop cert↔request compare, drop `labelsMatchRequest`, use `ResolvedContainerFromContext`
-- `internal/controlplane/agent/register_handler_test.go` — update tests for new flow
-
-**Depends on:** Task 2
-
-### Implementation Phase
-
-1. Read `ResolvedContainer` from ctx via `ResolvedContainerFromContext` — set by the middleware. If missing → 500 Internal (wiring bug — middleware MUST have run); structured log `event=agent_register_no_resolved_container`.
-2. Drop:
-   - `peerLeafAndIP` no longer needs to return `peerIP` (middleware already used it). Keep returning `leaf` for thumbprint + container_id SAN extraction.
-   - `auth.AgentCanonicalFromCert` call + `ok` check (middleware verified non-empty + matching).
-   - `expectedCanonical` computation + constant-time compare against request — middleware compared cert SAN to labels; trusting labels is the new floor.
-   - `labelsMatchRequest` — labels were the input to middleware, no need to recheck. Delete the function.
-   - `peerIPMatchesContainer` — middleware resolved by peer IP, so by construction the IP matches. Delete the function.
-3. Validate request fields (`auth.NewProjectSlug`, `auth.NewAgentName`) as inputs. Cross-check against resolved labels (cheap sanity): if `req.Project != resolved.Project` or `req.AgentName != resolved.AgentName` → reject with `event=agent_register_request_label_mismatch` (the client is lying about its own identity; cert+labels+request must all align).
-4. Read `container_id` from cert URI SAN as before. Cross-check against `resolved.ContainerID` (cert SAN claim vs Docker-resolved truth): mismatch → reject with `event=agent_register_container_id_mismatch`.
-5. Idempotency check via `Registry.LookupByContainerID` stays.
-6. Registry write: use values FROM `resolved` (label-derived), NOT from request. Request is the client's claim; labels are authoritative.
-7. Update tests: drop `labelsMatchRequest_*` tests, drop `peerIPMismatch_*` tests, add `request_label_mismatch_*` and `container_id_mismatch_*`.
-
-### Acceptance Criteria
-
-```bash
-go build ./internal/controlplane/agent/...
-go test -run TestRegister ./internal/controlplane/agent/... -v
-```
-
-All Register tests pass.
-
-### Wrap Up
-
-1. Update Progress Tracker: Task 3 → `complete`
-2. Append key learnings
-3. Run review subagents; fix findings
-4. Commit: `refactor(agent): Register handler consumes middleware-resolved identity`
-5. **STOP.** Present handoff:
-
-> **Next agent prompt:** "Continue the SAN-refactor initiative. Read Serena memory `initiative_san_refactor` — Tasks 1-3 complete. Begin Task 4: Drop Registry.Lookup, simplify surface, rework dialer."
-
----
-
-## Task 4: Drop `Registry.Lookup`, simplify surface, rework `Dialer.classifyRegistry`
-
-**Creates/modifies:**
-- `internal/controlplane/agent/registry.go` — drop `Lookup` from the interface
-- `internal/controlplane/agent/registry_sqlite.go` — drop `Lookup` method + `canonical_cn` references in Add/scan; `LookupByContainerID` stays
-- `internal/controlplane/agent/registry_mock_test.go` — regen moq mock
-- `internal/controlplane/agent/dialer.go` — `classifyRegistry` uses `LookupByContainerID` + thumbprint compare; outcomes refit
-- `internal/controlplane/agent/dialer_test.go` — update outcome assertions
-
-**Depends on:** Task 3
-
-### Implementation Phase
-
-1. Drop `Lookup(thumbprint, agentFullName)` from `Registry` interface. Drop the sqlite impl + the in-memory `NewRegistry` impl's method.
-2. Drop the `canonical` field write/scan in `Add`/`scanEntry`. Update `selectEntryCols` to remove `canonical_cn`. **Note:** the column itself still exists in the DB at this point — Task 5 drops it via migration. Code stops writing/reading it now so the column is unused, and the Task-5 migration is safe.
-3. Regenerate `registry_mock_test.go` via `cd internal/controlplane/agent && go generate ./...`. Strip the self-import (see existing file's post-edit shape).
-4. Rework `Dialer.classifyRegistry`:
-   - New flow: `LookupByContainerID(containerID)` → if Not Found = `outcomeRegistryMiss`; if found and thumbprint matches = `outcomeRegistryMatch`; if found and thumbprint differs = `outcomeRegistryThumbprintMismatch` (renamed from current).
-   - Drop the agent-full-name CN comparison entirely — that lived in `Lookup` and is no longer the dialer's job. The dialer is OUTBOUND CP→clawkerd; trust on the agent side comes from clawkerd's listener pinning CP's CN.
-   - Keep `outcomeRegistryCNMismatch` enum value but rename to `outcomeRegistryThumbprintMismatch` — the substantive check is now thumbprint. (Per user: `UntrustedReasonCNMismatch` enum stays as-is because the CN-pin failure still references the binary identity CN. Be precise: the dialer's enum becomes `UntrustedReasonThumbprintMismatch` because that's what changed.)
-5. Update `events_session.go` `SessionConnected` event: keep `PeerAgentFullName` field (still valuable diagnostic); keep `PeerThumbprint`.
-6. Update `dialer_test.go` to assert new outcomes.
-
-### Acceptance Criteria
-
-```bash
-go build ./...
-go test -run "TestDialer|TestRegistry" ./internal/controlplane/agent/... -v
-```
-
-All dialer + registry tests pass.
-
-### Wrap Up
-
-1. Update Progress Tracker: Task 4 → `complete`
-2. Append key learnings
-3. Run review subagents; fix findings
-4. Commit: `refactor(agent): drop Registry.Lookup; dialer classifies by thumbprint`
-5. **STOP.** Present handoff:
-
-> **Next agent prompt:** "Continue the SAN-refactor initiative. Read Serena memory `initiative_san_refactor` — Tasks 1-4 complete. Begin Task 5: Migration 00002 to drop canonical_cn."
-
----
-
-## Task 5: Migration `00002_drop_canonical_cn.sql`
-
-**Creates/modifies:**
-- `internal/controlplane/agent/migrations/00002_drop_canonical_cn.sql` (new)
-
-**Depends on:** Task 4 (code stops reading/writing `canonical_cn` before migration drops it — guarantees no broken queries during migration window).
-
-### Implementation Phase
-
-1. Verify modernc.org/sqlite version supports `ALTER TABLE DROP COLUMN` (SQLite 3.35+, released March 2021 — modernc tracks recent).
-2. Write `00002_drop_canonical_cn.sql`:
-   ```sql
-   -- +goose Up
-   ALTER TABLE agents DROP COLUMN canonical_cn;
-   
-   -- +goose Down
-   ALTER TABLE agents ADD COLUMN canonical_cn TEXT NOT NULL DEFAULT '';
-   ```
-   The down migration is best-effort — the original column was `NOT NULL` without a default. Restoring requires a default; existing rows that survived an up→down round-trip won't have meaningful canonical_cn values. Acceptable for alpha.
-3. Verify `idx_name_project ON agents(project, agent_name)` is unaffected by the column drop (it doesn't reference canonical_cn).
-
-### Acceptance Criteria
-
-```bash
-go test ./internal/controlplane/agent/... -v
-```
-
-All tests pass including a new test verifying the column is gone after migration applies. Specifically:
-
-- `TestMigration_002_DropsCanonicalCN`: Open a DB, apply migrations, query `PRAGMA table_info(agents)`, assert no `canonical_cn` column.
-
-### Wrap Up
-
-1. Update Progress Tracker: Task 5 → `complete`
-2. Append key learnings
-3. Run review subagents; fix findings
-4. Commit: `chore(agent): migration 00002 drop canonical_cn column`
-5. **STOP.** Present handoff:
-
-> **Next agent prompt:** "Continue the SAN-refactor initiative. Read Serena memory `initiative_san_refactor` — Tasks 1-5 complete. Begin Task 6: Rename Canonical* → AgentFullName* everywhere."
-
----
-
-## Task 6: Rename `Canonical*` → `AgentFullName*` everywhere
-
-**Creates/modifies:** All packages with `canonical` references in identity contexts. Memory `feedback_no_canonical_naming` documents the rule.
-
-**Depends on:** Task 5
-
-### Implementation Phase
-
-Mechanical rename, preserving semantics. Use Serena `rename_symbol` where possible; fall back to Edit for log fields/event names/comments.
-
-1. **`internal/auth` package:**
-   - `auth.CanonicalAgentCN` → `auth.AgentFullName` (function)
-   - `auth.AgentCanonicalFromCert` → `auth.AgentFullNameFromCert`
-   - Comments mentioning "the canonical" / "canonical agent identity" → "the agent full name" / "the AgentFullName"
-   - `canonicalPrefix` constant in `identity.go:135` may stay if it's purely a "looks-like-AgentFullName" parse-rejection guard (not identity naming). If kept, rename to `agentFullNamePrefix` for consistency.
-
-2. **`internal/controlplane/agent` package:**
-   - `canonicalCNFromStrings` → `agentFullNameFromStrings`
-   - `canonicalCNFromEntry` → `agentFullNameFromEntry`
-   - Log fields: `cert_canonical` → `cert_agent_full_name`, `expected_canonical` → `expected_agent_full_name`, `peer_cn` (in CN-pin rejection) stays — that IS the CN being checked
-   - Event names: `agent_register_canonical_mismatch` → `agent_register_agent_full_name_mismatch`
-   - Variables: `certCanonical` → `certAgentFullName`, `expectedCanonical` → `expectedAgentFullName`, `expectedCN` (in `dialer.go classifyRegistry`) → `expectedAgentFullName`
-   - Comments throughout
-
-3. **Sweep stale "canonical CN" descriptions outside diff scope** (these refer to OLD design — the cert no longer carries the canonical in CN):
-   - `internal/cmd/container/shared/agent_bootstrap.go:64-68, 121`
-   - `internal/cmd/container/shared/container_start.go:30-32, 46`
-   - `internal/cmd/container/shared/CLAUDE.md:57`
-   - `internal/controlplane/agent/registry.go:48-49, 65, 100, 148-152, 238`
-   - `internal/controlplane/agent/registry_sqlite.go:26-27` (now obsolete with Task 5 — column gone)
-   - `internal/docker/env.go:117`
-
-4. **Skip:**
-   - `outcomeRegistryCNMismatch` / `UntrustedReasonCNMismatch` — per user call, these stay (semantic continuity with old check). Task 4 already renamed dialer-side to `Thumbprint*`.
-   - Generic English "canonical attach-then-start pattern" (`internal/cmd/container/start/start.go:169`), "canonical container ID is exactly that charset" (`internal/auth/agent_cert.go:69`) — these are non-identity uses of "canonical" and are fine.
-   - sqlite goose-recorded migration `00001_init.sql` still references `canonical_cn` because that was the schema at that version. Don't rewrite history.
-
-### Acceptance Criteria
-
-```bash
-go build ./...
-go test ./internal/auth/... ./internal/controlplane/agent/... ./internal/cmd/container/shared/... ./internal/docker/... -v
-grep -rn "canonical" --include="*.go" internal/auth/ internal/controlplane/agent/ internal/cmd/container/shared/
-```
-
-Final grep should show only:
-- `canonicalPrefix` if you chose to keep it under that name
-- `outcomeRegistryCNMismatch`-related references (intentionally kept)
-- Non-identity uses of "canonical" (generic English)
-
-### Wrap Up
-
-1. Update Progress Tracker: Task 6 → `complete`
-2. Append key learnings
-3. Run review subagents; fix findings
-4. Commit: `refactor: rename Canonical* → AgentFullName* in identity contexts`
-5. **STOP.** Present handoff:
-
-> **Next agent prompt:** "Continue the SAN-refactor initiative. Read Serena memory `initiative_san_refactor` — Tasks 1-6 complete. Begin Task 7: Update tests + add missing tests."
+- No "canonical" in new identifier names — use `AgentFullName`. The sqlite column `canonical_cn` was dropped by Task 5.
 
 ---
 
 ## Task 7: Update existing tests + add missing tests
 
 **Creates/modifies:**
-- All `_test.go` files affected by the rename in Task 6
+- All `_test.go` files affected by the rename in Task 6 — comment-level scrub for "canonical" residue (`identity_test.go:98`, `agent_cert_test.go:59,64,117`, `register_handler_test.go:69,231`, `dialer_test.go:74,78`, `identity_interceptor_test.go:88`).
 - Add new tests identified in review
 
 **Depends on:** Task 6
@@ -474,7 +185,9 @@ Final grep should show only:
 
 1. **Mechanical rename in tests:** `gotCN` → `gotAgentFullName` in `identity_interceptor_test.go:111`, similar patterns elsewhere.
 
-2. **Add new tests:**
+2. **Test-comment scrub:** edit "canonical" → "AgentFullName" (or "agent-full-name" prose) in the test files listed above. Generic-English "canonical" (e.g. test-shape descriptions) may stay.
+
+3. **Add new tests:**
    - `TestIdentityInterceptor_WrongCN_PermissionDenied` — cert with `CommonName != consts.ContainerClawkerd` → reject
    - `TestIdentityInterceptor_NoContainerForPeerIP_PermissionDenied` — peer IP that doesn't match any `purpose=agent` container → reject
    - `TestIdentityInterceptor_CertSANvsLabelMismatch_PermissionDenied` — cert SAN `AgentFullName` differs from label-derived → reject
@@ -486,12 +199,12 @@ Final grep should show only:
    - `TestContainerName_HeadroomForMaxFields` — `auth.AgentFullName(maxProject, maxAgent)` + longest purpose suffix ≤ 128 bytes
    - `TestMigration_002_DropsCanonicalCN` (added in Task 5 already, just verify it lives)
 
-3. **Drop tests for removed functionality:**
+4. **Drop tests for removed functionality:**
    - Tests for `Registry.Lookup` (now gone)
    - Tests for `labelsMatchRequest` / `peerIPMatchesContainer` if those functions were deleted in Task 3
    - Tests for the `optedOut` map / `IdentityOptedOutMethods`
 
-4. **Run `test-hunter` agent on the test diff** to catch any wasteful tests slipped in.
+5. **Run `test-hunter` agent on the test diff** to catch any wasteful tests slipped in.
 
 ### Acceptance Criteria
 
@@ -520,25 +233,26 @@ All tests pass. Coverage on new code paths verified by reading the test function
 - `internal/controlplane/agent/CLAUDE.md`
 - `internal/cmd/container/shared/CLAUDE.md`
 - `internal/controlplane/CLAUDE.md` (interceptor wiring step in startup sequence)
+- `.claude/docs/KEY-CONCEPTS.md` (canonical_cn / Lookup / CanonicalAgentCN / pre-computed canonical entries)
 
 **Depends on:** Task 7
 
 ### Implementation Phase
 
-1. **`internal/auth/CLAUDE.md`:** Update API table — `CanonicalAgentCN` → `AgentFullName`, `AgentCanonicalFromCert` → `AgentFullNameFromCert`. Update prose describing CN-as-canonical to reflect CN=`ContainerClawkerd` literal + canonical-as-URI-SAN.
+1. **`internal/auth/CLAUDE.md`:** Update API table — `CanonicalAgentCN` → `AgentFullName`, `AgentCanonicalFromCert` → `AgentFullNameFromCert`. Update prose describing CN-as-canonical to reflect CN=`ContainerClawkerd` literal + AgentFullName-as-URI-SAN. Drop `canonical_cn` column references (column dropped in Task 5).
 
 2. **`internal/controlplane/agent/CLAUDE.md`:**
-   - "Identity contract" section — replace "CN composed from (project, agent_name) is stored pre-computed" with the new design (peer-IP→Docker→labels is the trust anchor; registry stores thumbprint + container_id + agent_full_name fields for bookkeeping/display)
-   - "Register flow" section — strike step about cert↔request compare; describe the new universal-middleware-then-handler split
-   - "Trust outcomes via overseer events" table — `CNMismatch` row → `ThumbprintMismatch` (per Task 4 rename), describe SAN-sourced semantics
-   - "Method scopes + interceptor opt-out" section — delete the opt-out subsection; the interceptor has no opt-outs now. Register is no longer exempt from the trust check (only the Lookup half is gone for everyone).
-   - Files table — remove stale entries; add `peer_lookup.go`
+   - "Identity contract" section — replace any pre-compute `canonical_cn` language with the post-Task-5 reality (column dropped; rows store `(thumbprint, container_id, project, agent_name, registered_at, last_seen)`; the displayed `AgentFullName` is reconstructed on demand from project + agent_name).
+   - "Imports" section — replace `CanonicalAgentCN`, `AgentCanonicalFromCert` with `AgentFullName`, `AgentFullNameFromCert`.
+   - Note that `Entry.AgentName` / `Entry.Project` are typed (`auth.AgentName` / `auth.ProjectSlug`) — the post-Task-6 invariant guarantee.
 
-3. **`internal/cmd/container/shared/CLAUDE.md:57`:** Strike "compose the cert's canonical CN" framing; cert CN is now `ContainerClawkerd` literal and AgentFullName lives in the URI SAN.
+3. **`internal/cmd/container/shared/CLAUDE.md:57`:** Strike "compose the cert's canonical CN" framing; cert CN is now `ContainerClawkerd` literal and AgentFullName lives in the URI SAN. Reference `auth.AgentFullName` not `auth.CanonicalAgentCN`.
 
 4. **`internal/controlplane/CLAUDE.md`:** Step 8 of startup describes IdentityInterceptor wiring. Update to reflect new constructor signature (no Registry/optedOut params; ContainerByPeerIP dep instead).
 
-5. **Final test run:**
+5. **`.claude/docs/KEY-CONCEPTS.md`:** sweep entries for `canonical_cn` column, `Lookup(thumbprint, cn)`, `CanonicalAgentCN`, pre-computed canonical column writes — these are post-Task-4/5 dead references.
+
+6. **Final test run:**
    ```bash
    make test
    go test ./internal/auth/... ./internal/controlplane/... ./internal/docker/... ./internal/cmd/container/... -v
@@ -548,7 +262,7 @@ All tests pass. Coverage on new code paths verified by reading the test function
    go build ./...
    ```
 
-6. **CLI doc regen** (if any user-visible behavior changed — unlikely for this refactor):
+7. **CLI doc regen** (if any user-visible behavior changed — unlikely for this refactor):
    ```bash
    go run ./cmd/gen-docs --doc-path docs --markdown --website
    ```
@@ -569,7 +283,7 @@ Final doc grep shows no stale "canonical" identity references.
 2. Append final key learnings
 3. Run review subagents one last time across the full branch diff vs `main`; fix findings
 4. Commit: `docs(agent): update CLAUDE.md for universal trust middleware`
-5. Inform the user the initiative is complete. PR can be opened from `fix/invalid-name-len` → `main` with all 9 commits (existing `94ec999a` + `0dce04cb` goose + 7 new from Tasks 1-8).
+5. Inform the user the initiative is complete. PR can be opened from `fix/invalid-name-len` → `main` with all 10 commits (existing `94ec999a` + `0dce04cb` goose + 8 new from Tasks 1-8).
 
 > **Initiative complete.** No further handoff prompt.
 
@@ -583,3 +297,7 @@ Items surfaced in PR review but deferred to follow-up issues (not addressed by t
 - `sethvargo/go-retry` and other transitive deps from goose: track license noise in NOTICE — already handled by pre-commit hook regen.
 - Volume-name headroom regression beyond what Task 7 covers (e.g., test against future longer purpose suffixes added to `internal/docker/names.go`) — keep `TestContainerName_HeadroomForMaxFields` updated as suffixes change.
 - Per-agent Session teardown on registry evict (noted in `internal/controlplane/CLAUDE.md` known limitations) — orthogonal to identity trust.
+- **`validateEntry` panic family on CP serve path** — pre-existing tech debt surfaced by Task 6 silent-failure-hunter. Reachable from `register_handler.go::Register` post-`SetReady`. Today unreachable in practice (sole production caller passes middleware-resolved typed values). FIXME comment landed in Task 6; future cleanup should convert to error returns. Out of Task 6 scope (rename + typed fields, not error-handling rewrite).
+- **`LookupByContainerID` malformed-row DOS path** — sqlite scanEntry now returns a validation error on hand-edited / corrupted rows; `Register` handler maps to `codes.Internal` and the affected container is stuck until manual eviction. Fix: typed `ErrMalformedEntry` sentinel + handler evicts-and-retries. Surfaced by Task 6 silent-failure-hunter, deferred — out of rename scope.
+- **`auth.AgentName.Less` / `ProjectSlug.Less` typed comparators** — three sort sites (`registry.go`, `registry_sqlite.go`, formerly `server.go` until deleted in Task 6) still use `.String() < .String()`. Nice-to-have refactor; trade-off was small win for moderate API surface expansion. Surfaced by Task 6 type-design-analyzer + code-simplifier.
+- **`sortEntries` extracted helper** — `registry.go` (in-memory, test-only) and `registry_sqlite.go` (production) have byte-identical sort bodies. Worth de-duplicating into one unexported helper. Surfaced by Task 6 code-simplifier.

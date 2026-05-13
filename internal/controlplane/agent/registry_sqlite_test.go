@@ -120,7 +120,7 @@ func TestSQLiteRegistry_Snapshot_Sorted(t *testing.T) {
 	require.Len(t, snap, 3)
 	got := make([][2]string, len(snap))
 	for i, e := range snap {
-		got[i] = [2]string{e.Project, e.AgentName}
+		got[i] = [2]string{e.Project.String(), e.AgentName.String()}
 	}
 	assert.Equal(t, [][2]string{
 		{"aproj", "bot"},
@@ -208,7 +208,7 @@ func TestSQLiteRegistry_SchemaMigration_FromOldDB(t *testing.T) {
 	got, err := r.LookupByContainerID("ctr-1")
 	require.NoError(t, err)
 	require.NotNil(t, got)
-	assert.Equal(t, "a", got.AgentName)
+	assert.Equal(t, "a", got.AgentName.String())
 }
 
 func TestMigration_002_DropsCanonicalCN(t *testing.T) {
@@ -274,5 +274,5 @@ func TestMigration_002_DropsCanonicalCN(t *testing.T) {
 	// loses data.
 	snap := r.Snapshot()
 	require.Len(t, snap, 1)
-	assert.Equal(t, "legacy-agent", snap[0].AgentName)
+	assert.Equal(t, "legacy-agent", snap[0].AgentName.String())
 }

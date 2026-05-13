@@ -146,7 +146,7 @@ func reapOrphans(ctx context.Context, reg Registry, lister ContainerLister, log 
 			log.Error().
 				Err(err).
 				Str("container_id", e.ContainerID).
-				Str("agent", e.AgentName).
+				Str("agent", e.AgentName.String()).
 				Msg("agent: reap evict failed")
 			evictErrs = append(evictErrs, fmt.Errorf("evict %s: %w", e.ContainerID, err))
 			continue

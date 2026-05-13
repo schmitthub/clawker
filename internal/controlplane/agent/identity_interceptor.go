@@ -102,7 +102,7 @@ func IdentityInterceptor(peerLookup ContainerByPeerIP, log *logger.Logger) (grpc
 		// ResolvedContainer.Project/.AgentName are typed and pre-validated
 		// by the resolver — re-running auth.NewProjectSlug here would be
 		// redundant.
-		labelFullName := auth.CanonicalAgentCN(resolved.Project, resolved.AgentName)
+		labelFullName := auth.AgentFullName(resolved.Project, resolved.AgentName)
 		if subtle.ConstantTimeCompare([]byte(pid.AgentFullName), []byte(labelFullName)) != 1 {
 			log.Warn().
 				Str("method", method).

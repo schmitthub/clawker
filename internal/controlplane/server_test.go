@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/controlplane/agent"
 )
 
@@ -35,16 +36,16 @@ func TestAdminServer_ListAgents_Snapshot(t *testing.T) {
 	thumbB := sha256.Sum256([]byte("cert-b"))
 
 	require.NoError(t, reg.Add(agent.Entry{
-		AgentName:    "b",
-		Project:      "p",
+		AgentName:    auth.MustAgentName("b"),
+		Project:      auth.MustProjectSlug("p"),
 		ContainerID:  "ctr-b",
 		Thumbprint:   thumbB,
 		RegisteredAt: now,
 		LastSeen:     now,
 	}))
 	require.NoError(t, reg.Add(agent.Entry{
-		AgentName:    "a",
-		Project:      "p",
+		AgentName:    auth.MustAgentName("a"),
+		Project:      auth.MustProjectSlug("p"),
 		ContainerID:  "ctr-a",
 		Thumbprint:   thumbA,
 		RegisteredAt: now.Add(time.Second),
