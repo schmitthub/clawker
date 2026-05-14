@@ -13,15 +13,19 @@ The monitoring stack provides critical security observability into Clawker's int
 ## Telemetry Pipeline
 
 ```
-Claude Code → OTLP (http/protobuf) → otel-collector ──┬─→ OpenSearch (logs + traces)
-                                                       └─→ Prometheus (metrics)
+OTLP/HTTP push ─┬─→ otel-collector ─┬─→ Prometheus scrape (metrics)
+                │                    ├─→ OpenSearch (traces, SS4O)
+                │                    └─→ OpenSearch (logs)
+                └─→ Prometheus (native OTLP receiver, optional direct push)
 ```
 
-- **Dockerfile template** (`bundler/assets/Dockerfile.tmpl`) sets OTEL env vars at build time
-- **`env.go`** (`internal/docker/env.go`) adds runtime `OTEL_RESOURCE_ATTRIBUTES` and disables telemetry when monitoring is inactive
-- **OpenSearch** receives logs via the `opensearch/logs` exporter (index `clawker-logs`) and traces via `opensearch/traces` using the SS4O (Simple Schema for Observability) data model
-- **Prometheus** receives metrics via the `prometheus` exporter on `prometheus_metrics_port`
-- **OpenSearch Dashboards** is the UI for logs + traces; Prometheus has its own UI for metrics
+- **Default metrics path**: clients hit `cfg.OtelMetricsEndpoint()` (`otel-collector:4318/v1/metrics`). Collector's `transform/metrics` processor copies resource attrs (project, agent) to datapoint attributes, prometheus exporter on `PrometheusMetricsPort` exposes a scrape endpoint, Prometheus scrapes it. This is the default because Prom's `/api/v1/metadata` excludes OTLP/remote-write ingested metrics (upstream limitation) — anything depending on metadata (e.g. OpenSearch Dashboards' Observability Metrics catalog) will miss direct-push metrics.
+- **Alternate metrics path** (direct to Prom OTLP receiver): `cfg.PrometheusURL() + Telemetry.PrometheusOTLPPath` (default `/api/v1/otlp/v1/metrics`). Saves a hop. Prometheus runs with `--web.enable-otlp-receiver` + `--enable-feature=otlp-deltatocumulative` and `prometheus.yaml` has an `otlp.promote_resource_attributes` block (`project`, `agent`, `service.name`, `service.version`) so labels still land. Use when metadata-blindness is acceptable.
+- **Logs path**: clients hit `cfg.OtelLogsEndpoint()` (`otel-collector:4318/v1/logs`). Collector's `routing/logs_by_service` connector dispatches by `resource.service.name`: `claude-code` → `claude-code` OpenSearch index; unmatched is dropped. Add a routing rule + exporter for each new log source.
+- **clawker-cp logs**: pushed to the mTLS-gated `otlp/cp` receiver → `clawker-cp` OpenSearch index. Separate index because clawker's zerolog (`Str("event", ...)`) emits `attributes.event` as scalar while Claude Code follows OTEL semantic conventions and emits nested `attributes.event.name` — OpenSearch dynamic mapping locks the first-seen shape per field, so sharing one index would silently reject whichever schema loses the race. Cross-index queries use pattern `clawker-cp,claude-code`.
+- **URL composition**: build endpoints via the `cfg.*Endpoint()` / `cfg.*URL()` accessors in `internal/config/consts.go` — never hand-concatenate host + port + path.
+- **`bundler/assets/Dockerfile.tmpl`** bakes the endpoint env vars at build time. `internal/docker/env.go` adds runtime `OTEL_RESOURCE_ATTRIBUTES` and overrides `CLAUDE_CODE_ENABLE_TELEMETRY=0` when the monitoring stack isn't running.
+- **OpenSearch Dashboards** is the UI for logs + traces; Prometheus has its own UI for metrics.
 
 ## Service Hostnames Are Constants
 
@@ -29,13 +33,13 @@ Service hostnames (`otel-collector`, `prometheus`, `opensearch-node`, `opensearc
 
 ## OpenSearch Data Model
 
-- **Logs**: index `clawker-logs`. Attributes flow through as document fields. `ingest_source` distinguishes agent (`agent`) from CP (`cp`) telemetry; both streams land in the same index and are filterable.
+- **Logs**: split across two indices to keep dynamic mappings clean — `claude-code` for Claude Code OTLP push (nested `attributes.event.name`, OTEL semantic conventions) and `clawker-cp` for clawker-cp's zerolog push (scalar `attributes.event`, `Str("event", ...)` pattern). `ingest_source` is stamped on each (`claude-code` / `cp`) so cross-index queries via pattern `clawker-cp,claude-code` work.
 - **Traces**: SS4O dataset `traces` / namespace `clawker` (per `opensearch/traces` exporter config). Use the Trace Analytics view in OpenSearch Dashboards to inspect spans.
 - **Security plugin disabled** for local development (`DISABLE_SECURITY_PLUGIN=true` + `DISABLE_SECURITY_DASHBOARDS_PLUGIN=true`). HTTP, no auth.
 
 ## Egress Traffic Logs
 
-Firewall containers (Envoy + CoreDNS) emit structured access logs to stdout. The OTEL collector ingests them and ships to the same OpenSearch `clawker-logs` index alongside agent telemetry.
+Envoy and CoreDNS access logs are **not currently scraped** by the OTEL collector (no `filelog` or docker log receiver wired up). Earlier doc claims of unified ingest are aspirational — left here as a target. Logs are still available via `docker logs clawker-envoy` / `docker logs clawker-coredns` until receivers are added.
 
 ### Envoy (`service.name="envoy"`)
 - JSON access log format

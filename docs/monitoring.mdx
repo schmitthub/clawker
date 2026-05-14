@@ -34,7 +34,7 @@ OTEL Collector ──┬──> OpenSearch (logs + traces) ──> OpenSearch Da
 | Service | Image | Default Port | Purpose |
 |---------|-------|:---:|---------|
 | **OTEL Collector** | `otel/opentelemetry-collector-contrib` | 4318 (HTTP), 4317 (gRPC) | Receives telemetry from agents and routes it to backends |
-| **OpenSearch** | `opensearchproject/opensearch` | 9200 | Stores logs (index `clawker-logs`) and traces (Simple Schema for Observability dataset `traces` / namespace `clawker`) |
+| **OpenSearch** | `opensearchproject/opensearch` | 9200 | Stores logs (index `claude-code` for Claude Code logs, `clawker-cp` for clawker-cp logs) and traces (Simple Schema for Observability dataset `traces` / namespace `clawker`) |
 | **OpenSearch Dashboards** | `opensearchproject/opensearch-dashboards` | 5601 | UI for querying and dashboarding logs + traces |
 | **Prometheus** | `prom/prometheus` | 9090 | Time-series metrics storage and UI |
 
@@ -59,7 +59,7 @@ OTEL endpoints are baked into every Clawker image at build time. At container cr
 
 ## Egress Traffic Visibility
 
-When the firewall is enabled, Envoy and CoreDNS emit structured access logs to stdout. The OTEL collector picks them up (via the same Docker label discovery used for agents) and ships them into the `clawker-logs` index in OpenSearch alongside agent telemetry. From OpenSearch Dashboards you can build saved searches and visualizations over:
+When the firewall is enabled, Envoy and CoreDNS emit structured access logs to stdout. These are **not currently ingested into OpenSearch** — inspect them via `docker logs clawker-envoy` and `docker logs clawker-coredns` until a `filelog` or Docker log receiver is wired into the collector.
 
 - **Envoy access logs** — domain, protocol (`tls`/`tls_mitm`/`http`/`tcp`/`deny`), response codes, response flags. `response_flags` containing `UF` (upstream failure) signals blocked/denied traffic.
 - **CoreDNS query logs** — queried domain, qtype (A/AAAA), rcode (NOERROR / NXDOMAIN), resolution duration. `rcode=NXDOMAIN` means the domain was not in the allow list.
@@ -104,7 +104,7 @@ clawker run -it --agent dev @
 
 ### 4. Explore in OpenSearch Dashboards
 
-Open OpenSearch Dashboards at `http://localhost:5601`. From the Discover view, point at the `clawker-logs` index for agent + firewall logs, or use the Observability plugin's Trace Analytics view to inspect spans. Metrics live at the Prometheus UI on `http://localhost:9090`.
+Open OpenSearch Dashboards at `http://localhost:5601`. From the Discover view, point at index pattern `clawker-cp,claude-code` to see logs from both sources, or use the Observability plugin's Trace Analytics view to inspect spans. Metrics live at the Prometheus UI on `http://localhost:9090`.
 
 ## Telemetry Controls
 

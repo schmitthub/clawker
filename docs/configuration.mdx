@@ -420,9 +420,9 @@ monitoring:
   # Host port for Prometheus internal metrics
   prometheus_metrics_port: <integer>  # default: 8889 | required: false
   telemetry:
-    # OTEL collector HTTP path for metrics (unused by Claude Code metrics — see prometheus_otlp_path — but retained for non-agent OTLP metric pushers)
+    # OTEL collector HTTP path for metrics
     metrics_path: <string>  # default: /v1/metrics | required: false
-    # HTTP path on Prometheus' OTLP receiver — Claude Code metrics push here directly, bypassing the OTEL collector
+    # HTTP path on Prometheus' native OTLP receiver — available for direct OTLP/HTTP pushers that want to bypass the collector
     prometheus_otlp_path: <string>  # default: /api/v1/otlp/v1/metrics | required: false
     # OTEL collector HTTP path for logs
     logs_path: <string>  # default: /v1/logs | required: false
@@ -524,8 +524,8 @@ Global settings live at `~/.config/clawker/settings.yaml`. The following tables 
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `metrics_path` | string | `/v1/metrics` | OTEL collector HTTP path for metrics (unused by Claude Code metrics — see prometheus_otlp_path — but retained for non-agent OTLP metric pushers) |
-| `prometheus_otlp_path` | string | `/api/v1/otlp/v1/metrics` | HTTP path on Prometheus' OTLP receiver — Claude Code metrics push here directly, bypassing the OTEL collector |
+| `metrics_path` | string | `/v1/metrics` | OTEL collector HTTP path for metrics |
+| `prometheus_otlp_path` | string | `/api/v1/otlp/v1/metrics` | HTTP path on Prometheus' native OTLP receiver — available for direct OTLP/HTTP pushers that want to bypass the collector |
 | `logs_path` | string | `/v1/logs` | OTEL collector HTTP path for logs |
 | `metric_export_interval_ms` | integer | `10000` | How often Claude exports metrics (lower = more granular, higher = less overhead) |
 | `logs_export_interval_ms` | integer | `5000` | How often Claude exports logs (lower = more real-time, higher = less overhead) |

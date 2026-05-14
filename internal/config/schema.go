@@ -376,8 +376,8 @@ type MonitoringConfig struct {
 
 // TelemetryConfig configures telemetry export paths and intervals.
 type TelemetryConfig struct {
-	MetricsPath            string `yaml:"metrics_path,omitempty" label:"Metrics Path" desc:"OTEL collector HTTP path for metrics (unused by Claude Code metrics — see prometheus_otlp_path — but retained for non-agent OTLP metric pushers)" default:"/v1/metrics"`
-	PrometheusOTLPPath     string `yaml:"prometheus_otlp_path,omitempty" label:"Prometheus OTLP Path" desc:"HTTP path on Prometheus' OTLP receiver — Claude Code metrics push here directly, bypassing the OTEL collector" default:"/api/v1/otlp/v1/metrics"`
+	MetricsPath            string `yaml:"metrics_path,omitempty" label:"Metrics Path" desc:"OTEL collector HTTP path for metrics" default:"/v1/metrics"`
+	PrometheusOTLPPath     string `yaml:"prometheus_otlp_path,omitempty" label:"Prometheus OTLP Path" desc:"HTTP path on Prometheus' native OTLP receiver — available for direct OTLP/HTTP pushers that want to bypass the collector" default:"/api/v1/otlp/v1/metrics"`
 	LogsPath               string `yaml:"logs_path,omitempty" label:"Logs Path" desc:"OTEL collector HTTP path for logs" default:"/v1/logs"`
 	MetricExportIntervalMs int    `yaml:"metric_export_interval_ms,omitempty" label:"Metric Export Interval (ms)" desc:"How often Claude exports metrics (lower = more granular, higher = less overhead)" default:"10000"`
 	LogsExportIntervalMs   int    `yaml:"logs_export_interval_ms,omitempty" label:"Logs Export Interval (ms)" desc:"How often Claude exports logs (lower = more real-time, higher = less overhead)" default:"5000"`

@@ -251,13 +251,20 @@ func (c *configImpl) OtelCollectorURL() string {
 	return consts.ServiceURL(consts.MonitoringServiceOtelCollector, c.MonitoringConfig().OtelCollectorPort, false)
 }
 
-// OtelMetricsEndpoint returns the full URL Claude Code's metrics
-// exporter targets — Prometheus' native OTLP receiver, NOT the
-// otel-collector. Bypassing the collector for metrics drops one network
-// hop and one serialization round-trip on the hot path. The matching
-// env var on the container side is OTEL_EXPORTER_OTLP_METRICS_ENDPOINT.
+// OtelMetricsEndpoint returns the full URL of the otel-collector's
+// OTLP/HTTP metrics receiver. The matching client-side env var is
+// OTEL_EXPORTER_OTLP_METRICS_ENDPOINT.
+//
+// Direct push to Prometheus' native OTLP receiver is also supported
+// on the Prom side ([PrometheusURL] + Telemetry.PrometheusOTLPPath)
+// and saves a hop, but Prometheus' /api/v1/metadata endpoint excludes
+// anything ingested via OTLP/remote-write (upstream limitation), so
+// consumers that depend on metric metadata (OpenSearch Dashboards'
+// Observability Metrics catalog, etc.) silently miss those metrics.
+// This default endpoint routes via the collector so metadata lands
+// via its prometheus exporter's scrape exposition format.
 func (c *configImpl) OtelMetricsEndpoint() string {
-	return c.PrometheusURL() + c.MonitoringConfig().Telemetry.PrometheusOTLPPath
+	return c.OtelCollectorURL() + c.MonitoringConfig().Telemetry.MetricsPath
 }
 
 // OtelLogsEndpoint returns the full URL Claude Code's logs exporter

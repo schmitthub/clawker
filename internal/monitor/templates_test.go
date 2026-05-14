@@ -171,6 +171,7 @@ func TestRenderTemplate_OtelConfig(t *testing.T) {
 monitoring:
   otel_collector_port: 5318
   otel_grpc_port: 5317
+  otel_cp_port: 5319
   prometheus_metrics_port: 9889
   opensearch_port: 9200
 `)
@@ -185,12 +186,19 @@ monitoring:
 		"0.0.0.0:5317", // gRPC endpoint
 		"0.0.0.0:5318", // HTTP endpoint
 		"0.0.0.0:9889", // prometheus exporter
-		"opensearch/logs:",
+		"opensearch/logs_cp:",
+		"opensearch/logs_claude_code:",
 		"opensearch/traces:",
 		"http://" + consts.MonitoringServiceOpenSearchNode + ":9200",
+		"logs_index: clawker-cp",
+		"logs_index: claude-code",
 		"exporters: [opensearch/traces, spanmetrics, debug]",
-		"exporters: [opensearch/logs, debug]",
+		"exporters: [opensearch/logs_cp, debug]",
+		"exporters: [opensearch/logs_claude_code, debug]",
+		"exporters: [routing/logs_by_service]",
 		"exporters: [prometheus, debug]",
+		"routing/logs_by_service:",
+		`condition: attributes["service.name"] == "claude-code"`,
 		"prometheus/self:",
 		"spanmetrics:",
 		"docker_stats:",

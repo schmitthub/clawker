@@ -116,26 +116,13 @@ processors:
         statements:
           - set(attributes["project"], resource.attributes["project"]) where resource.attributes["project"] != nil
           - set(attributes["agent"], resource.attributes["agent"]) where resource.attributes["agent"] != nil
-  # Provenance stamp for agent-side telemetry. Runs AFTER the otlp
-  # receiver and force-sets ingest_source=agent regardless of what the
-  # client sent. service.name is NOT normalized here so per-component
-  # granularity (claude-code, envoy, coredns, ...) is preserved; the
-  # trustable provenance signal is ingest_source, which the agent
-  # cannot fake because this processor unconditionally upserts it
-  # post-receiver. A spoofed service.name=clawker-cp on the agent
-  # plaintext path still lands with ingest_source=agent.
-  resource/agent:
-    attributes:
-      - key: ingest_source
-        value: agent
-        action: upsert
 {{- if .OtelCPPort}}
   # Provenance stamp for clawker-cp telemetry. Reaches this processor
   # only via the mTLS-gated otlp/cp receiver (CLI-issued client cert
-  # required at TLS handshake — agents on clawker-net have none and
-  # are rejected before bytes flow). Both service.name and
+  # required at TLS handshake — clawker containers on clawker-net have
+  # none and are rejected before bytes flow). Both service.name and
   # ingest_source are forced regardless of what the client sent so
-  # CP-shaped logs cannot be forged from the unauth'd agent receiver.
+  # CP-shaped logs cannot be forged from the unauth'd plaintext receiver.
   resource/cp:
     attributes:
       - key: ingest_source
@@ -156,12 +143,20 @@ exporters:
       endpoint: "http://{{.OpenSearchNodeService}}:9200"
     dataset: traces
     namespace: clawker
-  # Logs → OpenSearch. Single index for both agent and CP streams;
-  # ingest_source attribute distinguishes them at query time.
-  opensearch/logs:
+  # Logs → OpenSearch. Indices split by source so dynamic mappings
+  # don't collide. clawker emits attributes.event as a scalar string
+  # (logger pattern `Str("event", ...)`); Claude Code emits the OTEL
+  # semantic-conventions nested form `event.name`. Sharing one index
+  # locks first-seen shape and rejects the other source — split keeps
+  # each schema clean.
+  opensearch/logs_cp:
     http:
       endpoint: "http://{{.OpenSearchNodeService}}:9200"
-    logs_index: clawker-logs
+    logs_index: clawker-cp
+  opensearch/logs_claude_code:
+    http:
+      endpoint: "http://{{.OpenSearchNodeService}}:9200"
+    logs_index: claude-code
   # Metrics → Prometheus scrape endpoint.
   prometheus:
     endpoint: "0.0.0.0:{{.PrometheusMetricsPort}}"
@@ -171,6 +166,21 @@ connectors:
   # through the traces pipeline and re-emits them into the metrics
   # pipeline. Empty-series until traces actually flow.
   spanmetrics:
+  # Route OTLP logs by the upstream resource attribute `service.name`.
+  # Anthropic's Claude Code SDK sets `service.name=claude-code` by
+  # default (per https://code.claude.com/docs/en/monitoring-usage
+  # #service-information). Records without service.name, or with a
+  # value not listed in the routing table, are dropped silently
+  # (no default_pipelines). This keeps the unauth'd plaintext otlp
+  # receiver from accidentally ingesting arbitrary log shapes into
+  # the `claude-code` index where they would collide with Claude
+  # Code's mapping.
+  routing/logs_by_service:
+    error_mode: ignore
+    table:
+      - context: resource
+        condition: attributes["service.name"] == "claude-code"
+        pipelines: [logs/claude-code]
 
 service:
   pipelines:
@@ -182,21 +192,31 @@ service:
       receivers: [otlp, prometheus/self, docker_stats, hostmetrics, spanmetrics]
       processors: [batch, transform/metrics]
       exporters: [prometheus, debug]
-    # Agent-side logs pipeline: receiver-isolated from the CP pipeline.
-    # An agent pushing here cannot reach the otlp/cp receiver
-    # (mTLS-gated) and cannot get its log stamped ingest_source=cp —
-    # resource/agent runs unconditionally and overwrites the field.
-    logs/agents:
+    # Inbound logs pipeline: terminates at the routing connector.
+    # Records pushed to the unauth'd otlp receiver flow here, get
+    # batched, then handed off. The connector inspects each record's
+    # resource.attributes["service.name"] and dispatches to a
+    # matching downstream pipeline — or drops it if no rule matches
+    # (no default_pipelines configured).
+    logs/in:
       receivers: [otlp]
-      processors: [resource/agent, batch]
-      exporters: [opensearch/logs, debug]
+      processors: [batch]
+      exporters: [routing/logs_by_service]
+    # Claude Code logs pipeline: fed by the routing connector when
+    # service.name=claude-code. Writes to the `claude-code` index so
+    # the OTEL-semantic `event.name` schema doesn't collide with
+    # clawker-cp's scalar `attributes.event` mapping.
+    logs/claude-code:
+      receivers: [routing/logs_by_service]
+      processors: []
+      exporters: [opensearch/logs_claude_code, debug]
 {{- if .OtelCPPort}}
     # CP-side logs pipeline: separate receiver, separate processor
     # chain. service.name and ingest_source are both forced post-
     # receiver so a malicious cert holder (none exist outside CLI
-    # provisioning) still couldn't shadow agent telemetry.
+    # provisioning) still couldn't shadow Claude Code telemetry.
     logs/cp:
       receivers: [otlp/cp]
       processors: [resource/cp, batch]
-      exporters: [opensearch/logs, debug]
+      exporters: [opensearch/logs_cp, debug]
 {{- end}}

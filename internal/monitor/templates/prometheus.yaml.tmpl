@@ -2,6 +2,17 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
+# Promote selected OTLP resource attributes to series labels for any
+# OTLP/HTTP pusher hitting Prometheus' native OTLP receiver directly.
+# Without this block Prometheus discards resource attrs and pushed
+# metrics arrive label-less, breaking per-container filtering.
+otlp:
+  promote_resource_attributes:
+    - project
+    - agent
+    - service.name
+    - service.version
+
 scrape_configs:
   - job_name: '{{.OtelCollectorService}}'
     static_configs:

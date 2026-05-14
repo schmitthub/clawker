@@ -65,6 +65,7 @@ services:
       - "--web.enable-lifecycle"
       - "--web.route-prefix=/"
       - "--enable-feature=exemplar-storage"
+      - "--enable-feature=otlp-deltatocumulative"
     ports:
       - "127.0.0.1:{{.PrometheusPort}}:{{.PrometheusPort}}"
     volumes:

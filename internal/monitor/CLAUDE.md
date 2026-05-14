@@ -76,12 +76,16 @@ All symbols are in `templates.go`.
 
 ## OTEL Pipelines (otel-config.yaml.tmpl)
 
+**Metrics default path: OTLP push → otel-collector → Prometheus scrape**. Clients targeting `cfg.OtelMetricsEndpoint()` hit the collector's OTLP/HTTP receiver. The collector's `transform/metrics` processor copies resource attrs (project, agent) to datapoint attributes, then the `prometheus` exporter exposes a scrape endpoint on `PrometheusMetricsPort` that Prometheus scrapes. Prometheus' native OTLP receiver is also enabled (`--web.enable-otlp-receiver`, `--enable-feature=otlp-deltatocumulative`, `otlp.promote_resource_attributes` in prometheus.yaml) and `cfg.PrometheusURL() + Telemetry.PrometheusOTLPPath` returns its URL — direct OTLP push works and saves a hop, but Prometheus' `/api/v1/metadata` excludes anything ingested via OTLP/remote-write (upstream limitation), so consumers depending on metric metadata (OpenSearch Dashboards' Observability Metrics catalog, etc.) silently miss those metrics. Route via the collector unless metadata-blindness is acceptable.
+
 | Pipeline | Receivers | Exporters |
 |----------|-----------|-----------|
 | `traces` | `otlp` | `opensearch/traces` (SS4O — dataset=traces, namespace=clawker), `spanmetrics` (→ metrics pipeline), `debug` |
-| `metrics` | `otlp`, `prometheus/self` (collector self-scrape on :8888), `docker_stats` (unix socket), `hostmetrics` (`/hostfs`), `spanmetrics` (RED from traces) | `prometheus` (scrape endpoint on `PrometheusMetricsPort`), `debug` |
-| `logs/agents` | `otlp` (resource/agent stamps `ingest_source=agent`) | `opensearch/logs` (index `clawker-logs`), `debug` |
-| `logs/cp` (conditional on `OtelCPPort`) | `otlp/cp` (mTLS-gated; resource/cp stamps `service.name=clawker-cp` + `ingest_source=cp`) | `opensearch/logs`, `debug` |
+| `metrics` | `otlp` (collector-internal / CP push only — Claude Code bypasses), `prometheus/self` (collector self-scrape on :8888), `docker_stats` (unix socket), `hostmetrics` (`/hostfs`), `spanmetrics` (RED from traces) | `prometheus` (scrape endpoint on `PrometheusMetricsPort` — Prometheus scrapes this for collector-side metrics), `debug` |
+| `logs/claude-code` | `otlp` (resource/claude-code stamps `ingest_source=claude-code`) | `opensearch/logs_claude_code` (index `claude-code`), `debug` |
+| `logs/cp` (conditional on `OtelCPPort`) | `otlp/cp` (mTLS-gated; resource/cp stamps `service.name=clawker-cp` + `ingest_source=cp`) | `opensearch/logs_cp` (index `clawker-cp`), `debug` |
+
+**Index split rationale**: clawker's zerolog pattern (`Str("event", "name")`) emits `attributes.event` as a scalar string. Claude Code follows OTEL semantic conventions and emits `attributes.event.name` (nested). OpenSearch dynamic mapping locks the first-seen shape per field, so sharing one index would reject whichever source loses the race. Splitting by source keeps each schema clean. The `ingest_source` resource attribute is still stamped on both for cross-index queries via index pattern `clawker-cp,claude-code`.
 
 `docker_stats` reads container metrics from the Docker daemon socket bind-mounted RO at `/var/run/docker.sock` (host path from `Settings.Docker.Socket`). `hostmetrics` reads cpu/disk/load/filesystem/memory/network/paging/process metrics from `/hostfs` (host path hardcoded to `/`; the Linux VM root on Docker Desktop).
 
