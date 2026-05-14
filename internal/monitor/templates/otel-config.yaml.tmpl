@@ -38,12 +38,16 @@ receivers:
       - type: move
         from: attributes.line
         to: body
-      # Drop anything not emitted by CoreDNS's log plugin. The
-      # corefileLogFormat prefix `source=coredns` is the cheap, schema-
-      # stable sentinel — no need to match on container id.
+      # Drop everything that isn't a CoreDNS query access log. The
+      # `log` plugin emits one line per DNS query at INFO level with
+      # the corefileLogFormat prefix `source=coredns`; the resulting
+      # body shape is `[INFO] source=coredns ...`. WARNING/ERROR
+      # lines (plugin failures, etc.) are intentionally dropped —
+      # this pipeline feeds the security-visibility index, not a
+      # generic dev-debug log sink.
       - type: filter
         id: drop_non_coredns
-        expr: 'not (body matches "^source=coredns")'
+        expr: 'not (body matches "^\\[INFO\\] source=coredns")'
 {{- if .OtelCPPort}}
   # mTLS-gated receiver dedicated to clawker-cp. Listens on
   # 0.0.0.0:<port> inside the container; the published mapping in
