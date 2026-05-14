@@ -390,7 +390,7 @@ logging:
   # Gzip rotated logs to save disk space
   compress: <boolean>  # default: true | required: false
   otel:
-    # Send logs to the OTEL collector for Grafana/Loki visibility
+    # Send logs to the OTEL collector for OpenSearch visibility
     enabled: <boolean>  # default: true | required: false
     # Give up on an export batch after this long
     timeout_seconds: <integer>  # default: 5 | required: false
@@ -498,7 +498,7 @@ Global settings live at `~/.config/clawker/settings.yaml`. The following tables 
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `enabled` | boolean | `true` | Send logs to the OTEL collector for Grafana/Loki visibility |
+| `enabled` | boolean | `true` | Send logs to the OTEL collector for OpenSearch visibility |
 | `timeout_seconds` | integer | `5` | Give up on an export batch after this long |
 | `max_queue_size` | integer | `2048` | Buffer this many log records before dropping (increase if you see gaps) |
 | `export_interval_seconds` | integer | `5` | How often to flush buffered logs to the collector |

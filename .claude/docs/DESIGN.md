@@ -778,13 +778,12 @@ No error, no duplicate—deterministic behavior.
 
 A Docker Compose stack on `clawker-net`:
 
-- **OpenTelemetry Collector** - Telemetry aggregation
-- **Prometheus** - Metrics collection
-- **Jaeger** - Distributed tracing
-- **Loki** - Log aggregation
-- **Grafana** - Visualization dashboards
+- **OpenTelemetry Collector** - OTLP/HTTP receivers + routing; writes logs to OpenSearch and exposes a Prometheus scrape endpoint for metrics. A `traces` pipeline is configured but idle — agents don't emit spans today.
+- **OpenSearch** - Logs only, split into two indices: `claude-code` (Claude Code OTLP push) and `clawker-cp` (mTLS-gated CP push)
+- **OpenSearch Dashboards** - UI for log exploration (Discover)
+- **Prometheus** - Metrics storage + UI; also accepts direct OTLP push for callers willing to lose `/api/v1/metadata` coverage
 
-Container images are built with OTEL environment variables pointing to the collector.
+Container images are built with OTEL environment variables pointing to the collector. The stack ships without pre-provisioned index patterns, data sources, or dashboards — users build them once on first run. Pre-provisioning is on the roadmap.
 
 ### 9.2 Verbosity Levels
 

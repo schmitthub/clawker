@@ -347,7 +347,7 @@ type LoggingConfig struct {
 
 // OtelConfig configures the OTEL zerolog bridge.
 type OtelConfig struct {
-	Enabled               *bool `yaml:"enabled,omitempty" label:"OTEL Logging" desc:"Send logs to the OTEL collector for Grafana/Loki visibility" default:"true"`
+	Enabled               *bool `yaml:"enabled,omitempty" label:"OTEL Logging" desc:"Send logs to the OTEL collector for OpenSearch visibility" default:"true"`
 	TimeoutSeconds        int   `yaml:"timeout_seconds,omitempty" label:"OTEL Timeout (sec)" desc:"Give up on an export batch after this long" default:"5"`
 	MaxQueueSize          int   `yaml:"max_queue_size,omitempty" label:"OTEL Queue Size" desc:"Buffer this many log records before dropping (increase if you see gaps)" default:"2048"`
 	ExportIntervalSeconds int   `yaml:"export_interval_seconds,omitempty" label:"OTEL Export Interval (sec)" desc:"How often to flush buffered logs to the collector" default:"5"`

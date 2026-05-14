@@ -4,11 +4,11 @@ description: "Set up the OpenSearch + OpenSearch Dashboards + Prometheus monitor
 icon: "chart-mixed"
 ---
 
-Clawker includes an optional monitoring stack that collects telemetry from Claude Code agents running in containers. It provides dashboards for logs, traces, and metrics — giving you visibility into what every agent is doing, how much it costs, what tools it's calling, and whether it's making progress.
+Clawker includes an optional monitoring stack that collects telemetry from Claude Code agents running in containers. It provides dashboards for logs and metrics — giving you visibility into what every agent is doing, how much it costs, what tools it's calling, and whether it's making progress.
 
 ## What You Get
 
-The stack ingests logs and traces into OpenSearch and exposes them through **OpenSearch Dashboards** for ad-hoc querying and dashboarding. **Prometheus** continues to back metrics with its own UI. You can see per-agent and per-project activity for:
+The stack ingests logs into OpenSearch and exposes them through **OpenSearch Dashboards** for ad-hoc querying and dashboarding. **Prometheus** backs metrics with its own UI. You can see per-agent and per-project activity for:
 
 - **Cost and token usage** — API call costs, input/output tokens, rate limiting
 - **Coding activity** — file edits, tool invocations, command executions
@@ -23,19 +23,21 @@ The monitoring stack runs as four Docker Compose services on the `clawker-net` n
 ```
 Claude Code (in container)
     |
-    | OTLP (HTTP/gRPC) — logs, traces, metrics
+    | OTLP (HTTP/gRPC) — logs, metrics
     v
-OTEL Collector ──┬──> OpenSearch (logs + traces) ──> OpenSearch Dashboards
-                 └──> Prometheus (metrics) ──────────> Prometheus UI
+OTEL Collector ──┬──> OpenSearch (logs) ──> OpenSearch Dashboards
+                 └──> Prometheus (metrics) ──> Prometheus UI
 ```
+
+Claude Code agents emit logs and metrics only — no traces. The collector's `traces` pipeline is wired but idle until an OTLP traces source is connected.
 
 ### Services
 
 | Service | Image | Default Port | Purpose |
 |---------|-------|:---:|---------|
 | **OTEL Collector** | `otel/opentelemetry-collector-contrib` | 4318 (HTTP), 4317 (gRPC) | Receives telemetry from agents and routes it to backends |
-| **OpenSearch** | `opensearchproject/opensearch` | 9200 | Stores logs (index `claude-code` for Claude Code logs, `clawker-cp` for clawker-cp logs) and traces (Simple Schema for Observability dataset `traces` / namespace `clawker`) |
-| **OpenSearch Dashboards** | `opensearchproject/opensearch-dashboards` | 5601 | UI for querying and dashboarding logs + traces |
+| **OpenSearch** | `opensearchproject/opensearch` | 9200 | Stores logs (index `claude-code` for Claude Code logs, `clawker-cp` for clawker-cp logs) |
+| **OpenSearch Dashboards** | `opensearchproject/opensearch-dashboards` | 5601 | UI for querying and dashboarding logs |
 | **Prometheus** | `prom/prometheus` | 9090 | Time-series metrics storage and UI |
 
 All containers are pre-configured with labels (`dev.clawker.purpose=monitoring`) and attached to the `clawker-net` network. The OpenSearch security plugin is disabled by default for local development — Dashboards is reachable at `http://localhost:5601` with no login required. Set `OPENSEARCH_JAVA_OPTS` via the `opensearch_heap_mb` setting if you need more heap.
@@ -104,7 +106,17 @@ clawker run -it --agent dev @
 
 ### 4. Explore in OpenSearch Dashboards
 
-Open OpenSearch Dashboards at `http://localhost:5601`. From the Discover view, point at index pattern `clawker-cp,claude-code` to see logs from both sources, or use the Observability plugin's Trace Analytics view to inspect spans. Metrics live at the Prometheus UI on `http://localhost:9090`.
+Open OpenSearch Dashboards at `http://localhost:5601`. From the Discover view, create an index pattern covering `claude-code,clawker-cp` to see logs from both sources. Metrics live at the Prometheus UI on `http://localhost:9090`.
+
+<Warning>
+**Setup required (current state).** The stack ships intentionally bare — there are no pre-provisioned index patterns, data sources, or dashboards yet. On first launch you'll need to:
+
+1. Open OpenSearch Dashboards → **Management → Stack Management → Index Patterns** and create one pattern that covers `claude-code` and `clawker-cp`.
+2. (Optional) Add Prometheus as a Dashboards data source via the OpenSearch Prometheus data connector if you want logs + metrics in the same UI; otherwise use the Prometheus UI directly at `http://localhost:9090`.
+3. Build dashboards from the Discover view against the indices documented in [`.claude/docs/MONITORING-REFERENCE.md`](https://github.com/schmitthub/clawker/blob/main/.claude/docs/MONITORING-REFERENCE.md) (event schemas — field names like `service_name`, `event_name`, `tool_name`, `project`, `agent` are unchanged from the older Loki-backed iteration; only the query language differs).
+
+Pre-provisioned index patterns, data connections, and a curated set of Claude Code dashboards are on the roadmap.
+</Warning>
 
 ## Telemetry Controls
 

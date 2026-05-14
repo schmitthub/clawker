@@ -69,7 +69,7 @@ Commands are organized under `internal/cmd/` with subpackages per subcommand:
 | `firewall` | status, list, add, remove, reload, up, down, enable, disable, bypass, rotate-ca | Egress firewall control (all RPCs route through `f.AdminClient` to the CP daemon) |
 | `controlplane` | up, down, status, agents | Break-glass control plane lifecycle + registered agent listing |
 | `auth` | rotate | CLI-side auth material (CA, server certs, OAuth2 signing key) |
-| `monitor` | init, up, down, status | Observability stack (Grafana, Prometheus) |
+| `monitor` | init, up, down, status | Observability stack (OTel Collector, OpenSearch, OpenSearch Dashboards, Prometheus) |
 | `settings` | edit | User settings TUI editor |
 | `skill` | install, show, remove | Manage the clawker-support Claude Code plugin |
 
@@ -132,7 +132,7 @@ Core business logic. Import leaves and foundation packages only.
 | `hostproxy` | config, logger | Host proxy for container-to-host communication |
 | `socketbridge` | config, logger | SSH/GPG agent forwarding via muxrpc |
 | `containerfs` | config, keyring, logger | Host config preparation for container init |
-| `monitor` | config | Observability stack templates (Grafana, Prometheus) |
+| `monitor` | config | Observability stack templates (OTel Collector, OpenSearch, OpenSearch Dashboards, Prometheus) |
 | `docs` | config, storage | CLI documentation generation |
 
 ### Composite Packages (import domain packages)

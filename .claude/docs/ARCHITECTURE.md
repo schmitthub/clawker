@@ -351,7 +351,7 @@ User interaction utilities with TTY and CI awareness.
 | `internal/signals` | OS signal utilities — `SetupSignalContext`, `ResizeHandler` (leaf — stdlib only) |
 | `internal/storage` | `Store[T]` — generic layered YAML store engine: discovery (static/walk-up), load+migrate, merge with provenance, scoped writes, atomic I/O, flock. **Leaf** — zero internal imports. See `internal/storage/CLAUDE.md` |
 | `internal/config` | Thin wrapper composing `Store[Project]` + `Store[Settings]`. Exposes `Config` interface with namespaced accessors, path/constant helpers (~40 methods). **Foundation** — imports storage only. See `internal/config/CLAUDE.md` |
-| `internal/monitor` | Observability stack (Prometheus, Grafana, OTel) |
+| `internal/monitor` | Observability stack templates (OTel Collector, OpenSearch, OpenSearch Dashboards, Prometheus) |
 | `internal/logger` | Zerolog setup |
 | `internal/cmdutil` | Factory struct (closure fields), error types, format/filter flags, arg validators |
 | `internal/cmd/factory` | Factory constructor — wires real dependencies (sync.Once closures) |

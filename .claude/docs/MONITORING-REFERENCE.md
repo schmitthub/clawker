@@ -2,7 +2,9 @@
 
 > For essential rules, see `.claude/rules/monitoring.md`.
 
-> **Backend update:** logs and traces are now stored in **OpenSearch** (index `clawker-logs` for logs; SS4O dataset `traces` / namespace `clawker` for spans). Metrics still live in **Prometheus**. The OTEL event schemas below are unchanged — only the query syntax differs. Translate the historical Loki LogQL examples here to OpenSearch DSL / PPL / Lucene as needed; `service_name`, `event_name`, `tool_name`, `project`, `agent`, etc. are still the field names.
+> **Backend (current):** logs in OpenSearch — two indices `claude-code` (Claude Code OTLP push) and `clawker-cp` (mTLS-gated CP push). Traces in OpenSearch SS4O dataset `traces` / namespace `clawker`. Metrics in Prometheus. UIs: OpenSearch Dashboards (`:5601`) for logs+traces, Prometheus (`:9090`) for metrics. The OTEL event schemas below are unchanged — only query language differs. Translate the historical Loki LogQL / Grafana panel examples here to OpenSearch DSL / PPL / Lucene as needed; `service_name`, `event_name`, `tool_name`, `project`, `agent`, etc. are still the field names.
+>
+> **Stack ships bare** — no pre-provisioned index patterns, data sources, or dashboards. The Grafana panel/MCP sections below are historical reference for the kinds of queries we want to rebuild against OpenSearch Dashboards, NOT a description of anything that ships today. When pre-provisioning lands, rewrite those sections against the actual provisioning surface.
 
 ## Complete Event Schemas
 

@@ -86,7 +86,7 @@ SettingsStore() *storage.Store[Settings]   // Direct access to settings store
 
 **Container constants**: `ContainerUID()` (1001), `ContainerGID()` (1001)
 
-**Monitoring URLs**: `GrafanaURL(host, https)`, `JaegerURL(host, https)`, `PrometheusURL(host, https)`
+**Monitoring URLs**: `OpenSearchURL()`, `OpenSearchDashboardsURL()`, `PrometheusURL()`
 
 ### Exported Mode Type (consts.go)
 

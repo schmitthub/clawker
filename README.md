@@ -71,7 +71,7 @@ When I began experimenting with Claude Code to keep up with the Agentic AI trend
 - **Jailed from host Docker resources** via `pkg/whail` (whale jail), a standalone package that decorates the moby SDK to prevent callers from seeing resources without the automatically applied management labels. I might use this package in other "agent in container" solutions. So I don't have to worry about accidentally deleting non-clawker managed containers/volumes/images, etc.
 - **Docker CLI-esque commands** for managing containers, Clawker isn't a passthrough to Docker CLI; it uses the moby SDK (via `pkg/whail`). This allowed me to add more flags, modify the behavior, etc over what docker cli offers
 - **Git worktree management and commands**: pass a worktree flag to container run or create commands to automatically create a git worktree in the Clawker home project directory and bind mount it to the container workdir. Also has cli commands and flags to list and manage worktrees created by clawker, uses `go-git` under the hood to avoid relying on the host git binary
-- **Optional monitoring stack** with Prometheus, Loki, and Grafana to monitor agents and containers; every container has the environment variables needed to communicate with it
+- **Optional monitoring stack** — OTel Collector + OpenSearch (logs) + OpenSearch Dashboards + Prometheus (metrics) on `clawker-net`. Every container has the environment variables baked in to push OTLP telemetry when the stack is running, and is silenced when it isn't
 - **Interactive configuration editing**: TUI-based editors for project config (`clawker project edit`) and user settings (`clawker settings edit`) with tabbed field browsing, per-field type-appropriate editors (text, boolean, list, multiline), layer-aware provenance display showing which file each value comes from, and per-field save targeting to choose which config layer to write to
 
 ## Installation
@@ -203,7 +203,7 @@ clawker monitor status
 clawker monitor down
 ```
 
-Now I can go to OpenSearch Dashboards at http://localhost:5601 and inspect logs + traces from every agent — costs, tokens, tool executions, decisions, prompts, api calls — and pull metrics from Prometheus at http://localhost:9090. (you can also set env vars in your host shell and it will report to this stack)
+Now I can go to OpenSearch Dashboards at http://localhost:5601 and inspect logs from every agent — costs, tokens, tool executions, decisions, prompts, api calls — and pull metrics from Prometheus at http://localhost:9090. (you can also set env vars in your host shell and it will report to this stack)
 
 ```bash
 # Host ENV var example
@@ -341,7 +341,7 @@ clawker skill remove                    # Remove the clawker-support plugin
 
 ## Monitoring 
 
-All containers have the necessary environment variables to send metrics and logs to an OpenTelemetry collector by default. When you start the optional monitoring stack, it automatically collects and visualizes these metrics and logs in Grafana dashboards. This gives you real-time insights into your agents' performance, decisions, tool calls, costs, token usage, and more. 
+All containers have the environment variables to push logs and metrics to an OpenTelemetry collector by default. The optional monitoring stack runs four Docker Compose services on `clawker-net`: the **OTEL Collector** (receivers + routing), **OpenSearch** (logs), **OpenSearch Dashboards** (UI over OpenSearch), and **Prometheus** (metrics + UI). Claude Code agents push OTLP/HTTP to the collector, which writes logs to OpenSearch and exposes a Prometheus scrape endpoint. See [`docs/monitoring.mdx`](docs/monitoring.mdx) for the full pipeline reference.
 
 ```bash
 clawker monitor init
@@ -351,13 +351,13 @@ clawker monitor status
 clawker monitor down
 ```
 
-<img src="docs/assets/monitor-top.png" alt="Monitor Top" width="600">
-<img src="docs/assets/monitor-cost-usage.png" alt="Monitor Cost Usage" width="600">
-<img src="docs/assets/monitor-coding-activity.png" alt="Monitor Coding Activity" width="600">
-<img src="docs/assets/monitor-tool-usage.png" alt="Monitor Tool Usage" width="600">
-<img src="docs/assets/monitor-session-detail-events.png" alt="Monitor Session Detail Events" width="600">
-<img src="docs/assets/monitor-firewall.png" alt="Monitor Firewall" width="600">
+Once the stack is up:
 
+- **OpenSearch Dashboards** — http://localhost:5601 — Discover view for log exploration
+- **Prometheus UI** — http://localhost:9090 — metrics + ad-hoc PromQL
+- **OpenSearch API** — http://localhost:9200 — REST access to the `claude-code` (Claude Code logs) and `clawker-cp` (control-plane logs) indices
+
+> **Setup required (current state).** The stack is intentionally bare. You'll need to create an index pattern in OpenSearch Dashboards covering `claude-code` and `clawker-cp`, connect Prometheus as a Dashboards data source if you want metrics + logs in the same UI, and build any dashboards yourself on first run. Pre-provisioning is on the roadmap.
 
 ## Roadmap / Known Issues
 

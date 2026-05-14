@@ -136,10 +136,10 @@ Start the monitoring stack before your agents to get real-time dashboards:
 
 ```bash
 clawker monitor init    # Scaffold configs (one-time)
-clawker monitor up      # Start Grafana, Prometheus, Loki, Jaeger
+clawker monitor up      # Start OTel Collector + OpenSearch + OpenSearch Dashboards + Prometheus
 ```
 
-Open Grafana at `http://localhost:3000` to see costs, token usage, tool calls, and session timelines for every agent.
+Open OpenSearch Dashboards at `http://localhost:5601` to explore logs (costs, token usage, tool calls, session events), and Prometheus at `http://localhost:9090` for metrics. The stack ships bare — first-run setup requires creating a Dashboards index pattern covering `claude-code` and `clawker-cp`. See [Monitoring](/monitoring) for the full setup checklist.
 
 ```bash
 clawker monitor down    # Stop when done
