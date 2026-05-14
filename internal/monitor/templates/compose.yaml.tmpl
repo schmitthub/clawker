@@ -57,7 +57,7 @@ services:
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--web.enable-remote-write-receiver"
-      - "--enable-feature=otlp-write-receiver"
+      - "--web.enable-otlp-receiver"
       - "--web.console.templates=/etc/prometheus/consoles"
       - "--web.console.libraries=/etc/prometheus/console_libraries"
       - "--storage.tsdb.retention.time=1h"

@@ -76,9 +76,23 @@ type Config interface {
 	EngineManagedLabel() string
 	ContainerUID() int
 	ContainerGID() int
-	OpenSearchURL(host string, https bool) string
-	OpenSearchDashboardsURL(host string, https bool) string
-	PrometheusURL(host string, https bool) string
+	// In-cluster base URLs (host + port) for monitoring services
+	// reachable from clawker-net. Composed from
+	// [consts.MonitoringService*] hostnames + the corresponding
+	// MonitoringConfig port. No path component.
+	OpenSearchURL() string
+	OpenSearchDashboardsURL() string
+	PrometheusURL() string
+	OtelCollectorURL() string
+
+	// Full OTEL push endpoints (URL + path) Claude Code's exporter
+	// targets from inside agent containers. Built by composing the
+	// in-cluster URL of the receiving service with the matching
+	// telemetry path: metrics push directly at Prometheus' OTLP
+	// receiver (skipping the otel-collector hop), logs push at the
+	// otel-collector OTLP receiver.
+	OtelMetricsEndpoint() string
+	OtelLogsEndpoint() string
 	RequiredFirewallDomains() []string
 	EgressRulesFileName() string
 	FirewallDataSubdir() (string, error)

@@ -193,16 +193,6 @@ func TestStateDir_envOverride(t *testing.T) {
 	assert.Equal(t, "/custom/state", StateDir())
 }
 
-func TestMonitoringURLs(t *testing.T) {
-	cfg, err := NewBlankConfig()
-	require.NoError(t, err)
-
-	assert.Equal(t, "http://localhost:5601", cfg.OpenSearchDashboardsURL("localhost", false))
-	assert.Equal(t, "https://myhost:5601", cfg.OpenSearchDashboardsURL("myhost", true))
-	assert.Equal(t, "http://localhost:9200", cfg.OpenSearchURL("localhost", false))
-	assert.Equal(t, "http://localhost:9090", cfg.PrometheusURL("localhost", false))
-}
-
 func TestSubdirPaths(t *testing.T) {
 	base := t.TempDir()
 	t.Setenv("CLAWKER_DATA_DIR", filepath.Join(base, "data"))

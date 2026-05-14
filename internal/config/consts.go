@@ -226,18 +226,43 @@ func (c *configImpl) ContainerGID() int { return consts.ContainerGID }
 
 // OpenSearchURL returns the OpenSearch REST API URL for the given host.
 // Uses the port from the loaded settings file.
-func (c *configImpl) OpenSearchURL(host string, https bool) string {
-	return consts.ServiceURL(host, c.MonitoringConfig().OpenSearchPort, https)
+func (c *configImpl) OpenSearchURL() string {
+	return consts.ServiceURL(consts.MonitoringServiceOpenSearchNode, c.MonitoringConfig().OpenSearchPort, false)
 }
 
 // OpenSearchDashboardsURL returns the OpenSearch Dashboards UI URL for the given host.
 // Uses the port from the loaded settings file.
-func (c *configImpl) OpenSearchDashboardsURL(host string, https bool) string {
-	return consts.ServiceURL(host, c.MonitoringConfig().OpenSearchDashboardsPort, https)
+func (c *configImpl) OpenSearchDashboardsURL() string {
+	return consts.ServiceURL(consts.MonitoringServiceOpenSearchDashboards, c.MonitoringConfig().OpenSearchDashboardsPort, false)
 }
 
 // PrometheusURL returns the Prometheus UI URL for the given host.
 // Uses the port from the loaded settings file.
-func (c *configImpl) PrometheusURL(host string, https bool) string {
-	return consts.ServiceURL(host, c.MonitoringConfig().PrometheusPort, https)
+func (c *configImpl) PrometheusURL() string {
+	return consts.ServiceURL(consts.MonitoringServicePrometheus, c.MonitoringConfig().PrometheusPort, false)
+}
+
+// OtelCollectorURL returns the OTLP collector base URL on clawker-net
+// (no path). Agents on clawker-net push to this URL + a path; the full
+// per-signal endpoints are composed by [OtelLogsEndpoint] (and any
+// future per-signal accessor) so callers never concatenate paths
+// themselves.
+func (c *configImpl) OtelCollectorURL() string {
+	return consts.ServiceURL(consts.MonitoringServiceOtelCollector, c.MonitoringConfig().OtelCollectorPort, false)
+}
+
+// OtelMetricsEndpoint returns the full URL Claude Code's metrics
+// exporter targets — Prometheus' native OTLP receiver, NOT the
+// otel-collector. Bypassing the collector for metrics drops one network
+// hop and one serialization round-trip on the hot path. The matching
+// env var on the container side is OTEL_EXPORTER_OTLP_METRICS_ENDPOINT.
+func (c *configImpl) OtelMetricsEndpoint() string {
+	return c.PrometheusURL() + c.MonitoringConfig().Telemetry.PrometheusOTLPPath
+}
+
+// OtelLogsEndpoint returns the full URL Claude Code's logs exporter
+// targets on the otel-collector. The matching env var on the container
+// side is OTEL_EXPORTER_OTLP_LOGS_ENDPOINT.
+func (c *configImpl) OtelLogsEndpoint() string {
+	return c.OtelCollectorURL() + c.MonitoringConfig().Telemetry.LogsPath
 }

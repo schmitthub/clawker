@@ -135,9 +135,9 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 		fmt.Fprintf(ios.ErrOut, "%s Monitoring stack started successfully!\n", cs.SuccessIcon())
 		fmt.Fprintln(ios.ErrOut)
 		fmt.Fprintln(ios.ErrOut, "Service URLs:")
-		fmt.Fprintf(ios.ErrOut, "  OpenSearch Dashboards: %s\n", cs.Cyan(cfg.OpenSearchDashboardsURL("localhost", false)))
-		fmt.Fprintf(ios.ErrOut, "  OpenSearch API:        %s\n", cs.Cyan(cfg.OpenSearchURL("localhost", false)))
-		fmt.Fprintf(ios.ErrOut, "  Prometheus:            %s\n", cs.Cyan(cfg.PrometheusURL("localhost", false)))
+		fmt.Fprintf(ios.ErrOut, "  OpenSearch Dashboards: %s\n", cs.Cyan(cfg.OpenSearchDashboardsURL()))
+		fmt.Fprintf(ios.ErrOut, "  OpenSearch API:        %s\n", cs.Cyan(cfg.OpenSearchURL()))
+		fmt.Fprintf(ios.ErrOut, "  Prometheus:            %s\n", cs.Cyan(cfg.PrometheusURL()))
 		fmt.Fprintln(ios.ErrOut)
 		fmt.Fprintln(ios.ErrOut, "To stop the stack: clawker monitor down")
 	}

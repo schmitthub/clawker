@@ -36,6 +36,7 @@ monitoring:
   prometheus_metrics_port: 8889
   telemetry:
     metrics_path: "/v1/metrics"
+    prometheus_otlp_path: "/api/v1/otlp/v1/metrics"
     logs_path: "/v1/logs"
     metric_export_interval_ms: 10000
     logs_export_interval_ms: 5000
@@ -159,25 +160,34 @@ func removeMonitoringFromProject(yaml string) (string, string) {
 }
 
 func TestBuildContext_CustomMonitoringEndpoints(t *testing.T) {
-	// OtelCollectorInternal was promoted to consts.MonitoringServiceOtelCollector
-	// (the firewall plane needs the same hostname, so it's no longer a config
-	// knob). The port override is still honored — assert that.
+	// Service hostnames were promoted to consts.MonitoringService* (the
+	// firewall plane needs the same hostnames, so they're no longer
+	// config knobs). The port overrides are still honored — assert that
+	// by pinning the rendered env vars to whatever cfg.Otel*Endpoint()
+	// resolves to. Metrics push directly to Prometheus' OTLP receiver
+	// and logs push to the otel-collector, so each port override must
+	// land on a different env var.
 	cfg := testConfig(t, `
 version: "1"
 build:
   image: "buildpack-deps:bookworm-scm"
 monitoring:
   otel_collector_port: 9999
+  prometheus_port: 9091
 `)
 	gen := NewProjectGenerator(cfg, t.TempDir())
 	dockerfile, err := gen.Generate()
 	require.NoError(t, err)
 
 	content := string(dockerfile)
-	assert.Contains(t, content, "http://otel-collector:9999/v1/metrics")
-	assert.Contains(t, content, "http://otel-collector:9999/v1/logs")
-	assert.NotContains(t, content, "otel-collector:4318",
-		"default OTEL port should not appear when custom port is provided")
+	metricsEndpoint := cfg.OtelMetricsEndpoint()
+	logsEndpoint := cfg.OtelLogsEndpoint()
+	assert.Contains(t, content, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT="+metricsEndpoint,
+		"metrics env var must render with the cfg-resolved Prometheus OTLP endpoint")
+	assert.Contains(t, content, "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT="+logsEndpoint,
+		"logs env var must render with the cfg-resolved otel-collector endpoint")
+	assert.NotEqual(t, metricsEndpoint, logsEndpoint,
+		"metrics and logs must target different services — same endpoint means the split pipeline collapsed")
 }
 
 func TestBuildContext_NodeInstall_Debian(t *testing.T) {
@@ -229,8 +239,10 @@ func TestBuildContext_DefaultMonitoring(t *testing.T) {
 	require.NoError(t, err)
 
 	content := string(dockerfile)
-	assert.Contains(t, content, "http://otel-collector:4318/v1/metrics")
-	assert.Contains(t, content, "http://otel-collector:4318/v1/logs")
+	assert.Contains(t, content, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT="+cfg.OtelMetricsEndpoint(),
+		"metrics env var must render with the cfg-resolved Prometheus OTLP endpoint (split pipeline: metrics skip the collector)")
+	assert.Contains(t, content, "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT="+cfg.OtelLogsEndpoint(),
+		"logs env var must render with the cfg-resolved otel-collector endpoint")
 }
 
 func TestBuildContext_ClaudeConfigDir(t *testing.T) {

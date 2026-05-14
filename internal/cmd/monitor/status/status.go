@@ -105,13 +105,13 @@ func statusRun(_ context.Context, opts *StatusOptions) error {
 	// Check which services are actually running and print relevant URLs
 	fmt.Fprintln(ios.ErrOut, "Service URLs:")
 	if strings.Contains(outputStr, consts.MonitoringServiceOpenSearchDashboards) {
-		fmt.Fprintf(ios.ErrOut, "  OpenSearch Dashboards: %s\n", cs.Cyan(cfg.OpenSearchDashboardsURL("localhost", false)))
+		fmt.Fprintf(ios.ErrOut, "  OpenSearch Dashboards: %s\n", cs.Cyan(cfg.OpenSearchDashboardsURL()))
 	}
 	if strings.Contains(outputStr, consts.MonitoringServiceOpenSearchNode) {
-		fmt.Fprintf(ios.ErrOut, "  OpenSearch API:        %s\n", cs.Cyan(cfg.OpenSearchURL("localhost", false)))
+		fmt.Fprintf(ios.ErrOut, "  OpenSearch API:        %s\n", cs.Cyan(cfg.OpenSearchURL()))
 	}
 	if strings.Contains(outputStr, consts.MonitoringServicePrometheus) {
-		fmt.Fprintf(ios.ErrOut, "  Prometheus:            %s\n", cs.Cyan(cfg.PrometheusURL("localhost", false)))
+		fmt.Fprintf(ios.ErrOut, "  Prometheus:            %s\n", cs.Cyan(cfg.PrometheusURL()))
 	}
 
 	// Check network status

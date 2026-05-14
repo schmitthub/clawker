@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -75,6 +76,17 @@ monitoring:
 	}
 }
 
+// TestRenderTemplate_Compose verifies that every port/heap/service-name
+// field on MonitorTemplateData reaches the rendered compose.yaml in a
+// place consumers depend on. Assertions derive their expected strings
+// from the data struct itself via fmt.Sprintf — so bumping a default
+// in [config.MonitoringConfig] or renaming a service in
+// [consts.MonitoringService*] does NOT require touching this test.
+//
+// The sentinel ports below are arbitrary non-defaults chosen so any
+// default-port leak in the template (e.g. hardcoded `4318` instead of
+// `{{.OtelCollectorPort}}`) shows up as a missing-port failure rather
+// than a false pass.
 func TestRenderTemplate_Compose(t *testing.T) {
 	mon := testSettings(t, `
 monitoring:
@@ -95,32 +107,57 @@ docker:
 		t.Fatalf("RenderTemplate failed: %v", err)
 	}
 
-	// Verify custom ports + heap + new services appear, old services do not.
-	mustContain := []struct {
+	// Value-routing: every field on MonitorTemplateData consumed by the
+	// template must surface at least once in the rendered output. The
+	// expected substring is built from `data` so renames/port changes
+	// don't break this test.
+	valueRouting := []struct {
 		desc    string
 		contain string
 	}{
-		{"OTEL HTTP port", "5318:5318"},
-		{"OTEL gRPC port", "5317:5317"},
-		{"Prometheus port", "10090:10090"},
-		{"OpenSearch REST host bind", "127.0.0.1:19200:9200"},
-		{"OpenSearch Dashboards host bind", "127.0.0.1:15601:5601"},
-		{"OpenSearch heap", "-Xms1024m -Xmx1024m"},
-		{"OTEL collector service key", consts.MonitoringServiceOtelCollector + ":"},
-		{"Prometheus service key", consts.MonitoringServicePrometheus + ":"},
-		{"OpenSearch node service key", consts.MonitoringServiceOpenSearchNode + ":"},
-		{"OpenSearch dashboards service key", consts.MonitoringServiceOpenSearchDashboards + ":"},
-		{"dashboards points at opensearch-node", `OPENSEARCH_HOSTS=["http://` + consts.MonitoringServiceOpenSearchNode + `:9200"]`},
-		{"hostfs bind mount", "/:/hostfs:ro"},
-		{"docker socket bind mount", "/var/run/docker.sock:/var/run/docker.sock:ro"},
+		// Same-port mappings ({{.X}}:{{.X}}) — host == container.
+		{"OTEL HTTP port", fmt.Sprintf("%d:%d", data.OtelCollectorPort, data.OtelCollectorPort)},
+		{"OTEL gRPC port", fmt.Sprintf("%d:%d", data.OtelGRPCPort, data.OtelGRPCPort)},
+		{"Prometheus port", fmt.Sprintf("%d:%d", data.PrometheusPort, data.PrometheusPort)},
+		{"OpenSearch Dashboards port", fmt.Sprintf("%d:%d", data.OpenSearchDashboardsPort, data.OpenSearchDashboardsPort)},
+		// Different host vs container ports — OpenSearch REST is pinned
+		// to container :9200 (an OpenSearch image contract, not a knob).
+		{"OpenSearch REST host:container", fmt.Sprintf("%d:9200", data.OpenSearchPort)},
+		// Heap derived from MonitoringConfig.OpenSearchHeapMB.
+		{"OpenSearch heap", fmt.Sprintf("-Xms%dm -Xmx%dm", data.OpenSearchHeapMB, data.OpenSearchHeapMB)},
+		// Service hostnames come from consts (firewall plane shares them).
+		{"OTEL collector service key", data.OtelCollectorService + ":"},
+		{"Prometheus service key", data.PrometheusService + ":"},
+		{"OpenSearch node service key", data.OpenSearchNodeService + ":"},
+		{"OpenSearch dashboards service key", data.OpenSearchDashboardsService + ":"},
+		{"dashboards points at opensearch-node", fmt.Sprintf(`OPENSEARCH_HOSTS=["http://%s:9200"]`, data.OpenSearchNodeService)},
+		// Host paths threaded straight through.
+		{"hostfs bind mount", data.HostFilesystem + ":/hostfs:ro"},
+		{"docker socket bind mount", data.DockerSocketPath + ":/var/run/docker.sock:ro"},
 	}
-	for _, check := range mustContain {
+	for _, check := range valueRouting {
 		if !strings.Contains(result, check.contain) {
-			t.Errorf("compose.yaml should contain %q (%s)", check.contain, check.desc)
+			t.Errorf("compose.yaml missing routed value for %s: %q not found", check.desc, check.contain)
 		}
 	}
 
-	// Verify removed services are gone.
+	// Loopback-bind policy: data-bearing services (Prometheus,
+	// OpenSearch REST) must be 127.0.0.1-bound — direct DB/metrics
+	// access is sensitive and must not be reachable from non-loopback
+	// host interfaces. Dashboards is intentionally NOT loopback-bound
+	// because it's a browser-served UI. If you change this policy,
+	// update both the template and this assertion together.
+	for _, hostBind := range []string{
+		fmt.Sprintf("127.0.0.1:%d:%d", data.PrometheusPort, data.PrometheusPort),
+		fmt.Sprintf("127.0.0.1:%d:9200", data.OpenSearchPort),
+	} {
+		if !strings.Contains(result, hostBind) {
+			t.Errorf("compose.yaml missing loopback bind %q — sensitive data port must not be exposed on all interfaces", hostBind)
+		}
+	}
+
+	// Stack-swap cleanup invariant: services from the prior Loki/Jaeger/Grafana
+	// stack must not sneak back in via copy-paste or a partial revert.
 	mustNotContain := []string{"jaeger", "loki", "grafana", "promtail"}
 	for _, banned := range mustNotContain {
 		if strings.Contains(result, banned) {
