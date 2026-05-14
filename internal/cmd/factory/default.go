@@ -108,10 +108,10 @@ func newLogger(f *cmdutil.Factory) (*logger.Logger, error) {
 	monitoringCfg := settings.Monitoring
 
 	// Build OTEL config from settings if enabled. CLI runs on the host and
-	// reaches the collector via its host-published gRPC port.
+	// reaches the collector via its host-published OTLP/HTTP port.
 	var otelCfg *logger.OtelOptions
 	if loggingCfg.Otel.Enabled != nil && *loggingCfg.Otel.Enabled {
-		endpoint := fmt.Sprintf("%s:%d", monitoringCfg.OtelCollectorHost, monitoringCfg.OtelGRPCPort)
+		endpoint := fmt.Sprintf("%s:%d", monitoringCfg.OtelCollectorHost, monitoringCfg.OtelCollectorPort)
 		otelCfg = &logger.OtelOptions{
 			Endpoint:       endpoint,
 			Insecure:       true,

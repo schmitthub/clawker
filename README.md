@@ -223,7 +223,7 @@ OTEL_LOG_USER_PROMPTS=1
 
 # Add this to a project level .env 
 PROJECT_NAME=MyGroundbreakingTodoApp
-OTEL_RESOURCE_ATTRIBUTES=project=$PROJECT_NAME,agent=host
+OTEL_RESOURCE_ATTRIBUTES=service.name=claude-code,project=$PROJECT_NAME,agent=host
 ```
 
 When I'm done I can commit / push / open a PR right in the container terminal with all my creds and git access set up, or I can open the worktree in my IDE and do it from there. I can `/exit` out and the container will stop (or `ctrl c` in the terminal). I can use `--rm` flags just like docker cli to automatically remove containers when they stop, or I can start the same one back up again with `clawker start -a -i --agent example` to pick up right where I left off.

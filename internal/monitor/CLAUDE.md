@@ -2,7 +2,7 @@
 
 Templates for the monitoring stack (Docker Compose + OTEL Collector pipeline + Prometheus). Backed by OpenSearch (logs + traces) and Prometheus (metrics). OpenSearch Dashboards is the UI for logs/traces; Prometheus has its own UI for metrics.
 
-Service hostnames (`otel-collector`, `prometheus`, `opensearch-node`, `opensearch-dashboards`) live in `internal/consts/consts.go` as `MonitoringServiceHostnames` and are also wired into CoreDNS's `internalHosts` forward zones — single source of truth across the compose plane and the firewall plane.
+Service hostnames live in `internal/consts/monitoring.go`. `MonitoringServiceHostnames` (`otel-collector`, `prometheus`) is the subset wired into CoreDNS's `internalHosts` forward zones — only services agent containers legitimately need to dial. `opensearch-node` and `opensearch-dashboards` are intentionally omitted: agents never query indices directly, so those containers reach each other via Docker's embedded resolver without going through CoreDNS.
 
 ## Template Files
 
@@ -41,15 +41,17 @@ All pinned to a multi-arch manifest list digest (`@sha256:`). Verify with `docke
 
 Struct providing values for `{{.FieldName}}` placeholders. Service hostname fields (`OtelCollectorService`, `PrometheusService`, `OpenSearchNodeService`, `OpenSearchDashboardsService`) are populated from `consts.MonitoringService*` so renaming a service in consts propagates everywhere.
 
+Each port field drives **both** sides of the host:container publish mapping AND the container's own listener config (Prometheus `--web.listen-address`, OpenSearch `http.port` env, Dashboards `SERVER_PORT` env, otel-collector receiver endpoints in `otel-config.yaml.tmpl`). Changing one setting moves host + internal together so users can shuffle ports to avoid host conflicts without diverging from the image's listener.
+
 | Field | Type | Description |
 |-------|------|-------------|
-| `OtelCollectorPort` | `int` | OTEL collector HTTP port (default 4318) |
+| `OtelCollectorPort` | `int` | OTEL collector OTLP/HTTP port (default 4318) |
 | `OtelGRPCPort` | `int` | OTEL collector gRPC port (default 4317; independent of HTTP) |
 | `OtelCPPort` | `int` | mTLS-gated host-loopback receiver port for clawker-cp push |
-| `PrometheusPort` | `int` | Prometheus UI port (default 9090) |
+| `PrometheusPort` | `int` | Prometheus UI port (default 9090) — wired into `--web.listen-address` |
 | `PrometheusMetricsPort` | `int` | Prometheus scrape port the collector exposes (default 8889) |
-| `OpenSearchPort` | `int` | OpenSearch REST API port (default 9200) |
-| `OpenSearchDashboardsPort` | `int` | OpenSearch Dashboards UI port (default 5601) |
+| `OpenSearchPort` | `int` | OpenSearch REST API port (default 9200) — wired into `http.port` env |
+| `OpenSearchDashboardsPort` | `int` | OpenSearch Dashboards UI port (default 5601) — wired into `SERVER_PORT` env |
 | `OpenSearchHeapMB` | `int` | JVM `-Xms`/`-Xmx` for the OpenSearch node (default 512) |
 | `OtelCollectorService` | `string` | Hostname for OTEL collector — from `consts.MonitoringServiceOtelCollector` |
 | `PrometheusService` | `string` | Hostname for Prometheus — from `consts.MonitoringServicePrometheus` |

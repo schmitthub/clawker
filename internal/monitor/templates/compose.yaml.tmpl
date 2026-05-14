@@ -72,6 +72,7 @@ services:
     image: {{.PrometheusImage}}
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--web.listen-address=:{{.PrometheusPort}}"
       - "--web.enable-remote-write-receiver"
       - "--web.enable-otlp-receiver"
       - "--web.console.templates=/etc/prometheus/consoles"
@@ -82,7 +83,7 @@ services:
       - "--enable-feature=exemplar-storage"
       - "--enable-feature=otlp-deltatocumulative"
     ports:
-      - "127.0.0.1:{{.PrometheusPort}}:{{.PrometheusInternalPort}}"
+      - "127.0.0.1:{{.PrometheusPort}}:{{.PrometheusPort}}"
     volumes:
       - ./prometheus.yaml:/etc/prometheus/prometheus.yml
       - clawker-prometheus:/prometheus
@@ -108,6 +109,7 @@ services:
       - bootstrap.memory_lock=true
       - DISABLE_SECURITY_PLUGIN=true
       - DISABLE_INSTALL_DEMO_CONFIG=true
+      - http.port={{.OpenSearchPort}}
       - "OPENSEARCH_JAVA_OPTS=-Xms{{.OpenSearchHeapMB}}m -Xmx{{.OpenSearchHeapMB}}m"
     ulimits:
       memlock:
@@ -117,7 +119,7 @@ services:
         soft: 65536
         hard: 65536
     ports:
-      - "127.0.0.1:{{.OpenSearchPort}}:{{.OpenSearchInternalPort}}"
+      - "127.0.0.1:{{.OpenSearchPort}}:{{.OpenSearchPort}}"
     volumes:
       - clawker-opensearch:/usr/share/opensearch/data
     labels:
@@ -131,12 +133,13 @@ services:
     container_name: {{.OpenSearchDashboardsService}}
     image: {{.OpenSearchDashboardsImage}}
     environment:
-      - 'OPENSEARCH_HOSTS=["http://{{.OpenSearchNodeService}}:{{.OpenSearchInternalPort}}"]'
+      - 'OPENSEARCH_HOSTS=["http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"]'
       - DISABLE_SECURITY_DASHBOARDS_PLUGIN=true
+      - SERVER_PORT={{.OpenSearchDashboardsPort}}
     ports:
-      - "{{.OpenSearchDashboardsPort}}:{{.OpenSearchDashboardsInternalPort}}"
+      - "127.0.0.1:{{.OpenSearchDashboardsPort}}:{{.OpenSearchDashboardsPort}}"
     expose:
-      - "{{.OpenSearchDashboardsInternalPort}}"
+      - "{{.OpenSearchDashboardsPort}}"
     depends_on:
       - {{.OpenSearchNodeService}}
     labels:

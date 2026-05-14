@@ -206,7 +206,7 @@ exporters:
   # Traces → OpenSearch (Simple Schema for Observability data model).
   opensearch/traces:
     http:
-      endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchInternalPort}}"
+      endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"
     dataset: traces
     namespace: clawker
   # Logs → OpenSearch. Indices split by source so dynamic mappings
@@ -217,24 +217,24 @@ exporters:
   # each schema clean.
   opensearch/logs_cp:
     http:
-      endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchInternalPort}}"
+      endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"
     logs_index: clawker-cp
   opensearch/logs_claude_code:
     http:
-      endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchInternalPort}}"
+      endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"
     logs_index: claude-code
   # Envoy access-log records arrive via the OTLP/gRPC receiver tagged
   # service.name=envoy by the access logger's resource_attributes
   # (firewall/envoy_config.go::otelAccessLogEntry).
   opensearch/logs_envoy:
     http:
-      endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchInternalPort}}"
+      endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"
     logs_index: clawker-envoy
   # CoreDNS query records arrive via filelog/coredns; resource/coredns
   # stamps service.name=coredns before the routing connector dispatches.
   opensearch/logs_coredns:
     http:
-      endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchInternalPort}}"
+      endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"
     logs_index: clawker-coredns
   # Metrics → Prometheus scrape endpoint.
   prometheus:

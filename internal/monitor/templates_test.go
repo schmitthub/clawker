@@ -115,17 +115,20 @@ docker:
 		desc    string
 		contain string
 	}{
-		// Same-port mappings ({{.X}}:{{.X}}) — host == container; these
-		// are receiver-config ports the collector listens on internally.
+		// Single-port mappings ({{.X}}:{{.X}}) — host == container for
+		// every service. User overrides one setting and both sides move
+		// together; the container's listener config (Prometheus
+		// --web.listen-address, OpenSearch http.port, Dashboards
+		// SERVER_PORT) is wired from the same template variable so the
+		// image actually listens on the configured port.
 		{"OTEL HTTP port", fmt.Sprintf("%d:%d", data.OtelCollectorPort, data.OtelCollectorPort)},
 		{"OTEL gRPC port", fmt.Sprintf("%d:%d", data.OtelGRPCPort, data.OtelGRPCPort)},
-		// Host:container mappings — container ports are image contracts
-		// sourced from consts, host ports are user-configurable. These
-		// must not drift; if a user changes the host port they should
-		// still reach the running service inside the container.
-		{"Prometheus host:container", fmt.Sprintf("%d:%d", data.PrometheusPort, data.PrometheusInternalPort)},
-		{"OpenSearch REST host:container", fmt.Sprintf("%d:%d", data.OpenSearchPort, data.OpenSearchInternalPort)},
-		{"OpenSearch Dashboards host:container", fmt.Sprintf("%d:%d", data.OpenSearchDashboardsPort, data.OpenSearchDashboardsInternalPort)},
+		{"Prometheus host:container", fmt.Sprintf("%d:%d", data.PrometheusPort, data.PrometheusPort)},
+		{"Prometheus listen-address flag", fmt.Sprintf("--web.listen-address=:%d", data.PrometheusPort)},
+		{"OpenSearch REST host:container", fmt.Sprintf("%d:%d", data.OpenSearchPort, data.OpenSearchPort)},
+		{"OpenSearch http.port env", fmt.Sprintf("http.port=%d", data.OpenSearchPort)},
+		{"OpenSearch Dashboards host:container", fmt.Sprintf("%d:%d", data.OpenSearchDashboardsPort, data.OpenSearchDashboardsPort)},
+		{"OpenSearch Dashboards SERVER_PORT env", fmt.Sprintf("SERVER_PORT=%d", data.OpenSearchDashboardsPort)},
 		// Heap derived from MonitoringConfig.OpenSearchHeapMB.
 		{"OpenSearch heap", fmt.Sprintf("-Xms%dm -Xmx%dm", data.OpenSearchHeapMB, data.OpenSearchHeapMB)},
 		// Service hostnames come from consts (firewall plane shares them).
@@ -133,7 +136,7 @@ docker:
 		{"Prometheus service key", data.PrometheusService + ":"},
 		{"OpenSearch node service key", data.OpenSearchNodeService + ":"},
 		{"OpenSearch dashboards service key", data.OpenSearchDashboardsService + ":"},
-		{"dashboards points at opensearch-node", fmt.Sprintf(`OPENSEARCH_HOSTS=["http://%s:%d"]`, data.OpenSearchNodeService, data.OpenSearchInternalPort)},
+		{"dashboards points at opensearch-node", fmt.Sprintf(`OPENSEARCH_HOSTS=["http://%s:%d"]`, data.OpenSearchNodeService, data.OpenSearchPort)},
 		// Host paths threaded straight through.
 		{"hostfs bind mount", data.HostFilesystem + ":/hostfs:ro"},
 		{"docker socket bind mount", data.DockerSocketPath + ":/var/run/docker.sock:ro"},
@@ -146,18 +149,20 @@ docker:
 		}
 	}
 
-	// Loopback-bind policy: data-bearing services (Prometheus,
-	// OpenSearch REST) must be 127.0.0.1-bound — direct DB/metrics
-	// access is sensitive and must not be reachable from non-loopback
-	// host interfaces. Dashboards is intentionally NOT loopback-bound
-	// because it's a browser-served UI. If you change this policy,
-	// update both the template and this assertion together.
+	// Loopback-bind policy: every host-published monitoring port
+	// (Prometheus, OpenSearch REST, OpenSearch Dashboards) must be
+	// 127.0.0.1-bound. Security plugins are disabled for local dev
+	// (DISABLE_SECURITY_PLUGIN / DISABLE_SECURITY_DASHBOARDS_PLUGIN),
+	// so non-loopback exposure leaks unauthenticated logs/traces/
+	// metrics to whatever network the host is on. If you change this
+	// policy, update both the template and this assertion together.
 	for _, hostBind := range []string{
-		fmt.Sprintf("127.0.0.1:%d:%d", data.PrometheusPort, data.PrometheusInternalPort),
-		fmt.Sprintf("127.0.0.1:%d:%d", data.OpenSearchPort, data.OpenSearchInternalPort),
+		fmt.Sprintf("127.0.0.1:%d:%d", data.PrometheusPort, data.PrometheusPort),
+		fmt.Sprintf("127.0.0.1:%d:%d", data.OpenSearchPort, data.OpenSearchPort),
+		fmt.Sprintf("127.0.0.1:%d:%d", data.OpenSearchDashboardsPort, data.OpenSearchDashboardsPort),
 	} {
 		if !strings.Contains(result, hostBind) {
-			t.Errorf("compose.yaml missing loopback bind %q — sensitive data port must not be exposed on all interfaces", hostBind)
+			t.Errorf("compose.yaml missing loopback bind %q — sensitive port must not be exposed on all interfaces", hostBind)
 		}
 	}
 

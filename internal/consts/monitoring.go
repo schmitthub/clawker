@@ -2,12 +2,14 @@ package consts
 
 // Monitoring stack service names. Each value is the hostname its
 // container registers under on clawker-net (compose service key →
-// Docker DNS). The same names are forwarded by CoreDNS to Docker's
-// embedded resolver via [MonitoringServiceHostnames] so OTEL collector,
-// OpenSearch, OpenSearch Dashboards, and Prometheus can dial each
-// other when the firewall is in front of them. Renaming a service
-// here propagates to both the compose template and the firewall plane
-// without further edits.
+// Docker DNS). A subset — see [MonitoringServiceHostnames] — is
+// forwarded by CoreDNS to Docker's embedded resolver so agent
+// containers can dial the OTEL collector and Prometheus when the
+// firewall is in front of them. OpenSearch and OpenSearch Dashboards
+// are intentionally NOT forwarded: agents push telemetry through the
+// collector and never address those services directly. Renaming a
+// service here propagates to both the compose template and the
+// firewall plane without further edits.
 const (
 	MonitoringServiceOtelCollector        = "otel-collector"
 	MonitoringServicePrometheus           = "prometheus"
@@ -33,14 +35,3 @@ var MonitoringServiceHostnames = []string{
 	MonitoringServiceOtelCollector,
 	MonitoringServicePrometheus,
 }
-
-// Container-internal listen ports for monitoring services. Images
-// listen on these regardless of how host-side ports are configured;
-// the compose port mappings (host:container) consume these for the
-// container side and Settings.Monitoring.*Port for the host side.
-// Service-to-service references inside clawker-net also use these.
-const (
-	MonitoringInternalPortOpenSearch           = 9200
-	MonitoringInternalPortOpenSearchDashboards = 5601
-	MonitoringInternalPortPrometheus           = 9090
-)

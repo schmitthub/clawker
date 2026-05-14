@@ -29,7 +29,7 @@ OTLP/HTTP push ─┬─→ otel-collector ─┬─→ Prometheus scrape (metri
 
 ## Service Hostnames Are Constants
 
-Service hostnames (`otel-collector`, `prometheus`, `opensearch-node`, `opensearch-dashboards`) live in `internal/consts/consts.go` as `MonitoringServiceHostnames`. The compose template service keys, the OTEL exporter endpoints, and the CoreDNS `internalHosts` forward zones all reference these constants. Renaming a service in one place would silently break the others — there is no per-config knob for these names.
+Service hostnames live in `internal/consts/monitoring.go` as four individual constants (`MonitoringServiceOtelCollector`, `MonitoringServicePrometheus`, `MonitoringServiceOpenSearchNode`, `MonitoringServiceOpenSearchDashboards`). The compose template service keys, the OTEL exporter endpoints, and the CoreDNS `internalHosts` forward zones all reference these constants — renaming a service in one place propagates everywhere without further edits. `MonitoringServiceHostnames` is a slice containing only `otel-collector` and `prometheus` — the two hostnames agent containers legitimately dial. OpenSearch and OpenSearch Dashboards are intentionally excluded: agents push telemetry through the collector and never query indices directly; those services reach each other via Docker's embedded resolver without going through CoreDNS.
 
 ## OpenSearch Data Model
 

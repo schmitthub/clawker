@@ -44,7 +44,7 @@ All containers are pre-configured with labels (`dev.clawker.purpose=monitoring`)
 
 ### Service Hostnames Are Constants
 
-Service hostnames (`otel-collector`, `prometheus`, `opensearch-node`, `opensearch-dashboards`) are sourced from `internal/consts/consts.go` (`MonitoringServiceHostnames`). The same list drives the CoreDNS `internalHosts` forward zones inside the firewall stack — renaming a service in one place would silently break the other, so the names are wired through a single constant set.
+Individual service hostname constants (`MonitoringServiceOtelCollector`, `MonitoringServicePrometheus`, `MonitoringServiceOpenSearchNode`, `MonitoringServiceOpenSearchDashboards`) are defined in `internal/consts/monitoring.go`. The `MonitoringServiceHostnames` slice — consumed by CoreDNS `internalHosts` forward zones — intentionally contains only `otel-collector` and `prometheus`: agents push telemetry through the collector and never query OpenSearch directly, so `opensearch-node` and `opensearch-dashboards` are excluded from the forwarded set (containers on `clawker-net` that do need those reach them via Docker's embedded resolver).
 
 ### How Agents Connect
 

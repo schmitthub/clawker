@@ -224,20 +224,24 @@ func (c *configImpl) ContainerUID() int { return consts.ContainerUID }
 // Deprecated: use consts.ContainerGID.
 func (c *configImpl) ContainerGID() int { return consts.ContainerGID }
 
-// OpenSearchURL returns the OpenSearch REST API URL for the given host.
-// Uses the port from the loaded settings file.
+// OpenSearchURL returns the OpenSearch REST API URL on clawker-net.
+// The settings port drives both the host publish and the container's
+// http.port env, so this URL works equally well in-cluster (via Docker
+// DNS) and from the host (via 127.0.0.1).
 func (c *configImpl) OpenSearchURL() string {
 	return consts.ServiceURL(consts.MonitoringServiceOpenSearchNode, c.MonitoringConfig().OpenSearchPort, false)
 }
 
-// OpenSearchDashboardsURL returns the OpenSearch Dashboards UI URL for the given host.
-// Uses the port from the loaded settings file.
+// OpenSearchDashboardsURL returns the OpenSearch Dashboards UI URL on
+// clawker-net. The settings port drives both the host publish and the
+// container's SERVER_PORT env.
 func (c *configImpl) OpenSearchDashboardsURL() string {
 	return consts.ServiceURL(consts.MonitoringServiceOpenSearchDashboards, c.MonitoringConfig().OpenSearchDashboardsPort, false)
 }
 
-// PrometheusURL returns the Prometheus UI URL for the given host.
-// Uses the port from the loaded settings file.
+// PrometheusURL returns the Prometheus UI URL on clawker-net. The
+// settings port drives both the host publish and Prometheus'
+// --web.listen-address flag.
 func (c *configImpl) PrometheusURL() string {
 	return consts.ServiceURL(consts.MonitoringServicePrometheus, c.MonitoringConfig().PrometheusPort, false)
 }
