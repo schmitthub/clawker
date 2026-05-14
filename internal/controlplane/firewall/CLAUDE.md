@@ -41,7 +41,7 @@ Closures (reconcileStackClosure + per-RPC bodies) call:
 | `status.go` | `Status` struct returned by `Stack.Status` (per-container up state, IPs, rule count) |
 | `cgroup.go` | `DetectCgroupDriver(ctx, *docker.Client)`, `EBPFCgroupPath(driver, cid)`, `ResolveContainerID(ctx, *docker.Client, ref)`, `IsCanonicalContainerID` |
 | `drift.go` | `resolveBypassCgroupID(entry, resolver, log)` — shared INV-B2-016 drift resolver used by direct Enable (`resolveForEnable`) and the bypass dead-man timer |
-| `envoy_config.go` | Envoy YAML generation; per-domain filter chains; LOGICAL_DNS clusters; TCP/SSH listeners (`normalizeDomain` lives here — used by certs, coredns_config, rules_store, and shared with `internal/dnsbpf` via `ebpf.DomainHash`) |
+| `envoy_config.go` | Envoy YAML generation; per-domain filter chains; LOGICAL_DNS clusters; TCP/SSH listeners; dual-sink access log builder (stdout JSON for `docker logs` triage + native `envoy.access_loggers.open_telemetry` OTLP/gRPC sink to `otel-collector:4317`, cluster `otel_collector_als` added unconditionally so the deny chain has somewhere to dial). `normalizeDomain` lives here — used by certs, coredns_config, rules_store, and shared with `internal/dnsbpf` via `ebpf.DomainHash` |
 | `coredns_config.go` | Corefile generation; per-domain forward zones; `dnsbpf` plugin directive; catch-all NXDOMAIN |
 | `certs.go` | CA keypair generation/loading; per-domain cert signing; wildcard SANs; `RotateCA` |
 | `rules_store.go` | `EgressRulesFile` schema + `NewRulesStore(cfg)` + rule helpers (`ValidateDst`, `NormalizeRule`, `RuleKey`, `NormalizeAndDedup`). Project-level rule composition lives on `project.Project.EgressRules()` — firewall doesn't know about project config. |

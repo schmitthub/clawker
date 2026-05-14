@@ -325,20 +325,74 @@ func TestGenerateEnvoyConfig_ZeroPortTLSDefaults443(t *testing.T) {
 	assert.Contains(t, out, "github.com-cert.pem")
 }
 
+// findStdoutEntry returns the stdout access log entry from the dual-sink
+// access_log list returned by buildHTTPAccessLog / buildTCPAccessLog.
+func findStdoutEntry(t *testing.T, logs []any) map[string]any {
+	t.Helper()
+	for _, e := range logs {
+		entry, ok := e.(map[string]any)
+		if !ok {
+			continue
+		}
+		if entry["name"] == "envoy.access_loggers.stdout" {
+			return entry
+		}
+	}
+	t.Fatalf("no stdout access log entry found in %v", logs)
+	return nil
+}
+
+// findOtelEntry returns the OpenTelemetry ALS access log entry from the
+// dual-sink access_log list.
+func findOtelEntry(t *testing.T, logs []any) map[string]any {
+	t.Helper()
+	for _, e := range logs {
+		entry, ok := e.(map[string]any)
+		if !ok {
+			continue
+		}
+		if entry["name"] == "envoy.access_loggers.open_telemetry" {
+			return entry
+		}
+	}
+	t.Fatalf("no otel access log entry found in %v", logs)
+	return nil
+}
+
+// otelAttrValue returns the string value associated with a given attribute
+// key in an OpenTelemetryAccessLogConfig.attributes KeyValueList.
+func otelAttrValue(t *testing.T, attrs map[string]any, key string) string {
+	t.Helper()
+	values, ok := attrs["values"].([]any)
+	require.True(t, ok, "attributes.values not present or wrong type")
+	for _, kv := range values {
+		entry, ok := kv.(map[string]any)
+		if !ok {
+			continue
+		}
+		if entry["key"] == key {
+			v, ok := entry["value"].(map[string]any)
+			require.True(t, ok, "attribute value not a map")
+			s, ok := v["string_value"].(string)
+			require.True(t, ok, "attribute value.string_value not a string")
+			return s
+		}
+	}
+	t.Fatalf("attribute %q not found", key)
+	return ""
+}
+
 func TestBuildHTTPAccessLog(t *testing.T) {
 	t.Parallel()
 
 	logs := buildHTTPAccessLog("http")
-	require.Len(t, logs, 1)
+	require.Len(t, logs, 2, "expected dual-sink: stdout + otel")
 
-	entry, ok := logs[0].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "envoy.access_loggers.stdout", entry["name"])
-
-	tc, ok := entry["typed_config"].(map[string]any)
+	// Stdout sink: legacy JSON access log surfacing in `docker logs`.
+	stdoutEntry := findStdoutEntry(t, logs)
+	tc, ok := stdoutEntry["typed_config"].(map[string]any)
 	require.True(t, ok)
 	assert.Contains(t, tc["@type"], "StdoutAccessLog")
-
 	lf, ok := tc["log_format"].(map[string]any)
 	require.True(t, ok)
 	jf, ok := lf["json_format"].(map[string]any)
@@ -356,18 +410,37 @@ func TestBuildHTTPAccessLog(t *testing.T) {
 	assert.Equal(t, "%REQ(:METHOD)%", jf["method"])
 	assert.Equal(t, "%REQ(:PATH)%", jf["path"])
 	assert.Equal(t, "%REQ(Host)%", jf["request_host"])
+
+	// OTel ALS sink: structured fields on attributes, service.name on resource.
+	otelEntry := findOtelEntry(t, logs)
+	otc, ok := otelEntry["typed_config"].(map[string]any)
+	require.True(t, ok)
+	assert.Contains(t, otc["@type"], "OpenTelemetryAccessLogConfig")
+	grpcSvc, ok := otc["grpc_service"].(map[string]any)
+	require.True(t, ok)
+	envoyGrpc, ok := grpcSvc["envoy_grpc"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, otelCollectorALSClusterName, envoyGrpc["cluster_name"])
+
+	resAttrs, ok := otc["resource_attributes"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "envoy", otelAttrValue(t, resAttrs, "service.name"))
+
+	attrs, ok := otc["attributes"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "http", otelAttrValue(t, attrs, "proto"))
+	assert.Equal(t, "%REQ(:METHOD)%", otelAttrValue(t, attrs, "method"))
+	assert.Equal(t, "%REQ(:PATH)%", otelAttrValue(t, attrs, "path"))
 }
 
 func TestBuildTCPAccessLog(t *testing.T) {
 	t.Parallel()
 
 	logs := buildTCPAccessLog("tls")
-	require.Len(t, logs, 1)
+	require.Len(t, logs, 2, "expected dual-sink: stdout + otel")
 
-	entry, ok := logs[0].(map[string]any)
-	require.True(t, ok)
-
-	tc, ok := entry["typed_config"].(map[string]any)
+	stdoutEntry := findStdoutEntry(t, logs)
+	tc, ok := stdoutEntry["typed_config"].(map[string]any)
 	require.True(t, ok)
 	lf, ok := tc["log_format"].(map[string]any)
 	require.True(t, ok)
@@ -379,31 +452,63 @@ func TestBuildTCPAccessLog(t *testing.T) {
 	assert.Equal(t, "%REQUESTED_SERVER_NAME%", jf["domain"])
 	assert.Equal(t, "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%", jf["client_ip"])
 
-	// HTTP-specific fields absent.
+	// HTTP-specific fields absent on TCP variant.
 	assert.Nil(t, jf["response_code"])
 	assert.Nil(t, jf["method"])
 	assert.Nil(t, jf["path"])
+
+	// OTel sink mirrors the same shape and carries service.name=envoy.
+	otelEntry := findOtelEntry(t, logs)
+	otc, ok := otelEntry["typed_config"].(map[string]any)
+	require.True(t, ok)
+	resAttrs, ok := otc["resource_attributes"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "envoy", otelAttrValue(t, resAttrs, "service.name"))
 }
 
 func TestBuildTCPAccessLog_DomainOverride(t *testing.T) {
 	t.Parallel()
 
 	logs := buildTCPAccessLog("tcp", "github.com")
-	require.Len(t, logs, 1)
+	require.Len(t, logs, 2)
 
-	entry, ok := logs[0].(map[string]any)
-	require.True(t, ok)
-
-	tc, ok := entry["typed_config"].(map[string]any)
+	// Static domain overrides %REQUESTED_SERVER_NAME% in both sinks.
+	stdoutEntry := findStdoutEntry(t, logs)
+	tc, ok := stdoutEntry["typed_config"].(map[string]any)
 	require.True(t, ok)
 	lf, ok := tc["log_format"].(map[string]any)
 	require.True(t, ok)
 	jf, ok := lf["json_format"].(map[string]any)
 	require.True(t, ok)
-
-	// Static domain overrides the SNI placeholder for raw TCP listeners.
 	assert.Equal(t, "github.com", jf["domain"])
 	assert.Equal(t, "tcp", jf["proto"])
+
+	otelEntry := findOtelEntry(t, logs)
+	otc, ok := otelEntry["typed_config"].(map[string]any)
+	require.True(t, ok)
+	attrs, ok := otc["attributes"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "github.com", otelAttrValue(t, attrs, "domain"))
+}
+
+func TestGenerateEnvoyConfig_OtelALSClusterPresent(t *testing.T) {
+	t.Parallel()
+
+	// The otel_collector_als cluster is unconditionally included in
+	// buildClusters so the deny chain's OTel access logger has somewhere to
+	// dial even when no allow rules exist. Verify shape: STRICT_DNS, HTTP/2
+	// protocol options, otel-collector hostname.
+	yamlBytes, _, err := GenerateEnvoyConfig(nil, EnvoyPorts{
+		EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901,
+	})
+	require.NoError(t, err)
+	out := string(yamlBytes)
+
+	assert.Contains(t, out, otelCollectorALSClusterName)
+	assert.Contains(t, out, "STRICT_DNS")
+	assert.Contains(t, out, "otel-collector")
+	assert.Contains(t, out, "port_value: 4317")
+	assert.Contains(t, out, "http2_protocol_options")
 }
 
 func TestGenerateEnvoyConfig_AccessLogPresent(t *testing.T) {
@@ -450,9 +555,14 @@ func TestGenerateEnvoyConfig_AccessLogPresent(t *testing.T) {
 			yamlBytes, _, err := GenerateEnvoyConfig(tt.rules, ports)
 			require.NoError(t, err)
 			out := string(yamlBytes)
+			// Stdout sink (operator triage).
 			assert.Contains(t, out, "envoy.access_loggers.stdout")
 			assert.Contains(t, out, "StdoutAccessLog")
 			assert.Contains(t, out, "json_format")
+			// OTel ALS sink (collector ingest).
+			assert.Contains(t, out, "envoy.access_loggers.open_telemetry")
+			assert.Contains(t, out, "OpenTelemetryAccessLogConfig")
+			assert.Contains(t, out, otelCollectorALSClusterName)
 		})
 	}
 }

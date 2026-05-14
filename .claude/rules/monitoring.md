@@ -39,17 +39,24 @@ Service hostnames (`otel-collector`, `prometheus`, `opensearch-node`, `opensearc
 
 ## Egress Traffic Logs
 
-Envoy and CoreDNS access logs flow into OpenSearch alongside agent telemetry.
+Envoy and CoreDNS access logs are scraped into OpenSearch with dedicated indices so each shape gets a clean dynamic mapping.
 
-### Envoy (`service.name="envoy"`)
-- JSON access log format
-- Key fields: `domain`, `proto` (tls/tls_mitm/http/tcp/deny), `response_code`, `response_flags`
-- `response_flags` containing `UF` (upstream failure) indicates blocked/denied traffic
+### Envoy (`service.name="envoy"`, index `clawker-envoy`)
+- Ships via the native `envoy.access_loggers.open_telemetry` sink (OTLP/gRPC) to the collector's OTLP receiver. The cluster `otel_collector_als` (defined in `firewall/envoy_config.go::buildOtelALSCluster`) dials `otel-collector:4317`.
+- Resource attribute `service.name=envoy` is stamped on the Envoy side by `otelAccessLogEntry`. The routing connector dispatches the record to `logs/envoy`; `resource/envoy` stamps `ingest_source=envoy` post-routing.
+- The legacy `envoy.access_loggers.stdout` JSON sink is kept alongside for `docker logs clawker-envoy` triage when the monitoring stack is down.
+- Structured fields land on OTLP attributes: `domain`, `proto` (tls/http/deny/tcp/ssh), `response_code` (HTTP contexts), `response_flags`, `method`, `path`, `request_host`. `response_flags` containing `UF` (upstream failure) indicates blocked/denied traffic.
 
-### CoreDNS (`service.name="coredns"`)
-- Logfmt key=value format (parsed at the collector)
-- Key fields: `domain`, `qtype` (A/AAAA), `rcode` (NOERROR/NXDOMAIN), `duration`
-- `rcode=NXDOMAIN` indicates blocked domain lookups
+### CoreDNS (`service.name="coredns"`, index `clawker-coredns`)
+- CoreDNS's `log` plugin writes each query as a logfmt line beginning with the sentinel `source=coredns` (see `firewall/coredns_config.go::corefileLogFormat`).
+- The collector's `filelog/coredns` receiver tails `/var/lib/docker/containers/*/*-json.log` (Docker host log dirs, bind-mounted RO into the collector), parses the json-file envelope, promotes the inner `log` field to body, then drops anything that doesn't start with `source=coredns`. No CoreDNS binary, plugin, or env change.
+- `resource/coredns` stamps `service.name=coredns` + `ingest_source=coredns` on the dedicated `logs/coredns` pipeline before writing to OpenSearch.
+- The body retains the logfmt shape: `source=coredns client_ip=… domain=… qtype=(A|AAAA) rcode=(NOERROR|NXDOMAIN) duration=…`. `rcode=NXDOMAIN` indicates blocked domain lookups.
+
+**Routing topology**:
+- `otlp` receiver → `logs/in` (batched) → `routing/logs_by_service` connector → dispatches to `logs/claude-code` / `logs/envoy` by `service.name`.
+- `filelog/coredns` receiver → `logs/coredns` directly (bypasses the routing connector — the filter operator already guarantees every record is a CoreDNS line, and feeding through the connector would risk dupes if a stray OTLP record ever arrived with `service.name=coredns`).
+- `otlp/cp` receiver (mTLS-gated) → `logs/cp` directly, same reasoning as filelog.
 
 ## What NOT To Do
 

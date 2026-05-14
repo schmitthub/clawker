@@ -137,6 +137,8 @@ docker:
 		// Host paths threaded straight through.
 		{"hostfs bind mount", data.HostFilesystem + ":/hostfs:ro"},
 		{"docker socket bind mount", data.DockerSocketPath + ":/var/run/docker.sock:ro"},
+		// filelog/coredns receiver needs the docker container log dirs.
+		{"docker containers bind mount", "/var/lib/docker/containers:/var/lib/docker/containers:ro"},
 	}
 	for _, check := range valueRouting {
 		if !strings.Contains(result, check.contain) {
@@ -191,17 +193,30 @@ monitoring:
 		"0.0.0.0:9889", // prometheus exporter
 		"opensearch/logs_cp:",
 		"opensearch/logs_claude_code:",
+		"opensearch/logs_envoy:",
+		"opensearch/logs_coredns:",
 		"opensearch/traces:",
 		"http://" + consts.MonitoringServiceOpenSearchNode + ":9200",
 		"logs_index: clawker-cp",
 		"logs_index: claude-code",
+		"logs_index: clawker-envoy",
+		"logs_index: clawker-coredns",
 		"exporters: [opensearch/traces, spanmetrics, debug]",
 		"exporters: [opensearch/logs_cp, debug]",
 		"exporters: [opensearch/logs_claude_code, debug]",
+		"exporters: [opensearch/logs_envoy, debug]",
+		"exporters: [opensearch/logs_coredns, debug]",
 		"exporters: [routing/logs_by_service]",
 		"exporters: [prometheus, debug]",
 		"routing/logs_by_service:",
 		`condition: attributes["service.name"] == "claude-code"`,
+		`condition: attributes["service.name"] == "envoy"`,
+		// CoreDNS records bypass the routing connector — they enter via
+		// the filelog receiver. Assert the dedicated branch directly.
+		"filelog/coredns:",
+		"/var/lib/docker/containers/*/*-json.log",
+		"resource/coredns:",
+		"resource/envoy:",
 		"prometheus/self:",
 		"spanmetrics:",
 		"docker_stats:",
@@ -209,6 +224,7 @@ monitoring:
 		"unix:///var/run/docker.sock",
 		"root_path: /hostfs",
 		"receivers: [otlp, prometheus/self, docker_stats, hostmetrics, spanmetrics]",
+		"receivers: [filelog/coredns]",
 	}
 	for _, check := range mustContain {
 		if !strings.Contains(result, check) {

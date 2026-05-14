@@ -2,10 +2,29 @@ package firewall
 
 import (
 	"fmt"
+	"maps"
+	"sort"
 	"strings"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"gopkg.in/yaml.v3"
+)
+
+// OpenTelemetry Access Log Service (ALS) wiring.
+//
+// Envoy ships access logs to the otel-collector via the native
+// `envoy.access_loggers.open_telemetry` sink, which speaks OTLP
+// LogsService over gRPC. Records arrive at the collector's standard
+// OTLP/gRPC receiver tagged with `service.name=envoy` so the
+// routing/logs_by_service connector can dispatch them to a dedicated
+// OpenSearch index without colliding with claude-code or clawker-cp
+// log shapes.
+//
+// The cluster is plaintext HTTP/2 on clawker-net (`otel-collector:4317`).
+const (
+	otelCollectorALSClusterName = "otel_collector_als"
+	otelCollectorALSGRPCPort    = 4317
 )
 
 // EnvoyPorts holds the port configuration for the Envoy proxy, sourced from config.Config.
@@ -88,36 +107,49 @@ const (
 	envoyKeyFileFmt  = "/etc/envoy/certs/%s-key.pem"
 )
 
-// buildHTTPAccessLog returns an Envoy stdout access log for http_connection_manager contexts.
-// Includes HTTP-specific fields (method, path, response_code, request_host) that are only
-// available when Envoy terminates HTTP — used by TLS filter chains and the HTTP listener.
-// request_host captures the Host/:authority header, which is the only domain source for
+// buildHTTPAccessLog returns Envoy access loggers for http_connection_manager
+// contexts. Emits the same record to two sinks: stdout (kept for
+// `docker logs clawker-envoy` triage) and OpenTelemetry ALS (gRPC to the
+// otel-collector). HTTP-specific fields (method, path, response_code,
+// request_host) are only available when Envoy terminates HTTP. request_host
+// captures the Host/:authority header, which is the only domain source for
 // plaintext HTTP (where SNI/%REQUESTED_SERVER_NAME% is empty).
 func buildHTTPAccessLog(proto string) []any {
-	return []any{accessLogEntry(proto, map[string]any{
+	extra := map[string]string{
 		"method":        "%REQ(:METHOD)%",
 		"path":          "%REQ(:PATH)%",
 		"response_code": "%RESPONSE_CODE%",
 		"request_host":  "%REQ(Host)%",
-	})}
-}
-
-// buildTCPAccessLog returns an Envoy stdout access log for tcp_proxy contexts.
-// Omits HTTP fields (method, path, response_code) that are unavailable in TCP proxy —
-// used by deny and TCP/SSH listeners.
-// Optional domain overrides %REQUESTED_SERVER_NAME% for raw TCP where SNI is unavailable.
-func buildTCPAccessLog(proto string, domain ...string) []any {
-	var extra map[string]any
-	if len(domain) > 0 && domain[0] != "" {
-		extra = map[string]any{"domain": domain[0]}
 	}
-	return []any{accessLogEntry(proto, extra)}
+	return []any{
+		stdoutAccessLogEntry(proto, extra),
+		otelAccessLogEntry(proto, extra),
+	}
 }
 
-// accessLogEntry builds the common access log structure. Extra fields (if any)
-// are merged into the JSON format for HTTP-aware contexts.
-func accessLogEntry(proto string, extra map[string]any) map[string]any {
-	jf := map[string]any{
+// buildTCPAccessLog returns Envoy access loggers for tcp_proxy contexts.
+// Omits HTTP fields (method, path, response_code) that are unavailable in
+// TCP proxy — used by deny and TCP/SSH listeners. Optional domain overrides
+// %REQUESTED_SERVER_NAME% for raw TCP where SNI is unavailable.
+func buildTCPAccessLog(proto string, domain ...string) []any {
+	var extra map[string]string
+	if len(domain) > 0 && domain[0] != "" {
+		extra = map[string]string{"domain": domain[0]}
+	}
+	return []any{
+		stdoutAccessLogEntry(proto, extra),
+		otelAccessLogEntry(proto, extra),
+	}
+}
+
+// accessLogFields returns the canonical field map shared between the
+// stdout JSON sink and the OpenTelemetry ALS attributes. Keeping a single
+// source of truth means renaming a field updates both sinks at once.
+//
+// `extra` carries context-specific overrides (HTTP method/path/code, or
+// the static domain for raw TCP). Nil-safe.
+func accessLogFields(proto string, extra map[string]string) map[string]string {
+	f := map[string]string{
 		"timestamp":      "%START_TIME%",
 		"domain":         "%REQUESTED_SERVER_NAME%",
 		"upstream_host":  "%UPSTREAM_HOST%",
@@ -130,7 +162,16 @@ func accessLogEntry(proto string, extra map[string]any) map[string]any {
 		"proto":          proto,
 		"source":         "envoy",
 	}
-	for k, v := range extra {
+	maps.Copy(f, extra)
+	return f
+}
+
+// stdoutAccessLogEntry builds the legacy JSON-formatted stdout access log
+// entry. Surfaces in `docker logs clawker-envoy` for triage when the otel
+// pipeline is misconfigured or the monitoring stack is down.
+func stdoutAccessLogEntry(proto string, extra map[string]string) map[string]any {
+	jf := make(map[string]any, len(accessLogFields(proto, extra)))
+	for k, v := range accessLogFields(proto, extra) {
 		jf[k] = v
 	}
 	return map[string]any{
@@ -138,6 +179,58 @@ func accessLogEntry(proto string, extra map[string]any) map[string]any {
 		"typed_config": map[string]any{
 			"@type":      "type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog",
 			"log_format": map[string]any{"json_format": jf},
+		},
+	}
+}
+
+// otelAccessLogEntry builds the OpenTelemetry ALS access log entry that
+// streams records to the otel-collector as OTLP/gRPC log records. Resource
+// attribute `service.name=envoy` is stamped on every record so the
+// collector's routing/logs_by_service connector can dispatch envoy logs to
+// a dedicated OpenSearch index without colliding with claude-code or
+// clawker-cp shapes.
+//
+// Body holds a short human-readable description; structured fields land in
+// `attributes` so downstream filters in OpenSearch Dashboards can pivot on
+// them without parsing the body string.
+func otelAccessLogEntry(proto string, extra map[string]string) map[string]any {
+	fields := accessLogFields(proto, extra)
+	// Stable attribute order keeps generated YAML diffs minimal across
+	// Envoy reloads — map ranges are unordered so we materialise a sorted
+	// slice.
+	keys := make([]string, 0, len(fields))
+	for k := range fields {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	values := make([]any, 0, len(keys))
+	for _, k := range keys {
+		values = append(values, map[string]any{
+			"key":   k,
+			"value": map[string]any{"string_value": fields[k]},
+		})
+	}
+	return map[string]any{
+		"name": "envoy.access_loggers.open_telemetry",
+		"typed_config": map[string]any{
+			"@type": "type.googleapis.com/envoy.extensions.access_loggers.open_telemetry.v3.OpenTelemetryAccessLogConfig",
+			"grpc_service": map[string]any{
+				"envoy_grpc": map[string]any{
+					"cluster_name": otelCollectorALSClusterName,
+				},
+			},
+			"resource_attributes": map[string]any{
+				"values": []any{
+					map[string]any{
+						"key":   "service.name",
+						"value": map[string]any{"string_value": "envoy"},
+					},
+				},
+			},
+			"body": map[string]any{
+				"string_value": fmt.Sprintf("envoy %s access_log", proto),
+			},
+			"attributes": map[string]any{"values": values},
 		},
 	}
 }
@@ -730,6 +823,14 @@ func buildClusters(tls, tcp, http []config.EgressRule) []any {
 				"endpoints":    []any{},
 			},
 		},
+		// OpenTelemetry Access Log Service sink. Plaintext HTTP/2 to the
+		// otel-collector on clawker-net. STRICT_DNS so Envoy re-resolves the
+		// hostname if the monitoring stack restarts. When the monitoring
+		// stack is down, the gRPC dial fails per-record; Envoy buffers up to
+		// the access logger's default 16KB then drops oldest — does NOT block
+		// the data path. This is intentional: a degraded monitoring plane
+		// must never wedge enforcement.
+		buildOtelALSCluster(),
 	}
 
 	// Per-(domain, port) TLS clusters — LOGICAL_DNS with upstream re-encryption.
@@ -847,6 +948,45 @@ func buildTLSDNSCluster(domain string, port int) map[string]any {
 				},
 				"auto_config": map[string]any{
 					"http_protocol_options":  map[string]any{},
+					"http2_protocol_options": map[string]any{},
+				},
+			},
+		},
+	}
+}
+
+// buildOtelALSCluster returns the cluster definition that backs the
+// `envoy.access_loggers.open_telemetry` sink. STRICT_DNS resolves
+// `otel-collector` (clawker-net DNS) on every refresh, http2 is required
+// because OTLP/gRPC runs on HTTP/2.
+func buildOtelALSCluster() map[string]any {
+	return map[string]any{
+		"name":            otelCollectorALSClusterName,
+		"type":            "STRICT_DNS",
+		"connect_timeout": "1s",
+		"load_assignment": map[string]any{
+			"cluster_name": otelCollectorALSClusterName,
+			"endpoints": []any{
+				map[string]any{
+					"lb_endpoints": []any{
+						map[string]any{
+							"endpoint": map[string]any{
+								"address": map[string]any{
+									"socket_address": map[string]any{
+										"address":    consts.MonitoringServiceOtelCollector,
+										"port_value": otelCollectorALSGRPCPort,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		"typed_extension_protocol_options": map[string]any{
+			"envoy.extensions.upstreams.http.v3.HttpProtocolOptions": map[string]any{
+				"@type": "type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions",
+				"explicit_http_config": map[string]any{
 					"http2_protocol_options": map[string]any{},
 				},
 			},

@@ -475,6 +475,15 @@ func (s *Stack) corednsContainerSpec(netInfo *NetworkInfo) containerSpec {
 	// Mount.Source is a host-FS path; consts.HostCorefilePath is derived
 	// from the CLAWKER_HOST_DATA_DIR env var the CLI injects into the CP
 	// container at creation.
+	//
+	// CoreDNS log shipping: the `log` plugin writes one record per query
+	// to stdout in the logfmt format defined by `corefileLogFormat`
+	// (`source=coredns ...`). Docker's json-file driver captures those
+	// lines into `/var/lib/docker/containers/<id>/<id>-json.log`, and the
+	// otel-collector's `filelog/coredns` receiver tails that directory,
+	// filters on the `source=coredns` body prefix, stamps
+	// `service.name=coredns`, and forwards to the routing connector.
+	// No envar or binary change is needed on this side.
 	return containerSpec{
 		image:     corednsImageTag,
 		staticIP:  netInfo.CoreDNSIP,
