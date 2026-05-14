@@ -2,7 +2,7 @@
 
 > For essential rules, see `.claude/rules/monitoring.md`.
 
-> **Backend (current):** logs in OpenSearch — two indices `claude-code` (Claude Code OTLP push) and `clawker-cp` (mTLS-gated CP push). Traces in OpenSearch SS4O dataset `traces` / namespace `clawker`. Metrics in Prometheus. UIs: OpenSearch Dashboards (`:5601`) for logs+traces, Prometheus (`:9090`) for metrics. The OTEL event schemas below are unchanged — only query language differs. Translate the historical Loki LogQL / Grafana panel examples here to OpenSearch DSL / PPL / Lucene as needed; `service_name`, `event_name`, `tool_name`, `project`, `agent`, etc. are still the field names.
+> **Backend (current):** logs in OpenSearch — two indices `claude-code` (Claude Code OTLP push) and `clawker-cp` (mTLS-gated CP push). Traces in OpenSearch SS4O dataset `traces` / namespace `clawker`. Metrics in Prometheus. UIs: OpenSearch Dashboards (`:5601`) for logs+traces, Prometheus (`:9090`) for metrics. Field semantics are unchanged, but paths are now SS4O-nested — `resource.attributes.service.name`, `attributes.event.name`, `attributes.tool_name`, `resource.attributes.project`, `resource.attributes.agent` — not the flat Loki labels (`service_name`, `event_name`, etc.) used in the historical tables below. Translate the historical Loki LogQL / Grafana panel examples here to OpenSearch DSL / PPL / Lucene against the nested paths as needed.
 >
 > **Stack ships bare** — no pre-provisioned index patterns, data sources, or dashboards. The Grafana panel/MCP sections below are historical reference for the kinds of queries we want to rebuild against OpenSearch Dashboards, NOT a description of anything that ships today. When pre-provisioning lands, rewrite those sections against the actual provisioning surface.
 

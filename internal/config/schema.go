@@ -361,7 +361,6 @@ type OtelConfig struct {
 // internalHosts) needs the same names. Rename a service there and the
 // compose template + DNS follow by construction.
 type MonitoringConfig struct {
-	OtelCollectorEndpoint    string          `yaml:"otel_collector_endpoint,omitempty" label:"OTEL Collector Endpoint" desc:"Override the auto-detected OTEL collector URL (e.g. for a remote collector)"`
 	OtelCollectorPort        int             `yaml:"otel_collector_port,omitempty" label:"OTEL Collector Port" desc:"Host port for the OTEL HTTP receiver" default:"4318"`
 	OtelCollectorHost        string          `yaml:"otel_collector_host,omitempty" label:"OTEL Collector Host" desc:"Hostname for reaching the collector from the host" default:"localhost"`
 	OtelGRPCPort             int             `yaml:"otel_grpc_port,omitempty" label:"OTEL gRPC Port" desc:"Host port for the OTEL gRPC receiver" default:"4317"`
@@ -369,7 +368,7 @@ type MonitoringConfig struct {
 	OpenSearchPort           int             `yaml:"opensearch_port,omitempty" label:"OpenSearch Port" desc:"Host port for the OpenSearch REST API (logs + traces backend)" default:"9200"`
 	OpenSearchDashboardsPort int             `yaml:"opensearch_dashboards_port,omitempty" label:"OpenSearch Dashboards Port" desc:"Host port for the OpenSearch Dashboards UI" default:"5601"`
 	OpenSearchHeapMB         int             `yaml:"opensearch_heap_mb,omitempty" label:"OpenSearch Heap (MB)" desc:"JVM -Xms/-Xmx for the OpenSearch node; raise on memory-hungry workloads" default:"512"`
-	PrometheusPort           int             `yaml:"prometheus_port,omitempty" label:"Prometheus Port" desc:"Host port for Prometheus metrics UI (also the in-cluster port agents push OTLP metrics to)" default:"9090"`
+	PrometheusPort           int             `yaml:"prometheus_port,omitempty" label:"Prometheus Port" desc:"Host port for the Prometheus UI and its native OTLP receiver (agent metrics flow through the OTEL collector, not here; this port is only used by direct OTLP pushers)" default:"9090"`
 	PrometheusMetricsPort    int             `yaml:"prometheus_metrics_port,omitempty" label:"Prometheus Metrics Port" desc:"Host port for Prometheus internal metrics" default:"8889"`
 	Telemetry                TelemetryConfig `yaml:"telemetry,omitempty"`
 }

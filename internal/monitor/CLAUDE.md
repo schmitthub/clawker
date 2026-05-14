@@ -81,7 +81,7 @@ All symbols are in `templates.go`.
 | Pipeline | Receivers | Exporters |
 |----------|-----------|-----------|
 | `traces` | `otlp` | `opensearch/traces` (SS4O — dataset=traces, namespace=clawker), `spanmetrics` (→ metrics pipeline), `debug` |
-| `metrics` | `otlp` (collector-internal / CP push only — Claude Code bypasses), `prometheus/self` (collector self-scrape on :8888), `docker_stats` (unix socket), `hostmetrics` (`/hostfs`), `spanmetrics` (RED from traces) | `prometheus` (scrape endpoint on `PrometheusMetricsPort` — Prometheus scrapes this for collector-side metrics), `debug` |
+| `metrics` | `otlp` (default path for Claude Code + CP metrics push; direct Prometheus OTLP push is the documented alternate), `prometheus/self` (collector self-scrape on :8888), `docker_stats` (unix socket), `hostmetrics` (`/hostfs`), `spanmetrics` (RED from traces) | `prometheus` (scrape endpoint on `PrometheusMetricsPort` — Prometheus scrapes this), `debug` |
 | `logs/claude-code` | `otlp` (resource/claude-code stamps `ingest_source=claude-code`) | `opensearch/logs_claude_code` (index `claude-code`), `debug` |
 | `logs/cp` (conditional on `OtelCPPort`) | `otlp/cp` (mTLS-gated; resource/cp stamps `service.name=clawker-cp` + `ingest_source=cp`) | `opensearch/logs_cp` (index `clawker-cp`), `debug` |
 

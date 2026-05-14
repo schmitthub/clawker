@@ -20,9 +20,27 @@ const (
 // by:
 //   - internal/controlplane/firewall/coredns_config.go (internalHosts)
 //   - internal/monitor/templates.go (MonitorTemplateData)
+//
+// Scope: only services agent containers legitimately need to dial.
+// otel-collector is the OTLP push target for Claude Code + clawker-cp.
+// prometheus is included for workflows that scrape it from agent code.
+// opensearch-node + opensearch-dashboards are deliberately omitted —
+// agents push telemetry through the collector and never query/write
+// the indices directly. Containers on clawker-net that DO need those
+// (the collector, the dashboards UI) reach them via Docker's embedded
+// resolver without going through CoreDNS.
 var MonitoringServiceHostnames = []string{
 	MonitoringServiceOtelCollector,
 	MonitoringServicePrometheus,
-	MonitoringServiceOpenSearchNode,
-	MonitoringServiceOpenSearchDashboards,
 }
+
+// Container-internal listen ports for monitoring services. Images
+// listen on these regardless of how host-side ports are configured;
+// the compose port mappings (host:container) consume these for the
+// container side and Settings.Monitoring.*Port for the host side.
+// Service-to-service references inside clawker-net also use these.
+const (
+	MonitoringInternalPortOpenSearch           = 9200
+	MonitoringInternalPortOpenSearchDashboards = 5601
+	MonitoringInternalPortPrometheus           = 9090
+)

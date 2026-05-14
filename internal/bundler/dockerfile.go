@@ -144,10 +144,11 @@ type DockerfileContext struct {
 	Instructions    *DockerfileInstructions
 	Inject          *DockerfileInject
 
-	// OTEL telemetry endpoints — populated from config.MonitoringConfig.
-	// Metrics push directly to Prometheus' native OTLP receiver (skips the
-	// otel-collector hop); logs push to the otel-collector OTLP receiver.
-	OtelMetricsEndpoint      string // e.g. "http://prometheus:9090/api/v1/otlp/v1/metrics"
+	// OTEL telemetry endpoints — populated from cfg.OtelMetricsEndpoint() /
+	// cfg.OtelLogsEndpoint(). Both default to the otel-collector OTLP/HTTP
+	// receiver. Prometheus retains metric metadata for OpenSearch Dashboards
+	// because /api/v1/metadata excludes OTLP-ingested series.
+	OtelMetricsEndpoint      string // e.g. "http://otel-collector:4318/v1/metrics"
 	OtelLogsEndpoint         string // e.g. "http://otel-collector:4318/v1/logs"
 	OtelLogsExportInterval   int    // milliseconds, e.g. 5000
 	OtelMetricExportInterval int    // milliseconds, e.g. 10000

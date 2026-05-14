@@ -46,7 +46,7 @@ const (
 // compose template, otel-config endpoints, and the CoreDNS internalHosts
 // list in `internal/controlplane/firewall/coredns_config.go` cannot drift.
 type MonitorTemplateData struct {
-	// Ports
+	// Host-side ports (user-configurable via Settings.Monitoring)
 	OtelCollectorPort        int
 	OtelGRPCPort             int // independent of HTTP port
 	OtelCPPort               int // mTLS-gated host-loopback receiver for clawker-cp push
@@ -54,6 +54,12 @@ type MonitorTemplateData struct {
 	PrometheusMetricsPort    int
 	OpenSearchPort           int
 	OpenSearchDashboardsPort int
+
+	// Container-internal listen ports (consts; what each image listens on).
+	// Mirrors consts.MonitoringInternalPort*.
+	OpenSearchInternalPort           int
+	OpenSearchDashboardsInternalPort int
+	PrometheusInternalPort           int
 
 	// OpenSearch JVM heap (MB) for both -Xms and -Xmx.
 	OpenSearchHeapMB int
@@ -97,24 +103,27 @@ type MonitorTemplateData struct {
 func NewMonitorTemplateData(s *config.Settings) MonitorTemplateData {
 	mon := s.Monitoring
 	return MonitorTemplateData{
-		OtelCollectorPort:           mon.OtelCollectorPort,
-		OtelGRPCPort:                mon.OtelGRPCPort,
-		OtelCPPort:                  mon.OtelCPPort,
-		PrometheusPort:              mon.PrometheusPort,
-		PrometheusMetricsPort:       mon.PrometheusMetricsPort,
-		OpenSearchPort:              mon.OpenSearchPort,
-		OpenSearchDashboardsPort:    mon.OpenSearchDashboardsPort,
-		OpenSearchHeapMB:            mon.OpenSearchHeapMB,
-		OtelCollectorService:        consts.MonitoringServiceOtelCollector,
-		PrometheusService:           consts.MonitoringServicePrometheus,
-		OpenSearchNodeService:       consts.MonitoringServiceOpenSearchNode,
-		OpenSearchDashboardsService: consts.MonitoringServiceOpenSearchDashboards,
-		HostFilesystem:              "/",
-		DockerSocketPath:            s.Docker.Socket,
-		OtelCollectorImage:          OtelCollectorImage,
-		PrometheusImage:             PrometheusImage,
-		OpenSearchImage:             OpenSearchImage,
-		OpenSearchDashboardsImage:   OpenSearchDashboardsImage,
+		OtelCollectorPort:                mon.OtelCollectorPort,
+		OtelGRPCPort:                     mon.OtelGRPCPort,
+		OtelCPPort:                       mon.OtelCPPort,
+		PrometheusPort:                   mon.PrometheusPort,
+		PrometheusMetricsPort:            mon.PrometheusMetricsPort,
+		OpenSearchPort:                   mon.OpenSearchPort,
+		OpenSearchDashboardsPort:         mon.OpenSearchDashboardsPort,
+		OpenSearchInternalPort:           consts.MonitoringInternalPortOpenSearch,
+		OpenSearchDashboardsInternalPort: consts.MonitoringInternalPortOpenSearchDashboards,
+		PrometheusInternalPort:           consts.MonitoringInternalPortPrometheus,
+		OpenSearchHeapMB:                 mon.OpenSearchHeapMB,
+		OtelCollectorService:             consts.MonitoringServiceOtelCollector,
+		PrometheusService:                consts.MonitoringServicePrometheus,
+		OpenSearchNodeService:            consts.MonitoringServiceOpenSearchNode,
+		OpenSearchDashboardsService:      consts.MonitoringServiceOpenSearchDashboards,
+		HostFilesystem:                   "/",
+		DockerSocketPath:                 s.Docker.Socket,
+		OtelCollectorImage:               OtelCollectorImage,
+		PrometheusImage:                  PrometheusImage,
+		OpenSearchImage:                  OpenSearchImage,
+		OpenSearchDashboardsImage:        OpenSearchDashboardsImage,
 	}
 }
 

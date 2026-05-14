@@ -61,24 +61,6 @@ prometheus {
     forward . 127.0.0.11
 }
 
-opensearch-node {
-    log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
-    template IN AAAA . {
-        rcode NOERROR
-    }
-    dnsbpf
-    forward . 127.0.0.11
-}
-
-opensearch-dashboards {
-    log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
-    template IN AAAA . {
-        rcode NOERROR
-    }
-    dnsbpf
-    forward . 127.0.0.11
-}
-
 . {
     log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
     template IN ANY . {

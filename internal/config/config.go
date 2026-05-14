@@ -86,11 +86,9 @@ type Config interface {
 	OtelCollectorURL() string
 
 	// Full OTEL push endpoints (URL + path) Claude Code's exporter
-	// targets from inside agent containers. Built by composing the
-	// in-cluster URL of the receiving service with the matching
-	// telemetry path: metrics push directly at Prometheus' OTLP
-	// receiver (skipping the otel-collector hop), logs push at the
-	// otel-collector OTLP receiver.
+	// targets from inside agent containers. Both default to the
+	// otel-collector OTLP/HTTP receiver so Prometheus retains metric
+	// metadata (its /api/v1/metadata excludes OTLP-ingested series).
 	OtelMetricsEndpoint() string
 	OtelLogsEndpoint() string
 	RequiredFirewallDomains() []string

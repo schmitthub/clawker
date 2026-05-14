@@ -5,10 +5,6 @@ receivers:
         endpoint: 0.0.0.0:{{.OtelGRPCPort}}
       http:
         endpoint: 0.0.0.0:{{.OtelCollectorPort}}
-        cors:
-          allowed_origins:
-            - "http://*"
-            - "https://*"
 {{- if .OtelCPPort}}
   # mTLS-gated receiver dedicated to clawker-cp. Listens on
   # 0.0.0.0:<port> inside the container; the published mapping in
@@ -140,7 +136,7 @@ exporters:
   # Traces → OpenSearch (Simple Schema for Observability data model).
   opensearch/traces:
     http:
-      endpoint: "http://{{.OpenSearchNodeService}}:9200"
+      endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchInternalPort}}"
     dataset: traces
     namespace: clawker
   # Logs → OpenSearch. Indices split by source so dynamic mappings
@@ -151,11 +147,11 @@ exporters:
   # each schema clean.
   opensearch/logs_cp:
     http:
-      endpoint: "http://{{.OpenSearchNodeService}}:9200"
+      endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchInternalPort}}"
     logs_index: clawker-cp
   opensearch/logs_claude_code:
     http:
-      endpoint: "http://{{.OpenSearchNodeService}}:9200"
+      endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchInternalPort}}"
     logs_index: claude-code
   # Metrics → Prometheus scrape endpoint.
   prometheus:

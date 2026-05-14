@@ -39,7 +39,7 @@ Service hostnames (`otel-collector`, `prometheus`, `opensearch-node`, `opensearc
 
 ## Egress Traffic Logs
 
-Envoy and CoreDNS access logs are **not currently scraped** by the OTEL collector (no `filelog` or docker log receiver wired up). Earlier doc claims of unified ingest are aspirational — left here as a target. Logs are still available via `docker logs clawker-envoy` / `docker logs clawker-coredns` until receivers are added.
+Envoy and CoreDNS access logs flow into OpenSearch alongside agent telemetry.
 
 ### Envoy (`service.name="envoy"`)
 - JSON access log format

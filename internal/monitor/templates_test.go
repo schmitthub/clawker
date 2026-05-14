@@ -115,14 +115,17 @@ docker:
 		desc    string
 		contain string
 	}{
-		// Same-port mappings ({{.X}}:{{.X}}) — host == container.
+		// Same-port mappings ({{.X}}:{{.X}}) — host == container; these
+		// are receiver-config ports the collector listens on internally.
 		{"OTEL HTTP port", fmt.Sprintf("%d:%d", data.OtelCollectorPort, data.OtelCollectorPort)},
 		{"OTEL gRPC port", fmt.Sprintf("%d:%d", data.OtelGRPCPort, data.OtelGRPCPort)},
-		{"Prometheus port", fmt.Sprintf("%d:%d", data.PrometheusPort, data.PrometheusPort)},
-		{"OpenSearch Dashboards port", fmt.Sprintf("%d:%d", data.OpenSearchDashboardsPort, data.OpenSearchDashboardsPort)},
-		// Different host vs container ports — OpenSearch REST is pinned
-		// to container :9200 (an OpenSearch image contract, not a knob).
-		{"OpenSearch REST host:container", fmt.Sprintf("%d:9200", data.OpenSearchPort)},
+		// Host:container mappings — container ports are image contracts
+		// sourced from consts, host ports are user-configurable. These
+		// must not drift; if a user changes the host port they should
+		// still reach the running service inside the container.
+		{"Prometheus host:container", fmt.Sprintf("%d:%d", data.PrometheusPort, data.PrometheusInternalPort)},
+		{"OpenSearch REST host:container", fmt.Sprintf("%d:%d", data.OpenSearchPort, data.OpenSearchInternalPort)},
+		{"OpenSearch Dashboards host:container", fmt.Sprintf("%d:%d", data.OpenSearchDashboardsPort, data.OpenSearchDashboardsInternalPort)},
 		// Heap derived from MonitoringConfig.OpenSearchHeapMB.
 		{"OpenSearch heap", fmt.Sprintf("-Xms%dm -Xmx%dm", data.OpenSearchHeapMB, data.OpenSearchHeapMB)},
 		// Service hostnames come from consts (firewall plane shares them).
@@ -130,7 +133,7 @@ docker:
 		{"Prometheus service key", data.PrometheusService + ":"},
 		{"OpenSearch node service key", data.OpenSearchNodeService + ":"},
 		{"OpenSearch dashboards service key", data.OpenSearchDashboardsService + ":"},
-		{"dashboards points at opensearch-node", fmt.Sprintf(`OPENSEARCH_HOSTS=["http://%s:9200"]`, data.OpenSearchNodeService)},
+		{"dashboards points at opensearch-node", fmt.Sprintf(`OPENSEARCH_HOSTS=["http://%s:%d"]`, data.OpenSearchNodeService, data.OpenSearchInternalPort)},
 		// Host paths threaded straight through.
 		{"hostfs bind mount", data.HostFilesystem + ":/hostfs:ro"},
 		{"docker socket bind mount", data.DockerSocketPath + ":/var/run/docker.sock:ro"},
@@ -148,8 +151,8 @@ docker:
 	// because it's a browser-served UI. If you change this policy,
 	// update both the template and this assertion together.
 	for _, hostBind := range []string{
-		fmt.Sprintf("127.0.0.1:%d:%d", data.PrometheusPort, data.PrometheusPort),
-		fmt.Sprintf("127.0.0.1:%d:9200", data.OpenSearchPort),
+		fmt.Sprintf("127.0.0.1:%d:%d", data.PrometheusPort, data.PrometheusInternalPort),
+		fmt.Sprintf("127.0.0.1:%d:%d", data.OpenSearchPort, data.OpenSearchInternalPort),
 	} {
 		if !strings.Contains(result, hostBind) {
 			t.Errorf("compose.yaml missing loopback bind %q — sensitive data port must not be exposed on all interfaces", hostBind)

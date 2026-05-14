@@ -1,3 +1,11 @@
+# Default log rotation for monitoring services. Caps Docker json-file
+# growth from the otel-collector debug exporter and any chatty service.
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   {{.OtelCollectorService}}:
     container_name: {{.OtelCollectorService}}
@@ -50,6 +58,7 @@ services:
       dev.clawker.purpose: "monitoring"
     networks:
       - clawker-net
+    logging: *default-logging
 
   {{.PrometheusService}}:
     container_name: {{.PrometheusService}}
@@ -60,14 +69,13 @@ services:
       - "--web.enable-otlp-receiver"
       - "--web.console.templates=/etc/prometheus/consoles"
       - "--web.console.libraries=/etc/prometheus/console_libraries"
-      - "--storage.tsdb.retention.time=1h"
       - "--storage.tsdb.path=/prometheus"
       - "--web.enable-lifecycle"
       - "--web.route-prefix=/"
       - "--enable-feature=exemplar-storage"
       - "--enable-feature=otlp-deltatocumulative"
     ports:
-      - "127.0.0.1:{{.PrometheusPort}}:{{.PrometheusPort}}"
+      - "127.0.0.1:{{.PrometheusPort}}:{{.PrometheusInternalPort}}"
     volumes:
       - ./prometheus.yaml:/etc/prometheus/prometheus.yml
       - clawker-prometheus:/prometheus
@@ -81,6 +89,7 @@ services:
       dev.clawker.purpose: "monitoring"
     networks:
       - clawker-net
+    logging: *default-logging
 
   {{.OpenSearchNodeService}}:
     container_name: {{.OpenSearchNodeService}}
@@ -101,7 +110,7 @@ services:
         soft: 65536
         hard: 65536
     ports:
-      - "127.0.0.1:{{.OpenSearchPort}}:9200"
+      - "127.0.0.1:{{.OpenSearchPort}}:{{.OpenSearchInternalPort}}"
     volumes:
       - clawker-opensearch:/usr/share/opensearch/data
     labels:
@@ -109,17 +118,18 @@ services:
       dev.clawker.purpose: "monitoring"
     networks:
       - clawker-net
+    logging: *default-logging
 
   {{.OpenSearchDashboardsService}}:
     container_name: {{.OpenSearchDashboardsService}}
     image: {{.OpenSearchDashboardsImage}}
     environment:
-      - 'OPENSEARCH_HOSTS=["http://{{.OpenSearchNodeService}}:9200"]'
+      - 'OPENSEARCH_HOSTS=["http://{{.OpenSearchNodeService}}:{{.OpenSearchInternalPort}}"]'
       - DISABLE_SECURITY_DASHBOARDS_PLUGIN=true
     ports:
-      - "{{.OpenSearchDashboardsPort}}:{{.OpenSearchDashboardsPort}}"
+      - "{{.OpenSearchDashboardsPort}}:{{.OpenSearchDashboardsInternalPort}}"
     expose:
-      - "{{.OpenSearchDashboardsPort}}"
+      - "{{.OpenSearchDashboardsInternalPort}}"
     depends_on:
       - {{.OpenSearchNodeService}}
     labels:
@@ -127,6 +137,7 @@ services:
       dev.clawker.purpose: "monitoring"
     networks:
       - clawker-net
+    logging: *default-logging
 
 volumes:
   clawker-prometheus:

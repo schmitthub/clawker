@@ -61,7 +61,7 @@ OTEL endpoints are baked into every Clawker image at build time. At container cr
 
 ## Egress Traffic Visibility
 
-When the firewall is enabled, Envoy and CoreDNS emit structured access logs to stdout. These are **not currently ingested into OpenSearch** — inspect them via `docker logs clawker-envoy` and `docker logs clawker-coredns` until a `filelog` or Docker log receiver is wired into the collector.
+When the firewall is enabled, Envoy and CoreDNS access logs flow into OpenSearch alongside agent telemetry.
 
 - **Envoy access logs** — domain, protocol (`tls`/`tls_mitm`/`http`/`tcp`/`deny`), response codes, response flags. `response_flags` containing `UF` (upstream failure) signals blocked/denied traffic.
 - **CoreDNS query logs** — queried domain, qtype (A/AAAA), rcode (NOERROR / NXDOMAIN), resolution duration. `rcode=NXDOMAIN` means the domain was not in the allow list.
@@ -109,13 +109,7 @@ clawker run -it --agent dev @
 Open OpenSearch Dashboards at `http://localhost:5601`. From the Discover view, create an index pattern covering `claude-code,clawker-cp` to see logs from both sources. Metrics live at the Prometheus UI on `http://localhost:9090`.
 
 <Warning>
-**Setup required (current state).** The stack ships intentionally bare — there are no pre-provisioned index patterns, data sources, or dashboards yet. On first launch you'll need to:
-
-1. Open OpenSearch Dashboards → **Management → Stack Management → Index Patterns** and create one pattern that covers `claude-code` and `clawker-cp`.
-2. (Optional) Add Prometheus as a Dashboards data source via the OpenSearch Prometheus data connector if you want logs + metrics in the same UI; otherwise use the Prometheus UI directly at `http://localhost:9090`.
-3. Build dashboards from the Discover view against the indices documented in [`.claude/docs/MONITORING-REFERENCE.md`](https://github.com/schmitthub/clawker/blob/main/.claude/docs/MONITORING-REFERENCE.md) (event schemas — field names like `service_name`, `event_name`, `tool_name`, `project`, `agent` are unchanged from the older Loki-backed iteration; only the query language differs).
-
-Pre-provisioned index patterns, data connections, and a curated set of Claude Code dashboards are on the roadmap.
+**Setup required (current state).** OpenSearch Dashboards needs to be configured manually for now — the indices and the underlying data source are already in place, but index patterns, dashboards, and pre-built views ship empty. Pre-provisioned patterns, data connections, and a curated set of Claude Code dashboards are on the roadmap.
 </Warning>
 
 ## Telemetry Controls

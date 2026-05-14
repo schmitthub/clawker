@@ -80,4 +80,4 @@ Shows monitoring stack status (running/stopped), container details, and service 
 
 ## Config Access Pattern
 
-Subcommands use `config.Config` interface via `opts.Config()` (multi-return). Monitor directory resolved via `cfg.MonitorSubdir()`, network name via `cfg.ClawkerNetwork()`, service URLs via `cfg.OpenSearchURL(host, https)` / `cfg.OpenSearchDashboardsURL(host, https)` / `cfg.PrometheusURL(host, https)`.
+Subcommands use `config.Config` interface via `opts.Config()` (multi-return). Monitor directory resolved via `cfg.MonitorSubdir()`, network name via `cfg.ClawkerNetwork()`, in-cluster service URLs via `cfg.OpenSearchURL()` / `cfg.OpenSearchDashboardsURL()` / `cfg.PrometheusURL()` (zero-arg; returns clawker-net hostnames for in-network consumers). Host-facing URLs printed to the user are formatted as `http://localhost:<port>` directly from `cfg.SettingsStore().Read().Monitoring` ports.
