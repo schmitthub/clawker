@@ -5,12 +5,16 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"math/big"
+	"net"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-jose/go-jose/v4"
 	josejwt "github.com/go-jose/go-jose/v4/jwt"
@@ -290,6 +294,63 @@ func TestOtelServerCertSignedByCA(t *testing.T) {
 	// one of the platforms.
 	assert.Contains(t, cert.DNSNames, "host.docker.internal")
 	assert.Contains(t, cert.DNSNames, "localhost")
+	// clawker-net dial path (Envoy ALS, CoreDNS otel plugin) verifies SNI
+	// against this SAN — drop it and gRPC handshakes fail with
+	// "certificate is valid for ..., not otel-collector".
+	assert.Contains(t, cert.DNSNames, consts.MonitoringServiceOtelCollector)
+}
+
+// Tests that ensureOtelServerCert re-mints when the on-disk cert is
+// missing a SAN that the current source declares. Without this drift
+// detection a cert minted before a SAN was added would persist forever
+// and silently break trusted peers that dial the newly-added name.
+func TestEnsureOtelServerCert_RemintsOnSANDrift(t *testing.T) {
+	testenv.New(t)
+	require.NoError(t, EnsureAuthMaterial())
+
+	certPath, err := consts.AuthOtelServerCertPath()
+	require.NoError(t, err)
+
+	// Overwrite the cert with one that has a strict subset of the
+	// current SAN list (drops "otel-collector"). Reuse the CA so chain
+	// verification still works; only the SANs differ.
+	caCert, caKey, err := loadCA()
+	require.NoError(t, err)
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	serial, err := rand.Int(rand.Reader, big.NewInt(1<<62))
+	require.NoError(t, err)
+	tmpl := &x509.Certificate{
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: "clawker-otel-collector"},
+		NotBefore:    time.Now().Add(-time.Minute),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:     []string{"host.docker.internal", "localhost"},
+		IPAddresses:  []net.IP{net.IPv4(127, 0, 0, 1)},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &key.PublicKey, caKey)
+	require.NoError(t, err)
+	require.NoError(t, writeCert(certPath, der))
+
+	// Sanity: stale cert lacks the SAN the production list now requires.
+	stalePEM, err := os.ReadFile(certPath)
+	require.NoError(t, err)
+	staleBlock, _ := pem.Decode(stalePEM)
+	staleCert, err := x509.ParseCertificate(staleBlock.Bytes)
+	require.NoError(t, err)
+	require.NotContains(t, staleCert.DNSNames, consts.MonitoringServiceOtelCollector)
+
+	require.NoError(t, ensureOtelServerCert())
+
+	freshPEM, err := os.ReadFile(certPath)
+	require.NoError(t, err)
+	freshBlock, _ := pem.Decode(freshPEM)
+	freshCert, err := x509.ParseCertificate(freshBlock.Bytes)
+	require.NoError(t, err)
+	assert.Contains(t, freshCert.DNSNames, consts.MonitoringServiceOtelCollector,
+		"stale cert with missing SAN must be re-minted")
 }
 
 func TestCPClientCertSignedByCA(t *testing.T) {

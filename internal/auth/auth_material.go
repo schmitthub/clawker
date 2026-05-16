@@ -717,6 +717,60 @@ func ReadJWK() (json.RawMessage, error) {
 // any cert signed by the CLI CA — the TLS handshake fails before any
 // data is accepted. No BPF rule needed; auth is the boundary.
 
+// otelServerCertSANs lists every name a trusted peer might dial. Hoisted
+// out of the mint path so the on-disk cert can be checked against the
+// current SAN list at every CP start and re-minted when the list grows.
+//
+//   - host.docker.internal: CP dials this from the host-side 127.0.0.1
+//     publish.
+//   - localhost / 127.0.0.1: host-side debug, future tools.
+//   - otel-collector (consts.MonitoringServiceOtelCollector): clawker-net
+//     DNS name used by Envoy ALS and the CoreDNS OTel plugin dialing
+//     siblings over the docker network. Without this SAN the gRPC SNI
+//     check fails: "certificate is valid for ... not otel-collector".
+var (
+	otelServerDNSNames = []string{"host.docker.internal", "localhost", consts.MonitoringServiceOtelCollector}
+	otelServerIPs      = []net.IP{net.IPv4(127, 0, 0, 1)}
+)
+
+// otelServerCertSANsCurrent reports whether the cert at certPath already
+// carries every entry in otelServerDNSNames/otelServerIPs. Returns false
+// for any read/parse failure so the caller re-mints — a cert we can't
+// parse is by definition not current.
+func otelServerCertSANsCurrent(certPath string) bool {
+	pemBytes, err := os.ReadFile(certPath)
+	if err != nil {
+		return false
+	}
+	block, _ := pem.Decode(pemBytes)
+	if block == nil || block.Type != "CERTIFICATE" {
+		return false
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return false
+	}
+	have := make(map[string]struct{}, len(cert.DNSNames))
+	for _, n := range cert.DNSNames {
+		have[n] = struct{}{}
+	}
+	for _, want := range otelServerDNSNames {
+		if _, ok := have[want]; !ok {
+			return false
+		}
+	}
+	haveIPs := make(map[string]struct{}, len(cert.IPAddresses))
+	for _, ip := range cert.IPAddresses {
+		haveIPs[ip.String()] = struct{}{}
+	}
+	for _, want := range otelServerIPs {
+		if _, ok := haveIPs[want.String()]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 func ensureOtelServerCert() error {
 	certPath, err := consts.AuthOtelServerCertPath()
 	if err != nil {
@@ -729,7 +783,9 @@ func ensureOtelServerCert() error {
 
 	if _, err := os.Stat(certPath); err == nil {
 		if _, err := os.Stat(keyPath); err == nil {
-			return nil
+			if otelServerCertSANsCurrent(certPath) {
+				return nil
+			}
 		}
 	}
 
@@ -759,17 +815,8 @@ func ensureOtelServerCert() error {
 		NotAfter:    now.AddDate(1, 0, 0),
 		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		// SANs cover every name a trusted peer might dial:
-		//   - host.docker.internal: CP dials this from the host-side
-		//     127.0.0.1 publish.
-		//   - localhost / 127.0.0.1: host-side debug, future tools.
-		//   - otel-collector / consts.MonitoringServiceOtelCollector:
-		//     clawker-net DNS name used by Envoy ALS and the CoreDNS
-		//     OTel plugin which dial siblings over the docker network.
-		//     Without this SAN, the gRPC SNI verification fails:
-		//     "certificate is valid for ... not otel-collector".
-		DNSNames:    []string{"host.docker.internal", "localhost", consts.MonitoringServiceOtelCollector},
-		IPAddresses: []net.IP{net.IPv4(127, 0, 0, 1)},
+		DNSNames:    otelServerDNSNames,
+		IPAddresses: otelServerIPs,
 	}
 
 	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &key.PublicKey, caKey)

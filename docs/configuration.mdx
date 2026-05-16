@@ -405,7 +405,7 @@ monitoring:
   otel_collector_host: <string>  # default: localhost | required: false
   # Host port for the OTEL gRPC receiver
   otel_grpc_port: <integer>  # default: 4317 | required: false
-  # Host-loopback port for the mTLS-gated OTLP receiver dedicated to trusted clawker infrastructure (CP, Envoy, CoreDNS). require_client_auth is enforced; peers must present a cert chained to the CLI root CA. Agents on clawker-net have no such cert so the TLS handshake rejects them
+  # Host-loopback port for the mTLS-gated OTLP receiver dedicated to trusted clawker infrastructure (CP, Envoy, CoreDNS). Setting client_ca_file on the receiver forces tls.RequireAndVerifyClientCert; peers must present a cert chained to the CLI root CA. Agents on clawker-net have no such cert so the TLS handshake rejects them
   otel_infra_port: <integer>  # default: 4319 | required: false
   # Host port for the OpenSearch REST API (logs + traces backend)
   opensearch_port: <integer>  # default: 9200 | required: false
@@ -509,7 +509,7 @@ Global settings live at `~/.config/clawker/settings.yaml`. The following tables 
 | `otel_collector_port` | integer | `4318` | Host port for the OTEL HTTP receiver |
 | `otel_collector_host` | string | `localhost` | Hostname for reaching the collector from the host |
 | `otel_grpc_port` | integer | `4317` | Host port for the OTEL gRPC receiver |
-| `otel_infra_port` | integer | `4319` | Host-loopback port for the mTLS-gated OTLP receiver dedicated to trusted clawker infrastructure (CP, Envoy, CoreDNS). require_client_auth is enforced; peers must present a cert chained to the CLI root CA. Agents on clawker-net have no such cert so the TLS handshake rejects them |
+| `otel_infra_port` | integer | `4319` | Host-loopback port for the mTLS-gated OTLP receiver dedicated to trusted clawker infrastructure (CP, Envoy, CoreDNS). Setting client_ca_file on the receiver forces tls.RequireAndVerifyClientCert; peers must present a cert chained to the CLI root CA. Agents on clawker-net have no such cert so the TLS handshake rejects them |
 | `opensearch_port` | integer | `9200` | Host port for the OpenSearch REST API (logs + traces backend) |
 | `opensearch_dashboards_port` | integer | `5601` | Host port for the OpenSearch Dashboards UI |
 | `opensearch_heap_mb` | integer | `512` | JVM -Xms/-Xmx for the OpenSearch node; raise on memory-hungry workloads |

@@ -32,12 +32,11 @@ receivers:
         tls:
           cert_file: /etc/otel/tls/server.pem
           key_file: /etc/otel/tls/server.key
+          # Setting client_ca_file forces tls.RequireAndVerifyClientCert
+          # in configtls.ServerConfig.LoadTLSConfig — handshake fails
+          # when no client cert is presented. Agents on clawker-net hold
+          # no CLI-issued leaf so they cannot reach this lane.
           client_ca_file: /etc/otel/tls/ca.pem
-          # client_ca_file alone configures a trust pool but does NOT
-          # require peers to present a cert; agents on clawker-net would
-          # land in the trusted lane with no auth. require_client_auth=true
-          # makes the handshake fail when no client cert is presented.
-          require_client_auth: true
 {{- end}}
   # Collector self-telemetry. The otel-collector exposes its own
   # process/pipeline metrics as a Prometheus endpoint on :8888 by
