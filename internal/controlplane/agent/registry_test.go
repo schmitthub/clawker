@@ -31,14 +31,6 @@ func validEntry(project, agent, containerID, certSeed string) Entry {
 }
 
 // TestRegistry_Add_RejectsInvariantViolations pins the contract that
-// Add panics on programming-error invariants — zero thumbprint, empty
-// container_id, zero RegisteredAt. The only legitimate caller of Add
-// is the in-package Register handler which has already verified each
-// invariant via the identity-binding cross-checks at Connect; any
-// other caller violating these is a wiring bug that must surface
-// loudly. Each subtest uses recover() to assert a panic occurred and
-// no entry made it into the registry.
-// TestRegistry_Add_RejectsInvariantViolations pins the contract that
 // Add returns an error on programming-error invariants — zero
 // thumbprint, empty container_id, zero RegisteredAt. The legitimate
 // caller (the in-package Register handler) has already verified each

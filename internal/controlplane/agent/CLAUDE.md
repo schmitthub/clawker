@@ -37,11 +37,15 @@ defer agentCleanup()
    `container/destroy`; consumer evicts the registry row. Stop/die/
    kill do NOT evict — a stopped container can be `docker start`-ed
    back into life.
-3. **Subscribe to registry evicts for Session cancel.** When the
-   evict subscriber above removes a row, this subscriber calls
+3. **Subscribe to `dockerevents.DockerEvent` for Session cancel.**
+   Filter on `container/{die,stop,kill,oom,destroy}`; consumer calls
    `dialer.CancelDial(containerID)` so the in-flight CP→clawkerd
-   `Session` is torn down synchronously instead of lingering until
-   the next reconnect attempt notices the container is gone.
+   `Session` is torn down synchronously on any exit transition
+   instead of lingering until the next reconnect attempt notices
+   the container is gone. Independent of the evict subscriber:
+   evict reflects row state (destroy only), cancel reflects
+   connectivity state (any exit transition). Both fire off the
+   same docker event bus — neither drives the other.
 4. **Subscribe to `dockerevents.DockerEvent` for dial.** Filter on
    `container/start|restart|unpause` with `purpose=agent`; consumer
    calls `dialer.DialAgent(ctx, containerID)`.

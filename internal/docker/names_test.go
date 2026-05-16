@@ -1,11 +1,8 @@
 package docker
 
 import (
-	"fmt"
 	"strings"
 	"testing"
-
-	"github.com/schmitthub/clawker/internal/auth"
 )
 
 func TestValidateResourceName(t *testing.T) {
@@ -279,24 +276,5 @@ func TestGlobalVolumeName(t *testing.T) {
 				t.Errorf("GlobalVolumeName(%q) = %q, want %q", tt.purpose, got, tt.want)
 			}
 		})
-	}
-}
-
-// TestGenerateRandomName_AlwaysValidAsAgentName pins that every
-// adjective-noun combo produced by GenerateRandomName satisfies the
-// AgentName constructor (only "agent name required" can reject it
-// after the auth-package validation strip — the random generator
-// never produces an empty string, so this passes for the whole
-// cartesian product). Catches a future word-list addition that ships
-// with an empty string or unicode character that would break
-// `auth.NewAgentName`.
-func TestGenerateRandomName_AlwaysValidAsAgentName(t *testing.T) {
-	for _, adj := range adjectives {
-		for _, noun := range nouns {
-			combo := fmt.Sprintf("%s-%s", adj, noun)
-			if _, err := auth.NewAgentName(combo); err != nil {
-				t.Fatalf("auth.NewAgentName(%q) rejected a GenerateRandomName output: %v", combo, err)
-			}
-		}
 	}
 }

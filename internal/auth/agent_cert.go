@@ -164,9 +164,11 @@ func AgentFullNameFromCert(cert *x509.Certificate) (string, error) {
 // sanTailFromCert walks the cert's URI SANs and returns the tail of
 // the first URI whose string-form starts with prefix along with a
 // three-state classification (missing / malformed / found). Shared by
-// ContainerIDFromCert + AgentFullNameFromCert; only the agent helper
-// surfaces the malformed state to its caller — the container helper
-// folds both reject states into a single bool.
+// ContainerIDFromCert + AgentFullNameFromCert; both callers map the
+// two reject states to distinct sentinel errors
+// (Err{Container,Agent}SAN{Missing,Malformed}) so the CP
+// IdentityInterceptor can emit separate structured-log events while
+// presenting a uniform PermissionDenied over the wire.
 func sanTailFromCert(cert *x509.Certificate, prefix string) (string, sanState) {
 	if cert == nil {
 		return "", sanMissing

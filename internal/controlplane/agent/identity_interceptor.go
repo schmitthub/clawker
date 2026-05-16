@@ -50,7 +50,7 @@ func IdentityInterceptor(peerLookup ContainerByPeerIP, log *logger.Logger) (grpc
 				Str("method", method).
 				Str("event", "agent_identity_peer_auth_missing").
 				Msg("agent identity: missing peer auth info")
-			return nil, status.Error(codes.PermissionDenied, "registration rejected")
+			return ctx, status.Error(codes.PermissionDenied, "registration rejected")
 		}
 
 		// Stage 1: universal CN pin.
@@ -61,7 +61,7 @@ func IdentityInterceptor(peerLookup ContainerByPeerIP, log *logger.Logger) (grpc
 				Str("peer_cn", pid.CommonName).
 				Str("expected_cn", consts.ContainerClawkerd).
 				Msg("agent identity: peer CN not authorized")
-			return nil, status.Error(codes.PermissionDenied, "registration rejected")
+			return ctx, status.Error(codes.PermissionDenied, "registration rejected")
 		}
 
 		// Stage 2a: cert must carry a well-formed agent SAN. Explicit
@@ -83,7 +83,7 @@ func IdentityInterceptor(peerLookup ContainerByPeerIP, log *logger.Logger) (grpc
 				Str("method", method).
 				Str("event", event).
 				Msg(msg)
-			return nil, status.Error(codes.PermissionDenied, "registration rejected")
+			return ctx, status.Error(codes.PermissionDenied, "registration rejected")
 		}
 
 		// Stage 2b: peer IP → Docker → labels. Distinguishing
@@ -120,7 +120,7 @@ func IdentityInterceptor(peerLookup ContainerByPeerIP, log *logger.Logger) (grpc
 					Str("peer_ip", pid.PeerAddr.String()).
 					Msg("agent identity: peer lookup failed")
 			}
-			return nil, status.Error(codes.PermissionDenied, "registration rejected")
+			return ctx, status.Error(codes.PermissionDenied, "registration rejected")
 		}
 
 		// Stage 3: cert SAN AgentFullName vs label-derived AgentFullName.
@@ -136,7 +136,7 @@ func IdentityInterceptor(peerLookup ContainerByPeerIP, log *logger.Logger) (grpc
 				Str("cert_agent_full_name", pid.AgentFullName).
 				Str("expected_agent_full_name", labelFullName).
 				Msg("agent identity: cert SAN does not match label-derived AgentFullName")
-			return nil, status.Error(codes.PermissionDenied, "registration rejected")
+			return ctx, status.Error(codes.PermissionDenied, "registration rejected")
 		}
 
 		return WithResolvedContainer(ctx, resolved), nil

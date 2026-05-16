@@ -279,9 +279,9 @@ func (s *projectManager) ResolvePath(_ context.Context, cwd string) (Project, er
 
 // CurrentProject resolves the current working directory to a registered project.
 //
-// If clawker.yaml::project.name is set, the returned Project reports that
+// If clawker.yaml::name is set, the returned Project reports that
 // override as its Name() while the underlying registry row is otherwise
-// untouched. The CLI hierarchy is: env (none) < clawker.yaml::project.name
+// untouched. The CLI hierarchy is: env (none) < clawker.yaml::name
 // (file) < --name flag (handled at init/register write path, persisting
 // the chosen value into the registry).
 func (s *projectManager) CurrentProject(ctx context.Context) (Project, error) {
