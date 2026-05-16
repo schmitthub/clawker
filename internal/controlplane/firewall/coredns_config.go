@@ -72,6 +72,7 @@ func GenerateCorefile(rules []config.EgressRule, healthPort int) ([]byte, error)
 	// back on EPERM). NODATA tells clients to prefer IPv4.
 	for _, domain := range domains {
 		fmt.Fprintf(&b, "%s {\n", domain)
+		b.WriteString("    otel\n")
 		fmt.Fprintf(&b, "    log . \"%s\"\n", corefileLogFormat)
 		b.WriteString("    template IN AAAA . {\n")
 		b.WriteString("        rcode NOERROR\n")
@@ -86,6 +87,7 @@ func GenerateCorefile(rules []config.EgressRule, healthPort int) ([]byte, error)
 	// AAAA NODATA applied for the same IPv6-block reason as public zones.
 	for _, host := range internalHosts {
 		fmt.Fprintf(&b, "%s {\n", host)
+		b.WriteString("    otel\n")
 		fmt.Fprintf(&b, "    log . \"%s\"\n", corefileLogFormat)
 		b.WriteString("    template IN AAAA . {\n")
 		b.WriteString("        rcode NOERROR\n")
@@ -97,6 +99,7 @@ func GenerateCorefile(rules []config.EgressRule, healthPort int) ([]byte, error)
 
 	// Catch-all zone: NXDOMAIN for everything not explicitly allowed.
 	b.WriteString(". {\n")
+	b.WriteString("    otel\n")
 	fmt.Fprintf(&b, "    log . \"%s\"\n", corefileLogFormat)
 	b.WriteString("    template IN ANY . {\n")
 	b.WriteString("        rcode NXDOMAIN\n")

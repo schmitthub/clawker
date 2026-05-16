@@ -1,4 +1,5 @@
 github.com {
+    otel
     log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
     template IN AAAA . {
         rcode NOERROR
@@ -8,6 +9,7 @@ github.com {
 }
 
 api.github.com {
+    otel
     log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
     template IN AAAA . {
         rcode NOERROR
@@ -17,6 +19,7 @@ api.github.com {
 }
 
 registry.npmjs.org {
+    otel
     log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
     template IN AAAA . {
         rcode NOERROR
@@ -26,6 +29,7 @@ registry.npmjs.org {
 }
 
 proxy.golang.org {
+    otel
     log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
     template IN AAAA . {
         rcode NOERROR
@@ -35,6 +39,7 @@ proxy.golang.org {
 }
 
 docker.internal {
+    otel
     log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
     template IN AAAA . {
         rcode NOERROR
@@ -44,6 +49,7 @@ docker.internal {
 }
 
 otel-collector {
+    otel
     log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
     template IN AAAA . {
         rcode NOERROR
@@ -53,6 +59,7 @@ otel-collector {
 }
 
 prometheus {
+    otel
     log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
     template IN AAAA . {
         rcode NOERROR
@@ -62,6 +69,7 @@ prometheus {
 }
 
 . {
+    otel
     log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
     template IN ANY . {
         rcode NXDOMAIN

@@ -21,6 +21,7 @@ import (
 	_ "github.com/coredns/coredns/plugin/reload"
 	_ "github.com/coredns/coredns/plugin/template"
 
+	_ "github.com/schmitthub/clawker/cmd/coredns-clawker/plugins/otel"
 	_ "github.com/schmitthub/clawker/internal/dnsbpf"
 
 	"github.com/coredns/coredns/core/dnsserver"
@@ -28,9 +29,11 @@ import (
 )
 
 func init() {
-	// Insert dnsbpf at the front of the directive chain so it wraps all
-	// resolver plugins (forward, hosts, etc.) and sees every DNS response.
-	dnsserver.Directives = append([]string{"dnsbpf"}, dnsserver.Directives...)
+	// Insert otel and dnsbpf at the front of the directive chain so the
+	// OTEL exporter sees every final DNS response and dnsbpf still wraps all
+	// resolver plugins (forward, hosts, etc.) to observe A answers before
+	// they leave the process.
+	dnsserver.Directives = append([]string{"otel", "dnsbpf"}, dnsserver.Directives...)
 }
 
 func main() {
