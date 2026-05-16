@@ -13,8 +13,9 @@ import (
 
 	"github.com/rs/zerolog"
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
+	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
+	"google.golang.org/grpc/credentials"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
@@ -46,6 +47,12 @@ type Options struct {
 
 	// Otel configures the OTEL zerolog bridge. Nil disables OTEL export.
 	Otel *OtelOptions
+
+	// EchoStdout mirrors every record to os.Stdout in addition to the
+	// file (and OTEL bridge if configured). Intended for containerized
+	// daemons whose structured logs should also surface in
+	// `docker logs <container>`; host-side CLI logging leaves this off.
+	EchoStdout bool
 }
 
 // OtelOptions configures the OTLP HTTP log exporter.
@@ -148,7 +155,14 @@ func New(opts Options) (*Logger, error) {
 	// and re-emits each record as an OTEL log.Record with all
 	// structured fields preserved (otelzerolog's bridge can't read
 	// fields off a zerolog.Event — see otel_writer.go).
-	var writer io.Writer = fw
+	// Compose the sinks bottom-up: file is always present; stdout is
+	// added when EchoStdout is set so daemon logs surface in
+	// `docker logs <container>`; OTEL bridge is appended last when
+	// configured.
+	sinks := []io.Writer{fw}
+	if opts.EchoStdout {
+		sinks = append(sinks, os.Stdout)
+	}
 	l := &Logger{fw: fw}
 
 	if opts.Otel != nil {
@@ -163,9 +177,15 @@ func New(opts Options) (*Logger, error) {
 			fmt.Fprintf(os.Stderr, "warning: OTEL bridge unavailable, continuing file-only: %v\n", err)
 		} else {
 			l.provider = provider
-			otelW := newOtelLogWriter(provider.Logger("clawker"))
-			writer = zerolog.MultiLevelWriter(fw, otelW)
+			sinks = append(sinks, newOtelLogWriter(provider.Logger("clawker")))
 		}
+	}
+
+	var writer io.Writer
+	if len(sinks) == 1 {
+		writer = sinks[0]
+	} else {
+		writer = zerolog.MultiLevelWriter(sinks...)
 	}
 
 	zl := zerolog.New(writer).
@@ -262,15 +282,19 @@ func (l *Logger) Close() error {
 	return firstErr
 }
 
-// newOtelProvider creates an OTLP HTTP log exporter and batch processor.
+// newOtelProvider creates an OTLP/gRPC log exporter and batch processor.
+// gRPC is the chosen transport for the trusted infra lane because the
+// collector's otlp/infra receiver declares grpc only — an HTTP exporter
+// hits the gRPC server with a non-grpc content-type and the receiver
+// returns 415 Unsupported Media Type, silently dropping every record.
 func newOtelProvider(cfg *OtelOptions, fileLogger zerolog.Logger) (*sdklog.LoggerProvider, error) {
 	// Route OTEL SDK internal errors to the file logger instead of stderr.
 	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
 		fileLogger.Warn().Err(err).Msg("otel sdk error")
 	}))
 
-	exporterOpts := []otlploghttp.Option{
-		otlploghttp.WithEndpoint(cfg.Endpoint),
+	exporterOpts := []otlploggrpc.Option{
+		otlploggrpc.WithEndpoint(cfg.Endpoint),
 	}
 
 	switch {
@@ -284,16 +308,16 @@ func newOtelProvider(cfg *OtelOptions, fileLogger zerolog.Logger) (*sdklog.Logge
 		if err != nil {
 			return nil, fmt.Errorf("OTEL mTLS config: %w", err)
 		}
-		exporterOpts = append(exporterOpts, otlploghttp.WithTLSClientConfig(tlsCfg))
+		exporterOpts = append(exporterOpts, otlploggrpc.WithTLSCredentials(credentials.NewTLS(tlsCfg)))
 	case cfg.Insecure:
-		exporterOpts = append(exporterOpts, otlploghttp.WithInsecure())
+		exporterOpts = append(exporterOpts, otlploggrpc.WithInsecure())
 	}
 
 	if cfg.Timeout > 0 {
-		exporterOpts = append(exporterOpts, otlploghttp.WithTimeout(cfg.Timeout))
+		exporterOpts = append(exporterOpts, otlploggrpc.WithTimeout(cfg.Timeout))
 	}
 
-	exporter, err := otlploghttp.New(context.Background(), exporterOpts...)
+	exporter, err := otlploggrpc.New(context.Background(), exporterOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("create OTLP log exporter: %w", err)
 	}

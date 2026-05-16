@@ -107,6 +107,9 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		LogsDir:  logDir,
 		Filename: consts.ControlPlaneLogFile,
 		Otel:     otelOptionsFromEnv(),
+		// Mirror structured records to stdout so `docker logs
+		// clawker-controlplane` shows what the file/OTEL sinks see.
+		EchoStdout: true,
 	}
 	log, err := logger.New(loggerOpts)
 	if err != nil {
@@ -898,7 +901,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 // Per-signal `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` takes precedence over
 // the generic `OTEL_EXPORTER_OTLP_ENDPOINT`. Either may be a full URL
 // (`https://host.docker.internal:4319/v1/logs`) or a bare authority
-// (`host.docker.internal:4319`); the otlploghttp exporter only needs
+// (`host.docker.internal:4319`); the OTLP/gRPC exporter only needs
 // host:port, so we strip scheme/path here.
 //
 // Default is TLS. Bare host:port → TLS. `https://` → TLS. Only
@@ -946,7 +949,7 @@ func otelOptionsFromEnv() *logger.OtelOptions {
 }
 
 // parseOtlpEndpoint normalises an OTEL endpoint env value to the
-// host:port form `otlploghttp.WithEndpoint` accepts, returning whether
+// host:port form `otlploggrpc.WithEndpoint` accepts, returning whether
 // it should be sent plaintext.
 //
 // Default is secure. Only an explicit `http://` scheme opts into
