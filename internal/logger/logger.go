@@ -15,6 +15,8 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
+	sdkresource "go.opentelemetry.io/otel/sdk/resource"
+	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
 	"google.golang.org/grpc/credentials"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
@@ -66,6 +68,14 @@ type OtelOptions struct {
 	Timeout        time.Duration // export timeout
 	MaxQueueSize   int           // batch processor queue size
 	ExportInterval time.Duration // batch export interval
+
+	// ServiceName stamps `service.name` on the Resource attached to every
+	// emitted log record. Required when the collector routes on this
+	// attribute (routing/trusted, routing/untrusted in otel-config.yaml).
+	// Empty leaves the SDK default ("unknown_service:<binary>") which is
+	// dropped silently at the routing connector. Callers: "clawker-cli"
+	// (host CLI), "clawker-cp" (control plane).
+	ServiceName string
 
 	// mTLS configuration. When all three paths are non-empty, the
 	// exporter presents a client certificate during the TLS handshake
@@ -353,7 +363,18 @@ func newOtelProvider(cfg *OtelOptions, fileLogger zerolog.Logger) (*sdklog.Logge
 	}
 
 	processor := sdklog.NewBatchProcessor(exporter, processorOpts...)
-	return sdklog.NewLoggerProvider(sdklog.WithProcessor(processor)), nil
+
+	providerOpts := []sdklog.LoggerProviderOption{sdklog.WithProcessor(processor)}
+	if cfg.ServiceName != "" {
+		res, err := sdkresource.Merge(sdkresource.Default(), sdkresource.NewSchemaless(
+			semconv.ServiceName(cfg.ServiceName),
+		))
+		if err != nil {
+			return nil, fmt.Errorf("build OTEL resource: %w", err)
+		}
+		providerOpts = append(providerOpts, sdklog.WithResource(res))
+	}
+	return sdklog.NewLoggerProvider(providerOpts...), nil
 }
 
 // buildOtelMTLSConfig loads the client keypair and trust roots for the

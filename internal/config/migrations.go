@@ -38,7 +38,6 @@ var legacyMonitoringKeys = []string{
 	"grafana_port",
 	"otel_collector_internal",
 	"otel_collector_endpoint",
-	"otel_cp_port",
 }
 
 // migrateRemoveLegacyMonitoringKeys strips removed monitoring keys
@@ -52,6 +51,21 @@ func migrateRemoveLegacyMonitoringKeys(raw map[string]any) bool {
 	if !ok {
 		return false
 	}
+	changed := false
+	// otel_cp_port was renamed to otel_infra_port; carry the user's value
+	// forward when only the legacy key is set, warn+drop on collision.
+	if old, had := mon["otel_cp_port"]; had {
+		delete(mon, "otel_cp_port")
+		changed = true
+		if _, hasNew := mon["otel_infra_port"]; !hasNew {
+			mon["otel_infra_port"] = old
+			fmt.Fprintf(os.Stderr,
+				"notice: monitoring.otel_cp_port renamed to monitoring.otel_infra_port; carried value %v forward\n", old)
+		} else {
+			fmt.Fprintf(os.Stderr,
+				"warning: both monitoring.otel_cp_port (%v) and monitoring.otel_infra_port present; keeping otel_infra_port, dropping otel_cp_port\n", old)
+		}
+	}
 	var removed []string
 	for _, key := range legacyMonitoringKeys {
 		if v, exists := mon[key]; exists {
@@ -60,7 +74,7 @@ func migrateRemoveLegacyMonitoringKeys(raw map[string]any) bool {
 		}
 	}
 	if len(removed) == 0 {
-		return false
+		return changed
 	}
 	sort.Strings(removed)
 	fmt.Fprintln(os.Stderr, "warning: legacy monitoring settings removed in this clawker version:")

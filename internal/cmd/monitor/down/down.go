@@ -84,8 +84,10 @@ func downRun(ctx context.Context, opts *DownOptions) error {
 		return fmt.Errorf("compose.yaml not found in %s", monitorDir)
 	}
 
-	// Build docker compose command
-	composeArgs := []string{"compose", "-f", composePath, "down"}
+	// Build docker compose command. --remove-orphans sweeps containers
+	// from prior compose schema versions (e.g. removed Grafana/Loki/
+	// Jaeger/Promtail) so `monitor down` actually cleans them up.
+	composeArgs := []string{"compose", "-f", composePath, "down", "--remove-orphans"}
 	if opts.Volumes {
 		composeArgs = append(composeArgs, "-v")
 	}

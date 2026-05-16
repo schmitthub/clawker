@@ -16,10 +16,10 @@ This command generates:
   - prometheus.yaml     Prometheus scrape configuration
 
 The monitoring stack includes:
-  - OpenTelemetry Collector (receives logs/traces/metrics from Claude Code)
-  - OpenSearch (log + trace storage)
-  - OpenSearch Dashboards (UI for logs + traces)
-  - Prometheus (metrics storage + UI)
+  - OpenTelemetry Collector
+  - OpenSearch
+  - OpenSearch Dashboards
+  - Prometheus
 
 ```
 clawker monitor init [flags]

@@ -415,7 +415,7 @@ monitoring:
   opensearch_heap_mb: <integer>  # default: 512 | required: false
   # Host port for the Prometheus UI and its native OTLP receiver (agent metrics flow through the OTEL collector, not here; this port is only used by direct OTLP pushers)
   prometheus_port: <integer>  # default: 9090 | required: false
-  # Host port the otel-collector exposes its Prometheus scrape endpoint on (Prometheus scrapes this for collector + agent metrics; not Prometheus' own self-metrics)
+  # In-network port the otel-collector exposes its Prometheus scrape endpoint on (Prometheus scrapes the collector over clawker-net for collector + agent metrics; not host-published — no localhost binding, no host port-conflict check needed)
   prometheus_metrics_port: <integer>  # default: 8889 | required: false
   telemetry:
     # OTEL collector HTTP path for metrics
@@ -514,7 +514,7 @@ Global settings live at `~/.config/clawker/settings.yaml`. The following tables 
 | `opensearch_dashboards_port` | integer | `5601` | Host port for the OpenSearch Dashboards UI |
 | `opensearch_heap_mb` | integer | `512` | JVM -Xms/-Xmx for the OpenSearch node; raise on memory-hungry workloads |
 | `prometheus_port` | integer | `9090` | Host port for the Prometheus UI and its native OTLP receiver (agent metrics flow through the OTEL collector, not here; this port is only used by direct OTLP pushers) |
-| `prometheus_metrics_port` | integer | `8889` | Host port the otel-collector exposes its Prometheus scrape endpoint on (Prometheus scrapes this for collector + agent metrics; not Prometheus' own self-metrics) |
+| `prometheus_metrics_port` | integer | `8889` | In-network port the otel-collector exposes its Prometheus scrape endpoint on (Prometheus scrapes the collector over clawker-net for collector + agent metrics; not host-published — no localhost binding, no host port-conflict check needed) |
 
 
 #### telemetry

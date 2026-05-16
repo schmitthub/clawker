@@ -10,7 +10,6 @@ receivers:
         endpoint: 0.0.0.0:{{.OtelGRPCPort}}
       http:
         endpoint: 0.0.0.0:{{.OtelCollectorPort}}
-{{- if .OtelInfraPort}}
   # Trusted OTLP ingress, gated by mTLS. Listens on 0.0.0.0:<port>
   # inside the container; the published mapping in compose.yaml binds
   # the host port to 127.0.0.1 only. Agents on clawker-net can reach
@@ -37,7 +36,6 @@ receivers:
           # when no client cert is presented. Agents on clawker-net hold
           # no CLI-issued leaf so they cannot reach this lane.
           client_ca_file: /etc/otel/tls/ca.pem
-{{- end}}
   # Collector self-telemetry. The otel-collector exposes its own
   # process/pipeline metrics as a Prometheus endpoint on :8888 by
   # default; scraping them here lets the metrics pipeline ship them
@@ -130,7 +128,6 @@ processors:
         statements:
           - set(attributes["project"], resource.attributes["project"]) where resource.attributes["project"] != nil
           - set(attributes["agent"], resource.attributes["agent"]) where resource.attributes["agent"] != nil
-{{- if .OtelInfraPort}}
   # Provenance stamps. Each trusted source gets ingest_source=<name>
   # so cross-index queries can filter on a single field. service.name
   # is NOT overwritten — mTLS handshake authenticated the sender;
@@ -150,7 +147,6 @@ processors:
       - key: ingest_source
         value: coredns
         action: upsert
-{{- end}}
 
 exporters:
   # Stdout pipe-through for diagnosis. Surfaces in `docker logs
@@ -176,6 +172,10 @@ exporters:
     http:
       endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"
     logs_index: claude-code
+  opensearch/logs_clawker_cli:
+    http:
+      endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"
+    logs_index: clawker-cli
   opensearch/logs_envoy:
     http:
       endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"
@@ -204,7 +204,9 @@ connectors:
       - context: resource
         condition: attributes["service.name"] == "claude-code"
         pipelines: [logs/claude-code]
-{{- if .OtelInfraPort}}
+      - context: resource
+        condition: attributes["service.name"] == "clawker-cli"
+        pipelines: [logs/clawker-cli]
   # Route trusted (mTLS-gated) records by sender-declared service.name.
   # Reachable only by peers with a CLI-root-chained client cert.
   routing/trusted:
@@ -219,7 +221,6 @@ connectors:
       - context: resource
         condition: attributes["service.name"] == "coredns"
         pipelines: [logs/coredns]
-{{- end}}
 
 service:
   pipelines:
@@ -241,7 +242,10 @@ service:
       receivers: [routing/untrusted]
       processors: []
       exporters: [opensearch/logs_claude_code, debug]
-{{- if .OtelInfraPort}}
+    logs/clawker-cli:
+      receivers: [routing/untrusted]
+      processors: []
+      exporters: [opensearch/logs_clawker_cli, debug]
     # Trusted log ingress. mTLS handshake is the auth boundary; the
     # routing connector dispatches by sender-declared service.name to
     # the right index. resource/* processors only stamp ingest_source
@@ -262,4 +266,3 @@ service:
       receivers: [routing/trusted]
       processors: [resource/coredns]
       exporters: [opensearch/logs_coredns, debug]
-{{- end}}

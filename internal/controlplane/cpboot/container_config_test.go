@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/testenv"
@@ -298,15 +297,6 @@ func TestCPContainer_OtelLogsEnv_Emitted(t *testing.T) {
 	for k, found := range expected {
 		assert.True(t, found, "missing OTEL env var %s in CP container env", k)
 	}
-}
-
-// TestOtelLogsEnv_NilWhenPortZero — if monitoring.otel_infra_port <= 0
-// (user hasn't run `clawker monitor init`), no OTLP env vars are
-// emitted. The daemon then runs file-only.
-func TestOtelLogsEnv_NilWhenPortZero(t *testing.T) {
-	cfg, err := config.NewFromString("", "monitoring:\n  otel_infra_port: 0\n")
-	require.NoError(t, err)
-	require.Nil(t, otelLogsEnv(cfg))
 }
 
 // TestTelemetryPath_FallbackPreference — telemetryPath uses the

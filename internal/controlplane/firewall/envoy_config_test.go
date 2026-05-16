@@ -382,10 +382,21 @@ func otelAttrValue(t *testing.T, attrs map[string]any, key string) string {
 	return ""
 }
 
+func TestBuildHTTPAccessLog_DegradedModeStdoutOnly(t *testing.T) {
+	t.Parallel()
+
+	// Trust-lane invariant: when mTLS material is unavailable, infra
+	// services must NOT emit OTLP across the untrusted lane. Only the
+	// stdout sink ships from this helper; the OTel entry must be absent.
+	logs := buildHTTPAccessLog("http", ALSConfig{})
+	require.Len(t, logs, 1, "degraded mode must emit stdout sink only")
+	findStdoutEntry(t, logs)
+}
+
 func TestBuildHTTPAccessLog(t *testing.T) {
 	t.Parallel()
 
-	logs := buildHTTPAccessLog("http")
+	logs := buildHTTPAccessLog("http", ALSConfig{MTLS: true, Port: 4319})
 	require.Len(t, logs, 2, "expected dual-sink: stdout + otel")
 
 	// Stdout sink: legacy JSON access log surfacing in `docker logs`.
@@ -433,10 +444,20 @@ func TestBuildHTTPAccessLog(t *testing.T) {
 	assert.Equal(t, "%REQ(:PATH)%", otelAttrValue(t, attrs, "path"))
 }
 
+func TestBuildTCPAccessLog_DegradedModeStdoutOnly(t *testing.T) {
+	t.Parallel()
+
+	// Mirror of the HTTP-side degraded-mode guard at the TCP/SSH/deny
+	// access-log builder.
+	logs := buildTCPAccessLog("tls", ALSConfig{})
+	require.Len(t, logs, 1, "degraded mode must emit stdout sink only")
+	findStdoutEntry(t, logs)
+}
+
 func TestBuildTCPAccessLog(t *testing.T) {
 	t.Parallel()
 
-	logs := buildTCPAccessLog("tls")
+	logs := buildTCPAccessLog("tls", ALSConfig{MTLS: true, Port: 4319})
 	require.Len(t, logs, 2, "expected dual-sink: stdout + otel")
 
 	stdoutEntry := findStdoutEntry(t, logs)
@@ -469,7 +490,7 @@ func TestBuildTCPAccessLog(t *testing.T) {
 func TestBuildTCPAccessLog_DomainOverride(t *testing.T) {
 	t.Parallel()
 
-	logs := buildTCPAccessLog("tcp", "github.com")
+	logs := buildTCPAccessLog("tcp", ALSConfig{MTLS: true, Port: 4319}, "github.com")
 	require.Len(t, logs, 2)
 
 	// Static domain overrides %REQUESTED_SERVER_NAME% in both sinks.
@@ -491,40 +512,54 @@ func TestBuildTCPAccessLog_DomainOverride(t *testing.T) {
 	assert.Equal(t, "github.com", otelAttrValue(t, attrs, "domain"))
 }
 
-func TestGenerateEnvoyConfig_OtelALSClusterPresent(t *testing.T) {
+func TestGenerateEnvoyConfig_DegradedModeOmitsOtelSink(t *testing.T) {
 	t.Parallel()
 
-	// The otel_collector_als cluster is unconditionally included in
-	// buildClusters so the deny chain's OTel access logger has somewhere to
-	// dial even when no allow rules exist. Verify shape: STRICT_DNS, HTTP/2
-	// protocol options, otel-collector hostname.
-	yamlBytes, _, err := GenerateEnvoyConfig(nil, EnvoyPorts{
+	// Trust-lane invariant: when mTLS material is unavailable, Envoy must
+	// emit access logs to stdout only — never push OTLP across the
+	// untrusted otel-collector:4317 lane (reserved for agent containers).
+	// The otel_collector_als cluster and OpenTelemetryAccessLogConfig
+	// entries must both be absent in this mode.
+	//
+	// Fixture exercises all four sender paths (TLS filter chain, HTTP
+	// filter chain, deny chain implicit on the egress listener, TCP/SSH
+	// listener) so a regression on any single helper is caught.
+	rules := []config.EgressRule{
+		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
+		{Dst: "example.com", Proto: "http", Port: 80, Action: "allow"},
+		{Dst: "github.com", Proto: "ssh", Port: 22, Action: "allow"},
+	}
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, EnvoyPorts{
 		EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901,
 	}, ALSConfig{})
 	require.NoError(t, err)
 	out := string(yamlBytes)
 
-	assert.Contains(t, out, otelCollectorALSClusterName)
-	assert.Contains(t, out, "STRICT_DNS")
-	assert.Contains(t, out, "otel-collector")
-	assert.Contains(t, out, "port_value: 4317")
-	assert.Contains(t, out, "http2_protocol_options")
-	// No upstream TLS context when ALS.MTLS is false.
-	assert.NotContains(t, out, "transport_socket")
+	assert.NotContains(t, out, otelCollectorALSClusterName, "OTel ALS cluster must not be emitted in degraded mode")
+	assert.NotContains(t, out, "envoy.access_loggers.open_telemetry", "OTel access-log sink must not be emitted in degraded mode")
+	assert.NotContains(t, out, "OpenTelemetryAccessLogConfig", "OTel access-log config must not be emitted in degraded mode")
+	// Stdout sink for `docker logs` triage stays on the TLS filter chain.
+	assert.Contains(t, out, "envoy.access_loggers.stdout")
 }
 
 func TestGenerateEnvoyConfig_OtelALSCluster_MTLS(t *testing.T) {
 	t.Parallel()
 
-	yamlBytes, _, err := GenerateEnvoyConfig(nil, EnvoyPorts{
+	rules := []config.EgressRule{
+		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
+	}
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, EnvoyPorts{
 		EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901,
 	}, ALSConfig{Port: 4319, MTLS: true})
 	require.NoError(t, err)
 	out := string(yamlBytes)
 
-	// Target the mTLS-gated receiver port, not the plaintext 4317.
+	// OTel ALS cluster + sink emitted; targets the mTLS-gated receiver
+	// port, not the untrusted 4317 lane.
+	assert.Contains(t, out, otelCollectorALSClusterName)
+	assert.Contains(t, out, "envoy.access_loggers.open_telemetry")
 	assert.Contains(t, out, "port_value: 4319")
-	assert.NotContains(t, out, "port_value: 4317")
+	assert.NotContains(t, out, "port_value: 4317", "infra services must never dial the untrusted lane")
 	// Upstream TLS context with the bind-mount paths Stack writes.
 	assert.Contains(t, out, "transport_socket")
 	assert.Contains(t, out, "UpstreamTlsContext")
@@ -571,10 +606,14 @@ func TestGenerateEnvoyConfig_AccessLogPresent(t *testing.T) {
 	}
 
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
+	// Exercise the mTLS-on path: both stdout + OTel sinks must be emitted
+	// on every listener type. (The degraded path is covered by
+	// TestGenerateEnvoyConfig_DegradedModeOmitsOtelSink.)
+	als := ALSConfig{Port: 4319, MTLS: true}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			yamlBytes, _, err := GenerateEnvoyConfig(tt.rules, ports, ALSConfig{})
+			yamlBytes, _, err := GenerateEnvoyConfig(tt.rules, ports, als)
 			require.NoError(t, err)
 			out := string(yamlBytes)
 			// Stdout sink (operator triage).

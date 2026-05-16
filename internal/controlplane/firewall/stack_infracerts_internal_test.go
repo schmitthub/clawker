@@ -191,45 +191,31 @@ func TestStack_ensureConfigs_InfraCertsReadyLifecycle(t *testing.T) {
 	assert.True(t, s.infraCertsReady, "recovery reload after a mint failure must re-flip infraCertsReady to true")
 }
 
-// TestStack_alsConfig_GatesOnCertsReadyAndPort pins the contract that
-// alsConfig must short-circuit BEFORE returning MTLS=true. Without
-// these gates, GenerateEnvoyConfig would wire the otel_collector_als
-// cluster's transport_socket against /etc/envoy/otel-tls/client.pem
-// when no bind-mount exists (infraCertsReady=false) or when no
-// receiver port is configured (OtelInfraPort=0). Both cases produce a
-// running Envoy that fails YAML load / TLS handshake at restart.
-// `TestGenerateEnvoyConfig_OtelALSCluster_MTLS` covers rendering with
-// a hardcoded ALSConfig; this test wires Stack state through to the
-// gate.
-func TestStack_alsConfig_GatesOnCertsReadyAndPort(t *testing.T) {
+// TestStack_alsConfig_GatesOnCertsReady wires Stack state through to the
+// rendered ALSConfig. infraCertsReady=false must short-circuit before
+// returning MTLS=true — otherwise GenerateEnvoyConfig would wire the
+// otel_collector_als cluster against /etc/envoy/otel-tls/client.pem when
+// no bind-mount exists, producing a running Envoy that fails YAML load /
+// TLS handshake at restart. infraCertsReady=true must surface the
+// settings-store port through ALSConfig.
+//
+// Port-range validation is enforced upstream by config.Port's UnmarshalYAML
+// hook + WithDefaultsFromStruct backfill, so OtelInfraPort can never be
+// out-of-range at runtime — no defensive port gate is needed here.
+// `TestGenerateEnvoyConfig_OtelALSCluster_MTLS` covers rendering with a
+// hardcoded ALSConfig.
+func TestStack_alsConfig_GatesOnCertsReady(t *testing.T) {
 	testenv.New(t)
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	require.NoError(t, cfg.SettingsStore().Set(func(s *config.Settings) {
 		s.Monitoring.OtelInfraPort = 4319
 	}))
 
-	t.Run("not ready returns empty", func(t *testing.T) {
-		s := NewStack(nil, cfg, logger.Nop(), nil, nil)
-		assert.Equal(t, ALSConfig{}, s.alsConfig(), "infraCertsReady=false must short-circuit before reading the port")
-	})
+	s := NewStack(nil, cfg, logger.Nop(), nil, nil)
+	assert.Equal(t, ALSConfig{}, s.alsConfig(), "infraCertsReady=false must short-circuit before returning MTLS=true")
 
-	t.Run("ready + port returns mTLS config", func(t *testing.T) {
-		s := NewStack(nil, cfg, logger.Nop(), nil, nil)
-		s.infraCertsReady = true
-		got := s.alsConfig()
-		assert.True(t, got.MTLS, "ready + non-zero port must yield MTLS=true")
-		assert.Equal(t, 4319, got.Port)
-	})
-
-	t.Run("ready but zero port returns empty", func(t *testing.T) {
-		cfgZero := configmocks.NewIsolatedTestConfig(t)
-		require.NoError(t, cfgZero.SettingsStore().Set(func(s *config.Settings) {
-			s.Monitoring.OtelInfraPort = 0
-		}))
-		s := NewStack(nil, cfgZero, logger.Nop(), nil, nil)
-		s.infraCertsReady = true
-		assert.Equal(t, ALSConfig{}, s.alsConfig(), "OtelInfraPort=0 must short-circuit even when certs are ready")
-	})
+	s.infraCertsReady = true
+	assert.Equal(t, ALSConfig{Port: 4319, MTLS: true}, s.alsConfig(), "ready must yield MTLS=true with the settings-store port")
 }
 
 // TestStack_ensureInfraClientCerts_NilIssuer_NoOp pins the degraded-

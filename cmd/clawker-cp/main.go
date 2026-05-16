@@ -271,13 +271,20 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// OTLP receiver. Failure here degrades to "no infra cert minting"
 	// — Envoy stdout access logs + CoreDNS file logs still work; only
 	// the mTLS OTLP push path is disabled. See infracerts/CLAUDE.md.
-	infraIssuer, err := infracerts.Load(consts.CPInfraCACertPath, consts.CPInfraCAKeyPath)
-	if err != nil {
+	// Declare as the interface type so the nil check inside Stack
+	// (`s.infraIssuer == nil`) actually fires on load failure. Assigning
+	// a typed `*infracerts.Issuer(nil)` into the interface would box
+	// non-nil — the nil check would pass, MintClient would dispatch on a
+	// nil receiver, and the CP would panic in firewall config generation
+	// (turning the intended degraded mode into eBPF-orphaning).
+	var infraIssuer fwhandler.InfraIssuer
+	if issuer, err := infracerts.Load(consts.CPInfraCACertPath, consts.CPInfraCAKeyPath); err != nil {
 		log.Error().Err(err).
 			Str("event", "infra_issuer_unavailable").
 			Str("component", "infracerts").
 			Msg("infra intermediate CA load failed — envoy/coredns OTLP mTLS push will be disabled")
-		infraIssuer = nil
+	} else {
+		infraIssuer = issuer
 	}
 
 	stack := fwhandler.NewStack(dockerCli, cfg, log, rulesStore, infraIssuer)

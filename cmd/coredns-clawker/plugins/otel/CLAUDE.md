@@ -4,7 +4,7 @@ Emits one structured `dns.query` log record per DNS query handled by CoreDNS, ex
 
 Runtime owner: `internal/controlplane/firewall.Stack` builds `clawker-coredns:latest`, manages its lifecycle, bind-mounts the mTLS material (leaf cert + key + CA) under `/etc/clawker/auth/coredns/`, and sets `CLAWKER_COREDNS_OTEL_ENDPOINT` in the container env. Endpoint host is `consts.MonitoringServiceOtelCollector` (clawker-net hostname) + port `cfg.Settings().Monitoring.OtelInfraPort`.
 
-Purpose: feed the monitoring stack with a per-query log stream that includes client IP, zone, query name, qtype, rcode, answer count + answers, duration, and resolver error. This is the OTLP-side complement to the plaintext stdout `log` directive (which is filelog-scraped for `docker logs` triage).
+Purpose: feed the monitoring stack with a per-query log stream that includes client IP, zone, query name, qtype, rcode, answer count + answers, duration, and resolver error. The plaintext stdout `log` directive is kept alongside for `docker logs clawker-coredns` triage only — the collector does not scrape it (no filelog receiver in the OpenSearch pipeline).
 
 ## Files
 

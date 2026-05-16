@@ -122,6 +122,7 @@ func newLogger(f *cmdutil.Factory) (*logger.Logger, error) {
 			Timeout:        time.Duration(loggingCfg.Otel.TimeoutSeconds) * time.Second,
 			MaxQueueSize:   loggingCfg.Otel.MaxQueueSize,
 			ExportInterval: time.Duration(loggingCfg.Otel.ExportIntervalSeconds) * time.Second,
+			ServiceName:    "clawker-cli",
 		}
 	}
 

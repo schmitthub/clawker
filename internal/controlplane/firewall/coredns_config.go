@@ -13,10 +13,12 @@ import (
 var upstreamDNS = []string{"1.1.1.2", "1.0.0.2"}
 
 // corefileLogFormat is the custom log format for DNS query logging.
-// Uses logfmt-compatible key=value pairs for easy parsing by the OTEL
-// collector / OpenSearch pipeline. CoreDNS placeholders: {name}=queried
-// domain, {type}=query type (A/AAAA), {rcode}=response code
-// (NOERROR/NXDOMAIN), {duration}=resolution time.
+// Uses logfmt-compatible key=value pairs for `docker logs clawker-coredns`
+// triage only — the OpenSearch pipeline ingests DNS events from the
+// in-tree `otel` plugin (OTLP/gRPC + mTLS), not from this stdout sink.
+// CoreDNS placeholders: {name}=queried domain, {type}=query type
+// (A/AAAA), {rcode}=response code (NOERROR/NXDOMAIN), {duration}=
+// resolution time.
 const corefileLogFormat = `source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}`
 
 // GenerateCorefile produces a CoreDNS Corefile from the given egress rules.

@@ -339,15 +339,11 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 // cannot present a CLI-signed client cert and so the receiver rejects
 // their TLS handshake — the gate is crypto, not network.
 //
-// When OtelInfraPort is zero (user hasn't run `clawker monitor init`)
-// no env vars are emitted and the CP logger falls back to file-only.
-// Logger construction also treats OTEL provider failure as non-fatal
-// so the daemon survives a collector that's down at startup.
+// The dial is always attempted; logger construction treats OTEL
+// provider failure as non-fatal so the daemon survives a collector
+// that's down at startup.
 func otelLogsEnv(cfg config.Config) []string {
 	mon := cfg.SettingsStore().Read().Monitoring
-	if mon.OtelInfraPort <= 0 {
-		return nil
-	}
 	endpoint := fmt.Sprintf("https://host.docker.internal:%d", mon.OtelInfraPort)
 	logsEndpoint := fmt.Sprintf("%s%s", endpoint, telemetryPath(mon.Telemetry.LogsPath, "/v1/logs"))
 	return []string{

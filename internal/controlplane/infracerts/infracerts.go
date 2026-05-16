@@ -62,6 +62,9 @@ func Load(certPath, keyPath string) (*Issuer, error) {
 	if !cert.IsCA {
 		return nil, fmt.Errorf("intermediate cert %s is not a CA (BasicConstraints CA=false)", certPath)
 	}
+	if cert.KeyUsage != 0 && cert.KeyUsage&x509.KeyUsageCertSign == 0 {
+		return nil, fmt.Errorf("intermediate cert %s has KeyUsage extension without KeyCertSign", certPath)
+	}
 
 	keyPEM, err := os.ReadFile(keyPath)
 	if err != nil {

@@ -109,8 +109,11 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 	}
 	log.Debug().Str("network", networkName).Msg("network ready")
 
-	// Build docker compose command
-	composeArgs := []string{"compose", "-f", composePath, "up"}
+	// Build docker compose command. --remove-orphans sweeps containers
+	// that aren't in the current compose.yaml — needed for upgrade flows
+	// where the template lost services (Grafana/Loki/Jaeger/Promtail) so
+	// their old containers don't keep ports bound after `init --force`.
+	composeArgs := []string{"compose", "-f", composePath, "up", "--remove-orphans"}
 	if opts.Detach {
 		composeArgs = append(composeArgs, "-d")
 	}
