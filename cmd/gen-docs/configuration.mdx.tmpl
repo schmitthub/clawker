@@ -85,6 +85,16 @@ clawker project register
 
 If CWD is not within a registered project, walk-up is skipped entirely and only the user config directory and defaults are used.
 
+#### Project name normalization
+
+When you register a project, Clawker derives the slug from your directory name. Mixed case becomes lowercase, spaces become hyphens, and the slug is used downstream for Docker container/volume names and the cert SAN identity. If the directory name produces a slug you don't like — or your directory name contains characters Docker won't accept — set `project.name` in your `.clawker.yaml` to take over:
+
+```yaml
+name: my-app
+```
+
+The override applies at every command run (it's read from the project config, not the registry). The hierarchy is: positional/CLI flag > `.clawker.yaml::name` > directory-derived slug.
+
 The registry lives at `~/.local/share/clawker/registry.yaml` and maps project names to filesystem paths (managed via `clawker project` commands):
 
 ```yaml

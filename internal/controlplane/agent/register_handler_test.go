@@ -167,9 +167,11 @@ func TestRegister_HappyPath(t *testing.T) {
 
 // TestRegister_RequestValidation pins that request-body validation
 // runs ahead of the ctx-resolved check — a malformed request must
-// surface as InvalidArgument even when the wiring is broken (the
-// alternative would classify a malformed-input regression as a
-// wiring bug, which is wrong).
+// surface as InvalidArgument even when the wiring is broken. After
+// the auth-side validators were gutted (Docker/x509 enforce their own
+// constraints downstream), the only request-body check that still
+// runs in the handler is "agent_name required" — which is the
+// canonical malformed-input surface we keep verified here.
 func TestRegister_RequestValidation(t *testing.T) {
 	h := newTestHandler(&RegistryMock{})
 	cases := []struct {
@@ -177,7 +179,6 @@ func TestRegister_RequestValidation(t *testing.T) {
 		req  *agentv1.RegisterRequest
 	}{
 		{"empty agent_name", &agentv1.RegisterRequest{Project: "p"}},
-		{"invalid project chars", &agentv1.RegisterRequest{AgentName: "x", Project: "BAD UPPER"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -195,10 +195,12 @@ func sanTailFromCert(cert *x509.Certificate, prefix string) (string, sanState) {
 // two-segment for the unscoped/empty-project case ("clawker.<agent>")
 // to match docker.ContainerName naming.
 //
-// Takes typed AgentName + ProjectSlug values so the caller can't pass
-// an AgentFullName form, a dot-containing name, or arbitrary characters
-// here — the constructors (NewAgentName / NewProjectSlug) enforce that
-// contract once and the function trusts the values from there on.
+// Takes typed AgentName + ProjectSlug values for compile-time
+// discipline — callers can't accidentally pass a raw string. Charset /
+// form constraints are NOT enforced by the constructors; Docker
+// rejects unusable resource names at create time and x509 URI SAN
+// encoding handles whatever survives. Upstream input normalization
+// lives in `cmdutil.ProjectSlugify`.
 //
 // Lives in this package because it is purely a function of
 // consts.NamePrefix and the (project, agent) tuple — every layer that
@@ -268,11 +270,11 @@ func (AgentCert) GoString() string { return "AgentCert{<redacted>}" }
 // Returns *AgentCert (nil on error) so a caller that ignores the error
 // cannot accidentally log the redacted zero-value as a successful cert.
 //
-// project + agent are typed (auth.ProjectSlug, auth.AgentName) so the
-// caller has gone through NewProjectSlug / NewAgentName and the
-// AgentFullName-form / dot-in-name / charset checks have already run. A
-// raw-string caller now produces a compile error instead of a silently-
-// malformed cert subject downstream.
+// project + agent are typed (auth.ProjectSlug, auth.AgentName) for
+// compile-time discipline — a raw-string caller produces a compile
+// error. The types do not enforce charset / form; downstream layers
+// (x509 URI SAN encoding, Docker resource names, IdentityInterceptor
+// SAN-vs-label compare) catch malformed values at op time.
 func MintAgentCert(caCertPath, caKeyPath string, project ProjectSlug, agent AgentName, containerID string) (*AgentCert, error) {
 	if agent.IsZero() {
 		return nil, fmt.Errorf("agent name required")

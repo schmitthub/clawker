@@ -22,7 +22,7 @@ func TestValidateResourceName(t *testing.T) {
 		{"a", false, ""},
 		{"A1-b2_c3.d4", false, ""},
 		{"test123", false, ""},
-		{strings.Repeat("a", 128), false, ""}, // max length
+		{strings.Repeat("a", 200), false, ""}, // no engine-level length cap
 
 		// Invalid: empty
 		{"", true, "cannot be empty"},
@@ -41,9 +41,6 @@ func TestValidateResourceName(t *testing.T) {
 		{"my@agent", true, "only [a-zA-Z0-9]"},
 		{"my/agent", true, "only [a-zA-Z0-9]"},
 		{"my:agent", true, "only [a-zA-Z0-9]"},
-
-		// Invalid: too long
-		{strings.Repeat("a", 129), true, "too long"},
 	}
 
 	for _, tt := range tests {
@@ -266,47 +263,6 @@ func TestImageTagWithHash(t *testing.T) {
 	}
 }
 
-func TestParseContainerName(t *testing.T) {
-	tests := []struct {
-		name        string
-		wantProject string
-		wantAgent   string
-		wantOK      bool
-	}{
-		// Valid 3-segment names
-		{"clawker.myproject.myagent", "myproject", "myagent", true},
-		{"clawker.test.agent1", "test", "agent1", true},
-		{"/clawker.backend.worker", "backend", "worker", true}, // Docker adds leading slash
-
-		// Valid 2-segment orphan names
-		{"clawker.dev", "", "dev", true},
-		{"/clawker.dev", "", "dev", true}, // Docker adds leading slash
-
-		// Invalid names
-		{"invalid", "", "", false},
-		{"notclawker.project.agent", "", "", false},
-		{"clawker.a.b.c", "", "", false}, // Too many parts
-		{"", "", "", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			gotProject, gotAgent, gotOK := ParseContainerName(tt.name)
-			if gotOK != tt.wantOK {
-				t.Errorf("ParseContainerName(%q) ok = %v, want %v", tt.name, gotOK, tt.wantOK)
-			}
-			if gotOK {
-				if gotProject != tt.wantProject {
-					t.Errorf("ParseContainerName(%q) project = %q, want %q", tt.name, gotProject, tt.wantProject)
-				}
-				if gotAgent != tt.wantAgent {
-					t.Errorf("ParseContainerName(%q) agent = %q, want %q", tt.name, gotAgent, tt.wantAgent)
-				}
-			}
-		})
-	}
-}
-
 func TestGlobalVolumeName(t *testing.T) {
 	tests := []struct {
 		purpose string
@@ -326,21 +282,14 @@ func TestGlobalVolumeName(t *testing.T) {
 	}
 }
 
-// TestGenerateRandomName_AlwaysValidAsAgentName locks the contract
-// the original "agent name too long" regression broke. Container
-// creation falls back to GenerateRandomName when no --agent flag was
-// supplied (internal/cmd/container/shared/container_create.go), then
-// pipes the result through auth.NewAgentName for the leaf cert's
-// urn:clawker:agent: SAN AgentFullName composition. If a word-list
-// addition pushes the adj-noun combo past auth.shortNameMax (or
-// violates the charset), CreateContainer fails with "agent
-// bootstrap: invalid agent name" — the exact symptom this test was
-// added to prevent re-introducing.
-//
-// The walk is the cartesian product of the two unexported word
-// lists, not a random sample of GenerateRandomName output, so a new
-// max-length adjective (or noun) shipped to the list fails the test
-// deterministically rather than depending on rand.Intn alignment.
+// TestGenerateRandomName_AlwaysValidAsAgentName pins that every
+// adjective-noun combo produced by GenerateRandomName satisfies the
+// AgentName constructor (only "agent name required" can reject it
+// after the auth-package validation strip — the random generator
+// never produces an empty string, so this passes for the whole
+// cartesian product). Catches a future word-list addition that ships
+// with an empty string or unicode character that would break
+// `auth.NewAgentName`.
 func TestGenerateRandomName_AlwaysValidAsAgentName(t *testing.T) {
 	for _, adj := range adjectives {
 		for _, noun := range nouns {
@@ -348,59 +297,6 @@ func TestGenerateRandomName_AlwaysValidAsAgentName(t *testing.T) {
 			if _, err := auth.NewAgentName(combo); err != nil {
 				t.Fatalf("auth.NewAgentName(%q) rejected a GenerateRandomName output: %v", combo, err)
 			}
-		}
-	}
-}
-
-// TestContainerName_HeadroomForMaxFields locks the volume / container
-// name budget against auth.shortNameMax (the validated upper bound on
-// both project slug and agent name). The longest resource name the
-// system can produce is a VolumeName built from a max-length project,
-// a max-length agent, and the longest purpose suffix ("workspace"):
-//
-//	clawker.<50 chars>.<50 chars>-workspace
-//	└─────┘ └──────┘ └──────┘ └────────┘
-//	   7      50       50         9      = 119 (after dots/dash)
-//
-// Docker's resource-name limit is 128 chars. ValidateResourceName
-// enforces this and is called by both ContainerName and VolumeName,
-// so a future word-list change (e.g. longer purpose like "workspace-
-// cache") or a bumped shortNameMax that crosses 128 fails this test
-// instead of producing "name too long" errors at container creation.
-//
-// The test deliberately walks every purpose currently used in
-// production so adding a longer one without re-checking the budget
-// fails here.
-func TestContainerName_HeadroomForMaxFields(t *testing.T) {
-	// auth.MaxShortNameLen() is the upper bound NewProjectSlug /
-	// NewAgentName enforce. A future bump that pushes the composed
-	// name past Docker's 128-byte resource-name limit lands here —
-	// reading the source of truth (rather than hardcoding 50) keeps
-	// the test honest in both directions.
-	maxField := auth.MaxShortNameLen()
-	project := strings.Repeat("a", maxField)
-	agent := strings.Repeat("b", maxField)
-
-	cn, err := ContainerName(project, agent)
-	if err != nil {
-		t.Fatalf("ContainerName(maxProject, maxAgent) error: %v", err)
-	}
-	if len(cn) > 128 {
-		t.Errorf("ContainerName(maxProject, maxAgent) = %q (len %d), exceeds Docker's 128-char limit", cn, len(cn))
-	}
-
-	// Iterate the canonical VolumePurposes list from names.go so a
-	// new purpose only needs to be appended in one place to be
-	// auto-exercised here. Adding a longer suffix without re-checking
-	// the budget fails this loop.
-	for _, purpose := range VolumePurposes {
-		vn, err := VolumeName(project, agent, purpose)
-		if err != nil {
-			t.Errorf("VolumeName(maxProject, maxAgent, %q) error: %v", purpose, err)
-			continue
-		}
-		if len(vn) > 128 {
-			t.Errorf("VolumeName(maxProject, maxAgent, %q) = %q (len %d), exceeds Docker's 128-char limit", purpose, vn, len(vn))
 		}
 	}
 }

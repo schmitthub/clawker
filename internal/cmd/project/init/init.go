@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 
@@ -21,8 +20,6 @@ import (
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/spf13/cobra"
 )
-
-var projectNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
 
 const (
 	actionSave      = "Save and get started"
@@ -353,9 +350,9 @@ func resolveInitEnv(ctx context.Context, opts *ProjectInitOptions) (*initEnv, er
 	}
 	dirName := filepath.Base(absPath)
 
-	projectName := strings.ToLower(dirName)
+	projectName := cmdutil.ProjectSlugify(dirName)
 	if opts.Name != "" {
-		projectName = strings.ToLower(opts.Name)
+		projectName = cmdutil.ProjectSlugify(opts.Name)
 	}
 
 	env := &initEnv{
@@ -426,8 +423,10 @@ func runInteractive(ctx context.Context, opts *ProjectInitOptions) error {
 		return nil
 	}
 
-	// Resolve preset, VCS, and branching.
-	projectName := result.Values["project_name"]
+	// Resolve preset, VCS, and branching. Slugify the user-typed name
+	// so the wizard accepts forgiving input (spaces, mixed case) and the
+	// registered slug stays Docker-safe.
+	projectName := cmdutil.ProjectSlugify(result.Values["project_name"])
 	if env.inSubdir {
 		projectName = env.parentProjectName
 	}
@@ -576,10 +575,8 @@ type performSetupInput struct {
 func performProjectSetup(ctx context.Context, in performSetupInput) error {
 	cs := in.ios.ColorScheme()
 
-	if !in.subdir {
-		if err := validateProjectName(in.projectName); err != nil {
-			return fmt.Errorf("invalid project name %q: %w", in.projectName, err)
-		}
+	if !in.subdir && in.projectName == "" {
+		return fmt.Errorf("project name is required")
 	}
 
 	configFileName := filepath.Base(in.configPath)
@@ -737,7 +734,6 @@ func buildInitWizardSteps(wctx wizardContext) []tui.WizardStep {
 				tui.WithDefault(wctx.nameDefault),
 				tui.WithPlaceholder("my-project"),
 				tui.WithRequired(),
-				tui.WithValidator(validateProjectName),
 			),
 			HelpKeys: []string{"enter", "confirm", "esc", "back", "ctrl+c", "quit"},
 			SkipIf: func(vals tui.WizardValues) bool {
@@ -840,23 +836,4 @@ func presetByName(presets []config.Preset, name string) (config.Preset, bool) {
 		}
 	}
 	return config.Preset{}, false
-}
-
-// validateProjectName checks that a project name is valid for clawker resource
-// naming. Stricter than Docker's container name rules: lowercase-only, must
-// start with a letter or digit.
-func validateProjectName(s string) error {
-	if s == "" {
-		return fmt.Errorf("project name is required")
-	}
-	if s != strings.ToLower(s) {
-		return fmt.Errorf("must be lowercase (try %q)", strings.ToLower(s))
-	}
-	if strings.Contains(s, " ") {
-		return fmt.Errorf("must not contain spaces")
-	}
-	if !projectNameRe.MatchString(s) {
-		return fmt.Errorf("must start with a letter or digit, and contain only lowercase letters, digits, dots, underscores, or hyphens")
-	}
-	return nil
 }

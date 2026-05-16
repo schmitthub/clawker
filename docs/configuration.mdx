@@ -85,6 +85,16 @@ clawker project register
 
 If CWD is not within a registered project, walk-up is skipped entirely and only the user config directory and defaults are used.
 
+#### Project name normalization
+
+When you register a project, Clawker derives the slug from your directory name. Mixed case becomes lowercase, spaces become hyphens, and the slug is used downstream for Docker container/volume names and the cert SAN identity. If the directory name produces a slug you don't like — or your directory name contains characters Docker won't accept — set `project.name` in your `.clawker.yaml` to take over:
+
+```yaml
+name: my-app
+```
+
+The override applies at every command run (it's read from the project config, not the registry). The hierarchy is: positional/CLI flag > `.clawker.yaml::name` > directory-derived slug.
+
 The registry lives at `~/.local/share/clawker/registry.yaml` and maps project names to filesystem paths (managed via `clawker project` commands):
 
 ```yaml
@@ -136,6 +146,8 @@ When Clawker writes configuration changes (e.g., via `clawker project init`), ea
 The complete `.clawker.yaml` schema with all fields and nested object structures. Descriptions are shown as comments.
 
 ```yaml
+# Override the project slug derived from the directory name (set this when the directory name isn't a good clawker identifier — e.g. dots, spaces, unicode)
+name: <string>  # default: n/a | required: false
 build:
   # Starting Docker image (e.g. node:20-slim, python:3.12); clawker layers tools on top
   image: <string>  # default: n/a | required: false
@@ -268,6 +280,13 @@ security:
 ## Project Configuration Reference
 
 The following tables are auto-generated from the schema struct tags in `internal/config/schema.go`. Each section corresponds to a top-level key in `.clawker.yaml`.
+
+### name
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `name` | string | — | Override the project slug derived from the directory name (set this when the directory name isn't a good clawker identifier — e.g. dots, spaces, unicode) |
+
 
 ### build
 

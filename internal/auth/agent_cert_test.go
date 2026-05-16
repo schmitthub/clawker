@@ -102,10 +102,13 @@ func TestMintAgentCert_HappyPath(t *testing.T) {
 func TestMintAgentCert_MaxLengthRoundTrip(t *testing.T) {
 	caCertPath, caKeyPath := caPaths(t)
 
-	// MaxShortNameLen()-sized identifiers: first char alphabetic (charset
-	// rule for AgentName/ProjectSlug), remainder safe alnum.
-	maxName := "a" + strings.Repeat("0", MaxShortNameLen()-1)
-	require.Len(t, maxName, MaxShortNameLen())
+	// 100-char identifier — comfortably past the old 64-byte CN limit
+	// that the URI-SAN refactor was meant to make irrelevant. AgentName
+	// / ProjectSlug no longer enforce a length cap, so this just pins
+	// that the cert encoding pipeline can carry a long identity
+	// end-to-end through the URI SAN.
+	maxName := "a" + strings.Repeat("0", 99)
+	require.Len(t, maxName, 100)
 
 	got, err := MintAgentCert(caCertPath, caKeyPath, MustProjectSlug(maxName), MustAgentName(maxName), "abc1234567890def")
 	require.NoError(t, err, "MintAgentCert must accept max-length project + agent names")

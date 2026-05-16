@@ -90,6 +90,15 @@ func buildSections(schema storage.Schema) []ConfigSection {
 		group := fields.Group(key)
 		section := ConfigSection{Key: key}
 
+		// Top-level scalar field — Group(key) returns nothing because it
+		// only matches paths under "key." prefix. Look up the field
+		// directly so the section's table is non-empty.
+		if rootField := fields.Get(key); rootField != nil && len(group) == 0 {
+			section.Fields = append(section.Fields, toConfigField(rootField))
+			sections = append(sections, section)
+			continue
+		}
+
 		// Separate direct children from nested groups.
 		subGroups := map[string][]ConfigField{}
 		var subGroupOrder []string

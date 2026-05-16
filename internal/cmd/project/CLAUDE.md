@@ -58,7 +58,6 @@ func customizeWizardFields() []string
 func customizeWizardOverrides() []storeui.Override
 func PresetCompletions() []cobra.Completion  // Dynamic completions from config.Presets()
 func presetByName(presets []config.Preset, name string) (config.Preset, bool)
-func validateProjectName(s string) error
 ```
 
 `NewCmdProject` is the parent (no RunE). All subcommands accept `runF` for test injection.
@@ -116,9 +115,9 @@ When user selects "Customize this preset" or "Build from scratch", `storeui.Wiza
 
 On first run, `bootstrapSettings()` checks if `settings.yaml` exists on disk (via `config.SettingsFilePath()`). If missing, writes `GenerateDefaultsYAML[Settings]()` to the config directory. This is silent — no user prompt.
 
-### Project Name Validation
+### Project Name Normalization
 
-`validateProjectName` enforces Docker-compatible lowercase names: `^[a-z0-9][a-z0-9._-]*$`. Rejects uppercase (suggests lowercase), spaces, and invalid start characters. Non-interactive mode auto-lowercases the name.
+Raw user input (positional arg, `--name` flag, dirname fallback) is normalized through `cmdutil.ProjectSlugify` before reaching `pm.Register`: lowercase, whitespace collapsed to `-`, control chars stripped, leading/trailing `-` trimmed. Unicode / dots / underscores pass through. No charset validation here — Docker rejects unusable names at container create time with a clear error.
 
 ## Shared Utilities (`shared/`)
 
@@ -141,7 +140,7 @@ Tests use `runF` injection for flag/option capture. Key patterns:
 - `NewCmdProjectInit(f, captureFunc)` for flag parsing tests
 - `buildInitWizardFields(wctx)` tested for field definitions, SkipIf logic, preset options
 - `performProjectSetup()` tested directly with `performSetupInput` for file creation/registration (avoids BubbleTea)
-- `validateProjectName()` tested as pure function with table-driven cases
+- Project name normalization tested centrally in `internal/cmdutil/slugify_test.go`
 - `customizeWizardFields()` validated against `storeui.WalkFields` to ensure all paths match real schema fields
 - `TestPerformProjectSetup_PresetRoundTrip` — table-driven test over all presets: write + reload + verify
 

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/git"
@@ -277,24 +278,40 @@ func (s *projectManager) ResolvePath(_ context.Context, cwd string) (Project, er
 }
 
 // CurrentProject resolves the current working directory to a registered project.
+//
+// If clawker.yaml::project.name is set, the returned Project reports that
+// override as its Name() while the underlying registry row is otherwise
+// untouched. The CLI hierarchy is: env (none) < clawker.yaml::project.name
+// (file) < --name flag (handled at init/register write path, persisting
+// the chosen value into the registry).
 func (s *projectManager) CurrentProject(ctx context.Context) (Project, error) {
 	if s == nil || s.cfg == nil {
 		return nil, fmt.Errorf("project manager not initialized")
 	}
 
+	var resolved Project
+	var resolveErr error
 	projectRoot, err := s.cfg.GetProjectRoot()
 	if err == nil {
-		projectFromRoot, resolveErr := s.ResolvePath(ctx, projectRoot)
-		if resolveErr == nil {
-			return projectFromRoot, nil
+		resolved, resolveErr = s.ResolvePath(ctx, projectRoot)
+	}
+	if resolved == nil {
+		cwd, wdErr := os.Getwd()
+		if wdErr != nil {
+			return nil, fmt.Errorf("reading current working directory: %w", wdErr)
 		}
+		resolved, resolveErr = s.ResolvePath(ctx, cwd)
+	}
+	if resolveErr != nil {
+		return nil, resolveErr
 	}
 
-	cwd, wdErr := os.Getwd()
-	if wdErr != nil {
-		return nil, fmt.Errorf("reading current working directory: %w", wdErr)
+	if override := strings.TrimSpace(s.cfg.Project().Name); override != "" {
+		if h, ok := resolved.(*projectHandle); ok {
+			h.record.Name = override
+		}
 	}
-	return s.ResolvePath(ctx, cwd)
+	return resolved, nil
 }
 
 // ListWorktrees returns worktree states across all registered projects.
