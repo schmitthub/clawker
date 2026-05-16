@@ -44,6 +44,15 @@ const (
 	// deadlines via ctx when they want different behavior.
 	healthCheckTimeout  = 60 * time.Second
 	healthCheckInterval = 500 * time.Millisecond
+
+	// labelInfraCertsReady encodes whether the running container was
+	// created with the mTLS-OTLP bind-mount + env wired. ensureContainer
+	// and Reload compare it against the current desired state to detect
+	// spec drift after an infraCertsReady flip — a plain ContainerRestart
+	// preserves env + mounts from create-time and would otherwise leave
+	// envoy.yaml referencing /etc/envoy/otel-tls/* with no mount, or
+	// CoreDNS holding CLAWKER_COREDNS_OTEL_ENDPOINT against missing certs.
+	labelInfraCertsReady = "dev.clawker.firewall.infra_certs_ready"
 )
 
 // Stack manages the Envoy + CoreDNS container pair via Docker-outside-of-
@@ -180,11 +189,20 @@ func (s *Stack) Reload(ctx context.Context) error {
 		return nil
 	}
 
+	// ensureConfigs may have flipped infraCertsReady; reloadContainer
+	// recreates the container when its create-time env + mounts no
+	// longer match the current Stack state (a plain ContainerRestart
+	// preserves both). Specs are computed once netInfo is available.
+	netInfo, err := DiscoverNetwork(ctx, s.docker, s.cfg)
+	if err != nil {
+		return fmt.Errorf("%w: discover network: %v", ErrStackProbe, err)
+	}
+
 	var errs []error
-	if err := s.restart(ctx, envoyContainerName); err != nil {
+	if err := s.reloadContainer(ctx, envoyContainerName, s.envoyContainerSpec(netInfo)); err != nil {
 		errs = append(errs, fmt.Errorf("%w: %v", ErrEnvoyRestart, err))
 	}
-	if err := s.restart(ctx, corednsContainerName); err != nil {
+	if err := s.reloadContainer(ctx, corednsContainerName, s.corednsContainerSpec(netInfo)); err != nil {
 		errs = append(errs, fmt.Errorf("%w: %v", ErrCoreDNSRestart, err))
 	}
 	if len(errs) == 0 {
@@ -414,10 +432,14 @@ func (s *Stack) ensureConfigs() (string, error) {
 	if s.infraIssuer == nil {
 		// Distinct from the mint-failure path below: this is the
 		// intentionally-cold state (no monitoring stack wired, or CP-side
-		// intermediate load failed at startup). Logged at Debug so the
-		// operator can confirm "skipped, not broken" when diagnosing a
-		// silent OTLP-cold stack — Warn would be noise on every reload.
-		s.log.Debug().
+		// intermediate load failed at startup). Logged at Info — the
+		// operator running `clawker monitor up` and then noticing no
+		// DNS/Envoy access logs in OpenSearch needs a discoverable
+		// signal that the cold state is by design; Debug would bury
+		// it under the default log level and force them to chase the
+		// mTLS material on disk. Reload-on-rule-change cadence is low
+		// enough that this is not noisy.
+		s.log.Info().
 			Str("event", "infra_client_certs_skipped").
 			Str("component", "firewall.stack").
 			Str("reason", "no_issuer").
@@ -558,11 +580,15 @@ func (s *Stack) ensureInfraClientCerts() error {
 		// write (ENOSPC, EINTR) leaves the prior-good file intact rather
 		// than half-overwritten on disk.
 		//
-		// 0o644 on the key is load-bearing: CoreDNS in the upstream image
-		// runs as a non-root uid, and Docker bind-mounts preserve host
-		// inode perms — a stricter file mode would silently fail key load
-		// at handshake. Defense-in-depth is the 0o700 svcDir above (NOT
-		// the FirewallDataSubdir tree, which is 0o755 via
+		// 0o644 on the key is load-bearing: the Envoy distroless image
+		// runs as UID 101 and Docker bind-mounts preserve host inode
+		// perms — a stricter mode (e.g. 0o600 owned by root on the
+		// host) would mean the in-container UID 101 can't read the
+		// key and the TLS handshake never gets off the ground.
+		// clawker-coredns (built from alpine here) currently runs as
+		// root and would tolerate stricter modes, but uses the same
+		// shape for symmetry. Defense-in-depth is the 0o700 svcDir
+		// above (NOT the FirewallDataSubdir tree, which is 0o755 via
 		// consts.subdirPathUnder); the file itself is permissive but
 		// unreachable to non-root host users without traversing the
 		// 0o700 directory.
@@ -639,6 +665,11 @@ type containerSpec struct {
 	mounts       []mount.Mount
 	portBindings network.PortMap
 	capAdd       []string
+	// labels carries the state-encoding labels that distinguish drift-
+	// significant create-time options (today: labelInfraCertsReady).
+	// Compared by ensureContainer / reloadContainer to decide whether
+	// a running container needs to be recreated rather than restarted.
+	labels map[string]string
 }
 
 // envoyContainerSpec composes the Envoy container spec for the current
@@ -694,6 +725,7 @@ func (s *Stack) envoyContainerSpec(netInfo *NetworkInfo) containerSpec {
 				{HostPort: strconv.Itoa(s.cfg.EnvoyHealthHostPort())},
 			},
 		},
+		labels: s.driftLabels(),
 	}
 }
 
@@ -767,27 +799,74 @@ func (s *Stack) corednsContainerSpec(netInfo *NetworkInfo) containerSpec {
 		// CAP_SYS_ADMIN: bpf(BPF_MAP_UPDATE_ELEM) on kernels <5.19 where
 		// CAP_BPF alone is insufficient for map writes.
 		capAdd: []string{"BPF", "SYS_ADMIN"},
+		labels: s.driftLabels(),
 	}
+}
+
+// driftLabels returns the drift-significant labels for the current
+// Stack state — applied at ContainerCreate and re-read by
+// ensureContainer / reloadContainer to detect cases where a plain
+// ContainerRestart would leave create-time env/mounts out of sync
+// with the freshly-generated envoy.yaml / Corefile.
+func (s *Stack) driftLabels() map[string]string {
+	return map[string]string{
+		labelInfraCertsReady: strconv.FormatBool(s.infraCertsReady),
+	}
+}
+
+// specMatchesContainer reports whether the running container's
+// drift-significant labels match the desired spec. Missing labels on
+// the container side are treated as mismatch — an older clawker
+// version may have created the container before labelInfraCertsReady
+// existed, and forcing a recreate brings it under the new gate.
+func specMatchesContainer(actual map[string]string, want map[string]string) bool {
+	for k, v := range want {
+		if actual[k] != v {
+			return false
+		}
+	}
+	return true
 }
 
 // ensureContainer creates + starts the named container if missing, or
 // starts an existing stopped one. Idempotent — if the container is
-// already running it returns without change.
+// already running AND its drift-significant labels match the desired
+// spec it returns without change.
+//
+// Spec drift triggers a stop + remove + recreate. Today the only
+// drift axis is labelInfraCertsReady, which controls whether the
+// mTLS-OTLP bind-mount + env are wired (see envoy/coredns spec
+// helpers). A plain ContainerRestart would leave create-time env
+// and mounts stale across an infraCertsReady flip — recreating is
+// the only way to push the new layout into the live container.
 func (s *Stack) ensureContainer(ctx context.Context, name string, spec containerSpec) error {
 	summary, err := s.findByName(ctx, name)
 	if err != nil {
 		return err
 	}
 	if summary != nil {
-		if summary.State == container.StateRunning {
-			s.log.Debug().Str("container", name).Msg("firewall container already running")
+		if specMatchesContainer(summary.Labels, spec.labels) {
+			if summary.State == container.StateRunning {
+				s.log.Debug().Str("container", name).Msg("firewall container already running")
+				return nil
+			}
+			s.log.Debug().Str("container", name).Str("state", string(summary.State)).Msg("starting existing firewall container")
+			if _, err := s.docker.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: summary.ID}); err != nil {
+				return fmt.Errorf("starting existing container %s: %w", name, err)
+			}
 			return nil
 		}
-		s.log.Debug().Str("container", name).Str("state", string(summary.State)).Msg("starting existing firewall container")
-		if _, err := s.docker.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: summary.ID}); err != nil {
-			return fmt.Errorf("starting existing container %s: %w", name, err)
+		s.log.Info().
+			Str("event", "firewall_container_spec_drift").
+			Str("component", "firewall.stack").
+			Str("container", name).
+			Str("desired_infra_certs_ready", spec.labels[labelInfraCertsReady]).
+			Str("running_infra_certs_ready", summary.Labels[labelInfraCertsReady]).
+			Msg("recreating firewall container — desired mTLS bind/env state diverges from running container")
+		if err := s.stopAndRemove(ctx, name); err != nil {
+			return fmt.Errorf("recreating %s on spec drift: %w", name, err)
 		}
-		return nil
+		// fall through to create below
 	}
 
 	ip, _ := netip.ParseAddr(spec.staticIP)
@@ -807,12 +886,16 @@ func (s *Stack) ensureContainer(ctx context.Context, name string, spec container
 		CapAdd:        spec.capAdd,
 	}
 
+	extraLabels := whail.Labels{{s.cfg.LabelPurpose(): s.cfg.PurposeFirewall()}}
+	if len(spec.labels) > 0 {
+		extraLabels = append(extraLabels, spec.labels)
+	}
 	createResp, err := s.docker.ContainerCreate(ctx, whail.ContainerCreateOptions{
 		Name:             name,
 		Config:           containerCfg,
 		HostConfig:       hostCfg,
 		NetworkingConfig: networkingConfig,
-		ExtraLabels:      whail.Labels{{s.cfg.LabelPurpose(): s.cfg.PurposeFirewall()}},
+		ExtraLabels:      extraLabels,
 	})
 	if err != nil {
 		// Another process may have created the container between
@@ -883,13 +966,22 @@ func (s *Stack) stopAndRemove(ctx context.Context, name string) error {
 	return nil
 }
 
-func (s *Stack) restart(ctx context.Context, name string) error {
+// reloadContainer restarts the named container in-place when its
+// drift-significant labels match the desired spec; otherwise it
+// stops + removes + recreates via ensureContainer so create-time env
+// and mount lists pick up the new layout. The fast restart path stays
+// intact for the common case (config-file regen with no flip in
+// infraCertsReady).
+func (s *Stack) reloadContainer(ctx context.Context, name string, spec containerSpec) error {
 	summary, err := s.findByName(ctx, name)
 	if err != nil {
 		return err
 	}
 	if summary == nil {
 		return fmt.Errorf("container %s not found", name)
+	}
+	if !specMatchesContainer(summary.Labels, spec.labels) {
+		return s.ensureContainer(ctx, name, spec)
 	}
 	timeout := 10
 	if _, err := s.docker.ContainerRestart(ctx, summary.ID, &timeout); err != nil {

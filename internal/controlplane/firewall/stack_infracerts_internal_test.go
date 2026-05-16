@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -53,10 +54,17 @@ type fakeIssuer struct {
 	calls    []string
 	chainPEM []byte
 	keyPEM   []byte
+	// failNext flips a mint to return an error without disturbing the
+	// PEM material — used by ensureConfigs lifecycle tests to model a
+	// transient mint failure between healthy reloads.
+	failNext bool
 }
 
 func (f *fakeIssuer) MintClient(svc string, _ time.Duration) ([]byte, []byte, error) {
 	f.calls = append(f.calls, svc)
+	if f.failNext {
+		return nil, nil, errors.New("synthetic mint failure")
+	}
 	return f.chainPEM, f.keyPEM, nil
 }
 
@@ -110,8 +118,12 @@ func TestStack_ensureInfraClientCerts_WritesPerServiceMaterial(t *testing.T) {
 		require.NoError(t, err, "%s ca", svc)
 		assert.Equal(t, caBytes, serviceCA)
 
-		// 0o644 on the key is intentional — CoreDNS upstream runs as a
-		// non-root uid and a stricter mode silently breaks load.
+		// 0o644 on the key is intentional — the Envoy distroless image
+		// runs as UID 101 and Docker bind-mounts preserve host inode
+		// perms, so a stricter mode (e.g. 0o600 owned by host root)
+		// would silently break key load at the TLS handshake. CoreDNS
+		// (built locally from alpine here, runs as root) would tolerate
+		// stricter modes but uses the same shape for symmetry.
 		info, err := os.Stat(keyPath)
 		require.NoError(t, err)
 		assert.Equal(t, os.FileMode(0o644), info.Mode().Perm(), "%s key mode", svc)
@@ -127,6 +139,97 @@ func TestStack_ensureInfraClientCerts_WritesPerServiceMaterial(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, os.FileMode(0o700), dirInfo.Mode().Perm(), "%s dir mode", svc)
 	}
+}
+
+// TestStack_ensureConfigs_InfraCertsReadyLifecycle pins the orchestrator
+// behavior in ensureConfigs around the infraCertsReady flag:
+//   - reset to false at entry
+//   - flip to true only after a successful mint
+//   - stay false after a mint failure
+//   - re-flip true on the next successful reload
+//
+// Without this, a re-ordering bug that latches the flag after the first
+// successful reload would mask a subsequent mint failure and silently
+// wire Envoy/CoreDNS specs against stale certs.
+func TestStack_ensureConfigs_InfraCertsReadyLifecycle(t *testing.T) {
+	testenv.New(t)
+	cfg := configmocks.NewIsolatedTestConfig(t)
+	require.NoError(t, cfg.SettingsStore().Set(func(s *config.Settings) {
+		s.Monitoring.OtelInfraPort = 4319
+	}))
+
+	caBytes := []byte("---FAKE-CA---\n")
+	caSrc := filepath.Join(t.TempDir(), "root-ca.pem")
+	require.NoError(t, os.WriteFile(caSrc, caBytes, 0o644))
+	prev := rootCASourcePath
+	rootCASourcePath = func() string { return caSrc }
+	t.Cleanup(func() { rootCASourcePath = prev })
+
+	chainPEM, keyPEM := mintTestCertKeyPEM(t)
+	issuer := &fakeIssuer{chainPEM: chainPEM, keyPEM: keyPEM}
+
+	store, err := NewRulesStore(cfg)
+	require.NoError(t, err)
+	s := NewStack(nil, cfg, logger.Nop(), store, issuer)
+
+	_, err = s.ensureConfigs()
+	require.NoError(t, err)
+	assert.True(t, s.infraCertsReady, "first reload with healthy mint must set infraCertsReady")
+
+	// Latch the flag, then simulate a transient mint failure. Expect
+	// the flag to be reset to false BEFORE the mint and stay false
+	// because ensureInfraClientCerts errors.
+	issuer.failNext = true
+	_, err = s.ensureConfigs()
+	require.NoError(t, err, "mint failure must not cascade — ensureConfigs returns nil and degrades")
+	assert.False(t, s.infraCertsReady, "mint failure must leave infraCertsReady=false so containers drop mTLS bind+env")
+
+	// Recover on the next reload. Flag must flip back to true.
+	issuer.failNext = false
+	_, err = s.ensureConfigs()
+	require.NoError(t, err)
+	assert.True(t, s.infraCertsReady, "recovery reload after a mint failure must re-flip infraCertsReady to true")
+}
+
+// TestStack_alsConfig_GatesOnCertsReadyAndPort pins the contract that
+// alsConfig must short-circuit BEFORE returning MTLS=true. Without
+// these gates, GenerateEnvoyConfig would wire the otel_collector_als
+// cluster's transport_socket against /etc/envoy/otel-tls/client.pem
+// when no bind-mount exists (infraCertsReady=false) or when no
+// receiver port is configured (OtelInfraPort=0). Both cases produce a
+// running Envoy that fails YAML load / TLS handshake at restart.
+// `TestGenerateEnvoyConfig_OtelALSCluster_MTLS` covers rendering with
+// a hardcoded ALSConfig; this test wires Stack state through to the
+// gate.
+func TestStack_alsConfig_GatesOnCertsReadyAndPort(t *testing.T) {
+	testenv.New(t)
+	cfg := configmocks.NewIsolatedTestConfig(t)
+	require.NoError(t, cfg.SettingsStore().Set(func(s *config.Settings) {
+		s.Monitoring.OtelInfraPort = 4319
+	}))
+
+	t.Run("not ready returns empty", func(t *testing.T) {
+		s := NewStack(nil, cfg, logger.Nop(), nil, nil)
+		assert.Equal(t, ALSConfig{}, s.alsConfig(), "infraCertsReady=false must short-circuit before reading the port")
+	})
+
+	t.Run("ready + port returns mTLS config", func(t *testing.T) {
+		s := NewStack(nil, cfg, logger.Nop(), nil, nil)
+		s.infraCertsReady = true
+		got := s.alsConfig()
+		assert.True(t, got.MTLS, "ready + non-zero port must yield MTLS=true")
+		assert.Equal(t, 4319, got.Port)
+	})
+
+	t.Run("ready but zero port returns empty", func(t *testing.T) {
+		cfgZero := configmocks.NewIsolatedTestConfig(t)
+		require.NoError(t, cfgZero.SettingsStore().Set(func(s *config.Settings) {
+			s.Monitoring.OtelInfraPort = 0
+		}))
+		s := NewStack(nil, cfgZero, logger.Nop(), nil, nil)
+		s.infraCertsReady = true
+		assert.Equal(t, ALSConfig{}, s.alsConfig(), "OtelInfraPort=0 must short-circuit even when certs are ready")
+	})
 }
 
 // TestStack_ensureInfraClientCerts_NilIssuer_NoOp pins the degraded-

@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coredns/caddy"
 	"github.com/coredns/coredns/plugin"
 	"github.com/coredns/coredns/plugin/pkg/dnstest"
 	ctest "github.com/coredns/coredns/plugin/test"
@@ -340,4 +341,51 @@ func writeTestCert(t *testing.T, dir string) (certPath, keyPath, caPath string) 
 	require.NoError(t, os.WriteFile(keyPath, keyPEM, 0o600))
 	require.NoError(t, os.WriteFile(caPath, certPEM, 0o600))
 	return
+}
+
+// TestSetup_RejectsCorefileArgs pins the contract that the otel
+// directive takes no arguments. Without this guard a Corefile typo
+// (e.g. `otel endpoint:1234`) would silently install a misconfigured
+// handler — the comment in setup.go calls this out as the load-bearing
+// behavior of the c.NextArg() check.
+func TestSetup_RejectsCorefileArgs(t *testing.T) {
+	t.Run("rejects extra argument", func(t *testing.T) {
+		c := caddy.NewTestController("dns", "otel some-unwanted-arg")
+		if err := setup(c); err == nil {
+			t.Fatal("setup accepted an extra arg; expected plugin.Error to fail Corefile load loudly")
+		}
+	})
+
+	t.Run("rejects multiple arguments", func(t *testing.T) {
+		c := caddy.NewTestController("dns", "otel a b c")
+		if err := setup(c); err == nil {
+			t.Fatal("setup accepted multiple args; expected plugin.Error")
+		}
+	})
+}
+
+// TestEnsureSharedEmitter_EmptyEndpoint_NotCached pins the lifecycle
+// behavior of ensureSharedEmitter when CLAWKER_COREDNS_OTEL_ENDPOINT
+// is unset: returns noopEmitter but does NOT cache it. A subsequent
+// call (modeling a CoreDNS reload after firewall.Stack wired the env
+// var) must construct a real emitter rather than returning the
+// previously-built noop. Caching noop would latch the degraded state
+// until process exit.
+func TestEnsureSharedEmitter_EmptyEndpoint_NotCached(t *testing.T) {
+	// Reset shared cache state for hermetic test.
+	prev := sharedEmitter
+	sharedEmitter = nil
+	t.Cleanup(func() { sharedEmitter = prev })
+
+	// First call with no env var must return noopEmitter without
+	// caching.
+	t.Setenv(envEndpoint, "")
+	e1, err := ensureSharedEmitter()
+	require.NoError(t, err)
+	if _, ok := e1.(noopEmitter); !ok {
+		t.Fatalf("expected noopEmitter when endpoint unset, got %T", e1)
+	}
+	if sharedEmitter != nil {
+		t.Fatal("noopEmitter must NOT be cached — reload after env-var fix would be stuck on noop")
+	}
 }

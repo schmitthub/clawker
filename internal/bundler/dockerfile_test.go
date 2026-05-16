@@ -27,12 +27,10 @@ func testConfig(t *testing.T, projectYAML string) config.Config {
 monitoring:
   otel_collector_port: 4318
   otel_collector_host: "localhost"
-  otel_collector_internal: "otel-collector"
   otel_grpc_port: 4317
-  loki_port: 3100
+  opensearch_port: 9200
+  opensearch_dashboards_port: 5601
   prometheus_port: 9090
-  jaeger_port: 16686
-  grafana_port: 3000
   prometheus_metrics_port: 8889
   telemetry:
     metrics_path: "/v1/metrics"
@@ -274,7 +272,6 @@ build:
   image: "buildpack-deps:bookworm-scm"
 monitoring:
   otel_collector_port: 4318
-  otel_collector_internal: "otel-collector"
   telemetry:
     metric_export_interval_ms: 30000
     logs_export_interval_ms: 15000

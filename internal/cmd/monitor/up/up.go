@@ -90,9 +90,8 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 	composePath := monitorDir + "/" + internalmonitor.ComposeFileName
 	if _, err := os.Stat(composePath); err != nil {
 		if os.IsNotExist(err) {
-			cmdutil.PrintErrorf(ios, "Monitoring stack not initialized")
-			cmdutil.PrintNextSteps(ios, "Run 'clawker monitor init' to scaffold configuration files")
-			return fmt.Errorf("compose.yaml not found in %s", monitorDir)
+			fmt.Fprintf(ios.ErrOut, "%s Run 'clawker monitor init' to scaffold configuration files\n", cs.InfoIcon())
+			return fmt.Errorf("monitoring stack not initialized: compose.yaml not found in %s", monitorDir)
 		}
 		return fmt.Errorf("failed to access compose.yaml at %s: %w", composePath, err)
 	}

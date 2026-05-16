@@ -28,10 +28,19 @@ Dials CP via:
 | File | Purpose |
 |------|---------|
 | `auth_material.go` | `EnsureAuthMaterial`, `RotateAuthMaterial`, `CheckAuthMaterial`, `EnsureHydraSecret`, `LoadSigningKey`, `LoadClientCert`, `ReadJWK`, `CACert`, `AuthFileStatus`. Also mints the **infra intermediate CA** (5y, signed by root) bind-mounted RO into the CP for runtime leaf issuance — see `internal/controlplane/infracerts`. |
-| `agent_cert.go` | `MintAgentCert(caCertPath, caKeyPath string, project ProjectSlug, agent AgentName)` returns an `AgentCert{CertPEM, KeyPEM, Thumbprint [32]byte}` — ephemeral 24h mTLS leaf signed by the CLI CA. Typed `ProjectSlug` / `AgentName` (built via `NewProjectSlug` / `NewAgentName` at the wire boundary) push validation upstream so the helper itself trusts its inputs. The thumbprint is SHA-256 over the cert DER. The CP-side Register handler captures the live peer cert thumbprint and writes the agent registry sqlite row — the CLI never opens the sqlite DB directly. The CN is composed via `CanonicalAgentCN(project, agent)` and pre-stored as the `canonical_cn` column on the registry row. PEM material is returned for in-memory bootstrap delivery only; never persisted on the host. |
+| `agent_cert.go` | `MintAgentCert` (24h mTLS leaf signed by the CLI CA) + `CanonicalAgentCN`. See "Agent cert mint" below for the full identity/registry contract. |
 | `assertion.go` | `BuildSignedAssertion`, `ValidateAssertionClaims`, `AssertionClaims` — ES256 JWT assertion builder for `private_key_jwt` client auth |
 | `agent_assertion.go` | `BuildAgentAssertion(audience, signingKey)` + `AgentAssertionTTL` — ES256 client_assertion identifying clawkerd as the `clawker-agent` OAuth2 client. Same signing key as the CLI assertion; only iss/sub differ. 24h TTL covers typical container session length. |
 | ~~`cp_dial.go`~~ | **Moved to `internal/controlplane/adminclient/dial.go`** — `Dial(ctx, adminPort, hydraPort, ...grpc.DialOption)` returns `adminv1.AdminServiceClient`. See `adminclient` package. |
+
+## Agent cert mint
+
+`MintAgentCert(caCertPath, caKeyPath string, project ProjectSlug, agent AgentName)` returns an `AgentCert{CertPEM, KeyPEM, Thumbprint [32]byte}` — an ephemeral 24h mTLS leaf signed by the CLI CA.
+
+- Typed `ProjectSlug` / `AgentName` (built via `NewProjectSlug` / `NewAgentName` at the wire boundary) push validation upstream so the helper itself trusts its inputs.
+- `Thumbprint` is SHA-256 over the cert DER. The CP-side Register handler captures the live peer cert thumbprint and writes the agent registry sqlite row; the CLI never opens the sqlite DB directly.
+- The CN is composed via `CanonicalAgentCN(project, agent)` and pre-stored on the registry row alongside `AgentFullName` (the canonical `clawker.<project>.<agent>` identity used everywhere else in the codebase — `CanonicalAgentCN` exists only as the cert-subject format helper, not a general identity name).
+- PEM material is returned for in-memory bootstrap delivery only; never persisted on the host.
 
 ## Auth material layout
 

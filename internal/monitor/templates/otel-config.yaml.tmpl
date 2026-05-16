@@ -121,7 +121,9 @@ processors:
   batch:
   # Copy project/agent from resource attributes to datapoint attributes.
   # The Prometheus exporter only surfaces datapoint attributes as metric labels,
-  # so this transform is required for per-project/agent filtering in Grafana.
+  # so this transform is required for per-project/agent filtering on the
+  # scraped Prometheus series (and any UI built on top — OpenSearch Dashboards
+  # Observability Metrics, Prometheus UI, etc.).
   transform/metrics:
     metric_statements:
       - context: datapoint

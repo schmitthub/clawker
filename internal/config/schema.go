@@ -378,7 +378,7 @@ type MonitoringConfig struct {
 	OpenSearchDashboardsPort int             `yaml:"opensearch_dashboards_port,omitempty" label:"OpenSearch Dashboards Port" desc:"Host port for the OpenSearch Dashboards UI" default:"5601"`
 	OpenSearchHeapMB         int             `yaml:"opensearch_heap_mb,omitempty" label:"OpenSearch Heap (MB)" desc:"JVM -Xms/-Xmx for the OpenSearch node; raise on memory-hungry workloads" default:"512"`
 	PrometheusPort           int             `yaml:"prometheus_port,omitempty" label:"Prometheus Port" desc:"Host port for the Prometheus UI and its native OTLP receiver (agent metrics flow through the OTEL collector, not here; this port is only used by direct OTLP pushers)" default:"9090"`
-	PrometheusMetricsPort    int             `yaml:"prometheus_metrics_port,omitempty" label:"Prometheus Metrics Port" desc:"Host port for Prometheus internal metrics" default:"8889"`
+	PrometheusMetricsPort    int             `yaml:"prometheus_metrics_port,omitempty" label:"Prometheus Metrics Port" desc:"Host port the otel-collector exposes its Prometheus scrape endpoint on (Prometheus scrapes this for collector + agent metrics; not Prometheus' own self-metrics)" default:"8889"`
 	Telemetry                TelemetryConfig `yaml:"telemetry,omitempty"`
 }
 

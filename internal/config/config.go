@@ -163,7 +163,10 @@ func NewConfig(opts ...NewConfigOption) (Config, error) {
 	} else {
 		settingsOpts = append(settingsOpts, storage.WithDefaultsFromStruct[Settings]())
 	}
-	settingsOpts = append(settingsOpts, storage.WithConfigDir())
+	settingsOpts = append(settingsOpts,
+		storage.WithConfigDir(),
+		storage.WithMigrations(SettingsMigrations()...),
+	)
 	settingsStore, err := storage.New[Settings]("", settingsOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("config: loading settings: %w", err)

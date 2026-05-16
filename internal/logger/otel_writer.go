@@ -26,7 +26,7 @@ import (
 //	NOTE: Fields are not transformed because of
 //	https://github.com/rs/zerolog/issues/493.
 //
-// Result: every clawker log line in Loki/Grafana arrives with the body
+// Result: every clawker log line in OpenSearch arrives with the body
 // + severity intact but ALL structured fields (`kind`, `id`, `action`,
 // `container_id`, ...) silently dropped, making "access granted" /
 // "event dispatched" lines useless for debugging.
@@ -173,7 +173,7 @@ func anyToOTELValue(v any) log.Value {
 		return log.StringValue("")
 	default:
 		// Slices, maps, anything exotic — JSON-encode as a string so
-		// the value still surfaces in Loki/Grafana even if it can't
+		// the value still surfaces in OpenSearch even if it can't
 		// be projected as a typed attribute.
 		if b, err := json.Marshal(tv); err == nil {
 			return log.StringValue(string(b))

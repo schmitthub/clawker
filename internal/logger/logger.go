@@ -55,9 +55,13 @@ type Options struct {
 	EchoStdout bool
 }
 
-// OtelOptions configures the OTLP HTTP log exporter.
+// OtelOptions configures the OTLP/gRPC log exporter. The transport is
+// gRPC because the collector's trusted-infra receiver speaks gRPC only
+// — an HTTP exporter hits it with the wrong content-type and the
+// receiver returns 415 Unsupported Media Type, silently dropping every
+// record. See newOtelProvider for the receiver-side rationale.
 type OtelOptions struct {
-	Endpoint       string        // e.g. "localhost:4318"
+	Endpoint       string        // e.g. "localhost:4317"
 	Insecure       bool          // default: true (local collector)
 	Timeout        time.Duration // export timeout
 	MaxQueueSize   int           // batch processor queue size
@@ -161,7 +165,12 @@ func New(opts Options) (*Logger, error) {
 	// configured.
 	sinks := []io.Writer{fw}
 	if opts.EchoStdout {
-		sinks = append(sinks, os.Stdout)
+		// Wrap os.Stdout so transient stdout failures (closed FD,
+		// pipe break in a `docker logs` consumer) don't shadow the
+		// success of the other sinks through MultiLevelWriter's
+		// first-error-wins semantics. File + OTEL sinks stay
+		// authoritative; stdout is best-effort triage output.
+		sinks = append(sinks, absorbingWriter{w: os.Stdout})
 	}
 	l := &Logger{fw: fw}
 
@@ -280,6 +289,19 @@ func (l *Logger) Close() error {
 	}
 
 	return firstErr
+}
+
+// absorbingWriter forwards writes to an inner writer but always
+// returns a successful (n=len(p), err=nil) result. Composed inside
+// MultiLevelWriter so a failing best-effort sink (stdout) can't
+// shadow successful writes to the authoritative sinks (file, OTEL).
+type absorbingWriter struct {
+	w io.Writer
+}
+
+func (a absorbingWriter) Write(p []byte) (int, error) {
+	_, _ = a.w.Write(p)
+	return len(p), nil
 }
 
 // newOtelProvider creates an OTLP/gRPC log exporter and batch processor.

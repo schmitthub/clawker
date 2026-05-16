@@ -33,11 +33,13 @@ type Logger struct {
 ```go
 type Options struct {
     LogsDir    string       // directory for log files (required)
+    Filename   string       // override log file name (default: "clawker.log")
     MaxSizeMB  int          // max log file size (default: 50)
     MaxAgeDays int          // max log age (default: 7)
     MaxBackups int          // max backup count (default: 3)
     Compress   bool         // gzip rotated logs (default: true)
     Otel       *OtelOptions // nil = file-only, no OTEL bridge
+    EchoStdout bool         // mirror records to os.Stdout (container daemon path; off for CLI)
 }
 ```
 
@@ -45,13 +47,22 @@ type Options struct {
 
 ```go
 type OtelOptions struct {
-    Endpoint       string        // e.g. "localhost:4318"
+    Endpoint       string        // e.g. "localhost:4317" — gRPC, NOT HTTP
     Insecure       bool          // default: true (local collector)
     Timeout        time.Duration // export timeout
     MaxQueueSize   int           // batch processor queue size
     ExportInterval time.Duration // batch export interval
+
+    // mTLS material — all three are required when any is set.
+    // When wired, the exporter presents the leaf during the gRPC handshake
+    // and pins the receiver's CA. Insecure is ignored.
+    CACertFile     string
+    ClientCertFile string
+    ClientKeyFile  string
 }
 ```
+
+Transport is OTLP/gRPC, not OTLP/HTTP — the collector's trusted-infra receiver speaks gRPC only and silently returns 415 to HTTP. The CLI/host loggers point at the same path so the wire format matches.
 
 ## Constructors
 
@@ -164,4 +175,4 @@ The OTEL SDK handles resilience natively — no custom health checking is needed
 
 ## Dependencies
 
-`zerolog` (structured logging), `lumberjack` (rotation), `otelzerolog` (OTEL bridge), `otlploghttp` (OTLP exporter), `otel/sdk/log` (LoggerProvider).
+`zerolog` (structured logging), `lumberjack` (rotation), `otlploggrpc` (OTLP/gRPC exporter), `otel/sdk/log` (LoggerProvider), `google.golang.org/grpc/credentials` (mTLS for the trusted-infra receiver).

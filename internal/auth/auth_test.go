@@ -97,6 +97,40 @@ func TestRotateAuthMaterial_PreservesSigningKeyWithoutForce(t *testing.T) {
 	assert.Equal(t, before, after, "signing key must be preserved when forceSigningKey=false")
 }
 
+// TestRotateAuthMaterial_RegeneratesInfraCA pins the infra intermediate
+// CA in the rotation set. Without this, a regression that drops the
+// infra CA cert/key from the removeIfExists list in RotateAuthMaterial
+// would leave the old intermediate alive after the user thought they
+// rotated everything — runtime mTLS leaves minted post-rotation would
+// continue to chain to the stale intermediate, and the otel-collector
+// would keep trusting them despite the supposed rotation.
+func TestRotateAuthMaterial_RegeneratesInfraCA(t *testing.T) {
+	testenv.New(t)
+	require.NoError(t, EnsureAuthMaterial())
+
+	certPath, err := consts.AuthInfraCACertPath()
+	require.NoError(t, err)
+	keyPath, err := consts.AuthInfraCAKeyPath()
+	require.NoError(t, err)
+
+	originalCert, err := os.ReadFile(certPath)
+	require.NoError(t, err)
+	originalKey, err := os.ReadFile(keyPath)
+	require.NoError(t, err)
+
+	require.NoError(t, RotateAuthMaterial(true))
+
+	rotatedCert, err := os.ReadFile(certPath)
+	require.NoError(t, err)
+	rotatedKey, err := os.ReadFile(keyPath)
+	require.NoError(t, err)
+
+	assert.NotEqual(t, originalCert, rotatedCert,
+		"infra intermediate CA cert must change after forced rotation — stale signer would still mint trusted leaves")
+	assert.NotEqual(t, originalKey, rotatedKey,
+		"infra intermediate CA key must change after forced rotation")
+}
+
 // Tests INV-B1-014 [unit]: Private keys have 0600 permissions after rotation.
 func TestRotateAuthMaterial_Permissions(t *testing.T) {
 	testenv.New(t)
@@ -352,6 +386,36 @@ func TestEnsureOtelServerCert_RemintsOnSANDrift(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, freshCert.DNSNames, consts.MonitoringServiceOtelCollector,
 		"stale cert with missing SAN must be re-minted")
+}
+
+// TestEnsureInfraIntermediateCA_MigratesStaleKeyPerms pins the upgrade
+// path in ensureInfraIntermediateCA: when an existing key on disk has
+// permissive perms (e.g. 0o644 from an older clawker that minted the
+// key with the wrong mode), the next EnsureAuthMaterial call must
+// tighten it to 0o600 in place. Without the migration block the
+// permissive perms would survive forever because the regen branch
+// only fires on file absence — the signing key for runtime mTLS
+// leaves would remain world-readable on the host indefinitely.
+func TestEnsureInfraIntermediateCA_MigratesStaleKeyPerms(t *testing.T) {
+	testenv.New(t)
+	require.NoError(t, EnsureAuthMaterial())
+
+	keyPath, err := consts.AuthInfraCAKeyPath()
+	require.NoError(t, err)
+
+	// Simulate the legacy state: same key material on disk but at
+	// 0o644 (the permissions an older clawker would have left).
+	require.NoError(t, os.Chmod(keyPath, 0o644))
+	info, err := os.Stat(keyPath)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o644), info.Mode().Perm(), "precondition: stale perms applied")
+
+	require.NoError(t, EnsureAuthMaterial(), "second EnsureAuthMaterial after stale perms must succeed")
+
+	info, err = os.Stat(keyPath)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(),
+		"stale 0o644 perms must be tightened to 0o600 on the next EnsureAuthMaterial — a world-readable infra CA signing key is a privilege boundary violation")
 }
 
 func TestCPClientCertSignedByCA(t *testing.T) {

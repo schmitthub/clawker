@@ -599,9 +599,9 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	}()
 
 	// Periodic Overseer stats heartbeat — gives an operator tailing
-	// the CP log (or querying Loki) a coarse health signal without
-	// needing a dedicated metrics surface. 30s cadence is below the
-	// OTEL resilience window and trivial overhead.
+	// the CP log (or querying OpenSearch) a coarse health signal
+	// without needing a dedicated metrics surface. 30s cadence is
+	// below the OTEL resilience window and trivial overhead.
 	statsCtx, statsCancel := context.WithCancel(watcherCtx)
 	defer statsCancel()
 	go func() {
@@ -776,6 +776,20 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		// listWithRetry pattern) absorbs the transient docker-daemon
 		// hiccup that's the dominant failure mode at boot.
 		go func() {
+			// recover so a panic deep in DialAgent (cert rotation race,
+			// nil deref in a future dialer change) doesn't silently
+			// strand every initial-poll agent without surfacing — this
+			// goroutine has no other observer. Same pattern as the
+			// overseer stats heartbeat below.
+			defer func() {
+				if r := recover(); r != nil {
+					log.Error().
+						Interface("panic", r).
+						Str("event", "agentdial_initial_poll_panic").
+						Str("component", "cp.agentdial").
+						Msg("initial agent dial goroutine panicked; initial-poll dispatch aborted (runtime ContainerStarted handlers unaffected)")
+				}
+			}()
 			const maxAttempts = 3
 			backoff := 100 * time.Millisecond
 			var initialAgents []string

@@ -141,6 +141,79 @@ func TestIssuer_MintClient_ChainVerifiesAgainstRoot(t *testing.T) {
 	}
 }
 
+// TestIssuer_MintClient_Validates pins the input-validation contract of
+// MintClient. These guards are part of the public API; a refactor that
+// inlines or removes them would silently mint zero-duration / unnamed
+// leaves that no downstream consumer would catch (Envoy/CoreDNS happily
+// load a 1ns-TTL cert and only fail later at handshake).
+func TestIssuer_MintClient_Validates(t *testing.T) {
+	dir := t.TempDir()
+	_, certPath, keyPath := testCA(t, dir)
+	issuer, err := infracerts.Load(certPath, keyPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	t.Run("empty serviceName", func(t *testing.T) {
+		if _, _, err := issuer.MintClient("", time.Hour); err == nil {
+			t.Fatal("expected error for empty serviceName")
+		}
+	})
+
+	t.Run("zero ttl", func(t *testing.T) {
+		if _, _, err := issuer.MintClient("svc", 0); err == nil {
+			t.Fatal("expected error for zero ttl")
+		}
+	})
+
+	t.Run("negative ttl", func(t *testing.T) {
+		if _, _, err := issuer.MintClient("svc", -time.Hour); err == nil {
+			t.Fatal("expected error for negative ttl")
+		}
+	})
+}
+
+// TestIssuer_Load_RejectsMalformedKey pins the symmetric guard to
+// Load_RejectsNonCACert: a cert that parses but a key that doesn't
+// must surface a typed error rather than crash at first MintClient
+// call. Operators see this when on-disk material is partially
+// corrupted (truncated file, wrong PEM block type) — the failure
+// should not be deferred to the first mint attempt.
+func TestIssuer_Load_RejectsMalformedKey(t *testing.T) {
+	dir := t.TempDir()
+	_, certPath, _ := testCA(t, dir)
+
+	// Write the CERTIFICATE PEM into the key path — wrong block type.
+	garbage := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("not-a-key")})
+	keyPath := filepath.Join(dir, "garbage.key")
+	if err := os.WriteFile(keyPath, garbage, 0o600); err != nil {
+		t.Fatalf("write garbage key: %v", err)
+	}
+
+	if _, err := infracerts.Load(certPath, keyPath); err == nil {
+		t.Fatal("Load accepted a malformed key; expected error")
+	}
+}
+
+// TestIssuer_Load_RejectsEmptyKeyPEM pins the no-PEM-block path
+// (file present but empty / non-PEM). Without the explicit nil block
+// check, pem.Decode returns (nil, rest) and x509.ParseECPrivateKey
+// would panic on a nil slice indirection rather than return a clean
+// error.
+func TestIssuer_Load_RejectsEmptyKeyPEM(t *testing.T) {
+	dir := t.TempDir()
+	_, certPath, _ := testCA(t, dir)
+
+	keyPath := filepath.Join(dir, "empty.key")
+	if err := os.WriteFile(keyPath, []byte("not pem"), 0o600); err != nil {
+		t.Fatalf("write empty key: %v", err)
+	}
+
+	if _, err := infracerts.Load(certPath, keyPath); err == nil {
+		t.Fatal("Load accepted an empty key file; expected error")
+	}
+}
+
 func TestIssuer_Load_RejectsNonCACert(t *testing.T) {
 	dir := t.TempDir()
 
