@@ -151,6 +151,7 @@ func assertKeyPerms(t *testing.T) {
 		{"client key", consts.AuthCLIClientKeyPath, tightMode},
 		{"otel server key", consts.AuthOtelServerKeyPath, otelMode},
 		{"cp client key", consts.AuthCPClientKeyPath, tightMode},
+		{"infra CA key", consts.AuthInfraCAKeyPath, tightMode},
 	} {
 		p, err := c.pathFn()
 		require.NoError(t, err)

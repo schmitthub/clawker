@@ -779,7 +779,7 @@ No error, no duplicate—deterministic behavior.
 A Docker Compose stack on `clawker-net`:
 
 - **OpenTelemetry Collector** - OTLP/HTTP receivers + routing; writes logs to OpenSearch and exposes a Prometheus scrape endpoint for metrics. A `traces` pipeline is configured but idle — agents don't emit spans today.
-- **OpenSearch** - Logs only, split into two indices: `claude-code` (Claude Code OTLP push) and `clawker-cp` (mTLS-gated CP push)
+- **OpenSearch** - Logs only, split into four indices: `claude-code` (Claude Code OTLP push, untrusted port), `clawker-cp` (mTLS-gated CP push), `clawker-envoy` (Envoy access logs, mTLS-gated), and `clawker-coredns` (CoreDNS query logs, mTLS-gated). Cross-index queries: `clawker-cp,claude-code,clawker-envoy,clawker-coredns`.
 - **OpenSearch Dashboards** - UI for log exploration (Discover)
 - **Prometheus** - Metrics storage + UI; also accepts direct OTLP push for callers willing to lose `/api/v1/metadata` coverage
 

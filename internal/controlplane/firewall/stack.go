@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -57,6 +58,17 @@ type Stack struct {
 	log         *logger.Logger
 	store       *storage.Store[EgressRulesFile]
 	infraIssuer InfraIssuer
+	// infraCertsReady is set to true by ensureConfigs after a successful
+	// ensureInfraClientCerts call (and reset to false on failure). Gates
+	// downstream mTLS wiring (alsConfig, envoy/coredns container specs)
+	// so a partial cert mint can't leave Envoy/CoreDNS pointed at
+	// missing files — which would take CoreDNS startup down hard via
+	// the otel plugin's tls.LoadX509KeyPair, breaking the firewall
+	// plane on a telemetry failure.
+	//
+	// Stack methods are serialized by the controlplane ActionQueue; no
+	// mutex is required.
+	infraCertsReady bool
 }
 
 // InfraIssuer mints short-lived mTLS client leaves for clawker infra
@@ -398,16 +410,36 @@ func (s *Stack) ensureConfigs() (string, error) {
 		return "", fmt.Errorf("regenerating domain certs: %w", err)
 	}
 
-	if err := s.ensureInfraClientCerts(); err != nil {
-		// Degraded path: infra client cert minting failure is logged but
-		// not fatal. Envoy + CoreDNS continue to start; the mTLS OTLP
-		// push path stays cold (envoy fall back to stdout JSON logs;
-		// coredns OTel plugin will warn and noop). The firewall plane
-		// itself is unaffected.
+	s.infraCertsReady = false
+	if s.infraIssuer == nil {
+		// Distinct from the mint-failure path below: this is the
+		// intentionally-cold state (no monitoring stack wired, or CP-side
+		// intermediate load failed at startup). Logged at Debug so the
+		// operator can confirm "skipped, not broken" when diagnosing a
+		// silent OTLP-cold stack — Warn would be noise on every reload.
+		s.log.Debug().
+			Str("event", "infra_client_certs_skipped").
+			Str("component", "firewall.stack").
+			Str("reason", "no_issuer").
+			Msg("infra issuer not wired — OTLP mTLS push from envoy/coredns disabled (intentionally cold)")
+	} else if err := s.ensureInfraClientCerts(); err != nil {
+		// Degraded path: infra client cert minting failure is logged
+		// but not fatal. Envoy + CoreDNS continue to start without
+		// the mTLS material wired in — Envoy ALS falls back to the
+		// stdout JSON sink (alsConfig returns the empty struct) and
+		// the CoreDNS otel plugin sees no CLAWKER_COREDNS_OTEL_ENDPOINT
+		// env var so it installs noopEmitter. Without this gate (i.e.
+		// wiring the bind-mounts when s.infraIssuer != nil regardless
+		// of mint success), CoreDNS's otel plugin would
+		// tls.LoadX509KeyPair missing/partial files at setup time,
+		// return plugin.Error, and take the CoreDNS container down —
+		// breaking the firewall plane on a telemetry failure.
 		s.log.Warn().Err(err).
 			Str("event", "infra_client_certs_unavailable").
 			Str("component", "firewall.stack").
 			Msg("infra client cert minting failed — OTLP mTLS push from envoy/coredns disabled")
+	} else {
+		s.infraCertsReady = true
 	}
 
 	envoyYAML, warnings, err := GenerateEnvoyConfig(rules, s.envoyPorts(), s.alsConfig())
@@ -487,37 +519,96 @@ func (s *Stack) ensureInfraClientCerts() error {
 	}
 	for _, svc := range []string{"envoy", "coredns"} {
 		svcDir := filepath.Join(dir, svc)
-		if err := os.MkdirAll(svcDir, 0o755); err != nil {
+		// 0o700 on the per-service dir is the defense-in-depth the 0o644
+		// key file below relies on: other local users on the host cannot
+		// traverse into svcDir to read the bind-mounted key. MkdirAll
+		// honors umask, so a fresh dir under a permissive host umask (or
+		// one left at 0o755 by an older clawker version) needs explicit
+		// tightening. Stat-first skips the chmod when the dir is already
+		// at or below 0o700 — the common steady state — and avoids EPERM
+		// noise on cross-account upgrades where the dir is owned by a
+		// stale UID but already tight.
+		if err := os.MkdirAll(svcDir, 0o700); err != nil {
 			return fmt.Errorf("create %s dir: %w", svc, err)
 		}
-		if err := os.WriteFile(filepath.Join(svcDir, "ca.pem"), caBytes, 0o644); err != nil {
-			return fmt.Errorf("write %s root CA copy: %w", svc, err)
+		info, statErr := os.Stat(svcDir)
+		if statErr != nil {
+			return fmt.Errorf("stat %s dir: %w", svc, statErr)
+		}
+		if info.Mode().Perm()&^0o700 != 0 {
+			if err := os.Chmod(svcDir, 0o700); err != nil {
+				return fmt.Errorf("tighten %s dir perms (mode=%o): %w", svc, info.Mode().Perm(), err)
+			}
 		}
 		chainPEM, keyPEM, err := s.infraIssuer.MintClient(svc+"-otel-client", 365*24*time.Hour)
 		if err != nil {
 			return fmt.Errorf("mint %s leaf: %w", svc, err)
 		}
-		if err := os.WriteFile(filepath.Join(svcDir, "client.pem"), chainPEM, 0o644); err != nil {
+		// Validate the mint output before any disk write commits:
+		// a corrupted pair (mismatched cert/key, malformed PEM) caught
+		// here fails the whole function so the caller leaves
+		// infraCertsReady=false and Envoy/CoreDNS skip the mTLS mounts.
+		// Without this round-trip, a buggy issuer could half-overwrite
+		// a previously-good pair (ENOSPC mid-write, mismatched keypair)
+		// and the next CoreDNS reload would refuse to start at handshake.
+		if _, err := tls.X509KeyPair(chainPEM, keyPEM); err != nil {
+			return fmt.Errorf("validate %s cert/key pair: %w", svc, err)
+		}
+		// Writes go through writeFileAtomic (tmp + rename) so a partial
+		// write (ENOSPC, EINTR) leaves the prior-good file intact rather
+		// than half-overwritten on disk.
+		//
+		// 0o644 on the key is load-bearing: CoreDNS in the upstream image
+		// runs as a non-root uid, and Docker bind-mounts preserve host
+		// inode perms — a stricter file mode would silently fail key load
+		// at handshake. Defense-in-depth is the 0o700 svcDir above (NOT
+		// the FirewallDataSubdir tree, which is 0o755 via
+		// consts.subdirPathUnder); the file itself is permissive but
+		// unreachable to non-root host users without traversing the
+		// 0o700 directory.
+		if err := writeFileAtomic(filepath.Join(svcDir, "ca.pem"), caBytes, 0o644); err != nil {
+			return fmt.Errorf("write %s root CA copy: %w", svc, err)
+		}
+		if err := writeFileAtomic(filepath.Join(svcDir, "client.pem"), chainPEM, 0o644); err != nil {
 			return fmt.Errorf("write %s cert: %w", svc, err)
 		}
-		// 0o644 because CoreDNS in the upstream image runs as a
-		// non-root uid; bind-mounted keys must be readable for the
-		// process to load them. Defense-in-depth comes from the
-		// FirewallDataSubdir tree being 0o700 on the host.
-		if err := os.WriteFile(filepath.Join(svcDir, "client.key"), keyPEM, 0o644); err != nil {
+		if err := writeFileAtomic(filepath.Join(svcDir, "client.key"), keyPEM, 0o644); err != nil {
 			return fmt.Errorf("write %s key: %w", svc, err)
 		}
 	}
 	return nil
 }
 
-// alsConfig returns the Envoy access logger upstream config. When the
-// infra issuer is wired and OtelInfraPort is set, the ALS cluster targets
-// the mTLS-gated receiver. Otherwise it falls back to the plaintext
-// receiver — preserves prior behavior when the monitoring stack
-// pre-dates the intermediate-CA wiring.
+// writeFileAtomic writes data to path via tmp file + os.Rename so a
+// partial write (ENOSPC, EINTR) leaves any pre-existing file intact
+// rather than half-overwritten. Same-filesystem rename is atomic on
+// POSIX; the .tmp lives in the same directory as path.
+func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, mode); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+// alsConfig returns the Envoy access logger upstream config. When
+// ensureInfraClientCerts has populated the cert material (which
+// implies a wired infra issuer — infraCertsReady is only set true
+// after a successful mint) AND OtelInfraPort is set, the ALS cluster
+// targets the mTLS-gated receiver. Otherwise it returns the empty
+// struct so Envoy falls back to the stdout JSON sink — preserves prior
+// behavior when the monitoring stack pre-dates the intermediate-CA
+// wiring, when no issuer is configured, or when cert minting failed.
+//
+// Reads s.infraCertsReady; assumed invoked from the controlplane
+// ActionQueue worker goroutine so the field observes the most recent
+// ensureConfigs run coherently (see Stack docstring).
 func (s *Stack) alsConfig() ALSConfig {
-	if s.infraIssuer == nil {
+	if !s.infraCertsReady {
 		return ALSConfig{}
 	}
 	mon := s.cfg.SettingsStore().Read().Monitoring
@@ -550,6 +641,11 @@ type containerSpec struct {
 	capAdd       []string
 }
 
+// envoyContainerSpec composes the Envoy container spec for the current
+// stack state. Reads s.infraCertsReady; callers must invoke from the
+// controlplane ActionQueue worker goroutine (the same single goroutine
+// that mutates the flag inside ensureConfigs) so the spec observes the
+// flag coherently with the most recent mint result.
 func (s *Stack) envoyContainerSpec(netInfo *NetworkInfo) containerSpec {
 	// Bind Mount.Source values must be host-FS paths — the Docker daemon
 	// resolves them on the host, not inside the CP container where the
@@ -572,9 +668,12 @@ func (s *Stack) envoyContainerSpec(netInfo *NetworkInfo) containerSpec {
 		},
 	}
 	// mTLS client material for the OTLP/gRPC access logger. Only attached
-	// when the infra issuer is wired and minted leaves exist; without it
-	// Envoy keeps shipping access logs via the stdout JSON sink.
-	if s.infraIssuer != nil {
+	// when the infra issuer is wired AND ensureInfraClientCerts populated
+	// the cert files; without it Envoy keeps shipping access logs via the
+	// stdout JSON sink. Gating on infraCertsReady (not infraIssuer != nil)
+	// prevents bind-mounting a partially-populated dir after a mint
+	// failure.
+	if s.infraCertsReady {
 		mounts = append(mounts, mount.Mount{
 			Type:     mount.TypeBind,
 			Source:   filepath.Join(consts.HostFirewallOtelCertsDir, "envoy"),
@@ -598,6 +697,11 @@ func (s *Stack) envoyContainerSpec(netInfo *NetworkInfo) containerSpec {
 	}
 }
 
+// corednsContainerSpec composes the CoreDNS container spec for the
+// current stack state. Reads s.infraCertsReady; callers must invoke
+// from the controlplane ActionQueue worker goroutine (see
+// envoyContainerSpec doc) so the spec observes the flag coherently
+// with the most recent mint result.
 func (s *Stack) corednsContainerSpec(netInfo *NetworkInfo) containerSpec {
 	healthPort := consts.CoreDNSHealthHostPort
 	// Mount.Source is a host-FS path; consts.HostCorefilePath is derived
@@ -608,9 +712,14 @@ func (s *Stack) corednsContainerSpec(netInfo *NetworkInfo) containerSpec {
 	// /plugins/otel) emits one OTLP log record per query over mTLS to
 	// the CP-only receiver at otel-collector:OtelInfraPort. CLAWKER_COREDNS_
 	// OTEL_ENDPOINT in container env (set by container_env below) wires
-	// the plugin to the receiver; the cert + key bind-mounts at
-	// /etc/clawker/auth/{coredns,tls} match the plugin's hardcoded
-	// defaults (see plugins/otel/setup.go).
+	// the plugin to the receiver; the cert + key + CA bind-mount at
+	// /etc/clawker/auth/coredns/ matches the plugin's hardcoded
+	// defaults (see plugins/otel/setup.go). Gated on infraCertsReady so
+	// a mint failure does NOT wire the env var or mount — without the
+	// env var, the plugin installs noopEmitter and CoreDNS starts
+	// cleanly; with the env var pointing at missing files, the plugin
+	// returns plugin.Error and CoreDNS refuses to start (taking the
+	// firewall plane down on a telemetry failure).
 	mounts := []mount.Mount{
 		{
 			Type:     mount.TypeBind,
@@ -627,7 +736,7 @@ func (s *Stack) corednsContainerSpec(netInfo *NetworkInfo) containerSpec {
 		},
 	}
 	var env []string
-	if s.infraIssuer != nil {
+	if s.infraCertsReady {
 		mounts = append(mounts, mount.Mount{
 			Type:     mount.TypeBind,
 			Source:   filepath.Join(consts.HostFirewallOtelCertsDir, "coredns"),

@@ -25,13 +25,6 @@ services:
       # Docker daemon socket → /var/run/docker.sock (RO). Feeds the
       # docker_stats receiver. Path-on-host comes from Settings.Docker.Socket.
       - {{.DockerSocketPath}}:/var/run/docker.sock:ro
-      # Docker per-container log dirs → /var/lib/docker/containers (RO).
-      # Feeds the filelog/coredns receiver which tails the JSON log file
-      # for clawker-coredns and filters on the `source=coredns` body
-      # prefix to drop other containers' lines. Blast radius: collector
-      # can see all container stdout/stderr; acceptable because the
-      # collector is already trusted with the docker_stats socket above.
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
 {{- if .OtelInfraPort}}
       # CLI-issued mTLS material for the CP-only receiver. Bound RO from
       # the CLI auth dir on the host. The CA bundle gates client certs

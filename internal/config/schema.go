@@ -355,11 +355,20 @@ type OtelConfig struct {
 
 // MonitoringConfig configures monitoring stack ports and OTEL endpoints.
 //
-// Service hostnames (otel-collector, prometheus, opensearch-node,
-// opensearch-dashboards) live in [consts.MonitoringServiceHostnames] —
-// they are not knobs here because the firewall plane (CoreDNS
-// internalHosts) needs the same names. Rename a service there and the
-// compose template + DNS follow by construction.
+// Service hostnames live in [consts] as four individual constants
+// ([consts.MonitoringServiceOtelCollector], [consts.MonitoringServicePrometheus],
+// [consts.MonitoringServiceOpenSearchNode],
+// [consts.MonitoringServiceOpenSearchDashboards]) — they are not
+// knobs here because the compose template renders all four directly,
+// and the firewall plane (CoreDNS internalHosts via the
+// [consts.MonitoringServiceHostnames] slice) shares the same names.
+// The CoreDNS slice contains only otel-collector + prometheus — the
+// agent-dialable subset. OpenSearch + OpenSearch Dashboards are
+// intentionally excluded: agents push telemetry through the collector
+// and never dial the indices directly, so widening CoreDNS forwarding
+// to those hostnames would broaden the agent's egress surface for no
+// functional gain. Rename a service in [consts] and both surfaces
+// follow by construction.
 type MonitoringConfig struct {
 	OtelCollectorPort        int             `yaml:"otel_collector_port,omitempty" label:"OTEL Collector Port" desc:"Host port for the OTEL HTTP receiver" default:"4318"`
 	OtelCollectorHost        string          `yaml:"otel_collector_host,omitempty" label:"OTEL Collector Host" desc:"Hostname for reaching the collector from the host" default:"localhost"`

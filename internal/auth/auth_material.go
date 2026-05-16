@@ -636,7 +636,17 @@ func ensureInfraIntermediateCA() error {
 	}
 
 	if _, err := os.Stat(certPath); err == nil {
-		if _, err := os.Stat(keyPath); err == nil {
+		if info, err := os.Stat(keyPath); err == nil {
+			// Migrate in-place: an upgrade from an older clawker that
+			// wrote this key at 0o644 leaves a world-readable signing
+			// key on disk forever (regen only fires on file absence).
+			// Tighten unconditionally — same UID owns the file by
+			// construction, so chmod is cheap and always succeeds.
+			if info.Mode().Perm() != 0o600 {
+				if err := os.Chmod(keyPath, 0o600); err != nil {
+					return fmt.Errorf("tighten infra CA key perms: %w", err)
+				}
+			}
 			return nil
 		}
 	}
@@ -680,11 +690,13 @@ func ensureInfraIntermediateCA() error {
 	if err := writeCert(certPath, certDER); err != nil {
 		return fmt.Errorf("write intermediate cert: %w", err)
 	}
-	// 0o644 on the key so the CP container (which runs as root inside
-	// the container but reads from a bind-mounted host path) can read
-	// it without per-container chown ceremony. The auth/ tree itself
-	// is 0o700 — other local users on the host cannot reach this file.
-	if err := writeECDSAKey(keyPath, key, 0o644); err != nil {
+	// 0o600: CP runs as root inside the container and reads 0o600 host
+	// bind-mounts without any chown ceremony (same pattern as the
+	// sibling CP OAuth2/mTLS client key written by ensureCPClientCert
+	// below). The infra intermediate CA private key signs runtime
+	// mTLS leaves trusted by the CP's trusted-infra OTLP receiver; it
+	// must NOT be world-readable on the host.
+	if err := writeECDSAKey(keyPath, key, 0o600); err != nil {
 		return fmt.Errorf("write intermediate key: %w", err)
 	}
 	return nil

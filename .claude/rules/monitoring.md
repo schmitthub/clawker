@@ -43,21 +43,21 @@ Service hostnames live in `internal/consts/monitoring.go` as four individual con
 Envoy and CoreDNS access logs are scraped into OpenSearch with dedicated indices so each shape gets a clean dynamic mapping.
 
 ### Envoy (`service.name="envoy"`, index `clawker-envoy`)
-- Ships via the native `envoy.access_loggers.open_telemetry` sink (OTLP/gRPC) to the collector's OTLP receiver. The cluster `otel_collector_als` (defined in `firewall/envoy_config.go::buildOtelALSCluster`) dials `otel-collector:4317`.
-- Resource attribute `service.name=envoy` is stamped on the Envoy side by `otelAccessLogEntry`. The routing connector dispatches the record to `logs/envoy`; `resource/envoy` stamps `ingest_source=envoy` post-routing.
+- Ships via the native `envoy.access_loggers.open_telemetry` sink (OTLP/gRPC) to the collector's mTLS-gated `otlp/infra` receiver. The cluster `otel_collector_als` (defined in `firewall/envoy_config.go::buildOtelALSCluster`) is parameterized by `ALSConfig` — `MTLS=true` dials `OtelInfraPort` with an upstream TLS transport_socket using the CLI-CA-chained leaf bind-mounted under `/etc/envoy/otel-tls/`; `MTLS=false` falls back to plaintext `otel-collector:4317`.
+- Resource attribute `service.name=envoy` is stamped on the Envoy side by `otelAccessLogEntry`. `routing/trusted` dispatches the record to `logs/envoy`; `resource/envoy` stamps `ingest_source=envoy` post-routing.
 - The legacy `envoy.access_loggers.stdout` JSON sink is kept alongside for `docker logs clawker-envoy` triage when the monitoring stack is down.
 - Structured fields land on OTLP attributes: `domain`, `proto` (tls/http/deny/tcp/ssh), `response_code` (HTTP contexts), `response_flags`, `method`, `path`, `request_host`. `response_flags` containing `UF` (upstream failure) indicates blocked/denied traffic.
 
 ### CoreDNS (`service.name="coredns"`, index `clawker-coredns`)
-- CoreDNS's `log` plugin writes each query as a logfmt line beginning with the sentinel `source=coredns` (see `firewall/coredns_config.go::corefileLogFormat`).
-- The collector's `filelog/coredns` receiver tails `/var/lib/docker/containers/*/*-json.log` (Docker host log dirs, bind-mounted RO into the collector), parses the json-file envelope, promotes the inner `log` field to body, then keeps only lines matching `^\[INFO\] source=coredns` — i.e. the query access logs emitted by the `log` plugin. CoreDNS plugin WARNING/ERROR output is intentionally dropped; this pipeline is for security visibility, not dev debugging. No CoreDNS binary, plugin, or env change.
-- `resource/coredns` stamps `service.name=coredns` + `ingest_source=coredns` on the dedicated `logs/coredns` pipeline before writing to OpenSearch.
-- The body retains the logfmt shape: `source=coredns client_ip=… domain=… qtype=(A|AAAA) rcode=(NOERROR|NXDOMAIN) duration=…`. `rcode=NXDOMAIN` indicates blocked domain lookups.
+- Ships via the in-tree `otel` CoreDNS plugin (`cmd/coredns-clawker/plugins/otel/`) which emits one structured `dns.query` OTLP log record per query (OTLP/gRPC + mTLS) to the collector's `otlp/infra` receiver. The plugin is the **first** directive in every server block (set in `cmd/coredns-clawker/main.go`) so it observes the final rcode + answer set after `forward`/`template`/etc.
+- Endpoint is `CLAWKER_COREDNS_OTEL_ENDPOINT` (host:port — no scheme; mTLS is forced by the client TLS config). `firewall.Stack` sets it to `consts.MonitoringServiceOtelCollector` + `Settings.Monitoring.OtelInfraPort` and bind-mounts the CLI-CA-chained leaf at `/etc/clawker/auth/coredns/client.{pem,key}` + the CA at `/etc/clawker/auth/coredns/ca.pem`. Leaves are issued + rotated by `internal/controlplane/infracerts`; `tls.Config.GetClientCertificate` re-reads the leaf on every handshake so rotation requires no container restart.
+- `service.name=coredns` is stamped by the plugin's OTel SDK Resource; trust comes from the mTLS handshake at `otlp/infra`, not from the self-declared name. `routing/trusted` dispatches to `logs/coredns`; `resource/coredns` stamps `ingest_source=coredns` post-routing.
+- Each record carries `event.name=dns.query`, body `"CoreDNS query handled"`, and attributes `source=coredns`, `client_ip`, `zone`, `query_name`, `qtype`, `rcode`, `answer_count`, `duration_ms`, plus `answers` (slice of strings) when non-empty. `rcode=NXDOMAIN` indicates blocked domain lookups; resolver errors set `record.SetErr(...)` with `rcode=SERVFAIL`.
+- The stdout `log` plugin is kept alongside for `docker logs clawker-coredns` triage when the monitoring stack is down — it is no longer scraped into OpenSearch.
 
 **Routing topology**:
-- `otlp` receiver → `logs/in` (batched) → `routing/logs_by_service` connector → dispatches to `logs/claude-code` / `logs/envoy` by `service.name`.
-- `filelog/coredns` receiver → `logs/coredns` directly (bypasses the routing connector — the filter operator already guarantees every record is a CoreDNS line, and feeding through the connector would risk dupes if a stray OTLP record ever arrived with `service.name=coredns`).
-- `otlp/infra` receiver (mTLS-gated) → `logs/cp` directly, same reasoning as filelog.
+- Untrusted: `otlp` receiver (no client auth, plaintext) → `logs/in_untrusted` (batched) → `routing/untrusted` connector → only `service.name=claude-code` reaches `logs/claude-code`; everything else is dropped. Spoofed `service.name=envoy`/`coredns`/`clawker-cp` from this lane goes nowhere.
+- Trusted: `otlp/infra` receiver (mTLS, `client_ca_file` = CLI root CA) → `logs/in_trusted` → `routing/trusted` connector → dispatches by sender-declared `service.name` to `logs/cp` (`clawker-cp`), `logs/envoy` (`envoy`), or `logs/coredns` (`coredns`). mTLS is the auth boundary; `service.name` is honored, not overwritten.
 
 ## What NOT To Do
 

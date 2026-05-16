@@ -125,6 +125,12 @@ func TestContainerSpecs_OtelClientMaterialUsesSingleDirectoryMountPerService(t *
 	overrideHostPathsForTest(t, consts.DataDir())
 
 	s := NewStack(nil, cfg, logger.Nop(), nil, fakeIssuerForSpecTest{})
+	// Container specs gate mTLS bind-mounts on infraCertsReady so a
+	// partial mint can't wire missing cert paths into CoreDNS startup
+	// (which would hard-fail). The cert mint flow is exercised by
+	// stack_infracerts_internal_test.go; this test pins the spec
+	// contract assuming a successful mint, so set the flag directly.
+	s.infraCertsReady = true
 	netInfo := &NetworkInfo{NetworkID: "net-test", EnvoyIP: "172.20.0.2", CoreDNSIP: "172.20.0.3"}
 
 	t.Run("envoy", func(t *testing.T) {

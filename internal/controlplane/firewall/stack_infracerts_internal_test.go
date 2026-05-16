@@ -1,7 +1,14 @@
 package firewall
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"errors"
+	"math/big"
 	"os"
 	"path/filepath"
 	"testing"
@@ -15,6 +22,31 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/testenv"
 )
+
+// mintTestCertKeyPEM produces a self-signed ECDSA cert + matching key
+// as PEM. ensureInfraClientCerts now validates issuer output via
+// tls.X509KeyPair before committing to disk; tests must provide a real
+// matching pair instead of opaque bytes.
+func mintTestCertKeyPEM(t *testing.T) (certPEM, keyPEM []byte) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	require.NoError(t, err)
+	tmpl := &x509.Certificate{
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: "test-infra-leaf"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	require.NoError(t, err)
+	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	require.NoError(t, err)
+	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	return certPEM, keyPEM
+}
 
 // fakeIssuer is a deterministic InfraIssuer for tests.
 type fakeIssuer struct {
@@ -46,9 +78,10 @@ func TestStack_ensureInfraClientCerts_WritesPerServiceMaterial(t *testing.T) {
 	rootCASourcePath = func() string { return caSrc }
 	t.Cleanup(func() { rootCASourcePath = prev })
 
+	chainPEM, keyPEM := mintTestCertKeyPEM(t)
 	issuer := &fakeIssuer{
-		chainPEM: []byte("---CHAIN---\n"),
-		keyPEM:   []byte("---KEY---\n"),
+		chainPEM: chainPEM,
+		keyPEM:   keyPEM,
 	}
 	s := NewStack(nil, cfg, logger.Nop(), nil, issuer)
 
@@ -60,9 +93,10 @@ func TestStack_ensureInfraClientCerts_WritesPerServiceMaterial(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, svc := range []string{"envoy", "coredns"} {
-		certPath := filepath.Join(dir, svc, "client.pem")
-		keyPath := filepath.Join(dir, svc, "client.key")
-		caPath := filepath.Join(dir, svc, "ca.pem")
+		svcDir := filepath.Join(dir, svc)
+		certPath := filepath.Join(svcDir, "client.pem")
+		keyPath := filepath.Join(svcDir, "client.key")
+		caPath := filepath.Join(svcDir, "ca.pem")
 
 		cert, err := os.ReadFile(certPath)
 		require.NoError(t, err, "%s cert", svc)
@@ -81,6 +115,17 @@ func TestStack_ensureInfraClientCerts_WritesPerServiceMaterial(t *testing.T) {
 		info, err := os.Stat(keyPath)
 		require.NoError(t, err)
 		assert.Equal(t, os.FileMode(0o644), info.Mode().Perm(), "%s key mode", svc)
+
+		// 0o700 on the per-service dir is the defense-in-depth the
+		// 0o644 key file relies on: a non-root host user cannot
+		// traverse into svcDir to read the otherwise world-readable
+		// bind-mounted key. If this assertion ever drifts, the
+		// "trusted infra-issuer-signed client" trust boundary on the
+		// otlp/infra receiver collapses (any local user can forge
+		// Envoy/CoreDNS log lines).
+		dirInfo, err := os.Stat(svcDir)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o700), dirInfo.Mode().Perm(), "%s dir mode", svc)
 	}
 }
 

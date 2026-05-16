@@ -21,7 +21,11 @@ const (
 // CoreDNS must rewire to Docker's embedded DNS (127.0.0.11). Consumed
 // by:
 //   - internal/controlplane/firewall/coredns_config.go (internalHosts)
-//   - internal/monitor/templates.go (MonitorTemplateData)
+//
+// internal/monitor/templates.go renders compose YAML for all four
+// services from the individual MonitoringService* constants directly,
+// not from this slice — do NOT add OpenSearch hostnames here to "make
+// compose work"; doing so only widens CoreDNS forwarding for no reason.
 //
 // Scope: only services agent containers legitimately need to dial.
 // otel-collector is the OTLP push target for Claude Code + clawker-cp.

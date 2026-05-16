@@ -108,10 +108,14 @@ func newLogger(f *cmdutil.Factory) (*logger.Logger, error) {
 	monitoringCfg := settings.Monitoring
 
 	// Build OTEL config from settings if enabled. CLI runs on the host and
-	// reaches the collector via its host-published OTLP/HTTP port.
+	// reaches the collector via its host-published OTLP/gRPC port —
+	// logger.New uses otlploggrpc (see internal/logger/logger.go::
+	// newOtelProvider). Dialing the OtelCollectorPort (HTTP, 4318) with
+	// a gRPC exporter returns 415 Unsupported Media Type and silently
+	// drops every record; use OtelGRPCPort (4317) instead.
 	var otelCfg *logger.OtelOptions
 	if loggingCfg.Otel.Enabled != nil && *loggingCfg.Otel.Enabled {
-		endpoint := fmt.Sprintf("%s:%d", monitoringCfg.OtelCollectorHost, monitoringCfg.OtelCollectorPort)
+		endpoint := fmt.Sprintf("%s:%d", monitoringCfg.OtelCollectorHost, monitoringCfg.OtelGRPCPort)
 		otelCfg = &logger.OtelOptions{
 			Endpoint:       endpoint,
 			Insecure:       true,

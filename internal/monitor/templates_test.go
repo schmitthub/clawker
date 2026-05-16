@@ -140,8 +140,6 @@ docker:
 		// Host paths threaded straight through.
 		{"hostfs bind mount", data.HostFilesystem + ":/hostfs:ro"},
 		{"docker socket bind mount", data.DockerSocketPath + ":/var/run/docker.sock:ro"},
-		// filelog/coredns receiver needs the docker container log dirs.
-		{"docker containers bind mount", "/var/lib/docker/containers:/var/lib/docker/containers:ro"},
 	}
 	for _, check := range valueRouting {
 		if !strings.Contains(result, check.contain) {

@@ -224,33 +224,36 @@ func (c *configImpl) ContainerUID() int { return consts.ContainerUID }
 // Deprecated: use consts.ContainerGID.
 func (c *configImpl) ContainerGID() int { return consts.ContainerGID }
 
-// OpenSearchURL returns the OpenSearch REST API URL on clawker-net.
-// The settings port drives both the host publish and the container's
-// http.port env, so this URL works equally well in-cluster (via Docker
-// DNS) and from the host (via 127.0.0.1).
+// OpenSearchURL returns the OpenSearch REST API URL on clawker-net
+// (e.g. http://opensearch-node:9200). **In-cluster only** — the
+// hostname is Docker-DNS-resolvable from containers attached to
+// clawker-net, NOT from the host. For host-side display, build a
+// http://127.0.0.1:<port> URL from MonitoringConfig().OpenSearchPort
+// directly (the settings port drives both the in-cluster listener and
+// the host publish, so the port number matches).
 func (c *configImpl) OpenSearchURL() string {
 	return consts.ServiceURL(consts.MonitoringServiceOpenSearchNode, c.MonitoringConfig().OpenSearchPort, false)
 }
 
 // OpenSearchDashboardsURL returns the OpenSearch Dashboards UI URL on
-// clawker-net. The settings port drives both the host publish and the
-// container's SERVER_PORT env.
+// clawker-net. **In-cluster only** — see [OpenSearchURL] for the host
+// access pattern.
 func (c *configImpl) OpenSearchDashboardsURL() string {
 	return consts.ServiceURL(consts.MonitoringServiceOpenSearchDashboards, c.MonitoringConfig().OpenSearchDashboardsPort, false)
 }
 
-// PrometheusURL returns the Prometheus UI URL on clawker-net. The
-// settings port drives both the host publish and Prometheus'
-// --web.listen-address flag.
+// PrometheusURL returns the Prometheus UI URL on clawker-net.
+// **In-cluster only** — see [OpenSearchURL] for the host access
+// pattern.
 func (c *configImpl) PrometheusURL() string {
 	return consts.ServiceURL(consts.MonitoringServicePrometheus, c.MonitoringConfig().PrometheusPort, false)
 }
 
 // OtelCollectorURL returns the OTLP collector base URL on clawker-net
-// (no path). Agents on clawker-net push to this URL + a path; the full
-// per-signal endpoints are composed by [OtelLogsEndpoint] (and any
-// future per-signal accessor) so callers never concatenate paths
-// themselves.
+// (no path). **In-cluster only** — agents on clawker-net push to this
+// URL + a path; the full per-signal endpoints are composed by
+// [OtelLogsEndpoint] (and any future per-signal accessor) so callers
+// never concatenate paths themselves.
 func (c *configImpl) OtelCollectorURL() string {
 	return consts.ServiceURL(consts.MonitoringServiceOtelCollector, c.MonitoringConfig().OtelCollectorPort, false)
 }

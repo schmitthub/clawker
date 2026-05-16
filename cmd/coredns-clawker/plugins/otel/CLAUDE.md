@@ -2,7 +2,7 @@
 
 Emits one structured `dns.query` log record per DNS query handled by CoreDNS, exported over OTLP/gRPC + mTLS to the CP-only collector receiver. Installed as the `otel` directive in every server block of the firewall Corefile (the first directive — runs after every other plugin has produced its final rcode + answer set).
 
-Runtime owner: `internal/controlplane/firewall.Stack` builds `clawker-coredns:latest`, manages its lifecycle, bind-mounts the mTLS material under `/etc/clawker/auth/coredns/` + `/etc/clawker/auth/tls/ca.pem`, and sets `CLAWKER_COREDNS_OTEL_ENDPOINT` in the container env. Endpoint host is `consts.MonitoringServiceOtelCollector` (clawker-net hostname) + port `cfg.Settings().Monitoring.OtelInfraPort`.
+Runtime owner: `internal/controlplane/firewall.Stack` builds `clawker-coredns:latest`, manages its lifecycle, bind-mounts the mTLS material (leaf cert + key + CA) under `/etc/clawker/auth/coredns/`, and sets `CLAWKER_COREDNS_OTEL_ENDPOINT` in the container env. Endpoint host is `consts.MonitoringServiceOtelCollector` (clawker-net hostname) + port `cfg.Settings().Monitoring.OtelInfraPort`.
 
 Purpose: feed the monitoring stack with a per-query log stream that includes client IP, zone, query name, qtype, rcode, answer count + answers, duration, and resolver error. This is the OTLP-side complement to the plaintext stdout `log` directive (which is filelog-scraped for `docker logs` triage).
 
@@ -56,7 +56,7 @@ const (
     envEndpoint           = "CLAWKER_COREDNS_OTEL_ENDPOINT"
     defaultClientCertPath = "/etc/clawker/auth/coredns/client.pem"
     defaultClientKeyPath  = "/etc/clawker/auth/coredns/client.key"
-    defaultCACertPath     = "/etc/clawker/auth/tls/ca.pem"
+    defaultCACertPath     = "/etc/clawker/auth/coredns/ca.pem"
 )
 ```
 
@@ -93,7 +93,7 @@ The plugin is the OTLP **client**. Material is issued + bind-mounted by `firewal
 |-----------------------|----------------|
 | `/etc/clawker/auth/coredns/client.pem` | `FirewallOtelClientsDir/coredns/client.pem` — leaf signed by CLI CA via `infracerts.Issuer`, rotated on `Reload` |
 | `/etc/clawker/auth/coredns/client.key` | `FirewallOtelClientsDir/coredns/client.key` |
-| `/etc/clawker/auth/tls/ca.pem` | `FirewallOtelCertsDir/ca.pem` — copy of CLI root CA |
+| `/etc/clawker/auth/coredns/ca.pem` | `FirewallOtelClientsDir/coredns/ca.pem` — copy of CLI root CA written alongside the leaf by `ensureInfraClientCerts` |
 
 `buildTLSConfig`:
 - Requires all three paths; returns error if any is empty.

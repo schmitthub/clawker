@@ -139,7 +139,7 @@ clawker monitor init    # Scaffold configs (one-time)
 clawker monitor up      # Start OTel Collector + OpenSearch + OpenSearch Dashboards + Prometheus
 ```
 
-Open OpenSearch Dashboards at `http://localhost:5601` to explore logs (costs, token usage, tool calls, session events), and Prometheus at `http://localhost:9090` for metrics. The stack ships bare — first-run setup requires creating a Dashboards index pattern covering `claude-code` and `clawker-cp`. See [Monitoring](/monitoring) for the full setup checklist.
+Open OpenSearch Dashboards at `http://localhost:5601` to explore logs (costs, token usage, tool calls, session events, firewall egress, DNS queries), and Prometheus at `http://localhost:9090` for metrics. The stack ships bare — first-run setup requires creating a Dashboards index pattern covering `clawker-*,claude-code` (the four indices: `claude-code`, `clawker-cp`, `clawker-envoy`, `clawker-coredns`). See [Monitoring](/monitoring) for the full setup checklist.
 
 ```bash
 clawker monitor down    # Stop when done
