@@ -213,7 +213,7 @@ func NormalizeFields[T any](v T, opts ...NormalizeOption) FieldSet {
 	}
 
 	// Dereference pointer-to-struct.
-	if rt.Kind() == reflect.Ptr {
+	if rt.Kind() == reflect.Pointer {
 		rt = rt.Elem()
 	}
 
@@ -265,7 +265,7 @@ func normalizeStruct(rt reflect.Type, prefix string, fields *[]Field, kindFunc K
 		ft := sf.Type
 
 		// Handle pointer types.
-		if ft.Kind() == reflect.Ptr {
+		if ft.Kind() == reflect.Pointer {
 			elem := ft.Elem()
 			if elem.Kind() == reflect.Bool {
 				*fields = append(*fields, &field{path: path, kind: KindBool, label: label, desc: desc, def: def, required: req, mergeTag: merge})

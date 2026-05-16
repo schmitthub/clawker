@@ -20,7 +20,7 @@ var durationKind = reflect.TypeOf(time.Duration(0))
 // v must be a non-nil pointer to a struct. Panics otherwise.
 func SetFieldValue(v any, path string, val string) error {
 	rv := reflect.ValueOf(v)
-	if rv.Kind() != reflect.Ptr || rv.IsNil() {
+	if rv.Kind() != reflect.Pointer || rv.IsNil() {
 		panic("storeui.SetFieldValue: v must be a non-nil pointer to a struct")
 	}
 	if rv.Elem().Kind() != reflect.Struct {
@@ -43,7 +43,7 @@ func SetFieldValue(v any, path string, val string) error {
 		f := current.Field(idx)
 
 		// Allocate nil pointer-to-struct parents.
-		if f.Kind() == reflect.Ptr {
+		if f.Kind() == reflect.Pointer {
 			if f.IsNil() {
 				f.Set(reflect.New(f.Type().Elem()))
 			}
@@ -98,7 +98,7 @@ func setLeaf(f reflect.Value, val string, path string) error {
 	ft := f.Type()
 
 	// Handle pointer types.
-	if ft.Kind() == reflect.Ptr {
+	if ft.Kind() == reflect.Pointer {
 		// *bool → Bool (always allocate a non-nil pointer)
 		if ft.Elem().Kind() == reflect.Bool {
 			b, err := strconv.ParseBool(val)
