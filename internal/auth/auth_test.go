@@ -176,7 +176,7 @@ func TestCheckAuthMaterial_ReportsStatus(t *testing.T) {
 
 	status, err := CheckAuthMaterial()
 	require.NoError(t, err)
-	require.Len(t, status, 12)
+	require.Len(t, status, 14)
 
 	for _, s := range status {
 		assert.True(t, s.Exists, "%s should exist", s.Name)
@@ -188,6 +188,7 @@ func TestCheckAuthMaterial_ReportsStatus(t *testing.T) {
 		"CLI client certificate",
 		"OTEL server certificate",
 		"CP client certificate",
+		"Infra intermediate CA certificate",
 	} {
 		s := statusByName(t, status, name)
 		assert.False(t, s.Expires.IsZero(), "%s should have expiry", name)
@@ -201,7 +202,7 @@ func TestCheckAuthMaterial_MissingFiles(t *testing.T) {
 
 	status, err := CheckAuthMaterial()
 	require.NoError(t, err)
-	require.Len(t, status, 12)
+	require.Len(t, status, 14)
 
 	for _, s := range status {
 		assert.False(t, s.Exists, "%s should not exist", s.Name)

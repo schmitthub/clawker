@@ -1,69 +1,43 @@
 receivers:
+  # Untrusted OTLP ingress for agent containers (Claude Code's SDK).
+  # No client auth — agent on clawker-net can reach this. Records are
+  # dispatched by routing/untrusted which only forwards service.name=
+  # claude-code; everything else is dropped. service.name=envoy/coredns/
+  # clawker-cp from this receiver can NOT route to the trusted indices.
   otlp:
     protocols:
       grpc:
         endpoint: 0.0.0.0:{{.OtelGRPCPort}}
       http:
         endpoint: 0.0.0.0:{{.OtelCollectorPort}}
-  # CoreDNS query-log tail. CoreDNS's `log` plugin writes each query as a
-  # logfmt line beginning with `source=coredns` (see
-  # firewall/coredns_config.go::corefileLogFormat). Docker's json-file
-  # driver captures those lines under
-  # /var/lib/docker/containers/<id>/<id>-json.log; the host directory is
-  # bind-mounted RO into the collector. We tail every container log file
-  # (we don't know the coredns container id at config-render time), parse
-  # the Docker JSON envelope, then drop everything that doesn't start with
-  # the source=coredns sentinel. Records that pass through get stamped
-  # with service.name=coredns by the resource/coredns processor and
-  # dispatched by the routing connector to the dedicated OpenSearch
-  # index.
-  filelog/coredns:
-    include: [/var/lib/docker/containers/*/*-json.log]
-    include_file_path: true
-    start_at: end
-    operators:
-      # Docker json-file envelope: {"log":"...","stream":"stdout","time":"..."}
-      - type: json_parser
-        id: docker_envelope
-      # Promote the inner `log` field (the actual CoreDNS line) to body so
-      # the substring filter below operates on the real payload.
-      - type: move
-        from: attributes.log
-        to: body
-      # Trim trailing newline left by the json-file driver.
-      - type: regex_parser
-        id: trim_newline
-        parse_from: body
-        regex: ^(?P<line>.*?)\s*$
-      - type: move
-        from: attributes.line
-        to: body
-      # Drop everything that isn't a CoreDNS query access log. The
-      # `log` plugin emits one line per DNS query at INFO level with
-      # the corefileLogFormat prefix `source=coredns`; the resulting
-      # body shape is `[INFO] source=coredns ...`. WARNING/ERROR
-      # lines (plugin failures, etc.) are intentionally dropped —
-      # this pipeline feeds the security-visibility index, not a
-      # generic dev-debug log sink.
-      - type: filter
-        id: drop_non_coredns
-        expr: 'not (body matches "^\\[INFO\\] source=coredns")'
-{{- if .OtelCPPort}}
-  # mTLS-gated receiver dedicated to clawker-cp. Listens on
-  # 0.0.0.0:<port> inside the container; the published mapping in
-  # compose.yaml binds the host port to 127.0.0.1 only, so the only
-  # off-host way to reach this receiver is via clawker-net DNS — and
-  # a TLS handshake with require_client_certificate fails for any
-  # peer that wasn't issued a client cert by the CLI CA. Agents on
-  # clawker-net therefore can't push here even if they try.
-  otlp/cp:
+{{- if .OtelInfraPort}}
+  # Trusted OTLP ingress, gated by mTLS. Listens on 0.0.0.0:<port>
+  # inside the container; the published mapping in compose.yaml binds
+  # the host port to 127.0.0.1 only. Agents on clawker-net can reach
+  # this port over the docker network, but the TLS handshake rejects
+  # any peer without a client cert chained to the CLI root CA — only
+  # CP (CLI-direct cp-client cert) and infra services (envoy/coredns,
+  # intermediate-signed via internal/controlplane/infracerts) have one.
+  #
+  # service.name on records that arrive here is trusted by virtue of
+  # mTLS having succeeded. routing/trusted dispatches by service.name
+  # to cp/envoy/coredns pipelines. The downstream resource/* processors
+  # stamp ingest_source for cross-index queries; they do NOT overwrite
+  # service.name (a compromised infra service is already game-over for
+  # its own log lane, no extra defense to add here).
+  otlp/infra:
     protocols:
-      http:
-        endpoint: 0.0.0.0:{{.OtelCPPort}}
+      grpc:
+        endpoint: 0.0.0.0:{{.OtelInfraPort}}
         tls:
           cert_file: /etc/otel/tls/server.pem
           key_file: /etc/otel/tls/server.key
           client_ca_file: /etc/otel/tls/ca.pem
+          # client_ca_file alone configures a trust pool but does NOT
+          # require peers to present a cert; agents on clawker-net would
+          # land in the trusted lane with no auth. require_client_auth=true
+          # makes the handshake fail when no client cert is presented.
+          require_client_auth: true
 {{- end}}
   # Collector self-telemetry. The otel-collector exposes its own
   # process/pipeline metrics as a Prometheus endpoint on :8888 by
@@ -155,49 +129,27 @@ processors:
         statements:
           - set(attributes["project"], resource.attributes["project"]) where resource.attributes["project"] != nil
           - set(attributes["agent"], resource.attributes["agent"]) where resource.attributes["agent"] != nil
-{{- if .OtelCPPort}}
-  # Provenance stamp for clawker-cp telemetry. Reaches this processor
-  # only via the mTLS-gated otlp/cp receiver (CLI-issued client cert
-  # required at TLS handshake — clawker containers on clawker-net have
-  # none and are rejected before bytes flow). Both service.name and
-  # ingest_source are forced regardless of what the client sent so
-  # CP-shaped logs cannot be forged from the unauth'd plaintext receiver.
+{{- if .OtelInfraPort}}
+  # Provenance stamps. Each trusted source gets ingest_source=<name>
+  # so cross-index queries can filter on a single field. service.name
+  # is NOT overwritten — mTLS handshake authenticated the sender;
+  # whatever they declared is trusted.
   resource/cp:
     attributes:
       - key: ingest_source
         value: cp
         action: upsert
-      - key: service.name
-        value: clawker-cp
-        action: upsert
-{{- end}}
-  # Stamp service.name=coredns + ingest_source=coredns on records that
-  # came in through the filelog/coredns receiver. The filter operator
-  # has already guaranteed the body starts with `source=coredns`, so
-  # this is provenance only — it lets the routing connector dispatch
-  # via the same service.name attribute used by Envoy ALS, CP, and
-  # claude-code, keeping the dispatch logic uniform.
-  resource/coredns:
-    attributes:
-      - key: ingest_source
-        value: coredns
-        action: upsert
-      - key: service.name
-        value: coredns
-        action: upsert
-  # Envoy ALS already stamps service.name=envoy on the record itself
-  # (see envoy.access_loggers.open_telemetry.resource_attributes in
-  # firewall/envoy_config.go); we still stamp ingest_source here for
-  # symmetry with the other sources so cross-index queries can filter
-  # on a single field.
   resource/envoy:
     attributes:
       - key: ingest_source
         value: envoy
         action: upsert
-      - key: service.name
-        value: envoy
+  resource/coredns:
+    attributes:
+      - key: ingest_source
+        value: coredns
         action: upsert
+{{- end}}
 
 exporters:
   # Stdout pipe-through for diagnosis. Surfaces in `docker logs
@@ -223,15 +175,10 @@ exporters:
     http:
       endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"
     logs_index: claude-code
-  # Envoy access-log records arrive via the OTLP/gRPC receiver tagged
-  # service.name=envoy by the access logger's resource_attributes
-  # (firewall/envoy_config.go::otelAccessLogEntry).
   opensearch/logs_envoy:
     http:
       endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"
     logs_index: clawker-envoy
-  # CoreDNS query records arrive via filelog/coredns; resource/coredns
-  # stamps service.name=coredns before the routing connector dispatches.
   opensearch/logs_coredns:
     http:
       endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"
@@ -245,26 +192,33 @@ connectors:
   # through the traces pipeline and re-emits them into the metrics
   # pipeline. Empty-series until traces actually flow.
   spanmetrics:
-  # Route OTLP logs by the upstream resource attribute `service.name`.
-  # Anthropic's Claude Code SDK sets `service.name=claude-code` by
-  # default (per https://code.claude.com/docs/en/monitoring-usage
-  # #service-information). Records without service.name, or with a
-  # value not listed in the routing table, are dropped silently
-  # (no default_pipelines). This keeps the unauth'd plaintext otlp
-  # receiver from accidentally ingesting arbitrary log shapes into
-  # the `claude-code` index where they would collide with Claude
-  # Code's mapping.
-  routing/logs_by_service:
+  # Route untrusted (plaintext OTLP) records. Only claude-code records
+  # land in their index; everything else is silently dropped (no
+  # default_pipelines). An agent crafting `service.name=envoy` from
+  # the unauth'd port CANNOT reach the clawker-envoy index — there is
+  # no envoy route off this connector.
+  routing/untrusted:
     error_mode: ignore
     table:
       - context: resource
         condition: attributes["service.name"] == "claude-code"
         pipelines: [logs/claude-code]
+{{- if .OtelInfraPort}}
+  # Route trusted (mTLS-gated) records by sender-declared service.name.
+  # Reachable only by peers with a CLI-root-chained client cert.
+  routing/trusted:
+    error_mode: ignore
+    table:
+      - context: resource
+        condition: attributes["service.name"] == "clawker-cp"
+        pipelines: [logs/cp]
       - context: resource
         condition: attributes["service.name"] == "envoy"
         pipelines: [logs/envoy]
-      # CoreDNS does NOT route through this connector — its records come
-      # in via filelog/coredns and feed logs/coredns directly.
+      - context: resource
+        condition: attributes["service.name"] == "coredns"
+        pipelines: [logs/coredns]
+{{- end}}
 
 service:
   pipelines:
@@ -276,62 +230,35 @@ service:
       receivers: [otlp, prometheus/self, docker_stats, hostmetrics, spanmetrics]
       processors: [batch, transform/metrics]
       exporters: [prometheus, debug]
-    # Inbound logs pipeline: terminates at the routing connector.
-    # Records pushed to the unauth'd otlp receiver flow here (Claude
-    # Code logs + Envoy ALS records carrying their own service.name
-    # resource attribute), get batched, then handed off. The
-    # connector inspects each record's resource.attributes
-    # ["service.name"] and dispatches to a matching downstream
-    # pipeline — or drops it if no rule matches (no default_pipelines
-    # configured). The filelog/coredns receiver bypasses this
-    # pipeline and feeds logs/coredns directly so the resource/coredns
-    # processor only sees CoreDNS records — overwriting service.name
-    # on the shared inbound pipeline would clobber Claude Code's
-    # resource attribute.
-    logs/in:
+    # Untrusted log ingress. Only claude-code routes downstream; other
+    # service.name values are dropped at the routing connector.
+    logs/in_untrusted:
       receivers: [otlp]
       processors: [batch]
-      exporters: [routing/logs_by_service]
-    # Claude Code logs pipeline: fed by the routing connector when
-    # service.name=claude-code. Writes to the `claude-code` index so
-    # the OTEL-semantic `event.name` schema doesn't collide with
-    # clawker-cp's scalar `attributes.event` mapping.
+      exporters: [routing/untrusted]
     logs/claude-code:
-      receivers: [routing/logs_by_service]
+      receivers: [routing/untrusted]
       processors: []
       exporters: [opensearch/logs_claude_code, debug]
-    # Envoy access-log pipeline: fed by the routing connector when
-    # service.name=envoy (the access logger stamps the resource
-    # attribute on the record itself; see envoy_config.go::
-    # otelAccessLogEntry). Writes to `clawker-envoy` so the request-
-    # flat attribute shape doesn't collide with CoreDNS's logfmt
-    # body or Claude Code's nested event records. resource/envoy
-    # adds the ingest_source provenance stamp post-routing for
-    # symmetry with the other sources.
+{{- if .OtelInfraPort}}
+    # Trusted log ingress. mTLS handshake is the auth boundary; the
+    # routing connector dispatches by sender-declared service.name to
+    # the right index. resource/* processors only stamp ingest_source
+    # for cross-index query convenience.
+    logs/in_trusted:
+      receivers: [otlp/infra]
+      processors: [batch]
+      exporters: [routing/trusted]
+    logs/cp:
+      receivers: [routing/trusted]
+      processors: [resource/cp]
+      exporters: [opensearch/logs_cp, debug]
     logs/envoy:
-      receivers: [routing/logs_by_service]
+      receivers: [routing/trusted]
       processors: [resource/envoy]
       exporters: [opensearch/logs_envoy, debug]
-    # CoreDNS query-log pipeline: fed directly by the filelog/coredns
-    # receiver (its filter operator already guarantees every record
-    # is a CoreDNS line, so no routing connector branch is needed).
-    # resource/coredns stamps service.name=coredns + ingest_source=
-    # coredns before the OpenSearch exporter writes to the
-    # `clawker-coredns` index. The routing connector is intentionally
-    # NOT listed as a receiver here — that path is already covered by
-    # the dedicated filelog feed and folding it in would risk dupes
-    # if a stray OTLP record ever arrived with service.name=coredns.
     logs/coredns:
-      receivers: [filelog/coredns]
-      processors: [resource/coredns, batch]
+      receivers: [routing/trusted]
+      processors: [resource/coredns]
       exporters: [opensearch/logs_coredns, debug]
-{{- if .OtelCPPort}}
-    # CP-side logs pipeline: separate receiver, separate processor
-    # chain. service.name and ingest_source are both forced post-
-    # receiver so a malicious cert holder (none exist outside CLI
-    # provisioning) still couldn't shadow Claude Code telemetry.
-    logs/cp:
-      receivers: [otlp/cp]
-      processors: [resource/cp, batch]
-      exporters: [opensearch/logs_cp, debug]
 {{- end}}

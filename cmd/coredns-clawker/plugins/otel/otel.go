@@ -15,10 +15,11 @@ import (
 	"github.com/miekg/dns"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
+	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	otellog "go.opentelemetry.io/otel/log"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	resource "go.opentelemetry.io/otel/sdk/resource"
+	"google.golang.org/grpc/credentials"
 )
 
 type Emitter interface {
@@ -166,15 +167,15 @@ func newProvider(opts Options) (*sdklog.LoggerProvider, error) {
 		return nil, err
 	}
 
-	exporterOpts := []otlploghttp.Option{
-		otlploghttp.WithEndpoint(opts.Endpoint),
-		otlploghttp.WithTLSClientConfig(tlsCfg),
+	exporterOpts := []otlploggrpc.Option{
+		otlploggrpc.WithEndpoint(opts.Endpoint),
+		otlploggrpc.WithTLSCredentials(credentials.NewTLS(tlsCfg)),
 	}
 	if opts.Timeout > 0 {
-		exporterOpts = append(exporterOpts, otlploghttp.WithTimeout(opts.Timeout))
+		exporterOpts = append(exporterOpts, otlploggrpc.WithTimeout(opts.Timeout))
 	}
 
-	exporter, err := otlploghttp.New(context.Background(), exporterOpts...)
+	exporter, err := otlploggrpc.New(context.Background(), exporterOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("create OTLP log exporter: %w", err)
 	}

@@ -181,7 +181,7 @@ func TestRenderTemplate_OtelConfig(t *testing.T) {
 monitoring:
   otel_collector_port: 5318
   otel_grpc_port: 5317
-  otel_cp_port: 5319
+  otel_infra_port: 5319
   prometheus_metrics_port: 9889
   opensearch_port: 9200
 `)
@@ -211,15 +211,16 @@ monitoring:
 		"exporters: [opensearch/logs_claude_code, debug]",
 		"exporters: [opensearch/logs_envoy, debug]",
 		"exporters: [opensearch/logs_coredns, debug]",
-		"exporters: [routing/logs_by_service]",
+		"exporters: [routing/untrusted]",
+		"exporters: [routing/trusted]",
 		"exporters: [prometheus, debug]",
-		"routing/logs_by_service:",
+		"routing/untrusted:",
+		"routing/trusted:",
 		`condition: attributes["service.name"] == "claude-code"`,
 		`condition: attributes["service.name"] == "envoy"`,
-		// CoreDNS records bypass the routing connector — they enter via
-		// the filelog receiver. Assert the dedicated branch directly.
-		"filelog/coredns:",
-		"/var/lib/docker/containers/*/*-json.log",
+		`condition: attributes["service.name"] == "coredns"`,
+		`condition: attributes["service.name"] == "clawker-cp"`,
+		"resource/cp:",
 		"resource/coredns:",
 		"resource/envoy:",
 		"prometheus/self:",
@@ -229,7 +230,14 @@ monitoring:
 		"unix:///var/run/docker.sock",
 		"root_path: /hostfs",
 		"receivers: [otlp, prometheus/self, docker_stats, hostmetrics, spanmetrics]",
-		"receivers: [filelog/coredns]",
+		// mTLS-gated receiver feeds the trusted-routing pipeline.
+		"receivers: [otlp/infra]",
+		// Routing connectors are the receivers for the per-source log
+		// pipelines.
+		"receivers: [routing/trusted]",
+		"receivers: [routing/untrusted]",
+		// gRPC variant of the trusted receiver is what Envoy ALS dials.
+		"0.0.0.0:5319",
 	}
 	for _, check := range mustContain {
 		if !strings.Contains(result, check) {

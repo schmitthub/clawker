@@ -32,7 +32,7 @@ services:
       # can see all container stdout/stderr; acceptable because the
       # collector is already trusted with the docker_stats socket above.
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
-{{- if .OtelCPPort}}
+{{- if .OtelInfraPort}}
       # CLI-issued mTLS material for the CP-only receiver. Bound RO from
       # the CLI auth dir on the host. The CA bundle gates client certs
       # to ones the CLI signed (currently just clawker-cp).
@@ -47,13 +47,13 @@ services:
       # published mapping.
       - "{{.OtelGRPCPort}}:{{.OtelGRPCPort}}"
       - "{{.OtelCollectorPort}}:{{.OtelCollectorPort}}"
-{{- if .OtelCPPort}}
+{{- if .OtelInfraPort}}
       # CP-only receiver — host loopback only. clawker-cp pushes via
       # host.docker.internal:<port>. Agents trying the same address are
       # rejected by BPF (gateway:non-hostproxy → Envoy → reset);
       # additionally, mTLS would refuse them because they have no
       # client cert signed by the CLI CA.
-      - "127.0.0.1:{{.OtelCPPort}}:{{.OtelCPPort}}"
+      - "127.0.0.1:{{.OtelInfraPort}}:{{.OtelInfraPort}}"
 {{- end}}
     extra_hosts:
       - "host.docker.internal:host-gateway"

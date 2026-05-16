@@ -61,7 +61,7 @@ func newStackFixture(t *testing.T) *stackFixture {
 	fake.FakeAPI.ContainerListFn = func(context.Context, mobyclient.ContainerListOptions) (mobyclient.ContainerListResult, error) {
 		return mobyclient.ContainerListResult{}, nil
 	}
-	stack := fwcp.NewStack(fake.Client, cfg, logger.Nop(), store)
+	stack := fwcp.NewStack(fake.Client, cfg, logger.Nop(), store, nil)
 	return &stackFixture{cfg: cfg, fake: fake, stack: stack}
 }
 
@@ -77,7 +77,7 @@ func TestStack_Accessors_EmptyWhenNetworkMissing(t *testing.T) {
 		return mobyclient.NetworkInspectResult{}, errors.New("network not found")
 	}
 
-	stack := fwcp.NewStack(fake.Client, cfg, logger.Nop(), store)
+	stack := fwcp.NewStack(fake.Client, cfg, logger.Nop(), store, nil)
 	assert.Empty(t, stack.EnvoyIP())
 	assert.Empty(t, stack.CoreDNSIP())
 	assert.Empty(t, stack.NetworkID())

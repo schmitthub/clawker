@@ -270,7 +270,7 @@ func TestCPContainer_ExtraHostsHostGateway(t *testing.T) {
 	require.Contains(t, cpConfig.ExtraHosts, "host.docker.internal:host-gateway")
 }
 
-// TestCPContainer_OtelLogsEnv_Emitted — when monitoring.otel_cp_port
+// TestCPContainer_OtelLogsEnv_Emitted — when monitoring.otel_infra_port
 // is non-zero (default), all six OTLP env vars land in the container
 // config, including the mTLS triple.
 func TestCPContainer_OtelLogsEnv_Emitted(t *testing.T) {
@@ -300,11 +300,11 @@ func TestCPContainer_OtelLogsEnv_Emitted(t *testing.T) {
 	}
 }
 
-// TestOtelLogsEnv_NilWhenPortZero — if monitoring.otel_cp_port <= 0
+// TestOtelLogsEnv_NilWhenPortZero — if monitoring.otel_infra_port <= 0
 // (user hasn't run `clawker monitor init`), no OTLP env vars are
 // emitted. The daemon then runs file-only.
 func TestOtelLogsEnv_NilWhenPortZero(t *testing.T) {
-	cfg, err := config.NewFromString("", "monitoring:\n  otel_cp_port: 0\n")
+	cfg, err := config.NewFromString("", "monitoring:\n  otel_infra_port: 0\n")
 	require.NoError(t, err)
 	require.Nil(t, otelLogsEnv(cfg))
 }

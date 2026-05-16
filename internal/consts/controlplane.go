@@ -32,10 +32,11 @@ var (
 // Pure string composition — Go package-var dependency ordering resolves
 // HostDataDir before these evaluate.
 var (
-	HostFirewallDataSubdir = filepath.Join(HostDataDir, firewallDir)
-	HostFirewallCertSubdir = filepath.Join(HostFirewallDataSubdir, firewallCertDir)
-	HostEnvoyConfigPath    = filepath.Join(HostFirewallDataSubdir, EnvoyConfigFile)
-	HostCorefilePath       = filepath.Join(HostFirewallDataSubdir, Corefile)
+	HostFirewallDataSubdir   = filepath.Join(HostDataDir, firewallDir)
+	HostFirewallCertSubdir   = filepath.Join(HostFirewallDataSubdir, firewallCertDir)
+	HostFirewallOtelCertsDir = filepath.Join(HostFirewallDataSubdir, OtelClientsDirName)
+	HostEnvoyConfigPath      = filepath.Join(HostFirewallDataSubdir, EnvoyConfigFile)
+	HostCorefilePath         = filepath.Join(HostFirewallDataSubdir, Corefile)
 	// HostControlPlaneSubdir is the host-FS path of the CP-owned data
 	// subdirectory. Bind source for the RW mount that backs the sqlite
 	// DB at HostControlPlaneDBPath.
@@ -85,6 +86,16 @@ const (
 	// cert IS "this is the CP".
 	CPClientCertPath = CPClawkerDir + "/auth/cp/client.pem"
 	CPClientKeyPath  = CPClawkerDir + "/auth/cp/client.key"
+
+	// CPInfraCACertPath / CPInfraCAKeyPath are the container-side paths
+	// for the infra intermediate CA the CP uses to mint short-lived
+	// mTLS client leaves for clawker infra services (Envoy, CoreDNS,
+	// ...). The intermediate is signed by the CLI root CA; leaves it
+	// signs chain to the same root so the otel-collector's truststore
+	// (CLI root CA only) accepts them. See internal/controlplane/
+	// infracerts for the Issuer.
+	CPInfraCACertPath = CPClawkerDir + "/auth/infra-ca/infra-ca.pem"
+	CPInfraCAKeyPath  = CPClawkerDir + "/auth/infra-ca/infra-ca.key"
 
 	// CPFirewallDataDir is the container-side directory for CP-managed firewall state.
 	CPFirewallDataDir = CPClawkerDataDir + "/firewall"

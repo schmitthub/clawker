@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -51,21 +52,36 @@ const (
 // Stack is not safe for concurrent EnsureRunning + Stop calls; callers
 // serialize via their own mutex.
 type Stack struct {
-	docker *docker.Client
-	cfg    config.Config
-	log    *logger.Logger
-	store  *storage.Store[EgressRulesFile]
+	docker      *docker.Client
+	cfg         config.Config
+	log         *logger.Logger
+	store       *storage.Store[EgressRulesFile]
+	infraIssuer InfraIssuer
+}
+
+// InfraIssuer mints short-lived mTLS client leaves for clawker infra
+// services pushing telemetry to the CP-only OTLP receiver. Satisfied
+// by *infracerts.Issuer. The interface keeps Stack unit-testable
+// (`firewall` package owns no crypto; tests pass a tiny fake).
+//
+// May be nil — Stack tolerates a missing issuer by skipping the
+// mTLS material bind-mounts; Envoy/CoreDNS fall back to stdout/
+// filelog and the mTLS OTLP push path stays cold. This matches the
+// CP-side degraded path (see cmd/clawker-cp/main.go: event=
+// infra_issuer_unavailable).
+type InfraIssuer interface {
+	MintClient(serviceName string, ttl time.Duration) (chainPEM, keyPEM []byte, err error)
 }
 
 // NewStack returns an initialized Stack. log may be nil (a Nop logger is
 // substituted); the other dependencies are required — nil docker or cfg
 // produces a nil Stack that panics at first use, which is preferable to
-// silent no-ops.
-func NewStack(dc *docker.Client, cfg config.Config, log *logger.Logger, store *storage.Store[EgressRulesFile]) *Stack {
+// silent no-ops. infraIssuer may be nil — see InfraIssuer.
+func NewStack(dc *docker.Client, cfg config.Config, log *logger.Logger, store *storage.Store[EgressRulesFile], infraIssuer InfraIssuer) *Stack {
 	if log == nil {
 		log = logger.Nop()
 	}
-	return &Stack{docker: dc, cfg: cfg, log: log, store: store}
+	return &Stack{docker: dc, cfg: cfg, log: log, store: store, infraIssuer: infraIssuer}
 }
 
 // EnsureRunning starts Envoy + CoreDNS if they are not already running.
@@ -382,7 +398,19 @@ func (s *Stack) ensureConfigs() (string, error) {
 		return "", fmt.Errorf("regenerating domain certs: %w", err)
 	}
 
-	envoyYAML, warnings, err := GenerateEnvoyConfig(rules, s.envoyPorts())
+	if err := s.ensureInfraClientCerts(); err != nil {
+		// Degraded path: infra client cert minting failure is logged but
+		// not fatal. Envoy + CoreDNS continue to start; the mTLS OTLP
+		// push path stays cold (envoy fall back to stdout JSON logs;
+		// coredns OTel plugin will warn and noop). The firewall plane
+		// itself is unaffected.
+		s.log.Warn().Err(err).
+			Str("event", "infra_client_certs_unavailable").
+			Str("component", "firewall.stack").
+			Msg("infra client cert minting failed — OTLP mTLS push from envoy/coredns disabled")
+	}
+
+	envoyYAML, warnings, err := GenerateEnvoyConfig(rules, s.envoyPorts(), s.alsConfig())
 	if err != nil {
 		return "", fmt.Errorf("generating envoy config: %w", err)
 	}
@@ -409,6 +437,95 @@ func (s *Stack) ensureConfigs() (string, error) {
 		return "", fmt.Errorf("writing Corefile: %w", err)
 	}
 	return dataDir, nil
+}
+
+// rootCASourcePath returns the in-container path to the CLI root CA
+// the CP bind-mounts. Exposed as a func so unit tests can override
+// when running off-container.
+var rootCASourcePath = func() string { return consts.CPCACertPath }
+
+// ensureInfraClientCerts mints short-lived mTLS client leaves for the
+// infra services that push telemetry through the CP-only OTLP
+// receiver (Envoy + CoreDNS today; future hostproxy sidecars plug in
+// here). Files land under FirewallOtelClientsDir:
+//
+//	<dir>/ca.pem            (CLI root CA, copied from CPCACertPath)
+//	<dir>/envoy/client.pem  (leaf + intermediate chain)
+//	<dir>/envoy/client.key
+//	<dir>/coredns/client.pem
+//	<dir>/coredns/client.key
+//
+// All leaves are 1-year TTL — same shape as the per-domain MITM
+// certs. EnsureRunning re-runs through ensureConfigs which re-runs
+// this, so container restarts naturally re-issue fresh certs without
+// a renewal goroutine.
+//
+// No-op when s.infraIssuer is nil (CP-side intermediate load failed
+// at startup); container specs degrade by not bind-mounting the cert
+// material, so receiver-side mTLS handshakes are simply never
+// attempted.
+func (s *Stack) ensureInfraClientCerts() error {
+	if s.infraIssuer == nil {
+		return nil
+	}
+	dir, err := consts.FirewallOtelClientsDir()
+	if err != nil {
+		return fmt.Errorf("resolve otel-clients dir: %w", err)
+	}
+
+	// Copy the CLI root CA (already bind-mounted RO into the CP at
+	// CPCACertPath) into the otel-clients dir so sibling containers
+	// can bind-mount a stable path. Containers cannot share the CP's
+	// own root CA mount because mount sources must be host-FS paths,
+	// and the CP's root CA mount source is the CLI auth dir which the
+	// firewall stack does not know the host-FS path of.
+	src := rootCASourcePath()
+	caBytes, err := os.ReadFile(src)
+	if err != nil {
+		return fmt.Errorf("read root CA at %s: %w", src, err)
+	}
+	caDst := filepath.Join(dir, "ca.pem")
+	if err := os.WriteFile(caDst, caBytes, 0o644); err != nil {
+		return fmt.Errorf("write root CA copy: %w", err)
+	}
+
+	for _, svc := range []string{"envoy", "coredns"} {
+		svcDir := filepath.Join(dir, svc)
+		if err := os.MkdirAll(svcDir, 0o755); err != nil {
+			return fmt.Errorf("create %s dir: %w", svc, err)
+		}
+		chainPEM, keyPEM, err := s.infraIssuer.MintClient(svc+"-otel-client", 365*24*time.Hour)
+		if err != nil {
+			return fmt.Errorf("mint %s leaf: %w", svc, err)
+		}
+		if err := os.WriteFile(filepath.Join(svcDir, "client.pem"), chainPEM, 0o644); err != nil {
+			return fmt.Errorf("write %s cert: %w", svc, err)
+		}
+		// 0o644 because CoreDNS in the upstream image runs as a
+		// non-root uid; bind-mounted keys must be readable for the
+		// process to load them. Defense-in-depth comes from the
+		// FirewallDataSubdir tree being 0o700 on the host.
+		if err := os.WriteFile(filepath.Join(svcDir, "client.key"), keyPEM, 0o644); err != nil {
+			return fmt.Errorf("write %s key: %w", svc, err)
+		}
+	}
+	return nil
+}
+
+// alsConfig returns the Envoy access logger upstream config. When the
+// infra issuer is wired and OtelInfraPort is set, the ALS cluster targets
+// the mTLS-gated receiver. Otherwise it falls back to the plaintext
+// receiver — preserves prior behavior when the monitoring stack
+// pre-dates the intermediate-CA wiring.
+func (s *Stack) alsConfig() ALSConfig {
+	if s.infraIssuer == nil {
+		return ALSConfig{}
+	}
+	mon := s.cfg.SettingsStore().Read().Monitoring
+	if mon.OtelInfraPort <= 0 {
+		return ALSConfig{}
+	}
+	return ALSConfig{Port: mon.OtelInfraPort, MTLS: true}
 }
 
 func (s *Stack) envoyPorts() EnvoyPorts {
@@ -441,24 +558,41 @@ func (s *Stack) envoyContainerSpec(netInfo *NetworkInfo) containerSpec {
 	// resolve to. consts.HostEnvoyConfigPath / consts.HostFirewallCertSubdir
 	// are derived from the CLAWKER_HOST_*_DIR env vars the CLI injects at
 	// CP container creation.
+	mounts := []mount.Mount{
+		{
+			Type:     mount.TypeBind,
+			Source:   consts.HostEnvoyConfigPath,
+			Target:   "/etc/envoy/envoy.yaml",
+			ReadOnly: true,
+		},
+		{
+			Type:     mount.TypeBind,
+			Source:   consts.HostFirewallCertSubdir,
+			Target:   "/etc/envoy/certs",
+			ReadOnly: true,
+		},
+	}
+	// mTLS client material for the OTLP/gRPC access logger. Only attached
+	// when the infra issuer is wired and minted leaves exist; without it
+	// Envoy keeps shipping access logs via the stdout JSON sink.
+	if s.infraIssuer != nil {
+		mounts = append(mounts, mount.Mount{
+			Type:     mount.TypeBind,
+			Source:   filepath.Join(consts.HostFirewallOtelCertsDir, "envoy"),
+			Target:   "/etc/envoy/otel-tls",
+			ReadOnly: true,
+		}, mount.Mount{
+			Type:     mount.TypeBind,
+			Source:   filepath.Join(consts.HostFirewallOtelCertsDir, "ca.pem"),
+			Target:   "/etc/envoy/otel-tls/ca.pem",
+			ReadOnly: true,
+		})
+	}
 	return containerSpec{
 		image:     envoyImage,
 		staticIP:  netInfo.EnvoyIP,
 		networkID: netInfo.NetworkID,
-		mounts: []mount.Mount{
-			{
-				Type:     mount.TypeBind,
-				Source:   consts.HostEnvoyConfigPath,
-				Target:   "/etc/envoy/envoy.yaml",
-				ReadOnly: true,
-			},
-			{
-				Type:     mount.TypeBind,
-				Source:   consts.HostFirewallCertSubdir,
-				Target:   "/etc/envoy/certs",
-				ReadOnly: true,
-			},
-		},
+		mounts:    mounts,
 		// Publish the dedicated health listener — NOT the TLS egress port.
 		// Publishing TLS would install NAT rules that masquerade the source
 		// IP of DNAT'd inter-container traffic.
@@ -476,34 +610,56 @@ func (s *Stack) corednsContainerSpec(netInfo *NetworkInfo) containerSpec {
 	// from the CLAWKER_HOST_DATA_DIR env var the CLI injects into the CP
 	// container at creation.
 	//
-	// CoreDNS log shipping: the `log` plugin writes one record per query
-	// to stdout in the logfmt format defined by `corefileLogFormat`
-	// (`source=coredns ...`). Docker's json-file driver captures those
-	// lines into `/var/lib/docker/containers/<id>/<id>-json.log`, and the
-	// otel-collector's `filelog/coredns` receiver tails that directory,
-	// filters on the `source=coredns` body prefix, stamps
-	// `service.name=coredns`, and forwards to the routing connector.
-	// No envar or binary change is needed on this side.
+	// CoreDNS log shipping: the custom `otel` plugin (cmd/coredns-clawker
+	// /plugins/otel) emits one OTLP log record per query over mTLS to
+	// the CP-only receiver at otel-collector:OtelInfraPort. CLAWKER_COREDNS_
+	// OTEL_ENDPOINT in container env (set by container_env below) wires
+	// the plugin to the receiver; the cert + key bind-mounts at
+	// /etc/clawker/auth/{coredns,tls} match the plugin's hardcoded
+	// defaults (see plugins/otel/setup.go).
+	mounts := []mount.Mount{
+		{
+			Type:     mount.TypeBind,
+			Source:   consts.HostCorefilePath,
+			Target:   "/etc/coredns/Corefile",
+			ReadOnly: true,
+		},
+		{
+			// The dnsbpf plugin updates the pinned dns_cache map at
+			// /sys/fs/bpf/clawker/dns_cache in real time.
+			Type:   mount.TypeBind,
+			Source: "/sys/fs/bpf",
+			Target: "/sys/fs/bpf",
+		},
+	}
+	var env []string
+	if s.infraIssuer != nil {
+		mounts = append(mounts, mount.Mount{
+			Type:     mount.TypeBind,
+			Source:   filepath.Join(consts.HostFirewallOtelCertsDir, "coredns"),
+			Target:   "/etc/clawker/auth/coredns",
+			ReadOnly: true,
+		}, mount.Mount{
+			Type:     mount.TypeBind,
+			Source:   filepath.Join(consts.HostFirewallOtelCertsDir, "ca.pem"),
+			Target:   "/etc/clawker/auth/tls/ca.pem",
+			ReadOnly: true,
+		})
+		if otelPort := s.cfg.SettingsStore().Read().Monitoring.OtelInfraPort; otelPort > 0 {
+			// otlploggrpc.WithEndpoint takes a host:port; the plugin
+			// upgrades to TLS via the client cert config it loads from
+			// the bind-mounted paths below.
+			env = append(env, fmt.Sprintf("CLAWKER_COREDNS_OTEL_ENDPOINT=%s:%d",
+				consts.MonitoringServiceOtelCollector, otelPort))
+		}
+	}
 	return containerSpec{
 		image:     corednsImageTag,
 		staticIP:  netInfo.CoreDNSIP,
 		networkID: netInfo.NetworkID,
 		cmd:       []string{"-conf", "/etc/coredns/Corefile"},
-		mounts: []mount.Mount{
-			{
-				Type:     mount.TypeBind,
-				Source:   consts.HostCorefilePath,
-				Target:   "/etc/coredns/Corefile",
-				ReadOnly: true,
-			},
-			{
-				// The dnsbpf plugin updates the pinned dns_cache map at
-				// /sys/fs/bpf/clawker/dns_cache in real time.
-				Type:   mount.TypeBind,
-				Source: "/sys/fs/bpf",
-				Target: "/sys/fs/bpf",
-			},
-		},
+		mounts:    mounts,
+		env:       env,
 		portBindings: network.PortMap{
 			network.MustParsePort(fmt.Sprintf("%d/tcp", healthPort)): {
 				{HostPort: strconv.Itoa(healthPort)},

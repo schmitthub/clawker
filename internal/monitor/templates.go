@@ -54,7 +54,7 @@ type MonitorTemplateData struct {
 	// together.
 	OtelCollectorPort        int
 	OtelGRPCPort             int // independent of HTTP port
-	OtelCPPort               int // mTLS-gated host-loopback receiver for clawker-cp push
+	OtelInfraPort            int // mTLS-gated host-loopback receiver for clawker-cp push
 	PrometheusPort           int
 	PrometheusMetricsPort    int
 	OpenSearchPort           int
@@ -73,7 +73,7 @@ type MonitorTemplateData struct {
 	// Host-side paths for CLI-issued mTLS material that gates the
 	// CP-only OTLP receiver. Populated by the monitor init command from
 	// internal/consts. Empty disables the gated receiver — the
-	// otel-config template branches on OtelCPPort to decide whether to
+	// otel-config template branches on OtelInfraPort to decide whether to
 	// emit the second receiver block.
 	OtelServerCertHostPath string
 	OtelServerKeyHostPath  string
@@ -104,7 +104,7 @@ func NewMonitorTemplateData(s *config.Settings) MonitorTemplateData {
 	return MonitorTemplateData{
 		OtelCollectorPort:           mon.OtelCollectorPort,
 		OtelGRPCPort:                mon.OtelGRPCPort,
-		OtelCPPort:                  mon.OtelCPPort,
+		OtelInfraPort:               mon.OtelInfraPort,
 		PrometheusPort:              mon.PrometheusPort,
 		PrometheusMetricsPort:       mon.PrometheusMetricsPort,
 		OpenSearchPort:              mon.OpenSearchPort,

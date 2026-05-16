@@ -189,7 +189,7 @@ func TestGenerateEnvoyConfig_TCPListeners(t *testing.T) {
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
-	yamlBytes, warnings, err := GenerateEnvoyConfig(rules, ports)
+	yamlBytes, warnings, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
 	require.NoError(t, err)
 	assert.Empty(t, warnings)
 	assert.Contains(t, string(yamlBytes), "name: egress")
@@ -204,7 +204,7 @@ func TestGenerateEnvoyConfig_HTTPListener(t *testing.T) {
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
-	yamlBytes, warnings, err := GenerateEnvoyConfig(rules, ports)
+	yamlBytes, warnings, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
 	require.NoError(t, err)
 	assert.Empty(t, warnings)
 
@@ -228,7 +228,7 @@ func TestGenerateEnvoyConfig_MixedHTTPAndTLS(t *testing.T) {
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
-	yamlBytes, warnings, err := GenerateEnvoyConfig(rules, ports)
+	yamlBytes, warnings, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
 	require.NoError(t, err)
 	assert.Empty(t, warnings)
 
@@ -248,7 +248,7 @@ func TestGenerateEnvoyConfig_TLSClusterAutoConfig(t *testing.T) {
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
-	yamlBytes, warnings, err := GenerateEnvoyConfig(rules, ports)
+	yamlBytes, warnings, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
 	require.NoError(t, err)
 	assert.Empty(t, warnings)
 
@@ -286,7 +286,7 @@ func TestGenerateEnvoyConfig_HTTPWithPathRules(t *testing.T) {
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
-	yamlBytes, warnings, err := GenerateEnvoyConfig(rules, ports)
+	yamlBytes, warnings, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
 	require.NoError(t, err)
 	assert.Empty(t, warnings)
 
@@ -310,7 +310,7 @@ func TestGenerateEnvoyConfig_ZeroPortTLSDefaults443(t *testing.T) {
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
-	yamlBytes, warnings, err := GenerateEnvoyConfig(rules, ports)
+	yamlBytes, warnings, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
 	require.NoError(t, err)
 	assert.Empty(t, warnings)
 
@@ -500,7 +500,7 @@ func TestGenerateEnvoyConfig_OtelALSClusterPresent(t *testing.T) {
 	// protocol options, otel-collector hostname.
 	yamlBytes, _, err := GenerateEnvoyConfig(nil, EnvoyPorts{
 		EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901,
-	})
+	}, ALSConfig{})
 	require.NoError(t, err)
 	out := string(yamlBytes)
 
@@ -509,6 +509,28 @@ func TestGenerateEnvoyConfig_OtelALSClusterPresent(t *testing.T) {
 	assert.Contains(t, out, "otel-collector")
 	assert.Contains(t, out, "port_value: 4317")
 	assert.Contains(t, out, "http2_protocol_options")
+	// No upstream TLS context when ALS.MTLS is false.
+	assert.NotContains(t, out, "transport_socket")
+}
+
+func TestGenerateEnvoyConfig_OtelALSCluster_MTLS(t *testing.T) {
+	t.Parallel()
+
+	yamlBytes, _, err := GenerateEnvoyConfig(nil, EnvoyPorts{
+		EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901,
+	}, ALSConfig{Port: 4319, MTLS: true})
+	require.NoError(t, err)
+	out := string(yamlBytes)
+
+	// Target the mTLS-gated receiver port, not the plaintext 4317.
+	assert.Contains(t, out, "port_value: 4319")
+	assert.NotContains(t, out, "port_value: 4317")
+	// Upstream TLS context with the bind-mount paths Stack writes.
+	assert.Contains(t, out, "transport_socket")
+	assert.Contains(t, out, "UpstreamTlsContext")
+	assert.Contains(t, out, "/etc/envoy/otel-tls/client.pem")
+	assert.Contains(t, out, "/etc/envoy/otel-tls/client.key")
+	assert.Contains(t, out, "/etc/envoy/otel-tls/ca.pem")
 }
 
 func TestGenerateEnvoyConfig_AccessLogPresent(t *testing.T) {
@@ -552,7 +574,7 @@ func TestGenerateEnvoyConfig_AccessLogPresent(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			yamlBytes, _, err := GenerateEnvoyConfig(tt.rules, ports)
+			yamlBytes, _, err := GenerateEnvoyConfig(tt.rules, ports, ALSConfig{})
 			require.NoError(t, err)
 			out := string(yamlBytes)
 			// Stdout sink (operator triage).
@@ -688,7 +710,7 @@ func TestGenerateEnvoyConfig_WildcardDomain(t *testing.T) {
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
-	yamlBytes, warnings, err := GenerateEnvoyConfig(rules, ports)
+	yamlBytes, warnings, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
 	require.NoError(t, err)
 	assert.Empty(t, warnings)
 
@@ -708,7 +730,7 @@ func TestGenerateEnvoyConfig_UpstreamTLSReEncryption(t *testing.T) {
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
-	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
 	require.NoError(t, err)
 
 	out := string(yamlBytes)
@@ -753,7 +775,7 @@ func TestGenerateEnvoyConfig_TLSRoutesToTLSCluster(t *testing.T) {
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
-	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
 	require.NoError(t, err)
 
 	var cfg map[string]any
@@ -816,7 +838,7 @@ func TestGenerateEnvoyConfig_PerDomainClusterIsolation(t *testing.T) {
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
-	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
 	require.NoError(t, err)
 
 	var cfg map[string]any
@@ -885,7 +907,7 @@ func TestGenerateEnvoyConfig_HTTPRoutesToPlaintextCluster(t *testing.T) {
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
-	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
 	require.NoError(t, err)
 
 	var cfg map[string]any
@@ -969,7 +991,7 @@ func TestGenerateEnvoyConfig_WildcardAndExactHTTPNoDuplicateVirtualHostNames(t *
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
-	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
 	require.NoError(t, err)
 
 	var cfg map[string]any
@@ -1026,7 +1048,7 @@ func TestGenerateEnvoyConfig_TLSClusterPortPinning(t *testing.T) {
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
-	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
 	require.NoError(t, err)
 
 	var cfg map[string]any
@@ -1072,7 +1094,7 @@ func TestGenerateEnvoyConfig_SimplifiedFilterChains(t *testing.T) {
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
-	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
 	require.NoError(t, err)
 
 	var cfg map[string]any
@@ -1177,7 +1199,7 @@ func TestGenerateEnvoyConfig_HTTPClusterStructure(t *testing.T) {
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
-	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
 	require.NoError(t, err)
 
 	var cfg map[string]any
@@ -1223,7 +1245,7 @@ func TestGenerateEnvoyConfig_ZeroPortHTTPDefaults80(t *testing.T) {
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
-	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
 	require.NoError(t, err)
 
 	out := string(yamlBytes)
@@ -1265,7 +1287,7 @@ func TestGenerateEnvoyConfig_TLSWebSocketALPNOverride(t *testing.T) {
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
-	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
 	require.NoError(t, err)
 
 	var cfg map[string]any
@@ -1332,7 +1354,7 @@ func TestGenerateEnvoyConfig_SameDomainDifferentPorts(t *testing.T) {
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
-	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
 	require.NoError(t, err)
 
 	var cfg map[string]any
@@ -1373,7 +1395,7 @@ func TestGenerateEnvoyConfig_SameDomainDifferentPortsHTTP(t *testing.T) {
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
-	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
 	require.NoError(t, err)
 
 	var cfg map[string]any
@@ -1404,7 +1426,7 @@ func TestGenerateEnvoyConfig_TLSInspectorPresent(t *testing.T) {
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
-	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
 	require.NoError(t, err)
 
 	var cfg map[string]any
@@ -1440,7 +1462,7 @@ func TestGenerateEnvoyConfig_DenyChainIsLast(t *testing.T) {
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
-	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports)
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
 	require.NoError(t, err)
 
 	var cfg map[string]any

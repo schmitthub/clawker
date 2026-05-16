@@ -63,7 +63,7 @@ func TestContainerSpecs_FirewallDataMountsAreReadOnly(t *testing.T) {
 	// builder resolves to a matching data dir for isFirewallData.
 	overrideHostPathsForTest(t, consts.DataDir())
 
-	s := NewStack(nil, cfg, logger.Nop(), nil)
+	s := NewStack(nil, cfg, logger.Nop(), nil, nil)
 	netInfo := &NetworkInfo{NetworkID: "net-test", EnvoyIP: "172.20.0.2", CoreDNSIP: "172.20.0.3"}
 
 	// isFirewallData returns true for any mount source rooted under

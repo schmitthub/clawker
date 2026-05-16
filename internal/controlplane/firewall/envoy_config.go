@@ -24,8 +24,30 @@ import (
 // The cluster is plaintext HTTP/2 on clawker-net (`otel-collector:4317`).
 const (
 	otelCollectorALSClusterName = "otel_collector_als"
-	otelCollectorALSGRPCPort    = 4317
+	// otelCollectorALSPlaintextPort is the unauth'd OTLP/gRPC receiver
+	// port. Used when no infra issuer is wired (degraded mode) so
+	// Envoy access logs still flow, accepting the spoofability of the
+	// unauth'd lane until the operator fixes the issuer.
+	otelCollectorALSPlaintextPort = 4317
 )
+
+// ALSConfig configures the Envoy access logger's upstream cluster.
+//
+// When MTLS is true the cluster is configured with an upstream TLS
+// transport_socket: leaf+intermediate chain from
+// /etc/envoy/otel-tls/client.pem, key from client.key, and the CLI
+// root CA at ca.pem as the validation context. The cluster targets
+// the otel-collector's mTLS-gated receiver on Port; the receiver
+// trusts only certs chained to the CLI root.
+//
+// When MTLS is false the cluster is plaintext HTTP/2 to the unauth'd
+// receiver — preserves prior behavior when the CP-side infra issuer
+// is unavailable. Port is ignored in this case; the cluster uses
+// otelCollectorALSPlaintextPort.
+type ALSConfig struct {
+	Port int
+	MTLS bool
+}
 
 // EnvoyPorts holds the port configuration for the Envoy proxy, sourced from config.Config.
 type EnvoyPorts struct {
@@ -258,7 +280,7 @@ func httpClusterName(domain string, port int) string {
 
 // GenerateEnvoyConfig produces an Envoy static bootstrap YAML from egress rules.
 // Returns the YAML bytes and a list of warnings (non-fatal issues).
-func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts) ([]byte, []string, error) {
+func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts, als ALSConfig) ([]byte, []string, error) {
 	if err := ports.Validate(); err != nil {
 		return nil, nil, err
 	}
@@ -354,7 +376,7 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts) ([]byte, [
 		},
 		"static_resources": map[string]any{
 			"listeners": buildListeners(tlsRules, tcpRules, httpRules, tcpMappings, ports, tlsExactDomains, httpExactDomains),
-			"clusters":  buildClusters(tlsRules, tcpRules, httpRules),
+			"clusters":  buildClusters(tlsRules, tcpRules, httpRules, als),
 		},
 	}
 
@@ -811,7 +833,7 @@ func buildTCPListener(r config.EgressRule, port int) map[string]any {
 // ──────────────────────────────────────────────────────────────────────────────
 
 // buildClusters constructs all Envoy clusters.
-func buildClusters(tls, tcp, http []config.EgressRule) []any {
+func buildClusters(tls, tcp, http []config.EgressRule, als ALSConfig) []any {
 	clusters := []any{
 		// Deny cluster (no endpoints — connection reset).
 		map[string]any{
@@ -830,7 +852,7 @@ func buildClusters(tls, tcp, http []config.EgressRule) []any {
 		// the access logger's default 16KB then drops oldest — does NOT block
 		// the data path. This is intentional: a degraded monitoring plane
 		// must never wedge enforcement.
-		buildOtelALSCluster(),
+		buildOtelALSCluster(als),
 	}
 
 	// Per-(domain, port) TLS clusters — LOGICAL_DNS with upstream re-encryption.
@@ -959,8 +981,12 @@ func buildTLSDNSCluster(domain string, port int) map[string]any {
 // `envoy.access_loggers.open_telemetry` sink. STRICT_DNS resolves
 // `otel-collector` (clawker-net DNS) on every refresh, http2 is required
 // because OTLP/gRPC runs on HTTP/2.
-func buildOtelALSCluster() map[string]any {
-	return map[string]any{
+func buildOtelALSCluster(als ALSConfig) map[string]any {
+	port := otelCollectorALSPlaintextPort
+	if als.MTLS && als.Port > 0 {
+		port = als.Port
+	}
+	cluster := map[string]any{
 		"name":            otelCollectorALSClusterName,
 		"type":            "STRICT_DNS",
 		"connect_timeout": "1s",
@@ -974,7 +1000,7 @@ func buildOtelALSCluster() map[string]any {
 								"address": map[string]any{
 									"socket_address": map[string]any{
 										"address":    consts.MonitoringServiceOtelCollector,
-										"port_value": otelCollectorALSGRPCPort,
+										"port_value": port,
 									},
 								},
 							},
@@ -992,6 +1018,41 @@ func buildOtelALSCluster() map[string]any {
 			},
 		},
 	}
+	if als.MTLS {
+		// Upstream TLS context. The collector's server cert is signed
+		// by the CLI root CA (validation_context). The leaf chain at
+		// client.pem includes the intermediate so the receiver can
+		// build the chain leaf→intermediate→root. SNI matches the
+		// SAN(s) on the otel-collector's server cert (issued for
+		// "host.docker.internal" / "localhost" / "127.0.0.1" — the
+		// MonitoringServiceOtelCollector hostname is the clawker-net
+		// service name, not a SAN, so match_typed_subject_alt_names
+		// stays disabled and SNI is left blank).
+		cluster["transport_socket"] = map[string]any{
+			"name": "envoy.transport_sockets.tls",
+			"typed_config": map[string]any{
+				"@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext",
+				"common_tls_context": map[string]any{
+					"tls_certificates": []any{
+						map[string]any{
+							"certificate_chain": map[string]any{
+								"filename": "/etc/envoy/otel-tls/client.pem",
+							},
+							"private_key": map[string]any{
+								"filename": "/etc/envoy/otel-tls/client.key",
+							},
+						},
+					},
+					"validation_context": map[string]any{
+						"trusted_ca": map[string]any{
+							"filename": "/etc/envoy/otel-tls/ca.pem",
+						},
+					},
+				},
+			},
+		}
+	}
+	return cluster
 }
 
 // buildHTTPDNSCluster creates a per-domain LOGICAL_DNS cluster for plaintext HTTP.

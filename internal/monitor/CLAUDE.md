@@ -47,7 +47,7 @@ Each port field drives **both** sides of the host:container publish mapping AND 
 |-------|------|-------------|
 | `OtelCollectorPort` | `int` | OTEL collector OTLP/HTTP port (default 4318) |
 | `OtelGRPCPort` | `int` | OTEL collector gRPC port (default 4317; independent of HTTP) |
-| `OtelCPPort` | `int` | mTLS-gated host-loopback receiver port for clawker-cp push |
+| `OtelInfraPort` | `int` | mTLS-gated host-loopback receiver port for clawker-cp push |
 | `PrometheusPort` | `int` | Prometheus UI port (default 9090) — wired into `--web.listen-address` |
 | `PrometheusMetricsPort` | `int` | Prometheus scrape port the collector exposes (default 8889) |
 | `OpenSearchPort` | `int` | OpenSearch REST API port (default 9200) — wired into `http.port` env |
@@ -88,7 +88,7 @@ All symbols are in `templates.go`.
 | `logs/claude-code` | `routing/logs_by_service` (when `service.name=claude-code`) | `opensearch/logs_claude_code` (index `claude-code`), `debug` |
 | `logs/envoy` | `routing/logs_by_service` (when `service.name=envoy` — stamped by Envoy ALS on the record itself; `resource/envoy` adds `ingest_source=envoy` post-routing) | `opensearch/logs_envoy` (index `clawker-envoy`), `debug` |
 | `logs/coredns` | `filelog/coredns` (tails Docker JSON log files under `/var/lib/docker/containers`; filter operator keeps only lines matching `^\[INFO\] source=coredns` — i.e. query access logs from the `log` plugin, including `rcode=NXDOMAIN` rejections; CoreDNS WARNING/ERROR plugin output is intentionally dropped; `resource/coredns` stamps `service.name=coredns` + `ingest_source=coredns`) | `opensearch/logs_coredns` (index `clawker-coredns`), `debug` |
-| `logs/cp` (conditional on `OtelCPPort`) | `otlp/cp` (mTLS-gated; resource/cp stamps `service.name=clawker-cp` + `ingest_source=cp`) | `opensearch/logs_cp` (index `clawker-cp`), `debug` |
+| `logs/cp` (conditional on `OtelInfraPort`) | `otlp/infra` (mTLS-gated; resource/cp stamps `service.name=clawker-cp` + `ingest_source=cp`) | `opensearch/logs_cp` (index `clawker-cp`), `debug` |
 
 **Index split rationale**: clawker's zerolog pattern (`Str("event", "name")`) emits `attributes.event` as a scalar string. Claude Code follows OTEL semantic conventions and emits `attributes.event.name` (nested). Envoy ALS attributes carry HTTP request fields (method, path, response_code) flat on the record. CoreDNS lines arrive as a single logfmt body string. OpenSearch dynamic mapping locks the first-seen shape per field, so sharing one index would reject whichever source loses the race. Splitting by source keeps each schema clean. The `ingest_source` resource attribute is stamped on every record for cross-index queries via the pattern `clawker-cp,claude-code,clawker-envoy,clawker-coredns`.
 

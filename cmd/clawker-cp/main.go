@@ -43,6 +43,7 @@ import (
 	"github.com/schmitthub/clawker/internal/controlplane/dockerevents"
 	fwhandler "github.com/schmitthub/clawker/internal/controlplane/firewall"
 	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
+	"github.com/schmitthub/clawker/internal/controlplane/infracerts"
 	"github.com/schmitthub/clawker/internal/controlplane/overseer"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -261,7 +262,22 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	if err != nil {
 		return fmt.Errorf("step 6c (rules store): %w", err)
 	}
-	stack := fwhandler.NewStack(dockerCli, cfg, log, rulesStore)
+	// Infra intermediate CA — bind-mounted RO by cpboot at startup.
+	// firewall.Stack uses it to mint short-lived mTLS client leaves
+	// for Envoy + CoreDNS so they can push telemetry to the CP-only
+	// OTLP receiver. Failure here degrades to "no infra cert minting"
+	// — Envoy stdout access logs + CoreDNS file logs still work; only
+	// the mTLS OTLP push path is disabled. See infracerts/CLAUDE.md.
+	infraIssuer, err := infracerts.Load(consts.CPInfraCACertPath, consts.CPInfraCAKeyPath)
+	if err != nil {
+		log.Error().Err(err).
+			Str("event", "infra_issuer_unavailable").
+			Str("component", "infracerts").
+			Msg("infra intermediate CA load failed — envoy/coredns OTLP mTLS push will be disabled")
+		infraIssuer = nil
+	}
+
+	stack := fwhandler.NewStack(dockerCli, cfg, log, rulesStore, infraIssuer)
 
 	// --- Step 7: Load eBPF programs ---
 	ebpfMgr := ebpf.NewManager(log)

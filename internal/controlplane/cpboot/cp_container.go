@@ -151,6 +151,14 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 	if err != nil {
 		return nil, fmt.Errorf("resolve cp client key path: %w", err)
 	}
+	infraCACertPath, err := consts.AuthInfraCACertPath()
+	if err != nil {
+		return nil, fmt.Errorf("resolve infra CA cert path: %w", err)
+	}
+	infraCAKeyPath, err := consts.AuthInfraCAKeyPath()
+	if err != nil {
+		return nil, fmt.Errorf("resolve infra CA key path: %w", err)
+	}
 
 	// Config dir — CP loads config.NewConfig() from this mount.
 	configDir := config.ConfigDir()
@@ -223,6 +231,23 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 			Type:     mount.TypeBind,
 			Source:   cpClientKeyPath,
 			Target:   consts.CPClientKeyPath,
+			ReadOnly: true,
+		},
+		// Infra intermediate CA — CP loads this via the infracerts
+		// package and signs short-lived mTLS client leaves for clawker
+		// infra services (Envoy, CoreDNS) at firewall.Stack.EnsureRunning.
+		// Adding a new infra service does not require minting a new
+		// cert in the CLI — CP issues from this intermediate at runtime.
+		{
+			Type:     mount.TypeBind,
+			Source:   infraCACertPath,
+			Target:   consts.CPInfraCACertPath,
+			ReadOnly: true,
+		},
+		{
+			Type:     mount.TypeBind,
+			Source:   infraCAKeyPath,
+			Target:   consts.CPInfraCAKeyPath,
 			ReadOnly: true,
 		},
 		// CP logs — persisted to host for auditing.
@@ -307,23 +332,23 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 // the OTEL bridge against the CP-only mTLS-gated receiver on the
 // monitoring stack.
 //
-// Endpoint: https://host.docker.internal:<OtelCPPort>. CP is exempt
+// Endpoint: https://host.docker.internal:<OtelInfraPort>. CP is exempt
 // from the BPF firewall (not enrolled in container_map) and has
 // host.docker.internal mapped via ExtraHosts, so the dial reaches the
 // host-loopback-bound docker port forwarder. Agents on clawker-net
 // cannot present a CLI-signed client cert and so the receiver rejects
 // their TLS handshake — the gate is crypto, not network.
 //
-// When OtelCPPort is zero (user hasn't run `clawker monitor init`)
+// When OtelInfraPort is zero (user hasn't run `clawker monitor init`)
 // no env vars are emitted and the CP logger falls back to file-only.
 // Logger construction also treats OTEL provider failure as non-fatal
 // so the daemon survives a collector that's down at startup.
 func otelLogsEnv(cfg config.Config) []string {
 	mon := cfg.SettingsStore().Read().Monitoring
-	if mon.OtelCPPort <= 0 {
+	if mon.OtelInfraPort <= 0 {
 		return nil
 	}
-	endpoint := fmt.Sprintf("https://host.docker.internal:%d", mon.OtelCPPort)
+	endpoint := fmt.Sprintf("https://host.docker.internal:%d", mon.OtelInfraPort)
 	logsEndpoint := fmt.Sprintf("%s%s", endpoint, telemetryPath(mon.Telemetry.LogsPath, "/v1/logs"))
 	return []string{
 		"OTEL_EXPORTER_OTLP_ENDPOINT=" + endpoint,
