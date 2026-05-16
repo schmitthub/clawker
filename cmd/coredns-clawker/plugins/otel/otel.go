@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/coredns/coredns/plugin"
@@ -64,7 +65,18 @@ type otelEmitter struct {
 
 type noopEmitter struct{}
 
+// Emit on the noop is intentionally a no-op so a missing endpoint
+// degrades to "telemetry off" without erroring downstream. The error
+// return on the interface exists for the test seam (recordingEmitter
+// can inject failures) — production otelEmitter also always returns
+// nil because the batch processor surfaces export errors via
+// otel.SetErrorHandler instead of the Emit call site.
 func (noopEmitter) Emit(context.Context, QueryEvent) error { return nil }
+
+// setErrorHandlerOnce ensures the process-global OTEL SDK error handler
+// is wired exactly once, independent of how many times newProvider is
+// invoked (the setup retry-on-error path can call it multiple times).
+var setErrorHandlerOnce sync.Once
 
 func NewEmitter(opts Options) (Emitter, error) {
 	if strings.TrimSpace(opts.Endpoint) == "" {
@@ -134,6 +146,10 @@ func (h Handler) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg)
 	if nw.Msg != nil {
 		event.Answers = answerStrings(nw.Msg.Answer)
 		event.AnswerCount = len(nw.Msg.Answer)
+		// The downstream message's rcode is what the client will see
+		// (set by template/forward/etc.); prefer it over the int rcode
+		// returned by NextOrFailure, which can desync when a plugin
+		// rewrites the response without updating the return code.
 		if text := dns.RcodeToString[nw.Msg.Rcode]; text != "" {
 			event.RCode = text
 		}
@@ -146,6 +162,10 @@ func (h Handler) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg)
 	}
 
 	if err != nil {
+		// Resolver errors should be visible in the local CoreDNS stdout
+		// triage stream, not only via OTLP (which may itself be the
+		// failing dependency).
+		log.Errorf("resolver error for %s: %v", event.QueryName, err)
 		return rcode, err
 	}
 	if nw.Msg == nil {
@@ -158,9 +178,11 @@ func (h Handler) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg)
 }
 
 func newProvider(opts Options) (*sdklog.LoggerProvider, error) {
-	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
-		log.Warningf("OTEL SDK error: %v", err)
-	}))
+	setErrorHandlerOnce.Do(func() {
+		otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
+			log.Warningf("OTEL SDK error: %v", err)
+		}))
+	})
 
 	tlsCfg, err := buildTLSConfig(opts)
 	if err != nil {
@@ -200,8 +222,10 @@ func buildTLSConfig(opts Options) (*tls.Config, error) {
 	if opts.ClientCertFile == "" || opts.ClientKeyFile == "" || opts.CACertFile == "" {
 		return nil, fmt.Errorf("OTEL mTLS requires client cert, client key, and CA paths")
 	}
-	clientCert, err := tls.LoadX509KeyPair(opts.ClientCertFile, opts.ClientKeyFile)
-	if err != nil {
+	// Validate the keypair eagerly so misconfiguration surfaces at boot
+	// instead of on the first handshake. The actual cert used on the
+	// wire is re-read by GetClientCertificate below.
+	if _, err := tls.LoadX509KeyPair(opts.ClientCertFile, opts.ClientKeyFile); err != nil {
 		return nil, fmt.Errorf("load client keypair: %w", err)
 	}
 	caBytes, err := os.ReadFile(opts.CACertFile)
@@ -212,10 +236,24 @@ func buildTLSConfig(opts Options) (*tls.Config, error) {
 	if !pool.AppendCertsFromPEM(caBytes) {
 		return nil, fmt.Errorf("CA bundle %q contains no PEM blocks", opts.CACertFile)
 	}
+	clientCertFile := opts.ClientCertFile
+	clientKeyFile := opts.ClientKeyFile
 	return &tls.Config{
-		Certificates: []tls.Certificate{clientCert},
-		RootCAs:      pool,
-		MinVersion:   tls.VersionTLS12,
+		// Re-read the leaf from disk on every handshake so leaf
+		// rotation by firewall.Stack.ensureInfraClientCerts picks up
+		// when gRPC reconnects, without requiring a CoreDNS restart.
+		// CoreDNS `reload` re-enters setup but the OTEL provider is
+		// process-scoped, so the provider's static cert would otherwise
+		// stay frozen until process exit.
+		GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+			cert, err := tls.LoadX509KeyPair(clientCertFile, clientKeyFile)
+			if err != nil {
+				return nil, fmt.Errorf("reload client keypair: %w", err)
+			}
+			return &cert, nil
+		},
+		RootCAs:    pool,
+		MinVersion: tls.VersionTLS12,
 	}, nil
 }
 

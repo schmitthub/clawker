@@ -8,7 +8,7 @@ This binary is **not** invoked from the host CLI. It runs only inside the CoreDN
 
 | File | Purpose |
 |------|---------|
-| `main.go` | Blank-imports the CoreDNS plugins our Corefile uses + the two in-tree plugins (`otel`, `dnsbpf`). Prepends `otel` then `dnsbpf` to `dnsserver.Directives` so otel sees every final response and dnsbpf still wraps all resolver plugins. `main()` is just `coremain.Run()`. |
+| `main.go` | Blank-imports the CoreDNS plugins our Corefile uses + the two in-tree plugins (`otel`, `dnsbpf`). `init()` prepends `otel` then `dnsbpf` to `dnsserver.Directives` so otel sees every final response and dnsbpf still wraps all resolver plugins. `main()` is just `coremain.Run()`. |
 | `plugins/otel/` | OTEL log exporter for DNS query events — emits structured `dns.query` log records over OTLP/gRPC + mTLS to the CP-only collector. See `plugins/otel/CLAUDE.md`. |
 
 ## Plugin chain ordering
