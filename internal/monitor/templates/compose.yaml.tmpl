@@ -71,7 +71,6 @@ services:
       - "--web.console.templates=/etc/prometheus/consoles"
       - "--web.console.libraries=/etc/prometheus/console_libraries"
       - "--storage.tsdb.path=/prometheus"
-      - "--web.enable-lifecycle"
       - "--web.route-prefix=/"
       - "--enable-feature=exemplar-storage"
       - "--enable-feature=otlp-deltatocumulative"

@@ -355,9 +355,9 @@ Once the stack is up:
 
 - **OpenSearch Dashboards** — http://localhost:5601 — Discover view for log exploration
 - **Prometheus UI** — http://localhost:9090 — metrics + ad-hoc PromQL
-- **OpenSearch API** — http://localhost:9200 — REST access to the `claude-code` (Claude Code logs), `clawker-cp` (control-plane logs), `clawker-envoy` (firewall egress access logs), and `clawker-coredns` (firewall DNS query logs) indices
+- **OpenSearch API** — http://localhost:9200 — REST access to the `claude-code` (Claude Code logs), `clawker-cli` (host CLI logs), `clawker-cp` (control-plane logs), `clawker-envoy` (firewall egress access logs), and `clawker-coredns` (firewall DNS query logs) indices
 
-> **Setup required (current state).** The stack is intentionally bare. You'll need to create an index pattern in OpenSearch Dashboards covering `clawker-*,claude-code` (or list the four indices: `claude-code,clawker-cp,clawker-envoy,clawker-coredns`), connect Prometheus as a Dashboards data source if you want metrics + logs in the same UI, and build any dashboards yourself on first run. Pre-provisioning is on the roadmap.
+> **Setup required (current state).** The stack is intentionally bare. You'll need to create an index pattern in OpenSearch Dashboards covering `clawker-*,claude-code` (or list the five indices: `claude-code,clawker-cli,clawker-cp,clawker-envoy,clawker-coredns`), connect Prometheus as a Dashboards data source if you want metrics + logs in the same UI, and build any dashboards yourself on first run. Pre-provisioning is on the roadmap.
 
 ## Roadmap / Known Issues
 

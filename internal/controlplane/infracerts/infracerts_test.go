@@ -214,6 +214,32 @@ func TestIssuer_Load_RejectsEmptyKeyPEM(t *testing.T) {
 	}
 }
 
+// TestIssuer_Load_RejectsMismatchedKey pins the pair-check: a parseable
+// EC key that doesn't match the intermediate cert's public key must fail
+// at Load time, not silently emit leaves that won't chain at handshake.
+func TestIssuer_Load_RejectsMismatchedKey(t *testing.T) {
+	dir := t.TempDir()
+	_, certPath, _ := testCA(t, dir)
+
+	// Generate an unrelated EC key and write it to a path Load can read.
+	otherKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("other key: %v", err)
+	}
+	otherKeyDER, err := x509.MarshalECPrivateKey(otherKey)
+	if err != nil {
+		t.Fatalf("marshal other key: %v", err)
+	}
+	mismatchedKeyPath := filepath.Join(dir, "mismatched.key")
+	if err := os.WriteFile(mismatchedKeyPath, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: otherKeyDER}), 0o600); err != nil {
+		t.Fatalf("write mismatched key: %v", err)
+	}
+
+	if _, err := infracerts.Load(certPath, mismatchedKeyPath); err == nil {
+		t.Fatal("Load accepted a key that doesn't match the intermediate cert; expected error")
+	}
+}
+
 func TestIssuer_Load_RejectsNonCACert(t *testing.T) {
 	dir := t.TempDir()
 

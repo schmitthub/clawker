@@ -36,7 +36,7 @@ Claude Code agents emit logs and metrics only — no traces. The collector's `tr
 | Service | Image | Default Port | Purpose |
 |---------|-------|:---:|---------|
 | **OTEL Collector** | `otel/opentelemetry-collector-contrib` | 4318 (HTTP), 4317 (gRPC) | Receives telemetry from agents and routes it to backends |
-| **OpenSearch** | `opensearchproject/opensearch` | 9200 | Stores logs across four indices: `claude-code` (Claude Code OTLP), `clawker-cp` (clawker-cp mTLS push), `clawker-envoy` (firewall HTTP/TLS/TCP access logs), `clawker-coredns` (firewall DNS query logs) |
+| **OpenSearch** | `opensearchproject/opensearch` | 9200 | Stores logs across five indices: `claude-code` (Claude Code OTLP), `clawker-cli` (host CLI records exported by the collector), `clawker-cp` (clawker-cp mTLS push), `clawker-envoy` (firewall HTTP/TLS/TCP access logs), `clawker-coredns` (firewall DNS query logs) |
 | **OpenSearch Dashboards** | `opensearchproject/opensearch-dashboards` | 5601 | UI for querying and dashboarding logs |
 | **Prometheus** | `prom/prometheus` | 9090 | Time-series metrics storage and UI |
 
@@ -106,7 +106,7 @@ clawker run -it --agent dev @
 
 ### 4. Explore in OpenSearch Dashboards
 
-Open OpenSearch Dashboards at `http://localhost:5601`. From the Discover view, create an index pattern covering `claude-code,clawker-cp,clawker-envoy,clawker-coredns` to see Claude Code logs, clawker-cp logs, and egress traffic (Envoy access + CoreDNS query logs) side-by-side. Metrics live at the Prometheus UI on `http://localhost:9090`.
+Open OpenSearch Dashboards at `http://localhost:5601`. From the Discover view, create an index pattern covering `claude-code,clawker-cli,clawker-cp,clawker-envoy,clawker-coredns` to see Claude Code logs, host CLI logs, clawker-cp logs, and egress traffic (Envoy access + CoreDNS query logs) side-by-side. Metrics live at the Prometheus UI on `http://localhost:9090`.
 
 <Warning>
 **Setup required (current state).** OpenSearch Dashboards needs to be configured manually for now — the indices and the underlying data source are already in place, but index patterns, dashboards, and pre-built views ship empty. Pre-provisioned patterns, data connections, and a curated set of Claude Code dashboards are on the roadmap.

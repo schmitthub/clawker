@@ -563,26 +563,16 @@ func (s *Stack) ensureInfraClientCerts() error {
 	}
 	for _, svc := range []string{"envoy", "coredns"} {
 		svcDir := filepath.Join(dir, svc)
-		// 0o700 on the per-service dir is the defense-in-depth the 0o644
-		// key file below relies on: other local users on the host cannot
-		// traverse into svcDir to read the bind-mounted key. MkdirAll
-		// honors umask, so a fresh dir under a permissive host umask (or
-		// one left at 0o755 by an older clawker version) needs explicit
-		// tightening. Stat-first skips the chmod when the dir is already
-		// at or below 0o700 — the common steady state — and avoids EPERM
-		// noise on cross-account upgrades where the dir is owned by a
-		// stale UID but already tight.
-		if err := os.MkdirAll(svcDir, 0o700); err != nil {
+		// 0o755 on the per-service dir so the in-container reader (Envoy
+		// distroless runs UID 101) can traverse to the bind-mounted key.
+		// Docker bind mounts preserve host inode perms; a root-owned
+		// 0o700 dir blocks any non-root in-container UID from entering
+		// the mount root, even though the key file itself is 0o644.
+		// The 0o644 mode on the key (below) is the relevant attack
+		// surface, not the directory: a tighter directory adds nothing
+		// real but creates a runtime EACCES trap.
+		if err := os.MkdirAll(svcDir, 0o755); err != nil {
 			return fmt.Errorf("create %s dir: %w", svc, err)
-		}
-		info, statErr := os.Stat(svcDir)
-		if statErr != nil {
-			return fmt.Errorf("stat %s dir: %w", svc, statErr)
-		}
-		if info.Mode().Perm()&^0o700 != 0 {
-			if err := os.Chmod(svcDir, 0o700); err != nil {
-				return fmt.Errorf("tighten %s dir perms (mode=%o): %w", svc, info.Mode().Perm(), err)
-			}
 		}
 		chainPEM, keyPEM, err := s.infraIssuer.MintClient(svc+"-otel-client", 365*24*time.Hour)
 		if err != nil {
@@ -609,11 +599,7 @@ func (s *Stack) ensureInfraClientCerts() error {
 		// key and the TLS handshake never gets off the ground.
 		// clawker-coredns (built from alpine here) currently runs as
 		// root and would tolerate stricter modes, but uses the same
-		// shape for symmetry. Defense-in-depth is the 0o700 svcDir
-		// above (NOT the FirewallDataSubdir tree, which is 0o755 via
-		// consts.subdirPathUnder); the file itself is permissive but
-		// unreachable to non-root host users without traversing the
-		// 0o700 directory.
+		// shape for symmetry.
 		if err := writeFileAtomic(filepath.Join(svcDir, "ca.pem"), caBytes, 0o644); err != nil {
 			return fmt.Errorf("write %s root CA copy: %w", svc, err)
 		}

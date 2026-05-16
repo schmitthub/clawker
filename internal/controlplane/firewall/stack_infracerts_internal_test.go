@@ -128,16 +128,16 @@ func TestStack_ensureInfraClientCerts_WritesPerServiceMaterial(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, os.FileMode(0o644), info.Mode().Perm(), "%s key mode", svc)
 
-		// 0o700 on the per-service dir is the defense-in-depth the
-		// 0o644 key file relies on: a non-root host user cannot
-		// traverse into svcDir to read the otherwise world-readable
-		// bind-mounted key. If this assertion ever drifts, the
-		// "trusted infra-issuer-signed client" trust boundary on the
-		// otlp/infra receiver collapses (any local user can forge
-		// Envoy/CoreDNS log lines).
+		// 0o755 on the per-service dir is required so the in-container
+		// reader (Envoy distroless runs UID 101) can traverse to the
+		// bind-mounted key. Docker bind mounts preserve host inode
+		// perms; a root-owned 0o700 mount root blocks any non-root
+		// in-container UID, which would silently break the TLS
+		// handshake on Envoy startup. The 0o644 key mode (asserted
+		// above) is the relevant exposure surface, not the directory.
 		dirInfo, err := os.Stat(svcDir)
 		require.NoError(t, err)
-		assert.Equal(t, os.FileMode(0o700), dirInfo.Mode().Perm(), "%s dir mode", svc)
+		assert.Equal(t, os.FileMode(0o755), dirInfo.Mode().Perm(), "%s dir mode", svc)
 	}
 }
 

@@ -356,10 +356,14 @@ func otelLogsEnv(cfg config.Config) []string {
 		"OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE=" + consts.CPClientCertPath,
 		"OTEL_EXPORTER_OTLP_CLIENT_KEY=" + consts.CPClientKeyPath,
 		"OTEL_EXPORTER_OTLP_CERTIFICATE=" + consts.CPCACertPath,
-		// service.name will be force-set on the receiver pipeline by a
-		// resource processor (see otel-config.yaml.tmpl) — this value
-		// is advisory and would be overwritten anyway. Setting it for
-		// debug parity with file logs.
+		// service.name=clawker-cp is consumed by the OTel SDK's
+		// auto-detected Resource (sdkresource.Default reads
+		// OTEL_RESOURCE_ATTRIBUTES) and stamped on every emitted log
+		// record. The collector's routing/trusted connector dispatches
+		// by this sender-declared name to the clawker-cp index. Removing
+		// this env disables CP log routing — the resource/cp processor
+		// runs AFTER routing and only stamps ingest_source, it does NOT
+		// rewrite service.name.
 		"OTEL_RESOURCE_ATTRIBUTES=service.name=clawker-cp,component=clawker-cp",
 	}
 }

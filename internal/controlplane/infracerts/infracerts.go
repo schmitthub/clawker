@@ -78,6 +78,18 @@ func Load(certPath, keyPath string) (*Issuer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse intermediate key: %w", err)
 	}
+	// Pair-check: x509.CreateCertificate happily signs leaves with a
+	// mismatched key, but the produced chain won't verify at handshake
+	// time. Catch the mismatch at Load so main.go's degrade path emits
+	// event=infra_issuer_unavailable instead of stranding the bug as
+	// opaque Envoy/CoreDNS TLS handshake failures at runtime.
+	certPub, ok := cert.PublicKey.(*ecdsa.PublicKey)
+	if !ok {
+		return nil, fmt.Errorf("intermediate cert %s public key is not ECDSA (got %T)", certPath, cert.PublicKey)
+	}
+	if !certPub.Equal(&key.PublicKey) {
+		return nil, fmt.Errorf("intermediate key %s does not match cert %s public key", keyPath, certPath)
+	}
 
 	return &Issuer{
 		intermediate:    cert,

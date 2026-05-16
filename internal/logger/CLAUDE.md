@@ -53,6 +53,15 @@ type OtelOptions struct {
     MaxQueueSize   int           // batch processor queue size
     ExportInterval time.Duration // batch export interval
 
+    // ServiceName stamps `service.name` on the OTEL Resource for every
+    // emitted record. REQUIRED when the collector routes on this
+    // attribute (routing/trusted, routing/untrusted in otel-config.yaml).
+    // Leaving it empty produces the SDK default "unknown_service:<binary>",
+    // which the routing connector drops silently — records export
+    // successfully but never reach a backend. Canonical values:
+    // "clawker-cli" (host CLI), "clawker-cp" (control plane daemon).
+    ServiceName string
+
     // mTLS material — all three are required when any is set.
     // When wired, the exporter presents the leaf during the gRPC handshake
     // and pins the receiver's CA. Insecure is ignored.

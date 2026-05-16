@@ -567,9 +567,10 @@ func TestGeneratedDefaults_SettingsValues(t *testing.T) {
 	assert.Equal(t, 7, s.Logging.MaxAgeDays)
 	assert.Equal(t, 3, s.Logging.MaxBackups)
 
-	// OTEL
+	// OTEL — opt-in: defaults off so CLI doesn't dial a missing
+	// collector on every invocation when monitoring stack isn't up.
 	require.NotNil(t, s.Logging.Otel.Enabled)
-	assert.True(t, *s.Logging.Otel.Enabled)
+	assert.False(t, *s.Logging.Otel.Enabled)
 	assert.Equal(t, 5, s.Logging.Otel.TimeoutSeconds)
 	assert.Equal(t, 2048, s.Logging.Otel.MaxQueueSize)
 
