@@ -19,6 +19,7 @@ call:
 agentCleanup, err := agent.Start(watcherCtx, agent.StartDeps{
     Registry:     agentReg,            // CP-owned sqlite writer
     DockerLister: listAgentIDsAll,     // returns purpose=agent containers, All:true
+    PeerLookup:   agentPeerLookup,     // peer-IP→Docker→labels resolver (required)
     Dialer:       dialer,              // agent.New(...) for CP→clawkerd
     Bus:          bus,
     Log:          log.With("component", "agent"),
@@ -36,7 +37,12 @@ defer agentCleanup()
    `container/destroy`; consumer evicts the registry row. Stop/die/
    kill do NOT evict — a stopped container can be `docker start`-ed
    back into life.
-3. **Subscribe to `dockerevents.DockerEvent` for dial.** Filter on
+3. **Subscribe to registry evicts for Session cancel.** When the
+   evict subscriber above removes a row, this subscriber calls
+   `dialer.CancelDial(containerID)` so the in-flight CP→clawkerd
+   `Session` is torn down synchronously instead of lingering until
+   the next reconnect attempt notices the container is gone.
+4. **Subscribe to `dockerevents.DockerEvent` for dial.** Filter on
    `container/start|restart|unpause` with `purpose=agent`; consumer
    calls `dialer.DialAgent(ctx, containerID)`.
 
@@ -49,12 +55,12 @@ now unexported helpers behind `Start`.
 |------|---------|
 | `start.go` | `Start(ctx, StartDeps)` umbrella + shared panic-loop guardrails for the two subscribers + private `reapOrphans` |
 | `registry.go` | `Registry` interface, `Entry`, `ErrUnknownAgent`, `NewRegistry` (in-memory test impl) |
-| `registry_sqlite.go` | sqlite-backed `Registry`: `NewSQLiteWriter`, `EnsureSchema`, schema apply with migration support |
+| `registry_sqlite.go` | sqlite-backed `Registry`: `NewSQLiteWriter`, `EnsureSchema`. Schema applied via goose migrations embedded from `migrations/*.sql` (see `applySchema`) |
 | `dialer.go` | `Dialer.DialAgent` — CP-side outbound mTLS dial to `ClawkerdService.Session`. Permissive trust posture (asymmetric: CP must always be reachable). Drives Register handshake on Miss, publishes Session* + AgentRegistered + AgentUntrusted events |
 | `events_session.go` | `SessionConnecting`, `SessionConnected`, `SessionFailed`, `SessionBroken` — all implement `overseer.applier` mutating `State.Agents` |
 | `events_agent.go` | `AgentRegistered{Ok, Reason}`, `AgentUntrusted{Reason UntrustedReason, Detail}` — also implement `applier` |
 | `register_handler.go` | `Handler` (AgentService.Register handler) — consumes middleware-resolved identity from ctx, captures cert thumbprint, cross-checks cert container SAN + request fields against resolved truth, writes the registry row |
-| `peer_lookup.go` | `ContainerByPeerIP` interface + `ResolvedContainer` struct + sentinels (`ErrNoContainerForPeerIP`, `ErrInvalidAgentLabels`) — peer-IP-grounded trust resolver |
+| `peer_lookup.go` | `ContainerByPeerIP` interface + `ResolvedContainer` struct + sentinels (`ErrNoContainerForPeerIP`, `ErrInvalidAgentLabels`, `ErrAmbiguousPeerIP`) — peer-IP-grounded trust resolver |
 | `peer_lookup_moby.go` | `MobyPeerLookup`, the production `ContainerByPeerIP` backed by the Docker daemon |
 | `handler.go` | `peerIdentity` projection + `peerIdentityFromContext` + `peerLeafFromContext` + `WithResolvedContainer` / `ResolvedContainerFromContext` ctx helpers |
 | `identity_interceptor.go` | `IdentityInterceptor(peerLookup, log)` — universal peer-IP-grounded identity gate applied to every AgentService RPC (no opt-out) |

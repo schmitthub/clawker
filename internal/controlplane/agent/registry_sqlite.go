@@ -104,14 +104,14 @@ func openSQLite(dbPath string, log *logger.Logger) (Registry, error) {
 	}
 	rowCount, countErr := r.countRows()
 	if countErr != nil {
-		// SELECT COUNT failure right after a fresh schema apply is
-		// suspicious (corrupt page, lock contention, busted PRAGMA).
-		// Surface at Warn so the boot-log "rows=N" line is not
-		// misread as an authoritative empty-DB signal when the
-		// reader actually couldn't ask.
+		// Omit the `rows` field on this path: the open-log emits
+		// Int("rows", N) on the happy path, so mixing a string under
+		// the same key would collide with the OpenSearch mapping and
+		// drop one of the two record shapes silently.
 		r.log.Warn().Err(countErr).
 			Str("db_path", dbPath).
-			Msg("agentregistry: countRows failed at open; row count is unknown")
+			Msg("agentregistry: sqlite registry opened; countRows failed, row count unknown")
+		return r, nil
 	}
 	r.log.Info().
 		Str("db_path", dbPath).

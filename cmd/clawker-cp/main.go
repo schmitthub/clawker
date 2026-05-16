@@ -552,12 +552,12 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// still observe and contain. Failing closed here is correct — a
 	// half-wired trust gate is exactly the silent-failure surface root
 	// CLAUDE.md forbids.
-	identityUnary, identityStream, err := agent.IdentityInterceptor(
+	identityUnary, identityStream, identityErr := agent.IdentityInterceptor(
 		agentPeerLookup,
 		log.With("component", "agent-identity"),
 	)
-	if err != nil {
-		log.Error().Err(err).
+	if identityErr != nil {
+		log.Error().Err(identityErr).
 			Str("component", "agent-identity").
 			Str("event", "agent_identity_unavailable").
 			Msg("agent identity gate unavailable; AgentService listener disabled, CP serve path otherwise unaffected")

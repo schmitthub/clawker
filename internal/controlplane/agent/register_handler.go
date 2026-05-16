@@ -145,11 +145,12 @@ func (h *Handler) Register(ctx context.Context, req *agentv1.RegisterRequest) (*
 	thumbprint := sha256.Sum256(leaf.Raw)
 
 	// Request fields must agree with the daemon-resolved labels. The
-	// middleware already confirmed cert↔labels alignment; this stage
-	// catches a clawkerd whose cert and labels agree but whose RPC
-	// body claims a different identity (defense-in-depth against a
-	// client bug, not a malicious peer — the cert+CN pin already
-	// excludes that). Plain string compare: project/agent are
+	// middleware already confirmed cert↔labels alignment (cert SAN
+	// AgentFullName ↔ peer-IP-derived labels); this stage catches a
+	// clawkerd whose cert and labels agree but whose RPC body claims
+	// a different identity (defense-in-depth against a client bug,
+	// not a malicious peer — the middleware's SAN-vs-labels gate
+	// already excludes that). Plain string compare: project/agent are
 	// daemon-attested labels, not secrets, and the timing channel
 	// reveals nothing useful.
 	if project.String() != resolved.Project.String() || agentName.String() != resolved.AgentName.String() {
@@ -165,15 +166,22 @@ func (h *Handler) Register(ctx context.Context, req *agentv1.RegisterRequest) (*
 
 	// Cert URI SAN container_id is a claim; resolved.ContainerID is
 	// daemon ground truth via peer-IP. The middleware verified the
-	// urn:clawker:agent: SAN but not the urn:clawker:container: SAN
-	// (cert claims about the container are this handler's
-	// responsibility). CLI MintAgentCert always embeds the SAN —
-	// absence is a malformed cert.
-	certContainerID, ok := auth.ContainerIDFromCert(leaf)
-	if !ok {
+	// urn:clawker:agent: SAN but not the urn:clawker:container: SAN —
+	// cert claims about the container are this handler's
+	// responsibility. Tri-state classification lets operators tell an
+	// old-CLI missing-SAN from a producer-side malformed-SAN bug; the
+	// wire envelope is uniform.
+	certContainerID, sanErr := auth.ContainerIDFromCert(leaf)
+	switch {
+	case errors.Is(sanErr, auth.ErrContainerSANMissing):
 		h.log.Warn().
 			Str("event", "agent_register_no_container_san").
 			Msg("cert missing container URI SAN")
+		return nil, status.Error(codes.PermissionDenied, "register: identity check failed")
+	case errors.Is(sanErr, auth.ErrContainerSANMalformed):
+		h.log.Warn().
+			Str("event", "agent_register_malformed_container_san").
+			Msg("cert container URI SAN has empty tail")
 		return nil, status.Error(codes.PermissionDenied, "register: identity check failed")
 	}
 	if certContainerID != resolved.ContainerID {

@@ -59,8 +59,8 @@ func TestGenerateAgentBootstrap_HappyPath(t *testing.T) {
 	// Container_id must be embedded as a URI SAN — the load-bearing
 	// binding the Register handler reads to identify which container
 	// the request is about.
-	gotID, ok := auth.ContainerIDFromCert(leaf)
-	require.True(t, ok, "cert must carry container_id URI SAN")
+	gotID, err := auth.ContainerIDFromCert(leaf)
+	require.NoError(t, err, "cert must carry container_id URI SAN")
 	assert.Equal(t, containerID, gotID)
 
 	// CA PEM matches the on-disk CA.

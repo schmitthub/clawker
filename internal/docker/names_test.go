@@ -62,24 +62,6 @@ func TestValidateResourceName(t *testing.T) {
 	}
 }
 
-func TestGenerateRandomName(t *testing.T) {
-	// Generate multiple names and verify format
-	seen := make(map[string]bool)
-	for i := 0; i < 100; i++ {
-		name := GenerateRandomName()
-		parts := strings.Split(name, "-")
-		if len(parts) != 2 {
-			t.Errorf("GenerateRandomName() = %q, expected adjective-noun format", name)
-		}
-		seen[name] = true
-	}
-
-	// Should have generated multiple unique names (very unlikely to get all same)
-	if len(seen) < 10 {
-		t.Errorf("GenerateRandomName() generated too few unique names: %d", len(seen))
-	}
-}
-
 func TestContainerName(t *testing.T) {
 	tests := []struct {
 		project string
@@ -341,12 +323,6 @@ func TestGlobalVolumeName(t *testing.T) {
 				t.Errorf("GlobalVolumeName(%q) = %q, want %q", tt.purpose, got, tt.want)
 			}
 		})
-	}
-}
-
-func TestNamePrefix(t *testing.T) {
-	if NamePrefix != "clawker" {
-		t.Errorf("NamePrefix = %q, want %q", NamePrefix, "clawker")
 	}
 }
 

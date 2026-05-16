@@ -44,9 +44,11 @@ var ErrAmbiguousPeerIP = errors.New("multiple purpose=agent containers match pee
 
 // ContainerByPeerIP resolves a live mTLS peer IP to the
 // `purpose=agent` container owning that IP on clawker-net. Returns
-// ErrNoContainerForPeerIP when nothing matches, ErrInvalidAgentLabels
-// when the matching container's labels can't form a valid identity,
-// or a wrapped daemon error.
+// ErrNoContainerForPeerIP when nothing matches,
+// ErrInvalidAgentLabels when the matching container's labels can't
+// form a valid identity, ErrAmbiguousPeerIP when two or more
+// containers share the peer IP (Docker restart-race window — fails
+// closed), or a wrapped daemon error.
 type ContainerByPeerIP interface {
 	LookupByIP(ctx context.Context, ip netip.Addr) (ResolvedContainer, error)
 }

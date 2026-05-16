@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -88,6 +89,36 @@ func TestMintAgentCert_HappyPath(t *testing.T) {
 	lifetime := leaf.NotAfter.Sub(leaf.NotBefore)
 	assert.Greater(t, lifetime, 23*time.Hour)
 	assert.LessOrEqual(t, lifetime, 25*time.Hour)
+}
+
+// TestMintAgentCert_MaxLengthRoundTrip pins the load-bearing
+// regression this PR closes: a cert minted with the longest
+// project + agent names the typed identity constructors accept must
+// still parse cleanly and round-trip through AgentFullNameFromCert.
+// A future change that reintroduces the AgentFullName in the CN
+// (or otherwise pushes a length past x509's 64-byte CN limit) would
+// fail this test loudly instead of silently breaking GenerateRandomName
+// agents at runtime.
+func TestMintAgentCert_MaxLengthRoundTrip(t *testing.T) {
+	caCertPath, caKeyPath := caPaths(t)
+
+	// MaxShortNameLen()-sized identifiers: first char alphabetic (charset
+	// rule for AgentName/ProjectSlug), remainder safe alnum.
+	maxName := "a" + strings.Repeat("0", MaxShortNameLen()-1)
+	require.Len(t, maxName, MaxShortNameLen())
+
+	got, err := MintAgentCert(caCertPath, caKeyPath, MustProjectSlug(maxName), MustAgentName(maxName), "abc1234567890def")
+	require.NoError(t, err, "MintAgentCert must accept max-length project + agent names")
+
+	leaf := mustParse(t, got.CertPEM)
+
+	// CN stays the deterministic binary identity regardless of input
+	// length — that's the entire reason the move to URI SAN happened.
+	assert.Equal(t, consts.ContainerClawkerd, leaf.Subject.CommonName)
+
+	gotFullName, err := AgentFullNameFromCert(leaf)
+	require.NoError(t, err)
+	assert.Equal(t, "clawker."+maxName+"."+maxName, gotFullName)
 }
 
 func TestMintAgentCert_DistinctSerials(t *testing.T) {
@@ -255,6 +286,50 @@ func TestAgentFullNameFromCert_TriState(t *testing.T) {
 		name, err := AgentFullNameFromCert(cert)
 		require.NoError(t, err)
 		assert.Equal(t, "clawker.proj.dev", name)
+	})
+}
+
+// TestContainerIDFromCert_TriState mirrors the agent-SAN tri-state on
+// the container SAN side. The Register handler maps missing vs
+// malformed to distinct structured-log events
+// (agent_register_no_container_san vs
+// agent_register_malformed_container_san) so operators can tell an
+// old-CLI no-SAN cert from a producer-side empty-tail bug.
+func TestContainerIDFromCert_TriState(t *testing.T) {
+	t.Run("nil cert → missing", func(t *testing.T) {
+		_, err := ContainerIDFromCert(nil)
+		require.ErrorIs(t, err, ErrContainerSANMissing)
+	})
+
+	t.Run("cert without any URI SANs → missing", func(t *testing.T) {
+		cert := &x509.Certificate{}
+		_, err := ContainerIDFromCert(cert)
+		require.ErrorIs(t, err, ErrContainerSANMissing)
+	})
+
+	t.Run("cert with unrelated URI SAN → missing", func(t *testing.T) {
+		u, parseErr := url.Parse("https://example.com/other")
+		require.NoError(t, parseErr)
+		cert := &x509.Certificate{URIs: []*url.URL{u}}
+		_, err := ContainerIDFromCert(cert)
+		require.ErrorIs(t, err, ErrContainerSANMissing)
+	})
+
+	t.Run("cert with container SAN scheme but empty tail → malformed", func(t *testing.T) {
+		u, parseErr := url.Parse(ContainerSANScheme)
+		require.NoError(t, parseErr)
+		cert := &x509.Certificate{URIs: []*url.URL{u}}
+		_, err := ContainerIDFromCert(cert)
+		require.ErrorIs(t, err, ErrContainerSANMalformed)
+	})
+
+	t.Run("cert with well-formed container SAN → no error", func(t *testing.T) {
+		u, parseErr := url.Parse(ContainerSANScheme + "abc1234567890def")
+		require.NoError(t, parseErr)
+		cert := &x509.Certificate{URIs: []*url.URL{u}}
+		id, err := ContainerIDFromCert(cert)
+		require.NoError(t, err)
+		assert.Equal(t, "abc1234567890def", id)
 	})
 }
 

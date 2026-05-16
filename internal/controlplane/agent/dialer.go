@@ -17,13 +17,13 @@
 // # Asymmetric trust model — load-bearing
 //
 // CP is the overlord. The dial NEVER aborts on cert / identity grounds.
-// Cert chain verification, peer CN match, and registry classification
+// Cert chain verification and registry thumbprint classification
 // outcomes are captured on the establishResult and surfaced through
 // the typed event surface — SessionConnected carries flat
-// PeerAgentFullName/PeerThumbprint fields; AgentRegistered/AgentUntrusted carry
-// the policy outcomes. Subscribers consume those events to enact
-// policy (containment, alerting, eviction); the dialer holds no
-// policy itself.
+// PeerAgentFullName/PeerThumbprint fields (purely diagnostic, never a
+// gate); AgentRegistered/AgentUntrusted carry the policy outcomes.
+// Subscribers consume those events to enact policy (containment,
+// alerting, eviction); the dialer holds no policy itself.
 //
 // Why permissive: CP must always be able to reach clawkerd to issue
 // containment commands (iptables lock, network detach, container kill).
@@ -128,10 +128,10 @@ type Dialer struct {
 	// agents is the CP-owned agentregistry (read+write). The dialer
 	// reads it at handshake time to classify the peer cert against
 	// the registered row: match (registered), miss (drives Register
-	// handshake), thumbprint mismatch (untrusted), CN mismatch
-	// (untrusted). Connection stays open in all cases. The Register
-	// flow re-reads after RegisterDone to confirm the row landed.
-	// Required (non-nil) — wiring bug if unset.
+	// handshake), thumbprint mismatch (untrusted). Connection stays
+	// open in all cases. The Register flow re-reads after RegisterDone
+	// to confirm the row landed. Required (non-nil) — wiring bug if
+	// unset.
 	agents Registry
 
 	// initExec dispatches the CP-driven init plan after
