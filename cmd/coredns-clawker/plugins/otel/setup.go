@@ -17,7 +17,7 @@ const (
 
 	defaultClientCertPath = "/etc/clawker/auth/coredns/client.pem"
 	defaultClientKeyPath  = "/etc/clawker/auth/coredns/client.key"
-	defaultCACertPath     = "/etc/clawker/auth/tls/ca.pem"
+	defaultCACertPath     = "/etc/clawker/auth/coredns/ca.pem"
 )
 
 func init() { plugin.Register(pluginName, setup) }

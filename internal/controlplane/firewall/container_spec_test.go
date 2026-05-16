@@ -4,7 +4,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/moby/moby/api/types/mount"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -116,4 +118,55 @@ func TestContainerSpecs_FirewallDataMountsAreReadOnly(t *testing.T) {
 			t.Errorf("coredns spec has %d firewall-data mounts, want at least 1 (Corefile)\n Got: %+v", firewallMounts, spec.mounts)
 		}
 	})
+}
+
+func TestContainerSpecs_OtelClientMaterialUsesSingleDirectoryMountPerService(t *testing.T) {
+	cfg := configmocks.NewIsolatedTestConfig(t)
+	overrideHostPathsForTest(t, consts.DataDir())
+
+	s := NewStack(nil, cfg, logger.Nop(), nil, fakeIssuerForSpecTest{})
+	netInfo := &NetworkInfo{NetworkID: "net-test", EnvoyIP: "172.20.0.2", CoreDNSIP: "172.20.0.3"}
+
+	t.Run("envoy", func(t *testing.T) {
+		spec := s.envoyContainerSpec(netInfo)
+		assertHasBindMount(t, spec.mounts,
+			filepath.Join(consts.HostFirewallOtelCertsDir, "envoy"),
+			"/etc/envoy/otel-tls",
+		)
+		assertNoBindTarget(t, spec.mounts, "/etc/envoy/otel-tls/ca.pem")
+	})
+
+	t.Run("coredns", func(t *testing.T) {
+		spec := s.corednsContainerSpec(netInfo)
+		assertHasBindMount(t, spec.mounts,
+			filepath.Join(consts.HostFirewallOtelCertsDir, "coredns"),
+			"/etc/clawker/auth/coredns",
+		)
+		assertNoBindTarget(t, spec.mounts, "/etc/clawker/auth/tls/ca.pem")
+	})
+}
+
+type fakeIssuerForSpecTest struct{}
+
+func (fakeIssuerForSpecTest) MintClient(string, time.Duration) ([]byte, []byte, error) {
+	return nil, nil, nil
+}
+
+func assertHasBindMount(t *testing.T, mounts []mount.Mount, source, target string) {
+	t.Helper()
+	for _, m := range mounts {
+		if m.Type == mount.TypeBind && m.Source == source && m.Target == target {
+			return
+		}
+	}
+	t.Fatalf("missing bind mount %s -> %s in %+v", source, target, mounts)
+}
+
+func assertNoBindTarget(t *testing.T, mounts []mount.Mount, target string) {
+	t.Helper()
+	for _, m := range mounts {
+		if m.Type == mount.TypeBind && m.Target == target {
+			t.Fatalf("unexpected bind mount target %s from %s", target, m.Source)
+		}
+	}
 }

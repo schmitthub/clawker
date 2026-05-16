@@ -449,11 +449,12 @@ var rootCASourcePath = func() string { return consts.CPCACertPath }
 // receiver (Envoy + CoreDNS today; future hostproxy sidecars plug in
 // here). Files land under FirewallOtelClientsDir:
 //
-//	<dir>/ca.pem            (CLI root CA, copied from CPCACertPath)
 //	<dir>/envoy/client.pem  (leaf + intermediate chain)
 //	<dir>/envoy/client.key
+//	<dir>/envoy/ca.pem      (CLI root CA, copied from CPCACertPath)
 //	<dir>/coredns/client.pem
 //	<dir>/coredns/client.key
+//	<dir>/coredns/ca.pem
 //
 // All leaves are 1-year TTL — same shape as the per-domain MITM
 // certs. EnsureRunning re-runs through ensureConfigs which re-runs
@@ -484,15 +485,13 @@ func (s *Stack) ensureInfraClientCerts() error {
 	if err != nil {
 		return fmt.Errorf("read root CA at %s: %w", src, err)
 	}
-	caDst := filepath.Join(dir, "ca.pem")
-	if err := os.WriteFile(caDst, caBytes, 0o644); err != nil {
-		return fmt.Errorf("write root CA copy: %w", err)
-	}
-
 	for _, svc := range []string{"envoy", "coredns"} {
 		svcDir := filepath.Join(dir, svc)
 		if err := os.MkdirAll(svcDir, 0o755); err != nil {
 			return fmt.Errorf("create %s dir: %w", svc, err)
+		}
+		if err := os.WriteFile(filepath.Join(svcDir, "ca.pem"), caBytes, 0o644); err != nil {
+			return fmt.Errorf("write %s root CA copy: %w", svc, err)
 		}
 		chainPEM, keyPEM, err := s.infraIssuer.MintClient(svc+"-otel-client", 365*24*time.Hour)
 		if err != nil {
@@ -581,11 +580,6 @@ func (s *Stack) envoyContainerSpec(netInfo *NetworkInfo) containerSpec {
 			Source:   filepath.Join(consts.HostFirewallOtelCertsDir, "envoy"),
 			Target:   "/etc/envoy/otel-tls",
 			ReadOnly: true,
-		}, mount.Mount{
-			Type:     mount.TypeBind,
-			Source:   filepath.Join(consts.HostFirewallOtelCertsDir, "ca.pem"),
-			Target:   "/etc/envoy/otel-tls/ca.pem",
-			ReadOnly: true,
 		})
 	}
 	return containerSpec{
@@ -638,11 +632,6 @@ func (s *Stack) corednsContainerSpec(netInfo *NetworkInfo) containerSpec {
 			Type:     mount.TypeBind,
 			Source:   filepath.Join(consts.HostFirewallOtelCertsDir, "coredns"),
 			Target:   "/etc/clawker/auth/coredns",
-			ReadOnly: true,
-		}, mount.Mount{
-			Type:     mount.TypeBind,
-			Source:   filepath.Join(consts.HostFirewallOtelCertsDir, "ca.pem"),
-			Target:   "/etc/clawker/auth/tls/ca.pem",
 			ReadOnly: true,
 		})
 		if otelPort := s.cfg.SettingsStore().Read().Monitoring.OtelInfraPort; otelPort > 0 {

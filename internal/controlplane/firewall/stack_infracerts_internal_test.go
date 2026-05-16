@@ -59,13 +59,10 @@ func TestStack_ensureInfraClientCerts_WritesPerServiceMaterial(t *testing.T) {
 	dir, err := consts.FirewallOtelClientsDir()
 	require.NoError(t, err)
 
-	gotCA, err := os.ReadFile(filepath.Join(dir, "ca.pem"))
-	require.NoError(t, err)
-	assert.Equal(t, caBytes, gotCA)
-
 	for _, svc := range []string{"envoy", "coredns"} {
 		certPath := filepath.Join(dir, svc, "client.pem")
 		keyPath := filepath.Join(dir, svc, "client.key")
+		caPath := filepath.Join(dir, svc, "ca.pem")
 
 		cert, err := os.ReadFile(certPath)
 		require.NoError(t, err, "%s cert", svc)
@@ -74,6 +71,10 @@ func TestStack_ensureInfraClientCerts_WritesPerServiceMaterial(t *testing.T) {
 		key, err := os.ReadFile(keyPath)
 		require.NoError(t, err, "%s key", svc)
 		assert.Equal(t, issuer.keyPEM, key)
+
+		serviceCA, err := os.ReadFile(caPath)
+		require.NoError(t, err, "%s ca", svc)
+		assert.Equal(t, caBytes, serviceCA)
 
 		// 0o644 on the key is intentional — CoreDNS upstream runs as a
 		// non-root uid and a stricter mode silently breaks load.
@@ -97,6 +98,8 @@ func TestStack_ensureInfraClientCerts_NilIssuer_NoOp(t *testing.T) {
 
 	dir, err := consts.FirewallOtelClientsDir()
 	require.NoError(t, err)
-	_, err = os.Stat(filepath.Join(dir, "ca.pem"))
-	assert.True(t, errors.Is(err, os.ErrNotExist), "ca.pem should not exist when issuer is nil")
+	for _, svc := range []string{"envoy", "coredns"} {
+		_, err = os.Stat(filepath.Join(dir, svc, "ca.pem"))
+		assert.True(t, errors.Is(err, os.ErrNotExist), "%s/ca.pem should not exist when issuer is nil", svc)
+	}
 }
