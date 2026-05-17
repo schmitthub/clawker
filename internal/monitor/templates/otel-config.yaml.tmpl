@@ -1,9 +1,14 @@
 receivers:
-  # Untrusted OTLP ingress for agent containers (Claude Code's SDK).
-  # No client auth — agent on clawker-net can reach this. Records are
-  # dispatched by routing/untrusted which only forwards service.name=
-  # claude-code; everything else is dropped. service.name=envoy/coredns/
-  # clawker-cp from this receiver can NOT route to the trusted indices.
+  # Untrusted OTLP ingress for agent containers (Claude Code's SDK) +
+  # host CLI (clawker-cli). No client auth — anyone reachable on
+  # clawker-net or the host loopback can push. Records are dispatched
+  # by routing/untrusted, which forwards only service.name=claude-code
+  # and service.name=clawker-cli to their respective indices; every
+  # other service.name (including spoofed envoy/coredns/clawker-cp) is
+  # dropped at routing. The resource/untrusted_otlp processor stamps
+  # ingest_source=untrusted_otlp on all records from this receiver so
+  # dashboards can separate forgeable, sender-declared records from
+  # provenance-stamped ones.
   otlp:
     protocols:
       grpc:
@@ -16,8 +21,7 @@ receivers:
   # this port over the docker network, but the TLS handshake rejects
   # any peer whose client cert chain does not validate against the
   # infra intermediate CA — only CP and infra services (envoy/coredns,
-  # cp) hold leaves signed by that intermediate (via internal/
-  # controlplane/otelcerts).
+  # cp) hold leaves signed by that intermediate.
   #
   # Trust anchor is the infra intermediate CA, NOT the CLI root. Agent
   # containers carry leaves signed directly by the CLI root with no
@@ -53,7 +57,7 @@ receivers:
         - job_name: 'otelcol'
           scrape_interval: 10s
           static_configs:
-            - targets: ['0.0.0.0:8888']
+            - targets: ['127.0.0.1:8888']
   # Container-level metrics scraped from the Docker daemon. Reads via
   # the RO-mounted socket at /var/run/docker.sock (compose maps host
   # Settings.Docker.Socket → this path).
@@ -123,7 +127,31 @@ receivers:
         mute_process_user_error: true
 
 processors:
+  # Cap collector memory below the 200M compose hard limit so burst
+  # load applies backpressure rather than triggering an OOM-kill. Must
+  # be the first processor in every pipeline to be effective.
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 150
+    spike_limit_mib: 30
+  # Explicit batch sizing so behavior is predictable under burst. The
+  # 5s timeout keeps forensic indices reasonably near-real-time without
+  # over-shipping tiny batches at low volume.
   batch:
+    timeout: 5s
+    send_batch_size: 1024
+    send_batch_max_size: 2048
+  # Provenance stamp for everything entering on the unauth'd otlp
+  # receiver. Lets queries trivially separate forgeable
+  # sender-declared records from records whose source is anchored by
+  # mTLS handshake. Applied at the start of every untrusted-lane
+  # pipeline; service.name itself is left alone so routing can still
+  # dispatch on it.
+  resource/untrusted_otlp:
+    attributes:
+      - key: ingest_source
+        value: untrusted_otlp
+        action: upsert
   # Copy project/agent from resource attributes to datapoint attributes.
   # The Prometheus exporter only surfaces datapoint attributes as metric labels,
   # so this transform is required for per-project/agent filtering on the
@@ -159,39 +187,82 @@ exporters:
   # Stdout pipe-through for diagnosis. Surfaces in `docker logs
   # clawker-otel-collector`; verbose by design.
   debug:
+    verbosity: detailed
   # Traces → OpenSearch (Simple Schema for Observability data model).
+  # sending_queue + retry_on_failure keep batches alive across the
+  # OpenSearch startup window and short outages so forensic data
+  # isn't dropped silently.
   opensearch/traces:
     http:
       endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"
     dataset: traces
     namespace: clawker
+    sending_queue:
+      enabled: true
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_elapsed_time: 5m
   # Logs → OpenSearch. Indices split by source so dynamic mappings
   # don't collide. clawker emits attributes.event as a scalar string
   # (logger pattern `Str("event", ...)`); Claude Code emits the OTEL
   # semantic-conventions nested form `event.name`. Sharing one index
   # locks first-seen shape and rejects the other source — split keeps
-  # each schema clean.
+  # each schema clean. sending_queue + retry_on_failure protect against
+  # OpenSearch unavailability windows (boot, GC pause, indexing
+  # pressure) where dropping forensic records would be the worst time.
   opensearch/logs_cp:
     http:
       endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"
     logs_index: clawker-cp
+    sending_queue:
+      enabled: true
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_elapsed_time: 5m
   opensearch/logs_claude_code:
     http:
       endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"
     logs_index: claude-code
+    sending_queue:
+      enabled: true
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_elapsed_time: 5m
   opensearch/logs_clawker_cli:
     http:
       endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"
     logs_index: clawker-cli
+    sending_queue:
+      enabled: true
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_elapsed_time: 5m
   opensearch/logs_envoy:
     http:
       endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"
     logs_index: clawker-envoy
+    sending_queue:
+      enabled: true
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_elapsed_time: 5m
   opensearch/logs_coredns:
     http:
       endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"
     logs_index: clawker-coredns
-  # Metrics → Prometheus scrape endpoint.
+    sending_queue:
+      enabled: true
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_elapsed_time: 5m
+  # Metrics → Prometheus scrape endpoint. Pull-based, so no retry
+  # config — Prometheus handles its own scrape cadence.
   prometheus:
     endpoint: "0.0.0.0:{{.PrometheusMetricsPort}}"
 
@@ -200,11 +271,12 @@ connectors:
   # through the traces pipeline and re-emits them into the metrics
   # pipeline. Empty-series until traces actually flow.
   spanmetrics:
-  # Route untrusted (plaintext OTLP) records. Only claude-code records
-  # land in their index; everything else is silently dropped (no
-  # default_pipelines). An agent crafting `service.name=envoy` from
-  # the unauth'd port CANNOT reach the clawker-envoy index — there is
-  # no envoy route off this connector.
+  # Route untrusted (plaintext OTLP) records. Only claude-code and
+  # clawker-cli records reach their indices; everything else is
+  # silently dropped (no default_pipelines, error_mode: ignore). An
+  # agent crafting `service.name=envoy`/`coredns`/`clawker-cp` from
+  # the unauth'd port CANNOT reach the trusted indices — there is no
+  # such route off this connector.
   routing/untrusted:
     error_mode: ignore
     table:
@@ -215,9 +287,16 @@ connectors:
         condition: attributes["service.name"] == "clawker-cli"
         pipelines: [logs/clawker-cli]
   # Route trusted (mTLS-gated) records by sender-declared service.name.
-  # Reachable only by peers with a CLI-root-chained client cert.
+  # Reachable only by peers whose client cert chains through the infra
+  # intermediate CA. error_mode: propagate so OTTL evaluation errors
+  # on legitimate forensic records surface in collector logs rather
+  # than being silently swallowed. default_pipelines catches any
+  # unmapped service.name and routes it to logs/trusted_unrouted —
+  # operator can grep collector stdout if this fires (it shouldn't,
+  # only cp/envoy/coredns hold infra-intermediate leaves today).
   routing/trusted:
-    error_mode: ignore
+    error_mode: propagate
+    default_pipelines: [logs/trusted_unrouted]
     table:
       - context: resource
         condition: attributes["service.name"] == "clawker-cp"
@@ -231,27 +310,46 @@ connectors:
 
 service:
   pipelines:
+    # Untrusted traces — agent-pushed spans. resource/untrusted_otlp
+    # stamps every record so dashboards can separate forgeable
+    # sender-declared spans from trusted-lane spans (currently none,
+    # but the pattern extends cleanly when a trusted span source is
+    # added).
     traces:
       receivers: [otlp]
-      processors: [batch]
+      processors: [memory_limiter, resource/untrusted_otlp, batch]
       exporters: [opensearch/traces, spanmetrics, debug]
-    metrics:
-      receivers: [otlp, prometheus/self, docker_stats, hostmetrics, spanmetrics]
-      processors: [batch, transform/metrics]
+    # Untrusted metrics — anything arriving on the unauth'd otlp
+    # receiver. transform/metrics copies project/agent resource attrs
+    # to datapoint labels; ingest_source=untrusted_otlp is stamped
+    # first so the forgeable labels are always paired with the
+    # provenance marker.
+    metrics/untrusted:
+      receivers: [otlp]
+      processors: [memory_limiter, resource/untrusted_otlp, transform/metrics, batch]
       exporters: [prometheus, debug]
-    # Untrusted log ingress. Only claude-code routes downstream; other
-    # service.name values are dropped at the routing connector.
+    # Trusted metrics — collector self-scrape, docker_stats,
+    # hostmetrics, and spanmetrics-derived RED metrics. All sourced
+    # locally; no sender-declared resource attrs to defend.
+    metrics/trusted:
+      receivers: [prometheus/self, docker_stats, hostmetrics, spanmetrics]
+      processors: [memory_limiter, transform/metrics, batch]
+      exporters: [prometheus, debug]
+    # Untrusted log ingress. Only claude-code/clawker-cli route
+    # downstream; other service.name values are dropped at the routing
+    # connector. ingest_source stamped here so it carries through to
+    # the per-source pipelines.
     logs/in_untrusted:
       receivers: [otlp]
-      processors: [batch]
+      processors: [memory_limiter, resource/untrusted_otlp, batch]
       exporters: [routing/untrusted]
     logs/claude-code:
       receivers: [routing/untrusted]
-      processors: []
+      processors: [memory_limiter]
       exporters: [opensearch/logs_claude_code, debug]
     logs/clawker-cli:
       receivers: [routing/untrusted]
-      processors: []
+      processors: [memory_limiter]
       exporters: [opensearch/logs_clawker_cli, debug]
     # Trusted log ingress. mTLS handshake is the auth boundary; the
     # routing connector dispatches by sender-declared service.name to
@@ -259,17 +357,26 @@ service:
     # for cross-index query convenience.
     logs/in_trusted:
       receivers: [otlp/infra]
-      processors: [batch]
+      processors: [memory_limiter, batch]
       exporters: [routing/trusted]
     logs/cp:
       receivers: [routing/trusted]
-      processors: [resource/cp]
+      processors: [memory_limiter, resource/cp]
       exporters: [opensearch/logs_cp, debug]
     logs/envoy:
       receivers: [routing/trusted]
-      processors: [resource/envoy]
+      processors: [memory_limiter, resource/envoy]
       exporters: [opensearch/logs_envoy, debug]
     logs/coredns:
       receivers: [routing/trusted]
-      processors: [resource/coredns]
+      processors: [memory_limiter, resource/coredns]
       exporters: [opensearch/logs_coredns, debug]
+    # Quarantine for any trusted-lane record with an unmapped
+    # service.name. Should never fire — only cp/envoy/coredns hold
+    # infra-intermediate-chained leaves today. If it does, operator
+    # can grep `docker logs clawker-otel-collector` for the debug
+    # output to identify a misconfigured trusted sender.
+    logs/trusted_unrouted:
+      receivers: [routing/trusted]
+      processors: [memory_limiter]
+      exporters: [debug]

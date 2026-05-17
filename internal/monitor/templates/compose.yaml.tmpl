@@ -16,6 +16,10 @@ services:
         limits:
           memory: 200M
     restart: unless-stopped
+    # Root required to read /hostfs (hostmetrics scrapes /proc, /sys,
+    # filesystem mounts — root-owned on the host) and the docker
+    # daemon socket (typically root:docker — readable by uid 0 inside
+    # the container without group bridging).
     user: 0:0
     volumes:
       - ./otel-config.yaml:/etc/otel-collector-config.yaml
@@ -34,25 +38,32 @@ services:
       - {{.OtelCAHostPath}}:/etc/otel/tls/ca.pem:ro
 {{- end}}
     ports:
-      # Existing receivers — published all-interfaces for parity with
-      # earlier behaviour. Agent containers push to these via clawker-net
-      # DNS (`{{.OtelCollectorService}}:<port>`); host-side debugging uses the
-      # published mapping.
-      - "{{.OtelGRPCPort}}:{{.OtelGRPCPort}}"
-      - "{{.OtelCollectorPort}}:{{.OtelCollectorPort}}"
+      # Untrusted receivers — host loopback only. Agent containers
+      # push via clawker-net DNS (`{{.OtelCollectorService}}:<port>`) which
+      # doesn't need a host publish at all; the publish exists solely
+      # for host-side senders (clawker CLI) which dial localhost via
+      # Settings.Monitoring.OtelCollectorHost (default `localhost`).
+      # Binding to 0.0.0.0 would expose the unauth'd plaintext OTLP
+      # ingestion to anything routable on the LAN.
+      - "127.0.0.1:{{.OtelGRPCPort}}:{{.OtelGRPCPort}}"
+      - "127.0.0.1:{{.OtelCollectorPort}}:{{.OtelCollectorPort}}"
 {{- if .OtelInfraPort}}
       # CP-only receiver — host loopback only. clawker-cp pushes via
       # host.docker.internal:<port>. Agents trying the same address are
       # rejected by BPF (gateway:non-hostproxy → Envoy → reset);
       # additionally, mTLS would refuse them because they have no
-      # client cert signed by the CLI CA.
+      # client cert chained through the infra intermediate CA.
       - "127.0.0.1:{{.OtelInfraPort}}:{{.OtelInfraPort}}"
 {{- end}}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
       {{.OpenSearchNodeService}}:
-        condition: service_started
+        # service_started fires too early — OpenSearch takes ~30s of
+        # heap init before it accepts HTTP. Gate on service_healthy
+        # (curl /_cluster/health below) so the collector's exporters
+        # don't open with rejected batches.
+        condition: service_healthy
     labels:
       dev.clawker.managed: "true"
       dev.clawker.purpose: "monitoring"
@@ -114,6 +125,16 @@ services:
       - "127.0.0.1:{{.OpenSearchPort}}:{{.OpenSearchPort}}"
     volumes:
       - clawker-opensearch:/usr/share/opensearch/data
+    # Cluster health endpoint is the canonical readiness signal. Yellow
+    # status is acceptable for single-node (no replicas to assign).
+    # start_period gives the JVM heap init time before the first
+    # failure counts against retries.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS 'http://localhost:{{.OpenSearchPort}}/_cluster/health?wait_for_status=yellow&timeout=5s' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
     labels:
       dev.clawker.managed: "true"
       dev.clawker.purpose: "monitoring"

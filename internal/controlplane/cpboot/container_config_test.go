@@ -273,8 +273,9 @@ func TestCPContainer_ExtraHostsHostGateway(t *testing.T) {
 // is non-zero (default), the OTLP endpoint + protocol env vars land in
 // the container config. Client cert/key/CA env vars are deliberately
 // absent — the CP-side exporter wires its TLSConfig in-process via
-// internal/controlplane/otelcerts (PR #287 trust-anchor fix). Reading
-// CLI-root-direct cert paths from env would silently undo the fix.
+// internal/controlplane/otelcerts. Reading CLI-root-direct cert paths
+// from env would silently undo the trust-anchor split (agents hold
+// CLI-root-direct leaves and could forge service.name=clawker-cp).
 func TestCPContainer_OtelLogsEnv_Emitted(t *testing.T) {
 	testenv.New(t)
 	cfg := configmocks.NewBlankConfig()

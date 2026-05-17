@@ -20,9 +20,10 @@ their handshake fails the receiver's chain validation. The CLI root CA
 remains the server-side trust anchor used by clients to verify the
 otel-collector's server cert.
 
-This is the security boundary that contains the OTLP/infra spoof CVE
-PR #287 introduced. Agents cannot reach the trusted forensic indices
-even when they hold a CLI-root-signed leaf.
+This is the security boundary on the trusted forensic indices: agents
+cannot reach `clawker-cp` / `clawker-envoy` / `clawker-coredns` even
+when they hold a valid CLI-root-signed leaf, because their chain does
+not pass through the infra intermediate.
 
 ## API
 

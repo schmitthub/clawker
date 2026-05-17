@@ -65,8 +65,10 @@ func TestOtelOptionsFromEnv(t *testing.T) {
 
 	// CLI-root-direct cert env vars are deliberately ignored. The CP's
 	// trusted-lane exporter takes its TLSConfig in-process from
-	// internal/controlplane/otelcerts; env-driven cert paths were the
-	// PR #287 vulnerability shape and must not silently re-enable.
+	// internal/controlplane/otelcerts; allowing env-driven cert paths
+	// would let an operator smuggle in a CLI-root-direct leaf, which
+	// agent containers also hold — they could then forge
+	// service.name=clawker-cp records on the trusted receiver.
 	t.Run("client cert env vars are not consulted", func(t *testing.T) {
 		t.Setenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "https://host:4319")
 		t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")

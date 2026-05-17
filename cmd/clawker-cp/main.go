@@ -110,9 +110,9 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// so the TLSConfig must be available at that moment. infracerts is
 	// cheap (reads two on-disk PEM files), so loading it early is
 	// strictly safer than late-binding a logger exporter that would
-	// otherwise have to read CLI-root-direct cert paths from env vars
-	// (the pre-fix wiring that PR #287 introduced and this code path
-	// closes).
+	// otherwise need env-driven cert paths — agent containers carry
+	// CLI-root-direct leaves, so any env-readable cert path becomes a
+	// smuggling vector for service.name=clawker-cp forgery.
 	//
 	// Defer all error logging until after logger.New so failures land
 	// in the structured log surface that operators are wired to watch,
@@ -1012,11 +1012,11 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 // exporter is wired in-process via internal/controlplane/otelcerts,
 // which mints leaves on each handshake from the bind-mounted infra
 // intermediate (see internal/controlplane/otelcerts/CLAUDE.md). Env-
-// driven cert paths are deliberately removed so a future operator
-// can't smuggle in CLI-root-direct material — that was the original
-// PR #287 vulnerability shape (agent containers reusing a CLI-root
-// leaf to forge service.name=clawker-cp records on the trusted
-// receiver).
+// driven cert paths are deliberately rejected so a future operator
+// can't smuggle in CLI-root-direct material — agent containers
+// already hold CLI-root-direct leaves and could forge
+// service.name=clawker-cp records on the trusted receiver if the CP
+// honored an env-supplied cert path.
 //
 // The bridge endpoint is set up by cpboot to point at the monitor
 // stack's CP-only receiver via host.docker.internal. CP is BPF-exempt

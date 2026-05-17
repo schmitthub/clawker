@@ -227,7 +227,10 @@ monitoring:
 		"hostmetrics:",
 		"unix:///var/run/docker.sock",
 		"root_path: /hostfs",
-		"receivers: [otlp, prometheus/self, docker_stats, hostmetrics, spanmetrics]",
+		// Metrics pipeline is split into untrusted (otlp only — anything
+		// pushed on the unauth'd lane) and trusted (locally-sourced
+		// scrapers). Both export to the shared prometheus exporter.
+		"receivers: [prometheus/self, docker_stats, hostmetrics, spanmetrics]",
 		// mTLS-gated receiver feeds the trusted-routing pipeline.
 		"receivers: [otlp/infra]",
 		// Routing connectors are the receivers for the per-source log
