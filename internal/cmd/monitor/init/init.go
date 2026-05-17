@@ -164,6 +164,21 @@ func initRun(_ context.Context, opts *InitOptions) error {
 		fmt.Fprintf(ios.ErrOut, "%s Generated %s\n", cs.InfoIcon(), file.name)
 	}
 
+	// Render the OpenSearch bootstrap asset tree (bootstrap.sh, index
+	// templates, ISM policies, saved objects). Bind-mounted into the
+	// clawker-opensearch-bootstrap service which preconfigures the
+	// cluster + Dashboards before the otel-collector starts.
+	//
+	// Unlike the single-file --force gate above, this dir is always
+	// re-rendered — the throwaway-stack model means the source of truth
+	// is the embedded assets in the binary, not anything the user might
+	// have hand-edited under monitorDir.
+	bootstrapDir := filepath.Join(monitorDir, monitor.OpenSearchBootstrapDirName)
+	if err := monitor.WriteOpenSearchBootstrap(bootstrapDir, tmplData); err != nil {
+		return fmt.Errorf("write opensearch bootstrap dir: %w", err)
+	}
+	fmt.Fprintf(ios.ErrOut, "%s Generated %s/\n", cs.InfoIcon(), monitor.OpenSearchBootstrapDirName)
+
 	// Success message — use config-derived URLs
 	fmt.Fprintf(ios.ErrOut, "%s Monitoring stack initialized.\n", cs.SuccessIcon())
 	fmt.Fprintln(ios.ErrOut)

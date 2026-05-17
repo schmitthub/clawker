@@ -1,0 +1,28 @@
+{
+  "index_patterns": ["clawker-coredns"],
+  "priority": 100,
+  "composed_of": ["clawker-common"],
+  "template": {
+    "mappings": {
+      "properties": {
+        "attributes": {
+          "properties": {
+            "source":       { "type": "keyword" },
+            "client_ip":    { "type": "ip" },
+            "zone":         { "type": "keyword" },
+            "query_name":   { "type": "keyword" },
+            "qtype":        { "type": "keyword" },
+            "rcode":        { "type": "keyword" },
+            "answer_count": { "type": "integer" },
+            "duration_ms":  { "type": "long" },
+            "answers":      { "type": "keyword" }
+          }
+        }
+      }
+    }
+  },
+  "_meta": {
+    "description": "CoreDNS query records via in-tree otel plugin — structured dns.query attributes",
+    "managed_by": "clawker-opensearch-bootstrap"
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0
+    },
+    "mappings": {
+      "properties": {
+        "@timestamp": { "type": "date" },
+        "observedTimestamp": { "type": "date" },
+        "severityText": { "type": "keyword" },
+        "severityNumber": { "type": "integer" },
+        "traceId": { "type": "keyword" },
+        "spanId": { "type": "keyword" },
+        "body": {
+          "type": "text",
+          "fields": { "keyword": { "type": "keyword", "ignore_above": 2048 } }
+        },
+        "resource": {
+          "properties": {
+            "attributes": {
+              "properties": {
+                "service.name":    { "type": "keyword" },
+                "service.version": { "type": "keyword" },
+                "ingest_source":   { "type": "keyword" },
+                "project":         { "type": "keyword" },
+                "agent":           { "type": "keyword" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "_meta": {
+    "description": "Shared field mappings for all clawker observability indices",
+    "managed_by": "clawker-opensearch-bootstrap"
+  }
+}

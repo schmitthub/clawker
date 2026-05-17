@@ -1,0 +1,5 @@
+{"id":"claude-code","type":"index-pattern","attributes":{"title":"claude-code","timeFieldName":"@timestamp"},"references":[],"migrationVersion":{"index-pattern":"7.6.0"}}
+{"id":"clawker-cli","type":"index-pattern","attributes":{"title":"clawker-cli","timeFieldName":"@timestamp"},"references":[],"migrationVersion":{"index-pattern":"7.6.0"}}
+{"id":"clawker-cp","type":"index-pattern","attributes":{"title":"clawker-cp","timeFieldName":"@timestamp"},"references":[],"migrationVersion":{"index-pattern":"7.6.0"}}
+{"id":"clawker-envoy","type":"index-pattern","attributes":{"title":"clawker-envoy","timeFieldName":"@timestamp"},"references":[],"migrationVersion":{"index-pattern":"7.6.0"}}
+{"id":"clawker-coredns","type":"index-pattern","attributes":{"title":"clawker-coredns","timeFieldName":"@timestamp"},"references":[],"migrationVersion":{"index-pattern":"7.6.0"}}

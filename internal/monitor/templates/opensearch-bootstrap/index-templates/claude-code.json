@@ -1,0 +1,38 @@
+{
+  "index_patterns": ["claude-code"],
+  "priority": 100,
+  "composed_of": ["clawker-common"],
+  "template": {
+    "mappings": {
+      "properties": {
+        "attributes": {
+          "properties": {
+            "event": {
+              "properties": {
+                "name":   { "type": "keyword" },
+                "domain": { "type": "keyword" }
+              }
+            },
+            "session": {
+              "properties": {
+                "id": { "type": "keyword" }
+              }
+            },
+            "user": {
+              "properties": {
+                "id": { "type": "keyword" }
+              }
+            },
+            "model":    { "type": "keyword" },
+            "tool_name":{ "type": "keyword" },
+            "language": { "type": "keyword" }
+          }
+        }
+      }
+    }
+  },
+  "_meta": {
+    "description": "Claude Code SDK logs — OTEL semantic-conventions nested attributes.event.name",
+    "managed_by": "clawker-opensearch-bootstrap"
+  }
+}

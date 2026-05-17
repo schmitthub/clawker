@@ -1,0 +1,23 @@
+{
+  "index_patterns": ["clawker-cli"],
+  "priority": 100,
+  "composed_of": ["clawker-common"],
+  "template": {
+    "mappings": {
+      "properties": {
+        "attributes": {
+          "properties": {
+            "event":     { "type": "keyword" },
+            "component": { "type": "keyword" },
+            "level":     { "type": "keyword" },
+            "error":     { "type": "text", "fields": { "keyword": { "type": "keyword", "ignore_above": 1024 } } }
+          }
+        }
+      }
+    }
+  },
+  "_meta": {
+    "description": "Host clawker CLI zerolog records — scalar attributes.event keyword",
+    "managed_by": "clawker-opensearch-bootstrap"
+  }
+}

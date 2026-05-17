@@ -6,13 +6,14 @@ Service hostnames live in `internal/consts/monitoring.go`. `MonitoringServiceHos
 
 ## Template Files
 
-Template source files live in `templates/`. Every file is a Go `text/template` (`.tmpl`) rendered via `RenderTemplate` before being written to disk.
+Template source files live in `templates/`. Every file is a Go `text/template` (`.tmpl`) rendered via `RenderTemplate` before being written to disk. The OpenSearch bootstrap asset tree is also embedded — see [OpenSearch Bootstrap](#opensearch-bootstrap) below.
 
 | Embedded Variable | Source File |
 |-------------------|-------------|
 | `ComposeTemplate` | `templates/compose.yaml.tmpl` |
 | `OtelConfigTemplate` | `templates/otel-config.yaml.tmpl` |
 | `PrometheusTemplate` | `templates/prometheus.yaml.tmpl` |
+| `OpenSearchBootstrapFS` (`embed.FS`) | `templates/opensearch-bootstrap/**` |
 
 ## Filename Constants
 
@@ -23,6 +24,7 @@ Output filenames for writing rendered content to disk:
 | `ComposeFileName` | `compose.yaml` |
 | `OtelConfigFileName` | `otel-config.yaml` |
 | `PrometheusFileName` | `prometheus.yaml` |
+| `OpenSearchBootstrapDirName` | `opensearch-bootstrap` (workdir subdir) |
 
 ## Image Constants
 
@@ -34,6 +36,7 @@ All pinned to a multi-arch manifest list digest (`@sha256:`). Verify with `docke
 | `PrometheusImage` | `prom/prometheus:v3.10.0` |
 | `OpenSearchImage` | `opensearchproject/opensearch:3.6.0` |
 | `OpenSearchDashboardsImage` | `opensearchproject/opensearch-dashboards:3.6.0` |
+| `CurlImage` | `curlimages/curl:8.17.0` (one-shot bootstrap container) |
 
 ## Template Rendering
 
@@ -60,7 +63,8 @@ Each port field drives **both** sides of the host:container publish mapping AND 
 | `OtelServerCertHostPath` / `OtelServerKeyHostPath` / `OtelCAHostPath` | `string` | Host paths to CLI-issued mTLS material gating the CP-only OTLP receiver (empty disables) |
 | `HostFilesystem` | `string` | Host path mounted at `/hostfs` for the hostmetrics receiver. Hardcoded `/` |
 | `DockerSocketPath` | `string` | Host path to the Docker daemon socket; mounted at `/var/run/docker.sock` for the docker_stats receiver. Sourced from `Settings.Docker.Socket` |
-| `OtelCollectorImage` / `PrometheusImage` / `OpenSearchImage` / `OpenSearchDashboardsImage` | `string` | Pinned image refs |
+| `OtelCollectorImage` / `PrometheusImage` / `OpenSearchImage` / `OpenSearchDashboardsImage` / `CurlImage` | `string` | Pinned image refs |
+| `OpenSearchBootstrapDirName` | `string` | Workdir subdir holding bootstrap.sh + JSON/NDJSON assets; bind-mounted into the bootstrap container |
 
 ### NewMonitorTemplateData(s *config.Settings) MonitorTemplateData
 
@@ -70,11 +74,66 @@ Constructor that populates `MonitorTemplateData` from full `config.Settings`. Se
 
 Renders a Go `text/template` string with the given `MonitorTemplateData`. Returns the rendered string or an error if parsing/execution fails.
 
+### WriteOpenSearchBootstrap(destDir string, data MonitorTemplateData) error
+
+Walks `OpenSearchBootstrapFS` and mirrors it into `destDir`, preserving directory structure. `.tmpl` files are rendered with `MonitorTemplateData` and written with the suffix stripped (and `0755` so `bootstrap.sh` is executable); JSON/NDJSON files are copied verbatim (`0644`). Existing files are overwritten unconditionally — `monitor init` enforces the `--force` gate at the entry point.
+
 ## Usage
 
-The `monitor init` command constructs `MonitorTemplateData` via `NewMonitorTemplateData`, then calls `RenderTemplate` for each `.tmpl` template before writing the rendered output to disk.
+The `monitor init` command constructs `MonitorTemplateData` via `NewMonitorTemplateData`, calls `RenderTemplate` for each `.tmpl` template, writes them to disk, then calls `WriteOpenSearchBootstrap` to materialize the bootstrap asset tree under `<monitorDir>/opensearch-bootstrap/`.
 
 All symbols are in `templates.go`.
+
+## OpenSearch Bootstrap
+
+The OpenSearch + Dashboards cluster ships preconfigured: index templates (per-source mappings + retention), ISM policies (auto-attached via `ism_template.index_patterns`), and Dashboards saved objects (index patterns + dashboards) all apply on every fresh `monitor up`. The mechanism is a one-shot service in the compose stack — `clawker-opensearch-bootstrap` — that runs `bootstrap.sh` against the cluster between OpenSearch reaching `service_healthy` and the otel-collector / prometheus starting.
+
+### Source tree
+
+Embedded into the CLI binary via `//go:embed all:templates/opensearch-bootstrap`:
+
+```
+templates/opensearch-bootstrap/
+  bootstrap.sh.tmpl                    # POSIX sh, file-driven loops over the subdirs below
+  component-templates/
+    clawker-common.json                # Shared @timestamp / service.name / ingest_source mappings
+  index-templates/
+    claude-code.json                   # Nested attributes.event.name (OTEL semantic conventions)
+    clawker-cli.json                   # Scalar attributes.event (zerolog Str("event", ...))
+    clawker-cp.json                    # Same shape as clawker-cli with cp-specific fields
+    clawker-envoy.json                 # Flat HTTP/TLS/TCP fields from Envoy ALS
+    clawker-coredns.json               # Structured dns.query attributes from CoreDNS otel plugin
+  ism-policies/
+    clawker-retention.json             # 7d retention; ism_template covers all 5 indices
+  saved-objects/
+    clawker.ndjson                     # Five index-pattern saved objects (timeFieldName=@timestamp)
+```
+
+`monitor init` walks this tree via `WriteOpenSearchBootstrap`, renders `bootstrap.sh.tmpl` against `MonitorTemplateData` (only OpenSearch / Dashboards hostnames + ports), and copies the rest verbatim into `<monitorDir>/opensearch-bootstrap/`. That directory is bind-mounted RO into the bootstrap container at `/opensearch-bootstrap`.
+
+### Compose ordering
+
+```
+opensearch-node (service_healthy via curl /_cluster/health)
+        │
+        ▼
+clawker-opensearch-bootstrap (one-shot)
+   - PUT /_component_template/<name> for each component-templates/*.json
+   - PUT /_index_template/<name>     for each index-templates/*.json
+   - PUT /_plugins/_ism/policies/<id> for each ism-policies/*.json
+   - poll http://opensearch-dashboards:5601/api/status until 2xx
+   - POST /api/saved_objects/_import?overwrite=true (multipart NDJSON, osd-xsrf: true)
+   - exit 0
+        │  (service_completed_successfully)
+        ▼
+otel-collector, prometheus (start only after bootstrap exits 0)
+```
+
+If `bootstrap.sh` exits non-zero (e.g. malformed template JSON, OpenSearch rejects a mapping), the collector + prom dependents never start. Logs surface in `docker logs clawker-opensearch-bootstrap`. There is no Dashboards healthcheck in compose — the script polls `/api/status` itself before doing saved-objects work, keeping all readiness logic in one place and avoiding having to add curl/wget to the Dashboards image's healthcheck.
+
+### Templates only apply at index creation
+
+OpenSearch index templates only take effect when an index is created — they do NOT retroactively re-map existing indices. The monitoring stack is preconfigured + ephemeral by design (see `.claude/rules/monitoring.md` → "Monitoring stack throwaway"), so the canonical way to pick up template / ISM / saved-object edits is `clawker monitor down --volumes && clawker monitor up`. Bootstrap re-runs on every `monitor up`; PUT semantics make template / ISM updates idempotent and `?overwrite=true` makes saved-objects import idempotent, but pre-existing index mappings stay locked to whatever was applied at first ingest of that index.
 
 ## OTEL Pipelines (otel-config.yaml.tmpl)
 

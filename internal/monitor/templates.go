@@ -2,8 +2,12 @@ package monitor
 
 import (
 	"bytes"
-	_ "embed"
+	"embed"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
 	"text/template"
 
 	"github.com/schmitthub/clawker/internal/config"
@@ -23,11 +27,21 @@ var OtelConfigTemplate string
 //go:embed templates/prometheus.yaml.tmpl
 var PrometheusTemplate string
 
+// OpenSearchBootstrapFS embeds the bootstrap asset tree (script + index
+// templates + ISM policies + saved objects). `monitor init` walks this
+// FS and writes each file to <workdir>/opensearch-bootstrap/. Only
+// `bootstrap.sh.tmpl` is templated; the JSON/NDJSON payloads ship
+// verbatim so users can audit them as static config.
+//
+//go:embed all:templates/opensearch-bootstrap
+var OpenSearchBootstrapFS embed.FS
+
 // Template file names for writing to disk
 const (
-	ComposeFileName    = "compose.yaml"
-	OtelConfigFileName = "otel-config.yaml"
-	PrometheusFileName = "prometheus.yaml"
+	ComposeFileName            = "compose.yaml"
+	OtelConfigFileName         = "otel-config.yaml"
+	PrometheusFileName         = "prometheus.yaml"
+	OpenSearchBootstrapDirName = "opensearch-bootstrap"
 )
 
 // Monitoring stack container images — pinned to version + SHA256 manifest-list digest.
@@ -38,6 +52,11 @@ const (
 	PrometheusImage           = "prom/prometheus:v3.10.0@sha256:4a61322ac1103a0e3aea2a61ef1718422a48fa046441f299d71e660a3bc71ae9"
 	OpenSearchImage           = "opensearchproject/opensearch:3.6.0@sha256:57bd3c879ad27123a9a6cd75e2adba504189d3131d00a669f3baf9210bc4538c"
 	OpenSearchDashboardsImage = "opensearchproject/opensearch-dashboards:3.6.0@sha256:9fe2cbf1d82c3f66a0860ed140415692ce55de4711ed7877ab738e5da1a357c0"
+	// CurlImage is the throwaway shell the clawker-opensearch-bootstrap
+	// service uses to PUT index templates / ISM policies and POST saved
+	// objects against OpenSearch + Dashboards once they're healthy.
+	// curlimages/curl is Alpine-based, ships /bin/sh + curl, ~10 MB.
+	CurlImage = "curlimages/curl:8.17.0@sha256:935d9100e9ba842cdb060de42472c7ca90cfe9a7c96e4dacb55e79e560b3ff40"
 )
 
 // MonitorTemplateData provides values for rendering monitoring stack templates.
@@ -99,6 +118,14 @@ type MonitorTemplateData struct {
 	PrometheusImage           string
 	OpenSearchImage           string
 	OpenSearchDashboardsImage string
+	CurlImage                 string
+
+	// OpenSearchBootstrapDirName is the subdir of the rendered monitor
+	// workdir that holds bootstrap.sh + index-templates/ + ism-policies/
+	// + saved-objects/. Bind-mounted into the bootstrap container at
+	// /opensearch-bootstrap. Lifted to a template field so the compose
+	// volume mount and the on-disk layout stay in sync from one constant.
+	OpenSearchBootstrapDirName string
 }
 
 // NewMonitorTemplateData constructs template data from Settings.
@@ -127,6 +154,8 @@ func NewMonitorTemplateData(s *config.Settings) MonitorTemplateData {
 		PrometheusImage:             PrometheusImage,
 		OpenSearchImage:             OpenSearchImage,
 		OpenSearchDashboardsImage:   OpenSearchDashboardsImage,
+		CurlImage:                   CurlImage,
+		OpenSearchBootstrapDirName:  OpenSearchBootstrapDirName,
 	}
 }
 
@@ -143,4 +172,63 @@ func RenderTemplate(name, tmplContent string, data MonitorTemplateData) (string,
 	}
 
 	return buf.String(), nil
+}
+
+// WriteOpenSearchBootstrap mirrors [OpenSearchBootstrapFS] into destDir,
+// preserving directory structure. Files ending in `.tmpl` are rendered
+// with [MonitorTemplateData] and written with the `.tmpl` suffix
+// stripped; everything else (JSON, NDJSON) is copied verbatim.
+//
+// The destination is the workdir subdir bind-mounted into the
+// clawker-opensearch-bootstrap container at /opensearch-bootstrap, so
+// the on-disk layout mirrors what the script reads at runtime. Callers
+// (monitor init) should pass `<monitorDir>/<OpenSearchBootstrapDirName>`.
+//
+// Idempotent: existing files are unconditionally overwritten. `monitor
+// init` already enforces the `--force` gate at the top level, so when
+// this runs the caller has decided to (re)render.
+func WriteOpenSearchBootstrap(destDir string, data MonitorTemplateData) error {
+	const root = "templates/" + OpenSearchBootstrapDirName
+
+	return fs.WalkDir(OpenSearchBootstrapFS, root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return fmt.Errorf("relpath %s: %w", path, err)
+		}
+		if rel == "." {
+			return os.MkdirAll(destDir, 0o755)
+		}
+
+		outPath := filepath.Join(destDir, rel)
+
+		if d.IsDir() {
+			return os.MkdirAll(outPath, 0o755)
+		}
+
+		raw, err := OpenSearchBootstrapFS.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read embed %s: %w", path, err)
+		}
+
+		mode := os.FileMode(0o644)
+		if strings.HasSuffix(outPath, ".tmpl") {
+			rendered, err := RenderTemplate(filepath.Base(path), string(raw), data)
+			if err != nil {
+				return fmt.Errorf("render %s: %w", path, err)
+			}
+			raw = []byte(rendered)
+			outPath = strings.TrimSuffix(outPath, ".tmpl")
+			// bootstrap.sh runs as the container entrypoint — needs +x.
+			mode = 0o755
+		}
+
+		if err := os.WriteFile(outPath, raw, mode); err != nil {
+			return fmt.Errorf("write %s: %w", outPath, err)
+		}
+		return nil
+	})
 }

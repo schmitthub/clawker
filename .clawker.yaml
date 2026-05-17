@@ -167,6 +167,9 @@ security:
       - slsa.dev
       - github.blog
       - docs.claude.com
+      - docs.opensearch.org
+      - auth.docker.io
+      - registry-1.docker.io
     rules:
       - action: allow
         dst: github.com
