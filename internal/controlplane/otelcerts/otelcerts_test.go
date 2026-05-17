@@ -20,15 +20,18 @@ import (
 
 // fakeIssuer implements Issuer with deterministic mint outputs the
 // test can drive. Callers can swap in invalid PEM to exercise the
-// pair-check failure path.
+// pair-check failure path. `calls` records every serviceName MintClient
+// was invoked with so tests can pin the `-otel-client` suffix contract.
 type fakeIssuer struct {
 	mints     int
+	calls     []string
 	failNext  bool
 	bogusPair bool
 }
 
-func (f *fakeIssuer) MintClient(_ string, _ time.Duration) ([]byte, []byte, error) {
+func (f *fakeIssuer) MintClient(serviceName string, _ time.Duration) ([]byte, []byte, error) {
 	f.mints++
+	f.calls = append(f.calls, serviceName)
 	if f.failNext {
 		f.failNext = false
 		return nil, nil, errors.New("forced mint failure")
@@ -99,25 +102,60 @@ func mustRootCAPEM() []byte {
 	return pemBytes
 }
 
-func TestNew_RejectsNilIssuer(t *testing.T) {
-	_, err := New(nil, t.TempDir(), mustRootCAPEM(), nil)
-	require.Error(t, err)
-}
-
-func TestNew_RejectsEmptyDestDir(t *testing.T) {
-	_, err := New(&fakeIssuer{}, "", mustRootCAPEM(), nil)
-	require.Error(t, err)
-}
-
-func TestNew_RejectsEmptyRootCA(t *testing.T) {
-	_, err := New(&fakeIssuer{}, t.TempDir(), nil, nil)
-	require.Error(t, err)
+// TestNew_RejectsInvalidArgs pins the message contract on each
+// constructor guard. ErrorContains on the message (not just
+// require.Error) is the part that catches a future refactor that
+// re-orders the guards or copy-pastes the wrong error string.
+func TestNew_RejectsInvalidArgs(t *testing.T) {
+	tests := []struct {
+		name        string
+		issuer      Issuer
+		destDir     string
+		rootCABytes []byte
+		wantSubstr  string
+	}{
+		{
+			name:        "nil issuer",
+			issuer:      nil,
+			destDir:     t.TempDir(),
+			rootCABytes: mustRootCAPEM(),
+			wantSubstr:  "issuer must not be nil",
+		},
+		{
+			name:        "empty destDir",
+			issuer:      &fakeIssuer{},
+			destDir:     "",
+			rootCABytes: mustRootCAPEM(),
+			wantSubstr:  "destDir must not be empty",
+		},
+		{
+			name:        "empty rootCABytes",
+			issuer:      &fakeIssuer{},
+			destDir:     t.TempDir(),
+			rootCABytes: nil,
+			wantSubstr:  "rootCABytes must not be empty",
+		},
+		{
+			name:        "garbage rootCABytes",
+			issuer:      &fakeIssuer{},
+			destDir:     t.TempDir(),
+			rootCABytes: []byte("not a PEM block"),
+			wantSubstr:  "no parseable PEM certificates",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := New(tt.issuer, tt.destDir, tt.rootCABytes, nil)
+			require.ErrorContains(t, err, tt.wantSubstr)
+		})
+	}
 }
 
 func TestEnsureClient_WritesAllThreeFiles(t *testing.T) {
 	dir := t.TempDir()
 	ca := mustRootCAPEM()
-	s, err := New(&fakeIssuer{}, dir, ca, nil)
+	iss := &fakeIssuer{}
+	s, err := New(iss, dir, ca, nil)
 	require.NoError(t, err)
 
 	certPath, keyPath, caPath, err := s.EnsureClient("envoy")
@@ -130,6 +168,14 @@ func TestEnsureClient_WritesAllThreeFiles(t *testing.T) {
 	got, err := os.ReadFile(caPath)
 	require.NoError(t, err)
 	require.Equal(t, ca, got)
+
+	// The `-otel-client` suffix on the serviceName passed to MintClient
+	// is load-bearing for the OTel collector's authz config — the
+	// otlp/infra receiver's `client_ca_file` chain is keyed on the leaf
+	// CN. A future refactor that drops or changes the suffix would
+	// silently break trusted-lane mTLS until the receiver config is
+	// also updated.
+	require.Equal(t, []string{"envoy-otel-client"}, iss.calls)
 }
 
 func TestEnsureClient_FilePermsForDockerBindMount(t *testing.T) {
@@ -158,11 +204,22 @@ func TestEnsureClient_FilePermsForDockerBindMount(t *testing.T) {
 	}
 }
 
-func TestEnsureClient_RejectsEmptyService(t *testing.T) {
+// TestServiceMethods_RejectEmptyService pins the svc-must-not-be-empty
+// guard across both consumption shapes. Message contract is asserted
+// so a future refactor that returns a different sentinel breaks the
+// test, not silently changes the API.
+func TestServiceMethods_RejectEmptyService(t *testing.T) {
 	s, err := New(&fakeIssuer{}, t.TempDir(), mustRootCAPEM(), nil)
 	require.NoError(t, err)
-	_, _, _, err = s.EnsureClient("")
-	require.Error(t, err)
+
+	t.Run("EnsureClient", func(t *testing.T) {
+		_, _, _, err := s.EnsureClient("")
+		require.ErrorContains(t, err, "svc must not be empty")
+	})
+	t.Run("LoadTLSConfig", func(t *testing.T) {
+		_, err := s.LoadTLSConfig("")
+		require.ErrorContains(t, err, "svc must not be empty")
+	})
 }
 
 func TestEnsureClient_MintFailureLeavesNoTmpFiles(t *testing.T) {
@@ -242,13 +299,6 @@ func TestLoadTLSConfig_GetClientCertificateRemintsEachCall(t *testing.T) {
 	_, err = cfg.GetClientCertificate(nil)
 	require.NoError(t, err)
 	require.Equal(t, 2, iss.mints, "each handshake re-mints")
-}
-
-func TestLoadTLSConfig_RejectsEmptyService(t *testing.T) {
-	s, err := New(&fakeIssuer{}, t.TempDir(), mustRootCAPEM(), nil)
-	require.NoError(t, err)
-	_, err = s.LoadTLSConfig("")
-	require.Error(t, err)
 }
 
 func TestLoadTLSConfig_PropagatesMintFailure(t *testing.T) {

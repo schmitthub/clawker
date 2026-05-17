@@ -117,22 +117,41 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// Defer all error logging until after logger.New so failures land
 	// in the structured log surface that operators are wired to watch,
 	// not stderr.
+	// Two-variable pattern is load-bearing for safe degraded-mode
+	// signaling: otelCerts (interface type) must remain plain
+	// interface-nil on any failure so the firewall stack's
+	// `s.otelCerts == nil` check fires. Assigning a typed-nil
+	// `(*otelcerts.Service)(nil)` into the interface would box
+	// non-nil, defeat the nil check, and dispatch EnsureClient on a
+	// nil receiver — turning the intended degraded mode into a panic
+	// that strands eBPF (see internal/controlplane/CLAUDE.md, "CP
+	// crashing is a security incident"). Keep the concrete *Service
+	// in `otelCertsSvc` for the post-logger SetLogger wiring; only
+	// assign into `otelCerts` on the success path.
 	var (
-		otelCerts     fwhandler.OtelCertProvisioner
-		otelTLSConfig *tls.Config
-		otelCertsErr  error
+		otelCertsSvc     *otelcerts.Service
+		otelCerts        fwhandler.OtelCertProvisioner
+		otelTLSConfig    *tls.Config
+		otelCertsErr     error
+		otelCertsErrStep string
 	)
 	if issuer, err := infracerts.Load(consts.CPInfraCACertPath, consts.CPInfraCAKeyPath); err != nil {
 		otelCertsErr = fmt.Errorf("infracerts load: %w", err)
+		otelCertsErrStep = "infracerts_load"
 	} else if otelDir, err := consts.OtelClientsDir(); err != nil {
 		otelCertsErr = fmt.Errorf("resolving otel-clients dir: %w", err)
+		otelCertsErrStep = "otel_clients_dir"
 	} else if rootCABytes, err := os.ReadFile(consts.CPCACertPath); err != nil {
 		otelCertsErr = fmt.Errorf("reading CLI root CA at %s: %w", consts.CPCACertPath, err)
+		otelCertsErrStep = "read_root_ca"
 	} else if svc, err := otelcerts.New(issuer, otelDir, rootCABytes, nil); err != nil {
 		otelCertsErr = fmt.Errorf("constructing otelcerts.Service: %w", err)
+		otelCertsErrStep = "service_new"
 	} else if tlsCfg, err := svc.LoadTLSConfig("cp"); err != nil {
 		otelCertsErr = fmt.Errorf("building cp tls.Config: %w", err)
+		otelCertsErrStep = "load_tls_config"
 	} else {
+		otelCertsSvc = svc
 		otelCerts = svc
 		otelTLSConfig = tlsCfg
 	}
@@ -157,6 +176,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		EchoStdout: true,
 	}
 	log, err := logger.New(loggerOpts)
+	loggerInitErr := err
 	if err != nil {
 		// Fall back to stderr-only if log dir isn't writable.
 		log = logger.NewWriter(os.Stderr)
@@ -166,10 +186,32 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	defer log.Close()
 	log.Info().Msg("starting")
 
+	// Wire the real logger into the Service now that logger.New has
+	// succeeded. LoadTLSConfig's closure reads s.log lazily (at
+	// handshake time, well after this point), so post-construction
+	// SetLogger is safe and lets the per-handshake mint-failure event
+	// surface in the structured log.
+	if otelCertsSvc != nil {
+		otelCertsSvc.SetLogger(log)
+	}
+
+	if loggerInitErr != nil {
+		// Surface the file-logger fallback as a structured event so
+		// the docker-logs surface (the only place stderr lands) at
+		// least contains a discoverable record. Note: the OTel bridge
+		// is also gone in this path because logger.NewWriter takes no
+		// OtelOptions — operators must know the trusted lane is dark.
+		log.Error().Err(loggerInitErr).
+			Str("event", "file_logger_unavailable").
+			Str("component", "logger").
+			Msg("file logging init failed — running with stderr-only logger, OTel bridge disabled")
+	}
+
 	if otelCertsErr != nil {
 		log.Error().Err(otelCertsErr).
-			Str("event", "infra_issuer_unavailable").
+			Str("event", "otelcerts_unavailable").
 			Str("component", "otelcerts").
+			Str("step", otelCertsErrStep).
 			Msg("trusted-lane OTLP push disabled — CP and infra services run with file/stderr logs only")
 	}
 

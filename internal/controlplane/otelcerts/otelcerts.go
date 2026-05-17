@@ -39,10 +39,10 @@ package otelcerts
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 
 	"github.com/schmitthub/clawker/internal/logger"
@@ -70,10 +70,11 @@ type Issuer interface {
 // (*Service)(nil) sentinel — callers pass nil into the firewall stack
 // and CP exporter wiring drops the lane entirely.
 type Service struct {
-	issuer  Issuer
-	destDir string // host-FS dir; per-svc subdirs land underneath
-	rootCA  []byte // CLI root CA PEM (server-side trust anchor)
-	log     *logger.Logger
+	issuer   Issuer
+	destDir  string         // host-FS dir; per-svc subdirs land underneath
+	rootCA   []byte         // defensive copy; written to disk as ca.pem
+	rootPool *x509.CertPool // prebuilt at New for in-process RootCAs
+	log      *logger.Logger
 }
 
 // New constructs a Service.
@@ -98,15 +99,38 @@ func New(issuer Issuer, destDir string, rootCABytes []byte, log *logger.Logger) 
 	if len(rootCABytes) == 0 {
 		return nil, fmt.Errorf("otelcerts: rootCABytes must not be empty")
 	}
+	// Defensive copy: rootCA must not be mutable from the caller after
+	// construction. Parse the trust pool once so LoadTLSConfig is a pure
+	// function of validated state — a malformed bundle fails at startup
+	// instead of the first handshake.
+	rootCA := append([]byte(nil), rootCABytes...)
+	rootPool := x509.NewCertPool()
+	if !rootPool.AppendCertsFromPEM(rootCA) {
+		return nil, fmt.Errorf("otelcerts: rootCABytes contains no parseable PEM certificates")
+	}
 	if log == nil {
 		log = logger.Nop()
 	}
 	return &Service{
-		issuer:  issuer,
-		destDir: destDir,
-		rootCA:  rootCABytes,
-		log:     log,
+		issuer:   issuer,
+		destDir:  destDir,
+		rootCA:   rootCA,
+		rootPool: rootPool,
+		log:      log,
 	}, nil
+}
+
+// SetLogger replaces the Service's logger. Provided so callers that
+// construct the Service before logger.New (because the *tls.Config it
+// returns is consumed by logger.New itself) can wire the real logger
+// in once it's available. Closures captured by LoadTLSConfig read
+// s.log lazily at handshake time, so this is safe to call before the
+// first handshake fires.
+func (s *Service) SetLogger(log *logger.Logger) {
+	if log == nil {
+		log = logger.Nop()
+	}
+	s.log = log
 }
 
 // EnsureClient mints a fresh leaf for svc and writes
@@ -184,40 +208,36 @@ func (s *Service) LoadTLSConfig(svc string) (*tls.Config, error) {
 		return nil, fmt.Errorf("otelcerts: svc must not be empty")
 	}
 
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(s.rootCA) {
-		return nil, fmt.Errorf("otelcerts: root CA bundle contains no PEM blocks")
-	}
-
-	var (
-		mu     sync.Mutex
-		cached *tls.Certificate
-	)
-
-	mint := func() (*tls.Certificate, error) {
-		chainPEM, keyPEM, err := s.issuer.MintClient(svc+"-otel-client", leafTTL)
-		if err != nil {
-			return nil, fmt.Errorf("otelcerts: mint %s leaf: %w", svc, err)
-		}
-		cert, err := tls.X509KeyPair(chainPEM, keyPEM)
-		if err != nil {
-			return nil, fmt.Errorf("otelcerts: validate %s cert/key pair: %w", svc, err)
-		}
-		return &cert, nil
-	}
-
 	return &tls.Config{
-		RootCAs:    pool,
+		RootCAs:    s.rootPool,
 		MinVersion: tls.VersionTLS12,
 		GetClientCertificate: func(_ *tls.CertificateRequestInfo) (*tls.Certificate, error) {
-			mu.Lock()
-			defer mu.Unlock()
-			cert, err := mint()
+			chainPEM, keyPEM, err := s.issuer.MintClient(svc+"-otel-client", leafTTL)
 			if err != nil {
-				return nil, err
+				wrapped := fmt.Errorf("otelcerts: mint %s leaf: %w", svc, err)
+				// Per-handshake mint failure is otherwise invisible —
+				// otlploggrpc routes the error through the OTel SDK
+				// error handler as a generic "otel sdk error" line.
+				// Emit a structured event so operators can triage
+				// trusted-lane handshake failures from the file log.
+				s.log.Error().Err(wrapped).
+					Str("event", "otelcerts_handshake_mint_failed").
+					Str("component", "otelcerts").
+					Str("svc", svc).
+					Msg("trusted-lane TLS handshake aborted — OTLP records will buffer and may drop")
+				return nil, wrapped
 			}
-			cached = cert
-			return cached, nil
+			cert, err := tls.X509KeyPair(chainPEM, keyPEM)
+			if err != nil {
+				wrapped := fmt.Errorf("otelcerts: validate %s cert/key pair: %w", svc, err)
+				s.log.Error().Err(wrapped).
+					Str("event", "otelcerts_handshake_pair_invalid").
+					Str("component", "otelcerts").
+					Str("svc", svc).
+					Msg("issuer returned malformed cert/key pair — trusted-lane handshake aborted")
+				return nil, wrapped
+			}
+			return &cert, nil
 		},
 	}, nil
 }
@@ -232,7 +252,12 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 		return err
 	}
 	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
+		// Both errors matter: rename failed AND the tmp may still hold
+		// key material at 0o644. Surface both so a stuck .tmp doesn't
+		// hide behind a generic rename error.
+		if rmErr := os.Remove(tmp); rmErr != nil && !os.IsNotExist(rmErr) {
+			return errors.Join(err, fmt.Errorf("cleanup %s: %w", tmp, rmErr))
+		}
 		return err
 	}
 	return nil

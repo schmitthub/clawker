@@ -91,7 +91,7 @@ The plugin is the OTLP **client**. Material is issued + bind-mounted by `firewal
 
 | Path inside container | Source on host |
 |-----------------------|----------------|
-| `/etc/clawker/auth/coredns/client.pem` | `OtelClientsDir/coredns/client.pem` — leaf signed by the infra intermediate CA via `otelcerts.Service`, rotated on `firewall.Stack.Reload` |
+| `/etc/clawker/auth/coredns/client.pem` | `OtelClientsDir/coredns/client.pem` — leaf signed by the infra intermediate CA via `otelcerts.Service`, minted on `firewall.Stack.EnsureRunning` and rotated on every `Reload` |
 | `/etc/clawker/auth/coredns/client.key` | `OtelClientsDir/coredns/client.key` |
 | `/etc/clawker/auth/coredns/ca.pem` | `OtelClientsDir/coredns/ca.pem` — copy of CLI root CA written alongside the leaf so coredns can verify the otel-collector server cert |
 
