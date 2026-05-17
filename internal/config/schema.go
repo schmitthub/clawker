@@ -373,7 +373,7 @@ type MonitoringConfig struct {
 	OtelCollectorPort        int             `yaml:"otel_collector_port,omitempty" label:"OTEL Collector Port" desc:"Host port for the OTEL HTTP receiver" default:"4318"`
 	OtelCollectorHost        string          `yaml:"otel_collector_host,omitempty" label:"OTEL Collector Host" desc:"Hostname for reaching the collector from the host" default:"localhost"`
 	OtelGRPCPort             int             `yaml:"otel_grpc_port,omitempty" label:"OTEL gRPC Port" desc:"Host port for the OTEL gRPC receiver" default:"4317"`
-	OtelInfraPort            Port            `yaml:"otel_infra_port,omitempty" label:"OTEL Infra Port" desc:"Host-loopback port for the mTLS-gated OTLP receiver dedicated to trusted clawker infrastructure (CP, Envoy, CoreDNS). Setting client_ca_file on the receiver forces tls.RequireAndVerifyClientCert; peers must present a cert chained to the CLI root CA. Agents on clawker-net have no such cert so the TLS handshake rejects them" default:"4319"`
+	OtelInfraPort            Port            `yaml:"otel_infra_port,omitempty" label:"OTEL Infra Port" desc:"Port the OTel collector listens on for infra service logs (CP, Envoy, CoreDNS)" default:"4319"`
 	OpenSearchPort           int             `yaml:"opensearch_port,omitempty" label:"OpenSearch Port" desc:"Host port for the OpenSearch REST API (logs + traces backend)" default:"9200"`
 	OpenSearchDashboardsPort int             `yaml:"opensearch_dashboards_port,omitempty" label:"OpenSearch Dashboards Port" desc:"Host port for the OpenSearch Dashboards UI" default:"5601"`
 	OpenSearchHeapMB         int             `yaml:"opensearch_heap_mb,omitempty" label:"OpenSearch Heap (MB)" desc:"JVM -Xms/-Xmx for the OpenSearch node; raise on memory-hungry workloads" default:"512"`

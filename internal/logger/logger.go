@@ -77,20 +77,35 @@ type OtelOptions struct {
 	// (host CLI), "clawker-cp" (control plane).
 	ServiceName string
 
-	// mTLS configuration. When all three paths are non-empty, the
-	// exporter presents a client certificate during the TLS handshake
-	// and pins the server's CA. This is how the clawker-cp daemon
-	// pushes to the monitoring stack's CP-only OTLP receiver — agents
-	// on clawker-net cannot present a CLI-signed cert and so the
-	// handshake fails, regardless of whether they reached the port.
+	// mTLS configuration. Two mutually-exclusive shapes:
 	//
-	// CACertFile is the PEM bundle the exporter trusts for the server
-	// cert. ClientCertFile + ClientKeyFile are the exporter's own
-	// keypair. If any one of the three is set, all three must be set;
-	// Insecure is ignored when these are populated.
+	//   - File-path triple (CACertFile + ClientCertFile + ClientKeyFile).
+	//     The exporter reads PEM material from disk at New time. Used by
+	//     the host CLI lane (clawker-cli, clawkerd) where the cert
+	//     material is provisioned by `clawker auth` and bind-mounted at
+	//     a stable path. If any one of the three is set, all three must
+	//     be set.
+	//
+	//   - In-process tls.Config. The exporter is given a fully-formed
+	//     *tls.Config (typically built by
+	//     internal/controlplane/otelcerts.Service.LoadTLSConfig with a
+	//     GetClientCertificate hook that re-mints on every handshake).
+	//     Used by the clawker-cp daemon's own OTel exporter so the leaf
+	//     never lands on disk and rotation matches the connection
+	//     lifecycle.
+	//
+	// At most one shape may be set. Insecure is ignored when either is
+	// populated.
 	CACertFile     string
 	ClientCertFile string
 	ClientKeyFile  string
+
+	// TLSConfig is the in-process counterpart to the file-path triple.
+	// When non-nil, the exporter uses it directly and the file-path
+	// fields are not consulted. Construction is the caller's
+	// responsibility — see internal/controlplane/otelcerts for the
+	// trusted-lane wiring used by clawker-cp.
+	TLSConfig *tls.Config
 }
 
 func (o *Options) maxSizeMB() int {
@@ -329,8 +344,19 @@ func newOtelProvider(cfg *OtelOptions, fileLogger zerolog.Logger) (*sdklog.Logge
 		otlploggrpc.WithEndpoint(cfg.Endpoint),
 	}
 
+	hasPathTriple := cfg.ClientCertFile != "" || cfg.ClientKeyFile != "" || cfg.CACertFile != ""
 	switch {
-	case cfg.ClientCertFile != "" || cfg.ClientKeyFile != "" || cfg.CACertFile != "":
+	case cfg.TLSConfig != nil && hasPathTriple:
+		// Path triple and TLSConfig together are a wiring bug — the
+		// caller has two trust anchors and we'd silently pick one. Fail
+		// loud so the operator can resolve the conflict.
+		return nil, fmt.Errorf("OTEL mTLS: TLSConfig and file-path triple are mutually exclusive")
+	case cfg.TLSConfig != nil:
+		// In-process tls.Config — typically minted by
+		// internal/controlplane/otelcerts.Service.LoadTLSConfig with a
+		// GetClientCertificate hook that re-mints per handshake.
+		exporterOpts = append(exporterOpts, otlploggrpc.WithTLSCredentials(credentials.NewTLS(cfg.TLSConfig)))
+	case hasPathTriple:
 		// All three required when any are set — partial config is a
 		// configuration bug rather than a soft fallback.
 		if cfg.ClientCertFile == "" || cfg.ClientKeyFile == "" || cfg.CACertFile == "" {

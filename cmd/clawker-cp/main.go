@@ -44,6 +44,7 @@ import (
 	fwhandler "github.com/schmitthub/clawker/internal/controlplane/firewall"
 	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
 	"github.com/schmitthub/clawker/internal/controlplane/infracerts"
+	"github.com/schmitthub/clawker/internal/controlplane/otelcerts"
 	"github.com/schmitthub/clawker/internal/controlplane/overseer"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -103,10 +104,54 @@ func main() {
 }
 
 func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (retErr error) {
+	// Load the infra intermediate + build the trusted-lane OTel cert
+	// provisioner BEFORE logger.New. The logger's OTLP exporter is
+	// locked in at construction time — it has no hot-reconfig hook —
+	// so the TLSConfig must be available at that moment. infracerts is
+	// cheap (reads two on-disk PEM files), so loading it early is
+	// strictly safer than late-binding a logger exporter that would
+	// otherwise have to read CLI-root-direct cert paths from env vars
+	// (the pre-fix wiring that PR #287 introduced and this code path
+	// closes).
+	//
+	// Defer all error logging until after logger.New so failures land
+	// in the structured log surface that operators are wired to watch,
+	// not stderr.
+	var (
+		otelCerts     fwhandler.OtelCertProvisioner
+		otelTLSConfig *tls.Config
+		otelCertsErr  error
+	)
+	if issuer, err := infracerts.Load(consts.CPInfraCACertPath, consts.CPInfraCAKeyPath); err != nil {
+		otelCertsErr = fmt.Errorf("infracerts load: %w", err)
+	} else if otelDir, err := consts.OtelClientsDir(); err != nil {
+		otelCertsErr = fmt.Errorf("resolving otel-clients dir: %w", err)
+	} else if rootCABytes, err := os.ReadFile(consts.CPCACertPath); err != nil {
+		otelCertsErr = fmt.Errorf("reading CLI root CA at %s: %w", consts.CPCACertPath, err)
+	} else if svc, err := otelcerts.New(issuer, otelDir, rootCABytes, nil); err != nil {
+		otelCertsErr = fmt.Errorf("constructing otelcerts.Service: %w", err)
+	} else if tlsCfg, err := svc.LoadTLSConfig("cp"); err != nil {
+		otelCertsErr = fmt.Errorf("building cp tls.Config: %w", err)
+	} else {
+		otelCerts = svc
+		otelTLSConfig = tlsCfg
+	}
+
+	// Wire the in-process TLSConfig into the logger's OTLP exporter.
+	// On any failure above, drop OtelOptions entirely (not just
+	// TLSConfig) so the logger stays file+stderr only — never half-
+	// init mTLS with no creds (would spam handshake failures) and
+	// never plaintext-fall-back to the untrusted lane.
+	otelOpts := otelOptionsFromEnv()
+	if otelTLSConfig != nil && otelOpts != nil {
+		otelOpts.TLSConfig = otelTLSConfig
+	} else {
+		otelOpts = nil
+	}
 	loggerOpts := logger.Options{
 		LogsDir:  logDir,
 		Filename: consts.ControlPlaneLogFile,
-		Otel:     otelOptionsFromEnv(),
+		Otel:     otelOpts,
 		// Mirror structured records to stdout so `docker logs
 		// clawker-controlplane` shows what the file/OTEL sinks see.
 		EchoStdout: true,
@@ -120,6 +165,13 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	log = log.With("component", consts.ContainerCP)
 	defer log.Close()
 	log.Info().Msg("starting")
+
+	if otelCertsErr != nil {
+		log.Error().Err(otelCertsErr).
+			Str("event", "infra_issuer_unavailable").
+			Str("component", "otelcerts").
+			Msg("trusted-lane OTLP push disabled — CP and infra services run with file/stderr logs only")
+	}
 
 	// Load config from the mounted config dir (CLAWKER_CONFIG_DIR set by
 	// the container env). All port values come from settings.ControlPlane.
@@ -267,27 +319,12 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	}
 	// Infra intermediate CA — bind-mounted RO by cpboot at startup.
 	// firewall.Stack uses it to mint short-lived mTLS client leaves
-	// for Envoy + CoreDNS so they can push telemetry to the CP-only
-	// OTLP receiver. Failure here degrades to "no infra cert minting"
-	// — Envoy stdout access logs + CoreDNS file logs still work; only
-	// the mTLS OTLP push path is disabled. See infracerts/CLAUDE.md.
-	// Declare as the interface type so the nil check inside Stack
-	// (`s.infraIssuer == nil`) actually fires on load failure. Assigning
-	// a typed `*infracerts.Issuer(nil)` into the interface would box
-	// non-nil — the nil check would pass, MintClient would dispatch on a
-	// nil receiver, and the CP would panic in firewall config generation
-	// (turning the intended degraded mode into eBPF-orphaning).
-	var infraIssuer fwhandler.InfraIssuer
-	if issuer, err := infracerts.Load(consts.CPInfraCACertPath, consts.CPInfraCAKeyPath); err != nil {
-		log.Error().Err(err).
-			Str("event", "infra_issuer_unavailable").
-			Str("component", "infracerts").
-			Msg("infra intermediate CA load failed — envoy/coredns OTLP mTLS push will be disabled")
-	} else {
-		infraIssuer = issuer
-	}
-
-	stack := fwhandler.NewStack(dockerCli, cfg, log, rulesStore, infraIssuer)
+	// otelCerts was wired pre-logger; both the firewall.Stack (for
+	// envoy/coredns leaf provisioning) and the CP's own OTLP exporter
+	// consume it. Degraded mode (nil otelCerts) is already logged via
+	// the event=infra_issuer_unavailable line above; container specs
+	// drop the mTLS bind-mounts and CP's OTel push lane is closed.
+	stack := fwhandler.NewStack(dockerCli, cfg, log, rulesStore, otelCerts)
 
 	// --- Step 7: Load eBPF programs ---
 	ebpfMgr := ebpf.NewManager(log)
@@ -929,17 +966,22 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 // explicit `http://` opts in to plaintext, so a misconfigured prod
 // endpoint can't silently downgrade.
 //
-// mTLS material is read from `OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE`,
-// `OTEL_EXPORTER_OTLP_CLIENT_KEY`, and `OTEL_EXPORTER_OTLP_CERTIFICATE`
-// (the trust bundle for the receiver). When all three are present
-// the exporter does mTLS.
+// mTLS material is NOT taken from env. The CP's trusted-lane
+// exporter is wired in-process via internal/controlplane/otelcerts,
+// which mints leaves on each handshake from the bind-mounted infra
+// intermediate (see internal/controlplane/otelcerts/CLAUDE.md). Env-
+// driven cert paths are deliberately removed so a future operator
+// can't smuggle in CLI-root-direct material — that was the original
+// PR #287 vulnerability shape (agent containers reusing a CLI-root
+// leaf to forge service.name=clawker-cp records on the trusted
+// receiver).
 //
 // The bridge endpoint is set up by cpboot to point at the monitor
 // stack's CP-only receiver via host.docker.internal. CP is BPF-exempt
 // (not enrolled in container_map) and ExtraHosts maps the gateway
 // alias, so the dial reaches the host loopback published port. Agents
-// on clawker-net cannot reach this endpoint AND cannot present a
-// CLI-signed client cert — two layers of isolation.
+// on clawker-net cannot reach this endpoint AND cannot present an
+// intermediate-chained client cert — two layers of isolation.
 func otelOptionsFromEnv() *logger.OtelOptions {
 	raw := os.Getenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT")
 	if raw == "" {
@@ -953,20 +995,10 @@ func otelOptionsFromEnv() *logger.OtelOptions {
 	if endpoint == "" {
 		return nil
 	}
-	opts := &logger.OtelOptions{
+	return &logger.OtelOptions{
 		Endpoint: endpoint,
 		Insecure: insecure,
 	}
-	if cert := os.Getenv("OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE"); cert != "" {
-		opts.ClientCertFile = cert
-		opts.ClientKeyFile = os.Getenv("OTEL_EXPORTER_OTLP_CLIENT_KEY")
-		opts.CACertFile = os.Getenv("OTEL_EXPORTER_OTLP_CERTIFICATE")
-		// mTLS implies TLS; insecure must be false even if the env URL
-		// was http:// (which would be a misconfiguration but we
-		// override defensively).
-		opts.Insecure = false
-	}
-	return opts
 }
 
 // parseOtlpEndpoint normalises an OTEL endpoint env value to the

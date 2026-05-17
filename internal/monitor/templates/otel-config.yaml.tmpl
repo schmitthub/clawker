@@ -14,9 +14,15 @@ receivers:
   # inside the container; the published mapping in compose.yaml binds
   # the host port to 127.0.0.1 only. Agents on clawker-net can reach
   # this port over the docker network, but the TLS handshake rejects
-  # any peer without a client cert chained to the CLI root CA — only
-  # CP (CLI-direct cp-client cert) and infra services (envoy/coredns,
-  # intermediate-signed via internal/controlplane/infracerts) have one.
+  # any peer whose client cert chain does not validate against the
+  # infra intermediate CA — only CP and infra services (envoy/coredns,
+  # cp) hold leaves signed by that intermediate (via internal/
+  # controlplane/otelcerts).
+  #
+  # Trust anchor is the infra intermediate CA, NOT the CLI root. Agent
+  # containers carry leaves signed directly by the CLI root with no
+  # path through the intermediate, so their chain fails validation
+  # even when they present a valid CLI-signed cert.
   #
   # service.name on records that arrive here is trusted by virtue of
   # mTLS having succeeded. routing/trusted dispatches by service.name
@@ -33,8 +39,9 @@ receivers:
           key_file: /etc/otel/tls/server.key
           # Setting client_ca_file forces tls.RequireAndVerifyClientCert
           # in configtls.ServerConfig.LoadTLSConfig — handshake fails
-          # when no client cert is presented. Agents on clawker-net hold
-          # no CLI-issued leaf so they cannot reach this lane.
+          # when no client cert is presented or when the presented
+          # chain does not validate against this CA. Bind-mount source
+          # is consts.AuthInfraCACertPath() — the infra intermediate.
           client_ca_file: /etc/otel/tls/ca.pem
   # Collector self-telemetry. The otel-collector exposes its own
   # process/pipeline metrics as a Prometheus endpoint on :8888 by

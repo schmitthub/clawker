@@ -1,21 +1,26 @@
 // Package infracerts issues short-lived mTLS client certificates for
-// clawker infrastructure services (Envoy, CoreDNS, future hostproxy
-// observability sidecars, ...) using a CLI-provisioned intermediate
-// CA.
+// clawker infrastructure services (Envoy, CoreDNS, clawker-cp's own
+// trusted-lane OTLP exporter, future hostproxy observability sidecars,
+// ...) using a CLI-provisioned intermediate CA.
 //
 // Trust chain:
 //
-//	CLI root CA (provisioned by `clawker auth` bootstrap)
+//	CLI root CA (provisioned by `clawker auth` bootstrap — server-side
+//	  │           anchor for clients verifying otel-collector's TLS cert)
 //	  └── infra intermediate CA  (this package's signer)
-//	        ├── envoy-otel-client    (minted at firewall.Stack.EnsureRunning)
-//	        ├── coredns-otel-client  (minted at firewall.Stack.EnsureRunning)
+//	        ├── envoy-otel-client    (minted via otelcerts.Service)
+//	        ├── coredns-otel-client  (minted via otelcerts.Service)
+//	        ├── cp-otel-client       (minted via otelcerts.Service)
 //	        └── <future infra service>
 //
 // The intermediate is bind-mounted RO into the clawker-controlplane
 // container; its private key never leaves the host CLI auth dir and
-// the CP container. The otel-collector trusts the CLI root CA only,
-// so leaves include the intermediate cert bundled in the PEM chain
-// they present during handshake.
+// the CP container. The otel-collector trusts the infra intermediate
+// CA only on its `otlp/infra` receiver — agent leaves chained to the
+// CLI root cannot complete the handshake. Leaves include the
+// intermediate cert bundled in the PEM chain they present during
+// handshake so the receiver can build a valid chain to the
+// intermediate it trusts.
 //
 // Adding a new infra service is a CP-side change only — the CLI does
 // not need to learn about it.

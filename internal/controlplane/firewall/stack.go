@@ -4,7 +4,6 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -70,11 +69,11 @@ const (
 // Stack is not safe for concurrent EnsureRunning + Stop calls; callers
 // serialize via their own mutex.
 type Stack struct {
-	docker      *docker.Client
-	cfg         config.Config
-	log         *logger.Logger
-	store       *storage.Store[EgressRulesFile]
-	infraIssuer InfraIssuer
+	docker    *docker.Client
+	cfg       config.Config
+	log       *logger.Logger
+	store     *storage.Store[EgressRulesFile]
+	otelCerts OtelCertProvisioner
 	// infraCertsReady is set to true by ensureConfigs after a successful
 	// ensureInfraClientCerts call (and reset to false on failure). Gates
 	// downstream mTLS wiring (alsConfig, envoy/coredns container specs)
@@ -88,12 +87,13 @@ type Stack struct {
 	infraCertsReady bool
 }
 
-// InfraIssuer mints short-lived mTLS client leaves for clawker infra
-// services pushing telemetry to the CP-only OTLP receiver. Satisfied
-// by *infracerts.Issuer. The interface keeps Stack unit-testable
-// (`firewall` package owns no crypto; tests pass a tiny fake).
+// OtelCertProvisioner is the firewall-package view of the trusted-lane
+// mTLS material provider. The concrete implementation lives in
+// `internal/controlplane/otelcerts` (CP-level, outside the firewall
+// package — see feedback_no_layering_violations.md). Tests pass a
+// tiny fake; production wiring passes `*otelcerts.Service`.
 //
-// May be nil — Stack tolerates a missing issuer by skipping the
+// May be nil — Stack tolerates a missing provisioner by skipping the
 // mTLS material bind-mounts. Envoy omits the OTel access-log sink
 // and the otel_collector_als cluster entirely (sender-side gate on
 // als.MTLS in buildHTTPAccessLog / buildTCPAccessLog / buildClusters
@@ -105,19 +105,22 @@ type Stack struct {
 // path is the only ingestion route, and it stays cold. This matches the
 // CP-side degraded path (see cmd/clawker-cp/main.go: event=
 // infra_issuer_unavailable).
-type InfraIssuer interface {
-	MintClient(serviceName string, ttl time.Duration) (chainPEM, keyPEM []byte, err error)
+type OtelCertProvisioner interface {
+	// EnsureClient mints + writes per-service mTLS client material under
+	// the provisioner's destination directory. Returns absolute host-FS
+	// paths to the three files. Re-runs overwrite atomically in place.
+	EnsureClient(svc string) (certPath, keyPath, caPath string, err error)
 }
 
 // NewStack returns an initialized Stack. log may be nil (a Nop logger is
 // substituted); the other dependencies are required — nil docker or cfg
 // produces a nil Stack that panics at first use, which is preferable to
-// silent no-ops. infraIssuer may be nil — see InfraIssuer.
-func NewStack(dc *docker.Client, cfg config.Config, log *logger.Logger, store *storage.Store[EgressRulesFile], infraIssuer InfraIssuer) *Stack {
+// silent no-ops. otelCerts may be nil — see OtelCertProvisioner.
+func NewStack(dc *docker.Client, cfg config.Config, log *logger.Logger, store *storage.Store[EgressRulesFile], otelCerts OtelCertProvisioner) *Stack {
 	if log == nil {
 		log = logger.Nop()
 	}
-	return &Stack{docker: dc, cfg: cfg, log: log, store: store, infraIssuer: infraIssuer}
+	return &Stack{docker: dc, cfg: cfg, log: log, store: store, otelCerts: otelCerts}
 }
 
 // EnsureRunning starts Envoy + CoreDNS if they are not already running.
@@ -444,7 +447,7 @@ func (s *Stack) ensureConfigs() (string, error) {
 	}
 
 	s.infraCertsReady = false
-	if s.infraIssuer == nil {
+	if s.otelCerts == nil {
 		// Distinct from the mint-failure path below: this is the
 		// intentionally-cold state (no monitoring stack wired, or CP-side
 		// intermediate load failed at startup). Logged at Info — the
@@ -457,8 +460,8 @@ func (s *Stack) ensureConfigs() (string, error) {
 		s.log.Info().
 			Str("event", "infra_client_certs_skipped").
 			Str("component", "firewall.stack").
-			Str("reason", "no_issuer").
-			Msg("infra issuer not wired — OTLP mTLS push from envoy/coredns disabled (intentionally cold)")
+			Str("reason", "no_provisioner").
+			Msg("otelcerts provisioner not wired — OTLP mTLS push from envoy/coredns disabled (intentionally cold)")
 	} else if err := s.ensureInfraClientCerts(); err != nil {
 		// Degraded path: infra client cert minting failure is logged
 		// but not fatal. Envoy + CoreDNS continue to start without
@@ -515,15 +518,10 @@ func (s *Stack) ensureConfigs() (string, error) {
 	return dataDir, nil
 }
 
-// rootCASourcePath returns the in-container path to the CLI root CA
-// the CP bind-mounts. Exposed as a func so unit tests can override
-// when running off-container.
-var rootCASourcePath = func() string { return consts.CPCACertPath }
-
 // ensureInfraClientCerts mints short-lived mTLS client leaves for the
 // infra services that push telemetry through the CP-only OTLP
 // receiver (Envoy + CoreDNS today; future hostproxy sidecars plug in
-// here). Files land under FirewallOtelClientsDir:
+// here). Files land under OtelClientsDir:
 //
 //	<dir>/envoy/client.pem  (leaf + intermediate chain)
 //	<dir>/envoy/client.key
@@ -537,94 +535,23 @@ var rootCASourcePath = func() string { return consts.CPCACertPath }
 // this, so container restarts naturally re-issue fresh certs without
 // a renewal goroutine.
 //
-// No-op when s.infraIssuer is nil (CP-side intermediate load failed
+// No-op when s.otelCerts is nil (CP-side intermediate load failed
 // at startup); container specs degrade by not bind-mounting the cert
 // material, so receiver-side mTLS handshakes are simply never
 // attempted.
+//
+// The mint + atomic-write + pair-check work lives in
+// `internal/controlplane/otelcerts` — this method only dispatches per
+// sibling service and propagates the first error. File perms, layout,
+// and the CLI-root ca.pem copy are owned by the provisioner.
 func (s *Stack) ensureInfraClientCerts() error {
-	if s.infraIssuer == nil {
+	if s.otelCerts == nil {
 		return nil
 	}
-	dir, err := consts.FirewallOtelClientsDir()
-	if err != nil {
-		return fmt.Errorf("resolve otel-clients dir: %w", err)
-	}
-
-	// Copy the CLI root CA (already bind-mounted RO into the CP at
-	// CPCACertPath) into the otel-clients dir so sibling containers
-	// can bind-mount a stable path. Containers cannot share the CP's
-	// own root CA mount because mount sources must be host-FS paths,
-	// and the CP's root CA mount source is the CLI auth dir which the
-	// firewall stack does not know the host-FS path of.
-	src := rootCASourcePath()
-	caBytes, err := os.ReadFile(src)
-	if err != nil {
-		return fmt.Errorf("read root CA at %s: %w", src, err)
-	}
 	for _, svc := range []string{"envoy", "coredns"} {
-		svcDir := filepath.Join(dir, svc)
-		// 0o755 on the per-service dir so the in-container reader (Envoy
-		// distroless runs UID 101) can traverse to the bind-mounted key.
-		// Docker bind mounts preserve host inode perms; a root-owned
-		// 0o700 dir blocks any non-root in-container UID from entering
-		// the mount root, even though the key file itself is 0o644.
-		// The 0o644 mode on the key (below) is the relevant attack
-		// surface, not the directory: a tighter directory adds nothing
-		// real but creates a runtime EACCES trap.
-		if err := os.MkdirAll(svcDir, 0o755); err != nil {
-			return fmt.Errorf("create %s dir: %w", svc, err)
+		if _, _, _, err := s.otelCerts.EnsureClient(svc); err != nil {
+			return fmt.Errorf("provision %s otel client material: %w", svc, err)
 		}
-		chainPEM, keyPEM, err := s.infraIssuer.MintClient(svc+"-otel-client", 365*24*time.Hour)
-		if err != nil {
-			return fmt.Errorf("mint %s leaf: %w", svc, err)
-		}
-		// Validate the mint output before any disk write commits:
-		// a corrupted pair (mismatched cert/key, malformed PEM) caught
-		// here fails the whole function so the caller leaves
-		// infraCertsReady=false and Envoy/CoreDNS skip the mTLS mounts.
-		// Without this round-trip, a buggy issuer could half-overwrite
-		// a previously-good pair (ENOSPC mid-write, mismatched keypair)
-		// and the next CoreDNS reload would refuse to start at handshake.
-		if _, err := tls.X509KeyPair(chainPEM, keyPEM); err != nil {
-			return fmt.Errorf("validate %s cert/key pair: %w", svc, err)
-		}
-		// Writes go through writeFileAtomic (tmp + rename) so a partial
-		// write (ENOSPC, EINTR) leaves the prior-good file intact rather
-		// than half-overwritten on disk.
-		//
-		// 0o644 on the key is load-bearing: the Envoy distroless image
-		// runs as UID 101 and Docker bind-mounts preserve host inode
-		// perms — a stricter mode (e.g. 0o600 owned by root on the
-		// host) would mean the in-container UID 101 can't read the
-		// key and the TLS handshake never gets off the ground.
-		// clawker-coredns (built from alpine here) currently runs as
-		// root and would tolerate stricter modes, but uses the same
-		// shape for symmetry.
-		if err := writeFileAtomic(filepath.Join(svcDir, "ca.pem"), caBytes, 0o644); err != nil {
-			return fmt.Errorf("write %s root CA copy: %w", svc, err)
-		}
-		if err := writeFileAtomic(filepath.Join(svcDir, "client.pem"), chainPEM, 0o644); err != nil {
-			return fmt.Errorf("write %s cert: %w", svc, err)
-		}
-		if err := writeFileAtomic(filepath.Join(svcDir, "client.key"), keyPEM, 0o644); err != nil {
-			return fmt.Errorf("write %s key: %w", svc, err)
-		}
-	}
-	return nil
-}
-
-// writeFileAtomic writes data to path via tmp file + os.Rename so a
-// partial write (ENOSPC, EINTR) leaves any pre-existing file intact
-// rather than half-overwritten. Same-filesystem rename is atomic on
-// POSIX; the .tmp lives in the same directory as path.
-func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, mode); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return err
 	}
 	return nil
 }

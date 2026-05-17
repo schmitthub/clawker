@@ -270,8 +270,11 @@ func TestCPContainer_ExtraHostsHostGateway(t *testing.T) {
 }
 
 // TestCPContainer_OtelLogsEnv_Emitted — when monitoring.otel_infra_port
-// is non-zero (default), all six OTLP env vars land in the container
-// config, including the mTLS triple.
+// is non-zero (default), the OTLP endpoint + protocol env vars land in
+// the container config. Client cert/key/CA env vars are deliberately
+// absent — the CP-side exporter wires its TLSConfig in-process via
+// internal/controlplane/otelcerts (PR #287 trust-anchor fix). Reading
+// CLI-root-direct cert paths from env would silently undo the fix.
 func TestCPContainer_OtelLogsEnv_Emitted(t *testing.T) {
 	testenv.New(t)
 	cfg := configmocks.NewBlankConfig()
@@ -279,22 +282,28 @@ func TestCPContainer_OtelLogsEnv_Emitted(t *testing.T) {
 	cpConfig, err := BuildCPContainerConfig(cfg, testCPOpts())
 	require.NoError(t, err)
 
-	expected := map[string]bool{
-		"OTEL_EXPORTER_OTLP_ENDPOINT":           false,
-		"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT":      false,
-		"OTEL_EXPORTER_OTLP_PROTOCOL":           false,
-		"OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE": false,
-		"OTEL_EXPORTER_OTLP_CLIENT_KEY":         false,
-		"OTEL_EXPORTER_OTLP_CERTIFICATE":        false,
+	wantPresent := map[string]bool{
+		"OTEL_EXPORTER_OTLP_ENDPOINT":      false,
+		"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT": false,
+		"OTEL_EXPORTER_OTLP_PROTOCOL":      false,
+	}
+	wantAbsent := []string{
+		"OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE",
+		"OTEL_EXPORTER_OTLP_CLIENT_KEY",
+		"OTEL_EXPORTER_OTLP_CERTIFICATE",
 	}
 	for _, e := range cpConfig.Env {
-		for k := range expected {
+		for k := range wantPresent {
 			if strings.HasPrefix(e, k+"=") {
-				expected[k] = true
+				wantPresent[k] = true
 			}
 		}
+		for _, k := range wantAbsent {
+			assert.False(t, strings.HasPrefix(e, k+"="),
+				"%s must NOT be injected via env — TLSConfig is wired in-process by clawker-cp main", k)
+		}
 	}
-	for k, found := range expected {
+	for k, found := range wantPresent {
 		assert.True(t, found, "missing OTEL env var %s in CP container env", k)
 	}
 }

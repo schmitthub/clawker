@@ -350,12 +350,13 @@ func otelLogsEnv(cfg config.Config) []string {
 		"OTEL_EXPORTER_OTLP_ENDPOINT=" + endpoint,
 		"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=" + logsEndpoint,
 		"OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf",
-		// Client cert + key (mounted RO into the container). CA bundle
-		// is the same trust root used for the AdminService server cert
-		// — already mounted at consts.CPCACertPath.
-		"OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE=" + consts.CPClientCertPath,
-		"OTEL_EXPORTER_OTLP_CLIENT_KEY=" + consts.CPClientKeyPath,
-		"OTEL_EXPORTER_OTLP_CERTIFICATE=" + consts.CPCACertPath,
+		// mTLS material is NOT injected via env. The CP-side exporter
+		// is wired in-process via internal/controlplane/otelcerts —
+		// leaves are minted from the infra intermediate on every
+		// handshake and never land on disk. PR #287 closes the env-
+		// driven CLI-root-direct cert path that let agents forge
+		// service.name=clawker-cp records on the trusted receiver.
+		//
 		// service.name=clawker-cp is consumed by the OTel SDK's
 		// auto-detected Resource (sdkresource.Default reads
 		// OTEL_RESOURCE_ATTRIBUTES) and stamped on every emitted log

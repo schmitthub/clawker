@@ -106,9 +106,19 @@ func initRun(_ context.Context, opts *InitOptions) error {
 	if err != nil {
 		return fmt.Errorf("resolve otel server key path: %w", err)
 	}
-	otelCAPath, err := consts.AuthCACertPath()
+	// Trust anchor for the otel-collector's mTLS-gated otlp/infra
+	// receiver. MUST be the infra intermediate CA, NOT the CLI root.
+	// Reasoning: CLI root signs both agent leaves (via
+	// auth.MintAgentCert) and infra leaves (envoy/coredns + cp via the
+	// intermediate). Using the CLI root as client_ca_file lets any
+	// agent container present a CLI-signed leaf and inject records
+	// with forged service.name=clawker-cp/envoy/coredns into the
+	// trusted forensic indices. The infra intermediate signs only
+	// envoy/coredns/cp leaves, so the chain validation locks the
+	// trusted lane to those senders.
+	otelCAPath, err := consts.AuthInfraCACertPath()
 	if err != nil {
-		return fmt.Errorf("resolve otel CA path: %w", err)
+		return fmt.Errorf("resolve otel infra CA path: %w", err)
 	}
 	tmplData.OtelServerCertHostPath = otelServerCertPath
 	tmplData.OtelServerKeyHostPath = otelServerKeyPath

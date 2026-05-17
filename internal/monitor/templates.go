@@ -71,10 +71,17 @@ type MonitorTemplateData struct {
 	OpenSearchDashboardsService string
 
 	// Host-side paths for CLI-issued mTLS material that gates the
-	// CP-only OTLP receiver. Populated by the monitor init command from
-	// internal/consts. Empty disables the gated receiver — the
-	// otel-config template branches on OtelInfraPort to decide whether to
-	// emit the second receiver block.
+	// trusted otlp/infra receiver. Populated unconditionally by
+	// `monitor init` from internal/consts after EnsureAuthMaterial
+	// succeeds. The otel-config.yaml template renders the otlp/infra
+	// receiver and trusted pipelines unconditionally — it has no
+	// `{{ if }}` gate. Degradation is sender-side only: when an infra
+	// sender (CP / Envoy / CoreDNS) lacks a valid client cert it stays
+	// off this lane (see internal/monitor/CLAUDE.md "Trusted block
+	// conditionality"). compose.yaml.tmpl gates the bind mounts + port
+	// publish on OtelInfraPort, so a zero port suppresses the host-side
+	// wiring even though the receiver block is still emitted into
+	// otel-config.
 	OtelServerCertHostPath string
 	OtelServerKeyHostPath  string
 	OtelCAHostPath         string

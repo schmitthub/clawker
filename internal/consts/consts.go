@@ -483,11 +483,16 @@ func CacheDir() string {
 // FirewallDataSubdir ensures and returns the firewall data subdirectory path under DataDir.
 func FirewallDataSubdir() (string, error) { return subdirPath(firewallDir, DataDir) }
 
-// FirewallOtelClientsDir ensures and returns the directory under
-// FirewallDataSubdir where firewall.Stack writes mTLS client material
-// for sibling infra services (Envoy, CoreDNS, ...). CP is the sole
-// writer; sibling containers bind-mount RO subpaths.
-func FirewallOtelClientsDir() (string, error) {
+// OtelClientsDir ensures and returns the directory under
+// FirewallDataSubdir where the otelcerts.Service writes mTLS client
+// material for trusted-lane senders (Envoy, CoreDNS, ...). CP is the
+// sole writer; sibling containers bind-mount RO subpaths.
+//
+// Path stays under FirewallDataSubdir for historical reasons (the
+// firewall plane was the first consumer) — the cert minting itself
+// lives in internal/controlplane/otelcerts and is not a firewall
+// concern.
+func OtelClientsDir() (string, error) {
 	fwDir, err := FirewallDataSubdir()
 	if err != nil {
 		return "", err

@@ -4,7 +4,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/moby/moby/api/types/mount"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
@@ -154,8 +153,8 @@ func TestContainerSpecs_OtelClientMaterialUsesSingleDirectoryMountPerService(t *
 
 type fakeIssuerForSpecTest struct{}
 
-func (fakeIssuerForSpecTest) MintClient(string, time.Duration) ([]byte, []byte, error) {
-	return nil, nil, nil
+func (fakeIssuerForSpecTest) EnsureClient(string) (string, string, string, error) {
+	return "", "", "", nil
 }
 
 func assertHasBindMount(t *testing.T, mounts []mount.Mount, source, target string) {
