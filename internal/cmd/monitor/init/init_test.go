@@ -48,17 +48,13 @@ func TestNewCmdInit(t *testing.T) {
 	}
 }
 
-// TestInitRun_OtelInfraCAHostPath is the regression gate for PR #287.
-// The rendered compose.yaml's bind-mount source for the otel-collector
-// container's /etc/otel/tls/ca.pem MUST resolve from
-// consts.AuthInfraCACertPath (infra intermediate CA), NOT
-// consts.AuthCACertPath (CLI root CA). Using the CLI root would
-// re-open the agent-spoof CVE — any CLI-signed leaf would chain to the
-// receiver's client_ca_file and forge service.name=clawker-cp records
-// on the trusted forensic indices.
-//
-// This test fails the moment init.go reverts to AuthCACertPath, even
-// before any handshake test would catch it in e2e.
+// TestInitRun_OtelInfraCAHostPath pins the bind-mount source for the
+// otel-collector container's /etc/otel/tls/ca.pem to the infra
+// intermediate CA (consts.AuthInfraCACertPath), NOT the CLI root
+// (consts.AuthCACertPath). Using the CLI root would let any CLI-
+// signed leaf — including agent-container leaves — chain to the
+// receiver's client_ca_file and forge service.name=clawker-cp
+// records on the trusted forensic indices.
 func TestInitRun_OtelInfraCAHostPath(t *testing.T) {
 	testenv.New(t)
 	require.NoError(t, auth.EnsureAuthMaterial())
@@ -93,7 +89,44 @@ func TestInitRun_OtelInfraCAHostPath(t *testing.T) {
 	// some future const refactor, this test would pass trivially.
 	require.NotEqual(t, wantInfra, rootCA, "infra and root CA host paths must be distinct")
 	require.NotContains(t, compose, rootCA+":/etc/otel/tls/ca.pem:ro",
-		"CLI root CA must NOT be the otel-collector trust anchor — that's the PR #287 vulnerability shape")
+		"CLI root CA must NOT be the otel-collector trust anchor — agent leaves would chain through it")
+}
+
+// TestInitRun_OtelInfraReceiverRequiresClientCert pins the
+// `otlp/infra` receiver's mTLS gate in the rendered otel-collector
+// config. The receiver must declare a `client_ca_file` under its
+// `tls` block — without it, the OTel collector accepts plaintext or
+// any-cert TLS on the trusted lane and the spoof gate is gone.
+//
+// Companion to TestInitRun_OtelInfraCAHostPath: that test pins WHERE
+// the trust anchor is sourced from on the host. This test pins THAT
+// the receiver still references it at all.
+func TestInitRun_OtelInfraReceiverRequiresClientCert(t *testing.T) {
+	testenv.New(t)
+	require.NoError(t, auth.EnsureAuthMaterial())
+
+	cfg, err := config.NewConfig()
+	require.NoError(t, err)
+
+	tio, _, _, _ := iostreams.Test()
+	opts := &InitOptions{
+		IOStreams: tio,
+		Config:    func() (config.Config, error) { return cfg, nil },
+		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
+		Force:     true,
+	}
+	require.NoError(t, initRun(context.Background(), opts))
+
+	monitorDir, err := cfg.MonitorSubdir()
+	require.NoError(t, err)
+	otelBytes, err := os.ReadFile(filepath.Join(monitorDir, monitor.OtelConfigFileName))
+	require.NoError(t, err)
+	otelCfg := string(otelBytes)
+
+	require.Contains(t, otelCfg, "otlp/infra:",
+		"otel-collector must define a separate otlp/infra receiver — folding it into the unauth receiver removes the mTLS gate")
+	require.Contains(t, otelCfg, "client_ca_file: /etc/otel/tls/ca.pem",
+		"otlp/infra receiver must require client certs against the bind-mounted CA — removing this line opens the trusted lane to any peer")
 }
 
 func TestNewCmdInit_ForceFlag(t *testing.T) {
