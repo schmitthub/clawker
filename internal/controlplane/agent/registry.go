@@ -45,19 +45,25 @@ import (
 // handshake). LastSeen currently equals RegisteredAt; future per-agent
 // RPCs will refresh LastSeen at their own boundary.
 type Entry struct {
-	// AgentName is the user-typed short name (typed so the registry
-	// cannot hold a string that failed auth.NewAgentName validation —
-	// e.g. a slug containing a dot, the "clawker." prefix, or chars
-	// outside the allowed charset). Constructed upstream by the
-	// Register handler via auth.NewAgentName at the wire boundary;
-	// reconstructed via auth.NewAgentName during sqlite Snapshot reads
-	// (malformed rows are skipped, never panicked on).
+	// AgentName is the user-typed short name. Typed (auth.AgentName)
+	// purely for compile-time discipline so the registry can't hold a
+	// raw string where an AgentName is expected. auth.NewAgentName
+	// rejects only the empty case today; charset/length/form
+	// constraints are enforced downstream (Docker container/volume
+	// create, x509 URI SAN encoding, IdentityInterceptor's symmetric
+	// SAN-vs-label compare). User-typed input is normalized upstream
+	// by cmdutil.ProjectSlugify before it crosses into auth.
+	// Constructed by the Register handler at the wire boundary via
+	// auth.NewAgentName; re-validated via auth.NewAgentName during
+	// sqlite Snapshot reads — rows with an empty agent_name column
+	// are skipped, never panicked on.
 	AgentName auth.AgentName
 	// Project is the clawker project slug under which the agent
 	// registered. The zero value (auth.ProjectSlug{}) signals a
-	// global-scope agent (no project namespace), matching the 2-segment
-	// docker.ContainerName shape. Typed for the same reason as
-	// AgentName.
+	// global-scope agent (no project namespace), matching the
+	// 2-segment docker.ContainerName shape. Typed for the same reason
+	// as AgentName; auth.NewProjectSlug accepts any input including
+	// empty.
 	Project      auth.ProjectSlug
 	ContainerID  string
 	Thumbprint   [sha256.Size]byte
@@ -101,9 +107,14 @@ type Registry interface {
 	// panicking — Add lives on a gRPC handler goroutine reachable
 	// post-SetReady from Register, and a panic on that path would
 	// strand eBPF programs with no supervisor (see root CLAUDE.md).
-	// Register maps the error to codes.InvalidArgument.
-	// Identity-string validity (project slug / agent name format) is
-	// enforced upstream by the Register handler at the wire boundary.
+	// Register maps the error to codes.Internal: every field
+	// validateEntry checks is server-derived (thumbprint from the
+	// live peer cert, ContainerID/AgentName/Project from
+	// IdentityInterceptor's ResolvedContainer, RegisteredAt from
+	// h.clock()), so a failure here is a CP wiring bug, not bad
+	// client input. User-controlled identity strings are validated
+	// upstream at the wire boundary (auth.NewProjectSlug /
+	// auth.NewAgentName → codes.InvalidArgument).
 	Add(entry Entry) error
 	// LookupByContainerID returns the entry whose ContainerID matches.
 	// Used by the Register handler (idempotency / replay-protection)
@@ -191,8 +202,9 @@ func (r *registryImpl) Add(entry Entry) error {
 // Returns an error rather than panicking — Add lives on the gRPC
 // handler goroutine reachable post-SetReady from Register, and a
 // panic on that path would strand eBPF programs with no supervisor
-// (see root CLAUDE.md). Both Add implementations propagate the error;
-// Register maps it to codes.InvalidArgument.
+// (see root CLAUDE.md). Both Add implementations propagate the
+// error; Register maps it to codes.Internal because every field
+// checked here is server-derived (see Add's doc comment above).
 func validateEntry(entry Entry) error {
 	if entry.Thumbprint == ([sha256.Size]byte{}) {
 		return errors.New("agentregistry: Add called with zero thumbprint")
