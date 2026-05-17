@@ -142,9 +142,9 @@ func main() {
 // looking healthy.
 func run(ctx context.Context, log *logger.Logger) (int, error) {
 	agentName := os.Getenv(consts.EnvAgent)
-	// CLAWKER_PROJECT is allowed to be empty — empty matches the
-	// 2-segment naming case (docker.ContainerName behavior) where the
-	// canonical CN is "clawker.<agent>".
+	// CLAWKER_PROJECT is allowed to be empty — empty is the
+	// global-scope-agent case (2-segment naming, docker.ContainerName
+	// behavior) where the AgentFullName is "clawker.<agent>".
 	project := os.Getenv(consts.EnvProject)
 	if agentName == "" {
 		return exitCodeConfig, fmt.Errorf("required env not set: %s", consts.EnvAgent)

@@ -161,10 +161,11 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	}
 
 	// Resolve project name from ProjectManager (empty if no project registered).
-	// Errors are non-fatal because an empty projectName IS the unscoped/2-segment
-	// naming case — but we log at debug so operators can tell "no project" from
-	// "lookup failed" when the composite-identity registry write silently lands
-	// against an unscoped row in a project that was supposed to be registered.
+	// Errors are non-fatal because an empty projectName IS the legitimate
+	// global-scope-agent case (2-segment naming) — but we log at debug so
+	// operators can tell "no project" from "lookup failed" when the
+	// composite-identity registry write silently lands against a global-scope
+	// row in a project that was supposed to be registered.
 	var projectName string
 	if opts.ProjectManager != nil {
 		log, _ := opts.Logger()
@@ -173,11 +174,11 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 		}
 		pm, pmErr := opts.ProjectManager()
 		if pmErr != nil {
-			log.Debug().Err(pmErr).Msg("project manager unavailable; announcing as unscoped")
+			log.Debug().Err(pmErr).Msg("project manager unavailable; announcing as global-scope")
 		} else {
 			p, pErr := pm.CurrentProject(ctx)
 			if pErr != nil {
-				log.Debug().Err(pErr).Msg("CurrentProject lookup failed; announcing as unscoped")
+				log.Debug().Err(pErr).Msg("CurrentProject lookup failed; announcing as global-scope")
 			} else {
 				projectName = p.Name()
 			}

@@ -54,9 +54,10 @@ type Entry struct {
 	// (malformed rows are skipped, never panicked on).
 	AgentName auth.AgentName
 	// Project is the clawker project slug under which the agent
-	// registered. The zero value (auth.ProjectSlug{}) is the unscoped
-	// 2-segment naming case (matches docker.ContainerName when no
-	// project is set). Typed for the same reason as AgentName.
+	// registered. The zero value (auth.ProjectSlug{}) signals a
+	// global-scope agent (no project namespace), matching the 2-segment
+	// docker.ContainerName shape. Typed for the same reason as
+	// AgentName.
 	Project      auth.ProjectSlug
 	ContainerID  string
 	Thumbprint   [sha256.Size]byte

@@ -36,13 +36,13 @@ func TestNewAgentName_Sanity(t *testing.T) {
 }
 
 // TestNewProjectSlug_Sanity pins that ProjectSlug never errors and
-// preserves the empty/unscoped case as the zero value.
+// preserves the empty global-scope case as the zero value.
 func TestNewProjectSlug_Sanity(t *testing.T) {
 	t.Parallel()
 
 	got, err := NewProjectSlug("")
 	require.NoError(t, err)
-	assert.True(t, got.IsEmpty(), "empty input is the unscoped signal")
+	assert.True(t, got.IsEmpty(), "empty input is the global-scope-agent signal")
 	assert.Equal(t, "", got.String())
 
 	got, err = NewProjectSlug("myapp")
@@ -74,8 +74,8 @@ func TestMust_Wrappers(t *testing.T) {
 }
 
 // TestAgentFullName_TwoVsThreeSegment confirms the AgentFullName
-// composer still produces the documented forms for scoped (3-segment)
-// and unscoped (2-segment) cases.
+// composer still produces the documented forms for project-scoped
+// (3-segment) and global-scope (2-segment) agents.
 func TestAgentFullName_TwoVsThreeSegment(t *testing.T) {
 	t.Parallel()
 	assert.Equal(t,

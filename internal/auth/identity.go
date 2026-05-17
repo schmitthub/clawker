@@ -61,21 +61,22 @@ func (a AgentName) Less(other AgentName) bool { return a.s < other.s }
 // ProjectSlug is the user-typed project slug (e.g. "myapp"). Like
 // AgentName, the type exists for compile-time discipline; no runtime
 // validation runs at construction. Unlike AgentName, the empty value
-// is legitimate — it signals the unscoped/2-segment naming case
-// documented at internal/consts/consts.go:39-40 (running `clawker`
-// outside a registered project).
+// is legitimate — it signals a global-scope agent (no project
+// namespace), producing the 2-segment naming case documented at
+// internal/consts/consts.go (running `clawker` outside a registered
+// project).
 type ProjectSlug struct{ s string }
 
 // NewProjectSlug wraps a string as a ProjectSlug. Always returns nil
 // error — the signature retains `error` only so existing callers
 // don't need to change shape if the validation ever has to return.
-// Empty input produces the zero value (the unscoped/projectless
-// signal).
+// Empty input produces the zero value (the global-scope-agent
+// signal — no project namespace).
 func NewProjectSlug(s string) (ProjectSlug, error) {
 	return ProjectSlug{s: s}, nil
 }
 
-// String returns the underlying slug; empty for the unscoped case.
+// String returns the underlying slug; empty for the global-scope case.
 func (p ProjectSlug) String() string { return p.s }
 
 // MustProjectSlug is the unchecked companion to NewProjectSlug. Kept
@@ -88,13 +89,13 @@ func MustProjectSlug(s string) ProjectSlug {
 	return p
 }
 
-// IsEmpty reports whether the slug is the empty/unscoped value. Use
-// this rather than `s.String() == ""` so a future refactor of the
-// underlying representation doesn't silently break the empty check.
+// IsEmpty reports whether the slug is the empty global-scope value.
+// Use this rather than `s.String() == ""` so a future refactor of the
+// underlying representation doesn't silently break the check.
 func (p ProjectSlug) IsEmpty() bool { return p.s == "" }
 
 // Less reports whether p sorts before other in lexicographic order on
-// the underlying slug. The empty/unscoped slug sorts before every
+// the underlying slug. The empty global-scope slug sorts before every
 // non-empty value, which keeps Snapshot output deterministic for the
 // docker.ContainerName 2-segment case.
 func (p ProjectSlug) Less(other ProjectSlug) bool { return p.s < other.s }

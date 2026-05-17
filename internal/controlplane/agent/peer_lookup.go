@@ -26,12 +26,15 @@ type ResolvedContainer struct {
 // authentication failure.
 var ErrNoContainerForPeerIP = errors.New("no purpose=agent container with matching clawker-net IP")
 
-// ErrInvalidAgentLabels is returned when the container matched by
-// peer IP carries malformed or missing dev.clawker.project /
-// dev.clawker.agent labels. Distinguishing this from a clean no-match
-// lets the trust gate emit a daemon-state diagnostic instead of a
-// generic auth reject.
-var ErrInvalidAgentLabels = errors.New("agent container has invalid identity labels")
+// ErrInvalidAgentLabel is returned when the container matched by peer
+// IP carries a missing or malformed dev.clawker.agent label. A missing
+// dev.clawker.project label is NOT an error here — it is the
+// legitimate global-scope-agent signal (no project namespace, producing
+// 2-segment naming clawker.<agent>); auth.NewProjectSlug("") returns a
+// zero-value slug with nil err. Distinguishing this from a clean
+// no-match lets the trust gate emit a daemon-state diagnostic instead
+// of a generic auth reject.
+var ErrInvalidAgentLabel = errors.New("agent container has invalid identity label")
 
 // ErrAmbiguousPeerIP is returned when two or more `purpose=agent`
 // containers on clawker-net advertise endpoints with the same peer
@@ -45,10 +48,12 @@ var ErrAmbiguousPeerIP = errors.New("multiple purpose=agent containers match pee
 // ContainerByPeerIP resolves a live mTLS peer IP to the
 // `purpose=agent` container owning that IP on clawker-net. Returns
 // ErrNoContainerForPeerIP when nothing matches,
-// ErrInvalidAgentLabels when the matching container's labels can't
-// form a valid identity, ErrAmbiguousPeerIP when two or more
-// containers share the peer IP (Docker restart-race window — fails
-// closed), or a wrapped daemon error.
+// ErrInvalidAgentLabel when the matching container's dev.clawker.agent
+// label is missing or malformed (an absent dev.clawker.project label
+// is a legitimate global-scope-agent signal, not an error),
+// ErrAmbiguousPeerIP when two or more containers share the peer IP
+// (Docker restart-race window — fails closed), or a wrapped daemon
+// error.
 type ContainerByPeerIP interface {
 	LookupByIP(ctx context.Context, ip netip.Addr) (ResolvedContainer, error)
 }

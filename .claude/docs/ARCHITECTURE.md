@@ -781,7 +781,7 @@ AFTER  (clean):  docker/naming.go ──imports──▶ naming/ (standalone lea
 
 ## Container Naming & Labels
 
-**Container names**: `clawker.project.agent` (3-segment) or `clawker.agent` (2-segment when project is empty)
+**Container names**: `clawker.project.agent` (3-segment, project-scoped) or `clawker.agent` (2-segment, global-scope agent)
 **Volume names**: `clawker.project.agent-purpose` (purposes: `workspace`, `config`, `history`)
 
 **Labels** (all `dev.clawker.*`):

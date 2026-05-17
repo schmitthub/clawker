@@ -256,7 +256,7 @@ func TestIdentityInterceptor_Stage2_ResolverErrors_PermissionDenied(t *testing.T
 		err  error
 	}{
 		{"NoContainerForPeerIP", ErrNoContainerForPeerIP},
-		{"InvalidAgentLabels", ErrInvalidAgentLabels},
+		{"InvalidAgentLabel", ErrInvalidAgentLabel},
 		{"AmbiguousPeerIP", ErrAmbiguousPeerIP},
 		{"GenericDaemonError", errors.New("docker daemon broken")},
 	}

@@ -20,7 +20,7 @@ CP is the host daemon; clawkerd is the per-container daemon. They communicate ov
 
    Files live in the container's **writable layer** (not tmpfs, not bind mount). The CLI streams a tar archive via `CopyToContainer` between `docker create` and `docker start`. tmpfs can't be pre-populated this way (mounted at start, shadows prior writes). Permissions: parent dir 0700, files 0400. See `WriteAgentBootstrapToContainer` in `internal/cmd/container/shared/agent_bootstrap.go` for the full tradeoff.
 
-2. Resolve env: `CLAWKER_AGENT` (required), `CLAWKER_PROJECT` (allowed empty for 2-segment naming), `CLAWKER_USER` (defaults to `consts.ContainerUser`). `CLAWKER_USER` is resolved against `/etc/passwd` to fill `SysProcAttr.Credential` for the spawn child.
+2. Resolve env: `CLAWKER_AGENT` (required), `CLAWKER_PROJECT` (empty = global-scope agent, 2-segment naming), `CLAWKER_USER` (defaults to `consts.ContainerUser`). `CLAWKER_USER` is resolved against `/etc/passwd` to fill `SysProcAttr.Credential` for the spawn child.
 
 3. Start listener on `consts.DefaultClawkerdPort` (`:7700`). This is the entire RPC surface.
 

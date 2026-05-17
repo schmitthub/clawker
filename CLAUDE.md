@@ -205,7 +205,7 @@ security: { firewall: { add_domains: [], rules: [] }, docker_socket: false, git_
 3. Hierarchical naming: `clawker.project.agent`; labels (`dev.clawker.*`) authoritative for filtering
 4. stdout for data/status/success/next-steps; stderr for warnings/errors only; `--format` for machine-readable output
 5. Project registry replaces directory walking for resolution
-6. Empty project → 2-segment names (`clawker.agent`), labels omit `dev.clawker.project`
+6. Global-scope agents (no project) → 2-segment names (`clawker.agent`); the `dev.clawker.project` label is intentionally absent (not present as an empty string), matching the 2-segment name shape
 7. Factory is a pure struct with closure fields; constructor in `internal/cmd/factory/`. Commands use `NewCmd(f, runF)` pattern
 8. Factory noun principle: fields return nouns, not verbs (`f.HostProxy().EnsureRunning()` not `f.EnsureHostProxy()`)
 9. Package boundary: path resolution + config I/O → `internal/config`; project identity/CRUD → `internal/project`

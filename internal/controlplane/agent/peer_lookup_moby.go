@@ -133,7 +133,7 @@ func (m *MobyPeerLookup) LookupByIP(ctx context.Context, ip netip.Addr) (Resolve
 				Stringer("peer_ip", ip).
 				Str("event", "peer_lookup_invalid_labels").
 				Msg("matched container has malformed project label")
-			return ResolvedContainer{}, fmt.Errorf("%w: container %s project: %w", ErrInvalidAgentLabels, mm.containerID, perr)
+			return ResolvedContainer{}, fmt.Errorf("%w: container %s project: %w", ErrInvalidAgentLabel, mm.containerID, perr)
 		}
 		agentName, aerr := auth.NewAgentName(mm.labels[consts.LabelAgent])
 		if aerr != nil {
@@ -142,7 +142,7 @@ func (m *MobyPeerLookup) LookupByIP(ctx context.Context, ip netip.Addr) (Resolve
 				Stringer("peer_ip", ip).
 				Str("event", "peer_lookup_invalid_labels").
 				Msg("matched container has malformed agent label")
-			return ResolvedContainer{}, fmt.Errorf("%w: container %s agent: %w", ErrInvalidAgentLabels, mm.containerID, aerr)
+			return ResolvedContainer{}, fmt.Errorf("%w: container %s agent: %w", ErrInvalidAgentLabel, mm.containerID, aerr)
 		}
 		return ResolvedContainer{
 			ContainerID: mm.containerID,

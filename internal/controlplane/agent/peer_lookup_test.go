@@ -193,7 +193,7 @@ func TestContainerByPeerIP_NilConfig_InvalidLabels(t *testing.T) {
 		},
 	}
 	_, err := newTestLookup(api).LookupByIP(context.Background(), netip.MustParseAddr("10.0.0.5"))
-	assert.ErrorIs(t, err, ErrInvalidAgentLabels)
+	assert.ErrorIs(t, err, ErrInvalidAgentLabel)
 }
 
 func TestContainerByPeerIP_MissingAgentLabel_InvalidLabels(t *testing.T) {
@@ -206,7 +206,7 @@ func TestContainerByPeerIP_MissingAgentLabel_InvalidLabels(t *testing.T) {
 		},
 	}
 	_, err := newTestLookup(api).LookupByIP(context.Background(), netip.MustParseAddr("10.0.0.5"))
-	assert.ErrorIs(t, err, ErrInvalidAgentLabels)
+	assert.ErrorIs(t, err, ErrInvalidAgentLabel)
 }
 
 func TestContainerByPeerIP_EmptyProjectLabel_Allowed(t *testing.T) {

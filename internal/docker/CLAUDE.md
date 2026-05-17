@@ -19,7 +19,7 @@ Full terminal session lifecycle for interactive container sessions. `NewPTYHandl
 
 ## Naming Convention
 
-- **3-segment** (with project): `clawker.project.agent` — **2-segment** (empty project): `clawker.agent`
+- **3-segment** (project-scoped agent): `clawker.project.agent` — **2-segment** (global-scope agent, no project namespace): `clawker.agent`
 - **Volumes**: `clawker.project.agent-purpose` (workspace, config, history)
 - **Global volumes**: `clawker-<purpose>` — **Network**: from `config.Config.ClawkerNetwork()` (no constant in this package)
 

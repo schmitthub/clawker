@@ -88,7 +88,7 @@ func IdentityInterceptor(peerLookup ContainerByPeerIP, log *logger.Logger) (grpc
 
 		// Stage 2b: peer IP → Docker → labels. Distinguishing
 		// ErrNoContainerForPeerIP (clean no-match),
-		// ErrInvalidAgentLabels (daemon-state corruption), and
+		// ErrInvalidAgentLabel (daemon-state corruption), and
 		// ErrAmbiguousPeerIP (multiple containers advertising the same
 		// peer IP) on the log surface lets operators triage; the wire
 		// envelope stays uniform PermissionDenied either way.
@@ -101,7 +101,7 @@ func IdentityInterceptor(peerLookup ContainerByPeerIP, log *logger.Logger) (grpc
 					Str("event", "agent_identity_peer_lookup_no_match").
 					Str("peer_ip", pid.PeerAddr.String()).
 					Msg("agent identity: no purpose=agent container owns peer IP")
-			case errors.Is(err, ErrInvalidAgentLabels):
+			case errors.Is(err, ErrInvalidAgentLabel):
 				log.Warn().
 					Str("method", method).
 					Str("event", "agent_identity_invalid_labels").

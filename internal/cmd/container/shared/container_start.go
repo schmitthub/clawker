@@ -41,10 +41,11 @@ type CommandOpts struct {
 
 	// Project is the clawker project slug the agent runs under, paired
 	// with AgentName to form the (project, agent) identity the CP keys
-	// agentregistry entries by. Empty string for the 2-segment unscoped
-	// naming case — same convention as docker.ContainerName. Must be set
-	// whenever AgentName is set on a new-container start path so
-	// MintAgentCert composes the right AgentFullName URI SAN.
+	// agentregistry entries by. Empty string signals a global-scope
+	// agent (2-segment naming) — same convention as
+	// docker.ContainerName. Must be set whenever AgentName is set on a
+	// new-container start path so MintAgentCert composes the right
+	// AgentFullName URI SAN.
 	Project string
 }
 

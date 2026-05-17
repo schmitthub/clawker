@@ -27,8 +27,9 @@ import (
 const ContainerSANScheme = "urn:clawker:container:"
 
 // AgentSANScheme is the URI SAN scheme that carries the AgentFullName
-// ("clawker.<project>.<agent>" or "clawker.<agent>" in the unscoped
-// case). It lives in a URI SAN — not Subject.CommonName — because the
+// ("clawker.<project>.<agent>" for project-scoped agents, or
+// "clawker.<agent>" for global-scope agents). It lives in a URI SAN —
+// not Subject.CommonName — because the
 // composed AgentFullName can exceed x509's 64-byte CN limit once a long
 // project slug + a long agent name (or a random
 // docker.GenerateRandomName output) are concatenated. The cert's
@@ -193,9 +194,9 @@ func sanTailFromCert(cert *x509.Certificate, prefix string) (string, sanState) {
 // AgentFullName composes the agent identity string carried in the
 // cert's urn:clawker:agent: URI SAN and reconstructed on demand from
 // the registry row's (project, agent_name) columns for display.
-// Three-segment for a scoped project ("clawker.<project>.<agent>"),
-// two-segment for the unscoped/empty-project case ("clawker.<agent>")
-// to match docker.ContainerName naming.
+// Three-segment for a project-scoped agent ("clawker.<project>.<agent>"),
+// two-segment for a global-scope agent ("clawker.<agent>") to match
+// docker.ContainerName naming.
 //
 // Takes typed AgentName + ProjectSlug values for compile-time
 // discipline — callers can't accidentally pass a raw string. Charset /
