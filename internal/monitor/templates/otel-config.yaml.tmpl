@@ -163,6 +163,19 @@ processors:
         statements:
           - set(attributes["project"], resource.attributes["project"]) where resource.attributes["project"] != nil
           - set(attributes["agent"], resource.attributes["agent"]) where resource.attributes["agent"] != nil
+  # Convert delta-temporality Sum metrics into cumulative before they hit
+  # the Prometheus exporter. Claude Code's SDK emits its counters
+  # (claude_code.cost.usage, claude_code.token.usage, etc.) with
+  # AggregationTemporality=Delta — each export is the increment since the
+  # last export, not the running total. The Prometheus exporter requires
+  # cumulative semantics for `_total` series; without this processor, each
+  # scrape sees only the latest delta instead of the lifetime sum, which
+  # silently undercounts every Claude Code counter by 10-20× over a session.
+  # Spanmetrics-derived RED metrics on the trusted pipeline are also delta
+  # by default, so apply on both metrics pipelines.
+  deltatocumulative:
+    max_streams: 10000
+    max_stale: 5m
   # Provenance stamps. Each trusted source gets ingest_source=<name>
   # so cross-index queries can filter on a single field. service.name
   # is NOT overwritten — mTLS handshake authenticated the sender;
@@ -332,14 +345,14 @@ service:
     # provenance marker.
     metrics/untrusted:
       receivers: [otlp]
-      processors: [memory_limiter, resource/untrusted_otlp, transform/metrics, batch]
+      processors: [memory_limiter, resource/untrusted_otlp, transform/metrics, deltatocumulative, batch]
       exporters: [prometheus, debug]
     # Trusted metrics — collector self-scrape, docker_stats,
     # hostmetrics, and spanmetrics-derived RED metrics. All sourced
     # locally; no sender-declared resource attrs to defend.
     metrics/trusted:
       receivers: [prometheus/self, docker_stats, hostmetrics, spanmetrics]
-      processors: [memory_limiter, transform/metrics, batch]
+      processors: [memory_limiter, transform/metrics, deltatocumulative, batch]
       exporters: [prometheus, debug]
     # Untrusted log ingress. Only claude-code/clawker-cli route
     # downstream; other service.name values are dropped at the routing
