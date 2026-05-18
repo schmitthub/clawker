@@ -205,6 +205,34 @@ services:
       - 'OPENSEARCH_HOSTS=["http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"]'
       - DISABLE_SECURITY_DASHBOARDS_PLUGIN=true
       - SERVER_PORT={{.OpenSearchDashboardsPort}}
+      # Enable OSD's data_source plugin. Registers the `data-connection` saved-object
+      # type that the explore-metrics flavor uses to surface external query connectors
+      # (Prometheus, S3) in the dataset picker. Without this, the SQL plugin's
+      # `clawker_prometheus` catalog entry exists on the OS node but OSD's frontend
+      # has no saved-object to point at, so explore-metrics dataset picker is empty.
+      # Maps to `data_source.enabled: true` via the OSD entrypoint allowlist.
+      - DATA_SOURCE_ENABLED=true
+      # Enable workspaces — required by the explore plugin's app-mount logic
+      # (getIsExploreEnabledWorkspace reads core.workspaces.currentWorkspace$).
+      - WORKSPACE_ENABLED=true
+      # Allow Vega visualizations to fetch external HTTP URLs (default: false).
+      # Required for the Claude Code dashboard's Prometheus-backed panels, which
+      # query http://localhost:{{.PrometheusPort}}/api/v1/query{,_range} directly
+      # from the user's browser (cross-origin to OSD's :{{.OpenSearchDashboardsPort}},
+      # CORS already permissive on Prometheus's side).
+      # Maps to `vega.enableExternalUrls: true` via the OSD entrypoint allowlist.
+      - VEGA_ENABLEEXTERNALURLS=true
+    # `explore.enabled` is NOT in the OSD docker entrypoint's env→config allowlist
+    # (the `opensearch_dashboards_vars` array in opensearch-dashboards-docker-entrypoint.sh),
+    # so an env var has no effect. The entrypoint forwards the container's argv to OSD
+    # via `exec "$@" ... "${longopts[@]}"`, so we pass `--explore.enabled=true` here as
+    # a CLI longopt. Required by https://docs.opensearch.org/latest/observing-your-data/
+    # exploring-observability-data/ for the new Discover/Explore experience (alongside
+    # workspace.enabled + data_source.enabled set via env above).
+    command:
+      - opensearch-dashboards
+      - --explore.enabled=true
+      - --explore.discoverMetrics.enabled=true
     ports:
       - "127.0.0.1:{{.OpenSearchDashboardsPort}}:{{.OpenSearchDashboardsPort}}"
     expose:

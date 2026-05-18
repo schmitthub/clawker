@@ -163,4 +163,45 @@ if [ -s "${NDJSON}" ]; then
     -o /dev/null
 fi
 
+# The OpenSearch Dashboards `explore` plugin (Discover replacement)
+# surfaces external query connectors — Prometheus, S3 — in its dataset
+# picker by listing `data-connection` saved objects and filtering by
+# `attributes.type`. The SQL plugin's `clawker_prometheus` connector
+# (registered above via `apply_datasources`) lives in the SQL plugin's
+# own catalog, separate from OSD's saved-objects store; without this
+# `data-connection` SO, the explore-metrics dataset picker is empty.
+# POST with explicit id + overwrite=true is fully idempotent.
+echo "==> bootstrap: PUT data-connection clawker-prometheus-conn"
+curl -fsS -X POST \
+  "${DASHBOARDS_URL}/api/saved_objects/data-connection/clawker-prometheus-conn?overwrite=true" \
+  -H "osd-xsrf: true" \
+  -H "Content-Type: application/json" \
+  --data-binary @- <<'EOF' \
+  -o /dev/null
+{"attributes":{"connectionId":"clawker_prometheus","type":"Prometheus","meta":"{\"type\":\"Prometheus\",\"timeFieldName\":\"Time\"}"}}
+EOF
+
+# Explore-flavor apps (`metrics`, `logs`, `traces`) only mount inside an
+# OSD workspace whose features include the relevant nav group. Without
+# a workspace, /app/explore/metrics returns "Application Not Found".
+# Create a "Clawker" workspace with use-case-observability the first
+# time bootstrap runs; subsequent runs find it by name and skip. The
+# workspace's settings.dataConnections list references the SO above so
+# the explore-metrics dataset picker can resolve `clawker_prometheus`.
+# Workspace IDs are auto-generated, so we do not pin one here.
+if curl -fsS -H 'osd-xsrf: true' -H 'Content-Type: application/json' \
+    -X POST "${DASHBOARDS_URL}/api/workspaces/_list" -d '{}' \
+    | grep -q '"name":"Clawker"'; then
+  echo "==> bootstrap: workspace 'Clawker' already exists, skipping"
+else
+  echo "==> bootstrap: POST workspace 'Clawker'"
+  curl -fsS -X POST "${DASHBOARDS_URL}/api/workspaces" \
+    -H "osd-xsrf: true" \
+    -H "Content-Type: application/json" \
+    --data-binary @- <<'EOF' \
+    -o /dev/null
+{"attributes":{"name":"Clawker","description":"Claude Code observability","features":["use-case-observability"]},"settings":{"dataConnections":["clawker-prometheus-conn"]}}
+EOF
+fi
+
 echo "==> bootstrap: complete"
