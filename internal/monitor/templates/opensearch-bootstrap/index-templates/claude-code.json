@@ -7,50 +7,14 @@
       "properties": {
         "resource": {
           "properties": {
-            "attributes": {
-              "properties": {
-                "os": {
-                  "properties": {
-                    "type":    { "type": "keyword" },
-                    "version": { "type": "keyword" }
-                  }
-                },
-                "host": {
-                  "properties": {
-                    "arch": { "type": "keyword" }
-                  }
-                },
-                "wsl": {
-                  "properties": {
-                    "version": { "type": "keyword" }
-                  }
-                },
-                "telemetry": {
-                  "properties": {
-                    "sdk": {
-                      "properties": {
-                        "name":     { "type": "keyword" },
-                        "version":  { "type": "keyword" },
-                        "language": { "type": "keyword" }
-                      }
-                    }
-                  }
-                },
-                "department":  { "type": "keyword" },
-                "team": {
-                  "properties": {
-                    "id": { "type": "keyword" }
-                  }
-                },
-                "cost_center": { "type": "keyword" },
-                "enduser": {
-                  "properties": {
-                    "id":           { "type": "keyword" },
-                    "directory_id": { "type": "keyword" }
-                  }
-                }
-              }
-            }
+            "project":         { "type": "keyword" },
+            "agent":           { "type": "keyword" },
+            "service.name":    { "type": "keyword" },
+            "service.version": { "type": "keyword" },
+            "ingest_source":   { "type": "keyword" },
+            "host.arch":       { "type": "keyword" },
+            "os.type":         { "type": "keyword" },
+            "os.version":      { "type": "keyword" }
           }
         },
         "scope": {

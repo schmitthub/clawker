@@ -13,8 +13,10 @@
 # && monitor up` to pick up template edits.
 #
 # Failures exit non-zero so dependents never start. The script is
-# idempotent: re-running is a no-op for PUT (templates, ISM) and uses
-# overwrite=true for saved-objects import.
+# idempotent: PUT is a no-op for component + index templates; ISM
+# policies use a probe-then-PUT-with-seq path (optimistic concurrency,
+# see apply_ism_policies); datasources POST-then-PUT-on-409; saved
+# objects import with overwrite=true.
 set -eu
 
 OPENSEARCH_URL="http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"
@@ -48,7 +50,55 @@ apply_dir() {
 
 apply_dir "/_component_template"     "${BOOTSTRAP_DIR}/component-templates"
 apply_dir "/_index_template"         "${BOOTSTRAP_DIR}/index-templates"
-apply_dir "/_plugins/_ism/policies"  "${BOOTSTRAP_DIR}/ism-policies"
+
+# ISM policies use optimistic concurrency. A bare PUT to an existing
+# policy returns 409 version_conflict_engine_exception. To update an
+# existing policy the request must carry if_seq_no + if_primary_term
+# query params taken from a GET of the current document. Create path is
+# a plain PUT (no params).
+apply_ism_policies() {
+  dir="${BOOTSTRAP_DIR}/ism-policies"
+  if [ ! -d "${dir}" ]; then
+    return 0
+  fi
+  for f in "${dir}"/*.json; do
+    [ -e "${f}" ] || continue
+    name=$(basename "${f}" .json)
+    code=$(curl -sS -o /tmp/ism_get -w '%{http_code}' \
+      "${OPENSEARCH_URL}/_plugins/_ism/policies/${name}")
+    case "${code}" in
+      404)
+        echo "==> bootstrap: PUT ism policy ${name} (create)"
+        curl -fsS -X PUT "${OPENSEARCH_URL}/_plugins/_ism/policies/${name}" \
+          -H "Content-Type: application/json" \
+          --data-binary "@${f}" \
+          -o /dev/null
+        ;;
+      200)
+        seq=$(grep -o '"_seq_no":[0-9]*' /tmp/ism_get | head -1 | cut -d: -f2)
+        term=$(grep -o '"_primary_term":[0-9]*' /tmp/ism_get | head -1 | cut -d: -f2)
+        if [ -z "${seq}" ] || [ -z "${term}" ]; then
+          echo "    ism policy ${name} GET ok but could not parse _seq_no/_primary_term"
+          cat /tmp/ism_get
+          return 1
+        fi
+        echo "==> bootstrap: PUT ism policy ${name} (update seq=${seq} term=${term})"
+        curl -fsS -X PUT \
+          "${OPENSEARCH_URL}/_plugins/_ism/policies/${name}?if_seq_no=${seq}&if_primary_term=${term}" \
+          -H "Content-Type: application/json" \
+          --data-binary "@${f}" \
+          -o /dev/null
+        ;;
+      *)
+        echo "    ism policy ${name} GET failed: HTTP ${code}"
+        cat /tmp/ism_get
+        return 1
+        ;;
+    esac
+  done
+}
+
+apply_ism_policies
 
 # Datasources register external query backends (Prometheus today) under
 # the SQL plugin's _plugins/_query/_datasources API. Unlike templates,
