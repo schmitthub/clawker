@@ -270,12 +270,17 @@ func TestCPContainer_ExtraHostsHostGateway(t *testing.T) {
 }
 
 // TestCPContainer_OtelLogsEnv_Emitted — when monitoring.otel_infra_port
-// is non-zero (default), the OTLP endpoint + protocol env vars land in
-// the container config. Client cert/key/CA env vars are deliberately
-// absent — the CP-side exporter wires its TLSConfig in-process via
-// internal/controlplane/otelcerts. Reading CLI-root-direct cert paths
-// from env would silently undo the trust-anchor split (agents hold
-// CLI-root-direct leaves and could forge service.name=clawker-cp).
+// is non-zero (default), the OTLP endpoint env var lands in the
+// container config. The transport-specific env vars
+// (OTEL_EXPORTER_OTLP_PROTOCOL, OTEL_EXPORTER_OTLP_LOGS_ENDPOINT with
+// the /v1/logs HTTP path) are deliberately absent: the CP wires
+// otlploggrpc in-process and the collector's otlp/infra receiver only
+// opens the grpc: protocol — setting them would be misleading. Client
+// cert/key/CA env vars are also absent — the CP-side exporter wires
+// its TLSConfig in-process via internal/controlplane/otelcerts.
+// Reading CLI-root-direct cert paths from env would silently undo the
+// trust-anchor split (agents hold CLI-root-direct leaves and could
+// forge service.name=clawker-cp).
 func TestCPContainer_OtelLogsEnv_Emitted(t *testing.T) {
 	testenv.New(t)
 	cfg := configmocks.NewBlankConfig()
@@ -284,11 +289,11 @@ func TestCPContainer_OtelLogsEnv_Emitted(t *testing.T) {
 	require.NoError(t, err)
 
 	wantPresent := map[string]bool{
-		"OTEL_EXPORTER_OTLP_ENDPOINT":      false,
-		"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT": false,
-		"OTEL_EXPORTER_OTLP_PROTOCOL":      false,
+		"OTEL_EXPORTER_OTLP_ENDPOINT": false,
 	}
 	wantAbsent := []string{
+		"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+		"OTEL_EXPORTER_OTLP_PROTOCOL",
 		"OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE",
 		"OTEL_EXPORTER_OTLP_CLIENT_KEY",
 		"OTEL_EXPORTER_OTLP_CERTIFICATE",
@@ -301,17 +306,10 @@ func TestCPContainer_OtelLogsEnv_Emitted(t *testing.T) {
 		}
 		for _, k := range wantAbsent {
 			assert.False(t, strings.HasPrefix(e, k+"="),
-				"%s must NOT be injected via env — TLSConfig is wired in-process by clawker-cp main", k)
+				"%s must NOT be injected via env — CP wires OTLP/gRPC + TLSConfig in-process", k)
 		}
 	}
 	for k, found := range wantPresent {
 		assert.True(t, found, "missing OTEL env var %s in CP container env", k)
 	}
-}
-
-// TestTelemetryPath_FallbackPreference — telemetryPath uses the
-// configured value when non-empty, otherwise the fallback.
-func TestTelemetryPath_FallbackPreference(t *testing.T) {
-	require.Equal(t, "/v1/logs", telemetryPath("", "/v1/logs"))
-	require.Equal(t, "/custom", telemetryPath("/custom", "/v1/logs"))
 }

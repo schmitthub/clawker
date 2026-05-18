@@ -339,17 +339,21 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 // cannot present a CLI-signed client cert and so the receiver rejects
 // their TLS handshake — the gate is crypto, not network.
 //
+// Transport is OTLP/gRPC: the CP wires otlploggrpc in-process (see
+// cmd/clawker-cp/main.go::otelOptionsFromEnv) and the collector's
+// otlp/infra receiver only opens the grpc: protocol. No OTLP/HTTP
+// path component is appended — otlploggrpc.WithEndpoint takes a bare
+// host:port — and OTEL_EXPORTER_OTLP_PROTOCOL is not set because the
+// in-process wiring picks the exporter, not the SDK env autoconfig.
+//
 // The dial is always attempted; logger construction treats OTEL
 // provider failure as non-fatal so the daemon survives a collector
 // that's down at startup.
 func otelLogsEnv(cfg config.Config) []string {
 	mon := cfg.SettingsStore().Read().Monitoring
 	endpoint := fmt.Sprintf("https://host.docker.internal:%d", mon.OtelInfraPort)
-	logsEndpoint := fmt.Sprintf("%s%s", endpoint, telemetryPath(mon.Telemetry.LogsPath, "/v1/logs"))
 	return []string{
 		"OTEL_EXPORTER_OTLP_ENDPOINT=" + endpoint,
-		"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=" + logsEndpoint,
-		"OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf",
 		// mTLS material is NOT injected via env. The CP-side exporter
 		// is wired in-process via internal/controlplane/otelcerts —
 		// leaves are minted from the infra intermediate on every
@@ -368,11 +372,4 @@ func otelLogsEnv(cfg config.Config) []string {
 		// rewrite service.name.
 		"OTEL_RESOURCE_ATTRIBUTES=service.name=clawker-cp,component=clawker-cp",
 	}
-}
-
-func telemetryPath(configured, fallback string) string {
-	if configured != "" {
-		return configured
-	}
-	return fallback
 }
