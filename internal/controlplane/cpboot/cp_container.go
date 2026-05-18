@@ -151,6 +151,14 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 	if err != nil {
 		return nil, fmt.Errorf("resolve cp client key path: %w", err)
 	}
+	infraCACertPath, err := consts.AuthInfraCACertPath()
+	if err != nil {
+		return nil, fmt.Errorf("resolve infra CA cert path: %w", err)
+	}
+	infraCAKeyPath, err := consts.AuthInfraCAKeyPath()
+	if err != nil {
+		return nil, fmt.Errorf("resolve infra CA key path: %w", err)
+	}
 
 	// Config dir — CP loads config.NewConfig() from this mount.
 	configDir := config.ConfigDir()
@@ -223,6 +231,23 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 			Type:     mount.TypeBind,
 			Source:   cpClientKeyPath,
 			Target:   consts.CPClientKeyPath,
+			ReadOnly: true,
+		},
+		// Infra intermediate CA — CP loads this via the infracerts
+		// package and signs short-lived mTLS client leaves for clawker
+		// infra services (Envoy, CoreDNS) at firewall.Stack.EnsureRunning.
+		// Adding a new infra service does not require minting a new
+		// cert in the CLI — CP issues from this intermediate at runtime.
+		{
+			Type:     mount.TypeBind,
+			Source:   infraCACertPath,
+			Target:   consts.CPInfraCACertPath,
+			ReadOnly: true,
+		},
+		{
+			Type:     mount.TypeBind,
+			Source:   infraCAKeyPath,
+			Target:   consts.CPInfraCAKeyPath,
 			ReadOnly: true,
 		},
 		// CP logs — persisted to host for auditing.
@@ -307,45 +332,49 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 // the OTEL bridge against the CP-only mTLS-gated receiver on the
 // monitoring stack.
 //
-// Endpoint: https://host.docker.internal:<OtelCPPort>. CP is exempt
+// Endpoint: https://host.docker.internal:<OtelInfraPort>. CP is exempt
 // from the BPF firewall (not enrolled in container_map) and has
 // host.docker.internal mapped via ExtraHosts, so the dial reaches the
 // host-loopback-bound docker port forwarder. Agents on clawker-net
 // cannot present a CLI-signed client cert and so the receiver rejects
 // their TLS handshake — the gate is crypto, not network.
 //
-// When OtelCPPort is zero (user hasn't run `clawker monitor init`)
-// no env vars are emitted and the CP logger falls back to file-only.
-// Logger construction also treats OTEL provider failure as non-fatal
-// so the daemon survives a collector that's down at startup.
+// Transport is OTLP/gRPC: the CP wires otlploggrpc in-process (see
+// cmd/clawker-cp/main.go::otelOptionsFromEnv) and the collector's
+// otlp/infra receiver only opens the grpc: protocol. No OTLP/HTTP
+// path component is appended — otlploggrpc.WithEndpoint takes a bare
+// host:port — and OTEL_EXPORTER_OTLP_PROTOCOL is not set because the
+// in-process wiring picks the exporter, not the SDK env autoconfig.
+//
+// The dial is always attempted; logger construction treats OTEL
+// provider failure as non-fatal so the daemon survives a collector
+// that's down at startup.
 func otelLogsEnv(cfg config.Config) []string {
 	mon := cfg.SettingsStore().Read().Monitoring
-	if mon.OtelCPPort <= 0 {
-		return nil
-	}
-	endpoint := fmt.Sprintf("https://host.docker.internal:%d", mon.OtelCPPort)
-	logsEndpoint := fmt.Sprintf("%s%s", endpoint, telemetryPath(mon.Telemetry.LogsPath, "/v1/logs"))
+	endpoint := fmt.Sprintf("https://host.docker.internal:%d", mon.OtelInfraPort)
 	return []string{
 		"OTEL_EXPORTER_OTLP_ENDPOINT=" + endpoint,
-		"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=" + logsEndpoint,
-		"OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf",
-		// Client cert + key (mounted RO into the container). CA bundle
-		// is the same trust root used for the AdminService server cert
-		// — already mounted at consts.CPCACertPath.
-		"OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE=" + consts.CPClientCertPath,
-		"OTEL_EXPORTER_OTLP_CLIENT_KEY=" + consts.CPClientKeyPath,
-		"OTEL_EXPORTER_OTLP_CERTIFICATE=" + consts.CPCACertPath,
-		// service.name will be force-set on the receiver pipeline by a
-		// resource processor (see otel-config.yaml.tmpl) — this value
-		// is advisory and would be overwritten anyway. Setting it for
-		// debug parity with file logs.
+		// mTLS material is NOT injected via env. The CP-side exporter
+		// is wired in-process via internal/controlplane/otelcerts —
+		// leaves are minted from the infra intermediate on every
+		// handshake and never land on disk. The otlp/infra receiver's
+		// client_ca_file is the infra intermediate (NOT the CLI root),
+		// so only chains that pass through that intermediate are
+		// trusted. Env-driven cert paths would invite an operator (or
+		// future code path) to wire a leaf that chains directly to the
+		// CLI root — the same trust path agent leaves take — and the
+		// receiver would reject it on chain validation. Keep the mint
+		// in-process so the only consumer of the intermediate-issued
+		// leaf is the CP exporter itself.
+		//
+		// service.name=clawker-cp is consumed by the OTel SDK's
+		// auto-detected Resource (sdkresource.Default reads
+		// OTEL_RESOURCE_ATTRIBUTES) and stamped on every emitted log
+		// record. The collector's routing/trusted connector dispatches
+		// by this sender-declared name to the clawker-cp index. Removing
+		// this env disables CP log routing — the resource/cp processor
+		// runs AFTER routing and only stamps ingest_source, it does NOT
+		// rewrite service.name.
 		"OTEL_RESOURCE_ATTRIBUTES=service.name=clawker-cp,component=clawker-cp",
 	}
-}
-
-func telemetryPath(configured, fallback string) string {
-	if configured != "" {
-		return configured
-	}
-	return fallback
 }

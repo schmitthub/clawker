@@ -68,7 +68,7 @@ SettingsStore() *storage.Store[Settings]   // Direct access to settings store
 
 **Schema accessors**: `Project()`, `Settings()`, `ClawkerIgnoreName()`, `RequiredFirewallDomains()`, `RequiredFirewallRules()`, `EgressRulesFileName()`
 
-**Deprecated schema accessors**: `LoggingConfig()`, `MonitoringConfig()`, `HostProxyConfig()` — use `SettingsStore().Read()` instead.
+**Settings convenience accessors**: `LoggingConfig()`, `MonitoringConfig()`, `HostProxyConfig()` return the corresponding nested struct directly. Equivalent to `SettingsStore().Read().Logging` etc.; the typed store accessor is the preferred path for new code, but these helpers are not deprecated and remain in active use (e.g. `internal/bundler/dockerfile.go` reads `cfg.MonitoringConfig()` per render to flow OTEL endpoints into the Dockerfile).
 
 **Mutation**: Use `ProjectStore().Set(fn)` / `SettingsStore().Set(fn)` (returns error). Persist with `ProjectStore().Write()` / `SettingsStore().Write()`.
 
@@ -86,7 +86,7 @@ SettingsStore() *storage.Store[Settings]   // Direct access to settings store
 
 **Container constants**: `ContainerUID()` (1001), `ContainerGID()` (1001)
 
-**Monitoring URLs**: `GrafanaURL(host, https)`, `JaegerURL(host, https)`, `PrometheusURL(host, https)`
+**Monitoring URLs**: `OpenSearchURL()`, `OpenSearchDashboardsURL()`, `PrometheusURL()`
 
 ### Exported Mode Type (consts.go)
 

@@ -182,6 +182,7 @@ EBPF_BINARY_DEPS := \
 COREDNS_BINARY_DEPS := \
 	$(BPF_BINDING_DEPS) \
 	cmd/coredns-clawker/main.go \
+	$(wildcard cmd/coredns-clawker/plugins/otel/*.go) \
 	$(wildcard internal/dnsbpf/*.go) \
 	internal/controlplane/firewall/ebpf/types.go
 
@@ -202,7 +203,9 @@ CP_BINARY_DEPS := \
 	$(wildcard internal/controlplane/dockerevents/*.go) \
 	$(wildcard internal/controlplane/firewall/*.go) \
 	$(wildcard internal/controlplane/firewall/ebpf/*.go) \
-	$(wildcard internal/controlplane/informer/*.go)
+	$(wildcard internal/controlplane/infracerts/*.go) \
+	$(wildcard internal/controlplane/informer/*.go) \
+	$(wildcard internal/controlplane/otelcerts/*.go)
 
 # `docker buildx build --output=type=local,dest=...` exports a stage's
 # filesystem to a host directory. The `*-extract` stages in Dockerfile.controlplane

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -42,6 +43,23 @@ const (
 	// deadlines via ctx when they want different behavior.
 	healthCheckTimeout  = 60 * time.Second
 	healthCheckInterval = 500 * time.Millisecond
+
+	// labelInfraCertsReady encodes whether the running container was
+	// created with the mTLS-OTLP bind-mount + env wired. ensureContainer
+	// and Reload compare it against the current desired state to detect
+	// spec drift after an infraCertsReady flip — a plain ContainerRestart
+	// preserves env + mounts from create-time and would otherwise leave
+	// envoy.yaml referencing /etc/envoy/otel-tls/* with no mount, or
+	// CoreDNS holding CLAWKER_COREDNS_OTEL_ENDPOINT against missing certs.
+	labelInfraCertsReady = "dev.clawker.firewall.infra_certs_ready"
+
+	// labelOtelInfraPort encodes the create-time monitoring.otel_infra_port
+	// value. CoreDNS receives the port via CLAWKER_COREDNS_OTEL_ENDPOINT
+	// env at ContainerCreate; Docker preserves env across ContainerRestart,
+	// so a setting change while certs remain ready would leave CoreDNS
+	// exporting to the stale port. Including the port in drift labels
+	// forces a recreate (not just a restart) when it changes.
+	labelOtelInfraPort = "dev.clawker.firewall.otel_infra_port"
 )
 
 // Stack manages the Envoy + CoreDNS container pair via Docker-outside-of-
@@ -51,21 +69,61 @@ const (
 // Stack is not safe for concurrent EnsureRunning + Stop calls; callers
 // serialize via their own mutex.
 type Stack struct {
-	docker *docker.Client
-	cfg    config.Config
-	log    *logger.Logger
-	store  *storage.Store[EgressRulesFile]
+	docker    *docker.Client
+	cfg       config.Config
+	log       *logger.Logger
+	store     *storage.Store[EgressRulesFile]
+	otelCerts OtelCertProvisioner
+	// infraCertsReady is set to true by ensureConfigs after a successful
+	// ensureInfraClientCerts call (and reset to false on failure). Gates
+	// downstream mTLS wiring (alsConfig, envoy/coredns container specs)
+	// so a partial cert mint can't leave Envoy/CoreDNS pointed at
+	// missing files — which would take CoreDNS startup down hard via
+	// the otel plugin's tls.LoadX509KeyPair, breaking the firewall
+	// plane on a telemetry failure.
+	//
+	// Stack methods are serialized by the controlplane ActionQueue; no
+	// mutex is required.
+	infraCertsReady bool
+}
+
+// OtelCertProvisioner is the firewall-package view of the trusted-lane
+// mTLS material provider. The concrete implementation lives in
+// `internal/controlplane/otelcerts` (CP-level, outside the firewall
+// package — see feedback_no_layering_violations.md). Tests pass a
+// tiny fake; production wiring passes `*otelcerts.Service`.
+//
+// May be nil — Stack tolerates a missing provisioner by skipping the
+// mTLS material bind-mounts. Envoy omits the OTel access-log sink
+// and the otel_collector_als cluster entirely (sender-side gate on
+// als.MTLS in buildHTTPAccessLog / buildTCPAccessLog / buildClusters
+// — no cross-lane emission to the untrusted otel-collector:4317
+// receiver that's reserved for agent containers). CoreDNS sees no
+// CLAWKER_COREDNS_OTEL_ENDPOINT and installs noopEmitter. Stdout
+// logs remain available via `docker logs` for triage, but the
+// OpenSearch pipeline has no filelog receiver — the trusted OTLP push
+// path is the only ingestion route, and it stays cold. This matches the
+// CP-side degraded path (see cmd/clawker-cp/main.go: event=
+// infra_issuer_unavailable).
+type OtelCertProvisioner interface {
+	// EnsureClient mints + writes per-service mTLS client material under
+	// the provisioner's destination directory, atomically. Re-runs
+	// overwrite in place. Returned paths are CP-container-FS absolute
+	// paths under destDir — Stack discards them and derives sibling
+	// Mount.Source from consts.HostFirewallOtelCertsDir, the host-FS
+	// twin of destDir via CP's firewall data bind-mount.
+	EnsureClient(svc string) (certPath, keyPath, caPath string, err error)
 }
 
 // NewStack returns an initialized Stack. log may be nil (a Nop logger is
 // substituted); the other dependencies are required — nil docker or cfg
 // produces a nil Stack that panics at first use, which is preferable to
-// silent no-ops.
-func NewStack(dc *docker.Client, cfg config.Config, log *logger.Logger, store *storage.Store[EgressRulesFile]) *Stack {
+// silent no-ops. otelCerts may be nil — see OtelCertProvisioner.
+func NewStack(dc *docker.Client, cfg config.Config, log *logger.Logger, store *storage.Store[EgressRulesFile], otelCerts OtelCertProvisioner) *Stack {
 	if log == nil {
 		log = logger.Nop()
 	}
-	return &Stack{docker: dc, cfg: cfg, log: log, store: store}
+	return &Stack{docker: dc, cfg: cfg, log: log, store: store, otelCerts: otelCerts}
 }
 
 // EnsureRunning starts Envoy + CoreDNS if they are not already running.
@@ -152,11 +210,20 @@ func (s *Stack) Reload(ctx context.Context) error {
 		return nil
 	}
 
+	// ensureConfigs may have flipped infraCertsReady; reloadContainer
+	// recreates the container when its create-time env + mounts no
+	// longer match the current Stack state (a plain ContainerRestart
+	// preserves both). Specs are computed once netInfo is available.
+	netInfo, err := DiscoverNetwork(ctx, s.docker, s.cfg)
+	if err != nil {
+		return fmt.Errorf("%w: discover network: %v", ErrStackProbe, err)
+	}
+
 	var errs []error
-	if err := s.restart(ctx, envoyContainerName); err != nil {
+	if err := s.reloadContainer(ctx, envoyContainerName, s.envoyContainerSpec(netInfo)); err != nil {
 		errs = append(errs, fmt.Errorf("%w: %v", ErrEnvoyRestart, err))
 	}
-	if err := s.restart(ctx, corednsContainerName); err != nil {
+	if err := s.reloadContainer(ctx, corednsContainerName, s.corednsContainerSpec(netInfo)); err != nil {
 		errs = append(errs, fmt.Errorf("%w: %v", ErrCoreDNSRestart, err))
 	}
 	if len(errs) == 0 {
@@ -382,7 +449,50 @@ func (s *Stack) ensureConfigs() (string, error) {
 		return "", fmt.Errorf("regenerating domain certs: %w", err)
 	}
 
-	envoyYAML, warnings, err := GenerateEnvoyConfig(rules, s.envoyPorts())
+	s.infraCertsReady = false
+	if s.otelCerts == nil {
+		// Distinct from the mint-failure path below: this is the
+		// intentionally-cold state (no monitoring stack wired, or CP-side
+		// intermediate load failed at startup). Logged at Info — the
+		// operator running `clawker monitor up` and then noticing no
+		// DNS/Envoy access logs in OpenSearch needs a discoverable
+		// signal that the cold state is by design; Debug would bury
+		// it under the default log level and force them to chase the
+		// mTLS material on disk. Reload-on-rule-change cadence is low
+		// enough that this is not noisy.
+		s.log.Info().
+			Str("event", "infra_client_certs_skipped").
+			Str("component", "firewall.stack").
+			Str("reason", "no_provisioner").
+			Msg("otelcerts provisioner not wired — OTLP mTLS push from envoy/coredns disabled (intentionally cold)")
+	} else if err := s.ensureInfraClientCerts(); err != nil {
+		// Degraded path: infra client cert minting failure is logged
+		// but not fatal. Envoy + CoreDNS continue to start without
+		// the mTLS material wired in — Envoy omits the OTel access
+		// log sink + otel_collector_als cluster entirely (alsConfig
+		// returns the empty struct, and the sender-side gate in
+		// buildHTTPAccessLog / buildTCPAccessLog / buildClusters
+		// drops everything OTel-related). The CoreDNS otel plugin
+		// sees no CLAWKER_COREDNS_OTEL_ENDPOINT env var so it
+		// installs noopEmitter. Stdout sinks remain wired for
+		// `docker logs` triage, but the OpenSearch ingestion path
+		// stays cold (no filelog receiver). Infra services must
+		// never cross into the untrusted otel-collector:4317 lane
+		// reserved for agent containers. Without this gate (i.e.
+		// wiring the bind-mounts when s.infraIssuer != nil regardless
+		// of mint success), CoreDNS's otel plugin would
+		// tls.LoadX509KeyPair missing/partial files at setup time,
+		// return plugin.Error, and take the CoreDNS container down —
+		// breaking the firewall plane on a telemetry failure.
+		s.log.Warn().Err(err).
+			Str("event", "infra_client_certs_unavailable").
+			Str("component", "firewall.stack").
+			Msg("infra client cert minting failed — OTLP mTLS push from envoy/coredns disabled")
+	} else {
+		s.infraCertsReady = true
+	}
+
+	envoyYAML, warnings, err := GenerateEnvoyConfig(rules, s.envoyPorts(), s.alsConfig())
 	if err != nil {
 		return "", fmt.Errorf("generating envoy config: %w", err)
 	}
@@ -411,6 +521,68 @@ func (s *Stack) ensureConfigs() (string, error) {
 	return dataDir, nil
 }
 
+// ensureInfraClientCerts mints short-lived mTLS client leaves for the
+// infra services that push telemetry through the CP-only OTLP
+// receiver (Envoy + CoreDNS today; future hostproxy sidecars plug in
+// here). Files land under OtelClientsDir:
+//
+//	<dir>/envoy/client.pem  (leaf + intermediate chain)
+//	<dir>/envoy/client.key
+//	<dir>/envoy/ca.pem      (CLI root CA, copied from CPCACertPath)
+//	<dir>/coredns/client.pem
+//	<dir>/coredns/client.key
+//	<dir>/coredns/ca.pem
+//
+// All leaves are 1-year TTL — same shape as the per-domain MITM
+// certs. EnsureRunning re-runs through ensureConfigs which re-runs
+// this, so container restarts naturally re-issue fresh certs without
+// a renewal goroutine.
+//
+// No-op when s.otelCerts is nil (CP-side intermediate load failed
+// at startup); container specs degrade by not bind-mounting the cert
+// material, so receiver-side mTLS handshakes are simply never
+// attempted.
+//
+// The mint + atomic-write + pair-check work lives in
+// `internal/controlplane/otelcerts` — this method only dispatches per
+// sibling service and propagates the first error. File perms, layout,
+// and the CLI-root ca.pem copy are owned by the provisioner.
+func (s *Stack) ensureInfraClientCerts() error {
+	if s.otelCerts == nil {
+		return nil
+	}
+	for _, svc := range []string{"envoy", "coredns"} {
+		if _, _, _, err := s.otelCerts.EnsureClient(svc); err != nil {
+			return fmt.Errorf("provision %s otel client material: %w", svc, err)
+		}
+	}
+	return nil
+}
+
+// alsConfig returns the Envoy access logger upstream config. When
+// ensureInfraClientCerts has populated the cert material (which
+// implies a wired infra issuer — infraCertsReady is only set true
+// after a successful mint) the ALS cluster targets the mTLS-gated
+// trusted receiver. Otherwise it returns the empty struct; in that
+// degraded mode the OTel access-log sink + otel_collector_als
+// cluster are omitted entirely (gated at the sender in
+// buildHTTPAccessLog / buildTCPAccessLog / buildClusters), and Envoy
+// keeps only the stdout JSON sink for `docker logs clawker-envoy`
+// triage. Infra services must never cross into the untrusted
+// otel-collector:4317 lane reserved for agent containers — degraded
+// telemetry is silent at the trusted receiver, never spoofable noise
+// on the untrusted one.
+//
+// Reads s.infraCertsReady; assumed invoked from the controlplane
+// ActionQueue worker goroutine so the field observes the most recent
+// ensureConfigs run coherently (see Stack docstring).
+func (s *Stack) alsConfig() ALSConfig {
+	if !s.infraCertsReady {
+		return ALSConfig{}
+	}
+	return ALSConfig{Port: int(s.cfg.SettingsStore().Read().Monitoring.OtelInfraPort), MTLS: true}
+}
+
 func (s *Stack) envoyPorts() EnvoyPorts {
 	return EnvoyPorts{
 		EgressPort:  s.cfg.EnvoyEgressPort(),
@@ -432,8 +604,18 @@ type containerSpec struct {
 	mounts       []mount.Mount
 	portBindings network.PortMap
 	capAdd       []string
+	// labels carries the state-encoding labels that distinguish drift-
+	// significant create-time options (today: labelInfraCertsReady).
+	// Compared by ensureContainer / reloadContainer to decide whether
+	// a running container needs to be recreated rather than restarted.
+	labels map[string]string
 }
 
+// envoyContainerSpec composes the Envoy container spec for the current
+// stack state. Reads s.infraCertsReady; callers must invoke from the
+// controlplane ActionQueue worker goroutine (the same single goroutine
+// that mutates the flag inside ensureConfigs) so the spec observes the
+// flag coherently with the most recent mint result.
 func (s *Stack) envoyContainerSpec(netInfo *NetworkInfo) containerSpec {
 	// Bind Mount.Source values must be host-FS paths — the Docker daemon
 	// resolves them on the host, not inside the CP container where the
@@ -441,24 +623,49 @@ func (s *Stack) envoyContainerSpec(netInfo *NetworkInfo) containerSpec {
 	// resolve to. consts.HostEnvoyConfigPath / consts.HostFirewallCertSubdir
 	// are derived from the CLAWKER_HOST_*_DIR env vars the CLI injects at
 	// CP container creation.
+	mounts := []mount.Mount{
+		{
+			Type:     mount.TypeBind,
+			Source:   consts.HostEnvoyConfigPath,
+			Target:   "/etc/envoy/envoy.yaml",
+			ReadOnly: true,
+		},
+		{
+			Type:     mount.TypeBind,
+			Source:   consts.HostFirewallCertSubdir,
+			Target:   "/etc/envoy/certs",
+			ReadOnly: true,
+		},
+	}
+	// mTLS client material for the OTLP/gRPC access logger. Only attached
+	// when the infra issuer is wired AND ensureInfraClientCerts populated
+	// the cert files; without it Envoy emits no OTLP at all (alsConfig +
+	// buildHTTPAccessLog / buildTCPAccessLog gate on infraCertsReady →
+	// als.MTLS, so the OTel sink + cluster are dropped end-to-end). The
+	// stdout JSON sink remains for `docker logs` triage. Gating on
+	// infraCertsReady (not infraIssuer != nil) prevents bind-mounting a
+	// partially-populated dir after a mint failure.
+	//
+	// Drift-on-Reload: the bind-mount set is part of the container's
+	// immutable create-time config, so flipping infraCertsReady on a
+	// later Reload would diverge from the running container. driftLabels
+	// stamps labelInfraCertsReady at create time; specMatchesContainer
+	// detects the mismatch and reloadContainer falls through to
+	// ensureContainer, which stop+remove+recreates with the new mount
+	// (see lines 808-991).
+	if s.infraCertsReady {
+		mounts = append(mounts, mount.Mount{
+			Type:     mount.TypeBind,
+			Source:   filepath.Join(consts.HostFirewallOtelCertsDir, "envoy"),
+			Target:   "/etc/envoy/otel-tls",
+			ReadOnly: true,
+		})
+	}
 	return containerSpec{
 		image:     envoyImage,
 		staticIP:  netInfo.EnvoyIP,
 		networkID: netInfo.NetworkID,
-		mounts: []mount.Mount{
-			{
-				Type:     mount.TypeBind,
-				Source:   consts.HostEnvoyConfigPath,
-				Target:   "/etc/envoy/envoy.yaml",
-				ReadOnly: true,
-			},
-			{
-				Type:     mount.TypeBind,
-				Source:   consts.HostFirewallCertSubdir,
-				Target:   "/etc/envoy/certs",
-				ReadOnly: true,
-			},
-		},
+		mounts:    mounts,
 		// Publish the dedicated health listener — NOT the TLS egress port.
 		// Publishing TLS would install NAT rules that masquerade the source
 		// IP of DNAT'd inter-container traffic.
@@ -467,34 +674,70 @@ func (s *Stack) envoyContainerSpec(netInfo *NetworkInfo) containerSpec {
 				{HostPort: strconv.Itoa(s.cfg.EnvoyHealthHostPort())},
 			},
 		},
+		labels: s.driftLabels(),
 	}
 }
 
+// corednsContainerSpec composes the CoreDNS container spec for the
+// current stack state. Reads s.infraCertsReady; callers must invoke
+// from the controlplane ActionQueue worker goroutine (see
+// envoyContainerSpec doc) so the spec observes the flag coherently
+// with the most recent mint result.
 func (s *Stack) corednsContainerSpec(netInfo *NetworkInfo) containerSpec {
 	healthPort := consts.CoreDNSHealthHostPort
 	// Mount.Source is a host-FS path; consts.HostCorefilePath is derived
 	// from the CLAWKER_HOST_DATA_DIR env var the CLI injects into the CP
 	// container at creation.
+	//
+	// CoreDNS log shipping: the custom `otel` plugin (cmd/coredns-clawker
+	// /plugins/otel) emits one OTLP log record per query over mTLS to
+	// the CP-only receiver at otel-collector:OtelInfraPort. CLAWKER_COREDNS_
+	// OTEL_ENDPOINT in container env (set by container_env below) wires
+	// the plugin to the receiver; the cert + key + CA bind-mount at
+	// /etc/clawker/auth/coredns/ matches the plugin's hardcoded
+	// defaults (see plugins/otel/setup.go). Gated on infraCertsReady so
+	// a mint failure does NOT wire the env var or mount — without the
+	// env var, the plugin installs noopEmitter and CoreDNS starts
+	// cleanly; with the env var pointing at missing files, the plugin
+	// returns plugin.Error and CoreDNS refuses to start (taking the
+	// firewall plane down on a telemetry failure).
+	mounts := []mount.Mount{
+		{
+			Type:     mount.TypeBind,
+			Source:   consts.HostCorefilePath,
+			Target:   "/etc/coredns/Corefile",
+			ReadOnly: true,
+		},
+		{
+			// The dnsbpf plugin updates the pinned dns_cache map at
+			// /sys/fs/bpf/clawker/dns_cache in real time.
+			Type:   mount.TypeBind,
+			Source: "/sys/fs/bpf",
+			Target: "/sys/fs/bpf",
+		},
+	}
+	var env []string
+	if s.infraCertsReady {
+		mounts = append(mounts, mount.Mount{
+			Type:     mount.TypeBind,
+			Source:   filepath.Join(consts.HostFirewallOtelCertsDir, "coredns"),
+			Target:   "/etc/clawker/auth/coredns",
+			ReadOnly: true,
+		})
+		// otlploggrpc.WithEndpoint takes a host:port; the plugin upgrades
+		// to TLS via the client cert config it loads from the bind-mounted
+		// paths below.
+		env = append(env, fmt.Sprintf("CLAWKER_COREDNS_OTEL_ENDPOINT=%s:%d",
+			consts.MonitoringServiceOtelCollector,
+			s.cfg.SettingsStore().Read().Monitoring.OtelInfraPort))
+	}
 	return containerSpec{
 		image:     corednsImageTag,
 		staticIP:  netInfo.CoreDNSIP,
 		networkID: netInfo.NetworkID,
 		cmd:       []string{"-conf", "/etc/coredns/Corefile"},
-		mounts: []mount.Mount{
-			{
-				Type:     mount.TypeBind,
-				Source:   consts.HostCorefilePath,
-				Target:   "/etc/coredns/Corefile",
-				ReadOnly: true,
-			},
-			{
-				// The dnsbpf plugin updates the pinned dns_cache map at
-				// /sys/fs/bpf/clawker/dns_cache in real time.
-				Type:   mount.TypeBind,
-				Source: "/sys/fs/bpf",
-				Target: "/sys/fs/bpf",
-			},
-		},
+		mounts:    mounts,
+		env:       env,
 		portBindings: network.PortMap{
 			network.MustParsePort(fmt.Sprintf("%d/tcp", healthPort)): {
 				{HostPort: strconv.Itoa(healthPort)},
@@ -504,27 +747,77 @@ func (s *Stack) corednsContainerSpec(netInfo *NetworkInfo) containerSpec {
 		// CAP_SYS_ADMIN: bpf(BPF_MAP_UPDATE_ELEM) on kernels <5.19 where
 		// CAP_BPF alone is insufficient for map writes.
 		capAdd: []string{"BPF", "SYS_ADMIN"},
+		labels: s.driftLabels(),
 	}
+}
+
+// driftLabels returns the drift-significant labels for the current
+// Stack state — applied at ContainerCreate and re-read by
+// ensureContainer / reloadContainer to detect cases where a plain
+// ContainerRestart would leave create-time env/mounts out of sync
+// with the freshly-generated envoy.yaml / Corefile.
+func (s *Stack) driftLabels() map[string]string {
+	return map[string]string{
+		labelInfraCertsReady: strconv.FormatBool(s.infraCertsReady),
+		labelOtelInfraPort:   strconv.Itoa(int(s.cfg.SettingsStore().Read().Monitoring.OtelInfraPort)),
+	}
+}
+
+// specMatchesContainer reports whether the running container's
+// drift-significant labels match the desired spec. Missing labels on
+// the container side are treated as mismatch — an older clawker
+// version may have created the container before labelInfraCertsReady
+// existed, and forcing a recreate brings it under the new gate.
+func specMatchesContainer(actual map[string]string, want map[string]string) bool {
+	for k, v := range want {
+		if actual[k] != v {
+			return false
+		}
+	}
+	return true
 }
 
 // ensureContainer creates + starts the named container if missing, or
 // starts an existing stopped one. Idempotent — if the container is
-// already running it returns without change.
+// already running AND its drift-significant labels match the desired
+// spec it returns without change.
+//
+// Spec drift triggers a stop + remove + recreate. Today the only
+// drift axis is labelInfraCertsReady, which controls whether the
+// mTLS-OTLP bind-mount + env are wired (see envoy/coredns spec
+// helpers). A plain ContainerRestart would leave create-time env
+// and mounts stale across an infraCertsReady flip — recreating is
+// the only way to push the new layout into the live container.
 func (s *Stack) ensureContainer(ctx context.Context, name string, spec containerSpec) error {
 	summary, err := s.findByName(ctx, name)
 	if err != nil {
 		return err
 	}
 	if summary != nil {
-		if summary.State == container.StateRunning {
-			s.log.Debug().Str("container", name).Msg("firewall container already running")
+		if specMatchesContainer(summary.Labels, spec.labels) {
+			if summary.State == container.StateRunning {
+				s.log.Debug().Str("container", name).Msg("firewall container already running")
+				return nil
+			}
+			s.log.Debug().Str("container", name).Str("state", string(summary.State)).Msg("starting existing firewall container")
+			if _, err := s.docker.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: summary.ID}); err != nil {
+				return fmt.Errorf("starting existing container %s: %w", name, err)
+			}
 			return nil
 		}
-		s.log.Debug().Str("container", name).Str("state", string(summary.State)).Msg("starting existing firewall container")
-		if _, err := s.docker.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: summary.ID}); err != nil {
-			return fmt.Errorf("starting existing container %s: %w", name, err)
+		s.log.Info().
+			Str("event", "firewall_container_spec_drift").
+			Str("component", "firewall.stack").
+			Str("container", name).
+			Str("desired_infra_certs_ready", spec.labels[labelInfraCertsReady]).
+			Str("running_infra_certs_ready", summary.Labels[labelInfraCertsReady]).
+			Str("desired_otel_infra_port", spec.labels[labelOtelInfraPort]).
+			Str("running_otel_infra_port", summary.Labels[labelOtelInfraPort]).
+			Msg("recreating firewall container — desired mTLS bind/env state diverges from running container")
+		if err := s.stopAndRemove(ctx, name); err != nil {
+			return fmt.Errorf("recreating %s on spec drift: %w", name, err)
 		}
-		return nil
+		// fall through to create below
 	}
 
 	ip, _ := netip.ParseAddr(spec.staticIP)
@@ -544,12 +837,16 @@ func (s *Stack) ensureContainer(ctx context.Context, name string, spec container
 		CapAdd:        spec.capAdd,
 	}
 
+	extraLabels := whail.Labels{{s.cfg.LabelPurpose(): s.cfg.PurposeFirewall()}}
+	if len(spec.labels) > 0 {
+		extraLabels = append(extraLabels, spec.labels)
+	}
 	createResp, err := s.docker.ContainerCreate(ctx, whail.ContainerCreateOptions{
 		Name:             name,
 		Config:           containerCfg,
 		HostConfig:       hostCfg,
 		NetworkingConfig: networkingConfig,
-		ExtraLabels:      whail.Labels{{s.cfg.LabelPurpose(): s.cfg.PurposeFirewall()}},
+		ExtraLabels:      extraLabels,
 	})
 	if err != nil {
 		// Another process may have created the container between
@@ -620,13 +917,22 @@ func (s *Stack) stopAndRemove(ctx context.Context, name string) error {
 	return nil
 }
 
-func (s *Stack) restart(ctx context.Context, name string) error {
+// reloadContainer restarts the named container in-place when its
+// drift-significant labels match the desired spec; otherwise it
+// stops + removes + recreates via ensureContainer so create-time env
+// and mount lists pick up the new layout. The fast restart path stays
+// intact for the common case (config-file regen with no flip in
+// infraCertsReady).
+func (s *Stack) reloadContainer(ctx context.Context, name string, spec containerSpec) error {
 	summary, err := s.findByName(ctx, name)
 	if err != nil {
 		return err
 	}
 	if summary == nil {
 		return fmt.Errorf("container %s not found", name)
+	}
+	if !specMatchesContainer(summary.Labels, spec.labels) {
+		return s.ensureContainer(ctx, name, spec)
 	}
 	timeout := 10
 	if _, err := s.docker.ContainerRestart(ctx, summary.ID, &timeout); err != nil {

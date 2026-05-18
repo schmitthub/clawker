@@ -14,11 +14,9 @@ import (
 	"io"
 	"io/fs"
 	"math/big"
-	"net"
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"text/template"
 	"time"
@@ -146,7 +144,10 @@ type DockerfileContext struct {
 	Instructions    *DockerfileInstructions
 	Inject          *DockerfileInject
 
-	// OTEL telemetry endpoints — populated from config.MonitoringConfig
+	// OTEL telemetry endpoints — populated from cfg.OtelMetricsEndpoint() /
+	// cfg.OtelLogsEndpoint(). Both default to the otel-collector OTLP/HTTP
+	// receiver. Prometheus retains metric metadata for OpenSearch Dashboards
+	// because /api/v1/metadata excludes OTLP-ingested series.
 	OtelMetricsEndpoint      string // e.g. "http://otel-collector:4318/v1/metrics"
 	OtelLogsEndpoint         string // e.g. "http://otel-collector:4318/v1/logs"
 	OtelLogsExportInterval   int    // milliseconds, e.g. 5000
@@ -282,15 +283,6 @@ func (m *DockerfileManager) GenerateDockerfiles(versions *registry.VersionsFile)
 	return nil
 }
 
-// otelBaseEndpoint returns the OTEL collector base URL.
-// Uses OtelCollectorEndpoint if set, otherwise constructs from internal host + port.
-func otelBaseEndpoint(mon config.MonitoringConfig) string {
-	if mon.OtelCollectorEndpoint != "" {
-		return mon.OtelCollectorEndpoint
-	}
-	return "http://" + net.JoinHostPort(mon.OtelCollectorInternal, strconv.Itoa(mon.OtelCollectorPort))
-}
-
 // createContext creates a DockerfileContext for a given version and variant.
 func (m *DockerfileManager) createContext(version, variant string) (*DockerfileContext, error) {
 	isAlpine := m.variantConfig.IsAlpine(variant)
@@ -312,8 +304,8 @@ func (m *DockerfileManager) createContext(version, variant string) (*DockerfileC
 		BuildKitEnabled:          m.BuildKitEnabled,
 		Instructions:             nil,
 		Inject:                   nil,
-		OtelMetricsEndpoint:      otelBaseEndpoint(mon) + mon.Telemetry.MetricsPath,
-		OtelLogsEndpoint:         otelBaseEndpoint(mon) + mon.Telemetry.LogsPath,
+		OtelMetricsEndpoint:      m.cfg.OtelMetricsEndpoint(),
+		OtelLogsEndpoint:         m.cfg.OtelLogsEndpoint(),
 		OtelLogsExportInterval:   mon.Telemetry.LogsExportIntervalMs,
 		OtelMetricExportInterval: mon.Telemetry.MetricExportIntervalMs,
 		OtelLogToolDetails:       *mon.Telemetry.LogToolDetails,
@@ -610,8 +602,8 @@ func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
 		IsAlpine:                 isAlpine,
 		BuildKitEnabled:          g.BuildKitEnabled,
 		HasFirewallCA:            hasFirewallCA,
-		OtelMetricsEndpoint:      otelBaseEndpoint(mon) + mon.Telemetry.MetricsPath,
-		OtelLogsEndpoint:         otelBaseEndpoint(mon) + mon.Telemetry.LogsPath,
+		OtelMetricsEndpoint:      g.cfg.OtelMetricsEndpoint(),
+		OtelLogsEndpoint:         g.cfg.OtelLogsEndpoint(),
 		OtelLogsExportInterval:   mon.Telemetry.LogsExportIntervalMs,
 		OtelMetricExportInterval: mon.Telemetry.MetricExportIntervalMs,
 		OtelLogToolDetails:       *mon.Telemetry.LogToolDetails,

@@ -27,15 +27,14 @@ func testConfig(t *testing.T, projectYAML string) config.Config {
 monitoring:
   otel_collector_port: 4318
   otel_collector_host: "localhost"
-  otel_collector_internal: "otel-collector"
   otel_grpc_port: 4317
-  loki_port: 3100
+  opensearch_port: 9200
+  opensearch_dashboards_port: 5601
   prometheus_port: 9090
-  jaeger_port: 16686
-  grafana_port: 3000
   prometheus_metrics_port: 8889
   telemetry:
     metrics_path: "/v1/metrics"
+    prometheus_otlp_path: "/api/v1/otlp/v1/metrics"
     logs_path: "/v1/logs"
     metric_export_interval_ms: 10000
     logs_export_interval_ms: 5000
@@ -159,23 +158,37 @@ func removeMonitoringFromProject(yaml string) (string, string) {
 }
 
 func TestBuildContext_CustomMonitoringEndpoints(t *testing.T) {
+	// Both metrics and logs default to the otel-collector OTLP/HTTP
+	// receiver post-OpenSearch refactor — split is by URL path
+	// (metrics_path vs logs_path), not by host:port. Override
+	// otel_collector_port to a sentinel value and assert both env vars
+	// carry it; that proves the port override actually flows through
+	// the Dockerfile renderer, not just that the assertions echo
+	// cfg.Otel*Endpoint() back to itself.
 	cfg := testConfig(t, `
 version: "1"
 build:
   image: "buildpack-deps:bookworm-scm"
 monitoring:
   otel_collector_port: 9999
-  otel_collector_internal: "custom-collector"
 `)
 	gen := NewProjectGenerator(cfg, t.TempDir())
 	dockerfile, err := gen.Generate()
 	require.NoError(t, err)
 
 	content := string(dockerfile)
-	assert.Contains(t, content, "http://custom-collector:9999/v1/metrics")
-	assert.Contains(t, content, "http://custom-collector:9999/v1/logs")
-	assert.NotContains(t, content, "otel-collector:4318",
-		"default OTEL endpoint should not appear when custom settings are provided")
+	metricsEndpoint := cfg.OtelMetricsEndpoint()
+	logsEndpoint := cfg.OtelLogsEndpoint()
+	assert.Contains(t, content, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT="+metricsEndpoint,
+		"metrics env var must render with the cfg-resolved otel-collector metrics endpoint")
+	assert.Contains(t, content, "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT="+logsEndpoint,
+		"logs env var must render with the cfg-resolved otel-collector logs endpoint")
+	assert.Contains(t, metricsEndpoint, ":9999",
+		"metrics endpoint must carry the overridden otel_collector_port — proves the override reaches the renderer")
+	assert.Contains(t, logsEndpoint, ":9999",
+		"logs endpoint must carry the overridden otel_collector_port — proves the override reaches the renderer")
+	assert.NotEqual(t, metricsEndpoint, logsEndpoint,
+		"metrics and logs must use different URL paths on the same collector — same endpoint means the path split collapsed")
 }
 
 func TestBuildContext_NodeInstall_Debian(t *testing.T) {
@@ -227,8 +240,10 @@ func TestBuildContext_DefaultMonitoring(t *testing.T) {
 	require.NoError(t, err)
 
 	content := string(dockerfile)
-	assert.Contains(t, content, "http://otel-collector:4318/v1/metrics")
-	assert.Contains(t, content, "http://otel-collector:4318/v1/logs")
+	assert.Contains(t, content, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT="+cfg.OtelMetricsEndpoint(),
+		"metrics env var must render with the cfg-resolved otel-collector metrics endpoint (path-split: metrics_path)")
+	assert.Contains(t, content, "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT="+cfg.OtelLogsEndpoint(),
+		"logs env var must render with the cfg-resolved otel-collector logs endpoint (path-split: logs_path)")
 }
 
 func TestBuildContext_ClaudeConfigDir(t *testing.T) {
@@ -257,7 +272,6 @@ build:
   image: "buildpack-deps:bookworm-scm"
 monitoring:
   otel_collector_port: 4318
-  otel_collector_internal: "otel-collector"
   telemetry:
     metric_export_interval_ms: 30000
     logs_export_interval_ms: 15000

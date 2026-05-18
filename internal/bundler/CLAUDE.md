@@ -108,13 +108,9 @@ type ArgInstruction struct { Name, Default string }
 type RunInstruction struct { Cmd, Alpine, Debian string }  // OS-variant aware RUN
 ```
 
-### Helpers
+### OTEL Endpoint Composition
 
-```go
-func otelBaseEndpoint(mon config.MonitoringConfig) string  // Constructs OTEL base URL from config components
-```
-
-Falls back from `mon.OtelCollectorEndpoint` (explicit override) to `http://<OtelCollectorInternal>:<OtelCollectorPort>`.
+Bundler does not compose OTEL URLs itself. `DockerfileContext.OtelMetricsEndpoint` / `OtelLogsEndpoint` are populated by callers from `cfg.OtelMetricsEndpoint()` / `cfg.OtelLogsEndpoint()` (see `internal/config/consts.go`). Both default to the otel-collector OTLP/HTTP receiver so Prometheus retains metric metadata for OpenSearch Dashboards (Prometheus' `/api/v1/metadata` excludes OTLP-ingested series). Direct OTLP push to Prometheus' native receiver remains supported as an alternate endpoint (saves a hop, trades metadata). Never hand-concatenate host + port + path in bundler code — add the accessor to config and read it.
 
 ### Constants and Embedded Assets
 

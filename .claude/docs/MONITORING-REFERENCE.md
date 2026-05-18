@@ -2,7 +2,13 @@
 
 > For essential rules, see `.claude/rules/monitoring.md`.
 
+> **Backend (current):** logs in OpenSearch — five indices `claude-code` (Claude Code OTLP push, untrusted port), `clawker-cli` (host CLI OTLP push, untrusted port), `clawker-cp` (mTLS-gated CP push), `clawker-envoy` (firewall data-plane access logs, mTLS-gated), and `clawker-coredns` (firewall DNS query logs, mTLS-gated). Cross-index queries use pattern `clawker-cp,claude-code,clawker-cli,clawker-envoy,clawker-coredns`. Traces in OpenSearch SS4O dataset `traces` / namespace `clawker`. Metrics in Prometheus. UIs: OpenSearch Dashboards (`:5601`) for logs+traces, Prometheus (`:9090`) for metrics. Field semantics are unchanged, but paths are now SS4O-nested — `resource.attributes.service.name`, `attributes.event.name`, `attributes.tool_name`, `resource.attributes.project`, `resource.attributes.agent` — not the flat Loki labels (`service_name`, `event_name`, etc.) used in the historical tables below. Translate the historical Loki LogQL / Grafana panel examples here to OpenSearch DSL / PPL / Lucene against the nested paths as needed.
+>
+> **Stack ships preconfigured** — `clawker-opensearch-bootstrap` (one-shot compose service, see `internal/monitor/templates/opensearch-bootstrap/`) applies component + index templates, the default ISM retention policy, and Dashboards index-pattern saved objects on every `monitor up`. Curated dashboards / visualizations / alerts are NOT yet shipped — the Grafana panel/MCP sections below remain historical reference for the kinds of queries to port into OpenSearch Dashboards visualizations once we start building them. The data plane is fully wired; only the saved visualization surface is empty.
+
 ## Complete Event Schemas
+
+> ⚠️ **Field-name caveat:** the field tables below use the flat Loki-style names (`service_name`, `event_name`, `tool_name`, etc.) that were emitted under the prior Loki/Grafana stack. The underlying OTLP record content is unchanged, but on OpenSearch the fields are SS4O-nested — translate `event_name` → `attributes.event.name`, `service_name` → `resource.attributes.service.name`, `project`/`agent` → `resource.attributes.project`/`agent`, etc. before querying. The semantics, presence conditions, and tool-name resolution rules all still apply.
 
 > Validated against live data as of 2026-02-13 (Claude Code v2.1.42). Subject to change — consider valid first before querying for updates.
 
@@ -91,6 +97,8 @@ Logged when user submits a prompt.
 
 ## Grafana Dashboard Patterns
 
+> ⚠️ **HISTORICAL — does not ship.** Grafana / Loki are no longer part of the monitoring stack (replaced by OpenSearch Dashboards + Prometheus, see top-of-file banner). The patterns below are kept as a porting reference for the kinds of queries to rebuild against OpenSearch Dashboards. The actual stack today does NOT contain Grafana, Loki, or any of the LogQL/transformation features described in this section.
+
 ### Loki instant query gotchas (CRITICAL)
 
 Loki instant metric queries return **separate data frames per result**, each with a field named `"Value"` and dimensions stored as **field-level labels** (NOT frame-level labels). This is fundamentally different from Prometheus which returns a single merged table.
@@ -155,6 +163,8 @@ If you need cross-tabulated data, use the multi-target approach above (one query
 - **Per-agent filtering**: All Loki queries include `| agent=~` `` `$agent` `` for consistency with dashboard filters.
 
 ## Grafana MCP Quirks
+
+> ⚠️ **HISTORICAL — does not ship.** Grafana MCP is no longer used; the monitoring UI is OpenSearch Dashboards. Kept as porting reference for equivalent OpenSearch Dashboards tooling. Do NOT attempt to run these commands — they will fail or hit a dead endpoint.
 
 When using Grafana MCP tools to develop or debug dashboards:
 

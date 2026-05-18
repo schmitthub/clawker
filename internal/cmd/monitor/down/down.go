@@ -35,7 +35,15 @@ func NewCmdDown(f *cmdutil.Factory, runF func(context.Context, *DownOptions) err
 		Long: `Stops the monitoring stack using Docker Compose.
 
 This stops and removes all monitoring containers while preserving
-the clawker-net Docker network for other clawker services.`,
+the clawker-net Docker network for other clawker services.
+
+Without --volumes, OpenSearch data + the bootstrap-applied
+configuration (index templates, ISM policies, Dashboards index
+patterns) persist in the named volume across restarts. With
+--volumes the volumes are wiped and 'monitor up' re-runs the
+clawker-opensearch-bootstrap container to reapply everything from
+templates — this is the canonical way to pick up template edits,
+since OpenSearch index templates only take effect at index creation.`,
 		Example: `  # Stop the monitoring stack
   clawker monitor down
 
@@ -49,7 +57,7 @@ the clawker-net Docker network for other clawker services.`,
 		},
 	}
 
-	cmd.Flags().BoolVarP(&opts.Volumes, "volumes", "v", false, "Remove named volumes declared in compose.yaml")
+	cmd.Flags().BoolVarP(&opts.Volumes, "volumes", "v", false, "Remove named volumes (next 'monitor up' re-runs bootstrap to reapply index templates, ISM policies, and Dashboards saved objects)")
 
 	return cmd
 }
@@ -84,8 +92,10 @@ func downRun(ctx context.Context, opts *DownOptions) error {
 		return fmt.Errorf("compose.yaml not found in %s", monitorDir)
 	}
 
-	// Build docker compose command
-	composeArgs := []string{"compose", "-f", composePath, "down"}
+	// Build docker compose command. --remove-orphans sweeps containers
+	// from prior compose schema versions (e.g. removed Grafana/Loki/
+	// Jaeger/Promtail) so `monitor down` actually cleans them up.
+	composeArgs := []string{"compose", "-f", composePath, "down", "--remove-orphans"}
 	if opts.Volumes {
 		composeArgs = append(composeArgs, "-v")
 	}
@@ -107,7 +117,7 @@ func downRun(ctx context.Context, opts *DownOptions) error {
 	fmt.Fprintln(ios.ErrOut)
 	fmt.Fprintf(ios.ErrOut, "%s Monitoring stack stopped.\n", cs.SuccessIcon())
 	if !opts.Volumes {
-		fmt.Fprintf(ios.ErrOut, "%s Volumes were preserved. Use --volumes to remove them.\n", cs.InfoIcon())
+		fmt.Fprintf(ios.ErrOut, "%s Volumes preserved (OpenSearch data + bootstrap-applied config survive). Use --volumes to wipe; bootstrap re-applies on next 'monitor up'.\n", cs.InfoIcon())
 	}
 
 	return nil

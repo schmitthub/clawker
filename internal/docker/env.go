@@ -31,7 +31,6 @@ type RuntimeEnvOpts struct {
 	// when FirewallEnabled=false). Reachable via Docker's bridge DNS
 	// because the agent container and CP share clawker-net.
 	CPHealthzURL string
-	LokiPort     int // Configured Loki port for container-side telemetry (0 = default 3100)
 
 	// clawkerd bootstrap targets. clawkerd reads these to find the CP's
 	// Hydra public endpoint (token exchange) and the CP's agent gRPC
@@ -107,9 +106,6 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 	if opts.CPHealthzURL != "" {
 		m["CLAWKER_CP_HEALTHZ_URL"] = opts.CPHealthzURL
 	}
-	if opts.LokiPort != 0 && opts.LokiPort != 3100 {
-		m["CLAWKER_LOKI_PORT"] = fmt.Sprintf("%d", opts.LokiPort)
-	}
 
 	// clawkerd bootstrap env vars — only what the daemon can authoritatively
 	// assert. Container ID is server-derived from the slot at Connect;
@@ -122,9 +118,14 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 		m[consts.EnvClawkerdAgentAddr] = opts.ClawkerdAgentAddr
 	}
 
-	// Telemetry resource attributes for per-project/agent metric segmentation.
-	// The OTEL collector's transform/metrics processor copies these to datapoint
-	// attributes so Prometheus can expose them as metric labels (see otel-config.yaml).
+	// Telemetry resource attributes for per-project/agent segmentation.
+	// The OTEL collector's transform/metrics processor copies these onto
+	// datapoint attributes so Prometheus exposes them as metric labels;
+	// the OpenSearch log exporters also persist them as resource fields,
+	// where the index templates applied by clawker-opensearch-bootstrap
+	// type them explicitly as keywords (see otel-config.yaml + the
+	// component-templates/clawker-common.json mapping). They are not
+	// dynamically-mapped fields.
 	var resourceAttrs []string
 	if opts.Project != "" {
 		resourceAttrs = append(resourceAttrs, "project="+opts.Project)

@@ -778,13 +778,12 @@ No error, no duplicate—deterministic behavior.
 
 A Docker Compose stack on `clawker-net`:
 
-- **OpenTelemetry Collector** - Telemetry aggregation
-- **Prometheus** - Metrics collection
-- **Jaeger** - Distributed tracing
-- **Loki** - Log aggregation
-- **Grafana** - Visualization dashboards
+- **OpenTelemetry Collector** - OTLP/HTTP receivers + routing; writes logs to OpenSearch and exposes a Prometheus scrape endpoint for metrics. A `traces` pipeline is configured but idle — agents don't emit spans today.
+- **OpenSearch** - Logs only, split into five indices: `claude-code` (Claude Code OTLP push, untrusted port), `clawker-cli` (host CLI OTLP push, untrusted port), `clawker-cp` (mTLS-gated CP push), `clawker-envoy` (Envoy access logs, mTLS-gated), and `clawker-coredns` (CoreDNS query logs, mTLS-gated). Cross-index queries: `clawker-cp,claude-code,clawker-cli,clawker-envoy,clawker-coredns`.
+- **OpenSearch Dashboards** - UI for log exploration (Discover)
+- **Prometheus** - Metrics storage + UI; also accepts direct OTLP push for callers willing to lose `/api/v1/metadata` coverage
 
-Container images are built with OTEL environment variables pointing to the collector.
+Container images are built with OTEL environment variables pointing to the collector. The stack is preconfigured by a one-shot `clawker-opensearch-bootstrap` compose service that runs after OpenSearch reports `service_healthy` and before `otel-collector` / `prometheus` start (`service_completed_successfully` gate): component + index templates with explicit per-source field mappings, a default ISM retention policy auto-attached via `ism_template.index_patterns`, and Dashboards index-pattern saved objects for all five indices. Source assets live in `internal/monitor/templates/opensearch-bootstrap/` and are re-applied every `monitor up`. Curated dashboards / visualizations / alerts are NOT yet shipped — adding them is a matter of dropping the Dashboards-exported NDJSON into `opensearch-bootstrap/saved-objects/clawker.ndjson` and shipping a new release.
 
 ### 9.2 Verbosity Levels
 

@@ -76,9 +76,21 @@ type Config interface {
 	EngineManagedLabel() string
 	ContainerUID() int
 	ContainerGID() int
-	GrafanaURL(host string, https bool) string
-	JaegerURL(host string, https bool) string
-	PrometheusURL(host string, https bool) string
+	// In-cluster base URLs (host + port) for monitoring services
+	// reachable from clawker-net. Composed from
+	// [consts.MonitoringService*] hostnames + the corresponding
+	// MonitoringConfig port. No path component.
+	OpenSearchURL() string
+	OpenSearchDashboardsURL() string
+	PrometheusURL() string
+	OtelCollectorURL() string
+
+	// Full OTEL push endpoints (URL + path) Claude Code's exporter
+	// targets from inside agent containers. Both default to the
+	// otel-collector OTLP/HTTP receiver so Prometheus retains metric
+	// metadata (its /api/v1/metadata excludes OTLP-ingested series).
+	OtelMetricsEndpoint() string
+	OtelLogsEndpoint() string
 	RequiredFirewallDomains() []string
 	EgressRulesFileName() string
 	FirewallDataSubdir() (string, error)
@@ -151,7 +163,10 @@ func NewConfig(opts ...NewConfigOption) (Config, error) {
 	} else {
 		settingsOpts = append(settingsOpts, storage.WithDefaultsFromStruct[Settings]())
 	}
-	settingsOpts = append(settingsOpts, storage.WithConfigDir())
+	settingsOpts = append(settingsOpts,
+		storage.WithConfigDir(),
+		storage.WithMigrations(SettingsMigrations()...),
+	)
 	settingsStore, err := storage.New[Settings]("", settingsOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("config: loading settings: %w", err)

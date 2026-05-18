@@ -39,7 +39,9 @@ func TestNewBlankConfig_settingsDefaults(t *testing.T) {
 	mon := cfg.MonitoringConfig()
 	assert.Equal(t, 4318, mon.OtelCollectorPort)
 	assert.Equal(t, "localhost", mon.OtelCollectorHost)
-	assert.Equal(t, "otel-collector", mon.OtelCollectorInternal)
+	assert.Equal(t, 9200, mon.OpenSearchPort)
+	assert.Equal(t, 5601, mon.OpenSearchDashboardsPort)
+	assert.Equal(t, 512, mon.OpenSearchHeapMB)
 	assert.Equal(t, "/v1/metrics", mon.Telemetry.MetricsPath)
 	assert.Equal(t, "/v1/logs", mon.Telemetry.LogsPath)
 
@@ -66,13 +68,13 @@ func TestNewFromString_settingsOnly(t *testing.T) {
 	cfg, err := NewFromString("", `
 monitoring:
   otel_collector_port: 9999
-  otel_collector_internal: "custom-host"
+  opensearch_port: 19200
 `)
 	require.NoError(t, err)
 
 	mon := cfg.MonitoringConfig()
 	assert.Equal(t, 9999, mon.OtelCollectorPort)
-	assert.Equal(t, "custom-host", mon.OtelCollectorInternal)
+	assert.Equal(t, 19200, mon.OpenSearchPort)
 }
 
 func TestNewFromString_emptyStrings(t *testing.T) {
@@ -189,16 +191,6 @@ func TestDataDir_envOverride(t *testing.T) {
 func TestStateDir_envOverride(t *testing.T) {
 	t.Setenv("CLAWKER_STATE_DIR", "/custom/state")
 	assert.Equal(t, "/custom/state", StateDir())
-}
-
-func TestMonitoringURLs(t *testing.T) {
-	cfg, err := NewBlankConfig()
-	require.NoError(t, err)
-
-	assert.Equal(t, "http://localhost:3000", cfg.GrafanaURL("localhost", false))
-	assert.Equal(t, "https://myhost:3000", cfg.GrafanaURL("myhost", true))
-	assert.Equal(t, "http://localhost:16686", cfg.JaegerURL("localhost", false))
-	assert.Equal(t, "http://localhost:9090", cfg.PrometheusURL("localhost", false))
 }
 
 func TestSubdirPaths(t *testing.T) {
@@ -575,9 +567,10 @@ func TestGeneratedDefaults_SettingsValues(t *testing.T) {
 	assert.Equal(t, 7, s.Logging.MaxAgeDays)
 	assert.Equal(t, 3, s.Logging.MaxBackups)
 
-	// OTEL
+	// OTEL — opt-in: defaults off so CLI doesn't dial a missing
+	// collector on every invocation when monitoring stack isn't up.
 	require.NotNil(t, s.Logging.Otel.Enabled)
-	assert.True(t, *s.Logging.Otel.Enabled)
+	assert.False(t, *s.Logging.Otel.Enabled)
 	assert.Equal(t, 5, s.Logging.Otel.TimeoutSeconds)
 	assert.Equal(t, 2048, s.Logging.Otel.MaxQueueSize)
 
@@ -591,7 +584,9 @@ func TestGeneratedDefaults_SettingsValues(t *testing.T) {
 	// Monitoring
 	assert.Equal(t, 4318, s.Monitoring.OtelCollectorPort)
 	assert.Equal(t, "localhost", s.Monitoring.OtelCollectorHost)
-	assert.Equal(t, "otel-collector", s.Monitoring.OtelCollectorInternal)
+	assert.Equal(t, 9200, s.Monitoring.OpenSearchPort)
+	assert.Equal(t, 5601, s.Monitoring.OpenSearchDashboardsPort)
+	assert.Equal(t, 512, s.Monitoring.OpenSearchHeapMB)
 	assert.Equal(t, "/v1/metrics", s.Monitoring.Telemetry.MetricsPath)
 	assert.Equal(t, "/v1/logs", s.Monitoring.Telemetry.LogsPath)
 }

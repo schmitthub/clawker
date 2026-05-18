@@ -1,0 +1,68 @@
+#!/bin/sh
+# OpenSearch bootstrap — runs once per `monitor up`, before the
+# otel-collector + prometheus services start (compose
+# service_completed_successfully gate).
+#
+# Order matters: component templates -> index templates -> ISM
+# policies must all land BEFORE otel-collector starts, so when the
+# collector's exporters create indices on first push, OpenSearch
+# applies the matching templates at creation time. Templates apply
+# only to indices created AFTER the template exists — they do not
+# retroactively re-map existing indices. The monitoring stack is
+# preconfigured + ephemeral; regenerate with `monitor down --volumes
+# && monitor up` to pick up template edits.
+#
+# Failures exit non-zero so dependents never start. The script is
+# idempotent: re-running is a no-op for PUT (templates, ISM) and uses
+# overwrite=true for saved-objects import.
+set -eu
+
+OPENSEARCH_URL="http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"
+DASHBOARDS_URL="http://{{.OpenSearchDashboardsService}}:{{.OpenSearchDashboardsPort}}"
+BOOTSTRAP_DIR="/opensearch-bootstrap"
+
+echo "==> bootstrap: waiting for OpenSearch at ${OPENSEARCH_URL}"
+until curl -fsS -o /dev/null "${OPENSEARCH_URL}/_cluster/health"; do
+  echo "    OpenSearch not ready, sleeping 5s"
+  sleep 5
+done
+echo "==> bootstrap: OpenSearch reachable"
+
+apply_dir() {
+  endpoint=$1
+  dir=$2
+  if [ ! -d "${dir}" ]; then
+    return 0
+  fi
+  for f in "${dir}"/*.json; do
+    [ -e "${f}" ] || continue
+    name=$(basename "${f}" .json)
+    echo "==> bootstrap: PUT ${endpoint}/${name}"
+    curl -fsS -X PUT "${OPENSEARCH_URL}${endpoint}/${name}" \
+      -H "Content-Type: application/json" \
+      --data-binary "@${f}" \
+      -o /dev/null
+  done
+}
+
+apply_dir "/_component_template"     "${BOOTSTRAP_DIR}/component-templates"
+apply_dir "/_index_template"         "${BOOTSTRAP_DIR}/index-templates"
+apply_dir "/_plugins/_ism/policies"  "${BOOTSTRAP_DIR}/ism-policies"
+
+echo "==> bootstrap: waiting for OpenSearch Dashboards at ${DASHBOARDS_URL}"
+until curl -fsS -o /dev/null "${DASHBOARDS_URL}/api/status"; do
+  echo "    Dashboards not ready, sleeping 5s"
+  sleep 5
+done
+echo "==> bootstrap: Dashboards reachable"
+
+NDJSON="${BOOTSTRAP_DIR}/saved-objects/clawker.ndjson"
+if [ -s "${NDJSON}" ]; then
+  echo "==> bootstrap: importing saved objects from ${NDJSON}"
+  curl -fsS -X POST "${DASHBOARDS_URL}/api/saved_objects/_import?overwrite=true" \
+    -H "osd-xsrf: true" \
+    --form "file=@${NDJSON}" \
+    -o /dev/null
+fi
+
+echo "==> bootstrap: complete"

@@ -71,6 +71,9 @@ func EnsureAuthMaterial() error {
 	if err := ensureCPClientCert(); err != nil {
 		return fmt.Errorf("cp client cert: %w", err)
 	}
+	if err := ensureInfraIntermediateCA(); err != nil {
+		return fmt.Errorf("infra intermediate CA: %w", err)
+	}
 	return nil
 }
 
@@ -111,6 +114,12 @@ func RotateAuthMaterial(forceSigningKey bool) error {
 	}
 	if err := removeIfExists(consts.AuthCPClientKeyPath); err != nil {
 		return fmt.Errorf("remove cp client key: %w", err)
+	}
+	if err := removeIfExists(consts.AuthInfraCACertPath); err != nil {
+		return fmt.Errorf("remove infra CA cert: %w", err)
+	}
+	if err := removeIfExists(consts.AuthInfraCAKeyPath); err != nil {
+		return fmt.Errorf("remove infra CA key: %w", err)
 	}
 
 	if forceSigningKey {
@@ -157,6 +166,8 @@ func CheckAuthMaterial() ([]AuthFileStatus, error) {
 		{"OTEL server key", consts.AuthOtelServerKeyPath, false},
 		{"CP client certificate", consts.AuthCPClientCertPath, true},
 		{"CP client key", consts.AuthCPClientKeyPath, false},
+		{"Infra intermediate CA certificate", consts.AuthInfraCACertPath, true},
+		{"Infra intermediate CA key", consts.AuthInfraCAKeyPath, false},
 	}
 
 	var results []AuthFileStatus
@@ -602,6 +613,100 @@ func writeJWK(path string, pub *ecdsa.PublicKey) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
+// --- Infra intermediate CA ---
+//
+// The infra intermediate is signed by the CLI root CA and bind-mounted
+// into the clawker-controlplane container. CP loads it via
+// `internal/controlplane/infracerts` and signs short-lived mTLS client
+// leaves for clawker infrastructure services (Envoy, CoreDNS, etc.)
+// that push telemetry to the trusted-infra OTLP receiver. The
+// otel-collector's `otlp/infra` receiver pins `client_ca_file` to this
+// infra intermediate (NOT the CLI root) so only intermediate-chained
+// leaves complete the handshake — agent leaves minted by
+// `auth.MintAgentCert` chain to the CLI root directly and are rejected,
+// which is what stops agents from forging `service.name=clawker-cp`
+// records on the trusted forensic indices. `monitor init` resolves the
+// bind-mount source via `consts.AuthInfraCACertPath()`. Adding a new
+// infra service is a CP-side change — the CLI does not learn about
+// it.
+
+func ensureInfraIntermediateCA() error {
+	certPath, err := consts.AuthInfraCACertPath()
+	if err != nil {
+		return err
+	}
+	keyPath, err := consts.AuthInfraCAKeyPath()
+	if err != nil {
+		return err
+	}
+
+	if _, err := os.Stat(certPath); err == nil {
+		if info, err := os.Stat(keyPath); err == nil {
+			// Migrate in-place: an upgrade from an older clawker that
+			// wrote this key at 0o644 leaves a world-readable signing
+			// key on disk forever (regen only fires on file absence).
+			// Tighten unconditionally — same UID owns the file by
+			// construction, so chmod is cheap and always succeeds.
+			if info.Mode().Perm() != 0o600 {
+				if err := os.Chmod(keyPath, 0o600); err != nil {
+					return fmt.Errorf("tighten infra CA key perms: %w", err)
+				}
+			}
+			return nil
+		}
+	}
+
+	caCert, caKey, err := loadCA()
+	if err != nil {
+		return fmt.Errorf("load root CA for signing: %w", err)
+	}
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return fmt.Errorf("generate key: %w", err)
+	}
+
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return fmt.Errorf("generate serial: %w", err)
+	}
+
+	now := time.Now().UTC()
+	tmpl := &x509.Certificate{
+		SerialNumber: serial,
+		Subject: pkix.Name{
+			CommonName:   "clawker infra intermediate CA",
+			Organization: []string{"clawker"},
+		},
+		NotBefore:             now.Add(-5 * time.Minute),
+		NotAfter:              now.AddDate(5, 0, 0),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		MaxPathLen:            0,
+		MaxPathLenZero:        true,
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &key.PublicKey, caKey)
+	if err != nil {
+		return fmt.Errorf("sign intermediate cert: %w", err)
+	}
+
+	if err := writeCert(certPath, certDER); err != nil {
+		return fmt.Errorf("write intermediate cert: %w", err)
+	}
+	// 0o600: CP runs as root inside the container and reads 0o600 host
+	// bind-mounts without any chown ceremony (same pattern as the
+	// sibling CP OAuth2/mTLS client key written by ensureCPClientCert
+	// below). The infra intermediate CA private key signs runtime
+	// mTLS leaves trusted by the CP's trusted-infra OTLP receiver; it
+	// must NOT be world-readable on the host.
+	if err := writeECDSAKey(keyPath, key, 0o600); err != nil {
+		return fmt.Errorf("write intermediate key: %w", err)
+	}
+	return nil
+}
+
 // ReadJWK reads the CLI's public signing key as raw JSON bytes.
 func ReadJWK() (json.RawMessage, error) {
 	p, err := consts.AuthCLISigningJWKPath()
@@ -629,6 +734,60 @@ func ReadJWK() (json.RawMessage, error) {
 // any cert signed by the CLI CA — the TLS handshake fails before any
 // data is accepted. No BPF rule needed; auth is the boundary.
 
+// otelServerCertSANs lists every name a trusted peer might dial. Hoisted
+// out of the mint path so the on-disk cert can be checked against the
+// current SAN list at every CP start and re-minted when the list grows.
+//
+//   - host.docker.internal: CP dials this from the host-side 127.0.0.1
+//     publish.
+//   - localhost / 127.0.0.1: host-side debug, future tools.
+//   - otel-collector (consts.MonitoringServiceOtelCollector): clawker-net
+//     DNS name used by Envoy ALS and the CoreDNS OTel plugin dialing
+//     siblings over the docker network. Without this SAN the gRPC SNI
+//     check fails: "certificate is valid for ... not otel-collector".
+var (
+	otelServerDNSNames = []string{"host.docker.internal", "localhost", consts.MonitoringServiceOtelCollector}
+	otelServerIPs      = []net.IP{net.IPv4(127, 0, 0, 1)}
+)
+
+// otelServerCertSANsCurrent reports whether the cert at certPath already
+// carries every entry in otelServerDNSNames/otelServerIPs. Returns false
+// for any read/parse failure so the caller re-mints — a cert we can't
+// parse is by definition not current.
+func otelServerCertSANsCurrent(certPath string) bool {
+	pemBytes, err := os.ReadFile(certPath)
+	if err != nil {
+		return false
+	}
+	block, _ := pem.Decode(pemBytes)
+	if block == nil || block.Type != "CERTIFICATE" {
+		return false
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return false
+	}
+	have := make(map[string]struct{}, len(cert.DNSNames))
+	for _, n := range cert.DNSNames {
+		have[n] = struct{}{}
+	}
+	for _, want := range otelServerDNSNames {
+		if _, ok := have[want]; !ok {
+			return false
+		}
+	}
+	haveIPs := make(map[string]struct{}, len(cert.IPAddresses))
+	for _, ip := range cert.IPAddresses {
+		haveIPs[ip.String()] = struct{}{}
+	}
+	for _, want := range otelServerIPs {
+		if _, ok := haveIPs[want.String()]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 func ensureOtelServerCert() error {
 	certPath, err := consts.AuthOtelServerCertPath()
 	if err != nil {
@@ -641,7 +800,9 @@ func ensureOtelServerCert() error {
 
 	if _, err := os.Stat(certPath); err == nil {
 		if _, err := os.Stat(keyPath); err == nil {
-			return nil
+			if otelServerCertSANsCurrent(certPath) {
+				return nil
+			}
 		}
 	}
 
@@ -671,8 +832,8 @@ func ensureOtelServerCert() error {
 		NotAfter:    now.AddDate(1, 0, 0),
 		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		DNSNames:    []string{"host.docker.internal", "localhost"},
-		IPAddresses: []net.IP{net.IPv4(127, 0, 0, 1)},
+		DNSNames:    otelServerDNSNames,
+		IPAddresses: otelServerIPs,
 	}
 
 	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &key.PublicKey, caKey)

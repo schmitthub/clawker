@@ -126,7 +126,7 @@ func (s *Store[T]) defaultWritePath() (string, error) {
 //   - Zero-value ints and bools (distinguishable via schema defaults)
 func structToMap(v any) map[string]any {
 	val := reflect.ValueOf(v)
-	if val.Kind() == reflect.Ptr {
+	if val.Kind() == reflect.Pointer {
 		if val.IsNil() {
 			return nil
 		}
@@ -181,7 +181,7 @@ func structToMap(v any) map[string]any {
 // values where "" is valid data (e.g. env vars, list entries).
 func encodeValue(v reflect.Value) any {
 	switch v.Kind() {
-	case reflect.Ptr:
+	case reflect.Pointer:
 		if v.IsNil() {
 			return nil
 		}

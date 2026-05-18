@@ -112,16 +112,22 @@ const (
 	monitorDir      = "monitor"
 	firewallDir     = "firewall"
 	firewallCertDir = "certs"
-	authDir         = "auth"
-	buildDir        = "build"
-	dockerfilesDir  = "dockerfiles"
-	worktreesDir    = "worktrees"
-	logsDir         = "logs"
-	pidsDir         = "pids"
-	shareDir        = ".clawker-share"
-	socketsDir      = "sockets"
-	auditDir        = "audit"
-	controlPlaneDir = "controlplane"
+	// OtelClientsDirName is the per-service mTLS material subdirectory
+	// under firewallDir: clients/<svc>/{client.pem,client.key} plus a
+	// shared ca.pem copy. CP-side firewall.Stack mints leaves here at
+	// EnsureRunning; sibling Envoy/CoreDNS containers bind-mount from
+	// the equivalent host path (HostFirewallOtelCertsDir).
+	OtelClientsDirName = "otel-clients"
+	authDir            = "auth"
+	buildDir           = "build"
+	dockerfilesDir     = "dockerfiles"
+	worktreesDir       = "worktrees"
+	logsDir            = "logs"
+	pidsDir            = "pids"
+	shareDir           = ".clawker-share"
+	socketsDir         = "sockets"
+	auditDir           = "audit"
+	controlPlaneDir    = "controlplane"
 )
 
 // PID and log file names.
@@ -477,6 +483,23 @@ func CacheDir() string {
 // FirewallDataSubdir ensures and returns the firewall data subdirectory path under DataDir.
 func FirewallDataSubdir() (string, error) { return subdirPath(firewallDir, DataDir) }
 
+// OtelClientsDir ensures and returns the directory under
+// FirewallDataSubdir where the otelcerts.Service writes mTLS client
+// material for trusted-lane senders (Envoy, CoreDNS, ...). CP is the
+// sole writer; sibling containers bind-mount RO subpaths.
+//
+// Path stays under FirewallDataSubdir for historical reasons (the
+// firewall plane was the first consumer) — the cert minting itself
+// lives in internal/controlplane/otelcerts and is not a firewall
+// concern.
+func OtelClientsDir() (string, error) {
+	fwDir, err := FirewallDataSubdir()
+	if err != nil {
+		return "", err
+	}
+	return subdirPathUnder(OtelClientsDirName, fwDir)
+}
+
 // FirewallCertSubdir ensures and returns the firewall certificate subdirectory path under DataDir.
 func FirewallCertSubdir() (string, error) {
 	fwDir, err := FirewallDataSubdir()
@@ -551,7 +574,7 @@ func HydraSystemSecretPath() (string, error) {
 // keys readable by container uids) cannot be reached by other local
 // users via permissive home/$XDG_DATA_HOME modes.
 func EnsureAuthDirs() error {
-	dirs := []string{"auth", "auth/ca", "auth/cli", "auth/tls", "auth/otel"}
+	dirs := []string{"auth", "auth/ca", "auth/cli", "auth/tls", "auth/otel", "auth/infra-ca"}
 	for _, sub := range dirs {
 		path := filepath.Join(DataDir(), sub)
 		if err := os.MkdirAll(path, 0o700); err != nil {
@@ -655,6 +678,37 @@ func AuthOtelServerKeyPath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, "server.key"), nil
+}
+
+// AuthInfraCADir ensures and returns the auth/infra-ca directory under
+// DataDir. Holds the intermediate CA the CP uses to mint short-lived
+// mTLS client leaves for clawker infrastructure services (Envoy,
+// CoreDNS, future hostproxy sidecars). The intermediate cert + key
+// are bind-mounted RO into the CP container; the key never leaves
+// host disk + the CP process.
+func AuthInfraCADir() (string, error) {
+	return subdirPathUnder(filepath.Join(authDir, "infra-ca"), DataDir())
+}
+
+// AuthInfraCACertPath returns the path to the infra intermediate CA
+// certificate. Bind-mounted RO into the CP container.
+func AuthInfraCACertPath() (string, error) {
+	dir, err := AuthInfraCADir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "infra-ca.pem"), nil
+}
+
+// AuthInfraCAKeyPath returns the path to the infra intermediate CA
+// private key. Bind-mounted RO into the CP container. Same trust
+// radius as CP — compromise of either is equivalent.
+func AuthInfraCAKeyPath() (string, error) {
+	dir, err := AuthInfraCADir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "infra-ca.key"), nil
 }
 
 // AuthCPDir ensures and returns the auth/cp directory under the

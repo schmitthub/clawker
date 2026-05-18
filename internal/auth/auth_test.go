@@ -5,12 +5,16 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"math/big"
+	"net"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-jose/go-jose/v4"
 	josejwt "github.com/go-jose/go-jose/v4/jwt"
@@ -93,6 +97,40 @@ func TestRotateAuthMaterial_PreservesSigningKeyWithoutForce(t *testing.T) {
 	assert.Equal(t, before, after, "signing key must be preserved when forceSigningKey=false")
 }
 
+// TestRotateAuthMaterial_RegeneratesInfraCA pins the infra intermediate
+// CA in the rotation set. Without this, a regression that drops the
+// infra CA cert/key from the removeIfExists list in RotateAuthMaterial
+// would leave the old intermediate alive after the user thought they
+// rotated everything — runtime mTLS leaves minted post-rotation would
+// continue to chain to the stale intermediate, and the otel-collector
+// would keep trusting them despite the supposed rotation.
+func TestRotateAuthMaterial_RegeneratesInfraCA(t *testing.T) {
+	testenv.New(t)
+	require.NoError(t, EnsureAuthMaterial())
+
+	certPath, err := consts.AuthInfraCACertPath()
+	require.NoError(t, err)
+	keyPath, err := consts.AuthInfraCAKeyPath()
+	require.NoError(t, err)
+
+	originalCert, err := os.ReadFile(certPath)
+	require.NoError(t, err)
+	originalKey, err := os.ReadFile(keyPath)
+	require.NoError(t, err)
+
+	require.NoError(t, RotateAuthMaterial(true))
+
+	rotatedCert, err := os.ReadFile(certPath)
+	require.NoError(t, err)
+	rotatedKey, err := os.ReadFile(keyPath)
+	require.NoError(t, err)
+
+	assert.NotEqual(t, originalCert, rotatedCert,
+		"infra intermediate CA cert must change after forced rotation — stale signer would still mint trusted leaves")
+	assert.NotEqual(t, originalKey, rotatedKey,
+		"infra intermediate CA key must change after forced rotation")
+}
+
 // Tests INV-B1-014 [unit]: Private keys have 0600 permissions after rotation.
 func TestRotateAuthMaterial_Permissions(t *testing.T) {
 	testenv.New(t)
@@ -147,6 +185,7 @@ func assertKeyPerms(t *testing.T) {
 		{"client key", consts.AuthCLIClientKeyPath, tightMode},
 		{"otel server key", consts.AuthOtelServerKeyPath, otelMode},
 		{"cp client key", consts.AuthCPClientKeyPath, tightMode},
+		{"infra CA key", consts.AuthInfraCAKeyPath, tightMode},
 	} {
 		p, err := c.pathFn()
 		require.NoError(t, err)
@@ -176,7 +215,7 @@ func TestCheckAuthMaterial_ReportsStatus(t *testing.T) {
 
 	status, err := CheckAuthMaterial()
 	require.NoError(t, err)
-	require.Len(t, status, 12)
+	require.Len(t, status, 14)
 
 	for _, s := range status {
 		assert.True(t, s.Exists, "%s should exist", s.Name)
@@ -188,6 +227,7 @@ func TestCheckAuthMaterial_ReportsStatus(t *testing.T) {
 		"CLI client certificate",
 		"OTEL server certificate",
 		"CP client certificate",
+		"Infra intermediate CA certificate",
 	} {
 		s := statusByName(t, status, name)
 		assert.False(t, s.Expires.IsZero(), "%s should have expiry", name)
@@ -201,7 +241,7 @@ func TestCheckAuthMaterial_MissingFiles(t *testing.T) {
 
 	status, err := CheckAuthMaterial()
 	require.NoError(t, err)
-	require.Len(t, status, 12)
+	require.Len(t, status, 14)
 
 	for _, s := range status {
 		assert.False(t, s.Exists, "%s should not exist", s.Name)
@@ -289,6 +329,93 @@ func TestOtelServerCertSignedByCA(t *testing.T) {
 	// one of the platforms.
 	assert.Contains(t, cert.DNSNames, "host.docker.internal")
 	assert.Contains(t, cert.DNSNames, "localhost")
+	// clawker-net dial path (Envoy ALS, CoreDNS otel plugin) verifies SNI
+	// against this SAN — drop it and gRPC handshakes fail with
+	// "certificate is valid for ..., not otel-collector".
+	assert.Contains(t, cert.DNSNames, consts.MonitoringServiceOtelCollector)
+}
+
+// Tests that ensureOtelServerCert re-mints when the on-disk cert is
+// missing a SAN that the current source declares. Without this drift
+// detection a cert minted before a SAN was added would persist forever
+// and silently break trusted peers that dial the newly-added name.
+func TestEnsureOtelServerCert_RemintsOnSANDrift(t *testing.T) {
+	testenv.New(t)
+	require.NoError(t, EnsureAuthMaterial())
+
+	certPath, err := consts.AuthOtelServerCertPath()
+	require.NoError(t, err)
+
+	// Overwrite the cert with one that has a strict subset of the
+	// current SAN list (drops "otel-collector"). Reuse the CA so chain
+	// verification still works; only the SANs differ.
+	caCert, caKey, err := loadCA()
+	require.NoError(t, err)
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	serial, err := rand.Int(rand.Reader, big.NewInt(1<<62))
+	require.NoError(t, err)
+	tmpl := &x509.Certificate{
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: "clawker-otel-collector"},
+		NotBefore:    time.Now().Add(-time.Minute),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:     []string{"host.docker.internal", "localhost"},
+		IPAddresses:  []net.IP{net.IPv4(127, 0, 0, 1)},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &key.PublicKey, caKey)
+	require.NoError(t, err)
+	require.NoError(t, writeCert(certPath, der))
+
+	// Sanity: stale cert lacks the SAN the production list now requires.
+	stalePEM, err := os.ReadFile(certPath)
+	require.NoError(t, err)
+	staleBlock, _ := pem.Decode(stalePEM)
+	staleCert, err := x509.ParseCertificate(staleBlock.Bytes)
+	require.NoError(t, err)
+	require.NotContains(t, staleCert.DNSNames, consts.MonitoringServiceOtelCollector)
+
+	require.NoError(t, ensureOtelServerCert())
+
+	freshPEM, err := os.ReadFile(certPath)
+	require.NoError(t, err)
+	freshBlock, _ := pem.Decode(freshPEM)
+	freshCert, err := x509.ParseCertificate(freshBlock.Bytes)
+	require.NoError(t, err)
+	assert.Contains(t, freshCert.DNSNames, consts.MonitoringServiceOtelCollector,
+		"stale cert with missing SAN must be re-minted")
+}
+
+// TestEnsureInfraIntermediateCA_MigratesStaleKeyPerms pins the upgrade
+// path in ensureInfraIntermediateCA: when an existing key on disk has
+// permissive perms (e.g. 0o644 from an older clawker that minted the
+// key with the wrong mode), the next EnsureAuthMaterial call must
+// tighten it to 0o600 in place. Without the migration block the
+// permissive perms would survive forever because the regen branch
+// only fires on file absence — the signing key for runtime mTLS
+// leaves would remain world-readable on the host indefinitely.
+func TestEnsureInfraIntermediateCA_MigratesStaleKeyPerms(t *testing.T) {
+	testenv.New(t)
+	require.NoError(t, EnsureAuthMaterial())
+
+	keyPath, err := consts.AuthInfraCAKeyPath()
+	require.NoError(t, err)
+
+	// Simulate the legacy state: same key material on disk but at
+	// 0o644 (the permissions an older clawker would have left).
+	require.NoError(t, os.Chmod(keyPath, 0o644))
+	info, err := os.Stat(keyPath)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o644), info.Mode().Perm(), "precondition: stale perms applied")
+
+	require.NoError(t, EnsureAuthMaterial(), "second EnsureAuthMaterial after stale perms must succeed")
+
+	info, err = os.Stat(keyPath)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(),
+		"stale 0o644 perms must be tightened to 0o600 on the next EnsureAuthMaterial — a world-readable infra CA signing key is a privilege boundary violation")
 }
 
 func TestCPClientCertSignedByCA(t *testing.T) {

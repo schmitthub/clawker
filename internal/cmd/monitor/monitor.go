@@ -17,7 +17,15 @@ func NewCmdMonitor(f *cmdutil.Factory) *cobra.Command {
 		Long: `Commands for managing the local observability stack.
 
 The monitoring stack provides local telemetry visualization for Claude Code
-sessions using OpenTelemetry, Jaeger, Prometheus, and Grafana.
+sessions using OpenTelemetry Collector + OpenSearch (logs + traces) +
+OpenSearch Dashboards + Prometheus (metrics).
+
+On 'monitor up', a one-shot clawker-opensearch-bootstrap container
+preconfigures the cluster — index templates, ISM retention, and Dashboards
+index patterns for claude-code, clawker-cli, clawker-cp, clawker-envoy,
+and clawker-coredns — before the collector and Prometheus start. The
+stack is intended to be throwaway (regenerate via 'monitor down --volumes
+&& monitor up' to pick up template edits).
 
 Available commands:
   init    Scaffold monitoring configuration files

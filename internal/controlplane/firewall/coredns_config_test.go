@@ -1,11 +1,13 @@
 package firewall_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane/firewall"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -43,6 +45,22 @@ func TestGenerateCorefile(t *testing.T) {
 			require.NoError(t, err, "golden file %s must exist — hand-edit to update", goldenPath)
 			assert.Equal(t, string(want), string(got))
 		})
+	}
+}
+
+// TestGenerateCorefile_MonitoringHostnamesEmitted asserts every hostname
+// in consts.MonitoringServiceHostnames produces a forward zone in the
+// generated Corefile. Drift guard: if a future commit adds an entry to
+// MonitoringServiceHostnames without coredns_config rendering it, this
+// test fails — keeping the firewall plane and the compose plane in
+// lockstep.
+func TestGenerateCorefile_MonitoringHostnamesEmitted(t *testing.T) {
+	got, err := firewall.GenerateCorefile(nil, 18902)
+	require.NoError(t, err)
+
+	for _, host := range consts.MonitoringServiceHostnames {
+		zone := fmt.Sprintf("%s {", host)
+		assert.Contains(t, string(got), zone, "expected zone block for monitoring hostname %q", host)
 	}
 }
 

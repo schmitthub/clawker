@@ -40,13 +40,12 @@ This command generates:
   - compose.yaml        Docker Compose stack definition
   - otel-config.yaml    OpenTelemetry Collector configuration
   - prometheus.yaml     Prometheus scrape configuration
-  - grafana-datasources.yaml  Pre-configured Grafana datasources
 
 The monitoring stack includes:
-  - OpenTelemetry Collector (receives traces/metrics from Claude Code)
-  - Jaeger (trace visualization)
-  - Prometheus (metrics storage)
-  - Grafana (unified dashboard)`,
+  - OpenTelemetry Collector
+  - OpenSearch
+  - OpenSearch Dashboards
+  - Prometheus`,
 		Example: `  # Initialize monitoring configuration
   clawker monitor init
 
@@ -87,9 +86,9 @@ func initRun(_ context.Context, opts *InitOptions) error {
 
 	log.Debug().Str("monitor_dir", monitorDir).Msg("initializing monitor stack")
 
-	// Get monitoring config for template rendering
-	monCfg := cfg.SettingsStore().Read().Monitoring
-	tmplData := monitor.NewMonitorTemplateData(&monCfg)
+	// Build template data from full settings (Monitoring + Docker).
+	settings := cfg.SettingsStore().Read()
+	tmplData := monitor.NewMonitorTemplateData(settings)
 
 	// Bake the CLI-issued OTEL mTLS material on demand. EnsureAuthMaterial
 	// is idempotent — if the certs are already present from a previous
@@ -107,9 +106,19 @@ func initRun(_ context.Context, opts *InitOptions) error {
 	if err != nil {
 		return fmt.Errorf("resolve otel server key path: %w", err)
 	}
-	otelCAPath, err := consts.AuthCACertPath()
+	// Trust anchor for the otel-collector's mTLS-gated otlp/infra
+	// receiver. MUST be the infra intermediate CA, NOT the CLI root.
+	// Reasoning: CLI root signs both agent leaves (via
+	// auth.MintAgentCert) and infra leaves (envoy/coredns + cp via the
+	// intermediate). Using the CLI root as client_ca_file lets any
+	// agent container present a CLI-signed leaf and inject records
+	// with forged service.name=clawker-cp/envoy/coredns into the
+	// trusted forensic indices. The infra intermediate signs only
+	// envoy/coredns/cp leaves, so the chain validation locks the
+	// trusted lane to those senders.
+	otelCAPath, err := consts.AuthInfraCACertPath()
 	if err != nil {
-		return fmt.Errorf("resolve otel CA path: %w", err)
+		return fmt.Errorf("resolve otel infra CA path: %w", err)
 	}
 	tmplData.OtelServerCertHostPath = otelServerCertPath
 	tmplData.OtelServerKeyHostPath = otelServerKeyPath
@@ -128,11 +137,6 @@ func initRun(_ context.Context, opts *InitOptions) error {
 		{monitor.ComposeFileName, monitor.ComposeTemplate, true},
 		{monitor.OtelConfigFileName, monitor.OtelConfigTemplate, true},
 		{monitor.PrometheusFileName, monitor.PrometheusTemplate, true},
-		{monitor.GrafanaDatasourcesFileName, monitor.GrafanaDatasourcesTemplate, true},
-		{monitor.GrafanaDashboardsFileName, monitor.GrafanaDashboardsTemplate, false},
-		{monitor.GrafanaDashboardFileName, monitor.GrafanaDashboardTemplate, false},
-		{monitor.GrafanaDashboardCPFileName, monitor.GrafanaDashboardCPTemplate, false},
-		{monitor.PromtailConfigFileName, monitor.PromtailConfigTemplate, true},
 	}
 
 	// Write each file
@@ -160,14 +164,30 @@ func initRun(_ context.Context, opts *InitOptions) error {
 		fmt.Fprintf(ios.ErrOut, "%s Generated %s\n", cs.InfoIcon(), file.name)
 	}
 
+	// Render the OpenSearch bootstrap asset tree (bootstrap.sh, index
+	// templates, ISM policies, saved objects). Bind-mounted into the
+	// clawker-opensearch-bootstrap service which preconfigures the
+	// cluster + Dashboards before the otel-collector starts.
+	//
+	// Unlike the single-file --force gate above, this dir is always
+	// re-rendered — the throwaway-stack model means the source of truth
+	// is the embedded assets in the binary, not anything the user might
+	// have hand-edited under monitorDir.
+	bootstrapDir := filepath.Join(monitorDir, monitor.OpenSearchBootstrapDirName)
+	if err := monitor.WriteOpenSearchBootstrap(bootstrapDir, tmplData); err != nil {
+		return fmt.Errorf("write opensearch bootstrap dir: %w", err)
+	}
+	fmt.Fprintf(ios.ErrOut, "%s Generated %s/\n", cs.InfoIcon(), monitor.OpenSearchBootstrapDirName)
+
 	// Success message — use config-derived URLs
 	fmt.Fprintf(ios.ErrOut, "%s Monitoring stack initialized.\n", cs.SuccessIcon())
 	fmt.Fprintln(ios.ErrOut)
 	fmt.Fprintln(ios.ErrOut, "Next Steps:")
 	fmt.Fprintln(ios.ErrOut, "  1. Start the stack:")
 	fmt.Fprintln(ios.ErrOut, "     clawker monitor up")
-	fmt.Fprintf(ios.ErrOut, "  2. Open Grafana at %s (No login required)\n", cfg.GrafanaURL("localhost", false))
-	fmt.Fprintf(ios.ErrOut, "  3. Open Jaeger at %s\n", cfg.JaegerURL("localhost", false))
+	mc := cfg.SettingsStore().Read().Monitoring
+	fmt.Fprintf(ios.ErrOut, "  2. Open OpenSearch Dashboards at http://localhost:%d\n", mc.OpenSearchDashboardsPort)
+	fmt.Fprintf(ios.ErrOut, "  3. Open Prometheus at http://localhost:%d\n", mc.PrometheusPort)
 	fmt.Fprintln(ios.ErrOut)
 	fmt.Fprintln(ios.ErrOut, "Note: The monitoring stack uses the clawker-net Docker network.")
 	fmt.Fprintln(ios.ErrOut, "      Run 'clawker start' or 'clawker run' to create the network if needed.")

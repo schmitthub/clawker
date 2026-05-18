@@ -2,7 +2,25 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
+# Promote selected OTLP resource attributes to series labels for any
+# OTLP/HTTP pusher hitting Prometheus' native OTLP receiver directly.
+# Without this block Prometheus discards resource attrs and pushed
+# metrics arrive label-less, breaking per-container filtering.
+otlp:
+  promote_resource_attributes:
+    - project
+    - agent
+    - service.name
+    - service.version
+
+# Scrapes the otel-collector's `prometheus` exporter — primary metrics
+# path for everything flowing through the collector (untrusted OTLP push,
+# docker_stats, hostmetrics, spanmetrics, collector self-telemetry).
+# Direct OTLP push to Prometheus' native receiver is also supported
+# (see otlp.promote_resource_attributes above) but is metadata-blind;
+# the scrape path is the documented default.
 scrape_configs:
-  - job_name: 'otel-collector'
+  - job_name: '{{.OtelCollectorService}}'
+    scrape_timeout: 10s
     static_configs:
-      - targets: ['{{.OtelCollectorInternal}}:{{.PrometheusMetricsPort}}']
+      - targets: ['{{.OtelCollectorService}}:{{.PrometheusMetricsPort}}']

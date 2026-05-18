@@ -33,11 +33,13 @@ type Logger struct {
 ```go
 type Options struct {
     LogsDir    string       // directory for log files (required)
+    Filename   string       // override log file name (default: "clawker.log")
     MaxSizeMB  int          // max log file size (default: 50)
     MaxAgeDays int          // max log age (default: 7)
     MaxBackups int          // max backup count (default: 3)
     Compress   bool         // gzip rotated logs (default: true)
     Otel       *OtelOptions // nil = file-only, no OTEL bridge
+    EchoStdout bool         // mirror records to os.Stdout (container daemon path; off for CLI)
 }
 ```
 
@@ -45,13 +47,45 @@ type Options struct {
 
 ```go
 type OtelOptions struct {
-    Endpoint       string        // e.g. "localhost:4318"
+    Endpoint       string        // e.g. "localhost:4317" — gRPC, NOT HTTP
     Insecure       bool          // default: true (local collector)
     Timeout        time.Duration // export timeout
     MaxQueueSize   int           // batch processor queue size
     ExportInterval time.Duration // batch export interval
+
+    // ServiceName stamps `service.name` on the OTEL Resource for every
+    // emitted record. REQUIRED when the collector routes on this
+    // attribute (routing/trusted, routing/untrusted in otel-config.yaml).
+    // Leaving it empty produces the SDK default "unknown_service:<binary>",
+    // which the routing connector drops silently — records export
+    // successfully but never reach a backend. Canonical values:
+    // "clawker-cli" (host CLI), "clawker-cp" (control plane daemon).
+    ServiceName string
+
+    // mTLS material — two mutually-exclusive shapes; at most one may be
+    // set. When either is wired, the exporter presents the leaf during the
+    // gRPC handshake and pins the receiver's CA, and Insecure is ignored.
+    //
+    //   - File-path triple (CACertFile + ClientCertFile + ClientKeyFile):
+    //     exporter reads PEM from disk at New time. No in-tree
+    //     consumer today (CLI runs Insecure=true on the untrusted lane;
+    //     CP uses TLSConfig; Envoy/CoreDNS read PEM via their own native
+    //     config, not this struct). Shape preserved for future on-disk-
+    //     cert consumers. If any one is set, all three must be set.
+    //   - In-process TLSConfig: caller passes a fully-formed *tls.Config
+    //     (typically built by internal/controlplane/otelcerts with a
+    //     GetClientCertificate hook that re-mints per handshake). Used by
+    //     clawker-cp so the leaf never lands on disk and rotation matches
+    //     the connection lifecycle. When non-nil, file-path fields are
+    //     not consulted.
+    CACertFile     string
+    ClientCertFile string
+    ClientKeyFile  string
+    TLSConfig      *tls.Config
 }
 ```
+
+Transport is OTLP/gRPC, not OTLP/HTTP. Two distinct receivers exist on the collector: the unauthenticated `otlp` receiver (`OtelGRPCPort`, plaintext) which the host CLI logger targets, and the mTLS-gated `otlp/infra` receiver (`OtelInfraPort`, gRPC-only, infra-intermediate CA) which `clawker-cp` targets via the in-process `TLSConfig` shape. They share the wire format but not the trust boundary — see `internal/monitor/CLAUDE.md` "OTEL Pipelines". Dialing the HTTP port with a gRPC exporter returns 415 and silently drops every record.
 
 ## Constructors
 
@@ -164,4 +198,4 @@ The OTEL SDK handles resilience natively — no custom health checking is needed
 
 ## Dependencies
 
-`zerolog` (structured logging), `lumberjack` (rotation), `otelzerolog` (OTEL bridge), `otlploghttp` (OTLP exporter), `otel/sdk/log` (LoggerProvider).
+`zerolog` (structured logging), `lumberjack` (rotation), `otlploggrpc` (OTLP/gRPC exporter), `otel/sdk/log` (LoggerProvider), `google.golang.org/grpc/credentials` (mTLS for the trusted-infra receiver).

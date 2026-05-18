@@ -1,104 +1,388 @@
 receivers:
+  # Untrusted OTLP ingress for agent containers (Claude Code's SDK) +
+  # host CLI (clawker-cli). No client auth — anyone reachable on
+  # clawker-net or the host loopback can push. Records are dispatched
+  # by routing/untrusted, which forwards only service.name=claude-code
+  # and service.name=clawker-cli to their respective indices; every
+  # other service.name (including spoofed envoy/coredns/clawker-cp) is
+  # dropped at routing. The resource/untrusted_otlp processor stamps
+  # ingest_source=untrusted_otlp on all records from this receiver so
+  # dashboards can separate forgeable, sender-declared records from
+  # provenance-stamped ones.
   otlp:
     protocols:
       grpc:
         endpoint: 0.0.0.0:{{.OtelGRPCPort}}
       http:
         endpoint: 0.0.0.0:{{.OtelCollectorPort}}
-{{- if .OtelCPPort}}
-  # mTLS-gated receiver dedicated to clawker-cp. Listens on
-  # 0.0.0.0:<port> inside the container; the published mapping in
-  # compose.yaml binds the host port to 127.0.0.1 only, so the only
-  # off-host way to reach this receiver is via clawker-net DNS — and
-  # a TLS handshake with require_client_certificate fails for any
-  # peer that wasn't issued a client cert by the CLI CA. Agents on
-  # clawker-net therefore can't push here even if they try.
-  otlp/cp:
+  # Trusted OTLP ingress, gated by mTLS. Listens on 0.0.0.0:<port>
+  # inside the container; the published mapping in compose.yaml binds
+  # the host port to 127.0.0.1 only. Agents on clawker-net can reach
+  # this port over the docker network, but the TLS handshake rejects
+  # any peer whose client cert chain does not validate against the
+  # infra intermediate CA — only CP and infra services (envoy/coredns,
+  # cp) hold leaves signed by that intermediate.
+  #
+  # Trust anchor is the infra intermediate CA, NOT the CLI root. Agent
+  # containers carry leaves signed directly by the CLI root with no
+  # path through the intermediate, so their chain fails validation
+  # even when they present a valid CLI-signed cert.
+  #
+  # service.name on records that arrive here is trusted by virtue of
+  # mTLS having succeeded. routing/trusted dispatches by service.name
+  # to cp/envoy/coredns pipelines. The downstream resource/* processors
+  # stamp ingest_source for cross-index queries; they do NOT overwrite
+  # service.name (a compromised infra service is already game-over for
+  # its own log lane, no extra defense to add here).
+  otlp/infra:
     protocols:
-      http:
-        endpoint: 0.0.0.0:{{.OtelCPPort}}
+      grpc:
+        endpoint: 0.0.0.0:{{.OtelInfraPort}}
         tls:
           cert_file: /etc/otel/tls/server.pem
           key_file: /etc/otel/tls/server.key
+          # Setting client_ca_file forces tls.RequireAndVerifyClientCert
+          # in configtls.ServerConfig.LoadTLSConfig — handshake fails
+          # when no client cert is presented or when the presented
+          # chain does not validate against this CA. Bind-mount source
+          # is consts.AuthInfraCACertPath() — the infra intermediate.
           client_ca_file: /etc/otel/tls/ca.pem
-{{- end}}
+  # Collector self-telemetry. The otel-collector exposes its own
+  # process/pipeline metrics as a Prometheus endpoint on :8888 by
+  # default; scraping them here lets the metrics pipeline ship them
+  # downstream to the same Prometheus instance operators already use.
+  prometheus/self:
+    config:
+      scrape_configs:
+        - job_name: 'otelcol'
+          scrape_interval: 10s
+          static_configs:
+            - targets: ['127.0.0.1:8888']
+  # Container-level metrics scraped from the Docker daemon. Reads via
+  # the RO-mounted socket at /var/run/docker.sock (compose maps host
+  # Settings.Docker.Socket → this path).
+  docker_stats:
+    endpoint: unix:///var/run/docker.sock
+    collection_interval: 10s
+  # Host metrics for the machine running the otel-collector. On Linux
+  # this is the actual host; on Docker Desktop it's the Linux VM (the
+  # constraint operators care about). Reads via the RO-mounted host
+  # root at /hostfs.
+  hostmetrics:
+    root_path: /hostfs
+    scrapers:
+      cpu:
+        metrics:
+          system.cpu.utilization:
+            enabled: true
+      disk:
+      load:
+      filesystem:
+        exclude_mount_points:
+          mount_points:
+            - /dev/*
+            - /proc/*
+            - /sys/*
+            - /run/k3s/containerd/*
+            - /var/lib/docker/*
+            - /var/lib/kubelet/*
+            - /snap/*
+          match_type: regexp
+        exclude_fs_types:
+          fs_types:
+            - autofs
+            - binfmt_misc
+            - bpf
+            - cgroup2
+            - configfs
+            - debugfs
+            - devpts
+            - devtmpfs
+            - fusectl
+            - hugetlbfs
+            - iso9660
+            - mqueue
+            - nsfs
+            - overlay
+            - proc
+            - procfs
+            - pstore
+            - rpc_pipefs
+            - securityfs
+            - selinuxfs
+            - squashfs
+            - sysfs
+            - tracefs
+          match_type: strict
+      memory:
+        metrics:
+          system.memory.utilization:
+            enabled: true
+      network:
+      paging:
+      processes:
+      process:
+        mute_process_exe_error: true
+        mute_process_io_error: true
+        mute_process_user_error: true
 
 processors:
+  # Cap collector memory below the 200M compose hard limit so burst
+  # load applies backpressure rather than triggering an OOM-kill. Must
+  # be the first processor in every pipeline to be effective.
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 150
+    spike_limit_mib: 30
+  # Explicit batch sizing so behavior is predictable under burst. The
+  # 5s timeout keeps forensic indices reasonably near-real-time without
+  # over-shipping tiny batches at low volume.
   batch:
+    timeout: 5s
+    send_batch_size: 1024
+    send_batch_max_size: 2048
+  # Provenance stamp for everything entering on the unauth'd otlp
+  # receiver. Lets queries trivially separate forgeable
+  # sender-declared records from records whose source is anchored by
+  # mTLS handshake. Applied at the start of every untrusted-lane
+  # pipeline; service.name itself is left alone so routing can still
+  # dispatch on it.
+  resource/untrusted_otlp:
+    attributes:
+      - key: ingest_source
+        value: untrusted_otlp
+        action: upsert
   # Copy project/agent from resource attributes to datapoint attributes.
   # The Prometheus exporter only surfaces datapoint attributes as metric labels,
-  # so this transform is required for per-project/agent filtering in Grafana.
+  # so this transform is required for per-project/agent filtering on the
+  # scraped Prometheus series (and any UI built on top — OpenSearch Dashboards
+  # Observability Metrics, Prometheus UI, etc.).
   transform/metrics:
     metric_statements:
       - context: datapoint
         statements:
           - set(attributes["project"], resource.attributes["project"]) where resource.attributes["project"] != nil
           - set(attributes["agent"], resource.attributes["agent"]) where resource.attributes["agent"] != nil
-  # Provenance stamp for agent-side telemetry. Runs AFTER the otlp
-  # receiver and force-sets ingest_source=agent regardless of what the
-  # client sent. service.name is NOT normalized here so per-component
-  # granularity (claude-code, envoy, coredns, ...) is preserved; the
-  # trustable provenance signal is ingest_source, which the agent
-  # cannot fake because this processor unconditionally upserts it
-  # post-receiver. A spoofed service.name=clawker-cp on the agent
-  # plaintext path still lands with ingest_source=agent.
-  resource/agent:
-    attributes:
-      - key: ingest_source
-        value: agent
-        action: upsert
-{{- if .OtelCPPort}}
-  # Provenance stamp for clawker-cp telemetry. Reaches this processor
-  # only via the mTLS-gated otlp/cp receiver (CLI-issued client cert
-  # required at TLS handshake — agents on clawker-net have none and
-  # are rejected before bytes flow). Both service.name and
-  # ingest_source are forced regardless of what the client sent so
-  # CP-shaped logs cannot be forged from the unauth'd agent receiver.
+  # Provenance stamps. Each trusted source gets ingest_source=<name>
+  # so cross-index queries can filter on a single field. service.name
+  # is NOT overwritten — mTLS handshake authenticated the sender;
+  # whatever they declared is trusted.
   resource/cp:
     attributes:
       - key: ingest_source
         value: cp
         action: upsert
-      - key: service.name
-        value: clawker-cp
+  resource/envoy:
+    attributes:
+      - key: ingest_source
+        value: envoy
         action: upsert
-{{- end}}
+  resource/coredns:
+    attributes:
+      - key: ingest_source
+        value: coredns
+        action: upsert
 
 exporters:
-  otlp/jaeger:
-    endpoint: jaeger:{{.OtelGRPCPort}}
-    tls:
-      insecure: true
+  # Stdout pipe-through for diagnosis. Surfaces in `docker logs
+  # clawker-otel-collector`; verbose by design.
+  debug:
+    verbosity: detailed
+  # Traces → OpenSearch (Simple Schema for Observability data model).
+  # sending_queue + retry_on_failure keep batches alive across the
+  # OpenSearch startup window and short outages so forensic data
+  # isn't dropped silently.
+  opensearch/traces:
+    http:
+      endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"
+    dataset: traces
+    namespace: clawker
+    sending_queue:
+      enabled: true
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_elapsed_time: 5m
+  # Logs → OpenSearch. Indices split by source because each source has
+  # a different schema shape: clawker emits attributes.event as a scalar
+  # string (logger pattern `Str("event", ...)`); Claude Code emits the
+  # OTEL semantic-conventions nested form `event.name`; Envoy ALS lands
+  # HTTP/TLS/TCP fields flat on the record; the CoreDNS otel plugin
+  # emits structured dns.query attributes. The clawker-opensearch-bootstrap
+  # one-shot service PUTs an explicit index template per source (see
+  # templates/opensearch-bootstrap/index-templates/) BEFORE the collector
+  # starts — its compose `depends_on: service_completed_successfully` on
+  # bootstrap is what guarantees that ordering — so each schema is locked
+  # at index creation by the template, not raced by first-ingest dynamic
+  # mapping. sending_queue + retry_on_failure protect against OpenSearch
+  # unavailability windows (boot, GC pause, indexing pressure) where
+  # dropping forensic records would be the worst time.
+  opensearch/logs_cp:
+    http:
+      endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"
+    logs_index: clawker-cp
+    sending_queue:
+      enabled: true
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_elapsed_time: 5m
+  opensearch/logs_claude_code:
+    http:
+      endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"
+    logs_index: claude-code
+    sending_queue:
+      enabled: true
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_elapsed_time: 5m
+  opensearch/logs_clawker_cli:
+    http:
+      endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"
+    logs_index: clawker-cli
+    sending_queue:
+      enabled: true
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_elapsed_time: 5m
+  opensearch/logs_envoy:
+    http:
+      endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"
+    logs_index: clawker-envoy
+    sending_queue:
+      enabled: true
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_elapsed_time: 5m
+  opensearch/logs_coredns:
+    http:
+      endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"
+    logs_index: clawker-coredns
+    sending_queue:
+      enabled: true
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_elapsed_time: 5m
+  # Metrics → Prometheus scrape endpoint. Pull-based, so no retry
+  # config — Prometheus handles its own scrape cadence.
   prometheus:
     endpoint: "0.0.0.0:{{.PrometheusMetricsPort}}"
-  otlphttp/loki:
-    endpoint: "http://loki:{{.LokiPort}}/otlp"
+
+connectors:
+  # Derives RED metrics (rate, errors, duration) from spans flowing
+  # through the traces pipeline and re-emits them into the metrics
+  # pipeline. Empty-series until traces actually flow.
+  spanmetrics:
+  # Route untrusted (plaintext OTLP) records. Only claude-code and
+  # clawker-cli records reach their indices; everything else is
+  # silently dropped (no default_pipelines, error_mode: ignore). An
+  # agent crafting `service.name=envoy`/`coredns`/`clawker-cp` from
+  # the unauth'd port CANNOT reach the trusted indices — there is no
+  # such route off this connector.
+  routing/untrusted:
+    error_mode: ignore
+    table:
+      - context: resource
+        condition: attributes["service.name"] == "claude-code"
+        pipelines: [logs/claude-code]
+      - context: resource
+        condition: attributes["service.name"] == "clawker-cli"
+        pipelines: [logs/clawker-cli]
+  # Route trusted (mTLS-gated) records by sender-declared service.name.
+  # Reachable only by peers whose client cert chains through the infra
+  # intermediate CA. error_mode: propagate so OTTL evaluation errors
+  # on legitimate forensic records surface in collector logs rather
+  # than being silently swallowed. default_pipelines catches any
+  # unmapped service.name and routes it to logs/trusted_unrouted —
+  # operator can grep collector stdout if this fires (it shouldn't,
+  # only cp/envoy/coredns hold infra-intermediate leaves today).
+  routing/trusted:
+    error_mode: propagate
+    default_pipelines: [logs/trusted_unrouted]
+    table:
+      - context: resource
+        condition: attributes["service.name"] == "clawker-cp"
+        pipelines: [logs/cp]
+      - context: resource
+        condition: attributes["service.name"] == "envoy"
+        pipelines: [logs/envoy]
+      - context: resource
+        condition: attributes["service.name"] == "coredns"
+        pipelines: [logs/coredns]
 
 service:
   pipelines:
+    # Untrusted traces — agent-pushed spans. resource/untrusted_otlp
+    # stamps every record so dashboards can separate forgeable
+    # sender-declared spans from trusted-lane spans (currently none,
+    # but the pattern extends cleanly when a trusted span source is
+    # added).
     traces:
       receivers: [otlp]
-      processors: [batch]
-      exporters: [otlp/jaeger]
-    metrics:
+      processors: [memory_limiter, resource/untrusted_otlp, batch]
+      exporters: [opensearch/traces, spanmetrics, debug]
+    # Untrusted metrics — anything arriving on the unauth'd otlp
+    # receiver. transform/metrics copies project/agent resource attrs
+    # to datapoint labels; ingest_source=untrusted_otlp is stamped
+    # first so the forgeable labels are always paired with the
+    # provenance marker.
+    metrics/untrusted:
       receivers: [otlp]
-      processors: [batch, transform/metrics]
-      exporters: [prometheus]
-    # Agent-side logs pipeline: receiver-isolated from the CP pipeline.
-    # An agent pushing here cannot reach the otlp/cp receiver
-    # (mTLS-gated) and cannot get its log stamped ingest_source=cp —
-    # resource/agent runs unconditionally and overwrites the field.
-    logs/agents:
+      processors: [memory_limiter, resource/untrusted_otlp, transform/metrics, batch]
+      exporters: [prometheus, debug]
+    # Trusted metrics — collector self-scrape, docker_stats,
+    # hostmetrics, and spanmetrics-derived RED metrics. All sourced
+    # locally; no sender-declared resource attrs to defend.
+    metrics/trusted:
+      receivers: [prometheus/self, docker_stats, hostmetrics, spanmetrics]
+      processors: [memory_limiter, transform/metrics, batch]
+      exporters: [prometheus, debug]
+    # Untrusted log ingress. Only claude-code/clawker-cli route
+    # downstream; other service.name values are dropped at the routing
+    # connector. ingest_source stamped here so it carries through to
+    # the per-source pipelines.
+    logs/in_untrusted:
       receivers: [otlp]
-      processors: [resource/agent, batch]
-      exporters: [otlphttp/loki]
-{{- if .OtelCPPort}}
-    # CP-side logs pipeline: separate receiver, separate processor
-    # chain. service.name and ingest_source are both forced post-
-    # receiver so a malicious cert holder (none exist outside CLI
-    # provisioning) still couldn't shadow agent telemetry.
+      processors: [memory_limiter, resource/untrusted_otlp, batch]
+      exporters: [routing/untrusted]
+    logs/claude-code:
+      receivers: [routing/untrusted]
+      processors: [memory_limiter]
+      exporters: [opensearch/logs_claude_code, debug]
+    logs/clawker-cli:
+      receivers: [routing/untrusted]
+      processors: [memory_limiter]
+      exporters: [opensearch/logs_clawker_cli, debug]
+    # Trusted log ingress. mTLS handshake is the auth boundary; the
+    # routing connector dispatches by sender-declared service.name to
+    # the right index. resource/* processors only stamp ingest_source
+    # for cross-index query convenience.
+    logs/in_trusted:
+      receivers: [otlp/infra]
+      processors: [memory_limiter, batch]
+      exporters: [routing/trusted]
     logs/cp:
-      receivers: [otlp/cp]
-      processors: [resource/cp, batch]
-      exporters: [otlphttp/loki]
-{{- end}}
+      receivers: [routing/trusted]
+      processors: [memory_limiter, resource/cp]
+      exporters: [opensearch/logs_cp, debug]
+    logs/envoy:
+      receivers: [routing/trusted]
+      processors: [memory_limiter, resource/envoy]
+      exporters: [opensearch/logs_envoy, debug]
+    logs/coredns:
+      receivers: [routing/trusted]
+      processors: [memory_limiter, resource/coredns]
+      exporters: [opensearch/logs_coredns, debug]
+    # Quarantine for any trusted-lane record with an unmapped
+    # service.name. Should never fire — only cp/envoy/coredns hold
+    # infra-intermediate-chained leaves today. If it does, operator
+    # can grep `docker logs clawker-otel-collector` for the debug
+    # output to identify a misconfigured trusted sender.
+    logs/trusted_unrouted:
+      receivers: [routing/trusted]
+      processors: [memory_limiter]
+      exporters: [debug]

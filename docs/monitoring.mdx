@@ -1,69 +1,50 @@
 ---
 title: "Monitoring"
-description: "Set up the Grafana, Prometheus, Loki, and Jaeger monitoring stack for agent observability"
+description: "Set up the OpenSearch + OpenSearch Dashboards + Prometheus monitoring stack for agent observability"
 icon: "chart-mixed"
 ---
 
-Clawker includes an optional monitoring stack that collects telemetry from Claude Code agents running in containers. It provides real-time dashboards for metrics and logs — giving you visibility into what every agent is doing, how much it costs, what tools it's calling, and whether it's making progress.
-
-<img src="/assets/monitor-top.png" alt="Grafana monitoring dashboard overview" />
+Clawker includes an optional monitoring stack that collects telemetry from Claude Code agents running in containers. It provides dashboards for logs and metrics — giving you visibility into what every agent is doing, how much it costs, what tools it's calling, and whether it's making progress.
 
 ## What You Get
 
-The pre-built Grafana dashboard gives you per-agent and per-project visibility into:
+The stack ingests logs into OpenSearch and exposes them through **OpenSearch Dashboards** for ad-hoc querying and dashboarding. **Prometheus** backs metrics with its own UI. You can see per-agent and per-project activity for:
 
 - **Cost and token usage** — API call costs, input/output tokens, rate limiting
 - **Coding activity** — file edits, tool invocations, command executions
 - **Tool usage** — which tools the agent calls, how often, and how long they take
 - **Session detail** — full event timeline for individual agent sessions
-
-<CardGroup cols={2}>
-  <Card>
-    <img src="/assets/monitor-cost-usage.png" alt="Cost and token usage dashboard" />
-  </Card>
-  <Card>
-    <img src="/assets/monitor-coding-activity.png" alt="Coding activity dashboard" />
-  </Card>
-  <Card>
-    <img src="/assets/monitor-tool-usage.png" alt="Tool usage breakdown" />
-  </Card>
-  <Card>
-    <img src="/assets/monitor-session-detail-events.png" alt="Session detail events" />
-  </Card>
-  <Card>
-    <img src="/assets/monitor-firewall.png" alt="Egress traffic visibility dashboard" />
-  </Card>
-</CardGroup>
+- **Egress traffic** — Envoy access logs and CoreDNS query logs from the firewall stack (when enabled)
 
 ## Architecture
 
-The monitoring stack runs as six Docker Compose services on the `clawker-net` network:
+The monitoring stack runs as four Docker Compose services on the `clawker-net` network:
 
 ```
 Claude Code (in container)
     |
-    | OTLP (HTTP/gRPC) — metrics & logs
+    | OTLP (HTTP/gRPC) — logs, metrics
     v
-OTEL Collector ──┬──> Prometheus (metrics)
-                 ├──> Loki (logs)
-                 └──> Jaeger (traces — collector-ready, not yet emitted by agents)
-                          |
-                          v
-                      Grafana (unified dashboards)
+OTEL Collector ──┬──> OpenSearch (logs) ──> OpenSearch Dashboards
+                 └──> Prometheus (metrics) ──> Prometheus UI
 ```
+
+Claude Code agents emit logs and metrics only — no traces. The collector's `traces` pipeline is wired but idle until an OTLP traces source is connected.
 
 ### Services
 
 | Service | Image | Default Port | Purpose |
 |---------|-------|:---:|---------|
-| **OTEL Collector** | `otel/opentelemetry-collector-contrib` | 4318 (HTTP), 4317 (gRPC) | Receives telemetry from agents and routes it to storage backends |
-| **Prometheus** | `prom/prometheus` | 9090 | Time-series metrics storage — resource utilization, request counts, durations |
-| **Loki** | `grafana/loki` | 3100 | Log aggregation — structured events with tool details, prompts, decisions |
-| **Jaeger** | `jaegertracing/all-in-one` | 16686 | Distributed tracing — collector pipeline is configured but agents don't emit traces yet |
-| **Grafana** | `grafana/grafana` | 3000 | Unified dashboards — pre-configured with all data sources and a Claude Code dashboard |
-| **Promtail** | `grafana/promtail` | 9080 | Collects firewall container logs (Envoy + CoreDNS) via Docker socket and ships to Loki |
+| **OTEL Collector** | `otel/opentelemetry-collector-contrib` | 4318 (HTTP), 4317 (gRPC) | Receives telemetry from agents and routes it to backends |
+| **OpenSearch** | `opensearchproject/opensearch` | 9200 | Stores logs across five indices: `claude-code` (Claude Code OTLP), `clawker-cli` (host CLI records exported by the collector), `clawker-cp` (clawker-cp mTLS push), `clawker-envoy` (firewall HTTP/TLS/TCP access logs), `clawker-coredns` (firewall DNS query logs) |
+| **OpenSearch Dashboards** | `opensearchproject/opensearch-dashboards` | 5601 | UI for querying and dashboarding logs |
+| **Prometheus** | `prom/prometheus` | 9090 | Time-series metrics storage and UI |
 
-All containers are pre-configured with labels and attached to the `clawker-net` network. Grafana starts with anonymous login enabled (no credentials required) and data sources pre-provisioned.
+All containers are pre-configured with labels (`dev.clawker.purpose=monitoring`) and attached to the `clawker-net` network. The OpenSearch security plugin is disabled by default for local development — Dashboards is reachable at `http://localhost:5601` with no login required. Set `OPENSEARCH_JAVA_OPTS` via the `opensearch_heap_mb` setting if you need more heap.
+
+### Service Hostnames Are Constants
+
+Individual service hostname constants (`MonitoringServiceOtelCollector`, `MonitoringServicePrometheus`, `MonitoringServiceOpenSearchNode`, `MonitoringServiceOpenSearchDashboards`) are defined in `internal/consts/monitoring.go`. The `MonitoringServiceHostnames` slice — consumed by CoreDNS `internalHosts` forward zones — intentionally contains only `otel-collector` and `prometheus`: agents push telemetry through the collector and never query OpenSearch directly, so `opensearch-node` and `opensearch-dashboards` are excluded from the forwarded set (containers on `clawker-net` that do need those reach them via Docker's embedded resolver).
 
 ### How Agents Connect
 
@@ -80,14 +61,10 @@ OTEL endpoints are baked into every Clawker image at build time. At container cr
 
 ## Egress Traffic Visibility
 
-When the firewall is enabled, the dashboard includes an **Egress Traffic** row at the bottom with real-time visibility into network activity:
+When the firewall is enabled, Envoy and CoreDNS access logs flow into OpenSearch alongside agent telemetry.
 
-- **Envoy Traffic** — streaming log of all outbound connections through the proxy, showing domain, protocol, HTTP method/path (for inspected traffic), response codes, and response flags
-- **DNS Lookups** — streaming log of all DNS queries through CoreDNS, showing queried domain, query type, response code (NOERROR for allowed, NXDOMAIN for blocked), and resolution time
-- **Top Blocked Domains** — table of the most frequently blocked domains (denied by Envoy or NXDOMAIN from CoreDNS)
-- **Egress Over Time** — time series of outbound request volume by protocol type
-
-Egress logs are collected by **Promtail**, which auto-discovers the firewall containers by their Docker labels and ships structured logs to Loki. No additional configuration is needed — `clawker monitor init` generates the Promtail configuration automatically.
+- **Envoy access logs** — domain, protocol (`tls`/`tls_mitm`/`http`/`tcp`/`deny`), response codes, response flags. `response_flags` containing `UF` (upstream failure) signals blocked/denied traffic.
+- **CoreDNS query logs** — queried domain, qtype (A/AAAA), rcode (NOERROR / NXDOMAIN), resolution duration. `rcode=NXDOMAIN` means the domain was not in the allow list.
 
 ## Setup
 
@@ -98,13 +75,10 @@ clawker monitor init
 ```
 
 This scaffolds configuration files in your data directory (`~/.local/share/clawker/monitor/`):
-- `compose.yaml` — Docker Compose definition for all six services
+
+- `compose.yaml` — Docker Compose definition for all four services
 - `otel-config.yaml` — OpenTelemetry Collector pipeline configuration
 - `prometheus.yaml` — Prometheus scrape targets
-- `grafana-datasources.yaml` — Auto-provisioned Grafana data sources
-- `grafana-dashboards.yaml` — Dashboard provisioning config
-- `grafana-dashboard.json` — Pre-built Claude Code dashboard
-- `promtail-config.yaml` — Promtail configuration for firewall log collection
 
 Use `--force` to regenerate files if they already exist.
 
@@ -117,9 +91,9 @@ clawker monitor up
 The stack runs in the background. Service URLs are printed on startup:
 
 ```
-Grafana:    http://localhost:3000
-Jaeger:     http://localhost:16686
-Prometheus: http://localhost:9090
+OpenSearch Dashboards: http://localhost:5601
+OpenSearch API:        http://localhost:9200
+Prometheus:            http://localhost:9090
 ```
 
 ### 3. Run Agents
@@ -130,9 +104,24 @@ Start agents as usual — telemetry flows automatically:
 clawker run -it --agent dev @
 ```
 
-### 4. View Dashboards
+### 4. Explore in OpenSearch Dashboards
 
-Open Grafana at `http://localhost:3000`. The pre-configured Claude Code dashboard shows metrics and logs with per-project and per-agent filtering.
+Open OpenSearch Dashboards at `http://localhost:5601`. From the Discover view, pick one of the preconfigured index patterns — `claude-code`, `clawker-cli`, `clawker-cp`, `clawker-envoy`, or `clawker-coredns` — to see Claude Code logs, host CLI logs, clawker-cp logs, and egress traffic (Envoy access + CoreDNS query logs) side-by-side. Metrics live at the Prometheus UI on `http://localhost:9090`.
+
+## Bootstrap
+
+The stack is preconfigured every `monitor up`. A one-shot `clawker-opensearch-bootstrap` compose service runs after OpenSearch reports healthy, applies:
+
+- **Component templates** with shared mappings (`@timestamp` as date, `service.name` / `ingest_source` / `project` / `agent` as keyword)
+- **Index templates** with per-source field mappings for each of the five indices (so dynamic mapping never locks the wrong type at first ingest)
+- **ISM retention policy** (7-day rollover-to-delete, auto-attached to all five indices via `ism_template.index_patterns`)
+- **Dashboards saved objects** — index patterns for all five indices with `@timestamp` as the time field
+
+`otel-collector` and `prometheus` gate on bootstrap completing successfully — they never start until the cluster is preconfigured. Bootstrap failure surfaces in `docker logs clawker-opensearch-bootstrap` and leaves the stack half-up by design (so wrong-mapped indices can't be silently created). The throwaway-stack model means picking up template/policy edits requires `monitor down --volumes && monitor up`; templates only apply at index creation.
+
+<Note>
+Curated dashboards, visualizations, alerts, and Prometheus-as-a-Dashboards-data-source are still TODO. The bootstrap surface is in place — adding pre-built dashboards is a matter of dropping their NDJSON export into `internal/monitor/templates/opensearch-bootstrap/saved-objects/clawker.ndjson` and shipping a new release.
+</Note>
 
 ## Telemetry Controls
 
@@ -153,12 +142,12 @@ Override default ports in `settings.yaml` if they conflict with other services:
 
 ```yaml
 monitoring:
-  grafana_port: 3000
-  jaeger_port: 16686
-  prometheus_port: 9090
-  loki_port: 3100
   otel_collector_port: 4318
   otel_grpc_port: 4317
+  opensearch_port: 9200
+  opensearch_dashboards_port: 5601
+  opensearch_heap_mb: 512        # JVM -Xms/-Xmx for the OpenSearch node
+  prometheus_port: 9090
   prometheus_metrics_port: 8889
 ```
 
@@ -188,4 +177,4 @@ clawker monitor down
 clawker monitor down --volumes
 ```
 
-Without `--volumes`, monitoring data persists across restarts. The `clawker-net` network is preserved for other Clawker services (firewall, agents).
+Without `--volumes`, monitoring data persists across restarts (named volume `clawker-opensearch` for indices, `clawker-prometheus` for TSDB). The `clawker-net` network is preserved for other Clawker services (firewall, agents).

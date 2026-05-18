@@ -35,7 +35,7 @@ func WalkFields(v any) []Field {
 
 // derefValue dereferences a pointer reflect.Value, allocating a zero value if nil.
 func derefValue(val reflect.Value) reflect.Value {
-	if val.Kind() != reflect.Ptr {
+	if val.Kind() != reflect.Pointer {
 		return val
 	}
 	if val.IsNil() {
@@ -69,7 +69,7 @@ func walkStruct(val reflect.Value, typ reflect.Type, prefix string, fields *[]Fi
 		ft := sf.Type
 
 		// Handle pointer types.
-		if ft.Kind() == reflect.Ptr {
+		if ft.Kind() == reflect.Pointer {
 			// *bool → Bool (nil treated as false; system handles defaults via nil guards)
 			if ft.Elem().Kind() == reflect.Bool {
 				val := "false"
@@ -200,7 +200,7 @@ func yamlTagName(tag string) string {
 func classifyAndFormat(ft reflect.Type, fv reflect.Value) (kind FieldKind, browseVal, editVal string) {
 	// Dereference pointer for classification.
 	elem := ft
-	if ft.Kind() == reflect.Ptr {
+	if ft.Kind() == reflect.Pointer {
 		elem = ft.Elem()
 		if fv.IsNil() {
 			fv = reflect.New(elem).Elem()

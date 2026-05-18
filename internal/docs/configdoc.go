@@ -201,7 +201,7 @@ func escapeMDX(s string) string {
 // this recurses into struct slice element types to show their full field
 // structure. Descriptions from `desc` tags become inline YAML comments.
 func renderYAMLSchema(t reflect.Type, indent int) string {
-	for t.Kind() == reflect.Ptr {
+	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	if t.Kind() != reflect.Struct {
@@ -227,7 +227,7 @@ func renderYAMLSchema(t reflect.Type, indent int) string {
 		req := f.Tag.Get("required") == "true"
 
 		ft := f.Type
-		for ft.Kind() == reflect.Ptr {
+		for ft.Kind() == reflect.Pointer {
 			ft = ft.Elem()
 		}
 
@@ -283,7 +283,7 @@ func renderYAMLSchema(t reflect.Type, indent int) string {
 // renderStructSliceElement renders the fields of a struct as a YAML list item
 // (first field prefixed with "- ", subsequent fields indented to align).
 func renderStructSliceElement(t reflect.Type, indent int) string {
-	for t.Kind() == reflect.Ptr {
+	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	if t.Kind() != reflect.Struct {
@@ -309,7 +309,7 @@ func renderStructSliceElement(t reflect.Type, indent int) string {
 		def := f.Tag.Get("default")
 		req := f.Tag.Get("required") == "true"
 		ft := f.Type
-		for ft.Kind() == reflect.Ptr {
+		for ft.Kind() == reflect.Pointer {
 			ft = ft.Elem()
 		}
 
@@ -384,7 +384,7 @@ func yamlFieldKey(f reflect.StructField) string {
 
 // yamlTypeName returns a human-readable type placeholder for YAML schema output.
 func yamlTypeName(t reflect.Type) string {
-	for t.Kind() == reflect.Ptr {
+	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	switch t.Kind() {

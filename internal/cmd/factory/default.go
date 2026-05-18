@@ -3,7 +3,6 @@ package factory
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -108,22 +107,22 @@ func newLogger(f *cmdutil.Factory) (*logger.Logger, error) {
 	}
 	monitoringCfg := settings.Monitoring
 
-	// Build OTEL config from settings if enabled
+	// Build OTEL config from settings if enabled. CLI runs on the host and
+	// reaches the collector via its host-published OTLP/gRPC port —
+	// logger.New uses otlploggrpc (see internal/logger/logger.go::
+	// newOtelProvider). Dialing the OtelCollectorPort (HTTP, 4318) with
+	// a gRPC exporter returns 415 Unsupported Media Type and silently
+	// drops every record; use OtelGRPCPort (4317) instead.
 	var otelCfg *logger.OtelOptions
 	if loggingCfg.Otel.Enabled != nil && *loggingCfg.Otel.Enabled {
-		endpoint := monitoringCfg.OtelCollectorEndpoint
-		endpoint = strings.TrimSpace(endpoint)
-		if i := strings.Index(endpoint, "://"); i >= 0 {
-			endpoint = endpoint[i+3:]
-		}
-		if endpoint != "" {
-			otelCfg = &logger.OtelOptions{
-				Endpoint:       endpoint,
-				Insecure:       true,
-				Timeout:        time.Duration(loggingCfg.Otel.TimeoutSeconds) * time.Second,
-				MaxQueueSize:   loggingCfg.Otel.MaxQueueSize,
-				ExportInterval: time.Duration(loggingCfg.Otel.ExportIntervalSeconds) * time.Second,
-			}
+		endpoint := fmt.Sprintf("%s:%d", monitoringCfg.OtelCollectorHost, monitoringCfg.OtelGRPCPort)
+		otelCfg = &logger.OtelOptions{
+			Endpoint:       endpoint,
+			Insecure:       true,
+			Timeout:        time.Duration(loggingCfg.Otel.TimeoutSeconds) * time.Second,
+			MaxQueueSize:   loggingCfg.Otel.MaxQueueSize,
+			ExportInterval: time.Duration(loggingCfg.Otel.ExportIntervalSeconds) * time.Second,
+			ServiceName:    "clawker-cli",
 		}
 	}
 

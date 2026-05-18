@@ -13,8 +13,11 @@ import (
 
 	"github.com/rs/zerolog"
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
+	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
+	sdkresource "go.opentelemetry.io/otel/sdk/resource"
+	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
+	"google.golang.org/grpc/credentials"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
@@ -46,30 +49,67 @@ type Options struct {
 
 	// Otel configures the OTEL zerolog bridge. Nil disables OTEL export.
 	Otel *OtelOptions
+
+	// EchoStdout mirrors every record to os.Stdout in addition to the
+	// file (and OTEL bridge if configured). Intended for containerized
+	// daemons whose structured logs should also surface in
+	// `docker logs <container>`; host-side CLI logging leaves this off.
+	EchoStdout bool
 }
 
-// OtelOptions configures the OTLP HTTP log exporter.
+// OtelOptions configures the OTLP/gRPC log exporter. The transport is
+// gRPC because the collector's trusted-infra receiver speaks gRPC only
+// — an HTTP exporter hits it with the wrong content-type and the
+// receiver returns 415 Unsupported Media Type, silently dropping every
+// record. See newOtelProvider for the receiver-side rationale.
 type OtelOptions struct {
-	Endpoint       string        // e.g. "localhost:4318"
+	Endpoint       string        // e.g. "localhost:4317"
 	Insecure       bool          // default: true (local collector)
 	Timeout        time.Duration // export timeout
 	MaxQueueSize   int           // batch processor queue size
 	ExportInterval time.Duration // batch export interval
 
-	// mTLS configuration. When all three paths are non-empty, the
-	// exporter presents a client certificate during the TLS handshake
-	// and pins the server's CA. This is how the clawker-cp daemon
-	// pushes to the monitoring stack's CP-only OTLP receiver — agents
-	// on clawker-net cannot present a CLI-signed cert and so the
-	// handshake fails, regardless of whether they reached the port.
+	// ServiceName stamps `service.name` on the Resource attached to every
+	// emitted log record. Required when the collector routes on this
+	// attribute (routing/trusted, routing/untrusted in otel-config.yaml).
+	// Empty leaves the SDK default ("unknown_service:<binary>") which is
+	// dropped silently at the routing connector. Callers: "clawker-cli"
+	// (host CLI), "clawker-cp" (control plane).
+	ServiceName string
+
+	// mTLS configuration. Two mutually-exclusive shapes:
 	//
-	// CACertFile is the PEM bundle the exporter trusts for the server
-	// cert. ClientCertFile + ClientKeyFile are the exporter's own
-	// keypair. If any one of the three is set, all three must be set;
-	// Insecure is ignored when these are populated.
+	//   - File-path triple (CACertFile + ClientCertFile + ClientKeyFile).
+	//     The exporter reads PEM material from disk at New time. No
+	//     in-tree consumer today — clawker-cp uses the TLSConfig path
+	//     below, clawker-cli runs Insecure=true on the untrusted otlp
+	//     receiver (CLI leaves chain to the CLI root, not the infra
+	//     intermediate, so they cannot complete the otlp/infra
+	//     handshake), and Envoy/CoreDNS read their bind-mounted PEM via
+	//     their own native config (not this struct). Shape preserved
+	//     for any future on-disk-cert consumer. If any one of the three
+	//     is set, all three must be set.
+	//
+	//   - In-process tls.Config. The exporter is given a fully-formed
+	//     *tls.Config (typically built by
+	//     internal/controlplane/otelcerts.Service.LoadTLSConfig with a
+	//     GetClientCertificate hook that re-mints on every handshake).
+	//     Used by the clawker-cp daemon's own OTel exporter so the leaf
+	//     never lands on disk and rotation matches the connection
+	//     lifecycle.
+	//
+	// At most one shape may be set. Insecure is ignored when either is
+	// populated.
 	CACertFile     string
 	ClientCertFile string
 	ClientKeyFile  string
+
+	// TLSConfig is the in-process counterpart to the file-path triple.
+	// When non-nil, the exporter uses it directly and the file-path
+	// fields are not consulted. Construction is the caller's
+	// responsibility — see internal/controlplane/otelcerts for the
+	// trusted-lane wiring used by clawker-cp.
+	TLSConfig *tls.Config
 }
 
 func (o *Options) maxSizeMB() int {
@@ -148,7 +188,19 @@ func New(opts Options) (*Logger, error) {
 	// and re-emits each record as an OTEL log.Record with all
 	// structured fields preserved (otelzerolog's bridge can't read
 	// fields off a zerolog.Event — see otel_writer.go).
-	var writer io.Writer = fw
+	// Compose the sinks bottom-up: file is always present; stdout is
+	// added when EchoStdout is set so daemon logs surface in
+	// `docker logs <container>`; OTEL bridge is appended last when
+	// configured.
+	sinks := []io.Writer{fw}
+	if opts.EchoStdout {
+		// Wrap os.Stdout so transient stdout failures (closed FD,
+		// pipe break in a `docker logs` consumer) don't shadow the
+		// success of the other sinks through MultiLevelWriter's
+		// first-error-wins semantics. File + OTEL sinks stay
+		// authoritative; stdout is best-effort triage output.
+		sinks = append(sinks, absorbingWriter{w: os.Stdout})
+	}
 	l := &Logger{fw: fw}
 
 	if opts.Otel != nil {
@@ -163,9 +215,15 @@ func New(opts Options) (*Logger, error) {
 			fmt.Fprintf(os.Stderr, "warning: OTEL bridge unavailable, continuing file-only: %v\n", err)
 		} else {
 			l.provider = provider
-			otelW := newOtelLogWriter(provider.Logger("clawker"))
-			writer = zerolog.MultiLevelWriter(fw, otelW)
+			sinks = append(sinks, newOtelLogWriter(provider.Logger("clawker")))
 		}
+	}
+
+	var writer io.Writer
+	if len(sinks) == 1 {
+		writer = sinks[0]
+	} else {
+		writer = zerolog.MultiLevelWriter(sinks...)
 	}
 
 	zl := zerolog.New(writer).
@@ -262,19 +320,47 @@ func (l *Logger) Close() error {
 	return firstErr
 }
 
-// newOtelProvider creates an OTLP HTTP log exporter and batch processor.
+// absorbingWriter forwards writes to an inner writer but always
+// returns a successful (n=len(p), err=nil) result. Composed inside
+// MultiLevelWriter so a failing best-effort sink (stdout) can't
+// shadow successful writes to the authoritative sinks (file, OTEL).
+type absorbingWriter struct {
+	w io.Writer
+}
+
+func (a absorbingWriter) Write(p []byte) (int, error) {
+	_, _ = a.w.Write(p)
+	return len(p), nil
+}
+
+// newOtelProvider creates an OTLP/gRPC log exporter and batch processor.
+// gRPC is the chosen transport for the trusted infra lane because the
+// collector's otlp/infra receiver declares grpc only — an HTTP exporter
+// hits the gRPC server with a non-grpc content-type and the receiver
+// returns 415 Unsupported Media Type, silently dropping every record.
 func newOtelProvider(cfg *OtelOptions, fileLogger zerolog.Logger) (*sdklog.LoggerProvider, error) {
 	// Route OTEL SDK internal errors to the file logger instead of stderr.
 	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
 		fileLogger.Warn().Err(err).Msg("otel sdk error")
 	}))
 
-	exporterOpts := []otlploghttp.Option{
-		otlploghttp.WithEndpoint(cfg.Endpoint),
+	exporterOpts := []otlploggrpc.Option{
+		otlploggrpc.WithEndpoint(cfg.Endpoint),
 	}
 
+	hasPathTriple := cfg.ClientCertFile != "" || cfg.ClientKeyFile != "" || cfg.CACertFile != ""
 	switch {
-	case cfg.ClientCertFile != "" || cfg.ClientKeyFile != "" || cfg.CACertFile != "":
+	case cfg.TLSConfig != nil && hasPathTriple:
+		// Path triple and TLSConfig together are a wiring bug — the
+		// caller has two trust anchors and we'd silently pick one. Fail
+		// loud so the operator can resolve the conflict.
+		return nil, fmt.Errorf("OTEL mTLS: TLSConfig and file-path triple are mutually exclusive")
+	case cfg.TLSConfig != nil:
+		// In-process tls.Config — typically minted by
+		// internal/controlplane/otelcerts.Service.LoadTLSConfig with a
+		// GetClientCertificate hook that re-mints per handshake.
+		exporterOpts = append(exporterOpts, otlploggrpc.WithTLSCredentials(credentials.NewTLS(cfg.TLSConfig)))
+	case hasPathTriple:
 		// All three required when any are set — partial config is a
 		// configuration bug rather than a soft fallback.
 		if cfg.ClientCertFile == "" || cfg.ClientKeyFile == "" || cfg.CACertFile == "" {
@@ -284,16 +370,16 @@ func newOtelProvider(cfg *OtelOptions, fileLogger zerolog.Logger) (*sdklog.Logge
 		if err != nil {
 			return nil, fmt.Errorf("OTEL mTLS config: %w", err)
 		}
-		exporterOpts = append(exporterOpts, otlploghttp.WithTLSClientConfig(tlsCfg))
+		exporterOpts = append(exporterOpts, otlploggrpc.WithTLSCredentials(credentials.NewTLS(tlsCfg)))
 	case cfg.Insecure:
-		exporterOpts = append(exporterOpts, otlploghttp.WithInsecure())
+		exporterOpts = append(exporterOpts, otlploggrpc.WithInsecure())
 	}
 
 	if cfg.Timeout > 0 {
-		exporterOpts = append(exporterOpts, otlploghttp.WithTimeout(cfg.Timeout))
+		exporterOpts = append(exporterOpts, otlploggrpc.WithTimeout(cfg.Timeout))
 	}
 
-	exporter, err := otlploghttp.New(context.Background(), exporterOpts...)
+	exporter, err := otlploggrpc.New(context.Background(), exporterOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("create OTLP log exporter: %w", err)
 	}
@@ -307,7 +393,18 @@ func newOtelProvider(cfg *OtelOptions, fileLogger zerolog.Logger) (*sdklog.Logge
 	}
 
 	processor := sdklog.NewBatchProcessor(exporter, processorOpts...)
-	return sdklog.NewLoggerProvider(sdklog.WithProcessor(processor)), nil
+
+	providerOpts := []sdklog.LoggerProviderOption{sdklog.WithProcessor(processor)}
+	if cfg.ServiceName != "" {
+		res, err := sdkresource.Merge(sdkresource.Default(), sdkresource.NewSchemaless(
+			semconv.ServiceName(cfg.ServiceName),
+		))
+		if err != nil {
+			return nil, fmt.Errorf("build OTEL resource: %w", err)
+		}
+		providerOpts = append(providerOpts, sdklog.WithResource(res))
+	}
+	return sdklog.NewLoggerProvider(providerOpts...), nil
 }
 
 // buildOtelMTLSConfig loads the client keypair and trust roots for the

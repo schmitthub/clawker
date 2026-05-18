@@ -233,6 +233,79 @@ func TestNew_NoStderrOutput(t *testing.T) {
 	}
 }
 
+// TestNew_EchoStdout_MirrorsRecords pins the contract that
+// containerized daemons (clawker-cp) get every log record copied to
+// os.Stdout so `docker logs <container>` is non-empty. A regression
+// that drops the os.Stdout sink would silently brick operator
+// triage; no other test exercises this property.
+func TestNew_EchoStdout_MirrorsRecords(t *testing.T) {
+	dir := t.TempDir()
+
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stdout = w
+
+	l, err := New(Options{LogsDir: dir, MaxSizeMB: 1, EchoStdout: true})
+	if err != nil {
+		os.Stdout = oldStdout
+		t.Fatalf("New failed: %v", err)
+	}
+	l.Info().Str("event", "ready").Msg("clawker-cp ready")
+	l.Close()
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	buf := make([]byte, 4096)
+	n, _ := r.Read(buf)
+	r.Close()
+
+	got := string(buf[:n])
+	if !strings.Contains(got, "clawker-cp ready") {
+		t.Errorf("EchoStdout=true must mirror records to os.Stdout; got: %q", got)
+	}
+	if !strings.Contains(got, `"event":"ready"`) {
+		t.Errorf("EchoStdout must preserve structured fields; got: %q", got)
+	}
+}
+
+// TestNew_EchoStdoutOff_KeepsStdoutQuiet pins the host-side CLI
+// contract: stdout is reserved for command output and must not
+// receive logger records when EchoStdout is unset. Default Options
+// must remain a host-safe default.
+func TestNew_EchoStdoutOff_KeepsStdoutQuiet(t *testing.T) {
+	dir := t.TempDir()
+
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stdout = w
+
+	l, err := New(Options{LogsDir: dir, MaxSizeMB: 1})
+	if err != nil {
+		os.Stdout = oldStdout
+		t.Fatalf("New failed: %v", err)
+	}
+	l.Info().Msg("should not appear on stdout")
+	l.Close()
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	buf := make([]byte, 4096)
+	n, _ := r.Read(buf)
+	r.Close()
+
+	if n > 0 {
+		t.Errorf("stdout should be empty without EchoStdout, got: %q", string(buf[:n]))
+	}
+}
+
 func TestNew_OtelFallback(t *testing.T) {
 	dir := t.TempDir()
 

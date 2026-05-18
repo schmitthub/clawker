@@ -9,7 +9,7 @@
 //
 // What stays here (genuinely config-backed):
 //   - RequiredFirewallRules() — backed by requiredFirewallRules in defaults.go
-//   - GrafanaURL/JaegerURL/PrometheusURL — read MonitoringConfig() ports
+//   - OpenSearchURL/OpenSearchDashboardsURL/PrometheusURL — read MonitoringConfig() ports
 //   - The Mode type and ModeBind/ModeSnapshot values (config-domain enum;
 //     ParseMode lives in schema.go)
 
@@ -224,20 +224,59 @@ func (c *configImpl) ContainerUID() int { return consts.ContainerUID }
 // Deprecated: use consts.ContainerGID.
 func (c *configImpl) ContainerGID() int { return consts.ContainerGID }
 
-// GrafanaURL returns the Grafana dashboard URL for the given host.
-// Uses the port from the loaded settings file.
-func (c *configImpl) GrafanaURL(host string, https bool) string {
-	return consts.ServiceURL(host, c.MonitoringConfig().GrafanaPort, https)
+// OpenSearchURL returns the OpenSearch REST API URL on clawker-net
+// (e.g. http://opensearch-node:9200). **In-cluster only** — the
+// hostname is Docker-DNS-resolvable from containers attached to
+// clawker-net, NOT from the host. For host-side display, build a
+// http://127.0.0.1:<port> URL from MonitoringConfig().OpenSearchPort
+// directly (the settings port drives both the in-cluster listener and
+// the host publish, so the port number matches).
+func (c *configImpl) OpenSearchURL() string {
+	return consts.ServiceURL(consts.MonitoringServiceOpenSearchNode, c.MonitoringConfig().OpenSearchPort, false)
 }
 
-// JaegerURL returns the Jaeger UI URL for the given host.
-// Uses the port from the loaded settings file.
-func (c *configImpl) JaegerURL(host string, https bool) string {
-	return consts.ServiceURL(host, c.MonitoringConfig().JaegerPort, https)
+// OpenSearchDashboardsURL returns the OpenSearch Dashboards UI URL on
+// clawker-net. **In-cluster only** — see [OpenSearchURL] for the host
+// access pattern.
+func (c *configImpl) OpenSearchDashboardsURL() string {
+	return consts.ServiceURL(consts.MonitoringServiceOpenSearchDashboards, c.MonitoringConfig().OpenSearchDashboardsPort, false)
 }
 
-// PrometheusURL returns the Prometheus UI URL for the given host.
-// Uses the port from the loaded settings file.
-func (c *configImpl) PrometheusURL(host string, https bool) string {
-	return consts.ServiceURL(host, c.MonitoringConfig().PrometheusPort, https)
+// PrometheusURL returns the Prometheus UI URL on clawker-net.
+// **In-cluster only** — see [OpenSearchURL] for the host access
+// pattern.
+func (c *configImpl) PrometheusURL() string {
+	return consts.ServiceURL(consts.MonitoringServicePrometheus, c.MonitoringConfig().PrometheusPort, false)
+}
+
+// OtelCollectorURL returns the OTLP collector base URL on clawker-net
+// (no path). **In-cluster only** — agents on clawker-net push to this
+// URL + a path; the full per-signal endpoints are composed by
+// [OtelLogsEndpoint] (and any future per-signal accessor) so callers
+// never concatenate paths themselves.
+func (c *configImpl) OtelCollectorURL() string {
+	return consts.ServiceURL(consts.MonitoringServiceOtelCollector, c.MonitoringConfig().OtelCollectorPort, false)
+}
+
+// OtelMetricsEndpoint returns the full URL of the otel-collector's
+// OTLP/HTTP metrics receiver. The matching client-side env var is
+// OTEL_EXPORTER_OTLP_METRICS_ENDPOINT.
+//
+// Direct push to Prometheus' native OTLP receiver is also supported
+// on the Prom side ([PrometheusURL] + Telemetry.PrometheusOTLPPath)
+// and saves a hop, but Prometheus' /api/v1/metadata endpoint excludes
+// anything ingested via OTLP/remote-write (upstream limitation), so
+// consumers that depend on metric metadata (OpenSearch Dashboards'
+// Observability Metrics catalog, etc.) silently miss those metrics.
+// This default endpoint routes via the collector so metadata lands
+// via its prometheus exporter's scrape exposition format.
+func (c *configImpl) OtelMetricsEndpoint() string {
+	return c.OtelCollectorURL() + c.MonitoringConfig().Telemetry.MetricsPath
+}
+
+// OtelLogsEndpoint returns the full URL Claude Code's logs exporter
+// targets on the otel-collector. The matching env var on the container
+// side is OTEL_EXPORTER_OTLP_LOGS_ENDPOINT.
+func (c *configImpl) OtelLogsEndpoint() string {
+	return c.OtelCollectorURL() + c.MonitoringConfig().Telemetry.LogsPath
 }

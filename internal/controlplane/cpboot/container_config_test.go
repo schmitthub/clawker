@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/testenv"
@@ -270,9 +269,18 @@ func TestCPContainer_ExtraHostsHostGateway(t *testing.T) {
 	require.Contains(t, cpConfig.ExtraHosts, "host.docker.internal:host-gateway")
 }
 
-// TestCPContainer_OtelLogsEnv_Emitted — when monitoring.otel_cp_port
-// is non-zero (default), all six OTLP env vars land in the container
-// config, including the mTLS triple.
+// TestCPContainer_OtelLogsEnv_Emitted — when monitoring.otel_infra_port
+// is non-zero (default), the OTLP endpoint env var lands in the
+// container config. The transport-specific env vars
+// (OTEL_EXPORTER_OTLP_PROTOCOL, OTEL_EXPORTER_OTLP_LOGS_ENDPOINT with
+// the /v1/logs HTTP path) are deliberately absent: the CP wires
+// otlploggrpc in-process and the collector's otlp/infra receiver only
+// opens the grpc: protocol — setting them would be misleading. Client
+// cert/key/CA env vars are also absent — the CP-side exporter wires
+// its TLSConfig in-process via internal/controlplane/otelcerts.
+// Reading CLI-root-direct cert paths from env would silently undo the
+// trust-anchor split (agents hold CLI-root-direct leaves and could
+// forge service.name=clawker-cp).
 func TestCPContainer_OtelLogsEnv_Emitted(t *testing.T) {
 	testenv.New(t)
 	cfg := configmocks.NewBlankConfig()
@@ -280,38 +288,28 @@ func TestCPContainer_OtelLogsEnv_Emitted(t *testing.T) {
 	cpConfig, err := BuildCPContainerConfig(cfg, testCPOpts())
 	require.NoError(t, err)
 
-	expected := map[string]bool{
-		"OTEL_EXPORTER_OTLP_ENDPOINT":           false,
-		"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT":      false,
-		"OTEL_EXPORTER_OTLP_PROTOCOL":           false,
-		"OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE": false,
-		"OTEL_EXPORTER_OTLP_CLIENT_KEY":         false,
-		"OTEL_EXPORTER_OTLP_CERTIFICATE":        false,
+	wantPresent := map[string]bool{
+		"OTEL_EXPORTER_OTLP_ENDPOINT": false,
+	}
+	wantAbsent := []string{
+		"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+		"OTEL_EXPORTER_OTLP_PROTOCOL",
+		"OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE",
+		"OTEL_EXPORTER_OTLP_CLIENT_KEY",
+		"OTEL_EXPORTER_OTLP_CERTIFICATE",
 	}
 	for _, e := range cpConfig.Env {
-		for k := range expected {
+		for k := range wantPresent {
 			if strings.HasPrefix(e, k+"=") {
-				expected[k] = true
+				wantPresent[k] = true
 			}
 		}
+		for _, k := range wantAbsent {
+			assert.False(t, strings.HasPrefix(e, k+"="),
+				"%s must NOT be injected via env — CP wires OTLP/gRPC + TLSConfig in-process", k)
+		}
 	}
-	for k, found := range expected {
+	for k, found := range wantPresent {
 		assert.True(t, found, "missing OTEL env var %s in CP container env", k)
 	}
-}
-
-// TestOtelLogsEnv_NilWhenPortZero — if monitoring.otel_cp_port <= 0
-// (user hasn't run `clawker monitor init`), no OTLP env vars are
-// emitted. The daemon then runs file-only.
-func TestOtelLogsEnv_NilWhenPortZero(t *testing.T) {
-	cfg, err := config.NewFromString("", "monitoring:\n  otel_cp_port: 0\n")
-	require.NoError(t, err)
-	require.Nil(t, otelLogsEnv(cfg))
-}
-
-// TestTelemetryPath_FallbackPreference — telemetryPath uses the
-// configured value when non-empty, otherwise the fallback.
-func TestTelemetryPath_FallbackPreference(t *testing.T) {
-	require.Equal(t, "/v1/logs", telemetryPath("", "/v1/logs"))
-	require.Equal(t, "/custom", telemetryPath("/custom", "/v1/logs"))
 }

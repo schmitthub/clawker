@@ -100,9 +100,6 @@ var _ config.Config = &ConfigMock{}
 //			GetProjectRootFunc: func() (string, error) {
 //				panic("mock out the GetProjectRoot method")
 //			},
-//			GrafanaURLFunc: func(host string, https bool) string {
-//				panic("mock out the GrafanaURL method")
-//			},
 //			HostProxyConfigFunc: func() config.HostProxyConfig {
 //				panic("mock out the HostProxyConfig method")
 //			},
@@ -111,9 +108,6 @@ var _ config.Config = &ConfigMock{}
 //			},
 //			HostProxyPIDFilePathFunc: func() (string, error) {
 //				panic("mock out the HostProxyPIDFilePath method")
-//			},
-//			JaegerURLFunc: func(host string, https bool) string {
-//				panic("mock out the JaegerURL method")
 //			},
 //			LabelAgentFunc: func() string {
 //				panic("mock out the LabelAgent method")
@@ -175,6 +169,21 @@ var _ config.Config = &ConfigMock{}
 //			MonitoringConfigFunc: func() config.MonitoringConfig {
 //				panic("mock out the MonitoringConfig method")
 //			},
+//			OpenSearchDashboardsURLFunc: func() string {
+//				panic("mock out the OpenSearchDashboardsURL method")
+//			},
+//			OpenSearchURLFunc: func() string {
+//				panic("mock out the OpenSearchURL method")
+//			},
+//			OtelCollectorURLFunc: func() string {
+//				panic("mock out the OtelCollectorURL method")
+//			},
+//			OtelLogsEndpointFunc: func() string {
+//				panic("mock out the OtelLogsEndpoint method")
+//			},
+//			OtelMetricsEndpointFunc: func() string {
+//				panic("mock out the OtelMetricsEndpoint method")
+//			},
 //			PidsSubdirFunc: func() (string, error) {
 //				panic("mock out the PidsSubdir method")
 //			},
@@ -190,7 +199,7 @@ var _ config.Config = &ConfigMock{}
 //			ProjectStoreFunc: func() *storage.Store[config.Project] {
 //				panic("mock out the ProjectStore method")
 //			},
-//			PrometheusURLFunc: func(host string, https bool) string {
+//			PrometheusURLFunc: func() string {
 //				panic("mock out the PrometheusURL method")
 //			},
 //			PurposeAgentFunc: func() string {
@@ -317,9 +326,6 @@ type ConfigMock struct {
 	// GetProjectRootFunc mocks the GetProjectRoot method.
 	GetProjectRootFunc func() (string, error)
 
-	// GrafanaURLFunc mocks the GrafanaURL method.
-	GrafanaURLFunc func(host string, https bool) string
-
 	// HostProxyConfigFunc mocks the HostProxyConfig method.
 	HostProxyConfigFunc func() config.HostProxyConfig
 
@@ -328,9 +334,6 @@ type ConfigMock struct {
 
 	// HostProxyPIDFilePathFunc mocks the HostProxyPIDFilePath method.
 	HostProxyPIDFilePathFunc func() (string, error)
-
-	// JaegerURLFunc mocks the JaegerURL method.
-	JaegerURLFunc func(host string, https bool) string
 
 	// LabelAgentFunc mocks the LabelAgent method.
 	LabelAgentFunc func() string
@@ -392,6 +395,21 @@ type ConfigMock struct {
 	// MonitoringConfigFunc mocks the MonitoringConfig method.
 	MonitoringConfigFunc func() config.MonitoringConfig
 
+	// OpenSearchDashboardsURLFunc mocks the OpenSearchDashboardsURL method.
+	OpenSearchDashboardsURLFunc func() string
+
+	// OpenSearchURLFunc mocks the OpenSearchURL method.
+	OpenSearchURLFunc func() string
+
+	// OtelCollectorURLFunc mocks the OtelCollectorURL method.
+	OtelCollectorURLFunc func() string
+
+	// OtelLogsEndpointFunc mocks the OtelLogsEndpoint method.
+	OtelLogsEndpointFunc func() string
+
+	// OtelMetricsEndpointFunc mocks the OtelMetricsEndpoint method.
+	OtelMetricsEndpointFunc func() string
+
 	// PidsSubdirFunc mocks the PidsSubdir method.
 	PidsSubdirFunc func() (string, error)
 
@@ -408,7 +426,7 @@ type ConfigMock struct {
 	ProjectStoreFunc func() *storage.Store[config.Project]
 
 	// PrometheusURLFunc mocks the PrometheusURL method.
-	PrometheusURLFunc func(host string, https bool) string
+	PrometheusURLFunc func() string
 
 	// PurposeAgentFunc mocks the PurposeAgent method.
 	PurposeAgentFunc func() string
@@ -531,13 +549,6 @@ type ConfigMock struct {
 		// GetProjectRoot holds details about calls to the GetProjectRoot method.
 		GetProjectRoot []struct {
 		}
-		// GrafanaURL holds details about calls to the GrafanaURL method.
-		GrafanaURL []struct {
-			// Host is the host argument value.
-			Host string
-			// HTTPS is the https argument value.
-			HTTPS bool
-		}
 		// HostProxyConfig holds details about calls to the HostProxyConfig method.
 		HostProxyConfig []struct {
 		}
@@ -546,13 +557,6 @@ type ConfigMock struct {
 		}
 		// HostProxyPIDFilePath holds details about calls to the HostProxyPIDFilePath method.
 		HostProxyPIDFilePath []struct {
-		}
-		// JaegerURL holds details about calls to the JaegerURL method.
-		JaegerURL []struct {
-			// Host is the host argument value.
-			Host string
-			// HTTPS is the https argument value.
-			HTTPS bool
 		}
 		// LabelAgent holds details about calls to the LabelAgent method.
 		LabelAgent []struct {
@@ -614,6 +618,21 @@ type ConfigMock struct {
 		// MonitoringConfig holds details about calls to the MonitoringConfig method.
 		MonitoringConfig []struct {
 		}
+		// OpenSearchDashboardsURL holds details about calls to the OpenSearchDashboardsURL method.
+		OpenSearchDashboardsURL []struct {
+		}
+		// OpenSearchURL holds details about calls to the OpenSearchURL method.
+		OpenSearchURL []struct {
+		}
+		// OtelCollectorURL holds details about calls to the OtelCollectorURL method.
+		OtelCollectorURL []struct {
+		}
+		// OtelLogsEndpoint holds details about calls to the OtelLogsEndpoint method.
+		OtelLogsEndpoint []struct {
+		}
+		// OtelMetricsEndpoint holds details about calls to the OtelMetricsEndpoint method.
+		OtelMetricsEndpoint []struct {
+		}
 		// PidsSubdir holds details about calls to the PidsSubdir method.
 		PidsSubdir []struct {
 		}
@@ -631,10 +650,6 @@ type ConfigMock struct {
 		}
 		// PrometheusURL holds details about calls to the PrometheusURL method.
 		PrometheusURL []struct {
-			// Host is the host argument value.
-			Host string
-			// HTTPS is the https argument value.
-			HTTPS bool
 		}
 		// PurposeAgent holds details about calls to the PurposeAgent method.
 		PurposeAgent []struct {
@@ -700,11 +715,9 @@ type ConfigMock struct {
 	lockFirewallDataSubdir      sync.RWMutex
 	lockGetProjectIgnoreFile    sync.RWMutex
 	lockGetProjectRoot          sync.RWMutex
-	lockGrafanaURL              sync.RWMutex
 	lockHostProxyConfig         sync.RWMutex
 	lockHostProxyLogFilePath    sync.RWMutex
 	lockHostProxyPIDFilePath    sync.RWMutex
-	lockJaegerURL               sync.RWMutex
 	lockLabelAgent              sync.RWMutex
 	lockLabelBaseImage          sync.RWMutex
 	lockLabelCreated            sync.RWMutex
@@ -725,6 +738,11 @@ type ConfigMock struct {
 	lockManagedLabelValue       sync.RWMutex
 	lockMonitorSubdir           sync.RWMutex
 	lockMonitoringConfig        sync.RWMutex
+	lockOpenSearchDashboardsURL sync.RWMutex
+	lockOpenSearchURL           sync.RWMutex
+	lockOtelCollectorURL        sync.RWMutex
+	lockOtelLogsEndpoint        sync.RWMutex
+	lockOtelMetricsEndpoint     sync.RWMutex
 	lockPidsSubdir              sync.RWMutex
 	lockProject                 sync.RWMutex
 	lockProjectConfigFileName   sync.RWMutex
@@ -1479,42 +1497,6 @@ func (mock *ConfigMock) GetProjectRootCalls() []struct {
 	return calls
 }
 
-// GrafanaURL calls GrafanaURLFunc.
-func (mock *ConfigMock) GrafanaURL(host string, https bool) string {
-	if mock.GrafanaURLFunc == nil {
-		panic("ConfigMock.GrafanaURLFunc: method is nil but Config.GrafanaURL was just called")
-	}
-	callInfo := struct {
-		Host  string
-		HTTPS bool
-	}{
-		Host:  host,
-		HTTPS: https,
-	}
-	mock.lockGrafanaURL.Lock()
-	mock.calls.GrafanaURL = append(mock.calls.GrafanaURL, callInfo)
-	mock.lockGrafanaURL.Unlock()
-	return mock.GrafanaURLFunc(host, https)
-}
-
-// GrafanaURLCalls gets all the calls that were made to GrafanaURL.
-// Check the length with:
-//
-//	len(mockedConfig.GrafanaURLCalls())
-func (mock *ConfigMock) GrafanaURLCalls() []struct {
-	Host  string
-	HTTPS bool
-} {
-	var calls []struct {
-		Host  string
-		HTTPS bool
-	}
-	mock.lockGrafanaURL.RLock()
-	calls = mock.calls.GrafanaURL
-	mock.lockGrafanaURL.RUnlock()
-	return calls
-}
-
 // HostProxyConfig calls HostProxyConfigFunc.
 func (mock *ConfigMock) HostProxyConfig() config.HostProxyConfig {
 	if mock.HostProxyConfigFunc == nil {
@@ -1593,42 +1575,6 @@ func (mock *ConfigMock) HostProxyPIDFilePathCalls() []struct {
 	mock.lockHostProxyPIDFilePath.RLock()
 	calls = mock.calls.HostProxyPIDFilePath
 	mock.lockHostProxyPIDFilePath.RUnlock()
-	return calls
-}
-
-// JaegerURL calls JaegerURLFunc.
-func (mock *ConfigMock) JaegerURL(host string, https bool) string {
-	if mock.JaegerURLFunc == nil {
-		panic("ConfigMock.JaegerURLFunc: method is nil but Config.JaegerURL was just called")
-	}
-	callInfo := struct {
-		Host  string
-		HTTPS bool
-	}{
-		Host:  host,
-		HTTPS: https,
-	}
-	mock.lockJaegerURL.Lock()
-	mock.calls.JaegerURL = append(mock.calls.JaegerURL, callInfo)
-	mock.lockJaegerURL.Unlock()
-	return mock.JaegerURLFunc(host, https)
-}
-
-// JaegerURLCalls gets all the calls that were made to JaegerURL.
-// Check the length with:
-//
-//	len(mockedConfig.JaegerURLCalls())
-func (mock *ConfigMock) JaegerURLCalls() []struct {
-	Host  string
-	HTTPS bool
-} {
-	var calls []struct {
-		Host  string
-		HTTPS bool
-	}
-	mock.lockJaegerURL.RLock()
-	calls = mock.calls.JaegerURL
-	mock.lockJaegerURL.RUnlock()
 	return calls
 }
 
@@ -2172,6 +2118,141 @@ func (mock *ConfigMock) MonitoringConfigCalls() []struct {
 	return calls
 }
 
+// OpenSearchDashboardsURL calls OpenSearchDashboardsURLFunc.
+func (mock *ConfigMock) OpenSearchDashboardsURL() string {
+	if mock.OpenSearchDashboardsURLFunc == nil {
+		panic("ConfigMock.OpenSearchDashboardsURLFunc: method is nil but Config.OpenSearchDashboardsURL was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockOpenSearchDashboardsURL.Lock()
+	mock.calls.OpenSearchDashboardsURL = append(mock.calls.OpenSearchDashboardsURL, callInfo)
+	mock.lockOpenSearchDashboardsURL.Unlock()
+	return mock.OpenSearchDashboardsURLFunc()
+}
+
+// OpenSearchDashboardsURLCalls gets all the calls that were made to OpenSearchDashboardsURL.
+// Check the length with:
+//
+//	len(mockedConfig.OpenSearchDashboardsURLCalls())
+func (mock *ConfigMock) OpenSearchDashboardsURLCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockOpenSearchDashboardsURL.RLock()
+	calls = mock.calls.OpenSearchDashboardsURL
+	mock.lockOpenSearchDashboardsURL.RUnlock()
+	return calls
+}
+
+// OpenSearchURL calls OpenSearchURLFunc.
+func (mock *ConfigMock) OpenSearchURL() string {
+	if mock.OpenSearchURLFunc == nil {
+		panic("ConfigMock.OpenSearchURLFunc: method is nil but Config.OpenSearchURL was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockOpenSearchURL.Lock()
+	mock.calls.OpenSearchURL = append(mock.calls.OpenSearchURL, callInfo)
+	mock.lockOpenSearchURL.Unlock()
+	return mock.OpenSearchURLFunc()
+}
+
+// OpenSearchURLCalls gets all the calls that were made to OpenSearchURL.
+// Check the length with:
+//
+//	len(mockedConfig.OpenSearchURLCalls())
+func (mock *ConfigMock) OpenSearchURLCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockOpenSearchURL.RLock()
+	calls = mock.calls.OpenSearchURL
+	mock.lockOpenSearchURL.RUnlock()
+	return calls
+}
+
+// OtelCollectorURL calls OtelCollectorURLFunc.
+func (mock *ConfigMock) OtelCollectorURL() string {
+	if mock.OtelCollectorURLFunc == nil {
+		panic("ConfigMock.OtelCollectorURLFunc: method is nil but Config.OtelCollectorURL was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockOtelCollectorURL.Lock()
+	mock.calls.OtelCollectorURL = append(mock.calls.OtelCollectorURL, callInfo)
+	mock.lockOtelCollectorURL.Unlock()
+	return mock.OtelCollectorURLFunc()
+}
+
+// OtelCollectorURLCalls gets all the calls that were made to OtelCollectorURL.
+// Check the length with:
+//
+//	len(mockedConfig.OtelCollectorURLCalls())
+func (mock *ConfigMock) OtelCollectorURLCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockOtelCollectorURL.RLock()
+	calls = mock.calls.OtelCollectorURL
+	mock.lockOtelCollectorURL.RUnlock()
+	return calls
+}
+
+// OtelLogsEndpoint calls OtelLogsEndpointFunc.
+func (mock *ConfigMock) OtelLogsEndpoint() string {
+	if mock.OtelLogsEndpointFunc == nil {
+		panic("ConfigMock.OtelLogsEndpointFunc: method is nil but Config.OtelLogsEndpoint was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockOtelLogsEndpoint.Lock()
+	mock.calls.OtelLogsEndpoint = append(mock.calls.OtelLogsEndpoint, callInfo)
+	mock.lockOtelLogsEndpoint.Unlock()
+	return mock.OtelLogsEndpointFunc()
+}
+
+// OtelLogsEndpointCalls gets all the calls that were made to OtelLogsEndpoint.
+// Check the length with:
+//
+//	len(mockedConfig.OtelLogsEndpointCalls())
+func (mock *ConfigMock) OtelLogsEndpointCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockOtelLogsEndpoint.RLock()
+	calls = mock.calls.OtelLogsEndpoint
+	mock.lockOtelLogsEndpoint.RUnlock()
+	return calls
+}
+
+// OtelMetricsEndpoint calls OtelMetricsEndpointFunc.
+func (mock *ConfigMock) OtelMetricsEndpoint() string {
+	if mock.OtelMetricsEndpointFunc == nil {
+		panic("ConfigMock.OtelMetricsEndpointFunc: method is nil but Config.OtelMetricsEndpoint was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockOtelMetricsEndpoint.Lock()
+	mock.calls.OtelMetricsEndpoint = append(mock.calls.OtelMetricsEndpoint, callInfo)
+	mock.lockOtelMetricsEndpoint.Unlock()
+	return mock.OtelMetricsEndpointFunc()
+}
+
+// OtelMetricsEndpointCalls gets all the calls that were made to OtelMetricsEndpoint.
+// Check the length with:
+//
+//	len(mockedConfig.OtelMetricsEndpointCalls())
+func (mock *ConfigMock) OtelMetricsEndpointCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockOtelMetricsEndpoint.RLock()
+	calls = mock.calls.OtelMetricsEndpoint
+	mock.lockOtelMetricsEndpoint.RUnlock()
+	return calls
+}
+
 // PidsSubdir calls PidsSubdirFunc.
 func (mock *ConfigMock) PidsSubdir() (string, error) {
 	if mock.PidsSubdirFunc == nil {
@@ -2308,21 +2389,16 @@ func (mock *ConfigMock) ProjectStoreCalls() []struct {
 }
 
 // PrometheusURL calls PrometheusURLFunc.
-func (mock *ConfigMock) PrometheusURL(host string, https bool) string {
+func (mock *ConfigMock) PrometheusURL() string {
 	if mock.PrometheusURLFunc == nil {
 		panic("ConfigMock.PrometheusURLFunc: method is nil but Config.PrometheusURL was just called")
 	}
 	callInfo := struct {
-		Host  string
-		HTTPS bool
-	}{
-		Host:  host,
-		HTTPS: https,
-	}
+	}{}
 	mock.lockPrometheusURL.Lock()
 	mock.calls.PrometheusURL = append(mock.calls.PrometheusURL, callInfo)
 	mock.lockPrometheusURL.Unlock()
-	return mock.PrometheusURLFunc(host, https)
+	return mock.PrometheusURLFunc()
 }
 
 // PrometheusURLCalls gets all the calls that were made to PrometheusURL.
@@ -2330,12 +2406,8 @@ func (mock *ConfigMock) PrometheusURL(host string, https bool) string {
 //
 //	len(mockedConfig.PrometheusURLCalls())
 func (mock *ConfigMock) PrometheusURLCalls() []struct {
-	Host  string
-	HTTPS bool
 } {
 	var calls []struct {
-		Host  string
-		HTTPS bool
 	}
 	mock.lockPrometheusURL.RLock()
 	calls = mock.calls.PrometheusURL
