@@ -44,7 +44,7 @@ type QueryEvent struct {
 type Options struct {
     Endpoint       string   // host:port — gRPC dial target
     CACertFile     string   // PEM, CLI root CA
-    ClientCertFile string   // PEM, leaf signed by CLI CA (issued by firewall.ensureInfraClientCerts)
+    ClientCertFile string   // PEM, leaf signed by the infra intermediate CA (minted by otelcerts.Service, dispatched via firewall.Stack.ensureInfraClientCerts)
     ClientKeyFile  string   // PEM, leaf private key
     Timeout        time.Duration
     MaxQueueSize   int

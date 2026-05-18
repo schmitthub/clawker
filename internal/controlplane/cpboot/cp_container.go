@@ -357,10 +357,15 @@ func otelLogsEnv(cfg config.Config) []string {
 		// mTLS material is NOT injected via env. The CP-side exporter
 		// is wired in-process via internal/controlplane/otelcerts —
 		// leaves are minted from the infra intermediate on every
-		// handshake and never land on disk. Env-driven cert paths
-		// would let an operator (or future code path) wire a CLI-root-
-		// direct cert here, which agents also hold — they could then
-		// forge service.name=clawker-cp records on the trusted receiver.
+		// handshake and never land on disk. The otlp/infra receiver's
+		// client_ca_file is the infra intermediate (NOT the CLI root),
+		// so only chains that pass through that intermediate are
+		// trusted. Env-driven cert paths would invite an operator (or
+		// future code path) to wire a leaf that chains directly to the
+		// CLI root — the same trust path agent leaves take — and the
+		// receiver would reject it on chain validation. Keep the mint
+		// in-process so the only consumer of the intermediate-issued
+		// leaf is the CP exporter itself.
 		//
 		// service.name=clawker-cp is consumed by the OTel SDK's
 		// auto-detected Resource (sdkresource.Default reads

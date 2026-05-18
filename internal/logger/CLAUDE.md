@@ -62,16 +62,30 @@ type OtelOptions struct {
     // "clawker-cli" (host CLI), "clawker-cp" (control plane daemon).
     ServiceName string
 
-    // mTLS material — all three are required when any is set.
-    // When wired, the exporter presents the leaf during the gRPC handshake
-    // and pins the receiver's CA. Insecure is ignored.
+    // mTLS material — two mutually-exclusive shapes; at most one may be
+    // set. When either is wired, the exporter presents the leaf during the
+    // gRPC handshake and pins the receiver's CA, and Insecure is ignored.
+    //
+    //   - File-path triple (CACertFile + ClientCertFile + ClientKeyFile):
+    //     exporter reads PEM from disk at New time. No in-tree
+    //     consumer today (CLI runs Insecure=true on the untrusted lane;
+    //     CP uses TLSConfig; Envoy/CoreDNS read PEM via their own native
+    //     config, not this struct). Shape preserved for future on-disk-
+    //     cert consumers. If any one is set, all three must be set.
+    //   - In-process TLSConfig: caller passes a fully-formed *tls.Config
+    //     (typically built by internal/controlplane/otelcerts with a
+    //     GetClientCertificate hook that re-mints per handshake). Used by
+    //     clawker-cp so the leaf never lands on disk and rotation matches
+    //     the connection lifecycle. When non-nil, file-path fields are
+    //     not consulted.
     CACertFile     string
     ClientCertFile string
     ClientKeyFile  string
+    TLSConfig      *tls.Config
 }
 ```
 
-Transport is OTLP/gRPC, not OTLP/HTTP — the collector's trusted-infra receiver speaks gRPC only and silently returns 415 to HTTP. The CLI/host loggers point at the same path so the wire format matches.
+Transport is OTLP/gRPC, not OTLP/HTTP. Two distinct receivers exist on the collector: the unauthenticated `otlp` receiver (`OtelGRPCPort`, plaintext) which the host CLI logger targets, and the mTLS-gated `otlp/infra` receiver (`OtelInfraPort`, gRPC-only, infra-intermediate CA) which `clawker-cp` targets via the in-process `TLSConfig` shape. They share the wire format but not the trust boundary — see `internal/monitor/CLAUDE.md` "OTEL Pipelines". Dialing the HTTP port with a gRPC exporter returns 415 and silently drops every record.
 
 ## Constructors
 

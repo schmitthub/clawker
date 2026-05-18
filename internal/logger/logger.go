@@ -80,11 +80,15 @@ type OtelOptions struct {
 	// mTLS configuration. Two mutually-exclusive shapes:
 	//
 	//   - File-path triple (CACertFile + ClientCertFile + ClientKeyFile).
-	//     The exporter reads PEM material from disk at New time. Used by
-	//     the host CLI lane (clawker-cli, clawkerd) where the cert
-	//     material is provisioned by `clawker auth` and bind-mounted at
-	//     a stable path. If any one of the three is set, all three must
-	//     be set.
+	//     The exporter reads PEM material from disk at New time. No
+	//     in-tree consumer today — clawker-cp uses the TLSConfig path
+	//     below, clawker-cli runs Insecure=true on the untrusted otlp
+	//     receiver (CLI leaves chain to the CLI root, not the infra
+	//     intermediate, so they cannot complete the otlp/infra
+	//     handshake), and Envoy/CoreDNS read their bind-mounted PEM via
+	//     their own native config (not this struct). Shape preserved
+	//     for any future on-disk-cert consumer. If any one of the three
+	//     is set, all three must be set.
 	//
 	//   - In-process tls.Config. The exporter is given a fully-formed
 	//     *tls.Config (typically built by

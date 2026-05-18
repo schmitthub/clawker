@@ -90,10 +90,13 @@ const (
 	// CPInfraCACertPath / CPInfraCAKeyPath are the container-side paths
 	// for the infra intermediate CA the CP uses to mint short-lived
 	// mTLS client leaves for clawker infra services (Envoy, CoreDNS,
-	// ...). The intermediate is signed by the CLI root CA; leaves it
-	// signs chain to the same root so the otel-collector's truststore
-	// (CLI root CA only) accepts them. See internal/controlplane/
-	// infracerts for the Issuer.
+	// ...). The intermediate is signed by the CLI root CA. The same
+	// intermediate cert is mounted as the otel-collector's
+	// `client_ca_file` for the `otlp/infra` receiver (see
+	// internal/cmd/monitor/init), which locks the trusted forensic
+	// lane to envoy/coredns/cp senders — a CLI-root-signed agent leaf
+	// cannot chain to the intermediate and is rejected at the TLS
+	// handshake. See internal/controlplane/infracerts for the Issuer.
 	CPInfraCACertPath = CPClawkerDir + "/auth/infra-ca/infra-ca.pem"
 	CPInfraCAKeyPath  = CPClawkerDir + "/auth/infra-ca/infra-ca.key"
 

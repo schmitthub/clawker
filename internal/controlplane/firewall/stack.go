@@ -107,8 +107,11 @@ type Stack struct {
 // infra_issuer_unavailable).
 type OtelCertProvisioner interface {
 	// EnsureClient mints + writes per-service mTLS client material under
-	// the provisioner's destination directory. Returns absolute host-FS
-	// paths to the three files. Re-runs overwrite atomically in place.
+	// the provisioner's destination directory, atomically. Re-runs
+	// overwrite in place. Returned paths are CP-container-FS absolute
+	// paths under destDir — Stack discards them and derives sibling
+	// Mount.Source from consts.HostFirewallOtelCertsDir, the host-FS
+	// twin of destDir via CP's firewall data bind-mount.
 	EnsureClient(svc string) (certPath, keyPath, caPath string, err error)
 }
 

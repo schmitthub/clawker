@@ -619,9 +619,14 @@ func writeJWK(path string, pub *ecdsa.PublicKey) error {
 // into the clawker-controlplane container. CP loads it via
 // `internal/controlplane/infracerts` and signs short-lived mTLS client
 // leaves for clawker infrastructure services (Envoy, CoreDNS, etc.)
-// that push telemetry to the trusted-infra OTLP receiver. The leaves chain
-// to the CLI root, so the otel-collector's truststore (CLI root CA
-// only) accepts them without further configuration. Adding a new
+// that push telemetry to the trusted-infra OTLP receiver. The
+// otel-collector's `otlp/infra` receiver pins `client_ca_file` to this
+// infra intermediate (NOT the CLI root) so only intermediate-chained
+// leaves complete the handshake — agent leaves minted by
+// `auth.MintAgentCert` chain to the CLI root directly and are rejected,
+// which is what stops agents from forging `service.name=clawker-cp`
+// records on the trusted forensic indices. `monitor init` resolves the
+// bind-mount source via `consts.AuthInfraCACertPath()`. Adding a new
 // infra service is a CP-side change — the CLI does not learn about
 // it.
 

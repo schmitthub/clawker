@@ -12,7 +12,7 @@ CLI root CA (auth.EnsureAuthMaterial — host-side, never enters CP)
         └── <future infra service>
 ```
 
-The receiving party (today: `otel-collector`'s `otlp/infra` receiver) trusts only the CLI root CA. Leaves include the intermediate cert bundled in the PEM chain they present, so chain building succeeds without the relying party needing the intermediate in its truststore.
+The receiving party (today: `otel-collector`'s `otlp/infra` receiver) pins the **infra intermediate CA** as its `client_ca_file` — NOT the CLI root. `monitor init` resolves the bind-mount source from `consts.AuthInfraCACertPath()`. This is the agent-spoofing boundary: agent containers carry leaves signed directly by the CLI root (`auth.MintAgentCert`), so their chain does not validate against the intermediate even though it does validate against the root. Anchoring trust at the intermediate locks the trusted lane to leaves this subpackage minted, which is what stops agents from forging `service.name=clawker-cp`/`envoy`/`coredns` records onto the trusted forensic indices. Leaves still bundle the intermediate in their presented chain so the receiver completes validation in one hop without holding the intermediate in any additional truststore.
 
 ## API
 
@@ -42,8 +42,8 @@ func (i *Issuer) IntermediatePEM() []byte
 ## Imports
 
 - **Uses**: stdlib `crypto/*`, `encoding/pem`, `math/big`. No internal/ imports.
-- **Imported by**: `cmd/clawker-cp` (loads the intermediate at startup; passes the Issuer into `firewall.NewStack`), `internal/controlplane/firewall` (consumes via the `InfraIssuer` interface; tests pass a fake).
+- **Imported by**: `cmd/clawker-cp` (loads the intermediate at startup and hands it to `otelcerts.New`, which is then passed to `firewall.NewStack` as a `firewall.OtelCertProvisioner`), `internal/controlplane/otelcerts` (wraps `*Issuer` behind its `Issuer` interface and mints per-service material on demand), `internal/auth` (provisions the intermediate at `EnsureAuthMaterial` time). The firewall package does NOT import `infracerts` directly — it only sees the `OtelCertProvisioner` interface defined in `firewall/stack.go`.
 
 ## Degraded mode
 
-`*Issuer` is passed as `firewall.InfraIssuer`, an interface. A nil issuer is tolerated by Stack — it skips the mTLS material bind-mounts; sibling Envoy/CoreDNS containers fall back to plaintext OTLP push (preserving existing behavior). The CP-side load failure emits `event=infra_issuer_unavailable` so operators can triage.
+`*Issuer` reaches the firewall only indirectly: `cmd/clawker-cp` wraps it with `*otelcerts.Service` and hands the wrapper to `firewall.NewStack` behind the `firewall.OtelCertProvisioner` interface. A nil provisioner is tolerated by Stack — it skips the mTLS material bind-mounts and Envoy/CoreDNS run in **stdout-only degraded mode**: Envoy omits the OTel access-log sink AND the `otel_collector_als` cluster (sender-side gate on `als.MTLS` in `buildHTTPAccessLog` / `buildTCPAccessLog` / `buildClusters`); CoreDNS sees no `CLAWKER_COREDNS_OTEL_ENDPOINT` and installs `noopEmitter`. There is no plaintext OTLP fallback — infra services must never cross into the untrusted `otel-collector:4317` receiver lane reserved for agent containers. Stdout JSON sinks remain wired for `docker logs` triage; the OpenSearch ingestion path stays cold. The CP-side load failure emits `event=infra_issuer_unavailable` so operators can triage.

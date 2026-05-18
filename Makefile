@@ -204,7 +204,8 @@ CP_BINARY_DEPS := \
 	$(wildcard internal/controlplane/firewall/*.go) \
 	$(wildcard internal/controlplane/firewall/ebpf/*.go) \
 	$(wildcard internal/controlplane/infracerts/*.go) \
-	$(wildcard internal/controlplane/informer/*.go)
+	$(wildcard internal/controlplane/informer/*.go) \
+	$(wildcard internal/controlplane/otelcerts/*.go)
 
 # `docker buildx build --output=type=local,dest=...` exports a stage's
 # filesystem to a host directory. The `*-extract` stages in Dockerfile.controlplane

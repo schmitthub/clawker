@@ -66,9 +66,15 @@ type Issuer interface {
 //
 // Construction is restricted to call sites that have already loaded
 // the infra intermediate; nil Issuer is rejected at New time so
-// degraded-mode wiring is forced through the typed-nil
-// (*Service)(nil) sentinel — callers pass nil into the firewall stack
-// and CP exporter wiring drops the lane entirely.
+// callers cannot construct a half-initialized Service. Degraded mode
+// propagates via plain interface-typed nil at the call site (NOT a
+// typed-nil *Service) — callers leave the OtelCertProvisioner
+// interface unassigned on failure (see cmd/clawker-cp/main.go), which
+// trips the firewall stack's `s.otelCerts == nil` guard cleanly. CP
+// exporter wiring drops OtelOptions entirely on the same failure
+// path. Boxing a typed-nil *Service into the interface would dispatch
+// EnsureClient/LoadTLSConfig on a nil receiver and panic — see the
+// "Degraded-mode signaling" section of this package's CLAUDE.md.
 type Service struct {
 	issuer   Issuer
 	destDir  string         // host-FS dir; per-svc subdirs land underneath
@@ -139,8 +145,15 @@ func (s *Service) SetLogger(log *logger.Logger) {
 //	<destDir>/<svc>/client.key  (leaf private key)
 //	<destDir>/<svc>/ca.pem      (CLI root CA, for server-cert verification)
 //
-// atomically (tmp + rename) and returns absolute paths suitable for
-// Docker bind-mount sources. Re-runs overwrite in place.
+// atomically (tmp + rename). Re-runs overwrite in place.
+//
+// Returned paths are absolute under destDir — CP-container-FS paths,
+// not host-FS. They are NOT suitable as Docker Mount.Source values:
+// sibling containers (envoy, coredns) take their bind-mount source
+// from consts.HostFirewallOtelCertsDir, the host-FS twin of destDir
+// via CP's firewall data bind-mount. The firewall stack discards
+// these return values; they exist for tests and in-process consumers
+// that read the material directly off the CP filesystem.
 //
 // Permission shape is 0o755 on the per-svc dir and 0o644 on all three
 // files. The directory mode is load-bearing for non-root in-container

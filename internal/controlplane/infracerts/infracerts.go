@@ -108,8 +108,14 @@ func Load(certPath, keyPath string) (*Issuer, error) {
 //
 //   - chainPEM: leaf cert followed by the intermediate cert, both PEM-
 //     encoded. The leaf holder presents this whole chain during TLS
-//     handshake so the relying party (whose truststore only contains
-//     the root CA) can build a valid chain.
+//     handshake. Today's sole relying party — the otel-collector's
+//     otlp/infra receiver — pins client_ca_file to the infra
+//     intermediate, so the chain validates in one hop and any leaf
+//     signed by something other than this intermediate (e.g. agent
+//     leaves chained directly to the CLI root) fails validation by
+//     design. Bundling the intermediate also lets future relying
+//     parties anchor trust at the root and build the path without
+//     holding the intermediate in their truststore.
 //   - keyPEM: leaf private key, EC PRIVATE KEY block.
 //
 // The cert's CommonName is serviceName; serviceName is also added as a
@@ -166,9 +172,7 @@ func (i *Issuer) MintClient(serviceName string, ttl time.Duration) (chainPEM, ke
 }
 
 // IntermediatePEM returns a copy of the intermediate cert PEM the
-// Issuer was loaded with. Useful for callers that need to populate a
-// truststore including the intermediate (rare — most relying parties
-// trust only the root CA).
+// Issuer was loaded with.
 func (i *Issuer) IntermediatePEM() []byte {
 	out := make([]byte, len(i.intermediatePEM))
 	copy(out, i.intermediatePEM)
