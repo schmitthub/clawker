@@ -170,6 +170,7 @@ security:
       - docs.opensearch.org
       - auth.docker.io
       - registry-1.docker.io
+      - opensearch.org
     rules:
       - action: allow
         dst: github.com

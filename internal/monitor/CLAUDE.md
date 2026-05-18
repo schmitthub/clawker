@@ -86,7 +86,7 @@ All symbols are in `templates.go`.
 
 ## OpenSearch Bootstrap
 
-The OpenSearch + Dashboards cluster ships preconfigured: index templates (per-source mappings + retention), ISM policies (auto-attached via `ism_template.index_patterns`), and Dashboards saved objects (index patterns + dashboards) all apply on every fresh `monitor up`. The mechanism is a one-shot service in the compose stack — `clawker-opensearch-bootstrap` — that runs `bootstrap.sh` against the cluster between OpenSearch reaching `service_healthy` and the otel-collector / prometheus starting.
+The OpenSearch + Dashboards cluster ships preconfigured: index templates (per-source mappings + retention), ISM policies (auto-attached via `ism_template.index_patterns`), data sources (Prometheus registered via the SQL plugin's `_plugins/_query/_datasources` API), and Dashboards saved objects (index patterns + dashboards) all apply on every fresh `monitor up`. The mechanism is a one-shot service in the compose stack — `clawker-opensearch-bootstrap` — that runs `bootstrap.sh` against the cluster between OpenSearch reaching `service_healthy` and the otel-collector / prometheus starting.
 
 ### Source tree
 
@@ -98,13 +98,15 @@ templates/opensearch-bootstrap/
   component-templates/
     clawker-common.json                # Shared @timestamp / service.name / ingest_source mappings
   index-templates/
-    claude-code.json                   # Nested attributes.event.name (OTEL semantic conventions)
+    claude-code.json                   # Full schema for every documented Claude Code OTLP log event
     clawker-cli.json                   # Scalar attributes.event (zerolog Str("event", ...))
     clawker-cp.json                    # Same shape as clawker-cli with cp-specific fields
     clawker-envoy.json                 # Flat HTTP/TLS/TCP fields from Envoy ALS
     clawker-coredns.json               # Structured dns.query attributes from CoreDNS otel plugin
   ism-policies/
     clawker-retention.json             # 7d retention; ism_template covers all 5 indices
+  datasources/
+    clawker_prometheus.json.tmpl       # Prometheus connector for SQL/PPL + Dashboards Metrics Analytics
   saved-objects/
     clawker.ndjson                     # Five index-pattern saved objects (timeFieldName=@timestamp)
 ```
@@ -114,20 +116,28 @@ templates/opensearch-bootstrap/
 ### Compose ordering
 
 ```
-opensearch-node (service_healthy via curl /_cluster/health)
-        │
-        ▼
-clawker-opensearch-bootstrap (one-shot)
+opensearch-node (service_healthy via /_cluster/health)     prometheus (service_started)
+        │                                                          │
+        └──────────────────────────┬───────────────────────────────┘
+                                   ▼
+                clawker-opensearch-bootstrap (one-shot)
    - PUT /_component_template/<name> for each component-templates/*.json
    - PUT /_index_template/<name>     for each index-templates/*.json
    - PUT /_plugins/_ism/policies/<id> for each ism-policies/*.json
+   - poll http://prometheus:9090/-/ready until 2xx
+   - POST /_plugins/_query/_datasources (body=file) for each datasources/*.json;
+     PUT same endpoint on 400/409 to update an existing datasource
    - poll http://opensearch-dashboards:5601/api/status until 2xx
    - POST /api/saved_objects/_import?overwrite=true (multipart NDJSON, osd-xsrf: true)
    - exit 0
-        │  (service_completed_successfully)
-        ▼
-otel-collector, prometheus (start only after bootstrap exits 0)
+                                   │  (service_completed_successfully)
+                                   ▼
+                              otel-collector
 ```
+
+Prometheus is intentionally NOT gated on bootstrap — the SQL plugin validates the configured `prometheus.uri` at register time (DNS + TCP), so Prometheus must already be reachable when the bootstrap registers its datasource. The bootstrap polls Prometheus's `/-/ready` before the POST. Prometheus's only scrape targets (otel-collector self-scrape, the collector's Prometheus exporter) come up after bootstrap, but Prometheus tolerates down targets as normal operational state.
+
+The data sources API requires `plugins.query.datasources.encryption.masterkey` to be set on the OpenSearch node, even with the security plugin disabled. The compose template sets a fixed dev key in the `opensearch-node` env block — the stack is local + ephemeral, no real credentials are encrypted with it.
 
 If `bootstrap.sh` exits non-zero (e.g. malformed template JSON, OpenSearch rejects a mapping), the collector + prom dependents never start. Logs surface in `docker logs clawker-opensearch-bootstrap`. There is no Dashboards healthcheck in compose — the script polls `/api/status` itself before doing saved-objects work, keeping all readiness logic in one place and avoiding having to add curl/wget to the Dashboards image's healthcheck.
 

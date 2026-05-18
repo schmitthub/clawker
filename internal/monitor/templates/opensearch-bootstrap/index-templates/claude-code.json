@@ -5,12 +5,68 @@
   "template": {
     "mappings": {
       "properties": {
+        "resource": {
+          "properties": {
+            "attributes": {
+              "properties": {
+                "os": {
+                  "properties": {
+                    "type":    { "type": "keyword" },
+                    "version": { "type": "keyword" }
+                  }
+                },
+                "host": {
+                  "properties": {
+                    "arch": { "type": "keyword" }
+                  }
+                },
+                "wsl": {
+                  "properties": {
+                    "version": { "type": "keyword" }
+                  }
+                },
+                "telemetry": {
+                  "properties": {
+                    "sdk": {
+                      "properties": {
+                        "name":     { "type": "keyword" },
+                        "version":  { "type": "keyword" },
+                        "language": { "type": "keyword" }
+                      }
+                    }
+                  }
+                },
+                "department":  { "type": "keyword" },
+                "team": {
+                  "properties": {
+                    "id": { "type": "keyword" }
+                  }
+                },
+                "cost_center": { "type": "keyword" },
+                "enduser": {
+                  "properties": {
+                    "id":           { "type": "keyword" },
+                    "directory_id": { "type": "keyword" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "scope": {
+          "properties": {
+            "name":    { "type": "keyword" },
+            "version": { "type": "keyword" }
+          }
+        },
         "attributes": {
           "properties": {
             "event": {
               "properties": {
-                "name":   { "type": "keyword" },
-                "domain": { "type": "keyword" }
+                "name":      { "type": "keyword" },
+                "timestamp": { "type": "date" },
+                "sequence":  { "type": "long" },
+                "domain":    { "type": "keyword" }
               }
             },
             "session": {
@@ -18,21 +74,155 @@
                 "id": { "type": "keyword" }
               }
             },
-            "user": {
+            "app": {
+              "properties": {
+                "version": { "type": "keyword" }
+              }
+            },
+            "organization": {
               "properties": {
                 "id": { "type": "keyword" }
               }
             },
-            "model":    { "type": "keyword" },
-            "tool_name":{ "type": "keyword" },
-            "language": { "type": "keyword" }
+            "user": {
+              "properties": {
+                "id":           { "type": "keyword" },
+                "email":        { "type": "keyword" },
+                "account_uuid": { "type": "keyword" },
+                "account_id":   { "type": "keyword" }
+              }
+            },
+            "terminal": {
+              "properties": {
+                "type": { "type": "keyword" }
+              }
+            },
+            "prompt": {
+              "properties": {
+                "id": { "type": "keyword" }
+              }
+            },
+            "workspace": {
+              "properties": {
+                "host_paths": { "type": "keyword" }
+              }
+            },
+            "agent": {
+              "properties": {
+                "name": { "type": "keyword" }
+              }
+            },
+            "skill": {
+              "properties": {
+                "name":   { "type": "keyword" },
+                "source": { "type": "keyword" }
+              }
+            },
+            "plugin": {
+              "properties": {
+                "name":    { "type": "keyword" },
+                "version": { "type": "keyword" },
+                "scope":   { "type": "keyword" }
+              }
+            },
+            "marketplace": {
+              "properties": {
+                "name":        { "type": "keyword" },
+                "is_official": { "type": "keyword" }
+              }
+            },
+            "install": {
+              "properties": {
+                "trigger": { "type": "keyword" }
+              }
+            },
+            "plugin_id_hash":      { "type": "keyword" },
+            "enabled_via":         { "type": "keyword" },
+            "has_hooks":           { "type": "boolean" },
+            "has_mcp":             { "type": "boolean" },
+            "skill_path_count":    { "type": "long" },
+            "command_path_count":  { "type": "long" },
+            "agent_path_count":    { "type": "long" },
+            "invocation_trigger":  { "type": "keyword" },
+            "prompt_length":       { "type": "long" },
+            "command_name":        { "type": "keyword" },
+            "command_source":      { "type": "keyword" },
+            "tool_name":           { "type": "keyword" },
+            "tool_use_id":         { "type": "keyword" },
+            "success":             { "type": "keyword" },
+            "duration_ms":         { "type": "long" },
+            "error_type":          { "type": "keyword" },
+            "error":               { "type": "text", "fields": { "keyword": { "type": "keyword", "ignore_above": 1024 } } },
+            "error_category":      { "type": "keyword" },
+            "error_name":          { "type": "keyword" },
+            "error_code":          { "type": "keyword" },
+            "decision":            { "type": "keyword" },
+            "decision_type":       { "type": "keyword" },
+            "decision_source":     { "type": "keyword" },
+            "source":              { "type": "keyword" },
+            "tool_input_size_bytes":  { "type": "long" },
+            "tool_result_size_bytes": { "type": "long" },
+            "mcp_server_scope":    { "type": "keyword" },
+            "tool_parameters":     { "type": "text" },
+            "tool_input":          { "type": "text" },
+            "model":               { "type": "keyword" },
+            "cost_usd":            { "type": "double" },
+            "input_tokens":          { "type": "long" },
+            "output_tokens":         { "type": "long" },
+            "cache_read_tokens":     { "type": "long" },
+            "cache_creation_tokens": { "type": "long" },
+            "request_id":          { "type": "keyword" },
+            "speed":               { "type": "keyword" },
+            "query_source":        { "type": "keyword" },
+            "effort":              { "type": "keyword" },
+            "type":                { "type": "keyword" },
+            "start_type":          { "type": "keyword" },
+            "status_code":         { "type": "long" },
+            "attempt":             { "type": "long" },
+            "total_attempts":         { "type": "long" },
+            "total_retry_duration_ms":{ "type": "long" },
+            "body":         { "type": "text" },
+            "body_ref":     { "type": "keyword" },
+            "body_length":  { "type": "long" },
+            "body_truncated": { "type": "keyword" },
+            "from_mode":          { "type": "keyword" },
+            "to_mode":            { "type": "keyword" },
+            "trigger":            { "type": "keyword" },
+            "action":             { "type": "keyword" },
+            "auth_method":        { "type": "keyword" },
+            "status":             { "type": "keyword" },
+            "transport_type":     { "type": "keyword" },
+            "server_scope":       { "type": "keyword" },
+            "server_name":        { "type": "keyword" },
+            "mention_type":       { "type": "keyword" },
+            "pre_tokens":         { "type": "long" },
+            "post_tokens":        { "type": "long" },
+            "event_type":         { "type": "keyword" },
+            "appearance_id":      { "type": "keyword" },
+            "survey_type":        { "type": "keyword" },
+            "response":           { "type": "keyword" },
+            "enabled_via_override": { "type": "boolean" },
+            "hook_event":         { "type": "keyword" },
+            "hook_name":          { "type": "keyword" },
+            "hook_type":          { "type": "keyword" },
+            "hook_source":        { "type": "keyword" },
+            "hook_matcher":       { "type": "keyword" },
+            "hook_definitions":   { "type": "text" },
+            "num_hooks":             { "type": "long" },
+            "num_success":           { "type": "long" },
+            "num_blocking":          { "type": "long" },
+            "num_non_blocking_error":{ "type": "long" },
+            "num_cancelled":         { "type": "long" },
+            "total_duration_ms":     { "type": "long" },
+            "managed_only":          { "type": "keyword" },
+            "language":              { "type": "keyword" }
           }
         }
       }
     }
   },
   "_meta": {
-    "description": "Claude Code SDK logs — OTEL semantic-conventions nested attributes.event.name",
+    "description": "Claude Code OTLP log events — full schema for every documented event (user_prompt, tool_result, api_request, api_error, api_request_body, api_response_body, api_retries_exhausted, tool_decision, permission_mode_changed, auth, mcp_server_connection, internal_error, plugin_installed, plugin_loaded, skill_activated, at_mention, hook_registered, hook_execution_start, hook_execution_complete, compaction, feedback_survey). Source: https://code.claude.com/docs/en/monitoring-usage",
     "managed_by": "clawker-opensearch-bootstrap"
   }
 }

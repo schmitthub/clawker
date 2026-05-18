@@ -19,6 +19,7 @@ set -eu
 
 OPENSEARCH_URL="http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"
 DASHBOARDS_URL="http://{{.OpenSearchDashboardsService}}:{{.OpenSearchDashboardsPort}}"
+PROMETHEUS_URL="http://{{.PrometheusService}}:{{.PrometheusPort}}"
 BOOTSTRAP_DIR="/opensearch-bootstrap"
 
 echo "==> bootstrap: waiting for OpenSearch at ${OPENSEARCH_URL}"
@@ -48,6 +49,53 @@ apply_dir() {
 apply_dir "/_component_template"     "${BOOTSTRAP_DIR}/component-templates"
 apply_dir "/_index_template"         "${BOOTSTRAP_DIR}/index-templates"
 apply_dir "/_plugins/_ism/policies"  "${BOOTSTRAP_DIR}/ism-policies"
+
+# Datasources register external query backends (Prometheus today) under
+# the SQL plugin's _plugins/_query/_datasources API. Unlike templates,
+# the API name is in the body — endpoint is collection-level. POST
+# creates; on conflict (name already registered after a stack restart
+# that kept the OpenSearch data volume) PUT updates with the same body.
+# The SQL plugin validates the configured prometheus.uri at register
+# time (DNS resolution + TCP connect), so we must wait for Prometheus
+# to be reachable before registering its datasource.
+apply_datasources() {
+  dir="${BOOTSTRAP_DIR}/datasources"
+  if [ ! -d "${dir}" ]; then
+    return 0
+  fi
+  echo "==> bootstrap: waiting for Prometheus at ${PROMETHEUS_URL}/-/ready"
+  until curl -fsS -o /dev/null "${PROMETHEUS_URL}/-/ready"; do
+    echo "    Prometheus not ready, sleeping 5s"
+    sleep 5
+  done
+  echo "==> bootstrap: Prometheus reachable"
+  for f in "${dir}"/*.json; do
+    [ -e "${f}" ] || continue
+    name=$(basename "${f}" .json)
+    echo "==> bootstrap: POST datasource ${name}"
+    code=$(curl -sS -o /tmp/ds_resp -w '%{http_code}' \
+      -X POST "${OPENSEARCH_URL}/_plugins/_query/_datasources" \
+      -H "Content-Type: application/json" \
+      --data-binary "@${f}")
+    case "${code}" in
+      200|201) ;;
+      400|409)
+        echo "    datasource exists (HTTP ${code}), PUT update"
+        curl -fsS -X PUT "${OPENSEARCH_URL}/_plugins/_query/_datasources" \
+          -H "Content-Type: application/json" \
+          --data-binary "@${f}" \
+          -o /dev/null
+        ;;
+      *)
+        echo "    datasource registration failed: HTTP ${code}"
+        cat /tmp/ds_resp
+        return 1
+        ;;
+    esac
+  done
+}
+
+apply_datasources
 
 echo "==> bootstrap: waiting for OpenSearch Dashboards at ${DASHBOARDS_URL}"
 until curl -fsS -o /dev/null "${DASHBOARDS_URL}/api/status"; do
