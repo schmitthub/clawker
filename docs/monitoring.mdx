@@ -106,11 +106,22 @@ clawker run -it --agent dev @
 
 ### 4. Explore in OpenSearch Dashboards
 
-Open OpenSearch Dashboards at `http://localhost:5601`. From the Discover view, create an index pattern covering `claude-code,clawker-cli,clawker-cp,clawker-envoy,clawker-coredns` to see Claude Code logs, host CLI logs, clawker-cp logs, and egress traffic (Envoy access + CoreDNS query logs) side-by-side. Metrics live at the Prometheus UI on `http://localhost:9090`.
+Open OpenSearch Dashboards at `http://localhost:5601`. From the Discover view, pick one of the preconfigured index patterns — `claude-code`, `clawker-cli`, `clawker-cp`, `clawker-envoy`, or `clawker-coredns` — to see Claude Code logs, host CLI logs, clawker-cp logs, and egress traffic (Envoy access + CoreDNS query logs) side-by-side. Metrics live at the Prometheus UI on `http://localhost:9090`.
 
-<Warning>
-**Setup required (current state).** OpenSearch Dashboards needs to be configured manually for now — the indices and the underlying data source are already in place, but index patterns, dashboards, and pre-built views ship empty. Pre-provisioned patterns, data connections, and a curated set of Claude Code dashboards are on the roadmap.
-</Warning>
+## Bootstrap
+
+The stack is preconfigured every `monitor up`. A one-shot `clawker-opensearch-bootstrap` compose service runs after OpenSearch reports healthy, applies:
+
+- **Component templates** with shared mappings (`@timestamp` as date, `service.name` / `ingest_source` / `project` / `agent` as keyword)
+- **Index templates** with per-source field mappings for each of the five indices (so dynamic mapping never locks the wrong type at first ingest)
+- **ISM retention policy** (7-day rollover-to-delete, auto-attached to all five indices via `ism_template.index_patterns`)
+- **Dashboards saved objects** — index patterns for all five indices with `@timestamp` as the time field
+
+`otel-collector` and `prometheus` gate on bootstrap completing successfully — they never start until the cluster is preconfigured. Bootstrap failure surfaces in `docker logs clawker-opensearch-bootstrap` and leaves the stack half-up by design (so wrong-mapped indices can't be silently created). The throwaway-stack model means picking up template/policy edits requires `monitor down --volumes && monitor up`; templates only apply at index creation.
+
+<Note>
+Curated dashboards, visualizations, alerts, and Prometheus-as-a-Dashboards-data-source are still TODO. The bootstrap surface is in place — adding pre-built dashboards is a matter of dropping their NDJSON export into `internal/monitor/templates/opensearch-bootstrap/saved-objects/clawker.ndjson` and shipping a new release.
+</Note>
 
 ## Telemetry Controls
 
