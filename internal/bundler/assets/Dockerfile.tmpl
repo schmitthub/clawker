@@ -459,7 +459,10 @@ ENV CLAUDE_CONFIG_DIR=/home/${USERNAME}/.claude
 ENV TERM=xterm-256color
 ENV COLORTERM=truecolor
 ENV LANG=en_US.UTF-8
-# Telemetry: pre-configured for otel-collector on clawker-net (requires 'clawker monitor up')
+# Telemetry: pre-configured for otel-collector on clawker-net (requires 'clawker monitor up').
+# 'monitor up' also provisions OpenSearch indices + Dashboards via the
+# clawker-opensearch-bootstrap one-shot service before the collector starts,
+# so records land in templated (not dynamically-mapped) indices.
 # Disabled at container creation if monitoring stack is not running; override with agent.env
 ENV CLAUDE_CODE_ENABLE_TELEMETRY=1
 ENV OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf

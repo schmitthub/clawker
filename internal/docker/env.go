@@ -118,9 +118,14 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 		m[consts.EnvClawkerdAgentAddr] = opts.ClawkerdAgentAddr
 	}
 
-	// Telemetry resource attributes for per-project/agent metric segmentation.
-	// The OTEL collector's transform/metrics processor copies these to datapoint
-	// attributes so Prometheus can expose them as metric labels (see otel-config.yaml).
+	// Telemetry resource attributes for per-project/agent segmentation.
+	// The OTEL collector's transform/metrics processor copies these onto
+	// datapoint attributes so Prometheus exposes them as metric labels;
+	// the OpenSearch log exporters also persist them as resource fields,
+	// where the index templates applied by clawker-opensearch-bootstrap
+	// type them explicitly as keywords (see otel-config.yaml + the
+	// component-templates/clawker-common.json mapping). They are not
+	// dynamically-mapped fields.
 	var resourceAttrs []string
 	if opts.Project != "" {
 		resourceAttrs = append(resourceAttrs, "project="+opts.Project)

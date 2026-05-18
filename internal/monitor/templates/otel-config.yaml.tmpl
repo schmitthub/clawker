@@ -203,14 +203,20 @@ exporters:
       enabled: true
       initial_interval: 5s
       max_elapsed_time: 5m
-  # Logs → OpenSearch. Indices split by source so dynamic mappings
-  # don't collide. clawker emits attributes.event as a scalar string
-  # (logger pattern `Str("event", ...)`); Claude Code emits the OTEL
-  # semantic-conventions nested form `event.name`. Sharing one index
-  # locks first-seen shape and rejects the other source — split keeps
-  # each schema clean. sending_queue + retry_on_failure protect against
-  # OpenSearch unavailability windows (boot, GC pause, indexing
-  # pressure) where dropping forensic records would be the worst time.
+  # Logs → OpenSearch. Indices split by source because each source has
+  # a different schema shape: clawker emits attributes.event as a scalar
+  # string (logger pattern `Str("event", ...)`); Claude Code emits the
+  # OTEL semantic-conventions nested form `event.name`; Envoy ALS lands
+  # HTTP/TLS/TCP fields flat on the record; the CoreDNS otel plugin
+  # emits structured dns.query attributes. The clawker-opensearch-bootstrap
+  # one-shot service PUTs an explicit index template per source (see
+  # templates/opensearch-bootstrap/index-templates/) BEFORE the collector
+  # starts — its compose `depends_on: service_completed_successfully` on
+  # bootstrap is what guarantees that ordering — so each schema is locked
+  # at index creation by the template, not raced by first-ingest dynamic
+  # mapping. sending_queue + retry_on_failure protect against OpenSearch
+  # unavailability windows (boot, GC pause, indexing pressure) where
+  # dropping forensic records would be the worst time.
   opensearch/logs_cp:
     http:
       endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"

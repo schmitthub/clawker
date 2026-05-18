@@ -22,10 +22,12 @@ const (
 // by:
 //   - internal/controlplane/firewall/coredns_config.go (internalHosts)
 //
-// internal/monitor/templates.go renders compose YAML for all four
-// services from the individual MonitoringService* constants directly,
-// not from this slice — do NOT add OpenSearch hostnames here to "make
-// compose work"; doing so only widens CoreDNS forwarding for no reason.
+// internal/monitor/templates.go renders compose YAML for all monitoring
+// services (opensearch-node, opensearch-dashboards, otel-collector,
+// prometheus, plus the one-shot clawker-opensearch-bootstrap) from the
+// individual MonitoringService* constants directly, not from this slice
+// — do NOT add OpenSearch hostnames here to "make compose work"; doing
+// so only widens CoreDNS forwarding for no reason.
 //
 // Scope: only services agent containers legitimately need to dial.
 // otel-collector is the OTLP push target for Claude Code + clawker-cp.
@@ -33,8 +35,11 @@ const (
 // opensearch-node + opensearch-dashboards are deliberately omitted —
 // agents push telemetry through the collector and never query/write
 // the indices directly. Containers on clawker-net that DO need those
-// (the collector, the dashboards UI) reach them via Docker's embedded
-// resolver without going through CoreDNS.
+// (the collector, the dashboards UI, the one-shot bootstrap container)
+// reach them via Docker's embedded resolver without going through
+// CoreDNS. The bootstrap container has no constant in this file either
+// — it dials opensearch-node:9200 + opensearch-dashboards:5601 once
+// per stack lifecycle and is never reached from an agent container.
 var MonitoringServiceHostnames = []string{
 	MonitoringServiceOtelCollector,
 	MonitoringServicePrometheus,
