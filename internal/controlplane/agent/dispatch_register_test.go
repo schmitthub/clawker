@@ -175,7 +175,7 @@ func happyEstablishResult(stream *fakeSessionStream, peerCN string, peerThumb [s
 		Addr:     "10.0.0.1:7700",
 		Attempt:  1,
 		Outcome:  outcomeSuccess,
-		PeerInfo: peerInfo{PeerCN: peerCN, PeerThumbprint: peerThumb},
+		PeerInfo: peerInfo{PeerAgentFullName: peerCN, PeerThumbprint: peerThumb},
 	}
 }
 
@@ -189,8 +189,8 @@ func TestDriveRegister_HappyPath(t *testing.T) {
 		LookupByContainerIDFunc: func(string) (*Entry, error) {
 			return &Entry{
 				ContainerID: "abc",
-				AgentName:   "dev",
-				Project:     "myapp",
+				AgentName:   auth.MustAgentName("dev"),
+				Project:     auth.MustProjectSlug("myapp"),
 				Thumbprint:  thumb,
 			}, nil
 		},
@@ -248,8 +248,8 @@ func TestDriveRegister_DiscardsUnsolicitedFrames(t *testing.T) {
 		LookupByContainerIDFunc: func(string) (*Entry, error) {
 			return &Entry{
 				ContainerID: "abc",
-				AgentName:   "dev",
-				Project:     "myapp",
+				AgentName:   auth.MustAgentName("dev"),
+				Project:     auth.MustProjectSlug("myapp"),
 				Thumbprint:  thumb,
 			}, nil
 		},
@@ -449,13 +449,13 @@ func TestDriveRegister_MissingRowAfterRegisterDone(t *testing.T) {
 // extra (SessionConnected already populated worldview).
 func TestDispatchAgentEvents_Match_PublishesNoExtraEvent(t *testing.T) {
 	thumb := sha256.Sum256([]byte("peer"))
-	expectedCN := auth.CanonicalAgentCN(auth.MustProjectSlug("myapp"), auth.MustAgentName("dev"))
+	expectedAgentFullName := auth.AgentFullName(auth.MustProjectSlug("myapp"), auth.MustAgentName("dev"))
 	reg := &RegistryMock{
 		LookupByContainerIDFunc: func(string) (*Entry, error) {
 			return &Entry{
 				ContainerID: "abc",
-				AgentName:   "dev",
-				Project:     "myapp",
+				AgentName:   auth.MustAgentName("dev"),
+				Project:     auth.MustProjectSlug("myapp"),
 				Thumbprint:  thumb,
 			}, nil
 		},
@@ -465,7 +465,7 @@ func TestDispatchAgentEvents_Match_PublishesNoExtraEvent(t *testing.T) {
 	streamCtx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	stream := newFakeStream(streamCtx)
-	res := happyEstablishResult(stream, expectedCN, thumb)
+	res := happyEstablishResult(stream, expectedAgentFullName, thumb)
 	res.StreamCancel = cancel
 
 	d.dispatchAgentEvents(t.Context(), "abc", res, logger.Nop())
@@ -476,9 +476,9 @@ func TestDispatchAgentEvents_Match_PublishesNoExtraEvent(t *testing.T) {
 }
 
 // TestDispatchAgentEvents_OutcomesPinned pins the typed Reason for
-// each non-Match outcome — a regression that swapped CNMismatch/
-// ThumbprintMismatch in the switch would silently mis-classify
-// containment policy.
+// each non-Match outcome — a regression that swapped
+// ThumbprintMismatch and LookupError in the switch would silently
+// mis-classify containment policy.
 func TestDispatchAgentEvents_OutcomesPinned(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -492,30 +492,14 @@ func TestDispatchAgentEvents_OutcomesPinned(t *testing.T) {
 				LookupByContainerIDFunc: func(string) (*Entry, error) {
 					return &Entry{
 						ContainerID: "abc",
-						AgentName:   "dev",
-						Project:     "myapp",
+						AgentName:   auth.MustAgentName("dev"),
+						Project:     auth.MustProjectSlug("myapp"),
 						Thumbprint:  sha256.Sum256([]byte("registered-cert")),
 					}, nil
 				},
 			},
-			peer:       peerInfo{PeerCN: "clawker.myapp.dev", PeerThumbprint: sha256.Sum256([]byte("live-cert"))},
+			peer:       peerInfo{PeerAgentFullName: "clawker.myapp.dev", PeerThumbprint: sha256.Sum256([]byte("live-cert"))},
 			wantReason: overseer.UntrustedReasonThumbprintMismatch,
-		},
-		{
-			name: "CNMismatch",
-			reg: &RegistryMock{
-				LookupByContainerIDFunc: func(string) (*Entry, error) {
-					thumb := sha256.Sum256([]byte("c"))
-					return &Entry{
-						ContainerID: "abc",
-						AgentName:   "dev",
-						Project:     "actual",
-						Thumbprint:  thumb,
-					}, nil
-				},
-			},
-			peer:       peerInfo{PeerCN: "clawker.different.dev", PeerThumbprint: sha256.Sum256([]byte("c"))},
-			wantReason: overseer.UntrustedReasonCNMismatch,
 		},
 		{
 			name: "LookupError",
@@ -524,7 +508,7 @@ func TestDispatchAgentEvents_OutcomesPinned(t *testing.T) {
 					return nil, errors.New("disk i/o failure")
 				},
 			},
-			peer:       peerInfo{PeerCN: "clawker.x.y", PeerThumbprint: sha256.Sum256([]byte("p"))},
+			peer:       peerInfo{PeerAgentFullName: "clawker.x.y", PeerThumbprint: sha256.Sum256([]byte("p"))},
 			wantReason: overseer.UntrustedReasonCertInvalid,
 		},
 	}
@@ -563,8 +547,8 @@ func TestDispatchAgentEvents_AsymmetricTrust_StreamStaysOpen(t *testing.T) {
 		LookupByContainerIDFunc: func(string) (*Entry, error) {
 			return &Entry{
 				ContainerID: "abc",
-				AgentName:   "dev",
-				Project:     "myapp",
+				AgentName:   auth.MustAgentName("dev"),
+				Project:     auth.MustProjectSlug("myapp"),
 				Thumbprint:  sha256.Sum256([]byte("registered")),
 			}, nil
 		},
@@ -580,8 +564,8 @@ func TestDispatchAgentEvents_AsymmetricTrust_StreamStaysOpen(t *testing.T) {
 		Agent:        "dev",
 		Project:      "myapp",
 		PeerInfo: peerInfo{
-			PeerCN:         "clawker.myapp.dev",
-			PeerThumbprint: sha256.Sum256([]byte("live")),
+			PeerAgentFullName: "clawker.myapp.dev",
+			PeerThumbprint:    sha256.Sum256([]byte("live")),
 		},
 	}
 

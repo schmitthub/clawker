@@ -516,6 +516,12 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		return fmt.Errorf("step 8 (agent sqlite): %w", err)
 	}
 
+	// Peer-IP→Docker→labels resolver. Maps a live mTLS peer IP to
+	// the `purpose=agent` container owning that endpoint on
+	// clawker-net so the identity surface can ground its trust check
+	// on a kernel-attested source instead of cert claims.
+	agentPeerLookup := agent.NewMobyPeerLookup(dockerCli.APIClient, log.With("component", "agent-peer-lookup"))
+
 	adminv1.RegisterAdminServiceServer(grpcServer, controlplane.NewAdminServer(handler, agentReg, log))
 
 	grpcLis, err := net.Listen("tcp", "0.0.0.0:"+strconv.Itoa(cp.AdminPort))
@@ -535,41 +541,57 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		MinVersion:   tls.VersionTLS13,
 	}
 	// IdentityInterceptor runs AFTER AuthInterceptor: token + scope
-	// pass first, then identity resolves the peer cert thumbprint to
-	// a registered agent (or rejects). AgentService is empty in this
-	// branch (Register was retired); the interceptor is wired so the
-	// listener stays correctly configured for any future inbound
-	// agent RPC.
-	identityUnary, identityStream := agent.IdentityInterceptor(
-		agentReg,
-		agent.IdentityOptedOutMethods(),
+	// pass first, then the universal identity gate grounds trust in
+	// the kernel-attested peer IP (peer-IP → Docker → labels) and
+	// verifies the cert's urn:clawker:agent: URI SAN against the
+	// label-derived AgentFullName. Applies to every RPC including
+	// Register — no opt-out exists. A constructor failure (nil
+	// resolver — wiring regression) degrades the AgentService surface:
+	// no agent listener brought up, no Register handler registered;
+	// CP, firewall, registry, AdminService stay up so operators can
+	// still observe and contain. Failing closed here is correct — a
+	// half-wired trust gate is exactly the silent-failure surface root
+	// CLAUDE.md forbids.
+	identityUnary, identityStream, identityErr := agent.IdentityInterceptor(
+		agentPeerLookup,
 		log.With("component", "agent-identity"),
 	)
-	agentServer := grpc.NewServer(
-		grpc.Creds(credentials.NewTLS(agentTLSCfg)),
-		grpc.ChainUnaryInterceptor(agentInterceptor.UnaryInterceptor(), identityUnary),
-		grpc.ChainStreamInterceptor(agentInterceptor.StreamInterceptor(), identityStream),
-	)
-	agentLis, err := net.Listen("tcp", "0.0.0.0:"+strconv.Itoa(cp.AgentPort))
-	if err != nil {
-		return fmt.Errorf("step 8 (agent grpc listen): %w", err)
+	if identityErr != nil {
+		log.Error().Err(identityErr).
+			Str("component", "agent-identity").
+			Str("event", "agent_identity_unavailable").
+			Msg("agent identity gate unavailable; AgentService listener disabled, CP serve path otherwise unaffected")
 	}
 
-	// Register the AgentService.Register handler. Captures the live
-	// mTLS peer's cert thumbprint at handler entry, reads
-	// container_id from the cert URI SAN, cross-checks against the
-	// docker container's labels + clawker-net IP, and writes the
-	// agentregistry row. The handler is the SOLE writer of the
-	// agentregistry sqlite DB.
-	registerHandler, err := agent.NewHandler(
-		agentReg,
-		agent.NewMobyContainerInspector(dockerCli.APIClient),
-		log.With("component", "agent-register"),
-	)
-	if err != nil {
-		return fmt.Errorf("step 8 (agent register handler): %w", err)
+	var agentServer *grpc.Server
+	var agentLis net.Listener
+	if identityUnary != nil {
+		agentServer = grpc.NewServer(
+			grpc.Creds(credentials.NewTLS(agentTLSCfg)),
+			grpc.ChainUnaryInterceptor(agentInterceptor.UnaryInterceptor(), identityUnary),
+			grpc.ChainStreamInterceptor(agentInterceptor.StreamInterceptor(), identityStream),
+		)
+		agentLis, err = net.Listen("tcp", "0.0.0.0:"+strconv.Itoa(cp.AgentPort))
+		if err != nil {
+			return fmt.Errorf("step 8 (agent grpc listen): %w", err)
+		}
+
+		// Register the AgentService.Register handler. IdentityInterceptor
+		// has already grounded the peer in a daemon-resolved container
+		// identity and attached it to ctx; the handler captures the cert
+		// thumbprint, cross-checks the cert's container_id SAN + request
+		// fields against the resolved truth, and writes the agentregistry
+		// row. The handler is the SOLE writer of the agentregistry sqlite
+		// DB.
+		registerHandler, herr := agent.NewHandler(
+			agentReg,
+			log.With("component", "agent-register"),
+		)
+		if herr != nil {
+			return fmt.Errorf("step 8 (agent register handler): %w", herr)
+		}
+		agentv1.RegisterAgentServiceServer(agentServer, registerHandler)
 	}
-	agentv1.RegisterAgentServiceServer(agentServer, registerHandler)
 
 	// Cap covers gRPC admin, gRPC agent, healthz, and the dockerevents
 	// feeder. Buffered so any goroutine that fails before main reaches
@@ -583,12 +605,14 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		}
 	}()
 
-	go func() {
-		log.Info().Int("port", cp.AgentPort).Msg("gRPC agent API serving")
-		if err := agentServer.Serve(agentLis); err != nil {
-			serveFailed <- fmt.Errorf("gRPC agent serve: %w", err)
-		}
-	}()
+	if agentServer != nil {
+		go func() {
+			log.Info().Int("port", cp.AgentPort).Msg("gRPC agent API serving")
+			if err := agentServer.Serve(agentLis); err != nil {
+				serveFailed <- fmt.Errorf("gRPC agent serve: %w", err)
+			}
+		}()
+	}
 
 	// --- Step 9: healthz ---
 	orchestrator.SetReady()
@@ -840,9 +864,10 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 			DockerLister: func(ctx context.Context) ([]string, error) {
 				return listAgentIDs(ctx, listAgentsOpts{All: true})
 			},
-			Dialer: dialer,
-			Bus:    bus,
-			Log:    log.With("component", "agent"),
+			PeerLookup: agentPeerLookup,
+			Dialer:     dialer,
+			Bus:        bus,
+			Log:        log.With("component", "agent"),
 		})
 		if err != nil {
 			log.Error().Err(err).Msg("agent.Start failed; agent-axis subscriptions disabled")
@@ -960,15 +985,18 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// Reverse-order graceful shutdown.
 	shutdownDone := make(chan struct{})
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		grpcServer.GracefulStop()
 	}()
-	go func() {
-		defer wg.Done()
-		agentServer.GracefulStop()
-	}()
+	if agentServer != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			agentServer.GracefulStop()
+		}()
+	}
 	go func() {
 		wg.Wait()
 		close(shutdownDone)
@@ -979,7 +1007,9 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	case <-time.After(defaultShutdownWait):
 		log.Warn().Msg("gRPC graceful stop timed out, forcing")
 		grpcServer.Stop()
-		agentServer.Stop()
+		if agentServer != nil {
+			agentServer.Stop()
+		}
 	}
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), defaultShutdownWait)

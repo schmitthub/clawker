@@ -1,0 +1,13 @@
+-- +goose Up
+-- AgentFullName lives in a urn:clawker:agent: URI SAN; cert CN is
+-- the literal consts.ContainerClawkerd. Trust derives from the
+-- kernel-attested peer IP via Docker labels, not from cached
+-- strings. The canonical_cn pre-compute column has no readers.
+--
+-- One-way migration: registry state is regenerable from Docker
+-- ground truth (peer IP → labels) and reapOrphans heals on the next
+-- CP boot, matching the policy migrateFromPreGoose enforces — there
+-- is no Down half. Adding one would re-introduce a NOT NULL column
+-- with an empty default and pretend trust state was preserved
+-- across the round-trip; it wasn't.
+ALTER TABLE agents DROP COLUMN canonical_cn;

@@ -54,7 +54,7 @@ WriteAgentBootstrapToContainer(ctx, containerID, copyFn CopyToContainerFn, b *Ag
 InstallAgentBootstrapMaterial(ctx, caCertPath, caKeyPath, signingKey, opts InstallAgentBootstrapOptions) error
 ```
 
-`project` + `agent` (user-typed short identifiers) feed `auth.CanonicalAgentCN` to compose the cert's canonical CN (`clawker.<project>.<agent>`).
+`project` + `agent` (user-typed short identifiers) feed `auth.AgentFullName` to compose the per-agent identity (`clawker.<project>.<agent>`), which rides in a `urn:clawker:agent:<full-name>` URI SAN on the minted cert. The x509 CN is the deterministic `consts.ContainerClawkerd` literal (the binary identity), not a per-agent value.
 
 `WriteAgentBootstrapToContainer` tars four files into `consts.BootstrapDir` (dir 0700, files 0400). Uses container writable layer (not tmpfs -- Docker's CopyToContainer cannot pre-populate tmpfs mounts).
 

@@ -9,19 +9,28 @@ import (
 	"github.com/schmitthub/clawker/internal/consts"
 )
 
-// validResourceNameRegex matches Docker's container/volume name rules:
-// starts with alphanumeric, followed by alphanumeric, underscore, period, or hyphen.
+// validResourceNameRegex matches Docker's `RestrictedNameChars` rule
+// for container, volume, and network names: starts with alphanumeric,
+// followed by alphanumeric, underscore, period, or hyphen.
 var validResourceNameRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
 
-// ValidateResourceName validates that a name is suitable for use in Docker
-// resource names. Matches Docker CLI's container name rules:
-// [a-zA-Z0-9][a-zA-Z0-9_.-]* with a max length of 128.
+// ValidateResourceName validates that a name conforms to Docker's
+// `RestrictedNameChars` pattern.
+//
+// Docker imposes NO engine-level length cap on container, volume, or
+// network names. The 63-character DNS-label limit (RFC 1123 §2.1) only
+// matters if Docker's name-based service discovery is in use on a
+// user-defined network; clawker does not rely on container-name DNS
+// resolution today, so no length cap is enforced here either.
+//
+// User-typed inputs (project/agent names) are normalized upstream by
+// `cmdutil.ProjectSlugify` so this validator is mainly a friendly
+// pre-flight for callers composing names without going through a
+// Docker create; bypassing it just defers the same charset error to
+// Docker's own create-time response.
 func ValidateResourceName(name string) error {
 	if name == "" {
 		return fmt.Errorf("name cannot be empty")
-	}
-	if len(name) > 128 {
-		return fmt.Errorf("name is too long (%d characters, maximum 128)", len(name))
 	}
 	if !validResourceNameRegex.MatchString(name) {
 		if strings.HasPrefix(name, "-") {
@@ -164,6 +173,24 @@ func ContainerNamePrefix(project string) string {
 // VolumeName generates volume name: clawker.project.agent-purpose
 // Returns an error if project or agent names contain invalid characters.
 // The purpose parameter is not validated as it is always a hardcoded internal string.
+//
+// Volume-name purpose suffixes. VolumeName composes volume names as
+// "clawker.<project>.<agent>-<purpose>". When adding a new volume
+// purpose: declare it as a const here AND append to VolumePurposes so
+// any future caller can reference the typed name instead of a stringly
+// literal.
+const (
+	VolumePurposeConfig    = "config"
+	VolumePurposeHistory   = "history"
+	VolumePurposeWorkspace = "workspace"
+)
+
+var VolumePurposes = []string{
+	VolumePurposeConfig,
+	VolumePurposeHistory,
+	VolumePurposeWorkspace,
+}
+
 func VolumeName(project, agent, purpose string) (string, error) {
 	if err := ValidateResourceName(agent); err != nil {
 		return "", fmt.Errorf("invalid agent name: %w", err)
@@ -197,21 +224,4 @@ func ImageTagWithHash(project, hash string) string {
 // Example: GlobalVolumeName("globals") → "clawker-globals"
 func GlobalVolumeName(purpose string) string {
 	return fmt.Sprintf("%s-%s", NamePrefix, purpose)
-}
-
-// ParseContainerName extracts project and agent from container name.
-// Container name format: clawker.project.agent
-// Returns empty strings and false if the name doesn't match the format.
-func ParseContainerName(name string) (project, agent string, ok bool) {
-	// Remove leading slash if present (Docker adds it)
-	name = strings.TrimPrefix(name, "/")
-	parts := strings.Split(name, ".")
-	switch {
-	case len(parts) == 3 && parts[0] == NamePrefix:
-		return parts[1], parts[2], true
-	case len(parts) == 2 && parts[0] == NamePrefix:
-		return "", parts[1], true
-	default:
-		return "", "", false
-	}
 }

@@ -21,7 +21,7 @@ type SnapshotStrategy struct {
 // NewSnapshotStrategy creates a new snapshot strategy.
 // Returns an error if the project or agent name is invalid for Docker resource naming.
 func NewSnapshotStrategy(cfg Config, log *logger.Logger) (*SnapshotStrategy, error) {
-	vn, err := docker.VolumeName(cfg.ProjectName, cfg.AgentName, "workspace")
+	vn, err := docker.VolumeName(cfg.ProjectName, cfg.AgentName, docker.VolumePurposeWorkspace)
 	if err != nil {
 		return nil, err
 	}

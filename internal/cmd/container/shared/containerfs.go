@@ -59,7 +59,7 @@ func InitContainerConfig(ctx context.Context, opts InitConfigOpts) error {
 	claudeCode := opts.ClaudeCode
 
 	// Get config volume name using docker naming convention
-	configVolume, err := docker.VolumeName(opts.ProjectName, opts.AgentName, "config")
+	configVolume, err := docker.VolumeName(opts.ProjectName, opts.AgentName, docker.VolumePurposeConfig)
 	if err != nil {
 		return err
 	}

@@ -97,21 +97,30 @@ func projectRegisterRun(ctx context.Context, opts *RegisterOptions) error {
 		return fmt.Errorf("no project config found in %s — run 'clawker project init' first to create one", wd)
 	}
 
-	// Determine project name
+	// Determine project name. Hierarchy (highest priority first):
+	//   1. positional arg (opts.Name)
+	//   2. clawker.yaml::name override
+	//   3. interactive prompt (or directory name in non-interactive mode)
+	// Every source is run through `cmdutil.ProjectSlugify` so the value
+	// persisted to the registry is Docker/x509-safe regardless of how it
+	// was sourced.
 	absPath, err := filepath.Abs(wd)
 	if err != nil {
 		return fmt.Errorf("failed to get absolute path: %w", err)
 	}
 	dirName := filepath.Base(absPath)
 
-	var projectName string
-	if opts.Name != "" {
-		projectName = opts.Name
-	} else if opts.Yes || !ios.IsInteractive() {
-		projectName = dirName
-	} else {
+	var raw string
+	switch {
+	case opts.Name != "":
+		raw = opts.Name
+	case cfgGateway.Project().Name != "":
+		raw = cfgGateway.Project().Name
+	case opts.Yes || !ios.IsInteractive():
+		raw = dirName
+	default:
 		prompter := opts.Prompter()
-		projectName, err = prompter.String(prompterpkg.PromptConfig{
+		raw, err = prompter.String(prompterpkg.PromptConfig{
 			Message:  "Project Name",
 			Default:  dirName,
 			Required: true,
@@ -119,6 +128,10 @@ func projectRegisterRun(ctx context.Context, opts *RegisterOptions) error {
 		if err != nil {
 			return fmt.Errorf("failed to get project name: %w", err)
 		}
+	}
+	projectName := cmdutil.ProjectSlugify(raw)
+	if projectName == "" {
+		return fmt.Errorf("project name resolved to empty after normalization (raw input %q); set `name` in clawker.yaml or pass a name argument", raw)
 	}
 
 	registeredProject, err := projectManager.Register(ctx, projectName, wd)

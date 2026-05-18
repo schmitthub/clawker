@@ -267,42 +267,6 @@ func TestBuildInitWizardSteps_ActionSkipForAutoCustomize(t *testing.T) {
 	assert.False(t, steps[6].SkipIf(vals), "action shown for normal presets")
 }
 
-// --- Validation tests ---
-
-func TestValidateProjectName(t *testing.T) {
-	tests := []struct {
-		name    string
-		input   string
-		wantErr string
-	}{
-		{name: "valid lowercase", input: "my-project"},
-		{name: "valid with dots", input: "my.project"},
-		{name: "valid with underscores", input: "my_project"},
-		{name: "valid with numbers", input: "project123"},
-		{name: "single char", input: "a"},
-		{name: "starts with number", input: "1project"},
-		{name: "empty", input: "", wantErr: "required"},
-		{name: "uppercase", input: "MyProject", wantErr: "lowercase"},
-		{name: "mixed case", input: "my-Project", wantErr: "lowercase"},
-		{name: "contains space", input: "my project", wantErr: "spaces"},
-		{name: "starts with dot", input: ".project", wantErr: "start with"},
-		{name: "starts with hyphen", input: "-project", wantErr: "start with"},
-		{name: "special chars", input: "my@project", wantErr: "start with"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validateProjectName(tt.input)
-			if tt.wantErr == "" {
-				assert.NoError(t, err)
-			} else {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), tt.wantErr)
-			}
-		})
-	}
-}
-
 // --- Preset lookup tests ---
 
 func TestPresetByName(t *testing.T) {

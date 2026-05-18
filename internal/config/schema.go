@@ -12,6 +12,7 @@ import (
 //
 // Project is a pure persisted schema model for clawker.yaml.
 type Project struct {
+	Name      string          `yaml:"name,omitempty" label:"Project Name" desc:"Override the project slug derived from the directory name (set this when the directory name isn't a good clawker identifier — e.g. dots, spaces, unicode)"`
 	Build     BuildConfig     `yaml:"build"`
 	Agent     AgentConfig     `yaml:"agent"`
 	Workspace WorkspaceConfig `yaml:"workspace"`

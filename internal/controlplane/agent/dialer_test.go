@@ -11,7 +11,9 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"math/big"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -22,7 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/internal/auth"
-
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane/overseer"
 	"github.com/schmitthub/clawker/internal/logger"
 )
@@ -68,12 +70,18 @@ func genCA(t *testing.T, cn string, validity time.Duration) (*x509.Certificate, 
 	return cert, key
 }
 
-// signLeaf issues a leaf cert for cn signed by parent (the CA). The
-// returned DER bytes are what would arrive in raw rawCerts during a
-// TLS handshake.
-func signLeaf(t *testing.T, cn string, notAfter time.Time, parent *x509.Certificate, parentKey *ecdsa.PrivateKey) ([]byte, *x509.Certificate) {
+// signLeaf issues a leaf cert with cn as Subject.CommonName and
+// sanFullName as the urn:clawker:agent: URI SAN value, signed by
+// parent (the CA). Callers that don't care about the production
+// CN-vs-SAN split (capturePeer chain-mechanics tests) pass cn for
+// sanFullName; TestCapturePeer_DistinctCNAndSAN passes the two
+// distinct strings to pin that capturePeer reads PeerAgentFullName
+// from the SAN, not from Subject.CommonName.
+func signLeaf(t *testing.T, cn, sanFullName string, notAfter time.Time, parent *x509.Certificate, parentKey *ecdsa.PrivateKey) ([]byte, *x509.Certificate) {
 	t.Helper()
 	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	agentSAN, err := url.Parse(auth.AgentSANScheme + sanFullName)
 	require.NoError(t, err)
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(2),
@@ -82,6 +90,7 @@ func signLeaf(t *testing.T, cn string, notAfter time.Time, parent *x509.Certific
 		NotAfter:     notAfter,
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		URIs:         []*url.URL{agentSAN},
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, parent, &leafKey.PublicKey, parentKey)
 	require.NoError(t, err)
@@ -93,11 +102,11 @@ func signLeaf(t *testing.T, cn string, notAfter time.Time, parent *x509.Certific
 // --- capturePeerProvenance: cert chain + CN + thumbprint capture ----
 // Permissive — every path returns without aborting. Failure outcomes
 // surface as Reason text + ChainVerified=false; populated fields
-// (PeerCN, PeerThumbprint) appear on the event payload.
+// (PeerAgentFullName, PeerThumbprint) appear on the event payload.
 
 func TestCapturePeer_ValidChain(t *testing.T) {
 	caCert, caKey := genCA(t, "clawker-ca", 24*time.Hour)
-	leafDER, leaf := signLeaf(t, "clawker.proj.dev", time.Now().Add(time.Hour), caCert, caKey)
+	leafDER, leaf := signLeaf(t, "clawker.proj.dev", "clawker.proj.dev", time.Now().Add(time.Hour), caCert, caKey)
 
 	pool := x509.NewCertPool()
 	pool.AddCert(caCert)
@@ -107,7 +116,7 @@ func TestCapturePeer_ValidChain(t *testing.T) {
 	d.capturePeer([][]byte{leafDER}, &peer)
 
 	assert.True(t, peer.ChainVerified, "trusted-CA chain must verify")
-	assert.Equal(t, leaf.Subject.CommonName, peer.PeerCN)
+	assert.Equal(t, leaf.Subject.CommonName, peer.PeerAgentFullName)
 	want := sha256.Sum256(leafDER)
 	assert.Equal(t, want, peer.PeerThumbprint)
 	assert.Empty(t, peer.CaptureReason)
@@ -115,7 +124,7 @@ func TestCapturePeer_ValidChain(t *testing.T) {
 
 func TestCapturePeer_UntrustedRoot_DoesNotAbort(t *testing.T) {
 	wrongCA, wrongKey := genCA(t, "wrong-ca", 24*time.Hour)
-	leafDER, leaf := signLeaf(t, "clawker.proj.dev", time.Now().Add(time.Hour), wrongCA, wrongKey)
+	leafDER, leaf := signLeaf(t, "clawker.proj.dev", "clawker.proj.dev", time.Now().Add(time.Hour), wrongCA, wrongKey)
 
 	trustedCA, _ := genCA(t, "trusted-ca", 24*time.Hour)
 	pool := x509.NewCertPool()
@@ -126,7 +135,7 @@ func TestCapturePeer_UntrustedRoot_DoesNotAbort(t *testing.T) {
 	d.capturePeer([][]byte{leafDER}, &peer)
 
 	assert.False(t, peer.ChainVerified, "untrusted root must yield ChainVerified=false")
-	assert.Equal(t, leaf.Subject.CommonName, peer.PeerCN)
+	assert.Equal(t, leaf.Subject.CommonName, peer.PeerAgentFullName)
 	want := sha256.Sum256(leafDER)
 	assert.Equal(t, want, peer.PeerThumbprint)
 	assert.Contains(t, peer.CaptureReason, "chain verify")
@@ -134,7 +143,7 @@ func TestCapturePeer_UntrustedRoot_DoesNotAbort(t *testing.T) {
 
 func TestCapturePeer_ExpiredLeaf_DoesNotAbort(t *testing.T) {
 	caCert, caKey := genCA(t, "clawker-ca", 24*time.Hour)
-	leafDER, _ := signLeaf(t, "clawker.proj.dev", time.Now().Add(-time.Minute), caCert, caKey)
+	leafDER, _ := signLeaf(t, "clawker.proj.dev", "clawker.proj.dev", time.Now().Add(-time.Minute), caCert, caKey)
 
 	pool := x509.NewCertPool()
 	pool.AddCert(caCert)
@@ -144,7 +153,7 @@ func TestCapturePeer_ExpiredLeaf_DoesNotAbort(t *testing.T) {
 	d.capturePeer([][]byte{leafDER}, &peer)
 
 	assert.False(t, peer.ChainVerified, "expired leaf must yield ChainVerified=false")
-	assert.Equal(t, "clawker.proj.dev", peer.PeerCN)
+	assert.Equal(t, "clawker.proj.dev", peer.PeerAgentFullName)
 	assert.NotEqual(t, [sha256.Size]byte{}, peer.PeerThumbprint)
 	assert.Contains(t, peer.CaptureReason, "chain verify")
 }
@@ -156,7 +165,7 @@ func TestCapturePeer_NoCerts_SetsReason(t *testing.T) {
 	d.capturePeer(nil, &peer)
 
 	assert.False(t, peer.ChainVerified)
-	assert.Empty(t, peer.PeerCN)
+	assert.Empty(t, peer.PeerAgentFullName)
 	assert.Equal(t, [sha256.Size]byte{}, peer.PeerThumbprint)
 	assert.Equal(t, "peer presented no certs", peer.CaptureReason)
 }
@@ -168,21 +177,46 @@ func TestCapturePeer_BadCertBytes_SetsReason(t *testing.T) {
 	d.capturePeer([][]byte{[]byte("not a cert")}, &peer)
 
 	assert.False(t, peer.ChainVerified)
-	assert.Empty(t, peer.PeerCN)
+	assert.Empty(t, peer.PeerAgentFullName)
 	assert.Equal(t, [sha256.Size]byte{}, peer.PeerThumbprint)
 	assert.Contains(t, peer.CaptureReason, "leaf parse failed")
+}
+
+// TestCapturePeer_DistinctCNAndSAN pins that capturePeer sources
+// PeerAgentFullName from the urn:clawker:agent: URI SAN, NOT from
+// Subject.CommonName. Production leaves carry CN=clawker-clawkerd
+// (a fixed binary identity that yields the same string for every
+// agent) and the per-agent AgentFullName in the SAN. A regression
+// that reads CN would silently make every connecting agent look
+// like clawker-clawkerd to subscribers — this test fails fast on
+// that drift.
+func TestCapturePeer_DistinctCNAndSAN(t *testing.T) {
+	caCert, caKey := genCA(t, "clawker-ca", 24*time.Hour)
+	const cn = consts.ContainerClawkerd
+	const sanFullName = "clawker.myapp.dev"
+	leafDER, _ := signLeaf(t, cn, sanFullName, time.Now().Add(time.Hour), caCert, caKey)
+
+	pool := x509.NewCertPool()
+	pool.AddCert(caCert)
+	d := &Dialer{caPool: pool}
+
+	var peer peerInfo
+	d.capturePeer([][]byte{leafDER}, &peer)
+
+	assert.True(t, peer.ChainVerified, "trusted-CA chain must verify")
+	assert.Equal(t, sanFullName, peer.PeerAgentFullName,
+		"PeerAgentFullName must come from the SAN, not Subject.CommonName")
 }
 
 // --- classifyRegistry: registry-row cross-check ---------------------
 
 func TestClassifyRegistry_Match(t *testing.T) {
 	thumb := sha256.Sum256([]byte("peer-cert-bytes"))
-	expectedCN := auth.CanonicalAgentCN(auth.MustProjectSlug("myproj"), auth.MustAgentName("dev"))
 	reg := &RegistryMock{
 		LookupByContainerIDFunc: func(id string) (*Entry, error) {
 			return &Entry{
-				AgentName:   "dev",
-				Project:     "myproj",
+				AgentName:   auth.MustAgentName("dev"),
+				Project:     auth.MustProjectSlug("myproj"),
 				ContainerID: id,
 				Thumbprint:  thumb,
 			}, nil
@@ -190,7 +224,7 @@ func TestClassifyRegistry_Match(t *testing.T) {
 	}
 	d := &Dialer{agents: reg}
 
-	outcome, _ := d.classifyRegistry(peerInfo{PeerCN: expectedCN, PeerThumbprint: thumb}, "ctr-1")
+	outcome, _ := d.classifyRegistry(thumb, "ctr-1")
 	assert.Equal(t, outcomeRegistryMatch, outcome)
 }
 
@@ -202,8 +236,7 @@ func TestClassifyRegistry_Miss(t *testing.T) {
 	}
 	d := &Dialer{agents: reg}
 
-	thumb := sha256.Sum256([]byte("peer"))
-	outcome, _ := d.classifyRegistry(peerInfo{PeerCN: "clawker.x.y", PeerThumbprint: thumb}, "ctr-2")
+	outcome, _ := d.classifyRegistry(sha256.Sum256([]byte("peer")), "ctr-2")
 	assert.Equal(t, outcomeRegistryMiss, outcome)
 }
 
@@ -213,8 +246,8 @@ func TestClassifyRegistry_ThumbprintMismatch(t *testing.T) {
 	reg := &RegistryMock{
 		LookupByContainerIDFunc: func(id string) (*Entry, error) {
 			return &Entry{
-				AgentName:   "dev",
-				Project:     "myproj",
+				AgentName:   auth.MustAgentName("dev"),
+				Project:     auth.MustProjectSlug("myproj"),
 				ContainerID: id,
 				Thumbprint:  rowThumb,
 			}, nil
@@ -222,26 +255,8 @@ func TestClassifyRegistry_ThumbprintMismatch(t *testing.T) {
 	}
 	d := &Dialer{agents: reg}
 
-	outcome, _ := d.classifyRegistry(peerInfo{PeerCN: "clawker.myproj.dev", PeerThumbprint: peerThumb}, "ctr-3")
+	outcome, _ := d.classifyRegistry(peerThumb, "ctr-3")
 	assert.Equal(t, outcomeRegistryThumbprintMismatch, outcome)
-}
-
-func TestClassifyRegistry_CNMismatch(t *testing.T) {
-	thumb := sha256.Sum256([]byte("peer"))
-	reg := &RegistryMock{
-		LookupByContainerIDFunc: func(id string) (*Entry, error) {
-			return &Entry{
-				AgentName:   "dev",
-				Project:     "actual",
-				ContainerID: id,
-				Thumbprint:  thumb,
-			}, nil
-		},
-	}
-	d := &Dialer{agents: reg}
-
-	outcome, _ := d.classifyRegistry(peerInfo{PeerCN: "clawker.different.dev", PeerThumbprint: thumb}, "ctr-4")
-	assert.Equal(t, outcomeRegistryCNMismatch, outcome)
 }
 
 func TestClassifyRegistry_LookupErrorReturnsNotQueried(t *testing.T) {
@@ -252,46 +267,38 @@ func TestClassifyRegistry_LookupErrorReturnsNotQueried(t *testing.T) {
 	}
 	d := &Dialer{agents: reg}
 
-	outcome, detail := d.classifyRegistry(peerInfo{PeerCN: "clawker.x.y", PeerThumbprint: sha256.Sum256([]byte("p"))}, "ctr-5")
+	outcome, detail := d.classifyRegistry(sha256.Sum256([]byte("p")), "ctr-5")
 	assert.Equal(t, outcomeRegistryNotQueried, outcome)
 	assert.Contains(t, detail, "registry lookup error")
+}
+
+// TestClassifyRegistry_MalformedEntryReturnsMiss pins the recovery
+// contract for malformed registry rows: a hand-edited or otherwise
+// invalid row returns ErrMalformedEntry from LookupByContainerID,
+// and the dialer must classify it as Miss so the Register handshake
+// drives an evict+rewrite of the row. Treating it as
+// NotQueried would publish AgentUntrusted on every reconnect and
+// leave the row stranded forever — the dialer's path is the only
+// natural trigger for the Register-side cleanup.
+func TestClassifyRegistry_MalformedEntryReturnsMiss(t *testing.T) {
+	reg := &RegistryMock{
+		LookupByContainerIDFunc: func(id string) (*Entry, error) {
+			return nil, fmt.Errorf("scan row: %w", ErrMalformedEntry)
+		},
+	}
+	d := &Dialer{agents: reg}
+
+	outcome, detail := d.classifyRegistry(sha256.Sum256([]byte("p")), "ctr-malformed")
+	assert.Equal(t, outcomeRegistryMiss, outcome)
+	assert.Empty(t, detail)
 }
 
 func TestClassifyRegistry_NilRegistryReturnsNotQueried(t *testing.T) {
 	d := &Dialer{agents: nil}
 
-	outcome, detail := d.classifyRegistry(peerInfo{PeerCN: "clawker.x.y", PeerThumbprint: sha256.Sum256([]byte("p"))}, "ctr-6")
+	outcome, detail := d.classifyRegistry(sha256.Sum256([]byte("p")), "ctr-6")
 	assert.Equal(t, outcomeRegistryNotQueried, outcome)
 	assert.Equal(t, "registry not wired", detail)
-}
-
-// --- computeCNPinMatch: cert-vs-labels CN derivation ----------------
-
-func TestComputeCNPinMatch(t *testing.T) {
-	cases := []struct {
-		name    string
-		peerCN  string
-		project string
-		agent   string
-		want    bool
-	}{
-		// Hand-written CN strings rather than auth.CanonicalAgentCN
-		// composer: feeding the composer into both sides of the match
-		// reduces the assertion to `x == x` and would pass even if
-		// computeCNPinMatch returned `peerCN != ""`. Hand strings keep
-		// computeCNPinMatch as the system under test, not the composer.
-		{name: "match scoped 3-segment", peerCN: "clawker.foo.bar", project: "foo", agent: "bar", want: true},
-		{name: "match unscoped 2-segment", peerCN: "clawker.solo", project: "", agent: "solo", want: true},
-		{name: "peer CN differs", peerCN: "clawker.other.bar", project: "foo", agent: "bar", want: false},
-		{name: "wrong prefix", peerCN: "notclawker.foo.bar", project: "foo", agent: "bar", want: false},
-		{name: "extra segment", peerCN: "clawker.foo.bar.baz", project: "foo", agent: "bar", want: false},
-		{name: "missing project segment when scoped", peerCN: "clawker.bar", project: "foo", agent: "bar", want: false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, computeCNPinMatch(tc.peerCN, tc.project, tc.agent))
-		})
-	}
 }
 
 // TestPublishConnected_DeliversPeerIntact pins the bus payload
@@ -313,9 +320,9 @@ func TestPublishConnected_DeliversPeerIntact(t *testing.T) {
 	d := &Dialer{bus: bus}
 	thumb := sha256.Sum256([]byte("peer-cert-bytes"))
 	peer := peerInfo{
-		ChainVerified:  true,
-		PeerCN:         "clawker.proj.dev",
-		PeerThumbprint: thumb,
+		ChainVerified:     true,
+		PeerAgentFullName: "clawker.proj.dev",
+		PeerThumbprint:    thumb,
 	}
 	d.publishConnected(ctx, "ctr-prov", "dev", "proj", "10.1.1.5:7700", 3, peer)
 
@@ -326,7 +333,7 @@ func TestPublishConnected_DeliversPeerIntact(t *testing.T) {
 		assert.Equal(t, "proj", ev.Project)
 		assert.Equal(t, "10.1.1.5:7700", ev.Address)
 		assert.Equal(t, 3, ev.Attempts)
-		assert.Equal(t, "clawker.proj.dev", ev.PeerCN)
+		assert.Equal(t, "clawker.proj.dev", ev.PeerAgentFullName)
 		assert.Equal(t, thumb, ev.PeerThumbprint)
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for SessionConnected event on bus")
@@ -409,9 +416,9 @@ func TestCloseAndCheckLeak_LogsCloseFailure(t *testing.T) {
 // These tests cover the runDial outer orchestration: dedup map,
 // resolveAgent failure → outcomeContainerGone → SessionFailed event
 // publication, and ctx-cancel teardown. Leaf functions
-// (capturePeerProvenance, fillRegistryProvenance, computeCNPinMatch,
-// closeAndCheckLeak) are exercised independently above; this layer
-// proves the wiring between them and the overseer event publishers.
+// (capturePeer, classifyRegistry, closeAndCheckLeak) are exercised
+// independently above; this layer proves the wiring between them and
+// the overseer event publishers.
 
 // fakeMobyForDialer satisfies mobyclient.APIClient via embedding —
 // the embedded nil interface is fine because every test path here

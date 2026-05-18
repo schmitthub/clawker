@@ -19,7 +19,7 @@ func TestValidateResourceName(t *testing.T) {
 		{"a", false, ""},
 		{"A1-b2_c3.d4", false, ""},
 		{"test123", false, ""},
-		{strings.Repeat("a", 128), false, ""}, // max length
+		{strings.Repeat("a", 200), false, ""}, // no engine-level length cap
 
 		// Invalid: empty
 		{"", true, "cannot be empty"},
@@ -38,9 +38,6 @@ func TestValidateResourceName(t *testing.T) {
 		{"my@agent", true, "only [a-zA-Z0-9]"},
 		{"my/agent", true, "only [a-zA-Z0-9]"},
 		{"my:agent", true, "only [a-zA-Z0-9]"},
-
-		// Invalid: too long
-		{strings.Repeat("a", 129), true, "too long"},
 	}
 
 	for _, tt := range tests {
@@ -56,24 +53,6 @@ func TestValidateResourceName(t *testing.T) {
 				t.Errorf("ValidateResourceName(%q) = %v, want nil", tt.name, err)
 			}
 		})
-	}
-}
-
-func TestGenerateRandomName(t *testing.T) {
-	// Generate multiple names and verify format
-	seen := make(map[string]bool)
-	for i := 0; i < 100; i++ {
-		name := GenerateRandomName()
-		parts := strings.Split(name, "-")
-		if len(parts) != 2 {
-			t.Errorf("GenerateRandomName() = %q, expected adjective-noun format", name)
-		}
-		seen[name] = true
-	}
-
-	// Should have generated multiple unique names (very unlikely to get all same)
-	if len(seen) < 10 {
-		t.Errorf("GenerateRandomName() generated too few unique names: %d", len(seen))
 	}
 }
 
@@ -281,47 +260,6 @@ func TestImageTagWithHash(t *testing.T) {
 	}
 }
 
-func TestParseContainerName(t *testing.T) {
-	tests := []struct {
-		name        string
-		wantProject string
-		wantAgent   string
-		wantOK      bool
-	}{
-		// Valid 3-segment names
-		{"clawker.myproject.myagent", "myproject", "myagent", true},
-		{"clawker.test.agent1", "test", "agent1", true},
-		{"/clawker.backend.worker", "backend", "worker", true}, // Docker adds leading slash
-
-		// Valid 2-segment orphan names
-		{"clawker.dev", "", "dev", true},
-		{"/clawker.dev", "", "dev", true}, // Docker adds leading slash
-
-		// Invalid names
-		{"invalid", "", "", false},
-		{"notclawker.project.agent", "", "", false},
-		{"clawker.a.b.c", "", "", false}, // Too many parts
-		{"", "", "", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			gotProject, gotAgent, gotOK := ParseContainerName(tt.name)
-			if gotOK != tt.wantOK {
-				t.Errorf("ParseContainerName(%q) ok = %v, want %v", tt.name, gotOK, tt.wantOK)
-			}
-			if gotOK {
-				if gotProject != tt.wantProject {
-					t.Errorf("ParseContainerName(%q) project = %q, want %q", tt.name, gotProject, tt.wantProject)
-				}
-				if gotAgent != tt.wantAgent {
-					t.Errorf("ParseContainerName(%q) agent = %q, want %q", tt.name, gotAgent, tt.wantAgent)
-				}
-			}
-		})
-	}
-}
-
 func TestGlobalVolumeName(t *testing.T) {
 	tests := []struct {
 		purpose string
@@ -338,11 +276,5 @@ func TestGlobalVolumeName(t *testing.T) {
 				t.Errorf("GlobalVolumeName(%q) = %q, want %q", tt.purpose, got, tt.want)
 			}
 		})
-	}
-}
-
-func TestNamePrefix(t *testing.T) {
-	if NamePrefix != "clawker" {
-		t.Errorf("NamePrefix = %q, want %q", NamePrefix, "clawker")
 	}
 }

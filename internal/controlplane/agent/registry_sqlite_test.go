@@ -28,30 +28,6 @@ func closeRegistry(t *testing.T, r Registry) {
 	}
 }
 
-func TestSQLiteWriter_Add_PersistsCanonicalCN(t *testing.T) {
-	path := dbPath(t, "agents.db")
-
-	w, err := NewSQLiteWriter(path, logger.Nop())
-	require.NoError(t, err)
-
-	entry := validEntry("alpha", "dev", "ctr-1", "cert-1")
-	require.NoError(t, w.Add(entry))
-	closeRegistry(t, w)
-
-	// Re-open and verify the CN-gated Lookup round-trips against the
-	// pre-computed canonical_cn column.
-	r, err := NewSQLiteWriter(path, logger.Nop())
-	require.NoError(t, err)
-	t.Cleanup(func() { closeRegistry(t, r) })
-
-	got, err := r.Lookup(entry.Thumbprint, canonical("alpha", "dev"))
-	require.NoError(t, err)
-	require.NotNil(t, got)
-	assert.Equal(t, "dev", got.AgentName)
-	assert.Equal(t, "alpha", got.Project)
-	assert.Equal(t, "ctr-1", got.ContainerID)
-}
-
 func TestSQLiteWriter_Add_RejectsDuplicates(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -84,53 +60,6 @@ func TestSQLiteWriter_Add_RejectsDuplicates(t *testing.T) {
 	}
 }
 
-func TestSQLiteRegistry_Lookup_CNMismatch_ReturnsUnknownAgent(t *testing.T) {
-	r, err := NewSQLiteWriter(dbPath(t, "agents.db"), logger.Nop())
-	require.NoError(t, err)
-	t.Cleanup(func() { closeRegistry(t, r) })
-
-	require.NoError(t, r.Add(validEntry("alpha", "dev", "ctr", "cert")))
-
-	// Right thumbprint, wrong CN — must collapse to ErrUnknownAgent so
-	// handlers can't probe which half of the composite identity failed.
-	_, err = r.Lookup(tp("cert"), canonical("beta", "dev"))
-	assert.ErrorIs(t, err, ErrUnknownAgent)
-	_, err = r.Lookup(tp("cert"), canonical("alpha", "other"))
-	assert.ErrorIs(t, err, ErrUnknownAgent)
-
-	// Right thumbprint + right CN — must succeed.
-	got, err := r.Lookup(tp("cert"), canonical("alpha", "dev"))
-	require.NoError(t, err)
-	assert.Equal(t, "dev", got.AgentName)
-}
-
-func TestSQLiteRegistry_Lookup_UnknownThumbprint(t *testing.T) {
-	r, err := NewSQLiteWriter(dbPath(t, "agents.db"), logger.Nop())
-	require.NoError(t, err)
-	t.Cleanup(func() { closeRegistry(t, r) })
-
-	_, err = r.Lookup(tp("never-registered"), "clawker.x.y")
-	assert.ErrorIs(t, err, ErrUnknownAgent)
-}
-
-func TestSQLiteRegistry_LookupByContainerID(t *testing.T) {
-	r, err := NewSQLiteWriter(dbPath(t, "agents.db"), logger.Nop())
-	require.NoError(t, err)
-	t.Cleanup(func() { closeRegistry(t, r) })
-
-	require.NoError(t, r.Add(validEntry("p", "a", "ctr-1", "cert-1")))
-
-	got, err := r.LookupByContainerID("ctr-1")
-	require.NoError(t, err)
-	assert.Equal(t, "a", got.AgentName)
-
-	_, err = r.LookupByContainerID("ctr-missing")
-	assert.ErrorIs(t, err, ErrUnknownAgent)
-
-	_, err = r.LookupByContainerID("")
-	assert.ErrorIs(t, err, ErrUnknownAgent)
-}
-
 func TestSQLiteRegistry_EvictByContainerID_DeletesRow(t *testing.T) {
 	r, err := NewSQLiteWriter(dbPath(t, "agents.db"), logger.Nop())
 	require.NoError(t, err)
@@ -139,12 +68,26 @@ func TestSQLiteRegistry_EvictByContainerID_DeletesRow(t *testing.T) {
 	require.NoError(t, r.Add(validEntry("p", "a", "ctr-1", "cert-1")))
 	require.NoError(t, r.Add(validEntry("p", "b", "ctr-2", "cert-2")))
 
+	// Empty-string and missing-row paths collapse to ErrUnknownAgent —
+	// the registry's idempotency contract for the Register handler.
+	_, err = r.LookupByContainerID("ctr-missing")
+	assert.ErrorIs(t, err, ErrUnknownAgent)
+	_, err = r.LookupByContainerID("")
+	assert.ErrorIs(t, err, ErrUnknownAgent)
+
+	// Pre-evict lookup exercises the sqlite hex→[32]byte thumbprint
+	// round-trip — a regression in scanEntry's hex.DecodeString /
+	// length check would silently return zero-thumbprint entries.
+	got, err := r.LookupByContainerID("ctr-1")
+	require.NoError(t, err)
+	assert.Equal(t, tp("cert-1"), got.Thumbprint, "thumbprint round-trips through sqlite")
+
 	require.NoError(t, r.EvictByContainerID("ctr-1"))
 
-	_, err = r.Lookup(tp("cert-1"), canonical("p", "a"))
+	_, err = r.LookupByContainerID("ctr-1")
 	assert.ErrorIs(t, err, ErrUnknownAgent)
-	_, err = r.Lookup(tp("cert-2"), canonical("p", "b"))
-	assert.NoError(t, err)
+	_, err = r.LookupByContainerID("ctr-2")
+	require.NoError(t, err)
 }
 
 func TestSQLiteRegistry_EvictByContainerID_ReturnsErrOnDBFailure(t *testing.T) {
@@ -173,17 +116,40 @@ func TestSQLiteRegistry_Snapshot_Sorted(t *testing.T) {
 	require.NoError(t, r.Add(validEntry("aproj", "dev", "ctr-2", "cert-2")))
 	require.NoError(t, r.Add(validEntry("aproj", "bot", "ctr-3", "cert-3")))
 
-	snap := r.Snapshot()
+	snap, err := r.Snapshot()
+	require.NoError(t, err)
 	require.Len(t, snap, 3)
 	got := make([][2]string, len(snap))
 	for i, e := range snap {
-		got[i] = [2]string{e.Project, e.AgentName}
+		got[i] = [2]string{e.Project.String(), e.AgentName.String()}
 	}
 	assert.Equal(t, [][2]string{
 		{"aproj", "bot"},
 		{"aproj", "dev"},
 		{"zproj", "dev"},
 	}, got)
+}
+
+// TestSQLiteRegistry_Snapshot_ReturnsErrOnDBFailure pins the
+// eviction-cascade-prevention contract: Snapshot MUST surface a
+// non-nil error when the underlying sqlite query fails, never
+// silently return an empty slice. A regression that mapped the
+// query error back to (nil, nil) would cause reapOrphans to evict
+// every registered agent on a transient hiccup, and ListAgents
+// would show operators "no agents" while the registry is intact but
+// unreadable — both are silent security regressions.
+func TestSQLiteRegistry_Snapshot_ReturnsErrOnDBFailure(t *testing.T) {
+	r, err := NewSQLiteWriter(dbPath(t, "agents.db"), logger.Nop())
+	require.NoError(t, err)
+	concrete, ok := r.(*sqliteRegistry)
+	require.True(t, ok)
+
+	require.NoError(t, r.Add(validEntry("p", "a", "ctr-1", "cert-1")))
+	require.NoError(t, concrete.Close())
+
+	snap, err := r.Snapshot()
+	require.Error(t, err)
+	assert.Nil(t, snap, "Snapshot must not return a partial slice alongside a non-nil error")
 }
 
 func TestSQLiteRegistry_ConcurrentWriters(t *testing.T) {
@@ -219,16 +185,19 @@ func TestSQLiteRegistry_ConcurrentWriters(t *testing.T) {
 
 	// Both writers raced into the same set of rows; UNIQUE rejected
 	// every duplicate.
-	snap := w1.Snapshot()
+	snap, snapErr := w1.Snapshot()
+	require.NoError(t, snapErr)
 	assert.GreaterOrEqual(t, len(snap), 1)
 	assert.LessOrEqual(t, len(snap), n)
 	assert.EqualValues(t, 2*n-len(snap), dupes.Load(), "every collision must surface as Add error")
 }
 
 func TestSQLiteRegistry_SchemaMigration_FromOldDB(t *testing.T) {
-	// Open a sqlite DB with the OLD schema (no canonical_cn) and seed
-	// a row. The next NewSQLiteWriter open must detect the drift,
-	// drop+recreate the table, and continue.
+	// Open a sqlite DB with a pre-goose schema and seed a row. The
+	// next NewSQLiteWriter open must detect the missing goose_db_version
+	// table, drop the legacy agents table (alpha policy — registry
+	// state regenerates on re-Register), and apply the embedded
+	// migrations cleanly.
 	path := dbPath(t, "agents.db")
 	const oldSchema = `
 		CREATE TABLE agents (
@@ -256,11 +225,81 @@ func TestSQLiteRegistry_SchemaMigration_FromOldDB(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { closeRegistry(t, r) })
 
-	assert.Empty(t, r.Snapshot(), "legacy rows must be dropped on schema migration")
+	legacySnap, legacyErr := r.Snapshot()
+	require.NoError(t, legacyErr)
+	assert.Empty(t, legacySnap, "legacy rows must be dropped on schema migration")
 
 	// New Adds against the migrated schema work.
 	require.NoError(t, r.Add(validEntry("p", "a", "ctr-1", "cert-1")))
-	got, err := r.Lookup(tp("cert-1"), canonical("p", "a"))
+	got, err := r.LookupByContainerID("ctr-1")
 	require.NoError(t, err)
 	require.NotNil(t, got)
+	assert.Equal(t, "a", got.AgentName.String())
+}
+
+func TestMigration_002_DropsCanonicalCN(t *testing.T) {
+	// Seed a DB at goose-version-1: the v1 agents schema (with
+	// canonical_cn) plus a goose_db_version row marking 00001 as
+	// applied. Opening via the production path then runs ONLY
+	// migration 00002. Asserting against an empty fresh DB would not
+	// distinguish "00002 dropped the column" from "the column was
+	// never there" — seeding pre-002 state pins the actual migration
+	// effect.
+	path := dbPath(t, "agents.db")
+	raw, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)")
+	require.NoError(t, err)
+	_, err = raw.Exec(`
+		CREATE TABLE agents (
+		  thumbprint_hex TEXT NOT NULL,
+		  container_id   TEXT NOT NULL,
+		  agent_name     TEXT NOT NULL,
+		  project        TEXT NOT NULL,
+		  canonical_cn   TEXT NOT NULL,
+		  registered_at  INTEGER NOT NULL,
+		  last_seen      INTEGER NOT NULL,
+		  PRIMARY KEY (thumbprint_hex, container_id),
+		  UNIQUE (thumbprint_hex),
+		  UNIQUE (container_id)
+		);
+		CREATE INDEX idx_name_project ON agents(project, agent_name);
+		CREATE TABLE goose_db_version (
+		  id INTEGER PRIMARY KEY AUTOINCREMENT,
+		  version_id INTEGER NOT NULL,
+		  is_applied INTEGER NOT NULL,
+		  tstamp TIMESTAMP DEFAULT (datetime('now'))
+		);
+		INSERT INTO goose_db_version (version_id, is_applied) VALUES (0, 1), (1, 1);
+		INSERT INTO agents VALUES (
+		  '0000000000000000000000000000000000000000000000000000000000000001',
+		  'legacy-ctr', 'legacy-agent', 'legacy-proj',
+		  'clawker.legacy-proj.legacy-agent', 1, 1
+		);
+	`)
+	require.NoError(t, err)
+	require.NoError(t, raw.Close())
+
+	r, err := NewSQLiteWriter(path, logger.Nop())
+	require.NoError(t, err)
+	t.Cleanup(func() { closeRegistry(t, r) })
+
+	rows, err := r.(*sqliteRegistry).db.Query(`PRAGMA table_info(agents)`)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = rows.Close() })
+	var cols []string
+	for rows.Next() {
+		var name string
+		var ign any
+		require.NoError(t, rows.Scan(&ign, &name, &ign, &ign, &ign, &ign))
+		cols = append(cols, name)
+	}
+	require.NoError(t, rows.Err())
+	assert.NotContains(t, cols, "canonical_cn", "migration 00002 must drop canonical_cn")
+
+	// Row pre-existing at goose-v1 must survive the column drop —
+	// guards against a 00002 that drops the whole table or otherwise
+	// loses data.
+	snap, err := r.Snapshot()
+	require.NoError(t, err)
+	require.Len(t, snap, 1)
+	assert.Equal(t, "legacy-agent", snap[0].AgentName.String())
 }

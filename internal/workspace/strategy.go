@@ -66,11 +66,11 @@ func NewStrategy(mode config.Mode, cfg Config, log *logger.Logger) (Strategy, er
 // GetConfigVolumeMounts returns mounts for persistent config volumes.
 // These are used for both bind and snapshot modes to preserve Claude config.
 func GetConfigVolumeMounts(projectName, agentName string) ([]mount.Mount, error) {
-	configVol, err := docker.VolumeName(projectName, agentName, "config")
+	configVol, err := docker.VolumeName(projectName, agentName, docker.VolumePurposeConfig)
 	if err != nil {
 		return nil, err
 	}
-	historyVol, err := docker.VolumeName(projectName, agentName, "history")
+	historyVol, err := docker.VolumeName(projectName, agentName, docker.VolumePurposeHistory)
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +123,7 @@ type ConfigVolumeResult struct {
 func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, agentName string) (ConfigVolumeResult, error) {
 	var result ConfigVolumeResult
 
-	configVolume, err := docker.VolumeName(projectName, agentName, "config")
+	configVolume, err := docker.VolumeName(projectName, agentName, docker.VolumePurposeConfig)
 	if err != nil {
 		return result, err
 	}
@@ -134,7 +134,7 @@ func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, a
 	}
 	result.ConfigCreated = created
 
-	historyVolume, err := docker.VolumeName(projectName, agentName, "history")
+	historyVolume, err := docker.VolumeName(projectName, agentName, docker.VolumePurposeHistory)
 	if err != nil {
 		return result, err
 	}

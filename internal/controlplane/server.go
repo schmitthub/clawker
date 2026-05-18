@@ -8,7 +8,9 @@ package controlplane
 import (
 	"context"
 	"encoding/hex"
-	"sort"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/controlplane/agent"
@@ -60,21 +62,25 @@ func NewAdminServer(fw *fwhandler.Handler, agents agent.Registry, log *logger.Lo
 // avoid pulling google.protobuf.Timestamp into the AdminService surface
 // for one read-only RPC.
 func (s *adminServer) ListAgents(_ context.Context, _ *adminv1.ListAgentsRequest) (*adminv1.ListAgentsResult, error) {
-	snap := s.agents.Snapshot()
-	// Snapshot is documented to return entries sorted by (Project,
-	// AgentName); preserve that ordering on the wire.
-	sort.Slice(snap, func(i, j int) bool {
-		if snap[i].Project != snap[j].Project {
-			return snap[i].Project < snap[j].Project
-		}
-		return snap[i].AgentName < snap[j].AgentName
-	})
+	// Snapshot's interface contract guarantees (Project, AgentName)
+	// ordering — trust it on the wire rather than re-sorting (avoids
+	// duplicating the comparator across in-memory + sqlite impls and
+	// this consumer). A non-nil error surfaces as codes.Internal so the
+	// CLI doesn't silently print "no agents" while the registry is
+	// intact but the underlying sqlite query failed.
+	snap, err := s.agents.Snapshot()
+	if err != nil {
+		s.log.Error().Err(err).
+			Str("event", "list_agents_snapshot_failed").
+			Msg("controlplane: ListAgents snapshot failed")
+		return nil, status.Error(codes.Internal, "list agents: snapshot unavailable")
+	}
 
 	out := make([]*adminv1.Agent, len(snap))
 	for i, e := range snap {
 		out[i] = &adminv1.Agent{
-			AgentName:        e.AgentName,
-			Project:          e.Project,
+			AgentName:        e.AgentName.String(),
+			Project:          e.Project.String(),
 			ContainerId:      e.ContainerID,
 			CertThumbprint:   hex.EncodeToString(e.Thumbprint[:]),
 			RegisteredAtUnix: e.RegisteredAt.Unix(),

@@ -19,6 +19,7 @@ call:
 agentCleanup, err := agent.Start(watcherCtx, agent.StartDeps{
     Registry:     agentReg,            // CP-owned sqlite writer
     DockerLister: listAgentIDsAll,     // returns purpose=agent containers, All:true
+    PeerLookup:   agentPeerLookup,     // peer-IP→Docker→labels resolver (required)
     Dialer:       dialer,              // agent.New(...) for CP→clawkerd
     Bus:          bus,
     Log:          log.With("component", "agent"),
@@ -36,7 +37,16 @@ defer agentCleanup()
    `container/destroy`; consumer evicts the registry row. Stop/die/
    kill do NOT evict — a stopped container can be `docker start`-ed
    back into life.
-3. **Subscribe to `dockerevents.DockerEvent` for dial.** Filter on
+3. **Subscribe to `dockerevents.DockerEvent` for Session cancel.**
+   Filter on `container/{die,stop,kill,oom,destroy}`; consumer calls
+   `dialer.CancelDial(containerID)` so the in-flight CP→clawkerd
+   `Session` is torn down synchronously on any exit transition
+   instead of lingering until the next reconnect attempt notices
+   the container is gone. Independent of the evict subscriber:
+   evict reflects row state (destroy only), cancel reflects
+   connectivity state (any exit transition). Both fire off the
+   same docker event bus — neither drives the other.
+4. **Subscribe to `dockerevents.DockerEvent` for dial.** Filter on
    `container/start|restart|unpause` with `purpose=agent`; consumer
    calls `dialer.DialAgent(ctx, containerID)`.
 
@@ -49,34 +59,59 @@ now unexported helpers behind `Start`.
 |------|---------|
 | `start.go` | `Start(ctx, StartDeps)` umbrella + shared panic-loop guardrails for the two subscribers + private `reapOrphans` |
 | `registry.go` | `Registry` interface, `Entry`, `ErrUnknownAgent`, `NewRegistry` (in-memory test impl) |
-| `registry_sqlite.go` | sqlite-backed `Registry`: `NewSQLiteWriter`, `EnsureSchema`, schema apply with migration support |
+| `registry_sqlite.go` | sqlite-backed `Registry`: `NewSQLiteWriter`, `EnsureSchema`. Schema applied via goose migrations embedded from `migrations/*.sql` (see `applySchema`) |
 | `dialer.go` | `Dialer.DialAgent` — CP-side outbound mTLS dial to `ClawkerdService.Session`. Permissive trust posture (asymmetric: CP must always be reachable). Drives Register handshake on Miss, publishes Session* + AgentRegistered + AgentUntrusted events |
 | `events_session.go` | `SessionConnecting`, `SessionConnected`, `SessionFailed`, `SessionBroken` — all implement `overseer.applier` mutating `State.Agents` |
 | `events_agent.go` | `AgentRegistered{Ok, Reason}`, `AgentUntrusted{Reason UntrustedReason, Detail}` — also implement `applier` |
-| `register_handler.go` | `Handler` (AgentService.Register handler) + `ContainerInspector` interface + `NewMobyContainerInspector` |
-| `handler.go` | `peerIdentity` projection + `peerIdentityFromContext` (used by IdentityInterceptor) |
-| `identity_interceptor.go` | `IdentityInterceptor(reg, optedOut, log)` + `IdentityOptedOutMethods()` (Register is opt-out — registry row doesn't exist pre-call) + `WithEntry` / `EntryFromContext` |
+| `register_handler.go` | `Handler` (AgentService.Register handler) — consumes middleware-resolved identity from ctx, captures cert thumbprint, cross-checks cert container SAN + request fields against resolved truth, writes the registry row |
+| `peer_lookup.go` | `ContainerByPeerIP` interface + `ResolvedContainer` struct + sentinels (`ErrNoContainerForPeerIP`, `ErrInvalidAgentLabel`, `ErrAmbiguousPeerIP`) — peer-IP-grounded trust resolver. `ErrInvalidAgentLabel` fires only on a missing/malformed `dev.clawker.agent` label; a missing `dev.clawker.project` label is the legitimate global-scope-agent signal (2-segment naming) and resolves cleanly |
+| `peer_lookup_moby.go` | `MobyPeerLookup`, the production `ContainerByPeerIP` backed by the Docker daemon |
+| `handler.go` | `peerIdentity` projection + `peerIdentityFromContext` + `peerLeafFromContext` + `WithResolvedContainer` / `ResolvedContainerFromContext` ctx helpers |
+| `identity_interceptor.go` | `IdentityInterceptor(peerLookup, log)` — universal peer-IP-grounded identity gate applied to every AgentService RPC (no opt-out) |
 | `registry_mock_test.go` | moq-generated `RegistryMock` (test-only file; lives in `agent` package itself to break import cycle that prevented an `agent/mocks` subpackage from working) |
 
 ## Identity contract
 
-A row's identity is `(thumbprint, container_id)` — both UNIQUE in
-sqlite. The CN composed from `(project, agent_name)` is stored
-pre-computed (`canonical_cn` column) and compared via
-`subtle.ConstantTimeCompare` inside `Lookup`. No reconstruction at
-read time.
+The trust anchor is the kernel-attested peer IP, NOT cert claims.
+`IdentityInterceptor` resolves the peer IP to a `purpose=agent`
+container via `ContainerByPeerIP`, reads the project/agent labels as
+the authoritative identity source, and constant-time-compares the
+label-derived AgentFullName against the cert's `urn:clawker:agent:`
+URI SAN. The cert's SAN claim is VERIFIED against this independent
+ground truth, never the basis of lookup.
 
-CP is the SOLE writer of registry rows. The Register handler captures
-the live mTLS peer's cert thumbprint at handler entry and writes the
-row. The CLI never opens the sqlite DB — that's what fixes the WAL
-coherence bug across the macOS bind-mount boundary.
+A registry row's identity is `(thumbprint, container_id)` — both
+UNIQUE in sqlite. The handler captures the thumbprint at the gate
+that writes it (defense-in-depth: no surfacing via ctx, so a future
+interceptor change can't substitute the value the registry stores).
+Rows store the `(thumbprint, container_id, project, agent_name,
+registered_at, last_seen)` tuple; `Snapshot()` and `ListAgents`
+reconstruct the displayed AgentFullName on demand from project +
+agent_name. There is no precomputed identity column on the row —
+the historical `canonical_cn` column was dropped by goose
+migration 00002.
+
+`Entry.Project` and `Entry.AgentName` are typed
+(`auth.ProjectSlug` / `auth.AgentName`). Construction goes through
+`auth.NewProjectSlug` / `auth.NewAgentName` at the wire boundary,
+and `scanEntry` re-validates on sqlite read so a hand-edited or
+corrupted row cannot land an invariant-violating value — `Snapshot()`
+logs and skips rows that fail validation (`event=agentregistry_row_skipped`
+plus a per-snapshot `event=agentregistry_snapshot_skipped_rows`
+summary).
+
+CP is the SOLE writer of registry rows. The CLI never opens the
+sqlite DB — that's what fixes the WAL coherence bug across the
+macOS bind-mount boundary.
 
 ## Register flow (CP-driven, one-time per container)
 
 1. **Container creation** (`clawker run`): CLI mints a leaf cert with
-   the container_id baked into a URI SAN (`urn:clawker:container:<id>`),
-   tars cert+key+ca+assertion JWT into the container, starts it. No
-   registry row written here.
+   `Subject.CommonName = consts.ContainerClawkerd` (binary identity),
+   the per-agent `AgentFullName` in a `urn:clawker:agent:<full-name>`
+   URI SAN, and the container_id in a `urn:clawker:container:<id>`
+   URI SAN. Tars cert+key+ca+assertion JWT into the container, starts
+   it. No registry row written here.
 2. **Session establishment**: CP dials clawkerd via `agentdial.Dialer`,
    completes mTLS + Hello, runs `classifyRegistry` → returns
    `outcomeRegistryMiss` because no row exists.
@@ -86,11 +121,19 @@ coherence bug across the macOS bind-mount boundary.
    `registerCoordinator.Run` exchanges the single-use Hydra
    `client_assertion` JWT for an access token, mTLS-dials CP's
    AgentPort with `bearerCreds`, calls `AgentService.Register`.
-5. **CP Register handler**: captures peer thumbprint, reads
-   container_id from cert URI SAN, validates CN (constant-time
-   compare against canonical CN), inspects container via
-   `ContainerInspector`, cross-checks labels + peer-IP-vs-clawker-net
-   IP, idempotently writes the row, returns Welcome.
+5. **CP Register handler**: `IdentityInterceptor` has already run on
+   this RPC — pinned `Subject.CommonName == consts.ContainerClawkerd`,
+   resolved the peer IP to a `purpose=agent` container, and verified
+   that the cert's `urn:clawker:agent:` URI SAN matches the
+   label-derived AgentFullName. The interceptor attached the resolved
+   `(containerID, project, agentName)` triple to ctx via
+   `WithResolvedContainer`. The handler reads it via
+   `ResolvedContainerFromContext`, captures the live peer cert
+   thumbprint (the registry's UNIQUE key), cross-checks the cert's
+   `urn:clawker:container:` SAN against `resolved.ContainerID`,
+   cross-checks the request body against `resolved.{Project, AgentName}`,
+   idempotently writes the row using the label-derived (authoritative)
+   identity, returns Welcome.
 6. **clawkerd replies** with `Response{RegisterDone{ok:true}}`.
 7. **CP confirms** by re-looking-up the row, publishes
    `AgentRegistered{Ok:true}` on the bus.
@@ -117,36 +160,55 @@ CP CN pin + Client-Auth EKU + CA chain enforced at TLS layer.
 
 | Hello-time outcome | Events published |
 |---|---|
-| Match | `SessionConnected` (with PeerCN/PeerThumbprint) |
+| Match | `SessionConnected` (with PeerAgentFullName/PeerThumbprint) |
 | Miss | `SessionConnected` → drive Register handshake → `AgentRegistered` (+ `AgentUntrusted{ReasonRegisterFailed}` on failure) |
 | ThumbprintMismatch | `SessionConnected` + `AgentUntrusted{ReasonThumbprintMismatch}` |
-| CNMismatch | `SessionConnected` + `AgentUntrusted{ReasonCNMismatch}` |
 | Lookup error | `SessionConnected` + `AgentUntrusted{ReasonCertInvalid, Detail: <err>}` |
+
+Note: cert SAN AgentFullName vs label-derived AgentFullName drift is
+NOT classified here — the dialer is the OUTBOUND CP→clawkerd path and
+compares only thumbprints against the row. Trust-anchor drift is
+caught upstream by `IdentityInterceptor` on the agent's next inbound
+RPC (e.g. a subsequent Register retry).
 
 `SessionConnected.ApplyTo` populates `State.Agents[containerID]` with
 session lifecycle + identity fields. `AgentRegistered.ApplyTo` sets
 `Registered`. `AgentUntrusted.ApplyTo` sets `Trusted=false` +
 `UntrustedReason`.
 
-## Method scopes + interceptor opt-out
+## Method scopes + interceptor
 
 - `controlplane.AgentMethodScopes()` maps
   `/clawker.agent.v1.AgentService/Register` →
   `consts.ScopeAgentSelfRegister`. AuthInterceptor on the agent
   listener fails closed on unmapped methods.
-- `IdentityOptedOutMethods()` includes the Register method path.
-  Justification: the registry row keyed by peer thumbprint doesn't
-  exist yet at Register-call time — that's the entire purpose of
-  the call. Going through IdentityInterceptor would reject every
-  legitimate Register with `PermissionDenied`. The Register handler
-  does its own peer-cert capture + cross-checks, so opt-out
-  relocates the gate from interceptor to handler, not strips it.
+- `IdentityInterceptor` runs a universal three-stage gate on every
+  AgentService RPC (no opt-out — applies to Register too):
+  1. **Universal CN pin** — `leaf.Subject.CommonName` must equal
+     `consts.ContainerClawkerd` (constant-time compare). Rejects any
+     peer presenting a non-clawkerd cert before reaching any handler.
+  2. **Peer IP → Docker → labels** — resolves the kernel-attested
+     peer IP to the `purpose=agent` container owning that endpoint
+     on clawker-net via `ContainerByPeerIP`, reads the
+     `dev.clawker.{project,agent}` labels as the authoritative
+     identity source.
+  3. **Cert SAN ↔ label cross-check** — composes the label-derived
+     AgentFullName and constant-time compares it against the cert's
+     `urn:clawker:agent:` URI SAN.
+- On success, the interceptor attaches the resolved
+  `ResolvedContainer{ContainerID, Project, AgentName}` to ctx via
+  `WithResolvedContainer`. Handlers read it via
+  `ResolvedContainerFromContext`; the Register handler additionally
+  cross-checks the cert's `urn:clawker:container:` SAN and the RPC
+  body against the resolved truth.
 
 ## Imports
 
-**Uses**: `internal/auth` (CanonicalAgentCN, NewAgentName,
-NewProjectSlug, ContainerIDFromCert), `internal/consts` (Network,
-LabelAgent/Project/Purpose, ContainerCP, ScopeAgentSelfRegister),
+**Uses**: `internal/auth` (AgentFullName, NewAgentName,
+NewProjectSlug, ContainerIDFromCert, AgentFullNameFromCert,
+AgentSANScheme, ContainerSANScheme), `internal/consts` (Network,
+LabelAgent/Project/Purpose, ContainerCP, ContainerClawkerd,
+ScopeAgentSelfRegister),
 `internal/controlplane/dockerevents`, `internal/controlplane/overseer`,
 `internal/logger`, `api/agent/v1`, `api/clawkerd/v1`,
 `modernc.org/sqlite`, `github.com/moby/moby/api/types/{container,
@@ -164,8 +226,9 @@ on adminServer for ListAgents).
 
 - `Registry` — moq-generated `RegistryMock` in `registry_mock_test.go`
   (test-only, lives in the `agent` package itself).
-- `ContainerInspector` — hand-rolled `fakeContainerInspector` in
-  `register_handler_test.go`.
+- `ContainerByPeerIP` — hand-rolled `fakePeerLookup` in
+  `identity_interceptor_test.go`; the Register handler's tests stub
+  the resolved container via `WithResolvedContainer` directly.
 - `Dialer` doesn't have a moq mock — tests construct `*Dialer`
   directly with the fields they need.
 

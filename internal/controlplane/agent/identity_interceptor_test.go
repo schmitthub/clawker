@@ -2,12 +2,13 @@ package agent
 
 import (
 	"context"
-	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"errors"
 	"net"
+	"net/netip"
+	"net/url"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,14 +20,61 @@ import (
 
 	agentv1 "github.com/schmitthub/clawker/api/agent/v1"
 
-	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/auth"
+	"github.com/schmitthub/clawker/internal/consts"
 )
+
+var (
+	testProjectSlug = auth.MustProjectSlug("p")
+	testAgentName   = auth.MustAgentName("alpha")
+)
+
+const (
+	testAgentFullName = "clawker.p.alpha"
+	testContainerID   = "ctr-xyz"
+	testPeerIP        = "10.0.0.1"
+)
+
+// fakePeerLookup is a stub ContainerByPeerIP for tests.
+type fakePeerLookup struct {
+	fn func(ctx context.Context, ip netip.Addr) (ResolvedContainer, error)
+}
+
+func (f *fakePeerLookup) LookupByIP(ctx context.Context, ip netip.Addr) (ResolvedContainer, error) {
+	return f.fn(ctx, ip)
+}
+
+func okPeerLookup() *fakePeerLookup {
+	return &fakePeerLookup{
+		fn: func(_ context.Context, _ netip.Addr) (ResolvedContainer, error) {
+			return ResolvedContainer{
+				ContainerID: testContainerID,
+				Project:     testProjectSlug,
+				AgentName:   testAgentName,
+			}, nil
+		},
+	}
+}
+
+func errPeerLookup(err error) *fakePeerLookup {
+	return &fakePeerLookup{
+		fn: func(_ context.Context, _ netip.Addr) (ResolvedContainer, error) {
+			return ResolvedContainer{}, err
+		},
+	}
+}
 
 // ctxWithPeer builds a fake gRPC context carrying TLS peer info — the
 // minimum surface peerIdentityFromContext reads (PeerCertificates +
-// peer.Addr).
-func ctxWithPeer(certRaw []byte, cn string, ip net.IP) context.Context {
-	cert := &x509.Certificate{Raw: certRaw, Subject: pkix.Name{CommonName: cn}}
+// peer.Addr). An empty agentFullName omits the URI SAN entirely.
+func ctxWithPeer(cn, agentFullName string, ip net.IP) context.Context {
+	cert := &x509.Certificate{Raw: []byte("cert-der"), Subject: pkix.Name{CommonName: cn}}
+	if agentFullName != "" {
+		u, err := url.Parse(auth.AgentSANScheme + agentFullName)
+		if err == nil {
+			cert.URIs = []*url.URL{u}
+		}
+	}
 	tlsInfo := credentials.TLSInfo{}
 	tlsInfo.State.PeerCertificates = []*x509.Certificate{cert}
 	addr := &net.TCPAddr{IP: ip, Port: 1234}
@@ -36,80 +84,70 @@ func ctxWithPeer(certRaw []byte, cn string, ip net.IP) context.Context {
 	})
 }
 
-// hypotheticalIdentityRequiredMethod is a stand-in path used by tests
-// that exercise the identity-required (registry-lookup) branch of the
-// interceptor. AgentService currently has no inbound RPCs, so this
-// path matches no real method — the interceptor accepts any
-// FullMethod string and routes anything not in the opt-out map
-// through the lookup path.
-func hypotheticalIdentityRequiredMethod() string {
-	return "/" + agentv1.ServiceName + "/FutureIdentityRequiredRPC"
+// fixturePeerCtx returns a ctx for an mTLS-authenticated agent peer
+// presenting the production clawkerd CN, the canonical agent SAN
+// matching testAgentFullName, and an IPv4 source IP matching what
+// the default fakePeerLookup is wired to accept.
+func fixturePeerCtx() context.Context {
+	return ctxWithPeer(consts.ContainerClawkerd, testAgentFullName, net.ParseIP(testPeerIP))
 }
 
-// fixturePeerCtx returns a ctx that looks like a real mTLS-authenticated
-// gRPC call: peer cert with the supplied raw bytes, peer IP set so
-// peerIdentityFromContext succeeds.
-func fixturePeerCtx(certRaw []byte) context.Context {
-	return ctxWithPeer(certRaw, "test-cn", net.IPv4(10, 0, 0, 1))
+func registerMethod() string {
+	return "/" + agentv1.ServiceName + "/Register"
 }
 
-// --- Unary interceptor cases ---
+// --- Unary happy path ---
 
-func TestIdentityInterceptor_Unary_RegistryHit_AttachesEntry(t *testing.T) {
-	certRaw := []byte("cert-der")
-	wantThumb := sha256.Sum256(certRaw)
-	wantEntry := &Entry{
-		AgentName:    "alpha",
-		Project:      "p",
-		ContainerID:  "ctr-xyz",
-		Thumbprint:   wantThumb,
-		RegisteredAt: time.Unix(100, 0),
-	}
+// TestIdentityInterceptor_NilPeerLookup_ReturnsError pins the
+// constructor contract: a nil resolver returns a wiring error rather
+// than panicking. Panicking would strand pinned eBPF programs with no
+// supervisor (root CLAUDE.md hard rule); returning an error lets
+// main.go log event=agent_identity_unavailable and degrade the
+// AgentService surface while CP/firewall/admin stay up.
+func TestIdentityInterceptor_NilPeerLookup_ReturnsError(t *testing.T) {
+	unary, stream, err := IdentityInterceptor(nil, nil)
+	require.Error(t, err)
+	assert.Nil(t, unary, "no interceptor must be returned on wiring error")
+	assert.Nil(t, stream, "no interceptor must be returned on wiring error")
+}
+
+func TestIdentityInterceptor_HappyPath_AttachesResolvedContainer(t *testing.T) {
+	unary, _, _ := IdentityInterceptor(okPeerLookup(), nil)
 
 	var (
-		lookupArg [sha256.Size]byte
-		gotCN     string
+		gotResolved ResolvedContainer
+		gotOK       bool
 	)
-	reg := &RegistryMock{
-		LookupFunc: func(thumbprint [sha256.Size]byte, cn string) (*Entry, error) {
-			lookupArg = thumbprint
-			gotCN = cn
-			return wantEntry, nil
-		},
-	}
-	unary, _ := IdentityInterceptor(reg, IdentityOptedOutMethods(), nil)
-
-	var gotEntry *Entry
 	_, err := unary(
-		fixturePeerCtx(certRaw),
+		fixturePeerCtx(),
 		"req",
-		&grpc.UnaryServerInfo{FullMethod: hypotheticalIdentityRequiredMethod()},
+		&grpc.UnaryServerInfo{FullMethod: registerMethod()},
 		func(ctx context.Context, _ any) (any, error) {
-			gotEntry, _ = EntryFromContext(ctx)
+			gotResolved, gotOK = ResolvedContainerFromContext(ctx)
 			return nil, nil
 		},
 	)
 	require.NoError(t, err)
-	assert.Equal(t, wantThumb, lookupArg, "interceptor must hash peer cert and pass to Lookup")
-	assert.Equal(t, "test-cn", gotCN, "interceptor must forward peer cert CN to Lookup for the cross-check")
-	require.NotNil(t, gotEntry)
-	assert.Equal(t, wantEntry.AgentName, gotEntry.AgentName)
+	require.True(t, gotOK, "handler ctx must carry ResolvedContainer")
+	assert.Equal(t, testContainerID, gotResolved.ContainerID)
+	assert.Equal(t, testProjectSlug, gotResolved.Project)
+	assert.Equal(t, testAgentName, gotResolved.AgentName)
 }
 
-func TestIdentityInterceptor_Unary_LookupMiss_PermissionDenied(t *testing.T) {
-	reg := &RegistryMock{
-		LookupFunc: func(_ [sha256.Size]byte, _ string) (*Entry, error) {
-			return nil, ErrUnknownAgent
-		},
-	}
-	unary, _ := IdentityInterceptor(reg, IdentityOptedOutMethods(), nil)
+// TestIdentityInterceptor_Register_HitsTrustCheck pins the load-bearing
+// invariant: Register has no identity opt-out. A peer whose IP doesn't
+// resolve to a purpose=agent container cannot reach the Register
+// handler. A future regression that re-introduces an opt-out for
+// Register would make this test fail.
+func TestIdentityInterceptor_Register_HitsTrustCheck(t *testing.T) {
+	unary, _, _ := IdentityInterceptor(errPeerLookup(ErrNoContainerForPeerIP), nil)
 
 	_, err := unary(
-		fixturePeerCtx([]byte("cert")),
+		fixturePeerCtx(),
 		"req",
-		&grpc.UnaryServerInfo{FullMethod: hypotheticalIdentityRequiredMethod()},
+		&grpc.UnaryServerInfo{FullMethod: registerMethod()},
 		func(_ context.Context, _ any) (any, error) {
-			t.Fatal("handler must NOT run on lookup miss")
+			t.Fatal("Register handler must NOT run when peer IP doesn't resolve")
 			return nil, nil
 		},
 	)
@@ -117,19 +155,32 @@ func TestIdentityInterceptor_Unary_LookupMiss_PermissionDenied(t *testing.T) {
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
-func TestIdentityInterceptor_Unary_NoPeerCert_PermissionDenied(t *testing.T) {
-	reg := &RegistryMock{
-		LookupFunc: func(_ [sha256.Size]byte, _ string) (*Entry, error) {
-			t.Fatal("Lookup must NOT be called when peer info is missing")
+// --- Stage 1: CN pin ---
+
+func TestIdentityInterceptor_WrongCN_PermissionDenied(t *testing.T) {
+	unary, _, _ := IdentityInterceptor(okPeerLookup(), nil)
+
+	wrongCN := ctxWithPeer("not-clawkerd", testAgentFullName, net.ParseIP(testPeerIP))
+	_, err := unary(
+		wrongCN,
+		"req",
+		&grpc.UnaryServerInfo{FullMethod: registerMethod()},
+		func(_ context.Context, _ any) (any, error) {
+			t.Fatal("handler must NOT run when CN pin fails")
 			return nil, nil
 		},
-	}
-	unary, _ := IdentityInterceptor(reg, IdentityOptedOutMethods(), nil)
+	)
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+func TestIdentityInterceptor_NoPeerCert_PermissionDenied(t *testing.T) {
+	unary, _, _ := IdentityInterceptor(okPeerLookup(), nil)
 
 	_, err := unary(
 		context.Background(),
 		"req",
-		&grpc.UnaryServerInfo{FullMethod: hypotheticalIdentityRequiredMethod()},
+		&grpc.UnaryServerInfo{FullMethod: registerMethod()},
 		func(_ context.Context, _ any) (any, error) {
 			t.Fatal("handler must NOT run when peer info is missing")
 			return nil, nil
@@ -139,9 +190,116 @@ func TestIdentityInterceptor_Unary_NoPeerCert_PermissionDenied(t *testing.T) {
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
-// --- Stream interceptor cases ---
+// --- Stage 2a: empty agent SAN ---
 
-// streamFake satisfies grpc.ServerStream with a custom Context only.
+func TestIdentityInterceptor_EmptyCertSAN_PermissionDenied(t *testing.T) {
+	unary, _, _ := IdentityInterceptor(okPeerLookup(), nil)
+
+	noSAN := ctxWithPeer(consts.ContainerClawkerd, "", net.ParseIP(testPeerIP))
+	_, err := unary(
+		noSAN,
+		"req",
+		&grpc.UnaryServerInfo{FullMethod: registerMethod()},
+		func(_ context.Context, _ any) (any, error) {
+			t.Fatal("handler must NOT run when cert has no agent SAN")
+			return nil, nil
+		},
+	)
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+// TestIdentityInterceptor_MalformedCertSAN_PermissionDenied pins
+// stage 2a's malformed-SAN branch. A cert that carries a URI with
+// scheme urn:clawker:agent: but an empty tail is a producer-side bug;
+// the interceptor short-circuits with PermissionDenied just like the
+// missing-SAN case, but the structured log surface emits
+// event=agent_identity_malformed_agent_san so operators can
+// distinguish it from a clean no-SAN cert.
+func TestIdentityInterceptor_MalformedCertSAN_PermissionDenied(t *testing.T) {
+	unary, _, _ := IdentityInterceptor(okPeerLookup(), nil)
+
+	// Cert has the agent SAN scheme but empty tail.
+	u, err := url.Parse(auth.AgentSANScheme)
+	require.NoError(t, err)
+	cert := &x509.Certificate{
+		Raw:     []byte("cert-der"),
+		Subject: pkix.Name{CommonName: consts.ContainerClawkerd},
+		URIs:    []*url.URL{u},
+	}
+	tlsInfo := credentials.TLSInfo{}
+	tlsInfo.State.PeerCertificates = []*x509.Certificate{cert}
+	addr := &net.TCPAddr{IP: net.ParseIP(testPeerIP), Port: 1234}
+	ctx := peer.NewContext(context.Background(), &peer.Peer{
+		Addr:     addr,
+		AuthInfo: tlsInfo,
+	})
+
+	_, err = unary(
+		ctx,
+		"req",
+		&grpc.UnaryServerInfo{FullMethod: registerMethod()},
+		func(_ context.Context, _ any) (any, error) {
+			t.Fatal("handler must NOT run when agent SAN is malformed")
+			return nil, nil
+		},
+	)
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+// --- Stage 2b: peer IP resolve (table-driven across error sentinels) ---
+
+func TestIdentityInterceptor_Stage2_ResolverErrors_PermissionDenied(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{"NoContainerForPeerIP", ErrNoContainerForPeerIP},
+		{"InvalidAgentLabel", ErrInvalidAgentLabel},
+		{"AmbiguousPeerIP", ErrAmbiguousPeerIP},
+		{"GenericDaemonError", errors.New("docker daemon broken")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			unary, _, _ := IdentityInterceptor(errPeerLookup(tc.err), nil)
+			_, err := unary(
+				fixturePeerCtx(),
+				"req",
+				&grpc.UnaryServerInfo{FullMethod: registerMethod()},
+				func(_ context.Context, _ any) (any, error) {
+					t.Fatal("handler must NOT run when peer lookup fails")
+					return nil, nil
+				},
+			)
+			require.Error(t, err)
+			assert.Equal(t, codes.PermissionDenied, status.Code(err))
+		})
+	}
+}
+
+// --- Stage 3: SAN vs label compare ---
+
+func TestIdentityInterceptor_CertSANvsLabelMismatch_PermissionDenied(t *testing.T) {
+	unary, _, _ := IdentityInterceptor(okPeerLookup(), nil)
+
+	// Cert SAN claims "clawker.p.beta" but labels resolve to "clawker.p.alpha".
+	wrongSAN := ctxWithPeer(consts.ContainerClawkerd, "clawker.p.beta", net.ParseIP(testPeerIP))
+	_, err := unary(
+		wrongSAN,
+		"req",
+		&grpc.UnaryServerInfo{FullMethod: registerMethod()},
+		func(_ context.Context, _ any) (any, error) {
+			t.Fatal("handler must NOT run when cert SAN does not match labels")
+			return nil, nil
+		},
+	)
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+// --- Stream interceptor ---
+
 type streamFake struct {
 	grpc.ServerStream
 	ctx context.Context
@@ -149,58 +307,45 @@ type streamFake struct {
 
 func (s *streamFake) Context() context.Context { return s.ctx }
 
-// TestIdentityInterceptor_Stream_RegistryHit_WrappedContextCarriesEntry
+// TestIdentityInterceptor_Stream_HappyPath_WrappedContextCarriesResolvedContainer
 // guards the load-bearing wrapper pitfall: if Context() is promoted from
 // the embedded ServerStream instead of overridden on the wrapper, the
-// handler reads the original ctx without the entry, silently breaking
-// identity binding for every streaming RPC.
-func TestIdentityInterceptor_Stream_RegistryHit_WrappedContextCarriesEntry(t *testing.T) {
-	certRaw := []byte("cert-der-stream")
-	wantThumb := sha256.Sum256(certRaw)
-	wantEntry := &Entry{
-		AgentName:    "beta",
-		Project:      "p",
-		ContainerID:  "ctr-stream",
-		Thumbprint:   wantThumb,
-		RegisteredAt: time.Unix(200, 0),
-	}
-	reg := &RegistryMock{
-		LookupFunc: func(_ [sha256.Size]byte, _ string) (*Entry, error) {
-			return wantEntry, nil
-		},
-	}
-	_, stream := IdentityInterceptor(reg, IdentityOptedOutMethods(), nil)
+// handler reads the original ctx without the resolved container,
+// silently breaking identity binding for every streaming RPC.
+func TestIdentityInterceptor_Stream_HappyPath_WrappedContextCarriesResolvedContainer(t *testing.T) {
+	_, stream, _ := IdentityInterceptor(okPeerLookup(), nil)
 
-	ss := &streamFake{ctx: fixturePeerCtx(certRaw)}
-	var gotEntry *Entry
+	ss := &streamFake{ctx: fixturePeerCtx()}
+	var (
+		gotResolved ResolvedContainer
+		gotOK       bool
+	)
 	err := stream(
 		nil,
 		ss,
-		&grpc.StreamServerInfo{FullMethod: hypotheticalIdentityRequiredMethod()},
+		&grpc.StreamServerInfo{FullMethod: registerMethod()},
 		func(_ any, wrapped grpc.ServerStream) error {
-			gotEntry, _ = EntryFromContext(wrapped.Context())
+			gotResolved, gotOK = ResolvedContainerFromContext(wrapped.Context())
 			return nil
 		},
 	)
 	require.NoError(t, err)
-	require.NotNil(t, gotEntry, "wrapped stream's Context() must carry the registered entry")
-	assert.Equal(t, wantEntry.AgentName, gotEntry.AgentName)
+	require.True(t, gotOK, "wrapped stream's Context() must carry the resolved container")
+	assert.Equal(t, testContainerID, gotResolved.ContainerID)
 }
 
+// TestIdentityInterceptor_Stream_NoPeerCert_PermissionDenied pins the
+// stream interceptor's reject path returns the error directly instead
+// of swallowing it inside the wrapper (distinct from the unary case
+// because the stream wrapper is its own load-bearing seam).
 func TestIdentityInterceptor_Stream_NoPeerCert_PermissionDenied(t *testing.T) {
-	reg := &RegistryMock{
-		LookupFunc: func(_ [sha256.Size]byte, _ string) (*Entry, error) {
-			t.Fatal("Lookup must NOT be called when peer info is missing")
-			return nil, nil
-		},
-	}
-	_, stream := IdentityInterceptor(reg, IdentityOptedOutMethods(), nil)
+	_, stream, _ := IdentityInterceptor(okPeerLookup(), nil)
 
 	ss := &streamFake{ctx: context.Background()}
 	err := stream(
 		nil,
 		ss,
-		&grpc.StreamServerInfo{FullMethod: hypotheticalIdentityRequiredMethod()},
+		&grpc.StreamServerInfo{FullMethod: registerMethod()},
 		func(_ any, _ grpc.ServerStream) error {
 			t.Fatal("handler must NOT run when peer info is missing")
 			return nil
@@ -210,26 +355,16 @@ func TestIdentityInterceptor_Stream_NoPeerCert_PermissionDenied(t *testing.T) {
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
-// TestIdentityOptedOut_EmptyForCurrentBranch pins the empty-opt-out
-// TestWithEntry_NilPanics locks the fail-fast contract: attempting to
-// attach a nil entry would round-trip back from EntryFromContext as
-// (nil, true) without the defensive nil-check in EntryFromContext —
-// silent identity vacuum followed by a downstream nil-deref panic.
-func TestWithEntry_NilPanics(t *testing.T) {
-	assert.Panics(t, func() { WithEntry(context.Background(), nil) },
-		"WithEntry with a nil entry must panic")
-}
+// --- Ctx helper ---
 
-// TestIdentityInterceptor_StaleOptedOutKey_Panics locks the runtime
-// validation contract: a key in the opt-out map that doesn't match any
-// real AgentService RPC must panic at construction so a typo or stale
-// rename surfaces during startup instead of silently locking a real
-// method out.
-func TestIdentityInterceptor_StaleOptedOutKey_Panics(t *testing.T) {
-	reg := NewRegistry(logger.Nop())
-	stale := map[string]bool{
-		"/clawker.agent.v1.AgentService/NotARealMethod": true,
-	}
-	assert.Panics(t, func() { IdentityInterceptor(reg, stale, logger.Nop()) },
-		"stale opt-out key must panic at construction")
+// TestWithResolvedContainer_EmptyContainerIDIsNoOp pins the silent-
+// identity-vacuum prevention contract: a zero-value ResolvedContainer
+// passed in produces a ctx where ResolvedContainerFromContext returns
+// ok=false, so downstream handlers consuming identity reject naturally.
+// Replaces a panic on the serving path (forbidden by the CP no-panic
+// security contract).
+func TestWithResolvedContainer_EmptyContainerIDIsNoOp(t *testing.T) {
+	ctx := WithResolvedContainer(context.Background(), ResolvedContainer{})
+	_, ok := ResolvedContainerFromContext(ctx)
+	assert.False(t, ok, "zero-value resolved container must not appear authenticated downstream")
 }

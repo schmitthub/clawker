@@ -61,19 +61,19 @@ func (e SessionConnecting) ApplyTo(s *overseer.State) {
 }
 
 // SessionConnected fires when a Session establishes (mTLS dial +
-// Hello handshake completes). Identity fields (PeerCN, PeerThumbprint)
+// Hello handshake completes). Identity fields (PeerAgentFullName, PeerThumbprint)
 // ride alongside the transport fields so subscribers and the
 // worldview have everything in one event — Provenance struct is
 // retired, AgentUntrusted/AgentRegistered carry the policy outcomes.
 type SessionConnected struct {
-	ContainerID    string
-	AgentName      string
-	Project        string
-	Address        string
-	Attempts       int
-	PeerCN         string
-	PeerThumbprint [sha256.Size]byte
-	At             time.Time
+	ContainerID       string
+	AgentName         string
+	Project           string
+	Address           string
+	Attempts          int
+	PeerAgentFullName string
+	PeerThumbprint    [sha256.Size]byte
+	At                time.Time
 }
 
 func (e SessionConnected) EventName() string     { return "agent.session.connected" }
@@ -84,7 +84,7 @@ func (e SessionConnected) MarshalZerologObject(z *zerolog.Event) {
 		Str("project", e.Project).
 		Str("address", e.Address).
 		Int("attempts", e.Attempts).
-		Str("peer_cn", e.PeerCN).
+		Str("peer_agent_full_name", e.PeerAgentFullName).
 		Str("peer_thumbprint", hex.EncodeToString(e.PeerThumbprint[:]))
 }
 func (e SessionConnected) ApplyTo(s *overseer.State) {

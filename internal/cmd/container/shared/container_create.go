@@ -1529,7 +1529,7 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 	// (with user session data) are never touched.
 	var createdVolumes []string
 	if wsResult.ConfigVolumeResult.ConfigCreated {
-		if vn, vnErr := docker.VolumeName(opts.ProjectName, agentName, "config"); vnErr != nil {
+		if vn, vnErr := docker.VolumeName(opts.ProjectName, agentName, docker.VolumePurposeConfig); vnErr != nil {
 			log.Error().Err(vnErr).Msg("cannot determine config volume name for cleanup tracking")
 			sendWarning(ctx, events, "workspace", fmt.Sprintf("Could not track config volume for cleanup: %v", vnErr))
 		} else {
@@ -1537,7 +1537,7 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 		}
 	}
 	if wsResult.ConfigVolumeResult.HistoryCreated {
-		if vn, vnErr := docker.VolumeName(opts.ProjectName, agentName, "history"); vnErr != nil {
+		if vn, vnErr := docker.VolumeName(opts.ProjectName, agentName, docker.VolumePurposeHistory); vnErr != nil {
 			log.Error().Err(vnErr).Msg("cannot determine history volume name for cleanup tracking")
 			sendWarning(ctx, events, "workspace", fmt.Sprintf("Could not track history volume for cleanup: %v", vnErr))
 		} else {

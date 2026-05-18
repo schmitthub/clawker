@@ -35,9 +35,11 @@ import (
 // Domain and label namespace.
 const (
 	// NamePrefix is the leading segment of every clawker resource name
-	// (containers, volumes, images, canonical agent identities). Two-segment
-	// names are NamePrefix.agent (empty project), three-segment names are
-	// NamePrefix.project.agent.
+	// (containers, volumes, images, AgentFullName values). Three-segment
+	// names NamePrefix.project.agent scope an agent to a registered
+	// project; two-segment names NamePrefix.agent identify a
+	// global-scope agent (no project namespace). Both shapes are
+	// first-class — neither is a degraded form of the other.
 	NamePrefix = "clawker"
 
 	// Domain is the public-facing domain used in help text, URLs, and output.
@@ -160,6 +162,14 @@ const (
 	ContainerCP      = "clawker-controlplane"
 	ContainerEnvoy   = "clawker-envoy"
 	ContainerCoreDNS = "clawker-coredns"
+	// ContainerClawkerd is the deterministic Subject.CommonName baked
+	// into every per-agent leaf cert minted by the CLI. It identifies
+	// the clawkerd binary as the cert holder; the per-agent identity
+	// (the AgentFullName "clawker.<project>.<agent>") lives in a URI
+	// SAN so it isn't pinned to x509's 64-byte CN limit. CP-side gates
+	// pin the peer CN to this constant; agent identity is read from
+	// the SAN and verified against label-derived ground truth.
+	ContainerClawkerd = "clawker-clawkerd"
 )
 
 // Container images.
@@ -324,8 +334,9 @@ const (
 // Container env vars for clawkerd bootstrap. clawkerd reads only what
 // it can authoritatively assert: container_id is server-derived from
 // the registry row keyed by container_id, and project + agent_name
-// travel via env vars only for log binding (the canonical CN comes
-// from the pre-computed registry column on the CP side).
+// travel via env vars only for log binding (the AgentFullName is
+// reconstructed on demand from the registry row's project +
+// agent_name columns; there is no pre-computed identity column).
 // Adding a CLAWKER_CONTAINER_ID env would let a coerced clawkerd lie
 // to itself; resist that temptation.
 const (

@@ -10,15 +10,13 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"errors"
+	"fmt"
 	"math/big"
 	"net"
-	"net/netip"
 	"net/url"
 	"testing"
 	"time"
 
-	mobycontainer "github.com/moby/moby/api/types/container"
-	mobynetwork "github.com/moby/moby/api/types/network"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -32,62 +30,48 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
-// fakeContainerInspector is a hand-rolled ContainerInspector for the
-// Register handler tests.
-type fakeContainerInspector struct {
-	inspectFn func(ctx context.Context, containerID string) (mobycontainer.InspectResponse, error)
-}
-
-func (f *fakeContainerInspector) Inspect(ctx context.Context, containerID string) (mobycontainer.InspectResponse, error) {
-	if f.inspectFn == nil {
-		return mobycontainer.InspectResponse{}, errors.New("fakeContainerInspector: no Inspect fn wired")
-	}
-	return f.inspectFn(ctx, containerID)
-}
-
-// peerCtxFromCertAndIP stuffs a fake TLS peer + remote IP into ctx so
-// the Register handler's peerLeafAndIP path resolves. Mirrors gRPC's
-// peer.NewContext shape.
-func peerCtxFromCertAndIP(t *testing.T, leaf *x509.Certificate, remoteIP string) context.Context {
+// resolvedCtx stuffs both a TLS peer cert and a middleware-resolved
+// ResolvedContainer into ctx so the Register handler's peerLeaf +
+// resolved-container reads both succeed. The peer.Addr value is an
+// arbitrary loopback addr — the handler doesn't compare against it
+// (the middleware already grounded the resolved container in peer IP).
+func resolvedCtx(t *testing.T, leaf *x509.Certificate, resolved ResolvedContainer) context.Context {
 	t.Helper()
 	tlsInfo := credentials.TLSInfo{
 		State: tls.ConnectionState{
 			PeerCertificates: []*x509.Certificate{leaf},
 		},
 	}
-	addr, err := net.ResolveTCPAddr("tcp", remoteIP+":52000")
+	addr, err := net.ResolveTCPAddr("tcp", "127.0.0.1:52000")
 	require.NoError(t, err)
-	return peer.NewContext(context.Background(), &peer.Peer{
+	ctx := peer.NewContext(context.Background(), &peer.Peer{
 		Addr:     addr,
 		AuthInfo: tlsInfo,
 	})
+	return WithResolvedContainer(ctx, resolved)
 }
 
-// happyContainer returns an InspectResponse the Register handler
-// accepts: labels match (project, agent) and clawker-net IP matches.
-func happyContainer(containerID, project, agentName, ip string) mobycontainer.InspectResponse {
-	addr := netip.MustParseAddr(ip)
-	return mobycontainer.InspectResponse{
-		ID: containerID,
-		Config: &mobycontainer.Config{
-			Labels: map[string]string{
-				consts.LabelProject: project,
-				consts.LabelAgent:   agentName,
-			},
-		},
-		NetworkSettings: &mobycontainer.NetworkSettings{
-			Networks: map[string]*mobynetwork.EndpointSettings{
-				consts.Network: {
-					IPAddress: addr,
-				},
-			},
-		},
+// resolvedFor is a convenience constructor for the typical resolved
+// container test inputs (project/agent/container_id).
+func resolvedFor(t *testing.T, project, agentName, containerID string) ResolvedContainer {
+	t.Helper()
+	proj, err := auth.NewProjectSlug(project)
+	require.NoError(t, err)
+	name, err := auth.NewAgentName(agentName)
+	require.NoError(t, err)
+	return ResolvedContainer{
+		ContainerID: containerID,
+		Project:     proj,
+		AgentName:   name,
 	}
 }
 
 // signTestLeaf produces a leaf cert chained to caCert/caKey with the
-// given CN and (optionally) container_id encoded as a URI SAN.
-func signTestLeaf(t *testing.T, caCert *x509.Certificate, caKey *ecdsa.PrivateKey, cn, containerID string) *x509.Certificate {
+// given CN and (optionally) AgentFullName + container_id encoded as
+// URI SANs. Production leaves carry CN=consts.ContainerClawkerd plus
+// both SANs; tests that need to drive a specific failure path pass
+// deliberately-bogus or empty values for the relevant input.
+func signTestLeaf(t *testing.T, caCert *x509.Certificate, caKey *ecdsa.PrivateKey, cn, agentFullName, containerID string) *x509.Certificate {
 	t.Helper()
 	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -103,10 +87,15 @@ func signTestLeaf(t *testing.T, caCert *x509.Certificate, caKey *ecdsa.PrivateKe
 		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
 	}
+	if agentFullName != "" {
+		uri, err := url.Parse(auth.AgentSANScheme + agentFullName)
+		require.NoError(t, err)
+		tmpl.URIs = append(tmpl.URIs, uri)
+	}
 	if containerID != "" {
 		uri, err := url.Parse(auth.ContainerSANScheme + containerID)
 		require.NoError(t, err)
-		tmpl.URIs = []*url.URL{uri}
+		tmpl.URIs = append(tmpl.URIs, uri)
 	}
 
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &leafKey.PublicKey, caKey)
@@ -138,14 +127,13 @@ func genTestCA(t *testing.T) (*x509.Certificate, *ecdsa.PrivateKey) {
 	return caCert, key
 }
 
-// newTestHandler builds a Register handler with a mock registry, fake
-// inspector, and Nop logger.
-func newTestHandler(reg Registry, inspector ContainerInspector) *Handler {
+// newTestHandler builds a Register handler with a mock registry and
+// Nop logger.
+func newTestHandler(reg Registry) *Handler {
 	return &Handler{
-		registry:  reg,
-		inspector: inspector,
-		log:       logger.Nop(),
-		clock:     func() time.Time { return time.Unix(1700000000, 0).UTC() },
+		registry: reg,
+		log:      logger.Nop(),
+		clock:    func() time.Time { return time.Unix(1700000000, 0).UTC() },
 	}
 }
 
@@ -153,7 +141,7 @@ func TestRegister_HappyPath(t *testing.T) {
 	caCert, caKey := genTestCA(t)
 	const containerID = "ctr-happy-path"
 	const project, agentName = "myapp", "dev"
-	leaf := signTestLeaf(t, caCert, caKey, auth.CanonicalAgentCN(auth.MustProjectSlug(project), auth.MustAgentName(agentName)), containerID)
+	leaf := signTestLeaf(t, caCert, caKey, consts.ContainerClawkerd, auth.AgentFullName(auth.MustProjectSlug(project), auth.MustAgentName(agentName)), containerID)
 
 	var added Entry
 	reg := &RegistryMock{
@@ -163,15 +151,9 @@ func TestRegister_HappyPath(t *testing.T) {
 			return nil
 		},
 	}
-	inspector := &fakeContainerInspector{
-		inspectFn: func(_ context.Context, gotID string) (mobycontainer.InspectResponse, error) {
-			require.Equal(t, containerID, gotID)
-			return happyContainer(containerID, project, agentName, "10.20.0.5"), nil
-		},
-	}
-	h := newTestHandler(reg, inspector)
+	h := newTestHandler(reg)
 
-	ctx := peerCtxFromCertAndIP(t, leaf, "10.20.0.5")
+	ctx := resolvedCtx(t, leaf, resolvedFor(t, project, agentName, containerID))
 	resp, err := h.Register(ctx, &agentv1.RegisterRequest{AgentName: agentName, Project: project})
 	require.NoError(t, err)
 	require.NotNil(t, resp)
@@ -179,296 +161,290 @@ func TestRegister_HappyPath(t *testing.T) {
 	wantThumbprint := sha256.Sum256(leaf.Raw)
 	assert.Equal(t, wantThumbprint, added.Thumbprint)
 	assert.Equal(t, containerID, added.ContainerID)
-	assert.Equal(t, agentName, added.AgentName)
-	assert.Equal(t, project, added.Project)
+	assert.Equal(t, agentName, added.AgentName.String())
+	assert.Equal(t, project, added.Project.String())
 }
 
-func TestRegister_MalformedIdentity(t *testing.T) {
-	h := newTestHandler(&RegistryMock{}, &fakeContainerInspector{})
+// TestRegister_RequestValidation pins that request-body validation
+// runs ahead of the ctx-resolved check — a malformed request must
+// surface as InvalidArgument even when the wiring is broken. After
+// the auth-side validators were gutted (Docker/x509 enforce their own
+// constraints downstream), the only request-body check that still
+// runs in the handler is "agent_name required" — which is the
+// canonical malformed-input surface we keep verified here.
+func TestRegister_RequestValidation(t *testing.T) {
+	h := newTestHandler(&RegistryMock{})
 	cases := []struct {
 		name string
 		req  *agentv1.RegisterRequest
 	}{
 		{"empty agent_name", &agentv1.RegisterRequest{Project: "p"}},
-		{"invalid project chars", &agentv1.RegisterRequest{AgentName: "x", Project: "BAD UPPER"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := h.Register(context.Background(), tc.req)
 			require.Error(t, err)
-			// Code is the contract; message strings drift across
-			// refactors and aren't worth pinning.
 			st, _ := status.FromError(err)
 			assert.Equal(t, codes.InvalidArgument, st.Code())
 		})
 	}
 }
 
-func TestRegister_NoPeerInfo_PermissionDenied(t *testing.T) {
-	h := newTestHandler(&RegistryMock{}, &fakeContainerInspector{})
-	_, err := h.Register(context.Background(), &agentv1.RegisterRequest{AgentName: "x", Project: "p"})
-	require.Error(t, err)
-	st, _ := status.FromError(err)
-	assert.Equal(t, codes.PermissionDenied, st.Code())
+// TestRegister_CtxGates covers the two pre-cross-check ctx gates that
+// run after request validation passes: a missing resolved container
+// (wiring bug, Internal) and a missing peer cert despite having a
+// resolved container (defense-in-depth, PermissionDenied — the
+// interceptor must have produced the resolved container from a cert,
+// so reaching this branch means ctx was stripped post-resolve).
+func TestRegister_CtxGates(t *testing.T) {
+	resolved := resolvedFor(t, "p", "dev", "ctr-id")
+	cases := []struct {
+		name     string
+		ctx      context.Context
+		wantCode codes.Code
+	}{
+		{"missing resolved container", context.Background(), codes.Internal},
+		{"resolved present but peer cert stripped", WithResolvedContainer(context.Background(), resolved), codes.PermissionDenied},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newTestHandler(&RegistryMock{})
+			_, err := h.Register(tc.ctx, &agentv1.RegisterRequest{AgentName: "dev", Project: "p"})
+			require.Error(t, err)
+			st, _ := status.FromError(err)
+			assert.Equal(t, tc.wantCode, st.Code())
+		})
+	}
 }
 
-func TestRegister_CNMismatch(t *testing.T) {
+// TestRegister_IdentityCrossChecks covers the three identity gates
+// the handler owns: request fields must agree with resolved labels;
+// cert must carry urn:clawker:container: SAN; cert SAN must match
+// resolved.ContainerID. Each row poisons exactly one input. All
+// reject with PermissionDenied and must not reach Add.
+func TestRegister_IdentityCrossChecks(t *testing.T) {
 	caCert, caKey := genTestCA(t)
-	const containerID = "ctr-cn-mismatch"
-	// Cert CN reflects "actual" project; request claims "different"
-	// project. Handler must reject before reaching docker.
-	leaf := signTestLeaf(t, caCert, caKey, "clawker.actual.dev", containerID)
+	const goodProject, goodAgent, goodContainerID = "myapp", "dev", "ctr-resolved"
+	goodAgentFullName := auth.AgentFullName(auth.MustProjectSlug(goodProject), auth.MustAgentName(goodAgent))
 
-	reg := &RegistryMock{}
-	inspector := &fakeContainerInspector{
-		inspectFn: func(_ context.Context, _ string) (mobycontainer.InspectResponse, error) {
-			t.Fatalf("Inspect must not be called when CN mismatches")
-			return mobycontainer.InspectResponse{}, nil
+	cases := []struct {
+		name              string
+		leafContainerSAN  string // empty → no urn:clawker:container: SAN
+		certAgentSAN      string // AgentFullName baked into the leaf's urn:clawker:agent: URI SAN
+		reqProject        string
+		reqAgent          string
+		resolvedContainer string
+	}{
+		{
+			name:              "request project disagrees with resolved",
+			leafContainerSAN:  goodContainerID,
+			certAgentSAN:      goodAgentFullName,
+			reqProject:        "different",
+			reqAgent:          goodAgent,
+			resolvedContainer: goodContainerID,
+		},
+		{
+			name:              "request agent disagrees with resolved",
+			leafContainerSAN:  goodContainerID,
+			certAgentSAN:      goodAgentFullName,
+			reqProject:        goodProject,
+			reqAgent:          "other",
+			resolvedContainer: goodContainerID,
+		},
+		{
+			name:              "cert missing container URI SAN",
+			leafContainerSAN:  "",
+			certAgentSAN:      goodAgentFullName,
+			reqProject:        goodProject,
+			reqAgent:          goodAgent,
+			resolvedContainer: goodContainerID,
+		},
+		{
+			name:              "cert container SAN disagrees with resolved",
+			leafContainerSAN:  "ctr-cert-claim",
+			certAgentSAN:      goodAgentFullName,
+			reqProject:        goodProject,
+			reqAgent:          goodAgent,
+			resolvedContainer: "ctr-resolved-truth",
 		},
 	}
-	h := newTestHandler(reg, inspector)
 
-	ctx := peerCtxFromCertAndIP(t, leaf, "10.20.0.5")
-	_, err := h.Register(ctx, &agentv1.RegisterRequest{AgentName: "dev", Project: "different"})
-	require.Error(t, err)
-	st, _ := status.FromError(err)
-	assert.Equal(t, codes.PermissionDenied, st.Code())
-}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			leaf := signTestLeaf(t, caCert, caKey, consts.ContainerClawkerd, tc.certAgentSAN, tc.leafContainerSAN)
+			addCalled := false
+			reg := &RegistryMock{
+				LookupByContainerIDFunc: func(string) (*Entry, error) { return nil, ErrUnknownAgent },
+				AddFunc: func(Entry) error {
+					addCalled = true
+					return nil
+				},
+			}
+			h := newTestHandler(reg)
 
-func TestRegister_NoContainerSAN(t *testing.T) {
-	caCert, caKey := genTestCA(t)
-	// signTestLeaf with empty containerID skips the SAN. Handler must
-	// reject because it can't bind to a container_id.
-	leaf := signTestLeaf(t, caCert, caKey, auth.CanonicalAgentCN(auth.MustProjectSlug("p"), auth.MustAgentName("dev")), "")
-
-	h := newTestHandler(&RegistryMock{}, &fakeContainerInspector{})
-
-	ctx := peerCtxFromCertAndIP(t, leaf, "10.20.0.5")
-	_, err := h.Register(ctx, &agentv1.RegisterRequest{AgentName: "dev", Project: "p"})
-	require.Error(t, err)
-	st, _ := status.FromError(err)
-	assert.Equal(t, codes.PermissionDenied, st.Code())
-}
-
-func TestRegister_ContainerLabelMismatch(t *testing.T) {
-	caCert, caKey := genTestCA(t)
-	const containerID = "ctr-label-mismatch"
-	leaf := signTestLeaf(t, caCert, caKey, auth.CanonicalAgentCN(auth.MustProjectSlug("myapp"), auth.MustAgentName("dev")), containerID)
-
-	inspector := &fakeContainerInspector{
-		inspectFn: func(_ context.Context, _ string) (mobycontainer.InspectResponse, error) {
-			// Container's labels claim a different identity than the
-			// cert + request — should reject.
-			return happyContainer(containerID, "different-project", "dev", "10.20.0.5"), nil
-		},
+			ctx := resolvedCtx(t, leaf, resolvedFor(t, goodProject, goodAgent, tc.resolvedContainer))
+			_, err := h.Register(ctx, &agentv1.RegisterRequest{AgentName: tc.reqAgent, Project: tc.reqProject})
+			require.Error(t, err)
+			st, _ := status.FromError(err)
+			assert.Equal(t, codes.PermissionDenied, st.Code())
+			assert.False(t, addCalled, "Add must not run when identity cross-checks fail")
+		})
 	}
-	h := newTestHandler(&RegistryMock{}, inspector)
-
-	ctx := peerCtxFromCertAndIP(t, leaf, "10.20.0.5")
-	_, err := h.Register(ctx, &agentv1.RegisterRequest{AgentName: "dev", Project: "myapp"})
-	require.Error(t, err)
-	st, _ := status.FromError(err)
-	assert.Equal(t, codes.PermissionDenied, st.Code())
 }
 
-func TestRegister_PeerIPMismatch(t *testing.T) {
+// TestRegister_RegistryBranches covers the post-cross-check registry
+// branches the handler decides on. Each row pins a distinct status
+// code mapping (Welcome/PermissionDenied/Internal) and the
+// Add-callthrough behavior. The handler's identity gates are
+// pre-asserted by `TestRegister_IdentityCrossChecks` — rows here
+// share the same happy-path inputs and vary only the registry-mock
+// behavior.
+func TestRegister_RegistryBranches(t *testing.T) {
 	caCert, caKey := genTestCA(t)
-	const containerID = "ctr-ip-mismatch"
-	leaf := signTestLeaf(t, caCert, caKey, auth.CanonicalAgentCN(auth.MustProjectSlug("myapp"), auth.MustAgentName("dev")), containerID)
-
-	inspector := &fakeContainerInspector{
-		inspectFn: func(_ context.Context, _ string) (mobycontainer.InspectResponse, error) {
-			// Container is at 10.20.0.5; peer claims 10.20.0.99.
-			return happyContainer(containerID, "myapp", "dev", "10.20.0.5"), nil
-		},
-	}
-	h := newTestHandler(&RegistryMock{}, inspector)
-
-	ctx := peerCtxFromCertAndIP(t, leaf, "10.20.0.99")
-	_, err := h.Register(ctx, &agentv1.RegisterRequest{AgentName: "dev", Project: "myapp"})
-	require.Error(t, err)
-	st, _ := status.FromError(err)
-	assert.Equal(t, codes.PermissionDenied, st.Code())
-}
-
-func TestRegister_IdempotentRetry_MatchingThumbprint(t *testing.T) {
-	caCert, caKey := genTestCA(t)
-	const containerID = "ctr-idempotent"
-	leaf := signTestLeaf(t, caCert, caKey, auth.CanonicalAgentCN(auth.MustProjectSlug("myapp"), auth.MustAgentName("dev")), containerID)
+	const containerID, project, agentName = "ctr-reg-branches", "myapp", "dev"
+	leaf := signTestLeaf(t, caCert, caKey, consts.ContainerClawkerd, auth.AgentFullName(auth.MustProjectSlug(project), auth.MustAgentName(agentName)), containerID)
 	thumb := sha256.Sum256(leaf.Raw)
+	otherThumb := sha256.Sum256([]byte("a-different-cert"))
 
-	addCalled := false
+	cases := []struct {
+		name            string
+		lookup          func(string) (*Entry, error)
+		add             func(Entry) error
+		wantCode        codes.Code // codes.OK = success
+		wantAddCalled   bool
+		failOnAddCalled bool // true → Add must not be reached
+	}{
+		{
+			name:          "idempotent retry — matching thumbprint, Add skipped",
+			lookup:        func(string) (*Entry, error) { return &Entry{ContainerID: containerID, Thumbprint: thumb}, nil },
+			add:           func(Entry) error { return nil },
+			wantCode:      codes.OK,
+			wantAddCalled: false,
+		},
+		{
+			name:            "thumbprint replay — existing row, different thumbprint",
+			lookup:          func(string) (*Entry, error) { return &Entry{ContainerID: containerID, Thumbprint: otherThumb}, nil },
+			wantCode:        codes.PermissionDenied,
+			failOnAddCalled: true,
+		},
+		{
+			name:            "lookup i/o error (non-ErrUnknownAgent) → Internal, Add skipped",
+			lookup:          func(string) (*Entry, error) { return nil, errors.New("disk i/o error") },
+			wantCode:        codes.Internal,
+			failOnAddCalled: true,
+		},
+		{
+			name:          "Add i/o error → Internal",
+			lookup:        func(string) (*Entry, error) { return nil, ErrUnknownAgent },
+			add:           func(Entry) error { return errors.New("UNIQUE constraint failed") },
+			wantCode:      codes.Internal,
+			wantAddCalled: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			addCalled := false
+			reg := &RegistryMock{
+				LookupByContainerIDFunc: tc.lookup,
+				AddFunc: func(e Entry) error {
+					addCalled = true
+					if tc.failOnAddCalled {
+						t.Fatalf("Add must not run for %s", tc.name)
+					}
+					if tc.add != nil {
+						return tc.add(e)
+					}
+					return nil
+				},
+			}
+			h := newTestHandler(reg)
+
+			ctx := resolvedCtx(t, leaf, resolvedFor(t, project, agentName, containerID))
+			resp, err := h.Register(ctx, &agentv1.RegisterRequest{AgentName: agentName, Project: project})
+
+			if tc.wantCode == codes.OK {
+				require.NoError(t, err)
+				require.NotNil(t, resp)
+			} else {
+				require.Error(t, err)
+				st, _ := status.FromError(err)
+				assert.Equal(t, tc.wantCode, st.Code())
+			}
+			assert.Equal(t, tc.wantAddCalled, addCalled, "Add call expectation mismatch")
+		})
+	}
+}
+
+// TestRegister_MalformedRowEvictThenRewrite pins T5's recovery path:
+// when LookupByContainerID returns ErrMalformedEntry (a row whose
+// agent_name / project / thumbprint failed re-validation at scan
+// time), the handler must evict the row and proceed with the normal
+// Add path. The Welcome surfaces to the agent; the registry ends up
+// holding the middleware-resolved (and freshly validated) identity.
+func TestRegister_MalformedRowEvictThenRewrite(t *testing.T) {
+	caCert, caKey := genTestCA(t)
+	const containerID, project, agentName = "ctr-malformed", "myapp", "dev"
+	leaf := signTestLeaf(t, caCert, caKey, consts.ContainerClawkerd,
+		auth.AgentFullName(auth.MustProjectSlug(project), auth.MustAgentName(agentName)), containerID)
+
+	var (
+		evicted   bool
+		addCalled bool
+	)
 	reg := &RegistryMock{
 		LookupByContainerIDFunc: func(string) (*Entry, error) {
-			return &Entry{
-				ContainerID: containerID,
-				Thumbprint:  thumb,
-				AgentName:   "dev",
-				Project:     "myapp",
-			}, nil
+			return nil, fmt.Errorf("agentregistry: query LookupByContainerID: %w", ErrMalformedEntry)
 		},
-		AddFunc: func(Entry) error {
+		EvictByContainerIDFunc: func(id string) error {
+			evicted = true
+			assert.Equal(t, containerID, id, "evict must target the resolved container_id")
+			return nil
+		},
+		AddFunc: func(e Entry) error {
 			addCalled = true
+			// Re-written row carries the middleware-resolved identity,
+			// not whatever was malformed on the old row.
+			assert.Equal(t, containerID, e.ContainerID)
+			assert.Equal(t, agentName, e.AgentName.String())
+			assert.Equal(t, project, e.Project.String())
 			return nil
 		},
 	}
-	inspector := &fakeContainerInspector{
-		inspectFn: func(_ context.Context, _ string) (mobycontainer.InspectResponse, error) {
-			return happyContainer(containerID, "myapp", "dev", "10.20.0.5"), nil
-		},
-	}
-	h := newTestHandler(reg, inspector)
+	h := newTestHandler(reg)
 
-	ctx := peerCtxFromCertAndIP(t, leaf, "10.20.0.5")
-	resp, err := h.Register(ctx, &agentv1.RegisterRequest{AgentName: "dev", Project: "myapp"})
+	ctx := resolvedCtx(t, leaf, resolvedFor(t, project, agentName, containerID))
+	resp, err := h.Register(ctx, &agentv1.RegisterRequest{AgentName: agentName, Project: project})
 	require.NoError(t, err)
 	require.NotNil(t, resp)
-	assert.False(t, addCalled, "Add must not run on idempotent retry")
+	assert.True(t, evicted, "EvictByContainerID must be called on malformed row")
+	assert.True(t, addCalled, "Add must be called after evict to re-write the row")
 }
 
-func TestRegister_ThumbprintReplay_Rejected(t *testing.T) {
+// TestRegister_MalformedRowEvictFailure pins the failure branch of the
+// recovery path: if the registry's evict itself fails on a malformed
+// row, the handler must NOT proceed to Add — Add would hit the same
+// stale row and either re-fail or land a misaligned upsert. Surface
+// as Internal so the operator's structured log line carries the
+// classification.
+func TestRegister_MalformedRowEvictFailure(t *testing.T) {
 	caCert, caKey := genTestCA(t)
-	const containerID = "ctr-replay"
-	leaf := signTestLeaf(t, caCert, caKey, auth.CanonicalAgentCN(auth.MustProjectSlug("myapp"), auth.MustAgentName("dev")), containerID)
+	const containerID, project, agentName = "ctr-malformed-evict-fail", "myapp", "dev"
+	leaf := signTestLeaf(t, caCert, caKey, consts.ContainerClawkerd,
+		auth.AgentFullName(auth.MustProjectSlug(project), auth.MustAgentName(agentName)), containerID)
 
-	differentThumb := sha256.Sum256([]byte("a-different-cert"))
 	reg := &RegistryMock{
 		LookupByContainerIDFunc: func(string) (*Entry, error) {
-			return &Entry{
-				ContainerID: containerID,
-				Thumbprint:  differentThumb,
-				AgentName:   "dev",
-				Project:     "myapp",
-			}, nil
+			return nil, fmt.Errorf("read: %w", ErrMalformedEntry)
 		},
-		AddFunc: func(Entry) error {
-			t.Fatalf("Add must not run when thumbprint differs from existing row")
-			return nil
-		},
+		EvictByContainerIDFunc: func(string) error { return errors.New("evict disk i/o") },
+		AddFunc:                func(Entry) error { t.Fatal("Add must not run after evict failure"); return nil },
 	}
-	inspector := &fakeContainerInspector{
-		inspectFn: func(_ context.Context, _ string) (mobycontainer.InspectResponse, error) {
-			return happyContainer(containerID, "myapp", "dev", "10.20.0.5"), nil
-		},
-	}
-	h := newTestHandler(reg, inspector)
+	h := newTestHandler(reg)
 
-	ctx := peerCtxFromCertAndIP(t, leaf, "10.20.0.5")
-	_, err := h.Register(ctx, &agentv1.RegisterRequest{AgentName: "dev", Project: "myapp"})
-	require.Error(t, err)
-	st, _ := status.FromError(err)
-	assert.Equal(t, codes.PermissionDenied, st.Code())
-}
-
-// TestRegister_InspectError_PermissionDenied pins that a docker
-// inspect failure rejects the call without falling through to Add.
-// Could surface as "container truly gone between dial and Register"
-// or as a transient daemon error; the handler fails closed either way.
-func TestRegister_InspectError_PermissionDenied(t *testing.T) {
-	caCert, caKey := genTestCA(t)
-	const containerID = "ctr-inspect-err"
-	leaf := signTestLeaf(t, caCert, caKey, auth.CanonicalAgentCN(auth.MustProjectSlug("myapp"), auth.MustAgentName("dev")), containerID)
-
-	addCalled := false
-	reg := &RegistryMock{
-		LookupByContainerIDFunc: func(string) (*Entry, error) { return nil, ErrUnknownAgent },
-		AddFunc: func(Entry) error {
-			addCalled = true
-			return nil
-		},
-	}
-	inspector := &fakeContainerInspector{
-		inspectFn: func(_ context.Context, _ string) (mobycontainer.InspectResponse, error) {
-			return mobycontainer.InspectResponse{}, errors.New("docker daemon hiccup")
-		},
-	}
-	h := newTestHandler(reg, inspector)
-
-	ctx := peerCtxFromCertAndIP(t, leaf, "10.20.0.5")
-	_, err := h.Register(ctx, &agentv1.RegisterRequest{AgentName: "dev", Project: "myapp"})
-	require.Error(t, err)
-	st, _ := status.FromError(err)
-	assert.Equal(t, codes.PermissionDenied, st.Code())
-	assert.False(t, addCalled, "Add must not run when inspect fails")
-}
-
-// TestRegister_AddError_Internal pins that a sqlite-side Add failure
-// (UNIQUE-violation race, disk full, etc.) surfaces as Internal — the
-// caller already passed every identity gate, so the failure is a
-// server-side persistence regression, not an identity verdict.
-func TestRegister_AddError_Internal(t *testing.T) {
-	caCert, caKey := genTestCA(t)
-	const containerID = "ctr-add-err"
-	leaf := signTestLeaf(t, caCert, caKey, auth.CanonicalAgentCN(auth.MustProjectSlug("myapp"), auth.MustAgentName("dev")), containerID)
-
-	reg := &RegistryMock{
-		LookupByContainerIDFunc: func(string) (*Entry, error) { return nil, ErrUnknownAgent },
-		AddFunc: func(Entry) error {
-			return errors.New("UNIQUE constraint failed: agents.thumbprint_hex")
-		},
-	}
-	inspector := &fakeContainerInspector{
-		inspectFn: func(_ context.Context, _ string) (mobycontainer.InspectResponse, error) {
-			return happyContainer(containerID, "myapp", "dev", "10.20.0.5"), nil
-		},
-	}
-	h := newTestHandler(reg, inspector)
-
-	ctx := peerCtxFromCertAndIP(t, leaf, "10.20.0.5")
-	_, err := h.Register(ctx, &agentv1.RegisterRequest{AgentName: "dev", Project: "myapp"})
+	ctx := resolvedCtx(t, leaf, resolvedFor(t, project, agentName, containerID))
+	_, err := h.Register(ctx, &agentv1.RegisterRequest{AgentName: agentName, Project: project})
 	require.Error(t, err)
 	st, _ := status.FromError(err)
 	assert.Equal(t, codes.Internal, st.Code())
-}
-
-// TestRegister_LookupIOError_Internal pins that a sqlite read error
-// (NOT ErrUnknownAgent) surfaces as Internal rather than collapsing
-// to "no row" via the existing-nil short-circuit.
-func TestRegister_LookupIOError_Internal(t *testing.T) {
-	caCert, caKey := genTestCA(t)
-	const containerID = "ctr-lookup-err"
-	leaf := signTestLeaf(t, caCert, caKey, auth.CanonicalAgentCN(auth.MustProjectSlug("myapp"), auth.MustAgentName("dev")), containerID)
-
-	addCalled := false
-	reg := &RegistryMock{
-		LookupByContainerIDFunc: func(string) (*Entry, error) {
-			return nil, errors.New("disk i/o error")
-		},
-		AddFunc: func(Entry) error {
-			addCalled = true
-			return nil
-		},
-	}
-	inspector := &fakeContainerInspector{
-		inspectFn: func(_ context.Context, _ string) (mobycontainer.InspectResponse, error) {
-			return happyContainer(containerID, "myapp", "dev", "10.20.0.5"), nil
-		},
-	}
-	h := newTestHandler(reg, inspector)
-
-	ctx := peerCtxFromCertAndIP(t, leaf, "10.20.0.5")
-	_, err := h.Register(ctx, &agentv1.RegisterRequest{AgentName: "dev", Project: "myapp"})
-	require.Error(t, err)
-	st, _ := status.FromError(err)
-	assert.Equal(t, codes.Internal, st.Code())
-	assert.False(t, addCalled, "Add must not run when lookup fails with non-ErrUnknownAgent")
-}
-
-// TestNewHandler_RejectsNilDeps pins the constructor's nil-rejection
-// contract. Wiring a Handler with a nil registry or nil inspector
-// would NPE on the first call — fail at construction so the failure
-// surfaces at CP startup, not at the first agent boot.
-func TestNewHandler_RejectsNilDeps(t *testing.T) {
-	inspector := &fakeContainerInspector{}
-	reg := &RegistryMock{}
-
-	if _, err := NewHandler(nil, inspector, logger.Nop()); err == nil {
-		t.Fatal("NewHandler(nil registry, _, _) must error")
-	}
-	if _, err := NewHandler(reg, nil, logger.Nop()); err == nil {
-		t.Fatal("NewHandler(_, nil inspector, _) must error")
-	}
-	h, err := NewHandler(reg, inspector, logger.Nop())
-	require.NoError(t, err)
-	require.NotNil(t, h)
 }

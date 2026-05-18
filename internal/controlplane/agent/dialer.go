@@ -17,13 +17,13 @@
 // # Asymmetric trust model — load-bearing
 //
 // CP is the overlord. The dial NEVER aborts on cert / identity grounds.
-// Cert chain verification, peer CN match, and registry classification
+// Cert chain verification and registry thumbprint classification
 // outcomes are captured on the establishResult and surfaced through
 // the typed event surface — SessionConnected carries flat
-// PeerCN/PeerThumbprint fields; AgentRegistered/AgentUntrusted carry
-// the policy outcomes. Subscribers consume those events to enact
-// policy (containment, alerting, eviction); the dialer holds no
-// policy itself.
+// PeerAgentFullName/PeerThumbprint fields (purely diagnostic, never a
+// gate); AgentRegistered/AgentUntrusted carry the policy outcomes.
+// Subscribers consume those events to enact policy (containment,
+// alerting, eviction); the dialer holds no policy itself.
 //
 // Why permissive: CP must always be able to reach clawkerd to issue
 // containment commands (iptables lock, network detach, container kill).
@@ -106,14 +106,21 @@ const closeErrCeiling = 5
 // Dialer captures the CP-side material every dial needs. Construct
 // once at CP startup; share across all agent dials.
 //
-// dialing is the dedup set: containerIDs currently being dialed (or
-// already-Session-established). Initial poll and the dockerevents
-// subscriber both call DialAgent for the same running container; the
-// dedup keeps the second call from spinning a duplicate goroutine
-// against an already-open Session. Membership lasts the lifetime of
-// the dial goroutine — after the Session closes (peer drop, ctx
-// cancel, retry timeout), the entry is removed and a future event
-// for the same containerID dials fresh.
+// dialing is the dedup + cancel map: containerIDs currently being
+// dialed (or already-Session-established) mapped to the cancel func
+// for their per-dial ctx. Initial poll and the dockerevents subscriber
+// both call DialAgent for the same running container; the dedup keeps
+// the second call from spinning a duplicate goroutine against an
+// already-open Session. Membership lasts the lifetime of the dial
+// goroutine — after the Session closes (peer drop, ctx cancel, retry
+// timeout), the entry is removed and a future event for the same
+// containerID dials fresh.
+//
+// CancelDial uses the stored cancel func to tear down a Session
+// synchronously with a registry-evict (container/destroy) — without
+// it, the dialer's runDial loop only notices the disappearance on the
+// next reconnect attempt via outcomeContainerGone, leaving a doomed
+// stream open during the interval.
 type Dialer struct {
 	log    *logger.Logger
 	docker mobyclient.APIClient
@@ -121,10 +128,10 @@ type Dialer struct {
 	// agents is the CP-owned agentregistry (read+write). The dialer
 	// reads it at handshake time to classify the peer cert against
 	// the registered row: match (registered), miss (drives Register
-	// handshake), thumbprint mismatch (untrusted), CN mismatch
-	// (untrusted). Connection stays open in all cases. The Register
-	// flow re-reads after RegisterDone to confirm the row landed.
-	// Required (non-nil) — wiring bug if unset.
+	// handshake), thumbprint mismatch (untrusted). Connection stays
+	// open in all cases. The Register flow re-reads after RegisterDone
+	// to confirm the row landed. Required (non-nil) — wiring bug if
+	// unset.
 	agents Registry
 
 	// initExec dispatches the CP-driven init plan after
@@ -138,7 +145,7 @@ type Dialer struct {
 	caPool       *x509.CertPool
 
 	mu      sync.Mutex
-	dialing map[string]struct{}
+	dialing map[string]context.CancelFunc
 }
 
 // New constructs a Dialer. Returns an error if the CP client cert /
@@ -181,7 +188,7 @@ func New(log *logger.Logger, docker mobyclient.APIClient, bus *overseer.Overseer
 		initExec:     initExec,
 		cpClientCert: cert,
 		caPool:       caPool,
-		dialing:      make(map[string]struct{}),
+		dialing:      make(map[string]context.CancelFunc),
 	}, nil
 }
 
@@ -203,12 +210,14 @@ func New(log *logger.Logger, docker mobyclient.APIClient, bus *overseer.Overseer
 // drain — a stream break ends the goroutine and removes the dedup
 // entry, so a subsequent restart event re-dials.
 func (d *Dialer) DialAgent(ctx context.Context, containerID string) {
+	dialCtx, cancel := context.WithCancel(ctx)
 	d.mu.Lock()
 	if _, exists := d.dialing[containerID]; exists {
 		d.mu.Unlock()
+		cancel()
 		return
 	}
-	d.dialing[containerID] = struct{}{}
+	d.dialing[containerID] = cancel
 	d.mu.Unlock()
 
 	go func() {
@@ -233,7 +242,7 @@ func (d *Dialer) DialAgent(ctx context.Context, containerID string) {
 			agentName, project := "", ""
 			if d.agents != nil {
 				if entry, lerr := d.agents.LookupByContainerID(containerID); lerr == nil && entry != nil {
-					agentName, project = entry.AgentName, entry.Project
+					agentName, project = entry.AgentName.String(), entry.Project.String()
 				}
 			}
 			d.log.Error().
@@ -263,9 +272,30 @@ func (d *Dialer) DialAgent(ctx context.Context, containerID string) {
 			d.mu.Lock()
 			delete(d.dialing, containerID)
 			d.mu.Unlock()
+			// Release the per-dial ctx resources. Safe to call after
+			// CancelDial already cancelled it — context.CancelFunc is
+			// idempotent.
+			cancel()
 		}()
-		d.runDial(ctx, containerID)
+		d.runDial(dialCtx, containerID)
 	}()
+}
+
+// CancelDial synchronously cancels the in-flight Session for
+// containerID, if any. Called by the registry-evict subscriber on
+// container/destroy so the dialer tears down the doomed stream
+// immediately rather than waiting for the next reconnect to classify
+// outcomeContainerGone. Safe to call when no dial is in flight
+// (no-op) and concurrent-safe (mu-guarded). The goroutine's own
+// cleanup runs the deferred delete after runDial returns.
+func (d *Dialer) CancelDial(containerID string) {
+	d.mu.Lock()
+	cancel, ok := d.dialing[containerID]
+	d.mu.Unlock()
+	if !ok {
+		return
+	}
+	cancel()
 }
 
 func (d *Dialer) runDial(ctx context.Context, containerID string) {
@@ -470,10 +500,16 @@ type establishResult struct {
 // enum, not on this struct, since the dial flow drives event
 // publication directly off the outcome rather than threading a
 // unified payload.
+//
+// PeerAgentFullName is the AgentFullName
+// ("clawker.<project>.<agent>") read from the peer's URI SAN
+// (urn:clawker:agent:<agent_full_name>) — NOT from Subject.CommonName,
+// which is the deterministic consts.ContainerClawkerd literal and
+// carries no per-agent information.
 type peerInfo struct {
-	PeerCN         string
-	PeerThumbprint [sha256.Size]byte
-	ChainVerified  bool
+	PeerAgentFullName string
+	PeerThumbprint    [sha256.Size]byte
+	ChainVerified     bool
 	// CaptureReason is set when capturePeer hit an unusual case (no
 	// peer certs, leaf parse failed, chain verify failed). Empty on
 	// the happy path. Stays purely diagnostic — the dialer never
@@ -491,8 +527,8 @@ const (
 	// outcomeRegistryNotQueried is the zero value. Set when the
 	// registry could not be queried at all (lookup error).
 	outcomeRegistryNotQueried registryOutcome = iota
-	// outcomeRegistryMatch — row exists, thumbprint AND canonical_cn
-	// agree with the peer cert. Trusted, registered.
+	// outcomeRegistryMatch — row exists and thumbprint agrees with
+	// the peer cert. Trusted, registered.
 	outcomeRegistryMatch
 	// outcomeRegistryMiss — no row for this container_id. Drives the
 	// Register handshake (RegisterRequired Command on the Session
@@ -502,10 +538,6 @@ const (
 	// disagrees with the live peer cert. Untrusted; AgentUntrusted
 	// fires with ReasonThumbprintMismatch.
 	outcomeRegistryThumbprintMismatch
-	// outcomeRegistryCNMismatch — row exists, thumbprints agree, but
-	// canonical_cn doesn't match the peer's CN. Untrusted;
-	// AgentUntrusted fires with ReasonCNMismatch.
-	outcomeRegistryCNMismatch
 )
 
 // establishWithRetry runs the inner exponential-backoff retry loop
@@ -673,7 +705,7 @@ func nextBackoff(backoff time.Duration) time.Duration {
 // peerInfo (cert-related fields populated by VerifyPeerCertificate)
 // on success, or an error describing which step failed.
 //
-// Cert-related fields (PeerCN, PeerThumbprint, ChainVerified) are
+// Cert-related fields (PeerAgentFullName, PeerThumbprint, ChainVerified) are
 // captured during the TLS handshake via VerifyPeerCertificate that
 // always returns nil — the dialer is permissive and never aborts on
 // cert grounds. The dial flow drives registry classification +
@@ -754,24 +786,35 @@ func clawkerNetAddr(c mobycontainer.InspectResponse) (string, error) {
 	return net.JoinHostPort(ip.String(), strconv.Itoa(consts.DefaultClawkerdPort)), nil
 }
 
-// classifyRegistry cross-checks the captured peer cert against the
-// agentregistry row keyed by container_id and returns the typed
-// outcome plus any diagnostic detail. The dial flow uses the outcome
-// to drive event publication (Match → SessionConnected only; Miss →
-// drives Register handshake; mismatch outcomes → AgentUntrusted).
+// classifyRegistry cross-checks the captured peer cert thumbprint
+// against the agentregistry row keyed by container_id and returns the
+// typed outcome plus any diagnostic detail. The dial flow uses the
+// outcome to drive event publication (Match → SessionConnected only;
+// Miss → drives Register handshake; ThumbprintMismatch →
+// AgentUntrusted).
 //
-// Identity comparison is between (a) the live peer cert thumbprint /
-// CN and (b) the registry row's Thumbprint / canonical_cn. The
-// inspect labels (project, agent on the docker container) are NOT
-// consulted here — they're consulted by the Register handler at row
-// CREATE time. After the row exists, the row IS the identity; later
-// label edits cannot drift identity without invalidating the cert.
+// Identity comparison is between (a) the live peer cert thumbprint
+// and (b) the registry row's Thumbprint. The cert SAN AgentFullName
+// vs label-derived AgentFullName check lives upstream in the
+// IdentityInterceptor — the dialer is the OUTBOUND CP→clawkerd path,
+// where trust on the agent side comes from clawkerd's listener
+// pinning CP's CN, not from CP re-deriving an AgentFullName from a
+// registry row. The row IS the identity once written; later label
+// edits cannot drift identity without invalidating the cert.
 //
 // Connection NEVER aborts here. Lookup errors that are NOT
 // "no such row" return outcomeRegistryNotQueried and a non-empty
 // detail string — these indicate a sqlite/IO regression visible to
 // operators even though the connection proceeds.
-func (d *Dialer) classifyRegistry(peer peerInfo, containerID string) (registryOutcome, string) {
+//
+// ErrMalformedEntry (a stored row that no longer re-validates as a
+// typed identity) is classified as outcomeRegistryMiss so the dial
+// drives the Register handshake — the Register handler will evict
+// the malformed row and re-write it from the middleware-resolved
+// identity. Without this, a malformed row self-perpetuates: the
+// dialer would publish AgentUntrusted on every reconnect and never
+// trigger the cleanup path.
+func (d *Dialer) classifyRegistry(peerThumbprint [sha256.Size]byte, containerID string) (registryOutcome, string) {
 	if d.agents == nil {
 		// Wiring bug — New rejected nil agents, so this can only
 		// happen in a test that bypassed New.
@@ -779,57 +822,25 @@ func (d *Dialer) classifyRegistry(peer peerInfo, containerID string) (registryOu
 	}
 
 	entry, err := d.agents.LookupByContainerID(containerID)
-	if err != nil && !errors.Is(err, ErrUnknownAgent) {
+	switch {
+	case err == nil:
+		// fall through to entry checks below.
+	case errors.Is(err, ErrUnknownAgent):
+		return outcomeRegistryMiss, ""
+	case errors.Is(err, ErrMalformedEntry):
+		// Recover by driving Register — handler evicts + rewrites.
+		return outcomeRegistryMiss, ""
+	default:
 		return outcomeRegistryNotQueried, "registry lookup error: " + err.Error()
 	}
 	if entry == nil {
 		return outcomeRegistryMiss, ""
 	}
 
-	if entry.Thumbprint != peer.PeerThumbprint {
+	if entry.Thumbprint != peerThumbprint {
 		return outcomeRegistryThumbprintMismatch, ""
 	}
-
-	expectedCN, cnErr := canonicalCNFromStrings(entry.Project, entry.AgentName)
-	if cnErr != nil {
-		return outcomeRegistryNotQueried, "registry row CN compose failed: " + cnErr.Error()
-	}
-	if expectedCN != peer.PeerCN {
-		return outcomeRegistryCNMismatch, ""
-	}
 	return outcomeRegistryMatch, ""
-}
-
-// computeCNPinMatch reports whether peerCN equals the canonical agent
-// CN derived from the inspect labels (project, agent). Returns false
-// if either label is missing/malformed (no panic — labels can be
-// arbitrary user-supplied strings on a malicious or misconfigured
-// container). Independent of the registry-row check.
-func computeCNPinMatch(peerCN, project, agent string) bool {
-	if peerCN == "" || agent == "" {
-		return false
-	}
-	expected, err := canonicalCNFromStrings(project, agent)
-	if err != nil {
-		return false
-	}
-	return peerCN == expected
-}
-
-// canonicalCNFromStrings safely composes a canonical agent CN from
-// raw strings, returning an error rather than panicking on malformed
-// input. Wraps auth.CanonicalAgentCN with the err-returning typed
-// constructors (auth.NewProjectSlug / auth.NewAgentName).
-func canonicalCNFromStrings(project, agent string) (string, error) {
-	proj, err := auth.NewProjectSlug(project)
-	if err != nil {
-		return "", err
-	}
-	ag, err := auth.NewAgentName(agent)
-	if err != nil {
-		return "", err
-	}
-	return auth.CanonicalAgentCN(proj, ag), nil
 }
 
 // agentLabels reads the (agent, project) labels from an inspect
@@ -850,7 +861,7 @@ func agentLabels(c mobycontainer.InspectResponse) (agent, project string) {
 // clawkerd to issue containment commands; cert mismatch is a data
 // point, not an abort condition".
 //
-// peer is populated during the handshake with PeerCN,
+// peer is populated during the handshake with PeerAgentFullName,
 // PeerThumbprint, and ChainVerified. The handshake is lazy under
 // grpc.NewClient — these fields are not filled until the first RPC
 // (Session open) triggers the underlying TLS dial.
@@ -882,7 +893,7 @@ func (d *Dialer) dial(_ context.Context, addr string, peer *peerInfo) (*grpc.Cli
 	)
 }
 
-// capturePeer populates PeerCN / PeerThumbprint / ChainVerified on
+// capturePeer populates PeerAgentFullName / PeerThumbprint / ChainVerified on
 // peer from the peer's TLS handshake material. Permissive: every
 // code path returns without error; outcomes flow into peer fields
 // (and peer.CaptureReason for unusual cases). Extracted from the
@@ -907,7 +918,16 @@ func (d *Dialer) capturePeer(rawCerts [][]byte, peer *peerInfo) {
 		certs = append(certs, c)
 	}
 	leaf := certs[0]
-	peer.PeerCN = leaf.Subject.CommonName
+	// Source PeerAgentFullName from the urn:clawker:agent:<agent_full_name> URI
+	// SAN. Subject.CommonName is the deterministic clawkerd binary
+	// literal (consts.ContainerClawkerd) and would yield the same
+	// string for every agent — the per-agent identity lives in the
+	// SAN. The dialer-side classifyRegistry compares only thumbprints
+	// post-Task-4; this field rides on SessionConnected purely as a
+	// diagnostic so subscribers can log "which agent connected" without
+	// a separate registry lookup. SAN-vs-label drift detection lives
+	// upstream in IdentityInterceptor.
+	peer.PeerAgentFullName, _ = auth.AgentFullNameFromCert(leaf)
 	peer.PeerThumbprint = sha256.Sum256(rawCerts[0])
 
 	// Chain-verify against the CLI CA. Outcome is a data point;
@@ -1014,13 +1034,12 @@ const registerRequiredTimeout = 30 * time.Second
 //     wait for RegisterDone, re-lookup), publish AgentRegistered
 //     and AgentUntrusted{ReasonRegisterFailed} on failure
 //   - ThumbprintMismatch → publish AgentUntrusted{ReasonThumbprintMismatch}
-//   - CNMismatch → publish AgentUntrusted{ReasonCNMismatch}
 //   - NotQueried (lookup error) → publish AgentUntrusted with detail
 //
 // Caller must have already called publishConnected — the agent state
 // in overseer is populated by the time we evaluate trust outcomes.
 func (d *Dialer) dispatchAgentEvents(ctx context.Context, containerID string, res establishResult, log *logger.Logger) {
-	outcome, detail := d.classifyRegistry(res.PeerInfo, containerID)
+	outcome, detail := d.classifyRegistry(res.PeerInfo.PeerThumbprint, containerID)
 
 	switch outcome {
 	case outcomeRegistryMatch:
@@ -1047,47 +1066,31 @@ func (d *Dialer) dispatchAgentEvents(ctx context.Context, containerID string, re
 			Reason:      overseer.UntrustedReasonThumbprintMismatch,
 			At:          time.Now(),
 		})
-	case outcomeRegistryCNMismatch:
-		log.Warn().
-			Str("event", "agent_untrusted").
-			Str("reason", string(overseer.UntrustedReasonCNMismatch)).
-			Msg("registered canonical_cn differs from live peer CN; agent untrusted")
-		overseer.Publish(d.bus, AgentUntrusted{
-			ContainerID: containerID,
-			AgentName:   res.Agent,
-			Project:     res.Project,
-			Reason:      overseer.UntrustedReasonCNMismatch,
-			At:          time.Now(),
-		})
-	case outcomeRegistryNotQueried:
-		// Lookup error or wiring bug. Connection proceeds (asymmetric
-		// trust) but worldview reflects the unverifiable state.
-		log.Warn().
-			Str("event", "agent_untrusted").
-			Str("detail", detail).
-			Msg("registry classification could not be determined; agent untrusted")
+	default:
+		// outcomeRegistryNotQueried is the explicit lookup-error /
+		// wiring-bug case; fallthrough catches any future outcome
+		// added without dispatch wiring (fail-closed). Both publish
+		// the same AgentUntrusted{ReasonCertInvalid} payload — the
+		// difference surfaces in the Detail string for operator
+		// triage. Asymmetric trust holds: connection still proceeds.
+		if outcome != outcomeRegistryNotQueried {
+			log.Error().
+				Int("outcome", int(outcome)).
+				Str("event", "agent_dispatch_unknown_outcome").
+				Msg("registryOutcome added without dispatch wiring; failing closed")
+			detail = fmt.Sprintf("unknown registryOutcome %d", int(outcome))
+		} else {
+			log.Warn().
+				Str("event", "agent_untrusted").
+				Str("detail", detail).
+				Msg("registry classification could not be determined; agent untrusted")
+		}
 		overseer.Publish(d.bus, AgentUntrusted{
 			ContainerID: containerID,
 			AgentName:   res.Agent,
 			Project:     res.Project,
 			Reason:      overseer.UntrustedReasonCertInvalid,
 			Detail:      detail,
-			At:          time.Now(),
-		})
-	default:
-		// Exhaustive cases above; reaching this branch means a new
-		// outcome value was added without updating dispatch. Log as
-		// Error and treat as untrusted to fail closed.
-		log.Error().
-			Int("outcome", int(outcome)).
-			Str("event", "agent_dispatch_unknown_outcome").
-			Msg("registryOutcome added without dispatch wiring; failing closed")
-		overseer.Publish(d.bus, AgentUntrusted{
-			ContainerID: containerID,
-			AgentName:   res.Agent,
-			Project:     res.Project,
-			Reason:      overseer.UntrustedReasonCertInvalid,
-			Detail:      fmt.Sprintf("unknown registryOutcome %d", int(outcome)),
 			At:          time.Now(),
 		})
 	}
@@ -1294,7 +1297,7 @@ func (d *Dialer) publishConnecting(ctx context.Context, containerID, agent, proj
 
 // publishConnected records that the Session handshake succeeded
 // (mTLS + Hello + HelloAck) on the given attempt. peer carries the
-// captured cert identity (PeerCN, PeerThumbprint) flat on the event.
+// captured cert identity (PeerAgentFullName, PeerThumbprint) flat on the event.
 // Trust/registration outcomes are published via separate events
 // (AgentRegistered, AgentUntrusted).
 func (d *Dialer) publishConnected(ctx context.Context, containerID, agent, project, addr string, attempt int, peer peerInfo) {
@@ -1302,14 +1305,14 @@ func (d *Dialer) publishConnected(ctx context.Context, containerID, agent, proje
 		return
 	}
 	overseer.Publish(d.bus, SessionConnected{
-		ContainerID:    containerID,
-		AgentName:      agent,
-		Project:        project,
-		Address:        addr,
-		Attempts:       attempt,
-		PeerCN:         peer.PeerCN,
-		PeerThumbprint: peer.PeerThumbprint,
-		At:             time.Now(),
+		ContainerID:       containerID,
+		AgentName:         agent,
+		Project:           project,
+		Address:           addr,
+		Attempts:          attempt,
+		PeerAgentFullName: peer.PeerAgentFullName,
+		PeerThumbprint:    peer.PeerThumbprint,
+		At:                time.Now(),
 	})
 }
 
