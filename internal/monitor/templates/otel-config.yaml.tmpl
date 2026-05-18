@@ -282,8 +282,24 @@ exporters:
       max_elapsed_time: 5m
   # Metrics → Prometheus scrape endpoint. Pull-based, so no retry
   # config — Prometheus handles its own scrape cadence.
+  #
+  # metric_expiration: 0 disables stale-series eviction at the exporter.
+  # The default (5m) reaps cumulative counters that haven't been refreshed
+  # in 5 minutes. Several Claude Code counters fire only on user-action
+  # triggers — session.count (once per session), code_edit_tool.decision
+  # (per Edit/Write decision), commit.count, pull_request.count,
+  # lines_of_code.count — so gaps of hours between deltas are normal.
+  # Combined with delta-temporality semantics (deltatocumulative only
+  # emits when a fresh delta arrives), the default expiration silently
+  # disappears these counters from `_total` series after their last
+  # event. `0` keeps the last cumulative value visible for the lifetime
+  # of the collector process. Cardinality is bounded (low thousands of
+  # series across all agents in a session), so memory cost is trivial,
+  # and the monitoring stack is throwaway anyway — `monitor down
+  # --volumes` is the canonical reset.
   prometheus:
     endpoint: "0.0.0.0:{{.PrometheusMetricsPort}}"
+    metric_expiration: 0
 
 connectors:
   # Derives RED metrics (rate, errors, duration) from spans flowing
