@@ -306,11 +306,18 @@ RUN {{.}}
 ARG USERNAME={{.Username}}
 
 # Setup non-root user
+{{/*
+  Idempotent groupadd: when the host GID happens to collide with a
+  pre-existing group in the base image (e.g. host GID == 20 picks up
+  Debian's dialout), fall back to an auto-assigned GID so the build
+  doesn't fail. UPG is preserved either way — ${USERNAME} group
+  always exists, useradd binds to it by name.
+*/}}
 {{if .IsAlpine -}}
-RUN addgroup -g {{.GID}} ${USERNAME} \
+RUN (addgroup -g {{.GID}} ${USERNAME} 2>/dev/null || addgroup ${USERNAME}) \
     && adduser -D -u {{.UID}} -G ${USERNAME} -s {{.Shell}} ${USERNAME}
 {{else -}}
-RUN groupadd --gid {{.GID}} ${USERNAME} \
+RUN (groupadd --gid {{.GID}} ${USERNAME} 2>/dev/null || groupadd ${USERNAME}) \
     && useradd --uid {{.UID}} --gid ${USERNAME} --shell {{.Shell}} --create-home ${USERNAME}
 {{end}}
 

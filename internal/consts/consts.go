@@ -288,7 +288,19 @@ func ContainerUID() int { return containerUID }
 // ContainerGID returns the GID counterpart to ContainerUID().
 func ContainerGID() int { return containerGID }
 
+// resolveProcessID returns the running process's UID/GID on Linux, falling
+// back to `fallback` on other platforms. Linux is the only host where
+// container processes see the host's numeric UID/GID through a bind mount —
+// Docker Desktop on macOS (virtiofs / gRPC FUSE) masks UID/GID at the
+// share boundary so any container UID lands on disk as the host user.
+// Baking the host UID into the image on macOS would offer no access
+// benefit and would cause downstream `groupadd --gid <host_gid>` to
+// collide with base-image groups whenever the host GID is low
+// (e.g. macOS staff = 20, Debian dialout = 20).
 func resolveProcessID(get func() int, fallback int) int {
+	if runtime.GOOS != "linux" {
+		return fallback
+	}
 	if v := get(); v > 0 {
 		return v
 	}
