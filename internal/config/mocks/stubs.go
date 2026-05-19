@@ -76,8 +76,6 @@ func newMockFrom(cfg config.Config) *ConfigMock {
 	mock.OpenSearchDashboardsURLFunc = cfg.OpenSearchDashboardsURL
 	mock.PrometheusURLFunc = cfg.PrometheusURL
 	mock.OtelCollectorURLFunc = cfg.OtelCollectorURL
-	mock.OtelMetricsEndpointFunc = cfg.OtelMetricsEndpoint
-	mock.OtelLogsEndpointFunc = cfg.OtelLogsEndpoint
 	mock.EnvoyIPLastOctetFunc = cfg.EnvoyIPLastOctet
 	mock.CoreDNSIPLastOctetFunc = cfg.CoreDNSIPLastOctet
 	mock.CPIPLastOctetFunc = cfg.CPIPLastOctet

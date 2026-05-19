@@ -465,12 +465,17 @@ ENV LANG=en_US.UTF-8
 # so records land in templated (not dynamically-mapped) indices.
 # Disabled at container creation if monitoring stack is not running; override with agent.env
 ENV CLAUDE_CODE_ENABLE_TELEMETRY=1
+# Beta gate: span tracing only fires when CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1
+# is also set (per Claude Code docs). With both set, OTEL_TRACES_EXPORTER=otlp
+# sends spans via the same OTLP base endpoint below.
+ENV CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1
 ENV OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
 ENV OTEL_METRICS_EXPORTER=otlp
 ENV OTEL_LOGS_EXPORTER=otlp
-# Per-signal endpoints (no traces — traces are not exported from containers)
-ENV OTEL_EXPORTER_OTLP_METRICS_ENDPOINT={{.OtelMetricsEndpoint}}
-ENV OTEL_EXPORTER_OTLP_LOGS_ENDPOINT={{.OtelLogsEndpoint}}
+ENV OTEL_TRACES_EXPORTER=otlp
+# Single base endpoint; OTel SDK appends /v1/metrics, /v1/logs, /v1/traces
+# per signal. Collector OTLP/HTTP receiver listens on the standard paths.
+ENV OTEL_EXPORTER_OTLP_ENDPOINT={{.OtelEndpoint}}
 {{- if .OtelIncludeAccountUUID}}
 ENV OTEL_METRICS_INCLUDE_ACCOUNT_UUID=true
 {{- end}}

@@ -42,8 +42,6 @@ func TestNewBlankConfig_settingsDefaults(t *testing.T) {
 	assert.Equal(t, 9200, mon.OpenSearchPort)
 	assert.Equal(t, 5601, mon.OpenSearchDashboardsPort)
 	assert.Equal(t, 512, mon.OpenSearchHeapMB)
-	assert.Equal(t, "/v1/metrics", mon.Telemetry.MetricsPath)
-	assert.Equal(t, "/v1/logs", mon.Telemetry.LogsPath)
 
 	// Host proxy defaults
 	hp := cfg.HostProxyConfig()
@@ -587,6 +585,4 @@ func TestGeneratedDefaults_SettingsValues(t *testing.T) {
 	assert.Equal(t, 9200, s.Monitoring.OpenSearchPort)
 	assert.Equal(t, 5601, s.Monitoring.OpenSearchDashboardsPort)
 	assert.Equal(t, 512, s.Monitoring.OpenSearchHeapMB)
-	assert.Equal(t, "/v1/metrics", s.Monitoring.Telemetry.MetricsPath)
-	assert.Equal(t, "/v1/logs", s.Monitoring.Telemetry.LogsPath)
 }

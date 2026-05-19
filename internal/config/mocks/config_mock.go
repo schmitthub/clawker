@@ -178,12 +178,6 @@ var _ config.Config = &ConfigMock{}
 //			OtelCollectorURLFunc: func() string {
 //				panic("mock out the OtelCollectorURL method")
 //			},
-//			OtelLogsEndpointFunc: func() string {
-//				panic("mock out the OtelLogsEndpoint method")
-//			},
-//			OtelMetricsEndpointFunc: func() string {
-//				panic("mock out the OtelMetricsEndpoint method")
-//			},
 //			PidsSubdirFunc: func() (string, error) {
 //				panic("mock out the PidsSubdir method")
 //			},
@@ -404,12 +398,6 @@ type ConfigMock struct {
 	// OtelCollectorURLFunc mocks the OtelCollectorURL method.
 	OtelCollectorURLFunc func() string
 
-	// OtelLogsEndpointFunc mocks the OtelLogsEndpoint method.
-	OtelLogsEndpointFunc func() string
-
-	// OtelMetricsEndpointFunc mocks the OtelMetricsEndpoint method.
-	OtelMetricsEndpointFunc func() string
-
 	// PidsSubdirFunc mocks the PidsSubdir method.
 	PidsSubdirFunc func() (string, error)
 
@@ -627,12 +615,6 @@ type ConfigMock struct {
 		// OtelCollectorURL holds details about calls to the OtelCollectorURL method.
 		OtelCollectorURL []struct {
 		}
-		// OtelLogsEndpoint holds details about calls to the OtelLogsEndpoint method.
-		OtelLogsEndpoint []struct {
-		}
-		// OtelMetricsEndpoint holds details about calls to the OtelMetricsEndpoint method.
-		OtelMetricsEndpoint []struct {
-		}
 		// PidsSubdir holds details about calls to the PidsSubdir method.
 		PidsSubdir []struct {
 		}
@@ -741,8 +723,6 @@ type ConfigMock struct {
 	lockOpenSearchDashboardsURL sync.RWMutex
 	lockOpenSearchURL           sync.RWMutex
 	lockOtelCollectorURL        sync.RWMutex
-	lockOtelLogsEndpoint        sync.RWMutex
-	lockOtelMetricsEndpoint     sync.RWMutex
 	lockPidsSubdir              sync.RWMutex
 	lockProject                 sync.RWMutex
 	lockProjectConfigFileName   sync.RWMutex
@@ -2196,60 +2176,6 @@ func (mock *ConfigMock) OtelCollectorURLCalls() []struct {
 	mock.lockOtelCollectorURL.RLock()
 	calls = mock.calls.OtelCollectorURL
 	mock.lockOtelCollectorURL.RUnlock()
-	return calls
-}
-
-// OtelLogsEndpoint calls OtelLogsEndpointFunc.
-func (mock *ConfigMock) OtelLogsEndpoint() string {
-	if mock.OtelLogsEndpointFunc == nil {
-		panic("ConfigMock.OtelLogsEndpointFunc: method is nil but Config.OtelLogsEndpoint was just called")
-	}
-	callInfo := struct {
-	}{}
-	mock.lockOtelLogsEndpoint.Lock()
-	mock.calls.OtelLogsEndpoint = append(mock.calls.OtelLogsEndpoint, callInfo)
-	mock.lockOtelLogsEndpoint.Unlock()
-	return mock.OtelLogsEndpointFunc()
-}
-
-// OtelLogsEndpointCalls gets all the calls that were made to OtelLogsEndpoint.
-// Check the length with:
-//
-//	len(mockedConfig.OtelLogsEndpointCalls())
-func (mock *ConfigMock) OtelLogsEndpointCalls() []struct {
-} {
-	var calls []struct {
-	}
-	mock.lockOtelLogsEndpoint.RLock()
-	calls = mock.calls.OtelLogsEndpoint
-	mock.lockOtelLogsEndpoint.RUnlock()
-	return calls
-}
-
-// OtelMetricsEndpoint calls OtelMetricsEndpointFunc.
-func (mock *ConfigMock) OtelMetricsEndpoint() string {
-	if mock.OtelMetricsEndpointFunc == nil {
-		panic("ConfigMock.OtelMetricsEndpointFunc: method is nil but Config.OtelMetricsEndpoint was just called")
-	}
-	callInfo := struct {
-	}{}
-	mock.lockOtelMetricsEndpoint.Lock()
-	mock.calls.OtelMetricsEndpoint = append(mock.calls.OtelMetricsEndpoint, callInfo)
-	mock.lockOtelMetricsEndpoint.Unlock()
-	return mock.OtelMetricsEndpointFunc()
-}
-
-// OtelMetricsEndpointCalls gets all the calls that were made to OtelMetricsEndpoint.
-// Check the length with:
-//
-//	len(mockedConfig.OtelMetricsEndpointCalls())
-func (mock *ConfigMock) OtelMetricsEndpointCalls() []struct {
-} {
-	var calls []struct {
-	}
-	mock.lockOtelMetricsEndpoint.RLock()
-	calls = mock.calls.OtelMetricsEndpoint
-	mock.lockOtelMetricsEndpoint.RUnlock()
 	return calls
 }
 

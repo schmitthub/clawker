@@ -437,12 +437,8 @@ monitoring:
   # In-network port the otel-collector exposes its Prometheus scrape endpoint on (Prometheus scrapes the collector over clawker-net for collector + agent metrics; not host-published — no localhost binding, no host port-conflict check needed)
   prometheus_metrics_port: <integer>  # default: 8889 | required: false
   telemetry:
-    # OTEL collector HTTP path for metrics
-    metrics_path: <string>  # default: /v1/metrics | required: false
     # HTTP path on Prometheus' native OTLP receiver — available for direct OTLP/HTTP pushers that want to bypass the collector
     prometheus_otlp_path: <string>  # default: /api/v1/otlp/v1/metrics | required: false
-    # OTEL collector HTTP path for logs
-    logs_path: <string>  # default: /v1/logs | required: false
     # How often Claude exports metrics (lower = more granular, higher = less overhead)
     metric_export_interval_ms: <integer>  # default: 10000 | required: false
     # How often Claude exports logs (lower = more real-time, higher = less overhead)
@@ -540,9 +536,7 @@ Global settings live at `~/.config/clawker/settings.yaml`. The following tables 
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `metrics_path` | string | `/v1/metrics` | OTEL collector HTTP path for metrics |
 | `prometheus_otlp_path` | string | `/api/v1/otlp/v1/metrics` | HTTP path on Prometheus' native OTLP receiver — available for direct OTLP/HTTP pushers that want to bypass the collector |
-| `logs_path` | string | `/v1/logs` | OTEL collector HTTP path for logs |
 | `metric_export_interval_ms` | integer | `10000` | How often Claude exports metrics (lower = more granular, higher = less overhead) |
 | `logs_export_interval_ms` | integer | `5000` | How often Claude exports logs (lower = more real-time, higher = less overhead) |
 | `log_tool_details` | boolean | `true` | Capture full tool call inputs/outputs in telemetry (verbose but useful for debugging) |

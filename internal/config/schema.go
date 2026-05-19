@@ -383,11 +383,14 @@ type MonitoringConfig struct {
 	Telemetry                TelemetryConfig `yaml:"telemetry,omitempty"`
 }
 
-// TelemetryConfig configures telemetry export paths and intervals.
+// TelemetryConfig configures telemetry export intervals and signal
+// gating. Per-signal OTLP URL paths are intentionally absent — the
+// container is wired with OTEL_EXPORTER_OTLP_ENDPOINT (base URL only)
+// and the OTel SDK appends the standard /v1/{metrics,logs,traces}
+// path per signal, matching what the collector's OTLP HTTP receiver
+// listens on by default.
 type TelemetryConfig struct {
-	MetricsPath            string `yaml:"metrics_path,omitempty" label:"Metrics Path" desc:"OTEL collector HTTP path for metrics" default:"/v1/metrics"`
 	PrometheusOTLPPath     string `yaml:"prometheus_otlp_path,omitempty" label:"Prometheus OTLP Path" desc:"HTTP path on Prometheus' native OTLP receiver — available for direct OTLP/HTTP pushers that want to bypass the collector" default:"/api/v1/otlp/v1/metrics"`
-	LogsPath               string `yaml:"logs_path,omitempty" label:"Logs Path" desc:"OTEL collector HTTP path for logs" default:"/v1/logs"`
 	MetricExportIntervalMs int    `yaml:"metric_export_interval_ms,omitempty" label:"Metric Export Interval (ms)" desc:"How often Claude exports metrics (lower = more granular, higher = less overhead)" default:"10000"`
 	LogsExportIntervalMs   int    `yaml:"logs_export_interval_ms,omitempty" label:"Logs Export Interval (ms)" desc:"How often Claude exports logs (lower = more real-time, higher = less overhead)" default:"5000"`
 	LogToolDetails         *bool  `yaml:"log_tool_details,omitempty" label:"Log Tool Details" desc:"Capture full tool call inputs/outputs in telemetry (verbose but useful for debugging)" default:"true"`

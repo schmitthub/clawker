@@ -83,14 +83,15 @@ type Config interface {
 	OpenSearchURL() string
 	OpenSearchDashboardsURL() string
 	PrometheusURL() string
-	OtelCollectorURL() string
 
-	// Full OTEL push endpoints (URL + path) Claude Code's exporter
-	// targets from inside agent containers. Both default to the
-	// otel-collector OTLP/HTTP receiver so Prometheus retains metric
-	// metadata (its /api/v1/metadata excludes OTLP-ingested series).
-	OtelMetricsEndpoint() string
-	OtelLogsEndpoint() string
+	// OtelCollectorURL is the OTLP collector base URL on clawker-net
+	// (no path). Wire it into the container as OTEL_EXPORTER_OTLP_ENDPOINT
+	// — the OTel SDK derives /v1/metrics, /v1/logs, /v1/traces by
+	// appending the standard path per signal, so a single base covers
+	// every current and future OTLP signal. Default routes via the
+	// collector so Prometheus retains metric metadata (its
+	// /api/v1/metadata excludes OTLP-ingested series).
+	OtelCollectorURL() string
 	RequiredFirewallDomains() []string
 	EgressRulesFileName() string
 	FirewallDataSubdir() (string, error)

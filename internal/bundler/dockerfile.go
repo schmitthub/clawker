@@ -144,12 +144,13 @@ type DockerfileContext struct {
 	Instructions    *DockerfileInstructions
 	Inject          *DockerfileInject
 
-	// OTEL telemetry endpoints — populated from cfg.OtelMetricsEndpoint() /
-	// cfg.OtelLogsEndpoint(). Both default to the otel-collector OTLP/HTTP
-	// receiver. Prometheus retains metric metadata for OpenSearch Dashboards
-	// because /api/v1/metadata excludes OTLP-ingested series.
-	OtelMetricsEndpoint      string // e.g. "http://otel-collector:4318/v1/metrics"
-	OtelLogsEndpoint         string // e.g. "http://otel-collector:4318/v1/logs"
+	// OTEL telemetry endpoint — populated from cfg.OtelCollectorURL().
+	// Wired into the container as OTEL_EXPORTER_OTLP_ENDPOINT (base URL,
+	// no path); the OTel SDK appends /v1/{metrics,logs,traces} per
+	// signal. Defaults to the otel-collector OTLP/HTTP receiver so
+	// Prometheus retains metric metadata for OpenSearch Dashboards
+	// (/api/v1/metadata excludes OTLP-ingested series).
+	OtelEndpoint             string // e.g. "http://otel-collector:4318"
 	OtelLogsExportInterval   int    // milliseconds, e.g. 5000
 	OtelMetricExportInterval int    // milliseconds, e.g. 10000
 
@@ -304,8 +305,7 @@ func (m *DockerfileManager) createContext(version, variant string) (*DockerfileC
 		BuildKitEnabled:          m.BuildKitEnabled,
 		Instructions:             nil,
 		Inject:                   nil,
-		OtelMetricsEndpoint:      m.cfg.OtelMetricsEndpoint(),
-		OtelLogsEndpoint:         m.cfg.OtelLogsEndpoint(),
+		OtelEndpoint:             m.cfg.OtelCollectorURL(),
 		OtelLogsExportInterval:   mon.Telemetry.LogsExportIntervalMs,
 		OtelMetricExportInterval: mon.Telemetry.MetricExportIntervalMs,
 		OtelLogToolDetails:       *mon.Telemetry.LogToolDetails,
@@ -602,8 +602,7 @@ func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
 		IsAlpine:                 isAlpine,
 		BuildKitEnabled:          g.BuildKitEnabled,
 		HasFirewallCA:            hasFirewallCA,
-		OtelMetricsEndpoint:      g.cfg.OtelMetricsEndpoint(),
-		OtelLogsEndpoint:         g.cfg.OtelLogsEndpoint(),
+		OtelEndpoint:             g.cfg.OtelCollectorURL(),
 		OtelLogsExportInterval:   mon.Telemetry.LogsExportIntervalMs,
 		OtelMetricExportInterval: mon.Telemetry.MetricExportIntervalMs,
 		OtelLogToolDetails:       *mon.Telemetry.LogToolDetails,
