@@ -184,11 +184,15 @@ EOF
 # Explore-flavor apps (`metrics`, `logs`, `traces`) only mount inside an
 # OSD workspace whose features include the relevant nav group. Without
 # a workspace, /app/explore/metrics returns "Application Not Found".
-# Create a "Clawker" workspace with use-case-observability the first
-# time bootstrap runs; subsequent runs find it by name and skip. The
-# workspace's settings.dataConnections list references the SO above so
-# the explore-metrics dataset picker can resolve `clawker_prometheus`.
-# Workspace IDs are auto-generated, so we do not pin one here.
+# Create a "Clawker" workspace with use-case-all (every nav group
+# enabled) the first time bootstrap runs; subsequent runs find it by
+# name and skip. use-case-all keeps observability + security analytics
+# + search + essentials all reachable from one workspace so a single
+# operator pane covers agent telemetry, firewall/security events, and
+# any future cross-cutting views. The workspace's settings.dataConnections
+# list references the SO above so the explore-metrics dataset picker can
+# resolve `clawker_prometheus`. Workspace IDs are auto-generated, so we
+# do not pin one here.
 if curl -fsS -H 'osd-xsrf: true' -H 'Content-Type: application/json' \
     -X POST "${DASHBOARDS_URL}/api/workspaces/_list" -d '{}' \
     | grep -q '"name":"Clawker"'; then
@@ -200,7 +204,7 @@ else
     -H "Content-Type: application/json" \
     --data-binary @- <<'EOF' \
     -o /dev/null
-{"attributes":{"name":"Clawker","description":"Claude Code observability","features":["use-case-observability"]},"settings":{"dataConnections":["clawker-prometheus-conn"]}}
+{"attributes":{"name":"Clawker","description":"Clawker observability","features":["use-case-all"]},"settings":{"dataConnections":["clawker-prometheus-conn"]}}
 EOF
 fi
 
