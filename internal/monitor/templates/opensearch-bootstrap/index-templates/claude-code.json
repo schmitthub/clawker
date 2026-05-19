@@ -3,6 +3,11 @@
   "priority": 100,
   "composed_of": ["clawker-common"],
   "template": {
+    "settings": {
+      "index": {
+        "default_pipeline": "claude-code-prompt-nest"
+      }
+    },
     "mappings": {
       "properties": {
         "resource": {
@@ -63,7 +68,8 @@
             },
             "prompt": {
               "properties": {
-                "id": { "type": "keyword" }
+                "id":    { "type": "keyword" },
+                "value": { "type": "text"    }
               }
             },
             "workspace": {

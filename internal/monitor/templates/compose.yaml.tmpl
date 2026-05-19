@@ -16,19 +16,8 @@ services:
         limits:
           memory: 200M
     restart: unless-stopped
-    # Root required to read /hostfs (hostmetrics scrapes /proc, /sys,
-    # filesystem mounts — root-owned on the host) and the docker
-    # daemon socket (typically root:docker — readable by uid 0 inside
-    # the container without group bridging).
-    user: 0:0
     volumes:
       - ./otel-config.yaml:/etc/otel-collector-config.yaml
-      # Host root → /hostfs (RO). Feeds the hostmetrics receiver (cpu/
-      # mem/disk/network for the underlying host or Docker Desktop VM).
-      - {{.HostFilesystem}}:/hostfs:ro
-      # Docker daemon socket → /var/run/docker.sock (RO). Feeds the
-      # docker_stats receiver. Path-on-host comes from Settings.Docker.Socket.
-      - {{.DockerSocketPath}}:/var/run/docker.sock:ro
 {{- if .OtelInfraPort}}
       # CLI-issued mTLS material for the CP-only receiver. Bound RO from
       # the CLI auth dir on the host. The CA bundle gates client certs

@@ -1,0 +1,11 @@
+{
+  "description": "Nest flat dotted attributes.actor_attr.<k> keys into a single attributes.actor_attr object. The dispatch.go fanout in internal/controlplane/dockerevents emits one Str(\"actor_attr.\"+k, v) per Docker actor attribute; some attributes share dotted prefixes (e.g. com.docker.compose.project AND com.docker.compose.project.working_dir) which OpenSearch auto-expands into colliding leaf-vs-object mappings. Collapsing them into a single flat_object-mapped field side-steps the collision. Paired with attributes.actor_attr: {type: flat_object} on the clawker-cp index template.",
+  "processors": [
+    {
+      "script": {
+        "lang": "painless",
+        "source": "Map attrs = ctx.attributes; if (attrs == null) { return; } Map nested = new HashMap(); List drop = new ArrayList(); for (entry in attrs.entrySet()) { String k = entry.getKey(); if (k.startsWith('actor_attr.')) { nested.put(k.substring(11), entry.getValue()); drop.add(k); } } for (k in drop) { attrs.remove(k); } if (!nested.isEmpty()) { attrs.put('actor_attr', nested); }"
+      }
+    }
+  ]
+}

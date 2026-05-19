@@ -3,6 +3,11 @@
   "priority": 100,
   "composed_of": ["clawker-common"],
   "template": {
+    "settings": {
+      "index": {
+        "default_pipeline": "cp-actor-attr-nest"
+      }
+    },
     "mappings": {
       "properties": {
         "instrumentationScope": {
@@ -20,7 +25,8 @@
             "agent":     { "type": "keyword" },
             "project":   { "type": "keyword" },
             "container": { "type": "keyword" },
-            "error":     { "type": "text", "fields": { "keyword": { "type": "keyword", "ignore_above": 1024 } } }
+            "error":     { "type": "text", "fields": { "keyword": { "type": "keyword", "ignore_above": 1024 } } },
+            "actor_attr": { "type": "flat_object" }
           }
         }
       }

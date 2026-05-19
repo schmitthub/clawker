@@ -97,10 +97,13 @@ templates/opensearch-bootstrap/
   bootstrap.sh.tmpl                    # POSIX sh, file-driven loops over the subdirs below
   component-templates/
     clawker-common.json                # Shared @timestamp / service.name / ingest_source mappings
+  ingest-pipelines/
+    cp-actor-attr-nest.json            # Painless: nest flat attributes.actor_attr.<k> into one flat_object
+    claude-code-prompt-nest.json       # Painless: collapse scalar attributes.prompt + sibling prompt.id into one object
   index-templates/
-    claude-code.json                   # Full schema for every documented Claude Code OTLP log event
+    claude-code.json                   # Full schema for every documented Claude Code OTLP log event; default_pipeline=claude-code-prompt-nest
     clawker-cli.json                   # Scalar attributes.event (zerolog Str("event", ...))
-    clawker-cp.json                    # Same shape as clawker-cli with cp-specific fields
+    clawker-cp.json                    # Same shape as clawker-cli with cp-specific fields; default_pipeline=cp-actor-attr-nest
     clawker-envoy.json                 # Flat HTTP/TLS/TCP fields from Envoy ALS
     clawker-coredns.json               # Structured dns.query attributes from CoreDNS otel plugin
   ism-policies/
@@ -122,6 +125,7 @@ opensearch-node (service_healthy via /_cluster/health)     prometheus (service_s
                                    ▼
                 clawker-opensearch-bootstrap (one-shot)
    - PUT /_component_template/<name> for each component-templates/*.json
+   - PUT /_ingest/pipeline/<name>    for each ingest-pipelines/*.json
    - PUT /_index_template/<name>     for each index-templates/*.json
    - PUT /_plugins/_ism/policies/<id> for each ism-policies/*.json
    - poll http://prometheus:9090/-/ready until 2xx
@@ -146,6 +150,8 @@ If `bootstrap.sh` exits non-zero (e.g. malformed template JSON, OpenSearch rejec
 ### Templates only apply at index creation
 
 OpenSearch index templates only take effect when an index is created — they do NOT retroactively re-map existing indices. The monitoring stack is preconfigured + ephemeral by design (see `.claude/rules/monitoring.md` → "Monitoring stack throwaway"), so the canonical way to pick up template / ISM / saved-object edits is `clawker monitor down --volumes && clawker monitor up`. Bootstrap re-runs on every `monitor up`; PUT semantics make template / ISM updates idempotent and `?overwrite=true` makes saved-objects import idempotent, but pre-existing index mappings stay locked to whatever was applied at first ingest of that index.
+
+Ingest pipeline bodies (`ingest-pipelines/*.json`) are the exception — they're resolved by name on every document, so editing a Painless script and re-running `monitor up` picks up the change without a volume wipe. Only changing which pipeline name an index uses (the `settings.index.default_pipeline` reference in the index template) requires the volume cycle, because the binding is set at index creation.
 
 ## OTEL Pipelines (otel-config.yaml.tmpl)
 

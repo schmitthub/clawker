@@ -58,6 +58,11 @@ apply_dir() {
 }
 
 apply_dir "/_component_template"     "${BOOTSTRAP_DIR}/component-templates"
+# Ingest pipelines must exist before any document is indexed against them
+# (an index template's settings.index.default_pipeline reference is
+# resolved at ingest time, not at template PUT). PUT semantics are
+# idempotent — re-runs replace the pipeline body in place.
+apply_dir "/_ingest/pipeline"        "${BOOTSTRAP_DIR}/ingest-pipelines"
 apply_dir "/_index_template"         "${BOOTSTRAP_DIR}/index-templates"
 
 # ISM policies use optimistic concurrency. A bare PUT to an existing

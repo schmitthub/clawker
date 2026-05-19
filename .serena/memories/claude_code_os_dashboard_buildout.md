@@ -8,15 +8,48 @@ The agent's role during construction is **research assistant only** — answer O
 
 Iron rules from `feedback_no_guessing_dashboard_work` + `feedback_ground_in_real_data` still apply at full force.
 
+## Open issues (probed live, fixes deferred — do NOT silently work around)
+
+### 1. OS SQL direct-query Prometheus connector chokes on `type` label
+
+OSD Explore's Metrics UI returns `Could not resolve subtype of [class PrometheusResult]: missing type id property 'type'` for any Prom metric whose label set contains a bare key named `type`.
+
+- Affected metrics today: `claude_code_active_time_seconds_total` (`type=cli|user`), `claude_code_lines_of_code_count_total` (`type=added|removed`), `claude_code_token_usage_tokens_total` (`type=input|output|cacheRead|cacheCreation`).
+- Root cause: `direct-query/.../ExecuteDirectQueryActionResponse.parseResult()` uses a brittle `rawResult.contains("\"type\":")` substring check to decide whether to wrap the Prom response with `{"type":"prometheus",...}`. Any label literally named `type` flips the flag, so the wrap is skipped, Jackson finds no discriminator at root, deserialization fails. Module is `@opensearch.experimental` (PR #4375, 2025-09-26). No upstream issue tracks it yet. #5251 is a different scalar-result bug.
+- Alt query paths that work today: PromQL via `/api/v1/query` on Prom, Prom UI on `:9090`, PPL `source = clawker_prometheus.<metric>` (different code path).
+- Decision: don't ship a local OTTL rename — would diverge from Claude Code's published metric label names; fix is upstream (~3 lines: `objectMapper.readTree(rawResult).has("type")` or unconditional wrap). File issue + carry doc-only caveat until landed.
+
+### 2. `clawker-cp` index drops docs containing nested Docker label keys — RESOLVED
+
+Both the cp `actor_attr.com.docker.compose.project*` collisions and claude-code `attributes.prompt` scalar↔object collisions are the same OS pathology: dotted attribute keys auto-expand into nested objects at index time, so a doc that places a scalar at a path AND something at a deeper path under the same prefix flips the field's mapping object↔leaf and is rejected.
+
+Fixed via OS ingest pipelines under `internal/monitor/templates/opensearch-bootstrap/ingest-pipelines/`:
+
+- `cp-actor-attr-nest.json` (Painless) — collapses flat `attributes.actor_attr.<k>` keys into a single nested `attributes.actor_attr: {<k>: <v>, ...}` object. Paired with `attributes.actor_attr: {type: flat_object}` on the `clawker-cp` index template.
+- `claude-code-prompt-nest.json` (Painless) — when `attributes.prompt` arrives as a scalar string, moves it to `attributes.prompt.value` and promotes the sibling `prompt.id` into the same object. Paired with `attributes.prompt: {properties: {id: keyword, value: text}}` on the `claude-code` index template. Events shipping only `prompt.id` are untouched and OS auto-nests them into the same template-typed object.
+
+Wired into bootstrap via a new `apply_dir "/_ingest/pipeline"` loop placed before the index-template loop. The two indices set `settings.index.default_pipeline` so the pipelines run on every ingest. Pipeline body edits land via plain `monitor up` (PUT replaces in place); only changing the bound pipeline name requires a volume-wipe cycle.
+
+Empirically verified end-to-end post-restart: cp index landed `container.start` docs containing both `com.docker.compose.project="monitor"` AND `com.docker.compose.project.working_dir="/path"` without collision; claude-code index landed `user_prompt` (scalar+id, transformed to `{id, value}`) and `hook_execution_*` (id-only) records co-resident with the same `attributes.prompt` object mapping.
+
+Rejected alternatives (do not re-propose):
+- `mapping: {dedup: true, dedot: true}` on `opensearchexporter` — silently no-op in SS4O mode. `encoder.go:86 if m.sso { return encodeLogSSO }` skips both. Lesson: [[trace-dispatch-before-trusting-config-option]].
+- `mode: ecs` / `flatten_attributes` exporter mode-switch — trades the SS4O envelope namespace separation (`attributes.*`, `resource.*`, `instrumentationScope.*`) for a corner-case fix. `ingest_source=untrusted_otlp` stamping depends on that envelope; collapsing it inverts blast radius.
+- `disable_objects: true` on `actor_attr` — empirically fails on multi-segment dotted children (`Cannot add nested object field [attributes.actor_attr.org]`).
+- `flat_object` mapping directly on flat-dotted wire shape — requires a real nested JSON object value; rejected the wire shape on probe.
+- OTTL `transform/logs` at the collector — works for bounded keys (claude-code's `prompt`/`prompt.id`) but DEAD-END for cp's unbounded `actor_attr.<k>` set (OTTL has no map-iteration construct).
+
+CP source remained untouched per [[cp-source-off-limits-for-monitoring-fixes]]. The fanout `Str("actor_attr."+k, v)` in `internal/controlplane/dockerevents/dispatch.go` is contract.
+
 ## Branch
 
-- Branch: `feat/os-dashboards` — handoff happens after the workspace was switched to `features: ["use-case-all"]`. Inspect `git log` for the live tip.
+- Branch: `feat/os-dashboards` — inspect `git log` for the live tip.
 
 ## What's wired in bootstrap as of HEAD
 
 `internal/monitor/templates/opensearch-bootstrap/bootstrap.sh.tmpl` does, in order:
 
-1. Component-templates / index-templates / ISM policies (loops over subdirs).
+1. Component-templates / ingest-pipelines / index-templates / ISM policies (loops over subdirs; ingest-pipelines PUT before index-templates so a template's `settings.index.default_pipeline` reference resolves at ingest time).
 2. Registers `clawker_prometheus` direct-query datasource via the SQL plugin (`/_plugins/_query/_datasources`).
 3. Polls `/api/status` on OSD.
 4. Imports `saved-objects/clawker.ndjson` via `/api/saved_objects/_import?overwrite=true` (5 index-pattern SOs only as of HEAD — no dashboards yet).
@@ -172,7 +205,7 @@ docker exec prometheus curl -s 'http://localhost:9090/api/v1/label/__name__/valu
 ## Handoff instructions for next agent (same as iron rules but more)
 
 1. **Re-read this memory completely** before responding to anything.
-2. Re-read `feedback_no_guessing_dashboard_work` + `feedback_ground_in_real_data` + `feedback_clawker_container_no_direct_net` + `feedback_dashboard_filter_bar_explicit` + `feedback_believe_user_observations`.
+2. Re-read `feedback_no_guessing_dashboard_work` + `feedback_ground_in_real_data` + `feedback_clawker_container_no_direct_net` + `feedback_dashboard_filter_bar_explicit` + `feedback_believe_user_observations` + `feedback_no_host_clawker_in_container`.
 3. Run `mcp__serena__check_onboarding_performed` first turn.
 4. **The user drives construction in the UI.** Your job is research assistant + permanence engineer. Do not unilaterally write dashboard / explore / panel JSON.
 5. When the user provides an export (`.ndjson` or SO JSON), bake it into `bootstrap.sh.tmpl` (per-SO POST) or `clawker.ndjson` (bulk import). Capture workspace id at runtime; template-substitute into the SO body before POSTing.

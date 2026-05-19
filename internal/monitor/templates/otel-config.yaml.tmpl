@@ -58,73 +58,6 @@ receivers:
           scrape_interval: 10s
           static_configs:
             - targets: ['127.0.0.1:8888']
-  # Container-level metrics scraped from the Docker daemon. Reads via
-  # the RO-mounted socket at /var/run/docker.sock (compose maps host
-  # Settings.Docker.Socket → this path).
-  docker_stats:
-    endpoint: unix:///var/run/docker.sock
-    collection_interval: 10s
-  # Host metrics for the machine running the otel-collector. On Linux
-  # this is the actual host; on Docker Desktop it's the Linux VM (the
-  # constraint operators care about). Reads via the RO-mounted host
-  # root at /hostfs.
-  hostmetrics:
-    root_path: /hostfs
-    scrapers:
-      cpu:
-        metrics:
-          system.cpu.utilization:
-            enabled: true
-      disk:
-      load:
-      filesystem:
-        exclude_mount_points:
-          mount_points:
-            - /dev/*
-            - /proc/*
-            - /sys/*
-            - /run/k3s/containerd/*
-            - /var/lib/docker/*
-            - /var/lib/kubelet/*
-            - /snap/*
-          match_type: regexp
-        exclude_fs_types:
-          fs_types:
-            - autofs
-            - binfmt_misc
-            - bpf
-            - cgroup2
-            - configfs
-            - debugfs
-            - devpts
-            - devtmpfs
-            - fusectl
-            - hugetlbfs
-            - iso9660
-            - mqueue
-            - nsfs
-            - overlay
-            - proc
-            - procfs
-            - pstore
-            - rpc_pipefs
-            - securityfs
-            - selinuxfs
-            - squashfs
-            - sysfs
-            - tracefs
-          match_type: strict
-      memory:
-        metrics:
-          system.memory.utilization:
-            enabled: true
-      network:
-      paging:
-      processes:
-      process:
-        mute_process_exe_error: true
-        mute_process_io_error: true
-        mute_process_user_error: true
 
 processors:
   # Cap collector memory below the 200M compose hard limit so burst
@@ -369,11 +302,11 @@ service:
       receivers: [otlp]
       processors: [memory_limiter, resource/untrusted_otlp, transform/metrics, deltatocumulative, batch]
       exporters: [prometheus, debug]
-    # Trusted metrics — collector self-scrape, docker_stats,
-    # hostmetrics, and spanmetrics-derived RED metrics. All sourced
-    # locally; no sender-declared resource attrs to defend.
+    # Trusted metrics — collector self-scrape and spanmetrics-derived
+    # RED metrics. All sourced locally; no sender-declared resource
+    # attrs to defend.
     metrics/trusted:
-      receivers: [prometheus/self, docker_stats, hostmetrics, spanmetrics]
+      receivers: [prometheus/self, spanmetrics]
       processors: [memory_limiter, transform/metrics, deltatocumulative, batch]
       exporters: [prometheus, debug]
     # Untrusted log ingress. Only claude-code/clawker-cli route

@@ -105,14 +105,6 @@ type MonitorTemplateData struct {
 	OtelServerKeyHostPath  string
 	OtelCAHostPath         string
 
-	// Host paths consumed by the otel-collector's hostmetrics +
-	// docker_stats receivers. HostFilesystem is hardcoded to "/" — Linux
-	// host root or Docker Desktop VM root; mounted RO at /hostfs.
-	// DockerSocketPath comes from Settings.Docker.Socket (defaults to
-	// /var/run/docker.sock); mounted RO at /var/run/docker.sock.
-	HostFilesystem   string
-	DockerSocketPath string
-
 	// Container images — version + SHA256 pinned.
 	OtelCollectorImage        string
 	PrometheusImage           string
@@ -131,8 +123,7 @@ type MonitorTemplateData struct {
 // NewMonitorTemplateData constructs template data from Settings.
 // Service hostnames are populated from [consts.MonitoringService*] —
 // changing a hostname in consts propagates here without further edits.
-// Settings.Monitoring drives ports/heap; Settings.Docker.Socket feeds
-// the otel-collector docker_stats receiver mount.
+// Settings.Monitoring drives ports/heap.
 func NewMonitorTemplateData(s *config.Settings) MonitorTemplateData {
 	mon := s.Monitoring
 	return MonitorTemplateData{
@@ -148,8 +139,6 @@ func NewMonitorTemplateData(s *config.Settings) MonitorTemplateData {
 		PrometheusService:           consts.MonitoringServicePrometheus,
 		OpenSearchNodeService:       consts.MonitoringServiceOpenSearchNode,
 		OpenSearchDashboardsService: consts.MonitoringServiceOpenSearchDashboards,
-		HostFilesystem:              "/",
-		DockerSocketPath:            s.Docker.Socket,
 		OtelCollectorImage:          OtelCollectorImage,
 		PrometheusImage:             PrometheusImage,
 		OpenSearchImage:             OpenSearchImage,
