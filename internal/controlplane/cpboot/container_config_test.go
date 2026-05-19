@@ -3,6 +3,7 @@ package cpboot
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -250,12 +251,19 @@ func TestCPContainer_HostUIDGIDEnv_Emitted(t *testing.T) {
 	cpConfig, err := BuildCPContainerConfig(cfg, testCPOpts())
 	require.NoError(t, err)
 
-	wantUID, wantGID := os.Getuid(), os.Getgid()
-	if wantUID <= 0 {
-		wantUID = 1001
-	}
-	if wantGID <= 0 {
-		wantGID = 1001
+	// Mirror consts.resolveProcessID exactly: Linux derives from
+	// os.Getuid/Getgid (with 1001 fallback when the call returns 0 / -1);
+	// non-Linux short-circuits to 1001 unconditionally because Docker
+	// Desktop's virtiofs masks UID/GID at the bind boundary so the
+	// bundler bakes the fallback UID into the agent image.
+	wantUID, wantGID := 1001, 1001
+	if runtime.GOOS == "linux" {
+		if u := os.Getuid(); u > 0 {
+			wantUID = u
+		}
+		if g := os.Getgid(); g > 0 {
+			wantGID = g
+		}
 	}
 	assert.Contains(t, cpConfig.Env, consts.EnvHostUID+"="+strconv.Itoa(wantUID),
 		"CP container env must carry host UID (os.Getuid() with fallback) for userStage drop-priv")
