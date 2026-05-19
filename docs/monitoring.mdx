@@ -18,27 +18,31 @@ The stack ingests logs into OpenSearch and exposes them through **OpenSearch Das
 
 ## Architecture
 
-The monitoring stack runs as four Docker Compose services on the `clawker-net` network:
+The monitoring stack runs as four long-lived Docker Compose services on the `clawker-net` network, plus one short-lived bootstrap container that runs once per `monitor up` to preconfigure the cluster:
 
 ```
 Claude Code (in container)
     |
-    | OTLP (HTTP/gRPC) — logs, metrics
+    | OTLP (HTTP/gRPC) — logs, metrics, traces
     v
-OTEL Collector ──┬──> OpenSearch (logs) ──> OpenSearch Dashboards
-                 └──> Prometheus (metrics) ──> Prometheus UI
+OTEL Collector ──┬──> OpenSearch (logs + traces) ──> OpenSearch Dashboards
+                 └──> Prometheus (metrics + spanmetrics) ──> Prometheus UI
+                                                       \\
+                                                        \\── (also read by OpenSearch Dashboards
+                                                              via a preconfigured datasource)
 ```
 
-Claude Code agents emit logs and metrics only — no traces. The collector's `traces` pipeline is wired but idle until an OTLP traces source is connected.
+Claude Code emits logs, metrics, AND traces. Span export gates on the `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1` flag (baked into the image alongside `CLAUDE_CODE_ENABLE_TELEMETRY=1`). The OTEL Collector's `spanmetrics` connector also produces RED (rate/error/duration) metrics from incoming spans and feeds them into the same Prometheus pipeline.
 
 ### Services
 
 | Service | Image | Default Port | Purpose |
 |---------|-------|:---:|---------|
 | **OTEL Collector** | `otel/opentelemetry-collector-contrib` | 4318 (HTTP), 4317 (gRPC) | Receives telemetry from agents and routes it to backends |
-| **OpenSearch** | `opensearchproject/opensearch` | 9200 | Stores logs across five indices: `claude-code` (Claude Code OTLP), `clawker-cli` (host CLI records exported by the collector), `clawker-cp` (clawker-cp mTLS push), `clawker-envoy` (firewall HTTP/TLS/TCP access logs), `clawker-coredns` (firewall DNS query logs) |
-| **OpenSearch Dashboards** | `opensearchproject/opensearch-dashboards` | 5601 | UI for querying and dashboarding logs |
+| **OpenSearch** | `opensearchproject/opensearch` | 9200 | Stores telemetry across the `claude-code` (Claude Code OTLP), `clawker-cli` (host CLI), `clawker-cp` (clawker-cp mTLS push), `clawker-envoy` (firewall HTTP/TLS/TCP access logs), `clawker-coredns` (firewall DNS query logs) log indices, plus the `traces`/`clawker` (SS4O) trace index |
+| **OpenSearch Dashboards** | `opensearchproject/opensearch-dashboards` | 5601 | UI for querying logs, dashboards, and (via the preconfigured `clawker_prometheus` direct-query datasource) Prometheus metrics |
 | **Prometheus** | `prom/prometheus` | 9090 | Time-series metrics storage and UI |
+| **clawker-opensearch-bootstrap** | `curlimages/curl` | — | One-shot init container. Runs before the collector + Prometheus start; applies templates, ISM, datasource, workspace, saved objects, then exits |
 
 All containers are pre-configured with labels (`dev.clawker.purpose=monitoring`) and attached to the `clawker-net` network. The OpenSearch security plugin is disabled by default for local development — Dashboards is reachable at `http://localhost:5601` with no login required. Set `OPENSEARCH_JAVA_OPTS` via the `opensearch_heap_mb` setting if you need more heap.
 
@@ -50,9 +54,10 @@ Individual service hostname constants (`MonitoringServiceOtelCollector`, `Monito
 
 OTEL endpoints are baked into every Clawker image at build time. At container creation, Clawker checks whether the monitoring stack is running and conditionally enables telemetry:
 
-- `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` — points to the collector's metrics endpoint (baked into image)
-- `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` — points to the collector's logs endpoint (baked into image)
+- `OTEL_EXPORTER_OTLP_ENDPOINT` — single base URL pointing at the collector's OTLP/HTTP listener (baked into image). The Claude Code SDK appends `/v1/metrics`, `/v1/logs`, `/v1/traces` per signal
+- `OTEL_METRICS_EXPORTER` / `OTEL_LOGS_EXPORTER` / `OTEL_TRACES_EXPORTER` — all set to `otlp`
 - `CLAUDE_CODE_ENABLE_TELEMETRY` — set to `1` when the `otel-collector` container is detected as running on `clawker-net`, set to `0` otherwise
+- `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA` — set to `1` (gates Claude Code's span export; both this and `CLAUDE_CODE_ENABLE_TELEMETRY` must be `1` for traces to flow)
 - `OTEL_RESOURCE_ATTRIBUTES` — tags with `project=` and `agent=` for filtering
 
 **Key behavior:** Telemetry is **only active when the monitoring stack is running** at the time the container is created. If the stack isn't up, Clawker explicitly disables telemetry so agents don't waste time attempting exports to an unreachable collector. You can force-enable telemetry via `agent.env` in your `.clawker.yaml` even when the stack is down, but Claude Code won't retry failed collector connections.
@@ -106,22 +111,21 @@ clawker run -it --agent dev @
 
 ### 4. Explore in OpenSearch Dashboards
 
-Open OpenSearch Dashboards at `http://localhost:5601`. From the Discover view, pick one of the preconfigured index patterns — `claude-code`, `clawker-cli`, `clawker-cp`, `clawker-envoy`, or `clawker-coredns` — to see Claude Code logs, host CLI logs, clawker-cp logs, and egress traffic (Envoy access + CoreDNS query logs) side-by-side. Metrics live at the Prometheus UI on `http://localhost:9090`.
+Open OpenSearch Dashboards at `http://localhost:5601` and switch into the `Clawker` workspace (auto-created by bootstrap). The preconfigured `Claude Code` dashboard surfaces session count, cost, and token usage out of the box. From the Discover / Explore views, pick one of the preconfigured index patterns — `claude-code`, `clawker-cli`, `clawker-cp`, `clawker-envoy`, or `clawker-coredns` — to see Claude Code logs, host CLI logs, clawker-cp logs, and egress traffic (Envoy access + CoreDNS query logs) side-by-side. Metrics can be browsed either at the raw Prometheus UI (`http://localhost:9090`) or through OSD via the `clawker_prometheus` direct-query datasource registered by bootstrap.
 
 ## Bootstrap
 
 The stack is preconfigured every `monitor up`. A one-shot `clawker-opensearch-bootstrap` compose service runs after OpenSearch reports healthy, applies:
 
 - **Component templates** with shared mappings (`@timestamp` as date, `service.name` / `ingest_source` / `project` / `agent` as keyword)
-- **Index templates** with per-source field mappings for each of the five indices (so dynamic mapping never locks the wrong type at first ingest)
-- **ISM retention policy** (7-day rollover-to-delete, auto-attached to all five indices via `ism_template.index_patterns`)
-- **Dashboards saved objects** — index patterns for all five indices with `@timestamp` as the time field
+- **Index templates** with per-source field mappings for each log index plus the SS4O `traces` mapping (so dynamic mapping never locks the wrong type at first ingest). The `claude-code` template carries the full Claude Code log + span field set.
+- **ISM retention policy** (7-day rollover-to-delete, auto-attached to all indices via `ism_template.index_patterns`)
+- **Empty index pre-creation** for the log indices so OSD Discover and dashboards don't error on initial load before the first record arrives
+- **`clawker_prometheus` direct-query datasource** registered via the OpenSearch SQL plugin so OSD can read Prometheus metrics without a federated proxy
+- **OSD `Clawker` workspace** with `features: ["use-case-all"]` so the explore-flavor `metrics` / `logs` / `traces` nav groups all mount
+- **Saved objects** imported INTO the Clawker workspace — index patterns for every log index plus the preconfigured `Claude Code` dashboard (KPI strip for sessions, cost, input/output/cache tokens, plus a filter-controls bar)
 
 `otel-collector` and `prometheus` gate on bootstrap completing successfully — they never start until the cluster is preconfigured. Bootstrap failure surfaces in `docker logs clawker-opensearch-bootstrap` and leaves the stack half-up by design (so wrong-mapped indices can't be silently created). The throwaway-stack model means picking up template/policy edits requires `monitor down --volumes && monitor up`; templates only apply at index creation.
-
-<Note>
-Curated dashboards, visualizations, alerts, and Prometheus-as-a-Dashboards-data-source are still TODO. The bootstrap surface is in place — adding pre-built dashboards is a matter of dropping their NDJSON export into `internal/monitor/templates/opensearch-bootstrap/saved-objects/clawker.ndjson` and shipping a new release.
-</Note>
 
 ## Telemetry Controls
 

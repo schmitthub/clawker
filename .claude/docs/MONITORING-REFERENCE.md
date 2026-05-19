@@ -2,13 +2,13 @@
 
 > For essential rules, see `.claude/rules/monitoring.md`.
 
-> **Backend (current):** logs in OpenSearch — five indices `claude-code` (Claude Code OTLP push, untrusted port), `clawker-cli` (host CLI OTLP push, untrusted port), `clawker-cp` (mTLS-gated CP push), `clawker-envoy` (firewall data-plane access logs, mTLS-gated), and `clawker-coredns` (firewall DNS query logs, mTLS-gated). Cross-index queries use pattern `clawker-cp,claude-code,clawker-cli,clawker-envoy,clawker-coredns`. Traces in OpenSearch SS4O dataset `traces` / namespace `clawker`. Metrics in Prometheus. UIs: OpenSearch Dashboards (`:5601`) for logs+traces, Prometheus (`:9090`) for metrics. Field semantics are unchanged, but paths are now SS4O-nested — `resource.attributes.service.name`, `attributes.event.name`, `attributes.tool_name`, `resource.attributes.project`, `resource.attributes.agent` — not the flat Loki labels (`service_name`, `event_name`, etc.) used in the historical tables below. Translate the historical Loki LogQL / Grafana panel examples here to OpenSearch DSL / PPL / Lucene against the nested paths as needed.
+> **Backend (current):** logs in OpenSearch — five indices `claude-code` (Claude Code OTLP push, untrusted port), `clawker-cli` (host CLI OTLP push, untrusted port), `clawker-cp` (mTLS-gated CP push), `clawker-envoy` (firewall data-plane access logs, mTLS-gated), and `clawker-coredns` (firewall DNS query logs, mTLS-gated). Cross-index queries use pattern `clawker-cp,claude-code,clawker-cli,clawker-envoy,clawker-coredns`. Traces in OpenSearch SS4O dataset `traces` / namespace `clawker` (Claude Code beta export gated on `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1`, both env vars baked into the image). Metrics in Prometheus. UIs: OpenSearch Dashboards (`:5601`) for logs+traces, Prometheus (`:9090`) for metrics. Field semantics are unchanged, but paths are SS4O-shaped: resource attributes land FLAT at `resource.*` (so `resource.service.name`, `resource.project`, `resource.agent`) — NOT nested at `resource.attributes.*`, despite the opensearch-go exporter's name. Event content stays under `attributes.*` (`attributes.event.name`, `attributes.tool_name`). Translate the historical Loki LogQL / Grafana panel examples here to OpenSearch DSL / PPL / Lucene against these paths as needed.
 >
-> **Stack ships preconfigured** — `clawker-opensearch-bootstrap` (one-shot compose service, see `internal/monitor/templates/opensearch-bootstrap/`) applies component + index templates, the default ISM retention policy, and Dashboards index-pattern saved objects on every `monitor up`. Curated dashboards / visualizations / alerts are NOT yet shipped — the Grafana panel/MCP sections below remain historical reference for the kinds of queries to port into OpenSearch Dashboards visualizations once we start building them. The data plane is fully wired; only the saved visualization surface is empty.
+> **Stack ships preconfigured** — `clawker-opensearch-bootstrap` (one-shot compose service, see `internal/monitor/templates/opensearch-bootstrap/`) applies component + index templates, the default ISM retention policy, the `clawker_prometheus` direct-query datasource, an OSD `Clawker` workspace with `features: ["use-case-all"]`, and Dashboards saved objects (index patterns for every log index + the preconfigured `Claude Code` dashboard with KPI strip and filter controls) on every `monitor up`. The Grafana panel/MCP sections below remain HISTORICAL — kept as a porting reference for the kinds of queries to add to OpenSearch Dashboards visualizations. Data plane is fully wired; the visualization surface is seeded with one dashboard and expected to grow via the NDJSON-export-and-bake workflow into `internal/monitor/templates/opensearch-bootstrap/saved-objects/clawker.ndjson`.
 
 ## Complete Event Schemas
 
-> ⚠️ **Field-name caveat:** the field tables below use the flat Loki-style names (`service_name`, `event_name`, `tool_name`, etc.) that were emitted under the prior Loki/Grafana stack. The underlying OTLP record content is unchanged, but on OpenSearch the fields are SS4O-nested — translate `event_name` → `attributes.event.name`, `service_name` → `resource.attributes.service.name`, `project`/`agent` → `resource.attributes.project`/`agent`, etc. before querying. The semantics, presence conditions, and tool-name resolution rules all still apply.
+> ⚠️ **Field-name caveat:** the field tables below use the flat Loki-style names (`service_name`, `event_name`, `tool_name`, etc.) that were emitted under the prior Loki/Grafana stack. The underlying OTLP record content is unchanged, but on OpenSearch translate `event_name` → `attributes.event.name`, `service_name` → `resource.service.name`, `project`/`agent` → `resource.project`/`resource.agent`, etc. before querying. Resource attrs are FLAT under `resource.*` (NOT nested at `resource.attributes.*`); event-time fields stay under `attributes.*`. The semantics, presence conditions, and tool-name resolution rules all still apply.
 
 > Validated against live data as of 2026-02-13 (Claude Code v2.1.42). Subject to change — consider valid first before querying for updates.
 
@@ -179,13 +179,14 @@ When using Grafana MCP tools to develop or debug dashboards:
 
 ## Verification Workflow
 
-When modifying the dashboard:
+When modifying templates, datasource, workspace, or saved objects:
 1. Validate JSON syntax (parse the template output)
 2. Run `make test` to ensure template tests pass
-3. Rebuild the binary, overwrite the monitoring compose file, redeploy the monitoring stack:
-   - `make clawker && clawker monitor init --force && clawker monitor down && clawker monitor up` — standard redeploy
-   - `make clawker && clawker monitor init --force && clawker monitor down --volumes && clawker monitor up` — full reset (wipes Prometheus/Loki data, use when datasource or provisioning config changes)
-4. Verify panels load correctly in Grafana (use Grafana MCP `get_dashboard_panel_queries` and `query_loki_logs`)
+3. Rebuild the binary and re-bootstrap the monitoring stack. **Always use `--volumes`**: index templates, ISM, datasources, workspace, and saved objects all apply at bootstrap time and are bound to the OpenSearch volume — a plain `monitor down` keeps the old state.
+   ```
+   make clawker && clawker monitor init --force && clawker monitor down --volumes && clawker monitor up
+   ```
+4. Verify saved objects landed in the `Clawker` workspace at `http://localhost:5601`. For dashboards, open Discover/Explore against the relevant index pattern to confirm fields resolve before adjusting visualizations.
 
 ## Reference
 

@@ -67,14 +67,17 @@ func SetFieldValue(v any, path string, val string) error // Set field by dotted 
 func ApplyOverrides(fields []Field, overrides []Override) []Field
 
 func Edit[T storage.Schema](ios *iostreams.IOStreams, store *storage.Store[T], opts ...Option) (Result, error)
+func BuildBrowser[T storage.Schema](store *storage.Store[T], opts ...Option) (*tui.FieldBrowserModel, error) // Build the model without running the program (for embedding inside larger TUIs)
 func WithTitle(title string) Option
 func WithOverrides(overrides []Override) Option
 func WithSkipPaths(paths ...string) Option
+func WithOnlyPaths(paths ...string) Option                // Inverse of skip — restrict to listed paths
 func WithLayerTargets(targets []LayerTarget) Option
 
 // Shared helpers (used by domain adapters)
 func ShortenHome(path string) string                     // Replace $HOME with ~
 func ResolveLocalPath(cwd, filename string) string       // Dual-placement CWD dot-file
+func BuildLayerTargets(filename, configDir string, layers []storage.LayerInfo) []LayerTarget // Stock Local/User/Original targets
 func Ptr[T any](v T) *T                                 // Pointer helper for Override fields
 ```
 
