@@ -111,7 +111,11 @@ clawker run -it --agent dev @
 
 ### 4. Explore in OpenSearch Dashboards
 
-Open OpenSearch Dashboards at `http://localhost:5601` and switch into the `Clawker` workspace (auto-created by bootstrap). The preconfigured `Claude Code` dashboard surfaces session count, cost, and token usage out of the box. From the Discover / Explore views, pick one of the preconfigured index patterns — `claude-code`, `clawker-cli`, `clawker-cp`, `clawker-envoy`, or `clawker-coredns` — to see Claude Code logs, host CLI logs, clawker-cp logs, and egress traffic (Envoy access + CoreDNS query logs) side-by-side. Metrics can be browsed either at the raw Prometheus UI (`http://localhost:9090`) or through OSD via the `clawker_prometheus` direct-query datasource registered by bootstrap.
+Open OpenSearch Dashboards at `http://localhost:5601`. From the splash / welcome screen, under the **Analytics** panel on the far right, click **Clawker** to enter the auto-created workspace.
+
+Inside the workspace, the left navbar has an **Explore** section — click **Logs** or **Metrics** to browse. The preconfigured index patterns (`claude-code`, `clawker-cli`, `clawker-cp`, `clawker-envoy`, `clawker-coredns`) and the `clawker_prometheus` direct-query datasource are already wired, so logs and Prometheus metrics are both reachable from inside OSD. Raw Prometheus is also still available at `http://localhost:9090` if you prefer it.
+
+**Dashboards.** Robust pre-made dashboards are on the roadmap. For now, build your own from the index patterns + the Prometheus datasource. An example **Claude Code** dashboard with KPI visualizations (sessions, cost, input/output/cache tokens) ships under the workspace's **Dashboards** view for inspiration or direct use.
 
 <Warning>
 **Prometheus label naming: use `kind` instead of `type`**
@@ -133,7 +137,7 @@ The stack is preconfigured every `monitor up`. A one-shot `clawker-opensearch-bo
 - **Empty index pre-creation** for the log indices so OSD Discover and dashboards don't error on initial load before the first record arrives
 - **`clawker_prometheus` direct-query datasource** registered via the OpenSearch SQL plugin so OSD can read Prometheus metrics without a federated proxy
 - **OSD `Clawker` workspace** with `features: ["use-case-all"]` so the explore-flavor `metrics` / `logs` / `traces` nav groups all mount
-- **Saved objects** imported INTO the Clawker workspace — index patterns for every log index plus the preconfigured `Claude Code` dashboard (KPI strip for sessions, cost, input/output/cache tokens, plus a filter-controls bar)
+- **Saved objects** imported INTO the Clawker workspace — index patterns for every log index plus an example `Claude Code` dashboard with KPI visualizations (sessions, cost, input/output/cache tokens, filter-controls bar) for inspiration or direct use. Robust pre-made dashboards are planned; users build their own off the index patterns + Prometheus datasource until then.
 
 `otel-collector` and `prometheus` gate on bootstrap completing successfully — they never start until the cluster is preconfigured. Bootstrap failure surfaces in `docker logs clawker-opensearch-bootstrap` and leaves the stack half-up by design (so wrong-mapped indices can't be silently created). The throwaway-stack model means picking up template/policy edits requires `monitor down --volumes && monitor up`; templates only apply at index creation.
 

@@ -358,7 +358,11 @@ Once the stack is up:
 - **Prometheus UI** — http://localhost:9090 — metrics + ad-hoc PromQL
 - **OpenSearch API** — http://localhost:9200 — REST access to the `claude-code` (Claude Code logs), `clawker-cli` (host CLI logs), `clawker-cp` (control-plane logs), `clawker-envoy` (firewall egress access logs), and `clawker-coredns` (firewall DNS query logs) indices
 
-> **Preconfigured out-of-box.** Every `monitor up` runs a one-shot `clawker-opensearch-bootstrap` container that applies index templates (with explicit field mappings per source), a default 7-day ISM retention policy, and Dashboards saved-object index patterns for all five indices — `otel-collector` and `prometheus` don't start until bootstrap exits cleanly. Open Discover and pick a pattern. Curated dashboards/visualizations + Prometheus-as-a-Dashboards-data-source still need to be built — those are on the roadmap.
+> **Preconfigured out-of-box.** Every `monitor up` runs a one-shot `clawker-opensearch-bootstrap` container that applies index templates (with explicit field mappings per source), ingest pipelines, a default 7-day ISM retention policy, a `clawker_prometheus` direct-query datasource, and a **`Clawker` analytics workspace** with index patterns + example visualizations imported. `otel-collector` and `prometheus` don't start until bootstrap exits cleanly.
+>
+> **Get into the workspace:** from the OSD splash / welcome screen click **Clawker** under the **Analytics** panel on the far right. **See logs or metrics:** in the workspace UI's left navbar, under **Explore**, click **Logs** or **Metrics**.
+>
+> Robust pre-made dashboards are planned. For now, build your own from the index patterns and the Prometheus datasource — an example dashboard + KPI visualizations ship under the workspace's **Dashboards** view for inspiration or direct use.
 
 ## Roadmap / Known Issues
 
