@@ -1,66 +1,46 @@
-# Claude Code OpenSearch Dashboard — Handoff State 2026-05-19
+# Claude Code OpenSearch Dashboard — Living Current State
 
-## Workflow change (THIS IS THE NEW SHAPE)
+## Workflow shape
 
-User builds dashboards / visualizations / explore SOs **manually in the OSD UI**, exports the resulting saved-object JSON / NDJSON, hands it to the agent. Agent's job is then to **bake the exported asset into `bootstrap.sh.tmpl`** (or `clawker.ndjson`) so it materializes on every fresh `monitor up`.
+User builds dashboards / visualizations / explore SOs **manually in the OSD UI**, exports the resulting saved-object JSON / NDJSON, hands it to the agent. Agent's job is to **bake the exported asset into `bootstrap.sh.tmpl`** (or `clawker.ndjson`) so it materializes on every fresh `monitor up`.
 
 The agent's role during construction is **research assistant only** — answer OSD/Prom/Vega questions, source-read plugins, probe the live stack, NEVER unilaterally hand-craft saved-objects from training-data recall.
 
-Iron rules from `feedback_no_guessing_dashboard_work` + `feedback_ground_in_real_data` still apply at full force.
+Iron rules from [[feedback_no_guessing_dashboard_work]] + [[feedback_ground_in_real_data]] apply at full force.
 
-## Open issues (probed live, fixes deferred — do NOT silently work around)
+## Open issues
 
 ### 1. OS SQL direct-query Prometheus connector chokes on `type` label
 
 OSD Explore's Metrics UI returns `Could not resolve subtype of [class PrometheusResult]: missing type id property 'type'` for any Prom metric whose label set contains a bare key named `type`.
 
-- Affected metrics today: `claude_code_active_time_seconds_total` (`type=cli|user`), `claude_code_lines_of_code_count_total` (`type=added|removed`), `claude_code_token_usage_tokens_total` (`type=input|output|cacheRead|cacheCreation`).
+- Affected metrics: `claude_code_active_time_seconds_total` (`type=cli|user`), `claude_code_lines_of_code_count_total` (`type=added|removed`), `claude_code_token_usage_tokens_total` (`type=input|output|cacheRead|cacheCreation`).
 - Root cause: `direct-query/.../ExecuteDirectQueryActionResponse.parseResult()` uses a brittle `rawResult.contains("\"type\":")` substring check to decide whether to wrap the Prom response with `{"type":"prometheus",...}`. Any label literally named `type` flips the flag, so the wrap is skipped, Jackson finds no discriminator at root, deserialization fails. Module is `@opensearch.experimental` (PR #4375, 2025-09-26). No upstream issue tracks it yet. #5251 is a different scalar-result bug.
 - Alt query paths that work today: PromQL via `/api/v1/query` on Prom, Prom UI on `:9090`, PPL `source = clawker_prometheus.<metric>` (different code path).
 - Decision: don't ship a local OTTL rename — would diverge from Claude Code's published metric label names; fix is upstream (~3 lines: `objectMapper.readTree(rawResult).has("type")` or unconditional wrap). File issue + carry doc-only caveat until landed.
 
-### 2. `clawker-cp` index drops docs containing nested Docker label keys — RESOLVED
+## Bootstrap state (as of HEAD)
 
-Both the cp `actor_attr.com.docker.compose.project*` collisions and claude-code `attributes.prompt` scalar↔object collisions are the same OS pathology: dotted attribute keys auto-expand into nested objects at index time, so a doc that places a scalar at a path AND something at a deeper path under the same prefix flips the field's mapping object↔leaf and is rejected.
+`internal/monitor/templates/opensearch-bootstrap/bootstrap.sh.tmpl` runs:
 
-Fixed via OS ingest pipelines under `internal/monitor/templates/opensearch-bootstrap/ingest-pipelines/`:
-
-- `cp-actor-attr-nest.json` (Painless) — collapses flat `attributes.actor_attr.<k>` keys into a single nested `attributes.actor_attr: {<k>: <v>, ...}` object. Paired with `attributes.actor_attr: {type: flat_object}` on the `clawker-cp` index template.
-- `claude-code-prompt-nest.json` (Painless) — when `attributes.prompt` arrives as a scalar string, moves it to `attributes.prompt.value` and promotes the sibling `prompt.id` into the same object. Paired with `attributes.prompt: {properties: {id: keyword, value: text}}` on the `claude-code` index template. Events shipping only `prompt.id` are untouched and OS auto-nests them into the same template-typed object.
-
-Wired into bootstrap via a new `apply_dir "/_ingest/pipeline"` loop placed before the index-template loop. The two indices set `settings.index.default_pipeline` so the pipelines run on every ingest. Pipeline body edits land via plain `monitor up` (PUT replaces in place); only changing the bound pipeline name requires a volume-wipe cycle.
-
-Empirically verified end-to-end post-restart: cp index landed `container.start` docs containing both `com.docker.compose.project="monitor"` AND `com.docker.compose.project.working_dir="/path"` without collision; claude-code index landed `user_prompt` (scalar+id, transformed to `{id, value}`) and `hook_execution_*` (id-only) records co-resident with the same `attributes.prompt` object mapping.
-
-Rejected alternatives (do not re-propose):
-- `mapping: {dedup: true, dedot: true}` on `opensearchexporter` — silently no-op in SS4O mode. `encoder.go:86 if m.sso { return encodeLogSSO }` skips both. Lesson: [[trace-dispatch-before-trusting-config-option]].
-- `mode: ecs` / `flatten_attributes` exporter mode-switch — trades the SS4O envelope namespace separation (`attributes.*`, `resource.*`, `instrumentationScope.*`) for a corner-case fix. `ingest_source=untrusted_otlp` stamping depends on that envelope; collapsing it inverts blast radius.
-- `disable_objects: true` on `actor_attr` — empirically fails on multi-segment dotted children (`Cannot add nested object field [attributes.actor_attr.org]`).
-- `flat_object` mapping directly on flat-dotted wire shape — requires a real nested JSON object value; rejected the wire shape on probe.
-- OTTL `transform/logs` at the collector — works for bounded keys (claude-code's `prompt`/`prompt.id`) but DEAD-END for cp's unbounded `actor_attr.<k>` set (OTTL has no map-iteration construct).
-
-CP source remained untouched per [[cp-source-off-limits-for-monitoring-fixes]]. The fanout `Str("actor_attr."+k, v)` in `internal/controlplane/dockerevents/dispatch.go` is contract.
-
-## Branch
-
-- Branch: `feat/os-dashboards` — inspect `git log` for the live tip.
-
-## What's wired in bootstrap as of HEAD
-
-`internal/monitor/templates/opensearch-bootstrap/bootstrap.sh.tmpl` does, in order:
-
-1. Component-templates / ingest-pipelines / index-templates / ISM policies (loops over subdirs; ingest-pipelines PUT before index-templates so a template's `settings.index.default_pipeline` reference resolves at ingest time).
-2. Registers `clawker_prometheus` direct-query datasource via the SQL plugin (`/_plugins/_query/_datasources`).
+1. Component-templates → ingest-pipelines → index-templates → ISM policies (loops over subdirs; ingest-pipelines PUT before index-templates so `settings.index.default_pipeline` / `final_pipeline` references resolve at ingest time).
+2. Registers `clawker_prometheus` direct-query datasource (SQL plugin `/_plugins/_query/_datasources`).
 3. Polls `/api/status` on OSD.
-4. Imports `saved-objects/clawker.ndjson` via `/api/saved_objects/_import?overwrite=true` (5 index-pattern SOs only as of HEAD — no dashboards yet).
-5. POSTs `data-connection/clawker-prometheus-conn` (idempotent via `?overwrite=true`).
-6. POSTs workspace `Clawker` with **`features: ["use-case-all"]`** (skip-if-exists by name list).
+4. POSTs `data-connection/clawker-prometheus-conn` (idempotent via `?overwrite=true`).
+5. POSTs workspace `Clawker` with `features: ["use-case-all"]` (skip-if-exists by name).
+6. Imports `saved-objects/clawker.ndjson` into the workspace via `/w/<wsId>/api/saved_objects/_import?overwrite=true`.
 
-Workspace id is auto-generated each fresh `monitor up`. Current live id: `5mimS6`.
+### Active ingest pipelines
+
+- `cp-actor-attr-nest` (default_pipeline on `clawker-cp`) — collapses flat dotted `attributes.actor_attr.<k>` keys into a single nested `actor_attr` `flat_object`.
+- `claude-code-prompt-nest` (default_pipeline on `claude-code`) — collapses scalar `attributes.prompt` + sibling `prompt.id` into one `{value, id}` object.
+- `envelope-normalize` (**final_pipeline on all 5 indices**) — mirrors SS4O envelope into legacy paths OSD reads: `severity.{text,number}` → `severityText`/`severityNumber`, flat `resource.<k>` → nested `resource.attributes.<k>`. Required because OSD's explore plugin hard-codes default log columns at `['body','severityText','resource.attributes.service.name']` but the opensearchexporter writes the canonical SS4O shape; multiple open upstream issues with no merged fix (see "Gotchas" below).
+
+Pipeline body edits land via plain `monitor up` (PUT replaces in place). Changing which pipeline NAME an index uses requires the volume-wipe cycle (binding is set at index creation).
 
 ## Stack restart workflow
 
-After editing any template or `Dockerfile.tmpl`:
+After editing any template, `Dockerfile.tmpl`, or pinned image:
 
 ```sh
 make clawker && \
@@ -69,19 +49,9 @@ clawker monitor down --volumes && \
 clawker monitor up
 ```
 
-`down --volumes` is what wipes the workspace + all SOs. Workspace IDs change. The probe SOs documented below ARE wiped — recreate on a fresh stack.
+`down --volumes` wipes the workspace + all SOs (workspace IDs change every cycle). `monitor down` (no `--volumes`) preserves data; `monitor up` reruns bootstrap idempotently — use this lighter cycle when only pipeline/template logic (not schema/SOs) changed.
 
-`monitor down` (no `--volumes`) preserves data; `monitor up` reruns bootstrap which is idempotent. Use this lighter cycle when only template logic (not schema/SOs) changed.
-
-## Verified state of the live stack right now
-
-- All four plugins green: explore, workspace, dataSource, queryEnhancements (all `@3.6.0`).
-- Workspace `Clawker` (id `5mimS6`) with `features: ["use-case-all"]`.
-- Data-connection `clawker-prometheus-conn` registered, `connectionId: clawker_prometheus`.
-- Probe explore SOs in the workspace:
-  - `probe-prom-cost` — `chartType: table`, query `claude_code_cost_usage_USD_total`. Confirmed renders standalone AND embedded in dashboard.
-  - `probe-prom-line` (id `69cec650-531a-11f1-bc73-dfbcc9be49c9`) — UI-saved via "Save explore" + "Add to dashboard". `chartType: line`, `axesMapping: {x: "Time", y: "Value", color: "Series"}`. Renders in dashboard. **This is the canonical reference shape for any line panel in the future.**
-- Probe dashboard `clawker-probe-dash` (workspace-scoped) — contains both panels. Time picker propagation confirmed working. No filter bar (none was wired; see "Open question" below).
+Inside an agent container, never run these host-side ops; ask the user. ([[feedback_no_host_clawker_in_container]])
 
 ## Key shapes (verified by API probe + production UI flow)
 
@@ -110,8 +80,8 @@ clawker monitor up
 ```
 
 Notes:
-- PROMQL pipeline produces columns named `Time` (Date), `Value` (Numerical), `Series` (Categorical). axesMapping must reference these LITERAL names — NOT `@timestamp` / `@value` (those come from the PPL `source = clawker_prometheus.X` form, which is a different code path).
-- `references[].type = "index-pattern"` even though clawker_prometheus is a `data-connection`. This is what the UI emits — don't second-guess it.
+- PROMQL pipeline produces columns named `Time` (Date), `Value` (Numerical), `Series` (Categorical). `axesMapping` must reference these LITERAL names — NOT `@timestamp` / `@value` (those come from the PPL `source = clawker_prometheus.X` form, a different code path).
+- `references[].type = "index-pattern"` even though `clawker_prometheus` is a `data-connection`. This is what the UI emits — don't second-guess it.
 
 ### dashboard SO body — UI-produced reference
 
@@ -136,7 +106,7 @@ Notes:
 - Panel size: production default is `w: 24, h: 15` (max grid width 48). Cosmetic.
 - `migrationVersion.dashboard = "7.9.3"` is added by the server on POST — don't include it in the request.
 
-### workspace ID is dynamic
+### Workspace ID is dynamic
 
 Capture from `/api/workspaces/_list` by name:
 
@@ -149,12 +119,7 @@ WS=$(docker exec opensearch-dashboards curl -s -X POST -H 'osd-xsrf: true' \
 
 For bootstrap baking: capture from the workspace-create response (or list-and-filter), then template-substitute into the dashboard SO JSON before POSTing. The bootstrap pattern for SOs is `POST /api/saved_objects/<type>/<id>?overwrite=true` per-SO, or NDJSON bulk via `/api/saved_objects/_import?overwrite=true`.
 
-### Embedding errors decoded (don't repeat past mistakes)
-
-- `Cannot load saved visualization "<title>" with id <id>` — thrown by `src/plugins/explore/public/embeddable/explore_embeddable.tsx:415` when `chartType !== "table"`, `chartType !== "logs"`, AND `findRuleByAxesMapping(axesMapping, allColumns)` returns no matching rule. axesMapping must reference column names that bucket into the rule's expected (numerical, categorical, date) shape. `axesMapping: {}` + `chartType: "line"` is the canonical "embedding fails" combo from prior probes.
-- `chartType: "table"` bypasses the rule matcher entirely (renders via `TableVis` with `searchProps.tableData`). Useful debugging probe to confirm the embedding plumbing works.
-
-## OPEN QUESTION (do not lose this)
+## OPEN QUESTION: filter mechanism
 
 **Filter mechanism is not wired.** The dashboard SO has no query/filter bar UI. User-facing brief was "verify pill propagation," but no pill UI has ever been configured.
 
@@ -167,7 +132,19 @@ Two unanswered sub-questions:
    - Input-controls panel (dropdowns/sliders) — separate visualization panel emitting filters into dashboard state.
    - PROMQL-side label selectors via dashboard URL/params.
 
-User has not selected one. Don't pick unilaterally.
+User has not selected one. Don't pick unilaterally. ([[feedback_dashboard_filter_bar_explicit]])
+
+## Gotchas worth not relitigating
+
+- **SS4O divergence between exporter wire shape and OSD UI bindings is real and upstream-unfixed.** opensearchexporter `ss4o` mode writes `severity.{text,number}` nested + flat `resource.<k>`; OSD's explore plugin reads top-level `severityText` + nested `resource.attributes.service.name`. Open issues without merged fixes: opensearch-project/data-prepper#5791, opensearch-project/opensearch-catalog#118, open-telemetry/opentelemetry-collector-contrib#45428. Our `envelope-normalize` ingest pipeline mirrors the canonical SS4O paths into the legacy paths OSD reads. Don't try `mode: ecs` / `flatten_attributes` — collapses the namespace separation `ingest_source=untrusted_otlp` stamping depends on.
+- **OS resource attrs land FLAT (`resource.<k>`), not nested at `resource.attributes.<k>`.** ([[project_otel_os_exporter_flat_resource]]) — index template pre-mappings under `resource.attributes` are populated only by the `envelope-normalize` mirror, not the exporter.
+- **`mapping: {dedup: true, dedot: true}` on opensearchexporter is silently no-op in SS4O mode.** `encoder.go:86 if m.sso { return encodeLogSSO }` skips both. ([[feedback_trace_dispatch_before_trusting_config_option]])
+- **CP source (`internal/controlplane/dockerevents/dispatch.go` actor_attr fanout, zerolog OTel writer, etc.) is OFF-LIMITS for monitoring fixes.** ([[feedback_cp_source_off_limits_for_monitoring_fixes]]) — fix at collector / OS template / ingest pipeline.
+- **`disable_objects: true` mapping fails on multi-segment dotted children** (`Cannot add nested object field [attributes.actor_attr.org]`). Use `flat_object` + an ingest pipeline that nests the dotted keys first.
+- **OTTL `transform/logs` has no map-iteration construct** — works only for bounded collision-key sets (e.g. claude-code's `prompt`/`prompt.id`), DEAD-END for unbounded sets (e.g. cp `actor_attr.<docker labels>`).
+- **Claude Code SDK + Envoy native OTel ALS ship log records with `SeverityNumber=Unspecified(0)` + `SeverityText=""`.** Not a pipeline drop; producers genuinely don't set severity. Verified at the raw OTLP debug exporter. `severityText` blank for those two indices is correct truth.
+- **Embedding errors:** `Cannot load saved visualization "<title>" with id <id>` is thrown by `src/plugins/explore/public/embeddable/explore_embeddable.tsx:415` when `chartType !== "table"`, `chartType !== "logs"`, AND `findRuleByAxesMapping(axesMapping, allColumns)` returns no matching rule. `axesMapping: {}` + `chartType: "line"` is the canonical "embedding fails" combo. `chartType: "table"` bypasses the rule matcher entirely (renders via `TableVis`).
+- **`use-case-observability` is dead history; current is `use-case-all`.** Don't repaint.
 
 ## Probe commands cheat sheet
 
@@ -196,18 +173,23 @@ docker exec opensearch-dashboards curl -s -X POST -H 'osd-xsrf: true' \
 # Prom metric list
 docker exec prometheus curl -s 'http://localhost:9090/api/v1/label/__name__/values' | jq
 
+# Pipeline run counters
+docker exec opensearch-dashboards curl -s 'http://opensearch-node:9200/_nodes/stats/ingest?filter_path=nodes.*.ingest.pipelines' | jq
+
+# Raw OTLP record severity at collector (debug exporter dumps to stdout)
+docker logs otel-collector 2>&1 | awk '/ResourceLog/{block=1} /SeverityText/{if(block)print}'
+
 # Verified Claude Code Prom counters: claude_code_session_count_total,
 # claude_code_cost_usage_USD_total, claude_code_token_usage_tokens_total,
 # claude_code_code_edit_tool_decision_total, claude_code_active_time_seconds_total,
 # claude_code_commit_count_total, claude_code_lines_of_code_count_total
 ```
 
-## Handoff instructions for next agent (same as iron rules but more)
+## Handoff instructions for next agent
 
 1. **Re-read this memory completely** before responding to anything.
-2. Re-read `feedback_no_guessing_dashboard_work` + `feedback_ground_in_real_data` + `feedback_clawker_container_no_direct_net` + `feedback_dashboard_filter_bar_explicit` + `feedback_believe_user_observations` + `feedback_no_host_clawker_in_container`.
+2. Re-read [[feedback_no_guessing_dashboard_work]] + [[feedback_ground_in_real_data]] + [[feedback_clawker_container_no_direct_net]] + [[feedback_dashboard_filter_bar_explicit]] + [[feedback_believe_user_observations]] + [[feedback_no_host_clawker_in_container]].
 3. Run `mcp__serena__check_onboarding_performed` first turn.
 4. **The user drives construction in the UI.** Your job is research assistant + permanence engineer. Do not unilaterally write dashboard / explore / panel JSON.
 5. When the user provides an export (`.ndjson` or SO JSON), bake it into `bootstrap.sh.tmpl` (per-SO POST) or `clawker.ndjson` (bulk import). Capture workspace id at runtime; template-substitute into the SO body before POSTing.
-6. Don't repaint old paths. The `use-case-observability` history is dead; current is `use-case-all`. The `axesMapping: {}` + line-chart shape is dead; UI-saved `axesMapping: {x:"Time",y:"Value",color:"Series"}` is the reference.
-7. Don't restart the stack proactively — ask before `monitor down --volumes`.
+6. Don't restart the stack proactively — ask before `monitor down --volumes`.
