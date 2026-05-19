@@ -4,21 +4,25 @@
 # service_completed_successfully gate).
 #
 # Order matters: component templates -> index templates -> ISM
-# policies must all land BEFORE otel-collector starts, so when the
-# collector's exporters create indices on first push, OpenSearch
-# applies the matching templates at creation time. Templates apply
-# only to indices created AFTER the template exists — they do not
-# retroactively re-map existing indices. The monitoring stack is
-# preconfigured + ephemeral; regenerate with `monitor down --volumes
-# && monitor up` to pick up template edits.
+# policies -> pre-create indices. Both index_template mappings AND
+# ISM `ism_template.index_patterns` auto-attach only at index
+# creation, so the policy MUST exist before the empty indices are
+# PUT, or the retention rule never binds for the lifetime of the
+# stack. Templates apply only to indices created AFTER they exist —
+# they do not retroactively re-map existing indices. The monitoring
+# stack is preconfigured + ephemeral; regenerate with `monitor down
+# --volumes && monitor up` to pick up template edits.
 #
 # Failures exit non-zero so dependents never start. The script is
-# idempotent: re-running is a no-op for PUT (templates, ISM) and uses
-# overwrite=true for saved-objects import.
+# idempotent: PUT is a no-op for component + index templates; ISM
+# policies use a probe-then-PUT-with-seq path (optimistic concurrency,
+# see apply_ism_policies); datasources POST-then-PUT-on-409; saved
+# objects import with overwrite=true.
 set -eu
 
 OPENSEARCH_URL="http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"
 DASHBOARDS_URL="http://{{.OpenSearchDashboardsService}}:{{.OpenSearchDashboardsPort}}"
+PROMETHEUS_URL="http://{{.PrometheusService}}:{{.PrometheusPort}}"
 BOOTSTRAP_DIR="/opensearch-bootstrap"
 
 echo "==> bootstrap: waiting for OpenSearch at ${OPENSEARCH_URL}"
@@ -34,6 +38,7 @@ apply_dir() {
   if [ ! -d "${dir}" ]; then
     return 0
   fi
+  count=0
   for f in "${dir}"/*.json; do
     [ -e "${f}" ] || continue
     name=$(basename "${f}" .json)
@@ -42,12 +47,154 @@ apply_dir() {
       -H "Content-Type: application/json" \
       --data-binary "@${f}" \
       -o /dev/null
+    count=$((count+1))
   done
+  if [ "${count}" -eq 0 ]; then
+    # Empty subdir is almost always an embed.FS rendering bug — without
+    # mappings applied, first-ingest dynamic mapping locks the wrong
+    # shape and queries silently miss data for the stack's lifetime.
+    echo "    WARNING: ${dir} contained no .json files — embed.FS may not have rendered"
+  fi
 }
 
 apply_dir "/_component_template"     "${BOOTSTRAP_DIR}/component-templates"
+# Ingest pipelines must exist before any document is indexed against them
+# (an index template's settings.index.default_pipeline reference is
+# resolved at ingest time, not at template PUT). PUT semantics are
+# idempotent — re-runs replace the pipeline body in place.
+apply_dir "/_ingest/pipeline"        "${BOOTSTRAP_DIR}/ingest-pipelines"
 apply_dir "/_index_template"         "${BOOTSTRAP_DIR}/index-templates"
-apply_dir "/_plugins/_ism/policies"  "${BOOTSTRAP_DIR}/ism-policies"
+
+# ISM policies use optimistic concurrency. A bare PUT to an existing
+# policy returns 409 version_conflict_engine_exception. To update an
+# existing policy the request must carry if_seq_no + if_primary_term
+# query params taken from a GET of the current document. Create path is
+# a plain PUT (no params).
+apply_ism_policies() {
+  dir="${BOOTSTRAP_DIR}/ism-policies"
+  if [ ! -d "${dir}" ]; then
+    return 0
+  fi
+  for f in "${dir}"/*.json; do
+    [ -e "${f}" ] || continue
+    name=$(basename "${f}" .json)
+    code=$(curl -sS -o /tmp/ism_get -w '%{http_code}' \
+      "${OPENSEARCH_URL}/_plugins/_ism/policies/${name}")
+    case "${code}" in
+      404)
+        echo "==> bootstrap: PUT ism policy ${name} (create)"
+        curl -fsS -X PUT "${OPENSEARCH_URL}/_plugins/_ism/policies/${name}" \
+          -H "Content-Type: application/json" \
+          --data-binary "@${f}" \
+          -o /dev/null
+        ;;
+      200)
+        seq=$(grep -o '"_seq_no":[0-9]*' /tmp/ism_get | head -1 | cut -d: -f2)
+        term=$(grep -o '"_primary_term":[0-9]*' /tmp/ism_get | head -1 | cut -d: -f2)
+        if [ -z "${seq}" ] || [ -z "${term}" ]; then
+          echo "    ism policy ${name} GET ok but could not parse _seq_no/_primary_term"
+          cat /tmp/ism_get
+          return 1
+        fi
+        echo "==> bootstrap: PUT ism policy ${name} (update seq=${seq} term=${term})"
+        curl -fsS -X PUT \
+          "${OPENSEARCH_URL}/_plugins/_ism/policies/${name}?if_seq_no=${seq}&if_primary_term=${term}" \
+          -H "Content-Type: application/json" \
+          --data-binary "@${f}" \
+          -o /dev/null
+        ;;
+      *)
+        echo "    ism policy ${name} GET failed: HTTP ${code}"
+        cat /tmp/ism_get
+        return 1
+        ;;
+    esac
+  done
+}
+
+apply_ism_policies
+
+# Pre-create the log indices so OSD Discover/dashboards stop spamming
+# "No matching indices found: No indices match pattern '<name>'" toasts
+# before any source has emitted its first record. Order is critical:
+# this runs AFTER index_template + ISM policy are in place, so the
+# matching template's mappings AND the ISM policy's retention rule
+# both auto-attach at index creation.
+# (resource_already_exists_exception) is benign and ignored. Post-PUT
+# we GET the index and assert `properties` is present — catches the
+# silent "template didn't match, dynamic mapping took over" path that
+# would otherwise lock the wrong shape until `monitor down --volumes`.
+for idx in claude-code clawker-cli clawker-cp clawker-envoy clawker-coredns; do
+  code=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT "${OPENSEARCH_URL}/${idx}")
+  case "${code}" in
+    200|201)
+      echo "==> bootstrap: created empty index ${idx}"
+      ;;
+    400)
+      # Already exists — fine.
+      ;;
+    *)
+      echo "    pre-create ${idx} failed: HTTP ${code}"
+      exit 1
+      ;;
+  esac
+  mapping=$(curl -fsS "${OPENSEARCH_URL}/${idx}")
+  case "${mapping}" in
+    *'"properties"'*) ;;
+    *)
+      echo "    ${idx} created but no mappings present — index template missing or did not match"
+      echo "${mapping}"
+      exit 1
+      ;;
+  esac
+done
+
+# Datasources register external query backends (Prometheus today) under
+# the SQL plugin's _plugins/_query/_datasources API. Unlike templates,
+# the API name is in the body — endpoint is collection-level. POST
+# creates; on conflict (name already registered after a stack restart
+# that kept the OpenSearch data volume) PUT updates with the same body.
+# The SQL plugin validates the configured prometheus.uri at register
+# time (DNS resolution + TCP connect), so we must wait for Prometheus
+# to be reachable before registering its datasource.
+apply_datasources() {
+  dir="${BOOTSTRAP_DIR}/datasources"
+  if [ ! -d "${dir}" ]; then
+    return 0
+  fi
+  echo "==> bootstrap: waiting for Prometheus at ${PROMETHEUS_URL}/-/ready"
+  until curl -fsS -o /dev/null "${PROMETHEUS_URL}/-/ready"; do
+    echo "    Prometheus not ready, sleeping 5s"
+    sleep 5
+  done
+  echo "==> bootstrap: Prometheus reachable"
+  for f in "${dir}"/*.json; do
+    [ -e "${f}" ] || continue
+    name=$(basename "${f}" .json)
+    echo "==> bootstrap: POST datasource ${name}"
+    code=$(curl -sS -o /tmp/ds_resp -w '%{http_code}' \
+      -X POST "${OPENSEARCH_URL}/_plugins/_query/_datasources" \
+      -H "Content-Type: application/json" \
+      --data-binary "@${f}")
+    case "${code}" in
+      200|201) ;;
+      400|409)
+        echo "    datasource exists (HTTP ${code}), PUT update"
+        curl -fsS -X PUT "${OPENSEARCH_URL}/_plugins/_query/_datasources" \
+          -H "Content-Type: application/json" \
+          --data-binary "@${f}" \
+          -o /dev/null
+        ;;
+      *)
+        echo "    datasource registration failed: HTTP ${code}"
+        cat /tmp/ds_resp
+        return 1
+        ;;
+    esac
+  done
+}
+
+apply_datasources
 
 echo "==> bootstrap: waiting for OpenSearch Dashboards at ${DASHBOARDS_URL}"
 until curl -fsS -o /dev/null "${DASHBOARDS_URL}/api/status"; do
@@ -56,10 +203,86 @@ until curl -fsS -o /dev/null "${DASHBOARDS_URL}/api/status"; do
 done
 echo "==> bootstrap: Dashboards reachable"
 
+# The OpenSearch Dashboards `explore` plugin (Discover replacement)
+# surfaces external query connectors — Prometheus, S3 — in its dataset
+# picker by listing `data-connection` saved objects and filtering by
+# `attributes.type`. The SQL plugin's `clawker_prometheus` connector
+# (registered above via `apply_datasources`) lives in the SQL plugin's
+# own catalog, separate from OSD's saved-objects store; without this
+# `data-connection` SO, the explore-metrics dataset picker is empty.
+# Kept global (not workspace-scoped) because the workspace's
+# `settings.dataConnections` list below references this SO by id, and
+# OSD resolves that list against the global saved-objects store. POST
+# with explicit id + overwrite=true is fully idempotent.
+echo "==> bootstrap: PUT data-connection clawker-prometheus-conn"
+curl -fsS -X POST \
+  "${DASHBOARDS_URL}/api/saved_objects/data-connection/clawker-prometheus-conn?overwrite=true" \
+  -H "osd-xsrf: true" \
+  -H "Content-Type: application/json" \
+  --data-binary @- <<'EOF' \
+  -o /dev/null
+{"attributes":{"connectionId":"clawker_prometheus","type":"Prometheus","meta":"{\"type\":\"Prometheus\",\"timeFieldName\":\"Time\"}"}}
+EOF
+
+# Explore-flavor apps (`metrics`, `logs`, `traces`) only mount inside an
+# OSD workspace whose features include the relevant nav group. Without
+# a workspace, /app/explore/metrics returns "Application Not Found".
+# Create a "Clawker" workspace with use-case-all (every nav group
+# enabled) the first time bootstrap runs; subsequent runs find it by
+# name. The workspace's settings.dataConnections list references the
+# data-connection SO above so the explore-metrics dataset picker can
+# resolve `clawker_prometheus`. Workspace IDs are auto-generated; we
+# capture the id directly from the create POST's response body so the
+# subsequent saved-objects import can be workspace-scoped without a
+# follow-up _list (which races against OSD's saved-object refresh
+# interval).
+# Workspace IDs are auto-generated. On creation we capture the id from
+# the POST response body (one workspace, top-level `"id":"..."`). On
+# the existing-workspace path we walk `_list` and pick the entry whose
+# name is exactly "Clawker" (anchored to prevent matching "Clawker-foo"
+# as a prefix). No jq in curlimages/curl; pure sh + sed.
+LIST=$(curl -fsS -H 'osd-xsrf: true' -H 'Content-Type: application/json' \
+  -X POST "${DASHBOARDS_URL}/api/workspaces/_list" -d '{}')
+# Split `_list` into one workspace object per line and pick Clawker by
+# exact name match. tr `,{[` to newline coarsely fragments JSON; the
+# regex anchors `"name":"Clawker"` to a trailing `,` or `}` to reject
+# "Clawker-staging". Then re-grab the workspace's id from the original
+# LIST by searching the substring spanning from one `{` past the
+# matching name to the next closing `}` of the same depth — but since
+# OSD workspace objects nest, that's hard in sh. Simpler: extract from
+# a per-workspace fragment produced by splitting on `},{`.
+CLAWKER_FRAGMENT=$(echo "${LIST}" | sed 's/},{/}\n{/g' | grep -E '"name":"Clawker"([,}]|$)' || true)
+if [ -n "${CLAWKER_FRAGMENT}" ]; then
+  echo "==> bootstrap: workspace 'Clawker' already exists"
+  WS_ID=$(echo "${CLAWKER_FRAGMENT}" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p' | head -1)
+else
+  echo "==> bootstrap: POST workspace 'Clawker'"
+  WS_RESP=$(curl -fsS -X POST "${DASHBOARDS_URL}/api/workspaces" \
+    -H "osd-xsrf: true" \
+    -H "Content-Type: application/json" \
+    --data-binary @- <<'EOF'
+{"attributes":{"name":"Clawker","description":"Clawker observability","features":["use-case-all"]},"settings":{"dataConnections":["clawker-prometheus-conn"]}}
+EOF
+  )
+  WS_ID=$(echo "${WS_RESP}" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p' | head -1)
+fi
+if [ -z "${WS_ID}" ]; then
+  echo "    failed to extract workspace id"
+  echo "${LIST}"
+  exit 1
+fi
+echo "==> bootstrap: workspace 'Clawker' id=${WS_ID}"
+
+# Import saved objects INTO the workspace. Posting against the global
+# /api/saved_objects/_import endpoint leaves SOs workspace-less, so
+# they're invisible inside the workspace UI even though the workspace
+# exists. The workspace-scoped path /w/<wsId>/api/saved_objects/_import
+# stamps `workspaces: [<wsId>]` on every imported SO. Re-runs are
+# idempotent via ?overwrite=true.
 NDJSON="${BOOTSTRAP_DIR}/saved-objects/clawker.ndjson"
 if [ -s "${NDJSON}" ]; then
-  echo "==> bootstrap: importing saved objects from ${NDJSON}"
-  curl -fsS -X POST "${DASHBOARDS_URL}/api/saved_objects/_import?overwrite=true" \
+  echo "==> bootstrap: importing saved objects from ${NDJSON} into workspace ${WS_ID}"
+  curl -fsS -X POST "${DASHBOARDS_URL}/w/${WS_ID}/api/saved_objects/_import?overwrite=true" \
     -H "osd-xsrf: true" \
     --form "file=@${NDJSON}" \
     -o /dev/null

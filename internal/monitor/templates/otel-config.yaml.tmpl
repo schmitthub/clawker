@@ -58,73 +58,6 @@ receivers:
           scrape_interval: 10s
           static_configs:
             - targets: ['127.0.0.1:8888']
-  # Container-level metrics scraped from the Docker daemon. Reads via
-  # the RO-mounted socket at /var/run/docker.sock (compose maps host
-  # Settings.Docker.Socket → this path).
-  docker_stats:
-    endpoint: unix:///var/run/docker.sock
-    collection_interval: 10s
-  # Host metrics for the machine running the otel-collector. On Linux
-  # this is the actual host; on Docker Desktop it's the Linux VM (the
-  # constraint operators care about). Reads via the RO-mounted host
-  # root at /hostfs.
-  hostmetrics:
-    root_path: /hostfs
-    scrapers:
-      cpu:
-        metrics:
-          system.cpu.utilization:
-            enabled: true
-      disk:
-      load:
-      filesystem:
-        exclude_mount_points:
-          mount_points:
-            - /dev/*
-            - /proc/*
-            - /sys/*
-            - /run/k3s/containerd/*
-            - /var/lib/docker/*
-            - /var/lib/kubelet/*
-            - /snap/*
-          match_type: regexp
-        exclude_fs_types:
-          fs_types:
-            - autofs
-            - binfmt_misc
-            - bpf
-            - cgroup2
-            - configfs
-            - debugfs
-            - devpts
-            - devtmpfs
-            - fusectl
-            - hugetlbfs
-            - iso9660
-            - mqueue
-            - nsfs
-            - overlay
-            - proc
-            - procfs
-            - pstore
-            - rpc_pipefs
-            - securityfs
-            - selinuxfs
-            - squashfs
-            - sysfs
-            - tracefs
-          match_type: strict
-      memory:
-        metrics:
-          system.memory.utilization:
-            enabled: true
-      network:
-      paging:
-      processes:
-      process:
-        mute_process_exe_error: true
-        mute_process_io_error: true
-        mute_process_user_error: true
 
 processors:
   # Cap collector memory below the 200M compose hard limit so burst
@@ -157,12 +90,58 @@ processors:
   # so this transform is required for per-project/agent filtering on the
   # scraped Prometheus series (and any UI built on top — OpenSearch Dashboards
   # Observability Metrics, Prometheus UI, etc.).
+  # error_mode: ignore so a single malformed datapoint (e.g. an SDK that
+  # emits resource.attributes["project"] as a slice instead of scalar)
+  # drops the offending point rather than killing the pipeline silently.
+  # OTTL errors surface in collector stdout via the default INFO log level.
+  # Rename datapoint attribute `type` -> `kind` (and delete `type`).
+  #
+  # The OpenSearch SQL plugin's experimental direct-query Prometheus
+  # connector (OS 3.6.0) chokes on any Prom label literally named
+  # `type`: its response wrapper uses a `rawResult.contains("\"type\":")`
+  # substring check to decide whether to inject the Jackson polymorphic
+  # discriminator at the JSON root. A label named `type` makes that
+  # check flip false-positive, the wrap is skipped, and Jackson fails
+  # with `MismatchedInputException: missing type id property 'type'`.
+  # Source: direct-query/src/main/java/org/opensearch/sql/directquery/
+  # transport/model/ExecuteDirectQueryActionResponse.java#parseResult.
+  #
+  # Affects the OSD Explore "Metrics" UI for every series whose label
+  # set includes `type` — today that's all Claude Code counters with a
+  # `type` attribute (claude_code.token.usage [input/output/cacheRead/
+  # cacheCreation], claude_code.active_time.total [cli/user], and
+  # claude_code.lines_of_code.count [added/removed]). PPL form
+  # (`source = clawker_prometheus.<metric>`) and the native Prom UI
+  # are unaffected — they take a different code path.
+  #
+  # Rename is unconditional rather than scoped to the known metrics so
+  # future producers carrying `type` work without further changes.
+  # Remove this block when upstream lands a fix (e.g. switching the
+  # substring check to a JSON-root check) and bump the pinned
+  # OpenSearch / OpenSearch Dashboards version in
+  # internal/monitor/templates.go.
   transform/metrics:
+    error_mode: ignore
     metric_statements:
       - context: datapoint
         statements:
           - set(attributes["project"], resource.attributes["project"]) where resource.attributes["project"] != nil
           - set(attributes["agent"], resource.attributes["agent"]) where resource.attributes["agent"] != nil
+          - set(attributes["kind"], attributes["type"]) where attributes["type"] != nil
+          - delete_key(attributes, "type") where attributes["type"] != nil
+  # Convert delta-temporality Sum metrics into cumulative before they hit
+  # the Prometheus exporter. Claude Code's SDK emits its counters
+  # (claude_code.cost.usage, claude_code.token.usage, etc.) with
+  # AggregationTemporality=Delta — each export is the increment since the
+  # last export, not the running total. The Prometheus exporter requires
+  # cumulative semantics for `_total` series; without this processor, each
+  # scrape sees only the latest delta instead of the lifetime sum, which
+  # silently undercounts every Claude Code counter by 10-20× over a session.
+  # Spanmetrics-derived RED metrics on the trusted pipeline are also delta
+  # by default, so apply on both metrics pipelines.
+  deltatocumulative:
+    max_streams: 10000
+    max_stale: 5m
   # Provenance stamps. Each trusted source gets ingest_source=<name>
   # so cross-index queries can filter on a single field. service.name
   # is NOT overwritten — mTLS handshake authenticated the sender;
@@ -269,8 +248,21 @@ exporters:
       max_elapsed_time: 5m
   # Metrics → Prometheus scrape endpoint. Pull-based, so no retry
   # config — Prometheus handles its own scrape cadence.
+  #
+  # metric_expiration controls the exporter's staleness window. The
+  # default (5m) reaps cumulative counters that haven't seen a fresh
+  # delta in 5 minutes. Several Claude Code counters fire only on
+  # user-action triggers (session.count, code_edit_tool.decision,
+  # commit.count, pull_request.count, lines_of_code.count) — gaps of
+  # hours between deltas are normal, and the default expiration would
+  # silently drop them from `_total` series after their last event.
+  # Foot-gun: `0` does NOT disable expiration — it expires every
+  # metric on every Collect call. Use a long duration instead. The
+  # stack is throwaway (`monitor down --volumes` is the reset), so
+  # one year is "effectively never."
   prometheus:
     endpoint: "0.0.0.0:{{.PrometheusMetricsPort}}"
+    metric_expiration: 8760h
 
 connectors:
   # Derives RED metrics (rate, errors, duration) from spans flowing
@@ -278,13 +270,17 @@ connectors:
   # pipeline. Empty-series until traces actually flow.
   spanmetrics:
   # Route untrusted (plaintext OTLP) records. Only claude-code and
-  # clawker-cli records reach their indices; everything else is
-  # silently dropped (no default_pipelines, error_mode: ignore). An
-  # agent crafting `service.name=envoy`/`coredns`/`clawker-cp` from
-  # the unauth'd port CANNOT reach the trusted indices — there is no
-  # such route off this connector.
+  # clawker-cli records reach their indices. An agent crafting
+  # `service.name=envoy`/`coredns`/`clawker-cp` from the unauth'd
+  # port CANNOT reach the trusted indices — there is no such route
+  # off this connector. default_pipelines catches any other
+  # service.name (e.g. SDK default `unknown_service`, a misconfigured
+  # local script) and routes it to logs/untrusted_unrouted where it
+  # surfaces in collector stdout for debugging — not indexed, since
+  # the records are forgeable.
   routing/untrusted:
     error_mode: ignore
+    default_pipelines: [logs/untrusted_unrouted]
     table:
       - context: resource
         condition: attributes["service.name"] == "claude-code"
@@ -332,14 +328,14 @@ service:
     # provenance marker.
     metrics/untrusted:
       receivers: [otlp]
-      processors: [memory_limiter, resource/untrusted_otlp, transform/metrics, batch]
+      processors: [memory_limiter, resource/untrusted_otlp, transform/metrics, deltatocumulative, batch]
       exporters: [prometheus, debug]
-    # Trusted metrics — collector self-scrape, docker_stats,
-    # hostmetrics, and spanmetrics-derived RED metrics. All sourced
-    # locally; no sender-declared resource attrs to defend.
+    # Trusted metrics — collector self-scrape and spanmetrics-derived
+    # RED metrics. All sourced locally; no sender-declared resource
+    # attrs to defend.
     metrics/trusted:
-      receivers: [prometheus/self, docker_stats, hostmetrics, spanmetrics]
-      processors: [memory_limiter, transform/metrics, batch]
+      receivers: [prometheus/self, spanmetrics]
+      processors: [memory_limiter, transform/metrics, deltatocumulative, batch]
       exporters: [prometheus, debug]
     # Untrusted log ingress. Only claude-code/clawker-cli route
     # downstream; other service.name values are dropped at the routing
@@ -357,6 +353,15 @@ service:
       receivers: [routing/untrusted]
       processors: [memory_limiter]
       exporters: [opensearch/logs_clawker_cli, debug]
+    # Quarantine for untrusted records whose service.name isn't
+    # claude-code or clawker-cli. Stdout-only (debug); never indexed
+    # because the lane is unauthenticated and the records are
+    # forgeable. Operator can grep `docker logs clawker-otel-collector`
+    # for the dropped record to spot a misconfigured sender.
+    logs/untrusted_unrouted:
+      receivers: [routing/untrusted]
+      processors: [memory_limiter]
+      exporters: [debug]
     # Trusted log ingress. mTLS handshake is the auth boundary; the
     # routing connector dispatches by sender-declared service.name to
     # the right index. resource/* processors only stamp ingest_source

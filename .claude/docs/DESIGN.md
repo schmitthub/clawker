@@ -707,7 +707,7 @@ This supplements environment variable passing for persistent credential storage.
 
 #### Implementation
 
-The firewall uses an **Envoy proxy + custom CoreDNS + eBPF manager** trio running as managed Docker containers. eBPF cgroup programs replace iptables for all traffic routing. The CoreDNS image is a custom build (`clawker-coredns:latest`) of `cmd/coredns-clawker` embedding `internal/dnsbpf` — not stock `coredns/coredns`. See `.claude/docs/EBPF-DESIGN.md` for the full eBPF design.
+The firewall uses an **Envoy proxy + custom CoreDNS + eBPF manager** trio running as managed Docker containers. eBPF cgroup programs perform all traffic routing. The CoreDNS image is a custom build (`clawker-coredns:latest`) of `cmd/coredns-clawker` embedding `internal/dnsbpf` — not stock `coredns/coredns`. See `.claude/docs/ARCHITECTURE.md` and `internal/controlplane/firewall/CLAUDE.md` for the as-built design.
 
 **Why this architecture:**
 - **DNS deny-by-default**: CoreDNS returns NXDOMAIN for unlisted domains — agents can't even resolve blocked hosts. Upstream: Cloudflare malware-blocking (`1.1.1.2`, `1.0.0.2`).

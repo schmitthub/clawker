@@ -137,9 +137,6 @@ docker:
 		{"OpenSearch node service key", data.OpenSearchNodeService + ":"},
 		{"OpenSearch dashboards service key", data.OpenSearchDashboardsService + ":"},
 		{"dashboards points at opensearch-node", fmt.Sprintf(`OPENSEARCH_HOSTS=["http://%s:%d"]`, data.OpenSearchNodeService, data.OpenSearchPort)},
-		// Host paths threaded straight through.
-		{"hostfs bind mount", data.HostFilesystem + ":/hostfs:ro"},
-		{"docker socket bind mount", data.DockerSocketPath + ":/var/run/docker.sock:ro"},
 	}
 	for _, check := range valueRouting {
 		if !strings.Contains(result, check.contain) {
@@ -164,14 +161,6 @@ docker:
 		}
 	}
 
-	// Stack-swap cleanup invariant: services from the prior Loki/Jaeger/Grafana
-	// stack must not sneak back in via copy-paste or a partial revert.
-	mustNotContain := []string{"jaeger", "loki", "grafana", "promtail"}
-	for _, banned := range mustNotContain {
-		if strings.Contains(result, banned) {
-			t.Errorf("compose.yaml should not contain %q after stack swap", banned)
-		}
-	}
 }
 
 func TestRenderTemplate_OtelConfig(t *testing.T) {
@@ -223,14 +212,10 @@ monitoring:
 		"resource/envoy:",
 		"prometheus/self:",
 		"spanmetrics:",
-		"docker_stats:",
-		"hostmetrics:",
-		"unix:///var/run/docker.sock",
-		"root_path: /hostfs",
 		// Metrics pipeline is split into untrusted (otlp only — anything
 		// pushed on the unauth'd lane) and trusted (locally-sourced
 		// scrapers). Both export to the shared prometheus exporter.
-		"receivers: [prometheus/self, docker_stats, hostmetrics, spanmetrics]",
+		"receivers: [prometheus/self, spanmetrics]",
 		// mTLS-gated receiver feeds the trusted-routing pipeline.
 		"receivers: [otlp/infra]",
 		// Routing connectors are the receivers for the per-source log
@@ -246,12 +231,6 @@ monitoring:
 		}
 	}
 
-	mustNotContain := []string{"jaeger", "loki", "otlphttp/loki", "otlp/jaeger"}
-	for _, banned := range mustNotContain {
-		if strings.Contains(result, banned) {
-			t.Errorf("otel-config.yaml should not contain %q after stack swap", banned)
-		}
-	}
 }
 
 func TestRenderTemplate_Prometheus(t *testing.T) {

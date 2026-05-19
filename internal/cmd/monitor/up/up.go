@@ -44,15 +44,6 @@ This launches the following services:
   - OpenTelemetry Collector (ports 4317, 4318)
   - Prometheus (port 9090)
 
-The clawker-opensearch-bootstrap container runs once after OpenSearch
-reports healthy and applies index templates, ISM retention, and
-Dashboards index-pattern saved objects for the five preconfigured
-indices (claude-code, clawker-cli, clawker-cp, clawker-envoy,
-clawker-coredns). The collector and Prometheus gate on its
-service_completed_successfully, so a bootstrap failure leaves the stack
-half-up by design — surfacing the problem instead of letting the
-collector silently create wrong-mapped indices.
-
 The stack connects to the clawker-net Docker network, allowing
 Claude Code containers to send telemetry automatically.`,
 		Example: `  # Start the monitoring stack (detached)
@@ -121,8 +112,8 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 
 	// Build docker compose command. --remove-orphans sweeps containers
 	// that aren't in the current compose.yaml — needed for upgrade flows
-	// where the template lost services (Grafana/Loki/Jaeger/Promtail) so
-	// their old containers don't keep ports bound after `init --force`.
+	// where the template dropped services, so old containers don't
+	// keep ports bound after `init --force`.
 	//
 	// Compose ordering is encoded entirely in the template via depends_on:
 	// opensearch-node (healthy) -> clawker-opensearch-bootstrap (exits 0)
@@ -159,10 +150,6 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 		fmt.Fprintf(ios.ErrOut, "  OpenSearch Dashboards: %s\n", cs.Cyan(fmt.Sprintf("http://localhost:%d", mc.OpenSearchDashboardsPort)))
 		fmt.Fprintf(ios.ErrOut, "  OpenSearch API:        %s\n", cs.Cyan(fmt.Sprintf("http://localhost:%d", mc.OpenSearchPort)))
 		fmt.Fprintf(ios.ErrOut, "  Prometheus:            %s\n", cs.Cyan(fmt.Sprintf("http://localhost:%d", mc.PrometheusPort)))
-		fmt.Fprintln(ios.ErrOut)
-		fmt.Fprintln(ios.ErrOut, "Index templates, ISM retention, and Dashboards index patterns")
-		fmt.Fprintln(ios.ErrOut, "for claude-code / clawker-cli / clawker-cp / clawker-envoy /")
-		fmt.Fprintln(ios.ErrOut, "clawker-coredns have been applied — open Discover and pick one.")
 		fmt.Fprintln(ios.ErrOut)
 		fmt.Fprintln(ios.ErrOut, "To stop the stack: clawker monitor down")
 	}

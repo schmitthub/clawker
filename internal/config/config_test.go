@@ -42,8 +42,6 @@ func TestNewBlankConfig_settingsDefaults(t *testing.T) {
 	assert.Equal(t, 9200, mon.OpenSearchPort)
 	assert.Equal(t, 5601, mon.OpenSearchDashboardsPort)
 	assert.Equal(t, 512, mon.OpenSearchHeapMB)
-	assert.Equal(t, "/v1/metrics", mon.Telemetry.MetricsPath)
-	assert.Equal(t, "/v1/logs", mon.Telemetry.LogsPath)
 
 	// Host proxy defaults
 	hp := cfg.HostProxyConfig()
@@ -554,6 +552,24 @@ agent:
 		"user-level agent.visual should survive — not overridden by empty string")
 }
 
+func TestOtelCollectorURL(t *testing.T) {
+	// Default port → otel-collector:4318. Asserting the literal shape
+	// here is the only direct coverage; consumers (bundler) assert the
+	// rendered Dockerfile contains cfg.OtelCollectorURL(), which is
+	// self-validating without a literal anchor.
+	cfg, err := NewBlankConfig()
+	require.NoError(t, err)
+	assert.Equal(t, "http://otel-collector:4318", cfg.OtelCollectorURL())
+
+	// Overridden port flows through.
+	cfg2, err := NewFromString("", `
+monitoring:
+  otel_collector_port: 9999
+`)
+	require.NoError(t, err)
+	assert.Equal(t, "http://otel-collector:9999", cfg2.OtelCollectorURL())
+}
+
 func TestGeneratedDefaults_SettingsValues(t *testing.T) {
 	generated := storage.GenerateDefaultsYAML[Settings]()
 	store, err := storage.NewFromString[Settings](generated)
@@ -587,6 +603,4 @@ func TestGeneratedDefaults_SettingsValues(t *testing.T) {
 	assert.Equal(t, 9200, s.Monitoring.OpenSearchPort)
 	assert.Equal(t, 5601, s.Monitoring.OpenSearchDashboardsPort)
 	assert.Equal(t, 512, s.Monitoring.OpenSearchHeapMB)
-	assert.Equal(t, "/v1/metrics", s.Monitoring.Telemetry.MetricsPath)
-	assert.Equal(t, "/v1/logs", s.Monitoring.Telemetry.LogsPath)
 }

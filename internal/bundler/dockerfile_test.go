@@ -33,9 +33,7 @@ monitoring:
   prometheus_port: 9090
   prometheus_metrics_port: 8889
   telemetry:
-    metrics_path: "/v1/metrics"
     prometheus_otlp_path: "/api/v1/otlp/v1/metrics"
-    logs_path: "/v1/logs"
     metric_export_interval_ms: 10000
     logs_export_interval_ms: 5000
     log_tool_details: true
@@ -158,13 +156,12 @@ func removeMonitoringFromProject(yaml string) (string, string) {
 }
 
 func TestBuildContext_CustomMonitoringEndpoints(t *testing.T) {
-	// Both metrics and logs default to the otel-collector OTLP/HTTP
-	// receiver post-OpenSearch refactor — split is by URL path
-	// (metrics_path vs logs_path), not by host:port. Override
-	// otel_collector_port to a sentinel value and assert both env vars
-	// carry it; that proves the port override actually flows through
-	// the Dockerfile renderer, not just that the assertions echo
-	// cfg.Otel*Endpoint() back to itself.
+	// Container is wired with OTEL_EXPORTER_OTLP_ENDPOINT only — the
+	// OTel SDK derives /v1/{metrics,logs,traces} per signal. Override
+	// otel_collector_port to a sentinel value and assert the rendered
+	// env var carries it; that proves the port override flows through
+	// the Dockerfile renderer, not just that the assertion echoes
+	// cfg.OtelCollectorURL() back to itself.
 	cfg := testConfig(t, `
 version: "1"
 build:
@@ -177,18 +174,17 @@ monitoring:
 	require.NoError(t, err)
 
 	content := string(dockerfile)
-	metricsEndpoint := cfg.OtelMetricsEndpoint()
-	logsEndpoint := cfg.OtelLogsEndpoint()
-	assert.Contains(t, content, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT="+metricsEndpoint,
-		"metrics env var must render with the cfg-resolved otel-collector metrics endpoint")
-	assert.Contains(t, content, "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT="+logsEndpoint,
-		"logs env var must render with the cfg-resolved otel-collector logs endpoint")
-	assert.Contains(t, metricsEndpoint, ":9999",
-		"metrics endpoint must carry the overridden otel_collector_port — proves the override reaches the renderer")
-	assert.Contains(t, logsEndpoint, ":9999",
-		"logs endpoint must carry the overridden otel_collector_port — proves the override reaches the renderer")
-	assert.NotEqual(t, metricsEndpoint, logsEndpoint,
-		"metrics and logs must use different URL paths on the same collector — same endpoint means the path split collapsed")
+	endpoint := cfg.OtelCollectorURL()
+	assert.Contains(t, content, "OTEL_EXPORTER_OTLP_ENDPOINT="+endpoint,
+		"otel base endpoint env var must render with the cfg-resolved otel-collector URL — OTel SDK derives /v1/{metrics,logs,traces} from this base per signal")
+	assert.Contains(t, endpoint, ":9999",
+		"otel endpoint must carry the overridden otel_collector_port — proves the port override reaches the renderer")
+	assert.NotContains(t, content, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+		"per-signal metrics endpoint must be absent — base-endpoint refactor removed it")
+	assert.NotContains(t, content, "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+		"per-signal logs endpoint must be absent — base-endpoint refactor removed it")
+	assert.NotContains(t, content, "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+		"per-signal traces endpoint must be absent — base-endpoint refactor relies on SDK path derivation")
 }
 
 func TestBuildContext_NodeInstall_Debian(t *testing.T) {
@@ -240,10 +236,16 @@ func TestBuildContext_DefaultMonitoring(t *testing.T) {
 	require.NoError(t, err)
 
 	content := string(dockerfile)
-	assert.Contains(t, content, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT="+cfg.OtelMetricsEndpoint(),
-		"metrics env var must render with the cfg-resolved otel-collector metrics endpoint (path-split: metrics_path)")
-	assert.Contains(t, content, "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT="+cfg.OtelLogsEndpoint(),
-		"logs env var must render with the cfg-resolved otel-collector logs endpoint (path-split: logs_path)")
+	assert.Contains(t, content, "OTEL_EXPORTER_OTLP_ENDPOINT="+cfg.OtelCollectorURL(),
+		"otel base endpoint env var must render with cfg.OtelCollectorURL() — OTel SDK derives /v1/{metrics,logs,traces} per signal")
+	assert.Contains(t, content, "OTEL_EXPORTER_OTLP_ENDPOINT=http://",
+		"otel endpoint must carry an http:// prefix — anchors the URL shape independently of cfg accessor (kills the self-validating assertion above)")
+	assert.Contains(t, content, "OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf",
+		"OTLP protocol must be pinned to http/protobuf — if dropped, traces silently fall back to gRPC against an HTTP-only receiver and disappear")
+	assert.Contains(t, content, "OTEL_TRACES_EXPORTER=otlp",
+		"traces exporter must be enabled — paired with CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1 gates the Claude Code beta trace path")
+	assert.Contains(t, content, "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1",
+		"Claude Code beta tracing gate must be set — without this OTEL_TRACES_EXPORTER is ignored")
 }
 
 func TestBuildContext_ClaudeConfigDir(t *testing.T) {

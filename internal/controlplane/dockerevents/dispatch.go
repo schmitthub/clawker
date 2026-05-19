@@ -72,9 +72,9 @@ func (f *Feeder) publishDockerEvent(ev DockerEvent, ctxID string) {
 //
 // The receive log lives upstream of the action allowlist so noisy
 // non-state events (exec_*, healthcheck probes, etc) don't dominate
-// Loki. A missing publish on the bus under a receive line means the
-// dispatch path filtered it; a missing receive line means Docker
-// never sent it (or our type-filter rejected it on the wire).
+// the log indices. A missing publish on the bus under a receive line
+// means the dispatch path filtered it; a missing receive line means
+// Docker never sent it (or our type-filter rejected it on the wire).
 func (f *Feeder) dispatch(ctx context.Context, ev events.Message) {
 	if !shouldHandleAction(ev) {
 		return
@@ -94,7 +94,7 @@ func (f *Feeder) dispatch(ctx context.Context, ev events.Message) {
 // fields. Actor.Attributes is folded out two ways: as an
 // `actor_attributes` JSON-encoded aggregate for full-fidelity replay,
 // plus one `actor_attr.<k>` field per entry so operators can filter on
-// individual attribute keys in Loki without a JSON parser.
+// individual attribute keys at the log index without a JSON parser.
 func (f *Feeder) logEventReceived(ev events.Message) {
 	e := f.log.Info().
 		Str("source", "docker").

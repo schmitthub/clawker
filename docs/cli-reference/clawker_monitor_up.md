@@ -17,15 +17,6 @@ This launches the following services:
   - OpenTelemetry Collector (ports 4317, 4318)
   - Prometheus (port 9090)
 
-The clawker-opensearch-bootstrap container runs once after OpenSearch
-reports healthy and applies index templates, ISM retention, and
-Dashboards index-pattern saved objects for the five preconfigured
-indices (claude-code, clawker-cli, clawker-cp, clawker-envoy,
-clawker-coredns). The collector and Prometheus gate on its
-service_completed_successfully, so a bootstrap failure leaves the stack
-half-up by design — surfacing the problem instead of letting the
-collector silently create wrong-mapped indices.
-
 The stack connects to the clawker-net Docker network, allowing
 Claude Code containers to send telemetry automatically.
 

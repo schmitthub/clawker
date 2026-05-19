@@ -32,11 +32,11 @@ All pinned to a multi-arch manifest list digest (`@sha256:`). Verify with `docke
 
 | Constant | Image |
 |----------|-------|
-| `OtelCollectorImage` | `otel/opentelemetry-collector-contrib:0.148.0` |
-| `PrometheusImage` | `prom/prometheus:v3.10.0` |
+| `OtelCollectorImage` | `otel/opentelemetry-collector-contrib:0.152.0` |
+| `PrometheusImage` | `prom/prometheus:v3.11.3` |
 | `OpenSearchImage` | `opensearchproject/opensearch:3.6.0` |
 | `OpenSearchDashboardsImage` | `opensearchproject/opensearch-dashboards:3.6.0` |
-| `CurlImage` | `curlimages/curl:8.17.0` (one-shot bootstrap container) |
+| `CurlImage` | `curlimages/curl:8.20.0` (one-shot bootstrap container) |
 
 ## Template Rendering
 
@@ -86,7 +86,7 @@ All symbols are in `templates.go`.
 
 ## OpenSearch Bootstrap
 
-The OpenSearch + Dashboards cluster ships preconfigured: index templates (per-source mappings + retention), ISM policies (auto-attached via `ism_template.index_patterns`), and Dashboards saved objects (index patterns + dashboards) all apply on every fresh `monitor up`. The mechanism is a one-shot service in the compose stack — `clawker-opensearch-bootstrap` — that runs `bootstrap.sh` against the cluster between OpenSearch reaching `service_healthy` and the otel-collector / prometheus starting.
+The OpenSearch + Dashboards cluster ships preconfigured: index templates (per-source mappings + retention), ISM policies (auto-attached via `ism_template.index_patterns`), data sources (Prometheus registered via the SQL plugin's `_plugins/_query/_datasources` API), and Dashboards saved objects (index patterns + dashboards) all apply on every fresh `monitor up`. The mechanism is a one-shot service in the compose stack — `clawker-opensearch-bootstrap` — that runs `bootstrap.sh` against the cluster between OpenSearch reaching `service_healthy` and the otel-collector starting. Prometheus starts in parallel; bootstrap depends on it (`service_started`) so the `clawker_prometheus` datasource registration can validate the configured URI.
 
 ### Source tree
 
@@ -97,16 +97,22 @@ templates/opensearch-bootstrap/
   bootstrap.sh.tmpl                    # POSIX sh, file-driven loops over the subdirs below
   component-templates/
     clawker-common.json                # Shared @timestamp / service.name / ingest_source mappings
+  ingest-pipelines/
+    cp-actor-attr-nest.json            # Painless: nest flat attributes.actor_attr.<k> into one flat_object
+    claude-code-prompt-nest.json       # Painless: collapse scalar attributes.prompt + sibling prompt.id into one object
+    envelope-normalize.json            # Painless: mirror severity.{text,number} → severityText/severityNumber + flat resource.<k> → resource.attributes.<k> so OSD explore's default log columns render
   index-templates/
-    claude-code.json                   # Nested attributes.event.name (OTEL semantic conventions)
-    clawker-cli.json                   # Scalar attributes.event (zerolog Str("event", ...))
-    clawker-cp.json                    # Same shape as clawker-cli with cp-specific fields
-    clawker-envoy.json                 # Flat HTTP/TLS/TCP fields from Envoy ALS
-    clawker-coredns.json               # Structured dns.query attributes from CoreDNS otel plugin
+    claude-code.json                   # Full Claude Code OTLP log schema; default_pipeline=claude-code-prompt-nest, final_pipeline=envelope-normalize
+    clawker-cli.json                   # Scalar attributes.event (zerolog Str("event", ...)); final_pipeline=envelope-normalize
+    clawker-cp.json                    # Same shape as clawker-cli with cp-specific fields; default_pipeline=cp-actor-attr-nest, final_pipeline=envelope-normalize
+    clawker-envoy.json                 # Flat HTTP/TLS/TCP fields from Envoy ALS; final_pipeline=envelope-normalize
+    clawker-coredns.json               # Structured dns.query attributes from CoreDNS otel plugin; final_pipeline=envelope-normalize
   ism-policies/
     clawker-retention.json             # 7d retention; ism_template covers all 5 indices
+  datasources/
+    clawker_prometheus.json.tmpl       # Prometheus connector for SQL/PPL + Dashboards Metrics Analytics
   saved-objects/
-    clawker.ndjson                     # Five index-pattern saved objects (timeFieldName=@timestamp)
+    clawker.ndjson                     # Dashboards saved objects bundle (index patterns, visualizations, dashboards)
 ```
 
 `monitor init` walks this tree via `WriteOpenSearchBootstrap`, renders `bootstrap.sh.tmpl` against `MonitorTemplateData` (only OpenSearch / Dashboards hostnames + ports), and copies the rest verbatim into `<monitorDir>/opensearch-bootstrap/`. That directory is bind-mounted RO into the bootstrap container at `/opensearch-bootstrap`.
@@ -114,30 +120,50 @@ templates/opensearch-bootstrap/
 ### Compose ordering
 
 ```
-opensearch-node (service_healthy via curl /_cluster/health)
-        │
-        ▼
-clawker-opensearch-bootstrap (one-shot)
+opensearch-node (service_healthy via /_cluster/health)     prometheus (service_started)
+        │                                                          │
+        └──────────────────────────┬───────────────────────────────┘
+                                   ▼
+                clawker-opensearch-bootstrap (one-shot)
    - PUT /_component_template/<name> for each component-templates/*.json
+   - PUT /_ingest/pipeline/<name>    for each ingest-pipelines/*.json
    - PUT /_index_template/<name>     for each index-templates/*.json
    - PUT /_plugins/_ism/policies/<id> for each ism-policies/*.json
+   - poll http://prometheus:9090/-/ready until 2xx
+   - POST /_plugins/_query/_datasources (body=file) for each datasources/*.json;
+     PUT same endpoint on 400/409 to update an existing datasource
    - poll http://opensearch-dashboards:5601/api/status until 2xx
-   - POST /api/saved_objects/_import?overwrite=true (multipart NDJSON, osd-xsrf: true)
+   - POST /api/saved_objects/data-connection/clawker-prometheus-conn?overwrite=true (global; referenced by workspace settings.dataConnections)
+   - POST /api/workspaces (skip-if-exists by name "Clawker"); capture workspace id from /api/workspaces/_list
+   - POST /w/<wsId>/api/saved_objects/_import?overwrite=true (multipart NDJSON, osd-xsrf: true) — workspace-scoped so imported SOs land with workspaces:[wsId] and are visible in the Clawker workspace UI
    - exit 0
-        │  (service_completed_successfully)
-        ▼
-otel-collector, prometheus (start only after bootstrap exits 0)
+                                   │  (service_completed_successfully)
+                                   ▼
+                              otel-collector
 ```
 
-If `bootstrap.sh` exits non-zero (e.g. malformed template JSON, OpenSearch rejects a mapping), the collector + prom dependents never start. Logs surface in `docker logs clawker-opensearch-bootstrap`. There is no Dashboards healthcheck in compose — the script polls `/api/status` itself before doing saved-objects work, keeping all readiness logic in one place and avoiding having to add curl/wget to the Dashboards image's healthcheck.
+Prometheus is intentionally NOT gated on bootstrap — the SQL plugin validates the configured `prometheus.uri` at register time (DNS + TCP), so Prometheus must already be reachable when the bootstrap registers its datasource. The bootstrap polls Prometheus's `/-/ready` before the POST. Prometheus's only scrape targets (otel-collector self-scrape, the collector's Prometheus exporter) come up after bootstrap, but Prometheus tolerates down targets as normal operational state.
+
+The data sources API requires `plugins.query.datasources.encryption.masterkey` to be set on the OpenSearch node, even with the security plugin disabled. The compose template sets a fixed dev key in the `opensearch-node` env block — the stack is local + ephemeral, no real credentials are encrypted with it.
+
+If `bootstrap.sh` exits non-zero (e.g. malformed template JSON, OpenSearch rejects a mapping), the collector never starts. Logs surface in `docker logs clawker-opensearch-bootstrap`. There is no Dashboards healthcheck in compose — the script polls `/api/status` itself before doing saved-objects work, keeping all readiness logic in one place and avoiding having to add curl/wget to the Dashboards image's healthcheck.
 
 ### Templates only apply at index creation
 
 OpenSearch index templates only take effect when an index is created — they do NOT retroactively re-map existing indices. The monitoring stack is preconfigured + ephemeral by design (see `.claude/rules/monitoring.md` → "Monitoring stack throwaway"), so the canonical way to pick up template / ISM / saved-object edits is `clawker monitor down --volumes && clawker monitor up`. Bootstrap re-runs on every `monitor up`; PUT semantics make template / ISM updates idempotent and `?overwrite=true` makes saved-objects import idempotent, but pre-existing index mappings stay locked to whatever was applied at first ingest of that index.
 
+Ingest pipeline bodies (`ingest-pipelines/*.json`) are the exception — they're resolved by name on every document, so editing a Painless script and re-running `monitor up` picks up the change without a volume wipe. Only changing which pipeline name an index uses (the `settings.index.default_pipeline` or `settings.index.final_pipeline` reference in the index template) requires the volume cycle, because the binding is set at index creation.
+
+### Default vs final pipeline split
+
+Per OS docs, `default_pipeline` runs before document indexing, and `final_pipeline` runs after `default_pipeline` (and after any explicit `?pipeline=` override). Two roles:
+
+- `default_pipeline` is per-index: `cp-actor-attr-nest` for `clawker-cp`, `claude-code-prompt-nest` for `claude-code`, unset for cli/envoy/coredns. These collapse source-specific dotted-key collisions before the rest of the pipeline runs.
+- `final_pipeline` is the shared `envelope-normalize` on all 5 indices. It writes the legacy SS4O envelope paths (`severityText`, `severityNumber`, `resource.attributes.<k>`) that the OSD explore plugin's default log columns read. The OTLP `opensearchexporter` in `ss4o` mode writes the canonical SS4O paths (`severity.{text,number}` nested, flat `resource.<k>`); OSD reads the legacy paths. Multiple upstream issues document the divergence with no merged fix (data-prepper#5791, opensearch-catalog#118, contrib#45428).
+
 ## OTEL Pipelines (otel-config.yaml.tmpl)
 
-**Metrics default path: OTLP push → otel-collector → Prometheus scrape**. Clients targeting `cfg.OtelMetricsEndpoint()` hit the collector's OTLP/HTTP receiver. The collector's `transform/metrics` processor copies resource attrs (project, agent) to datapoint attributes, then the `prometheus` exporter exposes a scrape endpoint on `PrometheusMetricsPort` that Prometheus scrapes. Prometheus' native OTLP receiver is also enabled (`--web.enable-otlp-receiver`, `--enable-feature=otlp-deltatocumulative`, `otlp.promote_resource_attributes` in prometheus.yaml) and `cfg.PrometheusURL() + Telemetry.PrometheusOTLPPath` returns its URL — direct OTLP push works and saves a hop, but Prometheus' `/api/v1/metadata` excludes anything ingested via OTLP/remote-write (upstream limitation), so consumers depending on metric metadata (OpenSearch Dashboards' Observability Metrics catalog, etc.) silently miss those metrics. Route via the collector unless metadata-blindness is acceptable.
+**Metrics default path: OTLP push → otel-collector → Prometheus scrape**. Clients wire `OTEL_EXPORTER_OTLP_ENDPOINT=cfg.OtelCollectorURL()` (base URL only); the OTel SDK appends `/v1/metrics` and pushes to the collector's OTLP/HTTP receiver. The collector's `transform/metrics` processor copies resource attrs (project, agent) to datapoint attributes, then the `prometheus` exporter exposes a scrape endpoint on `PrometheusMetricsPort` that Prometheus scrapes. Prometheus' native OTLP receiver is also enabled (`--web.enable-otlp-receiver`, `--enable-feature=otlp-deltatocumulative`, `otlp.promote_resource_attributes` in prometheus.yaml) and `cfg.PrometheusURL() + Telemetry.PrometheusOTLPPath` returns its URL — direct OTLP push works and saves a hop, but Prometheus' `/api/v1/metadata` excludes anything ingested via OTLP/remote-write (upstream limitation), so consumers depending on metric metadata (OpenSearch Dashboards' Observability Metrics catalog, etc.) silently miss those metrics. Route via the collector unless metadata-blindness is acceptable.
 
 Every pipeline runs `memory_limiter` as its first processor — the collector container has a 200M hard memory cap (compose deploy.resources.limits), and `memory_limiter` applies backpressure before the kernel OOM-kills the process. Pipelines on the untrusted lane additionally stamp `resource/untrusted_otlp` (sets `ingest_source=untrusted_otlp`) so dashboards can separate forgeable sender-declared records from records anchored by mTLS handshake. `batch` is explicitly sized (`timeout: 5s`, `send_batch_size: 1024`, `send_batch_max_size: 2048`) so behavior is predictable under burst.
 
@@ -156,6 +182,8 @@ Every pipeline runs `memory_limiter` as its first processor — the collector co
 | `logs/trusted_unrouted` *(trusted block, see note)* | `routing/trusted` default branch (any `service.name` outside cp/envoy/coredns). Should never fire — only those three hold infra-intermediate-chained leaves today | `debug` only (operator can grep `docker logs clawker-otel-collector` to identify a misconfigured trusted sender) |
 
 All `opensearch/*` exporters have `sending_queue.enabled: true` and `retry_on_failure` (5s initial, 5m max elapsed) so forensic data survives the OpenSearch boot window (start gated on `service_healthy` via cluster-health endpoint) and short outages. The `prometheus` exporter is pull-based — no retry config needed.
+
+**`transform/metrics` quirks — `type` → `kind` rename**: the `transform/metrics` processor (applied on both `metrics/untrusted` and `metrics/trusted`) does more than copy resource attrs to datapoints. It also **unconditionally renames any datapoint attribute named `type` to `kind`** before metrics reach the Prometheus exporter. Reason: the OpenSearch SQL plugin's experimental direct-query Prometheus connector (`OpenSearchImage`/`OpenSearchDashboardsImage` pinned at 3.6.0) has a substring-check bug in `ExecuteDirectQueryActionResponse.parseResult` (`direct-query/src/main/java/org/opensearch/sql/directquery/transport/model/ExecuteDirectQueryActionResponse.java`) that decides whether to inject the Jackson polymorphic discriminator at the JSON root via `rawResult.contains("\"type\":")`. Any Prom series in the response carrying a label literally named `type` flips the check false-positive, the root wrap is skipped, and Jackson dies with `MismatchedInputException: missing type id property 'type'`. This breaks the OSD Explore "Metrics" UI for every series with such a label — Claude Code carries one on `claude_code.token.usage` (`input`/`output`/`cacheRead`/`cacheCreation`), `claude_code.active_time.total` (`cli`/`user`), and `claude_code.lines_of_code.count` (`added`/`removed`). The PPL form (`source = clawker_prometheus.<metric>`) and native Prom UI take a different code path and are unaffected. Removal criteria when the OS image is bumped: re-read that file's `parseResult` method; if the substring check has been replaced with a JSON-root check (or the wrap is unconditional), delete the two `set(attributes["kind"], ...)` + `delete_key(attributes, "type")` statements in `otel-config.yaml.tmpl`'s `transform/metrics` block. No upstream issue tracks the bug at the time of writing; the closest neighbor is `opensearch-project/sql#5251` (a different scalar-shape deserialization bug in the same `PrometheusResult` class).
 
 > **Trusted block conditionality**: the `otlp/infra` receiver + all four trusted pipelines (`logs/in_trusted`, `logs/cp`, `logs/envoy`, `logs/coredns`) are **always rendered** into `otel-config.yaml` — the template has no `{{ if }}` gate inside the collector config. Note that `compose.yaml.tmpl` separately gates the host-side mounts (cert paths) and the port publish on `OtelInfraPort` being non-zero; production wiring always passes a non-zero port, but if a future code path ever set `OtelInfraPort=0`, the receiver would still render but be unreachable because the host bind-mounted server cert + port mapping would be absent. `monitor init` always mints + mounts the collector server cert at `/etc/otel/tls/`. Degradation is sender-side only: when the infra issuer isn't available or per-sender cert minting fails, the receiver keeps listening but no trusted client can complete the mTLS handshake. Envoy drops the OTel access-log sink + `otel_collector_als` cluster (gated at the sender via `als.MTLS` in `buildHTTPAccessLog` / `buildTCPAccessLog` / `buildClusters`), keeping only the stdout JSON sink for `docker logs clawker-envoy` triage; the CoreDNS otel plugin installs `noopEmitter` (no `CLAWKER_COREDNS_OTEL_ENDPOINT` env var); the CP's mTLS log shipper stays cold. Infra services never push OTLP across the untrusted `otel-collector:4317` lane reserved for agent containers — the infra ingestion path is closed end-to-end at the sender.
 

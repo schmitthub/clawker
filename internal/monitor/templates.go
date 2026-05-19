@@ -48,15 +48,15 @@ const (
 // All digests are multi-arch (linux/amd64 + linux/arm64) — verify with
 // `docker buildx imagetools inspect <pin>` before bumping.
 const (
-	OtelCollectorImage        = "otel/opentelemetry-collector-contrib:0.148.0@sha256:8164eab2e6bca9c9b0837a8d2f118a6618489008a839db7f9d6510e66be3923c"
-	PrometheusImage           = "prom/prometheus:v3.10.0@sha256:4a61322ac1103a0e3aea2a61ef1718422a48fa046441f299d71e660a3bc71ae9"
+	OtelCollectorImage        = "otel/opentelemetry-collector-contrib:0.152.0@sha256:f41d7995565df3733b7568702073a9c490792f9c6ac60684fe6a4da21a313f8d"
+	PrometheusImage           = "prom/prometheus:v3.11.3@sha256:e4254400b85610324913f0dc4acf92603d9984e7519414c5a12811aa6146acc3"
 	OpenSearchImage           = "opensearchproject/opensearch:3.6.0@sha256:57bd3c879ad27123a9a6cd75e2adba504189d3131d00a669f3baf9210bc4538c"
 	OpenSearchDashboardsImage = "opensearchproject/opensearch-dashboards:3.6.0@sha256:9fe2cbf1d82c3f66a0860ed140415692ce55de4711ed7877ab738e5da1a357c0"
 	// CurlImage is the throwaway shell the clawker-opensearch-bootstrap
 	// service uses to PUT index templates / ISM policies and POST saved
 	// objects against OpenSearch + Dashboards once they're healthy.
 	// curlimages/curl is Alpine-based, ships /bin/sh + curl, ~10 MB.
-	CurlImage = "curlimages/curl:8.17.0@sha256:935d9100e9ba842cdb060de42472c7ca90cfe9a7c96e4dacb55e79e560b3ff40"
+	CurlImage = "curlimages/curl:8.20.0@sha256:b3f1fb2a51d923260350d21b8654bbc607164a987e2f7c84a0ac199a67df812a"
 )
 
 // MonitorTemplateData provides values for rendering monitoring stack templates.
@@ -105,14 +105,6 @@ type MonitorTemplateData struct {
 	OtelServerKeyHostPath  string
 	OtelCAHostPath         string
 
-	// Host paths consumed by the otel-collector's hostmetrics +
-	// docker_stats receivers. HostFilesystem is hardcoded to "/" — Linux
-	// host root or Docker Desktop VM root; mounted RO at /hostfs.
-	// DockerSocketPath comes from Settings.Docker.Socket (defaults to
-	// /var/run/docker.sock); mounted RO at /var/run/docker.sock.
-	HostFilesystem   string
-	DockerSocketPath string
-
 	// Container images — version + SHA256 pinned.
 	OtelCollectorImage        string
 	PrometheusImage           string
@@ -131,8 +123,7 @@ type MonitorTemplateData struct {
 // NewMonitorTemplateData constructs template data from Settings.
 // Service hostnames are populated from [consts.MonitoringService*] —
 // changing a hostname in consts propagates here without further edits.
-// Settings.Monitoring drives ports/heap; Settings.Docker.Socket feeds
-// the otel-collector docker_stats receiver mount.
+// Settings.Monitoring drives ports/heap.
 func NewMonitorTemplateData(s *config.Settings) MonitorTemplateData {
 	mon := s.Monitoring
 	return MonitorTemplateData{
@@ -148,8 +139,6 @@ func NewMonitorTemplateData(s *config.Settings) MonitorTemplateData {
 		PrometheusService:           consts.MonitoringServicePrometheus,
 		OpenSearchNodeService:       consts.MonitoringServiceOpenSearchNode,
 		OpenSearchDashboardsService: consts.MonitoringServiceOpenSearchDashboards,
-		HostFilesystem:              "/",
-		DockerSocketPath:            s.Docker.Socket,
 		OtelCollectorImage:          OtelCollectorImage,
 		PrometheusImage:             PrometheusImage,
 		OpenSearchImage:             OpenSearchImage,

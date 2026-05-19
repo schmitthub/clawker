@@ -38,7 +38,7 @@ type DockerEvent struct {
 // EventName renders the canonical "docker.<type>.<action>" string
 // (e.g. "docker.container.start", "docker.network.connect"). Used
 // by NewLoggerHook for the log-line message and the `event` field;
-// also used by structured-log filters in Loki / Grafana.
+// also used by structured-log filters at the log index.
 func (e DockerEvent) EventName() string {
 	return fmt.Sprintf("docker.%s.%s", e.Type, e.Action)
 }
@@ -52,8 +52,9 @@ func (e DockerEvent) OccurredAt() time.Time {
 // MarshalZerologObject dumps the moby Message as structured log
 // fields. Actor.Attributes is folded out as one `actor_attr.<k>`
 // field per entry so operators can label-filter on individual
-// attribute keys in Loki without a JSON parser. Type and Action are
-// flat fields so subscribers' Loki queries pin on them directly.
+// attribute keys at the log index without a JSON parser. Type and
+// Action are flat fields so subscribers' index queries pin on them
+// directly.
 func (e DockerEvent) MarshalZerologObject(z *zerolog.Event) {
 	z.Str("type", string(e.Type)).
 		Str("action", string(e.Action)).

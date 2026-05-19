@@ -250,33 +250,14 @@ func (c *configImpl) PrometheusURL() string {
 }
 
 // OtelCollectorURL returns the OTLP collector base URL on clawker-net
-// (no path). **In-cluster only** — agents on clawker-net push to this
-// URL + a path; the full per-signal endpoints are composed by
-// [OtelLogsEndpoint] (and any future per-signal accessor) so callers
-// never concatenate paths themselves.
+// (no path). **In-cluster only** — agents on clawker-net wire this as
+// OTEL_EXPORTER_OTLP_ENDPOINT; the OTel SDK derives /v1/metrics,
+// /v1/logs, and /v1/traces by appending each signal's standard OTLP
+// path. Single base covers every current and future signal. Default
+// routes via the collector so Prometheus retains metric metadata
+// (its /api/v1/metadata excludes OTLP-ingested series); direct OTLP
+// push to Prometheus' native receiver remains an alternate path via
+// [PrometheusURL] + Telemetry.PrometheusOTLPPath.
 func (c *configImpl) OtelCollectorURL() string {
 	return consts.ServiceURL(consts.MonitoringServiceOtelCollector, c.MonitoringConfig().OtelCollectorPort, false)
-}
-
-// OtelMetricsEndpoint returns the full URL of the otel-collector's
-// OTLP/HTTP metrics receiver. The matching client-side env var is
-// OTEL_EXPORTER_OTLP_METRICS_ENDPOINT.
-//
-// Direct push to Prometheus' native OTLP receiver is also supported
-// on the Prom side ([PrometheusURL] + Telemetry.PrometheusOTLPPath)
-// and saves a hop, but Prometheus' /api/v1/metadata endpoint excludes
-// anything ingested via OTLP/remote-write (upstream limitation), so
-// consumers that depend on metric metadata (OpenSearch Dashboards'
-// Observability Metrics catalog, etc.) silently miss those metrics.
-// This default endpoint routes via the collector so metadata lands
-// via its prometheus exporter's scrape exposition format.
-func (c *configImpl) OtelMetricsEndpoint() string {
-	return c.OtelCollectorURL() + c.MonitoringConfig().Telemetry.MetricsPath
-}
-
-// OtelLogsEndpoint returns the full URL Claude Code's logs exporter
-// targets on the otel-collector. The matching env var on the container
-// side is OTEL_EXPORTER_OTLP_LOGS_ENDPOINT.
-func (c *configImpl) OtelLogsEndpoint() string {
-	return c.OtelCollectorURL() + c.MonitoringConfig().Telemetry.LogsPath
 }

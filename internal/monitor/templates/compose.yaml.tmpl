@@ -16,19 +16,8 @@ services:
         limits:
           memory: 200M
     restart: unless-stopped
-    # Root required to read /hostfs (hostmetrics scrapes /proc, /sys,
-    # filesystem mounts — root-owned on the host) and the docker
-    # daemon socket (typically root:docker — readable by uid 0 inside
-    # the container without group bridging).
-    user: 0:0
     volumes:
       - ./otel-config.yaml:/etc/otel-collector-config.yaml
-      # Host root → /hostfs (RO). Feeds the hostmetrics receiver (cpu/
-      # mem/disk/network for the underlying host or Docker Desktop VM).
-      - {{.HostFilesystem}}:/hostfs:ro
-      # Docker daemon socket → /var/run/docker.sock (RO). Feeds the
-      # docker_stats receiver. Path-on-host comes from Settings.Docker.Socket.
-      - {{.DockerSocketPath}}:/var/run/docker.sock:ro
 {{- if .OtelInfraPort}}
       # CLI-issued mTLS material for the CP-only receiver. Bound RO from
       # the CLI auth dir on the host. The CA bundle gates client certs
@@ -105,12 +94,6 @@ services:
         limits:
           memory: 300M
     restart: unless-stopped
-    depends_on:
-      clawker-opensearch-bootstrap:
-        # Same rationale as the otel-collector dependency: gate on
-        # bootstrap completion so Prometheus comes up alongside the
-        # collector only after OpenSearch is preconfigured.
-        condition: service_completed_successfully
     labels:
       dev.clawker.managed: "true"
       dev.clawker.purpose: "monitoring"
@@ -121,11 +104,14 @@ services:
   # One-shot bootstrap that preconfigures OpenSearch + Dashboards on
   # every fresh `monitor up` (the stack is throwaway by design — see
   # `.claude/rules/monitoring.md`). Runs `bootstrap.sh` from the
-  # bind-mounted source dir, exits 0 on success. Dependents
-  # (otel-collector, prometheus) gate on `service_completed_successfully`
-  # so they never start until the cluster has index templates / ISM
-  # policies / saved objects applied; bootstrap failure surfaces the
-  # stack as half-up rather than producing wrong-mapped indices.
+  # bind-mounted source dir, exits 0 on success. otel-collector gates
+  # on `service_completed_successfully` so it never starts until the
+  # cluster has index templates / ISM policies / saved objects applied;
+  # bootstrap failure surfaces the stack as half-up rather than
+  # producing wrong-mapped indices. Prometheus starts in parallel —
+  # bootstrap depends on it (service_started) because the Prometheus
+  # data source registration in OpenSearch validates the configured URI
+  # at register time and fails if the hostname doesn't resolve.
   clawker-opensearch-bootstrap:
     container_name: clawker-opensearch-bootstrap
     image: {{.CurlImage}}
@@ -136,6 +122,11 @@ services:
         # here (the Dashboards image doesn't ship a healthcheck
         # entrypoint we want to lock to anyway).
         condition: service_healthy
+      {{.PrometheusService}}:
+        # service_started only — the Prometheus image is built from
+        # scratch so we can't run an in-container healthcheck. The
+        # script polls /-/ready before registering the datasource.
+        condition: service_started
     entrypoint: ["sh", "/opensearch-bootstrap/bootstrap.sh"]
     volumes:
       # Bind-mount the rendered bootstrap dir read-only. The script
@@ -143,7 +134,13 @@ services:
       # ism-policies,saved-objects} and applies them via the OpenSearch
       # + Dashboards REST APIs over the docker network.
       - ./{{.OpenSearchBootstrapDirName}}:/opensearch-bootstrap:ro
-    restart: "no"
+    # Retry on transient failures (e.g. OSD's saved-objects subsystem
+    # racing with /api/status readiness). Capped so a deterministic
+    # bug fails fast rather than spinning forever. Exhausting the cap
+    # leaves the stack half-up by design — operator inspects
+    # `docker logs clawker-opensearch-bootstrap` and resets via
+    # `monitor down --volumes && monitor up`.
+    restart: on-failure:5
     labels:
       dev.clawker.managed: "true"
       dev.clawker.purpose: "monitoring"
@@ -162,6 +159,11 @@ services:
       - DISABLE_SECURITY_PLUGIN=true
       - DISABLE_INSTALL_DEMO_CONFIG=true
       - http.port={{.OpenSearchPort}}
+      # SQL plugin _plugins/_query/_datasources REST API rejects
+      # create/update without an encryption master key set, even
+      # with the security plugin disabled. Fixed dev key — stack is
+      # local + ephemeral; no real credentials are encrypted with it.
+      - plugins.query.datasources.encryption.masterkey=a1b2c3d4e5f6g7h8i9j0k1l2 # gitleaks:allow
       - "OPENSEARCH_JAVA_OPTS=-Xms{{.OpenSearchHeapMB}}m -Xmx{{.OpenSearchHeapMB}}m"
     ulimits:
       memlock:
@@ -198,6 +200,27 @@ services:
       - 'OPENSEARCH_HOSTS=["http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"]'
       - DISABLE_SECURITY_DASHBOARDS_PLUGIN=true
       - SERVER_PORT={{.OpenSearchDashboardsPort}}
+      # Enable OSD's data_source plugin. Registers the `data-connection` saved-object
+      # type that the explore-metrics flavor uses to surface external query connectors
+      # (Prometheus, S3) in the dataset picker. Without this, the SQL plugin's
+      # `clawker_prometheus` catalog entry exists on the OS node but OSD's frontend
+      # has no saved-object to point at, so explore-metrics dataset picker is empty.
+      # Maps to `data_source.enabled: true` via the OSD entrypoint allowlist.
+      - DATA_SOURCE_ENABLED=true
+      # Enable workspaces — required by the explore plugin's app-mount logic
+      # (getIsExploreEnabledWorkspace reads core.workspaces.currentWorkspace$).
+      - WORKSPACE_ENABLED=true
+    # `explore.enabled` is NOT in the OSD docker entrypoint's env→config allowlist
+    # (the `opensearch_dashboards_vars` array in opensearch-dashboards-docker-entrypoint.sh),
+    # so an env var has no effect. The entrypoint forwards the container's argv to OSD
+    # via `exec "$@" ... "${longopts[@]}"`, so we pass `--explore.enabled=true` here as
+    # a CLI longopt. Required by https://docs.opensearch.org/latest/observing-your-data/
+    # exploring-observability-data/ for the new Discover/Explore experience (alongside
+    # workspace.enabled + data_source.enabled set via env above).
+    command:
+      - opensearch-dashboards
+      - --explore.enabled=true
+      - --explore.discoverMetrics.enabled=true
     ports:
       - "127.0.0.1:{{.OpenSearchDashboardsPort}}:{{.OpenSearchDashboardsPort}}"
     expose:

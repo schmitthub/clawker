@@ -83,7 +83,7 @@ type DockerfileContext struct {
     Packages []string; UID, GID int; IsAlpine, BuildKitEnabled bool
     Instructions *DockerfileInstructions; Inject *DockerfileInject
     // OTEL telemetry — from config.MonitoringConfig
-    OtelMetricsEndpoint, OtelLogsEndpoint string
+    OtelEndpoint string  // base URL only; SDK appends /v1/{metrics,logs,traces}. Traces ride the same base via OTEL_TRACES_EXPORTER=otlp + CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1, both hard-coded in Dockerfile.tmpl (not context fields).
     OtelLogsExportInterval, OtelMetricExportInterval int
     OtelLogToolDetails, OtelLogUserPrompts, OtelIncludeAccountUUID, OtelIncludeSessionID bool
     HasFirewallCA bool; GoBuilderImage string
@@ -110,7 +110,7 @@ type RunInstruction struct { Cmd, Alpine, Debian string }  // OS-variant aware R
 
 ### OTEL Endpoint Composition
 
-Bundler does not compose OTEL URLs itself. `DockerfileContext.OtelMetricsEndpoint` / `OtelLogsEndpoint` are populated by callers from `cfg.OtelMetricsEndpoint()` / `cfg.OtelLogsEndpoint()` (see `internal/config/consts.go`). Both default to the otel-collector OTLP/HTTP receiver so Prometheus retains metric metadata for OpenSearch Dashboards (Prometheus' `/api/v1/metadata` excludes OTLP-ingested series). Direct OTLP push to Prometheus' native receiver remains supported as an alternate endpoint (saves a hop, trades metadata). Never hand-concatenate host + port + path in bundler code — add the accessor to config and read it.
+Bundler does not compose OTEL URLs itself. `DockerfileContext.OtelEndpoint` is populated by callers from `cfg.OtelCollectorURL()` (see `internal/config/consts.go`) and wired into the container as `OTEL_EXPORTER_OTLP_ENDPOINT`. The OTel SDK appends `/v1/metrics`, `/v1/logs`, and `/v1/traces` per signal, matching the collector's OTLP HTTP receiver. Single base covers every signal — no per-signal endpoint vars. Defaults to the otel-collector so Prometheus retains metric metadata for OpenSearch Dashboards (Prometheus' `/api/v1/metadata` excludes OTLP-ingested series). Direct OTLP push to Prometheus' native receiver remains supported as an alternate endpoint (saves a hop, trades metadata). Never hand-concatenate host + port + path in bundler code — add the accessor to config and read it.
 
 ### Constants and Embedded Assets
 

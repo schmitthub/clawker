@@ -40,8 +40,6 @@ monitoring:
   grafana_port: 3000
   prometheus_metrics_port: 8889
   telemetry:
-    metrics_path: "/v1/metrics"
-    logs_path: "/v1/logs"
     metric_export_interval_ms: 10000
     logs_export_interval_ms: 5000
     log_tool_details: true

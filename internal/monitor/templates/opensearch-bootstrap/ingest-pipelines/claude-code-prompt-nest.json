@@ -1,0 +1,11 @@
+{
+  "description": "Reshape Claude Code's split attributes.prompt emissions into a single object field. Some events (user_prompt) ship attributes.prompt as a scalar string AND a sibling attributes.prompt.id; others (hook_execution_*, tool_decision) ship only attributes.prompt.id. OpenSearch auto-expands the dotted key into a nested object, which collides with the scalar prompt mapping. Move the scalar to attributes.prompt.value and keep attributes.prompt.id under the same object. Paired with attributes.prompt: {properties: {id: keyword, value: text}} on the claude-code index template.",
+  "processors": [
+    {
+      "script": {
+        "lang": "painless",
+        "source": "if (ctx.attributes == null) { return; } def p = ctx.attributes.get('prompt'); if (p instanceof String) { def id = ctx.attributes.remove('prompt.id'); ctx.attributes.remove('prompt'); Map obj = new HashMap(); obj.put('value', p); if (id != null) { obj.put('id', id); } ctx.attributes.put('prompt', obj); }"
+      }
+    }
+  ]
+}

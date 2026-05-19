@@ -209,15 +209,16 @@ Now I can go to OpenSearch Dashboards at http://localhost:5601 and inspect logs 
 # Host ENV var example
 # Add these to your shell profile / .env etc
 OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 OTEL_METRICS_EXPORTER=otlp
-OTEL_LOGS_EXPORT_INTERVAL=5000
-OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://localhost:4318/v1/metrics
-OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://localhost:4318/v1/logs
-OTEL_METRIC_EXPORT_INTERVAL=10000
 OTEL_LOGS_EXPORTER=otlp
+OTEL_TRACES_EXPORTER=otlp
+OTEL_LOGS_EXPORT_INTERVAL=5000
+OTEL_METRIC_EXPORT_INTERVAL=10000
 OTEL_METRICS_INCLUDE_ACCOUNT_UUID=true
 OTEL_METRICS_INCLUDE_SESSION_ID=true
 CLAUDE_CODE_ENABLE_TELEMETRY=1
+CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1
 OTEL_LOG_TOOL_DETAILS=1
 OTEL_LOG_USER_PROMPTS=1
 
@@ -357,7 +358,11 @@ Once the stack is up:
 - **Prometheus UI** — http://localhost:9090 — metrics + ad-hoc PromQL
 - **OpenSearch API** — http://localhost:9200 — REST access to the `claude-code` (Claude Code logs), `clawker-cli` (host CLI logs), `clawker-cp` (control-plane logs), `clawker-envoy` (firewall egress access logs), and `clawker-coredns` (firewall DNS query logs) indices
 
-> **Preconfigured out-of-box.** Every `monitor up` runs a one-shot `clawker-opensearch-bootstrap` container that applies index templates (with explicit field mappings per source), a default 7-day ISM retention policy, and Dashboards saved-object index patterns for all five indices — `otel-collector` and `prometheus` don't start until bootstrap exits cleanly. Open Discover and pick a pattern. Curated dashboards/visualizations + Prometheus-as-a-Dashboards-data-source still need to be built — those are on the roadmap.
+> **Preconfigured out-of-box.** Every `monitor up` runs a one-shot `clawker-opensearch-bootstrap` container that applies index templates (with explicit field mappings per source), ingest pipelines, a default 7-day ISM retention policy, a `clawker_prometheus` direct-query datasource, and a **`Clawker` analytics workspace** with index patterns + example visualizations imported. `otel-collector` and `prometheus` don't start until bootstrap exits cleanly.
+>
+> **Get into the workspace:** from the OSD splash / welcome screen click **Clawker** under the **Analytics** panel on the far right. **See logs or metrics:** in the workspace UI's left navbar, under **Explore**, click **Logs** or **Metrics**.
+>
+> Robust pre-made dashboards are planned. For now, build your own from the index patterns and the Prometheus datasource — an example dashboard + KPI visualizations ship under the workspace's **Dashboards** view for inspiration or direct use.
 
 ## Roadmap / Known Issues
 
