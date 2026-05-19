@@ -94,6 +94,32 @@ processors:
   # emits resource.attributes["project"] as a slice instead of scalar)
   # drops the offending point rather than killing the pipeline silently.
   # OTTL errors surface in collector stdout via the default INFO log level.
+  # Rename datapoint attribute `type` -> `kind` (and delete `type`).
+  #
+  # The OpenSearch SQL plugin's experimental direct-query Prometheus
+  # connector (OS 3.6.0) chokes on any Prom label literally named
+  # `type`: its response wrapper uses a `rawResult.contains("\"type\":")`
+  # substring check to decide whether to inject the Jackson polymorphic
+  # discriminator at the JSON root. A label named `type` makes that
+  # check flip false-positive, the wrap is skipped, and Jackson fails
+  # with `MismatchedInputException: missing type id property 'type'`.
+  # Source: direct-query/src/main/java/org/opensearch/sql/directquery/
+  # transport/model/ExecuteDirectQueryActionResponse.java#parseResult.
+  #
+  # Affects the OSD Explore "Metrics" UI for every series whose label
+  # set includes `type` — today that's all Claude Code counters with a
+  # `type` attribute (claude_code.token.usage [input/output/cacheRead/
+  # cacheCreation], claude_code.active_time.total [cli/user], and
+  # claude_code.lines_of_code.count [added/removed]). PPL form
+  # (`source = clawker_prometheus.<metric>`) and the native Prom UI
+  # are unaffected — they take a different code path.
+  #
+  # Rename is unconditional rather than scoped to the known metrics so
+  # future producers carrying `type` work without further changes.
+  # Remove this block when upstream lands a fix (e.g. switching the
+  # substring check to a JSON-root check) and bump the pinned
+  # OpenSearch / OpenSearch Dashboards version in
+  # internal/monitor/templates.go.
   transform/metrics:
     error_mode: ignore
     metric_statements:
@@ -101,6 +127,8 @@ processors:
         statements:
           - set(attributes["project"], resource.attributes["project"]) where resource.attributes["project"] != nil
           - set(attributes["agent"], resource.attributes["agent"]) where resource.attributes["agent"] != nil
+          - set(attributes["kind"], attributes["type"]) where attributes["type"] != nil
+          - delete_key(attributes, "type") where attributes["type"] != nil
   # Convert delta-temporality Sum metrics into cumulative before they hit
   # the Prometheus exporter. Claude Code's SDK emits its counters
   # (claude_code.cost.usage, claude_code.token.usage, etc.) with

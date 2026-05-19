@@ -113,6 +113,16 @@ clawker run -it --agent dev @
 
 Open OpenSearch Dashboards at `http://localhost:5601` and switch into the `Clawker` workspace (auto-created by bootstrap). The preconfigured `Claude Code` dashboard surfaces session count, cost, and token usage out of the box. From the Discover / Explore views, pick one of the preconfigured index patterns — `claude-code`, `clawker-cli`, `clawker-cp`, `clawker-envoy`, or `clawker-coredns` — to see Claude Code logs, host CLI logs, clawker-cp logs, and egress traffic (Envoy access + CoreDNS query logs) side-by-side. Metrics can be browsed either at the raw Prometheus UI (`http://localhost:9090`) or through OSD via the `clawker_prometheus` direct-query datasource registered by bootstrap.
 
+<Warning>
+**Prometheus label naming: use `kind` instead of `type`**
+
+Claude Code's metrics docs reference a `type` label on a few counters (`claude_code_token_usage_tokens_total`, `claude_code_active_time_seconds_total`, `claude_code_lines_of_code_count_total`). The monitoring stack stores these as `kind` instead — same values (`input`/`output`/`cacheRead`/`cacheCreation`, `cli`/`user`, `added`/`removed`), only the key is renamed.
+
+Why: a known bug in the current OpenSearch SQL plugin's direct-query Prometheus connector causes the OSD Explore "Metrics" UI to error out (`missing type id property 'type'`) on any Prom series that carries a label literally named `type`. The OTel collector renames the label at ingest so the UI works. The native Prometheus UI at `http://localhost:9090` is unaffected either way — `type` would work there if it existed.
+
+When writing your own PromQL or saved searches against these metrics, query with `kind=` rather than `type=`.
+</Warning>
+
 ## Bootstrap
 
 The stack is preconfigured every `monitor up`. A one-shot `clawker-opensearch-bootstrap` compose service runs after OpenSearch reports healthy, applies:

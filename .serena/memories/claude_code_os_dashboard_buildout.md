@@ -8,17 +8,6 @@ The agent's role during construction is **research assistant only** — answer O
 
 Iron rules from [[feedback_no_guessing_dashboard_work]] + [[feedback_ground_in_real_data]] apply at full force.
 
-## Open issues
-
-### 1. OS SQL direct-query Prometheus connector chokes on `type` label
-
-OSD Explore's Metrics UI returns `Could not resolve subtype of [class PrometheusResult]: missing type id property 'type'` for any Prom metric whose label set contains a bare key named `type`.
-
-- Affected metrics: `claude_code_active_time_seconds_total` (`type=cli|user`), `claude_code_lines_of_code_count_total` (`type=added|removed`), `claude_code_token_usage_tokens_total` (`type=input|output|cacheRead|cacheCreation`).
-- Root cause: `direct-query/.../ExecuteDirectQueryActionResponse.parseResult()` uses a brittle `rawResult.contains("\"type\":")` substring check to decide whether to wrap the Prom response with `{"type":"prometheus",...}`. Any label literally named `type` flips the flag, so the wrap is skipped, Jackson finds no discriminator at root, deserialization fails. Module is `@opensearch.experimental` (PR #4375, 2025-09-26). No upstream issue tracks it yet. #5251 is a different scalar-result bug.
-- Alt query paths that work today: PromQL via `/api/v1/query` on Prom, Prom UI on `:9090`, PPL `source = clawker_prometheus.<metric>` (different code path).
-- Decision: don't ship a local OTTL rename — would diverge from Claude Code's published metric label names; fix is upstream (~3 lines: `objectMapper.readTree(rawResult).has("type")` or unconditional wrap). File issue + carry doc-only caveat until landed.
-
 ## Bootstrap state (as of HEAD)
 
 `internal/monitor/templates/opensearch-bootstrap/bootstrap.sh.tmpl` runs:
@@ -38,6 +27,10 @@ OSD Explore's Metrics UI returns `Could not resolve subtype of [class Prometheus
 
 Pipeline body edits land via plain `monitor up` (PUT replaces in place). Changing which pipeline NAME an index uses requires the volume-wipe cycle (binding is set at index creation).
 
+### OTel collector `type` → `kind` rename
+
+The `transform/metrics` processor in `otel-config.yaml.tmpl` unconditionally renames any datapoint attribute named `type` to `kind` (and deletes `type`) before metrics reach the Prometheus exporter. This is required for the OSD Explore "Metrics" UI to function for any Claude Code counter carrying a `type` label (`claude_code.token.usage`, `claude_code.active_time.total`, `claude_code.lines_of_code.count`). See `internal/monitor/CLAUDE.md` → `transform/metrics` quirks for full context, source-file reference, and removal criteria on image bump.
+
 ## Stack restart workflow
 
 After editing any template, `Dockerfile.tmpl`, or pinned image:
@@ -49,7 +42,7 @@ clawker monitor down --volumes && \
 clawker monitor up
 ```
 
-`down --volumes` wipes the workspace + all SOs (workspace IDs change every cycle). `monitor down` (no `--volumes`) preserves data; `monitor up` reruns bootstrap idempotently — use this lighter cycle when only pipeline/template logic (not schema/SOs) changed.
+`down --volumes` wipes the workspace + all SOs (workspace IDs change every cycle) AND the Prom TSDB. `monitor down` (no `--volumes`) preserves data; `monitor up` reruns bootstrap idempotently — use this lighter cycle when only pipeline/template logic (not schema/SOs) changed AND no Prom label rewrites are involved (Prom retains historical series under the old labels until retention drops them).
 
 Inside an agent container, never run these host-side ops; ask the user. ([[feedback_no_host_clawker_in_container]])
 
@@ -182,7 +175,13 @@ docker logs otel-collector 2>&1 | awk '/ResourceLog/{block=1} /SeverityText/{if(
 # Verified Claude Code Prom counters: claude_code_session_count_total,
 # claude_code_cost_usage_USD_total, claude_code_token_usage_tokens_total,
 # claude_code_code_edit_tool_decision_total, claude_code_active_time_seconds_total,
-# claude_code_commit_count_total, claude_code_lines_of_code_count_total
+# claude_code_commit_count_total, claude_code_lines_of_code_count_total,
+# claude_code_pull_request_count_total
+# Counters with a `kind` label (renamed from upstream `type` at the OTel collector —
+# see `transform/metrics` in `otel-config.yaml.tmpl`):
+#   active_time_seconds_total: kind=cli|user
+#   token_usage_tokens_total:  kind=input|output|cacheRead|cacheCreation
+#   lines_of_code_count_total: kind=added|removed
 ```
 
 ## Handoff instructions for next agent

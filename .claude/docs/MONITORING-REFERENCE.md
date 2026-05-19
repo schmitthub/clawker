@@ -6,6 +6,24 @@
 >
 > **Stack ships preconfigured** — `clawker-opensearch-bootstrap` (one-shot compose service, see `internal/monitor/templates/opensearch-bootstrap/`) applies component + index templates, the default ISM retention policy, the `clawker_prometheus` direct-query datasource, an OSD `Clawker` workspace with `features: ["use-case-all"]`, and Dashboards saved objects (index patterns for every log index + the preconfigured `Claude Code` dashboard with KPI strip and filter controls) on every `monitor up`. The visualization surface grows via the NDJSON-export-and-bake workflow into `internal/monitor/templates/opensearch-bootstrap/saved-objects/clawker.ndjson`.
 
+## Prometheus Metric Labels — `type` is rewritten to `kind`
+
+The OTel collector's `transform/metrics` processor unconditionally renames any datapoint attribute named `type` to `kind` before metrics reach the Prometheus exporter. This is a workaround for a bug in the OpenSearch SQL plugin's experimental direct-query Prometheus connector (currently pinned at OpenSearch 3.6.0 — see `OpenSearchImage` / `OpenSearchDashboardsImage` in `internal/monitor/templates.go`).
+
+**What it means when querying:**
+
+| Metric | Upstream Claude Code label | Stored label in our Prom |
+|--------|----------------------------|--------------------------|
+| `claude_code_token_usage_tokens_total` | `type=input/output/cacheRead/cacheCreation` | `kind=input/output/cacheRead/cacheCreation` |
+| `claude_code_active_time_seconds_total` | `type=cli/user` | `kind=cli/user` |
+| `claude_code_lines_of_code_count_total` | `type=added/removed` | `kind=added/removed` |
+
+Cross-reference with [Claude Code's monitoring docs](https://code.claude.com/docs/en/monitoring-usage) accordingly — the values are unchanged, only the label key differs.
+
+**Why**: `ExecuteDirectQueryActionResponse.parseResult` (`direct-query/src/main/java/org/opensearch/sql/directquery/transport/model/ExecuteDirectQueryActionResponse.java`) uses a `rawResult.contains("\"type\":")` substring check to decide whether to wrap the Prom response with the Jackson polymorphic discriminator at the JSON root. Any Prom label literally named `type` flips that check false-positive, the wrap is skipped, and Jackson fails with `MismatchedInputException: missing type id property 'type'`. The OSD Explore "Metrics" UI is the path that breaks; PPL (`source = clawker_prometheus.<metric>`) and the native Prom UI at `:9090` take separate paths and are unaffected.
+
+**Removal criteria**: when the pinned OpenSearch / OpenSearch Dashboards image is bumped, re-read `parseResult` in the file above. If the substring check has been replaced (e.g. with `objectMapper.readTree(rawResult).has("type")`) or the wrap is unconditional, drop the two rename statements in `otel-config.yaml.tmpl`'s `transform/metrics` block. No upstream issue tracks this bug at the time of writing; closest neighbor is `opensearch-project/sql#5251` (a different scalar-shape deserialization bug in the same `PrometheusResult` class).
+
 ## Complete Event Schemas
 
 > The field tables below use the flat names emitted by Claude Code OTLP records (`service_name`, `event_name`, `tool_name`, etc.). When querying OpenSearch, map `event_name` → `attributes.event.name`, `service_name` → `resource.service.name`, `project`/`agent` → `resource.project`/`resource.agent`, etc. Resource attrs are FLAT under `resource.*` (NOT nested at `resource.attributes.*`); event-time fields stay under `attributes.*`.
