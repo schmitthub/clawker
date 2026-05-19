@@ -84,7 +84,7 @@ SettingsStore() *storage.Store[Settings]   // Direct access to settings store
 
 **Label keys**: `LabelPrefix()`, `LabelManaged()`, `LabelMonitoringStack()`, `LabelProject()`, `LabelAgent()`, `LabelVersion()`, `LabelImage()`, `LabelCreated()`, `LabelWorkdir()`, `LabelPurpose()`, `LabelTestName()`, `LabelBaseImage()`, `LabelFlavor()`, `LabelTest()`, `LabelE2ETest()`, `ManagedLabelValue()`, `EngineLabelPrefix()`, `EngineManagedLabel()`
 
-**Container constants**: `ContainerUID()` (1001), `ContainerGID()` (1001)
+**Container constants**: `ContainerUID()` / `ContainerGID()` — deprecated delegates to `consts.ContainerUID` / `consts.ContainerGID`. The underlying consts now resolve to `os.Getuid()` / `os.Getgid()` (the CLI invoker's host UID/GID) with a 1001 fallback when `os.Getuid()` is unavailable (Windows). CP-side code must use `consts.HostUID` / `consts.HostGID` instead — see `internal/consts/controlplane.go`.
 
 **Monitoring URLs**: `OpenSearchURL()`, `OpenSearchDashboardsURL()`, `PrometheusURL()`
 

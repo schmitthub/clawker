@@ -692,11 +692,19 @@ func (e *Executor) plan() []step {
 // location; without an explicit override they'd write to /root
 // (permission denied). Any future ShellCommand dispatched with
 // uid != 0 must do the same — clawkerd is a dumb pipe.
+//
+// UID source: consts.HostUID (NOT consts.ContainerUID). CP runs in
+// its own container; os.Getuid() inside CP is the CP image's UID,
+// not the host invoker's. consts.HostUID reads CLAWKER_HOST_UID, set
+// on the CP container by the CLI when launching it. The CLI baked
+// the same value into the agent image's claude user at build time,
+// so dropping to consts.HostUID inside the agent lines up with the
+// baked user and the host bind-mount UID.
 func userStage(script string) *clawkerdv1.PipeStage {
 	return &clawkerdv1.PipeStage{
 		Argv: []string{"sh", "-c", script},
-		Uid:  uint32(consts.ContainerUID),
-		Gid:  uint32(consts.ContainerGID),
+		Uid:  uint32(consts.HostUID),
+		Gid:  uint32(consts.HostGID),
 		Env: map[string]string{
 			"HOME": consts.ContainerHomeDir,
 			"USER": consts.ContainerUser,

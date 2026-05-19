@@ -314,6 +314,14 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 			consts.EnvHostDataDir + "=" + opts.HostDirs.Data,
 			consts.EnvHostStateDir + "=" + opts.HostDirs.State,
 			consts.EnvHostCacheDir + "=" + opts.HostDirs.Cache,
+			// Host invoker UID/GID for the CP daemon's userStage to drop
+			// to when dispatching init shell stages, so files created
+			// inside the agent container land at the host user's UID and
+			// the ~/.claude/projects bind mount is writable. In the CLI
+			// process consts.ContainerUID/GID resolve to os.Getuid()/
+			// Getgid() — that's what the CP needs to know.
+			consts.EnvHostUID + "=" + strconv.Itoa(consts.ContainerUID),
+			consts.EnvHostGID + "=" + strconv.Itoa(consts.ContainerGID),
 		}, otelLogsEnv(cfg)...),
 		ExtraHosts:  []string{"host.docker.internal:host-gateway"},
 		Cmd:         []string{"/usr/local/bin/clawker-cp"},

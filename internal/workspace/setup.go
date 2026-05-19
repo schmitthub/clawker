@@ -6,11 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 
 	"github.com/moby/moby/api/types/mount"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/containerfs"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -183,8 +181,12 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 	// misconfigured $CLAUDE_CONFIG_DIR. Users who genuinely don't want the
 	// bind can set agent.claude_code.mount_projects: false. Missing
 	// projects/ subdir under an existing config dir is still a soft skip
-	// (Claude Code creates it on first session). UID mismatches surface as
-	// non-fatal Warnings.
+	// (Claude Code creates it on first session).
+	//
+	// Container UID is host-derived (see consts.ContainerUID / HostUID)
+	// so the bind mount is writable by construction; no UID-mismatch
+	// surfacing is needed. The Warnings field is retained as a generic
+	// channel for future non-fatal mount diagnostics.
 	var mountWarnings []string
 	if project.Agent.ClaudeCode.MountProjectsEnabled() {
 		src, ok, resolveErr := containerfs.ResolveHostProjectsDir()
@@ -202,18 +204,6 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 				return nil, fmt.Errorf("build claude projects mount: %w", err)
 			}
 			mounts = append(mounts, projectsMount)
-			if runtime.GOOS == "linux" && os.Getuid() != consts.ContainerUID {
-				cfg.Log.Warn().
-					Int("host_uid", os.Getuid()).
-					Int("container_uid", consts.ContainerUID).
-					Msg("~/.claude/projects bind mount may fail to write: host UID does not match container claude user")
-				mountWarnings = append(mountWarnings,
-					fmt.Sprintf("host UID %d does not match container claude user (UID %d). "+
-						"Writes from the container to ~/.claude/projects/ may fail with EACCES; "+
-						"session history and auto-memory will not persist across runs. "+
-						"Workaround: set agent.claude_code.mount_projects: false to disable the bind mount.",
-						os.Getuid(), consts.ContainerUID))
-			}
 			cfg.Log.Debug().Str("src", src).Msg("mounted host ~/.claude/projects/")
 		}
 	}

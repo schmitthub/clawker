@@ -2,6 +2,7 @@ package cpboot
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -228,6 +229,26 @@ func TestINV_B1_020_ConfigDirEnvVar(t *testing.T) {
 	envVar := cfg.ConfigDirEnvVar() + "=" + consts.CPClawkerConfigDir
 	assert.Contains(t, cpConfig.Env, envVar,
 		"container env must set %s", cfg.ConfigDirEnvVar())
+}
+
+// TestCPContainer_HostUIDGIDEnv_Emitted — the CP container must
+// receive the host invoker's UID/GID via env vars so its userStage
+// can drop init-shell stages to the same UID baked into the agent
+// image. Missing this wiring would re-introduce the
+// ~/.claude/projects bind-mount EACCES on Linux UID != 1001 systems.
+func TestCPContainer_HostUIDGIDEnv_Emitted(t *testing.T) {
+	testenv.New(t)
+	cfg := configmocks.NewBlankConfig()
+
+	cpConfig, err := BuildCPContainerConfig(cfg, testCPOpts())
+	require.NoError(t, err)
+
+	wantUID := consts.EnvHostUID + "=" + strconv.Itoa(consts.ContainerUID)
+	wantGID := consts.EnvHostGID + "=" + strconv.Itoa(consts.ContainerGID)
+	assert.Contains(t, cpConfig.Env, wantUID,
+		"CP container env must carry the host UID for userStage drop-priv")
+	assert.Contains(t, cpConfig.Env, wantGID,
+		"CP container env must carry the host GID for userStage drop-priv")
 }
 
 // TestCPContainer_OtelClientCertMounts — both halves of the OTEL
