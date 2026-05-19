@@ -60,6 +60,7 @@ claude-plugin/clawker-support/
         ├── mcp-recipes.md        # MCP setup methodology, troubleshooting
         ├── troubleshooting.md    # Entry point routing to domain-specific sections
         ├── docker-hygiene.md     # Docker disk space diagnosis and cleanup
+        ├── monitoring.md         # OTel + OpenSearch + Prometheus stack, Clawker workspace, telemetry env, troubleshooting
         └── known-issues.md       # Active bugs and workarounds
 ```
 

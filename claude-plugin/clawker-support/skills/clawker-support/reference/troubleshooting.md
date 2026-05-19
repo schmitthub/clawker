@@ -14,6 +14,7 @@ reference files. Check these first if the issue matches:
 | MCP server setup and debugging | `reference/mcp-recipes.md` | Troubleshooting |
 | Settings not taking effect | `reference/settings.md` | Troubleshooting |
 | Disk space, build cache, Docker cleanup | `reference/docker-hygiene.md` | Full reference |
+| Monitoring stack (OTel/OpenSearch/Prometheus, workspace, empty indices) | `reference/monitoring.md` | Troubleshooting |
 | Control plane down or unreachable | This file | Control plane down or unhealthy |
 | Agent missing from CP registry | This file | Agent appears in clawker ps but missing from CP |
 
