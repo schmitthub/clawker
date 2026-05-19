@@ -51,6 +51,27 @@ apply_dir() {
 apply_dir "/_component_template"     "${BOOTSTRAP_DIR}/component-templates"
 apply_dir "/_index_template"         "${BOOTSTRAP_DIR}/index-templates"
 
+# Pre-create the log indices so OSD Discover/dashboards stop spamming
+# "No matching indices found: No indices match pattern '<name>'" toasts
+# before any source has emitted its first record. The PUT applies the
+# matching index_template at creation time, so mappings are correct.
+# 400 (resource_already_exists_exception) is benign and ignored.
+for idx in claude-code clawker-cli clawker-cp clawker-envoy clawker-coredns; do
+  code=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT "${OPENSEARCH_URL}/${idx}")
+  case "${code}" in
+    200|201)
+      echo "==> bootstrap: created empty index ${idx}"
+      ;;
+    400)
+      # Already exists — fine.
+      ;;
+    *)
+      echo "    pre-create ${idx} failed: HTTP ${code}"
+      exit 1
+      ;;
+  esac
+done
+
 # ISM policies use optimistic concurrency. A bare PUT to an existing
 # policy returns 409 version_conflict_engine_exception. To update an
 # existing policy the request must carry if_seq_no + if_primary_term
