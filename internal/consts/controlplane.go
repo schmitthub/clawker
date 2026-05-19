@@ -1,7 +1,6 @@
 package consts
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -12,7 +11,7 @@ import (
 // containers (Envoy, CoreDNS, etc.) via Docker-outside-of-Docker. All four
 // dir vars are required; a missing value is caught by
 // cpboot.HostDirs.Validate(). EnvHostUID / EnvHostGID are also set by the
-// CLI; missing values degrade to ContainerUID / ContainerGID rather than
+// CLI; a missing value degrades to fallbackContainerUID/GID rather than
 // failing the boot, since most container ops still work at 1001.
 const (
 	EnvHostConfigDir = "CLAWKER_HOST_CONFIG_DIR"
@@ -35,69 +34,72 @@ var (
 	HostCacheDir  = os.Getenv(EnvHostCacheDir)
 )
 
-// HostUID is the UID of the host user who invoked the CLI, as passed
-// in via EnvHostUID by the CLI when launching the CP container. The
-// CP daemon's userStage drops to this UID when dispatching post-init
-// shell stages so that files created inside the container land at the
-// same UID the host-side bind mount expects.
-//
-// Inside the CP container os.Getuid() returns the CP image's UID
-// (typically 0 — CP holds BPF / SYS_ADMIN caps), NOT the host's, so
-// this env-fed var is the only correct source. CLI process consumers
-// must NOT read HostUID; they should read ContainerUID (which
-// resolves to os.Getuid() in the CLI process).
-//
-// Falls back to fallbackContainerUID (1001 — NOT ContainerUID, which
-// resolves to the CP-process UID inside CP and would silently drop
-// userStage to root when the env var is missing). Degraded mode:
-// most container ops still function; only host ~/.claude/projects
-// bind-mount writes (auto-memory + session jsonls) fail with EACCES
-// because the agent image's claude user is baked at the host UID
-// while userStage is dispatching at 1001.
-//
-// Note: depends on EnvHostUID const above. Go package-var dependency
-// ordering resolves init correctly; a future refactor that inlines
-// EnvHostUID into a literal or moves it across files must preserve
-// the same ordering or HostUID will silently fall back.
-var HostUID = resolveHostUID(EnvHostUID, fallbackContainerUID)
+// HostIDResolution captures the outcome of parsing CLAWKER_HOST_UID /
+// CLAWKER_HOST_GID at package init. The CP daemon's startup gate
+// surfaces degraded mode (Fallback == true) via its structured
+// logger; resolution itself is side-effect-free.
+type HostIDResolution struct {
+	Env      string
+	Raw      string
+	Value    int
+	Fallback bool
+	// Reason is "" (happy) | "unset" | "malformed" | "non_positive".
+	Reason string
+	Err    error
+}
 
-// HostGID is the GID counterpart to HostUID; same resolution rules.
-var HostGID = resolveHostUID(EnvHostGID, fallbackContainerGID)
+var (
+	hostUID, hostUIDResolution = resolveHostID(EnvHostUID, fallbackContainerUID)
+	hostGID, hostGIDResolution = resolveHostID(EnvHostGID, fallbackContainerGID)
+)
 
-// resolveHostUID parses an integer UID/GID from the named env var.
-// Accepts strictly positive values; rejects unset, empty, malformed,
-// negative, or zero. Zero is rejected because a sudo'd CLI would
-// otherwise propagate root into userStage, and userStage running as
-// uid 0 inside the agent defeats the unprivileged-user contract that
-// the entire CP-driven init pipeline relies on.
+// HostUID returns the host invoker's UID, propagated to the CP daemon
+// via EnvHostUID by the CLI when launching the CP container.
 //
-// When the env var is set but invalid (malformed, negative, or zero),
-// emit a one-shot stderr line so an operator can diagnose silent
-// degraded-mode boots. Package-var init has no project logger; stderr
-// lands in `docker logs <cp>` which is the same surface used for
-// other early-boot CP diagnostics.
+// Inside the CP container os.Getuid() is the CP image's UID (typically
+// 0 — CP holds BPF / SYS_ADMIN caps), so this env-fed surface is the
+// only correct source. CLI-process consumers must use ContainerUID().
 //
-// Unset/empty is intentionally silent: that's the expected CLI-
-// process state (the env var is set only on the CP container).
-func resolveHostUID(envName string, fallback int) int {
+// Fallback is fallbackContainerUID (the const literal, NOT
+// containerUID — inside CP that would resolve to 0 and silently drop
+// userStage to root).
+func HostUID() int { return hostUID }
+
+// HostGID returns the GID counterpart to HostUID().
+func HostGID() int { return hostGID }
+
+// HostUIDResolution returns the parse result captured at package init
+// so callers can surface degraded mode via their own structured logger.
+func HostUIDResolution() HostIDResolution { return hostUIDResolution }
+
+// HostGIDResolution returns the GID counterpart to HostUIDResolution().
+func HostGIDResolution() HostIDResolution { return hostGIDResolution }
+
+// resolveHostID parses an integer UID/GID from the named env var.
+// Rejects unset, empty, malformed, negative, or zero values in favor
+// of `fallback`. Zero is rejected because a sudo'd CLI would otherwise
+// propagate root into userStage, defeating the unprivileged-user
+// contract the entire CP-driven init pipeline relies on.
+func resolveHostID(envName string, fallback int) (int, HostIDResolution) {
 	raw := os.Getenv(envName)
+	res := HostIDResolution{Env: envName, Raw: raw, Value: fallback, Fallback: true}
 	if raw == "" {
-		return fallback
+		res.Reason = "unset"
+		return fallback, res
 	}
 	v, err := strconv.Atoi(raw)
 	if err != nil {
-		fmt.Fprintf(os.Stderr,
-			"event=host_uid_invalid env=%s value=%q error=%v action=fallback fallback=%d\n",
-			envName, raw, err, fallback)
-		return fallback
+		res.Reason = "malformed"
+		res.Err = err
+		return fallback, res
 	}
 	if v <= 0 {
-		fmt.Fprintf(os.Stderr,
-			"event=host_uid_invalid env=%s value=%d action=fallback fallback=%d reason=non_positive\n",
-			envName, v, fallback)
-		return fallback
+		res.Reason = "non_positive"
+		return fallback, res
 	}
-	return v
+	res.Value = v
+	res.Fallback = false
+	return v, res
 }
 
 // Composed host paths used as sibling-container bind Mount.Source values.

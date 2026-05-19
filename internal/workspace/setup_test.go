@@ -222,9 +222,6 @@ func TestSetupMounts_SkipsClaudeProjectsBindMountWhenDisabled(t *testing.T) {
 			t.Errorf("unexpected projects mount when disabled: %+v", m)
 		}
 	}
-	if len(res.Warnings) != 0 {
-		t.Errorf("Warnings = %v, want empty when feature disabled", res.Warnings)
-	}
 }
 
 func TestSetupMounts_SilentSkipWhenHostProjectsMissing(t *testing.T) {
@@ -243,10 +240,6 @@ func TestSetupMounts_SilentSkipWhenHostProjectsMissing(t *testing.T) {
 		if m.Target == ClaudeProjectsTargetPath {
 			t.Errorf("unexpected projects mount when host dir missing: %+v", m)
 		}
-	}
-	// Missing-dir is the expected first-run case — no user-visible warning.
-	if len(res.Warnings) != 0 {
-		t.Errorf("Warnings = %v, want empty for the missing-host-dir silent-skip case", res.Warnings)
 	}
 }
 

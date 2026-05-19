@@ -20,14 +20,16 @@ Branch: `fix/uid`. Live document. Appended-to after each phase.
 - CLI sets the env vars on CP container in `BuildCPContainerConfig`.
 - One CP caller (`controlplane/agent/init.go::userStage`) swaps to
   `consts.HostUID` / `consts.HostGID`.
-- Workspace UID-mismatch warning at `setup.go:205-216`: dead post-fix,
+- Workspace UID-mismatch warning in `internal/workspace/setup.go`
+  (the Linux runtime.GOOS check inside `SetupMounts`): dead post-fix,
   delete.
 
 ## Phase 1 — `consts.go` refactor
 
 **What I did**
 
-- Split the const block at `internal/consts/consts.go:256-266`. Kept
+- Split the `// Container user identity.` const block in
+  `internal/consts/consts.go`. Kept
   `ContainerUser` + `ContainerHomeDir` as `const`. Added private
   `fallbackContainerUID = 1001` / `fallbackContainerGID = 1001` consts
   for the last-resort default.
@@ -113,8 +115,8 @@ Branch: `fix/uid`. Live document. Appended-to after each phase.
 **What I did**
 
 - Appended two entries to the `Env` slice in `BuildCPContainerConfig`
-  at `internal/controlplane/cpboot/cp_container.go:316-317`:
-  `CLAWKER_HOST_UID=<consts.ContainerUID>` and the GID twin.
+  (`internal/controlplane/cpboot/cp_container.go`):
+  `CLAWKER_HOST_UID=<consts.ContainerUID()>` and the GID twin.
   `strconv` was already imported.
 - Added comment block explaining the contract: in the CLI process
   `consts.ContainerUID/GID` resolve via `os.Getuid()/Getgid()`, so the
@@ -154,9 +156,9 @@ Branch: `fix/uid`. Live document. Appended-to after each phase.
 
 **What I did**
 
-- Swapped `uint32(consts.ContainerUID)` → `uint32(consts.HostUID)` and
-  the GID twin at `internal/controlplane/agent/init.go:702-703` inside
-  `userStage`.
+- Swapped `uint32(consts.ContainerUID)` → `uint32(consts.HostUID())`
+  and the GID twin inside `userStage` in
+  `internal/controlplane/agent/init.go`.
 - Expanded the function's doc comment to explain WHY: CP runs in its
   own container; `os.Getuid()` inside CP is the CP image's UID, not the
   host's. `consts.HostUID` reads `CLAWKER_HOST_UID` set by the CLI when
@@ -198,22 +200,21 @@ Branch: `fix/uid`. Live document. Appended-to after each phase.
 **What I did**
 
 - Removed the `if runtime.GOOS == "linux" && os.Getuid() !=
-  consts.ContainerUID` block (warning log + Warnings append) at
-  `internal/workspace/setup.go:205-216`.
+  consts.ContainerUID` block (warning log + Warnings append) inside
+  `SetupMounts` in `internal/workspace/setup.go`.
 - Dropped now-unused `runtime` and `consts` imports.
 - Updated the surrounding doc comment to say UID mismatch is no
   longer surfaced (container UID is host-derived by construction).
-- Kept `var mountWarnings []string` + `Warnings` field on
-  `SetupMountsResult` as a generic channel for future non-fatal mount
-  diagnostics. Removing it would be API churn beyond plan scope.
+- Initially kept `var mountWarnings []string` + `Warnings` field on
+  `SetupMountsResult` as a placeholder; deleted in the same branch
+  during PR review since no producer remained.
 
 **Decisions due to unforeseen issues**
 
-- Left `Warnings` field on `SetupMountsResult` intact. The struct
-  field is now always populated with `nil`. Alternative was removing
-  the field entirely, but that requires updating every caller's
-  unpack and felt like scope creep on a focused UID fix. Recording so
-  a future cleanup PR knows the right path.
+- `Warnings` field and `mountWarnings` slice were both removed during
+  PR review — leaving dead state and aspirational "future generic
+  channel" comments was the worse tradeoff than the small API churn
+  of dropping them.
 
 **Bugs found**
 
@@ -225,10 +226,11 @@ Branch: `fix/uid`. Live document. Appended-to after each phase.
   259/261 (`os.Stat`/`os.IsNotExist`) for unrelated paths. Don't
   blindly remove `os` along with `runtime` and `consts`. The compiler
   catches it but a sloppy edit would have wasted a cycle.
-- `mountWarnings` slice variable retained even though no callsite
-  appends to it post-deletion — it's used at the result-struct
-  construction. Could be inlined as `nil`, but leaving the named slot
-  makes future warning-emitters obvious.
+- Earlier draft kept `mountWarnings` slice + `Warnings` field as
+  forward-looking placeholders. Deleted in PR review — dead struct
+  fields with aspirational rationale rot faster than they earn back.
+  If a non-fatal mount diagnostic ever materializes, that PR adds
+  the slot.
 
 ## Phase 6 — Doc updates
 
@@ -242,8 +244,8 @@ Branch: `fix/uid`. Live document. Appended-to after each phase.
 - `internal/config/CLAUDE.md`: updated the `ContainerUID() (1001)`
   line to reflect host-derived semantics and call out the CP-side
   alternative.
-- `internal/workspace/setup.go`: in-file comment block above
-  `mountWarnings` rewritten to match.
+- `internal/workspace/setup.go`: in-file comment block above the
+  `~/.claude/projects` bind block rewritten to match.
 
 **Decisions due to unforeseen issues**
 
@@ -490,18 +492,21 @@ accounts for the deleted tautological test + the merged subcase.
 
 1. **Image-inspect runtime probe** for foreign / mismatched images.
    Read `dev.clawker.uid` label (or `getent passwd claude` via exec)
-   at container create time; warn-level log + `Warnings` entry on
-   mismatch against `consts.ContainerUID`. Covers silent-failure
-   findings #3 + #4 cleanly.
-2. **Typed UID getter functions.** Convert `HostUID/HostGID` (and
-   maybe `ContainerUID/GID`) to `func() uint32`. Kills exported
-   mutability + the `uint32(...)` cast asymmetry at every call site.
-   Suggested shape: type alias + unexported var + exported getter.
-3. **Resolve(log) refactor.** Move resolution from package-var init
-   to explicit `consts.ResolveHostIdentity(log)` called from
-   `main()` in both CLI and CP entry points, so fallback events
-   land in the project's structured logger surface (`ControlPlaneLogFile`)
-   rather than raw stderr.
+   at container create time; warn-level log on mismatch against
+   `consts.ContainerUID()`. Open follow-up.
+2. **Typed UID getter functions.** DONE in PR-review pass. Converted
+   `ContainerUID/GID` and `HostUID/GID` to `func() int`. Mutable
+   exported vars replaced with unexported package-private state +
+   exported getters. Single `uint32(consts.HostUID())` cast at
+   userStage call site is the only remaining asymmetry — acceptable
+   because `clawkerdv1.PipeStage.Uid` is uint32 at the wire boundary.
+3. **Structured-logger resolution.** DONE in PR-review pass. Package
+   init runs the resolver silently; `cmd/clawker-cp/main.go`'s
+   `logHostIdentity(log, consts.HostUIDResolution(),
+   consts.HostGIDResolution())` emits `event=host_uid_unavailable` at
+   warn on degraded boot. Lands in the rotating CP logfile, not raw
+   stderr. CLI never reads `HostUID()`, so the CLI surface stays
+   silent.
 4. **Makefile UX.** Document the `-buildvcs=false` requirement in
    `make test` for worktree contributors. Could also rewrite
    the Makefile's `GOFLAGS := -trimpath` to `GOFLAGS ?= -trimpath

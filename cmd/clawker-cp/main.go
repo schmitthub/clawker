@@ -215,6 +215,8 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 			Msg("trusted-lane OTLP push disabled — CP and infra services run with file/stderr logs only")
 	}
 
+	logHostIdentity(log, consts.HostUIDResolution(), consts.HostGIDResolution())
+
 	// Load config from the mounted config dir (CLAWKER_CONFIG_DIR set by
 	// the container env). All port values come from settings.ControlPlane.
 	cfg, err := config.NewConfig()
@@ -1111,4 +1113,35 @@ func wireInitExecutor(bus *overseer.Overseer, log *logger.Logger) *agent.Executo
 		Str("event", "agent_init_executor_unavailable").
 		Msg("agent.init: Executor construction failed; CP-driven init disabled — agent containers will hang on the entrypoint fifo until timeout. CP otherwise continues.")
 	return nil
+}
+
+// logHostIdentity emits a structured warning when the CLAWKER_HOST_UID
+// / CLAWKER_HOST_GID env vars the CLI is supposed to set on the CP
+// container were absent or invalid at package-init time. Pre-fix-uid
+// CP silently fell back to uid 1001 on every degraded boot; this
+// emit surfaces the same fallback on the rotating CP logfile so an
+// operator can correlate downstream userStage EACCES bugs with the
+// boot-time env drop. CP behavior is unchanged — the fallback is the
+// same value, just no longer invisible.
+// logHostIdentity surfaces a degraded-mode warn on the rotating CP
+// logfile when the CLI didn't deliver a valid CLAWKER_HOST_UID /
+// CLAWKER_HOST_GID. CP behavior is unchanged — the fallback is taken
+// regardless — but the event is the operator's only triage anchor for
+// downstream userStage EACCES on the ~/.claude/projects bind mount.
+func logHostIdentity(log *logger.Logger, results ...consts.HostIDResolution) {
+	for _, res := range results {
+		if !res.Fallback {
+			continue
+		}
+		ev := log.Warn().
+			Str("event", "host_uid_unavailable").
+			Str("env", res.Env).
+			Str("raw", res.Raw).
+			Str("reason", res.Reason).
+			Int("fallback", res.Value)
+		if res.Err != nil {
+			ev = ev.Err(res.Err)
+		}
+		ev.Msg("CP host identity env missing or invalid; userStage drops to fallback UID/GID — ~/.claude/projects bind writes may EACCES.")
+	}
 }

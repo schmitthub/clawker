@@ -84,7 +84,7 @@ SettingsStore() *storage.Store[Settings]   // Direct access to settings store
 
 **Label keys**: `LabelPrefix()`, `LabelManaged()`, `LabelMonitoringStack()`, `LabelProject()`, `LabelAgent()`, `LabelVersion()`, `LabelImage()`, `LabelCreated()`, `LabelWorkdir()`, `LabelPurpose()`, `LabelTestName()`, `LabelBaseImage()`, `LabelFlavor()`, `LabelTest()`, `LabelE2ETest()`, `ManagedLabelValue()`, `EngineLabelPrefix()`, `EngineManagedLabel()`
 
-**Container constants**: `ContainerUID()` / `ContainerGID()` — deprecated delegates to `consts.ContainerUID` / `consts.ContainerGID`. The underlying consts now resolve to `os.Getuid()` / `os.Getgid()` (the CLI invoker's host UID/GID) with a 1001 fallback when `os.Getuid()` is unavailable (Windows). CP-side code must use `consts.HostUID` / `consts.HostGID` instead — see `internal/consts/controlplane.go`.
+**Container constants**: `ContainerUID()` / `ContainerGID()` — deprecated delegates to `consts.ContainerUID()` / `consts.ContainerGID()`. The underlying consts resolve once at package init from `os.Getuid()` / `os.Getgid()` (the CLI invoker), falling back to 1001 when the kernel returns 0 (sudo) or -1 (Windows). CP-side code must use `consts.HostUID()` / `consts.HostGID()` instead — inside the CP container `os.Getuid()` is the CP image's UID, not the host's. See `internal/consts/controlplane.go`.
 
 **Monitoring URLs**: `OpenSearchURL()`, `OpenSearchDashboardsURL()`, `PrometheusURL()`
 

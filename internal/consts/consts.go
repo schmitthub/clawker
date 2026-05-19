@@ -261,46 +261,39 @@ const (
 	// reference $HOME, but PipeStage.Env must set HOME explicitly per
 	// stage because Linux's setuid syscall does not update HOME/USER.
 	ContainerHomeDir = "/home/" + ContainerUser
-	// fallbackContainerUID is the legacy UID baked into the container's
-	// claude user when no host-derived value is available. Used as the
-	// last-resort default by ContainerUID, ContainerGID, HostUID, and
-	// HostGID. Most container ops still work at this value; only host
-	// ~/.claude/projects bind-mount writes (auto-memory + session jsonls)
-	// fail with EACCES when the running host UID differs.
+	// fallbackContainerUID is the last-resort default for the
+	// container's claude user when no host-derived value is available.
+	// Most container ops still work at this value; only host
+	// ~/.claude/projects bind-mount writes (auto-memory + session
+	// jsonls) fail with EACCES when the host UID differs.
 	fallbackContainerUID = 1001
 	fallbackContainerGID = 1001
 )
 
-// ContainerUID is the UID the bundler bakes into the image's claude
-// user and that CLI-side code stamps onto tar headers, volume copies,
-// and any other CLI-driven container-bound operation. Resolves to
-// os.Getuid() — the user who invoked the CLI — so that bind mounts of
-// host-owned paths inside the container are writable without UID
-// translation.
-//
-// Falls back to fallbackContainerUID (1001) when os.Getuid() returns
-// either -1 (Windows) or 0 (sudo / root invocation). Refusing root
-// keeps the agent's claude user unprivileged even when the CLI was
-// launched as root; running init scripts as uid 0 inside the agent
-// would defeat the drop-priv contract userStage enforces.
-//
-// CP-side code MUST use HostUID instead; inside the CP container,
-// os.Getuid() is whatever UID the CP image runs as, NOT the host UID.
-var ContainerUID = func() int {
-	if v := os.Getuid(); v > 0 {
-		return v
-	}
-	return fallbackContainerUID
-}()
+var (
+	containerUID = resolveProcessID(os.Getuid, fallbackContainerUID)
+	containerGID = resolveProcessID(os.Getgid, fallbackContainerGID)
+)
 
-// ContainerGID is the GID counterpart to ContainerUID. Same resolution
-// rules: rejects 0 and -1 in favor of fallbackContainerGID.
-var ContainerGID = func() int {
-	if v := os.Getgid(); v > 0 {
+// ContainerUID returns the CLI invoker's UID — the value the bundler
+// bakes into the image's claude user and that CLI-side code stamps
+// onto tar headers and volume copies. Falls back to
+// fallbackContainerUID on uid 0 (sudo) or -1 (Windows): root inside
+// the agent would defeat the drop-priv contract userStage enforces.
+//
+// CP-side code MUST use HostUID() — inside the CP container
+// os.Getuid() is the CP image's UID, not the host invoker's.
+func ContainerUID() int { return containerUID }
+
+// ContainerGID returns the GID counterpart to ContainerUID().
+func ContainerGID() int { return containerGID }
+
+func resolveProcessID(get func() int, fallback int) int {
+	if v := get(); v > 0 {
 		return v
 	}
-	return fallbackContainerGID
-}()
+	return fallback
+}
 
 // In-container paths that span the supervisor↔CP-driven init contract.
 // The Dockerfile template (or CLI ContainerCopy) creates these; CP-side

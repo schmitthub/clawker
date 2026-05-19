@@ -5,27 +5,28 @@ import (
 	"testing"
 )
 
-// TestResolveHostUID exercises every guard in the resolver. Each case
-// targets a distinct branch:
-//   - env_set_numeric: happy path (positive integer)
-//   - env_unset: missing env, must return fallback (CLI process state)
-//   - env_set_zero: sudo'd CLI propagates UID 0; must reject (defeats
-//     drop-priv contract if userStage runs as root)
-//   - env_negative: must reject
-//   - env_malformed: strconv.Atoi error must reject
-func TestResolveHostUID(t *testing.T) {
+// TestResolveHostID exercises every branch of the resolver. Each case
+// pins both the returned int and the structured Reason that callers
+// (the CP daemon's startup gate) key off when surfacing degraded mode
+// via their own logger.
+func TestResolveHostID(t *testing.T) {
 	cases := []struct {
-		name     string
-		envVal   string
-		envSet   bool
-		fallback int
-		want     int
+		name         string
+		envVal       string
+		envSet       bool
+		wantValue    int
+		wantFallback bool
+		wantReason   string
 	}{
-		{name: "env_set_numeric", envVal: "1234", envSet: true, fallback: 1001, want: 1234},
-		{name: "env_unset", envSet: false, fallback: 1001, want: 1001},
-		{name: "env_set_zero", envVal: "0", envSet: true, fallback: 1001, want: 1001},
-		{name: "env_negative", envVal: "-1", envSet: true, fallback: 1001, want: 1001},
-		{name: "env_malformed", envVal: "notanumber", envSet: true, fallback: 1001, want: 1001},
+		{name: "happy_positive", envVal: "1234", envSet: true, wantValue: 1234, wantFallback: false, wantReason: ""},
+		{name: "unset", envSet: false, wantValue: 1001, wantFallback: true, wantReason: "unset"},
+		{name: "empty", envVal: "", envSet: true, wantValue: 1001, wantFallback: true, wantReason: "unset"},
+		// Zero is rejected so a sudo'd CLI cannot propagate root into
+		// userStage; root inside the agent defeats the drop-priv
+		// contract of the entire init pipeline.
+		{name: "zero", envVal: "0", envSet: true, wantValue: 1001, wantFallback: true, wantReason: "non_positive"},
+		{name: "negative", envVal: "-1", envSet: true, wantValue: 1001, wantFallback: true, wantReason: "non_positive"},
+		{name: "malformed", envVal: "notanumber", envSet: true, wantValue: 1001, wantFallback: true, wantReason: "malformed"},
 	}
 	const probeEnv = "CLAWKER_TEST_PROBE_UID"
 	for _, tc := range cases {
@@ -37,8 +38,28 @@ func TestResolveHostUID(t *testing.T) {
 					t.Fatalf("unset env: %v", err)
 				}
 			}
-			if got := resolveHostUID(probeEnv, tc.fallback); got != tc.want {
-				t.Fatalf("resolveHostUID(%q, %d) = %d, want %d", tc.envVal, tc.fallback, got, tc.want)
+			gotV, gotRes := resolveHostID(probeEnv, 1001)
+			if gotV != tc.wantValue {
+				t.Fatalf("value = %d, want %d", gotV, tc.wantValue)
+			}
+			if gotRes.Value != tc.wantValue {
+				t.Fatalf("res.Value = %d, want %d", gotRes.Value, tc.wantValue)
+			}
+			if gotRes.Fallback != tc.wantFallback {
+				t.Fatalf("res.Fallback = %v, want %v", gotRes.Fallback, tc.wantFallback)
+			}
+			if gotRes.Reason != tc.wantReason {
+				t.Fatalf("res.Reason = %q, want %q", gotRes.Reason, tc.wantReason)
+			}
+			if tc.wantReason == "malformed" && gotRes.Err == nil {
+				t.Fatalf("res.Err = nil, want non-nil for malformed input")
+			}
+			wantRaw := tc.envVal
+			if !tc.envSet {
+				wantRaw = ""
+			}
+			if gotRes.Raw != wantRaw {
+				t.Fatalf("res.Raw = %q, want %q", gotRes.Raw, wantRaw)
 			}
 		})
 	}

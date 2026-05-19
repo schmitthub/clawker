@@ -53,12 +53,6 @@ type SetupMountsResult struct {
 	WorkspaceVolumeName string
 	// ContainerPath is the resolved container-side workspace mount path.
 	ContainerPath string
-	// Warnings carries non-fatal user-facing diagnostics produced during mount
-	// setup (e.g. a configured ~/.claude/projects bind mount could not be
-	// resolved, or host UID will not be able to write to host-owned files).
-	// Callers are expected to surface these on stderr; some warning conditions
-	// may also be logged by SetupMounts.
-	Warnings []string
 }
 
 // SetupMounts prepares workspace mounts for container creation.
@@ -183,11 +177,8 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 	// projects/ subdir under an existing config dir is still a soft skip
 	// (Claude Code creates it on first session).
 	//
-	// Container UID is host-derived (see consts.ContainerUID / HostUID)
-	// so the bind mount is writable by construction; no UID-mismatch
-	// surfacing is needed. The Warnings field is retained as a generic
-	// channel for future non-fatal mount diagnostics.
-	var mountWarnings []string
+	// Container UID is host-derived (see consts.ContainerUID() /
+	// HostUID()) so the bind mount is writable by construction.
 	if project.Agent.ClaudeCode.MountProjectsEnabled() {
 		src, ok, resolveErr := containerfs.ResolveHostProjectsDir()
 		if resolveErr != nil {
@@ -227,7 +218,6 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 		ConfigVolumeResult:  configResult,
 		WorkspaceVolumeName: wsVolumeName,
 		ContainerPath:       containerPath,
-		Warnings:            mountWarnings,
 	}, nil
 }
 

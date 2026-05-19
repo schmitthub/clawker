@@ -2,6 +2,7 @@ package cpboot
 
 import (
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -236,6 +237,12 @@ func TestINV_B1_020_ConfigDirEnvVar(t *testing.T) {
 // can drop init-shell stages to the same UID baked into the agent
 // image. Missing this wiring would re-introduce the
 // ~/.claude/projects bind-mount EACCES on Linux UID != 1001 systems.
+//
+// Anchored against os.Getuid() with the same fallback rule the
+// production resolver applies, so a regression that hardcodes 1001
+// (or any other literal) trips the test on a non-1001 host. Asserting
+// against consts.ContainerUID() on both sides would be tautological
+// — that's the exact value BuildCPContainerConfig already writes.
 func TestCPContainer_HostUIDGIDEnv_Emitted(t *testing.T) {
 	testenv.New(t)
 	cfg := configmocks.NewBlankConfig()
@@ -243,12 +250,17 @@ func TestCPContainer_HostUIDGIDEnv_Emitted(t *testing.T) {
 	cpConfig, err := BuildCPContainerConfig(cfg, testCPOpts())
 	require.NoError(t, err)
 
-	wantUID := consts.EnvHostUID + "=" + strconv.Itoa(consts.ContainerUID)
-	wantGID := consts.EnvHostGID + "=" + strconv.Itoa(consts.ContainerGID)
-	assert.Contains(t, cpConfig.Env, wantUID,
-		"CP container env must carry the host UID for userStage drop-priv")
-	assert.Contains(t, cpConfig.Env, wantGID,
-		"CP container env must carry the host GID for userStage drop-priv")
+	wantUID, wantGID := os.Getuid(), os.Getgid()
+	if wantUID <= 0 {
+		wantUID = 1001
+	}
+	if wantGID <= 0 {
+		wantGID = 1001
+	}
+	assert.Contains(t, cpConfig.Env, consts.EnvHostUID+"="+strconv.Itoa(wantUID),
+		"CP container env must carry host UID (os.Getuid() with fallback) for userStage drop-priv")
+	assert.Contains(t, cpConfig.Env, consts.EnvHostGID+"="+strconv.Itoa(wantGID),
+		"CP container env must carry host GID (os.Getgid() with fallback) for userStage drop-priv")
 }
 
 // TestCPContainer_OtelClientCertMounts — both halves of the OTEL

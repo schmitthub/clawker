@@ -1547,9 +1547,6 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 	if wsResult.WorkspaceVolumeName != "" {
 		createdVolumes = append(createdVolumes, wsResult.WorkspaceVolumeName)
 	}
-	for _, w := range wsResult.Warnings {
-		sendWarning(ctx, events, "workspace", w)
-	}
 
 	defer func() {
 		if retErr == nil || len(createdVolumes) == 0 {
