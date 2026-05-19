@@ -17,7 +17,7 @@
             "os.version":      { "type": "keyword" }
           }
         },
-        "scope": {
+        "instrumentationScope": {
           "properties": {
             "name":    { "type": "keyword" },
             "version": { "type": "keyword" }

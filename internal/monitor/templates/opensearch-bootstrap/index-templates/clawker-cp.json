@@ -5,6 +5,12 @@
   "template": {
     "mappings": {
       "properties": {
+        "instrumentationScope": {
+          "properties": {
+            "name":    { "type": "keyword" },
+            "version": { "type": "keyword" }
+          }
+        },
         "attributes": {
           "properties": {
             "event":     { "type": "keyword" },
