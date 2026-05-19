@@ -5,7 +5,8 @@
   "template": {
     "settings": {
       "index": {
-        "default_pipeline": "cp-actor-attr-nest"
+        "default_pipeline": "cp-actor-attr-nest",
+        "final_pipeline":   "envelope-normalize"
       }
     },
     "mappings": {

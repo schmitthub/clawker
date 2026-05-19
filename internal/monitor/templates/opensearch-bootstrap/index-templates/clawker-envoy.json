@@ -3,6 +3,11 @@
   "priority": 100,
   "composed_of": ["clawker-common"],
   "template": {
+    "settings": {
+      "index": {
+        "final_pipeline": "envelope-normalize"
+      }
+    },
     "mappings": {
       "properties": {
         "attributes": {

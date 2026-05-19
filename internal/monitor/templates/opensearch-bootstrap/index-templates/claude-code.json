@@ -5,7 +5,8 @@
   "template": {
     "settings": {
       "index": {
-        "default_pipeline": "claude-code-prompt-nest"
+        "default_pipeline": "claude-code-prompt-nest",
+        "final_pipeline":   "envelope-normalize"
       }
     },
     "mappings": {
