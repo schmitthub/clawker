@@ -2,6 +2,8 @@
 
 Branch: `fix/uid`. Live document. Appended-to after each phase.
 
+**Status: COMPLETE pending alpha-release verification on a Linux host.** Code, tests, docs, and PR #291 body all reflect HEAD as of `1cc857ca`. Soft-closed — the post-merge alpha-release hand-off (Phase 8 host-side checks + new Linux-only e2e `TestBindMountUID_E2E`) is the only gate remaining before this can be considered hard-closed. Re-open this doc if a Linux-host run surfaces a regression.
+
 ## Plan reference
 
 `/home/claude/.claude/plans/look-at-the-uid-wild-pinwheel.md`
@@ -511,3 +513,185 @@ accounts for the deleted tautological test + the merged subcase.
    `make test` for worktree contributors. Could also rewrite
    the Makefile's `GOFLAGS := -trimpath` to `GOFLAGS ?= -trimpath
    -buildvcs=false` so the env-var-supplied override works.
+
+## Phase 9 — `uid_t`-typed accessors + neutral diagnostic event
+
+Commit `ce98cbe1`. Triggered by CodeQL flags #285 / #286 on the
+`int → uint32` cast at the `userStage` PipeStage assignment site.
+
+**What I did**
+
+- `internal/consts/controlplane.go`:
+  - `HostUID()` / `HostGID()` now return `uint32` (uid_t shape). Matches
+    the `clawkerdv1.PipeStage.Uid/Gid` wire type → the cast at the
+    `userStage` call site becomes a total identity.
+  - `HostIDResolution.Value` is now `uint32`.
+  - `resolveHostID` now parses via `strconv.ParseUint(raw, 10, 32)`.
+    Out-of-uint32-range input (e.g. `"9999999999"`) becomes
+    `Reason: "malformed"` (with `Err: strconv.ErrRange`) instead of
+    silently wrapping at the downstream `uint32` cast.
+  - Negative inputs are now caught by `ParseUint`'s parser →
+    `Reason: "malformed"` (was `"non_positive"` under `strconv.Atoi`).
+    Zero is still rejected as `"non_positive"`.
+- `internal/controlplane/agent/init.go`: dropped the `uint32(...)` cast
+  on both `consts.HostUID()` / `consts.HostGID()` calls.
+- `cmd/clawker-cp/main.go`:
+  - Diagnostic event renamed `host_uid_unavailable` →
+    `host_id_unavailable`. The `env` field on the record
+    (`CLAWKER_HOST_UID` vs `CLAWKER_HOST_GID`) already disambiguates
+    UID vs GID for the operator; the event name shouldn't lie about
+    which one it covers.
+  - `Int("fallback", ...)` → `Uint32("fallback", ...)` to match the new
+    accessor type.
+  - Collapsed the duplicated doc paragraph above `logHostIdentity`.
+- `internal/workspace/setup.go`: qualified the bare `HostUID()`
+  reference in the existing comment to `consts.HostUID()`.
+- Tests:
+  - `internal/consts/host_user_test.go`: case `"negative"` reason flipped
+    from `"non_positive"` → `"malformed"` (parser-side reject). New
+    `"overflow"` case (`"4294967296"`) pins the uid_t-shape guard.
+  - `cmd/clawker-cp/main_test.go`: event-name expectation updated to
+    `host_id_unavailable`.
+
+**Decisions due to unforeseen issues**
+
+- Considered keeping `Atoi` and rejecting `v > math.MaxUint32` as a
+  separate guard branch. Skipped — `ParseUint(_, 10, 32)` does both
+  rejects (parser-shape + range) in one call and yields a single
+  `"malformed"` Reason, which is the right operator surface.
+- Negative-input behavior moved from `"non_positive"` to `"malformed"`.
+  Considered keeping a separate `"negative"` Reason. Skipped — operator
+  surface gains nothing from distinguishing "rejected by the parser"
+  from "rejected as out-of-domain". Test comment now documents this
+  explicitly so a future reader doesn't expect `"non_positive"`.
+
+**Bugs found**
+
+- None mid-flight.
+
+**Gotchas**
+
+- `strconv.ParseUint(raw, 10, bitSize)` returns a `uint64`. The cast
+  to `uint32` at the return statement is safe because `bitSize=32`
+  already constrains the parse to the uint32 range — over-range input
+  fails the parse with `ErrRange` before we reach the cast.
+
+## Phase 10 — Linux-only host UID/GID + idempotent `groupadd`
+
+Commit `1cc857ca`. Triggered by macOS-host build failure: host GID 20
+(macOS `staff`) collided with Debian `dialout` (also GID 20) inside
+the agent image base layer.
+
+**What I did**
+
+- `internal/consts/consts.go`: `resolveProcessID` short-circuits to
+  `fallback` (the 1001 constants) on non-Linux hosts. Linux is the only
+  OS where container processes see the host's numeric UID/GID through
+  a bind mount — Docker Desktop on macOS (virtiofs / gRPC FUSE) masks
+  ownership at the share boundary, so baking the host UID into the
+  image on macOS gives zero access benefit AND breaks the build
+  whenever the host GID collides with a base-image group.
+- `internal/bundler/assets/Dockerfile.tmpl` and the user-facing
+  reference copy at
+  `claude-plugin/clawker-support/skills/clawker-support/reference/Dockerfile.tmpl`
+  (kept byte-for-byte in sync):
+  - `groupadd --gid {{.GID}} ${USERNAME}` → `(groupadd --gid {{.GID}}
+    ${USERNAME} 2>/dev/null || groupadd ${USERNAME})`.
+  - Same fallback on the Alpine `addgroup -g` branch.
+  - `useradd --gid ${USERNAME}` binds by NAME, so UPG (user-private-
+    group) is preserved either way — the user's primary group always
+    exists and always has the right name, just possibly at an
+    auto-assigned GID instead of the host GID.
+  - Added a Go-template comment block (`{{/* ... */}}`) above the
+    block explaining the contract for future readers.
+
+**Decisions due to unforeseen issues**
+
+- Considered detecting host GID collision in the CLI (probe the base
+  image for known low-GID groups, refuse to bake a colliding GID).
+  Rejected — too much code, requires image-pull-before-build, and the
+  Dockerfile-side fallback is two characters of shell.
+- Considered making the fallback Linux-only (skip the `||` branch on
+  Alpine images on Linux hosts where we know the GID is host-derived
+  and likely safe). Rejected — the fallback is harmless and the
+  Dockerfile is generated by the same template path on every host.
+- The bind-mount writability contract holds on UID match alone. GID
+  match is best-effort. Documented in the template comment so a
+  reviewer who notices the asymmetry can find the rationale.
+
+**Bugs found**
+
+- None mid-flight. The macOS build failure that triggered this work
+  was the bug.
+
+**Gotchas**
+
+- `internal/bundler/assets/Dockerfile.tmpl` and the clawker-support
+  reference copy MUST stay byte-for-byte identical (modulo expected
+  template-only differences). The CI test
+  `TestDockerfileTemplateInSync` enforces this. Edit both, or the
+  test fails.
+- `runtime.GOOS != "linux"` covers darwin AND windows. Windows
+  already hit the `os.Getuid() == -1 → fallback` branch, so the
+  Linux-only gate is technically a no-op there — but stating the
+  contract by OS rather than by syscall return is clearer.
+
+## Phase 11 — Soft-close / hand-off
+
+**Status**
+
+PR #291 body updated to current HEAD (`1cc857ca`). All in-container
+verifications (`make test`, `go vet`, targeted package tests, the
+new `TestResolveHostID` overflow case, the `host_id_unavailable`
+event-name test) pass. Code-side work is complete.
+
+**What is NOT yet verified**
+
+- `go test ./test/e2e/... -run TestBindMountUID_E2E -v` from a Linux
+  host. This is the only test that exercises the full host-UID →
+  bundler → CP env → `userStage` → bind-mount-write chain end-to-end,
+  and it is Linux-only by design (skips on darwin because virtiofs
+  masking would false-pass). Cannot be run from inside a clawker
+  container (would tear down the host CP).
+- The Phase 7 host-side manual hand-off sequence
+  (`docker exec clawker.uidtest id claude`, `docker inspect` for the
+  env vars, drive Claude Code to force a session-jsonl write,
+  `ls -la ~/.claude/projects/`) on a Linux host with `id -u != 1001`.
+- The macOS regression check: that on a macOS host the bundler still
+  bakes UID 1001 (so `groupadd --gid 20` never gets attempted, and
+  Docker Desktop's virtiofs continues to translate ownership at the
+  bind boundary). Phase 10 added the Linux-only gate specifically to
+  preserve this path.
+
+**Why soft-closed not hard-closed**
+
+The unit + targeted integration coverage is strong, but the actual
+regression this PR exists to fix (bind-mount EACCES on a Linux host
+with UID != 1001) can only be observed on the host. The alpha-release
+checkpoint is the right gate — a Linux-host user running the new
+clawker against a real project will exercise every link in the chain
+the unit tests stub.
+
+**If a regression surfaces during alpha**
+
+Re-open this doc. Likely suspects in rough order of probability:
+
+1. `consts.HostUID()` returning `0` inside CP — `CLAWKER_HOST_UID` env
+   didn't get plumbed through. Check
+   `docker inspect clawker-controlplane --format '{{json .Config.Env}}'`
+   for the var. If absent → `BuildCPContainerConfig` regression.
+2. Image cache hit on a pre-fix image. `consts.ContainerUID()` is now
+   part of the bundler content hash (`internal/bundler/CLAUDE.md`),
+   so a UID change should cache-miss, but a stale image tag pulled
+   without consulting the hash would skip the rebuild. `clawker image
+   prune` + rebuild.
+3. Host GID collision NOT covered by the Dockerfile `||` fallback —
+   some other distro has a low-numbered system user that `useradd
+   --uid {{.UID}}` itself collides with (UID-side collision, not
+   GID-side). Phase 10 only made `groupadd` idempotent; the
+   `useradd` line still hard-fails on UID collision. If alpha hits
+   this, the fix is analogous on the `useradd` line.
+4. Foreign agent image not built by clawker's bundler. The deleted
+   workspace UID-mismatch warning (Phase 5) is now silent on this
+   case. The deferred image-inspect runtime probe (follow-up #1
+   above) is the architectural fix.
