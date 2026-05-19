@@ -699,8 +699,8 @@ func (e *Executor) plan() []step {
 func userStage(script string) *clawkerdv1.PipeStage {
 	return &clawkerdv1.PipeStage{
 		Argv: []string{"sh", "-c", script},
-		Uid:  uint32(consts.HostUID()),
-		Gid:  uint32(consts.HostGID()),
+		Uid:  consts.HostUID(),
+		Gid:  consts.HostGID(),
 		Env: map[string]string{
 			"HOME": consts.ContainerHomeDir,
 			"USER": consts.ContainerUser,

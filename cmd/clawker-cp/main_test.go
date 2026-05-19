@@ -70,7 +70,7 @@ func TestLogHostIdentity(t *testing.T) {
 			require.NoError(t, json.Unmarshal([]byte(line), &rec),
 				"record %d must be valid JSON: %q", i, line)
 			require.Equal(t, "warn", rec["level"], "must use warn severity, not debug/info")
-			require.Equal(t, "host_uid_unavailable", rec["event"], "structured event name is the operator's triage anchor")
+			require.Equal(t, "host_id_unavailable", rec["event"], "structured event name is the operator's triage anchor (env field disambiguates UID vs GID)")
 			require.Equal(t, want[i].env, rec["env"])
 			require.Equal(t, want[i].reason, rec["reason"])
 			require.Equal(t, float64(1001), rec["fallback"], "fallback value must surface so operators know which UID userStage will drop to")

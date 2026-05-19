@@ -14,7 +14,7 @@ func TestResolveHostID(t *testing.T) {
 		name         string
 		envVal       string
 		envSet       bool
-		wantValue    int
+		wantValue    uint32
 		wantFallback bool
 		wantReason   string
 	}{
@@ -25,8 +25,15 @@ func TestResolveHostID(t *testing.T) {
 		// userStage; root inside the agent defeats the drop-priv
 		// contract of the entire init pipeline.
 		{name: "zero", envVal: "0", envSet: true, wantValue: 1001, wantFallback: true, wantReason: "non_positive"},
-		{name: "negative", envVal: "-1", envSet: true, wantValue: 1001, wantFallback: true, wantReason: "non_positive"},
+		// ParseUint rejects negatives at the parser, so the "negative"
+		// fallback Reason is "malformed" (ErrSyntax), not "non_positive".
+		{name: "negative", envVal: "-1", envSet: true, wantValue: 1001, wantFallback: true, wantReason: "malformed"},
 		{name: "malformed", envVal: "notanumber", envSet: true, wantValue: 1001, wantFallback: true, wantReason: "malformed"},
+		// 2^32 sits 1 past uid_t's ceiling and would silently wrap to 0
+		// on a downstream uint32 cast. ParseUint(_, 10, 32) makes it
+		// "malformed" with ErrRange so userStage gets the fallback UID
+		// instead of UID 0 (root).
+		{name: "out_of_uint32_range", envVal: "4294967296", envSet: true, wantValue: 1001, wantFallback: true, wantReason: "malformed"},
 	}
 	const probeEnv = "CLAWKER_TEST_PROBE_UID"
 	for _, tc := range cases {

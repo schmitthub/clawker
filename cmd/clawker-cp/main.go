@@ -1115,30 +1115,23 @@ func wireInitExecutor(bus *overseer.Overseer, log *logger.Logger) *agent.Executo
 	return nil
 }
 
-// logHostIdentity emits a structured warning when the CLAWKER_HOST_UID
-// / CLAWKER_HOST_GID env vars the CLI is supposed to set on the CP
-// container were absent or invalid at package-init time. Pre-fix-uid
-// CP silently fell back to uid 1001 on every degraded boot; this
-// emit surfaces the same fallback on the rotating CP logfile so an
-// operator can correlate downstream userStage EACCES bugs with the
-// boot-time env drop. CP behavior is unchanged — the fallback is the
-// same value, just no longer invisible.
 // logHostIdentity surfaces a degraded-mode warn on the rotating CP
 // logfile when the CLI didn't deliver a valid CLAWKER_HOST_UID /
-// CLAWKER_HOST_GID. CP behavior is unchanged — the fallback is taken
-// regardless — but the event is the operator's only triage anchor for
-// downstream userStage EACCES on the ~/.claude/projects bind mount.
+// CLAWKER_HOST_GID at package-init time. CP behavior is unchanged
+// — the fallback UID/GID is taken regardless — but this event is
+// the operator's only triage anchor for downstream userStage
+// EACCES on the ~/.claude/projects bind mount.
 func logHostIdentity(log *logger.Logger, results ...consts.HostIDResolution) {
 	for _, res := range results {
 		if !res.Fallback {
 			continue
 		}
 		ev := log.Warn().
-			Str("event", "host_uid_unavailable").
+			Str("event", "host_id_unavailable").
 			Str("env", res.Env).
 			Str("raw", res.Raw).
 			Str("reason", res.Reason).
-			Int("fallback", res.Value)
+			Uint32("fallback", res.Value)
 		if res.Err != nil {
 			ev = ev.Err(res.Err)
 		}

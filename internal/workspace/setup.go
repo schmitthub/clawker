@@ -178,7 +178,7 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 	// (Claude Code creates it on first session).
 	//
 	// Container UID is host-derived (see consts.ContainerUID() /
-	// HostUID()) so the bind mount is writable by construction.
+	// consts.HostUID()) so the bind mount is writable by construction.
 	if project.Agent.ClaudeCode.MountProjectsEnabled() {
 		src, ok, resolveErr := containerfs.ResolveHostProjectsDir()
 		if resolveErr != nil {

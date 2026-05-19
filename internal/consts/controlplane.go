@@ -38,10 +38,15 @@ var (
 // CLAWKER_HOST_GID at package init. The CP daemon's startup gate
 // surfaces degraded mode (Fallback == true) via its structured
 // logger; resolution itself is side-effect-free.
+//
+// Value is uint32 to match the uid_t kernel type and the
+// clawkerdv1.PipeStage Uid/Gid fields userStage feeds — out-of-range
+// env values are rejected at parse time (Reason "malformed") rather
+// than silently wrapping at a downstream cast.
 type HostIDResolution struct {
 	Env      string
 	Raw      string
-	Value    int
+	Value    uint32
 	Fallback bool
 	// Reason is "" (happy) | "unset" | "malformed" | "non_positive".
 	Reason string
@@ -60,13 +65,16 @@ var (
 // 0 — CP holds BPF / SYS_ADMIN caps), so this env-fed surface is the
 // only correct source. CLI-process consumers must use ContainerUID().
 //
+// Return type is uint32 (uid_t) so PipeStage.Uid assignment is a
+// total identity — no narrowing cast at every call site.
+//
 // Fallback is fallbackContainerUID (the const literal, NOT
 // containerUID — inside CP that would resolve to 0 and silently drop
 // userStage to root).
-func HostUID() int { return hostUID }
+func HostUID() uint32 { return hostUID }
 
 // HostGID returns the GID counterpart to HostUID().
-func HostGID() int { return hostGID }
+func HostGID() uint32 { return hostGID }
 
 // HostUIDResolution returns the parse result captured at package init
 // so callers can surface degraded mode via their own structured logger.
@@ -75,31 +83,34 @@ func HostUIDResolution() HostIDResolution { return hostUIDResolution }
 // HostGIDResolution returns the GID counterpart to HostUIDResolution().
 func HostGIDResolution() HostIDResolution { return hostGIDResolution }
 
-// resolveHostID parses an integer UID/GID from the named env var.
-// Rejects unset, empty, malformed, negative, or zero values in favor
-// of `fallback`. Zero is rejected because a sudo'd CLI would otherwise
-// propagate root into userStage, defeating the unprivileged-user
-// contract the entire CP-driven init pipeline relies on.
-func resolveHostID(envName string, fallback int) (int, HostIDResolution) {
+// resolveHostID parses a uid_t-shaped UID/GID from the named env var.
+// Rejects unset, empty, malformed, out-of-uint32-range, or zero values
+// in favor of `fallback`. ParseUint with bitSize=32 makes the overflow
+// case ("9999999999") a structured "malformed" Reason instead of a
+// silent wrap on a downstream uint32 cast. Zero is rejected because a
+// sudo'd CLI would otherwise propagate root into userStage, defeating
+// the unprivileged-user contract the entire CP-driven init pipeline
+// relies on.
+func resolveHostID(envName string, fallback uint32) (uint32, HostIDResolution) {
 	raw := os.Getenv(envName)
 	res := HostIDResolution{Env: envName, Raw: raw, Value: fallback, Fallback: true}
 	if raw == "" {
 		res.Reason = "unset"
 		return fallback, res
 	}
-	v, err := strconv.Atoi(raw)
+	v, err := strconv.ParseUint(raw, 10, 32)
 	if err != nil {
 		res.Reason = "malformed"
 		res.Err = err
 		return fallback, res
 	}
-	if v <= 0 {
+	if v == 0 {
 		res.Reason = "non_positive"
 		return fallback, res
 	}
-	res.Value = v
+	res.Value = uint32(v)
 	res.Fallback = false
-	return v, res
+	return uint32(v), res
 }
 
 // Composed host paths used as sibling-container bind Mount.Source values.
