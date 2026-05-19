@@ -84,7 +84,7 @@ SettingsStore() *storage.Store[Settings]   // Direct access to settings store
 
 **Label keys**: `LabelPrefix()`, `LabelManaged()`, `LabelMonitoringStack()`, `LabelProject()`, `LabelAgent()`, `LabelVersion()`, `LabelImage()`, `LabelCreated()`, `LabelWorkdir()`, `LabelPurpose()`, `LabelTestName()`, `LabelBaseImage()`, `LabelFlavor()`, `LabelTest()`, `LabelE2ETest()`, `ManagedLabelValue()`, `EngineLabelPrefix()`, `EngineManagedLabel()`
 
-**Container constants**: `ContainerUID()` (1001), `ContainerGID()` (1001)
+**Container constants**: `ContainerUID()` / `ContainerGID()` — deprecated delegates to `consts.ContainerUID()` / `consts.ContainerGID()`. The underlying consts resolve once at package init: on Linux hosts from `os.Getuid()` / `os.Getgid()` (the CLI invoker), falling back to 1001 when the kernel returns 0 (sudo) or -1; on non-Linux hosts (macOS, Windows) the fallback 1001 is taken unconditionally because Docker Desktop's virtiofs / gRPC-FUSE share masks container UID/GID at the boundary and baking the host's numeric IDs would also risk `groupadd --gid` collisions with low base-image GIDs (e.g. macOS staff=20 vs Debian dialout=20). CP-side code must use `consts.HostUID()` / `consts.HostGID()` instead — inside the CP container `os.Getuid()` is the CP image's UID, not the host's. See `internal/consts/controlplane.go`.
 
 **Monitoring URLs**: `OpenSearchURL()`, `OpenSearchDashboardsURL()`, `PrometheusURL()`
 

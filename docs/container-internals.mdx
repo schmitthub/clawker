@@ -164,7 +164,7 @@ Clawker builds custom Docker images tailored to your project. The image includes
 - An agent awareness prompt at `/etc/claude-code/CLAUDE.md`
 - A baked-in copy of `clawkerd` at `/usr/local/bin/clawkerd` — the per-container daemon that runs as PID 1
 - Credential helper binaries (`git-credential-clawker`, socket-bridge server)
-- A non-root user (`claude`, UID 1001) with sudo access
+- A non-root user (`claude`) with sudo access — on Linux hosts the UID is baked at build time to match the CLI invoker's `os.Getuid()` so the `~/.claude/projects/` bind mount stays writable from inside the container; macOS/Windows hosts (Docker Desktop virtiofs) fall back to UID 1001
 
 The container's `ENTRYPOINT` is `clawkerd`. See [Custom Images](/custom-images) for build customization.
 
@@ -215,8 +215,8 @@ If the user CMD exits cleanly (e.g. you `/exit` from Claude Code), clawkerd exit
 | Process | UID | Why |
 |---------|----:|-----|
 | `clawkerd` (PID 1) | 0 (`root`) | mTLS listener, log writes, bootstrap reads, `Wait4(-1)` orphan reap |
-| User CMD (`claude` by default) | 1001 (`claude`) | Forked with `SysProcAttr.Credential`; kernel performs the privilege drop |
-| Anything the user CMD spawns | 1001 (`claude`) | Inherits from the user CMD; never reaches clawkerd's privilege |
+| User CMD (`claude` by default) | `claude` (host-derived on Linux, 1001 elsewhere) | Forked with `SysProcAttr.Credential`; kernel performs the privilege drop |
+| Anything the user CMD spawns | `claude` (host-derived on Linux, 1001 elsewhere) | Inherits from the user CMD; never reaches clawkerd's privilege |
 
 The kernel performs the credential switch atomically between fork and exec, so there is no user-mode code path that holds root and then drops it.
 

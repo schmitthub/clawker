@@ -314,6 +314,10 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 			consts.EnvHostDataDir + "=" + opts.HostDirs.Data,
 			consts.EnvHostStateDir + "=" + opts.HostDirs.State,
 			consts.EnvHostCacheDir + "=" + opts.HostDirs.Cache,
+			// Plumb host UID/GID into the CP container so userStage can drop
+			// to the same UID baked into the agent image. See consts.HostUID().
+			consts.EnvHostUID + "=" + strconv.Itoa(consts.ContainerUID()),
+			consts.EnvHostGID + "=" + strconv.Itoa(consts.ContainerGID()),
 		}, otelLogsEnv(cfg)...),
 		ExtraHosts:  []string{"host.docker.internal:host-gateway"},
 		Cmd:         []string{"/usr/local/bin/clawker-cp"},

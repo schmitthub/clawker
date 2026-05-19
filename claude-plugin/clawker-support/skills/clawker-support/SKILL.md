@@ -208,8 +208,15 @@ Do not guess at config syntax, field names, or behavior.
     mentioning space, or asks about cleaning up Docker resources, read
     `reference/docker-hygiene.md` for the diagnosis and cleanup methodology.
 
-12. **Other topics** — For monitoring, worktrees, or other features,
-    fetch `https://docs.clawker.dev/llms.txt` for the docs index, then fetch
+12. **Monitoring stack** — For questions about `clawker monitor` (OTel
+    Collector + OpenSearch + Dashboards + Prometheus, the bootstrap
+    container, the `Clawker` analytics workspace, telemetry env vars,
+    or troubleshooting empty indices), read `reference/monitoring.md`
+    first. Fetch `https://docs.clawker.dev/monitoring` for field
+    schemas and OTel attribute conventions.
+
+13. **Other topics** — For worktrees or other features, fetch
+    `https://docs.clawker.dev/llms.txt` for the docs index, then fetch
     the relevant page.
 
 ### Step 4: Analyze — classify and decide placement

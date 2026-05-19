@@ -692,11 +692,15 @@ func (e *Executor) plan() []step {
 // location; without an explicit override they'd write to /root
 // (permission denied). Any future ShellCommand dispatched with
 // uid != 0 must do the same — clawkerd is a dumb pipe.
+//
+// Uid/Gid: consts.HostUID()/HostGID() — see internal/consts/controlplane.go.
+// CP's os.Getuid() inside the CP container is the CP image's UID
+// (typically 0), not the host invoker's.
 func userStage(script string) *clawkerdv1.PipeStage {
 	return &clawkerdv1.PipeStage{
 		Argv: []string{"sh", "-c", script},
-		Uid:  uint32(consts.ContainerUID),
-		Gid:  uint32(consts.ContainerGID),
+		Uid:  consts.HostUID(),
+		Gid:  consts.HostGID(),
 		Env: map[string]string{
 			"HOME": consts.ContainerHomeDir,
 			"USER": consts.ContainerUser,

@@ -63,7 +63,7 @@ This means when the agent hits a blocked domain, it can explain the problem and 
 
 ## Container PID 1 and Privilege Drop
 
-The container's PID 1 is `clawkerd`, the per-container daemon that supervises Claude Code. clawkerd runs as root inside the container, but it never executes user-controlled code in its own process. The user CMD (Claude Code by default) is forked with kernel-side privilege drop via `SysProcAttr.Credential` — between `fork()` and `execve()` the kernel performs `setgroups → setgid → setuid` atomically, so there is no user-mode code path between root and the unprivileged `claude` user (UID 1001).
+The container's PID 1 is `clawkerd`, the per-container daemon that supervises Claude Code. clawkerd runs as root inside the container, but it never executes user-controlled code in its own process. The user CMD (Claude Code by default) is forked with kernel-side privilege drop via `SysProcAttr.Credential` — between `fork()` and `execve()` the kernel performs `setgroups → setgid → setuid` atomically, so there is no user-mode code path between root and the unprivileged `claude` user (UID baked at build time — host-derived on Linux for bind-mount writability, 1001 elsewhere).
 
 The clawker control plane talks to clawkerd over a CN-pinned mTLS Session — only a peer holding a cert with CN `clawker-controlplane` chained to the clawker CA can dispatch commands. See [Container Internals → clawkerd](/container-internals#clawkerd-the-containers-pid-1) for the full PID-1 contract.
 

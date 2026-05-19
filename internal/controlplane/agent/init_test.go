@@ -194,7 +194,7 @@ func TestNewExecutor_NilBusReturnsError(t *testing.T) {
 //     consumes; an empty payload silently produces an empty file).
 //
 // The per-stage HOME/USER override + uid/gid match against
-// consts.Container* values is enforced structurally by userStage:
+// consts.Host* values is enforced structurally by userStage:
 // build-time wiring, not a runtime invariant — exercised once in
 // TestExecutor_Run_HappyPath via the full plan.
 func TestExecutor_Plan_PrivilegeAndShape(t *testing.T) {

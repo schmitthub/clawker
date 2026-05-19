@@ -124,8 +124,7 @@ func TestConstantAccessors(t *testing.T) {
 	assert.Equal(t, "clawker.dev", cfg.Domain())
 	assert.Equal(t, "dev.clawker", cfg.LabelDomain())
 	assert.Equal(t, "clawker-net", cfg.ClawkerNetwork())
-	assert.Equal(t, 1001, cfg.ContainerUID())
-	assert.Equal(t, 1001, cfg.ContainerGID())
+
 }
 
 func TestLabelAccessors(t *testing.T) {

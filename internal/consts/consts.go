@@ -255,15 +255,57 @@ const (
 
 // Container user identity.
 const (
-	ContainerUID  = 1001
-	ContainerGID  = 1001
 	ContainerUser = "claude"
 	// ContainerHomeDir is the unprivileged container user's home,
 	// fixed by the bundler's Dockerfile template. CP-side init scripts
 	// reference $HOME, but PipeStage.Env must set HOME explicitly per
 	// stage because Linux's setuid syscall does not update HOME/USER.
 	ContainerHomeDir = "/home/" + ContainerUser
+	// fallbackContainerUID is the last-resort default for the
+	// container's claude user when no host-derived value is available.
+	// Most container ops still work at this value; only host
+	// ~/.claude/projects bind-mount writes (auto-memory + session
+	// jsonls) fail with EACCES when the host UID differs.
+	fallbackContainerUID = 1001
+	fallbackContainerGID = 1001
 )
+
+var (
+	containerUID = resolveProcessID(os.Getuid, fallbackContainerUID)
+	containerGID = resolveProcessID(os.Getgid, fallbackContainerGID)
+)
+
+// ContainerUID returns the CLI invoker's UID — the value the bundler
+// bakes into the image's claude user and that CLI-side code stamps
+// onto tar headers and volume copies. Falls back to
+// fallbackContainerUID on uid 0 (sudo) or -1 (Windows): root inside
+// the agent would defeat the drop-priv contract userStage enforces.
+//
+// CP-side code MUST use HostUID() — inside the CP container
+// os.Getuid() is the CP image's UID, not the host invoker's.
+func ContainerUID() int { return containerUID }
+
+// ContainerGID returns the GID counterpart to ContainerUID().
+func ContainerGID() int { return containerGID }
+
+// resolveProcessID returns the running process's UID/GID on Linux, falling
+// back to `fallback` on other platforms. Linux is the only host where
+// container processes see the host's numeric UID/GID through a bind mount —
+// Docker Desktop on macOS (virtiofs / gRPC FUSE) masks UID/GID at the
+// share boundary so any container UID lands on disk as the host user.
+// Baking the host UID into the image on macOS would offer no access
+// benefit and would cause downstream `groupadd --gid <host_gid>` to
+// collide with base-image groups whenever the host GID is low
+// (e.g. macOS staff = 20, Debian dialout = 20).
+func resolveProcessID(get func() int, fallback int) int {
+	if runtime.GOOS != "linux" {
+		return fallback
+	}
+	if v := get(); v > 0 {
+		return v
+	}
+	return fallback
+}
 
 // In-container paths that span the supervisor↔CP-driven init contract.
 // The Dockerfile template (or CLI ContainerCopy) creates these; CP-side

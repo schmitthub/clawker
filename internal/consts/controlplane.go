@@ -3,17 +3,23 @@ package consts
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 )
 
 // Env vars the CLI host-side bootstrap MUST set on the CP container so the
 // CP can compute host-FS bind mount sources when it creates sibling
 // containers (Envoy, CoreDNS, etc.) via Docker-outside-of-Docker. All four
-// are required; a missing value is caught by cpboot.HostDirs.Validate().
+// dir vars are required; a missing value is caught by
+// cpboot.HostDirs.Validate(). EnvHostUID / EnvHostGID are also set by the
+// CLI; a missing value degrades to fallbackContainerUID/GID rather than
+// failing the boot, since most container ops still work at 1001.
 const (
 	EnvHostConfigDir = "CLAWKER_HOST_CONFIG_DIR"
 	EnvHostDataDir   = "CLAWKER_HOST_DATA_DIR"
 	EnvHostStateDir  = "CLAWKER_HOST_STATE_DIR"
 	EnvHostCacheDir  = "CLAWKER_HOST_CACHE_DIR"
+	EnvHostUID       = "CLAWKER_HOST_UID"
+	EnvHostGID       = "CLAWKER_HOST_GID"
 )
 
 // Host-FS XDG-shaped directory roots resolved from the env vars above.
@@ -27,6 +33,85 @@ var (
 	HostStateDir  = os.Getenv(EnvHostStateDir)
 	HostCacheDir  = os.Getenv(EnvHostCacheDir)
 )
+
+// HostIDResolution captures the outcome of parsing CLAWKER_HOST_UID /
+// CLAWKER_HOST_GID at package init. The CP daemon's startup gate
+// surfaces degraded mode (Fallback == true) via its structured
+// logger; resolution itself is side-effect-free.
+//
+// Value is uint32 to match the uid_t kernel type and the
+// clawkerdv1.PipeStage Uid/Gid fields userStage feeds — out-of-range
+// env values are rejected at parse time (Reason "malformed") rather
+// than silently wrapping at a downstream cast.
+type HostIDResolution struct {
+	Env      string
+	Raw      string
+	Value    uint32
+	Fallback bool
+	// Reason is "" (happy) | "unset" | "malformed" | "non_positive".
+	Reason string
+	Err    error
+}
+
+var (
+	hostUID, hostUIDResolution = resolveHostID(EnvHostUID, fallbackContainerUID)
+	hostGID, hostGIDResolution = resolveHostID(EnvHostGID, fallbackContainerGID)
+)
+
+// HostUID returns the host invoker's UID, propagated to the CP daemon
+// via EnvHostUID by the CLI when launching the CP container.
+//
+// Inside the CP container os.Getuid() is the CP image's UID (typically
+// 0 — CP holds BPF / SYS_ADMIN caps), so this env-fed surface is the
+// only correct source. CLI-process consumers must use ContainerUID().
+//
+// Return type is uint32 (uid_t) so PipeStage.Uid assignment is a
+// total identity — no narrowing cast at every call site.
+//
+// Fallback is fallbackContainerUID (the const literal, NOT
+// containerUID — inside CP that would resolve to 0 and silently drop
+// userStage to root).
+func HostUID() uint32 { return hostUID }
+
+// HostGID returns the GID counterpart to HostUID().
+func HostGID() uint32 { return hostGID }
+
+// HostUIDResolution returns the parse result captured at package init
+// so callers can surface degraded mode via their own structured logger.
+func HostUIDResolution() HostIDResolution { return hostUIDResolution }
+
+// HostGIDResolution returns the GID counterpart to HostUIDResolution().
+func HostGIDResolution() HostIDResolution { return hostGIDResolution }
+
+// resolveHostID parses a uid_t-shaped UID/GID from the named env var.
+// Rejects unset, empty, malformed, out-of-uint32-range, or zero values
+// in favor of `fallback`. ParseUint with bitSize=32 makes the overflow
+// case ("9999999999") a structured "malformed" Reason instead of a
+// silent wrap on a downstream uint32 cast. Zero is rejected because a
+// sudo'd CLI would otherwise propagate root into userStage, defeating
+// the unprivileged-user contract the entire CP-driven init pipeline
+// relies on.
+func resolveHostID(envName string, fallback uint32) (uint32, HostIDResolution) {
+	raw := os.Getenv(envName)
+	res := HostIDResolution{Env: envName, Raw: raw, Value: fallback, Fallback: true}
+	if raw == "" {
+		res.Reason = "unset"
+		return fallback, res
+	}
+	v, err := strconv.ParseUint(raw, 10, 32)
+	if err != nil {
+		res.Reason = "malformed"
+		res.Err = err
+		return fallback, res
+	}
+	if v == 0 {
+		res.Reason = "non_positive"
+		return fallback, res
+	}
+	res.Value = uint32(v)
+	res.Fallback = false
+	return uint32(v), res
+}
 
 // Composed host paths used as sibling-container bind Mount.Source values.
 // Pure string composition — Go package-var dependency ordering resolves

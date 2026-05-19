@@ -2,6 +2,9 @@ package cpboot
 
 import (
 	"fmt"
+	"os"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -228,6 +231,44 @@ func TestINV_B1_020_ConfigDirEnvVar(t *testing.T) {
 	envVar := cfg.ConfigDirEnvVar() + "=" + consts.CPClawkerConfigDir
 	assert.Contains(t, cpConfig.Env, envVar,
 		"container env must set %s", cfg.ConfigDirEnvVar())
+}
+
+// TestCPContainer_HostUIDGIDEnv_Emitted — the CP container must
+// receive the host invoker's UID/GID via env vars so its userStage
+// can drop init-shell stages to the same UID baked into the agent
+// image. Missing this wiring would re-introduce the
+// ~/.claude/projects bind-mount EACCES on Linux UID != 1001 systems.
+//
+// Anchored against os.Getuid() with the same fallback rule the
+// production resolver applies, so a regression that hardcodes 1001
+// (or any other literal) trips the test on a non-1001 host. Asserting
+// against consts.ContainerUID() on both sides would be tautological
+// — that's the exact value BuildCPContainerConfig already writes.
+func TestCPContainer_HostUIDGIDEnv_Emitted(t *testing.T) {
+	testenv.New(t)
+	cfg := configmocks.NewBlankConfig()
+
+	cpConfig, err := BuildCPContainerConfig(cfg, testCPOpts())
+	require.NoError(t, err)
+
+	// Mirror consts.resolveProcessID exactly: Linux derives from
+	// os.Getuid/Getgid (with 1001 fallback when the call returns 0 / -1);
+	// non-Linux short-circuits to 1001 unconditionally because Docker
+	// Desktop's virtiofs masks UID/GID at the bind boundary so the
+	// bundler bakes the fallback UID into the agent image.
+	wantUID, wantGID := 1001, 1001
+	if runtime.GOOS == "linux" {
+		if u := os.Getuid(); u > 0 {
+			wantUID = u
+		}
+		if g := os.Getgid(); g > 0 {
+			wantGID = g
+		}
+	}
+	assert.Contains(t, cpConfig.Env, consts.EnvHostUID+"="+strconv.Itoa(wantUID),
+		"CP container env must carry host UID (os.Getuid() with fallback) for userStage drop-priv")
+	assert.Contains(t, cpConfig.Env, consts.EnvHostGID+"="+strconv.Itoa(wantGID),
+		"CP container env must carry host GID (os.Getgid() with fallback) for userStage drop-priv")
 }
 
 // TestCPContainer_OtelClientCertMounts — both halves of the OTEL

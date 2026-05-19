@@ -6,11 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 
 	"github.com/moby/moby/api/types/mount"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/containerfs"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -55,12 +53,6 @@ type SetupMountsResult struct {
 	WorkspaceVolumeName string
 	// ContainerPath is the resolved container-side workspace mount path.
 	ContainerPath string
-	// Warnings carries non-fatal user-facing diagnostics produced during mount
-	// setup (e.g. a configured ~/.claude/projects bind mount could not be
-	// resolved, or host UID will not be able to write to host-owned files).
-	// Callers are expected to surface these on stderr; some warning conditions
-	// may also be logged by SetupMounts.
-	Warnings []string
 }
 
 // SetupMounts prepares workspace mounts for container creation.
@@ -183,9 +175,10 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 	// misconfigured $CLAUDE_CONFIG_DIR. Users who genuinely don't want the
 	// bind can set agent.claude_code.mount_projects: false. Missing
 	// projects/ subdir under an existing config dir is still a soft skip
-	// (Claude Code creates it on first session). UID mismatches surface as
-	// non-fatal Warnings.
-	var mountWarnings []string
+	// (Claude Code creates it on first session).
+	//
+	// Container UID is host-derived (see consts.ContainerUID() /
+	// consts.HostUID()) so the bind mount is writable by construction.
 	if project.Agent.ClaudeCode.MountProjectsEnabled() {
 		src, ok, resolveErr := containerfs.ResolveHostProjectsDir()
 		if resolveErr != nil {
@@ -202,18 +195,6 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 				return nil, fmt.Errorf("build claude projects mount: %w", err)
 			}
 			mounts = append(mounts, projectsMount)
-			if runtime.GOOS == "linux" && os.Getuid() != consts.ContainerUID {
-				cfg.Log.Warn().
-					Int("host_uid", os.Getuid()).
-					Int("container_uid", consts.ContainerUID).
-					Msg("~/.claude/projects bind mount may fail to write: host UID does not match container claude user")
-				mountWarnings = append(mountWarnings,
-					fmt.Sprintf("host UID %d does not match container claude user (UID %d). "+
-						"Writes from the container to ~/.claude/projects/ may fail with EACCES; "+
-						"session history and auto-memory will not persist across runs. "+
-						"Workaround: set agent.claude_code.mount_projects: false to disable the bind mount.",
-						os.Getuid(), consts.ContainerUID))
-			}
 			cfg.Log.Debug().Str("src", src).Msg("mounted host ~/.claude/projects/")
 		}
 	}
@@ -237,7 +218,6 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 		ConfigVolumeResult:  configResult,
 		WorkspaceVolumeName: wsVolumeName,
 		ContainerPath:       containerPath,
-		Warnings:            mountWarnings,
 	}, nil
 }
 

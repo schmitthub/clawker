@@ -218,11 +218,11 @@ func (c *configImpl) EngineLabelPrefix() string { return consts.EngineLabelPrefi
 // Deprecated: use consts.EngineManagedLabel.
 func (c *configImpl) EngineManagedLabel() string { return consts.EngineManagedLabel }
 
-// Deprecated: use consts.ContainerUID.
-func (c *configImpl) ContainerUID() int { return consts.ContainerUID }
+// Deprecated: use consts.ContainerUID().
+func (c *configImpl) ContainerUID() int { return consts.ContainerUID() }
 
-// Deprecated: use consts.ContainerGID.
-func (c *configImpl) ContainerGID() int { return consts.ContainerGID }
+// Deprecated: use consts.ContainerGID().
+func (c *configImpl) ContainerGID() int { return consts.ContainerGID() }
 
 // OpenSearchURL returns the OpenSearch REST API URL on clawker-net
 // (e.g. http://opensearch-node:9200). **In-cluster only** — the

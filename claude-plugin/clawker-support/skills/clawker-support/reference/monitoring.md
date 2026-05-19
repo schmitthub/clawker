@@ -1,0 +1,149 @@
+# Clawker Monitoring Stack
+
+The clawker monitoring stack is an opt-in OpenTelemetry pipeline that
+captures Claude Code logs/metrics, clawker CLI logs, control-plane logs,
+and firewall (Envoy + CoreDNS) logs. It runs on the same `clawker-net`
+Docker network as agent containers and is managed entirely through the
+`clawker monitor` subcommand.
+
+## What it is
+
+Four containers brought up by `clawker monitor up`:
+
+- **OTel Collector** — receives OTLP/HTTP from agents on `:4318`, fans
+  out to OpenSearch (logs) and Prometheus exporter (metrics).
+- **OpenSearch** — log storage. Five indices: `claude-code`,
+  `clawker-cli`, `clawker-cp`, `clawker-envoy`, `clawker-coredns`.
+- **OpenSearch Dashboards (OSD)** — UI at `http://localhost:5601`.
+- **Prometheus** — metrics scrape + UI at `http://localhost:9090`.
+
+A one-shot `clawker-opensearch-bootstrap` container runs before the
+collector and Prometheus start. It applies index templates, ingest
+pipelines, an ISM retention policy, the `clawker_prometheus`
+direct-query datasource, and imports the **Clawker analytics workspace**
+with index patterns + example visualizations. If bootstrap fails, the
+collector and Prometheus do not start.
+
+## How to get into the workspace
+
+From the OpenSearch Dashboards splash / welcome screen, click
+**Clawker** under the **Analytics** panel on the far right of the page.
+
+Inside the workspace, the left navbar's **Explore** section has
+**Logs** (across all five indices) and **Metrics** (Prometheus-backed).
+Pre-built example visualizations and an example dashboard live under
+the workspace's **Dashboards** view — these are seeded by bootstrap as
+reference material; users are expected to build their own dashboards
+on top.
+
+The authoritative reference for the stack and its semantics is
+`https://docs.clawker.dev/monitoring` — fetch it for index field
+schemas, OTel resource attribute conventions, or detailed
+configuration. Do not invent field names from training data.
+
+## What agent containers send
+
+Every clawker-built image has OTel env vars baked at build time
+(`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`, etc.)
+pointing at the collector's `clawker-net` hostname. When the stack
+is down, agents emit to a no-op endpoint silently — there is no error
+or retry storm. When the stack comes up, telemetry flows automatically
+on the next container start. Already-running agents do NOT
+retroactively connect — Claude Code resolves the OTLP endpoint at
+process start, not per-export.
+
+This means: **start the monitoring stack before starting agent
+containers** if you want to capture their telemetry. Containers that
+predate `monitor up` will produce no data until they restart.
+
+## Troubleshooting
+
+### No data in any index
+
+1. **Is the stack actually up?**
+   ```
+   clawker monitor status
+   ```
+   Reports per-service container state and bootstrap exit status.
+
+2. **Did bootstrap fail?** If it did, the collector and Prometheus
+   never started. Inspect the bootstrap container's logs:
+   ```
+   docker logs clawker-opensearch-bootstrap
+   ```
+   Common cause: stale OpenSearch volume from a prior incompatible
+   version. The monitoring stack is preconfigured and ephemeral by
+   design — tear it down with volumes and re-init rather than trying
+   to migrate state:
+   ```
+   clawker monitor down --volumes
+   clawker monitor init --force
+   clawker monitor up
+   ```
+
+3. **Agents started before the stack came up?** They have no live OTel
+   connection. Restart the agents so they pick up the running endpoint:
+   ```
+   clawker container restart --agent <agent-name>
+   ```
+
+### `claude-code` index has no documents
+
+Claude Code emits telemetry only when env vars enable it. The Dockerfile
+template bakes in `OTEL_*` resource/endpoint vars, but
+`CLAUDE_CODE_ENABLE_TELEMETRY=1` and the prompt/tool-detail flags must
+be set explicitly by the user (typically in their shell profile or a
+project `.env` file). Fetch
+`https://docs.clawker.dev/monitoring` for the current variable list
+and recommended values.
+
+### `clawker-envoy` / `clawker-coredns` indices empty
+
+These indices fill only when the firewall is enabled AND processing
+traffic. If the firewall is disabled or no agent has made an outbound
+request, the indices will exist but be empty. Confirm via:
+```
+clawker firewall status
+```
+
+### Workspace `Clawker` not visible in OSD
+
+Bootstrap likely failed or was skipped. Re-init:
+```
+clawker monitor init --force
+clawker monitor up
+```
+Do not edit OSD saved-objects by hand expecting them to persist — the
+stack is throwaway and `monitor down --volumes` wipes them.
+
+### Prometheus has no metrics
+
+1. Check that the collector is scraping itself and exporting on the
+   expected port. The collector's metrics-exporter expiration is
+   tuned for long-lived series (currently `8760h` — never expire);
+   a setting of `0` would expire every metric on every Collect cycle.
+2. Confirm Prometheus is up at `http://localhost:9090/targets` — the
+   `otel-collector` job should be `UP`.
+
+### Cannot run `clawker monitor` commands from inside an agent container
+
+The monitoring stack is host-side infrastructure. From inside an
+agent, use `docker exec` against the stack containers (or check
+their `clawker-net` IPs via `docker inspect`) — do NOT try to run
+host-side `clawker monitor up/down/status` from within an agent
+container.
+
+## Anti-patterns
+
+- **Treating the stack as durable state.** It is preconfigured +
+  ephemeral. Index templates, dashboards, ISM policies, and the
+  Clawker workspace are all baked into the bootstrap image. The
+  answer to almost every state-management question is "regenerate
+  with `clawker monitor down --volumes && clawker monitor init
+  --force && clawker monitor up`."
+- **Adding fields to OSD index patterns by hand.** They will be
+  overwritten on the next `monitor init`. If a field is missing,
+  the fix is in the bootstrap image, not in OSD.
+- **Running `docker compose` against the stack directly.** Use the
+  `clawker monitor` subcommands — they are the only supported entry
+  point and handle the bootstrap ordering correctly.
