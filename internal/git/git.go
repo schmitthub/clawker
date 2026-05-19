@@ -75,7 +75,7 @@ func NewGitManager(path string) (*GitManager, error) {
 	if err != nil {
 		return nil, fmt.Errorf("getting worktree: %w", err)
 	}
-	repoRoot := wt.Filesystem.Root()
+	repoRoot := wt.Filesystem().Root()
 
 	return &GitManager{
 		repo:     repo,

@@ -43,7 +43,7 @@ func TestGitManager_DeleteBranch(t *testing.T) {
 		require.NoError(t, err)
 
 		// Use billy filesystem (in-memory) to create a file
-		fs := wt.Filesystem
+		fs := wt.Filesystem()
 		f, err := fs.Create("branch-only.txt")
 		require.NoError(t, err)
 		_, err = f.Write([]byte("branch content\n"))
