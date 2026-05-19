@@ -38,7 +38,7 @@ Service hostnames live in `internal/consts/monitoring.go` as four individual con
 Cluster ships preconfigured: index templates, ISM policies, Dashboards saved objects all applied on every fresh `monitor up`. See `internal/monitor/CLAUDE.md` → "OpenSearch Bootstrap" for the source-tree layout and full API breakdown. Mechanics worth knowing here:
 
 - `clawker-opensearch-bootstrap` is a one-shot compose service (image: `curlimages/curl`, Alpine + curl + sh) that runs after `opensearch-node` reports `service_healthy` and exits 0 when done.
-- `otel-collector` + `prometheus` gate on `clawker-opensearch-bootstrap: service_completed_successfully` — they never start until index templates + ISM + saved objects are applied. Bootstrap failure means the stack is half-up by design; logs are in `docker logs clawker-opensearch-bootstrap`.
+- `otel-collector` gates on `clawker-opensearch-bootstrap: service_completed_successfully` — it never starts until index templates + ISM + saved objects are applied. Prometheus starts in parallel; bootstrap depends on Prometheus (`service_started`) so the `clawker_prometheus` datasource registration can validate the configured URI. Bootstrap failure means the stack is half-up by design; logs are in `docker logs clawker-opensearch-bootstrap`.
 - The script polls Dashboards `/api/status` internally before doing saved-objects work; no Dashboards healthcheck in compose.
 - Templates apply only at index creation. Editing an index template + re-running `monitor up` does NOT re-map existing indices. The throwaway-stack model expects `monitor down --volumes && monitor up` for changes to take effect cluster-wide.
 - Index template + ISM PUTs are idempotent; saved-objects `_import` uses `?overwrite=true`.

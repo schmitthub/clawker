@@ -86,7 +86,7 @@ All symbols are in `templates.go`.
 
 ## OpenSearch Bootstrap
 
-The OpenSearch + Dashboards cluster ships preconfigured: index templates (per-source mappings + retention), ISM policies (auto-attached via `ism_template.index_patterns`), data sources (Prometheus registered via the SQL plugin's `_plugins/_query/_datasources` API), and Dashboards saved objects (index patterns + dashboards) all apply on every fresh `monitor up`. The mechanism is a one-shot service in the compose stack — `clawker-opensearch-bootstrap` — that runs `bootstrap.sh` against the cluster between OpenSearch reaching `service_healthy` and the otel-collector / prometheus starting.
+The OpenSearch + Dashboards cluster ships preconfigured: index templates (per-source mappings + retention), ISM policies (auto-attached via `ism_template.index_patterns`), data sources (Prometheus registered via the SQL plugin's `_plugins/_query/_datasources` API), and Dashboards saved objects (index patterns + dashboards) all apply on every fresh `monitor up`. The mechanism is a one-shot service in the compose stack — `clawker-opensearch-bootstrap` — that runs `bootstrap.sh` against the cluster between OpenSearch reaching `service_healthy` and the otel-collector starting. Prometheus starts in parallel; bootstrap depends on it (`service_started`) so the `clawker_prometheus` datasource registration can validate the configured URI.
 
 ### Source tree
 
@@ -112,7 +112,7 @@ templates/opensearch-bootstrap/
   datasources/
     clawker_prometheus.json.tmpl       # Prometheus connector for SQL/PPL + Dashboards Metrics Analytics
   saved-objects/
-    clawker.ndjson                     # Five index-pattern saved objects (timeFieldName=@timestamp)
+    clawker.ndjson                     # Dashboards saved objects bundle (index patterns, visualizations, dashboards)
 ```
 
 `monitor init` walks this tree via `WriteOpenSearchBootstrap`, renders `bootstrap.sh.tmpl` against `MonitorTemplateData` (only OpenSearch / Dashboards hostnames + ports), and copies the rest verbatim into `<monitorDir>/opensearch-bootstrap/`. That directory is bind-mounted RO into the bootstrap container at `/opensearch-bootstrap`.
@@ -146,7 +146,7 @@ Prometheus is intentionally NOT gated on bootstrap — the SQL plugin validates 
 
 The data sources API requires `plugins.query.datasources.encryption.masterkey` to be set on the OpenSearch node, even with the security plugin disabled. The compose template sets a fixed dev key in the `opensearch-node` env block — the stack is local + ephemeral, no real credentials are encrypted with it.
 
-If `bootstrap.sh` exits non-zero (e.g. malformed template JSON, OpenSearch rejects a mapping), the collector + prom dependents never start. Logs surface in `docker logs clawker-opensearch-bootstrap`. There is no Dashboards healthcheck in compose — the script polls `/api/status` itself before doing saved-objects work, keeping all readiness logic in one place and avoiding having to add curl/wget to the Dashboards image's healthcheck.
+If `bootstrap.sh` exits non-zero (e.g. malformed template JSON, OpenSearch rejects a mapping), the collector never starts. Logs surface in `docker logs clawker-opensearch-bootstrap`. There is no Dashboards healthcheck in compose — the script polls `/api/status` itself before doing saved-objects work, keeping all readiness logic in one place and avoiding having to add curl/wget to the Dashboards image's healthcheck.
 
 ### Templates only apply at index creation
 

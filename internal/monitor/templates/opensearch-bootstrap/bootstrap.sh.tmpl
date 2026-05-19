@@ -119,7 +119,7 @@ apply_ism_policies
 # before any source has emitted its first record. Order is critical:
 # this runs AFTER index_template + ISM policy are in place, so the
 # matching template's mappings AND the ISM policy's retention rule
-# both auto-attach at index creation. 400
+# both auto-attach at index creation.
 # (resource_already_exists_exception) is benign and ignored. Post-PUT
 # we GET the index and assert `properties` is present — catches the
 # silent "template didn't match, dynamic mapping took over" path that

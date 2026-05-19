@@ -1,35 +1,16 @@
-# Claude Code OpenSearch Dashboard — Living Current State
+# Claude Code OpenSearch Dashboard — Status: OPEN
 
-## Workflow shape
+## Scope
 
-User builds dashboards / visualizations / explore SOs **manually in the OSD UI**, exports the resulting saved-object JSON / NDJSON, hands it to the agent. Agent's job is to **bake the exported asset into `bootstrap.sh.tmpl`** (or `clawker.ndjson`) so it materializes on every fresh `monitor up`.
+Substrate is shipped. Future work: build out the **pre-made dashboard suite** that users get on every `monitor up`. Today the bake includes a starter `Claude Code` dashboard with a KPI strip + filter-controls panel; goal is a richer, opinionated set covering session activity, cost/token economics, tool decisions, agentic loops, edit velocity, etc.
+
+## Workflow
+
+User builds dashboards / visualizations / explore SOs **manually in the OSD UI**, exports the saved-object JSON / NDJSON, hands it to the agent. Agent's job is to **bake the exported asset into `internal/monitor/templates/opensearch-bootstrap/saved-objects/clawker.ndjson`** (or per-SO POSTs in `bootstrap.sh.tmpl`) so it materializes on every fresh `monitor up`.
 
 The agent's role during construction is **research assistant only** — answer OSD/Prom/Vega questions, source-read plugins, probe the live stack, NEVER unilaterally hand-craft saved-objects from training-data recall.
 
-Iron rules from [[feedback_no_guessing_dashboard_work]] + [[feedback_ground_in_real_data]] apply at full force.
-
-## Bootstrap state (as of HEAD)
-
-`internal/monitor/templates/opensearch-bootstrap/bootstrap.sh.tmpl` runs:
-
-1. Component-templates → ingest-pipelines → index-templates → ISM policies (loops over subdirs; ingest-pipelines PUT before index-templates so `settings.index.default_pipeline` / `final_pipeline` references resolve at ingest time).
-2. Registers `clawker_prometheus` direct-query datasource (SQL plugin `/_plugins/_query/_datasources`).
-3. Polls `/api/status` on OSD.
-4. POSTs `data-connection/clawker-prometheus-conn` (idempotent via `?overwrite=true`).
-5. POSTs workspace `Clawker` with `features: ["use-case-all"]` (skip-if-exists by name).
-6. Imports `saved-objects/clawker.ndjson` into the workspace via `/w/<wsId>/api/saved_objects/_import?overwrite=true`.
-
-### Active ingest pipelines
-
-- `cp-actor-attr-nest` (default_pipeline on `clawker-cp`) — collapses flat dotted `attributes.actor_attr.<k>` keys into a single nested `actor_attr` `flat_object`.
-- `claude-code-prompt-nest` (default_pipeline on `claude-code`) — collapses scalar `attributes.prompt` + sibling `prompt.id` into one `{value, id}` object.
-- `envelope-normalize` (**final_pipeline on all 5 indices**) — mirrors SS4O envelope into legacy paths OSD reads: `severity.{text,number}` → `severityText`/`severityNumber`, flat `resource.<k>` → nested `resource.attributes.<k>`. Required because OSD's explore plugin hard-codes default log columns at `['body','severityText','resource.attributes.service.name']` but the opensearchexporter writes the canonical SS4O shape; multiple open upstream issues with no merged fix (see "Gotchas" below).
-
-Pipeline body edits land via plain `monitor up` (PUT replaces in place). Changing which pipeline NAME an index uses requires the volume-wipe cycle (binding is set at index creation).
-
-### OTel collector `type` → `kind` rename
-
-The `transform/metrics` processor in `otel-config.yaml.tmpl` unconditionally renames any datapoint attribute named `type` to `kind` (and deletes `type`) before metrics reach the Prometheus exporter. This is required for the OSD Explore "Metrics" UI to function for any Claude Code counter carrying a `type` label (`claude_code.token.usage`, `claude_code.active_time.total`, `claude_code.lines_of_code.count`). See `internal/monitor/CLAUDE.md` → `transform/metrics` quirks for full context, source-file reference, and removal criteria on image bump.
+Iron rules: [[feedback_no_guessing_dashboard_work]], [[feedback_ground_in_real_data]], [[feedback_dashboard_filter_bar_explicit]], [[feedback_believe_user_observations]], [[feedback_no_host_clawker_in_container]], [[feedback_clawker_container_no_direct_net]].
 
 ## Stack restart workflow
 
@@ -42,13 +23,13 @@ clawker monitor down --volumes && \
 clawker monitor up
 ```
 
-`down --volumes` wipes the workspace + all SOs (workspace IDs change every cycle) AND the Prom TSDB. `monitor down` (no `--volumes`) preserves data; `monitor up` reruns bootstrap idempotently — use this lighter cycle when only pipeline/template logic (not schema/SOs) changed AND no Prom label rewrites are involved (Prom retains historical series under the old labels until retention drops them).
+`down --volumes` wipes the workspace + all SOs (workspace IDs regenerate every cycle) AND the Prom TSDB. `monitor down` (no `--volumes`) preserves data; `monitor up` reruns bootstrap idempotently — use this lighter cycle when only pipeline/template logic changed and no Prom label rewrites are involved.
 
-Inside an agent container, never run these host-side ops; ask the user. ([[feedback_no_host_clawker_in_container]])
+Inside an agent container, never run these host-side ops; ask the user.
 
-## Key shapes (verified by API probe + production UI flow)
+## Key SO body shapes (reusable templates for new panels)
 
-### explore SO body — UI-produced reference (line chart, PROMQL)
+### explore SO body — line chart, PROMQL
 
 ```json
 {
@@ -76,7 +57,7 @@ Notes:
 - PROMQL pipeline produces columns named `Time` (Date), `Value` (Numerical), `Series` (Categorical). `axesMapping` must reference these LITERAL names — NOT `@timestamp` / `@value` (those come from the PPL `source = clawker_prometheus.X` form, a different code path).
 - `references[].type = "index-pattern"` even though `clawker_prometheus` is a `data-connection`. This is what the UI emits — don't second-guess it.
 
-### dashboard SO body — UI-produced reference
+### dashboard SO body
 
 ```json
 {
@@ -95,49 +76,27 @@ Notes:
 ```
 
 Notes:
-- Production `addToDashboard` (`src/plugins/explore/public/components/visualizations/utils/add_to_dashboard.ts`) writes panels with INLINE `id` + `type`; OSD's `extractReferences` on save rewrites them to `panelRefName` + entries in `references[]`. Both shapes load; the post-extract form (`panelRefName`) is canonical when fetching via API.
-- Panel size: production default is `w: 24, h: 15` (max grid width 48). Cosmetic.
-- `migrationVersion.dashboard = "7.9.3"` is added by the server on POST — don't include it in the request.
+- Production `addToDashboard` writes panels with INLINE `id` + `type`; OSD's `extractReferences` on save rewrites them to `panelRefName` + entries in `references[]`. Both shapes load; the post-extract form (`panelRefName`) is canonical when fetching via API.
+- Default panel size: `w: 24, h: 15` (max grid width 48).
+- `migrationVersion.dashboard = "7.9.3"` is server-added on POST — don't include in the request.
 
 ### Workspace ID is dynamic
 
-Capture from `/api/workspaces/_list` by name:
-
-```sh
-WS=$(docker exec opensearch-dashboards curl -s -X POST -H 'osd-xsrf: true' \
-  -H 'content-type: application/json' \
-  http://localhost:5601/api/workspaces/_list -d '{}' \
-  | python3 -c 'import sys,json; print([w["id"] for w in json.load(sys.stdin)["result"]["workspaces"] if w["name"]=="Clawker"][0])')
-```
-
-For bootstrap baking: capture from the workspace-create response (or list-and-filter), then template-substitute into the dashboard SO JSON before POSTing. The bootstrap pattern for SOs is `POST /api/saved_objects/<type>/<id>?overwrite=true` per-SO, or NDJSON bulk via `/api/saved_objects/_import?overwrite=true`.
-
-## OPEN QUESTION: filter mechanism
-
-**Filter mechanism is not wired.** The dashboard SO has no query/filter bar UI. User-facing brief was "verify pill propagation," but no pill UI has ever been configured.
-
-Two unanswered sub-questions:
-
-1. **Do dashboard-level filter pills, if they existed, even propagate into the explore embeddable's PROMQL execution?** Source-read in progress: `explore_embeddable.tsx` creates a `filtersSearchSource` and parents the search source under it, but `input.filters` was NOT observed pushed onto `filtersSearchSource.setField('filter', ...)`. Only references to `input.filters` were: gating re-fetch in `updateHandler`, and passing into `searchContext` for `matchedRule.toSpec()` (i.e. Vega-side client filtering). `prepareQueryForLanguage` may inject filters into PROMQL — not yet traced. If filters don't reach the PROMQL string sent to the data source, dashboard pills are cosmetic at best.
-
-2. **What input mechanism does the user actually want?** Options previously presented:
-   - Standard OSD top filter+query bar (kuery + pills) — requires figuring out why it's absent on this dashboard and what wires it on. With `use-case-all` it MAY appear automatically; user has not yet verified post-switch.
-   - Input-controls panel (dropdowns/sliders) — separate visualization panel emitting filters into dashboard state.
-   - PROMQL-side label selectors via dashboard URL/params.
-
-User has not selected one. Don't pick unilaterally. ([[feedback_dashboard_filter_bar_explicit]])
+Captured at runtime by `bootstrap.sh` from the workspace-create response (or list-and-filter by name "Clawker"), then template-substituted into the SO body before POSTing. Bulk import via `/w/<wsId>/api/saved_objects/_import?overwrite=true`. The existing bake logic already handles this — new dashboards just need their `workspaces: ["<wsId>"]` and any internal references templated the same way.
 
 ## Gotchas worth not relitigating
 
-- **SS4O divergence between exporter wire shape and OSD UI bindings is real and upstream-unfixed.** opensearchexporter `ss4o` mode writes `severity.{text,number}` nested + flat `resource.<k>`; OSD's explore plugin reads top-level `severityText` + nested `resource.attributes.service.name`. Open issues without merged fixes: opensearch-project/data-prepper#5791, opensearch-project/opensearch-catalog#118, open-telemetry/opentelemetry-collector-contrib#45428. Our `envelope-normalize` ingest pipeline mirrors the canonical SS4O paths into the legacy paths OSD reads. Don't try `mode: ecs` / `flatten_attributes` — collapses the namespace separation `ingest_source=untrusted_otlp` stamping depends on.
-- **OS resource attrs land FLAT (`resource.<k>`), not nested at `resource.attributes.<k>`.** ([[project_otel_os_exporter_flat_resource]]) — index template pre-mappings under `resource.attributes` are populated only by the `envelope-normalize` mirror, not the exporter.
-- **`mapping: {dedup: true, dedot: true}` on opensearchexporter is silently no-op in SS4O mode.** `encoder.go:86 if m.sso { return encodeLogSSO }` skips both. ([[feedback_trace_dispatch_before_trusting_config_option]])
-- **CP source (`internal/controlplane/dockerevents/dispatch.go` actor_attr fanout, zerolog OTel writer, etc.) is OFF-LIMITS for monitoring fixes.** ([[feedback_cp_source_off_limits_for_monitoring_fixes]]) — fix at collector / OS template / ingest pipeline.
-- **`disable_objects: true` mapping fails on multi-segment dotted children** (`Cannot add nested object field [attributes.actor_attr.org]`). Use `flat_object` + an ingest pipeline that nests the dotted keys first.
-- **OTTL `transform/logs` has no map-iteration construct** — works only for bounded collision-key sets (e.g. claude-code's `prompt`/`prompt.id`), DEAD-END for unbounded sets (e.g. cp `actor_attr.<docker labels>`).
-- **Claude Code SDK + Envoy native OTel ALS ship log records with `SeverityNumber=Unspecified(0)` + `SeverityText=""`.** Not a pipeline drop; producers genuinely don't set severity. Verified at the raw OTLP debug exporter. `severityText` blank for those two indices is correct truth.
-- **Embedding errors:** `Cannot load saved visualization "<title>" with id <id>` is thrown by `src/plugins/explore/public/embeddable/explore_embeddable.tsx:415` when `chartType !== "table"`, `chartType !== "logs"`, AND `findRuleByAxesMapping(axesMapping, allColumns)` returns no matching rule. `axesMapping: {}` + `chartType: "line"` is the canonical "embedding fails" combo. `chartType: "table"` bypasses the rule matcher entirely (renders via `TableVis`).
-- **`use-case-observability` is dead history; current is `use-case-all`.** Don't repaint.
+- **SS4O divergence between exporter wire shape and OSD UI bindings is real and upstream-unfixed.** opensearchexporter `ss4o` mode writes `severity.{text,number}` nested + flat `resource.<k>`; OSD's explore plugin reads top-level `severityText` + nested `resource.attributes.service.name`. Open upstream without merged fixes: opensearch-project/data-prepper#5791, opensearch-project/opensearch-catalog#118, open-telemetry/opentelemetry-collector-contrib#45428. Our `envelope-normalize` ingest pipeline (final_pipeline on all 5 indices) mirrors canonical SS4O paths into the legacy paths OSD reads. Don't try `mode: ecs` / `flatten_attributes` — collapses the namespace separation `ingest_source=untrusted_otlp` stamping depends on.
+- **Resource attrs land FLAT (`resource.<k>`) AND nested (`resource.attributes.<k>`).** Exporter writes flat; envelope-normalize mirrors flat → nested. New panels: prefer flat `resource.<k>` (canonical); nested also works for OSD UI default columns. [[project_otel_os_exporter_flat_resource]]
+- **`mapping: {dedup: true, dedot: true}` on opensearchexporter is silently no-op in SS4O mode.** [[feedback_trace_dispatch_before_trusting_config_option]]
+- **CP source is OFF-LIMITS for monitoring fixes.** Fix at collector / OS template / ingest pipeline. [[feedback_cp_source_off_limits_for_monitoring_fixes]]
+- **`disable_objects: true` mapping fails on multi-segment dotted children**. Use `flat_object` + an ingest pipeline that nests the dotted keys first.
+- **OTTL `transform/logs` has no map-iteration construct** — works only for bounded collision-key sets, DEAD-END for unbounded sets.
+- **Claude Code SDK + Envoy native OTel ALS ship records with `SeverityNumber=Unspecified(0)` + `SeverityText=""`.** Not a pipeline drop; producers genuinely don't set severity. `severityText` blank for those two indices is correct truth.
+- **Embedding errors:** `Cannot load saved visualization "<title>" with id <id>` is thrown by `src/plugins/explore/public/embeddable/explore_embeddable.tsx:415` when `chartType !== "table"`, `chartType !== "logs"`, AND `findRuleByAxesMapping(axesMapping, allColumns)` returns no matching rule. `axesMapping: {}` + `chartType: "line"` is the canonical "embedding fails" combo. `chartType: "table"` bypasses the rule matcher entirely.
+- **`use-case-observability` is dead history; current is `use-case-all`.**
+- **Prom `type` label is renamed to `kind` at the OTel collector** (workaround for OS SQL plugin's direct-query Prom connector). Affects PROMQL panels on `claude_code_token_usage_tokens_total`, `claude_code_active_time_seconds_total`, `claude_code_lines_of_code_count_total`. Full context + removal criteria: `.claude/docs/MONITORING-REFERENCE.md` → "Prometheus Metric Labels".
+- **Filter wiring on a dashboard is explicit.** OSD does not auto-show a top filter bar; if a new dashboard needs filters, wire an input-controls panel or PROMQL-side label selectors. Whether dashboard-level pills propagate into explore-embeddable's PROMQL execution is unverified — source-read shows `input.filters` is NOT pushed onto the embeddable's `filtersSearchSource.setField('filter', ...)`. Treat dashboard pills as cosmetic unless proven otherwise for the panel type in question. [[feedback_dashboard_filter_bar_explicit]]
 
 ## Probe commands cheat sheet
 
@@ -171,24 +130,15 @@ docker exec opensearch-dashboards curl -s 'http://opensearch-node:9200/_nodes/st
 
 # Raw OTLP record severity at collector (debug exporter dumps to stdout)
 docker logs otel-collector 2>&1 | awk '/ResourceLog/{block=1} /SeverityText/{if(block)print}'
-
-# Verified Claude Code Prom counters: claude_code_session_count_total,
-# claude_code_cost_usage_USD_total, claude_code_token_usage_tokens_total,
-# claude_code_code_edit_tool_decision_total, claude_code_active_time_seconds_total,
-# claude_code_commit_count_total, claude_code_lines_of_code_count_total,
-# claude_code_pull_request_count_total
-# Counters with a `kind` label (renamed from upstream `type` at the OTel collector —
-# see `transform/metrics` in `otel-config.yaml.tmpl`):
-#   active_time_seconds_total: kind=cli|user
-#   token_usage_tokens_total:  kind=input|output|cacheRead|cacheCreation
-#   lines_of_code_count_total: kind=added|removed
 ```
 
-## Handoff instructions for next agent
+Verified Claude Code Prom counters: `claude_code_session_count_total`, `claude_code_cost_usage_USD_total`, `claude_code_token_usage_tokens_total`, `claude_code_code_edit_tool_decision_total`, `claude_code_active_time_seconds_total`, `claude_code_commit_count_total`, `claude_code_lines_of_code_count_total`, `claude_code_pull_request_count_total`. Counters carrying `kind` label (renamed from upstream `type`): `active_time_seconds_total` (cli|user), `token_usage_tokens_total` (input|output|cacheRead|cacheCreation), `lines_of_code_count_total` (added|removed).
 
-1. **Re-read this memory completely** before responding to anything.
-2. Re-read [[feedback_no_guessing_dashboard_work]] + [[feedback_ground_in_real_data]] + [[feedback_clawker_container_no_direct_net]] + [[feedback_dashboard_filter_bar_explicit]] + [[feedback_believe_user_observations]] + [[feedback_no_host_clawker_in_container]].
+## Handoff
+
+1. Re-read this memory completely before responding.
+2. Re-read the linked feedback memories above.
 3. Run `mcp__serena__check_onboarding_performed` first turn.
-4. **The user drives construction in the UI.** Your job is research assistant + permanence engineer. Do not unilaterally write dashboard / explore / panel JSON.
-5. When the user provides an export (`.ndjson` or SO JSON), bake it into `bootstrap.sh.tmpl` (per-SO POST) or `clawker.ndjson` (bulk import). Capture workspace id at runtime; template-substitute into the SO body before POSTing.
+4. **User drives construction in the UI.** Agent role: research assistant + permanence engineer. Don't unilaterally write dashboard / explore / panel JSON.
+5. When user provides an export, bake it into `clawker.ndjson` (bulk import) or per-SO POSTs in `bootstrap.sh.tmpl`. Workspace id is captured at runtime — template-substitute into the SO body and any cross-SO `references[].id` before POSTing.
 6. Don't restart the stack proactively — ask before `monitor down --volumes`.
