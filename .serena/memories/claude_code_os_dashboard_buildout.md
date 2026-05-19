@@ -1,190 +1,180 @@
-# Claude Code OpenSearch Dashboard — Buildout (Handoff State 2026-05-18)
+# Claude Code OpenSearch Dashboard — Handoff State 2026-05-19
 
-## End goal
+## Workflow change (THIS IS THE NEW SHAPE)
 
-Ship a preconfigured "Claude Code" dashboard inside OpenSearch Dashboards (OSD), auto-imported by `clawker monitor up`. Single pane of glass mixing Claude Code Prometheus counters + claude-code OS log events. Mirrors the prior Grafana dashboard at `f420327e^:internal/monitor/templates/grafana-dashboard.json`.
+User builds dashboards / visualizations / explore SOs **manually in the OSD UI**, exports the resulting saved-object JSON / NDJSON, hands it to the agent. Agent's job is then to **bake the exported asset into `bootstrap.sh.tmpl`** (or `clawker.ndjson`) so it materializes on every fresh `monitor up`.
 
-**Branch:** `feat/os-dashboards` (clawker repo at `/Users/andrew/Code/clawker`).
-**Live OSD stack:** running locally; bootstrap-imported saved-objects + index templates.
+The agent's role during construction is **research assistant only** — answer OSD/Prom/Vega questions, source-read plugins, probe the live stack, NEVER unilaterally hand-craft saved-objects from training-data recall.
 
-## Iron rules (re-read every turn)
+Iron rules from `feedback_no_guessing_dashboard_work` + `feedback_ground_in_real_data` still apply at full force.
 
-- **Empirical proof per claim.** If you can't show a probe output, don't state the behavior as fact. LLM training data for OSD 3.6 + explore plugin is unreliable.
-- **One panel before scaling.** Never roll out N panels off an unverified pattern.
-- **Probe live stack via `docker exec opensearch-dashboards curl http://localhost:5601/...`** — DNS for clawker-net hostnames does NOT resolve from agent containers due to firewall CoreDNS.
-- **Use deepwiki for codebase Q's, web/official docs for research, NOT training-data recall.**
-- **Ask user before scaling.**
+## Branch
 
-## Verified working — 2026-05-18 (changes in working tree)
+- Branch: `feat/os-dashboards` — handoff happens after the workspace was switched to `features: ["use-case-all"]`. Inspect `git log` for the live tip.
 
-### 1. compose.yaml.tmpl — OSD service env + command
+## What's wired in bootstrap as of HEAD
 
-`internal/monitor/templates/compose.yaml.tmpl` opensearch-dashboards service:
+`internal/monitor/templates/opensearch-bootstrap/bootstrap.sh.tmpl` does, in order:
 
-```yaml
-environment:
-  - DATA_SOURCE_ENABLED=true       # registers `data-connection` SO type
-  - WORKSPACE_ENABLED=true         # required by explore plugin's app-mount logic
-  - VEGA_ENABLEEXTERNALURLS=true   # LEFTOVER from obsolete Vega-on-Prom path — should be removed
-command:
-  - opensearch-dashboards
-  - --explore.enabled=true              # `explore.enabled` NOT in entrypoint env→config allowlist; pass via CLI longopt
-  - --explore.discoverMetrics.enabled=true   # surfaces metrics flavor in nav + UI capability
-```
+1. Component-templates / index-templates / ISM policies (loops over subdirs).
+2. Registers `clawker_prometheus` direct-query datasource via the SQL plugin (`/_plugins/_query/_datasources`).
+3. Polls `/api/status` on OSD.
+4. Imports `saved-objects/clawker.ndjson` via `/api/saved_objects/_import?overwrite=true` (5 index-pattern SOs only as of HEAD — no dashboards yet).
+5. POSTs `data-connection/clawker-prometheus-conn` (idempotent via `?overwrite=true`).
+6. POSTs workspace `Clawker` with **`features: ["use-case-all"]`** (skip-if-exists by name list).
 
-The OSD docker entrypoint's `opensearch_dashboards_vars` allowlist (in `opensearch-dashboards-docker-entrypoint.sh`) accepts `workspace.enabled` and `data_source.enabled` via env. `explore.enabled` is NOT in the allowlist — must pass via compose `command:` longopt. Entrypoint forwards `"$@"` to OSD's argv: `exec "$@" ... "${longopts[@]}"`.
+Workspace id is auto-generated each fresh `monitor up`. Current live id: `5mimS6`.
 
-Plugins green after this:
-- `plugin:dataSource@3.6.0 green`
-- `plugin:workspace@3.6.0 green`
-- `plugin:explore@3.6.0 green`
-- `plugin:queryEnhancements@3.6.0 green`
+## Stack restart workflow
 
-### 2. otel-config.yaml.tmpl — fix `metric_expiration` bug
-
-`internal/monitor/templates/otel-config.yaml.tmpl` prometheus exporter:
-
-```yaml
-prometheus:
-  endpoint: "0.0.0.0:{{.PrometheusMetricsPort}}"
-  metric_expiration: 8760h
-```
-
-**Was wrong:** prior commit `a8056eed` set `metric_expiration: 0` thinking it disabled expiration. Source `opentelemetry-collector-contrib/exporter/prometheusexporter/accumulator.go` lines 409 + 436:
-
-```go
-expirationTime := time.Now().Add(-a.metricExpiration)
-if expirationTime.After(v.updated) { /* expire */ }
-```
-
-`metric_expiration: 0` → `expirationTime = Now() - 0 = Now()` → always-true expiration → all metrics evicted every Collect call. `/metrics` endpoint returned `Content-Length: 0` despite collector debug logs showing claude_code metrics flowing. Use `8760h` for "effectively never expire". See memory `project_prom_exporter_expiration_zero_means_immediate`.
-
-After fix + rebuild: Prom `/api/v1/label/__name__/values` returned 85 metric names including `claude_code_active_time_seconds_total`, `claude_code_cost_usage_USD_total`, `claude_code_token_usage_tokens_total`.
-
-### 3. bootstrap.sh.tmpl — auto-create data-connection + workspace
-
-`internal/monitor/templates/opensearch-bootstrap/bootstrap.sh.tmpl` — new section appended after the saved-objects `_import` step:
+After editing any template or `Dockerfile.tmpl`:
 
 ```sh
-# data-connection SO (idempotent via overwrite=true)
-POST /api/saved_objects/data-connection/clawker-prometheus-conn?overwrite=true
-body: {"attributes":{"connectionId":"clawker_prometheus","type":"Prometheus","meta":"{\"type\":\"Prometheus\",\"timeFieldName\":\"Time\"}"}}
-
-# workspace (skip if "Clawker" already in /api/workspaces/_list)
-POST /api/workspaces
-body: {"attributes":{"name":"Clawker","description":"Claude Code observability","features":["use-case-observability"]},"settings":{"dataConnections":["clawker-prometheus-conn"]}}
+make clawker && \
+clawker monitor init --force && \
+clawker monitor down --volumes && \
+clawker monitor up
 ```
 
-Workspace IDs are auto-generated. Future bootstrap iterations that need to POST explore-flavor SOs scoped to the workspace will need to capture the id from the create response (or list-and-filter by name) — not yet wired since explore SO embedding into a regular dashboard is blocked (see below).
+`down --volumes` is what wipes the workspace + all SOs. Workspace IDs change. The probe SOs documented below ARE wiped — recreate on a fresh stack.
 
-## PPL+Prom at API level (verified)
+`monitor down` (no `--volumes`) preserves data; `monitor up` reruns bootstrap which is idempotent. Use this lighter cycle when only template logic (not schema/SOs) changed.
 
-```
-POST /api/ppl/search
-{"query":"source = clawker_prometheus.claude_code_cost_usage_USD_total | stats sum(@value) by span(@timestamp, 1h)","format":"jdbc"}
-→ datarows: [[<real number>, "<ts>"]]
-```
+## Verified state of the live stack right now
 
-Prom-PPL aggregation requires `by span(@timestamp, …)` — without it returns 500: `"Prometheus Catalog doesn't support aggregations without span expression"`.
+- All four plugins green: explore, workspace, dataSource, queryEnhancements (all `@3.6.0`).
+- Workspace `Clawker` (id `5mimS6`) with `features: ["use-case-all"]`.
+- Data-connection `clawker-prometheus-conn` registered, `connectionId: clawker_prometheus`.
+- Probe explore SOs in the workspace:
+  - `probe-prom-cost` — `chartType: table`, query `claude_code_cost_usage_USD_total`. Confirmed renders standalone AND embedded in dashboard.
+  - `probe-prom-line` (id `69cec650-531a-11f1-bc73-dfbcc9be49c9`) — UI-saved via "Save explore" + "Add to dashboard". `chartType: line`, `axesMapping: {x: "Time", y: "Value", color: "Series"}`. Renders in dashboard. **This is the canonical reference shape for any line panel in the future.**
+- Probe dashboard `clawker-probe-dash` (workspace-scoped) — contains both panels. Time picker propagation confirmed working. No filter bar (none was wired; see "Open question" below).
 
-## explore-metrics flavor — standalone page works
+## Key shapes (verified by API probe + production UI flow)
 
-After bootstrap creates workspace + data-connection, the dataset picker at `/w/{wsId}/app/explore/metrics/` shows `clawker_prometheus`. Pick it, write PROMQL like `claude_code_cost_usage_USD_total`, save the explore. URL `/w/{wsId}/app/explore/metrics#/view/{id}` renders a table (and optionally a chart tab — the metrics flavor registers `id: "metrics"` Table + `id: "metrics-raw"` Raw, per `src/plugins/explore/public/application/register_tabs.ts`; no line-chart tab is registered for the metrics flavor, but the rendered MetricsTab does present a chart view).
-
-### Verified explore SO body shape (POSTs cleanly past strict mapping)
-
-The shape that worked (deepwiki was WRONG about `legacyState` and `queryState` being top-level — they get rejected by `strict_dynamic_mapping_exception`; the SO type `explore` server schema at `src/plugins/discover/server/saved_objects/search.js` only mapps title/description/hits/columns/sort/version/kibanaSavedObjectMeta/type/visualization/uiState):
+### explore SO body — UI-produced reference (line chart, PROMQL)
 
 ```json
 {
+  "type": "explore",
   "attributes": {
-    "title": "probe-prom-cost",
+    "title": "<name>",
     "description": "",
     "hits": 0,
-    "columns": [],
+    "columns": ["_source"],
     "sort": [],
     "version": 1,
     "type": "metrics",
-    "visualization": "{\"title\":\"\",\"chartType\":\"line\",\"params\":{},\"axesMapping\":{}}",
-    "uiState": "{\"activeTab\":\"explore\"}",
+    "visualization": "{\"title\":\"\",\"chartType\":\"line\",\"params\":{...defaults from line_vis_config.ts...},\"axesMapping\":{\"x\":\"Time\",\"y\":\"Value\",\"color\":\"Series\"}}",
+    "uiState": "{\"activeTab\":\"explore_visualization_tab\"}",
     "kibanaSavedObjectMeta": {
-      "searchSourceJSON": "{\"query\":{\"query\":\"claude_code_cost_usage_USD_total\",\"language\":\"PROMQL\",\"dataset\":{\"id\":\"clawker_prometheus\",\"title\":\"clawker_prometheus\",\"type\":\"PROMETHEUS\",\"timeFieldName\":\"Time\",\"language\":\"PROMQL\",\"signalType\":\"metrics\",\"dataSource\":{\"meta\":{\"type\":\"Prometheus\",\"timeFieldName\":\"Time\"}}}},\"filter\":[]}"
+      "searchSourceJSON": "{\"query\":{\"query\":\"<PROMQL>\",\"language\":\"PROMQL\",\"dataset\":{\"id\":\"clawker_prometheus\",\"title\":\"clawker_prometheus\",\"type\":\"PROMETHEUS\",\"language\":\"PROMQL\",\"timeFieldName\":\"Time\",\"dataSource\":{},\"signalType\":\"metrics\"}},\"filter\":[],\"indexRefName\":\"kibanaSavedObjectMeta.searchSourceJSON.index\"}"
     }
   },
-  "references": [{"id":"clawker-prometheus-conn","name":"dataSource","type":"data-connection"}],
-  "workspaces": ["<workspace-id>"]
+  "references": [{"name":"kibanaSavedObjectMeta.searchSourceJSON.index","type":"index-pattern","id":"clawker_prometheus"}],
+  "workspaces": ["<wsId>"]
 }
 ```
 
-## Dashboard embedding the explore SO — ERRORED (the open blocker)
+Notes:
+- PROMQL pipeline produces columns named `Time` (Date), `Value` (Numerical), `Series` (Categorical). axesMapping must reference these LITERAL names — NOT `@timestamp` / `@value` (those come from the PPL `source = clawker_prometheus.X` form, which is a different code path).
+- `references[].type = "index-pattern"` even though clawker_prometheus is a `data-connection`. This is what the UI emits — don't second-guess it.
 
-Attempted at `http://localhost:5601/w/s26O_K/app/dashboards#/view/clawker-probe-dash` using dashboard SO:
+### dashboard SO body — UI-produced reference
 
 ```json
 {
+  "type": "dashboard",
   "attributes": {
-    "title": "Clawker — probe",
-    "panelsJSON": "[{\"version\":\"3.6.0\",\"gridData\":{\"x\":0,\"y\":0,\"w\":48,\"h\":24,\"i\":\"1\"},\"panelIndex\":\"1\",\"embeddableConfig\":{},\"panelRefName\":\"panel_0\"}]",
+    "title": "<title>",
+    "panelsJSON": "[{\"version\":\"3.6.0\",\"panelIndex\":\"<uuid>\",\"gridData\":{\"i\":\"<uuid>\",\"x\":0,\"y\":0,\"w\":24,\"h\":15},\"panelRefName\":\"panel_0\"}, ...]",
     "optionsJSON": "{\"hidePanelTitles\":false,\"useMargins\":true}",
     "version": 1,
     "timeRestore": false,
-    "kibanaSavedObjectMeta": {"searchSourceJSON": "{\"query\":{\"language\":\"kuery\",\"query\":\"\"},\"filter\":[]}"}
+    "kibanaSavedObjectMeta": {"searchSourceJSON":"{\"query\":{\"language\":\"kuery\",\"query\":\"\"},\"filter\":[]}"}
   },
-  "references": [{"name":"panel_0","type":"explore","id":"probe-prom-cost"}],
-  "workspaces": ["<workspace-id>"]
+  "references": [{"name":"panel_0","type":"explore","id":"<explore-so-id>"}, ...],
+  "workspaces": ["<wsId>"]
 }
 ```
 
-The panel rendered with an ERROR (user confirmed). Exact error text NOT yet captured — that is the very next thing to ask for.
+Notes:
+- Production `addToDashboard` (`src/plugins/explore/public/components/visualizations/utils/add_to_dashboard.ts`) writes panels with INLINE `id` + `type`; OSD's `extractReferences` on save rewrites them to `panelRefName` + entries in `references[]`. Both shapes load; the post-extract form (`panelRefName`) is canonical when fetching via API.
+- Panel size: production default is `w: 24, h: 15` (max grid width 48). Cosmetic.
+- `migrationVersion.dashboard = "7.9.3"` is added by the server on POST — don't include it in the request.
 
-### Suspected root causes (to investigate in order)
+### workspace ID is dynamic
 
-1. `embeddableConfig: {}` is empty. Explore embeddable likely requires fields. Source pointer: `src/plugins/explore/public/components/visualizations/utils/add_to_dashboard.ts` (the production path) — copy its panel/embeddable JSON construction verbatim.
-2. `panelRefName` shape may be specific to the explore embeddable factory.
-3. The explore embeddable may not be registered with `dashboard` plugin's embeddable host at all and might require `observability-dashboards` (the separate dashboard surface) instead.
+Capture from `/api/workspaces/_list` by name:
 
-**Source pointers** for debug:
-- `src/plugins/explore/public/components/visualizations/add_to_dashboard_button.tsx` — production "Add to dashboard" UI flow
-- `src/plugins/explore/public/components/visualizations/utils/add_to_dashboard.ts` — actual mutation routine
-- `src/plugins/explore/public/embeddable/` — EXPLORE_EMBEDDABLE_TYPE definition + factory + create flow
+```sh
+WS=$(docker exec opensearch-dashboards curl -s -X POST -H 'osd-xsrf: true' \
+  -H 'content-type: application/json' \
+  http://localhost:5601/api/workspaces/_list -d '{}' \
+  | python3 -c 'import sys,json; print([w["id"] for w in json.load(sys.stdin)["result"]["workspaces"] if w["name"]=="Clawker"][0])')
+```
 
-## Verified PPL Prom counters (after collector fix)
+For bootstrap baking: capture from the workspace-create response (or list-and-filter), then template-substitute into the dashboard SO JSON before POSTing. The bootstrap pattern for SOs is `POST /api/saved_objects/<type>/<id>?overwrite=true` per-SO, or NDJSON bulk via `/api/saved_objects/_import?overwrite=true`.
 
-The 7 canonical Claude Code counters present in Prom right now:
-- `claude_code_session_count_total`
-- `claude_code_cost_usage_USD_total` — labels: agent, project, session_id, model, …
-- `claude_code_token_usage_tokens_total` — extra label `type` ∈ {input, output, cacheRead, cacheCreation}
-- `claude_code_code_edit_tool_decision_total`
-- `claude_code_active_time_seconds_total` — extra label `type` ∈ {cli, user}
-- `claude_code_commit_count_total`
-- `claude_code_lines_of_code_count_total`
+### Embedding errors decoded (don't repeat past mistakes)
 
-Verified live this session that `claude_code_active_time_seconds_total`, `claude_code_cost_usage_USD_total`, `claude_code_token_usage_tokens_total` all return real values via `prometheus:9090/api/v1/query?query=<name>`.
+- `Cannot load saved visualization "<title>" with id <id>` — thrown by `src/plugins/explore/public/embeddable/explore_embeddable.tsx:415` when `chartType !== "table"`, `chartType !== "logs"`, AND `findRuleByAxesMapping(axesMapping, allColumns)` returns no matching rule. axesMapping must reference column names that bucket into the rule's expected (numerical, categorical, date) shape. `axesMapping: {}` + `chartType: "line"` is the canonical "embedding fails" combo from prior probes.
+- `chartType: "table"` bypasses the rule matcher entirely (renders via `TableVis` with `searchProps.tableData`). Useful debugging probe to confirm the embedding plumbing works.
 
-## What's in the working tree (uncommitted as of this memory write)
+## OPEN QUESTION (do not lose this)
 
-- `internal/monitor/templates/compose.yaml.tmpl` — added DATA_SOURCE_ENABLED, WORKSPACE_ENABLED, command override with `--explore.enabled` + `--explore.discoverMetrics.enabled`. VEGA_ENABLEEXTERNALURLS still present (LEFTOVER — should be dropped).
-- `internal/monitor/templates/otel-config.yaml.tmpl` — `metric_expiration: 0` → `metric_expiration: 8760h`.
-- `internal/monitor/templates/opensearch-bootstrap/bootstrap.sh.tmpl` — POSTs data-connection SO + workspace at the end. Idempotent on both (data-connection via overwrite=true, workspace via list-and-skip).
+**Filter mechanism is not wired.** The dashboard SO has no query/filter bar UI. User-facing brief was "verify pill propagation," but no pill UI has ever been configured.
 
-Nothing committed yet for this session.
+Two unanswered sub-questions:
 
-## Tasks (running)
+1. **Do dashboard-level filter pills, if they existed, even propagate into the explore embeddable's PROMQL execution?** Source-read in progress: `explore_embeddable.tsx` creates a `filtersSearchSource` and parents the search source under it, but `input.filters` was NOT observed pushed onto `filtersSearchSource.setField('filter', ...)`. Only references to `input.filters` were: gating re-fetch in `updateHandler`, and passing into `searchContext` for `matchedRule.toSpec()` (i.e. Vega-side client filtering). `prepareQueryForLanguage` may inject filters into PROMQL — not yet traced. If filters don't reach the PROMQL string sent to the data source, dashboard pills are cosmetic at best.
 
-| # | State | What |
-|---|---|---|
-| #5 | done | Workspace + data-connection baked into bootstrap.sh.tmpl |
-| NEW | pending | Capture exact dashboard-embed panel error from browser |
-| NEW | pending | Resolve dashboard embedding of explore SO — read `add_to_dashboard.ts` source |
-| NEW | pending | Once embedding works: bake explore SOs + dashboard SO into bootstrap (workspace id captured at runtime — explore SOs POST per-counter after workspace create) |
-| NEW | pending | Remove `VEGA_ENABLEEXTERNALURLS=true` from compose (obsolete) |
-| NEW | pending | Commit working-tree changes after embedding resolved |
+2. **What input mechanism does the user actually want?** Options previously presented:
+   - Standard OSD top filter+query bar (kuery + pills) — requires figuring out why it's absent on this dashboard and what wires it on. With `use-case-all` it MAY appear automatically; user has not yet verified post-switch.
+   - Input-controls panel (dropdowns/sliders) — separate visualization panel emitting filters into dashboard state.
+   - PROMQL-side label selectors via dashboard URL/params.
 
-## Handoff instructions for next agent
+User has not selected one. Don't pick unilaterally.
 
-1. **Re-read this memory completely.** Then re-read iron rules at the top. Run `mcp__serena__check_onboarding_performed`. Read `feedback_no_guessing_dashboard_work` and `feedback_ground_in_real_data` memories before responding.
-2. **Confirm current stack state** before doing anything: `docker exec opensearch-dashboards curl -s http://localhost:5601/api/status` — ensure plugins explore/workspace/dataSource/queryEnhancements all green.
-3. **First step:** ask user to share the exact error text rendered in the dashboard panel area. URL is `http://localhost:5601/w/<workspace-id>/app/dashboards#/view/clawker-probe-dash`. Workspace id changes after every `monitor down --volumes && monitor up` (bootstrap creates a fresh one); find current with `docker exec opensearch-dashboards curl -s -X POST -H 'osd-xsrf: true' -H 'content-type: application/json' http://localhost:5601/api/workspaces/_list -d '{}'`.
-4. **Do NOT scale** to more panels until the embedding error is resolved AND ONE dashboard panel renders end-to-end with time picker + filter pill propagation verified.
-5. **Workspace ID is dynamic.** After bootstrap, fetch fresh id via `_list` (workspace named "Clawker").
-6. After embedding works: bake explore SOs + dashboard SO into bootstrap.sh.tmpl. Strategy: capture workspace id from the workspace-create response, write to /tmp, then template-substitute into the explore + dashboard JSON before POSTing.
+## Probe commands cheat sheet
+
+```sh
+# Plugin health
+docker exec opensearch-dashboards curl -s http://localhost:5601/api/status | jq
+
+# List workspaces
+docker exec opensearch-dashboards curl -s -X POST -H 'osd-xsrf: true' \
+  -H 'content-type: application/json' \
+  http://localhost:5601/api/workspaces/_list -d '{}' | jq
+
+# Fetch a single SO
+docker exec opensearch-dashboards curl -s -H 'osd-xsrf: true' \
+  "http://localhost:5601/w/<wsId>/api/saved_objects/<type>/<id>" | jq
+
+# Search SOs by title
+docker exec opensearch-dashboards curl -s -H 'osd-xsrf: true' \
+  "http://localhost:5601/w/<wsId>/api/saved_objects/_find?type=<type>&search_fields=title&search=<title>" | jq
+
+# Prom column-shape via PPL (NOTE: differs from explore-PROMQL pipeline)
+docker exec opensearch-dashboards curl -s -X POST -H 'osd-xsrf: true' \
+  -H 'content-type: application/json' http://localhost:5601/api/ppl/search \
+  -d '{"query":"source = clawker_prometheus.<metric>","format":"jdbc"}' | jq
+
+# Prom metric list
+docker exec prometheus curl -s 'http://localhost:9090/api/v1/label/__name__/values' | jq
+
+# Verified Claude Code Prom counters: claude_code_session_count_total,
+# claude_code_cost_usage_USD_total, claude_code_token_usage_tokens_total,
+# claude_code_code_edit_tool_decision_total, claude_code_active_time_seconds_total,
+# claude_code_commit_count_total, claude_code_lines_of_code_count_total
+```
+
+## Handoff instructions for next agent (same as iron rules but more)
+
+1. **Re-read this memory completely** before responding to anything.
+2. Re-read `feedback_no_guessing_dashboard_work` + `feedback_ground_in_real_data` + `feedback_clawker_container_no_direct_net` + `feedback_dashboard_filter_bar_explicit` + `feedback_believe_user_observations`.
+3. Run `mcp__serena__check_onboarding_performed` first turn.
+4. **The user drives construction in the UI.** Your job is research assistant + permanence engineer. Do not unilaterally write dashboard / explore / panel JSON.
+5. When the user provides an export (`.ndjson` or SO JSON), bake it into `bootstrap.sh.tmpl` (per-SO POST) or `clawker.ndjson` (bulk import). Capture workspace id at runtime; template-substitute into the SO body before POSTing.
+6. Don't repaint old paths. The `use-case-observability` history is dead; current is `use-case-all`. The `axesMapping: {}` + line-chart shape is dead; UI-saved `axesMapping: {x:"Time",y:"Value",color:"Series"}` is the reference.
+7. Don't restart the stack proactively — ask before `monitor down --volumes`.

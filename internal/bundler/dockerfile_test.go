@@ -238,6 +238,10 @@ func TestBuildContext_DefaultMonitoring(t *testing.T) {
 	content := string(dockerfile)
 	assert.Contains(t, content, "OTEL_EXPORTER_OTLP_ENDPOINT="+cfg.OtelCollectorURL(),
 		"otel base endpoint env var must render with cfg.OtelCollectorURL() — OTel SDK derives /v1/{metrics,logs,traces} per signal")
+	assert.Contains(t, content, "OTEL_EXPORTER_OTLP_ENDPOINT=http://",
+		"otel endpoint must carry an http:// prefix — anchors the URL shape independently of cfg accessor (kills the self-validating assertion above)")
+	assert.Contains(t, content, "OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf",
+		"OTLP protocol must be pinned to http/protobuf — if dropped, traces silently fall back to gRPC against an HTTP-only receiver and disappear")
 	assert.Contains(t, content, "OTEL_TRACES_EXPORTER=otlp",
 		"traces exporter must be enabled — paired with CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1 gates the Claude Code beta trace path")
 	assert.Contains(t, content, "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1",

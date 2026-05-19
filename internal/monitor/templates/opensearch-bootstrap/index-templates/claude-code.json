@@ -28,7 +28,7 @@
             "event": {
               "properties": {
                 "name":      { "type": "keyword" },
-                "timestamp": { "type": "date" },
+                "timestamp": { "type": "date", "format": "strict_date_optional_time||epoch_millis" },
                 "sequence":  { "type": "long" },
                 "domain":    { "type": "keyword" }
               }
@@ -186,7 +186,7 @@
     }
   },
   "_meta": {
-    "description": "Claude Code OTLP log events — full schema for every documented event (user_prompt, tool_result, api_request, api_error, api_request_body, api_response_body, api_retries_exhausted, tool_decision, permission_mode_changed, auth, mcp_server_connection, internal_error, plugin_installed, plugin_loaded, skill_activated, at_mention, hook_registered, hook_execution_start, hook_execution_complete, compaction, feedback_survey). Source: https://code.claude.com/docs/en/monitoring-usage",
+    "description": "Claude Code OTLP log events — see Claude Code monitoring docs for the canonical event list.",
     "managed_by": "clawker-opensearch-bootstrap"
   }
 }

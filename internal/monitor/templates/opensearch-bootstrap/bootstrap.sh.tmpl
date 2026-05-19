@@ -4,13 +4,14 @@
 # service_completed_successfully gate).
 #
 # Order matters: component templates -> index templates -> ISM
-# policies must all land BEFORE otel-collector starts, so when the
-# collector's exporters create indices on first push, OpenSearch
-# applies the matching templates at creation time. Templates apply
-# only to indices created AFTER the template exists — they do not
-# retroactively re-map existing indices. The monitoring stack is
-# preconfigured + ephemeral; regenerate with `monitor down --volumes
-# && monitor up` to pick up template edits.
+# policies -> pre-create indices. Both index_template mappings AND
+# ISM `ism_template.index_patterns` auto-attach only at index
+# creation, so the policy MUST exist before the empty indices are
+# PUT, or the retention rule never binds for the lifetime of the
+# stack. Templates apply only to indices created AFTER they exist —
+# they do not retroactively re-map existing indices. The monitoring
+# stack is preconfigured + ephemeral; regenerate with `monitor down
+# --volumes && monitor up` to pick up template edits.
 #
 # Failures exit non-zero so dependents never start. The script is
 # idempotent: PUT is a no-op for component + index templates; ISM
@@ -37,6 +38,7 @@ apply_dir() {
   if [ ! -d "${dir}" ]; then
     return 0
   fi
+  count=0
   for f in "${dir}"/*.json; do
     [ -e "${f}" ] || continue
     name=$(basename "${f}" .json)
@@ -45,32 +47,18 @@ apply_dir() {
       -H "Content-Type: application/json" \
       --data-binary "@${f}" \
       -o /dev/null
+    count=$((count+1))
   done
+  if [ "${count}" -eq 0 ]; then
+    # Empty subdir is almost always an embed.FS rendering bug — without
+    # mappings applied, first-ingest dynamic mapping locks the wrong
+    # shape and queries silently miss data for the stack's lifetime.
+    echo "    WARNING: ${dir} contained no .json files — embed.FS may not have rendered"
+  fi
 }
 
 apply_dir "/_component_template"     "${BOOTSTRAP_DIR}/component-templates"
 apply_dir "/_index_template"         "${BOOTSTRAP_DIR}/index-templates"
-
-# Pre-create the log indices so OSD Discover/dashboards stop spamming
-# "No matching indices found: No indices match pattern '<name>'" toasts
-# before any source has emitted its first record. The PUT applies the
-# matching index_template at creation time, so mappings are correct.
-# 400 (resource_already_exists_exception) is benign and ignored.
-for idx in claude-code clawker-cli clawker-cp clawker-envoy clawker-coredns; do
-  code=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT "${OPENSEARCH_URL}/${idx}")
-  case "${code}" in
-    200|201)
-      echo "==> bootstrap: created empty index ${idx}"
-      ;;
-    400)
-      # Already exists — fine.
-      ;;
-    *)
-      echo "    pre-create ${idx} failed: HTTP ${code}"
-      exit 1
-      ;;
-  esac
-done
 
 # ISM policies use optimistic concurrency. A bare PUT to an existing
 # policy returns 409 version_conflict_engine_exception. To update an
@@ -120,6 +108,41 @@ apply_ism_policies() {
 }
 
 apply_ism_policies
+
+# Pre-create the log indices so OSD Discover/dashboards stop spamming
+# "No matching indices found: No indices match pattern '<name>'" toasts
+# before any source has emitted its first record. Order is critical:
+# this runs AFTER index_template + ISM policy are in place, so the
+# matching template's mappings AND the ISM policy's retention rule
+# both auto-attach at index creation. 400
+# (resource_already_exists_exception) is benign and ignored. Post-PUT
+# we GET the index and assert `properties` is present — catches the
+# silent "template didn't match, dynamic mapping took over" path that
+# would otherwise lock the wrong shape until `monitor down --volumes`.
+for idx in claude-code clawker-cli clawker-cp clawker-envoy clawker-coredns; do
+  code=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT "${OPENSEARCH_URL}/${idx}")
+  case "${code}" in
+    200|201)
+      echo "==> bootstrap: created empty index ${idx}"
+      ;;
+    400)
+      # Already exists — fine.
+      ;;
+    *)
+      echo "    pre-create ${idx} failed: HTTP ${code}"
+      exit 1
+      ;;
+  esac
+  mapping=$(curl -fsS "${OPENSEARCH_URL}/${idx}")
+  case "${mapping}" in
+    *'"properties"'*) ;;
+    *)
+      echo "    ${idx} created but no mappings present — index template missing or did not match"
+      echo "${mapping}"
+      exit 1
+      ;;
+  esac
+done
 
 # Datasources register external query backends (Prometheus today) under
 # the SQL plugin's _plugins/_query/_datasources API. Unlike templates,
@@ -201,42 +224,45 @@ EOF
 # a workspace, /app/explore/metrics returns "Application Not Found".
 # Create a "Clawker" workspace with use-case-all (every nav group
 # enabled) the first time bootstrap runs; subsequent runs find it by
-# name. use-case-all keeps observability + security analytics + search
-# + essentials all reachable from one workspace so a single operator
-# pane covers agent telemetry, firewall/security events, and any
-# future cross-cutting views. The workspace's settings.dataConnections
-# list references the data-connection SO above so the explore-metrics
-# dataset picker can resolve `clawker_prometheus`. Workspace IDs are
-# auto-generated; we capture the id from the _list response so the
-# subsequent saved-objects import can be workspace-scoped.
+# name. The workspace's settings.dataConnections list references the
+# data-connection SO above so the explore-metrics dataset picker can
+# resolve `clawker_prometheus`. Workspace IDs are auto-generated; we
+# capture the id directly from the create POST's response body so the
+# subsequent saved-objects import can be workspace-scoped without a
+# follow-up _list (which races against OSD's saved-object refresh
+# interval).
+# Workspace IDs are auto-generated. On creation we capture the id from
+# the POST response body (one workspace, top-level `"id":"..."`). On
+# the existing-workspace path we walk `_list` and pick the entry whose
+# name is exactly "Clawker" (anchored to prevent matching "Clawker-foo"
+# as a prefix). No jq in curlimages/curl; pure sh + sed.
 LIST=$(curl -fsS -H 'osd-xsrf: true' -H 'Content-Type: application/json' \
   -X POST "${DASHBOARDS_URL}/api/workspaces/_list" -d '{}')
-if echo "${LIST}" | grep -q '"name":"Clawker"'; then
+# Split `_list` into one workspace object per line and pick Clawker by
+# exact name match. tr `,{[` to newline coarsely fragments JSON; the
+# regex anchors `"name":"Clawker"` to a trailing `,` or `}` to reject
+# "Clawker-staging". Then re-grab the workspace's id from the original
+# LIST by searching the substring spanning from one `{` past the
+# matching name to the next closing `}` of the same depth — but since
+# OSD workspace objects nest, that's hard in sh. Simpler: extract from
+# a per-workspace fragment produced by splitting on `},{`.
+CLAWKER_FRAGMENT=$(echo "${LIST}" | sed 's/},{/}\n{/g' | grep -E '"name":"Clawker"([,}]|$)' || true)
+if [ -n "${CLAWKER_FRAGMENT}" ]; then
   echo "==> bootstrap: workspace 'Clawker' already exists"
+  WS_ID=$(echo "${CLAWKER_FRAGMENT}" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p' | head -1)
 else
   echo "==> bootstrap: POST workspace 'Clawker'"
-  curl -fsS -X POST "${DASHBOARDS_URL}/api/workspaces" \
+  WS_RESP=$(curl -fsS -X POST "${DASHBOARDS_URL}/api/workspaces" \
     -H "osd-xsrf: true" \
     -H "Content-Type: application/json" \
-    --data-binary @- <<'EOF' \
-    -o /dev/null
+    --data-binary @- <<'EOF'
 {"attributes":{"name":"Clawker","description":"Clawker observability","features":["use-case-all"]},"settings":{"dataConnections":["clawker-prometheus-conn"]}}
 EOF
-  LIST=$(curl -fsS -H 'osd-xsrf: true' -H 'Content-Type: application/json' \
-    -X POST "${DASHBOARDS_URL}/api/workspaces/_list" -d '{}')
+  )
+  WS_ID=$(echo "${WS_RESP}" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p' | head -1)
 fi
-
-# Workspace ids are auto-generated per fresh `monitor up`. Parse from
-# _list (no jq in curlimages/curl). Each workspace object emits
-# `"name":"…",…,"id":"…"` on a single line; awk locks onto the segment
-# starting at name="Clawker" and walks forward to the id field.
-WS_ID=$(echo "${LIST}" | awk 'match($0, /"name":"Clawker"[^}]*"id":"[^"]*"/){
-  s=substr($0, RSTART, RLENGTH)
-  match(s, /"id":"[^"]*"/)
-  print substr(s, RSTART+6, RLENGTH-7)
-}')
 if [ -z "${WS_ID}" ]; then
-  echo "    failed to extract workspace id from _list response"
+  echo "    failed to extract workspace id"
   echo "${LIST}"
   exit 1
 fi

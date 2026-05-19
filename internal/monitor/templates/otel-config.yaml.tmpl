@@ -157,7 +157,12 @@ processors:
   # so this transform is required for per-project/agent filtering on the
   # scraped Prometheus series (and any UI built on top — OpenSearch Dashboards
   # Observability Metrics, Prometheus UI, etc.).
+  # error_mode: ignore so a single malformed datapoint (e.g. an SDK that
+  # emits resource.attributes["project"] as a slice instead of scalar)
+  # drops the offending point rather than killing the pipeline silently.
+  # OTTL errors surface in collector stdout via the default INFO log level.
   transform/metrics:
+    error_mode: ignore
     metric_statements:
       - context: datapoint
         statements:
@@ -283,24 +288,17 @@ exporters:
   # Metrics → Prometheus scrape endpoint. Pull-based, so no retry
   # config — Prometheus handles its own scrape cadence.
   #
-  # metric_expiration sets the staleness window at the exporter. The
-  # default (5m) reaps cumulative counters that haven't been refreshed
-  # in 5 minutes. Several Claude Code counters fire only on user-action
-  # triggers — session.count (once per session), code_edit_tool.decision
-  # (per Edit/Write decision), commit.count, pull_request.count,
-  # lines_of_code.count — so gaps of hours between deltas are normal.
-  # Combined with delta-temporality semantics (deltatocumulative only
-  # emits when a fresh delta arrives), the default expiration silently
-  # disappears these counters from `_total` series after their last
-  # event.
-  #
-  # `0` does NOT disable expiration — the source check is
-  # `time.Now().Add(-metricExpiration).After(v.updated)`, which evaluates
-  # `Now().After(v.updated)` and expires every metric on every Collect
-  # call. The canonical idiom for "effectively never expire" in the
-  # prometheusexporter is a very long duration; use one year. The stack
-  # is throwaway anyway (`monitor down --volumes` is the canonical
-  # reset), so the upper bound is academic.
+  # metric_expiration controls the exporter's staleness window. The
+  # default (5m) reaps cumulative counters that haven't seen a fresh
+  # delta in 5 minutes. Several Claude Code counters fire only on
+  # user-action triggers (session.count, code_edit_tool.decision,
+  # commit.count, pull_request.count, lines_of_code.count) — gaps of
+  # hours between deltas are normal, and the default expiration would
+  # silently drop them from `_total` series after their last event.
+  # Foot-gun: `0` does NOT disable expiration — it expires every
+  # metric on every Collect call. Use a long duration instead. The
+  # stack is throwaway (`monitor down --volumes` is the reset), so
+  # one year is "effectively never."
   prometheus:
     endpoint: "0.0.0.0:{{.PrometheusMetricsPort}}"
     metric_expiration: 8760h
@@ -311,13 +309,17 @@ connectors:
   # pipeline. Empty-series until traces actually flow.
   spanmetrics:
   # Route untrusted (plaintext OTLP) records. Only claude-code and
-  # clawker-cli records reach their indices; everything else is
-  # silently dropped (no default_pipelines, error_mode: ignore). An
-  # agent crafting `service.name=envoy`/`coredns`/`clawker-cp` from
-  # the unauth'd port CANNOT reach the trusted indices — there is no
-  # such route off this connector.
+  # clawker-cli records reach their indices. An agent crafting
+  # `service.name=envoy`/`coredns`/`clawker-cp` from the unauth'd
+  # port CANNOT reach the trusted indices — there is no such route
+  # off this connector. default_pipelines catches any other
+  # service.name (e.g. SDK default `unknown_service`, a misconfigured
+  # local script) and routes it to logs/untrusted_unrouted where it
+  # surfaces in collector stdout for debugging — not indexed, since
+  # the records are forgeable.
   routing/untrusted:
     error_mode: ignore
+    default_pipelines: [logs/untrusted_unrouted]
     table:
       - context: resource
         condition: attributes["service.name"] == "claude-code"
@@ -390,6 +392,15 @@ service:
       receivers: [routing/untrusted]
       processors: [memory_limiter]
       exporters: [opensearch/logs_clawker_cli, debug]
+    # Quarantine for untrusted records whose service.name isn't
+    # claude-code or clawker-cli. Stdout-only (debug); never indexed
+    # because the lane is unauthenticated and the records are
+    # forgeable. Operator can grep `docker logs clawker-otel-collector`
+    # for the dropped record to spot a misconfigured sender.
+    logs/untrusted_unrouted:
+      receivers: [routing/untrusted]
+      processors: [memory_limiter]
+      exporters: [debug]
     # Trusted log ingress. mTLS handshake is the auth boundary; the
     # routing connector dispatches by sender-declared service.name to
     # the right index. resource/* processors only stamp ingest_source

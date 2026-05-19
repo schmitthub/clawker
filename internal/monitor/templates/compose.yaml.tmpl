@@ -145,7 +145,13 @@ services:
       # ism-policies,saved-objects} and applies them via the OpenSearch
       # + Dashboards REST APIs over the docker network.
       - ./{{.OpenSearchBootstrapDirName}}:/opensearch-bootstrap:ro
-    restart: "no"
+    # Retry on transient failures (e.g. OSD's saved-objects subsystem
+    # racing with /api/status readiness). Capped so a deterministic
+    # bug fails fast rather than spinning forever. Exhausting the cap
+    # leaves the stack half-up by design — operator inspects
+    # `docker logs clawker-opensearch-bootstrap` and resets via
+    # `monitor down --volumes && monitor up`.
+    restart: on-failure:5
     labels:
       dev.clawker.managed: "true"
       dev.clawker.purpose: "monitoring"
@@ -215,13 +221,6 @@ services:
       # Enable workspaces — required by the explore plugin's app-mount logic
       # (getIsExploreEnabledWorkspace reads core.workspaces.currentWorkspace$).
       - WORKSPACE_ENABLED=true
-      # Allow Vega visualizations to fetch external HTTP URLs (default: false).
-      # Required for the Claude Code dashboard's Prometheus-backed panels, which
-      # query http://localhost:{{.PrometheusPort}}/api/v1/query{,_range} directly
-      # from the user's browser (cross-origin to OSD's :{{.OpenSearchDashboardsPort}},
-      # CORS already permissive on Prometheus's side).
-      # Maps to `vega.enableExternalUrls: true` via the OSD entrypoint allowlist.
-      - VEGA_ENABLEEXTERNALURLS=true
     # `explore.enabled` is NOT in the OSD docker entrypoint's env→config allowlist
     # (the `opensearch_dashboards_vars` array in opensearch-dashboards-docker-entrypoint.sh),
     # so an env var has no effect. The entrypoint forwards the container's argv to OSD
