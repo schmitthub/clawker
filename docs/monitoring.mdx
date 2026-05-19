@@ -42,7 +42,7 @@ Claude Code emits logs, metrics, AND traces. Span export gates on the `CLAUDE_CO
 | **OpenSearch** | `opensearchproject/opensearch` | 9200 | Stores telemetry across the `claude-code` (Claude Code OTLP), `clawker-cli` (host CLI), `clawker-cp` (clawker-cp mTLS push), `clawker-envoy` (firewall HTTP/TLS/TCP access logs), `clawker-coredns` (firewall DNS query logs) log indices, plus the `traces`/`clawker` (SS4O) trace index |
 | **OpenSearch Dashboards** | `opensearchproject/opensearch-dashboards` | 5601 | UI for querying logs, dashboards, and (via the preconfigured `clawker_prometheus` direct-query datasource) Prometheus metrics |
 | **Prometheus** | `prom/prometheus` | 9090 | Time-series metrics storage and UI |
-| **clawker-opensearch-bootstrap** | `curlimages/curl` | — | One-shot init container. Runs before the collector + Prometheus start; applies templates, ISM, datasource, workspace, saved objects, then exits |
+| **clawker-opensearch-bootstrap** | `curlimages/curl` | — | One-shot init container. Runs after OpenSearch + Prometheus are reachable, before the collector starts; applies templates, ISM, datasource, workspace, saved objects, then exits |
 
 All containers are pre-configured with labels (`dev.clawker.purpose=monitoring`) and attached to the `clawker-net` network. The OpenSearch security plugin is disabled by default for local development — Dashboards is reachable at `http://localhost:5601` with no login required. Set `OPENSEARCH_JAVA_OPTS` via the `opensearch_heap_mb` setting if you need more heap.
 

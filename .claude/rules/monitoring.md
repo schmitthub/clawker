@@ -74,4 +74,3 @@ Envoy and CoreDNS access logs are scraped into OpenSearch with dedicated indices
 ## What NOT To Do
 
 - Don't add hostname knobs to `MonitoringConfig` for monitoring services — they're consts shared with the firewall plane.
-- Don't bring back Grafana/Loki/Jaeger/Promtail without re-introducing the consts they need, and without auditing CoreDNS + compose template + otel-config + bundler dockerfile generator together.

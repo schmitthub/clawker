@@ -618,8 +618,9 @@ func (d *Dialer) establishWithRetry(ctx context.Context, containerID string, log
 
 		// Every log line from here forward carries agent + project +
 		// addr so an operator reading retry/timeout/error events in
-		// Grafana doesn't have to cross-reference the container_id
-		// against docker inspect to know which agent we're dialing.
+		// the structured log surface doesn't have to cross-reference
+		// the container_id against docker inspect to know which agent
+		// we're dialing.
 		attemptLog := log.With("agent", agent, "project", project, "addr", addr)
 
 		// Publish "connecting" once per cycle, on the first

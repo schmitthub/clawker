@@ -93,8 +93,8 @@ func downRun(ctx context.Context, opts *DownOptions) error {
 	}
 
 	// Build docker compose command. --remove-orphans sweeps containers
-	// from prior compose schema versions (e.g. removed Grafana/Loki/
-	// Jaeger/Promtail) so `monitor down` actually cleans them up.
+	// from prior compose schema versions so `monitor down` actually
+	// cleans up services the template no longer defines.
 	composeArgs := []string{"compose", "-f", composePath, "down", "--remove-orphans"}
 	if opts.Volumes {
 		composeArgs = append(composeArgs, "-v")

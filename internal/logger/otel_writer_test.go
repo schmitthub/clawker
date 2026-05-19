@@ -139,7 +139,7 @@ func TestOtelWriter_TimestampShapes(t *testing.T) {
 // float64 to int64 when integral so attribute consumers see the
 // natural numeric type. The point of the writer over the upstream
 // bridge is field fidelity; a regression that drops Int64 would lie
-// about port numbers in Loki.
+// about port numbers at the log index.
 func TestOtelWriter_TypePromotion(t *testing.T) {
 	r := emit(t, map[string]any{
 		"level":   "info",

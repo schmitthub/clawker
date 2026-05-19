@@ -23,7 +23,7 @@ Do **not** wire new consumers to it. Adding new call sites is a signal that the 
 | `bypass` | `<cgroupPath>` | Set `bypass_map[cgroupID] = 1`. |
 | `unbypass` | `<cgroupPath>` | Clear the bypass flag. |
 | `sync-routes` | `<routesJSON>` | Replace the global `route_map` atomically. |
-| `dns-update` | `<ip> <domainHash> <ttl>` | Write a single `dns_cache` entry. Historical; the CoreDNS `dnsbpf` plugin is the real writer. |
+| `dns-update` | `<ip> <domainHash> <ttl>` | Write a single `dns_cache` entry. Break-glass only; the CoreDNS `dnsbpf` plugin is the real writer. |
 | `gc-dns` | — | Iterate `dns_cache`, delete expired entries, print count. |
 | `dump` | `<cgroupPath>` | Print `container_map`, `bypass_map`, and per-cgroup metrics for diagnostics. |
 | `resolve` | `<hostname>` | Libc hostname lookup. |

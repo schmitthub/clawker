@@ -499,10 +499,9 @@ func FirewallDataSubdir() (string, error) { return subdirPath(firewallDir, DataD
 // material for trusted-lane senders (Envoy, CoreDNS, ...). CP is the
 // sole writer; sibling containers bind-mount RO subpaths.
 //
-// Path stays under FirewallDataSubdir for historical reasons (the
-// firewall plane was the first consumer) — the cert minting itself
-// lives in internal/controlplane/otelcerts and is not a firewall
-// concern.
+// Path lives under FirewallDataSubdir because the firewall plane was
+// the first consumer; the cert minting itself lives in
+// internal/controlplane/otelcerts and is not a firewall concern.
 func OtelClientsDir() (string, error) {
 	fwDir, err := FirewallDataSubdir()
 	if err != nil {

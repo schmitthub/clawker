@@ -112,8 +112,8 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 
 	// Build docker compose command. --remove-orphans sweeps containers
 	// that aren't in the current compose.yaml — needed for upgrade flows
-	// where the template lost services (Grafana/Loki/Jaeger/Promtail) so
-	// their old containers don't keep ports bound after `init --force`.
+	// where the template dropped services, so old containers don't
+	// keep ports bound after `init --force`.
 	//
 	// Compose ordering is encoded entirely in the template via depends_on:
 	// opensearch-node (healthy) -> clawker-opensearch-bootstrap (exits 0)

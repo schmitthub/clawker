@@ -854,10 +854,10 @@ func TestResolveBypassCgroupID_CgroupStatFails_FallsBack(t *testing.T) {
 // bypassTimerFired retry behaviour
 // ---------------------------------------------------------------------------
 
-// bypassTimerFired makes a single enqueue attempt (historically 3 with
-// backoff; retrying from a timer goroutine blocked shutdown and added
-// little value — the operator can reissue FirewallEnable). A
-// permanent enable failure logs + cleans up the entry.
+// bypassTimerFired makes a single enqueue attempt; retrying from a
+// timer goroutine would block shutdown and add little value — the
+// operator can reissue FirewallEnable. A permanent enable failure
+// logs + cleans up the entry.
 func TestBypassTimerFired_EnableFails_CleansUpEntry(t *testing.T) {
 	mock := noopMock()
 	mock.EnableFunc = func(_ uint64) error {

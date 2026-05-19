@@ -963,12 +963,12 @@ func (h *Handler) bypassTimerFired(cid string, entry *bypassEntry) {
 
 	enableID := resolveBypassCgroupID(entry, h.resolve, h.cgroupIDFn, h.log)
 
-	// One attempt. Historically this retried with time.Sleep backoff,
-	// but the sleep blocked the shutdown path up to a cumulative few
-	// seconds per in-flight timer (GracefulStop drains the queue, but
-	// a goroutine sleeping between Submit calls doesn't observe that).
-	// The failsafe is best-effort by design — a transient enable
-	// failure is logged and the operator can reissue FirewallEnable.
+	// One attempt — best-effort by design. Retrying with sleep would
+	// block the shutdown path up to a cumulative few seconds per
+	// in-flight timer (GracefulStop drains the queue, but a goroutine
+	// sleeping between Submit calls doesn't observe that). A transient
+	// enable failure is logged and the operator can reissue
+	// FirewallEnable.
 	// Route through the queue so the Enable can't collide with a
 	// simultaneous stack reconcile or a mid-shutdown FlushAll. Post-
 	// Close the queue returns ErrClosed — treat that as "CP is tearing

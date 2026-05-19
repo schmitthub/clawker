@@ -87,9 +87,7 @@ interceptor change can't substitute the value the registry stores).
 Rows store the `(thumbprint, container_id, project, agent_name,
 registered_at, last_seen)` tuple; `Snapshot()` and `ListAgents`
 reconstruct the displayed AgentFullName on demand from project +
-agent_name. There is no precomputed identity column on the row —
-the historical `canonical_cn` column was dropped by goose
-migration 00002.
+agent_name. There is no precomputed identity column on the row.
 
 `Entry.Project` and `Entry.AgentName` are typed
 (`auth.ProjectSlug` / `auth.AgentName`). Construction goes through

@@ -83,7 +83,7 @@ type DockerfileContext struct {
     Packages []string; UID, GID int; IsAlpine, BuildKitEnabled bool
     Instructions *DockerfileInstructions; Inject *DockerfileInject
     // OTEL telemetry — from config.MonitoringConfig
-    OtelEndpoint string  // base URL only; SDK appends /v1/{metrics,logs,traces}
+    OtelEndpoint string  // base URL only; SDK appends /v1/{metrics,logs,traces}. Traces ride the same base via OTEL_TRACES_EXPORTER=otlp + CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1, both hard-coded in Dockerfile.tmpl (not context fields).
     OtelLogsExportInterval, OtelMetricExportInterval int
     OtelLogToolDetails, OtelLogUserPrompts, OtelIncludeAccountUUID, OtelIncludeSessionID bool
     HasFirewallCA bool; GoBuilderImage string
