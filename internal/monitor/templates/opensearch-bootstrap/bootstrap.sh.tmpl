@@ -154,15 +154,6 @@ until curl -fsS -o /dev/null "${DASHBOARDS_URL}/api/status"; do
 done
 echo "==> bootstrap: Dashboards reachable"
 
-NDJSON="${BOOTSTRAP_DIR}/saved-objects/clawker.ndjson"
-if [ -s "${NDJSON}" ]; then
-  echo "==> bootstrap: importing saved objects from ${NDJSON}"
-  curl -fsS -X POST "${DASHBOARDS_URL}/api/saved_objects/_import?overwrite=true" \
-    -H "osd-xsrf: true" \
-    --form "file=@${NDJSON}" \
-    -o /dev/null
-fi
-
 # The OpenSearch Dashboards `explore` plugin (Discover replacement)
 # surfaces external query connectors — Prometheus, S3 — in its dataset
 # picker by listing `data-connection` saved objects and filtering by
@@ -170,7 +161,10 @@ fi
 # (registered above via `apply_datasources`) lives in the SQL plugin's
 # own catalog, separate from OSD's saved-objects store; without this
 # `data-connection` SO, the explore-metrics dataset picker is empty.
-# POST with explicit id + overwrite=true is fully idempotent.
+# Kept global (not workspace-scoped) because the workspace's
+# `settings.dataConnections` list below references this SO by id, and
+# OSD resolves that list against the global saved-objects store. POST
+# with explicit id + overwrite=true is fully idempotent.
 echo "==> bootstrap: PUT data-connection clawker-prometheus-conn"
 curl -fsS -X POST \
   "${DASHBOARDS_URL}/api/saved_objects/data-connection/clawker-prometheus-conn?overwrite=true" \
@@ -186,17 +180,18 @@ EOF
 # a workspace, /app/explore/metrics returns "Application Not Found".
 # Create a "Clawker" workspace with use-case-all (every nav group
 # enabled) the first time bootstrap runs; subsequent runs find it by
-# name and skip. use-case-all keeps observability + security analytics
-# + search + essentials all reachable from one workspace so a single
-# operator pane covers agent telemetry, firewall/security events, and
-# any future cross-cutting views. The workspace's settings.dataConnections
-# list references the SO above so the explore-metrics dataset picker can
-# resolve `clawker_prometheus`. Workspace IDs are auto-generated, so we
-# do not pin one here.
-if curl -fsS -H 'osd-xsrf: true' -H 'Content-Type: application/json' \
-    -X POST "${DASHBOARDS_URL}/api/workspaces/_list" -d '{}' \
-    | grep -q '"name":"Clawker"'; then
-  echo "==> bootstrap: workspace 'Clawker' already exists, skipping"
+# name. use-case-all keeps observability + security analytics + search
+# + essentials all reachable from one workspace so a single operator
+# pane covers agent telemetry, firewall/security events, and any
+# future cross-cutting views. The workspace's settings.dataConnections
+# list references the data-connection SO above so the explore-metrics
+# dataset picker can resolve `clawker_prometheus`. Workspace IDs are
+# auto-generated; we capture the id from the _list response so the
+# subsequent saved-objects import can be workspace-scoped.
+LIST=$(curl -fsS -H 'osd-xsrf: true' -H 'Content-Type: application/json' \
+  -X POST "${DASHBOARDS_URL}/api/workspaces/_list" -d '{}')
+if echo "${LIST}" | grep -q '"name":"Clawker"'; then
+  echo "==> bootstrap: workspace 'Clawker' already exists"
 else
   echo "==> bootstrap: POST workspace 'Clawker'"
   curl -fsS -X POST "${DASHBOARDS_URL}/api/workspaces" \
@@ -206,6 +201,39 @@ else
     -o /dev/null
 {"attributes":{"name":"Clawker","description":"Clawker observability","features":["use-case-all"]},"settings":{"dataConnections":["clawker-prometheus-conn"]}}
 EOF
+  LIST=$(curl -fsS -H 'osd-xsrf: true' -H 'Content-Type: application/json' \
+    -X POST "${DASHBOARDS_URL}/api/workspaces/_list" -d '{}')
+fi
+
+# Workspace ids are auto-generated per fresh `monitor up`. Parse from
+# _list (no jq in curlimages/curl). Each workspace object emits
+# `"name":"…",…,"id":"…"` on a single line; awk locks onto the segment
+# starting at name="Clawker" and walks forward to the id field.
+WS_ID=$(echo "${LIST}" | awk 'match($0, /"name":"Clawker"[^}]*"id":"[^"]*"/){
+  s=substr($0, RSTART, RLENGTH)
+  match(s, /"id":"[^"]*"/)
+  print substr(s, RSTART+6, RLENGTH-7)
+}')
+if [ -z "${WS_ID}" ]; then
+  echo "    failed to extract workspace id from _list response"
+  echo "${LIST}"
+  exit 1
+fi
+echo "==> bootstrap: workspace 'Clawker' id=${WS_ID}"
+
+# Import saved objects INTO the workspace. Posting against the global
+# /api/saved_objects/_import endpoint leaves SOs workspace-less, so
+# they're invisible inside the workspace UI even though the workspace
+# exists. The workspace-scoped path /w/<wsId>/api/saved_objects/_import
+# stamps `workspaces: [<wsId>]` on every imported SO. Re-runs are
+# idempotent via ?overwrite=true.
+NDJSON="${BOOTSTRAP_DIR}/saved-objects/clawker.ndjson"
+if [ -s "${NDJSON}" ]; then
+  echo "==> bootstrap: importing saved objects from ${NDJSON} into workspace ${WS_ID}"
+  curl -fsS -X POST "${DASHBOARDS_URL}/w/${WS_ID}/api/saved_objects/_import?overwrite=true" \
+    -H "osd-xsrf: true" \
+    --form "file=@${NDJSON}" \
+    -o /dev/null
 fi
 
 echo "==> bootstrap: complete"

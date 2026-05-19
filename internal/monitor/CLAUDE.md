@@ -128,7 +128,9 @@ opensearch-node (service_healthy via /_cluster/health)     prometheus (service_s
    - POST /_plugins/_query/_datasources (body=file) for each datasources/*.json;
      PUT same endpoint on 400/409 to update an existing datasource
    - poll http://opensearch-dashboards:5601/api/status until 2xx
-   - POST /api/saved_objects/_import?overwrite=true (multipart NDJSON, osd-xsrf: true)
+   - POST /api/saved_objects/data-connection/clawker-prometheus-conn?overwrite=true (global; referenced by workspace settings.dataConnections)
+   - POST /api/workspaces (skip-if-exists by name "Clawker"); capture workspace id from /api/workspaces/_list
+   - POST /w/<wsId>/api/saved_objects/_import?overwrite=true (multipart NDJSON, osd-xsrf: true) — workspace-scoped so imported SOs land with workspaces:[wsId] and are visible in the Clawker workspace UI
    - exit 0
                                    │  (service_completed_successfully)
                                    ▼
