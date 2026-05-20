@@ -48,5 +48,4 @@ Next Steps:
 ```
 - [ ] Project init on linux at least fails when selecting typescript preset at least `writing .clawker.yaml: storage: remerge: storage: unmarshalling to struct: yaml: unmarshal errors: line 23: cannot unmarshal !!str `ENV NVM...` into []string` after cloning clawker.dev repo. Seems to be ignoring the existing `.clawker.yaml`. `clawker project register` `✗ no project config found in /home/ubuntu/clawker.dev — run 'clawker project init' first to create one`. Might be a malformed file so its struggling to read it and claiming it doesn't exist instead. Update: confirmed due to legacy field type after_user_switch was multi-line string, now list
 - [ ] logs from infra containers on linux are owned by root and unread without sudo
-- [ ] control plane won't start fully on linx ✗ bringing control plane up: clawker-cp did not become ready within 1m0.071250355s (healthz at http://127.0.0.1:7080/healthz); last transport error: Get "http://127.0.0.1:7080/healthz": dial tcp 127.0.0.1:7080: connect: connection refused. 
 - [ ] when gpg agent was dead the container TTY doesn't fully shutdown nor does it get destroyed it hangs. looks like claude does exist tho
