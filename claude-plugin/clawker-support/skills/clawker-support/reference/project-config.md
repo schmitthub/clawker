@@ -117,9 +117,22 @@ triggers a build).
    with different package names. Check the project's base image, then research
    the correct package name for that distro — do not guess.
 
-4. **Network error during build**: The build runs outside the firewall
-   (it needs to pull packages). But if using a custom registry or proxy,
-   ensure network access is available during build.
+4. **Network error during build**: `clawker build` is a host process that
+   asks the Docker daemon to build the agent image. Image pulls and
+   `RUN` step traffic originate from the daemon itself, not from any
+   agent container. The clawker firewall filters only agent-container
+   egress, so it does NOT and CANNOT affect build-time traffic. **Do not recommend `clawker firewall add` or any
+   firewall change to fix a build network error — it will have zero
+   effect.** Diagnose as a daemon/host network problem:
+   - Host DNS or corporate proxy misconfigured
+   - Registry outage (Docker Hub, GHCR, distro mirror)
+   - Base image tag/digest no longer exists
+   - VPN MTU or TLS interception breaking package downloads
+   - Docker daemon proxy settings (`~/.docker/config.json`, Docker
+     Desktop proxy pane, daemon `HTTP_PROXY` env)
+
+   See the "Firewall Scope" critical rule in `SKILL.md` for the host vs
+   container split.
 
 5. **COPY file not found**: Copy instruction paths are relative to the build
    context (project root). Verify the source file exists at the specified path.

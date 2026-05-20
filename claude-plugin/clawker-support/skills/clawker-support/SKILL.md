@@ -94,6 +94,97 @@ targets and why.** If the user hasn't told you which level, ASK.
 from project config — it does not participate in walk-up discovery or project
 config inheritance. See `reference/settings.md` for when and how to consult it.
 
+## Critical Rule: Firewall Scope — Containers Only, Never Host
+
+**The clawker firewall filters egress from agent containers. It has zero
+effect on host-side commands.** Enforcement is eBPF programs attached to
+each agent container's cgroup plus an Envoy+CoreDNS dataplane on
+`clawker-net`. Host processes are not on `clawker-net` and their syscalls
+do not traverse those cgroups.
+
+**Host-side operations are NEVER affected by firewall rules.** Every
+`clawker` subcommand is a host process. See the "How clawker talks to
+Docker" rule below for the mechanics — the short version is that
+build/run/container/image/etc. talk to the Docker daemon directly from
+the clawker process, and only `clawker monitor *` shells out to
+`docker compose`. Either way, nothing executes inside an agent
+container. Examples that are unfiltered:
+
+- `clawker build` — the host clawker process drives the image build via
+  the Docker daemon. Base image fetches and `RUN apt-get install` traffic
+  originate from the daemon and `docker buildx` builder, not from any
+  agent cgroup. None of it crosses the firewall dataplane.
+- `clawker init`, `clawker version`, `clawker auth *`
+- Any `clawker firewall *` command itself (talks to CP, not filtered)
+- Any other `clawker` subcommand executed on the host shell
+
+**If `clawker build` fails with a network error, it is NOT a firewall
+problem.** Diagnose as a host network issue: DNS, corporate proxy,
+registry outage, base image tag changed, package mirror down, MTU on
+VPN, etc. Adding domains to the firewall allowlist will not fix it.
+Removing the firewall will not fix it.
+
+**Container-side operations ARE filtered.** Anything an agent does from
+inside its running container — `curl`, `git clone`, `npm install`,
+`pip install`, MCP servers calling external APIs, `apt-get update` run
+at runtime (not build) — passes through the firewall.
+
+**Heuristic:** "Where does the network syscall originate?" Host shell →
+not filtered. Inside an agent container → filtered. If unsure, ask the
+user where they ran the command.
+
+## Critical Rule: How Clawker Talks to Docker — SDK, Not CLI
+
+**Clawker is a Docker CLI replacement, not a wrapper around it.** This
+matters whenever you're describing what clawker does, attributing errors,
+or reasoning about which process owns a network call.
+
+**Default mechanism.** The host `clawker` process talks to the Docker
+Engine API directly. For everything in the build / run / container /
+image / volume / network / project / worktree surface, clawker does
+NOT exec a `docker` binary. There is no `docker` fork-exec, no CLI
+exit code parsing, no requirement that a `docker` CLI exist on the
+host's PATH.
+
+**The single exception — `clawker monitor *`.** The monitoring stack
+(OTel Collector + OpenSearch + Dashboards + Prometheus + bootstrap) is
+orchestrated by `docker compose`, and clawker shells out to the
+`docker compose` CLI to drive it. Compose is the chosen orchestrator
+for that stack specifically; the CLI owns its lifecycle and users
+should not run compose against it directly.
+
+**What this means for your responses:**
+
+- **Never tell the user** "clawker runs `docker build`" / "clawker
+  calls `docker pull`" / "clawker invokes the docker CLI" outside the
+  monitor context. It is factually wrong and the user will (rightly)
+  call it out.
+- **Do say** "clawker talks to the Docker daemon directly" or "the
+  clawker process drives the Docker Engine API" when describing
+  build/run/etc. This is the right level of detail for an end user.
+- **Error attribution.** Build failures surface from clawker as
+  structured errors carrying daemon output, not as `docker` CLI exit
+  codes. When diagnosing, ask the user for the clawker command output,
+  not a `docker` command transcript.
+- **Dependency reasoning.** A missing `docker` binary on PATH breaks
+  ONLY `clawker monitor *`. Everything else only needs a reachable
+  Docker daemon socket.
+
+**Internal-only context — do NOT surface to users.** The following
+implementation details exist for your reasoning; they are NOT
+appropriate in user-facing responses (end users don't care and
+mentioning them leaks irrelevant codebase trivia):
+
+- The moby SDK package name, `pkg/whail` (clawker's decorated moby
+  client), specific Go types, internal package boundaries.
+- File paths inside the clawker repo (`internal/...`, `cmd/...`).
+- Function names, struct names, or interface names from the codebase.
+- BuildKit / buildx internals beyond "the daemon does the build."
+
+If a user explicitly asks "how is this implemented?" or is clearly
+contributing to clawker itself, you may surface these. Default
+otherwise is silence on internals.
+
 ## Workflow
 
 Follow this methodology for every support request:
@@ -281,6 +372,24 @@ These are the things users consistently get wrong. Keep them in mind always:
   Anthropic domains must be explicitly allowed. Fetch the current firewall
   docs if you need the exact list.
 
+- **Firewall does NOT filter host commands.** Every `clawker` subcommand
+  runs as a host process. eBPF programs are attached to agent container
+  cgroups, not the host or the Docker daemon. A `clawker build` failure
+  pulling a base image or apt package is a host/daemon network problem
+  (DNS, corporate proxy, registry outage). Never recommend firewall
+  rules to fix it. See the "Firewall Scope" and "How Clawker Talks to
+  Docker" critical rules above.
+
+- **Clawker is a Docker CLI replacement, not a wrapper.** Build / run /
+  container / image / volume / network / etc. all talk to the Docker
+  daemon directly from the clawker process — clawker does NOT exec the
+  `docker` CLI. The lone exception is `clawker monitor *`, which
+  shells out to `docker compose` to orchestrate the monitoring stack.
+  Do not describe clawker as "running `docker build`" or "calling
+  `docker pull`" outside the monitor context. Keep responses at this
+  level — internal Go packages / SDK names belong to developers, not
+  end users.
+
 - **Control plane (CP) is required for runtime firewall operations.** `clawker
   firewall add/remove/reload/bypass/enable/disable` all route through the CP
   daemon's AdminService gRPC. CP is bootstrapped transparently on first use,
@@ -328,6 +437,16 @@ These are the things users consistently get wrong. Keep them in mind always:
 
 ## Response guidelines
 
+- **Audience is end users of clawker, not clawker developers.** Speak in
+  terms of CLI commands, config files, the Docker daemon, agent
+  containers, the firewall, the control plane — concepts a user sees and
+  configures. Do NOT name internal Go packages, source paths (`pkg/...`,
+  `internal/...`, `cmd/...`), SDK library names (e.g. the moby SDK),
+  struct or interface names, or buildx/BuildKit internals. Those are
+  context for your reasoning only. If the user is unambiguously
+  contributing to clawker itself (asking about source, working in the
+  repo on internals), you may surface implementation details — default
+  otherwise is silence on internals.
 - **Always state the target file.** Every YAML block must be prefixed with the
   file path it targets. Never give YAML without specifying where it goes.
   Default to project-level.
