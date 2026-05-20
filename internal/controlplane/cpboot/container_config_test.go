@@ -354,3 +354,17 @@ func TestCPContainer_OtelLogsEnv_Emitted(t *testing.T) {
 		assert.True(t, found, "missing OTEL env var %s in CP container env", k)
 	}
 }
+
+// TestCPContainer_SecurityOpt_AppArmorUnconfined pins the
+// BuildCPContainerConfig output. See the SecurityOpt field doc in
+// cp_container.go for the AppArmor deny-rule detail and why the
+// unconfine isn't load-bearing.
+func TestCPContainer_SecurityOpt_AppArmorUnconfined(t *testing.T) {
+	testenv.New(t)
+	cfg := configmocks.NewBlankConfig()
+
+	cpConfig, err := BuildCPContainerConfig(cfg, testCPOpts())
+	require.NoError(t, err)
+	assert.Contains(t, cpConfig.SecurityOpt, "apparmor=unconfined",
+		"CP container must set apparmor=unconfined so bpffs writes (mkdir /sys/fs/bpf/clawker) are not denied by docker-default")
+}

@@ -186,6 +186,29 @@ func TestEnsureRunning_HappyPath_CreatesContainer(t *testing.T) {
 	assert.Equal(t, int32(1), f.calls.healthz.Load(), "healthz polled once")
 }
 
+// TestEnsureRunning_ForwardsSecurityOptToHostConfig pins the
+// createCPContainer wiring that copies cpConfig.SecurityOpt into the
+// moby HostConfig. The companion BuildCPContainerConfig test only
+// covers the upstream struct; without this assertion, a future change
+// could keep SecurityOpt populated on the config layer while dropping
+// the HostConfig assignment, silently re-enabling docker-default
+// AppArmor and re-introducing the bpffs mkdir EPERM at eBPF Load.
+func TestEnsureRunning_ForwardsSecurityOptToHostConfig(t *testing.T) {
+	f := newBootstrapFixture(t)
+
+	var captured *container.HostConfig
+	f.fake.FakeAPI.ContainerCreateFn = func(_ context.Context, opts mobyclient.ContainerCreateOptions) (mobyclient.ContainerCreateResult, error) {
+		f.calls.create.Add(1)
+		captured = opts.HostConfig
+		return mobyclient.ContainerCreateResult{ID: "cp-id"}, nil
+	}
+
+	require.NoError(t, EnsureRunning(t.Context(), f.ensureOpts()))
+	require.NotNil(t, captured, "ContainerCreate must receive a HostConfig")
+	assert.Contains(t, captured.SecurityOpt, "apparmor=unconfined",
+		"createCPContainer must forward cpConfig.SecurityOpt into HostConfig")
+}
+
 func TestEnsureRunning_AlreadyRunning_IsNoOp(t *testing.T) {
 	f := newBootstrapFixture(t)
 

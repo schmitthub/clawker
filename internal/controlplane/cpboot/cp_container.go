@@ -64,6 +64,15 @@ type CPContainerConfig struct {
 	PortBindings network.PortMap
 	// CapAdd are the Linux capabilities added to the container.
 	CapAdd []string
+	// SecurityOpt are Docker security options. CP sets
+	// "apparmor=unconfined" because docker-default denies writes to
+	// /sys/fs/** except /sys/fs/cgroup/** (rule "deny /sys/fs/[^c]*/**
+	// wklx"), blocking `mkdir /sys/fs/bpf/clawker` at eBPF Load
+	// regardless of CAP_BPF + CAP_SYS_ADMIN. AppArmor is not load-
+	// bearing on this container — CP already holds CAP_SYS_ADMIN,
+	// CAP_BPF, a Docker-socket bind-mount, and bpffs RW; mirrors the
+	// cilium-agent production posture (appArmorProfile: Unconfined).
+	SecurityOpt []string
 	// Env are environment variables for the container.
 	Env []string
 	// Cmd is the command to run inside the container.
@@ -307,6 +316,7 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 		Mounts:       mounts,
 		PortBindings: portBindings,
 		CapAdd:       []string{"BPF", "SYS_ADMIN"},
+		SecurityOpt:  []string{"apparmor=unconfined"},
 		Env: append([]string{
 			consts.EnvConfigDir + "=" + consts.CPClawkerConfigDir,
 			consts.EnvDataDir + "=" + consts.CPClawkerDataDir,

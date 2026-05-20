@@ -25,6 +25,25 @@ The CP container is a single binary, `clawker-cp`, running as PID 1. Inside it:
 - **Agent watcher + clean self-shutdown** — polls Docker every 30s for `purpose=agent, managed=true` containers. After drain-to-zero (`missed_threshold × pollInterval + 60s` grace), it fires an ordered drain callback: cancel bypass timers → graceful gRPC stop → Stack stop → eBPF `FlushAll` → exit code 0. The `on-failure` restart policy does not retrigger.
 - **Aggregate `/healthz`** — host-loopback HTTP on `HealthPort` (default `7080`) probes every internal service port before returning 200. Used by both `clawker controlplane status` and the host-side bootstrap to confirm readiness.
 
+## Container Privileges
+
+The CP container runs with elevated permissions because it is the host-side supervisor that loads kernel-attached eBPF programs and brings up the sibling firewall containers (Envoy, CoreDNS) on your behalf. The full privilege set is:
+
+| Privilege | Why CP needs it |
+|-----------|----------------|
+| `CAP_SYS_ADMIN` | Required to attach cgroup-bound eBPF programs to agent containers' cgroups and to mount the bpffs pin path. |
+| `CAP_BPF` | Required to load BPF programs and create/update pinned BPF maps. |
+| `/sys/fs/bpf` (RW bind mount) | Where BPF programs and maps are pinned. Pins survive across CP restarts (they're attached to cgroups, not CP's process). CP needs RW to mount the `clawker` subdirectory at boot, sync routes on rule changes, and flush state during clean shutdown. |
+| `/sys/fs/cgroup` (RO bind mount) | Required to enumerate agent containers' cgroup paths so CP can attach BPF programs to the right cgroup. |
+| `/var/run/docker.sock` (bind mount, RO file flag) | CP subscribes to Docker events (container start/stop/destroy) and brings up the Envoy/CoreDNS sibling containers via the Docker API. The RO flag only prevents the socket file itself from being replaced inside the container — once the socket is open, the Docker daemon honors any API call over it, so CP has full Docker control regardless of the mount flag. |
+| `apparmor=unconfined` | Docker's `docker-default` AppArmor profile denies writes under `/sys/fs/**` (except `/sys/fs/cgroup/**`), which blocks `mkdir /sys/fs/bpf/clawker` at eBPF load even with `CAP_BPF + CAP_SYS_ADMIN`. CP runs unconfined so the bpffs pin path is writable. This mirrors the upstream cilium-agent posture (`appArmorProfile.type: Unconfined`). Defense-in-depth on the CP container relies on the docker-default seccomp profile, namespaces, masked `/proc` paths, and `no-new-privileges` — all still applied. |
+
+**These privileges are not extended to agent containers.** The agent container itself runs fully unprivileged: `cap_add: []`, the docker-default seccomp and AppArmor profiles, no `/sys/fs/bpf` or `/sys/fs/cgroup` mount, no Docker socket. The agent's blast radius is bounded by its own container; CP's privileges exist only to *enforce* that boundary, not to relax it.
+
+<Warning>
+CP is the privileged side of the security boundary. Anything with write access to the CP binary, the embedded `ebpf-manager`, the mounted CA, or the AdminService server certs can subvert firewall enforcement for every agent container on the host. Apply the [release verification](/threat-model#verifying-a-release) procedure to any clawker upgrade, and do not bind-mount additional host paths into the CP container via local modifications.
+</Warning>
+
 ## Guarantees
 
 1. **eBPF programs have a deterministic owner.** BPF cgroup programs and pinned maps survive the CP container's death (they're under `/sys/fs/bpf`). Without a supervisor, rule changes would silently fail and bypass timers would never expire. CP is the single owner — its drain callback is the only clean exit path that detaches and flushes eBPF state.

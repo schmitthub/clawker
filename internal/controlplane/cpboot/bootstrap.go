@@ -264,6 +264,7 @@ func createCPContainer(ctx context.Context, dc *docker.Client, cfg config.Config
 		Mounts:        cpCfg.Mounts,
 		PortBindings:  cpCfg.PortBindings,
 		CapAdd:        cpCfg.CapAdd,
+		SecurityOpt:   cpCfg.SecurityOpt,
 		RestartPolicy: cpCfg.RestartPolicy,
 		ExtraHosts:    cpCfg.ExtraHosts,
 	}

@@ -142,6 +142,16 @@ See the [Firewall](/firewall) guide for the full architecture, configuration, an
 Claude Code's `WebSearch` tool [uses Anthropic's API to perform searches](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool#how-web-search-works). This means the agent may appear to reach domains that are not in your allowlist via search results, but this is not a firewall bypass. The `WebFetch` tool, however, does go through the container's network and is subject to the firewall.
 </Note>
 
+### Infrastructure container privileges
+
+Enforcing the agent-container boundary requires a small number of clawker-managed infrastructure containers that run with elevated permissions:
+
+- **Control plane (`clawker-controlplane`)** holds `CAP_SYS_ADMIN` + `CAP_BPF`, RW-mounts `/sys/fs/bpf`, RO-mounts `/sys/fs/cgroup`, bind-mounts the Docker socket, and runs with `apparmor=unconfined`. It owns eBPF program loading, cgroup attach/detach, and lifecycle of the sibling firewall containers. See [Control Plane → Container Privileges](/control-plane#container-privileges) for the per-privilege rationale.
+- **CoreDNS (`clawker-coredns`)** runs with `CAP_BPF + CAP_SYS_ADMIN` and a `/sys/fs/bpf` bind mount — the minimum required to write resolved `IP → domain_hash` entries into the pinned `dns_cache` map at every successful DNS reply. See [Firewall → Architecture](/firewall#architecture).
+- **Envoy (`envoyproxy/envoy`)** runs unprivileged; it is the data-plane TLS terminator only.
+
+These privileges sit on the *enforcement* side of the trust boundary and are **not extended to your agent containers**. Agent containers run unprivileged (`cap_add: []`, docker-default seccomp + AppArmor, no kernel-surface mounts, no Docker socket). The infrastructure containers' job is to constrain what agent containers can do — they do not give the agent any additional reach. Anything that can tamper with the CP binary, the embedded `ebpf-manager`, or the bind-mounted CA can subvert enforcement for every agent on the host, which is why the [release verification](#verifying-a-release) procedure matters for upgrades.
+
 ## Data Exfiltration via Network Egress
 
 **Threat:** A prompt-injected or hallucinating agent sends source code, secrets, environment variables, or credentials to an attacker-controlled endpoint — or leaks sensitive data to unintended services.
