@@ -354,3 +354,21 @@ func TestCPContainer_OtelLogsEnv_Emitted(t *testing.T) {
 		assert.True(t, found, "missing OTEL env var %s in CP container env", k)
 	}
 }
+
+// TestCPContainer_SecurityOpt_AppArmorUnconfined — docker-default
+// AppArmor denies writes under /sys/fs/** (except /sys/fs/cgroup/**),
+// blocking `mkdir /sys/fs/bpf/clawker` at eBPF Load on Linux hosts
+// where AppArmor is enforcing (Ubuntu native; not Docker Desktop on
+// macOS). The CP container ships with `apparmor=unconfined` so the
+// bpffs pin path is writable. Regression test: a future PR that drops
+// or renames the SecurityOpt would re-introduce the "step 7 (ebpf
+// load): mkdir /sys/fs/bpf/clawker: permission denied" boot loop.
+func TestCPContainer_SecurityOpt_AppArmorUnconfined(t *testing.T) {
+	testenv.New(t)
+	cfg := configmocks.NewBlankConfig()
+
+	cpConfig, err := BuildCPContainerConfig(cfg, testCPOpts())
+	require.NoError(t, err)
+	assert.Contains(t, cpConfig.SecurityOpt, "apparmor=unconfined",
+		"CP container must set apparmor=unconfined so bpffs writes (mkdir /sys/fs/bpf/clawker) are not denied by docker-default")
+}
