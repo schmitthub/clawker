@@ -142,11 +142,15 @@ func (m *Manager) Load() error {
 // re-loading the BPF programs.
 func (m *Manager) OpenPinned() error {
 	maps := map[string]**ebpf.Map{
-		"container_map": &m.objs.ContainerMap,
-		"bypass_map":    &m.objs.BypassMap,
-		"dns_cache":     &m.objs.DnsCache,
-		"route_map":     &m.objs.RouteMap,
-		"metrics_map":   &m.objs.MetricsMap,
+		"container_map":   &m.objs.ContainerMap,
+		"bypass_map":      &m.objs.BypassMap,
+		"dns_cache":       &m.objs.DnsCache,
+		"route_map":       &m.objs.RouteMap,
+		"metrics_map":     &m.objs.MetricsMap,
+		"events_ringbuf":  &m.objs.EventsRingbuf,
+		"events_drops":    &m.objs.EventsDrops,
+		"ratelimit_state": &m.objs.RatelimitState,
+		"ratelimit_drops": &m.objs.RatelimitDrops,
 	}
 	for name, target := range maps {
 		mp, err := ebpf.LoadPinnedMap(filepath.Join(m.pinPath, name), nil)
@@ -404,6 +408,53 @@ func (m *Manager) FlushAll() error {
 		for _, id := range keys {
 			if err := m.objs.BypassMap.Delete(id); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
 				errs = append(errs, fmt.Errorf("flush bypass_map[%d]: %w", id, err))
+			}
+		}
+	}
+
+	// Drain ratelimit_state so a CP restart leaves each cgroup starting from
+	// a full token bucket — matches drain-to-zero semantics for the other
+	// per-cgroup maps. LRU eviction would eventually do this, but explicit
+	// drain keeps the post-drain state deterministic.
+	if m.objs.RatelimitState != nil {
+		var keys []uint64
+		var key uint64
+		var val clawkerRatelimitStateVal
+		iter := m.objs.RatelimitState.Iterate()
+		for iter.Next(&key, &val) {
+			keys = append(keys, key)
+		}
+		if err := iter.Err(); err != nil {
+			errs = append(errs, fmt.Errorf("iterate ratelimit_state: %w", err))
+		}
+		for _, id := range keys {
+			if err := m.objs.RatelimitState.Delete(id); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+				errs = append(errs, fmt.Errorf("flush ratelimit_state[%d]: %w", id, err))
+			}
+		}
+	}
+
+	// Drain ratelimit_drops so per-cgroup drop counters reset on CP restart.
+	// Unlike ratelimit_state, ratelimit_drops is a plain BPF_MAP_TYPE_HASH
+	// with no eviction — without this drain, drop counts from previous CP
+	// lifetimes would accumulate indefinitely up to max_entries=256.
+	// Operators expect "since the current CP started" semantics; carrying
+	// stale counts across restarts would misattribute drops to fresh
+	// containers reusing recycled cgroup IDs.
+	if m.objs.RatelimitDrops != nil {
+		var keys []uint64
+		var key uint64
+		var val uint64
+		iter := m.objs.RatelimitDrops.Iterate()
+		for iter.Next(&key, &val) {
+			keys = append(keys, key)
+		}
+		if err := iter.Err(); err != nil {
+			errs = append(errs, fmt.Errorf("iterate ratelimit_drops: %w", err))
+		}
+		for _, id := range keys {
+			if err := m.objs.RatelimitDrops.Delete(id); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+				errs = append(errs, fmt.Errorf("flush ratelimit_drops[%d]: %w", id, err))
 			}
 		}
 	}
@@ -696,6 +747,35 @@ func (m *Manager) LookupContainer(cgroupID uint64) (clawkerContainerConfig, erro
 	var cfg clawkerContainerConfig
 	err := m.objs.ContainerMap.Lookup(cgroupID, &cfg)
 	return cfg, err
+}
+
+// EventsRingbuf returns the pinned events_ringbuf map handle. Read-only:
+// netlogger uses ringbuf.NewReader on this map to drain egress event
+// records emitted by the cgroup BPF programs. Returns nil before Load /
+// OpenPinned has been called.
+func (m *Manager) EventsRingbuf() *ebpf.Map {
+	return m.objs.EventsRingbuf
+}
+
+// EventsDrops returns the pinned events_drops PERCPU_ARRAY map handle.
+// Userspace reads key=0 and sums across CPUs to surface kernel-fault
+// drop counts (bpf_ringbuf_reserve returning NULL).
+func (m *Manager) EventsDrops() *ebpf.Map {
+	return m.objs.EventsDrops
+}
+
+// RatelimitDrops returns the pinned ratelimit_drops HASH map handle.
+// Userspace iterates {cgroup_id -> drop count} to attribute intentional
+// rate-limit drops to specific noisy agents.
+func (m *Manager) RatelimitDrops() *ebpf.Map {
+	return m.objs.RatelimitDrops
+}
+
+// DNSCache returns the pinned dns_cache map handle. Exposed so the
+// netlogger reverse-DNS map can iterate {IPv4 -> domain_hash} entries
+// without re-opening the pinned file. Read-only access pattern.
+func (m *Manager) DNSCache() *ebpf.Map {
+	return m.objs.DnsCache
 }
 
 // ContainerEntry pairs a cgroup ID with its container_map config.

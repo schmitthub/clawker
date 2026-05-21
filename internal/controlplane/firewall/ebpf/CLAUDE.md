@@ -37,8 +37,37 @@ All maps live at `PinPath = /sys/fs/bpf/clawker/`:
 | `dns_cache` | IPv4 (u32) | `dns_entry` {domain_hash, expire_ts} | `UpdateDNSCache` **and** `internal/dnsbpf` CoreDNS plugin | BPF fast path |
 | `route_map` | `{domain_hash, dst_port}` | `{envoy_port}` | `SyncRoutes` | BPF fast path |
 | `metrics_map` | `{cgroup_id, domain_hash, dst_port, action}` | counters | BPF fast path | userspace `dump` (break-glass) |
+| `events_ringbuf` | — (BPF_MAP_TYPE_RINGBUF) | `egress_event` | BPF `submit_event` | userspace `netlogger` reader |
+| `events_drops` | u32 (always 0) | u64 counter (PERCPU_ARRAY) | BPF `submit_event` on `bpf_ringbuf_reserve == NULL` | userspace `netlogger` periodic gauge |
+| `ratelimit_state` | cgroup ID (u64) | `ratelimit_state_val` {last_topup_ns, tokens} | BPF `ratelimit_check_and_take` + `ratelimit_refund`; drained by `FlushAll` | BPF fast path |
+| `ratelimit_drops` | cgroup ID (u64) | u64 counter | BPF `ratelimit_check_and_take` on empty bucket; drained by `FlushAll` | userspace `netlogger` per-cgroup attribution |
 
 `route_map` is **global** — container enforcement is gated by presence in `container_map`, so a single `SyncRoutes` call updates routing for every enforced container atomically.
+
+`events_ringbuf` is single-producer-per-decision-point (each cgroup BPF program), single-consumer (one userspace reader). 256 KiB ring sized for `egress_event` records (32 bytes each). The buffer is a power-of-2 multiple of the page size so `cilium/ebpf` accepts it. Records dropped on a full ring increment `events_drops`; rate-limited records increment `ratelimit_drops` and never touch the ring.
+
+`ratelimit_state` is `BPF_MAP_TYPE_LRU_HASH` so dead cgroups evict without a userspace sweep. Refill arithmetic in `ratelimit_check_and_take` is intentionally non-atomic — bucket inaccuracy under racing CPUs is cheaper than the cmpxchg cost on the hot path. Token-bucket tunables (`RATELIMIT_BURST=64`, `RATELIMIT_REFILL_NS=100ms`, `RATELIMIT_TOKENS_PER=64`) live as `#define` constants in `bpf/common.h`.
+
+### Endianness convention for `struct egress_event`
+
+| Field | Byte order | Why |
+|-------|-----------|-----|
+| `ts_ns`, `cgroup_id`, `domain_hash`, `dst_port`, `verdict`, `flags`, `l4_proto` | host | Userspace consumes via `binary.NativeEndian` on a `clawkerEgressEvent` struct (CO-RE `structs.HostLayout`). |
+| `dst_ip` | network | Matches `ctx->user_ip4` and `container_config` IP fields — userspace re-uses `Uint32ToIP` (NativeEndian → 4 net-order bytes → `net.IP`). |
+
+Callers MUST `bpf_ntohs(ctx->user_port)` before passing `dst_port` to `submit_event`. The helper itself never swaps; pick-one-side keeps every emit site explicit and prevents double-swap bugs.
+
+### `enter_state` enum
+
+`enter_enforced` returns `enum enter_state`. Values:
+
+| State | Meaning | Caller action |
+|-------|---------|---------------|
+| `ENTER_NOT_MANAGED` | uid==0, or container not in `container_map`. | `return 1;` (pass-through, no event). |
+| `ENTER_BYPASSED` | Managed and bypass flag set (only when caller passed `check_bypass=true`). | `submit_event(BYPASSED)` then `return 1;`. |
+| `ENTER_ENFORCED` | Managed, proceed to routing decision. `*cfg` and `*cgroup_id` populated. | Run `decide_connect` / `decide_sendmsg`, `submit_event(verdict)`, return verdict. |
+
+`enter_enforced` calls `metric_inc(ACTION_BYPASS)` on the confirmed bypass path so the existing `metrics_map` dump (consumed by the break-glass `ebpf-manager` CLI) keeps working; the `submit_event(BYPASSED)` record is the finer-grained signal for the netlogger pipeline.
 
 ## Key Types and Functions
 
@@ -61,7 +90,14 @@ func (m *Manager) LookupContainer(cgroupID uint64) (clawkerContainerConfig, erro
 // Startup / shutdown maintenance — not on EBPFManager interface; called
 // by cmd/clawker-cp directly so the RPC surface stays pure.
 func (m *Manager) CleanupStaleBypass() (int, error)         // INV-B2-013: clear orphan bypass_map entries at startup
-func (m *Manager) FlushAll() error                          // INV-B2-007: drain-to-zero — empty container_map + bypass_map, unpin links
+func (m *Manager) FlushAll() error                          // INV-B2-007: drain-to-zero — empty container_map + bypass_map + ratelimit_state + ratelimit_drops, unpin links
+
+// Read-only accessors for the netlogger subpackage. Return nil before
+// Load/OpenPinned; callers MUST nil-check.
+func (m *Manager) EventsRingbuf() *ebpf.Map                 // ringbuf.NewReader source for egress events
+func (m *Manager) EventsDrops() *ebpf.Map                   // PERCPU_ARRAY of kernel-fault drop counts (key=0)
+func (m *Manager) RatelimitDrops() *ebpf.Map                // HASH of {cgroup_id → intentional rate-limit drops}
+func (m *Manager) DNSCache() *ebpf.Map                      // HASH of {IPv4 → dns_entry}; netlogger reverse-DNS source
 ```
 
 Helpers in `types.go`:

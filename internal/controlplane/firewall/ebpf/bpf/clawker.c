@@ -74,12 +74,24 @@ int clawker_connect4(struct bpf_sock_addr *ctx)
 
 	struct container_config *cfg;
 	__u64 cgroup_id;
-	if (enter_enforced(&cfg, &cgroup_id, true))
+	enum enter_state st = enter_enforced(&cfg, &cgroup_id, true);
+	if (st == ENTER_NOT_MANAGED)
 		return 1;
 
+	__u16 dst_port_host = bpf_ntohs(ctx->user_port);
+
+	if (st == ENTER_BYPASSED) {
+		submit_event(cgroup_id, ctx->user_ip4, dst_port_host,
+			     (__u8)ctx->type, EGRESS_VERDICT_BYPASSED, 0);
+		return 1;
+	}
+
 	struct route_result r = decide_connect(ctx, cfg, cgroup_id,
-					       ctx->user_ip4,
-					       bpf_ntohs(ctx->user_port));
+					       ctx->user_ip4, dst_port_host);
+	__u8 verdict = (r.verdict == V_DENY) ? EGRESS_VERDICT_DENIED
+					     : EGRESS_VERDICT_ALLOWED;
+	submit_event(cgroup_id, ctx->user_ip4, dst_port_host,
+		     (__u8)ctx->type, verdict, 0);
 	return apply_v4(ctx, r);
 }
 
@@ -92,12 +104,24 @@ int clawker_sendmsg4(struct bpf_sock_addr *ctx)
 {
 	struct container_config *cfg;
 	__u64 cgroup_id;
-	if (enter_enforced(&cfg, &cgroup_id, true))
+	enum enter_state st = enter_enforced(&cfg, &cgroup_id, true);
+	if (st == ENTER_NOT_MANAGED)
 		return 1;
 
+	__u16 dst_port_host = bpf_ntohs(ctx->user_port);
+
+	if (st == ENTER_BYPASSED) {
+		submit_event(cgroup_id, ctx->user_ip4, dst_port_host,
+			     (__u8)ctx->type, EGRESS_VERDICT_BYPASSED, 0);
+		return 1;
+	}
+
 	struct route_result r = decide_sendmsg(cfg, cgroup_id,
-					       ctx->user_ip4,
-					       bpf_ntohs(ctx->user_port));
+					       ctx->user_ip4, dst_port_host);
+	__u8 verdict = (r.verdict == V_DENY) ? EGRESS_VERDICT_DENIED
+					     : EGRESS_VERDICT_ALLOWED;
+	submit_event(cgroup_id, ctx->user_ip4, dst_port_host,
+		     (__u8)ctx->type, verdict, 0);
 	return apply_v4(ctx, r);
 }
 
@@ -113,7 +137,9 @@ int clawker_recvmsg4(struct bpf_sock_addr *ctx)
 {
 	struct container_config *cfg;
 	__u64 cgroup_id;
-	if (enter_enforced(&cfg, &cgroup_id, false))
+	// recvmsg is response-side — no egress decision, no event emission.
+	// check_bypass=false: enter_enforced will never return BYPASSED here.
+	if (enter_enforced(&cfg, &cgroup_id, false) != ENTER_ENFORCED)
 		return 1;
 
 	if (should_rewrite_dns_source(cfg, ctx->user_ip4, bpf_ntohs(ctx->user_port))) {
@@ -136,23 +162,43 @@ int clawker_connect6(struct bpf_sock_addr *ctx)
 {
 	struct container_config *cfg;
 	__u64 cgroup_id;
-	if (enter_enforced(&cfg, &cgroup_id, true))
+	enum enter_state st = enter_enforced(&cfg, &cgroup_id, true);
+	if (st == ENTER_NOT_MANAGED)
 		return 1;
 
 	if (is_ipv6_loopback(ctx))
 		return 1;
 
+	__u16 dst_port_host = bpf_ntohs(ctx->user_port);
+
 	if (is_ipv4_mapped(ctx)) {
 		if (ctx->type != SOCK_STREAM && ctx->type != SOCK_DGRAM)
 			return 1;
+		__u32 dst_ip = ctx->user_ip6[3];
+		if (st == ENTER_BYPASSED) {
+			submit_event(cgroup_id, dst_ip, dst_port_host,
+				     (__u8)ctx->type, EGRESS_VERDICT_BYPASSED,
+				     EGRESS_FLAG_IPV4_MAPPED);
+			return 1;
+		}
 		struct route_result r = decide_connect(ctx, cfg, cgroup_id,
-						       ctx->user_ip6[3],
-						       bpf_ntohs(ctx->user_port));
+						       dst_ip, dst_port_host);
+		__u8 verdict = (r.verdict == V_DENY) ? EGRESS_VERDICT_DENIED
+						     : EGRESS_VERDICT_ALLOWED;
+		submit_event(cgroup_id, dst_ip, dst_port_host, (__u8)ctx->type,
+			     verdict, EGRESS_FLAG_IPV4_MAPPED);
 		return apply_v6_mapped(ctx, r);
 	}
 
-	// Native IPv6: deny (not supported).
-	metric_inc(cgroup_id, 0, bpf_ntohs(ctx->user_port), ACTION_DENY);
+	// Native IPv6: bypass emits + allows; otherwise deny.
+	if (st == ENTER_BYPASSED) {
+		submit_event(cgroup_id, 0, dst_port_host, (__u8)ctx->type,
+			     EGRESS_VERDICT_BYPASSED, EGRESS_FLAG_IPV6);
+		return 1;
+	}
+	metric_inc(cgroup_id, 0, dst_port_host, ACTION_DENY);
+	submit_event(cgroup_id, 0, dst_port_host, (__u8)ctx->type,
+		     EGRESS_VERDICT_DENIED, EGRESS_FLAG_IPV6);
 	return 0;
 }
 
@@ -169,21 +215,41 @@ int clawker_sendmsg6(struct bpf_sock_addr *ctx)
 {
 	struct container_config *cfg;
 	__u64 cgroup_id;
-	if (enter_enforced(&cfg, &cgroup_id, true))
+	enum enter_state st = enter_enforced(&cfg, &cgroup_id, true);
+	if (st == ENTER_NOT_MANAGED)
 		return 1;
 
 	if (is_ipv6_loopback(ctx))
 		return 1;
 
+	__u16 dst_port_host = bpf_ntohs(ctx->user_port);
+
 	if (is_ipv4_mapped(ctx)) {
+		__u32 dst_ip = ctx->user_ip6[3];
+		if (st == ENTER_BYPASSED) {
+			submit_event(cgroup_id, dst_ip, dst_port_host,
+				     (__u8)ctx->type, EGRESS_VERDICT_BYPASSED,
+				     EGRESS_FLAG_IPV4_MAPPED);
+			return 1;
+		}
 		struct route_result r = decide_sendmsg(cfg, cgroup_id,
-						       ctx->user_ip6[3],
-						       bpf_ntohs(ctx->user_port));
+						       dst_ip, dst_port_host);
+		__u8 verdict = (r.verdict == V_DENY) ? EGRESS_VERDICT_DENIED
+						     : EGRESS_VERDICT_ALLOWED;
+		submit_event(cgroup_id, dst_ip, dst_port_host, (__u8)ctx->type,
+			     verdict, EGRESS_FLAG_IPV4_MAPPED);
 		return apply_v6_mapped(ctx, r);
 	}
 
-	// Native IPv6 UDP: deny.
-	metric_inc(cgroup_id, 0, bpf_ntohs(ctx->user_port), ACTION_DENY);
+	// Native IPv6 UDP: bypass emits + allows; otherwise deny.
+	if (st == ENTER_BYPASSED) {
+		submit_event(cgroup_id, 0, dst_port_host, (__u8)ctx->type,
+			     EGRESS_VERDICT_BYPASSED, EGRESS_FLAG_IPV6);
+		return 1;
+	}
+	metric_inc(cgroup_id, 0, dst_port_host, ACTION_DENY);
+	submit_event(cgroup_id, 0, dst_port_host, (__u8)ctx->type,
+		     EGRESS_VERDICT_DENIED, EGRESS_FLAG_IPV6);
 	return 0;
 }
 
@@ -200,7 +266,9 @@ int clawker_recvmsg6(struct bpf_sock_addr *ctx)
 {
 	struct container_config *cfg;
 	__u64 cgroup_id;
-	if (enter_enforced(&cfg, &cgroup_id, false))
+	// recvmsg is response-side — no egress decision, no event emission.
+	// check_bypass=false: enter_enforced will never return BYPASSED here.
+	if (enter_enforced(&cfg, &cgroup_id, false) != ENTER_ENFORCED)
 		return 1;
 
 	// Only IPv4-mapped responses — native IPv6 doesn't go through CoreDNS.
@@ -229,13 +297,23 @@ int clawker_sock_create(struct bpf_sock *ctx)
 	// bpf_sock_addr* vs bpf_sock* — enter_enforced doesn't touch ctx, only
 	// bpf_get_current_uid_gid/bpf_get_current_cgroup_id, so the cast-free
 	// reuse is safe.
-	if (enter_enforced(&cfg, &cgroup_id, true))
+	enum enter_state st = enter_enforced(&cfg, &cgroup_id, true);
+	if (st == ENTER_NOT_MANAGED)
 		return 1;
+
+	if (st == ENTER_BYPASSED) {
+		submit_event(cgroup_id, 0, 0, (__u8)ctx->type,
+			     EGRESS_VERDICT_BYPASSED, 0);
+		return 1;
+	}
 
 	if (ctx->type == SOCK_RAW) {
 		metric_inc(cgroup_id, 0, 0, ACTION_DENY);
+		submit_event(cgroup_id, 0, 0, (__u8)ctx->type,
+			     EGRESS_VERDICT_DENIED, 0);
 		return 0;
 	}
+	submit_event(cgroup_id, 0, 0, (__u8)ctx->type, EGRESS_VERDICT_ALLOWED, 0);
 	return 1;
 }
 

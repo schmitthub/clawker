@@ -1,15 +1,48 @@
 package ebpf
 
 import (
+	"encoding/binary"
 	"errors"
 	"strings"
 	"syscall"
 	"testing"
 
 	"github.com/cilium/ebpf"
+	"github.com/cilium/ebpf/rlimit"
 
 	"github.com/schmitthub/clawker/internal/logger"
 )
+
+// TestEgressEvent_SizeMatchesABI mirrors the C-side
+// _Static_assert(sizeof(struct egress_event) == 32) on the Go side. If
+// bpf2go's generated struct ever drifts (toolchain upgrade, layout
+// semantic change, reordered field, padding mistake), this fails before
+// the netlogger reader can read a misaligned record off the ringbuf.
+func TestEgressEvent_SizeMatchesABI(t *testing.T) {
+	t.Parallel()
+	if got := binary.Size(EgressEvent{}); got != 32 {
+		t.Fatalf("EgressEvent on-wire size = %d; want 32 — C struct egress_event has drifted from the Go side", got)
+	}
+}
+
+// requireBPF skips a test if the kernel/container lacks the perms needed
+// to create in-memory BPF maps. Used for tests that need real ebpf.Map
+// handles in m.objs. CI on a privileged Linux runner never skips; dev
+// containers without CAP_BPF skip silently.
+func requireBPF(t *testing.T) {
+	t.Helper()
+	_ = rlimit.RemoveMemlock()
+	m, err := ebpf.NewMap(&ebpf.MapSpec{
+		Type:       ebpf.Hash,
+		KeySize:    8,
+		ValueSize:  8,
+		MaxEntries: 1,
+	})
+	if err != nil {
+		t.Skipf("BPF unavailable in this environment: %v", err)
+	}
+	m.Close()
+}
 
 // fakeBypassMap is an in-memory bypassMap used to exercise clearBypass
 // without a live kernel. It lets tests stage specific error conditions
@@ -425,5 +458,93 @@ func TestCgroupID_RejectsMaliciousPath(t *testing.T) {
 				t.Errorf("CgroupID(%q) reached os.Open before rejection: %v", tc.path, err)
 			}
 		})
+	}
+}
+
+// TestManager_FlushAll_NilObjsNoOp asserts FlushAll on a Manager with
+// zero-value objs neither panics nor returns an error. The drain code
+// for every per-cgroup map gates on `m.objs.X != nil` so that the
+// CP-startup degraded path (Load failed, manager pointer still wired)
+// can call FlushAll during shutdown without compounding the failure.
+func TestManager_FlushAll_NilObjsNoOp(t *testing.T) {
+	t.Parallel()
+	m := NewManager(logger.Nop())
+	if err := m.FlushAll(); err != nil {
+		t.Errorf("FlushAll on nil objs = %v; want nil", err)
+	}
+}
+
+// TestManager_FlushAll_DrainsRatelimitMaps verifies the new ratelimit_state
+// + ratelimit_drops drain logic added in Task 1. Constructs the two maps
+// directly (no Load → no pinning → no privileges beyond CAP_BPF) and
+// wires them into a Manager, populates entries, then asserts FlushAll
+// leaves both maps empty. CP-restart determinism — token buckets must
+// not carry across.
+func TestManager_FlushAll_DrainsRatelimitMaps(t *testing.T) {
+	t.Parallel()
+	requireBPF(t)
+
+	state, err := ebpf.NewMap(&ebpf.MapSpec{
+		Type:       ebpf.LRUHash,
+		KeySize:    8,
+		ValueSize:  16, // matches clawkerRatelimitStateVal (2× uint64)
+		MaxEntries: 8,
+	})
+	if err != nil {
+		t.Fatalf("create ratelimit_state map: %v", err)
+	}
+	defer state.Close()
+
+	drops, err := ebpf.NewMap(&ebpf.MapSpec{
+		Type:       ebpf.Hash,
+		KeySize:    8,
+		ValueSize:  8,
+		MaxEntries: 8,
+	})
+	if err != nil {
+		t.Fatalf("create ratelimit_drops map: %v", err)
+	}
+	defer drops.Close()
+
+	m := NewManager(logger.Nop())
+	m.objs.RatelimitState = state
+	m.objs.RatelimitDrops = drops
+
+	for _, cg := range []uint64{1, 2, 3} {
+		if err := state.Update(cg, clawkerRatelimitStateVal{Tokens: 7}, ebpf.UpdateAny); err != nil {
+			t.Fatalf("seed ratelimit_state[%d]: %v", cg, err)
+		}
+		if err := drops.Update(cg, uint64(11), ebpf.UpdateAny); err != nil {
+			t.Fatalf("seed ratelimit_drops[%d]: %v", cg, err)
+		}
+	}
+
+	if err := m.FlushAll(); err != nil {
+		t.Fatalf("FlushAll: %v", err)
+	}
+
+	assertMapEmpty(t, "ratelimit_state", state, func() (any, any) {
+		var k uint64
+		var v clawkerRatelimitStateVal
+		return &k, &v
+	})
+	assertMapEmpty(t, "ratelimit_drops", drops, func() (any, any) {
+		var k, v uint64
+		return &k, &v
+	})
+}
+
+// assertMapEmpty fails the test if the given BPF map still has any
+// entries. Iteration after FlushAll should be a no-op walk.
+func assertMapEmpty(t *testing.T, name string, m *ebpf.Map, allocKV func() (any, any)) {
+	t.Helper()
+	k, v := allocKV()
+	iter := m.Iterate()
+	for iter.Next(k, v) {
+		t.Errorf("%s still has entries after FlushAll", name)
+		return
+	}
+	if err := iter.Err(); err != nil {
+		t.Errorf("%s iterate after FlushAll: %v", name, err)
 	}
 }

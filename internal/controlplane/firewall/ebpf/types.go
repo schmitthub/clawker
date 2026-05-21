@@ -80,6 +80,37 @@ const (
 	ActionBypass uint8 = 2
 )
 
+// EgressEvent is the exported alias for the bpf2go-generated
+// clawkerEgressEvent type (derived from C struct egress_event).
+// `structs.HostLayout` (on the generated struct) forces C-compatible
+// field offsets and padding so the in-memory layout matches the kernel
+// writer byte-for-byte. The netlogger reader copies each ringbuf record
+// directly into this struct; integer fields land in host byte order,
+// matching how the kernel wrote them. Add fields here ONLY by editing
+// bpf/common.h and running `make ebpf`.
+type EgressEvent = clawkerEgressEvent
+
+// EgressVerdict constants matching enum egress_verdict in bpf/common.h.
+// Written into EgressEvent.Verdict by the BPF submit_event helper.
+const (
+	EgressVerdictAllowed  uint8 = 0
+	EgressVerdictDenied   uint8 = 1
+	EgressVerdictBypassed uint8 = 2
+)
+
+// EgressFlag constants matching enum egress_flags in bpf/common.h.
+// Bitmask written into EgressEvent.Flags. Encoding:
+//   - Neither flag set: pure IPv4 (DstIp is the destination, network order).
+//   - EgressFlagIPv6: native IPv6 destination; DstIp is 0.
+//   - EgressFlagIPv4Mapped: ::ffff:x.x.x.x dual-stack; DstIp carries the
+//     low 32 bits of the mapped address.
+//
+// Bits 2-7 are reserved.
+const (
+	EgressFlagIPv6       uint8 = 1 << 0
+	EgressFlagIPv4Mapped uint8 = 1 << 1
+)
+
 // IPToUint32 converts a net.IP to a uint32 in network byte order.
 // The kernel stores ctx->user_ip4 as 4 network-order bytes in memory,
 // which the CPU reads as a native uint32. NativeEndian replicates this:

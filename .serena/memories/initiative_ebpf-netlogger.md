@@ -9,14 +9,22 @@
 
 | Task | Status | Agent |
 |------|--------|-------|
-| Task 1: BPF ringbuf + per-decision-point emit + drop counters + kernel rate limiter | `pending` | — |
+| Task 1: BPF ringbuf + per-decision-point emit + drop counters + kernel rate limiter | `complete` | claude-opus-4-7 |
 | Task 2: netlogger subpackage scaffold — ringbuf reader, LabelCache, reverse-DNS, processor (no OTLP) | `pending` | — |
 | Task 3: Generic OTel client in `internal/controlplane/` + netlogger OTel sink + CP main wiring + drain hook | `pending` | — |
 | Task 4: E2E test + docs | `pending` | — |
 
 ## Key Learnings
 
-(Agents append here as they complete tasks.)
+### Task 1 (2026-05-21)
+
+- **bpf2go `-type` extraction needs a BTF anchor on ringbuf maps.** Without a typed reference reachable from BPF program signatures, `clang -g` strips the struct out of BTF and bpf2go fails with `Error: collect C types: not found`. Solution: declare `struct egress_event` BEFORE the `events_ringbuf` map definition and add `__type(value, struct egress_event)` to the map's anonymous struct. Tried two alternative anchors first — a `const volatile` global, and a `__attribute__((used))` global — both produced `type name "clawkerEgressEvent" is used multiple times` from bpf2go (BTF entries for the global + the program usage collide). `__type` is the canonical pattern; the ringbuf doesn't otherwise honor it (it has no kernel-side key/value typing), but the BTF entry is what bpf2go reads.
+- **`-type` flag in `gen.go` is required for each custom-typed ringbuf record.** Add to the `go:generate` line: `-type egress_event`. Future netlogger event types (sock-state, etc.) will need the same pattern.
+- **Build environment confirmed working on Debian bookworm + clang 14.** Makefile pins clang 18 on Ubuntu Noble, but the actual `go generate` invocation accepts older clang versions for BPF compilation. CI on the pinned Ubuntu runner remains the authoritative build.
+- **CAP_BPF unavailable inside the clawker dev container.** `ebpf.NewMap` returns EPERM, so Manager.Load + accessor-after-Load tests can't run in `make test`. The new `requireBPF(t)` helper skips gracefully. The kernel-side correctness gate is `make ebpf` (verifier-bound bytecode generation) plus Task 4 E2E (full agent-container flow).
+- **`__sync_fetch_and_sub`-and-restore is NOT wrap-safe under racing CPUs.** Three+ CPUs racing on `tokens==1` could leave the counter at `(u64)-2` despite a per-CPU restore. Switched to `__sync_val_compare_and_swap` with a `#pragma unroll` retry loop (`RATELIMIT_CAS_RETRIES=4`) and an explicit wrap-clamp. The CAS bound caps verifier-loop budget; sustained contention beyond that gets counted as a rate-limit drop instead of a silent emission.
+- **`enter_enforced` must verify `container_map` BEFORE calling `metric_inc(ACTION_BYPASS)`.** The original ordering (metric_inc first, container_map lookup second) emitted an orphan metric when the lookup race-failed. Fixed by reordering — now the metric only fires once `container_map` confirms the container is still managed.
+- **Strict directive caveat realized:** `sock_create` now emits a `submit_event(ALLOWED)` for every non-RAW socket creation (per "emit at every decision point"). Volume is bounded by the BPF token bucket (640 records/sec/cgroup at default `RATELIMIT_BURST=64` / `RATELIMIT_REFILL_NS=100ms` / `RATELIMIT_TOKENS_PER=64`). Operators filter on `verdict=allowed AND l4_proto != stream/dgram` at the dashboard layer; the BPF side does not discriminate.
 
 ---
 

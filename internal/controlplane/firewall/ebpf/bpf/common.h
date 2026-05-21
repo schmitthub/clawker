@@ -183,6 +183,123 @@ enum action {
 };
 
 // ---------------------------------------------------------------------------
+// Egress event channel — per-decision-point ringbuf for userspace netlogger
+// ---------------------------------------------------------------------------
+
+// Egress verdict — written into struct egress_event.verdict.
+enum egress_verdict {
+	EGRESS_VERDICT_ALLOWED  = 0,
+	EGRESS_VERDICT_DENIED   = 1,
+	EGRESS_VERDICT_BYPASSED = 2,
+};
+
+// Egress flags — written into struct egress_event.flags as a bitmask.
+enum egress_flags {
+	EGRESS_FLAG_IPV6        = 1 << 0, // native IPv6 (not IPv4-mapped)
+	EGRESS_FLAG_IPV4_MAPPED = 1 << 1, // ::ffff:x.x.x.x
+};
+
+// egress_event ABI — 32 bytes total. All padding is explicit so the
+// compound-literal zero-init in submit_event leaves no uninitialized
+// bytes on the ringbuf wire.
+//
+// Endianness convention (referenced from netlogger Go parser):
+//   ts_ns, cgroup_id, domain_hash, dst_port, verdict, flags, l4_proto —
+//     host byte order.
+//   dst_ip — network byte order (matches ctx->user_ip4 and the
+//     ContainerConfig IP fields in this codebase).
+// Callers MUST bpf_ntohs() ctx->user_port before passing dst_port; the
+// submit_event helper never swaps. Pick-one-side keeps every emit
+// site explicit and prevents double-swap bugs.
+struct egress_event {
+	__u64 ts_ns;       // bpf_ktime_get_ns()
+	__u64 cgroup_id;   // trust anchor — userspace cache key
+	__u32 domain_hash; // 0 if no DNS resolution (direct-IP / no cache hit)
+	__u32 dst_ip;      // network byte order
+	__u16 dst_port;    // host byte order (caller swapped)
+	__u8  verdict;     // enum egress_verdict
+	__u8  flags;       // enum egress_flags bitmask
+	__u8  l4_proto;    // SOCK_STREAM / SOCK_DGRAM / SOCK_RAW
+	__u8  _pad[3];     // explicit padding — zero-initialized
+};
+
+_Static_assert(sizeof(struct egress_event) == 32, "egress_event must be 32 bytes");
+
+// enter_state — return value of enter_enforced. Distinguishes
+// ENTER_BYPASSED from ENTER_NOT_MANAGED so the bypass path is surfaced
+// to callers, which emit a submit_event(BYPASSED) record before
+// allowing.
+enum enter_state {
+	ENTER_NOT_MANAGED = 0, // not in container_map, fast-return
+	ENTER_BYPASSED    = 1, // managed but bypassed; caller emits + allows
+	ENTER_ENFORCED    = 2, // managed, proceed with routing decision
+};
+
+// events_ringbuf carries a fixed-size struct egress_event for every
+// allow/deny/bypass decision in the cgroup programs. Userspace
+// (internal/controlplane/firewall/ebpf/netlogger) drains it and emits
+// each record as an OTLP log to the infra collector.
+//
+// 256 KiB total (64 × 4 KiB pages) — must be a power-of-2 multiple of the
+// page size or cilium/ebpf's ringbuf.NewReader rejects it. Sized for one
+// userspace reader handling records of ~32 bytes; dial up only after
+// observing kernel-fault drops in events_drops.
+//
+// __type(value, struct egress_event) is the BTF anchor for bpf2go's
+// -type extraction. Ringbuf maps have no key/value shape the kernel
+// verifier inspects, but the BTF entry it produces is what bpf2go reads
+// to emit the Go-side clawkerEgressEvent struct. Without this line,
+// `-type egress_event` fails with "collect C types: not found".
+struct {
+	__uint(type, BPF_MAP_TYPE_RINGBUF);
+	__uint(max_entries, 256 * 1024);
+	__type(value, struct egress_event);
+	__uint(pinning, LIBBPF_PIN_BY_NAME);
+} events_ringbuf SEC(".maps");
+
+// events_drops: kernel-fault drop counter. Bumped when bpf_ringbuf_reserve
+// returns NULL (buffer full). PERCPU_ARRAY single-slot (key always 0)
+// to avoid contention on the hot path; this counter has no per-cgroup
+// or per-cause dimension. Userspace reads index 0 and sums across CPUs.
+struct {
+	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+	__type(key, __u32);
+	__type(value, __u64);
+	__uint(max_entries, 1);
+	__uint(pinning, LIBBPF_PIN_BY_NAME);
+} events_drops SEC(".maps");
+
+// ratelimit_state: token bucket per cgroup_id. LRU_HASH so dead cgroups
+// evict naturally without a userspace sweep. Bucket inaccuracy under
+// racing CPUs is cheaper than the cmpxchg cost; non-atomic refill is
+// intentional.
+struct ratelimit_state_val {
+	__u64 last_topup_ns;
+	__u64 tokens;
+};
+struct {
+	__uint(type, BPF_MAP_TYPE_LRU_HASH);
+	__type(key, __u64);
+	__type(value, struct ratelimit_state_val);
+	__uint(max_entries, 1024);
+	__uint(pinning, LIBBPF_PIN_BY_NAME);
+} ratelimit_state SEC(".maps");
+
+// ratelimit_drops: intentional drop counter keyed by cgroup_id.
+// Distinct from events_drops because the per-cgroup dimension is what
+// makes "noisy agent" attributable — userspace can iterate this map to
+// name the offending agent. events_drops is a single global counter
+// for "ringbuf full" without sub-attribution. Operator response differs
+// per class, so the two counters never share a storage location.
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__type(key, __u64);
+	__type(value, __u64);
+	__uint(max_entries, 256);
+	__uint(pinning, LIBBPF_PIN_BY_NAME);
+} ratelimit_drops SEC(".maps");
+
+// ---------------------------------------------------------------------------
 // Shared leaf helpers
 // ---------------------------------------------------------------------------
 
@@ -237,46 +354,248 @@ static __always_inline bool is_ipv4_mapped(const struct bpf_sock_addr *ctx)
 }
 
 // ---------------------------------------------------------------------------
+// Egress event emission — rate-limited ringbuf submit
+// ---------------------------------------------------------------------------
+
+// Token-bucket tunables — see ratelimit_check_and_take. Per-cgroup keying
+// matches the granularity of "noisy agent" we want to throttle without
+// starving siblings. Compile-time constants; no userspace config knob.
+#define RATELIMIT_BURST       64ULL
+#define RATELIMIT_REFILL_NS   100000000ULL // 100 ms
+#define RATELIMIT_TOKENS_PER  64ULL
+
+// ratelimit_drop_bump increments the ratelimit_drops counter for the
+// given cgroup_id, inserting a fresh entry on first drop. Shared by
+// the rate-limit path in ratelimit_check_and_take so the contention
+// branch and the empty-bucket branch use one code path.
+static __always_inline void
+ratelimit_drop_bump(__u64 cgroup_id)
+{
+	__u64 *drops = bpf_map_lookup_elem(&ratelimit_drops, &cgroup_id);
+	if (drops) {
+		__sync_fetch_and_add(drops, 1);
+		return;
+	}
+	__u64 one = 1;
+	bpf_map_update_elem(&ratelimit_drops, &cgroup_id, &one, BPF_ANY);
+}
+
+// ratelimit_check_and_take returns true if the caller may emit a record,
+// false if the cgroup is over its budget. The decrement uses an explicit
+// CAS retry loop (__sync_val_compare_and_swap) that gates on tokens > 0
+// so racing CPUs can never underflow the u64 counter. Without the CAS,
+// a fetch-and-sub on tokens==0 would wrap to ~MAX_U64 and the cgroup
+// would emit unbounded events until LRU eviction.
+//
+// Refill arithmetic stays non-atomic: refill drift under racing CPUs
+// is cheaper than the cmpxchg cost and self-heals on the next tick.
+// The CAS loop bound (RATELIMIT_CAS_RETRIES) caps verifier-loop budget
+// — a sustained contention storm beyond that gets a drop instead of a
+// silent emission, which is the safer side to err toward.
+#define RATELIMIT_CAS_RETRIES 4
+static __always_inline bool
+ratelimit_check_and_take(__u64 cgroup_id)
+{
+	__u64 now = bpf_ktime_get_ns();
+	struct ratelimit_state_val *st =
+		bpf_map_lookup_elem(&ratelimit_state, &cgroup_id);
+	if (!st) {
+		struct ratelimit_state_val fresh = {
+			.last_topup_ns = now,
+			.tokens        = RATELIMIT_BURST - 1,
+		};
+		bpf_map_update_elem(&ratelimit_state, &cgroup_id, &fresh,
+				    BPF_NOEXIST);
+		return true;
+	}
+
+	if (now - st->last_topup_ns >= RATELIMIT_REFILL_NS) {
+		__u64 add = RATELIMIT_TOKENS_PER;
+		if (st->tokens + add > RATELIMIT_BURST)
+			add = RATELIMIT_BURST - st->tokens;
+		st->tokens += add;
+		st->last_topup_ns = now;
+	}
+
+#pragma unroll
+	for (int i = 0; i < RATELIMIT_CAS_RETRIES; i++) {
+		__u64 cur = st->tokens;
+		// Out-of-bounds (wrap from a hypothetical earlier non-CAS
+		// caller, or stale prior-CP state) — clamp to 0 best-effort
+		// via CAS and treat this attempt as a drop. The clamp is
+		// soft: if it loses the CAS race, the next caller retries.
+		if (cur == 0 || cur > RATELIMIT_BURST) {
+			if (cur > RATELIMIT_BURST) {
+				__sync_val_compare_and_swap(&st->tokens, cur, 0);
+			}
+			ratelimit_drop_bump(cgroup_id);
+			return false;
+		}
+		if (__sync_val_compare_and_swap(&st->tokens, cur, cur - 1) == cur) {
+			return true;
+		}
+		// CAS lost; another CPU mutated tokens — retry.
+	}
+	// Sustained contention exhausted the retry budget. Count as a
+	// rate-limit drop so operators see the signal.
+	ratelimit_drop_bump(cgroup_id);
+	return false;
+}
+
+// ratelimit_refund returns a previously taken token back to the bucket.
+// Used by submit_event when bpf_ringbuf_reserve fails: the kernel-fault
+// drop is counted in events_drops, NOT ratelimit_drops, so the token
+// must be put back so subsequent post-recovery events aren't
+// misclassified as intentional rate-limit drops. CAS-bounded so a
+// concurrent refill can never push tokens beyond RATELIMIT_BURST.
+// If the state entry was LRU-evicted between take and refund, the
+// refund is a no-op — next take on this cgroup_id re-creates the
+// bucket at full burst, so the "lost" token rounds back to budget.
+static __always_inline void
+ratelimit_refund(__u64 cgroup_id)
+{
+	struct ratelimit_state_val *st =
+		bpf_map_lookup_elem(&ratelimit_state, &cgroup_id);
+	if (!st)
+		return;
+#pragma unroll
+	for (int i = 0; i < RATELIMIT_CAS_RETRIES; i++) {
+		__u64 cur = st->tokens;
+		if (cur >= RATELIMIT_BURST) {
+			return; // already at or above burst — nothing to do
+		}
+		if (__sync_val_compare_and_swap(&st->tokens, cur, cur + 1) == cur) {
+			return;
+		}
+	}
+	// Exhausted retries; drop the refund. Next refill window resets.
+}
+
+// lookup_domain_hash_for_ip resolves the FNV-1a domain hash for an IPv4
+// destination by reading the pinned dns_cache (populated by CoreDNS). A
+// miss (direct-IP connect, or DNS resolution outside our managed CoreDNS)
+// returns 0; userspace treats 0 as "no domain attribution".
+static __always_inline __u32
+lookup_domain_hash_for_ip(__u32 dst_ip)
+{
+	if (dst_ip == 0)
+		return 0;
+	struct dns_entry *dns = bpf_map_lookup_elem(&dns_cache, &dst_ip);
+	if (!dns)
+		return 0;
+	return dns->domain_hash;
+}
+
+// submit_event reserves a slot in events_ringbuf and writes one
+// struct egress_event. Two BPF-side drop dimensions, each kept
+// distinct so operators can diagnose root cause from the userspace
+// metric surface:
+//   - Rate-limit drop: ratelimit_drops[cgroup_id] bumped, token consumed.
+//     "Noisy agent over its budget" — adjust RATELIMIT_BURST or
+//     investigate the agent.
+//   - Kernel-fault drop (reserve returned NULL): events_drops[0] bumped,
+//     token refunded so subsequent post-recovery events aren't
+//     misclassified as ratelimit drops. "Ringbuf full" — userspace
+//     reader fell behind; investigate consumer.
+// Additional userspace-side drops (BatchProcessor overflow) are out of
+// scope here; the netlogger pipeline counts those independently.
+//
+// Compound-literal init writes every field including _pad explicitly,
+// leaving no uninitialized bytes on the ringbuf wire.
+static __always_inline void
+submit_event(__u64 cgroup_id, __u32 dst_ip, __u16 dst_port_host,
+	     __u8 l4_proto, __u8 verdict, __u8 flags)
+{
+	if (!ratelimit_check_and_take(cgroup_id))
+		return;
+
+	struct egress_event *ev =
+		bpf_ringbuf_reserve(&events_ringbuf, sizeof(*ev), 0);
+	if (!ev) {
+		ratelimit_refund(cgroup_id);
+		__u32 zero = 0;
+		__u64 *cnt = bpf_map_lookup_elem(&events_drops, &zero);
+		if (cnt)
+			__sync_fetch_and_add(cnt, 1);
+		return;
+	}
+
+	*ev = (struct egress_event){
+		.ts_ns       = bpf_ktime_get_ns(),
+		.cgroup_id   = cgroup_id,
+		.domain_hash = lookup_domain_hash_for_ip(dst_ip),
+		.dst_ip      = dst_ip,
+		.dst_port    = dst_port_host,
+		.verdict     = verdict,
+		.flags       = flags,
+		.l4_proto    = l4_proto,
+		._pad        = {0, 0, 0},
+	};
+	bpf_ringbuf_submit(ev, 0);
+}
+
+// ---------------------------------------------------------------------------
 // Program preamble helper
 // ---------------------------------------------------------------------------
 
 // enter_enforced is the shared fast-path preamble for every clawker BPF
-// program. It handles root-uid pass-through, the active-bypass fast-path
-// (including metric accounting when check_bypass is true), and the
-// container_map lookup that gates enforcement.
+// program. It handles root-uid pass-through, the active-bypass detection
+// (when check_bypass is true), and the container_map lookup that gates
+// enforcement.
 //
-// Return value:
-//   1 — fast return (pass-through): caller should `return 1` immediately.
-//   0 — continue enforcement: *cfg and *cgroup_id are populated.
+// Returns enum enter_state:
+//   ENTER_NOT_MANAGED — uid==0 or container not in container_map; caller
+//                       must `return 1` immediately.
+//   ENTER_BYPASSED    — managed but bypass flag set (check_bypass=true
+//                       only); caller emits submit_event(BYPASSED) then
+//                       `return 1`.
+//   ENTER_ENFORCED    — proceed with normal routing decision; *cfg and
+//                       *cgroup_id are populated.
 //
 // Callers that do not care about bypass (recvmsg4/recvmsg6) pass
-// check_bypass = false; bypass state is still transparent to their
-// source-rewrite logic and the bypass metric is emitted exclusively on
-// the enforcement paths to avoid double-counting.
-static __always_inline int
+// check_bypass = false. With check_bypass=false the function never
+// returns ENTER_BYPASSED. Source-rewrite for DNS responses is keyed by
+// CoreDNS IP, so a recvmsg from a bypassed container that never went
+// through CoreDNS won't match the rewrite predicate — honoring bypass
+// here is unnecessary.
+//
+// enter_enforced calls metric_inc(ACTION_BYPASS) on the confirmed
+// bypass path so the existing metrics_map dump (consumed by the
+// break-glass ebpf-manager CLI) keeps working. The submit_event(BYPASSED)
+// record emitted by the caller is the finer-grained signal for the
+// netlogger pipeline.
+static __always_inline enum enter_state
 enter_enforced(struct container_config **cfg, __u64 *cgroup_id, bool check_bypass)
 {
 	__u32 uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;
 	if (uid == 0)
-		return 1;
+		return ENTER_NOT_MANAGED;
 
 	__u64 cid = bpf_get_current_cgroup_id();
 
 	if (check_bypass) {
 		__u8 *bypassed = bpf_map_lookup_elem(&bypass_map, &cid);
 		if (bypassed && *bypassed == 1) {
+			struct container_config *bc =
+				bpf_map_lookup_elem(&container_map, &cid);
+			if (!bc)
+				return ENTER_NOT_MANAGED;
+			// container_map confirmed; only now is this a real
+			// bypass event worth counting in metrics_map.
 			metric_inc(cid, 0, 0, ACTION_BYPASS);
-			return 1;
+			*cfg = bc;
+			*cgroup_id = cid;
+			return ENTER_BYPASSED;
 		}
 	}
 
 	struct container_config *c = bpf_map_lookup_elem(&container_map, &cid);
 	if (!c)
-		return 1;
+		return ENTER_NOT_MANAGED;
 
 	*cfg = c;
 	*cgroup_id = cid;
-	return 0;
+	return ENTER_ENFORCED;
 }
 
 // ---------------------------------------------------------------------------
