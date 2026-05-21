@@ -42,6 +42,7 @@ type BuildOptions struct {
 	Quiet     bool     // -q, --quiet
 	Progress  string   // --progress (output formatting)
 	Network   string   // --network
+	IIDFile   string   // --iidfile (write built image ID/digest to file)
 }
 
 // NewCmdBuild creates the image build command.
@@ -109,6 +110,7 @@ Build-time variables can be passed using --build-arg.`,
 	cmd.Flags().BoolVarP(&opts.Quiet, "quiet", "q", false, "Suppress the build output")
 	cmd.Flags().StringVar(&opts.Progress, "progress", "auto", "Set type of progress output (auto, plain, tty, none)")
 	cmd.Flags().StringVar(&opts.Network, "network", "", "Set the networking mode for the RUN instructions during build")
+	cmd.Flags().StringVar(&opts.IIDFile, "iidfile", "", "Write the built image's ID/digest to this file (same shape as `docker buildx --iidfile`)")
 
 	return cmd
 }
@@ -229,15 +231,11 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 	}
 
 	// Build with options.
-	// Defense in depth: --no-cache should also skip content hash check if
-	// EnsureImage() is ever used. This ensures explicit no-cache requests
-	// always trigger a full rebuild.
 	log.Debug().
 		Str("project", projectName).
 		Str("image", imageTag).
 		Msg("building container image")
 	buildOpts := docker.BuilderOptions{
-		ForceBuild:        opts.NoCache,
 		NoCache:           opts.NoCache,
 		Labels:            userLabels,
 		Target:            opts.Target,
@@ -248,6 +246,21 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 		Tags:              opts.Tags,
 		BuildKitEnabled:   buildkitEnabled,
 		ClaudeCodeVersion: claudeCodeVersion,
+		OnComplete: func(res whail.BuildResult) {
+			// Surfaces the digest from the exporter response (BuildKit
+			// containerimage.digest) or the `aux` stream event (legacy).
+			// Equivalent to `docker buildx --iidfile` / `buildctl
+			// --metadata-file containerimage.digest`.
+			log.Info().
+				Str("image", imageTag).
+				Str("image_id", res.ImageID).
+				Msg("image build complete")
+			if opts.IIDFile != "" && res.ImageID != "" {
+				if err := os.WriteFile(opts.IIDFile, []byte(res.ImageID), 0o644); err != nil {
+					fmt.Fprintf(ios.ErrOut, "%s Failed to write --iidfile %q: %v\n", cs.WarningIcon(), opts.IIDFile, err)
+				}
+			}
+		},
 	}
 
 	// Wire progress display when output is not suppressed.

@@ -16,7 +16,6 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"text/template"
 	"time"
@@ -28,13 +27,6 @@ import (
 )
 
 // Embedded assets for Dockerfile generation
-//
-// IMPORTANT: All scripts in assets/ are automatically included in image
-// content hashing via EmbeddedScripts(). New scripts added to this directory
-// will be discovered automatically without manual list maintenance.
-
-//go:embed assets/*
-var assetsFS embed.FS
 
 //go:embed assets/Dockerfile.tmpl
 var dockerfileFS embed.FS
@@ -62,45 +54,6 @@ var (
 	GitCredentialScript     = internals.GitCredentialScript
 	SocketForwarderSource   = internals.SocketForwarderSource
 )
-
-// EmbeddedScripts returns all embedded script contents for content
-// hashing. Bundler assets/ are auto-discovered via embed.FS; hostproxy
-// scripts come from internals.AllScripts(); the clawkerd binary is
-// included separately so a CLI release that ships a new clawkerd with
-// no Dockerfile/asset changes still rolls a fresh content hash and
-// invalidates the build cache. Sorted for determinism.
-//
-// Without clawkerd.Binary in the hash, the cache-skip in
-// internal/docker/builder.go (ImageExists(hashTag)) would short-circuit
-// the rebuild and the user would keep running the old PID-1 binary
-// despite upgrading the CLI — a silent regression of every fix we
-// ship in clawkerd.
-func EmbeddedScripts() []string {
-	var scripts []string
-
-	entries, err := fs.ReadDir(assetsFS, "assets")
-	if err != nil {
-		// Reading a compiled-in embed.FS only fails on a corrupt
-		// binary. A silent empty list here would produce a stable but
-		// wrong content hash and cache-poison the image.
-		panic(fmt.Errorf("bundler: read embedded assets dir: %w", err))
-	}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		content, err := fs.ReadFile(assetsFS, "assets/"+entry.Name())
-		if err != nil {
-			panic(fmt.Errorf("bundler: read embedded asset %q: %w", entry.Name(), err))
-		}
-		scripts = append(scripts, string(content))
-	}
-
-	scripts = append(scripts, internals.AllScripts()...)
-	scripts = append(scripts, string(clawkerd.Binary))
-	sort.Strings(scripts)
-	return scripts
-}
 
 // Default values for container configuration
 const (
@@ -397,7 +350,7 @@ func (g *ProjectGenerator) GenerateBuildContext() (io.Reader, error) {
 
 // GenerateBuildContextFromDockerfile builds a tar archive build context using
 // pre-rendered Dockerfile bytes. This avoids re-generating the Dockerfile when
-// the caller (e.g. EnsureImage) has already rendered it for content hashing.
+// the caller already has it.
 func (g *ProjectGenerator) GenerateBuildContextFromDockerfile(dockerfile []byte) (io.Reader, error) {
 	buf := new(bytes.Buffer)
 	tw := tar.NewWriter(buf)

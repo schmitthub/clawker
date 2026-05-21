@@ -120,7 +120,25 @@ type ImageBuildKitOptions struct {
 	// OnProgress receives build progress events when non-nil.
 	// Called from the progress-draining goroutine — must be safe for concurrent use.
 	OnProgress BuildProgressFunc
+
+	// OnComplete fires once after a successful build with the result digest/ID
+	// from the exporter response. Mirrors `buildx --iidfile` / `buildctl
+	// --metadata-file`. Optional; nil disables the callback.
+	OnComplete BuildCompleteFunc
 }
+
+// BuildResult is the output of a successful image build, surfacing the digest
+// the exporter assigned. Equivalent to `buildx --iidfile` / `buildctl
+// --metadata-file containerimage.digest`.
+type BuildResult struct {
+	// ImageID is the sha256 digest of the built image manifest.
+	// BuildKit: from SolveResponse.ExporterResponse[exptypes.ExporterImageDigestKey].
+	// Legacy: from the `aux` stream event ({"ID": "sha256:..."}).
+	ImageID string
+}
+
+// BuildCompleteFunc fires once with the digest of a successfully built image.
+type BuildCompleteFunc func(BuildResult)
 
 // BuildProgressFunc is a callback invoked by build pipelines to report step progress.
 // Implementations must be safe for concurrent use.

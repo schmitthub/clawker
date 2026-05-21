@@ -59,9 +59,9 @@ type Engine struct {
 
 **`EnsureNetworkOptions`**: embeds `client.NetworkCreateOptions` + `Name`, `Verbose`, `ExtraLabels Labels`
 
-## Image Operations (7 methods)
+## Image Operations (6 methods)
 
-`ImageBuild(ctx, reader, opts)`, `ImageBuildKit(ctx, ImageBuildKitOptions)`, `ImageTag(ctx, ImageTagOptions)`, `ImageRemove(ctx, id, opts)`, `ImageList(ctx, opts)`, `ImageInspect(ctx, ref)`, `ImagesPrune(ctx, dangling)`
+`ImageBuild(ctx, reader, opts)`, `ImageBuildKit(ctx, ImageBuildKitOptions)`, `ImageRemove(ctx, id, opts)`, `ImageList(ctx, opts)`, `ImageInspect(ctx, ref)`, `ImagesPrune(ctx, dangling)`
 
 **`ImageBuildKitOptions`**: `Tags []string`, `ContextDir`, `Dockerfile`, `BuildArgs`, `NoCache`, `Labels`, `Target`, `Pull`, `SuppressOutput`, `NetworkMode`, `OnProgress BuildProgressFunc`
 

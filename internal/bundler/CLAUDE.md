@@ -1,12 +1,11 @@
 # Bundler Package
 
-Leaf package: Dockerfile generation, version management, content hashing, and build configuration for clawker container images. Imports `internal/hostproxy/internals` for container-side scripts (embed-only leaf). **No `internal/docker` import** — building orchestration (`Builder`, `EnsureImage`, `Build`) lives in `internal/docker`.
+Leaf package: Dockerfile generation, version management, and build configuration for clawker container images. Imports `internal/hostproxy/internals` for container-side scripts (embed-only leaf). **No `internal/docker` import** — building orchestration (`Builder`, `Build`) lives in `internal/docker`.
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `hash.go` | Content-addressed hashing for Dockerfile + includes |
 | `defaults.go` | Flavor selection (`FlavorOption`, `DefaultFlavorOptions`, `FlavorToImage`) |
 | `dockerfile.go` | Dockerfile templates, context generation, project scaffolding |
 | `config.go` | Variant configuration (Debian/Alpine) |
@@ -21,22 +20,13 @@ Leaf package: Dockerfile generation, version management, content hashing, and bu
 | `registry/` | npm registry client, version info types, fetcher interface |
 | `assets/` | Dockerfile template, statusline script, claude config seeds, agent prompt, embedded clawkerd binary (PID 1) |
 
-## Content Hashing (`hash.go`)
+## Build Cache Strategy
 
-```go
-func ContentHash(dockerfile []byte, includes []string, workDir string, embeddedScripts []string) (string, error)
-func EmbeddedScripts() []string  // Returns all embedded script contents for hashing
-```
+Cache invalidation is delegated entirely to the builder (BuildKit's layer cache, or the classic builder's `probeCache` for legacy daemons) — both hash RUN/COPY inputs and skip identical steps automatically. The Dockerfile template's layer ordering (`internal/bundler/assets/Dockerfile.tmpl`) and ARG vs ENV choices control which layers invalidate when, but the cache mechanism itself is Docker's, not clawker's.
 
-SHA-256 of rendered Dockerfile + sorted include file contents + embedded scripts. Returns 12-char hex prefix. Images tagged `clawker-<project>:sha-<hash>` with `:latest` aliased.
+**Host-UID is baked into the rendered Dockerfile (Linux only).** `consts.ContainerUID()` / `ContainerGID()` resolve to the CLI invoker's `os.Getuid()` / `Getgid()` on Linux, so `useradd --uid {{.UID}}` in `Dockerfile.tmpl` varies per host user. On macOS/Windows, `consts.resolveProcessID` returns `fallbackContainerUID`/`GID` (1001) — Docker Desktop's virtiofs / gRPC-FUSE share masks UID/GID at the boundary, so baking the host UID would offer no access benefit and risks `groupadd --gid` collisions with base-image groups (e.g. macOS staff=20 vs Debian dialout=20). Required for the Linux `~/.claude/projects` bind-mount writability contract.
 
-`EmbeddedScripts()` dynamically discovers all embedded assets via `embed.FS` (bundler/assets/) plus `internals.AllScripts()` (hostproxy scripts) plus `clawkerd.Binary` (the embedded PID-1 binary). Inputs are sorted for deterministic hashing. New scripts added to either location are automatically included without manual list maintenance. The clawkerd binary is included separately so a CLI release that ships a new clawkerd with no Dockerfile/asset changes still rolls a fresh content hash and invalidates the build cache (otherwise `ImageExists(hashTag)` would short-circuit the rebuild).
-
-**Host-UID is baked into the rendered Dockerfile (Linux only).** `consts.ContainerUID()` / `ContainerGID()` resolve to the CLI invoker's `os.Getuid()` / `Getgid()` on Linux, so `useradd --uid {{.UID}}` in `Dockerfile.tmpl` varies per host user. On macOS/Windows, `consts.resolveProcessID` returns `fallbackContainerUID`/`GID` (1001) — Docker Desktop's virtiofs / gRPC-FUSE share masks UID/GID at the boundary, so baking the host UID would offer no access benefit and risks `groupadd --gid` collisions with base-image groups (e.g. macOS staff=20 vs Debian dialout=20). The content hash therefore diverges per host user **on Linux**; on non-Linux hosts the UID inputs are constant, and only other inputs (Dockerfile, scripts, clawkerd binary) drive cache invalidation. Required for the Linux `~/.claude/projects` bind-mount writability contract; not a cache bug.
-
-**Stability guarantee:** Dockerfile only contains structural instructions (FROM, RUN, COPY, USER, WORKDIR, ARG). Config-dependent values injected at container creation time or via Docker build API.
-
-**BuildKit vs Legacy:** `BuildKitEnabled=true` emits `--mount=type=cache` directives. Different builders produce different hashes (correct behavior). The flag flows through `DockerfileContext`, `ProjectGenerator`, and `DockerfileManager`.
+**BuildKit vs Legacy:** `BuildKitEnabled=true` emits `--mount=type=cache` directives in the rendered Dockerfile; legacy builder silently ignores them. The flag flows through `DockerfileContext`, `ProjectGenerator`, and `DockerfileManager`.
 
 ## Flavor Utilities (`defaults.go`)
 
@@ -126,7 +116,7 @@ type DockerfileContext struct {
 
 ### Baked-in Node.js Runtime
 
-Node + npm baked into every generated image so Claude Code hooks (`UserPromptSubmit`, `SessionStart` — these shell out to `node`) work without setup. Faithful copy of `nodejs/docker-node` 24/{bullseye-slim, alpine3.22}: Debian fetches the prebuilt tarball from nodejs.org/dist; Alpine x86_64 fetches the musl prebuilt from unofficial-builds.nodejs.org (SHA256 hardcoded inline alongside `NODE_VERSION`, matching upstream); other Alpine arches build from source. `NODE_VERSION` is honored on every variant/arch combo. Bumping `NODE_VERSION` requires updating the inline x86_64 musl checksum in the Alpine `case` block alongside it (same dual-bump constraint upstream lives with — they automate via update.sh; we do it manually). `NODE_VERSION` flows into the rendered template → image content hash rolls automatically.
+Node + npm baked into every generated image so Claude Code hooks (`UserPromptSubmit`, `SessionStart` — these shell out to `node`) work without setup. Faithful copy of `nodejs/docker-node` 24/{bullseye-slim, alpine3.22}: Debian fetches the prebuilt tarball from nodejs.org/dist; Alpine x86_64 fetches the musl prebuilt from unofficial-builds.nodejs.org (SHA256 hardcoded inline alongside `NODE_VERSION`, matching upstream); other Alpine arches build from source. `NODE_VERSION` is honored on every variant/arch combo. Bumping `NODE_VERSION` requires updating the inline x86_64 musl checksum in the Alpine `case` block alongside it (same dual-bump constraint upstream lives with — they automate via update.sh; we do it manually). `NODE_VERSION` flows into the rendered template — BuildKit/legacy cache invalidates downstream layers automatically.
 
 `ENV NODE_USE_SYSTEM_CA=1` set near the top of the final stage (before USER switch) so root and unprivileged `${USERNAME}` both trust `/etc/ssl/certs/ca-certificates.crt`. When `HasFirewallCA` is set, the firewall MITM cert is merged into that bundle via `update-ca-certificates`, transparently trusting the interception cert for `fetch()`/TLS.
 
@@ -182,7 +172,7 @@ const DefaultClaudeCodeVersion, DefaultUsername, DefaultShell = "latest", "claud
 
 UID/GID come from `cfg.ContainerUID()` / `cfg.ContainerGID()` (no bundler-local constants).
 
-Embedded: `DockerfileTemplate`, `StatuslineScript`, `SettingsFile`, `ConfigFile`, `AgentPromptFile`, `HostOpenScript`, `CallbackForwarderSource`, `GitCredentialScript`, `SocketForwarderSource`. The pre-compiled clawkerd binary (`internal/clawkerd.Binary`) is included in `EmbeddedScripts()` for content hashing — a clawkerd version bump rolls a fresh image hash so the cache-skip in `internal/docker/builder.go` does not silently skip rebuilds.
+Embedded: `DockerfileTemplate`, `StatuslineScript`, `SettingsFile`, `ConfigFile`, `AgentPromptFile`, `HostOpenScript`, `CallbackForwarderSource`, `GitCredentialScript`, `SocketForwarderSource`. The pre-compiled clawkerd binary (`internal/clawkerd.Binary`) flows through `COPY clawkerd` as the last layer in the late root block — a clawkerd version bump invalidates only that layer via BuildKit/legacy content-keyed cache.
 
 ## Version Management (`versions.go`)
 
@@ -251,6 +241,6 @@ Imports: `internal/config`, `internal/bundler/registry`, `internal/bundler/semve
 
 ## Tests
 
-Unit tests: `dockerfile_test.go`, `build_test.go`, `hash_test.go`, `defaults_test.go`, `firewall_test.go`. Subpackage: `registry/npm_test.go`, `semver/semver_test.go`. Docker integration: `test/whail/`.
+Unit tests: `dockerfile_test.go`, `build_test.go`, `defaults_test.go`, `firewall_test.go`. Subpackage: `registry/npm_test.go`, `semver/semver_test.go`. Docker integration: `test/whail/`.
 
 Test helper: `testConfig(t, projectYAML) config.Config` wraps `config.NewFromString(projectYAML, settingsYAML)` with default monitoring settings — preferred test double for bundler tests. All test configs use YAML fixtures rather than mock/fake constructors.
