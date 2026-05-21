@@ -21,7 +21,7 @@ Full terminal session lifecycle for interactive container sessions. `NewPTYHandl
 
 - **3-segment** (project-scoped agent): `clawker.project.agent` — **2-segment** (global-scope agent, no project namespace): `clawker.agent`
 - **Volumes**: `clawker.project.agent-purpose` (workspace, config, history)
-- **Global volumes**: `clawker-<purpose>` — **Network**: from `config.Config.ClawkerNetwork()` (no constant in this package)
+- **Network**: from `config.Config.ClawkerNetwork()` (no constant in this package)
 
 Functions: `ValidateResourceName(name) error`, `ContainerName(project, agent) (string, error)`, `VolumeName(project, agent, purpose) (string, error)`, `ContainerNamesFromAgents(project, agents) ([]string, error)`, `ContainerNamePrefix`, `ImageTag`, `ParseContainerName`, `GenerateRandomName`. Constants: `NamePrefix = "clawker"`.
 
