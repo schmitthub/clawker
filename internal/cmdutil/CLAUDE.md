@@ -45,6 +45,7 @@ type Factory struct {
     Prompter       func() *prompter.Prompter
     AdminClient    func(context.Context) (adminv1.AdminServiceClient, error)
     ControlPlane   func() cpboot.Manager
+    HttpClient     func() *http.Client
 }
 ```
 
@@ -60,6 +61,7 @@ type Factory struct {
 - `SocketBridge()` -- returns `socketbridge.SocketBridgeManager` (interface); commands call `.EnsureBridge()` / `.StopBridge()` on it. Mock: `sockebridgemocks.MockManager`
 - `Prompter()` -- returns `*prompter.Prompter` for interactive prompts
 - `AdminClient(ctx)` -- lazy `adminv1.AdminServiceClient` (gRPC client to the CP AdminService). First call triggers `cpboot.EnsureRunning` then `adminclient.Dial` (package `internal/controlplane/adminclient`) with mTLS + OAuth2 JWT + keepalive; the closure caches `grpc.ClientConn` and only rebuilds on `TransientFailure`/`Shutdown`. Commands call the 13 `Firewall*` RPCs directly. Mock: `controlplane/mocks.AdminServiceClientMock`
+- `HttpClient()` -- lazy `*http.Client` for outbound HTTP from the CLI (first consumer: npm registry lookups during Claude Code version resolution in `bundler.ResolveLatestClaudeCodeVersion`). Tests substitute by setting `f.HttpClient = func() *http.Client { return &http.Client{Transport: stubRoundTripper{}} }` — `http.RoundTripper` is the stdlib mock seam (same shape as gh-CLI's `pkg/httpmock.Registry`). No project-defined interface; no test seam on production API.
 - `ControlPlane()` -- lazy `cpboot.Manager` (host-side CP container lifecycle noun). Methods: `EnsureRunning`, `Stop`, `IsRunning`, `ProbeHealthz`. Wraps `f.Client`/`f.Config`/`f.Logger` so callers don't re-resolve them. Used by the `clawker controlplane up/down/status` break-glass verbs. Mock: `controlplane/cpboot/mocks.ManagerMock` (moq-generated)
 
 **Testing:** Construct minimal Factory structs directly:

@@ -212,14 +212,6 @@ func ImageTag(project string) string {
 	return fmt.Sprintf("%s-%s:latest", NamePrefix, project)
 }
 
-// ImageTagWithHash generates a content-addressed image tag: clawker-project:sha-<hash>
-func ImageTagWithHash(project, hash string) string {
-	if project == "" {
-		return fmt.Sprintf("%s:sha-%s", NamePrefix, hash)
-	}
-	return fmt.Sprintf("%s-%s:sha-%s", NamePrefix, project, hash)
-}
-
 // GlobalVolumeName returns the name for a global (non-agent-scoped) volume.
 // Example: GlobalVolumeName("globals") → "clawker-globals"
 func GlobalVolumeName(purpose string) string {

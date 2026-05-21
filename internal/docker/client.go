@@ -123,16 +123,6 @@ func (c *Client) IsMonitoringActive(ctx context.Context) bool {
 	return false
 }
 
-// TagImage adds an additional tag to an existing managed image.
-// source is the existing image reference, target is the new tag to apply.
-func (c *Client) TagImage(ctx context.Context, source, target string) error {
-	_, err := c.ImageTag(ctx, whail.ImageTagOptions{
-		Source: source,
-		Target: target,
-	})
-	return err
-}
-
 // ImageExists checks if a managed image exists locally.
 // Returns true if the image exists and is managed, false if not found or unmanaged.
 func (c *Client) ImageExists(ctx context.Context, imageRef string) (bool, error) {
@@ -182,6 +172,7 @@ type BuildImageOpts struct {
 	BuildKitEnabled bool                    // Use BuildKit builder via whail.ImageBuildKit
 	ContextDir      string                  // Build context directory (required for BuildKit)
 	OnProgress      whail.BuildProgressFunc // Progress callback for build events
+	OnComplete      whail.BuildCompleteFunc // Fires once with the built image digest
 }
 
 // BuildImage builds a Docker image from a build context.
@@ -204,6 +195,7 @@ func (c *Client) BuildImage(ctx context.Context, buildContext io.Reader, opts Bu
 			SuppressOutput: opts.SuppressOutput,
 			NetworkMode:    opts.NetworkMode,
 			OnProgress:     opts.OnProgress,
+			OnComplete:     opts.OnComplete,
 		})
 	}
 
@@ -229,27 +221,34 @@ func (c *Client) BuildImage(ctx context.Context, buildContext io.Reader, opts Bu
 	// Process the build output
 	// Even with SuppressOutput, we must still check for errors
 	if opts.SuppressOutput {
-		return c.processBuildOutputQuiet(resp.Body)
+		return c.processBuildOutputQuiet(resp.Body, opts.OnComplete)
 	}
 	if opts.OnProgress != nil {
-		return c.processBuildOutputWithProgress(resp.Body, opts.OnProgress)
+		return c.processBuildOutputWithProgress(resp.Body, opts.OnProgress, opts.OnComplete)
 	}
-	return c.processBuildOutput(resp.Body)
+	return c.processBuildOutput(resp.Body, opts.OnComplete)
 }
 
-// buildEvent represents a Docker build stream event.
+// buildEvent represents a Docker build stream event. The legacy classic builder
+// emits an `aux` JSON object containing the final image ID on the last event;
+// BuildKit-via-legacy-stream omits it (BuildKit's path captures the digest via
+// SolveResponse instead).
 type buildEvent struct {
 	Stream      string `json:"stream"`
 	Error       string `json:"error"`
 	ErrorDetail struct {
 		Message string `json:"message"`
 	} `json:"errorDetail"`
+	Aux *struct {
+		ID string `json:"ID"`
+	} `json:"aux,omitempty"`
 }
 
 // processBuildOutput processes and displays Docker build output.
-func (c *Client) processBuildOutput(reader io.Reader) error {
+func (c *Client) processBuildOutput(reader io.Reader, onComplete whail.BuildCompleteFunc) error {
 	scanner := bufio.NewScanner(reader)
 	var parseErrors int
+	var imageID string
 
 	for scanner.Scan() {
 		var event buildEvent
@@ -276,6 +275,10 @@ func (c *Client) processBuildOutput(reader io.Reader) error {
 			return fmt.Errorf("build error: %s", event.ErrorDetail.Message)
 		}
 
+		if event.Aux != nil && event.Aux.ID != "" {
+			imageID = event.Aux.ID
+		}
+
 		// Log build output (trimmed)
 		if stream := strings.TrimSpace(event.Stream); stream != "" {
 			c.log.Debug().Msg(stream)
@@ -287,14 +290,18 @@ func (c *Client) processBuildOutput(reader io.Reader) error {
 	}
 
 	c.log.Debug().Msg("image build complete")
+	if onComplete != nil {
+		onComplete(whail.BuildResult{ImageID: imageID})
+	}
 	return nil
 }
 
 // processBuildOutputQuiet processes Docker build output without displaying it,
 // but still returns any build errors. Used for quiet/suppressed output modes.
-func (c *Client) processBuildOutputQuiet(reader io.Reader) error {
+func (c *Client) processBuildOutputQuiet(reader io.Reader, onComplete whail.BuildCompleteFunc) error {
 	scanner := bufio.NewScanner(reader)
 	var parseErrors int
+	var imageID string
 
 	for scanner.Scan() {
 		var event buildEvent
@@ -319,12 +326,19 @@ func (c *Client) processBuildOutputQuiet(reader io.Reader) error {
 		if event.ErrorDetail.Message != "" {
 			return fmt.Errorf("build error: %s", event.ErrorDetail.Message)
 		}
+
+		if event.Aux != nil && event.Aux.ID != "" {
+			imageID = event.Aux.ID
+		}
 	}
 
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("error reading build output: %w", err)
 	}
 
+	if onComplete != nil {
+		onComplete(whail.BuildResult{ImageID: imageID})
+	}
 	return nil
 }
 
@@ -334,13 +348,14 @@ var legacyStepRe = regexp.MustCompile(`^Step (\d+)/(\d+) : (.+)$`)
 // processBuildOutputWithProgress processes legacy Docker build output and
 // forwards structured progress events via the callback. Error checking is
 // identical to processBuildOutput.
-func (c *Client) processBuildOutputWithProgress(reader io.Reader, onProgress whail.BuildProgressFunc) error {
+func (c *Client) processBuildOutputWithProgress(reader io.Reader, onProgress whail.BuildProgressFunc, onComplete whail.BuildCompleteFunc) error {
 	scanner := bufio.NewScanner(reader)
 	var parseErrors int
 	var currentStepID string
 	var currentStepIndex int
 	var totalSteps int
 	var currentStepCached bool
+	var imageID string
 
 	for scanner.Scan() {
 		var event buildEvent
@@ -382,6 +397,10 @@ func (c *Client) processBuildOutputWithProgress(reader io.Reader, onProgress wha
 				})
 			}
 			return fmt.Errorf("build error: %s", event.ErrorDetail.Message)
+		}
+
+		if event.Aux != nil && event.Aux.ID != "" {
+			imageID = event.Aux.ID
 		}
 
 		stream := strings.TrimSpace(event.Stream)
@@ -472,6 +491,9 @@ func (c *Client) processBuildOutputWithProgress(reader io.Reader, onProgress wha
 	}
 
 	c.log.Debug().Msg("image build complete")
+	if onComplete != nil {
+		onComplete(whail.BuildResult{ImageID: imageID})
+	}
 	return nil
 }
 

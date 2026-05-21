@@ -130,7 +130,7 @@ func generateRun(ctx context.Context, opts *GenerateOptions) error {
 
 	// Resolve versions from npm
 	mgr := bundler.NewVersionsManager()
-	vf, err := mgr.ResolveVersions(ctx, versions, bundler.ResolveOptions{})
+	vf, err := mgr.ResolveVersions(ctx, versions, bundler.ResolveOptions{Output: ios.ErrOut})
 	if err != nil {
 		cmdutil.HandleError(ios, err)
 		return err

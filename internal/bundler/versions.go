@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 
 	"github.com/schmitthub/clawker/internal/bundler/registry"
@@ -40,6 +41,48 @@ func NewVersionsManagerWithFetcher(fetcher registry.Fetcher, config *VariantConf
 		fetcher: fetcher,
 		config:  config,
 	}
+}
+
+// ResolveLatestClaudeCodeVersion calls the npm registry through the supplied
+// http.Client and returns the concrete version that the "latest" dist-tag
+// currently points at (e.g. "2.1.5"). Resolution happens once per build at
+// the command layer; the result is then baked into the rendered Dockerfile
+// via ProjectGenerator.ClaudeCodeVersion / BuilderOptions.ClaudeCodeVersion
+// so the install layer's ARG cache busts only when npm publishes a new
+// release.
+//
+// On resolution failure (offline, registry 5xx, empty response) returns
+// DefaultClaudeCodeVersion ("latest" literal) + the underlying error so
+// callers can warn the user. Build still works in that path — the install
+// RUN at the end of the Dockerfile downloads whatever npm latest is at
+// build time — but the cache won't bust on a new release until network
+// returns.
+//
+// Pass a stdlib *http.Client; in production the Factory's HttpClient
+// closure supplies it, in tests a client with a stubbed RoundTripper
+// substitutes the registry. The npm-specific knowledge (URL, parsing) is
+// encapsulated in registry.NPMClient via WithHTTPClient.
+func ResolveLatestClaudeCodeVersion(ctx context.Context, httpClient *http.Client) (string, error) {
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	fetcher := registry.NewNPMClient(registry.WithHTTPClient(httpClient))
+	mgr := NewVersionsManagerWithFetcher(fetcher, nil)
+	vf, err := mgr.ResolveVersions(ctx, []string{DefaultClaudeCodeVersion}, ResolveOptions{})
+	if err != nil {
+		return DefaultClaudeCodeVersion, err
+	}
+	// Single-pattern call: ResolveVersions returns at most one entry, keyed
+	// by the resolved version string. Take that single key explicitly
+	// rather than picking via non-deterministic map iteration so the
+	// contract is obvious if a future caller threads more patterns through.
+	if len(*vf) != 1 {
+		return DefaultClaudeCodeVersion, fmt.Errorf("expected 1 resolved version for %q, got %d", DefaultClaudeCodeVersion, len(*vf))
+	}
+	for v := range *vf {
+		return v, nil
+	}
+	return DefaultClaudeCodeVersion, ErrNoVersions
 }
 
 // ResolveOptions configures version resolution behavior.
@@ -86,7 +129,7 @@ func (m *VersionsManager) ResolveVersions(ctx context.Context, patterns []string
 	for _, pattern := range patterns {
 		fullVersion, err := m.resolvePattern(ctx, pattern, allVersions, distTags, opts)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+			fmt.Fprintf(out, "warning: %v\n", err)
 			continue
 		}
 
@@ -97,7 +140,7 @@ func (m *VersionsManager) ResolveVersions(ctx context.Context, patterns []string
 		// Parse and create version info
 		v, err := semver.Parse(fullVersion)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: invalid version format %q: %v\n", fullVersion, err)
+			fmt.Fprintf(out, "warning: invalid version format %q: %v\n", fullVersion, err)
 			continue
 		}
 

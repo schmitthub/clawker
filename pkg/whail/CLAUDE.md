@@ -59,11 +59,11 @@ type Engine struct {
 
 **`EnsureNetworkOptions`**: embeds `client.NetworkCreateOptions` + `Name`, `Verbose`, `ExtraLabels Labels`
 
-## Image Operations (7 methods)
+## Image Operations (6 methods)
 
-`ImageBuild(ctx, reader, opts)`, `ImageBuildKit(ctx, ImageBuildKitOptions)`, `ImageTag(ctx, ImageTagOptions)`, `ImageRemove(ctx, id, opts)`, `ImageList(ctx, opts)`, `ImageInspect(ctx, ref)`, `ImagesPrune(ctx, dangling)`
+`ImageBuild(ctx, reader, opts)`, `ImageBuildKit(ctx, ImageBuildKitOptions)`, `ImageRemove(ctx, id, opts)`, `ImageList(ctx, opts)`, `ImageInspect(ctx, ref)`, `ImagesPrune(ctx, dangling)`
 
-**`ImageBuildKitOptions`**: `Tags []string`, `ContextDir`, `Dockerfile`, `BuildArgs`, `NoCache`, `Labels`, `Target`, `Pull`, `SuppressOutput`, `NetworkMode`, `OnProgress BuildProgressFunc`
+**`ImageBuildKitOptions`**: `Tags []string`, `ContextDir`, `Dockerfile`, `BuildArgs`, `NoCache`, `Labels`, `Target`, `Pull`, `SuppressOutput`, `NetworkMode`, `OnProgress BuildProgressFunc`, `OnComplete BuildCompleteFunc`
 
 ## Build Progress Types (`types.go`)
 
@@ -74,9 +74,12 @@ type BuildProgressEvent struct {
     Status BuildStepStatus; LogLine, Error string; Cached bool
 }
 type BuildStepStatus int // BuildStepPending, BuildStepRunning, BuildStepComplete, BuildStepCached, BuildStepError
+
+type BuildResult struct { ImageID string }
+type BuildCompleteFunc func(BuildResult)
 ```
 
-Defined in `types.go`, used by both `buildkit/` (produces events) and `internal/docker/` (forwards callback). The command layer bridges these events to `tui.RunProgress` display via a channel.
+Defined in `types.go`, used by both `buildkit/` (produces events) and `internal/docker/` (forwards callback). The command layer bridges these events to `tui.RunProgress` display via a channel. `BuildResult{ImageID string}` carries the built image digest (BuildKit `ExporterImageDigestKey` or legacy `aux.ID` stream); `BuildCompleteFunc` is invoked at most once after a successful build.
 
 ## Build Progress Helpers (`progress.go`)
 
@@ -145,7 +148,7 @@ Wire pattern: `engine.BuildKitImageBuilder = buildkit.NewImageBuilder(engine.API
 - **Container**: `ContainerAttachOptions`, `ContainerListOptions`, `ContainerLogsOptions`, `ContainerRemoveOptions`, `ContainerInspectOptions`, `ContainerInspectResult`, `SDKContainerCreateOptions` (raw SDK create, distinct from whail's composite), `SDKContainerStartOptions`, `SDKContainerWaitOptions` (`client.ContainerWaitOptions`)
 - **Exec**: `ExecCreateOptions`, `ExecStartOptions`, `ExecAttachOptions`, `ExecResizeOptions`, `ExecInspectOptions`, `ExecInspectResult`
 - **Copy**: `CopyToContainerOptions`, `CopyFromContainerOptions`
-- **Image**: `ImageBuildOptions`, `ImagePullOptions`, `ImageListOptions`, `ImageListResult`, `ImageSummary`, `ImageRemoveOptions`, `ImageTagOptions` (`client.ImageTagOptions`), `ImageTagResult` (`client.ImageTagResult`)
+- **Image**: `ImageBuildOptions`, `ImagePullOptions`, `ImageListOptions`, `ImageListResult`, `ImageSummary`, `ImageRemoveOptions`
 - **Volume/Network**: `VolumeCreateOptions`, `NetworkCreateOptions`, `NetworkInspectOptions`
 - **Other**: `Filters`, `HijackedResponse`, `WaitCondition`, `Resources`, `RestartPolicy`, `UpdateConfig`, `ContainerUpdateResult`
 - **Constants**: `WaitConditionNotRunning`, `WaitConditionNextExit`, `WaitConditionRemoved`

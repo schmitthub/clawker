@@ -28,7 +28,12 @@ FROM {{.BaseImage}} AS final
 ARG TZ=UTC
 ENV TZ="$TZ"
 
-ENV CLAUDE_CODE_VERSION={{.ClaudeVersion}}
+# Claude Code version (build-only ARG, not ENV — Claude Code's runtime does not
+# read CLAUDE_CODE_VERSION; only the install RUN below consumes it). Default
+# is resolved against the npm registry at template-render time, so a fresh
+# CC release rolls the ARG default and busts the install layer's cache. Users
+# can override with `clawker build --build-arg CLAUDE_CODE_VERSION=<version>`.
+ARG CLAUDE_CODE_VERSION={{.ClaudeVersion}}
 
 # Node.js (≥22.10) trusts the OS CA bundle. Set globally — applies to root
 # (clawkerd-as-PID-1, build-time RUN steps) AND to the unprivileged ${USERNAME}
@@ -389,44 +394,30 @@ RUN mkdir -p /tmp/downloads && \
 # Firewall: eBPF programs attach to container cgroups from outside — no in-container
 # firewall script or iptables needed. See .claude/docs/EBPF-DESIGN.md.
 
-# Clawker agent environment awareness
-RUN mkdir -p /etc/claude-code
-COPY clawker-agent-prompt.md /etc/claude-code/CLAUDE.md
-
 # Managed enterprise settings (Linux managed path, highest precedence,
 # cannot be overridden by user/project settings). REQUIRED — do not
-# remove. Claude Code's Bash tool runs `/bin/zsh -c` and source's its own
+# remove. Claude Code's Bash tool runs `/bin/zsh -c` and sources its own
 # shell snapshot AFTER zsh init files, so the snapshot's PATH overrides
 # anything `.zshenv` exports. That makes `.zshenv` insufficient on its
 # own for hooks/Bash-tool to see `.npm-global/bin` — the snapshot is
 # built from process env at session start, and managed-settings.json is
 # the only documented enterprise mechanism that injects into that env.
 # Includes `.npm-global/bin` and `.local/bin` (claude binary lives there).
-RUN cat > /etc/claude-code/managed-settings.json <<EOF
+#
+# Stays in early root scope (not the late clawker block) because any
+# `claude` invocation in `after_claude_install` / `before_entrypoint`
+# inject points reads this at session start — without it, the user's
+# build-time `claude mcp add ...` runs without `.npm-global/bin` on PATH
+# and globally-installed MCP binaries fail to resolve. The heredoc body
+# is structural (template-author-edited only), so locking it early has
+# negligible cache cost vs the asset bumps in the late block.
+RUN mkdir -p /etc/claude-code && cat > /etc/claude-code/managed-settings.json <<EOF
 {
   "env": {
     "PATH": "/home/${USERNAME}/.local/bin:${PATH}:/home/${USERNAME}/.npm-global/bin"
   }
 }
 EOF
-{{- if .HasFirewallCA}}
-
-# Firewall CA cert for TLS inspection
-COPY clawker-ca.crt /usr/local/share/ca-certificates/clawker-firewall-ca.crt
-RUN update-ca-certificates
-ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
-ENV CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
-{{- end}}
-
-# Host proxy client scripts for container-to-host communication
-COPY host-open.sh /usr/local/bin/host-open
-COPY --from=callback-forwarder-builder /build/callback-forwarder /usr/local/bin/callback-forwarder
-COPY git-credential-clawker.sh /usr/local/bin/git-credential-clawker
-RUN chmod +x /usr/local/bin/host-open /usr/local/bin/callback-forwarder /usr/local/bin/git-credential-clawker
-
-# Unified socket server for GPG/SSH agent forwarding via muxrpc protocol
-COPY --from=socket-server-builder /build/clawker-socket-server /usr/local/bin/clawker-socket-server
-RUN chmod +x /usr/local/bin/clawker-socket-server
 
 # Switch to non-root user for ENV/WORKDIR resolution. clawkerd (PID 1)
 # is invoked as root by Docker — the USER directive only affects
@@ -552,7 +543,10 @@ RUN --mount=type=cache,target=/home/${USERNAME}/.npm \
 RUN curl -fsSL "https://claude.ai/install.sh" | bash -s ${CLAUDE_CODE_VERSION}
 {{- end}}
 
-# Stage config files for volume initialization (not shadowed by volume mount)
+# Stage Claude config seeds for volume initialization (not shadowed by volume
+# mount). Sit in the user-scope section — alongside Claude Code itself —
+# so the after_claude_install / before_entrypoint inject points and any
+# user `Instructions.Copy` step can reference ~/.claude-init/ contents.
 COPY --chown=${USERNAME}:${USERNAME} statusline.sh /home/${USERNAME}/.claude-init/statusline.sh
 COPY --chown=${USERNAME}:${USERNAME} claude-settings.json /home/${USERNAME}/.claude-init/settings.json
 COPY --chown=${USERNAME}:${USERNAME} claude-config.json /home/${USERNAME}/.claude-init/.config.json
@@ -587,11 +581,50 @@ HEALTHCHECK --interval=5s --timeout=3s --start-period=30s --retries=3 \
 # forward signals, reap zombies, serve the CP-dialed mTLS listener).
 USER root
 
+# --- Begin clawker-managed root assets (consolidated for build-cache locality) ---
+# Every COPY/RUN in this block changes with clawker release cadence
+# (embedded scripts, agent prompt, firewall CA, clawkerd binary) and writes
+# to root-owned paths (/etc/claude-code, /usr/local/bin, /usr/local/share).
+# Keeping them at end-of-stage means a clawker bump invalidates ONLY this
+# block — apt/apk, Node, git-delta, zsh-in-docker, Claude Code install,
+# Claude config seeds all stay cached above. The seeds live in the
+# user-scope section (before USER root) so the after_claude_install inject
+# point can reference ~/.claude-init/ contents. managed-settings.json
+# lives in early root scope (before USER ${USERNAME}) — see comment there
+# — because any build-time `claude` invocation in user inject points
+# reads it at session start and depends on it for PATH augmentation.
+
+# /etc/claude-code is created by the managed-settings.json RUN above; COPY auto-creates intermediates either way.
+COPY clawker-agent-prompt.md /etc/claude-code/CLAUDE.md
+{{- if .HasFirewallCA}}
+
+# Firewall CA cert for TLS inspection. docker build itself runs via host
+# network (not through the per-container eBPF firewall), so curl/wget
+# steps ABOVE this point don't need the CA — only runtime traffic does.
+COPY clawker-ca.crt /usr/local/share/ca-certificates/clawker-firewall-ca.crt
+RUN update-ca-certificates
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+ENV CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+{{- end}}
+
+# Host-proxy and socket-forwarder binaries. Single chmod batches the four files into one layer.
+COPY host-open.sh /usr/local/bin/host-open
+COPY git-credential-clawker.sh /usr/local/bin/git-credential-clawker
+COPY --from=callback-forwarder-builder /build/callback-forwarder /usr/local/bin/callback-forwarder
+COPY --from=socket-server-builder /build/clawker-socket-server /usr/local/bin/clawker-socket-server
+RUN chmod +x /usr/local/bin/host-open \
+             /usr/local/bin/git-credential-clawker \
+             /usr/local/bin/callback-forwarder \
+             /usr/local/bin/clawker-socket-server
+
 # clawkerd: per-container agent daemon AND PID 1 init. Reads bootstrap
 # material, completes the CP-driven Register handshake, serves the
 # mTLS Session listener for command dispatch, and supervises the user
 # CMD across its lifetime. See cmd/clawkerd for the source + CLAUDE.md.
+# Last in the block — every clawker release rolls the binary content,
+# so it ends up in its own layer with the smallest possible tail.
 COPY --chown=root:root --chmod=755 clawkerd /usr/local/bin/clawkerd
+# --- End clawker-managed assets ---
 
 ENTRYPOINT ["/usr/local/bin/clawkerd"]
 CMD ["claude"]

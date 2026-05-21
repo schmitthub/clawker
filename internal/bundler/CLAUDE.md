@@ -1,12 +1,11 @@
 # Bundler Package
 
-Leaf package: Dockerfile generation, version management, content hashing, and build configuration for clawker container images. Imports `internal/hostproxy/internals` for container-side scripts (embed-only leaf). **No `internal/docker` import** — building orchestration (`Builder`, `EnsureImage`, `Build`) lives in `internal/docker`.
+Leaf package: Dockerfile generation, version management, and build configuration for clawker container images. Imports `internal/hostproxy/internals` for container-side scripts (embed-only leaf). **No `internal/docker` import** — building orchestration (`Builder`, `Build`) lives in `internal/docker`.
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `hash.go` | Content-addressed hashing for Dockerfile + includes |
 | `defaults.go` | Flavor selection (`FlavorOption`, `DefaultFlavorOptions`, `FlavorToImage`) |
 | `dockerfile.go` | Dockerfile templates, context generation, project scaffolding |
 | `config.go` | Variant configuration (Debian/Alpine) |
@@ -21,22 +20,13 @@ Leaf package: Dockerfile generation, version management, content hashing, and bu
 | `registry/` | npm registry client, version info types, fetcher interface |
 | `assets/` | Dockerfile template, statusline script, claude config seeds, agent prompt, embedded clawkerd binary (PID 1) |
 
-## Content Hashing (`hash.go`)
+## Build Cache Strategy
 
-```go
-func ContentHash(dockerfile []byte, includes []string, workDir string, embeddedScripts []string) (string, error)
-func EmbeddedScripts() []string  // Returns all embedded script contents for hashing
-```
+Cache invalidation is delegated entirely to the builder (BuildKit's layer cache, or the classic builder's `probeCache` for legacy daemons) — both hash RUN/COPY inputs and skip identical steps automatically. The Dockerfile template's layer ordering (`internal/bundler/assets/Dockerfile.tmpl`) and ARG vs ENV choices control which layers invalidate when, but the cache mechanism itself is Docker's, not clawker's.
 
-SHA-256 of rendered Dockerfile + sorted include file contents + embedded scripts. Returns 12-char hex prefix. Images tagged `clawker-<project>:sha-<hash>` with `:latest` aliased.
+**Host-UID is baked into the rendered Dockerfile (Linux only).** `consts.ContainerUID()` / `ContainerGID()` resolve to the CLI invoker's `os.Getuid()` / `Getgid()` on Linux, so `useradd --uid {{.UID}}` in `Dockerfile.tmpl` varies per host user. On macOS/Windows, `consts.resolveProcessID` returns `fallbackContainerUID`/`GID` (1001) — Docker Desktop's virtiofs / gRPC-FUSE share masks UID/GID at the boundary, so baking the host UID would offer no access benefit and risks `groupadd --gid` collisions with base-image groups (e.g. macOS staff=20 vs Debian dialout=20). Required for the Linux `~/.claude/projects` bind-mount writability contract.
 
-`EmbeddedScripts()` dynamically discovers all embedded assets via `embed.FS` (bundler/assets/) plus `internals.AllScripts()` (hostproxy scripts) plus `clawkerd.Binary` (the embedded PID-1 binary). Inputs are sorted for deterministic hashing. New scripts added to either location are automatically included without manual list maintenance. The clawkerd binary is included separately so a CLI release that ships a new clawkerd with no Dockerfile/asset changes still rolls a fresh content hash and invalidates the build cache (otherwise `ImageExists(hashTag)` would short-circuit the rebuild).
-
-**Host-UID is baked into the rendered Dockerfile (Linux only).** `consts.ContainerUID()` / `ContainerGID()` resolve to the CLI invoker's `os.Getuid()` / `Getgid()` on Linux, so `useradd --uid {{.UID}}` in `Dockerfile.tmpl` varies per host user. On macOS/Windows, `consts.resolveProcessID` returns `fallbackContainerUID`/`GID` (1001) — Docker Desktop's virtiofs / gRPC-FUSE share masks UID/GID at the boundary, so baking the host UID would offer no access benefit and risks `groupadd --gid` collisions with base-image groups (e.g. macOS staff=20 vs Debian dialout=20). The content hash therefore diverges per host user **on Linux**; on non-Linux hosts the UID inputs are constant, and only other inputs (Dockerfile, scripts, clawkerd binary) drive cache invalidation. Required for the Linux `~/.claude/projects` bind-mount writability contract; not a cache bug.
-
-**Stability guarantee:** Dockerfile only contains structural instructions (FROM, RUN, COPY, USER, WORKDIR, ARG). Config-dependent values injected at container creation time or via Docker build API.
-
-**BuildKit vs Legacy:** `BuildKitEnabled=true` emits `--mount=type=cache` directives. Different builders produce different hashes (correct behavior). The flag flows through `DockerfileContext`, `ProjectGenerator`, and `DockerfileManager`.
+**BuildKit vs Legacy:** `BuildKitEnabled=true` emits `--mount=type=cache` directives in the rendered Dockerfile; legacy builder silently ignores them. The flag flows through `DockerfileContext`, `ProjectGenerator`, and `DockerfileManager`.
 
 ## Flavor Utilities (`defaults.go`)
 
@@ -75,7 +65,37 @@ func (g *ProjectGenerator) GetBuildContext() string
 func CreateBuildContextFromDir(dir, dockerfilePath string) (io.Reader, error)  // Tar from directory
 ```
 
-`cfg config.Config` (interface) — replaces old `*config.Config` struct pointer. `BuildKitEnabled` field mirrors DockerfileManager. `WriteBuildContextToDir` for BuildKit's fsutil mount; `GenerateBuildContextFromDockerfile` for legacy tar stream.
+`cfg config.Config` (interface). `BuildKitEnabled` field mirrors DockerfileManager. `WriteBuildContextToDir` for BuildKit's fsutil mount; `GenerateBuildContextFromDockerfile` for legacy tar stream.
+
+**ProjectGenerator is a pure renderer** — it does not perform any network I/O. The Claude Code version that gets baked into the rendered `ARG CLAUDE_CODE_VERSION=<value>` default comes from the `ClaudeCodeVersion string` field on the generator. Callers (the build command) resolve via the command-layer factory and set the field before calling `Generate()`. Empty falls back to the literal `DefaultClaudeCodeVersion`:
+
+```go
+gen := bundler.NewProjectGenerator(cfg, workDir)
+gen.ClaudeCodeVersion = "2.1.5"  // resolved by caller via bundler.ResolveLatestClaudeCodeVersion
+df, _ := gen.Generate()
+```
+
+This separation keeps bundler hermetic in tests (no HTTP traffic on `Generate()`) and aligns with the repo's factory-DI pattern: HTTP-using dependencies live on the Factory (`f.HttpClient`), not buried inside leaf packages.
+
+### Claude Code Version Resolution
+
+```go
+func ResolveLatestClaudeCodeVersion(ctx context.Context, httpClient *http.Client) (string, error)
+```
+
+Wraps `NewVersionsManagerWithFetcher` + `registry.NewNPMClient(registry.WithHTTPClient(httpClient))` + `ResolveVersions("latest")`. On resolution failure returns `(DefaultClaudeCodeVersion, err)` so callers can warn the user while still producing a usable rendered Dockerfile (the install RUN downloads npm-latest at build time when given the `"latest"` literal).
+
+**Production wiring:** `internal/cmd/image/build/build.go` calls this once per build, passing `f.HttpClient()` from the Factory.
+
+**Test wiring:** tests construct `&cmdutil.Factory{HttpClient: func() *http.Client { return &http.Client{Transport: stubRT} }}` where `stubRT` is a tiny `http.RoundTripper` returning canned npm responses. Mirrors gh-CLI's `pkg/httpmock.Registry` pattern — `http.RoundTripper` is the stdlib mock seam; no project-defined interface required.
+
+### Claude Code Version Pinning (build-arg passthrough)
+
+`Dockerfile.tmpl` declares `ARG CLAUDE_CODE_VERSION=<resolved-version>` — **not** `ENV`. Three properties this gives:
+
+1. **ARG-cache mechanic:** per Docker docs, a changed ARG default busts cache "upon its first usage, not its definition" — only the install RUN at the end of the file invalidates, leaving apt + Node + git-delta + zsh-in-docker cached above. This applies to incremental cache reuse; `clawker build --no-cache` invalidates everything regardless of ARG positioning.
+2. **Runtime invisibility:** Claude Code does not read `CLAUDE_CODE_VERSION` at runtime (verified against the official env-var list at code.claude.com/docs/en/settings). ARG is build-only, so the env var is naturally absent from the running container.
+3. **User override:** `clawker build --build-arg CLAUDE_CODE_VERSION=2.1.4` pins the install to an explicit version, bypassing the npm resolution. Already wired through `internal/cmd/image/build/build.go`.
 
 ### DockerfileContext -- template data
 
@@ -96,9 +116,39 @@ type DockerfileContext struct {
 
 ### Baked-in Node.js Runtime
 
-Node + npm baked into every generated image so Claude Code hooks (`UserPromptSubmit`, `SessionStart` — these shell out to `node`) work without setup. Faithful copy of `nodejs/docker-node` 24/{bullseye-slim, alpine3.22}: Debian fetches the prebuilt tarball from nodejs.org/dist; Alpine x86_64 fetches the musl prebuilt from unofficial-builds.nodejs.org (SHA256 hardcoded inline alongside `NODE_VERSION`, matching upstream); other Alpine arches build from source. `NODE_VERSION` is honored on every variant/arch combo. Bumping `NODE_VERSION` requires updating the inline x86_64 musl checksum in the Alpine `case` block alongside it (same dual-bump constraint upstream lives with — they automate via update.sh; we do it manually). `NODE_VERSION` flows into the rendered template → image content hash rolls automatically.
+Node + npm baked into every generated image so Claude Code hooks (`UserPromptSubmit`, `SessionStart` — these shell out to `node`) work without setup. Faithful copy of `nodejs/docker-node` 24/{bullseye-slim, alpine3.22}: Debian fetches the prebuilt tarball from nodejs.org/dist; Alpine x86_64 fetches the musl prebuilt from unofficial-builds.nodejs.org (SHA256 hardcoded inline alongside `NODE_VERSION`, matching upstream); other Alpine arches build from source. `NODE_VERSION` is honored on every variant/arch combo. Bumping `NODE_VERSION` requires updating the inline x86_64 musl checksum in the Alpine `case` block alongside it (same dual-bump constraint upstream lives with — they automate via update.sh; we do it manually). `NODE_VERSION` flows into the rendered template — BuildKit/legacy cache invalidates downstream layers automatically.
 
 `ENV NODE_USE_SYSTEM_CA=1` set near the top of the final stage (before USER switch) so root and unprivileged `${USERNAME}` both trust `/etc/ssl/certs/ca-certificates.crt`. When `HasFirewallCA` is set, the firewall MITM cert is merged into that bundle via `update-ca-certificates`, transparently trusting the interception cert for `fetch()`/TLS.
+
+### Clawker-Assets Placement (cache-locality + inject-lifetime invariants)
+
+Clawker-managed assets are split across THREE positions in the final stage, dictated by USER scope, build-time read dependencies, and inject-point lifetime contracts:
+
+**1. Early root scope (before `USER ${USERNAME}`):**
+- `mkdir /etc/claude-code` + `managed-settings.json` heredoc
+
+`managed-settings.json` is the Linux managed-settings path — highest-precedence Claude Code env override, the only documented enterprise mechanism that injects `PATH` into Claude Code's Bash-tool shell snapshot (built at session start, AFTER zsh init files, so `.zshenv` is insufficient on its own). Any `claude` invocation in `after_claude_install` / `before_entrypoint` inject points reads this at session start and depends on it to expose `.npm-global/bin` to globally-installed binaries (e.g. `claude mcp add <package>`). Must exist BEFORE any potential build-time claude session, so it can't sit in the late block. The heredoc body is structural (template-author-edited only), so locking it early has negligible cache cost.
+
+**2. User-scope (right after `RUN curl ... claude.ai/install.sh`, while `USER ${USERNAME}` is in effect):**
+- `statusline.sh`, `claude-settings.json`, `claude-config.json` seeds → `/home/${USERNAME}/.claude-init/`
+
+These stay in the user-scope section because `after_claude_install` / `before_entrypoint` inject points and user `Instructions.Copy` may reference `~/.claude-init/` contents at injection time. Burying them under the trailing `USER root` block would silently break that contract.
+
+**3. Late root scope (between trailing `USER root` and `ENTRYPOINT`):**
+1. Agent prompt: `COPY clawker-agent-prompt.md` → `/etc/claude-code/CLAUDE.md` (Claude reads this at session start as an additional system message; not load-bearing for command execution, so safe to defer)
+2. `{{if .HasFirewallCA}}` block: CA cert COPY + `update-ca-certificates` + `SSL_CERT_FILE` / `CURL_CA_BUNDLE` ENVs (runtime traffic only; `docker build` itself goes via host network, not through the in-container firewall)
+3. Host-proxy + socket-forwarder binaries (`host-open`, `git-credential-clawker`, `callback-forwarder`, `clawker-socket-server`) + single batched `chmod +x` (one layer, not four)
+4. `COPY clawkerd` (every CLI release rolls this — last so its layer's invalidation tail is just `ENTRYPOINT`)
+
+**Why this works for cache:** a clawker bump that only touches late-block assets (the common case — agent prompt edit, host-proxy script edit, clawkerd binary bump) invalidates ONLY the late block. Everything above — apt/apk, Node, git-delta, zsh-in-docker, Claude Code install, the user-scope seeds, user `Instructions.Copy`, every `Inject.*` point, the early-root managed-settings heredoc — stays cached. A bump that touches user-scope seeds (rare — those files change occasionally with clawker releases) invalidates from the seed COPYs downward, still cheap.
+
+**Test invariants** (`TestBuildContext_LateClawkerBlock`):
+- managed-settings.json appears BEFORE the first `USER ${USERNAME}` switch (early root scope)
+- Claude config seeds appear BEFORE the trailing `USER root` switch (user scope)
+- Agent prompt + firewall CA + host-proxy/socket binaries + clawkerd appear AFTER the trailing `USER root` (late root scope)
+- clawkerd's COPY is the last asset before `ENTRYPOINT`
+
+`TestBuildContext_CollapsedChmod` separately pins the single-chmod batching for the late root block's four `/usr/local/bin/*` binaries. Regressions that scatter the block, bury the seeds under USER root, or move managed-settings.json out of early root scope fail these tests.
 
 ### Dockerfile Instruction Types
 
@@ -122,7 +172,7 @@ const DefaultClaudeCodeVersion, DefaultUsername, DefaultShell = "latest", "claud
 
 UID/GID come from `cfg.ContainerUID()` / `cfg.ContainerGID()` (no bundler-local constants).
 
-Embedded: `DockerfileTemplate`, `StatuslineScript`, `SettingsFile`, `ConfigFile`, `AgentPromptFile`, `HostOpenScript`, `CallbackForwarderSource`, `GitCredentialScript`, `SocketForwarderSource`. The pre-compiled clawkerd binary (`internal/clawkerd.Binary`) is included in `EmbeddedScripts()` for content hashing — a clawkerd version bump rolls a fresh image hash so the cache-skip in `internal/docker/builder.go` does not silently skip rebuilds.
+Embedded: `DockerfileTemplate`, `StatuslineScript`, `SettingsFile`, `ConfigFile`, `AgentPromptFile`, `HostOpenScript`, `CallbackForwarderSource`, `GitCredentialScript`, `SocketForwarderSource`. The pre-compiled clawkerd binary (`internal/clawkerd.Binary`) flows through `COPY clawkerd` as the last layer in the late root block — a clawkerd version bump invalidates only that layer via BuildKit/legacy content-keyed cache.
 
 ## Version Management (`versions.go`)
 
@@ -191,6 +241,6 @@ Imports: `internal/config`, `internal/bundler/registry`, `internal/bundler/semve
 
 ## Tests
 
-Unit tests: `dockerfile_test.go`, `build_test.go`, `hash_test.go`, `defaults_test.go`, `firewall_test.go`. Subpackage: `registry/npm_test.go`, `semver/semver_test.go`. Docker integration: `test/whail/`.
+Unit tests: `dockerfile_test.go`, `build_test.go`, `defaults_test.go`, `firewall_test.go`. Subpackage: `registry/npm_test.go`, `semver/semver_test.go`. Docker integration: `test/whail/`.
 
 Test helper: `testConfig(t, projectYAML) config.Config` wraps `config.NewFromString(projectYAML, settingsYAML)` with default monitoring settings — preferred test double for bundler tests. All test configs use YAML fixtures rather than mock/fake constructors.

@@ -2,6 +2,7 @@ package cmdutil
 
 import (
 	"context"
+	"net/http"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/config"
@@ -43,4 +44,11 @@ type Factory struct {
 	Prompter       func() *prompter.Prompter
 	AdminClient    func(context.Context) (adminv1.AdminServiceClient, error)
 	ControlPlane   func() cpboot.Manager
+	// HttpClient returns the *http.Client used for outbound HTTP from the
+	// CLI (first consumer: npm registry lookups for Claude Code version
+	// resolution). Tests substitute by setting this field to a closure that
+	// returns a client whose Transport is a stubbed http.RoundTripper —
+	// same pattern as cli/cli's pkg/httpmock.Registry. No project-defined
+	// interface; the stdlib RoundTripper IS the seam.
+	HttpClient func() *http.Client
 }

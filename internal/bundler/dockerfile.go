@@ -16,7 +16,6 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"text/template"
 	"time"
@@ -28,13 +27,6 @@ import (
 )
 
 // Embedded assets for Dockerfile generation
-//
-// IMPORTANT: All scripts in assets/ are automatically included in image
-// content hashing via EmbeddedScripts(). New scripts added to this directory
-// will be discovered automatically without manual list maintenance.
-
-//go:embed assets/*
-var assetsFS embed.FS
 
 //go:embed assets/Dockerfile.tmpl
 var dockerfileFS embed.FS
@@ -62,45 +54,6 @@ var (
 	GitCredentialScript     = internals.GitCredentialScript
 	SocketForwarderSource   = internals.SocketForwarderSource
 )
-
-// EmbeddedScripts returns all embedded script contents for content
-// hashing. Bundler assets/ are auto-discovered via embed.FS; hostproxy
-// scripts come from internals.AllScripts(); the clawkerd binary is
-// included separately so a CLI release that ships a new clawkerd with
-// no Dockerfile/asset changes still rolls a fresh content hash and
-// invalidates the build cache. Sorted for determinism.
-//
-// Without clawkerd.Binary in the hash, the cache-skip in
-// internal/docker/builder.go (ImageExists(hashTag)) would short-circuit
-// the rebuild and the user would keep running the old PID-1 binary
-// despite upgrading the CLI — a silent regression of every fix we
-// ship in clawkerd.
-func EmbeddedScripts() []string {
-	var scripts []string
-
-	entries, err := fs.ReadDir(assetsFS, "assets")
-	if err != nil {
-		// Reading a compiled-in embed.FS only fails on a corrupt
-		// binary. A silent empty list here would produce a stable but
-		// wrong content hash and cache-poison the image.
-		panic(fmt.Errorf("bundler: read embedded assets dir: %w", err))
-	}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		content, err := fs.ReadFile(assetsFS, "assets/"+entry.Name())
-		if err != nil {
-			panic(fmt.Errorf("bundler: read embedded asset %q: %w", entry.Name(), err))
-		}
-		scripts = append(scripts, string(content))
-	}
-
-	scripts = append(scripts, internals.AllScripts()...)
-	scripts = append(scripts, string(clawkerd.Binary))
-	sort.Strings(scripts)
-	return scripts
-}
 
 // Default values for container configuration
 const (
@@ -347,6 +300,12 @@ type ProjectGenerator struct {
 	cfg             config.Config
 	workDir         string
 	BuildKitEnabled bool // Enables --mount=type=cache directives in generated Dockerfiles
+	// ClaudeCodeVersion is the concrete version string baked into the rendered
+	// ARG default (e.g. "2.1.5"). The npm-registry resolution that turns the
+	// "latest" dist-tag into a concrete version happens at the command layer
+	// via bundler.ResolveLatestClaudeCodeVersion — bundler itself doesn't fetch.
+	// Empty means use DefaultClaudeCodeVersion ("latest") as a literal.
+	ClaudeCodeVersion string
 }
 
 // NewProjectGenerator creates a new project Dockerfile generator.
@@ -357,9 +316,12 @@ func NewProjectGenerator(cfg config.Config, workDir string) *ProjectGenerator {
 	}
 }
 
-// Generate creates a Dockerfile based on the project configuration.
+// Generate creates a Dockerfile based on the project configuration. The
+// ClaudeCodeVersion baked into the rendered ARG default comes from the
+// generator's ClaudeCodeVersion field (set by callers from the resolved
+// npm version) — empty falls back to DefaultClaudeCodeVersion literal.
 func (g *ProjectGenerator) Generate() ([]byte, error) {
-	ctx, err := g.buildContext()
+	tctx, err := g.buildContext()
 	if err != nil {
 		return nil, fmt.Errorf("failed to build context: %w", err)
 	}
@@ -370,7 +332,7 @@ func (g *ProjectGenerator) Generate() ([]byte, error) {
 	}
 
 	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, ctx); err != nil {
+	if err := tmpl.Execute(&buf, tctx); err != nil {
 		return nil, fmt.Errorf("failed to render Dockerfile template: %w", err)
 	}
 
@@ -388,7 +350,7 @@ func (g *ProjectGenerator) GenerateBuildContext() (io.Reader, error) {
 
 // GenerateBuildContextFromDockerfile builds a tar archive build context using
 // pre-rendered Dockerfile bytes. This avoids re-generating the Dockerfile when
-// the caller (e.g. EnsureImage) has already rendered it for content hashing.
+// the caller already has it.
 func (g *ProjectGenerator) GenerateBuildContextFromDockerfile(dockerfile []byte) (io.Reader, error) {
 	buf := new(bytes.Buffer)
 	tw := tar.NewWriter(buf)
@@ -590,7 +552,12 @@ func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
 		hasFirewallCA = true
 	}
 
-	ctx := &DockerfileContext{
+	claudeVersion := g.ClaudeCodeVersion
+	if claudeVersion == "" {
+		claudeVersion = DefaultClaudeCodeVersion
+	}
+
+	tctx := &DockerfileContext{
 		BaseImage:                baseImage,
 		Packages:                 filterBasePackages(p.Build.Packages, isAlpine),
 		Username:                 DefaultUsername,
@@ -598,7 +565,7 @@ func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
 		GID:                      g.cfg.ContainerGID(),
 		Shell:                    DefaultShell,
 		WorkspacePath:            "/workspace",
-		ClaudeVersion:            DefaultClaudeCodeVersion,
+		ClaudeVersion:            claudeVersion,
 		IsAlpine:                 isAlpine,
 		BuildKitEnabled:          g.BuildKitEnabled,
 		HasFirewallCA:            hasFirewallCA,
@@ -615,7 +582,7 @@ func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
 	// Populate Instructions if present (structural only — Copy, Args, RUN)
 	if p.Build.Instructions != nil {
 		inst := p.Build.Instructions
-		ctx.Instructions = &DockerfileInstructions{
+		tctx.Instructions = &DockerfileInstructions{
 			Copy:    convertCopyInstructions(inst.Copy),
 			Args:    convertArgInstructions(inst.Args),
 			UserRun: inst.UserRun,
@@ -626,7 +593,7 @@ func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
 	// Populate Inject if present
 	if p.Build.Inject != nil {
 		inj := p.Build.Inject
-		ctx.Inject = &DockerfileInject{
+		tctx.Inject = &DockerfileInject{
 			AfterFrom:          inj.AfterFrom,
 			AfterPackages:      inj.AfterPackages,
 			AfterUserSetup:     inj.AfterUserSetup,
@@ -636,7 +603,7 @@ func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
 		}
 	}
 
-	return ctx, nil
+	return tctx, nil
 }
 
 // Conversion helpers from config types to build types

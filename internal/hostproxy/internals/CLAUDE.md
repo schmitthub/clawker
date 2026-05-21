@@ -6,7 +6,7 @@ Container-side scripts and binaries that communicate with the clawker host proxy
 
 | File | Purpose |
 |------|---------|
-| `embed.go` | `go:embed` directives + exported vars + `AllScripts()` |
+| `embed.go` | `go:embed` directives + exported vars |
 | `host-open.sh` | BROWSER handler — opens URLs via host proxy, intercepts OAuth callbacks |
 | `git-credential-clawker.sh` | Git credential helper — forwards to host proxy `/git/credential` |
 | `cmd/callback-forwarder/main.go` | OAuth callback polling — polls host proxy, forwards to local port with dual-stack fallback |
@@ -21,13 +21,7 @@ var HostOpenScript string           // host-open.sh
 var GitCredentialScript string      // git-credential-clawker.sh
 var CallbackForwarderSource string  // cmd/callback-forwarder/main.go
 var SocketForwarderSource string    // cmd/clawker-socket-server/main.go
-
-// AllScripts returns all embedded script contents for content hashing.
-// Used by bundler.EmbeddedScripts() to ensure image rebuilds when scripts change.
-func AllScripts() []string
 ```
-
-**IMPORTANT:** When adding new embedded scripts, add them to `AllScripts()` to ensure they are included in image content hashing. Otherwise, changes to the script won't trigger image rebuilds.
 
 ## Architecture
 

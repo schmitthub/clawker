@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	bkclient "github.com/moby/buildkit/client"
+	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 
 	"github.com/schmitthub/clawker/pkg/whail"
 )
@@ -54,11 +55,30 @@ func NewImageBuilder(apiClient DockerDialer) func(context.Context, whail.ImageBu
 		// Solve returns errors for failed vertices. The drainProgress goroutine
 		// forwards per-vertex errors via the progress callback, but Solve's
 		// return value is the authoritative error source.
-		_, err = bkClient.Solve(ctx, nil, solveOpt, statusCh)
+		resp, err := bkClient.Solve(ctx, nil, solveOpt, statusCh)
 		wg.Wait()
 		if err != nil {
 			return fmt.Errorf("buildkit: solve: %w", err)
 		}
+
+		// Surface the image digest from the exporter response. Mirrors
+		// buildx getImageID + buildctl --metadata-file containerimage.digest.
+		// Empty digest is acceptable (some exporters omit it) — caller decides
+		// what to do with it.
+		if opts.OnComplete != nil {
+			opts.OnComplete(whail.BuildResult{ImageID: extractImageID(resp)})
+		}
 		return nil
 	}
+}
+
+// extractImageID returns the built image digest from a BuildKit SolveResponse,
+// matching buildx getImageID semantics. Pure helper so the digest plumbing is
+// unit-testable without a live BuildKit daemon — the load-bearing string here
+// is the upstream ExporterImageDigestKey constant.
+func extractImageID(resp *bkclient.SolveResponse) string {
+	if resp == nil {
+		return ""
+	}
+	return resp.ExporterResponse[exptypes.ExporterImageDigestKey]
 }

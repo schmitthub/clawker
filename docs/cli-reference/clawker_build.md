@@ -55,6 +55,7 @@ clawker build [OPTIONS] [flags]
       --build-arg stringArray   Set build-time variables (format: KEY=VALUE)
   -f, --file string             Path to Dockerfile (overrides build.dockerfile in config)
   -h, --help                    help for build
+      --iidfile string          Write the built image's ID/digest to this file (docker buildx --iidfile shape)
       --label stringArray       Set metadata for the image (format: KEY=VALUE)
       --network string          Set the networking mode for the RUN instructions during build
       --no-cache                Do not use cache when building the image

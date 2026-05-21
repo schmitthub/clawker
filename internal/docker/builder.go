@@ -24,7 +24,6 @@ type Builder struct {
 
 // BuilderOptions contains options for build operations.
 type BuilderOptions struct {
-	ForceBuild      bool                    // Force rebuild even if image exists
 	NoCache         bool                    // Build without Docker cache
 	Labels          map[string]string       // Labels to apply to the built image
 	Target          string                  // Multi-stage build target
@@ -36,6 +35,13 @@ type BuilderOptions struct {
 	Dockerfile      []byte                  // Pre-rendered Dockerfile bytes (avoids re-generation)
 	BuildKitEnabled bool                    // Use BuildKit builder for cache mount support
 	OnProgress      whail.BuildProgressFunc // Progress callback for build events
+	OnComplete      whail.BuildCompleteFunc // Fires once with the built image digest/ID
+	// ClaudeCodeVersion is the concrete npm version baked into the rendered
+	// Dockerfile's ARG CLAUDE_CODE_VERSION default. Resolved upstream at the
+	// command layer via bundler.ResolveLatestClaudeCodeVersion (using
+	// Factory.HttpClient). Empty string falls back to bundler's
+	// DefaultClaudeCodeVersion literal — preserves offline-build behaviour.
+	ClaudeCodeVersion string
 }
 
 // toBuildImageOpts maps BuilderOptions to BuildImageOpts with the given per-call parameters.
@@ -53,6 +59,7 @@ func (o BuilderOptions) toBuildImageOpts(tags []string, dockerfile string, conte
 		BuildKitEnabled: o.BuildKitEnabled,
 		ContextDir:      contextDir,
 		OnProgress:      o.OnProgress,
+		OnComplete:      o.OnComplete,
 	}
 }
 
@@ -69,65 +76,11 @@ func NewBuilder(cli *Client, cfg *config.Project, workDir, projectName string) *
 	}
 }
 
-// EnsureImage ensures an image is available, building if necessary.
-// Uses content-addressed tags to detect whether config actually changed.
-// If ForceBuild is true, rebuilds even if the image exists.
-func (b *Builder) EnsureImage(ctx context.Context, imageTag string, opts BuilderOptions) error {
-	gen := bundler.NewProjectGenerator(b.client.cfg, b.workDir)
-	gen.BuildKitEnabled = opts.BuildKitEnabled
-
-	// Custom Dockerfiles bypass content hashing — delegate to Build() so that
-	// mergeImageLabels is applied consistently. Note: this always rebuilds;
-	// ForceBuild has no effect since content hashing is not supported for
-	// external Dockerfiles.
-	if gen.UseCustomDockerfile() {
-		return b.Build(ctx, imageTag, opts)
-	}
-
-	// Render Dockerfile and compute content hash
-	dockerfile, err := gen.Generate()
-	if err != nil {
-		return fmt.Errorf("failed to generate Dockerfile: %w", err)
-	}
-
-	hash, err := bundler.ContentHash(dockerfile, nil, b.workDir, bundler.EmbeddedScripts())
-	if err != nil {
-		return fmt.Errorf("failed to compute content hash: %w", err)
-	}
-
-	hashTag := ImageTagWithHash(b.projectName, hash)
-
-	// Check if content-addressed image already exists
-	if !opts.ForceBuild {
-		exists, err := b.client.ImageExists(ctx, hashTag)
-		if err != nil {
-			return fmt.Errorf("failed to check image existence for %s: %w", hashTag, err)
-		}
-		if exists {
-			b.log.Debug().
-				Str("image", hashTag).
-				Msg("image up-to-date, skipping build")
-
-			// Ensure :latest points to this hash
-			if err := b.client.TagImage(ctx, hashTag, imageTag); err != nil {
-				return fmt.Errorf("failed to update :latest alias: %w", err)
-			}
-			return nil
-		}
-	}
-
-	// Build with both :latest and content-addressed tags
-	tags := make([]string, len(opts.Tags), len(opts.Tags)+1)
-	copy(tags, opts.Tags)
-	opts.Tags = append(tags, hashTag)
-	opts.Dockerfile = dockerfile
-	return b.Build(ctx, imageTag, opts)
-}
-
 // Build unconditionally builds the Docker image.
 func (b *Builder) Build(ctx context.Context, imageTag string, opts BuilderOptions) error {
 	gen := bundler.NewProjectGenerator(b.client.cfg, b.workDir)
 	gen.BuildKitEnabled = opts.BuildKitEnabled
+	gen.ClaudeCodeVersion = opts.ClaudeCodeVersion
 
 	// Merge image labels into build options (applied via Docker API, not in Dockerfile)
 	opts.Labels = b.mergeImageLabels(opts.Labels)

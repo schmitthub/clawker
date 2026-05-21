@@ -58,7 +58,7 @@ func TestProcessBuildOutputWithProgress_StepParsing(t *testing.T) {
 
 	collector := &eventCollector{}
 	client := &Client{Engine: clawkerEngine(progressCfg, whailtest.NewFakeAPIClient()), log: logger.Nop()}
-	err := client.processBuildOutputWithProgress(bytes.NewReader(stream), collector.collect)
+	err := client.processBuildOutputWithProgress(bytes.NewReader(stream), collector.collect, nil)
 	require.NoError(t, err)
 
 	events := collector.all()
@@ -92,7 +92,7 @@ func TestProcessBuildOutputWithProgress_CacheHit(t *testing.T) {
 
 	collector := &eventCollector{}
 	client := &Client{Engine: clawkerEngine(progressCfg, whailtest.NewFakeAPIClient()), log: logger.Nop()}
-	err := client.processBuildOutputWithProgress(bytes.NewReader(stream), collector.collect)
+	err := client.processBuildOutputWithProgress(bytes.NewReader(stream), collector.collect, nil)
 	require.NoError(t, err)
 
 	events := collector.all()
@@ -125,7 +125,7 @@ func TestProcessBuildOutputWithProgress_CachedStepTerminalStatus(t *testing.T) {
 
 	collector := &eventCollector{}
 	client := &Client{Engine: clawkerEngine(progressCfg, whailtest.NewFakeAPIClient()), log: logger.Nop()}
-	err := client.processBuildOutputWithProgress(bytes.NewReader(stream), collector.collect)
+	err := client.processBuildOutputWithProgress(bytes.NewReader(stream), collector.collect, nil)
 	require.NoError(t, err)
 
 	events := collector.all()
@@ -165,7 +165,7 @@ func TestProcessBuildOutputWithProgress_Error(t *testing.T) {
 
 	collector := &eventCollector{}
 	client := &Client{Engine: clawkerEngine(progressCfg, whailtest.NewFakeAPIClient()), log: logger.Nop()}
-	err := client.processBuildOutputWithProgress(bytes.NewReader(stream), collector.collect)
+	err := client.processBuildOutputWithProgress(bytes.NewReader(stream), collector.collect, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "exit 1")
 
@@ -192,7 +192,7 @@ func TestProcessBuildOutputWithProgress_LogLines(t *testing.T) {
 
 	collector := &eventCollector{}
 	client := &Client{Engine: clawkerEngine(progressCfg, whailtest.NewFakeAPIClient()), log: logger.Nop()}
-	err := client.processBuildOutputWithProgress(bytes.NewReader(stream), collector.collect)
+	err := client.processBuildOutputWithProgress(bytes.NewReader(stream), collector.collect, nil)
 	require.NoError(t, err)
 
 	events := collector.all()
@@ -235,6 +235,123 @@ func TestBuildImage_OnProgressThreadedToBuildKit(t *testing.T) {
 	_ = called // The fake builder doesn't call OnProgress, so called stays false.
 }
 
+// buildEventAux builds a buildEvent carrying an aux ID. Inlines the anonymous
+// struct so the call sites stay readable.
+func buildEventAux(id string) buildEvent {
+	return buildEvent{Aux: &struct {
+		ID string `json:"ID"`
+	}{ID: id}}
+}
+
+func TestProcessBuildOutput_OnCompleteFires(t *testing.T) {
+	stream := buildLegacyStream(
+		buildEvent{Stream: "Step 1/1 : FROM alpine\n"},
+		buildEventAux("sha256:abc123"),
+	)
+
+	var got whail.BuildResult
+	var called int
+	onComplete := func(r whail.BuildResult) {
+		called++
+		got = r
+	}
+
+	client := &Client{Engine: clawkerEngine(progressCfg, whailtest.NewFakeAPIClient()), log: logger.Nop()}
+	err := client.processBuildOutput(bytes.NewReader(stream), onComplete)
+	require.NoError(t, err)
+	assert.Equal(t, 1, called, "OnComplete must fire exactly once on success")
+	assert.Equal(t, "sha256:abc123", got.ImageID)
+}
+
+func TestProcessBuildOutput_OnCompleteSkippedOnError(t *testing.T) {
+	stream := buildLegacyStream(
+		buildEvent{Stream: "Step 1/1 : RUN exit 1\n"},
+		buildEventAux("sha256:must-not-be-surfaced"),
+		buildEvent{Error: "exit code 1"},
+	)
+
+	var called int
+	onComplete := func(_ whail.BuildResult) { called++ }
+
+	client := &Client{Engine: clawkerEngine(progressCfg, whailtest.NewFakeAPIClient()), log: logger.Nop()}
+	err := client.processBuildOutput(bytes.NewReader(stream), onComplete)
+	require.Error(t, err)
+	assert.Equal(t, 0, called, "OnComplete must NOT fire when build errored")
+}
+
+func TestProcessBuildOutput_NilOnComplete(t *testing.T) {
+	stream := buildLegacyStream(
+		buildEvent{Stream: "Step 1/1 : FROM alpine\n"},
+		buildEventAux("sha256:abc"),
+	)
+	client := &Client{Engine: clawkerEngine(progressCfg, whailtest.NewFakeAPIClient()), log: logger.Nop()}
+	require.NoError(t, client.processBuildOutput(bytes.NewReader(stream), nil))
+}
+
+func TestProcessBuildOutputQuiet_OnCompleteFires(t *testing.T) {
+	stream := buildLegacyStream(buildEventAux("sha256:def456"))
+
+	var got whail.BuildResult
+	var called int
+	onComplete := func(r whail.BuildResult) {
+		called++
+		got = r
+	}
+
+	client := &Client{Engine: clawkerEngine(progressCfg, whailtest.NewFakeAPIClient()), log: logger.Nop()}
+	err := client.processBuildOutputQuiet(bytes.NewReader(stream), onComplete)
+	require.NoError(t, err)
+	assert.Equal(t, 1, called)
+	assert.Equal(t, "sha256:def456", got.ImageID)
+}
+
+func TestProcessBuildOutputQuiet_OnCompleteSkippedOnError(t *testing.T) {
+	stream := buildLegacyStream(
+		buildEventAux("sha256:must-not-be-surfaced"),
+		buildEvent{Error: "boom"},
+	)
+	var called int
+	client := &Client{Engine: clawkerEngine(progressCfg, whailtest.NewFakeAPIClient()), log: logger.Nop()}
+	err := client.processBuildOutputQuiet(bytes.NewReader(stream), func(_ whail.BuildResult) { called++ })
+	require.Error(t, err)
+	assert.Equal(t, 0, called)
+}
+
+func TestProcessBuildOutputWithProgress_OnCompleteFires(t *testing.T) {
+	stream := buildLegacyStream(
+		buildEvent{Stream: "Step 1/1 : FROM alpine\n"},
+		buildEventAux("sha256:ghi789"),
+	)
+
+	var got whail.BuildResult
+	var called int
+	onComplete := func(r whail.BuildResult) {
+		called++
+		got = r
+	}
+	collector := &eventCollector{}
+
+	client := &Client{Engine: clawkerEngine(progressCfg, whailtest.NewFakeAPIClient()), log: logger.Nop()}
+	err := client.processBuildOutputWithProgress(bytes.NewReader(stream), collector.collect, onComplete)
+	require.NoError(t, err)
+	assert.Equal(t, 1, called)
+	assert.Equal(t, "sha256:ghi789", got.ImageID)
+}
+
+func TestProcessBuildOutputWithProgress_OnCompleteSkippedOnError(t *testing.T) {
+	stream := buildLegacyStream(
+		buildEvent{Stream: "Step 1/1 : RUN exit 1\n"},
+		buildEventAux("sha256:must-not-be-surfaced"),
+		buildEvent{Error: "exit code 1"},
+	)
+	var called int
+	collector := &eventCollector{}
+	client := &Client{Engine: clawkerEngine(progressCfg, whailtest.NewFakeAPIClient()), log: logger.Nop()}
+	err := client.processBuildOutputWithProgress(bytes.NewReader(stream), collector.collect, func(_ whail.BuildResult) { called++ })
+	require.Error(t, err)
+	assert.Equal(t, 0, called)
+}
+
 func TestProcessBuildOutputWithProgress_MultiStep(t *testing.T) {
 	// Verify a multi-step build produces correct step indices and completion
 	stream := buildLegacyStream(
@@ -247,7 +364,7 @@ func TestProcessBuildOutputWithProgress_MultiStep(t *testing.T) {
 
 	collector := &eventCollector{}
 	client := &Client{Engine: clawkerEngine(progressCfg, whailtest.NewFakeAPIClient()), log: logger.Nop()}
-	err := client.processBuildOutputWithProgress(bytes.NewReader(stream), collector.collect)
+	err := client.processBuildOutputWithProgress(bytes.NewReader(stream), collector.collect, nil)
 	require.NoError(t, err)
 
 	events := collector.all()

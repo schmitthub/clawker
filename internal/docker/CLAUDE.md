@@ -23,7 +23,7 @@ Full terminal session lifecycle for interactive container sessions. `NewPTYHandl
 - **Volumes**: `clawker.project.agent-purpose` (workspace, config, history)
 - **Global volumes**: `clawker-<purpose>` — **Network**: from `config.Config.ClawkerNetwork()` (no constant in this package)
 
-Functions: `ValidateResourceName(name) error`, `ContainerName(project, agent) (string, error)`, `VolumeName(project, agent, purpose) (string, error)`, `ContainerNamesFromAgents(project, agents) ([]string, error)`, `GlobalVolumeName`, `ContainerNamePrefix`, `ImageTag`, `ImageTagWithHash`, `ParseContainerName`, `GenerateRandomName`. Constants: `NamePrefix = "clawker"`.
+Functions: `ValidateResourceName(name) error`, `ContainerName(project, agent) (string, error)`, `VolumeName(project, agent, purpose) (string, error)`, `ContainerNamesFromAgents(project, agents) ([]string, error)`, `GlobalVolumeName`, `ContainerNamePrefix`, `ImageTag`, `ParseContainerName`, `GenerateRandomName`. Constants: `NamePrefix = "clawker"`.
 
 **Validation**: `ValidateResourceName` validates user-sourced inputs (agent, project names) against Docker's container name rules: `^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`, max 128 chars. Built into `ContainerName` and `VolumeName` — callers cannot bypass validation. Internal `purpose` strings (`"config"`, `"history"`, `"workspace"`) are not validated.
 
@@ -45,7 +45,7 @@ type ClientOption func(*clientOptions)    // WithLabels(whail.LabelConfig)
 
 `Client` embeds `*whail.Engine`. Fields: `cfg config.Config` (interface, always set), `BuildDefaultImageFunc BuildDefaultImageFn`, `ChownImage string`.
 
-**Image methods**: `Close()`, `ResolveImage(ctx, projectName)`, `ResolveImageWithSource(ctx, projectName)`, `BuildImage(ctx, reader, opts)`, `ImageExists(ctx, ref)`, `TagImage(ctx, source, target)`.
+**Image methods**: `Close()`, `ResolveImage(ctx, projectName)`, `ResolveImageWithSource(ctx, projectName)`, `BuildImage(ctx, reader, opts)`, `ImageExists(ctx, ref)`.
 
 ### Container type
 
@@ -69,7 +69,7 @@ type Container struct {
 
 ## Builder (`builder.go`)
 
-`NewBuilder(cli *Client, cfg *config.Project, workDir, projectName string)`. `EnsureImage(ctx, tag, opts)` — content-addressed (skips if hash matches). `Build(ctx, tag, opts)` — always builds. `BuilderOptions`: `ForceBuild/NoCache/Pull/SuppressOutput/BuildKitEnabled`, `Labels/Target/NetworkMode/BuildArgs/Tags/Dockerfile/OnProgress`.
+`NewBuilder(cli *Client, cfg *config.Project, workDir, projectName string)`. `Build(ctx, tag, opts)` builds the image; cache invalidation is delegated to the daemon-side builder (BuildKit layer cache or classic builder `probeCache`). `BuilderOptions`: `NoCache/Pull/SuppressOutput/BuildKitEnabled`, `Labels/Target/NetworkMode/BuildArgs/Tags/Dockerfile/OnProgress/ClaudeCodeVersion`.
 
 ## Default Image (`defaults.go`)
 
@@ -116,7 +116,7 @@ Standalone fixture functions (`ContainerFixture`, `RunningContainerFixture`) use
 - **Copy**: `SetupCopyToContainer/CopyFromContainer`
 - **Volumes/Networks**: `SetupVolumeExists/VolumeCreate/NetworkExists/NetworkCreate`
 - **BuildKit**: `SetupBuildKit/BuildKitWithProgress(events)/BuildKitWithRecordedProgress(events)/PingBuildKit/LegacyBuild/LegacyBuildError`
-- **Query**: `SetupFindContainer/ImageExists/ImageTag/ImageList/SetupContainerListError`
+- **Query**: `SetupFindContainer/ImageExists/ImageList/SetupContainerListError`
 
 ## Gotchas
 
