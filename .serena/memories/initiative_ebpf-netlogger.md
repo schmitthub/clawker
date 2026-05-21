@@ -10,7 +10,7 @@
 | Task | Status | Agent |
 |------|--------|-------|
 | Task 1: BPF ringbuf + per-decision-point emit + drop counters + kernel rate limiter | `complete` | claude-opus-4-7 |
-| Task 2: netlogger subpackage scaffold — ringbuf reader, LabelCache, reverse-DNS, processor (no OTLP) | `pending` | — |
+| Task 2: netlogger subpackage scaffold — ringbuf reader, LabelCache, reverse-DNS, processor (no OTLP) | `complete` | claude-opus-4-7 |
 | Task 3: Generic OTel client in `internal/controlplane/` + netlogger OTel sink + CP main wiring + drain hook | `pending` | — |
 | Task 4: E2E test + docs | `pending` | — |
 
@@ -25,6 +25,19 @@
 - **`__sync_fetch_and_sub`-and-restore is NOT wrap-safe under racing CPUs.** Three+ CPUs racing on `tokens==1` could leave the counter at `(u64)-2` despite a per-CPU restore. Switched to `__sync_val_compare_and_swap` with a `#pragma unroll` retry loop (`RATELIMIT_CAS_RETRIES=4`) and an explicit wrap-clamp. The CAS bound caps verifier-loop budget; sustained contention beyond that gets counted as a rate-limit drop instead of a silent emission.
 - **`enter_enforced` must verify `container_map` BEFORE calling `metric_inc(ACTION_BYPASS)`.** The original ordering (metric_inc first, container_map lookup second) emitted an orphan metric when the lookup race-failed. Fixed by reordering — now the metric only fires once `container_map` confirms the container is still managed.
 - **Strict directive caveat realized:** `sock_create` now emits a `submit_event(ALLOWED)` for every non-RAW socket creation (per "emit at every decision point"). Volume is bounded by the BPF token bucket (640 records/sec/cgroup at default `RATELIMIT_BURST=64` / `RATELIMIT_REFILL_NS=100ms` / `RATELIMIT_TOKENS_PER=64`). Operators filter on `verdict=allowed AND l4_proto != stream/dgram` at the dashboard layer; the BPF side does not discriminate.
+
+### Task 2 (2026-05-21)
+
+- **Bus ordering had to move earlier than step 9a.** The original `cmd/clawker-cp/main.go` constructed the overseer bus at step 9a (after `grpcServer.Serve`). FirewallEnable publishes on the bus, so RPCs that fire between Serve and bus.Start would silently drop. Fix: hoisted bus.New + bus.Start to step 8, immediately before NewHandler. The dockerevents feeder stays in step 9a — only bus construction moved. This invariant ("bus.Start BEFORE the gRPC listener accepts") is now load-bearing for any future bus-publishing RPC handler.
+- **Event types live in the producer-adjacent package, not in `overseer/`.** The initiative doc said "overseer/types.go (or sibling)" — the established pattern (`dockerevents.DockerEvent` in dockerevents/, `agent.Session*` in agent/) is producer-package events. Put `EBPFContainerEnrolled` in `internal/controlplane/firewall/ebpf/events.go`. The firewall.Handler emit site already imports ebpf; netlogger consumer already imports ebpf. No new import edges either side.
+- **Event type satisfies `overseer.Event` structurally — no import needed.** The ebpf package does NOT import `internal/controlplane/overseer`. Go's structural interface satisfaction means `EBPFContainerEnrolled.EventName / OccurredAt / MarshalZerologObject` is enough; `overseer.Publish[T overseer.Event]` resolves T at the call site.
+- **`Service.Stop` ordering matters: close ringbuf BEFORE cancelling ctx.** Initial draft did cancel → close. That caused processor to exit via `case <-ctx.Done()` immediately while the reader was still pushing records onto the queue, defeating the documented "processor drains remaining buffered records before exiting" contract. Correct order: unsubscribe → close rb (reader exits on ringbuf.ErrClosed → closes queue → processor drains then returns on `!ok`) → cancel ctx (for reverse-DNS refresher and the subscriber goroutines that select on ctx.Done as belt-and-braces).
+- **Subscriber goroutines need `select ctx.Done()` as belt-and-braces.** `Subscription.Unsubscribe()` posts to `unsubscribeCh` via `select { case <-o.stopCh: return; case ... }`. If the bus is closed first (during CP drain), Unsubscribe returns without closing `Subscription.C`, so a `for ev := range sub.C` loop leaks. Belt-and-braces: select on both `s.ctx.Done()` AND `<-sub.C` in every subscriber goroutine.
+- **`Publish` returns false on bus closed / not started / full buffer — log it.** Overseer logs its own warn line, but adding a producer-side log line with `event=netlogger_enroll_publish_dropped` + `container_id` + `cgroup_id` makes blast-radius (one cgroup of unattributed records) locatable from the structured log surface. The bus's drop line carries the event name but not these identifiers.
+- **ReverseDNSMap is honest about the v1 limitation.** `dns_cache` stores only `{IPv4 → {hash, expire_ts}}` — the domain string lives in CoreDNS process memory and is unavailable to userspace. Lookup returns "" for every hash; the refresh walk records the OBSERVED hash set so a future `(hash → string)` population path lights up Lookup without an API change. Documented in the type doc + the package CLAUDE.md.
+- **`docker.ContainerInspectResult.Container.Config.Labels` is the right path.** First draft used `info.Config.Labels` — wrong; the moby type is `mobyclient.ContainerInspectResult{Container: mobycontainer.InspectResponse{Config: ...}}`. Match `internal/controlplane/agent/peer_lookup_moby.go` exactly.
+- **CAP_BPF caveat from Task 1 applies to Service tests.** Real `Service.Start` opens a `ringbuf.NewReader` against a `*ebpf.Map`, which needs CAP_BPF (unavailable in the dev container). The test seam: `newTestService` in `netlogger_test.go` wires `subscribeBus` directly without calling `Start`. Pipeline tests bypass the kernel entirely — `fakeRingbuf` implements the `readerSource` interface and serves scripted records.
+- **`overseer.Subscribe[T]` panics if T is an interface.** Confirmed by `subscribe.go:86` — `eventType := reflect.TypeOf(zero)` returns nil for an interface zero value. Sticking to concrete struct types (`ebpf.EBPFContainerEnrolled`, `dockerevents.DockerEvent`) keeps the netlogger subscriptions safe; any future refactor that uses an interface-typed event would crash CP at boot (violating no-panic). Worth documenting on the consumer side, not just relying on overseer's own check.
 
 ---
 
@@ -1340,3 +1353,4 @@ go test ./test/e2e/... -v -timeout 15m
 These form a coherent next initiative if the broader SIEM pivot is taken on later.
 
 **Not on this list (intentionally):** sock_ops / TCP_CLOSE roundtrip byte tracking. See "Why decision-time emit is the right scope" in the Context section — bytes/duration belong to the L7 proxy stream, not the BPF decision stream. Doing it in BPF doubles the surface area and overlaps the Envoy access-log emission.
+

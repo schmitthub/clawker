@@ -14,6 +14,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
+	"github.com/schmitthub/clawker/internal/controlplane/overseer"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/storage"
 	"google.golang.org/grpc/codes"
@@ -108,6 +109,7 @@ type Handler struct {
 	resolve    ContainerResolver
 	log        *logger.Logger
 	queue      *ActionQueue
+	bus        *overseer.Overseer
 	certDirF   func() (string, error)
 	listAgents func(ctx context.Context) ([]string, error)
 
@@ -151,6 +153,12 @@ type HandlerDeps struct {
 	Resolver ContainerResolver
 	Log      *logger.Logger
 	Queue    *ActionQueue
+
+	// Bus is the overseer bus the handler publishes ebpf-axis lifecycle
+	// events on after a successful FirewallEnable. Nil-tolerant for unit
+	// tests that exercise the RPC surface without a running bus —
+	// FirewallEnable simply skips the publish when Bus is nil.
+	Bus *overseer.Overseer
 
 	// CertDirFn optionally overrides FirewallCertSubdir resolution —
 	// tests pass a temp dir so RotateCA does not touch the real data path.
@@ -205,6 +213,7 @@ func NewHandler(deps HandlerDeps) *Handler {
 		resolve:        deps.Resolver,
 		log:            log,
 		queue:          deps.Queue,
+		bus:            deps.Bus,
 		certDirF:       certDirFn,
 		listAgents:     deps.ListAgents,
 		cgroupIDFn:     ebpf.CgroupID,
@@ -486,6 +495,30 @@ func (h *Handler) FirewallEnable(ctx context.Context, req *adminv1.FirewallEnabl
 	})
 	if err != nil {
 		return nil, toStatus(err)
+	}
+
+	// Publish EBPFContainerEnrolled AFTER the BPF install completes so
+	// downstream consumers (netlogger LabelCache) hydrate their
+	// cgroup_id → {container_id, labels} mapping. Nil-bus tolerant
+	// for tests that exercise the RPC surface without a running bus.
+	// Publish is non-blocking; the bus also emits its own drop line,
+	// but we add a producer-side line that names the affected
+	// container_id + cgroup_id so the blast radius (one cgroup of
+	// unattributed netlogger records) is locatable from the
+	// structured log surface alone.
+	if h.bus != nil {
+		ok := overseer.Publish(h.bus, ebpf.EBPFContainerEnrolled{
+			CgroupID:    cgroupID,
+			ContainerID: cid,
+			At:          time.Now(),
+		})
+		if !ok {
+			h.log.Warn().
+				Str("container_id", cid).
+				Uint64("cgroup_id", cgroupID).
+				Str("event", "netlogger_enroll_publish_dropped").
+				Msg("overseer.Publish(EBPFContainerEnrolled) returned false — netlogger LabelCache will not hydrate for this cgroup; subsequent egress records will carry empty attribution")
+		}
 	}
 
 	h.log.Info().
