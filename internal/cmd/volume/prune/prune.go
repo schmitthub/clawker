@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/prompter"
@@ -19,6 +20,7 @@ type PruneOptions struct {
 	Prompter  func() *prompter.Prompter
 
 	Force bool
+	All   bool
 }
 
 // NewCmdPrune creates the volume prune command.
@@ -31,13 +33,17 @@ func NewCmdPrune(f *cmdutil.Factory, runF func(context.Context, *PruneOptions) e
 
 	cmd := &cobra.Command{
 		Use:   "prune [OPTIONS]",
-		Short: "Remove unused local volumes",
-		Long: `Removes all clawker-managed volumes that are not currently in use.
+		Short: "Remove unused agent volumes",
+		Long: `Removes unused clawker-managed agent volumes (volumes labeled with purpose=agent).
 
-This command removes volumes that are not attached to any container.
+By default only agent volumes are pruned. Other clawker-managed volumes
+(monitoring, firewall, control plane, etc.) are preserved unless --all is set.
 Use with caution as this will permanently delete data.`,
-		Example: `  # Remove all unused clawker volumes
+		Example: `  # Remove unused agent volumes
   clawker volume prune
+
+  # Remove all unused clawker-managed volumes (agent, monitoring, etc.)
+  clawker volume prune --all
 
   # Remove without confirmation prompt
   clawker volume prune --force`,
@@ -50,6 +56,7 @@ Use with caution as this will permanently delete data.`,
 	}
 
 	cmd.Flags().BoolVarP(&opts.Force, "force", "f", false, "Do not prompt for confirmation")
+	cmd.Flags().BoolVarP(&opts.All, "all", "a", false, "Remove all clawker-managed volumes (default: only agent volumes)")
 
 	return cmd
 }
@@ -58,18 +65,22 @@ func pruneRun(ctx context.Context, opts *PruneOptions) error {
 	ios := opts.IOStreams
 	cs := ios.ColorScheme()
 
-	// Connect to Docker
 	client, err := opts.Client(ctx)
 	if err != nil {
-		cmdutil.HandleError(ios, err)
-		return err
+		return fmt.Errorf("connect to docker: %w", err)
 	}
 
-	// Prompt for confirmation if not forced
+	scope := "unused agent volumes"
+	emptyMsg := "No unused agent volumes to remove."
+	if opts.All {
+		scope = "all unused clawker-managed volumes"
+		emptyMsg = "No unused clawker volumes to remove."
+	}
+
 	if !opts.Force {
-		confirmed, err := opts.Prompter().Confirm(fmt.Sprintf("%s This will remove all unused clawker-managed volumes.", cs.WarningIcon()), false)
+		confirmed, err := opts.Prompter().Confirm(fmt.Sprintf("%s This will remove %s.", cs.WarningIcon(), scope), false)
 		if err != nil {
-			return err
+			return fmt.Errorf("confirm prune: %w", err)
 		}
 		if !confirmed {
 			fmt.Fprintln(ios.ErrOut, "Aborted.")
@@ -77,15 +88,18 @@ func pruneRun(ctx context.Context, opts *PruneOptions) error {
 		}
 	}
 
-	// Prune all unused managed volumes (all=true to include named volumes)
-	report, err := client.VolumesPrune(ctx, true)
+	var extraFilters []map[string]string
+	if !opts.All {
+		extraFilters = append(extraFilters, map[string]string{consts.LabelPurpose: consts.PurposeAgent})
+	}
+
+	report, err := client.VolumesPrune(ctx, true, extraFilters...)
 	if err != nil {
-		cmdutil.HandleError(ios, err)
-		return err
+		return fmt.Errorf("prune volumes: %w", err)
 	}
 
 	if len(report.Report.VolumesDeleted) == 0 {
-		fmt.Fprintln(ios.ErrOut, "No unused clawker volumes to remove.")
+		fmt.Fprintln(ios.ErrOut, emptyMsg)
 		return nil
 	}
 

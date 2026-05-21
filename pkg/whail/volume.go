@@ -107,11 +107,17 @@ func (e *Engine) IsVolumeManaged(ctx context.Context, name string) (bool, error)
 
 // VolumesPrune removes all unused managed volumes.
 // The managed label filter is automatically injected to ensure only
-// managed volumes are affected.
+// managed volumes are affected. Additional label filters from extraFilters
+// are ANDed onto the managed filter to narrow the prune scope.
 // If all is true, prunes all unused volumes including named ones.
 // If all is false, only prunes anonymous volumes (Docker's default behavior).
-func (e *Engine) VolumesPrune(ctx context.Context, all bool) (client.VolumePruneResult, error) {
+func (e *Engine) VolumesPrune(ctx context.Context, all bool, extraFilters ...map[string]string) (client.VolumePruneResult, error) {
 	f := e.newManagedFilter()
+	for _, labels := range extraFilters {
+		for k, v := range labels {
+			f = f.Add("label", k+"="+v)
+		}
+	}
 	result, err := e.APIClient.VolumePrune(ctx, client.VolumePruneOptions{All: all, Filters: f})
 	if err != nil {
 		return client.VolumePruneResult{}, ErrVolumesPruneFailed(err)

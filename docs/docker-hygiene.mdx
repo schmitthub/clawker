@@ -42,7 +42,7 @@ clawker rm <container-name>
 ```
 
 <Warning>
-`clawker volume prune` removes **all** clawker-managed volumes not currently attached to a running container — including config and command history volumes that persist your agent's settings and shell history across sessions. Use `clawker volume list` and `clawker volume remove` for targeted cleanup instead.
+`clawker volume prune` removes unused agent workspace volumes by default. Passing `--all` widens the sweep to **all** clawker-managed volumes not currently attached to a running container — including config and command history volumes that persist your agent's settings and shell history across sessions. Use `clawker volume list` and `clawker volume remove` for targeted cleanup instead.
 </Warning>
 
 ### Docker-wide cleanup

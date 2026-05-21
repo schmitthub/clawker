@@ -4,13 +4,14 @@ title: "clawker volume prune"
 
 ## clawker volume prune
 
-Remove unused local volumes
+Remove unused agent volumes
 
 ### Synopsis
 
-Removes all clawker-managed volumes that are not currently in use.
+Removes unused clawker-managed agent volumes (volumes labeled with purpose=agent).
 
-This command removes volumes that are not attached to any container.
+By default only agent volumes are pruned. Other clawker-managed volumes
+(monitoring, firewall, control plane, etc.) are preserved unless --all is set.
 Use with caution as this will permanently delete data.
 
 ```
@@ -20,8 +21,11 @@ clawker volume prune [OPTIONS] [flags]
 ### Examples
 
 ```
-  # Remove all unused clawker volumes
+  # Remove unused agent volumes
   clawker volume prune
+
+  # Remove all unused clawker-managed volumes (agent, monitoring, etc.)
+  clawker volume prune --all
 
   # Remove without confirmation prompt
   clawker volume prune --force
@@ -30,6 +34,7 @@ clawker volume prune [OPTIONS] [flags]
 ### Options
 
 ```
+  -a, --all     Remove all clawker-managed volumes (default: only agent volumes)
   -f, --force   Do not prompt for confirmation
   -h, --help    help for prune
 ```

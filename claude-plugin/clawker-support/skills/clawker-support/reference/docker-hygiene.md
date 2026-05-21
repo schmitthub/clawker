@@ -57,8 +57,10 @@ resources and won't touch other Docker workloads:
 2. `clawker volume list` + `clawker volume remove <name>` — targeted volume cleanup
 3. `clawker rm <name>` — remove specific stopped containers
 
-**Avoid `clawker volume prune`** unless the user explicitly wants a full reset —
-it removes all unattached clawker volumes including config and shell history.
+`clawker volume prune` (no flags) removes only unattached agent workspace
+volumes — safe default. **Avoid `clawker volume prune --all`** unless the user
+explicitly wants a full reset — it removes all unattached clawker volumes
+including config and shell history.
 
 **If that's not enough, escalate to Docker-wide commands:**
 
