@@ -25,26 +25,19 @@ func (c *Client) ContainerLabels(project, agent, version, image, workdir string)
 	return labels
 }
 
-// VolumeLabels returns labels for a new volume.
-func (c *Client) VolumeLabels(project, agent, purpose string) map[string]string {
+// AgentVolumeLabels returns labels for an agent-scoped volume (config,
+// history, or workspace). All agent volumes carry purpose=PurposeAgent;
+// the per-volume role lives in the volume name suffix, not the label.
+func (c *Client) AgentVolumeLabels(project, agent string) map[string]string {
 	labels := map[string]string{
 		c.cfg.LabelManaged(): c.cfg.ManagedLabelValue(),
 		c.cfg.LabelAgent():   agent,
-		c.cfg.LabelPurpose(): purpose,
+		c.cfg.LabelPurpose(): c.cfg.PurposeAgent(),
 	}
 	if project != "" {
 		labels[c.cfg.LabelProject()] = project
 	}
 	return labels
-}
-
-// GlobalVolumeLabels returns labels for a global (non-agent-scoped) volume.
-// Only includes managed and purpose labels — no project or agent.
-func (c *Client) GlobalVolumeLabels(purpose string) map[string]string {
-	return map[string]string{
-		c.cfg.LabelManaged(): c.cfg.ManagedLabelValue(),
-		c.cfg.LabelPurpose(): purpose,
-	}
 }
 
 // ImageLabels returns labels for a built image.

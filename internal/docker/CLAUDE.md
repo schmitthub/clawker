@@ -23,7 +23,7 @@ Full terminal session lifecycle for interactive container sessions. `NewPTYHandl
 - **Volumes**: `clawker.project.agent-purpose` (workspace, config, history)
 - **Global volumes**: `clawker-<purpose>` — **Network**: from `config.Config.ClawkerNetwork()` (no constant in this package)
 
-Functions: `ValidateResourceName(name) error`, `ContainerName(project, agent) (string, error)`, `VolumeName(project, agent, purpose) (string, error)`, `ContainerNamesFromAgents(project, agents) ([]string, error)`, `GlobalVolumeName`, `ContainerNamePrefix`, `ImageTag`, `ParseContainerName`, `GenerateRandomName`. Constants: `NamePrefix = "clawker"`.
+Functions: `ValidateResourceName(name) error`, `ContainerName(project, agent) (string, error)`, `VolumeName(project, agent, purpose) (string, error)`, `ContainerNamesFromAgents(project, agents) ([]string, error)`, `ContainerNamePrefix`, `ImageTag`, `ParseContainerName`, `GenerateRandomName`. Constants: `NamePrefix = "clawker"`.
 
 **Validation**: `ValidateResourceName` validates user-sourced inputs (agent, project names) against Docker's container name rules: `^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`, max 128 chars. Built into `ContainerName` and `VolumeName` — callers cannot bypass validation. Internal `purpose` strings (`"config"`, `"history"`, `"workspace"`) are not validated.
 
@@ -31,7 +31,7 @@ Functions: `ValidateResourceName(name) error`, `ContainerName(project, agent) (s
 
 All label keys come from `config.Config` interface methods (`LabelManaged()`, `LabelProject()`, etc.). No label constants are exported from this package — callers use `(*Client)` methods which read keys from `c.cfg`.
 
-**Client methods** (all on `*Client`): `ContainerLabels(project, agent, version, image, workdir)`, `GlobalVolumeLabels(purpose)`, `VolumeLabels(project, agent, purpose)`, `ImageLabels(project, version)`, `NetworkLabels()`
+**Client methods** (all on `*Client`): `ContainerLabels(project, agent, version, image, workdir)`, `AgentVolumeLabels(project, agent)`, `ImageLabels(project, version)`, `NetworkLabels()`. `AgentVolumeLabels` always sets `purpose=PurposeAgent`; the config/history/workspace role lives in the volume name suffix, not the label.
 
 **Filters** (all on `*Client`): `ClawkerFilter()`, `ProjectFilter(project)`, `AgentFilter(project, agent)` — return `whail.Filters`.
 

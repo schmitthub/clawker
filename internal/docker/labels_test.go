@@ -94,17 +94,17 @@ func TestContainerLabels(t *testing.T) {
 	})
 }
 
-func TestVolumeLabels(t *testing.T) {
+func TestAgentVolumeLabels(t *testing.T) {
 	c, cfg := testClient(t)
 
 	t.Run("with project", func(t *testing.T) {
-		labels := c.VolumeLabels("myproject", "myagent", "workspace")
+		labels := c.AgentVolumeLabels("myproject", "myagent")
 
 		expected := map[string]string{
 			cfg.LabelManaged(): cfg.ManagedLabelValue(),
 			cfg.LabelProject(): "myproject",
 			cfg.LabelAgent():   "myagent",
-			cfg.LabelPurpose(): "workspace",
+			cfg.LabelPurpose(): cfg.PurposeAgent(),
 		}
 
 		for key, want := range expected {
@@ -113,14 +113,14 @@ func TestVolumeLabels(t *testing.T) {
 			}
 		}
 
-		// VolumeLabels should NOT include created timestamp
+		// AgentVolumeLabels should NOT include created timestamp
 		if _, ok := labels[cfg.LabelCreated()]; ok {
-			t.Error("VolumeLabels should not include LabelCreated")
+			t.Error("AgentVolumeLabels should not include LabelCreated")
 		}
 	})
 
 	t.Run("empty project omits LabelProject", func(t *testing.T) {
-		labels := c.VolumeLabels("", "dev", "workspace")
+		labels := c.AgentVolumeLabels("", "dev")
 
 		if _, ok := labels[cfg.LabelProject()]; ok {
 			t.Error("labels should not contain LabelProject when project is empty")
@@ -129,36 +129,6 @@ func TestVolumeLabels(t *testing.T) {
 			t.Errorf("labels[LabelAgent] = %q, want %q", got, "dev")
 		}
 	})
-}
-
-func TestGlobalVolumeLabels(t *testing.T) {
-	c, cfg := testClient(t)
-
-	labels := c.GlobalVolumeLabels("globals")
-
-	expected := map[string]string{
-		cfg.LabelManaged(): cfg.ManagedLabelValue(),
-		cfg.LabelPurpose(): "globals",
-	}
-
-	for key, want := range expected {
-		if got := labels[key]; got != want {
-			t.Errorf("labels[%q] = %q, want %q", key, got, want)
-		}
-	}
-
-	// Should NOT include project or agent labels
-	if _, ok := labels[cfg.LabelProject()]; ok {
-		t.Error("GlobalVolumeLabels should not include LabelProject")
-	}
-	if _, ok := labels[cfg.LabelAgent()]; ok {
-		t.Error("GlobalVolumeLabels should not include LabelAgent")
-	}
-
-	// Should have exactly 2 labels
-	if got := len(labels); got != 2 {
-		t.Errorf("len(labels) = %d, want 2", got)
-	}
 }
 
 func TestImageLabels(t *testing.T) {

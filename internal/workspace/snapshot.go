@@ -64,12 +64,9 @@ func (s *SnapshotStrategy) Prepare(ctx context.Context, cli *docker.Client) erro
 		return nil
 	}
 
-	// Create the volume
-	labels := map[string]string{
-		"clawker.project": s.config.ProjectName,
-		"clawker.type":    "workspace",
-		"clawker.mode":    "snapshot",
-	}
+	// Create the volume with clawker's standard agent-volume labels so
+	// label-based cleanup in (*Client).removeAgentVolumes can find it.
+	labels := cli.AgentVolumeLabels(s.config.ProjectName, s.config.AgentName)
 
 	created, err := cli.EnsureVolume(ctx, s.volumeName, labels)
 	if err != nil {

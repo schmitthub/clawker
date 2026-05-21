@@ -238,22 +238,3 @@ func TestImageTag(t *testing.T) {
 		})
 	}
 }
-
-func TestGlobalVolumeName(t *testing.T) {
-	tests := []struct {
-		purpose string
-		want    string
-	}{
-		{"globals", "clawker-globals"},
-		{"cache", "clawker-cache"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.purpose, func(t *testing.T) {
-			got := GlobalVolumeName(tt.purpose)
-			if got != tt.want {
-				t.Errorf("GlobalVolumeName(%q) = %q, want %q", tt.purpose, got, tt.want)
-			}
-		})
-	}
-}
