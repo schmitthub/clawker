@@ -67,6 +67,24 @@ const (
 	LabelFlavor    = LabelPrefix + "flavor"
 	LabelTest      = LabelPrefix + "test"
 	LabelE2ETest   = LabelPrefix + "e2e-test"
+	// LabelCPBinarySHA stamps the SHA-256 of the embedded clawker-cp +
+	// ebpf-manager bytes onto the built CP image and running container.
+	// EnsureRunning compares the running container's label against the
+	// host clawker binary's embedded hash to detect drift.
+	LabelCPBinarySHA = LabelPrefix + "cp.binary_sha256"
+)
+
+// OCI standard label keys (not under LabelPrefix — defined by the
+// OCI image-spec).
+const (
+	// LabelImageCreated is the OCI provenance timestamp (RFC3339)
+	// stamped on the CP image at build time. The name-conflict recovery
+	// path reads it from competing CP images to determine which
+	// concurrent bootstrapper has the newer build.
+	LabelImageCreated  = "org.opencontainers.image.created"
+	LabelImageRevision = "org.opencontainers.image.revision"
+	LabelImageVersion  = "org.opencontainers.image.version"
+	LabelImageSource   = "org.opencontainers.image.source"
 )
 
 // Label values.
@@ -174,9 +192,11 @@ const (
 
 // Container images.
 const (
-	// CPImageTag is the local Docker image tag for the built control plane image.
-	// Built on-demand from embedded binaries by ensureCPImage in the firewall manager.
-	CPImageTag = "clawker-controlplane:latest"
+	// CPImageRepo is the local Docker image repo for the built control plane image.
+	// The tag is content-derived (computed from the SHA-256 of the embedded
+	// clawker-cp + ebpf-manager binaries) so a stale image is impossible: the
+	// host clawker binary either resolves the tag and reuses, or rebuilds.
+	CPImageRepo = "clawker-controlplane"
 )
 
 // Static IP assignments (last octet on clawker-net).

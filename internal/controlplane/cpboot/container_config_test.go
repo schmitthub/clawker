@@ -154,7 +154,13 @@ func TestINV_B1_015_CPImageTag(t *testing.T) {
 
 	cpConfig, err := BuildCPContainerConfig(cfg, testCPOpts())
 	require.NoError(t, err)
-	assert.Equal(t, consts.CPImageTag, cpConfig.Image)
+	assert.Equal(t, cpImageRef(), cpConfig.Image)
+	assert.True(t, strings.HasPrefix(cpConfig.Image, consts.CPImageRepo+":bin-"),
+		"image tag must be content-derived under the clawker-controlplane repo, got %q", cpConfig.Image)
+
+	full, _ := cpBinaryHash()
+	assert.Equal(t, full, cpConfig.Labels[consts.LabelCPBinarySHA],
+		"container labels must carry the full SHA-256 of the embedded binaries so EnsureRunning's staleness compare works")
 }
 
 // Tests INV-B1-018 [unit]: CP container labels.

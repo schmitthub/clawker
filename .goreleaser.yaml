@@ -38,6 +38,7 @@ builds:
       - -s -w
       - -X github.com/schmitthub/clawker/internal/build.Version={{.Version}}
       - -X github.com/schmitthub/clawker/internal/build.Date={{.CommitDate}}
+      - -X github.com/schmitthub/clawker/internal/build.Revision={{.FullCommit}}
     hooks:
       pre:
         - cmd: make stage-embeds-amd64
@@ -59,6 +60,7 @@ builds:
       - -s -w
       - -X github.com/schmitthub/clawker/internal/build.Version={{.Version}}
       - -X github.com/schmitthub/clawker/internal/build.Date={{.CommitDate}}
+      - -X github.com/schmitthub/clawker/internal/build.Revision={{.FullCommit}}
     hooks:
       pre:
         - cmd: make stage-embeds-arm64

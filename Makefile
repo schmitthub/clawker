@@ -13,12 +13,14 @@
 # Go Clawker variables
 BINARY_NAME := clawker
 CLAWKER_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+CLAWKER_REVISION ?= $(shell git rev-parse HEAD 2>/dev/null || echo "unknown")
 GO ?= go
 GOFLAGS := -trimpath
 # Dev builds leave build.Date empty; release goreleaser stamps it via
 # {{.CommitDate}} in .goreleaser.yaml.
 LDFLAGS := -s -w \
-	-X 'github.com/schmitthub/clawker/internal/build.Version=$(CLAWKER_VERSION)'
+	-X 'github.com/schmitthub/clawker/internal/build.Version=$(CLAWKER_VERSION)' \
+	-X 'github.com/schmitthub/clawker/internal/build.Revision=$(CLAWKER_REVISION)'
 BIN_DIR := bin
 DIST_DIR := dist
 # Staging directory for per-arch linux embed sets used by the release pipeline.
@@ -780,7 +782,14 @@ localenv:
 restart: clawker-clean clawker
 	@echo "Stopping firewall stack containers..."
 	@docker rm -f clawker-controlplane clawker-envoy clawker-coredns 2>/dev/null || true
-	@docker rmi clawker-controlplane:latest clawker-coredns:latest 2>/dev/null || true
+	@# CP image tag is content-derived (clawker-controlplane:bin-<sha16>);
+	@# sweep every tag under the repo so old bin-<sha> tags from prior
+	@# builds and any legacy :latest don't linger after a restart. The
+	@# explicit empty-check avoids BSD xargs (macOS) erroring on the
+	@# GNU-only `-r` flag when there is no input.
+	@tags="$$(docker images clawker-controlplane --format '{{.Repository}}:{{.Tag}}' 2>/dev/null)"; \
+		[ -n "$$tags" ] && echo "$$tags" | xargs docker rmi -f 2>/dev/null || true
+	@docker rmi clawker-coredns:latest 2>/dev/null || true
 	@echo "Ready. Start with: ./bin/clawker run ..."
 
 # ============================================================================
