@@ -2,6 +2,7 @@ package build
 
 import (
 	"context"
+	"net/http"
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
@@ -57,6 +58,9 @@ monitoring:
 					return testCfg, nil
 				},
 				Logger: func() (*logger.Logger, error) { return logger.Nop(), nil },
+				HttpClient: func() (*http.Client, error) {
+					return stubHTTPClient("2.99.99-test"), nil
+				},
 			}
 
 			cmd := NewCmdBuild(f, nil) // nil runF → real buildRun
@@ -123,6 +127,9 @@ monitoring:
 			return testCfg, nil
 		},
 		Logger: func() (*logger.Logger, error) { return logger.Nop(), nil },
+		HttpClient: func() (*http.Client, error) {
+			return stubHTTPClient("2.99.99-test"), nil
+		},
 	}
 
 	cmd := NewCmdBuild(f, nil)
@@ -179,6 +186,9 @@ monitoring:
 			return testCfg, nil
 		},
 		Logger: func() (*logger.Logger, error) { return logger.Nop(), nil },
+		HttpClient: func() (*http.Client, error) {
+			return stubHTTPClient("2.99.99-test"), nil
+		},
 	}
 
 	cmd := NewCmdBuild(f, nil)
@@ -230,6 +240,9 @@ monitoring:
 			return testCfg, nil
 		},
 		Logger: func() (*logger.Logger, error) { return logger.Nop(), nil },
+		HttpClient: func() (*http.Client, error) {
+			return stubHTTPClient("2.99.99-test"), nil
+		},
 	}
 
 	cmd := NewCmdBuild(f, nil)

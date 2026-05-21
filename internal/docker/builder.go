@@ -36,6 +36,12 @@ type BuilderOptions struct {
 	Dockerfile      []byte                  // Pre-rendered Dockerfile bytes (avoids re-generation)
 	BuildKitEnabled bool                    // Use BuildKit builder for cache mount support
 	OnProgress      whail.BuildProgressFunc // Progress callback for build events
+	// ClaudeCodeVersion is the concrete npm version baked into the rendered
+	// Dockerfile's ARG CLAUDE_CODE_VERSION default. Resolved upstream at the
+	// command layer via bundler.ResolveLatestClaudeCodeVersion (using
+	// Factory.HttpClient). Empty string falls back to bundler's
+	// DefaultClaudeCodeVersion literal — preserves offline-build behaviour.
+	ClaudeCodeVersion string
 }
 
 // toBuildImageOpts maps BuilderOptions to BuildImageOpts with the given per-call parameters.
@@ -75,6 +81,7 @@ func NewBuilder(cli *Client, cfg *config.Project, workDir, projectName string) *
 func (b *Builder) EnsureImage(ctx context.Context, imageTag string, opts BuilderOptions) error {
 	gen := bundler.NewProjectGenerator(b.client.cfg, b.workDir)
 	gen.BuildKitEnabled = opts.BuildKitEnabled
+	gen.ClaudeCodeVersion = opts.ClaudeCodeVersion
 
 	// Custom Dockerfiles bypass content hashing — delegate to Build() so that
 	// mergeImageLabels is applied consistently. Note: this always rebuilds;
@@ -128,6 +135,7 @@ func (b *Builder) EnsureImage(ctx context.Context, imageTag string, opts Builder
 func (b *Builder) Build(ctx context.Context, imageTag string, opts BuilderOptions) error {
 	gen := bundler.NewProjectGenerator(b.client.cfg, b.workDir)
 	gen.BuildKitEnabled = opts.BuildKitEnabled
+	gen.ClaudeCodeVersion = opts.ClaudeCodeVersion
 
 	// Merge image labels into build options (applied via Docker API, not in Dockerfile)
 	opts.Labels = b.mergeImageLabels(opts.Labels)

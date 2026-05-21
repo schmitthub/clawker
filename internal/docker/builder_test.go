@@ -257,6 +257,7 @@ func TestEnsureImage_CacheHit(t *testing.T) {
 
 	// Pre-compute the expected hash tag by generating the Dockerfile and hashing it
 	gen := bundler.NewProjectGenerator(cfg, t.TempDir())
+	gen.ClaudeCodeVersion = "2.99.99-test"
 	dockerfile, err := gen.Generate()
 	require.NoError(t, err)
 
@@ -286,7 +287,9 @@ func TestEnsureImage_CacheHit(t *testing.T) {
 	builder := NewBuilder(client, projectCfg, "", ensureImageTestProject)
 	imageTag := ImageTag(ensureImageTestProject)
 
-	err = builder.EnsureImage(context.Background(), imageTag, BuilderOptions{})
+	err = builder.EnsureImage(context.Background(), imageTag, BuilderOptions{
+		ClaudeCodeVersion: "2.99.99-test",
+	})
 	require.NoError(t, err)
 
 	// TagImage should have been called to alias :latest → hash tag
@@ -302,6 +305,7 @@ func TestEnsureImage_CacheMiss(t *testing.T) {
 
 	// Pre-compute the expected hash tag
 	gen := bundler.NewProjectGenerator(cfg, t.TempDir())
+	gen.ClaudeCodeVersion = "2.99.99-test"
 	dockerfile, err := gen.Generate()
 	require.NoError(t, err)
 
@@ -327,7 +331,9 @@ func TestEnsureImage_CacheMiss(t *testing.T) {
 	builder := NewBuilder(client, projectCfg, "", ensureImageTestProject)
 	imageTag := ImageTag(ensureImageTestProject)
 
-	err = builder.EnsureImage(context.Background(), imageTag, BuilderOptions{})
+	err = builder.EnsureImage(context.Background(), imageTag, BuilderOptions{
+		ClaudeCodeVersion: "2.99.99-test",
+	})
 	require.NoError(t, err)
 
 	// The hash tag should be in the build tags
@@ -366,6 +372,7 @@ func TestEnsureImage_TagImageFailure(t *testing.T) {
 
 	// Pre-compute the expected hash tag
 	gen := bundler.NewProjectGenerator(cfg, t.TempDir())
+	gen.ClaudeCodeVersion = "2.99.99-test"
 	dockerfile, err := gen.Generate()
 	require.NoError(t, err)
 
@@ -390,7 +397,9 @@ func TestEnsureImage_TagImageFailure(t *testing.T) {
 	builder := NewBuilder(client, projectCfg, "", ensureImageTestProject)
 	imageTag := ImageTag(ensureImageTestProject)
 
-	err = builder.EnsureImage(context.Background(), imageTag, BuilderOptions{})
+	err = builder.EnsureImage(context.Background(), imageTag, BuilderOptions{
+		ClaudeCodeVersion: "2.99.99-test",
+	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "tag failed")
 }

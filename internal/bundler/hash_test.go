@@ -118,7 +118,7 @@ security:
 `
 	// Generate baseline Dockerfile and hash
 	cfg1 := testConfig(t, baseYAML)
-	gen1 := NewProjectGenerator(cfg1, "/tmp/test")
+	gen1 := newTestProjectGenerator(cfg1, "/tmp/test")
 	df1, err := gen1.Generate()
 	require.NoError(t, err)
 	hash1, err := ContentHash(df1, nil, "", nil)
@@ -131,7 +131,7 @@ agent:
     FOO: "bar"
     BAZ: "qux"
 `)
-	gen2 := NewProjectGenerator(cfg2, "/tmp/test")
+	gen2 := newTestProjectGenerator(cfg2, "/tmp/test")
 	df2, err := gen2.Generate()
 	require.NoError(t, err)
 	hash2, err := ContentHash(df2, nil, "", nil)
@@ -144,7 +144,7 @@ agent:
   editor: "vim"
   visual: "code"
 `)
-	gen3 := NewProjectGenerator(cfg3, "/tmp/test")
+	gen3 := newTestProjectGenerator(cfg3, "/tmp/test")
 	df3, err := gen3.Generate()
 	require.NoError(t, err)
 	hash3, err := ContentHash(df3, nil, "", nil)
@@ -165,7 +165,7 @@ security:
     add_domains:
       - "custom.com"
 `)
-	gen4 := NewProjectGenerator(cfg4, "/tmp/test")
+	gen4 := newTestProjectGenerator(cfg4, "/tmp/test")
 	df4, err := gen4.Generate()
 	require.NoError(t, err)
 	hash4, err := ContentHash(df4, nil, "", nil)
@@ -189,7 +189,7 @@ security:
   firewall:
     enable: true
 `)
-	gen5 := NewProjectGenerator(cfg5, "/tmp/test")
+	gen5 := newTestProjectGenerator(cfg5, "/tmp/test")
 	df5, err := gen5.Generate()
 	require.NoError(t, err)
 	hash5, err := ContentHash(df5, nil, "", nil)
@@ -208,7 +208,7 @@ security:
   firewall:
     enable: true
 `)
-	gen6 := NewProjectGenerator(cfg6, "/tmp/test")
+	gen6 := newTestProjectGenerator(cfg6, "/tmp/test")
 	df6, err := gen6.Generate()
 	require.NoError(t, err)
 	hash6, err := ContentHash(df6, nil, "", nil)
@@ -228,7 +228,7 @@ security:
   firewall:
     enable: true
 `)
-	gen7 := NewProjectGenerator(cfg7, "/tmp/test")
+	gen7 := newTestProjectGenerator(cfg7, "/tmp/test")
 	df7, err := gen7.Generate()
 	require.NoError(t, err)
 	hash7, err := ContentHash(df7, nil, "", nil)
@@ -257,7 +257,7 @@ func TestContentHash_BuildKitVsLegacy(t *testing.T) {
 	cfg := testConfig(t, hashTestConfig(t))
 
 	// BuildKit mode
-	genBK := NewProjectGenerator(cfg, "/tmp/test")
+	genBK := newTestProjectGenerator(cfg, "/tmp/test")
 	genBK.BuildKitEnabled = true
 	dfBK, err := genBK.Generate()
 	require.NoError(t, err)
@@ -265,7 +265,7 @@ func TestContentHash_BuildKitVsLegacy(t *testing.T) {
 	require.NoError(t, err)
 
 	// Legacy mode
-	genLegacy := NewProjectGenerator(cfg, "/tmp/test")
+	genLegacy := newTestProjectGenerator(cfg, "/tmp/test")
 	genLegacy.BuildKitEnabled = false
 	dfLegacy, err := genLegacy.Generate()
 	require.NoError(t, err)
@@ -286,14 +286,14 @@ func TestContentHash_BuildKitVsLegacy(t *testing.T) {
 func TestContentHash_StableBuildKit(t *testing.T) {
 	cfg := testConfig(t, hashTestConfig(t))
 
-	gen1 := NewProjectGenerator(cfg, "/tmp/test")
+	gen1 := newTestProjectGenerator(cfg, "/tmp/test")
 	gen1.BuildKitEnabled = true
 	df1, err := gen1.Generate()
 	require.NoError(t, err)
 	hash1, err := ContentHash(df1, nil, "", nil)
 	require.NoError(t, err)
 
-	gen2 := NewProjectGenerator(cfg, "/tmp/test")
+	gen2 := newTestProjectGenerator(cfg, "/tmp/test")
 	gen2.BuildKitEnabled = true
 	df2, err := gen2.Generate()
 	require.NoError(t, err)
@@ -308,14 +308,14 @@ func TestContentHash_StableBuildKit(t *testing.T) {
 func TestContentHash_StableLegacy(t *testing.T) {
 	cfg := testConfig(t, hashTestConfig(t))
 
-	gen1 := NewProjectGenerator(cfg, "/tmp/test")
+	gen1 := newTestProjectGenerator(cfg, "/tmp/test")
 	gen1.BuildKitEnabled = false
 	df1, err := gen1.Generate()
 	require.NoError(t, err)
 	hash1, err := ContentHash(df1, nil, "", nil)
 	require.NoError(t, err)
 
-	gen2 := NewProjectGenerator(cfg, "/tmp/test")
+	gen2 := newTestProjectGenerator(cfg, "/tmp/test")
 	gen2.BuildKitEnabled = false
 	df2, err := gen2.Generate()
 	require.NoError(t, err)
@@ -337,12 +337,12 @@ security:
   firewall:
     enable: true
 `)
-	genBK := NewProjectGenerator(cfg, "/tmp/test")
+	genBK := newTestProjectGenerator(cfg, "/tmp/test")
 	genBK.BuildKitEnabled = true
 	dfBK, err := genBK.Generate()
 	require.NoError(t, err)
 
-	genLegacy := NewProjectGenerator(cfg, "/tmp/test")
+	genLegacy := newTestProjectGenerator(cfg, "/tmp/test")
 	genLegacy.BuildKitEnabled = false
 	dfLegacy, err := genLegacy.Generate()
 	require.NoError(t, err)

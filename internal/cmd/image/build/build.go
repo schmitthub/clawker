@@ -4,6 +4,7 @@ package build
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 
@@ -29,6 +30,7 @@ type BuildOptions struct {
 	Logger         func() (*logger.Logger, error)
 	Client         func(context.Context) (*docker.Client, error)
 	ProjectManager func() (project.ProjectManager, error)
+	HttpClient     func() (*http.Client, error)
 
 	File      string   // -f, --file (Dockerfile path)
 	Tags      []string // -t, --tag (multiple allowed)
@@ -51,6 +53,7 @@ func NewCmdBuild(f *cmdutil.Factory, runF func(context.Context, *BuildOptions) e
 		Logger:         f.Logger,
 		Client:         f.Client,
 		ProjectManager: f.ProjectManager,
+		HttpClient:     f.HttpClient,
 	}
 
 	cmd := &cobra.Command{
@@ -206,6 +209,25 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 
 	builder := docker.NewBuilder(client, cfg, wd, projectName)
 
+	// Resolve Claude Code's "latest" dist-tag to a concrete npm version
+	// once per build. The resolved value flows into the rendered
+	// Dockerfile's `ARG CLAUDE_CODE_VERSION=<value>` default so the
+	// install layer's cache busts iff npm has published a new release.
+	// Resolution failure (offline, registry down) is non-fatal: warn and
+	// fall back to the literal "latest" — install RUN still works, cache
+	// just doesn't auto-bust until the next online build.
+	httpClient, hcErr := opts.HttpClient()
+	if hcErr != nil {
+		return fmt.Errorf("failed to get http client: %w", hcErr)
+	}
+	claudeCodeVersion, resErr := bundler.ResolveLatestClaudeCodeVersion(ctx, httpClient)
+	if resErr != nil {
+		fmt.Fprintf(ios.ErrOut, "%s Could not resolve latest Claude Code version (%v) — using %q literal; cache will not bust on a new release until network returns\n",
+			cs.WarningIcon(), resErr, bundler.DefaultClaudeCodeVersion)
+	} else {
+		log.Debug().Str("claude_code_version", claudeCodeVersion).Msg("resolved Claude Code version for ARG default")
+	}
+
 	// Build with options.
 	// Defense in depth: --no-cache should also skip content hash check if
 	// EnsureImage() is ever used. This ensures explicit no-cache requests
@@ -215,16 +237,17 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 		Str("image", imageTag).
 		Msg("building container image")
 	buildOpts := docker.BuilderOptions{
-		ForceBuild:      opts.NoCache,
-		NoCache:         opts.NoCache,
-		Labels:          userLabels,
-		Target:          opts.Target,
-		Pull:            opts.Pull,
-		SuppressOutput:  suppressed,
-		NetworkMode:     opts.Network,
-		BuildArgs:       buildArgs,
-		Tags:            opts.Tags,
-		BuildKitEnabled: buildkitEnabled,
+		ForceBuild:        opts.NoCache,
+		NoCache:           opts.NoCache,
+		Labels:            userLabels,
+		Target:            opts.Target,
+		Pull:              opts.Pull,
+		SuppressOutput:    suppressed,
+		NetworkMode:       opts.Network,
+		BuildArgs:         buildArgs,
+		Tags:              opts.Tags,
+		BuildKitEnabled:   buildkitEnabled,
+		ClaudeCodeVersion: claudeCodeVersion,
 	}
 
 	// Wire progress display when output is not suppressed.

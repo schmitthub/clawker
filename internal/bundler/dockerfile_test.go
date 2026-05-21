@@ -11,6 +11,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// testClaudeCodeVersion is the version baked into rendered Dockerfiles when
+// tests construct generators via newTestProjectGenerator. Setting the field
+// directly (rather than going through any resolver) keeps bundler unit tests
+// hermetic — bundler is a pure renderer that doesn't touch npm; the npm
+// round-trip lives at the command layer in production.
+const testClaudeCodeVersion = "2.99.99-test"
+
+// newTestProjectGenerator builds a ProjectGenerator with the test version
+// pre-set so Generate() produces a deterministic ARG CLAUDE_CODE_VERSION
+// without any HTTP traffic. Mirrors the way production callers (the build
+// command) set ClaudeCodeVersion after resolving via Factory.HttpClient.
+func newTestProjectGenerator(cfg config.Config, workDir string) *ProjectGenerator {
+	gen := NewProjectGenerator(cfg, workDir)
+	gen.ClaudeCodeVersion = testClaudeCodeVersion
+	return gen
+}
+
 func minimalProjectYAML() string {
 	return `
 version: "1"
@@ -169,7 +186,7 @@ build:
 monitoring:
   otel_collector_port: 9999
 `)
-	gen := NewProjectGenerator(cfg, t.TempDir())
+	gen := newTestProjectGenerator(cfg, t.TempDir())
 	dockerfile, err := gen.Generate()
 	require.NoError(t, err)
 
@@ -189,7 +206,7 @@ monitoring:
 
 func TestBuildContext_NodeInstall_Debian(t *testing.T) {
 	cfg := testConfig(t, minimalProjectYAML())
-	gen := NewProjectGenerator(cfg, t.TempDir())
+	gen := newTestProjectGenerator(cfg, t.TempDir())
 	dockerfile, err := gen.Generate()
 	require.NoError(t, err)
 
@@ -212,7 +229,7 @@ version: "1"
 build:
   image: "alpine:3.23"
 `)
-	gen := NewProjectGenerator(cfg, t.TempDir())
+	gen := newTestProjectGenerator(cfg, t.TempDir())
 	dockerfile, err := gen.Generate()
 	require.NoError(t, err)
 
@@ -231,7 +248,7 @@ build:
 
 func TestBuildContext_DefaultMonitoring(t *testing.T) {
 	cfg := testConfig(t, minimalProjectYAML())
-	gen := NewProjectGenerator(cfg, t.TempDir())
+	gen := newTestProjectGenerator(cfg, t.TempDir())
 	dockerfile, err := gen.Generate()
 	require.NoError(t, err)
 
@@ -250,7 +267,7 @@ func TestBuildContext_DefaultMonitoring(t *testing.T) {
 
 func TestBuildContext_ClaudeConfigDir(t *testing.T) {
 	cfg := testConfig(t, minimalProjectYAML())
-	gen := NewProjectGenerator(cfg, t.TempDir())
+	gen := newTestProjectGenerator(cfg, t.TempDir())
 	dockerfile, err := gen.Generate()
 	require.NoError(t, err)
 
@@ -282,7 +299,7 @@ monitoring:
     include_account_uuid: false
     include_session_id: false
 `)
-	gen := NewProjectGenerator(cfg, t.TempDir())
+	gen := newTestProjectGenerator(cfg, t.TempDir())
 	dockerfile, err := gen.Generate()
 	require.NoError(t, err)
 
@@ -302,7 +319,7 @@ monitoring:
 func TestBuildContext_TelemetryConfig_DefaultsEnabled(t *testing.T) {
 	// With default config (all telemetry enabled), all OTEL env vars should be present
 	cfg := testConfig(t, minimalProjectYAML())
-	gen := NewProjectGenerator(cfg, t.TempDir())
+	gen := newTestProjectGenerator(cfg, t.TempDir())
 	dockerfile, err := gen.Generate()
 	require.NoError(t, err)
 
@@ -338,7 +355,7 @@ func TestDockerfilesDir_DelegatesToConfig(t *testing.T) {
 // a userspace wrapper.
 func TestBuildContext_ClawkerdIsPID1(t *testing.T) {
 	cfg := testConfig(t, minimalProjectYAML())
-	gen := NewProjectGenerator(cfg, t.TempDir())
+	gen := newTestProjectGenerator(cfg, t.TempDir())
 	dockerfile, err := gen.Generate()
 	require.NoError(t, err)
 	content := string(dockerfile)
@@ -351,6 +368,137 @@ func TestBuildContext_ClawkerdIsPID1(t *testing.T) {
 		"no userspace privilege-drop wrapper allowed; privilege drop happens in the spawn child")
 	assert.NotContains(t, content, `ENTRYPOINT ["/usr/local/bin/entrypoint.sh"`,
 		"no shell entrypoint shim allowed; clawkerd owns the spawn directly")
+}
+
+// TestBuildContext_ClaudeCodeVersionIsARG pins the ENV→ARG conversion. ARG
+// (not ENV) is required so the ARG-cache behaviour applies: a changed value
+// busts cache ONLY at first usage (the install RUN), not at the declaration
+// line — keeping apt/Node/git-delta/zsh-in-docker cached above. ENV would
+// create a layer whose hash propagates downward and bust every layer below.
+func TestBuildContext_ClaudeCodeVersionIsARG(t *testing.T) {
+	cfg := testConfig(t, minimalProjectYAML())
+	gen := newTestProjectGenerator(cfg, t.TempDir())
+	dockerfile, err := gen.Generate()
+	require.NoError(t, err)
+	content := string(dockerfile)
+
+	assert.Contains(t, content, "ARG CLAUDE_CODE_VERSION="+testClaudeCodeVersion,
+		"Claude Code version must be declared as ARG with the npm-resolved concrete version baked in")
+	assert.NotContains(t, content, "ENV CLAUDE_CODE_VERSION=",
+		"ENV form would bust cache for every layer below the declaration; ARG form busts only at first usage")
+}
+
+// TestBuildContext_FallsBackOnEmptyClaudeCodeVersion verifies offline-build
+// resilience: when no ClaudeCodeVersion is set on the generator (resolver
+// failure handled by the caller / offline build), the renderer falls back
+// to the literal DefaultClaudeCodeVersion ("latest"). Build still works in
+// that path; the cache just won't bust on a new release until network
+// returns and the command-layer resolver succeeds.
+func TestBuildContext_FallsBackOnEmptyClaudeCodeVersion(t *testing.T) {
+	cfg := testConfig(t, minimalProjectYAML())
+	gen := NewProjectGenerator(cfg, t.TempDir())
+	// ClaudeCodeVersion intentionally unset.
+	dockerfile, err := gen.Generate()
+	require.NoError(t, err, "empty ClaudeCodeVersion must not fail the build — fallback path keeps offline builds working")
+
+	assert.Contains(t, string(dockerfile), "ARG CLAUDE_CODE_VERSION="+DefaultClaudeCodeVersion,
+		"fallback must render the literal default so the install RUN still works (downloads npm-latest at build time)")
+}
+
+// TestBuildContext_LateClawkerBlock pins the post-reorder layer ordering.
+// Root-scoped clawker assets (agent prompt, managed-settings heredoc,
+// firewall CA, host-proxy + socket-server binaries, clawkerd) land AFTER
+// the trailing `USER root` switch and BEFORE ENTRYPOINT. The Claude config
+// seeds (.claude-init/) stay in the user-scope section — alongside Claude
+// Code itself — because the after_claude_install / before_entrypoint
+// inject points and user Instructions.Copy must be able to reference
+// ~/.claude-init/ contents at injection time. A regression that scatters
+// the root block across the file, or that buries the seeds below
+// after_claude_install, would silently break either cache locality or the
+// inject-point lifetime contract.
+func TestBuildContext_LateClawkerBlock(t *testing.T) {
+	cfg := testConfig(t, minimalProjectYAML())
+	gen := newTestProjectGenerator(cfg, t.TempDir())
+	dockerfile, err := gen.Generate()
+	require.NoError(t, err)
+	content := string(dockerfile)
+
+	userRootIdx := strings.LastIndex(content, "USER root")
+	require.Positive(t, userRootIdx, "trailing USER root switch must exist")
+
+	// Root-scoped clawker assets that have no build-time dependency from
+	// user inject points belong AFTER the trailing USER root.
+	for _, asset := range []string{
+		"clawker-agent-prompt.md",
+		"host-open.sh",
+		"git-credential-clawker.sh",
+		"/build/callback-forwarder",
+		"/build/clawker-socket-server",
+		"/usr/local/bin/clawkerd",
+	} {
+		idx := strings.Index(content, asset)
+		require.Positive(t, idx, "asset %q must appear in rendered Dockerfile", asset)
+		assert.Greater(t, idx, userRootIdx,
+			"root-scoped clawker asset %q must appear AFTER the trailing 'USER root' switch", asset)
+	}
+
+	// managed-settings.json MUST land in early root scope (before the
+	// user-scope USER ${USERNAME} switch). Any `claude` invocation in
+	// after_claude_install / before_entrypoint inject points reads it at
+	// session start for the enterprise PATH override that exposes
+	// .npm-global/bin to Claude Code's Bash-tool shell snapshot —
+	// without it, build-time `claude mcp add ...` runs without the
+	// global-npm dir on PATH and globally-installed binaries fail to
+	// resolve.
+	managedSettingsIdx := strings.Index(content, "managed-settings.json")
+	require.Positive(t, managedSettingsIdx, "managed-settings.json heredoc must exist")
+	assert.Less(t, managedSettingsIdx, userRootIdx,
+		"managed-settings.json must appear BEFORE the trailing 'USER root' (early root scope) so any build-time claude invocation in user inject points sees its PATH augmentation")
+	firstUserSwitchIdx := strings.Index(content, "USER ${USERNAME}")
+	require.Positive(t, firstUserSwitchIdx, "USER ${USERNAME} switch must exist")
+	assert.Less(t, managedSettingsIdx, firstUserSwitchIdx,
+		"managed-settings.json must be created in early root scope, before the USER ${USERNAME} switch")
+
+	// Claude config seeds belong BEFORE the trailing USER root — they're
+	// user-owned writes that production user inject points expect to
+	// reference (e.g. after_claude_install dropping additional config
+	// into ~/.claude-init/). Burying them under USER root and below the
+	// inject points would silently break that contract.
+	for _, seed := range []string{
+		"statusline.sh",
+		"claude-settings.json",
+		"claude-config.json",
+	} {
+		idx := strings.Index(content, seed)
+		require.Positive(t, idx, "seed %q must appear in rendered Dockerfile", seed)
+		assert.Less(t, idx, userRootIdx,
+			"Claude config seed %q must appear BEFORE the trailing 'USER root' switch so user inject points can reference ~/.claude-init/", seed)
+	}
+
+	// clawkerd COPY must be the very last asset before ENTRYPOINT (so a
+	// clawkerd binary bump invalidates only its own layer + ENTRYPOINT).
+	clawkerdIdx := strings.Index(content, "/usr/local/bin/clawkerd")
+	entrypointIdx := strings.Index(content, "ENTRYPOINT")
+	require.Positive(t, clawkerdIdx)
+	require.Positive(t, entrypointIdx)
+	assert.Less(t, clawkerdIdx, entrypointIdx,
+		"COPY clawkerd must precede ENTRYPOINT")
+}
+
+// TestBuildContext_CollapsedChmod pins the single-chmod-batching invariant:
+// host-proxy + socket-server binaries get one chmod RUN, not multiple. Two
+// separate chmod RUNs would create two layers and lose the "one block to
+// invalidate" cache property the consolidation establishes.
+func TestBuildContext_CollapsedChmod(t *testing.T) {
+	cfg := testConfig(t, minimalProjectYAML())
+	gen := newTestProjectGenerator(cfg, t.TempDir())
+	dockerfile, err := gen.Generate()
+	require.NoError(t, err)
+	content := string(dockerfile)
+
+	chmodCount := strings.Count(content, "chmod +x /usr/local/bin/")
+	assert.Equal(t, 1, chmodCount,
+		"all clawker-installed /usr/local/bin/* binaries must be chmod'd in a single RUN to minimise layer count and keep cache invalidation contiguous")
 }
 
 func TestDockerfilesDir_PropagatesError(t *testing.T) {

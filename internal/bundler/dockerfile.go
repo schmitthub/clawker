@@ -347,6 +347,12 @@ type ProjectGenerator struct {
 	cfg             config.Config
 	workDir         string
 	BuildKitEnabled bool // Enables --mount=type=cache directives in generated Dockerfiles
+	// ClaudeCodeVersion is the concrete version string baked into the rendered
+	// ARG default (e.g. "2.1.5"). The npm-registry resolution that turns the
+	// "latest" dist-tag into a concrete version happens at the command layer
+	// via bundler.ResolveLatestClaudeCodeVersion — bundler itself doesn't fetch.
+	// Empty means use DefaultClaudeCodeVersion ("latest") as a literal.
+	ClaudeCodeVersion string
 }
 
 // NewProjectGenerator creates a new project Dockerfile generator.
@@ -357,9 +363,12 @@ func NewProjectGenerator(cfg config.Config, workDir string) *ProjectGenerator {
 	}
 }
 
-// Generate creates a Dockerfile based on the project configuration.
+// Generate creates a Dockerfile based on the project configuration. The
+// ClaudeCodeVersion baked into the rendered ARG default comes from the
+// generator's ClaudeCodeVersion field (set by callers from the resolved
+// npm version) — empty falls back to DefaultClaudeCodeVersion literal.
 func (g *ProjectGenerator) Generate() ([]byte, error) {
-	ctx, err := g.buildContext()
+	tctx, err := g.buildContext()
 	if err != nil {
 		return nil, fmt.Errorf("failed to build context: %w", err)
 	}
@@ -370,7 +379,7 @@ func (g *ProjectGenerator) Generate() ([]byte, error) {
 	}
 
 	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, ctx); err != nil {
+	if err := tmpl.Execute(&buf, tctx); err != nil {
 		return nil, fmt.Errorf("failed to render Dockerfile template: %w", err)
 	}
 
@@ -590,7 +599,12 @@ func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
 		hasFirewallCA = true
 	}
 
-	ctx := &DockerfileContext{
+	claudeVersion := g.ClaudeCodeVersion
+	if claudeVersion == "" {
+		claudeVersion = DefaultClaudeCodeVersion
+	}
+
+	tctx := &DockerfileContext{
 		BaseImage:                baseImage,
 		Packages:                 filterBasePackages(p.Build.Packages, isAlpine),
 		Username:                 DefaultUsername,
@@ -598,7 +612,7 @@ func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
 		GID:                      g.cfg.ContainerGID(),
 		Shell:                    DefaultShell,
 		WorkspacePath:            "/workspace",
-		ClaudeVersion:            DefaultClaudeCodeVersion,
+		ClaudeVersion:            claudeVersion,
 		IsAlpine:                 isAlpine,
 		BuildKitEnabled:          g.BuildKitEnabled,
 		HasFirewallCA:            hasFirewallCA,
@@ -615,7 +629,7 @@ func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
 	// Populate Instructions if present (structural only — Copy, Args, RUN)
 	if p.Build.Instructions != nil {
 		inst := p.Build.Instructions
-		ctx.Instructions = &DockerfileInstructions{
+		tctx.Instructions = &DockerfileInstructions{
 			Copy:    convertCopyInstructions(inst.Copy),
 			Args:    convertArgInstructions(inst.Args),
 			UserRun: inst.UserRun,
@@ -626,7 +640,7 @@ func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
 	// Populate Inject if present
 	if p.Build.Inject != nil {
 		inj := p.Build.Inject
-		ctx.Inject = &DockerfileInject{
+		tctx.Inject = &DockerfileInject{
 			AfterFrom:          inj.AfterFrom,
 			AfterPackages:      inj.AfterPackages,
 			AfterUserSetup:     inj.AfterUserSetup,
@@ -636,7 +650,7 @@ func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
 		}
 	}
 
-	return ctx, nil
+	return tctx, nil
 }
 
 // Conversion helpers from config types to build types
