@@ -42,7 +42,7 @@ Each task is self-contained — the handoff prompt provides all context the next
 Per-decision-point eBPF egress event emitter for clawker. BPF programs already enforce egress at cgroup connect/sendmsg hooks; today they only invoke `metric_inc()` (silent counters). This branch adds:
 
 1. A `BPF_MAP_TYPE_RINGBUF` map (`events_ringbuf`) populated at every decision point with a fixed-size `struct egress_event` carrying `{verdict, dst_ip, dst_port, l4_proto, cgroup_id, domain_hash, ts_ns}`.
-2. A BPF-side **token-bucket rate limiter** keyed by `cgroup_id` so a misbehaving container can't monopolize the ringbuf (Cilium pattern — `bpf/lib/ratelimit.h`).
+2. A BPF-side **token-bucket rate limiter** keyed by `cgroup_id` so a misbehaving container can't monopolize the ringbuf.
 3. A BPF-side **kernel-fault drop counter** (`BPF_MAP_TYPE_PERCPU_ARRAY`, 1 entry) bumped when `bpf_ringbuf_reserve` returns NULL.
 4. A new userspace subpackage `internal/controlplane/firewall/ebpf/netlogger/` that drains the ringbuf, enriches each event with `{container_id, agent, project, domain}` looked up by `cgroup_id`, and emits as OTLP log records.
 5. A generic OTel-client constructor at `internal/controlplane/otelclient.go` so future subsystems (sysexec events, etc.) construct their own `*sdklog.LoggerProvider` against the existing infra OTel receiver without duplicating the SDK wiring.
@@ -53,51 +53,63 @@ Per-decision-point eBPF egress event emitter for clawker. BPF programs already e
 - **No Envoy access-log OTLP rewiring.** Separate branch.
 - **No CoreDNS `log` plugin → filelog receiver pivot.** Separate branch.
 - **No OpenSearch backend migration.** Separate branch.
-- **No new mTLS certs minted.** netlogger reuses CP's existing `otelcerts.Service.LoadTLSConfig` (per-handshake ephemeral leaf — same path the CP zerolog→OTLP bridge already uses).
-- **No new `service.name`.** Resource attribute stays `service.name=clawker-cp`. Stream is discriminated by OTel **instrumentation scope** name (`clawker.netlogger`) and a record attribute `event.name=ebpf.egress.flow`. This is the user's explicit framing: "CP emitting additional service events, not a new service".
+- **No new mTLS certs minted.** netlogger reuses CP's existing `otelcerts.Service.LoadTLSConfig` (per-handshake ephemeral leaf — same path the CP zerolog→OTLP bridge already uses). Same identity, same cert, same gRPC endpoint.
+- **Distinct `service.name=ebpf-networking`.** Resource attribute differs from the CP zerolog stream (`service.name=clawker-cp`) so the OpenSearch exporter routes records to a separate data stream by default. This is the right shape because the two streams have materially different operational characteristics: CP zerolog is operator-facing daemon-health, netlogger is per-agent security telemetry; different consumers, different retention, different volume profiles. Identity-layer reuse (cert / gRPC / endpoint) and resource-attribute distinction are independent concerns.
+- **Two `*sdklog.LoggerProvider` instances in one process** (one per service.name). Both constructed by the same generic `NewOtelLoggerProvider` helper. Same exporter wiring, same TLS material, different batch processor + retry tuning. Within the netlogger provider, the instrumentation scope name is `clawker.netlogger` and records carry `event.name=ebpf.egress.flow` so future netlogger-emitted event types (e.g. sock-state) can be filtered within the stream.
 
-### Why decision-time emit is the right scope (grounded in research)
+### Why decision-time emit is the right scope
 
-This is not a deferral — it's how production observability tools work:
+The BPF record captures the **decision**. **Strict directive: emit ALL possible fields on every record — every field in the BPF `struct egress_event`, plus every field added by userspace enrichment.** Not "all current fields" — ALL possible fields, including any that get added in the future. No discretion. No "this field isn't interesting for this verdict, skip it". When a field has no value for a given event, emit it empty (`""`) or zero (`0`) — never drop it from the record.
 
-- **Cilium Hubble** emits `trace_sock_notify` at `cgroup/connect` and `cgroup/sendmsg` — connect time, **not** TCP_CLOSE. The struct (`bpf/lib/trace_sock.h`) has no byte-count fields. Per-connection bytes/duration are sourced from the **L7 proxy layer** (Envoy ALS records) and correlated downstream by 5-tuple, not from sock_ops STATE_CB.
-- **Tetragon** emits at sensor hook points (`pkg/observer/observer_linux.go`) — per-decision, per-syscall. No TCP_CLOSE roundtrip enrichment.
-- **The `cilium/ebpf examples/tcprtt_sockops/` reference is a tutorial for RTT measurement, not a production observability pattern.** Nobody ships it as security telemetry.
+Operators decide which fields matter at dashboard / query time. The emitter's job is to make sure every field that exists on the event is present on every record, so consumers never have to guess whether a field was unset versus unsupported.
 
-The "one entry per logical flow" requirement resolves cleanly under this model: the flow record from the operator's point of view is the Envoy ALS log (for L7 flows) or the netlogger BPF record (for DENIED before Envoy and BYPASSED that skips Envoy). Each source emits independently — no ingest-time composer goroutine — and cross-source 5-tuple correlation is a human / dashboard operation at query time.
+Per-connection bytes/duration are not in the BPF event by design — they live on the L7 proxy stream (Envoy access logs), emitted independently from that source. Sock_ops state tracking in BPF would (a) double the BPF surface area, (b) introduce a new map keyed by socket cookie with verifier complexity, (c) leave UDP / connectionless flows with no analogous signal, (d) overlap with the L7 proxy's existing access-log emission. We don't do it.
 
-**Operator workflow**: query `clawker.netlogger` stream for the BPF decision record; pivot by 5-tuple to the Envoy access-log stream for bytes/duration/HTTP-method. For BYPASSED connections, only the netlogger record exists — that's the documented limitation of bypass mode. Fixing the bypass-mode forensic blind-spot (BPF still observes traffic even when Envoy and CoreDNS enforcement is skipped) is the headline win of this branch even without byte data.
+Each record stands on its own:
 
-### Reference research (read before starting any task)
+- DENIED records are intrinsically complete — no traffic flowed, there are no bytes/duration to record.
+- BYPASSED records are the headline win — BPF observes traffic even when Envoy and CoreDNS enforcement is skipped. This closes the bypass-mode forensic blind-spot.
+- ALLOWED records describe an enforcement decision, not a connection lifecycle. They say "this agent was permitted to reach X" — useful on its own.
 
-Every design call in this initiative is grounded in one of these. Don't reinvent — copy the pattern.
+Per-connection bytes/duration are a separate concern, sourced from the L7 proxy (Envoy access logs) and not from BPF. Adding sock_ops state tracking to chase byte counts would (a) double the BPF surface area, (b) introduce a new map keyed by socket cookie with verifier complexity, (c) leave UDP / connectionless flows with no analogous signal, (d) overlap with the L7 proxy's existing access-log emission. We don't do it.
 
-| Source | File path (upstream) | What it teaches |
-|--------|---------------------|-----------------|
-| Cilium | `bpf/lib/policy_log.h:28-44` | Event struct layout: explicit padding, C99 compound literal zero-init, helper-side `bpf_ntohs` byte-swap |
-| Cilium | `bpf/lib/ratelimit.h` | Token-bucket rate limiter in `LRU_HASH`, intentionally racy (non-atomic), per-key state, separate metrics map |
-| Cilium | `pkg/monitor/agent/agent.go::handleEvents` | Reader goroutine: `defer Close()`, context-cancel loop body, error tolerance |
-| Cilium | `pkg/maps/eventsmap/cell.go` | Buffer sizing posture: modest fixed, dial rate limits on drops (don't grow buffer) |
-| Tetragon | `pkg/observer/observer_linux.go:64-180` | The full ringbuf consumer pattern — reader goroutine → bounded channel with non-blocking send (drop newest) → processor goroutine. **The reference implementation.** |
-| Tetragon | `pkg/cgidmap/cgidmap.go:36-217` | Cgroup→container metadata cache: slice + dual-index maps + `invalid` flag for soft-delete on cgroup-id reuse, single `sync.Mutex` |
-| Tetragon | `pkg/observer/metrics.go:27-117` | Five-counter Prom convention: received, errors, kernel-lost, queue-received, queue-lost |
-| cilium/ebpf | `examples/ringbuffer/main.go:55-90` | Canonical Go ringbuf reader: `Close()` from signal goroutine → `ErrClosed` on Read |
-| cilium/ebpf | `examples/tcprtt_sockops/` (full example) | sock_ops attach via `ebpf.AttachCGroupSockOps`. Reference only — production observability does NOT use sock_ops STATE_CB for byte tracking; tutorial pattern. |
-| cilium/ebpf | `ringbuf/reader.go:147` | `ReadInto(*Record)` preferred over `Read()` for hot path (reuses RawSample backing slice) |
-| OTel Go SDK | `sdk/log/batch.go:193` (`OnEmit`), `:305` (`queue.Enqueue`) | BatchProcessor ring-buffer drops oldest on overflow — drop-not-block built in |
-| OTel Go SDK | `internal/shared/otlp/retry/retry.go.tmpl:22-26` | Default `MaxElapsedTime=1min` retry — **TOO LONG** for our use case; tune to 10s so dead-collector doesn't pin the export goroutine |
-| OTel Go SDK | `sdk/log/provider.go:78-129` | Logger scope cache — one `*sdklog.LoggerProvider` per process, `provider.Logger("scope")` returns cached per-scope instance |
+**Operator workflow**: query the netlogger stream for the BPF decision record; if richer L7 detail (HTTP method, status, bytes) is needed for the same flow, pivot by 5-tuple to the Envoy access-log stream once that stream exists (separate branch). For BYPASSED connections, only the netlogger record exists — that's the documented limitation of bypass mode and is inherent to bypass semantics.
+
+### Library API notes (read before starting any task)
+
+These are behaviors of the libraries this initiative builds on. Not optional — wiring against these APIs has hard constraints.
+
+**`github.com/cilium/ebpf/ringbuf`**
+- `Reader.ReadInto(*Record)` is preferred over `Read()` on a hot path — `Read` allocates a fresh `Record` per call; `ReadInto` reuses the caller's slice.
+- `Reader.Read` / `ReadInto` block until a record arrives. Graceful shutdown: call `Reader.Close()` from a separate goroutine — pending Read returns `ringbuf.ErrClosed`.
+- `ringbuf.NewReader` rejects a `*ebpf.Map` whose `MaxEntries` is not a power-of-2 multiple of the page size.
+- The library does not expose kernel-side drop tracking. `bpf_ringbuf_reserve` returning NULL on a full buffer is invisible to userspace unless the BPF program counts it (PERCPU_ARRAY pattern below).
+
+**`github.com/cilium/ebpf/link`**
+- `link.AttachCgroup(CgroupOptions{Path, Attach, Program})` is the attach point for all `cgroup/*` BPF program types — already used by every program in `internal/controlplane/firewall/ebpf/manager.go`.
+
+**`go.opentelemetry.io/otel/sdk/log`**
+- `BatchProcessor.OnEmit` is non-blocking — records go into an internal ring buffer; on overflow the **oldest record is dropped** and an internal atomic counter increments. We do NOT need to implement drop semantics ourselves.
+- Default `MaxQueueSize=2048`, `ExportInterval=1s`, `ExportTimeout=30s`. Override via `WithMaxQueueSize` / `WithExportInterval` / `WithExportTimeout`.
+- The internal drop counter is not exposed as a stable metric. To get a Prom counter, wrap the `sdklog.Exporter` and count `Export` calls (success vs failure).
+- `*sdklog.LoggerProvider.Logger(scopeName)` caches per-scope. Safe to call repeatedly; same scope name returns the same instance.
+- `LoggerProvider.Shutdown(ctx)` flushes in-flight batches then closes the exporter. Wrap with a deadline context — a hung Shutdown must not block the CP drain path.
+
+**`go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc`**
+- Has its own retry layer via `WithRetry(RetryConfig{...})`. Defaults: enabled, `InitialInterval=5s`, `MaxInterval=30s`, `MaxElapsedTime=1min`. The 1-minute default is **too long** for our use case — a dead collector pins the export goroutine and refills the BatchProcessor queue many times over. Override to 10s.
+- `otel.SetErrorHandler` is process-global. Each `NewOtelLoggerProvider` call re-sets it; idempotent across providers in the same process. Route to the CP file logger with `event=otel_sdk_error` for operator visibility.
 
 ### Existing clawker primitives to reuse (do not reinvent)
 
 | Primitive | Path | Why |
 |-----------|------|-----|
 | `ebpf.Manager` | `internal/controlplane/firewall/ebpf/manager.go` | Already owns BPF lifetime, pinned maps, `OpenPinned()`. We add accessor methods for the new pinned maps. |
-| `dockerevents.DockerEvent` bus + `overseer.Overseer` | `internal/controlplane/dockerevents/`, `internal/controlplane/overseer/` | Already publishes container start/die/destroy with full `Actor.Attributes` including `dev.clawker.{project,agent}` labels. **LabelCache subscribes to this bus** for invalidation — we do NOT add a separate Docker-events subscriber. |
+| `overseer.Overseer` bus — for eBPF **enrollment** events + existing `DockerEvent` for removal | `internal/controlplane/overseer/`, `internal/controlplane/dockerevents/` | This initiative adds ONE new event type published by `firewall.Handler`: `EBPFContainerEnrolled{cgroup_id, container_id, occurred_at}`, emitted from `FirewallEnable` after the existing `container_map` write succeeds. Because `firewall.Handler.FirewallInit` already re-enrolls every running managed agent at CP startup (see `handler.go:160-167, 236-242`), this single emit point hydrates netlogger's cache both at startup (via the FirewallInit re-enrollment sweep) and at runtime (each new container enroll). For the **removal half**, netlogger subscribes to the existing `dockerevents.DockerEvent` already published on overseer — container die/destroy is the eviction signal. No `EBPFContainerRemoved` event is added; duplicating the die signal would be redundant. **netlogger touches overseer ONLY for these two event types — `EBPFContainerEnrolled` for enrollment and `DockerEvent` (die/destroy actions) for eviction.** The BPF ringbuf telemetry stream does NOT touch overseer; it goes ringbuf → OTLP via netlogger's own reader. Lifecycle (sparse, per-container, overseer) vs telemetry (dense, per-decision, ringbuf→OTLP) are completely separate. |
+| `docker.Client` (existing CP-held instance) | `internal/docker/` | Used once per container at enrollment time to fetch labels: when netlogger receives an `EBPFContainerEnrolled` event, it does ONE `ContainerInspect(container_id)` to extract `dev.clawker.{agent,project}` + the container name, then caches the resolved attribution by `cgroup_id` for the lifetime of that enrollment. BPF events do an O(1) map lookup, never a Docker call. **No client-side response cache is added in this initiative** — the Docker daemon's own in-memory state makes per-enrollment inspects cheap; a userspace cache is unnecessary at this scale. |
 | `otelcerts.Service` | `internal/controlplane/otelcerts/otelcerts.go::LoadTLSConfig` | Already in use by CP zerolog→OTLP bridge. `LoadTLSConfig(svc)` returns a `*tls.Config` with `GetClientCertificate` that re-mints per handshake. We call `LoadTLSConfig("netlogger")` — same issuer, same root CA, no new on-disk material. |
 | `consts.MonitoringServiceOtelCollector` + `cfg.Settings().Monitoring.OtelInfraPort` | `internal/config/` | OTLP endpoint for trusted-lane infra push. Already routed cross-network. |
 | `logger.Logger` | `internal/logger/logger.go` | **Only** for netlogger's own degraded-path structured logs (`event=netlogger_unavailable`, drop-counter periodic summaries). **NEVER** for the network event records themselves — those go direct OTLP via the new `*sdklog.LoggerProvider`. |
-| CP no-panic discipline | root `CLAUDE.md` + `internal/controlplane/CLAUDE.md` | Hard rule: no `panic()`, no `log.Fatal()`, no `os.Exit()` from netlogger code path. Constructor returns `(nil, error)`; main degrades to `event=netlogger_unavailable`. Every long-lived goroutine wraps with `defer recover()` (template: overseer stats heartbeat in `cmd/clawker-cp/main.go`). |
+| CP no-panic discipline | root `CLAUDE.md` + `internal/controlplane/CLAUDE.md` | Hard rule: no `panic()`, no `log.Fatal()`, no `os.Exit()` from netlogger code path. Constructor returns `(nil, error)`; main degrades to `event=netlogger_unavailable`. Every long-lived goroutine wraps with `defer recover()` — see existing recover-wrapped goroutines in `cmd/clawker-cp/main.go` for the template. |
 
 ### Rules
 
@@ -109,9 +121,30 @@ Every design call in this initiative is grounded in one of these. Don't reinvent
 - Pre-commit hooks (installed via `scripts/install-hooks.sh`) run unit tests automatically. Don't double-run before commit.
 - Tests use real implementations as far as possible (`internal/testenv.New(t)`, etc.). Mock only at external boundaries.
 
+### Non-negotiable directive — applies to every task
+
+**No deferrals. No scope reductions. No "we'll add it later" / "follow-up branch" / "v2" / "out of scope for this task" escape hatches. No agent-side decisions to skip, simplify, or postpone any requirement.** Every line item in a task's design, implementation steps, and acceptance criteria lands in this PR.
+
+**When you hit tension, PAUSE WORK AND ASK THE USER.** This is the fastest path. Tension = a requirement that looks infeasible, conflicting requirements, an API that doesn't behave as documented here, a design choice the doc doesn't pin down, an unexpected verifier rejection, an architectural seam that resists clean implementation — anything where you find yourself reaching for a workaround, a simplification, or a "minimal version". Stop. Ask. Wait.
+
+Asking 3-5 questions and waiting 10 minutes for an answer is **dramatically faster** than:
+1. Shipping the wrong thing
+2. User reviews the diff
+3. User catches the silent descope
+4. User forces a full rewrite in a fresh context window
+5. The fresh-context agent re-derives the answer that one question would have surfaced
+
+The user prefers a mid-task pause over a finished-but-wrong PR. They have explicitly built this loop expecting pauses. Use `AskUserQuestion` whenever you would otherwise make a unilateral call on something this document doesn't already decide.
+
+Incomplete work — missing files, skipped requirements, omitted attribute fields, untested code paths, "I'll add X in a follow-up" framing in commit messages or code comments, design choices made silently — is grounds for the user forcing the entire task to be redone from scratch in a fresh context window. That's the slow path. Asking is the fast path.
+
+The only acceptable scope reductions are the ones already enumerated in "What this initiative explicitly does NOT ship" at the top of this document. Anything else is in scope and must land — or must be raised to the user as a question before any code lands that reflects a different choice.
+
 ---
 
 ## Task 1: BPF — events_ringbuf + per-decision-point emission + drop counters + kernel rate limiter
+
+> **No deferrals on this task.** Every item in "Creates/modifies", "Implementation steps", and "Acceptance Criteria" below must land in this PR. No "I'll add the rate limiter later", no "drop counters can wait", no skipping the IPv6 branches. If anything blocks you, surface to the user — do not silently descope. Incomplete work means redoing the task from scratch in a fresh context window.
 
 **Creates/modifies:**
 - `internal/controlplane/firewall/ebpf/bpf/common.h` — add maps + `struct egress_event` + `submit_event` helper + token-bucket rate limiter
@@ -136,11 +169,10 @@ Every design call in this initiative is grounded in one of these. Don't reinvent
 
 ```c
 // 1) Event channel — modest fixed size, dial rate limits on drops.
-//    Buffer must be power-of-2 page-size multiple (cilium/ebpf NewReader rejects otherwise).
+//    Buffer must be power-of-2 page-size multiple (ringbuf.NewReader rejects otherwise).
 //    Start at 256 KiB = 64 pages × 4 KiB.  Tunable but ratchet up only after observing drops.
-//    Rationale: Cilium pkg/maps/eventsmap/cell.go uses kernel-default per-CPU sizing;
-//    we use a single ringbuf because we only have one userspace reader and the records
-//    are tiny (~32 bytes).
+//    Single ringbuf (not per-CPU) because we have one userspace reader and the records are
+//    tiny (~32 bytes); a single ring keeps the userspace consumer simple.
 struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
     __uint(max_entries, 256 * 1024);
@@ -158,9 +190,9 @@ struct {
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } events_drops SEC(".maps");
 
-// 3) Rate-limit state — token bucket per cgroup_id (Cilium bpf/lib/ratelimit.h pattern).
-//    LRU_HASH so dead cgroups evict naturally.  Per-cgroup (not per-usage like Cilium)
-//    because that matches the granularity of "noisy agent" we want to throttle.
+// 3) Rate-limit state — token bucket per cgroup_id.
+//    LRU_HASH so dead cgroups evict naturally.  Per-cgroup keying matches the granularity
+//    of "noisy agent" we want to throttle.
 //    Intentionally non-atomic: a small amount of bucket inaccuracy under racing CPUs is
 //    cheaper than the cmpxchg cost on the hot path.
 struct ratelimit_state {
@@ -176,9 +208,8 @@ struct {
 } ratelimit_state SEC(".maps");
 
 // 4) Rate-limit drop counter — distinct from kernel-fault drops because the cause
-//    (intentional vs ringbuf overflow) demands different operator response.
-//    Cilium splits this exact way (cilium_bpf_ratelimit_dropped_total vs
-//    cilium_lost_events_total).  Key is cgroup_id so userspace can attribute.
+//    (intentional vs ringbuf overflow) demands different operator response.  Key is
+//    cgroup_id so userspace can attribute drops to a specific noisy agent.
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __type(key, __u64);                   // cgroup_id
@@ -198,8 +229,8 @@ struct {
 // ctx->user_port IS network-order — caller swaps to host before passing.
 // We pick caller-swap (not helper-swap) because the helper is shared across call
 // sites that have already swapped for other reasons; doubling the swap is worse than
-// requiring callers to be explicit.  Cilium policy_verdict_notify uses helper-swap
-// and trace_sock_notify uses caller-swap — they ended up inconsistent.  We won't.
+// requiring callers to be explicit.  Be consistent — every emit site swaps once,
+// the helper never swaps.
 enum egress_verdict {
     EGRESS_VERDICT_ALLOWED  = 0,
     EGRESS_VERDICT_DENIED   = 1,
@@ -221,7 +252,7 @@ struct egress_event {
     __u8  verdict;        // enum egress_verdict
     __u8  flags;          // enum egress_flags bitmask
     __u8  l4_proto;       // SOCK_STREAM / SOCK_DGRAM / SOCK_RAW
-    __u8  _pad[3];        // explicit padding — Cilium policy_log.h pattern
+    __u8  _pad[3];        // explicit padding — zero-initialized via compound literal
 };
 ```
 
@@ -278,7 +309,7 @@ ratelimit_check_and_take(__u64 cgroup_id)
         bpf_map_update_elem(&ratelimit_state, &cgroup_id, &fresh, BPF_NOEXIST);
         return true;
     }
-    // Racy refill — Cilium does the same (bpf/lib/ratelimit.h).
+    // Racy refill — intentionally non-atomic for hot-path performance.
     if (now - st->last_topup_ns >= RATELIMIT_REFILL_NS) {
         __u64 add = RATELIMIT_TOKENS_PER;
         if (st->tokens + add > RATELIMIT_BURST) add = RATELIMIT_BURST - st->tokens;
@@ -327,7 +358,7 @@ return apply_v4(ctx, r);
 
 Mirror for `connect6`, `sendmsg4`, `sendmsg6`, `sock_create` (sock_create has no port — pass 0). `recvmsg4`/`recvmsg6` are response-side and do not emit events on this branch (they don't represent egress decisions).
 
-**`lookup_domain_hash_for_ip(dst_ip)`** — uses the existing pinned `dns_cache` (key=IPv4, value={domain_hash, expire_ts}). Cilium's `trace_sock_notify` does the analogous lookup. Returns 0 if not present (direct-IP connect). Cilium's `dns_cache` GC already evicts stale entries — no extra work needed.
+**`lookup_domain_hash_for_ip(dst_ip)`** — uses the existing pinned `dns_cache` (key=IPv4, value={domain_hash, expire_ts}). Returns 0 if not present (direct-IP connect, or DNS cache miss). The existing `dns_cache` GC (already in `Manager.GarbageCollectDNS`) evicts stale entries — no extra work needed.
 
 **Manager.go accessors**:
 
@@ -338,7 +369,7 @@ func (m *Manager) RatelimitDrops() *ebpf.Map      // returns m.objs.RatelimitDro
 func (m *Manager) DNSCache() *ebpf.Map            // returns m.objs.DnsCache (already exists, just expose)
 ```
 
-These are read-only access — netlogger never writes to these maps. Returning the raw `*ebpf.Map` is the same pattern `LookupContainer` uses internally and what cilium/ebpf documents.
+These are read-only access — netlogger never writes to these maps. Returning the raw `*ebpf.Map` is the same shape `LookupContainer` uses internally on the existing Manager.
 
 Update `Load()` and `OpenPinned()` to include the new maps. Update `FlushAll()` to walk `ratelimit_state` and `ratelimit_drops` and drain them (rate-limit state is per-cgroup; an agent restart should start with a fresh bucket).
 
@@ -390,10 +421,12 @@ grep -q "_Static_assert.*egress_event.*32" internal/controlplane/firewall/ebpf/b
 
 ## Task 2: netlogger subpackage — ringbuf reader + LabelCache + reverse DNS + processor (no OTLP)
 
+> **No deferrals on this task.** Every file in "Creates", every step in "Implementation steps", every line in "Acceptance Criteria" must land in this PR. No skipping the LabelCache cgroup-id-reuse test, no skipping the reverse-DNS goroutine, no "I'll add the rate limit later", no race-detector skips. If anything blocks you, surface to the user — do not silently descope. Incomplete work means redoing the task from scratch in a fresh context window.
+
 **Creates:**
 - `internal/controlplane/firewall/ebpf/netlogger/netlogger.go` — top-level `Service` struct, `New(Deps)`, `Start(ctx)`, `Stop(ctx) error`
 - `internal/controlplane/firewall/ebpf/netlogger/event.go` — `Event` struct (enriched), parser using bpf2go type + `binary.NativeEndian`
-- `internal/controlplane/firewall/ebpf/netlogger/cache.go` — `LabelCache` cgroup_id → `{container_id, agent, project}`, Tetragon `cgidmap` pattern
+- `internal/controlplane/firewall/ebpf/netlogger/cache.go` — `LabelCache` cgroup_id → `{container_id, agent, project}`
 - `internal/controlplane/firewall/ebpf/netlogger/reverse_dns.go` — periodic `dns_cache` scan, `domain_hash → domain` map under RWMutex
 - `internal/controlplane/firewall/ebpf/netlogger/reader.go` — ringbuf drain goroutine
 - `internal/controlplane/firewall/ebpf/netlogger/processor.go` — channel consumer goroutine, enriches + emits via `Sink`
@@ -402,11 +435,16 @@ grep -q "_Static_assert.*egress_event.*32" internal/controlplane/firewall/ebpf/b
 - `internal/controlplane/firewall/ebpf/netlogger/CLAUDE.md` — package reference doc
 - Test files for each of the above
 
+**Also modifies (lifecycle event emit):**
+- `internal/controlplane/overseer/types.go` (or sibling) — new event type `EBPFContainerEnrolled{CgroupID uint64, ContainerID string, OccurredAt time.Time}`. Implements the `overseer.Event` interface alongside existing event types. The type lives in the overseer package because that's where the bus types live; the `firewall.Handler` package PRODUCES instances of it (overseer package owns the type, firewall package owns the emit point — symmetric with how `dockerevents.DockerEvent` is defined in `dockerevents` and produced by the feeder).
+- `internal/controlplane/firewall/handler.go` — `FirewallEnable` publishes `EBPFContainerEnrolled` to the overseer bus AFTER the existing `container_map.Update` returns successfully and `Install` returns no error. Publish is fire-and-forget (overseer's pub interface should already be non-blocking; if it isn't, the call site does NOT block the RPC). Nil-bus tolerant — if `HandlerDeps.Bus` is nil (test wiring without overseer), skip the publish. Add a `Bus *overseer.Overseer` (or whatever overseer's exported producer-side type is named) field to `HandlerDeps`.
+- `cmd/clawker-cp/main.go` — wire the overseer bus into `HandlerDeps.Bus`. This is the existing CP-process bus instance; no new construction.
+
 **Depends on:** Task 1 (Manager accessors must exist).
 
-### Background — the Tetragon pattern we're copying
+### Background — the consumer pipeline shape
 
-Tetragon's `pkg/observer/observer_linux.go:64-180` is the reference implementation. Architecture:
+A two-goroutine kernel→userspace pipeline with a bounded channel between them. Architecture:
 
 ```
         ┌─────────────────────┐
@@ -421,7 +459,7 @@ Tetragon's `pkg/observer/observer_linux.go:64-180` is the reference implementati
                    │  non-blocking send, default→drop newest, bumps QueueLost
                    ▼
         ┌─────────────────────┐
-        │  queue chan []byte  │  buffered, size 8192 (Tetragon default 65535 — we're smaller scale)
+        │  queue chan []byte  │  buffered, size 8192 (tunable; sized for clawker's per-agent volume)
         └──────────┬──────────┘
                    │
                    ▼
@@ -431,7 +469,7 @@ Tetragon's `pkg/observer/observer_linux.go:64-180` is the reference implementati
         └─────────────────────┘
 ```
 
-**Critical**: the kernel reader MUST NOT block on the channel. A blocked reader stalls the ringbuf which causes upstream `bpf_ringbuf_reserve` failures (counted as kernel-fault drops by Task 1's `events_drops`). Drop-newest on channel-full is the documented Tetragon posture (`pkg/observer/observer_linux.go:122-129`).
+**Critical**: the kernel reader MUST NOT block on the channel. A blocked reader stalls the ringbuf which causes upstream `bpf_ringbuf_reserve` failures (counted as kernel-fault drops by Task 1's `events_drops`). On channel-full, drop the newest event via a `select` with a `default` arm and bump the queue-dropped counter.
 
 ### Design
 
@@ -495,14 +533,14 @@ const (
 )
 ```
 
-Parser uses the bpf2go-generated `clawkerEgressEvent` type and `binary.NativeEndian` per cilium/ebpf's `tcprtt_sockops` example. The bpf2go-generated struct has `structs.HostLayout` so the field offsets match the C ABI exactly. Do NOT define a parallel Go struct.
+Parser uses the bpf2go-generated `clawkerEgressEvent` type and `binary.NativeEndian`. The bpf2go-generated struct has `structs.HostLayout` so the field offsets match the C ABI exactly. Do NOT define a parallel Go struct.
 
-**`LabelCache`** (in `cache.go`) — mirror Tetragon's `cgidmap` pattern:
+**`LabelCache`** (in `cache.go`):
 
 ```go
 // LabelCache resolves cgroup_id to container identity.  Backed by a slice +
-// dual-index maps + invalid flag (Tetragon pkg/cgidmap/cgidmap.go pattern),
-// guarded by a single mutex.  Invalidation is event-driven via dockerevents.
+// dual-index maps + invalid flag, guarded by a single mutex.  Invalidation
+// is event-driven via the dockerevents bus.
 //
 // Why not sync.Map: we need atomic "evict by cgroup_id AND container_id" on
 // die/destroy, which requires the dual-index lookup under a single mutex.
@@ -539,15 +577,23 @@ func (c *LabelCache) AddOrUpdate(cgroupID uint64, containerID, agent, project st
 
 // EvictByContainerID is called when a container's die/destroy event arrives.
 // Marks the entry invalid (so cgroup-id-reuse can't read stale labels) and
-// frees the slot for recycle.  Tetragon's cgidmap pattern.
+// frees the slot for recycle.
 func (c *LabelCache) EvictByContainerID(containerID string)
 ```
 
-**Wiring to dockerevents bus** — `Service.Start` subscribes the LabelCache to the bus via the `overseer.Overseer` interface. The handler dispatches on `DockerEvent.Type == ContainerEventType` and `Action`:
-- `ActionStart` / `ActionRestart`: resolve cgroup_id, call `AddOrUpdate` with `Actor.Attributes["dev.clawker.agent"]` + `["dev.clawker.project"]`. Global-scope agents have project="" — pass through as empty. Use the raw Docker label values verbatim; do NOT synthesize from cgroup name or `AgentFullName`, because the downstream dashboard variable resolution (Prom-sourced) keys on the same raw label strings and any drift means panels go blank.
+**Wiring to overseer — enrollment (new) + dockerevents (existing)** — `Service.Start` subscribes to the `overseer.Overseer` bus and filters for:
+
+- `EBPFContainerEnrolled{CgroupID uint64, ContainerID string, OccurredAt time.Time}` — NEW type added by this initiative, emitted by `firewall.Handler.FirewallEnable`. See "Overseer event types" below for the definition site and "Modifications to firewall.Handler" for the emit site.
+- `dockerevents.DockerEvent` (already published on overseer today) — netlogger filters for `Type=container, Action ∈ {die, destroy}` to drive cache eviction.
+
+These two are the **only** overseer interactions netlogger has. The eBPF telemetry stream itself never touches overseer.
+
+The handler:
+- On `EBPFContainerEnrolled`: do ONE `docker.Client.ContainerInspect(container_id)` to fetch the container's labels and name; store `{cgroup_id → container_id, container_name, dev.clawker.agent, dev.clawker.project}` in the LabelCache. Global-scope agents have an empty project — pass through verbatim. Use raw Docker label values; do NOT synthesize from cgroup name or `AgentFullName`, because the downstream dashboard variable resolution (Prom-sourced) keys on the same raw label strings and any drift means panels go blank.
+- On `dockerevents.DockerEvent` with `Type=container` and `Action ∈ {die, destroy}`: evict the entry by container_id. Use the soft-delete pattern (mark invalid + index-remove) so cgroup-id reuse by the kernel cannot return stale labels for a newly-enrolled container.
 - `ActionDie` / `ActionStop` / `ActionDestroy`: call `EvictByContainerID(Actor.ID)`.
 
-**Startup backfill**: `Service.Start` walks `manager.DumpContainers()` (already exists in Task 1 dependency — it returns `[]ContainerEntry{CgroupID, Config}`) and seeds the cache by Docker inspecting each container_id for labels. This handles the case where containers existed before netlogger started (CP restart, etc.).
+**Startup hydration is free** — no explicit backfill needed. `firewall.Handler.FirewallInit` already re-enrolls every running managed agent at CP startup (see `handler.go:160-167, 236-242`: "Init re-enrolls every running managed agent it can find. On a cold CP start that follows a previous CP's FlushAll, container_map is empty — without re-enrollment, long-lived agents that outlived the previous CP would egress unenforced"). Each re-enrollment calls `FirewallEnable`, which (after this initiative) emits `EBPFContainerEnrolled`. netlogger subscribes to those events at `Service.Start` and is hydrated naturally by the FirewallInit sweep. Single code path: every `container_map` entry that exists at any moment corresponds to exactly one `EBPFContainerEnrolled` event that netlogger has consumed or will consume.
 
 **`ReverseDNSMap`** (in `reverse_dns.go`):
 
@@ -599,9 +645,7 @@ func (r *reader) drain(ctx context.Context) {
         r.metrics.ringbufReceived.Inc()
         // MUST COPY — rec.RawSample is reused on next ReadInto.
         // Allocation per record is acceptable: events are ~32 bytes,
-        // Go's small-object allocator handles this well.  Tetragon does
-        // the same (observer_linux.go:122 copies record.RawSample into a
-        // new slice before channel send).
+        // Go's small-object allocator handles this well.
         buf := make([]byte, len(rec.RawSample))
         copy(buf, rec.RawSample)
         select {
@@ -649,7 +693,7 @@ func (p *processor) run(ctx context.Context) {
 2. `close(s.queue)` — processor's range-over-channel terminates after draining remaining queued events.
 3. Wait on both goroutines via WaitGroup with a timeout (5s — beyond that we proceed with shutdown to honor INV-B2-007 drain ordering, processor leakage is acceptable on timeout because the OS will reap on CP container exit).
 4. Drop the reverse-DNS ticker (no special teardown — it watches `ctx.Done()`).
-5. Drop the dockerevents subscription (overseer's Subscribe returns an unsubscribe func — call it).
+5. Drop the overseer subscription — `Overseer.Subscribe` returns an unsubscribe func; call it. The lifecycle-event handler goroutine exits when its parent context is cancelled.
 
 ### Implementation steps
 
@@ -659,12 +703,12 @@ func (p *processor) run(ctx context.Context) {
 4. Implement `ReverseDNSMap` in `reverse_dns.go`. Test with a fake `*ebpf.Map` (use a test-only `Iterable` interface so tests don't need a real BPF map) or via the existing `ebpf.Map` test seam in `manager_test.go`.
 5. Implement reader + processor + Sink interface + nopSink + stdoutSink. Tests use the nopSink to drive the pipeline; stdoutSink test feeds a synthetic event, decodes the JSON output, asserts fields.
 6. Top-level `Service` in `netlogger.go`:
-   - `Deps` struct: `Mgr *ebpf.Manager`, `Bus *overseer.Overseer`, `Docker docker.Client` (for backfill), `Log *logger.Logger`, `Sink Sink`. Future: `OtelLoggerProvider *sdklog.LoggerProvider` (Task 3 adds).
+   - `Deps` struct: `Mgr *ebpf.Manager`, `Bus *overseer.Overseer` (for `EBPFContainerEnrolled` + existing `dockerevents.DockerEvent` for die/destroy eviction), `Docker docker.Client` (for one inspect per enrollment), `Log *logger.Logger`, `Sink Sink`. Future: `OtelLoggerProvider *sdklog.LoggerProvider` (Task 3 adds).
    - `New(Deps) (*Service, error)`: validate required deps, construct LabelCache, ReverseDNSMap, reader, processor. No goroutines started.
-   - `Start(ctx context.Context) error`: subscribe to bus, backfill cache, start reader + processor + reverse-DNS ticker. Return nil; degraded paths inside the goroutines per CP no-panic.
+   - `Start(ctx context.Context) error`: subscribe to bus (`EBPFContainerEnrolled` + `dockerevents.DockerEvent`), start reader + processor + reverse-DNS ticker. No explicit backfill — FirewallInit re-enrollment hydrates the cache via the same subscription path. Return nil; degraded paths inside the goroutines per CP no-panic.
    - `Stop(ctx context.Context) error`: drain per the order above.
 7. Test the full pipeline end-to-end using a real `ebpf.Map` via the bpf2go test helpers (load the BPF spec in a test, write synthetic events to events_ringbuf via... actually no, ringbuf is kernel-write only from userspace tests. Use a different approach: bypass the ringbuf, call `processor.handle(rawBytes)` directly. Pipeline E2E lands in Task 4.)
-8. Write `CLAUDE.md` for the package covering: architecture diagram (reader → channel → processor → sink), the five drop counter dimensions, the Tetragon cgidmap pattern reuse, the OTel-deferred-to-Task-3 note.
+8. Write `CLAUDE.md` for the package covering: architecture diagram (reader → channel → processor → sink), the five drop counter dimensions, the LabelCache design (slice + dual-index + invalid flag), the OTel-deferred-to-Task-3 note.
 
 ### Acceptance Criteria
 
@@ -705,10 +749,13 @@ go test ./internal/controlplane/firewall/ebpf/netlogger -v -run TestPipeline_Std
 
 ## Task 3: Generic OTel client + netlogger OTel sink + CP main wiring + drain hook
 
+> **No deferrals on this task.** Every file in "Creates/modifies", every step in "Implementation steps", every check in "Acceptance Criteria" must land in this PR. No skipping the Prom counter wrap, no skipping the degraded path, no skipping the drain hook ordering, no leaving the generic `NewOtelLoggerProvider` half-built. Every Event-struct field must appear as an OTel attribute on every emitted record — no field omissions. If anything blocks you, surface to the user — do not silently descope. Incomplete work means redoing the task from scratch in a fresh context window.
+
 **Creates/modifies:**
 - `internal/controlplane/otelclient.go` — new file, generic `NewOtelLoggerProvider(opts) (*sdklog.LoggerProvider, error)`
 - `internal/controlplane/otelclient_test.go` — unit tests for the generic constructor
 - `internal/controlplane/firewall/ebpf/netlogger/otel_sink.go` — new file, `otelSink` implementing `Sink` using a `otellog.Logger` from a shared provider
+- `internal/controlplane/firewall/ebpf/netlogger/circuit.go` — new file, `circuitExporter` decorating `sdklog.Exporter`: tracks consecutive `Export()` failures, permanently trips after N (default 3), emits `event=netlogger_collector_lost` once on trip, drops all subsequent records on the floor. No background reconnect.
 - `internal/controlplane/firewall/ebpf/netlogger/otel_sink_test.go` — uses an in-process `sdklog.Exporter` test double to assert record shape
 - `internal/controlplane/firewall/ebpf/netlogger/netlogger.go` — `Deps` gains `OtelLoggerProvider *sdklog.LoggerProvider`
 - `cmd/clawker-cp/main.go` — boot wiring + degraded path + drain hook
@@ -720,12 +767,22 @@ go test ./internal/controlplane/firewall/ebpf/netlogger -v -run TestPipeline_Std
 
 ### Background — what the OTel SDK gives us for free
 
-From research (`sdk/log/batch.go:193,305`):
+From the OTel SDK source:
 
 - `BatchProcessor.OnEmit` is non-blocking. Records go into a ring buffer. **On overflow, the oldest record is dropped and an internal counter increments**. We do not need to implement drop-on-overflow ourselves.
-- The internal drop counter is NOT exposed as a stable metric. The pattern from the OTel-SDK research is to **wrap the `sdklog.Exporter`** and count `Export()` calls (success vs error) into Prom counters of our own.
-- `otlploggrpc.New(WithRetry(...))` defaults to `MaxElapsedTime=1min`. For a dead infra collector this means each batch sits in the exporter for ~1min before failing — refilling the 2048-slot queue dozens of times in that window. **We set `MaxElapsedTime=10s`** so the exporter fails fast and the queue drop telemetry reflects reality.
-- `otel.SetErrorHandler` is process-global. Wire it once in `otelclient.go` to route SDK-internal errors (export failures, retry exhaustion, parse failures inside the SDK) through `logger.Logger.Warn` with `event=otel_sdk_error`. Operators grep the same surface they already use for CP degradation.
+- The internal drop counter is NOT exposed as a stable metric. The pattern is to **wrap the `sdklog.Exporter`** and count `Export()` calls (success vs error) into Prom counters of our own.
+- `otlploggrpc.New(WithRetry(...))` defaults to `MaxElapsedTime=1min`. For a dead infra collector this means each batch sits in the exporter for ~1min before failing — refilling the queue dozens of times in that window. **We set `MaxElapsedTime=10s`** so the exporter fails fast.
+- `otel.SetErrorHandler` is process-global. Wire it once in `otelclient.go` to route SDK-internal errors through `logger.Logger.Warn` with `event=otel_sdk_error`.
+
+### Collector-unavailable posture (strict requirement)
+
+**Monitoring stack is not always up.** Users may run clawker without `clawker monitor up`. netlogger must NOT spend the lifetime of the CP process retrying connections to a collector that never came up. Behavior:
+
+1. **Startup preflight.** At `NewOtelLoggerProvider` construction time, do a one-shot gRPC dial with a **20-second deadline** against the configured OTLP endpoint, using the supplied `*tls.Config`. If the dial returns an error within that window, return `(nil, error)` from the constructor — the caller (CP main) sees the error, emits `event=netlogger_unavailable`, and netlogger runs with `nopSink`. Telemetry is dropped on the floor for the rest of the CP lifetime. No background reconnect, no periodic retry, no buffering.
+2. **Runtime circuit breaker.** Even if startup succeeded, the collector may go down later. Wrap the `sdklog.Exporter` with a circuit-breaker decorator that tracks **consecutive `Export()` failures**. After **N consecutive failures** (start with `N=3`), the breaker permanently trips: subsequent `Export()` calls return `nil` immediately (so the BatchProcessor thinks export succeeded and the queue drains via the natural drop-oldest path), and a single structured log line fires (`event=netlogger_collector_lost`). Once tripped it stays tripped for the rest of the CP lifetime — we do NOT periodically probe to reconnect. The user can restart CP to retry.
+3. **No background reconnect / health-check goroutine.** Telemetry availability is binary per-CP-lifetime: either the collector was up at boot and stayed up enough to keep the circuit closed, or netlogger is dropping. The cost of running a reconnect loop forever against a missing collector exceeds the value of the telemetry once it returns.
+
+The circuit-breaker wrapper lives in the netlogger package (it's netlogger's policy, not a general OTel concern), composed onto the generic `*sdklog.Exporter` via `OtelClientOptions.ExporterWrap`. The generic `NewOtelLoggerProvider` in `internal/controlplane/otelclient.go` only owns the preflight dial — it has no opinion on circuit-breaking, because future callers may want different policies.
 
 ### Design — `internal/controlplane/otelclient.go`
 
@@ -758,10 +815,13 @@ type OtelClientOptions struct {
     // not supported here (callers wanting insecure should not use this helper).
     TLSConfig *tls.Config
 
-    // ServiceName is the OTel resource attribute service.name.  For the CP-side
-    // emitters that share this binary, use "clawker-cp" — the streams are
-    // discriminated by instrumentation scope (provider.Logger("netlogger") etc.),
-    // not by service.name.
+    // ServiceName is the OTel resource attribute service.name.  Distinct
+    // emitters in the same binary SHOULD use distinct service.name values
+    // when their streams have different operational characteristics
+    // (retention, routing, consumer audience).  The CP zerolog bridge uses
+    // "clawker-cp"; netlogger uses "ebpf-networking".  Identity-layer
+    // reuse (TLS, cert, endpoint) is orthogonal — that's what the
+    // TLSConfig + Endpoint fields handle.
     ServiceName string
 
     // MaxQueueSize controls the BatchProcessor ring buffer.  Default 2048
@@ -783,9 +843,20 @@ type OtelClientOptions struct {
     Log *logger.Logger
 
     // ExporterWrap is an optional decorator for the underlying sdklog.Exporter.
-    // The standard use case is wrapping with a counting exporter for Prom
-    // metrics — see netlogger's metrics.go for the pattern.
+    // Standard use cases: wrapping with a counting exporter for Prom metrics
+    // (netlogger/metrics.go) and wrapping with a circuit-breaker exporter that
+    // permanently trips after N consecutive failures (netlogger/circuit.go).
+    // Wraps compose — pass a single func that applies multiple decorators in
+    // the order the caller wants observability vs failure-tripping.
     ExporterWrap func(sdklog.Exporter) sdklog.Exporter
+
+    // PreflightTimeout caps the startup gRPC dial used to verify the collector
+    // is reachable before constructing the BatchProcessor.  If the dial fails
+    // within this window, NewOtelLoggerProvider returns an error and the caller
+    // degrades the subsystem (no background reconnect, no buffered retry).
+    // Default 20s.  Set to zero to skip the preflight entirely (NOT recommended
+    // for a monitoring-stack-optional deployment shape).
+    PreflightTimeout time.Duration
 }
 
 func NewOtelLoggerProvider(opts OtelClientOptions) (*sdklog.LoggerProvider, error) {
@@ -794,6 +865,26 @@ func NewOtelLoggerProvider(opts OtelClientOptions) (*sdklog.LoggerProvider, erro
     if opts.TLSConfig == nil    { return nil, fmt.Errorf("otelclient: TLSConfig required") }
     if opts.ServiceName == ""   { return nil, fmt.Errorf("otelclient: ServiceName required") }
     if opts.Log == nil          { return nil, fmt.Errorf("otelclient: Log required") }
+
+    // Preflight: one-shot dial with deadline.  If the collector isn't up at
+    // CP boot we fail fast and the caller degrades the subsystem.  No
+    // background reconnect loop — telemetry availability is binary per CP
+    // lifetime.  See "Collector-unavailable posture" in the design notes.
+    preflight := opts.PreflightTimeout
+    if preflight == 0 { preflight = 20 * time.Second }
+    {
+        ctx, cancel := context.WithTimeout(context.Background(), preflight)
+        defer cancel()
+        creds := credentials.NewTLS(opts.TLSConfig)
+        conn, err := grpc.DialContext(ctx, opts.Endpoint,
+            grpc.WithTransportCredentials(creds),
+            grpc.WithBlock(),
+        )
+        if err != nil {
+            return nil, fmt.Errorf("otelclient: preflight dial %s: %w", opts.Endpoint, err)
+        }
+        _ = conn.Close()  // we just needed to confirm reachability
+    }
 
     // Process-global error handler.  Idempotent — calling twice replaces.
     // Multiple callers of NewOtelLoggerProvider in the same process land
@@ -863,8 +954,11 @@ type otelSink struct {
 
 func newOtelSink(provider *sdklog.LoggerProvider) *otelSink {
     return &otelSink{
-        // scope name "clawker.netlogger" — discriminates this stream from
-        // CP's zerolog→OTLP bridge ("clawker") in the OS index downstream.
+        // scope name "clawker.netlogger" — discriminates future event types
+        // WITHIN the netlogger stream (e.g. if we ever add a sock-state event
+        // type, it would share the provider but use a different scope).  The
+        // top-level stream separation from CP zerolog comes from this
+        // provider's distinct service.name=ebpf-networking resource.
         logger: provider.Logger("clawker.netlogger"),
     }
 }
@@ -878,24 +972,29 @@ func (s *otelSink) Emit(ctx context.Context, ev Event) {
     rec.SetSeverityText("INFO")
     rec.SetBody(otellog.StringValue("ebpf egress flow"))
 
-    // At-source attribution rules:
-    // - container_id always present (event is container-scoped)
-    // - agent / project present when LabelCache hit; empty string on miss
-    //   (no synthesis from cgroup name — raw Docker label values only)
+    // Strict directive: every field on the Event struct MUST be added here as an
+    // attribute, every time.  If a field is later added to Event (or to the BPF
+    // egress_event struct that Event mirrors), this Emit body MUST be updated in
+    // the same change to carry it.  No "we'll add it when we need it" — operators
+    // can only filter on fields that are present.  Empty/zero values are emitted
+    // explicitly; never drop an attribute because its value is the zero value.
+    //
+    // The block below is a sample matching the field set as of Task 1 — extend it
+    // every time the Event struct grows.
     rec.AddAttributes(
         otellog.String("source", "ebpf"),
         otellog.String("verdict", verdictString(ev.Verdict)),
         otellog.String("container_id", ev.ContainerID),
         otellog.String("agent", ev.Agent),
         otellog.String("project", ev.Project),
-        otellog.Int64("cgroup_id", int64(ev.CgroupID)),  // signed because OTel attr is int64; cgroup_id fits
+        otellog.Int64("cgroup_id", int64(ev.CgroupID)),
         otellog.String("dst_ip", ev.DstIP.String()),
         otellog.Int("dst_port", int(ev.DstPort)),
         otellog.String("l4_proto", l4ProtoString(ev.L4Proto)),
         otellog.Bool("ipv6", ev.IsIPv6),
         otellog.Bool("ipv4_mapped", ev.IsMapped),
-        otellog.String("dst_host", ev.Domain),               // empty for direct-IP / no DNS cache hit
-        otellog.Int64("domain_hash", int64(ev.DomainHash)),  // 0 if no DNS resolution
+        otellog.String("dst_host", ev.Domain),
+        otellog.Int64("domain_hash", int64(ev.DomainHash)),
     )
     s.logger.Emit(ctx, rec)
 }
@@ -924,16 +1023,30 @@ var netloggerSvc *netlogger.Service
         } else {
             endpoint := /* hostport for OtelInfraPort — same shape as the
                           existing logger.New endpoint resolution */
+            // ExporterWrap composes: counting (Prom metrics, outermost) ∘
+            // circuit-breaker (collector-lost trip, innermost) ∘ otlploggrpc.
+            // Order matters: circuit returns nil on tripped state so the
+            // counting wrapper records that as a "success" — desired, because
+            // a tripped collector isn't an export error from netlogger's POV,
+            // it's a deliberate drop.
+            wrap := func(inner sdklog.Exporter) sdklog.Exporter {
+                breaker := netlogger.NewCircuitExporter(inner, netlogger.CircuitOptions{
+                    FailureThreshold: 3,
+                    Log:              log,
+                })
+                return netlogger.NewCountingExporter(breaker, promCounters)
+            }
             provider, err = controlplane.NewOtelLoggerProvider(controlplane.OtelClientOptions{
                 Endpoint:            endpoint,
                 TLSConfig:           tlsCfg,
-                ServiceName:         "clawker-cp",
+                ServiceName:         "ebpf-networking",   // distinct from clawker-cp; lands in its own OS data stream
                 MaxQueueSize:        2048,
                 ExportInterval:      time.Second,
                 ExportTimeout:       30 * time.Second,
                 RetryMaxElapsedTime: 10 * time.Second,
+                PreflightTimeout:    20 * time.Second,    // dial collector with 20s deadline at boot; fail fast if monitoring stack is down
                 Log:                 log,
-                ExporterWrap:        netlogger.NewCountingExporterWrap(promCounters),
+                ExporterWrap:        wrap,
             })
             if err != nil { degradeErr = fmt.Errorf("NewOtelLoggerProvider: %w", err) }
         }
@@ -1068,6 +1181,8 @@ go test ./internal/controlplane/firewall/ebpf/netlogger -v -run TestPromMetricsR
 
 ## Task 4: E2E test + docs
 
+> **No deferrals on this task.** Every E2E case (allow / deny / bypass / collector-down / drain-ordering), every CLAUDE.md update, and every Mintlify doc page must land in this PR. No skipping the collector-down test, no "we'll write the docs in a follow-up", no shipping with a green allow-path test but skipping the bypass assertion. Every record attribute asserted by the E2E test must match the full set the otelSink emits. If anything blocks you, surface to the user — do not silently descope. Incomplete work means redoing the task from scratch in a fresh context window.
+
 **Creates/modifies:**
 - `test/e2e/netlogger_test.go` — E2E test exercising allow / deny / bypass paths and asserting OTLP records arrive
 - `docs/firewall.mdx` (or new `docs/observability.mdx`) — Mintlify doc covering netlogger
@@ -1132,10 +1247,11 @@ func TestNetlogger_E2E(t *testing.T) {
         assert.NotEmpty(t, rec.Attribute("container_id"))
         assert.Equal(t, "test-agent", rec.Attribute("agent"))
         assert.Equal(t, "test-project", rec.Attribute("project"))
-        // Scope name discriminates the stream.
+        // Scope name discriminates event types within the netlogger stream.
         assert.Equal(t, "clawker.netlogger", rec.ScopeName())
-        // service.name is shared with CP (not a separate service).
-        assert.Equal(t, "clawker-cp", rec.ResourceAttribute("service.name"))
+        // service.name is distinct from CP zerolog so OS routes records to
+        // its own data stream by default.
+        assert.Equal(t, "ebpf-networking", rec.ResourceAttribute("service.name"))
     }
     assert.True(t, foundVerdicts["allowed"])
     assert.True(t, foundVerdicts["denied"])
@@ -1160,7 +1276,7 @@ Additional targeted tests:
 - Architecture diagram (reader → channel → processor → sink)
 - The four pinned BPF maps and their semantics
 - The five Prom counter dimensions (kernel-fault drops, ratelimit drops, queue drops, parse errors, export errors)
-- LabelCache cgidmap pattern citation (Tetragon `pkg/cgidmap/cgidmap.go`)
+- LabelCache design (slice + dual-index + invalid flag) and its dockerevents-driven invalidation
 - Reverse-DNS limitation (hash-only until follow-up populates domains)
 - Sink interface contract (non-blocking)
 - Trust-lane (infra endpoint, mTLS via `otelcerts.Service.LoadTLSConfig`)
@@ -1215,4 +1331,4 @@ go test ./test/e2e/... -v -timeout 15m
 
 These form a coherent next initiative if the broader SIEM pivot is taken on later.
 
-**Not on this list (intentionally):** sock_ops / TCP_CLOSE roundtrip byte tracking. See "Why decision-time emit is the right scope" in the Context section — this isn't deferred, it's the wrong shape for production observability per Cilium / Tetragon practice. Bytes come from Envoy ALS, not BPF sock_ops.
+**Not on this list (intentionally):** sock_ops / TCP_CLOSE roundtrip byte tracking. See "Why decision-time emit is the right scope" in the Context section — bytes/duration belong to the L7 proxy stream, not the BPF decision stream. Doing it in BPF doubles the surface area and overlaps the Envoy access-log emission.
