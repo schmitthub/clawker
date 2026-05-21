@@ -64,7 +64,6 @@ func newTestBus(t *testing.T) *overseer.Overseer {
 func TestService_New_RequiredDeps(t *testing.T) {
 	bus := newTestBus(t)
 	insp := &fakeInspecter{}
-	sink := NewNopSink()
 	cfg := configmocks.NewBlankConfig()
 	cases := []struct {
 		name   string
@@ -74,7 +73,6 @@ func TestService_New_RequiredDeps(t *testing.T) {
 		{"nil bus", func(d *Deps) { d.Bus = nil }},
 		{"nil docker", func(d *Deps) { d.Docker = nil }},
 		{"nil cfg", func(d *Deps) { d.Cfg = nil }},
-		{"nil sink", func(d *Deps) { d.Sink = nil }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -83,7 +81,6 @@ func TestService_New_RequiredDeps(t *testing.T) {
 				Bus:    bus,
 				Docker: insp,
 				Cfg:    cfg,
-				Sink:   sink,
 			}
 			tc.mutate(&d)
 			if _, err := New(d); err == nil {
@@ -108,7 +105,6 @@ func TestService_Enroll_HydratesLabelCache(t *testing.T) {
 		Bus:    bus,
 		Docker: insp,
 		Cfg:    configmocks.NewBlankConfig(),
-		Sink:   NewNopSink(),
 	})
 
 	if !overseer.Publish(bus, ebpf.EBPFContainerEnrolled{
@@ -147,7 +143,6 @@ func TestService_Evict_OnDockerDieRemovesCacheEntry(t *testing.T) {
 		Bus:    bus,
 		Docker: insp,
 		Cfg:    configmocks.NewBlankConfig(),
-		Sink:   NewNopSink(),
 	})
 
 	overseer.Publish(bus, ebpf.EBPFContainerEnrolled{CgroupID: 7, ContainerID: "cid-abc", At: time.Now()})
@@ -178,7 +173,6 @@ func TestService_Evict_IgnoresNonDieActions(t *testing.T) {
 		Bus:    bus,
 		Docker: insp,
 		Cfg:    configmocks.NewBlankConfig(),
-		Sink:   NewNopSink(),
 	})
 
 	overseer.Publish(bus, ebpf.EBPFContainerEnrolled{CgroupID: 7, ContainerID: "cid-abc", At: time.Now()})
@@ -214,7 +208,6 @@ func TestService_InspectFailureIsLogged_NotFatal(t *testing.T) {
 		Bus:    bus,
 		Docker: insp,
 		Cfg:    configmocks.NewBlankConfig(),
-		Sink:   NewNopSink(),
 	})
 
 	overseer.Publish(bus, ebpf.EBPFContainerEnrolled{CgroupID: 7, ContainerID: "cid-abc", At: time.Now()})
@@ -250,6 +243,7 @@ func newTestService(t *testing.T, d Deps) *Service {
 		cache:   cache,
 		revDNS:  NewReverseDNSMapWithWalk(func(func(uint32)) error { return nil }, d.Log),
 		metrics: NewMetrics(),
+		sink:    nopSink{},
 		queue:   make(chan []byte, d.QueueBuffer),
 	}
 	svc.ctx, svc.cancel = context.WithCancel(context.Background())

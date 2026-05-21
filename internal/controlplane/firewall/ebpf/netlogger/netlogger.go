@@ -29,6 +29,7 @@ import (
 	"github.com/cilium/ebpf/ringbuf"
 	mobyevents "github.com/moby/moby/api/types/events"
 	mobyclient "github.com/moby/moby/client"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/controlplane/dockerevents"
@@ -90,16 +91,19 @@ type Deps struct {
 	// (Config interface — never hardcode label strings). Required.
 	Cfg config.Config
 
-	// Sink consumes enriched events. CP main wires the production
-	// sink (OTel-backed); tests inject nopSink or a recording
-	// sink. Required.
-	Sink Sink
+	// OtelLoggerProvider drives the production sink. nil routes
+	// every event into nopSink — the test-only default that drops
+	// records on the floor. Production wiring in cmd/clawker-cp
+	// supplies a provider built via controlplane.NewOtelLoggerProvider
+	// against the trusted-infra OTLP receiver. The Service does NOT
+	// Shutdown the provider on Stop; lifetime is the caller's.
+	OtelLoggerProvider *sdklog.LoggerProvider
 
 	// Log captures degraded-path structured lines
 	// (event=netlogger_*_unavailable, parse errors, dropped record
 	// summaries). Never used for the network event records
-	// themselves — those flow through Sink. nil defaults to a Nop
-	// logger.
+	// themselves — those flow through the internal sink. nil
+	// defaults to a Nop logger.
 	Log *logger.Logger
 
 	// QueueBuffer overrides defaultQueueBuffer. 0 means default.
@@ -129,6 +133,10 @@ type Service struct {
 	cache   *LabelCache
 	revDNS  *ReverseDNSMap
 	metrics *Metrics
+
+	// sink is the live event sink chosen by New. otelSink when
+	// deps.OtelLoggerProvider is non-nil; nopSink otherwise.
+	sink Sink
 
 	// rb is the live ringbuf.Reader. nil until Start.
 	rb *ringbuf.Reader
@@ -163,8 +171,6 @@ func New(deps Deps) (*Service, error) {
 		return nil, errors.New("netlogger: Deps.Docker required")
 	case deps.Cfg == nil:
 		return nil, errors.New("netlogger: Deps.Cfg required")
-	case deps.Sink == nil:
-		return nil, errors.New("netlogger: Deps.Sink required")
 	}
 	if deps.Log == nil {
 		deps.Log = logger.Nop()
@@ -179,6 +185,15 @@ func New(deps Deps) (*Service, error) {
 		deps.StopTimeout = defaultStopTimeout
 	}
 
+	// nopSink is the test/degraded default. CP main wires a real
+	// provider; nil here means "drop records on the floor" and is
+	// the same shape the netlogger_unavailable degraded path
+	// produces — every fields-required check above takes priority.
+	var sink Sink = nopSink{}
+	if s := newOtelSink(deps.OtelLoggerProvider); s != nil {
+		sink = s
+	}
+
 	cache := NewLabelCache(deps.Log)
 	revDNS := NewReverseDNSMap(deps.Mgr.DNSCache(), deps.Log)
 	metrics := NewMetrics()
@@ -188,6 +203,7 @@ func New(deps Deps) (*Service, error) {
 		cache:   cache,
 		revDNS:  revDNS,
 		metrics: metrics,
+		sink:    sink,
 		queue:   make(chan []byte, deps.QueueBuffer),
 	}, nil
 }
@@ -232,7 +248,7 @@ func (s *Service) Start(ctx context.Context) error {
 			queue:   s.queue,
 			cache:   s.cache,
 			revDNS:  s.revDNS,
-			sink:    s.deps.Sink,
+			sink:    s.sink,
 			metrics: s.metrics,
 			log:     s.deps.Log,
 		}

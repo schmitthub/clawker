@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"encoding/json"
 	"net"
 	"sync"
 	"testing"
@@ -138,11 +137,11 @@ func TestProcessor_CacheMissEmitsEmptyAttribution(t *testing.T) {
 	}
 }
 
-// TestPipeline_StdoutSink drives the end-to-end pipeline (reader →
-// queue → processor → sink) using fakes for both the ringbuf source
-// and the cache hydration. Catches a regression in the wiring before
-// Task 3's OTel sink replaces stdoutSink.
-func TestPipeline_StdoutSink(t *testing.T) {
+// TestPipeline_EndToEnd drives the kernel→sink pipeline (reader →
+// queue → processor → sink) with a recording sink, exercising the
+// wiring without touching the OTel SDK. The OTel sink itself is
+// covered by otel_sink_test.go.
+func TestPipeline_EndToEnd(t *testing.T) {
 	cache := NewLabelCache(nil)
 	cache.AddOrUpdate(7, "ABC", "agent-1", "project-1")
 
@@ -160,12 +159,12 @@ func TestPipeline_StdoutSink(t *testing.T) {
 	metrics := NewMetrics()
 	r := &reader{src: src, queue: queue, metrics: metrics, log: logger.Nop()}
 
-	var out bytes.Buffer
+	sink := &recordingSink{}
 	p := &processor{
 		queue:   queue,
 		cache:   cache,
 		revDNS:  NewReverseDNSMapWithWalk(func(func(uint32)) error { return nil }, nil),
-		sink:    NewStdoutSink(&out),
+		sink:    sink,
 		metrics: metrics,
 		log:     logger.Nop(),
 	}
@@ -179,13 +178,14 @@ func TestPipeline_StdoutSink(t *testing.T) {
 	}
 	p.run(context.Background())
 
-	var rec stdoutRecord
-	if err := json.Unmarshal(out.Bytes(), &rec); err != nil {
-		t.Fatalf("decode emitted JSON: %v\nraw=%q", err, out.String())
+	events := sink.snapshot()
+	if len(events) != 1 {
+		t.Fatalf("emit count = %d; want 1", len(events))
 	}
-	if rec.Verdict != "allowed" || rec.ContainerID != "ABC" ||
+	rec := events[0]
+	if rec.Verdict != VerdictAllowed || rec.ContainerID != "ABC" ||
 		rec.Agent != "agent-1" || rec.Project != "project-1" ||
-		rec.DstIP != "192.0.2.33" || rec.DstPort != 80 ||
+		rec.DstIP.String() != "192.0.2.33" || rec.DstPort != 80 ||
 		rec.DomainHash != 0xfeed {
 		t.Errorf("end-to-end record fields wrong: %+v", rec)
 	}
