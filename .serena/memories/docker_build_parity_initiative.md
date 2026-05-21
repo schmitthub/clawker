@@ -2,97 +2,51 @@
 
 ## End Goal
 
-Bring `clawker image build` (aliased as `clawker build`) to **flag-surface parity with `docker build`**.
+Bring `clawker image build` (aliased as `clawker build`) to **flag-surface parity with `docker build`** for flags that have genuine clawker value. Drop anything packaging/distribution-flavored — clawker images run **locally on the same daemon they were built on**.
 
-The justification is "drop-in replacement" claim — users typing `clawker build` should get the docker CLI conventions they already know. Prune anything that exists for **packaging / deployment / distribution to remote systems** (clawker images are intended to run locally on the same daemon they were built in).
+Holistic secondary goal: follow standard build-CLI conventions for **proper metadata, tags, digest capture, attestations**. For a security-positioned tool, attestations (`--provenance`, `--sbom`) are first-class even for local-only builds (audit trail + SBOM for CVE scanning).
 
-Holistic secondary goal: follow the standard build-CLI conventions for **proper metadata, tags, digest capture, attestations** — across the board, not just flag names. For a security-positioned tool, attestations (`--provenance`, `--sbom`) are **first-class even for local-only builds** because they provide audit trail + SBOM (foundation of CVE scanning), not just registry trust.
+## Curation Filter (Phase 2 outcome — locked)
 
-## Why — Standardization with Container CLI Builders
+Two filters, applied in order, with no invented rationalizations:
 
-clawker is one of a tiny handful of projects that programmatically drive image builds via SDK (most consumers shell out to `docker build`). For users to treat `clawker build` as a drop-in replacement they don't have to relearn, it must match the conventions established by peer SDK-driving projects (docker CLI, podman, buildx, kaniko, ko, dagger, etc.) for:
+1. **Packaging / distribution / cross-target?** → drop
+2. **Genuine local-dev or security-tool value?** → keep
 
-- **Flag surface** (what users type)
-- **Metadata capture** (digest extraction from `SolveResponse.ExporterResponse[ExporterImageDigestKey]`, legacy `aux.ID`)
-- **Standard outputs** (`--iidfile`, `--metadata-file` shapes)
-- **Tag application** (moby exporter `name=` attr, multi-tag via comma-separated)
-- **Cache trust model** (delegate to daemon-side cache: BuildKit Solve or classic builder `probeCache` — don't invent client-side hash schemes)
+Cross-references: [[feedback_parity_needs_value]], [[feedback_no_invented_security_framings]].
 
-### SDK Pattern Alignment Table (the rosetta stone driving this work)
+### SDK Pattern Alignment Table
 
-| Aspect | Standard SDK pattern | Clawker today | Clawker dead path (now removed) |
-|---|---|---|---|
-| Apply user tags | exporter `name=` attr | ✅ same | — |
-| Extract digest | parse `ExporterResponse[ExporterImageDigestKey]` (BuildKit) + `aux.ID` (legacy) | ✅ via `OnComplete` callback (this session) | ❌ ignored |
-| Skip-rebuild | trust daemon-side cache (Solve / `probeCache`) is the lookup | ✅ implicit (Solve runs) | invented `:sha-<custom>` tag check |
-| Content-addressed local ref | `--iidfile` (or `name-canonical=true` if moby honored it — it doesn't) | ✅ `--iidfile` flag (this session) | invented `:sha-<custom>` (not OCI digest) |
-
-Original (before this session) had ❌ on rows 2 + 4. Both now ✅. Row 3 was where the prior author's dead path lived (`EnsureImage` + `ImageTagWithHash` with custom 12-hex-char short hash, never actually applied because EnsureImage was unreachable from `clawker build`).
+| Aspect | Standard SDK pattern | Clawker now |
+|---|---|---|
+| Apply user tags | exporter `name=` attr | ✅ |
+| Extract digest | parse `ExporterResponse[ExporterImageDigestKey]` (BuildKit) + `aux.ID` (legacy) | ✅ via `OnComplete` |
+| Skip-rebuild | trust daemon-side cache (BuildKit Solve / classic `probeCache`) | ✅ implicit |
+| Content-addressed local ref | `--iidfile` writes digest to file | ✅ |
 
 ### Peer-project references benchmarked
 
 - **docker/cli** `cli/command/image/build.go` — flag parsing, ImageBuildOptions
-- **moby/moby** `daemon/internal/builder-next/exporter/exporter.go imageExporterMobyWrapper` — confirms `name-canonical=true` is silently stripped; `aux.ID` in stream is the legacy digest source
+- **moby/moby** `daemon/internal/builder-next/exporter/exporter.go imageExporterMobyWrapper` — confirms `name-canonical=true` silently stripped; `aux.ID` in stream is legacy digest source
 - **moby/buildkit** `exporter/containerimage/export.go` — sets `ExporterResponse[ExporterImageDigestKey]` (`containerimage.digest`)
-- **docker/buildx** `commands/build.go getImageID` — pattern for extracting digest from SolveResponse + writing `--iidfile`
-- **containers/podman** `libimage/normalize.go NormalizeName` — defaults `:latest` if tag missing (same convention)
+- **docker/buildx** `commands/build.go getImageID` — extract digest from SolveResponse + write `--iidfile`
+- **containers/podman** `libimage/normalize.go NormalizeName` — defaults `:latest` if tag missing
 
-## Branch State (as of save)
+## Branch State (current)
 
 - Branch: `feat/image-optimization`
-- HEAD commit: `bb51901c feat(bundler): npm-resolved Claude Code version + Dockerfile.tmpl cache locality`
-- **Uncommitted changes are substantial** — entire dead `EnsureImage` chain deleted + BuildKit digest capture wired. See "Already Done" below.
+- HEAD: `aa06f2f6 chore(memory): in-flight serena memories — build-parity initiative + cache UAT`
+- Working tree: clean
+- Commits in this initiative (pushed):
+  - `bb51901c` — ARG CLAUDE_CODE_VERSION + Dockerfile.tmpl three-tier reorder
+  - `6e959fd7` — Phase 0: EnsureImage chain removal + BuildKit digest capture + `--iidfile`
+  - `aa06f2f6` — in-flight serena memories
 
-## Already Done (uncommitted, all tests pass — `go test ./internal/docker/... ./internal/bundler/... ./pkg/whail/...` green)
+## Already on `clawker image build` (Phase 0)
 
-1. **Deleted dead `EnsureImage` chain** (was test-only since PR #139, ~3.5 months ago):
-   - `Builder.EnsureImage` + 5 `TestEnsureImage_*` tests
-   - `internal/docker/names.go::ImageTagWithHash` + its test
-   - `internal/docker/client.go::TagImage` method
-   - `internal/bundler/hash.go` + `hash_test.go` (entire files deleted)
-   - `internal/bundler/dockerfile.go::EmbeddedScripts` function
-   - `internal/hostproxy/internals/embed.go::AllScripts` function
-   - `pkg/whail/image.go::Engine.ImageTag` + `TestImageTag`
-   - `BuilderOptions.ForceBuild` field (only EnsureImage read it)
-   - All related CLAUDE.md docs updated (`internal/bundler/`, `internal/docker/`, `pkg/whail/`, `internal/hostproxy/internals/`)
-   - Stale comment in `internal/cmd/image/build/build.go:232` removed
+`-f/--file`, `-t/--tag`, `--no-cache`, `--pull`, `--build-arg`, `--label`, `--target`, `-q/--quiet`, `--progress`, `--network`, `--iidfile`
 
-2. **BuildKit `SolveResponse` digest capture** (was dropped on floor — `_, err = bkClient.Solve(...)`):
-   - Added `whail.BuildResult{ImageID string}` + `whail.BuildCompleteFunc` types in `pkg/whail/types.go`
-   - Added `OnComplete BuildCompleteFunc` field to `whail.ImageBuildKitOptions`
-   - `pkg/whail/buildkit/builder.go` parses `resp.ExporterResponse[exptypes.ExporterImageDigestKey]` and fires `OnComplete`
-   - Legacy path: extended `buildEvent` struct with `Aux.ID`, threaded `onComplete` through all three `processBuildOutput*` functions in `internal/docker/client.go`
-   - `BuildImageOpts` + `BuilderOptions` both have `OnComplete` field, plumbed through `toBuildImageOpts`
-   - `internal/cmd/image/build/build.go` wires `OnComplete` to:
-     - log `image_id` at Info level
-     - write to `--iidfile PATH` (new flag, same shape as `docker buildx --iidfile`)
-   - Verified empirically: file matches `docker image inspect`'s `.Id`
-
-3. **`--iidfile` flag added** to `clawker image build` (the only flag-surface addition so far).
-
-4. **Reverted UAT marker** on `internal/bundler/assets/clawker-agent-prompt.md` (was sitting at marker `BBBBB` from prior session). Now clean.
-
-## Critical Confusions to Avoid (lessons learned)
-
-1. **`docker build` ≠ `docker buildx` ≠ `docker buildx build`.** Three distinct flag surfaces. Modern docker routes `docker build` through buildx but with a curated flag subset.
-2. **NEVER trust deepwiki for "list all flags of X"** — it synthesizes from mixed sources (legacy + buildx) without delineation. Agent got burned twice making up flags (`--security-opt`, `--memory`, `--pids-limit`, etc. — none of these are in `docker buildx build`).
-3. **ALWAYS get authoritative `--help` output directly** via `Bash` against an actual docker binary, not via deepwiki.
-4. **Attestations are NOT distribution-only for security tools.** `--provenance` = build audit trail. `--sbom` = vuln-scan foundation. Both have local-only value.
-5. **`name-canonical=true` exporter attribute is silently stripped by moby's wrapper** (confirmed in `daemon/internal/builder-next/exporter/exporter.go imageExporterMobyWrapper`). RepoDigests for local builds is genuinely unsatisfiable via this path. The standard alternative is `--iidfile` (which is now wired).
-
-## TODOs
-
-### Phase 0 — Commit current work
-- [ ] Decide: commit cleanup + iidfile as their own PR/commit on this branch, OR bundle with parity work?
-- [ ] Recommended: commit now (mechanical cleanup, low risk, sizable diff). Parity work is a fresh diff on top.
-
-### Phase 1 — Get authoritative flag list (DO NOT SKIP)
-- [x] `docker build --help` output captured in chat (preserved in Flag Inventory section below).
-- [ ] If anything ambiguous about a flag, run `docker build --help` again on user's machine — never synthesize via deepwiki.
-
-### Flag Inventory (in-flight; refine after Phase 1 legacy `docker build --help` capture)
-
-**Authoritative `docker build --help` output user pasted in chat (DO NOT re-synthesize via deepwiki):**
+## Authoritative `docker build --help` output (DO NOT re-synthesize via deepwiki)
 
 ```
 docker build [OPTIONS] PATH | URL | -
@@ -135,120 +89,83 @@ docker build [OPTIONS] PATH | URL | -
       --ulimit ulimit                 Ulimit options
 ```
 
-**User goal: `docker build == clawker build` parity, flag-for-flag where applicable.**
+## Final Phase 2 Outcome — LOCKED Keep List (5 flags)
 
-### Already on clawker
-
-`-f/--file`, `-t/--tag`, `--no-cache`, `--pull`, `--build-arg`, `--label`, `--target`, `-q/--quiet`, `--progress`, `--network`, `--iidfile` (added this session)
-
-### Tentative keep (in-flight, subject to legacy-help recheck)
-
-| Flag | Rationale |
+| Flag | Honest rationale |
 |---|---|
-| `--add-host` | Build-time DNS — corp / internal mirror IPs |
-| `--allow` | Default-deny privileged entitlements. Matches clawker's security posture. |
-| `--attest`, `--sbom`, `--provenance` | Security tool needs audit trail + SBOM for CVE scanning. Local-relevant. |
-| `--annotation` | OCI manifest annotations — local tooling can read via `docker inspect` |
-| `--build-context` | Multi-source builds (monorepo overlays) |
-| `--cache-from type=local`, `--cache-to type=local` | Filesystem-backed cache sharing across dev machines without registry |
-| `--call`, `--check` | Lint/outline modes for generated Dockerfile |
-| `--cgroup-parent` | Edge case but cheap |
-| `--metadata-file` | JSON output superset of `--iidfile`; standard tool integration |
-| `--no-cache-filter` | Selective stage cache invalidation |
-| `-D/--debug` | Debug logging (align name with docker) |
-| `--output type=local`/`type=tar` | Forensic extraction of built filesystem for security inspection |
-| `--platform` | Cross-arch via QEMU emulation for security-regression testing |
-| `--policy` | BuildKit policy enforcement — security tool concern |
-| `--secret` | Build-time creds without baking into layers |
-| `--shm-size` | `/dev/shm` cap — DoS defense during build |
-| `--ssh` | SSH agent forwarding for private git pulls |
-| `--ulimit` | nofile/nproc caps — fork-bomb / fd-exhaustion defense |
+| `--no-cache-filter` | Stage iteration workflow; force-rebuild a specific stage |
+| `--secret` | Build-time creds (npm/GH tokens) without baking into layers |
+| `--cache-from`/`--cache-to` (local types only) | Filesystem cache share across dev machines |
+| `--attest`/`--provenance`/`--sbom` | SBOM consumed locally by trivy/grype — only legitimate security framing |
+| `--call`/`--check` | Lint mode for generated Dockerfile |
 
-### Tentative drop (distribution / non-applicable)
+## Locked Drop List (with reasons — never re-litigate)
 
-| Flag | Reason |
+| Flag | Drop reason |
 |---|---|
+| `--platform` | Cross-arch packaging for other systems. clawker images run locally on the daemon they were built on. |
+| `--add-host` | eBPF firewall doesn't touch buildkitd; build runs on host daemon, no clawker interaction |
+| `--allow` | `network.host`/`security.insecure` opt-in; default-deny is fine, no user demand |
+| `--annotation` | OCI manifest metadata clawker doesn't read or ship |
+| `--cgroup-parent` | Build cgroup ≠ agent cgroup; clawker controls only agent runtime cgroup |
+| `--shm-size` | Build container ephemeral; no DoS angle |
+| `--ulimit` | Same; short-lived build, fd/proc caps irrelevant |
+| `--policy` | BuildKit policy runs on host daemon, no CP signal |
+| `-o`/`--output` | "Forensic extraction" was invented framing — actually distribution-flavored |
+| `--metadata-file` | CI integration; clawker users build locally, not in CI |
+| `-D`/`--debug` | clawker likely has its own; alignment not worth the conflict cost |
+| `--ssh` | No clawker-generated Dockerfile does private git clone during build |
+| `--build-context` | Niche (only for user-supplied custom Dockerfile) |
 | `--push` | Pure registry upload |
-| `--load` | Default for clawker (we always load); redundant |
-| `--builder` | Builder-instance management; we own that |
-| `--output type=registry/oci` | Registry push variants only |
+| `--load` | clawker default behavior |
+| `--builder` | clawker owns BuildKit lifecycle |
+| `--output type=registry/oci/image` | Registry variants |
 | `--cache-from`/`--cache-to type=registry` | Registry-backed cache |
 
-### Output-shape gaps (separate from flag adds)
+## Earlier agent errors (avoid repeats — see [[feedback_no_invented_security_framings]])
 
-- `--quiet` currently suppresses everything; should print image ID to stdout on success (docker `-q` spec)
-- `BUILDKIT_PROGRESS` env not honored (mirror our `--progress` flag)
+- Made up `--security-opt`, `--memory`, `--memory-swap`, `--pids-limit`, `--cpu-shares`, `--cpu-period`, `--cpu-quota`, `--cpuset-cpus`, `--cpuset-mems`, `--isolation`. NONE in `docker build`. Conflated with `docker run` surface.
+- Reframed `--platform` as "cross-arch security regression testing" → invented justification, user rejected
+- Reframed `--output type=local/tar` as "forensic extraction" → same invented framing pattern
 
-### Agent's prior errors on this list (avoid repeats)
+## Critical Confusions to Avoid
 
-- Made up `--security-opt`, `--memory`, `--memory-swap`, `--pids-limit`, `--cpu-shares`, `--cpu-period`, `--cpu-quota`, `--cpuset-cpus`, `--cpuset-mems`, `--isolation`. **NONE in `docker build`.** Conflated with `docker run` / `docker container create` surface.
-- Initially dismissed `--security-opt` then "corrected" by keeping it — both wrong, flag doesn't exist on `docker build` at all.
-- Initially dismissed attestation flags (`--provenance`, `--sbom`, `--attest`) as distribution-only — wrong for security tool; reinstated.
+1. `docker build` ≠ `docker buildx` ≠ `docker buildx build`. Three distinct flag surfaces.
+2. NEVER trust deepwiki for "list all flags of X" — synthesizes legacy + buildx without delineation.
+3. ALWAYS get authoritative `--help` output directly via `Bash` against an actual docker binary.
+4. Attestations are NOT distribution-only for security tools. SBOM is consumed locally by trivy/grype.
+5. `name-canonical=true` exporter attribute is silently stripped by moby wrapper. `--iidfile` is the alternative.
 
-### Phase 2 — Categorize each flag (with proper rigor this time)
-Apply two filters in order:
-1. **Distribution / packaging / deployment** → drop. Examples: `--push`, `--load`, `--builder`, `--cache-to type=registry`.
-2. **Useful for local dev / security tool** → keep, even if it has a distribution angle. Examples: `--provenance` (audit), `--sbom` (CVE scan), `--cache-from type=local`, `--output type=local` (forensic extraction).
+## TODOs
 
-### Phase 3 — Implementation (per-flag, mechanical)
-For each kept flag:
+### Phase 3 — Implementation (next; per-flag with signoff)
+
+For each of the 5 locked-keep flags:
 - [ ] Add to `BuildOptions` in `internal/cmd/image/build/build.go`
 - [ ] Register cobra flag with help text matching docker CLI's wording verbatim
 - [ ] Plumb through `BuilderOptions` (`internal/docker/builder.go`) → `BuildImageOpts` (`internal/docker/client.go`) → `whail.ImageBuildKitOptions` (`pkg/whail/types.go`) → BuildKit Solve attrs (`pkg/whail/buildkit/solve.go`)
 - [ ] Add test
 - [ ] Verify behavior matches docker CLI (run `docker build` with same flag, compare result)
 
+Implementation tier order (memory-suggested, user TBD on cadence):
+1. `--no-cache-filter` (Tier A trivial — single attr)
+2. `--secret` (Tier B — mount syntax parse)
+3. `--cache-from`/`--cache-to` (Tier B — pass-through with local-type doc)
+4. `--call`/`--check` (Tier C — Solve evaluation mode reroute)
+5. `--attest`/`--provenance`/`--sbom` (Tier C — BuildKit attestation plumb + verify exporter)
+
 ### Phase 4 — Output-shape parity
+
 - [ ] Fix `--quiet`: today suppresses all output; should print just image ID to stdout on success (matches `docker build -q`)
-- [ ] Honor `BUILDKIT_PROGRESS` env (currently we only honor `--progress` flag, not the env equivalent)
+- [ ] Honor `BUILDKIT_PROGRESS` env (currently only honor `--progress` flag)
 
-### Phase 5 — Resume the paused UAT (separate concern, see also `dockerfile_cache_optimization_uat` memory)
-- [ ] Test 1 still pending: modify `internal/bundler/assets/clawker-agent-prompt.md` (real edit, no fake marker accumulation), build, observe expected invalidation (steps 19–27), revert immediately
+### Phase 5 — Resume paused UAT (separate concern, see [[dockerfile_cache_optimization_uat]])
+
+- [ ] Test 1: modify `internal/bundler/assets/clawker-agent-prompt.md` (real edit, no fake marker accumulation), build, observe expected invalidation (steps 19–27), revert immediately
 - [ ] Tests 2–5 same pattern for host-open.sh, claude-settings.json, clawkerd binary, socket-server main.go
-- [ ] Confirm with user before each test (per existing UAT memory's instruction)
-
-## Plan File Reference
-
-There IS a prior plan file documenting the cache-optimization design that this branch implemented:
-`/home/claude/.claude/plans/internal-bundler-assets-dockerfile-tmpl-imperative-teacup.md`
-
-That plan is already implemented (`ARG CLAUDE_CODE_VERSION` + three-tier asset placement). The remaining UAT (Phase 5 above) is validation, not implementation.
-
-## Files Modified in This Session (uncommitted — `git status` to inspect)
-
-Code:
-- `internal/docker/builder.go` (EnsureImage deleted, ForceBuild field deleted, OnComplete plumb)
-- `internal/docker/client.go` (TagImage deleted, BuildImageOpts.OnComplete added, aux parsing, processBuildOutput* signatures)
-- `internal/docker/names.go` (ImageTagWithHash deleted)
-- `internal/docker/names_test.go` (TestImageTagWithHash deleted)
-- `internal/docker/builder_test.go` (5 TestEnsureImage_* + helpers deleted, imports cleaned)
-- `internal/docker/client_progress_test.go` (nil arg added to processBuildOutputWithProgress calls)
-- `internal/bundler/hash.go` (DELETED — file)
-- `internal/bundler/hash_test.go` (DELETED — file)
-- `internal/bundler/dockerfile.go` (EmbeddedScripts deleted, imports cleaned, stale comment fixed)
-- `pkg/whail/image.go` (Engine.ImageTag deleted)
-- `pkg/whail/image_test.go` (TestImageTag deleted)
-- `pkg/whail/types.go` (BuildResult + BuildCompleteFunc + OnComplete field added)
-- `pkg/whail/buildkit/builder.go` (exptypes import + SolveResponse digest capture)
-- `internal/hostproxy/internals/embed.go` (AllScripts deleted, doc comment cleaned)
-- `internal/cmd/image/build/build.go` (--iidfile flag, OnComplete callback, ForceBuild assignment removed, stale comment removed)
-
-Docs:
-- `internal/bundler/CLAUDE.md`
-- `internal/docker/CLAUDE.md`
-- `pkg/whail/CLAUDE.md`
-- `internal/hostproxy/internals/CLAUDE.md`
-
-## SDK Pattern Status (after this session)
-
-| Aspect | Standard SDK pattern | Clawker now |
-|---|---|---|
-| Apply user tags | exporter `name=` attr | ✅ |
-| Extract digest | parse `ExporterResponse[ExporterImageDigestKey]` (BuildKit) + `aux.ID` (legacy) | ✅ via `OnComplete` |
-| Skip-rebuild | trust daemon-side cache (BuildKit Solve / classic `probeCache`) | ✅ implicit |
-| Content-addressed local ref | `--iidfile` writes digest to file | ✅ |
+- [ ] Confirm with user before each test
 
 ## IMPORTANT
 
-- **Always check with the user before proceeding with the next TODO item.** Each phase / flag addition needs explicit user signoff because there are decisions about scope, naming, behavior alignment with docker CLI's exact wording.
-- **DELETE THIS MEMORY when work complete.** Once docker build parity scope is finalized + implemented + UAT completed, ask user if they want to delete this memory via `mcp__serena__delete_memory` with name `docker_build_parity_initiative`. This memory captures in-flight investigation state, not durable project facts.
+- **Always check with the user before proceeding with the next TODO item.** Each phase / flag addition needs explicit user signoff.
+- **DELETE THIS MEMORY when work complete.** Once Phase 3/4/5 done, ask user to delete via `mcp__serena__delete_memory` with name `docker_build_parity_initiative`. Captures in-flight investigation state, not durable project facts.
