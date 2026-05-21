@@ -1,0 +1,40 @@
+{
+  "index_patterns": ["clawker-netlogger"],
+  "priority": 100,
+  "composed_of": ["clawker-common"],
+  "template": {
+    "settings": {
+      "index": {
+        "final_pipeline": "envelope-normalize"
+      }
+    },
+    "mappings": {
+      "properties": {
+        "eventName": { "type": "keyword" },
+        "attributes": {
+          "properties": {
+            "source":        { "type": "keyword" },
+            "verdict":       { "type": "keyword" },
+            "container_id":  { "type": "keyword" },
+            "agent":         { "type": "keyword" },
+            "project":       { "type": "keyword" },
+            "cgroup_id":     { "type": "long" },
+            "bpf_ts_ns":     { "type": "long" },
+            "dst_ip":        { "type": "ip" },
+            "dst_port":      { "type": "integer" },
+            "l4_proto":      { "type": "keyword" },
+            "l4_proto_code": { "type": "integer" },
+            "ipv6":          { "type": "boolean" },
+            "ipv4_mapped":   { "type": "boolean" },
+            "dst_host":      { "type": "keyword" },
+            "domain_hash":   { "type": "long" }
+          }
+        }
+      }
+    }
+  },
+  "_meta": {
+    "description": "eBPF netlogger egress decision records (service.name=ebpf-networking) — per-decision-point verdict + attribution + 4-tuple + domain",
+    "managed_by": "clawker-opensearch-bootstrap"
+  }
+}

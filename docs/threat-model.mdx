@@ -255,6 +255,8 @@ The bypass exists to avoid firewall rule management fatigue. Sometimes the agent
 
 Use small time windows (e.g., `clawker firewall bypass 30s --agent dev`). Pay attention while it's active. If you notice anything suspicious, immediately close the bypass with `clawker firewall bypass --stop --agent <agent-name>`. Bypass is scoped to a specific agent — it only toggles the egress restrictions for that one container. The firewall stack itself is not turned off, and all other agents continue to have their traffic routed through it normally. This limits exposure to a single container rather than your entire fleet. That said, the bypassed container has fully unrestricted network access for the duration, so don't leave long bypasses running unattended.
 
+Bypassed traffic is **not** a forensic blind spot. The eBPF cgroup programs emit a `verdict=bypassed` record for every connect/sendmsg/sock_create call that takes the bypass path, with the same attribution and destination 4-tuple as `allowed`/`denied` records. Records land in the `clawker-netlogger` OpenSearch index alongside the other egress streams — see [Egress Observability](/observability) for the record shape and how to query bypass windows after the fact.
+
 ### Workspace Scope
 
 Be intentional about what you bind-mount:

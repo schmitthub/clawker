@@ -36,8 +36,9 @@ Reference map of the clawker repo. Lazy-loaded from root `CLAUDE.md`.
 │   │   ├── dockerevents/      # Docker events feeder + typed envelope
 │   │   ├── firewall/          # Firewall: Handler (13 RPCs), Stack, Envoy+CoreDNS, eBPF
 │   │   │   └── ebpf/          # eBPF loader + Manager
+│   │   │       └── netlogger/ # Per-decision egress event emitter (ringbuf → enrich → OTLP)
 │   │   ├── infracerts/        # CLI-root CA material (long-lived) for CP→clawkerd dial
-│   │   ├── otelcerts/         # Short-lived infra leaves for trusted OTLP (CP/Envoy/CoreDNS)
+│   │   ├── otelcerts/         # Short-lived infra leaves for trusted OTLP (CP/Envoy/CoreDNS/netlogger)
 │   │   ├── overseer/          # Typed event bus + worldview state
 │   │   └── mocks/
 │   ├── dnsbpf/                # CoreDNS plugin for BPF dns_cache

@@ -1,0 +1,113 @@
+---
+title: "Egress Observability"
+description: "Per-decision-point eBPF egress event records — what netlogger emits, where it lands, and how to use it"
+icon: "binoculars"
+---
+
+When the firewall is enabled, clawker's control plane runs **netlogger** — a userspace pipeline that drains an eBPF ringbuf populated by the cgroup/connect/sendmsg/sock_create programs and emits one OTLP log record per egress decision. Every connect, sendmsg, and socket-create call from a managed agent container produces a record carrying the kernel's verdict (`allowed` / `denied` / `bypassed`), the container's attribution (`agent`, `project`, `container_id`), the destination 4-tuple, and the resolved domain when DNS context is available.
+
+The headline use is **bypass-mode forensic coverage**. The firewall's bypass switch (`clawker firewall bypass <duration> --agent <name>`) intentionally short-circuits enforcement so the operator can perform supervised exploration without rule churn. Before netlogger, bypassed traffic flowed without leaving an enforcement record — the so-called "forensic black hole" of bypass mode. netlogger emits a `verdict=bypassed` record at the same decision points that would have emitted `allowed`/`denied`, so an audit trail exists for every bypass window without changing enforcement semantics.
+
+## Record Shape
+
+Each record is an OTel log emitted on the trusted infra OTLP lane with:
+
+- `service.name = ebpf-networking` (distinct from `clawker-cp` so retention + volume profile are independent)
+- `event.name = ebpf.egress.flow`
+- `body = "ebpf egress flow"`
+- `severity = INFO`
+
+Attributes carried on every record (empty/zero when not applicable — fields are never dropped):
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `source` | keyword | Always `ebpf` |
+| `verdict` | keyword | `allowed`, `denied`, or `bypassed` |
+| `container_id` | keyword | Docker container ID (empty if cgroup_id not yet in label cache) |
+| `agent` | keyword | `dev.clawker.agent` label (empty if cache miss) |
+| `project` | keyword | `dev.clawker.project` label (empty for global-scope agents or cache miss) |
+| `cgroup_id` | long | Kernel cgroup ID — trust anchor used for attribution lookup |
+| `bpf_ts_ns` | long | Kernel monotonic timestamp at the moment of decision (`bpf_ktime_get_ns`) |
+| `dst_ip` | ip | Destination IPv4 (or IPv4-mapped low word for IPv6 paths) |
+| `dst_port` | integer | Destination port (host byte order) |
+| `l4_proto` | keyword | `stream` / `dgram` / `raw` (human-readable form of `SOCK_*`) |
+| `l4_proto_code` | integer | Raw `SOCK_*` constant in case operators need to filter on a code that doesn't have a string form yet |
+| `ipv6` | boolean | Native IPv6 (not IPv4-mapped) — denied by the firewall today, recorded for completeness |
+| `ipv4_mapped` | boolean | `::ffff:x.x.x.x` IPv4-mapped IPv6 address (the dual-stack default for most clients) |
+| `dst_host` | keyword | Resolved domain string. Always empty today — the userspace reverse cache only stores hashes (see [Domain Resolution Limitation](#domain-resolution-limitation)) |
+| `domain_hash` | long | FNV-1a hash of the destination domain. Always present when DNS resolved the IP — the reverse-mapping to the original string is best-effort |
+
+The full BPF event struct is fixed-size with explicit padding (32 bytes; layout asserted at compile time). Operators filter and aggregate at dashboard/query time — the emitter never decides which fields are "interesting" for a given verdict.
+
+## Where Records Land
+
+Records flow:
+
+```
+agent container egress decision
+        │
+        ▼
+  BPF cgroup program (events_ringbuf)
+        │
+        ▼
+  netlogger (CP-side userspace)
+        │  enrich {cgroup_id → container_id, agent, project, domain}
+        ▼
+  OTLP/gRPC + mTLS via netlogger's *sdklog.LoggerProvider
+        │
+        ▼
+  otel-collector trusted lane (otlp/infra receiver)
+        │
+        ▼
+  routing/trusted connector (service.name=ebpf-networking)
+        │
+        ▼
+  OpenSearch index: clawker-netlogger
+```
+
+The index is preconfigured by the `clawker-opensearch-bootstrap` one-shot service every time `clawker monitor up` runs. The retention policy (default 7 days, throwaway-stack semantics) auto-attaches via the same ISM policy that covers the other clawker indices. Cross-index queries against `clawker-cp,clawker-envoy,clawker-coredns,clawker-netlogger` work out of the box — `ingest_source` is stamped on every record for filtering.
+
+## Per-Connection Bytes and Duration
+
+**Not in this stream.** netlogger records the **decision** — the moment the kernel approved, denied, or bypassed an outbound connection. Byte counts and durations belong to the L7 proxy lifecycle, not the decision point.
+
+For `verdict=allowed` records, the matching Envoy access log carries `bytes_sent`, `bytes_received`, `duration_ms`. Operators pivot from a netlogger record to the corresponding Envoy record by 5-tuple at query time. For `verdict=denied` records there are no bytes to record — no traffic flowed. For `verdict=bypassed` records, only the netlogger record exists — Envoy and CoreDNS enforcement are skipped under bypass by design.
+
+Sock_ops-based per-connection byte tracking inside BPF is not on this stream's roadmap. It would double the BPF surface area, leave UDP/connectionless flows without an analogous signal, and overlap with Envoy's access-log emission for the cases where it matters.
+
+## Domain Resolution Limitation
+
+The BPF `dns_cache` map is keyed by destination IP and stores `{domain_hash, expire_ts}` — the domain string itself lives in CoreDNS process memory and is not currently exported to BPF. netlogger's reverse-DNS cache only has the hashes that the dnsbpf plugin has written; it cannot recover the original string today. Operators filter on `domain_hash` until a follow-up branch adds a `hash → string` population path.
+
+## Reliability
+
+netlogger is engineered to fail open with respect to the firewall — enforcement runs whether or not netlogger is healthy.
+
+- **BPF token-bucket rate limiter** keyed by `cgroup_id` (burst 64, refill 64 tokens/100ms ⇒ ~640 records/sec/cgroup ceiling). A misbehaving container cannot monopolize the ringbuf; throttled events are counted in `ratelimit_drops`, keyed by the noisy cgroup.
+- **Kernel-fault drop counter** (`events_drops`, PERCPU_ARRAY) bumps when `bpf_ringbuf_reserve` returns NULL on a full buffer — distinct from rate-limit drops so the operator response is different (ringbuf size vs. noisy-agent triage).
+- **Userspace queue** between the ringbuf reader and the processor is bounded with drop-newest semantics; the reader never blocks on the consumer. Drops are counted in `clawker_netlogger_queue_dropped_total` (Prom counter declared today; scrape exposure is not currently wired).
+- **Circuit breaker** wraps the OTLP exporter: three consecutive `Export()` failures permanently trip the breaker for the rest of the CP lifetime. Records drop on the floor afterward; the BatchProcessor queue drains via the SDK's own drop-oldest path. No background reconnect — telemetry availability is binary per-CP-lifetime by design. Operator response: restart CP after fixing the collector.
+- **Preflight TLS dial** runs at CP boot with a 20-second deadline against the configured OTLP endpoint. Failure degrades netlogger to a no-op for the rest of the CP lifetime and emits `event=netlogger_unavailable` (warn for "no endpoint configured", error for actual failures like cert problems or unreachable collector). The firewall, AdminService, agent dispatch, and registry are unaffected — netlogger's failure is contained.
+
+If netlogger is degraded, the kernel records continue to land in the ringbuf and are dropped on the floor — the BPF programs themselves are unaffected, no enforcement decision is missed, and the BPF token-bucket prevents unbounded buildup of pinned ringbuf records.
+
+## Trust Lane
+
+netlogger emits on the **trusted infra lane** — the same OTLP/gRPC + mTLS path the CP zerolog bridge, the Envoy access logger, and the CoreDNS otel plugin use. Identity reuse:
+
+- Cert: per-handshake ephemeral leaf minted by `otelcerts.Service` (`LoadTLSConfig("netlogger")`), chained through the **infra intermediate CA** — not the CLI root.
+- Endpoint: the collector's `otlp/infra` receiver on `OtelInfraPort` (not the unauth'd `otel-collector:4317` agent lane).
+- The OTLP endpoint **must** be `https://` (or bare host:port). A plaintext `http://` endpoint is rejected at boot — pushing infra telemetry over plaintext would smuggle records onto the agent-lane receiver, defeating the trust-lane separation.
+
+Agent containers cannot forge `service.name=ebpf-networking` records onto the trusted index — they don't hold a leaf chained through the infra intermediate, so the receiver's TLS handshake fails the chain check. The strict-directive promise (every field on every record, no discretion) only delivers if the records actually originate from the CP — the mTLS boundary is what makes that promise enforceable.
+
+## Configuration
+
+netlogger inherits its endpoint from the standard `OTEL_EXPORTER_OTLP_ENDPOINT` resolution path used by the CP zerolog bridge — when `clawker monitor up` is running, the CP boot sequence wires the collector's `OtelInfraPort` automatically. No netlogger-specific knobs ship today; the BatchProcessor sizing, retry cap (10s vs. SDK default 1 min), and circuit-breaker threshold are CP-level constants.
+
+To point netlogger at a custom collector (for a centralized SIEM, or to bypass the local stack entirely), override `OTEL_EXPORTER_OTLP_ENDPOINT` in the CP container's environment and ensure the receiver presents a server cert chained through the infra intermediate. Plaintext endpoints are rejected by design — see [Trust Lane](#trust-lane) above.
+
+## Current Limitations
+
+- **No domain string resolution** — `dst_host` is always empty today. The reverse cache stores hashes only; the dnsbpf plugin does not yet write the original domain string to a userspace-readable map.
+- **Prom counters not scraped** — the `clawker_netlogger_*` counters are declared but not yet wired into the CP `/metrics` endpoint. Today the structured log surface is the operational signal for throughput, queue drops, kernel drops, ratelimit drops, parse errors, and OTLP export success/error.

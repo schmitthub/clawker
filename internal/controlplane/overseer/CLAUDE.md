@@ -56,6 +56,7 @@ A producer event type may also implement an unexported `applier` interface (`App
 - `dockerevents.DockerEvent` — single envelope wrapping moby's `events.Message` verbatim. Its `ApplyTo` switches on the embedded `(Type, Action)` pair: container start/restart/unpause → `Status=running`; die/stop/kill/oom → `Status=stopped`; destroy → delete; rename → update `Name`. Network events and any other (Type, Action) combination fall through with no state side effect (Overseer doesn't project network edges into State). Subscribers express intent via `SubscribeFiltered` predicates on `ev.Type` + `ev.Action`.
 - `agent.SessionConnecting/Connected/Failed/Broken` — populate `State.Agents[ContainerID]` (session-axis fields)
 - `agent.AgentRegistered/AgentUntrusted` — populate `State.Agents[ContainerID]` (registration + trust verdict)
+- `ebpf.EBPFContainerEnrolled{CgroupID, ContainerID, OccurredAt}` — published by `firewall.Handler.FirewallEnable` after the `container_map` write succeeds. No `ApplyTo` (not projected into worldview State). The netlogger subsystem consumes these events to hydrate its `cgroup_id → {container_id, agent, project}` label cache; the existing `dockerevents.DockerEvent` `die`/`destroy` actions drive the matching eviction half.
 
 Events that don't implement applier are routed to subscribers without touching State.
 

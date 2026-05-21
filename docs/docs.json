@@ -88,6 +88,7 @@
           "configuration",
           "security",
           "firewall",
+          "observability",
           "control-plane",
           "credentials",
           "custom-images",

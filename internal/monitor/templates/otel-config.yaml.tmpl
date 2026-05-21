@@ -161,6 +161,11 @@ processors:
       - key: ingest_source
         value: coredns
         action: upsert
+  resource/netlogger:
+    attributes:
+      - key: ingest_source
+        value: netlogger
+        action: upsert
 
 exporters:
   # Stdout pipe-through for diagnosis. Surfaces in `docker logs
@@ -246,6 +251,21 @@ exporters:
       enabled: true
       initial_interval: 5s
       max_elapsed_time: 5m
+  # netlogger eBPF egress events (service.name=ebpf-networking) — per-decision-point
+  # verdict + attribution + 4-tuple emitted by the CP-side netlogger pipeline over the
+  # same mTLS-gated infra lane the CP zerolog bridge uses. Distinct service.name routes
+  # records into their own index so retention + volume profile are independent of the
+  # operator-facing daemon-health stream on clawker-cp.
+  opensearch/logs_netlogger:
+    http:
+      endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"
+    logs_index: clawker-netlogger
+    sending_queue:
+      enabled: true
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_elapsed_time: 5m
   # Metrics → Prometheus scrape endpoint. Pull-based, so no retry
   # config — Prometheus handles its own scrape cadence.
   #
@@ -295,7 +315,7 @@ connectors:
   # than being silently swallowed. default_pipelines catches any
   # unmapped service.name and routes it to logs/trusted_unrouted —
   # operator can grep collector stdout if this fires (it shouldn't,
-  # only cp/envoy/coredns hold infra-intermediate leaves today).
+  # only cp/envoy/coredns/ebpf-networking hold infra-intermediate leaves today).
   routing/trusted:
     error_mode: propagate
     default_pipelines: [logs/trusted_unrouted]
@@ -309,6 +329,9 @@ connectors:
       - context: resource
         condition: attributes["service.name"] == "coredns"
         pipelines: [logs/coredns]
+      - context: resource
+        condition: attributes["service.name"] == "ebpf-networking"
+        pipelines: [logs/netlogger]
 
 service:
   pipelines:
@@ -382,8 +405,12 @@ service:
       receivers: [routing/trusted]
       processors: [memory_limiter, resource/coredns]
       exporters: [opensearch/logs_coredns, debug]
+    logs/netlogger:
+      receivers: [routing/trusted]
+      processors: [memory_limiter, resource/netlogger]
+      exporters: [opensearch/logs_netlogger, debug]
     # Quarantine for any trusted-lane record with an unmapped
-    # service.name. Should never fire — only cp/envoy/coredns hold
+    # service.name. Should never fire — only cp/envoy/coredns/ebpf-networking hold
     # infra-intermediate-chained leaves today. If it does, operator
     # can grep `docker logs clawker-otel-collector` for the debug
     # output to identify a misconfigured trusted sender.

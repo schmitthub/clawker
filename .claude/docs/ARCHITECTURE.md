@@ -373,6 +373,7 @@ User interaction utilities with TTY and CI awareness.
 | `internal/controlplane/cpboot` | Host-side CP lifecycle: `EnsureRunning`/`Stop`/`CPRunning`, `Manager` interface, embedded clawker-cp + ebpf-manager binaries |
 | `internal/controlplane/firewall` | Firewall domain: `Handler` (13 RPCs), `Stack` (Envoy+CoreDNS container lifecycle), `ActionQueue` (serialized mutation), Envoy/CoreDNS config generators, certificate PKI, rules store, cgroup helpers, drift resolver, rich error types |
 | `internal/controlplane/firewall/ebpf` | eBPF loader + `Manager` (cgroup programs, pinned maps); break-glass `ebpf-manager` CLI under `cmd/` |
+| `internal/controlplane/firewall/ebpf/netlogger` | Per-decision-point egress event emitter — drains BPF `events_ringbuf`, enriches by `cgroup_id` via overseer-bus enrollment events, emits OTLP log records (`service.name=ebpf-networking`) on the trusted infra lane |
 | `internal/socketbridge` | SSH/GPG agent forwarding via muxrpc over `docker exec` |
 | `internal/testenv` | Unified test environment: isolated XDG dirs + optional Config/ProjectManager. Delegates from `config/mocks`, `project/mocks`, `test/e2e/harness` |
 
