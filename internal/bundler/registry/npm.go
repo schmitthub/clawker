@@ -127,8 +127,9 @@ func (c *NPMClient) fetchPackageInfo(ctx context.Context, pkg string) (*NPMPacka
 	}
 
 	// Buffer the body so a decode failure can surface the first bytes as a
-	// diagnostic snippet. Capped at the same 1 KiB budget the non-200 path
-	// uses so a misbehaving mirror can't blow memory.
+	// diagnostic snippet. Capped at 1 MiB so a misbehaving mirror can't
+	// blow memory while still leaving room for legitimate npm metadata
+	// (`dist-tags` + version list for popular packages exceeds 1 KiB).
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return nil, &NetworkError{

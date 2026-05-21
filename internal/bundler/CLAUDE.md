@@ -87,7 +87,7 @@ Wraps `NewVersionsManagerWithFetcher` + `registry.NewNPMClient(registry.WithHTTP
 
 **Production wiring:** `internal/cmd/image/build/build.go` calls this once per build, passing `f.HttpClient()` from the Factory.
 
-**Test wiring:** tests construct `&cmdutil.Factory{HttpClient: func() (*http.Client, error) { return &http.Client{Transport: stubRT}, nil }}` where `stubRT` is a tiny `http.RoundTripper` returning canned npm responses. Mirrors gh-CLI's `pkg/httpmock.Registry` pattern — `http.RoundTripper` is the stdlib mock seam; no project-defined interface required.
+**Test wiring:** tests construct `&cmdutil.Factory{HttpClient: func() *http.Client { return &http.Client{Transport: stubRT} }}` where `stubRT` is a tiny `http.RoundTripper` returning canned npm responses. Mirrors gh-CLI's `pkg/httpmock.Registry` pattern — `http.RoundTripper` is the stdlib mock seam; no project-defined interface required.
 
 ### Claude Code Version Pinning (build-arg passthrough)
 
