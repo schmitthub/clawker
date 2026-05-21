@@ -72,6 +72,13 @@ func ResolveLatestClaudeCodeVersion(ctx context.Context, httpClient *http.Client
 	if err != nil {
 		return DefaultClaudeCodeVersion, err
 	}
+	// Single-pattern call: ResolveVersions returns at most one entry, keyed
+	// by the resolved version string. Take that single key explicitly
+	// rather than picking via non-deterministic map iteration so the
+	// contract is obvious if a future caller threads more patterns through.
+	if len(*vf) != 1 {
+		return DefaultClaudeCodeVersion, fmt.Errorf("expected 1 resolved version for %q, got %d", DefaultClaudeCodeVersion, len(*vf))
+	}
 	for v := range *vf {
 		return v, nil
 	}
@@ -122,7 +129,7 @@ func (m *VersionsManager) ResolveVersions(ctx context.Context, patterns []string
 	for _, pattern := range patterns {
 		fullVersion, err := m.resolvePattern(ctx, pattern, allVersions, distTags, opts)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+			fmt.Fprintf(out, "warning: %v\n", err)
 			continue
 		}
 
@@ -133,7 +140,7 @@ func (m *VersionsManager) ResolveVersions(ctx context.Context, patterns []string
 		// Parse and create version info
 		v, err := semver.Parse(fullVersion)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: invalid version format %q: %v\n", fullVersion, err)
+			fmt.Fprintf(out, "warning: invalid version format %q: %v\n", fullVersion, err)
 			continue
 		}
 

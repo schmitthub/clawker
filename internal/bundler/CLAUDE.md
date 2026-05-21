@@ -93,7 +93,7 @@ Wraps `NewVersionsManagerWithFetcher` + `registry.NewNPMClient(registry.WithHTTP
 
 `Dockerfile.tmpl` declares `ARG CLAUDE_CODE_VERSION=<resolved-version>` — **not** `ENV`. Three properties this gives:
 
-1. **ARG-cache mechanic:** per Docker docs, a changed ARG default busts cache "upon its first usage, not its definition" — only the install RUN at the end of the file invalidates, leaving apt + Node + git-delta + zsh-in-docker cached above.
+1. **ARG-cache mechanic:** per Docker docs, a changed ARG default busts cache "upon its first usage, not its definition" — only the install RUN at the end of the file invalidates, leaving apt + Node + git-delta + zsh-in-docker cached above. This applies to incremental cache reuse; `clawker build --no-cache` invalidates everything regardless of ARG positioning.
 2. **Runtime invisibility:** Claude Code does not read `CLAUDE_CODE_VERSION` at runtime (verified against the official env-var list at code.claude.com/docs/en/settings). ARG is build-only, so the env var is naturally absent from the running container.
 3. **User override:** `clawker build --build-arg CLAUDE_CODE_VERSION=2.1.4` pins the install to an explicit version, bypassing the npm resolution. Already wired through `internal/cmd/image/build/build.go`.
 

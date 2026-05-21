@@ -50,3 +50,26 @@ func (e *RegistryError) Error() string {
 func (e *RegistryError) IsNotFound() bool {
 	return e.StatusCode == 404
 }
+
+// ParseError represents a failure to decode a registry response body that the
+// transport returned successfully (HTTP 200). Distinct from NetworkError so
+// operators can tell "registry returned non-JSON" — typical of corp proxy
+// MITM injecting HTML, captive portals, or DNS hijack — from "couldn't reach
+// the registry". Snippet captures the first ~256 bytes of the body as the
+// actionable diagnostic.
+type ParseError struct {
+	URL     string
+	Snippet string
+	Err     error
+}
+
+func (e *ParseError) Error() string {
+	if e.Snippet == "" {
+		return fmt.Sprintf("parse response from %s: %v", e.URL, e.Err)
+	}
+	return fmt.Sprintf("parse response from %s: %v (body starts with: %q)", e.URL, e.Err, e.Snippet)
+}
+
+func (e *ParseError) Unwrap() error {
+	return e.Err
+}

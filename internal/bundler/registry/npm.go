@@ -126,11 +126,27 @@ func (c *NPMClient) fetchPackageInfo(ctx context.Context, pkg string) (*NPMPacka
 		}
 	}
 
-	var info NPMPackageInfo
-	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+	// Buffer the body so a decode failure can surface the first bytes as a
+	// diagnostic snippet. Capped at the same 1 KiB budget the non-200 path
+	// uses so a misbehaving mirror can't blow memory.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
 		return nil, &NetworkError{
 			URL:     url,
-			Message: "failed to decode response",
+			Message: "failed to read response",
+			Err:     err,
+		}
+	}
+
+	var info NPMPackageInfo
+	if err := json.Unmarshal(body, &info); err != nil {
+		snippet := string(body)
+		if len(snippet) > 256 {
+			snippet = snippet[:256]
+		}
+		return nil, &ParseError{
+			URL:     url,
+			Snippet: snippet,
 			Err:     err,
 		}
 	}

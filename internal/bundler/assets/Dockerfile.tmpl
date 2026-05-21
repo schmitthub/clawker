@@ -594,10 +594,7 @@ USER root
 # — because any build-time `claude` invocation in user inject points
 # reads it at session start and depends on it for PATH augmentation.
 
-# Clawker agent environment awareness. The /etc/claude-code dir was
-# already created upstream when managed-settings.json was written; COPY
-# auto-creates intermediates anyway, but this comment exists so future
-# readers know not to add a defensive mkdir back.
+# /etc/claude-code is created by the managed-settings.json RUN above; COPY auto-creates intermediates either way.
 COPY clawker-agent-prompt.md /etc/claude-code/CLAUDE.md
 {{- if .HasFirewallCA}}
 
@@ -610,9 +607,7 @@ ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 ENV CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 {{- end}}
 
-# Host-proxy and socket-forwarder binaries. Single chmod batches the four
-# files into one layer (replaces two separate chmod RUNs from the pre-
-# consolidation template).
+# Host-proxy and socket-forwarder binaries. Single chmod batches the four files into one layer.
 COPY host-open.sh /usr/local/bin/host-open
 COPY git-credential-clawker.sh /usr/local/bin/git-credential-clawker
 COPY --from=callback-forwarder-builder /build/callback-forwarder /usr/local/bin/callback-forwarder

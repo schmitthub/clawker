@@ -75,25 +75,25 @@ func New(version string) *cmdutil.Factory {
 }
 
 // httpClientFunc returns a lazy closure that yields a shared *http.Client
-// for outbound HTTP from the CLI. Currently used for npm registry lookups
-// during Claude Code version resolution (see
-// bundler.ResolveLatestClaudeCodeVersion). Matches cli/cli's HttpClient
-// factory shape — *http.Client is the noun, http.RoundTripper is the
-// stdlib mock seam.
+// for outbound HTTP from the CLI. First consumer:
+// bundler.ResolveLatestClaudeCodeVersion for npm registry lookups during
+// Claude Code version resolution. Matches cli/cli's HttpClient factory
+// shape — *http.Client is the noun, http.RoundTripper is the stdlib mock
+// seam.
 //
 // A 30s timeout is applied at the client level so a hung npm response
 // doesn't stall builds indefinitely. Default Transport (net/http) handles
 // connection pooling, keep-alives, and standard env-var proxy resolution.
-func httpClientFunc() func() (*http.Client, error) {
+func httpClientFunc() func() *http.Client {
 	var (
 		once   sync.Once
 		client *http.Client
 	)
-	return func() (*http.Client, error) {
+	return func() *http.Client {
 		once.Do(func() {
 			client = &http.Client{Timeout: 30 * time.Second}
 		})
-		return client, nil
+		return client
 	}
 }
 

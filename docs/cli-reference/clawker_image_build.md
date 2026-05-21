@@ -52,18 +52,18 @@ clawker image build [flags]
 ### Options
 
 ```
-      --build-arg stringArray             Set build-time variables (format: KEY=VALUE)
-  -f, --file string                       Path to Dockerfile (overrides build.dockerfile in config)
-  -h, --help                              help for build
-      --iidfile docker buildx --iidfile   Write the built image's ID/digest to this file (same shape as docker buildx --iidfile)
-      --label stringArray                 Set metadata for the image (format: KEY=VALUE)
-      --network string                    Set the networking mode for the RUN instructions during build
-      --no-cache                          Do not use cache when building the image
-      --progress string                   Set type of progress output (auto, plain, tty, none) (default "auto")
-      --pull                              Always attempt to pull a newer version of the base image
-  -q, --quiet                             Suppress the build output
-  -t, --tag stringArray                   Name and optionally a tag (format: name:tag)
-      --target string                     Set the target build stage to build
+      --build-arg stringArray   Set build-time variables (format: KEY=VALUE)
+  -f, --file string             Path to Dockerfile (overrides build.dockerfile in config)
+  -h, --help                    help for build
+      --iidfile string          Write the built image's ID/digest to this file (docker buildx --iidfile shape)
+      --label stringArray       Set metadata for the image (format: KEY=VALUE)
+      --network string          Set the networking mode for the RUN instructions during build
+      --no-cache                Do not use cache when building the image
+      --progress string         Set type of progress output (auto, plain, tty, none) (default "auto")
+      --pull                    Always attempt to pull a newer version of the base image
+  -q, --quiet                   Suppress the build output
+  -t, --tag stringArray         Name and optionally a tag (format: name:tag)
+      --target string           Set the target build stage to build
 ```
 
 ### Options inherited from parent commands

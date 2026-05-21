@@ -58,8 +58,8 @@ monitoring:
 					return testCfg, nil
 				},
 				Logger: func() (*logger.Logger, error) { return logger.Nop(), nil },
-				HttpClient: func() (*http.Client, error) {
-					return stubHTTPClient("2.99.99-test"), nil
+				HttpClient: func() *http.Client {
+					return stubHTTPClient("2.99.99-test")
 				},
 			}
 
@@ -127,8 +127,8 @@ monitoring:
 			return testCfg, nil
 		},
 		Logger: func() (*logger.Logger, error) { return logger.Nop(), nil },
-		HttpClient: func() (*http.Client, error) {
-			return stubHTTPClient("2.99.99-test"), nil
+		HttpClient: func() *http.Client {
+			return stubHTTPClient("2.99.99-test")
 		},
 	}
 
@@ -186,8 +186,8 @@ monitoring:
 			return testCfg, nil
 		},
 		Logger: func() (*logger.Logger, error) { return logger.Nop(), nil },
-		HttpClient: func() (*http.Client, error) {
-			return stubHTTPClient("2.99.99-test"), nil
+		HttpClient: func() *http.Client {
+			return stubHTTPClient("2.99.99-test")
 		},
 	}
 
@@ -240,8 +240,8 @@ monitoring:
 			return testCfg, nil
 		},
 		Logger: func() (*logger.Logger, error) { return logger.Nop(), nil },
-		HttpClient: func() (*http.Client, error) {
-			return stubHTTPClient("2.99.99-test"), nil
+		HttpClient: func() *http.Client {
+			return stubHTTPClient("2.99.99-test")
 		},
 	}
 

@@ -22,3 +22,6 @@ type NetworkError = registry.NetworkError
 
 // RegistryError is an alias for registry.RegistryError.
 type RegistryError = registry.RegistryError
+
+// ParseError is an alias for registry.ParseError.
+type ParseError = registry.ParseError

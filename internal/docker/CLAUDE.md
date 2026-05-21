@@ -116,7 +116,7 @@ Standalone fixture functions (`ContainerFixture`, `RunningContainerFixture`) use
 - **Copy**: `SetupCopyToContainer/CopyFromContainer`
 - **Volumes/Networks**: `SetupVolumeExists/VolumeCreate/NetworkExists/NetworkCreate`
 - **BuildKit**: `SetupBuildKit/BuildKitWithProgress(events)/BuildKitWithRecordedProgress(events)/PingBuildKit/LegacyBuild/LegacyBuildError`
-- **Query**: `SetupFindContainer/ImageExists/ImageTag/ImageList/SetupContainerListError`
+- **Query**: `SetupFindContainer/ImageExists/ImageList/SetupContainerListError`
 
 ## Gotchas
 

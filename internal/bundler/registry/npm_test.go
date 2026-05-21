@@ -48,7 +48,7 @@ func TestNPMClient_FetchVersions(t *testing.T) {
 				w.Write([]byte("not valid json"))
 			},
 			wantErr: true,
-			errType: &NetworkError{},
+			errType: &ParseError{},
 		},
 	}
 

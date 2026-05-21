@@ -3,6 +3,7 @@ package build
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -25,13 +26,7 @@ type stubRoundTripper struct {
 
 func (s stubRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	if !strings.Contains(req.URL.Path, "@anthropic-ai/claude-code") {
-		// Unexpected request — return 404 to fail loudly rather than
-		// silently returning canned data for the wrong endpoint.
-		return &http.Response{
-			StatusCode: http.StatusNotFound,
-			Body:       io.NopCloser(strings.NewReader("not found")),
-			Header:     make(http.Header),
-		}, nil
+		panic(fmt.Sprintf("httpstub: unexpected request %s", req.URL.String()))
 	}
 	body, _ := json.Marshal(map[string]any{
 		"name": "@anthropic-ai/claude-code",

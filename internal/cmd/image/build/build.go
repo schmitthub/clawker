@@ -30,7 +30,7 @@ type BuildOptions struct {
 	Logger         func() (*logger.Logger, error)
 	Client         func(context.Context) (*docker.Client, error)
 	ProjectManager func() (project.ProjectManager, error)
-	HttpClient     func() (*http.Client, error)
+	HttpClient     func() *http.Client
 
 	File      string   // -f, --file (Dockerfile path)
 	Tags      []string // -t, --tag (multiple allowed)
@@ -110,7 +110,7 @@ Build-time variables can be passed using --build-arg.`,
 	cmd.Flags().BoolVarP(&opts.Quiet, "quiet", "q", false, "Suppress the build output")
 	cmd.Flags().StringVar(&opts.Progress, "progress", "auto", "Set type of progress output (auto, plain, tty, none)")
 	cmd.Flags().StringVar(&opts.Network, "network", "", "Set the networking mode for the RUN instructions during build")
-	cmd.Flags().StringVar(&opts.IIDFile, "iidfile", "", "Write the built image's ID/digest to this file (same shape as `docker buildx --iidfile`)")
+	cmd.Flags().StringVar(&opts.IIDFile, "iidfile", "", "Write the built image's ID/digest to this file (docker buildx --iidfile shape)")
 
 	return cmd
 }
@@ -205,8 +205,8 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 
 	// Parse user labels from --label flags (clawker labels are added by the builder)
 	userLabels, invalidLabels := parseKeyValuePairs(opts.Labels)
-	for _, label := range invalidLabels {
-		fmt.Fprintf(ios.ErrOut, "%s Ignoring malformed label %q — use format KEY=VALUE\n", cs.WarningIcon(), label)
+	if len(invalidLabels) > 0 {
+		return cmdutil.FlagErrorf("malformed --label %q — use format KEY=VALUE", invalidLabels[0])
 	}
 
 	builder := docker.NewBuilder(client, cfg, wd, projectName)
@@ -218,19 +218,22 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 	// Resolution failure (offline, registry down) is non-fatal: warn and
 	// fall back to the literal "latest" — install RUN still works, cache
 	// just doesn't auto-bust until the next online build.
-	httpClient, hcErr := opts.HttpClient()
-	if hcErr != nil {
-		return fmt.Errorf("failed to get http client: %w", hcErr)
-	}
+	httpClient := opts.HttpClient()
 	claudeCodeVersion, resErr := bundler.ResolveLatestClaudeCodeVersion(ctx, httpClient)
 	if resErr != nil {
+		log.Warn().Err(resErr).Msg("npm version resolution failed — install layer cache will not bust until next online build")
 		fmt.Fprintf(ios.ErrOut, "%s Could not resolve latest Claude Code version (%v) — using %q literal; cache will not bust on a new release until network returns\n",
 			cs.WarningIcon(), resErr, bundler.DefaultClaudeCodeVersion)
 	} else {
 		log.Debug().Str("claude_code_version", claudeCodeVersion).Msg("resolved Claude Code version for ARG default")
 	}
 
-	// Build with options.
+	// Build options. OnComplete stashes the digest into a closure variable;
+	// post-build handling (success log, --iidfile write) runs in the main
+	// goroutine after builder.Build returns so write/empty-digest errors
+	// surface through the normal error-return path instead of being
+	// swallowed inside the build goroutine.
+	var imageDigest string
 	log.Debug().
 		Str("project", projectName).
 		Str("image", imageTag).
@@ -247,19 +250,7 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 		BuildKitEnabled:   buildkitEnabled,
 		ClaudeCodeVersion: claudeCodeVersion,
 		OnComplete: func(res whail.BuildResult) {
-			// Surfaces the digest from the exporter response (BuildKit
-			// containerimage.digest) or the `aux` stream event (legacy).
-			// Equivalent to `docker buildx --iidfile` / `buildctl
-			// --metadata-file containerimage.digest`.
-			log.Info().
-				Str("image", imageTag).
-				Str("image_id", res.ImageID).
-				Msg("image build complete")
-			if opts.IIDFile != "" && res.ImageID != "" {
-				if err := os.WriteFile(opts.IIDFile, []byte(res.ImageID), 0o644); err != nil {
-					fmt.Fprintf(ios.ErrOut, "%s Failed to write --iidfile %q: %v\n", cs.WarningIcon(), opts.IIDFile, err)
-				}
-			}
+			imageDigest = res.ImageID
 		},
 	}
 
@@ -303,17 +294,25 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 		}, ch)
 		close(done) // signal OnProgress callback to stop sending
 
+		// Always drain the build goroutine before deciding which error to
+		// surface. The goroutine sends to buildErrCh before closing ch, so
+		// by the time RunProgress returns buildErrCh is ready to read.
+		// Without this drain a TUI render error would mask a real build
+		// failure (e.g. both triggered by ctx cancel).
+		buildErr := <-buildErrCh
+
+		if buildErr != nil {
+			if result.Err != nil {
+				log.Warn().Err(result.Err).Msg("progress display error masked by build error")
+			}
+			printBuildNextSteps(ios, cs)
+			return buildErr
+		}
 		if result.Err != nil {
 			printBuildNextSteps(ios, cs)
 			return result.Err
 		}
-
-		if buildErr := <-buildErrCh; buildErr != nil {
-			printBuildNextSteps(ios, cs)
-			return buildErr
-		}
-
-		return nil
+		return finishBuild(log, imageTag, imageDigest, opts.IIDFile)
 	}
 
 	// Suppressed output — build synchronously without progress display.
@@ -321,7 +320,27 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 		printBuildNextSteps(ios, cs)
 		return err
 	}
+	return finishBuild(log, imageTag, imageDigest, opts.IIDFile)
+}
 
+// finishBuild logs build success and, when --iidfile is set, writes the
+// resolved image digest to the named file. Returns a hard error when the
+// user requested an --iidfile but the builder returned no digest, or when
+// the file write itself fails — both are CI-breaking footguns to swallow.
+func finishBuild(log *logger.Logger, imageTag, imageDigest, iidFile string) error {
+	log.Info().
+		Str("image", imageTag).
+		Str("image_id", imageDigest).
+		Msg("image build complete")
+	if iidFile == "" {
+		return nil
+	}
+	if imageDigest == "" {
+		return fmt.Errorf("--iidfile %q requested but builder returned no image digest", iidFile)
+	}
+	if err := os.WriteFile(iidFile, []byte(imageDigest), 0o644); err != nil {
+		return fmt.Errorf("write --iidfile %q: %w", iidFile, err)
+	}
 	return nil
 }
 
