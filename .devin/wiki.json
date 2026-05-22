@@ -1,270 +1,344 @@
 {
   "repo_notes": [
     {
-      "content": ""
+      "content": "CRITICAL ANTI-CONFUSION (clawker + whail): Neither clawker nor whail is a system to sandbox Docker from AI agents. Clawker isolates AI agents from the host machine via containerization and network egress filtering. Whail (pkg/whail, the 'whale jail') is a host-side library that protects the USER from accidentally destroying non-clawker Docker resources when they run clawker CLI commands. Two distinct concerns get conflated and must not be:\n\n1. pkg/whail decorates the moby Docker SDK with management-label filtering. For example, `clawker volume prune` only removes volumes carrying the `dev.clawker.managed=true` label, never arbitrary host volumes. Whail is a UX/user-error guard around the clawker CLI. It does NOT police what an agent does with Docker inside its container, and it has no presence inside the container at all.\n\n2. Agents never invoke the clawker CLI. Only the user does. When `security.docker_socket: true` is set, the agent gets the raw host docker socket and can do whatever it wants with Docker (this is why enabling it is policy-gated). There is no whail enforcement on the agent side because whail lives in the host-side clawker binary.\n\nWhen Devin generates documentation, design suggestions, or code changes, it must never describe clawker or whail as 'preventing agents from misusing Docker' or as an 'agent sandbox for Docker operations'. Clawker's agent isolation story is containerization plus egress firewalling, full stop. Whail's contract is exactly: the clawker CLI sees and operates only on clawker-labeled resources; everything else on the host's Docker daemon is invisible to it."
+    },
+    {
+      "content": "PHILOSOPHY: Clawker is a 'padded cell' for AI agents. It mitigates two threat classes: (a) destructive changes to the host (an agent deleting sensitive files, installing arbitrary binaries) and (b) data exfiltration via prompt injection (an agent pasting secrets to attacker-controlled endpoints). The mitigations are containerization plus egress firewalling, both enabled by default. The clawker CLI orchestrates the supporting infrastructure: an isolated `clawker-net` Docker network, a control plane container that owns firewall lifecycle and agent identity, a host proxy for browser/OAuth callbacks, a socket bridge for SSH/GPG credential forwarding, and an optional monitoring stack. None of this is invoked by the agent — the agent only sees the inside of its container."
+    },
+    {
+      "content": "CRITICAL DISTINCTION: CP (the control plane) and the firewall are not the same thing and must not be conflated.\n\nCP is unconditional infrastructure. Auth (Hydra/Kratos/Oathkeeper), AdminService gRPC on `DefaultCPAdminPort` (7443), AgentService gRPC on `DefaultCPAgentPort` (7444), agent registry (sqlite), mTLS, OAuth2 — all running whenever any clawker container exists. CP boots via `cpboot.EnsureRunning`. There is no 'disable CP' flag. CP owns the `clawker-net` Docker network.\n\nThe firewall is ONE optional subsystem CP manages. Envoy + custom CoreDNS + eBPF egress enforcement. Toggled by `firewall.enable` in `settings.yaml` (NOT clawker.yaml). When the firewall is disabled, CP, mTLS, the agent registry, `agent.Dialer`, and ListAgents all continue to operate normally.\n\nNever gate non-firewall behavior on `firewall.enable`. Never restructure user-facing firewall docs around the framing 'CP owns the firewall' — CP and firewall are separate user-facing concerns even though one supervises the other."
+    },
+    {
+      "content": "CRITICAL SECURITY INVARIANT: a CP crash is a SECURITY incident, not an availability one. When CP dies via panic/log.Fatal/unrecovered goroutine, the eBPF programs stay pinned under /sys/fs/bpf and continue filtering with whatever rule set was loaded at the moment of crash, but the clean drain-to-zero path (`firewall.Stack.Stop`, `ebpfMgr.FlushAll`) is skipped. Agent containers keep running, the user sees agents running and assumes CP is observing — it isn't. No new firewall rules can be applied, no bypass can be expired, and CP→clawkerd command dispatch is dead. The user has no signal of this; the stack trace lands on docker logs and is not in the rotating `ControlPlaneLogFile`.\n\nHard rules for code on the CP boot/serve path (`cmd/clawker-cp/`, `internal/controlplane/`, and anything imported by them):\n- No `panic()`, no `log.Fatal()`, no `os.Exit()` outside the orchestrator's intentional shutdown sequence.\n- Every long-lived goroutine recovers (defer recover, log structured panic, continue).\n- Subsystem failures degrade, never cascade. Broken init Executor → `initExec = nil` and emit `event=agent_init_executor_unavailable`; broken dialer → `dialer = nil` and emit `event=agent_dialer_unavailable`; firewall, registry, AdminService stay up regardless.\n- Every degraded path emits a structured log line with component, error, and downstream impact so an operator can determine root cause AND blast radius from the structured log surface alone.\n\nIf you find yourself thinking 'this should never happen, just panic' in CP code, stop. That line of reasoning compromises the security boundary the user trusts to be intact. Return an error and let the orchestrator decide."
+    },
+    {
+      "content": "CRITICAL TRUST MODEL: asymmetric trust between CP-side dialer and clawkerd-side listener.\n\n- clawkerd-side listener (server) is STRICT. `cmd/clawkerd/listener.go` enforces CP CN pin, Client-Auth EKU, and CA chain at the TLS layer. A bad client cert is dropped at TLS handshake.\n\n- CP-side dialer (client) is PERMISSIVE. `internal/controlplane/agent.Dialer` never aborts on cert or identity grounds. Trust outcomes are emitted as typed fields on `SessionConnected` overseer events. The dialer only fails on connectivity errors. This is intentional: CP must be able to reach clawkerd to issue containment commands even when the agent's cert looks wrong; subscribers to `SessionConnected` (not the dialer) enact policy.\n\n- Trust anchor for agent identity is the PEER IP and the resulting Docker labels lookup, NOT cert subject claims. The CLI mints an agent cert (via `internal/auth`) and writes a sqlite registry row at container create time; the dialer cross-checks the peer's presented cert thumbprint against the row and emits the result on the bus.\n\nWhen designing or modifying agent-trust code, do not invert this: never make the dialer abort on cert mismatch, and never make the listener permissive."
     }
   ],
   "pages": [
     {
-      "title": "Clawker Overview",
-      "purpose": "High-level introduction to Clawker: what it is, why it exists, the 'padded cell' philosophy, key concepts, and a map to all child pages.",
-      "page_notes": [
-        {
-          "content": "Clawker is not a system to isolate docker from ai agents. It's a system to isolate AI agents from the host machine and mitigates destructive changes (ex: ai agent deleting sensitive/critical system files when unattended, installing binaries it shouldn't be), and data exfiltration from prompt injection via containerization and network isolation. Clawker cli also orchestrates security infrastructure: an isolated docker network `clawker-net`, daemonized services that manage infra via container lifecycle events, a socketbridge to forward credentials for development (ssh, gpg, git creds, git https creds), a hostproxy to facilitate http forwarding and callbacks (like browser open events for oauth), monitoring infrastructure, egress infrastructure, etc. (Important: Agents don't ever use clawker cli directly, only users. The whail engine is a UX/user error defensive guard by keeping clawker cli docker resource access relegated to specific resources. This way running destructive commands like `clawker volume prune` only removes volumes created by clawker, it doesn't remove all of the host's docker volumes. Docker itself when enabled inside the container is actually fully available to the agent (no whail) to do what it wants via the host docker socket, that is why enabling it is policy gated.)"
-        }
-      ]
-    },
-    {
-      "title": "Getting Started",
-      "purpose": "Installation, initial setup (clawker init, project init), quick-start workflow, and the clawker.yaml configuration file. Covers the install script, Homebrew cask, and first-run experience.",
-      "parent": "Clawker Overview",
-      "page_notes": [
-        {
-          "content": ""
-        }
-      ]
-    },
-    {
-      "title": "Core Concepts and Terminology",
-      "purpose": "Defines the key domain terms an onboarding engineer needs: Agent, Project, Whail, Workspace Modes, Managed Labels, Socket Bridge, Egress Firewall, etc. Acts as a conceptual glossary with code pointers.",
-      "parent": "Clawker Overview",
-      "page_notes": [
-        {
-          "content": ""
-        }
-      ]
-    },
-    {
-      "title": "Configuration Reference",
-      "purpose": "Complete reference for clawker.yaml (Project config) and settings.yaml (user Settings). Covers schema, precedence order, walk-up discovery, merge strategy, and all top-level keys with examples.",
-      "parent": "Clawker Overview",
-      "page_notes": [
-        {
-          "content": ""
-        }
-      ]
-    },
-    {
       "title": "Architecture",
-      "purpose": "Overview of the layered architecture: CLI → Middleware → Whail → Docker SDK. Introduces the Factory DI pattern, package DAG, and links to child pages for each major subsystem.",
+      "purpose": "Entry into the layered architecture of clawker. The single child page maps the package DAG and the lint-enforced layer boundaries. Devin should read this before navigating into any internal/* package. Each concrete code component is then documented in detail under Core Subsystems.",
       "page_notes": [
         {
-          "content": ""
+          "content": "Architecture is layered and layer boundaries are enforced by lint rules in .claude/rules/code-style.md and .claude/rules/docker-client.md. Key boundaries: only pkg/whail may import the github.com/moby/moby/client APIClient (carve-out: daemon packages internal/hostproxy, internal/cmd/bridge, cmd/clawker-cp, and internal/controlplane watcher may also import moby/client directly); only internal/docker may use the pkg/whail runtime client (the Engine). Importing pure type/helper symbols from pkg/whail (e.g., whail.BuildResult, whail.BuildProgressEvent, whail.BuildStepStatus, build-progress formatters) is allowed anywhere — these are not boundary violations. Only internal/term may import golang.org/x/term; only internal/iostreams may import lipgloss; only internal/tui may import bubbletea/bubbles. Violations are code smells that lint catches."
         }
       ]
     },
     {
-      "title": "CLI Layer and Command Structure",
-      "purpose": "How the Cobra command tree is organized, the Factory dependency injection pattern, top-level aliases, error handling in Main(), and the update notification system.",
+      "title": "Layered Architecture and Package DAG",
+      "purpose": "Map of clawker's package directed acyclic graph and the actual contents of cmd/ and internal/. cmd/ binaries: clawker (CLI), clawker-cp (control plane container entrypoint), clawkerd (per-container PID-1 supervisor), clawker-generate (static Dockerfile emitter), coredns-clawker (custom CoreDNS build with the dnsbpf plugin), gen-docs (Mintlify docs generator). internal/ packages of note: auth, build, bundler, clawker, clawkerd, cmd, cmdutil, config, consts, containerfs, controlplane, dnsbpf, docker, git, hostproxy, iostreams, keyring, logger, monitor, project, prompter, signals, socketbridge, storage, storeui, term, testenv, tui, update, workspace. pkg/ has the single reusable package pkg/whail.",
       "parent": "Architecture",
       "page_notes": [
         {
-          "content": ""
+          "content": "Source of truth for the directory tree is `.claude/docs/REPO-STRUCTURE.md`. Important: `clawker-socket-server` is NOT a top-level `cmd/` binary despite being mentioned widely. Its source lives at `internal/hostproxy/internals/cmd/clawker-socket-server/main.go` and it is built into agent images, where it resides at `/usr/local/bin/clawker-socket-server`. It is a container-side runtime helper, not a clawker deliverable. Devin grepping `cmd/` for it will not find it; grep `internal/hostproxy/internals/cmd/` instead."
+        }
+      ]
+    },
+    {
+      "title": "Core Subsystems",
+      "purpose": "One child page per cohesive design component. Each page consolidates everything Devin needs to know about that component: its package(s), public API, invariants, gotchas, and how it composes with the rest of the system. Components are not split across pages — the entire Control Plane (boot, orchestrator, dialer, registry, identity, mTLS, crash-safety) is one page; the entire Firewall (Envoy, CoreDNS, eBPF, rule store, commands) is one page; and so on.",
+      "page_notes": [
+        {
+          "content": "Devin must read the repo_notes about whail and CP before working in this section. The two most common Devin confusions are (a) treating whail as an 'agent Docker sandbox' (it is not — it protects the user from clawker CLI footguns), and (b) gating non-firewall behavior on `firewall.enable` (CP runs regardless of `firewall.enable`)."
+        }
+      ]
+    },
+    {
+      "title": "CLI Layer (cmd, cmdutil, Cobra, Factory DI)",
+      "purpose": "The user-facing clawker binary. The Cobra command tree lives under internal/cmd/, one subdirectory per noun: auth, bridge, container, controlplane, factory, firewall, generate, hostproxy, image, init, monitor, network, project, root, settings, skill, version, volume, worktree. Top-level shortcut commands (run, build, ps, exec, etc.) alias into container subcommands. Every command is constructed via Factory dependency injection — the Factory is a pure struct of closures (Logger, IOStreams, Config, Docker, HostProxy, TUI, etc.) defined in internal/cmdutil. Commands use the NewCmd(f, runF) pattern. Factory fields return nouns, not verbs (`f.HostProxy().EnsureRunning()`, never `f.EnsureHostProxy()`). Cobra hooks must use PersistentPreRunE never PersistentPreRun. Every command populates the Example field. Error contract: errors are returned to Main() for centralized rendering — never printed inline. Helpful error types from internal/cmdutil: `FlagErrorf` triggers usage; `SilentError` suppresses output.",
+      "parent": "Core Subsystems",
+      "page_notes": [
+        {
+          "content": "Shared container creation logic (CreateContainer) lives in `internal/cmd/container/shared/`. The `shared/` package within each command noun is the only non-subcommand subpackage allowed — it holds flag types and helpers shared by sibling subcommands. User-input slug normalization helpers live in `internal/cmdutil/slugify.go` as `<Thing>Slugify` (currently only `ProjectSlugify`); never name these `Normalize` and never place them in `internal/auth/`. Deprecated and removed helpers — do not reintroduce: `cmdutil.HandleError`, `cmdutil.PrintError`, `cmdutil.PrintWarning`, `cmdutil.PrintNextSteps`, `ios.PrintSuccess/Warning/Info/Failure`, `ios.RenderHeader/Divider/KeyValue/Status`."
+        }
+      ]
+    },
+    {
+      "title": "Storage and Config Engine (internal/storage, internal/config)",
+      "purpose": "The generic `storage.Store[T]` engine and how `internal/config` composes two stores (one for the project `clawker.yaml`, one for the user `settings.yaml`). Covers node-tree merge architecture, copy-on-write semantics for safe in-memory mutation, walk-up discovery for finding a `clawker.yaml` from a subdirectory, defaults sourced from struct tags via `storage.WithDefaultsFromStruct[T]()`, provenance tracking (which file each value came from — used by the config TUI for per-field save targeting), migrations, and the cross-process flock for concurrent safety. The canonical mutation API is `cfg.ProjectStore().Set(fn func(*Project))` / `cfg.ProjectStore().Write()` (and the equivalent on `SettingsStore()`). Older wrapper methods `SetProject(fn)` / `SetSettings(fn)` / `WriteProject()` / `WriteSettings()` exist but are deprecated — prefer the store-accessor API in new code.",
+      "parent": "Core Subsystems",
+      "page_notes": [
+        {
+          "content": "Actual schema types in `internal/config/schema.go`: top-level types are `Project` and `Settings`. Project sub-types use the `Config` suffix: `BuildConfig`, `AgentConfig`, `WorkspaceConfig`, `SecurityConfig`, `FirewallConfig`, with nested `BuildInstructions`, `BuildInject`, etc. Settings sub-types use the `Settings` suffix: `DockerSettings`, `ControlPlaneSettings`, `FirewallSettings`. There is no `ProjectConfig` type at top level; the top-level project type is just `Project`. Walk-up precedence: when multiple `clawker.yaml` exist on the path from CWD to filesystem root, the closest-to-CWD wins. `.clawker.local.yaml` (uncommitted) provides additional overrides."
+        },
+        {
+          "content": "Consumers must use only the `config.Config` interface; never reach into `internal/config` internals. Never hardcode `.clawker.yaml` or label-domain strings in callers — read them via `ConfigDir()`, `Domain()`, `LabelDomain()`, `LogsSubdir()`, etc. In tests, prefer `configmocks.NewBlankConfig()`, `configmocks.NewFromString(projectYAML, settingsYAML)`, and `configmocks.NewIsolatedTestConfig(t)` from `internal/config/mocks/`. Typed wire-boundary wrappers (e.g., a `Port` type with custom `UnmarshalYAML`) are preferred over broad `ValidateX` helpers; don't pre-validate what downstream layers (Docker, x509, gRPC interceptors) already validate."
         }
       ]
     },
     {
       "title": "Docker Middleware (internal/docker)",
-      "purpose": "The internal/docker.Client layer: resource naming conventions, label enforcement, volume lifecycle, PTY handling, image resolution, and how it wraps the Whail engine.",
-      "parent": "Architecture",
+      "purpose": "The internal/docker.Client layer that wraps pkg/whail and adds clawker-specific operations on top of label-filtered Docker. Resource naming: 3-segment `clawker.<project>.<agent>` for project-scoped agents, 2-segment `clawker.<agent>` for global-scope agents. Label enforcement uses `dev.clawker.managed=true` plus `dev.clawker.project` and `dev.clawker.agent`. Volume lifecycle (create, list, prune), PTY handling for exec/attach, image resolution from project config. Every non-pkg/whail caller that needs Docker goes through this client. The image build entrypoint `internal/docker.Builder` / `BuildDefaultImage` lives here.",
+      "parent": "Core Subsystems",
       "page_notes": [
         {
-          "content": ""
+          "content": "Naming string `clawker.<project>.<agent>` is called `AgentFullName` (not 'canonical name' — 'canonical' is ambiguous in identity contexts). The helper that composes and parses `AgentFullName` is in `internal/auth/agent_cert.go`, NOT in `internal/docker`. internal/docker consumes it. For global-scope agents (no project context), the `dev.clawker.project` label is INTENTIONALLY ABSENT — not present as an empty string. Filtering code must handle the missing-label case explicitly."
+        },
+        {
+          "content": "Gotchas: HostConfig.Mounts behaves differently from Binds for Unix sockets on macOS (Docker Desktop). Docker hijacked connections (exec/attach) need cleanup of both read and write sides. `os.Exit()` does not run deferred functions — terminal state must be restored explicitly. Raw terminal mode means Ctrl+C goes to the container, not as SIGINT to clawker. `IsContainerManaged()` returns `(false, nil)` for non-existent containers — not an error. Per-operation `context.Context` as first parameter, never stored in structs; use `context.Background()` in deferred cleanup."
         }
       ]
     },
     {
-      "title": "Whail: Docker Isolation Engine (pkg/whail)",
-      "purpose": "Deep dive into pkg/whail — the label-based Docker jail. Covers Engine construction, label injection, filtering semantics, all resource operation categories (container/volume/network/image), BuildKit integration, and the whailtest fake.",
-      "parent": "Architecture",
+      "title": "IOStreams, TUI and Term (internal/iostreams, internal/tui, internal/term)",
+      "purpose": "The presentation layer, three packages with strict import boundaries. `internal/term` is a leaf package (stdlib + `golang.org/x/term` only, zero `internal/` imports) and is the only allowed importer of `x/term`. `internal/iostreams` is the only package that may import `lipgloss`. `internal/tui` is the only package that may import `bubbletea`/`bubbles`. Commands access these via Factory nouns: `f.IOStreams`, `f.TUI`. Four output scenarios — non-interactive static (iostreams + fmt), static-interactive (iostreams + prompter), live-display (iostreams + tui), live-interactive (iostreams + tui). Output stream rules: data and status to `ios.Out` (stdout); warnings and errors to `ios.ErrOut` (stderr). Tables go through `f.TUI.NewTable`, never raw tabwriter. Semantic colors via `ios.ColorScheme()`; icons via `cs.SuccessIcon()`, `cs.WarningIcon()`, `cs.FailureIcon()`, `cs.InfoIcon()`. `--format` flag for per-command machine-readable output (`json`, `table`, template) sends formatted data to stdout and status/progress to stderr.",
+      "parent": "Core Subsystems",
       "page_notes": [
         {
-          "content": ""
+          "content": "zerolog is for FILE LOGGING ONLY — never user-visible output. File logging goes to `cfg.LogsSubdir()/clawker.log` with rotation (50MB, 7 days, 3 backups). Library packages accept `*logger.Logger` in constructors and never use globals. Tests use `logger.Nop()`. Never use `logger.Fatal` in Cobra hooks — return errors instead. For TUI composition: if you need a special view that doesn't exist, create a generic one in `internal/tui` that can be customized in the consuming command package. TUI is generic infrastructure and never contains consumer-specific logic. For interactive tests use `iostreams.Test()` with `SetStdinTTY(true)` + `SetStdoutTTY(true)`; the older `iostreamstest` package was removed — do not reintroduce it."
         }
       ]
     },
     {
-      "title": "Configuration and Storage Engine",
-      "purpose": "The storage.Store[T] generic engine: node-tree merge architecture, copy-on-write semantics, walk-up discovery, provenance tracking, migrations, and how internal/config composes two stores.",
-      "parent": "Architecture",
+      "title": "Whail: Docker Jail Package (pkg/whail)",
+      "purpose": "Deep dive into pkg/whail — the label-based decoration around the moby Docker SDK. Engine construction; automatic label injection (dev.clawker.managed=true plus owner labels) on every create operation; automatic label-filter injection on every list operation; the symmetric label-presence check on every get/inspect/remove operation. This makes non-clawker resources invisible to the clawker CLI. Resource categories: container, volume, network, image. BuildKit integration via the build session. The `whailtest` fake (recorded scenarios + golden files) provides integration coverage without a live Docker daemon.",
+      "parent": "Core Subsystems",
       "page_notes": [
         {
-          "content": ""
+          "content": "CLAWKER + WHAIL ARE NOT AN AGENT DOCKER SANDBOX. Whail's contract is exactly: the clawker CLI sees and operates only on resources labeled `dev.clawker.managed=true`. Its purpose is to protect the user from running `clawker volume prune` and accidentally destroying unrelated host volumes. Agents never invoke clawker CLI — only users do. When an agent container is given the docker socket (`security.docker_socket: true`, policy-gated), it sees the raw daemon with no whail decoration. Never describe clawker or whail as 'preventing AI agents from misusing Docker' — that confuses two unrelated concerns. Clawker's agent isolation story is containerization plus egress firewalling, not whail."
+        },
+        {
+          "content": "Import rules (from `.claude/rules/docker-client.md`): no package may import `github.com/moby/moby/client` outside `pkg/whail` EXCEPT the documented carve-out for daemon packages (`internal/hostproxy`, `internal/cmd/bridge`, `cmd/clawker-cp`, `internal/controlplane` watcher), which need lightweight Docker API access without whail's label isolation overhead. The pkg/whail RUNTIME client (the Engine) may only be used from `internal/docker`. Importing pure type/helper symbols from pkg/whail (e.g., `whail.BuildResult`, `whail.BuildProgressEvent`, `whail.BuildStepStatus`, build-progress formatters like `whail.IsInternalStep`, `whail.CleanStepName`, `whail.ParseBuildStage`, `whail.FormatBuildDuration`) is allowed anywhere — these are not boundary violations and existing call sites in `internal/cmd/image/build/` and `internal/cmd/container/shared/` rely on them. Devin must NOT 'fix' these type imports by moving them; the rule is about the runtime client, not about whail-defined types. Direct imports of `github.com/moby/moby/api/types` are fine anywhere. pkg/whail exposes the same interface as the underlying moby client so all moby methods remain available through it. Golden-file regen: `GOLDEN_UPDATE=1 go test ./pkg/whail/whailtest/... -run TestSeedRecordedScenarios -v`."
         }
       ]
     },
     {
-      "title": "Container Lifecycle",
-      "purpose": "Overview of how containers are created, started, and managed. Links to child pages covering the creation pipeline, workspace strategies, and the container command set.",
+      "title": "Control Plane (overseer, dialer, registry, auth, mTLS, crash-safety)",
+      "purpose": "The complete control plane subsystem — one page, not split. cmd/clawker-cp is the binary; internal/controlplane is the package; internal/controlplane/cpboot bootstraps it; internal/controlplane/agent contains the consolidated Dialer + Registry + Register handler + IdentityInterceptor + dispatcher; internal/auth holds the trust-orchestrator material (cert minting, identity types, AgentFullName). The CP container is a long-lived per-host supervisor that boots via `cpboot.EnsureRunning` (the CLI dials through to spin it up on demand and idempotently). The orchestrator pattern coordinates subsystem startup, SetReady gating, intentional drain-to-zero shutdown (`firewall.Stack.Stop` then `ebpfMgr.FlushAll`), and structured degraded modes when any single subsystem fails to initialize. Subsystems CP manages: firewall (Envoy + CoreDNS + eBPF), agent registry (sqlite), AdminService gRPC on `DefaultCPAdminPort` (7443) serving the CLI over mTLS, AgentService gRPC on `DefaultCPAgentPort` (7444) serving clawkerd over mTLS. Identity is established by the CLI minting an agent cert at container create time and writing a sqlite registry row keyed on container ID + Docker labels (project, agent). Hydra issues OAuth2 tokens, Kratos manages identities, Oathkeeper enforces. `clawker auth rotate` triggers cert rotation across the trust store.",
+      "parent": "Core Subsystems",
       "page_notes": [
         {
-          "content": ""
+          "content": "READ THE CP-CRASH-IS-A-SECURITY-INCIDENT note in repo_notes BEFORE writing or modifying any code on the CP boot/serve path (`cmd/clawker-cp/`, `internal/controlplane/`, anything imported by them). Hard rules: no `panic()`, no `log.Fatal()`, no `os.Exit()` outside the orchestrator's intentional shutdown sequence. Every long-lived goroutine must recover. Subsystem failures degrade (broken `initExec` → `initExec = nil` + emit `event=agent_init_executor_unavailable`; broken dialer → `dialer = nil` + emit `event=agent_dialer_unavailable`) and never cascade. Every degraded path emits a structured log line with component, error, and downstream impact. Naming caveat: the command directory is `internal/cmd/controlplane/`, not `internal/cmd/cp/` — wiki and prose say 'CP' but the actual directory uses the full word."
+        },
+        {
+          "content": "ASYMMETRIC TRUST is by design. Dialer (CP-side client) is PERMISSIVE — never aborts on cert or identity grounds, only on connectivity errors. Trust outcomes are typed fields on `SessionConnected` events; subscribers enact policy. Listener (clawkerd-side server) is STRICT — `cmd/clawkerd/listener.go` enforces CN pin, Client-Auth EKU, CA chain. Reason: CP must reach clawkerd even when certs look wrong, so it can issue containment commands. Never invert this. Trust anchor for agent lookup is PEER IP → Docker labels (project, agent). Cert claims are VERIFIED against that lookup, never the basis OF the lookup. `AgentFullName` (the `clawker.<project>.<agent>` string) is composed in `internal/auth/agent_cert.go` and travels in the URI SAN of agent certs; CP-side `IdentityInterceptor` reads it back via `AgentFullNameFromCert`."
+        },
+        {
+          "content": "OTel cert minting belongs in a centralized CP helper, not in the firewall package — do not extend an existing layering wart to 'stay consistent'. CP infrastructure constants are in `internal/consts/consts.go` (`DefaultCPAdminPort`, `DefaultCPAgentPort`, `BootstrapDir`, `ControlPlaneDBPath`, trust-config block). Touch this file when adding new CP-side ports, paths, or trust config."
         }
       ]
     },
     {
-      "title": "Container Creation Pipeline (CreateContainer)",
-      "purpose": "Step-by-step walkthrough of CreateContainer: workspace setup, config volume initialization, environment resolution, Docker container creation, post-init injection, and the events channel progress model.",
-      "parent": "Container Lifecycle",
+      "title": "Egress Firewall (Envoy + CoreDNS + eBPF)",
+      "purpose": "The complete firewall subsystem — one page covering all three planes. Envoy and a custom CoreDNS build run as managed Docker containers on the shared `clawker-net` network. eBPF cgroup programs (loaded and attached from OUTSIDE agent containers by the control plane) redirect TCP to Envoy and DNS to CoreDNS. Agents themselves get no Linux capabilities — all enforcement happens kernel-side outside the container's privilege scope. Three layers of filtering: (1) DNS-level deny-by-default in CoreDNS — unlisted domains return NXDOMAIN; (2) per-domain TCP routing via a real-time BPF DNS cache; (3) TLS MITM inspection in Envoy with per-domain certificates for path-level rules. The custom CoreDNS binary is `cmd/coredns-clawker`, which embeds the `dnsbpf` plugin from `internal/dnsbpf` to keep the BPF DNS cache in sync. System-required rules (Claude API, Docker registry) are always present; project rules merge additively. User commands: `clawker firewall add/remove/list/status/reload`, `clawker firewall bypass <duration> --agent <name>` for temporary disable, `clawker firewall enable/disable --agent <name>` to fully turn off per-agent, `clawker firewall rotate-ca` for MITM CA rotation.",
+      "parent": "Core Subsystems",
       "page_notes": [
         {
-          "content": ""
+          "content": "Rule storage is PURELY ADDITIVE. Three sources all merge into a single persistent `egress-rules.yaml` in clawker's data directory: `add_domains` in clawker.yaml (simple domain list, converted to TLS allow rules at startup), `security.firewall.rules` in clawker.yaml (full rule definitions with custom proto/port/action, synced at startup), and `clawker firewall add <domain>` (appends at runtime). Duplicates are silently deduped by `dst:proto:port`. Removing a domain from clawker.yaml does NOT remove it from the store — it gets re-synced on next startup. The only way to remove a rule is `clawker firewall remove <domain>`."
+        },
+        {
+          "content": "Firewall command scoping: per-container commands (`bypass`, `enable`, `disable`) REQUIRE `--agent` (verified — these subcommands call `MarkFlagRequired('agent')`). Global infrastructure commands (`status`, `list`, `add`, `remove`, `reload`, `up`, `down`, `rotate-ca`) do NOT accept `--agent` and Cobra will reject the flag if passed. The bypass sets an eBPF flag that allows all outbound traffic; after the timeout expires (or `clawker firewall bypass --stop`) the flag is cleared and rules re-apply. No proxy routing during bypass — all tools work normally. When `firewall.enable: false` in settings.yaml, CP and the rest continue to run; never gate non-firewall behavior on this setting."
         }
       ]
     },
     {
-      "title": "Workspace Strategies: Bind and Snapshot",
-      "purpose": "How the workspace is presented to the container. Covers BindStrategy (live mount with tmpfs overlays for ignored dirs), SnapshotStrategy (ephemeral volume copy), .clawkerignore pattern matching, and the SetupMounts pipeline.",
-      "parent": "Container Lifecycle",
+      "title": "Host Proxy (internal/hostproxy)",
+      "purpose": "Host-side HTTP server that bridges container-initiated operations back to the host environment. Handles browser-open callbacks (e.g., `gh auth login` inside the container opens a browser on the host; the OAuth callback returns through the proxy to the container). Copies git SSH keys at container start when host SSH-key copy is requested. Forwards environment events. Manager/Daemon/Server architecture — Manager owns lifecycle, Daemon runs in background, Server is the HTTP listener. SessionStore tracks active container sessions; CallbackChannel routes OAuth callbacks back. Container watcher subscribes to Docker events and auto-exits the daemon when no clawker containers remain. Hidden `host-proxy` CLI (under `internal/cmd/hostproxy/`) is available for manual operation/debugging.",
+      "parent": "Core Subsystems",
       "page_notes": [
         {
-          "content": ""
+          "content": "internal/hostproxy is one of the daemon packages that may import `github.com/moby/moby/client` directly (per `.claude/rules/docker-client.md` carve-out) — it needs Docker events for the container watcher. The container-side counterpart is the `clawker-socket-server` binary built from `internal/hostproxy/internals/cmd/clawker-socket-server/main.go` into the agent image. CLAWKER_HOST_PROXY is exposed in every clawker container so agent-side tools can introspect the proxy endpoint."
         }
       ]
     },
     {
-      "title": "Container Commands Reference",
-      "purpose": "Reference for all container subcommands: run, create, start, stop, remove, exec, attach, logs, list, inspect, cp, kill, pause, unpause, rename, restart, stats, top, update, wait. Covers the daemon bootstrap pattern and ContainerStart.",
-      "parent": "Container Lifecycle",
+      "title": "Socket Bridge (internal/socketbridge, SSH/GPG)",
+      "purpose": "Forwards SSH agent and GPG agent sockets from host into container via muxrpc over docker exec (same approach as devcontainers). Manager/Bridge architecture: Manager tracks which containers have active bridges; each Bridge holds the muxrpc session. Wire protocol runs over docker exec stdin/stdout. The container-side companion is the `clawker-socket-server` binary, baked into the agent image at `/usr/local/bin/clawker-socket-server`; its source is `internal/hostproxy/internals/cmd/clawker-socket-server/main.go` (NOT a top-level `cmd/` directory). PID-file lifecycle keeps bridges discoverable across CLI invocations. Docker die-event subscription cleans up bridges when containers exit.",
+      "parent": "Core Subsystems",
       "page_notes": [
         {
-          "content": ""
+          "content": "Forwarding gotchas: Docker Desktop SDK Mounts API does NOT forward Unix sockets properly on macOS. GPG needs a `pubring.kbx` FILE (not a directory) with the exported public key. Context cancellation after `bridge.Start()` will kill the exec'd process — do NOT cancel on success. File ownership matters for GPG: the bridge must `chown` the forwarded socket to the target user. `EnsureBridge` must be idempotent because exec may call it when the bridge is already running."
         }
       ]
     },
     {
-      "title": "Agent Image Building",
-      "purpose": "Overview of how Docker images for Claude Code agents are built and managed. Links to child pages on Dockerfile generation and the build pipeline.",
+      "title": "clawkerd PID-1 Supervisor (cmd/clawkerd)",
+      "purpose": "The per-container clawkerd daemon runs as PID 1 inside every clawker container. Responsibilities: handle signal forwarding to the user CMD, drop privilege from root to the unprivileged claude user kernel-side (so the user CMD never runs with caps), supervise the user CMD for the container's lifetime, expose AgentService gRPC over mTLS to the host CP. cmd/clawkerd is the binary; cmd/clawkerd/listener.go is the strict half of the asymmetric trust model and enforces CP CN pin + Client-Auth EKU + CA chain at TLS handshake.",
+      "parent": "Core Subsystems",
       "page_notes": [
         {
-          "content": ""
+          "content": "PID-1 invariants (see `cmd/clawkerd/CLAUDE.md` for the full set): TTY pgroup setup must complete before exec'ing the user CMD; environment overrides must merge in the right order (image-baked OTel vars + user-passed env vars + container-runtime injected vars); shutdown must use `GracefulStop` on gRPC servers and a two-phase reaper so zombie children are collected; signal forwarding must distinguish signals sent to PID 1 from signals targeting the user CMD's pgroup. If CP cannot reach clawkerd at startup (broken init executor on the CP side), clawkerd-as-PID-1 never spawns the user CMD and the container exits non-zero on docker stop — by design, do not paper over an unwired initExec with a default 'just spawn the user CMD anyway' path."
         }
       ]
     },
     {
-      "title": "Dockerfile Generation and Bundler",
-      "purpose": "How the Dockerfile template is rendered: DockerfileManager for official multi-flavor images, ProjectGenerator for project-specific builds, DockerfileContext injection points, content hashing, embedded assets, and BuildKit cache mounts.",
-      "parent": "Agent Image Building",
+      "title": "Monitoring Stack (internal/monitor, OTel, OpenSearch, Prometheus)",
+      "purpose": "Optional 4-container telemetry stack on `clawker-net`: OTel Collector, OpenSearch (logs), OpenSearch Dashboards, Prometheus (metrics). Internal package is `internal/monitor`; user commands are under `internal/cmd/monitor/{init,up,down,status}`. Every clawker container has OTEL_* environment variables baked into the image, so when the monitor stack is up containers automatically push OTLP telemetry; when the stack is down those pushes silently no-op. Dashboards ship with a single OSD workspace named 'Clawker' configured with `features: ['use-case-all']` — not multi-workspace. KPI panels source from Prometheus counters (session, cost, token, tool_decision, active_time, LOC, commits); OpenSearch is for log events and time-series content. `clawker monitor down --volumes` blows away state for a clean regenerate.",
+      "parent": "Core Subsystems",
       "page_notes": [
         {
-          "content": ""
+          "content": "The monitoring stack is preconfigured and ephemeral by design. 'Regenerate the stack' is the answer to almost every state-management concern. Workflow when editing any monitor template or `Dockerfile.tmpl`: `make clawker && clawker monitor init --force && clawker monitor down --volumes && clawker monitor up`. The clawker CLI is the only entry point for `docker compose` against this stack — user-run compose edge cases are unreachable and not worth coding around."
+        },
+        {
+          "content": "OTel → OpenSearch exporter writes resource attributes FLAT at `resource.*` (SS4O shape), NOT nested at `resource.attributes.*`. Index template pre-mappings under `resource.attributes` are dead. The OTel collector's prometheusexporter `metric_expiration: 0` means EXPIRE EVERY METRIC ON EVERY COLLECT — use `8760h` for 'never'. OS/OSD/Prom/OTel/Vega behavior must NEVER be asserted from training data — always pull source and probe a live stack before changing the ingest or dashboard layer. CP source is off-limits for monitoring fixes: fix at collector / template / ingest pipeline, not by changing the CP emission shape (CP emission is the contract). Trust-lane separation: degraded mode for infra OTLP should be stdout-only, never plaintext to the untrusted lane."
         }
       ]
     },
     {
-      "title": "Container Internals: Entrypoint and Runtime Scripts",
-      "purpose": "What runs inside the container: entrypoint.sh privilege drop, firewall.sh iptables setup, statusline.sh terminal UI, host-open browser forwarding, git-credential-clawker, and the clawker-socket-server binary.",
-      "parent": "Agent Image Building",
+      "title": "Features",
+      "purpose": "User-facing capabilities, one child page per feature area. The list mirrors the opening bullet list in the project README and is the right entry point for a Devin agent asked to add, modify, or remove a feature. Where a feature is powered by a Core Subsystem (firewall, CP, whail), the feature page documents the user-facing surface and configuration knobs while the subsystem page documents the engine internals.",
       "page_notes": [
         {
-          "content": ""
+          "content": "Don't duplicate engine-internal content here — keep feature pages oriented around 'what the user gets, how it is configured, where it is wired into the container lifecycle'. When adding a new feature, link to the implementing package and to any Core Subsystem page it composes."
         }
       ]
     },
     {
-      "title": "Image Management Commands",
-      "purpose": "CLI commands for managing agent images: image build, list, inspect, remove, prune, and the generate command for producing official Dockerfiles from npm version patterns.",
-      "parent": "Agent Image Building",
+      "title": "Image Build and Dockerfile Generation",
+      "purpose": "Two related capabilities, both implemented in `internal/bundler`. (1) Embedded parameterized Dockerfile template, inspired by the official devcontainer image, supporting Alpine and Debian bases with common tools preinstalled (git, curl, vim, zsh, ripgrep, etc.). The `DockerfileManager` type renders the template into a multi-flavor official image; `ProjectGenerator` renders project-specific builds. `DockerfileContext` defines injection points; `DockerfileInstructions` and `DockerfileInject` capture user-supplied content. Content hashing keys the BuildKit cache. The actual image build is executed via `internal/docker.Builder` / `BuildDefaultImage`. The npm-resolved Claude Code version pin is captured at image build time so the agent image and Claude Code stay in lockstep. (2) Static Dockerfile generation via `clawker generate` (binary at `cmd/clawker-generate`) for users who want a tangible Dockerfile to build and customize themselves — this exists because the project originally started as a private Docker Hub packaging repo.",
+      "parent": "Features",
       "page_notes": [
         {
-          "content": ""
+          "content": "Baked-in runtimes (Node, etc.) must work for the unprivileged `${USERNAME}` user out-of-box. Preconfigure prefix at template time — never push runtime install/config to `root_run`. macOS Docker Desktop virtiofs / gRPC-FUSE masks UID/GID at the bind boundary, so host-UID baking is Linux-only (`runtime.GOOS != 'linux'` → fallback 1001). Templated Dockerfile `groupadd --gid <host>` (Debian) or `addgroup -g <host>` (Alpine) must `|| addgroup/groupadd <name>` fallback when the host GID collides with a base-image system group (macOS staff=20 vs Debian dialout=20). UPG is preserved because `useradd --gid <name>` binds by name."
         }
       ]
     },
     {
-      "title": "Egress Firewall",
-      "purpose": "Overview of the Envoy + CoreDNS egress firewall stack. Links to child pages on architecture, configuration, and the daemon.",
+      "title": "clawker.yaml Configuration and Init Presets",
+      "purpose": "The project configuration surface. Schema lives in `internal/config/schema.go`. Top-level keys: `name`, `build`, `agent`, `workspace`, `security`. BuildConfig fields: `image`, `dockerfile`, `context`, `packages`, `instructions` (with `env`, `copy`, `root_run`, `user_run`, `labels`, `args`), `inject` (with `after_from`, `after_packages`, `after_user_setup`, `after_user_switch`, `after_claude_install`, `before_entrypoint`). AgentConfig fields: `env_file`, `from_env`, `env`, `post_init`, `editor`, `visual`, `claude_code` block, `enable_shared_dir`. WorkspaceConfig: `default_mode` (bind|snapshot). SecurityConfig: `firewall` (with `enable`, `add_domains`, `rules`), `docker_socket`, `git_credentials` (with `forward_https`, `forward_ssh`, `forward_gpg`, `copy_git_config`), `cap_add`, `enable_host_proxy`. `clawker init` scaffolds new projects from language presets defined in `internal/config/presets.go` — currently Python, Go, Rust, TypeScript, Java, Ruby, C/C++, C#/.NET, and Bare. Uncommitted local overrides live in `.clawker.local.yaml`.",
+      "parent": "Features",
       "page_notes": [
         {
-          "content": ""
+          "content": "Always use the `config.Config` interface accessors to read configuration in code — never hardcode filenames or env var names. The schema is the source of truth; when adding a field, update `internal/config/schema.go` and the field will flow through provenance, defaults (struct tag), the TUI editor (via `internal/storeui`), and the YAML round-trip automatically."
         }
       ]
     },
     {
-      "title": "Firewall Architecture: Envoy and CoreDNS",
-      "purpose": "How the firewall works: CoreDNS for DNS-level blocking (NXDOMAIN for unlisted domains), Envoy for TLS inspection and path-level filtering, MITM certificate management, static IP allocation on the clawker-net Docker network.",
-      "parent": "Egress Firewall",
+      "title": "Workspace and Agent Init Modes",
+      "purpose": "Two orthogonal init modes the user picks at container create time. Workspace mode (implemented in `internal/workspace`): bind (live mount of the host project so edits flow both ways) or snapshot (an ephemeral volume copy of the workspace at create time, so the container is purely isolated from host file changes). BindStrategy uses tmpfs overlays for `.clawkerignore`-matched directories under bind mode. SnapshotStrategy uses a volume copy at create time. SetupMounts pipeline composes both. Agent mode: fresh (a clean Claude Code install) or copy (the host user's Claude Code settings, plugins, authentication, skills are copied into the container at runtime so the agent picks up where the host instance left off). Also covers the toggleable read-only global share volume that, when enabled, mounts a host directory into every clawker container for shared reference files.",
+      "parent": "Features",
       "page_notes": [
         {
-          "content": ""
+          "content": "Snapshot mode does NOT persist changes back to the host — that is the entire point. Code paths must not assume the workspace is writable from the host's perspective. `CLAWKER_WORKSPACE_MODE` (bind|snapshot) and `CLAWKER_WORKSPACE_SOURCE` are exported into the container so agent-side code can introspect."
         }
       ]
     },
     {
-      "title": "Firewall Manager and Daemon",
-      "purpose": "The FirewallManager interface and its Docker implementation: EnsureRunning, AddRules, RemoveRules, Bypass, Disable/Enable, Status. The background daemon's dual-loop (health check + container watcher) and auto-stop behavior.",
-      "parent": "Egress Firewall",
+      "title": "Project Namespace Isolation",
+      "purpose": "How clawker scopes container resources per project so the user can reuse short names (dev, main, review) without collision. Detection: when the CLI runs inside a project directory (walk-up discovery of `clawker.yaml`), it stamps every created resource with `dev.clawker.project=<project-name>` and `dev.clawker.agent=<agent-name>` labels. Filtering: `clawker ps --filter agent=dev` shows all dev containers across projects; `clawker ps --project myapp` shows all containers for one project. Labels are the source of truth for filtering, not name parsing. Global-scope agents (no project context) deliberately OMIT the `dev.clawker.project` label (not 'set to empty string' — absent). Project registry in `internal/project` records each registered project's path and metadata via `clawker project init/register/list/info/remove/edit`.",
+      "parent": "Features",
       "page_notes": [
         {
-          "content": ""
+          "content": "Naming: `AgentFullName` is the string `clawker.<project>.<agent>` for project-scoped agents and `clawker.<agent>` for global-scope agents. The helper lives in `internal/auth/agent_cert.go` and is used by both Docker middleware (for label composition) and the CP identity stack (for cert URI SANs). Filter code must handle the absent-label case for global-scope agents, never coerce to empty string."
         }
       ]
     },
     {
-      "title": "Firewall CLI Commands",
-      "purpose": "Reference for all firewall subcommands: up, down, add, remove, list, reload, status, bypass, disable, enable, rotate-ca. Covers egress rule schema (domains, path_rules, IP ranges) and the requiredFirewallRules defaults.",
-      "parent": "Egress Firewall",
+      "title": "Worktree Management",
+      "purpose": "Clawker can create a git worktree per agent container so multiple agents work on the same repo on different branches without stomping each other. Pass `--worktree` on container run or create; clawker materializes a worktree under the clawker home directory and bind-mounts it at the container workdir. Worktree lifecycle commands: `clawker worktree add/list/prune/remove` (under `internal/cmd/worktree/`). Implementation uses go-git so the host git binary is not a runtime dependency.",
+      "parent": "Features",
       "page_notes": [
         {
-          "content": ""
+          "content": "Worktree state is tracked in clawker's home directory, not via host `git worktree list`. Use the worktree subcommands (or the worktree manager package APIs in code) rather than shelling out to git. Worktree health — stale, missing, deleted-on-host — is computed by reconciling clawker's record with the on-disk state at list time."
         }
       ]
     },
     {
-      "title": "Host Integration Services",
-      "purpose": "Overview of the services that bridge the host and container: Host Proxy, Socket Bridge, and Git credential forwarding. Links to child pages for each.",
+      "title": "Git Credential Forwarding (HTTPS, SSH, GPG)",
+      "purpose": "Forwards the user's git credentials into agent containers so the agent can clone private repos, push, and sign commits without re-authenticating. Composes the Socket Bridge subsystem (for SSH agent and GPG agent sockets) and the Host Proxy subsystem (for browser-based auth flows). HTTPS credentials use the `git-credential-clawker` helper baked into the agent image, which receives credentials via `GIT_CONFIG_KEY_N` environment variable injection at container start. GPG signing config is composed from host config when `copy_git_config` is enabled. Toggles under `security.git_credentials` in clawker.yaml: `forward_https`, `forward_ssh`, `forward_gpg`, `copy_git_config` (all bool, defaults true). Each can be turned off independently.",
+      "parent": "Features",
       "page_notes": [
         {
-          "content": ""
+          "content": "Forwarding-related environment surface exposed inside the container: `CLAWKER_GIT_HTTPS`, `CLAWKER_REMOTE_SOCKETS` (JSON array of forwarded sockets), `SSH_AUTH_SOCK`. Agent-facing diagnostic code reads these to confirm forwarding is active. See the Socket Bridge and Host Proxy subsystem pages for the wire-level details."
         }
       ]
     },
     {
-      "title": "Host Proxy",
-      "purpose": "The host proxy daemon: HTTP server for browser-open callbacks and OAuth forwarding, container watcher auto-exit logic, Manager/Daemon/Server architecture, SessionStore, CallbackChannel, and the hidden host-proxy CLI.",
-      "parent": "Host Integration Services",
+      "title": "Interactive Config TUI",
+      "purpose": "TUI-based editors for project config (`clawker project edit`) and user settings (`clawker settings edit`). Built on `internal/storeui` (which composes `internal/tui` components) and consumed by `internal/cmd/project/edit` and `internal/cmd/settings/edit`. Tabbed field browsing across the schema, per-field type-appropriate editors (text, boolean, list, multiline), layer-aware provenance display showing which file each value comes from (default → settings → project), and per-field save targeting so the user can choose which config layer to write a change to (writing `forward_ssh: false` to the project clawker.yaml versus the user settings.yaml is a meaningful distinction).",
+      "parent": "Features",
       "page_notes": [
         {
-          "content": ""
+          "content": "TUI views are the feature. Compose them from existing `internal/tui` components first; only add to `internal/tui` when the component is genuinely generic. Consumer-specific logic must live in the consuming command package (or in `internal/storeui` for config-specific generic patterns), not in `internal/tui`. Provenance display is wired from the storage engine's per-value source tracking (see the Storage and Config Engine subsystem page)."
         }
       ]
     },
     {
-      "title": "Socket Bridge (SSH and GPG Forwarding)",
-      "purpose": "How SSH and GPG agent sockets are forwarded from host to container via muxrpc over docker exec. Covers the Manager/Bridge architecture, wire protocol, PID file lifecycle, Docker die-event subscription, and the clawker-socket-server binary.",
-      "parent": "Host Integration Services",
+      "title": "Build, Release, and Installation",
+      "purpose": "How clawker is built, signed, attested, packaged, distributed, and tested. Child pages cover the Makefile and install channels, the CI release pipeline with attestations, and the test suite organization. Devin should land here when asked to change any `.github/workflows/*.yml`, the Makefile, the `install.sh` script, or the test runner.",
       "page_notes": [
         {
-          "content": ""
+          "content": "GitHub Actions: use `actions/attest` DIRECTLY, never the deprecated `attest-build-provenance` / `attest-sbom` wrappers — modes auto-detect by input shape. Squash-merge is the repository's PR merge mode, so always create new commits rather than amend; this preserves the per-iteration history that squash-merge collapses cleanly."
         }
       ]
     },
     {
-      "title": "Git Credential Forwarding",
-      "purpose": "How HTTPS and SSH git credentials are forwarded into containers: git-credential-clawker helper, GIT_CONFIG_KEY_N environment variable injection, copy_git_config strategy, and GPG signing configuration.",
-      "parent": "Host Integration Services",
+      "title": "Build System, Pinning and Distribution",
+      "purpose": "The Makefile, dependency pinning conventions, and end-user install channels. `make` targets: `clawker` (build CLI), `test` (unit tests, no Docker), `test-all` (unit + e2e + whail), `pre-commit` (run all hooks). BPF dependencies for firewall binaries are pinned via `BPF_APT_DEPS` in the Makefile (clang/llvm/libbpf-dev/linux-libc-dev). CI runs `sudo make bpf-deps` on `ubuntu-latest`; macOS devs use `Dockerfile.controlplane` for the same path. End-user install channels: `scripts/install.sh` (curl | bash) is primary; Homebrew cask via `schmitthub/tap/clawker` is the macOS channel. The npm-resolved Claude Code version pin is captured at image build time and baked into each released agent image so the image and Claude Code stay in lockstep. `CLAWKER_VERSION` and `CLAWKER_INSTALL_DIR` env vars steer `install.sh` behavior.",
+      "parent": "Build, Release, and Installation",
       "page_notes": [
         {
-          "content": ""
+          "content": "ALL external dependencies are pinned to exact versions with integrity verification. Never use `@latest` or floating tags. Pinning rules by context: Dockerfile base images use SHA256 digests (`FROM golang:1.25@sha256:abc...`); CI workflow actions use SHA commit hashes (`uses: actions/checkout@a1b2c3d...`); pre-commit hooks use SHA commit hashes with `# frozen: <version>` comments; container images referenced in Go code use SHA256 digest constants; Go tool installs use exact version or SHA. All `@sha256:` pins must be multi-arch manifest lists (`application/vnd.oci.image.index.v1+json`). Verify with `docker buildx imagetools inspect`. Firewall stack binaries are built fresh from pinned BPF toolchain inputs; nothing generated is committed."
+        },
+        {
+          "content": "Documentation rule: NEVER inline pin versions in docs prose. Reference the source-of-truth file (Makefile / Dockerfile) instead of copying concrete versions into the wiki. Docs that quote a version become wrong the moment the pin is updated."
         }
       ]
     },
     {
-      "title": "Project and Worktree Management",
-      "purpose": "Overview of project registration and Git worktree lifecycle management. Links to child pages on the project domain and worktree health model.",
+      "title": "Release Pipeline and Attestation",
+      "purpose": "GitHub Actions workflows that build, test, and release clawker. Build provenance and SBOM are produced via `actions/attest` used directly (not deprecated wrappers). BuildKit digests are captured via `--iidfile` and surfaced as workflow outputs. The release path produces the multi-arch image manifest list pushed to the registry, attaches attestations, and (separately) triggers Homebrew cask updates via the update-plugin workflow.",
+      "parent": "Build, Release, and Installation",
       "page_notes": [
         {
-          "content": ""
+          "content": "PR descriptions and commits are the source of release-iteration context, not in-code comments. Never write 'PR #N' / 'issue #M' / 'commit abc' in comments, docs, or wiki pages — state the constraint directly in present tense. Squash-merge collapses per-iteration commits; design every iteration as a new commit rather than `--amend` of a previous one."
         }
       ]
     },
     {
-      "title": "Project Registry and Manager",
-      "purpose": "How projects are registered, resolved, and listed. Covers ProjectManager interface, projects.yaml registry, ResolvePath symlink handling, CurrentProject detection, and the project init/register/list/info/remove CLI commands.",
-      "parent": "Project and Worktree Management",
+      "title": "Testing Infrastructure",
+      "purpose": "Three test suites with distinct scopes. UNIT tests live alongside the code in `*_test.go` files — run with `make test`, no Docker required. E2E suite under `test/e2e/` exercises real container lifecycles end-to-end — Docker required, `go test ./test/e2e/... -v -timeout 10m`. WHAIL integration suite under `test/whail/` exercises pkg/whail against a real Docker daemon with recorded scenarios and golden files — `go test ./test/whail/... -v -timeout 5m`, regen with `GOLDEN_UPDATE=1`. Mocks are generated by moq via `//go:generate` (never hand-edited). Configmocks live at `internal/config/mocks/` and are the canonical way to build a test Config.",
+      "parent": "Build, Release, and Installation",
       "page_notes": [
         {
-          "content": ""
+          "content": "CRITICAL: when running INSIDE a clawker container (`CLAWKER_AGENT` env var set), do NOT run `go test ./...`. The e2e suite tears down the host CP. Use targeted package tests or `make test` (which skips Docker-required suites). Pre-commit hooks auto-run unit tests, so skip standalone `make test` before committing."
+        },
+        {
+          "content": "Test patterns to follow: TDD — write tests before code. If a package lacks an interface, mock, or fake, ADD ONE before writing tests against it; don't paper over the gap. E2E tests must ONLY use CLI commands via the test harness's `h.Run()`, never call internal APIs directly. Do not unit test test helpers (they get tested by usage). Shared test cleanup must be shared test infrastructure, not inline per-test. Use `iostreams.Test()` with `SetStdinTTY(true)` + `SetStdoutTTY(true)` for interactive tests."
+        }
+      ]
+    },
+    {
+      "title": "Threat Model",
+      "purpose": "Security boundaries clawker establishes and the invariants the codebase must preserve. Each child page documents one boundary or guarantee, what enforces it in code, and what kinds of changes would break it. Devin should read all child pages before modifying code in `cmd/clawker-cp/`, `internal/controlplane/`, `internal/dnsbpf/`, `internal/auth/`, or `cmd/clawkerd/`.",
+      "page_notes": [
+        {
+          "content": "Threat model framing: clawker is a 'padded cell' for AI agents, defending against (a) destructive host changes by a runaway or misled agent and (b) data exfiltration via prompt injection. The mitigations are containerization (the agent only sees its container) plus egress firewalling (the agent can only reach allow-listed network destinations). NOT in scope: defending against an agent that has been deliberately granted the host docker socket (`security.docker_socket: true`) — that mode is policy-gated and explicit. NOT in scope: confidentiality against a hostile host user (clawker assumes the host user is the principal whose interests are being protected). Do not invent security framings for packaging or build flags — clawker images run locally only."
+        }
+      ]
+    },
+    {
+      "title": "Trust Boundaries and Attack Surface",
+      "purpose": "Catalog of clawker's trust boundaries. (1) Host ↔ agent container: containerization plus the egress firewall enforce this. The agent has no Linux caps, no host filesystem outside the mounted workspace and config/history volumes, and no visibility into other containers. (2) Clawker CLI ↔ non-clawker Docker resources: pkg/whail enforces this so the user cannot accidentally clobber host Docker state via clawker subcommands. (3) Host user ↔ CP: AdminService over mTLS + OAuth2. (4) CP ↔ clawkerd: AgentService over mTLS with the asymmetric trust model (permissive dialer, strict listener). (5) Container ↔ external network: firewall with DNS deny-by-default + TLS MITM inspection. Documents each boundary's enforcement code path and what an attacker who breaches it gains.",
+      "parent": "Threat Model",
+      "page_notes": [
+        {
+          "content": "Reminder: whail enforces boundary (2), the clawker-CLI ↔ non-clawker-Docker-resources boundary. It does NOT enforce boundary (1), the host ↔ agent boundary. Confusing the two is the single most common Devin documentation error in this codebase — see the whail repo_note."
+        }
+      ]
+    },
+    {
+      "title": "CP Crash-Safety Invariants",
+      "purpose": "Why a CP panic is a security incident, not an availability one, and the hard rules CP code must follow to preserve the user's mental model that 'CP has my agents covered'. eBPF programs are pinned under `/sys/fs/bpf` and survive CP container death, so on a CP panic the firewall stays loaded with the rule set frozen at the moment of crash but no longer reloadable, no longer expire-able (active bypasses become permanent), and CP → clawkerd containment-command dispatch is dead. Agent containers keep running and the user has no signal of any of this — the stack trace lands on docker logs, not on the rotating `ControlPlaneLogFile` that operators are wired to grep, and `clawker controlplane status` only sees up/down, not 'running but corrupt'.",
+      "parent": "Threat Model",
+      "page_notes": [
+        {
+          "content": "HARD RULES for code on the CP boot/serve path (`cmd/clawker-cp/`, `internal/controlplane/`, anything imported by them):\n\n1. No `panic()`, no `log.Fatal()`, no `os.Exit()` outside the orchestrator's intentional shutdown sequence. Constructors return `(nil, error)` (see `agent.New`, `agent.NewExecutor` pattern); main logs structurally and degrades. The only hard-exits permitted are: drain-to-zero clean exit (code 0), and the orchestrator's pre-`SetReady` startup-gate failures (code 1) where no agents are running yet so eBPF flush isn't load-bearing.\n\n2. Every long-lived goroutine recovers. Heartbeats, watchers, event handlers, RPC handlers — wrap with `defer func() { if r := recover(); r != nil { log.Error().Interface('panic', r)... } }()`. The overseer stats heartbeat in `cmd/clawker-cp/main.go` is the canonical template.\n\n3. Subsystem failures degrade, never cascade. A broken init Executor → `initExec = nil` and emit `event=agent_init_executor_unavailable`. A broken dialer → `dialer = nil` and emit `event=agent_dialer_unavailable`. Firewall, registry, AdminService, dialer all stay up regardless. The patterns `wireInitExecutor` and the `agent.New(...)` block in `cmd/clawker-cp/main.go` are the templates — copy either for any new subsystem.\n\n4. Every degraded path emits a structured log line with component, error, and downstream impact. An operator must be able to determine root cause AND blast radius from the structured log surface alone.\n\n5. Treat CP shutdown as a privileged operation. If you find yourself thinking 'this should never happen, just panic', stop. In CP that line of reasoning compromises the security boundary the user trusts to be intact."
+        }
+      ]
+    },
+    {
+      "title": "Egress Firewall Guarantees",
+      "purpose": "What the firewall promises, what it does not, and what code preserves each promise. PROMISES: DNS-level deny-by-default for unlisted domains (NXDOMAIN — the domain does not even resolve); TCP routing only to allow-listed destinations; TLS MITM inspection on all HTTPS traffic to allow-listed domains, enabling path-level rules; enforcement is kernel-side via eBPF cgroup programs attached from outside the agent container, so the agent has no caps and cannot disable filtering from within. DOES NOT PROMISE: confidentiality of traffic that traverses allow-listed paths (an attacker who controls an allow-listed destination is on the inside); resistance against an agent given the docker socket (which would let it create unfiltered sibling containers — `docker_socket` is policy-gated for this reason); intact enforcement after a CP panic (the rule set freezes, see CP Crash-Safety Invariants).",
+      "parent": "Threat Model",
+      "page_notes": [
+        {
+          "content": "Diagnostic surface for blocked connections (agent-side): NXDOMAIN / 'could not resolve host' → domain not in allow list; connection reset / refused → domain or path blocked by Envoy; certificate errors → firewall's MITM CA not trusted by the tool (rare; clawker pre-sets `SSL_CERT_FILE` and `CURL_CA_BUNDLE`, but some tools ignore those env vars). Remediation choices the USER (not the agent) executes on the HOST: `clawker firewall add <hostname>` (permanent), `clawker firewall bypass <duration> --agent <name>` (temporary escape hatch), `clawker firewall disable --agent <name>` (turn off for that container until re-enabled)."
+        },
+        {
+          "content": "When the firewall is disabled (`firewall.enable: false` in `settings.yaml`), CP continues to run. mTLS, agent registry, AdminService, `agent.Dialer`, `ListAgents` all stay operational. Code that gates non-firewall behavior on `firewall.enable` is a bug. The 'firewall off' user mode is for users who want clawker's containerization and credential forwarding without the egress filter — they get a weaker but still meaningful security posture."
         }
       ]
     }
