@@ -46,7 +46,7 @@ func TestProcessor_ParsesEnrichesEmits(t *testing.T) {
 	p := &processor{
 		queue:   queue,
 		cache:   cache,
-		revDNS:  NewReverseDNSMapWithWalk(func(func(uint32)) error { return nil }, nil),
+		revDNS:  NewReverseDNSMapWithWalk(func(func(uint32)) error { return nil }, nil, nil),
 		sink:    sink,
 		metrics: metrics,
 		log:     logger.Nop(),
@@ -87,7 +87,7 @@ func TestProcessor_ParseErrorIncrementsCounterAndSkips(t *testing.T) {
 	p := &processor{
 		queue:   queue,
 		cache:   NewLabelCache(nil),
-		revDNS:  NewReverseDNSMapWithWalk(func(func(uint32)) error { return nil }, nil),
+		revDNS:  NewReverseDNSMapWithWalk(func(func(uint32)) error { return nil }, nil, nil),
 		sink:    sink,
 		metrics: metrics,
 		log:     logger.Nop(),
@@ -113,7 +113,7 @@ func TestProcessor_CacheMissEmitsEmptyAttribution(t *testing.T) {
 	p := &processor{
 		queue:   queue,
 		cache:   NewLabelCache(nil), // empty
-		revDNS:  NewReverseDNSMapWithWalk(func(func(uint32)) error { return nil }, nil),
+		revDNS:  NewReverseDNSMapWithWalk(func(func(uint32)) error { return nil }, nil, nil),
 		sink:    sink,
 		metrics: metrics,
 		log:     logger.Nop(),
@@ -163,7 +163,7 @@ func TestPipeline_EndToEnd(t *testing.T) {
 	p := &processor{
 		queue:   queue,
 		cache:   cache,
-		revDNS:  NewReverseDNSMapWithWalk(func(func(uint32)) error { return nil }, nil),
+		revDNS:  NewReverseDNSMapWithWalk(func(func(uint32)) error { return nil }, nil, nil),
 		sink:    sink,
 		metrics: metrics,
 		log:     logger.Nop(),

@@ -442,35 +442,6 @@ ratelimit_check_and_take(__u64 cgroup_id)
 	return false;
 }
 
-// ratelimit_refund returns a previously taken token back to the bucket.
-// Used by submit_event when bpf_ringbuf_reserve fails: the kernel-fault
-// drop is counted in events_drops, NOT ratelimit_drops, so the token
-// must be put back so subsequent post-recovery events aren't
-// misclassified as intentional rate-limit drops. CAS-bounded so a
-// concurrent refill can never push tokens beyond RATELIMIT_BURST.
-// If the state entry was LRU-evicted between take and refund, the
-// refund is a no-op — next take on this cgroup_id re-creates the
-// bucket at full burst, so the "lost" token rounds back to budget.
-static __always_inline void
-ratelimit_refund(__u64 cgroup_id)
-{
-	struct ratelimit_state_val *st =
-		bpf_map_lookup_elem(&ratelimit_state, &cgroup_id);
-	if (!st)
-		return;
-#pragma unroll
-	for (int i = 0; i < RATELIMIT_CAS_RETRIES; i++) {
-		__u64 cur = st->tokens;
-		if (cur >= RATELIMIT_BURST) {
-			return; // already at or above burst — nothing to do
-		}
-		if (__sync_val_compare_and_swap(&st->tokens, cur, cur + 1) == cur) {
-			return;
-		}
-	}
-	// Exhausted retries; drop the refund. Next refill window resets.
-}
-
 // lookup_domain_hash_for_ip resolves the FNV-1a domain hash for an IPv4
 // destination by reading the pinned dns_cache (populated by CoreDNS). A
 // miss (direct-IP connect, or DNS resolution outside our managed CoreDNS)
@@ -490,13 +461,18 @@ lookup_domain_hash_for_ip(__u32 dst_ip)
 // struct egress_event. Two BPF-side drop dimensions, each kept
 // distinct so operators can diagnose root cause from the userspace
 // metric surface:
-//   - Rate-limit drop: ratelimit_drops[cgroup_id] bumped, token consumed.
-//     "Noisy agent over its budget" — adjust RATELIMIT_BURST or
-//     investigate the agent.
-//   - Kernel-fault drop (reserve returned NULL): events_drops[0] bumped,
-//     token refunded so subsequent post-recovery events aren't
-//     misclassified as ratelimit drops. "Ringbuf full" — userspace
-//     reader fell behind; investigate consumer.
+//   - Rate-limit drop: ratelimit_drops[cgroup_id] bumped. The token
+//     was already consumed by ratelimit_check_and_take. "Noisy agent
+//     over its budget" — adjust RATELIMIT_BURST or investigate the
+//     agent.
+//   - Kernel-fault drop (reserve returned NULL): events_drops[0]
+//     bumped. The token consumed by ratelimit_check_and_take is NOT
+//     refunded — matches Cilium (bpf/lib/ratelimit.h) and Tetragon
+//     (bpf/process/bpf_rate.h) convention: a failed reserve indicates
+//     the consumer can't keep up, so token-budget should back off,
+//     not retry harder. The two drop counters are independent
+//     dimensions; events_drops on its own surfaces the consumer-lag
+//     signal. "Ringbuf full" — userspace reader fell behind.
 // Additional userspace-side drops (BatchProcessor overflow) are out of
 // scope here; the netlogger pipeline counts those independently.
 //
@@ -512,7 +488,6 @@ submit_event(__u64 cgroup_id, __u32 dst_ip, __u16 dst_port_host,
 	struct egress_event *ev =
 		bpf_ringbuf_reserve(&events_ringbuf, sizeof(*ev), 0);
 	if (!ev) {
-		ratelimit_refund(cgroup_id);
 		__u32 zero = 0;
 		__u64 *cnt = bpf_map_lookup_elem(&events_drops, &zero);
 		if (cnt)

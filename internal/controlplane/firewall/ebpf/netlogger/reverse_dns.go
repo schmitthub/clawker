@@ -11,27 +11,59 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
-// ReverseDNSMap is the userspace mirror of the pinned dns_cache,
-// keyed by domain_hash. It exists so the OTel sink can attach a
-// `dst_host` attribute alongside the `domain_hash` field when the
-// operator wants human-readable domain attribution on egress
-// records.
+// DomainSource returns every domain dnsbpf will resolve under the
+// active firewall configuration. ReverseDNSMap hashes each entry on
+// every refresh tick to rebuild the hash→domain table the otelSink
+// reads when emitting `dst_host` on a security record.
 //
-// dns_cache stores {IPv4 → {domain_hash, expire_ts}} — the original
-// domain string is not on the BPF side, so Lookup returns "" for
-// every hash. The observed-hash set is tracked so a future
-// (hash → string) population path can light Lookup up without
-// touching the public API; until then, operators filter on the
-// numeric `domain_hash` attribute on each emitted record.
+// Production wiring: a closure over `firewall.Handler.AllResolvableDomains`.
+// Tests pass a static slice via a literal closure.
+//
+// nil DomainSource is supported (degraded mode — every Lookup returns ""),
+// matching the boot-time shape before the wiring lands.
+type DomainSource func() []string
+
+// ReverseDNSMap holds the userspace hash→domain table the otelSink
+// reads when stamping `dst_host` on each emitted security record.
+//
+// Source of truth is the firewall rule set + the internal hostnames
+// CoreDNS serves out of band. dnsbpf computes the same FNV-1a hash on
+// every A-record write into dns_cache, so the hash netlogger observes
+// on a security record matches DomainHash(d) for some d in the firewall
+// configuration — by construction, since GenerateCorefile and
+// AllResolvableDomains share the same normalize/filter passes.
+//
+// The pinned dns_cache map is still walked on every refresh tick for
+// the observed-hash set. Hashes present in dns_cache but absent from
+// DomainSource (race after rule remove, dnsbpf stale entry, hash
+// collision against an unknown domain) leave dst_host="" — operators
+// reading the security record see no domain attribution for that
+// record, which is the same outcome as a direct-IP connect.
+//
+// Collision floor: FNV-1a is 32-bit. Two firewall-rule domains
+// colliding is astronomically unlikely in any realistic config; an
+// adversarial second-preimage against a known rule domain is not
+// realistic either, but the route_map shape inherits the same floor
+// today and is tracked for replacement in the route-identity-allocator
+// initiative. See `initiative_route_identity_allocator` Serena memory.
 type ReverseDNSMap struct {
 	mu     sync.RWMutex
 	byHash map[uint32]string
 
-	// walk is the iteration seam. Production wires it from the
-	// pinned dns_cache map via NewReverseDNSMap; tests inject a
-	// stub so they don't need a real *ebpf.Map (which would require
-	// CAP_BPF, unavailable inside the clawker dev container per
-	// Task-1 learnings).
+	// domains is the live source of "every domain dnsbpf might
+	// resolve". Each refresh tick reads it once and hashes each
+	// entry to populate byHash.
+	domains DomainSource
+
+	// walk is the iteration seam over the pinned dns_cache map.
+	// Production wires it via NewReverseDNSMap; tests inject a
+	// stub so they don't need a real *ebpf.Map (which would
+	// require CAP_BPF, unavailable inside the clawker dev
+	// container per Task-1 learnings). The walk is no longer
+	// load-bearing for Lookup — DomainSource is — but the
+	// dns_cache hash set is logged on every refresh tick for
+	// triage when an emitted security record carries an
+	// unattributed hash.
 	walk func(visit func(hash uint32)) error
 
 	log *logger.Logger
@@ -39,38 +71,40 @@ type ReverseDNSMap struct {
 
 // NewReverseDNSMap constructs a ReverseDNSMap backed by a pinned BPF
 // dns_cache map. Pass nil for dnsCache when running in a test that
-// supplies its own walk function via NewReverseDNSMapWithWalk.
-func NewReverseDNSMap(dnsCache *ebpf.Map, log *logger.Logger) *ReverseDNSMap {
+// supplies its own walk function via NewReverseDNSMapWithWalk. Pass
+// nil for domains to run in degraded mode (Lookup always returns "").
+func NewReverseDNSMap(dnsCache *ebpf.Map, domains DomainSource, log *logger.Logger) *ReverseDNSMap {
 	if log == nil {
 		log = logger.Nop()
 	}
 	return &ReverseDNSMap{
-		byHash: make(map[uint32]string),
-		walk:   walkDNSCache(dnsCache),
-		log:    log,
+		byHash:  make(map[uint32]string),
+		domains: domains,
+		walk:    walkDNSCache(dnsCache),
+		log:     log,
 	}
 }
 
 // NewReverseDNSMapWithWalk constructs a ReverseDNSMap with an
 // injectable walk function — used by unit tests that don't have a
 // real BPF map handle.
-func NewReverseDNSMapWithWalk(walk func(visit func(hash uint32)) error, log *logger.Logger) *ReverseDNSMap {
+func NewReverseDNSMapWithWalk(walk func(visit func(hash uint32)) error, domains DomainSource, log *logger.Logger) *ReverseDNSMap {
 	if log == nil {
 		log = logger.Nop()
 	}
 	return &ReverseDNSMap{
-		byHash: make(map[uint32]string),
-		walk:   walk,
-		log:    log,
+		byHash:  make(map[uint32]string),
+		domains: domains,
+		walk:    walk,
+		log:     log,
 	}
 }
 
 // Lookup returns the domain string bound to hash, or "" when:
 //   - hash == 0 (direct-IP connect, no DNS resolution at all)
-//   - the hash has not been observed in dns_cache yet
-//   - the dns_cache entry exists but no domain string is available
-//     (see type doc) — every hit returns "" until a follow-up
-//     population path lights this up.
+//   - DomainSource is nil (degraded mode)
+//   - the hash is absent from DomainSource (race after rule remove,
+//     dnsbpf stale entry, or domain not under firewall management)
 func (m *ReverseDNSMap) Lookup(hash uint32) string {
 	if hash == 0 {
 		return ""
@@ -85,7 +119,8 @@ func (m *ReverseDNSMap) Lookup(hash uint32) string {
 // populated before the first egress event arrives.
 //
 // Recovers from any panic in the refresh path: a malformed dns_cache
-// row must not kill the netlogger pipeline (CP no-panic discipline).
+// row or a DomainSource panic must not kill the netlogger pipeline
+// (CP no-panic discipline).
 func (m *ReverseDNSMap) Run(ctx context.Context, interval time.Duration) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -111,28 +146,44 @@ func (m *ReverseDNSMap) Run(ctx context.Context, interval time.Duration) {
 	}
 }
 
-// refresh walks the dns_cache map exactly once, replacing byHash
-// with the set of observed hashes. Iteration errors are logged at
-// debug — the next tick retries.
+// refresh rebuilds byHash from DomainSource and walks dns_cache to
+// surface any observed hashes the source doesn't account for.
 func (m *ReverseDNSMap) refresh() {
-	if m.walk == nil {
-		return
-	}
 	next := make(map[uint32]string)
-	err := m.walk(func(hash uint32) {
-		if hash == 0 {
-			return
+	if m.domains != nil {
+		for _, d := range m.domains() {
+			if d == "" {
+				continue
+			}
+			next[clawkerebpf.DomainHash(d)] = d
 		}
-		// String stays "" until a separate (hash → domain)
-		// population path lands. The presence of the key here
-		// is itself useful: it lets Lookup differentiate "we
-		// observed this hash" from "never seen". See type doc.
-		next[hash] = ""
-	})
-	if err != nil {
-		m.log.Debug().Err(err).Str("event", "netlogger_reverse_dns_refresh_error").Msg("dns_cache iterate failed")
-		return
 	}
+
+	if m.walk != nil {
+		var unattributed int
+		err := m.walk(func(hash uint32) {
+			if hash == 0 {
+				return
+			}
+			if _, ok := next[hash]; !ok {
+				unattributed++
+			}
+		})
+		switch {
+		case err != nil:
+			m.log.Debug().Err(err).Str("event", "netlogger_reverse_dns_refresh_error").Msg("dns_cache iterate failed")
+		case unattributed > 0:
+			// Hashes present in dns_cache but missing from
+			// DomainSource — race or stale entry. Records
+			// emitted with these hashes carry dst_host="".
+			m.log.Warn().
+				Int("unattributed", unattributed).
+				Int("attributed", len(next)).
+				Str("event", "netlogger_reverse_dns_unattributed").
+				Msg("dns_cache holds hashes absent from firewall rule set")
+		}
+	}
+
 	m.mu.Lock()
 	m.byHash = next
 	m.mu.Unlock()

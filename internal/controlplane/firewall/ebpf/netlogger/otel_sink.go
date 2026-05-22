@@ -45,14 +45,12 @@ func newOtelSink(provider *sdklog.LoggerProvider) *otelSink {
 	return &otelSink{logger: provider.Logger(scopeName)}
 }
 
-// Emit attaches every Event field as an attribute on the OTel record.
-//
-// Strict directive (initiative_ebpf-netlogger, "Why decision-time emit
-// is the right scope"): every field on Event is present on every
-// record, including empty strings and zero numbers. Operators filter
-// at dashboard/query time; the sink never decides a field is "not
-// interesting" for a given verdict. Adding a field to Event is a
-// contract change that requires updating this body in the same diff.
+// Emit stamps a security record carrying the kernel verdict + agent
+// attribution + 4-tuple + domain. domain_hash (the BPF-side identity
+// handle for the resolved destination domain) is intentionally not on
+// the wire: SOC analysts query on dst_host, and a bare hash without
+// the string is unactionable. The hash stays on Event so
+// ReverseDNSMap.Lookup can translate it to dst_host here.
 func (s *otelSink) Emit(ctx context.Context, ev Event) {
 	var rec otellog.Record
 	rec.SetEventName(eventName)
@@ -76,7 +74,6 @@ func (s *otelSink) Emit(ctx context.Context, ev Event) {
 		otellog.Bool("ipv6", ev.IsIPv6),
 		otellog.Bool("ipv4_mapped", ev.IsMapped),
 		otellog.String("dst_host", ev.Domain),
-		otellog.Int64("domain_hash", int64(ev.DomainHash)),
 	)
 	s.logger.Emit(ctx, rec)
 }

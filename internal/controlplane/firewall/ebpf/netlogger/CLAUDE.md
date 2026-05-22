@@ -70,8 +70,7 @@ The reader MUST NOT block on the queue. Back-pressure from the queue into the ke
 | `l4_proto_code` | int | raw SOCK code (resilient to renames) |
 | `ipv6` | bool | native IPv6 |
 | `ipv4_mapped` | bool | `::ffff:x.x.x.x` |
-| `dst_host` | string | `Event.Domain` (`""` while ReverseDNSMap is hash-only) |
-| `domain_hash` | int64 | `Event.DomainHash` |
+| `dst_host` | string | `Event.Domain` populated via `ReverseDNSMap.Lookup(Event.DomainHash)`; `""` for direct-IP connects or domains outside the firewall rule set |
 
 **Trust lane.** Endpoint is the infra OTel receiver (`OtelInfraPort`). Plaintext endpoints are rejected at CP-main wiring time (`event=netlogger_unavailable` with `step=OTLP endpoint is plaintext`) — infra emitters never cross into the untrusted agent lane.
 
@@ -143,9 +142,16 @@ Why not `sync.Map`: two-key atomic update (cgroup_id index AND container_id inde
 
 Why not an LRU: cgroup_id reuse is event-driven, not time-driven. An LRU would either evict live entries (wiping attribution mid-traffic) or hand back dead labels for reused cgroup_id values.
 
-## ReverseDNSMap v1 limitation
+## ReverseDNSMap
 
-`dns_cache` stores `{IPv4 → {domain_hash, expire_ts}}`. The domain string lives only in CoreDNS process memory — the BPF side has access only to the hash. ReverseDNSMap therefore tracks the SET of observed hashes (periodic walk of the pinned map) but Lookup returns `""` for every hash until a follow-up branch populates strings via a new `domain_strings` map. Until then, operators filter on the numeric `domain_hash` attribute on each emitted record. The scaffolding is in place; the follow-up branch flips Lookup's return value without touching the public API.
+`dns_cache` stores `{IPv4 → {domain_hash, expire_ts}}`. The domain string lives only on the control plane side (the firewall rule set + the internal hostnames CoreDNS serves out of band). ReverseDNSMap holds the inverse `hash → domain` table, rebuilt every refresh tick by hashing the live set returned by `Deps.Domains` — a closure over `firewall.Handler.AllResolvableDomains` in production wiring. The walk over the pinned dns_cache stays as a triage signal: hashes present in dns_cache but absent from the DomainSource emit `event=netlogger_reverse_dns_unattributed` (race after rule remove / dnsbpf stale entry / unknown source).
+
+`Lookup(hash)` returns the domain string when known, `""` otherwise. Empty cases:
+- `hash == 0` — direct-IP connect, BPF saw no DNS context.
+- Nil `Deps.Domains` (degraded mode before CP main wiring lands).
+- Hash absent from DomainSource (race or stale; logged on refresh).
+
+The hash function is `internal/controlplane/firewall/ebpf.DomainHash` (FNV-1a of the lowercased domain) — the same call dnsbpf uses when it writes `dns_cache`. The collision floor is tracked separately; see `initiative_route_identity_allocator`.
 
 ## Prom counters (in-process today; scrape deferred)
 

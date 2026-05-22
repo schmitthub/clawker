@@ -241,7 +241,7 @@ func newTestService(t *testing.T, d Deps) *Service {
 	svc := &Service{
 		deps:    d,
 		cache:   cache,
-		revDNS:  NewReverseDNSMapWithWalk(func(func(uint32)) error { return nil }, d.Log),
+		revDNS:  NewReverseDNSMapWithWalk(func(func(uint32)) error { return nil }, nil, d.Log),
 		metrics: NewMetrics(),
 		sink:    nopSink{},
 		queue:   make(chan []byte, d.QueueBuffer),

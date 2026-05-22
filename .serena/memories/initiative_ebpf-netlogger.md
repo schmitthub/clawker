@@ -13,7 +13,7 @@
 | Task 2: netlogger subpackage scaffold — ringbuf reader, LabelCache, reverse-DNS, processor (no OTLP) | `complete` | claude-opus-4-7 |
 | Task 3: Generic OTel client in `internal/controlplane/` + netlogger OTel sink + CP main wiring + drain hook | `complete` | claude-opus-4-7 |
 | Task 4: docs + monitor-stack routing wiring | `complete` | claude-opus-4-7 |
-| Task 5: UAT + commit + push + PR open | `pending` | — |
+| Task 5: UAT + commit + push + PR open | `in_progress` (uncommitted; pre-UAT triage shipped) | claude-opus-4-7 |
 
 ## Key Learnings
 
@@ -61,6 +61,94 @@
 - **`docs/observability.mdx` — keep it user-facing, not a CLAUDE.md transplant.** First draft duplicated implementation detail from `netlogger/CLAUDE.md` (BPF token-bucket burst/refill numbers, BatchProcessor SDK terminology, PERCPU_ARRAY type). Trimmed on review. The Mintlify page should answer "what records will I see and how do I query them"; the internal mechanics belong in CLAUDE.md.
 - **`dst_host` is empty 100% of the time today, not "sometimes empty".** Drafted as "empty when cache miss" — wrong. Per `reverse_dns.go`, the userspace cache only stores hashes (the dnsbpf plugin doesn't write strings yet), so Lookup always returns "". Comment-analyzer flagged the imprecision. Worth tracking — when the follow-up plugin lands, the doc row + the "Current Limitations" callout both need updating in lockstep.
 - **`otel-config.yaml.tmpl` template comments duplicate prose, drift independently.** Two in-template comments said "only cp/envoy/coredns hold infra-intermediate leaves today". The same sentiment was updated in `internal/monitor/CLAUDE.md` and `.claude/rules/monitoring.md` but the template comments drifted. They're easy to miss because they look like static config, not documentation. Grep for the literal text when updating routing-related claims.
+
+### Task 5 (2026-05-22)
+
+- **Cilium AND Tetragon both consume rate-limit tokens unconditionally on ringbuf-reserve failure.** Verified via deepwiki against `bpf/lib/ratelimit.h` (Cilium `ratelimit_check_and_take`) and `bpf/process/bpf_rate.h` + `bpf/lib/process.h` (Tetragon `cgroup_rate` + `event_output_metric`). Neither has anything resembling a refund helper. The Task-1 `ratelimit_refund` was industry-divergent and architecturally unsound: a non-atomic write under exactly the contention causing the failure, with the perverse incentive of nudging the bucket to retry harder when the correct response is to back off. Yanked.
+
+- **`events_drops` is PERCPU and read-side stays in BPF subsystem land, NOT netlogger.** User reframed mid-task: netlogger is a security-telemetry pipeline; drop counters are operator/SRE diagnostics. Don't mix them. The BPF write path is correct (verified post-yank: `__sync_fetch_and_add` on `events_drops[0]` after `bpf_ringbuf_reserve == NULL`). Userspace `Manager.EventsDrops()` accessor exists. No userspace reader is wired today and that's INTENTIONAL — when the /metrics scrape follow-up lands, it'll surface drop counters from the firewall/eBPF subsystem, not from netlogger's OTel stream. Saved as `feedback_netlogger_security_only` in MEMORY.md.
+
+- **clawker's FNV-1a 32-bit domain hash is divergent from Cilium AND Tetragon, but the fix is out of scope here.** Cilium uses userspace-allocated sequential u32 identities (`pkg/fqdn/namemanager` + IPCache) — no collision possible. Tetragon doesn't do per-domain enforcement in BPF at all. clawker's FNV approach has a theoretical collision floor that's harmless for today's deployment shape (single-digit-to-hundreds of firewall-rule domains) but a real architectural debt. Filed as `initiative_route_identity_allocator` Serena memory + a one-liner in `.serena/memories/bug-tracker.md`. The CP-side reverse map shipped here inherits the same collision floor as the existing `route_map` — no new risk introduced, just unfixed.
+
+- **dst_host fix via control-plane reverse map (not via a new BPF map).** The set of domains dnsbpf will ever resolve is bounded and knowable at the control plane: every allow-rule with a domain destination + the internal hostnames CoreDNS serves out of band (`docker.internal` + `consts.MonitoringServiceHostnames`). `DomainHash` is deterministic. So netlogger can build `hash → domain` directly from firewall config — no BPF map round-trip needed. The data-plane alternative (extend dnsbpf to write a `domain_strings` BPF map) is architecturally purer but adds a pinned BPF map, dnsbpf changes, and ~32KB pinned with no per-record win. CP-side won on size / simplicity / "this PR" framing.
+
+- **`firewall.Handler.AllResolvableDomains` must mirror `GenerateCorefile`'s passes exactly.** The two surfaces have to produce identical sets — if `GenerateCorefile` emits a zone, dnsbpf hashes it; netlogger's reverse map must contain the matching hash → domain entry, or `dst_host` will be empty for that zone's records. The new method shares the normalize / skip-IP-or-CIDR / skip-deny / dedup-against-reserved-internal passes. Tests pin the contract against the Corefile zone set.
+
+- **`domain_hash` dropped from `otelSink.Emit`.** Strict directive ("emit ALL Event fields") was reframed once netlogger was clarified as security-telemetry-only. SOC analysts query on `dst_host`; a bare 32-bit hash without the string is unactionable noise. The hash stays on `Event` so `ReverseDNSMap.Lookup` can translate it to `dst_host`, but it doesn't ride the wire.
+
+- **netlogger walks `dns_cache` on every refresh tick as a triage signal, not as the source of truth.** The control-plane DomainSource is the source. The walk detects hashes present in `dns_cache` that aren't in DomainSource — races (rule remove between dnsbpf write and netlogger refresh), dnsbpf stale entries, hash collisions against an unknown domain. Each tick logs `event=netlogger_reverse_dns_unattributed` with the unattributed count if non-zero. Triage signal in the structured CP log; no impact on per-record `dst_host` attribution.
+
+### Task 5 — pre-UAT triage (2026-05-22)
+
+**Status:** Tasks 1–4 are committed to `feat/ebpf-logging` (4 commits, pushed to origin). Two design corrections landed as UNCOMMITTED local edits before UAT runs — they are sitting on the worktree pending the user's UAT pass. No PR opened yet.
+
+**Correction 1 — Yanked `ratelimit_refund` from `bpf/common.h`.** Task 1 had landed a CAS-bounded helper that returned a consumed token to the per-cgroup bucket when `bpf_ringbuf_reserve` failed (kernel-fault drop). User asked whether Cilium / Tetragon do this. Verified via deepwiki against `bpf/lib/ratelimit.h` (Cilium) and `bpf/process/bpf_rate.h` + `bpf/process/types/basic.h` + `bpf/lib/process.h` (Tetragon): NEITHER refunds. Both consume the token unconditionally and bump a drop counter; a failed reserve is the signal to back off, not retry harder. Refund creates a non-atomic write under exactly the contention causing the failure. Yanked the helper + the call site in `submit_event`. Two clean counters remain: `events_drops` (PERCPU, kernel-fault) and `ratelimit_drops` (HASH per cgroup, intentional throttle). Cleaner architecturally and matches industry convention.
+
+**Correction 2 — `dst_host` populated via CP-side reverse map (no new BPF map).** Tasks 2-4 shipped with the documented limitation that `ReverseDNSMap.Lookup` always returned `""` because dnsbpf wrote only the FNV hash into `dns_cache`. User pushed back: hash-only attribution is unactionable for SOC analysts. Resolved by giving netlogger a `Deps.Domains DomainSource` closure wired in CP main to `firewall.Handler.AllResolvableDomains` (new public accessor — enumerates allow-rule domains + internal hosts with the same normalize/filter passes `GenerateCorefile` uses, so the two sources agree by construction). `ReverseDNSMap` rebuilds `hash → domain` every refresh tick from the source. Walk over `dns_cache` stays as a triage signal (emits `event=netlogger_reverse_dns_unattributed` when BPF holds hashes the source can't account for). `domain_hash` dropped from `otelSink.Emit` — SOC queries on `dst_host`, and a bare hash is noise without the string.
+
+**Architecture observation captured for follow-up: clawker's FNV-1a 32-bit domain hash is divergent from both Cilium and Tetragon.** Cilium uses userspace-allocated sequential u32 identities (`pkg/fqdn/namemanager` + IPCache); Tetragon doesn't do per-domain enforcement in BPF at all. clawker is doing the Cilium pattern with a worse identity allocator (FNV has theoretical collisions; sequential allocation does not). Out of scope for this PR — filed as `initiative_route_identity_allocator` Serena memory AND a one-liner in `.serena/memories/bug-tracker.md`. The CP-side reverse map inherits the same collision floor as today's `route_map`; not new risk, just unfixed for now.
+
+**Strict-directive reinterpretation:** User clarified mid-task that netlogger is a SECURITY-TELEMETRY pipeline, not an operator-diagnostic surface. Drop counters (`events_drops`, `ratelimit_drops`) are eBPF subsystem health — they belong on `/metrics` or break-glass CLI, NEVER on the netlogger OTel stream. Saved as `feedback_netlogger_security_only` in MEMORY.md so future agents don't propose adding kernel-drop watchers / log emit goroutines to netlogger. Strict "emit ALL Event fields" directive now applies to per-decision security records only — `domain_hash` was correctly dropped because it's a BPF-side identity handle that's unactionable for SOC at the OTel layer once `dst_host` resolves.
+
+**Files modified on worktree (uncommitted at handoff):**
+
+```
+M  cmd/clawker-cp/main.go                                      (Domains wire-up)
+M  docs/observability.mdx                                      (Domain Resolution section + attribute table + Current Limitations)
+M  internal/controlplane/firewall/ebpf/CLAUDE.md               (ratelimit_state write-source updated)
+M  internal/controlplane/firewall/ebpf/bpf/common.h            (ratelimit_refund deleted, submit_event simplified)
+M  internal/controlplane/firewall/ebpf/clawker_*_bpfel.{go,o}  (regen)
+M  internal/controlplane/firewall/ebpf/netlogger/CLAUDE.md     (ReverseDNSMap section + attribute table)
+M  internal/controlplane/firewall/ebpf/netlogger/netlogger.go  (Deps.Domains)
+M  internal/controlplane/firewall/ebpf/netlogger/otel_sink.go  (domain_hash removed from emit)
+M  internal/controlplane/firewall/ebpf/netlogger/reverse_dns.go (control-plane reverse map)
+M  internal/controlplane/firewall/ebpf/netlogger/*_test.go     (signatures, assertions, new tests)
+M  internal/controlplane/firewall/handler.go                   (AllResolvableDomains)
+M  internal/controlplane/firewall/handler_test.go              (two new tests pinning the accessor)
+M  .serena/memories/bug-tracker.md                             (route-identity-allocator follow-up)
+?? .serena/memories/initiative_route_identity_allocator.md     (new follow-up initiative)
+```
+
+`go build ./...`, `go vet ./...`, and `go test ./internal/controlplane/...` all green. `make ebpf` regenerated bindings cleanly.
+
+**What the next agent must do:**
+
+1. **Read this memory top-to-bottom**, including Tasks 1–4 sections — they describe what already shipped and committed.
+2. **Anchor on git state:** `git log --oneline -15`, `git status --short`, `git diff --stat`. Tasks 1–4 are commits `e59730ad..093c6ce8`. Task 5 corrections are sitting unstaged with no commit yet.
+3. **Wait for the user to run UAT.** Suggested probes:
+   - Allowed domain: `clawker run -it --agent dev @` + `curl https://github.com` → OSD `clawker-netlogger` index should show `verdict=allowed`, `dst_host=github.com`, NO `domain_hash` attribute.
+   - Wildcard: `.example.com` allow rule + subdomain resolution → `dst_host=example.com` (normalized).
+   - Direct-IP: `curl https://1.1.1.1` → `dst_host=""`, `verdict=denied`.
+   - Internal host: `curl http://host.docker.internal:...` → `dst_host=docker.internal`.
+   - Bypass: `clawker firewall bypass 30s --agent dev` + curl → `verdict=bypassed`, `dst_host` populated.
+4. **Triage findings together with the user.** When UAT passes:
+   - Squash Task 5 corrections into ONE commit. Recommended message:
+     ```
+     refactor(netlogger): match Cilium ratelimit convention + populate dst_host
+     
+     - yank ratelimit_refund (industry-divergent — Cilium bpf/lib/ratelimit.h
+       and Tetragon bpf/process/bpf_rate.h both consume tokens unconditionally
+       on bpf_ringbuf_reserve failure; failed reserve is back-off signal,
+       not retry-harder). events_drops PERCPU + ratelimit_drops HASH remain
+       as two independent drop dimensions.
+     - populate dst_host via CP-side reverse map (no new BPF map). netlogger
+       Deps.Domains closure over firewall.Handler.AllResolvableDomains;
+       ReverseDNSMap rebuilds hash→domain from the firewall rule set on
+       each refresh tick. Walk over dns_cache stays as the unattributed-
+       hash triage signal.
+     - drop domain_hash from otelSink emission. SOC queries on dst_host;
+       bare hash is unactionable noise. Strict directive ("emit ALL Event
+       fields") narrowed to security-relevant fields per security-only
+       reframing.
+     - file route-identity-allocator follow-up (initiative_route_identity_
+       allocator) for the proper Cilium-pattern fix: replace FNV with
+       userspace-allocated sequential identities in dns_cache + route_map.
+     ```
+   - Push: `git push origin feat/ebpf-logging`.
+   - Open PR with the body template from "Task 5" section below (no behavior change to the template — just add a "Pre-UAT corrections" paragraph noting refund yank + dst_host).
+5. **Mark Task 5 → `complete`** and hand off the PR URL.
+
+**Do NOT begin any work in `initiative_route_identity_allocator` from this conversation.** That is a separate initiative requiring its own branch and migration story for pinned-map shape changes.
 
 ---
 

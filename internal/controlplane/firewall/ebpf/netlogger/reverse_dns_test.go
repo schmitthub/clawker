@@ -6,47 +6,38 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	clawkerebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
 )
 
 func TestReverseDNSMap_LookupBeforeRefreshReturnsEmpty(t *testing.T) {
-	m := NewReverseDNSMapWithWalk(func(func(uint32)) error { return nil }, nil)
+	m := NewReverseDNSMapWithWalk(func(func(uint32)) error { return nil }, nil, nil)
 	if got := m.Lookup(0xdeadbeef); got != "" {
 		t.Fatalf("Lookup with no refresh = %q; want empty", got)
 	}
 }
 
 func TestReverseDNSMap_LookupZeroHashIsAlwaysEmpty(t *testing.T) {
-	m := NewReverseDNSMapWithWalk(func(visit func(uint32)) error {
-		// Adversarial: try to write the zero hash. refresh must
-		// drop it; this guard is what keeps direct-IP connects
-		// (DomainHash=0 on the BPF side) from accidentally hitting
-		// a stale entry.
-		visit(0)
-		return nil
-	}, nil)
+	m := NewReverseDNSMapWithWalk(
+		func(func(uint32)) error { return nil },
+		func() []string { return []string{"example.com"} },
+		nil,
+	)
 	m.refresh()
 	if got := m.Lookup(0); got != "" {
 		t.Fatalf("Lookup(0) = %q; want empty", got)
 	}
 }
 
-func TestReverseDNSMap_RefreshObservesHashes(t *testing.T) {
-	m := NewReverseDNSMapWithWalk(func(visit func(uint32)) error {
-		visit(1)
-		visit(2)
-		visit(3)
-		return nil
-	}, nil)
+func TestReverseDNSMap_RefreshPopulatesFromDomainSource(t *testing.T) {
+	domains := func() []string { return []string{"github.com", "example.com"} }
+	m := NewReverseDNSMapWithWalk(func(func(uint32)) error { return nil }, domains, nil)
 	m.refresh()
-	// v1 limitation: Lookup returns "" because there is no domain
-	// string source yet. But the hashes are recorded in byHash.
-	// Assert via the private field — that's the contract the
-	// follow-up branch builds on.
-	if _, ok := m.byHash[1]; !ok {
-		t.Fatalf("expected hash 1 to be observed")
+	if got := m.Lookup(clawkerebpf.DomainHash("github.com")); got != "github.com" {
+		t.Fatalf("Lookup(hash(github.com)) = %q; want github.com", got)
 	}
-	if got := m.Lookup(1); got != "" {
-		t.Fatalf("Lookup(1) = %q; v1 must return empty until follow-up populates strings", got)
+	if got := m.Lookup(clawkerebpf.DomainHash("example.com")); got != "example.com" {
+		t.Fatalf("Lookup(hash(example.com)) = %q; want example.com", got)
 	}
 }
 
@@ -54,51 +45,60 @@ func TestReverseDNSMap_RefreshIsAtomicSwap(t *testing.T) {
 	// Two refresh passes — the second sees a different set. The map
 	// must reflect ONLY the latest set; refresh replaces, not merges.
 	round := atomic.Int32{}
-	m := NewReverseDNSMapWithWalk(func(visit func(uint32)) error {
+	domains := func() []string {
 		if round.Add(1) == 1 {
-			visit(1)
-			visit(2)
-		} else {
-			visit(3)
+			return []string{"alpha.example", "beta.example"}
 		}
-		return nil
-	}, nil)
-	m.refresh()
-	m.refresh()
-	if _, ok := m.byHash[1]; ok {
-		t.Fatalf("byHash[1] should have been dropped by the second refresh")
+		return []string{"gamma.example"}
 	}
-	if _, ok := m.byHash[3]; !ok {
-		t.Fatalf("byHash[3] should have been added by the second refresh")
+	m := NewReverseDNSMapWithWalk(func(func(uint32)) error { return nil }, domains, nil)
+	m.refresh()
+	m.refresh()
+	if got := m.Lookup(clawkerebpf.DomainHash("alpha.example")); got != "" {
+		t.Fatalf("alpha.example should have been dropped by the second refresh; got %q", got)
+	}
+	if got := m.Lookup(clawkerebpf.DomainHash("gamma.example")); got != "gamma.example" {
+		t.Fatalf("gamma.example should be present after the second refresh; got %q", got)
 	}
 }
 
-func TestReverseDNSMap_RefreshErrorKeepsLastGoodState(t *testing.T) {
-	// First refresh succeeds; second errors. The map must keep the
-	// previously observed set so an iteration glitch doesn't blank
-	// downstream domain attribution.
-	round := atomic.Int32{}
+func TestReverseDNSMap_WalkErrorDoesNotBlankAttribution(t *testing.T) {
+	// DomainSource is the source of truth for byHash; a dns_cache
+	// iterate failure must not wipe attribution. The walk loop runs
+	// only for the unattributed-hash diagnostic.
+	domains := func() []string { return []string{"github.com"} }
+	m := NewReverseDNSMapWithWalk(
+		func(func(uint32)) error { return errors.New("simulated dns_cache iterate failure") },
+		domains,
+		nil,
+	)
+	m.refresh()
+	if got := m.Lookup(clawkerebpf.DomainHash("github.com")); got != "github.com" {
+		t.Fatalf("walk error wiped DomainSource attribution; got %q", got)
+	}
+}
+
+func TestReverseDNSMap_NilDomainSourceLeavesByHashEmpty(t *testing.T) {
+	// Degraded mode: no DomainSource wired. refresh runs cleanly,
+	// every Lookup returns "" — same shape as boot-time before the
+	// CP main wiring lands.
 	m := NewReverseDNSMapWithWalk(func(visit func(uint32)) error {
-		if round.Add(1) == 1 {
-			visit(42)
-			return nil
-		}
-		return errors.New("simulated dns_cache iterate failure")
-	}, nil)
+		visit(0xdeadbeef)
+		return nil
+	}, nil, nil)
 	m.refresh()
-	m.refresh()
-	if _, ok := m.byHash[42]; !ok {
-		t.Fatalf("refresh error wiped the previous map; want last-good state retained")
+	if got := m.Lookup(0xdeadbeef); got != "" {
+		t.Fatalf("Lookup with nil DomainSource = %q; want empty", got)
 	}
 }
 
 func TestReverseDNSMap_Run_PopulatesImmediatelyAndOnTick(t *testing.T) {
 	calls := atomic.Int32{}
-	m := NewReverseDNSMapWithWalk(func(visit func(uint32)) error {
+	domains := func() []string {
 		calls.Add(1)
-		visit(uint32(calls.Load()))
-		return nil
-	}, nil)
+		return []string{"github.com"}
+	}
+	m := NewReverseDNSMapWithWalk(func(func(uint32)) error { return nil }, domains, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan struct{})
@@ -106,7 +106,7 @@ func TestReverseDNSMap_Run_PopulatesImmediatelyAndOnTick(t *testing.T) {
 		m.Run(ctx, 25*time.Millisecond)
 		close(done)
 	}()
-	// Wait long enough for ≥2 ticks beyond the immediate refresh.
+	// Wait long enough for ≥2 calls beyond the immediate refresh.
 	deadline := time.Now().Add(500 * time.Millisecond)
 	for time.Now().Before(deadline) {
 		if calls.Load() >= 2 {
@@ -121,6 +121,6 @@ func TestReverseDNSMap_Run_PopulatesImmediatelyAndOnTick(t *testing.T) {
 		t.Fatalf("Run did not exit after ctx cancel")
 	}
 	if got := calls.Load(); got < 2 {
-		t.Fatalf("expected ≥2 refresh calls (immediate + tick); got %d", got)
+		t.Fatalf("expected ≥2 DomainSource calls (immediate + tick); got %d", got)
 	}
 }

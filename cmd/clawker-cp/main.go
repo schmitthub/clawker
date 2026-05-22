@@ -842,6 +842,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 				Bus:                bus,
 				Docker:             dockerCli.APIClient,
 				Cfg:                cfg,
+				Domains:            handler.AllResolvableDomains,
 				OtelLoggerProvider: netloggerProvider,
 				Log:                log.With("component", "netlogger"),
 			})

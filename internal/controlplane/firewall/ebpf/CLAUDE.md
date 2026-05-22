@@ -39,7 +39,7 @@ All maps live at `PinPath = /sys/fs/bpf/clawker/`:
 | `metrics_map` | `{cgroup_id, domain_hash, dst_port, action}` | counters | BPF fast path | userspace `dump` (break-glass) |
 | `events_ringbuf` | — (BPF_MAP_TYPE_RINGBUF) | `egress_event` | BPF `submit_event` | userspace `netlogger` reader |
 | `events_drops` | u32 (always 0) | u64 counter (PERCPU_ARRAY) | BPF `submit_event` on `bpf_ringbuf_reserve == NULL` | userspace `netlogger` periodic gauge |
-| `ratelimit_state` | cgroup ID (u64) | `ratelimit_state_val` {last_topup_ns, tokens} | BPF `ratelimit_check_and_take` + `ratelimit_refund`; drained by `FlushAll` | BPF fast path |
+| `ratelimit_state` | cgroup ID (u64) | `ratelimit_state_val` {last_topup_ns, tokens} | BPF `ratelimit_check_and_take`; drained by `FlushAll` | BPF fast path |
 | `ratelimit_drops` | cgroup ID (u64) | u64 counter | BPF `ratelimit_check_and_take` on empty bucket; drained by `FlushAll` | userspace `netlogger` per-cgroup attribution |
 
 `route_map` is **global** — container enforcement is gated by presence in `container_map`, so a single `SyncRoutes` call updates routing for every enforced container atomically.

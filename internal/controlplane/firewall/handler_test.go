@@ -1144,6 +1144,70 @@ func TestHandler_FirewallRemove_PreservesRulesStore(t *testing.T) {
 	assert.Equal(t, "keep.example.com", listResp.GetRules()[0].GetDst())
 }
 
+// TestHandler_AllResolvableDomains_MatchesCorefileZoneSet asserts the
+// netlogger-facing reverse-DNS source returns exactly the zone set
+// GenerateCorefile would build: internal hosts (docker.internal +
+// monitoring service hostnames) union with allow-rule destinations,
+// stripping IPs/CIDRs and deny rules, deduped against the reserved
+// internal set. The two sources must agree by construction so a
+// netlogger record's dst_host lookup matches the dnsbpf hash write.
+func TestHandler_AllResolvableDomains_MatchesCorefileZoneSet(t *testing.T) {
+	mock := noopMock()
+	h, _ := ruleStoreHandler(t, mock)
+
+	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
+		Rules: []*adminv1.EgressRule{
+			{Dst: "github.com", Proto: "tls", Port: 443, Action: "allow"},
+			{Dst: ".example.com", Proto: "tls", Port: 443, Action: "allow"},    // wildcard, normalized
+			{Dst: "203.0.113.5", Proto: "tcp", Port: 22, Action: "allow"},      // IP, skipped
+			{Dst: "blocked.test", Proto: "tls", Port: 443, Action: "deny"},     // deny, skipped
+			{Dst: "docker.internal", Proto: "tls", Port: 443, Action: "allow"}, // reserved, dedup
+		},
+	})
+	require.NoError(t, err)
+
+	got := h.AllResolvableDomains()
+
+	// Must include the two real allow-rule domains AND every internal host.
+	want := map[string]bool{
+		"github.com":      true,
+		"example.com":     true, // ".example.com" normalized
+		"docker.internal": true,
+	}
+	for _, h := range consts.MonitoringServiceHostnames {
+		want[h] = true
+	}
+	gotSet := make(map[string]bool, len(got))
+	for _, d := range got {
+		gotSet[d] = true
+	}
+	for d := range want {
+		assert.Truef(t, gotSet[d], "expected %q in AllResolvableDomains; got %v", d, got)
+	}
+	// Must NOT include IP / CIDR / deny destinations.
+	assert.False(t, gotSet["203.0.113.5"], "IP destination must be filtered")
+	assert.False(t, gotSet["blocked.test"], "deny rule must be filtered")
+}
+
+func TestHandler_AllResolvableDomains_NoStoreReturnsInternalHostsOnly(t *testing.T) {
+	// Handler built without a rules store (newTestHandler) returns just
+	// the internal hosts — no rules to enumerate, but the netlogger
+	// reverse map still needs to attribute internal-zone resolutions.
+	mock := noopMock()
+	h := newTestHandler(t, mock, nil)
+
+	got := h.AllResolvableDomains()
+
+	gotSet := make(map[string]bool, len(got))
+	for _, d := range got {
+		gotSet[d] = true
+	}
+	assert.Truef(t, gotSet["docker.internal"], "internal hosts must be present even without a store; got %v", got)
+	for _, host := range consts.MonitoringServiceHostnames {
+		assert.Truef(t, gotSet[host], "monitoring hostname %q missing; got %v", host, got)
+	}
+}
+
 // TestHandler_RemoveRule_Success covers the happy path: rule matches
 // exactly, store is mutated, reconcile fires.
 func TestHandler_RemoveRule_Success(t *testing.T) {

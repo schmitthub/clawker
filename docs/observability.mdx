@@ -34,8 +34,7 @@ Attributes carried on every record (empty/zero when not applicable — fields ar
 | `l4_proto_code` | integer | Raw `SOCK_*` constant in case operators need to filter on a code that doesn't have a string form yet |
 | `ipv6` | boolean | Native IPv6 (not IPv4-mapped) — denied by the firewall today, recorded for completeness |
 | `ipv4_mapped` | boolean | `::ffff:x.x.x.x` IPv4-mapped IPv6 address (the dual-stack default for most clients) |
-| `dst_host` | keyword | Resolved domain string. Always empty today — the userspace reverse cache only stores hashes (see [Domain Resolution Limitation](#domain-resolution-limitation)) |
-| `domain_hash` | long | FNV-1a hash of the destination domain. Always present when DNS resolved the IP — the reverse-mapping to the original string is best-effort |
+| `dst_host` | keyword | Resolved domain string. Populated for every record whose destination IP was resolved via the managed CoreDNS under a firewall-allowed zone. Empty for direct-IP connects (see [Domain Resolution](#domain-resolution)) |
 
 The full BPF event struct is fixed-size with explicit padding (32 bytes; layout asserted at compile time). Operators filter and aggregate at dashboard/query time — the emitter never decides which fields are "interesting" for a given verdict.
 
@@ -75,9 +74,16 @@ For `verdict=allowed` records, the matching Envoy access log carries `bytes_sent
 
 Sock_ops-based per-connection byte tracking inside BPF is not on this stream's roadmap. It would double the BPF surface area, leave UDP/connectionless flows without an analogous signal, and overlap with Envoy's access-log emission for the cases where it matters.
 
-## Domain Resolution Limitation
+## Domain Resolution
 
-The BPF `dns_cache` map is keyed by destination IP and stores `{domain_hash, expire_ts}` — the domain string itself lives in CoreDNS process memory and is not currently exported to BPF. netlogger's reverse-DNS cache only has the hashes that the dnsbpf plugin has written; it cannot recover the original string today. Operators filter on `domain_hash` until a follow-up branch adds a `hash → string` population path.
+`dst_host` is populated for every record whose destination IP came from a dnsbpf-resolved A record under a firewall-allowed zone. The translation is control-plane-driven: the BPF `dns_cache` map stores `{domain_hash, expire_ts}` keyed by IPv4, and netlogger's reverse-DNS map maintains the inverse `hash → domain` table by hashing the live set of firewall rule destinations + internal hosts (`docker.internal` + monitoring service hostnames) on a 30-second refresh tick. The hash function (`internal/controlplane/firewall/ebpf.DomainHash` — FNV-1a) is the same one dnsbpf computes when it writes `dns_cache`, so the two sides agree on the identity by construction.
+
+`dst_host` will be empty when:
+- The destination IP was reached without DNS resolution (direct-IP `connect`).
+- The IP was resolved through a path other than the managed CoreDNS (e.g., `/etc/hosts` entry inside the agent container).
+- A rule was removed and netlogger hasn't yet refreshed (worst case: 30 seconds of stale records on the previously-allowed domain).
+
+The hash space is 32-bit FNV-1a, which carries a theoretical collision floor. The route-identity-allocator follow-up (see the bug tracker entry by that name) replaces the hash with userspace-allocated sequential identities, matching Cilium's `pkg/fqdn/namemanager` pattern. For today's deployment shape (single-digit-to-hundreds of firewall-rule domains), the floor is operationally irrelevant.
 
 ## Reliability
 
@@ -109,5 +115,5 @@ To point netlogger at a custom collector (for a centralized SIEM, or to bypass t
 
 ## Current Limitations
 
-- **No domain string resolution** — `dst_host` is always empty today. The reverse cache stores hashes only; the dnsbpf plugin does not yet write the original domain string to a userspace-readable map.
-- **Prom counters not scraped** — the `clawker_netlogger_*` counters are declared but not yet wired into the CP `/metrics` endpoint. Today the structured log surface is the operational signal for throughput, queue drops, kernel drops, ratelimit drops, parse errors, and OTLP export success/error.
+- **FNV-1a 32-bit identity** — the BPF data path uses an FNV-1a hash of the lowercased domain as a fixed-width identity in `dns_cache` and `route_map`. Collision-vulnerable in theory; harmless in practice for today's rule-set sizes. The route-identity-allocator follow-up replaces this with userspace-allocated sequential u32 identities (Cilium pattern). See `initiative_route_identity_allocator` for scope.
+- **Prom counters not scraped** — the `clawker_netlogger_*` counters are declared but not yet wired into a `/metrics` endpoint. Today the structured CP log surface is the operational signal for throughput, queue drops, parse errors, and OTLP export success/error. Kernel-side drop counters (`events_drops`, `ratelimit_drops`) live on the firewall/eBPF subsystem surface — they are subsystem health, not security telemetry, and intentionally don't ride on the netlogger OTel stream.

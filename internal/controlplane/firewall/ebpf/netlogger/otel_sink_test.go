@@ -141,7 +141,6 @@ func TestOtelSink_EmitsAllAttributes(t *testing.T) {
 		{"ipv6", false},
 		{"ipv4_mapped", false},
 		{"dst_host", "example.com"},
-		{"domain_hash", int64(0xdead)},
 	}
 	for _, c := range checks {
 		v, ok := attrs[c.key]
@@ -186,11 +185,13 @@ func TestOtelSink_EmitsEmptyFieldsOnZeroEvent(t *testing.T) {
 		"source", "verdict", "container_id", "agent", "project",
 		"cgroup_id", "bpf_ts_ns", "dst_ip", "dst_port", "l4_proto",
 		"l4_proto_code", "ipv6", "ipv4_mapped", "dst_host",
-		"domain_hash",
 	} {
 		if _, ok := attrs[key]; !ok {
 			t.Errorf("attribute %q missing on zero-Event emit", key)
 		}
+	}
+	if _, ok := attrs["domain_hash"]; ok {
+		t.Errorf("domain_hash should NOT be emitted; SOC queries on dst_host")
 	}
 	if got := attrs["verdict"].AsString(); got != "bypassed" {
 		t.Errorf("verdict = %q; want bypassed", got)
@@ -225,7 +226,7 @@ func TestPipeline_OtelSinkIntegration(t *testing.T) {
 	p := &processor{
 		queue:   queue,
 		cache:   cache,
-		revDNS:  NewReverseDNSMapWithWalk(func(func(uint32)) error { return nil }, nil),
+		revDNS:  NewReverseDNSMapWithWalk(func(func(uint32)) error { return nil }, nil, nil),
 		sink:    sink,
 		metrics: NewMetrics(),
 		log:     logger.Nop(),

@@ -727,6 +727,53 @@ func (h *Handler) FirewallListRules(ctx context.Context, _ *adminv1.FirewallList
 	return &adminv1.FirewallListRulesResult{Rules: ConfigRulesToProto(r.Rules)}, nil
 }
 
+// AllResolvableDomains returns every domain name CoreDNS will serve a
+// zone for under the current firewall rule set — the union of allow-rule
+// destinations (after normalization, skipping IP/CIDR destinations and
+// deny rules) and the internal hosts CoreDNS forwards out of band
+// (`docker.internal` + the monitoring service hostnames). The set is
+// constructed with the same passes [GenerateCorefile] uses, so the
+// returned slice and the zones in the active Corefile are identical by
+// construction. Order is unspecified.
+//
+// netlogger's reverse-DNS map calls this on its refresh timer to
+// rebuild the `domain_hash → domain` table dnsbpf populates as it
+// answers queries. Reads bypass the action queue: an eventually
+// consistent view (lagging by at most one refresh interval) is fine
+// for attribution on security telemetry; queue contention would buy
+// nothing observable.
+func (h *Handler) AllResolvableDomains() []string {
+	internalHosts := append([]string{"docker.internal"}, consts.MonitoringServiceHostnames...)
+	reserved := make(map[string]bool, len(internalHosts))
+	for _, host := range internalHosts {
+		reserved[host] = true
+	}
+
+	out := make([]string, 0, len(internalHosts))
+	out = append(out, internalHosts...)
+
+	if h.store == nil {
+		return out
+	}
+	rules, _ := NormalizeAndDedup(h.store.Read().Rules)
+	seen := make(map[string]bool, len(rules))
+	for _, host := range internalHosts {
+		seen[host] = true
+	}
+	for _, r := range rules {
+		if !isAllowDomain(r) {
+			continue
+		}
+		domain := normalizeDomain(r.Dst)
+		if reserved[domain] || seen[domain] {
+			continue
+		}
+		seen[domain] = true
+		out = append(out, domain)
+	}
+	return out
+}
+
 // FirewallReload regenerates configs and restarts Envoy+CoreDNS without
 // mutating the rule set. No pre-Submit work — it is a pure reconcile
 // signal against the current store contents.
