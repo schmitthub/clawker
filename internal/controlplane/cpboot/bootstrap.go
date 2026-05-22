@@ -415,6 +415,17 @@ func recoverFromNameConflict(ctx context.Context, dc *docker.Client, createErr e
 	desiredSHA, _ := cpBinaryHash()
 
 	if actualSHA == desiredSHA {
+		state := ""
+		if resp.State != nil {
+			state = string(resp.State.Status)
+		}
+		log.Info().
+			Str("event", "cp_recovery_adopt_sha_match").
+			Str("component", "cpboot.bootstrap").
+			Str("container_id", resp.ID).
+			Str("state", state).
+			Str("binary_sha256", actualSHA).
+			Msg("adopting concurrent peer cp container — binary SHA matches")
 		return adoptRecoveredCP(ctx, dc, resp)
 	}
 
