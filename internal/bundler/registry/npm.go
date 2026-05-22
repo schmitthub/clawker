@@ -104,8 +104,11 @@ func (c *NPMClient) fetchPackageInfo(ctx context.Context, pkg string) (*NPMPacka
 		}
 	}
 
-	// npm registry expects these headers
-	req.Header.Set("Accept", "application/json")
+	// Abbreviated metadata: drops per-version README/scripts/peerDeps blobs.
+	// Full metadata for @anthropic-ai/claude-code (148+ versions) blows past
+	// the 1 MiB read cap below, causing silent truncation → JSON parse error.
+	// Abbreviated keeps dist-tags + version keys (all this client needs).
+	req.Header.Set("Accept", "application/vnd.npm.install-v1+json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -127,10 +130,11 @@ func (c *NPMClient) fetchPackageInfo(ctx context.Context, pkg string) (*NPMPacka
 	}
 
 	// Buffer the body so a decode failure can surface the first bytes as a
-	// diagnostic snippet. Capped at 1 MiB so a misbehaving mirror can't
-	// blow memory while still leaving room for legitimate npm metadata
-	// (`dist-tags` + version list for popular packages exceeds 1 KiB).
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	// diagnostic snippet. Capped at 16 MiB so a misbehaving mirror can't
+	// blow memory while still leaving room for legitimate npm metadata —
+	// abbreviated format keeps popular packages well under 1 MiB, but
+	// long-lived packages with hundreds of versions can still grow large.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
 	if err != nil {
 		return nil, &NetworkError{
 			URL:     url,
