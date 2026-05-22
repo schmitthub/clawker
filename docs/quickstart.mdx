@@ -158,7 +158,7 @@ clawker volume ls                     # List volumes
 
 clawker stop --agent dev              # Stop a container
 clawker rm --agent dev                # Remove a container
-clawker volume prune                  # Clean up orphaned agent volumes (add --all to include monitoring, firewall, config, history)
+clawker volume prune                  # Remove unused agent volumes — config, history, workspace (add --all for infra volumes like monitoring stack)
 ```
 
 ### Firewall Management

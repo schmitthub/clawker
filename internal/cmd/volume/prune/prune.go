@@ -36,13 +36,18 @@ func NewCmdPrune(f *cmdutil.Factory, runF func(context.Context, *PruneOptions) e
 		Short: "Remove unused agent volumes",
 		Long: `Removes unused clawker-managed agent volumes (volumes labeled with purpose=agent).
 
-By default only agent volumes are pruned. Other clawker-managed volumes
-(monitoring, firewall, control plane, etc.) are preserved unless --all is set.
+By default all agent volumes are pruned — workspace, config, AND command
+history. Config and history volumes persist per-agent settings and shell
+history across sessions, so they will be lost if the matching agent container
+is not running at prune time. Infrastructure volumes (monitoring stack and
+any other clawker-managed volumes) are preserved unless --all is set.
+
+For targeted cleanup, prefer 'clawker volume list' + 'clawker volume remove'.
 Use with caution as this will permanently delete data.`,
-		Example: `  # Remove unused agent volumes
+		Example: `  # Remove unused agent volumes (workspace, config, history)
   clawker volume prune
 
-  # Remove all unused clawker-managed volumes (agent, monitoring, etc.)
+  # Also remove infrastructure volumes (monitoring stack, etc.)
   clawker volume prune --all
 
   # Remove without confirmation prompt

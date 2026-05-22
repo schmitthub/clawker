@@ -150,7 +150,7 @@ All resources are tagged with labels (`dev.clawker.project`, `dev.clawker.agent`
 
 ### Volume Lifecycle
 
-- **Config and history volumes** persist independently of containers. Removing a container does not remove its volumes. `clawker volume prune` only sweeps agent workspace volumes by default; use `clawker volume prune --all` to also clean up config, history, and other clawker-managed volumes (monitoring, firewall, control plane).
+- **Config and history volumes** persist independently of containers. Removing a container does not remove its volumes. `clawker volume prune` sweeps all unused agent volumes by default — config, history, and workspace. Use `clawker volume prune --all` to additionally clean up infrastructure volumes (monitoring stack and any other clawker-managed volumes). For targeted cleanup, prefer `clawker volume list` + `clawker volume remove`.
 - **Workspace volumes** (snapshot mode only) are ephemeral and tied to the container lifecycle.
 - **Volume cleanup on failure** — If container creation fails partway through, only volumes created during that attempt are cleaned up. Pre-existing volumes with your session data are never touched.
 
