@@ -6,7 +6,7 @@ Host-side orchestration for the clawker control plane container. Split out of `i
 
 1. Embed the `clawker-cp` + `ebpf-manager` Linux binaries into the clawker CLI release via `//go:embed`.
 2. Build the clawker-cp Docker image on demand from the embedded binaries (multi-stage recipe, pinned digests).
-3. Reconcile the `clawker-controlplane` container lifecycle — create, start, health-wait, stop/remove. Existing CP containers are adopted as-is; mount spec is not inspected.
+3. Reconcile the `clawker-controlplane` container lifecycle — create, start, health-wait, stop/remove. Drift gate: adopt when `consts.LabelCPBinarySHA` matches the host binary's embedded clawker-cp + ebpf-manager hash; force-remove + recreate on any mismatch (including legacy containers without the label). Cross-process race recovery (Docker 409) compares `consts.LabelImageCreated` timestamps — peer-newer adopts, ours-newer replaces, equal ties to peer (favors stability). Mount spec is not inspected: mounts derive from compile-time constants, so any drift implies a host rebuild caught by the SHA. Clawker is single-host by design; cross-machine concurrent bootstrap is not supported.
 4. Expose a `Manager` interface that wraps the bootstrap functions with lazy Factory closures so `f.ControlPlane()` can be consumed by CLI commands.
 
 ## Files
@@ -15,7 +15,7 @@ Host-side orchestration for the clawker control plane container. Split out of `i
 |------|---------|
 | `embed_cp.go` | `ClawkerCPBinary []byte` — `//go:embed assets/clawker-cp` |
 | `embed_ebpf.go` | `EBPFManagerBinary []byte` — `//go:embed assets/ebpf-manager` |
-| `bootstrap.go` | `EnsureRunning(ctx, EnsureOpts)` / `Stop(ctx, dc)` / `CPRunning(ctx, dc)` host-side lifecycle; `EnsureOpts` bundles `Docker` / `Config` / `Logger` / `HostDirs`; `cpImageDockerfile` multi-stage recipe; `ensureCPImage` / `cpBuildContext` image build; `waitForCPHealthz` + `CPHealthTimeoutError` |
+| `bootstrap.go` | `EnsureRunning(ctx, EnsureOpts)` / `Stop(ctx, dc)` / `CPRunning(ctx, dc)` host-side lifecycle; `EnsureOpts` bundles `Docker` / `Config` / `Logger` / `HostDirs`. Drift gate: `cpBinaryHash` + `consts.LabelCPBinarySHA`. Image build: `cpImageDockerfile` recipe with content-derived tag (`cpImageRef`) and OCI provenance LABELs; `ensureCPImage` / `cpBuildContext`; `pruneStaleCPImages` post-build cleanup. Concurrent-bootstrap recovery: `recoverFromNameConflict` resolves Docker 409 via SHA match → image-creation-time ordering (`cpImageCreatedAt`) → retry sentinel `errCPRecoveryRetry`. Healthz: `waitForCPHealthz` + `CPHealthTimeoutError`. |
 | `cp_container.go` | `BuildCPContainerConfig(cfg, CPContainerOpts)` → `*CPContainerConfig` — port bindings, mounts, labels, restart policy (INV-B1-005/006/008/009/015/017/018/020); defines `HostDirs{Config,Data,State,Cache}` + `Validate()`; injects the four `CLAWKER_HOST_*_DIR` env vars so the CP can compute sibling container bind `Mount.Source` values from host-FS paths |
 | `manager.go` | `Manager` interface (`EnsureRunning` / `Stop` / `IsRunning` / `ProbeHealthz`) + `NewManager(client, cfg, log)` constructor. Holds lazy Factory closures so callers who never touch the CP never resolve Docker/Config/Logger. |
 | `bootstrap_test.go` | Unit tests for `EnsureRunning` happy-path, idempotency, existing-stopped start-without-recreate, name-conflict recovery, healthz timeout, concurrent callers (INV-B2-006) |

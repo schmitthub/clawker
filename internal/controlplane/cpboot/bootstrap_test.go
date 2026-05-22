@@ -3,20 +3,25 @@ package cpboot
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	cerrdefs "github.com/containerd/errdefs"
+	dockerspec "github.com/moby/docker-image-spec/specs-go/v1"
 	"github.com/moby/moby/api/types/container"
+	dockerimage "github.com/moby/moby/api/types/image"
 	"github.com/moby/moby/api/types/network"
 	mobyclient "github.com/moby/moby/client"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -113,9 +118,9 @@ func newBootstrapFixture(t *testing.T) *bootstrapFixture {
 		}, nil
 	}
 	origImage, origHealthz := ensureCPImageFn, healthzFn
-	ensureCPImageFn = func(_ context.Context, _ *docker.Client, _ *logger.Logger) error {
+	ensureCPImageFn = func(_ context.Context, _ *docker.Client, _ *logger.Logger) (string, error) {
 		calls.image.Add(1)
-		return nil
+		return cpImageRef(), nil
 	}
 	healthzFn = func(_ context.Context, _ config.Config) error {
 		calls.healthz.Add(1)
@@ -144,7 +149,9 @@ func testHostDirs() HostDirs {
 }
 
 // testCPOpts returns CPContainerOpts wrapping testHostDirs.
-func testCPOpts() CPContainerOpts { return CPContainerOpts{HostDirs: testHostDirs()} }
+func testCPOpts() CPContainerOpts {
+	return CPContainerOpts{HostDirs: testHostDirs(), Image: cpImageRef()}
+}
 
 // hostDirs resolves the host-side XDG dirs from the isolated test env.
 // configmocks.NewIsolatedTestConfig sets CLAWKER_*_DIR env vars via
@@ -171,7 +178,42 @@ func (f *bootstrapFixture) ensureOpts() EnsureOpts {
 
 // cpOpts returns CPContainerOpts for the fixture.
 func (f *bootstrapFixture) cpOpts() CPContainerOpts {
-	return CPContainerOpts{HostDirs: f.hostDirs()}
+	return CPContainerOpts{HostDirs: f.hostDirs(), Image: cpImageRef()}
+}
+
+// managedImageInspect constructs an ImageInspectResult that whail's
+// label-jail accepts as managed, with the supplied Created timestamp
+// (as both the InspectResponse.Created field and the
+// org.opencontainers.image.created LABEL). Used by the
+// name-conflict-recovery tests that exercise the
+// timestamp-comparison branch of recoverFromNameConflict.
+func managedImageInspect(cfg config.Config, created string) mobyclient.ImageInspectResult {
+	return mobyclient.ImageInspectResult{
+		InspectResponse: dockerimage.InspectResponse{
+			Created: created,
+			Config: &dockerspec.DockerOCIImageConfig{
+				ImageConfig: ocispec.ImageConfig{
+					Labels: map[string]string{
+						cfg.LabelManaged():       cfg.ManagedLabelValue(),
+						consts.LabelImageCreated: created,
+					},
+				},
+			},
+		},
+	}
+}
+
+// cpLabels returns the minimum label set a freshly-built CP container
+// would carry — managed + the content-derived binary SHA. Tests stubbing
+// ContainerList put this on the fake summary so EnsureRunning's drift
+// compare matches and adopts the existing container instead of
+// force-removing it.
+func (f *bootstrapFixture) cpLabels() map[string]string {
+	full, _ := cpBinaryHash()
+	return map[string]string{
+		f.cfg.LabelManaged():    f.cfg.ManagedLabelValue(),
+		consts.LabelCPBinarySHA: full,
+	}
 }
 
 func TestEnsureRunning_HappyPath_CreatesContainer(t *testing.T) {
@@ -212,31 +254,20 @@ func TestEnsureRunning_ForwardsSecurityOptToHostConfig(t *testing.T) {
 func TestEnsureRunning_AlreadyRunning_IsNoOp(t *testing.T) {
 	f := newBootstrapFixture(t)
 
-	// Pretend the CP container is already running with the expected mount
-	// set — EnsureRunning should fast-path to healthz.
-	wantCfg, err := BuildCPContainerConfig(f.cfg, f.cpOpts())
-	require.NoError(t, err)
-
+	// SHA-match adoption reads labels straight off the list summary; no
+	// ContainerInspect call should happen, so leaving the default inspect
+	// stub in place (returns labels without consts.LabelCPBinarySHA) keeps
+	// the test honest — if a refactor moves the SHA read to Inspect, the
+	// adoption will silently break and create will fire.
 	f.fake.FakeAPI.ContainerListFn = func(_ context.Context, _ mobyclient.ContainerListOptions) (mobyclient.ContainerListResult, error) {
 		return mobyclient.ContainerListResult{Items: []container.Summary{
 			{
 				ID:     "cp-id",
 				Names:  []string{"/" + consts.ContainerCP},
 				State:  container.StateRunning,
-				Labels: map[string]string{f.cfg.LabelManaged(): f.cfg.ManagedLabelValue()},
+				Labels: f.cpLabels(),
 			},
 		}}, nil
-	}
-	f.fake.FakeAPI.ContainerInspectFn = func(_ context.Context, id string, _ mobyclient.ContainerInspectOptions) (mobyclient.ContainerInspectResult, error) {
-		return mobyclient.ContainerInspectResult{
-			Container: container.InspectResponse{
-				ID: id,
-				Config: &container.Config{
-					Labels: map[string]string{f.cfg.LabelManaged(): f.cfg.ManagedLabelValue()},
-				},
-				HostConfig: &container.HostConfig{Mounts: wantCfg.Mounts},
-			},
-		}, nil
 	}
 
 	require.NoError(t, EnsureRunning(t.Context(), f.ensureOpts()))
@@ -257,7 +288,7 @@ func TestEnsureRunning_ExistingStopped_StartsWithoutRecreate(t *testing.T) {
 				ID:     "cp-id",
 				Names:  []string{"/" + consts.ContainerCP},
 				State:  container.StateExited,
-				Labels: map[string]string{f.cfg.LabelManaged(): f.cfg.ManagedLabelValue()},
+				Labels: f.cpLabels(),
 			},
 		}}, nil
 	}
@@ -266,7 +297,7 @@ func TestEnsureRunning_ExistingStopped_StartsWithoutRecreate(t *testing.T) {
 			Container: container.InspectResponse{
 				ID: id,
 				Config: &container.Config{
-					Labels: map[string]string{f.cfg.LabelManaged(): f.cfg.ManagedLabelValue()},
+					Labels: f.cpLabels(),
 				},
 				HostConfig: &container.HostConfig{Mounts: wantCfg.Mounts},
 			},
@@ -276,7 +307,7 @@ func TestEnsureRunning_ExistingStopped_StartsWithoutRecreate(t *testing.T) {
 	require.NoError(t, EnsureRunning(t.Context(), f.ensureOpts()))
 	assert.Zero(t, f.calls.create.Load(), "no create when only stopped")
 	assert.Equal(t, int32(1), f.calls.start.Load(), "existing container started")
-	assert.Zero(t, f.calls.remove.Load(), "no remove when mounts match")
+	assert.Zero(t, f.calls.remove.Load(), "no remove when binary SHA matches")
 }
 
 func TestEnsureRunning_HealthzTimeout_SurfacesError(t *testing.T) {
@@ -324,7 +355,7 @@ func TestEnsureRunning_ConcurrentCallers_SingleCreate(t *testing.T) {
 				ID:     "cp-id",
 				Names:  []string{"/" + consts.ContainerCP},
 				State:  container.StateRunning,
-				Labels: map[string]string{f.cfg.LabelManaged(): f.cfg.ManagedLabelValue()},
+				Labels: f.cpLabels(),
 			},
 		}}, nil
 	}
@@ -380,9 +411,11 @@ func TestEnsureRunning_ConcurrentCallers_SingleCreate(t *testing.T) {
 }
 
 func TestEnsureRunning_NameConflictRecovery_NoSecondCreate(t *testing.T) {
-	// Cross-process race: another bootstrapper created the CP between
+	// Cross-process race with matching binary SHAs: another bootstrapper
+	// (running the same clawker build) created the CP between
 	// findCPContainer and ContainerCreate. Docker returns "already in
-	// use"; we recover by starting the existing container.
+	// use"; recovery sees the peer container carries our exact binary SHA
+	// and adopts it without a second create.
 	f := newBootstrapFixture(t)
 	wantCfg, err := BuildCPContainerConfig(f.cfg, f.cpOpts())
 	require.NoError(t, err)
@@ -399,7 +432,7 @@ func TestEnsureRunning_NameConflictRecovery_NoSecondCreate(t *testing.T) {
 				ID:     "conflict-id",
 				Names:  []string{"/" + consts.ContainerCP},
 				State:  container.StateExited,
-				Labels: map[string]string{f.cfg.LabelManaged(): f.cfg.ManagedLabelValue()},
+				Labels: f.cpLabels(),
 			},
 		}}, nil
 	}
@@ -413,10 +446,10 @@ func TestEnsureRunning_NameConflictRecovery_NoSecondCreate(t *testing.T) {
 	f.fake.FakeAPI.ContainerInspectFn = func(_ context.Context, id string, _ mobyclient.ContainerInspectOptions) (mobyclient.ContainerInspectResult, error) {
 		return mobyclient.ContainerInspectResult{
 			Container: container.InspectResponse{
-				ID: id,
-				Config: &container.Config{
-					Labels: map[string]string{f.cfg.LabelManaged(): f.cfg.ManagedLabelValue()},
-				},
+				ID:         id,
+				Image:      cpImageRef(),
+				State:      &container.State{Status: container.StateExited},
+				Config:     &container.Config{Labels: f.cpLabels()},
 				HostConfig: &container.HostConfig{Mounts: wantCfg.Mounts},
 			},
 		}, nil
@@ -426,7 +459,8 @@ func TestEnsureRunning_NameConflictRecovery_NoSecondCreate(t *testing.T) {
 	// The recovery path must NOT re-issue a second ContainerCreate after
 	// picking up the pre-existing container — that's the whole point of
 	// the test name. The conflict happens during the first attempted
-	// create; recovery reuses the found container and only starts it.
+	// create; recovery sees a SHA-match and adopts the recovered
+	// container, only starting it.
 	assert.Equal(t, int32(1), f.calls.create.Load(), "no second create after conflict recovery")
 	assert.GreaterOrEqual(t, f.calls.start.Load(), int32(1), "recovered container started at least once")
 }
@@ -542,4 +576,706 @@ func TestBuildCPContainerConfig_ClawkerNetAttachment(t *testing.T) {
 	cpCfg, err := BuildCPContainerConfig(cfg, testCPOpts())
 	require.NoError(t, err)
 	assert.Equal(t, consts.Network, cpCfg.NetworkName)
+}
+
+// TestEnsureCPImage_CacheHitOnSameBinary asserts that a second
+// invocation with the same embedded binaries resolves the content-derived
+// tag, finds the existing image via ImageInspect, and short-circuits —
+// no second ImageBuild fires. This is the "rebuild only on real change"
+// guarantee that fixes the original silent-staleness regression.
+func TestEnsureCPImage_CacheHitOnSameBinary(t *testing.T) {
+	cfg := configmocks.NewIsolatedTestConfig(t)
+	fake := dockermocks.NewFakeClient(cfg)
+
+	// Stage non-empty embedded binaries so ensureCPImage isn't blocked
+	// by the "binary not embedded" guard. Restore on cleanup so other
+	// tests in this package see the production embed.
+	origCP, origEBPF := ClawkerCPBinary, EBPFManagerBinary
+	ClawkerCPBinary = []byte("stub-cp-binary-v1")
+	EBPFManagerBinary = []byte("stub-ebpf-binary-v1")
+	t.Cleanup(func() {
+		ClawkerCPBinary = origCP
+		EBPFManagerBinary = origEBPF
+	})
+
+	wantTag := cpImageRef()
+	var inspectCalls, buildCalls atomic.Int32
+	// Cache miss on first ImageInspect (NotFound), then succeed on the
+	// second so the second ensureCPImage call returns without rebuilding.
+	// Chain to dockermocks' default ImageInspectFn so the success path
+	// returns labels matching this Engine's managed-label key (the
+	// whailtest.ManagedImageInspect helper hardcodes a test prefix that
+	// the production-shaped Engine treats as unmanaged).
+	defaultInspect := fake.FakeAPI.ImageInspectFn
+	fake.FakeAPI.ImageInspectFn = func(ctx context.Context, ref string, opts ...mobyclient.ImageInspectOption) (mobyclient.ImageInspectResult, error) {
+		require.Equal(t, wantTag, ref, "ImageInspect must query the content-derived tag, got %q", ref)
+		if inspectCalls.Add(1) == 1 {
+			return mobyclient.ImageInspectResult{}, cerrdefs.ErrNotFound
+		}
+		return defaultInspect(ctx, ref, opts...)
+	}
+	fake.FakeAPI.ImageBuildFn = func(_ context.Context, _ io.Reader, opts mobyclient.ImageBuildOptions) (mobyclient.ImageBuildResult, error) {
+		buildCalls.Add(1)
+		require.Contains(t, opts.Tags, wantTag, "ImageBuild must be tagged with cpImageRef, got %v", opts.Tags)
+		return mobyclient.ImageBuildResult{Body: io.NopCloser(strings.NewReader(""))}, nil
+	}
+	// Prune helper lists then iterates RepoTags — empty list keeps it a
+	// no-op so the test isolates the cache-hit behavior.
+	fake.FakeAPI.ImageListFn = func(_ context.Context, _ mobyclient.ImageListOptions) (mobyclient.ImageListResult, error) {
+		return mobyclient.ImageListResult{}, nil
+	}
+
+	// `wantTag == ensureCPImage(...)` would be tautological — both
+	// expressions evaluate the same pure cpImageRef() against the same
+	// stubbed embedded bytes. The load-bearing assertions are the inspect-
+	// ref check inside the stub (proves prod code resolves the content-
+	// derived tag) and the build-call counter (proves the second call
+	// short-circuits).
+	_, err := ensureCPImage(t.Context(), fake.Client, logger.Nop())
+	require.NoError(t, err)
+
+	_, err = ensureCPImage(t.Context(), fake.Client, logger.Nop())
+	require.NoError(t, err)
+
+	assert.Equal(t, int32(1), buildCalls.Load(), "second call must hit the ImageInspect cache and skip ImageBuild")
+}
+
+// TestEnsureCPImage_RebuildsOnBinaryChange asserts that mutating the
+// embedded binaries changes the resolved tag, the new tag misses on
+// ImageInspect, and ImageBuild fires for the new tag — proving the
+// content-derived identity is the actual gate.
+func TestEnsureCPImage_RebuildsOnBinaryChange(t *testing.T) {
+	cfg := configmocks.NewIsolatedTestConfig(t)
+	fake := dockermocks.NewFakeClient(cfg)
+
+	origCP, origEBPF := ClawkerCPBinary, EBPFManagerBinary
+	ClawkerCPBinary = []byte("stub-cp-binary-v1")
+	EBPFManagerBinary = []byte("stub-ebpf-binary-v1")
+	t.Cleanup(func() {
+		ClawkerCPBinary = origCP
+		EBPFManagerBinary = origEBPF
+	})
+
+	firstTag := cpImageRef()
+	var built []string
+	fake.FakeAPI.ImageInspectFn = func(_ context.Context, _ string, _ ...mobyclient.ImageInspectOption) (mobyclient.ImageInspectResult, error) {
+		return mobyclient.ImageInspectResult{}, cerrdefs.ErrNotFound
+	}
+	fake.FakeAPI.ImageBuildFn = func(_ context.Context, _ io.Reader, opts mobyclient.ImageBuildOptions) (mobyclient.ImageBuildResult, error) {
+		built = append(built, opts.Tags...)
+		return mobyclient.ImageBuildResult{Body: io.NopCloser(strings.NewReader(""))}, nil
+	}
+	fake.FakeAPI.ImageListFn = func(_ context.Context, _ mobyclient.ImageListOptions) (mobyclient.ImageListResult, error) {
+		return mobyclient.ImageListResult{}, nil
+	}
+
+	_, err := ensureCPImage(t.Context(), fake.Client, logger.Nop())
+	require.NoError(t, err)
+
+	// Swap the embedded CP binary — the resolved tag must change.
+	ClawkerCPBinary = []byte("stub-cp-binary-v2-different-content")
+	secondTag := cpImageRef()
+	require.NotEqual(t, firstTag, secondTag, "swapping the embedded binary must change cpImageRef")
+
+	gotTag, err := ensureCPImage(t.Context(), fake.Client, logger.Nop())
+	require.NoError(t, err)
+	assert.Equal(t, secondTag, gotTag)
+	assert.Equal(t, []string{firstTag, secondTag}, built,
+		"ImageBuild must fire for both tags — content-derived identity gates rebuild")
+}
+
+// TestEnsureRunning_RecreatesStoppedDriftedContainer pins the
+// post-drain + host-rebuild scenario described in the original failure
+// mode: AgentWatcher's drain-to-zero shutdown left a stopped CP
+// container on disk; the operator then rebuilt the host clawker binary
+// (new binary SHA). Next `firewall up` must NOT start the stale stopped
+// container — it must force-remove and recreate, otherwise the new
+// mount/env spec from the rebuilt binary never reaches the running CP.
+func TestEnsureRunning_RecreatesStoppedDriftedContainer(t *testing.T) {
+	f := newBootstrapFixture(t)
+	wantCfg, err := BuildCPContainerConfig(f.cfg, f.cpOpts())
+	require.NoError(t, err)
+
+	staleLabels := map[string]string{
+		f.cfg.LabelManaged():    f.cfg.ManagedLabelValue(),
+		consts.LabelCPBinarySHA: "stale-deadbeef-from-previous-build",
+	}
+	var listCalls atomic.Int32
+	f.fake.FakeAPI.ContainerListFn = func(_ context.Context, _ mobyclient.ContainerListOptions) (mobyclient.ContainerListResult, error) {
+		if listCalls.Add(1) == 1 {
+			return mobyclient.ContainerListResult{Items: []container.Summary{{
+				ID:     "stale-cp-id",
+				Names:  []string{"/" + consts.ContainerCP},
+				State:  container.StateExited,
+				Labels: staleLabels,
+			}}}, nil
+		}
+		return mobyclient.ContainerListResult{}, nil
+	}
+	f.fake.FakeAPI.ContainerInspectFn = func(_ context.Context, id string, _ mobyclient.ContainerInspectOptions) (mobyclient.ContainerInspectResult, error) {
+		return mobyclient.ContainerInspectResult{
+			Container: container.InspectResponse{
+				ID:         id,
+				Config:     &container.Config{Labels: staleLabels},
+				HostConfig: &container.HostConfig{Mounts: wantCfg.Mounts},
+			},
+		}, nil
+	}
+
+	require.NoError(t, EnsureRunning(t.Context(), f.ensureOpts()))
+	assert.Equal(t, int32(1), f.calls.remove.Load(),
+		"stopped + drifted container must be force-removed, not started")
+	assert.Equal(t, int32(1), f.calls.create.Load(),
+		"container must be recreated, not adopted by ContainerStart")
+}
+
+// TestEnsureRunning_NameConflict_TheirsNewer_AdoptsPeer pins the
+// cross-process race where a peer bootstrapper running a NEWER clawker
+// build won the ContainerCreate race. Our process has an older binary;
+// the peer's container's image is newer per
+// org.opencontainers.image.created. Recovery must adopt the peer's
+// container (start if stopped) rather than force-removing it — the
+// newer binary is the source of truth.
+func TestEnsureRunning_NameConflict_TheirsNewer_AdoptsPeer(t *testing.T) {
+	f := newBootstrapFixture(t)
+
+	const peerImageRef = "clawker-controlplane:bin-newerpeer123456"
+	peerLabels := map[string]string{
+		f.cfg.LabelManaged():    f.cfg.ManagedLabelValue(),
+		consts.LabelCPBinarySHA: "peer-binary-sha-from-a-newer-clawker-build",
+	}
+
+	// First list (pre-create) returns empty so EnsureRunning falls
+	// through to ContainerCreate. The create returns Conflict;
+	// findCPContainer is re-run from recovery and must find the peer.
+	var listCalls atomic.Int32
+	f.fake.FakeAPI.ContainerListFn = func(_ context.Context, _ mobyclient.ContainerListOptions) (mobyclient.ContainerListResult, error) {
+		if listCalls.Add(1) == 1 {
+			return mobyclient.ContainerListResult{}, nil
+		}
+		return mobyclient.ContainerListResult{Items: []container.Summary{{
+			ID:     "peer-cp-id",
+			Names:  []string{"/" + consts.ContainerCP},
+			State:  container.StateExited,
+			Labels: peerLabels,
+		}}}, nil
+	}
+	f.fake.FakeAPI.ContainerCreateFn = func(_ context.Context, _ mobyclient.ContainerCreateOptions) (mobyclient.ContainerCreateResult, error) {
+		f.calls.create.Add(1)
+		return mobyclient.ContainerCreateResult{}, fmt.Errorf(`name "/clawker-controlplane" in use: %w`, cerrdefs.ErrConflict)
+	}
+	f.fake.FakeAPI.ContainerInspectFn = func(_ context.Context, id string, _ mobyclient.ContainerInspectOptions) (mobyclient.ContainerInspectResult, error) {
+		return mobyclient.ContainerInspectResult{
+			Container: container.InspectResponse{
+				ID:     id,
+				Image:  peerImageRef,
+				State:  &container.State{Status: container.StateExited},
+				Config: &container.Config{Labels: peerLabels},
+			},
+		}, nil
+	}
+	// Our image was built before; peer's image was built one minute
+	// later. Recovery must defer to the newer build.
+	const oursCreated = "2026-05-21T10:00:00Z"
+	const theirsCreated = "2026-05-21T10:01:00Z"
+	ourTag := cpImageRef()
+	f.fake.FakeAPI.ImageInspectFn = func(_ context.Context, ref string, _ ...mobyclient.ImageInspectOption) (mobyclient.ImageInspectResult, error) {
+		switch ref {
+		case ourTag:
+			return managedImageInspect(f.cfg, oursCreated), nil
+		case peerImageRef:
+			return managedImageInspect(f.cfg, theirsCreated), nil
+		}
+		return mobyclient.ImageInspectResult{}, fmt.Errorf("unexpected image ref %q", ref)
+	}
+
+	require.NoError(t, EnsureRunning(t.Context(), f.ensureOpts()))
+	assert.Equal(t, int32(1), f.calls.create.Load(),
+		"only the initial (conflict-ing) create attempt — no retry when peer wins")
+	assert.Zero(t, f.calls.remove.Load(),
+		"newer peer container must NOT be force-removed")
+	assert.GreaterOrEqual(t, f.calls.start.Load(), int32(1),
+		"adopted peer container must be started")
+}
+
+// TestEnsureRunning_NameConflict_OursNewer_ReplacesPeer pins the
+// reverse race: peer bootstrapper running an OLDER clawker build won
+// ContainerCreate first. Our binary is newer per
+// org.opencontainers.image.created. Recovery must force-remove the
+// peer's stale container and signal retry; the retry's create then
+// fires successfully against the now-empty name.
+func TestEnsureRunning_NameConflict_OursNewer_ReplacesPeer(t *testing.T) {
+	f := newBootstrapFixture(t)
+
+	const peerImageRef = "clawker-controlplane:bin-olderpeer987654"
+	peerLabels := map[string]string{
+		f.cfg.LabelManaged():    f.cfg.ManagedLabelValue(),
+		consts.LabelCPBinarySHA: "peer-binary-sha-from-an-older-clawker-build",
+	}
+
+	// First list (pre-create) empty → create fires, returns conflict.
+	// Second list (from recovery's findCPContainer) returns the peer.
+	// Third list (post-remove, if any) returns empty — but recovery
+	// returns errCPRecoveryRetry which the create loop catches and
+	// retries; the retry's create must NOT see a duplicate.
+	var listCalls atomic.Int32
+	f.fake.FakeAPI.ContainerListFn = func(_ context.Context, _ mobyclient.ContainerListOptions) (mobyclient.ContainerListResult, error) {
+		if listCalls.Add(1) == 2 {
+			return mobyclient.ContainerListResult{Items: []container.Summary{{
+				ID:     "peer-cp-id",
+				Names:  []string{"/" + consts.ContainerCP},
+				State:  container.StateRunning,
+				Labels: peerLabels,
+			}}}, nil
+		}
+		return mobyclient.ContainerListResult{}, nil
+	}
+
+	// Track each create attempt; first returns Conflict, second succeeds.
+	f.fake.FakeAPI.ContainerCreateFn = func(_ context.Context, _ mobyclient.ContainerCreateOptions) (mobyclient.ContainerCreateResult, error) {
+		n := f.calls.create.Add(1)
+		if n == 1 {
+			return mobyclient.ContainerCreateResult{}, fmt.Errorf(`name "/clawker-controlplane" in use: %w`, cerrdefs.ErrConflict)
+		}
+		return mobyclient.ContainerCreateResult{ID: "fresh-cp-id"}, nil
+	}
+	f.fake.FakeAPI.ContainerInspectFn = func(_ context.Context, id string, _ mobyclient.ContainerInspectOptions) (mobyclient.ContainerInspectResult, error) {
+		return mobyclient.ContainerInspectResult{
+			Container: container.InspectResponse{
+				ID:     id,
+				Image:  peerImageRef,
+				State:  &container.State{Running: true, Status: container.StateRunning},
+				Config: &container.Config{Labels: peerLabels},
+			},
+		}, nil
+	}
+	const oursCreated = "2026-05-21T10:01:00Z"
+	const theirsCreated = "2026-05-21T10:00:00Z"
+	ourTag := cpImageRef()
+	f.fake.FakeAPI.ImageInspectFn = func(_ context.Context, ref string, _ ...mobyclient.ImageInspectOption) (mobyclient.ImageInspectResult, error) {
+		switch ref {
+		case ourTag:
+			return managedImageInspect(f.cfg, oursCreated), nil
+		case peerImageRef:
+			return managedImageInspect(f.cfg, theirsCreated), nil
+		}
+		return mobyclient.ImageInspectResult{}, fmt.Errorf("unexpected image ref %q", ref)
+	}
+
+	require.NoError(t, EnsureRunning(t.Context(), f.ensureOpts()))
+	assert.Equal(t, int32(1), f.calls.remove.Load(),
+		"older peer container must be force-removed")
+	assert.Equal(t, int32(2), f.calls.create.Load(),
+		"two create attempts: first conflicts, retry succeeds after remove")
+}
+
+// TestPruneStaleCPImages_KeepsKeepTagAndUnrelated verifies the three
+// behavioral guarantees: (a) keepTag survives, (b) only the
+// clawker-controlplane: prefix is in scope (unrelated repos untouched),
+// (c) other clawker-controlplane:bin-* tags get removed.
+func TestPruneStaleCPImages_KeepsKeepTagAndUnrelated(t *testing.T) {
+	cfg := configmocks.NewIsolatedTestConfig(t)
+	fake := dockermocks.NewFakeClient(cfg)
+
+	keepTag := consts.CPImageRepo + ":bin-keep1234567890"
+	staleCPTag := consts.CPImageRepo + ":bin-stale987654321"
+	legacyLatestTag := consts.CPImageRepo + ":latest"
+	unrelatedTag := "redis:7-alpine"
+
+	fake.FakeAPI.ImageListFn = func(_ context.Context, _ mobyclient.ImageListOptions) (mobyclient.ImageListResult, error) {
+		return mobyclient.ImageListResult{Items: []dockerimage.Summary{
+			{ID: "sha256:keepimg", RepoTags: []string{keepTag}},
+			{ID: "sha256:staleimg", RepoTags: []string{staleCPTag}},
+			{ID: "sha256:legacyimg", RepoTags: []string{legacyLatestTag}},
+			{ID: "sha256:redisimg", RepoTags: []string{unrelatedTag}},
+		}}, nil
+	}
+
+	var removed []string
+	fake.FakeAPI.ImageRemoveFn = func(_ context.Context, ref string, _ mobyclient.ImageRemoveOptions) (mobyclient.ImageRemoveResult, error) {
+		removed = append(removed, ref)
+		return mobyclient.ImageRemoveResult{}, nil
+	}
+
+	pruneStaleCPImages(t.Context(), fake.Client, keepTag, logger.Nop())
+
+	assert.ElementsMatch(t, []string{staleCPTag, legacyLatestTag}, removed,
+		"prune must remove stale + legacy CP tags but leave keepTag and unrelated repos alone")
+}
+
+// TestPruneStaleCPImages_ListFailure_Degrades guarantees a failed
+// ImageList does NOT propagate as an error (best-effort cleanup) and
+// does NOT trigger any ImageRemove calls.
+func TestPruneStaleCPImages_ListFailure_Degrades(t *testing.T) {
+	cfg := configmocks.NewIsolatedTestConfig(t)
+	fake := dockermocks.NewFakeClient(cfg)
+
+	fake.FakeAPI.ImageListFn = func(_ context.Context, _ mobyclient.ImageListOptions) (mobyclient.ImageListResult, error) {
+		return mobyclient.ImageListResult{}, fmt.Errorf("docker daemon went away")
+	}
+	var removed []string
+	fake.FakeAPI.ImageRemoveFn = func(_ context.Context, ref string, _ mobyclient.ImageRemoveOptions) (mobyclient.ImageRemoveResult, error) {
+		removed = append(removed, ref)
+		return mobyclient.ImageRemoveResult{}, nil
+	}
+
+	// Function returns void — the test is that it doesn't panic and
+	// doesn't try to remove anything when the list failed.
+	pruneStaleCPImages(t.Context(), fake.Client, "ignored", logger.Nop())
+	assert.Empty(t, removed, "list failure must short-circuit before any remove call")
+}
+
+// TestCPImageCreatedAt covers the LABEL → Docker Created fallback chain
+// directly so each branch is pinned independently of recoverFromNameConflict.
+func TestCPImageCreatedAt(t *testing.T) {
+	cfg := configmocks.NewIsolatedTestConfig(t)
+	const ref = "clawker-controlplane:bin-deadbeef00000000"
+
+	// inspectWith returns a managed (passes whail's label-jail) image
+	// inspect with explicit Created field and arbitrary extra labels.
+	inspectWith := func(created string, extraLabels map[string]string) mobyclient.ImageInspectResult {
+		labels := map[string]string{cfg.LabelManaged(): cfg.ManagedLabelValue()}
+		for k, v := range extraLabels {
+			labels[k] = v
+		}
+		return mobyclient.ImageInspectResult{
+			InspectResponse: dockerimage.InspectResponse{
+				Created: created,
+				Config: &dockerspec.DockerOCIImageConfig{
+					ImageConfig: ocispec.ImageConfig{Labels: labels},
+				},
+			},
+		}
+	}
+
+	t.Run("label parseable wins", func(t *testing.T) {
+		fake := dockermocks.NewFakeClient(cfg)
+		want := "2026-05-21T10:00:00Z"
+		fake.FakeAPI.ImageInspectFn = func(_ context.Context, _ string, _ ...mobyclient.ImageInspectOption) (mobyclient.ImageInspectResult, error) {
+			// Newer Created field — must be ignored when LABEL is parseable.
+			return inspectWith("2026-05-21T11:00:00.123456789Z", map[string]string{consts.LabelImageCreated: want}), nil
+		}
+		got, err := cpImageCreatedAt(t.Context(), fake.Client, ref, logger.Nop())
+		require.NoError(t, err)
+		assert.Equal(t, want, got.UTC().Format(time.RFC3339), "LABEL must take precedence over Created field")
+	})
+
+	t.Run("label missing falls back to Created", func(t *testing.T) {
+		fake := dockermocks.NewFakeClient(cfg)
+		want := "2026-05-21T10:00:00.123456789Z"
+		fake.FakeAPI.ImageInspectFn = func(_ context.Context, _ string, _ ...mobyclient.ImageInspectOption) (mobyclient.ImageInspectResult, error) {
+			return inspectWith(want, nil), nil
+		}
+		got, err := cpImageCreatedAt(t.Context(), fake.Client, ref, logger.Nop())
+		require.NoError(t, err)
+		assert.Equal(t, want, got.UTC().Format(time.RFC3339Nano))
+	})
+
+	t.Run("malformed label falls back silently and logs warn", func(t *testing.T) {
+		fake := dockermocks.NewFakeClient(cfg)
+		validCreated := "2026-05-21T10:00:00.123456789Z"
+		fake.FakeAPI.ImageInspectFn = func(_ context.Context, _ string, _ ...mobyclient.ImageInspectOption) (mobyclient.ImageInspectResult, error) {
+			return inspectWith(validCreated, map[string]string{consts.LabelImageCreated: "not-a-timestamp"}), nil
+		}
+		got, err := cpImageCreatedAt(t.Context(), fake.Client, ref, logger.Nop())
+		require.NoError(t, err, "malformed LABEL must fall through to Created field, not fail")
+		assert.Equal(t, validCreated, got.UTC().Format(time.RFC3339Nano))
+	})
+
+	t.Run("both empty returns error", func(t *testing.T) {
+		fake := dockermocks.NewFakeClient(cfg)
+		fake.FakeAPI.ImageInspectFn = func(_ context.Context, _ string, _ ...mobyclient.ImageInspectOption) (mobyclient.ImageInspectResult, error) {
+			return inspectWith("", nil), nil
+		}
+		_, err := cpImageCreatedAt(t.Context(), fake.Client, ref, logger.Nop())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no parseable created timestamp")
+	})
+
+	t.Run("inspect error propagates", func(t *testing.T) {
+		fake := dockermocks.NewFakeClient(cfg)
+		fake.FakeAPI.ImageInspectFn = func(_ context.Context, _ string, _ ...mobyclient.ImageInspectOption) (mobyclient.ImageInspectResult, error) {
+			return mobyclient.ImageInspectResult{}, cerrdefs.ErrNotFound
+		}
+		_, err := cpImageCreatedAt(t.Context(), fake.Client, ref, logger.Nop())
+		require.Error(t, err)
+		assert.ErrorIs(t, err, cerrdefs.ErrNotFound)
+	})
+}
+
+// TestEnsureRunning_NameConflict_UnmanagedSquat covers the case where
+// Docker says the CP name is taken but the managed-label jail returns
+// nothing — an operator-managed (or stale, unlabeled) container is
+// squatting on the CP name. Must surface a typed error without
+// touching the squatter.
+func TestEnsureRunning_NameConflict_UnmanagedSquat(t *testing.T) {
+	f := newBootstrapFixture(t)
+
+	// All ContainerList calls return empty (managed-jail filter rejects
+	// the squatter), but ContainerCreate returns Conflict so recovery
+	// runs and observes the empty list.
+	f.fake.FakeAPI.ContainerListFn = func(_ context.Context, _ mobyclient.ContainerListOptions) (mobyclient.ContainerListResult, error) {
+		return mobyclient.ContainerListResult{}, nil
+	}
+	f.fake.FakeAPI.ContainerCreateFn = func(_ context.Context, _ mobyclient.ContainerCreateOptions) (mobyclient.ContainerCreateResult, error) {
+		f.calls.create.Add(1)
+		return mobyclient.ContainerCreateResult{}, fmt.Errorf(`name "/clawker-controlplane" in use: %w`, cerrdefs.ErrConflict)
+	}
+
+	err := EnsureRunning(t.Context(), f.ensureOpts())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "in use by an unmanaged container",
+		"unmanaged squatter must surface as a typed message, not be silently adopted")
+	assert.Equal(t, int32(1), f.calls.create.Load(), "no retry — squatter requires operator intervention")
+	assert.Zero(t, f.calls.remove.Load(), "must NOT force-remove an unmanaged container")
+}
+
+// TestEnsureRunning_NameConflict_OurImageVanished_Retries covers the
+// race where our just-built CP image is force-removed (concurrent
+// `docker image rm`, prune, storage GC) between ensureCPImage and the
+// recovery inspect. Recovery must signal retry rather than abort.
+func TestEnsureRunning_NameConflict_OurImageVanished_Retries(t *testing.T) {
+	f := newBootstrapFixture(t)
+
+	const peerImageRef = "clawker-controlplane:bin-peer1234567890ab"
+	peerLabels := map[string]string{
+		f.cfg.LabelManaged():    f.cfg.ManagedLabelValue(),
+		consts.LabelCPBinarySHA: "peer-binary-sha-from-other-build",
+	}
+
+	var listCalls atomic.Int32
+	f.fake.FakeAPI.ContainerListFn = func(_ context.Context, _ mobyclient.ContainerListOptions) (mobyclient.ContainerListResult, error) {
+		// First list (pre-create): empty so create fires.
+		// Recovery list (after conflict): returns peer.
+		// Retry list (after errCPRecoveryRetry): empty so create succeeds.
+		if listCalls.Add(1) == 2 {
+			return mobyclient.ContainerListResult{Items: []container.Summary{{
+				ID:     "peer-cp-id",
+				Names:  []string{"/" + consts.ContainerCP},
+				State:  container.StateRunning,
+				Labels: peerLabels,
+			}}}, nil
+		}
+		return mobyclient.ContainerListResult{}, nil
+	}
+	f.fake.FakeAPI.ContainerCreateFn = func(_ context.Context, _ mobyclient.ContainerCreateOptions) (mobyclient.ContainerCreateResult, error) {
+		n := f.calls.create.Add(1)
+		if n == 1 {
+			return mobyclient.ContainerCreateResult{}, fmt.Errorf(`name "/clawker-controlplane" in use: %w`, cerrdefs.ErrConflict)
+		}
+		return mobyclient.ContainerCreateResult{ID: "fresh-cp-id"}, nil
+	}
+	f.fake.FakeAPI.ContainerInspectFn = func(_ context.Context, id string, _ mobyclient.ContainerInspectOptions) (mobyclient.ContainerInspectResult, error) {
+		return mobyclient.ContainerInspectResult{
+			Container: container.InspectResponse{
+				ID:     id,
+				Image:  peerImageRef,
+				State:  &container.State{Running: true, Status: container.StateRunning},
+				Config: &container.Config{Labels: peerLabels},
+			},
+		}, nil
+	}
+	ourTag := cpImageRef()
+	f.fake.FakeAPI.ImageInspectFn = func(_ context.Context, ref string, _ ...mobyclient.ImageInspectOption) (mobyclient.ImageInspectResult, error) {
+		if ref == ourTag {
+			return mobyclient.ImageInspectResult{}, cerrdefs.ErrNotFound
+		}
+		return managedImageInspect(f.cfg, "2026-05-21T10:00:00Z"), nil
+	}
+
+	require.NoError(t, EnsureRunning(t.Context(), f.ensureOpts()))
+	assert.Equal(t, int32(2), f.calls.create.Load(),
+		"vanished image must trigger retry, not abort: first create conflicts, second succeeds")
+	assert.Equal(t, int32(2), f.calls.image.Load(),
+		"retry must re-invoke ensureCPImageFn so a vanished image is rebuilt before the next ContainerCreate")
+}
+
+// TestEnsureRunning_NameConflict_ReensureImageFails covers the failure
+// branch on the retry path: if ensureCPImageFn errors when re-resolving
+// the image after recovery signals retry, createCPContainer must
+// surface the error rather than spin into a doomed ContainerCreate.
+func TestEnsureRunning_NameConflict_ReensureImageFails(t *testing.T) {
+	f := newBootstrapFixture(t)
+
+	const peerImageRef = "clawker-controlplane:bin-peerXXXX00000000"
+	peerLabels := map[string]string{
+		f.cfg.LabelManaged():    f.cfg.ManagedLabelValue(),
+		consts.LabelCPBinarySHA: "peer-binary-sha-mismatched",
+	}
+
+	var listCalls atomic.Int32
+	f.fake.FakeAPI.ContainerListFn = func(_ context.Context, _ mobyclient.ContainerListOptions) (mobyclient.ContainerListResult, error) {
+		if listCalls.Add(1) == 2 {
+			return mobyclient.ContainerListResult{Items: []container.Summary{{
+				ID:     "peer-cp-id",
+				Names:  []string{"/" + consts.ContainerCP},
+				State:  container.StateRunning,
+				Labels: peerLabels,
+			}}}, nil
+		}
+		return mobyclient.ContainerListResult{}, nil
+	}
+	f.fake.FakeAPI.ContainerCreateFn = func(_ context.Context, _ mobyclient.ContainerCreateOptions) (mobyclient.ContainerCreateResult, error) {
+		f.calls.create.Add(1)
+		return mobyclient.ContainerCreateResult{}, fmt.Errorf(`name "/clawker-controlplane" in use: %w`, cerrdefs.ErrConflict)
+	}
+	f.fake.FakeAPI.ContainerInspectFn = func(_ context.Context, id string, _ mobyclient.ContainerInspectOptions) (mobyclient.ContainerInspectResult, error) {
+		return mobyclient.ContainerInspectResult{
+			Container: container.InspectResponse{
+				ID:     id,
+				Image:  peerImageRef,
+				State:  &container.State{Running: true, Status: container.StateRunning},
+				Config: &container.Config{Labels: peerLabels},
+			},
+		}, nil
+	}
+	ourTag := cpImageRef()
+	f.fake.FakeAPI.ImageInspectFn = func(_ context.Context, ref string, _ ...mobyclient.ImageInspectOption) (mobyclient.ImageInspectResult, error) {
+		if ref == ourTag {
+			return mobyclient.ImageInspectResult{}, cerrdefs.ErrNotFound
+		}
+		return managedImageInspect(f.cfg, "2026-05-21T10:00:00Z"), nil
+	}
+
+	// First ensureCPImageFn call (from EnsureRunning) succeeds; second
+	// call (from the retry path) fails — caller must surface the wrapped
+	// error rather than retry into a doomed ContainerCreate.
+	origEnsure := ensureCPImageFn
+	t.Cleanup(func() { ensureCPImageFn = origEnsure })
+	var ensureCalls atomic.Int32
+	ensureCPImageFn = func(_ context.Context, _ *docker.Client, _ *logger.Logger) (string, error) {
+		if ensureCalls.Add(1) == 1 {
+			return cpImageRef(), nil
+		}
+		return "", fmt.Errorf("simulated build failure")
+	}
+
+	err := EnsureRunning(t.Context(), f.ensureOpts())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "re-ensuring cp image before retry",
+		"reensure failure on retry must surface as a wrapped error")
+	assert.Equal(t, int32(1), f.calls.create.Load(),
+		"retry must NOT fire a second ContainerCreate after reensure failed")
+}
+
+// TestEnsureRunning_NameConflict_PeerImageInspectFails covers the
+// non-NotFound failure path on the peer's image inspect — recovery
+// must propagate the wrapped error rather than picking a winner.
+func TestEnsureRunning_NameConflict_PeerImageInspectFails(t *testing.T) {
+	f := newBootstrapFixture(t)
+
+	const peerImageRef = "clawker-controlplane:bin-peerxxxx00000000"
+	peerLabels := map[string]string{
+		f.cfg.LabelManaged():    f.cfg.ManagedLabelValue(),
+		consts.LabelCPBinarySHA: "peer-binary-sha-mismatched",
+	}
+
+	var listCalls atomic.Int32
+	f.fake.FakeAPI.ContainerListFn = func(_ context.Context, _ mobyclient.ContainerListOptions) (mobyclient.ContainerListResult, error) {
+		if listCalls.Add(1) == 1 {
+			return mobyclient.ContainerListResult{}, nil
+		}
+		return mobyclient.ContainerListResult{Items: []container.Summary{{
+			ID:     "peer-cp-id",
+			Names:  []string{"/" + consts.ContainerCP},
+			State:  container.StateRunning,
+			Labels: peerLabels,
+		}}}, nil
+	}
+	f.fake.FakeAPI.ContainerCreateFn = func(_ context.Context, _ mobyclient.ContainerCreateOptions) (mobyclient.ContainerCreateResult, error) {
+		f.calls.create.Add(1)
+		return mobyclient.ContainerCreateResult{}, fmt.Errorf(`name "/clawker-controlplane" in use: %w`, cerrdefs.ErrConflict)
+	}
+	f.fake.FakeAPI.ContainerInspectFn = func(_ context.Context, id string, _ mobyclient.ContainerInspectOptions) (mobyclient.ContainerInspectResult, error) {
+		return mobyclient.ContainerInspectResult{
+			Container: container.InspectResponse{
+				ID:     id,
+				Image:  peerImageRef,
+				State:  &container.State{Running: true, Status: container.StateRunning},
+				Config: &container.Config{Labels: peerLabels},
+			},
+		}, nil
+	}
+	ourTag := cpImageRef()
+	f.fake.FakeAPI.ImageInspectFn = func(_ context.Context, ref string, _ ...mobyclient.ImageInspectOption) (mobyclient.ImageInspectResult, error) {
+		switch ref {
+		case ourTag:
+			return managedImageInspect(f.cfg, "2026-05-21T10:00:00Z"), nil
+		case peerImageRef:
+			return mobyclient.ImageInspectResult{}, fmt.Errorf("storage backend unreachable")
+		}
+		return mobyclient.ImageInspectResult{}, fmt.Errorf("unexpected ref %q", ref)
+	}
+
+	err := EnsureRunning(t.Context(), f.ensureOpts())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "inspecting recovered cp image",
+		"peer-image inspect failure must propagate as a wrapped error, not be silently adopted")
+	assert.Zero(t, f.calls.remove.Load(), "must not force-remove peer when timestamp comparison is uncertain")
+}
+
+// TestCreateCPContainer_MaxAttemptsExhausted covers the safety-net path
+// where ContainerCreate keeps conflicting and recovery keeps signaling
+// retry. The bounded loop (maxCreateAttempts) must give up with a
+// typed error rather than spin.
+func TestCreateCPContainer_MaxAttemptsExhausted(t *testing.T) {
+	f := newBootstrapFixture(t)
+
+	const peerImageRef = "clawker-controlplane:bin-loopypeer00000"
+	peerLabels := map[string]string{
+		f.cfg.LabelManaged():    f.cfg.ManagedLabelValue(),
+		consts.LabelCPBinarySHA: "peer-binary-sha-always-older",
+	}
+
+	var listCalls atomic.Int32
+	f.fake.FakeAPI.ContainerListFn = func(_ context.Context, _ mobyclient.ContainerListOptions) (mobyclient.ContainerListResult, error) {
+		// Every list past the very first one returns the peer so each
+		// recovery cycle finds something to compare against.
+		if listCalls.Add(1) == 1 {
+			return mobyclient.ContainerListResult{}, nil
+		}
+		return mobyclient.ContainerListResult{Items: []container.Summary{{
+			ID:     "peer-cp-id",
+			Names:  []string{"/" + consts.ContainerCP},
+			State:  container.StateExited,
+			Labels: peerLabels,
+		}}}, nil
+	}
+	// Every create attempt returns Conflict — the loop must hit
+	// maxCreateAttempts and surface the exhaustion error.
+	f.fake.FakeAPI.ContainerCreateFn = func(_ context.Context, _ mobyclient.ContainerCreateOptions) (mobyclient.ContainerCreateResult, error) {
+		f.calls.create.Add(1)
+		return mobyclient.ContainerCreateResult{}, fmt.Errorf(`name "/clawker-controlplane" in use: %w`, cerrdefs.ErrConflict)
+	}
+	f.fake.FakeAPI.ContainerInspectFn = func(_ context.Context, id string, _ mobyclient.ContainerInspectOptions) (mobyclient.ContainerInspectResult, error) {
+		return mobyclient.ContainerInspectResult{
+			Container: container.InspectResponse{
+				ID:     id,
+				Image:  peerImageRef,
+				State:  &container.State{Status: container.StateExited},
+				Config: &container.Config{Labels: peerLabels},
+			},
+		}, nil
+	}
+	// Our image is always newer → recovery always picks "replace peer"
+	// → stop+remove peer, signal retry → next create conflicts again.
+	const oursCreated = "2026-05-21T10:05:00Z"
+	const theirsCreated = "2026-05-21T10:00:00Z"
+	ourTag := cpImageRef()
+	f.fake.FakeAPI.ImageInspectFn = func(_ context.Context, ref string, _ ...mobyclient.ImageInspectOption) (mobyclient.ImageInspectResult, error) {
+		switch ref {
+		case ourTag:
+			return managedImageInspect(f.cfg, oursCreated), nil
+		case peerImageRef:
+			return managedImageInspect(f.cfg, theirsCreated), nil
+		}
+		return mobyclient.ImageInspectResult{}, fmt.Errorf("unexpected ref %q", ref)
+	}
+
+	err := EnsureRunning(t.Context(), f.ensureOpts())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeded 2 attempts",
+		"persistent create conflicts must bottom out at the maxCreateAttempts safety net")
+	assert.Equal(t, int32(2), f.calls.create.Load(),
+		"loop must respect maxCreateAttempts=2, not retry forever")
 }

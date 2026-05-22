@@ -4,20 +4,24 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/netip"
+	"strings"
 	"sync"
 	"time"
 
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
-
+	"github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/auth"
+	"github.com/schmitthub/clawker/internal/build"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 	fwcp "github.com/schmitthub/clawker/internal/controlplane/firewall"
@@ -37,7 +41,7 @@ const (
 )
 
 // ensureMu serializes concurrent EnsureRunning calls within a single
-// process (INV-B2-006). Cross-process concurrency is guarded by Docker's
+// process. Cross-process concurrency is guarded by Docker's
 // container-name uniqueness — the "already in use" recovery path below
 // catches that race and reconciles to the existing container.
 var ensureMu sync.Mutex
@@ -47,62 +51,100 @@ var ensureMu sync.Mutex
 // and /healthz polling.
 //
 // `ensureAuthFn` is the load-bearing pre-step: bind mounts in
-// BuildCPContainerConfig point at on-disk PEM files (CA cert, server
-// cert+key, CP-side OTEL client cert+key). `auth.EnsureAuthMaterial`
-// is idempotent — safe to call on every EnsureRunning invocation.
-// Without it, a fresh install running `clawker firewall up` (or any
-// other command that triggers CP startup before `monitor init` /
-// `image build` runs) would fail at ContainerCreate with a missing
-// bind source.
+// BuildCPContainerConfig point at on-disk PEM files. `auth.EnsureAuthMaterial`
+// is idempotent — safe to call on every EnsureRunning invocation. Without
+// it, ContainerCreate fails with a missing bind source.
 var (
 	ensureAuthFn    = auth.EnsureAuthMaterial
 	ensureCPImageFn = ensureCPImage
 	healthzFn       = waitForCPHealthz
 )
 
+// errCPRecoveryRetry is returned by recoverFromNameConflict when it
+// has force-removed a stale peer-bootstrapped CP container and the
+// caller should re-attempt ContainerCreate. Internal sentinel — never
+// surfaces to operators.
+var errCPRecoveryRetry = errors.New("cp container create should be retried after recovery")
+
+// cpBinaryHash returns the SHA-256 hash of the embedded clawker-cp +
+// ebpf-manager binaries. The full hex form is stamped onto the image
+// and container as consts.LabelCPBinarySHA; the short prefix is folded
+// into the image tag for human-readable `docker images` output.
+func cpBinaryHash() (full, short string) {
+	h := sha256.New()
+	h.Write(ClawkerCPBinary)
+	h.Write(EBPFManagerBinary)
+	sum := h.Sum(nil)
+	full = hex.EncodeToString(sum)
+	short = full[:16]
+	return
+}
+
+// cpImageRef returns the content-derived image tag for the CP image
+// (clawker-controlplane:bin-<short>). The tag changes whenever either
+// embedded binary changes, so ImageInspect becomes an exact-content
+// cache check.
+func cpImageRef() string {
+	_, short := cpBinaryHash()
+	return fmt.Sprintf("%s:bin-%s", consts.CPImageRepo, short)
+}
+
 // cpImageDockerfile is the multi-stage build recipe for the clawker-cp
 // image. All base images are pinned by multi-arch manifest digest.
 // clawker-cp and ebpf-manager binaries are supplied from embedded bytes
 // (see ClawkerCPBinary / EBPFManagerBinary) in the build tar context.
-const cpImageDockerfile = "" +
-	"FROM oryd/hydra:v26.2.0@sha256:ff67c7fb5f95074fa53374d41151713554960504b340cd3f95b09e65deaea2a9 AS hydra\n" +
-	"FROM oryd/oathkeeper:v26.2.0@sha256:467329abde34feefca217b7af76fff59e77fe1795a19376e9d479f33c7c198fc AS oathkeeper\n" +
-	"FROM oryd/kratos:v26.2.0@sha256:2a13bb8d362c7a7ae33bd7c0f5168aee46921f15c916a06346db91c06dc76643 AS kratos\n" +
-	"FROM alpine:3.21@sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c AS musl\n" +
-	"FROM gcr.io/distroless/static-debian12@sha256:20bc6c0bc4d625a22a8fde3e55f6515709b32055ef8fb9cfbddaa06d1760f838\n" +
-	"COPY --from=musl /lib/ld-musl-*.so.1 /lib/\n" +
-	"COPY --from=hydra /usr/bin/hydra /usr/local/bin/hydra\n" +
-	"COPY --from=oathkeeper /usr/bin/oathkeeper /usr/local/bin/oathkeeper\n" +
-	"COPY --from=kratos /usr/bin/kratos /usr/local/bin/kratos\n" +
-	"COPY clawker-cp /usr/local/bin/clawker-cp\n" +
-	"COPY ebpf-manager /usr/local/bin/ebpf-manager\n" +
-	"CMD [\"/usr/local/bin/clawker-cp\"]\n"
+// Per-build labels are interpolated so the resulting image carries its
+// content identity and OCI provenance metadata.
+func cpImageDockerfile(binarySHA, version, revision, createdAt string) string {
+	// LABEL syntax needs `\` and `"` escapes; %q is wrong because Docker
+	// does not parse Go-style escape sequences.
+	dockerLabel := func(key, value string) string {
+		v := strings.ReplaceAll(value, `\`, `\\`)
+		v = strings.ReplaceAll(v, `"`, `\"`)
+		return fmt.Sprintf("LABEL %s=\"%s\"\n", key, v)
+	}
+	labels := "" +
+		dockerLabel(consts.LabelCPBinarySHA, binarySHA) +
+		dockerLabel(consts.LabelImageVersion, version) +
+		dockerLabel(consts.LabelImageCreated, createdAt) +
+		dockerLabel(consts.LabelImageSource, "https://github.com/schmitthub/clawker")
+	// Omit revision LABEL when ldflags + vcs.revision both fall back to
+	// the "unknown" sentinel (typical for `go run`); OCI convention is
+	// to skip provenance fields with no real value.
+	if revision != "" && revision != "unknown" {
+		labels += dockerLabel(consts.LabelImageRevision, revision)
+	}
+	return "" +
+		"FROM oryd/hydra:v26.2.0@sha256:ff67c7fb5f95074fa53374d41151713554960504b340cd3f95b09e65deaea2a9 AS hydra\n" +
+		"FROM oryd/oathkeeper:v26.2.0@sha256:467329abde34feefca217b7af76fff59e77fe1795a19376e9d479f33c7c198fc AS oathkeeper\n" +
+		"FROM oryd/kratos:v26.2.0@sha256:2a13bb8d362c7a7ae33bd7c0f5168aee46921f15c916a06346db91c06dc76643 AS kratos\n" +
+		"FROM alpine:3.21@sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c AS musl\n" +
+		"FROM gcr.io/distroless/static-debian12@sha256:20bc6c0bc4d625a22a8fde3e55f6515709b32055ef8fb9cfbddaa06d1760f838\n" +
+		"COPY --from=musl /lib/ld-musl-*.so.1 /lib/\n" +
+		"COPY --from=hydra /usr/bin/hydra /usr/local/bin/hydra\n" +
+		"COPY --from=oathkeeper /usr/bin/oathkeeper /usr/local/bin/oathkeeper\n" +
+		"COPY --from=kratos /usr/bin/kratos /usr/local/bin/kratos\n" +
+		"COPY clawker-cp /usr/local/bin/clawker-cp\n" +
+		"COPY ebpf-manager /usr/local/bin/ebpf-manager\n" +
+		labels +
+		"CMD [\"/usr/local/bin/clawker-cp\"]\n"
+}
 
 // EnsureRunning is the host-side entry point for bringing up the control
 // plane. Idempotent and concurrency-safe. Returns nil when the CP
 // container is running and /healthz is green.
 //
-// Steps (in order):
-//  1. Ensure CLI auth material (CA, signing key, server cert).
-//  2. Ensure CP image present (build from embedded binaries if missing).
-//  3. If an existing CP container is found, start it (if stopped) and
-//     return once /healthz is green. Mount spec is NOT inspected: CP
-//     mounts are a function of install-level XDG env vars + compile-
-//     time constants, never of clawker.yaml or settings.yaml, so
-//     legitimate in-process divergence cannot happen. A host-level
-//     attacker who can mutate the CP container spec already has
-//     privileges that trivially bypass anything a mount-inspection
-//     guard could protect. (Spec INV-B2-006 originally defended the
-//     B1→B2 RO→RW upgrade — now vestigial and retired.)
-//  4. Ensure clawker-net exists (defensive guard — CLI bootstrap is
-//     normally the primary owner).
-//  5. Discover the network to compute the CP's static IP.
-//  6. Create and start the CP container with static IP + clawker-net
-//     attachment (INV-B2-014).
-//  7. Poll /healthz on 127.0.0.1:<HealthPort> until 200 or timeout.
+// Drift gate: an existing CP container whose consts.LabelCPBinarySHA
+// matches the host clawker binary's embedded clawker-cp + ebpf-manager
+// hash is adopted (started if stopped); any mismatch (including legacy
+// containers that predate the label) is force-removed and recreated so
+// the new mount/env spec reaches the running CP. Mount spec itself is
+// not inspected — mounts derive from compile-time constants only, so
+// any mount/env/cmd change implies a host rebuild, which changes the
+// embedded bytes, which changes the SHA.
 //
-// On partial failure (container created but /healthz timed out) the next
-// call observes the stopped/unhealthy container and reconciles.
+// On partial failure (container created but /healthz timed out) the
+// next call observes the stopped/unhealthy container and reconciles.
 // EnsureOpts bundles the inputs EnsureRunning needs. HostDirs is required;
 // callers resolve it host-side from consts.{ConfigDir,DataDir,StateDir,
 // CacheDir} before invoking. The CP container reads the host paths back
@@ -135,10 +177,8 @@ func EnsureRunning(ctx context.Context, opts EnsureOpts) error {
 		return fmt.Errorf("ensure auth material: %w", err)
 	}
 
-	// Note: agentregistry schema apply moved into the CP daemon
-	// (cmd/clawker-cp/main.go Step 8) now that CP is the sole sqlite
-	// writer. Host-side EnsureSchema is no longer needed.
-	if err := ensureCPImageFn(ctx, dc, log); err != nil {
+	imageRef, err := ensureCPImageFn(ctx, dc, log)
+	if err != nil {
 		return fmt.Errorf("controlplane: %w", err)
 	}
 
@@ -147,12 +187,63 @@ func EnsureRunning(ctx context.Context, opts EnsureOpts) error {
 		return fmt.Errorf("controlplane: find cp: %w", err)
 	}
 	if summary != nil {
-		if summary.State != container.StateRunning {
-			if _, err := dc.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: summary.ID}); err != nil {
-				return fmt.Errorf("controlplane: start existing cp: %w", err)
+		desired, _ := cpBinaryHash()
+		actual := summary.Labels[consts.LabelCPBinarySHA]
+		if actual == desired {
+			if summary.State != container.StateRunning {
+				if _, err := dc.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: summary.ID}); err != nil {
+					return fmt.Errorf("controlplane: start existing cp: %w", err)
+				}
 			}
+			return healthzFn(ctx, cfg)
 		}
-		return healthzFn(ctx, cfg)
+
+		cpRunning := summary.State == container.StateRunning
+
+		activeAgents, err := dc.ContainerList(ctx, client.ContainerListOptions{
+			Filters: client.Filters{}.
+				Add("label", consts.LabelPurpose+"="+consts.PurposeAgent).
+				Add("status", "running"),
+		})
+		if err != nil {
+			return fmt.Errorf("controlplane: list active agents: %w", err)
+		}
+
+		if cpRunning || len(activeAgents.Items) > 0 {
+			log.Error().
+				Str("event", "cp_container_upgrade_blocked").
+				Str("component", "cpboot.bootstrap").
+				Str("container", consts.ContainerCP).
+				Bool("cp_running", cpRunning).
+				Int("active_agent_count", len(activeAgents.Items)).
+				Msg("control plane upgrade blocked — active CP or agent containers present")
+			return fmt.Errorf("clawker was upgraded and the control plane needs to be replaced, but %d agent container(s) are still running and the existing control plane is %s.\n\nTo upgrade safely:\n  1. Stop all agents:        clawker container ls\n                             clawker container stop <name>\n  2. Shut down CP (one of):  wait — CP self-shuts-down once agents reach zero\n                             clawker controlplane down  (skip the wait)\n  3. Restart agents:         clawker run <name>\n\nIf agents fail to restart cleanly after upgrade, their embedded clawkerd may need rebuilding against the new CLI:\n  clawker build\n  clawker run <name>",
+				len(activeAgents.Items),
+				map[bool]string{true: "still running", false: "stopped"}[cpRunning])
+		}
+
+		// Drift: either binary hash changed (host clawker was rebuilt)
+		// or the container predates this label (legacy / orphaned).
+		// Force-remove and recreate regardless of State — works on
+		// stopped post-drain containers and on still-running stale ones
+		// alike.
+		log.Info().
+			Str("event", "cp_container_spec_drift").
+			Str("component", "cpboot.bootstrap").
+			Str("container", consts.ContainerCP).
+			Str("state", string(summary.State)).
+			Str("desired_binary_sha256", desired).
+			Str("running_binary_sha256", actual).
+			Msg("recreating CP container — embedded binary or spec changed")
+		if err := stopAndRemoveCP(ctx, dc, summary.ID); err != nil {
+			log.Error().
+				Str("event", "cp_container_force_remove_failed").
+				Str("component", "cpboot.bootstrap").
+				Str("container", consts.ContainerCP).
+				Err(err).
+				Msg("drift detected but force-remove failed; next EnsureRunning will retry")
+			return fmt.Errorf("controlplane: %w", err)
+		}
 	}
 
 	if _, err := dc.EnsureNetwork(ctx, whail.EnsureNetworkOptions{Name: cfg.ClawkerNetwork()}); err != nil {
@@ -171,7 +262,7 @@ func EnsureRunning(ctx context.Context, opts EnsureOpts) error {
 		return fmt.Errorf("controlplane: cp static IP %s is outside network subnet %s (check CPIPLastOctet setting)", cpIP, netInfo.Subnet)
 	}
 
-	if err := createCPContainer(ctx, dc, cfg, netInfo.NetworkID, cpIP, opts.HostDirs); err != nil {
+	if err := createCPContainer(ctx, dc, cfg, netInfo.NetworkID, cpIP, opts.HostDirs, imageRef, log); err != nil {
 		return fmt.Errorf("controlplane: %w", err)
 	}
 
@@ -182,7 +273,7 @@ func EnsureRunning(ctx context.Context, opts EnsureOpts) error {
 // Docker sends SIGTERM to PID 1 (clawker-cp), whose own shutdown path
 // drains the firewall stack (Envoy + CoreDNS) and flushes per-container
 // eBPF state before exiting — this call does not need to tear those down
-// separately (INV-B2-008).
+// separately.
 func Stop(ctx context.Context, dc *docker.Client) error {
 	summary, err := findCPContainer(ctx, dc)
 	if err != nil {
@@ -246,10 +337,13 @@ func stopAndRemoveCP(ctx context.Context, dc *docker.Client, id string) error {
 // createCPContainer composes the full create options from
 // BuildCPContainerConfig + bootstrap-computed network topology and
 // dispatches ContainerCreate + ContainerStart. Handles the "already in
-// use" race from concurrent bootstraps by recovering the existing
-// container and starting it.
-func createCPContainer(ctx context.Context, dc *docker.Client, cfg config.Config, networkID string, ip netip.Addr, hostDirs HostDirs) error {
-	cpCfg, err := BuildCPContainerConfig(cfg, CPContainerOpts{HostDirs: hostDirs})
+// use" race from concurrent bootstraps via recoverFromNameConflict; if
+// recovery force-removes a peer's stale container it signals retry via
+// errCPRecoveryRetry, which loops back to a fresh ContainerCreate.
+// Bounded at maxCreateAttempts so a pathological repeat-conflict cannot
+// spin.
+func createCPContainer(ctx context.Context, dc *docker.Client, cfg config.Config, networkID string, ip netip.Addr, hostDirs HostDirs, imageRef string, log *logger.Logger) error {
+	cpCfg, err := BuildCPContainerConfig(cfg, CPContainerOpts{HostDirs: hostDirs, Image: imageRef})
 	if err != nil {
 		return fmt.Errorf("build cp container config: %w", err)
 	}
@@ -277,27 +371,56 @@ func createCPContainer(ctx context.Context, dc *docker.Client, cfg config.Config
 		},
 	}
 
-	createResp, err := dc.ContainerCreate(ctx, whail.ContainerCreateOptions{
-		Name:             consts.ContainerCP,
-		Config:           containerCfg,
-		HostConfig:       hostCfg,
-		NetworkingConfig: netCfg,
-	})
-	if err != nil {
-		return recoverFromNameConflict(ctx, dc, err)
+	const maxCreateAttempts = 2
+	var lastErr error
+	for attempt := 1; attempt <= maxCreateAttempts; attempt++ {
+		createResp, createErr := dc.ContainerCreate(ctx, whail.ContainerCreateOptions{
+			Name:             consts.ContainerCP,
+			Config:           containerCfg,
+			HostConfig:       hostCfg,
+			NetworkingConfig: netCfg,
+		})
+		if createErr == nil {
+			if _, err := dc.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: createResp.ID}); err != nil {
+				return fmt.Errorf("starting cp container: %w", err)
+			}
+			return nil
+		}
+		lastErr = createErr
+		recErr := recoverFromNameConflict(ctx, dc, createErr, imageRef, log)
+		if errors.Is(recErr, errCPRecoveryRetry) {
+			// Re-resolve via ensureCPImageFn so a concurrent prune that
+			// removed our image (cp_recovery_our_image_vanished branch in
+			// recoverFromNameConflict) is rebuilt before the next
+			// ContainerCreate. Cheap on the happy path — content-derived
+			// tag short-circuits on ImageInspect cache hit.
+			newRef, ensureErr := ensureCPImageFn(ctx, dc, log)
+			if ensureErr != nil {
+				log.Error().
+					Str("event", "cp_recovery_reensure_image_failed").
+					Str("component", "cpboot.bootstrap").
+					Err(ensureErr).
+					Msg("re-ensuring cp image before retry failed")
+				return fmt.Errorf("re-ensuring cp image before retry: %w", ensureErr)
+			}
+			imageRef = newRef
+			containerCfg.Image = newRef
+			continue
+		}
+		return recErr
 	}
-	if _, err := dc.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: createResp.ID}); err != nil {
-		return fmt.Errorf("starting cp container: %w", err)
-	}
-	return nil
+	return fmt.Errorf("creating cp container: exceeded %d attempts; last error: %w", maxCreateAttempts, lastErr)
 }
 
 // recoverFromNameConflict handles the cross-process race where another
 // bootstrapper created the CP container between findCPContainer and
-// ContainerCreate. Adopts the recovered container as-is and starts it
-// if not already running. A NotConflict error propagates unchanged;
-// there is nothing to recover from.
-func recoverFromNameConflict(ctx context.Context, dc *docker.Client, createErr error) error {
+// ContainerCreate. Resolution: ContainerInspect the peer for an
+// authoritative SHA read; on match adopt; on mismatch compare
+// LabelImageCreated (with Docker image Created fallback) and let the
+// newer build win. Equal timestamps tie-break to adopt-peer (favors
+// stability under second-precision collisions). NotConflict errors and
+// unmanaged-name squats surface unchanged.
+func recoverFromNameConflict(ctx context.Context, dc *docker.Client, createErr error, imageRef string, log *logger.Logger) error {
 	if !cerrdefs.IsConflict(createErr) {
 		return fmt.Errorf("creating cp container: %w", createErr)
 	}
@@ -306,56 +429,234 @@ func recoverFromNameConflict(ctx context.Context, dc *docker.Client, createErr e
 		return fmt.Errorf("cp container name conflict (%v) and lookup failed: %w", createErr, recErr)
 	}
 	if recovered == nil {
-		// Docker says the name is taken but the managed-label jail
-		// doesn't see it. Usually means an unmanaged container squatted
-		// on the name — safe recovery requires operator intervention.
+		log.Error().
+			Str("event", "cp_recovery_unmanaged_name_squat").
+			Str("component", "cpboot.bootstrap").
+			Str("container", consts.ContainerCP).
+			Msg("cp container name held by an unmanaged container")
 		return fmt.Errorf("cp container name %q in use by an unmanaged container: %w", consts.ContainerCP, createErr)
 	}
-	if recovered.State == container.StateRunning {
+
+	inspect, err := dc.ContainerInspect(ctx, recovered.ID, whail.ContainerInspectOptions{})
+	if err != nil {
+		log.Error().
+			Str("event", "cp_recovery_inspect_failed").
+			Str("component", "cpboot.bootstrap").
+			Str("container_id", recovered.ID).
+			Err(err).
+			Msg("recovered cp container inspect failed")
+		return fmt.Errorf("inspecting recovered cp container: %w", err)
+	}
+	resp := inspect.Container
+
+	var actualSHA string
+	if resp.Config != nil {
+		actualSHA = resp.Config.Labels[consts.LabelCPBinarySHA]
+	}
+	desiredSHA, _ := cpBinaryHash()
+
+	if actualSHA == desiredSHA {
+		state := ""
+		if resp.State != nil {
+			state = string(resp.State.Status)
+		}
+		log.Info().
+			Str("event", "cp_recovery_adopt_sha_match").
+			Str("component", "cpboot.bootstrap").
+			Str("container_id", resp.ID).
+			Str("state", state).
+			Str("binary_sha256", actualSHA).
+			Msg("adopting concurrent peer cp container — binary SHA matches")
+		return adoptRecoveredCP(ctx, dc, resp)
+	}
+
+	oursCreated, err := cpImageCreatedAt(ctx, dc, imageRef, log)
+	if err != nil {
+		// Our image vanished between build and recovery (concurrent
+		// `docker image rm`, prune, or storage GC). Treat as recoverable:
+		// createCPContainer's retry loop re-runs ensureCPImageFn on this
+		// sentinel so the next ContainerCreate has something to reference.
+		if cerrdefs.IsNotFound(err) {
+			log.Warn().
+				Str("event", "cp_recovery_our_image_vanished").
+				Str("component", "cpboot.bootstrap").
+				Str("image", imageRef).
+				Err(err).
+				Msg("our cp image vanished mid-recovery; retrying")
+			return errCPRecoveryRetry
+		}
+		log.Error().
+			Str("event", "cp_recovery_inspect_failed").
+			Str("component", "cpboot.bootstrap").
+			Str("image", imageRef).
+			Err(err).
+			Msg("our cp image inspect failed during recovery")
+		return fmt.Errorf("inspecting our cp image %s: %w", imageRef, err)
+	}
+	theirsCreated, err := cpImageCreatedAt(ctx, dc, resp.Image, log)
+	if err != nil {
+		log.Error().
+			Str("event", "cp_recovery_inspect_failed").
+			Str("component", "cpboot.bootstrap").
+			Str("image", resp.Image).
+			Err(err).
+			Msg("recovered cp image inspect failed during recovery")
+		return fmt.Errorf("inspecting recovered cp image %s: %w", resp.Image, err)
+	}
+
+	logEvent := log.Info().
+		Str("component", "cpboot.bootstrap").
+		Str("our_binary_sha256", desiredSHA).
+		Str("their_binary_sha256", actualSHA).
+		Time("our_image_created", oursCreated).
+		Time("their_image_created", theirsCreated)
+
+	// Equal timestamps fall here too — adopt peer to avoid churn under
+	// second-precision clock collisions.
+	if !oursCreated.After(theirsCreated) {
+		logEvent.
+			Str("event", "cp_recovery_adopt_newer_peer").
+			Msg("adopting concurrent peer cp container — peer image is at least as new")
+		return adoptRecoveredCP(ctx, dc, resp)
+	}
+
+	logEvent.
+		Str("event", "cp_recovery_replace_older_peer").
+		Msg("replacing concurrent peer cp container — our image is newer")
+	if err := stopAndRemoveCP(ctx, dc, resp.ID); err != nil {
+		return fmt.Errorf("removing older cp container: %w", err)
+	}
+	return errCPRecoveryRetry
+}
+
+// adoptRecoveredCP starts the recovered container if it isn't already
+// running. Shared between the SHA-match and theirs-newer branches of
+// recoverFromNameConflict.
+func adoptRecoveredCP(ctx context.Context, dc *docker.Client, resp container.InspectResponse) error {
+	if resp.State != nil && resp.State.Running {
 		return nil
 	}
-	if _, startErr := dc.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: recovered.ID}); startErr != nil {
-		return fmt.Errorf("starting recovered cp container: %w", startErr)
+	if _, err := dc.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: resp.ID}); err != nil {
+		return fmt.Errorf("starting recovered cp container: %w", err)
 	}
 	return nil
+}
+
+// cpImageCreatedAt returns the build-time creation timestamp for a CP
+// image. Prefers the consts.LabelImageCreated LABEL we stamp in
+// cpImageDockerfile (RFC3339, second precision), falling back to the
+// Docker image's own Created field (RFC3339Nano, set by the daemon at
+// build completion). A non-empty LABEL that fails to parse emits a
+// structured warn before fallback so tampering / corruption is
+// observable in the file log.
+func cpImageCreatedAt(ctx context.Context, dc *docker.Client, ref string, log *logger.Logger) (time.Time, error) {
+	inspect, err := dc.ImageInspect(ctx, ref)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if inspect.Config != nil {
+		if raw := inspect.Config.Labels[consts.LabelImageCreated]; raw != "" {
+			if t, parseErr := time.Parse(time.RFC3339, raw); parseErr == nil {
+				return t, nil
+			} else if log != nil {
+				log.Warn().
+					Str("event", "cp_image_created_label_unparseable").
+					Str("component", "cpboot.bootstrap").
+					Str("image", ref).
+					Str("raw", raw).
+					Err(parseErr).
+					Msg("cp image org.opencontainers.image.created LABEL is non-empty but unparseable; falling back to Docker Created field")
+			}
+		}
+	}
+	if inspect.Created != "" {
+		if t, parseErr := time.Parse(time.RFC3339Nano, inspect.Created); parseErr == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("image %s has no parseable created timestamp", ref)
 }
 
 // ensureCPImage checks for the clawker-cp image and builds it from
 // embedded binaries + pinned base images when absent. Mirrors the
 // Stack.ensureCorednsImage pattern so both CP and CoreDNS images have
 // the same error-surfacing behavior.
-func ensureCPImage(ctx context.Context, dc *docker.Client, log *logger.Logger) error {
-	if _, err := dc.ImageInspect(ctx, consts.CPImageTag); err == nil {
-		return nil
+func ensureCPImage(ctx context.Context, dc *docker.Client, log *logger.Logger) (string, error) {
+	tag := cpImageRef()
+	if _, err := dc.ImageInspect(ctx, tag); err == nil {
+		return tag, nil
 	} else if !cerrdefs.IsNotFound(err) {
-		return fmt.Errorf("checking %s image: %w", consts.CPImageTag, err)
+		return "", fmt.Errorf("checking %s image: %w", tag, err)
 	}
 
 	if len(ClawkerCPBinary) == 0 {
-		return fmt.Errorf("%s binary not embedded — run 'make cp-binary' then rebuild clawker", consts.CPImageTag)
+		return "", fmt.Errorf("clawker-cp binary not embedded — run 'make cp-binary' then rebuild clawker")
 	}
 	if len(EBPFManagerBinary) == 0 {
-		return fmt.Errorf("ebpf-manager binary not embedded — run 'make ebpf-binary' then rebuild clawker")
+		return "", fmt.Errorf("ebpf-manager binary not embedded — run 'make ebpf-binary' then rebuild clawker")
 	}
 
-	buildCtx, err := cpBuildContext()
+	full, _ := cpBinaryHash()
+	createdAt := time.Now().UTC().Format(time.RFC3339)
+
+	buildCtx, err := cpBuildContext(full, build.Version, build.Revision, createdAt)
 	if err != nil {
-		return fmt.Errorf("creating cp build context: %w", err)
+		return "", fmt.Errorf("creating cp build context: %w", err)
 	}
 
-	log.Debug().Str("image", consts.CPImageTag).Msg("building cp image from embedded binaries")
+	log.Debug().Str("image", tag).Str("binary_sha256", full).Msg("building cp image from embedded binaries")
 	resp, err := dc.ImageBuild(ctx, buildCtx, whail.ImageBuildOptions{
-		Tags:           []string{consts.CPImageTag},
+		Tags:           []string{tag},
 		Dockerfile:     "Dockerfile",
 		Remove:         true,
 		ForceRemove:    true,
 		SuppressOutput: true,
 	})
 	if err != nil {
-		return fmt.Errorf("building cp image: %w", err)
+		return "", fmt.Errorf("building cp image: %w", err)
 	}
 	defer resp.Body.Close()
-	return drainBuildStream(resp.Body, "building cp image")
+	if err := drainBuildStream(resp.Body, fmt.Sprintf("building cp image %s", tag)); err != nil {
+		return "", err
+	}
+	pruneStaleCPImages(ctx, dc, tag, log)
+	return tag, nil
+}
+
+// pruneStaleCPImages best-effort removes locally-cached CP image tags
+// that don't match the just-built keepTag, so a rebuild cycle doesn't
+// accumulate one bin-<sha> image per change. Matches the bare
+// `clawker-controlplane:` prefix so legacy `:latest` images from
+// pre-content-derived-tag installs are also swept. Failures degrade
+// (warn + continue) — a stale image leftover is not a boot blocker.
+func pruneStaleCPImages(ctx context.Context, dc *docker.Client, keepTag string, log *logger.Logger) {
+	images, err := dc.ImageList(ctx, whail.ImageListOptions{All: false})
+	if err != nil {
+		log.Warn().
+			Str("event", "cp_image_prune_unavailable").
+			Str("component", "cpboot.bootstrap").
+			Err(err).
+			Msg("cp image prune: list failed")
+		return
+	}
+	prefix := consts.CPImageRepo + ":"
+	for _, img := range images.Items {
+		for _, tag := range img.RepoTags {
+			if tag == keepTag || !strings.HasPrefix(tag, prefix) {
+				continue
+			}
+			if _, err := dc.ImageRemove(ctx, tag, whail.ImageRemoveOptions{Force: true, PruneChildren: true}); err != nil {
+				log.Warn().
+					Str("event", "cp_image_prune_unavailable").
+					Str("component", "cpboot.bootstrap").
+					Str("image", tag).
+					Err(err).
+					Msg("cp image prune: remove failed")
+			} else {
+				log.Debug().Str("image", tag).Msg("cp image prune: removed stale tag")
+			}
+		}
+	}
 }
 
 // drainBuildStream consumes the Docker build daemon's JSON progress
@@ -391,7 +692,7 @@ func drainBuildStream(r io.Reader, ctxMsg string) error {
 
 // cpBuildContext assembles the three-file tar archive (Dockerfile +
 // clawker-cp + ebpf-manager) that ImageBuild expects.
-func cpBuildContext() (io.Reader, error) {
+func cpBuildContext(binarySHA, version, revision, createdAt string) (io.Reader, error) {
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
 	writeFile := func(name string, contents []byte, mode int64) error {
@@ -403,7 +704,7 @@ func cpBuildContext() (io.Reader, error) {
 		}
 		return nil
 	}
-	if err := writeFile("Dockerfile", []byte(cpImageDockerfile), 0o644); err != nil {
+	if err := writeFile("Dockerfile", []byte(cpImageDockerfile(binarySHA, version, revision, createdAt)), 0o644); err != nil {
 		return nil, err
 	}
 	if err := writeFile("clawker-cp", ClawkerCPBinary, 0o755); err != nil {
@@ -441,12 +742,9 @@ func waitForCPHealthz(ctx context.Context, cfg config.Config) error {
 	var lastStatus int
 	var lastBody string
 	for {
-		// Deadline check before ctx.Err() so a timed-out ctx that the
-		// poller adopted as its own deadline surfaces the typed error
-		// with its captured last-probe diagnostics — callers that
-		// supplied a deadline want "CP didn't come up", not bare
-		// context.DeadlineExceeded. Caller-initiated cancellation
-		// (context.Canceled) still returns the bare ctx error below.
+		// Deadline check first so a DeadlineExceeded surfaces the typed
+		// error with last-probe diagnostics rather than bare ctx.Err().
+		// Caller Canceled returns the bare ctx error via the select below.
 		if time.Now().After(deadline) {
 			return newCPHealthTimeout(start, url, lastStatus, lastBody, lastErr)
 		}
@@ -471,10 +769,6 @@ func waitForCPHealthz(ctx context.Context, cfg config.Config) error {
 		}
 		select {
 		case <-ctx.Done():
-			// ctx.Err() distinguishes Canceled from DeadlineExceeded.
-			// For DeadlineExceeded, loop once more so the deadline
-			// check at top surfaces the typed error. For Canceled,
-			// return immediately.
 			if errors.Is(ctx.Err(), context.Canceled) {
 				return ctx.Err()
 			}

@@ -48,6 +48,8 @@ func (h HostDirs) Validate() error {
 // needs that cannot be derived from config.Config alone.
 type CPContainerOpts struct {
 	HostDirs HostDirs
+	// Image is the CP image tag (content-derived; see cpImageRef).
+	Image string
 }
 
 // CPContainerConfig holds the configuration for creating the control plane
@@ -305,13 +307,15 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 		},
 	}
 
+	binarySHA, _ := cpBinaryHash()
 	labels := map[string]string{
-		consts.LabelManaged: consts.ManagedLabelValue,
-		consts.LabelPurpose: consts.PurposeControlPlane,
+		consts.LabelManaged:     consts.ManagedLabelValue,
+		consts.LabelPurpose:     consts.PurposeControlPlane,
+		consts.LabelCPBinarySHA: binarySHA,
 	}
 
 	return &CPContainerConfig{
-		Image:        consts.CPImageTag,
+		Image:        opts.Image,
 		Labels:       labels,
 		Mounts:       mounts,
 		PortBindings: portBindings,
