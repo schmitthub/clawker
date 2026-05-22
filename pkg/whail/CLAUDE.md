@@ -96,7 +96,7 @@ Domain helpers for build progress display. These live in `whail` (bottom of the 
 
 ## Volume Operations (8 methods)
 
-`VolumeCreate(ctx, opts, extraLabels...)`, `VolumeRemove(ctx, id, force)`, `VolumeInspect(ctx, id)`, `VolumeExists(ctx, id)`, `VolumeList(ctx, extraFilters...)`, `VolumeListAll(ctx)`, `IsVolumeManaged(ctx, name)`, `VolumesPrune(ctx, all)`
+`VolumeCreate(ctx, opts, extraLabels...)`, `VolumeRemove(ctx, id, force)`, `VolumeInspect(ctx, id)`, `VolumeExists(ctx, id)`, `VolumeList(ctx, extraFilters...)`, `VolumeListAll(ctx)`, `IsVolumeManaged(ctx, name)`, `VolumesPrune(ctx, all, extraFilters...)`
 
 **Note:** `VolumeExists` delegates to `IsVolumeManaged` — an unmanaged volume with the same name is treated as "not found".
 

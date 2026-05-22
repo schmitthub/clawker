@@ -211,9 +211,3 @@ func ImageTag(project string) string {
 	}
 	return fmt.Sprintf("%s-%s:latest", NamePrefix, project)
 }
-
-// GlobalVolumeName returns the name for a global (non-agent-scoped) volume.
-// Example: GlobalVolumeName("globals") → "clawker-globals"
-func GlobalVolumeName(purpose string) string {
-	return fmt.Sprintf("%s-%s", NamePrefix, purpose)
-}

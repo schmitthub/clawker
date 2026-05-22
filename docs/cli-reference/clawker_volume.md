@@ -31,7 +31,7 @@ configuration, and command history between container runs.
 * [clawker volume create](clawker_volume_create) - Create a volume
 * [clawker volume inspect](clawker_volume_inspect) - Display detailed information on one or more volumes
 * [clawker volume list](clawker_volume_list) - List volumes
-* [clawker volume prune](clawker_volume_prune) - Remove unused local volumes
+* [clawker volume prune](clawker_volume_prune) - Remove unused agent volumes
 * [clawker volume remove](clawker_volume_remove) - Remove one or more volumes
 
 ### Options

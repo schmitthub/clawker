@@ -127,7 +127,7 @@ func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, a
 	if err != nil {
 		return result, err
 	}
-	configLabels := cli.VolumeLabels(projectName, agentName, "config")
+	configLabels := cli.AgentVolumeLabels(projectName, agentName)
 	created, err := cli.EnsureVolume(ctx, configVolume, configLabels)
 	if err != nil {
 		return result, err
@@ -138,7 +138,7 @@ func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, a
 	if err != nil {
 		return result, err
 	}
-	historyLabels := cli.VolumeLabels(projectName, agentName, "history")
+	historyLabels := cli.AgentVolumeLabels(projectName, agentName)
 	created, err = cli.EnsureVolume(ctx, historyVolume, historyLabels)
 	if err != nil {
 		return result, err

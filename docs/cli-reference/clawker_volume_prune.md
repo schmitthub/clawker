@@ -4,13 +4,19 @@ title: "clawker volume prune"
 
 ## clawker volume prune
 
-Remove unused local volumes
+Remove unused agent volumes
 
 ### Synopsis
 
-Removes all clawker-managed volumes that are not currently in use.
+Removes unused clawker-managed agent volumes (volumes labeled with purpose=agent).
 
-This command removes volumes that are not attached to any container.
+By default all agent volumes are pruned — workspace, config, AND command
+history. Config and history volumes persist per-agent settings and shell
+history across sessions, so they will be lost if the matching agent container
+is not running at prune time. Infrastructure volumes (monitoring stack and
+any other clawker-managed volumes) are preserved unless --all is set.
+
+For targeted cleanup, prefer 'clawker volume list' + 'clawker volume remove'.
 Use with caution as this will permanently delete data.
 
 ```
@@ -20,8 +26,11 @@ clawker volume prune [OPTIONS] [flags]
 ### Examples
 
 ```
-  # Remove all unused clawker volumes
+  # Remove unused agent volumes (workspace, config, history)
   clawker volume prune
+
+  # Also remove infrastructure volumes (monitoring stack, etc.)
+  clawker volume prune --all
 
   # Remove without confirmation prompt
   clawker volume prune --force
@@ -30,6 +39,7 @@ clawker volume prune [OPTIONS] [flags]
 ### Options
 
 ```
+  -a, --all     Remove all clawker-managed volumes (default: only agent volumes)
   -f, --force   Do not prompt for confirmation
   -h, --help    help for prune
 ```

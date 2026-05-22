@@ -32,6 +32,16 @@ func TestNewCmdPrune(t *testing.T) {
 			input:    "-f",
 			wantOpts: PruneOptions{Force: true},
 		},
+		{
+			name:     "all flag",
+			input:    "--all",
+			wantOpts: PruneOptions{All: true},
+		},
+		{
+			name:     "all flag short",
+			input:    "-a",
+			wantOpts: PruneOptions{All: true},
+		},
 	}
 
 	for _, tt := range tests {
@@ -62,6 +72,7 @@ func TestNewCmdPrune(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, gotOpts)
 			require.Equal(t, tt.wantOpts.Force, gotOpts.Force)
+			require.Equal(t, tt.wantOpts.All, gotOpts.All)
 		})
 	}
 }
@@ -81,9 +92,11 @@ func TestCmdPrune_Properties(t *testing.T) {
 
 	// Test flags exist
 	require.NotNil(t, cmd.Flags().Lookup("force"))
+	require.NotNil(t, cmd.Flags().Lookup("all"))
 
 	// Test shorthand flags
 	require.NotNil(t, cmd.Flags().ShorthandLookup("f"))
+	require.NotNil(t, cmd.Flags().ShorthandLookup("a"))
 }
 
 func TestFormatBytes(t *testing.T) {
