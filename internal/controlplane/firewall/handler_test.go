@@ -14,6 +14,7 @@ import (
 	"github.com/schmitthub/clawker/internal/consts"
 	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
 	ebpfmocks "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf/mocks"
+	"github.com/schmitthub/clawker/internal/controlplane/overseer"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -597,6 +598,17 @@ func TestHandler_FirewallInit_ReenrollsRunningAgents(t *testing.T) {
 
 	q := NewActionQueue(nil)
 	t.Cleanup(func() { _ = q.Close() })
+	bus := overseer.New(overseer.Options{Logger: logger.Nop()})
+	require.NoError(t, bus.Start(context.Background()))
+	t.Cleanup(func() { _ = bus.Close() })
+	// Subscribe BEFORE FirewallInit so the publish path is observable.
+	// netlogger's LabelCache hydration depends on this — without it
+	// every record from a re-enrolled agent carries empty attribution
+	// (the bug this regression locks in).
+	sub, ok := overseer.Subscribe[ebpf.EBPFContainerEnrolled](bus, "test.reenroll")
+	require.True(t, ok, "Subscribe must succeed on a live bus")
+	t.Cleanup(sub.Unsubscribe)
+
 	h := NewHandler(HandlerDeps{
 		EBPF:       mock,
 		Stack:      stack,
@@ -604,6 +616,7 @@ func TestHandler_FirewallInit_ReenrollsRunningAgents(t *testing.T) {
 		Resolver:   resolver,
 		Log:        logger.Nop(),
 		Queue:      q,
+		Bus:        bus,
 		ListAgents: func(_ context.Context) ([]string, error) { return agents, nil },
 	})
 	h.resolveHostFn = func(_ context.Context, _ string) ([]string, error) {
@@ -627,6 +640,25 @@ func TestHandler_FirewallInit_ReenrollsRunningAgents(t *testing.T) {
 	// same config twice (or swapped indices) shows up clearly.
 	gotIDs := []uint64{mock.InstallCalls()[0].CgroupID, mock.InstallCalls()[1].CgroupID}
 	assert.ElementsMatch(t, []uint64{111, 222}, gotIDs)
+
+	// Pin the publish: every re-enrolled agent MUST emit an
+	// EBPFContainerEnrolled event so netlogger's LabelCache hydrates
+	// for cgroups that outlived the previous CP. Drain with a small
+	// deadline so a regression that drops the publish fails fast
+	// instead of hanging the suite.
+	gotEnrolls := map[uint64]string{}
+	deadline := time.After(2 * time.Second)
+	for len(gotEnrolls) < 2 {
+		select {
+		case ev := <-sub.C:
+			gotEnrolls[ev.CgroupID] = ev.ContainerID
+		case <-deadline:
+			t.Fatalf("timed out waiting for re-enrollment publish; got %d/%d events: %+v",
+				len(gotEnrolls), 2, gotEnrolls)
+		}
+	}
+	assert.Equal(t, "agent-A", gotEnrolls[111])
+	assert.Equal(t, "agent-B", gotEnrolls[222])
 }
 
 // TestHandler_FirewallInit_ReenrollContinuesOnPerAgentFailure verifies

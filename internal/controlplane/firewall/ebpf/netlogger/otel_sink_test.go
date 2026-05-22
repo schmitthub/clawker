@@ -118,8 +118,8 @@ func TestOtelSink_EmitsAllAttributes(t *testing.T) {
 	if !rec.Timestamp().Equal(ev.Timestamp) {
 		t.Errorf("Timestamp = %v; want %v", rec.Timestamp(), ev.Timestamp)
 	}
-	if rec.Body().AsString() != "ebpf egress flow" {
-		t.Errorf("Body = %q; want %q", rec.Body().AsString(), "ebpf egress flow")
+	if rec.Body().AsString() != "ebpf egress" {
+		t.Errorf("Body = %q; want %q", rec.Body().AsString(), "ebpf egress")
 	}
 
 	attrs := attrsAsMap(t, rec)
@@ -127,15 +127,16 @@ func TestOtelSink_EmitsAllAttributes(t *testing.T) {
 		key  string
 		want any
 	}{
+		{"event.name", eventName},
 		{"source", "ebpf"},
 		{"verdict", "allowed"},
 		{"container_id", "cid-abc"},
 		{"agent", "a1"},
 		{"project", "p1"},
-		{"cgroup_id", int64(9001)},
+		{"cgroup_id", "9001"},
 		{"bpf_ts_ns", int64(42)},
 		{"dst_ip", "203.0.113.7"},
-		{"dst_port", int64(443)},
+		{"dst_port", "443"},
 		{"l4_proto", "stream"},
 		{"l4_proto_code", int64(1)},
 		{"ipv6", false},
@@ -182,7 +183,7 @@ func TestOtelSink_EmitsEmptyFieldsOnZeroEvent(t *testing.T) {
 	attrs := attrsAsMap(t, records[0])
 
 	for _, key := range []string{
-		"source", "verdict", "container_id", "agent", "project",
+		"event.name", "source", "verdict", "container_id", "agent", "project",
 		"cgroup_id", "bpf_ts_ns", "dst_ip", "dst_port", "l4_proto",
 		"l4_proto_code", "ipv6", "ipv4_mapped", "dst_host",
 	} {
@@ -199,8 +200,8 @@ func TestOtelSink_EmitsEmptyFieldsOnZeroEvent(t *testing.T) {
 	if got := attrs["container_id"].AsString(); got != "" {
 		t.Errorf("container_id = %q; want empty string", got)
 	}
-	if got := attrs["cgroup_id"].AsInt64(); got != 0 {
-		t.Errorf("cgroup_id = %d; want 0", got)
+	if got := attrs["cgroup_id"].AsString(); got != "0" {
+		t.Errorf("cgroup_id = %q; want %q", got, "0")
 	}
 	// netip.Addr{}.String() == "invalid IP" — verify the sink emits
 	// that verbatim rather than dropping the field. Operators read it

@@ -820,7 +820,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 				netloggerProvider, err = controlplane.NewOtelLoggerProvider(controlplane.OtelClientOptions{
 					Endpoint:            endpoint,
 					TLSConfig:           tlsCfg,
-					ServiceName:         "ebpf-networking",
+					ServiceName:         "ebpf-egress",
 					MaxQueueSize:        2048,
 					ExportInterval:      time.Second,
 					ExportTimeout:       30 * time.Second,

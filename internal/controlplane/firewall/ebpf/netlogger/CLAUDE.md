@@ -43,29 +43,30 @@ The reader MUST NOT block on the queue. Back-pressure from the queue into the ke
 | `reader.go` | `reader` — ringbuf drain goroutine. Recovers; bumps RingbufReceived/RingbufErrors/QueueDropped |
 | `processor.go` | `processor` — queue-consumer goroutine. Recovers; bumps QueueReceived/ParseErrors/EmitSucceeded |
 | `sink.go` | `Sink` interface + internal `nopSink`. No public sink constructors — the OTel-backed sink is constructed in `New` when `Deps.OtelLoggerProvider` is non-nil, and the nopSink is the test/degraded default. |
-| `otel_sink.go` | `otelSink` + `newOtelSink(provider)` — emits every Event field as an attribute on a `*otellog.Record`; scope `clawker.netlogger`, event.name `ebpf.egress.flow` |
+| `otel_sink.go` | `otelSink` + `newOtelSink(provider)` — emits every Event field as an attribute on a `*otellog.Record`; scope `clawker.netlogger`, event.name `ebpf.egress` |
 | `circuit.go` | `circuitExporter` + `NewCircuitExporter(inner, CircuitOptions)` — wraps `sdklog.Exporter`; after N consecutive Export failures (default 3) trips permanently and drops records on the floor with a single `event=netlogger_collector_lost` log line. No probe loop; reconnect requires CP restart. |
 | `metrics.go` | `Metrics` struct declaring the six pipeline Prom counters. Counters created unregistered; scrape wiring is deferred to a follow-up PR (see TODO at the top of the file). |
 
 ## OTel sink + provider wiring
 
-**Resource attribution.** `service.name=ebpf-networking` so the OS routing/connector pipeline drops netlogger records into their own data stream, separate from `clawker-cp` (the CP zerolog bridge). Identity-layer reuse stays: same `otelcerts.Service`, same per-handshake leaf mint, same gRPC endpoint on `OtelInfraPort`.
+**Resource attribution.** `service.name=ebpf-egress` so the OS routing/connector pipeline drops netlogger records into their own data stream, separate from `clawker-cp` (the CP zerolog bridge). Identity-layer reuse stays: same `otelcerts.Service`, same per-handshake leaf mint, same gRPC endpoint on `OtelInfraPort`.
 
-**Instrumentation scope.** Records carry scope name `clawker.netlogger` and event name `ebpf.egress.flow`. Future netlogger-emitted event types (e.g. sock-state) can share the provider but use a distinct scope/event-name so subscribers within the stream can filter cleanly.
+**Instrumentation scope.** Records carry scope name `clawker.netlogger` and event name `ebpf.egress`. Future netlogger-emitted event types (e.g. sock-state) can share the provider but use a distinct scope/event-name so subscribers within the stream can filter cleanly.
 
 **Record shape (strict directive).** Every field on `Event` lands as an attribute on every emitted record. Empty strings and zero numbers are emitted verbatim — never dropped. Adding a field to `Event` is a contract change that requires updating `otelSink.Emit` in the same diff. Attribute keys today:
 
 | Attribute | Type | Source |
 |-----------|------|--------|
+| `event.name` | string | constant `"ebpf.egress"`. Mirrors what `rec.SetEventName(...)` populates on the OTLP LogRecord, but the OS OTLP exporter does NOT currently project `LogRecord.event_name` into the SS4O document — emit as an attribute too so OSD can filter by it. Keep `SetEventName` for downstream consumers that DO honor the OTLP field (Loki, future OS releases). |
 | `source` | string | constant `"ebpf"` |
 | `verdict` | string | `Event.Verdict.String()` (`allowed`/`denied`/`bypassed`) |
 | `container_id` | string | `Event.ContainerID` (empty on cache miss) |
 | `agent` | string | `Event.Agent` |
 | `project` | string | `Event.Project` |
-| `cgroup_id` | int64 | `Event.CgroupID` |
+| `cgroup_id` | string | `strconv.FormatUint(Event.CgroupID, 10)` — opaque kernel identifier; emitted as string so the OS index template maps it as `keyword` (group/filter dimension) instead of `long` (metric). Sending a JSON number to a keyword field is officially supported via numeric→string coercion but operator UIs treat numerics as metrics by default, which is wrong for ID-shaped fields. |
 | `bpf_ts_ns` | int64 | `Event.BPFTsNs` (raw `bpf_ktime_get_ns`) |
 | `dst_ip` | string | `Event.DstIP.String()` |
-| `dst_port` | int | `Event.DstPort` |
+| `dst_port` | string | `strconv.FormatUint(uint64(Event.DstPort), 10)` — opaque port identifier; emitted as string for the same reason as `cgroup_id` (keyword dimension, not metric). OSD formats numeric fields with thousands separators ("4,318") which is wrong for an ID-shaped axis. |
 | `l4_proto` | string | SOCK_STREAM / SOCK_DGRAM / SOCK_RAW name |
 | `l4_proto_code` | int | raw SOCK code (resilient to renames) |
 | `ipv6` | bool | native IPv6 |

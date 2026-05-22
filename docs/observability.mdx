@@ -12,9 +12,9 @@ The headline use is **bypass-mode forensic coverage**. The firewall's bypass swi
 
 Each record is an OTel log emitted on the trusted infra OTLP lane with:
 
-- `service.name = ebpf-networking` (distinct from `clawker-cp` so retention + volume profile are independent)
-- `event.name = ebpf.egress.flow`
-- `body = "ebpf egress flow"`
+- `service.name = ebpf-egress` (distinct from `clawker-cp` so retention + volume profile are independent)
+- `event.name = ebpf.egress`
+- `body = "ebpf egress"`
 - `severity = INFO`
 
 Attributes carried on every record (empty/zero when not applicable — fields are never dropped):
@@ -58,13 +58,13 @@ agent container egress decision
   otel-collector trusted lane (otlp/infra receiver)
         │
         ▼
-  routing/trusted connector (service.name=ebpf-networking)
+  routing/trusted connector (service.name=ebpf-egress)
         │
         ▼
-  OpenSearch index: clawker-netlogger
+  OpenSearch index: clawker-ebpf-egress
 ```
 
-The index is preconfigured by the `clawker-opensearch-bootstrap` one-shot service every time `clawker monitor up` runs. The retention policy (default 7 days, throwaway-stack semantics) auto-attaches via the same ISM policy that covers the other clawker indices. Cross-index queries against `clawker-cp,clawker-envoy,clawker-coredns,clawker-netlogger` work out of the box — `ingest_source` is stamped on every record for filtering.
+The index is preconfigured by the `clawker-opensearch-bootstrap` one-shot service every time `clawker monitor up` runs. The retention policy (default 7 days, throwaway-stack semantics) auto-attaches via the same ISM policy that covers the other clawker indices. Cross-index queries against `clawker-cp,clawker-envoy,clawker-coredns,clawker-ebpf-egress` work out of the box — `ingest_source` is stamped on every record for filtering.
 
 ## Per-Connection Bytes and Duration
 
@@ -105,7 +105,7 @@ netlogger emits on the **trusted infra lane** — the same OTLP/gRPC + mTLS path
 - Endpoint: the collector's `otlp/infra` receiver on `OtelInfraPort` (not the unauth'd `otel-collector:4317` agent lane).
 - The OTLP endpoint **must** be `https://` (or bare host:port). A plaintext `http://` endpoint is rejected at boot — pushing infra telemetry over plaintext would smuggle records onto the agent-lane receiver, defeating the trust-lane separation.
 
-Agent containers cannot forge `service.name=ebpf-networking` records onto the trusted index — they don't hold a leaf chained through the infra intermediate, so the receiver's TLS handshake fails the chain check. The strict-directive promise (every field on every record, no discretion) only delivers if the records actually originate from the CP — the mTLS boundary is what makes that promise enforceable.
+Agent containers cannot forge `service.name=ebpf-egress` records onto the trusted index — they don't hold a leaf chained through the infra intermediate, so the receiver's TLS handshake fails the chain check. The strict-directive promise (every field on every record, no discretion) only delivers if the records actually originate from the CP — the mTLS boundary is what makes that promise enforceable.
 
 ## Configuration
 

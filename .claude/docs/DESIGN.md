@@ -779,7 +779,7 @@ No error, no duplicate—deterministic behavior.
 A Docker Compose stack on `clawker-net`:
 
 - **OpenTelemetry Collector** - OTLP/HTTP receivers + routing; writes logs to OpenSearch and exposes a Prometheus scrape endpoint for metrics. A `traces` pipeline is configured but idle — agents don't emit spans today.
-- **OpenSearch** - Logs only, split into six indices: `claude-code` (Claude Code OTLP push, untrusted port), `clawker-cli` (host CLI OTLP push, untrusted port), `clawker-cp` (mTLS-gated CP push), `clawker-envoy` (Envoy access logs, mTLS-gated), `clawker-coredns` (CoreDNS query logs, mTLS-gated), and `clawker-netlogger` (eBPF per-decision egress events from netlogger, `service.name=ebpf-networking`, mTLS-gated). Cross-index queries: `clawker-cp,claude-code,clawker-cli,clawker-envoy,clawker-coredns,clawker-netlogger`.
+- **OpenSearch** - Logs only, split into six indices: `claude-code` (Claude Code OTLP push, untrusted port), `clawker-cli` (host CLI OTLP push, untrusted port), `clawker-cp` (mTLS-gated CP push), `clawker-envoy` (Envoy access logs, mTLS-gated), `clawker-coredns` (CoreDNS query logs, mTLS-gated), and `clawker-ebpf-egress` (eBPF per-decision egress events from netlogger, `service.name=ebpf-egress`, mTLS-gated). Cross-index queries: `clawker-cp,claude-code,clawker-cli,clawker-envoy,clawker-coredns,clawker-ebpf-egress`.
 - **OpenSearch Dashboards** - UI for log exploration (Discover)
 - **Prometheus** - Metrics storage + UI; also accepts direct OTLP push for callers willing to lose `/api/v1/metadata` coverage
 

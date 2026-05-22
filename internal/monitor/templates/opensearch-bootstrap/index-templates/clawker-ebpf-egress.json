@@ -1,5 +1,5 @@
 {
-  "index_patterns": ["clawker-netlogger"],
+  "index_patterns": ["clawker-ebpf-egress"],
   "priority": 100,
   "composed_of": ["clawker-common"],
   "template": {
@@ -10,31 +10,41 @@
     },
     "mappings": {
       "properties": {
-        "eventName": { "type": "keyword" },
         "attributes": {
           "properties": {
+            "event": {
+              "properties": {
+                "name": { "type": "keyword" }
+              }
+            },
             "source":        { "type": "keyword" },
             "verdict":       { "type": "keyword" },
             "container_id":  { "type": "keyword" },
             "agent":         { "type": "keyword" },
             "project":       { "type": "keyword" },
-            "cgroup_id":     { "type": "long" },
+            "cgroup_id":     { "type": "keyword" },
             "bpf_ts_ns":     { "type": "long" },
             "dst_ip":        { "type": "ip" },
-            "dst_port":      { "type": "integer" },
+            "dst_port":      { "type": "keyword" },
             "l4_proto":      { "type": "keyword" },
             "l4_proto_code": { "type": "integer" },
             "ipv6":          { "type": "boolean" },
             "ipv4_mapped":   { "type": "boolean" },
             "dst_host":      { "type": "keyword" },
-            "domain_hash":   { "type": "long" }
+            "data_stream": {
+              "properties": {
+                "dataset":   { "type": "keyword" },
+                "namespace": { "type": "keyword" },
+                "type":      { "type": "keyword" }
+              }
+            }
           }
         }
       }
     }
   },
   "_meta": {
-    "description": "eBPF netlogger egress decision records (service.name=ebpf-networking) — per-decision-point verdict + attribution + 4-tuple + domain",
+    "description": "eBPF netlogger egress decision records (service.name=ebpf-egress) — per-decision-point verdict + attribution + 4-tuple + domain",
     "managed_by": "clawker-opensearch-bootstrap"
   }
 }

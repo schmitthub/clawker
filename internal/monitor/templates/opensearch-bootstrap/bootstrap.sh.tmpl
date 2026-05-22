@@ -124,7 +124,7 @@ apply_ism_policies
 # we GET the index and assert `properties` is present — catches the
 # silent "template didn't match, dynamic mapping took over" path that
 # would otherwise lock the wrong shape until `monitor down --volumes`.
-for idx in claude-code clawker-cli clawker-cp clawker-envoy clawker-coredns clawker-netlogger; do
+for idx in claude-code clawker-cli clawker-cp clawker-envoy clawker-coredns clawker-ebpf-egress; do
   code=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT "${OPENSEARCH_URL}/${idx}")
   case "${code}" in
     200|201)

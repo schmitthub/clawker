@@ -371,6 +371,13 @@ func (h *Handler) reenrollAgents(ctx context.Context) {
 		h.cgroupIDMu.Lock()
 		h.storedCgroupID[rid] = cgroupID
 		h.cgroupIDMu.Unlock()
+		// netlogger LabelCache hydration covers BOTH the startup
+		// re-enrollment sweep here AND runtime FirewallEnable. Without
+		// this publish, agents that outlived the previous CP get their
+		// container_map row rebuilt but netlogger records carry empty
+		// container_id/agent/project until the user manually rebounces
+		// the container.
+		h.publishEnrolled(rid, cgroupID)
 		h.log.Info().Str("container_id", rid).Uint64("cgroup_id", cgroupID).Msg("firewall ebpf: container re-enrolled in container_map")
 		enrolled++
 	}
@@ -497,29 +504,7 @@ func (h *Handler) FirewallEnable(ctx context.Context, req *adminv1.FirewallEnabl
 		return nil, toStatus(err)
 	}
 
-	// Publish EBPFContainerEnrolled AFTER the BPF install completes so
-	// downstream consumers (netlogger LabelCache) hydrate their
-	// cgroup_id → {container_id, labels} mapping. Nil-bus tolerant
-	// for tests that exercise the RPC surface without a running bus.
-	// Publish is non-blocking; the bus also emits its own drop line,
-	// but we add a producer-side line that names the affected
-	// container_id + cgroup_id so the blast radius (one cgroup of
-	// unattributed netlogger records) is locatable from the
-	// structured log surface alone.
-	if h.bus != nil {
-		ok := overseer.Publish(h.bus, ebpf.EBPFContainerEnrolled{
-			CgroupID:    cgroupID,
-			ContainerID: cid,
-			At:          time.Now(),
-		})
-		if !ok {
-			h.log.Warn().
-				Str("container_id", cid).
-				Uint64("cgroup_id", cgroupID).
-				Str("event", "netlogger_enroll_publish_dropped").
-				Msg("overseer.Publish(EBPFContainerEnrolled) returned false — netlogger LabelCache will not hydrate for this cgroup; subsequent egress records will carry empty attribution")
-		}
-	}
+	h.publishEnrolled(cid, cgroupID)
 
 	h.log.Info().
 		Str("container_id", cid).
@@ -1076,6 +1061,33 @@ func (h *Handler) bypassTimerFired(cid string, entry *bypassEntry) {
 			Uint64("cgroup_id", enableID).
 			Str("container_id", entry.containerID).
 			Msg("bypass auto-enable failed — enforcement NOT restored, reissue FirewallEnable to recover")
+	}
+}
+
+// publishEnrolled emits EBPFContainerEnrolled on the overseer bus so
+// netlogger's LabelCache hydrates the cgroup_id → {container_id, labels}
+// mapping. Called from BOTH runtime FirewallEnable AND startup
+// reenrollAgents — netlogger records carry empty attribution until both
+// paths publish. Nil-bus tolerant (unit-test wiring). Publish is
+// non-blocking; the bus emits its own drop line, but we add a
+// producer-side line naming the affected container_id + cgroup_id so an
+// operator can locate the blast radius (one cgroup of unattributed
+// netlogger records) from the structured log surface alone.
+func (h *Handler) publishEnrolled(containerID string, cgroupID uint64) {
+	if h.bus == nil {
+		return
+	}
+	ok := overseer.Publish(h.bus, ebpf.EBPFContainerEnrolled{
+		CgroupID:    cgroupID,
+		ContainerID: containerID,
+		At:          time.Now(),
+	})
+	if !ok {
+		h.log.Warn().
+			Str("container_id", containerID).
+			Uint64("cgroup_id", cgroupID).
+			Str("event", "netlogger_enroll_publish_dropped").
+			Msg("overseer.Publish(EBPFContainerEnrolled) returned false — netlogger LabelCache will not hydrate for this cgroup; subsequent egress records will carry empty attribution")
 	}
 }
 

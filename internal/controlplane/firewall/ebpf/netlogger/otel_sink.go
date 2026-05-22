@@ -3,6 +3,7 @@ package netlogger
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	otellog "go.opentelemetry.io/otel/log"
@@ -19,7 +20,7 @@ const (
 	// eventName is the OTel log record's EventName. Operators filter
 	// records by this attribute when isolating the BPF egress-decision
 	// stream from other emitters that may share the provider.
-	eventName = "ebpf.egress.flow"
+	eventName = "ebpf.egress"
 )
 
 // otelSink emits enriched events as OTel log records via the
@@ -53,22 +54,35 @@ func newOtelSink(provider *sdklog.LoggerProvider) *otelSink {
 // ReverseDNSMap.Lookup can translate it to dst_host here.
 func (s *otelSink) Emit(ctx context.Context, ev Event) {
 	var rec otellog.Record
+	// SetEventName populates OTLP's LogRecord.event_name field, which
+	// the OpenSearch OTLP exporter does NOT currently project into the
+	// SS4O document — the field lands nowhere visible. We additionally
+	// emit `event.name` as an attribute (the SS4O / clawker convention,
+	// matched by the claude-code index) so operators can filter by it
+	// in OSD. Keep SetEventName too so downstream consumers that DO
+	// honor LogRecord.event_name (Loki, future OS releases) work.
 	rec.SetEventName(eventName)
 	rec.SetTimestamp(ev.Timestamp)
 	rec.SetObservedTimestamp(time.Now().UTC())
 	rec.SetSeverity(otellog.SeverityInfo)
 	rec.SetSeverityText("INFO")
-	rec.SetBody(otellog.StringValue("ebpf egress flow"))
+	rec.SetBody(otellog.StringValue("ebpf egress"))
 	rec.AddAttributes(
+		otellog.String("event.name", eventName),
 		otellog.String("source", "ebpf"),
 		otellog.String("verdict", ev.Verdict.String()),
 		otellog.String("container_id", ev.ContainerID),
 		otellog.String("agent", ev.Agent),
 		otellog.String("project", ev.Project),
-		otellog.Int64("cgroup_id", int64(ev.CgroupID)),
+		// cgroup_id and dst_port are opaque identifiers — emit as
+		// string so OS maps them as keyword (group/filter dimension)
+		// instead of long/integer (metric). OSD applies thousands-
+		// separator formatting to numeric fields ("4,318") which is
+		// wrong for an ID-shaped axis.
+		otellog.String("cgroup_id", strconv.FormatUint(ev.CgroupID, 10)),
 		otellog.Int64("bpf_ts_ns", int64(ev.BPFTsNs)),
 		otellog.String("dst_ip", ev.DstIP.String()),
-		otellog.Int("dst_port", int(ev.DstPort)),
+		otellog.String("dst_port", strconv.FormatUint(uint64(ev.DstPort), 10)),
 		otellog.String("l4_proto", l4ProtoString(ev.L4Proto)),
 		otellog.Int("l4_proto_code", int(ev.L4Proto)),
 		otellog.Bool("ipv6", ev.IsIPv6),

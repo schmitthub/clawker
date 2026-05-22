@@ -56,7 +56,7 @@
 
 ### Task 4 (2026-05-21)
 
-- **Plan undercounted scope: monitor-stack ingestion routing was missing.** Plan Task 4 said "docs only". Grep sweep found `service.name=ebpf-networking` had no route in `internal/monitor/templates/otel-config.yaml.tmpl` — `routing/trusted` only matched `clawker-cp` / `envoy` / `coredns`, so records would have landed in the `logs/trusted_unrouted` quarantine (debug-only, never indexed) on local UAT. User selected "wire it now" at the question. Wired in this task: new `resource/netlogger` processor (stamps `ingest_source=netlogger`), `opensearch/logs_netlogger` exporter targeting `clawker-netlogger` index, `routing/trusted` table entry, `logs/netlogger` pipeline, new `index-templates/clawker-netlogger.json` mirroring the otel_sink attribute set, ISM `clawker-retention.json` index_patterns + bootstrap pre-create loop both updated. Effect: out-of-box `clawker monitor up` UAT now lands records in OpenSearch without any operator wiring. Lesson: when a task is framed as "docs only", still grep-sweep — the plan author may have missed a load-bearing wiring detail that breaks UAT.
+- **Plan undercounted scope: monitor-stack ingestion routing was missing.** Plan Task 4 said "docs only". Grep sweep found `service.name=ebpf-egress` had no route in `internal/monitor/templates/otel-config.yaml.tmpl` — `routing/trusted` only matched `clawker-cp` / `envoy` / `coredns`, so records would have landed in the `logs/trusted_unrouted` quarantine (debug-only, never indexed) on local UAT. User selected "wire it now" at the question. Wired in this task: new `resource/netlogger` processor (stamps `ingest_source=netlogger`), `opensearch/logs_netlogger` exporter targeting `clawker-ebpf-egress` index, `routing/trusted` table entry, `logs/netlogger` pipeline, new `index-templates/clawker-ebpf-egress.json` mirroring the otel_sink attribute set, ISM `clawker-retention.json` index_patterns + bootstrap pre-create loop both updated. Effect: out-of-box `clawker monitor up` UAT now lands records in OpenSearch without any operator wiring. Lesson: when a task is framed as "docs only", still grep-sweep — the plan author may have missed a load-bearing wiring detail that breaks UAT.
 - **Doc surfaces grew further than plan listed.** The plan listed only a handful of CLAUDE.md updates. Actual stale-ref sweep needed: `docs/{firewall,monitoring,control-plane,architecture,threat-model,quickstart}.mdx`, `docs/docs.json` nav, `.claude/docs/{ARCHITECTURE,DESIGN,KEY-CONCEPTS,REPO-STRUCTURE,MONITORING-REFERENCE}.md`, `.claude/rules/monitoring.md`, `internal/monitor/CLAUDE.md`, `internal/controlplane/{firewall,overseer,otelcerts}/CLAUDE.md`. The "five indices" → "six indices" stale count drifted across four separate files and would have shown up immediately when any reviewer cross-checked them. Lesson: phrase that names a fixed-cardinality set (`five indices`, `four trusted pipelines`, `three subsystems`) is a stale-ref magnet — grep for the count words, not just the new noun.
 - **`docs/observability.mdx` — keep it user-facing, not a CLAUDE.md transplant.** First draft duplicated implementation detail from `netlogger/CLAUDE.md` (BPF token-bucket burst/refill numbers, BatchProcessor SDK terminology, PERCPU_ARRAY type). Trimmed on review. The Mintlify page should answer "what records will I see and how do I query them"; the internal mechanics belong in CLAUDE.md.
 - **`dst_host` is empty 100% of the time today, not "sometimes empty".** Drafted as "empty when cache miss" — wrong. Per `reverse_dns.go`, the userspace cache only stores hashes (the dnsbpf plugin doesn't write strings yet), so Lookup always returns "". Comment-analyzer flagged the imprecision. Worth tracking — when the follow-up plugin lands, the doc row + the "Current Limitations" callout both need updating in lockstep.
@@ -116,7 +116,7 @@ M  .serena/memories/bug-tracker.md                             (route-identity-a
 1. **Read this memory top-to-bottom**, including Tasks 1–4 sections — they describe what already shipped and committed.
 2. **Anchor on git state:** `git log --oneline -15`, `git status --short`, `git diff --stat`. Tasks 1–4 are commits `e59730ad..093c6ce8`. Task 5 corrections are sitting unstaged with no commit yet.
 3. **Wait for the user to run UAT.** Suggested probes:
-   - Allowed domain: `clawker run -it --agent dev @` + `curl https://github.com` → OSD `clawker-netlogger` index should show `verdict=allowed`, `dst_host=github.com`, NO `domain_hash` attribute.
+   - Allowed domain: `clawker run -it --agent dev @` + `curl https://github.com` → OSD `clawker-ebpf-egress` index should show `verdict=allowed`, `dst_host=github.com`, NO `domain_hash` attribute.
    - Wildcard: `.example.com` allow rule + subdomain resolution → `dst_host=example.com` (normalized).
    - Direct-IP: `curl https://1.1.1.1` → `dst_host=""`, `verdict=denied`.
    - Internal host: `curl http://host.docker.internal:...` → `dst_host=docker.internal`.
@@ -186,8 +186,8 @@ Per-decision-point eBPF egress event emitter for clawker. BPF programs already e
 - **No CoreDNS `log` plugin → filelog receiver pivot.** Separate branch.
 - **No OpenSearch backend migration.** Separate branch.
 - **No new mTLS certs minted.** netlogger reuses CP's existing `otelcerts.Service.LoadTLSConfig` (per-handshake ephemeral leaf — same path the CP zerolog→OTLP bridge already uses). Same identity, same cert, same gRPC endpoint.
-- **Distinct `service.name=ebpf-networking`.** Resource attribute differs from the CP zerolog stream (`service.name=clawker-cp`) so the OpenSearch exporter routes records to a separate data stream by default. This is the right shape because the two streams have materially different operational characteristics: CP zerolog is operator-facing daemon-health, netlogger is per-agent security telemetry; different consumers, different retention, different volume profiles. Identity-layer reuse (cert / gRPC / endpoint) and resource-attribute distinction are independent concerns.
-- **Two `*sdklog.LoggerProvider` instances in one process** (one per service.name). Both constructed by the same generic `NewOtelLoggerProvider` helper. Same exporter wiring, same TLS material, different batch processor + retry tuning. Within the netlogger provider, the instrumentation scope name is `clawker.netlogger` and records carry `event.name=ebpf.egress.flow` so future netlogger-emitted event types (e.g. sock-state) can be filtered within the stream.
+- **Distinct `service.name=ebpf-egress`.** Resource attribute differs from the CP zerolog stream (`service.name=clawker-cp`) so the OpenSearch exporter routes records to a separate data stream by default. This is the right shape because the two streams have materially different operational characteristics: CP zerolog is operator-facing daemon-health, netlogger is per-agent security telemetry; different consumers, different retention, different volume profiles. Identity-layer reuse (cert / gRPC / endpoint) and resource-attribute distinction are independent concerns.
+- **Two `*sdklog.LoggerProvider` instances in one process** (one per service.name). Both constructed by the same generic `NewOtelLoggerProvider` helper. Same exporter wiring, same TLS material, different batch processor + retry tuning. Within the netlogger provider, the instrumentation scope name is `clawker.netlogger` and records carry `event.name=ebpf.egress` so future netlogger-emitted event types (e.g. sock-state) can be filtered within the stream.
 
 ### Why decision-time emit is the right scope
 
@@ -951,7 +951,7 @@ type OtelClientOptions struct {
     // emitters in the same binary SHOULD use distinct service.name values
     // when their streams have different operational characteristics
     // (retention, routing, consumer audience).  The CP zerolog bridge uses
-    // "clawker-cp"; netlogger uses "ebpf-networking".  Identity-layer
+    // "clawker-cp"; netlogger uses "ebpf-egress".  Identity-layer
     // reuse (TLS, cert, endpoint) is orthogonal — that's what the
     // TLSConfig + Endpoint fields handle.
     ServiceName string
@@ -1090,14 +1090,14 @@ func newOtelSink(provider *sdklog.LoggerProvider) *otelSink {
         // WITHIN the netlogger stream (e.g. if we ever add a sock-state event
         // type, it would share the provider but use a different scope).  The
         // top-level stream separation from CP zerolog comes from this
-        // provider's distinct service.name=ebpf-networking resource.
+        // provider's distinct service.name=ebpf-egress resource.
         logger: provider.Logger("clawker.netlogger"),
     }
 }
 
 func (s *otelSink) Emit(ctx context.Context, ev Event) {
     var rec otellog.Record
-    rec.SetEventName("ebpf.egress.flow")
+    rec.SetEventName("ebpf.egress")
     rec.SetTimestamp(ev.Timestamp)
     rec.SetObservedTimestamp(time.Now())
     rec.SetSeverity(otellog.SeverityInfo)
@@ -1171,7 +1171,7 @@ var netloggerSvc *netlogger.Service
             provider, err = controlplane.NewOtelLoggerProvider(controlplane.OtelClientOptions{
                 Endpoint:            endpoint,
                 TLSConfig:           tlsCfg,
-                ServiceName:         "ebpf-networking",   // distinct from clawker-cp; lands in its own OS data stream
+                ServiceName:         "ebpf-egress",   // distinct from clawker-cp; lands in its own OS data stream
                 MaxQueueSize:        2048,
                 ExportInterval:      time.Second,
                 ExportTimeout:       30 * time.Second,
@@ -1366,9 +1366,9 @@ grep -l netlogger internal/controlplane/CLAUDE.md \
 - `docs/docs.json` nav — observability slot under Guides between firewall and control-plane.
 - Stale-ref fixes across user docs: `docs/{firewall,monitoring,control-plane,architecture,threat-model,quickstart}.mdx`. Pinned BPF map list updated to include the four new netlogger maps. Bypass-mode forensic-coverage callout added to firewall + threat-model. Monitor index list bumped to 6.
 - `.claude/docs/{ARCHITECTURE,DESIGN,KEY-CONCEPTS,REPO-STRUCTURE,MONITORING-REFERENCE}.md` + `.claude/rules/monitoring.md` — package table, key concepts table, index/cross-pattern strings, routing topology all carry netlogger.
-- `internal/monitor/CLAUDE.md` — bootstrap tree includes `clawker-netlogger.json`, pipeline table has `logs/netlogger` row, trust-block conditional note + index-split rationale + per-sender callout all extended.
+- `internal/monitor/CLAUDE.md` — bootstrap tree includes `clawker-ebpf-egress.json`, pipeline table has `logs/netlogger` row, trust-block conditional note + index-split rationale + per-sender callout all extended.
 - `internal/controlplane/{firewall,overseer,otelcerts}/CLAUDE.md` — `FirewallEnable` documents the `EBPFContainerEnrolled` publish side-effect; overseer documents the new event; otelcerts notes `LoadTLSConfig("netlogger")` as a known in-process consumer.
-- **Monitor-stack ingestion routing wiring** (scope discovered during sweep, user approved): `otel-config.yaml.tmpl` gains `resource/netlogger` processor, `opensearch/logs_netlogger` exporter (`logs_index: clawker-netlogger`), `routing/trusted` table entry for `service.name=ebpf-networking`, and `logs/netlogger` pipeline. `index-templates/clawker-netlogger.json` (new) mirrors otel_sink attribute set. ISM `clawker-retention.json` index_patterns + `bootstrap.sh.tmpl` pre-create loop both updated. Local-stack UAT no longer needs operator-side wiring.
+- **Monitor-stack ingestion routing wiring** (scope discovered during sweep, user approved): `otel-config.yaml.tmpl` gains `resource/netlogger` processor, `opensearch/logs_netlogger` exporter (`logs_index: clawker-ebpf-egress`), `routing/trusted` table entry for `service.name=ebpf-egress`, and `logs/netlogger` pipeline. `index-templates/clawker-ebpf-egress.json` (new) mirrors otel_sink attribute set. ISM `clawker-retention.json` index_patterns + `bootstrap.sh.tmpl` pre-create loop both updated. Local-stack UAT no longer needs operator-side wiring.
 
 ### Acceptance Criteria (Task 4)
 
@@ -1384,15 +1384,15 @@ go build ./...
 go test ./internal/monitor/... ./internal/controlplane/... ./internal/dnsbpf/...
 
 # Index templates + ISM are valid JSON
-jq . internal/monitor/templates/opensearch-bootstrap/index-templates/clawker-netlogger.json
+jq . internal/monitor/templates/opensearch-bootstrap/index-templates/clawker-ebpf-egress.json
 jq . internal/monitor/templates/opensearch-bootstrap/ism-policies/clawker-retention.json
 
-# otel-config has all four wiring points for ebpf-networking
-grep -c 'opensearch/logs_netlogger\|logs/netlogger\|resource/netlogger\|ebpf-networking' internal/monitor/templates/otel-config.yaml.tmpl
+# otel-config has all four wiring points for ebpf-egress
+grep -c 'opensearch/logs_netlogger\|logs/netlogger\|resource/netlogger\|ebpf-egress' internal/monitor/templates/otel-config.yaml.tmpl
 # Expect ≥7
 
-# Cross-doc consistency (every surface that lists indices includes clawker-netlogger)
-grep -L clawker-netlogger \
+# Cross-doc consistency (every surface that lists indices includes clawker-ebpf-egress)
+grep -L clawker-ebpf-egress \
   docs/monitoring.mdx \
   docs/quickstart.mdx \
   .claude/docs/MONITORING-REFERENCE.md \
@@ -1410,7 +1410,7 @@ grep -L clawker-netlogger \
 1. Update Progress Tracker: Task 4 → `complete`, add Task 5.  **(done)**
 2. Append key learnings — see "Task 4 (2026-05-21)" above.  **(done)**
 3. Run completion gate: `code-reviewer`, `comment-analyzer` ran on the doc/template diff; findings folded back in (count fixes, dst_host always-empty, in-template comments). `test-hunter`, `code-simplifier`, `silent-failure-hunter`, `type-design-analyzer` skipped — diff has no code or tests.  **(done)**
-4. Commit: `docs(netlogger): docs sweep + monitor-stack ebpf-networking routing`.  **(deferred to Task 5 per user instruction)**
+4. Commit: `docs(netlogger): docs sweep + monitor-stack ebpf-egress routing`.  **(deferred to Task 5 per user instruction)**
 
 ---
 
@@ -1427,7 +1427,7 @@ grep -L clawker-netlogger \
   - `feat(netlogger): ringbuf reader + label cache + reverse-DNS + processor`
   - `feat(netlogger): otel sink + cp wiring + generic otel client`
   - `chore: final plan` (and a couple of doc-sync chore commits)
-- **Unstaged docs/template diff from Task 4 (NOT yet committed)** — `git status --short` will show ~19 modified files + 2 new files (`docs/observability.mdx`, `internal/monitor/templates/opensearch-bootstrap/index-templates/clawker-netlogger.json`). Inspect with `git diff` before acting on anything; this is the load-bearing context for what Task 4 already did.
+- **Unstaged docs/template diff from Task 4 (NOT yet committed)** — `git status --short` will show ~19 modified files + 2 new files (`docs/observability.mdx`, `internal/monitor/templates/opensearch-bootstrap/index-templates/clawker-ebpf-egress.json`). Inspect with `git diff` before acting on anything; this is the load-bearing context for what Task 4 already did.
 - Serena memory `initiative_ebpf-netlogger` (this file) — task tracker + design decisions + all key learnings.
 
 ### Steps (sequenced — do NOT jump ahead)
@@ -1435,8 +1435,8 @@ grep -L clawker-netlogger \
 1. **Orient.** Read this memory top-to-bottom. Then `git log --oneline -15`, `git status --short`, `git diff` to see what Task 4 staged but didn't commit. Build a mental model of what shipped and what the user is about to UAT.
 
 2. **Wait for user direction.** Do NOT commit, push, or run UAT autonomously. The user will likely:
-   - Run UAT against a real OTel collector (typically `make clawker && clawker monitor down --volumes && clawker monitor up && clawker run -it --agent dev @`, then probe netlogger records in OpenSearch at `http://localhost:5601` Discover for index `clawker-netlogger`).
-   - Surface any bugs they hit — likely categories: records not landing in `clawker-netlogger` (routing/index template), missing attributes (otel_sink omitted a field), wrong attribute type (index template mapping mismatch), netlogger degraded at CP boot (`event=netlogger_unavailable` in `~/.local/share/clawker/logs/clawker.log`), drain hangs (Stop ordering), kernel-side drops (`events_drops` / `ratelimit_drops` non-zero).
+   - Run UAT against a real OTel collector (typically `make clawker && clawker monitor down --volumes && clawker monitor up && clawker run -it --agent dev @`, then probe netlogger records in OpenSearch at `http://localhost:5601` Discover for index `clawker-ebpf-egress`).
+   - Surface any bugs they hit — likely categories: records not landing in `clawker-ebpf-egress` (routing/index template), missing attributes (otel_sink omitted a field), wrong attribute type (index template mapping mismatch), netlogger degraded at CP boot (`event=netlogger_unavailable` in `~/.local/share/clawker/logs/clawker.log`), drain hangs (Stop ordering), kernel-side drops (`events_drops` / `ratelimit_drops` non-zero).
 
 3. **Triage each reported bug.** For every finding, follow this loop:
    - Reproduce the symptom independently if you can. Match the user's observation against `cmd/clawker-cp/main.go` (boot + drain), `internal/controlplane/firewall/ebpf/netlogger/` (pipeline), `internal/monitor/templates/otel-config.yaml.tmpl` (routing), and the relevant index template.
@@ -1448,12 +1448,12 @@ grep -L clawker-netlogger \
    - Single commit covering all Task 4 changes (docs + monitor wiring + index template + ISM + bootstrap + any UAT triage fixes). Conventional message:
 
      ```
-     docs(netlogger): observability page + monitor-stack ebpf-networking routing
+     docs(netlogger): observability page + monitor-stack ebpf-egress routing
 
      - new docs/observability.mdx covering record shape, routing topology,
        reliability posture, trust lane, known limitations
      - monitor-stack OTel collector + OpenSearch bootstrap learn to route
-       service.name=ebpf-networking into the new clawker-netlogger index
+       service.name=ebpf-egress into the new clawker-ebpf-egress index
        (new index template + ISM + bootstrap pre-create + routing/trusted
        table + opensearch/logs_netlogger exporter + resource/netlogger
        processor + logs/netlogger pipeline) so out-of-box `clawker monitor
@@ -1478,12 +1478,12 @@ grep -L clawker-netlogger \
        BPF ringbuf populated at every cgroup connect/sendmsg/sock_create
        hook, enriches by cgroup_id via overseer enrollment events, and
        emits OTLP log records on the trusted infra lane with
-       service.name=ebpf-networking.
+       service.name=ebpf-egress.
      - Closes the bypass-mode forensic blind spot — verdict=bypassed
        records carry the same attribution + 4-tuple + domain as
        verdict=allowed / verdict=denied.
      - Local monitoring stack auto-routes the new stream into the
-       clawker-netlogger OpenSearch index with retention + mappings
+       clawker-ebpf-egress OpenSearch index with retention + mappings
        preconfigured by the bootstrap one-shot.
 
      ## Changes
@@ -1517,7 +1517,7 @@ grep -L clawker-netlogger \
      - [ ] make clawker && clawker monitor down --volumes && clawker
            monitor up && clawker run -it --agent dev @ ; from a separate
            shell, probe netlogger records in OSD at
-           http://localhost:5601 (Discover, index clawker-netlogger) —
+           http://localhost:5601 (Discover, index clawker-ebpf-egress) —
            verify verdict=allowed records on whitelisted domains,
            verdict=denied on blocked, verdict=bypassed under
            `clawker firewall bypass 30s --agent dev`
@@ -1532,7 +1532,7 @@ grep -L clawker-netlogger \
 
 - All four commits are on `feat/ebpf-logging` pushed to origin.
 - PR is open against `main` with the full body template above.
-- User confirms UAT records visible in `clawker-netlogger` with the expected attribute set across all three verdicts.
+- User confirms UAT records visible in `clawker-ebpf-egress` with the expected attribute set across all three verdicts.
 - No regressions in `go test ./...` (unit only — do NOT run `go test ./...` inside the container; e2e suite tears down host CP).
 
 ---
