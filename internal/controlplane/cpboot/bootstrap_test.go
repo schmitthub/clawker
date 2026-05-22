@@ -684,52 +684,6 @@ func TestEnsureCPImage_RebuildsOnBinaryChange(t *testing.T) {
 		"ImageBuild must fire for both tags — content-derived identity gates rebuild")
 }
 
-// TestEnsureRunning_RecreatesOnLabelDrift asserts that a running CP
-// container whose consts.LabelCPBinarySHA doesn't match the host clawker
-// binary's embedded SHA is force-removed and recreated — even though
-// it's still running. This is the path that fixes the original
-// silently-stale spec failure mode (mount/env set frozen in time).
-func TestEnsureRunning_RecreatesOnLabelDrift(t *testing.T) {
-	f := newBootstrapFixture(t)
-	wantCfg, err := BuildCPContainerConfig(f.cfg, f.cpOpts())
-	require.NoError(t, err)
-
-	// Stale container: managed but with a binary SHA from a previous
-	// build of the host clawker binary.
-	staleLabels := map[string]string{
-		f.cfg.LabelManaged():    f.cfg.ManagedLabelValue(),
-		consts.LabelCPBinarySHA: "stale-deadbeef-from-previous-build",
-	}
-	var listCalls atomic.Int32
-	f.fake.FakeAPI.ContainerListFn = func(_ context.Context, _ mobyclient.ContainerListOptions) (mobyclient.ContainerListResult, error) {
-		// First list: returns the stale container so EnsureRunning sees
-		// the drift. Subsequent lists (post-remove) return empty so the
-		// create path runs cleanly without name-conflict recovery.
-		if listCalls.Add(1) == 1 {
-			return mobyclient.ContainerListResult{Items: []container.Summary{{
-				ID:     "stale-cp-id",
-				Names:  []string{"/" + consts.ContainerCP},
-				State:  container.StateRunning,
-				Labels: staleLabels,
-			}}}, nil
-		}
-		return mobyclient.ContainerListResult{}, nil
-	}
-	f.fake.FakeAPI.ContainerInspectFn = func(_ context.Context, id string, _ mobyclient.ContainerInspectOptions) (mobyclient.ContainerInspectResult, error) {
-		return mobyclient.ContainerInspectResult{
-			Container: container.InspectResponse{
-				ID:         id,
-				Config:     &container.Config{Labels: staleLabels},
-				HostConfig: &container.HostConfig{Mounts: wantCfg.Mounts},
-			},
-		}, nil
-	}
-
-	require.NoError(t, EnsureRunning(t.Context(), f.ensureOpts()))
-	assert.Equal(t, int32(1), f.calls.remove.Load(), "stale running container must be force-removed")
-	assert.Equal(t, int32(1), f.calls.create.Load(), "container must be recreated after drift remove")
-}
-
 // TestEnsureRunning_RecreatesStoppedDriftedContainer pins the
 // post-drain + host-rebuild scenario described in the original failure
 // mode: AgentWatcher's drain-to-zero shutdown left a stopped CP
@@ -913,39 +867,6 @@ func TestEnsureRunning_NameConflict_OursNewer_ReplacesPeer(t *testing.T) {
 		"older peer container must be force-removed")
 	assert.Equal(t, int32(2), f.calls.create.Load(),
 		"two create attempts: first conflicts, retry succeeds after remove")
-}
-
-// TestEnsureRunning_LegacyContainerNoLabel_Recreates pins the upgrade
-// path: a running CP container from a clawker build that predates the
-// consts.LabelCPBinarySHA label has no SHA label at all. Drift gate
-// treats empty-vs-desired as mismatch and force-removes + recreates
-// the same way an explicit stale label does.
-func TestEnsureRunning_LegacyContainerNoLabel_Recreates(t *testing.T) {
-	f := newBootstrapFixture(t)
-
-	// Managed but no LabelCPBinarySHA — exactly the shape an old clawker
-	// build would leave behind after upgrade.
-	legacyLabels := map[string]string{
-		f.cfg.LabelManaged(): f.cfg.ManagedLabelValue(),
-	}
-	var listCalls atomic.Int32
-	f.fake.FakeAPI.ContainerListFn = func(_ context.Context, _ mobyclient.ContainerListOptions) (mobyclient.ContainerListResult, error) {
-		if listCalls.Add(1) == 1 {
-			return mobyclient.ContainerListResult{Items: []container.Summary{{
-				ID:     "legacy-cp-id",
-				Names:  []string{"/" + consts.ContainerCP},
-				State:  container.StateRunning,
-				Labels: legacyLabels,
-			}}}, nil
-		}
-		return mobyclient.ContainerListResult{}, nil
-	}
-
-	require.NoError(t, EnsureRunning(t.Context(), f.ensureOpts()))
-	assert.Equal(t, int32(1), f.calls.remove.Load(),
-		"legacy container (no SHA label) must be force-removed")
-	assert.Equal(t, int32(1), f.calls.create.Load(),
-		"container must be recreated to apply the new mount/env spec")
 }
 
 // TestPruneStaleCPImages_KeepsKeepTagAndUnrelated verifies the three

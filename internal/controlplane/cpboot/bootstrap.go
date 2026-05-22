@@ -19,7 +19,7 @@ import (
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
-
+	"github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/build"
 	"github.com/schmitthub/clawker/internal/config"
@@ -197,6 +197,31 @@ func EnsureRunning(ctx context.Context, opts EnsureOpts) error {
 			}
 			return healthzFn(ctx, cfg)
 		}
+
+		cpRunning := summary.State == container.StateRunning
+
+		activeAgents, err := dc.ContainerList(ctx, client.ContainerListOptions{
+			Filters: client.Filters{}.
+				Add("label", consts.LabelPurpose+"="+consts.PurposeAgent).
+				Add("status", "running"),
+		})
+		if err != nil {
+			return fmt.Errorf("controlplane: list active agents: %w", err)
+		}
+
+		if cpRunning || len(activeAgents.Items) > 0 {
+			log.Error().
+				Str("event", "cp_container_upgrade_blocked").
+				Str("component", "cpboot.bootstrap").
+				Str("container", consts.ContainerCP).
+				Bool("cp_running", cpRunning).
+				Int("active_agent_count", len(activeAgents.Items)).
+				Msg("control plane upgrade blocked — active CP or agent containers present")
+			return fmt.Errorf("clawker was upgraded and the control plane needs to be replaced, but %d agent container(s) are still running and the existing control plane is %s.\n\nTo upgrade safely:\n  1. Stop all agents:        clawker container ls\n                             clawker container stop <name>\n  2. Shut down CP (one of):  wait — CP self-shuts-down once agents reach zero\n                             clawker controlplane down  (skip the wait)\n  3. Restart agents:         clawker run <name>\n\nIf agents fail to restart cleanly after upgrade, their embedded clawkerd may need rebuilding against the new CLI:\n  clawker build\n  clawker run <name>",
+				len(activeAgents.Items),
+				map[bool]string{true: "still running", false: "stopped"}[cpRunning])
+		}
+
 		// Drift: either binary hash changed (host clawker was rebuilt)
 		// or the container predates this label (legacy / orphaned).
 		// Force-remove and recreate regardless of State — works on
