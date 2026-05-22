@@ -47,11 +47,10 @@ func newOtelSink(provider *sdklog.LoggerProvider) *otelSink {
 }
 
 // Emit stamps a security record carrying the kernel verdict + agent
-// attribution + 4-tuple + domain. domain_hash (the BPF-side identity
-// handle for the resolved destination domain) is intentionally not on
-// the wire: SOC analysts query on dst_host, and a bare hash without
-// the string is unactionable. The hash stays on Event so
-// ReverseDNSMap.Lookup can translate it to dst_host here.
+// attribution + 4-tuple + domain. domain_hash is emitted alongside
+// dst_host so operators can correlate userspace records with BPF-side
+// dns_cache / route_map entries when dst_host is empty (direct-IP
+// connect, rule removed mid-flight, stale dnsbpf entry).
 func (s *otelSink) Emit(ctx context.Context, ev Event) {
 	var rec otellog.Record
 	// SetEventName populates OTLP's LogRecord.event_name field, which
@@ -88,6 +87,11 @@ func (s *otelSink) Emit(ctx context.Context, ev Event) {
 		otellog.Bool("ipv6", ev.IsIPv6),
 		otellog.Bool("ipv4_mapped", ev.IsMapped),
 		otellog.String("dst_host", ev.Domain),
+		// domain_hash is the BPF-side identity for the resolved domain.
+		// Emit as decimal string (keyword mapping) for the same ID-shape
+		// reason as cgroup_id / dst_port — operators filter by exact
+		// value, not aggregate as a metric.
+		otellog.String("domain_hash", strconv.FormatUint(uint64(ev.DomainHash), 10)),
 	)
 	s.logger.Emit(ctx, rec)
 }

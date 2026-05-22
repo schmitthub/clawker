@@ -40,10 +40,10 @@ func (f *fakeRingbuf) ReadInto(rec *ringbuf.Record) error {
 func TestReader_HappyPath_ForwardsCopiesToQueue(t *testing.T) {
 	queue := make(chan []byte, 4)
 	metrics := NewMetrics()
-	src := &fakeRingbuf{records: [][]byte{
-		[]byte("first"),
-		[]byte("second"),
-	}}
+	// Keep refs to original backing arrays so we can mutate post-drain.
+	orig0 := []byte("first")
+	orig1 := []byte("second")
+	src := &fakeRingbuf{records: [][]byte{orig0, orig1}}
 	r := &reader{src: src, queue: queue, metrics: metrics, log: logger.Nop()}
 	done := make(chan struct{})
 	go func() { r.drain(); close(done) }()
@@ -56,12 +56,15 @@ func TestReader_HappyPath_ForwardsCopiesToQueue(t *testing.T) {
 	if string(got[0]) != "first" || string(got[1]) != "second" {
 		t.Fatalf("forwarded records = %v; want [first second]", got)
 	}
-	// Copies, not aliases — assert by mutating the original record
-	// after the read completed and confirming the queued slice is
-	// unchanged.
-	src.records = append(src.records, []byte("xxxxxx"))
-	if string(got[0]) != "first" {
-		t.Fatalf("queue slice aliased the ringbuf record buffer")
+	// Copies, not aliases — clobber backing arrays, assert queue unchanged.
+	for i := range orig0 {
+		orig0[i] = 'X'
+	}
+	for i := range orig1 {
+		orig1[i] = 'X'
+	}
+	if string(got[0]) != "first" || string(got[1]) != "second" {
+		t.Fatalf("queue slice aliased ringbuf record buffer: got %v", got)
 	}
 }
 

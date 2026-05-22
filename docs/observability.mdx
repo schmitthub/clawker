@@ -26,15 +26,16 @@ Attributes carried on every record (empty/zero when not applicable — fields ar
 | `container_id` | keyword | Docker container ID (empty if cgroup_id not yet in label cache) |
 | `agent` | keyword | `dev.clawker.agent` label (empty if cache miss) |
 | `project` | keyword | `dev.clawker.project` label (empty for global-scope agents or cache miss) |
-| `cgroup_id` | long | Kernel cgroup ID — trust anchor used for attribution lookup |
+| `cgroup_id` | keyword | Kernel cgroup ID — trust anchor used for attribution lookup |
 | `bpf_ts_ns` | long | Kernel monotonic timestamp at the moment of decision (`bpf_ktime_get_ns`) |
 | `dst_ip` | ip | Destination IPv4 (or IPv4-mapped low word for IPv6 paths) |
-| `dst_port` | integer | Destination port (host byte order) |
+| `dst_port` | keyword | Destination port (host byte order) |
 | `l4_proto` | keyword | `stream` / `dgram` / `raw` (human-readable form of `SOCK_*`) |
 | `l4_proto_code` | integer | Raw `SOCK_*` constant in case operators need to filter on a code that doesn't have a string form yet |
 | `ipv6` | boolean | Native IPv6 (not IPv4-mapped) — denied by the firewall today, recorded for completeness |
 | `ipv4_mapped` | boolean | `::ffff:x.x.x.x` IPv4-mapped IPv6 address (the dual-stack default for most clients) |
 | `dst_host` | keyword | Resolved domain string. Populated for every record whose destination IP was resolved via the managed CoreDNS under a firewall-allowed zone. Empty for direct-IP connects (see [Domain Resolution](#domain-resolution)) |
+| `domain_hash` | keyword | BPF-side identity (FNV-1a of normalized domain). Correlates userspace records with BPF `dns_cache` / `route_map` entries when `dst_host` is empty (direct-IP connect, rule removed mid-flight, stale dnsbpf entry) |
 
 The full BPF event struct is fixed-size with explicit padding (32 bytes; layout asserted at compile time). Operators filter and aggregate at dashboard/query time — the emitter never decides which fields are "interesting" for a given verdict.
 
@@ -76,12 +77,12 @@ Sock_ops-based per-connection byte tracking inside BPF is not on this stream's r
 
 ## Domain Resolution
 
-`dst_host` is populated for every record whose destination IP came from a dnsbpf-resolved A record under a firewall-allowed zone. The translation is control-plane-driven: the BPF `dns_cache` map stores `{domain_hash, expire_ts}` keyed by IPv4, and netlogger's reverse-DNS map maintains the inverse `hash → domain` table by hashing the live set of firewall rule destinations + internal hosts (`docker.internal` + monitoring service hostnames) on a 30-second refresh tick. The hash function (`internal/controlplane/firewall/ebpf.DomainHash` — FNV-1a) is the same one dnsbpf computes when it writes `dns_cache`, so the two sides agree on the identity by construction.
+`dst_host` is populated for every record whose destination IP came from a dnsbpf-resolved A record under a firewall-allowed zone. The translation is control-plane-driven: the BPF `dns_cache` map stores `{domain_hash, expire_ts}` keyed by IPv4, and netlogger's reverse-DNS map maintains the inverse `hash → domain` table by hashing the live set of firewall rule destinations + internal hosts (`docker.internal` + monitoring service hostnames) on a 5-second refresh tick. The hash function (`internal/controlplane/firewall/ebpf.DomainHash` — FNV-1a) is the same one dnsbpf computes when it writes `dns_cache`, so the two sides agree on the identity by construction.
 
 `dst_host` will be empty when:
 - The destination IP was reached without DNS resolution (direct-IP `connect`).
 - The IP was resolved through a path other than the managed CoreDNS (e.g., `/etc/hosts` entry inside the agent container).
-- A rule was removed and netlogger hasn't yet refreshed (worst case: 30 seconds of stale records on the previously-allowed domain).
+- A rule was removed and netlogger hasn't yet refreshed (worst case: 5 seconds of stale records on the previously-allowed domain).
 
 The hash space is 32-bit FNV-1a, which carries a theoretical collision floor. The route-identity-allocator follow-up (see the bug tracker entry by that name) replaces the hash with userspace-allocated sequential identities, matching Cilium's `pkg/fqdn/namemanager` pattern. For today's deployment shape (single-digit-to-hundreds of firewall-rule domains), the floor is operationally irrelevant.
 

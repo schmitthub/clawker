@@ -31,6 +31,7 @@
             "ipv6":          { "type": "boolean" },
             "ipv4_mapped":   { "type": "boolean" },
             "dst_host":      { "type": "keyword" },
+            "domain_hash":   { "type": "keyword" },
             "data_stream": {
               "properties": {
                 "dataset":   { "type": "keyword" },

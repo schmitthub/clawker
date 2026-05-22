@@ -246,7 +246,7 @@ func (s *Service) Start(ctx context.Context) error {
 		}
 		s.rb = rb
 
-		s.ctx, s.cancel = context.WithCancel(context.Background())
+		s.ctx, s.cancel = context.WithCancel(ctx)
 
 		s.reader = &reader{
 			src:     s.rb,
