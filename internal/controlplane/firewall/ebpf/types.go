@@ -100,15 +100,36 @@ const (
 
 // EgressFlag constants matching enum egress_flags in bpf/common.h.
 // Bitmask written into EgressEvent.Flags. Encoding:
-//   - Neither flag set: pure IPv4 (DstIp is the destination, network order).
-//   - EgressFlagIPv6: native IPv6 destination; DstIp is 0.
-//   - EgressFlagIPv4Mapped: ::ffff:x.x.x.x dual-stack; DstIp carries the
-//     low 32 bits of the mapped address.
 //
-// Bits 2-7 are reserved.
+// Bits 0-2 — address-shape discriminator:
+//   - No flag set: pure IPv4 destination; DstIp[0..3] carries the v4
+//     address (network order), DstIp[4..15] zero.
+//   - EgressFlagIPv6: native IPv6 destination; DstIp[0..15] carries the
+//     full v6 address (network order).
+//   - EgressFlagIPv4Mapped: ::ffff:x.x.x.x dual-stack; DstIp[0..3]
+//     carries the low 32 bits of the mapped address.
+//   - EgressFlagNoDst: sock_create event — no destination exists; DstIp
+//     and DstPort are zero. Userspace renders Event.DstIP as invalid;
+//     the OTLP sink omits the dst_ip attribute so operators partition
+//     via _exists_:attributes.dst_ip.
+//
+// Bits 3-4 — emit_site enum (which BPF program submitted the event):
+//   - EgressEmitConnect: clawker_connect4 / clawker_connect6
+//   - EgressEmitSendmsg: clawker_sendmsg4 / clawker_sendmsg6
+//   - EgressEmitSockCreate: clawker_sock_create
+//
+// Userspace decodes via (Flags & EgressEmitMask) to derive event.name.
+//
+// Bits 5-7 are reserved.
 const (
 	EgressFlagIPv6       uint8 = 1 << 0
 	EgressFlagIPv4Mapped uint8 = 1 << 1
+	EgressFlagNoDst      uint8 = 1 << 2
+
+	EgressEmitConnect    uint8 = 0 << 3
+	EgressEmitSendmsg    uint8 = 1 << 3
+	EgressEmitSockCreate uint8 = 2 << 3
+	EgressEmitMask       uint8 = 3 << 3
 )
 
 // IPToUint32 converts a net.IP to a uint32 in network byte order.
@@ -128,6 +149,27 @@ func Uint32ToIP(n uint32) net.IP {
 	ip := make(net.IP, 4)
 	binary.NativeEndian.PutUint32(ip, n)
 	return ip
+}
+
+// IPToBytes16 converts a net.IP to the 16-byte DstIp slot shape used by
+// EgressEvent. IPv4 addresses occupy the first 4 bytes (network byte
+// order, matching ctx->user_ip4) with the remaining 12 bytes zero;
+// IPv6 addresses fill all 16 bytes. Nil input returns the zero array.
+// Mirrors the v4/v6 dispatch on the BPF side (submit_event_v4 vs
+// submit_event_v6 in bpf/common.h).
+func IPToBytes16(ip net.IP) [16]uint8 {
+	var out [16]uint8
+	if ip == nil {
+		return out
+	}
+	if v4 := ip.To4(); v4 != nil {
+		copy(out[:4], v4)
+		return out
+	}
+	if v6 := ip.To16(); v6 != nil {
+		copy(out[:], v6)
+	}
+	return out
 }
 
 // CIDRToAddrMask extracts the network address and mask from a CIDR string.

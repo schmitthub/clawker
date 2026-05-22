@@ -194,41 +194,59 @@ enum egress_verdict {
 };
 
 // Egress flags — written into struct egress_event.flags as a bitmask.
+// Bits 0-2: address-shape discriminator (mutually exclusive use, but
+//   IPV4_MAPPED can co-occur with the others as an annotation).
+// Bits 3-4: emit_site enum — which BPF program submitted the event.
+//   Lets userspace derive event.name (connect / sendmsg / sock_create)
+//   without growing the struct. 2 bits = 4 values, current 3 used.
 enum egress_flags {
-	EGRESS_FLAG_IPV6        = 1 << 0, // native IPv6 (not IPv4-mapped)
-	EGRESS_FLAG_IPV4_MAPPED = 1 << 1, // ::ffff:x.x.x.x
+	EGRESS_FLAG_IPV6        = 1 << 0, // native IPv6 (not IPv4-mapped); dst_ip carries 16-byte v6 addr
+	EGRESS_FLAG_IPV4_MAPPED = 1 << 1, // ::ffff:x.x.x.x; dst_ip carries the v4 in first 4 bytes
+	EGRESS_FLAG_NO_DST      = 1 << 2, // sock_create — no destination exists; dst_ip is zero
+
+	// emit_site enum (bits 3-4). Helpers OR these into flags.
+	EGRESS_EMIT_CONNECT     = 0 << 3, // clawker_connect4 / clawker_connect6
+	EGRESS_EMIT_SENDMSG     = 1 << 3, // clawker_sendmsg4 / clawker_sendmsg6
+	EGRESS_EMIT_SOCK_CREATE = 2 << 3, // clawker_sock_create
+	EGRESS_EMIT_MASK        = 3 << 3,
 };
 
-// egress_event ABI — 32 bytes total. All padding is explicit so the
-// compound-literal zero-init in submit_event leaves no uninitialized
-// bytes on the ringbuf wire.
+// egress_event ABI — 48 bytes total. All padding is explicit so the
+// compound-literal zero-init in submit_event_* helpers leaves no
+// uninitialized bytes on the ringbuf wire.
+//
+// Address representation follows the Cilium / Tetragon convention: a
+// single flat 16-byte slot carries either the IPv4 destination in the
+// first 4 bytes (rest zero) or the full IPv6 destination in all 16
+// bytes. EGRESS_FLAG_IPV6 / EGRESS_FLAG_IPV4_MAPPED / EGRESS_FLAG_NO_DST
+// in `flags` discriminate the three cases.
 //
 // Endianness convention (referenced from netlogger Go parser):
 //   ts_ns, cgroup_id, domain_hash, dst_port, verdict, flags, l4_proto —
 //     host byte order.
-//   dst_ip — network byte order (matches ctx->user_ip4 and the
-//     ContainerConfig IP fields in this codebase).
+//   dst_ip — network byte order (matches ctx->user_ip4 / ctx->user_ip6
+//     and the ContainerConfig IP fields in this codebase).
 // Callers MUST bpf_ntohs() ctx->user_port before passing dst_port; the
-// submit_event helper never swaps. Pick-one-side keeps every emit
+// submit_event_* helpers never swap. Pick-one-side keeps every emit
 // site explicit and prevents double-swap bugs.
 struct egress_event {
 	__u64 ts_ns;       // bpf_ktime_get_ns()
 	__u64 cgroup_id;   // trust anchor — userspace cache key
-	__u32 domain_hash; // 0 if no DNS resolution (direct-IP / no cache hit)
-	__u32 dst_ip;      // network byte order
-	__u16 dst_port;    // host byte order (caller swapped)
+	__u8  dst_ip[16];  // network byte order; v4 in [0..3] + zeros, v6 in [0..15], zero when NO_DST
+	__u32 domain_hash; // 0 if no DNS resolution (direct-IP / no cache hit / v6 / no_dst)
+	__u16 dst_port;    // host byte order (caller swapped); 0 when NO_DST
 	__u8  verdict;     // enum egress_verdict
 	__u8  flags;       // enum egress_flags bitmask
 	__u8  l4_proto;    // SOCK_STREAM / SOCK_DGRAM / SOCK_RAW
-	__u8  _pad[3];     // explicit padding — zero-initialized
+	__u8  _pad[7];     // explicit padding — zero-initialized; aligns total to 48
 };
 
-_Static_assert(sizeof(struct egress_event) == 32, "egress_event must be 32 bytes");
+_Static_assert(sizeof(struct egress_event) == 48, "egress_event must be 48 bytes");
 
 // enter_state — return value of enter_enforced. Distinguishes
 // ENTER_BYPASSED from ENTER_NOT_MANAGED so the bypass path is surfaced
-// to callers, which emit a submit_event(BYPASSED) record before
-// allowing.
+// to callers, which emit a submit_event_v4/v6/nodst(BYPASSED) record
+// before allowing.
 enum enter_state {
 	ENTER_NOT_MANAGED = 0, // not in container_map, fast-return
 	ENTER_BYPASSED    = 1, // managed but bypassed; caller emits + allows
@@ -250,23 +268,32 @@ enum enter_state {
 // verifier inspects, but the BTF entry it produces is what bpf2go reads
 // to emit the Go-side clawkerEgressEvent struct. Without this line,
 // `-type egress_event` fails with "collect C types: not found".
+// events_ringbuf is intentionally NOT pinned. The ringbuf is a transient
+// queue between BPF producers and the in-process netlogger consumer; it
+// holds no load-bearing enforcement state. Pinning would survive across
+// CP restarts and carry stale records produced by a previous CP's ABI
+// (BPF_MAP_TYPE_RINGBUF reports KeySize=ValueSize=0, so the schema-
+// change detector in manager.Load() cannot see ABI drift). Each CP boot
+// creates a fresh ringbuf; in-flight records are discarded on shutdown,
+// which is the desired property because old producers are detached on
+// the same transition.
 struct {
 	__uint(type, BPF_MAP_TYPE_RINGBUF);
 	__uint(max_entries, 256 * 1024);
 	__type(value, struct egress_event);
-	__uint(pinning, LIBBPF_PIN_BY_NAME);
 } events_ringbuf SEC(".maps");
 
 // events_drops: kernel-fault drop counter. Bumped when bpf_ringbuf_reserve
 // returns NULL (buffer full). PERCPU_ARRAY single-slot (key always 0)
 // to avoid contention on the hot path; this counter has no per-cgroup
 // or per-cause dimension. Userspace reads index 0 and sums across CPUs.
+// Not pinned for the same reason as events_ringbuf — it's a per-CP-lifetime
+// counter, not enforcement state.
 struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
 	__type(key, __u32);
 	__type(value, __u64);
 	__uint(max_entries, 1);
-	__uint(pinning, LIBBPF_PIN_BY_NAME);
 } events_drops SEC(".maps");
 
 // ratelimit_state: token bucket per cgroup_id. LRU_HASH so dead cgroups
@@ -457,10 +484,15 @@ lookup_domain_hash_for_ip(__u32 dst_ip)
 	return dns->domain_hash;
 }
 
-// submit_event reserves a slot in events_ringbuf and writes one
-// struct egress_event. Two BPF-side drop dimensions, each kept
-// distinct so operators can diagnose root cause from the userspace
-// metric surface:
+// submit_event_v4 / submit_event_v6 / submit_event_nodst — typed
+// wrappers around the ringbuf-reserve + ratelimit + compound-literal
+// init sequence. Three helpers instead of one because each path has a
+// different address representation and a different domain-hash source,
+// and the BPF verifier is happiest when every field is initialized
+// from a constant or a known-bounded copy.
+//
+// Two BPF-side drop dimensions, each kept distinct so operators can
+// diagnose root cause from the userspace metric surface:
 //   - Rate-limit drop: ratelimit_drops[cgroup_id] bumped. The token
 //     was already consumed by ratelimit_check_and_take. "Noisy agent
 //     over its budget" — adjust RATELIMIT_BURST or investigate the
@@ -470,17 +502,18 @@ lookup_domain_hash_for_ip(__u32 dst_ip)
 //     refunded — matches Cilium (bpf/lib/ratelimit.h) and Tetragon
 //     (bpf/process/bpf_rate.h) convention: a failed reserve indicates
 //     the consumer can't keep up, so token-budget should back off,
-//     not retry harder. The two drop counters are independent
-//     dimensions; events_drops on its own surfaces the consumer-lag
-//     signal. "Ringbuf full" — userspace reader fell behind.
+//     not retry harder.
 // Additional userspace-side drops (BatchProcessor overflow) are out of
 // scope here; the netlogger pipeline counts those independently.
-//
-// Compound-literal init writes every field including _pad explicitly,
-// leaving no uninitialized bytes on the ringbuf wire.
+
+// submit_event_v4 — connect4 / sendmsg4 / connect6+sendmsg6 IPv4-mapped
+// paths. dst_ip4 is in network byte order (matches ctx->user_ip4 and
+// ctx->user_ip6[3]). The 16-byte ev->dst_ip is fully zero-initialized
+// by the compound literal, then the 4 v4 bytes are written into
+// ev->dst_ip[0..3]. Domain-hash lookup is v4-keyed.
 static __always_inline void
-submit_event(__u64 cgroup_id, __u32 dst_ip, __u16 dst_port_host,
-	     __u8 l4_proto, __u8 verdict, __u8 flags)
+submit_event_v4(__u64 cgroup_id, __u32 dst_ip4, __u16 dst_port_host,
+		__u8 l4_proto, __u8 verdict, __u8 flags)
 {
 	if (!ratelimit_check_and_take(cgroup_id))
 		return;
@@ -498,13 +531,87 @@ submit_event(__u64 cgroup_id, __u32 dst_ip, __u16 dst_port_host,
 	*ev = (struct egress_event){
 		.ts_ns       = bpf_ktime_get_ns(),
 		.cgroup_id   = cgroup_id,
-		.domain_hash = lookup_domain_hash_for_ip(dst_ip),
-		.dst_ip      = dst_ip,
+		.dst_ip      = {0},
+		.domain_hash = lookup_domain_hash_for_ip(dst_ip4),
 		.dst_port    = dst_port_host,
 		.verdict     = verdict,
 		.flags       = flags,
 		.l4_proto    = l4_proto,
-		._pad        = {0, 0, 0},
+		._pad        = {0, 0, 0, 0, 0, 0, 0},
+	};
+	__builtin_memcpy(ev->dst_ip, &dst_ip4, sizeof(dst_ip4));
+	bpf_ringbuf_submit(ev, 0);
+}
+
+// submit_event_v6 — connect6 / sendmsg6 native IPv6 paths.
+// dst_ip6 points at ctx->user_ip6 (4 × __be32, network byte order). The
+// full 16 bytes copy into ev->dst_ip. Domain-hash lookup is v4-only, so
+// v6 always emits hash=0; EGRESS_FLAG_IPV6 is OR'd into flags by the
+// helper so call sites only carry verdict-specific flag bits.
+static __always_inline void
+submit_event_v6(__u64 cgroup_id, const __u32 dst_ip6[4], __u16 dst_port_host,
+		__u8 l4_proto, __u8 verdict, __u8 flags)
+{
+	if (!ratelimit_check_and_take(cgroup_id))
+		return;
+
+	struct egress_event *ev =
+		bpf_ringbuf_reserve(&events_ringbuf, sizeof(*ev), 0);
+	if (!ev) {
+		__u32 zero = 0;
+		__u64 *cnt = bpf_map_lookup_elem(&events_drops, &zero);
+		if (cnt)
+			__sync_fetch_and_add(cnt, 1);
+		return;
+	}
+
+	*ev = (struct egress_event){
+		.ts_ns       = bpf_ktime_get_ns(),
+		.cgroup_id   = cgroup_id,
+		.dst_ip      = {0},
+		.domain_hash = 0,
+		.dst_port    = dst_port_host,
+		.verdict     = verdict,
+		.flags       = (__u8)(flags | EGRESS_FLAG_IPV6),
+		.l4_proto    = l4_proto,
+		._pad        = {0, 0, 0, 0, 0, 0, 0},
+	};
+	__builtin_memcpy(ev->dst_ip, dst_ip6, 16);
+	bpf_ringbuf_submit(ev, 0);
+}
+
+// submit_event_nodst — sock_create paths. The syscall is socket
+// creation, not connection/send — there is no destination, so dst_ip /
+// dst_port / domain_hash are all zero and EGRESS_FLAG_NO_DST is the
+// observable signal. Userspace renders Event.DstIP as invalid; the
+// OTLP sink omits the dst_ip attribute so operators can partition via
+// _exists_:attributes.dst_ip.
+static __always_inline void
+submit_event_nodst(__u64 cgroup_id, __u8 l4_proto, __u8 verdict)
+{
+	if (!ratelimit_check_and_take(cgroup_id))
+		return;
+
+	struct egress_event *ev =
+		bpf_ringbuf_reserve(&events_ringbuf, sizeof(*ev), 0);
+	if (!ev) {
+		__u32 zero = 0;
+		__u64 *cnt = bpf_map_lookup_elem(&events_drops, &zero);
+		if (cnt)
+			__sync_fetch_and_add(cnt, 1);
+		return;
+	}
+
+	*ev = (struct egress_event){
+		.ts_ns       = bpf_ktime_get_ns(),
+		.cgroup_id   = cgroup_id,
+		.dst_ip      = {0},
+		.domain_hash = 0,
+		.dst_port    = 0,
+		.verdict     = verdict,
+		.flags       = EGRESS_FLAG_NO_DST | EGRESS_EMIT_SOCK_CREATE,
+		.l4_proto    = l4_proto,
+		._pad        = {0, 0, 0, 0, 0, 0, 0},
 	};
 	bpf_ringbuf_submit(ev, 0);
 }
@@ -522,8 +629,8 @@ submit_event(__u64 cgroup_id, __u32 dst_ip, __u16 dst_port_host,
 //   ENTER_NOT_MANAGED — uid==0 or container not in container_map; caller
 //                       must `return 1` immediately.
 //   ENTER_BYPASSED    — managed but bypass flag set (check_bypass=true
-//                       only); caller emits submit_event(BYPASSED) then
-//                       `return 1`.
+//                       only); caller emits submit_event_v4/v6/nodst
+//                       (BYPASSED) then `return 1`.
 //   ENTER_ENFORCED    — proceed with normal routing decision; *cfg and
 //                       *cgroup_id are populated.
 //
@@ -536,9 +643,9 @@ submit_event(__u64 cgroup_id, __u32 dst_ip, __u16 dst_port_host,
 //
 // enter_enforced calls metric_inc(ACTION_BYPASS) on the confirmed
 // bypass path so the existing metrics_map dump (consumed by the
-// break-glass ebpf-manager CLI) keeps working. The submit_event(BYPASSED)
-// record emitted by the caller is the finer-grained signal for the
-// netlogger pipeline.
+// break-glass ebpf-manager CLI) keeps working. The
+// submit_event_v4/v6/nodst(BYPASSED) record emitted by the caller is
+// the finer-grained signal for the netlogger pipeline.
 static __always_inline enum enter_state
 enter_enforced(struct container_config **cfg, __u64 *cgroup_id, bool check_bypass)
 {

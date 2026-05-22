@@ -47,28 +47,44 @@ The reader MUST NOT block on the queue. Back-pressure from the queue into the ke
 
 **Resource attribution.** `service.name=ebpf-egress` so the OS routing/connector pipeline drops netlogger records into their own data stream, separate from `clawker-cp` (the CP zerolog bridge). Identity-layer reuse stays: same `otelcerts.Service`, same per-handshake leaf mint, same gRPC endpoint on `OtelInfraPort`.
 
-**Instrumentation scope.** Records carry scope name `clawker.netlogger` and event name `ebpf.egress`. Future netlogger-emitted event types (e.g. sock-state) can share the provider but use a distinct scope/event-name so subscribers within the stream can filter cleanly.
+**Instrumentation scope + event taxonomy.** Records carry scope name `clawker.netlogger`. `event.name` is per-emit-site so dashboards can filter by record kind without inspecting `flags`:
 
-**Record shape (strict directive).** Every field on `Event` lands as an attribute on every emitted record. Empty strings and zero numbers are emitted verbatim — never dropped. Adding a field to `Event` is a contract change that requires updating `otelSink.Emit` in the same diff. Attribute keys today:
+| BPF program | event.name |
+|-------------|------------|
+| `clawker_connect4` / `clawker_connect6` | `ebpf.egress.connect` |
+| `clawker_sendmsg4` / `clawker_sendmsg6` | `ebpf.egress.sendmsg` |
+| `clawker_sock_create` | `ebpf.egress.sock_create` |
 
-| Attribute | Type | Source |
-|-----------|------|--------|
-| `event.name` | string | constant `"ebpf.egress"`. The OS OTLP exporter does not project `LogRecord.event_name` into the SS4O document; netlogger emits `event.name` as an attribute too so OSD can filter by it. `SetEventName` is kept for consumers that honor the OTLP field (e.g. Loki). |
-| `source` | string | constant `"ebpf"` |
-| `verdict` | string | `Event.Verdict.String()` (`allowed`/`denied`/`bypassed`) |
-| `container_id` | string | `Event.ContainerID` (empty on cache miss) |
-| `agent` | string | `Event.Agent` |
-| `project` | string | `Event.Project` |
-| `cgroup_id` | string | `strconv.FormatUint(Event.CgroupID, 10)` — opaque kernel identifier; emitted as string so the OS index template maps it as `keyword` (group/filter dimension) instead of `long` (metric). Sending a JSON number to a keyword field is officially supported via numeric→string coercion but operator UIs treat numerics as metrics by default, which is wrong for ID-shaped fields. |
-| `bpf_ts_ns` | int64 | `Event.BPFTsNs` (raw `bpf_ktime_get_ns`) |
-| `dst_ip` | string | `Event.DstIP.String()` |
-| `dst_port` | string | `strconv.FormatUint(uint64(Event.DstPort), 10)` — opaque port identifier; emitted as string for the same reason as `cgroup_id` (keyword dimension, not metric). OSD formats numeric fields with thousands separators ("4,318") which is wrong for an ID-shaped axis. |
-| `l4_proto` | string | SOCK_STREAM / SOCK_DGRAM / SOCK_RAW name |
-| `l4_proto_code` | int | raw SOCK code (resilient to renames) |
-| `ipv6` | bool | native IPv6 |
-| `ipv4_mapped` | bool | `::ffff:x.x.x.x` |
-| `dst_host` | string | `Event.Domain` populated via `ReverseDNSMap.Lookup(Event.DomainHash)`; `""` for direct-IP connects or domains outside the firewall rule set |
-| `domain_hash` | string | `strconv.FormatUint(uint64(Event.DomainHash), 10)` — BPF-side identity for the resolved domain. Emitted as string for the same keyword-mapping rationale as `cgroup_id` / `dst_port`. Operators use it to correlate userspace records with BPF `dns_cache` / `route_map` entries when `dst_host` is empty (direct-IP connect, rule removed mid-flight, stale dnsbpf entry). |
+`emit_site` enum is encoded in `flags` bits 3-4 (2 bits, 3 values used; 1 reserved). Userspace `parseEvent` decodes `(rec.Flags & EgressEmitMask) >> 3` into `Event.EmitSite`, which the OTel sink renders via `EmitSite.EventName()`. Future netlogger-emitted event types (e.g. sock-state) can either share `ebpf.egress.*` namespace or take a new scope.
+
+**Record shape (strict directive with per-code-path carve-outs).** Every field on `Event` lands as an attribute on every emitted record. Empty strings and zero numbers are emitted verbatim — never dropped. Carve-outs: optional attributes are OMITTED when their source value is absent so OS Discover renders empty cells and operators partition cleanly via `_exists_:attributes.<key>` / `NOT _exists_:attributes.<key>`. Adding a field to `Event` is a contract change that requires updating `otelSink.Emit` in the same diff.
+
+Schema discipline:
+  - **Resource layer** (routing + provenance) — `service.name=ebpf-egress` (drives collector routing/trusted dispatch + dedicated index), `ingest_source=netlogger` (stamped by `resource/netlogger` processor post-routing as the trust-lane attribution). These are NOT re-emitted on every record. Per-record dupes of process identity (`source`, `component`) were dropped — `service.name` + `ingest_source` already discriminate.
+  - **Per-record layer** = event taxonomy (`event.name`) + payload.
+
+Attribute keys today:
+
+| Attribute | Type | Source | Omit-when |
+|-----------|------|--------|-----------|
+| `event.name` | string | per-emit-site via `Event.EmitSite.EventName()` — `ebpf.egress.{connect,sendmsg,sock_create}`. The OS OTLP exporter does not project `LogRecord.event_name` into the SS4O document; netlogger emits `event.name` as an attribute too so OSD can filter by it. `SetEventName` is kept for consumers that honor the OTLP field (e.g. Loki). | never |
+| `verdict` | string | `Event.Verdict.String()` (`allowed`/`denied`/`bypassed`) | never |
+| `container_id` | string | `Event.ContainerID` (empty on cache miss) | never (empty string emitted) |
+| `agent` | string | `Event.Agent` | never (empty string emitted) |
+| `project` | string | `Event.Project` | never (empty string emitted) |
+| `cgroup_id` | string | `strconv.FormatUint(Event.CgroupID, 10)` — opaque kernel identifier; emitted as string so the OS index template maps it as `keyword` (group/filter dimension) instead of `long` (metric). | never |
+| `bpf_ts_ns` | int64 | `Event.BPFTsNs` (raw `bpf_ktime_get_ns`) | never |
+| `dst_ip` | string | `Event.DstIP.String()` — IPv4 dotted-quad or IPv6 colon form. OS index template maps `dst_ip` as `type: ip`, accepts both. | `!Event.DstIP.IsValid()` (sock_create — NoDst=true; defensive when parseEvent left it zero) |
+| `dst_port` | string | `strconv.FormatUint(uint64(Event.DstPort), 10)` — opaque port identifier, keyword-mapped (see cgroup_id rationale). | `Event.NoDst` (sock_create has no port) |
+| `l4_proto` | string | SOCK_STREAM / SOCK_DGRAM / SOCK_RAW name | never |
+| `l4_proto_code` | int | raw SOCK code (resilient to renames) | never |
+| `ipv6` | bool | native IPv6 destination — full 16-byte address carried in `dst_ip` | never |
+| `ipv4_mapped` | bool | `::ffff:x.x.x.x` dual-stack destination | never |
+| `no_dst` | bool | `Event.NoDst` — sock_create event with no destination | never |
+| `dst_host` | string | `Event.Domain` populated via `ReverseDNSMap.Lookup(Event.DomainHash)` | `Event.Domain == ""` (direct-IP connect, domain outside firewall rules, stale dnsbpf entry) |
+| `domain_hash` | string | `strconv.FormatUint(uint64(Event.DomainHash), 10)` — BPF-side identity for the resolved domain. Operators correlate userspace records with BPF `dns_cache` / `route_map` entries when `dst_host` is empty. | never |
+
+**Address representation.** Follows the Cilium / Tetragon convention: BPF's `struct egress_event.dst_ip` is a flat 16-byte slot in network byte order. IPv4 destinations occupy the first 4 bytes (the same shape as `ctx->user_ip4`) with the remaining 12 bytes zero; IPv6 destinations fill all 16 bytes. `EgressFlagIPv6` / `EgressFlagIPv4Mapped` / `EgressFlagNoDst` discriminate. Userspace `parseEvent` switches on flags: NoDst leaves the address invalid, IPv6 decodes via `netip.AddrFrom16`, default decodes the low 4 bytes via `netip.AddrFrom4`. `netip.Addr.String()` produces the right shape for either family, and OS `type: ip` mapping accepts both string forms — single attribute name `dst_ip` handles all cases (no `dst_ipv4`/`dst_ipv6` split).
 
 **Trust lane.** Endpoint is the infra OTel receiver (`OtelInfraPort`). Plaintext endpoints are rejected at CP-main wiring time (`event=netlogger_unavailable` with `step=OTLP endpoint is plaintext`) — infra emitters never cross into the untrusted agent lane.
 
@@ -109,11 +125,12 @@ type Event struct {
     ContainerID string
     Agent       string
     Project     string
-    DstIP       netip.Addr
+    DstIP       netip.Addr // invalid when NoDst=true; v4 or v6 otherwise
     DstPort     uint16
     L4Proto     uint8
     IsIPv6      bool
     IsMapped    bool
+    NoDst       bool       // sock_create — no destination exists
     DomainHash  uint32
     Domain      string
     Verdict     Verdict

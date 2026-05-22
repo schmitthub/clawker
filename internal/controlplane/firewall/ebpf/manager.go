@@ -82,13 +82,39 @@ func (m *Manager) Load() error {
 		return fmt.Errorf("ebpf: loading collection spec: %w", err)
 	}
 
-	for _, mapSpec := range spec.Maps {
+	// Maps that intentionally do NOT survive across CP restarts. These
+	// hold per-CP-lifetime queues / counters (events_ringbuf is the BPF→
+	// userspace egress event queue; events_drops counts kernel-fault
+	// drops produced during the same CP run). Pinning them would let
+	// stale records from a previous (possibly different-ABI) CP boot
+	// land in the new CP's netlogger reader — BPF_MAP_TYPE_RINGBUF
+	// reports KeySize=ValueSize=0 so the schema-change check below
+	// cannot detect the drift. Each CP boot creates a fresh in-memory
+	// map; old pin files (from legacy CPs that pinned these) are
+	// removed unconditionally so spec.LoadAndAssign doesn't collide.
+	ephemeralMaps := map[string]bool{
+		"events_ringbuf": true,
+		"events_drops":   true,
+	}
+	for name, mapSpec := range spec.Maps {
+		if ephemeralMaps[name] {
+			mapSpec.Pinning = ebpf.PinNone
+			pin := filepath.Join(m.pinPath, name)
+			if err := os.Remove(pin); err == nil {
+				m.log.Info().Str("map", name).Msg("removed legacy pin for ephemeral map")
+			}
+			continue
+		}
 		mapSpec.Pinning = ebpf.PinByName
 	}
 
 	// Remove stale pinned maps whose schema has changed (e.g., key size).
 	// The BPF loader refuses to reuse a pinned map with incompatible specs.
+	// Skip ephemeral maps — they're unpinned + cleared above.
 	for name, mapSpec := range spec.Maps {
+		if ephemeralMaps[name] {
+			continue
+		}
 		pin := filepath.Join(m.pinPath, name)
 		existing, err := ebpf.LoadPinnedMap(pin, nil)
 		if err != nil {
@@ -141,14 +167,16 @@ func (m *Manager) Load() error {
 // Used by command-mode instances (docker exec) that operate on maps without
 // re-loading the BPF programs.
 func (m *Manager) OpenPinned() error {
+	// events_ringbuf + events_drops are intentionally unpinned (see Load
+	// comment on ephemeralMaps) — break-glass OpenPinned cannot reach
+	// them. The netlogger pipeline consumes them via the in-process
+	// EventsRingbuf() / EventsDrops() accessors instead.
 	maps := map[string]**ebpf.Map{
 		"container_map":   &m.objs.ContainerMap,
 		"bypass_map":      &m.objs.BypassMap,
 		"dns_cache":       &m.objs.DnsCache,
 		"route_map":       &m.objs.RouteMap,
 		"metrics_map":     &m.objs.MetricsMap,
-		"events_ringbuf":  &m.objs.EventsRingbuf,
-		"events_drops":    &m.objs.EventsDrops,
 		"ratelimit_state": &m.objs.RatelimitState,
 		"ratelimit_drops": &m.objs.RatelimitDrops,
 	}
@@ -749,17 +777,20 @@ func (m *Manager) LookupContainer(cgroupID uint64) (clawkerContainerConfig, erro
 	return cfg, err
 }
 
-// EventsRingbuf returns the pinned events_ringbuf map handle. Read-only:
-// netlogger uses ringbuf.NewReader on this map to drain egress event
-// records emitted by the cgroup BPF programs. Returns nil before Load /
-// OpenPinned has been called.
+// EventsRingbuf returns the in-process events_ringbuf map handle.
+// Intentionally unpinned (per-CP-lifetime queue) — break-glass
+// OpenPinned cannot reach this map; the netlogger reader in-process
+// is the sole consumer. Read-only: netlogger uses ringbuf.NewReader
+// on the returned handle to drain egress event records emitted by the
+// cgroup BPF programs. Returns nil before Load has been called.
 func (m *Manager) EventsRingbuf() *ebpf.Map {
 	return m.objs.EventsRingbuf
 }
 
-// EventsDrops returns the pinned events_drops PERCPU_ARRAY map handle.
-// Userspace reads key=0 and sums across CPUs to surface kernel-fault
-// drop counts (bpf_ringbuf_reserve returning NULL).
+// EventsDrops returns the in-process events_drops PERCPU_ARRAY map
+// handle. Intentionally unpinned (per-CP-lifetime counter). Userspace
+// reads key=0 and sums across CPUs to surface kernel-fault drop counts
+// (bpf_ringbuf_reserve returning NULL). Returns nil before Load.
 func (m *Manager) EventsDrops() *ebpf.Map {
 	return m.objs.EventsDrops
 }

@@ -393,6 +393,13 @@ func otelLogsEnv(cfg config.Config) []string {
 		// this env disables CP log routing — the resource/cp processor
 		// runs AFTER routing and only stamps ingest_source, it does NOT
 		// rewrite service.name.
-		"OTEL_RESOURCE_ATTRIBUTES=service.name=clawker-cp,component=clawker-cp",
+		//
+		// Only service.name is set here. Process-identity attrs like
+		// `component=clawker-cp` are intentionally NOT stamped — they
+		// duplicate what service.name + ingest_source already carry,
+		// and they leak into netlogger records (which override
+		// service.name to "ebpf-egress" in their own SDK Resource but
+		// inherit anything else from this env).
+		"OTEL_RESOURCE_ATTRIBUTES=service.name=clawker-cp",
 	}
 }

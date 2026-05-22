@@ -98,6 +98,7 @@ func TestOtelSink_EmitsAllAttributes(t *testing.T) {
 		L4Proto:     1,
 		IsIPv6:      false,
 		IsMapped:    false,
+		EmitSite:    EmitSiteConnect,
 		DomainHash:  0xdead,
 		Domain:      "example.com",
 		Verdict:     VerdictAllowed,
@@ -109,8 +110,9 @@ func TestOtelSink_EmitsAllAttributes(t *testing.T) {
 		t.Fatalf("emit count = %d; want 1", len(records))
 	}
 	rec := records[0]
-	if got := rec.EventName(); got != eventName {
-		t.Errorf("EventName = %q; want %q", got, eventName)
+	wantEventName := "ebpf.egress.connect"
+	if got := rec.EventName(); got != wantEventName {
+		t.Errorf("EventName = %q; want %q", got, wantEventName)
 	}
 	if got := rec.Severity(); got != otellog.SeverityInfo {
 		t.Errorf("Severity = %v; want Info", got)
@@ -123,12 +125,14 @@ func TestOtelSink_EmitsAllAttributes(t *testing.T) {
 	}
 
 	attrs := attrsAsMap(t, rec)
+	if _, ok := attrs["source"]; ok {
+		t.Errorf("source attribute present; want absent (redundant with service.name)")
+	}
 	checks := []struct {
 		key  string
 		want any
 	}{
-		{"event.name", eventName},
-		{"source", "ebpf"},
+		{"event.name", wantEventName},
 		{"verdict", "allowed"},
 		{"container_id", "cid-abc"},
 		{"agent", "a1"},
@@ -141,6 +145,7 @@ func TestOtelSink_EmitsAllAttributes(t *testing.T) {
 		{"l4_proto_code", int64(1)},
 		{"ipv6", false},
 		{"ipv4_mapped", false},
+		{"no_dst", false},
 		{"dst_host", "example.com"},
 		{"domain_hash", "57005"}, // 0xdead in decimal
 	}
@@ -171,7 +176,10 @@ func TestOtelSink_EmitsAllAttributes(t *testing.T) {
 
 // TestOtelSink_EmitsEmptyFieldsOnZeroEvent backs the strict directive
 // from a different angle: empty strings and zero numbers are emitted
-// verbatim — never dropped. Operators filter at query time.
+// verbatim — never dropped. The carve-outs are dst_ip (omitted when
+// DstIP is invalid), dst_port (omitted when NoDst — sock_create), and
+// dst_host (omitted when Domain is empty). All other fields, including
+// the ipv6 / ipv4_mapped / no_dst booleans, MUST be present.
 func TestOtelSink_EmitsEmptyFieldsOnZeroEvent(t *testing.T) {
 	provider, exp := providerWithRecorder(t)
 	sink := newOtelSink(provider)
@@ -183,14 +191,26 @@ func TestOtelSink_EmitsEmptyFieldsOnZeroEvent(t *testing.T) {
 	}
 	attrs := attrsAsMap(t, records[0])
 
+	// Required attributes: emitted unconditionally on every record.
 	for _, key := range []string{
-		"event.name", "source", "verdict", "container_id", "agent", "project",
-		"cgroup_id", "bpf_ts_ns", "dst_ip", "dst_port", "l4_proto",
-		"l4_proto_code", "ipv6", "ipv4_mapped", "dst_host", "domain_hash",
+		"event.name", "verdict", "container_id", "agent", "project",
+		"cgroup_id", "bpf_ts_ns", "dst_port", "l4_proto",
+		"l4_proto_code", "ipv6", "ipv4_mapped", "no_dst", "domain_hash",
 	} {
 		if _, ok := attrs[key]; !ok {
 			t.Errorf("attribute %q missing on zero-Event emit", key)
 		}
+	}
+	// Omitted attributes: not emitted when their source value is absent.
+	// Operators partition via _exists_:attributes.<key> in OSD.
+	for _, key := range []string{"dst_ip", "dst_host", "source"} {
+		if _, ok := attrs[key]; ok {
+			t.Errorf("attribute %q present on zero-Event; want omitted (operators use _exists_ to partition)", key)
+		}
+	}
+	if got := attrs["event.name"].AsString(); got != "ebpf.egress.connect" {
+		// zero Event has EmitSite=0 = EmitSiteConnect
+		t.Errorf("event.name = %q; want ebpf.egress.connect (default EmitSite)", got)
 	}
 	if got := attrs["verdict"].AsString(); got != "bypassed" {
 		t.Errorf("verdict = %q; want bypassed", got)
@@ -201,11 +221,103 @@ func TestOtelSink_EmitsEmptyFieldsOnZeroEvent(t *testing.T) {
 	if got := attrs["cgroup_id"].AsString(); got != "0" {
 		t.Errorf("cgroup_id = %q; want %q", got, "0")
 	}
-	// netip.Addr{}.String() == "invalid IP" — verify the sink emits
-	// that verbatim rather than dropping the field. Operators read it
-	// as a sentinel for sock_create/native-IPv6 records.
-	if got := attrs["dst_ip"].AsString(); got == "" {
-		t.Errorf("dst_ip is empty string; want invalid-Addr sentinel")
+	if got := attrs["dst_port"].AsString(); got != "0" {
+		t.Errorf("dst_port = %q; want %q (NoDst=false carries dst_port)", got, "0")
+	}
+	if got := attrs["no_dst"].AsBool(); got {
+		t.Errorf("no_dst = true; want false on zero Event")
+	}
+}
+
+// TestOtelSink_OmitsDstOnNoDst pins the sock_create carve-out: when
+// NoDst=true, both dst_ip and dst_port are omitted from the OTLP
+// record so OS Discover renders empty cells and operators can
+// partition via NOT _exists_:attributes.dst_ip.
+func TestOtelSink_OmitsDstOnNoDst(t *testing.T) {
+	provider, exp := providerWithRecorder(t)
+	sink := newOtelSink(provider)
+	sink.Emit(context.Background(), Event{
+		Verdict: VerdictAllowed,
+		L4Proto: 1,
+		NoDst:   true,
+	})
+
+	records := exp.snapshot()
+	if len(records) != 1 {
+		t.Fatalf("emit count = %d; want 1", len(records))
+	}
+	attrs := attrsAsMap(t, records[0])
+
+	if _, ok := attrs["dst_ip"]; ok {
+		t.Errorf("dst_ip present on NoDst=true Event; want omitted")
+	}
+	if _, ok := attrs["dst_port"]; ok {
+		t.Errorf("dst_port present on NoDst=true Event; want omitted")
+	}
+	if got := attrs["no_dst"].AsBool(); !got {
+		t.Errorf("no_dst = false; want true")
+	}
+}
+
+// TestOtelSink_EmitsNativeIPv6 pins the native-IPv6 emit path: the
+// dst_ip attribute carries the v6 string form (colons) and the index
+// template's type=ip mapping accepts both v4 and v6.
+func TestOtelSink_EmitsNativeIPv6(t *testing.T) {
+	provider, exp := providerWithRecorder(t)
+	sink := newOtelSink(provider)
+	v6 := netip.MustParseAddr("2001:db8::1")
+	sink.Emit(context.Background(), Event{
+		Verdict:  VerdictDenied,
+		DstIP:    v6,
+		DstPort:  443,
+		IsIPv6:   true,
+		L4Proto:  1,
+		EmitSite: EmitSiteConnect,
+	})
+
+	records := exp.snapshot()
+	if len(records) != 1 {
+		t.Fatalf("emit count = %d; want 1", len(records))
+	}
+	attrs := attrsAsMap(t, records[0])
+	if got := attrs["dst_ip"].AsString(); got != "2001:db8::1" {
+		t.Errorf("dst_ip = %q; want %q", got, "2001:db8::1")
+	}
+	if got := attrs["ipv6"].AsBool(); !got {
+		t.Errorf("ipv6 = false; want true")
+	}
+}
+
+// TestOtelSink_EventNamePerEmitSite pins the per-emit-site event.name
+// taxonomy: connect / sendmsg / sock_create each get their own
+// event.name suffix so dashboards can filter by record kind without
+// inspecting flag bits.
+func TestOtelSink_EventNamePerEmitSite(t *testing.T) {
+	cases := []struct {
+		site EmitSite
+		want string
+	}{
+		{EmitSiteConnect, "ebpf.egress.connect"},
+		{EmitSiteSendmsg, "ebpf.egress.sendmsg"},
+		{EmitSiteSockCreate, "ebpf.egress.sock_create"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.want, func(t *testing.T) {
+			provider, exp := providerWithRecorder(t)
+			sink := newOtelSink(provider)
+			sink.Emit(context.Background(), Event{EmitSite: tc.site, Verdict: VerdictAllowed})
+			records := exp.snapshot()
+			if len(records) != 1 {
+				t.Fatalf("emit count = %d; want 1", len(records))
+			}
+			if got := records[0].EventName(); got != tc.want {
+				t.Errorf("EventName = %q; want %q", got, tc.want)
+			}
+			attrs := attrsAsMap(t, records[0])
+			if got := attrs["event.name"].AsString(); got != tc.want {
+				t.Errorf("event.name attr = %q; want %q", got, tc.want)
+			}
+		})
 	}
 }
 

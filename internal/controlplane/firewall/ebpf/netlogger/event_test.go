@@ -14,16 +14,17 @@ import (
 // serialises a known EgressEvent via the same NativeEndian path
 // production uses, decodes it back, and asserts every field round-trips.
 // The IPv4 case pins the network-byte-order convention (kernel writes
-// ctx->user_ip4 in net order; parse converts via ebpf.Uint32ToIP) by
-// constructing the address via ebpf.IPToUint32 and checking the
-// netip.Addr round-trips byte-equal.
+// ctx->user_ip4 in net order into DstIp[0..3]; parse decodes via
+// netip.AddrFrom4 of those 4 bytes) by constructing the 16-byte slot
+// via ebpf.IPToBytes16 and checking the netip.Addr round-trips
+// byte-equal.
 func TestParseEvent_RoundTrip(t *testing.T) {
 	ip := net.IPv4(203, 0, 113, 7)
 	in := ebpf.EgressEvent{
 		TsNs:       1234567890,
 		CgroupId:   424242,
 		DomainHash: 0xdeadbeef,
-		DstIp:      ebpf.IPToUint32(ip),
+		DstIp:      ebpf.IPToBytes16(ip),
 		DstPort:    443,
 		Verdict:    ebpf.EgressVerdictAllowed,
 		Flags:      0,
@@ -57,8 +58,61 @@ func TestParseEvent_RoundTrip(t *testing.T) {
 	if got.L4Proto != 1 {
 		t.Errorf("L4Proto = %d; want 1", got.L4Proto)
 	}
-	if got.IsIPv6 || got.IsMapped {
-		t.Errorf("flags decoded incorrectly: IsIPv6=%v IsMapped=%v", got.IsIPv6, got.IsMapped)
+	if got.IsIPv6 || got.IsMapped || got.NoDst {
+		t.Errorf("flags decoded incorrectly: IsIPv6=%v IsMapped=%v NoDst=%v", got.IsIPv6, got.IsMapped, got.NoDst)
+	}
+}
+
+// TestParseEvent_NativeIPv6 pins the native-IPv6 decode path: the BPF
+// submit_event_v6 helper writes the full 16-byte v6 address into
+// DstIp[0..15] and sets EgressFlagIPv6. parseEvent must reconstruct
+// the netip.Addr as a v6 address.
+func TestParseEvent_NativeIPv6(t *testing.T) {
+	v6 := netip.MustParseAddr("2001:db8::cafe")
+	in := ebpf.EgressEvent{
+		CgroupId: 1,
+		DstIp:    ebpf.IPToBytes16(v6.AsSlice()),
+		DstPort:  443,
+		Flags:    ebpf.EgressFlagIPv6,
+		Verdict:  ebpf.EgressVerdictDenied,
+		L4Proto:  1,
+	}
+	ev, err := parseEvent(mustEncode(t, in))
+	if err != nil {
+		t.Fatalf("parseEvent: %v", err)
+	}
+	if !ev.DstIP.IsValid() || ev.DstIP.Is4() {
+		t.Errorf("DstIP = %v (is4=%v); want v6 address", ev.DstIP, ev.DstIP.Is4())
+	}
+	if ev.DstIP != v6 {
+		t.Errorf("DstIP = %v; want %v", ev.DstIP, v6)
+	}
+	if !ev.IsIPv6 {
+		t.Errorf("IsIPv6 = false; want true")
+	}
+}
+
+// TestParseEvent_NoDst pins the sock_create decode path: BPF
+// submit_event_nodst sets EgressFlagNoDst with DstIp / DstPort zero.
+// parseEvent must leave DstIP as the invalid zero-value Addr and set
+// NoDst=true so the OTel sink can omit the dst_ip / dst_port
+// attributes.
+func TestParseEvent_NoDst(t *testing.T) {
+	in := ebpf.EgressEvent{
+		CgroupId: 7,
+		Flags:    ebpf.EgressFlagNoDst,
+		Verdict:  ebpf.EgressVerdictAllowed,
+		L4Proto:  1,
+	}
+	ev, err := parseEvent(mustEncode(t, in))
+	if err != nil {
+		t.Fatalf("parseEvent: %v", err)
+	}
+	if ev.DstIP.IsValid() {
+		t.Errorf("DstIP = %v; want zero-value Addr for sock_create records", ev.DstIP)
+	}
+	if !ev.NoDst {
+		t.Errorf("NoDst = false; want true")
 	}
 }
 
@@ -92,20 +146,23 @@ func TestParseEvent_Verdicts(t *testing.T) {
 	}
 }
 
-// TestParseEvent_Flags pins the IPv6 / IPv4-mapped flag decoding.
-// EgressFlagIPv6 → IsIPv6, EgressFlagIPv4Mapped → IsMapped. The two
-// can co-occur on a dual-stack connect.
+// TestParseEvent_Flags pins the IPv6 / IPv4-mapped / NoDst flag
+// decoding. EgressFlagIPv6 → IsIPv6, EgressFlagIPv4Mapped → IsMapped,
+// EgressFlagNoDst → NoDst. The first two can co-occur on a dual-stack
+// connect; NoDst is mutually exclusive (sock_create has no destination).
 func TestParseEvent_Flags(t *testing.T) {
 	cases := []struct {
 		name     string
 		flags    uint8
 		isIPv6   bool
 		isMapped bool
+		noDst    bool
 	}{
-		{"none", 0, false, false},
-		{"ipv6", ebpf.EgressFlagIPv6, true, false},
-		{"mapped", ebpf.EgressFlagIPv4Mapped, false, true},
-		{"both", ebpf.EgressFlagIPv6 | ebpf.EgressFlagIPv4Mapped, true, true},
+		{"none", 0, false, false, false},
+		{"ipv6", ebpf.EgressFlagIPv6, true, false, false},
+		{"mapped", ebpf.EgressFlagIPv4Mapped, false, true, false},
+		{"both", ebpf.EgressFlagIPv6 | ebpf.EgressFlagIPv4Mapped, true, true, false},
+		{"no_dst", ebpf.EgressFlagNoDst, false, false, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -113,26 +170,11 @@ func TestParseEvent_Flags(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parseEvent: %v", err)
 			}
-			if ev.IsIPv6 != tc.isIPv6 || ev.IsMapped != tc.isMapped {
-				t.Errorf("got IsIPv6=%v IsMapped=%v; want IsIPv6=%v IsMapped=%v",
-					ev.IsIPv6, ev.IsMapped, tc.isIPv6, tc.isMapped)
+			if ev.IsIPv6 != tc.isIPv6 || ev.IsMapped != tc.isMapped || ev.NoDst != tc.noDst {
+				t.Errorf("got IsIPv6=%v IsMapped=%v NoDst=%v; want IsIPv6=%v IsMapped=%v NoDst=%v",
+					ev.IsIPv6, ev.IsMapped, ev.NoDst, tc.isIPv6, tc.isMapped, tc.noDst)
 			}
 		})
-	}
-}
-
-// TestParseEvent_ZeroDstIPIsInvalid pins the "DstIp == 0" path: the
-// kernel sets DstIp=0 for native IPv6 + sock_create records. parseEvent
-// must leave the netip.Addr at its zero value rather than serialising
-// 0.0.0.0 (which would mislead operators querying for the wildcard
-// address).
-func TestParseEvent_ZeroDstIPIsInvalid(t *testing.T) {
-	ev, err := parseEvent(mustEncode(t, ebpf.EgressEvent{DstIp: 0}))
-	if err != nil {
-		t.Fatalf("parseEvent: %v", err)
-	}
-	if ev.DstIP.IsValid() {
-		t.Errorf("DstIP = %v; want zero-value Addr for native-IPv6/sock_create records", ev.DstIP)
 	}
 }
 

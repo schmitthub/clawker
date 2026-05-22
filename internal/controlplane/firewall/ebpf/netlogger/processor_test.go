@@ -54,7 +54,7 @@ func TestProcessor_ParsesEnrichesEmits(t *testing.T) {
 
 	raw := mustEncodeEvent(t, ebpf.EgressEvent{
 		CgroupId:   424242,
-		DstIp:      ebpf.IPToUint32(net.IPv4(203, 0, 113, 9)),
+		DstIp:      ebpf.IPToBytes16(net.IPv4(203, 0, 113, 9)),
 		DstPort:    443,
 		Verdict:    ebpf.EgressVerdictAllowed,
 		L4Proto:    1,
@@ -149,7 +149,7 @@ func TestPipeline_EndToEnd(t *testing.T) {
 	src := &fakeRingbuf{records: [][]byte{
 		mustEncodeEvent(t, ebpf.EgressEvent{
 			CgroupId:   7,
-			DstIp:      ebpf.IPToUint32(net.IPv4(192, 0, 2, 33)),
+			DstIp:      ebpf.IPToBytes16(net.IPv4(192, 0, 2, 33)),
 			DstPort:    80,
 			Verdict:    ebpf.EgressVerdictAllowed,
 			L4Proto:    1,

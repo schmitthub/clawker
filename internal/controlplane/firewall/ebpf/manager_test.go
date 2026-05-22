@@ -14,14 +14,14 @@ import (
 )
 
 // TestEgressEvent_SizeMatchesABI mirrors the C-side
-// _Static_assert(sizeof(struct egress_event) == 32) on the Go side. If
+// _Static_assert(sizeof(struct egress_event) == 48) on the Go side. If
 // bpf2go's generated struct ever drifts (toolchain upgrade, layout
 // semantic change, reordered field, padding mistake), this fails before
 // the netlogger reader can read a misaligned record off the ringbuf.
 func TestEgressEvent_SizeMatchesABI(t *testing.T) {
 	t.Parallel()
-	if got := binary.Size(EgressEvent{}); got != 32 {
-		t.Fatalf("EgressEvent on-wire size = %d; want 32 — C struct egress_event has drifted from the Go side", got)
+	if got := binary.Size(EgressEvent{}); got != 48 {
+		t.Fatalf("EgressEvent on-wire size = %d; want 48 — C struct egress_event has drifted from the Go side", got)
 	}
 }
 

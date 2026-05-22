@@ -13,7 +13,7 @@ The headline use is **bypass-mode forensic coverage**. The firewall's bypass swi
 Each record is an OTel log emitted on the trusted infra OTLP lane with:
 
 - `service.name = ebpf-egress` (distinct from `clawker-cp` so retention + volume profile are independent)
-- `event.name = ebpf.egress`
+- `event.name = ebpf.egress.connect` / `ebpf.egress.sendmsg` / `ebpf.egress.sock_create` (per-emit-site so dashboards can filter by record kind without inspecting flag bits)
 - `body = "ebpf egress"`
 - `severity = INFO`
 
@@ -28,16 +28,17 @@ Attributes carried on every record (empty/zero when not applicable — fields ar
 | `project` | keyword | `dev.clawker.project` label (empty for global-scope agents or cache miss) |
 | `cgroup_id` | keyword | Kernel cgroup ID — trust anchor used for attribution lookup |
 | `bpf_ts_ns` | long | Kernel monotonic timestamp at the moment of decision (`bpf_ktime_get_ns`) |
-| `dst_ip` | ip | Destination IPv4 (or IPv4-mapped low word for IPv6 paths) |
-| `dst_port` | keyword | Destination port (host byte order) |
+| `dst_ip` | ip | Destination address — IPv4 dotted-quad or IPv6 colon form. Mapped as `type: ip`, accepts both. Omitted on `sock_create` records (`no_dst=true`); operators filter via `NOT _exists_:attributes.dst_ip` |
+| `dst_port` | keyword | Destination port (host byte order). Omitted on `sock_create` records (`no_dst=true`) |
 | `l4_proto` | keyword | `stream` / `dgram` / `raw` (human-readable form of `SOCK_*`) |
 | `l4_proto_code` | integer | Raw `SOCK_*` constant in case operators need to filter on a code that doesn't have a string form yet |
-| `ipv6` | boolean | Native IPv6 (not IPv4-mapped) — denied by the firewall, recorded for completeness |
+| `ipv6` | boolean | Native IPv6 destination — full 16-byte v6 address carried in `dst_ip`. Denied by default (only allowed during a bypass) |
 | `ipv4_mapped` | boolean | `::ffff:x.x.x.x` IPv4-mapped IPv6 address (the dual-stack default for most clients) |
+| `no_dst` | boolean | Socket-creation event with no destination (`sock_create` program). `dst_ip` and `dst_port` are omitted on these records |
 | `dst_host` | keyword | Resolved domain string. Populated for every record whose destination IP was resolved via the managed CoreDNS under a firewall-allowed zone. Empty for direct-IP connects (see [Domain Resolution](#domain-resolution)) |
 | `domain_hash` | keyword | BPF-side identity (FNV-1a of normalized domain). Correlates userspace records with BPF `dns_cache` / `route_map` entries when `dst_host` is empty (direct-IP connect, rule removed mid-flight, stale dnsbpf entry) |
 
-The full BPF event struct is fixed-size with explicit padding (32 bytes; layout asserted at compile time). Operators filter and aggregate at dashboard/query time — the emitter never decides which fields are "interesting" for a given verdict.
+The BPF event struct is fixed-size with explicit padding (48 bytes; layout asserted at compile time). Operators filter and aggregate at dashboard/query time — the emitter never decides which fields are "interesting" for a given verdict, except for the `sock_create` carve-out above where BPF carries no destination.
 
 ## Where Records Land
 

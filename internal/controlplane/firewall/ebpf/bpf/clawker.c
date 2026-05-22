@@ -81,8 +81,9 @@ int clawker_connect4(struct bpf_sock_addr *ctx)
 	__u16 dst_port_host = bpf_ntohs(ctx->user_port);
 
 	if (st == ENTER_BYPASSED) {
-		submit_event(cgroup_id, ctx->user_ip4, dst_port_host,
-			     (__u8)ctx->type, EGRESS_VERDICT_BYPASSED, 0);
+		submit_event_v4(cgroup_id, ctx->user_ip4, dst_port_host,
+				(__u8)ctx->type, EGRESS_VERDICT_BYPASSED,
+				EGRESS_EMIT_CONNECT);
 		return 1;
 	}
 
@@ -90,8 +91,8 @@ int clawker_connect4(struct bpf_sock_addr *ctx)
 					       ctx->user_ip4, dst_port_host);
 	__u8 verdict = (r.verdict == V_DENY) ? EGRESS_VERDICT_DENIED
 					     : EGRESS_VERDICT_ALLOWED;
-	submit_event(cgroup_id, ctx->user_ip4, dst_port_host,
-		     (__u8)ctx->type, verdict, 0);
+	submit_event_v4(cgroup_id, ctx->user_ip4, dst_port_host,
+			(__u8)ctx->type, verdict, EGRESS_EMIT_CONNECT);
 	return apply_v4(ctx, r);
 }
 
@@ -111,8 +112,9 @@ int clawker_sendmsg4(struct bpf_sock_addr *ctx)
 	__u16 dst_port_host = bpf_ntohs(ctx->user_port);
 
 	if (st == ENTER_BYPASSED) {
-		submit_event(cgroup_id, ctx->user_ip4, dst_port_host,
-			     (__u8)ctx->type, EGRESS_VERDICT_BYPASSED, 0);
+		submit_event_v4(cgroup_id, ctx->user_ip4, dst_port_host,
+				(__u8)ctx->type, EGRESS_VERDICT_BYPASSED,
+				EGRESS_EMIT_SENDMSG);
 		return 1;
 	}
 
@@ -120,8 +122,8 @@ int clawker_sendmsg4(struct bpf_sock_addr *ctx)
 					       ctx->user_ip4, dst_port_host);
 	__u8 verdict = (r.verdict == V_DENY) ? EGRESS_VERDICT_DENIED
 					     : EGRESS_VERDICT_ALLOWED;
-	submit_event(cgroup_id, ctx->user_ip4, dst_port_host,
-		     (__u8)ctx->type, verdict, 0);
+	submit_event_v4(cgroup_id, ctx->user_ip4, dst_port_host,
+			(__u8)ctx->type, verdict, EGRESS_EMIT_SENDMSG);
 	return apply_v4(ctx, r);
 }
 
@@ -176,29 +178,37 @@ int clawker_connect6(struct bpf_sock_addr *ctx)
 			return 1;
 		__u32 dst_ip = ctx->user_ip6[3];
 		if (st == ENTER_BYPASSED) {
-			submit_event(cgroup_id, dst_ip, dst_port_host,
-				     (__u8)ctx->type, EGRESS_VERDICT_BYPASSED,
-				     EGRESS_FLAG_IPV4_MAPPED);
+			submit_event_v4(cgroup_id, dst_ip, dst_port_host,
+					(__u8)ctx->type, EGRESS_VERDICT_BYPASSED,
+					EGRESS_FLAG_IPV4_MAPPED | EGRESS_EMIT_CONNECT);
 			return 1;
 		}
 		struct route_result r = decide_connect(ctx, cfg, cgroup_id,
 						       dst_ip, dst_port_host);
 		__u8 verdict = (r.verdict == V_DENY) ? EGRESS_VERDICT_DENIED
 						     : EGRESS_VERDICT_ALLOWED;
-		submit_event(cgroup_id, dst_ip, dst_port_host, (__u8)ctx->type,
-			     verdict, EGRESS_FLAG_IPV4_MAPPED);
+		submit_event_v4(cgroup_id, dst_ip, dst_port_host, (__u8)ctx->type,
+				verdict, EGRESS_FLAG_IPV4_MAPPED | EGRESS_EMIT_CONNECT);
 		return apply_v6_mapped(ctx, r);
 	}
 
-	// Native IPv6: bypass emits + allows; otherwise deny.
+	// Native IPv6: bypass emits + allows; otherwise deny. Helper OR's
+	// EGRESS_FLAG_IPV6 into flags; full 16-byte dst_ip carried on the wire.
+	// Copy ctx->user_ip6 into a stack array first — the verifier rejects
+	// passing a pointer that points INTO bpf_sock_addr ctx to a helper
+	// ("dereference of modified ctx ptr R8 off=8 disallowed"). Field-by-
+	// field load via the verifier-blessed ctx access pattern is safe.
+	__u32 ip6[4] = {ctx->user_ip6[0], ctx->user_ip6[1],
+			ctx->user_ip6[2], ctx->user_ip6[3]};
 	if (st == ENTER_BYPASSED) {
-		submit_event(cgroup_id, 0, dst_port_host, (__u8)ctx->type,
-			     EGRESS_VERDICT_BYPASSED, EGRESS_FLAG_IPV6);
+		submit_event_v6(cgroup_id, ip6, dst_port_host,
+				(__u8)ctx->type, EGRESS_VERDICT_BYPASSED,
+				EGRESS_EMIT_CONNECT);
 		return 1;
 	}
 	metric_inc(cgroup_id, 0, dst_port_host, ACTION_DENY);
-	submit_event(cgroup_id, 0, dst_port_host, (__u8)ctx->type,
-		     EGRESS_VERDICT_DENIED, EGRESS_FLAG_IPV6);
+	submit_event_v6(cgroup_id, ip6, dst_port_host,
+			(__u8)ctx->type, EGRESS_VERDICT_DENIED, EGRESS_EMIT_CONNECT);
 	return 0;
 }
 
@@ -227,29 +237,34 @@ int clawker_sendmsg6(struct bpf_sock_addr *ctx)
 	if (is_ipv4_mapped(ctx)) {
 		__u32 dst_ip = ctx->user_ip6[3];
 		if (st == ENTER_BYPASSED) {
-			submit_event(cgroup_id, dst_ip, dst_port_host,
-				     (__u8)ctx->type, EGRESS_VERDICT_BYPASSED,
-				     EGRESS_FLAG_IPV4_MAPPED);
+			submit_event_v4(cgroup_id, dst_ip, dst_port_host,
+					(__u8)ctx->type, EGRESS_VERDICT_BYPASSED,
+					EGRESS_FLAG_IPV4_MAPPED | EGRESS_EMIT_SENDMSG);
 			return 1;
 		}
 		struct route_result r = decide_sendmsg(cfg, cgroup_id,
 						       dst_ip, dst_port_host);
 		__u8 verdict = (r.verdict == V_DENY) ? EGRESS_VERDICT_DENIED
 						     : EGRESS_VERDICT_ALLOWED;
-		submit_event(cgroup_id, dst_ip, dst_port_host, (__u8)ctx->type,
-			     verdict, EGRESS_FLAG_IPV4_MAPPED);
+		submit_event_v4(cgroup_id, dst_ip, dst_port_host, (__u8)ctx->type,
+				verdict, EGRESS_FLAG_IPV4_MAPPED | EGRESS_EMIT_SENDMSG);
 		return apply_v6_mapped(ctx, r);
 	}
 
-	// Native IPv6 UDP: bypass emits + allows; otherwise deny.
+	// Native IPv6 UDP: bypass emits + allows; otherwise deny. Helper OR's
+	// EGRESS_FLAG_IPV6 into flags; full 16-byte dst_ip carried on the wire.
+	// Stack-array copy required — verifier rejects ctx-pointer arg to helper.
+	__u32 ip6[4] = {ctx->user_ip6[0], ctx->user_ip6[1],
+			ctx->user_ip6[2], ctx->user_ip6[3]};
 	if (st == ENTER_BYPASSED) {
-		submit_event(cgroup_id, 0, dst_port_host, (__u8)ctx->type,
-			     EGRESS_VERDICT_BYPASSED, EGRESS_FLAG_IPV6);
+		submit_event_v6(cgroup_id, ip6, dst_port_host,
+				(__u8)ctx->type, EGRESS_VERDICT_BYPASSED,
+				EGRESS_EMIT_SENDMSG);
 		return 1;
 	}
 	metric_inc(cgroup_id, 0, dst_port_host, ACTION_DENY);
-	submit_event(cgroup_id, 0, dst_port_host, (__u8)ctx->type,
-		     EGRESS_VERDICT_DENIED, EGRESS_FLAG_IPV6);
+	submit_event_v6(cgroup_id, ip6, dst_port_host,
+			(__u8)ctx->type, EGRESS_VERDICT_DENIED, EGRESS_EMIT_SENDMSG);
 	return 0;
 }
 
@@ -302,18 +317,18 @@ int clawker_sock_create(struct bpf_sock *ctx)
 		return 1;
 
 	if (st == ENTER_BYPASSED) {
-		submit_event(cgroup_id, 0, 0, (__u8)ctx->type,
-			     EGRESS_VERDICT_BYPASSED, 0);
+		submit_event_nodst(cgroup_id, (__u8)ctx->type,
+				   EGRESS_VERDICT_BYPASSED);
 		return 1;
 	}
 
 	if (ctx->type == SOCK_RAW) {
 		metric_inc(cgroup_id, 0, 0, ACTION_DENY);
-		submit_event(cgroup_id, 0, 0, (__u8)ctx->type,
-			     EGRESS_VERDICT_DENIED, 0);
+		submit_event_nodst(cgroup_id, (__u8)ctx->type,
+				   EGRESS_VERDICT_DENIED);
 		return 0;
 	}
-	submit_event(cgroup_id, 0, 0, (__u8)ctx->type, EGRESS_VERDICT_ALLOWED, 0);
+	submit_event_nodst(cgroup_id, (__u8)ctx->type, EGRESS_VERDICT_ALLOWED);
 	return 1;
 }
 
