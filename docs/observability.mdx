@@ -32,7 +32,7 @@ Attributes carried on every record (empty/zero when not applicable — fields ar
 | `dst_port` | keyword | Destination port (host byte order) |
 | `l4_proto` | keyword | `stream` / `dgram` / `raw` (human-readable form of `SOCK_*`) |
 | `l4_proto_code` | integer | Raw `SOCK_*` constant in case operators need to filter on a code that doesn't have a string form yet |
-| `ipv6` | boolean | Native IPv6 (not IPv4-mapped) — denied by the firewall today, recorded for completeness |
+| `ipv6` | boolean | Native IPv6 (not IPv4-mapped) — denied by the firewall, recorded for completeness |
 | `ipv4_mapped` | boolean | `::ffff:x.x.x.x` IPv4-mapped IPv6 address (the dual-stack default for most clients) |
 | `dst_host` | keyword | Resolved domain string. Populated for every record whose destination IP was resolved via the managed CoreDNS under a firewall-allowed zone. Empty for direct-IP connects (see [Domain Resolution](#domain-resolution)) |
 | `domain_hash` | keyword | BPF-side identity (FNV-1a of normalized domain). Correlates userspace records with BPF `dns_cache` / `route_map` entries when `dst_host` is empty (direct-IP connect, rule removed mid-flight, stale dnsbpf entry) |
@@ -54,6 +54,9 @@ agent container egress decision
         │  enrich {cgroup_id → container_id, agent, project, domain}
         ▼
   OTLP/gRPC + mTLS via netlogger's *sdklog.LoggerProvider
+   (built by controlplane.NewOtelLoggerProvider —
+    generic factory reusable for any future CP-side
+    OTLP log emitter)
         │
         ▼
   otel-collector trusted lane (otlp/infra receiver)
@@ -84,7 +87,7 @@ Sock_ops-based per-connection byte tracking inside BPF is not on this stream's r
 - The IP was resolved through a path other than the managed CoreDNS (e.g., `/etc/hosts` entry inside the agent container).
 - A rule was removed and netlogger hasn't yet refreshed (worst case: 5 seconds of stale records on the previously-allowed domain).
 
-The hash space is 32-bit FNV-1a, which carries a theoretical collision floor. The route-identity-allocator follow-up (see the bug tracker entry by that name) replaces the hash with userspace-allocated sequential identities, matching Cilium's `pkg/fqdn/namemanager` pattern. For today's deployment shape (single-digit-to-hundreds of firewall-rule domains), the floor is operationally irrelevant.
+The hash space is 32-bit FNV-1a, which carries a theoretical collision floor. The route-identity-allocator follow-up replaces the hash with userspace-allocated sequential identities, matching Cilium's `pkg/fqdn/namemanager` pattern. At deployment-typical rule-set sizes (single-digit-to-hundreds of firewall-rule domains), the floor is operationally irrelevant.
 
 ## Reliability
 
@@ -92,7 +95,7 @@ netlogger is engineered to fail open with respect to the firewall — enforcemen
 
 - **BPF token-bucket rate limiter** keyed by `cgroup_id` (burst 64, refill 64 tokens/100ms ⇒ ~640 records/sec/cgroup ceiling). A misbehaving container cannot monopolize the ringbuf; throttled events are counted in `ratelimit_drops`, keyed by the noisy cgroup.
 - **Kernel-fault drop counter** (`events_drops`, PERCPU_ARRAY) bumps when `bpf_ringbuf_reserve` returns NULL on a full buffer — distinct from rate-limit drops so the operator response is different (ringbuf size vs. noisy-agent triage).
-- **Userspace queue** between the ringbuf reader and the processor is bounded with drop-newest semantics; the reader never blocks on the consumer. Drops are counted in `clawker_netlogger_queue_dropped_total` (Prom counter declared today; scrape exposure is not currently wired).
+- **Userspace queue** between the ringbuf reader and the processor is bounded with drop-newest semantics; the reader never blocks on the consumer. Drops are counted in `clawker_netlogger_queue_dropped_total` (Prom counter declared; scrape exposure is not wired).
 - **Circuit breaker** wraps the OTLP exporter: three consecutive `Export()` failures permanently trip the breaker for the rest of the CP lifetime. Records drop on the floor afterward; the BatchProcessor queue drains via the SDK's own drop-oldest path. No background reconnect — telemetry availability is binary per-CP-lifetime by design. Operator response: restart CP after fixing the collector.
 - **Preflight TLS dial** runs at CP boot with a 20-second deadline against the configured OTLP endpoint. Failure degrades netlogger to a no-op for the rest of the CP lifetime and emits `event=netlogger_unavailable` (warn for "no endpoint configured", error for actual failures like cert problems or unreachable collector). The firewall, AdminService, agent dispatch, and registry are unaffected — netlogger's failure is contained.
 
@@ -110,11 +113,16 @@ Agent containers cannot forge `service.name=ebpf-egress` records onto the truste
 
 ## Configuration
 
-netlogger inherits its endpoint from the standard `OTEL_EXPORTER_OTLP_ENDPOINT` resolution path used by the CP zerolog bridge — when `clawker monitor up` is running, the CP boot sequence wires the collector's `OtelInfraPort` automatically. No netlogger-specific knobs ship today; the BatchProcessor sizing, retry cap (10s vs. SDK default 1 min), and circuit-breaker threshold are CP-level constants.
+netlogger inherits its endpoint from the standard `OTEL_EXPORTER_OTLP_ENDPOINT` resolution path used by the CP zerolog bridge — when `clawker monitor up` is running, the CP boot sequence wires the collector's `OtelInfraPort` automatically. No netlogger-specific knobs ship; the BatchProcessor sizing, retry cap (10s vs. SDK default 1 min), and circuit-breaker threshold are CP-level constants.
 
 To point netlogger at a custom collector (for a centralized SIEM, or to bypass the local stack entirely), override `OTEL_EXPORTER_OTLP_ENDPOINT` in the CP container's environment and ensure the receiver presents a server cert chained through the infra intermediate. Plaintext endpoints are rejected by design — see [Trust Lane](#trust-lane) above.
 
 ## Current Limitations
 
-- **FNV-1a 32-bit identity** — the BPF data path uses an FNV-1a hash of the lowercased domain as a fixed-width identity in `dns_cache` and `route_map`. Collision-vulnerable in theory; harmless in practice for today's rule-set sizes. The route-identity-allocator follow-up replaces this with userspace-allocated sequential u32 identities (Cilium pattern). See `initiative_route_identity_allocator` for scope.
-- **Prom counters not scraped** — the `clawker_netlogger_*` counters are declared but not yet wired into a `/metrics` endpoint. Today the structured CP log surface is the operational signal for throughput, queue drops, parse errors, and OTLP export success/error. Kernel-side drop counters (`events_drops`, `ratelimit_drops`) live on the firewall/eBPF subsystem surface — they are subsystem health, not security telemetry, and intentionally don't ride on the netlogger OTel stream.
+- **FNV-1a 32-bit identity** — the BPF data path uses an FNV-1a hash of the lowercased domain as a fixed-width identity in `dns_cache` and `route_map`. Collision-vulnerable in theory; harmless in practice at deployment-typical rule-set sizes. The route-identity-allocator follow-up replaces this with userspace-allocated sequential u32 identities (Cilium pattern).
+- **Prom counters not scraped** — the `clawker_netlogger_*` counters are declared but not wired into a `/metrics` endpoint. The structured CP log surface is the operational signal for throughput, queue drops, parse errors, and OTLP export success/error. Kernel-side drop counters (`events_drops`, `ratelimit_drops`) live on the firewall/eBPF subsystem surface — they are subsystem health, not security telemetry, and intentionally don't ride on the netlogger OTel stream.
+
+## See Also
+
+- [Firewall](/firewall) — the source of every record on this stream (decision points, bypass mechanics, rule lifecycle).
+- [Monitoring](/monitoring) — the OpenSearch + OpenSearch Dashboards + Prometheus stack that hosts the `clawker-ebpf-egress` index.

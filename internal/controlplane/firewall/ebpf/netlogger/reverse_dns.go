@@ -43,9 +43,8 @@ type DomainSource func() []string
 // Collision floor: FNV-1a is 32-bit. Two firewall-rule domains
 // colliding is astronomically unlikely in any realistic config; an
 // adversarial second-preimage against a known rule domain is not
-// realistic either, but the route_map shape inherits the same floor
-// today and is tracked for replacement in the route-identity-allocator
-// initiative. See `initiative_route_identity_allocator` Serena memory.
+// realistic either. The route_map shape inherits the same floor and
+// is tracked as part of the route-identity allocator work.
 type ReverseDNSMap struct {
 	mu     sync.RWMutex
 	byHash map[uint32]string
@@ -59,11 +58,10 @@ type ReverseDNSMap struct {
 	// Production wires it via NewReverseDNSMap; tests inject a
 	// stub so they don't need a real *ebpf.Map (which would
 	// require CAP_BPF, unavailable inside the clawker dev
-	// container per Task-1 learnings). The walk is no longer
-	// load-bearing for Lookup — DomainSource is — but the
-	// dns_cache hash set is logged on every refresh tick for
-	// triage when an emitted security record carries an
-	// unattributed hash.
+	// container). The walk is not load-bearing for Lookup —
+	// DomainSource is — but the dns_cache hash set is logged on
+	// every refresh tick for triage when an emitted security
+	// record carries an unattributed hash.
 	walk func(visit func(hash uint32)) error
 
 	log *logger.Logger
@@ -171,7 +169,7 @@ func (m *ReverseDNSMap) refresh() {
 		})
 		switch {
 		case err != nil:
-			m.log.Debug().Err(err).Str("event", "netlogger_reverse_dns_refresh_error").Msg("dns_cache iterate failed")
+			m.log.Warn().Err(err).Str("event", "netlogger_reverse_dns_refresh_error").Msg("dns_cache iterate failed — emitted records will carry empty dst_host until next successful refresh")
 		case unattributed > 0:
 			// Hashes present in dns_cache but missing from
 			// DomainSource — race or stale entry. Records

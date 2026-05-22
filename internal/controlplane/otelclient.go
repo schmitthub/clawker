@@ -189,6 +189,10 @@ func NewOtelLoggerProvider(opts OtelClientOptions) (*sdklog.LoggerProvider, erro
 		semconv.ServiceName(opts.ServiceName),
 	))
 	if err != nil {
+		// BatchProcessor.NewBatchProcessor spawns a goroutine
+		// immediately. Shut it down before returning the error so
+		// the goroutine doesn't leak with no provider holding it.
+		_ = processor.Shutdown(context.Background())
 		return nil, fmt.Errorf("otelclient: build resource: %w", err)
 	}
 	return sdklog.NewLoggerProvider(

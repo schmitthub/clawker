@@ -52,10 +52,10 @@ func (p *processor) run(ctx context.Context) {
 			ev, err := parseEvent(raw)
 			if err != nil {
 				p.metrics.ParseErrors.Inc()
-				p.log.Debug().
+				p.log.Warn().
 					Err(err).
 					Str("event", "netlogger_parse_error").
-					Msg("decode egress event")
+					Msg("decode egress event — sustained growth indicates BPF/Go ABI drift")
 				continue
 			}
 			p.enrich(&ev)
@@ -68,7 +68,7 @@ func (p *processor) run(ctx context.Context) {
 // enrich layers userspace attribution onto an Event parsed from the
 // ringbuf. LabelCache resolves cgroup_id to {container_id, agent,
 // project}; ReverseDNSMap resolves domain_hash to a human-readable
-// domain (returns "" today — see ReverseDNSMap doc).
+// domain (returns "" for unattributed hashes — see ReverseDNSMap doc).
 func (p *processor) enrich(ev *Event) {
 	if p.cache != nil {
 		if cid, agent, project, ok := p.cache.Lookup(ev.CgroupID); ok {

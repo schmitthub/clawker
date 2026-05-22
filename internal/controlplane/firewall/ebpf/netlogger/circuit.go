@@ -14,12 +14,11 @@ import (
 // drop on the floor for the rest of the process lifetime. No probe
 // loop, no half-open state.
 //
-// The rationale (initiative_ebpf-netlogger, "Collector-unavailable
-// posture"): telemetry availability is binary per-CP-lifetime — either
-// the collector was up at boot and stayed up, or netlogger is dropping.
-// A reconnect loop against a missing collector costs more than it
-// earns; operators recover by restarting CP once the monitoring stack
-// returns.
+// The rationale: telemetry availability is binary per-CP-lifetime —
+// either the collector was up at boot and stayed up, or netlogger is
+// dropping. A reconnect loop against a missing collector costs more
+// than it earns; operators recover by restarting CP once the
+// monitoring stack returns.
 type CircuitOptions struct {
 	// FailureThreshold is the number of consecutive Export failures
 	// that trip the breaker. Default 3.

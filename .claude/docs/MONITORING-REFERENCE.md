@@ -38,6 +38,8 @@ Cross-reference with [Claude Code's monitoring docs](https://code.claude.com/doc
 
 `project`, `agent`, `session_id`
 
+> **netlogger exception**: for `clawker-ebpf-egress` records (`service.name=ebpf-egress`), `project` and `agent` are NOT carried via `OTEL_RESOURCE_ATTRIBUTES` on a sender. The CP-side netlogger pipeline derives them from the target container's `dev.clawker.{project,agent}` Docker labels via `LabelCache` enrichment, keyed on the BPF-attested `cgroup_id`. They land as event-time attributes on the record (`attributes.project`, `attributes.agent`), not under `resource.*`.
+
 ### Common event fields
 
 `event_name`, `event_timestamp`, `event_sequence`
@@ -108,6 +110,31 @@ Logged when user submits a prompt.
 |-------|------|-------------|
 | `prompt_length` | numeric string | Length of prompt |
 | `prompt` | string | Prompt content (requires `OTEL_LOG_USER_PROMPTS=1`, redacted otherwise) |
+
+### `ebpf.egress`
+
+Logged once per BPF egress decision (per-cgroup rate-limited by `ratelimit_state`). Source: `internal/controlplane/firewall/ebpf/netlogger`. Resource: `service.name=ebpf-egress`. Instrumentation scope: `clawker.netlogger`. Lands in the `clawker-ebpf-egress` OpenSearch index on the mTLS-gated `otlp/infra` lane.
+
+**Strict-emission rule**: every field below is written on every record. Empty strings and zero numbers ship verbatim — they are never dropped. Adding a field is a contract change.
+
+| Attribute | Type | Source |
+|-----------|------|--------|
+| `event.name` | string | constant `"ebpf.egress"`. The OS OTLP exporter does not project `LogRecord.event_name` into the SS4O document; netlogger emits `event.name` as an attribute too so OSD can filter by it. `SetEventName` is kept for consumers that honor the OTLP field (e.g. Loki). |
+| `source` | string | constant `"ebpf"` |
+| `verdict` | string | `Event.Verdict.String()` (`allowed` / `denied` / `bypassed`) |
+| `container_id` | string | `Event.ContainerID` (empty on `LabelCache` miss) |
+| `agent` | string | `Event.Agent` — derived from the container's `dev.clawker.agent` label by `LabelCache` enrichment |
+| `project` | string | `Event.Project` — derived from the container's `dev.clawker.project` label by `LabelCache` enrichment |
+| `cgroup_id` | string | `strconv.FormatUint(Event.CgroupID, 10)` — opaque kernel identifier; emitted as string so the OS index template maps it as `keyword` (group/filter dimension) instead of `long` (metric). Sending a JSON number to a keyword field is officially supported via numeric→string coercion but operator UIs treat numerics as metrics by default, which is wrong for ID-shaped fields. |
+| `bpf_ts_ns` | int64 | `Event.BPFTsNs` (raw `bpf_ktime_get_ns`) |
+| `dst_ip` | string | `Event.DstIP.String()` |
+| `dst_port` | string | `strconv.FormatUint(uint64(Event.DstPort), 10)` — opaque port identifier; emitted as string for the same reason as `cgroup_id` (keyword dimension, not metric). OSD formats numeric fields with thousands separators ("4,318") which is wrong for an ID-shaped axis. |
+| `l4_proto` | string | `SOCK_STREAM` / `SOCK_DGRAM` / `SOCK_RAW` name |
+| `l4_proto_code` | int | raw SOCK code (resilient to renames) |
+| `ipv6` | bool | native IPv6 |
+| `ipv4_mapped` | bool | `::ffff:x.x.x.x` |
+| `dst_host` | string | `Event.Domain` populated via `ReverseDNSMap.Lookup(Event.DomainHash)`; `""` for direct-IP connects or domains outside the firewall rule set |
+| `domain_hash` | string | `strconv.FormatUint(uint64(Event.DomainHash), 10)` — BPF-side identity for the resolved domain. Emitted as string for the same keyword-mapping rationale as `cgroup_id` / `dst_port`. Operators use it to correlate userspace records with BPF `dns_cache` / `route_map` entries when `dst_host` is empty (direct-IP connect, rule removed mid-flight, stale dnsbpf entry). |
 
 ## Verification Workflow
 

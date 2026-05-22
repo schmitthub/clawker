@@ -735,6 +735,27 @@ The firewall uses an **Envoy proxy + custom CoreDNS + eBPF manager** trio runnin
 
 **PID-1 privilege model**: Agent containers run fully unprivileged. clawkerd is the container's `ENTRYPOINT` and runs as root only to host the mTLS listener, write log files, and reap reparented orphans; the user CMD it forks runs as the unprivileged `claude` user (kernel-side `setgroups → setgid → setuid` between fork and exec via `SysProcAttr.Credential`). eBPF programs attach from outside — no in-container firewall scripts or capabilities.
 
+#### Per-decision telemetry / eBPF egress event stream
+
+Every BPF decision point (`connect4`/`connect6`, `sendmsg4`/`sendmsg6`, `recvmsg6`) calls `submit_event` after it reaches a verdict. The kernel side is fully bounded:
+
+- **Rate limiting** is enforced per-`cgroup_id` via a token-bucket in `ratelimit_state` (`BPF_MAP_TYPE_LRU_HASH` so dead cgroups self-evict). Tunables (`RATELIMIT_BURST=64`, `RATELIMIT_REFILL_NS=100ms`, `RATELIMIT_TOKENS_PER=64`) live as `#define`s in `bpf/common.h`. Records dropped by the limiter increment `ratelimit_drops` (per-cgroup) and never touch the ringbuf.
+- **Kernel-fault drops** (ringbuf full or `bpf_ringbuf_reserve == NULL`) increment `events_drops` (PERCPU_ARRAY at key 0).
+- The ringbuf itself (`events_ringbuf`) is single-producer-per-decision-point, single-consumer, 256 KiB sized for 32-byte `egress_event` records.
+
+The userspace consumer is `netlogger.Service` (`internal/controlplane/firewall/ebpf/netlogger/`):
+
+1. **Drain**: A reader goroutine pulls records out of `events_ringbuf` via `cilium/ebpf/ringbuf` and forwards them through a bounded queue (default 8192) with drop-newest back-pressure (`QueueDropped` counter).
+2. **Enrichment**: A processor goroutine decodes each record into a typed `Event` and resolves `cgroup_id → {container_id, agent, project}` via `LabelCache`. The cache is hydrated by `ebpf.EBPFContainerEnrolled` overseer events published by `firewall.Handler.FirewallEnable` and evicted by `dockerevents.DockerEvent` with `Action ∈ {die, destroy}`. `domain_hash → domain` resolution goes through `ReverseDNSMap`, rebuilt every refresh tick from the firewall rule set.
+3. **Emit**: An `otelSink` shapes the enriched record into an OTLP log record (scope `clawker.netlogger`, event name `ebpf.egress`, `service.name=ebpf-egress`) and pushes it through a `*sdklog.LoggerProvider` over mTLS gRPC to the trusted-infra OTLP receiver on `OtelInfraPort`. Records land in the `clawker-ebpf-egress` OpenSearch index. Strict directive: every `Event` field maps to an attribute on every emitted record — empty strings and zero numbers ship verbatim, never dropped.
+
+Collector-unavailable posture is binary per-CP-lifetime:
+
+- **Startup preflight**: `controlplane.NewOtelLoggerProvider` performs a one-shot TLS dial against the OTLP endpoint. Failure returns an error to CP main; main emits `event=netlogger_unavailable` with the failing `step` field, leaves `netloggerSvc=nil`, and CP runs degraded with no per-decision telemetry. Firewall enforcement is untouched.
+- **Runtime circuit breaker**: `netlogger.NewCircuitExporter` wraps the OTLP exporter inside the BatchProcessor. After 3 consecutive `Export` failures the breaker permanently trips, drops records on the floor, and emits a single `event=netlogger_collector_lost` line. No background reconnect — operators recover by restarting CP.
+
+Drain ordering (in `cmd/clawker-cp/main.go`'s drain callback) places `netloggerSvc.Stop(stopCtx)` BEFORE `ebpfMgr.FlushAll()` so the BatchProcessor flushes in-flight OTLP batches before the BPF maps the reader holds are torn down.
+
 ### 7.3 Strict Label Ownership
 
 Clawker **refuses** to operate on resources without proper labels:
@@ -778,12 +799,12 @@ No error, no duplicate—deterministic behavior.
 
 A Docker Compose stack on `clawker-net`:
 
-- **OpenTelemetry Collector** - OTLP/HTTP receivers + routing; writes logs to OpenSearch and exposes a Prometheus scrape endpoint for metrics. A `traces` pipeline is configured but idle — agents don't emit spans today.
+- **OpenTelemetry Collector** - Two OTLP receivers on distinct trust lanes: the untrusted `otlp` receiver (agent containers — Claude Code + clawker-cli telemetry) and the mTLS-gated `otlp/infra` receiver on `OtelInfraPort` (trusted CP-side emitters — CP zerolog bridge, Envoy access logs, CoreDNS otel plugin, netlogger). Routes logs into the six OpenSearch indices and exposes a Prometheus scrape endpoint for metrics. The two-lane split is load-bearing for netlogger's trust model — infra emitters carry per-handshake leaf certs minted by `otelcerts.Service` and never cross into the untrusted agent lane. A `traces` pipeline is configured but idle — agents don't emit spans today.
 - **OpenSearch** - Logs only, split into six indices: `claude-code` (Claude Code OTLP push, untrusted port), `clawker-cli` (host CLI OTLP push, untrusted port), `clawker-cp` (mTLS-gated CP push), `clawker-envoy` (Envoy access logs, mTLS-gated), `clawker-coredns` (CoreDNS query logs, mTLS-gated), and `clawker-ebpf-egress` (eBPF per-decision egress events from netlogger, `service.name=ebpf-egress`, mTLS-gated). Cross-index queries: `clawker-cp,claude-code,clawker-cli,clawker-envoy,clawker-coredns,clawker-ebpf-egress`.
 - **OpenSearch Dashboards** - UI for log exploration (Discover)
 - **Prometheus** - Metrics storage + UI; also accepts direct OTLP push for callers willing to lose `/api/v1/metadata` coverage
 
-Container images are built with OTEL environment variables pointing to the collector. The stack is preconfigured by a one-shot `clawker-opensearch-bootstrap` compose service that runs after OpenSearch reports `service_healthy` and before `otel-collector` / `prometheus` start (`service_completed_successfully` gate): component + index templates with explicit per-source field mappings, a default ISM retention policy auto-attached via `ism_template.index_patterns`, and Dashboards index-pattern saved objects for all six indices. Source assets live in `internal/monitor/templates/opensearch-bootstrap/` and are re-applied every `monitor up`. Curated dashboards / visualizations / alerts are NOT yet shipped — adding them is a matter of dropping the Dashboards-exported NDJSON into `opensearch-bootstrap/saved-objects/clawker.ndjson` and shipping a new release.
+Container images are built with OTEL environment variables pointing to the collector. The stack is preconfigured by a one-shot `clawker-opensearch-bootstrap` compose service that runs after OpenSearch reports `service_healthy` and before `otel-collector` / `prometheus` start (`service_completed_successfully` gate): component + index templates with explicit per-source field mappings (including `clawker-ebpf-egress` for netlogger records), per-index ingest pipelines on the trusted-infra OTLP lane (the `envelope-normalize` mirror that surfaces `resource.attributes.*` for OSD Explore default columns), a default ISM retention policy auto-attached via `ism_template.index_patterns`, and Dashboards index-pattern saved objects for all six indices. Source assets live in `internal/monitor/templates/opensearch-bootstrap/` and are re-applied every `monitor up`. Curated dashboards / visualizations / alerts are NOT yet shipped — adding them is a matter of dropping the Dashboards-exported NDJSON into `opensearch-bootstrap/saved-objects/clawker.ndjson` and shipping a new release.
 
 ### 9.2 Verbosity Levels
 

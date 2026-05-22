@@ -137,5 +137,5 @@ To bump pins: resolve fresh apt versions against the pinned `ubuntu:24.04@sha256
 
 ## Imports
 
-- **Imported by**: `internal/controlplane` (the CP binary — imports `Manager`, `Route`, types), `internal/controlplane/firewall` (the firewall domain handler — `Manager` interface satisfies `EBPFManager`), `internal/dnsbpf` (reuses `DomainHash`/`IPToUint32`/`Uint32ToIP` to stay in sync), `internal/controlplane/firewall/ebpf/cmd` (the break-glass CLI).
+- **Imported by**: `internal/controlplane` (the CP binary — imports `Manager`, `Route`, types), `internal/controlplane/firewall` (the firewall domain handler — `Manager` interface satisfies `EBPFManager`), `internal/controlplane/firewall/ebpf/netlogger` (consumes `EventsRingbuf`, `EventsDrops`, `RatelimitDrops`, `DNSCache` accessors + `EgressEvent` struct + `EBPFContainerEnrolled` overseer event type), `internal/dnsbpf` (reuses `DomainHash`/`IPToUint32`/`Uint32ToIP` to stay in sync), `internal/controlplane/firewall/ebpf/cmd` (the break-glass CLI).
 - **Imports**: `github.com/cilium/ebpf`, `github.com/cilium/ebpf/link`, `internal/logger`.

@@ -246,8 +246,9 @@ func newTestService(t *testing.T, d Deps) *Service {
 		sink:    nopSink{},
 		queue:   make(chan []byte, d.QueueBuffer),
 	}
-	svc.ctx, svc.cancel = context.WithCancel(context.Background())
-	svc.subscribeBus()
+	ctx, cancel := context.WithCancel(context.Background())
+	svc.cancel = cancel
+	svc.subscribeBus(ctx)
 	t.Cleanup(func() {
 		for _, unsub := range svc.unsubs {
 			unsub()

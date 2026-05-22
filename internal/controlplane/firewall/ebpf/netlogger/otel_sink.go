@@ -53,13 +53,13 @@ func newOtelSink(provider *sdklog.LoggerProvider) *otelSink {
 // connect, rule removed mid-flight, stale dnsbpf entry).
 func (s *otelSink) Emit(ctx context.Context, ev Event) {
 	var rec otellog.Record
-	// SetEventName populates OTLP's LogRecord.event_name field, which
-	// the OpenSearch OTLP exporter does NOT currently project into the
-	// SS4O document — the field lands nowhere visible. We additionally
-	// emit `event.name` as an attribute (the SS4O / clawker convention,
-	// matched by the claude-code index) so operators can filter by it
-	// in OSD. Keep SetEventName too so downstream consumers that DO
-	// honor LogRecord.event_name (Loki, future OS releases) work.
+	// SetEventName populates OTLP's LogRecord.event_name field. The
+	// OpenSearch OTLP exporter does not project that field into the
+	// SS4O document, so netlogger also emits `event.name` as an
+	// attribute (the SS4O / clawker convention, matched by the
+	// claude-code index) so operators can filter by it in OSD.
+	// SetEventName is kept for consumers that honor the OTLP field
+	// (e.g. Loki).
 	rec.SetEventName(eventName)
 	rec.SetTimestamp(ev.Timestamp)
 	rec.SetObservedTimestamp(time.Now().UTC())

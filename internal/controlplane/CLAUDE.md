@@ -47,10 +47,11 @@ It's a safety net, not a recovery strategy. By the time it triggers, eBPF has be
 
 ## Responsibilities (v1)
 
-1. **Authoritative eBPF management** — the CP owns `ebpf.Manager.Load()` lifetime for its process lifetime. BPF programs are loaded once at boot and stay live.
+1. **Authoritative eBPF management** — the CP owns `ebpf.Manager.Load()` lifetime for its process lifetime. BPF programs are loaded once at boot and stay live. The manager exposes read-only accessors for the netlogger pipeline: `EventsRingbuf()`, `EventsDrops()`, `RatelimitDrops()`, `DNSCache()` (all nil before `Load`; callers MUST nil-check).
 2. **AdminService gRPC surface** — the host CLI calls firewall/eBPF operations as typed gRPC over mTLS TCP with OAuth2 JWT authorization.
 3. **Ory auth stack** — Hydra (OAuth2), Oathkeeper (reverse proxy), Kratos (identity, placeholder for webui).
 4. **Aggregate health reporting** — `/healthz` actively probes all 7 service ports before returning 200.
+5. **Per-decision eBPF egress event emission (netlogger)** — drains BPF `events_ringbuf`, enriches by `cgroup_id` via overseer enrollment events, ships OTLP log records (`service.name=ebpf-egress`) to the trusted-infra OTLP receiver via the `controlplane.NewOtelLoggerProvider` factory. Degraded paths emit `event=netlogger_unavailable` and leave firewall enforcement untouched.
 
 ## Auth (Hydra introspection + mTLS + JWT)
 
@@ -151,6 +152,7 @@ The eBPF subsystem lives at `firewall/ebpf/` — see `firewall/ebpf/CLAUDE.md` f
 - `ebpf.Manager` — concrete loader. `Load()` runs once at CP startup; `CleanupStaleBypass` runs before `SetReady` (INV-B2-013); `FlushAll` runs during drain-to-zero (INV-B2-007).
 - `ebpf.EBPFManager` interface — consumed by `firewall.Handler`. Methods: `Install`, `Remove`, `Enable`, `Disable`, `SyncRoutes`, `FlushAll`.
 - `ebpf.Route` + `ebpf.BPFContainerConfig` + `ebpf.DomainHash` — shared types / hash function used by `internal/dnsbpf` and `internal/controlplane/firewall` (`normalizeDomain`).
+- `ebpf.Manager.EventsRingbuf()` / `EventsDrops()` / `RatelimitDrops()` / `DNSCache()` — read-only map accessors consumed by `netlogger.Service` for the per-decision egress event pipeline. All return nil before `Load()` — callers MUST nil-check.
 
 ## Ory Config Generation (`ory_configs.go`)
 
@@ -199,9 +201,9 @@ Manages Ory service lifecycle. Crash reporting via channel. Shutdown sends SIGTE
 
 ## Package imports
 
-**Uses**: `internal/config`, `internal/consts`, `internal/docker`, `internal/logger`, `internal/controlplane/firewall`, `internal/controlplane/firewall/ebpf`, `api/admin/v1`, `google.golang.org/grpc`, `github.com/cilium/ebpf`, `github.com/moby/moby/api/types/{mount,network}`.
+**Uses**: `internal/config`, `internal/consts`, `internal/docker`, `internal/logger`, `internal/controlplane/firewall`, `internal/controlplane/firewall/ebpf`, `api/admin/v1`, `google.golang.org/grpc`, `github.com/cilium/ebpf`, `github.com/moby/moby/api/types/{mount,network}`, `go.opentelemetry.io/otel`, `go.opentelemetry.io/otel/log`, `go.opentelemetry.io/otel/sdk/log`, `go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc` (the last four via `otelclient.go`'s `NewOtelLoggerProvider`).
 
-**Used by**: `cmd/clawker-cp/` (startup sequence), `internal/cmd/controlplane/` (break-glass up/down/status), `internal/cmd/factory/` (AdminClient + ControlPlane Factory closures), `internal/cmd/firewall/` (AdminService consumers via `f.AdminClient`), `internal/cmd/container/shared/` (BootstrapServicesPostStart), `internal/dnsbpf` (reuses ebpf types), `internal/auth` (cert paths).
+**Used by**: `cmd/clawker-cp/` (startup sequence), `internal/cmd/controlplane/` (break-glass up/down/status), `internal/cmd/factory/` (AdminClient + ControlPlane Factory closures), `internal/cmd/firewall/` (AdminService consumers via `f.AdminClient`), `internal/cmd/container/shared/` (BootstrapServicesPostStart), `internal/controlplane/firewall/ebpf/netlogger` (consumes `NewOtelLoggerProvider`), `internal/dnsbpf` (reuses ebpf types), `internal/auth` (cert paths).
 
 No circular dependencies.
 

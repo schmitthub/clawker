@@ -155,12 +155,13 @@ type Service struct {
 	reader  *reader
 	process *processor
 
-	// Lifecycle: started once, stopped once. ctx + cancel control
-	// the reverse-DNS refresher and the processor's outer ctx.
+	// Lifecycle: started once, stopped once. cancel terminates the
+	// reverse-DNS refresher, the processor's outer ctx, and both
+	// subscriber goroutines. The derived ctx itself flows through
+	// closures rather than being held on the struct.
 	startOnce sync.Once
 	stopOnce  sync.Once
 	wg        sync.WaitGroup
-	ctx       context.Context
 	cancel    context.CancelFunc
 
 	// unsubs holds the two overseer subscription cancel funcs so
@@ -246,7 +247,8 @@ func (s *Service) Start(ctx context.Context) error {
 		}
 		s.rb = rb
 
-		s.ctx, s.cancel = context.WithCancel(ctx)
+		innerCtx, cancel := context.WithCancel(ctx)
+		s.cancel = cancel
 
 		s.reader = &reader{
 			src:     s.rb,
@@ -266,7 +268,7 @@ func (s *Service) Start(ctx context.Context) error {
 		// Subscribe BEFORE launching goroutines so any
 		// EBPFContainerEnrolled event delivered while the goroutines
 		// spin up still lands in the LabelCache.
-		s.subscribeBus()
+		s.subscribeBus(innerCtx)
 
 		s.wg.Add(3)
 		go func() {
@@ -279,11 +281,11 @@ func (s *Service) Start(ctx context.Context) error {
 		}()
 		go func() {
 			defer s.wg.Done()
-			s.process.run(s.ctx)
+			s.process.run(innerCtx)
 		}()
 		go func() {
 			defer s.wg.Done()
-			s.revDNS.Run(s.ctx, s.deps.ReverseDNSInterval)
+			s.revDNS.Run(innerCtx, s.deps.ReverseDNSInterval)
 		}()
 	})
 	return startErr
@@ -353,7 +355,8 @@ func (s *Service) Stop(ctx context.Context) error {
 // subscribeBus wires the two overseer subscriptions netlogger
 // depends on. Each subscriber goroutine recovers; a malformed
 // event must not strand the BPF programs pinned with no consumer.
-func (s *Service) subscribeBus() {
+// ctx is the inner lifecycle context cancelled by Stop.
+func (s *Service) subscribeBus(ctx context.Context) {
 	// Enrollment: the firewall handler publishes
 	// EBPFContainerEnrolled after a successful FirewallEnable.
 	// FirewallInit's re-enrollment sweep at CP boot ALSO calls
@@ -376,7 +379,7 @@ func (s *Service) subscribeBus() {
 			}()
 			for {
 				select {
-				case <-s.ctx.Done():
+				case <-ctx.Done():
 					return
 				case ev, open := <-enrollSub.C:
 					if !open {
@@ -425,7 +428,7 @@ func (s *Service) subscribeBus() {
 			}()
 			for {
 				select {
-				case <-s.ctx.Done():
+				case <-ctx.Done():
 					return
 				case ev, open := <-evictSub.C:
 					if !open {

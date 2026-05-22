@@ -1080,7 +1080,7 @@ func (h *Handler) publishEnrolled(containerID string, cgroupID uint64) {
 	ok := overseer.Publish(h.bus, ebpf.EBPFContainerEnrolled{
 		CgroupID:    cgroupID,
 		ContainerID: containerID,
-		At:          time.Now(),
+		At:          time.Now().UTC(),
 	})
 	if !ok {
 		h.log.Warn().

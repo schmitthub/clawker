@@ -2,11 +2,7 @@
 
 Userspace consumer of the BPF `events_ringbuf`. Drains per-decision-point egress records, enriches each with `{container_id, agent, project, domain}` attribution looked up by `cgroup_id`, and pushes the result through an OTel log sink to the trusted-infra OTLP receiver. Lives under `internal/controlplane/firewall/ebpf/` because it is the userspace half of the ebpf egress event emitter — the BPF programs in `bpf/clawker.c` submit records into the pinned ringbuf; this package shapes them into the OTLP log stream the monitoring backend consumes.
 
-Task scope shipped on this branch:
-
-- **Task 2**: scaffold — ringbuf reader, LabelCache, ReverseDNSMap, processor + Sink interface, lifecycle.
-- **Task 3 (current)**: OTel sink + circuit breaker; CP main constructs the provider via `controlplane.NewOtelLoggerProvider` and wires it through `Deps.OtelLoggerProvider`; drain hook places `Service.Stop(stopCtx)` before `ebpfMgr.FlushAll()`.
-- **Task 4**: E2E test + Mintlify doc.
+The package ships as a per-decision-point egress event emitter with an OTel sink and a circuit breaker; CP main constructs the `*sdklog.LoggerProvider` via `controlplane.NewOtelLoggerProvider`, wraps it with `NewCircuitExporter`, and wires it through `Deps.OtelLoggerProvider`. The drain hook places `Service.Stop(stopCtx)` before `ebpfMgr.FlushAll()`.
 
 ## Pipeline shape
 
@@ -39,13 +35,13 @@ The reader MUST NOT block on the queue. Back-pressure from the queue into the ke
 | `netlogger.go` | `Service` struct, `New(Deps)`, `Start(ctx)`, `Stop(ctx)`, overseer subscriptions for enroll + evict, `handleEnroll` (one docker ContainerInspect per enroll). `Deps.OtelLoggerProvider` is the production sink anchor; nil routes to internal `nopSink`. |
 | `event.go` | `Event` struct, `Verdict` enum, `parseEvent([]byte) (Event, error)` — decodes ringbuf records via `binary.NativeEndian` against the bpf2go-generated `ebpf.EgressEvent` |
 | `cache.go` | `LabelCache` — slice + dual-index (`byCgroup`/`byCont`) + invalid-flag + free-list. Mutex-guarded. Single eviction call drops both indices atomically so cgroup-id reuse can't return stale labels |
-| `reverse_dns.go` | `ReverseDNSMap` — periodic walk of pinned `dns_cache` map. v1 limitation: dns_cache stores only hashes, so Lookup returns `""` until a follow-up branch populates strings. Walk seam is injectable for tests (no real BPF map needed) |
+| `reverse_dns.go` | `ReverseDNSMap` — periodic refresh of the `hash → domain` table from `DomainSource`; walks the pinned `dns_cache` as a triage-only signal for unattributed hashes. Walk seam is injectable for tests (no real BPF map needed) |
 | `reader.go` | `reader` — ringbuf drain goroutine. Recovers; bumps RingbufReceived/RingbufErrors/QueueDropped |
 | `processor.go` | `processor` — queue-consumer goroutine. Recovers; bumps QueueReceived/ParseErrors/EmitSucceeded |
 | `sink.go` | `Sink` interface + internal `nopSink`. No public sink constructors — the OTel-backed sink is constructed in `New` when `Deps.OtelLoggerProvider` is non-nil, and the nopSink is the test/degraded default. |
 | `otel_sink.go` | `otelSink` + `newOtelSink(provider)` — emits every Event field as an attribute on a `*otellog.Record`; scope `clawker.netlogger`, event.name `ebpf.egress` |
 | `circuit.go` | `circuitExporter` + `NewCircuitExporter(inner, CircuitOptions)` — wraps `sdklog.Exporter`; after N consecutive Export failures (default 3) trips permanently and drops records on the floor with a single `event=netlogger_collector_lost` log line. No probe loop; reconnect requires CP restart. |
-| `metrics.go` | `Metrics` struct declaring the six pipeline Prom counters. Counters created unregistered; scrape wiring is deferred to a follow-up PR (see TODO at the top of the file). |
+| `metrics.go` | `Metrics` struct declaring the six pipeline Prom counters. Counters are created unregistered and bumped in-process; CP has no `/metrics` scrape endpoint, so values are not visible outside the CP process. |
 
 ## OTel sink + provider wiring
 
@@ -57,7 +53,7 @@ The reader MUST NOT block on the queue. Back-pressure from the queue into the ke
 
 | Attribute | Type | Source |
 |-----------|------|--------|
-| `event.name` | string | constant `"ebpf.egress"`. Mirrors what `rec.SetEventName(...)` populates on the OTLP LogRecord, but the OS OTLP exporter does NOT currently project `LogRecord.event_name` into the SS4O document — emit as an attribute too so OSD can filter by it. Keep `SetEventName` for downstream consumers that DO honor the OTLP field (Loki, future OS releases). |
+| `event.name` | string | constant `"ebpf.egress"`. The OS OTLP exporter does not project `LogRecord.event_name` into the SS4O document; netlogger emits `event.name` as an attribute too so OSD can filter by it. `SetEventName` is kept for consumers that honor the OTLP field (e.g. Loki). |
 | `source` | string | constant `"ebpf"` |
 | `verdict` | string | `Event.Verdict.String()` (`allowed`/`denied`/`bypassed`) |
 | `container_id` | string | `Event.ContainerID` (empty on cache miss) |
@@ -92,6 +88,7 @@ type Deps struct {
     Bus                *overseer.Overseer
     Docker             ContainerInspecter
     Cfg                config.Config
+    Domains            DomainSource          // nil → degraded mode (dst_host always "")
     OtelLoggerProvider *sdklog.LoggerProvider // nil → nopSink (degraded / test)
     Log                *logger.Logger
     QueueBuffer        int
@@ -153,11 +150,11 @@ Why not an LRU: cgroup_id reuse is event-driven, not time-driven. An LRU would e
 - Nil `Deps.Domains` (degraded mode before CP main wiring lands).
 - Hash absent from DomainSource (race or stale; logged on refresh).
 
-The hash function is `internal/controlplane/firewall/ebpf.DomainHash` (FNV-1a of the lowercased domain) — the same call dnsbpf uses when it writes `dns_cache`. The collision floor is tracked separately; see `initiative_route_identity_allocator`.
+The hash function is `internal/controlplane/firewall/ebpf.DomainHash` (FNV-1a of the lowercased domain) — the same call dnsbpf uses when it writes `dns_cache`. The collision floor is tracked as part of the route-identity allocator work.
 
-## Prom counters (in-process today; scrape deferred)
+## Prom counters (in-process; scrape not wired)
 
-Declared in `metrics.go`. The six counters below are incremented on every relevant pipeline event but are NOT registered with a `prometheus.Registerer` because CP has no `/metrics` HTTP endpoint today. A follow-up PR wires scraping along with the additional dimensions the initiative listed for Task 3 (kernel-side gauges, OTel-export success/failure counters via a counting-exporter wrap).
+Declared in `metrics.go`. The six counters below are incremented on every relevant pipeline event but are NOT registered with a `prometheus.Registerer` because CP has no `/metrics` HTTP endpoint. Counters are visible only for in-process introspection; nothing outside the CP process can scrape them.
 
 | Counter | Bumped where | Meaning |
 |---------|--------------|---------|
@@ -168,7 +165,7 @@ Declared in `metrics.go`. The six counters below are incremented on every releva
 | `clawker_netlogger_parse_errors_total` | processor.run | Records that failed to decode |
 | `clawker_netlogger_emit_succeeded_total` | processor.run | Sink.Emit returns |
 
-Two additional dimensions are deferred with the scrape wiring: `clawker_netlogger_ringbuf_kernel_drops_total` (sum across CPUs of `events_drops`) and `clawker_netlogger_ratelimit_drops_total{cgroup_id}` (per-cgroup `ratelimit_drops`).
+Two additional dimensions exist on the BPF maps but are not scraped here: `events_drops` (PERCPU_ARRAY of kernel-fault drop counts) and `ratelimit_drops` (per-cgroup intentional rate-limit drops). They surface via `Manager.EventsDrops()` / `Manager.RatelimitDrops()` for in-process inspection.
 
 ## Lifecycle and drain ordering
 
@@ -205,4 +202,4 @@ Every goroutine recovers (`defer func() { if r := recover(); r != nil { log.Erro
 ## Imports
 
 - **Uses**: `internal/config`, `internal/logger`, `internal/controlplane/dockerevents`, `internal/controlplane/firewall/ebpf` (for `EgressEvent`, `EBPFContainerEnrolled`, `Manager` accessors), `internal/controlplane/overseer`, `github.com/cilium/ebpf/ringbuf`, `github.com/moby/moby/client` + `api/types/container,events` (daemon-side; permitted under the docker-client.md exception), `go.opentelemetry.io/otel/log`, `go.opentelemetry.io/otel/sdk/log`.
-- **Imported by**: `cmd/clawker-cp/main.go` (Task 3 boot wiring) — constructs `*sdklog.LoggerProvider` via `controlplane.NewOtelLoggerProvider`, wraps with `NewCircuitExporter`, hands to `netlogger.New` via `Deps.OtelLoggerProvider`.
+- **Imported by**: `cmd/clawker-cp/main.go` — constructs `*sdklog.LoggerProvider` via `controlplane.NewOtelLoggerProvider`, wraps with `NewCircuitExporter`, hands to `netlogger.New` via `Deps.OtelLoggerProvider`.

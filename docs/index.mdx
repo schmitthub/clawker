@@ -43,6 +43,7 @@ clawker run -it --agent review @  # Start a "review" agent in parallel
 - **Project-scoped namespacing** -- Multi-agent, multi-project isolation via Docker labels and naming conventions
 - **Git worktree integration** -- Spin up agents on separate branches with automatic worktree management
 - **Monitoring stack** -- Optional OpenTelemetry Collector + OpenSearch + OpenSearch Dashboards + Prometheus for agent observability
+- **Per-decision egress observability** -- eBPF event stream (`allowed` / `denied` / `bypassed`) flows to OpenSearch alongside Envoy and CoreDNS access logs, so bypass windows leave a full audit trail. See [Egress Observability](/observability).
 
 ## How It Works
 

@@ -4,16 +4,15 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-// NOTE (deferred): the counters defined here are incremented in
-// process today but never registered with a prometheus.Registerer
-// because CP has no /metrics scrape endpoint. A follow-up PR will
-// wire scraping (either an HTTP exporter alongside /healthz or a
-// push-style pipeline through the OTel collector) along with the
-// gauge dimensions the initiative_ebpf-netlogger doc listed for Task
-// 3 — events_drops summed across CPUs, ratelimit_drops per cgroup,
-// and the OTel-export success/failure counters from a counting
-// exporter wrap. Until then, the values exist purely for in-process
+// NOTE: the counters defined here are incremented in-process but are
+// not registered with a prometheus.Registerer because CP exposes no
+// /metrics scrape endpoint. Their values exist purely for in-process
 // runtime introspection and are not visible outside the CP process.
+// Additional dimensions exist on the BPF maps but are not scraped
+// here: events_drops (PERCPU_ARRAY, sum across CPUs of kernel-fault
+// drops) and ratelimit_drops (per-cgroup intentional rate-limit
+// drops) — both reachable via Manager.EventsDrops() /
+// Manager.RatelimitDrops().
 //
 // Metrics groups every Prom counter the netlogger pipeline bumps in
 // its hot path. Counters are created unregistered; callers wire

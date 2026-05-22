@@ -21,10 +21,12 @@ The stack ingests logs into OpenSearch and exposes them through **OpenSearch Das
 The monitoring stack runs as four long-lived Docker Compose services on the `clawker-net` network, plus one short-lived bootstrap container that runs once per `monitor up` to preconfigure the cluster:
 
 ```
-Claude Code (in container)
-    |
-    | OTLP (HTTP/gRPC) — logs, metrics, traces
-    v
+Claude Code (in container)                Control plane (host)
+    |                                          |
+    | OTLP (HTTP/gRPC) — agent lane            | OTLP/gRPC + mTLS — trusted infra lane
+    | logs, metrics, traces                    | zerolog bridge, Envoy access logs,
+    |                                          | CoreDNS query logs, netlogger ebpf-egress
+    v                                          v
 OTEL Collector ──┬──> OpenSearch (logs + traces) ──> OpenSearch Dashboards
                  └──> Prometheus (metrics + spanmetrics) ──> Prometheus UI
                                                        \\
