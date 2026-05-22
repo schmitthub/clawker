@@ -389,6 +389,22 @@ func createCPContainer(ctx context.Context, dc *docker.Client, cfg config.Config
 		lastErr = createErr
 		recErr := recoverFromNameConflict(ctx, dc, createErr, imageRef, log)
 		if errors.Is(recErr, errCPRecoveryRetry) {
+			// Re-resolve via ensureCPImageFn so a concurrent prune that
+			// removed our image (cp_recovery_our_image_vanished branch in
+			// recoverFromNameConflict) is rebuilt before the next
+			// ContainerCreate. Cheap on the happy path — content-derived
+			// tag short-circuits on ImageInspect cache hit.
+			newRef, ensureErr := ensureCPImageFn(ctx, dc, log)
+			if ensureErr != nil {
+				log.Error().
+					Str("event", "cp_recovery_reensure_image_failed").
+					Str("component", "cpboot.bootstrap").
+					Err(ensureErr).
+					Msg("re-ensuring cp image before retry failed")
+				return fmt.Errorf("re-ensuring cp image before retry: %w", ensureErr)
+			}
+			imageRef = newRef
+			containerCfg.Image = newRef
 			continue
 		}
 		return recErr
@@ -458,7 +474,8 @@ func recoverFromNameConflict(ctx context.Context, dc *docker.Client, createErr e
 	if err != nil {
 		// Our image vanished between build and recovery (concurrent
 		// `docker image rm`, prune, or storage GC). Treat as recoverable:
-		// the next attempt re-resolves and rebuilds via ensureCPImage.
+		// createCPContainer's retry loop re-runs ensureCPImageFn on this
+		// sentinel so the next ContainerCreate has something to reference.
 		if cerrdefs.IsNotFound(err) {
 			log.Warn().
 				Str("event", "cp_recovery_our_image_vanished").

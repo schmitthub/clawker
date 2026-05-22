@@ -1086,6 +1086,76 @@ func TestEnsureRunning_NameConflict_OurImageVanished_Retries(t *testing.T) {
 	require.NoError(t, EnsureRunning(t.Context(), f.ensureOpts()))
 	assert.Equal(t, int32(2), f.calls.create.Load(),
 		"vanished image must trigger retry, not abort: first create conflicts, second succeeds")
+	assert.Equal(t, int32(2), f.calls.image.Load(),
+		"retry must re-invoke ensureCPImageFn so a vanished image is rebuilt before the next ContainerCreate")
+}
+
+// TestEnsureRunning_NameConflict_ReensureImageFails covers the failure
+// branch on the retry path: if ensureCPImageFn errors when re-resolving
+// the image after recovery signals retry, createCPContainer must
+// surface the error rather than spin into a doomed ContainerCreate.
+func TestEnsureRunning_NameConflict_ReensureImageFails(t *testing.T) {
+	f := newBootstrapFixture(t)
+
+	const peerImageRef = "clawker-controlplane:bin-peerXXXX00000000"
+	peerLabels := map[string]string{
+		f.cfg.LabelManaged():    f.cfg.ManagedLabelValue(),
+		consts.LabelCPBinarySHA: "peer-binary-sha-mismatched",
+	}
+
+	var listCalls atomic.Int32
+	f.fake.FakeAPI.ContainerListFn = func(_ context.Context, _ mobyclient.ContainerListOptions) (mobyclient.ContainerListResult, error) {
+		if listCalls.Add(1) == 2 {
+			return mobyclient.ContainerListResult{Items: []container.Summary{{
+				ID:     "peer-cp-id",
+				Names:  []string{"/" + consts.ContainerCP},
+				State:  container.StateRunning,
+				Labels: peerLabels,
+			}}}, nil
+		}
+		return mobyclient.ContainerListResult{}, nil
+	}
+	f.fake.FakeAPI.ContainerCreateFn = func(_ context.Context, _ mobyclient.ContainerCreateOptions) (mobyclient.ContainerCreateResult, error) {
+		f.calls.create.Add(1)
+		return mobyclient.ContainerCreateResult{}, fmt.Errorf(`name "/clawker-controlplane" in use: %w`, cerrdefs.ErrConflict)
+	}
+	f.fake.FakeAPI.ContainerInspectFn = func(_ context.Context, id string, _ mobyclient.ContainerInspectOptions) (mobyclient.ContainerInspectResult, error) {
+		return mobyclient.ContainerInspectResult{
+			Container: container.InspectResponse{
+				ID:     id,
+				Image:  peerImageRef,
+				State:  &container.State{Running: true, Status: container.StateRunning},
+				Config: &container.Config{Labels: peerLabels},
+			},
+		}, nil
+	}
+	ourTag := cpImageRef()
+	f.fake.FakeAPI.ImageInspectFn = func(_ context.Context, ref string, _ ...mobyclient.ImageInspectOption) (mobyclient.ImageInspectResult, error) {
+		if ref == ourTag {
+			return mobyclient.ImageInspectResult{}, cerrdefs.ErrNotFound
+		}
+		return managedImageInspect(f.cfg, "2026-05-21T10:00:00Z"), nil
+	}
+
+	// First ensureCPImageFn call (from EnsureRunning) succeeds; second
+	// call (from the retry path) fails — caller must surface the wrapped
+	// error rather than retry into a doomed ContainerCreate.
+	origEnsure := ensureCPImageFn
+	t.Cleanup(func() { ensureCPImageFn = origEnsure })
+	var ensureCalls atomic.Int32
+	ensureCPImageFn = func(_ context.Context, _ *docker.Client, _ *logger.Logger) (string, error) {
+		if ensureCalls.Add(1) == 1 {
+			return cpImageRef(), nil
+		}
+		return "", fmt.Errorf("simulated build failure")
+	}
+
+	err := EnsureRunning(t.Context(), f.ensureOpts())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "re-ensuring cp image before retry",
+		"reensure failure on retry must surface as a wrapped error")
+	assert.Equal(t, int32(1), f.calls.create.Load(),
+		"retry must NOT fire a second ContainerCreate after reensure failed")
 }
 
 // TestEnsureRunning_NameConflict_PeerImageInspectFails covers the
