@@ -26,7 +26,8 @@
           "clawker-cli",
           "clawker-cp",
           "clawker-envoy",
-          "clawker-coredns"
+          "clawker-coredns",
+          "clawker-ebpf-egress"
         ],
         "priority": 100
       }

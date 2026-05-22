@@ -28,4 +28,4 @@ package ebpf
 // either arch host. Only the matching one exists on any given host — the
 // other is silently ignored.
 //
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go@v0.21.0 -cc clang -cflags "-O2 -g -Wall -Werror -I/usr/include/x86_64-linux-gnu -I/usr/include/aarch64-linux-gnu" -target amd64,arm64 clawker ./bpf/clawker.c -- -I./bpf
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go@v0.21.0 -cc clang -cflags "-O2 -g -Wall -Werror -I/usr/include/x86_64-linux-gnu -I/usr/include/aarch64-linux-gnu" -target amd64,arm64 -type egress_event clawker ./bpf/clawker.c -- -I./bpf

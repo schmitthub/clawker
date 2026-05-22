@@ -71,6 +71,10 @@ The firewall is deny-by-default. Outbound TCP is redirected to an Envoy egress p
 
 The clawker control plane (`cmd/clawker-cp`, PID 1 of the `clawker-controlplane` container) is the authoritative supervisor. It owns the firewall lifecycle, eBPF program lifetime, agent identity registry, and the mTLS Session over which it dispatches in-container commands to `clawkerd`. CP is not the firewall — it is the host-level daemon that, among other things, manages the firewall. The Ory stack (Hydra, Kratos, Oathkeeper) runs as subprocesses inside CP; the CLI exchanges OAuth2 tokens with Hydra and calls AdminService gRPC over mTLS for every privileged operation. See [Control Plane](/control-plane) for the user-facing guide and [Container Internals → clawkerd](/container-internals#clawkerd-the-containers-pid-1) for the in-container counterpart.
 
+### Egress Observability
+
+Every firewall decision — `allowed`, `denied`, or `bypassed` — emits a structured OTLP log record from the netlogger subsystem. Records carry container attribution, the destination 4-tuple, and the resolved domain when available; they land in the `clawker-ebpf-egress` OpenSearch index (`service.name=ebpf-egress`) on the trusted infra OTLP lane. The headline guarantee is that bypass mode (`clawker firewall bypass`) is no longer a forensic blind spot — bypassed traffic still produces a per-decision record even though it skips Envoy and CoreDNS enforcement. See [Egress Observability](/observability) for the record shape and per-attribute reference.
+
 ## Key Design Decisions
 
 1. **All Docker SDK calls go through `pkg/whail`** — never bypass this isolation layer

@@ -43,11 +43,13 @@ import (
 	"github.com/schmitthub/clawker/internal/controlplane/dockerevents"
 	fwhandler "github.com/schmitthub/clawker/internal/controlplane/firewall"
 	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
+	"github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf/netlogger"
 	"github.com/schmitthub/clawker/internal/controlplane/infracerts"
 	"github.com/schmitthub/clawker/internal/controlplane/otelcerts"
 	"github.com/schmitthub/clawker/internal/controlplane/overseer"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 )
@@ -455,6 +457,32 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 			log.Warn().Err(err).Msg("actionQueue close failed")
 		}
 	}()
+
+	// Overseer bus: constructed + Started here, BEFORE the gRPC
+	// listener accepts. FirewallEnable publishes
+	// ebpf.EBPFContainerEnrolled on the bus, so the bus MUST be
+	// Started before the first inbound RPC can fire — otherwise the
+	// enroll event drops silently and downstream subscribers miss
+	// the binding for that cgroup. The dockerevents feeder +
+	// agent.Start subscribers still wire up in step 9a below.
+	watcherCtx, watcherCancel := context.WithCancel(context.Background())
+	defer watcherCancel()
+
+	busLog := log.With("component", "overseer")
+	bus := overseer.New(overseer.Options{
+		Logger:            busLog,
+		PublishBufferSize: 2048,
+		SubscriberBuffer:  256,
+		// PublishHook emits one structured Info line per published
+		// event from the bus loop. Producers (dockerevents, agent,
+		// firewall) no longer pair manual log calls with each Publish
+		// — the hook is the single canonical source of bus-event log
+		// lines.
+		PublishHook: overseer.NewLoggerHook(busLog),
+	})
+	if err := bus.Start(watcherCtx); err != nil {
+		return fmt.Errorf("step 8 (overseer start): %w", err)
+	}
 	// listAgentIDs enumerates managed agent container IDs. Two callers
 	// at two scopes:
 	//   - Firewall handler + AgentWatcher pass {} → running only. They
@@ -491,6 +519,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		Resolver:   containerResolver,
 		Log:        log,
 		Queue:      actionQueue,
+		Bus:        bus,
 		ListAgents: func(ctx context.Context) ([]string, error) { return listAgentIDs(ctx, listAgentsOpts{}) },
 	})
 
@@ -632,41 +661,11 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		}
 	}()
 
-	// Step 9a: Overseer + dockerevents feeder.
+	// Step 9a: dockerevents feeder.
 	//
-	// The Overseer is the in-process worldview + typed event bus. It
-	// outlives every individual feeder/consumer for the daemon's
-	// lifetime; we close it explicitly during the drain sequence below
-	// (after ebpf flush) so any final dispatched events have a fully-
-	// functional bus to land on. The dockerevents feeder publishes
-	// typed ContainerStarted/Stopped/Removed (and NetworkAttached/
-	// Detached) events for clawker-managed containers.
-	//
-	// PublishBufferSize=2048: high enough to absorb a docker events
-	// burst (image prune + network reconnect storm) without blocking
-	// the feeder goroutine but bounded so a stuck consumer doesn't
-	// grow unbounded. SubscriberBuffer=256: per-subscriber drop-oldest
-	// threshold; sized so a slow consumer only loses ~5s of activity
-	// at the heartbeat rate before events start dropping.
-	busLog := log.With("component", "overseer")
-	bus := overseer.New(overseer.Options{
-		Logger:            busLog,
-		PublishBufferSize: 2048,
-		SubscriberBuffer:  256,
-		// PublishHook emits one structured Info line per published
-		// event from the bus loop. Producers (dockerevents, agent)
-		// no longer pair manual log calls with each Publish — the
-		// hook is the single canonical source of bus-event log lines.
-		PublishHook: overseer.NewLoggerHook(busLog),
-	})
-
-	watcherCtx, watcherCancel := context.WithCancel(context.Background())
-	defer watcherCancel()
-
-	if err := bus.Start(watcherCtx); err != nil {
-		return fmt.Errorf("step 9a (overseer start): %w", err)
-	}
-
+	// Wires the dockerevents feeder onto the bus created in step 8;
+	// agent.Start (below) hangs its container/{start,destroy}
+	// subscribers off the same bus.
 	feeder, err := dockerevents.New(dockerCli.APIClient, bus, dockerevents.Options{
 		ManagedLabelKey:   cfg.LabelManaged(),
 		ManagedLabelValue: cfg.ManagedLabelValue(),
@@ -745,6 +744,161 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		}
 	}()
 
+	// Step 9c: netlogger — eBPF egress event emitter. Drains the
+	// per-decision-point ringbuf populated by BPF and pushes enriched
+	// records to the trusted-infra OTLP receiver over a distinct
+	// service.name. Degraded paths (no otelcerts, no infra endpoint
+	// in env, provider preflight failure, netlogger constructor
+	// error, Start failure) each emit event=netlogger_unavailable
+	// and leave netloggerSvc nil so the drain hook skips the Stop
+	// call. CP, firewall, and gRPC surface stay up.
+	//
+	// netloggerProvider is hoisted to the run scope so the drain
+	// callback can Shutdown it after netloggerSvc.Stop — netlogger
+	// deliberately does not own the provider's lifetime (see
+	// netlogger/CLAUDE.md), so a clean drain has to flush it from
+	// here or the BatchProcessor goroutine leaks past Stop without
+	// flushing in-flight batches.
+	var (
+		netloggerSvc      *netlogger.Service
+		netloggerProvider *sdklog.LoggerProvider
+	)
+	{
+		endpoint, insecure := "", false
+		if raw := os.Getenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"); raw != "" {
+			endpoint, insecure = parseOtlpEndpoint(raw)
+		} else if raw := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"); raw != "" {
+			endpoint, insecure = parseOtlpEndpoint(raw)
+		}
+
+		// unconfigured tracks the "operator never set an OTLP
+		// endpoint" path so the structured log line lands at Warn
+		// instead of Error. That case is a normal optional-monitoring
+		// deployment shape; an operator log surface that screams
+		// Error on every default-config boot trains them to filter
+		// netlogger_unavailable, masking real failures later.
+		unconfigured := false
+		var degradeErr error
+		var reason string
+		switch {
+		case otelCertsSvc == nil:
+			reason = "otelcerts unavailable"
+			degradeErr = fmt.Errorf("trusted-lane TLS material absent")
+		case endpoint == "":
+			reason = "no OTLP endpoint configured"
+			degradeErr = fmt.Errorf("OTEL_EXPORTER_OTLP_ENDPOINT not set")
+			unconfigured = true
+		case insecure:
+			// Trust lane requires mTLS — never push BPF telemetry
+			// over plaintext. An operator who configured http://
+			// for the CP zerolog bridge is signalling test-mode,
+			// not production-mode; degrade rather than smuggle
+			// records onto a non-trusted receiver.
+			reason = "OTLP endpoint is plaintext"
+			degradeErr = fmt.Errorf("netlogger requires mTLS endpoint, got insecure: %s", endpoint)
+		}
+
+		if degradeErr == nil {
+			tlsCfg, err := otelCertsSvc.LoadTLSConfig("netlogger")
+			if err != nil {
+				reason = "LoadTLSConfig"
+				degradeErr = fmt.Errorf("netlogger LoadTLSConfig: %w", err)
+			} else {
+				// Circuit breaker: 3 consecutive Export failures
+				// trip the breaker permanently for the rest of the
+				// CP lifetime. The counting-exporter wrap that the
+				// initiative listed for Prom metrics is deferred to
+				// a follow-up PR (see netlogger/metrics.go) — only
+				// the circuit breaker is wired today.
+				circLog := log.With("component", "netlogger.circuit")
+				wrap := func(inner sdklog.Exporter) sdklog.Exporter {
+					return netlogger.NewCircuitExporter(inner, netlogger.CircuitOptions{
+						FailureThreshold: 3,
+						Log:              circLog,
+					})
+				}
+				netloggerProvider, err = controlplane.NewOtelLoggerProvider(controlplane.OtelClientOptions{
+					Endpoint:            endpoint,
+					TLSConfig:           tlsCfg,
+					ServiceName:         "ebpf-egress",
+					MaxQueueSize:        2048,
+					ExportInterval:      time.Second,
+					ExportTimeout:       30 * time.Second,
+					RetryMaxElapsedTime: 10 * time.Second,
+					PreflightTimeout:    20 * time.Second,
+					Log:                 log,
+					ExporterWrap:        wrap,
+				})
+				if err != nil {
+					reason = "NewOtelLoggerProvider"
+					degradeErr = fmt.Errorf("netlogger NewOtelLoggerProvider: %w", err)
+				}
+			}
+		}
+
+		if degradeErr == nil {
+			netloggerSvc, degradeErr = netlogger.New(netlogger.Deps{
+				Mgr:                ebpfMgr,
+				Bus:                bus,
+				Docker:             dockerCli.APIClient,
+				Cfg:                cfg,
+				Domains:            handler.AllResolvableDomains,
+				OtelLoggerProvider: netloggerProvider,
+				Log:                log.With("component", "netlogger"),
+			})
+			if degradeErr != nil {
+				reason = "netlogger.New"
+			}
+		}
+
+		if degradeErr == nil {
+			if err := netloggerSvc.Start(watcherCtx); err != nil {
+				reason = "netlogger.Start"
+				degradeErr = fmt.Errorf("netlogger Start: %w", err)
+				netloggerSvc = nil
+			}
+		}
+
+		if degradeErr != nil {
+			ev := log.Error()
+			if unconfigured {
+				// Unconfigured is the expected shape when running
+				// without `clawker monitor up` — Warn is the right
+				// level so operators don't filter the netlogger
+				// event class out of triage.
+				ev = log.Warn()
+			}
+			ev.Err(degradeErr).
+				Str("event", "netlogger_unavailable").
+				Str("component", "netlogger").
+				Str("step", reason).
+				Msg("netlogger degraded — eBPF egress events will not be exported; firewall enforcement unaffected")
+			netloggerSvc = nil
+			// Shut down a provider we constructed but never handed
+			// off — leaving it live would leak a BatchProcessor
+			// goroutine retrying a doomed export for the rest of
+			// the CP lifetime. Shutdown errors are themselves
+			// degraded-state telemetry: log so an operator can see
+			// when teardown of a half-built provider stalls.
+			if netloggerProvider != nil {
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				if err := netloggerProvider.Shutdown(shutdownCtx); err != nil {
+					log.Warn().Err(err).
+						Str("event", "netlogger_provider_shutdown_failed").
+						Str("component", "netlogger").
+						Msg("provider Shutdown failed on degraded boot path; BatchProcessor goroutine may have leaked")
+				}
+				cancel()
+				netloggerProvider = nil
+			}
+		} else {
+			log.Info().
+				Str("component", "netlogger").
+				Str("endpoint", endpoint).
+				Msg("netlogger ready — eBPF egress events exporting to OTLP")
+		}
+	}
+
 	listAgents := func(ctx context.Context) (int, error) {
 		ids, err := listAgentIDs(ctx, listAgentsOpts{})
 		if err != nil {
@@ -779,6 +933,33 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		if err := stack.Stop(ctx); err != nil {
 			log.Error().Err(err).Msg("drain: firewall stack stop failed")
 			errs = append(errs, fmt.Errorf("stack stop: %w", err))
+		}
+		// Stop netlogger BEFORE eBPF flush so the ringbuf reader
+		// drains in-flight records before we tear down the BPF maps
+		// the reader holds. Then Shutdown the OTLP provider so the
+		// BatchProcessor flushes any in-flight batches to the
+		// collector — netlogger.Service.Stop deliberately does not
+		// touch the provider (lifetime is the caller's per
+		// netlogger/CLAUDE.md), so without this Shutdown call the
+		// "Stop before FlushAll" guarantee never actually flushes
+		// the OTLP queue. Fresh context bounded at 5s for each:
+		// the outer ctx may already be cancelled and we do not want
+		// netlogger to hold up CP drain past the AgentWatcher budget.
+		if netloggerSvc != nil {
+			stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if err := netloggerSvc.Stop(stopCtx); err != nil {
+				log.Error().Err(err).Msg("drain: netlogger stop failed")
+				errs = append(errs, fmt.Errorf("netlogger stop: %w", err))
+			}
+			stopCancel()
+		}
+		if netloggerProvider != nil {
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if err := netloggerProvider.Shutdown(shutdownCtx); err != nil {
+				log.Error().Err(err).Msg("drain: netlogger provider shutdown failed")
+				errs = append(errs, fmt.Errorf("netlogger provider shutdown: %w", err))
+			}
+			shutdownCancel()
 		}
 		if err := ebpfMgr.FlushAll(); err != nil {
 			log.Error().Err(err).Msg("drain: ebpf flush failed")

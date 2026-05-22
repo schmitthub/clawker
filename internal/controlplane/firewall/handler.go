@@ -14,6 +14,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
+	"github.com/schmitthub/clawker/internal/controlplane/overseer"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/storage"
 	"google.golang.org/grpc/codes"
@@ -108,6 +109,7 @@ type Handler struct {
 	resolve    ContainerResolver
 	log        *logger.Logger
 	queue      *ActionQueue
+	bus        *overseer.Overseer
 	certDirF   func() (string, error)
 	listAgents func(ctx context.Context) ([]string, error)
 
@@ -151,6 +153,12 @@ type HandlerDeps struct {
 	Resolver ContainerResolver
 	Log      *logger.Logger
 	Queue    *ActionQueue
+
+	// Bus is the overseer bus the handler publishes ebpf-axis lifecycle
+	// events on after a successful FirewallEnable. Nil-tolerant for unit
+	// tests that exercise the RPC surface without a running bus —
+	// FirewallEnable simply skips the publish when Bus is nil.
+	Bus *overseer.Overseer
 
 	// CertDirFn optionally overrides FirewallCertSubdir resolution —
 	// tests pass a temp dir so RotateCA does not touch the real data path.
@@ -205,6 +213,7 @@ func NewHandler(deps HandlerDeps) *Handler {
 		resolve:        deps.Resolver,
 		log:            log,
 		queue:          deps.Queue,
+		bus:            deps.Bus,
 		certDirF:       certDirFn,
 		listAgents:     deps.ListAgents,
 		cgroupIDFn:     ebpf.CgroupID,
@@ -362,6 +371,13 @@ func (h *Handler) reenrollAgents(ctx context.Context) {
 		h.cgroupIDMu.Lock()
 		h.storedCgroupID[rid] = cgroupID
 		h.cgroupIDMu.Unlock()
+		// netlogger LabelCache hydration covers BOTH the startup
+		// re-enrollment sweep here AND runtime FirewallEnable. Without
+		// this publish, agents that outlived the previous CP get their
+		// container_map row rebuilt but netlogger records carry empty
+		// container_id/agent/project until the user manually rebounces
+		// the container.
+		h.publishEnrolled(rid, cgroupID)
 		h.log.Info().Str("container_id", rid).Uint64("cgroup_id", cgroupID).Msg("firewall ebpf: container re-enrolled in container_map")
 		enrolled++
 	}
@@ -487,6 +503,8 @@ func (h *Handler) FirewallEnable(ctx context.Context, req *adminv1.FirewallEnabl
 	if err != nil {
 		return nil, toStatus(err)
 	}
+
+	h.publishEnrolled(cid, cgroupID)
 
 	h.log.Info().
 		Str("container_id", cid).
@@ -692,6 +710,53 @@ func (h *Handler) FirewallListRules(ctx context.Context, _ *adminv1.FirewallList
 	}
 	r := val.(ListRulesResult)
 	return &adminv1.FirewallListRulesResult{Rules: ConfigRulesToProto(r.Rules)}, nil
+}
+
+// AllResolvableDomains returns every domain name CoreDNS will serve a
+// zone for under the current firewall rule set — the union of allow-rule
+// destinations (after normalization, skipping IP/CIDR destinations and
+// deny rules) and the internal hosts CoreDNS forwards out of band
+// (`docker.internal` + the monitoring service hostnames). The set is
+// constructed with the same passes [GenerateCorefile] uses, so the
+// returned slice and the zones in the active Corefile are identical by
+// construction. Order is unspecified.
+//
+// netlogger's reverse-DNS map calls this on its refresh timer to
+// rebuild the `domain_hash → domain` table dnsbpf populates as it
+// answers queries. Reads bypass the action queue: an eventually
+// consistent view (lagging by at most one refresh interval) is fine
+// for attribution on security telemetry; queue contention would buy
+// nothing observable.
+func (h *Handler) AllResolvableDomains() []string {
+	internalHosts := append([]string{"docker.internal"}, consts.MonitoringServiceHostnames...)
+	reserved := make(map[string]bool, len(internalHosts))
+	for _, host := range internalHosts {
+		reserved[host] = true
+	}
+
+	out := make([]string, 0, len(internalHosts))
+	out = append(out, internalHosts...)
+
+	if h.store == nil {
+		return out
+	}
+	rules, _ := NormalizeAndDedup(h.store.Read().Rules)
+	seen := make(map[string]bool, len(rules))
+	for _, host := range internalHosts {
+		seen[host] = true
+	}
+	for _, r := range rules {
+		if !isAllowDomain(r) {
+			continue
+		}
+		domain := normalizeDomain(r.Dst)
+		if reserved[domain] || seen[domain] {
+			continue
+		}
+		seen[domain] = true
+		out = append(out, domain)
+	}
+	return out
 }
 
 // FirewallReload regenerates configs and restarts Envoy+CoreDNS without
@@ -996,6 +1061,33 @@ func (h *Handler) bypassTimerFired(cid string, entry *bypassEntry) {
 			Uint64("cgroup_id", enableID).
 			Str("container_id", entry.containerID).
 			Msg("bypass auto-enable failed — enforcement NOT restored, reissue FirewallEnable to recover")
+	}
+}
+
+// publishEnrolled emits EBPFContainerEnrolled on the overseer bus so
+// netlogger's LabelCache hydrates the cgroup_id → {container_id, labels}
+// mapping. Called from BOTH runtime FirewallEnable AND startup
+// reenrollAgents — netlogger records carry empty attribution until both
+// paths publish. Nil-bus tolerant (unit-test wiring). Publish is
+// non-blocking; the bus emits its own drop line, but we add a
+// producer-side line naming the affected container_id + cgroup_id so an
+// operator can locate the blast radius (one cgroup of unattributed
+// netlogger records) from the structured log surface alone.
+func (h *Handler) publishEnrolled(containerID string, cgroupID uint64) {
+	if h.bus == nil {
+		return
+	}
+	ok := overseer.Publish(h.bus, ebpf.EBPFContainerEnrolled{
+		CgroupID:    cgroupID,
+		ContainerID: containerID,
+		At:          time.Now().UTC(),
+	})
+	if !ok {
+		h.log.Warn().
+			Str("container_id", containerID).
+			Uint64("cgroup_id", cgroupID).
+			Str("event", "netlogger_enroll_publish_dropped").
+			Msg("overseer.Publish(EBPFContainerEnrolled) returned false — netlogger LabelCache will not hydrate for this cgroup; subsequent egress records will carry empty attribution")
 	}
 }
 

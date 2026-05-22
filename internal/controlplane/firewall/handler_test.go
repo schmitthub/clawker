@@ -14,6 +14,7 @@ import (
 	"github.com/schmitthub/clawker/internal/consts"
 	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
 	ebpfmocks "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf/mocks"
+	"github.com/schmitthub/clawker/internal/controlplane/overseer"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -597,6 +598,17 @@ func TestHandler_FirewallInit_ReenrollsRunningAgents(t *testing.T) {
 
 	q := NewActionQueue(nil)
 	t.Cleanup(func() { _ = q.Close() })
+	bus := overseer.New(overseer.Options{Logger: logger.Nop()})
+	require.NoError(t, bus.Start(context.Background()))
+	t.Cleanup(func() { _ = bus.Close() })
+	// Subscribe BEFORE FirewallInit so the publish path is observable.
+	// netlogger's LabelCache hydration depends on this — without it
+	// every record from a re-enrolled agent carries empty attribution
+	// (the bug this regression locks in).
+	sub, ok := overseer.Subscribe[ebpf.EBPFContainerEnrolled](bus, "test.reenroll")
+	require.True(t, ok, "Subscribe must succeed on a live bus")
+	t.Cleanup(sub.Unsubscribe)
+
 	h := NewHandler(HandlerDeps{
 		EBPF:       mock,
 		Stack:      stack,
@@ -604,6 +616,7 @@ func TestHandler_FirewallInit_ReenrollsRunningAgents(t *testing.T) {
 		Resolver:   resolver,
 		Log:        logger.Nop(),
 		Queue:      q,
+		Bus:        bus,
 		ListAgents: func(_ context.Context) ([]string, error) { return agents, nil },
 	})
 	h.resolveHostFn = func(_ context.Context, _ string) ([]string, error) {
@@ -627,6 +640,25 @@ func TestHandler_FirewallInit_ReenrollsRunningAgents(t *testing.T) {
 	// same config twice (or swapped indices) shows up clearly.
 	gotIDs := []uint64{mock.InstallCalls()[0].CgroupID, mock.InstallCalls()[1].CgroupID}
 	assert.ElementsMatch(t, []uint64{111, 222}, gotIDs)
+
+	// Pin the publish: every re-enrolled agent MUST emit an
+	// EBPFContainerEnrolled event so netlogger's LabelCache hydrates
+	// for cgroups that outlived the previous CP. Drain with a small
+	// deadline so a regression that drops the publish fails fast
+	// instead of hanging the suite.
+	gotEnrolls := map[uint64]string{}
+	deadline := time.After(2 * time.Second)
+	for len(gotEnrolls) < 2 {
+		select {
+		case ev := <-sub.C:
+			gotEnrolls[ev.CgroupID] = ev.ContainerID
+		case <-deadline:
+			t.Fatalf("timed out waiting for re-enrollment publish; got %d/%d events: %+v",
+				len(gotEnrolls), 2, gotEnrolls)
+		}
+	}
+	assert.Equal(t, "agent-A", gotEnrolls[111])
+	assert.Equal(t, "agent-B", gotEnrolls[222])
 }
 
 // TestHandler_FirewallInit_ReenrollContinuesOnPerAgentFailure verifies
@@ -1142,6 +1174,70 @@ func TestHandler_FirewallRemove_PreservesRulesStore(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, listResp.GetRules(), 1, "rules store must survive teardown (trailing-mutation invariant)")
 	assert.Equal(t, "keep.example.com", listResp.GetRules()[0].GetDst())
+}
+
+// TestHandler_AllResolvableDomains_MatchesCorefileZoneSet asserts the
+// netlogger-facing reverse-DNS source returns exactly the zone set
+// GenerateCorefile would build: internal hosts (docker.internal +
+// monitoring service hostnames) union with allow-rule destinations,
+// stripping IPs/CIDRs and deny rules, deduped against the reserved
+// internal set. The two sources must agree by construction so a
+// netlogger record's dst_host lookup matches the dnsbpf hash write.
+func TestHandler_AllResolvableDomains_MatchesCorefileZoneSet(t *testing.T) {
+	mock := noopMock()
+	h, _ := ruleStoreHandler(t, mock)
+
+	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
+		Rules: []*adminv1.EgressRule{
+			{Dst: "github.com", Proto: "tls", Port: 443, Action: "allow"},
+			{Dst: ".example.com", Proto: "tls", Port: 443, Action: "allow"},    // wildcard, normalized
+			{Dst: "203.0.113.5", Proto: "tcp", Port: 22, Action: "allow"},      // IP, skipped
+			{Dst: "blocked.test", Proto: "tls", Port: 443, Action: "deny"},     // deny, skipped
+			{Dst: "docker.internal", Proto: "tls", Port: 443, Action: "allow"}, // reserved, dedup
+		},
+	})
+	require.NoError(t, err)
+
+	got := h.AllResolvableDomains()
+
+	// Must include the two real allow-rule domains AND every internal host.
+	want := map[string]bool{
+		"github.com":      true,
+		"example.com":     true, // ".example.com" normalized
+		"docker.internal": true,
+	}
+	for _, h := range consts.MonitoringServiceHostnames {
+		want[h] = true
+	}
+	gotSet := make(map[string]bool, len(got))
+	for _, d := range got {
+		gotSet[d] = true
+	}
+	for d := range want {
+		assert.Truef(t, gotSet[d], "expected %q in AllResolvableDomains; got %v", d, got)
+	}
+	// Must NOT include IP / CIDR / deny destinations.
+	assert.False(t, gotSet["203.0.113.5"], "IP destination must be filtered")
+	assert.False(t, gotSet["blocked.test"], "deny rule must be filtered")
+}
+
+func TestHandler_AllResolvableDomains_NoStoreReturnsInternalHostsOnly(t *testing.T) {
+	// Handler built without a rules store (newTestHandler) returns just
+	// the internal hosts — no rules to enumerate, but the netlogger
+	// reverse map still needs to attribute internal-zone resolutions.
+	mock := noopMock()
+	h := newTestHandler(t, mock, nil)
+
+	got := h.AllResolvableDomains()
+
+	gotSet := make(map[string]bool, len(got))
+	for _, d := range got {
+		gotSet[d] = true
+	}
+	assert.Truef(t, gotSet["docker.internal"], "internal hosts must be present even without a store; got %v", got)
+	for _, host := range consts.MonitoringServiceHostnames {
+		assert.Truef(t, gotSet[host], "monitoring hostname %q missing; got %v", host, got)
+	}
 }
 
 // TestHandler_RemoveRule_Success covers the happy path: rule matches

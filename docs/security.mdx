@@ -12,6 +12,8 @@ The firewall is **deny-by-default**. When enabled, it blocks **all outbound traf
 
 This is intentional. The hardcoded allowlist is kept to the bare minimum required for Claude Code itself to function. Everything else — including GitHub, npm, PyPI, or any other service your project needs — must be explicitly configured by you.
 
+Every firewall decision — including bypassed traffic during `clawker firewall bypass` windows — is recorded as a structured event in the `clawker-ebpf-egress` OpenSearch index. See [Egress Observability](/observability).
+
 See the [Firewall](/firewall) guide for the full architecture, configuration, CLI commands, and troubleshooting.
 
 ### Hardcoded Allowed Domains
@@ -49,6 +51,8 @@ firewall:
 <Warning>
 Disabling the firewall removes **all** outbound network restrictions. The agent can reach any endpoint on the internet. Only do this in trusted environments where you accept the risk of unrestricted egress.
 </Warning>
+
+Disabling the firewall also turns off netlogger emission — netlogger drains the eBPF cgroup programs' decision events, and those programs only run when the firewall is enabled. The `clawker-ebpf-egress` index will receive no new records while the firewall is off.
 
 ## Agent Awareness Prompt
 

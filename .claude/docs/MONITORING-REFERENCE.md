@@ -2,7 +2,7 @@
 
 > For essential rules, see `.claude/rules/monitoring.md`.
 
-> **Backend:** logs in OpenSearch — five indices `claude-code` (Claude Code OTLP push, untrusted port), `clawker-cli` (host CLI OTLP push, untrusted port), `clawker-cp` (mTLS-gated CP push), `clawker-envoy` (firewall data-plane access logs, mTLS-gated), and `clawker-coredns` (firewall DNS query logs, mTLS-gated). Cross-index queries use pattern `clawker-cp,claude-code,clawker-cli,clawker-envoy,clawker-coredns`. Traces in OpenSearch SS4O dataset `traces` / namespace `clawker` (Claude Code beta export gated on `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1`, both env vars baked into the image). Metrics in Prometheus. UIs: OpenSearch Dashboards (`:5601`) for logs+traces, Prometheus (`:9090`) for metrics. Resource attributes are written FLAT at `resource.*` (so `resource.service.name`, `resource.project`, `resource.agent`) by the OTel `opensearchexporter` (SS4O shape), and mirrored into `resource.attributes.*` by the `envelope-normalize` ingest pipeline so OSD Explore's default log columns (`resource.attributes.service.name`) render. Both shapes are queryable; prefer the flat `resource.<k>` path for new queries. Event content lives under `attributes.*` (`attributes.event.name`, `attributes.tool_name`).
+> **Backend:** logs in OpenSearch — six indices `claude-code` (Claude Code OTLP push, untrusted port), `clawker-cli` (host CLI OTLP push, untrusted port), `clawker-cp` (mTLS-gated CP push), `clawker-envoy` (firewall data-plane access logs, mTLS-gated), `clawker-coredns` (firewall DNS query logs, mTLS-gated), and `clawker-ebpf-egress` (eBPF per-decision egress events from netlogger, `service.name=ebpf-egress`, mTLS-gated). Cross-index queries use pattern `clawker-cp,claude-code,clawker-cli,clawker-envoy,clawker-coredns,clawker-ebpf-egress`. Traces in OpenSearch SS4O dataset `traces` / namespace `clawker` (Claude Code beta export gated on `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1`, both env vars baked into the image). Metrics in Prometheus. UIs: OpenSearch Dashboards (`:5601`) for logs+traces, Prometheus (`:9090`) for metrics. Resource attributes are written FLAT at `resource.*` (so `resource.service.name`, `resource.project`, `resource.agent`) by the OTel `opensearchexporter` (SS4O shape), and mirrored into `resource.attributes.*` by the `envelope-normalize` ingest pipeline so OSD Explore's default log columns (`resource.attributes.service.name`) render. Both shapes are queryable; prefer the flat `resource.<k>` path for new queries. Event content lives under `attributes.*` (`attributes.event.name`, `attributes.tool_name`).
 >
 > **Stack ships preconfigured** — `clawker-opensearch-bootstrap` (one-shot compose service, see `internal/monitor/templates/opensearch-bootstrap/`) applies component + index templates, the default ISM retention policy, the `clawker_prometheus` direct-query datasource, an OSD `Clawker` workspace with `features: ["use-case-all"]`, and Dashboards saved objects (index patterns for every log index + the preconfigured `Claude Code` dashboard with KPI strip and filter controls) on every `monitor up`. The visualization surface grows via the NDJSON-export-and-bake workflow into `internal/monitor/templates/opensearch-bootstrap/saved-objects/clawker.ndjson`.
 
@@ -37,6 +37,8 @@ Cross-reference with [Claude Code's monitoring docs](https://code.claude.com/doc
 ### Common clawker-injected fields (from OTEL_RESOURCE_ATTRIBUTES)
 
 `project`, `agent`, `session_id`
+
+> **netlogger exception**: for `clawker-ebpf-egress` records (`service.name=ebpf-egress`), `project` and `agent` are NOT carried via `OTEL_RESOURCE_ATTRIBUTES` on a sender. The CP-side netlogger pipeline derives them from the target container's `dev.clawker.{project,agent}` Docker labels via `LabelCache` enrichment, keyed on the BPF-attested `cgroup_id`. They land as event-time attributes on the record (`attributes.project`, `attributes.agent`), not under `resource.*`.
 
 ### Common event fields
 
@@ -108,6 +110,31 @@ Logged when user submits a prompt.
 |-------|------|-------------|
 | `prompt_length` | numeric string | Length of prompt |
 | `prompt` | string | Prompt content (requires `OTEL_LOG_USER_PROMPTS=1`, redacted otherwise) |
+
+### `ebpf.egress`
+
+Logged once per BPF egress decision (per-cgroup rate-limited by `ratelimit_state`). Source: `internal/controlplane/firewall/ebpf/netlogger`. Resource: `service.name=ebpf-egress`. Instrumentation scope: `clawker.netlogger`. Lands in the `clawker-ebpf-egress` OpenSearch index on the mTLS-gated `otlp/infra` lane.
+
+**Emission contract**: every field below is written on every record by default — empty strings and zero numbers ship verbatim. Three attributes are omitted when their source value is absent: `dst_ip` (when `Event.DstIP` is invalid), `dst_port` (when `Event.NoDst` is true), `dst_host` (when `Event.Domain` is empty). Operators partition cleanly via `_exists_:attributes.<key>` / `NOT _exists_:attributes.<key>` in OSD. Adding or removing an attribute is a contract change.
+
+| Attribute | Type | Source |
+|-----------|------|--------|
+| `event.name` | string | per-emit-site via `Event.EmitSite.EventName()` — `ebpf.egress.{connect,sendmsg,sock_create}`. The OS OTLP exporter does not project `LogRecord.event_name` into the SS4O document; netlogger emits `event.name` as an attribute too so OSD can filter by it. `SetEventName` is kept for consumers that honor the OTLP field (e.g. Loki). |
+| `verdict` | string | `Event.Verdict.String()` (`allowed` / `denied` / `bypassed`) |
+| `container_id` | string | `Event.ContainerID` (empty on `LabelCache` miss) |
+| `agent` | string | `Event.Agent` — derived from the container's `dev.clawker.agent` label by `LabelCache` enrichment |
+| `project` | string | `Event.Project` — derived from the container's `dev.clawker.project` label by `LabelCache` enrichment |
+| `cgroup_id` | string | `strconv.FormatUint(Event.CgroupID, 10)` — opaque kernel identifier; emitted as string so the OS index template maps it as `keyword` (group/filter dimension) instead of `long` (metric). Sending a JSON number to a keyword field is officially supported via numeric→string coercion but operator UIs treat numerics as metrics by default, which is wrong for ID-shaped fields. |
+| `bpf_ts_ns` | int64 | `Event.BPFTsNs` (raw `bpf_ktime_get_ns`) |
+| `dst_ip` | string | `Event.DstIP.String()`. **Omitted** when `!Event.DstIP.IsValid()` (sock_create with `no_dst=true`; defensive guard against an unset address). |
+| `dst_port` | string | `strconv.FormatUint(uint64(Event.DstPort), 10)` — opaque port identifier; emitted as string for the same reason as `cgroup_id` (keyword dimension, not metric). OSD formats numeric fields with thousands separators ("4,318") which is wrong for an ID-shaped axis. **Omitted** when `Event.NoDst` is true (sock_create has no destination port). |
+| `l4_proto` | string | `SOCK_STREAM` / `SOCK_DGRAM` / `SOCK_RAW` name |
+| `l4_proto_code` | int | raw SOCK code (resilient to renames) |
+| `ipv6` | bool | native IPv6 |
+| `ipv4_mapped` | bool | `::ffff:x.x.x.x` |
+| `no_dst` | bool | `Event.NoDst` — sock_create event with no destination |
+| `dst_host` | string | `Event.Domain` populated via `ReverseDNSMap.Lookup(Event.DomainHash)`. **Omitted** when `Event.Domain` is empty (direct-IP connect, domain outside firewall rules, stale dnsbpf entry); operators filter via `NOT _exists_:attributes.dst_host`. |
+| `domain_hash` | string | `strconv.FormatUint(uint64(Event.DomainHash), 10)` — BPF-side identity for the resolved domain. Emitted as string for the same keyword-mapping rationale as `cgroup_id` / `dst_port`. Operators use it to correlate userspace records with BPF `dns_cache` / `route_map` entries when `dst_host` is empty (direct-IP connect, rule removed mid-flight, stale dnsbpf entry). |
 
 ## Verification Workflow
 

@@ -12,7 +12,7 @@ The firewall is composed of two managed Docker containers plus a set of eBPF pro
 
 - **Envoy** (`envoyproxy/envoy`, TLS listener `10000`, sequential TCP listeners from `10001`) — TLS termination with per-domain certificates for all allowed domains. Envoy terminates TLS, inspects HTTP traffic (paths, methods, response codes visible), then re-encrypts upstream. Default deny (connection reset) for unrecognized SNI.
 - **CoreDNS** (`clawker-coredns:latest`, port `53`) — a *custom* CoreDNS build from `cmd/coredns-clawker`. Provides deny-by-default DNS filtering (NXDOMAIN for anything not in the allowlist, Cloudflare malware-blocking upstream `1.1.1.2` / `1.0.0.2`) and embeds the first-party `dnsbpf` plugin that writes every resolved IP to the BPF `dns_cache` map in real time — this is what lets the BPF `connect4/connect6` programs do per-domain TCP routing. Runs with `CAP_BPF + CAP_SYS_ADMIN` and a `/sys/fs/bpf` bind mount, the minimum required to update the pinned cache map.
-- **eBPF cgroup programs** (`connect4`, `sendmsg4`, `recvmsg4`, `connect6`, `sendmsg6`, `recvmsg6`, `sock_create`) — loaded and attached **from outside the agent container** by the clawker control plane. Owns the pinned BPF maps under `/sys/fs/bpf/clawker/` (`container_map`, `route_map`, `dns_cache`, `bypass_map`, `metrics_map`). The agent container itself runs fully unprivileged — no Linux capabilities, no firewall scripts, no init-time network gymnastics. The control plane container that owns the load step runs with `CAP_BPF + CAP_SYS_ADMIN`, a `/sys/fs/bpf` RW bind mount, a `/sys/fs/cgroup` RO bind mount, the Docker socket, and `apparmor=unconfined` — see [Control Plane → Container Privileges](/control-plane#container-privileges) for the full set and why each is required.
+- **eBPF cgroup programs** (`connect4`, `sendmsg4`, `recvmsg4`, `connect6`, `sendmsg6`, `recvmsg6`, `sock_create`) — loaded and attached **from outside the agent container** by the clawker control plane. Owns the pinned BPF maps under `/sys/fs/bpf/clawker/`: `container_map`, `route_map`, `dns_cache`, `bypass_map`, `metrics_map`, plus the netlogger telemetry maps `events_ringbuf` (decision-point event channel), `events_drops` (kernel-fault drop counter), `ratelimit_state` (per-cgroup token bucket), `ratelimit_drops` (per-cgroup throttled-event counter). The agent container itself runs fully unprivileged — no Linux capabilities, no firewall scripts, no init-time network gymnastics. The control plane container that owns the load step runs with `CAP_BPF + CAP_SYS_ADMIN`, a `/sys/fs/bpf` RW bind mount, a `/sys/fs/cgroup` RO bind mount, the Docker socket, and `apparmor=unconfined` — see [Control Plane → Container Privileges](/control-plane#container-privileges) for the full set and why each is required.
 
 Both managed containers run on the `clawker-net` bridge network with deterministic static IPs computed from the network gateway by replacing its last octet: Envoy at `<network>.200`, CoreDNS at `<network>.201` (so e.g. `192.168.215.200` / `.201` on a default Docker bridge with gateway `192.168.215.1`). Agent containers join the same network with `--dns` pointed at CoreDNS, and the eBPF `connect4/connect6` programs redirect all outbound TCP to Envoy. CoreDNS forwards Docker internal names (`host.docker.internal`, monitoring stack containers) back to Docker's embedded DNS at `127.0.0.11` so internal networking keeps working.
 
@@ -30,6 +30,8 @@ Agent Container      CoreDNS (.201)     eBPF maps       Envoy (.200)      Intern
     |<-------------------------------------------------------|               |
 ```
 
+Each connect4/connect6/sendmsg/sock_create decision also emits one event onto a parallel BPF ringbuf drained by the netlogger pipeline — see [Egress Observability](/observability) for the record shape and where it lands.
+
 ## How It Works
 
 1. When you run `clawker run` or `clawker container create` with the firewall enabled, clawker brings the firewall stack up automatically (this happens transparently — see [Control Plane](/control-plane) if you want the lifecycle details).
@@ -39,6 +41,7 @@ Agent Container      CoreDNS (.201)     eBPF maps       Envoy (.200)      Intern
 5. Agent containers join the firewall network; the eBPF cgroup programs attach to each container's cgroup, and an entry is written to `container_map` (cgroup_id → container config). Presence in `container_map` is what gates enforcement — the `route_map` itself is global.
 6. As the agent resolves DNS, the `dnsbpf` plugin writes `IP → {domain_hash, TTL}` entries into the `dns_cache` map. On each outbound TCP connection, the `connect4` / `connect6` programs look up the destination IP in `dns_cache`, then look up `{domain_hash, dst_port}` in `route_map` to decide which Envoy listener to redirect to.
 7. Envoy and CoreDNS are health-probed continuously. When the last clawker-managed agent container exits, the firewall stack and eBPF state are drained and flushed cleanly.
+8. At every cgroup decision point, the BPF program also reserves a slot in the parallel `events_ringbuf` and writes the verdict + 4-tuple + `cgroup_id`. The CP-side netlogger drains the ringbuf, enriches each record by `cgroup_id` with container/agent/project attribution, and emits one OTLP log record per decision. See [Egress Observability](/observability) for the record shape, attribute reference, and the OpenSearch index they land in.
 
 <Note>
 Because `route_map` is global, `clawker firewall add`, `clawker firewall remove`, and `clawker firewall reload` immediately propagate rule changes to **all** running agent containers via an atomic route-map sync — no agent restart, no firewall stack restart.
@@ -381,6 +384,8 @@ clawker firewall bypass --stop --agent dev
 ```
 
 Bypass mode sets the eBPF bypass flag, completely bypassing both DNS filtering and TLS inspection. The flag auto-clears after the specified timeout, re-enabling the firewall.
+
+Bypassed traffic still produces a per-decision audit trail. The eBPF cgroup programs emit a `verdict=bypassed` record (with attribution, destination 4-tuple, and resolved domain when available) for every connect/sendmsg/sock_create call that takes the bypass path. The records land in OpenSearch alongside `allowed`/`denied` decisions — see [Egress Observability](/observability) for the record shape and how to query them.
 
 <Warning>
 Bypass mode removes all network restrictions for the specified agent. Use it sparingly and with short timeouts. The agent has full internet access during a bypass.

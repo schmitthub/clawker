@@ -54,7 +54,8 @@ func (s *Service) EnsureClient(svc string) (certPath, keyPath, caPath string, er
 
 // LoadTLSConfig returns a *tls.Config with a GetClientCertificate
 // hook that re-mints per TLS handshake. Used in-process by the CP
-// OTLP exporter — leaf material never lands on disk.
+// OTLP exporter (svc="clawker-cp") and by the netlogger pipeline
+// (svc="netlogger") — leaf material never lands on disk.
 //
 // Only callable by code running inside the CP process: the closure
 // holds the Service reference, which is not transportable across
