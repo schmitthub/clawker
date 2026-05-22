@@ -115,25 +115,25 @@ Logged when user submits a prompt.
 
 Logged once per BPF egress decision (per-cgroup rate-limited by `ratelimit_state`). Source: `internal/controlplane/firewall/ebpf/netlogger`. Resource: `service.name=ebpf-egress`. Instrumentation scope: `clawker.netlogger`. Lands in the `clawker-ebpf-egress` OpenSearch index on the mTLS-gated `otlp/infra` lane.
 
-**Strict-emission rule**: every field below is written on every record. Empty strings and zero numbers ship verbatim — they are never dropped. Adding a field is a contract change.
+**Emission contract**: every field below is written on every record by default — empty strings and zero numbers ship verbatim. Three attributes are omitted when their source value is absent: `dst_ip` (when `Event.DstIP` is invalid), `dst_port` (when `Event.NoDst` is true), `dst_host` (when `Event.Domain` is empty). Operators partition cleanly via `_exists_:attributes.<key>` / `NOT _exists_:attributes.<key>` in OSD. Adding or removing an attribute is a contract change.
 
 | Attribute | Type | Source |
 |-----------|------|--------|
-| `event.name` | string | constant `"ebpf.egress"`. The OS OTLP exporter does not project `LogRecord.event_name` into the SS4O document; netlogger emits `event.name` as an attribute too so OSD can filter by it. `SetEventName` is kept for consumers that honor the OTLP field (e.g. Loki). |
-| `source` | string | constant `"ebpf"` |
+| `event.name` | string | per-emit-site via `Event.EmitSite.EventName()` — `ebpf.egress.{connect,sendmsg,sock_create}`. The OS OTLP exporter does not project `LogRecord.event_name` into the SS4O document; netlogger emits `event.name` as an attribute too so OSD can filter by it. `SetEventName` is kept for consumers that honor the OTLP field (e.g. Loki). |
 | `verdict` | string | `Event.Verdict.String()` (`allowed` / `denied` / `bypassed`) |
 | `container_id` | string | `Event.ContainerID` (empty on `LabelCache` miss) |
 | `agent` | string | `Event.Agent` — derived from the container's `dev.clawker.agent` label by `LabelCache` enrichment |
 | `project` | string | `Event.Project` — derived from the container's `dev.clawker.project` label by `LabelCache` enrichment |
 | `cgroup_id` | string | `strconv.FormatUint(Event.CgroupID, 10)` — opaque kernel identifier; emitted as string so the OS index template maps it as `keyword` (group/filter dimension) instead of `long` (metric). Sending a JSON number to a keyword field is officially supported via numeric→string coercion but operator UIs treat numerics as metrics by default, which is wrong for ID-shaped fields. |
 | `bpf_ts_ns` | int64 | `Event.BPFTsNs` (raw `bpf_ktime_get_ns`) |
-| `dst_ip` | string | `Event.DstIP.String()` |
-| `dst_port` | string | `strconv.FormatUint(uint64(Event.DstPort), 10)` — opaque port identifier; emitted as string for the same reason as `cgroup_id` (keyword dimension, not metric). OSD formats numeric fields with thousands separators ("4,318") which is wrong for an ID-shaped axis. |
+| `dst_ip` | string | `Event.DstIP.String()`. **Omitted** when `!Event.DstIP.IsValid()` (sock_create with `no_dst=true`; defensive guard against an unset address). |
+| `dst_port` | string | `strconv.FormatUint(uint64(Event.DstPort), 10)` — opaque port identifier; emitted as string for the same reason as `cgroup_id` (keyword dimension, not metric). OSD formats numeric fields with thousands separators ("4,318") which is wrong for an ID-shaped axis. **Omitted** when `Event.NoDst` is true (sock_create has no destination port). |
 | `l4_proto` | string | `SOCK_STREAM` / `SOCK_DGRAM` / `SOCK_RAW` name |
 | `l4_proto_code` | int | raw SOCK code (resilient to renames) |
 | `ipv6` | bool | native IPv6 |
 | `ipv4_mapped` | bool | `::ffff:x.x.x.x` |
-| `dst_host` | string | `Event.Domain` populated via `ReverseDNSMap.Lookup(Event.DomainHash)`; `""` for direct-IP connects or domains outside the firewall rule set |
+| `no_dst` | bool | `Event.NoDst` — sock_create event with no destination |
+| `dst_host` | string | `Event.Domain` populated via `ReverseDNSMap.Lookup(Event.DomainHash)`. **Omitted** when `Event.Domain` is empty (direct-IP connect, domain outside firewall rules, stale dnsbpf entry); operators filter via `NOT _exists_:attributes.dst_host`. |
 | `domain_hash` | string | `strconv.FormatUint(uint64(Event.DomainHash), 10)` — BPF-side identity for the resolved domain. Emitted as string for the same keyword-mapping rationale as `cgroup_id` / `dst_port`. Operators use it to correlate userspace records with BPF `dns_cache` / `route_map` entries when `dst_host` is empty (direct-IP connect, rule removed mid-flight, stale dnsbpf entry). |
 
 ## Verification Workflow

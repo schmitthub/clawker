@@ -64,7 +64,7 @@ func (r *reader) drain() {
 		// copy makes the queue's slice independently owned, which
 		// keeps the processor's parse step free of any reader-side
 		// aliasing concerns. Allocation per record is acceptable
-		// — records are ~32 bytes and bounded at ~640/sec/cgroup
+		// — records are 48 bytes and bounded at ~640/sec/cgroup
 		// by the BPF rate limiter.
 		buf := make([]byte, len(rec.RawSample))
 		copy(buf, rec.RawSample)

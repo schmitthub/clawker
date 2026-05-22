@@ -17,11 +17,10 @@ Each record is an OTel log emitted on the trusted infra OTLP lane with:
 - `body = "ebpf egress"`
 - `severity = INFO`
 
-Attributes carried on every record (empty/zero when not applicable — fields are never dropped):
+Attributes carried on each record (most are unconditional — empty strings and zero numbers ship verbatim; `dst_ip` / `dst_port` / `dst_host` are omitted when their source value is absent so operators can partition via `_exists_:attributes.<key>` in OS Discover):
 
 | Attribute | Type | Description |
 |-----------|------|-------------|
-| `source` | keyword | Always `ebpf` |
 | `verdict` | keyword | `allowed`, `denied`, or `bypassed` |
 | `container_id` | keyword | Docker container ID (empty if cgroup_id not yet in label cache) |
 | `agent` | keyword | `dev.clawker.agent` label (empty if cache miss) |
@@ -35,7 +34,7 @@ Attributes carried on every record (empty/zero when not applicable — fields ar
 | `ipv6` | boolean | Native IPv6 destination — full 16-byte v6 address carried in `dst_ip`. Denied by default (only allowed during a bypass) |
 | `ipv4_mapped` | boolean | `::ffff:x.x.x.x` IPv4-mapped IPv6 address (the dual-stack default for most clients) |
 | `no_dst` | boolean | Socket-creation event with no destination (`sock_create` program). `dst_ip` and `dst_port` are omitted on these records |
-| `dst_host` | keyword | Resolved domain string. Populated for every record whose destination IP was resolved via the managed CoreDNS under a firewall-allowed zone. Empty for direct-IP connects (see [Domain Resolution](#domain-resolution)) |
+| `dst_host` | keyword | Resolved domain string. Populated for every record whose destination IP was resolved via the managed CoreDNS under a firewall-allowed zone. Omitted for direct-IP connects (operators filter via `NOT _exists_:attributes.dst_host`; see [Domain Resolution](#domain-resolution)) |
 | `domain_hash` | keyword | BPF-side identity (FNV-1a of normalized domain). Correlates userspace records with BPF `dns_cache` / `route_map` entries when `dst_host` is empty (direct-IP connect, rule removed mid-flight, stale dnsbpf entry) |
 
 The BPF event struct is fixed-size with explicit padding (48 bytes; layout asserted at compile time). Operators filter and aggregate at dashboard/query time — the emitter never decides which fields are "interesting" for a given verdict, except for the `sock_create` carve-out above where BPF carries no destination.

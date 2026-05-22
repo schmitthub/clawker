@@ -44,7 +44,7 @@ All maps live at `PinPath = /sys/fs/bpf/clawker/`:
 
 `route_map` is **global** — container enforcement is gated by presence in `container_map`, so a single `SyncRoutes` call updates routing for every enforced container atomically.
 
-`events_ringbuf` is single-producer-per-decision-point (each cgroup BPF program), single-consumer (one userspace reader). 256 KiB ring sized for `egress_event` records (32 bytes each). The buffer is a power-of-2 multiple of the page size so `cilium/ebpf` accepts it. Records dropped on a full ring increment `events_drops`; rate-limited records increment `ratelimit_drops` and never touch the ring.
+`events_ringbuf` is single-producer-per-decision-point (each cgroup BPF program), single-consumer (one userspace reader). 256 KiB ring sized for `egress_event` records (48 bytes each — see `_Static_assert` in `bpf/common.h` and the Go-side `TestEgressEvent_SizeMatchesABI` guard). The buffer is a power-of-2 multiple of the page size so `cilium/ebpf` accepts it. Records dropped on a full ring increment `events_drops`; rate-limited records increment `ratelimit_drops` and never touch the ring.
 
 `ratelimit_state` is `BPF_MAP_TYPE_LRU_HASH` so dead cgroups evict without a userspace sweep. Refill arithmetic in `ratelimit_check_and_take` is intentionally non-atomic — bucket inaccuracy under racing CPUs is cheaper than the cmpxchg cost on the hot path. Token-bucket tunables (`RATELIMIT_BURST=64`, `RATELIMIT_REFILL_NS=100ms`, `RATELIMIT_TOKENS_PER=64`) live as `#define` constants in `bpf/common.h`.
 

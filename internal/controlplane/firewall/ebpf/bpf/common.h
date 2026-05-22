@@ -260,7 +260,7 @@ enum enter_state {
 //
 // 256 KiB total (64 × 4 KiB pages) — must be a power-of-2 multiple of the
 // page size or cilium/ebpf's ringbuf.NewReader rejects it. Sized for one
-// userspace reader handling records of ~32 bytes; dial up only after
+// userspace reader handling records of 48 bytes; dial up only after
 // observing kernel-fault drops in events_drops.
 //
 // __type(value, struct egress_event) is the BTF anchor for bpf2go's
