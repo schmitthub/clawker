@@ -191,8 +191,8 @@ func TestInfoRun_JSON(t *testing.T) {
 	require.NoError(t, err)
 
 	output := outBuf.String()
-	assert.Contains(t, output, `"name": "alpha"`)
-	assert.Contains(t, output, `"status": "missing"`)
+	assert.Contains(t, output, `"name":"alpha"`)
+	assert.Contains(t, output, `"status":"missing"`)
 }
 
 // --- Tier 3: Unit tests ---

@@ -321,3 +321,63 @@ func TestMergeRule_EmptyIncomingPathDefault_PreservesExisting(t *testing.T) {
 	got := firewall.MergeRule(existing, incoming)
 	assert.Equal(t, "deny", got.PathDefault, "empty incoming PathDefault does not clobber existing")
 }
+
+// TestEffectivePathDefault_Inference covers the four-case truth table that
+// drives the catch-all action when no explicit r.PathDefault is set. The
+// inference exists so `firewall add foo.com --path /x --action deny` gives
+// users denylist semantics without forcing them to learn about
+// path_default. See rules_store.go::EffectivePathDefault.
+func TestEffectivePathDefault_Inference(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		rule config.EgressRule
+		want string
+	}{
+		{
+			name: "explicit override wins over inference",
+			rule: config.EgressRule{
+				PathDefault: "allow",
+				PathRules:   []config.PathRule{{Path: "/x", Action: "allow"}},
+			},
+			want: "allow",
+		},
+		{
+			name: "no path rules → allow (vacuous; callers gate on len(PathRules)>0)",
+			rule: config.EgressRule{Action: "allow"},
+			want: "allow",
+		},
+		{
+			name: "only deny path rules → allow (denylist mode)",
+			rule: config.EgressRule{
+				PathRules: []config.PathRule{
+					{Path: "/admin", Action: "deny"},
+					{Path: "/internal", Action: "deny"},
+				},
+			},
+			want: "allow",
+		},
+		{
+			name: "only allow path rules → deny (allowlist mode)",
+			rule: config.EgressRule{
+				PathRules: []config.PathRule{{Path: "/v1", Action: "allow"}},
+			},
+			want: "deny",
+		},
+		{
+			name: "mixed allow + deny → deny (any allow ⇒ allowlist semantics)",
+			rule: config.EgressRule{
+				PathRules: []config.PathRule{
+					{Path: "/v1", Action: "allow"},
+					{Path: "/admin", Action: "deny"},
+				},
+			},
+			want: "deny",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, firewall.EffectivePathDefault(tt.rule))
+		})
+	}
+}

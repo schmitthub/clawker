@@ -235,10 +235,10 @@ func TestListRun_JSONOutput(t *testing.T) {
 	require.NoError(t, err)
 
 	outStr := out.String()
-	assert.Contains(t, outStr, `"name": "clawker.myapp.dev"`)
-	assert.Contains(t, outStr, `"status": "running"`)
-	assert.Contains(t, outStr, `"project": "myapp"`)
-	assert.Contains(t, outStr, `"agent": "dev"`)
+	assert.Contains(t, outStr, `"name":"clawker.myapp.dev"`)
+	assert.Contains(t, outStr, `"status":"running"`)
+	assert.Contains(t, outStr, `"project":"myapp"`)
+	assert.Contains(t, outStr, `"agent":"dev"`)
 }
 
 func TestListRun_QuietMode(t *testing.T) {

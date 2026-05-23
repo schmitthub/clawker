@@ -153,6 +153,131 @@ func TestListRun_SortsByDomainProtoPort(t *testing.T) {
 	assert.Equal(t, "tls", rows[3].Proto)
 }
 
+// TestListRun_JSONContract_OmitsPathFieldsWhenEmpty guards backward
+// compatibility: scripts reading `firewall list --json` must not see new
+// keys when no path data is present on a rule.
+func TestListRun_JSONContract_OmitsPathFieldsWhenEmpty(t *testing.T) {
+	rules := []*adminv1.EgressRule{
+		{Dst: "example.com", Proto: "tls", Port: 443},
+	}
+
+	f, stdout := newListCmd(t, rules, nil)
+	cmd := NewCmdList(f, nil)
+	cmd.SetContext(context.Background())
+	cmd.SetArgs([]string{"--json"})
+
+	require.NoError(t, cmd.Execute())
+
+	out := stdout.String()
+	assert.NotContains(t, out, "path_default")
+	assert.NotContains(t, out, "paths")
+}
+
+func TestListRun_WithPaths(t *testing.T) {
+	rules := []*adminv1.EgressRule{
+		{
+			Dst:   "api.example.com",
+			Proto: "tls",
+			Port:  443,
+			PathRules: []*adminv1.PathRule{
+				{Path: "/admin/*", Action: "deny"},
+				{Path: "/v1/*", Action: "allow"},
+			},
+			PathDefault: "deny",
+		},
+	}
+
+	t.Run("json includes paths sorted by path string", func(t *testing.T) {
+		f, stdout := newListCmd(t, rules, nil)
+		cmd := NewCmdList(f, nil)
+		cmd.SetContext(context.Background())
+		cmd.SetArgs([]string{"--json"})
+
+		require.NoError(t, cmd.Execute())
+
+		var rows []ruleRow
+		require.NoError(t, json.Unmarshal([]byte(stdout.String()), &rows))
+		require.Len(t, rows, 1)
+		assert.Equal(t, "deny", rows[0].PathDefault)
+		require.Len(t, rows[0].Paths, 2)
+		assert.Equal(t, "/admin/*", rows[0].Paths[0].Path)
+		assert.Equal(t, "deny", rows[0].Paths[0].Action)
+		assert.Equal(t, "/v1/*", rows[0].Paths[1].Path)
+		assert.Equal(t, "allow", rows[0].Paths[1].Action)
+	})
+
+	t.Run("table renders indented path sub-rows and default row", func(t *testing.T) {
+		f, stdout := newListCmd(t, rules, nil)
+		cmd := NewCmdList(f, nil)
+		cmd.SetContext(context.Background())
+		cmd.SetArgs([]string{})
+
+		require.NoError(t, cmd.Execute())
+
+		out := stdout.String()
+		assert.Contains(t, out, "api.example.com")
+		assert.Contains(t, out, "  /admin/*")
+		assert.Contains(t, out, "  /v1/*")
+		assert.Contains(t, out, "  path default")
+
+		adminIdx := strings.Index(out, "/admin/*")
+		v1Idx := strings.Index(out, "/v1/*")
+		defaultIdx := strings.Index(out, "path default")
+		assert.Less(t, adminIdx, v1Idx, "paths should sort alphabetically")
+		assert.Less(t, v1Idx, defaultIdx, "path default row should follow path rows")
+	})
+}
+
+// TestListRun_WithDenylistPaths_InfersAllowDefault locks in the inferred
+// path_default display for the denylist case (only deny path_rules, no
+// explicit r.path_default). Without inference, the list output would
+// silently hide the catch-all action and the user couldn't tell what
+// Envoy actually enforces. See firewall.EffectivePathDefault.
+func TestListRun_WithDenylistPaths_InfersAllowDefault(t *testing.T) {
+	rules := []*adminv1.EgressRule{
+		{
+			Dst:   "docs.example.com",
+			Proto: "tls",
+			Port:  443,
+			PathRules: []*adminv1.PathRule{
+				{Path: "/admin", Action: "deny"},
+			},
+			// PathDefault deliberately unset — must be inferred to "allow".
+		},
+	}
+
+	t.Run("table renders inferred path default row", func(t *testing.T) {
+		f, stdout := newListCmd(t, rules, nil)
+		cmd := NewCmdList(f, nil)
+		cmd.SetContext(context.Background())
+		cmd.SetArgs([]string{})
+
+		require.NoError(t, cmd.Execute())
+
+		out := stdout.String()
+		assert.Contains(t, out, "  /admin")
+		assert.Contains(t, out, "  path default")
+		// "allow" must appear after "path default" in the output (sub-row action).
+		defaultIdx := strings.Index(out, "path default")
+		require.NotEqual(t, -1, defaultIdx)
+		assert.Contains(t, out[defaultIdx:], "allow")
+	})
+
+	t.Run("json carries inferred path_default", func(t *testing.T) {
+		f, stdout := newListCmd(t, rules, nil)
+		cmd := NewCmdList(f, nil)
+		cmd.SetContext(context.Background())
+		cmd.SetArgs([]string{"--json"})
+
+		require.NoError(t, cmd.Execute())
+
+		var rows []ruleRow
+		require.NoError(t, json.Unmarshal([]byte(stdout.String()), &rows))
+		require.Len(t, rows, 1)
+		assert.Equal(t, "allow", rows[0].PathDefault, "denylist mode: only-deny path rules → allow catch-all")
+	})
+}
+
 func TestListRun_EmptyRules(t *testing.T) {
 	f, stdout := newListCmd(t, nil, nil)
 	cmd := NewCmdList(f, nil)
