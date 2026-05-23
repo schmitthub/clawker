@@ -143,6 +143,50 @@ func RuleKey(r config.EgressRule) string {
 	return fmt.Sprintf("%s:%s:%d", r.Dst, r.Proto, r.Port)
 }
 
+// MergeRule merges incoming into existing for the same RuleKey. Caller wins
+// on Action and PathDefault; PathRules is unioned by Path with caller winning
+// on same-path collision. Callers MUST pre-normalize via NormalizeRule so
+// scalar defaults are populated before merge.
+//
+// PathDefault is overwritten unconditionally (caller wins). A bare CLI add
+// (`clawker firewall add foo.com`) carries PathDefault="" and will therefore
+// clear any previously-set PathDefault on the same key. This is by design
+// — the CLI captures current intent — but it means PathDefault is an
+// effectively yaml-side knob; CLI users who want a non-empty PathDefault
+// must encode it in their `.clawker.yaml`.
+func MergeRule(existing, incoming config.EgressRule) config.EgressRule {
+	out := existing
+	out.Action = incoming.Action
+	out.PathDefault = incoming.PathDefault
+	out.PathRules = mergePathRules(existing.PathRules, incoming.PathRules)
+	return out
+}
+
+// mergePathRules unions existing and incoming by Path. Existing-side ordering
+// is preserved; an incoming PathRule whose Path matches an existing entry
+// overwrites that slot in place. Incoming-only PathRules are appended in
+// input order.
+func mergePathRules(existing, incoming []config.PathRule) []config.PathRule {
+	if len(incoming) == 0 {
+		return existing
+	}
+	out := make([]config.PathRule, len(existing))
+	copy(out, existing)
+	index := make(map[string]int, len(out))
+	for i, p := range out {
+		index[p.Path] = i
+	}
+	for _, p := range incoming {
+		if i, exists := index[p.Path]; exists {
+			out[i] = p
+			continue
+		}
+		index[p.Path] = len(out)
+		out = append(out, p)
+	}
+	return out
+}
+
 // RoutesFromRules projects a rule set into the BPF route_map entry form.
 // Destinations are normalized before hashing so the resulting DomainHash
 // matches whatever CoreDNS writes into dns_cache at resolve time (INV:

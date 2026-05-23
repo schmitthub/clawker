@@ -154,11 +154,42 @@ message FirewallBypassResult {}
 // Rule management
 // ---------------------------------------------------------------------------
 
+// AddRuleStatus is the per-rule outcome of a FirewallAddRules call.
+// statuses[i] on the result message corresponds to rules[i] on the
+// request, preserving input order through normalization.
+enum AddRuleStatus {
+  ADD_RULE_STATUS_UNSPECIFIED = 0;
+  // ADDED: a new RuleKey was appended to the store.
+  ADD_RULE_STATUS_ADDED = 1;
+  // MODIFIED: an existing RuleKey was mutated via MergeRule (Action /
+  // PathDefault overwrite; PathRules union by Path).
+  ADD_RULE_STATUS_MODIFIED = 2;
+  // UNCHANGED: incoming rule was reflect.DeepEqual to the existing
+  // entry after merge; store write was suppressed.
+  ADD_RULE_STATUS_UNCHANGED = 3;
+}
+
+// RemoveRuleStatus is the outcome of a FirewallRemoveRule call. NOT_FOUND
+// is surfaced through this field, not as a gRPC codes.NotFound error —
+// genuine errors (store I/O, validation) still return as gRPC errors.
+enum RemoveRuleStatus {
+  REMOVE_RULE_STATUS_UNSPECIFIED = 0;
+  // REMOVED: the whole rule keyed by (dst, proto, port) was deleted.
+  REMOVE_RULE_STATUS_REMOVED = 1;
+  // PATH_REMOVED: only the matching PathRule entry was deleted; the rule
+  // itself remains in the store.
+  REMOVE_RULE_STATUS_PATH_REMOVED = 2;
+  // NOT_FOUND: either the RuleKey does not exist, or (when path is set)
+  // no PathRule matched the requested path.
+  REMOVE_RULE_STATUS_NOT_FOUND = 3;
+}
+
 message FirewallAddRulesRequest {
   repeated EgressRule rules = 1;
 }
 message FirewallAddRulesResult {
-  int32 added_count = 1;
+  // statuses[i] is the outcome for request rules[i], in input order.
+  repeated AddRuleStatus statuses = 1;
   // stack_restarted is true when the live stack was reloaded; false when
   // the stack was down at queue-time and only the on-disk rule change
   // applied. In both cases err==nil — the rule is durable.
@@ -169,12 +200,18 @@ message FirewallRemoveRuleRequest {
   string dst = 1;
   string proto = 2;     // "tls" | "tcp" | "http" | "ssh" | "ip" | "cidr"
   uint32 port = 3;
+  // Optional. When set, only the matching PathRule entry is removed from
+  // the rule identified by (dst, proto, port); the rule itself remains.
+  // When empty, the whole rule is removed.
+  string path = 4;
 }
 message FirewallRemoveRuleResult {
   // stack_restarted is true when the live stack was reloaded; false when
   // the stack was down at queue-time and only the on-disk rule change
   // applied. In both cases err==nil — the rule is durable.
   bool stack_restarted = 1;
+  // status names the outcome (REMOVED / PATH_REMOVED / NOT_FOUND).
+  RemoveRuleStatus status = 2;
 }
 
 message FirewallListRulesRequest {}

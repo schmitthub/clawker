@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -644,12 +645,12 @@ func (h *Handler) FirewallAddRules(ctx context.Context, req *adminv1.FirewallAdd
 			return nil, toStatus(fmt.Errorf("%w: %q: %v", ErrRuleInvalid, r.Dst, err))
 		}
 	}
-	added, err := h.addRulesToStore(rules)
+	statuses, err := h.addRulesToStore(rules)
 	if err != nil {
 		return nil, toStatus(fmt.Errorf("%w: %v", ErrRuleStoreWrite, err))
 	}
-	if added == 0 {
-		return &adminv1.FirewallAddRulesResult{AddedCount: 0}, nil
+	if !anyAddChange(statuses) {
+		return &adminv1.FirewallAddRulesResult{Statuses: toProtoAddStatuses(statuses)}, nil
 	}
 
 	val, err := h.submit(ActionReconcile, h.reconcileStackClosure)
@@ -658,30 +659,42 @@ func (h *Handler) FirewallAddRules(ctx context.Context, req *adminv1.FirewallAdd
 	}
 	rr := val.(StackReloadResult)
 	return &adminv1.FirewallAddRulesResult{
-		AddedCount:     int32(added),
+		Statuses:       toProtoAddStatuses(statuses),
 		StackRestarted: rr.Restarted,
 	}, nil
 }
 
 // FirewallRemoveRule deletes a single rule matched by (dst, proto, port)
 // pre-Submit then reconciles the stack. A miss on the store lookup
-// returns ErrRuleNotFound → codes.NotFound so a typo or
-// wrong-proto/port never masquerades as success. No ValidateDst here:
-// anything that fails to match an existing key — typo, malformed
-// hostname, or legitimate absence — collapses into the same NotFound
-// outcome, which is exactly the behavior the CLI needs to render.
+// returns Status=REMOVE_RULE_STATUS_NOT_FOUND on the result (NOT a
+// codes.NotFound gRPC error) so a typo or wrong-proto/port surfaces as
+// a typed outcome on the wire — the CLI renders the not-found message
+// and exits non-zero. Genuine store-I/O failures still come back as
+// gRPC errors. No ValidateDst here: anything that fails to match an
+// existing key — typo, malformed hostname, or legitimate absence —
+// collapses into the same NOT_FOUND outcome, which is exactly the
+// behavior the CLI needs to render.
 func (h *Handler) FirewallRemoveRule(ctx context.Context, req *adminv1.FirewallRemoveRuleRequest) (*adminv1.FirewallRemoveRuleResult, error) {
 	rule := config.EgressRule{
 		Dst:   req.GetDst(),
 		Proto: req.GetProto(),
 		Port:  int(req.GetPort()),
 	}
-	matched, err := h.removeRuleFromStore(rule)
+	pathMode := req.GetPath() != ""
+	var matched bool
+	var err error
+	if pathMode {
+		matched, err = h.removePathRuleFromStore(rule, req.GetPath())
+	} else {
+		matched, err = h.removeRuleFromStore(rule)
+	}
 	if err != nil {
 		return nil, toStatus(fmt.Errorf("%w: %v", ErrRuleStoreWrite, err))
 	}
 	if !matched {
-		return nil, toStatus(fmt.Errorf("%w: %s:%s:%d", ErrRuleNotFound, rule.Dst, rule.Proto, rule.Port))
+		return &adminv1.FirewallRemoveRuleResult{
+			Status: toProtoRemoveStatus(removeStatusNotFound),
+		}, nil
 	}
 
 	val, err := h.submit(ActionReconcile, h.reconcileStackClosure)
@@ -689,8 +702,13 @@ func (h *Handler) FirewallRemoveRule(ctx context.Context, req *adminv1.FirewallR
 		return nil, toStatus(err)
 	}
 	rr := val.(StackReloadResult)
+	status := removeStatusRemoved
+	if pathMode {
+		status = removeStatusPathRemoved
+	}
 	return &adminv1.FirewallRemoveRuleResult{
 		StackRestarted: rr.Restarted,
+		Status:         toProtoRemoveStatus(status),
 	}, nil
 }
 
@@ -1100,41 +1118,59 @@ func (h *Handler) cancelBypassTimer(cid string) {
 	}
 }
 
-// addRulesToStore validates, normalizes, dedups, and persists new rules.
-// Returns the count of rules actually added. Validation is all-or-nothing:
-// one bad destination aborts before any store mutation.
-func (h *Handler) addRulesToStore(rules []config.EgressRule) (int, error) {
+// addRulesToStore normalizes incoming rules and merges them into the
+// store via MergeRule. On RuleKey collision the existing entry is mutated
+// in place (caller wins on Action/PathDefault; PathRules union by Path
+// with caller winning on path collision). New keys are appended.
+//
+// Returns a per-rule status slice the same length as rules, in input
+// order: addStatusAdded for a brand-new RuleKey, addStatusModified for a
+// merge that actually changed the stored entry, addStatusUnchanged for
+// a reflect.DeepEqual identical re-apply (write suppressed). When every
+// entry is Unchanged the store.Write call is skipped so the caller can
+// also skip the stack reconcile.
+//
+// Destination validation happens upstream in FirewallAddRules — this
+// helper trusts its input and never returns ErrRuleInvalid.
+func (h *Handler) addRulesToStore(rules []config.EgressRule) ([]addStatus, error) {
 	normalized := make([]config.EgressRule, 0, len(rules))
 	for _, r := range rules {
 		normalized = append(normalized, NormalizeRule(r))
 	}
-	var added int
+	statuses := make([]addStatus, len(rules))
 	if err := h.store.Set(func(f *EgressRulesFile) {
 		existing, _ := NormalizeAndDedup(f.Rules)
-		known := make(map[string]struct{}, len(existing))
-		for _, r := range existing {
-			known[RuleKey(r)] = struct{}{}
+		index := make(map[string]int, len(existing))
+		for i, r := range existing {
+			index[RuleKey(r)] = i
 		}
-		for _, r := range normalized {
+		for i, r := range normalized {
 			key := RuleKey(r)
-			if _, exists := known[key]; exists {
+			if j, exists := index[key]; exists {
+				merged := MergeRule(existing[j], r)
+				if reflect.DeepEqual(existing[j], merged) {
+					statuses[i] = addStatusUnchanged
+					continue
+				}
+				existing[j] = merged
+				statuses[i] = addStatusModified
 				continue
 			}
-			known[key] = struct{}{}
+			index[key] = len(existing)
 			existing = append(existing, r)
-			added++
+			statuses[i] = addStatusAdded
 		}
 		f.Rules = existing
 	}); err != nil {
-		return 0, fmt.Errorf("updating rules: %w", err)
+		return nil, fmt.Errorf("updating rules: %w", err)
 	}
-	if added == 0 {
-		return 0, nil
+	if !anyAddChange(statuses) {
+		return statuses, nil
 	}
 	if err := h.store.Write(); err != nil {
-		return 0, fmt.Errorf("writing rules: %w", err)
+		return nil, fmt.Errorf("writing rules: %w", err)
 	}
-	return added, nil
+	return statuses, nil
 }
 
 // removeRuleFromStore deletes the single rule whose normalized key
@@ -1156,6 +1192,55 @@ func (h *Handler) removeRuleFromStore(toRemove config.EgressRule) (bool, error) 
 		f.Rules = filtered
 	}); err != nil {
 		return false, fmt.Errorf("removing rule: %w", err)
+	}
+	if !matched {
+		return false, nil
+	}
+	if err := h.store.Write(); err != nil {
+		return false, fmt.Errorf("writing rules: %w", err)
+	}
+	return true, nil
+}
+
+// removePathRuleFromStore removes a single PathRule entry from the rule
+// identified by (dst, proto, port). The rule itself remains in the store.
+//
+// Returns matched=false when either the rule key does not exist or the path
+// is not present in the rule's PathRules. The caller maps both to
+// ErrRuleNotFound; the caller (FirewallRemoveRule) qualifies the surfaced
+// error with the path so a typo never silently succeeds.
+func (h *Handler) removePathRuleFromStore(toRemove config.EgressRule, path string) (bool, error) {
+	targetKey := RuleKey(NormalizeRule(toRemove))
+	var matched bool
+	if err := h.store.Set(func(f *EgressRulesFile) {
+		normalized, _ := NormalizeAndDedup(f.Rules)
+		idx := -1
+		for i, r := range normalized {
+			if RuleKey(r) == targetKey {
+				idx = i
+				break
+			}
+		}
+		if idx < 0 {
+			return
+		}
+		r := normalized[idx]
+		filtered := make([]config.PathRule, 0, len(r.PathRules))
+		for _, p := range r.PathRules {
+			if p.Path == path {
+				matched = true
+				continue
+			}
+			filtered = append(filtered, p)
+		}
+		if !matched {
+			return
+		}
+		r.PathRules = filtered
+		normalized[idx] = r
+		f.Rules = normalized
+	}); err != nil {
+		return false, fmt.Errorf("removing path rule: %w", err)
 	}
 	if !matched {
 		return false, nil

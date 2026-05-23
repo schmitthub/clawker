@@ -18,6 +18,7 @@ type RemoveOptions struct {
 	Domain      string
 	Proto       string
 	Port        int
+	Path        string
 }
 
 // NewCmdRemove creates the firewall remove command.
@@ -36,7 +37,10 @@ immediately via hot-reload — no container restart required.`,
   clawker firewall remove registry.npmjs.org
 
   # Remove an SSH rule
-  clawker firewall remove git.example.com --proto ssh --port 22`,
+  clawker firewall remove git.example.com --proto ssh --port 22
+
+  # Remove a single path rule from a domain entry (entry itself stays)
+  clawker firewall remove api.example.com --path /v1`,
 		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.Domain = args[0]
@@ -51,6 +55,7 @@ immediately via hot-reload — no container restart required.`,
 
 	cmd.Flags().StringVar(&opts.Proto, "proto", "tls", "Protocol (tls, ssh, tcp)")
 	cmd.Flags().IntVar(&opts.Port, "port", 0, "Port number")
+	cmd.Flags().StringVar(&opts.Path, "path", "", "Remove a single path rule by path prefix; omit to remove the whole entry")
 
 	return cmd
 }
@@ -105,12 +110,17 @@ func removeRun(ctx context.Context, opts *RemoveOptions) error {
 		return fmt.Errorf("connecting to control plane: %w", err)
 	}
 
-	resp, err := callWithSpinner(ctx, ios, fmt.Sprintf("Removing firewall rule %s...", opts.Domain),
+	spinnerLabel := fmt.Sprintf("Removing firewall rule %s...", opts.Domain)
+	if opts.Path != "" {
+		spinnerLabel = fmt.Sprintf("Removing path rule %s on %s...", opts.Path, opts.Domain)
+	}
+	resp, err := callWithSpinner(ctx, ios, spinnerLabel,
 		func(rpcCtx context.Context) (*adminv1.FirewallRemoveRuleResult, error) {
 			return client.FirewallRemoveRule(rpcCtx, &adminv1.FirewallRemoveRuleRequest{
 				Dst:   opts.Domain,
 				Proto: opts.Proto,
 				Port:  uint32(opts.Port),
+				Path:  opts.Path,
 			})
 		})
 	if err != nil {
@@ -118,8 +128,21 @@ func removeRun(ctx context.Context, opts *RemoveOptions) error {
 	}
 
 	cs := ios.ColorScheme()
-	fmt.Fprintf(ios.Out, "%s Removed rule: %s\n", cs.SuccessIcon(), opts.Domain)
-	printStackRestartedNote(ios, resp.GetStackRestarted(), "rule removed")
+	switch resp.GetStatus() {
+	case adminv1.RemoveRuleStatus_REMOVE_RULE_STATUS_REMOVED:
+		fmt.Fprintf(ios.Out, "%s Removed rule: %s\n", cs.SuccessIcon(), opts.Domain)
+		printStackRestartedNote(ios, resp.GetStackRestarted(), "rule removed")
+	case adminv1.RemoveRuleStatus_REMOVE_RULE_STATUS_PATH_REMOVED:
+		fmt.Fprintf(ios.Out, "%s Removed path rule %s on %s\n", cs.SuccessIcon(), opts.Path, opts.Domain)
+		printStackRestartedNote(ios, resp.GetStackRestarted(), "rule removed")
+	case adminv1.RemoveRuleStatus_REMOVE_RULE_STATUS_NOT_FOUND:
+		if opts.Path != "" {
+			return fmt.Errorf("removing firewall rule: rule not found: %s:%s:%d path %q", opts.Domain, opts.Proto, opts.Port, opts.Path)
+		}
+		return fmt.Errorf("removing firewall rule: rule not found: %s:%s:%d", opts.Domain, opts.Proto, opts.Port)
+	default:
+		return fmt.Errorf("removing firewall rule: server returned unknown status %v", resp.GetStatus())
+	}
 
 	return nil
 }

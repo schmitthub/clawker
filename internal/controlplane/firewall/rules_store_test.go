@@ -202,3 +202,101 @@ func TestEgressRulesFileFields_AllFieldsHaveDescriptions(t *testing.T) {
 		assert.NotEmptyf(t, f.Description(), "field %q has no desc tag", f.Path())
 	}
 }
+
+// TestMergeRule_CallerWinsScalars asserts that on a same-RuleKey merge,
+// the caller's Action and PathDefault overwrite the existing values.
+func TestMergeRule_CallerWinsScalars(t *testing.T) {
+	t.Parallel()
+	existing := config.EgressRule{
+		Dst: "api.example.com", Proto: "tls", Port: 443,
+		Action:      "allow",
+		PathDefault: "allow",
+	}
+	incoming := config.EgressRule{
+		Dst: "api.example.com", Proto: "tls", Port: 443,
+		Action:      "deny",
+		PathDefault: "deny",
+	}
+	got := firewall.MergeRule(existing, incoming)
+	assert.Equal(t, "deny", got.Action)
+	assert.Equal(t, "deny", got.PathDefault)
+}
+
+// TestMergeRule_PathRulesUnionByPath asserts existing + incoming PathRules
+// are unioned by Path, with existing-side order preserved and incoming-only
+// entries appended.
+func TestMergeRule_PathRulesUnionByPath(t *testing.T) {
+	t.Parallel()
+	existing := config.EgressRule{
+		Dst: "api.example.com", Proto: "tls", Port: 443,
+		PathRules: []config.PathRule{
+			{Path: "/v1", Action: "allow"},
+		},
+	}
+	incoming := config.EgressRule{
+		Dst: "api.example.com", Proto: "tls", Port: 443,
+		PathRules: []config.PathRule{
+			{Path: "/v2", Action: "deny"},
+		},
+	}
+	got := firewall.MergeRule(existing, incoming)
+	require.Len(t, got.PathRules, 2)
+	assert.Equal(t, "/v1", got.PathRules[0].Path)
+	assert.Equal(t, "allow", got.PathRules[0].Action)
+	assert.Equal(t, "/v2", got.PathRules[1].Path)
+	assert.Equal(t, "deny", got.PathRules[1].Action)
+}
+
+// TestMergeRule_PathRulesSamePathCallerWins asserts that on a same-Path
+// collision inside PathRules, the caller's PathRule overwrites in place
+// rather than appending a duplicate.
+func TestMergeRule_PathRulesSamePathCallerWins(t *testing.T) {
+	t.Parallel()
+	existing := config.EgressRule{
+		Dst: "api.example.com", Proto: "tls", Port: 443,
+		PathRules: []config.PathRule{
+			{Path: "/v1", Action: "allow"},
+			{Path: "/v2", Action: "allow"},
+		},
+	}
+	incoming := config.EgressRule{
+		Dst: "api.example.com", Proto: "tls", Port: 443,
+		PathRules: []config.PathRule{
+			{Path: "/v1", Action: "deny"},
+		},
+	}
+	got := firewall.MergeRule(existing, incoming)
+	require.Len(t, got.PathRules, 2)
+	assert.Equal(t, "/v1", got.PathRules[0].Path)
+	assert.Equal(t, "deny", got.PathRules[0].Action, "caller's action wins on path collision")
+	assert.Equal(t, "/v2", got.PathRules[1].Path)
+	assert.Equal(t, "allow", got.PathRules[1].Action)
+}
+
+// TestMergeRule_EmptyIncomingPathRules_PreservesExisting asserts the
+// mergePathRules len(incoming)==0 short-circuit: an incoming rule with no
+// PathRules must NOT wipe the existing rule's PathRules, but scalars on
+// the incoming rule (Action, PathDefault) still win per the caller-wins
+// rule.
+func TestMergeRule_EmptyIncomingPathRules_PreservesExisting(t *testing.T) {
+	t.Parallel()
+	existing := config.EgressRule{
+		Dst: "api.example.com", Proto: "tls", Port: 443,
+		Action:      "allow",
+		PathDefault: "deny",
+		PathRules: []config.PathRule{
+			{Path: "/v1", Action: "allow"},
+		},
+	}
+	incoming := config.EgressRule{
+		Dst: "api.example.com", Proto: "tls", Port: 443,
+		Action:      "deny",
+		PathDefault: "allow",
+		// No PathRules — represents e.g. a bare `clawker firewall add`.
+	}
+	got := firewall.MergeRule(existing, incoming)
+	assert.Equal(t, "deny", got.Action, "caller wins on Action")
+	assert.Equal(t, "allow", got.PathDefault, "caller wins on PathDefault")
+	require.Len(t, got.PathRules, 1, "existing PathRules preserved when incoming is empty")
+	assert.Equal(t, "/v1", got.PathRules[0].Path)
+}

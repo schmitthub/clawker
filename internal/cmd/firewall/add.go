@@ -17,6 +17,8 @@ type AddOptions struct {
 	Domain      string
 	Proto       string
 	Port        int
+	Path        string
+	Action      string
 }
 
 // NewCmdAdd creates the firewall add command.
@@ -30,7 +32,12 @@ func NewCmdAdd(f *cmdutil.Factory, runF func(context.Context, *AddOptions) error
 		Use:   "add <domain>",
 		Short: "Add an egress rule",
 		Long: `Add a domain to the firewall allow list. The rule takes effect immediately
-via hot-reload — no container restart required.`,
+via hot-reload — no container restart required.
+
+Pass --path together with --action to add a path-scoped rule onto the domain
+entry instead of (or alongside) the bare-domain allow. Path rules accumulate
+across calls; a repeated --path with a different --action overwrites the
+prior action for that path.`,
 		Example: `  # Allow HTTPS traffic to a domain
   clawker firewall add registry.npmjs.org
 
@@ -38,7 +45,10 @@ via hot-reload — no container restart required.`,
   clawker firewall add git.example.com --proto ssh --port 22
 
   # Allow plain TCP traffic
-  clawker firewall add api.example.com --proto tcp --port 8080`,
+  clawker firewall add api.example.com --proto tcp --port 8080
+
+  # Add a path-scoped allow rule onto a domain entry
+  clawker firewall add api.example.com --path /v1 --action allow`,
 		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.Domain = args[0]
@@ -51,6 +61,9 @@ via hot-reload — no container restart required.`,
 
 	cmd.Flags().StringVar(&opts.Proto, "proto", "tls", "Protocol (tls, ssh, tcp)")
 	cmd.Flags().IntVar(&opts.Port, "port", 0, "Port number (default: protocol-specific)")
+	cmd.Flags().StringVar(&opts.Path, "path", "", "URL path prefix for a path-scoped rule (requires --action)")
+	cmd.Flags().StringVar(&opts.Action, "action", "", "Action for the path rule: allow or deny (requires --path)")
+	cmd.MarkFlagsRequiredTogether("path", "action")
 
 	return cmd
 }
@@ -60,6 +73,11 @@ func addRun(ctx context.Context, opts *AddOptions) error {
 
 	if err := validatePortFlag(opts.Port); err != nil {
 		return err
+	}
+	if opts.Path != "" {
+		if opts.Action != "allow" && opts.Action != "deny" {
+			return cmdutil.FlagErrorf("--action must be \"allow\" or \"deny\", got %q", opts.Action)
+		}
 	}
 
 	client, err := opts.AdminClient(ctx)
@@ -73,6 +91,9 @@ func addRun(ctx context.Context, opts *AddOptions) error {
 		Port:   uint32(opts.Port),
 		Action: "allow",
 	}
+	if opts.Path != "" {
+		rule.PathRules = []*adminv1.PathRule{{Path: opts.Path, Action: opts.Action}}
+	}
 
 	resp, err := callWithSpinner(ctx, ios, fmt.Sprintf("Adding firewall rule %s...", opts.Domain),
 		func(rpcCtx context.Context) (*adminv1.FirewallAddRulesResult, error) {
@@ -83,13 +104,33 @@ func addRun(ctx context.Context, opts *AddOptions) error {
 	}
 
 	cs := ios.ColorScheme()
-	fmt.Fprintf(ios.Out, "%s Added rule: %s (%s)\n", cs.SuccessIcon(), opts.Domain, opts.Proto)
-	// Only print the "not running" note when a real rule change
-	// landed — an AddedCount==0 response means the rule was already
-	// present, so "will take effect on next firewall up" is
-	// misleading (nothing needs to take effect).
-	if resp.GetAddedCount() > 0 {
+	statuses := resp.GetStatuses()
+	if len(statuses) != 1 {
+		return fmt.Errorf("adding firewall rule: server returned %d statuses, want 1", len(statuses))
+	}
+	switch statuses[0] {
+	case adminv1.AddRuleStatus_ADD_RULE_STATUS_ADDED:
+		if opts.Path != "" {
+			fmt.Fprintf(ios.Out, "%s Added path rule %s (%s) on %s\n", cs.SuccessIcon(), opts.Path, opts.Action, opts.Domain)
+		} else {
+			fmt.Fprintf(ios.Out, "%s Added rule: %s (%s)\n", cs.SuccessIcon(), opts.Domain, opts.Proto)
+		}
 		printStackRestartedNote(ios, resp.GetStackRestarted(), "rule persisted")
+	case adminv1.AddRuleStatus_ADD_RULE_STATUS_MODIFIED:
+		if opts.Path != "" {
+			fmt.Fprintf(ios.Out, "%s Updated path rule %s (%s) on %s\n", cs.SuccessIcon(), opts.Path, opts.Action, opts.Domain)
+		} else {
+			fmt.Fprintf(ios.Out, "%s Updated rule: %s (%s)\n", cs.SuccessIcon(), opts.Domain, opts.Proto)
+		}
+		printStackRestartedNote(ios, resp.GetStackRestarted(), "rule persisted")
+	case adminv1.AddRuleStatus_ADD_RULE_STATUS_UNCHANGED:
+		if opts.Path != "" {
+			fmt.Fprintf(ios.Out, "%s Path rule already exists: %s (%s) on %s — no change\n", cs.InfoIcon(), opts.Path, opts.Action, opts.Domain)
+		} else {
+			fmt.Fprintf(ios.Out, "%s Rule already exists: %s (%s) — no change\n", cs.InfoIcon(), opts.Domain, opts.Proto)
+		}
+	default:
+		return fmt.Errorf("adding firewall rule: server returned unknown status %v", statuses[0])
 	}
 
 	return nil

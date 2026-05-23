@@ -330,8 +330,8 @@ All firewall operations are available under `clawker firewall`:
 |---------|---------|
 | `clawker firewall status` | Show firewall health, running containers, rule count |
 | `clawker firewall list` | List all active egress rules |
-| `clawker firewall add DOMAIN` | Add a domain allow rule |
-| `clawker firewall remove DOMAIN` | Remove a domain rule |
+| `clawker firewall add DOMAIN` | Add a domain allow rule (use `--path` + `--action` to attach a path-scoped rule) |
+| `clawker firewall remove DOMAIN` | Remove a domain rule (use `--path` to remove only that path rule, leaving the entry) |
 | `clawker firewall reload` | Force regenerate Envoy/CoreDNS configs |
 | `clawker firewall up` | Start the firewall daemon (usually automatic) |
 | `clawker firewall down` | Stop the firewall daemon |
@@ -434,6 +434,15 @@ security:
     add_domains:
       - "api.openai.com"
 ```
+
+To attach a path-scoped rule onto an existing entry:
+
+```bash
+clawker firewall add api.example.com --path /v1 --action allow
+clawker firewall add api.example.com --path /v2 --action deny
+```
+
+Path rules accumulate across calls. Repeating a `--path` with a different `--action` overwrites that path's action. Use `clawker firewall remove api.example.com --path /v1` to drop a single path rule without removing the whole entry.
 
 ### DNS resolution failures
 

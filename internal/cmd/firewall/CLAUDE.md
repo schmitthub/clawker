@@ -33,8 +33,8 @@ Every run function now speaks typed gRPC via `f.AdminClient(ctx)` — no in-proc
 | `down` | `NewCmdDown(f, runF)` | none | none | `FirewallRemove` |
 | `status` | `NewCmdStatus(f, runF)` | none | `--format`, `--json`, `--quiet` | `FirewallStatus` |
 | `list` / `ls` | `NewCmdList(f, runF)` | none | `--format`, `--json`, `--quiet` | `FirewallListRules` |
-| `add` | `NewCmdAdd(f, runF)` | `<domain>` (required) | `--proto` (default `tls`), `--port` | `FirewallAddRules` |
-| `remove` | `NewCmdRemove(f, runF)` | `<domain>` (required, tab-completable) | `--proto` (default `tls`), `--port` | `FirewallRemoveRule` (+ `FirewallListRules` for completion); returns `NOT_FOUND` / `RULE_NOT_FOUND` when no rule matches the `(dst, proto, port)` key so a typo or wrong-proto/port never silently succeeds |
+| `add` | `NewCmdAdd(f, runF)` | `<domain>` (required) | `--proto` (default `tls`), `--port`, `--path`, `--action` (`--path` and `--action` are required together; `--action` accepts `allow`/`deny`) | `FirewallAddRules` |
+| `remove` | `NewCmdRemove(f, runF)` | `<domain>` (required, tab-completable) | `--proto` (default `tls`), `--port`, `--path` | `FirewallRemoveRule` (+ `FirewallListRules` for completion); with `--path` the call removes a single `PathRule` from the matching rule, otherwise the whole rule; result status enum is `REMOVED` / `PATH_REMOVED` / `NOT_FOUND`. The CLI exits non-zero on `NOT_FOUND` (RPC succeeds, status drives the outcome) so a typo, wrong-proto/port, or unknown path never silently succeeds |
 | `reload` | `NewCmdReload(f, runF)` | none | none | `FirewallReload` |
 | `enable` | `NewCmdEnable(f, runF)` | none | `--agent` (required) | `FirewallEnable` |
 | `disable` | `NewCmdDisable(f, runF)` | none | `--agent` (required) | `FirewallDisable` |
@@ -65,7 +65,7 @@ All other commands produce action output only (success/error messages via `fmt.F
 - **Stack lifecycle** (`up`, `down`): `FirewallInit` / `FirewallRemove` via `AdminClient`
 - **Infrastructure queries** (`status`, `list`, `reload`, `rotate-ca`): read-only RPCs on `AdminClient`
 - **Per-container operations** (`enable`, `disable`, `bypass`): `FirewallEnable` / `FirewallDisable` / `FirewallBypass` on `AdminClient`; `--agent` flag identifies the container
-- **Rule mutations** (`add`, `remove`): `FirewallAddRules` / `FirewallRemoveRule` on `AdminClient`; positional `<domain>` + `--proto`/`--port` flags
+- **Rule mutations** (`add`, `remove`): `FirewallAddRules` / `FirewallRemoveRule` on `AdminClient`; positional `<domain>` + `--proto`/`--port` flags. `add` also takes `--path`/`--action` (required-together) to attach a path-scoped rule to the entry; `remove --path` removes a single path entry without nuking the rule. Both verbs share one underlying merge semantic — yaml input and CLI input are peers.
 
 ## Shell Completion
 
