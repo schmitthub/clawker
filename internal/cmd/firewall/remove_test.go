@@ -10,10 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 // newRemoveCmd creates a remove command wired with a background context for
@@ -131,7 +128,7 @@ func TestRemoveRun_Success(t *testing.T) {
 		return &cpmocks.AdminServiceClientMock{
 			FirewallRemoveRuleFunc: func(_ context.Context, req *adminv1.FirewallRemoveRuleRequest, _ ...grpc.CallOption) (*adminv1.FirewallRemoveRuleResult, error) {
 				got = req
-				return &adminv1.FirewallRemoveRuleResult{StackRestarted: true}, nil
+				return &adminv1.FirewallRemoveRuleResult{StackRestarted: true, Status: adminv1.RemoveRuleStatus_REMOVE_RULE_STATUS_REMOVED}, nil
 			},
 		}, nil
 	}
@@ -146,21 +143,19 @@ func TestRemoveRun_Success(t *testing.T) {
 	assert.Equal(t, uint32(443), got.GetPort())
 }
 
-// TestRemoveRun_NotFound is the whole reason this RPC shrunk: the
-// handler's codes.NotFound must surface as a CLI error, not a silent
-// success. wrapRPCError carries the RULE_NOT_FOUND remediation line
-// through to the returned error message.
+// TestRemoveRun_NotFound is the whole reason this RPC shrunk: a missing
+// rule must surface as a CLI error, never a silent success. NOT_FOUND
+// now travels as a response Status (replaces the old gRPC codes.NotFound
+// wire surface); the CLI must still exit non-zero with a hint that
+// names dst:proto:port.
 func TestRemoveRun_NotFound(t *testing.T) {
 	f := newTestFactory(t)
 	f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
 		return &cpmocks.AdminServiceClientMock{
 			FirewallRemoveRuleFunc: func(_ context.Context, _ *adminv1.FirewallRemoveRuleRequest, _ ...grpc.CallOption) (*adminv1.FirewallRemoveRuleResult, error) {
-				st := status.New(codes.NotFound, "rule not found: exmaple.com:tls:443")
-				det, _ := st.WithDetails(&errdetails.ErrorInfo{
-					Reason: "RULE_NOT_FOUND",
-					Domain: "firewall.clawker.dev",
-				})
-				return nil, det.Err()
+				return &adminv1.FirewallRemoveRuleResult{
+					Status: adminv1.RemoveRuleStatus_REMOVE_RULE_STATUS_NOT_FOUND,
+				}, nil
 			},
 		}, nil
 	}
@@ -169,5 +164,77 @@ func TestRemoveRun_NotFound(t *testing.T) {
 	cmd.SetArgs([]string{"exmaple.com"})
 	err := cmd.Execute()
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no matching rule", "RULE_NOT_FOUND remediation hint must reach the user")
+	assert.Contains(t, err.Error(), "rule not found")
+	assert.Contains(t, err.Error(), "exmaple.com")
+}
+
+// TestRemoveRun_NotFound_WithPath is the path-scoped sibling: a path
+// miss must qualify the surfaced error with the path so a typo never
+// silently succeeds.
+func TestRemoveRun_NotFound_WithPath(t *testing.T) {
+	f := newTestFactory(t)
+	f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
+		return &cpmocks.AdminServiceClientMock{
+			FirewallRemoveRuleFunc: func(_ context.Context, _ *adminv1.FirewallRemoveRuleRequest, _ ...grpc.CallOption) (*adminv1.FirewallRemoveRuleResult, error) {
+				return &adminv1.FirewallRemoveRuleResult{
+					Status: adminv1.RemoveRuleStatus_REMOVE_RULE_STATUS_NOT_FOUND,
+				}, nil
+			},
+		}, nil
+	}
+	cmd := NewCmdRemove(f, nil)
+	cmd.SetContext(context.Background())
+	cmd.SetArgs([]string{"api.example.com", "--path", "/unknown"})
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "/unknown")
+	assert.Contains(t, err.Error(), "rule not found")
+}
+
+// TestRemoveRun_WithPath_BuildsRequest asserts --path is forwarded on
+// the wire so the handler can take the path-scoped branch. The success
+// status PATH_REMOVED maps to the "Removed path rule" output line.
+func TestRemoveRun_WithPath_BuildsRequest(t *testing.T) {
+	f, out, _ := testFactoryWithStreams(t)
+	var got *adminv1.FirewallRemoveRuleRequest
+	f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
+		return &cpmocks.AdminServiceClientMock{
+			FirewallRemoveRuleFunc: func(_ context.Context, req *adminv1.FirewallRemoveRuleRequest, _ ...grpc.CallOption) (*adminv1.FirewallRemoveRuleResult, error) {
+				got = req
+				return &adminv1.FirewallRemoveRuleResult{StackRestarted: true, Status: adminv1.RemoveRuleStatus_REMOVE_RULE_STATUS_PATH_REMOVED}, nil
+			},
+		}, nil
+	}
+	cmd := NewCmdRemove(f, nil)
+	cmd.SetContext(context.Background())
+	cmd.SetArgs([]string{"api.example.com", "--path", "/v1"})
+	err := cmd.Execute()
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "api.example.com", got.GetDst())
+	assert.Equal(t, "/v1", got.GetPath())
+	assert.Contains(t, out.String(), "Removed path rule")
+}
+
+// TestRemoveRun_NoPath_RequestPathEmpty pins the wire-shape for the
+// whole-rule removal path: GetPath() must come back empty so the handler
+// stays on the existing branch.
+func TestRemoveRun_NoPath_RequestPathEmpty(t *testing.T) {
+	f := newTestFactory(t)
+	var got *adminv1.FirewallRemoveRuleRequest
+	f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
+		return &cpmocks.AdminServiceClientMock{
+			FirewallRemoveRuleFunc: func(_ context.Context, req *adminv1.FirewallRemoveRuleRequest, _ ...grpc.CallOption) (*adminv1.FirewallRemoveRuleResult, error) {
+				got = req
+				return &adminv1.FirewallRemoveRuleResult{StackRestarted: true, Status: adminv1.RemoveRuleStatus_REMOVE_RULE_STATUS_REMOVED}, nil
+			},
+		}, nil
+	}
+	cmd := NewCmdRemove(f, nil)
+	cmd.SetContext(context.Background())
+	cmd.SetArgs([]string{"api.example.com"})
+	err := cmd.Execute()
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Empty(t, got.GetPath())
 }

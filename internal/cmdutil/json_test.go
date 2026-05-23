@@ -19,12 +19,7 @@ func TestWriteJSON_Struct(t *testing.T) {
 	err := WriteJSON(&buf, item{Name: "Alice", Age: 30})
 	require.NoError(t, err)
 
-	expected := `{
-  "name": "Alice",
-  "age": 30
-}
-`
-	assert.Equal(t, expected, buf.String())
+	assert.Equal(t, "{\"name\":\"Alice\",\"age\":30}\n", buf.String())
 }
 
 func TestWriteJSON_Slice(t *testing.T) {
@@ -42,18 +37,7 @@ func TestWriteJSON_Slice(t *testing.T) {
 	err := WriteJSON(&buf, data)
 	require.NoError(t, err)
 
-	expected := `[
-  {
-    "id": 1,
-    "name": "alpha"
-  },
-  {
-    "id": 2,
-    "name": "beta"
-  }
-]
-`
-	assert.Equal(t, expected, buf.String())
+	assert.Equal(t, "[{\"id\":1,\"name\":\"alpha\"},{\"id\":2,\"name\":\"beta\"}]\n", buf.String())
 }
 
 func TestWriteJSON_EmptySlice(t *testing.T) {
@@ -70,7 +54,7 @@ func TestWriteJSON_Nil(t *testing.T) {
 	assert.Equal(t, "null\n", buf.String())
 }
 
-func TestWriteJSON_PrettyPrinted(t *testing.T) {
+func TestWriteJSON_Compact(t *testing.T) {
 	data := map[string]string{"key": "value"}
 
 	var buf bytes.Buffer
@@ -78,10 +62,10 @@ func TestWriteJSON_PrettyPrinted(t *testing.T) {
 	require.NoError(t, err)
 
 	output := buf.String()
-	// Must contain newlines (not compact single-line JSON).
-	assert.True(t, strings.Contains(output, "\n"), "expected newlines in pretty-printed output")
-	// Must use 2-space indentation.
-	assert.True(t, strings.Contains(output, "  \"key\""), "expected 2-space indentation")
+	// Compact: a single object on one line, followed by the encoder's trailing newline.
+	assert.Equal(t, "{\"key\":\"value\"}\n", output)
+	// No 2-space indentation.
+	assert.False(t, strings.Contains(output, "  \"key\""), "compact output should not contain indented keys")
 }
 
 func TestWriteJSON_NoHTMLEscaping(t *testing.T) {

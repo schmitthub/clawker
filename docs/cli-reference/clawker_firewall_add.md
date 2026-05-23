@@ -11,6 +11,11 @@ Add an egress rule
 Add a domain to the firewall allow list. The rule takes effect immediately
 via hot-reload — no container restart required.
 
+Pass --path together with --action to add a path-scoped rule onto the domain
+entry instead of (or alongside) the bare-domain allow. Path rules accumulate
+across calls; a repeated --path with a different --action overwrites the
+prior action for that path.
+
 ```
 clawker firewall add <domain> [flags]
 ```
@@ -26,14 +31,19 @@ clawker firewall add <domain> [flags]
 
   # Allow plain TCP traffic
   clawker firewall add api.example.com --proto tcp --port 8080
+
+  # Add a path-scoped allow rule onto a domain entry
+  clawker firewall add api.example.com --path /v1 --action allow
 ```
 
 ### Options
 
 ```
-  -h, --help           help for add
-      --port int       Port number (default: protocol-specific)
-      --proto string   Protocol (tls, ssh, tcp) (default "tls")
+      --action string   Action for the path rule: allow or deny (requires --path)
+  -h, --help            help for add
+      --path string     URL path prefix for a path-scoped rule, matched as a prefix at request time (requires --action)
+      --port int        Port number (default: protocol-specific)
+      --proto string    Protocol (tls, ssh, tcp) (default "tls")
 ```
 
 ### Options inherited from parent commands

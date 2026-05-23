@@ -69,15 +69,15 @@ The bypass sets an eBPF flag that allows all outbound traffic to go directly to 
 
 ### How rules are managed (agent reference)
 
-Firewall rules are stored in a persistent `egress-rules.yaml` file in clawker's data directory. All rule sources are **purely additive** — they merge into this file and never remove existing entries:
+Firewall rules are stored in a persistent `egress-rules.yaml` file in clawker's data directory. Rule sources merge into this file via a shared semantic — yaml input (project config) and CLI input (`clawker firewall add`) are peers:
 
 - **`add_domains`** in `clawker.yaml` — simple domain list, converted to TLS allow rules at startup
-- **`security.firewall.rules`** in `clawker.yaml` — full rule definitions (custom proto/port/action), synced at startup
-- **`clawker firewall add <domain>`** — appends to the same store at runtime
+- **`security.firewall.rules`** in `clawker.yaml` — full rule definitions (custom proto/port/action + optional path rules), synced at startup
+- **`clawker firewall add <domain>`** — applies the same merge at runtime; with `--path X --action Y` it attaches a path-scoped rule
 
-Duplicates are silently ignored (deduped by `dst:proto:port`). Rules persist across container restarts. Removing a domain from `clawker.yaml` does **not** remove it from the store — it gets re-synced on next startup.
+Rules are keyed by `dst:proto:port`. When a key already exists in the store, the new call merges in: caller wins on `Action`; caller wins on `PathDefault` only when the incoming value is non-empty (an empty incoming `path_default` preserves the stored value, so a bare `clawker firewall add` will not clobber a yaml-set `path_default` on the same rule). `PathRules` is unioned by `Path` with caller winning on same-`Path` collision; `--path` identifies a `PathRule` by exact-string match against the stored `path`, while at request time Envoy matches the stored `path` as a prefix when routing. A re-apply where every rule in the batch is identical to what's already in the store is a true no-op (no write, no reload); mixed batches still reconcile. Rules persist across container restarts. Removing a domain from `clawker.yaml` does **not** remove it from the store on its own — the workaround is `clawker firewall remove <domain>` (whole entry) or `clawker firewall remove <domain> --path <p>` (single path rule).
 
-**The only way to remove a rule is `clawker firewall remove <domain>`.** No other command (`reload`, `disable`, `stop`) removes rules from the store.
+**The only way to remove a rule is `clawker firewall remove`.** No other command (`reload`, `disable`, `stop`) removes rules from the store.
 
 ### Other firewall commands available to the user
 

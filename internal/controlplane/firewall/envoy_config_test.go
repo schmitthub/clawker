@@ -298,6 +298,44 @@ func TestGenerateEnvoyConfig_HTTPWithPathRules(t *testing.T) {
 	assert.Contains(t, out, "Blocked by clawker firewall")
 }
 
+// TestGenerateEnvoyConfig_DenylistPathRules_InferAllowDefault locks in the
+// fix for the inverse path-rule bug: a rule with only deny path_rules and
+// no explicit PathDefault must catch unmatched paths through to upstream
+// (allow), not 403. Without this, `firewall add foo.com --path /admin
+// --action deny` silently denied the whole domain.
+func TestGenerateEnvoyConfig_DenylistPathRules_InferAllowDefault(t *testing.T) {
+	t.Parallel()
+
+	rules := []config.EgressRule{
+		{
+			Dst:    "docs.example.com",
+			Proto:  "tls",
+			Port:   443,
+			Action: "allow",
+			PathRules: []config.PathRule{
+				{Path: "/admin", Action: "deny"},
+			},
+			// PathDefault deliberately unset — inference must produce
+			// "allow" so the catch-all routes to upstream.
+		},
+	}
+	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
+
+	yamlBytes, warnings, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
+	require.NoError(t, err)
+	assert.Empty(t, warnings)
+
+	out := string(yamlBytes)
+	assert.Contains(t, out, "docs.example.com")
+	assert.Contains(t, out, "/admin")
+	// The denied path emits a direct_response 403 in the generated config,
+	// but the catch-all "/" must route to the upstream cluster — not also
+	// 403. A second "Blocked by clawker firewall" string in the same vhost
+	// would mean the catch-all is denying too (the original bug).
+	blockCount := strings.Count(out, "Blocked by clawker firewall")
+	assert.Equal(t, 1, blockCount, "exactly one deny route (/admin); catch-all must route to upstream")
+}
+
 func TestGenerateEnvoyConfig_ZeroPortTLSDefaults443(t *testing.T) {
 	t.Parallel()
 

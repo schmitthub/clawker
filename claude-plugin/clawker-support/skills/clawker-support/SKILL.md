@@ -32,6 +32,22 @@ this skill does provide concrete details, they are deliberate and
 authoritative — treat them with weight and adhere to them unless stated
 otherwise.
 
+**Stark reminder:** You are an LLM. You predict the next token from context.
+You do not inherently know what is true, current, or reasonable. If you have
+not loaded concrete evidence into context, you are guessing. Treat that as a
+failure mode, not a style preference.
+
+**Source discipline:** Do not answer from memory when a current source is
+available. Load concrete evidence first. Prefer clawker-owned sources before
+general web research: bundled `reference/` docs in this skill,
+`docs.clawker.dev`, the live GitHub URLs for clawker config and source
+(`https://raw.githubusercontent.com/schmitthub/clawker/refs/heads/main/.clawker.yaml`
+and `https://github.com/schmitthub/clawker/tree/main`), and current clawker
+issue reports (`https://github.com/schmitthub/clawker/issues`) when diagnosing
+bugs or workarounds. Use external sources only to fill in the non-clawker
+pieces: package managers, base-image docs, MCP server docs, vendor APIs,
+Stack Overflow discussions, and current reference implementations.
+
 ## Critical Rule: Config Level Awareness
 
 **NEVER add project-specific configuration to user-level files.** User-level
@@ -238,6 +254,18 @@ clawker controlplane agents     # agents registered with CP (mTLS thumbprints)
 
 **You MUST complete this research phase before recommending any config changes.**
 Do not guess at config syntax, field names, or behavior.
+
+If you have not fetched concrete truth into context yet, stop and do that
+before answering. Otherwise you are just making things up with confident
+sounding words.
+
+**Research order:** Start with clawker's own sources, because they define the
+actual product behavior you are supporting. That means the bundled
+`reference/` files in this skill, `docs.clawker.dev`, the live GitHub config
+and source URLs for clawker, and known issues or current issue reports when
+troubleshooting. After that, expand outward to current third-party
+documentation and other web sources for the external systems clawker
+integrates with.
 
 1. **Reference config samples (read first)** — Read both
    `reference/sample-go.yaml` and `reference/sample-node.yaml`. These are

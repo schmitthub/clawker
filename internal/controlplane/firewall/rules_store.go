@@ -143,6 +143,76 @@ func RuleKey(r config.EgressRule) string {
 	return fmt.Sprintf("%s:%s:%d", r.Dst, r.Proto, r.Port)
 }
 
+// EffectivePathDefault resolves the catch-all action for HTTP paths under a
+// rule that don't match any explicit PathRule entry. Explicit PathDefault
+// always wins; otherwise the action is inferred from the path_rules
+// composition so a user who runs `firewall add foo.com --path /x --action
+// deny` gets denylist semantics (allow all paths except /x) without
+// having to know about the path_default knob:
+//
+//   - r.PathDefault non-empty               → r.PathDefault   (explicit override)
+//   - any PathRule with Action="allow"      → "deny"          (allowlist mode)
+//   - all PathRules have Action="deny"      → "allow"         (denylist mode)
+//   - no PathRules                          → "allow"         (vacuous; callers
+//     don't query this)
+func EffectivePathDefault(r config.EgressRule) string {
+	if r.PathDefault != "" {
+		return r.PathDefault
+	}
+	for _, pr := range r.PathRules {
+		if strings.EqualFold(pr.Action, "allow") {
+			return "deny"
+		}
+	}
+	return "allow"
+}
+
+// MergeRule merges incoming into existing for the same RuleKey. Caller wins
+// on Action; PathRules is unioned by Path with caller winning on same-path
+// collision. Callers MUST pre-normalize via NormalizeRule so scalar defaults
+// are populated before merge.
+//
+// PathDefault is preserved from existing when incoming.PathDefault is "" so
+// a bare CLI add (`clawker firewall add foo.com`) does not silently clear a
+// yaml-set default on the same key. A non-empty incoming.PathDefault wins.
+// The `string` proto field cannot distinguish "unset" from "explicitly
+// empty" — yaml authors who want to clear a default remove the rule and
+// re-add without it.
+func MergeRule(existing, incoming config.EgressRule) config.EgressRule {
+	out := existing
+	out.Action = incoming.Action
+	if incoming.PathDefault != "" {
+		out.PathDefault = incoming.PathDefault
+	}
+	out.PathRules = mergePathRules(existing.PathRules, incoming.PathRules)
+	return out
+}
+
+// mergePathRules unions existing and incoming by Path. Existing-side ordering
+// is preserved; an incoming PathRule whose Path matches an existing entry
+// overwrites that slot in place. Incoming-only PathRules are appended in
+// input order.
+func mergePathRules(existing, incoming []config.PathRule) []config.PathRule {
+	if len(incoming) == 0 {
+		return existing
+	}
+	out := make([]config.PathRule, len(existing))
+	copy(out, existing)
+	index := make(map[string]int, len(out))
+	for i, p := range out {
+		index[p.Path] = i
+	}
+	for _, p := range incoming {
+		if i, exists := index[p.Path]; exists {
+			out[i] = p
+			continue
+		}
+		index[p.Path] = len(out)
+		out = append(out, p)
+	}
+	return out
+}
+
 // RoutesFromRules projects a rule set into the BPF route_map entry form.
 // Destinations are normalized before hashing so the resulting DomainHash
 // matches whatever CoreDNS writes into dns_cache at resolve time (INV:

@@ -23,12 +23,16 @@ clawker firewall remove <domain> [flags]
 
   # Remove an SSH rule
   clawker firewall remove git.example.com --proto ssh --port 22
+
+  # Remove a single path rule from a domain entry (entry itself stays)
+  clawker firewall remove api.example.com --path /v1
 ```
 
 ### Options
 
 ```
   -h, --help           help for remove
+      --path string    Remove a single path rule by its stored path (exact string match); omit to remove the whole entry
       --port int       Port number
       --proto string   Protocol (tls, ssh, tcp) (default "tls")
 ```

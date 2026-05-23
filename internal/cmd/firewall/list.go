@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/cmdutil"
@@ -23,10 +24,40 @@ type ListOptions struct {
 
 // ruleRow is the JSON/template-friendly representation of an egress rule.
 type ruleRow struct {
-	Domain string `json:"domain"`
-	Proto  string `json:"proto"`
-	Port   string `json:"port"`
+	Domain      string    `json:"domain"`
+	Proto       string    `json:"proto"`
+	Port        string    `json:"port"`
+	Action      string    `json:"action"`
+	PathDefault string    `json:"path_default,omitempty"`
+	Paths       []pathRow `json:"paths,omitempty"`
+}
+
+// pathRow is a single path-scoped rule entry under a domain.
+type pathRow struct {
+	Path   string `json:"path"`
 	Action string `json:"action"`
+}
+
+// effectivePathDefault mirrors firewall.EffectivePathDefault on the CLI
+// side so `firewall list` can show the catch-all action that Envoy will
+// actually enforce — explicit r.path_default wins, otherwise inferred
+// from the path_rules composition (any allow → deny; only deny → allow).
+// Returns "" when the rule has no path rules, so the table render code
+// keeps suppressing the sub-row for bare-domain rules.
+func effectivePathDefault(r *adminv1.EgressRule) string {
+	if pd := r.GetPathDefault(); pd != "" {
+		return pd
+	}
+	prs := r.GetPathRules()
+	if len(prs) == 0 {
+		return ""
+	}
+	for _, pr := range prs {
+		if strings.EqualFold(pr.GetAction(), "allow") {
+			return "deny"
+		}
+	}
+	return "allow"
 }
 
 // NewCmdList creates the firewall list command.
@@ -99,11 +130,27 @@ func listRun(ctx context.Context, opts *ListOptions) error {
 		if r.GetPort() > 0 {
 			port = strconv.FormatUint(uint64(r.GetPort()), 10)
 		}
+
+		var paths []pathRow
+		if pr := r.GetPathRules(); len(pr) > 0 {
+			paths = make([]pathRow, 0, len(pr))
+			for _, p := range pr {
+				pAction := p.GetAction()
+				if pAction == "" {
+					pAction = "allow"
+				}
+				paths = append(paths, pathRow{Path: p.GetPath(), Action: pAction})
+			}
+			sort.Slice(paths, func(i, j int) bool { return paths[i].Path < paths[j].Path })
+		}
+
 		rows = append(rows, ruleRow{
-			Domain: r.GetDst(),
-			Proto:  proto,
-			Port:   port,
-			Action: action,
+			Domain:      r.GetDst(),
+			Proto:       proto,
+			Port:        port,
+			Action:      action,
+			PathDefault: effectivePathDefault(r),
+			Paths:       paths,
 		})
 	}
 
@@ -134,6 +181,12 @@ func listRun(ctx context.Context, opts *ListOptions) error {
 		tp := opts.TUI.NewTable("DOMAIN", "PROTO", "PORT", "ACTION")
 		for _, r := range rows {
 			tp.AddRow(r.Domain, r.Proto, r.Port, r.Action)
+			for _, p := range r.Paths {
+				tp.AddRow("  "+p.Path, "", "", p.Action)
+			}
+			if r.PathDefault != "" {
+				tp.AddRow("  path default", "", "", r.PathDefault)
+			}
 		}
 		return tp.Render()
 	}

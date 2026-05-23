@@ -730,12 +730,15 @@ func TestHandler_FirewallInit_SyncsRoutesFromStore(t *testing.T) {
 
 	// Pre-seed the store via the handler's own helper so the rules land
 	// on disk exactly as a prior CP run would have left them.
-	added, err := h.addRulesToStore([]config.EgressRule{
+	statuses, err := h.addRulesToStore([]config.EgressRule{
 		{Dst: "github.com", Proto: "ssh", Port: 22, Action: "allow"},
 		{Dst: "example.com", Proto: "tls", Port: 443, Action: "allow"},
 	})
 	require.NoError(t, err)
-	require.Equal(t, 2, added)
+	require.Len(t, statuses, 2, "one status per input rule")
+	for _, s := range statuses {
+		require.Equal(t, addStatusAdded, s, "both rules are brand-new")
+	}
 	// addRulesToStore writes to disk only; no Submit, so no SyncRoutes
 	// calls have been recorded yet.
 	require.Empty(t, mock.SyncRoutesCalls(), "store seed must not invoke SyncRoutes")
@@ -787,18 +790,15 @@ func TestHandler_FirewallInit_EmitsNormalizeWarningsButSyncsSurvivors(t *testing
 	mock := noopMock()
 	h, _ := ruleStoreHandler(t, mock)
 
-	// Two rules that normalize to the same key → one will dedupe
-	// and emit a warning; the other survives and must appear in the
-	// sync call.
-	added, err := h.addRulesToStore([]config.EgressRule{
+	// Two rules that normalize to the same key → first lands as ADDED,
+	// the second collides on the same RuleKey and reports UNCHANGED
+	// (identical re-apply after the first insert).
+	statuses, err := h.addRulesToStore([]config.EgressRule{
 		{Dst: "Example.Com", Proto: "tls", Port: 443, Action: "allow"},
 		{Dst: "example.com", Proto: "tls", Port: 443, Action: "allow"},
 	})
 	require.NoError(t, err)
-	// addRulesToStore dedupes by RuleKey pre-insert, so only one
-	// physical rule lands — good; that already exercises the
-	// path-of-least-surprise: no warning, one route.
-	assert.LessOrEqual(t, added, 2)
+	require.Len(t, statuses, 2, "one status per input rule even when keys collide")
 
 	_, err = h.FirewallInit(context.Background(), &adminv1.FirewallInitRequest{})
 	require.NoError(t, err)
@@ -1117,7 +1117,10 @@ func TestHandler_AddRules_StackDown_PersistsWithoutRestart(t *testing.T) {
 		Rules: []*adminv1.EgressRule{{Dst: "durable.example.com", Proto: "tls", Port: 443, Action: "allow"}},
 	})
 	require.NoError(t, err)
-	assert.Equal(t, int32(1), resp.GetAddedCount(), "added_count reflects the durable rule")
+	assert.Equal(t,
+		[]adminv1.AddRuleStatus{adminv1.AddRuleStatus_ADD_RULE_STATUS_ADDED},
+		resp.GetStatuses(),
+		"single durable rule reports ADDED")
 	assert.False(t, resp.GetStackRestarted(), "stack was down — no restart fired")
 
 	// Rule is still in the store for the next firewall up.
@@ -1257,6 +1260,8 @@ func TestHandler_RemoveRule_Success(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.True(t, resp.GetStackRestarted())
+	assert.Equal(t, adminv1.RemoveRuleStatus_REMOVE_RULE_STATUS_REMOVED, resp.GetStatus(),
+		"whole-rule removal reports REMOVED")
 	assert.Equal(t, reloadsBefore+1, stack.reloadCalls, "reconcile fires on successful remove")
 
 	listResp, err := h.FirewallListRules(context.Background(), &adminv1.FirewallListRulesRequest{})
@@ -1265,8 +1270,10 @@ func TestHandler_RemoveRule_Success(t *testing.T) {
 }
 
 // TestHandler_RemoveRule_NotFound_Typo is the whole reason this RPC
-// shrunk: a typo in the dst MUST surface as NotFound so the CLI can
-// render a failure, never a bogus "Removed rule: exmaple.com".
+// shrunk: a typo in the dst MUST surface as Status=NOT_FOUND so the CLI
+// can render a failure, never a bogus "Removed rule: exmaple.com". The
+// gRPC call succeeds (err == nil) — NOT_FOUND now travels on the
+// response, not as codes.NotFound.
 func TestHandler_RemoveRule_NotFound_Typo(t *testing.T) {
 	mock := noopMock()
 	h, stack := ruleStoreHandler(t, mock)
@@ -1277,12 +1284,12 @@ func TestHandler_RemoveRule_NotFound_Typo(t *testing.T) {
 	require.NoError(t, err)
 	reloadsBefore := stack.reloadCalls
 
-	_, err = h.FirewallRemoveRule(context.Background(), &adminv1.FirewallRemoveRuleRequest{
+	resp, err := h.FirewallRemoveRule(context.Background(), &adminv1.FirewallRemoveRuleRequest{
 		Dst: "exmaple.com", Proto: "tls", Port: 443,
 	})
-	require.Error(t, err)
-	assertCode(t, err, codes.NotFound)
-	assertReason(t, err, ReasonRuleNotFound)
+	require.NoError(t, err)
+	assert.Equal(t, adminv1.RemoveRuleStatus_REMOVE_RULE_STATUS_NOT_FOUND, resp.GetStatus())
+	assert.False(t, resp.GetStackRestarted(), "no reconcile fires on miss")
 
 	assert.Equal(t, reloadsBefore, stack.reloadCalls, "miss must not trigger reconcile")
 	listResp, _ := h.FirewallListRules(context.Background(), &adminv1.FirewallListRulesRequest{})
@@ -1292,7 +1299,8 @@ func TestHandler_RemoveRule_NotFound_Typo(t *testing.T) {
 
 // TestHandler_RemoveRule_NotFound_WrongProto covers the second failure
 // mode the user called out: stored example.com:tcp:80, asked to remove
-// example.com:tls:443 — proto+port disagree so the key misses.
+// example.com:tls:443 — proto+port disagree so the key misses and the
+// response carries Status=NOT_FOUND.
 func TestHandler_RemoveRule_NotFound_WrongProto(t *testing.T) {
 	mock := noopMock()
 	h, _ := ruleStoreHandler(t, mock)
@@ -1302,12 +1310,11 @@ func TestHandler_RemoveRule_NotFound_WrongProto(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = h.FirewallRemoveRule(context.Background(), &adminv1.FirewallRemoveRuleRequest{
+	resp, err := h.FirewallRemoveRule(context.Background(), &adminv1.FirewallRemoveRuleRequest{
 		Dst: "example.com", Proto: "tls", Port: 443,
 	})
-	require.Error(t, err)
-	assertCode(t, err, codes.NotFound)
-	assertReason(t, err, ReasonRuleNotFound)
+	require.NoError(t, err)
+	assert.Equal(t, adminv1.RemoveRuleStatus_REMOVE_RULE_STATUS_NOT_FOUND, resp.GetStatus())
 
 	listResp, _ := h.FirewallListRules(context.Background(), &adminv1.FirewallListRulesRequest{})
 	require.Len(t, listResp.GetRules(), 1, "tcp:80 rule untouched when tls:443 requested")
@@ -1334,6 +1341,8 @@ func TestHandler_RemoveRule_StackDown_PersistsRemoval(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.False(t, resp.GetStackRestarted())
+	assert.Equal(t, adminv1.RemoveRuleStatus_REMOVE_RULE_STATUS_REMOVED, resp.GetStatus(),
+		"removal is durable even when stack is down")
 	assert.Equal(t, reloadsBefore, stack.reloadCalls, "stack down: no reload")
 
 	listResp, _ := h.FirewallListRules(context.Background(), &adminv1.FirewallListRulesRequest{})
@@ -1354,4 +1363,262 @@ func assertReason(t *testing.T, err error, wantReason string) {
 		}
 	}
 	t.Fatalf("no errdetails.ErrorInfo with Reason=%q found (got %+v)", wantReason, st.Details())
+}
+
+// TestHandler_AddRules_KeyCollision_MergesPathRules is the regression test
+// for the path_rules-propagation bug. Pre-seeding the store with a path
+// rule, then re-sending the same key with a different path rule, must
+// produce a rule whose PathRules list contains BOTH entries — not the
+// first-write-wins skip the old addRulesToStore exhibited.
+func TestHandler_AddRules_KeyCollision_MergesPathRules(t *testing.T) {
+	mock := noopMock()
+	h, stack := ruleStoreHandler(t, mock)
+
+	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
+		Rules: []*adminv1.EgressRule{{
+			Dst: "api.example.com", Proto: "tls", Port: 443, Action: "allow",
+			PathRules: []*adminv1.PathRule{{Path: "/v1", Action: "allow"}},
+		}},
+	})
+	require.NoError(t, err)
+	reloadsBefore := stack.reloadCalls
+
+	resp, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
+		Rules: []*adminv1.EgressRule{{
+			Dst: "api.example.com", Proto: "tls", Port: 443, Action: "allow",
+			PathRules: []*adminv1.PathRule{{Path: "/v2", Action: "deny"}},
+		}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t,
+		[]adminv1.AddRuleStatus{adminv1.AddRuleStatus_ADD_RULE_STATUS_MODIFIED},
+		resp.GetStatuses(),
+		"merge mutated existing key → MODIFIED")
+	assert.Equal(t, reloadsBefore+1, stack.reloadCalls, "merge mutation must trigger one reconcile")
+
+	listResp, err := h.FirewallListRules(context.Background(), &adminv1.FirewallListRulesRequest{})
+	require.NoError(t, err)
+	require.Len(t, listResp.GetRules(), 1, "still one entry; same RuleKey")
+	got := listResp.GetRules()[0]
+	require.Len(t, got.GetPathRules(), 2, "both path rules persisted")
+	assert.Equal(t, "/v1", got.GetPathRules()[0].GetPath())
+	assert.Equal(t, "/v2", got.GetPathRules()[1].GetPath())
+	assert.Equal(t, "deny", got.GetPathRules()[1].GetAction())
+}
+
+// TestHandler_AddRules_KeyCollision_NoChange_NoReconcile asserts a
+// re-seed of identical rules is a true no-op: per-rule status reports
+// UNCHANGED, no Stack.Reload, no ebpf.SyncRoutes calls. This guards
+// against unnecessary churn on every container start.
+func TestHandler_AddRules_KeyCollision_NoChange_NoReconcile(t *testing.T) {
+	mock := noopMock()
+	h, stack := ruleStoreHandler(t, mock)
+
+	rule := &adminv1.EgressRule{
+		Dst: "api.example.com", Proto: "tls", Port: 443, Action: "allow",
+		PathRules: []*adminv1.PathRule{{Path: "/v1", Action: "allow"}},
+	}
+	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
+		Rules: []*adminv1.EgressRule{rule},
+	})
+	require.NoError(t, err)
+	reloadsBefore := stack.reloadCalls
+	syncBefore := len(mock.SyncRoutesCalls())
+
+	resp, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
+		Rules: []*adminv1.EgressRule{rule},
+	})
+	require.NoError(t, err)
+	assert.Equal(t,
+		[]adminv1.AddRuleStatus{adminv1.AddRuleStatus_ADD_RULE_STATUS_UNCHANGED},
+		resp.GetStatuses(),
+		"identical re-seed is UNCHANGED")
+	assert.Equal(t, reloadsBefore, stack.reloadCalls, "no reconcile on no-op")
+	assert.Equal(t, syncBefore, len(mock.SyncRoutesCalls()), "no SyncRoutes on no-op")
+}
+
+// TestHandler_AddRules_MixedBatch_ReportsPerRuleStatus is the
+// bootstrap-shaped case: a batch carrying [new, identical-reseed,
+// merge-mutation] must come back with statuses [ADDED, UNCHANGED,
+// MODIFIED] in input order. Order preservation is the wire contract
+// statuses[i] ↔ req.rules[i] on which the CLI message bank depends.
+func TestHandler_AddRules_MixedBatch_ReportsPerRuleStatus(t *testing.T) {
+	mock := noopMock()
+	h, _ := ruleStoreHandler(t, mock)
+
+	// Pre-seed: one rule that will get re-applied identically + one that
+	// will be merged with new path rule on next batch.
+	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
+		Rules: []*adminv1.EgressRule{
+			{Dst: "stable.example.com", Proto: "tls", Port: 443, Action: "allow"},
+			{
+				Dst: "api.example.com", Proto: "tls", Port: 443, Action: "allow",
+				PathRules: []*adminv1.PathRule{{Path: "/v1", Action: "allow"}},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	// Batch with [new key, identical-reseed of stable, merge add /v2 on
+	// api]. Status slice must mirror request order exactly.
+	resp, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
+		Rules: []*adminv1.EgressRule{
+			{Dst: "new.example.com", Proto: "tls", Port: 443, Action: "allow"},
+			{Dst: "stable.example.com", Proto: "tls", Port: 443, Action: "allow"},
+			{
+				Dst: "api.example.com", Proto: "tls", Port: 443, Action: "allow",
+				PathRules: []*adminv1.PathRule{{Path: "/v2", Action: "deny"}},
+			},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []adminv1.AddRuleStatus{
+		adminv1.AddRuleStatus_ADD_RULE_STATUS_ADDED,
+		adminv1.AddRuleStatus_ADD_RULE_STATUS_UNCHANGED,
+		adminv1.AddRuleStatus_ADD_RULE_STATUS_MODIFIED,
+	}, resp.GetStatuses(), "statuses[i] mirrors rules[i] in input order")
+}
+
+// TestHandler_AddRules_KeyCollision_PathRuleAction_CallerWins asserts the
+// same-Path caller-wins semantic at the handler boundary.
+func TestHandler_AddRules_KeyCollision_PathRuleAction_CallerWins(t *testing.T) {
+	mock := noopMock()
+	h, _ := ruleStoreHandler(t, mock)
+
+	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
+		Rules: []*adminv1.EgressRule{{
+			Dst: "api.example.com", Proto: "tls", Port: 443, Action: "allow",
+			PathRules: []*adminv1.PathRule{{Path: "/v1", Action: "allow"}},
+		}},
+	})
+	require.NoError(t, err)
+
+	_, err = h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
+		Rules: []*adminv1.EgressRule{{
+			Dst: "api.example.com", Proto: "tls", Port: 443, Action: "allow",
+			PathRules: []*adminv1.PathRule{{Path: "/v1", Action: "deny"}},
+		}},
+	})
+	require.NoError(t, err)
+
+	listResp, err := h.FirewallListRules(context.Background(), &adminv1.FirewallListRulesRequest{})
+	require.NoError(t, err)
+	require.Len(t, listResp.GetRules(), 1)
+	got := listResp.GetRules()[0]
+	require.Len(t, got.GetPathRules(), 1, "same Path collapses, no duplicate")
+	assert.Equal(t, "deny", got.GetPathRules()[0].GetAction(), "caller wins on same-Path collision")
+}
+
+// TestHandler_RemoveRule_WithPath_RemovesOnlyPathRule asserts the
+// path-scoped removal leaves the rule itself in place and removes only
+// the matching PathRule entry.
+func TestHandler_RemoveRule_WithPath_RemovesOnlyPathRule(t *testing.T) {
+	mock := noopMock()
+	h, _ := ruleStoreHandler(t, mock)
+
+	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
+		Rules: []*adminv1.EgressRule{{
+			Dst: "api.example.com", Proto: "tls", Port: 443, Action: "allow",
+			PathRules: []*adminv1.PathRule{
+				{Path: "/v1", Action: "allow"},
+				{Path: "/v2", Action: "deny"},
+			},
+		}},
+	})
+	require.NoError(t, err)
+
+	resp, err := h.FirewallRemoveRule(context.Background(), &adminv1.FirewallRemoveRuleRequest{
+		Dst: "api.example.com", Proto: "tls", Port: 443,
+		Path: "/v1",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, adminv1.RemoveRuleStatus_REMOVE_RULE_STATUS_PATH_REMOVED, resp.GetStatus(),
+		"path-scoped removal reports PATH_REMOVED")
+
+	listResp, err := h.FirewallListRules(context.Background(), &adminv1.FirewallListRulesRequest{})
+	require.NoError(t, err)
+	require.Len(t, listResp.GetRules(), 1, "rule itself remains")
+	got := listResp.GetRules()[0]
+	require.Len(t, got.GetPathRules(), 1, "only /v1 path rule removed")
+	assert.Equal(t, "/v2", got.GetPathRules()[0].GetPath())
+}
+
+// TestHandler_RemoveRule_WithPath_RuleMissing_NotFound asserts removal
+// against a non-existent (dst, proto, port) returns Status=NOT_FOUND on
+// the response regardless of the path argument.
+func TestHandler_RemoveRule_WithPath_RuleMissing_NotFound(t *testing.T) {
+	mock := noopMock()
+	h, _ := ruleStoreHandler(t, mock)
+
+	resp, err := h.FirewallRemoveRule(context.Background(), &adminv1.FirewallRemoveRuleRequest{
+		Dst: "missing.example.com", Proto: "tls", Port: 443,
+		Path: "/v1",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, adminv1.RemoveRuleStatus_REMOVE_RULE_STATUS_NOT_FOUND, resp.GetStatus())
+}
+
+// TestHandler_RemoveRule_WithPath_PathMissing_NotFound asserts the
+// rule-exists-but-no-such-path case also surfaces Status=NOT_FOUND
+// rather than silently succeeding.
+func TestHandler_RemoveRule_WithPath_PathMissing_NotFound(t *testing.T) {
+	mock := noopMock()
+	h, _ := ruleStoreHandler(t, mock)
+
+	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
+		Rules: []*adminv1.EgressRule{{
+			Dst: "api.example.com", Proto: "tls", Port: 443, Action: "allow",
+			PathRules: []*adminv1.PathRule{{Path: "/v1", Action: "allow"}},
+		}},
+	})
+	require.NoError(t, err)
+
+	resp, err := h.FirewallRemoveRule(context.Background(), &adminv1.FirewallRemoveRuleRequest{
+		Dst: "api.example.com", Proto: "tls", Port: 443,
+		Path: "/nosuch",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, adminv1.RemoveRuleStatus_REMOVE_RULE_STATUS_NOT_FOUND, resp.GetStatus())
+
+	listResp, _ := h.FirewallListRules(context.Background(), &adminv1.FirewallListRulesRequest{})
+	require.Len(t, listResp.GetRules(), 1, "untouched")
+	require.Len(t, listResp.GetRules()[0].GetPathRules(), 1, "untouched")
+}
+
+// TestHandler_RemoveRule_WithPath_StackDown_PersistsRemoval mirrors the
+// whole-rule stack-down test for the path-scoped branch: the path rule is
+// removed durably on disk and stack_restarted reports false rather than
+// firing a Reload against a down stack.
+func TestHandler_RemoveRule_WithPath_StackDown_PersistsRemoval(t *testing.T) {
+	mock := noopMock()
+	h, stack := ruleStoreHandler(t, mock)
+
+	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
+		Rules: []*adminv1.EgressRule{{
+			Dst: "api.example.com", Proto: "tls", Port: 443, Action: "allow",
+			PathRules: []*adminv1.PathRule{
+				{Path: "/v1", Action: "allow"},
+				{Path: "/v2", Action: "deny"},
+			},
+		}},
+	})
+	require.NoError(t, err)
+
+	stack.statusResult = Status{Running: false}
+	reloadsBefore := stack.reloadCalls
+
+	resp, err := h.FirewallRemoveRule(context.Background(), &adminv1.FirewallRemoveRuleRequest{
+		Dst: "api.example.com", Proto: "tls", Port: 443,
+		Path: "/v1",
+	})
+	require.NoError(t, err)
+	assert.False(t, resp.GetStackRestarted())
+	assert.Equal(t, adminv1.RemoveRuleStatus_REMOVE_RULE_STATUS_PATH_REMOVED, resp.GetStatus(),
+		"single path-rule removed → PATH_REMOVED")
+	assert.Equal(t, reloadsBefore, stack.reloadCalls, "stack down: no reload")
+
+	listResp, _ := h.FirewallListRules(context.Background(), &adminv1.FirewallListRulesRequest{})
+	require.Len(t, listResp.GetRules(), 1, "rule entry persists")
+	require.Len(t, listResp.GetRules()[0].GetPathRules(), 1, "removal durable on disk")
+	assert.Equal(t, "/v2", listResp.GetRules()[0].GetPathRules()[0].GetPath())
 }

@@ -700,9 +700,11 @@ func buildHTTPRoutes(r config.EgressRule, clusterName string) []any {
 		}
 	}
 
-	// Default action for unmatched paths.
-	pathDefault := strings.ToLower(r.PathDefault)
-	if pathDefault == "" || pathDefault == "deny" {
+	// Default action for unmatched paths. EffectivePathDefault honors an
+	// explicit r.PathDefault override and otherwise infers from the path_rules
+	// composition — see rules_store.go for the inference rule.
+	pathDefault := strings.ToLower(EffectivePathDefault(r))
+	if pathDefault == "deny" {
 		routes = append(routes, map[string]any{
 			"match": map[string]any{"prefix": "/"},
 			"direct_response": map[string]any{

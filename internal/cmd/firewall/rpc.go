@@ -84,8 +84,6 @@ func remediationForReason(reason string) string {
 		return "target container no longer exists"
 	case "RULE_INVALID":
 		return "rule validation failed — check domain syntax, proto, and port"
-	case "RULE_NOT_FOUND":
-		return "no matching rule — run `clawker firewall list` to see current rules"
 	case "RULE_STORE_WRITE":
 		return "rule change was not persisted — state is unchanged, safe to retry"
 	case "CERT_REGEN":
