@@ -1247,8 +1247,9 @@ func (h *Handler) removeRuleFromStore(toRemove config.EgressRule) (bool, error) 
 //
 // Returns matched=false when either the rule key does not exist or the path
 // is not present in the rule's PathRules. The caller maps both to
-// removeStatusNotFound on the response; the CLI qualifies the surfaced
-// error with the path so a typo never silently succeeds.
+// removeStatusNotFound on the response (surfaced on the wire as
+// REMOVE_RULE_STATUS_NOT_FOUND, not a gRPC error); the CLI qualifies the
+// rendered not-found message with the path so a typo never silently succeeds.
 func (h *Handler) removePathRuleFromStore(toRemove config.EgressRule, path string) (bool, error) {
 	targetKey := RuleKey(NormalizeRule(toRemove))
 	var matched bool

@@ -149,8 +149,9 @@ func TestAddCmd_NoPathFlag_BackwardCompatible(t *testing.T) {
 }
 
 // TestAddCmd_AlreadyExists_NoPath_PrintsInfoLine asserts that when the
-// server returns AddedCount=0 the CLI surfaces an "already exists" line
-// instead of the misleading "Added rule" success line.
+// server returns Statuses[0] == ADD_RULE_STATUS_UNCHANGED the CLI surfaces
+// an "already exists" line instead of the misleading "Added rule" success
+// line.
 func TestAddCmd_AlreadyExists_NoPath_PrintsInfoLine(t *testing.T) {
 	f, out, _ := testFactoryWithStreams(t)
 	f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
