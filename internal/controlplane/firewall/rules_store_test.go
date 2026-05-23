@@ -300,3 +300,24 @@ func TestMergeRule_EmptyIncomingPathRules_PreservesExisting(t *testing.T) {
 	require.Len(t, got.PathRules, 1, "existing PathRules preserved when incoming is empty")
 	assert.Equal(t, "/v1", got.PathRules[0].Path)
 }
+
+// TestMergeRule_EmptyIncomingPathDefault_PreservesExisting locks in the
+// invariant that a bare CLI add (no --path, no --path-default) must NOT
+// clear a yaml-set PathDefault on the same RuleKey. The string field can't
+// distinguish "unset" from "explicitly empty" so empty incoming defers to
+// existing.
+func TestMergeRule_EmptyIncomingPathDefault_PreservesExisting(t *testing.T) {
+	t.Parallel()
+	existing := config.EgressRule{
+		Dst: "api.example.com", Proto: "tls", Port: 443,
+		Action:      "allow",
+		PathDefault: "deny",
+	}
+	incoming := config.EgressRule{
+		Dst: "api.example.com", Proto: "tls", Port: 443,
+		Action: "allow",
+		// PathDefault unset — bare CLI add has nothing to say.
+	}
+	got := firewall.MergeRule(existing, incoming)
+	assert.Equal(t, "deny", got.PathDefault, "empty incoming PathDefault does not clobber existing")
+}

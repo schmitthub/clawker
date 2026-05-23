@@ -144,20 +144,22 @@ func RuleKey(r config.EgressRule) string {
 }
 
 // MergeRule merges incoming into existing for the same RuleKey. Caller wins
-// on Action and PathDefault; PathRules is unioned by Path with caller winning
-// on same-path collision. Callers MUST pre-normalize via NormalizeRule so
-// scalar defaults are populated before merge.
+// on Action; PathRules is unioned by Path with caller winning on same-path
+// collision. Callers MUST pre-normalize via NormalizeRule so scalar defaults
+// are populated before merge.
 //
-// PathDefault is overwritten unconditionally (caller wins). A bare CLI add
-// (`clawker firewall add foo.com`) carries PathDefault="" and will therefore
-// clear any previously-set PathDefault on the same key. This is by design
-// — the CLI captures current intent — but it means PathDefault is an
-// effectively yaml-side knob; CLI users who want a non-empty PathDefault
-// must encode it in their `.clawker.yaml`.
+// PathDefault is preserved from existing when incoming.PathDefault is "" so
+// a bare CLI add (`clawker firewall add foo.com`) does not silently clear a
+// yaml-set default on the same key. A non-empty incoming.PathDefault wins.
+// The `string` proto field cannot distinguish "unset" from "explicitly
+// empty" — yaml authors who want to clear a default remove the rule and
+// re-add without it.
 func MergeRule(existing, incoming config.EgressRule) config.EgressRule {
 	out := existing
 	out.Action = incoming.Action
-	out.PathDefault = incoming.PathDefault
+	if incoming.PathDefault != "" {
+		out.PathDefault = incoming.PathDefault
+	}
 	out.PathRules = mergePathRules(existing.PathRules, incoming.PathRules)
 	return out
 }

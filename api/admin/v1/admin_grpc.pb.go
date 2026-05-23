@@ -82,11 +82,15 @@ type AdminServiceClient interface {
 	// FirewallAddRules adds egress rules to the store and hot-reloads the
 	// stack. Synchronous: returns after the stack is healthy again.
 	FirewallAddRules(ctx context.Context, in *FirewallAddRulesRequest, opts ...grpc.CallOption) (*FirewallAddRulesResult, error)
-	// FirewallRemoveRule removes a single egress rule by (dst, proto, port)
-	// and hot-reloads the stack. Returns NOT_FOUND (sentinel
-	// RULE_NOT_FOUND) when no rule matches the key — typos and malformed
-	// hostnames both land here, since anything that can't match an
-	// existing rule key is a miss.
+	// FirewallRemoveRule removes a single egress rule keyed by
+	// (dst, proto, port), or a single PathRule entry when `path` is set,
+	// then hot-reloads the stack. Outcome travels on
+	// FirewallRemoveRuleResult.status — REMOVED / PATH_REMOVED / NOT_FOUND.
+	// NOT_FOUND is a typed response status, NOT a gRPC codes.NotFound
+	// error: typos, wrong-proto/port, and missing-path all collapse to the
+	// same outcome on the wire so the CLI never branches between error
+	// and response for the same case. Genuine store-I/O / validation
+	// failures still surface as gRPC errors.
 	FirewallRemoveRule(ctx context.Context, in *FirewallRemoveRuleRequest, opts ...grpc.CallOption) (*FirewallRemoveRuleResult, error)
 	// FirewallListRules returns the current normalized/deduplicated rule
 	// set from the store. Read-only.
@@ -307,11 +311,15 @@ type AdminServiceServer interface {
 	// FirewallAddRules adds egress rules to the store and hot-reloads the
 	// stack. Synchronous: returns after the stack is healthy again.
 	FirewallAddRules(context.Context, *FirewallAddRulesRequest) (*FirewallAddRulesResult, error)
-	// FirewallRemoveRule removes a single egress rule by (dst, proto, port)
-	// and hot-reloads the stack. Returns NOT_FOUND (sentinel
-	// RULE_NOT_FOUND) when no rule matches the key — typos and malformed
-	// hostnames both land here, since anything that can't match an
-	// existing rule key is a miss.
+	// FirewallRemoveRule removes a single egress rule keyed by
+	// (dst, proto, port), or a single PathRule entry when `path` is set,
+	// then hot-reloads the stack. Outcome travels on
+	// FirewallRemoveRuleResult.status — REMOVED / PATH_REMOVED / NOT_FOUND.
+	// NOT_FOUND is a typed response status, NOT a gRPC codes.NotFound
+	// error: typos, wrong-proto/port, and missing-path all collapse to the
+	// same outcome on the wire so the CLI never branches between error
+	// and response for the same case. Genuine store-I/O / validation
+	// failures still surface as gRPC errors.
 	FirewallRemoveRule(context.Context, *FirewallRemoveRuleRequest) (*FirewallRemoveRuleResult, error)
 	// FirewallListRules returns the current normalized/deduplicated rule
 	// set from the store. Read-only.

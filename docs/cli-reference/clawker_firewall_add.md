@@ -41,7 +41,7 @@ clawker firewall add <domain> [flags]
 ```
       --action string   Action for the path rule: allow or deny (requires --path)
   -h, --help            help for add
-      --path string     URL path prefix for a path-scoped rule (requires --action)
+      --path string     URL path prefix for a path-scoped rule, matched as a prefix at request time (requires --action)
       --port int        Port number (default: protocol-specific)
       --proto string    Protocol (tls, ssh, tcp) (default "tls")
 ```

@@ -237,6 +237,19 @@ func (h *Handler) submit(kind ActionKind, fn ActionFunc) (any, error) {
 	return res.Value, nil
 }
 
+// resultAs is a comma-ok wrapper for the queue-result type assertion. A
+// wrong-type result indicates a handler/closure wiring bug; returning an
+// error instead of panicking keeps CP up so eBPF stays supervised — see
+// the "CP crashing is a security incident" invariant in CLAUDE.md.
+func resultAs[T any](val any) (T, error) {
+	var zero T
+	typed, ok := val.(T)
+	if !ok {
+		return zero, fmt.Errorf("internal: queue result type mismatch: got %T, want %T", val, zero)
+	}
+	return typed, nil
+}
+
 // --- Global lifecycle ---
 
 // FirewallInit brings the firewall stack (Envoy + CoreDNS) up via a
@@ -296,7 +309,10 @@ func (h *Handler) FirewallInit(ctx context.Context, _ *adminv1.FirewallInitReque
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	r := val.(InitResult)
+	r, err := resultAs[InitResult](val)
+	if err != nil {
+		return nil, toStatus(err)
+	}
 	return &adminv1.FirewallInitResult{
 		EnvoyIp:   r.EnvoyIP,
 		CorednsIp: r.CoreDNSIP,
@@ -657,7 +673,10 @@ func (h *Handler) FirewallAddRules(ctx context.Context, req *adminv1.FirewallAdd
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	rr := val.(StackReloadResult)
+	rr, err := resultAs[StackReloadResult](val)
+	if err != nil {
+		return nil, toStatus(err)
+	}
 	return &adminv1.FirewallAddRulesResult{
 		Statuses:       toProtoAddStatuses(statuses),
 		StackRestarted: rr.Restarted,
@@ -701,7 +720,10 @@ func (h *Handler) FirewallRemoveRule(ctx context.Context, req *adminv1.FirewallR
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	rr := val.(StackReloadResult)
+	rr, err := resultAs[StackReloadResult](val)
+	if err != nil {
+		return nil, toStatus(err)
+	}
 	status := removeStatusRemoved
 	if pathMode {
 		status = removeStatusPathRemoved
@@ -726,7 +748,10 @@ func (h *Handler) FirewallListRules(ctx context.Context, _ *adminv1.FirewallList
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	r := val.(ListRulesResult)
+	r, err := resultAs[ListRulesResult](val)
+	if err != nil {
+		return nil, toStatus(err)
+	}
 	return &adminv1.FirewallListRulesResult{Rules: ConfigRulesToProto(r.Rules)}, nil
 }
 
@@ -785,7 +810,10 @@ func (h *Handler) FirewallReload(ctx context.Context, _ *adminv1.FirewallReloadR
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	rr := val.(StackReloadResult)
+	rr, err := resultAs[StackReloadResult](val)
+	if err != nil {
+		return nil, toStatus(err)
+	}
 	return &adminv1.FirewallReloadResult{StackRestarted: rr.Restarted}, nil
 }
 
@@ -801,7 +829,10 @@ func (h *Handler) FirewallStatus(ctx context.Context, _ *adminv1.FirewallStatusR
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	st := val.(StatusResult)
+	st, err := resultAs[StatusResult](val)
+	if err != nil {
+		return nil, toStatus(err)
+	}
 	return &adminv1.FirewallStatusResult{
 		Running:       st.Running,
 		EnvoyHealth:   st.EnvoyHealth,
@@ -831,7 +862,10 @@ func (h *Handler) FirewallRotateCA(ctx context.Context, _ *adminv1.FirewallRotat
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	rr := val.(StackReloadResult)
+	rr, err := resultAs[StackReloadResult](val)
+	if err != nil {
+		return nil, toStatus(err)
+	}
 	return &adminv1.FirewallRotateCAResult{StackRestarted: rr.Restarted}, nil
 }
 
@@ -850,7 +884,9 @@ func (h *Handler) FirewallSyncRoutes(ctx context.Context, _ *adminv1.FirewallSyn
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	_ = val.(StackReloadResult)
+	if _, err := resultAs[StackReloadResult](val); err != nil {
+		return nil, toStatus(err)
+	}
 	return &adminv1.FirewallSyncRoutesResult{Applied: uint32(len(h.routesFromStore()))}, nil
 }
 
@@ -875,7 +911,10 @@ func (h *Handler) FirewallResolveHostname(ctx context.Context, req *adminv1.Fire
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	r := val.(ResolveResult)
+	r, err := resultAs[ResolveResult](val)
+	if err != nil {
+		return nil, toStatus(err)
+	}
 	return &adminv1.FirewallResolveHostnameResult{Addresses: r.Addresses}, nil
 }
 
@@ -1175,7 +1214,8 @@ func (h *Handler) addRulesToStore(rules []config.EgressRule) ([]addStatus, error
 
 // removeRuleFromStore deletes the single rule whose normalized key
 // matches. Returns matched=false when no stored rule shares the key, so
-// the handler can surface ErrRuleNotFound without touching disk.
+// the caller can map the miss to removeStatusNotFound without touching
+// disk.
 func (h *Handler) removeRuleFromStore(toRemove config.EgressRule) (bool, error) {
 	targetKey := RuleKey(NormalizeRule(toRemove))
 	var matched bool
@@ -1207,7 +1247,7 @@ func (h *Handler) removeRuleFromStore(toRemove config.EgressRule) (bool, error) 
 //
 // Returns matched=false when either the rule key does not exist or the path
 // is not present in the rule's PathRules. The caller maps both to
-// ErrRuleNotFound; the caller (FirewallRemoveRule) qualifies the surfaced
+// removeStatusNotFound on the response; the CLI qualifies the surfaced
 // error with the path so a typo never silently succeeds.
 func (h *Handler) removePathRuleFromStore(toRemove config.EgressRule, path string) (bool, error) {
 	targetKey := RuleKey(NormalizeRule(toRemove))

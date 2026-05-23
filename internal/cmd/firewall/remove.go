@@ -55,7 +55,7 @@ immediately via hot-reload — no container restart required.`,
 
 	cmd.Flags().StringVar(&opts.Proto, "proto", "tls", "Protocol (tls, ssh, tcp)")
 	cmd.Flags().IntVar(&opts.Port, "port", 0, "Port number")
-	cmd.Flags().StringVar(&opts.Path, "path", "", "Remove a single path rule by path prefix; omit to remove the whole entry")
+	cmd.Flags().StringVar(&opts.Path, "path", "", "Remove a single path rule by its stored path (exact string match); omit to remove the whole entry")
 
 	return cmd
 }
@@ -137,9 +137,9 @@ func removeRun(ctx context.Context, opts *RemoveOptions) error {
 		printStackRestartedNote(ios, resp.GetStackRestarted(), "rule removed")
 	case adminv1.RemoveRuleStatus_REMOVE_RULE_STATUS_NOT_FOUND:
 		if opts.Path != "" {
-			return fmt.Errorf("removing firewall rule: rule not found: %s:%s:%d path %q", opts.Domain, opts.Proto, opts.Port, opts.Path)
+			return fmt.Errorf("removing firewall rule: rule not found: %s:%s:%d path %q — run `clawker firewall list` to see current rules", opts.Domain, opts.Proto, opts.Port, opts.Path)
 		}
-		return fmt.Errorf("removing firewall rule: rule not found: %s:%s:%d", opts.Domain, opts.Proto, opts.Port)
+		return fmt.Errorf("removing firewall rule: rule not found: %s:%s:%d — run `clawker firewall list` to see current rules", opts.Domain, opts.Proto, opts.Port)
 	default:
 		return fmt.Errorf("removing firewall rule: server returned unknown status %v", resp.GetStatus())
 	}

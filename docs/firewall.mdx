@@ -330,8 +330,8 @@ All firewall operations are available under `clawker firewall`:
 |---------|---------|
 | `clawker firewall status` | Show firewall health, running containers, rule count |
 | `clawker firewall list` | List all active egress rules |
-| `clawker firewall add DOMAIN` | Add a domain allow rule (use `--path` + `--action` to attach a path-scoped rule) |
-| `clawker firewall remove DOMAIN` | Remove a domain rule (use `--path` to remove only that path rule, leaving the entry) |
+| `clawker firewall add DOMAIN` | Add a domain allow rule (use `--path` + `--action` to attach a path-scoped rule; `--path` is the URL path prefix the rule routes on at request time) |
+| `clawker firewall remove DOMAIN` | Remove a domain rule (use `--path` to drop a single path entry; the lookup is exact-string against the stored `path` so a typo or sub-prefix won't match) |
 | `clawker firewall reload` | Force regenerate Envoy/CoreDNS configs |
 | `clawker firewall up` | Start the firewall daemon (usually automatic) |
 | `clawker firewall down` | Stop the firewall daemon |
@@ -442,7 +442,7 @@ clawker firewall add api.example.com --path /v1 --action allow
 clawker firewall add api.example.com --path /v2 --action deny
 ```
 
-Path rules accumulate across calls. Repeating a `--path` with a different `--action` overwrites that path's action. Use `clawker firewall remove api.example.com --path /v1` to drop a single path rule without removing the whole entry.
+Path rules accumulate across calls. Each entry's `path` is treated as a prefix by Envoy at request time. Adds, updates, and removes look the entry up by exact-string match on `path`: repeating the same `--path` with a different `--action` overwrites that entry's action; a different `--path` value appends a new entry. Use `clawker firewall remove api.example.com --path /v1` to drop a single path rule without removing the whole entry.
 
 ### DNS resolution failures
 
