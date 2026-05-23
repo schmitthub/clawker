@@ -321,3 +321,39 @@ func TestCheckPathRules(t *testing.T) {
 		})
 	}
 }
+
+// TestCheckPathRules_DenylistInference pins the parity with
+// firewall.EffectivePathDefault: a rule set where every PathRule is deny and
+// path_default is empty resolves the catch-all to "allow" (denylist mode), so
+// unmatched paths must pass on both Envoy and the host proxy.
+func TestCheckPathRules_DenylistInference(t *testing.T) {
+	denyOnly := []pathRule{
+		{Path: "/admin", Action: "deny"},
+		{Path: "/private", Action: "deny"},
+	}
+
+	tests := []struct {
+		name        string
+		rules       []pathRule
+		pathDefault string
+		urlPath     string
+		allowed     bool
+	}{
+		{"denylist_unmatched_allowed", denyOnly, "", "/public", true},
+		{"denylist_matched_denied", denyOnly, "", "/admin/users", false},
+		{"denylist_explicit_default_deny_wins", denyOnly, "deny", "/public", false},
+		{"empty_rules_no_default_allows", nil, "", "/anything", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := checkPathRules(tt.rules, tt.pathDefault, "host", tt.urlPath)
+			if tt.allowed && err != nil {
+				t.Errorf("expected path allowed, got: %v", err)
+			}
+			if !tt.allowed && err == nil {
+				t.Error("expected path blocked, got nil")
+			}
+		})
+	}
+}

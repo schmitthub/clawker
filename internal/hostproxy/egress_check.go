@@ -178,18 +178,35 @@ func checkPathRules(rules []pathRule, pathDefault, host, urlPath string) error {
 		}
 	}
 
-	// No path rule matched; use path_default (fail-closed: deny if unset).
+	// No path rule matched; resolve via the same allowlist/denylist inference
+	// the firewall side uses (firewall.EffectivePathDefault) so a denylist rule
+	// like `firewall add foo.com --path /admin --action deny` produces matching
+	// catch-all semantics across Envoy and the host proxy.
 	if action == "" {
-		action = pathDefault
-		if action == "" {
-			action = "deny"
-		}
+		action = effectivePathDefault(rules, pathDefault)
 	}
 
 	if !strings.EqualFold(action, "allow") {
 		return fmt.Errorf("path %q on %q is denied by egress path rules", urlPath, host)
 	}
 	return nil
+}
+
+// effectivePathDefault mirrors firewall.EffectivePathDefault: explicit
+// path_default wins; otherwise infer "deny" when any PathRule is allow
+// (allowlist mode) and "allow" when every PathRule is deny (denylist mode).
+// Must stay in lockstep with the firewall implementation — the same
+// egress-rules.yaml must enforce the same catch-all on both paths.
+func effectivePathDefault(rules []pathRule, pathDefault string) string {
+	if pathDefault != "" {
+		return pathDefault
+	}
+	for _, pr := range rules {
+		if strings.EqualFold(pr.Action, "allow") {
+			return "deny"
+		}
+	}
+	return "allow"
 }
 
 // normalizeEgressRule applies the same defaults as firewall.normalizeRule:
