@@ -88,7 +88,7 @@ func CheckURLAgainstEgressRules(targetURL, rulesFilePath string) error {
 func schemeToProto(scheme string) (proto string, defaultPort int, err error) {
 	switch strings.ToLower(scheme) {
 	case "https":
-		return "tls", 443, nil
+		return "http", 443, nil
 	case "http":
 		return "http", 80, nil
 	default:
@@ -209,16 +209,20 @@ func effectivePathDefault(rules []pathRule, pathDefault string) string {
 	return "allow"
 }
 
-// normalizeEgressRule applies the same defaults as firewall.normalizeRule:
-// empty proto → "tls", empty action → "allow", TLS with port 0 → 443.
+// normalizeEgressRule applies the same defaults as firewall.NormalizeRule:
+// legacy proto:"tls" → "http", empty proto → "http", empty action → "allow",
+// http with port 0 → 443.
 func normalizeEgressRule(r egressRule) egressRule {
+	if strings.EqualFold(r.Proto, "tls") {
+		r.Proto = "http"
+	}
 	if r.Proto == "" {
-		r.Proto = "tls"
+		r.Proto = "http"
 	}
 	if r.Action == "" {
 		r.Action = "allow"
 	}
-	if r.Port == 0 && strings.EqualFold(r.Proto, "tls") {
+	if r.Port == 0 && strings.EqualFold(r.Proto, "http") {
 		r.Port = 443
 	}
 	return r

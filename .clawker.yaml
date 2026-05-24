@@ -173,6 +173,7 @@ security:
       - docs.docker.com
       - bpfman.io
       - docs.ebpf.io
+      - docs.cilium.io
     rules:
       - action: allow
         dst: github.com
@@ -185,7 +186,7 @@ security:
           - action: allow
             path: /syft/releases/
         port: 443
-        proto: tls
+        proto: http
       - action: allow
         dst: raw.githubusercontent.com
         path_default: deny
@@ -197,7 +198,7 @@ security:
           - action: allow
             path: /envoyproxy/
         port: 443
-        proto: tls
+        proto: http
   git_credentials:
     copy_git_config: true
     forward_gpg: true

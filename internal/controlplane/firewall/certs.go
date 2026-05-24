@@ -161,9 +161,10 @@ func RegenerateDomainCerts(rules []config.EgressRule, certDir string, caCert *x5
 	var order []string // preserve deterministic iteration
 
 	for _, rule := range rules {
-		// Only TLS rules need certificates — skip TCP, SSH, HTTP.
+		// Only HTTP rules (TLS-terminated MITM HCM) need certificates — skip
+		// opaque TCP / SSH pass-through which do not terminate TLS.
 		proto := strings.ToLower(rule.Proto)
-		if proto == "tcp" || proto == "ssh" || proto == "http" {
+		if proto == "tcp" || proto == "ssh" {
 			continue
 		}
 		if isIPOrCIDR(rule.Dst) {

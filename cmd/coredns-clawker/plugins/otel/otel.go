@@ -28,12 +28,37 @@ type Emitter interface {
 }
 
 type Handler struct {
-	Next    plugin.Handler
-	Zone    string
+	Next plugin.Handler
+	Zone string
+	// Action is the clawker firewall verdict for every query this handler
+	// observes. Derived from zone identity at plugin construction (named
+	// zones forward upstream → "allowed"; the catch-all `.` zone returns
+	// NXDOMAIN → "denied"). Stamped on every emitted QueryEvent so the OS
+	// index records the firewall decision distinct from the DNS rcode
+	// (which can be NXDOMAIN/SERVFAIL on an allowed-zone query when the
+	// upstream returns no record or the resolver fails — neither is a
+	// clawker block). See [[project_mitm_load_bearing]] for the
+	// threat-model context: the action field is consumed by the firewall
+	// observability dashboard alongside Envoy + eBPF action values, all
+	// with vocabulary `allowed | denied` (eBPF additionally emits
+	// `bypassed`).
+	Action  string
 	Emitter Emitter
 }
 
 func (h Handler) Name() string { return pluginName }
+
+// ActionForZone derives the clawker firewall action for a CoreDNS zone.
+// The catch-all `.` zone (with its templated NXDOMAIN response) is the
+// only deny path served by CoreDNS; every other configured zone forwards
+// upstream and is allowed. Shared between setup() and tests so the test
+// harness exercises the same derivation logic as the production wiring.
+func ActionForZone(zone string) string {
+	if strings.TrimSpace(zone) == "." {
+		return "denied"
+	}
+	return "allowed"
+}
 
 type QueryEvent struct {
 	Timestamp   time.Time
@@ -43,6 +68,7 @@ type QueryEvent struct {
 	QueryName   string
 	QueryType   string
 	RCode       string
+	Action      string
 	Answers     []string
 	AnswerCount int
 	Err         error
@@ -109,6 +135,7 @@ func (e *otelEmitter) Emit(ctx context.Context, event QueryEvent) error {
 		otellog.String("query_name", event.QueryName),
 		otellog.String("qtype", event.QueryType),
 		otellog.String("rcode", event.RCode),
+		otellog.String("action", event.Action),
 		otellog.Int("answer_count", event.AnswerCount),
 		otellog.Float64("duration_ms", float64(event.Duration)/float64(time.Millisecond)),
 	)
@@ -137,6 +164,7 @@ func (h Handler) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg)
 		ClientIP:  remoteIP(w.RemoteAddr()),
 		Zone:      strings.TrimSuffix(h.Zone, "."),
 		RCode:     dns.RcodeToString[rcode],
+		Action:    h.Action,
 		Err:       err,
 	}
 	if len(r.Question) > 0 {

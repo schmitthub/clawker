@@ -50,7 +50,7 @@ func (s *otelSink) Emit(ctx context.Context, ev Event) {
 	var rec otellog.Record
 	// event.name is per-emit-site (connect / sendmsg / sock_create) so
 	// dashboards can filter `event.name:ebpf.egress.connect AND
-	// verdict:denied` without bit-twiddling Flags. SetEventName
+	// action:denied` without bit-twiddling Flags. SetEventName
 	// populates OTLP's LogRecord.event_name; OS's OTLP exporter does
 	// not project that field into the SS4O document, so we also emit
 	// `event.name` as an attribute (the SS4O / clawker convention,
@@ -75,7 +75,7 @@ func (s *otelSink) Emit(ctx context.Context, ev Event) {
 	//     formatting ("4,318") which is wrong for IDs.
 	attrs := []otellog.KeyValue{
 		otellog.String("event.name", name),
-		otellog.String("verdict", ev.Verdict.String()),
+		otellog.String("action", ev.Verdict.String()),
 		otellog.String("container_id", ev.ContainerID),
 		otellog.String("agent", ev.Agent),
 		otellog.String("project", ev.Project),

@@ -14,22 +14,22 @@ package config
 // they share IPs with api.anthropic.com.
 var requiredFirewallRules = []EgressRule{
 	// Claude Code — API and OAuth
-	{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
-	{Dst: "claude.com", Proto: "tls", Port: 443, Action: "allow"},
-	{Dst: "platform.claude.com", Proto: "tls", Port: 443, Action: "allow"},
-	{Dst: ".claude.ai", Proto: "tls", Port: 443, Action: "allow"},
+	{Dst: "api.anthropic.com", Proto: "http", Port: 443, Action: "allow"},
+	{Dst: "claude.com", Proto: "http", Port: 443, Action: "allow"},
+	{Dst: "platform.claude.com", Proto: "http", Port: 443, Action: "allow"},
+	{Dst: ".claude.ai", Proto: "http", Port: 443, Action: "allow"},
 	// Claude Code — MCP proxy
-	{Dst: "mcp-proxy.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
+	{Dst: "mcp-proxy.anthropic.com", Proto: "http", Port: 443, Action: "allow"},
 	// Node.js / npm — registry for `npm install -g` (presets + user_run) and
 	// runtime hook deps. Node is baked into every image; without registry
 	// access the unprivileged user cannot install global packages.
-	{Dst: "registry.npmjs.org", Proto: "tls", Port: 443, Action: "allow"},
+	{Dst: "registry.npmjs.org", Proto: "http", Port: 443, Action: "allow"},
 	// Claude Code — telemetry
-	{Dst: "sentry.io", Proto: "tls", Port: 443, Action: "allow"},
-	{Dst: "statsig.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
-	{Dst: "statsig.com", Proto: "tls", Port: 443, Action: "allow"},
-	{Dst: ".datadoghq.com", Proto: "tls", Port: 443, Action: "allow"},
-	{Dst: ".datadoghq.eu", Proto: "tls", Port: 443, Action: "allow"},
+	{Dst: "sentry.io", Proto: "http", Port: 443, Action: "allow"},
+	{Dst: "statsig.anthropic.com", Proto: "http", Port: 443, Action: "allow"},
+	{Dst: "statsig.com", Proto: "http", Port: 443, Action: "allow"},
+	{Dst: ".datadoghq.com", Proto: "http", Port: 443, Action: "allow"},
+	{Dst: ".datadoghq.eu", Proto: "http", Port: 443, Action: "allow"},
 }
 
 // requiredFirewallDomains is derived from requiredFirewallRules for backwards compatibility.

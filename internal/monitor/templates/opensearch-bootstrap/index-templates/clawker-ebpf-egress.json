@@ -18,7 +18,7 @@
               }
             },
             "source":        { "type": "keyword" },
-            "verdict":       { "type": "keyword" },
+            "action":        { "type": "keyword" },
             "container_id":  { "type": "keyword" },
             "agent":         { "type": "keyword" },
             "project":       { "type": "keyword" },
@@ -45,7 +45,7 @@
     }
   },
   "_meta": {
-    "description": "eBPF netlogger egress decision records (service.name=ebpf-egress) — per-decision-point verdict + attribution + 4-tuple + domain",
+    "description": "eBPF netlogger egress decision records (service.name=ebpf-egress) — per-decision-point action + attribution + 4-tuple + domain",
     "managed_by": "clawker-opensearch-bootstrap"
   }
 }

@@ -133,7 +133,7 @@ func TestOtelSink_EmitsAllAttributes(t *testing.T) {
 		want any
 	}{
 		{"event.name", wantEventName},
-		{"verdict", "allowed"},
+		{"action", "allowed"},
 		{"container_id", "cid-abc"},
 		{"agent", "a1"},
 		{"project", "p1"},
@@ -193,7 +193,7 @@ func TestOtelSink_EmitsEmptyFieldsOnZeroEvent(t *testing.T) {
 
 	// Required attributes: emitted unconditionally on every record.
 	for _, key := range []string{
-		"event.name", "verdict", "container_id", "agent", "project",
+		"event.name", "action", "container_id", "agent", "project",
 		"cgroup_id", "bpf_ts_ns", "dst_port", "l4_proto",
 		"l4_proto_code", "ipv6", "ipv4_mapped", "no_dst", "domain_hash",
 	} {
@@ -212,8 +212,8 @@ func TestOtelSink_EmitsEmptyFieldsOnZeroEvent(t *testing.T) {
 		// zero Event has EmitSite=0 = EmitSiteConnect
 		t.Errorf("event.name = %q; want ebpf.egress.connect (default EmitSite)", got)
 	}
-	if got := attrs["verdict"].AsString(); got != "bypassed" {
-		t.Errorf("verdict = %q; want bypassed", got)
+	if got := attrs["action"].AsString(); got != "bypassed" {
+		t.Errorf("action = %q; want bypassed", got)
 	}
 	if got := attrs["container_id"].AsString(); got != "" {
 		t.Errorf("container_id = %q; want empty string", got)

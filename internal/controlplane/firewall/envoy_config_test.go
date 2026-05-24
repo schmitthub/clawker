@@ -30,7 +30,7 @@ func TestTCPMappings(t *testing.T) {
 		{
 			name: "TLS rules are excluded",
 			rules: []config.EgressRule{
-				{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
+				{Dst: "api.anthropic.com", Proto: "http", Port: 443, Action: "allow"},
 			},
 			expected: nil,
 		},
@@ -68,9 +68,9 @@ func TestTCPMappings(t *testing.T) {
 		{
 			name: "mixed TLS and TCP — only TCP produces mappings",
 			rules: []config.EgressRule{
-				{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
+				{Dst: "api.anthropic.com", Proto: "http", Port: 443, Action: "allow"},
 				{Dst: "github.com", Proto: "ssh", Port: 22, Action: "allow"},
-				{Dst: "registry.npmjs.org", Proto: "tls", Port: 443, Action: "allow"},
+				{Dst: "registry.npmjs.org", Proto: "http", Port: 443, Action: "allow"},
 				{Dst: "db.example.com", Proto: "tcp", Port: 5432, Action: "allow"},
 			},
 			expected: []TCPMapping{
@@ -184,7 +184,7 @@ func TestGenerateEnvoyConfig_TCPListeners(t *testing.T) {
 	t.Parallel()
 
 	rules := []config.EgressRule{
-		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
+		{Dst: "api.anthropic.com", Proto: "http", Port: 443, Action: "allow"},
 		{Dst: "github.com", Proto: "ssh", Port: 22, Action: "allow"},
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
@@ -196,55 +196,11 @@ func TestGenerateEnvoyConfig_TCPListeners(t *testing.T) {
 	assert.Contains(t, string(yamlBytes), "tcp_github_com_22")
 }
 
-func TestGenerateEnvoyConfig_HTTPListener(t *testing.T) {
-	t.Parallel()
-
-	rules := []config.EgressRule{
-		{Dst: "example.com", Proto: "http", Port: 80, Action: "allow"},
-	}
-	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
-
-	yamlBytes, warnings, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
-	require.NoError(t, err)
-	assert.Empty(t, warnings)
-
-	out := string(yamlBytes)
-	// HTTP rules are served via the egress listener's raw_buffer filter chain.
-	assert.Contains(t, out, "name: egress")
-	assert.Contains(t, out, "raw_buffer")
-	assert.Contains(t, out, "http_egress")
-	assert.Contains(t, out, "http_egress_routes")
-	assert.Contains(t, out, "example.com")
-	assert.Contains(t, out, "deny_all")
-	assert.Contains(t, out, "http_example_com_80")
-}
-
-func TestGenerateEnvoyConfig_MixedHTTPAndTLS(t *testing.T) {
-	t.Parallel()
-
-	rules := []config.EgressRule{
-		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
-		{Dst: "example.com", Proto: "http", Port: 80, Action: "allow"},
-	}
-	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
-
-	yamlBytes, warnings, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
-	require.NoError(t, err)
-	assert.Empty(t, warnings)
-
-	out := string(yamlBytes)
-	// Single egress listener with both TLS filter chains and raw_buffer HTTP filter chain.
-	assert.Contains(t, out, "name: egress")
-	assert.Contains(t, out, "tls_api_anthropic_com_443")
-	assert.Contains(t, out, "raw_buffer")
-	assert.Contains(t, out, "http_egress")
-}
-
 func TestGenerateEnvoyConfig_TLSClusterAutoConfig(t *testing.T) {
 	t.Parallel()
 
 	rules := []config.EgressRule{
-		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
+		{Dst: "api.anthropic.com", Proto: "http", Port: 443, Action: "allow"},
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
@@ -268,36 +224,6 @@ func TestGenerateEnvoyConfig_TLSClusterAutoConfig(t *testing.T) {
 	assert.NotContains(t, out, "envoy.filters.http.dynamic_forward_proxy")
 }
 
-func TestGenerateEnvoyConfig_HTTPWithPathRules(t *testing.T) {
-	t.Parallel()
-
-	rules := []config.EgressRule{
-		{
-			Dst:   "api.example.com",
-			Proto: "http",
-			Port:  80,
-			PathRules: []config.PathRule{
-				{Path: "/api/v1", Action: "allow"},
-				{Path: "/admin", Action: "deny"},
-			},
-			PathDefault: "deny",
-			Action:      "allow",
-		},
-	}
-	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
-
-	yamlBytes, warnings, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
-	require.NoError(t, err)
-	assert.Empty(t, warnings)
-
-	out := string(yamlBytes)
-	assert.Contains(t, out, "http_egress")
-	assert.Contains(t, out, "api.example.com")
-	assert.Contains(t, out, "/api/v1")
-	assert.Contains(t, out, "/admin")
-	assert.Contains(t, out, "Blocked by clawker firewall")
-}
-
 // TestGenerateEnvoyConfig_DenylistPathRules_InferAllowDefault locks in the
 // fix for the inverse path-rule bug: a rule with only deny path_rules and
 // no explicit PathDefault must catch unmatched paths through to upstream
@@ -309,7 +235,7 @@ func TestGenerateEnvoyConfig_DenylistPathRules_InferAllowDefault(t *testing.T) {
 	rules := []config.EgressRule{
 		{
 			Dst:    "docs.example.com",
-			Proto:  "tls",
+			Proto:  "http",
 			Port:   443,
 			Action: "allow",
 			PathRules: []config.PathRule{
@@ -330,10 +256,12 @@ func TestGenerateEnvoyConfig_DenylistPathRules_InferAllowDefault(t *testing.T) {
 	assert.Contains(t, out, "/admin")
 	// The denied path emits a direct_response 403 in the generated config,
 	// but the catch-all "/" must route to the upstream cluster — not also
-	// 403. A second "Blocked by clawker firewall" string in the same vhost
-	// would mean the catch-all is denying too (the original bug).
-	blockCount := strings.Count(out, "Blocked by clawker firewall")
-	assert.Equal(t, 1, blockCount, "exactly one deny route (/admin); catch-all must route to upstream")
+	// 403. Count route-level `action: denied` clawker metadata entries:
+	// the per-rule deny route and the deny_all virtual-host route are the
+	// two structurally expected denies in this minimal config. A third
+	// would mean the catch-all "/" is also denying (the original bug).
+	denyMetadataCount := strings.Count(out, "action: denied")
+	assert.Equal(t, 2, denyMetadataCount, "two deny routes expected (/admin path rule + deny_all virtual host); catch-all must route to upstream")
 }
 
 func TestGenerateEnvoyConfig_ZeroPortTLSDefaults443(t *testing.T) {
@@ -343,8 +271,8 @@ func TestGenerateEnvoyConfig_ZeroPortTLSDefaults443(t *testing.T) {
 	// normalizeRule defaulted TLS to 443. GenerateEnvoyConfig must handle this
 	// defensively — Envoy rejects port_value:0 with a validation error.
 	rules := []config.EgressRule{
-		{Dst: "api.anthropic.com", Proto: "tls", Port: 0, Action: "allow"},
-		{Dst: "github.com", Proto: "tls", Port: 0, Action: "allow"},
+		{Dst: "api.anthropic.com", Proto: "http", Port: 0, Action: "allow"},
+		{Dst: "github.com", Proto: "http", Port: 0, Action: "allow"},
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
@@ -426,7 +354,7 @@ func TestBuildHTTPAccessLog_DegradedModeStdoutOnly(t *testing.T) {
 	// Trust-lane invariant: when mTLS material is unavailable, infra
 	// services must NOT emit OTLP across the untrusted lane. Only the
 	// stdout sink ships from this helper; the OTel entry must be absent.
-	logs := buildHTTPAccessLog("http", ALSConfig{})
+	logs := buildHTTPAccessLog(true, "allowed", ALSConfig{})
 	require.Len(t, logs, 1, "degraded mode must emit stdout sink only")
 	findStdoutEntry(t, logs)
 }
@@ -434,7 +362,7 @@ func TestBuildHTTPAccessLog_DegradedModeStdoutOnly(t *testing.T) {
 func TestBuildHTTPAccessLog(t *testing.T) {
 	t.Parallel()
 
-	logs := buildHTTPAccessLog("http", ALSConfig{MTLS: true, Port: 4319})
+	logs := buildHTTPAccessLog(true, "%METADATA(ROUTE:clawker:action)%", ALSConfig{MTLS: true, Port: 4319})
 	require.Len(t, logs, 2, "expected dual-sink: stdout + otel")
 
 	// Stdout sink: legacy JSON access log surfacing in `docker logs`.
@@ -447,9 +375,19 @@ func TestBuildHTTPAccessLog(t *testing.T) {
 	jf, ok := lf["json_format"].(map[string]any)
 	require.True(t, ok)
 
-	// Common fields.
-	assert.Equal(t, "http", jf["proto"])
-	assert.Equal(t, "envoy", jf["source"])
+	// OTel network/tls semconv fields replace the legacy `proto` overload.
+	assert.Equal(t, "tcp", jf["network.transport"])
+	assert.Equal(t, "http", jf["network.protocol.name"])
+	assert.Equal(t, "%PROTOCOL%", jf["network.protocol.version"])
+	assert.Equal(t, "true", jf["tls.established"], "HCM with tlsTerminated=true must stamp tls.established=true")
+	assert.Equal(t, "%DOWNSTREAM_TLS_VERSION%", jf["tls.protocol.version"])
+	assert.Equal(t, "%DOWNSTREAM_TLS_CIPHER%", jf["tls.cipher"])
+
+	// Common fields. Note: `source: "envoy"` and `timestamp` have been
+	// pruned — `resource.service.name=envoy` (OTel ALS resource attribute)
+	// and the OTel envelope `@timestamp` cover them respectively.
+	assert.Nil(t, jf["source"], "redundant with resource.service.name=envoy")
+	assert.Nil(t, jf["timestamp"], "redundant with envelope @timestamp")
 	assert.Equal(t, "%REQUESTED_SERVER_NAME%", jf["domain"])
 	assert.Equal(t, "%DURATION%", jf["duration_ms"])
 	assert.Equal(t, "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%", jf["client_ip"])
@@ -459,6 +397,13 @@ func TestBuildHTTPAccessLog(t *testing.T) {
 	assert.Equal(t, "%REQ(:METHOD)%", jf["method"])
 	assert.Equal(t, "%REQ(:PATH)%", jf["path"])
 	assert.Equal(t, "%REQ(Host)%", jf["request_host"])
+	assert.Equal(t, "%UPSTREAM_TRANSPORT_FAILURE_REASON%", jf["upstream_transport_failure_reason"])
+
+	// Legacy field names dropped.
+	_, hasLegacyProto := jf["proto"]
+	assert.False(t, hasLegacyProto, "legacy `proto` field must be gone (replaced by network.transport / network.protocol.name)")
+	_, hasLegacyDsTLS := jf["downstream_tls_version"]
+	assert.False(t, hasLegacyDsTLS, "legacy `downstream_tls_version` replaced by tls.protocol.version")
 
 	// OTel ALS sink: structured fields on attributes, service.name on resource.
 	otelEntry := findOtelEntry(t, logs)
@@ -477,9 +422,25 @@ func TestBuildHTTPAccessLog(t *testing.T) {
 
 	attrs, ok := otc["attributes"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "http", otelAttrValue(t, attrs, "proto"))
+	assert.Equal(t, "tcp", otelAttrValue(t, attrs, "network.transport"))
+	assert.Equal(t, "http", otelAttrValue(t, attrs, "network.protocol.name"))
+	assert.Equal(t, "%PROTOCOL%", otelAttrValue(t, attrs, "network.protocol.version"))
+	assert.Equal(t, "true", otelAttrValue(t, attrs, "tls.established"))
 	assert.Equal(t, "%REQ(:METHOD)%", otelAttrValue(t, attrs, "method"))
 	assert.Equal(t, "%REQ(:PATH)%", otelAttrValue(t, attrs, "path"))
+}
+
+func TestBuildHTTPAccessLog_PlaintextHCMStampsTLSEstablishedFalse(t *testing.T) {
+	t.Parallel()
+
+	// When the plaintext HCM filter chain (no upstream TLS termination) calls
+	// the builder, tls.established must stamp "false" so consumers can
+	// distinguish HTTPS-MITM records from plaintext HTTP records purely from
+	// the indexed attribute.
+	logs := buildHTTPAccessLog(false, "allowed", ALSConfig{})
+	stdoutEntry := findStdoutEntry(t, logs)
+	jf := stdoutEntry["typed_config"].(map[string]any)["log_format"].(map[string]any)["json_format"].(map[string]any)
+	assert.Equal(t, "false", jf["tls.established"])
 }
 
 func TestBuildTCPAccessLog_DegradedModeStdoutOnly(t *testing.T) {
@@ -487,7 +448,7 @@ func TestBuildTCPAccessLog_DegradedModeStdoutOnly(t *testing.T) {
 
 	// Mirror of the HTTP-side degraded-mode guard at the TCP/SSH/deny
 	// access-log builder.
-	logs := buildTCPAccessLog("tls", ALSConfig{})
+	logs := buildTCPAccessLog("ssh", "allowed", ALSConfig{})
 	require.Len(t, logs, 1, "degraded mode must emit stdout sink only")
 	findStdoutEntry(t, logs)
 }
@@ -495,7 +456,7 @@ func TestBuildTCPAccessLog_DegradedModeStdoutOnly(t *testing.T) {
 func TestBuildTCPAccessLog(t *testing.T) {
 	t.Parallel()
 
-	logs := buildTCPAccessLog("tls", ALSConfig{MTLS: true, Port: 4319})
+	logs := buildTCPAccessLog("ssh", "allowed", ALSConfig{MTLS: true, Port: 4319})
 	require.Len(t, logs, 2, "expected dual-sink: stdout + otel")
 
 	stdoutEntry := findStdoutEntry(t, logs)
@@ -506,8 +467,16 @@ func TestBuildTCPAccessLog(t *testing.T) {
 	jf, ok := lf["json_format"].(map[string]any)
 	require.True(t, ok)
 
+	// OTel network/tls semconv fields.
+	assert.Equal(t, "tcp", jf["network.transport"])
+	assert.Equal(t, "ssh", jf["network.protocol.name"])
+	assert.Equal(t, "false", jf["tls.established"], "opaque TCP listener does not terminate TLS")
+
+	// network.protocol.version is HTTP-only and must be absent on TCP records.
+	_, hasVersion := jf["network.protocol.version"]
+	assert.False(t, hasVersion, "network.protocol.version is HTTP-only — absent on TCP path")
+
 	// Common fields present.
-	assert.Equal(t, "tls", jf["proto"])
 	assert.Equal(t, "%REQUESTED_SERVER_NAME%", jf["domain"])
 	assert.Equal(t, "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%", jf["client_ip"])
 
@@ -515,6 +484,11 @@ func TestBuildTCPAccessLog(t *testing.T) {
 	assert.Nil(t, jf["response_code"])
 	assert.Nil(t, jf["method"])
 	assert.Nil(t, jf["path"])
+	assert.Nil(t, jf["upstream_transport_failure_reason"], "upstream_transport_failure_reason is HTTP-only — absent on TCP path")
+
+	// Legacy `proto` field is gone.
+	_, hasLegacyProto := jf["proto"]
+	assert.False(t, hasLegacyProto, "legacy `proto` field must be gone")
 
 	// OTel sink mirrors the same shape and carries service.name=envoy.
 	otelEntry := findOtelEntry(t, logs)
@@ -523,12 +497,18 @@ func TestBuildTCPAccessLog(t *testing.T) {
 	resAttrs, ok := otc["resource_attributes"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "envoy", otelAttrValue(t, resAttrs, "service.name"))
+
+	attrs, ok := otc["attributes"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "tcp", otelAttrValue(t, attrs, "network.transport"))
+	assert.Equal(t, "ssh", otelAttrValue(t, attrs, "network.protocol.name"))
+	assert.Equal(t, "false", otelAttrValue(t, attrs, "tls.established"))
 }
 
 func TestBuildTCPAccessLog_DomainOverride(t *testing.T) {
 	t.Parallel()
 
-	logs := buildTCPAccessLog("tcp", ALSConfig{MTLS: true, Port: 4319}, "github.com")
+	logs := buildTCPAccessLog("", "denied", ALSConfig{MTLS: true, Port: 4319}, "github.com")
 	require.Len(t, logs, 2)
 
 	// Static domain overrides %REQUESTED_SERVER_NAME% in both sinks.
@@ -540,7 +520,9 @@ func TestBuildTCPAccessLog_DomainOverride(t *testing.T) {
 	jf, ok := lf["json_format"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "github.com", jf["domain"])
-	assert.Equal(t, "tcp", jf["proto"])
+	assert.Equal(t, "tcp", jf["network.transport"])
+	assert.Equal(t, "", jf["network.protocol.name"], "deny chain has no negotiated L7 protocol")
+	assert.Equal(t, "denied", jf["action"])
 
 	otelEntry := findOtelEntry(t, logs)
 	otc, ok := otelEntry["typed_config"].(map[string]any)
@@ -548,6 +530,7 @@ func TestBuildTCPAccessLog_DomainOverride(t *testing.T) {
 	attrs, ok := otc["attributes"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "github.com", otelAttrValue(t, attrs, "domain"))
+	assert.Equal(t, "denied", otelAttrValue(t, attrs, "action"))
 }
 
 func TestGenerateEnvoyConfig_DegradedModeOmitsOtelSink(t *testing.T) {
@@ -563,7 +546,7 @@ func TestGenerateEnvoyConfig_DegradedModeOmitsOtelSink(t *testing.T) {
 	// filter chain, deny chain implicit on the egress listener, TCP/SSH
 	// listener) so a regression on any single helper is caught.
 	rules := []config.EgressRule{
-		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
+		{Dst: "api.anthropic.com", Proto: "http", Port: 443, Action: "allow"},
 		{Dst: "example.com", Proto: "http", Port: 80, Action: "allow"},
 		{Dst: "github.com", Proto: "ssh", Port: 22, Action: "allow"},
 	}
@@ -584,7 +567,7 @@ func TestGenerateEnvoyConfig_OtelALSCluster_MTLS(t *testing.T) {
 	t.Parallel()
 
 	rules := []config.EgressRule{
-		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
+		{Dst: "api.anthropic.com", Proto: "http", Port: 443, Action: "allow"},
 	}
 	yamlBytes, _, err := GenerateEnvoyConfig(rules, EnvoyPorts{
 		EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901,
@@ -616,14 +599,14 @@ func TestGenerateEnvoyConfig_AccessLogPresent(t *testing.T) {
 		{
 			name: "TLS has access_log",
 			rules: []config.EgressRule{
-				{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
+				{Dst: "api.anthropic.com", Proto: "http", Port: 443, Action: "allow"},
 			},
 		},
 		{
 			name: "TLS with path rules has access_log",
 			rules: []config.EgressRule{
 				{
-					Dst: "api.example.com", Proto: "tls", Port: 443, Action: "allow",
+					Dst: "api.example.com", Proto: "http", Port: 443, Action: "allow",
 					PathRules:   []config.PathRule{{Path: "/v1", Action: "allow"}},
 					PathDefault: "deny",
 				},
@@ -671,10 +654,10 @@ func TestNormalizeAndDedup(t *testing.T) {
 
 	// Simulates a legacy store with port:0 and port:443 duplicates.
 	rules := []config.EgressRule{
-		{Dst: "api.anthropic.com", Proto: "tls", Port: 0, Action: "allow"},
-		{Dst: "github.com", Proto: "tls", Port: 0, Action: "allow"},
-		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
-		{Dst: "github.com", Proto: "tls", Port: 443, Action: "allow"},
+		{Dst: "api.anthropic.com", Proto: "http", Port: 0, Action: "allow"},
+		{Dst: "github.com", Proto: "http", Port: 0, Action: "allow"},
+		{Dst: "api.anthropic.com", Proto: "http", Port: 443, Action: "allow"},
+		{Dst: "github.com", Proto: "http", Port: 443, Action: "allow"},
 	}
 
 	result, _ := NormalizeAndDedup(rules)
@@ -689,8 +672,8 @@ func TestNormalizeAndDedup_WildcardAndExactCoexist(t *testing.T) {
 
 	// Wildcard and exact for the same domain — both kept as separate rules.
 	rules := []config.EgressRule{
-		{Dst: "claude.ai", Proto: "tls", Port: 443, Action: "allow"},
-		{Dst: ".claude.ai", Proto: "tls", Port: 443, Action: "allow"},
+		{Dst: "claude.ai", Proto: "http", Port: 443, Action: "allow"},
+		{Dst: ".claude.ai", Proto: "http", Port: 443, Action: "allow"},
 	}
 
 	result, _ := NormalizeAndDedup(rules)
@@ -705,8 +688,8 @@ func TestNormalizeAndDedup_ExactDuplicatesStillDeduped(t *testing.T) {
 	t.Parallel()
 
 	rules := []config.EgressRule{
-		{Dst: "claude.ai", Proto: "tls", Port: 443, Action: "allow"},
-		{Dst: "claude.ai", Proto: "tls", Port: 443, Action: "allow"},
+		{Dst: "claude.ai", Proto: "http", Port: 443, Action: "allow"},
+		{Dst: "claude.ai", Proto: "http", Port: 443, Action: "allow"},
 	}
 
 	result, _ := NormalizeAndDedup(rules)
@@ -782,8 +765,8 @@ func TestGenerateEnvoyConfig_WildcardDomain(t *testing.T) {
 	t.Parallel()
 
 	rules := []config.EgressRule{
-		{Dst: ".datadoghq.com", Proto: "tls", Port: 443, Action: "allow"},
-		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
+		{Dst: ".datadoghq.com", Proto: "http", Port: 443, Action: "allow"},
+		{Dst: "api.anthropic.com", Proto: "http", Port: 443, Action: "allow"},
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
@@ -803,7 +786,7 @@ func TestGenerateEnvoyConfig_UpstreamTLSReEncryption(t *testing.T) {
 	t.Parallel()
 
 	rules := []config.EgressRule{
-		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
+		{Dst: "api.anthropic.com", Proto: "http", Port: 443, Action: "allow"},
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
@@ -848,7 +831,7 @@ func TestGenerateEnvoyConfig_TLSRoutesToTLSCluster(t *testing.T) {
 	t.Parallel()
 
 	rules := []config.EgressRule{
-		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
+		{Dst: "api.anthropic.com", Proto: "http", Port: 443, Action: "allow"},
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
@@ -910,8 +893,8 @@ func TestGenerateEnvoyConfig_PerDomainClusterIsolation(t *testing.T) {
 	t.Parallel()
 
 	rules := []config.EgressRule{
-		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
-		{Dst: "mcp-proxy.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
+		{Dst: "api.anthropic.com", Proto: "http", Port: 443, Action: "allow"},
+		{Dst: "mcp-proxy.anthropic.com", Proto: "http", Port: 443, Action: "allow"},
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
@@ -976,68 +959,6 @@ func TestGenerateEnvoyConfig_PerDomainClusterIsolation(t *testing.T) {
 	}
 }
 
-func TestGenerateEnvoyConfig_HTTPRoutesToPlaintextCluster(t *testing.T) {
-	t.Parallel()
-
-	rules := []config.EgressRule{
-		{Dst: "example.com", Proto: "http", Port: 80, Action: "allow"},
-	}
-	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
-
-	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
-	require.NoError(t, err)
-
-	var cfg map[string]any
-	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
-
-	sr := cfg["static_resources"].(map[string]any)
-	listeners := sr["listeners"].([]any)
-
-	// HTTP rules live as a raw_buffer filter chain inside the egress listener.
-	foundEgress := false
-	foundHTTPChain := false
-	checkedRoutes := false
-	for _, l := range listeners {
-		lis := l.(map[string]any)
-		if lis["name"] != "egress" {
-			continue
-		}
-		foundEgress = true
-		chains := lis["filter_chains"].([]any)
-		for _, fc := range chains {
-			chain := fc.(map[string]any)
-			match, _ := chain["filter_chain_match"].(map[string]any)
-			if match["transport_protocol"] != "raw_buffer" {
-				continue
-			}
-			foundHTTPChain = true
-			filters := chain["filters"].([]any)
-			for _, f := range filters {
-				filter := f.(map[string]any)
-				tc := filter["typed_config"].(map[string]any)
-				rc := tc["route_config"].(map[string]any)
-				vhosts := rc["virtual_hosts"].([]any)
-				for _, vh := range vhosts {
-					vhost := vh.(map[string]any)
-					routes := vhost["routes"].([]any)
-					for _, r := range routes {
-						route := r.(map[string]any)
-						if routeTarget, ok := route["route"].(map[string]any); ok {
-							checkedRoutes = true
-							clusterName := routeTarget["cluster"].(string)
-							assert.Truef(t, strings.HasPrefix(clusterName, "http_"),
-								"HTTP filter chain routes must use a per-domain HTTP cluster, got %q", clusterName)
-						}
-					}
-				}
-			}
-		}
-	}
-	require.True(t, foundEgress, "egress listener must be present in generated config")
-	require.True(t, foundHTTPChain, "raw_buffer filter chain must be present for HTTP rules")
-	require.True(t, checkedRoutes, "at least one HTTP route must be inspected")
-}
-
 func TestVirtualHostName(t *testing.T) {
 	t.Parallel()
 
@@ -1058,60 +979,6 @@ func TestVirtualHostName(t *testing.T) {
 	}
 }
 
-func TestGenerateEnvoyConfig_WildcardAndExactHTTPNoDuplicateVirtualHostNames(t *testing.T) {
-	t.Parallel()
-
-	// Both wildcard and exact rules for the same domain — virtual host names must be unique.
-	rules := []config.EgressRule{
-		{Dst: "example.com", Proto: "http", Port: 80, Action: "allow"},
-		{Dst: ".example.com", Proto: "http", Port: 80, Action: "allow"},
-	}
-	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
-
-	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
-	require.NoError(t, err)
-
-	var cfg map[string]any
-	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
-
-	sr := cfg["static_resources"].(map[string]any)
-	listeners := sr["listeners"].([]any)
-
-	for _, l := range listeners {
-		lis := l.(map[string]any)
-		if lis["name"] != "egress" {
-			continue
-		}
-		chains := lis["filter_chains"].([]any)
-		for _, fc := range chains {
-			chain := fc.(map[string]any)
-			// Find the raw_buffer (HTTP) filter chain.
-			fcm, _ := chain["filter_chain_match"].(map[string]any)
-			if fcm["transport_protocol"] != "raw_buffer" {
-				continue
-			}
-			filters := chain["filters"].([]any)
-			for _, f := range filters {
-				filter := f.(map[string]any)
-				tc := filter["typed_config"].(map[string]any)
-				rc := tc["route_config"].(map[string]any)
-				vhosts := rc["virtual_hosts"].([]any)
-
-				names := make(map[string]bool, len(vhosts))
-				for _, vh := range vhosts {
-					vhost := vh.(map[string]any)
-					name := vhost["name"].(string)
-					assert.False(t, names[name],
-						"duplicate virtual host name %q in HTTP route_config", name)
-					names[name] = true
-				}
-				assert.True(t, names["example.com"], "exact virtual host should be present")
-				assert.True(t, names["wildcard_example.com"], "wildcard virtual host should be present")
-			}
-		}
-	}
-}
-
 // TestGenerateEnvoyConfig_TLSClusterPortPinning verifies that each per-domain TLS
 // cluster uses the port from the rule config as its endpoint port_value — not derived
 // from the Host header. This is the security fix: LOGICAL_DNS endpoints have fixed
@@ -1120,8 +987,8 @@ func TestGenerateEnvoyConfig_TLSClusterPortPinning(t *testing.T) {
 	t.Parallel()
 
 	rules := []config.EgressRule{
-		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
-		{Dst: "custom.example.com", Proto: "tls", Port: 8443, Action: "allow"},
+		{Dst: "api.anthropic.com", Proto: "http", Port: 443, Action: "allow"},
+		{Dst: "custom.example.com", Proto: "http", Port: 8443, Action: "allow"},
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
@@ -1166,7 +1033,7 @@ func TestGenerateEnvoyConfig_SimplifiedFilterChains(t *testing.T) {
 	t.Parallel()
 
 	rules := []config.EgressRule{
-		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
+		{Dst: "api.anthropic.com", Proto: "http", Port: 443, Action: "allow"},
 		{Dst: "example.com", Proto: "http", Port: 80, Action: "allow"},
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
@@ -1211,9 +1078,9 @@ func TestNormalizeAndDedup_MalformedDomains(t *testing.T) {
 	t.Parallel()
 
 	rules := []config.EgressRule{
-		{Dst: ".", Proto: "tls", Port: 443, Action: "allow"},
-		{Dst: "..", Proto: "tls", Port: 443, Action: "allow"},
-		{Dst: "valid.com", Proto: "tls", Port: 443, Action: "allow"},
+		{Dst: ".", Proto: "http", Port: 443, Action: "allow"},
+		{Dst: "..", Proto: "http", Port: 443, Action: "allow"},
+		{Dst: "valid.com", Proto: "http", Port: 443, Action: "allow"},
 	}
 
 	result, warnings := NormalizeAndDedup(rules)
@@ -1268,89 +1135,9 @@ func TestEnvoyPorts_Validate(t *testing.T) {
 // Gap coverage: HTTP cluster structure (#9)
 // ──────────────────────────────────────────────────────────────────────────────
 
-func TestGenerateEnvoyConfig_HTTPClusterStructure(t *testing.T) {
-	t.Parallel()
-
-	rules := []config.EgressRule{
-		{Dst: "example.com", Proto: "http", Port: 8080, Action: "allow"},
-	}
-	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
-
-	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
-	require.NoError(t, err)
-
-	var cfg map[string]any
-	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
-
-	sr := cfg["static_resources"].(map[string]any)
-	clusters := sr["clusters"].([]any)
-
-	var found bool
-	for _, c := range clusters {
-		cl := c.(map[string]any)
-		if cl["name"] != "http_example_com_8080" {
-			continue
-		}
-		found = true
-		assert.Equal(t, "LOGICAL_DNS", cl["type"])
-		assert.Equal(t, "V4_ONLY", cl["dns_lookup_family"])
-		// No transport_socket — plaintext upstream.
-		assert.Nil(t, cl["transport_socket"],
-			"HTTP cluster must NOT have transport_socket (plaintext upstream)")
-
-		// Endpoint address and port.
-		la := cl["load_assignment"].(map[string]any)
-		eps := la["endpoints"].([]any)
-		lbEps := eps[0].(map[string]any)["lb_endpoints"].([]any)
-		ep := lbEps[0].(map[string]any)["endpoint"].(map[string]any)
-		addr := ep["address"].(map[string]any)["socket_address"].(map[string]any)
-		assert.Equal(t, "example.com", addr["address"])
-		assert.Equal(t, 8080, addr["port_value"])
-	}
-	assert.True(t, found, "http_example_com_8080 cluster must exist")
-}
-
 // ──────────────────────────────────────────────────────────────────────────────
 // Gap coverage: HTTP port 0 defaults to 80 (#10)
 // ──────────────────────────────────────────────────────────────────────────────
-
-func TestGenerateEnvoyConfig_ZeroPortHTTPDefaults80(t *testing.T) {
-	t.Parallel()
-
-	rules := []config.EgressRule{
-		{Dst: "example.com", Proto: "http", Port: 0, Action: "allow"},
-	}
-	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
-
-	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
-	require.NoError(t, err)
-
-	out := string(yamlBytes)
-	// port_value:0 must never appear — Envoy requires (0, 65535].
-	assert.NotContains(t, out, "port_value: 0")
-	assert.Contains(t, out, "http_example_com_80")
-
-	// Verify cluster endpoint uses port 80.
-	var cfg map[string]any
-	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
-	sr := cfg["static_resources"].(map[string]any)
-	clusters := sr["clusters"].([]any)
-
-	for _, c := range clusters {
-		cl := c.(map[string]any)
-		if cl["name"] != "http_example_com_80" {
-			continue
-		}
-		la := cl["load_assignment"].(map[string]any)
-		eps := la["endpoints"].([]any)
-		lbEps := eps[0].(map[string]any)["lb_endpoints"].([]any)
-		ep := lbEps[0].(map[string]any)["endpoint"].(map[string]any)
-		addr := ep["address"].(map[string]any)["socket_address"].(map[string]any)
-		assert.Equal(t, 80, addr["port_value"])
-		return
-	}
-	t.Fatal("http_example_com_80 cluster not found")
-}
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Gap coverage: WebSocket ALPN override structural test (#11)
@@ -1360,7 +1147,7 @@ func TestGenerateEnvoyConfig_TLSWebSocketALPNOverride(t *testing.T) {
 	t.Parallel()
 
 	rules := []config.EgressRule{
-		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
+		{Dst: "api.anthropic.com", Proto: "http", Port: 443, Action: "allow"},
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
@@ -1426,8 +1213,8 @@ func TestGenerateEnvoyConfig_SameDomainDifferentPorts(t *testing.T) {
 	t.Parallel()
 
 	rules := []config.EgressRule{
-		{Dst: "example.com", Proto: "tls", Port: 443, Action: "allow"},
-		{Dst: "example.com", Proto: "tls", Port: 8443, Action: "allow"},
+		{Dst: "example.com", Proto: "http", Port: 443, Action: "allow"},
+		{Dst: "example.com", Proto: "http", Port: 8443, Action: "allow"},
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
@@ -1463,33 +1250,6 @@ func TestGenerateEnvoyConfig_SameDomainDifferentPorts(t *testing.T) {
 	assert.Equal(t, 8443, portByCluster["tls_example_com_8443"])
 }
 
-func TestGenerateEnvoyConfig_SameDomainDifferentPortsHTTP(t *testing.T) {
-	t.Parallel()
-
-	rules := []config.EgressRule{
-		{Dst: "example.com", Proto: "http", Port: 80, Action: "allow"},
-		{Dst: "example.com", Proto: "http", Port: 8080, Action: "allow"},
-	}
-	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
-
-	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
-	require.NoError(t, err)
-
-	var cfg map[string]any
-	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
-	sr := cfg["static_resources"].(map[string]any)
-	clusters := sr["clusters"].([]any)
-
-	clusterNames := make(map[string]bool)
-	for _, c := range clusters {
-		cl := c.(map[string]any)
-		clusterNames[cl["name"].(string)] = true
-	}
-
-	assert.True(t, clusterNames["http_example_com_80"], "cluster for port 80 must exist")
-	assert.True(t, clusterNames["http_example_com_8080"], "cluster for port 8080 must exist")
-}
-
 // ──────────────────────────────────────────────────────────────────────────────
 // Gap coverage: tls_inspector listener filter presence (#13)
 // ──────────────────────────────────────────────────────────────────────────────
@@ -1498,7 +1258,7 @@ func TestGenerateEnvoyConfig_TLSInspectorPresent(t *testing.T) {
 	t.Parallel()
 
 	rules := []config.EgressRule{
-		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
+		{Dst: "api.anthropic.com", Proto: "http", Port: 443, Action: "allow"},
 		{Dst: "example.com", Proto: "http", Port: 80, Action: "allow"},
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
@@ -1534,7 +1294,7 @@ func TestGenerateEnvoyConfig_DenyChainIsLast(t *testing.T) {
 	t.Parallel()
 
 	rules := []config.EgressRule{
-		{Dst: "api.anthropic.com", Proto: "tls", Port: 443, Action: "allow"},
+		{Dst: "api.anthropic.com", Proto: "http", Port: 443, Action: "allow"},
 		{Dst: "example.com", Proto: "http", Port: 80, Action: "allow"},
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
@@ -1569,4 +1329,210 @@ func TestGenerateEnvoyConfig_DenyChainIsLast(t *testing.T) {
 		return
 	}
 	t.Fatal("egress listener not found")
+}
+
+// TestBuildDenyFilterChain_ProtoNotOverloaded locks in the un-overloading
+// of the legacy `proto` access log field that conflated protocol with the
+// firewall verdict. The deny chain now stamps `network.transport: "tcp"`,
+// `network.protocol.name: ""` (no L7 negotiated for a denied connection),
+// and `action: "denied"` (the dedicated verdict field). Regression here
+// would reintroduce the field overload that motivated the action
+// standardization.
+func TestBuildDenyFilterChain_ProtoNotOverloaded(t *testing.T) {
+	t.Parallel()
+
+	logs := buildTCPAccessLog("", "denied", ALSConfig{MTLS: true, Port: 4319})
+	stdoutEntry := findStdoutEntry(t, logs)
+	tc := stdoutEntry["typed_config"].(map[string]any)
+	lf := tc["log_format"].(map[string]any)
+	jf := lf["json_format"].(map[string]any)
+	assert.Equal(t, "tcp", jf["network.transport"])
+	assert.Equal(t, "", jf["network.protocol.name"], "deny chain has no negotiated L7")
+	assert.Equal(t, "denied", jf["action"], "deny_cluster action must carry the firewall verdict")
+	_, hasLegacyProto := jf["proto"]
+	assert.False(t, hasLegacyProto, "legacy `proto` field must be gone")
+}
+
+// TestBuildDenyFilterChain_IdleTimeoutRemoved locks in the DoS-surface fix
+// at envoy_config.go's buildDenyFilterChain. The previous explicit
+// `"idle_timeout": "0s"` disabled the timeout per Envoy tcp_proxy.proto
+// warning ("Disabling this timeout is likely to yield connection leaks").
+// Regression here would re-introduce a path where a hostile agent can pin
+// Envoy resources by opening N never-closed connections to a blocked SNI.
+func TestBuildDenyFilterChain_IdleTimeoutRemoved(t *testing.T) {
+	t.Parallel()
+
+	chain := buildDenyFilterChain(ALSConfig{})
+	filters := chain["filters"].([]any)
+	tcpProxy := filters[0].(map[string]any)
+	tc := tcpProxy["typed_config"].(map[string]any)
+	_, present := tc["idle_timeout"]
+	assert.False(t, present, "deny_cluster must NOT set idle_timeout (Envoy default of 1h applies; explicit '0s' disables and leaks)")
+}
+
+// TestGenerateEnvoyConfig_RouteMetadataActionStamped locks in the
+// concrete-at-emit-time action stamping. EVERY route literal in the
+// generated config carries metadata.filter_metadata.clawker.action so
+// the HTTP access log's %METADATA(ROUTE:clawker:action)% substitution
+// reads a value baked at config generation. A missing metadata block on
+// any route would cause Envoy to emit `action: -` for requests matching
+// that route — breaking the dashboard's per-record verdict signal.
+func TestGenerateEnvoyConfig_RouteMetadataActionStamped(t *testing.T) {
+	t.Parallel()
+
+	rules := []config.EgressRule{
+		{Dst: "api.example.com", Proto: "http", Port: 443, Action: "allow"},
+		{Dst: "raw.example.com", Proto: "http", Port: 443, Action: "allow",
+			PathDefault: "deny",
+			PathRules: []config.PathRule{
+				{Path: "/allowed/", Action: "allow"},
+			},
+		},
+		{Dst: "plain.example.com", Proto: "http", Port: 80, Action: "allow"},
+	}
+	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
+
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
+	require.NoError(t, err)
+
+	// Parse the generated YAML and walk every virtual_host.routes entry,
+	// asserting each route has clawker.action metadata. Walking the
+	// structure (vs string-counting) avoids false matches on
+	// filter_chain_match and other unrelated map keys.
+	var cfg map[string]any
+	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
+
+	checkedRoutes := 0
+	listeners := cfg["static_resources"].(map[string]any)["listeners"].([]any)
+	for _, l := range listeners {
+		lis := l.(map[string]any)
+		for _, c := range lis["filter_chains"].([]any) {
+			ch := c.(map[string]any)
+			for _, f := range ch["filters"].([]any) {
+				flt := f.(map[string]any)
+				if flt["name"] != "envoy.filters.network.http_connection_manager" {
+					continue
+				}
+				tc := flt["typed_config"].(map[string]any)
+				rc, _ := tc["route_config"].(map[string]any)
+				if rc == nil {
+					continue
+				}
+				for _, vh := range rc["virtual_hosts"].([]any) {
+					for _, r := range vh.(map[string]any)["routes"].([]any) {
+						route := r.(map[string]any)
+						md, ok := route["metadata"].(map[string]any)
+						require.True(t, ok, "route %v missing metadata block", route["match"])
+						fm, ok := md["filter_metadata"].(map[string]any)
+						require.True(t, ok, "route %v missing filter_metadata", route["match"])
+						clw, ok := fm["clawker"].(map[string]any)
+						require.True(t, ok, "route %v missing clawker filter namespace", route["match"])
+						action, ok := clw["action"].(string)
+						require.True(t, ok, "route %v missing clawker.action", route["match"])
+						assert.Contains(t, []string{"allowed", "denied"}, action, "action must be allowed|denied")
+						checkedRoutes++
+					}
+				}
+			}
+		}
+	}
+	assert.GreaterOrEqual(t, checkedRoutes, 4, "expected ≥4 routes across the test config (tls allow, tls path-rule allow+deny, http allow, deny_all)")
+}
+
+// TestGenerateEnvoyConfig_HCMHardening locks in the path-smuggling-vector
+// fix. Every HTTP connection manager MUST carry the edge-hardening field
+// set so URL-encoded traversal cannot bypass the route-prefix matcher.
+// Missing any one of these fields reintroduces the verified
+// CVE-class smuggling vector documented in plan
+// compressed-floating-matsumoto.md §4.
+func TestGenerateEnvoyConfig_HCMHardening(t *testing.T) {
+	t.Parallel()
+
+	rules := []config.EgressRule{
+		{Dst: "tls.example.com", Proto: "http", Port: 443, Action: "allow"},
+		{Dst: "plain.example.com", Proto: "http", Port: 80, Action: "allow"},
+	}
+	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
+
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
+	require.NoError(t, err)
+
+	var cfg map[string]any
+	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
+
+	// Walk every HCM typed_config in every listener filter chain and
+	// assert the hardening field set is complete. Both the TLS chain HCM
+	// and the plaintext HTTP chain HCM must carry the full set.
+	required := []string{
+		"normalize_path",
+		"merge_slashes",
+		"path_with_escaped_slashes_action",
+		"request_timeout",
+		"stream_idle_timeout",
+		"common_http_protocol_options",
+		"http2_protocol_options",
+	}
+
+	hcmCount := 0
+	egressListenerSeen := false
+	listeners := cfg["static_resources"].(map[string]any)["listeners"].([]any)
+	for _, l := range listeners {
+		lis := l.(map[string]any)
+		if lis["name"] != "egress" {
+			continue
+		}
+		egressListenerSeen = true
+		// per_connection_buffer_limit_bytes lives on Listener
+		// (envoy.config.listener.v3.Listener), NOT on HCM — Envoy
+		// strict-validates the HCM proto and rejects bootstraps that
+		// put it there. Caps per-connection read buffer so a slowloris
+		// agent can't grow memory on N parked connections.
+		assert.Equal(t, 32768, lis["per_connection_buffer_limit_bytes"], "egress listener missing per_connection_buffer_limit_bytes (slowloris DoS cap)")
+		for _, c := range lis["filter_chains"].([]any) {
+			ch := c.(map[string]any)
+			for _, f := range ch["filters"].([]any) {
+				flt := f.(map[string]any)
+				if flt["name"] != "envoy.filters.network.http_connection_manager" {
+					continue
+				}
+				tc := flt["typed_config"].(map[string]any)
+				hcmCount++
+				for _, field := range required {
+					_, present := tc[field]
+					assert.True(t, present, "HCM stat_prefix=%v missing hardening field %q — reintroduces path-smuggling vector", tc["stat_prefix"], field)
+				}
+				assert.Equal(t, "UNESCAPE_AND_REDIRECT", tc["path_with_escaped_slashes_action"], "URL-encoded traversal must be unescaped before route match")
+				assert.Equal(t, true, tc["normalize_path"], "normalize_path MUST be true to defeat traversal smuggling")
+				assert.Equal(t, true, tc["merge_slashes"], "merge_slashes MUST be true to defeat path-segment smuggling")
+			}
+		}
+	}
+	assert.True(t, egressListenerSeen, "egress listener not found in generated config")
+	assert.GreaterOrEqual(t, hcmCount, 2, "expected at least 2 HCMs (TLS chain + plaintext HTTP chain)")
+}
+
+// TestGenerateEnvoyConfig_DenyResponseBodyNotFingerprinted locks in the
+// non-fingerprinting 403 body. The previous "Blocked by clawker firewall"
+// literal disclosed the enforcement product to any agent — useful intel
+// for an injected-prompt adversary tuning a bypass. Generic
+// firewallBlockedBody decouples the response body from product identity;
+// the firewall verdict travels via the action access log field.
+func TestGenerateEnvoyConfig_DenyResponseBodyNotFingerprinted(t *testing.T) {
+	t.Parallel()
+
+	rules := []config.EgressRule{
+		{Dst: "api.example.com", Proto: "http", Port: 443, Action: "allow",
+			PathDefault: "deny",
+			PathRules:   []config.PathRule{{Path: "/allowed/", Action: "allow"}},
+		},
+	}
+	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
+
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
+	require.NoError(t, err)
+
+	out := string(yamlBytes)
+	assert.NotContains(t, out, "Blocked by clawker firewall", "deny body must not name the firewall product (fingerprint disclosure)")
+	assert.NotContains(t, out, "clawker firewall", "no inline string may reveal the clawker name in response bodies")
+	assert.Contains(t, out, strings.TrimSpace(firewallBlockedBody), "centralized firewallBlockedBody must be present")
 }

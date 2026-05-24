@@ -24,6 +24,7 @@
             "query_name":   { "type": "keyword" },
             "qtype":        { "type": "keyword" },
             "rcode":        { "type": "keyword" },
+            "action":       { "type": "keyword" },
             "answer_count": { "type": "integer" },
             "duration_ms":  { "type": "long" },
             "answers":      { "type": "keyword" }

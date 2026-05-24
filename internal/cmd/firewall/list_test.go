@@ -46,9 +46,9 @@ func newListCmd(t *testing.T, rules []*adminv1.EgressRule, listErr error) (*cmdu
 
 func TestListRun_SortsByDomain(t *testing.T) {
 	rules := []*adminv1.EgressRule{
-		{Dst: "zebra.example.com", Proto: "tls"},
-		{Dst: "alpha.example.com", Proto: "tls"},
-		{Dst: "middle.example.com", Proto: "tls"},
+		{Dst: "zebra.example.com", Proto: "http"},
+		{Dst: "alpha.example.com", Proto: "http"},
+		{Dst: "middle.example.com", Proto: "http"},
 	}
 
 	tests := []struct {
@@ -126,10 +126,10 @@ func TestListRun_SortsByDomain(t *testing.T) {
 
 func TestListRun_SortsByDomainProtoPort(t *testing.T) {
 	rules := []*adminv1.EgressRule{
-		{Dst: "api.github.com", Proto: "tcp", Port: 22},
-		{Dst: "api.github.com", Proto: "tls", Port: 443},
+		{Dst: "api.github.com", Proto: "ssh", Port: 22},
+		{Dst: "api.github.com", Proto: "http", Port: 443},
 		{Dst: "api.github.com", Proto: "http", Port: 80},
-		{Dst: "alpha.example.com", Proto: "tls", Port: 443},
+		{Dst: "alpha.example.com", Proto: "http", Port: 443},
 	}
 
 	f, stdout := newListCmd(t, rules, nil)
@@ -144,13 +144,18 @@ func TestListRun_SortsByDomainProtoPort(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(stdout.String()), &rows))
 	require.Len(t, rows, 4)
 
+	// Sort key is (domain, proto, port — string compare). alpha.example.com
+	// comes first; the three api.github.com rows sort by proto then port:
+	// http/"443" < http/"80" (string compare) < ssh/"22".
 	assert.Equal(t, "alpha.example.com", rows[0].Domain)
 	assert.Equal(t, "api.github.com", rows[1].Domain)
 	assert.Equal(t, "http", rows[1].Proto)
+	assert.Equal(t, "443", rows[1].Port)
 	assert.Equal(t, "api.github.com", rows[2].Domain)
-	assert.Equal(t, "tcp", rows[2].Proto)
+	assert.Equal(t, "http", rows[2].Proto)
+	assert.Equal(t, "80", rows[2].Port)
 	assert.Equal(t, "api.github.com", rows[3].Domain)
-	assert.Equal(t, "tls", rows[3].Proto)
+	assert.Equal(t, "ssh", rows[3].Proto)
 }
 
 // TestListRun_JSONContract_OmitsPathFieldsWhenEmpty guards backward
@@ -158,7 +163,7 @@ func TestListRun_SortsByDomainProtoPort(t *testing.T) {
 // keys when no path data is present on a rule.
 func TestListRun_JSONContract_OmitsPathFieldsWhenEmpty(t *testing.T) {
 	rules := []*adminv1.EgressRule{
-		{Dst: "example.com", Proto: "tls", Port: 443},
+		{Dst: "example.com", Proto: "http", Port: 443},
 	}
 
 	f, stdout := newListCmd(t, rules, nil)
@@ -177,7 +182,7 @@ func TestListRun_WithPaths(t *testing.T) {
 	rules := []*adminv1.EgressRule{
 		{
 			Dst:   "api.example.com",
-			Proto: "tls",
+			Proto: "http",
 			Port:  443,
 			PathRules: []*adminv1.PathRule{
 				{Path: "/admin/*", Action: "deny"},
@@ -237,7 +242,7 @@ func TestListRun_WithDenylistPaths_InfersAllowDefault(t *testing.T) {
 	rules := []*adminv1.EgressRule{
 		{
 			Dst:   "docs.example.com",
-			Proto: "tls",
+			Proto: "http",
 			Port:  443,
 			PathRules: []*adminv1.PathRule{
 				{Path: "/admin", Action: "deny"},

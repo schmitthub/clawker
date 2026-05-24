@@ -252,7 +252,7 @@ exporters:
       initial_interval: 5s
       max_elapsed_time: 5m
   # netlogger eBPF egress events (service.name=ebpf-egress) — per-decision-point
-  # verdict + attribution + 4-tuple emitted by the CP-side netlogger pipeline over the
+  # action + attribution + 4-tuple emitted by the CP-side netlogger pipeline over the
   # same mTLS-gated infra lane the CP zerolog bridge uses. Distinct service.name routes
   # records into their own index so retention + volume profile are independent of the
   # operator-facing daemon-health stream on clawker-cp.

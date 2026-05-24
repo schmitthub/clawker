@@ -1,10 +1,16 @@
 {
-  "description": "Mirror SS4O envelope fields into the legacy paths the OpenSearch Dashboards explore plugin reads by default. OSD's logs use-case hard-codes DEFAULT_LOGS_COLUMNS_SETTING=['body','severityText','resource.attributes.service.name'] (src/plugins/explore/server/explore_ui_settings.ts), but the OTLP opensearchexporter in ss4o mode writes severity.{text,number} nested and resource.<k> flat — those default columns render empty without this normalization. Tracking issues for the SS4O exporter/UI divergence: opensearch-project/data-prepper#5791, opensearch-project/opensearch-catalog#118, open-telemetry/opentelemetry-collector-contrib#45428 — all open, no upstream fix. Idempotent (only writes when source field is present and dest is missing).",
+  "description": "Mirror SS4O envelope fields into the legacy paths the OpenSearch Dashboards explore plugin reads by default + strip noisy SS4O exporter defaults. OSD's logs use-case hard-codes DEFAULT_LOGS_COLUMNS_SETTING=['body','severityText','resource.attributes.service.name'] (src/plugins/explore/server/explore_ui_settings.ts), but the OTLP opensearchexporter in ss4o mode writes severity.{text,number} nested and resource.<k> flat — those default columns render empty without this normalization. Only severity and resource.service.name are mirrored — copying all flat resource.<k> values into resource.attributes.* duplicated every record's resource block (cluster_name, node_name, zone_name, ingest_source, ...) for no operator benefit. The exporter also stamps a useless `attributes.data_stream: {dataset:default, namespace:namespace, type:record}` envelope on every doc even when logs_index sends to a static index — strip it. Tracking issues for the SS4O exporter/UI divergence: opensearch-project/data-prepper#5791, opensearch-project/opensearch-catalog#118, open-telemetry/opentelemetry-collector-contrib#45428 — all open, no upstream fix. Idempotent (only writes when source field is present and dest is missing).",
   "processors": [
     {
       "script": {
         "lang": "painless",
-        "source": "if (ctx.severity instanceof Map) { if (ctx.severity.text != null && ctx.severityText == null) { ctx.severityText = ctx.severity.text; } if (ctx.severity.number != null && ctx.severityNumber == null) { ctx.severityNumber = ctx.severity.number; } } if (ctx.resource instanceof Map) { if (ctx.resource.attributes == null) { ctx.resource.attributes = new HashMap(); } for (k in new ArrayList(ctx.resource.keySet())) { if (k == 'attributes') { continue; } if (!ctx.resource.attributes.containsKey(k)) { ctx.resource.attributes.put(k, ctx.resource.get(k)); } } }"
+        "source": "if (ctx.severity instanceof Map) { if (ctx.severity.text != null && ctx.severityText == null) { ctx.severityText = ctx.severity.text; } if (ctx.severity.number != null && ctx.severityNumber == null) { ctx.severityNumber = ctx.severity.number; } } if (ctx.resource instanceof Map && ctx.resource.service instanceof Map && ctx.resource.service.name != null) { if (ctx.resource.attributes == null) { ctx.resource.attributes = new HashMap(); } if (ctx.resource.attributes.service == null) { ctx.resource.attributes.service = new HashMap(); } if (ctx.resource.attributes.service instanceof Map && ctx.resource.attributes.service.name == null) { ctx.resource.attributes.service.name = ctx.resource.service.name; } }"
+      }
+    },
+    {
+      "remove": {
+        "field": "attributes.data_stream",
+        "ignore_missing": true
       }
     }
   ]

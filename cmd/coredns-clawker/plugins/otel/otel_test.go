@@ -168,7 +168,7 @@ func TestServeDNS(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			emitter := &recordingEmitter{err: tc.emitErr}
-			h := Handler{Next: tc.next, Zone: tc.zone, Emitter: emitter}
+			h := Handler{Next: tc.next, Zone: tc.zone, Action: ActionForZone(tc.zone), Emitter: emitter}
 
 			req := new(dns.Msg)
 			req.SetQuestion(tc.question, dns.TypeA)
@@ -185,6 +185,7 @@ func TestServeDNS(t *testing.T) {
 			require.Len(t, emitter.events, tc.wantEvents)
 			event := emitter.events[0]
 			assert.Equal(t, tc.wantEventRCode, event.RCode)
+			assert.Equal(t, ActionForZone(tc.zone), event.Action, "Action must be zone-derived (named → allowed, '.' catch-all → denied)")
 			assert.Equal(t, tc.wantAnswerLen, event.AnswerCount)
 			assert.Len(t, event.Answers, tc.wantAnswerLen)
 			if tc.wantEventErr {

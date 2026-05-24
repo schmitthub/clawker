@@ -43,7 +43,7 @@ clawker firewall add <domain> [flags]
   -h, --help            help for add
       --path string     URL path prefix for a path-scoped rule, matched as a prefix at request time (requires --action)
       --port int        Port number (default: protocol-specific)
-      --proto string    Protocol (tls, ssh, tcp) (default "tls")
+      --proto string    L7 protocol (http for TLS-terminated MITM; any other value routes to opaque TCP pass-through) (default "http")
 ```
 
 ### Options inherited from parent commands

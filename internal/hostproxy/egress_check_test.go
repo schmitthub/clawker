@@ -116,12 +116,12 @@ func TestMatchRules_ExactDenyBeatsWildcardAllow(t *testing.T) {
 	// A wildcard allow for .example.test must NOT shadow an exact deny for example.test.
 	// This is the critical case: exact rules always take priority regardless of order.
 	rules := []egressRule{
-		{Dst: ".example.test", Proto: "tls", Port: 443, Action: "allow"},
-		{Dst: "example.test", Proto: "tls", Port: 443, Action: "deny"},
+		{Dst: ".example.test", Proto: "http", Port: 443, Action: "allow"},
+		{Dst: "example.test", Proto: "http", Port: 443, Action: "deny"},
 	}
 
 	// Apex must be denied (exact deny wins over wildcard allow).
-	err := matchRules(rules, "example.test", "tls", 443, "/")
+	err := matchRules(rules, "example.test", "http", 443, "/")
 	if err == nil {
 		t.Fatal("expected apex example.test to be denied, got nil")
 	}
@@ -130,7 +130,7 @@ func TestMatchRules_ExactDenyBeatsWildcardAllow(t *testing.T) {
 	}
 
 	// Subdomain must still be allowed (wildcard covers subdomains).
-	err = matchRules(rules, "sub.example.test", "tls", 443, "/")
+	err = matchRules(rules, "sub.example.test", "http", 443, "/")
 	if err != nil {
 		t.Fatalf("expected subdomain to be allowed, got: %v", err)
 	}
@@ -139,18 +139,18 @@ func TestMatchRules_ExactDenyBeatsWildcardAllow(t *testing.T) {
 func TestMatchRules_ExactAllowBeatsWildcardDeny(t *testing.T) {
 	// Reverse case: wildcard deny + exact allow. Exact allow must win for apex.
 	rules := []egressRule{
-		{Dst: ".example.test", Proto: "tls", Port: 443, Action: "deny"},
-		{Dst: "example.test", Proto: "tls", Port: 443, Action: "allow"},
+		{Dst: ".example.test", Proto: "http", Port: 443, Action: "deny"},
+		{Dst: "example.test", Proto: "http", Port: 443, Action: "allow"},
 	}
 
 	// Apex must be allowed (exact allow wins).
-	err := matchRules(rules, "example.test", "tls", 443, "/")
+	err := matchRules(rules, "example.test", "http", 443, "/")
 	if err != nil {
 		t.Fatalf("expected apex to be allowed, got: %v", err)
 	}
 
 	// Subdomain must be denied (wildcard deny covers subdomains).
-	err = matchRules(rules, "sub.example.test", "tls", 443, "/")
+	err = matchRules(rules, "sub.example.test", "http", 443, "/")
 	if err == nil {
 		t.Fatal("expected subdomain to be denied, got nil")
 	}
@@ -239,9 +239,11 @@ func TestNormalizeEgressRule(t *testing.T) {
 		wantProto, wantAction string
 		wantPort              int
 	}{
-		{"empty defaults to tls/allow/443", egressRule{Dst: "example.test"}, "tls", "allow", 443},
-		{"http proto keeps port 0", egressRule{Dst: "example.test", Proto: "http"}, "http", "allow", 0},
-		{"explicit values preserved", egressRule{Dst: "x.test", Proto: "tls", Port: 8443, Action: "deny"}, "tls", "deny", 8443},
+		{"empty defaults to http/allow/443", egressRule{Dst: "example.test"}, "http", "allow", 443},
+		{"legacy tls translated to http", egressRule{Dst: "example.test", Proto: "tls"}, "http", "allow", 443},
+		{"tcp proto keeps port 0", egressRule{Dst: "example.test", Proto: "tcp"}, "tcp", "allow", 0},
+		{"explicit values preserved", egressRule{Dst: "x.test", Proto: "http", Port: 8443, Action: "deny"}, "http", "deny", 8443},
+		{"http with port 0 gets 443", egressRule{Dst: "x.test", Proto: "http"}, "http", "allow", 443},
 	}
 
 	for _, tt := range tests {
@@ -262,8 +264,8 @@ func TestSchemeToProto(t *testing.T) {
 		wantPort  int
 		wantErr   bool
 	}{
-		{"https", "tls", 443, false},
-		{"HTTPS", "tls", 443, false},
+		{"https", "http", 443, false},
+		{"HTTPS", "http", 443, false},
 		{"http", "http", 80, false},
 		{"ftp", "", 0, true},
 		{"", "", 0, true},
