@@ -100,6 +100,7 @@ templates/opensearch-bootstrap/
   ingest-pipelines/
     cp-actor-attr-nest.json            # Painless: nest flat attributes.actor_attr.<k> into one flat_object
     claude-code-prompt-nest.json       # Painless: collapse scalar attributes.prompt + sibling prompt.id into one object
+    netlogger-normalize.json           # Convert processor: stringify attributes.bpf_ts_ns so the UI doesn't localize the BPF monotonic timestamp as a comma-separated number
     envelope-normalize.json            # Painless: mirror severity.{text,number} → severityText/severityNumber + resource.service.name → resource.attributes.service.name so OSD explore's default log columns render; also strips the SS4O exporter's noisy `attributes.data_stream` envelope
   index-templates/
     claude-code.json                   # Full Claude Code OTLP log schema; default_pipeline=claude-code-prompt-nest, final_pipeline=envelope-normalize
@@ -159,7 +160,7 @@ Ingest pipeline bodies (`ingest-pipelines/*.json`) are the exception — they're
 
 Per OS docs, `default_pipeline` runs before document indexing, and `final_pipeline` runs after `default_pipeline` (and after any explicit `?pipeline=` override). Two roles:
 
-- `default_pipeline` is per-index: `cp-actor-attr-nest` for `clawker-cp`, `claude-code-prompt-nest` for `claude-code`, unset for cli/envoy/coredns/netlogger. These collapse source-specific dotted-key collisions before the rest of the pipeline runs.
+- `default_pipeline` is per-index: `cp-actor-attr-nest` for `clawker-cp`, `claude-code-prompt-nest` for `claude-code`, `netlogger-normalize` for `clawker-ebpf-egress`, unset for cli/envoy/coredns. These collapse source-specific dotted-key collisions or coerce wire-shape mismatches before the rest of the pipeline runs.
 - `final_pipeline` is the shared `envelope-normalize` on all 6 indices. It writes the legacy SS4O envelope paths (`severityText`, `severityNumber`, `resource.attributes.<k>`) that the OSD explore plugin's default log columns read. The OTLP `opensearchexporter` in `ss4o` mode writes the canonical SS4O paths (`severity.{text,number}` nested, flat `resource.<k>`); OSD reads the legacy paths. Multiple upstream issues document the divergence with no merged fix (data-prepper#5791, opensearch-catalog#118, contrib#45428).
 
 ## OTEL Pipelines (otel-config.yaml.tmpl)

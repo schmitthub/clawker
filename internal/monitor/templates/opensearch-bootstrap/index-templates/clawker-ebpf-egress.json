@@ -5,6 +5,7 @@
   "template": {
     "settings": {
       "index": {
+        "default_pipeline": "netlogger-normalize",
         "final_pipeline": "envelope-normalize"
       }
     },
@@ -23,7 +24,7 @@
             "agent":         { "type": "keyword" },
             "project":       { "type": "keyword" },
             "cgroup_id":     { "type": "keyword" },
-            "bpf_ts_ns":     { "type": "long" },
+            "bpf_ts_ns":     { "type": "keyword" },
             "dst_ip":        { "type": "ip" },
             "dst_port":      { "type": "keyword" },
             "l4_proto":      { "type": "keyword" },

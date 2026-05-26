@@ -1,0 +1,12 @@
+{
+  "description": "netlogger-specific normalization: stringify bpf_ts_ns so the UI doesn't render it as a localized number with thousands separators. The value is an opaque BPF monotonic timestamp used for dedup/ordering, never numeric math, so keyword storage matches the field's actual semantics.",
+  "processors": [
+    {
+      "convert": {
+        "field": "attributes.bpf_ts_ns",
+        "type": "string",
+        "ignore_missing": true
+      }
+    }
+  ]
+}

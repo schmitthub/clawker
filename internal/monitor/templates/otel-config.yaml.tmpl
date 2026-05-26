@@ -189,6 +189,31 @@ processors:
         statements:
           - set(severity_text, "INFO") where severity_text == ""
           - set(severity_number, SEVERITY_NUMBER_INFO) where severity_number == 0
+          # %METADATA(ROUTE:clawker:action)% substitutes "-" on responses Envoy
+          # generates BEFORE route matching (path_with_escaped_slashes_action
+          # local-redirect, HCM-rejected requests). Deny path always carries
+          # route metadata via direct_response, so action="-" is by elimination
+          # an allowed pre-route action — coerce to "allowed" so the firewall
+          # verdict pie stays binary.
+          - set(attributes["action"], "allowed") where attributes["action"] == "-"
+          # Strip Envoy "-" sentinels from typed fields before coercion.
+          # Local replies (direct_response, deny chain) leave upstream peer + response-side
+          # timers unset; Envoy substitutes "-" instead of omitting. Without removal the bare
+          # string lands against typed mappings (long / ip) and OS rejects the whole record
+          # (mapper_parsing_exception → forensic data dropped).
+          - delete_key(attributes, "response_code") where attributes["response_code"] == "-"
+          - delete_key(attributes, "bytes_sent") where attributes["bytes_sent"] == "-"
+          - delete_key(attributes, "bytes_received") where attributes["bytes_received"] == "-"
+          - delete_key(attributes, "upstream_bytes_sent") where attributes["upstream_bytes_sent"] == "-"
+          - delete_key(attributes, "upstream_bytes_received") where attributes["upstream_bytes_received"] == "-"
+          - delete_key(attributes, "duration_ms") where attributes["duration_ms"] == "-"
+          - delete_key(attributes, "req_duration_ms") where attributes["req_duration_ms"] == "-"
+          - delete_key(attributes, "resp_duration_ms") where attributes["resp_duration_ms"] == "-"
+          - delete_key(attributes, "resp_tx_duration_ms") where attributes["resp_tx_duration_ms"] == "-"
+          - delete_key(attributes, "network.peer.port") where attributes["network.peer.port"] == "-"
+          - delete_key(attributes, "network.peer.address") where attributes["network.peer.address"] == "-"
+          - delete_key(attributes, "client.address") where attributes["client.address"] == "-"
+          - delete_key(attributes, "listener_ip") where attributes["listener_ip"] == "-"
           - set(attributes["response_code"], Int(attributes["response_code"])) where attributes["response_code"] != nil
           - set(attributes["bytes_sent"], Int(attributes["bytes_sent"])) where attributes["bytes_sent"] != nil
           - set(attributes["bytes_received"], Int(attributes["bytes_received"])) where attributes["bytes_received"] != nil
