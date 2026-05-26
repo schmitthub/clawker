@@ -127,20 +127,39 @@ const (
 // and the untrusted otel-collector:4317 lane is reserved for agent
 // containers — infra services must never cross into it.
 //
-// HTTP-specific fields (method, path, response_code, request_host) are only
-// available when Envoy terminates HTTP. request_host captures the
-// Host/:authority header, which is the only domain source for plaintext
-// HTTP (where SNI/%REQUESTED_SERVER_NAME% is empty).
-func buildHTTPAccessLog(proto string, als ALSConfig) []any {
+// HTTP-specific fields (method, path, response_code) are only available when
+// Envoy terminates HTTP. The destination host travels uniformly on
+// `server.address` for both TLS (SNI via %REQUESTED_SERVER_NAME%) and
+// plaintext HTTP (Host/:authority header via %REQ(Host)%) — stamped at the
+// common path in accessLogFields so consumers query one field regardless of
+// filter-chain shape.
+func buildHTTPAccessLog(tlsTerminated bool, action string, als ALSConfig) []any {
 	extra := map[string]string{
-		"method":        "%REQ(:METHOD)%",
-		"path":          "%REQ(:PATH)%",
-		"response_code": "%RESPONSE_CODE%",
-		"request_host":  "%REQ(Host)%",
+		"method":                            "%REQ(:METHOD)%",
+		"path":                              "%REQ(:PATH)%",
+		"response_code":                     "%RESPONSE_CODE%",
+		"response_code_details":             "%RESPONSE_CODE_DETAILS%",
+		"user_agent":                        "%REQ(USER-AGENT)%",
+		"req_duration_ms":                   "%REQUEST_DURATION%",
+		"resp_duration_ms":                  "%RESPONSE_DURATION%",
+		"resp_tx_duration_ms":               "%RESPONSE_TX_DURATION%",
+		"upstream_transport_failure_reason": "%UPSTREAM_TRANSPORT_FAILURE_REASON%",
+		"network.protocol.version":          "%PROTOCOL%",
 	}
-	sinks := []any{stdoutAccessLogEntry(proto, extra)}
+	tlsEst := "false"
+	if tlsTerminated {
+		tlsEst = "true"
+	} else {
+		// Plaintext HTTP chain: SNI is unavailable (%REQUESTED_SERVER_NAME%
+		// is empty), so override server.address to the Host/:authority
+		// header. LOGICAL_DNS cluster pinning by Host header preserves the
+		// security boundary — server.address records the client's stated
+		// destination on every record regardless of filter-chain shape.
+		extra["server.address"] = "%REQ(Host)%"
+	}
+	sinks := []any{stdoutAccessLogEntry("tcp", "http", tlsEst, action, extra)}
 	if als.MTLS {
-		sinks = append(sinks, otelAccessLogEntry(proto, extra))
+		sinks = append(sinks, otelAccessLogEntry("tcp", "http", tlsEst, action, extra))
 	}
 	return sinks
 }
@@ -149,39 +168,178 @@ func buildHTTPAccessLog(proto string, als ALSConfig) []any {
 // Stdout always; OpenTelemetry ALS only when als.MTLS is true (same
 // trust-lane rationale as buildHTTPAccessLog). Omits HTTP fields (method,
 // path, response_code) that are unavailable in TCP proxy — used by deny
-// and TCP/SSH listeners. Optional domain overrides %REQUESTED_SERVER_NAME%
-// for raw TCP where SNI is unavailable.
-func buildTCPAccessLog(proto string, als ALSConfig, domain ...string) []any {
+// and TCP/SSH listeners. Optional serverAddress overrides
+// %REQUESTED_SERVER_NAME% for raw TCP where SNI is unavailable.
+//
+// `action` is a clawker-internal literal stamped at config generation:
+// uniform-verdict TCP filter chains hardcode it ("denied" for deny_cluster,
+// "allowed" for per-rule TCP/SSH listeners). It carries the firewall
+// decision in the dedicated `action` field, never overloaded into `proto`.
+//
+// `tls.established` field handling: the deny chain (l7Proto=="" with
+// action=="denied") catches both TLS and plaintext flows that didn't
+// match any allow chain — Envoy resets the connection before it can
+// observe whether the client was attempting a TLS handshake or sending
+// plaintext bytes. Stamping `tls.established: "false"` on a denied TLS
+// handshake misleads forensics, so the deny chain OMITS the field
+// entirely. Per-rule TCP/SSH allow listeners (l7Proto!="") still stamp
+// "false" because the rule declares the listener as opaque TCP — no TLS
+// termination is in scope by construction.
+func buildTCPAccessLog(l7Proto, action string, als ALSConfig, serverAddress ...string) []any {
 	var extra map[string]string
-	if len(domain) > 0 && domain[0] != "" {
-		extra = map[string]string{"domain": domain[0]}
+	if len(serverAddress) > 0 && serverAddress[0] != "" {
+		extra = map[string]string{"server.address": serverAddress[0]}
 	}
-	sinks := []any{stdoutAccessLogEntry(proto, extra)}
+	// Deny chain catch-all: l7 protocol unknown and verdict is denied.
+	// Empty tlsEstablished tells accessLogFields to omit the key.
+	tlsEst := "false"
+	if l7Proto == "" && action == "denied" {
+		tlsEst = ""
+	}
+	sinks := []any{stdoutAccessLogEntry("tcp", l7Proto, tlsEst, action, extra)}
 	if als.MTLS {
-		sinks = append(sinks, otelAccessLogEntry(proto, extra))
+		sinks = append(sinks, otelAccessLogEntry("tcp", l7Proto, tlsEst, action, extra))
 	}
 	return sinks
+}
+
+// firewallBlockedBody is the response body returned for every clawker-firewall
+// direct_response 403 route (SNI-block deny_all virtual host, per-path-rule
+// deny, default unmatched path deny). Generic and non-fingerprinting — an
+// injected-prompt adversary should not be able to trivially distinguish a
+// clawker firewall block from a generic upstream "Forbidden". The firewall
+// verdict travels via the `action` access log field (route metadata +
+// %METADATA(ROUTE:clawker:action)% substitution), never via the response
+// body. Centralized here so all three direct_response sites stay in sync.
+const firewallBlockedBody = "Forbidden\n"
+
+// httpConnectionManagerHardening returns the edge-hardening field map shared
+// by every clawker HTTP connection manager (TLS and plaintext HTTP filter
+// chains). Critical for path-rule security: without `normalize_path` +
+// `merge_slashes` + `path_with_escaped_slashes_action`, URL-encoded
+// traversal like `/allowed/%2e%2e/denied` literally starts with `/allowed/`
+// — Envoy's route matcher sees the un-normalized path, the allow prefix
+// matches, and the request forwards upstream, bypassing the deny path rule
+// that should have caught it.
+//
+// Field-by-field rationale:
+//   - normalize_path / merge_slashes / path_with_escaped_slashes_action:
+//     RFC 3986 normalization BEFORE route matching closes the smuggling
+//     vector. UNESCAPE_AND_REDIRECT issues a 307 with the canonical path
+//     instead of silently rewriting, so the matcher sees what the agent
+//     actually sent.
+//   - headers_with_underscores_action: REJECT_REQUEST: defends against
+//     RFC 9110 §5.4.5 header-name aliasing (`X_AUTH` vs `X-AUTH`).
+//   - http2_protocol_options.max_concurrent_streams: h2 amplification
+//     cap; default is conservative for forward-proxy threat model.
+//
+// Timeouts (request_timeout / stream_idle_timeout / idle_timeout) are NOT
+// set here. LLM API calls regularly stream for minutes with multi-MB
+// request bodies, and short defaults rupture mid-stream. Envoy's built-in
+// defaults are deliberate.
+//
+// Applied via maps.Copy at HCM construction sites — keeps each HCM literal
+// readable while ensuring no site forgets a hardening field.
+func httpConnectionManagerHardening() map[string]any {
+	return map[string]any{
+		"normalize_path":                   true,
+		"merge_slashes":                    true,
+		"path_with_escaped_slashes_action": "UNESCAPE_AND_REDIRECT",
+		"common_http_protocol_options": map[string]any{
+			"headers_with_underscores_action": "REJECT_REQUEST",
+		},
+		"http2_protocol_options": map[string]any{
+			"max_concurrent_streams": 100,
+		},
+	}
+}
+
+// clawkerActionMetadata returns a route-level metadata block whose
+// filter_metadata.clawker.action is read by the HTTP access log via
+// %METADATA(ROUTE:clawker:action)% substitution. Every route literal in
+// the route table MUST carry this so Envoy stamps the correct action
+// per-record at emit time. `action` is a Go literal ("allowed" / "denied")
+// — never a runtime computation — exactly the same generation-time model
+// as `l7Proto`/`action` hardcoded at TCP filter chain access loggers
+// (buildTCPAccessLog call sites in buildDenyFilterChain and
+// buildTCPListener).
+func clawkerActionMetadata(action string) map[string]any {
+	return map[string]any{
+		"filter_metadata": map[string]any{
+			"clawker": map[string]any{"action": action},
+		},
+	}
 }
 
 // accessLogFields returns the canonical field map shared between the
 // stdout JSON sink and the OpenTelemetry ALS attributes. Keeping a single
 // source of truth means renaming a field updates both sinks at once.
 //
-// `extra` carries context-specific overrides (HTTP method/path/code, or
-// the static domain for raw TCP). Nil-safe.
-func accessLogFields(proto string, extra map[string]string) map[string]string {
+// Parameters:
+//
+//   - `transport` is the OTel network.transport enum and is always
+//     hardcoded "tcp" at every call site (every clawker filter chain is
+//     TCP-bound; future UDP/QUIC listeners would pass "udp" / "quic").
+//   - `l7Proto` is the OTel network.protocol.name. HCM filter chains
+//     (TLS-MITM + plaintext HTTP) pass "http"; per-rule opaque TCP/SSH
+//     listeners pass the rule's `proto:` value (`ssh` / `tcp` / unknown);
+//     the deny chain catch-all passes "" because no L7 was negotiated.
+//   - `tlsEstablished` is the OTel tls.established bool-as-string. Only
+//     "true" for TLS-terminating HCM chains. Per-rule opaque TCP/SSH
+//     listeners pass "false" (the rule declares the listener as opaque
+//     TCP — no TLS termination in scope by construction). The deny chain
+//     passes "" to OMIT the field — see the buildTCPAccessLog doc for
+//     the forensics rationale (a denied TLS handshake stamped "false"
+//     would mislead consumers about what was actually on the wire).
+//   - `action` carries the clawker firewall decision (`allowed` /
+//     `denied`), stamped at config generation time. For uniform-verdict
+//     filter chains (deny_cluster, TCP/SSH listeners) the call site
+//     passes a literal; for mixed-verdict HTTP filter chains (one HCM
+//     serves both allow + deny routes) the call site passes the
+//     substitution token `%METADATA(ROUTE:clawker:action)%` so Envoy
+//     copies the per-route metadata value into the log line at emit
+//     time. The field is NEVER inferred from response_code,
+//     response_flags, or any downstream-of-routing signal.
+//
+// `action` and `l7Proto` are distinct fields — never overload one into
+// the other. The firewall verdict travels on `action` only.
+//
+// `extra` carries context-specific overrides (HTTP method/path/code, or a
+// static server.address for raw TCP). Nil-safe.
+//
+// Field naming follows OTel network/server/client/tls semantic conventions
+// where they exist: `server.address` (replaces deprecated `tls.server.name`
+// — the canonical "host the client was trying to reach", stable since
+// semconv v1.21), `client.address`, `network.peer.{address,port}` (post-
+// resolution upstream peer per network semconv), `tls.*`, `network.*`.
+// Envoy-specific operational fields stay flat under their original names
+// (`listener_ip`, `upstream_tls_*`, `bytes_*`, `duration_ms`, etc.) — no
+// OTel equivalent.
+func accessLogFields(transport, l7Proto, tlsEstablished, action string, extra map[string]string) map[string]string {
 	f := map[string]string{
-		"timestamp":      "%START_TIME%",
-		"domain":         "%REQUESTED_SERVER_NAME%",
-		"upstream_host":  "%UPSTREAM_HOST%",
-		"listener_ip":    "%DOWNSTREAM_LOCAL_ADDRESS_WITHOUT_PORT%",
-		"client_ip":      "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%",
-		"response_flags": "%RESPONSE_FLAGS%",
-		"bytes_sent":     "%BYTES_SENT%",
-		"bytes_received": "%BYTES_RECEIVED%",
-		"duration_ms":    "%DURATION%",
-		"proto":          proto,
-		"source":         "envoy",
+		"server.address":          "%REQUESTED_SERVER_NAME%",
+		"client.address":          "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%",
+		"listener_ip":             "%DOWNSTREAM_LOCAL_ADDRESS_WITHOUT_PORT%",
+		"network.peer.address":    "%UPSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%",
+		"network.peer.port":       "%UPSTREAM_REMOTE_PORT%",
+		"response_flags":          "%RESPONSE_FLAGS%",
+		"bytes_sent":              "%BYTES_SENT%",
+		"bytes_received":          "%BYTES_RECEIVED%",
+		"upstream_bytes_sent":     "%UPSTREAM_WIRE_BYTES_SENT%",
+		"upstream_bytes_received": "%UPSTREAM_WIRE_BYTES_RECEIVED%",
+		"duration_ms":             "%DURATION%",
+		"tls.protocol.version":    "%DOWNSTREAM_TLS_VERSION%",
+		"tls.cipher":              "%DOWNSTREAM_TLS_CIPHER%",
+		"upstream_tls_version":    "%UPSTREAM_TLS_VERSION%",
+		"upstream_tls_cipher":     "%UPSTREAM_TLS_CIPHER%",
+		"network.transport":       transport,
+		"network.protocol.name":   l7Proto,
+		"action":                  action,
+	}
+	// Empty tlsEstablished omits the key — used by the deny chain where
+	// stamping "false" on a denied TLS handshake would mislead forensics.
+	if tlsEstablished != "" {
+		f["tls.established"] = tlsEstablished
 	}
 	maps.Copy(f, extra)
 	return f
@@ -190,9 +348,10 @@ func accessLogFields(proto string, extra map[string]string) map[string]string {
 // stdoutAccessLogEntry builds the legacy JSON-formatted stdout access log
 // entry. Surfaces in `docker logs clawker-envoy` for triage when the otel
 // pipeline is misconfigured or the monitoring stack is down.
-func stdoutAccessLogEntry(proto string, extra map[string]string) map[string]any {
-	jf := make(map[string]any, len(accessLogFields(proto, extra)))
-	for k, v := range accessLogFields(proto, extra) {
+func stdoutAccessLogEntry(transport, l7Proto, tlsEstablished, action string, extra map[string]string) map[string]any {
+	fields := accessLogFields(transport, l7Proto, tlsEstablished, action, extra)
+	jf := make(map[string]any, len(fields))
+	for k, v := range fields {
 		jf[k] = v
 	}
 	return map[string]any{
@@ -214,11 +373,8 @@ func stdoutAccessLogEntry(proto string, extra map[string]string) map[string]any 
 // Body holds a short human-readable description; structured fields land in
 // `attributes` so downstream filters in OpenSearch Dashboards can pivot on
 // them without parsing the body string.
-func otelAccessLogEntry(proto string, extra map[string]string) map[string]any {
-	fields := accessLogFields(proto, extra)
-	// Stable attribute order keeps generated YAML diffs minimal across
-	// Envoy reloads — map ranges are unordered so we materialise a sorted
-	// slice.
+func otelAccessLogEntry(transport, l7Proto, tlsEstablished, action string, extra map[string]string) map[string]any {
+	fields := accessLogFields(transport, l7Proto, tlsEstablished, action, extra)
 	keys := make([]string, 0, len(fields))
 	for k := range fields {
 		keys = append(keys, k)
@@ -249,7 +405,7 @@ func otelAccessLogEntry(proto string, extra map[string]string) map[string]any {
 				},
 			},
 			"body": map[string]any{
-				"string_value": fmt.Sprintf("envoy %s access_log", proto),
+				"string_value": "envoy access_log",
 			},
 			"attributes": map[string]any{"values": values},
 		},
@@ -302,24 +458,36 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts, als ALSCon
 			continue
 		}
 		proto := strings.ToLower(r.Proto)
-		if proto == "ssh" || proto == "tcp" {
+		switch proto {
+		case "ssh", "tcp":
 			tcpRules = append(tcpRules, r)
 			continue
-		}
-		if proto == "http" {
+		case "http":
+			// Plaintext HTTP. Routes to the raw_buffer HCM filter chain
+			// (no TLS termination). Used by sites that genuinely serve
+			// plaintext on port 80.
 			if r.Port == 0 {
 				r.Port = 80
 			}
 			httpRules = append(httpRules, r)
 			continue
+		case "https", "":
+			// TLS-MITM. Envoy terminates TLS with a per-domain cert,
+			// inspects HTTP semantics (paths visible in access logs),
+			// then re-encrypts upstream. Rules with PathRules get
+			// per-path routing; rules without get allow-all. Empty proto
+			// defaults here (the common case post-NormalizeRule).
+			if r.Port == 0 {
+				r.Port = 443
+			}
+			tlsRules = append(tlsRules, r)
+			continue
+		default:
+			// Unknown L7 name: route to opaque TCP listener so the
+			// destination is at least proxied — arbitrary `proto:`
+			// strings fall through to TCP passthrough.
+			tcpRules = append(tcpRules, r)
 		}
-		// Default: TLS — Envoy terminates TLS with a per-domain certificate,
-		// inspects HTTP (paths visible in access logs), then re-encrypts upstream.
-		// Rules with PathRules get per-path routing; rules without get allow-all.
-		if r.Port == 0 {
-			r.Port = 443
-		}
-		tlsRules = append(tlsRules, r)
 	}
 
 	// Build per-listener exact-domain sets so wildcard filter chains only
@@ -445,7 +613,8 @@ func buildHealthListener(port int) map[string]any {
 										"domains": []any{"*"},
 										"routes": []any{
 											map[string]any{
-												"match": map[string]any{"prefix": "/"},
+												"match":    map[string]any{"prefix": "/"},
+												"metadata": clawkerActionMetadata("allowed"),
 												"direct_response": map[string]any{
 													"status": 200,
 													"body":   map[string]any{"inline_string": "ok"},
@@ -527,8 +696,9 @@ func buildHTTPFilterChain(rules []config.EgressRule, exactDomains map[string]boo
 		} else {
 			routes = []any{
 				map[string]any{
-					"match": map[string]any{"prefix": "/"},
-					"route": map[string]any{"cluster": cluster, "timeout": "0s", "upgrade_configs": []any{map[string]any{"upgrade_type": "websocket"}}},
+					"match":    map[string]any{"prefix": "/"},
+					"metadata": clawkerActionMetadata("allowed"),
+					"route":    map[string]any{"cluster": cluster, "timeout": "0s", "upgrade_configs": []any{map[string]any{"upgrade_type": "websocket"}}},
 				},
 			}
 		}
@@ -546,10 +716,11 @@ func buildHTTPFilterChain(rules []config.EgressRule, exactDomains map[string]boo
 		"domains": []string{"*"},
 		"routes": []any{
 			map[string]any{
-				"match": map[string]any{"prefix": "/"},
+				"match":    map[string]any{"prefix": "/"},
+				"metadata": clawkerActionMetadata("denied"),
 				"direct_response": map[string]any{
 					"status": 403,
-					"body":   map[string]any{"inline_string": "Blocked by clawker firewall\n"},
+					"body":   map[string]any{"inline_string": firewallBlockedBody},
 				},
 			},
 		},
@@ -561,23 +732,8 @@ func buildHTTPFilterChain(rules []config.EgressRule, exactDomains map[string]boo
 		},
 		"filters": []any{
 			map[string]any{
-				"name": "envoy.filters.network.http_connection_manager",
-				"typed_config": map[string]any{
-					"@type":       "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
-					"stat_prefix": "http_egress",
-					"codec_type":  "AUTO",
-					"access_log":  buildHTTPAccessLog("http", als),
-					// Plaintext HTTP — no upstream TLS, no ALPN override needed.
-					// Standard HCM-level upgrade is sufficient per envoy-ws.yaml example.
-					"upgrade_configs": []any{
-						map[string]any{"upgrade_type": "websocket"},
-					},
-					"route_config": map[string]any{
-						"name":          "http_egress_routes",
-						"virtual_hosts": virtualHosts,
-					},
-					"http_filters": []any{routerFilter()},
-				},
+				"name":         "envoy.filters.network.http_connection_manager",
+				"typed_config": plaintextHCMTypedConfig(virtualHosts, als),
 			},
 		},
 	}
@@ -606,8 +762,9 @@ func buildTLSFilterChain(r config.EgressRule, exactDomains map[string]bool, als 
 	} else {
 		routes = []any{
 			map[string]any{
-				"match": map[string]any{"prefix": "/"},
-				"route": map[string]any{"cluster": cluster, "timeout": "0s", "upgrade_configs": []any{map[string]any{"upgrade_type": "websocket"}}},
+				"match":    map[string]any{"prefix": "/"},
+				"metadata": clawkerActionMetadata("allowed"),
+				"route":    map[string]any{"cluster": cluster, "timeout": "0s", "upgrade_configs": []any{map[string]any{"upgrade_type": "websocket"}}},
 			},
 		}
 	}
@@ -633,31 +790,64 @@ func buildTLSFilterChain(r config.EgressRule, exactDomains map[string]bool, als 
 		},
 		"filters": []any{
 			map[string]any{
-				"name": "envoy.filters.network.http_connection_manager",
-				"typed_config": map[string]any{
-					"@type":       "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
-					"stat_prefix": fmt.Sprintf("tls_%s", sanitizeName(domain)),
-					"codec_type":  "AUTO",
-					"access_log":  buildHTTPAccessLog("tls", als),
-					// TLS upstream uses auto_config (H2+H1.1 ALPN). WebSocket Upgrade
-					// doesn't exist in HTTP/2, so the upgrade filter chain overrides
-					// ALPN to force HTTP/1.1 on the upstream TLS handshake.
-					"upgrade_configs": buildTLSWebSocketUpgrade(),
-					"route_config": map[string]any{
-						"name": fmt.Sprintf("tls_route_%s", sanitizeName(domain)),
-						"virtual_hosts": []any{
-							map[string]any{
-								"name":    virtualHostName(r.Dst),
-								"domains": httpDomains(r.Dst, exactDomains),
-								"routes":  routes,
-							},
-						},
-					},
-					"http_filters": []any{routerFilter()},
-				},
+				"name":         "envoy.filters.network.http_connection_manager",
+				"typed_config": tlsHCMTypedConfig(r, domain, exactDomains, routes, als),
 			},
 		},
 	}
+}
+
+// plaintextHCMTypedConfig + tlsHCMTypedConfig build the HCM `typed_config`
+// map for the plaintext-HTTP and TLS-terminating filter chains. Both end by
+// merging in httpConnectionManagerHardening() so no HCM construction site
+// can forget the edge-hardening defaults. Split into helpers (vs inlining)
+// purely so the maps.Copy(hardening) call is shared — every clawker HCM
+// MUST carry the hardening set.
+func plaintextHCMTypedConfig(virtualHosts []any, als ALSConfig) map[string]any {
+	tc := map[string]any{
+		"@type":       "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
+		"stat_prefix": "http_egress",
+		"codec_type":  "AUTO",
+		"access_log":  buildHTTPAccessLog(false, "%METADATA(ROUTE:clawker:action)%", als),
+		// Plaintext HTTP — no upstream TLS, no ALPN override needed.
+		// Standard HCM-level upgrade is sufficient per envoy-ws.yaml example.
+		"upgrade_configs": []any{
+			map[string]any{"upgrade_type": "websocket"},
+		},
+		"route_config": map[string]any{
+			"name":          "http_egress_routes",
+			"virtual_hosts": virtualHosts,
+		},
+		"http_filters": []any{routerFilter()},
+	}
+	maps.Copy(tc, httpConnectionManagerHardening())
+	return tc
+}
+
+func tlsHCMTypedConfig(r config.EgressRule, domain string, exactDomains map[string]bool, routes []any, als ALSConfig) map[string]any {
+	tc := map[string]any{
+		"@type":       "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
+		"stat_prefix": fmt.Sprintf("tls_%s", sanitizeName(domain)),
+		"codec_type":  "AUTO",
+		"access_log":  buildHTTPAccessLog(true, "%METADATA(ROUTE:clawker:action)%", als),
+		// TLS upstream uses auto_config (H2+H1.1 ALPN). WebSocket Upgrade
+		// doesn't exist in HTTP/2, so the upgrade filter chain overrides
+		// ALPN to force HTTP/1.1 on the upstream TLS handshake.
+		"upgrade_configs": buildTLSWebSocketUpgrade(),
+		"route_config": map[string]any{
+			"name": fmt.Sprintf("tls_route_%s", sanitizeName(domain)),
+			"virtual_hosts": []any{
+				map[string]any{
+					"name":    virtualHostName(r.Dst),
+					"domains": httpDomains(r.Dst, exactDomains),
+					"routes":  routes,
+				},
+			},
+		},
+		"http_filters": []any{routerFilter()},
+	}
+	maps.Copy(tc, httpConnectionManagerHardening())
+	return tc
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -682,19 +872,25 @@ func buildHTTPRoutes(r config.EgressRule, clusterName string) []any {
 
 	wsUpgrade := []any{map[string]any{"upgrade_type": "websocket"}}
 
-	// Explicit path rules first.
+	// Explicit path rules first. Each route literal carries
+	// metadata.filter_metadata.clawker.action — the access log
+	// (%METADATA(ROUTE:clawker:action)%) reads this at emit time so the
+	// firewall verdict is concrete per record (never inferred from
+	// response_code). See clawkerActionMetadata.
 	for _, pr := range r.PathRules {
 		if strings.EqualFold(pr.Action, "allow") {
 			routes = append(routes, map[string]any{
-				"match": map[string]any{"prefix": pr.Path},
-				"route": map[string]any{"cluster": clusterName, "timeout": "0s", "upgrade_configs": wsUpgrade},
+				"match":    map[string]any{"prefix": pr.Path},
+				"metadata": clawkerActionMetadata("allowed"),
+				"route":    map[string]any{"cluster": clusterName, "timeout": "0s", "upgrade_configs": wsUpgrade},
 			})
 		} else {
 			routes = append(routes, map[string]any{
-				"match": map[string]any{"prefix": pr.Path},
+				"match":    map[string]any{"prefix": pr.Path},
+				"metadata": clawkerActionMetadata("denied"),
 				"direct_response": map[string]any{
 					"status": 403,
-					"body":   map[string]any{"inline_string": "Blocked by clawker firewall\n"},
+					"body":   map[string]any{"inline_string": firewallBlockedBody},
 				},
 			})
 		}
@@ -706,16 +902,18 @@ func buildHTTPRoutes(r config.EgressRule, clusterName string) []any {
 	pathDefault := strings.ToLower(EffectivePathDefault(r))
 	if pathDefault == "deny" {
 		routes = append(routes, map[string]any{
-			"match": map[string]any{"prefix": "/"},
+			"match":    map[string]any{"prefix": "/"},
+			"metadata": clawkerActionMetadata("denied"),
 			"direct_response": map[string]any{
 				"status": 403,
-				"body":   map[string]any{"inline_string": "Blocked by clawker firewall\n"},
+				"body":   map[string]any{"inline_string": firewallBlockedBody},
 			},
 		})
 	} else {
 		routes = append(routes, map[string]any{
-			"match": map[string]any{"prefix": "/"},
-			"route": map[string]any{"cluster": clusterName, "timeout": "0s", "upgrade_configs": wsUpgrade},
+			"match":    map[string]any{"prefix": "/"},
+			"metadata": clawkerActionMetadata("allowed"),
+			"route":    map[string]any{"cluster": clusterName, "timeout": "0s", "upgrade_configs": wsUpgrade},
 		})
 	}
 
@@ -758,9 +956,13 @@ func buildTLSWebSocketUpgrade() []any {
 	}
 }
 
-// buildDenyFilterChain creates the default deny filter chain that resets connections.
-// Access logging with proto="deny" so blocked connection attempts are visible in the
-// egress monitoring dashboard alongside allowed traffic.
+// buildDenyFilterChain creates the default deny filter chain that resets
+// connections. Catch-all filter_chain_match: matches any flow no allow
+// chain claimed. Access logging emits `action: "denied"` so blocked
+// connection attempts are visible in the egress monitoring dashboard
+// alongside allowed traffic. The deny chain sees both TLS and plaintext
+// flows (Envoy resets before observing which), so the access log omits
+// `tls.established` — see buildTCPAccessLog for the forensics rationale.
 func buildDenyFilterChain(als ALSConfig) map[string]any {
 	return map[string]any{
 		"filter_chain_match": map[string]any{},
@@ -768,11 +970,17 @@ func buildDenyFilterChain(als ALSConfig) map[string]any {
 			map[string]any{
 				"name": "envoy.filters.network.tcp_proxy",
 				"typed_config": map[string]any{
-					"@type":        "type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy",
-					"stat_prefix":  "deny_all",
-					"cluster":      "deny_cluster",
-					"idle_timeout": "0s",
-					"access_log":   buildTCPAccessLog("deny", als),
+					"@type":       "type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy",
+					"stat_prefix": "deny_all",
+					"cluster":     "deny_cluster",
+					// idle_timeout omitted — Envoy default (1h) applies.
+					// An explicit "0s" disables the timeout entirely; the
+					// tcp_proxy.proto docs warn this yields connection
+					// leaks ("Disabling this timeout is likely to yield
+					// connection leaks"). A hostile agent opening N
+					// never-closed TCP connections to a blocked SNI
+					// would exhaust Envoy's per-process FD/socket budget.
+					"access_log": buildTCPAccessLog("", "denied", als),
 				},
 			},
 		},
@@ -820,7 +1028,7 @@ func buildTCPListener(r config.EgressRule, port int, als ALSConfig) map[string]a
 							"@type":       "type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy",
 							"stat_prefix": clusterName,
 							"cluster":     clusterName,
-							"access_log":  buildTCPAccessLog(r.Proto, als, r.Dst),
+							"access_log":  buildTCPAccessLog(r.Proto, "allowed", als, r.Dst),
 						},
 					},
 				},

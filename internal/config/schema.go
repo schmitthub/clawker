@@ -137,20 +137,21 @@ type PathRule struct {
 }
 
 // EgressRule defines a single egress firewall rule.
-// Dst is the domain or IP, Proto defaults to "tls", Action defaults to "allow".
+// Dst is the domain or IP, Proto defaults to "https" (TLS-MITM HCM), Action defaults to "allow".
+// The legacy value `proto: tls` is silently translated to `proto: https` at normalization time.
 type EgressRule struct {
 	Dst         string     `yaml:"dst" label:"Destination" desc:"Domain or IP the container needs to reach (e.g. api.github.com, registry.npmjs.org)"`
-	Proto       string     `yaml:"proto,omitempty" label:"Protocol" desc:"Connection protocol: tls (HTTPS, default), tcp (plain), or http (MITM-inspected)"`
-	Port        int        `yaml:"port,omitempty" label:"Port" desc:"Override the default port (443 for TLS, 80 for HTTP)"`
+	Proto       string     `yaml:"proto,omitempty" label:"Protocol" desc:"L7 protocol: https (TLS-MITM, default), http (plaintext HCM), ssh, tcp, or any opaque L7 name for TCP pass-through"`
+	Port        int        `yaml:"port,omitempty" label:"Port" desc:"Override the default port (443 for https, 80 for http, 22 for ssh)"`
 	Action      string     `yaml:"action,omitempty" label:"Action" desc:"Allow or deny traffic to this destination (default: allow)"`
-	PathRules   []PathRule `yaml:"path_rules,omitempty" label:"Path Rules" desc:"Fine-grained path filtering (works with proto tls and http)"`
+	PathRules   []PathRule `yaml:"path_rules,omitempty" label:"Path Rules" desc:"Fine-grained path filtering (only applies to https/http)"`
 	PathDefault string     `yaml:"path_default,omitempty" label:"Path Default" desc:"What to do with HTTP paths that don't match any path rule (allow or deny)"`
 }
 
 // FirewallConfig defines per-project firewall rules in clawker.yaml.
 // Global lifecycle control (enable/disable) lives in settings.yaml via FirewallSettings.
 type FirewallConfig struct {
-	AddDomains []string     `yaml:"add_domains,omitempty" merge:"union" label:"Firewall Domains" desc:"Shorthand: domains the container can reach over HTTPS (converted to TLS rules)"`
+	AddDomains []string     `yaml:"add_domains,omitempty" merge:"union" label:"Firewall Domains" desc:"Shorthand: domains the container can reach over HTTPS (converted to https+port-443 rules)"`
 	Rules      []EgressRule `yaml:"rules,omitempty" merge:"union" label:"Rules" desc:"Full egress rules with protocol, port, and path control"`
 }
 

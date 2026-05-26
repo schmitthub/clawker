@@ -1,0 +1,38 @@
+{
+  "description": "netlogger-specific normalization: stringify bpf_ts_ns so the UI doesn't render it as a localized number with thousands separators. The value is an opaque BPF monotonic timestamp used for dedup/ordering, never numeric math, so keyword storage matches the field's actual semantics.",
+  "processors": [
+    {
+      "convert": {
+        "field": "attributes.bpf_ts_ns",
+        "type": "string",
+        "ignore_missing": true
+      }
+    }
+  ],
+  "on_failure": [
+    {
+      "set": {
+        "field": "_normalize_failed",
+        "value": true
+      }
+    },
+    {
+      "set": {
+        "field": "_normalize_failed_pipeline",
+        "value": "{{ _ingest.pipeline }}"
+      }
+    },
+    {
+      "set": {
+        "field": "_normalize_failed_processor",
+        "value": "{{ _ingest.on_failure_processor_type }}"
+      }
+    },
+    {
+      "set": {
+        "field": "_normalize_failed_message",
+        "value": "{{ _ingest.on_failure_message }}"
+      }
+    }
+  ]
+}

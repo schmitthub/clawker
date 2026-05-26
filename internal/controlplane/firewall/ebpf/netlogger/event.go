@@ -38,7 +38,7 @@ func (v Verdict) String() string {
 // EmitSite mirrors the (Flags & EgressEmitMask) enum from BPF —
 // identifies which cgroup BPF program submitted the event. The OTel
 // sink uses this to set event.name per record kind so dashboards can
-// filter `event.name:ebpf.egress.connect AND verdict:denied` etc.
+// filter `event.name:ebpf.egress.connect AND action:denied` etc.
 // without having to look at flag bits.
 type EmitSite uint8
 

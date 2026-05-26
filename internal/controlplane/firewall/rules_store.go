@@ -119,18 +119,32 @@ func ValidateDst(dst string) error {
 }
 
 // NormalizeRule fills in missing fields before storage so rules are explicit and
-// unambiguous. Empty proto defaults to "tls", empty action to "allow", and TLS
-// rules with no port default to 443. Existing non-zero values are never overridden.
-// Users should set full rules — this is a storage safety net, not a feature.
+// unambiguous. `proto: tls` is silently translated to `proto: https` (legacy
+// alias; "tls" was always TLS-terminated HCM-inspected HTTPS — the rename
+// disambiguates from raw TLS proxying). Empty proto defaults to "https" (the
+// common case). Empty action defaults to "allow". Default port is 443 for
+// https, 80 for http, 22 for ssh. Existing non-zero values are never overridden.
+// Config-side values stay present-tense (allow/deny) — the access log emits
+// past-tense verdict values (allowed/denied) independently.
 func NormalizeRule(r config.EgressRule) config.EgressRule {
+	if strings.ToLower(r.Proto) == "tls" {
+		r.Proto = "https"
+	}
 	if r.Proto == "" {
-		r.Proto = "tls"
+		r.Proto = "https"
 	}
 	if r.Action == "" {
 		r.Action = "allow"
 	}
-	if r.Port == 0 && strings.ToLower(r.Proto) == "tls" {
-		r.Port = 443
+	if r.Port == 0 {
+		switch strings.ToLower(r.Proto) {
+		case "https":
+			r.Port = 443
+		case "http":
+			r.Port = 80
+		case "ssh":
+			r.Port = 22
+		}
 	}
 	return r
 }

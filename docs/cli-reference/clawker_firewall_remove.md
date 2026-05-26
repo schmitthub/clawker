@@ -34,7 +34,7 @@ clawker firewall remove <domain> [flags]
   -h, --help           help for remove
       --path string    Remove a single path rule by its stored path (exact string match); omit to remove the whole entry
       --port int       Port number
-      --proto string   Protocol (tls, ssh, tcp) (default "tls")
+      --proto string   L7 protocol (legacy 'tls' value translated to 'https') (default "https")
 ```
 
 ### Options inherited from parent commands

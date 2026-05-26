@@ -120,7 +120,7 @@ func listRun(ctx context.Context, opts *ListOptions) error {
 	for _, r := range rules {
 		proto := r.GetProto()
 		if proto == "" {
-			proto = "tls"
+			proto = "https"
 		}
 		action := r.GetAction()
 		if action == "" {

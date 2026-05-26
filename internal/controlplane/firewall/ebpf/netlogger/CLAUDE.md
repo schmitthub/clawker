@@ -68,7 +68,7 @@ Attribute keys today:
 | Attribute | Type | Source | Omit-when |
 |-----------|------|--------|-----------|
 | `event.name` | string | per-emit-site via `Event.EmitSite.EventName()` — `ebpf.egress.{connect,sendmsg,sock_create}`. The OS OTLP exporter does not project `LogRecord.event_name` into the SS4O document; netlogger emits `event.name` as an attribute too so OSD can filter by it. `SetEventName` is kept for consumers that honor the OTLP field (e.g. Loki). | never |
-| `verdict` | string | `Event.Verdict.String()` (`allowed`/`denied`/`bypassed`) | never |
+| `action` | string | `Event.Verdict.String()` (`allowed`/`denied`/`bypassed`) — the internal `Verdict` type stays the kernel-accurate name; only the emitted OTel attribute is renamed to `action` for parity with CoreDNS + Envoy and alignment with ECS / OCSF / Cloudflare / AWS VPC Flow Logs convention. | never |
 | `container_id` | string | `Event.ContainerID` (empty on cache miss) | never (empty string emitted) |
 | `agent` | string | `Event.Agent` | never (empty string emitted) |
 | `project` | string | `Event.Project` | never (empty string emitted) |

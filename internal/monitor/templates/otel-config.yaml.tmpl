@@ -156,6 +156,77 @@ processors:
       - key: ingest_source
         value: envoy
         action: upsert
+  # Envoy ALS shape-fix processor. Two roles:
+  #
+  #   1. Severity defaults. Envoy's OpenTelemetryAccessLogConfig sink does
+  #      not populate the OTLP log record's Severity{Text,Number} fields —
+  #      the record arrives with empty severity, so the OpenSearch
+  #      Dashboards explore plugin's default logs column 'severityText'
+  #      renders blank on every Envoy record. INFO (severity_number 9) is
+  #      the right floor for access logs since the firewall verdict travels
+  #      on attributes["action"] — operators alerting on denials filter on
+  #      action=denied, not severity. Idempotent: the where-clauses only
+  #      fire when severity is unset, so OTel-emitting infra senders that
+  #      do set severity (CP zerolog bridge, CoreDNS otel plugin, netlogger)
+  #      come through untouched.
+  #
+  #   2. Numeric coercion. Envoy's command-operator substitutions
+  #      (%RESPONSE_CODE%, %BYTES_RECEIVED%, %DURATION%, ...) always
+  #      produce string values, so the access-log AttributeValue arrives
+  #      on the wire as StringValue("200") even though the index template
+  #      maps response_code as `integer`. OS coerces strings to ints via
+  #      mapping for indexing + aggregation, but the raw _source still
+  #      displays as a string in Dashboards which makes the OSD Discover
+  #      table show "200" (quoted) instead of 200. Coercing here means the
+  #      OTLP record arrives at the opensearchexporter as IntValue(200) so
+  #      _source serializes as a JSON int and aggregations don't have to
+  #      lean on the mapping coercion silently. `where != nil` guards
+  #      protect TCP/SSH records that don't carry HTTP-only fields.
+  transform/envoy_logs:
+    error_mode: ignore
+    log_statements:
+      - context: log
+        statements:
+          - set(severity_text, "INFO") where severity_text == ""
+          - set(severity_number, SEVERITY_NUMBER_INFO) where severity_number == 0
+          # %METADATA(ROUTE:clawker:action)% substitutes "-" on responses Envoy
+          # generates BEFORE route matching (path_with_escaped_slashes_action
+          # local-redirect, HCM-rejected requests). These are pre-route events
+          # — distinct from both allowed and denied. Map to "pre_route" so the
+          # firewall action pie surfaces them as a third bucket; an adversary
+          # triggering escaped-slash redirects must not appear as "allowed".
+          - set(attributes["action"], "pre_route") where attributes["action"] == "-"
+          # Strip Envoy "-" sentinels from typed fields before coercion.
+          # Local replies (direct_response, deny chain) leave upstream peer + response-side
+          # timers unset; Envoy substitutes "-" instead of omitting. Without removal the bare
+          # string lands against typed mappings (long / ip) and OS rejects the whole record
+          # (mapper_parsing_exception → forensic data dropped).
+          # ORDER LOAD-BEARING: every delete_key for "-" MUST precede the matching Int() coercion
+          # below. OTTL statements execute in declaration order; a reorder makes Int("-") fire
+          # against the sentinel before deletion → typed-mapping rejection → record dropped.
+          - delete_key(attributes, "response_code") where attributes["response_code"] == "-"
+          - delete_key(attributes, "bytes_sent") where attributes["bytes_sent"] == "-"
+          - delete_key(attributes, "bytes_received") where attributes["bytes_received"] == "-"
+          - delete_key(attributes, "upstream_bytes_sent") where attributes["upstream_bytes_sent"] == "-"
+          - delete_key(attributes, "upstream_bytes_received") where attributes["upstream_bytes_received"] == "-"
+          - delete_key(attributes, "duration_ms") where attributes["duration_ms"] == "-"
+          - delete_key(attributes, "req_duration_ms") where attributes["req_duration_ms"] == "-"
+          - delete_key(attributes, "resp_duration_ms") where attributes["resp_duration_ms"] == "-"
+          - delete_key(attributes, "resp_tx_duration_ms") where attributes["resp_tx_duration_ms"] == "-"
+          - delete_key(attributes, "network.peer.port") where attributes["network.peer.port"] == "-"
+          - delete_key(attributes, "network.peer.address") where attributes["network.peer.address"] == "-"
+          - delete_key(attributes, "client.address") where attributes["client.address"] == "-"
+          - delete_key(attributes, "listener_ip") where attributes["listener_ip"] == "-"
+          - set(attributes["response_code"], Int(attributes["response_code"])) where attributes["response_code"] != nil
+          - set(attributes["bytes_sent"], Int(attributes["bytes_sent"])) where attributes["bytes_sent"] != nil
+          - set(attributes["bytes_received"], Int(attributes["bytes_received"])) where attributes["bytes_received"] != nil
+          - set(attributes["upstream_bytes_sent"], Int(attributes["upstream_bytes_sent"])) where attributes["upstream_bytes_sent"] != nil
+          - set(attributes["upstream_bytes_received"], Int(attributes["upstream_bytes_received"])) where attributes["upstream_bytes_received"] != nil
+          - set(attributes["duration_ms"], Int(attributes["duration_ms"])) where attributes["duration_ms"] != nil
+          - set(attributes["req_duration_ms"], Int(attributes["req_duration_ms"])) where attributes["req_duration_ms"] != nil
+          - set(attributes["resp_duration_ms"], Int(attributes["resp_duration_ms"])) where attributes["resp_duration_ms"] != nil
+          - set(attributes["resp_tx_duration_ms"], Int(attributes["resp_tx_duration_ms"])) where attributes["resp_tx_duration_ms"] != nil
+          - set(attributes["network.peer.port"], Int(attributes["network.peer.port"])) where attributes["network.peer.port"] != nil
   resource/coredns:
     attributes:
       - key: ingest_source
@@ -252,7 +323,7 @@ exporters:
       initial_interval: 5s
       max_elapsed_time: 5m
   # netlogger eBPF egress events (service.name=ebpf-egress) — per-decision-point
-  # verdict + attribution + 4-tuple emitted by the CP-side netlogger pipeline over the
+  # action + attribution + 4-tuple emitted by the CP-side netlogger pipeline over the
   # same mTLS-gated infra lane the CP zerolog bridge uses. Distinct service.name routes
   # records into their own index so retention + volume profile are independent of the
   # operator-facing daemon-health stream on clawker-cp.
@@ -399,7 +470,7 @@ service:
       exporters: [opensearch/logs_cp, debug]
     logs/envoy:
       receivers: [routing/trusted]
-      processors: [memory_limiter, resource/envoy]
+      processors: [memory_limiter, transform/envoy_logs, resource/envoy]
       exporters: [opensearch/logs_envoy, debug]
     logs/coredns:
       receivers: [routing/trusted]

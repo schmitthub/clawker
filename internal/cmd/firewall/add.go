@@ -59,7 +59,7 @@ prior action for that path.`,
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.Proto, "proto", "tls", "Protocol (tls, ssh, tcp)")
+	cmd.Flags().StringVar(&opts.Proto, "proto", "https", "L7 protocol: https (TLS-MITM, default), http (plaintext HCM), ssh, tcp, or any opaque L7 name (TCP pass-through)")
 	cmd.Flags().IntVar(&opts.Port, "port", 0, "Port number (default: protocol-specific)")
 	cmd.Flags().StringVar(&opts.Path, "path", "", "URL path prefix for a path-scoped rule, matched as a prefix at request time (requires --action)")
 	cmd.Flags().StringVar(&opts.Action, "action", "", "Action for the path rule: allow or deny (requires --path)")

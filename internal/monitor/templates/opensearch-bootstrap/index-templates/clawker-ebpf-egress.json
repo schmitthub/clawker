@@ -5,6 +5,7 @@
   "template": {
     "settings": {
       "index": {
+        "default_pipeline": "netlogger-normalize",
         "final_pipeline": "envelope-normalize"
       }
     },
@@ -18,12 +19,12 @@
               }
             },
             "source":        { "type": "keyword" },
-            "verdict":       { "type": "keyword" },
+            "action":        { "type": "keyword" },
             "container_id":  { "type": "keyword" },
             "agent":         { "type": "keyword" },
             "project":       { "type": "keyword" },
             "cgroup_id":     { "type": "keyword" },
-            "bpf_ts_ns":     { "type": "long" },
+            "bpf_ts_ns":     { "type": "keyword" },
             "dst_ip":        { "type": "ip" },
             "dst_port":      { "type": "keyword" },
             "l4_proto":      { "type": "keyword" },
@@ -45,7 +46,7 @@
     }
   },
   "_meta": {
-    "description": "eBPF netlogger egress decision records (service.name=ebpf-egress) — per-decision-point verdict + attribution + 4-tuple + domain",
+    "description": "eBPF netlogger egress decision records (service.name=ebpf-egress) — per-decision-point action + attribution + 4-tuple + domain",
     "managed_by": "clawker-opensearch-bootstrap"
   }
 }

@@ -5,32 +5,51 @@
   "template": {
     "settings": {
       "index": {
-        "final_pipeline": "envelope-normalize"
+        "default_pipeline": "envoy-normalize",
+        "final_pipeline":   "envelope-normalize"
       }
     },
     "mappings": {
       "properties": {
         "attributes": {
           "properties": {
-            "domain":         { "type": "keyword" },
-            "proto":          { "type": "keyword" },
-            "method":         { "type": "keyword" },
-            "path":           { "type": "keyword" },
-            "request_host":   { "type": "keyword" },
-            "response_code":  { "type": "integer" },
-            "response_flags": { "type": "keyword" },
-            "client_ip":      { "type": "ip" },
-            "upstream_host":  { "type": "keyword" },
-            "bytes_sent":     { "type": "long" },
-            "bytes_received": { "type": "long" },
-            "duration_ms":    { "type": "long" }
+            "server.address":                    { "type": "keyword" },
+            "server.port":                       { "type": "integer" },
+            "client.address":                    { "type": "ip" },
+            "network.peer.address":              { "type": "ip" },
+            "network.peer.port":                 { "type": "integer" },
+            "action":                            { "type": "keyword" },
+            "method":                            { "type": "keyword" },
+            "path":                              { "type": "keyword" },
+            "user_agent":                        { "type": "keyword" },
+            "response_code":                     { "type": "integer" },
+            "response_code_details":             { "type": "keyword" },
+            "response_flags":                    { "type": "keyword" },
+            "upstream_transport_failure_reason": { "type": "keyword" },
+            "listener_ip":                       { "type": "ip" },
+            "network.transport":                 { "type": "keyword" },
+            "network.protocol.name":             { "type": "keyword" },
+            "network.protocol.version":          { "type": "keyword" },
+            "tls.established":                   { "type": "boolean" },
+            "tls.protocol.version":              { "type": "keyword" },
+            "tls.cipher":                        { "type": "keyword" },
+            "upstream_tls_version":              { "type": "keyword" },
+            "upstream_tls_cipher":               { "type": "keyword" },
+            "bytes_sent":                        { "type": "long" },
+            "bytes_received":                    { "type": "long" },
+            "upstream_bytes_sent":               { "type": "long" },
+            "upstream_bytes_received":           { "type": "long" },
+            "duration_ms":                       { "type": "long" },
+            "req_duration_ms":                   { "type": "long" },
+            "resp_duration_ms":                  { "type": "long" },
+            "resp_tx_duration_ms":               { "type": "long" }
           }
         }
       }
     }
   },
   "_meta": {
-    "description": "Envoy access logs via native OpenTelemetry ALS — flat HTTP/TLS/TCP fields",
+    "description": "Envoy access logs via native OpenTelemetry ALS — OTel network/tls semconv + pruned operational fields",
     "managed_by": "clawker-opensearch-bootstrap"
   }
 }

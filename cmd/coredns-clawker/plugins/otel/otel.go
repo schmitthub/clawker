@@ -28,12 +28,37 @@ type Emitter interface {
 }
 
 type Handler struct {
-	Next    plugin.Handler
-	Zone    string
+	Next plugin.Handler
+	Zone string
+	// Action is the clawker firewall verdict for every query this handler
+	// observes. Derived from zone identity at plugin construction (named
+	// zones forward upstream → "allowed"; the catch-all `.` zone returns
+	// NXDOMAIN → "denied"). Stamped on every emitted QueryEvent so the OS
+	// index records the firewall decision distinct from the DNS rcode
+	// (which can be NXDOMAIN/SERVFAIL on an allowed-zone query when the
+	// upstream returns no record or the resolver fails — neither is a
+	// clawker block). See [[project_mitm_load_bearing]] for the
+	// threat-model context: the action field is consumed by the firewall
+	// observability dashboard alongside Envoy + eBPF action values, all
+	// with vocabulary `allowed | denied` (eBPF additionally emits
+	// `bypassed`).
+	Action  string
 	Emitter Emitter
 }
 
 func (h Handler) Name() string { return pluginName }
+
+// ActionForZone derives the clawker firewall action for a CoreDNS zone.
+// The catch-all `.` zone (with its templated NXDOMAIN response) is the
+// only deny path served by CoreDNS; every other configured zone forwards
+// upstream and is allowed. Shared between setup() and tests so the test
+// harness exercises the same derivation logic as the production wiring.
+func ActionForZone(zone string) string {
+	if strings.TrimSpace(zone) == "." {
+		return "denied"
+	}
+	return "allowed"
+}
 
 type QueryEvent struct {
 	Timestamp   time.Time
@@ -43,6 +68,7 @@ type QueryEvent struct {
 	QueryName   string
 	QueryType   string
 	RCode       string
+	Action      string
 	Answers     []string
 	AnswerCount int
 	Err         error
@@ -73,10 +99,49 @@ type noopEmitter struct{}
 // otel.SetErrorHandler instead of the Emit call site.
 func (noopEmitter) Emit(context.Context, QueryEvent) error { return nil }
 
+// handleOTELError is wired as the process-global OTel SDK error handler.
+// Export failures from the BatchProcessor land here — they would
+// otherwise be invisible to the operator log surface that monitors
+// `event=<subsystem>_unavailable` lines (the structured triage
+// contract for CP-imported subsystem degradation; see root CLAUDE.md
+// hard rules for the CP boot/serve path). CoreDNS clog has no
+// structured-field API, so the contract is encoded as key=value pairs
+// in the format string and emitted at Error level so log scrapers
+// surface it. `impact=security_event_loss` makes the blast radius
+// explicit: a silent OTel outage during an attack window means DNS
+// allow/deny decisions are no longer being shipped to OpenSearch and
+// the operator's only post-hoc audit trail is the local `docker logs
+// clawker-coredns` ring buffer.
+func handleOTELError(err error) {
+	now := time.Now()
+	otelErrorMu.Lock()
+	if !otelErrorLastEmit.IsZero() && now.Sub(otelErrorLastEmit) < otelErrorRateLimit {
+		otelErrorMu.Unlock()
+		return
+	}
+	otelErrorLastEmit = now
+	otelErrorMu.Unlock()
+
+	log.Errorf("event=coredns_otel_unavailable component=coredns_otel_plugin cause=%q impact=security_event_loss", err.Error())
+}
+
 // setErrorHandlerOnce ensures the process-global OTEL SDK error handler
 // is wired exactly once, independent of how many times newProvider is
 // invoked (the setup retry-on-error path can call it multiple times).
 var setErrorHandlerOnce sync.Once
+
+// otelErrorRateLimit caps the structured event=coredns_otel_unavailable
+// emit cadence. The SDK BatchProcessor retries export on its own interval,
+// so a sustained outage would otherwise drown the operator log surface in
+// duplicate failure lines. One line per minute is the legibility floor
+// — operators must still see the signal during an attack-window outage,
+// but not at a rate that buries every other CoreDNS log entry.
+const otelErrorRateLimit = time.Minute
+
+var (
+	otelErrorMu       sync.Mutex
+	otelErrorLastEmit time.Time
+)
 
 func NewEmitter(opts Options) (Emitter, error) {
 	if strings.TrimSpace(opts.Endpoint) == "" {
@@ -103,12 +168,12 @@ func (e *otelEmitter) Emit(ctx context.Context, event QueryEvent) error {
 	record.SetSeverityText("INFO")
 	record.SetBody(otellog.StringValue("CoreDNS query handled"))
 	record.AddAttributes(
-		otellog.String("source", "coredns"),
-		otellog.String("client_ip", event.ClientIP),
+		otellog.String("client.address", event.ClientIP),
 		otellog.String("zone", event.Zone),
 		otellog.String("query_name", event.QueryName),
 		otellog.String("qtype", event.QueryType),
 		otellog.String("rcode", event.RCode),
+		otellog.String("action", event.Action),
 		otellog.Int("answer_count", event.AnswerCount),
 		otellog.Float64("duration_ms", float64(event.Duration)/float64(time.Millisecond)),
 	)
@@ -137,6 +202,7 @@ func (h Handler) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg)
 		ClientIP:  remoteIP(w.RemoteAddr()),
 		Zone:      strings.TrimSuffix(h.Zone, "."),
 		RCode:     dns.RcodeToString[rcode],
+		Action:    h.Action,
 		Err:       err,
 	}
 	if len(r.Question) > 0 {
@@ -179,9 +245,7 @@ func (h Handler) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg)
 
 func newProvider(opts Options) (*sdklog.LoggerProvider, error) {
 	setErrorHandlerOnce.Do(func() {
-		otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
-			log.Warningf("OTEL SDK error: %v", err)
-		}))
+		otel.SetErrorHandler(otel.ErrorHandlerFunc(handleOTELError))
 	})
 
 	tlsCfg, err := buildTLSConfig(opts)

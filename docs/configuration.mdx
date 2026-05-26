@@ -237,20 +237,20 @@ workspace:
   default_mode: <string>  # default: bind | required: true
 security:
   firewall:
-    # Shorthand: domains the container can reach over HTTPS (converted to TLS rules)
+    # Shorthand: domains the container can reach over HTTPS (converted to https+port-443 rules)
     add_domains:  # default: n/a | required: false
       - <string>
     # Full egress rules with protocol, port, and path control
     rules:
       # Domain or IP the container needs to reach (e.g. api.github.com, registry.npmjs.org)
       - dst: <string>  # default: n/a | required: false
-        # Connection protocol: tls (HTTPS, default), tcp (plain), or http (MITM-inspected)
+        # L7 protocol: https (TLS-MITM, default), http (plaintext HCM), ssh, tcp, or any opaque L7 name for TCP pass-through
         proto: <string>  # default: n/a | required: false
-        # Override the default port (443 for TLS, 80 for HTTP)
+        # Override the default port (443 for https, 80 for http, 22 for ssh)
         port: <integer>  # default: n/a | required: false
         # Allow or deny traffic to this destination (default: allow)
         action: <string>  # default: n/a | required: false
-        # Fine-grained path filtering (works with proto tls and http)
+        # Fine-grained path filtering (only applies to https/http)
         path_rules:  # default: n/a | required: false
           # URL path prefix to match (e.g. /v1/api, /repos/myorg)
           - path: <string>  # default: n/a | required: false
@@ -364,7 +364,7 @@ The following tables are auto-generated from the schema struct tags in `internal
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `add_domains` | string list | — | Shorthand: domains the container can reach over HTTPS (converted to TLS rules) |
+| `add_domains` | string list | — | Shorthand: domains the container can reach over HTTPS (converted to https+port-443 rules) |
 | `rules` | object list | — | Full egress rules with protocol, port, and path control |
 
 

@@ -115,13 +115,6 @@ TLS filter chains:  ALPN override + router (custom filters)
 HTTP filter chain:  upgrade_type: websocket (no custom filters, uses default HCM filters)
 ```
 
-### Extended CONNECT (RFC 8441) — Untested
-
-`allow_connect: true` in `http2_protocol_options` enables WebSocket over HTTP/2 via Extended CONNECT. This would allow H2 downstream clients to use WebSocket without falling back to HTTP/1.1.
-- envoyproxy/envoy#38645 reports a multi-stream issue, but the referenced predecessor (#8547) was fixed in 2019 and the report lacks strong verification
-- **Needs live testing** against the attacker server's `/ws/echo` endpoint before drawing conclusions
-- If Extended CONNECT works, it would eliminate the H2 downstream WebSocket limitation entirely
-
 ### HTTP/2 Downstream (Client → Envoy)
 
 Our TLS listener advertises `alpn_protocols: ["h2", "http/1.1"]` downstream. Clients that negotiate h2 (like Node.js `ws` library, wscat) cannot use the HTTP/1.1 Upgrade mechanism over h2. Real browsers use HTTP/1.1 for WebSocket natively. Programmatic clients may need to force HTTP/1.1 ALPN.
@@ -137,6 +130,77 @@ Egress rule types live in `internal/config/schema.go` (not in the firewall packa
 - `FirewallConfig` — per-project firewall config (add_domains shorthand + full rules)
 
 The firewall package imports these types from config; config does NOT import firewall.
+
+### `proto:` values
+
+Routing key for filter-chain shape selection. `NormalizeRule` (`internal/controlplane/firewall/rules_store.go`) silently translates legacy `proto: tls` → `proto: https` for backwards compatibility.
+
+| Proto | Default port | Pipeline | Notes |
+|-------|--------------|----------|-------|
+| `https` | 443 | TLS-MITM HCM filter chain (`buildTLSFilterChain`) | Envoy terminates TLS with a per-domain MITM cert, inspects HTTP, re-encrypts upstream. Default when proto is empty. |
+| `http` | 80 | Plaintext HCM filter chain (`buildHTTPFilterChain`) | `transport_protocol: raw_buffer` match. Host-header routing, no TLS termination. For sites that genuinely serve plaintext on port 80. |
+| `ssh` | 22 | Opaque TCP listener (`buildTCPListener`) | Per-rule listener on `tcp_<port>+offset`. No L7 inspection. |
+| `tcp` | 443 | Opaque TCP listener (`buildTCPListener`) | Generic TCP passthrough. |
+| (other) | 443 | Opaque TCP listener | Unknown proto names fall through to opaque TCP. |
+
+## Access Log Schema
+
+Every access log record emitted by clawker's Envoy uses OTel semantic conventions for network/server/client/tls identity (network, server, client, network.peer, tls registries), with one clawker-defined field (`action`) alongside the standard Envoy substitution operators. The colloquial pre-rename fields (`domain`, `client_ip`, `upstream_ip`, `upstream_port`) have been replaced by their OTel canonical equivalents (`server.address`, `client.address`, `network.peer.address`, `network.peer.port`); `request_host` (Host header) has been consolidated into `server.address` (plaintext HCMs override the SNI default with `%REQ(Host)%`). The legacy single `proto` field — which conflated L4/L5/L7 into one rule-type label and at one point even carried the verdict (`proto: "deny"`) — and the `source: envoy` discriminator are also gone (`resource.service.name=envoy` covers source; `@timestamp` covers timestamp). **Rule schema (`proto:` on `EgressRule`) and access-log schema are NOT in parity**: the rule keeps the simple `proto:` knob as the routing key for filter-chain shape selection; the access-log decomposes observed protocol layers into separate OTel fields.
+
+Field reference (one per row on every access log record):
+
+| Field | Source | Notes |
+|-------|--------|-------|
+| `server.address` | TLS HCM + TCP/SSH: `%REQUESTED_SERVER_NAME%` (SNI). Plaintext HCM: `%REQ(Host)%` (override in `buildHTTPAccessLog` because SNI is unavailable). Deny TCP chain: optional static value from `buildTCPAccessLog`'s variadic. | OTel-stable, replaces deprecated `tls.server.name` / `tls.client.server_name` (both deprecated in semconv ≥ v1.21 in favor of `server.address`). |
+| `server.port` | not emitted (clawker's per-rule clusters pin upstream port — see `network.peer.port` for the resolved value) | No Envoy substitution operator exposes the downstream-target port. |
+| `client.address` | `%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%` | OTel-stable, replaces colloquial `client_ip`. |
+| `network.peer.address` | `%UPSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%` | OTel network-semconv for the post-resolution upstream peer Envoy actually connected to. Distinct from `server.address` (what the client asked for) so confused-deputy mismatch is queryable. |
+| `network.peer.port` | `%UPSTREAM_REMOTE_PORT%` | Pair to `network.peer.address`. |
+| `network.transport` | hardcoded `"tcp"` per call site | All filter chains are TCP-bound. OTel enum: `tcp\|udp\|pipe\|quic\|unix`. |
+| `network.protocol.name` | rule's L7 name (HCM: `"http"`; opaque TCP: rule's `proto:` value; deny chain: `""`) | Lowercase free-form, IANA-aligned. Deny chain has no negotiated L7 — emits empty string. |
+| `network.protocol.version` | `%PROTOCOL%` (HTTP only) | Envoy emits the raw HCM value (`HTTP/1.1` / `HTTP/2` / `HTTP/3`). Absent on TCP/SSH records (`%PROTOCOL%` is HTTP-only and would emit `-`). |
+| `tls.established` | hardcoded per filter-chain shape: `"true"` for TLS-terminated HCM, `"false"` for plaintext HCM and per-rule opaque TCP/SSH listeners. OMITTED on the deny chain (catches both TLS handshakes and plaintext flows that no allow chain claimed — Envoy resets before observing which, so stamping a bool would mislead forensics). | Bool-as-string from Envoy substitution. The OS ingest pipeline `envoy-normalize` coerces to actual boolean type via Painless before storage, matching the index template's `boolean` mapping. Consumers query `tls.established:true`. |
+| `tls.protocol.version` | `%DOWNSTREAM_TLS_VERSION%` | Returns `-` when TLS wasn't on the wire. |
+| `tls.cipher` | `%DOWNSTREAM_TLS_CIPHER%` | Same null behavior as version. |
+| `action` | `"allowed"` / `"denied"` (past-tense verdict) | The canonical firewall verdict per record. See verdict-source rules below. |
+| `listener_ip` | `%DOWNSTREAM_LOCAL_ADDRESS_WITHOUT_PORT%` | Envoy-specific (no OTel mapping). Useful for multi-listener deployments; clawker today binds one listener so the value is constant but the field stays for observability hygiene. |
+| `response_flags` | `%RESPONSE_FLAGS%` | Envoy short-code response-flag bitmap (e.g. `UC`, `UH`, `NR`). The `envoy-normalize` ingest pipeline strips Envoy's `"-"` sentinel for unset values. Diagnostic surface, not an OTel semconv field. |
+| `bytes_sent` / `bytes_received` | `%BYTES_SENT%` / `%BYTES_RECEIVED%` | Downstream byte counters. Coerced to int by the OTel collector `transform/envoy_logs` Int() pass. |
+| `upstream_bytes_sent` / `upstream_bytes_received` | `%UPSTREAM_WIRE_BYTES_SENT%` / `%UPSTREAM_WIRE_BYTES_RECEIVED%` | Upstream wire-level byte counters (post-TLS for MITM chains). Same int coercion. |
+| `duration_ms` | `%DURATION%` | Total request duration in milliseconds. Emitted on every record (HTTP + TCP). Coerced to int. |
+| `method` / `path` / `response_code` / `user_agent` | `%REQ(:METHOD)%` / `%REQ(:PATH)%` / `%RESPONSE_CODE%` / `%REQ(USER-AGENT)%` | **HTTP-only.** Standard HTTP access-log fields. `response_code` coerced to int. The `path` field is the post-`normalize_path` / `merge_slashes` / `path_with_escaped_slashes_action` canonical form — exactly what the route matcher saw. |
+| `response_code_details` | `%RESPONSE_CODE_DETAILS%` | **HTTP-only.** Distinguishes Envoy-generated responses from upstream pass-through. Common values: `direct_response` (Envoy 4xx, e.g. path-rule deny → 403), `via_upstream` (response came from upstream), `local_reset` (Envoy abort). The `action`/`response_code_details` pair makes "Envoy verdict vs upstream verdict" queryable. |
+| `req_duration_ms` / `resp_duration_ms` / `resp_tx_duration_ms` | `%REQUEST_DURATION%` / `%RESPONSE_DURATION%` / `%RESPONSE_TX_DURATION%` | **HTTP-only.** Phased durations: req = time spent receiving the downstream request; resp = time from request received to upstream response headers; resp_tx = time spent transmitting the response back to the downstream. All coerced to int. Distinct from `duration_ms` (total) so streaming workloads can attribute time between phases. |
+| `upstream_tls_*` | upstream MITM re-encryption metadata | Kept as flat clawker operational fields (no OTel `tls.client.*` mapping; OTel deprecated `tls.client.*` for downstream identity, leaving no canonical home for upstream-side re-encryption diagnostics). Diagnostic, not part of the access-event schema. |
+| `upstream_transport_failure_reason` | `%UPSTREAM_TRANSPORT_FAILURE_REASON%` | **HTTP-only.** Deliberately dropped from the TCP/SSH path because Envoy emits `-` for non-HTTP contexts and the field gave the false impression of TCP-side diagnostics. The OS ingest pipeline drops the literal `"-"` sentinel that Envoy substitutes when the field is unset. |
+
+ALPN / `tls.next_protocol` is intentionally not on the schema — Envoy does not expose a downstream ALPN substitution that works reliably across filter-chain shapes. Add only when a verified substitution exists.
+
+Verdict-source rules for `action`:
+  - **TCP-level filter chains** (deny chain, per-rule TCP/SSH listeners) carry a uniform verdict — `action` is hardcoded at config generation in the call site (`buildTCPAccessLog("", "denied", ...)` for the deny chain catch-all, `"allowed"` for per-rule TCP/SSH allow listeners).
+  - **HCM filter chains** (TLS-terminated HTTPS MITM) serve mixed verdicts because one HCM handles both allow and `direct_response` deny routes. Per-route metadata (`metadata.filter_metadata.clawker.action`) carries the verdict; the access log format reads it via `%METADATA(ROUTE:clawker:action)%`. Every route literal in the route table MUST stamp this metadata at construction (see `clawkerActionMetadata()` helper in `envoy_config.go`).
+
+The `action` field is the canonical firewall verdict for downstream consumers (dashboards, alerting). It is NEVER inferred from `response_code`, `response_flags`, upstream health, or any downstream-of-routing signal. A legitimate upstream 403 (e.g. GitHub returning 403) lands on a `route → cluster` route whose metadata reads `action: "allowed"` — `response_code: 403` while `action: "allowed"` is the expected shape.
+
+### Config vs event vocabulary
+
+Rule input (`EgressRule.Action`, `PathRule.Action`, `PathDefault`) uses present-tense `allow` / `deny` — simple for users editing YAML / CLI. The access log emits past-tense `allowed` / `denied` (the verdict that actually happened). These are independent vocabularies by design — do NOT propagate "consistency" changes between them.
+
+## HCM Hardening Contract
+
+Every clawker HCM (`buildTLSFilterChain` for TLS-MITM termination AND `buildHTTPFilterChain` for plaintext HTTP) MUST include the field set returned by `httpConnectionManagerHardening()`. Applied via `maps.Copy` at HCM construction so no site can forget any field. The set is load-bearing for the path-rule security boundary:
+
+- `normalize_path: true` + `merge_slashes: true` + `path_with_escaped_slashes_action: UNESCAPE_AND_REDIRECT` — defeats URL-encoded traversal (`%2e%2e/`, `..%2f`, double-encoded). Without these, `/allowed/%2e%2e/denied` literally starts with `/allowed/` → matches allow prefix → forwards upstream, bypassing path rules entirely.
+- `common_http_protocol_options.headers_with_underscores_action: REJECT_REQUEST` — RFC 9110 §5.4.5 header-name aliasing prevention.
+- `http2_protocol_options.max_concurrent_streams: 100` — h2 amplification cap.
+
+Timeouts (`request_timeout`, `stream_idle_timeout`, `idle_timeout`) and `per_connection_buffer_limit_bytes` are deliberately NOT set. LLM API calls regularly stream for minutes with multi-MB request bodies; short caps rupture mid-stream and tight buffer limits trigger `downstream_local_disconnect(purging_socket_that_have_not_progressed_to_connections)` under upstream backpressure. Envoy's built-in defaults are the right choice for this workload.
+
+The `TestGenerateEnvoyConfig_HCMHardening` regression test asserts every HCM in the generated YAML carries the full hardening set; a missing field would re-introduce the path-smuggling vector.
+
+## Deny Body — Non-Fingerprinting
+
+The package-level `firewallBlockedBody` constant is the response body returned by every clawker-firewall `direct_response: 403` route (SNI-block deny_all virtual host, per-path-rule deny, default unmatched path deny). Value is generic ("Forbidden\n") — never names the clawker product. An injected-prompt adversary should not be able to trivially distinguish a clawker block from a generic upstream Forbidden by reading the response body; the firewall verdict travels via the `action` access log field, not the body.
 
 ## Testing Requirements
 

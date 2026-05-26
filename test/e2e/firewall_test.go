@@ -291,7 +291,7 @@ security:
   firewall:
     rules:
       - dst: "example.com"
-        proto: "tls"
+        proto: "https"
         port: 443
         action: "allow"
 `)
@@ -850,8 +850,13 @@ security:
 		"curl", "-s", "--max-time", "10", "--connect-timeout", "5",
 		"http://example.com/evil")
 	require.NoError(t, bodyRes.Err, "body check curl should succeed")
-	assert.Contains(t, bodyRes.Stdout, "Blocked by clawker firewall",
-		"denied path should return firewall block message in body")
+	// Centralized non-fingerprinting body — firewall verdict travels via
+	// the `action` access log field (route metadata), NOT the body. See
+	// envoy_config.go::firewallBlockedBody.
+	assert.Contains(t, bodyRes.Stdout, "Forbidden",
+		"denied path should return non-fingerprinting Forbidden body")
+	assert.NotContains(t, bodyRes.Stdout, "clawker",
+		"deny body must not disclose enforcement product identity")
 }
 
 func TestFirewall_PathRulesExplicitDeny(t *testing.T) {
@@ -942,8 +947,13 @@ security:
 		"curl", "-s", "--max-time", "10", "--connect-timeout", "5",
 		"http://example.com/evil")
 	require.NoError(t, bodyRes.Err, "body check curl should succeed")
-	assert.Contains(t, bodyRes.Stdout, "Blocked by clawker firewall",
-		"denied path should return firewall block message in body")
+	// Centralized non-fingerprinting body — firewall verdict travels via
+	// the `action` access log field (route metadata), NOT the body. See
+	// envoy_config.go::firewallBlockedBody.
+	assert.Contains(t, bodyRes.Stdout, "Forbidden",
+		"denied path should return non-fingerprinting Forbidden body")
+	assert.NotContains(t, bodyRes.Stdout, "clawker",
+		"deny body must not disclose enforcement product identity")
 }
 
 func TestFirewall_TLSPathRulesDefaultDeny(t *testing.T) {
@@ -981,7 +991,7 @@ security:
   firewall:
     rules:
       - dst: "example.com"
-        proto: "tls"
+        proto: "https"
         port: 443
         action: "allow"
         path_rules:
@@ -1034,8 +1044,127 @@ security:
 		"curl", "-s", "--max-time", "10", "--connect-timeout", "5",
 		"https://example.com/evil")
 	require.NoError(t, bodyRes.Err, "body check curl should succeed")
-	assert.Contains(t, bodyRes.Stdout, "Blocked by clawker firewall",
-		"denied path should return firewall block message in body")
+	// Centralized non-fingerprinting body — firewall verdict travels via
+	// the `action` access log field (route metadata), NOT the body. See
+	// envoy_config.go::firewallBlockedBody.
+	assert.Contains(t, bodyRes.Stdout, "Forbidden",
+		"denied path should return non-fingerprinting Forbidden body")
+	assert.NotContains(t, bodyRes.Stdout, "clawker",
+		"deny body must not disclose enforcement product identity")
+}
+
+// TestFirewall_PathRuleNormalizationDefeatsSmuggling locks in the
+// path-smuggling fix verified live on 2026-05-23 against the live
+// firewall. Without normalize_path + path_with_escaped_slashes_action
+// on the HCM, URL-encoded `..` sequences pass the literal-prefix match
+// and forward upstream — a CVE-class bypass of the path-rule security
+// boundary clawker depends on for UGC-class allowed domains (see
+// project_mitm_load_bearing memory). Curl with `%2e%2e/` traversal
+// from `/test/...` to outside-prefix paths must be blocked by clawker
+// (403 with the centralized non-fingerprint body), NOT reach upstream.
+func TestFirewall_PathRuleNormalizationDefeatsSmuggling(t *testing.T) {
+	h := &harness.Harness{
+		T: t,
+		Opts: &harness.FactoryOptions{
+			Config:         config.NewConfig,
+			Client:         docker.NewClient,
+			ProjectManager: project.NewProjectManager,
+			ControlPlane: func(cfg config.Config, log *logger.Logger) cpboot.Manager {
+				return cpboot.NewManager(
+					func(ctx context.Context) (*docker.Client, error) {
+						return docker.NewClient(ctx, cfg, log)
+					},
+					func() (config.Config, error) { return cfg, nil },
+					func() (*logger.Logger, error) { return log, nil },
+				)
+			},
+			UseRealAdminClient: true,
+		},
+	}
+	setup := h.NewIsolatedFS(nil)
+
+	// TLS rule with path inspection: only /allowed/ allowed; default deny.
+	// The smuggle attempts target paths OUTSIDE /allowed/ via URL-encoded
+	// traversal. Without HCM normalize_path the literal prefix match
+	// permits these to reach upstream; with normalize_path they collapse
+	// to paths outside the allow prefix and hit the deny default.
+	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
+build:
+  image: "buildpack-deps:bookworm-scm"
+agent:
+  claude_code:
+    use_host_auth: false
+security:
+  firewall:
+    rules:
+      - dst: "example.com"
+        proto: "https"
+        port: 443
+        action: "allow"
+        path_rules:
+          - path: "/allowed/"
+            action: "allow"
+        path_default: "deny"
+`)
+
+	regRes := h.Run("project", "register", "testproject")
+	require.NoError(t, regRes.Err, "register failed\nstdout: %s\nstderr: %s",
+		regRes.Stdout, regRes.Stderr)
+
+	buildRes := h.Run("build")
+	require.NoError(t, buildRes.Err, "build failed\nstdout: %s\nstderr: %s",
+		buildRes.Stdout, buildRes.Stderr)
+
+	startRes := h.Run("container", "run", "--detach", "--agent", "smuggle", "@", "sleep", "infinity")
+	require.NoError(t, startRes.Err, "container start failed\nstdout: %s\nstderr: %s",
+		startRes.Stdout, startRes.Stderr)
+	t.Cleanup(func() {
+		h.Run("container", "stop", "--agent", "smuggle")
+	})
+
+	// Each smuggle vector — clawker must block all of them with 403.
+	// The path normalizes (via Envoy's UNESCAPE_AND_REDIRECT behavior or
+	// equivalent) to a path outside `/allowed/`, hitting the default deny.
+	smuggleVectors := []struct {
+		name string
+		url  string
+	}{
+		{name: "url-encoded %2e%2e", url: "https://example.com/allowed/%2e%2e/escaped"},
+		{name: "url-encoded ..%2f", url: "https://example.com/allowed/..%2fescaped"},
+		{name: "double-encoded", url: "https://example.com/allowed/%252e%252e/escaped"},
+		{name: "merged-slash", url: "https://example.com/allowed//..//escaped"},
+	}
+
+	for _, v := range smuggleVectors {
+		t.Run(v.name, func(t *testing.T) {
+			// Use -L to follow Envoy's UNESCAPE_AND_REDIRECT 307 (the
+			// normalized path then hits the deny default → 403). Without
+			// -L we'd accept the redirect itself as a "success" outcome
+			// even though the eventual path is denied.
+			res := h.ExecInContainer("smuggle",
+				"curl", "-sL", "--max-time", "15", "--connect-timeout", "10",
+				"-o", "/dev/null", "-w", "%{http_code}",
+				v.url)
+			require.NoError(t, res.Err,
+				"curl with smuggle vector should reach clawker (not connection error)\nstdout: %s\nstderr: %s",
+				res.Stdout, res.Stderr)
+			httpCode := strings.TrimSpace(res.Stdout)
+			assert.Equal(t, "403", httpCode,
+				"smuggle vector %q must be blocked by clawker, got HTTP %s — path normalization is broken",
+				v.url, httpCode)
+
+			// Body must be the centralized non-fingerprint Forbidden body
+			// (not an upstream-served response that would indicate the
+			// request escaped clawker).
+			bodyRes := h.ExecInContainer("smuggle",
+				"curl", "-sL", "--max-time", "15", "--connect-timeout", "10",
+				v.url)
+			require.NoError(t, bodyRes.Err, "body check curl should succeed")
+			assert.Contains(t, bodyRes.Stdout, "Forbidden",
+				"smuggle vector %q must hit clawker deny (Forbidden body), got: %s",
+				v.url, bodyRes.Stdout)
+		})
+	}
 }
 
 func TestFirewall_TLSPathRulesExplicitDeny(t *testing.T) {
@@ -1070,7 +1199,7 @@ security:
   firewall:
     rules:
       - dst: "example.com"
-        proto: "tls"
+        proto: "https"
         port: 443
         action: "allow"
         path_rules:
@@ -1123,8 +1252,13 @@ security:
 		"curl", "-s", "--max-time", "10", "--connect-timeout", "5",
 		"https://example.com/evil")
 	require.NoError(t, bodyRes.Err, "body check curl should succeed")
-	assert.Contains(t, bodyRes.Stdout, "Blocked by clawker firewall",
-		"denied path should return firewall block message in body")
+	// Centralized non-fingerprinting body — firewall verdict travels via
+	// the `action` access log field (route metadata), NOT the body. See
+	// envoy_config.go::firewallBlockedBody.
+	assert.Contains(t, bodyRes.Stdout, "Forbidden",
+		"denied path should return non-fingerprinting Forbidden body")
+	assert.NotContains(t, bodyRes.Stdout, "clawker",
+		"deny body must not disclose enforcement product identity")
 }
 
 // TestFirewall_WildcardAndExactCoexist verifies that a wildcard rule (.example.com)
@@ -1169,7 +1303,7 @@ security:
   firewall:
     rules:
       - dst: "clawker.dev"
-        proto: "tls"
+        proto: "https"
         port: 443
         action: "allow"
         path_rules:
@@ -1177,7 +1311,7 @@ security:
             action: "allow"
         path_default: "deny"
       - dst: ".clawker.dev"
-        proto: "tls"
+        proto: "https"
         port: 443
         action: "allow"
         path_rules:
