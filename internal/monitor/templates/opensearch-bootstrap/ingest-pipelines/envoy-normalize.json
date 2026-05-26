@@ -1,0 +1,11 @@
+{
+  "description": "Envoy-specific cleanup. Bound as default_pipeline on clawker-envoy (runs BEFORE the shared envelope-normalize final_pipeline). Strips noise Envoy ALS emits unconditionally from its CommonProperties proto (cluster_name / log_name / node_name / zone_name — all empty strings in clawker's single-node deployment), removes empty instrumentationScope, drops the literal '-' sentinel Envoy substitutes for unset response_flags / upstream_transport_failure_reason, and converts the 'true'/'false' string for tls.established into an actual boolean to match the mapping type. Source-side fix would require an Envoy proto change (CommonProperties fields have no suppression knob); collector-side transform would need OTTL Length() guards on every empty-string field. Pipeline is the right layer for shape cleanup that is intrinsic to the Envoy ALS exporter, not specific to one record's content. Severity defaults + numeric coercion live in the OTel Collector transform processor (closer to source, applies before storage).",
+  "processors": [
+    {
+      "script": {
+        "lang": "painless",
+        "source": "if (ctx.resource instanceof Map) { String[] empties = new String[] { 'cluster_name', 'log_name', 'node_name', 'zone_name' }; for (int i = 0; i < empties.length; i++) { String k = empties[i]; Object v = ctx.resource.get(k); if (v != null && ''.equals(v.toString())) { ctx.resource.remove(k); } } } if (ctx.instrumentationScope instanceof Map && ctx.instrumentationScope.isEmpty()) { ctx.remove('instrumentationScope'); } if (ctx.attributes instanceof Map) { String[] sentinels = new String[] { 'response_flags', 'upstream_transport_failure_reason' }; for (int i = 0; i < sentinels.length; i++) { String k = sentinels[i]; if ('-'.equals(ctx.attributes.get(k))) { ctx.attributes.remove(k); } } Object te = ctx.attributes.get('tls.established'); if (te instanceof String) { ctx.attributes.put('tls.established', 'true'.equals(te)); } }"
+      }
+    }
+  ]
+}

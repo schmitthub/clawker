@@ -152,22 +152,27 @@ Routing key for filter-chain shape selection. `NormalizeRule` (`internal/control
 
 ## Access Log Schema
 
-Every access log record emitted by clawker's Envoy uses OTel network + tls semantic conventions for protocol/transport/TLS identity, with two clawker-defined fields (`action`, `source`) alongside the standard Envoy substitution operators. The legacy single `proto` field — which conflated L4/L5/L7 into one rule-type label and at one point even carried the verdict (`proto: "deny"`) — is gone. **Rule schema (`proto:` on `EgressRule`) and access-log schema are NOT in parity**: the rule keeps the simple `proto:` knob as the routing key for filter-chain shape selection; the access-log decomposes observed protocol layers into separate OTel fields.
+Every access log record emitted by clawker's Envoy uses OTel semantic conventions for network/server/client/tls identity (network, server, client, network.peer, tls registries), with one clawker-defined field (`action`) alongside the standard Envoy substitution operators. The colloquial pre-rename fields (`domain`, `client_ip`, `upstream_ip`, `upstream_port`) have been replaced by their OTel canonical equivalents (`server.address`, `client.address`, `network.peer.address`, `network.peer.port`); `request_host` (Host header) has been consolidated into `server.address` (plaintext HCMs override the SNI default with `%REQ(Host)%`). The legacy single `proto` field — which conflated L4/L5/L7 into one rule-type label and at one point even carried the verdict (`proto: "deny"`) — and the `source: envoy` discriminator are also gone (`resource.service.name=envoy` covers source; `@timestamp` covers timestamp). **Rule schema (`proto:` on `EgressRule`) and access-log schema are NOT in parity**: the rule keeps the simple `proto:` knob as the routing key for filter-chain shape selection; the access-log decomposes observed protocol layers into separate OTel fields.
 
 Field reference (one per row on every access log record):
 
 | Field | Source | Notes |
 |-------|--------|-------|
+| `server.address` | TLS HCM + TCP/SSH: `%REQUESTED_SERVER_NAME%` (SNI). Plaintext HCM: `%REQ(Host)%` (override in `buildHTTPAccessLog` because SNI is unavailable). Deny TCP chain: optional static value from `buildTCPAccessLog`'s variadic. | OTel-stable, replaces deprecated `tls.server.name` / `tls.client.server_name` (both deprecated in semconv ≥ v1.21 in favor of `server.address`). |
+| `server.port` | not currently emitted (clawker's per-rule clusters pin upstream port — see `network.peer.port` for the resolved value) | Reserved for future use if Envoy substitution adds a downstream-target-port operator. |
+| `client.address` | `%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%` | OTel-stable, replaces colloquial `client_ip`. |
+| `network.peer.address` | `%UPSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%` | OTel network-semconv for the post-resolution upstream peer Envoy actually connected to. Distinct from `server.address` (what the client asked for) so confused-deputy mismatch is queryable. |
+| `network.peer.port` | `%UPSTREAM_REMOTE_PORT%` | Pair to `network.peer.address`. |
 | `network.transport` | hardcoded `"tcp"` per call site | All current filter chains are TCP-bound. Future UDP/QUIC would carry `"udp"` / `"quic"`. OTel enum: `tcp\|udp\|pipe\|quic\|unix`. |
 | `network.protocol.name` | rule's L7 name (HCM: `"http"`; opaque TCP: rule's `proto:` value; deny chain: `""`) | Lowercase free-form, IANA-aligned. Deny chain has no negotiated L7 — emits empty string. |
 | `network.protocol.version` | `%PROTOCOL%` (HTTP only) | Envoy emits the raw HCM-observed value `HTTP/1.1` / `HTTP/2` / `HTTP/3` — prefix-stripped normalization deferred until a second emitter sends bare-version values. Absent on TCP/SSH records (`%PROTOCOL%` is HTTP-only and would emit `-`). |
-| `tls.established` | hardcoded per filter-chain shape: `"true"` for TLS-terminated HCM, `"false"` otherwise | Bool-as-string; consumers query `tls.established:true`. Stamped at builder call site, not derived from substitution. |
+| `tls.established` | hardcoded per filter-chain shape: `"true"` for TLS-terminated HCM, `"false"` otherwise | Bool-as-string from Envoy substitution. The OS ingest pipeline `envoy-normalize` coerces to actual boolean type via Painless before storage, matching the index template's `boolean` mapping. Consumers query `tls.established:true`. |
 | `tls.protocol.version` | `%DOWNSTREAM_TLS_VERSION%` | Returns `-` when TLS wasn't on the wire. |
 | `tls.cipher` | `%DOWNSTREAM_TLS_CIPHER%` | Same null behavior as version. |
 | `action` | `"allowed"` / `"denied"` (past-tense verdict) | The canonical firewall verdict per record. See verdict-source rules below. |
-| `source` | hardcoded `"envoy"` | Discriminator when an aggregated query spans multiple log emitters. |
-| `upstream_tls_*` | upstream MITM re-encryption metadata | Kept as flat clawker operational fields (no OTel `tls.client.*` mapping); diagnostic, not part of the access-event schema. |
-| `upstream_transport_failure_reason` | `%UPSTREAM_TRANSPORT_FAILURE_REASON%` | **HTTP-only.** Deliberately dropped from the TCP/SSH path because Envoy emits `-` for non-HTTP contexts and the field gave the false impression of TCP-side diagnostics. |
+| `listener_ip` | `%DOWNSTREAM_LOCAL_ADDRESS_WITHOUT_PORT%` | Envoy-specific (no OTel mapping). Useful for multi-listener deployments; clawker today binds one listener so the value is constant but the field stays for observability hygiene. |
+| `upstream_tls_*` | upstream MITM re-encryption metadata | Kept as flat clawker operational fields (no OTel `tls.client.*` mapping; OTel deprecated `tls.client.*` for downstream identity, leaving no canonical home for upstream-side re-encryption diagnostics). Diagnostic, not part of the access-event schema. |
+| `upstream_transport_failure_reason` | `%UPSTREAM_TRANSPORT_FAILURE_REASON%` | **HTTP-only.** Deliberately dropped from the TCP/SSH path because Envoy emits `-` for non-HTTP contexts and the field gave the false impression of TCP-side diagnostics. The OS ingest pipeline drops the literal `"-"` sentinel that Envoy substitutes when the field is unset. |
 
 ALPN / `tls.next_protocol` is intentionally not on the schema — Envoy does not expose a downstream ALPN substitution that works reliably across filter-chain shapes. Add only when a verified substitution exists.
 

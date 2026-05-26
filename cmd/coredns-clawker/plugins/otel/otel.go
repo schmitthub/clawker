@@ -129,8 +129,7 @@ func (e *otelEmitter) Emit(ctx context.Context, event QueryEvent) error {
 	record.SetSeverityText("INFO")
 	record.SetBody(otellog.StringValue("CoreDNS query handled"))
 	record.AddAttributes(
-		otellog.String("source", "coredns"),
-		otellog.String("client_ip", event.ClientIP),
+		otellog.String("client.address", event.ClientIP),
 		otellog.String("zone", event.Zone),
 		otellog.String("query_name", event.QueryName),
 		otellog.String("qtype", event.QueryType),

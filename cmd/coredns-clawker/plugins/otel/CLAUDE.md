@@ -118,7 +118,7 @@ The plugin is the OTLP **client**. Material is issued + bind-mounted by `firewal
 - Provider: `sdklog.NewLoggerProvider(WithResource(...), WithProcessor(processor))`. Resource attribute `service.name=coredns` (schemaless).
 - Each `Emit` builds an `otellog.Record`:
   - `EventName=dns.query`, `Severity=Info`, `SeverityText=INFO`, body `"CoreDNS query handled"`
-  - Attributes: `source=coredns`, `client_ip`, `zone`, `query_name`, `qtype`, `rcode`, `action`, `answer_count` (int), `duration_ms` (float64)
+  - Attributes: `client.address` (OTel-canonical, replaces colloquial `client_ip`), `zone`, `query_name`, `qtype`, `rcode`, `action`, `answer_count` (int), `duration_ms` (float64). No per-record `source` attribute — `service.name=coredns` (resource layer) + `ingest_source=coredns` (stamped post-routing by `resource/coredns`) cover provenance.
   - `action` is the clawker firewall verdict — `allowed` for named zones (forward upstream), `denied` for the catch-all `.` zone (templated NXDOMAIN). Distinct from `rcode`: an allowed-zone query that gets an upstream NXDOMAIN (typo) emits `rcode=NXDOMAIN, action=allowed` — clawker policy allowed, upstream said no record.
   - `answers` (slice of strings) added only when non-empty so empty NXDOMAIN responses don't carry an empty array attribute
   - `event.Err != nil` → `record.SetErr(event.Err)`

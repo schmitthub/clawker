@@ -388,22 +388,32 @@ func TestBuildHTTPAccessLog(t *testing.T) {
 	// and the OTel envelope `@timestamp` cover them respectively.
 	assert.Nil(t, jf["source"], "redundant with resource.service.name=envoy")
 	assert.Nil(t, jf["timestamp"], "redundant with envelope @timestamp")
-	assert.Equal(t, "%REQUESTED_SERVER_NAME%", jf["domain"])
+	// OTel semconv: server.address = "host the client was trying to reach"
+	// (stable, replaces deprecated tls.server.name). TLS-MITM HCM sources
+	// from SNI; the plaintext HCM variant tested below overrides to
+	// %REQ(Host)% since SNI is unavailable on plaintext.
+	assert.Equal(t, "%REQUESTED_SERVER_NAME%", jf["server.address"])
 	assert.Equal(t, "%DURATION%", jf["duration_ms"])
-	assert.Equal(t, "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%", jf["client_ip"])
+	assert.Equal(t, "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%", jf["client.address"])
+	assert.Equal(t, "%UPSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%", jf["network.peer.address"])
+	assert.Equal(t, "%UPSTREAM_REMOTE_PORT%", jf["network.peer.port"])
 
 	// HTTP-specific fields present.
 	assert.Equal(t, "%RESPONSE_CODE%", jf["response_code"])
 	assert.Equal(t, "%REQ(:METHOD)%", jf["method"])
 	assert.Equal(t, "%REQ(:PATH)%", jf["path"])
-	assert.Equal(t, "%REQ(Host)%", jf["request_host"])
 	assert.Equal(t, "%UPSTREAM_TRANSPORT_FAILURE_REASON%", jf["upstream_transport_failure_reason"])
 
-	// Legacy field names dropped.
+	// Legacy + redundant field names dropped. `request_host` consolidated
+	// into `server.address` (Host header source for plaintext); the
+	// pre-rename colloquial fields (`domain`, `client_ip`, `upstream_ip`,
+	// `upstream_port`) replaced by OTel semconv equivalents.
 	_, hasLegacyProto := jf["proto"]
 	assert.False(t, hasLegacyProto, "legacy `proto` field must be gone (replaced by network.transport / network.protocol.name)")
 	_, hasLegacyDsTLS := jf["downstream_tls_version"]
 	assert.False(t, hasLegacyDsTLS, "legacy `downstream_tls_version` replaced by tls.protocol.version")
+	_, hasRequestHost := jf["request_host"]
+	assert.False(t, hasRequestHost, "request_host consolidated into server.address")
 
 	// OTel ALS sink: structured fields on attributes, service.name on resource.
 	otelEntry := findOtelEntry(t, logs)
@@ -428,6 +438,9 @@ func TestBuildHTTPAccessLog(t *testing.T) {
 	assert.Equal(t, "true", otelAttrValue(t, attrs, "tls.established"))
 	assert.Equal(t, "%REQ(:METHOD)%", otelAttrValue(t, attrs, "method"))
 	assert.Equal(t, "%REQ(:PATH)%", otelAttrValue(t, attrs, "path"))
+	assert.Equal(t, "%REQUESTED_SERVER_NAME%", otelAttrValue(t, attrs, "server.address"))
+	assert.Equal(t, "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%", otelAttrValue(t, attrs, "client.address"))
+	assert.Equal(t, "%UPSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%", otelAttrValue(t, attrs, "network.peer.address"))
 }
 
 func TestBuildHTTPAccessLog_PlaintextHCMStampsTLSEstablishedFalse(t *testing.T) {
@@ -436,11 +449,14 @@ func TestBuildHTTPAccessLog_PlaintextHCMStampsTLSEstablishedFalse(t *testing.T) 
 	// When the plaintext HCM filter chain (no upstream TLS termination) calls
 	// the builder, tls.established must stamp "false" so consumers can
 	// distinguish HTTPS-MITM records from plaintext HTTP records purely from
-	// the indexed attribute.
+	// the indexed attribute. server.address falls back to the Host header
+	// because SNI is unavailable on plaintext — without the override, the
+	// destination would be empty for every plaintext record.
 	logs := buildHTTPAccessLog(false, "allowed", ALSConfig{})
 	stdoutEntry := findStdoutEntry(t, logs)
 	jf := stdoutEntry["typed_config"].(map[string]any)["log_format"].(map[string]any)["json_format"].(map[string]any)
 	assert.Equal(t, "false", jf["tls.established"])
+	assert.Equal(t, "%REQ(Host)%", jf["server.address"], "plaintext HCM must source server.address from Host header (SNI unavailable)")
 }
 
 func TestBuildTCPAccessLog_DegradedModeStdoutOnly(t *testing.T) {
@@ -477,8 +493,8 @@ func TestBuildTCPAccessLog(t *testing.T) {
 	assert.False(t, hasVersion, "network.protocol.version is HTTP-only — absent on TCP path")
 
 	// Common fields present.
-	assert.Equal(t, "%REQUESTED_SERVER_NAME%", jf["domain"])
-	assert.Equal(t, "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%", jf["client_ip"])
+	assert.Equal(t, "%REQUESTED_SERVER_NAME%", jf["server.address"])
+	assert.Equal(t, "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%", jf["client.address"])
 
 	// HTTP-specific fields absent on TCP variant.
 	assert.Nil(t, jf["response_code"])
@@ -486,7 +502,7 @@ func TestBuildTCPAccessLog(t *testing.T) {
 	assert.Nil(t, jf["path"])
 	assert.Nil(t, jf["upstream_transport_failure_reason"], "upstream_transport_failure_reason is HTTP-only — absent on TCP path")
 
-	// Legacy `proto` field is gone.
+	// Legacy field names gone.
 	_, hasLegacyProto := jf["proto"]
 	assert.False(t, hasLegacyProto, "legacy `proto` field must be gone")
 
@@ -519,7 +535,7 @@ func TestBuildTCPAccessLog_DomainOverride(t *testing.T) {
 	require.True(t, ok)
 	jf, ok := lf["json_format"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "github.com", jf["domain"])
+	assert.Equal(t, "github.com", jf["server.address"])
 	assert.Equal(t, "tcp", jf["network.transport"])
 	assert.Equal(t, "", jf["network.protocol.name"], "deny chain has no negotiated L7 protocol")
 	assert.Equal(t, "denied", jf["action"])
@@ -529,7 +545,7 @@ func TestBuildTCPAccessLog_DomainOverride(t *testing.T) {
 	require.True(t, ok)
 	attrs, ok := otc["attributes"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "github.com", otelAttrValue(t, attrs, "domain"))
+	assert.Equal(t, "github.com", otelAttrValue(t, attrs, "server.address"))
 	assert.Equal(t, "denied", otelAttrValue(t, attrs, "action"))
 }
 

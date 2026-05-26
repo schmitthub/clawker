@@ -5,14 +5,19 @@
   "template": {
     "settings": {
       "index": {
-        "final_pipeline": "envelope-normalize"
+        "default_pipeline": "envoy-normalize",
+        "final_pipeline":   "envelope-normalize"
       }
     },
     "mappings": {
       "properties": {
         "attributes": {
           "properties": {
-            "domain":                            { "type": "keyword" },
+            "server.address":                    { "type": "keyword" },
+            "server.port":                       { "type": "integer" },
+            "client.address":                    { "type": "ip" },
+            "network.peer.address":              { "type": "ip" },
+            "network.peer.port":                 { "type": "integer" },
             "action":                            { "type": "keyword" },
             "method":                            { "type": "keyword" },
             "path":                              { "type": "keyword" },
@@ -21,14 +26,11 @@
             "response_code_details":             { "type": "keyword" },
             "response_flags":                    { "type": "keyword" },
             "upstream_transport_failure_reason": { "type": "keyword" },
-            "client_ip":                         { "type": "ip" },
             "listener_ip":                       { "type": "ip" },
-            "upstream_ip":                       { "type": "ip" },
-            "upstream_port":                     { "type": "integer" },
             "network.transport":                 { "type": "keyword" },
             "network.protocol.name":             { "type": "keyword" },
             "network.protocol.version":          { "type": "keyword" },
-            "tls.established":                   { "type": "keyword" },
+            "tls.established":                   { "type": "boolean" },
             "tls.protocol.version":              { "type": "keyword" },
             "tls.cipher":                        { "type": "keyword" },
             "upstream_tls_version":              { "type": "keyword" },

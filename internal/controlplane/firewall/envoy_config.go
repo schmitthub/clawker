@@ -127,17 +127,18 @@ const (
 // and the untrusted otel-collector:4317 lane is reserved for agent
 // containers — infra services must never cross into it.
 //
-// HTTP-specific fields (method, path, response_code, request_host) are only
-// available when Envoy terminates HTTP. request_host captures the
-// Host/:authority header, which is the only domain source for plaintext
-// HTTP (where SNI/%REQUESTED_SERVER_NAME% is empty).
+// HTTP-specific fields (method, path, response_code) are only available when
+// Envoy terminates HTTP. The destination host travels uniformly on
+// `server.address` for both TLS (SNI via %REQUESTED_SERVER_NAME%) and
+// plaintext HTTP (Host/:authority header via %REQ(Host)%) — stamped at the
+// common path in accessLogFields so consumers query one field regardless of
+// filter-chain shape.
 func buildHTTPAccessLog(tlsTerminated bool, action string, als ALSConfig) []any {
 	extra := map[string]string{
 		"method":                            "%REQ(:METHOD)%",
 		"path":                              "%REQ(:PATH)%",
 		"response_code":                     "%RESPONSE_CODE%",
 		"response_code_details":             "%RESPONSE_CODE_DETAILS%",
-		"request_host":                      "%REQ(Host)%",
 		"user_agent":                        "%REQ(USER-AGENT)%",
 		"req_duration_ms":                   "%REQUEST_DURATION%",
 		"resp_duration_ms":                  "%RESPONSE_DURATION%",
@@ -148,6 +149,13 @@ func buildHTTPAccessLog(tlsTerminated bool, action string, als ALSConfig) []any 
 	tlsEst := "false"
 	if tlsTerminated {
 		tlsEst = "true"
+	} else {
+		// Plaintext HTTP chain: SNI is unavailable (%REQUESTED_SERVER_NAME%
+		// is empty), so override server.address to the Host/:authority
+		// header. LOGICAL_DNS cluster pinning by Host header preserves the
+		// security boundary — server.address records the client's stated
+		// destination on every record regardless of filter-chain shape.
+		extra["server.address"] = "%REQ(Host)%"
 	}
 	sinks := []any{stdoutAccessLogEntry("tcp", "http", tlsEst, action, extra)}
 	if als.MTLS {
@@ -160,17 +168,17 @@ func buildHTTPAccessLog(tlsTerminated bool, action string, als ALSConfig) []any 
 // Stdout always; OpenTelemetry ALS only when als.MTLS is true (same
 // trust-lane rationale as buildHTTPAccessLog). Omits HTTP fields (method,
 // path, response_code) that are unavailable in TCP proxy — used by deny
-// and TCP/SSH listeners. Optional domain overrides %REQUESTED_SERVER_NAME%
-// for raw TCP where SNI is unavailable.
+// and TCP/SSH listeners. Optional serverAddress overrides
+// %REQUESTED_SERVER_NAME% for raw TCP where SNI is unavailable.
 //
 // `action` is a clawker-internal literal stamped at config generation:
 // uniform-verdict TCP filter chains hardcode it ("denied" for deny_cluster,
 // "allowed" for per-rule TCP/SSH listeners). It carries the firewall
 // decision in the dedicated `action` field, never overloaded into `proto`.
-func buildTCPAccessLog(l7Proto, action string, als ALSConfig, domain ...string) []any {
+func buildTCPAccessLog(l7Proto, action string, als ALSConfig, serverAddress ...string) []any {
 	var extra map[string]string
-	if len(domain) > 0 && domain[0] != "" {
-		extra = map[string]string{"domain": domain[0]}
+	if len(serverAddress) > 0 && serverAddress[0] != "" {
+		extra = map[string]string{"server.address": serverAddress[0]}
 	}
 	sinks := []any{stdoutAccessLogEntry("tcp", l7Proto, "false", action, extra)}
 	if als.MTLS {
@@ -265,15 +273,24 @@ func clawkerActionMetadata(action string) map[string]any {
 // pre-rename `proto: "deny"` overload that conflated proto with action
 // is gone.
 //
-// `extra` carries context-specific overrides (HTTP method/path/code, or
-// the static domain for raw TCP). Nil-safe.
+// `extra` carries context-specific overrides (HTTP method/path/code, or a
+// static server.address for raw TCP). Nil-safe.
+//
+// Field naming follows OTel network/server/client/tls semantic conventions
+// where they exist: `server.address` (replaces deprecated `tls.server.name`
+// — the canonical "host the client was trying to reach", stable since
+// semconv v1.21), `client.address`, `network.peer.{address,port}` (post-
+// resolution upstream peer per network semconv), `tls.*`, `network.*`.
+// Envoy-specific operational fields stay flat under their original names
+// (`listener_ip`, `upstream_tls_*`, `bytes_*`, `duration_ms`, etc.) — no
+// OTel equivalent.
 func accessLogFields(transport, l7Proto, tlsEstablished, action string, extra map[string]string) map[string]string {
 	f := map[string]string{
-		"domain":                  "%REQUESTED_SERVER_NAME%",
-		"client_ip":               "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%",
+		"server.address":          "%REQUESTED_SERVER_NAME%",
+		"client.address":          "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%",
 		"listener_ip":             "%DOWNSTREAM_LOCAL_ADDRESS_WITHOUT_PORT%",
-		"upstream_ip":             "%UPSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%",
-		"upstream_port":           "%UPSTREAM_REMOTE_PORT%",
+		"network.peer.address":    "%UPSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%",
+		"network.peer.port":       "%UPSTREAM_REMOTE_PORT%",
 		"response_flags":          "%RESPONSE_FLAGS%",
 		"bytes_sent":              "%BYTES_SENT%",
 		"bytes_received":          "%BYTES_RECEIVED%",
