@@ -370,7 +370,7 @@ func (p *projectHandle) EgressRules() []config.EgressRule {
 	if projectFw != nil {
 		rules = append(rules, projectFw.Rules...)
 		for _, d := range projectFw.AddDomains {
-			rules = append(rules, config.EgressRule{Dst: d, Proto: "http", Port: 443, Action: "allow"})
+			rules = append(rules, config.EgressRule{Dst: d, Proto: "https", Port: 443, Action: "allow"})
 		}
 	}
 	return rules

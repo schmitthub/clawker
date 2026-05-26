@@ -12,8 +12,8 @@ agent:
     - CONTEXT7_API_KEY
   post_init: |
     claude mcp add -s local serena -- uvx --from git+https://github.com/oraios/serena@ad7cf51ec3cd69f4e1cc6d2eab679f8876897b7a serena start-mcp-server --context claude-code --project "$(pwd)" --enable-web-dashboard false
-    claude mcp add -s user --header "CONTEXT7_API_KEY: $CONTEXT7_API_KEY" --transport http context7 https://mcp.context7.com/mcp
     claude mcp add -s user -t http deepwiki https://mcp.deepwiki.com/mcp
+    npx ctx7 setup --claude --api-key "$CONTEXT7_API_KEY"
 build:
   image: golang:1.26-bookworm
   instructions:
@@ -186,7 +186,7 @@ security:
           - action: allow
             path: /syft/releases/
         port: 443
-        proto: http
+        proto: https
       - action: allow
         dst: raw.githubusercontent.com
         path_default: deny
@@ -198,7 +198,7 @@ security:
           - action: allow
             path: /envoyproxy/
         port: 443
-        proto: http
+        proto: https
   git_credentials:
     copy_git_config: true
     forward_gpg: true
