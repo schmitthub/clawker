@@ -211,7 +211,7 @@ func effectivePathDefault(rules []pathRule, pathDefault string) string {
 
 // normalizeEgressRule applies the same defaults as firewall.NormalizeRule:
 // legacy proto:"tls" → "https", empty proto → "https", empty action → "allow",
-// https with port 0 → 443, http with port 0 → 80.
+// https with port 0 → 443, http with port 0 → 80, ssh with port 0 → 22.
 func normalizeEgressRule(r egressRule) egressRule {
 	if strings.EqualFold(r.Proto, "tls") {
 		r.Proto = "https"
@@ -228,6 +228,8 @@ func normalizeEgressRule(r egressRule) egressRule {
 			r.Port = 443
 		case "http":
 			r.Port = 80
+		case "ssh":
+			r.Port = 22
 		}
 	}
 	return r

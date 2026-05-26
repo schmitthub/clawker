@@ -123,7 +123,7 @@ func ValidateDst(dst string) error {
 // alias; "tls" was always TLS-terminated HCM-inspected HTTPS — the rename
 // disambiguates from raw TLS proxying). Empty proto defaults to "https" (the
 // common case). Empty action defaults to "allow". Default port is 443 for
-// https, 80 for http. Existing non-zero values are never overridden.
+// https, 80 for http, 22 for ssh. Existing non-zero values are never overridden.
 // Config-side values stay present-tense (allow/deny) — the access log emits
 // past-tense verdict values (allowed/denied) independently.
 func NormalizeRule(r config.EgressRule) config.EgressRule {
@@ -142,6 +142,8 @@ func NormalizeRule(r config.EgressRule) config.EgressRule {
 			r.Port = 443
 		case "http":
 			r.Port = 80
+		case "ssh":
+			r.Port = 22
 		}
 	}
 	return r

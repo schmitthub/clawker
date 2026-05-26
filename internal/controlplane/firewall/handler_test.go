@@ -1010,7 +1010,7 @@ func TestProtoRulesRoundTrip(t *testing.T) {
 		{
 			name: "http proto, path default only",
 			in: []*adminv1.EgressRule{{
-				Dst: "plain.example.com", Proto: "https", Port: 80, Action: "allow",
+				Dst: "plain.example.com", Proto: "http", Port: 80, Action: "allow",
 				PathDefault: "deny",
 			}},
 		},
@@ -1018,8 +1018,8 @@ func TestProtoRulesRoundTrip(t *testing.T) {
 			name: "multiple rules, mixed protos",
 			in: []*adminv1.EgressRule{
 				{Dst: "a.example.com", Proto: "https", Port: 443, Action: "allow"},
-				{Dst: "b.example.com", Proto: "tcp", Port: 22, Action: "allow"},
-				{Dst: "c.example.com", Proto: "https", Port: 80, Action: "deny"},
+				{Dst: "b.example.com", Proto: "ssh", Port: 22, Action: "allow"},
+				{Dst: "c.example.com", Proto: "http", Port: 80, Action: "deny"},
 			},
 		},
 	}
