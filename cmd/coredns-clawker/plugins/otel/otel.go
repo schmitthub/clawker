@@ -99,10 +99,49 @@ type noopEmitter struct{}
 // otel.SetErrorHandler instead of the Emit call site.
 func (noopEmitter) Emit(context.Context, QueryEvent) error { return nil }
 
+// handleOTELError is wired as the process-global OTel SDK error handler.
+// Export failures from the BatchProcessor land here — they would
+// otherwise be invisible to the operator log surface that monitors
+// `event=<subsystem>_unavailable` lines (the structured triage
+// contract for CP-imported subsystem degradation; see root CLAUDE.md
+// hard rules for the CP boot/serve path). CoreDNS clog has no
+// structured-field API, so the contract is encoded as key=value pairs
+// in the format string and emitted at Error level so log scrapers
+// surface it. `impact=security_event_loss` makes the blast radius
+// explicit: a silent OTel outage during an attack window means DNS
+// allow/deny decisions are no longer being shipped to OpenSearch and
+// the operator's only post-hoc audit trail is the local `docker logs
+// clawker-coredns` ring buffer.
+func handleOTELError(err error) {
+	now := time.Now()
+	otelErrorMu.Lock()
+	if !otelErrorLastEmit.IsZero() && now.Sub(otelErrorLastEmit) < otelErrorRateLimit {
+		otelErrorMu.Unlock()
+		return
+	}
+	otelErrorLastEmit = now
+	otelErrorMu.Unlock()
+
+	log.Errorf("event=coredns_otel_unavailable component=coredns_otel_plugin cause=%q impact=security_event_loss", err.Error())
+}
+
 // setErrorHandlerOnce ensures the process-global OTEL SDK error handler
 // is wired exactly once, independent of how many times newProvider is
 // invoked (the setup retry-on-error path can call it multiple times).
 var setErrorHandlerOnce sync.Once
+
+// otelErrorRateLimit caps the structured event=coredns_otel_unavailable
+// emit cadence. The SDK BatchProcessor retries export on its own interval,
+// so a sustained outage would otherwise drown the operator log surface in
+// duplicate failure lines. One line per minute is the legibility floor
+// — operators must still see the signal during an attack-window outage,
+// but not at a rate that buries every other CoreDNS log entry.
+const otelErrorRateLimit = time.Minute
+
+var (
+	otelErrorMu       sync.Mutex
+	otelErrorLastEmit time.Time
+)
 
 func NewEmitter(opts Options) (Emitter, error) {
 	if strings.TrimSpace(opts.Endpoint) == "" {
@@ -206,9 +245,7 @@ func (h Handler) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg)
 
 func newProvider(opts Options) (*sdklog.LoggerProvider, error) {
 	setErrorHandlerOnce.Do(func() {
-		otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
-			log.Warningf("OTEL SDK error: %v", err)
-		}))
+		otel.SetErrorHandler(otel.ErrorHandlerFunc(handleOTELError))
 	})
 
 	tlsCfg, err := buildTLSConfig(opts)

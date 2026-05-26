@@ -93,6 +93,7 @@ func TestServeDNS(t *testing.T) {
 		wantEventErr     bool
 		wantAnswerLen    int
 		wantUpstreamSent bool
+		wantAction       string
 	}{
 		{
 			name:             "success forwards response and emits event",
@@ -104,6 +105,7 @@ func TestServeDNS(t *testing.T) {
 			wantEventRCode:   "NOERROR",
 			wantAnswerLen:    1,
 			wantUpstreamSent: true,
+			wantAction:       "allowed",
 		},
 		{
 			name:             "resolver error emits SERVFAIL event and returns error",
@@ -117,6 +119,7 @@ func TestServeDNS(t *testing.T) {
 			wantEventErr:     true,
 			wantAnswerLen:    0,
 			wantUpstreamSent: false,
+			wantAction:       "denied",
 		},
 		{
 			name:             "emit error does not break DNS forwarding",
@@ -129,6 +132,7 @@ func TestServeDNS(t *testing.T) {
 			wantEventRCode:   "NOERROR",
 			wantAnswerLen:    1,
 			wantUpstreamSent: true,
+			wantAction:       "allowed",
 		},
 		{
 			name:             "downstream NXDOMAIN omits answers attribute",
@@ -140,6 +144,7 @@ func TestServeDNS(t *testing.T) {
 			wantEventRCode:   "NXDOMAIN",
 			wantAnswerLen:    0,
 			wantUpstreamSent: true,
+			wantAction:       "denied",
 		},
 		{
 			name:             "downstream rcode overrides numeric rcode",
@@ -151,6 +156,7 @@ func TestServeDNS(t *testing.T) {
 			wantEventRCode:   "REFUSED",
 			wantAnswerLen:    0,
 			wantUpstreamSent: true,
+			wantAction:       "allowed",
 		},
 		{
 			name:             "no downstream write skips upstream WriteMsg",
@@ -162,6 +168,7 @@ func TestServeDNS(t *testing.T) {
 			wantEventRCode:   "NOERROR",
 			wantAnswerLen:    0,
 			wantUpstreamSent: false,
+			wantAction:       "allowed",
 		},
 	}
 
@@ -185,7 +192,7 @@ func TestServeDNS(t *testing.T) {
 			require.Len(t, emitter.events, tc.wantEvents)
 			event := emitter.events[0]
 			assert.Equal(t, tc.wantEventRCode, event.RCode)
-			assert.Equal(t, ActionForZone(tc.zone), event.Action, "Action must be zone-derived (named → allowed, '.' catch-all → denied)")
+			assert.Equal(t, tc.wantAction, event.Action)
 			assert.Equal(t, tc.wantAnswerLen, event.AnswerCount)
 			assert.Len(t, event.Answers, tc.wantAnswerLen)
 			if tc.wantEventErr {
@@ -217,6 +224,26 @@ func TestRemoteIP(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.want, remoteIP(tc.addr))
+		})
+	}
+}
+
+func TestActionForZone(t *testing.T) {
+	cases := []struct {
+		name string
+		zone string
+		want string
+	}{
+		{name: "catch-all root", zone: ".", want: "denied"},
+		{name: "catch-all root with surrounding whitespace", zone: "  .  ", want: "denied"},
+		{name: "named zone with trailing dot", zone: "github.com.", want: "allowed"},
+		{name: "named zone without trailing dot", zone: "github.com", want: "allowed"},
+		{name: "empty string is not the catch-all", zone: "", want: "allowed"},
+		{name: "whitespace-only is not the catch-all", zone: "   ", want: "allowed"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, ActionForZone(tc.zone))
 		})
 	}
 }

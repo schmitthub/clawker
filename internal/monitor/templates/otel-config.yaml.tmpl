@@ -191,16 +191,19 @@ processors:
           - set(severity_number, SEVERITY_NUMBER_INFO) where severity_number == 0
           # %METADATA(ROUTE:clawker:action)% substitutes "-" on responses Envoy
           # generates BEFORE route matching (path_with_escaped_slashes_action
-          # local-redirect, HCM-rejected requests). Deny path always carries
-          # route metadata via direct_response, so action="-" is by elimination
-          # an allowed pre-route action — coerce to "allowed" so the firewall
-          # verdict pie stays binary.
-          - set(attributes["action"], "allowed") where attributes["action"] == "-"
+          # local-redirect, HCM-rejected requests). These are pre-route events
+          # — distinct from both allowed and denied. Map to "pre_route" so the
+          # firewall action pie surfaces them as a third bucket; an adversary
+          # triggering escaped-slash redirects must not appear as "allowed".
+          - set(attributes["action"], "pre_route") where attributes["action"] == "-"
           # Strip Envoy "-" sentinels from typed fields before coercion.
           # Local replies (direct_response, deny chain) leave upstream peer + response-side
           # timers unset; Envoy substitutes "-" instead of omitting. Without removal the bare
           # string lands against typed mappings (long / ip) and OS rejects the whole record
           # (mapper_parsing_exception → forensic data dropped).
+          # ORDER LOAD-BEARING: every delete_key for "-" MUST precede the matching Int() coercion
+          # below. OTTL statements execute in declaration order; a reorder makes Int("-") fire
+          # against the sentinel before deletion → typed-mapping rejection → record dropped.
           - delete_key(attributes, "response_code") where attributes["response_code"] == "-"
           - delete_key(attributes, "bytes_sent") where attributes["bytes_sent"] == "-"
           - delete_key(attributes, "bytes_received") where attributes["bytes_received"] == "-"

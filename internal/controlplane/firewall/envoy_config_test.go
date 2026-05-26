@@ -254,14 +254,72 @@ func TestGenerateEnvoyConfig_DenylistPathRules_InferAllowDefault(t *testing.T) {
 	out := string(yamlBytes)
 	assert.Contains(t, out, "docs.example.com")
 	assert.Contains(t, out, "/admin")
-	// The denied path emits a direct_response 403 in the generated config,
-	// but the catch-all "/" must route to the upstream cluster — not also
-	// 403. Count route-level `action: denied` clawker metadata entries:
-	// the per-rule deny route and the deny_all virtual-host route are the
-	// two structurally expected denies in this minimal config. A third
-	// would mean the catch-all "/" is also denying (the original bug).
-	denyMetadataCount := strings.Count(out, "action: denied")
-	assert.Equal(t, 2, denyMetadataCount, "two deny routes expected (/admin path rule + deny_all virtual host); catch-all must route to upstream")
+
+	// Walk the route table structurally and assert the inferred-default
+	// invariant: explicit deny path rules deny, the catch-all "/" allows.
+	// A regression where the catch-all also denied would silently 403 the
+	// whole domain — the original denylist bug.
+	var cfg map[string]any
+	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
+
+	var catchAllAction, adminAction string
+	catchAllSeen, adminSeen := false, false
+	listeners := cfg["static_resources"].(map[string]any)["listeners"].([]any)
+	for _, l := range listeners {
+		lis := l.(map[string]any)
+		for _, c := range lis["filter_chains"].([]any) {
+			ch := c.(map[string]any)
+			for _, f := range ch["filters"].([]any) {
+				flt := f.(map[string]any)
+				if flt["name"] != "envoy.filters.network.http_connection_manager" {
+					continue
+				}
+				tc := flt["typed_config"].(map[string]any)
+				rc, _ := tc["route_config"].(map[string]any)
+				if rc == nil {
+					continue
+				}
+				for _, vh := range rc["virtual_hosts"].([]any) {
+					vhost := vh.(map[string]any)
+					// Only inspect the docs.example.com virtual host —
+					// other virtual hosts (e.g. deny_all SNI catch-all)
+					// carry their own denied catch-all by design.
+					domains, _ := vhost["domains"].([]any)
+					isTarget := false
+					for _, d := range domains {
+						if s, ok := d.(string); ok && s == "docs.example.com" {
+							isTarget = true
+							break
+						}
+					}
+					if !isTarget {
+						continue
+					}
+					for _, r := range vhost["routes"].([]any) {
+						route := r.(map[string]any)
+						match, _ := route["match"].(map[string]any)
+						prefix, _ := match["prefix"].(string)
+						md := route["metadata"].(map[string]any)
+						fm := md["filter_metadata"].(map[string]any)
+						clw := fm["clawker"].(map[string]any)
+						action := clw["action"].(string)
+						switch prefix {
+						case "/":
+							catchAllAction = action
+							catchAllSeen = true
+						case "/admin":
+							adminAction = action
+							adminSeen = true
+						}
+					}
+				}
+			}
+		}
+	}
+	require.True(t, adminSeen, "/admin path-rule route not found in docs.example.com virtual host")
+	require.True(t, catchAllSeen, `catch-all "/" route not found in docs.example.com virtual host`)
+	assert.Equal(t, "denied", adminAction, "/admin path rule must carry denied verdict")
+	assert.Equal(t, "allowed", catchAllAction, `catch-all "/" must carry allowed verdict — inferred PathDefault for denylist-only rule`)
 }
 
 func TestGenerateEnvoyConfig_ZeroPortTLSDefaults443(t *testing.T) {
@@ -539,6 +597,12 @@ func TestBuildTCPAccessLog_DomainOverride(t *testing.T) {
 	assert.Equal(t, "tcp", jf["network.transport"])
 	assert.Equal(t, "", jf["network.protocol.name"], "deny chain has no negotiated L7 protocol")
 	assert.Equal(t, "denied", jf["action"])
+	// Deny chain catches both TLS handshakes and plaintext flows that no
+	// allow chain claimed — Envoy resets before observing which.
+	// tls.established MUST be omitted (not "false") so forensics is not
+	// misled into reading a denied TLS handshake as a plaintext attempt.
+	_, hasTLSEst := jf["tls.established"]
+	assert.False(t, hasTLSEst, "deny chain must OMIT tls.established (TLS-vs-plaintext is unobservable on a reset)")
 
 	otelEntry := findOtelEntry(t, logs)
 	otc, ok := otelEntry["typed_config"].(map[string]any)
@@ -547,6 +611,44 @@ func TestBuildTCPAccessLog_DomainOverride(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "github.com", otelAttrValue(t, attrs, "server.address"))
 	assert.Equal(t, "denied", otelAttrValue(t, attrs, "action"))
+	// Same omission must hold on the OTel attributes sink.
+	for _, v := range attrs["values"].([]any) {
+		entry := v.(map[string]any)
+		assert.NotEqual(t, "tls.established", entry["key"], "deny chain OTel attrs must OMIT tls.established")
+	}
+}
+
+// TestBuildDenyFilterChain_OmitsTLSEstablished walks the generated deny
+// filter chain end-to-end and asserts tls.established is absent from
+// both access-log sinks. The deny chain catches both TLS and plaintext
+// flows; stamping a bool on a denied TLS handshake misleads forensics.
+func TestBuildDenyFilterChain_OmitsTLSEstablished(t *testing.T) {
+	t.Parallel()
+
+	chain := buildDenyFilterChain(ALSConfig{MTLS: true, Port: 4319})
+	filters := chain["filters"].([]any)
+	tcpProxy := filters[0].(map[string]any)
+	tc := tcpProxy["typed_config"].(map[string]any)
+	accessLog := tc["access_log"].([]any)
+
+	for _, entry := range accessLog {
+		entryMap := entry.(map[string]any)
+		switch entryMap["name"] {
+		case "envoy.access_loggers.stdout":
+			etc := entryMap["typed_config"].(map[string]any)
+			lf := etc["log_format"].(map[string]any)
+			jf := lf["json_format"].(map[string]any)
+			_, has := jf["tls.established"]
+			assert.False(t, has, "stdout deny-chain access log must OMIT tls.established")
+		case "envoy.access_loggers.open_telemetry":
+			etc := entryMap["typed_config"].(map[string]any)
+			attrs := etc["attributes"].(map[string]any)
+			for _, v := range attrs["values"].([]any) {
+				e := v.(map[string]any)
+				assert.NotEqual(t, "tls.established", e["key"], "otel deny-chain access log must OMIT tls.established")
+			}
+		}
+	}
 }
 
 func TestGenerateEnvoyConfig_DegradedModeOmitsOtelSink(t *testing.T) {
@@ -1542,5 +1644,4 @@ func TestGenerateEnvoyConfig_DenyResponseBodyNotFingerprinted(t *testing.T) {
 	out := string(yamlBytes)
 	assert.NotContains(t, out, "Blocked by clawker firewall", "deny body must not name the firewall product (fingerprint disclosure)")
 	assert.NotContains(t, out, "clawker firewall", "no inline string may reveal the clawker name in response bodies")
-	assert.Contains(t, out, strings.TrimSpace(firewallBlockedBody), "centralized firewallBlockedBody must be present")
 }

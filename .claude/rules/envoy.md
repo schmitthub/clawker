@@ -115,13 +115,6 @@ TLS filter chains:  ALPN override + router (custom filters)
 HTTP filter chain:  upgrade_type: websocket (no custom filters, uses default HCM filters)
 ```
 
-### Extended CONNECT (RFC 8441) — Untested
-
-`allow_connect: true` in `http2_protocol_options` enables WebSocket over HTTP/2 via Extended CONNECT. This would allow H2 downstream clients to use WebSocket without falling back to HTTP/1.1.
-- envoyproxy/envoy#38645 reports a multi-stream issue, but the referenced predecessor (#8547) was fixed in 2019 and the report lacks strong verification
-- **Needs live testing** against the attacker server's `/ws/echo` endpoint before drawing conclusions
-- If Extended CONNECT works, it would eliminate the H2 downstream WebSocket limitation entirely
-
 ### HTTP/2 Downstream (Client → Envoy)
 
 Our TLS listener advertises `alpn_protocols: ["h2", "http/1.1"]` downstream. Clients that negotiate h2 (like Node.js `ws` library, wscat) cannot use the HTTP/1.1 Upgrade mechanism over h2. Real browsers use HTTP/1.1 for WebSocket natively. Programmatic clients may need to force HTTP/1.1 ALPN.
@@ -159,14 +152,14 @@ Field reference (one per row on every access log record):
 | Field | Source | Notes |
 |-------|--------|-------|
 | `server.address` | TLS HCM + TCP/SSH: `%REQUESTED_SERVER_NAME%` (SNI). Plaintext HCM: `%REQ(Host)%` (override in `buildHTTPAccessLog` because SNI is unavailable). Deny TCP chain: optional static value from `buildTCPAccessLog`'s variadic. | OTel-stable, replaces deprecated `tls.server.name` / `tls.client.server_name` (both deprecated in semconv ≥ v1.21 in favor of `server.address`). |
-| `server.port` | not currently emitted (clawker's per-rule clusters pin upstream port — see `network.peer.port` for the resolved value) | Reserved for future use if Envoy substitution adds a downstream-target-port operator. |
+| `server.port` | not emitted (clawker's per-rule clusters pin upstream port — see `network.peer.port` for the resolved value) | No Envoy substitution operator exposes the downstream-target port. |
 | `client.address` | `%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%` | OTel-stable, replaces colloquial `client_ip`. |
 | `network.peer.address` | `%UPSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%` | OTel network-semconv for the post-resolution upstream peer Envoy actually connected to. Distinct from `server.address` (what the client asked for) so confused-deputy mismatch is queryable. |
 | `network.peer.port` | `%UPSTREAM_REMOTE_PORT%` | Pair to `network.peer.address`. |
-| `network.transport` | hardcoded `"tcp"` per call site | All current filter chains are TCP-bound. Future UDP/QUIC would carry `"udp"` / `"quic"`. OTel enum: `tcp\|udp\|pipe\|quic\|unix`. |
+| `network.transport` | hardcoded `"tcp"` per call site | All filter chains are TCP-bound. OTel enum: `tcp\|udp\|pipe\|quic\|unix`. |
 | `network.protocol.name` | rule's L7 name (HCM: `"http"`; opaque TCP: rule's `proto:` value; deny chain: `""`) | Lowercase free-form, IANA-aligned. Deny chain has no negotiated L7 — emits empty string. |
-| `network.protocol.version` | `%PROTOCOL%` (HTTP only) | Envoy emits the raw HCM-observed value `HTTP/1.1` / `HTTP/2` / `HTTP/3` — prefix-stripped normalization deferred until a second emitter sends bare-version values. Absent on TCP/SSH records (`%PROTOCOL%` is HTTP-only and would emit `-`). |
-| `tls.established` | hardcoded per filter-chain shape: `"true"` for TLS-terminated HCM, `"false"` otherwise | Bool-as-string from Envoy substitution. The OS ingest pipeline `envoy-normalize` coerces to actual boolean type via Painless before storage, matching the index template's `boolean` mapping. Consumers query `tls.established:true`. |
+| `network.protocol.version` | `%PROTOCOL%` (HTTP only) | Envoy emits the raw HCM value (`HTTP/1.1` / `HTTP/2` / `HTTP/3`). Absent on TCP/SSH records (`%PROTOCOL%` is HTTP-only and would emit `-`). |
+| `tls.established` | hardcoded per filter-chain shape: `"true"` for TLS-terminated HCM, `"false"` for plaintext HCM and per-rule opaque TCP/SSH listeners. OMITTED on the deny chain (catches both TLS handshakes and plaintext flows that no allow chain claimed — Envoy resets before observing which, so stamping a bool would mislead forensics). | Bool-as-string from Envoy substitution. The OS ingest pipeline `envoy-normalize` coerces to actual boolean type via Painless before storage, matching the index template's `boolean` mapping. Consumers query `tls.established:true`. |
 | `tls.protocol.version` | `%DOWNSTREAM_TLS_VERSION%` | Returns `-` when TLS wasn't on the wire. |
 | `tls.cipher` | `%DOWNSTREAM_TLS_CIPHER%` | Same null behavior as version. |
 | `action` | `"allowed"` / `"denied"` (past-tense verdict) | The canonical firewall verdict per record. See verdict-source rules below. |
@@ -197,7 +190,7 @@ Rule input (`EgressRule.Action`, `PathRule.Action`, `PathDefault`) uses present-
 
 Every clawker HCM (`buildTLSFilterChain` for TLS-MITM termination AND `buildHTTPFilterChain` for plaintext HTTP) MUST include the field set returned by `httpConnectionManagerHardening()`. Applied via `maps.Copy` at HCM construction so no site can forget any field. The set is load-bearing for the path-rule security boundary:
 
-- `normalize_path: true` + `merge_slashes: true` + `path_with_escaped_slashes_action: UNESCAPE_AND_REDIRECT` — defeats URL-encoded traversal (`%2e%2e/`, `..%2f`, double-encoded). Without these, `/allowed/%2e%2e/denied` literally starts with `/allowed/` → matches allow prefix → forwards upstream, bypassing path rules entirely. See plan `compressed-floating-matsumoto.md` §4 for the verified exploit.
+- `normalize_path: true` + `merge_slashes: true` + `path_with_escaped_slashes_action: UNESCAPE_AND_REDIRECT` — defeats URL-encoded traversal (`%2e%2e/`, `..%2f`, double-encoded). Without these, `/allowed/%2e%2e/denied` literally starts with `/allowed/` → matches allow prefix → forwards upstream, bypassing path rules entirely.
 - `common_http_protocol_options.headers_with_underscores_action: REJECT_REQUEST` — RFC 9110 §5.4.5 header-name aliasing prevention.
 - `http2_protocol_options.max_concurrent_streams: 100` — h2 amplification cap.
 

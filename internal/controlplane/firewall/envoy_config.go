@@ -175,14 +175,30 @@ func buildHTTPAccessLog(tlsTerminated bool, action string, als ALSConfig) []any 
 // uniform-verdict TCP filter chains hardcode it ("denied" for deny_cluster,
 // "allowed" for per-rule TCP/SSH listeners). It carries the firewall
 // decision in the dedicated `action` field, never overloaded into `proto`.
+//
+// `tls.established` field handling: the deny chain (l7Proto=="" with
+// action=="denied") catches both TLS and plaintext flows that didn't
+// match any allow chain — Envoy resets the connection before it can
+// observe whether the client was attempting a TLS handshake or sending
+// plaintext bytes. Stamping `tls.established: "false"` on a denied TLS
+// handshake misleads forensics, so the deny chain OMITS the field
+// entirely. Per-rule TCP/SSH allow listeners (l7Proto!="") still stamp
+// "false" because the rule declares the listener as opaque TCP — no TLS
+// termination is in scope by construction.
 func buildTCPAccessLog(l7Proto, action string, als ALSConfig, serverAddress ...string) []any {
 	var extra map[string]string
 	if len(serverAddress) > 0 && serverAddress[0] != "" {
 		extra = map[string]string{"server.address": serverAddress[0]}
 	}
-	sinks := []any{stdoutAccessLogEntry("tcp", l7Proto, "false", action, extra)}
+	// Deny chain catch-all: l7 protocol unknown and verdict is denied.
+	// Empty tlsEstablished tells accessLogFields to omit the key.
+	tlsEst := "false"
+	if l7Proto == "" && action == "denied" {
+		tlsEst = ""
+	}
+	sinks := []any{stdoutAccessLogEntry("tcp", l7Proto, tlsEst, action, extra)}
 	if als.MTLS {
-		sinks = append(sinks, otelAccessLogEntry("tcp", l7Proto, "false", action, extra))
+		sinks = append(sinks, otelAccessLogEntry("tcp", l7Proto, tlsEst, action, extra))
 	}
 	return sinks
 }
@@ -201,10 +217,10 @@ const firewallBlockedBody = "Forbidden\n"
 // by every clawker HTTP connection manager (TLS and plaintext HTTP filter
 // chains). Critical for path-rule security: without `normalize_path` +
 // `merge_slashes` + `path_with_escaped_slashes_action`, URL-encoded
-// traversal (e.g. `/anchore/syft/main/%2e%2e/%2e%2e/torvalds/linux/...`)
-// bypasses the route's literal-prefix matcher and forwards upstream — the
-// verified path-smuggling exploit documented in plan
-// compressed-floating-matsumoto.md §4.
+// traversal like `/allowed/%2e%2e/denied` literally starts with `/allowed/`
+// — Envoy's route matcher sees the un-normalized path, the allow prefix
+// matches, and the request forwards upstream, bypassing the deny path rule
+// that should have caught it.
 //
 // Field-by-field rationale:
 //   - normalize_path / merge_slashes / path_with_escaped_slashes_action:
@@ -244,7 +260,9 @@ func httpConnectionManagerHardening() map[string]any {
 // the route table MUST carry this so Envoy stamps the correct action
 // per-record at emit time. `action` is a Go literal ("allowed" / "denied")
 // — never a runtime computation — exactly the same generation-time model
-// as `proto`/`action` hardcoded at TCP filter chain access loggers.
+// as `l7Proto`/`action` hardcoded at TCP filter chain access loggers
+// (buildTCPAccessLog call sites in buildDenyFilterChain and
+// buildTCPListener).
 func clawkerActionMetadata(action string) map[string]any {
 	return map[string]any{
 		"filter_metadata": map[string]any{
@@ -257,21 +275,34 @@ func clawkerActionMetadata(action string) map[string]any {
 // stdout JSON sink and the OpenTelemetry ALS attributes. Keeping a single
 // source of truth means renaming a field updates both sinks at once.
 //
-// `action` carries the clawker firewall decision (`allowed` / `denied`),
-// stamped at config generation time. For uniform-verdict filter chains
-// (deny_cluster, TCP/SSH listeners) the call site passes a literal; for
-// mixed-verdict HTTP filter chains (one HCM serves both allow + deny
-// routes) the call site passes the literal substitution token
-// `%METADATA(ROUTE:clawker:action)%` so Envoy copies the per-route
-// metadata value into the log line at emit time. The field is NEVER
-// inferred from response_code, response_flags, or any downstream-of-
-// routing signal — see plan compressed-floating-matsumoto.md for the
-// concrete-at-emit-time rationale.
+// Parameters:
 //
-// `proto` reflects the actual L4 protocol the filter chain processes
-// (`tls`/`http`/`tcp`/`ssh`). It does NOT carry the verdict — the
-// pre-rename `proto: "deny"` overload that conflated proto with action
-// is gone.
+//   - `transport` is the OTel network.transport enum and is always
+//     hardcoded "tcp" at every call site (every clawker filter chain is
+//     TCP-bound; future UDP/QUIC listeners would pass "udp" / "quic").
+//   - `l7Proto` is the OTel network.protocol.name. HCM filter chains
+//     (TLS-MITM + plaintext HTTP) pass "http"; per-rule opaque TCP/SSH
+//     listeners pass the rule's `proto:` value (`ssh` / `tcp` / unknown);
+//     the deny chain catch-all passes "" because no L7 was negotiated.
+//   - `tlsEstablished` is the OTel tls.established bool-as-string. Only
+//     "true" for TLS-terminating HCM chains. Per-rule opaque TCP/SSH
+//     listeners pass "false" (the rule declares the listener as opaque
+//     TCP — no TLS termination in scope by construction). The deny chain
+//     passes "" to OMIT the field — see the buildTCPAccessLog doc for
+//     the forensics rationale (a denied TLS handshake stamped "false"
+//     would mislead consumers about what was actually on the wire).
+//   - `action` carries the clawker firewall decision (`allowed` /
+//     `denied`), stamped at config generation time. For uniform-verdict
+//     filter chains (deny_cluster, TCP/SSH listeners) the call site
+//     passes a literal; for mixed-verdict HTTP filter chains (one HCM
+//     serves both allow + deny routes) the call site passes the
+//     substitution token `%METADATA(ROUTE:clawker:action)%` so Envoy
+//     copies the per-route metadata value into the log line at emit
+//     time. The field is NEVER inferred from response_code,
+//     response_flags, or any downstream-of-routing signal.
+//
+// `action` and `l7Proto` are distinct fields — never overload one into
+// the other. The firewall verdict travels on `action` only.
 //
 // `extra` carries context-specific overrides (HTTP method/path/code, or a
 // static server.address for raw TCP). Nil-safe.
@@ -303,8 +334,12 @@ func accessLogFields(transport, l7Proto, tlsEstablished, action string, extra ma
 		"upstream_tls_cipher":     "%UPSTREAM_TLS_CIPHER%",
 		"network.transport":       transport,
 		"network.protocol.name":   l7Proto,
-		"tls.established":         tlsEstablished,
 		"action":                  action,
+	}
+	// Empty tlsEstablished omits the key — used by the deny chain where
+	// stamping "false" on a denied TLS handshake would mislead forensics.
+	if tlsEstablished != "" {
+		f["tls.established"] = tlsEstablished
 	}
 	maps.Copy(f, extra)
 	return f
@@ -449,8 +484,8 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts, als ALSCon
 			continue
 		default:
 			// Unknown L7 name: route to opaque TCP listener so the
-			// destination is at least proxied (matches pre-rename
-			// behavior for arbitrary proto strings).
+			// destination is at least proxied — arbitrary `proto:`
+			// strings fall through to TCP passthrough.
 			tcpRules = append(tcpRules, r)
 		}
 	}
@@ -841,8 +876,7 @@ func buildHTTPRoutes(r config.EgressRule, clusterName string) []any {
 	// metadata.filter_metadata.clawker.action — the access log
 	// (%METADATA(ROUTE:clawker:action)%) reads this at emit time so the
 	// firewall verdict is concrete per record (never inferred from
-	// response_code). See clawkerActionMetadata + plan
-	// compressed-floating-matsumoto.md.
+	// response_code). See clawkerActionMetadata.
 	for _, pr := range r.PathRules {
 		if strings.EqualFold(pr.Action, "allow") {
 			routes = append(routes, map[string]any{
@@ -922,9 +956,13 @@ func buildTLSWebSocketUpgrade() []any {
 	}
 }
 
-// buildDenyFilterChain creates the default deny filter chain that resets connections.
-// Access logging with proto="deny" so blocked connection attempts are visible in the
-// egress monitoring dashboard alongside allowed traffic.
+// buildDenyFilterChain creates the default deny filter chain that resets
+// connections. Catch-all filter_chain_match: matches any flow no allow
+// chain claimed. Access logging emits `action: "denied"` so blocked
+// connection attempts are visible in the egress monitoring dashboard
+// alongside allowed traffic. The deny chain sees both TLS and plaintext
+// flows (Envoy resets before observing which), so the access log omits
+// `tls.established` — see buildTCPAccessLog for the forensics rationale.
 func buildDenyFilterChain(als ALSConfig) map[string]any {
 	return map[string]any{
 		"filter_chain_match": map[string]any{},
@@ -936,13 +974,12 @@ func buildDenyFilterChain(als ALSConfig) map[string]any {
 					"stat_prefix": "deny_all",
 					"cluster":     "deny_cluster",
 					// idle_timeout omitted — Envoy default (1h) applies.
-					// The previous explicit "0s" disabled the timeout
-					// entirely, which the tcp_proxy.proto docs warn yields
-					// connection leaks ("Disabling this timeout is likely
-					// to yield connection leaks"). A hostile agent opening
-					// N never-closed TCP connections to a blocked SNI
+					// An explicit "0s" disables the timeout entirely; the
+					// tcp_proxy.proto docs warn this yields connection
+					// leaks ("Disabling this timeout is likely to yield
+					// connection leaks"). A hostile agent opening N
+					// never-closed TCP connections to a blocked SNI
 					// would exhaust Envoy's per-process FD/socket budget.
-					// Verified DoS surface 2026-05-23.
 					"access_log": buildTCPAccessLog("", "denied", als),
 				},
 			},

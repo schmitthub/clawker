@@ -291,7 +291,7 @@ security:
   firewall:
     rules:
       - dst: "example.com"
-        proto: "http"
+        proto: "https"
         port: 443
         action: "allow"
 `)
@@ -991,7 +991,7 @@ security:
   firewall:
     rules:
       - dst: "example.com"
-        proto: "http"
+        proto: "https"
         port: 443
         action: "allow"
         path_rules:
@@ -1098,7 +1098,7 @@ security:
   firewall:
     rules:
       - dst: "example.com"
-        proto: "http"
+        proto: "https"
         port: 443
         action: "allow"
         path_rules:
@@ -1199,7 +1199,7 @@ security:
   firewall:
     rules:
       - dst: "example.com"
-        proto: "http"
+        proto: "https"
         port: 443
         action: "allow"
         path_rules:
@@ -1303,7 +1303,7 @@ security:
   firewall:
     rules:
       - dst: "clawker.dev"
-        proto: "http"
+        proto: "https"
         port: 443
         action: "allow"
         path_rules:
@@ -1311,7 +1311,7 @@ security:
             action: "allow"
         path_default: "deny"
       - dst: ".clawker.dev"
-        proto: "http"
+        proto: "https"
         port: 443
         action: "allow"
         path_rules:
