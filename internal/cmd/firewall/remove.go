@@ -53,7 +53,7 @@ immediately via hot-reload — no container restart required.`,
 
 	cmd.ValidArgsFunction = domainCompletions(opts.AdminClient)
 
-	cmd.Flags().StringVar(&opts.Proto, "proto", "http", "L7 protocol (legacy `tls` value translated to `http`)")
+	cmd.Flags().StringVar(&opts.Proto, "proto", "https", "L7 protocol (legacy `tls` value translated to `https`)")
 	cmd.Flags().IntVar(&opts.Port, "port", 0, "Port number")
 	cmd.Flags().StringVar(&opts.Path, "path", "", "Remove a single path rule by its stored path (exact string match); omit to remove the whole entry")
 

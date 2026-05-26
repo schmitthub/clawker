@@ -19,9 +19,9 @@ func newRemoveCmd(t *testing.T) *cobra.Command {
 	t.Helper()
 	f := newTestFactory(t)
 	f.AdminClient = mockAdminFunc([]*adminv1.EgressRule{
-		{Dst: "zebra.example.com", Proto: "http"},
-		{Dst: "alpha.example.com", Proto: "http"},
-		{Dst: "middle.example.com", Proto: "http"},
+		{Dst: "zebra.example.com", Proto: "https"},
+		{Dst: "alpha.example.com", Proto: "https"},
+		{Dst: "middle.example.com", Proto: "https"},
 	}, nil)
 	cmd := NewCmdRemove(f, nil)
 	cmd.SetContext(context.Background())
@@ -89,9 +89,9 @@ func TestRemoveCompletion_EmptyRules(t *testing.T) {
 func TestRemoveCompletion_DeduplicatesDomains(t *testing.T) {
 	f := newTestFactory(t)
 	f.AdminClient = mockAdminFunc([]*adminv1.EgressRule{
-		{Dst: "example.com", Proto: "http"},
+		{Dst: "example.com", Proto: "https"},
 		{Dst: "example.com", Proto: "ssh", Port: 22},
-		{Dst: "other.com", Proto: "http"},
+		{Dst: "other.com", Proto: "https"},
 	}, nil)
 
 	cmd := NewCmdRemove(f, nil)

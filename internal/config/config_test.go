@@ -453,7 +453,7 @@ func TestRequiredFirewallRules(t *testing.T) {
 	// Verify all required rules have proper proto and action
 	for _, r := range rules {
 		assert.NotEmpty(t, r.Dst)
-		assert.Equal(t, "http", r.Proto)
+		assert.Equal(t, "https", r.Proto)
 		assert.Equal(t, "allow", r.Action)
 	}
 

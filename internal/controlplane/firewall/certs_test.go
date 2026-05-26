@@ -87,12 +87,12 @@ func TestRegenerateDomainCerts_AllTLSRules(t *testing.T) {
 	rules := []config.EgressRule{
 		{
 			Dst:   "github.com",
-			Proto: "http",
+			Proto: "https",
 			// No PathRules — still gets a cert for TLS inspection.
 		},
 		{
 			Dst:   "api.openai.com",
-			Proto: "http",
+			Proto: "https",
 			PathRules: []config.PathRule{
 				{Path: "/v1/models", Action: "allow"},
 			},
@@ -100,7 +100,7 @@ func TestRegenerateDomainCerts_AllTLSRules(t *testing.T) {
 		},
 		{
 			Dst:   "storage.googleapis.com",
-			Proto: "http",
+			Proto: "https",
 			PathRules: []config.PathRule{
 				{Path: "/download/*", Action: "allow"},
 			},
@@ -157,7 +157,7 @@ func TestRotateCA_RegeneratesAll(t *testing.T) {
 	rules := []config.EgressRule{
 		{
 			Dst:   "api.openai.com",
-			Proto: "http",
+			Proto: "https",
 			PathRules: []config.PathRule{
 				{Path: "/v1/models", Action: "allow"},
 			},
@@ -256,15 +256,15 @@ func TestRegenerateDomainCerts_WildcardAndExactDedup(t *testing.T) {
 		{
 			name: "wildcard first",
 			rules: []config.EgressRule{
-				{Dst: ".claude.ai", Proto: "http"},
-				{Dst: "claude.ai", Proto: "http"},
+				{Dst: ".claude.ai", Proto: "https"},
+				{Dst: "claude.ai", Proto: "https"},
 			},
 		},
 		{
 			name: "exact first",
 			rules: []config.EgressRule{
-				{Dst: "claude.ai", Proto: "http"},
-				{Dst: ".claude.ai", Proto: "http"},
+				{Dst: "claude.ai", Proto: "https"},
+				{Dst: ".claude.ai", Proto: "https"},
 			},
 		},
 	}
@@ -319,7 +319,7 @@ func TestRegenerateDomainCerts_WildcardFilenames(t *testing.T) {
 	rules := []config.EgressRule{
 		{
 			Dst:   ".datadoghq.com",
-			Proto: "http",
+			Proto: "https",
 			PathRules: []config.PathRule{
 				{Path: "/api/v2/logs", Action: "allow"},
 			},
@@ -355,8 +355,8 @@ func TestRegenerateDomainCerts_CleansStaleCerts(t *testing.T) {
 
 	// Generate certs for two domains.
 	rules := []config.EgressRule{
-		{Dst: "old-domain.com", Proto: "http"},
-		{Dst: "kept-domain.com", Proto: "http"},
+		{Dst: "old-domain.com", Proto: "https"},
+		{Dst: "kept-domain.com", Proto: "https"},
 	}
 	err = firewall.RegenerateDomainCerts(rules, certDir, caCert, caKey)
 	require.NoError(t, err)
@@ -365,7 +365,7 @@ func TestRegenerateDomainCerts_CleansStaleCerts(t *testing.T) {
 
 	// Regenerate with only the kept domain — stale cert should be cleaned.
 	rules = []config.EgressRule{
-		{Dst: "kept-domain.com", Proto: "http"},
+		{Dst: "kept-domain.com", Proto: "https"},
 	}
 	err = firewall.RegenerateDomainCerts(rules, certDir, caCert, caKey)
 	require.NoError(t, err)

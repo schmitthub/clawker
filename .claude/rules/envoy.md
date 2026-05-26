@@ -138,6 +138,18 @@ Egress rule types live in `internal/config/schema.go` (not in the firewall packa
 
 The firewall package imports these types from config; config does NOT import firewall.
 
+### `proto:` values
+
+Routing key for filter-chain shape selection. `NormalizeRule` (`internal/controlplane/firewall/rules_store.go`) silently translates legacy `proto: tls` → `proto: https` for backwards compatibility.
+
+| Proto | Default port | Pipeline | Notes |
+|-------|--------------|----------|-------|
+| `https` | 443 | TLS-MITM HCM filter chain (`buildTLSFilterChain`) | Envoy terminates TLS with a per-domain MITM cert, inspects HTTP, re-encrypts upstream. Default when proto is empty. |
+| `http` | 80 | Plaintext HCM filter chain (`buildHTTPFilterChain`) | `transport_protocol: raw_buffer` match. Host-header routing, no TLS termination. For sites that genuinely serve plaintext on port 80. |
+| `ssh` | 22 | Opaque TCP listener (`buildTCPListener`) | Per-rule listener on `tcp_<port>+offset`. No L7 inspection. |
+| `tcp` | 443 | Opaque TCP listener (`buildTCPListener`) | Generic TCP passthrough. |
+| (other) | 443 | Opaque TCP listener | Unknown proto names fall through to opaque TCP. |
+
 ## Access Log Schema
 
 Every access log record emitted by clawker's Envoy uses OTel network + tls semantic conventions for protocol/transport/TLS identity, with two clawker-defined fields (`action`, `source`) alongside the standard Envoy substitution operators. The legacy single `proto` field — which conflated L4/L5/L7 into one rule-type label and at one point even carried the verdict (`proto: "deny"`) — is gone. **Rule schema (`proto:` on `EgressRule`) and access-log schema are NOT in parity**: the rule keeps the simple `proto:` knob as the routing key for filter-chain shape selection; the access-log decomposes observed protocol layers into separate OTel fields.
@@ -171,16 +183,15 @@ Rule input (`EgressRule.Action`, `PathRule.Action`, `PathDefault`) uses present-
 
 ## HCM Hardening Contract
 
-Every clawker HCM (`buildTLSFilterChain` for TLS termination — the only HCM shape currently routed to) MUST include the field set returned by `httpConnectionManagerHardening()`. Applied via `maps.Copy` at HCM construction so no site can forget any field. The set is load-bearing for the path-rule security boundary:
+Every clawker HCM (`buildTLSFilterChain` for TLS-MITM termination AND `buildHTTPFilterChain` for plaintext HTTP) MUST include the field set returned by `httpConnectionManagerHardening()`. Applied via `maps.Copy` at HCM construction so no site can forget any field. The set is load-bearing for the path-rule security boundary:
 
 - `normalize_path: true` + `merge_slashes: true` + `path_with_escaped_slashes_action: UNESCAPE_AND_REDIRECT` — defeats URL-encoded traversal (`%2e%2e/`, `..%2f`, double-encoded). Without these, `/allowed/%2e%2e/denied` literally starts with `/allowed/` → matches allow prefix → forwards upstream, bypassing path rules entirely. See plan `compressed-floating-matsumoto.md` §4 for the verified exploit.
-- `request_timeout: 30s` + `stream_idle_timeout: 300s` + `common_http_protocol_options.idle_timeout: 300s` — slow-loris mitigation.
 - `common_http_protocol_options.headers_with_underscores_action: REJECT_REQUEST` — RFC 9110 §5.4.5 header-name aliasing prevention.
 - `http2_protocol_options.max_concurrent_streams: 100` — h2 amplification cap.
 
-`per_connection_buffer_limit_bytes: 32768` is NOT an HCM field — it lives on `envoy.config.listener.v3.Listener` and is stamped at the egress listener in `buildEgressListener`. Envoy strict-validates the HCM proto and refuses bootstrap when this field appears under `typed_config`. Same DoS-resistance role (cap per-connection read buffer so slowloris can't grow memory on N parked connections), wrong proto level.
+Timeouts (`request_timeout`, `stream_idle_timeout`, `idle_timeout`) and `per_connection_buffer_limit_bytes` are deliberately NOT set. LLM API calls regularly stream for minutes with multi-MB request bodies; short caps rupture mid-stream and tight buffer limits trigger `downstream_local_disconnect(purging_socket_that_have_not_progressed_to_connections)` under upstream backpressure. Envoy's built-in defaults are the right choice for this workload.
 
-The `TestGenerateEnvoyConfig_HCMHardening` regression test asserts every HCM in the generated YAML carries the full hardening set AND that the egress listener carries `per_connection_buffer_limit_bytes` at listener scope; a missing field would re-introduce the path-smuggling vector or the slowloris memory-growth vector.
+The `TestGenerateEnvoyConfig_HCMHardening` regression test asserts every HCM in the generated YAML carries the full hardening set; a missing field would re-introduce the path-smuggling vector.
 
 ## Deny Body — Non-Fingerprinting
 

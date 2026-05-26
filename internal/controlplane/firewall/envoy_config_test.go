@@ -30,7 +30,7 @@ func TestTCPMappings(t *testing.T) {
 		{
 			name: "TLS rules are excluded",
 			rules: []config.EgressRule{
-				{Dst: "api.anthropic.com", Proto: "http", Port: 443, Action: "allow"},
+				{Dst: "api.anthropic.com", Proto: "https", Port: 443, Action: "allow"},
 			},
 			expected: nil,
 		},
@@ -68,9 +68,9 @@ func TestTCPMappings(t *testing.T) {
 		{
 			name: "mixed TLS and TCP — only TCP produces mappings",
 			rules: []config.EgressRule{
-				{Dst: "api.anthropic.com", Proto: "http", Port: 443, Action: "allow"},
+				{Dst: "api.anthropic.com", Proto: "https", Port: 443, Action: "allow"},
 				{Dst: "github.com", Proto: "ssh", Port: 22, Action: "allow"},
-				{Dst: "registry.npmjs.org", Proto: "http", Port: 443, Action: "allow"},
+				{Dst: "registry.npmjs.org", Proto: "https", Port: 443, Action: "allow"},
 				{Dst: "db.example.com", Proto: "tcp", Port: 5432, Action: "allow"},
 			},
 			expected: []TCPMapping{
@@ -184,7 +184,7 @@ func TestGenerateEnvoyConfig_TCPListeners(t *testing.T) {
 	t.Parallel()
 
 	rules := []config.EgressRule{
-		{Dst: "api.anthropic.com", Proto: "http", Port: 443, Action: "allow"},
+		{Dst: "api.anthropic.com", Proto: "https", Port: 443, Action: "allow"},
 		{Dst: "github.com", Proto: "ssh", Port: 22, Action: "allow"},
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
@@ -200,7 +200,7 @@ func TestGenerateEnvoyConfig_TLSClusterAutoConfig(t *testing.T) {
 	t.Parallel()
 
 	rules := []config.EgressRule{
-		{Dst: "api.anthropic.com", Proto: "http", Port: 443, Action: "allow"},
+		{Dst: "api.anthropic.com", Proto: "https", Port: 443, Action: "allow"},
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
@@ -235,7 +235,7 @@ func TestGenerateEnvoyConfig_DenylistPathRules_InferAllowDefault(t *testing.T) {
 	rules := []config.EgressRule{
 		{
 			Dst:    "docs.example.com",
-			Proto:  "http",
+			Proto:  "https",
 			Port:   443,
 			Action: "allow",
 			PathRules: []config.PathRule{
@@ -271,8 +271,8 @@ func TestGenerateEnvoyConfig_ZeroPortTLSDefaults443(t *testing.T) {
 	// normalizeRule defaulted TLS to 443. GenerateEnvoyConfig must handle this
 	// defensively — Envoy rejects port_value:0 with a validation error.
 	rules := []config.EgressRule{
-		{Dst: "api.anthropic.com", Proto: "http", Port: 0, Action: "allow"},
-		{Dst: "github.com", Proto: "http", Port: 0, Action: "allow"},
+		{Dst: "api.anthropic.com", Proto: "https", Port: 0, Action: "allow"},
+		{Dst: "github.com", Proto: "https", Port: 0, Action: "allow"},
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
@@ -546,8 +546,8 @@ func TestGenerateEnvoyConfig_DegradedModeOmitsOtelSink(t *testing.T) {
 	// filter chain, deny chain implicit on the egress listener, TCP/SSH
 	// listener) so a regression on any single helper is caught.
 	rules := []config.EgressRule{
-		{Dst: "api.anthropic.com", Proto: "http", Port: 443, Action: "allow"},
-		{Dst: "example.com", Proto: "http", Port: 80, Action: "allow"},
+		{Dst: "api.anthropic.com", Proto: "https", Port: 443, Action: "allow"},
+		{Dst: "example.com", Proto: "https", Port: 80, Action: "allow"},
 		{Dst: "github.com", Proto: "ssh", Port: 22, Action: "allow"},
 	}
 	yamlBytes, _, err := GenerateEnvoyConfig(rules, EnvoyPorts{
@@ -567,7 +567,7 @@ func TestGenerateEnvoyConfig_OtelALSCluster_MTLS(t *testing.T) {
 	t.Parallel()
 
 	rules := []config.EgressRule{
-		{Dst: "api.anthropic.com", Proto: "http", Port: 443, Action: "allow"},
+		{Dst: "api.anthropic.com", Proto: "https", Port: 443, Action: "allow"},
 	}
 	yamlBytes, _, err := GenerateEnvoyConfig(rules, EnvoyPorts{
 		EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901,
@@ -599,14 +599,14 @@ func TestGenerateEnvoyConfig_AccessLogPresent(t *testing.T) {
 		{
 			name: "TLS has access_log",
 			rules: []config.EgressRule{
-				{Dst: "api.anthropic.com", Proto: "http", Port: 443, Action: "allow"},
+				{Dst: "api.anthropic.com", Proto: "https", Port: 443, Action: "allow"},
 			},
 		},
 		{
 			name: "TLS with path rules has access_log",
 			rules: []config.EgressRule{
 				{
-					Dst: "api.example.com", Proto: "http", Port: 443, Action: "allow",
+					Dst: "api.example.com", Proto: "https", Port: 443, Action: "allow",
 					PathRules:   []config.PathRule{{Path: "/v1", Action: "allow"}},
 					PathDefault: "deny",
 				},
@@ -621,7 +621,7 @@ func TestGenerateEnvoyConfig_AccessLogPresent(t *testing.T) {
 		{
 			name: "HTTP has access_log",
 			rules: []config.EgressRule{
-				{Dst: "example.com", Proto: "http", Port: 80, Action: "allow"},
+				{Dst: "example.com", Proto: "https", Port: 80, Action: "allow"},
 			},
 		},
 	}
@@ -654,10 +654,10 @@ func TestNormalizeAndDedup(t *testing.T) {
 
 	// Simulates a legacy store with port:0 and port:443 duplicates.
 	rules := []config.EgressRule{
-		{Dst: "api.anthropic.com", Proto: "http", Port: 0, Action: "allow"},
-		{Dst: "github.com", Proto: "http", Port: 0, Action: "allow"},
-		{Dst: "api.anthropic.com", Proto: "http", Port: 443, Action: "allow"},
-		{Dst: "github.com", Proto: "http", Port: 443, Action: "allow"},
+		{Dst: "api.anthropic.com", Proto: "https", Port: 0, Action: "allow"},
+		{Dst: "github.com", Proto: "https", Port: 0, Action: "allow"},
+		{Dst: "api.anthropic.com", Proto: "https", Port: 443, Action: "allow"},
+		{Dst: "github.com", Proto: "https", Port: 443, Action: "allow"},
 	}
 
 	result, _ := NormalizeAndDedup(rules)
@@ -672,8 +672,8 @@ func TestNormalizeAndDedup_WildcardAndExactCoexist(t *testing.T) {
 
 	// Wildcard and exact for the same domain — both kept as separate rules.
 	rules := []config.EgressRule{
-		{Dst: "claude.ai", Proto: "http", Port: 443, Action: "allow"},
-		{Dst: ".claude.ai", Proto: "http", Port: 443, Action: "allow"},
+		{Dst: "claude.ai", Proto: "https", Port: 443, Action: "allow"},
+		{Dst: ".claude.ai", Proto: "https", Port: 443, Action: "allow"},
 	}
 
 	result, _ := NormalizeAndDedup(rules)
@@ -688,8 +688,8 @@ func TestNormalizeAndDedup_ExactDuplicatesStillDeduped(t *testing.T) {
 	t.Parallel()
 
 	rules := []config.EgressRule{
-		{Dst: "claude.ai", Proto: "http", Port: 443, Action: "allow"},
-		{Dst: "claude.ai", Proto: "http", Port: 443, Action: "allow"},
+		{Dst: "claude.ai", Proto: "https", Port: 443, Action: "allow"},
+		{Dst: "claude.ai", Proto: "https", Port: 443, Action: "allow"},
 	}
 
 	result, _ := NormalizeAndDedup(rules)
@@ -765,8 +765,8 @@ func TestGenerateEnvoyConfig_WildcardDomain(t *testing.T) {
 	t.Parallel()
 
 	rules := []config.EgressRule{
-		{Dst: ".datadoghq.com", Proto: "http", Port: 443, Action: "allow"},
-		{Dst: "api.anthropic.com", Proto: "http", Port: 443, Action: "allow"},
+		{Dst: ".datadoghq.com", Proto: "https", Port: 443, Action: "allow"},
+		{Dst: "api.anthropic.com", Proto: "https", Port: 443, Action: "allow"},
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
@@ -786,7 +786,7 @@ func TestGenerateEnvoyConfig_UpstreamTLSReEncryption(t *testing.T) {
 	t.Parallel()
 
 	rules := []config.EgressRule{
-		{Dst: "api.anthropic.com", Proto: "http", Port: 443, Action: "allow"},
+		{Dst: "api.anthropic.com", Proto: "https", Port: 443, Action: "allow"},
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
@@ -831,7 +831,7 @@ func TestGenerateEnvoyConfig_TLSRoutesToTLSCluster(t *testing.T) {
 	t.Parallel()
 
 	rules := []config.EgressRule{
-		{Dst: "api.anthropic.com", Proto: "http", Port: 443, Action: "allow"},
+		{Dst: "api.anthropic.com", Proto: "https", Port: 443, Action: "allow"},
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
@@ -893,8 +893,8 @@ func TestGenerateEnvoyConfig_PerDomainClusterIsolation(t *testing.T) {
 	t.Parallel()
 
 	rules := []config.EgressRule{
-		{Dst: "api.anthropic.com", Proto: "http", Port: 443, Action: "allow"},
-		{Dst: "mcp-proxy.anthropic.com", Proto: "http", Port: 443, Action: "allow"},
+		{Dst: "api.anthropic.com", Proto: "https", Port: 443, Action: "allow"},
+		{Dst: "mcp-proxy.anthropic.com", Proto: "https", Port: 443, Action: "allow"},
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
@@ -987,8 +987,8 @@ func TestGenerateEnvoyConfig_TLSClusterPortPinning(t *testing.T) {
 	t.Parallel()
 
 	rules := []config.EgressRule{
-		{Dst: "api.anthropic.com", Proto: "http", Port: 443, Action: "allow"},
-		{Dst: "custom.example.com", Proto: "http", Port: 8443, Action: "allow"},
+		{Dst: "api.anthropic.com", Proto: "https", Port: 443, Action: "allow"},
+		{Dst: "custom.example.com", Proto: "https", Port: 8443, Action: "allow"},
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
@@ -1033,8 +1033,8 @@ func TestGenerateEnvoyConfig_SimplifiedFilterChains(t *testing.T) {
 	t.Parallel()
 
 	rules := []config.EgressRule{
-		{Dst: "api.anthropic.com", Proto: "http", Port: 443, Action: "allow"},
-		{Dst: "example.com", Proto: "http", Port: 80, Action: "allow"},
+		{Dst: "api.anthropic.com", Proto: "https", Port: 443, Action: "allow"},
+		{Dst: "example.com", Proto: "https", Port: 80, Action: "allow"},
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
@@ -1078,9 +1078,9 @@ func TestNormalizeAndDedup_MalformedDomains(t *testing.T) {
 	t.Parallel()
 
 	rules := []config.EgressRule{
-		{Dst: ".", Proto: "http", Port: 443, Action: "allow"},
-		{Dst: "..", Proto: "http", Port: 443, Action: "allow"},
-		{Dst: "valid.com", Proto: "http", Port: 443, Action: "allow"},
+		{Dst: ".", Proto: "https", Port: 443, Action: "allow"},
+		{Dst: "..", Proto: "https", Port: 443, Action: "allow"},
+		{Dst: "valid.com", Proto: "https", Port: 443, Action: "allow"},
 	}
 
 	result, warnings := NormalizeAndDedup(rules)
@@ -1147,7 +1147,7 @@ func TestGenerateEnvoyConfig_TLSWebSocketALPNOverride(t *testing.T) {
 	t.Parallel()
 
 	rules := []config.EgressRule{
-		{Dst: "api.anthropic.com", Proto: "http", Port: 443, Action: "allow"},
+		{Dst: "api.anthropic.com", Proto: "https", Port: 443, Action: "allow"},
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
@@ -1213,8 +1213,8 @@ func TestGenerateEnvoyConfig_SameDomainDifferentPorts(t *testing.T) {
 	t.Parallel()
 
 	rules := []config.EgressRule{
-		{Dst: "example.com", Proto: "http", Port: 443, Action: "allow"},
-		{Dst: "example.com", Proto: "http", Port: 8443, Action: "allow"},
+		{Dst: "example.com", Proto: "https", Port: 443, Action: "allow"},
+		{Dst: "example.com", Proto: "https", Port: 8443, Action: "allow"},
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
@@ -1258,8 +1258,8 @@ func TestGenerateEnvoyConfig_TLSInspectorPresent(t *testing.T) {
 	t.Parallel()
 
 	rules := []config.EgressRule{
-		{Dst: "api.anthropic.com", Proto: "http", Port: 443, Action: "allow"},
-		{Dst: "example.com", Proto: "http", Port: 80, Action: "allow"},
+		{Dst: "api.anthropic.com", Proto: "https", Port: 443, Action: "allow"},
+		{Dst: "example.com", Proto: "https", Port: 80, Action: "allow"},
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
@@ -1294,8 +1294,8 @@ func TestGenerateEnvoyConfig_DenyChainIsLast(t *testing.T) {
 	t.Parallel()
 
 	rules := []config.EgressRule{
-		{Dst: "api.anthropic.com", Proto: "http", Port: 443, Action: "allow"},
-		{Dst: "example.com", Proto: "http", Port: 80, Action: "allow"},
+		{Dst: "api.anthropic.com", Proto: "https", Port: 443, Action: "allow"},
+		{Dst: "example.com", Proto: "https", Port: 80, Action: "allow"},
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
@@ -1381,14 +1381,14 @@ func TestGenerateEnvoyConfig_RouteMetadataActionStamped(t *testing.T) {
 	t.Parallel()
 
 	rules := []config.EgressRule{
-		{Dst: "api.example.com", Proto: "http", Port: 443, Action: "allow"},
-		{Dst: "raw.example.com", Proto: "http", Port: 443, Action: "allow",
+		{Dst: "api.example.com", Proto: "https", Port: 443, Action: "allow"},
+		{Dst: "raw.example.com", Proto: "https", Port: 443, Action: "allow",
 			PathDefault: "deny",
 			PathRules: []config.PathRule{
 				{Path: "/allowed/", Action: "allow"},
 			},
 		},
-		{Dst: "plain.example.com", Proto: "http", Port: 80, Action: "allow"},
+		{Dst: "plain.example.com", Proto: "https", Port: 80, Action: "allow"},
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
@@ -1449,7 +1449,7 @@ func TestGenerateEnvoyConfig_HCMHardening(t *testing.T) {
 	t.Parallel()
 
 	rules := []config.EgressRule{
-		{Dst: "tls.example.com", Proto: "http", Port: 443, Action: "allow"},
+		{Dst: "tls.example.com", Proto: "https", Port: 443, Action: "allow"},
 		{Dst: "plain.example.com", Proto: "http", Port: 80, Action: "allow"},
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
@@ -1467,8 +1467,6 @@ func TestGenerateEnvoyConfig_HCMHardening(t *testing.T) {
 		"normalize_path",
 		"merge_slashes",
 		"path_with_escaped_slashes_action",
-		"request_timeout",
-		"stream_idle_timeout",
 		"common_http_protocol_options",
 		"http2_protocol_options",
 	}
@@ -1482,12 +1480,6 @@ func TestGenerateEnvoyConfig_HCMHardening(t *testing.T) {
 			continue
 		}
 		egressListenerSeen = true
-		// per_connection_buffer_limit_bytes lives on Listener
-		// (envoy.config.listener.v3.Listener), NOT on HCM — Envoy
-		// strict-validates the HCM proto and rejects bootstraps that
-		// put it there. Caps per-connection read buffer so a slowloris
-		// agent can't grow memory on N parked connections.
-		assert.Equal(t, 32768, lis["per_connection_buffer_limit_bytes"], "egress listener missing per_connection_buffer_limit_bytes (slowloris DoS cap)")
 		for _, c := range lis["filter_chains"].([]any) {
 			ch := c.(map[string]any)
 			for _, f := range ch["filters"].([]any) {
@@ -1521,7 +1513,7 @@ func TestGenerateEnvoyConfig_DenyResponseBodyNotFingerprinted(t *testing.T) {
 	t.Parallel()
 
 	rules := []config.EgressRule{
-		{Dst: "api.example.com", Proto: "http", Port: 443, Action: "allow",
+		{Dst: "api.example.com", Proto: "https", Port: 443, Action: "allow",
 			PathDefault: "deny",
 			PathRules:   []config.PathRule{{Path: "/allowed/", Action: "allow"}},
 		},

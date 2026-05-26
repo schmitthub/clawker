@@ -147,7 +147,7 @@ func TestRoutesFromRules_TCPMappingsParity(t *testing.T) {
 		{
 			name: "tls rule still routes to the main egress listener",
 			rules: []config.EgressRule{
-				{Dst: "api.example.com", Proto: "http", Action: "allow", Port: 443},
+				{Dst: "api.example.com", Proto: "https", Action: "allow", Port: 443},
 			},
 			want: []ebpf.Route{
 				{DomainHash: ebpf.DomainHash("api.example.com"), DstPort: 443, EnvoyPort: 10000},
@@ -156,7 +156,7 @@ func TestRoutesFromRules_TCPMappingsParity(t *testing.T) {
 		{
 			name: "deny rules produce no routes",
 			rules: []config.EgressRule{
-				{Dst: "api.example.com", Proto: "http", Action: "deny", Port: 443},
+				{Dst: "api.example.com", Proto: "https", Action: "deny", Port: 443},
 				{Dst: "git.example.com", Proto: "ssh", Action: "deny"},
 			},
 			want: []ebpf.Route{},
@@ -165,7 +165,7 @@ func TestRoutesFromRules_TCPMappingsParity(t *testing.T) {
 			name: "ip and cidr destinations are skipped",
 			rules: []config.EgressRule{
 				{Dst: "10.0.0.1", Proto: "tcp", Action: "allow", Port: 22},
-				{Dst: "10.0.0.0/24", Proto: "http", Action: "allow", Port: 443},
+				{Dst: "10.0.0.0/24", Proto: "https", Action: "allow", Port: 443},
 			},
 			want: []ebpf.Route{},
 		},
@@ -208,12 +208,12 @@ func TestEgressRulesFileFields_AllFieldsHaveDescriptions(t *testing.T) {
 func TestMergeRule_CallerWinsScalars(t *testing.T) {
 	t.Parallel()
 	existing := config.EgressRule{
-		Dst: "api.example.com", Proto: "http", Port: 443,
+		Dst: "api.example.com", Proto: "https", Port: 443,
 		Action:      "allow",
 		PathDefault: "allow",
 	}
 	incoming := config.EgressRule{
-		Dst: "api.example.com", Proto: "http", Port: 443,
+		Dst: "api.example.com", Proto: "https", Port: 443,
 		Action:      "deny",
 		PathDefault: "deny",
 	}
@@ -228,13 +228,13 @@ func TestMergeRule_CallerWinsScalars(t *testing.T) {
 func TestMergeRule_PathRulesUnionByPath(t *testing.T) {
 	t.Parallel()
 	existing := config.EgressRule{
-		Dst: "api.example.com", Proto: "http", Port: 443,
+		Dst: "api.example.com", Proto: "https", Port: 443,
 		PathRules: []config.PathRule{
 			{Path: "/v1", Action: "allow"},
 		},
 	}
 	incoming := config.EgressRule{
-		Dst: "api.example.com", Proto: "http", Port: 443,
+		Dst: "api.example.com", Proto: "https", Port: 443,
 		PathRules: []config.PathRule{
 			{Path: "/v2", Action: "deny"},
 		},
@@ -253,14 +253,14 @@ func TestMergeRule_PathRulesUnionByPath(t *testing.T) {
 func TestMergeRule_PathRulesSamePathCallerWins(t *testing.T) {
 	t.Parallel()
 	existing := config.EgressRule{
-		Dst: "api.example.com", Proto: "http", Port: 443,
+		Dst: "api.example.com", Proto: "https", Port: 443,
 		PathRules: []config.PathRule{
 			{Path: "/v1", Action: "allow"},
 			{Path: "/v2", Action: "allow"},
 		},
 	}
 	incoming := config.EgressRule{
-		Dst: "api.example.com", Proto: "http", Port: 443,
+		Dst: "api.example.com", Proto: "https", Port: 443,
 		PathRules: []config.PathRule{
 			{Path: "/v1", Action: "deny"},
 		},
@@ -281,7 +281,7 @@ func TestMergeRule_PathRulesSamePathCallerWins(t *testing.T) {
 func TestMergeRule_EmptyIncomingPathRules_PreservesExisting(t *testing.T) {
 	t.Parallel()
 	existing := config.EgressRule{
-		Dst: "api.example.com", Proto: "http", Port: 443,
+		Dst: "api.example.com", Proto: "https", Port: 443,
 		Action:      "allow",
 		PathDefault: "deny",
 		PathRules: []config.PathRule{
@@ -289,7 +289,7 @@ func TestMergeRule_EmptyIncomingPathRules_PreservesExisting(t *testing.T) {
 		},
 	}
 	incoming := config.EgressRule{
-		Dst: "api.example.com", Proto: "http", Port: 443,
+		Dst: "api.example.com", Proto: "https", Port: 443,
 		Action:      "deny",
 		PathDefault: "allow",
 		// No PathRules — represents e.g. a bare `clawker firewall add`.
@@ -309,12 +309,12 @@ func TestMergeRule_EmptyIncomingPathRules_PreservesExisting(t *testing.T) {
 func TestMergeRule_EmptyIncomingPathDefault_PreservesExisting(t *testing.T) {
 	t.Parallel()
 	existing := config.EgressRule{
-		Dst: "api.example.com", Proto: "http", Port: 443,
+		Dst: "api.example.com", Proto: "https", Port: 443,
 		Action:      "allow",
 		PathDefault: "deny",
 	}
 	incoming := config.EgressRule{
-		Dst: "api.example.com", Proto: "http", Port: 443,
+		Dst: "api.example.com", Proto: "https", Port: 443,
 		Action: "allow",
 		// PathDefault unset — bare CLI add has nothing to say.
 	}

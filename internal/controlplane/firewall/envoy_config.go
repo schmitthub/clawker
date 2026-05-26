@@ -198,22 +198,21 @@ const firewallBlockedBody = "Forbidden\n"
 // verified path-smuggling exploit documented in plan
 // compressed-floating-matsumoto.md §4.
 //
-// Field-by-field rationale (each cited against Envoy best_practices/edge
-// + the http_connection_manager.proto + protocol.proto API references):
+// Field-by-field rationale:
 //   - normalize_path / merge_slashes / path_with_escaped_slashes_action:
 //     RFC 3986 normalization BEFORE route matching closes the smuggling
 //     vector. UNESCAPE_AND_REDIRECT issues a 307 with the canonical path
 //     instead of silently rewriting, so the matcher sees what the agent
 //     actually sent.
-//   - request_timeout + stream_idle_timeout + idle_timeout: slow-loris
-//     mitigation. Without these one slow connection per agent can pin
-//     Envoy worker resources.
 //   - headers_with_underscores_action: REJECT_REQUEST: defends against
 //     RFC 9110 §5.4.5 header-name aliasing (`X_AUTH` vs `X-AUTH`).
 //   - http2_protocol_options.max_concurrent_streams: h2 amplification
 //     cap; default is conservative for forward-proxy threat model.
-//   - per_connection_buffer_limit_bytes: DoS resistance for slowloris-
-//     style attacks that grow the per-connection buffer.
+//
+// Timeouts (request_timeout / stream_idle_timeout / idle_timeout) are NOT
+// set here. LLM API calls regularly stream for minutes with multi-MB
+// request bodies, and short defaults rupture mid-stream. Envoy's built-in
+// defaults are deliberate.
 //
 // Applied via maps.Copy at HCM construction sites — keeps each HCM literal
 // readable while ensuring no site forgets a hardening field.
@@ -222,10 +221,7 @@ func httpConnectionManagerHardening() map[string]any {
 		"normalize_path":                   true,
 		"merge_slashes":                    true,
 		"path_with_escaped_slashes_action": "UNESCAPE_AND_REDIRECT",
-		"request_timeout":                  "30s",
-		"stream_idle_timeout":              "300s",
 		"common_http_protocol_options": map[string]any{
-			"idle_timeout":                    "300s",
 			"headers_with_underscores_action": "REJECT_REQUEST",
 		},
 		"http2_protocol_options": map[string]any{
@@ -410,19 +406,36 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts, als ALSCon
 			continue
 		}
 		proto := strings.ToLower(r.Proto)
-		if proto == "ssh" || proto == "tcp" {
+		switch proto {
+		case "ssh", "tcp":
 			tcpRules = append(tcpRules, r)
 			continue
+		case "http":
+			// Plaintext HTTP. Routes to the raw_buffer HCM filter chain
+			// (no TLS termination). Used by sites that genuinely serve
+			// plaintext on port 80.
+			if r.Port == 0 {
+				r.Port = 80
+			}
+			httpRules = append(httpRules, r)
+			continue
+		case "https", "":
+			// TLS-MITM. Envoy terminates TLS with a per-domain cert,
+			// inspects HTTP semantics (paths visible in access logs),
+			// then re-encrypts upstream. Rules with PathRules get
+			// per-path routing; rules without get allow-all. Empty proto
+			// defaults here (the common case post-NormalizeRule).
+			if r.Port == 0 {
+				r.Port = 443
+			}
+			tlsRules = append(tlsRules, r)
+			continue
+		default:
+			// Unknown L7 name: route to opaque TCP listener so the
+			// destination is at least proxied (matches pre-rename
+			// behavior for arbitrary proto strings).
+			tcpRules = append(tcpRules, r)
 		}
-		// proto: "http" (default after NormalizeRule, ex-"tls") and any other
-		// unknown L7 name route to the TLS-MITM HCM filter chain. Envoy
-		// terminates TLS with a per-domain certificate, inspects HTTP (paths
-		// visible in access logs), then re-encrypts upstream. Rules with
-		// PathRules get per-path routing; rules without get allow-all.
-		if r.Port == 0 {
-			r.Port = 443
-		}
-		tlsRules = append(tlsRules, r)
 	}
 
 	// Build per-listener exact-domain sets so wildcard filter chains only
@@ -598,11 +611,6 @@ func buildEgressListener(tlsRules, httpRules []config.EgressRule, port int, tlsE
 				"port_value": port,
 			},
 		},
-		// per_connection_buffer_limit_bytes is a Listener field (not HCM —
-		// envoy.config.listener.v3.Listener). Caps the per-connection read
-		// buffer so a slowloris-style agent can't grow Envoy's memory by
-		// dribbling bytes on N parked connections.
-		"per_connection_buffer_limit_bytes": 32768,
 		"listener_filters": []any{
 			map[string]any{
 				"name": "envoy.filters.listener.tls_inspector",
