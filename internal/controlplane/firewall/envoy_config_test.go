@@ -210,7 +210,7 @@ func TestGenerateEnvoyConfig_TLSClusterAutoConfig(t *testing.T) {
 
 	out := string(yamlBytes)
 	// Per-domain LOGICAL_DNS cluster with upstream TLS re-encryption.
-	assert.Contains(t, out, "tls_api_anthropic_com_443")
+	assert.Contains(t, out, "tls_exact_api_anthropic_com_443")
 	assert.Contains(t, out, "type: LOGICAL_DNS")
 	assert.Contains(t, out, "envoy.extensions.upstreams.http.v3.HttpProtocolOptions")
 	assert.Contains(t, out, "auto_sni: true")
@@ -923,7 +923,7 @@ func TestGenerateEnvoyConfig_UpstreamTLSReEncryption(t *testing.T) {
 	out := string(yamlBytes)
 
 	// Per-domain LOGICAL_DNS cluster must exist with upstream TLS context for re-encryption.
-	assert.Contains(t, out, "tls_api_anthropic_com_443",
+	assert.Contains(t, out, "tls_exact_api_anthropic_com_443",
 		"per-domain TLS cluster must be present for upstream re-encryption after MITM termination")
 	assert.Contains(t, out, "UpstreamTlsContext",
 		"TLS cluster must have UpstreamTlsContext for upstream re-encryption")
@@ -941,7 +941,7 @@ func TestGenerateEnvoyConfig_UpstreamTLSReEncryption(t *testing.T) {
 	var foundTLSCluster bool
 	for _, c := range clusters {
 		cl := c.(map[string]any)
-		if cl["name"] == "tls_api_anthropic_com_443" {
+		if cl["name"] == "tls_exact_api_anthropic_com_443" {
 			foundTLSCluster = true
 			assert.Equal(t, "LOGICAL_DNS", cl["type"],
 				"TLS cluster must use LOGICAL_DNS for domain-pinned routing")
@@ -1047,8 +1047,8 @@ func TestGenerateEnvoyConfig_PerDomainClusterIsolation(t *testing.T) {
 		clusterNames[name] = true
 	}
 
-	assert.Contains(t, clusterNames, "tls_api_anthropic_com_443")
-	assert.Contains(t, clusterNames, "tls_mcp_proxy_anthropic_com_443")
+	assert.Contains(t, clusterNames, "tls_exact_api_anthropic_com_443")
+	assert.Contains(t, clusterNames, "tls_exact_mcp_proxy_anthropic_com_443")
 
 	// Each filter chain must route to its own domain-specific cluster.
 	listeners := sr["listeners"].([]any)
@@ -1079,7 +1079,7 @@ func TestGenerateEnvoyConfig_PerDomainClusterIsolation(t *testing.T) {
 			routeAction := route["route"].(map[string]any)
 			cluster := routeAction["cluster"].(string)
 
-			expectedCluster := fmt.Sprintf("tls_%s_443", sanitizeName(domain))
+			expectedCluster := fmt.Sprintf("tls_exact_%s_443", sanitizeName(domain))
 			assert.Equalf(t, expectedCluster, cluster,
 				"filter chain for %s must route to its own per-domain cluster", domain)
 		}
@@ -1143,9 +1143,9 @@ func TestGenerateEnvoyConfig_TLSClusterPortPinning(t *testing.T) {
 		portByCluster[name] = addr["port_value"].(int)
 	}
 
-	assert.Equal(t, 443, portByCluster["tls_api_anthropic_com_443"],
+	assert.Equal(t, 443, portByCluster["tls_exact_api_anthropic_com_443"],
 		"cluster for api.anthropic.com must use port 443")
-	assert.Equal(t, 8443, portByCluster["tls_custom_example_com_8443"],
+	assert.Equal(t, 8443, portByCluster["tls_exact_custom_example_com_8443"],
 		"cluster for custom.example.com must use port 8443")
 
 	// No DFP port enforcement filter needed — ports are hardcoded in cluster endpoints.
@@ -1328,10 +1328,10 @@ func TestGenerateEnvoyConfig_SameDomainDifferentPorts(t *testing.T) {
 		portByCluster[name] = addr["port_value"].(int)
 	}
 
-	assert.True(t, clusterNames["tls_example_com_443"], "cluster for port 443 must exist")
-	assert.True(t, clusterNames["tls_example_com_8443"], "cluster for port 8443 must exist")
-	assert.Equal(t, 443, portByCluster["tls_example_com_443"])
-	assert.Equal(t, 8443, portByCluster["tls_example_com_8443"])
+	assert.True(t, clusterNames["tls_exact_example_com_443"], "cluster for port 443 must exist")
+	assert.True(t, clusterNames["tls_exact_example_com_8443"], "cluster for port 8443 must exist")
+	assert.Equal(t, 443, portByCluster["tls_exact_example_com_443"])
+	assert.Equal(t, 8443, portByCluster["tls_exact_example_com_8443"])
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -1778,8 +1778,8 @@ func TestGenerateEnvoyConfig_WildcardAndExactCoexistTwoClusters(t *testing.T) {
 	var cfg map[string]any
 	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
 
-	exact := findCluster(t, cfg, "tls_mintlify_com_443")
-	require.NotNil(t, exact, "exact apex rule must produce tls_<apex>_<port> cluster")
+	exact := findCluster(t, cfg, "tls_exact_mintlify_com_443")
+	require.NotNil(t, exact, "exact apex rule must produce tls_exact_<apex>_<port> cluster")
 	assert.Equal(t, "LOGICAL_DNS", exact["type"], "exact rule must remain LOGICAL_DNS")
 
 	wild := findCluster(t, cfg, "tls_wildcard_mintlify_com_443")
@@ -1917,7 +1917,7 @@ func TestGenerateEnvoyConfig_WildcardRoutesToWildcardCluster(t *testing.T) {
 	require.NotNil(t, exChain, "exact rule must produce its own filter chain when no exact-sibling suppression applies")
 	exRoutes := chainHCM(t, exChain)["route_config"].(map[string]any)["virtual_hosts"].([]any)[0].(map[string]any)["routes"].([]any)
 	exRoute := exRoutes[0].(map[string]any)["route"].(map[string]any)
-	assert.Equal(t, "tls_mintlify_com_443", exRoute["cluster"])
+	assert.Equal(t, "tls_exact_mintlify_com_443", exRoute["cluster"])
 }
 
 // TestGenerateEnvoyConfig_DownstreamHCMAllowsH2WebSocket — every TLS HCM
@@ -2051,4 +2051,81 @@ func TestGenerateEnvoyConfig_TLSWebSocketUpgrade(t *testing.T) {
 			"wildcard WS upgrade must lock dynamic_host + upstream_server_name + upstream_subject_alt_names to SNI AND force upstream ALPN to http/1.1",
 		)
 	})
+}
+
+// TestGenerateEnvoyConfig_NoExactWildcardNameCollision pins the cluster-naming
+// invariant that exact and wildcard cluster names live in disjoint namespaces.
+// Before the `tls_exact_` prefix rename, an exact rule for the domain literal
+// `wildcard.foo.com` produced `tls_wildcard_foo_com_443` (`tls_` prefix +
+// sanitize(`wildcard.foo.com`)), which collided with the wildcard rule
+// `.foo.com`'s `tls_wildcard_foo_com_443`. Envoy rejects duplicate cluster
+// names at config load, stranding the firewall (fail-closed, but opaque).
+// Both clusters now emit on the same key set without collision, and
+// firstDuplicateClusterName would catch any future builder regression.
+func TestGenerateEnvoyConfig_NoExactWildcardNameCollision(t *testing.T) {
+	t.Parallel()
+
+	rules := []config.EgressRule{
+		{Dst: "wildcard.foo.com", Proto: "https", Port: 443, Action: "allow"},
+		{Dst: ".foo.com", Proto: "https", Port: 443, Action: "allow"},
+	}
+	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
+
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
+	require.NoError(t, err, "exact rule for `wildcard.foo.com` must coexist with wildcard rule `.foo.com` without cluster-name collision")
+
+	var cfg map[string]any
+	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
+
+	exact := findCluster(t, cfg, "tls_exact_wildcard_foo_com_443")
+	require.NotNil(t, exact, "exact rule for wildcard.foo.com must produce tls_exact_wildcard_foo_com_443")
+	assert.Equal(t, "LOGICAL_DNS", exact["type"])
+
+	wild := findCluster(t, cfg, "tls_wildcard_foo_com_443")
+	require.NotNil(t, wild, "wildcard rule .foo.com must produce tls_wildcard_foo_com_443")
+	require.NotNil(t, wild["cluster_type"], "wildcard cluster must use dynamic_forward_proxy cluster_type")
+}
+
+// TestFirstDuplicateClusterName verifies the helper used by GenerateEnvoyConfig
+// to fail closed when any builder regression introduces colliding cluster names.
+// Envoy's own error surface for duplicate cluster names (`cds.update_rejected`)
+// is opaque to operators; this helper turns the failure into a structured
+// config-gen-time error.
+func TestFirstDuplicateClusterName(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		clusters []any
+		want     string
+	}{
+		{
+			name: "no duplicates",
+			clusters: []any{
+				map[string]any{"name": "tls_exact_foo_443"},
+				map[string]any{"name": "tls_wildcard_foo_443"},
+				map[string]any{"name": "http_foo_80"},
+			},
+			want: "",
+		},
+		{
+			name: "duplicate name",
+			clusters: []any{
+				map[string]any{"name": "tls_exact_foo_443"},
+				map[string]any{"name": "tls_exact_foo_443"},
+			},
+			want: "tls_exact_foo_443",
+		},
+		{
+			name:     "empty input",
+			clusters: nil,
+			want:     "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, firstDuplicateClusterName(tt.clusters))
+		})
+	}
 }

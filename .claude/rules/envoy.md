@@ -67,7 +67,7 @@ Two cluster shapes back the TLS chains. Both lock the upstream identity to the d
 
 | | Exact rule (e.g. `api.anthropic.com`) | Wildcard rule (e.g. `.mintlify.com`) |
 |---|---|---|
-| Cluster | `tls_<domain>_<port>` LOGICAL_DNS, endpoint pinned to the apex hostname | `tls_wildcard_<apex>_<port>` `envoy.clusters.dynamic_forward_proxy` with `sub_clusters_config` (per `host:port` sub-cluster + pool) |
+| Cluster | `tls_exact_<domain>_<port>` LOGICAL_DNS, endpoint pinned to the apex hostname | `tls_wildcard_<apex>_<port>` `envoy.clusters.dynamic_forward_proxy` with `sub_clusters_config` (per `host:port` sub-cluster + pool) |
 | TCP destination | Cluster endpoint (host header has no say) | Sub-cluster derived from the `envoy.upstream.dynamic_host` filter state (written from SNI by the chain's set_filter_state filter) |
 | Pool isolation | One pool per cluster (one cluster per allowed domain) → no cross-cluster coalescing | One pool per sub-cluster, `allow_coalesced_connections: false` explicitly → no cross-pool reuse even when sibling subdomains share a SAN cert |
 

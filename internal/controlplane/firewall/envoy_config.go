@@ -424,19 +424,26 @@ func otelAccessLogEntry(transport, l7Proto, tlsEstablished, action string, extra
 // Cluster naming
 // ──────────────────────────────────────────────────────────────────────────────
 
-// tlsClusterName returns the per-domain, per-port cluster name for TLS upstream.
-// Each (domain, port) pair gets its own LOGICAL_DNS cluster with upstream TLS re-encryption.
-// Port is included in the name so that rules for the same domain on different ports
-// (e.g., example.com:443 and example.com:8443) get separate clusters.
-func tlsClusterName(domain string, port int) string {
-	return fmt.Sprintf("tls_%s_%d", sanitizeName(domain), port)
+// tlsExactClusterName returns the per-domain, per-port cluster name for an
+// exact-rule TLS upstream. Each (domain, port) pair gets its own LOGICAL_DNS
+// cluster with upstream TLS re-encryption. Port is included so that rules for
+// the same domain on different ports (e.g., example.com:443 and
+// example.com:8443) get separate clusters. The `exact` segment is symmetric
+// with `tlsWildcardClusterName`'s `wildcard` segment so the cluster-kind
+// namespace cannot collide with a user-controlled domain string: a user
+// domain `wildcard.foo.com` produces `tls_exact_wildcard_foo_com_443`, a
+// wildcard `.foo.com` produces `tls_wildcard_foo_com_443` — different kind
+// segment, no collision possible.
+func tlsExactClusterName(domain string, port int) string {
+	return fmt.Sprintf("tls_exact_%s_%d", sanitizeName(domain), port)
 }
 
 // tlsWildcardClusterName returns the cluster name for the wildcard-rule TLS upstream.
 // Wildcard rules require a separate cluster from any exact rule for the same apex —
 // the wildcard cluster is dynamic_forward_proxy with sub_clusters keyed by SNI, the
-// exact cluster is LOGICAL_DNS pinned to the apex. Distinct names keep their upstream
-// connection pools isolated even when both rules coexist for the same apex.
+// exact cluster is LOGICAL_DNS pinned to the apex. The symmetric `tls_wildcard_` /
+// `tls_exact_` prefixes keep the cluster-kind namespace structurally distinct from
+// any user-controlled domain string (see `tlsExactClusterName`).
 func tlsWildcardClusterName(apex string, port int) string {
 	return fmt.Sprintf("tls_wildcard_%s_%d", sanitizeName(apex), port)
 }
@@ -549,6 +556,18 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts, als ALSCon
 		}
 	}
 
+	clusters := buildClusters(tlsRules, tcpRules, httpRules, als)
+	// Defense in depth: cluster names are constructed from kind-segmented
+	// builders (`tls_exact_…`, `tls_wildcard_…`, `http_…`, `tcp_…`,
+	// `deny_cluster`, `otel_collector_als`) so collisions are not reachable
+	// via any combination of inputs. Catch any future builder regression
+	// here — Envoy would reject the config opaquely at load (cds.update_rejected),
+	// stranding the firewall. Fail closed at config-gen time with a structured
+	// error instead.
+	if dup := firstDuplicateClusterName(clusters); dup != "" {
+		return nil, nil, fmt.Errorf("duplicate cluster name %q in generated envoy config (cluster-naming invariant violated)", dup)
+	}
+
 	cfg := map[string]any{
 		"admin": map[string]any{
 			"address": map[string]any{
@@ -560,7 +579,7 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts, als ALSCon
 		},
 		"static_resources": map[string]any{
 			"listeners": buildListeners(tlsRules, tcpRules, httpRules, tcpMappings, ports, tlsExactDomains, httpExactDomains, als),
-			"clusters":  buildClusters(tlsRules, tcpRules, httpRules, als),
+			"clusters":  clusters,
 		},
 	}
 
@@ -783,7 +802,7 @@ func buildTLSFilterChain(r config.EgressRule, exactDomains map[string]bool, als 
 	certFile := fmt.Sprintf(envoyCertFileFmt, domain)
 	keyFile := fmt.Sprintf(envoyKeyFileFmt, domain)
 	wildcard := isWildcardDomain(r.Dst)
-	cluster := tlsClusterName(domain, r.Port)
+	cluster := tlsExactClusterName(domain, r.Port)
 	if wildcard {
 		cluster = tlsWildcardClusterName(domain, r.Port)
 	}
@@ -1194,6 +1213,29 @@ func buildTCPListener(r config.EgressRule, port int, als ALSConfig) map[string]a
 // Clusters
 // ──────────────────────────────────────────────────────────────────────────────
 
+// firstDuplicateClusterName scans a slice of cluster maps and returns the
+// first duplicate `name` it finds, or "" when all names are unique. Used as
+// a config-gen-time sanity check to catch any future builder regression that
+// would otherwise be surfaced only by Envoy rejecting the config at load.
+func firstDuplicateClusterName(clusters []any) string {
+	seen := make(map[string]bool, len(clusters))
+	for _, c := range clusters {
+		cm, ok := c.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := cm["name"].(string)
+		if name == "" {
+			continue
+		}
+		if seen[name] {
+			return name
+		}
+		seen[name] = true
+	}
+	return ""
+}
+
 // buildClusters constructs all Envoy clusters.
 func buildClusters(tls, tcp, http []config.EgressRule, als ALSConfig) []any {
 	clusters := []any{
@@ -1300,12 +1342,12 @@ func buildClusters(tls, tcp, http []config.EgressRule, als ALSConfig) []any {
 // auto_config enables HTTP/2 when the upstream supports it via ALPN negotiation.
 func buildTLSDNSCluster(domain string, port int) map[string]any {
 	return map[string]any{
-		"name":              tlsClusterName(domain, port),
+		"name":              tlsExactClusterName(domain, port),
 		"connect_timeout":   "10s",
 		"type":              "LOGICAL_DNS",
 		"dns_lookup_family": "V4_ONLY",
 		"load_assignment": map[string]any{
-			"cluster_name": tlsClusterName(domain, port),
+			"cluster_name": tlsExactClusterName(domain, port),
 			"endpoints": []any{
 				map[string]any{
 					"lb_endpoints": []any{
