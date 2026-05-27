@@ -50,36 +50,57 @@ Fetch via: `gh api "repos/envoyproxy/examples/contents/<path>" --jq '.content' |
 
 ```
 Client → eBPF connect4 rewrite → Envoy :10000
-                            ├─ TLS (SNI match) → per-domain filter chain → LOGICAL_DNS cluster (re-encrypt upstream)
-                            ├─ HTTP (raw_buffer) → Host header routing → per-domain LOGICAL_DNS cluster (plaintext)
-                            └─ Unknown → deny chain (tcp_proxy → deny_cluster → reset)
+                            ├─ TLS exact (SNI match)   → per-domain filter chain → LOGICAL_DNS cluster (apex-pinned)
+                            ├─ TLS wildcard (suffix)   → per-apex filter chain   → DFP cluster (sub_clusters_config, SNI-keyed)
+                            ├─ HTTP (raw_buffer)       → Host header routing     → per-domain LOGICAL_DNS cluster (plaintext)
+                            └─ Unknown                 → deny chain (tcp_proxy → deny_cluster → reset)
 ```
 
 - `tls_inspector` listener filter detects TLS vs plaintext
-- TLS: `filter_chain_match.server_names` (SNI) routes to per-domain chains
+- TLS: `filter_chain_match.server_names` (SNI) routes to per-domain chains. Exact rules match an exact SNI; wildcard rules (`.example.com`) match by SNI suffix
 - HTTP: `filter_chain_match.transport_protocol: "raw_buffer"` catches plaintext
 - Deny: empty `filter_chain_match: {}` catches everything else
 
-### LOGICAL_DNS Clusters (Security-Critical Design)
+### TLS Cluster Shapes (Security-Critical Design)
 
-Each domain gets its own LOGICAL_DNS cluster with the domain name as the endpoint address. This is a deliberate security design:
+Two cluster shapes back the TLS chains. Both lock the upstream identity to the downstream SNI so the HTTP Host header can never influence which IP, cert, or SAN the request validates against.
 
-- **Upstream destination is determined by the cluster endpoint, NOT the HTTP Host header.** This prevents confused deputy attacks where a malicious client inside the container manipulates the Host header to redirect traffic to unintended destinations.
-- **Ports are hardcoded in cluster endpoints** from the rule's configured port. No `envoy.upstream.dynamic_port` filter state needed.
-- **No DFP (Dynamic Forward Proxy) filter** — eliminated entirely. DFP trusts the Host header for routing, which is a security vulnerability in a transparent proxy where the client is untrusted.
+| | Exact rule (e.g. `api.anthropic.com`) | Wildcard rule (e.g. `.mintlify.com`) |
+|---|---|---|
+| Cluster | `tls_<domain>_<port>` LOGICAL_DNS, endpoint pinned to the apex hostname | `tls_wildcard_<apex>_<port>` `envoy.clusters.dynamic_forward_proxy` with `sub_clusters_config` (per `host:port` sub-cluster + pool) |
+| TCP destination | Cluster endpoint (host header has no say) | Sub-cluster derived from the `envoy.upstream.dynamic_host` filter state (written from SNI by the chain's set_filter_state filter) |
+| Pool isolation | One pool per cluster (one cluster per allowed domain) → no cross-cluster coalescing | One pool per sub-cluster, `allow_coalesced_connections: false` explicitly → no cross-pool reuse even when sibling subdomains share a SAN cert |
 
-Cluster types:
-- **Per-domain TLS** (`tls_<domain>`): LOGICAL_DNS, upstream re-encryption with `auto_config` (h2 + h1.1 ALPN), `auto_sni`, `auto_san_validation`. Used by TLS filter chains.
-- **Per-domain HTTP** (`http_<domain>`): LOGICAL_DNS, no upstream TLS. Used by HTTP filter chain.
-- **Deny** (`deny_cluster`): STATIC, no endpoints — connection reset.
+Both cluster shapes share an identical upstream TLS posture: `auto_sni`, `auto_san_validation`, `ecdh_curves: [X25519, P-256, P-384]`, trusted CA at `/etc/ssl/certs/ca-certificates.crt`, `auto_config` advertising HTTP/2 + HTTP/1.1 ALPN, `dns_lookup_family: V4_ONLY`.
+
+A wildcard rule and an exact rule for the same apex produce two distinct clusters keyed by `(kind, domain, port)`. Their connection pools never share.
+
+The plaintext-HTTP listener still uses `http_<domain>_<port>` LOGICAL_DNS (no TLS) and the deny chain uses `deny_cluster` STATIC.
 
 ### Filter Chain Matching (critical ordering)
 
-Envoy evaluates filter chains IN ORDER and stops at the first match. Multiple filter chains with the same `server_names` means only the first is reachable. Same-domain TLS rules with different path_rules MUST be merged into a single filter chain.
+Envoy evaluates filter chains IN ORDER and stops at the first match. Multiple filter chains with the same `server_names` means only the first is reachable. Same-domain TLS rules with different path_rules MUST be merged into a single filter chain (`addRulesToStore` / `MergeRule` enforces this at the rules-store layer: same `dst:proto:port` key collapses into one entry whose `path_rules` are unioned).
 
-### http_filters
+### http_filters — SNI Lock (Security-Critical)
 
-Both TLS and HTTP filter chains use a single http_filter: `envoy.filters.http.router`. No other HTTP filters are needed because LOGICAL_DNS clusters handle DNS resolution independently.
+The TLS chain http_filters list looks like this:
+
+| Chain | http_filters |
+|---|---|
+| TLS exact | `[set_filter_state(sni-lock), router]` |
+| TLS wildcard | `[set_filter_state(sni-lock), set_filter_state(dynamic_host), dynamic_forward_proxy, router]` |
+| Plaintext HTTP | `[router]` |
+
+**The sni-lock filter is the trust boundary** on every TLS chain. It pre-populates two upstream-targeting filter-state keys from `%REQUESTED_SERVER_NAME%` (the downstream SNI that selected the chain):
+
+- `envoy.network.upstream_server_name` — upstream TLS SNI
+- `envoy.network.upstream_subject_alt_names` — expected upstream cert SAN
+
+`Router::Filter::decodeHeaders` only writes these under `auto_sni` / `auto_san_validation` when filter state does not already carry them, so the sni-lock value wins. Without the sni-lock filter the router derives both from the `:authority` header — an attacker with code-exec in the agent container could craft a request with allowed SNI and a different Host, causing the upstream TLS handshake to validate against the Host name. Exact-rule attacks would not cross IPs (cluster endpoint is pinned) but can still reach a non-allowed sibling at the app layer when the destination edge serves a cert covering Host's name. Wildcard-rule attacks cross IPs as well (TCP target follows the `dynamic_host` filter state).
+
+Wildcard chains additionally write `envoy.upstream.dynamic_host` from SNI; the DFP HTTP filter consumes it (`allow_dynamic_host_from_filter_state: true`) so sub-cluster resolution sees the per-subdomain SNI rather than the apex.
+
+Order matters: every set_filter_state writer must run before any filter that reads the corresponding filter-state key. dynamic_host writer must precede DFP; sni-lock must precede the router (the router consults filter state during its own auto_sni/auto_san_validation defaulting).
 
 ## WebSocket Proxying
 
@@ -100,20 +121,23 @@ When custom filters ARE specified, they **completely replace** the HCM's `http_f
 
 ### TLS WebSocket: ALPN Override
 
-TLS clusters use `auto_config` with both `http_protocol_options` and `http2_protocol_options`. When the upstream supports h2, ALPN negotiates HTTP/2. **WebSocket upgrade doesn't work over HTTP/2 upstreams** — the Upgrade header mechanism doesn't exist in h2.
+TLS clusters use `auto_config` with both `http_protocol_options` and `http2_protocol_options`. When the upstream supports h2, ALPN negotiates HTTP/2. **Envoy's `upgrade_configs` path uses the RFC 6455 HTTP/1.1 Upgrade mechanism, which does not exist in HTTP/2** (RFC 8441 extended-CONNECT WebSockets are a separate code path Envoy does not take here). When upstream ALPN lands on h2, the upgrade fails.
 
 Fix: TLS filter chains use custom `upgrade_configs` filters: `set_filter_state` overrides `envoy.network.application_protocols` to `"http/1.1"`, forcing HTTP/1.1 on the upstream TLS handshake for WebSocket connections only.
 
+### TLS WebSocket: SNI Lock Carries Over
+
+`upgrade_configs.filters` **replaces** the HCM `http_filters` wholesale for upgrade requests — no merging. The sni-lock filter therefore must also be present on every TLS upgrade chain, or the trust boundary documented above evaporates on WebSocket connections. The actual upgrade filter lists:
+
+| Chain | upgrade_configs filters |
+|---|---|
+| TLS exact | `[sni-lock, ALPN override, router]` |
+| TLS wildcard | `[sni-lock, dynamic_host writer, ALPN override, dynamic_forward_proxy, router]` |
+| Plaintext HTTP | (none — `upgrade_type: websocket` only; default http_filters reused) |
+
 ### HTTP WebSocket: No Custom Filters Needed
 
-HTTP (plaintext) filter chains use simple `upgrade_configs: [{upgrade_type: websocket}]`. No ALPN override needed because there's no TLS negotiation. The default HCM http_filters (router only) are used for WebSocket traffic.
-
-### Correct WebSocket upgrade_configs
-
-```
-TLS filter chains:  ALPN override + router (custom filters)
-HTTP filter chain:  upgrade_type: websocket (no custom filters, uses default HCM filters)
-```
+HTTP (plaintext) filter chains use simple `upgrade_configs: [{upgrade_type: websocket}]`. No ALPN override needed because there's no TLS negotiation; no sni-lock needed because there's no upstream TLS handshake to confuse. The default HCM http_filters (router only) are used for WebSocket traffic.
 
 ### HTTP/2 Downstream (Client → Envoy)
 

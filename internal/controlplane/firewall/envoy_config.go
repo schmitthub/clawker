@@ -232,6 +232,13 @@ const firewallBlockedBody = "Forbidden\n"
 //     RFC 9110 §5.4.5 header-name aliasing (`X_AUTH` vs `X-AUTH`).
 //   - http2_protocol_options.max_concurrent_streams: h2 amplification
 //     cap; default is conservative for forward-proxy threat model.
+//   - http2_protocol_options.allow_connect: enables RFC 8441 extended
+//     CONNECT downstream so HTTP/2 clients can run WebSocket without
+//     falling back to HTTP/1.1. Envoy then translates the upgrade
+//     downward to HTTP/1.1 RFC 6455 Upgrade for upstream — the upstream
+//     ALPN is force-pinned to h1.1 by a per-request filter in
+//     buildTLSWebSocketUpgrade (Envoy can't reliably probe for RFC 8441
+//     support upstream, so it stays on h1.1 for universal compat).
 //
 // Timeouts (request_timeout / stream_idle_timeout / idle_timeout) are NOT
 // set here. LLM API calls regularly stream for minutes with multi-MB
@@ -250,6 +257,7 @@ func httpConnectionManagerHardening() map[string]any {
 		},
 		"http2_protocol_options": map[string]any{
 			"max_concurrent_streams": 100,
+			"allow_connect":          true,
 		},
 	}
 }
@@ -422,6 +430,15 @@ func otelAccessLogEntry(transport, l7Proto, tlsEstablished, action string, extra
 // (e.g., example.com:443 and example.com:8443) get separate clusters.
 func tlsClusterName(domain string, port int) string {
 	return fmt.Sprintf("tls_%s_%d", sanitizeName(domain), port)
+}
+
+// tlsWildcardClusterName returns the cluster name for the wildcard-rule TLS upstream.
+// Wildcard rules require a separate cluster from any exact rule for the same apex —
+// the wildcard cluster is dynamic_forward_proxy with sub_clusters keyed by SNI, the
+// exact cluster is LOGICAL_DNS pinned to the apex. Distinct names keep their upstream
+// connection pools isolated even when both rules coexist for the same apex.
+func tlsWildcardClusterName(apex string, port int) string {
+	return fmt.Sprintf("tls_wildcard_%s_%d", sanitizeName(apex), port)
 }
 
 // httpClusterName returns the per-domain, per-port cluster name for plaintext HTTP upstream.
@@ -744,15 +761,32 @@ func buildHTTPFilterChain(rules []config.EgressRule, exactDomains map[string]boo
 // ──────────────────────────────────────────────────────────────────────────────
 
 // buildTLSFilterChain creates a filter chain that terminates TLS with a per-domain
-// certificate, inspects HTTP traffic, then forwards to a per-domain LOGICAL_DNS
-// cluster that re-encrypts upstream. The upstream destination is determined by the
-// cluster endpoint (domain:port), NOT by the HTTP Host header — this prevents
-// confused deputy attacks where a malicious client manipulates Host to redirect traffic.
+// certificate, inspects HTTP traffic, then forwards to the per-domain upstream
+// cluster that re-encrypts upstream.
+//
+// For exact rules the cluster is LOGICAL_DNS whose endpoint is the apex hostname:
+// the upstream destination is determined by the cluster endpoint, NOT by the HTTP
+// Host header, which closes the confused-deputy vector where a malicious client
+// could manipulate Host to redirect traffic.
+//
+// For wildcard rules the cluster is dynamic_forward_proxy with sub_clusters_config:
+// the filter chain prepends an HTTP set_filter_state filter that copies the
+// downstream SNI (%REQUESTED_SERVER_NAME%) into envoy.upstream.dynamic_host. The
+// DFP filter then resolves the actual subdomain rather than the apex, so e.g.
+// www.mintlify.com on Cloudflare and the mintlify.com apex on Vercel each reach
+// their own backend. The trust boundary still holds: this chain only entered
+// when SNI matched the wildcard suffix, the dynamic_host is sourced from SNI
+// (not Host), and each host:port gets its own sub-cluster pool so same-SAN
+// HTTP/2 coalescing across hostnames cannot happen.
 func buildTLSFilterChain(r config.EgressRule, exactDomains map[string]bool, als ALSConfig) map[string]any {
 	domain := normalizeDomain(r.Dst)
 	certFile := fmt.Sprintf(envoyCertFileFmt, domain)
 	keyFile := fmt.Sprintf(envoyKeyFileFmt, domain)
+	wildcard := isWildcardDomain(r.Dst)
 	cluster := tlsClusterName(domain, r.Port)
+	if wildcard {
+		cluster = tlsWildcardClusterName(domain, r.Port)
+	}
 
 	// Build routes: path rules when configured, otherwise allow-all.
 	// Each domain routes to its own per-domain LOGICAL_DNS cluster.
@@ -791,7 +825,7 @@ func buildTLSFilterChain(r config.EgressRule, exactDomains map[string]bool, als 
 		"filters": []any{
 			map[string]any{
 				"name":         "envoy.filters.network.http_connection_manager",
-				"typed_config": tlsHCMTypedConfig(r, domain, exactDomains, routes, als),
+				"typed_config": tlsHCMTypedConfig(r, domain, exactDomains, routes, wildcard, als),
 			},
 		},
 	}
@@ -824,7 +858,7 @@ func plaintextHCMTypedConfig(virtualHosts []any, als ALSConfig) map[string]any {
 	return tc
 }
 
-func tlsHCMTypedConfig(r config.EgressRule, domain string, exactDomains map[string]bool, routes []any, als ALSConfig) map[string]any {
+func tlsHCMTypedConfig(r config.EgressRule, domain string, exactDomains map[string]bool, routes []any, wildcard bool, als ALSConfig) map[string]any {
 	tc := map[string]any{
 		"@type":       "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
 		"stat_prefix": fmt.Sprintf("tls_%s", sanitizeName(domain)),
@@ -832,8 +866,11 @@ func tlsHCMTypedConfig(r config.EgressRule, domain string, exactDomains map[stri
 		"access_log":  buildHTTPAccessLog(true, "%METADATA(ROUTE:clawker:action)%", als),
 		// TLS upstream uses auto_config (H2+H1.1 ALPN). WebSocket Upgrade
 		// doesn't exist in HTTP/2, so the upgrade filter chain overrides
-		// ALPN to force HTTP/1.1 on the upstream TLS handshake.
-		"upgrade_configs": buildTLSWebSocketUpgrade(),
+		// ALPN to force HTTP/1.1 on the upstream TLS handshake. For
+		// wildcard chains the upgrade chain additionally writes the
+		// dynamic_host filter state so DFP resolves the actual SNI host,
+		// not the apex.
+		"upgrade_configs": buildTLSWebSocketUpgrade(wildcard),
 		"route_config": map[string]any{
 			"name": fmt.Sprintf("tls_route_%s", sanitizeName(domain)),
 			"virtual_hosts": []any{
@@ -844,10 +881,106 @@ func tlsHCMTypedConfig(r config.EgressRule, domain string, exactDomains map[stri
 				},
 			},
 		},
-		"http_filters": []any{routerFilter()},
+		"http_filters": tlsHTTPFilters(wildcard),
 	}
 	maps.Copy(tc, httpConnectionManagerHardening())
 	return tc
+}
+
+// tlsHTTPFilters returns the http_filters list for a TLS-MITM HCM. Every TLS
+// chain prepends sniLockFilter — without it Router::Filter::decodeHeaders
+// would fall back to deriving upstream SNI / SAN-validation target from the
+// HTTP :authority header, letting an attacker who controls Host validate the
+// upstream cert against a different name than the one that selected the
+// filter chain. Wildcard chains additionally insert the dynamic_host writer
+// and the DFP HTTP filter so cluster resolution sees the per-subdomain SNI
+// rather than the apex; the dynamic_host writer must execute before the DFP
+// filter on every request.
+func tlsHTTPFilters(wildcard bool) []any {
+	if !wildcard {
+		return []any{sniLockFilter(), routerFilter()}
+	}
+	return []any{
+		sniLockFilter(),
+		dynamicHostFromSNIFilter(),
+		dynamicForwardProxyHTTPFilter(),
+		routerFilter(),
+	}
+}
+
+// sniLockFilter pre-populates the two filter-state keys the router would
+// otherwise derive from the :authority header under auto_sni /
+// auto_san_validation:
+//
+//   - envoy.network.upstream_server_name — upstream TLS SNI.
+//   - envoy.network.upstream_subject_alt_names — expected upstream cert SAN.
+//
+// Router::Filter::decodeHeaders only writes these when filter state does not
+// already carry them, so a pre-populated value sourced from
+// %REQUESTED_SERVER_NAME% (the downstream SNI that selected this filter
+// chain) wins. Result: upstream TLS handshake and SAN validation are bound
+// to the SNI a connecting client presented, never to the attacker-influenced
+// Host header. Applies to every TLS chain — exact and wildcard — because the
+// attack does not require DFP (TCP destination follows the cluster endpoint
+// on exact rules, but a Host-derived upstream SNI can still cause a request
+// to be served at the cluster's edge under a different cert name and routed
+// to an unallowed sibling at the app layer).
+func sniLockFilter() map[string]any {
+	return setFilterStateFromSNI(
+		"envoy.network.upstream_server_name",
+		"envoy.network.upstream_subject_alt_names",
+	)
+}
+
+// dynamicHostFromSNIFilter writes envoy.upstream.dynamic_host from the
+// downstream SNI for wildcard chains. The DFP HTTP filter consumes this key
+// (when allow_dynamic_host_from_filter_state is set) for cluster / DNS
+// resolution, so the actual subdomain is routed rather than the apex.
+func dynamicHostFromSNIFilter() map[string]any {
+	return setFilterStateFromSNI("envoy.upstream.dynamic_host")
+}
+
+// setFilterStateFromSNI builds an envoy.filters.http.set_filter_state config
+// that writes each given object_key with the downstream SNI value
+// (%REQUESTED_SERVER_NAME%) on every request.
+func setFilterStateFromSNI(objectKeys ...string) map[string]any {
+	entries := make([]any, 0, len(objectKeys))
+	for _, k := range objectKeys {
+		entries = append(entries, map[string]any{
+			"object_key": k,
+			"format_string": map[string]any{
+				"text_format_source": map[string]any{
+					"inline_string": "%REQUESTED_SERVER_NAME%",
+				},
+			},
+		})
+	}
+	return map[string]any{
+		"name": "envoy.filters.http.set_filter_state",
+		"typed_config": map[string]any{
+			"@type":              "type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config",
+			"on_request_headers": entries,
+		},
+	}
+}
+
+// dynamicForwardProxyHTTPFilter is the DFP HTTP filter used inside wildcard
+// TLS filter chains. allow_dynamic_host_from_filter_state lets the filter
+// honor envoy.upstream.dynamic_host instead of the :authority header
+// (matching the long-standing SNI/UDP DFP behavior — landed in Envoy 1.35).
+// sub_cluster_config.cluster_init_timeout caps how long the first request to
+// a new SNI waits for its sub-cluster's DNS resolve before failing.
+func dynamicForwardProxyHTTPFilter() map[string]any {
+	return map[string]any{
+		"name": "envoy.filters.http.dynamic_forward_proxy",
+		"typed_config": map[string]any{
+			"@type":                                "type.googleapis.com/envoy.extensions.filters.http.dynamic_forward_proxy.v3.FilterConfig",
+			"allow_dynamic_host_from_filter_state": true,
+			"sub_cluster_config": map[string]any{
+				"cluster_init_timeout": "5s",
+			},
+		},
+	}
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -921,39 +1054,59 @@ func buildHTTPRoutes(r config.EgressRule, clusterName string) []any {
 }
 
 // buildTLSWebSocketUpgrade returns the HCM upgrade_configs entry for WebSocket
-// on TLS filter chains. The custom filter chain overrides ALPN to HTTP/1.1 for
-// the upstream TLS handshake — necessary because standard WebSocket upgrades use
-// the HTTP/1.1 Upgrade header mechanism which does not exist in HTTP/2.
-// Regular (non-upgrade) requests continue to use the cluster's auto_config
-// ALPN and get HTTP/2 when available.
+// on TLS filter chains. WebSocket upgrade_configs replace the HCM's
+// http_filters wholesale for upgrade requests, so every filter the regular
+// request path relies on must be reproduced here.
+//
+// Filters per chain kind:
+//   - Exact rule: [sni-lock, alpn-override(h1.1), router]
+//   - Wildcard rule: [sni-lock, dynamic_host writer, alpn-override(h1.1),
+//     dynamic_forward_proxy, router]
+//
+// Why each is here:
+//   - sni-lock locks upstream SNI/SAN to downstream SNI (per-request) — same
+//     confused-deputy fix as the regular http_filters path.
+//   - dynamic_host + DFP (wildcard only) route the upgrade to the actual
+//     subdomain rather than the apex.
+//   - alpn-override-to-http/1.1 is the recommended Envoy pattern (current
+//     in 1.37+) for forcing upstream ALPN to h1.1 per-request, overriding
+//     whatever the cluster's auto_config would negotiate. Without it, h2
+//     gets negotiated upstream and the upgrade fails on any upstream that
+//     doesn't implement RFC 8441 extended CONNECT (e.g. ngrok edge,
+//     plenty of origin servers). With it, Envoy automatically translates
+//     downstream h2 extended CONNECT → upstream h1.1 RFC 6455 Upgrade,
+//     so HTTP/2 WebSocket clients still work end-to-end.
+//
+// h2 WebSocket support comes from `allow_connect: true` on the downstream
+// HCM's http2_protocol_options (see httpConnectionManagerHardening).
 //
 // Ref: https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/http/upgrades
-func buildTLSWebSocketUpgrade() []any {
-	return []any{
-		map[string]any{
-			"upgrade_type": "websocket",
-			"filters": []any{
-				// Force HTTP/1.1 ALPN for upstream TLS connection.
+func buildTLSWebSocketUpgrade(wildcard bool) []any {
+	alpnOverride := map[string]any{
+		"name": "envoy.filters.http.set_filter_state",
+		"typed_config": map[string]any{
+			"@type": "type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config",
+			"on_request_headers": []any{
 				map[string]any{
-					"name": "envoy.filters.http.set_filter_state",
-					"typed_config": map[string]any{
-						"@type": "type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config",
-						"on_request_headers": []any{
-							map[string]any{
-								"object_key": "envoy.network.application_protocols",
-								"format_string": map[string]any{
-									"text_format_source": map[string]any{
-										"inline_string": "http/1.1",
-									},
-								},
-							},
+					"object_key": "envoy.network.application_protocols",
+					"format_string": map[string]any{
+						"text_format_source": map[string]any{
+							"inline_string": "http/1.1",
 						},
 					},
 				},
-				routerFilter(),
 			},
 		},
 	}
+
+	var filters []any
+	if wildcard {
+		filters = append(filters, sniLockFilter(), dynamicHostFromSNIFilter(), alpnOverride, dynamicForwardProxyHTTPFilter(), routerFilter())
+	} else {
+		filters = append(filters, sniLockFilter(), alpnOverride, routerFilter())
+	}
+
+	return []any{map[string]any{"upgrade_type": "websocket", "filters": filters}}
 }
 
 // buildDenyFilterChain creates the default deny filter chain that resets
@@ -1068,18 +1221,31 @@ func buildClusters(tls, tcp, http []config.EgressRule, als ALSConfig) []any {
 		clusters = append(clusters, buildOtelALSCluster(als))
 	}
 
-	// Per-(domain, port) TLS clusters — LOGICAL_DNS with upstream re-encryption.
-	// Separate clusters per (domain, port) pair maintain isolated connection pools and
-	// allow the same domain on different ports (e.g., example.com:443 and example.com:8443).
+	// Per-(domain, port) TLS clusters. Exact rules get LOGICAL_DNS with the
+	// apex hostname as the pinned endpoint; wildcard rules get a separate
+	// dynamic_forward_proxy cluster whose endpoint is resolved at request
+	// time from the SNI (written into filter state by the wildcard filter
+	// chain). The two cluster kinds are independent — a wildcard rule and
+	// an exact rule for the same apex produce two distinct clusters whose
+	// connection pools never share. Dedup key includes the kind so the same
+	// apex can carry both.
 	seen := make(map[string]bool)
 	for _, r := range tls {
 		domain := normalizeDomain(r.Dst)
-		key := fmt.Sprintf("%s:%d", domain, r.Port)
+		kind := "exact"
+		if isWildcardDomain(r.Dst) {
+			kind = "wildcard"
+		}
+		key := fmt.Sprintf("%s:%s:%d", kind, domain, r.Port)
 		if seen[key] {
 			continue
 		}
 		seen[key] = true
-		clusters = append(clusters, buildTLSDNSCluster(domain, r.Port))
+		if isWildcardDomain(r.Dst) {
+			clusters = append(clusters, buildTLSWildcardDFPCluster(domain, r.Port))
+		} else {
+			clusters = append(clusters, buildTLSDNSCluster(domain, r.Port))
+		}
 	}
 
 	// Per-(domain, port) HTTP clusters — LOGICAL_DNS without TLS.
@@ -1163,6 +1329,85 @@ func buildTLSDNSCluster(domain string, port int) map[string]any {
 				"@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext",
 				"common_tls_context": map[string]any{
 					"alpn_protocols": []string{"h2", "http/1.1"},
+					"tls_params": map[string]any{
+						"ecdh_curves": []string{"X25519", "P-256", "P-384"},
+					},
+					"validation_context": map[string]any{
+						"trusted_ca": map[string]any{
+							"filename": "/etc/ssl/certs/ca-certificates.crt",
+						},
+					},
+				},
+			},
+		},
+		"typed_extension_protocol_options": map[string]any{
+			"envoy.extensions.upstreams.http.v3.HttpProtocolOptions": map[string]any{
+				"@type": "type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions",
+				"upstream_http_protocol_options": map[string]any{
+					"auto_sni":            true,
+					"auto_san_validation": true,
+				},
+				"auto_config": map[string]any{
+					"http_protocol_options":  map[string]any{},
+					"http2_protocol_options": map[string]any{},
+				},
+			},
+		},
+	}
+}
+
+// buildTLSWildcardDFPCluster creates a per-apex dynamic_forward_proxy cluster
+// for wildcard rules. Unlike the exact-rule LOGICAL_DNS cluster whose endpoint
+// is pinned to the apex hostname, this cluster routes each request to a
+// sub-cluster keyed on the actual SNI (provided via the envoy.upstream.dynamic_host
+// filter state that the wildcard filter chain writes from %REQUESTED_SERVER_NAME%).
+// Each sub-cluster keeps its own DNS resolution and connection pool, so:
+//
+//   - Subdomains that resolve to different IPs than the apex (e.g.
+//     mintlify.com → Vercel apex, www.mintlify.com → Cloudflare) connect to
+//     the correct upstream rather than the apex IP.
+//   - Same-SAN HTTP/2 connection coalescing across different hostnames
+//     (the api.anthropic.com / statsig.anthropic.com race that PR #231
+//     was guarding against) cannot happen: allow_coalesced_connections
+//     defaults to false and lifetime callbacks return empty when off, so
+//     no cross-sub-cluster pool reuse is tracked.
+//
+// Trust boundary: the dynamic_host is sourced from SNI inside a filter chain
+// that only matches SNI suffix `.<apex>`, so a hostile Host header cannot
+// redirect the upstream connection outside the wildcard's reach.
+func buildTLSWildcardDFPCluster(apex string, port int) map[string]any {
+	return map[string]any{
+		"name":            tlsWildcardClusterName(apex, port),
+		"connect_timeout": "10s",
+		"lb_policy":       "CLUSTER_PROVIDED",
+		// V4_ONLY parity with buildTLSDNSCluster — clawker-net is IPv4-only.
+		// Without this, the dynamically-spawned sub-clusters try AAAA records
+		// first (Envoy's `AUTO` default prefers IPv6) and fail with
+		// `Network is unreachable` for any host with IPv6 records.
+		"dns_lookup_family": "V4_ONLY",
+		"cluster_type": map[string]any{
+			"name": "envoy.clusters.dynamic_forward_proxy",
+			"typed_config": map[string]any{
+				"@type": "type.googleapis.com/envoy.extensions.clusters.dynamic_forward_proxy.v3.ClusterConfig",
+				"sub_clusters_config": map[string]any{
+					"max_sub_clusters": 1024,
+					"sub_cluster_ttl":  "300s",
+				},
+				// Explicit false instead of proto default. With sub_clusters,
+				// each host:port gets its own pool — coalescing across pools
+				// would re-enable the SAN-shared h2 reuse race where the
+				// first IP to win a pool serves every subsequent same-SAN
+				// hostname (api.X / statsig.X collapsing onto one socket).
+				// Pinning the flag here makes the security boundary
+				// resilient to any future upstream default change.
+				"allow_coalesced_connections": false,
+			},
+		},
+		"transport_socket": map[string]any{
+			"name": "envoy.transport_sockets.tls",
+			"typed_config": map[string]any{
+				"@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext",
+				"common_tls_context": map[string]any{
 					"tls_params": map[string]any{
 						"ecdh_curves": []string{"X25519", "P-256", "P-384"},
 					},

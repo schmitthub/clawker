@@ -216,12 +216,21 @@ func TestGenerateEnvoyConfig_TLSClusterAutoConfig(t *testing.T) {
 	assert.Contains(t, out, "auto_sni: true")
 	assert.Contains(t, out, "auto_san_validation: true")
 	assert.Contains(t, out, "auto_config")
+	// Upstream auto_config offers both HTTP/1.1 and HTTP/2 via ALPN.
 	assert.Contains(t, out, "http2_protocol_options: {}")
-	// WebSocket upgrade uses custom filter chain to force HTTP/1.1 upstream ALPN.
+	// WebSocket upgrade carries a per-request ALPN override forcing upstream
+	// to h1.1 (RFC 6455 Upgrade); h2-WS support is downstream-only and
+	// covered by _DownstreamHCMAllowsH2WebSocket + _TLSWebSocketUpgrade.
 	assert.Contains(t, out, "upgrade_type: websocket")
 	assert.Contains(t, out, "envoy.network.application_protocols")
-	// No DFP filter — LOGICAL_DNS clusters don't need it.
-	assert.NotContains(t, out, "envoy.filters.http.dynamic_forward_proxy")
+	// Exact-rule chains do not run DFP.
+	var cfg map[string]any
+	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
+	c := findTLSFilterChain(t, cfg, "api.anthropic.com")
+	require.NotNil(t, c)
+	for _, f := range chainHCM(t, c)["http_filters"].([]any) {
+		assert.NotEqual(t, "envoy.filters.http.dynamic_forward_proxy", f.(map[string]any)["name"], "exact-rule TLS chain must not include DFP filter")
+	}
 }
 
 // TestGenerateEnvoyConfig_DenylistPathRules_InferAllowDefault locks in the
@@ -1145,14 +1154,19 @@ func TestGenerateEnvoyConfig_TLSClusterPortPinning(t *testing.T) {
 		"LOGICAL_DNS clusters don't need dynamic port filter state")
 }
 
-// TestGenerateEnvoyConfig_SimplifiedFilterChains verifies the new architecture
-// has minimal http_filters: just the router. No DFP filter, no port enforcement.
+// TestGenerateEnvoyConfig_SimplifiedFilterChains verifies the http_filters
+// shape on TLS and plaintext-HTTP chains. TLS chains carry [sni-lock, router]
+// — sni-lock pre-populates upstream_server_name + upstream_subject_alt_names
+// from %REQUESTED_SERVER_NAME% so the router can't fall back to deriving
+// either from the :authority (Host) header under auto_sni / auto_san_validation.
+// Plaintext HTTP chains carry [router] only — no upstream TLS handshake so no
+// SNI to lock.
 func TestGenerateEnvoyConfig_SimplifiedFilterChains(t *testing.T) {
 	t.Parallel()
 
 	rules := []config.EgressRule{
 		{Dst: "api.anthropic.com", Proto: "https", Port: 443, Action: "allow"},
-		{Dst: "example.com", Proto: "https", Port: 80, Action: "allow"},
+		{Dst: "example.com", Proto: "http", Port: 80, Action: "allow"},
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
@@ -1173,8 +1187,8 @@ func TestGenerateEnvoyConfig_SimplifiedFilterChains(t *testing.T) {
 		chains := lis["filter_chains"].([]any)
 		for _, fc := range chains {
 			chain := fc.(map[string]any)
-			// Skip deny chain (uses tcp_proxy, no http_filters).
 			fcm, _ := chain["filter_chain_match"].(map[string]any)
+			// Skip deny chain (catch-all, tcp_proxy filter).
 			if len(fcm) == 0 {
 				continue
 			}
@@ -1183,11 +1197,29 @@ func TestGenerateEnvoyConfig_SimplifiedFilterChains(t *testing.T) {
 			tc := hcm["typed_config"].(map[string]any)
 			httpFilters := tc["http_filters"].([]any)
 
-			// Both TLS and HTTP filter chains should have router only.
-			assert.Len(t, httpFilters, 1,
-				"filter chain should have router only (no DFP, no port enforcement)")
-			router := httpFilters[0].(map[string]any)
-			assert.Equal(t, "envoy.filters.http.router", router["name"])
+			names := []string{}
+			for _, hf := range httpFilters {
+				names = append(names, hf.(map[string]any)["name"].(string))
+			}
+
+			// Plaintext chain is matched by transport_protocol=raw_buffer;
+			// TLS chains by SNI.
+			if fcm["transport_protocol"] == "raw_buffer" {
+				assert.Equal(t,
+					[]string{"envoy.filters.http.router"},
+					names,
+					"plaintext HTTP chain has no upstream TLS — no SNI to lock, router only",
+				)
+				continue
+			}
+			assert.Equal(t,
+				[]string{
+					"envoy.filters.http.set_filter_state",
+					"envoy.filters.http.router",
+				},
+				names,
+				"TLS chain must carry sni-lock + router (sni-lock pins upstream SNI/SAN to downstream SNI, defeating Host-header confused-deputy at the upstream TLS handshake)",
+			)
 		}
 	}
 }
@@ -1256,72 +1288,6 @@ func TestEnvoyPorts_Validate(t *testing.T) {
 // ──────────────────────────────────────────────────────────────────────────────
 // Gap coverage: HTTP port 0 defaults to 80 (#10)
 // ──────────────────────────────────────────────────────────────────────────────
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Gap coverage: WebSocket ALPN override structural test (#11)
-// ──────────────────────────────────────────────────────────────────────────────
-
-func TestGenerateEnvoyConfig_TLSWebSocketALPNOverride(t *testing.T) {
-	t.Parallel()
-
-	rules := []config.EgressRule{
-		{Dst: "api.anthropic.com", Proto: "https", Port: 443, Action: "allow"},
-	}
-	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
-
-	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
-	require.NoError(t, err)
-
-	var cfg map[string]any
-	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
-
-	sr := cfg["static_resources"].(map[string]any)
-	listeners := sr["listeners"].([]any)
-
-	for _, l := range listeners {
-		lis := l.(map[string]any)
-		if lis["name"] != "egress" {
-			continue
-		}
-		chains := lis["filter_chains"].([]any)
-		for _, fc := range chains {
-			chain := fc.(map[string]any)
-			// Find TLS filter chains (have transport_socket).
-			if chain["transport_socket"] == nil {
-				continue
-			}
-			filters := chain["filters"].([]any)
-			hcm := filters[0].(map[string]any)
-			tc := hcm["typed_config"].(map[string]any)
-			upgrades := tc["upgrade_configs"].([]any)
-
-			require.Len(t, upgrades, 1, "TLS chain must have exactly one upgrade_configs entry")
-			uc := upgrades[0].(map[string]any)
-			assert.Equal(t, "websocket", uc["upgrade_type"])
-
-			// Custom filter chain with ALPN override.
-			ucFilters := uc["filters"].([]any)
-			require.Len(t, ucFilters, 2, "WebSocket upgrade must have set_filter_state + router")
-
-			// First filter: set_filter_state to override ALPN.
-			sf := ucFilters[0].(map[string]any)
-			assert.Equal(t, "envoy.filters.http.set_filter_state", sf["name"])
-			sfTC := sf["typed_config"].(map[string]any)
-			headers := sfTC["on_request_headers"].([]any)
-			header := headers[0].(map[string]any)
-			assert.Equal(t, "envoy.network.application_protocols", header["object_key"])
-			fs := header["format_string"].(map[string]any)
-			tfs := fs["text_format_source"].(map[string]any)
-			assert.Equal(t, "http/1.1", tfs["inline_string"])
-
-			// Second filter: router.
-			router := ucFilters[1].(map[string]any)
-			assert.Equal(t, "envoy.filters.http.router", router["name"])
-			return
-		}
-	}
-	t.Fatal("TLS filter chain with WebSocket upgrade not found")
-}
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Gap coverage: duplicate domain different ports (#12)
@@ -1569,6 +1535,7 @@ func TestGenerateEnvoyConfig_HCMHardening(t *testing.T) {
 	rules := []config.EgressRule{
 		{Dst: "tls.example.com", Proto: "https", Port: 443, Action: "allow"},
 		{Dst: "plain.example.com", Proto: "http", Port: 80, Action: "allow"},
+		{Dst: ".wild.example.com", Proto: "https", Port: 443, Action: "allow"},
 	}
 	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
 
@@ -1579,8 +1546,8 @@ func TestGenerateEnvoyConfig_HCMHardening(t *testing.T) {
 	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
 
 	// Walk every HCM typed_config in every listener filter chain and
-	// assert the hardening field set is complete. Both the TLS chain HCM
-	// and the plaintext HTTP chain HCM must carry the full set.
+	// assert the hardening field set is complete. TLS exact, TLS wildcard,
+	// and plaintext HTTP chain HCMs must all carry the full set.
 	required := []string{
 		"normalize_path",
 		"merge_slashes",
@@ -1618,7 +1585,7 @@ func TestGenerateEnvoyConfig_HCMHardening(t *testing.T) {
 		}
 	}
 	assert.True(t, egressListenerSeen, "egress listener not found in generated config")
-	assert.GreaterOrEqual(t, hcmCount, 2, "expected at least 2 HCMs (TLS chain + plaintext HTTP chain)")
+	assert.GreaterOrEqual(t, hcmCount, 3, "expected at least 3 HCMs (TLS exact + TLS wildcard + plaintext HTTP)")
 }
 
 // TestGenerateEnvoyConfig_DenyResponseBodyNotFingerprinted locks in the
@@ -1644,4 +1611,444 @@ func TestGenerateEnvoyConfig_DenyResponseBodyNotFingerprinted(t *testing.T) {
 	out := string(yamlBytes)
 	assert.NotContains(t, out, "Blocked by clawker firewall", "deny body must not name the firewall product (fingerprint disclosure)")
 	assert.NotContains(t, out, "clawker firewall", "no inline string may reveal the clawker name in response bodies")
+}
+
+// findCluster returns the cluster map with the given name from a parsed envoy
+// config, or nil if not found.
+func findCluster(t *testing.T, cfg map[string]any, name string) map[string]any {
+	t.Helper()
+	sr := cfg["static_resources"].(map[string]any)
+	for _, c := range sr["clusters"].([]any) {
+		cl := c.(map[string]any)
+		if cl["name"] == name {
+			return cl
+		}
+	}
+	return nil
+}
+
+// findTLSFilterChain returns the egress listener's filter chain whose
+// server_names list contains the given SNI entry, or nil.
+func findTLSFilterChain(t *testing.T, cfg map[string]any, sni string) map[string]any {
+	t.Helper()
+	sr := cfg["static_resources"].(map[string]any)
+	for _, l := range sr["listeners"].([]any) {
+		lis := l.(map[string]any)
+		if lis["name"] != "egress" {
+			continue
+		}
+		for _, fc := range lis["filter_chains"].([]any) {
+			chain := fc.(map[string]any)
+			fcm, ok := chain["filter_chain_match"].(map[string]any)
+			if !ok {
+				continue
+			}
+			sn, ok := fcm["server_names"].([]any)
+			if !ok {
+				continue
+			}
+			for _, s := range sn {
+				if s.(string) == sni {
+					return chain
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// chainHCM returns the HCM typed_config from a TLS filter chain.
+func chainHCM(t *testing.T, chain map[string]any) map[string]any {
+	t.Helper()
+	filters := chain["filters"].([]any)
+	require.NotEmpty(t, filters)
+	return filters[0].(map[string]any)["typed_config"].(map[string]any)
+}
+
+// TestGenerateEnvoyConfig_WildcardClusterIsDFP — a wildcard rule must emit a
+// dynamic_forward_proxy cluster with sub_clusters_config, not LOGICAL_DNS.
+// LOGICAL_DNS pins the upstream endpoint to the apex hostname, which sends
+// requests for any subdomain to whatever IP the apex resolves to. That fails
+// when an apex and its subdomains live on different infrastructure (e.g.
+// mintlify.com → Vercel, www.mintlify.com → Cloudflare) — Envoy connects to
+// the apex IP, sends SNI for the subdomain, and the upstream cert verification
+// fails on the wrong backend.
+func TestGenerateEnvoyConfig_WildcardClusterIsDFP(t *testing.T) {
+	t.Parallel()
+
+	rules := []config.EgressRule{
+		{Dst: ".mintlify.com", Proto: "https", Port: 443, Action: "allow"},
+	}
+	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
+
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
+	require.NoError(t, err)
+
+	var cfg map[string]any
+	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
+
+	cl := findCluster(t, cfg, "tls_wildcard_mintlify_com_443")
+	require.NotNil(t, cl, "wildcard rule must produce a tls_wildcard_<apex>_<port> cluster")
+
+	ct, ok := cl["cluster_type"].(map[string]any)
+	require.True(t, ok, "wildcard cluster must use cluster_type (dynamic_forward_proxy), not the LOGICAL_DNS type field")
+	assert.Equal(t, "envoy.clusters.dynamic_forward_proxy", ct["name"])
+
+	tc := ct["typed_config"].(map[string]any)
+	sub, ok := tc["sub_clusters_config"].(map[string]any)
+	require.True(t, ok, "wildcard DFP cluster must enable sub_clusters_config for per-host:port pool isolation")
+	assert.NotZero(t, sub["max_sub_clusters"], "max_sub_clusters must be set explicitly")
+	assert.NotEmpty(t, sub["sub_cluster_ttl"], "sub_cluster_ttl must be set explicitly")
+
+	// allow_coalesced_connections is explicitly false in YAML, not relying on
+	// the proto default. With sub_clusters each host:port has its own pool;
+	// coalescing across pools would re-open the same-SAN h2 pool reuse race
+	// where the first IP to win a pool serves every subsequent same-SAN
+	// hostname. Pinning the flag at the YAML layer keeps the boundary stable
+	// against any future upstream default change.
+	v, present := tc["allow_coalesced_connections"]
+	require.True(t, present, "allow_coalesced_connections must be explicit in YAML, not relying on proto default")
+	assert.Equal(t, false, v, "allow_coalesced_connections must be false to keep pools isolated across SAN-shared hostnames")
+
+	// Upstream TLS context — must keep auto_sni + auto_san_validation and the
+	// system trusted_ca so the upstream cert is validated against the SNI
+	// derived from the request.
+	ts, ok := cl["transport_socket"].(map[string]any)
+	require.True(t, ok)
+	utc := ts["typed_config"].(map[string]any)
+	assert.Contains(t, utc["@type"], "UpstreamTlsContext")
+	common := utc["common_tls_context"].(map[string]any)
+	vc := common["validation_context"].(map[string]any)
+	assert.Equal(t, "/etc/ssl/certs/ca-certificates.crt", vc["trusted_ca"].(map[string]any)["filename"])
+
+	hpo := cl["typed_extension_protocol_options"].(map[string]any)["envoy.extensions.upstreams.http.v3.HttpProtocolOptions"].(map[string]any)
+	uhp := hpo["upstream_http_protocol_options"].(map[string]any)
+	assert.Equal(t, true, uhp["auto_sni"])
+	assert.Equal(t, true, uhp["auto_san_validation"])
+	auto, ok := hpo["auto_config"].(map[string]any)
+	require.True(t, ok, "wildcard cluster must keep auto_config (h2 + h1.1 ALPN) parity with exact clusters")
+	_, hasH1 := auto["http_protocol_options"]
+	_, hasH2 := auto["http2_protocol_options"]
+	assert.True(t, hasH1 && hasH2, "auto_config must offer both HTTP/1.1 and HTTP/2 so h2 wins via ALPN when supported")
+}
+
+// TestGenerateEnvoyConfig_WildcardClusterIsV4Only — clawker-net is IPv4-only,
+// matching the explicit V4_ONLY pin on the exact-rule LOGICAL_DNS cluster.
+// Without this on the wildcard DFP cluster, dynamically-spawned sub-clusters
+// pick up Envoy's `AUTO` default and try AAAA first; any wildcard host with
+// IPv6 records (e.g. claude.ai → 2607:6bc0::10) hits
+// `immediate_connect_error: Network is unreachable` at the Envoy upstream.
+func TestGenerateEnvoyConfig_WildcardClusterIsV4Only(t *testing.T) {
+	t.Parallel()
+
+	rules := []config.EgressRule{
+		{Dst: ".claude.ai", Proto: "https", Port: 443, Action: "allow"},
+	}
+	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
+
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
+	require.NoError(t, err)
+
+	var cfg map[string]any
+	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
+
+	cl := findCluster(t, cfg, "tls_wildcard_claude_ai_443")
+	require.NotNil(t, cl)
+	assert.Equal(t, "V4_ONLY", cl["dns_lookup_family"], "wildcard DFP cluster must pin V4_ONLY — clawker-net has no IPv6 path and the Envoy default (AUTO) prefers AAAA, which yields Network-is-unreachable on any v6-enabled upstream")
+}
+
+// TestGenerateEnvoyConfig_WildcardAndExactCoexistTwoClusters — when a
+// wildcard rule and an exact rule for the same apex are present together,
+// the generator must produce two distinct clusters (one DFP, one LOGICAL_DNS).
+// Collapsing them into one is the bug this fix addresses; the DFP cluster's
+// per-host:port pool isolation also keeps the exact-apex pool from sharing
+// upstream connections with subdomain pools.
+func TestGenerateEnvoyConfig_WildcardAndExactCoexistTwoClusters(t *testing.T) {
+	t.Parallel()
+
+	rules := []config.EgressRule{
+		{Dst: ".mintlify.com", Proto: "https", Port: 443, Action: "allow"},
+		{Dst: "mintlify.com", Proto: "https", Port: 443, Action: "allow"},
+	}
+	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
+
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
+	require.NoError(t, err)
+
+	var cfg map[string]any
+	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
+
+	exact := findCluster(t, cfg, "tls_mintlify_com_443")
+	require.NotNil(t, exact, "exact apex rule must produce tls_<apex>_<port> cluster")
+	assert.Equal(t, "LOGICAL_DNS", exact["type"], "exact rule must remain LOGICAL_DNS")
+
+	wild := findCluster(t, cfg, "tls_wildcard_mintlify_com_443")
+	require.NotNil(t, wild, "wildcard rule must produce a distinct tls_wildcard_<apex>_<port> cluster")
+	ct := wild["cluster_type"].(map[string]any)
+	assert.Equal(t, "envoy.clusters.dynamic_forward_proxy", ct["name"])
+}
+
+// TestGenerateEnvoyConfig_TLSChainSNILock — every TLS filter chain (exact
+// AND wildcard) must prepend a set_filter_state that locks the upstream
+// SNI / SAN validation target to the downstream SNI. Without this lock,
+// Router::Filter::decodeHeaders derives both from the :authority header,
+// letting an attacker who controls Host validate the upstream cert against
+// a different name than the one that selected the chain — exfiltration to
+// unallowed siblings via shared-edge cert SANs.
+//
+// Wildcard chains additionally carry the dynamic_host writer + DFP HTTP
+// filter so cluster resolution sees the per-subdomain SNI.
+func TestGenerateEnvoyConfig_TLSChainSNILock(t *testing.T) {
+	t.Parallel()
+
+	rules := []config.EgressRule{
+		{Dst: "api.anthropic.com", Proto: "https", Port: 443, Action: "allow"},
+		{Dst: ".mintlify.com", Proto: "https", Port: 443, Action: "allow"},
+	}
+	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
+
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
+	require.NoError(t, err)
+
+	var cfg map[string]any
+	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
+
+	collectSNIKeys := func(t *testing.T, filters []any) []string {
+		t.Helper()
+		keys := []string{}
+		for _, f := range filters {
+			flt := f.(map[string]any)
+			if flt["name"] != "envoy.filters.http.set_filter_state" {
+				continue
+			}
+			tc := flt["typed_config"].(map[string]any)
+			for _, e := range tc["on_request_headers"].([]any) {
+				entry := e.(map[string]any)
+				keys = append(keys, entry["object_key"].(string))
+				fmtStr := entry["format_string"].(map[string]any)["text_format_source"].(map[string]any)["inline_string"].(string)
+				assert.Equalf(t, "%REQUESTED_SERVER_NAME%", fmtStr, "filter-state %q must be sourced from SNI; any other source reopens the SNI/Host confused-deputy vector", entry["object_key"])
+			}
+		}
+		return keys
+	}
+
+	// Exact chain — sni-lock + router. upstream_server_name and
+	// upstream_subject_alt_names locked to SNI; no DFP (LOGICAL_DNS).
+	exact := findTLSFilterChain(t, cfg, "api.anthropic.com")
+	require.NotNil(t, exact)
+	exactFilters := chainHCM(t, exact)["http_filters"].([]any)
+	require.Len(t, exactFilters, 2, "exact TLS chain must have [sni-lock, router]")
+	assert.Equal(t, "envoy.filters.http.set_filter_state", exactFilters[0].(map[string]any)["name"])
+	assert.Equal(t, "envoy.filters.http.router", exactFilters[1].(map[string]any)["name"])
+	assert.ElementsMatch(t,
+		[]string{
+			"envoy.network.upstream_server_name",
+			"envoy.network.upstream_subject_alt_names",
+		},
+		collectSNIKeys(t, exactFilters),
+		"exact chain SNI-lock must pin upstream_server_name + upstream_subject_alt_names",
+	)
+
+	// Wildcard chain — sni-lock + dynamic_host + DFP + router. All three
+	// filter-state keys must be locked to SNI: dynamic_host for cluster
+	// resolution, upstream_server_name + upstream_subject_alt_names so the
+	// router can't fall back to Host header.
+	wild := findTLSFilterChain(t, cfg, ".mintlify.com")
+	require.NotNil(t, wild, "wildcard rule must produce a filter chain matched on the suffix SNI")
+	wildFilters := chainHCM(t, wild)["http_filters"].([]any)
+	require.Len(t, wildFilters, 4, "wildcard TLS chain must have [sni-lock, dynamic_host, dynamic_forward_proxy, router]")
+	wildNames := []string{}
+	for _, f := range wildFilters {
+		wildNames = append(wildNames, f.(map[string]any)["name"].(string))
+	}
+	assert.Equal(t,
+		[]string{
+			"envoy.filters.http.set_filter_state",
+			"envoy.filters.http.set_filter_state",
+			"envoy.filters.http.dynamic_forward_proxy",
+			"envoy.filters.http.router",
+		},
+		wildNames,
+		"wildcard chain filter order: sni-lock → dynamic_host writer → DFP → router (sni-lock and dynamic_host writers must both precede DFP since dfp reads the filter state they write)",
+	)
+	assert.ElementsMatch(t,
+		[]string{
+			"envoy.upstream.dynamic_host",
+			"envoy.network.upstream_server_name",
+			"envoy.network.upstream_subject_alt_names",
+		},
+		collectSNIKeys(t, wildFilters),
+		"wildcard chain must lock all three upstream-targeting filter-state keys to SNI",
+	)
+
+	dfpTC := wildFilters[2].(map[string]any)["typed_config"].(map[string]any)
+	assert.Equal(t, true, dfpTC["allow_dynamic_host_from_filter_state"], "DFP filter must honor the dynamic_host filter state instead of :authority")
+	require.NotNil(t, dfpTC["sub_cluster_config"], "DFP filter must reference sub_cluster_config to engage the per-host:port sub-clusters")
+}
+
+// TestGenerateEnvoyConfig_WildcardRoutesToWildcardCluster — the wildcard
+// filter chain's routes must point at the wildcard DFP cluster, not the
+// exact LOGICAL_DNS cluster. Mis-routing would defeat the whole fix: the
+// route would still send subdomain requests through the apex-pinned cluster.
+func TestGenerateEnvoyConfig_WildcardRoutesToWildcardCluster(t *testing.T) {
+	t.Parallel()
+
+	rules := []config.EgressRule{
+		{Dst: ".mintlify.com", Proto: "https", Port: 443, Action: "allow"},
+		{Dst: "mintlify.com", Proto: "https", Port: 443, Action: "allow"},
+	}
+	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
+
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
+	require.NoError(t, err)
+
+	var cfg map[string]any
+	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
+
+	// Wildcard chain → wildcard cluster.
+	wcChain := findTLSFilterChain(t, cfg, ".mintlify.com")
+	require.NotNil(t, wcChain)
+	wcRoutes := chainHCM(t, wcChain)["route_config"].(map[string]any)["virtual_hosts"].([]any)[0].(map[string]any)["routes"].([]any)
+	wcRoute := wcRoutes[0].(map[string]any)["route"].(map[string]any)
+	assert.Equal(t, "tls_wildcard_mintlify_com_443", wcRoute["cluster"])
+
+	// Exact chain → exact cluster, unaffected by the wildcard sibling.
+	exChain := findTLSFilterChain(t, cfg, "mintlify.com")
+	require.NotNil(t, exChain, "exact rule must produce its own filter chain when no exact-sibling suppression applies")
+	exRoutes := chainHCM(t, exChain)["route_config"].(map[string]any)["virtual_hosts"].([]any)[0].(map[string]any)["routes"].([]any)
+	exRoute := exRoutes[0].(map[string]any)["route"].(map[string]any)
+	assert.Equal(t, "tls_mintlify_com_443", exRoute["cluster"])
+}
+
+// TestGenerateEnvoyConfig_DownstreamHCMAllowsH2WebSocket — every TLS HCM
+// must set http2_protocol_options.allow_connect=true so HTTP/2 downstream
+// clients can run WebSocket via RFC 8441 extended CONNECT (instead of being
+// forced down to HTTP/1.1 ALPN). Envoy translates the downstream extended
+// CONNECT to upstream HTTP/1.1 RFC 6455 Upgrade automatically — the per-
+// request ALPN override on the upgrade chain (verified by
+// _TLSWebSocketUpgrade_AlpnForceH1) keeps upstream on h1.1 regardless of
+// what upstream auto_config would negotiate.
+func TestGenerateEnvoyConfig_DownstreamHCMAllowsH2WebSocket(t *testing.T) {
+	t.Parallel()
+
+	rules := []config.EgressRule{
+		{Dst: "api.anthropic.com", Proto: "https", Port: 443, Action: "allow"},
+		{Dst: ".mintlify.com", Proto: "https", Port: 443, Action: "allow"},
+	}
+	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
+
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
+	require.NoError(t, err)
+
+	var cfg map[string]any
+	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
+
+	for _, sni := range []string{"api.anthropic.com", ".mintlify.com"} {
+		chain := findTLSFilterChain(t, cfg, sni)
+		require.NotNil(t, chain)
+		hcm := chainHCM(t, chain)
+		h2 := hcm["http2_protocol_options"].(map[string]any)
+		assert.Equal(t, true, h2["allow_connect"], "%q HCM must set http2_protocol_options.allow_connect=true to enable h2 WebSocket (RFC 8441 extended CONNECT) for downstream clients", sni)
+	}
+}
+
+// TestGenerateEnvoyConfig_TLSWebSocketUpgrade — WS upgrade_configs on TLS
+// chains must replay every regular http_filter the trust boundary depends
+// on, AND force upstream ALPN to h1.1 per-request. Upstream auto_config
+// would otherwise negotiate h2 with capable upstreams, and Envoy would try
+// h2 extended CONNECT — which fails on upstreams that don't implement
+// RFC 8441 (ngrok edge in our test setup, plenty of origin servers). The
+// ALPN override is the documented Envoy pattern for forcing per-request
+// upstream HTTP version. It's still the recommended approach in 1.37+.
+func TestGenerateEnvoyConfig_TLSWebSocketUpgrade(t *testing.T) {
+	t.Parallel()
+
+	rules := []config.EgressRule{
+		{Dst: "api.anthropic.com", Proto: "https", Port: 443, Action: "allow"},
+		{Dst: ".mintlify.com", Proto: "https", Port: 443, Action: "allow"},
+	}
+	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
+
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
+	require.NoError(t, err)
+
+	var cfg map[string]any
+	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
+
+	// Filter-state writes contributed by each set_filter_state filter,
+	// indexed by object_key → inline_string value. Built across all
+	// on_request_headers entries of every set_filter_state filter.
+	collect := func(t *testing.T, filters []any) (names []string, keyValues map[string]string) {
+		t.Helper()
+		keyValues = map[string]string{}
+		for _, f := range filters {
+			flt := f.(map[string]any)
+			names = append(names, flt["name"].(string))
+			if flt["name"] != "envoy.filters.http.set_filter_state" {
+				continue
+			}
+			for _, e := range flt["typed_config"].(map[string]any)["on_request_headers"].([]any) {
+				entry := e.(map[string]any)
+				key := entry["object_key"].(string)
+				val := entry["format_string"].(map[string]any)["text_format_source"].(map[string]any)["inline_string"].(string)
+				keyValues[key] = val
+			}
+		}
+		return names, keyValues
+	}
+
+	t.Run("exact rule", func(t *testing.T) {
+		chain := findTLSFilterChain(t, cfg, "api.anthropic.com")
+		require.NotNil(t, chain)
+		ws := chainHCM(t, chain)["upgrade_configs"].([]any)[0].(map[string]any)
+		assert.Equal(t, "websocket", ws["upgrade_type"])
+		names, kv := collect(t, ws["filters"].([]any))
+		assert.Equal(t,
+			[]string{
+				"envoy.filters.http.set_filter_state",
+				"envoy.filters.http.set_filter_state",
+				"envoy.filters.http.router",
+			},
+			names,
+			"exact-rule WS upgrade chain: sni-lock + alpn-override + router (no DFP — exact uses LOGICAL_DNS)",
+		)
+		assert.Equal(t,
+			map[string]string{
+				"envoy.network.upstream_server_name":       "%REQUESTED_SERVER_NAME%",
+				"envoy.network.upstream_subject_alt_names": "%REQUESTED_SERVER_NAME%",
+				"envoy.network.application_protocols":      "http/1.1",
+			},
+			kv,
+			"exact WS upgrade must SNI-lock upstream_server_name + upstream_subject_alt_names AND force upstream ALPN to http/1.1",
+		)
+	})
+
+	t.Run("wildcard rule", func(t *testing.T) {
+		chain := findTLSFilterChain(t, cfg, ".mintlify.com")
+		require.NotNil(t, chain)
+		ws := chainHCM(t, chain)["upgrade_configs"].([]any)[0].(map[string]any)
+		assert.Equal(t, "websocket", ws["upgrade_type"])
+		names, kv := collect(t, ws["filters"].([]any))
+		assert.Equal(t,
+			[]string{
+				"envoy.filters.http.set_filter_state",
+				"envoy.filters.http.set_filter_state",
+				"envoy.filters.http.set_filter_state",
+				"envoy.filters.http.dynamic_forward_proxy",
+				"envoy.filters.http.router",
+			},
+			names,
+			"wildcard WS upgrade chain: sni-lock + dynamic_host writer + alpn-override + DFP + router",
+		)
+		assert.Equal(t,
+			map[string]string{
+				"envoy.upstream.dynamic_host":              "%REQUESTED_SERVER_NAME%",
+				"envoy.network.upstream_server_name":       "%REQUESTED_SERVER_NAME%",
+				"envoy.network.upstream_subject_alt_names": "%REQUESTED_SERVER_NAME%",
+				"envoy.network.application_protocols":      "http/1.1",
+			},
+			kv,
+			"wildcard WS upgrade must lock dynamic_host + upstream_server_name + upstream_subject_alt_names to SNI AND force upstream ALPN to http/1.1",
+		)
+	})
 }

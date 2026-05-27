@@ -120,6 +120,7 @@ build:
     - llvm
     - libbpf-dev
     - bpftool
+    - nghttp2-client
 security:
   docker_socket: false
   firewall:
@@ -129,6 +130,7 @@ security:
       - production.cloudflare.docker.com
       - mcp.deepwiki.com
       - mcp.context7.com
+      - context7.com
       - pypi.org
       - files.pythonhosted.org
       - registry.npmjs.org
@@ -174,6 +176,8 @@ security:
       - bpfman.io
       - docs.ebpf.io
       - docs.cilium.io
+      - mintlify.com
+      - .mintlify.com
     rules:
       - action: allow
         dst: github.com
