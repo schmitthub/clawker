@@ -17,7 +17,21 @@ var requiredFirewallRules = []EgressRule{
 	{Dst: "api.anthropic.com", Proto: "https", Port: 443, Action: "allow"},
 	{Dst: "claude.com", Proto: "https", Port: 443, Action: "allow"},
 	{Dst: "platform.claude.com", Proto: "https", Port: 443, Action: "allow"},
-	{Dst: ".claude.ai", Proto: "https", Port: 443, Action: "allow"},
+	// .claude.ai serves both Claude Code OAuth + Anthropic-hosted UGC. The
+	// host-scope allow is required for login; the explicit deny PathRules
+	// scope out documented UGC surfaces so an injected prompt can't pivot
+	// an agent into fetching attacker-authored content from a trusted
+	// origin (public artifacts render HTML/JS; shared chats are UGC by
+	// definition). PathDefault is left empty so EffectivePathDefault
+	// returns "allow" — denylist mode keeps OAuth/login flows intact under
+	// `/` and `/login` (the only Allow patterns in claude.ai's robots.txt).
+	{
+		Dst: ".claude.ai", Proto: "https", Port: 443, Action: "allow",
+		PathRules: []PathRule{
+			{Path: "/public/", Action: "deny"},
+			{Path: "/share/", Action: "deny"},
+		},
+	},
 	// Claude Code — MCP proxy
 	{Dst: "mcp-proxy.anthropic.com", Proto: "https", Port: 443, Action: "allow"},
 	// Node.js / npm — registry for `npm install -g` (presets + user_run) and
