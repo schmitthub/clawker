@@ -75,7 +75,7 @@ func GenerateCorefile(rules []config.EgressRule, healthPort int) ([]byte, error)
 				denySeen[domain] = true
 				denyDomains = append(denyDomains, domain)
 			}
-		case isWildcardDomain(r.Dst):
+		case isAllowDomain(r) && isWildcardDomain(r.Dst):
 			wildcard[domain] = true
 		}
 	}

@@ -80,3 +80,24 @@ func TestGenerateCorefile_MonitoringHostnamesEmitted(t *testing.T) {
 		assert.Contains(t, string(got), zone, "expected zone block for monitoring hostname %q", host)
 	}
 }
+
+// A wildcard rule carrying an unknown/typo'd action (e.g. "allwo") must not widen
+// DNS scope. It contributes nothing to the allow set, so a colliding exact-host
+// allow has to stay exact-only (subdomains NXDOMAIN'd) — otherwise a single config
+// typo silently reopens the DNS subtree-exfil channel. Fail-closed means the typo'd
+// rule is inert, so output must equal the exact-allow-alone baseline byte-for-byte.
+func TestGenerateCorefile_UnknownActionDoesNotWidenScope(t *testing.T) {
+	baseline, err := firewall.GenerateCorefile([]config.EgressRule{
+		{Dst: "example.com", Action: "allow"},
+	}, 18902)
+	require.NoError(t, err)
+
+	withTypo, err := firewall.GenerateCorefile([]config.EgressRule{
+		{Dst: "example.com", Action: "allow"},
+		{Dst: ".example.com", Action: "allwo"}, // typo: unknown action, not an effective allow
+	}, 18902)
+	require.NoError(t, err)
+
+	assert.Equal(t, string(baseline), string(withTypo),
+		"typo'd-action wildcard rule must not flip example.com out of exact-only scoping")
+}
