@@ -52,14 +52,16 @@ Fetch via: `gh api "repos/envoyproxy/examples/contents/<path>" --jq '.content' |
 Client → eBPF connect4 rewrite → Envoy :10000
                             ├─ TLS exact (SNI match)   → per-domain filter chain → LOGICAL_DNS cluster (apex-pinned)
                             ├─ TLS wildcard (suffix)   → per-apex filter chain   → DFP cluster (sub_clusters_config, SNI-keyed)
+                            ├─ TLS deny (SNI match)    → per-domain deny chain (tcp_proxy → deny_cluster → reset)
                             ├─ HTTP (raw_buffer)       → Host header routing     → per-domain LOGICAL_DNS cluster (plaintext)
-                            └─ Unknown                 → deny chain (tcp_proxy → deny_cluster → reset)
+                            └─ Unmatched               → catch-all deny chain (tcp_proxy → deny_cluster → reset)
 ```
 
 - `tls_inspector` listener filter detects TLS vs plaintext
 - TLS: `filter_chain_match.server_names` (SNI) routes to per-domain chains. Exact rules match an exact SNI; wildcard rules (`.example.com`) match by SNI suffix
+- TLS deny: a domain-level `deny` (https/empty proto) rule emits an SNI-matched chain (`buildTLSDenyFilterChain`) that resets via `deny_cluster`. Envoy selects the **most-specific** `server_names` chain (verified against FilterChainMatch docs), so an exact deny `sub.example.com` beats a broader allow `*.example.com` — the mechanism behind "allow `.X` except `sub.X`". Selection is by specificity, not declaration order. Non-https deny rules fall through to the catch-all deny chain and emit a generation warning.
 - HTTP: `filter_chain_match.transport_protocol: "raw_buffer"` catches plaintext
-- Deny: empty `filter_chain_match: {}` catches everything else
+- Catch-all deny: empty `filter_chain_match: {}` is least-specific and catches everything no allow or per-domain deny chain claimed; MUST stay last
 
 ### TLS Cluster Shapes (Security-Critical Design)
 

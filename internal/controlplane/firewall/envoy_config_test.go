@@ -1138,6 +1138,80 @@ func TestGenerateEnvoyConfig_PerDomainClusterIsolation(t *testing.T) {
 	}
 }
 
+// TestGenerateEnvoyConfig_DenyChainWinsOverWildcard asserts a domain-level deny
+// rule emits a per-domain SNI-matched filter chain that resets via deny_cluster
+// (so Envoy's most-specific match beats a broader allow wildcard), and that the
+// least-specific catch-all deny chain stays last.
+func TestGenerateEnvoyConfig_DenyChainWinsOverWildcard(t *testing.T) {
+	t.Parallel()
+
+	rules := []config.EgressRule{
+		{Dst: ".example.com", Proto: "https", Port: 443, Action: "allow"},
+		{Dst: "sub.example.com", Proto: "https", Action: "deny"},
+	}
+	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
+
+	yamlBytes, warnings, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
+	require.NoError(t, err)
+	assert.Empty(t, warnings, "an https deny rule emits a chain, not a warning")
+
+	var cfg map[string]any
+	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
+
+	sr := cfg["static_resources"].(map[string]any)
+	var chains []any
+	for _, l := range sr["listeners"].([]any) {
+		lis := l.(map[string]any)
+		if lis["name"] == "egress" {
+			chains = lis["filter_chains"].([]any)
+		}
+	}
+	require.NotEmpty(t, chains)
+
+	// A per-domain deny chain: SNI sub.example.com → tcp_proxy → deny_cluster.
+	var found bool
+	for _, fc := range chains {
+		chain := fc.(map[string]any)
+		fcm, _ := chain["filter_chain_match"].(map[string]any)
+		sn, _ := fcm["server_names"].([]any)
+		if len(sn) == 0 || sn[0].(string) != "sub.example.com" {
+			continue
+		}
+		f0 := chain["filters"].([]any)[0].(map[string]any)
+		assert.Equal(t, "envoy.filters.network.tcp_proxy", f0["name"])
+		tc := f0["typed_config"].(map[string]any)
+		assert.Equal(t, "deny_cluster", tc["cluster"], "deny chain must reset via deny_cluster")
+		found = true
+	}
+	assert.True(t, found, "expected an SNI-matched deny chain for sub.example.com")
+
+	// The catch-all deny chain (no server_names) must remain last (least specific).
+	last := chains[len(chains)-1].(map[string]any)
+	lastFCM, _ := last["filter_chain_match"].(map[string]any)
+	_, hasSN := lastFCM["server_names"]
+	assert.False(t, hasSN, "final chain must be the catch-all deny (no server_names)")
+	lastTC := last["filters"].([]any)[0].(map[string]any)["typed_config"].(map[string]any)
+	assert.Equal(t, "deny_cluster", lastTC["cluster"])
+}
+
+// TestGenerateEnvoyConfig_NonTLSDenyWarns asserts a non-https deny rule does not
+// get a per-domain chain (it relies on the catch-all deny) and surfaces a
+// warning rather than silently doing nothing.
+func TestGenerateEnvoyConfig_NonTLSDenyWarns(t *testing.T) {
+	t.Parallel()
+
+	rules := []config.EgressRule{
+		{Dst: "sub.example.com", Proto: "tcp", Action: "deny"},
+	}
+	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
+
+	_, warnings, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
+	require.NoError(t, err)
+	require.Len(t, warnings, 1)
+	assert.Contains(t, warnings[0], "sub.example.com")
+	assert.Contains(t, warnings[0], "catch-all deny chain")
+}
+
 func TestVirtualHostName(t *testing.T) {
 	t.Parallel()
 

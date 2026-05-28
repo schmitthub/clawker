@@ -52,51 +52,66 @@ func GenerateCorefile(rules []config.EgressRule, healthPort int) ([]byte, error)
 		reserved[host] = true
 	}
 
-	// Collect unique allowed domains (skip IPs, CIDRs, deny rules, reserved names).
+	// First pass: record which allowed domains carry a wildcard (.X) rule and
+	// which domains are explicitly denied. An exact-only allow (X, no wildcard)
+	// must NXDOMAIN its subdomains — the same exact-host contract Envoy's SNI
+	// matching enforces — while a wildcard allow forwards the whole subtree.
+	// Deny domains become dedicated NXDOMAIN zones that win over any broader
+	// allow via CoreDNS longest-zone matching (e.g. deny sub.X under .X).
+	wildcard := make(map[string]bool)
+	denySeen := make(map[string]bool)
+	var denyDomains []string
+	for _, r := range rules {
+		if isIPOrCIDR(r.Dst) {
+			continue
+		}
+		domain := normalizeDomain(r.Dst)
+		if reserved[domain] {
+			continue
+		}
+		switch {
+		case isDenyRule(r):
+			if !denySeen[domain] {
+				denySeen[domain] = true
+				denyDomains = append(denyDomains, domain)
+			}
+		case isWildcardDomain(r.Dst):
+			wildcard[domain] = true
+		}
+	}
+
+	// Collect unique allowed domains (skip IPs, CIDRs, deny rules, reserved
+	// names, and any name that is also explicitly denied — the deny zone wins).
 	emitted := make(map[string]bool)
-	var domains []string
+	var allowDomains []string
 	for _, r := range rules {
 		if !isAllowDomain(r) {
 			continue
 		}
 		domain := normalizeDomain(r.Dst)
-		if reserved[domain] || emitted[domain] {
+		if reserved[domain] || emitted[domain] || denySeen[domain] {
 			continue
 		}
 		emitted[domain] = true
-		domains = append(domains, domain)
+		allowDomains = append(allowDomains, domain)
 	}
 
-	// Per-domain forward zones.
-	// AAAA queries return NODATA (NOERROR with empty answer) because the eBPF
-	// connect6 hook blocks all IPv6 to prevent dual-stack firewall bypass. Returning
-	// AAAA records that can't connect misleads clients (e.g., npm/node don't fall
-	// back on EPERM). NODATA tells clients to prefer IPv4.
-	for _, domain := range domains {
-		fmt.Fprintf(&b, "%s {\n", domain)
-		b.WriteString("    otel\n")
-		fmt.Fprintf(&b, "    log . \"%s\"\n", corefileLogFormat)
-		b.WriteString("    template IN AAAA . {\n")
-		b.WriteString("        rcode NOERROR\n")
-		b.WriteString("    }\n")
-		b.WriteString("    dnsbpf\n")
-		fmt.Fprintf(&b, "    forward . %s\n", strings.Join(upstreamDNS, " "))
-		fmt.Fprintf(&b, "}\n\n")
+	// Per-domain forward zones. Exact-only domains additionally NXDOMAIN every
+	// subdomain (see writeAllowZone); wildcard domains forward the whole subtree.
+	for _, domain := range allowDomains {
+		writeAllowZone(&b, domain, upstreamDNS, !wildcard[domain])
 	}
 
-	// Internal host forward zones (Docker DNS).
-	// dnsbpf is included so host.docker.internal resolution populates dns_cache.
-	// AAAA NODATA applied for the same IPv6-block reason as public zones.
+	// Deny zones: NXDOMAIN the domain and its entire subtree, beating any
+	// broader allow zone via CoreDNS longest-zone matching.
+	for _, domain := range denyDomains {
+		writeDenyZone(&b, domain)
+	}
+
+	// Internal host forward zones (Docker DNS). Never exact-scoped — e.g.
+	// host.docker.internal is a subdomain of docker.internal and must resolve.
 	for _, host := range internalHosts {
-		fmt.Fprintf(&b, "%s {\n", host)
-		b.WriteString("    otel\n")
-		fmt.Fprintf(&b, "    log . \"%s\"\n", corefileLogFormat)
-		b.WriteString("    template IN AAAA . {\n")
-		b.WriteString("        rcode NOERROR\n")
-		b.WriteString("    }\n")
-		b.WriteString("    dnsbpf\n")
-		b.WriteString("    forward . 127.0.0.11\n")
-		b.WriteString("}\n\n")
+		writeAllowZone(&b, host, []string{"127.0.0.11"}, false)
 	}
 
 	// Catch-all zone: NXDOMAIN for everything not explicitly allowed.
@@ -143,4 +158,77 @@ func normalizeDomain(d string) string {
 // (e.g., ".datadoghq.com") to indicate that all subdomains should be matched.
 func isWildcardDomain(d string) bool {
 	return strings.HasPrefix(d, ".")
+}
+
+// isDenyRule reports whether r explicitly denies a domain destination.
+// IP/CIDR deny rules are handled by Envoy/eBPF, not CoreDNS.
+func isDenyRule(r config.EgressRule) bool {
+	return strings.EqualFold(r.Action, "deny") && !isIPOrCIDR(r.Dst)
+}
+
+// subdomainRegex builds a CoreDNS template `match` regex that matches any
+// subdomain of domain — but not the apex — against the trailing-dot FQDN query
+// name. Dots become "[.]" character classes (the only regex metacharacter a
+// domain name can contain), so no escaping is needed and the apex never matches
+// because it lacks the leading separator dot. E.g. "api.github.com" ->
+// "[.]api[.]github[.]com[.]$" matches "x.api.github.com." but not
+// "api.github.com.".
+func subdomainRegex(domain string) string {
+	return "[.]" + strings.ReplaceAll(domain, ".", "[.]") + "[.]$"
+}
+
+// writeAllowZone writes a forward zone for domain.
+//
+// When exactOnly is true, the zone NXDOMAINs every subdomain of domain and
+// forwards only the apex — the exact-host contract Envoy's SNI matching already
+// enforces. The subdomain template carries `fallthrough` so the apex (which the
+// subdomainRegex does not match) passes through to forward; without it CoreDNS
+// returns SERVFAIL on a zone-match-but-no-regex-match. The IN ANY subdomain
+// template is ordered before the AAAA template so subdomains are NXDOMAINed for
+// every qtype.
+//
+// When exactOnly is false the whole subtree is forwarded (wildcard rules and
+// internal hosts such as docker.internal, whose host.docker.internal subdomain
+// must resolve).
+//
+// AAAA queries return NODATA (NOERROR with no answer) because the eBPF connect6
+// hook blocks all IPv6 to prevent dual-stack firewall bypass. Returning AAAA
+// records that can't connect misleads clients (e.g. npm/node don't fall back on
+// EPERM); NODATA tells clients to prefer IPv4.
+func writeAllowZone(b *strings.Builder, domain string, upstreams []string, exactOnly bool) {
+	fmt.Fprintf(b, "%s {\n", domain)
+	b.WriteString("    otel\n")
+	fmt.Fprintf(b, "    log . \"%s\"\n", corefileLogFormat)
+	if exactOnly {
+		b.WriteString("    template IN ANY . {\n")
+		fmt.Fprintf(b, "        match \"%s\"\n", subdomainRegex(domain))
+		b.WriteString("        rcode NXDOMAIN\n")
+		b.WriteString("        fallthrough\n")
+		b.WriteString("    }\n")
+	}
+	b.WriteString("    template IN AAAA . {\n")
+	b.WriteString("        rcode NOERROR\n")
+	b.WriteString("    }\n")
+	b.WriteString("    dnsbpf\n")
+	fmt.Fprintf(b, "    forward . %s\n", strings.Join(upstreams, " "))
+	b.WriteString("}\n\n")
+}
+
+// writeDenyZone writes a zone that NXDOMAINs domain and its entire subtree.
+// CoreDNS longest-zone matching makes this win over any broader allow zone
+// (e.g. deny sub.example.com under an allowed .example.com wildcard). otel/log
+// stay so denied lookups remain observable; there is no forward and no dnsbpf
+// because a denied name has no upstream answer to cache.
+//
+// Deny is always subtree-scoped: normalizeDomain strips any leading dot, so an
+// exact deny (sub.X) and a wildcard deny (.sub.X) collapse to the same sub.X
+// zone — the denied name's apex is blocked along with everything beneath it.
+func writeDenyZone(b *strings.Builder, domain string) {
+	fmt.Fprintf(b, "%s {\n", domain)
+	b.WriteString("    otel\n")
+	fmt.Fprintf(b, "    log . \"%s\"\n", corefileLogFormat)
+	b.WriteString("    template IN ANY . {\n")
+	b.WriteString("        rcode NXDOMAIN\n")
+	b.WriteString("    }\n")
+	b.WriteString("}\n\n")
 }

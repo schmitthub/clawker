@@ -468,14 +468,31 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts, als ALSCon
 
 	// Classify rules.
 	var (
-		tlsRules  []config.EgressRule
-		tcpRules  []config.EgressRule
-		httpRules []config.EgressRule
+		tlsRules     []config.EgressRule
+		tcpRules     []config.EgressRule
+		httpRules    []config.EgressRule
+		tlsDenyRules []config.EgressRule
 	)
 	for _, r := range rules {
 		action := strings.ToLower(r.Action)
 		if action != "allow" && action != "" {
-			continue // Only allow rules generate proxy config; deny/unknown handled by default deny chain.
+			// Domain-level deny. A bare deny is redundant with the catch-all
+			// deny chain, BUT a deny that is more specific than a broader allow
+			// (e.g. deny sub.X under allow .X) must win — Envoy selects the
+			// most-specific server_names filter chain, so we emit a per-domain
+			// SNI-matched deny chain. Only TLS-class (https / empty proto)
+			// domain rules get a chain; IP/CIDR and http/tcp/ssh denies fall
+			// through to the catch-all deny chain (a more-specific deny in
+			// those classes is an unhandled edge — surfaced as a warning).
+			if action == "deny" && !isIPOrCIDR(r.Dst) {
+				switch strings.ToLower(r.Proto) {
+				case "https", "":
+					tlsDenyRules = append(tlsDenyRules, r)
+				default:
+					warnings = append(warnings, fmt.Sprintf("deny rule %q (proto %q) relies on the catch-all deny chain; per-domain deny chains are only emitted for https", r.Dst, r.Proto))
+				}
+			}
+			continue
 		}
 		if isIPOrCIDR(r.Dst) {
 			warnings = append(warnings, fmt.Sprintf("skipping IP/CIDR rule %q (not supported in Envoy proxy)", r.Dst))
@@ -530,6 +547,15 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts, als ALSCon
 			httpExactDomains[normalizeDomain(r.Dst)] = true
 		}
 	}
+	// Exact-domain set for the deny chains' SNI lists, so a wildcard deny
+	// (.sub.X) omits the apex only when a same-listener exact deny (sub.X)
+	// already covers it — mirrors the allow-side tlsExactDomains semantics.
+	tlsDenyExactDomains := make(map[string]bool)
+	for _, r := range tlsDenyRules {
+		if !isWildcardDomain(r.Dst) {
+			tlsDenyExactDomains[normalizeDomain(r.Dst)] = true
+		}
+	}
 
 	// Compute TCP port mappings (same function used by manager.Enable for eBPF args).
 	tcpMappings := TCPMappings(rules, ports)
@@ -578,7 +604,7 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts, als ALSCon
 			},
 		},
 		"static_resources": map[string]any{
-			"listeners": buildListeners(tlsRules, tcpRules, httpRules, tcpMappings, ports, tlsExactDomains, httpExactDomains, als),
+			"listeners": buildListeners(tlsRules, tcpRules, httpRules, tlsDenyRules, tcpMappings, ports, tlsExactDomains, httpExactDomains, tlsDenyExactDomains, als),
 			"clusters":  clusters,
 		},
 	}
@@ -595,14 +621,14 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts, als ALSCon
 // ──────────────────────────────────────────────────────────────────────────────
 
 // buildListeners constructs all Envoy listeners.
-func buildListeners(tls, tcp, http []config.EgressRule, tcpMappings []TCPMapping, ports EnvoyPorts, tlsExactDomains, httpExactDomains map[string]bool, als ALSConfig) []any {
+func buildListeners(tls, tcp, http, tlsDeny []config.EgressRule, tcpMappings []TCPMapping, ports EnvoyPorts, tlsExactDomains, httpExactDomains, tlsDenyExactDomains map[string]bool, als ALSConfig) []any {
 	var listeners []any
 
 	// Main egress listener — handles TLS (per-domain filter chains with SNI matching)
 	// and plaintext HTTP (raw_buffer filter chain with Host header routing).
 	// tls_inspector differentiates TLS from plaintext at the listener level.
-	if len(tls) > 0 || len(http) > 0 {
-		listeners = append(listeners, buildEgressListener(tls, http, ports.EgressPort, tlsExactDomains, httpExactDomains, als))
+	if len(tls) > 0 || len(http) > 0 || len(tlsDeny) > 0 {
+		listeners = append(listeners, buildEgressListener(tls, http, tlsDeny, ports.EgressPort, tlsExactDomains, httpExactDomains, tlsDenyExactDomains, als))
 	}
 
 	// Per-rule TCP/SSH listeners from the port mappings.
@@ -674,12 +700,22 @@ func buildHealthListener(port int) map[string]any {
 // differentiates protocols: TLS connections match per-domain filter chains (SNI),
 // plaintext HTTP matches a raw_buffer filter chain (Host header routing).
 // Unmatched traffic hits the deny chain (connection reset).
-func buildEgressListener(tlsRules, httpRules []config.EgressRule, port int, tlsExactDomains, httpExactDomains map[string]bool, als ALSConfig) map[string]any {
+func buildEgressListener(tlsRules, httpRules, tlsDenyRules []config.EgressRule, port int, tlsExactDomains, httpExactDomains, tlsDenyExactDomains map[string]bool, als ALSConfig) map[string]any {
 	var filterChains []any
 
 	// Per-domain TLS filter chains (matched by SNI via tls_inspector).
 	for _, r := range tlsRules {
 		filterChains = append(filterChains, buildTLSFilterChain(r, tlsExactDomains, als))
+	}
+
+	// Per-domain TLS deny chains (SNI-matched → connection reset). Envoy
+	// selects the most-specific server_names match, so an exact deny
+	// (sub.example.com) beats a broader allow wildcard (*.example.com) and the
+	// empty catch-all deny chain below stays least-specific. Selection is by
+	// specificity, not declaration order (verified against the FilterChainMatch
+	// docs), so placement relative to the allow chains is immaterial.
+	for _, r := range tlsDenyRules {
+		filterChains = append(filterChains, buildTLSDenyFilterChain(r, tlsDenyExactDomains, als))
 	}
 
 	// Plaintext HTTP filter chain (matched by transport_protocol: "raw_buffer").
@@ -688,7 +724,9 @@ func buildEgressListener(tlsRules, httpRules []config.EgressRule, port int, tlsE
 		filterChains = append(filterChains, buildHTTPFilterChain(httpRules, httpExactDomains, als))
 	}
 
-	// Default deny chain (catch-all → connection reset).
+	// Default deny chain (catch-all → connection reset). MUST stay last: it is
+	// the least-specific (empty filter_chain_match) and catches everything no
+	// allow or per-domain deny chain claimed.
 	filterChains = append(filterChains, buildDenyFilterChain(als))
 
 	return map[string]any{
@@ -1166,6 +1204,34 @@ func buildDenyFilterChain(als ALSConfig) map[string]any {
 					// never-closed TCP connections to a blocked SNI
 					// would exhaust Envoy's per-process FD/socket budget.
 					"access_log": buildTCPAccessLog("", "denied", als),
+				},
+			},
+		},
+	}
+}
+
+// buildTLSDenyFilterChain builds an SNI-matched filter chain that resets
+// connections to an explicitly-denied domain. It mirrors buildDenyFilterChain
+// (tcp_proxy → deny_cluster reset, no TLS termination) but scopes the match to
+// the rule's SNI via serverNames, so Envoy's most-specific filter-chain
+// selection picks it over any broader allow wildcard chain (e.g. deny
+// sub.example.com wins over allow .example.com). It carries no
+// filter_chain_match other than server_names, so it stays more specific than
+// the empty catch-all deny chain. The access log server.address defaults to
+// %REQUESTED_SERVER_NAME%, so the blocked SNI is recorded under action=denied.
+func buildTLSDenyFilterChain(r config.EgressRule, exactDomains map[string]bool, als ALSConfig) map[string]any {
+	return map[string]any{
+		"filter_chain_match": map[string]any{
+			"server_names": serverNames(r.Dst, exactDomains),
+		},
+		"filters": []any{
+			map[string]any{
+				"name": "envoy.filters.network.tcp_proxy",
+				"typed_config": map[string]any{
+					"@type":       "type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy",
+					"stat_prefix": "deny_" + sanitizeName(normalizeDomain(r.Dst)),
+					"cluster":     "deny_cluster",
+					"access_log":  buildTCPAccessLog("", "denied", als),
 				},
 			},
 		},

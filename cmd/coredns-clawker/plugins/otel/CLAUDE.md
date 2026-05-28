@@ -25,17 +25,8 @@ type Emitter interface {
 type Handler struct {
     Next    plugin.Handler
     Zone    string   // Corefile zone (e.g., "github.com." — trailing dot stripped before emit)
-    Action  string   // clawker firewall verdict for every query this handler serves
-                     // ("allowed" for named zones; "denied" for the catch-all `.` zone
-                     // whose templated NXDOMAIN response IS the firewall block).
-                     // Derived via ActionForZone() at construction time, not per-query.
     Emitter Emitter  // shared per-process; nil-tolerant via noopEmitter
 }
-
-// ActionForZone — exported helper. Tests use it to derive the expected
-// Action value for table-driven cases so the test harness mirrors setup()
-// production wiring exactly.
-func ActionForZone(zone string) string
 
 type QueryEvent struct {
     Timestamp   time.Time
@@ -45,7 +36,6 @@ type QueryEvent struct {
     QueryName   string
     QueryType   string
     RCode       string
-    Action      string // copied from Handler.Action at emit time
     Answers     []string
     AnswerCount int
     Err         error
@@ -118,8 +108,8 @@ The plugin is the OTLP **client**. Material is issued + bind-mounted by `firewal
 - Provider: `sdklog.NewLoggerProvider(WithResource(...), WithProcessor(processor))`. Resource attribute `service.name=coredns` (schemaless).
 - Each `Emit` builds an `otellog.Record`:
   - `EventName=dns.query`, `Severity=Info`, `SeverityText=INFO`, body `"CoreDNS query handled"`
-  - Attributes: `client.address` (OTel-canonical, replaces colloquial `client_ip`), `zone`, `query_name`, `qtype`, `rcode`, `action`, `answer_count` (int), `duration_ms` (float64). No per-record `source` attribute — `service.name=coredns` (resource layer) + `ingest_source=coredns` (stamped post-routing by `resource/coredns`) cover provenance.
-  - `action` is the clawker firewall verdict — `allowed` for named zones (forward upstream), `denied` for the catch-all `.` zone (templated NXDOMAIN). Distinct from `rcode`: an allowed-zone query that gets an upstream NXDOMAIN (typo) emits `rcode=NXDOMAIN, action=allowed` — clawker policy allowed, upstream said no record.
+  - Attributes: `client.address` (OTel-canonical, replaces colloquial `client_ip`), `zone`, `query_name`, `qtype`, `rcode`, `answer_count` (int), `duration_ms` (float64). No per-record `source` attribute — `service.name=coredns` (resource layer) + `ingest_source=coredns` (stamped post-routing by `resource/coredns`) cover provenance.
+  - There is no `action` attribute. CoreDNS makes no explicit allow/deny decision per query — it resolves (forward) or NXDOMAINs by zone. The honest signal is `rcode`. (An earlier zone-derived `action` was provably wrong: a non-allowlisted subdomain of an exact-allow apex returned NXDOMAIN but logged `action=allowed`. Removed in favor of `rcode`.)
   - `answers` (slice of strings) added only when non-empty so empty NXDOMAIN responses don't carry an empty array attribute
   - `event.Err != nil` → `record.SetErr(event.Err)`
 - SDK-side errors flow through `otel.SetErrorHandler` → CoreDNS Warning log; they never crash the plugin (consistent with the CP no-panic invariant — see root `CLAUDE.md`).
