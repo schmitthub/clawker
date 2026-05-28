@@ -808,7 +808,10 @@ func buildTLSFilterChain(r config.EgressRule, exactDomains map[string]bool, als 
 	}
 
 	// Build routes: path rules when configured, otherwise allow-all.
-	// Each domain routes to its own per-domain LOGICAL_DNS cluster.
+	// Exact rules route to a per-domain LOGICAL_DNS cluster pinned to the apex;
+	// wildcard rules route to a per-apex dynamic_forward_proxy cluster whose
+	// sub-cluster is keyed on the downstream SNI written into
+	// envoy.upstream.dynamic_host by the chain's set_filter_state filter.
 	var routes []any
 	if len(r.PathRules) > 0 {
 		routes = buildHTTPRoutes(r, cluster)
@@ -1409,14 +1412,16 @@ func buildTLSDNSCluster(domain string, port int) map[string]any {
 //     mintlify.com → Vercel apex, www.mintlify.com → Cloudflare) connect to
 //     the correct upstream rather than the apex IP.
 //   - Same-SAN HTTP/2 connection coalescing across different hostnames
-//     (the api.anthropic.com / statsig.anthropic.com race that PR #231
-//     was guarding against) cannot happen: allow_coalesced_connections
-//     defaults to false and lifetime callbacks return empty when off, so
-//     no cross-sub-cluster pool reuse is tracked.
+//     (e.g. api.anthropic.com and statsig.anthropic.com sharing a SAN)
+//     cannot happen: allow_coalesced_connections defaults to false and
+//     lifetime callbacks return empty when off, so no cross-sub-cluster
+//     pool reuse is tracked.
 //
 // Trust boundary: the dynamic_host is sourced from SNI inside a filter chain
-// that only matches SNI suffix `.<apex>`, so a hostile Host header cannot
-// redirect the upstream connection outside the wildcard's reach.
+// whose SNI match list is owned by serverNames() — the suffix `.<apex>` is
+// always matched; the apex itself is matched only when no exact sibling rule
+// covers it (so a hostile Host header still cannot redirect the upstream
+// connection outside the wildcard's reach).
 func buildTLSWildcardDFPCluster(apex string, port int) map[string]any {
 	return map[string]any{
 		"name":            tlsWildcardClusterName(apex, port),
