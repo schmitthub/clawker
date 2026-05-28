@@ -120,6 +120,14 @@ func (c *configImpl) CoreDNSHealthPath() string { return consts.CoreDNSHealthPat
 func (c *configImpl) RequiredFirewallRules() []EgressRule {
 	result := make([]EgressRule, len(requiredFirewallRules))
 	copy(result, requiredFirewallRules)
+	// Deep-copy PathRules so callers can't mutate the package-level defaults.
+	for i := range result {
+		if len(result[i].PathRules) > 0 {
+			pr := make([]PathRule, len(result[i].PathRules))
+			copy(pr, result[i].PathRules)
+			result[i].PathRules = pr
+		}
+	}
 	return result
 }
 

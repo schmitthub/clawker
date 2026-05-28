@@ -469,6 +469,24 @@ func TestRequiredFirewallRules(t *testing.T) {
 	// Returned slice is a copy
 	rules[0].Dst = "mutated.com"
 	assert.Equal(t, "api.anthropic.com", cfg.RequiredFirewallRules()[0].Dst)
+
+	// Nested PathRules are deep-copied: mutating a returned rule's PathRules
+	// must not corrupt the package-level defaults (these are load-bearing
+	// security denies, e.g. .claude.ai /public/ + /share/ UGC paths).
+	idx := -1
+	for i := range rules {
+		if len(rules[i].PathRules) > 0 {
+			idx = i
+			break
+		}
+	}
+	require.GreaterOrEqual(t, idx, 0, "expected at least one default rule with PathRules")
+	rules[idx].PathRules[0].Action = "allow"
+	rules[idx].PathRules = append(rules[idx].PathRules, PathRule{Path: "/injected/", Action: "allow"})
+
+	fresh := cfg.RequiredFirewallRules()[idx]
+	assert.Equal(t, "deny", fresh.PathRules[0].Action, "PathRules must be deep-copied; mutation leaked into defaults")
+	assert.Len(t, fresh.PathRules, 2, "appending to returned PathRules must not grow the defaults")
 }
 
 // --- Generated defaults validation ---
