@@ -28,13 +28,6 @@ FROM {{.BaseImage}} AS final
 ARG TZ=UTC
 ENV TZ="$TZ"
 
-# Claude Code version (build-only ARG, not ENV — Claude Code's runtime does not
-# read CLAUDE_CODE_VERSION; only the install RUN below consumes it). Default
-# is resolved against the npm registry at template-render time, so a fresh
-# CC release rolls the ARG default and busts the install layer's cache. Users
-# can override with `clawker build --build-arg CLAUDE_CODE_VERSION=<version>`.
-ARG CLAUDE_CODE_VERSION={{.ClaudeVersion}}
-
 # Node.js (≥22.10) trusts the OS CA bundle. Set globally — applies to root
 # (clawkerd-as-PID-1, build-time RUN steps) AND to the unprivileged ${USERNAME}
 # (Claude Code hooks, user `npm`/`npx`). When the firewall MITM CA is added to
@@ -534,6 +527,21 @@ RUN wget -O /tmp/zsh-in-docker.sh "https://github.com/deluan/zsh-in-docker/relea
 RUN {{.}}
 {{- end}}
 {{- end}}
+
+# Claude Code version. Build-only ARG (not ENV — CC's runtime ignores it; only
+# the install RUN below consumes it). Default is resolved against the npm
+# registry at template-render time, so a fresh CC release (often several a week)
+# rolls this value.
+#
+# MUST stay here, directly above its only consumer. BuildKit invalidates the
+# cache at an ARG's DECLARATION line, not at first use — that "first use, not
+# definition" rule is the classic (pre-BuildKit) builder's, and Docker 23+
+# builds with BuildKit by default. Hoisting this declaration up the stage would
+# re-run every layer below it (apt/apk, Node, git-delta, zsh-in-docker, ...) on
+# every CC release. Adjacent placement scopes the CC-version cache miss to the
+# install layer + the late root block alone.
+# Override: clawker build --build-arg CLAUDE_CODE_VERSION=<version>
+ARG CLAUDE_CODE_VERSION={{.ClaudeVersion}}
 
 # Install Claude Code
 {{- if .BuildKitEnabled}}

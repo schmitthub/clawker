@@ -385,7 +385,23 @@ func TestBuildContext_ClaudeCodeVersionIsARG(t *testing.T) {
 	assert.Contains(t, content, "ARG CLAUDE_CODE_VERSION="+testClaudeCodeVersion,
 		"Claude Code version must be declared as ARG with the npm-resolved concrete version baked in")
 	assert.NotContains(t, content, "ENV CLAUDE_CODE_VERSION=",
-		"ENV form would bust cache for every layer below the declaration; ARG form busts only at first usage")
+		"ENV form would persist into the running container; ARG is build-only and CC's runtime does not read it")
+
+	// Position guard: the ARG declaration must sit directly above its only
+	// consumer (the install RUN), AFTER the expensive upstream layers. BuildKit
+	// busts the cache at an ARG's declaration line (not at first use), so a CC
+	// release that rolls the rendered default must invalidate only the install
+	// layer downward — never the Node/git-delta/zsh-in-docker chain. Hoisting
+	// the declaration up the stage reintroduces a full rebuild on every release.
+	argIdx := strings.Index(content, "ARG CLAUDE_CODE_VERSION=")
+	zshIdx := strings.Index(content, "zsh-in-docker")
+	installIdx := strings.Index(content, "claude.ai/install.sh")
+	require.NotEqual(t, -1, zshIdx, "expected zsh-in-docker step as an upstream-layer marker")
+	require.NotEqual(t, -1, installIdx, "expected Claude install RUN as the ARG consumer marker")
+	assert.Greater(t, argIdx, zshIdx,
+		"ARG CLAUDE_CODE_VERSION must be declared AFTER zsh-in-docker — declaring it earlier busts every cached layer below it on every CC release (BuildKit invalidates at the ARG declaration line)")
+	assert.Less(t, argIdx, installIdx,
+		"ARG CLAUDE_CODE_VERSION must be declared BEFORE the install RUN that consumes it")
 }
 
 // TestBuildContext_FallsBackOnEmptyClaudeCodeVersion verifies offline-build
