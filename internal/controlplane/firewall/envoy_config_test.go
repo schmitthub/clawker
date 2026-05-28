@@ -1194,6 +1194,148 @@ func TestGenerateEnvoyConfig_DenyChainWinsOverWildcard(t *testing.T) {
 	assert.Equal(t, "deny_cluster", lastTC["cluster"])
 }
 
+// egressFilterChains generates an Envoy config and returns the filter chains of
+// the "egress" listener. Shared by the deny-chain SNI tests.
+func egressFilterChains(t *testing.T, rules []config.EgressRule, ports EnvoyPorts) []any {
+	t.Helper()
+	yamlBytes, _, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
+	require.NoError(t, err)
+	var cfg map[string]any
+	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
+	sr := cfg["static_resources"].(map[string]any)
+	for _, l := range sr["listeners"].([]any) {
+		lis := l.(map[string]any)
+		if lis["name"] == "egress" {
+			return lis["filter_chains"].([]any)
+		}
+	}
+	t.Fatal("no egress listener in generated config")
+	return nil
+}
+
+// chainServerNames returns the server_names of a filter chain (nil for the
+// catch-all chain that has none).
+func chainServerNames(fc any) []string {
+	fcm, _ := fc.(map[string]any)["filter_chain_match"].(map[string]any)
+	raw, _ := fcm["server_names"].([]any)
+	out := make([]string, 0, len(raw))
+	for _, s := range raw {
+		out = append(out, s.(string))
+	}
+	return out
+}
+
+// isDenyChain reports whether a filter chain resets via tcp_proxy → deny_cluster.
+func isDenyChain(fc any) bool {
+	f0, _ := fc.(map[string]any)["filters"].([]any)[0].(map[string]any)
+	if f0["name"] != "envoy.filters.network.tcp_proxy" {
+		return false
+	}
+	tc, _ := f0["typed_config"].(map[string]any)
+	return tc["cluster"] == "deny_cluster"
+}
+
+// TestGenerateEnvoyConfig_ExactDenyCoversSubtree asserts an exact deny claims its
+// whole subtree at Envoy, not just the exact SNI. Envoy matches SNI against
+// wildcards by stripping one label at a time, so the leading-dot ".sub.example.com"
+// server_name resets child.sub.example.com (and deeper). Without it a deeper SNI
+// would fall through to the broader wildcard allow (".example.com") — a DNS-bypass
+// (curl --resolve / direct IP) hole that CoreDNS deny zones already block.
+func TestGenerateEnvoyConfig_ExactDenyCoversSubtree(t *testing.T) {
+	t.Parallel()
+
+	rules := []config.EgressRule{
+		{Dst: ".example.com", Proto: "https", Port: 443, Action: "allow"},
+		{Dst: "sub.example.com", Proto: "https", Action: "deny"},
+	}
+	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
+
+	chains := egressFilterChains(t, rules, ports)
+
+	var denySN []string
+	for _, fc := range chains {
+		if sn := chainServerNames(fc); len(sn) > 0 && isDenyChain(fc) {
+			denySN = sn
+		}
+	}
+	assert.Equal(t, []string{"sub.example.com", ".sub.example.com"}, denySN,
+		"exact deny must reset the host AND its subtree (.host matches child.host at any depth)")
+
+	// Defense in depth: the subtree wildcard belongs to the deny chain alone —
+	// no allow chain may claim ".sub.example.com" or the apex "sub.example.com".
+	for _, fc := range chains {
+		if isDenyChain(fc) {
+			continue
+		}
+		for _, sn := range chainServerNames(fc) {
+			assert.NotEqual(t, ".sub.example.com", sn, "subtree wildcard must not land on an allow chain")
+			assert.NotEqual(t, "sub.example.com", sn, "denied host must not land on an allow chain")
+		}
+	}
+}
+
+// TestGenerateEnvoyConfig_OverlappingDenyNoDuplicateSNI asserts a wildcard deny
+// (".sub.example.com") plus an exact deny ("sub.example.com") on the same listener
+// never emits the same server_name on two filter chains. Envoy rejects duplicate
+// server_names config-wide (cds/lds update_rejected), which would strand the
+// firewall. The exact deny already covers the subtree, so the wildcard deny chain
+// is dropped as redundant.
+func TestGenerateEnvoyConfig_OverlappingDenyNoDuplicateSNI(t *testing.T) {
+	t.Parallel()
+
+	rules := []config.EgressRule{
+		{Dst: ".example.com", Proto: "https", Port: 443, Action: "allow"},
+		{Dst: "sub.example.com", Proto: "https", Action: "deny"},
+		{Dst: ".sub.example.com", Proto: "https", Action: "deny"},
+	}
+	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
+
+	chains := egressFilterChains(t, rules, ports)
+
+	seen := map[string]int{}
+	for _, fc := range chains {
+		for _, sn := range chainServerNames(fc) {
+			seen[sn]++
+		}
+	}
+	for name, n := range seen {
+		assert.Equalf(t, 1, n, "server_name %q must appear on exactly one filter chain (Envoy rejects duplicates)", name)
+	}
+	assert.Equal(t, 1, seen[".sub.example.com"], "subtree wildcard appears once")
+	assert.Equal(t, 1, seen["sub.example.com"], "denied host appears once")
+}
+
+// TestGenerateEnvoyConfig_DenySubtreeCarveOut asserts a more-specific exact allow
+// nested under a denied subtree is still served. Envoy matches exact server_names
+// before any wildcard, so the exact allow chain wins for that one SNI even though
+// the deny's ".sub.example.com" wildcard would otherwise claim it.
+func TestGenerateEnvoyConfig_DenySubtreeCarveOut(t *testing.T) {
+	t.Parallel()
+
+	rules := []config.EgressRule{
+		{Dst: ".example.com", Proto: "https", Port: 443, Action: "allow"},
+		{Dst: "sub.example.com", Proto: "https", Action: "deny"},
+		{Dst: "ok.sub.example.com", Proto: "https", Port: 443, Action: "allow"},
+	}
+	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
+
+	chains := egressFilterChains(t, rules, ports)
+
+	var carveOutServed bool
+	for _, fc := range chains {
+		for _, sn := range chainServerNames(fc) {
+			if sn != "ok.sub.example.com" {
+				continue
+			}
+			f0 := fc.(map[string]any)["filters"].([]any)[0].(map[string]any)
+			assert.Equal(t, "envoy.filters.network.http_connection_manager", f0["name"],
+				"exact allow nested under a denied subtree must still be served (not reset)")
+			carveOutServed = true
+		}
+	}
+	assert.True(t, carveOutServed, "expected an exact allow chain for ok.sub.example.com")
+}
+
 // TestGenerateEnvoyConfig_NonTLSDenyWarns asserts a non-https deny rule does not
 // get a per-domain chain (it relies on the catch-all deny) and surfaces a
 // warning rather than silently doing nothing.

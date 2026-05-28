@@ -547,16 +547,6 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts, als ALSCon
 			httpExactDomains[normalizeDomain(r.Dst)] = true
 		}
 	}
-	// Exact-domain set for the deny chains' SNI lists, so a wildcard deny
-	// (.sub.X) omits the apex only when a same-listener exact deny (sub.X)
-	// already covers it — mirrors the allow-side tlsExactDomains semantics.
-	tlsDenyExactDomains := make(map[string]bool)
-	for _, r := range tlsDenyRules {
-		if !isWildcardDomain(r.Dst) {
-			tlsDenyExactDomains[normalizeDomain(r.Dst)] = true
-		}
-	}
-
 	// Compute TCP port mappings (same function used by manager.Enable for eBPF args).
 	tcpMappings := TCPMappings(rules, ports)
 
@@ -604,7 +594,7 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts, als ALSCon
 			},
 		},
 		"static_resources": map[string]any{
-			"listeners": buildListeners(tlsRules, tcpRules, httpRules, tlsDenyRules, tcpMappings, ports, tlsExactDomains, httpExactDomains, tlsDenyExactDomains, als),
+			"listeners": buildListeners(tlsRules, tcpRules, httpRules, tlsDenyRules, tcpMappings, ports, tlsExactDomains, httpExactDomains, als),
 			"clusters":  clusters,
 		},
 	}
@@ -621,14 +611,14 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts, als ALSCon
 // ──────────────────────────────────────────────────────────────────────────────
 
 // buildListeners constructs all Envoy listeners.
-func buildListeners(tls, tcp, http, tlsDeny []config.EgressRule, tcpMappings []TCPMapping, ports EnvoyPorts, tlsExactDomains, httpExactDomains, tlsDenyExactDomains map[string]bool, als ALSConfig) []any {
+func buildListeners(tls, tcp, http, tlsDeny []config.EgressRule, tcpMappings []TCPMapping, ports EnvoyPorts, tlsExactDomains, httpExactDomains map[string]bool, als ALSConfig) []any {
 	var listeners []any
 
 	// Main egress listener — handles TLS (per-domain filter chains with SNI matching)
 	// and plaintext HTTP (raw_buffer filter chain with Host header routing).
 	// tls_inspector differentiates TLS from plaintext at the listener level.
 	if len(tls) > 0 || len(http) > 0 || len(tlsDeny) > 0 {
-		listeners = append(listeners, buildEgressListener(tls, http, tlsDeny, ports.EgressPort, tlsExactDomains, httpExactDomains, tlsDenyExactDomains, als))
+		listeners = append(listeners, buildEgressListener(tls, http, tlsDeny, ports.EgressPort, tlsExactDomains, httpExactDomains, als))
 	}
 
 	// Per-rule TCP/SSH listeners from the port mappings.
@@ -700,7 +690,7 @@ func buildHealthListener(port int) map[string]any {
 // differentiates protocols: TLS connections match per-domain filter chains (SNI),
 // plaintext HTTP matches a raw_buffer filter chain (Host header routing).
 // Unmatched traffic hits the deny chain (connection reset).
-func buildEgressListener(tlsRules, httpRules, tlsDenyRules []config.EgressRule, port int, tlsExactDomains, httpExactDomains, tlsDenyExactDomains map[string]bool, als ALSConfig) map[string]any {
+func buildEgressListener(tlsRules, httpRules, tlsDenyRules []config.EgressRule, port int, tlsExactDomains, httpExactDomains map[string]bool, als ALSConfig) map[string]any {
 	var filterChains []any
 
 	// Per-domain TLS filter chains (matched by SNI via tls_inspector).
@@ -714,8 +704,22 @@ func buildEgressListener(tlsRules, httpRules, tlsDenyRules []config.EgressRule, 
 	// empty catch-all deny chain below stays least-specific. Selection is by
 	// specificity, not declaration order (verified against the FilterChainMatch
 	// docs), so placement relative to the allow chains is immaterial.
+	// An exact deny now claims its whole subtree (see denyServerNames), so a
+	// wildcard deny ".X" is fully subsumed by a same-listener exact deny "X" —
+	// emitting both would duplicate server_names across two filter chains and
+	// Envoy rejects the config wholesale (stranded firewall). Drop the redundant
+	// wildcard deny chain.
+	exactDenies := make(map[string]bool, len(tlsDenyRules))
 	for _, r := range tlsDenyRules {
-		filterChains = append(filterChains, buildTLSDenyFilterChain(r, tlsDenyExactDomains, als))
+		if !isWildcardDomain(r.Dst) {
+			exactDenies[normalizeDomain(r.Dst)] = true
+		}
+	}
+	for _, r := range tlsDenyRules {
+		if isWildcardDomain(r.Dst) && exactDenies[normalizeDomain(r.Dst)] {
+			continue
+		}
+		filterChains = append(filterChains, buildTLSDenyFilterChain(r, als))
 	}
 
 	// Plaintext HTTP filter chain (matched by transport_protocol: "raw_buffer").
@@ -1219,10 +1223,10 @@ func buildDenyFilterChain(als ALSConfig) map[string]any {
 // filter_chain_match other than server_names, so it stays more specific than
 // the empty catch-all deny chain. The access log server.address defaults to
 // %REQUESTED_SERVER_NAME%, so the blocked SNI is recorded under action=denied.
-func buildTLSDenyFilterChain(r config.EgressRule, exactDomains map[string]bool, als ALSConfig) map[string]any {
+func buildTLSDenyFilterChain(r config.EgressRule, als ALSConfig) map[string]any {
 	return map[string]any{
 		"filter_chain_match": map[string]any{
-			"server_names": serverNames(r.Dst, exactDomains),
+			"server_names": denyServerNames(r.Dst),
 		},
 		"filters": []any{
 			map[string]any{
@@ -1702,6 +1706,31 @@ func serverNames(dst string, exactDomains map[string]bool) []string {
 		return []string{"." + domain, domain}
 	}
 	return []string{domain}
+}
+
+// denyServerNames returns the SNI server_names for a deny filter chain. Unlike
+// the allow side, an exact deny must also claim its whole subtree: Envoy matches
+// SNI against wildcards by stripping one label at a time (see
+// FilterChainManagerImpl::findFilterChainForServerName), so the leading-dot form
+// ".sub.example.com" matches sub.example.com's subdomains at ANY depth
+// (child.sub.example.com, a.b.sub.example.com, ...). Without it, "deny
+// sub.example.com" would only reset the exact SNI, and a deeper SNI would fall
+// through to a broader wildcard allow chain (".example.com") — a DNS-bypass
+// (curl --resolve / hardcoded IP) hole, since CoreDNS deny zones already block
+// the whole subtree but Envoy would not. Emitting the subtree wildcard aligns
+// Envoy with CoreDNS deny-zone semantics so both layers fail closed.
+//
+// A more-specific exact allow nested under a denied subtree (e.g. allow
+// ok.sub.example.com) is still honored: Envoy checks exact server_names before
+// any wildcard, so the exact allow chain wins for that one SNI.
+func denyServerNames(dst string) []string {
+	domain := normalizeDomain(dst)
+	if isWildcardDomain(dst) {
+		// Wildcard deny: ".X" already covers the subtree at any depth; "X" the apex.
+		return []string{"." + domain, domain}
+	}
+	// Exact deny: claim the host AND its subtree.
+	return []string{domain, "." + domain}
 }
 
 // virtualHostName returns a unique Envoy virtual host name for a rule's destination.
