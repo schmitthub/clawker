@@ -1032,7 +1032,17 @@ func buildHTTPRoutes(r config.EgressRule, clusterName string) []any {
 	// (%METADATA(ROUTE:clawker:action)%) reads this at emit time so the
 	// firewall verdict is concrete per record (never inferred from
 	// response_code). See clawkerActionMetadata.
-	for _, pr := range r.PathRules {
+	//
+	// Sort longest-prefix-first: Envoy route matching is first-match-wins on
+	// prefix, so slice order would let a broad rule (deny /public/) shadow a
+	// narrower override (allow /public/sub/). Stable sort keeps insertion
+	// order for equal-length prefixes, preserving MergeRule's caller-wins
+	// semantics on identical-path collisions.
+	prs := append([]config.PathRule(nil), r.PathRules...)
+	sort.SliceStable(prs, func(i, j int) bool {
+		return len(prs[i].Path) > len(prs[j].Path)
+	})
+	for _, pr := range prs {
 		if strings.EqualFold(pr.Action, "allow") {
 			routes = append(routes, map[string]any{
 				"match":    map[string]any{"prefix": pr.Path},

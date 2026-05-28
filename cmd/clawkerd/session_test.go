@@ -325,7 +325,13 @@ func TestStartShellCommand_InitialStdinCloseStdinRace(t *testing.T) {
 	const id = "init-stdin-race-1"
 
 	s, _ := newTestSession()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// Deadlines are decoupled so the success path can never be pre-empted by
+	// a timeout firing first: the test read deadline (20s) is the smallest, so
+	// a genuine hang fails with the useful "Done never arrived" message rather
+	// than the ctx silently dropping the terminal Done or the command timeout
+	// surfacing ERROR_CODE_TIMEOUT. All three are far above the fork/exec +
+	// pipe + reap cost of /bin/cat, so a loaded CI runner won't false-fail.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	// Dispatch ShellCommand and CloseStdin back-to-back via dispatch().
@@ -338,7 +344,7 @@ func TestStartShellCommand_InitialStdinCloseStdinRace(t *testing.T) {
 		Payload: &clawkerdv1.Command_Shell{Shell: &clawkerdv1.ShellCommand{
 			Stages:         []*clawkerdv1.PipeStage{{Argv: []string{"/bin/cat"}}},
 			InitialStdin:   []byte(payload),
-			TimeoutSeconds: 5,
+			TimeoutSeconds: 30,
 		}},
 	})
 	s.dispatch(ctx, &clawkerdv1.Command{
@@ -348,7 +354,7 @@ func TestStartShellCommand_InitialStdinCloseStdinRace(t *testing.T) {
 
 	// Drain Responses until Done; assemble stdout.
 	var stdout strings.Builder
-	deadline := time.After(4 * time.Second)
+	deadline := time.After(20 * time.Second)
 	for {
 		select {
 		case r := <-s.sendCh:

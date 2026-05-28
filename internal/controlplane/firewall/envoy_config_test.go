@@ -233,6 +233,44 @@ func TestGenerateEnvoyConfig_TLSClusterAutoConfig(t *testing.T) {
 	}
 }
 
+// routesForDomain walks a generated Envoy config and returns the ordered
+// route entries emitted under the HCM virtual host whose domains include the
+// given SNI. Only that virtual host is inspected — sibling hosts (e.g. the
+// deny_all SNI catch-all) carry their own routes by design. Returns routes in
+// emission order, which is the order Envoy evaluates them (first-match-wins).
+func routesForDomain(t *testing.T, cfg map[string]any, domain string) []map[string]any {
+	t.Helper()
+	var routes []map[string]any
+	listeners := cfg["static_resources"].(map[string]any)["listeners"].([]any)
+	for _, l := range listeners {
+		for _, c := range l.(map[string]any)["filter_chains"].([]any) {
+			for _, f := range c.(map[string]any)["filters"].([]any) {
+				flt := f.(map[string]any)
+				if flt["name"] != "envoy.filters.network.http_connection_manager" {
+					continue
+				}
+				rc, _ := flt["typed_config"].(map[string]any)["route_config"].(map[string]any)
+				if rc == nil {
+					continue
+				}
+				for _, vh := range rc["virtual_hosts"].([]any) {
+					vhost := vh.(map[string]any)
+					domains, _ := vhost["domains"].([]any)
+					for _, d := range domains {
+						if s, ok := d.(string); ok && s == domain {
+							for _, r := range vhost["routes"].([]any) {
+								routes = append(routes, r.(map[string]any))
+							}
+							break
+						}
+					}
+				}
+			}
+		}
+	}
+	return routes
+}
+
 // TestGenerateEnvoyConfig_DenylistPathRules_InferAllowDefault locks in the
 // fix for the inverse path-rule bug: a rule with only deny path_rules and
 // no explicit PathDefault must catch unmatched paths through to upstream
@@ -273,62 +311,76 @@ func TestGenerateEnvoyConfig_DenylistPathRules_InferAllowDefault(t *testing.T) {
 
 	var catchAllAction, adminAction string
 	catchAllSeen, adminSeen := false, false
-	listeners := cfg["static_resources"].(map[string]any)["listeners"].([]any)
-	for _, l := range listeners {
-		lis := l.(map[string]any)
-		for _, c := range lis["filter_chains"].([]any) {
-			ch := c.(map[string]any)
-			for _, f := range ch["filters"].([]any) {
-				flt := f.(map[string]any)
-				if flt["name"] != "envoy.filters.network.http_connection_manager" {
-					continue
-				}
-				tc := flt["typed_config"].(map[string]any)
-				rc, _ := tc["route_config"].(map[string]any)
-				if rc == nil {
-					continue
-				}
-				for _, vh := range rc["virtual_hosts"].([]any) {
-					vhost := vh.(map[string]any)
-					// Only inspect the docs.example.com virtual host —
-					// other virtual hosts (e.g. deny_all SNI catch-all)
-					// carry their own denied catch-all by design.
-					domains, _ := vhost["domains"].([]any)
-					isTarget := false
-					for _, d := range domains {
-						if s, ok := d.(string); ok && s == "docs.example.com" {
-							isTarget = true
-							break
-						}
-					}
-					if !isTarget {
-						continue
-					}
-					for _, r := range vhost["routes"].([]any) {
-						route := r.(map[string]any)
-						match, _ := route["match"].(map[string]any)
-						prefix, _ := match["prefix"].(string)
-						md := route["metadata"].(map[string]any)
-						fm := md["filter_metadata"].(map[string]any)
-						clw := fm["clawker"].(map[string]any)
-						action := clw["action"].(string)
-						switch prefix {
-						case "/":
-							catchAllAction = action
-							catchAllSeen = true
-						case "/admin":
-							adminAction = action
-							adminSeen = true
-						}
-					}
-				}
-			}
+	for _, route := range routesForDomain(t, cfg, "docs.example.com") {
+		match, _ := route["match"].(map[string]any)
+		prefix, _ := match["prefix"].(string)
+		md := route["metadata"].(map[string]any)
+		fm := md["filter_metadata"].(map[string]any)
+		clw := fm["clawker"].(map[string]any)
+		action := clw["action"].(string)
+		switch prefix {
+		case "/":
+			catchAllAction = action
+			catchAllSeen = true
+		case "/admin":
+			adminAction = action
+			adminSeen = true
 		}
 	}
 	require.True(t, adminSeen, "/admin path-rule route not found in docs.example.com virtual host")
 	require.True(t, catchAllSeen, `catch-all "/" route not found in docs.example.com virtual host`)
 	assert.Equal(t, "denied", adminAction, "/admin path rule must carry denied verdict")
 	assert.Equal(t, "allowed", catchAllAction, `catch-all "/" must carry allowed verdict — inferred PathDefault for denylist-only rule`)
+}
+
+// TestGenerateEnvoyConfig_PathRulesEmitLongestPrefixFirst asserts that
+// buildHTTPRoutes emits path-rule routes ordered longest-prefix-first so
+// Envoy's first-match-wins prefix matching resolves to the most specific
+// rule. Without this, a narrower override (e.g. an allow on /public/sub/) is
+// unreachable when a broader rule (a deny on /public/) is emitted first —
+// Envoy stops at the broad prefix and the specific rule never runs.
+func TestGenerateEnvoyConfig_PathRulesEmitLongestPrefixFirst(t *testing.T) {
+	t.Parallel()
+
+	// Mixed prefix lengths in non-sorted insertion order to prove the sort
+	// — not the insertion order — drives emission. The final emitted order
+	// must be longest-first regardless of how they appeared in the slice.
+	rules := []config.EgressRule{
+		{
+			Dst:    "api.example.com",
+			Proto:  "https",
+			Port:   443,
+			Action: "allow",
+			PathRules: []config.PathRule{
+				{Path: "/api/", Action: "allow"},
+				{Path: "/api/v1/internal/", Action: "deny"},
+				{Path: "/admin/", Action: "deny"},
+			},
+		},
+	}
+	ports := EnvoyPorts{EgressPort: 10000, TCPPortBase: 10001, HealthPort: 18901}
+
+	yamlBytes, warnings, err := GenerateEnvoyConfig(rules, ports, ALSConfig{})
+	require.NoError(t, err)
+	assert.Empty(t, warnings)
+
+	var cfg map[string]any
+	require.NoError(t, yaml.Unmarshal(yamlBytes, &cfg))
+
+	// Collect every route prefix in the order Envoy will evaluate them.
+	var prefixes []string
+	for _, route := range routesForDomain(t, cfg, "api.example.com") {
+		match, _ := route["match"].(map[string]any)
+		if p, ok := match["prefix"].(string); ok {
+			prefixes = append(prefixes, p)
+		}
+	}
+
+	// Expected emission order: longest path rule first, then shorter, then
+	// the catch-all "/" emitted by EffectivePathDefault. Equal-length
+	// prefixes (none here) would preserve insertion order via stable sort.
+	want := []string{"/api/v1/internal/", "/admin/", "/api/", "/"}
+	assert.Equal(t, want, prefixes, "path-rule routes must be emitted longest-prefix-first so Envoy first-match-wins resolves to the most specific rule")
 }
 
 func TestGenerateEnvoyConfig_ZeroPortTLSDefaults443(t *testing.T) {
