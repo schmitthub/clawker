@@ -20,18 +20,35 @@ func TestGenerateCorefile(t *testing.T) {
 		goldenFile string
 	}{
 		{
-			name: "basic rules: allow domains, skip IPs, skip deny",
+			name: "exact allows get subdomain-deny templates; deny gets NXDOMAIN zone; IPs skipped",
 			rules: []config.EgressRule{
 				{Dst: "github.com", Action: "allow"},
 				{Dst: "api.github.com", Action: "allow"},
 				{Dst: "registry.npmjs.org", Action: "allow"},
 				{Dst: "10.0.0.0/8", Action: "allow"},      // CIDR — skip
 				{Dst: "192.168.1.1", Action: "allow"},     // IP — skip
-				{Dst: "evil.example.com", Action: "deny"}, // deny — skip
+				{Dst: "evil.example.com", Action: "deny"}, // deny — NXDOMAIN zone
 				{Dst: "proxy.golang.org", Action: "allow"},
 				{Dst: "github.com", Action: "allow"}, // duplicate — skip
 			},
 			goldenFile: "corefile_basic.golden",
+		},
+		{
+			// Wildcard (.X) forwards the subtree; an exact rule keeps subdomain
+			// blocking; a wildcard coexisting with an exact apex (github.com +
+			// .github.com) collapses to plain subtree forward; an exact deny
+			// under a wildcard allow (.somedomain.com + deny sub.somedomain.com)
+			// emits a more-specific NXDOMAIN zone that wins via longest-zone.
+			name: "wildcard, exact, wildcard+exact coexist, and deny-under-wildcard",
+			rules: []config.EgressRule{
+				{Dst: ".datadoghq.com", Action: "allow"},
+				{Dst: "api.anthropic.com", Action: "allow"},
+				{Dst: ".somedomain.com", Action: "allow"},
+				{Dst: "sub.somedomain.com", Action: "deny"},
+				{Dst: "github.com", Action: "allow"},
+				{Dst: ".github.com", Action: "allow"},
+			},
+			goldenFile: "corefile_wildcard_deny.golden",
 		},
 	}
 
@@ -64,18 +81,23 @@ func TestGenerateCorefile_MonitoringHostnamesEmitted(t *testing.T) {
 	}
 }
 
-func TestGenerateCorefile_WildcardDomain(t *testing.T) {
-	rules := []config.EgressRule{
-		{Dst: ".datadoghq.com", Action: "allow"},
-		{Dst: "api.anthropic.com", Action: "allow"},
-	}
-
-	got, err := firewall.GenerateCorefile(rules, 18902)
+// A wildcard rule carrying an unknown/typo'd action (e.g. "allwo") must not widen
+// DNS scope. It contributes nothing to the allow set, so a colliding exact-host
+// allow has to stay exact-only (subdomains NXDOMAIN'd) — otherwise a single config
+// typo silently reopens the DNS subtree-exfil channel. Fail-closed means the typo'd
+// rule is inert, so output must equal the exact-allow-alone baseline byte-for-byte.
+func TestGenerateCorefile_UnknownActionDoesNotWidenScope(t *testing.T) {
+	baseline, err := firewall.GenerateCorefile([]config.EgressRule{
+		{Dst: "example.com", Action: "allow"},
+	}, 18902)
 	require.NoError(t, err)
 
-	out := string(got)
-	// Leading dot should be stripped — CoreDNS zone "datadoghq.com" matches all subdomains.
-	assert.Contains(t, out, "datadoghq.com {")
-	assert.NotContains(t, out, ".datadoghq.com {")
-	assert.Contains(t, out, "api.anthropic.com {")
+	withTypo, err := firewall.GenerateCorefile([]config.EgressRule{
+		{Dst: "example.com", Action: "allow"},
+		{Dst: ".example.com", Action: "allwo"}, // typo: unknown action, not an effective allow
+	}, 18902)
+	require.NoError(t, err)
+
+	assert.Equal(t, string(baseline), string(withTypo),
+		"typo'd-action wildcard rule must not flip example.com out of exact-only scoping")
 }

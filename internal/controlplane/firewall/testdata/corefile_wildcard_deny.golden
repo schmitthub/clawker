@@ -1,11 +1,41 @@
+datadoghq.com {
+    otel
+    log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
+    template IN AAAA . {
+        rcode NOERROR
+    }
+    dnsbpf
+    forward . 1.1.1.2 1.0.0.2
+}
+
+api.anthropic.com {
+    otel
+    log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
+    template IN ANY . {
+        match "[.]api[.]anthropic[.]com[.]$"
+        rcode NXDOMAIN
+        fallthrough
+    }
+    template IN AAAA . {
+        rcode NOERROR
+    }
+    dnsbpf
+    forward . 1.1.1.2 1.0.0.2
+}
+
+somedomain.com {
+    otel
+    log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
+    template IN AAAA . {
+        rcode NOERROR
+    }
+    dnsbpf
+    forward . 1.1.1.2 1.0.0.2
+}
+
 github.com {
     otel
     log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
-    template IN ANY . {
-        match "[.]github[.]com[.]$"
-        rcode NXDOMAIN
-        fallthrough
-    }
     template IN AAAA . {
         rcode NOERROR
     }
@@ -13,52 +43,7 @@ github.com {
     forward . 1.1.1.2 1.0.0.2
 }
 
-api.github.com {
-    otel
-    log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
-    template IN ANY . {
-        match "[.]api[.]github[.]com[.]$"
-        rcode NXDOMAIN
-        fallthrough
-    }
-    template IN AAAA . {
-        rcode NOERROR
-    }
-    dnsbpf
-    forward . 1.1.1.2 1.0.0.2
-}
-
-registry.npmjs.org {
-    otel
-    log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
-    template IN ANY . {
-        match "[.]registry[.]npmjs[.]org[.]$"
-        rcode NXDOMAIN
-        fallthrough
-    }
-    template IN AAAA . {
-        rcode NOERROR
-    }
-    dnsbpf
-    forward . 1.1.1.2 1.0.0.2
-}
-
-proxy.golang.org {
-    otel
-    log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
-    template IN ANY . {
-        match "[.]proxy[.]golang[.]org[.]$"
-        rcode NXDOMAIN
-        fallthrough
-    }
-    template IN AAAA . {
-        rcode NOERROR
-    }
-    dnsbpf
-    forward . 1.1.1.2 1.0.0.2
-}
-
-evil.example.com {
+sub.somedomain.com {
     otel
     log . "source=coredns client_ip={remote} domain={name} qtype={type} rcode={rcode} duration={duration}"
     template IN ANY . {

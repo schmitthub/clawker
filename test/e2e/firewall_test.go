@@ -619,6 +619,118 @@ func TestFirewall_DockerInternalDNS(t *testing.T) {
 	assert.NotNil(t, blockedRes.Err, "non-whitelisted domain should not resolve")
 }
 
+// TestFirewall_ExactAllowBlocksSubdomain is the regression test for the DNS
+// subtree exfiltration fix. CoreDNS zones are suffix-authoritative, so before
+// the fix an exact allow rule (X) forwarded the entire *.X subtree upstream —
+// an unfiltered DNS exfil/C2 channel that bypassed Envoy and eBPF. The fix:
+// an exact rule resolves the apex but NXDOMAINs every subdomain; a wildcard
+// rule (.X) intentionally forwards the subtree. www.example.com is a real,
+// resolvable subdomain, so it discriminates "blocked by CoreDNS" (NXDOMAIN)
+// from "forwarded then upstream said no" (which would still resolve).
+func TestFirewall_ExactAllowBlocksSubdomain(t *testing.T) {
+	h := newFirewallHarness(t)
+
+	startRes := h.Run("container", "run", "--detach", "--agent", "dns-subtree", "@", "sleep", "infinity")
+	require.NoError(t, startRes.Err, "container start failed\nstdout: %s\nstderr: %s",
+		startRes.Stdout, startRes.Stderr)
+	t.Cleanup(func() { h.Run("container", "stop", "--agent", "dns-subtree") })
+
+	// Exact allow (no leading dot).
+	addRes := h.Run("firewall", "add", "example.com")
+	require.NoError(t, addRes.Err, "firewall add failed\nstdout: %s\nstderr: %s",
+		addRes.Stdout, addRes.Stderr)
+
+	// Apex resolves (forwarded upstream).
+	apex := h.ExecInContainer("dns-subtree", "getent", "hosts", "example.com")
+	t.Logf("example.com (exact-allow apex): stdout=%q stderr=%q err=%v", apex.Stdout, apex.Stderr, apex.Err)
+	require.NoError(t, apex.Err, "exact-allow apex example.com must resolve\nstdout: %s\nstderr: %s",
+		apex.Stdout, apex.Stderr)
+	assert.NotEmpty(t, strings.TrimSpace(apex.Stdout))
+
+	// Subdomain of an EXACT rule must NOT resolve — the fix. A successful
+	// resolution here means the *.example.com subtree leaked upstream.
+	sub := h.ExecInContainer("dns-subtree", "getent", "hosts", "www.example.com")
+	t.Logf("www.example.com (exact-allow subdomain): stdout=%q stderr=%q err=%v", sub.Stdout, sub.Stderr, sub.Err)
+	assert.NotNil(t, sub.Err, "subdomain of an exact-allow rule must NXDOMAIN (DNS subtree must not leak)")
+	assert.Empty(t, strings.TrimSpace(sub.Stdout))
+
+	// Promote to a wildcard rule: now the whole subtree forwards.
+	wcRes := h.Run("firewall", "add", ".example.com")
+	require.NoError(t, wcRes.Err, "firewall add wildcard failed\nstdout: %s\nstderr: %s",
+		wcRes.Stdout, wcRes.Stderr)
+
+	subWC := h.ExecInContainer("dns-subtree", "getent", "hosts", "www.example.com")
+	t.Logf("www.example.com (after wildcard): stdout=%q stderr=%q err=%v", subWC.Stdout, subWC.Stderr, subWC.Err)
+	require.NoError(t, subWC.Err, "wildcard-allow subdomain www.example.com must resolve\nstdout: %s\nstderr: %s",
+		subWC.Stdout, subWC.Stderr)
+	assert.NotEmpty(t, strings.TrimSpace(subWC.Stdout))
+}
+
+// TestFirewall_DenySubdomainUnderWildcard verifies "allow .X except sub.X": a
+// domain-level deny rule (config-only; the CLI add path is allow-only) emits a
+// more-specific NXDOMAIN zone that wins over the broader wildcard allow via
+// CoreDNS longest-zone matching. The apex still resolves (wildcard), proving
+// the wildcard is live and the deny is scoped to the denied name.
+func TestFirewall_DenySubdomainUnderWildcard(t *testing.T) {
+	h := &harness.Harness{
+		T: t,
+		Opts: &harness.FactoryOptions{
+			Config:         config.NewConfig,
+			Client:         docker.NewClient,
+			ProjectManager: project.NewProjectManager,
+			ControlPlane: func(cfg config.Config, log *logger.Logger) cpboot.Manager {
+				return cpboot.NewManager(
+					func(ctx context.Context) (*docker.Client, error) { return docker.NewClient(ctx, cfg, log) },
+					func() (config.Config, error) { return cfg, nil },
+					func() (*logger.Logger, error) { return log, nil },
+				)
+			},
+			UseRealAdminClient: true,
+		},
+	}
+	t.Cleanup(func() { h.RequireServicesWereRunning(t, "firewall", "controlplane") })
+
+	setup := h.NewIsolatedFS(nil)
+	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
+build:
+  image: "buildpack-deps:bookworm-scm"
+agent:
+  claude_code:
+    use_host_auth: false
+security:
+  firewall:
+    rules:
+      - dst: ".example.com"
+        action: allow
+      - dst: "www.example.com"
+        action: deny
+`)
+
+	regRes := h.Run("project", "register", "testproject")
+	require.NoError(t, regRes.Err, "register failed\nstdout: %s\nstderr: %s", regRes.Stdout, regRes.Stderr)
+	buildRes := h.Run("build")
+	require.NoError(t, buildRes.Err, "build failed\nstdout: %s\nstderr: %s", buildRes.Stdout, buildRes.Stderr)
+
+	startRes := h.Run("container", "run", "--detach", "--agent", "deny-sub", "@", "sleep", "infinity")
+	require.NoError(t, startRes.Err, "container start failed\nstdout: %s\nstderr: %s",
+		startRes.Stdout, startRes.Stderr)
+	t.Cleanup(func() { h.Run("container", "stop", "--agent", "deny-sub") })
+
+	// Wildcard apex resolves.
+	apex := h.ExecInContainer("deny-sub", "getent", "hosts", "example.com")
+	t.Logf("example.com (wildcard apex): stdout=%q stderr=%q err=%v", apex.Stdout, apex.Stderr, apex.Err)
+	require.NoError(t, apex.Err, "wildcard apex example.com must resolve\nstdout: %s\nstderr: %s",
+		apex.Stdout, apex.Stderr)
+	assert.NotEmpty(t, strings.TrimSpace(apex.Stdout))
+
+	// Denied subdomain NXDOMAINs even though the wildcard would otherwise
+	// forward it — the more-specific deny zone wins.
+	denied := h.ExecInContainer("deny-sub", "getent", "hosts", "www.example.com")
+	t.Logf("www.example.com (denied under wildcard): stdout=%q stderr=%q err=%v", denied.Stdout, denied.Stderr, denied.Err)
+	assert.NotNil(t, denied.Err, "denied subdomain must NXDOMAIN even under a wildcard allow")
+	assert.Empty(t, strings.TrimSpace(denied.Stdout))
+}
+
 func TestFirewall_HTTPDomainDetection(t *testing.T) {
 	h := &harness.Harness{
 		T: t,

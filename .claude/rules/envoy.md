@@ -52,14 +52,16 @@ Fetch via: `gh api "repos/envoyproxy/examples/contents/<path>" --jq '.content' |
 Client → eBPF connect4 rewrite → Envoy :10000
                             ├─ TLS exact (SNI match)   → per-domain filter chain → LOGICAL_DNS cluster (apex-pinned)
                             ├─ TLS wildcard (suffix)   → per-apex filter chain   → DFP cluster (sub_clusters_config, SNI-keyed)
+                            ├─ TLS deny (SNI match)    → per-domain deny chain (tcp_proxy → deny_cluster → reset)
                             ├─ HTTP (raw_buffer)       → Host header routing     → per-domain LOGICAL_DNS cluster (plaintext)
-                            └─ Unknown                 → deny chain (tcp_proxy → deny_cluster → reset)
+                            └─ Unmatched               → catch-all deny chain (tcp_proxy → deny_cluster → reset)
 ```
 
 - `tls_inspector` listener filter detects TLS vs plaintext
 - TLS: `filter_chain_match.server_names` (SNI) routes to per-domain chains. Exact rules match an exact SNI; wildcard rules (`.example.com`) match by SNI suffix
+- TLS deny: a domain-level `deny` (https/empty proto) rule emits an SNI-matched chain (`buildTLSDenyFilterChain`, server_names from `denyServerNames`) that resets via `deny_cluster`. Envoy selects the **most-specific** `server_names` chain (verified against FilterChainMatch docs), so an exact deny `sub.example.com` beats a broader allow `*.example.com` — the mechanism behind "allow `.X` except `sub.X`". Selection is by specificity, not declaration order. **An exact deny also claims its whole subtree**: `denyServerNames("sub.example.com")` → `["sub.example.com", ".sub.example.com"]`. Envoy matches SNI against wildcards by stripping one label at a time (`FilterChainManagerImpl::findFilterChainForServerName` — a `while` loop over `.`, so `.sub.example.com` matches `child.sub.example.com` and `a.b.sub.example.com`), so without the leading-dot form a deeper SNI would fall through to the broader allow wildcard. That is a DNS-bypass hole (a `curl --resolve` / hardcoded-IP client skips CoreDNS, which already NXDOMAINs the whole deny subtree); emitting the subtree wildcard keeps Envoy fail-closed in lockstep with CoreDNS. A more-specific exact allow under the deny (e.g. `ok.sub.example.com`) is still served because Envoy checks exact server_names before any wildcard. Because the exact deny now subsumes the subtree, a same-listener wildcard deny `.sub.example.com` would duplicate server_names across chains (Envoy rejects the whole config) — `buildEgressListener` drops the redundant wildcard deny chain. Non-https deny rules fall through to the catch-all deny chain and emit a generation warning.
 - HTTP: `filter_chain_match.transport_protocol: "raw_buffer"` catches plaintext
-- Deny: empty `filter_chain_match: {}` catches everything else
+- Catch-all deny: empty `filter_chain_match: {}` is least-specific and catches everything no allow or per-domain deny chain claimed; MUST stay last
 
 ### TLS Cluster Shapes (Security-Critical Design)
 

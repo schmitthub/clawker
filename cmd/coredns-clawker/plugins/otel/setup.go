@@ -43,12 +43,10 @@ func setup(c *caddy.Controller) error {
 	}
 
 	zone := dnsserver.GetConfig(c).Zone
-	action := ActionForZone(zone)
 	dnsserver.GetConfig(c).AddPlugin(func(next plugin.Handler) plugin.Handler {
 		return Handler{
 			Next:    next,
 			Zone:    zone,
-			Action:  action,
 			Emitter: emitter,
 		}
 	})
