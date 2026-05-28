@@ -176,7 +176,6 @@ security:
       - bpfman.io
       - docs.ebpf.io
       - docs.cilium.io
-      - mintlify.com
       - .mintlify.com
     rules:
       - action: allow
