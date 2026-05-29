@@ -16,7 +16,7 @@ import (
 // (method/path/response_code) are included. server.address travels uniformly:
 // SNI (%REQUESTED_SERVER_NAME%) for TLS, Host (%REQ(Host)%) for plaintext where
 // SNI is unavailable.
-func buildHTTPAccessLog(tlsTerminated bool, action string, als ALSConfig) []any {
+func buildHTTPAccessLog(tlsTerminated bool, transport, action string, als ALSConfig) []any {
 	extra := map[string]string{
 		"method":                            "%REQ(:METHOD)%",
 		"path":                              "%REQ(:PATH)%",
@@ -37,9 +37,12 @@ func buildHTTPAccessLog(tlsTerminated bool, action string, als ALSConfig) []any 
 		// Host/:authority header instead of %REQUESTED_SERVER_NAME%.
 		extra["server.address"] = "%REQ(Host)%"
 	}
-	sinks := []any{stdoutAccessLogEntry("tcp", "http", tlsEst, action, extra)}
+	// transport is the ACTUAL L4 (tcp for the TCP egress chains, quic for the
+	// HTTP/3-over-QUIC chains) — never hardcoded, so the QUIC HCM that reuses this
+	// app block reports quic, not tcp.
+	sinks := []any{stdoutAccessLogEntry(transport, "http", tlsEst, action, extra)}
 	if als.MTLS {
-		sinks = append(sinks, otelAccessLogEntry("tcp", "http", tlsEst, action, extra))
+		sinks = append(sinks, otelAccessLogEntry(transport, "http", tlsEst, action, extra))
 	}
 	return sinks
 }

@@ -9,6 +9,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math/big"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -100,23 +101,29 @@ func GenerateDomainCert(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, domai
 		return nil, nil, fmt.Errorf("generating serial: %w", err)
 	}
 
-	wild := isWildcardDomain(domain)
 	normalized := normalizeDomain(domain)
-
-	dnsNames := []string{normalized}
-	if wild {
-		dnsNames = append(dnsNames, "*."+normalized)
-	}
 
 	now := time.Now()
 	template := &x509.Certificate{
 		SerialNumber: serial,
 		Subject:      pkix.Name{CommonName: normalized},
-		DNSNames:     dnsNames,
 		NotBefore:    now,
 		NotAfter:     now.AddDate(domainCertValidYears, 0, 0),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	// IP-literal vs hostname is orthogonal to everything else about the cert: a
+	// TLS connection to an IP carries no SNI (RFC 6066) and is validated against
+	// the cert's iPAddress SAN, never a dNSName. A hostname (incl. wildcard) gets
+	// dNSName SANs. Only one of the two applies per dst.
+	if ip := net.ParseIP(normalized); ip != nil {
+		template.IPAddresses = []net.IP{ip}
+	} else {
+		dnsNames := []string{normalized}
+		if isWildcardDomain(domain) {
+			dnsNames = append(dnsNames, "*."+normalized)
+		}
+		template.DNSNames = dnsNames
 	}
 
 	certDER, err := x509.CreateCertificate(rand.Reader, template, caCert, &key.PublicKey, caKey)
@@ -171,7 +178,10 @@ func RegenerateDomainCerts(rules []config.EgressRule, certDir string, caCert *x5
 		if strings.ToLower(rule.Proto) != "https" {
 			continue
 		}
-		if isIPOrCIDR(rule.Dst) {
+		// IP literals DO get a MITM cert (iPAddress SAN — see GenerateDomainCert),
+		// for local-dev https to an IP. Only a CIDR *range* is skipped: there is no
+		// single host to mint a cert for, and we never MITM a whole range.
+		if net.ParseIP(strings.TrimSuffix(rule.Dst, ".")) == nil && isIPOrCIDR(rule.Dst) {
 			continue
 		}
 

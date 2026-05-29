@@ -258,6 +258,8 @@ security:
             action: <string>  # default: n/a | required: false
         # What to do with HTTP paths that don't match any path rule (allow or deny)
         path_default: <string>  # default: n/a | required: false
+        # Accept a self-signed/untrusted upstream TLS cert for this destination (default: false). Use only for trusted local-dev endpoints.
+        insecure_skip_tls_verify: <boolean>  # default: n/a | required: false
   # Mount the host Docker socket (DooD, not DinD) — lets the container manage sibling containers but is a security risk
   docker_socket: <boolean>  # default: false | required: true
   # Extra Linux capabilities for the agent container. Empty by default — the eBPF firewall is attached from outside, so no in-container caps are needed. Add e.g. SYS_PTRACE only if your workflow requires it.

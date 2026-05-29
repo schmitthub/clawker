@@ -148,6 +148,21 @@ type genCtx struct {
 	filters  []any            // network filters (terminal: HCM or tcp_proxy)
 	clusters []map[string]any // upstream clusters this permutation needs
 
+	// scheme-derived port facts the transport block sets so the proto-agnostic
+	// app block need not know http-vs-https port defaults: port is the effective
+	// destination port; bareHostPort is the scheme's default port (80 http / 443
+	// https) — the port-less Host form belongs to that port's vhost.
+	port         int
+	bareHostPort int
+
+	// HCM codec + h3 advertisement the transport block decides so the shared app
+	// block stays proto-agnostic: hcmCodec is the HCM codec_type ("" → AUTO; the
+	// QUIC transport sets "HTTP3" + http3_protocol_options); advertiseH3 makes
+	// the rendered allow vhost emit an alt-svc h3 response header (set by the TCP
+	// tls transport so clients discover the sibling QUIC listener).
+	hcmCodec    string
+	advertiseH3 bool
+
 	// crypto/upstream facts the transport + upstream blocks decide and write
 	// BEFORE the app block renders its terminal. The app block only reads these.
 	tlsTerminated       bool   // downstream TLS terminated here (access-log tls.established + server.address source)
@@ -223,6 +238,12 @@ func NewEnvoyConfig() *EnvoyConfig {
 // SetAdmin sets the top-level admin block (last write wins).
 func (c *EnvoyConfig) SetAdmin(admin map[string]any) { c.admin = admin }
 
+// HasListener reports whether the named listener has been created.
+func (c *EnvoyConfig) HasListener(name string) bool {
+	_, ok := c.listeners[name]
+	return ok
+}
+
 // EnsureListener returns (creating on first call, bound to address:port) the
 // named listener. Idempotent — the first call's address wins.
 func (c *EnvoyConfig) EnsureListener(name, address string, port int) {
@@ -234,6 +255,29 @@ func (c *EnvoyConfig) EnsureListener(name, address string, port int) {
 			"name": name,
 			"address": map[string]any{
 				"socket_address": map[string]any{"address": address, "port_value": port},
+			},
+		},
+		chainBySig: map[string]int{},
+	}
+}
+
+// EnsureQUICListener returns (creating on first call) the named UDP/QUIC
+// listener, bound to address:port over UDP with quic_options. Idempotent — the
+// first call wins. The QUIC peer of EnsureListener: filter chains attached here
+// carry a QuicDownstreamTransport socket and an HTTP/3 HCM.
+func (c *EnvoyConfig) EnsureQUICListener(name, address string, port int) {
+	if _, ok := c.listeners[name]; ok {
+		return
+	}
+	c.listeners[name] = &envoyListener{
+		base: map[string]any{
+			"name": name,
+			"address": map[string]any{
+				"socket_address": map[string]any{"protocol": "UDP", "address": address, "port_value": port},
+			},
+			"udp_listener_config": map[string]any{
+				"quic_options":             map[string]any{},
+				"downstream_socket_config": map[string]any{"prefer_gro": true},
 			},
 		},
 		chainBySig: map[string]int{},

@@ -6,10 +6,16 @@ const (
 	// envoyAdminPort is the loopback-only Envoy admin endpoint port.
 	envoyAdminPort = 9901
 
-	// egressListenerName is the shared egress listener's name. http/https ride
-	// it (eBPF connect4 redirects them here); raw tcp/ssh get dedicated
+	// egressListenerName is the shared TCP egress listener's name. http/https
+	// ride it (eBPF connect4 redirects them here); raw tcp/ssh get dedicated
 	// listeners.
 	egressListenerName = "egress"
+
+	// egressQUICListenerName is the shared UDP/QUIC egress listener — the h3 peer
+	// of egressListenerName, bound to the SAME port over UDP. https/wss rules
+	// emit a QUIC filter chain here (HTTP/3) in addition to their TCP tls chain;
+	// the TCP chain advertises h3 via alt-svc so clients discover it.
+	egressQUICListenerName = "egress_quic"
 
 	// defaultBindAddress is the address Envoy listeners bind inside the
 	// firewall container.
@@ -37,6 +43,31 @@ const (
 	// reach it — so port-scoping rides the authority, no per-port cluster needed.
 	httpDFPClusterName = "http_dfp"
 	httpDFPCacheName   = "http_dfp_cache"
+
+	// httpsDFPClusterName / httpsDFPCacheName name the single shared https
+	// (TLS-reencrypt) dynamic-forward-proxy cluster + its DNS cache. The https
+	// peer of httpDFPClusterName: one DFP cluster serves every wildcard-https
+	// rule, Host-keyed (the DFP LB derives upstream host+port from :authority),
+	// with an UpstreamTlsContext re-encrypt socket. Distinct cache from the
+	// plaintext one so the secure-upstream default port (443) is honored.
+	httpsDFPClusterName = "https_dfp"
+	httpsDFPCacheName   = "https_dfp_cache"
+
+	// denyClusterName is the STATIC, zero-endpoint cluster backing the egress
+	// listener's default_filter_chain: a tls connection whose SNI matches no
+	// server_names chain (unknown/absent SNI) is tcp_proxy'd here and reset. The
+	// server-side half of the SNI gate (require_sni is unimplemented in Envoy).
+	denyClusterName = "deny_cluster"
+
+	// Per-domain MITM cert file paths inside the Envoy container. certs.go signs
+	// these against the firewall CA and stack.go bind-mounts the dir; the
+	// generator only references the filenames. %s = normalizeDomain(dst).
+	envoyCertFileFmt = "/etc/envoy/certs/%s-cert.pem"
+	envoyKeyFileFmt  = "/etc/envoy/certs/%s-key.pem"
+
+	// upstreamTrustedCAFile is the system CA bundle Envoy validates re-encrypted
+	// upstream TLS against (the real server's real cert — NOT the MITM CA).
+	upstreamTrustedCAFile = "/etc/ssl/certs/ca-certificates.crt"
 
 	// firewallBlockedBody is the response body for every clawker direct_response
 	// 403 (per-path deny, deny_all vhost). Generic and non-fingerprinting — an

@@ -146,6 +146,13 @@ type EgressRule struct {
 	Action      string     `yaml:"action,omitempty" label:"Action" desc:"Allow or deny traffic to this destination (default: allow)"`
 	PathRules   []PathRule `yaml:"path_rules,omitempty" label:"Path Rules" desc:"Fine-grained path filtering (only applies to https/http)"`
 	PathDefault string     `yaml:"path_default,omitempty" label:"Path Default" desc:"What to do with HTTP paths that don't match any path rule (allow or deny)"`
+	// InsecureSkipTLSVerify, when true, makes Envoy accept an untrusted/self-signed
+	// upstream TLS certificate for this destination (trust_chain_verification:
+	// ACCEPT_UNTRUSTED) instead of validating it against the system CA. Default
+	// false = safe-by-default verification. Only meaningful for TLS-reencrypt protos
+	// (https/wss); a no-op for plaintext/opaque flows. Real for local-dev https to an
+	// IP or a self-signed dev host — orthogonal to whether the dst is an IP or FQDN.
+	InsecureSkipTLSVerify bool `yaml:"insecure_skip_tls_verify,omitempty" label:"Insecure Skip TLS Verify" desc:"Accept a self-signed/untrusted upstream TLS cert for this destination (default: false). Use only for trusted local-dev endpoints."`
 }
 
 // FirewallConfig defines per-project firewall rules in clawker.yaml.
