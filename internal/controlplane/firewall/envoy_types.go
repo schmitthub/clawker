@@ -1,0 +1,427 @@
+package firewall
+
+import (
+	"fmt"
+	"maps"
+	"reflect"
+	"sort"
+	"strings"
+
+	"github.com/schmitthub/clawker/internal/config"
+	"gopkg.in/yaml.v3"
+)
+
+// envoy_types.go holds the data model of the layered Envoy generator:
+//   - cross-layer glue shared with the eBPF route layer + Stack (ALSConfig,
+//     EnvoyPorts, TCPMapping/TCPMappings);
+//   - genCtx — the mutable context threaded through a permutation's layer
+//     methods (it carries the rule, the chain being built, and the shared
+//     EnvoyConfig);
+//   - layer — a single building-block method (genCtx in, error out);
+//   - the EnvoyConfig accumulator — the upsert-by-key deliverable.
+//
+// The orchestrator (envoy_config.go) is protocol-agnostic: the deriver hands it
+// the ordered list of layer methods for each permutation and it just chains
+// them through one genCtx. All protocol knowledge lives in the layer files +
+// the deriver's table.
+
+// ──────────────────────────────────────────────────────────────────────────
+// Cross-layer glue (shared with rules_store / handler / stack / eBPF)
+// ──────────────────────────────────────────────────────────────────────────
+
+// ALSConfig configures the Envoy access logger's upstream cluster. MTLS=true
+// targets the otel-collector's mTLS receiver on Port; MTLS=false omits the OTel
+// sink + cluster (stdout-only) — infra services must never cross into the
+// untrusted otel-collector:4317 lane reserved for agent containers.
+type ALSConfig struct {
+	Port int
+	MTLS bool
+}
+
+// EnvoyPorts holds the port layout for the Envoy proxy.
+type EnvoyPorts struct {
+	EgressPort  int // Main shared egress listener port.
+	TCPPortBase int // Starting port for the per-rule TCP/SSH listeners.
+	HealthPort  int // Dedicated health-check listener port.
+}
+
+// Validate checks that all ports are in valid range and no two ports collide.
+func (p EnvoyPorts) Validate() error {
+	named := []struct {
+		name string
+		port int
+	}{
+		{"EgressPort", p.EgressPort},
+		{"TCPPortBase", p.TCPPortBase},
+		{"HealthPort", p.HealthPort},
+	}
+	for _, n := range named {
+		if n.port <= 0 || n.port > 65535 {
+			return fmt.Errorf("envoy ports: %s=%d is out of valid range (1-65535)", n.name, n.port)
+		}
+	}
+	seen := make(map[int]string, len(named))
+	for _, n := range named {
+		if prev, exists := seen[n.port]; exists {
+			return fmt.Errorf("envoy ports: %s and %s both use port %d", prev, n.name, n.port)
+		}
+		seen[n.port] = n.name
+	}
+	return nil
+}
+
+// TCPMapping describes a per-destination eBPF DNAT entry for non-TLS traffic;
+// each TCP/SSH rule gets a dedicated Envoy listener port.
+type TCPMapping struct {
+	Dst       string
+	DstPort   int
+	EnvoyPort int
+}
+
+// TCPMappings computes TCP/SSH port mappings from egress rules. Deterministic.
+// Consumed by the generator (listener layout) and rules_store.RoutesFromRules
+// (eBPF DNAT route_map) — the two must stay in lockstep.
+func TCPMappings(rules []config.EgressRule, ports EnvoyPorts) []TCPMapping {
+	var mappings []TCPMapping
+	idx := 0
+	for _, r := range rules {
+		action := strings.ToLower(r.Action)
+		if action != "allow" && action != "" {
+			continue
+		}
+		if isIPOrCIDR(r.Dst) {
+			continue
+		}
+		proto := strings.ToLower(r.Proto)
+		if proto != "ssh" && proto != "tcp" {
+			continue
+		}
+		mappings = append(mappings, TCPMapping{
+			Dst:       normalizeDomain(r.Dst),
+			DstPort:   tcpDefaultPort(r),
+			EnvoyPort: ports.TCPPortBase + idx,
+		})
+		idx++
+	}
+	return mappings
+}
+
+// tcpDefaultPort returns the effective destination port for a TCP/SSH rule.
+func tcpDefaultPort(r config.EgressRule) int {
+	if r.Port != 0 {
+		return r.Port
+	}
+	if strings.EqualFold(r.Proto, "ssh") {
+		return sshDefaultPort
+	}
+	return defaultDestPort
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// The threaded context + the layer method
+// ──────────────────────────────────────────────────────────────────────────
+
+// genCtx is the mutable context threaded through one permutation's layer
+// methods. It carries the source rule + generation inputs (read-only to
+// layers), the single shared EnvoyConfig being built, and the per-permutation
+// chain the layers enrich. A layer method mutates genCtx and returns an error;
+// the orchestrator just keeps passing the same genCtx down the method list.
+type genCtx struct {
+	// inputs (set once per permutation; layers read, never mutate)
+	rule  config.EgressRule
+	ports EnvoyPorts
+	als   ALSConfig
+
+	// shared output (the EnvoyConfig the context "contains")
+	cfg *EnvoyConfig
+
+	// the per-permutation filter chain being built — generic Envoy primitives,
+	// no protocol-named fields. Filled procedurally in a single forward pass:
+	// the transport block sets listener + match + socket (+ tlsTerminated); the
+	// upstream block sets upstreamCluster + clusters (+ any http filters it
+	// contributes); the app block renders the terminal (HCM/tcp_proxy) LAST,
+	// reading the already-populated ctx. Nothing runs after the app block to
+	// patch its terminal — there is no second pass.
+	listener string
+	match    map[string]any   // filter_chain_match
+	socket   map[string]any   // transport_socket (downstream; nil = cleartext)
+	filters  []any            // network filters (terminal: HCM or tcp_proxy)
+	clusters []map[string]any // upstream clusters this permutation needs
+
+	// crypto/upstream facts the transport + upstream blocks decide and write
+	// BEFORE the app block renders its terminal. The app block only reads these.
+	tlsTerminated       bool   // downstream TLS terminated here (access-log tls.established + server.address source)
+	upstreamCluster     string // cluster the app block's routes target
+	upstreamFollowsHost bool   // upstream resolves from the request Host (DFP) — app keeps the DFP filter live on this vhost
+	httpFilters         []any  // HTTP filters contributed by earlier blocks (e.g. sni-lock); the app block appends the router terminal
+}
+
+// layer is one building-block method. It mutates ctx (enriches the chain) and
+// returns an error; a layer fails closed if its precondition is unmet (e.g. an
+// app layer with no transport beneath it). Self-contained: it reads only ctx,
+// never the proto token.
+type layer func(ctx *genCtx) error
+
+// commit folds the finished chain into the shared EnvoyConfig: clusters first,
+// then the assembled filter chain (skipped when no terminal was built — e.g. a
+// deny/empty permutation).
+func (ctx *genCtx) commit() error {
+	for _, cl := range ctx.clusters {
+		if err := ctx.cfg.AddCluster(cl); err != nil {
+			return err
+		}
+	}
+	if len(ctx.filters) == 0 {
+		return nil
+	}
+	chain := map[string]any{"filters": ctx.filters}
+	if ctx.match != nil {
+		chain["filter_chain_match"] = ctx.match
+	}
+	if ctx.socket != nil {
+		chain["transport_socket"] = ctx.socket
+	}
+	return ctx.cfg.addChain(ctx.listener, chain)
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// EnvoyConfig — the upsert-by-key deliverable
+// ──────────────────────────────────────────────────────────────────────────
+
+// EnvoyConfig is the growing deliverable: a generic Envoy bootstrap tree that
+// permutations aggregate into (upsert by key), marshalled to YAML once. Storage
+// is generic so a layer may attach any Envoy key/value; the small typed surface
+// owns the structural invariants that, left to free-form writes, previously
+// shipped a config Envoy rejects — cluster-name uniqueness and
+// filter_chain_match uniqueness — failing generation CLOSED on a violation.
+type EnvoyConfig struct {
+	admin     map[string]any
+	listeners map[string]*envoyListener
+	clusters  map[string]map[string]any
+	seenPerms map[string]struct{}
+}
+
+// envoyListener accumulates one listener. chainBySig indexes chains by their
+// filter_chain_match signature so a second chain with the same match is merged
+// (HCM vhosts unioned) rather than emitted as a duplicate Envoy would reject.
+type envoyListener struct {
+	base        map[string]any
+	chains      []map[string]any
+	chainBySig  map[string]int
+	defaultDeny map[string]any
+}
+
+// NewEnvoyConfig returns an empty accumulator.
+func NewEnvoyConfig() *EnvoyConfig {
+	return &EnvoyConfig{
+		listeners: map[string]*envoyListener{},
+		clusters:  map[string]map[string]any{},
+		seenPerms: map[string]struct{}{},
+	}
+}
+
+// SetAdmin sets the top-level admin block (last write wins).
+func (c *EnvoyConfig) SetAdmin(admin map[string]any) { c.admin = admin }
+
+// EnsureListener returns (creating on first call, bound to address:port) the
+// named listener. Idempotent — the first call's address wins.
+func (c *EnvoyConfig) EnsureListener(name, address string, port int) {
+	if _, ok := c.listeners[name]; ok {
+		return
+	}
+	c.listeners[name] = &envoyListener{
+		base: map[string]any{
+			"name": name,
+			"address": map[string]any{
+				"socket_address": map[string]any{"address": address, "port_value": port},
+			},
+		},
+		chainBySig: map[string]int{},
+	}
+}
+
+// SetListenerField sets a top-level field on a listener (e.g. listener_filters).
+func (c *EnvoyConfig) SetListenerField(listener, key string, value any) error {
+	l, ok := c.listeners[listener]
+	if !ok {
+		return fmt.Errorf("envoy config: SetListenerField on unknown listener %q", listener)
+	}
+	l.base[key] = value
+	return nil
+}
+
+// addChain appends a filter chain to a listener. A second chain with the same
+// filter_chain_match is only legal if both are HCM chains — then their
+// virtual_hosts are merged (the plaintext-HTTP case: all hosts share one
+// raw_buffer chain, Host-routed). Same-match chains that are NOT both HCM (e.g.
+// two tcp_proxy chains on one port) fail generation closed.
+func (c *EnvoyConfig) addChain(listener string, chain map[string]any) error {
+	l, ok := c.listeners[listener]
+	if !ok {
+		return fmt.Errorf("envoy config: addChain on unknown listener %q", listener)
+	}
+	sig, err := matchSignature(chain["filter_chain_match"])
+	if err != nil {
+		return err
+	}
+	if idx, dup := l.chainBySig[sig]; dup {
+		if err := mergeHCMVHosts(l.chains[idx], chain); err != nil {
+			return fmt.Errorf("envoy config: listener %q: duplicate filter_chain_match %q on non-mergeable chains: %w", listener, sig, err)
+		}
+		return nil
+	}
+	l.chainBySig[sig] = len(l.chains)
+	l.chains = append(l.chains, chain)
+	return nil
+}
+
+// AddCluster registers cluster, deduping by "name". An identical re-add is a
+// no-op; a conflicting body is an error.
+func (c *EnvoyConfig) AddCluster(cluster map[string]any) error {
+	name, _ := cluster["name"].(string)
+	if name == "" {
+		return fmt.Errorf("envoy config: AddCluster with empty/absent name")
+	}
+	if existing, ok := c.clusters[name]; ok {
+		if !reflect.DeepEqual(existing, cluster) {
+			return fmt.Errorf("envoy config: conflicting cluster definitions for name %q", name)
+		}
+		return nil
+	}
+	c.clusters[name] = cluster
+	return nil
+}
+
+// ClaimPermutation records key and reports whether it is newly seen (false on a
+// repeat), so the orchestrator can skip a duplicate permutation.
+func (c *EnvoyConfig) ClaimPermutation(key string) bool {
+	if _, seen := c.seenPerms[key]; seen {
+		return false
+	}
+	c.seenPerms[key] = struct{}{}
+	return true
+}
+
+// SetUnmatchedDeny installs the listener-level default_filter_chain — the
+// terminal reached when no chain matches (the zero-layer deny). Last write wins.
+func (c *EnvoyConfig) SetUnmatchedDeny(listener string, chain map[string]any) error {
+	l, ok := c.listeners[listener]
+	if !ok {
+		return fmt.Errorf("envoy config: SetUnmatchedDeny on unknown listener %q", listener)
+	}
+	l.defaultDeny = chain
+	return nil
+}
+
+// Bytes assembles the bootstrap tree (listeners and clusters name-sorted) and
+// marshals it to YAML.
+func (c *EnvoyConfig) Bytes() ([]byte, error) {
+	root := map[string]any{
+		"static_resources": map[string]any{
+			"listeners": c.listenerList(),
+			"clusters":  c.clusterList(),
+		},
+	}
+	if c.admin != nil {
+		root["admin"] = c.admin
+	}
+	return yaml.Marshal(root)
+}
+
+func (c *EnvoyConfig) listenerList() []map[string]any {
+	names := make([]string, 0, len(c.listeners))
+	for n := range c.listeners {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	out := make([]map[string]any, 0, len(names))
+	for _, n := range names {
+		l := c.listeners[n]
+		m := map[string]any{}
+		maps.Copy(m, l.base)
+		if len(l.chains) > 0 {
+			m["filter_chains"] = l.chains
+		}
+		if l.defaultDeny != nil {
+			m["default_filter_chain"] = l.defaultDeny
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
+func (c *EnvoyConfig) clusterList() []map[string]any {
+	names := make([]string, 0, len(c.clusters))
+	for n := range c.clusters {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	out := make([]map[string]any, 0, len(names))
+	for _, n := range names {
+		out = append(out, c.clusters[n])
+	}
+	return out
+}
+
+// matchSignature returns a deterministic signature of a filter_chain_match for
+// dedup (yaml.v3 sorts map keys). A nil match signs as "".
+func matchSignature(match any) (string, error) {
+	if match == nil {
+		return "", nil
+	}
+	b, err := yaml.Marshal(match)
+	if err != nil {
+		return "", fmt.Errorf("marshal filter_chain_match for dedup: %w", err)
+	}
+	return string(b), nil
+}
+
+// mergeHCMVHosts unions the virtual_hosts of incoming into existing (dedup by
+// vhost name, so a shared deny_all collapses). Both chains must be single-HCM
+// chains; otherwise it errors (the caller turns that into a fail-closed
+// duplicate-match error). This is the generic structural reconciliation behind
+// the plaintext-HTTP shared chain — no protocol-routing logic.
+func mergeHCMVHosts(existing, incoming map[string]any) error {
+	ev, err := hcmVHosts(existing)
+	if err != nil {
+		return err
+	}
+	iv, err := hcmVHosts(incoming)
+	if err != nil {
+		return err
+	}
+	seen := make(map[string]bool, len(ev)+len(iv))
+	merged := make([]any, 0, len(ev)+len(iv))
+	for _, v := range append(append([]any{}, ev...), iv...) {
+		name, _ := v.(map[string]any)["name"].(string)
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		merged = append(merged, v)
+	}
+	setHCMVHosts(existing, merged)
+	return nil
+}
+
+// hcmVHosts returns a single-HCM chain's virtual_hosts, or an error if the chain
+// is not a single http_connection_manager filter.
+func hcmVHosts(chain map[string]any) ([]any, error) {
+	filters, _ := chain["filters"].([]any)
+	if len(filters) != 1 {
+		return nil, fmt.Errorf("chain has %d network filters, expected a single HCM", len(filters))
+	}
+	f, _ := filters[0].(map[string]any)
+	if f == nil || f["name"] != "envoy.filters.network.http_connection_manager" {
+		return nil, fmt.Errorf("chain terminal is not an HCM")
+	}
+	tc, _ := f["typed_config"].(map[string]any)
+	rc, _ := tc["route_config"].(map[string]any)
+	vh, _ := rc["virtual_hosts"].([]any)
+	return vh, nil
+}
+
+func setHCMVHosts(chain map[string]any, vhosts []any) {
+	rc := chain["filters"].([]any)[0].(map[string]any)["typed_config"].(map[string]any)["route_config"].(map[string]any)
+	rc["virtual_hosts"] = vhosts
+}

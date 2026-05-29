@@ -10,6 +10,8 @@ Generated from go.mod using go-licenses.
 Apache-2.0
 ================================================================================
 
+cel.dev/expr                                                                   Apache-2.0
+github.com/cncf/xds/go                                                         Apache-2.0
 github.com/containerd/containerd/api/services/content/v1                       Apache-2.0
 github.com/containerd/containerd/v2                                            Apache-2.0
 github.com/containerd/continuity/sysx                                          Apache-2.0
@@ -26,6 +28,8 @@ github.com/distribution/reference                                              A
 github.com/dnstap/golang-dnstap                                                Apache-2.0
 github.com/docker/go-connections                                               Apache-2.0
 github.com/docker/go-units                                                     Apache-2.0
+github.com/envoyproxy/go-control-plane/envoy                                   Apache-2.0
+github.com/envoyproxy/protoc-gen-validate/validate                             Apache-2.0
 github.com/farsightsec/golang-framestream                                      Apache-2.0
 github.com/flynn/go-shlex                                                      Apache-2.0
 github.com/go-git/go-billy/v6                                                  Apache-2.0
@@ -71,7 +75,7 @@ go.opentelemetry.io/otel/sdk/log                                               A
 go.opentelemetry.io/otel/trace                                                 Apache-2.0
 go.opentelemetry.io/proto/otlp                                                 Apache-2.0
 go.yaml.in/yaml/v2                                                             Apache-2.0
-google.golang.org/genproto/googleapis/api/httpbody                             Apache-2.0
+google.golang.org/genproto/googleapis/api                                      Apache-2.0
 google.golang.org/genproto/googleapis/rpc                                      Apache-2.0
 google.golang.org/grpc                                                         Apache-2.0
 
