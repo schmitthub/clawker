@@ -140,6 +140,49 @@ func buildTLSDNSCluster(host string, port int, insecureSkipTLSVerify bool) map[s
 	return c
 }
 
+// ── opaque (ssh / tcp / udp) pinned upstreams ────────────────────────────────
+// Peers of the http/https clusters — same generic pin, NO decoration (no TLS
+// reencrypt, no HttpProtocolOptions): the flow is opaque (no L7), so Envoy just
+// forwards bytes/datagrams to the host:port it resolved itself. Resolution is
+// LOGICAL_DNS (hostname) via CoreDNS — never the client's chosen dst
+// (confused-deputy guard holds identically for TCP and UDP).
+
+// tcpPinnedName / udpPinnedName are the per-(host,port) opaque cluster names —
+// also reused verbatim as the dedicated listener name (one listener, one cluster,
+// one rule). The L4 prefix (tcp/udp), not the proto token, names them: ssh and
+// raw tcp both ride a TCP pin, so both are tcp_*.
+func tcpPinnedName(host string, port int) string {
+	return fmt.Sprintf("tcp_%s_%d", sanitizeName(host), port)
+}
+
+func udpPinnedName(host string, port int) string {
+	return fmt.Sprintf("udp_%s_%d", sanitizeName(host), port)
+}
+
+// tcpPinnedUpstreamLayer registers the opaque per-(host,port) TCP pinned cluster
+// (ssh / raw tcp) and points the terminal at it. No crypto, no L7.
+func tcpPinnedUpstreamLayer(ctx *genCtx) error {
+	host := normalizeDomain(ctx.rule.Dst)
+	port := tcpDefaultPort(ctx.rule)
+	name := tcpPinnedName(host, port)
+	ctx.clusters = append(ctx.clusters, pinnedCluster(name, host, port))
+	ctx.upstreamCluster = name
+	ctx.upstreamFollowsHost = false
+	return nil
+}
+
+// udpPinnedUpstreamLayer registers the opaque per-(host,port) UDP pinned cluster
+// and points the udp_proxy terminal at it. No crypto, no L7.
+func udpPinnedUpstreamLayer(ctx *genCtx) error {
+	host := normalizeDomain(ctx.rule.Dst)
+	port := udpDefaultPort(ctx.rule)
+	name := udpPinnedName(host, port)
+	ctx.clusters = append(ctx.clusters, pinnedCluster(name, host, port))
+	ctx.upstreamCluster = name
+	ctx.upstreamFollowsHost = false
+	return nil
+}
+
 // ── dynamic forward proxy clusters (wildcard) ───────────────────────────────
 // Host-keyed: the DFP LB derives the upstream host:port from the request
 // :authority (grounded in proxy_filter.cc — missing port defaults to 80 cleartext

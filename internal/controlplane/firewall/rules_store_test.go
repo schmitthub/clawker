@@ -169,6 +169,17 @@ func TestRoutesFromRules_TCPMappingsParity(t *testing.T) {
 			},
 			want: []ebpf.Route{},
 		},
+		{
+			// Raw UDP gets a dedicated Envoy udp_proxy listener but is NOT projected
+			// into the eBPF route_map yet (eBPF UDP redirect is a separate atom). A
+			// udp rule must NOT emit a route — emitting one would point UDP at the TCP
+			// egress listener and could overwrite a co-keyed tcp/https route entry.
+			name: "udp rule produces no route (not projected into eBPF route_map)",
+			rules: []config.EgressRule{
+				{Dst: "relay.example.com", Proto: "udp", Action: "allow", Port: 3478},
+			},
+			want: []ebpf.Route{},
+		},
 	}
 
 	for _, tt := range tests {

@@ -587,6 +587,7 @@ func (s *Stack) envoyPorts() EnvoyPorts {
 	return EnvoyPorts{
 		EgressPort:  s.cfg.EnvoyEgressPort(),
 		TCPPortBase: s.cfg.EnvoyTCPPortBase(),
+		UDPPortBase: s.cfg.EnvoyUDPPortBase(),
 		HealthPort:  s.cfg.EnvoyHealthPort(),
 	}
 }

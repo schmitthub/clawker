@@ -213,6 +213,11 @@ const (
 	EnvoyEgressPort = 10000
 	// EnvoyTCPPortBase is the starting port for TCP/SSH listeners.
 	EnvoyTCPPortBase = 10001
+	// EnvoyUDPPortBase is the starting port for the per-rule raw-UDP listeners
+	// (opaque udp_proxy datagram forwarding). UDP and TCP listener ports occupy
+	// independent socket namespaces, but a distinct base keeps the layout
+	// unambiguous and lets EnvoyPorts.Validate keep the bases collision-free.
+	EnvoyUDPPortBase = 11001
 	// EnvoyHealthPort is the Envoy health check listener (inside container).
 	EnvoyHealthPort = 9902
 	// EnvoyHealthHostPort is the host-published port for Envoy health probes.

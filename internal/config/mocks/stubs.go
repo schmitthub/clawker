@@ -81,6 +81,7 @@ func newMockFrom(cfg config.Config) *ConfigMock {
 	mock.CPIPLastOctetFunc = cfg.CPIPLastOctet
 	mock.EnvoyEgressPortFunc = cfg.EnvoyEgressPort
 	mock.EnvoyTCPPortBaseFunc = cfg.EnvoyTCPPortBase
+	mock.EnvoyUDPPortBaseFunc = cfg.EnvoyUDPPortBase
 	mock.EnvoyHealthPortFunc = cfg.EnvoyHealthPort
 	mock.EnvoyHealthHostPortFunc = cfg.EnvoyHealthHostPort
 	mock.CoreDNSHealthHostPortFunc = cfg.CoreDNSHealthHostPort

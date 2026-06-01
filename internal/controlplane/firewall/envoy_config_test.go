@@ -24,7 +24,7 @@ import (
 // ENVOY_TARGET.md before committing.
 
 func testPorts() EnvoyPorts {
-	return EnvoyPorts{EgressPort: 10000, TCPPortBase: 15000, HealthPort: 10001}
+	return EnvoyPorts{EgressPort: 10000, TCPPortBase: 15000, UDPPortBase: 16000, HealthPort: 10001}
 }
 
 func TestGenerateEnvoyConfig(t *testing.T) {
@@ -138,7 +138,7 @@ rules:
 `,
 		},
 		{
-			name: "raw_tcp", // opaque raw TCP (currently skipped — see note in test output)
+			name: "raw_tcp", // opaque raw TCP: dedicated listener → tcp_proxy → pinned cluster
 			rules: `
 rules:
   - dst: db.example.com
@@ -147,7 +147,16 @@ rules:
 `,
 		},
 		{
-			name: "raw_udp", // opaque raw UDP (currently skipped — see note in test output)
+			name: "ssh", // opaque SSH over TCP: same shape as raw tcp, proto token = ssh
+			rules: `
+rules:
+  - dst: github.com
+    proto: ssh
+    port: 22
+`,
+		},
+		{
+			name: "raw_udp", // opaque raw UDP: dedicated UDP listener → udp_proxy → pinned cluster
 			rules: `
 rules:
   - dst: relay.example.com
@@ -165,12 +174,12 @@ rules:
 			als: ALSConfig{Port: 4319, MTLS: true},
 		},
 		{
-			name: "unsupported_proto", // ssh → skipped (no egress listener in output)
+			name: "unsupported_proto", // ftp → not yet a supported token; skipped (no listener in output)
 			rules: `
 rules:
   - dst: host.com
-    proto: ssh
-    port: 22
+    proto: ftp
+    port: 21
 `,
 		},
 		{

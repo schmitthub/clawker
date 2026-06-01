@@ -42,6 +42,7 @@ type ALSConfig struct {
 type EnvoyPorts struct {
 	EgressPort  int // Main shared egress listener port.
 	TCPPortBase int // Starting port for the per-rule TCP/SSH listeners.
+	UDPPortBase int // Starting port for the per-rule raw-UDP (udp_proxy) listeners.
 	HealthPort  int // Dedicated health-check listener port.
 }
 
@@ -53,6 +54,7 @@ func (p EnvoyPorts) Validate() error {
 	}{
 		{"EgressPort", p.EgressPort},
 		{"TCPPortBase", p.TCPPortBase},
+		{"UDPPortBase", p.UDPPortBase},
 		{"HealthPort", p.HealthPort},
 	}
 	for _, n := range named {
@@ -82,6 +84,26 @@ type TCPMapping struct {
 // Consumed by the generator (listener layout) and rules_store.RoutesFromRules
 // (eBPF DNAT route_map) — the two must stay in lockstep.
 func TCPMappings(rules []config.EgressRule, ports EnvoyPorts) []TCPMapping {
+	return dedicatedMappings(rules, ports.TCPPortBase,
+		func(p string) bool { return p == "ssh" || p == "tcp" }, tcpDefaultPort)
+}
+
+// UDPMappings computes raw-UDP port mappings from egress rules — the udp_proxy
+// peer of TCPMappings. Deterministic, indexed from ports.UDPPortBase. Consumed by
+// the generator's raw-UDP listener layout. (eBPF UDP redirect is a separate atom;
+// per the island rule the Envoy UDP listener is self-secure regardless, so this is
+// NOT yet projected into RoutesFromRules — when eBPF gains UDP support it mirrors
+// this the way RoutesFromRules already mirrors TCPMappings.)
+func UDPMappings(rules []config.EgressRule, ports EnvoyPorts) []TCPMapping {
+	return dedicatedMappings(rules, ports.UDPPortBase,
+		func(p string) bool { return p == "udp" }, udpDefaultPort)
+}
+
+// dedicatedMappings is the shared, deterministic per-rule dedicated-listener port
+// assignment behind TCPMappings + UDPMappings: allow-only, hostname-only (IP/CIDR
+// dsts are skipped — opaque-to-CIDR is a separate pass), matching the proto class,
+// indexed from base in rule order. portFn resolves each rule's effective dst port.
+func dedicatedMappings(rules []config.EgressRule, base int, protoMatch func(string) bool, portFn func(config.EgressRule) int) []TCPMapping {
 	var mappings []TCPMapping
 	idx := 0
 	for _, r := range rules {
@@ -92,18 +114,23 @@ func TCPMappings(rules []config.EgressRule, ports EnvoyPorts) []TCPMapping {
 		if isIPOrCIDR(r.Dst) {
 			continue
 		}
-		proto := strings.ToLower(r.Proto)
-		if proto != "ssh" && proto != "tcp" {
+		if !protoMatch(strings.ToLower(r.Proto)) {
 			continue
 		}
 		mappings = append(mappings, TCPMapping{
 			Dst:       normalizeDomain(r.Dst),
-			DstPort:   tcpDefaultPort(r),
-			EnvoyPort: ports.TCPPortBase + idx,
+			DstPort:   portFn(r),
+			EnvoyPort: base + idx,
 		})
 		idx++
 	}
 	return mappings
+}
+
+// dedicatedPortKey is the lookup key the deriver uses to map a rule to its
+// pre-assigned dedicated-listener port (host + effective dst port).
+func dedicatedPortKey(host string, port int) string {
+	return fmt.Sprintf("%s:%d", host, port)
 }
 
 // tcpDefaultPort returns the effective destination port for a TCP/SSH rule.
@@ -278,6 +305,26 @@ func (c *EnvoyConfig) EnsureQUICListener(name, address string, port int) {
 			"udp_listener_config": map[string]any{
 				"quic_options":             map[string]any{},
 				"downstream_socket_config": map[string]any{"prefer_gro": true},
+			},
+		},
+		chainBySig: map[string]int{},
+	}
+}
+
+// EnsureRawUDPListener creates (first call wins) a plain UDP listener for opaque
+// datagram forwarding — a UDP socket_address with NO quic_options (the raw-udp
+// peer of EnsureQUICListener). The udp_proxy listener_filter and its pinned route
+// are attached by the terminal layer via SetListenerField; this listener carries
+// NO filter_chains (matching examples/udp/envoy.yaml).
+func (c *EnvoyConfig) EnsureRawUDPListener(name, address string, port int) {
+	if _, ok := c.listeners[name]; ok {
+		return
+	}
+	c.listeners[name] = &envoyListener{
+		base: map[string]any{
+			"name": name,
+			"address": map[string]any{
+				"socket_address": map[string]any{"protocol": "UDP", "address": address, "port_value": port},
 			},
 		},
 		chainBySig: map[string]int{},

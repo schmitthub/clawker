@@ -31,7 +31,7 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts, als ALSCon
 	cfg := NewEnvoyConfig()
 	cfg.SetAdmin(envoyAdmin())
 
-	perms, warnings := derive(rules)
+	perms, warnings := derive(rules, ports)
 	for _, p := range perms {
 		if !cfg.ClaimPermutation(p.key) {
 			continue
@@ -77,12 +77,12 @@ type permutation struct {
 // decide in isolation (e.g. dfpActive — whether the shared plaintext chain must
 // carry the DFP filter) are computed once here and captured into the layer
 // closures, since the orchestrator's forward pass cannot patch them in later.
-func derive(rules []config.EgressRule) ([]permutation, []string) {
+func derive(rules []config.EgressRule, ports EnvoyPorts) ([]permutation, []string) {
 	var (
 		perms    []permutation
 		warnings []string
 	)
-	gen := deriveGenFacts(rules)
+	gen := deriveGenFacts(rules, ports)
 	for _, r := range rules {
 		if a := strings.ToLower(r.Action); a != "allow" && a != "" {
 			continue
@@ -120,10 +120,23 @@ type genFacts struct {
 	// chains). https chains are NOT shared (each rule owns its server_names
 	// chain), so https DFP is a per-rule decision — no generation-wide flag.
 	httpsExactDomains map[string]bool
+
+	// tcpListenerPorts / udpListenerPorts: the deterministic dedicated-listener
+	// port assigned to each opaque (ssh/tcp / udp) rule, keyed by
+	// dedicatedPortKey(host, dstPort). A single permutation can't decide its own
+	// index (it depends on the rule's position among same-class rules), so the
+	// whole layout is computed up front from TCPMappings/UDPMappings and the
+	// transport layer just looks its port up. Lockstep with the eBPF route_map.
+	tcpListenerPorts map[string]int
+	udpListenerPorts map[string]int
 }
 
-func deriveGenFacts(rules []config.EgressRule) genFacts {
-	g := genFacts{httpsExactDomains: map[string]bool{}}
+func deriveGenFacts(rules []config.EgressRule, ports EnvoyPorts) genFacts {
+	g := genFacts{
+		httpsExactDomains: map[string]bool{},
+		tcpListenerPorts:  map[string]int{},
+		udpListenerPorts:  map[string]int{},
+	}
 	for _, r := range rules {
 		if a := strings.ToLower(r.Action); a != "allow" && a != "" {
 			continue
@@ -134,6 +147,12 @@ func deriveGenFacts(rules []config.EgressRule) genFacts {
 		if strings.EqualFold(r.Proto, "https") && !isWildcardDomain(r.Dst) {
 			g.httpsExactDomains[normalizeDomain(r.Dst)] = true
 		}
+	}
+	for _, m := range TCPMappings(rules, ports) {
+		g.tcpListenerPorts[dedicatedPortKey(m.Dst, m.DstPort)] = m.EnvoyPort
+	}
+	for _, m := range UDPMappings(rules, ports) {
+		g.udpListenerPorts[dedicatedPortKey(m.Dst, m.DstPort)] = m.EnvoyPort
 	}
 	return g
 }
@@ -171,6 +190,37 @@ func layersFor(r config.EgressRule, gen genFacts) [][]layer {
 			{tcpTransport, httpsExactUpstreamLayer, httpAppLayer(appDFP{})},
 			{quicTransport, httpsExactUpstreamLayer, httpAppLayer(appDFP{})},
 		}
+	case "ssh", "tcp":
+		// Opaque TCP: dedicated listener → tcp_proxy → pinned cluster, NO app
+		// block (no L7 to inspect — the pin is the gate). ssh and raw tcp differ
+		// only in the proto token recorded as network.protocol.name. The
+		// dedicated-listener port is pre-assigned in genFacts (lockstep with the
+		// eBPF route_map); a missing entry means an IP/CIDR dst (opaque-to-CIDR is
+		// a separate pass) — skip with the not-supported warning, fail-closed.
+		host := normalizeDomain(r.Dst)
+		envoyPort, ok := gen.tcpListenerPorts[dedicatedPortKey(host, tcpDefaultPort(r))]
+		if !ok {
+			return nil
+		}
+		return [][]layer{{
+			tcpDedicatedListenerLayer(envoyPort),
+			tcpPinnedUpstreamLayer,
+			tcpProxyTerminalLayer(strings.ToLower(r.Proto)),
+		}}
+	case "udp":
+		// Opaque raw UDP: dedicated UDP listener → udp_proxy listener filter →
+		// pinned cluster, NO app block. Same self-secure shape as opaque TCP over a
+		// UDP socket. Port pre-assigned in genFacts; missing = IP/CIDR dst, skip.
+		host := normalizeDomain(r.Dst)
+		envoyPort, ok := gen.udpListenerPorts[dedicatedPortKey(host, udpDefaultPort(r))]
+		if !ok {
+			return nil
+		}
+		return [][]layer{{
+			udpDedicatedListenerLayer(envoyPort),
+			udpPinnedUpstreamLayer,
+			udpProxyTerminalLayer,
+		}}
 	default:
 		return nil
 	}

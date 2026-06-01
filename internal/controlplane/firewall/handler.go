@@ -989,6 +989,7 @@ func (h *Handler) envoyPorts() EnvoyPorts {
 	return EnvoyPorts{
 		EgressPort:  h.cfg.EnvoyEgressPort(),
 		TCPPortBase: h.cfg.EnvoyTCPPortBase(),
+		UDPPortBase: h.cfg.EnvoyUDPPortBase(),
 	}
 }
 

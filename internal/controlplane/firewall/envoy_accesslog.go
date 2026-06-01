@@ -47,6 +47,23 @@ func buildHTTPAccessLog(tlsTerminated bool, transport, action string, als ALSCon
 	return sinks
 }
 
+// buildTCPAccessLog returns access loggers for an opaque L4 proxy (tcp_proxy /
+// udp_proxy). No HTTP fields — there is no L7 to inspect. The verdict is hardcoded
+// (action=allowed): an opaque flow has no per-route metadata, and the pinned
+// cluster IS the gate, so reaching the proxy at all means allowed. transport is
+// the actual L4 ("tcp"/"udp"); l7Proto is the opaque app token ("ssh"/"tcp"/"udp")
+// recorded as network.protocol.name; serverAddress is the pinned host literal (no
+// SNI/Host is available on an opaque connection). tls.established is always false
+// (no TLS terminated here).
+func buildTCPAccessLog(transport, l7Proto, serverAddress, action string, als ALSConfig) []any {
+	extra := map[string]string{"server.address": serverAddress}
+	sinks := []any{stdoutAccessLogEntry(transport, l7Proto, "false", action, extra)}
+	if als.MTLS {
+		sinks = append(sinks, otelAccessLogEntry(transport, l7Proto, "false", action, extra))
+	}
+	return sinks
+}
+
 // accessLogFields is the canonical field map shared by both sinks so a rename
 // updates both at once. `action` carries the clawker verdict (allowed/denied),
 // stamped at generation time — for mixed-verdict HCMs the call site passes the

@@ -268,7 +268,17 @@ func RoutesFromRules(rules []config.EgressRule, ports EnvoyPorts) []ebpf.Route {
 		}
 		proto := strings.ToLower(r.Proto)
 		if proto == "ssh" || proto == "tcp" {
-			continue // handled above
+			continue // handled above (TCPMappings → dedicated TCP listener)
+		}
+		if proto == "udp" {
+			// Raw UDP gets a dedicated Envoy udp_proxy listener (UDPMappings) but
+			// is NOT projected into the eBPF route_map yet: eBPF UDP redirect is a
+			// separate atom (the data plane currently denies non-DNS UDP outright).
+			// Emitting a route here would point UDP at the TCP egress listener and
+			// could overwrite a co-keyed tcp/https route_map entry. Skip until eBPF
+			// gains UDP support, at which point it mirrors UDPMappings the way this
+			// TLS/HTTP pass mirrors TCPMappings.
+			continue
 		}
 		if isIPOrCIDR(r.Dst) {
 			continue
