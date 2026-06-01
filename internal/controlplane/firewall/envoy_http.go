@@ -57,7 +57,7 @@ func httpAppLayer(dfp appDFP) layer {
 		vhost := map[string]any{
 			"name":    virtualHostName(r.Dst, port),
 			"domains": httpDomains(r.Dst, port, ctx.bareHostPort),
-			"routes":  httpRoutes(r, ctx.upstreamCluster),
+			"routes":  httpRoutes(r, ctx.upstreamCluster, ctx.websocket),
 		}
 		// Advertise the sibling QUIC (h3) listener so clients can upgrade. Set by
 		// the TCP tls transport; the alt-svc port is the rule's origin port (the
@@ -80,11 +80,22 @@ func httpAppLayer(dfp appDFP) layer {
 		ctx.filters = []any{
 			map[string]any{
 				"name":         "envoy.filters.network.http_connection_manager",
-				"typed_config": httpHCM(ctx.hcmCodec, ctx.tlsTerminated, httpFilterChain(ctx, dfp), ctx.als, []any{vhost, deny}),
+				"typed_config": httpHCM(ctx.hcmCodec, ctx.tlsTerminated, httpFilterChain(ctx, dfp), ctx.als, []any{vhost, deny}, ctx.websocket),
 			},
 		}
 		return nil
 	}
+}
+
+// wsEnrichLayer flags the permutation as websocket-enabled (ws/wss). The deriver
+// prepends it to an http/https origin's layer list when that origin is named by a
+// ws/wss rule, so it runs BEFORE the upstream block (https upstream pins h1.1 on
+// ctx.websocket) and the app block (adds per-route upgrade_configs + HCM
+// allow_connect). It is a flag-setter only — it builds no config itself, which is
+// what makes ws/wss an enrichment of the one stack rather than a separate chain.
+func wsEnrichLayer(ctx *genCtx) error {
+	ctx.websocket = true
+	return nil
 }
 
 // httpFilterChain assembles the HCM http_filters in dependency order: filters
@@ -172,7 +183,7 @@ func httpDomains(dst string, port, barePort int) []string {
 // the transport-decided seams are codec (AUTO for http/https, HTTP3 for QUIC) and
 // tlsTerminated (drives the access log's tls.established + server.address source).
 // No upgrade_configs: websocket upgrades are denied unless a ws intent adds them.
-func httpHCM(codec string, tlsTerminated bool, httpFilters []any, als ALSConfig, vhosts []any) map[string]any {
+func httpHCM(codec string, tlsTerminated bool, httpFilters []any, als ALSConfig, vhosts []any, websocket bool) map[string]any {
 	// The L4 the access log reports follows the codec: HTTP/3 rides QUIC (UDP),
 	// everything else (AUTO: http/https/ws/wss) rides TCP.
 	transport := "tcp"
@@ -195,6 +206,20 @@ func httpHCM(codec string, tlsTerminated bool, httpFilters []any, als ALSConfig,
 		tc["http3_protocol_options"] = map[string]any{}
 	}
 	maps.Copy(tc, httpConnectionManagerHardening())
+	// ws/wss enrichment: enable Extended CONNECT so a client speaking h2 (h3 for
+	// QUIC) to Envoy can negotiate a WebSocket upgrade (RFC 8441). Merged AFTER
+	// hardening so it augments hardening's http2_protocol_options (which carries
+	// max_concurrent_streams) rather than overwriting it. h1.1 WS needs no flag.
+	if websocket {
+		if h2, ok := tc["http2_protocol_options"].(map[string]any); ok {
+			h2["allow_connect"] = true
+		}
+		if codec == "HTTP3" {
+			if h3, ok := tc["http3_protocol_options"].(map[string]any); ok {
+				h3["allow_extended_connect"] = true
+			}
+		}
+	}
 	return tc
 }
 
@@ -211,14 +236,14 @@ func denyAllVHost() map[string]any {
 // httpRoutes converts a rule's path rules into Envoy routes, longest-prefix
 // first (Envoy is first-match-wins on prefix). The trailing default comes from
 // EffectivePathDefault.
-func httpRoutes(r config.EgressRule, cluster string) []any {
+func httpRoutes(r config.EgressRule, cluster string, websocket bool) []any {
 	defaultDeny := strings.EqualFold(EffectivePathDefault(r), "deny")
 
 	if len(r.PathRules) == 0 {
 		if defaultDeny {
 			return []any{httpDenyRoute("/")}
 		}
-		return []any{httpAllowRoute("/", cluster)}
+		return []any{httpAllowRoute("/", cluster, websocket)}
 	}
 
 	prs := append([]config.PathRule(nil), r.PathRules...)
@@ -227,7 +252,7 @@ func httpRoutes(r config.EgressRule, cluster string) []any {
 	var routes []any
 	for _, pr := range prs {
 		if strings.EqualFold(pr.Action, "allow") {
-			routes = append(routes, httpAllowRoute(pr.Path, cluster))
+			routes = append(routes, httpAllowRoute(pr.Path, cluster, websocket))
 		} else {
 			routes = append(routes, httpDenyRoute(pr.Path))
 		}
@@ -235,15 +260,23 @@ func httpRoutes(r config.EgressRule, cluster string) []any {
 	if defaultDeny {
 		return append(routes, httpDenyRoute("/"))
 	}
-	return append(routes, httpAllowRoute("/", cluster))
+	return append(routes, httpAllowRoute("/", cluster, websocket))
 }
 
 // httpAllowRoute forwards a path prefix to the upstream cluster.
-func httpAllowRoute(prefix, cluster string) map[string]any {
+func httpAllowRoute(prefix, cluster string, websocket bool) map[string]any {
+	route := map[string]any{"cluster": cluster, "timeout": "0s"}
+	// ws/wss enrichment: a per-route upgrade_configs entry enables the WebSocket
+	// upgrade on THIS allow route (RFC 6455 over h1.1, RFC 8441 Extended CONNECT
+	// over h2/h3 with HCM allow_connect). Per-route (not HCM-wide) so path-scoped
+	// WS is expressible. Deny routes never get it — they have no route action.
+	if websocket {
+		route["upgrade_configs"] = []any{map[string]any{"upgrade_type": "websocket"}}
+	}
 	return map[string]any{
 		"match":    map[string]any{"prefix": prefix},
 		"metadata": clawkerActionMetadata("allowed"),
-		"route":    map[string]any{"cluster": cluster, "timeout": "0s"},
+		"route":    route,
 	}
 }
 

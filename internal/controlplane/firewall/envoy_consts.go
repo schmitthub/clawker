@@ -53,6 +53,14 @@ const (
 	httpsDFPClusterName = "https_dfp"
 	httpsDFPCacheName   = "https_dfp_cache"
 
+	// wssDFPClusterName is the h1.1-pinned dynamic-forward-proxy cluster for
+	// wildcard wss (websocket-over-TLS) origins. It shares httpsDFPCacheName with
+	// httpsDFPClusterName but pins the upstream to HTTP/1.1 (WS-native) via
+	// explicit_http_config — a distinct body, so it needs its own name to avoid an
+	// AddCluster dedup clash with the auto-config https_dfp when both a plain
+	// https-wildcard and a wss-wildcard rule are present.
+	wssDFPClusterName = "wss_dfp"
+
 	// denyClusterName is the STATIC, zero-endpoint cluster backing the egress
 	// listener's default_filter_chain: a tls connection whose SNI matches no
 	// server_names chain (unknown/absent SNI) is tcp_proxy'd here and reset. The

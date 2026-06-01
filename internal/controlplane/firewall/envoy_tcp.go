@@ -33,15 +33,14 @@ func tcpEgressLayer(ctx *genCtx) error {
 // L7 (ssh, or none) is opaque to us; the gate is the pin alone. The tcp_proxy
 // terminal is rendered by tcpProxyTerminalLayer after the upstream block names the
 // cluster.
-func tcpDedicatedListenerLayer(envoyPort int) layer {
+func tcpDedicatedListenerLayer(envoyPort, dstPort int) layer {
 	return func(ctx *genCtx) error {
 		host := normalizeDomain(ctx.rule.Dst)
-		port := tcpDefaultPort(ctx.rule)
-		ctx.cfg.EnsureListener(tcpPinnedName(host, port), defaultBindAddress, envoyPort)
-		ctx.listener = tcpPinnedName(host, port)
+		ctx.cfg.EnsureListener(tcpPinnedName(host, dstPort), defaultBindAddress, envoyPort)
+		ctx.listener = tcpPinnedName(host, dstPort)
 		ctx.match = nil // single chain on a dedicated listener — no match needed
 		ctx.tlsTerminated = false
-		ctx.port = port
+		ctx.port = dstPort // the upstream + terminal read this (port-range: one perm per port)
 		return nil
 	}
 }

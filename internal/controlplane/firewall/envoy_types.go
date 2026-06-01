@@ -5,6 +5,7 @@ import (
 	"maps"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/schmitthub/clawker/internal/config"
@@ -117,14 +118,58 @@ func dedicatedMappings(rules []config.EgressRule, base int, protoMatch func(stri
 		if !protoMatch(strings.ToLower(r.Proto)) {
 			continue
 		}
-		mappings = append(mappings, TCPMapping{
-			Dst:       normalizeDomain(r.Dst),
-			DstPort:   portFn(r),
-			EnvoyPort: base + idx,
-		})
-		idx++
+		// A port_range expands into one mapping (→ one dedicated listener + one
+		// pinned cluster) per in-range port; each consumes its own base+idx slot.
+		// Self-secure mapping A (per-port pin), never ORIGINAL_DST — see the
+		// port-range design in ENVOY_TARGET.md.
+		for _, port := range dedicatedPorts(r, portFn) {
+			mappings = append(mappings, TCPMapping{
+				Dst:       normalizeDomain(r.Dst),
+				DstPort:   port,
+				EnvoyPort: base + idx,
+			})
+			idx++
+		}
 	}
 	return mappings
+}
+
+// dedicatedPorts returns the destination ports an opaque rule expands to: every
+// port in its PortRange (inclusive) if set, otherwise the single port from
+// portFn. The order is deterministic (ascending) so listener-port assignment is
+// stable across generations and stays in lockstep with the eBPF route_map.
+func dedicatedPorts(r config.EgressRule, portFn func(config.EgressRule) int) []int {
+	if lo, hi, ok := parsePortRange(r.PortRange); ok {
+		ports := make([]int, 0, hi-lo+1)
+		for p := lo; p <= hi; p++ {
+			ports = append(ports, p)
+		}
+		return ports
+	}
+	return []int{portFn(r)}
+}
+
+// parsePortRange parses an inclusive "lo-hi" port range. Returns ok=false for an
+// empty or malformed value (caller falls back to the single Port) — a malformed
+// range pins FEWER ports, never more, so the fallback is fail-closed.
+func parsePortRange(s string) (lo, hi int, ok bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, 0, false
+	}
+	left, right, found := strings.Cut(s, "-")
+	if !found {
+		return 0, 0, false
+	}
+	lo, err1 := strconv.Atoi(strings.TrimSpace(left))
+	hi, err2 := strconv.Atoi(strings.TrimSpace(right))
+	if err1 != nil || err2 != nil {
+		return 0, 0, false
+	}
+	if lo <= 0 || hi <= 0 || lo > hi || hi > 0xffff {
+		return 0, 0, false
+	}
+	return lo, hi, true
 }
 
 // dedicatedPortKey is the lookup key the deriver uses to map a rule to its
@@ -196,6 +241,14 @@ type genCtx struct {
 	upstreamCluster     string // cluster the app block's routes target
 	upstreamFollowsHost bool   // upstream resolves from the request Host (DFP) — app keeps the DFP filter live on this vhost
 	httpFilters         []any  // HTTP filters contributed by earlier blocks (e.g. sni-lock); the app block appends the router terminal
+
+	// websocket marks this http/https permutation as ws/wss-enriched: the app
+	// block adds per-route upgrade_configs:[websocket] + HCM allow_connect (h2) /
+	// allow_extended_connect (h3), and the https upstream block pins the cluster
+	// to http/1.1. Set by wsEnrichLayer (prepended by the deriver) when the rule's
+	// origin is named by a ws/wss rule — NOT a separate chain, an enrichment of
+	// the one http/https stack for that origin.
+	websocket bool
 }
 
 // layer is one building-block method. It mutates ctx (enriches the chain) and

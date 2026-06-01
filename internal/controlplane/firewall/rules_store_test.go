@@ -180,6 +180,35 @@ func TestRoutesFromRules_TCPMappingsParity(t *testing.T) {
 			},
 			want: []ebpf.Route{},
 		},
+		{
+			// A port_range fans one opaque tcp rule into one dedicated listener per
+			// in-range port; RoutesFromRules must mirror that fan-out one-to-one so
+			// the eBPF route_map and the Envoy listener layout stay in lockstep.
+			name: "tcp port_range fans into one sequential route per in-range port",
+			rules: []config.EgressRule{
+				{Dst: "cluster.example.com", Proto: "tcp", Action: "allow", PortRange: "9000-9002"},
+			},
+			want: []ebpf.Route{
+				{DomainHash: ebpf.DomainHash("cluster.example.com"), DstPort: 9000, EnvoyPort: 11000},
+				{DomainHash: ebpf.DomainHash("cluster.example.com"), DstPort: 9001, EnvoyPort: 11001},
+				{DomainHash: ebpf.DomainHash("cluster.example.com"), DstPort: 9002, EnvoyPort: 11002},
+			},
+		},
+		{
+			// ws/wss ride the shared egress listener as their base http/https proto.
+			// A wss+https (or ws+http) pair for one origin is ONE stack in Envoy, so
+			// it must be ONE route here — the eBPF layer can't distinguish them (same
+			// host:port → same egress redirect); a second route would write the same
+			// key twice and muddy the one-stack-per-origin invariant.
+			name: "wss enriches https without adding a second egress route",
+			rules: []config.EgressRule{
+				{Dst: "stream.example.com", Proto: "https", Action: "allow", Port: 443},
+				{Dst: "stream.example.com", Proto: "wss", Action: "allow", Port: 443},
+			},
+			want: []ebpf.Route{
+				{DomainHash: ebpf.DomainHash("stream.example.com"), DstPort: 443, EnvoyPort: 10000},
+			},
+		},
 	}
 
 	for _, tt := range tests {

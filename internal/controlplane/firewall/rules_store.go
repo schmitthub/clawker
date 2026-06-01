@@ -123,7 +123,8 @@ func ValidateDst(dst string) error {
 // alias; "tls" was always TLS-terminated HCM-inspected HTTPS — the rename
 // disambiguates from raw TLS proxying). Empty proto defaults to "https" (the
 // common case). Empty action defaults to "allow". Default port is 443 for
-// https, 80 for http, 22 for ssh. Existing non-zero values are never overridden.
+// https/wss, 80 for http/ws, 22 for ssh. Existing non-zero values are never
+// overridden.
 // Config-side values stay present-tense (allow/deny) — the access log emits
 // past-tense verdict values (allowed/denied) independently.
 func NormalizeRule(r config.EgressRule) config.EgressRule {
@@ -138,9 +139,9 @@ func NormalizeRule(r config.EgressRule) config.EgressRule {
 	}
 	if r.Port == 0 {
 		switch strings.ToLower(r.Proto) {
-		case "https":
+		case "https", "wss":
 			r.Port = 443
-		case "http":
+		case "http", "ws":
 			r.Port = 80
 		case "ssh":
 			r.Port = 22
@@ -154,6 +155,13 @@ func NormalizeRule(r config.EgressRule) config.EgressRule {
 // rules — a wildcard and its apex carry independent semantics (e.g., different
 // PathRules) and must not be collapsed.
 func RuleKey(r config.EgressRule) string {
+	// A port_range rule has no single Port (it defaults to the proto default), so
+	// two opaque rules for one dst:proto that differ only by port_range would
+	// otherwise collapse to the same key and NormalizeAndDedup would silently drop
+	// one. Fold PortRange into the key so distinct ranges stay distinct rules.
+	if r.PortRange != "" {
+		return fmt.Sprintf("%s:%s:%d:%s", r.Dst, r.Proto, r.Port, r.PortRange)
+	}
 	return fmt.Sprintf("%s:%s:%d", r.Dst, r.Proto, r.Port)
 }
 
@@ -247,7 +255,8 @@ func RoutesFromRules(rules []config.EgressRule, ports EnvoyPorts) []ebpf.Route {
 
 	// TCP/SSH: TCPMappings is the source of truth for which rules
 	// produce a listener, the effective destination port, and the Envoy
-	// listener port. Mirror its output one-to-one.
+	// listener port. It already expands a port_range into one mapping per
+	// in-range port, so this pass mirrors that fan-out one-to-one.
 	for _, m := range TCPMappings(rules, ports) {
 		if m.Dst == "" {
 			continue
@@ -259,8 +268,15 @@ func RoutesFromRules(rules []config.EgressRule, ports EnvoyPorts) []ebpf.Route {
 		})
 	}
 
-	// TLS/HTTP: second pass. Apply the same action/IP filtering as
-	// TCPMappings so the two paths agree on which rules are "allow".
+	// TLS/HTTP (http/https/ws/wss): second pass — all ride the shared egress
+	// listener, so the route just maps (domain, dst port) → EgressPort. ws/wss
+	// are http/https with a websocket upgrade enrichment in Envoy; at the eBPF
+	// layer they are indistinguishable from their base proto (same host:port →
+	// same egress redirect), so a ws+http or wss+https pair for one origin must
+	// collapse to a SINGLE route. Dedup by (domain, dst port) — emitting both
+	// would write the same route_map key twice (harmless but noisy) and obscures
+	// the one-stack-per-origin invariant the Envoy generator enforces.
+	seen := make(map[string]struct{})
 	for _, r := range rules {
 		action := strings.ToLower(r.Action)
 		if action != "allow" && action != "" {
@@ -293,6 +309,11 @@ func RoutesFromRules(rules []config.EgressRule, ports EnvoyPorts) []ebpf.Route {
 		if r.Port <= 0 || r.Port > 0xffff {
 			continue
 		}
+		key := fmt.Sprintf("%s:%d", dst, r.Port)
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
 		out = append(out, ebpf.Route{
 			DomainHash: ebpf.DomainHash(dst),
 			DstPort:    uint16(r.Port),

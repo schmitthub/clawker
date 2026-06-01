@@ -67,15 +67,14 @@ func quicSNIChainLayer(exactDomains map[string]bool) layer {
 // UDP listener bound to envoyPort (UDPPortBase+idx). It binds the listener only;
 // the udp_proxy listener_filter (which references the pinned cluster) is attached
 // by udpProxyTerminalLayer after the upstream block names the cluster.
-func udpDedicatedListenerLayer(envoyPort int) layer {
+func udpDedicatedListenerLayer(envoyPort, dstPort int) layer {
 	return func(ctx *genCtx) error {
 		host := normalizeDomain(ctx.rule.Dst)
-		port := udpDefaultPort(ctx.rule)
-		ctx.cfg.EnsureRawUDPListener(udpPinnedName(host, port), defaultBindAddress, envoyPort)
-		ctx.listener = udpPinnedName(host, port)
+		ctx.cfg.EnsureRawUDPListener(udpPinnedName(host, dstPort), defaultBindAddress, envoyPort)
+		ctx.listener = udpPinnedName(host, dstPort)
 		ctx.match = nil // single pinned route on a dedicated listener — no chain match
 		ctx.tlsTerminated = false
-		ctx.port = port
+		ctx.port = dstPort // the upstream + terminal read this (port-range: one perm per port)
 		return nil
 	}
 }

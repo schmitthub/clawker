@@ -172,10 +172,11 @@ func RegenerateDomainCerts(rules []config.EgressRule, certDir string, caCert *x5
 		// the proto check. A skip here means no cert minted → TLS-MITM handshake
 		// fails at runtime with no operator-visible signal.
 		rule = NormalizeRule(rule)
-		// Only proto:https rules (TLS-terminated MITM HCM) need certificates —
-		// plaintext http, opaque TCP, SSH, and any other proto pass through
-		// without TLS termination.
-		if strings.ToLower(rule.Proto) != "https" {
+		// Only TLS-terminated protos need a MITM cert: https and wss (websocket
+		// over TLS — same downstream TLS termination as https, just with an
+		// upgrade enrichment). Plaintext http/ws, opaque TCP/SSH/UDP, and any
+		// other proto pass through without TLS termination.
+		if p := strings.ToLower(rule.Proto); p != "https" && p != "wss" {
 			continue
 		}
 		// IP literals DO get a MITM cert (iPAddress SAN — see GenerateDomainCert),

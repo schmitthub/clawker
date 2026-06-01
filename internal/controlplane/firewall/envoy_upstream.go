@@ -106,7 +106,11 @@ func buildHTTPDNSCluster(host string, port int) map[string]any {
 func httpsExactUpstreamLayer(ctx *genCtx) error {
 	host := normalizeDomain(ctx.rule.Dst)
 	port := httpsPort(ctx.rule)
-	ctx.clusters = append(ctx.clusters, buildTLSDNSCluster(host, port, ctx.rule.InsecureSkipTLSVerify))
+	// ctx.websocket → wss: pin the reencrypt cluster to http/1.1. One origin =
+	// one stack = one cluster, so a ws-enriched origin's cluster is uniformly
+	// h1.1 (regular https requests on it speak h1.1 too — correct, just no h2
+	// upstream). The cluster name is unchanged (origin owns it), so no dedup clash.
+	ctx.clusters = append(ctx.clusters, buildTLSDNSCluster(host, port, ctx.rule.InsecureSkipTLSVerify, ctx.websocket))
 	ctx.upstreamCluster = tlsExactClusterName(host, port)
 	ctx.upstreamFollowsHost = false
 	return nil
@@ -120,8 +124,18 @@ func httpsWildcardUpstreamLayer(ctx *genCtx) error {
 	// wildcard-https rule). insecure_skip_tls_verify is per-rule; if two wildcard
 	// rules disagree, AddCluster's identical-body dedup fails generation closed
 	// rather than silently picking one posture — the safe outcome.
-	ctx.clusters = append(ctx.clusters, buildHTTPSDFPCluster(ctx.rule.InsecureSkipTLSVerify))
-	ctx.upstreamCluster = httpsDFPClusterName
+	//
+	// ws-enriched (wss) wildcard origins need an h1.1-pinned DFP cluster, which is
+	// a DIFFERENT body than the auto-config https_dfp — so they use a distinct
+	// cluster name (wss_dfp) sharing the same dns_cache. Without the split, a plain
+	// https-wildcard and a wss-wildcard would both claim https_dfp with conflicting
+	// http_protocol_options and AddCluster would fail closed.
+	name := httpsDFPClusterName
+	if ctx.websocket {
+		name = wssDFPClusterName
+	}
+	ctx.clusters = append(ctx.clusters, buildHTTPSDFPCluster(name, ctx.rule.InsecureSkipTLSVerify, ctx.websocket))
+	ctx.upstreamCluster = name
 	ctx.upstreamFollowsHost = true
 	return nil
 }
@@ -133,10 +147,10 @@ func tlsExactClusterName(host string, port int) string {
 
 // buildTLSDNSCluster is the per-(host,port) TLS-reencrypt LOGICAL_DNS upstream:
 // the generic pin (IP pinned to the rule's host) + the uniform reencrypt posture.
-func buildTLSDNSCluster(host string, port int, insecureSkipTLSVerify bool) map[string]any {
+func buildTLSDNSCluster(host string, port int, insecureSkipTLSVerify, http11Only bool) map[string]any {
 	c := pinnedCluster(tlsExactClusterName(host, port), host, port)
-	c["transport_socket"] = upstreamReencryptSocket(insecureSkipTLSVerify)
-	c["typed_extension_protocol_options"] = upstreamHTTPProtocolOptions()
+	c["transport_socket"] = upstreamReencryptSocket(insecureSkipTLSVerify, http11Only)
+	c["typed_extension_protocol_options"] = upstreamHTTPProtocolOptions(http11Only)
 	return c
 }
 
@@ -163,7 +177,7 @@ func udpPinnedName(host string, port int) string {
 // (ssh / raw tcp) and points the terminal at it. No crypto, no L7.
 func tcpPinnedUpstreamLayer(ctx *genCtx) error {
 	host := normalizeDomain(ctx.rule.Dst)
-	port := tcpDefaultPort(ctx.rule)
+	port := ctx.port // set by the dedicated-listener transport (per-port for a port_range)
 	name := tcpPinnedName(host, port)
 	ctx.clusters = append(ctx.clusters, pinnedCluster(name, host, port))
 	ctx.upstreamCluster = name
@@ -175,7 +189,7 @@ func tcpPinnedUpstreamLayer(ctx *genCtx) error {
 // and points the udp_proxy terminal at it. No crypto, no L7.
 func udpPinnedUpstreamLayer(ctx *genCtx) error {
 	host := normalizeDomain(ctx.rule.Dst)
-	port := udpDefaultPort(ctx.rule)
+	port := ctx.port // set by the dedicated-listener transport (per-port for a port_range)
 	name := udpPinnedName(host, port)
 	ctx.clusters = append(ctx.clusters, pinnedCluster(name, host, port))
 	ctx.upstreamCluster = name
@@ -223,9 +237,9 @@ func buildHTTPDFPCluster() map[string]any {
 // Host-keyed, with the uniform reencrypt posture. Distinct dns_cache
 // (https_dfp_cache) from the plaintext cluster so the secure default port (443)
 // is honored.
-func buildHTTPSDFPCluster(insecureSkipTLSVerify bool) map[string]any {
+func buildHTTPSDFPCluster(name string, insecureSkipTLSVerify, http11Only bool) map[string]any {
 	return map[string]any{
-		"name":            httpsDFPClusterName,
+		"name":            name,
 		"connect_timeout": "10s",
 		"lb_policy":       "CLUSTER_PROVIDED",
 		"cluster_type": map[string]any{
@@ -235,8 +249,8 @@ func buildHTTPSDFPCluster(insecureSkipTLSVerify bool) map[string]any {
 				"dns_cache_config": dfpDNSCacheConfig(httpsDFPCacheName),
 			},
 		},
-		"transport_socket":                 upstreamReencryptSocket(insecureSkipTLSVerify),
-		"typed_extension_protocol_options": upstreamHTTPProtocolOptions(),
+		"transport_socket":                 upstreamReencryptSocket(insecureSkipTLSVerify, http11Only),
+		"typed_extension_protocol_options": upstreamHTTPProtocolOptions(http11Only),
 	}
 }
 
@@ -246,7 +260,7 @@ func buildHTTPSDFPCluster(insecureSkipTLSVerify bool) map[string]any {
 // upstream: ALPN h2/http1.1, the curated ECDH curve list, and the SYSTEM CA
 // bundle (the real server's real cert — NOT the MITM CA). SNI + SAN validation
 // are driven by upstreamHTTPProtocolOptions, so no static sni here.
-func upstreamReencryptSocket(insecureSkipTLSVerify bool) map[string]any {
+func upstreamReencryptSocket(insecureSkipTLSVerify, http11Only bool) map[string]any {
 	validationContext := map[string]any{
 		"trusted_ca": map[string]any{"filename": upstreamTrustedCAFile},
 	}
@@ -258,12 +272,20 @@ func upstreamReencryptSocket(insecureSkipTLSVerify bool) map[string]any {
 	if insecureSkipTLSVerify {
 		validationContext["trust_chain_verification"] = "ACCEPT_UNTRUSTED"
 	}
+	// ALPN must match the codec the cluster will actually speak. wss pins h1.1
+	// (explicit_http_config), so it advertises only http/1.1 — offering h2 here
+	// would let the upstream negotiate a codec Envoy won't use. Non-ws reencrypt
+	// offers both (auto_config picks per ALPN).
+	alpn := []string{"h2", "http/1.1"}
+	if http11Only {
+		alpn = []string{"http/1.1"}
+	}
 	return map[string]any{
 		"name": "envoy.transport_sockets.tls",
 		"typed_config": map[string]any{
 			"@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext",
 			"common_tls_context": map[string]any{
-				"alpn_protocols": []string{"h2", "http/1.1"},
+				"alpn_protocols": alpn,
 				"tls_params": map[string]any{
 					"ecdh_curves": []string{"X25519", "P-256", "P-384"},
 				},
@@ -280,19 +302,30 @@ func upstreamReencryptSocket(insecureSkipTLSVerify bool) map[string]any {
 //     the DFP dynamic host (auto_host_sni does NOT — a DFP host has no hostname).
 //   - auto_config (empty http/1 + http/2 blocks): advertise h2 + http/1.1 ALPN
 //     and use the highest the upstream supports.
-func upstreamHTTPProtocolOptions() map[string]any {
-	return map[string]any{
-		"envoy.extensions.upstreams.http.v3.HttpProtocolOptions": map[string]any{
-			"@type": "type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions",
-			"upstream_http_protocol_options": map[string]any{
-				"auto_sni":            true,
-				"auto_san_validation": true,
-			},
-			"auto_config": map[string]any{
-				"http_protocol_options":  map[string]any{},
-				"http2_protocol_options": map[string]any{},
-			},
+func upstreamHTTPProtocolOptions(http11Only bool) map[string]any {
+	opts := map[string]any{
+		"@type": "type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions",
+		"upstream_http_protocol_options": map[string]any{
+			"auto_sni":            true,
+			"auto_san_validation": true,
 		},
+	}
+	// WS over TLS (wss) pins the upstream to HTTP/1.1: WebSocket is h1.1-native
+	// (RFC 6455 Upgrade), and WS-over-h2 to the upstream would need Extended
+	// CONNECT support most origins lack. explicit_http_config forces h1.1 instead
+	// of offering h2 via auto_config. Non-ws reencrypt keeps auto_config (h1/h2).
+	if http11Only {
+		opts["explicit_http_config"] = map[string]any{
+			"http_protocol_options": map[string]any{},
+		}
+	} else {
+		opts["auto_config"] = map[string]any{
+			"http_protocol_options":  map[string]any{},
+			"http2_protocol_options": map[string]any{},
+		}
+	}
+	return map[string]any{
+		"envoy.extensions.upstreams.http.v3.HttpProtocolOptions": opts,
 	}
 }
 

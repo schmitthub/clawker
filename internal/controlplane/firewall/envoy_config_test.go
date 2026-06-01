@@ -165,6 +165,100 @@ rules:
 `,
 		},
 		{
+			name: "ws", // websocket over http: standalone ws rule promotes to an http stack + per-route upgrade_configs + HCM allow_connect
+			rules: `
+rules:
+  - dst: realtime.io
+    proto: ws
+    port: 80
+`,
+		},
+		{
+			name: "wss", // websocket over https: standalone wss promotes to the https+quic stack, enriched (upgrade route, allow_connect/allow_extended_connect, upstream pinned http/1.1, MITM cert)
+			rules: `
+rules:
+  - dst: stream.anthropic.com
+    proto: wss
+`,
+		},
+		{
+			name: "ws_wildcard", // wildcard ws: plaintext http_dfp + websocket enrichment (no h1.1 pin — plaintext upstream)
+			rules: `
+rules:
+  - dst: .chat.example.com
+    proto: ws
+`,
+		},
+		{
+			name: "wss_wildcard", // wildcard wss: distinct wss_dfp cluster (h1.1) sharing the https dns_cache + websocket enrichment
+			rules: `
+rules:
+  - dst: .stream.example.com
+    proto: wss
+`,
+		},
+		{
+			// Additive UX: ws/wss is its own rule that ENRICHES the base http/https
+			// stack for the same origin. https+wss → ONE enriched https stack (wss
+			// absorbed, no proto-collision); http+ws → ONE enriched http stack. The
+			// base rule owns structure; the ws/wss rule only flips the upgrade on.
+			name: "ws_wss_absorb",
+			rules: `
+rules:
+  - dst: secure.example.com
+    proto: https
+  - dst: secure.example.com
+    proto: wss
+  - dst: plain.example.com
+    proto: http
+    port: 80
+  - dst: plain.example.com
+    proto: ws
+    port: 80
+`,
+		},
+		{
+			name: "tcp_port_range", // opaque tcp port_range → one dedicated listener + pinned cluster per in-range port (mapping A, never ORIGINAL_DST)
+			rules: `
+rules:
+  - dst: cluster.example.com
+    proto: tcp
+    port_range: "9000-9002"
+`,
+		},
+		{
+			// A port_range wide enough to push the tcp/ssh band past the udp base
+			// must FAIL closed: a tcp + udp listener sharing one Envoy bind port is a
+			// runtime bind failure, and the eBPF route_map can't disambiguate on
+			// EnvoyPort. testPorts: TCP base 15000, UDP base 16000 → a 1002-wide tcp
+			// range tops at 16001 and overlaps the udp listener. No golden.
+			name: "port_range_band_overlap",
+			rules: `
+rules:
+  - dst: cluster.example.com
+    proto: tcp
+    port_range: "9000-10001"
+  - dst: relay.example.com
+    proto: udp
+    port: 3478
+`,
+			wantErrContains: "overlaps the raw-udp band",
+		},
+		{
+			// A port_range whose fan-out tops past 65535 must FAIL closed: otherwise
+			// rules_store.RoutesFromRules' uint16(EnvoyPort) cast would silently WRAP
+			// and write a bogus eBPF route. testPorts TCP base 15000 + 60000 ports →
+			// 74999 > 65535. No golden.
+			name: "port_range_overflow_65535",
+			rules: `
+rules:
+  - dst: huge.example.com
+    proto: tcp
+    port_range: "1-60000"
+`,
+			wantErrContains: "overflow past port 65535",
+		},
+		{
 			name: "otel_mtls", // OTel access-log sink wired
 			rules: `
 rules:

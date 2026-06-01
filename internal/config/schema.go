@@ -140,9 +140,16 @@ type PathRule struct {
 // Dst is the domain or IP, Proto defaults to "https" (TLS-MITM HCM), Action defaults to "allow".
 // The legacy value `proto: tls` is silently translated to `proto: https` at normalization time.
 type EgressRule struct {
-	Dst         string     `yaml:"dst" label:"Destination" desc:"Domain or IP the container needs to reach (e.g. api.github.com, registry.npmjs.org)"`
-	Proto       string     `yaml:"proto,omitempty" label:"Protocol" desc:"L7 protocol: https (TLS-MITM, default), http (plaintext HCM), ssh, tcp, or any opaque L7 name for TCP pass-through"`
-	Port        int        `yaml:"port,omitempty" label:"Port" desc:"Override the default port (443 for https, 80 for http, 22 for ssh)"`
+	Dst   string `yaml:"dst" label:"Destination" desc:"Domain or IP the container needs to reach (e.g. api.github.com, registry.npmjs.org)"`
+	Proto string `yaml:"proto,omitempty" label:"Protocol" desc:"L7 protocol: https (TLS-MITM, default), http (plaintext HCM), ws/wss (websocket over http/https), ssh, tcp, udp, or any opaque L7 name for TCP pass-through"`
+	Port  int    `yaml:"port,omitempty" label:"Port" desc:"Override the default port (443 for https, 80 for http, 22 for ssh)"`
+	// PortRange, when set (e.g. "9000-9100", inclusive), expands an opaque rule
+	// (tcp/ssh/udp) into one self-secure pinned listener+cluster PER port in the
+	// range — never ORIGINAL_DST, so a compromised agent can't redirect within
+	// the range. Meaningful only for opaque protos; ignored for http/https/ws/wss
+	// (those scope by Host/SNI, not by a fan of ports). When set, it supersedes a
+	// single Port for the expansion.
+	PortRange   string     `yaml:"port_range,omitempty" label:"Port Range" desc:"Inclusive port range (e.g. 9000-9100) for opaque tcp/ssh/udp rules; one pinned listener per port"`
 	Action      string     `yaml:"action,omitempty" label:"Action" desc:"Allow or deny traffic to this destination (default: allow)"`
 	PathRules   []PathRule `yaml:"path_rules,omitempty" label:"Path Rules" desc:"Fine-grained path filtering (only applies to https/http)"`
 	PathDefault string     `yaml:"path_default,omitempty" label:"Path Default" desc:"What to do with HTTP paths that don't match any path rule (allow or deny)"`

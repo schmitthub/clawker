@@ -244,10 +244,12 @@ security:
     rules:
       # Domain or IP the container needs to reach (e.g. api.github.com, registry.npmjs.org)
       - dst: <string>  # default: n/a | required: false
-        # L7 protocol: https (TLS-MITM, default), http (plaintext HCM), ssh, tcp, or any opaque L7 name for TCP pass-through
+        # L7 protocol: https (TLS-MITM, default), http (plaintext HCM), ws/wss (websocket over http/https), ssh, tcp, udp, or any opaque L7 name for TCP pass-through
         proto: <string>  # default: n/a | required: false
         # Override the default port (443 for https, 80 for http, 22 for ssh)
         port: <integer>  # default: n/a | required: false
+        # Inclusive port range (e.g. 9000-9100) for opaque tcp/ssh/udp rules; one pinned listener per port
+        port_range: <string>  # default: n/a | required: false
         # Allow or deny traffic to this destination (default: allow)
         action: <string>  # default: n/a | required: false
         # Fine-grained path filtering (only applies to https/http)
