@@ -126,10 +126,10 @@ func TestListRun_SortsByDomain(t *testing.T) {
 
 func TestListRun_SortsByDomainProtoPort(t *testing.T) {
 	rules := []*adminv1.EgressRule{
-		{Dst: "api.github.com", Proto: "ssh", Port: 22},
-		{Dst: "api.github.com", Proto: "https", Port: 443},
-		{Dst: "api.github.com", Proto: "https", Port: 80},
-		{Dst: "alpha.example.com", Proto: "https", Port: 443},
+		{Dst: "api.github.com", Proto: "ssh", Port: "22"},
+		{Dst: "api.github.com", Proto: "https", Port: "443"},
+		{Dst: "api.github.com", Proto: "https", Port: "80"},
+		{Dst: "alpha.example.com", Proto: "https", Port: "443"},
 	}
 
 	f, stdout := newListCmd(t, rules, nil)
@@ -163,7 +163,7 @@ func TestListRun_SortsByDomainProtoPort(t *testing.T) {
 // keys when no path data is present on a rule.
 func TestListRun_JSONContract_OmitsPathFieldsWhenEmpty(t *testing.T) {
 	rules := []*adminv1.EgressRule{
-		{Dst: "example.com", Proto: "https", Port: 443},
+		{Dst: "example.com", Proto: "https", Port: "443"},
 	}
 
 	f, stdout := newListCmd(t, rules, nil)
@@ -183,7 +183,7 @@ func TestListRun_WithPaths(t *testing.T) {
 		{
 			Dst:   "api.example.com",
 			Proto: "https",
-			Port:  443,
+			Port:  "443",
 			PathRules: []*adminv1.PathRule{
 				{Path: "/admin/*", Action: "deny"},
 				{Path: "/v1/*", Action: "allow"},
@@ -243,7 +243,7 @@ func TestListRun_WithDenylistPaths_InfersAllowDefault(t *testing.T) {
 		{
 			Dst:   "docs.example.com",
 			Proto: "https",
-			Port:  443,
+			Port:  "443",
 			PathRules: []*adminv1.PathRule{
 				{Path: "/admin", Action: "deny"},
 			},

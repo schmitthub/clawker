@@ -525,7 +525,7 @@ func TestApplyVCSToProject(t *testing.T) {
 				require.NotEmpty(t, p.Security.Firewall.Rules)
 				rule := p.Security.Firewall.Rules[0]
 				assert.Equal(t, tt.wantSSHHost, rule.Dst)
-				assert.Equal(t, 22, rule.Port)
+				assert.Equal(t, "22", rule.Port)
 				assert.Equal(t, "ssh", rule.Proto)
 				assert.Equal(t, "allow", rule.Action)
 			} else {
@@ -621,7 +621,7 @@ func TestRunNonInteractive_VCSFlags(t *testing.T) {
 	// Verify SSH rule.
 	require.NotEmpty(t, snap.Security.Firewall.Rules)
 	assert.Equal(t, "gitlab.com", snap.Security.Firewall.Rules[0].Dst)
-	assert.Equal(t, 22, snap.Security.Firewall.Rules[0].Port)
+	assert.Equal(t, "22", snap.Security.Firewall.Rules[0].Port)
 
 	// Verify GPG disabled.
 	require.NotNil(t, snap.Security.GitCredentials)

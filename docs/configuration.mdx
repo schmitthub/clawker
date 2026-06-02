@@ -246,10 +246,8 @@ security:
       - dst: <string>  # default: n/a | required: false
         # L7 protocol: https (TLS-MITM, default), http (plaintext HCM), ws/wss (websocket over http/https), ssh, tcp, udp, or any opaque L7 name for TCP pass-through
         proto: <string>  # default: n/a | required: false
-        # Override the default port (443 for https, 80 for http, 22 for ssh)
-        port: <integer>  # default: n/a | required: false
-        # Inclusive port range (e.g. 9000-9100) for opaque tcp/ssh/udp rules; one pinned listener per port
-        port_range: <string>  # default: n/a | required: false
+        # Destination port: a single port (443) or an inclusive range (9000-9100); empty = protocol default
+        port: <string>  # default: n/a | required: false
         # Allow or deny traffic to this destination (default: allow)
         action: <string>  # default: n/a | required: false
         # Fine-grained path filtering (only applies to https/http)

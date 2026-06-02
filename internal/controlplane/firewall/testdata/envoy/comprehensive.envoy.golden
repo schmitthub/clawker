@@ -166,6 +166,30 @@ static_resources:
           type: STATIC
         - connect_timeout: 10s
           load_assignment:
+            cluster_name: tcp_198_51_100_9_9100
+            endpoints:
+                - lb_endpoints:
+                    - endpoint:
+                        address:
+                            socket_address:
+                                address: 198.51.100.9
+                                port_value: 9100
+          name: tcp_198_51_100_9_9100
+          type: STATIC
+        - connect_timeout: 10s
+          load_assignment:
+            cluster_name: tcp_198_51_100_9_9101
+            endpoints:
+                - lb_endpoints:
+                    - endpoint:
+                        address:
+                            socket_address:
+                                address: 198.51.100.9
+                                port_value: 9101
+          name: tcp_198_51_100_9_9101
+          type: STATIC
+        - connect_timeout: 10s
+          load_assignment:
             cluster_name: tcp_203_0_113_7_22
             endpoints:
                 - lb_endpoints:
@@ -176,6 +200,32 @@ static_resources:
                                 port_value: 22
           name: tcp_203_0_113_7_22
           type: STATIC
+        - connect_timeout: 10s
+          dns_lookup_family: V4_ONLY
+          load_assignment:
+            cluster_name: tcp_carve_example_com_7000
+            endpoints:
+                - lb_endpoints:
+                    - endpoint:
+                        address:
+                            socket_address:
+                                address: carve.example.com
+                                port_value: 7000
+          name: tcp_carve_example_com_7000
+          type: LOGICAL_DNS
+        - connect_timeout: 10s
+          dns_lookup_family: V4_ONLY
+          load_assignment:
+            cluster_name: tcp_carve_example_com_7002
+            endpoints:
+                - lb_endpoints:
+                    - endpoint:
+                        address:
+                            socket_address:
+                                address: carve.example.com
+                                port_value: 7002
+          name: tcp_carve_example_com_7002
+          type: LOGICAL_DNS
         - connect_timeout: 10s
           dns_lookup_family: V4_ONLY
           load_assignment:
@@ -684,6 +734,31 @@ static_resources:
                 - name: envoy.filters.network.tcp_proxy
                   typed_config:
                     '@type': type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
+                    access_log:
+                        - name: envoy.access_loggers.stdout
+                          typed_config:
+                            '@type': type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+                            log_format:
+                                json_format:
+                                    action: denied
+                                    bytes_received: '%BYTES_RECEIVED%'
+                                    bytes_sent: '%BYTES_SENT%'
+                                    client.address: '%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%'
+                                    duration_ms: '%DURATION%'
+                                    listener_ip: '%DOWNSTREAM_LOCAL_ADDRESS_WITHOUT_PORT%'
+                                    network.peer.address: '%UPSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%'
+                                    network.peer.port: '%UPSTREAM_REMOTE_PORT%'
+                                    network.protocol.name: ""
+                                    network.transport: tcp
+                                    response_flags: '%RESPONSE_FLAGS%'
+                                    server.address: '%REQUESTED_SERVER_NAME%'
+                                    tls.cipher: '%DOWNSTREAM_TLS_CIPHER%'
+                                    tls.established: "false"
+                                    tls.protocol.version: '%DOWNSTREAM_TLS_VERSION%'
+                                    upstream_bytes_received: '%UPSTREAM_WIRE_BYTES_RECEIVED%'
+                                    upstream_bytes_sent: '%UPSTREAM_WIRE_BYTES_SENT%'
+                                    upstream_tls_cipher: '%UPSTREAM_TLS_CIPHER%'
+                                    upstream_tls_version: '%UPSTREAM_TLS_VERSION%'
                     cluster: deny_cluster
                     stat_prefix: egress_deny
           filter_chains:
@@ -2461,10 +2536,10 @@ static_resources:
                               private_key:
                                 filename: /etc/envoy/certs/10.10.0.0_16-key.pem
             - filter_chain_match:
-                destination_port: 8080
+                destination_port: 9000
                 prefix_ranges:
-                    - address_prefix: 10.0.0.5
-                      prefix_len: 32
+                    - address_prefix: 172.31.0.0
+                      prefix_len: 24
                 transport_protocol: raw_buffer
               filters:
                 - name: envoy.filters.network.tcp_proxy
@@ -2476,7 +2551,7 @@ static_resources:
                             '@type': type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
                             log_format:
                                 json_format:
-                                    action: allowed
+                                    action: denied
                                     bytes_received: '%BYTES_RECEIVED%'
                                     bytes_sent: '%BYTES_SENT%'
                                     client.address: '%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%'
@@ -2487,7 +2562,7 @@ static_resources:
                                     network.protocol.name: tcp
                                     network.transport: tcp
                                     response_flags: '%RESPONSE_FLAGS%'
-                                    server.address: 10.0.0.5
+                                    server.address: 172.31.0.0/24
                                     tls.cipher: '%DOWNSTREAM_TLS_CIPHER%'
                                     tls.established: "false"
                                     tls.protocol.version: '%DOWNSTREAM_TLS_VERSION%'
@@ -2495,8 +2570,8 @@ static_resources:
                                     upstream_bytes_sent: '%UPSTREAM_WIRE_BYTES_SENT%'
                                     upstream_tls_cipher: '%UPSTREAM_TLS_CIPHER%'
                                     upstream_tls_version: '%UPSTREAM_TLS_VERSION%'
-                    cluster: tcp_10_0_0_5_8080
-                    stat_prefix: tcp_10_0_0_5_8080
+                    cluster: deny_cluster
+                    stat_prefix: deny_cluster
             - filter_chain_match:
                 destination_port: 5432
                 prefix_ranges:
@@ -2534,43 +2609,6 @@ static_resources:
                                     upstream_tls_version: '%UPSTREAM_TLS_VERSION%'
                     cluster: tcp_origdst_10_0_0_0_24_5432
                     stat_prefix: tcp_origdst_10_0_0_0_24_5432
-            - filter_chain_match:
-                destination_port: 22
-                prefix_ranges:
-                    - address_prefix: 203.0.113.7
-                      prefix_len: 32
-                transport_protocol: raw_buffer
-              filters:
-                - name: envoy.filters.network.tcp_proxy
-                  typed_config:
-                    '@type': type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
-                    access_log:
-                        - name: envoy.access_loggers.stdout
-                          typed_config:
-                            '@type': type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
-                            log_format:
-                                json_format:
-                                    action: allowed
-                                    bytes_received: '%BYTES_RECEIVED%'
-                                    bytes_sent: '%BYTES_SENT%'
-                                    client.address: '%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%'
-                                    duration_ms: '%DURATION%'
-                                    listener_ip: '%DOWNSTREAM_LOCAL_ADDRESS_WITHOUT_PORT%'
-                                    network.peer.address: '%UPSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%'
-                                    network.peer.port: '%UPSTREAM_REMOTE_PORT%'
-                                    network.protocol.name: ssh
-                                    network.transport: tcp
-                                    response_flags: '%RESPONSE_FLAGS%'
-                                    server.address: 203.0.113.7
-                                    tls.cipher: '%DOWNSTREAM_TLS_CIPHER%'
-                                    tls.established: "false"
-                                    tls.protocol.version: '%DOWNSTREAM_TLS_VERSION%'
-                                    upstream_bytes_received: '%UPSTREAM_WIRE_BYTES_RECEIVED%'
-                                    upstream_bytes_sent: '%UPSTREAM_WIRE_BYTES_SENT%'
-                                    upstream_tls_cipher: '%UPSTREAM_TLS_CIPHER%'
-                                    upstream_tls_version: '%UPSTREAM_TLS_VERSION%'
-                    cluster: tcp_203_0_113_7_22
-                    stat_prefix: tcp_203_0_113_7_22
           listener_filters:
             - name: envoy.filters.listener.tls_inspector
               typed_config:
@@ -3608,6 +3646,302 @@ static_resources:
         - address:
             socket_address:
                 address: 0.0.0.0
+                port_value: 15010
+          filter_chains:
+            - filters:
+                - name: envoy.filters.network.tcp_proxy
+                  typed_config:
+                    '@type': type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
+                    access_log:
+                        - name: envoy.access_loggers.stdout
+                          typed_config:
+                            '@type': type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+                            log_format:
+                                json_format:
+                                    action: allowed
+                                    bytes_received: '%BYTES_RECEIVED%'
+                                    bytes_sent: '%BYTES_SENT%'
+                                    client.address: '%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%'
+                                    duration_ms: '%DURATION%'
+                                    listener_ip: '%DOWNSTREAM_LOCAL_ADDRESS_WITHOUT_PORT%'
+                                    network.peer.address: '%UPSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%'
+                                    network.peer.port: '%UPSTREAM_REMOTE_PORT%'
+                                    network.protocol.name: tcp
+                                    network.transport: tcp
+                                    response_flags: '%RESPONSE_FLAGS%'
+                                    server.address: 10.0.0.5
+                                    tls.cipher: '%DOWNSTREAM_TLS_CIPHER%'
+                                    tls.established: "false"
+                                    tls.protocol.version: '%DOWNSTREAM_TLS_VERSION%'
+                                    upstream_bytes_received: '%UPSTREAM_WIRE_BYTES_RECEIVED%'
+                                    upstream_bytes_sent: '%UPSTREAM_WIRE_BYTES_SENT%'
+                                    upstream_tls_cipher: '%UPSTREAM_TLS_CIPHER%'
+                                    upstream_tls_version: '%UPSTREAM_TLS_VERSION%'
+                    cluster: tcp_10_0_0_5_8080
+                    stat_prefix: tcp_10_0_0_5_8080
+          name: tcp_10_0_0_5_8080
+        - address:
+            socket_address:
+                address: 0.0.0.0
+                port_value: 15012
+          filter_chains:
+            - filters:
+                - name: envoy.filters.network.tcp_proxy
+                  typed_config:
+                    '@type': type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
+                    access_log:
+                        - name: envoy.access_loggers.stdout
+                          typed_config:
+                            '@type': type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+                            log_format:
+                                json_format:
+                                    action: allowed
+                                    bytes_received: '%BYTES_RECEIVED%'
+                                    bytes_sent: '%BYTES_SENT%'
+                                    client.address: '%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%'
+                                    duration_ms: '%DURATION%'
+                                    listener_ip: '%DOWNSTREAM_LOCAL_ADDRESS_WITHOUT_PORT%'
+                                    network.peer.address: '%UPSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%'
+                                    network.peer.port: '%UPSTREAM_REMOTE_PORT%'
+                                    network.protocol.name: tcp
+                                    network.transport: tcp
+                                    response_flags: '%RESPONSE_FLAGS%'
+                                    server.address: 198.51.100.9
+                                    tls.cipher: '%DOWNSTREAM_TLS_CIPHER%'
+                                    tls.established: "false"
+                                    tls.protocol.version: '%DOWNSTREAM_TLS_VERSION%'
+                                    upstream_bytes_received: '%UPSTREAM_WIRE_BYTES_RECEIVED%'
+                                    upstream_bytes_sent: '%UPSTREAM_WIRE_BYTES_SENT%'
+                                    upstream_tls_cipher: '%UPSTREAM_TLS_CIPHER%'
+                                    upstream_tls_version: '%UPSTREAM_TLS_VERSION%'
+                    cluster: tcp_198_51_100_9_9100
+                    stat_prefix: tcp_198_51_100_9_9100
+          name: tcp_198_51_100_9_9100
+        - address:
+            socket_address:
+                address: 0.0.0.0
+                port_value: 15013
+          filter_chains:
+            - filters:
+                - name: envoy.filters.network.tcp_proxy
+                  typed_config:
+                    '@type': type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
+                    access_log:
+                        - name: envoy.access_loggers.stdout
+                          typed_config:
+                            '@type': type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+                            log_format:
+                                json_format:
+                                    action: allowed
+                                    bytes_received: '%BYTES_RECEIVED%'
+                                    bytes_sent: '%BYTES_SENT%'
+                                    client.address: '%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%'
+                                    duration_ms: '%DURATION%'
+                                    listener_ip: '%DOWNSTREAM_LOCAL_ADDRESS_WITHOUT_PORT%'
+                                    network.peer.address: '%UPSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%'
+                                    network.peer.port: '%UPSTREAM_REMOTE_PORT%'
+                                    network.protocol.name: tcp
+                                    network.transport: tcp
+                                    response_flags: '%RESPONSE_FLAGS%'
+                                    server.address: 198.51.100.9
+                                    tls.cipher: '%DOWNSTREAM_TLS_CIPHER%'
+                                    tls.established: "false"
+                                    tls.protocol.version: '%DOWNSTREAM_TLS_VERSION%'
+                                    upstream_bytes_received: '%UPSTREAM_WIRE_BYTES_RECEIVED%'
+                                    upstream_bytes_sent: '%UPSTREAM_WIRE_BYTES_SENT%'
+                                    upstream_tls_cipher: '%UPSTREAM_TLS_CIPHER%'
+                                    upstream_tls_version: '%UPSTREAM_TLS_VERSION%'
+                    cluster: tcp_198_51_100_9_9101
+                    stat_prefix: tcp_198_51_100_9_9101
+          name: tcp_198_51_100_9_9101
+        - address:
+            socket_address:
+                address: 0.0.0.0
+                port_value: 15011
+          filter_chains:
+            - filters:
+                - name: envoy.filters.network.tcp_proxy
+                  typed_config:
+                    '@type': type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
+                    access_log:
+                        - name: envoy.access_loggers.stdout
+                          typed_config:
+                            '@type': type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+                            log_format:
+                                json_format:
+                                    action: allowed
+                                    bytes_received: '%BYTES_RECEIVED%'
+                                    bytes_sent: '%BYTES_SENT%'
+                                    client.address: '%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%'
+                                    duration_ms: '%DURATION%'
+                                    listener_ip: '%DOWNSTREAM_LOCAL_ADDRESS_WITHOUT_PORT%'
+                                    network.peer.address: '%UPSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%'
+                                    network.peer.port: '%UPSTREAM_REMOTE_PORT%'
+                                    network.protocol.name: ssh
+                                    network.transport: tcp
+                                    response_flags: '%RESPONSE_FLAGS%'
+                                    server.address: 203.0.113.7
+                                    tls.cipher: '%DOWNSTREAM_TLS_CIPHER%'
+                                    tls.established: "false"
+                                    tls.protocol.version: '%DOWNSTREAM_TLS_VERSION%'
+                                    upstream_bytes_received: '%UPSTREAM_WIRE_BYTES_RECEIVED%'
+                                    upstream_bytes_sent: '%UPSTREAM_WIRE_BYTES_SENT%'
+                                    upstream_tls_cipher: '%UPSTREAM_TLS_CIPHER%'
+                                    upstream_tls_version: '%UPSTREAM_TLS_VERSION%'
+                    cluster: tcp_203_0_113_7_22
+                    stat_prefix: tcp_203_0_113_7_22
+          name: tcp_203_0_113_7_22
+        - address:
+            socket_address:
+                address: 0.0.0.0
+                port_value: 15009
+          filter_chains:
+            - filters:
+                - name: envoy.filters.network.tcp_proxy
+                  typed_config:
+                    '@type': type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
+                    access_log:
+                        - name: envoy.access_loggers.stdout
+                          typed_config:
+                            '@type': type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+                            log_format:
+                                json_format:
+                                    action: denied
+                                    bytes_received: '%BYTES_RECEIVED%'
+                                    bytes_sent: '%BYTES_SENT%'
+                                    client.address: '%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%'
+                                    duration_ms: '%DURATION%'
+                                    listener_ip: '%DOWNSTREAM_LOCAL_ADDRESS_WITHOUT_PORT%'
+                                    network.peer.address: '%UPSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%'
+                                    network.peer.port: '%UPSTREAM_REMOTE_PORT%'
+                                    network.protocol.name: ssh
+                                    network.transport: tcp
+                                    response_flags: '%RESPONSE_FLAGS%'
+                                    server.address: blocked.example.com
+                                    tls.cipher: '%DOWNSTREAM_TLS_CIPHER%'
+                                    tls.established: "false"
+                                    tls.protocol.version: '%DOWNSTREAM_TLS_VERSION%'
+                                    upstream_bytes_received: '%UPSTREAM_WIRE_BYTES_RECEIVED%'
+                                    upstream_bytes_sent: '%UPSTREAM_WIRE_BYTES_SENT%'
+                                    upstream_tls_cipher: '%UPSTREAM_TLS_CIPHER%'
+                                    upstream_tls_version: '%UPSTREAM_TLS_VERSION%'
+                    cluster: deny_cluster
+                    stat_prefix: deny_cluster
+          name: tcp_blocked_example_com_2222
+        - address:
+            socket_address:
+                address: 0.0.0.0
+                port_value: 15007
+          filter_chains:
+            - filters:
+                - name: envoy.filters.network.tcp_proxy
+                  typed_config:
+                    '@type': type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
+                    access_log:
+                        - name: envoy.access_loggers.stdout
+                          typed_config:
+                            '@type': type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+                            log_format:
+                                json_format:
+                                    action: allowed
+                                    bytes_received: '%BYTES_RECEIVED%'
+                                    bytes_sent: '%BYTES_SENT%'
+                                    client.address: '%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%'
+                                    duration_ms: '%DURATION%'
+                                    listener_ip: '%DOWNSTREAM_LOCAL_ADDRESS_WITHOUT_PORT%'
+                                    network.peer.address: '%UPSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%'
+                                    network.peer.port: '%UPSTREAM_REMOTE_PORT%'
+                                    network.protocol.name: tcp
+                                    network.transport: tcp
+                                    response_flags: '%RESPONSE_FLAGS%'
+                                    server.address: carve.example.com
+                                    tls.cipher: '%DOWNSTREAM_TLS_CIPHER%'
+                                    tls.established: "false"
+                                    tls.protocol.version: '%DOWNSTREAM_TLS_VERSION%'
+                                    upstream_bytes_received: '%UPSTREAM_WIRE_BYTES_RECEIVED%'
+                                    upstream_bytes_sent: '%UPSTREAM_WIRE_BYTES_SENT%'
+                                    upstream_tls_cipher: '%UPSTREAM_TLS_CIPHER%'
+                                    upstream_tls_version: '%UPSTREAM_TLS_VERSION%'
+                    cluster: tcp_carve_example_com_7000
+                    stat_prefix: tcp_carve_example_com_7000
+          name: tcp_carve_example_com_7000
+        - address:
+            socket_address:
+                address: 0.0.0.0
+                port_value: 15006
+          filter_chains:
+            - filters:
+                - name: envoy.filters.network.tcp_proxy
+                  typed_config:
+                    '@type': type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
+                    access_log:
+                        - name: envoy.access_loggers.stdout
+                          typed_config:
+                            '@type': type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+                            log_format:
+                                json_format:
+                                    action: denied
+                                    bytes_received: '%BYTES_RECEIVED%'
+                                    bytes_sent: '%BYTES_SENT%'
+                                    client.address: '%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%'
+                                    duration_ms: '%DURATION%'
+                                    listener_ip: '%DOWNSTREAM_LOCAL_ADDRESS_WITHOUT_PORT%'
+                                    network.peer.address: '%UPSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%'
+                                    network.peer.port: '%UPSTREAM_REMOTE_PORT%'
+                                    network.protocol.name: tcp
+                                    network.transport: tcp
+                                    response_flags: '%RESPONSE_FLAGS%'
+                                    server.address: carve.example.com
+                                    tls.cipher: '%DOWNSTREAM_TLS_CIPHER%'
+                                    tls.established: "false"
+                                    tls.protocol.version: '%DOWNSTREAM_TLS_VERSION%'
+                                    upstream_bytes_received: '%UPSTREAM_WIRE_BYTES_RECEIVED%'
+                                    upstream_bytes_sent: '%UPSTREAM_WIRE_BYTES_SENT%'
+                                    upstream_tls_cipher: '%UPSTREAM_TLS_CIPHER%'
+                                    upstream_tls_version: '%UPSTREAM_TLS_VERSION%'
+                    cluster: deny_cluster
+                    stat_prefix: deny_cluster
+          name: tcp_carve_example_com_7001
+        - address:
+            socket_address:
+                address: 0.0.0.0
+                port_value: 15008
+          filter_chains:
+            - filters:
+                - name: envoy.filters.network.tcp_proxy
+                  typed_config:
+                    '@type': type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
+                    access_log:
+                        - name: envoy.access_loggers.stdout
+                          typed_config:
+                            '@type': type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+                            log_format:
+                                json_format:
+                                    action: allowed
+                                    bytes_received: '%BYTES_RECEIVED%'
+                                    bytes_sent: '%BYTES_SENT%'
+                                    client.address: '%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%'
+                                    duration_ms: '%DURATION%'
+                                    listener_ip: '%DOWNSTREAM_LOCAL_ADDRESS_WITHOUT_PORT%'
+                                    network.peer.address: '%UPSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%'
+                                    network.peer.port: '%UPSTREAM_REMOTE_PORT%'
+                                    network.protocol.name: tcp
+                                    network.transport: tcp
+                                    response_flags: '%RESPONSE_FLAGS%'
+                                    server.address: carve.example.com
+                                    tls.cipher: '%DOWNSTREAM_TLS_CIPHER%'
+                                    tls.established: "false"
+                                    tls.protocol.version: '%DOWNSTREAM_TLS_VERSION%'
+                                    upstream_bytes_received: '%UPSTREAM_WIRE_BYTES_RECEIVED%'
+                                    upstream_bytes_sent: '%UPSTREAM_WIRE_BYTES_SENT%'
+                                    upstream_tls_cipher: '%UPSTREAM_TLS_CIPHER%'
+                                    upstream_tls_version: '%UPSTREAM_TLS_VERSION%'
+                    cluster: tcp_carve_example_com_7002
+                    stat_prefix: tcp_carve_example_com_7002
+          name: tcp_carve_example_com_7002
+        - address:
+            socket_address:
+                address: 0.0.0.0
                 port_value: 15003
           filter_chains:
             - filters:
@@ -3830,7 +4164,7 @@ static_resources:
         - address:
             socket_address:
                 address: 0.0.0.0
-                port_value: 16001
+                port_value: 16002
                 protocol: UDP
           listener_filters:
             - name: envoy.filters.udp_listener.udp_proxy
@@ -3874,6 +4208,49 @@ static_resources:
             socket_address:
                 address: 0.0.0.0
                 port_value: 16000
+                protocol: UDP
+          listener_filters:
+            - name: envoy.filters.udp_listener.udp_proxy
+              typed_config:
+                '@type': type.googleapis.com/envoy.extensions.filters.udp.udp_proxy.v3.UdpProxyConfig
+                access_log:
+                    - name: envoy.access_loggers.stdout
+                      typed_config:
+                        '@type': type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+                        log_format:
+                            json_format:
+                                action: denied
+                                bytes_received: '%BYTES_RECEIVED%'
+                                bytes_sent: '%BYTES_SENT%'
+                                client.address: '%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%'
+                                duration_ms: '%DURATION%'
+                                listener_ip: '%DOWNSTREAM_LOCAL_ADDRESS_WITHOUT_PORT%'
+                                network.peer.address: '%UPSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%'
+                                network.peer.port: '%UPSTREAM_REMOTE_PORT%'
+                                network.protocol.name: udp
+                                network.transport: udp
+                                response_flags: '%RESPONSE_FLAGS%'
+                                server.address: blocked-udp.example.com
+                                tls.cipher: '%DOWNSTREAM_TLS_CIPHER%'
+                                tls.established: "false"
+                                tls.protocol.version: '%DOWNSTREAM_TLS_VERSION%'
+                                upstream_bytes_received: '%UPSTREAM_WIRE_BYTES_RECEIVED%'
+                                upstream_bytes_sent: '%UPSTREAM_WIRE_BYTES_SENT%'
+                                upstream_tls_cipher: '%UPSTREAM_TLS_CIPHER%'
+                                upstream_tls_version: '%UPSTREAM_TLS_VERSION%'
+                matcher:
+                    on_no_match:
+                        action:
+                            name: route
+                            typed_config:
+                                '@type': type.googleapis.com/envoy.extensions.filters.udp.udp_proxy.v3.Route
+                                cluster: deny_cluster
+                stat_prefix: deny_cluster
+          name: udp_blocked_udp_example_com_9999
+        - address:
+            socket_address:
+                address: 0.0.0.0
+                port_value: 16001
                 protocol: UDP
           listener_filters:
             - name: envoy.filters.udp_listener.udp_proxy

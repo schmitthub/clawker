@@ -17,7 +17,7 @@ type RemoveOptions struct {
 	AdminClient func(context.Context) (adminv1.AdminServiceClient, error)
 	Domain      string
 	Proto       string
-	Port        int
+	Port        string
 	Path        string
 }
 
@@ -54,7 +54,7 @@ immediately via hot-reload — no container restart required.`,
 	cmd.ValidArgsFunction = domainCompletions(opts.AdminClient)
 
 	cmd.Flags().StringVar(&opts.Proto, "proto", "https", "L7 protocol (legacy 'tls' value translated to 'https')")
-	cmd.Flags().IntVar(&opts.Port, "port", 0, "Port number")
+	cmd.Flags().StringVar(&opts.Port, "port", "", "Destination port: a single port (443) or an inclusive range (9000-9100)")
 	cmd.Flags().StringVar(&opts.Path, "path", "", "Remove a single path rule by its stored path (exact string match); omit to remove the whole entry")
 
 	return cmd
@@ -119,7 +119,7 @@ func removeRun(ctx context.Context, opts *RemoveOptions) error {
 			return client.FirewallRemoveRule(rpcCtx, &adminv1.FirewallRemoveRuleRequest{
 				Dst:   opts.Domain,
 				Proto: opts.Proto,
-				Port:  uint32(opts.Port),
+				Port:  opts.Port,
 				Path:  opts.Path,
 			})
 		})
@@ -137,9 +137,9 @@ func removeRun(ctx context.Context, opts *RemoveOptions) error {
 		printStackRestartedNote(ios, resp.GetStackRestarted(), "rule removed")
 	case adminv1.RemoveRuleStatus_REMOVE_RULE_STATUS_NOT_FOUND:
 		if opts.Path != "" {
-			return fmt.Errorf("removing firewall rule: rule not found: %s:%s:%d path %q — run `clawker firewall list` to see current rules", opts.Domain, opts.Proto, opts.Port, opts.Path)
+			return fmt.Errorf("removing firewall rule: rule not found: %s:%s:%s path %q — run `clawker firewall list` to see current rules", opts.Domain, opts.Proto, opts.Port, opts.Path)
 		}
-		return fmt.Errorf("removing firewall rule: rule not found: %s:%s:%d — run `clawker firewall list` to see current rules", opts.Domain, opts.Proto, opts.Port)
+		return fmt.Errorf("removing firewall rule: rule not found: %s:%s:%s — run `clawker firewall list` to see current rules", opts.Domain, opts.Proto, opts.Port)
 	default:
 		return fmt.Errorf("removing firewall rule: server returned unknown status %v", resp.GetStatus())
 	}

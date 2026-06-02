@@ -142,14 +142,17 @@ type PathRule struct {
 type EgressRule struct {
 	Dst   string `yaml:"dst" label:"Destination" desc:"Domain or IP the container needs to reach (e.g. api.github.com, registry.npmjs.org)"`
 	Proto string `yaml:"proto,omitempty" label:"Protocol" desc:"L7 protocol: https (TLS-MITM, default), http (plaintext HCM), ws/wss (websocket over http/https), ssh, tcp, udp, or any opaque L7 name for TCP pass-through"`
-	Port  int    `yaml:"port,omitempty" label:"Port" desc:"Override the default port (443 for https, 80 for http, 22 for ssh)"`
-	// PortRange, when set (e.g. "9000-9100", inclusive), expands an opaque rule
-	// (tcp/ssh/udp) into one self-secure pinned listener+cluster PER port in the
-	// range — never ORIGINAL_DST, so a compromised agent can't redirect within
-	// the range. Meaningful only for opaque protos; ignored for http/https/ws/wss
-	// (those scope by Host/SNI, not by a fan of ports). When set, it supersedes a
-	// single Port for the expansion.
-	PortRange   string     `yaml:"port_range,omitempty" label:"Port Range" desc:"Inclusive port range (e.g. 9000-9100) for opaque tcp/ssh/udp rules; one pinned listener per port"`
+	// Port is the destination port the rule applies to. It is dynamic: a single
+	// port ("443") or an inclusive range ("9000-9100", lo-hi) delimited by a dash.
+	// Empty means the protocol default (443 https/wss, 80 http/ws, 22 ssh). A range
+	// is meaningful only for opaque protos (tcp/ssh/udp), where it expands into one
+	// self-secure pinned listener+cluster PER port in the range — never
+	// ORIGINAL_DST, so a compromised agent can't redirect within the range; it is
+	// ignored for http/https/ws/wss (those scope by Host/SNI, not a fan of ports).
+	// Values are validated (1..65535, lo<=hi) at ingestion via ParsePortSpec; an
+	// invalid spec drops the rule with an operator warning rather than silently
+	// widening access.
+	Port        string     `yaml:"port,omitempty" label:"Port" desc:"Destination port: a single port (443) or an inclusive range (9000-9100); empty = protocol default"`
 	Action      string     `yaml:"action,omitempty" label:"Action" desc:"Allow or deny traffic to this destination (default: allow)"`
 	PathRules   []PathRule `yaml:"path_rules,omitempty" label:"Path Rules" desc:"Fine-grained path filtering (only applies to https/http)"`
 	PathDefault string     `yaml:"path_default,omitempty" label:"Path Default" desc:"What to do with HTTP paths that don't match any path rule (allow or deny)"`

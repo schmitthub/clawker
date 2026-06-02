@@ -194,27 +194,22 @@ func tcpPinnedUpstreamLayer(ctx *genCtx) error {
 	return nil
 }
 
-// opaqueMatchedUpstreamLayer is the upstream block for an opaque TCP rule whose dst
-// is an IP literal or CIDR (ride the shared egress listener, gated by prefix_ranges
-// — see opaqueMatchedTransportLayer). It is the dst-type-aware peer of
-// tcpPinnedUpstreamLayer (which serves FQDN dedicated listeners): a bare IP pins to
-// a STATIC endpoint (the address IS the resolution); a CIDR range has no single host
-// to pin, so it forwards to the connection's ORIGINAL_DST. ORIGINAL_DST is safe here
-// — and ONLY here — because the chain's prefix_ranges already constrained the dst to
-// the user-authorized range (range-validated, not host-validated), so the client
-// never escapes the grant. Reads ctx.port (per-port for a port_range).
-func opaqueMatchedUpstreamLayer(ctx *genCtx) error {
+// opaqueCIDRUpstreamLayer is the upstream block for an opaque TCP rule whose dst
+// is a CIDR range (rides the shared egress listener, gated by prefix_ranges — see
+// prefixRangeTransportLayer). A range has no single host to pin, so it forwards to
+// the connection's ORIGINAL_DST. ORIGINAL_DST is safe here — and ONLY here —
+// because the chain's prefix_ranges already constrained the dst to the
+// user-authorized range (range-validated, not host-validated), so the client never
+// escapes the grant. A single-IP opaque-TCP dst does NOT reach here: it gets a
+// dedicated STATIC-pinned listener (tcpPinnedUpstreamLayer), the same shape as an
+// FQDN — the eBPF connect4 NAT destroys the original dst, so ORIGINAL_DST recovery
+// would yield the Envoy address, not the IP. Reads ctx.port (per-port for a
+// port_range).
+func opaqueCIDRUpstreamLayer(ctx *genCtx) error {
 	host := normalizeDomain(ctx.rule.Dst)
 	port := ctx.port
-	if isCIDR(host) {
-		name := tcpOriginalDstName(host, port)
-		ctx.clusters = append(ctx.clusters, originalDstCluster(name))
-		ctx.upstreamCluster = name
-		ctx.upstreamFollowsHost = false
-		return nil
-	}
-	name := tcpPinnedName(host, port)
-	ctx.clusters = append(ctx.clusters, pinnedCluster(name, host, port))
+	name := tcpOriginalDstName(host, port)
+	ctx.clusters = append(ctx.clusters, originalDstCluster(name))
 	ctx.upstreamCluster = name
 	ctx.upstreamFollowsHost = false
 	return nil
@@ -433,8 +428,8 @@ func upstreamHTTPProtocolOptions(http11Only bool) map[string]any {
 // httpPort resolves the effective destination port for an HTTP rule. Shared by
 // the upstream and app blocks (cluster pinning + vhost domain scoping).
 func httpPort(r config.EgressRule) int {
-	if r.Port != 0 {
-		return r.Port
+	if p, ok := r.SinglePort(); ok {
+		return p
 	}
 	return defaultHTTPPort
 }

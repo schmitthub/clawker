@@ -5,7 +5,6 @@ import (
 	"maps"
 	"reflect"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/schmitthub/clawker/internal/config"
@@ -85,9 +84,17 @@ type TCPMapping struct {
 // Consumed by the generator (listener layout) and rules_store.RoutesFromRules
 // (eBPF DNAT route_map) — the two must stay in lockstep.
 func TCPMappings(rules []config.EgressRule, ports EnvoyPorts) []TCPMapping {
-	// TCP/SSH skip IP AND CIDR — a known dst rides the shared egress listener.
+	// TCP/SSH skip only CIDR. An FQDN OR a single-IP dst each gets its own
+	// dedicated listener (FQDN → LOGICAL_DNS pin, IP → STATIC pin; see layersFor);
+	// only a CIDR range — which has no single host to pin — rides the shared egress
+	// listener via prefix_ranges + ORIGINAL_DST. This mirrors UDPMappings: the eBPF
+	// connect4 NAT rewrites the socket dst before connect, so SO_ORIGINAL_DST can't
+	// recover a single IP on the shared listener — a dedicated STATIC listener per IP
+	// is the only form that routes correctly. UDP-CIDR has no shared fallback and
+	// fails closed; TCP-CIDR rides prefix_ranges (a separate datapath gap tracked
+	// elsewhere).
 	return dedicatedMappings(rules, ports.TCPPortBase,
-		func(p string) bool { return p == "ssh" || p == "tcp" }, tcpDefaultPort, isIPOrCIDR)
+		func(p string) bool { return p == "ssh" || p == "tcp" }, tcpDefaultPort, isCIDR)
 }
 
 // UDPMappings computes raw-UDP port mappings from egress rules — the udp_proxy
@@ -104,27 +111,27 @@ func UDPMappings(rules []config.EgressRule, ports EnvoyPorts) []TCPMapping {
 }
 
 // dedicatedMappings is the shared, deterministic per-rule dedicated-listener port
-// assignment behind TCPMappings + UDPMappings: allow-only, hostname-only (IP/CIDR
-// dsts are skipped — opaque-to-CIDR is a separate pass), matching the proto class,
+// assignment behind TCPMappings + UDPMappings: allow-only, matching the proto class,
 // indexed from base in rule order. portFn resolves each rule's effective dst port.
-// dedicatedMappings is the shared dedicated-listener layout for opaque protos. Each
-// matching rule (after the port_range fan-out) consumes one base+idx slot → one
+// Each matching rule (after the port_range fan-out) consumes one base+idx slot → one
 // dedicated listener + one pinned cluster.
 //
-// skipDst gates which dst types are NOT served by a dedicated listener, and it
-// differs by transport: TCP/SSH skip BOTH IP and CIDR (a known dst rides the shared
-// egress listener as a prefix_ranges chain instead — see opaqueMatchedTransportLayer),
-// while UDP skips only CIDR (UDP has no filter chains, so a UDP-IP rule still needs
-// its own dedicated listener pinned STATIC; a UDP-CIDR range has no pinnable host and
-// no original-dst path, so it fails closed upstream).
+// skipDst gates which dst types are NOT served by a dedicated listener. Both TCP/SSH
+// and UDP skip ONLY CIDR: an FQDN or a single-IP dst gets its own dedicated listener
+// (FQDN → LOGICAL_DNS pin, IP → STATIC pin), while a CIDR range — which has no single
+// host to pin — is handled elsewhere (TCP/SSH → shared egress listener via
+// prefixRangeTransportLayer + ORIGINAL_DST; UDP → fails closed, no filter chains to
+// range-gate on).
 func dedicatedMappings(rules []config.EgressRule, base int, protoMatch func(string) bool, portFn func(config.EgressRule) int, skipDst func(string) bool) []TCPMapping {
 	var mappings []TCPMapping
 	idx := 0
 	for _, r := range rules {
-		action := strings.ToLower(r.Action)
-		if action != "allow" && action != "" {
-			continue
-		}
+		// Both allow AND deny opaque rules get a dedicated listener slot: an allow
+		// listener pins the upstream, a deny listener blackholes (deny cluster).
+		// Deny needs a slot so layersFor can build its deny chain and RoutesFromRules
+		// can redirect the denied port to it (active deny + logging) — resolveOpaque
+		// PortConflicts guarantees allow/deny ports are disjoint per proto, so the two
+		// never claim the same (host, port) slot.
 		if skipDst(r.Dst) {
 			continue
 		}
@@ -133,8 +140,8 @@ func dedicatedMappings(rules []config.EgressRule, base int, protoMatch func(stri
 		}
 		// A port_range expands into one mapping (→ one dedicated listener + one
 		// pinned cluster) per in-range port; each consumes its own base+idx slot.
-		// Self-secure mapping A (per-port pin), never ORIGINAL_DST — see the
-		// port-range design in ENVOY_TARGET.md.
+		// The per-port pin is the self-secure atom — never ORIGINAL_DST (which would
+		// forward to whatever dst arrives, delegating host enforcement to the datapath).
 		for _, port := range dedicatedPorts(r, portFn) {
 			mappings = append(mappings, TCPMapping{
 				Dst:       normalizeDomain(r.Dst),
@@ -152,7 +159,11 @@ func dedicatedMappings(rules []config.EgressRule, base int, protoMatch func(stri
 // portFn. The order is deterministic (ascending) so listener-port assignment is
 // stable across generations and stays in lockstep with the eBPF route_map.
 func dedicatedPorts(r config.EgressRule, portFn func(config.EgressRule) int) []int {
-	if lo, hi, ok := parsePortRange(r.PortRange); ok {
+	// A single port ("443") yields lo==hi → one port; a range ("9000-9100")
+	// fans into one port per value. Empty/invalid Port (ok==false) falls back to
+	// the protocol-specific default. Invalid specs are dropped upstream in
+	// NormalizeAndDedup, so ok==false here means "unset", not "malformed".
+	if lo, hi, ok := r.PortSpan(); ok {
 		ports := make([]int, 0, hi-lo+1)
 		for p := lo; p <= hi; p++ {
 			ports = append(ports, p)
@@ -165,25 +176,9 @@ func dedicatedPorts(r config.EgressRule, portFn func(config.EgressRule) int) []i
 // parsePortRange parses an inclusive "lo-hi" port range. Returns ok=false for an
 // empty or malformed value (caller falls back to the single Port) — a malformed
 // range pins FEWER ports, never more, so the fallback is fail-closed.
-func parsePortRange(s string) (lo, hi int, ok bool) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return 0, 0, false
-	}
-	left, right, found := strings.Cut(s, "-")
-	if !found {
-		return 0, 0, false
-	}
-	lo, err1 := strconv.Atoi(strings.TrimSpace(left))
-	hi, err2 := strconv.Atoi(strings.TrimSpace(right))
-	if err1 != nil || err2 != nil {
-		return 0, 0, false
-	}
-	if lo <= 0 || hi <= 0 || lo > hi || hi > 0xffff {
-		return 0, 0, false
-	}
-	return lo, hi, true
-}
+// parsePortRange was removed: the dynamic Port field is now parsed and
+// validated by config.ParsePortSpec (see internal/config/egress_port.go),
+// reached via EgressRule.PortSpan / EgressRule.SinglePort.
 
 // dedicatedPortKey is the lookup key the deriver uses to map a rule to its
 // pre-assigned dedicated-listener port (host + effective dst port).
@@ -193,8 +188,8 @@ func dedicatedPortKey(host string, port int) string {
 
 // tcpDefaultPort returns the effective destination port for a TCP/SSH rule.
 func tcpDefaultPort(r config.EgressRule) int {
-	if r.Port != 0 {
-		return r.Port
+	if p, ok := r.SinglePort(); ok {
+		return p
 	}
 	if strings.EqualFold(r.Proto, "ssh") {
 		return sshDefaultPort

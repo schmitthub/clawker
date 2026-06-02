@@ -33,7 +33,7 @@ clawker firewall remove <domain> [flags]
 ```
   -h, --help           help for remove
       --path string    Remove a single path rule by its stored path (exact string match); omit to remove the whole entry
-      --port int       Port number
+      --port string    Destination port: a single port (443) or an inclusive range (9000-9100)
       --proto string   L7 protocol (legacy 'tls' value translated to 'https') (default "https")
 ```
 

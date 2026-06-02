@@ -105,13 +105,44 @@ func udpProxyTerminalLayer(ctx *genCtx) error {
 	return ctx.cfg.SetListenerField(ctx.listener, "listener_filters", []any{udpProxy})
 }
 
+// udpDenyTerminalLayer is the opaque-deny peer of udpProxyTerminalLayer: the
+// udp_proxy routes to the shared deny cluster (STATIC, zero endpoints → datagrams
+// have no upstream → dropped). Explicit per-port UDP deny on a dedicated listener,
+// logged action=denied. Mirrors tcpDenyTerminalLayer; the deny cluster is added
+// to ctx.clusters (commit installs clusters even though UDP writes listener_filters
+// rather than network filters), AddCluster idempotent on the identical definition.
+func udpDenyTerminalLayer(ctx *genCtx) error {
+	host := normalizeDomain(ctx.rule.Dst)
+	ctx.clusters = append(ctx.clusters, buildDenyCluster())
+	udpProxy := map[string]any{
+		"name": "envoy.filters.udp_listener.udp_proxy",
+		"typed_config": map[string]any{
+			"@type":       "type.googleapis.com/envoy.extensions.filters.udp.udp_proxy.v3.UdpProxyConfig",
+			"stat_prefix": denyClusterName,
+			"matcher": map[string]any{
+				"on_no_match": map[string]any{
+					"action": map[string]any{
+						"name": "route",
+						"typed_config": map[string]any{
+							"@type":   "type.googleapis.com/envoy.extensions.filters.udp.udp_proxy.v3.Route",
+							"cluster": denyClusterName,
+						},
+					},
+				},
+			},
+			"access_log": buildTCPAccessLog("udp", "udp", host, "denied", ctx.als),
+		},
+	}
+	return ctx.cfg.SetListenerField(ctx.listener, "listener_filters", []any{udpProxy})
+}
+
 // udpDefaultPort resolves the effective destination port for a raw-UDP rule:
 // explicit Port wins; else the generic default (matching effectiveDstPort's udp
 // branch so the collision check and the listener layout agree). Raw UDP has no
 // well-known default the way ssh→22 does, so callers should set Port explicitly.
 func udpDefaultPort(r config.EgressRule) int {
-	if r.Port != 0 {
-		return r.Port
+	if p, ok := r.SinglePort(); ok {
+		return p
 	}
 	return defaultDestPort
 }

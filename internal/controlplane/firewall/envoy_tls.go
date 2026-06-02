@@ -171,8 +171,8 @@ func ipPrefixRange(dst string) map[string]any {
 // httpsPort resolves the effective destination port for a secure (https/wss/h3)
 // rule. Shared by the TLS (TCP) and QUIC (UDP) transports.
 func httpsPort(r config.EgressRule) int {
-	if r.Port != 0 {
-		return r.Port
+	if p, ok := r.SinglePort(); ok {
+		return p
 	}
 	return defaultDestPort
 }

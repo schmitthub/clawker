@@ -107,7 +107,9 @@ message Route {
 message EgressRule {
   string dst = 1;
   string proto = 2;     // "tls" | "tcp" | "http" | "ssh" | "ip" | "cidr"
-  uint32 port = 3;
+  // Dynamic port spec mirroring config.EgressRule.Port: a single port ("443")
+  // or an inclusive range ("9000-9100", lo-hi). Empty = protocol default.
+  string port = 3;
   string action = 4;    // "allow" | "deny"
   repeated PathRule path_rules = 5;
   string path_default = 6;
@@ -203,7 +205,8 @@ message FirewallAddRulesResult {
 message FirewallRemoveRuleRequest {
   string dst = 1;
   string proto = 2;     // "tls" | "tcp" | "http" | "ssh" | "ip" | "cidr"
-  uint32 port = 3;
+  // Dynamic port spec ("443" or "9000-9100"); empty = protocol default.
+  string port = 3;
   // Optional. When set, only the matching PathRule entry is removed from
   // the rule identified by (dst, proto, port); the rule itself remains.
   // When empty, the whole rule is removed.

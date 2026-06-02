@@ -57,7 +57,7 @@ This table is illustrative, not exhaustive — new tokens (gRPC, QUIC-raw, DNS, 
 
 ## Architecture: orthogonal building blocks, one forward pass
 
-The generator (`envoy_*.go` in the firewall package, spec in `ENVOY_TARGET.md`) is a **protocol-agnostic orchestrator + a deriver + self-contained layer blocks**:
+The generator (`envoy_*.go` in the firewall package) is a **protocol-agnostic orchestrator + a deriver + self-contained layer blocks**:
 
 - **Orchestrator** (`GenerateEnvoyConfig`): dumb generic loop. For each permutation it chains an ordered list of `layer` methods through one mutable `genCtx`, then commits into the `EnvoyConfig` accumulator (upsert by key, fail-closed). It never names a protocol.
 - **Deriver** (`layersFor(rule, genFacts)`): the ONLY proto-aware step. Maps a token (+ wildcard-ness, port, paths) → the ordered `[]layer` list(s). One token may yield multiple permutations (e.g. `https` → a TCP chain AND a QUIC chain).
@@ -90,6 +90,20 @@ Never reason "eBPF will catch it" / "CoreDNS NXDOMAINs it, so the vhost can fail
 - the upstream cluster re-validates identity (`auto_sni` / `auto_san_validation` against the system CA) even though SNI already selected the chain.
 
 See the `defense-in-depth-no-vacuum-excuse` and `transport-first-not-tls-centric` memories.
+
+## Deny: an EXPLICIT chain, NOT a fall-through (two different mechanisms)
+
+There are TWO deny mechanisms. They are not interchangeable, and the floor is not an escape hatch for skipping the first.
+
+**1. Explicit deny chain — a real `action: deny` on a SUPPORTED proto.** The operator said deny, so the generator builds a real chain, the same way it builds an allow chain — just terminating in the blackhole `deny_cluster` instead of a pinned upstream:
+- opaque tcp/ssh/udp → its OWN dedicated listener (`tcp_<host>_<port>` / `udp_<host>_<port>`) → `tcp_proxy`/`udp_proxy` → `deny_cluster` (STATIC, zero endpoints → reset) + access-log `action: denied`. A CIDR opaque deny rides the shared egress listener as a `prefix_ranges` + `destination_port` chain → `deny_cluster`.
+- A deny listener is a FIRST-CLASS listener: it gets an eBPF route to it, exactly like an allow listener. **A deny listener with an eBPF route is NOT an orphaned-listener violation — it is the intended shape.** The orphaned-listener invariant ("every `TCPMapping`/`UDPMapping` must have a matching `RoutesFromRules` route") applies to deny mappings too: that route is what makes the denied port get ACTIVELY reset and logged (`action: denied`) instead of silently dropped. Do not "fix" the route away.
+- **Deny ALWAYS wins on overlap.** `resolveOpaquePortConflicts` (rules_store.go) folds each `(dst, opaque-proto)` into allow + deny port spans and carves every denied port out of the allow spans (`subtractSpans`) — allow `45-50` + deny `47` → allow `{45-46, 48-50}` + explicit deny `47`; deny `45-50` + allow `47` → deny `45-50`, allow swallowed; both directions, range∩range too.
+- **A carve REQUIRES a range.** An all-single allow/deny clash on the SAME port (`tcp 4242 allow` + `tcp 4242 deny`) has no range to carve — it is a contradictory config, not a deny-wins carve. The resolver leaves both rules and `checkOpaquePortActionConflicts` (a generation pre-check) FAILS LOUD ("no range to carve"). `NormalizeAndDedup`'s dedup key folds in the action so both survive to be caught (RuleKey alone, port-only, would silently drop one).
+
+**2. Fall-through deny FLOOR — the safety net for UNRECOGNIZED tokens.** The shared egress listener's `default_filter_chain` (`installEgressDenyFloor` → `deny_cluster`, `stat_prefix: egress_deny`) and the SNI/Host/path deny defaults exist to catch flows that match NO built chain: a misspelled or unsupported proto token (`tfp`, `tpc`, …) that `layersFor` returns nil for (the deriver soft-skips it with a warning — never a hard failure, so one bad token can't deny everything), an unknown/absent SNI, a Host not on the whitelist, a denied path. We deny those because there is no stack to build — no other choice.
+
+**The floor is a backstop for the unknown case, never the enforcement path for intent.** Reasoning "the floor will catch it" / "deny by absence" to avoid building an explicit chain for a real `action: deny` rule is the lazy escape hatch that left denied ports silently allowed under overlapping allow ranges. Build the explicit chain. Equally: never delete or weaken the floor — it is the unrecognized-token safety net. See the `deny-floor-is-safety-net-only` memory.
 
 ## Verified Envoy facts (this codebase relies on these — re-verify before changing)
 
@@ -143,7 +157,7 @@ Every `direct_response: 403` (path-rule deny, `deny_all` vhost) uses the generic
 
 ## Access-log schema
 
-Records use OTel semantic conventions (`network.*`, `server.*`, `client.*`, `tls.*`) plus the clawker `action` verdict. Full field reference + sources live in code comments and `ENVOY_TARGET.md`. Non-obvious rules:
+Records use OTel semantic conventions (`network.*`, `server.*`, `client.*`, `tls.*`) plus the clawker `action` verdict. Full field reference + sources live in code comments (`buildTCPAccessLog`/`buildHTTPAccessLog`). Non-obvious rules:
 - `action` (`allowed`/`denied`) is the canonical verdict, stamped at generation (per-route `%METADATA(ROUTE:clawker:action)%` for HCMs; hardcoded for opaque `tcp_proxy`/`udp_proxy`). NEVER inferred from `response_code`/`response_flags` — a legitimate upstream 403 is still `action: allowed`.
 - `network.transport` must reflect the ACTUAL L4 (`tcp`/`udp`/`quic`) — do not hardcode `tcp` once UDP/QUIC transports exist.
 - Config vocabulary (`allow`/`deny`, present tense) and event vocabulary (`allowed`/`denied`, past tense) are independent by design — never propagate "consistency" between them.
@@ -156,7 +170,7 @@ Three hard requirements. A test touching Envoy generation that violates ANY of t
 2. **Compare the resulting Envoy CONFIG against a control.** Every case generates the COMPLETE config and compares it against a committed control — a golden file (preferred: byte-for-byte against `testdata/envoy/<case>.envoy.golden`) or explicit string matches on the rendered YAML. NEVER assert on intermediate Go structures or poke individual fields of the in-memory tree. Assert against the produced config artifact, nothing else.
 3. **One comprehensive golden — extend it, do NOT add one-off cases.** All cases live in ONE table-driven test (`cases := []struct{...}` + `t.Run`), and the primary golden is `comprehensive` (+ `comprehensive_mtls` — the identical `comprehensiveRules` const generated with `als.MTLS` on). It packs every co-existable feature into ONE config so cross-rule interactions are pinned in a single diff (same host/CIDR on two ports under two protos, FQDN-QUIC interleaved with IP/CIDR-no-QUIC, the shared egress listener carrying TLS SNI chains + plaintext http catch-all + prefix_ranges chains + `use_original_dst` + deny floor all at once — interactions a per-feature golden never exercises). **DEFAULT for new coverage: add rule line(s) to the `comprehensiveRules` const and re-bless, NOT a new table row / new `*.envoy.golden`.** Before you add ANY new case, you must be able to state which of the two narrow exceptions below it falls under; if neither, it belongs in `comprehensiveRules`.
 
-Why: a whole-config control captures EVERYTHING — every chain, vhost, cluster, filter, listener, access-log field — so any regression surfaces as a diff and is caught inherently. Field-level structural assertions are redundant, brittle, and let drift slip through; they are banned. `validateBootstrap` inside `GenerateEnvoyConfig` is the structural backstop; the control is the behavioral contract. Re-bless goldens with `GOLDEN_UPDATE=1`, then read the diff against `ENVOY_TARGET.md` before committing.
+Why: a whole-config control captures EVERYTHING — every chain, vhost, cluster, filter, listener, access-log field — so any regression surfaces as a diff and is caught inherently. Field-level structural assertions are redundant, brittle, and let drift slip through; they are banned. `validateBootstrap` inside `GenerateEnvoyConfig` is the structural backstop; the control is the behavioral contract. Re-bless goldens with `GOLDEN_UPDATE=1`, then read the diff carefully before committing — a re-bless that quietly drops a chain is a regression, not an update.
 
 **The ONLY two reasons to add a case instead of extending `comprehensiveRules`:**
 
@@ -167,6 +181,5 @@ Everything else — every new proto token, dst-type, path-rule shape, websocket/
 
 ## See also
 
-- `ENVOY_TARGET.md` (firewall package) — the concrete final-state config spec for every token, the source of truth the generator must reproduce.
 - `internal/controlplane/firewall/CLAUDE.md` — firewall domain (Stack, handler, rules store).
 - Memories: `transport-first-not-tls-centric`, `defense-in-depth-no-vacuum-excuse`, `dont-fabricate-patterns`.

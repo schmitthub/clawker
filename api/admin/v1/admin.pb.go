@@ -204,13 +204,15 @@ func (x *Route) GetEnvoyPort() uint32 {
 
 // EgressRule is one egress firewall rule (mirrors config.EgressRule).
 type EgressRule struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Dst           string                 `protobuf:"bytes,1,opt,name=dst,proto3" json:"dst,omitempty"`
-	Proto         string                 `protobuf:"bytes,2,opt,name=proto,proto3" json:"proto,omitempty"` // "tls" | "tcp" | "http" | "ssh" | "ip" | "cidr"
-	Port          uint32                 `protobuf:"varint,3,opt,name=port,proto3" json:"port,omitempty"`
-	Action        string                 `protobuf:"bytes,4,opt,name=action,proto3" json:"action,omitempty"` // "allow" | "deny"
-	PathRules     []*PathRule            `protobuf:"bytes,5,rep,name=path_rules,json=pathRules,proto3" json:"path_rules,omitempty"`
-	PathDefault   string                 `protobuf:"bytes,6,opt,name=path_default,json=pathDefault,proto3" json:"path_default,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Dst   string                 `protobuf:"bytes,1,opt,name=dst,proto3" json:"dst,omitempty"`
+	Proto string                 `protobuf:"bytes,2,opt,name=proto,proto3" json:"proto,omitempty"` // "tls" | "tcp" | "http" | "ssh" | "ip" | "cidr"
+	// Dynamic port spec mirroring config.EgressRule.Port: a single port ("443")
+	// or an inclusive range ("9000-9100", lo-hi). Empty = protocol default.
+	Port          string      `protobuf:"bytes,3,opt,name=port,proto3" json:"port,omitempty"`
+	Action        string      `protobuf:"bytes,4,opt,name=action,proto3" json:"action,omitempty"` // "allow" | "deny"
+	PathRules     []*PathRule `protobuf:"bytes,5,rep,name=path_rules,json=pathRules,proto3" json:"path_rules,omitempty"`
+	PathDefault   string      `protobuf:"bytes,6,opt,name=path_default,json=pathDefault,proto3" json:"path_default,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -259,11 +261,11 @@ func (x *EgressRule) GetProto() string {
 	return ""
 }
 
-func (x *EgressRule) GetPort() uint32 {
+func (x *EgressRule) GetPort() string {
 	if x != nil {
 		return x.Port
 	}
-	return 0
+	return ""
 }
 
 func (x *EgressRule) GetAction() string {
@@ -859,7 +861,8 @@ type FirewallRemoveRuleRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Dst   string                 `protobuf:"bytes,1,opt,name=dst,proto3" json:"dst,omitempty"`
 	Proto string                 `protobuf:"bytes,2,opt,name=proto,proto3" json:"proto,omitempty"` // "tls" | "tcp" | "http" | "ssh" | "ip" | "cidr"
-	Port  uint32                 `protobuf:"varint,3,opt,name=port,proto3" json:"port,omitempty"`
+	// Dynamic port spec ("443" or "9000-9100"); empty = protocol default.
+	Port string `protobuf:"bytes,3,opt,name=port,proto3" json:"port,omitempty"`
 	// Optional. When set, only the matching PathRule entry is removed from
 	// the rule identified by (dst, proto, port); the rule itself remains.
 	// When empty, the whole rule is removed.
@@ -912,11 +915,11 @@ func (x *FirewallRemoveRuleRequest) GetProto() string {
 	return ""
 }
 
-func (x *FirewallRemoveRuleRequest) GetPort() uint32 {
+func (x *FirewallRemoveRuleRequest) GetPort() string {
 	if x != nil {
 		return x.Port
 	}
-	return 0
+	return ""
 }
 
 func (x *FirewallRemoveRuleRequest) GetPath() string {
@@ -1736,7 +1739,7 @@ const file_admin_v1_admin_proto_rawDesc = "" +
 	"EgressRule\x12\x10\n" +
 	"\x03dst\x18\x01 \x01(\tR\x03dst\x12\x14\n" +
 	"\x05proto\x18\x02 \x01(\tR\x05proto\x12\x12\n" +
-	"\x04port\x18\x03 \x01(\rR\x04port\x12\x16\n" +
+	"\x04port\x18\x03 \x01(\tR\x04port\x12\x16\n" +
 	"\x06action\x18\x04 \x01(\tR\x06action\x129\n" +
 	"\n" +
 	"path_rules\x18\x05 \x03(\v2\x1a.clawker.admin.v1.PathRuleR\tpathRules\x12!\n" +
@@ -1771,7 +1774,7 @@ const file_admin_v1_admin_proto_rawDesc = "" +
 	"\x19FirewallRemoveRuleRequest\x12\x10\n" +
 	"\x03dst\x18\x01 \x01(\tR\x03dst\x12\x14\n" +
 	"\x05proto\x18\x02 \x01(\tR\x05proto\x12\x12\n" +
-	"\x04port\x18\x03 \x01(\rR\x04port\x12\x12\n" +
+	"\x04port\x18\x03 \x01(\tR\x04port\x12\x12\n" +
 	"\x04path\x18\x04 \x01(\tR\x04path\"\x7f\n" +
 	"\x18FirewallRemoveRuleResult\x12'\n" +
 	"\x0fstack_restarted\x18\x01 \x01(\bR\x0estackRestarted\x12:\n" +

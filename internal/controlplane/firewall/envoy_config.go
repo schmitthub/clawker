@@ -28,6 +28,11 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts, als ALSCon
 	if err := checkProtoCollisions(rules); err != nil {
 		return nil, nil, err
 	}
+	// Fail closed on an all-single allow/deny clash on one (dst, opaque proto)
+	// port — a contradictory config with no range to carve (see the function doc).
+	if err := checkOpaquePortActionConflicts(rules); err != nil {
+		return nil, nil, err
+	}
 	// Fail closed when the dedicated-listener layout (opaque tcp/ssh/udp +
 	// port_range fan-out) would overflow its port bands — see the function doc.
 	if err := validateDedicatedLayout(rules, ports); err != nil {
@@ -58,7 +63,7 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts, als ALSCon
 		}
 	}
 
-	if err := installEgressDenyFloor(cfg); err != nil {
+	if err := installEgressDenyFloor(cfg, als); err != nil {
 		return nil, warnings, err
 	}
 	if err := installOtelALSCluster(cfg, als); err != nil {
@@ -111,7 +116,11 @@ func derive(rules []config.EgressRule, ports EnvoyPorts) ([]permutation, []strin
 	// for, so repeated ws/wss rules on one origin don't emit duplicate stacks.
 	promoted := map[string]bool{}
 	for _, r := range rules {
-		if a := strings.ToLower(r.Action); a != "allow" && a != "" {
+		// First-class deny is opaque-only: tcp/ssh/udp deny rules build a dedicated
+		// blackhole (deny-cluster) listener so a port carved out of an allow range
+		// is ACTIVELY refused and logged, not merely absent. http/https/ws/wss deny
+		// generates no chain — it is enforced by absence + the egress deny floor.
+		if isDenyAction(r.Action) && !isOpaqueProto(r.Proto) {
 			continue
 		}
 		// ws/wss is an enrichment of the origin's http/https stack, never its own
@@ -151,7 +160,7 @@ func derive(rules []config.EgressRule, ports EnvoyPorts) ([]permutation, []strin
 				// wildcard rule for the same apex+port stay distinct permutations
 				// — same rationale as RuleKey. normalizeDomain would collapse
 				// "mintlify.com" and ".mintlify.com" into one, dropping a chain.
-				key: fmt.Sprintf("%s:%d:%s#%d", r.Dst, r.Port, strings.ToLower(r.Proto), i),
+				key: fmt.Sprintf("%s:%s:%s:%s#%d", r.Dst, r.Port, strings.ToLower(r.Action), strings.ToLower(r.Proto), i),
 			})
 		}
 	}
@@ -310,26 +319,43 @@ func layersFor(r config.EgressRule, gen genFacts) [][]layer {
 		// block (no L7 to inspect — the pin is the gate). ssh and raw tcp differ
 		// only in the proto token recorded as network.protocol.name.
 		//
-		// dst type splits the transport: an IP/CIDR dst is KNOWN at gen time, so it
-		// rides the SHARED egress listener as a prefix_ranges raw_buffer chain (IP →
-		// STATIC pin; CIDR → ORIGINAL_DST scoped by the chain's prefix_ranges) — no
-		// dedicated listener. An FQDN dst has no wire discriminator (no SNI, the
-		// DNS-resolved IP is unknown/unstable), so it gets a dedicated listener whose
-		// port encodes its identity. A port_range fans either form into one
-		// permutation per in-range port.
-		if isIPOrCIDR(r.Dst) {
+		// dst type splits the transport. A CIDR range is the ONLY form that rides the
+		// SHARED egress listener: a prefix_ranges raw_buffer chain → ORIGINAL_DST
+		// scoped by that range (a range has no single host to pin). An FQDN OR a
+		// single-IP dst each gets its OWN dedicated listener whose port encodes its
+		// identity (FQDN → LOGICAL_DNS pin, IP → STATIC pin; both via
+		// tcpPinnedUpstreamLayer). A single IP must be dedicated, not shared: the eBPF
+		// connect4 NAT rewrites the socket dst before connect, so the shared listener's
+		// use_original_dst recovers the Envoy address, not the IP — prefix_ranges would
+		// never match. A port_range fans either form into one permutation per in-range
+		// port.
+		// A deny rule builds the SAME dedicated/prefix_ranges transport as its allow
+		// peer but terminates in a blackhole (deny cluster) instead of a pinned
+		// upstream — an explicit per-port deny chain. resolveOpaquePortConflicts has
+		// already carved denied ports out of any overlapping allow span, so allow and
+		// deny never claim the same (host, port) listener.
+		deny := isDenyAction(r.Action)
+		l7 := strings.ToLower(r.Proto)
+		if isCIDR(r.Dst) {
 			var lists [][]layer
 			for _, port := range dedicatedPorts(r, tcpDefaultPort) {
+				if deny {
+					lists = append(lists, []layer{
+						prefixRangeTransportLayer(port),
+						tcpDenyTerminalLayer(l7),
+					})
+					continue
+				}
 				lists = append(lists, []layer{
 					prefixRangeTransportLayer(port),
-					opaqueMatchedUpstreamLayer,
-					tcpProxyTerminalLayer(strings.ToLower(r.Proto)),
+					opaqueCIDRUpstreamLayer,
+					tcpProxyTerminalLayer(l7),
 				})
 			}
 			return lists
 		}
-		// FQDN opaque: each dedicated-listener port is pre-assigned in genFacts
-		// (lockstep with the eBPF route_map).
+		// FQDN or single-IP opaque: each dedicated-listener port is pre-assigned in
+		// genFacts (lockstep with the eBPF route_map).
 		host := normalizeDomain(r.Dst)
 		var lists [][]layer
 		for _, port := range dedicatedPorts(r, tcpDefaultPort) {
@@ -337,10 +363,17 @@ func layersFor(r config.EgressRule, gen genFacts) [][]layer {
 			if !ok {
 				continue
 			}
+			if deny {
+				lists = append(lists, []layer{
+					tcpDedicatedListenerLayer(envoyPort, port),
+					tcpDenyTerminalLayer(l7),
+				})
+				continue
+			}
 			lists = append(lists, []layer{
 				tcpDedicatedListenerLayer(envoyPort, port),
 				tcpPinnedUpstreamLayer,
-				tcpProxyTerminalLayer(strings.ToLower(r.Proto)),
+				tcpProxyTerminalLayer(l7),
 			})
 		}
 		return lists
@@ -349,11 +382,19 @@ func layersFor(r config.EgressRule, gen genFacts) [][]layer {
 		// pinned cluster, NO app block. Same self-secure shape as opaque TCP over a
 		// UDP socket, with the same port_range fan-out. Port pre-assigned in
 		// genFacts; missing = IP/CIDR dst, skip.
+		deny := isDenyAction(r.Action)
 		host := normalizeDomain(r.Dst)
 		var lists [][]layer
 		for _, port := range dedicatedPorts(r, udpDefaultPort) {
 			envoyPort, ok := gen.udpListenerPorts[dedicatedPortKey(host, port)]
 			if !ok {
+				continue
+			}
+			if deny {
+				lists = append(lists, []layer{
+					udpDedicatedListenerLayer(envoyPort, port),
+					udpDenyTerminalLayer,
+				})
 				continue
 			}
 			lists = append(lists, []layer{
@@ -372,26 +413,39 @@ func layersFor(r config.EgressRule, gen genFacts) [][]layer {
 // the default_filter_chain a connection lands on when NO transport block's filter
 // chain claimed it. Its meaning is "no block could secure this to any degree — no
 // defense-in-depth applies" — so it is the orchestrator's listener-wide last
-// resort, NOT a TCP or TLS concern. In practice it is basically unreachable: the
-// TCP (raw_buffer) and UDP transport floors claim every supported proto, and an
-// unsupported/misspelled token is skipped at derive time (no chain, never
-// redirected). It resets via a tcp_proxy to the zero-endpoint deny_cluster.
+// resort, NOT a TCP or TLS concern. It IS reached in practice: a raw-TCP flow to a
+// disallowed host/port on a resolvable/seeded IP is redirected here by eBPF's
+// catch-all (decide_connect, common.h) and matches no allow chain, and a TLS flow
+// with a disallowed SNI falls here too — both reset via tcp_proxy → zero-endpoint
+// deny_cluster, now with an action=denied access log (see denyDefaultFilterChain).
 // No-op when no rule produced the shared egress listener (e.g. all rules skipped).
-func installEgressDenyFloor(cfg *EnvoyConfig) error {
+func installEgressDenyFloor(cfg *EnvoyConfig, als ALSConfig) error {
 	if !cfg.HasListener(egressListenerName) {
 		return nil
 	}
 	if err := cfg.AddCluster(buildDenyCluster()); err != nil {
 		return err
 	}
-	return cfg.SetUnmatchedDeny(egressListenerName, denyDefaultFilterChain())
+	return cfg.SetUnmatchedDeny(egressListenerName, denyDefaultFilterChain(als))
 }
 
-// denyDefaultFilterChain is the global catch-all chain: tcp_proxy → the
-// zero-endpoint deny_cluster, which resets the connection. (Absent any default
-// chain Envoy also closes an unmatched connection; the explicit deny chain makes
-// the reject deterministic and loggable.)
-func denyDefaultFilterChain() map[string]any {
+// denyDefaultFilterChain is the egress listener's catch-all: the single
+// default_filter_chain that catches every flow matching no allow chain —
+// unmatched SNI (a TLS flow to a disallowed domain) AND unmatched raw_buffer
+// (a raw-TCP flow to a disallowed host/port that eBPF redirected here for
+// inspection). It blackholes to the zero-endpoint deny_cluster (reset) AND now
+// emits an access-log record with action=denied so the catch-all deny is
+// OBSERVABLE in the same stream as allows — without it, the most common deny
+// (anything not explicitly allowed) was silently reset and recorded nowhere.
+//
+// server.address is %REQUESTED_SERVER_NAME%: for a disallowed-SNI TLS flow this
+// captures the rejected domain; for a raw-TCP flow it is empty, because the eBPF
+// connect-rewrite replaced the socket dst with the Envoy listener before connect
+// (so SO_ORIGINAL_DST / DOWNSTREAM_LOCAL_ADDRESS yield Envoy's address, not the
+// real dst). The true dst for a raw-TCP deny lives in the correlated netlogger
+// eBPF event (same client + timestamp; eBPF logs the pre-rewrite dst). client.address
+// still attributes the deny to the offending agent.
+func denyDefaultFilterChain(als ALSConfig) map[string]any {
 	return map[string]any{
 		"filters": []any{
 			map[string]any{
@@ -400,6 +454,7 @@ func denyDefaultFilterChain() map[string]any {
 					"@type":       "type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy",
 					"stat_prefix": "egress_deny",
 					"cluster":     denyClusterName,
+					"access_log":  buildTCPAccessLog("tcp", "", "%REQUESTED_SERVER_NAME%", "denied", als),
 				},
 			},
 		},
@@ -586,48 +641,132 @@ func buildHealthListener(port int) map[string]any {
 // ports or pick one proto. (Same host:port + same proto across exact and wildcard
 // rules — e.g. apex + subtree — is fine: one proto, one stack.)
 func checkProtoCollisions(rules []config.EgressRule) error {
-	type hostPort struct {
-		host string
-		port int
-	}
-	protosByKey := map[hostPort]map[string]struct{}{}
+	// A host:port maps to exactly one network stack — the proto token determines
+	// the whole stack, and the eBPF route_map keys (host, port) with no proto, so
+	// two protos on one host:port would silently race (last write wins). With port
+	// ranges this generalizes: no two protos may claim OVERLAPPING port spans on one
+	// host. Both allow AND opaque-deny rules generate a stack (a deny builds a
+	// dedicated blackhole listener in the same tcp_/udp_ family), so both are
+	// counted; non-opaque deny (http/https) builds nothing and is skipped. ws/wss
+	// canonicalize to their http/https base so they compose rather than collide.
+	byHost := map[string]map[string][][2]int{} // host -> canonicalProto -> port spans
 	for _, r := range rules {
-		if a := strings.ToLower(r.Action); a != "allow" && a != "" {
-			continue // deny rules don't generate a competing stack
+		if isDenyAction(r.Action) && !isOpaqueProto(r.Proto) {
+			continue // non-opaque deny generates no competing stack
 		}
-		key := hostPort{normalizeDomain(r.Dst), effectiveDstPort(r)}
-		if protosByKey[key] == nil {
-			protosByKey[key] = map[string]struct{}{}
+		host := normalizeDomain(r.Dst)
+		lo, hi, ok := r.PortSpan()
+		if !ok {
+			p := effectiveDstPort(r)
+			lo, hi = p, p
 		}
-		protosByKey[key][canonicalProto(r.Proto)] = struct{}{}
+		cp := canonicalProto(r.Proto)
+		if byHost[host] == nil {
+			byHost[host] = map[string][][2]int{}
+		}
+		byHost[host][cp] = append(byHost[host][cp], [2]int{lo, hi})
 	}
 
-	// Deterministic: report the lowest-sorted colliding host:port.
-	keys := make([]hostPort, 0, len(protosByKey))
-	for k, protos := range protosByKey {
-		if len(protos) > 1 {
-			keys = append(keys, k)
+	// Deterministic: scan hosts sorted; within a host check every pair of distinct
+	// canonical protos for an overlapping span; report the lowest offending port.
+	hosts := make([]string, 0, len(byHost))
+	for h := range byHost {
+		hosts = append(hosts, h)
+	}
+	sort.Strings(hosts)
+	for _, h := range hosts {
+		protoSpans := byHost[h]
+		protos := make([]string, 0, len(protoSpans))
+		for p := range protoSpans {
+			protos = append(protos, p)
+		}
+		sort.Strings(protos)
+		for i := 0; i < len(protos); i++ {
+			for j := i + 1; j < len(protos); j++ {
+				if port, ok := lowestSpanOverlap(protoSpans[protos[i]], protoSpans[protos[j]]); ok {
+					return fmt.Errorf(
+						"envoy config: %s:%d is claimed by multiple protos %v — a host:port maps to exactly one network stack; split onto distinct ports or pick one proto",
+						h, port, []string{protos[i], protos[j]},
+					)
+				}
+			}
 		}
 	}
-	if len(keys) == 0 {
-		return nil
+	return nil
+}
+
+// lowestSpanOverlap returns the lowest port present in both span sets, or
+// ok=false if they are disjoint. Spans are inclusive [lo, hi].
+func lowestSpanOverlap(a, b [][2]int) (int, bool) {
+	best := -1
+	for _, sa := range a {
+		for _, sb := range b {
+			lo := sa[0]
+			if sb[0] > lo {
+				lo = sb[0]
+			}
+			hi := sa[1]
+			if sb[1] < hi {
+				hi = sb[1]
+			}
+			if lo <= hi && (best == -1 || lo < best) {
+				best = lo
+			}
+		}
+	}
+	if best == -1 {
+		return 0, false
+	}
+	return best, true
+}
+
+// checkOpaquePortActionConflicts fails closed when one (dst, opaque proto) has
+// BOTH an allow and a deny rule claiming the SAME port with no range to carve.
+// resolveOpaquePortConflicts already carves every range-involved deny out of the
+// overlapping allow span (deny wins) and merges same-action overlaps, so the ONLY
+// residual allow/deny overlap within one (dst, proto) is an all-single clash
+// (allow 4242 + deny 4242) — a contradictory config, not a carve. Reject it loud
+// rather than let it collapse silently or trip the order-dependent addChain backstop.
+func checkOpaquePortActionConflicts(rules []config.EgressRule) error {
+	type key struct{ host, proto string }
+	allow := map[key][][2]int{}
+	deny := map[key][][2]int{}
+	for _, r := range rules {
+		if !isOpaqueProto(r.Proto) {
+			continue
+		}
+		lo, hi, ok := r.PortSpan()
+		if !ok {
+			continue
+		}
+		k := key{normalizeDomain(r.Dst), strings.ToLower(r.Proto)}
+		if isDenyAction(r.Action) {
+			deny[k] = append(deny[k], [2]int{lo, hi})
+		} else {
+			allow[k] = append(allow[k], [2]int{lo, hi})
+		}
+	}
+	keys := make([]key, 0, len(deny))
+	for k := range deny {
+		if _, ok := allow[k]; ok {
+			keys = append(keys, k)
+		}
 	}
 	sort.Slice(keys, func(i, j int) bool {
 		if keys[i].host != keys[j].host {
 			return keys[i].host < keys[j].host
 		}
-		return keys[i].port < keys[j].port
+		return keys[i].proto < keys[j].proto
 	})
-	k := keys[0]
-	protos := make([]string, 0, len(protosByKey[k]))
-	for p := range protosByKey[k] {
-		protos = append(protos, p)
+	for _, k := range keys {
+		if port, ok := lowestSpanOverlap(allow[k], deny[k]); ok {
+			return fmt.Errorf(
+				"envoy config: %s %s:%d has conflicting allow and deny rules for the same port — a single port has no range to carve; remove one or express the exception as a port range",
+				k.proto, k.host, port,
+			)
+		}
 	}
-	sort.Strings(protos)
-	return fmt.Errorf(
-		"envoy config: %s:%d is claimed by multiple protos %v — a host:port maps to exactly one network stack; split onto distinct ports or pick one proto",
-		k.host, k.port, protos,
-	)
+	return nil
 }
 
 // validateDedicatedLayout fails closed when the dedicated per-rule listeners
@@ -693,8 +832,8 @@ func validateProtoDstSupport(rules []config.EgressRule) error {
 // (mirrors NormalizeRule so the collision check is correct even on un-normalized
 // input): explicit Port wins; else http/ws→80, ssh→22, everything else→443.
 func effectiveDstPort(r config.EgressRule) int {
-	if r.Port != 0 {
-		return r.Port
+	if p, ok := r.SinglePort(); ok {
+		return p
 	}
 	switch strings.ToLower(r.Proto) {
 	case "http", "ws":

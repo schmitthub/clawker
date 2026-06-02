@@ -75,7 +75,7 @@ build:
       - go install golang.org/x/vuln/cmd/govulncheck@latest
       - go install golang.org/x/tools/cmd/goimports@latest
       - go install honnef.co/go/tools/cmd/staticcheck@latest
-      - go install golang.org/dl/go1.25.10@latest && go1.25.10 download
+      - go install golang.org/dl/go1.25.11@latest && go1.25.11 download
       - go install github.com/matryer/moq@latest
       - go install github.com/goreleaser/goreleaser/v2@latest
       - go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
@@ -218,7 +218,7 @@ security:
         path_default: allow
         path_rules:
           - action: allow
-            path: /repos/schmitthub/clawker/
+            path: /repos/schmitthub/clawker
           - action: allow
             path: /repos/envoyproxy/
           - action: allow
@@ -265,6 +265,12 @@ security:
             path: /cilium/cilium/
         port: 443
         proto: https
+      # tcpbin.com: TLS echo (:4243) as OPAQUE tcp — Envoy proxies the bytes (no MITM),
+      # the agent runs TLS end-to-end through the dedicated STATIC listener.
+      - action: allow
+        dst: 45.79.112.203
+        proto: tcp
+        port: "4242-4243" # dynamic port: inclusive range → one dedicated STATIC listener per port
   git_credentials:
     copy_git_config: true
     forward_gpg: true

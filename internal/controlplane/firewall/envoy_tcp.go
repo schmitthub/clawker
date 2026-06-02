@@ -98,3 +98,29 @@ func tcpProxyTerminalLayer(l7Proto string) layer {
 		return nil
 	}
 }
+
+// tcpDenyTerminalLayer is the opaque-deny peer of tcpProxyTerminalLayer: instead
+// of a pinned upstream it blackholes the connection to the shared deny cluster
+// (STATIC, zero endpoints → tcp_proxy finds no upstream → reset). This is an
+// EXPLICIT per-port deny chain on a dedicated listener, NOT the egress floor's
+// fall-through — so a port carved out of an allow range by an overlapping deny
+// is actively refused (and logged action=denied for security observability),
+// not merely absent. The deny cluster is added here because a deny chain can ride
+// a dedicated listener with no shared egress floor to install it; AddCluster is
+// idempotent on the identical definition.
+func tcpDenyTerminalLayer(l7Proto string) layer {
+	return func(ctx *genCtx) error {
+		host := normalizeDomain(ctx.rule.Dst)
+		ctx.clusters = append(ctx.clusters, buildDenyCluster())
+		ctx.filters = append(ctx.filters, map[string]any{
+			"name": "envoy.filters.network.tcp_proxy",
+			"typed_config": map[string]any{
+				"@type":       "type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy",
+				"stat_prefix": denyClusterName,
+				"cluster":     denyClusterName,
+				"access_log":  buildTCPAccessLog("tcp", l7Proto, host, "denied", ctx.als),
+			},
+		})
+		return nil
+	}
+}

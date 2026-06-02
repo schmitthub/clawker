@@ -90,7 +90,7 @@ func TestRemoveCompletion_DeduplicatesDomains(t *testing.T) {
 	f := newTestFactory(t)
 	f.AdminClient = mockAdminFunc([]*adminv1.EgressRule{
 		{Dst: "example.com", Proto: "https"},
-		{Dst: "example.com", Proto: "ssh", Port: 22},
+		{Dst: "example.com", Proto: "ssh", Port: "22"},
 		{Dst: "other.com", Proto: "https"},
 	}, nil)
 
@@ -140,7 +140,7 @@ func TestRemoveRun_Success(t *testing.T) {
 	require.NotNil(t, got, "FirewallRemoveRule must be called")
 	assert.Equal(t, "example.com", got.GetDst())
 	assert.Equal(t, "tls", got.GetProto())
-	assert.Equal(t, uint32(443), got.GetPort())
+	assert.Equal(t, "443", got.GetPort())
 }
 
 // TestRemoveRun_NotFound is the whole reason this RPC shrunk: a missing

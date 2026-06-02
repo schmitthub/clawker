@@ -39,8 +39,8 @@ import (
 // Plus the fail-closed cases (no config produced), which cannot coexist with a
 // valid config by definition. Everything else folds into the comprehensive pair.
 //
-// Re-bless goldens with GOLDEN_UPDATE=1, then read the diff against
-// ENVOY_TARGET.md before committing.
+// Re-bless goldens with GOLDEN_UPDATE=1, then read the diff carefully
+// before committing — a re-bless that quietly drops a chain is a regression.
 
 func testPorts() EnvoyPorts {
 	return EnvoyPorts{EgressPort: 10000, TCPPortBase: 15000, UDPPortBase: 16000, HealthPort: 10001}
@@ -53,13 +53,16 @@ func testPorts() EnvoyPorts {
 //
 // It maxes out the SHARED egress listener — TLS SNI chains (per-SNI cert + deny
 // default), the plaintext http catch-all (+ http_dfp), prefix_ranges raw_buffer
-// chains for opaque IP/CIDR AND L7/TLS-to-CIDR, all under one use_original_dst —
+// chains for opaque CIDR AND L7/TLS-to-CIDR, all under one use_original_dst
+// (single-IP opaque tcp/ssh no longer rides this — it gets its OWN dedicated
+// STATIC listener, since eBPF connect4 NAT defeats prefix_ranges recovery) —
 // alongside the dedicated tcp/ssh/udp listeners, the port_range fan-out, the
 // QUIC sibling listener, and the deny floor. It deliberately interleaves: FQDN
 // https (gets a QUIC sibling) next to IP and CIDR https (TCP-only, no QUIC — the
 // carve-out pinned in one place); the same CIDR on two ports under two protos
 // (10.0.0.0/24 http:8080 + tcp:5432); the same IP on two ports under two protos
-// (10.0.0.5 https:8443 + tcp:8080); plaintext http to a bare IP literal
+// (10.0.0.5 https:8443 on the shared TLS prefix_ranges chain + tcp:8080 on its
+// own dedicated STATIC listener); plaintext http to a bare IP literal
 // (192.168.1.1/.2 → STATIC pin + IP-keyed Host vhost, multi-port + path rules);
 // apex dedup (mintlify.com + .mintlify.com);
 // ws/wss absorbed into a base rule AND standalone ws/wss promotion AND wildcard
@@ -186,8 +189,46 @@ rules:
     port: 22
   - dst: cluster.example.com
     proto: tcp
-    port_range: "9000-9002"
-  # --- opaque tcp/ssh to IP/CIDR: shared egress prefix_ranges (STATIC vs ORIGINAL_DST) ---
+    port: "9000-9002"
+  # Overlap-coalesce guard: a single port inside the range above for the same
+  # dst:proto. Each opaque rule fans into one dedicated listener PER in-range
+  # port, so without rule-layer coalescing this would emit tcp_cluster.example.com_9001
+  # twice and fail generation. NormalizeAndDedup must merge it back into 9000-9002
+  # BEFORE generation — so this config still produces exactly the 9000-9002 fan-out
+  # (the golden is unchanged by this line; its job is to prove no duplicate listener).
+  - dst: cluster.example.com
+    proto: tcp
+    port: "9001"
+  # --- first-class opaque deny: explicit per-port deny chain → deny_cluster blackhole ---
+  # allow range with a deny single carved out of the MIDDLE: the deny port gets its
+  # own dedicated deny listener (tcp_carve.example.com_7001 → deny_cluster, access
+  # log action=denied), and the allow range splits around it into 7000 + 7002.
+  - dst: carve.example.com
+    proto: tcp
+    port: "7000-7002"
+  - dst: carve.example.com
+    proto: tcp
+    port: "7001"
+    action: deny
+  # standalone opaque ssh deny (no overlapping allow) — still an EXPLICIT deny chain
+  # on its own dedicated listener, never a fall-through to the egress floor.
+  - dst: blocked.example.com
+    proto: ssh
+    port: 2222
+    action: deny
+  # standalone raw-udp deny → dedicated udp_proxy listener routing to deny_cluster.
+  - dst: blocked-udp.example.com
+    proto: udp
+    port: 9999
+    action: deny
+  # opaque tcp deny to a CIDR → explicit prefix_ranges deny chain on the shared
+  # egress listener (raw_buffer + prefix_ranges + destination_port → deny_cluster),
+  # distinct from the unmatched deny floor.
+  - dst: 172.31.0.0/24
+    proto: tcp
+    port: 9000
+    action: deny
+  # --- opaque tcp/ssh: single-IP → dedicated STATIC listener; CIDR → shared egress prefix_ranges (ORIGINAL_DST) ---
   - dst: 10.0.0.5
     proto: tcp
     port: 8080
@@ -197,6 +238,11 @@ rules:
   - dst: 203.0.113.7
     proto: ssh
     port: 22
+  # single-IP opaque tcp + port_range: fans into one dedicated STATIC listener per
+  # in-range port (mirrors the FQDN port_range above), each with a seeded eBPF route.
+  - dst: 198.51.100.9
+    proto: tcp
+    port: "9100-9101"
   # --- raw udp: dedicated FQDN listener + dedicated single-IP listener ---
   - dst: relay.example.com
     proto: udp
@@ -291,7 +337,7 @@ rules:
 rules:
   - dst: cluster.example.com
     proto: tcp
-    port_range: "9000-10001"
+    port: "9000-10001"
   - dst: relay.example.com
     proto: udp
     port: 3478
@@ -308,7 +354,7 @@ rules:
 rules:
   - dst: huge.example.com
     proto: tcp
-    port_range: "1-60000"
+    port: "1-60000"
 `,
 			wantErrContains: "overflow past port 65535",
 		},
@@ -328,6 +374,43 @@ rules:
     port: 8443
 `,
 			wantErrContains: "claimed by multiple protos",
+		},
+		{
+			// Span-aware collision: a tcp port_range that OVERLAPS an ssh single port
+			// on the same host. tcp and ssh share the tcp_<dst>_<port> listener family
+			// (and the eBPF route_map keys host:port with no proto), so 4500 ∈
+			// [4242,5000] is a genuine collision — must fail closed, not slip past a
+			// SinglePort() collapse to the proto default. No golden.
+			name: "proto_collision_range_overlaps_single",
+			rules: `
+rules:
+  - dst: collide.example.com
+    proto: tcp
+    port: "4242-5000"
+  - dst: collide.example.com
+    proto: ssh
+    port: 4500
+`,
+			wantErrContains: "claimed by multiple protos",
+		},
+		{
+			// An all-single allow/deny clash on one opaque (dst, proto) port: no range
+			// to carve, so it is a contradictory config — fail closed rather than
+			// silently collapse to deny or trip the order-dependent addChain backstop.
+			// (A range-involved clash like allow 4242-4243 + deny 4242 is NOT here — it
+			// carves cleanly, deny wins, and generation succeeds.) No golden.
+			name: "opaque_single_port_allow_deny_conflict",
+			rules: `
+rules:
+  - dst: collide.example.com
+    proto: tcp
+    port: 4242
+  - dst: collide.example.com
+    proto: tcp
+    port: 4242
+    action: deny
+`,
+			wantErrContains: "no range to carve",
 		},
 	}
 

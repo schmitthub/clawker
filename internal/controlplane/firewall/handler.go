@@ -697,7 +697,7 @@ func (h *Handler) FirewallRemoveRule(ctx context.Context, req *adminv1.FirewallR
 	rule := config.EgressRule{
 		Dst:   req.GetDst(),
 		Proto: req.GetProto(),
-		Port:  int(req.GetPort()),
+		Port:  req.GetPort(),
 	}
 	pathMode := req.GetPath() != ""
 	var matched bool
@@ -1306,7 +1306,7 @@ func ProtoRulesToConfig(in []*adminv1.EgressRule) []config.EgressRule {
 		out = append(out, config.EgressRule{
 			Dst:         r.GetDst(),
 			Proto:       r.GetProto(),
-			Port:        int(r.GetPort()),
+			Port:        r.GetPort(),
 			Action:      r.GetAction(),
 			PathRules:   paths,
 			PathDefault: r.GetPathDefault(),
@@ -1328,7 +1328,7 @@ func ConfigRulesToProto(in []config.EgressRule) []*adminv1.EgressRule {
 		out = append(out, &adminv1.EgressRule{
 			Dst:         r.Dst,
 			Proto:       r.Proto,
-			Port:        uint32(r.Port),
+			Port:        r.Port,
 			Action:      r.Action,
 			PathRules:   paths,
 			PathDefault: r.PathDefault,

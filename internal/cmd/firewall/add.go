@@ -16,7 +16,7 @@ type AddOptions struct {
 	AdminClient func(context.Context) (adminv1.AdminServiceClient, error)
 	Domain      string
 	Proto       string
-	Port        int
+	Port        string
 	Path        string
 	Action      string
 }
@@ -60,7 +60,7 @@ prior action for that path.`,
 	}
 
 	cmd.Flags().StringVar(&opts.Proto, "proto", "https", "L7 protocol: https (TLS-MITM, default), http (plaintext HCM), ssh, tcp, or any opaque L7 name (TCP pass-through)")
-	cmd.Flags().IntVar(&opts.Port, "port", 0, "Port number (default: protocol-specific)")
+	cmd.Flags().StringVar(&opts.Port, "port", "", "Destination port: a single port (443) or an inclusive range (9000-9100); default: protocol-specific")
 	cmd.Flags().StringVar(&opts.Path, "path", "", "URL path prefix for a path-scoped rule, matched as a prefix at request time (requires --action)")
 	cmd.Flags().StringVar(&opts.Action, "action", "", "Action for the path rule: allow or deny (requires --path)")
 	cmd.MarkFlagsRequiredTogether("path", "action")
@@ -88,7 +88,7 @@ func addRun(ctx context.Context, opts *AddOptions) error {
 	rule := &adminv1.EgressRule{
 		Dst:    opts.Domain,
 		Proto:  opts.Proto,
-		Port:   uint32(opts.Port),
+		Port:   opts.Port,
 		Action: "allow",
 	}
 	if opts.Path != "" {

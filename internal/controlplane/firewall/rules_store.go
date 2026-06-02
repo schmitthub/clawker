@@ -3,6 +3,8 @@ package firewall
 import (
 	"fmt"
 	"net"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/schmitthub/clawker/internal/config"
@@ -138,14 +140,14 @@ func NormalizeRule(r config.EgressRule) config.EgressRule {
 	if r.Action == "" {
 		r.Action = "allow"
 	}
-	if r.Port == 0 {
+	if r.Port == "" {
 		switch strings.ToLower(r.Proto) {
 		case "https", "wss":
-			r.Port = 443
+			r.Port = "443"
 		case "http", "ws":
-			r.Port = 80
+			r.Port = "80"
 		case "ssh":
-			r.Port = 22
+			r.Port = "22"
 		}
 	}
 	return r
@@ -156,14 +158,11 @@ func NormalizeRule(r config.EgressRule) config.EgressRule {
 // rules — a wildcard and its apex carry independent semantics (e.g., different
 // PathRules) and must not be collapsed.
 func RuleKey(r config.EgressRule) string {
-	// A port_range rule has no single Port (it defaults to the proto default), so
-	// two opaque rules for one dst:proto that differ only by port_range would
-	// otherwise collapse to the same key and NormalizeAndDedup would silently drop
-	// one. Fold PortRange into the key so distinct ranges stay distinct rules.
-	if r.PortRange != "" {
-		return fmt.Sprintf("%s:%s:%d:%s", r.Dst, r.Proto, r.Port, r.PortRange)
-	}
-	return fmt.Sprintf("%s:%s:%d", r.Dst, r.Proto, r.Port)
+	// Port is the dynamic spec string ("443" or "9000-9100"), so it folds into
+	// the key verbatim: two opaque rules for one dst:proto that differ only by
+	// their port range stay distinct (a bare range and a single port produce
+	// different keys), and NormalizeAndDedup won't collapse them.
+	return fmt.Sprintf("%s:%s:%s", r.Dst, r.Proto, r.Port)
 }
 
 // EffectivePathDefault resolves the catch-all action for HTTP paths under a
@@ -254,31 +253,42 @@ func mergePathRules(existing, incoming []config.PathRule) []config.PathRule {
 func RoutesFromRules(rules []config.EgressRule, ports EnvoyPorts) []ebpf.Route {
 	out := make([]ebpf.Route, 0, len(rules))
 
-	// TCP/SSH: TCPMappings is the source of truth for which rules
-	// produce a listener, the effective destination port, and the Envoy
-	// listener port. It already expands a port_range into one mapping per
-	// in-range port, so this pass mirrors that fan-out one-to-one.
+	// mappingRoute projects a dedicated-listener mapping (TCP/SSH or raw UDP) into
+	// an eBPF route. A single-IP dst (TCPMappings/UDPMappings skip only CIDR) was
+	// never resolved by CoreDNS, so it has no dns_cache entry — carry SeedIP and
+	// SyncRoutes seeds dns_cache[ip]=DomainHash(ip), letting connect4/sendmsg4 hit on
+	// the literal IP and redirect to the dedicated STATIC-pinned listener. An FQDN
+	// has no SeedIP (its dns_cache entry comes from CoreDNS).
+	mappingRoute := func(m TCPMapping, proto uint8) ebpf.Route {
+		r := ebpf.Route{
+			DomainHash: ebpf.DomainHash(m.Dst),
+			DstPort:    uint16(m.DstPort),
+			EnvoyPort:  uint16(m.EnvoyPort),
+			L4Proto:    proto,
+		}
+		if v4 := net.ParseIP(m.Dst).To4(); v4 != nil {
+			r.SeedIP = ebpf.IPToUint32(v4)
+		}
+		return r
+	}
+
+	// TCP/SSH: TCPMappings is the source of truth for which rules produce a
+	// dedicated listener, the effective destination port, and the Envoy listener
+	// port. It expands a port_range into one mapping per in-range port, so this pass
+	// mirrors that fan-out one-to-one. m.Dst is an FQDN or a single IP literal (CIDR
+	// is skipped — it rides the shared egress listener); a bare IP carries SeedIP.
 	for _, m := range TCPMappings(rules, ports) {
 		if m.Dst == "" {
 			continue
 		}
-		out = append(out, ebpf.Route{
-			DomainHash: ebpf.DomainHash(m.Dst),
-			DstPort:    uint16(m.DstPort),
-			EnvoyPort:  uint16(m.EnvoyPort),
-			L4Proto:    ebpf.L4ProtoTCP,
-		})
+		out = append(out, mappingRoute(m, ebpf.L4ProtoTCP))
 	}
 
 	// Raw UDP: UDPMappings is the source of truth for which udp rules get a
-	// dedicated udp_proxy listener and its port — the L4ProtoUDP peer of the
-	// TCP pass above. The l4_proto discriminator keeps a co-keyed tcp/https
-	// route on the same {domain, port} independent. UDPMappings already drops
-	// CIDR dsts, so m.Dst is an FQDN or a single IP literal — BOTH are projected.
-	// An FQDN gets its dns_cache entry from CoreDNS; a bare IP has none (CoreDNS
-	// never resolved it), so we carry SeedIP and SyncRoutes seeds
-	// dns_cache[ip]=DomainHash(ip), letting connect4/sendmsg4's lookup hit on the
-	// literal IP and redirect to the dedicated STATIC-pinned udp listener.
+	// dedicated udp_proxy listener and its port — the L4ProtoUDP peer of the TCP
+	// pass above. The l4_proto discriminator keeps a co-keyed tcp/https route on the
+	// same {domain, port} independent. Like the TCP pass, m.Dst is an FQDN or a
+	// single IP literal (CIDR skipped, fails closed); a bare IP carries SeedIP.
 	//
 	// udpSeen dedups L4ProtoUDP routes across BOTH this pass and the h3-over-https
 	// pass below — the raw-udp pass runs first, so an explicit `proto: udp` rule
@@ -289,18 +299,7 @@ func RoutesFromRules(rules []config.EgressRule, ports EnvoyPorts) []ebpf.Route {
 			continue
 		}
 		udpSeen[fmt.Sprintf("%s:%d", m.Dst, m.DstPort)] = struct{}{}
-		r := ebpf.Route{
-			DomainHash: ebpf.DomainHash(m.Dst),
-			DstPort:    uint16(m.DstPort),
-			EnvoyPort:  uint16(m.EnvoyPort),
-			L4Proto:    ebpf.L4ProtoUDP,
-		}
-		if ip := net.ParseIP(m.Dst); ip != nil {
-			if v4 := ip.To4(); v4 != nil {
-				r.SeedIP = ebpf.IPToUint32(v4)
-			}
-		}
-		out = append(out, r)
+		out = append(out, mappingRoute(m, ebpf.L4ProtoUDP))
 	}
 
 	// TLS/HTTP (http/https/ws/wss): second pass — all ride the shared egress
@@ -331,20 +330,23 @@ func RoutesFromRules(rules []config.EgressRule, ports EnvoyPorts) []ebpf.Route {
 		if dst == "" {
 			continue
 		}
-		// TLS rules reach here post-NormalizeRule with Port==443 (the
-		// pre-Submit store write ensures that); an explicit zero at this
-		// point is a misconfigured rule and we drop it rather than guess.
-		if r.Port <= 0 || r.Port > 0xffff {
+		// TLS rules reach here post-NormalizeRule with a single Port (the
+		// pre-Submit store write fills the proto default, e.g. 443). A range or
+		// missing single port is a misconfigured TLS rule and we drop it rather
+		// than guess (port_range is opaque-only; invalid specs are already
+		// dropped by NormalizeAndDedup).
+		port, ok := r.SinglePort()
+		if !ok {
 			continue
 		}
-		key := fmt.Sprintf("%s:%d", dst, r.Port)
+		key := fmt.Sprintf("%s:%d", dst, port)
 		if _, dup := seen[key]; dup {
 			continue
 		}
 		seen[key] = struct{}{}
 		out = append(out, ebpf.Route{
 			DomainHash: ebpf.DomainHash(dst),
-			DstPort:    uint16(r.Port),
+			DstPort:    uint16(port),
 			EnvoyPort:  uint16(ports.EgressPort),
 			L4Proto:    ebpf.L4ProtoTCP,
 		})
@@ -364,7 +366,7 @@ func RoutesFromRules(rules []config.EgressRule, ports EnvoyPorts) []ebpf.Route {
 				udpSeen[key] = struct{}{}
 				out = append(out, ebpf.Route{
 					DomainHash: ebpf.DomainHash(dst),
-					DstPort:    uint16(r.Port),
+					DstPort:    uint16(port),
 					EnvoyPort:  uint16(ports.EgressPort),
 					L4Proto:    ebpf.L4ProtoUDP,
 				})
@@ -393,12 +395,313 @@ func NormalizeAndDedup(rules []config.EgressRule) ([]config.EgressRule, []string
 			warnings = append(warnings, fmt.Sprintf("skipping rule with empty domain after normalization (dst=%q)", r.Dst))
 			continue
 		}
-		key := RuleKey(r)
+		// Validate the dynamic port spec at ingestion. A malformed port/range is
+		// dropped with an operator warning rather than silently collapsing to a
+		// protocol default — that would widen egress past what the rule intended.
+		if err := r.ValidatePortSpec(); err != nil {
+			warnings = append(warnings, fmt.Sprintf("skipping rule %s:%s: %v", r.Dst, r.Proto, err))
+			continue
+		}
+		// Dedup only TRULY-identical entries: fold the action into the dedup key so
+		// a same dst:proto:port allow AND deny both survive. RuleKey alone (no action)
+		// keeps just the first and silently drops the other — the deny would vanish.
+		// Both surviving lets resolveOpaquePortConflicts carve (when a range is
+		// present) or the generator reject loud (an all-single allow/deny clash).
+		action := "allow"
+		if isDenyAction(r.Action) {
+			action = "deny"
+		}
+		key := RuleKey(r) + "\x00" + action
 		if _, exists := seen[key]; exists {
 			continue
 		}
 		seen[key] = struct{}{}
 		out = append(out, r)
 	}
+	// Resolve opaque port conflicts AFTER exact-key dedup: a range and a single
+	// port for the same dst:proto have distinct RuleKeys, so the dedup above keeps
+	// both — and each opaque rule fans into one dedicated STATIC listener PER
+	// in-range port (named tcp_<dst>_<port> / udp_<dst>_<port>), so an overlapping
+	// port would emit the SAME listener twice and fail generation. This merges
+	// same-action overlaps into one span set AND carves denied ports out of allow
+	// spans (DENY ALWAYS WINS), emitting an explicit deny rule for each denied span.
+	// A cross-proto overlap on the same listener family (e.g. tcp + ssh on one
+	// dst:port) is a genuine conflict left to the generator's span-aware collision
+	// check, which fails closed.
+	out, resolveWarnings := resolveOpaquePortConflicts(out)
+	warnings = append(warnings, resolveWarnings...)
 	return out, warnings
+}
+
+// coalesceOpaquePortOverlaps merges opaque (tcp/ssh/udp) rules that share a
+// dst:proto:action and whose port spans overlap into one rule per contiguous
+// span, so the per-port dedicated-listener fan-out never emits a duplicate
+// listener. Non-opaque rules and rules without an explicit port span are passed
+// through untouched, in their original order; merged opaque rules take the
+// position of the group's first appearance. Only OVERLAPPING spans merge
+// (sharing ≥1 port) — adjacent-but-disjoint ranges (e.g. 4242 and 4243-4244)
+// stay separate, since distinct listeners on distinct ports don't collide.
+// resolveOpaquePortConflicts is the merge brain for opaque (tcp/ssh/udp) port
+// rules. A range is just shorthand for a set of per-port chains, so this folds
+// every opaque rule into two port-span sets per (dst, proto) — allow and deny —
+// and resolves overlaps with ONE invariant: DENY ALWAYS WINS.
+//
+//   - Same-action overlapping spans merge (a range + a single port inside it,
+//     or two partial ranges, collapse into one span set). Without this an opaque
+//     rule fans into one dedicated STATIC listener PER in-range port (named
+//     tcp_<dst>_<port> / udp_<dst>_<port>), so an overlapping port would emit the
+//     SAME listener twice and fail generation.
+//   - Any port that appears in a deny span is CARVED OUT of the allow spans
+//     (subtractSpans) and emitted as an explicit deny rule. So `tcp 45-50 allow`
+//   - `tcp 47 deny` → allow {45-46, 48-50} + deny {47}; `tcp 45-50 deny` +
+//     `tcp 47 allow` → deny {45-50}, allow gone (the single allow is swallowed).
+//     Deny spans are emitted verbatim and ALWAYS persist — a denied port is never
+//     silently allowed by an overlapping allow range.
+//
+// The output is the flat, conflict-free span set the generator loops over: allow
+// spans build pinned upstream listeners, deny spans build blackhole (deny-cluster)
+// listeners. Cross-proto overlaps on one listener family (e.g. tcp + ssh on one
+// dst:port) are a genuine conflict resolved separately by the generator's
+// span-aware collision check — they are NOT merged here. Non-opaque rules and
+// rules with an unset port pass through verbatim, in input order.
+func resolveOpaquePortConflicts(rules []config.EgressRule) ([]config.EgressRule, []string) {
+	type group struct {
+		allowTmpl  *config.EgressRule
+		denyTmpl   *config.EgressRule
+		allowSpans [][2]int
+		denySpans  [][2]int
+	}
+	groups := make(map[string]*group)
+	// order records emission slots: each is either a verbatim rule (rule != nil)
+	// or a group key (the first time that (dst,proto) group is seen), preserving
+	// input order.
+	type slot struct {
+		rule *config.EgressRule
+		key  string
+	}
+	var order []slot
+
+	for i := range rules {
+		r := rules[i]
+		lo, hi, ok := r.PortSpan()
+		if !ok || !isOpaqueProto(r.Proto) {
+			rr := r
+			order = append(order, slot{rule: &rr})
+			continue
+		}
+		key := fmt.Sprintf("%s\x00%s", normalizeDomain(r.Dst), strings.ToLower(r.Proto))
+		g, exists := groups[key]
+		if !exists {
+			g = &group{}
+			groups[key] = g
+			order = append(order, slot{key: key})
+		}
+		if isDenyAction(r.Action) {
+			if g.denyTmpl == nil {
+				rr := r
+				g.denyTmpl = &rr
+			}
+			g.denySpans = append(g.denySpans, [2]int{lo, hi})
+		} else {
+			if g.allowTmpl == nil {
+				rr := r
+				g.allowTmpl = &rr
+			}
+			g.allowSpans = append(g.allowSpans, [2]int{lo, hi})
+		}
+	}
+
+	var warnings []string
+	out := make([]config.EgressRule, 0, len(rules))
+	for _, s := range order {
+		if s.rule != nil {
+			out = append(out, *s.rule)
+			continue
+		}
+		g := groups[s.key]
+		mergedDeny := mergeOverlappingSpans(g.denySpans)
+		mergedAllow := mergeOverlappingSpans(g.allowSpans)
+		// A carve REQUIRES a range: the deny-wins carve-out exists so an allow
+		// range can express "this span EXCEPT these ports". A single allow port and
+		// a single deny port for the SAME port is not a carve — it is a contradictory
+		// config with no range to resolve, so it must FAIL LOUD, not silently collapse
+		// to deny. Exclude those all-single clashes from the carve set and leave BOTH
+		// rules in the output; the generator's checkOpaquePortActionConflicts rejects
+		// them. A deny span that overlaps an allow RANGE (or a deny range over an allow
+		// single) still carves — a range is present.
+		allowSingles := make(map[int]bool)
+		for _, sp := range mergedAllow {
+			if sp[0] == sp[1] {
+				allowSingles[sp[0]] = true
+			}
+		}
+		carveDeny := make([][2]int, 0, len(mergedDeny))
+		for _, sp := range mergedDeny {
+			if sp[0] == sp[1] && allowSingles[sp[0]] {
+				continue // all-single allow/deny clash: leave both → loud rejection
+			}
+			carveDeny = append(carveDeny, sp)
+		}
+		allowOut := subtractSpans(mergedAllow, carveDeny)
+
+		dst, proto := "", ""
+		if g.denyTmpl != nil {
+			dst, proto = g.denyTmpl.Dst, strings.ToLower(g.denyTmpl.Proto)
+		} else if g.allowTmpl != nil {
+			dst, proto = g.allowTmpl.Dst, strings.ToLower(g.allowTmpl.Proto)
+		}
+		if mergedSpansChanged(g.allowSpans, mergedAllow) || mergedSpansChanged(g.denySpans, mergedDeny) {
+			warnings = append(warnings, fmt.Sprintf("coalesced overlapping %s rules for %q", proto, dst))
+		}
+		if len(mergedDeny) > 0 && !spansEqual(mergedAllow, allowOut) {
+			warnings = append(warnings, fmt.Sprintf(
+				"deny wins for %s %q: denied ports %s carved out of allow (allow now %s)",
+				proto, dst, formatSpans(mergedDeny), formatSpans(allowOut)))
+		}
+
+		// Deny spans first (deny always persists), then carved allow spans —
+		// both ascending, deterministic for the eBPF/Envoy port assignment.
+		for _, sp := range mergedDeny {
+			m := *g.denyTmpl
+			m.Port = formatSpan(sp)
+			out = append(out, m)
+		}
+		for _, sp := range allowOut {
+			m := *g.allowTmpl
+			m.Port = formatSpan(sp)
+			out = append(out, m)
+		}
+	}
+	return out, warnings
+}
+
+// isDenyAction reports whether an egress rule action denies. Empty action
+// defaults to allow (see NormalizeRule), so only an explicit "deny" denies.
+func isDenyAction(action string) bool {
+	return strings.ToLower(action) == "deny"
+}
+
+// subtractSpans removes every port covered by a deny span from the allow spans,
+// returning the remaining allow sub-spans. Both inputs MUST be the merged
+// (sorted, disjoint) output of mergeOverlappingSpans. A denied port is never
+// left in the result — this is the deny-wins carve-out.
+// subtractSpans removes every port covered by a deny span from the allow spans,
+// returning the remaining allow sub-spans. A denied port is never left in the
+// result — this is the deny-wins carve-out, an egress-security boundary, so the
+// running-cursor advance defensively sorts the deny spans first rather than
+// trusting callers to pass merged (sorted) input: an unsorted deny would silently
+// skip earlier spans and leave denied ports allowed (a fail-open shape).
+func subtractSpans(allow, deny [][2]int) [][2]int {
+	if len(deny) == 0 {
+		return allow
+	}
+	sortedDeny := make([][2]int, len(deny))
+	copy(sortedDeny, deny)
+	sort.Slice(sortedDeny, func(i, j int) bool {
+		if sortedDeny[i][0] != sortedDeny[j][0] {
+			return sortedDeny[i][0] < sortedDeny[j][0]
+		}
+		return sortedDeny[i][1] < sortedDeny[j][1]
+	})
+	var out [][2]int
+	for _, a := range allow {
+		lo := a[0]
+		for _, d := range sortedDeny {
+			if d[1] < lo || d[0] > a[1] {
+				continue // no overlap with the remaining [lo, a[1]]
+			}
+			if d[0] > lo {
+				out = append(out, [2]int{lo, d[0] - 1})
+			}
+			if d[1]+1 > lo {
+				lo = d[1] + 1
+			}
+			if lo > a[1] {
+				break
+			}
+		}
+		if lo <= a[1] {
+			out = append(out, [2]int{lo, a[1]})
+		}
+	}
+	return out
+}
+
+// mergedSpansChanged reports whether merging collapsed the input (overlap was
+// present), used only to decide whether to emit a coalesce warning.
+func mergedSpansChanged(in, merged [][2]int) bool {
+	return len(merged) < len(in)
+}
+
+// spansEqual reports whether two span slices are identical (same order, same
+// bounds). Both are merged output, so order is canonical (ascending).
+func spansEqual(a, b [][2]int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// isOpaqueProto reports whether the proto produces a dedicated per-port listener
+// (and thus expands a port range into one listener per port). Only these protos
+// are subject to port-overlap coalescing.
+func isOpaqueProto(proto string) bool {
+	switch strings.ToLower(proto) {
+	case "tcp", "ssh", "udp":
+		return true
+	default:
+		return false
+	}
+}
+
+// mergeOverlappingSpans sorts [lo,hi] spans ascending and merges any that
+// overlap (share ≥1 port, i.e. next.lo <= cur.hi). Adjacent-but-disjoint spans
+// are left separate.
+func mergeOverlappingSpans(spans [][2]int) [][2]int {
+	if len(spans) <= 1 {
+		return spans
+	}
+	sorted := make([][2]int, len(spans))
+	copy(sorted, spans)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i][0] != sorted[j][0] {
+			return sorted[i][0] < sorted[j][0]
+		}
+		return sorted[i][1] < sorted[j][1]
+	})
+	merged := [][2]int{sorted[0]}
+	for _, s := range sorted[1:] {
+		last := &merged[len(merged)-1]
+		if s[0] <= last[1] { // overlap (shared port)
+			if s[1] > last[1] {
+				last[1] = s[1]
+			}
+			continue
+		}
+		merged = append(merged, s)
+	}
+	return merged
+}
+
+// formatSpan renders a [lo,hi] span as the dynamic Port field: "443" for a
+// single port, "lo-hi" for a range.
+func formatSpan(sp [2]int) string {
+	if sp[0] == sp[1] {
+		return strconv.Itoa(sp[0])
+	}
+	return strconv.Itoa(sp[0]) + "-" + strconv.Itoa(sp[1])
+}
+
+// formatSpans renders a list of spans for an operator warning.
+func formatSpans(spans [][2]int) string {
+	parts := make([]string, len(spans))
+	for i, sp := range spans {
+		parts[i] = formatSpan(sp)
+	}
+	return strings.Join(parts, ",")
 }

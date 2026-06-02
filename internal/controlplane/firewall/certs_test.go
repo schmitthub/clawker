@@ -160,7 +160,7 @@ func TestRegenerateDomainCerts_AllTLSRules(t *testing.T) {
 		{
 			Dst:   "git.example.com",
 			Proto: "ssh",
-			Port:  22,
+			Port:  "22",
 			// SSH rules do NOT get certs.
 		},
 	}
