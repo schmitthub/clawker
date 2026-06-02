@@ -45,6 +45,34 @@ func tcpDedicatedListenerLayer(envoyPort, dstPort int) layer {
 	}
 }
 
+// opaqueMatchedTransportLayer is the opaque-TCP transport for an IP-literal or CIDR
+// dst. Unlike an FQDN opaque rule — which has no wire discriminator (no SNI, and the
+// DNS-resolved dst IP is unknown at config-gen time), so it needs its own dedicated
+// listener keyed by port — an IP/CIDR dst IS known, so it rides the SHARED egress
+// listener as a raw_buffer filter chain gated by prefix_ranges + destination_port.
+// This mirrors the https-to-IP transport (downstreamCryptoMatch IP branch) but stays
+// pure L4: no TLS, no app block — the upstream pin (IP) / ORIGINAL_DST (CIDR) is the
+// gate. use_original_dst recovers the real destination so prefix_ranges matches it
+// (whatever redirected the connection rewrote the socket dst). dstPort is the
+// effective destination port (one transport per in-range port for a port_range).
+func opaqueMatchedTransportLayer(dstPort int) layer {
+	return func(ctx *genCtx) error {
+		ctx.cfg.EnsureListener(egressListenerName, defaultBindAddress, ctx.ports.EgressPort)
+		if err := ctx.cfg.SetListenerField(egressListenerName, "use_original_dst", true); err != nil {
+			return err
+		}
+		ctx.listener = egressListenerName
+		ctx.match = map[string]any{
+			"transport_protocol": "raw_buffer",
+			"prefix_ranges":      []any{ipPrefixRange(ctx.rule.Dst)},
+			"destination_port":   dstPort,
+		}
+		ctx.tlsTerminated = false
+		ctx.port = dstPort // the upstream + terminal read this
+		return nil
+	}
+}
+
 // tcpProxyTerminalLayer renders the opaque tcp_proxy network filter — the L4
 // terminal (no L7/HCM). It reads the cluster the upstream block pinned. l7Proto is
 // the proto token ("ssh"/"tcp") recorded as network.protocol.name in the access

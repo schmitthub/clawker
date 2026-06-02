@@ -32,6 +32,11 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts, als ALSCon
 	if err := validateDedicatedLayout(rules, ports); err != nil {
 		return nil, nil, err
 	}
+	// Fail closed on (proto, dst-type) combos Envoy can't express self-securely
+	// (raw udp to a CIDR range — see the function doc).
+	if err := validateProtoDstSupport(rules); err != nil {
+		return nil, nil, err
+	}
 
 	cfg := NewEnvoyConfig()
 	cfg.SetAdmin(envoyAdmin())
@@ -256,11 +261,28 @@ func layersFor(r config.EgressRule, gen genFacts) [][]layer {
 	case "ssh", "tcp":
 		// Opaque TCP: dedicated listener → tcp_proxy → pinned cluster, NO app
 		// block (no L7 to inspect — the pin is the gate). ssh and raw tcp differ
-		// only in the proto token recorded as network.protocol.name. A port_range
-		// fans the rule into one self-secure permutation per in-range port; each
-		// dedicated-listener port is pre-assigned in genFacts (lockstep with the
-		// eBPF route_map). A missing entry means an IP/CIDR dst (opaque-to-CIDR is
-		// a separate pass) — skip it, fail-closed.
+		// only in the proto token recorded as network.protocol.name.
+		//
+		// dst type splits the transport: an IP/CIDR dst is KNOWN at gen time, so it
+		// rides the SHARED egress listener as a prefix_ranges raw_buffer chain (IP →
+		// STATIC pin; CIDR → ORIGINAL_DST scoped by the chain's prefix_ranges) — no
+		// dedicated listener. An FQDN dst has no wire discriminator (no SNI, the
+		// DNS-resolved IP is unknown/unstable), so it gets a dedicated listener whose
+		// port encodes its identity. A port_range fans either form into one
+		// permutation per in-range port.
+		if isIPOrCIDR(r.Dst) {
+			var lists [][]layer
+			for _, port := range dedicatedPorts(r, tcpDefaultPort) {
+				lists = append(lists, []layer{
+					opaqueMatchedTransportLayer(port),
+					opaqueMatchedUpstreamLayer,
+					tcpProxyTerminalLayer(strings.ToLower(r.Proto)),
+				})
+			}
+			return lists
+		}
+		// FQDN opaque: each dedicated-listener port is pre-assigned in genFacts
+		// (lockstep with the eBPF route_map).
 		host := normalizeDomain(r.Dst)
 		var lists [][]layer
 		for _, port := range dedicatedPorts(r, tcpDefaultPort) {
@@ -438,6 +460,26 @@ func validateDedicatedLayout(rules []config.EgressRule, ports EnvoyPorts) error 
 		uLo, uHi := ports.UDPPortBase, ports.UDPPortBase+len(udp)-1
 		if tLo <= uHi && uLo <= tHi {
 			return fmt.Errorf("envoy config: dedicated tcp/ssh band [%d-%d] overlaps the raw-udp band [%d-%d] (port_range fan-out too wide) — narrow the range(s) or widen the gap between TCPPortBase (%d) and UDPPortBase (%d)", tLo, tHi, uLo, uHi, ports.TCPPortBase, ports.UDPPortBase)
+		}
+	}
+	return nil
+}
+
+// validateProtoDstSupport fails closed on (proto, dst-type) combinations Envoy
+// cannot express as a self-secure atom. The only one is raw UDP to a CIDR range:
+// udp_proxy has no original-destination forwarding (only use_original_src_ip, which
+// rewrites the SOURCE, not the dest) and UDP has no filter chains to pin per in-range
+// host — so a range can't be served without forwarding to an unvalidated client-chosen
+// dst. A single-IP UDP rule (STATIC pin) and tcp/ssh-to-CIDR (ORIGINAL_DST scoped by
+// prefix_ranges) are both supported. TLS-to-CIDR (https/wss) is also supported (one
+// range cert + reencrypt ORIGINAL_DST) and is NOT rejected here.
+func validateProtoDstSupport(rules []config.EgressRule) error {
+	for _, r := range rules {
+		if a := strings.ToLower(r.Action); a != "allow" && a != "" {
+			continue
+		}
+		if strings.ToLower(r.Proto) == "udp" && isCIDR(r.Dst) {
+			return fmt.Errorf("envoy config: raw udp to a CIDR range %q is not supported (udp_proxy cannot forward to the original destination); use a single IP dst or split the range into per-host rules", r.Dst)
 		}
 	}
 	return nil

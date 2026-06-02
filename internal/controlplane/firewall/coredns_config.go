@@ -147,6 +147,20 @@ func isIPOrCIDR(s string) bool {
 	return err == nil
 }
 
+// isCIDR reports whether s is a CIDR range (e.g. 10.0.0.0/24) as opposed to a
+// bare IP literal. The distinction drives upstream resolution: a bare IP pins to
+// a single STATIC endpoint (the address IS the resolution), while a range has no
+// single host to pin, so it forwards to the connection's original destination
+// (ORIGINAL_DST) scoped by the filter chain's prefix_ranges — the range itself is
+// the authorization boundary, never the client's chosen host.
+func isCIDR(s string) bool {
+	if net.ParseIP(s) != nil {
+		return false // bare IP literal, not a range
+	}
+	_, _, err := net.ParseCIDR(s)
+	return err == nil
+}
+
 // normalizeDomain strips any leading dot (wildcard indicator) and trailing dot
 // (FQDN indicator) from a domain name.
 func normalizeDomain(d string) string {

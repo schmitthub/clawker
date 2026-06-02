@@ -85,8 +85,9 @@ type TCPMapping struct {
 // Consumed by the generator (listener layout) and rules_store.RoutesFromRules
 // (eBPF DNAT route_map) — the two must stay in lockstep.
 func TCPMappings(rules []config.EgressRule, ports EnvoyPorts) []TCPMapping {
+	// TCP/SSH skip IP AND CIDR — a known dst rides the shared egress listener.
 	return dedicatedMappings(rules, ports.TCPPortBase,
-		func(p string) bool { return p == "ssh" || p == "tcp" }, tcpDefaultPort)
+		func(p string) bool { return p == "ssh" || p == "tcp" }, tcpDefaultPort, isIPOrCIDR)
 }
 
 // UDPMappings computes raw-UDP port mappings from egress rules — the udp_proxy
@@ -96,15 +97,27 @@ func TCPMappings(rules []config.EgressRule, ports EnvoyPorts) []TCPMapping {
 // NOT yet projected into RoutesFromRules — when eBPF gains UDP support it mirrors
 // this the way RoutesFromRules already mirrors TCPMappings.)
 func UDPMappings(rules []config.EgressRule, ports EnvoyPorts) []TCPMapping {
+	// UDP skips only CIDR — a UDP-IP rule still needs its own dedicated listener
+	// (UDP has no filter chains to ride the shared listener); UDP-CIDR fails closed.
 	return dedicatedMappings(rules, ports.UDPPortBase,
-		func(p string) bool { return p == "udp" }, udpDefaultPort)
+		func(p string) bool { return p == "udp" }, udpDefaultPort, isCIDR)
 }
 
 // dedicatedMappings is the shared, deterministic per-rule dedicated-listener port
 // assignment behind TCPMappings + UDPMappings: allow-only, hostname-only (IP/CIDR
 // dsts are skipped — opaque-to-CIDR is a separate pass), matching the proto class,
 // indexed from base in rule order. portFn resolves each rule's effective dst port.
-func dedicatedMappings(rules []config.EgressRule, base int, protoMatch func(string) bool, portFn func(config.EgressRule) int) []TCPMapping {
+// dedicatedMappings is the shared dedicated-listener layout for opaque protos. Each
+// matching rule (after the port_range fan-out) consumes one base+idx slot → one
+// dedicated listener + one pinned cluster.
+//
+// skipDst gates which dst types are NOT served by a dedicated listener, and it
+// differs by transport: TCP/SSH skip BOTH IP and CIDR (a known dst rides the shared
+// egress listener as a prefix_ranges chain instead — see opaqueMatchedTransportLayer),
+// while UDP skips only CIDR (UDP has no filter chains, so a UDP-IP rule still needs
+// its own dedicated listener pinned STATIC; a UDP-CIDR range has no pinnable host and
+// no original-dst path, so it fails closed upstream).
+func dedicatedMappings(rules []config.EgressRule, base int, protoMatch func(string) bool, portFn func(config.EgressRule) int, skipDst func(string) bool) []TCPMapping {
 	var mappings []TCPMapping
 	idx := 0
 	for _, r := range rules {
@@ -112,7 +125,7 @@ func dedicatedMappings(rules []config.EgressRule, base int, protoMatch func(stri
 		if action != "allow" && action != "" {
 			continue
 		}
-		if isIPOrCIDR(r.Dst) {
+		if skipDst(r.Dst) {
 			continue
 		}
 		if !protoMatch(strings.ToLower(r.Proto)) {

@@ -218,6 +218,52 @@ rules:
 `,
 		},
 		{
+			// Opaque TCP/SSH to an IP or CIDR rides the SHARED egress listener as a
+			// prefix_ranges raw_buffer chain (the dst is known at gen time — no
+			// dedicated listener, no SNI/Host discriminator needed). A bare IP pins
+			// STATIC (the address IS the resolution); a CIDR forwards to ORIGINAL_DST
+			// scoped by the chain's prefix_ranges (range = the grant). use_original_dst
+			// recovers the real dst so prefix_ranges matches it.
+			name: "opaque_ip_cidr",
+			rules: `
+rules:
+  - dst: 192.168.1.5
+    proto: tcp
+    port: 5432
+  - dst: 10.0.0.0/24
+    proto: tcp
+    port: 5432
+  - dst: 203.0.113.7
+    proto: ssh
+    port: 22
+`,
+		},
+		{
+			// Raw UDP to a single IP → dedicated UDP listener → udp_proxy → STATIC
+			// pin (UDP has no filter chains, so even a known IP gets its own listener;
+			// the pin is the gate). Peer of opaque_ip_cidr's tcp single-IP case.
+			name: "udp_ip",
+			rules: `
+rules:
+  - dst: 192.168.1.9
+    proto: udp
+    port: 3478
+`,
+		},
+		{
+			// Raw UDP to a CIDR fails closed: udp_proxy has no original-destination
+			// forwarding (only use_original_src_ip, which rewrites the source) and UDP
+			// has no filter chains to pin per in-range host. No golden.
+			name: "udp_cidr_unsupported",
+			rules: `
+rules:
+  - dst: 10.0.0.0/24
+    proto: udp
+    port: 3478
+`,
+			wantErrContains: "raw udp to a CIDR range",
+		},
+		{
 			name: "tcp_port_range", // opaque tcp port_range → one dedicated listener + pinned cluster per in-range port (mapping A, never ORIGINAL_DST)
 			rules: `
 rules:

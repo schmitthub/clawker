@@ -185,6 +185,54 @@ func tcpPinnedUpstreamLayer(ctx *genCtx) error {
 	return nil
 }
 
+// opaqueMatchedUpstreamLayer is the upstream block for an opaque TCP rule whose dst
+// is an IP literal or CIDR (ride the shared egress listener, gated by prefix_ranges
+// — see opaqueMatchedTransportLayer). It is the dst-type-aware peer of
+// tcpPinnedUpstreamLayer (which serves FQDN dedicated listeners): a bare IP pins to
+// a STATIC endpoint (the address IS the resolution); a CIDR range has no single host
+// to pin, so it forwards to the connection's ORIGINAL_DST. ORIGINAL_DST is safe here
+// — and ONLY here — because the chain's prefix_ranges already constrained the dst to
+// the user-authorized range (range-validated, not host-validated), so the client
+// never escapes the grant. Reads ctx.port (per-port for a port_range).
+func opaqueMatchedUpstreamLayer(ctx *genCtx) error {
+	host := normalizeDomain(ctx.rule.Dst)
+	port := ctx.port
+	if isCIDR(host) {
+		name := tcpOriginalDstName(host, port)
+		ctx.clusters = append(ctx.clusters, originalDstCluster(name))
+		ctx.upstreamCluster = name
+		ctx.upstreamFollowsHost = false
+		return nil
+	}
+	name := tcpPinnedName(host, port)
+	ctx.clusters = append(ctx.clusters, pinnedCluster(name, host, port))
+	ctx.upstreamCluster = name
+	ctx.upstreamFollowsHost = false
+	return nil
+}
+
+// tcpOriginalDstName is the cluster name for a CIDR opaque-TCP rule's ORIGINAL_DST
+// cluster. sanitizeName folds the "/" and "." in the CIDR into underscores.
+func tcpOriginalDstName(host string, port int) string {
+	return fmt.Sprintf("tcp_origdst_%s_%d", sanitizeName(host), port)
+}
+
+// originalDstCluster builds an ORIGINAL_DST cluster: tcp_proxy forwards to the
+// connection's original destination (recovered by the listener's use_original_dst /
+// original_dst listener filter), with no static endpoint. lb_policy CLUSTER_PROVIDED
+// is mandatory for ORIGINAL_DST (the original-destination load balancer). Grounded in
+// Envoy configs/original-dst-cluster/proxy_config.yaml + Istio's PassthroughCluster.
+// Only ever reached for a CIDR dst, where the filter chain's prefix_ranges has
+// already constrained the original dst to the authorized range.
+func originalDstCluster(name string) map[string]any {
+	return map[string]any{
+		"name":            name,
+		"type":            "ORIGINAL_DST",
+		"lb_policy":       "CLUSTER_PROVIDED",
+		"connect_timeout": "10s",
+	}
+}
+
 // udpPinnedUpstreamLayer registers the opaque per-(host,port) UDP pinned cluster
 // and points the udp_proxy terminal at it. No crypto, no L7.
 func udpPinnedUpstreamLayer(ctx *genCtx) error {
