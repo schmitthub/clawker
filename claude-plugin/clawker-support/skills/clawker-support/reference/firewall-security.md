@@ -38,6 +38,7 @@ example, battle-tested in clawker's own `.clawker.yaml`:
   path_rules:
     - { action: allow, path: /repos/<owner>/<repo>/ }                   # your repo
     - { action: allow, path: /anthropics/claude-code/refs/heads/main/ } # Claude Code auto-update — ALWAYS include
+    - { action: deny,  path: /gists }                                   # block gist creation (exfil channel); no trailing slash so bare POST /gists is caught
     - { action: deny,  path: /repos/ }                                  # every other repo blocked
 ```
 

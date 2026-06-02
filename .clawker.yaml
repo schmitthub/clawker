@@ -204,6 +204,8 @@ security:
           - action: allow
             path: /repos/upstash/context7/
           - action: deny
+            path: /gists
+          - action: deny
             path: /repos/
         port: 443
         proto: https
