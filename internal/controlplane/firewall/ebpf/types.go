@@ -52,11 +52,22 @@ type DNSEntry struct {
 
 // RouteKey mirrors struct route_key in bpf/common.h.
 // Global (not per-container) — container enforcement is via container_map.
+// L4Proto (SOCK_STREAM/SOCK_DGRAM) keeps TCP and UDP routes for the same
+// {domain, port} from colliding on a single key.
 type RouteKey struct {
 	DomainHash uint32
 	DstPort    uint16
-	_          uint16 // padding
+	L4Proto    uint8
+	_          uint8 // padding
 }
+
+// L4 transport discriminators for RouteKey.L4Proto / Route.L4Proto. Values
+// match SOCK_STREAM / SOCK_DGRAM in bpf/common.h (and egress_event.l4_proto)
+// so the eBPF route lookup keys off the same byte the kernel reports.
+const (
+	L4ProtoTCP uint8 = 1 // SOCK_STREAM
+	L4ProtoUDP uint8 = 2 // SOCK_DGRAM
+)
 
 // RouteVal mirrors struct route_val in bpf/common.h.
 type RouteVal struct {

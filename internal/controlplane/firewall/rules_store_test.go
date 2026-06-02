@@ -1,6 +1,7 @@
 package firewall_test
 
 import (
+	"net"
 	"strings"
 	"testing"
 
@@ -99,7 +100,7 @@ func TestValidateDst(t *testing.T) {
 // main TLS listener gets reset by tls_inspector's deny chain.
 func TestRoutesFromRules_TCPMappingsParity(t *testing.T) {
 	t.Parallel()
-	ports := firewall.EnvoyPorts{EgressPort: 10000, TCPPortBase: 11000}
+	ports := firewall.EnvoyPorts{EgressPort: 10000, TCPPortBase: 11000, UDPPortBase: 12000}
 
 	tests := []struct {
 		name  string
@@ -112,7 +113,7 @@ func TestRoutesFromRules_TCPMappingsParity(t *testing.T) {
 				{Dst: "github.com", Proto: "tcp", Port: 8080 /* Action: "" */},
 			},
 			want: []ebpf.Route{
-				{DomainHash: ebpf.DomainHash("github.com"), DstPort: 8080, EnvoyPort: 11000},
+				{DomainHash: ebpf.DomainHash("github.com"), DstPort: 8080, EnvoyPort: 11000, L4Proto: ebpf.L4ProtoTCP},
 			},
 		},
 		{
@@ -121,7 +122,7 @@ func TestRoutesFromRules_TCPMappingsParity(t *testing.T) {
 				{Dst: "git.example.com", Proto: "ssh", Action: "allow" /* Port: 0 */},
 			},
 			want: []ebpf.Route{
-				{DomainHash: ebpf.DomainHash("git.example.com"), DstPort: 22, EnvoyPort: 11000},
+				{DomainHash: ebpf.DomainHash("git.example.com"), DstPort: 22, EnvoyPort: 11000, L4Proto: ebpf.L4ProtoTCP},
 			},
 		},
 		{
@@ -130,7 +131,7 @@ func TestRoutesFromRules_TCPMappingsParity(t *testing.T) {
 				{Dst: "a.example.com", Proto: "tcp", Action: "allow" /* Port: 0 */},
 			},
 			want: []ebpf.Route{
-				{DomainHash: ebpf.DomainHash("a.example.com"), DstPort: 443, EnvoyPort: 11000},
+				{DomainHash: ebpf.DomainHash("a.example.com"), DstPort: 443, EnvoyPort: 11000, L4Proto: ebpf.L4ProtoTCP},
 			},
 		},
 		{
@@ -140,17 +141,22 @@ func TestRoutesFromRules_TCPMappingsParity(t *testing.T) {
 				{Dst: "b.example.com", Proto: "tcp", Action: "allow", Port: 8080},
 			},
 			want: []ebpf.Route{
-				{DomainHash: ebpf.DomainHash("a.example.com"), DstPort: 443, EnvoyPort: 11000},
-				{DomainHash: ebpf.DomainHash("b.example.com"), DstPort: 8080, EnvoyPort: 11001},
+				{DomainHash: ebpf.DomainHash("a.example.com"), DstPort: 443, EnvoyPort: 11000, L4Proto: ebpf.L4ProtoTCP},
+				{DomainHash: ebpf.DomainHash("b.example.com"), DstPort: 8080, EnvoyPort: 11001, L4Proto: ebpf.L4ProtoTCP},
 			},
 		},
 		{
-			name: "tls rule still routes to the main egress listener",
+			// An https FQDN rule routes BOTH the TCP egress chain and the QUIC/h3
+			// sibling (quicSNIChainLayer, on UDP EgressPort): one L4ProtoTCP route
+			// and one L4ProtoUDP route, both to EgressPort. The l4_proto byte keeps
+			// them distinct on the same {domain, port}.
+			name: "https rule routes both the TCP egress chain and the QUIC/h3 sibling",
 			rules: []config.EgressRule{
 				{Dst: "api.example.com", Proto: "https", Action: "allow", Port: 443},
 			},
 			want: []ebpf.Route{
-				{DomainHash: ebpf.DomainHash("api.example.com"), DstPort: 443, EnvoyPort: 10000},
+				{DomainHash: ebpf.DomainHash("api.example.com"), DstPort: 443, EnvoyPort: 10000, L4Proto: ebpf.L4ProtoTCP},
+				{DomainHash: ebpf.DomainHash("api.example.com"), DstPort: 443, EnvoyPort: 10000, L4Proto: ebpf.L4ProtoUDP},
 			},
 		},
 		{
@@ -162,7 +168,11 @@ func TestRoutesFromRules_TCPMappingsParity(t *testing.T) {
 			want: []ebpf.Route{},
 		},
 		{
-			name: "ip and cidr destinations are skipped",
+			// TCP-IP and CIDR-https get no eBPF route: TCPMappings skips IP/CIDR
+			// (opaque-IP TCP rides the shared egress listener via prefix_ranges,
+			// not a domain-hash route), and the TLS/HTTP pass skips isIPOrCIDR.
+			// (UDP-IP is the exception — it gets a seeded route; see below.)
+			name: "tcp-ip and cidr-https get no eBPF route",
 			rules: []config.EgressRule{
 				{Dst: "10.0.0.1", Proto: "tcp", Action: "allow", Port: 22},
 				{Dst: "10.0.0.0/24", Proto: "https", Action: "allow", Port: 443},
@@ -170,15 +180,47 @@ func TestRoutesFromRules_TCPMappingsParity(t *testing.T) {
 			want: []ebpf.Route{},
 		},
 		{
-			// Raw UDP gets a dedicated Envoy udp_proxy listener but is NOT projected
-			// into the eBPF route_map yet (eBPF UDP redirect is a separate atom). A
-			// udp rule must NOT emit a route — emitting one would point UDP at the TCP
-			// egress listener and could overwrite a co-keyed tcp/https route entry.
-			name: "udp rule produces no route (not projected into eBPF route_map)",
+			// UDP-IP DOES get a route: UDPMappings gives a bare-IP udp rule its own
+			// dedicated STATIC-pinned listener, and RoutesFromRules projects it with
+			// SeedIP set so SyncRoutes seeds dns_cache[ip]=DomainHash(ip) — that lets
+			// connect4/sendmsg4 hit on the literal IP (no CoreDNS resolution exists).
+			name: "udp ip dst projects a seeded route",
+			rules: []config.EgressRule{
+				{Dst: "10.0.0.5", Proto: "udp", Action: "allow", Port: 3478},
+			},
+			want: []ebpf.Route{
+				{
+					DomainHash: ebpf.DomainHash("10.0.0.5"),
+					DstPort:    3478,
+					EnvoyPort:  12000,
+					L4Proto:    ebpf.L4ProtoUDP,
+					SeedIP:     ebpf.IPToUint32(net.ParseIP("10.0.0.5").To4()),
+				},
+			},
+		},
+		{
+			// FQDN raw-UDP projects into the route_map keyed L4ProtoUDP, indexed from
+			// UDPPortBase. Consumed by the connect4 SOCK_DGRAM lookup (connected UDP).
+			name: "fqdn udp rule projects a UDP route from UDPPortBase",
 			rules: []config.EgressRule{
 				{Dst: "relay.example.com", Proto: "udp", Action: "allow", Port: 3478},
 			},
-			want: []ebpf.Route{},
+			want: []ebpf.Route{
+				{DomainHash: ebpf.DomainHash("relay.example.com"), DstPort: 3478, EnvoyPort: 12000, L4Proto: ebpf.L4ProtoUDP},
+			},
+		},
+		{
+			// l4_proto keeps a tcp and a udp route on the SAME {domain, port} from
+			// colliding: distinct keys, distinct Envoy listeners, both present.
+			name: "tcp and udp on same domain+port coexist as two independent routes",
+			rules: []config.EgressRule{
+				{Dst: "dual.example.com", Proto: "tcp", Action: "allow", Port: 443},
+				{Dst: "dual.example.com", Proto: "udp", Action: "allow", Port: 443},
+			},
+			want: []ebpf.Route{
+				{DomainHash: ebpf.DomainHash("dual.example.com"), DstPort: 443, EnvoyPort: 11000, L4Proto: ebpf.L4ProtoTCP},
+				{DomainHash: ebpf.DomainHash("dual.example.com"), DstPort: 443, EnvoyPort: 12000, L4Proto: ebpf.L4ProtoUDP},
+			},
 		},
 		{
 			// A port_range fans one opaque tcp rule into one dedicated listener per
@@ -189,24 +231,26 @@ func TestRoutesFromRules_TCPMappingsParity(t *testing.T) {
 				{Dst: "cluster.example.com", Proto: "tcp", Action: "allow", PortRange: "9000-9002"},
 			},
 			want: []ebpf.Route{
-				{DomainHash: ebpf.DomainHash("cluster.example.com"), DstPort: 9000, EnvoyPort: 11000},
-				{DomainHash: ebpf.DomainHash("cluster.example.com"), DstPort: 9001, EnvoyPort: 11001},
-				{DomainHash: ebpf.DomainHash("cluster.example.com"), DstPort: 9002, EnvoyPort: 11002},
+				{DomainHash: ebpf.DomainHash("cluster.example.com"), DstPort: 9000, EnvoyPort: 11000, L4Proto: ebpf.L4ProtoTCP},
+				{DomainHash: ebpf.DomainHash("cluster.example.com"), DstPort: 9001, EnvoyPort: 11001, L4Proto: ebpf.L4ProtoTCP},
+				{DomainHash: ebpf.DomainHash("cluster.example.com"), DstPort: 9002, EnvoyPort: 11002, L4Proto: ebpf.L4ProtoTCP},
 			},
 		},
 		{
 			// ws/wss ride the shared egress listener as their base http/https proto.
-			// A wss+https (or ws+http) pair for one origin is ONE stack in Envoy, so
-			// it must be ONE route here — the eBPF layer can't distinguish them (same
-			// host:port → same egress redirect); a second route would write the same
-			// key twice and muddy the one-stack-per-origin invariant.
-			name: "wss enriches https without adding a second egress route",
+			// A wss+https pair for one origin is ONE stack in Envoy, so it collapses
+			// to ONE TCP egress route (the eBPF layer can't distinguish them — same
+			// host:port → same redirect). Because https/wss are TLS-bearing they ALSO
+			// get the QUIC/h3 sibling, so the pair yields exactly one TCP route + one
+			// h3 (L4ProtoUDP) route to EgressPort — not a second egress route per rule.
+			name: "wss+https collapse to one TCP egress route plus the shared h3 route",
 			rules: []config.EgressRule{
 				{Dst: "stream.example.com", Proto: "https", Action: "allow", Port: 443},
 				{Dst: "stream.example.com", Proto: "wss", Action: "allow", Port: 443},
 			},
 			want: []ebpf.Route{
-				{DomainHash: ebpf.DomainHash("stream.example.com"), DstPort: 443, EnvoyPort: 10000},
+				{DomainHash: ebpf.DomainHash("stream.example.com"), DstPort: 443, EnvoyPort: 10000, L4Proto: ebpf.L4ProtoTCP},
+				{DomainHash: ebpf.DomainHash("stream.example.com"), DstPort: 443, EnvoyPort: 10000, L4Proto: ebpf.L4ProtoUDP},
 			},
 		},
 	}
@@ -225,9 +269,30 @@ func TestRoutesFromRules_TCPMappingsParity(t *testing.T) {
 					DomainHash: ebpf.DomainHash(m.Dst),
 					DstPort:    uint16(m.DstPort),
 					EnvoyPort:  uint16(m.EnvoyPort),
+					L4Proto:    ebpf.L4ProtoTCP,
 				}
 				assert.Contains(t, got, want,
 					"TCPMappings produced a mapping with no matching BPF route — Envoy listener would be orphaned")
+			}
+
+			// UDP parity: every FQDN UDPMappings entry must appear as an
+			// L4ProtoUDP route. IP dsts are intentionally absent (no dns_cache
+			// path), so only assert the FQDN subset. Production skips via
+			// isIPOrCIDR, but a bare net.ParseIP check suffices here because
+			// UDPMappings already drops CIDR dsts (its isCIDR skipDst) — so the
+			// only non-FQDN dst that ever reaches this loop is a bare IP.
+			for _, m := range firewall.UDPMappings(tt.rules, ports) {
+				if net.ParseIP(m.Dst) != nil {
+					continue
+				}
+				want := ebpf.Route{
+					DomainHash: ebpf.DomainHash(m.Dst),
+					DstPort:    uint16(m.DstPort),
+					EnvoyPort:  uint16(m.EnvoyPort),
+					L4Proto:    ebpf.L4ProtoUDP,
+				}
+				assert.Contains(t, got, want,
+					"UDPMappings produced an FQDN mapping with no matching BPF route — udp_proxy listener would be orphaned")
 			}
 		})
 	}

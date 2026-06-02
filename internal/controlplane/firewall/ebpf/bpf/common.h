@@ -98,19 +98,57 @@ struct dns_entry {
 	__u32 expire_ts;   // Wall-clock expiration: time.Now().Unix() + TTL seconds
 };
 
-// Global per-domain TCP route key (shared across all enforced containers).
+// Global per-domain route key (shared across all enforced containers).
 // Presence in container_map determines enforcement; route_map is global.
+// l4_proto discriminates TCP vs UDP so both can route the same {domain,port}.
 struct route_key {
 	__u32 domain_hash; // Matches dns_entry.domain_hash
 	__u16 dst_port;    // Original destination port (host byte order)
-	__u16 _pad;
+	__u8  l4_proto;    // SOCK_STREAM (TCP) / SOCK_DGRAM (UDP) — keeps TCP and
+	                   // UDP routes for one {domain,port} from colliding.
+	__u8  _pad;
 };
+// l4_proto was carved from the trailing pad — the key MUST stay 8 bytes so the
+// pinned route_map schema is unchanged (a size change would force a flush/
+// remap). Mirrored Go-side by TestRouteKey_SizeMatchesABI.
+_Static_assert(sizeof(struct route_key) == 8, "route_key must stay 8 bytes");
 
-// TCP route value: which Envoy listener to route to.
+// Route value: which Envoy listener to route to.
 struct route_val {
 	__u16 envoy_port; // Target Envoy TCP listener port (host byte order)
 	__u16 _pad;
 };
+
+// udp_flow_key / udp_flow_val — reverse-NAT state for UDP routing. A redirected
+// UDP flow has its dst rewritten to Envoy (connect4 for connected sockets,
+// sendmsg4 for unconnected). The reply then arrives FROM Envoy, but the app
+// expects it FROM the original dst (D). connect4/sendmsg4 record {cookie,
+// envoy_ip, envoy_port} → D; recvmsg4 (reply source) and getpeername4 (reported
+// peer) restore it.
+//
+// Keyed by socket cookie + backend (Envoy) addr:port, mirroring Cilium's
+// socket-LB reverse-NAT (bpf/bpf_sock.c sock4_update_revnat / __sock4_xlate_rev):
+//   - cookie (bpf_get_socket_cookie) is globally unique across the TCP/UDP
+//     socket universe AND stable for the socket's life — so distinct sockets
+//     that happen to share an ephemeral local port never collide (the old
+//     {cgroup, src_port} key did).
+//   - including the backend lets ONE unconnected socket fan out to MULTIPLE
+//     dsts (each a distinct Envoy listener) without last-write-wins clobbering
+//     the earlier flows — the recvmsg key is reconstructed from the reply's
+//     actual source, so each dst's reply restores to its own original dst.
+struct udp_flow_key {
+	__u64 cookie;       // bpf_get_socket_cookie(ctx)
+	__u32 backend_ip;   // Envoy IP the reply comes from (network byte order)
+	__u16 backend_port; // Envoy listener port (host byte order)
+	__u16 _pad;
+};
+
+struct udp_flow_val {
+	__u32 orig_dst_ip;   // network byte order, ready to write to user_ip4
+	__u16 orig_dst_port; // network byte order, ready to write to user_port
+	__u16 _pad;
+};
+_Static_assert(sizeof(struct udp_flow_key) == 16, "udp_flow_key must stay 16 bytes");
 
 // ---------------------------------------------------------------------------
 // Pinned BPF maps — shared across all programs via /sys/fs/bpf/clawker/
@@ -146,8 +184,8 @@ struct {
 	__uint(pinning, LIBBPF_PIN_BY_NAME);
 } dns_cache SEC(".maps");
 
-// route_map: {domain_hash, dst_port} → envoy_port
-// Global TCP routing table shared by all enforced containers.
+// route_map: {domain_hash, dst_port, l4_proto} → envoy_port
+// Global routing table shared by all enforced containers (TCP + UDP).
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__uint(max_entries, 8192);
@@ -155,6 +193,18 @@ struct {
 	__type(value, struct route_val);
 	__uint(pinning, LIBBPF_PIN_BY_NAME);
 } route_map SEC(".maps");
+
+// udp_flow_map: {cookie, envoy_ip, envoy_port} → original UDP dst. Written by
+// connect4/sendmsg4 on a routed flow, read by recvmsg4 (reply source) and
+// getpeername4 (reported peer) to restore the original dst. LRU so abandoned
+// flows evict without a userspace sweep.
+struct {
+	__uint(type, BPF_MAP_TYPE_LRU_HASH);
+	__uint(max_entries, 4096);
+	__type(key, struct udp_flow_key);
+	__type(value, struct udp_flow_val);
+	__uint(pinning, LIBBPF_PIN_BY_NAME);
+} udp_flow_map SEC(".maps");
 
 // ---------------------------------------------------------------------------
 // Metrics maps — counters read by eBPF Manager for Prometheus export
@@ -706,6 +756,50 @@ struct route_result {
 	__u8  _pad;
 };
 
+// lookup_route resolves the per-domain Envoy listener port for a routed flow.
+// Keyed by {domain_hash, dst_port, l4_proto} so TCP and UDP routes for the same
+// destination stay independent. dst_port is host byte order; l4_proto is
+// SOCK_STREAM / SOCK_DGRAM. Returns 0 on miss (no rule for this transport).
+static __always_inline __u16
+lookup_route(__u32 domain_hash, __u16 dst_port, __u8 l4_proto)
+{
+	struct route_key rk = {
+		.domain_hash = domain_hash,
+		.dst_port    = dst_port,
+		.l4_proto    = l4_proto,
+	};
+	struct route_val *rv = bpf_map_lookup_elem(&route_map, &rk);
+	return rv ? rv->envoy_port : 0;
+}
+
+// record_udp_flow stores the reverse-NAT entry for a routed UDP flow so
+// recvmsg4 (reply source) and getpeername4 (reported peer) can restore the
+// original dst the app aimed at — the datagram physically arrives from Envoy.
+// Keyed {cookie, backend_ip, backend_port} (Cilium sock4_update_revnat model).
+// cookie==0 means the cookie was unavailable; skip rather than write a bad key.
+// backend_ip is network byte order (cfg->envoy_ip); backend_port + orig_dst_port
+// are host byte order. orig_dst_ip is network byte order.
+static __always_inline void
+record_udp_flow(__u64 cookie, __u32 backend_ip, __u16 backend_port,
+		__u32 orig_dst_ip, __u16 orig_dst_port)
+{
+	if (cookie == 0)
+		return;
+	struct udp_flow_key fk = {
+		.cookie       = cookie,
+		.backend_ip   = backend_ip,
+		.backend_port = backend_port,
+	};
+	struct udp_flow_val fv = {
+		.orig_dst_ip   = orig_dst_ip,            // already network order
+		.orig_dst_port = bpf_htons(orig_dst_port),
+	};
+	bpf_map_update_elem(&udp_flow_map, &fk, &fv, BPF_ANY);
+	// Touch after insert so the LRU bumps recency before the first reply's
+	// reverse lookup arrives (Cilium bpf_sock.c sock4_update_revnat).
+	bpf_map_lookup_elem(&udp_flow_map, &fk);
+}
+
 // decide_connect computes the IPv4 routing decision for a connect() from a
 // managed container. It is the shared body for clawker_connect4 (direct IPv4)
 // and the IPv4-mapped branch of clawker_connect6 — the logic is identical,
@@ -770,10 +864,32 @@ decide_connect(struct bpf_sock_addr *ctx, struct container_config *cfg,
 		return r;
 	}
 
-	// Non-DNS UDP: deny outright. UDP has no TLS path for SNI inspection
-	// and the DNS case is already handled above.
+	// Non-DNS UDP: per-domain routing only. There is no shared catch-all UDP
+	// egress listener (UDP has no SNI/TLS inspection path), so a flow with a
+	// matching udp route goes to its dedicated udp_proxy listener and an
+	// unrouted one fails closed. Connected UDP (this connect4 path): the reply
+	// arrives FROM envoy_ip and the kernel accepts it (envoy IS the connected
+	// peer post-rewrite), but the app's getpeername/recvmsg would report envoy.
+	// So record the reverse-NAT entry here too — getpeername4/recvmsg4 restore
+	// the original dst. Unconnected UDP (sendmsg4) is NOT routed here — see
+	// decide_sendmsg.
 	if (ctx->type == SOCK_DGRAM) {
-		metric_inc(cgroup_id, 0, dst_port, ACTION_DENY);
+		__u32 udp_hash = 0;
+		struct dns_entry *udns = bpf_map_lookup_elem(&dns_cache, &dst_ip);
+		if (udns) {
+			udp_hash = udns->domain_hash;
+			__u16 ep = lookup_route(udp_hash, dst_port, SOCK_DGRAM);
+			if (ep) {
+				record_udp_flow(bpf_get_socket_cookie(ctx),
+						cfg->envoy_ip, ep, dst_ip, dst_port);
+				r.verdict      = V_REWRITE;
+				r.new_ip       = cfg->envoy_ip;
+				r.new_port_nbo = bpf_htons(ep);
+				metric_inc(cgroup_id, udp_hash, dst_port, ACTION_ALLOW);
+				return r;
+			}
+		}
+		metric_inc(cgroup_id, udp_hash, dst_port, ACTION_DENY);
 		r.verdict = V_DENY;
 		return r;
 	}
@@ -788,16 +904,12 @@ decide_connect(struct bpf_sock_addr *ctx, struct container_config *cfg,
 	struct dns_entry *dns = bpf_map_lookup_elem(&dns_cache, &dst_ip);
 	if (dns) {
 		domain_hash = dns->domain_hash;
-		struct route_key rk = {
-			.domain_hash = dns->domain_hash,
-			.dst_port = dst_port,
-		};
-		struct route_val *rv = bpf_map_lookup_elem(&route_map, &rk);
-		if (rv) {
+		__u16 ep = lookup_route(domain_hash, dst_port, SOCK_STREAM);
+		if (ep) {
 			r.verdict      = V_REWRITE;
 			r.new_ip       = cfg->envoy_ip;
-			r.new_port_nbo = bpf_htons(rv->envoy_port);
-			metric_inc(cgroup_id, dns->domain_hash, dst_port, ACTION_ALLOW);
+			r.new_port_nbo = bpf_htons(ep);
+			metric_inc(cgroup_id, domain_hash, dst_port, ACTION_ALLOW);
 			return r;
 		}
 	}
@@ -810,17 +922,27 @@ decide_connect(struct bpf_sock_addr *ctx, struct container_config *cfg,
 	return r;
 }
 
-// decide_sendmsg is the UDP-only counterpart to decide_connect for sendmsg4
-// and the IPv4-mapped branch of sendmsg6. The logic is a strict subset of
-// decide_connect: DNS redirect, loopback/subnet pass-through, everything
-// else denied. There is no per-domain routing (UDP has no TLS path).
+// decide_sendmsg is the UDP-only counterpart to decide_connect for sendmsg4 and
+// the IPv4-mapped branch of sendmsg6 — i.e. UNCONNECTED UDP. DNS redirect,
+// loopback/subnet pass-through, per-domain route, else deny.
+//
+// Per-domain routing mirrors decide_connect's SOCK_DGRAM branch (dns_cache →
+// route_map(SOCK_DGRAM) → dedicated/QUIC listener). The difference vs a
+// connected socket: the reply comes back FROM envoy_ip, but an unconnected
+// socket expects it FROM the original dst. So on a route hit we record
+// {cookie, envoy_ip, envoy_port} → original dst in udp_flow_map; recvmsg4 reads
+// it to restore the reply source. cookie is bpf_get_socket_cookie(ctx) (host
+// order, globally unique per socket); 0 means the caller couldn't read it, in
+// which case we still route but skip flow-tracking (the reply would arrive from
+// envoy_ip and the app may reject it).
 static __always_inline struct route_result
 decide_sendmsg(struct container_config *cfg, __u64 cgroup_id,
-	       __u32 dst_ip, __u16 dst_port)
+	       __u32 dst_ip, __u16 dst_port, __u64 cookie)
 {
 	struct route_result r = { .verdict = V_PASSTHROUGH };
 
-	// DNS redirect before loopback (Docker embedded DNS is 127.0.0.11).
+	// DNS redirect before loopback (Docker embedded DNS is 127.0.0.11). Fixed
+	// CoreDNS mapping with its own recvmsg restore — never flow-tracked.
 	if (dst_port == DNS_PORT) {
 		r.verdict      = V_REWRITE;
 		r.new_ip       = cfg->coredns_ip;
@@ -834,7 +956,23 @@ decide_sendmsg(struct container_config *cfg, __u64 cgroup_id,
 	if (is_in_subnet(dst_ip, cfg->net_addr, cfg->net_mask))
 		return r;
 
-	metric_inc(cgroup_id, 0, dst_port, ACTION_DENY);
+	// Non-DNS UDP: per-domain routing. On a hit, record the original dst for
+	// the recvmsg4 reverse-rewrite, then redirect; on a miss, fail closed.
+	__u32 udp_hash = 0;
+	struct dns_entry *dns = bpf_map_lookup_elem(&dns_cache, &dst_ip);
+	if (dns) {
+		udp_hash = dns->domain_hash;
+		__u16 ep = lookup_route(udp_hash, dst_port, SOCK_DGRAM);
+		if (ep) {
+			record_udp_flow(cookie, cfg->envoy_ip, ep, dst_ip, dst_port);
+			r.verdict      = V_REWRITE;
+			r.new_ip       = cfg->envoy_ip;
+			r.new_port_nbo = bpf_htons(ep);
+			metric_inc(cgroup_id, udp_hash, dst_port, ACTION_ALLOW);
+			return r;
+		}
+	}
+	metric_inc(cgroup_id, udp_hash, dst_port, ACTION_DENY);
 	r.verdict = V_DENY;
 	return r;
 }
@@ -849,6 +987,33 @@ static __always_inline bool
 should_rewrite_dns_source(struct container_config *cfg, __u32 src_ip, __u16 src_port)
 {
 	return src_ip == cfg->coredns_ip && src_port == DNS_PORT;
+}
+
+// lookup_udp_flow_source is the recvmsg/getpeername counterpart to the
+// connect4/sendmsg4 flow-map write: given the socket cookie and the reply's
+// actual source (the Envoy backend addr:port), recover the original UDP dst the
+// flow was recorded against, so the caller can restore it (the datagram
+// physically arrives from Envoy). Returns false on no recorded flow (cookie==0
+// or map miss) — caller leaves the source untouched. backend_ip is network byte
+// order; backend_port is host byte order. orig_ip / orig_port_nbo are network
+// byte order, ready to assign to ctx->user_ip4 / ctx->user_port.
+static __always_inline bool
+lookup_udp_flow_source(__u64 cookie, __u32 backend_ip, __u16 backend_port,
+		       __u32 *orig_ip, __u16 *orig_port_nbo)
+{
+	if (cookie == 0)
+		return false;
+	struct udp_flow_key fk = {
+		.cookie       = cookie,
+		.backend_ip   = backend_ip,
+		.backend_port = backend_port,
+	};
+	struct udp_flow_val *fv = bpf_map_lookup_elem(&udp_flow_map, &fk);
+	if (!fv)
+		return false;
+	*orig_ip       = fv->orig_dst_ip;
+	*orig_port_nbo = fv->orig_dst_port;
+	return true;
 }
 
 #endif // __CLAWKER_COMMON_H

@@ -92,10 +92,10 @@ func TCPMappings(rules []config.EgressRule, ports EnvoyPorts) []TCPMapping {
 
 // UDPMappings computes raw-UDP port mappings from egress rules — the udp_proxy
 // peer of TCPMappings. Deterministic, indexed from ports.UDPPortBase. Consumed by
-// the generator's raw-UDP listener layout. (eBPF UDP redirect is a separate atom;
-// per the island rule the Envoy UDP listener is self-secure regardless, so this is
-// NOT yet projected into RoutesFromRules — when eBPF gains UDP support it mirrors
-// this the way RoutesFromRules already mirrors TCPMappings.)
+// the generator's raw-UDP listener layout AND by RoutesFromRules, which projects
+// each mapping into an L4ProtoUDP route_map entry so the eBPF connect4/sendmsg4
+// SOCK_DGRAM path redirects the datagram to this dedicated udp_proxy listener
+// (mirroring how RoutesFromRules mirrors TCPMappings).
 func UDPMappings(rules []config.EgressRule, ports EnvoyPorts) []TCPMapping {
 	// UDP skips only CIDR — a UDP-IP rule still needs its own dedicated listener
 	// (UDP has no filter chains to ride the shared listener); UDP-CIDR fails closed.

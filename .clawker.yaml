@@ -80,6 +80,7 @@ build:
       - go install github.com/goreleaser/goreleaser/v2@latest
       - go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
       - uv tool install semgrep
+      - curl https://sh.rustup.rs -sSf | sh -s -- -y
       - |-
         WEBSOCAT_VERSION=v1.14.1 && \
           ARCH=$(dpkg --print-architecture) && \
@@ -121,6 +122,8 @@ build:
     - libbpf-dev
     - bpftool
     - nghttp2-client
+    - netcat-openbsd
+    - cmake
 security:
   docker_socket: false
   firewall:
@@ -175,6 +178,13 @@ security:
       - docs.ebpf.io
       - docs.cilium.io
       - .mintlify.com
+      - cloudflare-quic.com
+      - quic.nginx.org
+      - quic.rocks
+      - quic.aiortc.org
+      - elixir.bootlin.com
+      - index.crates.io
+      - static.crates.io
     rules:
       - action: allow
         dst: github.com
@@ -198,6 +208,10 @@ security:
             path: /koalaman/shellcheck/
           - action: allow
             path: /artempyanykh/marksman/
+          - action: allow
+            path: /mintlify/
+          - action: allow
+            path: /cloudflare/
       - action: allow
         dst: api.github.com
         insecure_skip_tls_verify: false
@@ -213,6 +227,8 @@ security:
             path: /anthropics/claude-code/refs/heads/main/
           - action: allow
             path: /repos/upstash/context7/
+          - action: allow
+            path: /repos/cilium/cilium/
           - action: deny
             path: /gists
           - action: deny
@@ -243,6 +259,10 @@ security:
             path: /oraios/serena/
           - action: allow
             path: /anthropics/claude-code/refs/heads/main/
+          - action: allow
+            path: /upstash/context7/master/plugins/claude/context7/skills/context7-mcp/
+          - action: allow
+            path: /cilium/cilium/
         port: 443
         proto: https
   git_credentials:

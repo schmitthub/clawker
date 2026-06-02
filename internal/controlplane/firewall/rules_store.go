@@ -2,6 +2,7 @@ package firewall
 
 import (
 	"fmt"
+	"net"
 	"strings"
 
 	"github.com/schmitthub/clawker/internal/config"
@@ -265,7 +266,41 @@ func RoutesFromRules(rules []config.EgressRule, ports EnvoyPorts) []ebpf.Route {
 			DomainHash: ebpf.DomainHash(m.Dst),
 			DstPort:    uint16(m.DstPort),
 			EnvoyPort:  uint16(m.EnvoyPort),
+			L4Proto:    ebpf.L4ProtoTCP,
 		})
+	}
+
+	// Raw UDP: UDPMappings is the source of truth for which udp rules get a
+	// dedicated udp_proxy listener and its port — the L4ProtoUDP peer of the
+	// TCP pass above. The l4_proto discriminator keeps a co-keyed tcp/https
+	// route on the same {domain, port} independent. UDPMappings already drops
+	// CIDR dsts, so m.Dst is an FQDN or a single IP literal — BOTH are projected.
+	// An FQDN gets its dns_cache entry from CoreDNS; a bare IP has none (CoreDNS
+	// never resolved it), so we carry SeedIP and SyncRoutes seeds
+	// dns_cache[ip]=DomainHash(ip), letting connect4/sendmsg4's lookup hit on the
+	// literal IP and redirect to the dedicated STATIC-pinned udp listener.
+	//
+	// udpSeen dedups L4ProtoUDP routes across BOTH this pass and the h3-over-https
+	// pass below — the raw-udp pass runs first, so an explicit `proto: udp` rule
+	// stays authoritative on a {domain, port} collision (e.g. udp:443 + https).
+	udpSeen := make(map[string]struct{})
+	for _, m := range UDPMappings(rules, ports) {
+		if m.Dst == "" {
+			continue
+		}
+		udpSeen[fmt.Sprintf("%s:%d", m.Dst, m.DstPort)] = struct{}{}
+		r := ebpf.Route{
+			DomainHash: ebpf.DomainHash(m.Dst),
+			DstPort:    uint16(m.DstPort),
+			EnvoyPort:  uint16(m.EnvoyPort),
+			L4Proto:    ebpf.L4ProtoUDP,
+		}
+		if ip := net.ParseIP(m.Dst); ip != nil {
+			if v4 := ip.To4(); v4 != nil {
+				r.SeedIP = ebpf.IPToUint32(v4)
+			}
+		}
+		out = append(out, r)
 	}
 
 	// TLS/HTTP (http/https/ws/wss): second pass — all ride the shared egress
@@ -287,14 +322,7 @@ func RoutesFromRules(rules []config.EgressRule, ports EnvoyPorts) []ebpf.Route {
 			continue // handled above (TCPMappings → dedicated TCP listener)
 		}
 		if proto == "udp" {
-			// Raw UDP gets a dedicated Envoy udp_proxy listener (UDPMappings) but
-			// is NOT projected into the eBPF route_map yet: eBPF UDP redirect is a
-			// separate atom (the data plane currently denies non-DNS UDP outright).
-			// Emitting a route here would point UDP at the TCP egress listener and
-			// could overwrite a co-keyed tcp/https route_map entry. Skip until eBPF
-			// gains UDP support, at which point it mirrors UDPMappings the way this
-			// TLS/HTTP pass mirrors TCPMappings.
-			continue
+			continue // handled above (UDPMappings → dedicated udp_proxy listener, L4ProtoUDP)
 		}
 		if isIPOrCIDR(r.Dst) {
 			continue
@@ -318,7 +346,30 @@ func RoutesFromRules(rules []config.EgressRule, ports EnvoyPorts) []ebpf.Route {
 			DomainHash: ebpf.DomainHash(dst),
 			DstPort:    uint16(r.Port),
 			EnvoyPort:  uint16(ports.EgressPort),
+			L4Proto:    ebpf.L4ProtoTCP,
 		})
+
+		// h3-over-https: a TLS-bearing FQDN rule (https/wss) also gets a QUIC/h3
+		// listener in Envoy (quicSNIChainLayer, on UDP EgressPort) that the TCP
+		// chain advertises via alt-svc. Project an L4ProtoUDP route to the SAME
+		// EgressPort so the eBPF layer redirects the agent's QUIC datagrams to that
+		// listener instead of denying them — this is what flips a QUIC attempt to an
+		// allowed-domain from "denied" to "allowed". Plaintext http/ws have no
+		// cleartext h3 sibling, so they get no UDP route. Skipped if a raw `udp`
+		// rule already claimed this {domain, port} (raw-udp pass is authoritative).
+		// NOTE: connect4 (connected UDP) consumes this today; routing UNCONNECTED
+		// QUIC (sendmsg4) additionally requires the recvmsg4 reverse source-map.
+		if proto == "https" || proto == "wss" {
+			if _, dup := udpSeen[key]; !dup {
+				udpSeen[key] = struct{}{}
+				out = append(out, ebpf.Route{
+					DomainHash: ebpf.DomainHash(dst),
+					DstPort:    uint16(r.Port),
+					EnvoyPort:  uint16(ports.EgressPort),
+					L4Proto:    ebpf.L4ProtoUDP,
+				})
+			}
+		}
 	}
 	return out
 }

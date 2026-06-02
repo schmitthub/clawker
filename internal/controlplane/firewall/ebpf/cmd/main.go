@@ -313,8 +313,20 @@ func runDumpRoutes(log *logger.Logger, asJSON bool) {
 	}
 	fmt.Printf("route_map: %d entries\n", len(routes))
 	for _, r := range routes {
-		fmt.Printf("  domain_hash=0x%08x dst_port=%d -> envoy_port=%d\n",
-			r.DomainHash, r.DstPort, r.EnvoyPort)
+		fmt.Printf("  domain_hash=0x%08x dst_port=%d proto=%s -> envoy_port=%d\n",
+			r.DomainHash, r.DstPort, l4ProtoLabel(r.L4Proto), r.EnvoyPort)
+	}
+}
+
+// l4ProtoLabel renders a RouteKey.L4Proto byte for the break-glass dump.
+func l4ProtoLabel(p uint8) string {
+	switch p {
+	case clawkerebpf.L4ProtoTCP:
+		return "tcp"
+	case clawkerebpf.L4ProtoUDP:
+		return "udp"
+	default:
+		return fmt.Sprintf("?(%d)", p)
 	}
 }
 

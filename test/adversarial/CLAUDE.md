@@ -46,7 +46,8 @@ Every capture is stored in SQLite with test ID, protocol, transport details, and
 | `POST /c/{id}` | HTTPS | Per-test capture with auto-decode |
 | `GET /ws/{id}` | WebSocket | WS upgrade, reads frames, stores captures (test 31) |
 | `:8080/c/{id}` | HTTP | Plain HTTP bypass testing |
-| `:5353` | UDP | UDP datagram capture |
+| `:5353` | UDP | UDP datagram capture **+ echo-back** (connected-UDP roundtrip proof) |
+| `:7777` | raw TCP | Plaintext TCP echo — opaque `tcp_proxy` routing test (no MITM, no app proto) |
 | ICMP raw | ICMP | ICMP echo payload capture |
 
 ### Checking Results
@@ -160,7 +161,34 @@ C2 server: `ajschmitt.ngrok.app` (ngrok tunnel to local attacker-server)
 - `POST /callback/register` — can bind arbitrary ports on host loopback (OAuth flow)
 - Socket bridge (SSH/GPG agent) abuse potential
 - Environment variable leakage (secrets visible in container env)
-- UDP/ICMP exfil (firewall only redirects TCP through Envoy)
+- ICMP exfil (firewall does not redirect ICMP). **UDP** is now redirected for
+  FQDN connected-UDP rules (`connect4` `SOCK_DGRAM` → `udp_proxy`); unconnected
+  UDP (`sendmsg4`) remains fail-closed pending a `recvmsg4` reverse source-map.
+  See "Transport-routing UAT" above.
+
+## Transport-routing UAT (raw TCP / raw UDP / QUIC)
+
+Behavioral tests for the eBPF→Envoy transport routing of opaque `tcp`/`udp`
+egress rules. Same rule as all egress UAT: **clawker-net is not Envoy-routed**,
+so the dst must be the **public ngrok edge**, never the C2's clawker-net IP.
+Route projection is **FQDN-only** (IP dsts have no `dns_cache` entry to key the
+`route_map` lookup), so rules must target a hostname.
+
+| Transport | Rule | Datapath | C2 sink | In-container probe |
+|---|---|---|---|---|
+| raw TCP | `firewall add <host> --proto tcp --port N` | `connect4` `SOCK_STREAM` → dedicated TCP listener (`TCPPortBase+idx`) → opaque `tcp_proxy` | `:7777` echo | `python3` socket connect+send+recv; `websocat tcp:<host>:N` |
+| raw UDP (connected) | `firewall add <host> --proto udp --port N` | `connect4` `SOCK_DGRAM` → `route_map(SOCK_DGRAM)` → `udp_proxy` (`UDPPortBase+idx`) | `:5353` capture+echo | `python3`: `s.connect((h,N)); s.send(b'x'); s.recv(...)` → **should arrive** |
+| raw UDP (unconnected) | same rule | `sendmsg4` → **fail-closed deny** (no `recvmsg4` reverse-map yet) | — (nothing captured) | `python3`: `s.sendto(b'x',(h,N))` → **should be denied** |
+| QUIC / h3 | — | **NOT testable yet** — `{udp,quic,http3}` realization deferred (Envoy QUIC build gated); `https` emits only `L4ProtoTCP`, so connected-h3 to an https domain is denied | — | `h2load -h3` / `curl --http3` exist as clients but have no listener |
+
+**The connected-vs-unconnected UDP pair is the precise discriminator for the
+eBPF UDP redirect**: connected datagrams route + echo back; unconnected ones
+fail closed. The netlogger event still labels both by socket type (`dgram`) —
+the route-map's `l4_proto` is a separate field and does not relabel events.
+
+ngrok edges: HTTP/WS via the existing HTTP tunnel; raw TCP via an ngrok **TCP
+edge** → host `:7777`; raw UDP via an ngrok **UDP** tunnel → host `:5454`
+(→ container `:5353`).
 
 ## Payloads
 

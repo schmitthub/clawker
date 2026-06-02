@@ -750,31 +750,37 @@ func TestHandler_FirewallInit_SyncsRoutesFromStore(t *testing.T) {
 	require.Len(t, calls, 1, "FirewallInit must SyncRoutes exactly once during bringup")
 
 	routes := calls[0].Routes
-	require.Len(t, routes, 2, "every persisted rule must appear in the route_map seed")
+	require.Len(t, routes, 3, "ssh route + https TCP egress route + https QUIC/h3 UDP route")
 
-	// Locate each rule's route by DstPort.
-	var sshRoute, tlsRoute *ebpf.Route
+	// Locate each route by (DstPort, l4_proto). The https rule projects two:
+	// the TCP egress route and the QUIC/h3 (UDP) sibling on the same port.
+	var sshRoute, tlsRoute, quicRoute *ebpf.Route
 	for i := range routes {
-		switch routes[i].DstPort {
-		case 22:
+		switch {
+		case routes[i].DstPort == 22:
 			sshRoute = &routes[i]
-		case 443:
+		case routes[i].DstPort == 443 && routes[i].L4Proto == ebpf.L4ProtoTCP:
 			tlsRoute = &routes[i]
+		case routes[i].DstPort == 443 && routes[i].L4Proto == ebpf.L4ProtoUDP:
+			quicRoute = &routes[i]
 		}
 	}
 	require.NotNil(t, sshRoute, "SSH rule missing from route_map seed")
 	require.NotNil(t, tlsRoute, "TLS rule missing from route_map seed")
+	require.NotNil(t, quicRoute, "QUIC/h3 sibling missing from route_map seed")
 	assert.NotZero(t, sshRoute.DomainHash)
 	assert.NotZero(t, tlsRoute.DomainHash)
+	assert.Equal(t, tlsRoute.DomainHash, quicRoute.DomainHash, "QUIC sibling shares the https domain hash")
 
-	// TLS rule routes to the main Envoy egress listener.
-	// SSH rule routes to a dedicated per-rule TCP listener at
-	// TCPPortBase + idx. A refactor that flipped these port
-	// assignments would silently misroute traffic through the wrong
-	// listener type (e.g. SSH reaching the TLS listener, which
-	// tls_inspector would reject).
+	// TLS + QUIC/h3 both target the main Envoy egress listener (TCP and UDP on
+	// the same port). SSH routes to a dedicated per-rule TCP listener at
+	// TCPPortBase + idx. A refactor that flipped these port assignments would
+	// silently misroute traffic through the wrong listener type (e.g. SSH
+	// reaching the TLS listener, which tls_inspector would reject).
 	assert.Equal(t, uint16(consts.EnvoyEgressPort), tlsRoute.EnvoyPort,
 		"TLS rule must target the main egress listener port")
+	assert.Equal(t, uint16(consts.EnvoyEgressPort), quicRoute.EnvoyPort,
+		"QUIC/h3 sibling must target the egress (QUIC) listener port")
 	assert.GreaterOrEqual(t, sshRoute.EnvoyPort, uint16(consts.EnvoyTCPPortBase),
 		"SSH rule must target a dedicated TCP listener port")
 }
@@ -1096,12 +1102,19 @@ func TestHandler_Reload_CallsSyncRoutesAfterReload(t *testing.T) {
 	assert.Equal(t, 1, stack.reloadCalls, "Stack.Reload called once per reconcile")
 	require.Len(t, mock.SyncRoutesCalls(), 1, "ebpf.SyncRoutes called exactly once per reconcile")
 
-	// Routes derived from the store (not from req) and carry EnvoyPort
-	// from cfg.
+	// Routes derived from the store (not from req) and carry EnvoyPort from
+	// cfg. An https rule projects BOTH the TCP egress route and the QUIC/h3
+	// (UDP) sibling — same domain+port+EnvoyPort, distinct l4_proto.
 	routes := mock.SyncRoutesCalls()[0].Routes
-	require.Len(t, routes, 1)
-	assert.NotZero(t, routes[0].DomainHash)
-	assert.Equal(t, uint16(443), routes[0].DstPort)
+	require.Len(t, routes, 2)
+	for _, rt := range routes {
+		assert.NotZero(t, rt.DomainHash)
+		assert.Equal(t, uint16(443), rt.DstPort)
+	}
+	assert.ElementsMatch(t,
+		[]uint8{ebpf.L4ProtoTCP, ebpf.L4ProtoUDP},
+		[]uint8{routes[0].L4Proto, routes[1].L4Proto},
+		"https rule must project both the TCP egress route and the QUIC/h3 UDP route")
 }
 
 // TestHandler_AddRules_StackDown_PersistsWithoutRestart proves the
