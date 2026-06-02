@@ -20,6 +20,25 @@ import (
 //     cluster, filter, listener, and access-log change as a diff;
 //  3. all cases are rows in this one table.
 //
+// ADDING COVERAGE? Extend the `comprehensiveRules` const below and re-bless with
+// GOLDEN_UPDATE=1 — do NOT add a new table row + new `*.envoy.golden`. A per-
+// feature golden re-tests in isolation what the mega-config already covers, loses
+// the cross-rule interaction diff, and rots. A new case is justified ONLY for one
+// of the two reasons listed below; if neither applies, it goes in comprehensiveRules.
+// (Full rationale: .claude/rules/envoy.md → Testing §.)
+//
+// Strategy: `comprehensive` (+ `comprehensive_mtls`) is the all-encompassing
+// interaction golden — every co-existable feature in ONE config so cross-rule
+// regressions surface as a single diff. The only other golden cases are the ones
+// a mega-config STRUCTURALLY cannot express, because a mega-config forces every
+// generation-wide fact ON and so can never observe a fact being absent:
+//   - http_exact_only / https_exact_only — assert the DFP filter+cluster is
+//     ABSENT (any wildcard rule in the mega turns DFP on globally);
+//   - ssh — an opaque-only config has NO shared egress listener and NO deny
+//     floor (any http/https rule creates the egress listener).
+// Plus the fail-closed cases (no config produced), which cannot coexist with a
+// valid config by definition. Everything else folds into the comprehensive pair.
+//
 // Re-bless goldens with GOLDEN_UPDATE=1, then read the diff against
 // ENVOY_TARGET.md before committing.
 
@@ -27,20 +46,28 @@ func testPorts() EnvoyPorts {
 	return EnvoyPorts{EgressPort: 10000, TCPPortBase: 15000, UDPPortBase: 16000, HealthPort: 10001}
 }
 
-func TestGenerateEnvoyConfig(t *testing.T) {
-	cases := []struct {
-		name  string    // golden: testdata/envoy/<name>.envoy.golden
-		rules string    // real egress-rules YAML, parsed via storage.NewFromString
-		als   ALSConfig // generation-side access-log config (not part of the rules sample)
-		// wantErrContains, when set, asserts GenerateEnvoyConfig FAILS with an error
-		// containing this substring (the "control" for a fail-closed case) and skips
-		// the golden compare — no config is produced.
-		wantErrContains string
-	}{
-		{
-			name: "http", // exact + wildcard, multi-port, path rules, plaintext DFP
-			rules: `
+// comprehensiveRules is the all-encompassing egress-rules sample shared by the
+// `comprehensive` (als off) and `comprehensive_mtls` (als on) cases — the same
+// rule set generated under both access-log modes is a full-matrix on/off
+// differential for the OTel sink across every listener type.
+//
+// It maxes out the SHARED egress listener — TLS SNI chains (per-SNI cert + deny
+// default), the plaintext http catch-all (+ http_dfp), prefix_ranges raw_buffer
+// chains for opaque IP/CIDR AND L7/TLS-to-CIDR, all under one use_original_dst —
+// alongside the dedicated tcp/ssh/udp listeners, the port_range fan-out, the
+// QUIC sibling listener, and the deny floor. It deliberately interleaves: FQDN
+// https (gets a QUIC sibling) next to IP and CIDR https (TCP-only, no QUIC — the
+// carve-out pinned in one place); the same CIDR on two ports under two protos
+// (10.0.0.0/24 http:8080 + tcp:5432); the same IP on two ports under two protos
+// (10.0.0.5 https:8443 + tcp:8080); plaintext http to a bare IP literal
+// (192.168.1.1/.2 → STATIC pin + IP-keyed Host vhost, multi-port + path rules);
+// apex dedup (mintlify.com + .mintlify.com);
+// ws/wss absorbed into a base rule AND standalone ws/wss promotion AND wildcard
+// ws/wss; path routing on both plaintext and TLS chains; and an unsupported
+// proto (ftp) skipped amid the rest.
+const comprehensiveRules = `
 rules:
+  # --- http: exact, wildcard (httpDFPActive), path rules ---
   - dst: example.com
     proto: http
     port: 80
@@ -56,50 +83,56 @@ rules:
         action: allow
       - path: /v1/internal
         action: deny
-  - dst: .other.com
-    proto: http
-`,
-		},
-		{
-			name: "http_exact_only", // exact-only → no DFP filter/cluster
-			rules: `
-rules:
-  - dst: example.com
-    proto: http
-    port: 80
-  - dst: some.com
-    proto: http
-`,
-		},
-		{
-			name: "https", // exact + wildcard (+ apex dedup) + h3/QUIC + reencrypt DFP
-			rules: `
-rules:
+  # --- https: exact FQDN (QUIC sibling), apex dedup, wildcard (httpsDFPActive), path rules ---
   - dst: api.anthropic.com
     proto: https
   - dst: mintlify.com
     proto: https
   - dst: .mintlify.com
     proto: https
-  - dst: .docs.example.com
+  - dst: api.github.com
     proto: https
-`,
-		},
-		{
-			name: "https_exact_only", // exact-only https + non-default port
-			rules: `
-rules:
-  - dst: api.anthropic.com
+    port: 443
+    path_default: allow
+    path_rules:
+      - path: /repos/schmitthub/clawker/
+        action: allow
+      - path: /repos/envoyproxy/
+        action: allow
+      - path: /repos/
+        action: deny
+  - dst: raw.githubusercontent.com
     proto: https
-  - dst: example.org
+    port: 443
+    path_default: deny
+    path_rules:
+      - path: /anchore/syft/main/
+        action: allow
+      - path: /schmitthub/clawker/
+        action: allow
+      - path: /envoyproxy/
+        action: allow
+  # --- https self-signed: FQDN (QUIC) + IP (no QUIC), insecure_skip_tls_verify ---
+  - dst: local.dev
+    proto: https
+    insecure_skip_tls_verify: true
+  - dst: 10.0.0.5
     proto: https
     port: 8443
-`,
-		},
-		{
-			name: "ip_dst", // IP literals as dst (not FQDNs) across http + https
-			rules: `
-rules:
+    insecure_skip_tls_verify: true
+  # --- L7/TLS to CIDR (TCP-only, no QUIC): http + https ---
+  - dst: 172.16.0.0/16
+    proto: https
+  - dst: 10.0.0.0/24
+    proto: http
+    port: 8080
+    path_default: deny
+    path_rules:
+      - path: /v1
+        action: allow
+      - path: /v1/internal
+        action: deny
+  # --- http to bare IP literal: STATIC pin + IP-keyed Host vhost, multi-port, path rules on an IP vhost ---
   - dst: 192.168.1.1
     proto: http
     port: 80
@@ -115,96 +148,16 @@ rules:
         action: allow
       - path: /v1/internal
         action: deny
-  - dst: 192.168.1.3
-    proto: https
-`,
-		},
-		{
-			// Axis 4 — insecure_skip_tls_verify, orthogonal to dst type: a self-signed
-			// FQDN dev host AND a self-signed IP dev host. Both upstream reencrypt
-			// contexts carry trust_chain_verification: ACCEPT_UNTRUSTED; SAN binding
-			// (auto_san_validation) still holds. The IP also exercises axes 1-3
-			// (prefix_ranges gate, iPAddress-keyed cert path, STATIC cluster).
-			name: "insecure_skip_verify",
-			rules: `
-rules:
-  - dst: local.dev
-    proto: https
-    insecure_skip_tls_verify: true
-  - dst: 10.0.0.5
-    proto: https
-    port: 8443
-    insecure_skip_tls_verify: true
-`,
-		},
-		{
-			name: "raw_tcp", // opaque raw TCP: dedicated listener → tcp_proxy → pinned cluster
-			rules: `
-rules:
-  - dst: db.example.com
-    proto: tcp
-    port: 5432
-`,
-		},
-		{
-			name: "ssh", // opaque SSH over TCP: same shape as raw tcp, proto token = ssh
-			rules: `
-rules:
-  - dst: github.com
-    proto: ssh
-    port: 22
-`,
-		},
-		{
-			name: "raw_udp", // opaque raw UDP: dedicated UDP listener → udp_proxy → pinned cluster
-			rules: `
-rules:
-  - dst: relay.example.com
-    proto: udp
-    port: 3478
-`,
-		},
-		{
-			name: "ws", // websocket over http: standalone ws rule promotes to an http stack + per-route upgrade_configs + HCM allow_connect
-			rules: `
-rules:
+  # --- websocket: standalone promote, absorb into base, wildcard, CIDR ---
   - dst: realtime.io
     proto: ws
     port: 80
-`,
-		},
-		{
-			name: "wss", // websocket over https: standalone wss promotes to the https+quic stack, enriched (upgrade route, allow_connect/allow_extended_connect, upstream pinned http/1.1, MITM cert)
-			rules: `
-rules:
   - dst: stream.anthropic.com
     proto: wss
-`,
-		},
-		{
-			name: "ws_wildcard", // wildcard ws: plaintext http_dfp + websocket enrichment (no h1.1 pin — plaintext upstream)
-			rules: `
-rules:
   - dst: .chat.example.com
     proto: ws
-`,
-		},
-		{
-			name: "wss_wildcard", // wildcard wss: distinct wss_dfp cluster (h1.1) sharing the https dns_cache + websocket enrichment
-			rules: `
-rules:
   - dst: .stream.example.com
     proto: wss
-`,
-		},
-		{
-			// Additive UX: ws/wss is its own rule that ENRICHES the base http/https
-			// stack for the same origin. https+wss → ONE enriched https stack (wss
-			// absorbed, no proto-collision); http+ws → ONE enriched http stack. The
-			// base rule owns structure; the ws/wss rule only flips the upgrade on.
-			name: "ws_wss_absorb",
-			rules: `
-rules:
   - dst: secure.example.com
     proto: https
   - dst: secure.example.com
@@ -215,96 +168,103 @@ rules:
   - dst: plain.example.com
     proto: ws
     port: 80
-`,
-		},
-		{
-			// http to a CIDR: a prefix_ranges raw_buffer chain (not the catch-all
-			// http chain) → plaintext ORIGINAL_DST cluster → ONE wildcard-host
-			// (domains: ["*"]) allow vhost carrying the rule's path routes, with NO
-			// deny_all (the prefix_ranges gate is the boundary) and NO DFP filter.
-			name: "http_cidr",
-			rules: `
-rules:
-  - dst: 10.0.0.0/24
-    proto: http
-    port: 8080
-    path_default: deny
-    path_rules:
-      - path: /v1
-        action: allow
-      - path: /v1/internal
-        action: deny
-`,
-		},
-		{
-			// https to a CIDR: TLS terminated on a prefix_ranges chain with the range
-			// MITM cert (SAN = network address, 172.16.0.0), reencrypt to ORIGINAL_DST,
-			// ONE wildcard-host vhost. TCP-only — no QUIC/h3 sibling for a range.
-			// Default verify (no insecure flag) → upstream VERIFY_TRUST_CHAIN.
-			name: "https_cidr",
-			rules: `
-rules:
-  - dst: 172.16.0.0/16
-    proto: https
-`,
-		},
-		{
-			// ws to a CIDR: http-CIDR shape (plaintext ORIGINAL_DST + wildcard-host
-			// vhost) ENRICHED with the websocket upgrade — per-route upgrade_configs +
-			// HCM allow_connect. Plaintext upstream speaks h1.1 natively (no pin).
-			name: "ws_cidr",
-			rules: `
-rules:
   - dst: 10.20.0.0/24
     proto: ws
     port: 80
-`,
-		},
-		{
-			// wss to a CIDR: https-CIDR shape (range cert + reencrypt ORIGINAL_DST +
-			// wildcard-host vhost) ENRICHED for websocket — upstream pinned http/1.1,
-			// allow_connect, upgrade route. insecure_skip_tls_verify accepts the
-			// self-signed in-range upstream (ACCEPT_UNTRUSTED) so the handshake isn't
-			// refused; SAN binding still holds and MITM inspection still applies.
-			name: "wss_cidr",
-			rules: `
-rules:
   - dst: 10.10.0.0/16
     proto: wss
     insecure_skip_tls_verify: true
-`,
-		},
-		{
-			// Opaque TCP/SSH to an IP or CIDR rides the SHARED egress listener as a
-			// prefix_ranges raw_buffer chain (the dst is known at gen time — no
-			// dedicated listener, no SNI/Host discriminator needed). A bare IP pins
-			// STATIC (the address IS the resolution); a CIDR forwards to ORIGINAL_DST
-			// scoped by the chain's prefix_ranges (range = the grant). use_original_dst
-			// recovers the real dst so prefix_ranges matches it.
-			name: "opaque_ip_cidr",
-			rules: `
-rules:
-  - dst: 192.168.1.5
+  # --- opaque tcp/ssh: dedicated FQDN listeners + port_range fan-out ---
+  - dst: db.example.com
     proto: tcp
     port: 5432
+  - dst: github.com
+    proto: ssh
+    port: 22
+  - dst: gitlab.com
+    proto: ssh
+    port: 22
+  - dst: cluster.example.com
+    proto: tcp
+    port_range: "9000-9002"
+  # --- opaque tcp/ssh to IP/CIDR: shared egress prefix_ranges (STATIC vs ORIGINAL_DST) ---
+  - dst: 10.0.0.5
+    proto: tcp
+    port: 8080
   - dst: 10.0.0.0/24
     proto: tcp
     port: 5432
   - dst: 203.0.113.7
     proto: ssh
     port: 22
-`,
-		},
-		{
-			// Raw UDP to a single IP → dedicated UDP listener → udp_proxy → STATIC
-			// pin (UDP has no filter chains, so even a known IP gets its own listener;
-			// the pin is the gate). Peer of opaque_ip_cidr's tcp single-IP case.
-			name: "udp_ip",
-			rules: `
-rules:
+  # --- raw udp: dedicated FQDN listener + dedicated single-IP listener ---
+  - dst: relay.example.com
+    proto: udp
+    port: 3478
   - dst: 192.168.1.9
     proto: udp
     port: 3478
+  # --- unsupported proto: skipped with a warning, rest still generates ---
+  - dst: legacy.example.com
+    proto: ftp
+    port: 21
+`
+
+func TestGenerateEnvoyConfig(t *testing.T) {
+	cases := []struct {
+		name  string    // golden: testdata/envoy/<name>.envoy.golden
+		rules string    // real egress-rules YAML, parsed via storage.NewFromString
+		als   ALSConfig // generation-side access-log config (not part of the rules sample)
+		// wantErrContains, when set, asserts GenerateEnvoyConfig FAILS with an error
+		// containing this substring (the "control" for a fail-closed case) and skips
+		// the golden compare — no config is produced.
+		wantErrContains string
+	}{
+		{
+			// The all-encompassing interaction golden (als off → stdout access log
+			// only, no OTel cluster/sink). See comprehensiveRules.
+			name:  "comprehensive",
+			rules: comprehensiveRules,
+		},
+		{
+			// Same rules as `comprehensive` with als.MTLS on: the OTel cluster
+			// (otel_collector_als) + open_telemetry access-log sink appear on EVERY
+			// listener type (http HCM, https HCM, tcp/ssh/udp tcp_proxy). The diff vs
+			// `comprehensive` is exactly the OTel additions — a full-matrix on/off
+			// differential for the access-log gate across the whole feature set.
+			name:  "comprehensive_mtls",
+			rules: comprehensiveRules,
+			als:   ALSConfig{Port: 4319, MTLS: true},
+		},
+		{
+			name: "http_exact_only", // exact-only → no DFP filter/cluster (the httpDFPActive=false shape)
+			rules: `
+rules:
+  - dst: example.com
+    proto: http
+    port: 80
+  - dst: some.com
+    proto: http
+`,
+		},
+		{
+			name: "https_exact_only", // exact-only https + non-default port (the httpsDFPActive=false shape)
+			rules: `
+rules:
+  - dst: api.anthropic.com
+    proto: https
+  - dst: example.org
+    proto: https
+    port: 8443
+`,
+		},
+		{
+			name: "ssh", // opaque-only: dedicated listener → tcp_proxy → pinned cluster, NO shared egress listener, NO deny floor
+			rules: `
+rules:
+  - dst: github.com
+    proto: ssh
+    port: 22
 `,
 		},
 		{
@@ -319,15 +279,6 @@ rules:
     port: 3478
 `,
 			wantErrContains: "raw udp to a CIDR range",
-		},
-		{
-			name: "tcp_port_range", // opaque tcp port_range → one dedicated listener + pinned cluster per in-range port (mapping A, never ORIGINAL_DST)
-			rules: `
-rules:
-  - dst: cluster.example.com
-    proto: tcp
-    port_range: "9000-9002"
-`,
 		},
 		{
 			// A port_range wide enough to push the tcp/ssh band past the udp base
@@ -360,24 +311,6 @@ rules:
     port_range: "1-60000"
 `,
 			wantErrContains: "overflow past port 65535",
-		},
-		{
-			name: "otel_mtls", // OTel access-log sink wired
-			rules: `
-rules:
-  - dst: example.com
-    proto: http
-`,
-			als: ALSConfig{Port: 4319, MTLS: true},
-		},
-		{
-			name: "unsupported_proto", // ftp → not yet a supported token; skipped (no listener in output)
-			rules: `
-rules:
-  - dst: host.com
-    proto: ftp
-    port: 21
-`,
 		},
 		{
 			// Two different protos on the same host:port must FAIL generation — a
