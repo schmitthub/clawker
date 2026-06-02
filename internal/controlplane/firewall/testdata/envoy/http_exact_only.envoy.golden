@@ -151,3 +151,34 @@ static_resources:
                                     timeout: 0s
                     stat_prefix: http_egress
           name: egress
+        - address:
+            socket_address:
+                address: 0.0.0.0
+                port_value: 10001
+          filter_chains:
+            - filters:
+                - name: envoy.filters.network.http_connection_manager
+                  typed_config:
+                    '@type': type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                    http_filters:
+                        - name: envoy.filters.http.router
+                          typed_config:
+                            '@type': type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                    route_config:
+                        virtual_hosts:
+                            - domains:
+                                - '*'
+                              name: health
+                              routes:
+                                - direct_response:
+                                    body:
+                                        inline_string: ok
+                                    status: 200
+                                  match:
+                                    prefix: /
+                                  metadata:
+                                    filter_metadata:
+                                        clawker:
+                                            action: allowed
+                    stat_prefix: health_check
+          name: health_check

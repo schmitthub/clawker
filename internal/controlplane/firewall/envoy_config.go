@@ -64,6 +64,16 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts, als ALSCon
 	if err := installOtelALSCluster(cfg, als); err != nil {
 		return nil, warnings, err
 	}
+	if err := installHealthListener(cfg, ports); err != nil {
+		return nil, warnings, err
+	}
+	// Fail closed: Stack.EnsureRunning probes the health listener on a
+	// non-cancellable context, so a config missing it would hang firewall
+	// bringup forever (stack up, but route-seed + agent re-enroll never run).
+	// Refuse to ship such a config rather than strand the firewall.
+	if ports.HealthPort > 0 && !cfg.HasListener(healthListenerName) {
+		return nil, warnings, fmt.Errorf("generated envoy config is missing the health listener on port %d — firewall bringup would hang", ports.HealthPort)
+	}
 
 	out, err := cfg.Bytes()
 	if err != nil {
@@ -496,6 +506,69 @@ func buildOtelALSCluster(als ALSConfig) map[string]any {
 									"exact": consts.MonitoringServiceOtelCollector,
 								},
 							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+// installHealthListener is the once-per-generation step that emits the dedicated
+// readiness listener Stack.EnsureRunning probes (http://<EnvoyIP>:HealthPort/ →
+// 200). It MUST run whenever HealthPort > 0: EnsureRunning loops on a
+// non-cancellable context until the probe succeeds, so a config without this
+// listener hangs firewall bringup forever (the stack comes up but route-seed and
+// agent re-enrollment never run). Gated on HealthPort > 0 so the test/zero-port
+// path stays listener-free.
+func installHealthListener(cfg *EnvoyConfig, ports EnvoyPorts) error {
+	if ports.HealthPort <= 0 {
+		return nil
+	}
+	return cfg.AddListener(buildHealthListener(ports.HealthPort))
+}
+
+// buildHealthListener creates the lightweight HTTP listener that returns 200 OK
+// "ok" for host-side readiness probes. It is the only port published to the host
+// — keeping the traffic ports (egress/quic/dedicated) unpublished preserves
+// source IPs for per-agent attribution. A complete self-contained listener (its
+// own HCM filter chain → direct_response), added via AddListener.
+func buildHealthListener(port int) map[string]any {
+	return map[string]any{
+		"name": healthListenerName,
+		"address": map[string]any{
+			"socket_address": map[string]any{
+				"address":    defaultBindAddress,
+				"port_value": port,
+			},
+		},
+		"filter_chains": []any{
+			map[string]any{
+				"filters": []any{
+					map[string]any{
+						"name": "envoy.filters.network.http_connection_manager",
+						"typed_config": map[string]any{
+							"@type":       "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
+							"stat_prefix": "health_check",
+							"route_config": map[string]any{
+								"virtual_hosts": []any{
+									map[string]any{
+										"name":    "health",
+										"domains": []any{"*"},
+										"routes": []any{
+											map[string]any{
+												"match":    map[string]any{"prefix": "/"},
+												"metadata": clawkerActionMetadata("allowed"),
+												"direct_response": map[string]any{
+													"status": 200,
+													"body":   map[string]any{"inline_string": "ok"},
+												},
+											},
+										},
+									},
+								},
+							},
+							"http_filters": []any{routerFilter()},
 						},
 					},
 				},

@@ -155,7 +155,6 @@ security:
       - code.claude.com
       - semgrep.dev
       - github.com
-      - api.github.com
       - release-assets.githubusercontent.com
       - docker.io
       - www.envoyproxy.io
@@ -180,10 +179,31 @@ security:
     rules:
       - action: allow
         dst: github.com
+        insecure_skip_tls_verify: false
         port: 22
         proto: ssh
       - action: allow
+        dst: api.github.com
+        insecure_skip_tls_verify: false
+        path_default: allow
+        path_rules:
+          - action: allow
+            path: /repos/schmitthub/clawker/
+          - action: allow
+            path: /repos/envoyproxy/
+          - action: allow
+            path: /repos/oraios/serena/commits/
+          - action: allow
+            path: /anthropics/claude-code/refs/heads/main/
+          - action: allow
+            path: /repos/upstash/context7/
+          - action: deny
+            path: /repos/
+        port: 443
+        proto: https
+      - action: allow
         dst: toolbox-data.anchore.io
+        insecure_skip_tls_verify: false
         path_default: deny
         path_rules:
           - action: allow
@@ -192,6 +212,7 @@ security:
         proto: https
       - action: allow
         dst: raw.githubusercontent.com
+        insecure_skip_tls_verify: false
         path_default: deny
         path_rules:
           - action: allow

@@ -228,6 +228,26 @@ const (
 	CoreDNSHealthPath = "/health"
 )
 
+// Firewall stack bringup timeouts. Single source of truth shared by the CP
+// (Stack.WaitForHealthy) and the CLI (FirewallInit/FirewallReload RPC deadlines)
+// so the two cannot drift apart. The drift that matters: if the CLI deadline is
+// SHORTER than the server health wait, the CLI aborts with a generic
+// "context deadline exceeded" before the server's real ErrEnvoyUnhealthy
+// surfaces — hiding the actual cause from the user. Deriving the CLI deadline
+// from the server budget guarantees CLI >= server.
+const (
+	// FirewallStackHealthTimeout bounds Stack.WaitForHealthy's probe loop —
+	// how long the CP waits for Envoy + CoreDNS to answer their health endpoints
+	// before returning ErrEnvoyUnhealthy/ErrCoreDNSUnhealthy.
+	FirewallStackHealthTimeout = 60 * time.Second
+	// FirewallStackBringupRPCTimeout is the CLI's RPC deadline for the
+	// stack-bringing RPCs (FirewallInit, FirewallReload). It must exceed the
+	// server's health wait PLUS the unbounded pre-health work (image pull +
+	// container create) so the real server error reaches the user instead of a
+	// premature client deadline. Derived from the health budget + headroom.
+	FirewallStackBringupRPCTimeout = FirewallStackHealthTimeout + 60*time.Second
+)
+
 // Control plane port defaults. These are flag defaults for the CP binary
 // and test constants. Production callers should read from
 // cfg.Settings().ControlPlane.<field> which gets defaults from struct tags

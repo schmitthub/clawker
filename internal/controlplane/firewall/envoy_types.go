@@ -449,6 +449,27 @@ func (c *EnvoyConfig) AddCluster(cluster map[string]any) error {
 	return nil
 }
 
+// AddListener stores a fully pre-built listener map (its own filter_chains
+// baked in) under its "name" field — the listener peer of AddCluster, for a
+// once-per-generation listener that the layer/chain machinery doesn't build
+// (e.g. the health-check listener). listenerList emits base verbatim when no
+// chains are attached, so the baked-in filter_chains survive. Conflicting
+// redefinition of an existing name is an error; an identical re-add is a no-op.
+func (c *EnvoyConfig) AddListener(listener map[string]any) error {
+	name, _ := listener["name"].(string)
+	if name == "" {
+		return fmt.Errorf("envoy config: AddListener with empty/absent name")
+	}
+	if existing, ok := c.listeners[name]; ok {
+		if !reflect.DeepEqual(existing.base, listener) || len(existing.chains) > 0 {
+			return fmt.Errorf("envoy config: conflicting listener definitions for name %q", name)
+		}
+		return nil
+	}
+	c.listeners[name] = &envoyListener{base: listener, chainBySig: map[string]int{}}
+	return nil
+}
+
 // ClaimPermutation records key and reports whether it is newly seen (false on a
 // repeat), so the orchestrator can skip a duplicate permutation.
 func (c *EnvoyConfig) ClaimPermutation(key string) bool {

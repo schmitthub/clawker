@@ -10,26 +10,38 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// rpcTimeout bounds every AdminService call the firewall CLI makes.
-// The CP queue serializes work so a single RPC can wait behind other
-// queued actions + its own reconcile (worst case a few seconds). 15s
-// gives comfortable headroom while keeping a stuck CP from hanging the
-// CLI indefinitely — the prior behavior was unbounded wait.
+// rpcTimeout bounds the quick AdminService calls the firewall CLI makes
+// (status, list, add, remove, enable, disable, bypass). The CP queue
+// serializes work so a single RPC can wait behind other queued actions +
+// its own reconcile (worst case a few seconds). 15s gives comfortable
+// headroom while keeping a stuck CP from hanging the CLI indefinitely.
+//
+// The stack-bringing RPCs (FirewallInit, FirewallReload) instead pass
+// consts.FirewallStackBringupRPCTimeout — they run Stack.WaitForHealthy
+// server-side (consts.FirewallStackHealthTimeout) plus image pull +
+// container create, so a 15s client deadline would abort with a generic
+// "context deadline exceeded" before the real ErrEnvoyUnhealthy surfaces.
 const rpcTimeout = 15 * time.Second
 
-// callWithSpinner runs fn under a stderr spinner with label and the
-// firewall CLI's fixed 15s RPC timeout, returning the typed result or
-// fn's error unchanged. The spinner auto-disables in non-TTY contexts
-// (pipes, CI, scripts) so machine-readable output is never polluted by
-// cursor escapes. Keeps each command's run function focused on its
-// per-RPC wire handling.
+// callWithSpinner runs fn under a stderr spinner with the firewall CLI's
+// default quick-RPC timeout. See callWithSpinnerTimeout.
 func callWithSpinner[T any](ctx context.Context, ios *iostreams.IOStreams, label string, fn func(context.Context) (T, error)) (T, error) {
+	return callWithSpinnerTimeout(ctx, ios, label, rpcTimeout, fn)
+}
+
+// callWithSpinnerTimeout runs fn under a stderr spinner with label and an
+// explicit RPC timeout, returning the typed result or fn's error
+// unchanged. The spinner auto-disables in non-TTY contexts (pipes, CI,
+// scripts) so machine-readable output is never polluted by cursor escapes.
+// Bringup commands pass consts.FirewallStackBringupRPCTimeout; everything
+// else uses callWithSpinner's default.
+func callWithSpinnerTimeout[T any](ctx context.Context, ios *iostreams.IOStreams, label string, timeout time.Duration, fn func(context.Context) (T, error)) (T, error) {
 	var (
 		result  T
 		callErr error
 	)
 	_ = ios.RunWithSpinner(label, func() error {
-		rpcCtx, cancel := context.WithTimeout(ctx, rpcTimeout)
+		rpcCtx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 		result, callErr = fn(rpcCtx)
 		return callErr
@@ -122,6 +134,29 @@ func wrapRPCError(header string, err error) error {
 		msg += "\n  - " + h
 	}
 	return fmt.Errorf("%s: %w", msg, err)
+}
+
+// warnStackDownExposure prints a loud, multi-line security warning to
+// stderr when a firewall stack bringup (FirewallInit, via `firewall up`)
+// fails. It is NOT used for FirewallReload: Stack.Reload short-circuits
+// when the stack is not running, so a reload failure leaves the prior
+// stack (and its enforcement) intact rather than exposing agents. The
+// stack being down leaves agent egress protection in an
+// unknown state: agents not currently enrolled in the eBPF firewall have
+// UNFILTERED internet egress, while enrolled agents are cut off (their
+// traffic redirects to a dead Envoy). The CP re-enrolls running agents
+// on a successful bringup, so a failed bringup is exactly when this
+// guarantee is absent. Printed in addition to the returned error so the
+// operator cannot miss it.
+func warnStackDownExposure(ios *iostreams.IOStreams) {
+	cs := ios.ColorScheme()
+	fmt.Fprintf(ios.ErrOut, "\n%s %s\n", cs.WarningIcon(),
+		cs.Warning("FIREWALL STACK FAILED TO START — agent network protection is NOT active."))
+	fmt.Fprintln(ios.ErrOut, "  Running agents are in an unprotected state: any agent not currently")
+	fmt.Fprintln(ios.ErrOut, "  enrolled in the eBPF firewall has UNFILTERED internet egress right now.")
+	fmt.Fprintln(ios.ErrOut, "  Resolve the error below and re-run `clawker firewall up`.")
+	fmt.Fprintln(ios.ErrOut, "  To run intentionally without firewall protection, set `firewall.enable: false`")
+	fmt.Fprintln(ios.ErrOut, "  in settings.yaml.")
 }
 
 // printStackRestartedNote prints a one-line info note about the

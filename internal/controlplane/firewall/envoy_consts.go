@@ -17,6 +17,14 @@ const (
 	// the TCP chain advertises h3 via alt-svc so clients discover it.
 	egressQUICListenerName = "egress_quic"
 
+	// healthListenerName is the dedicated readiness listener (a 200-OK HTTP
+	// endpoint bound to EnvoyPorts.HealthPort). Stack.EnsureRunning probes
+	// http://<EnvoyIP>:HealthPort/ on a non-cancellable context until it answers
+	// — so this listener MUST be emitted whenever HealthPort > 0, or firewall
+	// bringup hangs forever (the stack comes up but route-seed + agent
+	// re-enrollment never run). GenerateEnvoyConfig fail-closes if it is missing.
+	healthListenerName = "health_check"
+
 	// defaultBindAddress is the address Envoy listeners bind inside the
 	// firewall container.
 	defaultBindAddress = "0.0.0.0"
