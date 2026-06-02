@@ -122,6 +122,13 @@ func derive(rules []config.EgressRule, ports EnvoyPorts) ([]permutation, []strin
 			warnings = append(warnings, fmt.Sprintf("layered generator: proto %q not yet supported (rule %s) — skipped", r.Proto, r.Dst))
 			continue
 		}
+		// https/wss to a CIDR reencrypts to an arbitrary in-range host whose cert
+		// almost never chains to a public CA, so Envoy refuses the upstream handshake
+		// (fail-closed, secure by default) unless insecure_skip_tls_verify is set. Not
+		// an error — a UX nudge so the operator knows why the upstream is rejected.
+		if isCIDR(r.Dst) && baseProto(strings.ToLower(r.Proto)) == "https" && !r.InsecureSkipTLSVerify {
+			warnings = append(warnings, fmt.Sprintf("https to CIDR %s reencrypts to the original in-range host; Envoy will refuse the upstream TLS handshake unless that host presents a CA-trusted cert — set insecure_skip_tls_verify: true to accept self-signed in-range upstreams (MITM inspection still applies)", r.Dst))
+		}
 		for i, ls := range lists {
 			perms = append(perms, permutation{
 				rule:   r,
@@ -232,6 +239,14 @@ func layersFor(r config.EgressRule, gen genFacts) [][]layer {
 	}
 	switch strings.ToLower(r.Proto) {
 	case "http":
+		// http/ws to a CIDR: the dst is a known range, so it rides a prefix_ranges
+		// raw_buffer chain (NOT the catch-all tcpEgressLayer) → plaintext ORIGINAL_DST
+		// → a single wildcard-host vhost (the prefix_ranges gate is the boundary; a
+		// per-host vhost can't enumerate the range). A single IP keeps the per-host
+		// vhost (its Host header IS the one host), so only a true CIDR routes here.
+		if isCIDR(r.Dst) {
+			return [][]layer{withWS(prefixRangeTransportLayer(httpPort(r)), httpOriginalDstUpstreamLayer, httpAppLayer(appDFP{}))}
+		}
 		app := httpAppLayer(appDFP{active: gen.httpDFPActive, cache: httpDFPCacheName})
 		if isWildcardDomain(r.Dst) {
 			return [][]layer{withWS(tcpEgressLayer, httpWildcardUpstreamLayer, app)}
@@ -246,6 +261,16 @@ func layersFor(r config.EgressRule, gen genFacts) [][]layer {
 		// websocket enrichment (wss) rides BOTH chains via wsEnrichLayer.
 		tcpTransport := tlsSNIChainLayer(gen.httpsExactDomains)
 		quicTransport := quicSNIChainLayer(gen.httpsExactDomains)
+		// https/wss to a CIDR: terminate TLS on a prefix_ranges chain (the IP branch
+		// of downstreamCryptoMatch, scoped to the range), MITM with the range cert,
+		// then reencrypt to ORIGINAL_DST with a single wildcard-host vhost. TCP-only:
+		// a QUIC/h3 sibling would need use_original_dst on a UDP listener to recover
+		// the in-range dst, which is unverified for original-dst recovery — so no h3
+		// is advertised for a range. The range cert is invalid for any single in-range
+		// host on purpose (agent-side verification is not the enforcement boundary).
+		if isCIDR(r.Dst) {
+			return [][]layer{withWS(tcpTransport, httpsOriginalDstUpstreamLayer, httpAppLayer(appDFP{}))}
+		}
 		if isWildcardDomain(r.Dst) {
 			dfp := appDFP{active: true, cache: httpsDFPCacheName}
 			return [][]layer{
@@ -274,7 +299,7 @@ func layersFor(r config.EgressRule, gen genFacts) [][]layer {
 			var lists [][]layer
 			for _, port := range dedicatedPorts(r, tcpDefaultPort) {
 				lists = append(lists, []layer{
-					opaqueMatchedTransportLayer(port),
+					prefixRangeTransportLayer(port),
 					opaqueMatchedUpstreamLayer,
 					tcpProxyTerminalLayer(strings.ToLower(r.Proto)),
 				})

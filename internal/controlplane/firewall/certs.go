@@ -116,9 +116,19 @@ func GenerateDomainCert(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, domai
 	// TLS connection to an IP carries no SNI (RFC 6066) and is validated against
 	// the cert's iPAddress SAN, never a dNSName. A hostname (incl. wildcard) gets
 	// dNSName SANs. Only one of the two applies per dst.
-	if ip := net.ParseIP(normalized); ip != nil {
+	switch ip := net.ParseIP(normalized); {
+	case ip != nil:
 		template.IPAddresses = []net.IP{ip}
-	} else {
+	case isCIDR(normalized):
+		// A CIDR dst mints ONE leaf whose iPAddress SAN is the network address. It
+		// cannot validate against every in-range host — and it does not need to:
+		// agent-side verification is not clawker's enforcement boundary (egress
+		// gating + MITM inspection are). The leaf still encrypts the hop and lets
+		// Envoy MITM-inspect; a client connecting to a raw in-range IP sets its own
+		// no-verify, exactly as it must for any self-signed endpoint.
+		_, ipnet, _ := net.ParseCIDR(normalized)
+		template.IPAddresses = []net.IP{ipnet.IP}
+	default:
 		dnsNames := []string{normalized}
 		if isWildcardDomain(domain) {
 			dnsNames = append(dnsNames, "*."+normalized)
@@ -154,18 +164,30 @@ func GenerateDomainCert(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, domai
 //
 // Cert generation runs before stale cleanup so that a partial failure leaves
 // previously-working certs intact rather than an empty directory.
+// certBasename is the flat on-disk filename stem for a dst's MITM cert/key. It
+// keeps dots (valid in filenames and unique per FQDN/IP) but folds the CIDR "/"
+// to "_" so a range dst (10.0.0.0/24) maps to a single flat file pair
+// (10.0.0.0_24-{cert,key}.pem) instead of a bogus subdirectory. The downstream
+// TLS context's cert reference must use this same basename so the listener finds
+// the file — both call sites flow through certBasename.
+func certBasename(dst string) string {
+	return strings.ReplaceAll(normalizeDomain(dst), "/", "_")
+}
+
 func RegenerateDomainCerts(rules []config.EgressRule, certDir string, caCert *x509.Certificate, caKey *ecdsa.PrivateKey) error {
 	if err := os.MkdirAll(certDir, 0o700); err != nil {
 		return fmt.Errorf("creating certs directory: %w", err)
 	}
 
-	// Deduplicate by normalized domain, tracking whether any rule uses
-	// the wildcard convention so the cert includes wildcard SANs if needed.
+	// Deduplicate by cert basename (the flat on-disk filename stem), tracking the
+	// domain form passed to GenerateDomainCert and whether any rule uses the
+	// wildcard convention so the cert includes wildcard SANs if needed.
 	type domainCertInfo struct {
+		domain    string // normalizeDomain(dst): FQDN, IP literal, or CIDR (keeps "/")
 		needsWild bool
 	}
 	seen := make(map[string]*domainCertInfo)
-	var order []string // preserve deterministic iteration
+	var order []string // preserve deterministic iteration (cert basenames)
 
 	for _, rule := range rules {
 		// Normalize first so legacy `proto: tls` translates to `https` before
@@ -179,50 +201,50 @@ func RegenerateDomainCerts(rules []config.EgressRule, certDir string, caCert *x5
 		if p := strings.ToLower(rule.Proto); p != "https" && p != "wss" {
 			continue
 		}
-		// IP literals DO get a MITM cert (iPAddress SAN — see GenerateDomainCert),
-		// for local-dev https to an IP. Only a CIDR *range* is skipped: there is no
-		// single host to mint a cert for, and we never MITM a whole range.
-		if net.ParseIP(strings.TrimSuffix(rule.Dst, ".")) == nil && isIPOrCIDR(rule.Dst) {
-			continue
-		}
+		// Every TLS-terminated dst gets a MITM cert — FQDN (dNSName SANs), IP
+		// literal (iPAddress SAN), AND CIDR range (one leaf, iPAddress SAN = the
+		// network address; see GenerateDomainCert). A range cert cannot validate
+		// every in-range host, but agent-side verification is not the enforcement
+		// boundary — the cert exists to encrypt the hop and enable MITM inspection.
 
-		normalized := normalizeDomain(rule.Dst)
-		if info, exists := seen[normalized]; exists {
+		bn := certBasename(rule.Dst)
+		if info, exists := seen[bn]; exists {
 			if isWildcardDomain(rule.Dst) {
 				info.needsWild = true
 			}
 			continue
 		}
-		seen[normalized] = &domainCertInfo{
+		seen[bn] = &domainCertInfo{
+			domain:    normalizeDomain(rule.Dst),
 			needsWild: isWildcardDomain(rule.Dst),
 		}
-		order = append(order, normalized)
+		order = append(order, bn)
 	}
 
 	// Generate certs first — overwrites existing files in-place.
 	// If generation fails partway, domains before the failure have fresh certs
 	// and domains after still have their old (valid) certs.
-	for _, normalized := range order {
-		info := seen[normalized]
+	for _, bn := range order {
+		info := seen[bn]
 		// Re-add leading dot so GenerateDomainCert produces wildcard SANs.
-		domain := normalized
+		domain := info.domain
 		if info.needsWild {
-			domain = "." + normalized
+			domain = "." + info.domain
 		}
 
 		certPEM, keyPEM, err := GenerateDomainCert(caCert, caKey, domain)
 		if err != nil {
-			return fmt.Errorf("generating cert for %s: %w", normalized, err)
+			return fmt.Errorf("generating cert for %s: %w", info.domain, err)
 		}
 
-		certPath := filepath.Join(certDir, normalized+"-cert.pem")
-		keyPath := filepath.Join(certDir, normalized+"-key.pem")
+		certPath := filepath.Join(certDir, bn+"-cert.pem")
+		keyPath := filepath.Join(certDir, bn+"-key.pem")
 
 		if err := os.WriteFile(certPath, certPEM, 0o600); err != nil {
-			return fmt.Errorf("writing cert for %s: %w", normalized, err)
+			return fmt.Errorf("writing cert for %s: %w", info.domain, err)
 		}
 		if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
-			return fmt.Errorf("writing key for %s: %w", normalized, err)
+			return fmt.Errorf("writing key for %s: %w", info.domain, err)
 		}
 	}
 

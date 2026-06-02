@@ -3,6 +3,7 @@ package firewall_test
 import (
 	"crypto/x509"
 	"encoding/pem"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -77,6 +78,56 @@ func TestGenerateDomainCert_Valid(t *testing.T) {
 	require.NotNil(t, keyBlock)
 	_, err = x509.ParseECPrivateKey(keyBlock.Bytes)
 	require.NoError(t, err, "key PEM should be a valid EC private key")
+}
+
+func TestGenerateDomainCert_CIDRNetworkSAN(t *testing.T) {
+	certDir := t.TempDir()
+	caCert, caKey, err := firewall.EnsureCA(certDir)
+	require.NoError(t, err)
+
+	// A CIDR dst mints ONE leaf whose only SAN is the network address (iPAddress),
+	// never a dNSName. It cannot validate every in-range host — agent-side
+	// verification is not the enforcement boundary; the cert exists to encrypt the
+	// hop and enable MITM inspection.
+	certPEM, _, err := firewall.GenerateDomainCert(caCert, caKey, "10.0.0.0/24")
+	require.NoError(t, err)
+
+	block, _ := pem.Decode(certPEM)
+	require.NotNil(t, block)
+	cert, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+
+	require.Len(t, cert.IPAddresses, 1)
+	assert.True(t, cert.IPAddresses[0].Equal(net.ParseIP("10.0.0.0")), "SAN must be the network address")
+	assert.Empty(t, cert.DNSNames, "a CIDR cert carries no dNSName SAN")
+	assert.Equal(t, "10.0.0.0/24", cert.Subject.CommonName)
+
+	roots := x509.NewCertPool()
+	roots.AddCert(caCert)
+	_, err = cert.Verify(x509.VerifyOptions{Roots: roots, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}})
+	require.NoError(t, err, "CIDR leaf should verify against CA")
+}
+
+func TestRegenerateDomainCerts_CIDRFlatBasename(t *testing.T) {
+	certDir := t.TempDir()
+	caCert, caKey, err := firewall.EnsureCA(certDir)
+	require.NoError(t, err)
+
+	rules := []config.EgressRule{
+		{Dst: "10.0.0.0/24", Proto: "https"},   // CIDR → flat basename (no "/")
+		{Dst: "192.168.1.5", Proto: "https"},   // single IP → unfolded literal
+		{Dst: "wss.example.com", Proto: "wss"}, // FQDN wss → unfolded, dots kept
+	}
+	require.NoError(t, firewall.RegenerateDomainCerts(rules, certDir, caCert, caKey))
+
+	// The CIDR's "/" folds to "_" so the cert is one flat file pair, never a
+	// bogus subdirectory.
+	assert.FileExists(t, filepath.Join(certDir, "10.0.0.0_24-cert.pem"))
+	assert.FileExists(t, filepath.Join(certDir, "10.0.0.0_24-key.pem"))
+	assert.NoDirExists(t, filepath.Join(certDir, "10.0.0.0"))
+	// IP and FQDN keep their literal basenames (no "/" to fold).
+	assert.FileExists(t, filepath.Join(certDir, "192.168.1.5-cert.pem"))
+	assert.FileExists(t, filepath.Join(certDir, "wss.example.com-cert.pem"))
 }
 
 func TestRegenerateDomainCerts_AllTLSRules(t *testing.T) {

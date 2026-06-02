@@ -218,6 +218,63 @@ rules:
 `,
 		},
 		{
+			// http to a CIDR: a prefix_ranges raw_buffer chain (not the catch-all
+			// http chain) → plaintext ORIGINAL_DST cluster → ONE wildcard-host
+			// (domains: ["*"]) allow vhost carrying the rule's path routes, with NO
+			// deny_all (the prefix_ranges gate is the boundary) and NO DFP filter.
+			name: "http_cidr",
+			rules: `
+rules:
+  - dst: 10.0.0.0/24
+    proto: http
+    port: 8080
+    path_default: deny
+    path_rules:
+      - path: /v1
+        action: allow
+      - path: /v1/internal
+        action: deny
+`,
+		},
+		{
+			// https to a CIDR: TLS terminated on a prefix_ranges chain with the range
+			// MITM cert (SAN = network address, 172.16.0.0), reencrypt to ORIGINAL_DST,
+			// ONE wildcard-host vhost. TCP-only — no QUIC/h3 sibling for a range.
+			// Default verify (no insecure flag) → upstream VERIFY_TRUST_CHAIN.
+			name: "https_cidr",
+			rules: `
+rules:
+  - dst: 172.16.0.0/16
+    proto: https
+`,
+		},
+		{
+			// ws to a CIDR: http-CIDR shape (plaintext ORIGINAL_DST + wildcard-host
+			// vhost) ENRICHED with the websocket upgrade — per-route upgrade_configs +
+			// HCM allow_connect. Plaintext upstream speaks h1.1 natively (no pin).
+			name: "ws_cidr",
+			rules: `
+rules:
+  - dst: 10.20.0.0/24
+    proto: ws
+    port: 80
+`,
+		},
+		{
+			// wss to a CIDR: https-CIDR shape (range cert + reencrypt ORIGINAL_DST +
+			// wildcard-host vhost) ENRICHED for websocket — upstream pinned http/1.1,
+			// allow_connect, upgrade route. insecure_skip_tls_verify accepts the
+			// self-signed in-range upstream (ACCEPT_UNTRUSTED) so the handshake isn't
+			// refused; SAN binding still holds and MITM inspection still applies.
+			name: "wss_cidr",
+			rules: `
+rules:
+  - dst: 10.10.0.0/16
+    proto: wss
+    insecure_skip_tls_verify: true
+`,
+		},
+		{
 			// Opaque TCP/SSH to an IP or CIDR rides the SHARED egress listener as a
 			// prefix_ranges raw_buffer chain (the dst is known at gen time — no
 			// dedicated listener, no SNI/Host discriminator needed). A bare IP pins

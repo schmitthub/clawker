@@ -46,7 +46,7 @@ func quicSNIChainLayer(exactDomains map[string]bool) layer {
 		}
 		ctx.listener = egressQUICListenerName
 		ctx.match = match
-		ctx.socket = quicDownstreamSocket(normalizeDomain(ctx.rule.Dst))
+		ctx.socket = quicDownstreamSocket(certBasename(ctx.rule.Dst))
 		ctx.tlsTerminated = true
 		ctx.port = httpsPort(ctx.rule)
 		ctx.bareHostPort = defaultDestPort

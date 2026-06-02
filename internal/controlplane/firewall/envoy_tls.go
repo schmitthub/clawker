@@ -47,7 +47,7 @@ func tlsSNIChainLayer(exactDomains map[string]bool) layer {
 		}
 		ctx.listener = egressListenerName
 		ctx.match = match
-		ctx.socket = downstreamMITMSocket(normalizeDomain(ctx.rule.Dst))
+		ctx.socket = downstreamMITMSocket(certBasename(ctx.rule.Dst))
 		ctx.tlsTerminated = true
 		ctx.port = httpsPort(ctx.rule)
 		ctx.bareHostPort = defaultDestPort

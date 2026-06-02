@@ -54,6 +54,28 @@ func httpAppLayer(dfp appDFP) layer {
 		r := ctx.rule
 		port := ctx.port
 
+		// CIDR dst: the chain is already dst-gated by prefix_ranges, and the Host is
+		// any IP in the range — a per-host vhost can't enumerate it. Emit ONE
+		// wildcard-host allow vhost owning the rule's routes, with NO deny_all (the
+		// prefix_ranges gate is the boundary; a deny_all would 403 legitimate in-range
+		// hosts) and NO DFP (the upstream is a pinned ORIGINAL_DST, never Host-resolved
+		// — so the gen-wide httpDFPActive flag must not leak its filter onto this
+		// chain). No alt-svc either: a range is TCP-only (no QUIC sibling to advertise).
+		if isCIDR(r.Dst) {
+			vhost := map[string]any{
+				"name":    virtualHostName(r.Dst, port),
+				"domains": []string{"*"},
+				"routes":  httpRoutes(r, ctx.upstreamCluster, ctx.websocket),
+			}
+			ctx.filters = []any{
+				map[string]any{
+					"name":         "envoy.filters.network.http_connection_manager",
+					"typed_config": httpHCM(ctx.hcmCodec, ctx.tlsTerminated, httpFilterChain(ctx, appDFP{}), ctx.als, []any{vhost}, ctx.websocket),
+				},
+			}
+			return nil
+		}
+
 		vhost := map[string]any{
 			"name":    virtualHostName(r.Dst, port),
 			"domains": httpDomains(r.Dst, port, ctx.bareHostPort),

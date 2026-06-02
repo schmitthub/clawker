@@ -45,17 +45,19 @@ func tcpDedicatedListenerLayer(envoyPort, dstPort int) layer {
 	}
 }
 
-// opaqueMatchedTransportLayer is the opaque-TCP transport for an IP-literal or CIDR
-// dst. Unlike an FQDN opaque rule — which has no wire discriminator (no SNI, and the
-// DNS-resolved dst IP is unknown at config-gen time), so it needs its own dedicated
-// listener keyed by port — an IP/CIDR dst IS known, so it rides the SHARED egress
-// listener as a raw_buffer filter chain gated by prefix_ranges + destination_port.
-// This mirrors the https-to-IP transport (downstreamCryptoMatch IP branch) but stays
-// pure L4: no TLS, no app block — the upstream pin (IP) / ORIGINAL_DST (CIDR) is the
-// gate. use_original_dst recovers the real destination so prefix_ranges matches it
-// (whatever redirected the connection rewrote the socket dst). dstPort is the
-// effective destination port (one transport per in-range port for a port_range).
-func opaqueMatchedTransportLayer(dstPort int) layer {
+// prefixRangeTransportLayer is the cleartext (raw_buffer) transport for an
+// IP-literal or CIDR dst, shared by opaque tcp/ssh AND plaintext http/ws (the app
+// block on top is what differs — tcp_proxy vs HCM). Unlike an FQDN rule — which has
+// no wire discriminator (no SNI, and the DNS-resolved dst IP is unknown at
+// config-gen time), so it needs its own dedicated listener keyed by port — an
+// IP/CIDR dst IS known, so it rides the SHARED egress listener as a raw_buffer
+// filter chain gated by prefix_ranges + destination_port. This mirrors the
+// https-to-IP transport (downstreamCryptoMatch IP branch) but stays pure L4: no TLS.
+// The upstream pin (IP) / ORIGINAL_DST (CIDR) is the gate; use_original_dst recovers
+// the real destination so prefix_ranges matches it (whatever redirected the
+// connection rewrote the socket dst). dstPort is the effective destination port (one
+// transport per in-range port for a port_range).
+func prefixRangeTransportLayer(dstPort int) layer {
 	return func(ctx *genCtx) error {
 		ctx.cfg.EnsureListener(egressListenerName, defaultBindAddress, ctx.ports.EgressPort)
 		if err := ctx.cfg.SetListenerField(egressListenerName, "use_original_dst", true); err != nil {

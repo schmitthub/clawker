@@ -149,9 +149,18 @@ func tlsExactClusterName(host string, port int) string {
 // the generic pin (IP pinned to the rule's host) + the uniform reencrypt posture.
 func buildTLSDNSCluster(host string, port int, insecureSkipTLSVerify, http11Only bool) map[string]any {
 	c := pinnedCluster(tlsExactClusterName(host, port), host, port)
+	decorateReencrypt(c, insecureSkipTLSVerify, http11Only)
+	return c
+}
+
+// decorateReencrypt applies the uniform upstream reencrypt posture (TLS context +
+// HttpProtocolOptions) onto any base cluster map in place — shared by the pinned
+// LOGICAL_DNS form (buildTLSDNSCluster) and the ORIGINAL_DST form
+// (httpsOriginalDstUpstreamLayer), since the reencrypt decoration is identical
+// regardless of how the upstream host is resolved.
+func decorateReencrypt(c map[string]any, insecureSkipTLSVerify, http11Only bool) {
 	c["transport_socket"] = upstreamReencryptSocket(insecureSkipTLSVerify, http11Only)
 	c["typed_extension_protocol_options"] = upstreamHTTPProtocolOptions(http11Only)
-	return c
 }
 
 // ── opaque (ssh / tcp / udp) pinned upstreams ────────────────────────────────
@@ -231,6 +240,50 @@ func originalDstCluster(name string) map[string]any {
 		"lb_policy":       "CLUSTER_PROVIDED",
 		"connect_timeout": "10s",
 	}
+}
+
+// httpOriginalDstName / tlsOriginalDstName are the cluster names for an L7 (http /
+// https) rule to a CIDR range. They parallel the opaque tcpOriginalDstName but keep
+// the proto family in the name so a plaintext http range and a reencrypt https range
+// on the same network never collide.
+func httpOriginalDstName(host string, port int) string {
+	return fmt.Sprintf("http_origdst_%s_%d", sanitizeName(host), port)
+}
+
+func tlsOriginalDstName(host string, port int) string {
+	return fmt.Sprintf("tls_origdst_%s_%d", sanitizeName(host), port)
+}
+
+// httpOriginalDstUpstreamLayer is the plaintext (http / ws) upstream for a CIDR dst:
+// a bare ORIGINAL_DST cluster. There is no single host to pin, so the cluster
+// forwards to the connection's real destination — which is authorized because the
+// transport chain already gated it by prefix_ranges (range = the grant). Plaintext,
+// so no transport_socket; the upstream speaks http/1.1 by default (WS upgrades
+// natively over h1.1, so ws needs nothing extra here).
+func httpOriginalDstUpstreamLayer(ctx *genCtx) error {
+	host := normalizeDomain(ctx.rule.Dst)
+	name := httpOriginalDstName(host, httpPort(ctx.rule))
+	ctx.clusters = append(ctx.clusters, originalDstCluster(name))
+	ctx.upstreamCluster = name
+	ctx.upstreamFollowsHost = false
+	return nil
+}
+
+// httpsOriginalDstUpstreamLayer is the reencrypt (https / wss) upstream for a CIDR
+// dst: an ORIGINAL_DST cluster wrapped in the upstream TLS context. Same range-gate
+// rationale as the plaintext form, plus reencryption to the in-range host. Verifying
+// that host's cert is not clawker's enforcement boundary — by default Envoy still
+// VERIFY_TRUST_CHAINs (fail-closed) unless insecure_skip_tls_verify accepts an
+// untrusted/self-signed upstream. ctx.websocket pins the cluster to http/1.1 (wss).
+func httpsOriginalDstUpstreamLayer(ctx *genCtx) error {
+	host := normalizeDomain(ctx.rule.Dst)
+	name := tlsOriginalDstName(host, httpsPort(ctx.rule))
+	c := originalDstCluster(name)
+	decorateReencrypt(c, ctx.rule.InsecureSkipTLSVerify, ctx.websocket)
+	ctx.clusters = append(ctx.clusters, c)
+	ctx.upstreamCluster = name
+	ctx.upstreamFollowsHost = false
+	return nil
 }
 
 // udpPinnedUpstreamLayer registers the opaque per-(host,port) UDP pinned cluster
