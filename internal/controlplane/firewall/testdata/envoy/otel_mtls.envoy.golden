@@ -24,6 +24,41 @@ static_resources:
                                 port_value: 80
           name: http_example_com_80
           type: LOGICAL_DNS
+        - connect_timeout: 1s
+          load_assignment:
+            cluster_name: otel_collector_als
+            endpoints:
+                - lb_endpoints:
+                    - endpoint:
+                        address:
+                            socket_address:
+                                address: otel-collector
+                                port_value: 4319
+          name: otel_collector_als
+          transport_socket:
+            name: envoy.transport_sockets.tls
+            typed_config:
+                '@type': type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+                common_tls_context:
+                    tls_certificates:
+                        - certificate_chain:
+                            filename: /etc/envoy/otel-tls/client.pem
+                          private_key:
+                            filename: /etc/envoy/otel-tls/client.key
+                    validation_context:
+                        match_typed_subject_alt_names:
+                            - matcher:
+                                exact: otel-collector
+                              san_type: DNS
+                        trusted_ca:
+                            filename: /etc/envoy/otel-tls/ca.pem
+                sni: otel-collector
+          type: STRICT_DNS
+          typed_extension_protocol_options:
+            envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+                '@type': type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+                explicit_http_config:
+                    http2_protocol_options: {}
     listeners:
         - address:
             socket_address:

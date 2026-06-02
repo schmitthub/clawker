@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 )
 
 // envoy_config.go is the root entrypoint + orchestrator. It is protocol-
@@ -58,6 +59,9 @@ func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts, als ALSCon
 	}
 
 	if err := installEgressDenyFloor(cfg); err != nil {
+		return nil, warnings, err
+	}
+	if err := installOtelALSCluster(cfg, als); err != nil {
 		return nil, warnings, err
 	}
 
@@ -402,6 +406,100 @@ func buildDenyCluster() map[string]any {
 		"load_assignment": map[string]any{
 			"cluster_name": denyClusterName,
 			"endpoints":    []any{},
+		},
+	}
+}
+
+// installOtelALSCluster is the once-per-generation step that emits the upstream
+// cluster backing the OTel access-log sink. It is gated on als.MTLS to mirror
+// the sink itself (buildHTTPAccessLog/buildTCPAccessLog only emit the
+// open_telemetry logger when als.MTLS): in degraded mode Envoy logs to stdout
+// only and must never push OTLP across the untrusted otel-collector lane, so the
+// cluster stays absent and no dangling envoy_grpc.cluster_name reference ships.
+func installOtelALSCluster(cfg *EnvoyConfig, als ALSConfig) error {
+	if !als.MTLS {
+		return nil
+	}
+	return cfg.AddCluster(buildOtelALSCluster(als))
+}
+
+// buildOtelALSCluster returns the cluster definition that backs the
+// `envoy.access_loggers.open_telemetry` sink. Caller (installOtelALSCluster)
+// only emits it when als.MTLS is true; infra services must never push OTLP
+// across the untrusted lane.
+//
+// STRICT_DNS resolves `otel-collector` (clawker-net DNS) on every refresh; h2 is
+// required because OTLP/gRPC runs on HTTP/2. The upstream TLS context loads the
+// leaf+intermediate chain bind-mounted at /etc/envoy/otel-tls/client.{pem,key}
+// and validates the collector's server cert against the CLI root CA at ca.pem.
+// SNI is set to "otel-collector" so Envoy presents the expected hostname in the
+// ClientHello, and match_typed_subject_alt_names pins the upstream cert to that
+// SAN — defense-in-depth on top of the CLI-root trust boundary so a different
+// CLI-root-chained leaf (a future infra service) can't impersonate the collector
+// for this cluster.
+func buildOtelALSCluster(als ALSConfig) map[string]any {
+	return map[string]any{
+		"name":            otelCollectorALSClusterName,
+		"type":            "STRICT_DNS",
+		"connect_timeout": "1s",
+		"load_assignment": map[string]any{
+			"cluster_name": otelCollectorALSClusterName,
+			"endpoints": []any{
+				map[string]any{
+					"lb_endpoints": []any{
+						map[string]any{
+							"endpoint": map[string]any{
+								"address": map[string]any{
+									"socket_address": map[string]any{
+										"address":    consts.MonitoringServiceOtelCollector,
+										"port_value": als.Port,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		"typed_extension_protocol_options": map[string]any{
+			"envoy.extensions.upstreams.http.v3.HttpProtocolOptions": map[string]any{
+				"@type": "type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions",
+				"explicit_http_config": map[string]any{
+					"http2_protocol_options": map[string]any{},
+				},
+			},
+		},
+		"transport_socket": map[string]any{
+			"name": "envoy.transport_sockets.tls",
+			"typed_config": map[string]any{
+				"@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext",
+				"sni":   consts.MonitoringServiceOtelCollector,
+				"common_tls_context": map[string]any{
+					"tls_certificates": []any{
+						map[string]any{
+							"certificate_chain": map[string]any{
+								"filename": "/etc/envoy/otel-tls/client.pem",
+							},
+							"private_key": map[string]any{
+								"filename": "/etc/envoy/otel-tls/client.key",
+							},
+						},
+					},
+					"validation_context": map[string]any{
+						"trusted_ca": map[string]any{
+							"filename": "/etc/envoy/otel-tls/ca.pem",
+						},
+						"match_typed_subject_alt_names": []any{
+							map[string]any{
+								"san_type": "DNS",
+								"matcher": map[string]any{
+									"exact": consts.MonitoringServiceOtelCollector,
+								},
+							},
+						},
+					},
+				},
+			},
 		},
 	}
 }

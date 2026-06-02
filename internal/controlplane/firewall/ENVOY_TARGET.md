@@ -317,7 +317,10 @@ static_resources:
     #   transport is present (any https/wss rule).
     - {name: deny_cluster, type: STATIC, load_assignment: {endpoints: []}}
 
-    # otel_collector_als — only when ALSConfig.MTLS
+    # otel_collector_als — only when ALSConfig.MTLS. STRICT_DNS h2/gRPC, UpstreamTLS
+    #   (sni+match SAN = otel-collector, client.{pem,key}+ca.pem at /etc/envoy/otel-tls/),
+    #   dials otel-collector:als.Port. Emitted by installOtelALSCluster (sibling of the deny floor).
+    - {name: otel_collector_als, type: STRICT_DNS → otel-collector:als.Port, h2, +UpstreamTLS(sni+match_san)}
 ```
 
 ## Deriver block-mapping (`layersFor`)
@@ -380,5 +383,8 @@ DONE (golden-tested in `envoy_config_test.go`, validated by `validateBootstrap`)
 
 - **QUIC sibling is SNI-selectable ONLY — IP/CIDR https/wss is TCP-only (RESOLVED, the one sanctioned per-dst-type carve-out).** A QUIC chain is selected either by SNI (`server_names`, read from the QUIC ClientHello — survives the eBPF redirect because it is in the payload) or by recovered original dst (`prefix_ranges`, IP/CIDR, no SNI). **UDP/QUIC has no original-dst recovery** — grounded vs Envoy source: the `use_original_dst` listener field is TCP-only (`QuicListenerFilterManagerImpl` forbids `useOriginalDst`), and there is no UDP/QUIC equivalent of the `envoy.filters.listener.original_dst` listener filter. So a `prefix_ranges`-matched QUIC chain can never match under redirect (the local dst Envoy sees is its own socket addr, not the agent's target). Therefore: **FQDN https/wss → TCP + QUIC siblings** (SNI-matched); **IP-literal and CIDR https/wss → TCP-only**, no QUIC sibling and no `alt-svc: h3` (would point at an unreachable listener). `layersFor` omits the QUIC permutation for IP/CIDR dsts; `tlsSNIChainLayer` sets `advertiseH3 = !needOriginalDst`; `quicSNIChainLayer` fails closed if ever handed an IP/CIDR dst. Goldens `ip_dst` + `insecure_skip_verify` re-blessed (IP chains lost their `egress_quic` listener + alt-svc; `insecure_skip_verify` keeps `local.dev`'s FQDN QUIC chain). IP and CIDR are now consistent: both L7/TLS dst-IP-matched flows are TCP-only.
 
+- **`otel_collector_als` cluster (RESOLVED — dangling ref closed)** — the OTel access-log sink (`buildHTTPAccessLog`/`buildTCPAccessLog`, emitted only when `als.MTLS`) names `envoy_grpc.cluster_name: otel_collector_als`, but the layered generator never emitted that cluster. `installOtelALSCluster(cfg, als)` is a once-per-generation step (sibling of `installEgressDenyFloor`) called from `GenerateEnvoyConfig` after the deny floor, **gated on `als.MTLS`**, that `AddCluster`s `buildOtelALSCluster(als)`: a `STRICT_DNS` h2/gRPC upstream-TLS cluster dialing `otel-collector:als.Port`, `UpstreamTlsContext` with `sni` + `match_typed_subject_alt_names` pinned to `otel-collector` and `client.pem`/`client.key`/`ca.pem` at `/etc/envoy/otel-tls/`. Degraded mode (`!als.MTLS`) emits neither sink nor cluster (stdout-only; never OTLP across the untrusted lane). Spec recovered verbatim from the legacy removed `buildOtelALSCluster` (`git show 25f6e8a8`). Golden `otel_mtls` re-blessed (+35, additive); the 22 MTLS-off goldens pin the absence.
+
 PENDING (next work, each its own token/pass):
-- **`otel_collector_als` cluster** — `otel_mtls` golden's access-log sink references this cluster but the layered generator never emits it (dangling ref; `validateBootstrap` can't catch cross-refs).
+- **eBPF UDP route projection** — `RoutesFromRules` is FQDN-only and skips udp by design; mirror `UDPMappings` into the eBPF route_map once eBPF gains a UDP redirect (the Envoy substrate already emits UDP listeners; this is the datapath half).
+- **(optional) real `envoy --mode validate` e2e** — `validateBootstrap` is a structural self-check, not a true Envoy load; a host e2e that runs `envoy --mode validate` against a generated config would catch what cross-ref/structural checks can't.
