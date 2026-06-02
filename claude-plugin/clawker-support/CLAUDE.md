@@ -61,6 +61,7 @@ claude-plugin/clawker-support/
         ├── troubleshooting.md    # Entry point routing to domain-specific sections
         ├── docker-hygiene.md     # Docker disk space diagnosis and cleanup
         ├── monitoring.md         # OTel + OpenSearch + Prometheus stack, Clawker workspace, telemetry env, troubleshooting
+        ├── firewall-security.md  # Proactive VCS egress lockdown — git credential-exfil defense (HTTPS path-scoping, GitHub write surface, monitoring-discovery loop)
         └── known-issues.md       # Active bugs and workarounds
 ```
 

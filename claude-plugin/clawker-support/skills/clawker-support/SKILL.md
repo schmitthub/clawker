@@ -338,6 +338,15 @@ integrates with.
     `https://docs.clawker.dev/llms.txt` for the docs index, then fetch
     the relevant page.
 
+14. **VCS egress security (git credential-exfil defense)** — When the task
+    involves firewall rules, git credentials, securing the agent's network, or
+    "can the agent push to other repos / leak my token", read
+    `reference/firewall-security.md`. It covers path-scoping `github.com` /
+    `api.github.com` (and other VCS) over HTTPS to only the project's repos —
+    clawker's defense against the live attack class where a compromised agent
+    abuses forwarded git credentials to exfil to an arbitrary repo (domain-only
+    sandboxes can't stop this; clawker's HTTPS path allow/deny can).
+
 ### Step 4: Analyze — classify and decide placement
 
 Cross-reference your research to classify every item. This is the most common
@@ -382,6 +391,18 @@ Present the user with:
 - **Which config section** — use the analysis from Step 4. Cite the schema
   and Dockerfile template to explain execution order and context.
 - **What firewall rules** are needed — research the domains, don't guess.
+- **Proactively offer VCS egress lockdown.** Whenever you set up or review
+  firewall rules — and especially when the project forwards git credentials
+  (the default) — offer to path-scope `github.com` / `api.github.com` (and
+  `gitlab.com` or other VCS in use) **over HTTPS** to only the project's own
+  repo(s) plus needed git dependencies, always including the
+  `/anthropics/claude-code/refs/heads/main/` allow (Claude Code's auto-update
+  check). Then recommend `clawker monitor up` and watching firewall block
+  events to discover any remaining critical dependency paths before adding
+  them. This is clawker's defense against forwarded-credential exfil to
+  arbitrary repos. Note the SSH caveat (port-22 git is opaque — no path
+  enforcement). See `reference/firewall-security.md`. Suggest the YAML; never
+  auto-apply.
 
 Always provide **specific YAML config** the user can paste. **Prefix every YAML
 block with a comment showing the target file path and config level:**

@@ -154,7 +154,6 @@ security:
       - cel.dev
       - code.claude.com
       - semgrep.dev
-      - github.com
       - release-assets.githubusercontent.com
       - docker.io
       - www.envoyproxy.io
@@ -182,6 +181,13 @@ security:
         insecure_skip_tls_verify: false
         port: 22
         proto: ssh
+      - action: allow
+        dst: github.com
+        insecure_skip_tls_verify: false
+        path_default: deny
+        path_rules:
+          - action: allow
+            path: /schmitthub/
       - action: allow
         dst: api.github.com
         insecure_skip_tls_verify: false
