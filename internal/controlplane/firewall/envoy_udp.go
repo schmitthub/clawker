@@ -25,25 +25,19 @@ import (
 // block renders an HTTP/3 HCM (hcmCodec=HTTP3) into it.
 func quicSNIChainLayer(exactDomains map[string]bool) layer {
 	return func(ctx *genCtx) error {
-		ctx.cfg.EnsureQUICListener(egressQUICListenerName, defaultBindAddress, ctx.ports.EgressPort)
-		// FQDN → SNI server_names; IP literal → original-dst prefix_ranges (no SNI).
-		// tcpChain=false: a QUIC listener needs no tls_inspector (every connection is
-		// QUIC/TLS-1.3, chains selected by SNI directly).
+		// QUIC chains are selected by SNI ONLY. A QUIC listener has no original-dst
+		// recovery (grounded vs Envoy source: the use_original_dst listener field is
+		// TCP-only — QuicListenerFilterManagerImpl forbids it — and there is no
+		// UDP/QUIC equivalent of the original_dst listener filter), so a chain matched
+		// by prefix_ranges (IP/CIDR dst, no SNI) can never match under eBPF redirect.
+		// The deriver therefore emits this sibling for FQDN dsts only; an IP/CIDR
+		// https/wss rule is TCP-only. If an IP/CIDR dst reaches here, fail closed
+		// (before touching the listener) rather than emit an unreachable chain.
 		match, _, needOriginalDst := downstreamCryptoMatch(ctx.rule, exactDomains, false)
 		if needOriginalDst {
-			// IP-literal h3 (no SNI) gates by original dst, same as the TCP path.
-			// NOTE: original-dst recovery for prefix_ranges matching on a UDP/QUIC
-			// listener is NOT verified against Envoy source (the use_original_dst /
-			// filter-chain-match docs are framed for TCP). This is emitted for atom
-			// completeness (https → TCP + QUIC siblings, no per-dst special-casing);
-			// if Envoy ignores it on UDP the chain never matches and the QUIC
-			// handshake fails closed — never fail-open. IP-over-h3 to a raw dev IP is
-			// a near-zero real flow; treat this chain as known-possibly-unreachable
-			// until grounded. See ENVOY_TARGET.md PENDING.
-			if err := ctx.cfg.SetListenerField(egressQUICListenerName, "use_original_dst", true); err != nil {
-				return err
-			}
+			return fmt.Errorf("quic sibling requires SNI: IP/CIDR dst %q has no QUIC original-dst recovery (must be TCP-only)", ctx.rule.Dst)
 		}
+		ctx.cfg.EnsureQUICListener(egressQUICListenerName, defaultBindAddress, ctx.ports.EgressPort)
 		ctx.listener = egressQUICListenerName
 		ctx.match = match
 		ctx.socket = quicDownstreamSocket(certBasename(ctx.rule.Dst))

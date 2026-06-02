@@ -29,8 +29,9 @@ import (
 // and gates the chain on SNI. exactDomains is the set of non-wildcard https
 // hosts, so a wildcard rule does not duplicate a server_names entry an exact rule
 // already owns (Envoy rejects duplicates). It installs the listener's
-// tls_inspector + deny default (idempotent) and sets advertiseH3 so the app block
-// emits alt-svc for the sibling QUIC listener.
+// tls_inspector + deny default (idempotent) and, for SNI-selectable (FQDN) chains
+// only, sets advertiseH3 so the app block advertises the sibling QUIC listener via
+// alt-svc — an IP/CIDR chain (no QUIC sibling) leaves it false.
 func tlsSNIChainLayer(exactDomains map[string]bool) layer {
 	return func(ctx *genCtx) error {
 		ctx.cfg.EnsureListener(egressListenerName, defaultBindAddress, ctx.ports.EgressPort)
@@ -51,7 +52,13 @@ func tlsSNIChainLayer(exactDomains map[string]bool) layer {
 		ctx.tlsTerminated = true
 		ctx.port = httpsPort(ctx.rule)
 		ctx.bareHostPort = defaultDestPort
-		ctx.advertiseH3 = true
+		// Advertise h3 ONLY when a reachable QUIC sibling exists. A QUIC chain is
+		// selectable by SNI (FQDN) or by recovered original dst (IP/CIDR) — and
+		// UDP/QUIC has NO original-dst recovery (grounded vs Envoy: use_original_dst
+		// and the original_dst listener filter are TCP-only). So an IP/CIDR https
+		// rule (needOriginalDst) gets NO QUIC sibling and must not advertise alt-svc
+		// pointing at an unreachable listener. Only SNI-selectable FQDN chains do.
+		ctx.advertiseH3 = !needOriginalDst
 		return nil
 	}
 }

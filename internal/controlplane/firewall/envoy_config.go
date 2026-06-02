@@ -279,6 +279,14 @@ func layersFor(r config.EgressRule, gen genFacts) [][]layer {
 			}
 		}
 		// Exact https: own server_names chain, pinned reencrypt cluster, no DFP.
+		// A single-IP literal has no SNI, so its chain is selected by prefix_ranges
+		// (recovered original dst) — which UDP/QUIC cannot do (grounded vs Envoy: no
+		// original-dst recovery on a QUIC listener). So an IP dst is TCP-only, like a
+		// CIDR; only an SNI-selectable FQDN host gets the h3 sibling. (CIDR is already
+		// returned above; by here isIPOrCIDR means a single IP literal.)
+		if isIPOrCIDR(r.Dst) {
+			return [][]layer{withWS(tcpTransport, httpsExactUpstreamLayer, httpAppLayer(appDFP{}))}
+		}
 		return [][]layer{
 			withWS(tcpTransport, httpsExactUpstreamLayer, httpAppLayer(appDFP{})),
 			withWS(quicTransport, httpsExactUpstreamLayer, httpAppLayer(appDFP{})),
