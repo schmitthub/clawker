@@ -188,6 +188,12 @@ security:
         path_rules:
           - action: allow
             path: /schmitthub/
+          - action: allow
+            path: /gitleaks/gitleaks/
+          - action: allow
+            path: /oraios/serena/
+          - action: allow
+            path: /golangci/golangci-lint/
       - action: allow
         dst: api.github.com
         insecure_skip_tls_verify: false
@@ -229,6 +235,10 @@ security:
             path: /schmitthub/clawker/
           - action: allow
             path: /envoyproxy/
+          - action: allow
+            path: /oraios/serena/
+          - action: allow
+            path: /anthropics/claude-code/refs/heads/main/
         port: 443
         proto: https
   git_credentials:

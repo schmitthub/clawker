@@ -181,4 +181,5 @@ Rule helpers are exported for reuse by `BootstrapServicesPostStart` and E2E test
 - `../CLAUDE.md` — CP core (Ory auth, startup sequencing, container config, drain callback composition)
 - `ebpf/CLAUDE.md` — eBPF subsystem details + pinned map contract
 - `.claude/rules/envoy.md` — Envoy config rules + verification workflow
+- `.claude/rules/firewall-uat.md` — runtime BEHAVIORAL UAT (in-container probe tools, allow/deny/upgrade/SSH-routing discriminators, live config spot-check, C2 harness). Golden+validate prove the config is valid; this proves it enforces.
 - `.correctless/specs/cp-initiative/branch-2-cp-owns-firewall.md` — migration spec + invariants
