@@ -360,3 +360,46 @@ func TestCheckPathRules_DenylistInference(t *testing.T) {
 		})
 	}
 }
+
+// TestPortSpecMatches pins the port matcher in lockstep with
+// config.ParsePortSpec. The DENY direction is the security-critical one: a
+// spec the firewall validated and wrote must parse here too, else a deny rule
+// silently fails to match and falls through to a wildcard allow.
+func TestPortSpecMatches(t *testing.T) {
+	tests := []struct {
+		name string
+		spec string
+		port int
+		want bool
+	}{
+		{"single exact", "443", 443, true},
+		{"single mismatch", "443", 8443, false},
+		{"range low edge", "9000-9100", 9000, true},
+		{"range high edge", "9000-9100", 9100, true},
+		{"range inside", "9000-9100", 9050, true},
+		{"range below", "9000-9100", 8999, false},
+		{"range above", "9000-9100", 9101, false},
+		// Whitespace: config.ParsePortSpec trims, so this matcher must too —
+		// otherwise a trimmed-and-valid deny spec is skipped here (the hole).
+		{"leading space single", " 443", 443, true},
+		{"trailing space single", "443 ", 443, true},
+		{"spaces around range", " 9000 - 9100 ", 9050, true},
+		// Malformed / out-of-range: rejected upstream by ParsePortSpec, so they
+		// should never appear in the file — but if they do, match nothing.
+		{"empty matches nothing", "", 443, false},
+		{"non-numeric", "https", 443, false},
+		{"zero out of range", "0", 0, false},
+		{"over 65535", "70000", 70000, false},
+		{"reversed range", "9100-9000", 9050, false},
+		{"range bad low", "abc-9100", 9050, false},
+		{"range bad high", "9000-abc", 9050, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := portSpecMatches(tt.spec, tt.port); got != tt.want {
+				t.Errorf("portSpecMatches(%q, %d) = %v, want %v", tt.spec, tt.port, got, tt.want)
+			}
+		})
+	}
+}

@@ -244,16 +244,51 @@ func normalizeEgressRule(r egressRule) egressRule {
 // dynamic port spec: a single port ("443") or an inclusive range ("9000-9100").
 // A range only ever attaches to opaque protos (tcp/ssh/udp); since /open/url
 // handles http/https only, a range never matches a browser URL in practice —
-// but the membership check is correct regardless. An unparseable spec matches
-// nothing.
+// but the membership check is correct regardless.
+//
+// It MUST parse identically to config.ParsePortSpec, which is the boundary the
+// firewall validates every spec through before writing egress-rules.yaml. The
+// package DAG forbids importing internal/config, so the logic is duplicated —
+// keep it in lockstep. The divergence matters in the DENY direction: a deny
+// rule the firewall accepted but this function fails to parse would silently
+// not match and fall through to a wildcard allow, opening an exfil hole. An
+// empty/malformed/out-of-range spec matches nothing.
 func portSpecMatches(spec string, p int) bool {
-	if lo, hi, ok := strings.Cut(spec, "-"); ok {
-		l, errLo := strconv.Atoi(lo)
-		h, errHi := strconv.Atoi(hi)
-		return errLo == nil && errHi == nil && p >= l && p <= h
+	lo, hi, ok := parsePortSpec(spec)
+	return ok && p >= lo && p <= hi
+}
+
+// parsePortSpec mirrors config.ParsePortSpec: it trims surrounding whitespace,
+// accepts a single port ("443") or an inclusive range ("9000-9100"), bounds-
+// checks every number to 1-65535, and rejects reversed ranges (lo>hi). ok is
+// false for an empty, malformed, or out-of-range spec.
+func parsePortSpec(spec string) (lo, hi int, ok bool) {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return 0, 0, false
 	}
-	n, err := strconv.Atoi(spec)
-	return err == nil && n == p
+	if left, right, isRange := strings.Cut(spec, "-"); isRange {
+		l, okLo := parsePortNumber(left)
+		h, okHi := parsePortNumber(right)
+		if !okLo || !okHi || l > h {
+			return 0, 0, false
+		}
+		return l, h, true
+	}
+	n, okN := parsePortNumber(spec)
+	if !okN {
+		return 0, 0, false
+	}
+	return n, n, true
+}
+
+// parsePortNumber parses a single whitespace-trimmed, bounds-checked port.
+func parsePortNumber(s string) (int, bool) {
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil || n < 1 || n > 0xffff {
+		return 0, false
+	}
+	return n, true
 }
 
 // matchKind classifies how a rule destination matched a host.
