@@ -25,6 +25,20 @@ func TestEgressEvent_SizeMatchesABI(t *testing.T) {
 	}
 }
 
+// TestRouteKey_SizeMatchesABI mirrors the C-side
+// _Static_assert(sizeof(struct route_key) == 8) on the Go side. route_key is
+// the pinned route_map key; l4_proto was carved from the trailing pad so the
+// key stays 8 bytes and the pinned map schema is unchanged (a size change
+// would force a flush/remap). If the Go struct ever drifts (reordered field,
+// padding mistake, widened member), this fails before SyncRoutes writes a
+// misaligned key into route_map.
+func TestRouteKey_SizeMatchesABI(t *testing.T) {
+	t.Parallel()
+	if got := binary.Size(RouteKey{}); got != 8 {
+		t.Fatalf("RouteKey on-wire size = %d; want 8 — C struct route_key has drifted from the Go side", got)
+	}
+}
+
 // requireBPF skips a test if the kernel/container lacks the perms needed
 // to create in-memory BPF maps. Used for tests that need real ebpf.Map
 // handles in m.objs. CI on a privileged Linux runner never skips; dev

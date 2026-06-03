@@ -77,7 +77,9 @@ const (
 
 	// Per-domain MITM cert file paths inside the Envoy container. certs.go signs
 	// these against the firewall CA and stack.go bind-mounts the dir; the
-	// generator only references the filenames. %s = normalizeDomain(dst).
+	// generator only references the filenames. %s = certBasename(dst) — the flat
+	// on-disk stem (folds a CIDR's "/" to "_", e.g. 10.0.0.0/8 → 10.0.0.0_8) so
+	// the ref matches the cert certs.go writes.
 	envoyCertFileFmt = "/etc/envoy/certs/%s-cert.pem"
 	envoyKeyFileFmt  = "/etc/envoy/certs/%s-key.pem"
 

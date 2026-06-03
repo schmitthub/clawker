@@ -115,7 +115,7 @@ _Static_assert(sizeof(struct route_key) == 8, "route_key must stay 8 bytes");
 
 // Route value: which Envoy listener to route to.
 struct route_val {
-	__u16 envoy_port; // Target Envoy TCP listener port (host byte order)
+	__u16 envoy_port; // Target Envoy listener port, TCP or UDP per route_key.l4_proto (host byte order)
 	__u16 _pad;
 };
 

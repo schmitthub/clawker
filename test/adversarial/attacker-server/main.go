@@ -769,6 +769,11 @@ func startUDPListener(port string) {
 // HTTP/TLS listeners — no MITM, no app protocol — so it isolates raw-TCP
 // routing from the TLS path. Reachable publicly via an ngrok TCP edge.
 func startRawTCPListener(port string) {
+	p, err := strconv.Atoi(port)
+	if err != nil {
+		log.Printf("raw-TCP invalid port %q: %v", port, err)
+		return
+	}
 	ln, err := net.Listen("tcp", ":"+port)
 	if err != nil {
 		log.Printf("raw-TCP listen error: %v", err)
@@ -777,7 +782,6 @@ func startRawTCPListener(port string) {
 	defer ln.Close()
 	log.Printf("raw-TCP echo listener on :%s", port)
 
-	p, _ := strconv.Atoi(port)
 	for {
 		conn, err := ln.Accept()
 		if err != nil {

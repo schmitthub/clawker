@@ -726,8 +726,9 @@ func (m *Manager) SyncRoutes(routes []Route) error {
 			m.log.Warn().Err(err).
 				Uint32("domain_hash", r.DomainHash).
 				Uint16("dst_port", r.DstPort).
+				Uint8("l4_proto", r.L4Proto).
 				Msg("ebpf sync-routes: updating route_map")
-			errs = append(errs, fmt.Errorf("update route_map[domain_hash=%d, dst_port=%d]: %w", r.DomainHash, r.DstPort, err))
+			errs = append(errs, fmt.Errorf("update route_map[domain_hash=%d, dst_port=%d, l4_proto=%d]: %w", r.DomainHash, r.DstPort, r.L4Proto, err))
 		}
 	}
 
@@ -736,12 +737,24 @@ func (m *Manager) SyncRoutes(routes []Route) error {
 	// miss and the datagram would be denied. Writing dns_cache[ip]=DomainHash(ip)
 	// (the same hash the route is keyed on) makes the existing lookup hit. FQDN
 	// routes carry SeedIP==0 — CoreDNS populates their dns_cache entry.
+	//
+	// dns_cache is keyed by destination IP and has two writers: this seed and
+	// the CoreDNS dnsbpf plugin (which rewrites dns_cache[ip] on every A record).
+	// If an operator configures both an FQDN rule and a bare-IP rule for an IP
+	// the FQDN resolves to, both writers contend for that one key. The seed is
+	// insert-only (UpdateNoExist) so CoreDNS — the high-frequency, per-resolution
+	// writer — stays authoritative on any contested IP: an ErrKeyExist means
+	// CoreDNS already owns the entry, which is a no-op for us, not a failure.
+	// Both rules still route to valid Envoy listeners either way, so this only
+	// affects access-log attribution on the contested IP, never enforcement.
+	// The durable collision fix (keying routes on FQDN hashes) is tracked
+	// separately.
 	seeded := 0
 	for _, r := range routes {
 		if r.SeedIP == 0 {
 			continue
 		}
-		if err := m.UpdateDNSCache(r.SeedIP, r.DomainHash, dnsSeedTTLSeconds); err != nil {
+		if err := m.seedDNSCacheIfAbsent(r.SeedIP, r.DomainHash, dnsSeedTTLSeconds); err != nil {
 			m.log.Warn().Err(err).
 				Uint32("seed_ip", r.SeedIP).
 				Uint32("domain_hash", r.DomainHash).
@@ -775,13 +788,34 @@ func (m *Manager) Enable(cgroupID uint64) error {
 	return nil
 }
 
-// UpdateDNSCache writes a DNS resolution result to the dns_cache map.
+// UpdateDNSCache writes a DNS resolution result to the dns_cache map,
+// overwriting any existing entry for the IP (last-writer-wins). Used by the
+// break-glass ebpf-manager CLI, where a manual override is the intent.
 func (m *Manager) UpdateDNSCache(ip uint32, domainHash uint32, ttlSeconds uint32) error {
 	entry := clawkerDnsEntry{
 		DomainHash: domainHash,
 		ExpireTs:   uint32(time.Now().Unix()) + ttlSeconds,
 	}
 	return m.objs.DnsCache.Update(ip, entry, ebpf.UpdateAny)
+}
+
+// seedDNSCacheIfAbsent writes a dns_cache entry only when the IP is not already
+// present (UpdateNoExist). Used by SyncRoutes to seed IP-literal routes without
+// clobbering a CoreDNS-populated entry for the same IP — ErrKeyExist means
+// CoreDNS already owns the key and is treated as a successful no-op. See the
+// two-writer contention note in SyncRoutes.
+func (m *Manager) seedDNSCacheIfAbsent(ip uint32, domainHash uint32, ttlSeconds uint32) error {
+	entry := clawkerDnsEntry{
+		DomainHash: domainHash,
+		ExpireTs:   uint32(time.Now().Unix()) + ttlSeconds,
+	}
+	if err := m.objs.DnsCache.Update(ip, entry, ebpf.UpdateNoExist); err != nil {
+		if errors.Is(err, ebpf.ErrKeyExist) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 // deleteExpiredDNSEntries clears the given keys from a BPF map, returning
