@@ -151,14 +151,25 @@ func readEgressRules(path string) ([]egressRule, error) {
 }
 
 // matchRules checks if the given host/proto/port/path combination is allowed by
-// the rule set. Exact domain matches always take priority over wildcard matches
-// regardless of rule ordering — this prevents a wildcard allow from shadowing
-// an exact deny (or vice versa). Returns nil if allowed, an error if blocked or
-// no matching rule.
+// the rule set. Two priority rules combine, mirroring the Envoy generator so
+// the host-browser channel enforces the same verdict as the MITM firewall:
+//
+//   - Specificity: an exact domain/IP/CIDR match always beats a wildcard match,
+//     regardless of rule order, so a wildcard can never shadow an exact rule.
+//   - Deny-always-wins within a tier: if ANY matching rule in the winning tier
+//     denies, the request is denied even when an allow rule also matches. This
+//     is load-bearing for overlapping port specs — a range allow ("9000-9100")
+//     and a single-port deny ("9050") are stored under different keys, so both
+//     survive in the file and both match port 9050; Envoy resolves that to deny
+//     and so must we. A deny only counts when its own port spec actually covers
+//     the request port (enforced by the portSpecMatches gate below), so a deny
+//     scoped to a port outside the request never suppresses a legitimate allow.
+//
+// Returns nil if allowed, an error if denied or if no rule matches.
 func matchRules(rules []egressRule, host, proto string, port int, path string) error {
-	var wildcardMatch *egressRule
+	var exactAllow, wildcardAllow *egressRule
+	exactDeny, wildcardDeny := false, false
 
-	// Pass 1: find the best match. Exact domain wins; wildcard is fallback.
 	for i := range rules {
 		r := normalizeEgressRule(rules[i])
 
@@ -166,24 +177,40 @@ func matchRules(rules []egressRule, host, proto string, port int, path string) e
 			continue
 		}
 
-		matchType := dstMatchType(r.Dst, host)
-		if matchType == matchNone {
-			continue
-		}
-
-		if matchType == matchExact {
-			return evaluateRule(r, host, path)
-		}
-
-		// Wildcard match — remember first one as fallback.
-		if wildcardMatch == nil {
-			normalized := r
-			wildcardMatch = &normalized
+		switch dstMatchType(r.Dst, host) {
+		case matchExact:
+			if strings.EqualFold(r.Action, "allow") {
+				if exactAllow == nil {
+					rc := r
+					exactAllow = &rc
+				}
+			} else {
+				exactDeny = true
+			}
+		case matchWildcard:
+			if strings.EqualFold(r.Action, "allow") {
+				if wildcardAllow == nil {
+					rc := r
+					wildcardAllow = &rc
+				}
+			} else {
+				wildcardDeny = true
+			}
 		}
 	}
 
-	if wildcardMatch != nil {
-		return evaluateRule(*wildcardMatch, host, path)
+	// Exact tier first (higher specificity), deny before allow within it.
+	if exactDeny {
+		return fmt.Errorf("domain %q is denied by egress rules", host)
+	}
+	if exactAllow != nil {
+		return evaluateRule(*exactAllow, host, path)
+	}
+	if wildcardDeny {
+		return fmt.Errorf("domain %q is denied by egress rules", host)
+	}
+	if wildcardAllow != nil {
+		return evaluateRule(*wildcardAllow, host, path)
 	}
 
 	return fmt.Errorf("domain %q is not in the egress allow list", host)

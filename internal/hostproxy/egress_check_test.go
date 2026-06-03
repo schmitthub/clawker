@@ -489,3 +489,125 @@ func TestCheckURLAgainstEgressRules_PathTraversal(t *testing.T) {
 		})
 	}
 }
+
+// TestMatchRules_DenyWins pins deny-always-wins + port-span semantics, the
+// host-proxy counterpart to the firewall generator's
+// TestNormalizeAndDedup_ResolvesOpaquePortConflicts. The firewall side carves
+// overlapping rules into disjoint spans at store-write time; the host proxy
+// reads the same file but matches directly, so for any (rules, port) it MUST
+// return the verdict the carved rule set would enforce. The reachable hazard:
+// a range allow ("9000-9100") and a single-port deny ("9050") live under
+// different dst:proto:port keys, so both survive on disk and both match port
+// 9050. First-match-wins (the old behavior) let an earlier allow shadow the
+// deny — an egress bypass relative to Envoy. A deny only wins when its own
+// port spec covers the request port.
+//
+// Each case fixes a rule set and asserts the verdict at several probe ports,
+// mirroring the carve scenarios as per-port verdicts.
+func TestMatchRules_DenyWins(t *testing.T) {
+	const dst = "x.test" // exact host; wildcard cases use ".x.test" + sub host
+
+	tests := []struct {
+		name  string
+		rules []egressRule
+		host  string
+		// port -> expected allowed
+		probes map[int]bool
+	}{
+		{
+			name: "allow range + deny single inside (deny wins at that port only)",
+			rules: []egressRule{
+				{Dst: dst, Proto: "https", Port: "9000-9100", Action: "allow"},
+				{Dst: dst, Proto: "https", Port: "9050", Action: "deny"},
+			},
+			host:   dst,
+			probes: map[int]bool{9000: true, 9049: true, 9050: false, 9051: true, 9100: true, 9101: false},
+		},
+		{
+			name: "deny single + allow range (reverse order, order-independent)",
+			rules: []egressRule{
+				{Dst: dst, Proto: "https", Port: "9050", Action: "deny"},
+				{Dst: dst, Proto: "https", Port: "9000-9100", Action: "allow"},
+			},
+			host:   dst,
+			probes: map[int]bool{9050: false, 9070: true},
+		},
+		{
+			name: "deny single in the middle splits the allow span",
+			rules: []egressRule{
+				{Dst: dst, Proto: "https", Port: "4242-4250", Action: "allow"},
+				{Dst: dst, Proto: "https", Port: "4246", Action: "deny"},
+			},
+			host:   dst,
+			probes: map[int]bool{4245: true, 4246: false, 4247: true},
+		},
+		{
+			name: "deny range swallows allow single inside (fully denied)",
+			rules: []egressRule{
+				{Dst: dst, Proto: "https", Port: "4242-4250", Action: "deny"},
+				{Dst: dst, Proto: "https", Port: "4245", Action: "allow"},
+			},
+			host:   dst,
+			probes: map[int]bool{4242: false, 4245: false, 4250: false, 4251: false},
+		},
+		{
+			name: "two overlapping deny+allow ranges (deny wins across the overlap)",
+			rules: []egressRule{
+				{Dst: dst, Proto: "https", Port: "4242-4250", Action: "allow"},
+				{Dst: dst, Proto: "https", Port: "4248-4260", Action: "deny"},
+			},
+			host:   dst,
+			probes: map[int]bool{4247: true, 4248: false, 4250: false, 4260: false, 4261: false},
+		},
+		{
+			name: "disjoint allow ports stay independent",
+			rules: []egressRule{
+				{Dst: dst, Proto: "https", Port: "4242", Action: "allow"},
+				{Dst: dst, Proto: "https", Port: "5000", Action: "allow"},
+			},
+			host:   dst,
+			probes: map[int]bool{4242: true, 4243: false, 5000: true},
+		},
+		{
+			name: "wildcard range allow + single deny overlap (deny wins on subdomain)",
+			rules: []egressRule{
+				{Dst: ".x.test", Proto: "https", Port: "9000-9100", Action: "allow"},
+				{Dst: ".x.test", Proto: "https", Port: "9050", Action: "deny"},
+			},
+			host:   "sub.x.test",
+			probes: map[int]bool{9049: true, 9050: false, 9051: true},
+		},
+		{
+			name: "exact allow beats wildcard deny (specificity tier, not deny-across-tiers)",
+			rules: []egressRule{
+				{Dst: ".x.test", Proto: "https", Port: "443", Action: "deny"},
+				{Dst: "host.x.test", Proto: "https", Port: "443", Action: "allow"},
+			},
+			host:   "host.x.test",
+			probes: map[int]bool{443: true},
+		},
+		{
+			name: "exact deny beats wildcard allow (specificity tier)",
+			rules: []egressRule{
+				{Dst: ".x.test", Proto: "https", Port: "443", Action: "allow"},
+				{Dst: "host.x.test", Proto: "https", Port: "443", Action: "deny"},
+			},
+			host:   "host.x.test",
+			probes: map[int]bool{443: false},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for port, wantAllow := range tt.probes {
+				err := matchRules(tt.rules, tt.host, "https", port, "/")
+				if wantAllow && err != nil {
+					t.Errorf("port %d: expected ALLOWED, got blocked: %v", port, err)
+				}
+				if !wantAllow && err == nil {
+					t.Errorf("port %d: expected DENIED, got allowed (deny-wins/span violated — egress bypass)", port)
+				}
+			}
+		})
+	}
+}
