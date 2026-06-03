@@ -656,10 +656,19 @@ func (h *Handler) FirewallBypass(ctx context.Context, req *adminv1.FirewallBypas
 // false} — the rule is still saved, next FirewallInit picks it up.
 func (h *Handler) FirewallAddRules(ctx context.Context, req *adminv1.FirewallAddRulesRequest) (*adminv1.FirewallAddRulesResult, error) {
 	rules := ProtoRulesToConfig(req.GetRules())
-	for _, r := range rules {
-		if err := ValidateDst(r.Dst); err != nil {
-			return nil, toStatus(fmt.Errorf("%w: %q: %v", ErrRuleInvalid, r.Dst, err))
+	// Validate every rule up front and report ALL problems at once. A bad rule
+	// from clawker.yaml (malformed port, inverted action, junk destination)
+	// fails the whole launch here — the error rides the RPC back to the CLI so
+	// the user sees it — rather than being accepted as ADDED and silently dropped
+	// when NormalizeAndDedup later canonicalizes the store.
+	var invalid []error
+	for i, r := range rules {
+		if err := ValidateRule(r); err != nil {
+			invalid = append(invalid, fmt.Errorf("rule %d (dst=%q): %v", i, r.Dst, err))
 		}
+	}
+	if len(invalid) > 0 {
+		return nil, toStatus(fmt.Errorf("%w: %v", ErrRuleInvalid, errors.Join(invalid...)))
 	}
 	statuses, err := h.addRulesToStore(rules)
 	if err != nil {
@@ -1178,8 +1187,14 @@ func (h *Handler) addRulesToStore(rules []config.EgressRule) ([]addStatus, error
 		normalized = append(normalized, NormalizeRule(r))
 	}
 	statuses := make([]addStatus, len(rules))
+	var mutated bool
 	if err := h.store.Set(func(f *EgressRulesFile) {
+		// Canonicalize the stored rules the same way every reader does. Indexing
+		// the RAW stored rules by RuleKey would miss carved spans: an opaque allow
+		// range overlapping a deny is split by NormalizeAndDedup into per-span
+		// rules, so a re-add of the original range matches no key and looks new.
 		existing, _ := NormalizeAndDedup(f.Rules)
+		before := append([]config.EgressRule(nil), existing...)
 		index := make(map[string]int, len(existing))
 		for i, r := range existing {
 			index[RuleKey(r)] = i
@@ -1200,11 +1215,27 @@ func (h *Handler) addRulesToStore(rules []config.EgressRule) ([]addStatus, error
 			existing = append(existing, r)
 			statuses[i] = addStatusAdded
 		}
-		f.Rules = existing
+		// Re-canonicalize and compare against the pre-merge canonical form. A
+		// freshly-"added" opaque range can carve back to spans already present,
+		// making the operation a true no-op. The canonical before/after diff —
+		// not the per-rule RuleKey heuristic, which can't see the carve — is the
+		// authoritative write+reconcile gate.
+		after, _ := NormalizeAndDedup(existing)
+		if rulesCanonicalEqual(before, after) {
+			return
+		}
+		f.Rules = after
+		mutated = true
 	}); err != nil {
 		return nil, fmt.Errorf("updating rules: %w", err)
 	}
-	if !anyAddChange(statuses) {
+	if !mutated {
+		// Canonical state did not move: force UNCHANGED so anyAddChange is false
+		// and the caller skips the stack reconcile. Keeps a re-apply of an
+		// identical (even carved) rule batch a true no-op — no write, no reload.
+		for i := range statuses {
+			statuses[i] = addStatusUnchanged
+		}
 		return statuses, nil
 	}
 	if err := h.store.Write(); err != nil {

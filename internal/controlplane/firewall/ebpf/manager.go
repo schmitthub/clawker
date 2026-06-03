@@ -49,14 +49,25 @@ type Manager struct {
 	// Per-container cgroup links, keyed by cgroup ID.
 	// Only populated when this Manager instance attaches programs (daemon mode).
 	links map[uint64][]link.Link
+
+	// seedMu guards seededIPs. SyncRoutes (gRPC handler goroutine) and
+	// GarbageCollectDNS (periodic goroutine) both touch it.
+	seedMu sync.Mutex
+	// seededIPs is the set of IP-literal destinations whose dns_cache entries
+	// SyncRoutes owns. GarbageCollectDNS never evicts these: a CoreDNS overwrite
+	// would otherwise lower the entry's TTL to a short DNS TTL and GC would drop
+	// it, failing a still-valid IP rule's route closed until the next reconcile.
+	// SyncRoutes is the only deleter of seeded entries (when the IP rule goes).
+	seededIPs map[uint32]struct{}
 }
 
 // NewManager creates a new eBPF manager. Call Load() or OpenPinned() before use.
 func NewManager(log *logger.Logger) *Manager {
 	return &Manager{
-		pinPath: PinPath,
-		log:     log,
-		links:   make(map[uint64][]link.Link),
+		pinPath:   PinPath,
+		log:       log,
+		links:     make(map[uint64][]link.Link),
+		seededIPs: make(map[uint32]struct{}),
 	}
 }
 
@@ -747,6 +758,9 @@ func (m *Manager) SyncRoutes(routes []Route) error {
 	// CoreDNS already owns the entry, which is a no-op for us, not a failure.
 	// Both rules still route to valid Envoy listeners either way, so this only
 	// affects access-log attribution on the contested IP, never enforcement.
+	// GarbageCollectDNS skips every IP in m.seededIPs, so even after a CoreDNS
+	// overwrite lowers the entry to a short DNS TTL the seed is never evicted
+	// while the IP rule is live — the route can't fail closed between reconciles.
 	// The durable collision fix (keying routes on FQDN hashes) is tracked
 	// separately.
 	seeded := 0
@@ -765,8 +779,42 @@ func (m *Manager) SyncRoutes(routes []Route) error {
 		seeded++
 	}
 
+	// Update the protected-seed set and remove dns_cache entries for IP rules
+	// that went away. Without the delete, an orphan seed would linger for the
+	// full seed TTL misattributing access-log records; dropping it also lets a
+	// later GC pass reclaim the slot. A co-resident FQDN rule for the same IP
+	// just re-resolves through CoreDNS on its next query.
+	m.seedMu.Lock()
+	next, orphaned := diffSeededIPs(routes, m.seededIPs)
+	m.seededIPs = next
+	m.seedMu.Unlock()
+	for _, ip := range orphaned {
+		if err := m.objs.DnsCache.Delete(ip); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+			m.log.Debug().Err(err).Uint32("ip", ip).Msg("ebpf sync-routes: removing orphan dns_cache seed (non-fatal)")
+		}
+	}
+
 	m.log.Info().Int("routes", len(routes)).Int("ip_seeds", seeded).Int("errors", len(errs)).Msg("global route_map synced")
 	return errors.Join(errs...)
+}
+
+// diffSeededIPs derives, from a SyncRoutes call's routes and the previously
+// seeded IP set, the new seed set and the IPs that were seeded before but are no
+// longer present (orphans whose dns_cache entries should be removed). Pure so the
+// seed-lifecycle logic is unit-testable without a kernel.
+func diffSeededIPs(routes []Route, prev map[uint32]struct{}) (next map[uint32]struct{}, orphaned []uint32) {
+	next = make(map[uint32]struct{})
+	for _, r := range routes {
+		if r.SeedIP != 0 {
+			next[r.SeedIP] = struct{}{}
+		}
+	}
+	for ip := range prev {
+		if _, still := next[ip]; !still {
+			orphaned = append(orphaned, ip)
+		}
+	}
+	return next, orphaned
 }
 
 // Disable sets the bypass flag for a container, allowing unrestricted egress.
@@ -847,15 +895,28 @@ func deleteExpiredDNSEntries(m bypassMap, keys []uint32, log *logger.Logger) int
 // next GC pass will try again.
 func (m *Manager) GarbageCollectDNS() int {
 	now := uint32(time.Now().Unix())
+
+	// Snapshot the protected IP-literal seeds. Their lifecycle is owned by
+	// SyncRoutes (it deletes them when the IP rule is removed); GC must never
+	// evict a live seed, or a CoreDNS overwrite + short TTL would fail the rule's
+	// route closed until the next reconcile.
+	m.seedMu.Lock()
+	protected := m.seededIPs
+	m.seedMu.Unlock()
+
 	var ip uint32
 	var entry clawkerDnsEntry
 	var expired []uint32
 
 	iter := m.objs.DnsCache.Iterate()
 	for iter.Next(&ip, &entry) {
-		if entry.ExpireTs < now {
-			expired = append(expired, ip)
+		if entry.ExpireTs >= now {
+			continue
 		}
+		if _, isSeed := protected[ip]; isSeed {
+			continue
+		}
+		expired = append(expired, ip)
 	}
 	if err := iter.Err(); err != nil {
 		m.log.Warn().Err(err).Msg("ebpf gc-dns: iterating dns_cache (next pass will retry)")

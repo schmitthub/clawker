@@ -782,16 +782,49 @@ func validateDedicatedLayout(rules []config.EgressRule, ports EnvoyPorts) error 
 	tcp := TCPMappings(rules, ports)
 	udp := UDPMappings(rules, ports)
 
-	for _, b := range []struct {
+	bands := []struct {
 		name string
 		base int
 		n    int
 	}{
 		{"tcp/ssh", ports.TCPPortBase, len(tcp)},
 		{"raw udp", ports.UDPPortBase, len(udp)},
-	} {
+	}
+
+	for _, b := range bands {
 		if b.n > 0 && b.base+b.n-1 > 65535 {
 			return fmt.Errorf("envoy config: %d dedicated %s listeners from base %d overflow past port 65535 (port_range fan-out too wide) — narrow the range(s) or lower the base", b.n, b.name, b.base)
+		}
+	}
+
+	// A grown band must not swallow one of the fixed infra ports. EnvoyPorts.Validate
+	// only collision-checks the four BASE ports against each other; once a band grows
+	// it can reach EgressPort / HealthPort / the admin port, which would emit two
+	// listeners on the same bind port. Golden + `envoy validate` can't catch that
+	// (distinct listener names, structurally valid) — it surfaces only as a runtime
+	// bind failure at bringup, the same CP↔generator contract-gap class as a dropped
+	// listener. Fail closed at generation instead.
+	// The two band BASES (TCPPortBase/UDPPortBase) are intentionally absent here:
+	// a band growing into the other band's base is caught by the band-vs-band
+	// overlap guard below, so this list covers only the fixed single-port infra
+	// listeners.
+	infra := []struct {
+		name string
+		port int
+	}{
+		{"EgressPort", ports.EgressPort},
+		{"HealthPort", ports.HealthPort},
+		{"admin", envoyAdminPort},
+	}
+	for _, b := range bands {
+		if b.n == 0 {
+			continue
+		}
+		lo, hi := b.base, b.base+b.n-1
+		for _, p := range infra {
+			if p.port >= lo && p.port <= hi {
+				return fmt.Errorf("envoy config: dedicated %s band [%d-%d] collides with the fixed %s listener on port %d (port_range fan-out too wide) — narrow the range(s) or move the band base", b.name, lo, hi, p.name, p.port)
+			}
 		}
 	}
 

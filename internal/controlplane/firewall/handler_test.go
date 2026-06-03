@@ -1463,6 +1463,72 @@ func TestHandler_AddRules_KeyCollision_NoChange_NoReconcile(t *testing.T) {
 	assert.Equal(t, syncBefore, len(mock.SyncRoutesCalls()), "no SyncRoutes on no-op")
 }
 
+// TestHandler_AddRules_DenyCarvedOpaqueRange_ReseedUnchanged guards the
+// no-op detection for carved opaque rules. An opaque allow range overlapping a
+// deny is split by NormalizeAndDedup into per-span rules in the store, so a
+// re-add of the ORIGINAL range matches no carved key. Keying the no-op gate off
+// per-rule RuleKey reported a spurious ADDED + reconcile on every bootstrap
+// re-seed; the gate now compares the canonical before/after, so an identical
+// re-seed stays a true no-op.
+func TestHandler_AddRules_DenyCarvedOpaqueRange_ReseedUnchanged(t *testing.T) {
+	mock := noopMock()
+	h, stack := ruleStoreHandler(t, mock)
+
+	// Seed an opaque allow range with an overlapping deny — the store carves
+	// 45-50 allow into [45-46, 48-50] and keeps 47 deny.
+	seed := []*adminv1.EgressRule{
+		{Dst: "vpn.example.com", Proto: "tcp", Port: "45-50", Action: "allow"},
+		{Dst: "vpn.example.com", Proto: "tcp", Port: "47", Action: "deny"},
+	}
+	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{Rules: seed})
+	require.NoError(t, err)
+	reloadsBefore := stack.reloadCalls
+	syncBefore := len(mock.SyncRoutesCalls())
+
+	// Re-seed the identical batch (the bootstrap path on every container start).
+	resp, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{Rules: seed})
+	require.NoError(t, err)
+	for i, st := range resp.GetStatuses() {
+		assert.Equalf(t, adminv1.AddRuleStatus_ADD_RULE_STATUS_UNCHANGED, st,
+			"rule %d of a carved re-seed must be UNCHANGED", i)
+	}
+	assert.Equal(t, reloadsBefore, stack.reloadCalls, "carved re-seed must not reconcile")
+	assert.Equal(t, syncBefore, len(mock.SyncRoutesCalls()), "carved re-seed must not SyncRoutes")
+}
+
+// TestHandler_AddRules_InvalidRule_FailsLaunch asserts that a malformed port
+// or an inverted/typo'd action from clawker.yaml is rejected up front — the
+// error rides the RPC back to the CLI and fails the launch — instead of being
+// accepted as ADDED then silently dropped at the NormalizeAndDedup reconcile.
+func TestHandler_AddRules_InvalidRule_FailsLaunch(t *testing.T) {
+	cases := []struct {
+		name string
+		rule *adminv1.EgressRule
+	}{
+		{"malformed port range", &adminv1.EgressRule{Dst: "host.example.com", Proto: "tcp", Port: "9100-9000", Action: "allow"}},
+		{"non-numeric port", &adminv1.EgressRule{Dst: "host.example.com", Proto: "tcp", Port: "44x", Action: "allow"}},
+		{"typo'd action", &adminv1.EgressRule{Dst: "host.example.com", Proto: "https", Port: "443", Action: "dney"}},
+		{"typo'd path_default", &adminv1.EgressRule{Dst: "host.example.com", Proto: "https", Port: "443", PathDefault: "denied"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mock := noopMock()
+			h, stack := ruleStoreHandler(t, mock)
+
+			_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
+				Rules: []*adminv1.EgressRule{tc.rule},
+			})
+			require.Error(t, err)
+			assertCode(t, err, codes.InvalidArgument)
+			assertReason(t, err, ReasonRuleInvalid)
+
+			assert.Equal(t, 0, stack.reloadCalls, "invalid rule must not reconcile")
+			listResp, _ := h.FirewallListRules(context.Background(), &adminv1.FirewallListRulesRequest{})
+			assert.Empty(t, listResp.GetRules(), "invalid rule must not land in the store")
+		})
+	}
+}
+
 // TestHandler_AddRules_MixedBatch_ReportsPerRuleStatus is the
 // bootstrap-shaped case: a batch carrying [new, identical-reseed,
 // merge-mutation] must come back with statuses [ADDED, UNCHANGED,

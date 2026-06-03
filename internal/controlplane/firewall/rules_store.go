@@ -3,6 +3,7 @@ package firewall
 import (
 	"fmt"
 	"net"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -119,6 +120,54 @@ func ValidateDst(dst string) error {
 		return fmt.Errorf("invalid destination %q: domain must not be purely numeric", dst)
 	}
 	return nil
+}
+
+// ValidateRule fully validates a single egress rule sourced from clawker.yaml
+// (the launch path, via BootstrapServicesPreStart → FirewallAddRules) or a CLI
+// `firewall add`. It checks destination syntax, the dynamic port spec, and every
+// allow/deny field. A failure aborts rule ingestion — and therefore the
+// container launch — so the CLI surfaces the bad rule to the user, instead of
+// the rule being accepted as ADDED and then silently dropped at the later
+// NormalizeAndDedup reconcile step.
+//
+// Proto is intentionally NOT rejected: an unrecognized proto token is a
+// deliberate soft-skip caught by the Envoy deny floor (a safety net, not a
+// config error), so opaque L7 names for TCP pass-through stay valid.
+func ValidateRule(r config.EgressRule) error {
+	if err := ValidateDst(r.Dst); err != nil {
+		return err
+	}
+	if err := r.ValidatePortSpec(); err != nil {
+		return fmt.Errorf("invalid port %q: %w", r.Port, err)
+	}
+	if err := validateActionField("action", r.Action); err != nil {
+		return err
+	}
+	if err := validateActionField("path_default", r.PathDefault); err != nil {
+		return err
+	}
+	for _, pr := range r.PathRules {
+		if strings.TrimSpace(pr.Path) == "" {
+			return fmt.Errorf("path rule with empty path")
+		}
+		if err := validateActionField("path rule action", pr.Action); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateActionField checks an allow/deny field. Empty is accepted (the
+// protocol/path default applies); any other value is rejected. A mistyped action
+// like "deny"→"dney" would otherwise silently coerce to allow — an inverted-
+// policy footgun that turns an intended block into an open egress path.
+func validateActionField(name, val string) error {
+	switch strings.ToLower(val) {
+	case "", "allow", "deny":
+		return nil
+	default:
+		return fmt.Errorf("invalid %s %q: must be \"allow\" or \"deny\"", name, val)
+	}
 }
 
 // NormalizeRule fills in missing fields before storage so rules are explicit and
@@ -645,6 +694,32 @@ func spansEqual(a, b [][2]int) bool {
 		}
 	}
 	return true
+}
+
+// rulesCanonicalEqual reports whether two NormalizeAndDedup outputs describe the
+// same rule set, independent of slice order. resolveOpaquePortConflicts can carve
+// an opaque allow range into multiple span rules and the resulting order is not
+// stable across an append+re-merge, so a plain reflect.DeepEqual on the slices
+// would report a spurious difference. Within a canonical set each
+// (RuleKey, action) pair is unique (carved spans have distinct ports; allow/deny
+// differ in action), so sorting by that key yields a stable total order to
+// compare. Used by addRulesToStore to gate the write+reconcile on a real change.
+func rulesCanonicalEqual(a, b []config.EgressRule) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	sortKey := func(r config.EgressRule) string {
+		action := "allow"
+		if isDenyAction(r.Action) {
+			action = "deny"
+		}
+		return RuleKey(r) + "\x00" + action
+	}
+	as := append([]config.EgressRule(nil), a...)
+	bs := append([]config.EgressRule(nil), b...)
+	sort.Slice(as, func(i, j int) bool { return sortKey(as[i]) < sortKey(as[j]) })
+	sort.Slice(bs, func(i, j int) bool { return sortKey(bs[i]) < sortKey(bs[j]) })
+	return reflect.DeepEqual(as, bs)
 }
 
 // isOpaqueProto reports whether the proto produces a dedicated per-port listener

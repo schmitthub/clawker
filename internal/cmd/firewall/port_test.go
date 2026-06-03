@@ -1,35 +1,31 @@
 package firewall
 
-import "testing"
+import (
+	"errors"
+	"testing"
 
+	"github.com/schmitthub/clawker/internal/cmdutil"
+)
+
+// TestValidatePortFlag is a delegation smoke-check only: validatePortFlag is a
+// thin wrapper over config.ParsePortSpec (exhaustively covered by
+// TestParsePortSpec in internal/config) that adds a --port FlagError prefix. We
+// assert the happy path passes, an invalid spec fails, and the error is a
+// FlagError (so Cobra prints usage) — not the full parse matrix, which belongs
+// to ParsePortSpec's own test.
 func TestValidatePortFlag(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
-		name    string
-		port    string
-		wantErr bool
-	}{
-		{"empty means protocol default", "", false},
-		{"valid low", "1", false},
-		{"valid https", "443", false},
-		{"valid high", "65535", false},
-		{"valid range", "9000-9100", false},
-		{"single-port range", "9000-9000", false},
-		{"not a number", "abc", true},
-		{"above max", "65536", true},
-		{"zero invalid", "0", true},
-		{"reversed range", "9100-9000", true},
-		{"range out of bounds", "1-70000", true},
-		{"malformed range", "9000-", true},
-		{"non-numeric range bound", "9000-abc", true},
+
+	if err := validatePortFlag("443"); err != nil {
+		t.Fatalf("validatePortFlag(%q) = %v; want nil", "443", err)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			err := validatePortFlag(tc.port)
-			if (err != nil) != tc.wantErr {
-				t.Fatalf("validatePortFlag(%q): err=%v, wantErr=%v", tc.port, err, tc.wantErr)
-			}
-		})
+
+	err := validatePortFlag("65536")
+	if err == nil {
+		t.Fatalf("validatePortFlag(%q) = nil; want error", "65536")
+	}
+	var fe *cmdutil.FlagError
+	if !errors.As(err, &fe) {
+		t.Fatalf("validatePortFlag error type = %T; want *cmdutil.FlagError (triggers usage display)", err)
 	}
 }
