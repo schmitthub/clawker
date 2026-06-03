@@ -403,3 +403,89 @@ func TestPortSpecMatches(t *testing.T) {
 		})
 	}
 }
+
+// TestCheckURLAgainstEgressRules_PathTraversal is the path-canonicalization
+// fuzz table. The host proxy opens the RAW url string in the host browser,
+// which normalizes the path per the WHATWG URL spec (backslash->slash for
+// http/https, dot-segment popping) and the origin server then resolves the
+// rest per RFC 3986 §5.2.4. So the path the matcher evaluates MUST equal the
+// post-normalization path the server actually serves, or an attacker prefixes
+// an allowed path and escapes to a denied one — defeating path_default:deny.
+//
+// The fixture `api.example.test` (http/80) is path_default:deny with allow
+// /v1/, allow /health, deny /v1/admin/. Denied targets used below: /secret
+// (default deny) and /v1/admin/x (explicit). Every evasion encoding that
+// resolves to a denied (or non-allowlisted) target MUST block; every one that
+// resolves to an allowed target MUST pass. net/url percent-decodes (%2e->'.',
+// %2f->'/') before canonicalizePath runs, so encoded and literal variants
+// collapse together; backslashes are folded to '/' to match browser behavior.
+func TestCheckURLAgainstEgressRules_PathTraversal(t *testing.T) {
+	const host = "http://api.example.test"
+	tests := []struct {
+		name    string
+		path    string
+		allowed bool
+	}{
+		// --- canonical baselines (behavior must be preserved) ---
+		{"allowed v1 path", "/v1/things", true},
+		{"allowed v1 deep", "/v1/a/b/c", true},
+		{"allowed health", "/health", true},
+		{"allowed v1 dir trailing slash", "/v1/", true},
+		{"denied default root", "/secret", false},
+		{"denied bare v1 no slash", "/v1", false},
+		{"denied explicit admin", "/v1/admin/x", false},
+		{"denied root", "/", false},
+
+		// --- literal dot-segment traversal out of /v1/ to /secret ---
+		{"dotdot single", "/v1/../secret", false},
+		{"dotdot double", "/v1/../../secret", false},
+		{"dotdot overshoot", "/v1/../../../../../../secret", false},
+		{"dotdot trailing", "/v1/..", false},
+		{"dot then dotdot", "/v1/./../secret", false},
+		{"dotdot into explicit deny", "/v1/../v1/admin/x", false},
+		{"admin out then to secret", "/v1/admin/../../secret", false},
+
+		// --- percent-encoded dot evasions ---
+		{"enc dotdot lower", "/v1/%2e%2e/secret", false},
+		{"enc dotdot upper", "/v1/%2E%2E/secret", false},
+		{"enc dot mixed a", "/v1/.%2e/secret", false},
+		{"enc dot mixed b", "/v1/%2e./secret", false},
+		{"enc full dotdotslash", "/v1/%2e%2e%2fsecret", false},
+
+		// --- percent-encoded slash evasions ---
+		{"enc slash lower", "/v1%2f..%2fsecret", false},
+		{"enc slash upper", "/v1%2F..%2Fsecret", false},
+		{"enc slash leading dotdot", "/v1/..%2fsecret", false},
+
+		// --- backslash evasions (browser folds \ -> / for http/https) ---
+		{"backslash dotdot", "/v1\\..\\secret", false},
+		{"backslash mid segment", "/v1/..\\secret", false},
+		{"backslash double", "/v1\\..\\..\\secret", false},
+
+		// --- noise that must canonicalize, not bypass or mis-block ---
+		{"single dot segments allowed", "/v1/./things", true},
+		{"double slash allowed", "//v1//things", true},
+		{"backslash separators allowed", "/v1\\things", true},
+
+		// --- traversal that legitimately nets back to an allowed path ---
+		{"dotdot net-allowed", "/v1/admin/../things", true},
+		{"dotdot churn net-allowed", "/v1/a/../b/../things", true},
+
+		// --- double-encoding: stays literal on a single-decode server, so it
+		// remains under /v1/ and never reaches /secret. Documents the boundary:
+		// only a (broken) double-decoding origin would traverse, out of scope. ---
+		{"double-encoded stays literal", "/v1/%252e%252e/x", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := CheckURLAgainstEgressRules(host+tt.path, testRulesFile)
+			if tt.allowed && err != nil {
+				t.Errorf("path %q: expected ALLOWED, got blocked: %v", tt.path, err)
+			}
+			if !tt.allowed && err == nil {
+				t.Errorf("path %q: expected BLOCKED, got allowed (EGRESS BYPASS)", tt.path)
+			}
+		})
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 
@@ -81,12 +82,43 @@ func CheckURLAgainstEgressRules(targetURL, rulesFilePath string) error {
 		return fmt.Errorf("cannot read egress rules: %w", err)
 	}
 
-	path := parsed.Path
-	if path == "" {
-		path = "/"
-	}
+	return matchRules(rules, host, proto, port, canonicalizePath(parsed.Path))
+}
 
-	return matchRules(rules, host, proto, port, path)
+// canonicalizePath collapses a URL path to the form the origin server will
+// actually resolve, so the path the rules match equals the path the host
+// browser fetches. Without this, an agent prefixes an allowed path and
+// "../"s out to a denied one — defeating path_default:deny entirely (e.g.
+// /schmitthub/clawker/../../victim against a per-repo allowlist).
+//
+// Two normalizations happen between the string we validate and the bytes the
+// origin serves, and we must replicate both or the matcher and the fetch
+// disagree:
+//
+//   - Backslashes. For http/https the WHATWG URL parser the host browser uses
+//     folds '\' to '/', so /v1/..\secret reaches the server as /v1/../secret.
+//     path.Clean is POSIX and treats '\' as an ordinary character, so we fold
+//     first or a backslash-disguised "../" sails straight through.
+//   - Dot-segments and duplicate slashes. path.Clean resolves "." / ".."
+//     (RFC 3986 §5.2.4) and merges "//". net/url has already percent-decoded
+//     the path by the time we see it (%2e->'.', %2f->'/'), so the encoded
+//     traversal variants collapse here too. Decoding-then-cleaning is
+//     intentionally stricter than a spec-compliant server (which keeps %2f
+//     literal) — the correct fail-closed direction for an allowlist.
+//
+// path.Clean strips a trailing slash, so restore it when the input had one:
+// a directory-prefix rule like "/schmitthub/" must still match a request to
+// the bare directory.
+func canonicalizePath(p string) string {
+	if p == "" {
+		return "/"
+	}
+	p = strings.ReplaceAll(p, "\\", "/")
+	cleaned := path.Clean(p)
+	if strings.HasSuffix(p, "/") && !strings.HasSuffix(cleaned, "/") {
+		cleaned += "/"
+	}
+	return cleaned
 }
 
 // schemeToProto maps a URL scheme to the egress rule proto and its default port.
