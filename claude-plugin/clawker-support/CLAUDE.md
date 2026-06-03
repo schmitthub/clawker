@@ -38,7 +38,12 @@ reference and should still be fetched for field-level details.
 ### What does NOT belong in skill files
 
 - Exhaustive field name lists (point to docs instead)
-- CLI flag syntax (point to docs instead)
+- CLI flag syntax (point to docs instead) — **exception:** the firewall
+  path-scoping flags (`--path`/`--action`, `path_default`/`path_rules`) are
+  deliberate and load-bearing security methodology, kept concrete in
+  `firewall-security.md`, SKILL.md, and `troubleshooting.md`. The narrowest-
+  scope advice is meaningless without them. Treat as a curated reference, not
+  drift-prone syntax.
 - Domain lists (hardcoded firewall domains, registry URLs)
 - Version numbers or base image digests
 

@@ -68,6 +68,18 @@ workflow, watch firewall **block events** in OpenSearch Dashboards (the
 `clawker-envoy` egress stream), add the legitimately-needed paths, re-run.
 See `monitoring.md`.
 
+Add discovered paths at runtime without a config edit or restart (host-side,
+hot-reloaded, persisted to the rules store):
+
+```bash
+clawker firewall add github.com --path /<owner>/<dep> --action allow
+```
+
+Each `--action allow` path keeps the domain in allowlist mode (deny everything
+else). The runtime store and `.clawker.yaml` are separate — once the path set
+is settled, write it back into `.clawker.yaml` so it's shared with the team and
+survives a fresh rules store.
+
 ## Two gaps path rules can't cover
 
 - **SSH git (port 22) is opaque** — nobody can path-filter it; an allowed

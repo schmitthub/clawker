@@ -42,10 +42,35 @@ command signatures.
 
 Present **all** of the following options to the user so they can choose. These are `clawker firewall` commands the user runs on the **host** — you cannot modify the firewall from inside this container.
 
-1. **Whitelist the domain** (permanent, recommended for recurring needs):
-   ```
-   clawker firewall add <hostname>
-   ```
+**Scope every allow as narrowly as the work needs.** A bare-domain allow lets
+the agent reach *every* path on that host; combined with forwarded git/API
+credentials that is an exfiltration surface. For HTTPS/HTTP destinations, scope
+to the specific URL path instead of the whole domain whenever the work only
+needs part of the host. Recommend the tightest rule that unblocks the task, not
+the broadest one that happens to work.
+
+1. **Whitelist the destination** (permanent, recommended for recurring needs).
+
+   - **Path-scoped (preferred for http/https):**
+     ```
+     clawker firewall add <hostname> --path <prefix> --action allow
+     ```
+     An `--action allow` path on a domain with no explicit `path_default` puts
+     it in **allowlist mode** — that path (prefix match) is allowed and **every
+     other path on the host is denied**. Add one `--path … --action allow` per
+     path the work legitimately needs; they accumulate across calls.
+     `--action deny` blocklists a single path while leaving the rest of the
+     domain open.
+
+   - **Whole domain (only when every path is needed, or for non-HTTP protocols):**
+     ```
+     clawker firewall add <hostname>
+     ```
+     Path rules apply only to `http`/`https`. `ssh`/`tcp`/`udp` are opaque (no
+     path metadata) — scope those by protocol and port instead:
+     ```
+     clawker firewall add <hostname> --proto ssh --port 22
+     ```
 
 2. **Temporary bypass** (escape hatch — temporarily disables firewall rules):
    ```
