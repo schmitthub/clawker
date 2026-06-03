@@ -120,12 +120,15 @@ func GenerateDomainCert(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, domai
 	case ip != nil:
 		template.IPAddresses = []net.IP{ip}
 	case isCIDR(normalized):
-		// A CIDR dst mints ONE leaf whose iPAddress SAN is the network address. It
-		// cannot validate against every in-range host — and it does not need to:
-		// agent-side verification is not clawker's enforcement boundary (egress
-		// gating + MITM inspection are). The leaf still encrypts the hop and lets
-		// Envoy MITM-inspect; a client connecting to a raw in-range IP sets its own
-		// no-verify, exactly as it must for any self-signed endpoint.
+		// A CIDR dst mints ONE leaf whose iPAddress SAN is the network address. That
+		// SAN matches only the network address itself — TLS name/IP verification
+		// against any other in-range host (the .1 gateway, etc.) fails, since x509
+		// has no CIDR-range SAN. It does not need to: agent-side verification is not
+		// clawker's enforcement boundary. Authorization is enforced by Envoy's
+		// prefix_range / original_dst gating (NOT SAN matching), and MITM inspection
+		// still applies. The leaf only encrypts the hop and lets Envoy MITM-inspect;
+		// a client connecting to a raw in-range IP must set its own no-verify, exactly
+		// as it must for any self-signed endpoint.
 		_, ipnet, _ := net.ParseCIDR(normalized)
 		template.IPAddresses = []net.IP{ipnet.IP}
 	default:
