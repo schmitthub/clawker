@@ -11,15 +11,17 @@
 //
 // clawker.c — All clawker eBPF programs in a single compilation unit.
 //
-// Seven cgroup programs that replace iptables for per-container egress
+// Nine cgroup programs that replace iptables for per-container egress
 // control:
-//   1. cgroup/connect4    — IPv4 TCP/UDP: redirect to Envoy/CoreDNS + deny
-//   2. cgroup/sendmsg4    — IPv4 UDP: DNS redirect + non-DNS deny
-//   3. cgroup/recvmsg4    — IPv4 UDP: rewrite DNS response source
-//   4. cgroup/connect6    — IPv6: full IPv4-mapped routing + native deny
-//   5. cgroup/sendmsg6    — IPv6 UDP: IPv4-mapped DNS redirect + native deny
-//   6. cgroup/recvmsg6    — IPv6 UDP: rewrite IPv4-mapped DNS response source
-//   7. cgroup/sock_create — Raw socket blocking (ICMP prevention)
+//   1.  cgroup/connect4     — IPv4 TCP/UDP: redirect to Envoy/CoreDNS + deny
+//   2.  cgroup/sendmsg4     — IPv4 UDP: DNS redirect + non-DNS deny
+//   2b. cgroup/recvmsg4     — IPv4 UDP: restore DNS/routed-UDP reply source
+//   2c. cgroup/getpeername4 — IPv4 UDP: report original dst as connected peer
+//   3.  cgroup/connect6     — IPv6: full IPv4-mapped routing + native deny
+//   4.  cgroup/sendmsg6     — IPv6 UDP: IPv4-mapped DNS redirect + native deny
+//   4b. cgroup/recvmsg6     — IPv6 UDP: rewrite IPv4-mapped DNS response source
+//   4c. cgroup/getpeername6 — IPv6 UDP: report original dst (IPv4-mapped)
+//   5.  cgroup/sock_create  — Raw socket blocking (ICMP prevention)
 //
 // Routing DRY: the IPv4 and IPv4-mapped-over-IPv6 code paths share the same
 // routing decisions. All of that logic lives in decide_connect/decide_sendmsg
@@ -59,6 +61,56 @@ static __always_inline int apply_v6_mapped(struct bpf_sock_addr *ctx, struct rou
 	}
 	if (r.verdict == V_DENY)
 		return 0;
+	return 1;
+}
+
+// restore_v4_reply_source rewrites a redirected UDP flow's reply source
+// (recvmsg4) or reported peer (getpeername4) back to what the app aimed at:
+//   - DNS: a reply from CoreDNS → embedded resolver 127.0.0.11 (fixed mapping).
+//   - routed UDP: a datagram from Envoy → the original dst connect4/sendmsg4
+//     recorded in udp_flow_map (keyed by cookie + the reply's actual source).
+// Always returns 1 (response-side, never drops). Shared by recvmsg4 +
+// getpeername4 so the source the app observes is consistent across both.
+static __always_inline int restore_v4_reply_source(struct bpf_sock_addr *ctx,
+						    struct container_config *cfg)
+{
+	if (should_rewrite_dns_source(cfg, ctx->user_ip4, bpf_ntohs(ctx->user_port))) {
+		ctx->user_ip4  = bpf_htonl(DOCKER_EMBEDDED_DNS);
+		ctx->user_port = bpf_htons(DNS_PORT);
+		return 1;
+	}
+	if (ctx->user_ip4 == cfg->envoy_ip) {
+		__u32 orig_ip;
+		__u16 orig_port_nbo;
+		if (lookup_udp_flow_source(bpf_get_socket_cookie(ctx), ctx->user_ip4,
+					   bpf_ntohs(ctx->user_port), &orig_ip, &orig_port_nbo)) {
+			ctx->user_ip4  = orig_ip;
+			ctx->user_port = orig_port_nbo;
+		}
+	}
+	return 1;
+}
+
+// restore_v6_mapped_reply_source is the IPv4-mapped counterpart of
+// restore_v4_reply_source for recvmsg6 + getpeername6. Only user_ip6[3] is
+// touched. Caller must have confirmed is_ipv4_mapped(ctx).
+static __always_inline int restore_v6_mapped_reply_source(struct bpf_sock_addr *ctx,
+							  struct container_config *cfg)
+{
+	if (should_rewrite_dns_source(cfg, ctx->user_ip6[3], bpf_ntohs(ctx->user_port))) {
+		ctx->user_ip6[3] = bpf_htonl(DOCKER_EMBEDDED_DNS);
+		ctx->user_port   = bpf_htons(DNS_PORT);
+		return 1;
+	}
+	if (ctx->user_ip6[3] == cfg->envoy_ip) {
+		__u32 orig_ip;
+		__u16 orig_port_nbo;
+		if (lookup_udp_flow_source(bpf_get_socket_cookie(ctx), ctx->user_ip6[3],
+					   bpf_ntohs(ctx->user_port), &orig_ip, &orig_port_nbo)) {
+			ctx->user_ip6[3] = orig_ip;
+			ctx->user_port   = orig_port_nbo;
+		}
+	}
 	return 1;
 }
 
@@ -118,8 +170,13 @@ int clawker_sendmsg4(struct bpf_sock_addr *ctx)
 		return 1;
 	}
 
+	// Socket cookie keys the reverse-NAT flow map so recvmsg4/getpeername4 can
+	// restore the reply source. 0 if unavailable — decide_sendmsg still routes,
+	// just skips flow-tracking.
+	__u64 cookie = bpf_get_socket_cookie(ctx);
 	struct route_result r = decide_sendmsg(cfg, cgroup_id,
-					       ctx->user_ip4, dst_port_host);
+					       ctx->user_ip4, dst_port_host,
+					       cookie);
 	__u8 verdict = (r.verdict == V_DENY) ? EGRESS_VERDICT_DENIED
 					     : EGRESS_VERDICT_ALLOWED;
 	submit_event_v4(cgroup_id, ctx->user_ip4, dst_port_host,
@@ -128,11 +185,12 @@ int clawker_sendmsg4(struct bpf_sock_addr *ctx)
 }
 
 // ---------------------------------------------------------------------------
-// Program 2b: cgroup/recvmsg4 — Rewrite UDP source on DNS responses
+// Program 2b: cgroup/recvmsg4 — Restore the reply source on redirected UDP
 // ---------------------------------------------------------------------------
-// Paired with sendmsg4: when sendmsg4 rewrites dst from 127.0.0.11 → CoreDNS,
-// the response arrives FROM CoreDNS. The app expects the response FROM
-// 127.0.0.11. This program fixes the source address on the response.
+// Paired with sendmsg4/connect4: when egress was rewritten dst→backend, the
+// response arrives FROM the backend but the app expects it FROM what it aimed
+// at. restore_v4_reply_source undoes both rewrites — DNS (CoreDNS → 127.0.0.11)
+// and routed UDP (Envoy → the original dst recorded in udp_flow_map).
 
 SEC("cgroup/recvmsg4")
 int clawker_recvmsg4(struct bpf_sock_addr *ctx)
@@ -144,11 +202,25 @@ int clawker_recvmsg4(struct bpf_sock_addr *ctx)
 	if (enter_enforced(&cfg, &cgroup_id, false) != ENTER_ENFORCED)
 		return 1;
 
-	if (should_rewrite_dns_source(cfg, ctx->user_ip4, bpf_ntohs(ctx->user_port))) {
-		ctx->user_ip4  = bpf_htonl(DOCKER_EMBEDDED_DNS);
-		ctx->user_port = bpf_htons(DNS_PORT);
-	}
-	return 1;
+	return restore_v4_reply_source(ctx, cfg);
+}
+
+// ---------------------------------------------------------------------------
+// Program 2c: cgroup/getpeername4 — Report the original dst on connected UDP
+// ---------------------------------------------------------------------------
+// connect4 rewrites a routed UDP socket's peer to Envoy, so a bare
+// getpeername() would report Envoy. This restores the original dst the app
+// connected to (from udp_flow_map), mirroring recvmsg4. Cilium does the same
+// via cgroup/getpeername4 → __sock4_xlate_rev (bpf/bpf_sock.c).
+
+SEC("cgroup/getpeername4")
+int clawker_getpeername4(struct bpf_sock_addr *ctx)
+{
+	struct container_config *cfg;
+	__u64 cgroup_id;
+	if (enter_enforced(&cfg, &cgroup_id, false) != ENTER_ENFORCED)
+		return 1;
+	return restore_v4_reply_source(ctx, cfg);
 }
 
 // ---------------------------------------------------------------------------
@@ -242,8 +314,10 @@ int clawker_sendmsg6(struct bpf_sock_addr *ctx)
 					EGRESS_FLAG_IPV4_MAPPED | EGRESS_EMIT_SENDMSG);
 			return 1;
 		}
+		__u64 cookie = bpf_get_socket_cookie(ctx);
 		struct route_result r = decide_sendmsg(cfg, cgroup_id,
-						       dst_ip, dst_port_host);
+						       dst_ip, dst_port_host,
+						       cookie);
 		__u8 verdict = (r.verdict == V_DENY) ? EGRESS_VERDICT_DENIED
 						     : EGRESS_VERDICT_ALLOWED;
 		submit_event_v4(cgroup_id, dst_ip, dst_port_host, (__u8)ctx->type,
@@ -290,11 +364,24 @@ int clawker_recvmsg6(struct bpf_sock_addr *ctx)
 	if (!is_ipv4_mapped(ctx))
 		return 1;
 
-	if (should_rewrite_dns_source(cfg, ctx->user_ip6[3], bpf_ntohs(ctx->user_port))) {
-		ctx->user_ip6[3] = bpf_htonl(DOCKER_EMBEDDED_DNS);
-		ctx->user_port   = bpf_htons(DNS_PORT);
-	}
-	return 1;
+	return restore_v6_mapped_reply_source(ctx, cfg);
+}
+
+// ---------------------------------------------------------------------------
+// Program 4c: cgroup/getpeername6 — Report original dst (IPv4-mapped)
+// ---------------------------------------------------------------------------
+// IPv4-mapped counterpart of getpeername4 for dual-stack connected UDP sockets.
+
+SEC("cgroup/getpeername6")
+int clawker_getpeername6(struct bpf_sock_addr *ctx)
+{
+	struct container_config *cfg;
+	__u64 cgroup_id;
+	if (enter_enforced(&cfg, &cgroup_id, false) != ENTER_ENFORCED)
+		return 1;
+	if (!is_ipv4_mapped(ctx))
+		return 1;
+	return restore_v6_mapped_reply_source(ctx, cfg);
 }
 
 // ---------------------------------------------------------------------------

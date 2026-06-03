@@ -7,7 +7,7 @@ The BPF source (`bpf/clawker.c`) and its generated Go bindings (`clawker_*_bpfel
 ## Layout
 
 ```
-bpf/clawker.c        BPF C source (connect4/6, sendmsg4/6, recvmsg4/6, sock_create)
+bpf/clawker.c        BPF C source (connect4/6, sendmsg4/6, recvmsg4/6, getpeername4/6, sock_create)
 bpf/common.h         Shared structs: container_config, dns_entry, route_key/val, metric_key
 gen.go               //go:generate bpf2go directive
 clawker_*_bpfel.go   bpf2go-generated Go bindings (gitignored, produced by `make ebpf`)
@@ -35,7 +35,8 @@ All maps live at `PinPath = /sys/fs/bpf/clawker/`:
 | `container_map` | cgroup ID (u64) | `container_config` | `Install`/`Remove` | BPF fast path |
 | `bypass_map` | cgroup ID (u64) | u8 (1 = bypass) | `Disable`/`Enable`, cleared by `Install`/`Remove` | BPF fast path |
 | `dns_cache` | IPv4 (u32) | `dns_entry` {domain_hash, expire_ts} | `UpdateDNSCache` **and** `internal/dnsbpf` CoreDNS plugin | BPF fast path |
-| `route_map` | `{domain_hash, dst_port}` | `{envoy_port}` | `SyncRoutes` | BPF fast path |
+| `route_map` | `{domain_hash, dst_port, l4_proto}` | `{envoy_port}` | `SyncRoutes` | BPF fast path |
+| `udp_flow_map` | `{socket_cookie, backend_ip, backend_port}` (LRU) | `{orig_dst_ip, orig_dst_port}` | `connect4`/`sendmsg4` (`record_udp_flow`); drained by `FlushAll` | `recvmsg4` (reply source) + `getpeername4` (reported peer) |
 | `metrics_map` | `{cgroup_id, domain_hash, dst_port, action}` | counters | BPF fast path | userspace `dump` (break-glass) |
 | `events_ringbuf` | — (BPF_MAP_TYPE_RINGBUF) | `egress_event` | BPF `submit_event` | userspace `netlogger` reader |
 | `events_drops` | u32 (always 0) | u64 counter (PERCPU_ARRAY) | BPF `submit_event` on `bpf_ringbuf_reserve == NULL` | userspace `netlogger` periodic gauge |
@@ -105,7 +106,7 @@ Helpers in `types.go`:
 ```go
 const PinPath = "/sys/fs/bpf/clawker"
 
-type Route struct { DomainHash uint32; DstPort, EnvoyPort uint16 }
+type Route struct { DomainHash uint32; DstPort, EnvoyPort uint16; L4Proto uint8 } // L4Proto: L4ProtoTCP/L4ProtoUDP
 type ContainerConfig struct { /* mirrors bpf/common.h — Envoy/CoreDNS/gateway IPs, CIDR, host proxy */ }
 
 func IPToUint32(net.IP) uint32                              // network byte order (matches ctx->user_ip4)

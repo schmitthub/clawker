@@ -4,14 +4,16 @@
 // connect() and sendmsg() syscalls, rewriting destinations to route traffic
 // through Envoy (TCP) and CoreDNS (DNS).
 //
-// The package manages seven BPF programs attached per-container via cgroup:
-//   - connect4:    IPv4 TCP/UDP routing to Envoy/CoreDNS
-//   - sendmsg4:    IPv4 UDP (DNS redirect + non-DNS block)
-//   - recvmsg4:    IPv4 UDP (rewrite DNS response source)
-//   - connect6:    IPv6 + IPv4-mapped routing / native deny
-//   - sendmsg6:    IPv6 UDP (IPv4-mapped DNS redirect + native deny)
-//   - recvmsg6:    IPv6 UDP (rewrite IPv4-mapped DNS response source)
-//   - sock_create: Raw socket blocking (ICMP prevention)
+// The package manages nine BPF programs attached per-container via cgroup:
+//   - connect4:     IPv4 TCP/UDP routing to Envoy/CoreDNS
+//   - sendmsg4:     IPv4 UDP (DNS redirect + non-DNS block)
+//   - recvmsg4:     IPv4 UDP (rewrite DNS/routed-UDP response source)
+//   - getpeername4: IPv4 UDP (report the original dst as the connected peer)
+//   - connect6:     IPv6 + IPv4-mapped routing / native deny
+//   - sendmsg6:     IPv6 UDP (IPv4-mapped DNS redirect + native deny)
+//   - recvmsg6:     IPv6 UDP (rewrite IPv4-mapped DNS response source)
+//   - getpeername6: IPv6 UDP (report the original dst as the connected peer)
+//   - sock_create:  Raw socket blocking (ICMP prevention)
 //
 // All programs share pinned BPF maps at /sys/fs/bpf/clawker/ for cross-process
 // access (eBPF Manager + CoreDNS plugin both read/write maps).
@@ -52,11 +54,22 @@ type DNSEntry struct {
 
 // RouteKey mirrors struct route_key in bpf/common.h.
 // Global (not per-container) — container enforcement is via container_map.
+// L4Proto (SOCK_STREAM/SOCK_DGRAM) keeps TCP and UDP routes for the same
+// {domain, port} from colliding on a single key.
 type RouteKey struct {
 	DomainHash uint32
 	DstPort    uint16
-	_          uint16 // padding
+	L4Proto    uint8
+	_          uint8 // padding
 }
+
+// L4 transport discriminators for RouteKey.L4Proto / Route.L4Proto. Values
+// match SOCK_STREAM / SOCK_DGRAM in bpf/common.h (and egress_event.l4_proto)
+// so the eBPF route lookup keys off the same byte the kernel reports.
+const (
+	L4ProtoTCP uint8 = 1 // SOCK_STREAM
+	L4ProtoUDP uint8 = 2 // SOCK_DGRAM
+)
 
 // RouteVal mirrors struct route_val in bpf/common.h.
 type RouteVal struct {

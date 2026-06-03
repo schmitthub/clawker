@@ -184,7 +184,7 @@ func TestPresetInit_VCSFlagCombinations(t *testing.T) {
 				require.NotNil(t, snap.Security.Firewall, "firewall config should exist")
 				found := false
 				for _, r := range snap.Security.Firewall.Rules {
-					if r.Dst == tt.wantSSHRule && r.Port == 22 && r.Proto == "ssh" {
+					if r.Dst == tt.wantSSHRule && r.Port == "22" && r.Proto == "ssh" {
 						found = true
 						break
 					}
@@ -194,7 +194,7 @@ func TestPresetInit_VCSFlagCombinations(t *testing.T) {
 				// No SSH rule expected.
 				if snap.Security.Firewall != nil {
 					for _, r := range snap.Security.Firewall.Rules {
-						assert.NotEqual(t, 22, r.Port,
+						assert.NotEqual(t, "22", r.Port,
 							"should not have port 22 rule but found one for %s", r.Dst)
 					}
 				}
@@ -408,7 +408,7 @@ func TestPresetInit_UserConfigIsolation(t *testing.T) {
 	require.Len(t, snap.Security.Firewall.Rules, 1,
 		"should have exactly one SSH rule (gitlab), not two")
 	assert.Equal(t, "gitlab.com", snap.Security.Firewall.Rules[0].Dst)
-	assert.Equal(t, 22, snap.Security.Firewall.Rules[0].Port)
+	assert.Equal(t, "22", snap.Security.Firewall.Rules[0].Port)
 	assert.Equal(t, "ssh", snap.Security.Firewall.Rules[0].Proto)
 
 	// GPG should be disabled (--no-gpg flag).

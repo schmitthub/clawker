@@ -97,7 +97,7 @@ func applyVCSToProject(p *config.Project, s vcsSettings) {
 		host := vcsSSHHosts[s.Provider]
 		p.Security.Firewall.Rules = append(p.Security.Firewall.Rules, config.EgressRule{
 			Dst:    host,
-			Port:   22,
+			Port:   "22",
 			Proto:  "ssh",
 			Action: "allow",
 		})

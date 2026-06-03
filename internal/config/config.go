@@ -102,6 +102,7 @@ type Config interface {
 	CPIPLastOctet() byte
 	EnvoyEgressPort() int
 	EnvoyTCPPortBase() int
+	EnvoyUDPPortBase() int
 	EnvoyHealthPort() int
 	EnvoyHealthHostPort() int
 	CoreDNSHealthHostPort() int

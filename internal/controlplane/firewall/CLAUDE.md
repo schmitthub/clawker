@@ -166,7 +166,8 @@ Rule helpers are exported for reuse by `BootstrapServicesPostStart` and E2E test
 - **Unit tests (`handler_test.go`, `stack_test.go`, `cgroup_test.go`)** — use `docker/mocks.FakeClient` + `controlplane/firewall/ebpf/mocks.EBPFManagerMock`. Handler fakes satisfy `StackLifecycle`; test-only `ContainerResolver` closures drive drift + not-found branches.
 - **FakeClient managed-label jail**: `whail.ContainerInspect` re-invokes `ContainerInspectFn` inside `IsContainerManaged` — test fakes must return `Config.Labels[managedKey]=ManagedLabelValue` in inspect responses, otherwise real callers see `ErrContainerNotFound`.
 - **Stop/Reload no-op tests** need affirmative assertions (`NotContains(fake.Calls, "ContainerStop")`, `FileExists(envoy.yaml)`) or they pass trivially without exercising the short-circuit.
-- **Golden files**: `testdata/corefile_basic.golden` is hand-edited to update (no `GOLDEN_UPDATE=1` hook).
+- **Envoy-gen tests (`envoy_config_test.go`)** — ONE comprehensive golden, NOT one-per-feature. New coverage (any new proto/dst-type/path/ws/DFP/QUIC/cert/port-range permutation or interaction) is added by extending the `comprehensiveRules` const + re-blessing `comprehensive`/`comprehensive_mtls`, NOT by adding a new `*.envoy.golden` per feature. The only standalone cases allowed are generation-wide-fact-OFF shapes a mega-config can't express (`http_exact_only`/`https_exact_only` = DFP absent, `ssh` = no egress listener/deny floor) and fail-closed (`wantErrContains`) cases. Full rules: `.claude/rules/envoy.md` → Testing §.
+- **Golden files**: `testdata/corefile_basic.golden` is hand-edited to update (no `GOLDEN_UPDATE=1` hook). `testdata/envoy/*.envoy.golden` re-bless via `GOLDEN_UPDATE=1 go test ./internal/controlplane/firewall/ -run TestGenerateEnvoyConfig`.
 - **E2E tests**: `test/e2e/firewall_test.go` (composite flows through the CLI — blocked domain, allowed domain, add/remove rules, status, path rules, bypass end-to-end including natural-expiry + gone-container error paths) and `test/e2e/controlplane_cli_test.go` (break-glass `controlplane up/status/down` verbs). E2E means through `harness.Run(...)` — no direct `Stack`/`Handler` construction belongs under `test/e2e/`.
 
 ## Gotchas
@@ -180,4 +181,5 @@ Rule helpers are exported for reuse by `BootstrapServicesPostStart` and E2E test
 - `../CLAUDE.md` — CP core (Ory auth, startup sequencing, container config, drain callback composition)
 - `ebpf/CLAUDE.md` — eBPF subsystem details + pinned map contract
 - `.claude/rules/envoy.md` — Envoy config rules + verification workflow
+- `.claude/rules/firewall-uat.md` — runtime BEHAVIORAL UAT (in-container probe tools, allow/deny/upgrade/SSH-routing discriminators, live config spot-check, C2 harness). Golden+validate prove the config is valid; this proves it enforces.
 - `.correctless/specs/cp-initiative/branch-2-cp-owns-firewall.md` — migration spec + invariants

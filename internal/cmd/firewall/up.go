@@ -6,6 +6,7 @@ import (
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
@@ -63,11 +64,13 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 		return fmt.Errorf("connecting to control plane: %w", err)
 	}
 
-	resp, err := callWithSpinner(ctx, ios, "Starting firewall stack...",
+	resp, err := callWithSpinnerTimeout(ctx, ios, "Starting firewall stack...",
+		consts.FirewallStackBringupRPCTimeout,
 		func(rpcCtx context.Context) (*adminv1.FirewallInitResult, error) {
 			return client.FirewallInit(rpcCtx, &adminv1.FirewallInitRequest{})
 		})
 	if err != nil {
+		warnStackDownExposure(ios)
 		return wrapRPCError("starting firewall", err)
 	}
 

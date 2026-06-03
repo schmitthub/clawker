@@ -42,7 +42,7 @@ clawker firewall add <domain> [flags]
       --action string   Action for the path rule: allow or deny (requires --path)
   -h, --help            help for add
       --path string     URL path prefix for a path-scoped rule, matched as a prefix at request time (requires --action)
-      --port int        Port number (default: protocol-specific)
+      --port string     Destination port: a single port (443) or an inclusive range (9000-9100); default: protocol-specific
       --proto string    L7 protocol: https (TLS-MITM, default), http (plaintext HCM), ssh, tcp, or any opaque L7 name (TCP pass-through) (default "https")
 ```
 

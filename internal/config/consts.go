@@ -103,6 +103,9 @@ func (c *configImpl) EnvoyEgressPort() int { return consts.EnvoyEgressPort }
 // Deprecated: use consts.EnvoyTCPPortBase.
 func (c *configImpl) EnvoyTCPPortBase() int { return consts.EnvoyTCPPortBase }
 
+// Deprecated: use consts.EnvoyUDPPortBase.
+func (c *configImpl) EnvoyUDPPortBase() int { return consts.EnvoyUDPPortBase }
+
 // Deprecated: use consts.EnvoyHealthPort.
 func (c *configImpl) EnvoyHealthPort() int { return consts.EnvoyHealthPort }
 

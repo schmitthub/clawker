@@ -88,6 +88,9 @@ var _ config.Config = &ConfigMock{}
 //			EnvoyTCPPortBaseFunc: func() int {
 //				panic("mock out the EnvoyTCPPortBase method")
 //			},
+//			EnvoyUDPPortBaseFunc: func() int {
+//				panic("mock out the EnvoyUDPPortBase method")
+//			},
 //			FirewallCertSubdirFunc: func() (string, error) {
 //				panic("mock out the FirewallCertSubdir method")
 //			},
@@ -308,6 +311,9 @@ type ConfigMock struct {
 	// EnvoyTCPPortBaseFunc mocks the EnvoyTCPPortBase method.
 	EnvoyTCPPortBaseFunc func() int
 
+	// EnvoyUDPPortBaseFunc mocks the EnvoyUDPPortBase method.
+	EnvoyUDPPortBaseFunc func() int
+
 	// FirewallCertSubdirFunc mocks the FirewallCertSubdir method.
 	FirewallCertSubdirFunc func() (string, error)
 
@@ -525,6 +531,9 @@ type ConfigMock struct {
 		// EnvoyTCPPortBase holds details about calls to the EnvoyTCPPortBase method.
 		EnvoyTCPPortBase []struct {
 		}
+		// EnvoyUDPPortBase holds details about calls to the EnvoyUDPPortBase method.
+		EnvoyUDPPortBase []struct {
+		}
 		// FirewallCertSubdir holds details about calls to the FirewallCertSubdir method.
 		FirewallCertSubdir []struct {
 		}
@@ -693,6 +702,7 @@ type ConfigMock struct {
 	lockEnvoyHealthPort         sync.RWMutex
 	lockEnvoyIPLastOctet        sync.RWMutex
 	lockEnvoyTCPPortBase        sync.RWMutex
+	lockEnvoyUDPPortBase        sync.RWMutex
 	lockFirewallCertSubdir      sync.RWMutex
 	lockFirewallDataSubdir      sync.RWMutex
 	lockGetProjectIgnoreFile    sync.RWMutex
@@ -1366,6 +1376,33 @@ func (mock *ConfigMock) EnvoyTCPPortBaseCalls() []struct {
 	mock.lockEnvoyTCPPortBase.RLock()
 	calls = mock.calls.EnvoyTCPPortBase
 	mock.lockEnvoyTCPPortBase.RUnlock()
+	return calls
+}
+
+// EnvoyUDPPortBase calls EnvoyUDPPortBaseFunc.
+func (mock *ConfigMock) EnvoyUDPPortBase() int {
+	if mock.EnvoyUDPPortBaseFunc == nil {
+		panic("ConfigMock.EnvoyUDPPortBaseFunc: method is nil but Config.EnvoyUDPPortBase was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockEnvoyUDPPortBase.Lock()
+	mock.calls.EnvoyUDPPortBase = append(mock.calls.EnvoyUDPPortBase, callInfo)
+	mock.lockEnvoyUDPPortBase.Unlock()
+	return mock.EnvoyUDPPortBaseFunc()
+}
+
+// EnvoyUDPPortBaseCalls gets all the calls that were made to EnvoyUDPPortBase.
+// Check the length with:
+//
+//	len(mockedConfig.EnvoyUDPPortBaseCalls())
+func (mock *ConfigMock) EnvoyUDPPortBaseCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockEnvoyUDPPortBase.RLock()
+	calls = mock.calls.EnvoyUDPPortBase
+	mock.lockEnvoyUDPPortBase.RUnlock()
 	return calls
 }
 

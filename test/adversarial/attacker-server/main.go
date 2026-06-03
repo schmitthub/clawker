@@ -227,6 +227,10 @@ func main() {
 	udpPort := getEnv("UDP_PORT", "5353")
 	go startUDPListener(udpPort)
 
+	// Start raw-TCP echo listener (opaque tcp_proxy routing test)
+	rawTCPPort := getEnv("RAW_TCP_PORT", "7777")
+	go startRawTCPListener(rawTCPPort)
+
 	// Start ICMP listener
 	go startICMPListener()
 
@@ -745,6 +749,60 @@ func startUDPListener(port string) {
 
 		log.Printf(">>> UDP from %s (%d bytes)", remote, n)
 		insertCapture(21, "udp", 5353, fmt.Sprintf("udp from %s", remote), decoded)
+
+		// Echo the datagram back so a CONNECTED-UDP probe can prove the full
+		// roundtrip through Envoy's udp_proxy (connect4 SOCK_DGRAM redirect +
+		// connected-socket response transparency). Unconnected sendmsg4 probes
+		// never reach here — they fail closed at the eBPF layer by design.
+		_, _ = conn.WriteToUDP(buf[:n], remote)
+	}
+}
+
+// ---------------------------------------------------------------
+// Raw TCP echo listener — opaque tcp_proxy routing test
+// ---------------------------------------------------------------
+
+// startRawTCPListener serves a plaintext (non-TLS) TCP echo so an opaque
+// `proto: tcp` egress rule can be exercised end-to-end: the agent's connected
+// TCP lands on Envoy's dedicated per-rule TCP listener, opaque tcp_proxy
+// forwards to this pinned upstream, and the bytes echo back. Distinct from the
+// HTTP/TLS listeners — no MITM, no app protocol — so it isolates raw-TCP
+// routing from the TLS path. Reachable publicly via an ngrok TCP edge.
+func startRawTCPListener(port string) {
+	p, err := strconv.Atoi(port)
+	if err != nil {
+		log.Printf("raw-TCP invalid port %q: %v", port, err)
+		return
+	}
+	ln, err := net.Listen("tcp", ":"+port)
+	if err != nil {
+		log.Printf("raw-TCP listen error: %v", err)
+		return
+	}
+	defer ln.Close()
+	log.Printf("raw-TCP echo listener on :%s", port)
+
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			continue
+		}
+		go func(c net.Conn) {
+			defer c.Close()
+			buf := make([]byte, 65535)
+			n, err := c.Read(buf)
+			if err != nil {
+				return
+			}
+			data := strings.TrimSpace(string(buf[:n]))
+			decoded := data
+			if raw, derr := base64.StdEncoding.DecodeString(data); derr == nil {
+				decoded = string(raw)
+			}
+			log.Printf(">>> raw-TCP from %s (%d bytes)", c.RemoteAddr(), n)
+			insertCapture(32, "tcp", p, fmt.Sprintf("raw-tcp from %s", c.RemoteAddr()), decoded)
+			_, _ = c.Write(buf[:n]) // echo back for roundtrip proof
+		}(conn)
 	}
 }
 

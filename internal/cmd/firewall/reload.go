@@ -6,6 +6,7 @@ import (
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
 )
@@ -50,7 +51,8 @@ func reloadRun(ctx context.Context, opts *ReloadOptions) error {
 		return fmt.Errorf("connecting to control plane: %w", err)
 	}
 
-	resp, err := callWithSpinner(ctx, ios, "Reloading firewall...",
+	resp, err := callWithSpinnerTimeout(ctx, ios, "Reloading firewall...",
+		consts.FirewallStackBringupRPCTimeout,
 		func(rpcCtx context.Context) (*adminv1.FirewallReloadResult, error) {
 			return client.FirewallReload(rpcCtx, &adminv1.FirewallReloadRequest{})
 		})

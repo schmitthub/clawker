@@ -15,6 +15,7 @@ reference files. Check these first if the issue matches:
 | Settings not taking effect | `reference/settings.md` | Troubleshooting |
 | Disk space, build cache, Docker cleanup | `reference/docker-hygiene.md` | Full reference |
 | Monitoring stack (OTel/OpenSearch/Prometheus, workspace, empty indices) | `reference/monitoring.md` | Troubleshooting |
+| Securing git/VCS egress, can the agent push to/leak via other repos, credential-exfil hardening | `reference/firewall-security.md` | Full reference |
 | Control plane down or unreachable | This file | Control plane down or unhealthy |
 | Agent missing from CP registry | This file | Agent appears in clawker ps but missing from CP |
 
@@ -89,9 +90,21 @@ a container.
    `https://docs.clawker.dev/cli-reference/clawker_firewall` for current
    command signatures.
 
-5. **Add the domain**: Either at runtime via `clawker firewall add` (immediate
-   but doesn't persist to config file) or persistently by adding it to the
-   project's clawker config. Fetch the current config schema for the exact
+5. **Add the destination — scope it as narrowly as the work allows.** Either at
+   runtime via `clawker firewall add` (immediate, doesn't persist to the config
+   file) or persistently in the project's clawker config. For http/https,
+   **prefer a path-scoped rule over a bare domain allow** when the agent only
+   needs specific paths:
+   ```bash
+   clawker firewall add <host> --path <prefix> --action allow
+   ```
+   The allow path flips the domain to allowlist mode — only that path prefix is
+   reachable, everything else on the host is denied. In YAML the equivalent is
+   `path_default: deny` plus `path_rules`. A whole-domain allow over a
+   credential-bearing host (GitHub, package registries, cloud APIs) is an exfil
+   surface — see `reference/firewall-security.md`. Reserve bare-domain allows
+   for hosts that genuinely need every path. SSH/TCP/UDP carry no path metadata —
+   scope those by `--proto`/`--port`. Fetch the current config schema for exact
    syntax.
 
 6. **DNS resolution**: If the domain resolves to multiple IPs or uses CDN,

@@ -14,9 +14,9 @@ package config
 // they share IPs with api.anthropic.com.
 var requiredFirewallRules = []EgressRule{
 	// Claude Code — API and OAuth
-	{Dst: "api.anthropic.com", Proto: "https", Port: 443, Action: "allow"},
-	{Dst: "claude.com", Proto: "https", Port: 443, Action: "allow"},
-	{Dst: "platform.claude.com", Proto: "https", Port: 443, Action: "allow"},
+	{Dst: "api.anthropic.com", Proto: "https", Port: "443", Action: "allow"},
+	{Dst: "claude.com", Proto: "https", Port: "443", Action: "allow"},
+	{Dst: "platform.claude.com", Proto: "https", Port: "443", Action: "allow"},
 	// .claude.ai serves both Claude Code OAuth + Anthropic-hosted UGC. The
 	// host-scope allow is required for login; the explicit deny PathRules
 	// scope out documented UGC surfaces so an injected prompt can't pivot
@@ -26,24 +26,24 @@ var requiredFirewallRules = []EgressRule{
 	// returns "allow" — denylist mode keeps OAuth/login flows intact under
 	// `/` and `/login` (the only Allow patterns in claude.ai's robots.txt).
 	{
-		Dst: ".claude.ai", Proto: "https", Port: 443, Action: "allow",
+		Dst: ".claude.ai", Proto: "https", Port: "443", Action: "allow",
 		PathRules: []PathRule{
 			{Path: "/public/", Action: "deny"},
 			{Path: "/share/", Action: "deny"},
 		},
 	},
 	// Claude Code — MCP proxy
-	{Dst: "mcp-proxy.anthropic.com", Proto: "https", Port: 443, Action: "allow"},
+	{Dst: "mcp-proxy.anthropic.com", Proto: "https", Port: "443", Action: "allow"},
 	// Node.js / npm — registry for `npm install -g` (presets + user_run) and
 	// runtime hook deps. Node is baked into every image; without registry
 	// access the unprivileged user cannot install global packages.
-	{Dst: "registry.npmjs.org", Proto: "https", Port: 443, Action: "allow"},
+	{Dst: "registry.npmjs.org", Proto: "https", Port: "443", Action: "allow"},
 	// Claude Code — telemetry
-	{Dst: "sentry.io", Proto: "https", Port: 443, Action: "allow"},
-	{Dst: "statsig.anthropic.com", Proto: "https", Port: 443, Action: "allow"},
-	{Dst: "statsig.com", Proto: "https", Port: 443, Action: "allow"},
-	{Dst: ".datadoghq.com", Proto: "https", Port: 443, Action: "allow"},
-	{Dst: ".datadoghq.eu", Proto: "https", Port: 443, Action: "allow"},
+	{Dst: "sentry.io", Proto: "https", Port: "443", Action: "allow"},
+	{Dst: "statsig.anthropic.com", Proto: "https", Port: "443", Action: "allow"},
+	{Dst: "statsig.com", Proto: "https", Port: "443", Action: "allow"},
+	{Dst: ".datadoghq.com", Proto: "https", Port: "443", Action: "allow"},
+	{Dst: ".datadoghq.eu", Proto: "https", Port: "443", Action: "allow"},
 }
 
 // requiredFirewallDomains is derived from requiredFirewallRules for backwards compatibility.

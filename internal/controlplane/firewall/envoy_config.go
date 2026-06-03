@@ -2,1585 +2,508 @@ package firewall
 
 import (
 	"fmt"
-	"maps"
 	"sort"
 	"strings"
 
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
-	"gopkg.in/yaml.v3"
 )
 
-// OpenTelemetry Access Log Service (ALS) wiring.
-//
-// Envoy ships access logs to the otel-collector via the native
-// `envoy.access_loggers.open_telemetry` sink, which speaks OTLP
-// LogsService over gRPC. Records arrive at the collector's standard
-// OTLP/gRPC receiver tagged with `service.name=envoy` so the
-// routing/logs_by_service connector can dispatch them to a dedicated
-// OpenSearch index without colliding with claude-code or clawker-cp
-// log shapes.
-const otelCollectorALSClusterName = "otel_collector_als"
+// envoy_config.go is the root entrypoint + orchestrator. It is protocol-
+// agnostic: the deriver hands it, per permutation, the ordered list of layer
+// methods to run, and it just chains them through one genCtx. It never names a
+// protocol or a layer class — all that lives in the deriver's table + the layer
+// files.
 
-// ALSConfig configures the Envoy access logger's upstream cluster.
-//
-// When MTLS is true the cluster targets the otel-collector's
-// mTLS-gated receiver on Port with an upstream TLS transport_socket:
-// leaf+intermediate chain from /etc/envoy/otel-tls/client.pem, key
-// from client.key, and the CLI root CA at ca.pem as the validation
-// context. The receiver trusts only certs chained to the CLI root.
-//
-// When MTLS is false the OTel access-log sink and otel_collector_als
-// cluster are omitted entirely. Envoy keeps the stdout JSON sink for
-// `docker logs clawker-envoy` triage, but emits no OTLP — infra
-// services must never cross into the untrusted otel-collector:4317
-// lane reserved for agent containers.
-type ALSConfig struct {
-	Port int
-	MTLS bool
-}
-
-// EnvoyPorts holds the port configuration for the Envoy proxy, sourced from config.Config.
-type EnvoyPorts struct {
-	EgressPort  int // Main egress listener — handles TLS (per-domain filter chains) and HTTP (raw_buffer filter chain).
-	TCPPortBase int // Starting port for TCP/SSH listeners.
-	HealthPort  int // Dedicated health check listener port for external probes.
-}
-
-// Validate checks that all ports are in valid range and no two ports collide.
-func (p EnvoyPorts) Validate() error {
-	named := []struct {
-		name string
-		port int
-	}{
-		{"EgressPort", p.EgressPort},
-		{"TCPPortBase", p.TCPPortBase},
-		{"HealthPort", p.HealthPort},
-	}
-	for _, n := range named {
-		if n.port <= 0 || n.port > 65535 {
-			return fmt.Errorf("envoy ports: %s=%d is out of valid range (1-65535)", n.name, n.port)
-		}
-	}
-	seen := make(map[int]string, len(named))
-	for _, n := range named {
-		if prev, exists := seen[n.port]; exists {
-			return fmt.Errorf("envoy ports: %s and %s both use port %d", prev, n.name, n.port)
-		}
-		seen[n.port] = n.name
-	}
-	return nil
-}
-
-// TCPMapping describes a per-destination eBPF DNAT entry for non-TLS traffic.
-// Each TCP/SSH rule gets a dedicated Envoy listener port.
-type TCPMapping struct {
-	Dst       string // Destination domain or IP.
-	DstPort   int    // Original destination port (e.g. 22, 8080).
-	EnvoyPort int    // Envoy listener port (TCPPortBase + index).
-}
-
-// TCPMappings computes TCP port mappings from egress rules.
-// The result is deterministic for a given rule set — same rules produce same mappings.
-// Used by both GenerateEnvoyConfig (to build listeners) and Enable (to build eBPF args).
-func TCPMappings(rules []config.EgressRule, ports EnvoyPorts) []TCPMapping {
-	var mappings []TCPMapping
-	idx := 0
-	for _, r := range rules {
-		action := strings.ToLower(r.Action)
-		if action != "allow" && action != "" {
-			continue
-		}
-		if isIPOrCIDR(r.Dst) {
-			continue
-		}
-		proto := strings.ToLower(r.Proto)
-		if proto != "ssh" && proto != "tcp" {
-			continue
-		}
-		// Dst is normalized to the canonical domain (no leading/trailing
-		// dots) so that DomainHash(Dst) matches what the dnsbpf CoreDNS
-		// plugin writes into dns_cache — the Corefile zones are already
-		// normalized via normalizeDomain, so any leading-dot wildcard
-		// marker on the raw rule Dst must be stripped here too or the
-		// route_map lookup will miss for wildcard TCP/SSH rules.
-		mappings = append(mappings, TCPMapping{
-			Dst:       normalizeDomain(r.Dst),
-			DstPort:   tcpDefaultPort(r),
-			EnvoyPort: ports.TCPPortBase + idx,
-		})
-		idx++
-	}
-	return mappings
-}
-
-// Cert path formats inside the Envoy container (mounted volume).
-const (
-	envoyCertFileFmt = "/etc/envoy/certs/%s-cert.pem"
-	envoyKeyFileFmt  = "/etc/envoy/certs/%s-key.pem"
-)
-
-// buildHTTPAccessLog returns Envoy access loggers for http_connection_manager
-// contexts. Stdout (kept for `docker logs clawker-envoy` triage) is always
-// emitted; the OpenTelemetry ALS sink is added only when als.MTLS is true.
-// Without mTLS material we cannot reach the trusted otlp/infra receiver,
-// and the untrusted otel-collector:4317 lane is reserved for agent
-// containers — infra services must never cross into it.
-//
-// HTTP-specific fields (method, path, response_code) are only available when
-// Envoy terminates HTTP. The destination host travels uniformly on
-// `server.address` for both TLS (SNI via %REQUESTED_SERVER_NAME%) and
-// plaintext HTTP (Host/:authority header via %REQ(Host)%) — stamped at the
-// common path in accessLogFields so consumers query one field regardless of
-// filter-chain shape.
-func buildHTTPAccessLog(tlsTerminated bool, action string, als ALSConfig) []any {
-	extra := map[string]string{
-		"method":                            "%REQ(:METHOD)%",
-		"path":                              "%REQ(:PATH)%",
-		"response_code":                     "%RESPONSE_CODE%",
-		"response_code_details":             "%RESPONSE_CODE_DETAILS%",
-		"user_agent":                        "%REQ(USER-AGENT)%",
-		"req_duration_ms":                   "%REQUEST_DURATION%",
-		"resp_duration_ms":                  "%RESPONSE_DURATION%",
-		"resp_tx_duration_ms":               "%RESPONSE_TX_DURATION%",
-		"upstream_transport_failure_reason": "%UPSTREAM_TRANSPORT_FAILURE_REASON%",
-		"network.protocol.version":          "%PROTOCOL%",
-	}
-	tlsEst := "false"
-	if tlsTerminated {
-		tlsEst = "true"
-	} else {
-		// Plaintext HTTP chain: SNI is unavailable (%REQUESTED_SERVER_NAME%
-		// is empty), so override server.address to the Host/:authority
-		// header. LOGICAL_DNS cluster pinning by Host header preserves the
-		// security boundary — server.address records the client's stated
-		// destination on every record regardless of filter-chain shape.
-		extra["server.address"] = "%REQ(Host)%"
-	}
-	sinks := []any{stdoutAccessLogEntry("tcp", "http", tlsEst, action, extra)}
-	if als.MTLS {
-		sinks = append(sinks, otelAccessLogEntry("tcp", "http", tlsEst, action, extra))
-	}
-	return sinks
-}
-
-// buildTCPAccessLog returns Envoy access loggers for tcp_proxy contexts.
-// Stdout always; OpenTelemetry ALS only when als.MTLS is true (same
-// trust-lane rationale as buildHTTPAccessLog). Omits HTTP fields (method,
-// path, response_code) that are unavailable in TCP proxy — used by deny
-// and TCP/SSH listeners. Optional serverAddress overrides
-// %REQUESTED_SERVER_NAME% for raw TCP where SNI is unavailable.
-//
-// `action` is a clawker-internal literal stamped at config generation:
-// uniform-verdict TCP filter chains hardcode it ("denied" for deny_cluster,
-// "allowed" for per-rule TCP/SSH listeners). It carries the firewall
-// decision in the dedicated `action` field, never overloaded into `proto`.
-//
-// `tls.established` field handling: the deny chain (l7Proto=="" with
-// action=="denied") catches both TLS and plaintext flows that didn't
-// match any allow chain — Envoy resets the connection before it can
-// observe whether the client was attempting a TLS handshake or sending
-// plaintext bytes. Stamping `tls.established: "false"` on a denied TLS
-// handshake misleads forensics, so the deny chain OMITS the field
-// entirely. Per-rule TCP/SSH allow listeners (l7Proto!="") still stamp
-// "false" because the rule declares the listener as opaque TCP — no TLS
-// termination is in scope by construction.
-func buildTCPAccessLog(l7Proto, action string, als ALSConfig, serverAddress ...string) []any {
-	var extra map[string]string
-	if len(serverAddress) > 0 && serverAddress[0] != "" {
-		extra = map[string]string{"server.address": serverAddress[0]}
-	}
-	// Deny chain catch-all: l7 protocol unknown and verdict is denied.
-	// Empty tlsEstablished tells accessLogFields to omit the key.
-	tlsEst := "false"
-	if l7Proto == "" && action == "denied" {
-		tlsEst = ""
-	}
-	sinks := []any{stdoutAccessLogEntry("tcp", l7Proto, tlsEst, action, extra)}
-	if als.MTLS {
-		sinks = append(sinks, otelAccessLogEntry("tcp", l7Proto, tlsEst, action, extra))
-	}
-	return sinks
-}
-
-// firewallBlockedBody is the response body returned for every clawker-firewall
-// direct_response 403 route (SNI-block deny_all virtual host, per-path-rule
-// deny, default unmatched path deny). Generic and non-fingerprinting — an
-// injected-prompt adversary should not be able to trivially distinguish a
-// clawker firewall block from a generic upstream "Forbidden". The firewall
-// verdict travels via the `action` access log field (route metadata +
-// %METADATA(ROUTE:clawker:action)% substitution), never via the response
-// body. Centralized here so all three direct_response sites stay in sync.
-const firewallBlockedBody = "Forbidden\n"
-
-// httpConnectionManagerHardening returns the edge-hardening field map shared
-// by every clawker HTTP connection manager (TLS and plaintext HTTP filter
-// chains). Critical for path-rule security: without `normalize_path` +
-// `merge_slashes` + `path_with_escaped_slashes_action`, URL-encoded
-// traversal like `/allowed/%2e%2e/denied` literally starts with `/allowed/`
-// — Envoy's route matcher sees the un-normalized path, the allow prefix
-// matches, and the request forwards upstream, bypassing the deny path rule
-// that should have caught it.
-//
-// Field-by-field rationale:
-//   - normalize_path / merge_slashes / path_with_escaped_slashes_action:
-//     RFC 3986 normalization BEFORE route matching closes the smuggling
-//     vector. UNESCAPE_AND_REDIRECT issues a 307 with the canonical path
-//     instead of silently rewriting, so the matcher sees what the agent
-//     actually sent.
-//   - headers_with_underscores_action: REJECT_REQUEST: defends against
-//     RFC 9110 §5.4.5 header-name aliasing (`X_AUTH` vs `X-AUTH`).
-//   - http2_protocol_options.max_concurrent_streams: h2 amplification
-//     cap; default is conservative for forward-proxy threat model.
-//   - http2_protocol_options.allow_connect: enables RFC 8441 extended
-//     CONNECT downstream so HTTP/2 clients can run WebSocket without
-//     falling back to HTTP/1.1. Envoy then translates the upgrade
-//     downward to HTTP/1.1 RFC 6455 Upgrade for upstream — the upstream
-//     ALPN is force-pinned to h1.1 by a per-request filter in
-//     buildTLSWebSocketUpgrade (Envoy can't reliably probe for RFC 8441
-//     support upstream, so it stays on h1.1 for universal compat).
-//
-// Timeouts (request_timeout / stream_idle_timeout / idle_timeout) are NOT
-// set here. LLM API calls regularly stream for minutes with multi-MB
-// request bodies, and short defaults rupture mid-stream. Envoy's built-in
-// defaults are deliberate.
-//
-// Applied via maps.Copy at HCM construction sites — keeps each HCM literal
-// readable while ensuring no site forgets a hardening field.
-func httpConnectionManagerHardening() map[string]any {
-	return map[string]any{
-		"normalize_path":                   true,
-		"merge_slashes":                    true,
-		"path_with_escaped_slashes_action": "UNESCAPE_AND_REDIRECT",
-		"common_http_protocol_options": map[string]any{
-			"headers_with_underscores_action": "REJECT_REQUEST",
-		},
-		"http2_protocol_options": map[string]any{
-			"max_concurrent_streams": 100,
-			"allow_connect":          true,
-		},
-	}
-}
-
-// clawkerActionMetadata returns a route-level metadata block whose
-// filter_metadata.clawker.action is read by the HTTP access log via
-// %METADATA(ROUTE:clawker:action)% substitution. Every route literal in
-// the route table MUST carry this so Envoy stamps the correct action
-// per-record at emit time. `action` is a Go literal ("allowed" / "denied")
-// — never a runtime computation — exactly the same generation-time model
-// as `l7Proto`/`action` hardcoded at TCP filter chain access loggers
-// (buildTCPAccessLog call sites in buildDenyFilterChain and
-// buildTCPListener).
-func clawkerActionMetadata(action string) map[string]any {
-	return map[string]any{
-		"filter_metadata": map[string]any{
-			"clawker": map[string]any{"action": action},
-		},
-	}
-}
-
-// accessLogFields returns the canonical field map shared between the
-// stdout JSON sink and the OpenTelemetry ALS attributes. Keeping a single
-// source of truth means renaming a field updates both sinks at once.
-//
-// Parameters:
-//
-//   - `transport` is the OTel network.transport enum and is always
-//     hardcoded "tcp" at every call site (every clawker filter chain is
-//     TCP-bound; future UDP/QUIC listeners would pass "udp" / "quic").
-//   - `l7Proto` is the OTel network.protocol.name. HCM filter chains
-//     (TLS-MITM + plaintext HTTP) pass "http"; per-rule opaque TCP/SSH
-//     listeners pass the rule's `proto:` value (`ssh` / `tcp` / unknown);
-//     the deny chain catch-all passes "" because no L7 was negotiated.
-//   - `tlsEstablished` is the OTel tls.established bool-as-string. Only
-//     "true" for TLS-terminating HCM chains. Per-rule opaque TCP/SSH
-//     listeners pass "false" (the rule declares the listener as opaque
-//     TCP — no TLS termination in scope by construction). The deny chain
-//     passes "" to OMIT the field — see the buildTCPAccessLog doc for
-//     the forensics rationale (a denied TLS handshake stamped "false"
-//     would mislead consumers about what was actually on the wire).
-//   - `action` carries the clawker firewall decision (`allowed` /
-//     `denied`), stamped at config generation time. For uniform-verdict
-//     filter chains (deny_cluster, TCP/SSH listeners) the call site
-//     passes a literal; for mixed-verdict HTTP filter chains (one HCM
-//     serves both allow + deny routes) the call site passes the
-//     substitution token `%METADATA(ROUTE:clawker:action)%` so Envoy
-//     copies the per-route metadata value into the log line at emit
-//     time. The field is NEVER inferred from response_code,
-//     response_flags, or any downstream-of-routing signal.
-//
-// `action` and `l7Proto` are distinct fields — never overload one into
-// the other. The firewall verdict travels on `action` only.
-//
-// `extra` carries context-specific overrides (HTTP method/path/code, or a
-// static server.address for raw TCP). Nil-safe.
-//
-// Field naming follows OTel network/server/client/tls semantic conventions
-// where they exist: `server.address` (replaces deprecated `tls.server.name`
-// — the canonical "host the client was trying to reach", stable since
-// semconv v1.21), `client.address`, `network.peer.{address,port}` (post-
-// resolution upstream peer per network semconv), `tls.*`, `network.*`.
-// Envoy-specific operational fields stay flat under their original names
-// (`listener_ip`, `upstream_tls_*`, `bytes_*`, `duration_ms`, etc.) — no
-// OTel equivalent.
-func accessLogFields(transport, l7Proto, tlsEstablished, action string, extra map[string]string) map[string]string {
-	f := map[string]string{
-		"server.address":          "%REQUESTED_SERVER_NAME%",
-		"client.address":          "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%",
-		"listener_ip":             "%DOWNSTREAM_LOCAL_ADDRESS_WITHOUT_PORT%",
-		"network.peer.address":    "%UPSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%",
-		"network.peer.port":       "%UPSTREAM_REMOTE_PORT%",
-		"response_flags":          "%RESPONSE_FLAGS%",
-		"bytes_sent":              "%BYTES_SENT%",
-		"bytes_received":          "%BYTES_RECEIVED%",
-		"upstream_bytes_sent":     "%UPSTREAM_WIRE_BYTES_SENT%",
-		"upstream_bytes_received": "%UPSTREAM_WIRE_BYTES_RECEIVED%",
-		"duration_ms":             "%DURATION%",
-		"tls.protocol.version":    "%DOWNSTREAM_TLS_VERSION%",
-		"tls.cipher":              "%DOWNSTREAM_TLS_CIPHER%",
-		"upstream_tls_version":    "%UPSTREAM_TLS_VERSION%",
-		"upstream_tls_cipher":     "%UPSTREAM_TLS_CIPHER%",
-		"network.transport":       transport,
-		"network.protocol.name":   l7Proto,
-		"action":                  action,
-	}
-	// Empty tlsEstablished omits the key — used by the deny chain where
-	// stamping "false" on a denied TLS handshake would mislead forensics.
-	if tlsEstablished != "" {
-		f["tls.established"] = tlsEstablished
-	}
-	maps.Copy(f, extra)
-	return f
-}
-
-// stdoutAccessLogEntry builds the legacy JSON-formatted stdout access log
-// entry. Surfaces in `docker logs clawker-envoy` for triage when the otel
-// pipeline is misconfigured or the monitoring stack is down.
-func stdoutAccessLogEntry(transport, l7Proto, tlsEstablished, action string, extra map[string]string) map[string]any {
-	fields := accessLogFields(transport, l7Proto, tlsEstablished, action, extra)
-	jf := make(map[string]any, len(fields))
-	for k, v := range fields {
-		jf[k] = v
-	}
-	return map[string]any{
-		"name": "envoy.access_loggers.stdout",
-		"typed_config": map[string]any{
-			"@type":      "type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog",
-			"log_format": map[string]any{"json_format": jf},
-		},
-	}
-}
-
-// otelAccessLogEntry builds the OpenTelemetry ALS access log entry that
-// streams records to the otel-collector as OTLP/gRPC log records. Resource
-// attribute `service.name=envoy` is stamped on every record so the
-// collector's routing/logs_by_service connector can dispatch envoy logs to
-// a dedicated OpenSearch index without colliding with claude-code or
-// clawker-cp shapes.
-//
-// Body holds a short human-readable description; structured fields land in
-// `attributes` so downstream filters in OpenSearch Dashboards can pivot on
-// them without parsing the body string.
-func otelAccessLogEntry(transport, l7Proto, tlsEstablished, action string, extra map[string]string) map[string]any {
-	fields := accessLogFields(transport, l7Proto, tlsEstablished, action, extra)
-	keys := make([]string, 0, len(fields))
-	for k := range fields {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	values := make([]any, 0, len(keys))
-	for _, k := range keys {
-		values = append(values, map[string]any{
-			"key":   k,
-			"value": map[string]any{"string_value": fields[k]},
-		})
-	}
-	return map[string]any{
-		"name": "envoy.access_loggers.open_telemetry",
-		"typed_config": map[string]any{
-			"@type": "type.googleapis.com/envoy.extensions.access_loggers.open_telemetry.v3.OpenTelemetryAccessLogConfig",
-			"grpc_service": map[string]any{
-				"envoy_grpc": map[string]any{
-					"cluster_name": otelCollectorALSClusterName,
-				},
-			},
-			"resource_attributes": map[string]any{
-				"values": []any{
-					map[string]any{
-						"key":   "service.name",
-						"value": map[string]any{"string_value": "envoy"},
-					},
-				},
-			},
-			"body": map[string]any{
-				"string_value": "envoy access_log",
-			},
-			"attributes": map[string]any{"values": values},
-		},
-	}
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Cluster naming
-// ──────────────────────────────────────────────────────────────────────────────
-
-// tlsExactClusterName returns the per-domain, per-port cluster name for an
-// exact-rule TLS upstream. Each (domain, port) pair gets its own LOGICAL_DNS
-// cluster with upstream TLS re-encryption. Port is included so that rules for
-// the same domain on different ports (e.g., example.com:443 and
-// example.com:8443) get separate clusters. The `exact` segment is symmetric
-// with `tlsWildcardClusterName`'s `wildcard` segment so the cluster-kind
-// namespace cannot collide with a user-controlled domain string: a user
-// domain `wildcard.foo.com` produces `tls_exact_wildcard_foo_com_443`, a
-// wildcard `.foo.com` produces `tls_wildcard_foo_com_443` — different kind
-// segment, no collision possible.
-func tlsExactClusterName(domain string, port int) string {
-	return fmt.Sprintf("tls_exact_%s_%d", sanitizeName(domain), port)
-}
-
-// tlsWildcardClusterName returns the cluster name for the wildcard-rule TLS upstream.
-// Wildcard rules require a separate cluster from any exact rule for the same apex —
-// the wildcard cluster is dynamic_forward_proxy with sub_clusters keyed by SNI, the
-// exact cluster is LOGICAL_DNS pinned to the apex. The symmetric `tls_wildcard_` /
-// `tls_exact_` prefixes keep the cluster-kind namespace structurally distinct from
-// any user-controlled domain string (see `tlsExactClusterName`).
-func tlsWildcardClusterName(apex string, port int) string {
-	return fmt.Sprintf("tls_wildcard_%s_%d", sanitizeName(apex), port)
-}
-
-// httpClusterName returns the per-domain, per-port cluster name for plaintext HTTP upstream.
-func httpClusterName(domain string, port int) string {
-	return fmt.Sprintf("http_%s_%d", sanitizeName(domain), port)
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Top-level config generator
-// ──────────────────────────────────────────────────────────────────────────────
-
-// GenerateEnvoyConfig produces an Envoy static bootstrap YAML from egress rules.
-// Returns the YAML bytes and a list of warnings (non-fatal issues).
+// GenerateEnvoyConfig is the firewall's sole Envoy-config entrypoint, consumed
+// by Stack.Reload. Signature is stable.
 func GenerateEnvoyConfig(rules []config.EgressRule, ports EnvoyPorts, als ALSConfig) ([]byte, []string, error) {
 	if err := ports.Validate(); err != nil {
 		return nil, nil, err
 	}
+	// Fail closed BEFORE generating anything: a host:port maps to exactly one
+	// network stack (the proto token determines the whole stack), and the eBPF
+	// route_map is keyed (host, port) with no proto — so two protos on one
+	// host:port would silently race (last write wins) rather than both apply.
+	if err := checkProtoCollisions(rules); err != nil {
+		return nil, nil, err
+	}
+	// Fail closed on an all-single allow/deny clash on one (dst, opaque proto)
+	// port — a contradictory config with no range to carve (see the function doc).
+	if err := checkOpaquePortActionConflicts(rules); err != nil {
+		return nil, nil, err
+	}
+	// Fail closed when the dedicated-listener layout (opaque tcp/ssh/udp +
+	// port_range fan-out) would overflow its port bands — see the function doc.
+	if err := validateDedicatedLayout(rules, ports); err != nil {
+		return nil, nil, err
+	}
+	// Fail closed on (proto, dst-type) combos Envoy can't express self-securely
+	// (raw udp to a CIDR range — see the function doc).
+	if err := validateProtoDstSupport(rules); err != nil {
+		return nil, nil, err
+	}
 
-	var warnings []string
+	cfg := NewEnvoyConfig()
+	cfg.SetAdmin(envoyAdmin())
 
-	// Classify rules.
-	var (
-		tlsRules     []config.EgressRule
-		tcpRules     []config.EgressRule
-		httpRules    []config.EgressRule
-		tlsDenyRules []config.EgressRule
-	)
-	for _, r := range rules {
-		action := strings.ToLower(r.Action)
-		if action != "allow" && action != "" {
-			// Domain-level deny. A bare deny is redundant with the catch-all
-			// deny chain, BUT a deny that is more specific than a broader allow
-			// (e.g. deny sub.X under allow .X) must win — Envoy selects the
-			// most-specific server_names filter chain, so we emit a per-domain
-			// SNI-matched deny chain. Only TLS-class (https / empty proto)
-			// domain rules get a chain; IP/CIDR and http/tcp/ssh denies fall
-			// through to the catch-all deny chain (a more-specific deny in
-			// those classes is an unhandled edge — surfaced as a warning).
-			if action == "deny" && !isIPOrCIDR(r.Dst) {
-				switch strings.ToLower(r.Proto) {
-				case "https", "":
-					tlsDenyRules = append(tlsDenyRules, r)
-				default:
-					warnings = append(warnings, fmt.Sprintf("deny rule %q (proto %q) relies on the catch-all deny chain; per-domain deny chains are only emitted for https", r.Dst, r.Proto))
-				}
-			}
+	perms, warnings := derive(rules, ports)
+	for _, p := range perms {
+		if !cfg.ClaimPermutation(p.key) {
 			continue
 		}
-		if isIPOrCIDR(r.Dst) {
-			warnings = append(warnings, fmt.Sprintf("skipping IP/CIDR rule %q (not supported in Envoy proxy)", r.Dst))
-			continue
-		}
-		proto := strings.ToLower(r.Proto)
-		switch proto {
-		case "ssh", "tcp":
-			tcpRules = append(tcpRules, r)
-			continue
-		case "http":
-			// Plaintext HTTP. Routes to the raw_buffer HCM filter chain
-			// (no TLS termination). Used by sites that genuinely serve
-			// plaintext on port 80.
-			if r.Port == 0 {
-				r.Port = 80
+		ctx := &genCtx{rule: p.rule, ports: ports, als: als, cfg: cfg}
+		for _, fn := range p.layers { // chain the cherry-picked methods, threading ctx
+			if err := fn(ctx); err != nil {
+				return nil, warnings, err
 			}
-			httpRules = append(httpRules, r)
-			continue
-		case "https", "":
-			// TLS-MITM. Envoy terminates TLS with a per-domain cert,
-			// inspects HTTP semantics (paths visible in access logs),
-			// then re-encrypts upstream. Rules with PathRules get
-			// per-path routing; rules without get allow-all. Empty proto
-			// defaults here (the common case post-NormalizeRule).
-			if r.Port == 0 {
-				r.Port = 443
-			}
-			tlsRules = append(tlsRules, r)
-			continue
-		default:
-			// Unknown L7 name: route to opaque TCP listener so the
-			// destination is at least proxied — arbitrary `proto:`
-			// strings fall through to TCP passthrough.
-			tcpRules = append(tcpRules, r)
+		}
+		if err := ctx.commit(); err != nil {
+			return nil, warnings, err
 		}
 	}
 
-	// Build per-listener exact-domain sets so wildcard filter chains only
-	// omit the apex when a same-listener exact rule handles it. Without
-	// per-listener separation, an exact HTTP rule for "example.com" would
-	// wrongly suppress the apex from a TLS wildcard ".example.com".
-	tlsExactDomains := make(map[string]bool)
-	for _, r := range tlsRules {
-		if !isWildcardDomain(r.Dst) {
-			tlsExactDomains[normalizeDomain(r.Dst)] = true
-		}
+	if err := installEgressDenyFloor(cfg, als); err != nil {
+		return nil, warnings, err
 	}
-	httpExactDomains := make(map[string]bool)
-	for _, r := range httpRules {
-		if !isWildcardDomain(r.Dst) {
-			httpExactDomains[normalizeDomain(r.Dst)] = true
-		}
+	if err := installOtelALSCluster(cfg, als); err != nil {
+		return nil, warnings, err
 	}
-	// Compute TCP port mappings (same function used by manager.Enable for eBPF args).
-	tcpMappings := TCPMappings(rules, ports)
-
-	// Validate derived TCP listener ports: range check + collision detection.
-	if len(tcpMappings) > 0 {
-		reservedPorts := map[int]string{
-			ports.EgressPort: "EgressPort",
-			ports.HealthPort: "HealthPort",
-			9901:             "EnvoyAdmin",
-		}
-		for _, m := range tcpMappings {
-			if m.EnvoyPort > 65535 {
-				return nil, nil, fmt.Errorf(
-					"TCP rule %s:%d would use port %d which exceeds 65535 (TCPPortBase=%d, %d TCP rules)",
-					m.Dst, m.DstPort, m.EnvoyPort, ports.TCPPortBase, len(tcpMappings))
-			}
-			if conflict, ok := reservedPorts[m.EnvoyPort]; ok {
-				return nil, nil, fmt.Errorf(
-					"TCP rule %s:%d would use port %d which collides with %s (TCPPortBase=%d)",
-					m.Dst, m.DstPort, m.EnvoyPort, conflict, ports.TCPPortBase)
-			}
-			reservedPorts[m.EnvoyPort] = fmt.Sprintf("TCP:%s:%d", m.Dst, m.DstPort)
-		}
+	if err := installHealthListener(cfg, ports); err != nil {
+		return nil, warnings, err
+	}
+	// Fail closed: Stack.EnsureRunning probes the health listener on a
+	// non-cancellable context, so a config missing it would hang firewall
+	// bringup forever (stack up, but route-seed + agent re-enroll never run).
+	// Refuse to ship such a config rather than strand the firewall.
+	if ports.HealthPort > 0 && !cfg.HasListener(healthListenerName) {
+		return nil, warnings, fmt.Errorf("generated envoy config is missing the health listener on port %d — firewall bringup would hang", ports.HealthPort)
 	}
 
-	clusters := buildClusters(tlsRules, tcpRules, httpRules, als)
-	// Defense in depth: cluster names are constructed from kind-segmented
-	// builders (`tls_exact_…`, `tls_wildcard_…`, `http_…`, `tcp_…`,
-	// `deny_cluster`, `otel_collector_als`) so collisions are not reachable
-	// via any combination of inputs. Catch any future builder regression
-	// here — Envoy would reject the config opaquely at load (cds.update_rejected),
-	// stranding the firewall. Fail closed at config-gen time with a structured
-	// error instead.
-	if dup := firstDuplicateClusterName(clusters); dup != "" {
-		return nil, nil, fmt.Errorf("duplicate cluster name %q in generated envoy config (cluster-naming invariant violated)", dup)
-	}
-
-	cfg := map[string]any{
-		"admin": map[string]any{
-			"address": map[string]any{
-				"socket_address": map[string]any{
-					"address":    "127.0.0.1",
-					"port_value": 9901,
-				},
-			},
-		},
-		"static_resources": map[string]any{
-			"listeners": buildListeners(tlsRules, tcpRules, httpRules, tlsDenyRules, tcpMappings, ports, tlsExactDomains, httpExactDomains, als),
-			"clusters":  clusters,
-		},
-	}
-
-	out, err := yaml.Marshal(cfg)
+	out, err := cfg.Bytes()
 	if err != nil {
 		return nil, warnings, fmt.Errorf("marshal envoy config: %w", err)
+	}
+	// Fail-closed self-check: never ship a config Envoy would reject at load.
+	if err := validateBootstrap(out); err != nil {
+		return nil, warnings, fmt.Errorf("generated envoy config failed bootstrap validation: %w", err)
 	}
 	return out, warnings, nil
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Listeners
-// ──────────────────────────────────────────────────────────────────────────────
-
-// buildListeners constructs all Envoy listeners.
-func buildListeners(tls, tcp, http, tlsDeny []config.EgressRule, tcpMappings []TCPMapping, ports EnvoyPorts, tlsExactDomains, httpExactDomains map[string]bool, als ALSConfig) []any {
-	var listeners []any
-
-	// Main egress listener — handles TLS (per-domain filter chains with SNI matching)
-	// and plaintext HTTP (raw_buffer filter chain with Host header routing).
-	// tls_inspector differentiates TLS from plaintext at the listener level.
-	if len(tls) > 0 || len(http) > 0 || len(tlsDeny) > 0 {
-		listeners = append(listeners, buildEgressListener(tls, http, tlsDeny, ports.EgressPort, tlsExactDomains, httpExactDomains, als))
-	}
-
-	// Per-rule TCP/SSH listeners from the port mappings.
-	for i, r := range tcp {
-		if i < len(tcpMappings) {
-			listeners = append(listeners, buildTCPListener(r, tcpMappings[i].EnvoyPort, als))
-		}
-	}
-
-	// Dedicated health check listener — published for host-side probes.
-	// Kept on a separate port so the TLS listener (10000) is never published,
-	// avoiding Docker's port-publish NAT rules that can masquerade source IPs.
-	if ports.HealthPort > 0 {
-		listeners = append(listeners, buildHealthListener(ports.HealthPort))
-	}
-
-	return listeners
+// permutation is a "permchain": a rule paired with the ordered list of layer
+// methods to chain for it, plus a dedup key.
+type permutation struct {
+	rule   config.EgressRule
+	layers []layer
+	key    string
 }
 
-// buildHealthListener creates a lightweight HTTP listener that returns 200 OK
-// for health probes. This is the only port published to the host — keeping
-// traffic ports unpublished preserves source IPs for per-agent attribution.
-func buildHealthListener(port int) map[string]any {
-	return map[string]any{
-		"name": "health_check",
-		"address": map[string]any{
-			"socket_address": map[string]any{
-				"address":    "0.0.0.0",
-				"port_value": port,
-			},
-		},
-		"filter_chains": []any{
-			map[string]any{
-				"filters": []any{
-					map[string]any{
-						"name": "envoy.filters.network.http_connection_manager",
-						"typed_config": map[string]any{
-							"@type":       "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
-							"stat_prefix": "health_check",
-							"route_config": map[string]any{
-								"virtual_hosts": []any{
-									map[string]any{
-										"name":    "health",
-										"domains": []any{"*"},
-										"routes": []any{
-											map[string]any{
-												"match":    map[string]any{"prefix": "/"},
-												"metadata": clawkerActionMetadata("allowed"),
-												"direct_response": map[string]any{
-													"status": 200,
-													"body":   map[string]any{"inline_string": "ok"},
-												},
-											},
-										},
-									},
-								},
-							},
-							"http_filters": []any{routerFilter()},
-						},
-					},
-				},
-			},
-		},
-	}
-}
-
-// buildEgressListener creates the main egress listener that handles both TLS and
-// plaintext HTTP traffic on a single port. The tls_inspector listener filter
-// differentiates protocols: TLS connections match per-domain filter chains (SNI),
-// plaintext HTTP matches a raw_buffer filter chain (Host header routing).
-// Unmatched traffic hits the deny chain (connection reset).
-func buildEgressListener(tlsRules, httpRules, tlsDenyRules []config.EgressRule, port int, tlsExactDomains, httpExactDomains map[string]bool, als ALSConfig) map[string]any {
-	var filterChains []any
-
-	// Per-domain TLS filter chains (matched by SNI via tls_inspector).
-	for _, r := range tlsRules {
-		filterChains = append(filterChains, buildTLSFilterChain(r, tlsExactDomains, als))
-	}
-
-	// Per-domain TLS deny chains (SNI-matched → connection reset). Envoy
-	// selects the most-specific server_names match, so an exact deny
-	// (sub.example.com) beats a broader allow wildcard (*.example.com) and the
-	// empty catch-all deny chain below stays least-specific. Selection is by
-	// specificity, not declaration order (verified against the FilterChainMatch
-	// docs), so placement relative to the allow chains is immaterial.
-	// An exact deny now claims its whole subtree (see denyServerNames), so a
-	// wildcard deny ".X" is fully subsumed by a same-listener exact deny "X" —
-	// emitting both would duplicate server_names across two filter chains and
-	// Envoy rejects the config wholesale (stranded firewall). Drop the redundant
-	// wildcard deny chain.
-	exactDenies := make(map[string]bool, len(tlsDenyRules))
-	for _, r := range tlsDenyRules {
-		if !isWildcardDomain(r.Dst) {
-			exactDenies[normalizeDomain(r.Dst)] = true
-		}
-	}
-	for _, r := range tlsDenyRules {
-		if isWildcardDomain(r.Dst) && exactDenies[normalizeDomain(r.Dst)] {
+// derive turns rules into permutations by cherry-picking each rule's layer
+// methods from its proto token (+ wildcard-ness) — the ONLY proto-aware step.
+// Non-opaque deny rules (http/https/ws/wss) are skipped — they are enforced by
+// absence + the egress deny floor; opaque deny rules (tcp/ssh/udp) DO build a
+// dedicated blackhole listener (first-class deny). Unsupported tokens are
+// skipped with a warning. Generation-wide facts that a single permutation cannot
+// decide in isolation (e.g. dfpActive — whether the shared plaintext chain must
+// carry the DFP filter) are computed once here and captured into the layer
+// closures, since the orchestrator's forward pass cannot patch them in later.
+func derive(rules []config.EgressRule, ports EnvoyPorts) ([]permutation, []string) {
+	var (
+		perms    []permutation
+		warnings []string
+	)
+	gen := deriveGenFacts(rules, ports)
+	// promoted tracks origins a ws/wss rule has already synthesized a base stack
+	// for, so repeated ws/wss rules on one origin don't emit duplicate stacks.
+	promoted := map[string]bool{}
+	for _, r := range rules {
+		// First-class deny is opaque-only: tcp/ssh/udp deny rules build a dedicated
+		// blackhole (deny-cluster) listener so a port carved out of an allow range
+		// is ACTIVELY refused and logged, not merely absent. http/https/ws/wss deny
+		// generates no chain — it is enforced by absence + the egress deny floor.
+		if isDenyAction(r.Action) && !isOpaqueProto(r.Proto) {
 			continue
 		}
-		filterChains = append(filterChains, buildTLSDenyFilterChain(r, als))
+		// ws/wss is an enrichment of the origin's http/https stack, never its own
+		// chain. ABSORB it into an explicit base rule when one exists (that rule's
+		// permutation already carries the enrichment via gen.wsOrigins); otherwise
+		// PROMOTE it — rewrite to the base proto so layersFor synthesizes the
+		// http/https stack, still enriched (origin is in gen.wsOrigins). When
+		// absorbed, the ws/wss rule's OWN path_rules/path_default are intentionally
+		// ignored — the base http/https rule owns the route structure; the ws/wss
+		// rule contributes only the upgrade flag (the additive "expand the existing
+		// stack" UX). Author path rules on the base rule, not the ws/wss one.
+		if proto := strings.ToLower(r.Proto); proto == "ws" || proto == "wss" {
+			key := originKey(r)
+			if gen.explicitBaseOrigins[key] || promoted[key] {
+				continue
+			}
+			promoted[key] = true
+			r.Proto = baseProto(proto)
+		}
+		lists := layersFor(r, gen)
+		if lists == nil {
+			warnings = append(warnings, fmt.Sprintf("layered generator: proto %q not yet supported (rule %s) — skipped", r.Proto, r.Dst))
+			continue
+		}
+		// https/wss to a CIDR reencrypts to an arbitrary in-range host whose cert
+		// almost never chains to a public CA, so Envoy refuses the upstream handshake
+		// (fail-closed, secure by default) unless insecure_skip_tls_verify is set. Not
+		// an error — a UX nudge so the operator knows why the upstream is rejected.
+		if isCIDR(r.Dst) && baseProto(strings.ToLower(r.Proto)) == "https" && !r.InsecureSkipTLSVerify {
+			warnings = append(warnings, fmt.Sprintf("https to CIDR %s reencrypts to the original in-range host; Envoy will refuse the upstream TLS handshake unless that host presents a CA-trusted cert — set insecure_skip_tls_verify: true to accept self-signed in-range upstreams (MITM inspection still applies)", r.Dst))
+		}
+		for i, ls := range lists {
+			perms = append(perms, permutation{
+				rule:   r,
+				layers: ls,
+				// r.Dst verbatim (NOT normalizeDomain) so an exact rule and a
+				// wildcard rule for the same apex+port stay distinct permutations
+				// — same rationale as RuleKey. normalizeDomain would collapse
+				// "mintlify.com" and ".mintlify.com" into one, dropping a chain.
+				key: fmt.Sprintf("%s:%s:%s:%s#%d", r.Dst, r.Port, strings.ToLower(r.Action), strings.ToLower(r.Proto), i),
+			})
+		}
 	}
-
-	// Plaintext HTTP filter chain (matched by transport_protocol: "raw_buffer").
-	// Handles all proto: http rules via Host header routing on this same port.
-	if len(httpRules) > 0 {
-		filterChains = append(filterChains, buildHTTPFilterChain(httpRules, httpExactDomains, als))
-	}
-
-	// Default deny chain (catch-all → connection reset). MUST stay last: it is
-	// the least-specific (empty filter_chain_match) and catches everything no
-	// allow or per-domain deny chain claimed.
-	filterChains = append(filterChains, buildDenyFilterChain(als))
-
-	return map[string]any{
-		"name": "egress",
-		"address": map[string]any{
-			"socket_address": map[string]any{
-				"address":    "0.0.0.0",
-				"port_value": port,
-			},
-		},
-		"listener_filters": []any{
-			map[string]any{
-				"name": "envoy.filters.listener.tls_inspector",
-				"typed_config": map[string]any{
-					"@type": "type.googleapis.com/envoy.extensions.filters.listener.tls_inspector.v3.TlsInspector",
-				},
-			},
-		},
-		"filter_chains": filterChains,
-	}
+	return perms, warnings
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// HTTP filter chain (plaintext)
-// ──────────────────────────────────────────────────────────────────────────────
+// genFacts holds generation-wide facts decided before any permutation runs.
+type genFacts struct {
+	// httpDFPActive: at least one allowed wildcard http-family rule exists (http
+	// OR ws — ws is http + websocket enrichment), so the shared plaintext
+	// raw_buffer chain must carry the dynamic_forward_proxy filter on every
+	// permutation (it cannot be added retroactively post-commit).
+	httpDFPActive bool
 
-// buildHTTPFilterChain creates a filter chain for plaintext HTTP traffic on the
-// egress listener. Matched by transport_protocol: "raw_buffer" (the tls_inspector
-// sets this for non-TLS connections). Uses Host header for domain authorization
-// and routes to per-domain LOGICAL_DNS clusters.
-func buildHTTPFilterChain(rules []config.EgressRule, exactDomains map[string]bool, als ALSConfig) map[string]any {
-	var virtualHosts []any
+	// httpsExactDomains: the set of non-wildcard https-family hosts (https OR
+	// wss). Used by the tls transport so a wildcard rule's server_names does not
+	// duplicate an apex an exact rule already owns (Envoy rejects duplicate
+	// server_names across chains). https chains are NOT shared (each rule owns its
+	// server_names chain), so https DFP is a per-rule decision — no generation-wide flag.
+	httpsExactDomains map[string]bool
 
+	// wsOrigins: origins (originKey = verbatim dst + effective port) named by a
+	// ws/wss rule. The http/https permutation for that origin reads this to add
+	// the websocket enrichment (upgrade_configs + allow_connect + upstream h1.1).
+	// ws/wss is NOT its own chain — it is an enrichment flag on the one http/https
+	// stack for the origin (see the deriver's promote/absorb logic).
+	wsOrigins map[string]bool
+
+	// explicitBaseOrigins: origins that have an explicit http/https rule. A ws/wss
+	// rule whose origin is here is ABSORBED (its enrichment rides the existing base
+	// rule's permutation via wsOrigins); one with no base rule is PROMOTED to
+	// synthesize the base stack. Prevents emitting two stacks for one origin.
+	explicitBaseOrigins map[string]bool
+
+	// tcpListenerPorts / udpListenerPorts: the deterministic dedicated-listener
+	// port assigned to each opaque (ssh/tcp / udp) rule, keyed by
+	// dedicatedPortKey(host, dstPort). A single permutation can't decide its own
+	// index (it depends on the rule's position among same-class rules, and a
+	// port_range fans one rule into many), so the whole layout is computed up
+	// front from TCPMappings/UDPMappings and the transport layer just looks its
+	// port up. Lockstep with the eBPF route_map.
+	tcpListenerPorts map[string]int
+	udpListenerPorts map[string]int
+}
+
+func deriveGenFacts(rules []config.EgressRule, ports EnvoyPorts) genFacts {
+	g := genFacts{
+		httpsExactDomains:   map[string]bool{},
+		wsOrigins:           map[string]bool{},
+		explicitBaseOrigins: map[string]bool{},
+		tcpListenerPorts:    map[string]int{},
+		udpListenerPorts:    map[string]int{},
+	}
 	for _, r := range rules {
-		domain := normalizeDomain(r.Dst)
-		cluster := httpClusterName(domain, r.Port)
+		if a := strings.ToLower(r.Action); a != "allow" && a != "" {
+			continue
+		}
+		proto := strings.ToLower(r.Proto)
+		// base proto collapses the websocket tokens onto their http/https stack:
+		// ws→http, wss→https. All http/https-family facts are computed against the
+		// base so a ws/wss rule contributes to DFP / exact-SNI exactly like its base.
+		base := baseProto(proto)
+		if proto == "ws" || proto == "wss" {
+			g.wsOrigins[originKey(r)] = true
+		}
+		if proto == "http" || proto == "https" {
+			g.explicitBaseOrigins[originKey(r)] = true
+		}
+		if base == "http" && isWildcardDomain(r.Dst) {
+			g.httpDFPActive = true
+		}
+		if base == "https" && !isWildcardDomain(r.Dst) {
+			g.httpsExactDomains[normalizeDomain(r.Dst)] = true
+		}
+	}
+	for _, m := range TCPMappings(rules, ports) {
+		g.tcpListenerPorts[dedicatedPortKey(m.Dst, m.DstPort)] = m.EnvoyPort
+	}
+	for _, m := range UDPMappings(rules, ports) {
+		g.udpListenerPorts[dedicatedPortKey(m.Dst, m.DstPort)] = m.EnvoyPort
+	}
+	return g
+}
 
-		var routes []any
-		if len(r.PathRules) > 0 {
-			routes = buildHTTPRoutes(r, cluster)
-		} else {
-			routes = []any{
-				map[string]any{
-					"match":    map[string]any{"prefix": "/"},
-					"metadata": clawkerActionMetadata("allowed"),
-					"route":    map[string]any{"cluster": cluster, "timeout": "0s", "upgrade_configs": []any{map[string]any{"upgrade_type": "websocket"}}},
-				},
+// layersFor is the deriver's table: a rule → its permutations, each an ordered
+// list of layer methods (transport → upstream → app). Proto picks the column;
+// wildcard-ness picks the upstream block; the shared app block is reused across
+// shapes. Adding a protocol is one row here plus its block method(s); the
+// orchestrator never changes.
+func layersFor(r config.EgressRule, gen genFacts) [][]layer {
+	// ws marks this origin's http/https stack for the websocket enrichment. It is
+	// prepended (runs before the upstream + app blocks, which read ctx.websocket).
+	ws := gen.wsOrigins[originKey(r)]
+	withWS := func(ls ...layer) []layer {
+		if ws {
+			return append([]layer{wsEnrichLayer}, ls...)
+		}
+		return ls
+	}
+	switch strings.ToLower(r.Proto) {
+	case "http":
+		// http/ws to a CIDR: the dst is a known range, so it rides a prefix_ranges
+		// raw_buffer chain (NOT the catch-all tcpEgressLayer) → plaintext ORIGINAL_DST
+		// → a single wildcard-host vhost (the prefix_ranges gate is the boundary; a
+		// per-host vhost can't enumerate the range). A single IP keeps the per-host
+		// vhost (its Host header IS the one host), so only a true CIDR routes here.
+		if isCIDR(r.Dst) {
+			return [][]layer{withWS(prefixRangeTransportLayer(httpPort(r)), httpOriginalDstUpstreamLayer, httpAppLayer(appDFP{}))}
+		}
+		app := httpAppLayer(appDFP{active: gen.httpDFPActive, cache: httpDFPCacheName})
+		if isWildcardDomain(r.Dst) {
+			return [][]layer{withWS(tcpEgressLayer, httpWildcardUpstreamLayer, app)}
+		}
+		return [][]layer{withWS(tcpEgressLayer, httpExactUpstreamLayer, app)}
+	case "https":
+		// https emits TWO sibling chains per rule: a TCP tls chain (egress
+		// listener) and a QUIC/h3 chain (egress_quic listener). Both reuse the
+		// same upstream + app blocks; only the transport differs (tls-over-tcp vs
+		// QuicDownstreamTransport, codec AUTO vs HTTP3). The TCP chain advertises
+		// h3 via alt-svc. The deriver returns both as distinct permutations. The
+		// websocket enrichment (wss) rides BOTH chains via wsEnrichLayer.
+		tcpTransport := tlsSNIChainLayer(gen.httpsExactDomains)
+		quicTransport := quicSNIChainLayer(gen.httpsExactDomains)
+		// https/wss to a CIDR: terminate TLS on a prefix_ranges chain (the IP branch
+		// of downstreamCryptoMatch, scoped to the range), MITM with the range cert,
+		// then reencrypt to ORIGINAL_DST with a single wildcard-host vhost. TCP-only:
+		// a QUIC/h3 sibling would need use_original_dst on a UDP listener to recover
+		// the in-range dst, which is unverified for original-dst recovery — so no h3
+		// is advertised for a range. The range cert is invalid for any single in-range
+		// host on purpose (agent-side verification is not the enforcement boundary).
+		if isCIDR(r.Dst) {
+			return [][]layer{withWS(tcpTransport, httpsOriginalDstUpstreamLayer, httpAppLayer(appDFP{}))}
+		}
+		if isWildcardDomain(r.Dst) {
+			dfp := appDFP{active: true, cache: httpsDFPCacheName}
+			return [][]layer{
+				withWS(tcpTransport, httpsWildcardUpstreamLayer, httpAppLayer(dfp)),
+				withWS(quicTransport, httpsWildcardUpstreamLayer, httpAppLayer(dfp)),
 			}
 		}
-
-		virtualHosts = append(virtualHosts, map[string]any{
-			"name":    virtualHostName(r.Dst),
-			"domains": httpDomains(r.Dst, exactDomains),
-			"routes":  routes,
-		})
-	}
-
-	// Default deny for unknown domains.
-	virtualHosts = append(virtualHosts, map[string]any{
-		"name":    "deny_all",
-		"domains": []string{"*"},
-		"routes": []any{
-			map[string]any{
-				"match":    map[string]any{"prefix": "/"},
-				"metadata": clawkerActionMetadata("denied"),
-				"direct_response": map[string]any{
-					"status": 403,
-					"body":   map[string]any{"inline_string": firewallBlockedBody},
-				},
-			},
-		},
-	})
-
-	return map[string]any{
-		"filter_chain_match": map[string]any{
-			"transport_protocol": "raw_buffer",
-		},
-		"filters": []any{
-			map[string]any{
-				"name":         "envoy.filters.network.http_connection_manager",
-				"typed_config": plaintextHCMTypedConfig(virtualHosts, als),
-			},
-		},
-	}
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// TLS filter chain (per-domain MITM)
-// ──────────────────────────────────────────────────────────────────────────────
-
-// buildTLSFilterChain creates a filter chain that terminates TLS with a per-domain
-// certificate, inspects HTTP traffic, then forwards to the per-domain upstream
-// cluster that re-encrypts upstream.
-//
-// For exact rules the cluster is LOGICAL_DNS whose endpoint is the apex hostname:
-// the upstream destination is determined by the cluster endpoint, NOT by the HTTP
-// Host header, which closes the confused-deputy vector where a malicious client
-// could manipulate Host to redirect traffic.
-//
-// For wildcard rules the cluster is dynamic_forward_proxy with sub_clusters_config:
-// the filter chain prepends an HTTP set_filter_state filter that copies the
-// downstream SNI (%REQUESTED_SERVER_NAME%) into envoy.upstream.dynamic_host. The
-// DFP filter then resolves the actual subdomain rather than the apex, so e.g.
-// www.mintlify.com on Cloudflare and the mintlify.com apex on Vercel each reach
-// their own backend. The trust boundary still holds: this chain only entered
-// when SNI matched the wildcard suffix, the dynamic_host is sourced from SNI
-// (not Host), and each host:port gets its own sub-cluster pool so same-SAN
-// HTTP/2 coalescing across hostnames cannot happen.
-func buildTLSFilterChain(r config.EgressRule, exactDomains map[string]bool, als ALSConfig) map[string]any {
-	domain := normalizeDomain(r.Dst)
-	certFile := fmt.Sprintf(envoyCertFileFmt, domain)
-	keyFile := fmt.Sprintf(envoyKeyFileFmt, domain)
-	wildcard := isWildcardDomain(r.Dst)
-	cluster := tlsExactClusterName(domain, r.Port)
-	if wildcard {
-		cluster = tlsWildcardClusterName(domain, r.Port)
-	}
-
-	// Build routes: path rules when configured, otherwise allow-all.
-	// Exact rules route to a per-domain LOGICAL_DNS cluster pinned to the apex;
-	// wildcard rules route to a per-apex dynamic_forward_proxy cluster whose
-	// sub-cluster is keyed on the downstream SNI written into
-	// envoy.upstream.dynamic_host by the chain's set_filter_state filter.
-	var routes []any
-	if len(r.PathRules) > 0 {
-		routes = buildHTTPRoutes(r, cluster)
-	} else {
-		routes = []any{
-			map[string]any{
-				"match":    map[string]any{"prefix": "/"},
-				"metadata": clawkerActionMetadata("allowed"),
-				"route":    map[string]any{"cluster": cluster, "timeout": "0s", "upgrade_configs": []any{map[string]any{"upgrade_type": "websocket"}}},
-			},
+		// Exact https: own server_names chain, pinned reencrypt cluster, no DFP.
+		// A single-IP literal has no SNI, so its chain is selected by prefix_ranges
+		// (recovered original dst) — which UDP/QUIC cannot do (grounded vs Envoy: no
+		// original-dst recovery on a QUIC listener). So an IP dst is TCP-only, like a
+		// CIDR; only an SNI-selectable FQDN host gets the h3 sibling. (CIDR is already
+		// returned above; by here isIPOrCIDR means a single IP literal.)
+		if isIPOrCIDR(r.Dst) {
+			return [][]layer{withWS(tcpTransport, httpsExactUpstreamLayer, httpAppLayer(appDFP{}))}
 		}
-	}
-
-	return map[string]any{
-		"filter_chain_match": map[string]any{
-			"server_names": serverNames(r.Dst, exactDomains),
-		},
-		"transport_socket": map[string]any{
-			"name": "envoy.transport_sockets.tls",
-			"typed_config": map[string]any{
-				"@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext",
-				"common_tls_context": map[string]any{
-					"alpn_protocols": []string{"h2", "http/1.1"},
-					"tls_certificates": []any{
-						map[string]any{
-							"certificate_chain": map[string]any{"filename": certFile},
-							"private_key":       map[string]any{"filename": keyFile},
-						},
-					},
-				},
-			},
-		},
-		"filters": []any{
-			map[string]any{
-				"name":         "envoy.filters.network.http_connection_manager",
-				"typed_config": tlsHCMTypedConfig(r, domain, exactDomains, routes, wildcard, als),
-			},
-		},
-	}
-}
-
-// plaintextHCMTypedConfig + tlsHCMTypedConfig build the HCM `typed_config`
-// map for the plaintext-HTTP and TLS-terminating filter chains. Both end by
-// merging in httpConnectionManagerHardening() so no HCM construction site
-// can forget the edge-hardening defaults. Split into helpers (vs inlining)
-// purely so the maps.Copy(hardening) call is shared — every clawker HCM
-// MUST carry the hardening set.
-func plaintextHCMTypedConfig(virtualHosts []any, als ALSConfig) map[string]any {
-	tc := map[string]any{
-		"@type":       "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
-		"stat_prefix": "http_egress",
-		"codec_type":  "AUTO",
-		"access_log":  buildHTTPAccessLog(false, "%METADATA(ROUTE:clawker:action)%", als),
-		// Plaintext HTTP — no upstream TLS, no ALPN override needed.
-		// Standard HCM-level upgrade is sufficient per envoy-ws.yaml example.
-		"upgrade_configs": []any{
-			map[string]any{"upgrade_type": "websocket"},
-		},
-		"route_config": map[string]any{
-			"name":          "http_egress_routes",
-			"virtual_hosts": virtualHosts,
-		},
-		"http_filters": []any{routerFilter()},
-	}
-	maps.Copy(tc, httpConnectionManagerHardening())
-	return tc
-}
-
-func tlsHCMTypedConfig(r config.EgressRule, domain string, exactDomains map[string]bool, routes []any, wildcard bool, als ALSConfig) map[string]any {
-	tc := map[string]any{
-		"@type":       "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
-		"stat_prefix": fmt.Sprintf("tls_%s", sanitizeName(domain)),
-		"codec_type":  "AUTO",
-		"access_log":  buildHTTPAccessLog(true, "%METADATA(ROUTE:clawker:action)%", als),
-		// TLS upstream uses auto_config (H2+H1.1 ALPN). WebSocket Upgrade
-		// doesn't exist in HTTP/2, so the upgrade filter chain overrides
-		// ALPN to force HTTP/1.1 on the upstream TLS handshake. For
-		// wildcard chains the upgrade chain additionally writes the
-		// dynamic_host filter state so DFP resolves the actual SNI host,
-		// not the apex.
-		"upgrade_configs": buildTLSWebSocketUpgrade(wildcard),
-		"route_config": map[string]any{
-			"name": fmt.Sprintf("tls_route_%s", sanitizeName(domain)),
-			"virtual_hosts": []any{
-				map[string]any{
-					"name":    virtualHostName(r.Dst),
-					"domains": httpDomains(r.Dst, exactDomains),
-					"routes":  routes,
-				},
-			},
-		},
-		"http_filters": tlsHTTPFilters(wildcard),
-	}
-	maps.Copy(tc, httpConnectionManagerHardening())
-	return tc
-}
-
-// tlsHTTPFilters returns the http_filters list for a TLS-MITM HCM. Every TLS
-// chain prepends sniLockFilter — without it Router::Filter::decodeHeaders
-// would fall back to deriving upstream SNI / SAN-validation target from the
-// HTTP :authority header, letting an attacker who controls Host validate the
-// upstream cert against a different name than the one that selected the
-// filter chain. Wildcard chains additionally insert the dynamic_host writer
-// and the DFP HTTP filter so cluster resolution sees the per-subdomain SNI
-// rather than the apex; the dynamic_host writer must execute before the DFP
-// filter on every request.
-func tlsHTTPFilters(wildcard bool) []any {
-	if !wildcard {
-		return []any{sniLockFilter(), routerFilter()}
-	}
-	return []any{
-		sniLockFilter(),
-		dynamicHostFromSNIFilter(),
-		dynamicForwardProxyHTTPFilter(),
-		routerFilter(),
-	}
-}
-
-// sniLockFilter pre-populates the two filter-state keys the router would
-// otherwise derive from the :authority header under auto_sni /
-// auto_san_validation:
-//
-//   - envoy.network.upstream_server_name — upstream TLS SNI.
-//   - envoy.network.upstream_subject_alt_names — expected upstream cert SAN.
-//
-// Router::Filter::decodeHeaders only writes these when filter state does not
-// already carry them, so a pre-populated value sourced from
-// %REQUESTED_SERVER_NAME% (the downstream SNI that selected this filter
-// chain) wins. Result: upstream TLS handshake and SAN validation are bound
-// to the SNI a connecting client presented, never to the attacker-influenced
-// Host header. Applies to every TLS chain — exact and wildcard — because the
-// attack does not require DFP (TCP destination follows the cluster endpoint
-// on exact rules, but a Host-derived upstream SNI can still cause a request
-// to be served at the cluster's edge under a different cert name and routed
-// to an unallowed sibling at the app layer).
-func sniLockFilter() map[string]any {
-	return setFilterStateFromSNI(
-		"envoy.network.upstream_server_name",
-		"envoy.network.upstream_subject_alt_names",
-	)
-}
-
-// dynamicHostFromSNIFilter writes envoy.upstream.dynamic_host from the
-// downstream SNI for wildcard chains. The DFP HTTP filter consumes this key
-// (when allow_dynamic_host_from_filter_state is set) for cluster / DNS
-// resolution, so the actual subdomain is routed rather than the apex.
-func dynamicHostFromSNIFilter() map[string]any {
-	return setFilterStateFromSNI("envoy.upstream.dynamic_host")
-}
-
-// setFilterStateFromSNI builds an envoy.filters.http.set_filter_state config
-// that writes each given object_key with the downstream SNI value
-// (%REQUESTED_SERVER_NAME%) on every request.
-func setFilterStateFromSNI(objectKeys ...string) map[string]any {
-	entries := make([]any, 0, len(objectKeys))
-	for _, k := range objectKeys {
-		entries = append(entries, map[string]any{
-			"object_key": k,
-			"format_string": map[string]any{
-				"text_format_source": map[string]any{
-					"inline_string": "%REQUESTED_SERVER_NAME%",
-				},
-			},
-		})
-	}
-	return map[string]any{
-		"name": "envoy.filters.http.set_filter_state",
-		"typed_config": map[string]any{
-			"@type":              "type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config",
-			"on_request_headers": entries,
-		},
-	}
-}
-
-// dynamicForwardProxyHTTPFilter is the DFP HTTP filter used inside wildcard
-// TLS filter chains. allow_dynamic_host_from_filter_state lets the filter
-// honor envoy.upstream.dynamic_host instead of the :authority header
-// (matching the long-standing SNI/UDP DFP behavior — landed in Envoy 1.35).
-// sub_cluster_config.cluster_init_timeout caps how long the first request to
-// a new SNI waits for its sub-cluster's DNS resolve before failing.
-func dynamicForwardProxyHTTPFilter() map[string]any {
-	return map[string]any{
-		"name": "envoy.filters.http.dynamic_forward_proxy",
-		"typed_config": map[string]any{
-			"@type":                                "type.googleapis.com/envoy.extensions.filters.http.dynamic_forward_proxy.v3.FilterConfig",
-			"allow_dynamic_host_from_filter_state": true,
-			"sub_cluster_config": map[string]any{
-				"cluster_init_timeout": "5s",
-			},
-		},
-	}
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Shared route and filter builders
-// ──────────────────────────────────────────────────────────────────────────────
-
-// routerFilter returns the standard Envoy router HTTP filter.
-func routerFilter() map[string]any {
-	return map[string]any{
-		"name": "envoy.filters.http.router",
-		"typed_config": map[string]any{
-			"@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router",
-		},
-	}
-}
-
-// buildHTTPRoutes converts path rules into Envoy route entries.
-// clusterName determines the upstream cluster — per-domain LOGICAL_DNS for both
-// TLS (re-encrypts upstream) and HTTP (plaintext upstream) filter chains.
-func buildHTTPRoutes(r config.EgressRule, clusterName string) []any {
-	var routes []any
-
-	wsUpgrade := []any{map[string]any{"upgrade_type": "websocket"}}
-
-	// Explicit path rules first. Each route literal carries
-	// metadata.filter_metadata.clawker.action — the access log
-	// (%METADATA(ROUTE:clawker:action)%) reads this at emit time so the
-	// firewall verdict is concrete per record (never inferred from
-	// response_code). See clawkerActionMetadata.
-	//
-	// Sort longest-prefix-first: Envoy route matching is first-match-wins on
-	// prefix, so slice order would let a broad rule (deny /public/) shadow a
-	// narrower override (allow /public/sub/). Stable sort keeps insertion
-	// order for equal-length prefixes, preserving MergeRule's caller-wins
-	// semantics on identical-path collisions.
-	prs := append([]config.PathRule(nil), r.PathRules...)
-	sort.SliceStable(prs, func(i, j int) bool {
-		return len(prs[i].Path) > len(prs[j].Path)
-	})
-	for _, pr := range prs {
-		if strings.EqualFold(pr.Action, "allow") {
-			routes = append(routes, map[string]any{
-				"match":    map[string]any{"prefix": pr.Path},
-				"metadata": clawkerActionMetadata("allowed"),
-				"route":    map[string]any{"cluster": clusterName, "timeout": "0s", "upgrade_configs": wsUpgrade},
-			})
-		} else {
-			routes = append(routes, map[string]any{
-				"match":    map[string]any{"prefix": pr.Path},
-				"metadata": clawkerActionMetadata("denied"),
-				"direct_response": map[string]any{
-					"status": 403,
-					"body":   map[string]any{"inline_string": firewallBlockedBody},
-				},
+		return [][]layer{
+			withWS(tcpTransport, httpsExactUpstreamLayer, httpAppLayer(appDFP{})),
+			withWS(quicTransport, httpsExactUpstreamLayer, httpAppLayer(appDFP{})),
+		}
+	case "ssh", "tcp":
+		// Opaque TCP: dedicated listener → tcp_proxy → pinned cluster, NO app
+		// block (no L7 to inspect — the pin is the gate). ssh and raw tcp differ
+		// only in the proto token recorded as network.protocol.name.
+		//
+		// dst type splits the transport. A CIDR range is the ONLY form that rides the
+		// SHARED egress listener: a prefix_ranges raw_buffer chain → ORIGINAL_DST
+		// scoped by that range (a range has no single host to pin). An FQDN OR a
+		// single-IP dst each gets its OWN dedicated listener whose port encodes its
+		// identity (FQDN → LOGICAL_DNS pin, IP → STATIC pin; both via
+		// tcpPinnedUpstreamLayer). A single IP must be dedicated, not shared: the eBPF
+		// connect4 NAT rewrites the socket dst before connect, so the shared listener's
+		// use_original_dst recovers the Envoy address, not the IP — prefix_ranges would
+		// never match. A port_range fans either form into one permutation per in-range
+		// port.
+		// A deny rule builds the SAME dedicated/prefix_ranges transport as its allow
+		// peer but terminates in a blackhole (deny cluster) instead of a pinned
+		// upstream — an explicit per-port deny chain. resolveOpaquePortConflicts has
+		// already carved denied ports out of any overlapping allow span, so allow and
+		// deny never claim the same (host, port) listener.
+		deny := isDenyAction(r.Action)
+		l7 := strings.ToLower(r.Proto)
+		if isCIDR(r.Dst) {
+			var lists [][]layer
+			for _, port := range dedicatedPorts(r, tcpDefaultPort) {
+				if deny {
+					lists = append(lists, []layer{
+						prefixRangeTransportLayer(port),
+						tcpDenyTerminalLayer(l7),
+					})
+					continue
+				}
+				lists = append(lists, []layer{
+					prefixRangeTransportLayer(port),
+					opaqueCIDRUpstreamLayer,
+					tcpProxyTerminalLayer(l7),
+				})
+			}
+			return lists
+		}
+		// FQDN or single-IP opaque: each dedicated-listener port is pre-assigned in
+		// genFacts (lockstep with the eBPF route_map).
+		host := normalizeDomain(r.Dst)
+		var lists [][]layer
+		for _, port := range dedicatedPorts(r, tcpDefaultPort) {
+			envoyPort, ok := gen.tcpListenerPorts[dedicatedPortKey(host, port)]
+			if !ok {
+				continue
+			}
+			if deny {
+				lists = append(lists, []layer{
+					tcpDedicatedListenerLayer(envoyPort, port),
+					tcpDenyTerminalLayer(l7),
+				})
+				continue
+			}
+			lists = append(lists, []layer{
+				tcpDedicatedListenerLayer(envoyPort, port),
+				tcpPinnedUpstreamLayer,
+				tcpProxyTerminalLayer(l7),
 			})
 		}
+		return lists
+	case "udp":
+		// Opaque raw UDP: dedicated UDP listener → udp_proxy listener filter →
+		// pinned cluster, NO app block. Same self-secure shape as opaque TCP over a
+		// UDP socket, with the same port_range fan-out. Port pre-assigned in
+		// genFacts; missing = IP/CIDR dst, skip.
+		deny := isDenyAction(r.Action)
+		host := normalizeDomain(r.Dst)
+		var lists [][]layer
+		for _, port := range dedicatedPorts(r, udpDefaultPort) {
+			envoyPort, ok := gen.udpListenerPorts[dedicatedPortKey(host, port)]
+			if !ok {
+				continue
+			}
+			if deny {
+				lists = append(lists, []layer{
+					udpDedicatedListenerLayer(envoyPort, port),
+					udpDenyTerminalLayer,
+				})
+				continue
+			}
+			lists = append(lists, []layer{
+				udpDedicatedListenerLayer(envoyPort, port),
+				udpPinnedUpstreamLayer,
+				udpProxyTerminalLayer,
+			})
+		}
+		return lists
+	default:
+		return nil
 	}
-
-	// Default action for unmatched paths. EffectivePathDefault honors an
-	// explicit r.PathDefault override and otherwise infers from the path_rules
-	// composition — see rules_store.go for the inference rule.
-	pathDefault := strings.ToLower(EffectivePathDefault(r))
-	if pathDefault == "deny" {
-		routes = append(routes, map[string]any{
-			"match":    map[string]any{"prefix": "/"},
-			"metadata": clawkerActionMetadata("denied"),
-			"direct_response": map[string]any{
-				"status": 403,
-				"body":   map[string]any{"inline_string": firewallBlockedBody},
-			},
-		})
-	} else {
-		routes = append(routes, map[string]any{
-			"match":    map[string]any{"prefix": "/"},
-			"metadata": clawkerActionMetadata("allowed"),
-			"route":    map[string]any{"cluster": clusterName, "timeout": "0s", "upgrade_configs": wsUpgrade},
-		})
-	}
-
-	return routes
 }
 
-// buildTLSWebSocketUpgrade returns the HCM upgrade_configs entry for WebSocket
-// on TLS filter chains. WebSocket upgrade_configs replace the HCM's
-// http_filters wholesale for upgrade requests, so every filter the regular
-// request path relies on must be reproduced here.
-//
-// Filters per chain kind:
-//   - Exact rule: [sni-lock, alpn-override(h1.1), router]
-//   - Wildcard rule: [sni-lock, dynamic_host writer, alpn-override(h1.1),
-//     dynamic_forward_proxy, router]
-//
-// Why each is here:
-//   - sni-lock locks upstream SNI/SAN to downstream SNI (per-request) — same
-//     confused-deputy fix as the regular http_filters path.
-//   - dynamic_host + DFP (wildcard only) route the upgrade to the actual
-//     subdomain rather than the apex.
-//   - alpn-override-to-http/1.1 is the recommended Envoy pattern (current
-//     in 1.37+) for forcing upstream ALPN to h1.1 per-request, overriding
-//     whatever the cluster's auto_config would negotiate. Without it, h2
-//     gets negotiated upstream and the upgrade fails on any upstream that
-//     doesn't implement RFC 8441 extended CONNECT (e.g. ngrok edge,
-//     plenty of origin servers). With it, Envoy automatically translates
-//     downstream h2 extended CONNECT → upstream h1.1 RFC 6455 Upgrade,
-//     so HTTP/2 WebSocket clients still work end-to-end.
-//
-// h2 WebSocket support comes from `allow_connect: true` on the downstream
-// HCM's http2_protocol_options (see httpConnectionManagerHardening).
-//
-// Ref: https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/http/upgrades
-func buildTLSWebSocketUpgrade(wildcard bool) []any {
-	alpnOverride := map[string]any{
-		"name": "envoy.filters.http.set_filter_state",
-		"typed_config": map[string]any{
-			"@type": "type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config",
-			"on_request_headers": []any{
-				map[string]any{
-					"object_key": "envoy.network.application_protocols",
-					"format_string": map[string]any{
-						"text_format_source": map[string]any{
-							"inline_string": "http/1.1",
-						},
-					},
-				},
-			},
-		},
+// installEgressDenyFloor installs the shared egress listener's global catch-all:
+// the default_filter_chain a connection lands on when NO transport block's filter
+// chain claimed it. Its meaning is "no block could secure this to any degree — no
+// defense-in-depth applies" — so it is the orchestrator's listener-wide last
+// resort, NOT a TCP or TLS concern. It IS reached in practice: a raw-TCP flow to a
+// disallowed host/port on a resolvable/seeded IP is redirected here by eBPF's
+// catch-all (decide_connect, common.h) and matches no allow chain, and a TLS flow
+// with a disallowed SNI falls here too — both reset via tcp_proxy → zero-endpoint
+// deny_cluster, now with an action=denied access log (see denyDefaultFilterChain).
+// No-op when no rule produced the shared egress listener (e.g. all rules skipped).
+func installEgressDenyFloor(cfg *EnvoyConfig, als ALSConfig) error {
+	if !cfg.HasListener(egressListenerName) {
+		return nil
 	}
-
-	var filters []any
-	if wildcard {
-		filters = append(filters, sniLockFilter(), dynamicHostFromSNIFilter(), alpnOverride, dynamicForwardProxyHTTPFilter(), routerFilter())
-	} else {
-		filters = append(filters, sniLockFilter(), alpnOverride, routerFilter())
+	if err := cfg.AddCluster(buildDenyCluster()); err != nil {
+		return err
 	}
-
-	return []any{map[string]any{"upgrade_type": "websocket", "filters": filters}}
+	return cfg.SetUnmatchedDeny(egressListenerName, denyDefaultFilterChain(als))
 }
 
-// buildDenyFilterChain creates the default deny filter chain that resets
-// connections. Catch-all filter_chain_match: matches any flow no allow
-// chain claimed. Access logging emits `action: "denied"` so blocked
-// connection attempts are visible in the egress monitoring dashboard
-// alongside allowed traffic. The deny chain sees both TLS and plaintext
-// flows (Envoy resets before observing which), so the access log omits
-// `tls.established` — see buildTCPAccessLog for the forensics rationale.
-func buildDenyFilterChain(als ALSConfig) map[string]any {
+// denyDefaultFilterChain is the egress listener's catch-all: the single
+// default_filter_chain that catches every flow matching no allow chain —
+// unmatched SNI (a TLS flow to a disallowed domain) AND unmatched raw_buffer
+// (a raw-TCP flow to a disallowed host/port that eBPF redirected here for
+// inspection). It blackholes to the zero-endpoint deny_cluster (reset) AND now
+// emits an access-log record with action=denied so the catch-all deny is
+// OBSERVABLE in the same stream as allows — without it, the most common deny
+// (anything not explicitly allowed) was silently reset and recorded nowhere.
+//
+// server.address is %REQUESTED_SERVER_NAME%: for a disallowed-SNI TLS flow this
+// captures the rejected domain; for a raw-TCP flow it is empty, because the eBPF
+// connect-rewrite replaced the socket dst with the Envoy listener before connect
+// (so SO_ORIGINAL_DST / DOWNSTREAM_LOCAL_ADDRESS yield Envoy's address, not the
+// real dst). The true dst for a raw-TCP deny lives in the correlated netlogger
+// eBPF event (same client + timestamp; eBPF logs the pre-rewrite dst). client.address
+// still attributes the deny to the offending agent.
+func denyDefaultFilterChain(als ALSConfig) map[string]any {
 	return map[string]any{
-		"filter_chain_match": map[string]any{},
 		"filters": []any{
 			map[string]any{
 				"name": "envoy.filters.network.tcp_proxy",
 				"typed_config": map[string]any{
 					"@type":       "type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy",
-					"stat_prefix": "deny_all",
-					"cluster":     "deny_cluster",
-					// idle_timeout omitted — Envoy default (1h) applies.
-					// An explicit "0s" disables the timeout entirely; the
-					// tcp_proxy.proto docs warn this yields connection
-					// leaks ("Disabling this timeout is likely to yield
-					// connection leaks"). A hostile agent opening N
-					// never-closed TCP connections to a blocked SNI
-					// would exhaust Envoy's per-process FD/socket budget.
-					"access_log": buildTCPAccessLog("", "denied", als),
+					"stat_prefix": "egress_deny",
+					"cluster":     denyClusterName,
+					"access_log":  buildTCPAccessLog("tcp", "", "%REQUESTED_SERVER_NAME%", "denied", als),
 				},
 			},
 		},
 	}
 }
 
-// buildTLSDenyFilterChain builds an SNI-matched filter chain that resets
-// connections to an explicitly-denied domain. It mirrors buildDenyFilterChain
-// (tcp_proxy → deny_cluster reset, no TLS termination) but scopes the match to
-// the rule's SNI via serverNames, so Envoy's most-specific filter-chain
-// selection picks it over any broader allow wildcard chain (e.g. deny
-// sub.example.com wins over allow .example.com). It carries no
-// filter_chain_match other than server_names, so it stays more specific than
-// the empty catch-all deny chain. The access log server.address defaults to
-// %REQUESTED_SERVER_NAME%, so the blocked SNI is recorded under action=denied.
-func buildTLSDenyFilterChain(r config.EgressRule, als ALSConfig) map[string]any {
+// buildDenyCluster is the STATIC, zero-endpoint cluster the deny floor targets —
+// a tcp_proxy to a cluster with no endpoints yields a connection reset.
+func buildDenyCluster() map[string]any {
 	return map[string]any{
-		"filter_chain_match": map[string]any{
-			"server_names": denyServerNames(r.Dst),
-		},
-		"filters": []any{
-			map[string]any{
-				"name": "envoy.filters.network.tcp_proxy",
-				"typed_config": map[string]any{
-					"@type":       "type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy",
-					"stat_prefix": "deny_" + sanitizeName(normalizeDomain(r.Dst)),
-					"cluster":     "deny_cluster",
-					"access_log":  buildTCPAccessLog("", "denied", als),
-				},
-			},
-		},
-	}
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// TCP/SSH listeners
-// ──────────────────────────────────────────────────────────────────────────────
-
-// tcpDefaultPort returns the effective destination port for a TCP/SSH rule.
-func tcpDefaultPort(r config.EgressRule) int {
-	if r.Port != 0 {
-		return r.Port
-	}
-	if strings.EqualFold(r.Proto, "ssh") {
-		return 22
-	}
-	return 443
-}
-
-// tcpClusterName returns the Envoy cluster name for a TCP/SSH rule.
-func tcpClusterName(r config.EgressRule) string {
-	return fmt.Sprintf("tcp_%s_%d", sanitizeName(r.Dst), tcpDefaultPort(r))
-}
-
-// buildTCPListener creates a TCP/SSH listener on the given port.
-func buildTCPListener(r config.EgressRule, port int, als ALSConfig) map[string]any {
-	clusterName := tcpClusterName(r)
-
-	return map[string]any{
-		"name": clusterName,
-		"address": map[string]any{
-			"socket_address": map[string]any{
-				"address":    "0.0.0.0",
-				"port_value": port,
-			},
-		},
-		"filter_chains": []any{
-			map[string]any{
-				"filters": []any{
-					map[string]any{
-						"name": "envoy.filters.network.tcp_proxy",
-						"typed_config": map[string]any{
-							"@type":       "type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy",
-							"stat_prefix": clusterName,
-							"cluster":     clusterName,
-							"access_log":  buildTCPAccessLog(r.Proto, "allowed", als, r.Dst),
-						},
-					},
-				},
-			},
-		},
-	}
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Clusters
-// ──────────────────────────────────────────────────────────────────────────────
-
-// firstDuplicateClusterName scans a slice of cluster maps and returns the
-// first duplicate `name` it finds, or "" when all names are unique. Used as
-// a config-gen-time sanity check to catch any future builder regression that
-// would otherwise be surfaced only by Envoy rejecting the config at load.
-func firstDuplicateClusterName(clusters []any) string {
-	seen := make(map[string]bool, len(clusters))
-	for _, c := range clusters {
-		cm, ok := c.(map[string]any)
-		if !ok {
-			continue
-		}
-		name, _ := cm["name"].(string)
-		if name == "" {
-			continue
-		}
-		if seen[name] {
-			return name
-		}
-		seen[name] = true
-	}
-	return ""
-}
-
-// buildClusters constructs all Envoy clusters.
-func buildClusters(tls, tcp, http []config.EgressRule, als ALSConfig) []any {
-	clusters := []any{
-		// Deny cluster (no endpoints — connection reset).
-		map[string]any{
-			"name":            "deny_cluster",
-			"connect_timeout": "1s",
-			"type":            "STATIC",
-			"load_assignment": map[string]any{
-				"cluster_name": "deny_cluster",
-				"endpoints":    []any{},
-			},
-		},
-	}
-	// OpenTelemetry Access Log Service sink + cluster only emitted when
-	// mTLS material is wired. In degraded mode the access loggers omit
-	// the OTel entry (buildHTTPAccessLog / buildTCPAccessLog gate on
-	// als.MTLS), so the cluster has no referrers — leaving it would only
-	// fail per-record dials to the untrusted lane, which infra services
-	// must never touch. STRICT_DNS resolves `otel-collector` (clawker-net
-	// DNS) on every refresh; when the monitoring stack is down the gRPC
-	// dial fails per-record and Envoy drops oldest from the access
-	// logger's default 16KB buffer — never blocks the data path.
-	if als.MTLS {
-		clusters = append(clusters, buildOtelALSCluster(als))
-	}
-
-	// Per-(domain, port) TLS clusters. Exact rules get LOGICAL_DNS with the
-	// apex hostname as the pinned endpoint; wildcard rules get a separate
-	// dynamic_forward_proxy cluster whose endpoint is resolved at request
-	// time from the SNI (written into filter state by the wildcard filter
-	// chain). The two cluster kinds are independent — a wildcard rule and
-	// an exact rule for the same apex produce two distinct clusters whose
-	// connection pools never share. Dedup key includes the kind so the same
-	// apex can carry both.
-	seen := make(map[string]bool)
-	for _, r := range tls {
-		domain := normalizeDomain(r.Dst)
-		kind := "exact"
-		if isWildcardDomain(r.Dst) {
-			kind = "wildcard"
-		}
-		key := fmt.Sprintf("%s:%s:%d", kind, domain, r.Port)
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		if isWildcardDomain(r.Dst) {
-			clusters = append(clusters, buildTLSWildcardDFPCluster(domain, r.Port))
-		} else {
-			clusters = append(clusters, buildTLSDNSCluster(domain, r.Port))
-		}
-	}
-
-	// Per-(domain, port) HTTP clusters — LOGICAL_DNS without TLS.
-	httpSeen := make(map[string]bool)
-	for _, r := range http {
-		domain := normalizeDomain(r.Dst)
-		key := fmt.Sprintf("%s:%d", domain, r.Port)
-		if httpSeen[key] {
-			continue
-		}
-		httpSeen[key] = true
-		clusters = append(clusters, buildHTTPDNSCluster(domain, r.Port))
-	}
-
-	// Per-destination TCP clusters.
-	for _, r := range tcp {
-		name := tcpClusterName(r)
-		clusters = append(clusters, map[string]any{
-			"name":              name,
-			"connect_timeout":   "5s",
-			"type":              "LOGICAL_DNS",
-			"dns_lookup_family": "V4_ONLY",
-			"load_assignment": map[string]any{
-				"cluster_name": name,
-				"endpoints": []any{
-					map[string]any{
-						"lb_endpoints": []any{
-							map[string]any{
-								"endpoint": map[string]any{
-									"address": map[string]any{
-										"socket_address": map[string]any{
-											"address":    r.Dst,
-											"port_value": tcpDefaultPort(r),
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		})
-	}
-
-	return clusters
-}
-
-// buildTLSDNSCluster creates a per-domain LOGICAL_DNS cluster with upstream TLS.
-// The cluster endpoint is the domain name itself — Envoy resolves it via DNS and
-// connects to the result. auto_sni derives the TLS SNI from the endpoint hostname,
-// auto_san_validation validates the upstream certificate against it.
-// auto_config enables HTTP/2 when the upstream supports it via ALPN negotiation.
-func buildTLSDNSCluster(domain string, port int) map[string]any {
-	return map[string]any{
-		"name":              tlsExactClusterName(domain, port),
-		"connect_timeout":   "10s",
-		"type":              "LOGICAL_DNS",
-		"dns_lookup_family": "V4_ONLY",
+		"name":            denyClusterName,
+		"connect_timeout": "1s",
+		"type":            "STATIC",
 		"load_assignment": map[string]any{
-			"cluster_name": tlsExactClusterName(domain, port),
-			"endpoints": []any{
-				map[string]any{
-					"lb_endpoints": []any{
-						map[string]any{
-							"endpoint": map[string]any{
-								"address": map[string]any{
-									"socket_address": map[string]any{
-										"address":    domain,
-										"port_value": port,
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-		"transport_socket": map[string]any{
-			"name": "envoy.transport_sockets.tls",
-			"typed_config": map[string]any{
-				"@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext",
-				"common_tls_context": map[string]any{
-					"alpn_protocols": []string{"h2", "http/1.1"},
-					"tls_params": map[string]any{
-						"ecdh_curves": []string{"X25519", "P-256", "P-384"},
-					},
-					"validation_context": map[string]any{
-						"trusted_ca": map[string]any{
-							"filename": "/etc/ssl/certs/ca-certificates.crt",
-						},
-					},
-				},
-			},
-		},
-		"typed_extension_protocol_options": map[string]any{
-			"envoy.extensions.upstreams.http.v3.HttpProtocolOptions": map[string]any{
-				"@type": "type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions",
-				"upstream_http_protocol_options": map[string]any{
-					"auto_sni":            true,
-					"auto_san_validation": true,
-				},
-				"auto_config": map[string]any{
-					"http_protocol_options":  map[string]any{},
-					"http2_protocol_options": map[string]any{},
-				},
-			},
+			"cluster_name": denyClusterName,
+			"endpoints":    []any{},
 		},
 	}
 }
 
-// buildTLSWildcardDFPCluster creates a per-apex dynamic_forward_proxy cluster
-// for wildcard rules. Unlike the exact-rule LOGICAL_DNS cluster whose endpoint
-// is pinned to the apex hostname, this cluster routes each request to a
-// sub-cluster keyed on the actual SNI (provided via the envoy.upstream.dynamic_host
-// filter state that the wildcard filter chain writes from %REQUESTED_SERVER_NAME%).
-// Each sub-cluster keeps its own DNS resolution and connection pool, so:
-//
-//   - Subdomains that resolve to different IPs than the apex (e.g.
-//     mintlify.com → Vercel apex, www.mintlify.com → Cloudflare) connect to
-//     the correct upstream rather than the apex IP.
-//   - Same-SAN HTTP/2 connection coalescing across different hostnames
-//     (e.g. api.anthropic.com and statsig.anthropic.com sharing a SAN)
-//     cannot happen: allow_coalesced_connections defaults to false and
-//     lifetime callbacks return empty when off, so no cross-sub-cluster
-//     pool reuse is tracked.
-//
-// Trust boundary: the dynamic_host is sourced from SNI inside a filter chain
-// whose SNI match list is owned by serverNames() — the suffix `.<apex>` is
-// always matched; the apex itself is matched only when no exact sibling rule
-// covers it (so a hostile Host header still cannot redirect the upstream
-// connection outside the wildcard's reach).
-func buildTLSWildcardDFPCluster(apex string, port int) map[string]any {
-	return map[string]any{
-		"name":            tlsWildcardClusterName(apex, port),
-		"connect_timeout": "10s",
-		"lb_policy":       "CLUSTER_PROVIDED",
-		// V4_ONLY parity with buildTLSDNSCluster — clawker-net is IPv4-only.
-		// Without this, the dynamically-spawned sub-clusters try AAAA records
-		// first (Envoy's `AUTO` default prefers IPv6) and fail with
-		// `Network is unreachable` for any host with IPv6 records.
-		"dns_lookup_family": "V4_ONLY",
-		"cluster_type": map[string]any{
-			"name": "envoy.clusters.dynamic_forward_proxy",
-			"typed_config": map[string]any{
-				"@type": "type.googleapis.com/envoy.extensions.clusters.dynamic_forward_proxy.v3.ClusterConfig",
-				"sub_clusters_config": map[string]any{
-					"max_sub_clusters": 1024,
-					"sub_cluster_ttl":  "300s",
-				},
-				// Explicit false instead of proto default. With sub_clusters,
-				// each host:port gets its own pool — coalescing across pools
-				// would re-enable the SAN-shared h2 reuse race where the
-				// first IP to win a pool serves every subsequent same-SAN
-				// hostname (api.X / statsig.X collapsing onto one socket).
-				// Pinning the flag here makes the security boundary
-				// resilient to any future upstream default change.
-				"allow_coalesced_connections": false,
-			},
-		},
-		"transport_socket": map[string]any{
-			"name": "envoy.transport_sockets.tls",
-			"typed_config": map[string]any{
-				"@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext",
-				"common_tls_context": map[string]any{
-					"tls_params": map[string]any{
-						"ecdh_curves": []string{"X25519", "P-256", "P-384"},
-					},
-					"validation_context": map[string]any{
-						"trusted_ca": map[string]any{
-							"filename": "/etc/ssl/certs/ca-certificates.crt",
-						},
-					},
-				},
-			},
-		},
-		"typed_extension_protocol_options": map[string]any{
-			"envoy.extensions.upstreams.http.v3.HttpProtocolOptions": map[string]any{
-				"@type": "type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions",
-				"upstream_http_protocol_options": map[string]any{
-					"auto_sni":            true,
-					"auto_san_validation": true,
-				},
-				"auto_config": map[string]any{
-					"http_protocol_options":  map[string]any{},
-					"http2_protocol_options": map[string]any{},
-				},
-			},
-		},
+// installOtelALSCluster is the once-per-generation step that emits the upstream
+// cluster backing the OTel access-log sink. It is gated on als.MTLS to mirror
+// the sink itself (buildHTTPAccessLog/buildTCPAccessLog only emit the
+// open_telemetry logger when als.MTLS): in degraded mode Envoy logs to stdout
+// only and must never push OTLP across the untrusted otel-collector lane, so the
+// cluster stays absent and no dangling envoy_grpc.cluster_name reference ships.
+func installOtelALSCluster(cfg *EnvoyConfig, als ALSConfig) error {
+	if !als.MTLS {
+		return nil
 	}
+	return cfg.AddCluster(buildOtelALSCluster(als))
 }
 
 // buildOtelALSCluster returns the cluster definition that backs the
-// `envoy.access_loggers.open_telemetry` sink. Caller is responsible
-// for only emitting the cluster when als.MTLS is true; infra services
-// must never push OTLP across the untrusted lane.
+// `envoy.access_loggers.open_telemetry` sink. Caller (installOtelALSCluster)
+// only emits it when als.MTLS is true; infra services must never push OTLP
+// across the untrusted lane.
 //
-// STRICT_DNS resolves `otel-collector` (clawker-net DNS) on every
-// refresh, http2 is required because OTLP/gRPC runs on HTTP/2. The
-// upstream TLS context loads the leaf+intermediate chain bind-mounted
-// at /etc/envoy/otel-tls/client.{pem,key} and validates the
-// collector's server cert against the CLI root CA at ca.pem.
-//
-// `ensureOtelServerCert` includes consts.MonitoringServiceOtelCollector
-// ("otel-collector") in the cert's DNS SANs, alongside
-// "host.docker.internal" / "localhost" / "127.0.0.1". SNI is set to
-// "otel-collector" so Envoy presents the expected hostname in the
-// ClientHello, and `match_typed_subject_alt_names` pins the upstream
-// cert to that SAN — defense-in-depth on top of the CLI-root trust
-// boundary so a different CLI-root-chained leaf (future infra service)
-// can't impersonate the collector for this cluster.
+// STRICT_DNS resolves `otel-collector` (clawker-net DNS) on every refresh; h2 is
+// required because OTLP/gRPC runs on HTTP/2. The upstream TLS context loads the
+// leaf+intermediate chain bind-mounted at /etc/envoy/otel-tls/client.{pem,key}
+// and validates the collector's server cert against the CLI root CA at ca.pem.
+// SNI is set to "otel-collector" so Envoy presents the expected hostname in the
+// ClientHello, and match_typed_subject_alt_names pins the upstream cert to that
+// SAN — defense-in-depth on top of the CLI-root trust boundary so a different
+// CLI-root-chained leaf (a future infra service) can't impersonate the collector
+// for this cluster.
 func buildOtelALSCluster(als ALSConfig) map[string]any {
 	return map[string]any{
 		"name":            otelCollectorALSClusterName,
@@ -1648,28 +571,61 @@ func buildOtelALSCluster(als ALSConfig) map[string]any {
 	}
 }
 
-// buildHTTPDNSCluster creates a per-domain LOGICAL_DNS cluster for plaintext HTTP.
-// No upstream TLS — used by the HTTP filter chain for proto: http rules.
-func buildHTTPDNSCluster(domain string, port int) map[string]any {
+// installHealthListener is the once-per-generation step that emits the dedicated
+// readiness listener Stack.EnsureRunning probes (http://<EnvoyIP>:HealthPort/ →
+// 200). It MUST run whenever HealthPort > 0: EnsureRunning loops on a
+// non-cancellable context until the probe succeeds, so a config without this
+// listener hangs firewall bringup forever (the stack comes up but route-seed and
+// agent re-enrollment never run). Gated on HealthPort > 0 so the test/zero-port
+// path stays listener-free.
+func installHealthListener(cfg *EnvoyConfig, ports EnvoyPorts) error {
+	if ports.HealthPort <= 0 {
+		return nil
+	}
+	return cfg.AddListener(buildHealthListener(ports.HealthPort))
+}
+
+// buildHealthListener creates the lightweight HTTP listener that returns 200 OK
+// "ok" for host-side readiness probes. It is the only port published to the host
+// — keeping the traffic ports (egress/quic/dedicated) unpublished preserves
+// source IPs for per-agent attribution. A complete self-contained listener (its
+// own HCM filter chain → direct_response), added via AddListener.
+func buildHealthListener(port int) map[string]any {
 	return map[string]any{
-		"name":              httpClusterName(domain, port),
-		"connect_timeout":   "10s",
-		"type":              "LOGICAL_DNS",
-		"dns_lookup_family": "V4_ONLY",
-		"load_assignment": map[string]any{
-			"cluster_name": httpClusterName(domain, port),
-			"endpoints": []any{
-				map[string]any{
-					"lb_endpoints": []any{
-						map[string]any{
-							"endpoint": map[string]any{
-								"address": map[string]any{
-									"socket_address": map[string]any{
-										"address":    domain,
-										"port_value": port,
+		"name": healthListenerName,
+		"address": map[string]any{
+			"socket_address": map[string]any{
+				"address":    defaultBindAddress,
+				"port_value": port,
+			},
+		},
+		"filter_chains": []any{
+			map[string]any{
+				"filters": []any{
+					map[string]any{
+						"name": "envoy.filters.network.http_connection_manager",
+						"typed_config": map[string]any{
+							"@type":       "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
+							"stat_prefix": "health_check",
+							"route_config": map[string]any{
+								"virtual_hosts": []any{
+									map[string]any{
+										"name":    "health",
+										"domains": []any{"*"},
+										"routes": []any{
+											map[string]any{
+												"match":    map[string]any{"prefix": "/"},
+												"metadata": clawkerActionMetadata("allowed"),
+												"direct_response": map[string]any{
+													"status": 200,
+													"body":   map[string]any{"inline_string": "ok"},
+												},
+											},
+										},
 									},
 								},
 							},
+							"http_filters": []any{routerFilter()},
 						},
 					},
 				},
@@ -1678,86 +634,304 @@ func buildHTTPDNSCluster(domain string, port int) map[string]any {
 	}
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ──────────────────────────────────────────────────────────────────────────────
-
-// statNameReplacer replaces dots and other special characters with underscores for Envoy stat names.
-var statNameReplacer = strings.NewReplacer(".", "_", "-", "_", ":", "_")
-
-// sanitizeName replaces dots and other special characters with underscores for Envoy stat names.
-func sanitizeName(s string) string {
-	return statNameReplacer.Replace(s)
-}
-
-// serverNames returns the Envoy server_names list for SNI matching.
-// For wildcard domains (leading dot, e.g. ".datadoghq.com"), it returns both
-// the suffix match form (".datadoghq.com") and the apex ("datadoghq.com").
-// However, if a separate exact rule exists for the same apex (tracked in
-// exactDomains), the apex is omitted to avoid duplicate filter chain matches.
-// For exact domains, it returns a single-element list.
-func serverNames(dst string, exactDomains map[string]bool) []string {
-	domain := normalizeDomain(dst)
-	if isWildcardDomain(dst) {
-		if exactDomains[domain] {
-			// Separate exact rule owns the apex — wildcard covers subdomains only.
-			return []string{"." + domain}
+// checkProtoCollisions fails closed when two allowed rules target the same
+// (host, effective-port) with different proto tokens. Such a pair is unresolvable:
+// the proto token selects the entire network stack for a host:port, and the eBPF
+// route_map is keyed (DomainHash, DstPort) with NO proto, so two stacks for one
+// host:port cannot both be installed — whichever rule is processed last would win
+// the route and silently strand the other. The user must split onto distinct
+// ports or pick one proto. (Same host:port + same proto across exact and wildcard
+// rules — e.g. apex + subtree — is fine: one proto, one stack.)
+func checkProtoCollisions(rules []config.EgressRule) error {
+	// A host:port maps to exactly one network stack — the proto token determines
+	// the whole stack, and the eBPF route_map keys (host, port) with no proto, so
+	// two protos on one host:port would silently race (last write wins). With port
+	// ranges this generalizes: no two protos may claim OVERLAPPING port spans on one
+	// host. Both allow AND opaque-deny rules generate a stack (a deny builds a
+	// dedicated blackhole listener in the same tcp_/udp_ family), so both are
+	// counted; non-opaque deny (http/https) builds nothing and is skipped. ws/wss
+	// canonicalize to their http/https base so they compose rather than collide.
+	byHost := map[string]map[string][][2]int{} // host -> canonicalProto -> port spans
+	for _, r := range rules {
+		if isDenyAction(r.Action) && !isOpaqueProto(r.Proto) {
+			continue // non-opaque deny generates no competing stack
 		}
-		return []string{"." + domain, domain}
-	}
-	return []string{domain}
-}
-
-// denyServerNames returns the SNI server_names for a deny filter chain. Unlike
-// the allow side, an exact deny must also claim its whole subtree: Envoy matches
-// SNI against wildcards by stripping one label at a time (see
-// FilterChainManagerImpl::findFilterChainForServerName), so the leading-dot form
-// ".sub.example.com" matches sub.example.com's subdomains at ANY depth
-// (child.sub.example.com, a.b.sub.example.com, ...). Without it, "deny
-// sub.example.com" would only reset the exact SNI, and a deeper SNI would fall
-// through to a broader wildcard allow chain (".example.com") — a DNS-bypass
-// (curl --resolve / hardcoded IP) hole, since CoreDNS deny zones already block
-// the whole subtree but Envoy would not. Emitting the subtree wildcard aligns
-// Envoy with CoreDNS deny-zone semantics so both layers fail closed.
-//
-// A more-specific exact allow nested under a denied subtree (e.g. allow
-// ok.sub.example.com) is still honored: Envoy checks exact server_names before
-// any wildcard, so the exact allow chain wins for that one SNI.
-func denyServerNames(dst string) []string {
-	domain := normalizeDomain(dst)
-	if isWildcardDomain(dst) {
-		// Wildcard deny: ".X" already covers the subtree at any depth; "X" the apex.
-		return []string{"." + domain, domain}
-	}
-	// Exact deny: claim the host AND its subtree.
-	return []string{domain, "." + domain}
-}
-
-// virtualHostName returns a unique Envoy virtual host name for a rule's destination.
-// Wildcard domains get a "wildcard_" prefix so they don't collide with exact rules
-// for the same apex domain in the same route_config.
-func virtualHostName(dst string) string {
-	domain := normalizeDomain(dst)
-	if isWildcardDomain(dst) {
-		return "wildcard_" + domain
-	}
-	return domain
-}
-
-// httpDomains returns the Envoy virtual host domains list for Host header matching.
-// For wildcard domains (leading dot), it returns both "*.domain" and "domain".
-// If a separate exact rule exists for the apex, the apex is omitted.
-// For exact domains, it returns a single-element list.
-func httpDomains(dst string, exactDomains map[string]bool) []string {
-	domain := normalizeDomain(dst)
-	if isWildcardDomain(dst) {
-		if exactDomains[domain] {
-			// Exact rule owns the apex — wildcard only, plus port variant.
-			return []string{"*." + domain, "*." + domain + ":*"}
+		host := normalizeDomain(r.Dst)
+		lo, hi, ok := r.PortSpan()
+		if !ok {
+			p := effectiveDstPort(r)
+			lo, hi = p, p
 		}
-		// Wildcard covers both apex and subdomains, with port variants.
-		return []string{"*." + domain, "*." + domain + ":*", domain, domain + ":*"}
+		cp := canonicalProto(r.Proto)
+		if byHost[host] == nil {
+			byHost[host] = map[string][][2]int{}
+		}
+		byHost[host][cp] = append(byHost[host][cp], [2]int{lo, hi})
 	}
-	// Exact domain plus port variant so Host: domain:443 also matches.
-	return []string{domain, domain + ":*"}
+
+	// Deterministic: scan hosts sorted; within a host check every pair of distinct
+	// canonical protos for an overlapping span; report the lowest offending port.
+	hosts := make([]string, 0, len(byHost))
+	for h := range byHost {
+		hosts = append(hosts, h)
+	}
+	sort.Strings(hosts)
+	for _, h := range hosts {
+		protoSpans := byHost[h]
+		protos := make([]string, 0, len(protoSpans))
+		for p := range protoSpans {
+			protos = append(protos, p)
+		}
+		sort.Strings(protos)
+		for i := 0; i < len(protos); i++ {
+			for j := i + 1; j < len(protos); j++ {
+				if port, ok := lowestSpanOverlap(protoSpans[protos[i]], protoSpans[protos[j]]); ok {
+					return fmt.Errorf(
+						"envoy config: %s:%d is claimed by multiple protos %v — a host:port maps to exactly one network stack; split onto distinct ports or pick one proto",
+						h, port, []string{protos[i], protos[j]},
+					)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// lowestSpanOverlap returns the lowest port present in both span sets, or
+// ok=false if they are disjoint. Spans are inclusive [lo, hi].
+func lowestSpanOverlap(a, b [][2]int) (int, bool) {
+	best := -1
+	for _, sa := range a {
+		for _, sb := range b {
+			lo := sa[0]
+			if sb[0] > lo {
+				lo = sb[0]
+			}
+			hi := sa[1]
+			if sb[1] < hi {
+				hi = sb[1]
+			}
+			if lo <= hi && (best == -1 || lo < best) {
+				best = lo
+			}
+		}
+	}
+	if best == -1 {
+		return 0, false
+	}
+	return best, true
+}
+
+// checkOpaquePortActionConflicts fails closed when one (dst, opaque proto) has
+// BOTH an allow and a deny rule claiming the SAME port with no range to carve.
+// resolveOpaquePortConflicts already carves every range-involved deny out of the
+// overlapping allow span (deny wins) and merges same-action overlaps, so the ONLY
+// residual allow/deny overlap within one (dst, proto) is an all-single clash
+// (allow 4242 + deny 4242) — a contradictory config, not a carve. Reject it loud
+// rather than let it collapse silently or trip the order-dependent addChain backstop.
+func checkOpaquePortActionConflicts(rules []config.EgressRule) error {
+	type key struct{ host, proto string }
+	allow := map[key][][2]int{}
+	deny := map[key][][2]int{}
+	for _, r := range rules {
+		if !isOpaqueProto(r.Proto) {
+			continue
+		}
+		lo, hi, ok := r.PortSpan()
+		if !ok {
+			continue
+		}
+		k := key{normalizeDomain(r.Dst), strings.ToLower(r.Proto)}
+		if isDenyAction(r.Action) {
+			deny[k] = append(deny[k], [2]int{lo, hi})
+		} else {
+			allow[k] = append(allow[k], [2]int{lo, hi})
+		}
+	}
+	keys := make([]key, 0, len(deny))
+	for k := range deny {
+		if _, ok := allow[k]; ok {
+			keys = append(keys, k)
+		}
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].host != keys[j].host {
+			return keys[i].host < keys[j].host
+		}
+		return keys[i].proto < keys[j].proto
+	})
+	for _, k := range keys {
+		if port, ok := lowestSpanOverlap(allow[k], deny[k]); ok {
+			return fmt.Errorf(
+				"envoy config: %s %s:%d has conflicting allow and deny rules for the same port — a single port has no range to carve; remove one or express the exception as a port range",
+				k.proto, k.host, port,
+			)
+		}
+	}
+	return nil
+}
+
+// validateDedicatedLayout fails closed when the dedicated per-rule listeners
+// (opaque tcp/ssh + raw udp, including any port_range fan-out) would not fit
+// their assigned port bands. EnvoyPort = base + idx, so an over-wide port_range
+// (or simply too many opaque rules) can push the tcp/ssh band into the udp base
+// band — two listeners on one bind port, which Envoy fails to bind — or past
+// 65535, where rules_store.RoutesFromRules' uint16(EnvoyPort) cast would silently
+// WRAP and write a bogus eBPF route. Both are caught here, at generation time,
+// before either failure can materialize. (The bands are config-driven via
+// EnvoyPorts, so this is layout-aware rather than a fixed width cap.)
+func validateDedicatedLayout(rules []config.EgressRule, ports EnvoyPorts) error {
+	tcp := TCPMappings(rules, ports)
+	udp := UDPMappings(rules, ports)
+
+	bands := []struct {
+		name string
+		base int
+		n    int
+	}{
+		{"tcp/ssh", ports.TCPPortBase, len(tcp)},
+		{"raw udp", ports.UDPPortBase, len(udp)},
+	}
+
+	for _, b := range bands {
+		if b.n > 0 && b.base+b.n-1 > 65535 {
+			return fmt.Errorf("envoy config: %d dedicated %s listeners from base %d overflow past port 65535 (port_range fan-out too wide) — narrow the range(s) or lower the base", b.n, b.name, b.base)
+		}
+	}
+
+	// A grown band must not swallow one of the fixed infra ports. EnvoyPorts.Validate
+	// only collision-checks the four BASE ports against each other; once a band grows
+	// it can reach EgressPort / HealthPort / the admin port, which would emit two
+	// listeners on the same bind port. Golden + `envoy validate` can't catch that
+	// (distinct listener names, structurally valid) — it surfaces only as a runtime
+	// bind failure at bringup, the same CP↔generator contract-gap class as a dropped
+	// listener. Fail closed at generation instead.
+	// The two band BASES (TCPPortBase/UDPPortBase) are intentionally absent here:
+	// a band growing into the other band's base is caught by the band-vs-band
+	// overlap guard below, so this list covers only the fixed single-port infra
+	// listeners.
+	infra := []struct {
+		name string
+		port int
+	}{
+		{"EgressPort", ports.EgressPort},
+		{"HealthPort", ports.HealthPort},
+		{"admin", envoyAdminPort},
+	}
+	for _, b := range bands {
+		if b.n == 0 {
+			continue
+		}
+		lo, hi := b.base, b.base+b.n-1
+		for _, p := range infra {
+			if p.port >= lo && p.port <= hi {
+				return fmt.Errorf("envoy config: dedicated %s band [%d-%d] collides with the fixed %s listener on port %d (port_range fan-out too wide) — narrow the range(s) or move the band base", b.name, lo, hi, p.name, p.port)
+			}
+		}
+	}
+
+	// The two bands must not overlap: a tcp listener and a udp listener sharing an
+	// Envoy bind port is a runtime bind failure (and the eBPF route_map can't tell
+	// them apart on EnvoyPort alone).
+	if len(tcp) > 0 && len(udp) > 0 {
+		tLo, tHi := ports.TCPPortBase, ports.TCPPortBase+len(tcp)-1
+		uLo, uHi := ports.UDPPortBase, ports.UDPPortBase+len(udp)-1
+		if tLo <= uHi && uLo <= tHi {
+			return fmt.Errorf("envoy config: dedicated tcp/ssh band [%d-%d] overlaps the raw-udp band [%d-%d] (port_range fan-out too wide) — narrow the range(s) or widen the gap between TCPPortBase (%d) and UDPPortBase (%d)", tLo, tHi, uLo, uHi, ports.TCPPortBase, ports.UDPPortBase)
+		}
+	}
+	return nil
+}
+
+// validateProtoDstSupport fails closed on (proto, dst-type) combinations Envoy
+// cannot express as a self-secure atom. The only one is raw UDP to a CIDR range:
+// udp_proxy has no original-destination forwarding (only use_original_src_ip, which
+// rewrites the SOURCE, not the dest) and UDP has no filter chains to pin per in-range
+// host — so a range can't be served without forwarding to an unvalidated client-chosen
+// dst. A single-IP UDP rule (STATIC pin) and tcp/ssh-to-CIDR (ORIGINAL_DST scoped by
+// prefix_ranges) are both supported. TLS-to-CIDR (https/wss) is also supported (one
+// range cert + reencrypt ORIGINAL_DST) and is NOT rejected here.
+func validateProtoDstSupport(rules []config.EgressRule) error {
+	for _, r := range rules {
+		if a := strings.ToLower(r.Action); a != "allow" && a != "" {
+			continue
+		}
+		if strings.ToLower(r.Proto) == "udp" && isCIDR(r.Dst) {
+			return fmt.Errorf("envoy config: raw udp to a CIDR range %q is not supported (udp_proxy cannot forward to the original destination); use a single IP dst or split the range into per-host rules", r.Dst)
+		}
+	}
+	return nil
+}
+
+// effectiveDstPort is a rule's destination port after proto-default resolution
+// (mirrors NormalizeRule so the collision check is correct even on un-normalized
+// input): explicit Port wins; else http/ws→80, ssh→22, everything else→443.
+func effectiveDstPort(r config.EgressRule) int {
+	if p, ok := r.SinglePort(); ok {
+		return p
+	}
+	switch strings.ToLower(r.Proto) {
+	case "http", "ws":
+		return defaultHTTPPort
+	case "ssh":
+		return sshDefaultPort
+	default:
+		return defaultDestPort
+	}
+}
+
+// canonicalProto folds proto-token aliases so the collision check compares like
+// with like: empty and legacy "tls" both mean https (matching NormalizeRule).
+func canonicalProto(p string) string {
+	switch p = strings.ToLower(p); p {
+	case "", "tls":
+		return "https"
+	// ws/wss are an enrichment OF the http/https stack for an origin, not a
+	// competing stack — so for collision purposes they ARE their base proto. This
+	// lets `https` + `wss` (or `http` + `ws`) compose on one host:port instead of
+	// tripping the one-stack-per-host:port guard, while `http` + `https` still
+	// collide (genuinely two stacks).
+	case "ws":
+		return "http"
+	case "wss":
+		return "https"
+	default:
+		return p
+	}
+}
+
+// baseProto collapses a websocket token onto the http/https stack it enriches:
+// ws→http, wss→https. Any other proto is returned unchanged (lowercased). Used by
+// the deriver to compute http/https-family facts and to promote a standalone
+// ws/wss rule into its base stack.
+func baseProto(p string) string {
+	switch p = strings.ToLower(p); p {
+	case "ws":
+		return "http"
+	case "wss":
+		return "https"
+	default:
+		return p
+	}
+}
+
+// originKey identifies the http/https stack a rule belongs to: verbatim dst (so
+// an exact host and its wildcard stay distinct, as in RuleKey) + the effective
+// destination port. A ws/wss rule and the http/https rule it enriches share an
+// originKey (ws↔http on the http port, wss↔https on the https port), which is how
+// the deriver pairs an enrichment to its base stack.
+func originKey(r config.EgressRule) string {
+	return fmt.Sprintf("%s:%d", r.Dst, effectiveDstPort(r))
+}
+
+// envoyAdmin returns the loopback-only Envoy admin endpoint block.
+func envoyAdmin() map[string]any {
+	return map[string]any{
+		"address": map[string]any{
+			"socket_address": map[string]any{
+				"address":    "127.0.0.1",
+				"port_value": envoyAdminPort,
+			},
+		},
+	}
 }

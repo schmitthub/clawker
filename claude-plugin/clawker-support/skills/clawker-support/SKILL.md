@@ -338,6 +338,15 @@ integrates with.
     `https://docs.clawker.dev/llms.txt` for the docs index, then fetch
     the relevant page.
 
+14. **VCS egress security (git credential-exfil defense)** — When the task
+    involves firewall rules, git credentials, securing the agent's network, or
+    "can the agent push to other repos / leak my token", read
+    `reference/firewall-security.md`. It covers path-scoping `github.com` /
+    `api.github.com` (and other VCS) over HTTPS to only the project's repos —
+    clawker's defense against the live attack class where a compromised agent
+    abuses forwarded git credentials to exfil to an arbitrary repo (domain-only
+    sandboxes can't stop this; clawker's HTTPS path allow/deny can).
+
 ### Step 4: Analyze — classify and decide placement
 
 Cross-reference your research to classify every item. This is the most common
@@ -382,6 +391,26 @@ Present the user with:
 - **Which config section** — use the analysis from Step 4. Cite the schema
   and Dockerfile template to explain execution order and context.
 - **What firewall rules** are needed — research the domains, don't guess.
+  **Scope to the narrowest rule that unblocks the work.** For http/https
+  destinations, prefer path-scoped rules (`path_default: deny` + `path_rules`
+  in YAML, or `clawker firewall add <host> --path <prefix> --action allow` at
+  runtime) over a bare domain allow whenever the agent only needs specific
+  paths — a whole-domain allow over a credential-bearing host (GitHub, package
+  registries, cloud APIs) is an exfil surface. Reserve bare-domain allows for
+  hosts where every path is genuinely needed, or for non-HTTP protocols that
+  have no path metadata (scope those by proto + port).
+- **Proactively offer VCS egress lockdown.** Whenever you set up or review
+  firewall rules — and especially when the project forwards git credentials
+  (the default) — offer to path-scope `github.com` / `api.github.com` (and
+  `gitlab.com` or other VCS in use) **over HTTPS** to only the project's own
+  repo(s) plus needed git dependencies, always including the
+  `/anthropics/claude-code/refs/heads/main/` allow (Claude Code's auto-update
+  check). Then recommend `clawker monitor up` and watching firewall block
+  events to discover any remaining critical dependency paths before adding
+  them. This is clawker's defense against forwarded-credential exfil to
+  arbitrary repos. Note the SSH caveat (port-22 git is opaque — no path
+  enforcement). See `reference/firewall-security.md`. Suggest the YAML; never
+  auto-apply.
 
 Always provide **specific YAML config** the user can paste. **Prefix every YAML
 block with a comment showing the target file path and config level:**
@@ -399,6 +428,17 @@ These are the things users consistently get wrong. Keep them in mind always:
 - **Firewall is deny-by-default.** Everything except a small set of hardcoded
   Anthropic domains must be explicitly allowed. Fetch the current firewall
   docs if you need the exact list.
+
+- **Default to the narrowest firewall scope — bare-domain allows are the #1
+  over-broad mistake.** When unblocking an http/https destination, path-scope
+  to the paths the work actually needs instead of allowing the whole host.
+  Adding an `allow` path flips the domain to deny-by-default allowlist mode
+  (runtime: `clawker firewall add <host> --path <prefix> --action allow`; YAML:
+  `path_default: deny` + `path_rules`). Only widen to a whole-domain allow when
+  every path is genuinely needed. SSH/TCP/UDP are opaque (no path filtering) —
+  scope those by proto + port. This matters most for credential-bearing hosts
+  (GitHub, registries, cloud APIs) where a broad allow is an exfil channel. See
+  `reference/firewall-security.md`.
 
 - **Firewall does NOT filter host commands.** Every `clawker` subcommand
   runs as a host process. eBPF programs are attached to agent container

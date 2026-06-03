@@ -40,8 +40,10 @@ const (
 	corednsContainerName = "clawker-coredns"
 
 	// healthCheckTimeout bounds WaitForHealthy by default. Callers supply
-	// deadlines via ctx when they want different behavior.
-	healthCheckTimeout  = 60 * time.Second
+	// deadlines via ctx when they want different behavior. Shared with the CLI's
+	// bringup RPC deadline (consts.FirewallStackBringupRPCTimeout derives from
+	// this) so the client never times out before the server's real health error.
+	healthCheckTimeout  = consts.FirewallStackHealthTimeout
 	healthCheckInterval = 500 * time.Millisecond
 
 	// labelInfraCertsReady encodes whether the running container was
@@ -587,6 +589,7 @@ func (s *Stack) envoyPorts() EnvoyPorts {
 	return EnvoyPorts{
 		EgressPort:  s.cfg.EnvoyEgressPort(),
 		TCPPortBase: s.cfg.EnvoyTCPPortBase(),
+		UDPPortBase: s.cfg.EnvoyUDPPortBase(),
 		HealthPort:  s.cfg.EnvoyHealthPort(),
 	}
 }

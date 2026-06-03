@@ -3,6 +3,8 @@ package ebpf
 import (
 	"encoding/binary"
 	"errors"
+	"reflect"
+	"sort"
 	"strings"
 	"syscall"
 	"testing"
@@ -23,6 +25,85 @@ func TestEgressEvent_SizeMatchesABI(t *testing.T) {
 	if got := binary.Size(EgressEvent{}); got != 48 {
 		t.Fatalf("EgressEvent on-wire size = %d; want 48 — C struct egress_event has drifted from the Go side", got)
 	}
+}
+
+// TestRouteKey_SizeMatchesABI mirrors the C-side
+// _Static_assert(sizeof(struct route_key) == 8) on the Go side. route_key is
+// the pinned route_map key; l4_proto was carved from the trailing pad so the
+// key stays 8 bytes and the pinned map schema is unchanged (a size change
+// would force a flush/remap). If the Go struct ever drifts (reordered field,
+// padding mistake, widened member), this fails before SyncRoutes writes a
+// misaligned key into route_map.
+func TestRouteKey_SizeMatchesABI(t *testing.T) {
+	t.Parallel()
+	if got := binary.Size(RouteKey{}); got != 8 {
+		t.Fatalf("RouteKey on-wire size = %d; want 8 — C struct route_key has drifted from the Go side", got)
+	}
+}
+
+// TestUDPFlowKey_SizeMatchesABI mirrors the C-side
+// _Static_assert(sizeof(struct udp_flow_key) == 16) on the Go side.
+// udp_flow_key is the pinned udp_flow_map key written by connect4/sendmsg4 and
+// read by recvmsg4/getpeername4 for reverse-NAT. Padding drift (reordered field,
+// widened member) would misalign the cookie-keyed lookup and silently break UDP
+// reply routing — same failure class route_key already guards.
+func TestUDPFlowKey_SizeMatchesABI(t *testing.T) {
+	t.Parallel()
+	if got := binary.Size(clawkerUdpFlowKey{}); got != 16 {
+		t.Fatalf("udp_flow_key on-wire size = %d; want 16 — C struct udp_flow_key has drifted from the Go side", got)
+	}
+}
+
+// TestDiffSeededIPs covers the IP-literal seed lifecycle that keeps a valid UDP
+// route from failing closed: GarbageCollectDNS protects every IP in the seed set,
+// and SyncRoutes drops the protection (and removes the orphan dns_cache entry)
+// only when the rule goes away. diffSeededIPs computes both the new protected set
+// and the orphans to delete.
+func TestDiffSeededIPs(t *testing.T) {
+	t.Parallel()
+
+	route := func(seedIP uint32) Route { return Route{SeedIP: seedIP} }
+	setEq := func(t *testing.T, got map[uint32]struct{}, want ...uint32) {
+		t.Helper()
+		if len(got) != len(want) {
+			t.Fatalf("seed set size = %d (%v); want %d (%v)", len(got), got, len(want), want)
+		}
+		for _, ip := range want {
+			if _, ok := got[ip]; !ok {
+				t.Fatalf("seed set %v missing expected IP %d", got, ip)
+			}
+		}
+	}
+	sliceEq := func(t *testing.T, got []uint32, want ...uint32) {
+		t.Helper()
+		g := append([]uint32(nil), got...)
+		w := append([]uint32(nil), want...)
+		sort.Slice(g, func(i, j int) bool { return g[i] < g[j] })
+		sort.Slice(w, func(i, j int) bool { return w[i] < w[j] })
+		if !reflect.DeepEqual(g, w) {
+			t.Fatalf("orphans = %v; want %v", got, want)
+		}
+	}
+
+	t.Run("first sync records every IP-literal seed, no orphans", func(t *testing.T) {
+		next, orphaned := diffSeededIPs([]Route{route(1), route(2), route(0)}, map[uint32]struct{}{})
+		setEq(t, next, 1, 2) // FQDN routes (SeedIP==0) are not seeds
+		sliceEq(t, orphaned)
+	})
+
+	t.Run("removed IP rule becomes an orphan and drops from the protected set", func(t *testing.T) {
+		prev := map[uint32]struct{}{1: {}, 2: {}, 3: {}}
+		next, orphaned := diffSeededIPs([]Route{route(1), route(3)}, prev)
+		setEq(t, next, 1, 3)
+		sliceEq(t, orphaned, 2) // IP 2 left the route set → orphan to evict
+	})
+
+	t.Run("re-seed of the same set keeps protection and yields no orphans", func(t *testing.T) {
+		prev := map[uint32]struct{}{1: {}, 2: {}}
+		next, orphaned := diffSeededIPs([]Route{route(1), route(2)}, prev)
+		setEq(t, next, 1, 2)
+		sliceEq(t, orphaned) // stable IP rules must never be evicted by a no-op reconcile
+	})
 }
 
 // requireBPF skips a test if the kernel/container lacks the perms needed

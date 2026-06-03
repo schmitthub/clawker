@@ -49,14 +49,25 @@ type Manager struct {
 	// Per-container cgroup links, keyed by cgroup ID.
 	// Only populated when this Manager instance attaches programs (daemon mode).
 	links map[uint64][]link.Link
+
+	// seedMu guards seededIPs. SyncRoutes (gRPC handler goroutine) and
+	// GarbageCollectDNS (periodic goroutine) both touch it.
+	seedMu sync.Mutex
+	// seededIPs is the set of IP-literal destinations whose dns_cache entries
+	// SyncRoutes owns. GarbageCollectDNS never evicts these: a CoreDNS overwrite
+	// would otherwise lower the entry's TTL to a short DNS TTL and GC would drop
+	// it, failing a still-valid IP rule's route closed until the next reconcile.
+	// SyncRoutes is the only deleter of seeded entries (when the IP rule goes).
+	seededIPs map[uint32]struct{}
 }
 
 // NewManager creates a new eBPF manager. Call Load() or OpenPinned() before use.
 func NewManager(log *logger.Logger) *Manager {
 	return &Manager{
-		pinPath: PinPath,
-		log:     log,
-		links:   make(map[uint64][]link.Link),
+		pinPath:   PinPath,
+		log:       log,
+		links:     make(map[uint64][]link.Link),
+		seededIPs: make(map[uint32]struct{}),
 	}
 }
 
@@ -143,13 +154,15 @@ func (m *Manager) Load() error {
 	// Pin programs so command-mode instances can open them for cgroup attachment.
 	// Remove stale pins first — the embedded ELF may have newer programs.
 	progs := map[string]*ebpf.Program{
-		"clawker_connect4":    m.objs.ClawkerConnect4,
-		"clawker_sendmsg4":    m.objs.ClawkerSendmsg4,
-		"clawker_recvmsg4":    m.objs.ClawkerRecvmsg4,
-		"clawker_connect6":    m.objs.ClawkerConnect6,
-		"clawker_sendmsg6":    m.objs.ClawkerSendmsg6,
-		"clawker_recvmsg6":    m.objs.ClawkerRecvmsg6,
-		"clawker_sock_create": m.objs.ClawkerSockCreate,
+		"clawker_connect4":     m.objs.ClawkerConnect4,
+		"clawker_sendmsg4":     m.objs.ClawkerSendmsg4,
+		"clawker_recvmsg4":     m.objs.ClawkerRecvmsg4,
+		"clawker_connect6":     m.objs.ClawkerConnect6,
+		"clawker_sendmsg6":     m.objs.ClawkerSendmsg6,
+		"clawker_recvmsg6":     m.objs.ClawkerRecvmsg6,
+		"clawker_getpeername4": m.objs.ClawkerGetpeername4,
+		"clawker_getpeername6": m.objs.ClawkerGetpeername6,
+		"clawker_sock_create":  m.objs.ClawkerSockCreate,
 	}
 	for name, prog := range progs {
 		pin := filepath.Join(m.pinPath, name)
@@ -176,6 +189,7 @@ func (m *Manager) OpenPinned() error {
 		"bypass_map":      &m.objs.BypassMap,
 		"dns_cache":       &m.objs.DnsCache,
 		"route_map":       &m.objs.RouteMap,
+		"udp_flow_map":    &m.objs.UdpFlowMap,
 		"metrics_map":     &m.objs.MetricsMap,
 		"ratelimit_state": &m.objs.RatelimitState,
 		"ratelimit_drops": &m.objs.RatelimitDrops,
@@ -189,13 +203,15 @@ func (m *Manager) OpenPinned() error {
 	}
 
 	progs := map[string]**ebpf.Program{
-		"clawker_connect4":    &m.objs.ClawkerConnect4,
-		"clawker_sendmsg4":    &m.objs.ClawkerSendmsg4,
-		"clawker_recvmsg4":    &m.objs.ClawkerRecvmsg4,
-		"clawker_connect6":    &m.objs.ClawkerConnect6,
-		"clawker_sendmsg6":    &m.objs.ClawkerSendmsg6,
-		"clawker_recvmsg6":    &m.objs.ClawkerRecvmsg6,
-		"clawker_sock_create": &m.objs.ClawkerSockCreate,
+		"clawker_connect4":     &m.objs.ClawkerConnect4,
+		"clawker_sendmsg4":     &m.objs.ClawkerSendmsg4,
+		"clawker_recvmsg4":     &m.objs.ClawkerRecvmsg4,
+		"clawker_connect6":     &m.objs.ClawkerConnect6,
+		"clawker_sendmsg6":     &m.objs.ClawkerSendmsg6,
+		"clawker_recvmsg6":     &m.objs.ClawkerRecvmsg6,
+		"clawker_getpeername4": &m.objs.ClawkerGetpeername4,
+		"clawker_getpeername6": &m.objs.ClawkerGetpeername6,
+		"clawker_sock_create":  &m.objs.ClawkerSockCreate,
 	}
 	for name, target := range progs {
 		p, err := ebpf.LoadPinnedProgram(filepath.Join(m.pinPath, name), nil)
@@ -312,9 +328,8 @@ func (m *Manager) cleanupStaleLinks() {
 		cleaned++
 	}
 
-	// numBPFPrograms is the number of BPF programs attached per cgroup
-	// (connect4, sendmsg4, recvmsg4, connect6, sendmsg6, recvmsg6, sock_create).
-	const numBPFPrograms = 7
+	// Programs attached per cgroup — derived from the single source of truth.
+	numBPFPrograms := len(m.cgroupAttachments())
 
 	if cleaned > 0 {
 		m.log.Info().Int("cleaned", cleaned).Int("kept", len(liveIDs)*numBPFPrograms).
@@ -334,8 +349,8 @@ func (m *Manager) cleanupLinks(cgroupID uint64) {
 	}
 
 	// Remove pinned link files for this cgroup.
-	progNames := []string{"connect4", "sendmsg4", "recvmsg4", "connect6", "sendmsg6", "recvmsg6", "sock_create"}
-	for _, name := range progNames {
+	for _, a := range m.cgroupAttachments() {
+		name := a.name
 		pin := filepath.Join(m.pinPath, fmt.Sprintf("link_%s_%d", name, cgroupID))
 		os.Remove(pin)
 	}
@@ -391,8 +406,9 @@ func (m *Manager) CleanupStaleBypass() (int, error) {
 	return cleared, errors.Join(errs...)
 }
 
-// FlushAll clears all per-container eBPF state: empties container_map
-// and bypass_map, unpins every link. Called ONLY on drain-to-zero
+// FlushAll clears all per-container/per-flow eBPF state: empties
+// container_map, bypass_map, ratelimit_state, udp_flow_map, and
+// ratelimit_drops, then unpins every link. Called ONLY on drain-to-zero
 // shutdown (INV-B2-007) when no agents remain — this is the drain
 // complement to CleanupAllLinks, which only touches pinned links.
 //
@@ -458,6 +474,27 @@ func (m *Manager) FlushAll() error {
 		for _, id := range keys {
 			if err := m.objs.RatelimitState.Delete(id); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
 				errs = append(errs, fmt.Errorf("flush ratelimit_state[%d]: %w", id, err))
+			}
+		}
+	}
+
+	// Drain udp_flow_map (UDP reverse-NAT state). LRU eviction would eventually
+	// clear it, but draining on drain-to-zero keeps the post-drain state
+	// deterministic alongside the other per-flow maps.
+	if m.objs.UdpFlowMap != nil {
+		var keys []clawkerUdpFlowKey
+		var key clawkerUdpFlowKey
+		var val clawkerUdpFlowVal
+		iter := m.objs.UdpFlowMap.Iterate()
+		for iter.Next(&key, &val) {
+			keys = append(keys, key)
+		}
+		if err := iter.Err(); err != nil {
+			errs = append(errs, fmt.Errorf("iterate udp_flow_map: %w", err))
+		}
+		for _, k := range keys {
+			if err := m.objs.UdpFlowMap.Delete(k); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+				errs = append(errs, fmt.Errorf("flush udp_flow_map[cookie=%d,backend_port=%d]: %w", k.Cookie, k.BackendPort, err))
 			}
 		}
 	}
@@ -535,6 +572,33 @@ func clearBypass(m bypassMap, cgroupID uint64, log *logger.Logger) error {
 	return err
 }
 
+// cgroupAttachment binds a program's pin/link name to its loaded program and
+// cgroup attach type.
+type cgroupAttachment struct {
+	name string
+	prog *ebpf.Program
+	typ  ebpf.AttachType
+}
+
+// cgroupAttachments is the single source of truth for the set of cgroup BPF
+// programs clawker attaches per container — Install attaches them, cleanupLinks
+// and Remove unpin their links by name, and the count drives the cleanup log.
+// Adding or removing a program is a one-line edit here (plus the two pin maps in
+// Load/OpenPinned, which must bind struct-field addresses and can't derive).
+func (m *Manager) cgroupAttachments() []cgroupAttachment {
+	return []cgroupAttachment{
+		{"connect4", m.objs.ClawkerConnect4, ebpf.AttachCGroupInet4Connect},
+		{"sendmsg4", m.objs.ClawkerSendmsg4, ebpf.AttachCGroupUDP4Sendmsg},
+		{"recvmsg4", m.objs.ClawkerRecvmsg4, ebpf.AttachCGroupUDP4Recvmsg},
+		{"connect6", m.objs.ClawkerConnect6, ebpf.AttachCGroupInet6Connect},
+		{"sendmsg6", m.objs.ClawkerSendmsg6, ebpf.AttachCGroupUDP6Sendmsg},
+		{"recvmsg6", m.objs.ClawkerRecvmsg6, ebpf.AttachCGroupUDP6Recvmsg},
+		{"getpeername4", m.objs.ClawkerGetpeername4, ebpf.AttachCgroupInet4GetPeername},
+		{"getpeername6", m.objs.ClawkerGetpeername6, ebpf.AttachCgroupInet6GetPeername},
+		{"sock_create", m.objs.ClawkerSockCreate, ebpf.AttachCGroupInetSockCreate},
+	}
+}
+
 // Install attaches BPF programs to a container's cgroup and populates routing maps.
 // Cleans up any stale links for this cgroup before attaching and clears any
 // stale bypass flag so the container lands in a known enforced state.
@@ -559,24 +623,8 @@ func (m *Manager) Install(cgroupID uint64, cgroupPath string, cfg clawkerContain
 		return fmt.Errorf("ebpf enable: updating container_map: %w", err)
 	}
 
-	type attachment struct {
-		name string
-		prog *ebpf.Program
-		typ  ebpf.AttachType
-	}
-
-	attachments := []attachment{
-		{"connect4", m.objs.ClawkerConnect4, ebpf.AttachCGroupInet4Connect},
-		{"sendmsg4", m.objs.ClawkerSendmsg4, ebpf.AttachCGroupUDP4Sendmsg},
-		{"recvmsg4", m.objs.ClawkerRecvmsg4, ebpf.AttachCGroupUDP4Recvmsg},
-		{"connect6", m.objs.ClawkerConnect6, ebpf.AttachCGroupInet6Connect},
-		{"sendmsg6", m.objs.ClawkerSendmsg6, ebpf.AttachCGroupUDP6Sendmsg},
-		{"recvmsg6", m.objs.ClawkerRecvmsg6, ebpf.AttachCGroupUDP6Recvmsg},
-		{"sock_create", m.objs.ClawkerSockCreate, ebpf.AttachCGroupInetSockCreate},
-	}
-
 	var linked []link.Link
-	for _, a := range attachments {
+	for _, a := range m.cgroupAttachments() {
 		l, err := link.AttachCgroup(link.CgroupOptions{
 			Path:    cgroupPath,
 			Attach:  a.typ,
@@ -617,8 +665,8 @@ func (m *Manager) Remove(cgroupID uint64) error {
 	}
 
 	// Also unpin any persisted links for this cgroup.
-	linkNames := []string{"connect4", "sendmsg4", "recvmsg4", "connect6", "sendmsg6", "recvmsg6", "sock_create"}
-	for _, name := range linkNames {
+	for _, a := range m.cgroupAttachments() {
+		name := a.name
 		pinPath := filepath.Join(m.pinPath, fmt.Sprintf("link_%s_%d", name, cgroupID))
 		l, err := link.LoadPinnedLink(pinPath, nil)
 		if err == nil {
@@ -672,8 +720,9 @@ func (m *Manager) SyncRoutes(routes []Route) error {
 			m.log.Warn().Err(err).
 				Uint32("domain_hash", k.DomainHash).
 				Uint16("dst_port", k.DstPort).
+				Uint8("l4_proto", k.L4Proto).
 				Msg("ebpf sync-routes: deleting stale route_map entry")
-			errs = append(errs, fmt.Errorf("delete route_map[domain_hash=%d, dst_port=%d]: %w", k.DomainHash, k.DstPort, err))
+			errs = append(errs, fmt.Errorf("delete route_map[domain_hash=%d, dst_port=%d, l4_proto=%d]: %w", k.DomainHash, k.DstPort, k.L4Proto, err))
 		}
 	}
 
@@ -682,19 +731,91 @@ func (m *Manager) SyncRoutes(routes []Route) error {
 		key := clawkerRouteKey{
 			DomainHash: r.DomainHash,
 			DstPort:    r.DstPort,
+			L4Proto:    r.L4Proto,
 		}
 		val := clawkerRouteVal{EnvoyPort: r.EnvoyPort}
 		if err := m.objs.RouteMap.Update(key, val, ebpf.UpdateAny); err != nil {
 			m.log.Warn().Err(err).
 				Uint32("domain_hash", r.DomainHash).
 				Uint16("dst_port", r.DstPort).
+				Uint8("l4_proto", r.L4Proto).
 				Msg("ebpf sync-routes: updating route_map")
-			errs = append(errs, fmt.Errorf("update route_map[domain_hash=%d, dst_port=%d]: %w", r.DomainHash, r.DstPort, err))
+			errs = append(errs, fmt.Errorf("update route_map[domain_hash=%d, dst_port=%d, l4_proto=%d]: %w", r.DomainHash, r.DstPort, r.L4Proto, err))
 		}
 	}
 
-	m.log.Info().Int("routes", len(routes)).Int("errors", len(errs)).Msg("global route_map synced")
+	// Seed dns_cache for IP-literal routes. The agent connects to a bare IP,
+	// which CoreDNS never resolved, so connect4/sendmsg4's dns_cache lookup would
+	// miss and the datagram would be denied. Writing dns_cache[ip]=DomainHash(ip)
+	// (the same hash the route is keyed on) makes the existing lookup hit. FQDN
+	// routes carry SeedIP==0 — CoreDNS populates their dns_cache entry.
+	//
+	// dns_cache is keyed by destination IP and has two writers: this seed and
+	// the CoreDNS dnsbpf plugin (which rewrites dns_cache[ip] on every A record).
+	// If an operator configures both an FQDN rule and a bare-IP rule for an IP
+	// the FQDN resolves to, both writers contend for that one key. The seed is
+	// insert-only (UpdateNoExist) so CoreDNS — the high-frequency, per-resolution
+	// writer — stays authoritative on any contested IP: an ErrKeyExist means
+	// CoreDNS already owns the entry, which is a no-op for us, not a failure.
+	// Both rules still route to valid Envoy listeners either way, so this only
+	// affects access-log attribution on the contested IP, never enforcement.
+	// GarbageCollectDNS skips every IP in m.seededIPs, so even after a CoreDNS
+	// overwrite lowers the entry to a short DNS TTL the seed is never evicted
+	// while the IP rule is live — the route can't fail closed between reconciles.
+	// The durable collision fix (keying routes on FQDN hashes) is tracked
+	// separately.
+	seeded := 0
+	for _, r := range routes {
+		if r.SeedIP == 0 {
+			continue
+		}
+		if err := m.seedDNSCacheIfAbsent(r.SeedIP, r.DomainHash, dnsSeedTTLSeconds); err != nil {
+			m.log.Warn().Err(err).
+				Uint32("seed_ip", r.SeedIP).
+				Uint32("domain_hash", r.DomainHash).
+				Msg("ebpf sync-routes: seeding dns_cache for IP rule")
+			errs = append(errs, fmt.Errorf("seed dns_cache[ip=%d, domain_hash=%d]: %w", r.SeedIP, r.DomainHash, err))
+			continue
+		}
+		seeded++
+	}
+
+	// Update the protected-seed set and remove dns_cache entries for IP rules
+	// that went away. Without the delete, an orphan seed would linger for the
+	// full seed TTL misattributing access-log records; dropping it also lets a
+	// later GC pass reclaim the slot. A co-resident FQDN rule for the same IP
+	// just re-resolves through CoreDNS on its next query.
+	m.seedMu.Lock()
+	next, orphaned := diffSeededIPs(routes, m.seededIPs)
+	m.seededIPs = next
+	m.seedMu.Unlock()
+	for _, ip := range orphaned {
+		if err := m.objs.DnsCache.Delete(ip); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+			m.log.Debug().Err(err).Uint32("ip", ip).Msg("ebpf sync-routes: removing orphan dns_cache seed (non-fatal)")
+		}
+	}
+
+	m.log.Info().Int("routes", len(routes)).Int("ip_seeds", seeded).Int("errors", len(errs)).Msg("global route_map synced")
 	return errors.Join(errs...)
+}
+
+// diffSeededIPs derives, from a SyncRoutes call's routes and the previously
+// seeded IP set, the new seed set and the IPs that were seeded before but are no
+// longer present (orphans whose dns_cache entries should be removed). Pure so the
+// seed-lifecycle logic is unit-testable without a kernel.
+func diffSeededIPs(routes []Route, prev map[uint32]struct{}) (next map[uint32]struct{}, orphaned []uint32) {
+	next = make(map[uint32]struct{})
+	for _, r := range routes {
+		if r.SeedIP != 0 {
+			next[r.SeedIP] = struct{}{}
+		}
+	}
+	for ip := range prev {
+		if _, still := next[ip]; !still {
+			orphaned = append(orphaned, ip)
+		}
+	}
+	return next, orphaned
 }
 
 // Disable sets the bypass flag for a container, allowing unrestricted egress.
@@ -716,13 +837,34 @@ func (m *Manager) Enable(cgroupID uint64) error {
 	return nil
 }
 
-// UpdateDNSCache writes a DNS resolution result to the dns_cache map.
+// UpdateDNSCache writes a DNS resolution result to the dns_cache map,
+// overwriting any existing entry for the IP (last-writer-wins). Used by the
+// break-glass ebpf-manager CLI, where a manual override is the intent.
 func (m *Manager) UpdateDNSCache(ip uint32, domainHash uint32, ttlSeconds uint32) error {
 	entry := clawkerDnsEntry{
 		DomainHash: domainHash,
 		ExpireTs:   uint32(time.Now().Unix()) + ttlSeconds,
 	}
 	return m.objs.DnsCache.Update(ip, entry, ebpf.UpdateAny)
+}
+
+// seedDNSCacheIfAbsent writes a dns_cache entry only when the IP is not already
+// present (UpdateNoExist). Used by SyncRoutes to seed IP-literal routes without
+// clobbering a CoreDNS-populated entry for the same IP — ErrKeyExist means
+// CoreDNS already owns the key and is treated as a successful no-op. See the
+// two-writer contention note in SyncRoutes.
+func (m *Manager) seedDNSCacheIfAbsent(ip uint32, domainHash uint32, ttlSeconds uint32) error {
+	entry := clawkerDnsEntry{
+		DomainHash: domainHash,
+		ExpireTs:   uint32(time.Now().Unix()) + ttlSeconds,
+	}
+	if err := m.objs.DnsCache.Update(ip, entry, ebpf.UpdateNoExist); err != nil {
+		if errors.Is(err, ebpf.ErrKeyExist) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 // deleteExpiredDNSEntries clears the given keys from a BPF map, returning
@@ -754,15 +896,28 @@ func deleteExpiredDNSEntries(m bypassMap, keys []uint32, log *logger.Logger) int
 // next GC pass will try again.
 func (m *Manager) GarbageCollectDNS() int {
 	now := uint32(time.Now().Unix())
+
+	// Snapshot the protected IP-literal seeds. Their lifecycle is owned by
+	// SyncRoutes (it deletes them when the IP rule is removed); GC must never
+	// evict a live seed, or a CoreDNS overwrite + short TTL would fail the rule's
+	// route closed until the next reconcile.
+	m.seedMu.Lock()
+	protected := m.seededIPs
+	m.seedMu.Unlock()
+
 	var ip uint32
 	var entry clawkerDnsEntry
 	var expired []uint32
 
 	iter := m.objs.DnsCache.Iterate()
 	for iter.Next(&ip, &entry) {
-		if entry.ExpireTs < now {
-			expired = append(expired, ip)
+		if entry.ExpireTs >= now {
+			continue
 		}
+		if _, isSeed := protected[ip]; isSeed {
+			continue
+		}
+		expired = append(expired, ip)
 	}
 	if err := iter.Err(); err != nil {
 		m.log.Warn().Err(err).Msg("ebpf gc-dns: iterating dns_cache (next pass will retry)")
@@ -852,6 +1007,7 @@ func (m *Manager) DumpRoutes() ([]Route, error) {
 			DomainHash: k.DomainHash,
 			DstPort:    k.DstPort,
 			EnvoyPort:  v.EnvoyPort,
+			L4Proto:    k.L4Proto,
 		})
 	}
 	if err := iter.Err(); err != nil {
@@ -927,12 +1083,30 @@ func (m *Manager) DumpDNS() ([]DNSCacheEntry, error) {
 	return out, nil
 }
 
-// Route describes a per-domain TCP route for a container, identified by domain hash.
+// Route describes a per-domain egress route for a container, identified by
+// domain hash. L4Proto (L4ProtoTCP/L4ProtoUDP) selects the transport so TCP and
+// UDP routes for the same {domain, port} stay independent in the route_map.
 type Route struct {
 	DomainHash uint32 `json:"domain_hash"`
 	DstPort    uint16 `json:"dst_port"`
 	EnvoyPort  uint16 `json:"envoy_port"`
+	L4Proto    uint8  `json:"l4_proto"`
+	// SeedIP, when non-zero, is a literal IPv4 dst (network byte order) whose
+	// dns_cache entry SyncRoutes must seed (dns_cache[SeedIP]=DomainHash) so the
+	// connect4/sendmsg4 lookup hits. The agent connects to the bare IP, which
+	// CoreDNS never resolved, so without the seed the lookup misses. Zero for
+	// FQDN routes (CoreDNS populates dns_cache on resolution).
+	SeedIP uint32 `json:"seed_ip,omitempty"`
 }
+
+// dnsSeedTTLSeconds is the TTL for SyncRoutes-seeded IP-literal dns_cache
+// entries. Seeding is insert-only (seedDNSCacheIfAbsent uses UpdateNoExist and
+// no-ops on ErrKeyExist), so a re-seed on a subsequent rule change/reload never
+// refreshes an existing entry's TTL — it must outlive the reconcile cadence on
+// its own. The long TTL is therefore load-bearing: it keeps the seed alive
+// across reconciles without GarbageCollectDNS evicting it (which is also why
+// GarbageCollectDNS skips m.seededIPs while the IP rule is live).
+const dnsSeedTTLSeconds uint32 = 365 * 24 * 3600
 
 // NewContainerConfig builds a BPF container_config from network parameters.
 func NewContainerConfig(envoyIP, corednsIP, gatewayIP, cidr string,

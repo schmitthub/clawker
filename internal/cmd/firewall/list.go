@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
@@ -126,10 +125,7 @@ func listRun(ctx context.Context, opts *ListOptions) error {
 		if action == "" {
 			action = "allow"
 		}
-		port := ""
-		if r.GetPort() > 0 {
-			port = strconv.FormatUint(uint64(r.GetPort()), 10)
-		}
+		port := r.GetPort()
 
 		var paths []pathRow
 		if pr := r.GetPathRules(); len(pr) > 0 {

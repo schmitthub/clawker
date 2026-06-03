@@ -44,7 +44,8 @@ services:
       - "8443:8443"           # Alternate HTTPS (legacy)
       - "9443:9443"           # Alternate HTTPS (port bypass testing)
       - "8080:8080"           # Plain HTTP (always on, for ngrok)
-      - "5454:5353/udp"       # UDP (protocol bypass testing)
+      - "5454:5353/udp"       # UDP (raw-udp routing test — ngrok UDP edge)
+      - "7777:7777"           # Raw TCP echo (opaque tcp_proxy test — ngrok TCP edge)
     expose:
       - "443"                 # Standard HTTPS (reachable on clawker-net)
     cap_add:

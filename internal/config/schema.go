@@ -140,12 +140,31 @@ type PathRule struct {
 // Dst is the domain or IP, Proto defaults to "https" (TLS-MITM HCM), Action defaults to "allow".
 // The legacy value `proto: tls` is silently translated to `proto: https` at normalization time.
 type EgressRule struct {
-	Dst         string     `yaml:"dst" label:"Destination" desc:"Domain or IP the container needs to reach (e.g. api.github.com, registry.npmjs.org)"`
-	Proto       string     `yaml:"proto,omitempty" label:"Protocol" desc:"L7 protocol: https (TLS-MITM, default), http (plaintext HCM), ssh, tcp, or any opaque L7 name for TCP pass-through"`
-	Port        int        `yaml:"port,omitempty" label:"Port" desc:"Override the default port (443 for https, 80 for http, 22 for ssh)"`
+	Dst   string `yaml:"dst" label:"Destination" desc:"Domain or IP the container needs to reach (e.g. api.github.com, registry.npmjs.org)"`
+	Proto string `yaml:"proto,omitempty" label:"Protocol" desc:"L7 protocol: https (TLS-MITM, default), http (plaintext HCM), ws/wss (websocket over http/https), ssh, tcp, udp, or any opaque L7 name for TCP pass-through"`
+	// Port is the destination port the rule applies to. It is dynamic: a single
+	// port ("443") or an inclusive range ("9000-9100", lo-hi) delimited by a dash.
+	// Empty means the protocol default (443 https/wss, 80 http/ws, 22 ssh). A range
+	// is meaningful only for opaque protos (tcp/ssh/udp), where it expands into one
+	// self-secure pinned listener+cluster PER port in the range — never
+	// ORIGINAL_DST, so a compromised agent can't redirect within the range; it is
+	// ignored for http/https/ws/wss (those scope by Host/SNI, not a fan of ports).
+	// Values are validated (1..65535, lo<=hi) at ingestion: firewall.ValidateRule
+	// rejects an invalid spec on the firewall add / BootstrapServicesPreStart
+	// path, so a bad port fails the operation rather than silently widening
+	// access. The defensive NormalizeAndDedup path drops-with-warning only if
+	// invalid data somehow reaches the store.
+	Port        string     `yaml:"port,omitempty" label:"Port" desc:"Destination port: a single port (443) or an inclusive range (9000-9100); empty = protocol default"`
 	Action      string     `yaml:"action,omitempty" label:"Action" desc:"Allow or deny traffic to this destination (default: allow)"`
 	PathRules   []PathRule `yaml:"path_rules,omitempty" label:"Path Rules" desc:"Fine-grained path filtering (only applies to https/http)"`
 	PathDefault string     `yaml:"path_default,omitempty" label:"Path Default" desc:"What to do with HTTP paths that don't match any path rule (allow or deny)"`
+	// InsecureSkipTLSVerify, when true, makes Envoy accept an untrusted/self-signed
+	// upstream TLS certificate for this destination (trust_chain_verification:
+	// ACCEPT_UNTRUSTED) instead of validating it against the system CA. Default
+	// false = safe-by-default verification. Only meaningful for TLS-reencrypt protos
+	// (https/wss); a no-op for plaintext/opaque flows. Real for local-dev https to an
+	// IP or a self-signed dev host — orthogonal to whether the dst is an IP or FQDN.
+	InsecureSkipTLSVerify bool `yaml:"insecure_skip_tls_verify,omitempty" label:"Insecure Skip TLS Verify" desc:"Accept a self-signed/untrusted upstream TLS cert for this destination (default: false). Use only for trusted local-dev endpoints."`
 }
 
 // FirewallConfig defines per-project firewall rules in clawker.yaml.

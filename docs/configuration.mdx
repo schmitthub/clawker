@@ -244,10 +244,10 @@ security:
     rules:
       # Domain or IP the container needs to reach (e.g. api.github.com, registry.npmjs.org)
       - dst: <string>  # default: n/a | required: false
-        # L7 protocol: https (TLS-MITM, default), http (plaintext HCM), ssh, tcp, or any opaque L7 name for TCP pass-through
+        # L7 protocol: https (TLS-MITM, default), http (plaintext HCM), ws/wss (websocket over http/https), ssh, tcp, udp, or any opaque L7 name for TCP pass-through
         proto: <string>  # default: n/a | required: false
-        # Override the default port (443 for https, 80 for http, 22 for ssh)
-        port: <integer>  # default: n/a | required: false
+        # Destination port: a single port (443) or an inclusive range (9000-9100); empty = protocol default
+        port: <string>  # default: n/a | required: false
         # Allow or deny traffic to this destination (default: allow)
         action: <string>  # default: n/a | required: false
         # Fine-grained path filtering (only applies to https/http)
@@ -258,6 +258,8 @@ security:
             action: <string>  # default: n/a | required: false
         # What to do with HTTP paths that don't match any path rule (allow or deny)
         path_default: <string>  # default: n/a | required: false
+        # Accept a self-signed/untrusted upstream TLS cert for this destination (default: false). Use only for trusted local-dev endpoints.
+        insecure_skip_tls_verify: <boolean>  # default: n/a | required: false
   # Mount the host Docker socket (DooD, not DinD) — lets the container manage sibling containers but is a security risk
   docker_socket: <boolean>  # default: false | required: true
   # Extra Linux capabilities for the agent container. Empty by default — the eBPF firewall is attached from outside, so no in-container caps are needed. Add e.g. SYS_PTRACE only if your workflow requires it.

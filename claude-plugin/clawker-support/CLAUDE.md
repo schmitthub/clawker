@@ -38,7 +38,12 @@ reference and should still be fetched for field-level details.
 ### What does NOT belong in skill files
 
 - Exhaustive field name lists (point to docs instead)
-- CLI flag syntax (point to docs instead)
+- CLI flag syntax (point to docs instead) — **exception:** the firewall
+  path-scoping flags (`--path`/`--action`, `path_default`/`path_rules`) are
+  deliberate and load-bearing security methodology, kept concrete in
+  `firewall-security.md`, SKILL.md, and `troubleshooting.md`. The narrowest-
+  scope advice is meaningless without them. Treat as a curated reference, not
+  drift-prone syntax.
 - Domain lists (hardcoded firewall domains, registry URLs)
 - Version numbers or base image digests
 
@@ -61,6 +66,7 @@ claude-plugin/clawker-support/
         ├── troubleshooting.md    # Entry point routing to domain-specific sections
         ├── docker-hygiene.md     # Docker disk space diagnosis and cleanup
         ├── monitoring.md         # OTel + OpenSearch + Prometheus stack, Clawker workspace, telemetry env, troubleshooting
+        ├── firewall-security.md  # Proactive VCS egress lockdown — git credential-exfil defense (HTTPS path-scoping, GitHub write surface, monitoring-discovery loop)
         └── known-issues.md       # Active bugs and workarounds
 ```
 

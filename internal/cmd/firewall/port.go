@@ -1,21 +1,22 @@
 package firewall
 
-import "github.com/schmitthub/clawker/internal/cmdutil"
+import (
+	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/config"
+)
 
-// validatePortFlag validates a user-supplied --port value for firewall
-// rule commands. Zero means "protocol default" (resolved server-side by
-// NormalizeRule — e.g. 443 for tls) and is accepted. Any non-zero value
-// must fall in the TCP port range 1..65535.
+// validatePortFlag validates a user-supplied --port value for firewall rule
+// commands. The value is the dynamic port spec: empty means "protocol default"
+// (resolved server-side by NormalizeRule — e.g. 443 for https) and is accepted;
+// otherwise it must be a single port ("443") or an inclusive range ("9000-9100",
+// lo-hi), with every port in 1..65535 and lo<=hi.
 //
-// Without this guard, negative ints silently wrap when cast to the
-// protobuf uint32 (e.g. -1 → 4294967295), producing nonsense rules that
-// Envoy rejects at reload time and that Remove cannot match.
-func validatePortFlag(port int) error {
-	if port == 0 {
-		return nil
-	}
-	if port < 1 || port > 65535 {
-		return cmdutil.FlagErrorf("invalid --port %d: must be between 1 and 65535", port)
+// Validating here gives the user an immediate, descriptive error instead of a
+// rule that the control plane would silently drop at ingestion (a malformed
+// port must never collapse to a default and widen egress).
+func validatePortFlag(port string) error {
+	if _, _, _, err := config.ParsePortSpec(port); err != nil {
+		return cmdutil.FlagErrorf("--port: %v", err)
 	}
 	return nil
 }

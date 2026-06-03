@@ -731,8 +731,8 @@ func TestHandler_FirewallInit_SyncsRoutesFromStore(t *testing.T) {
 	// Pre-seed the store via the handler's own helper so the rules land
 	// on disk exactly as a prior CP run would have left them.
 	statuses, err := h.addRulesToStore([]config.EgressRule{
-		{Dst: "github.com", Proto: "ssh", Port: 22, Action: "allow"},
-		{Dst: "example.com", Proto: "https", Port: 443, Action: "allow"},
+		{Dst: "github.com", Proto: "ssh", Port: "22", Action: "allow"},
+		{Dst: "example.com", Proto: "https", Port: "443", Action: "allow"},
 	})
 	require.NoError(t, err)
 	require.Len(t, statuses, 2, "one status per input rule")
@@ -750,31 +750,37 @@ func TestHandler_FirewallInit_SyncsRoutesFromStore(t *testing.T) {
 	require.Len(t, calls, 1, "FirewallInit must SyncRoutes exactly once during bringup")
 
 	routes := calls[0].Routes
-	require.Len(t, routes, 2, "every persisted rule must appear in the route_map seed")
+	require.Len(t, routes, 3, "ssh route + https TCP egress route + https QUIC/h3 UDP route")
 
-	// Locate each rule's route by DstPort.
-	var sshRoute, tlsRoute *ebpf.Route
+	// Locate each route by (DstPort, l4_proto). The https rule projects two:
+	// the TCP egress route and the QUIC/h3 (UDP) sibling on the same port.
+	var sshRoute, tlsRoute, quicRoute *ebpf.Route
 	for i := range routes {
-		switch routes[i].DstPort {
-		case 22:
+		switch {
+		case routes[i].DstPort == 22:
 			sshRoute = &routes[i]
-		case 443:
+		case routes[i].DstPort == 443 && routes[i].L4Proto == ebpf.L4ProtoTCP:
 			tlsRoute = &routes[i]
+		case routes[i].DstPort == 443 && routes[i].L4Proto == ebpf.L4ProtoUDP:
+			quicRoute = &routes[i]
 		}
 	}
 	require.NotNil(t, sshRoute, "SSH rule missing from route_map seed")
 	require.NotNil(t, tlsRoute, "TLS rule missing from route_map seed")
+	require.NotNil(t, quicRoute, "QUIC/h3 sibling missing from route_map seed")
 	assert.NotZero(t, sshRoute.DomainHash)
 	assert.NotZero(t, tlsRoute.DomainHash)
+	assert.Equal(t, tlsRoute.DomainHash, quicRoute.DomainHash, "QUIC sibling shares the https domain hash")
 
-	// TLS rule routes to the main Envoy egress listener.
-	// SSH rule routes to a dedicated per-rule TCP listener at
-	// TCPPortBase + idx. A refactor that flipped these port
-	// assignments would silently misroute traffic through the wrong
-	// listener type (e.g. SSH reaching the TLS listener, which
-	// tls_inspector would reject).
+	// TLS + QUIC/h3 both target the main Envoy egress listener (TCP and UDP on
+	// the same port). SSH routes to a dedicated per-rule TCP listener at
+	// TCPPortBase + idx. A refactor that flipped these port assignments would
+	// silently misroute traffic through the wrong listener type (e.g. SSH
+	// reaching the TLS listener, which tls_inspector would reject).
 	assert.Equal(t, uint16(consts.EnvoyEgressPort), tlsRoute.EnvoyPort,
 		"TLS rule must target the main egress listener port")
+	assert.Equal(t, uint16(consts.EnvoyEgressPort), quicRoute.EnvoyPort,
+		"QUIC/h3 sibling must target the egress (QUIC) listener port")
 	assert.GreaterOrEqual(t, sshRoute.EnvoyPort, uint16(consts.EnvoyTCPPortBase),
 		"SSH rule must target a dedicated TCP listener port")
 }
@@ -794,8 +800,8 @@ func TestHandler_FirewallInit_EmitsNormalizeWarningsButSyncsSurvivors(t *testing
 	// the second collides on the same RuleKey and reports UNCHANGED
 	// (identical re-apply after the first insert).
 	statuses, err := h.addRulesToStore([]config.EgressRule{
-		{Dst: "Example.Com", Proto: "https", Port: 443, Action: "allow"},
-		{Dst: "example.com", Proto: "https", Port: 443, Action: "allow"},
+		{Dst: "Example.Com", Proto: "https", Port: "443", Action: "allow"},
+		{Dst: "example.com", Proto: "https", Port: "443", Action: "allow"},
 	})
 	require.NoError(t, err)
 	require.Len(t, statuses, 2, "one status per input rule even when keys collide")
@@ -993,7 +999,7 @@ func TestProtoRulesRoundTrip(t *testing.T) {
 		{
 			name: "tls with path rules",
 			in: []*adminv1.EgressRule{{
-				Dst: "api.example.com", Proto: "https", Port: 443, Action: "allow",
+				Dst: "api.example.com", Proto: "https", Port: "443", Action: "allow",
 				PathRules: []*adminv1.PathRule{
 					{Path: "/v1", Action: "allow"},
 					{Path: "/admin", Action: "deny"},
@@ -1004,22 +1010,35 @@ func TestProtoRulesRoundTrip(t *testing.T) {
 		{
 			name: "wildcard dst, no path rules",
 			in: []*adminv1.EgressRule{{
-				Dst: "*.github.com", Proto: "https", Port: 443, Action: "allow",
+				Dst: "*.github.com", Proto: "https", Port: "443", Action: "allow",
 			}},
 		},
 		{
 			name: "http proto, path default only",
 			in: []*adminv1.EgressRule{{
-				Dst: "plain.example.com", Proto: "http", Port: 80, Action: "allow",
+				Dst: "plain.example.com", Proto: "http", Port: "80", Action: "allow",
 				PathDefault: "deny",
 			}},
 		},
 		{
 			name: "multiple rules, mixed protos",
 			in: []*adminv1.EgressRule{
-				{Dst: "a.example.com", Proto: "https", Port: 443, Action: "allow"},
-				{Dst: "b.example.com", Proto: "ssh", Port: 22, Action: "allow"},
-				{Dst: "c.example.com", Proto: "http", Port: 80, Action: "deny"},
+				{Dst: "a.example.com", Proto: "https", Port: "443", Action: "allow"},
+				{Dst: "b.example.com", Proto: "ssh", Port: "22", Action: "allow"},
+				{Dst: "c.example.com", Proto: "http", Port: "80", Action: "deny"},
+			},
+		},
+		{
+			// Regression: a port range MUST survive the proto round-trip. The
+			// earlier split-field design (uint32 port + a config-only PortRange
+			// string with no proto field) silently dropped the range here, so
+			// every port_range rule collapsed to the default port on the live CP
+			// path while golden/direct-gen tests — which bypass this boundary —
+			// stayed green. The dynamic string `port` closes that gap.
+			name: "opaque tcp port range survives round-trip",
+			in: []*adminv1.EgressRule{
+				{Dst: "cluster.example.com", Proto: "tcp", Port: "9000-9002", Action: "allow"},
+				{Dst: "198.51.100.9", Proto: "tcp", Port: "9100-9101", Action: "allow"},
 			},
 		},
 	}
@@ -1089,19 +1108,26 @@ func TestHandler_Reload_CallsSyncRoutesAfterReload(t *testing.T) {
 	h, stack := ruleStoreHandler(t, mock)
 
 	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
-		Rules: []*adminv1.EgressRule{{Dst: "example.com", Proto: "https", Port: 443, Action: "allow"}},
+		Rules: []*adminv1.EgressRule{{Dst: "example.com", Proto: "https", Port: "443", Action: "allow"}},
 	})
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, stack.reloadCalls, "Stack.Reload called once per reconcile")
 	require.Len(t, mock.SyncRoutesCalls(), 1, "ebpf.SyncRoutes called exactly once per reconcile")
 
-	// Routes derived from the store (not from req) and carry EnvoyPort
-	// from cfg.
+	// Routes derived from the store (not from req) and carry EnvoyPort from
+	// cfg. An https rule projects BOTH the TCP egress route and the QUIC/h3
+	// (UDP) sibling — same domain+port+EnvoyPort, distinct l4_proto.
 	routes := mock.SyncRoutesCalls()[0].Routes
-	require.Len(t, routes, 1)
-	assert.NotZero(t, routes[0].DomainHash)
-	assert.Equal(t, uint16(443), routes[0].DstPort)
+	require.Len(t, routes, 2)
+	for _, rt := range routes {
+		assert.NotZero(t, rt.DomainHash)
+		assert.Equal(t, uint16(443), rt.DstPort)
+	}
+	assert.ElementsMatch(t,
+		[]uint8{ebpf.L4ProtoTCP, ebpf.L4ProtoUDP},
+		[]uint8{routes[0].L4Proto, routes[1].L4Proto},
+		"https rule must project both the TCP egress route and the QUIC/h3 UDP route")
 }
 
 // TestHandler_AddRules_StackDown_PersistsWithoutRestart proves the
@@ -1114,7 +1140,7 @@ func TestHandler_AddRules_StackDown_PersistsWithoutRestart(t *testing.T) {
 	stack.statusResult = Status{Running: false}
 
 	resp, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
-		Rules: []*adminv1.EgressRule{{Dst: "durable.example.com", Proto: "https", Port: 443, Action: "allow"}},
+		Rules: []*adminv1.EgressRule{{Dst: "durable.example.com", Proto: "https", Port: "443", Action: "allow"}},
 	})
 	require.NoError(t, err)
 	assert.Equal(t,
@@ -1142,7 +1168,7 @@ func TestHandler_AddRules_InvalidDomain_ReturnsRuleInvalid(t *testing.T) {
 	h, stack := ruleStoreHandler(t, mock)
 
 	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
-		Rules: []*adminv1.EgressRule{{Dst: "INVALID UPPERCASE", Proto: "https", Port: 443, Action: "allow"}},
+		Rules: []*adminv1.EgressRule{{Dst: "INVALID UPPERCASE", Proto: "https", Port: "443", Action: "allow"}},
 	})
 	require.Error(t, err)
 	assertCode(t, err, codes.InvalidArgument)
@@ -1164,7 +1190,7 @@ func TestHandler_FirewallRemove_PreservesRulesStore(t *testing.T) {
 
 	// Seed a rule while the stack is running.
 	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
-		Rules: []*adminv1.EgressRule{{Dst: "keep.example.com", Proto: "https", Port: 443, Action: "allow"}},
+		Rules: []*adminv1.EgressRule{{Dst: "keep.example.com", Proto: "https", Port: "443", Action: "allow"}},
 	})
 	require.NoError(t, err)
 	require.Equal(t, 1, stack.reloadCalls)
@@ -1192,11 +1218,11 @@ func TestHandler_AllResolvableDomains_MatchesCorefileZoneSet(t *testing.T) {
 
 	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
 		Rules: []*adminv1.EgressRule{
-			{Dst: "github.com", Proto: "https", Port: 443, Action: "allow"},
-			{Dst: ".example.com", Proto: "https", Port: 443, Action: "allow"},    // wildcard, normalized
-			{Dst: "203.0.113.5", Proto: "tcp", Port: 22, Action: "allow"},        // IP, skipped
-			{Dst: "blocked.test", Proto: "https", Port: 443, Action: "deny"},     // deny, skipped
-			{Dst: "docker.internal", Proto: "https", Port: 443, Action: "allow"}, // reserved, dedup
+			{Dst: "github.com", Proto: "https", Port: "443", Action: "allow"},
+			{Dst: ".example.com", Proto: "https", Port: "443", Action: "allow"},    // wildcard, normalized
+			{Dst: "203.0.113.5", Proto: "tcp", Port: "22", Action: "allow"},        // IP, skipped
+			{Dst: "blocked.test", Proto: "https", Port: "443", Action: "deny"},     // deny, skipped
+			{Dst: "docker.internal", Proto: "https", Port: "443", Action: "allow"}, // reserved, dedup
 		},
 	})
 	require.NoError(t, err)
@@ -1250,13 +1276,13 @@ func TestHandler_RemoveRule_Success(t *testing.T) {
 	h, stack := ruleStoreHandler(t, mock)
 
 	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
-		Rules: []*adminv1.EgressRule{{Dst: "example.com", Proto: "https", Port: 443, Action: "allow"}},
+		Rules: []*adminv1.EgressRule{{Dst: "example.com", Proto: "https", Port: "443", Action: "allow"}},
 	})
 	require.NoError(t, err)
 	reloadsBefore := stack.reloadCalls
 
 	resp, err := h.FirewallRemoveRule(context.Background(), &adminv1.FirewallRemoveRuleRequest{
-		Dst: "example.com", Proto: "https", Port: 443,
+		Dst: "example.com", Proto: "https", Port: "443",
 	})
 	require.NoError(t, err)
 	assert.True(t, resp.GetStackRestarted())
@@ -1279,13 +1305,13 @@ func TestHandler_RemoveRule_NotFound_Typo(t *testing.T) {
 	h, stack := ruleStoreHandler(t, mock)
 
 	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
-		Rules: []*adminv1.EgressRule{{Dst: "example.com", Proto: "https", Port: 443, Action: "allow"}},
+		Rules: []*adminv1.EgressRule{{Dst: "example.com", Proto: "https", Port: "443", Action: "allow"}},
 	})
 	require.NoError(t, err)
 	reloadsBefore := stack.reloadCalls
 
 	resp, err := h.FirewallRemoveRule(context.Background(), &adminv1.FirewallRemoveRuleRequest{
-		Dst: "exmaple.com", Proto: "https", Port: 443,
+		Dst: "exmaple.com", Proto: "https", Port: "443",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, adminv1.RemoveRuleStatus_REMOVE_RULE_STATUS_NOT_FOUND, resp.GetStatus())
@@ -1306,12 +1332,12 @@ func TestHandler_RemoveRule_NotFound_WrongProto(t *testing.T) {
 	h, _ := ruleStoreHandler(t, mock)
 
 	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
-		Rules: []*adminv1.EgressRule{{Dst: "example.com", Proto: "tcp", Port: 80, Action: "allow"}},
+		Rules: []*adminv1.EgressRule{{Dst: "example.com", Proto: "tcp", Port: "80", Action: "allow"}},
 	})
 	require.NoError(t, err)
 
 	resp, err := h.FirewallRemoveRule(context.Background(), &adminv1.FirewallRemoveRuleRequest{
-		Dst: "example.com", Proto: "https", Port: 443,
+		Dst: "example.com", Proto: "https", Port: "443",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, adminv1.RemoveRuleStatus_REMOVE_RULE_STATUS_NOT_FOUND, resp.GetStatus())
@@ -1329,7 +1355,7 @@ func TestHandler_RemoveRule_StackDown_PersistsRemoval(t *testing.T) {
 	h, stack := ruleStoreHandler(t, mock)
 
 	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
-		Rules: []*adminv1.EgressRule{{Dst: "example.com", Proto: "https", Port: 443, Action: "allow"}},
+		Rules: []*adminv1.EgressRule{{Dst: "example.com", Proto: "https", Port: "443", Action: "allow"}},
 	})
 	require.NoError(t, err)
 
@@ -1337,7 +1363,7 @@ func TestHandler_RemoveRule_StackDown_PersistsRemoval(t *testing.T) {
 	reloadsBefore := stack.reloadCalls
 
 	resp, err := h.FirewallRemoveRule(context.Background(), &adminv1.FirewallRemoveRuleRequest{
-		Dst: "example.com", Proto: "https", Port: 443,
+		Dst: "example.com", Proto: "https", Port: "443",
 	})
 	require.NoError(t, err)
 	assert.False(t, resp.GetStackRestarted())
@@ -1376,7 +1402,7 @@ func TestHandler_AddRules_KeyCollision_MergesPathRules(t *testing.T) {
 
 	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
 		Rules: []*adminv1.EgressRule{{
-			Dst: "api.example.com", Proto: "https", Port: 443, Action: "allow",
+			Dst: "api.example.com", Proto: "https", Port: "443", Action: "allow",
 			PathRules: []*adminv1.PathRule{{Path: "/v1", Action: "allow"}},
 		}},
 	})
@@ -1385,7 +1411,7 @@ func TestHandler_AddRules_KeyCollision_MergesPathRules(t *testing.T) {
 
 	resp, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
 		Rules: []*adminv1.EgressRule{{
-			Dst: "api.example.com", Proto: "https", Port: 443, Action: "allow",
+			Dst: "api.example.com", Proto: "https", Port: "443", Action: "allow",
 			PathRules: []*adminv1.PathRule{{Path: "/v2", Action: "deny"}},
 		}},
 	})
@@ -1415,7 +1441,7 @@ func TestHandler_AddRules_KeyCollision_NoChange_NoReconcile(t *testing.T) {
 	h, stack := ruleStoreHandler(t, mock)
 
 	rule := &adminv1.EgressRule{
-		Dst: "api.example.com", Proto: "https", Port: 443, Action: "allow",
+		Dst: "api.example.com", Proto: "https", Port: "443", Action: "allow",
 		PathRules: []*adminv1.PathRule{{Path: "/v1", Action: "allow"}},
 	}
 	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
@@ -1437,6 +1463,74 @@ func TestHandler_AddRules_KeyCollision_NoChange_NoReconcile(t *testing.T) {
 	assert.Equal(t, syncBefore, len(mock.SyncRoutesCalls()), "no SyncRoutes on no-op")
 }
 
+// TestHandler_AddRules_DenyCarvedOpaqueRange_ReseedUnchanged guards the
+// no-op detection for carved opaque rules. An opaque allow range overlapping a
+// deny is split by NormalizeAndDedup into per-span rules in the store, so a
+// re-add of the ORIGINAL range matches no carved key. Keying the no-op gate off
+// per-rule RuleKey reported a spurious ADDED + reconcile on every bootstrap
+// re-seed; the gate now compares the canonical before/after, so an identical
+// re-seed stays a true no-op.
+func TestHandler_AddRules_DenyCarvedOpaqueRange_ReseedUnchanged(t *testing.T) {
+	mock := noopMock()
+	h, stack := ruleStoreHandler(t, mock)
+
+	// Seed an opaque allow range with an overlapping deny — the store carves
+	// 45-50 allow into [45-46, 48-50] and keeps 47 deny.
+	seed := []*adminv1.EgressRule{
+		{Dst: "vpn.example.com", Proto: "tcp", Port: "45-50", Action: "allow"},
+		{Dst: "vpn.example.com", Proto: "tcp", Port: "47", Action: "deny"},
+	}
+	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{Rules: seed})
+	require.NoError(t, err)
+	reloadsBefore := stack.reloadCalls
+	syncBefore := len(mock.SyncRoutesCalls())
+
+	// Re-seed the identical batch (the bootstrap path on every container start).
+	resp, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{Rules: seed})
+	require.NoError(t, err)
+	for i, st := range resp.GetStatuses() {
+		assert.Equalf(t, adminv1.AddRuleStatus_ADD_RULE_STATUS_UNCHANGED, st,
+			"rule %d of a carved re-seed must be UNCHANGED", i)
+	}
+	assert.Equal(t, reloadsBefore, stack.reloadCalls, "carved re-seed must not reconcile")
+	assert.Equal(t, syncBefore, len(mock.SyncRoutesCalls()), "carved re-seed must not SyncRoutes")
+}
+
+// TestHandler_AddRules_InvalidRule_FailsLaunch asserts that a malformed port
+// or an inverted/typo'd action from clawker.yaml is rejected up front — the
+// error rides the RPC back to the CLI and fails the launch — instead of being
+// accepted as ADDED then silently dropped at the NormalizeAndDedup reconcile.
+func TestHandler_AddRules_InvalidRule_FailsLaunch(t *testing.T) {
+	cases := []struct {
+		name string
+		rule *adminv1.EgressRule
+	}{
+		{"malformed port range", &adminv1.EgressRule{Dst: "host.example.com", Proto: "tcp", Port: "9100-9000", Action: "allow"}},
+		{"non-numeric port", &adminv1.EgressRule{Dst: "host.example.com", Proto: "tcp", Port: "44x", Action: "allow"}},
+		{"typo'd action", &adminv1.EgressRule{Dst: "host.example.com", Proto: "https", Port: "443", Action: "dney"}},
+		{"typo'd path_default", &adminv1.EgressRule{Dst: "host.example.com", Proto: "https", Port: "443", PathDefault: "denied"}},
+		{"empty path rule path", &adminv1.EgressRule{Dst: "host.example.com", Proto: "https", Port: "443", PathRules: []*adminv1.PathRule{{Path: "  ", Action: "allow"}}}},
+		{"typo'd path rule action", &adminv1.EgressRule{Dst: "host.example.com", Proto: "https", Port: "443", PathRules: []*adminv1.PathRule{{Path: "/x", Action: "dney"}}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mock := noopMock()
+			h, stack := ruleStoreHandler(t, mock)
+
+			_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
+				Rules: []*adminv1.EgressRule{tc.rule},
+			})
+			require.Error(t, err)
+			assertCode(t, err, codes.InvalidArgument)
+			assertReason(t, err, ReasonRuleInvalid)
+
+			assert.Equal(t, 0, stack.reloadCalls, "invalid rule must not reconcile")
+			listResp, _ := h.FirewallListRules(context.Background(), &adminv1.FirewallListRulesRequest{})
+			assert.Empty(t, listResp.GetRules(), "invalid rule must not land in the store")
+		})
+	}
+}
+
 // TestHandler_AddRules_MixedBatch_ReportsPerRuleStatus is the
 // bootstrap-shaped case: a batch carrying [new, identical-reseed,
 // merge-mutation] must come back with statuses [ADDED, UNCHANGED,
@@ -1450,9 +1544,9 @@ func TestHandler_AddRules_MixedBatch_ReportsPerRuleStatus(t *testing.T) {
 	// will be merged with new path rule on next batch.
 	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
 		Rules: []*adminv1.EgressRule{
-			{Dst: "stable.example.com", Proto: "https", Port: 443, Action: "allow"},
+			{Dst: "stable.example.com", Proto: "https", Port: "443", Action: "allow"},
 			{
-				Dst: "api.example.com", Proto: "https", Port: 443, Action: "allow",
+				Dst: "api.example.com", Proto: "https", Port: "443", Action: "allow",
 				PathRules: []*adminv1.PathRule{{Path: "/v1", Action: "allow"}},
 			},
 		},
@@ -1463,10 +1557,10 @@ func TestHandler_AddRules_MixedBatch_ReportsPerRuleStatus(t *testing.T) {
 	// api]. Status slice must mirror request order exactly.
 	resp, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
 		Rules: []*adminv1.EgressRule{
-			{Dst: "new.example.com", Proto: "https", Port: 443, Action: "allow"},
-			{Dst: "stable.example.com", Proto: "https", Port: 443, Action: "allow"},
+			{Dst: "new.example.com", Proto: "https", Port: "443", Action: "allow"},
+			{Dst: "stable.example.com", Proto: "https", Port: "443", Action: "allow"},
 			{
-				Dst: "api.example.com", Proto: "https", Port: 443, Action: "allow",
+				Dst: "api.example.com", Proto: "https", Port: "443", Action: "allow",
 				PathRules: []*adminv1.PathRule{{Path: "/v2", Action: "deny"}},
 			},
 		},
@@ -1487,7 +1581,7 @@ func TestHandler_AddRules_KeyCollision_PathRuleAction_CallerWins(t *testing.T) {
 
 	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
 		Rules: []*adminv1.EgressRule{{
-			Dst: "api.example.com", Proto: "https", Port: 443, Action: "allow",
+			Dst: "api.example.com", Proto: "https", Port: "443", Action: "allow",
 			PathRules: []*adminv1.PathRule{{Path: "/v1", Action: "allow"}},
 		}},
 	})
@@ -1495,7 +1589,7 @@ func TestHandler_AddRules_KeyCollision_PathRuleAction_CallerWins(t *testing.T) {
 
 	_, err = h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
 		Rules: []*adminv1.EgressRule{{
-			Dst: "api.example.com", Proto: "https", Port: 443, Action: "allow",
+			Dst: "api.example.com", Proto: "https", Port: "443", Action: "allow",
 			PathRules: []*adminv1.PathRule{{Path: "/v1", Action: "deny"}},
 		}},
 	})
@@ -1518,7 +1612,7 @@ func TestHandler_RemoveRule_WithPath_RemovesOnlyPathRule(t *testing.T) {
 
 	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
 		Rules: []*adminv1.EgressRule{{
-			Dst: "api.example.com", Proto: "https", Port: 443, Action: "allow",
+			Dst: "api.example.com", Proto: "https", Port: "443", Action: "allow",
 			PathRules: []*adminv1.PathRule{
 				{Path: "/v1", Action: "allow"},
 				{Path: "/v2", Action: "deny"},
@@ -1528,7 +1622,7 @@ func TestHandler_RemoveRule_WithPath_RemovesOnlyPathRule(t *testing.T) {
 	require.NoError(t, err)
 
 	resp, err := h.FirewallRemoveRule(context.Background(), &adminv1.FirewallRemoveRuleRequest{
-		Dst: "api.example.com", Proto: "https", Port: 443,
+		Dst: "api.example.com", Proto: "https", Port: "443",
 		Path: "/v1",
 	})
 	require.NoError(t, err)
@@ -1551,7 +1645,7 @@ func TestHandler_RemoveRule_WithPath_RuleMissing_NotFound(t *testing.T) {
 	h, _ := ruleStoreHandler(t, mock)
 
 	resp, err := h.FirewallRemoveRule(context.Background(), &adminv1.FirewallRemoveRuleRequest{
-		Dst: "missing.example.com", Proto: "https", Port: 443,
+		Dst: "missing.example.com", Proto: "https", Port: "443",
 		Path: "/v1",
 	})
 	require.NoError(t, err)
@@ -1567,14 +1661,14 @@ func TestHandler_RemoveRule_WithPath_PathMissing_NotFound(t *testing.T) {
 
 	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
 		Rules: []*adminv1.EgressRule{{
-			Dst: "api.example.com", Proto: "https", Port: 443, Action: "allow",
+			Dst: "api.example.com", Proto: "https", Port: "443", Action: "allow",
 			PathRules: []*adminv1.PathRule{{Path: "/v1", Action: "allow"}},
 		}},
 	})
 	require.NoError(t, err)
 
 	resp, err := h.FirewallRemoveRule(context.Background(), &adminv1.FirewallRemoveRuleRequest{
-		Dst: "api.example.com", Proto: "https", Port: 443,
+		Dst: "api.example.com", Proto: "https", Port: "443",
 		Path: "/nosuch",
 	})
 	require.NoError(t, err)
@@ -1595,7 +1689,7 @@ func TestHandler_RemoveRule_WithPath_StackDown_PersistsRemoval(t *testing.T) {
 
 	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
 		Rules: []*adminv1.EgressRule{{
-			Dst: "api.example.com", Proto: "https", Port: 443, Action: "allow",
+			Dst: "api.example.com", Proto: "https", Port: "443", Action: "allow",
 			PathRules: []*adminv1.PathRule{
 				{Path: "/v1", Action: "allow"},
 				{Path: "/v2", Action: "deny"},
@@ -1608,7 +1702,7 @@ func TestHandler_RemoveRule_WithPath_StackDown_PersistsRemoval(t *testing.T) {
 	reloadsBefore := stack.reloadCalls
 
 	resp, err := h.FirewallRemoveRule(context.Background(), &adminv1.FirewallRemoveRuleRequest{
-		Dst: "api.example.com", Proto: "https", Port: 443,
+		Dst: "api.example.com", Proto: "https", Port: "443",
 		Path: "/v1",
 	})
 	require.NoError(t, err)

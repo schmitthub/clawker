@@ -213,6 +213,11 @@ const (
 	EnvoyEgressPort = 10000
 	// EnvoyTCPPortBase is the starting port for TCP/SSH listeners.
 	EnvoyTCPPortBase = 10001
+	// EnvoyUDPPortBase is the starting port for the per-rule raw-UDP listeners
+	// (opaque udp_proxy datagram forwarding). UDP and TCP listener ports occupy
+	// independent socket namespaces, but a distinct base keeps the layout
+	// unambiguous and lets EnvoyPorts.Validate keep the bases collision-free.
+	EnvoyUDPPortBase = 11001
 	// EnvoyHealthPort is the Envoy health check listener (inside container).
 	EnvoyHealthPort = 9902
 	// EnvoyHealthHostPort is the host-published port for Envoy health probes.
@@ -221,6 +226,26 @@ const (
 	CoreDNSHealthHostPort = 18902
 	// CoreDNSHealthPath is the HTTP path for CoreDNS health checks.
 	CoreDNSHealthPath = "/health"
+)
+
+// Firewall stack bringup timeouts. Single source of truth shared by the CP
+// (Stack.WaitForHealthy) and the CLI (FirewallInit/FirewallReload RPC deadlines)
+// so the two cannot drift apart. The drift that matters: if the CLI deadline is
+// SHORTER than the server health wait, the CLI aborts with a generic
+// "context deadline exceeded" before the server's real ErrEnvoyUnhealthy
+// surfaces — hiding the actual cause from the user. Deriving the CLI deadline
+// from the server budget guarantees CLI >= server.
+const (
+	// FirewallStackHealthTimeout bounds Stack.WaitForHealthy's probe loop —
+	// how long the CP waits for Envoy + CoreDNS to answer their health endpoints
+	// before returning ErrEnvoyUnhealthy/ErrCoreDNSUnhealthy.
+	FirewallStackHealthTimeout = 60 * time.Second
+	// FirewallStackBringupRPCTimeout is the CLI's RPC deadline for the
+	// stack-bringing RPCs (FirewallInit, FirewallReload). It must exceed the
+	// server's health wait PLUS the unbounded pre-health work (image pull +
+	// container create) so the real server error reaches the user instead of a
+	// premature client deadline. Derived from the health budget + headroom.
+	FirewallStackBringupRPCTimeout = FirewallStackHealthTimeout + 60*time.Second
 )
 
 // Control plane port defaults. These are flag defaults for the CP binary
