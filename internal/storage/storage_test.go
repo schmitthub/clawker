@@ -2794,3 +2794,152 @@ func TestStore_Merge_UnionWithImplicitYAMLFieldName(t *testing.T) {
 	assert.Equal(t, []string{"a", "b"}, cfgResult.Items,
 		"merge union should still apply when yaml tag uses implicit field name")
 }
+
+// testPortRule mirrors a real-world opaque struct-slice element whose Port is a
+// Go string but is written on disk as a bare yaml int (e.g. `port: 22`).
+type testPortRule struct {
+	Dst  string `yaml:"dst"`
+	Port string `yaml:"port,omitempty"`
+}
+
+type testPortRuleCfg struct {
+	Name  string         `yaml:"name"`
+	Rules []testPortRule `yaml:"rules" merge:"union"`
+}
+
+func (t testPortRuleCfg) Fields() FieldSet { return NormalizeFields(t) }
+
+// TestStore_Set_TypedScalarDriftDoesNotFalselyDirtyOpaqueSlice reproduces a
+// store-routing regression: editing one unrelated scalar funneled an untouched
+// opaque struct-slice into the targeted layer file.
+//
+// Root cause: on-disk `port: 22` parses as a yaml !!int into the raw merged
+// tree, but coerces into the Go `string` Port field and re-serializes as the
+// quoted string `"22"`. Set() diffed the raw parsed tree against the
+// struct-serialized form, so the int-vs-string representation mismatch flagged
+// the whole rules slice as changed even though the caller never touched it.
+// Set() must diff serialized-before vs serialized-after so the coercion cancels.
+func TestStore_Set_TypedScalarDriftDoesNotFalselyDirtyOpaqueSlice(t *testing.T) {
+	dir := t.TempDir()
+	basePath := filepath.Join(dir, "base.yaml")
+	localPath := filepath.Join(dir, "local.yaml")
+
+	// Unquoted int ports — parsed as yaml !!int, coerced into the string field.
+	baseYAML := `
+name: base
+rules:
+  - dst: github.com
+    port: 22
+  - dst: api.github.com
+    port: 443
+`
+	localYAML := `
+name: base
+`
+	require.NoError(t, os.WriteFile(basePath, []byte(baseYAML), 0o644))
+	require.NoError(t, os.WriteFile(localPath, []byte(localYAML), 0o644))
+
+	baseData, err := loadFile(basePath, nil)
+	require.NoError(t, err)
+	localData, err := loadFile(localPath, nil)
+	require.NoError(t, err)
+
+	// local.yaml is the higher-priority layer (index 0).
+	layers := []layer{
+		{path: localPath, filename: "local.yaml", data: localData},
+		{path: basePath, filename: "base.yaml", data: baseData},
+	}
+	tags := buildTagRegistry[testPortRuleCfg]()
+	tree, prov := merge(layers, tags)
+	value, err := unmarshal[testPortRuleCfg](tree)
+	require.NoError(t, err)
+
+	store := &Store[testPortRuleCfg]{
+		tree:   tree,
+		layers: layers,
+		prov:   prov,
+		tags:   tags,
+		opts:   options{filenames: []string{"base.yaml", "local.yaml"}},
+	}
+	store.value.Store(value)
+
+	// Edit only the top-level scalar, routed explicitly to the local layer
+	// (mirrors storeui's per-field save: Set + Write(ToPath(target))).
+	require.NoError(t, store.Set(func(c *testPortRuleCfg) {
+		c.Name = "local-updated"
+	}))
+	require.NoError(t, store.Write(ToPath(localPath)))
+
+	var localMap map[string]any
+	raw, err := os.ReadFile(localPath)
+	require.NoError(t, err)
+	require.NoError(t, yaml.Unmarshal(raw, &localMap))
+
+	assert.Equal(t, "local-updated", localMap["name"])
+	assert.NotContains(t, localMap, "rules",
+		"untouched opaque rules slice must not be routed into the local layer file")
+}
+
+// TestStore_Set_ClearScalarRoutesDeleteToOwningLayer pins the behavior the
+// symmetric serialized diff newly enables: clearing a scalar to its zero value
+// is recorded as a delete and routed to the layer that owns the field, rather
+// than being silently ignored (the old raw-tree-vs-merged-tree diff never saw
+// the clear because mergeIntoTree does not remove keys).
+func TestStore_Set_ClearScalarRoutesDeleteToOwningLayer(t *testing.T) {
+	dir := t.TempDir()
+	basePath := filepath.Join(dir, "base.yaml")
+	localPath := filepath.Join(dir, "local.yaml")
+
+	baseYAML := `
+name: base-name
+version: 1
+`
+	// local.yaml is the higher-priority layer and owns the winning name.
+	localYAML := `
+name: local-name
+version: 2
+`
+	require.NoError(t, os.WriteFile(basePath, []byte(baseYAML), 0o644))
+	require.NoError(t, os.WriteFile(localPath, []byte(localYAML), 0o644))
+
+	baseData, err := loadFile(basePath, nil)
+	require.NoError(t, err)
+	localData, err := loadFile(localPath, nil)
+	require.NoError(t, err)
+
+	layers := []layer{
+		{path: localPath, filename: "local.yaml", data: localData},
+		{path: basePath, filename: "base.yaml", data: baseData},
+	}
+	tags := buildTagRegistry[testConfig]()
+	tree, prov := merge(layers, tags)
+	value, err := unmarshal[testConfig](tree)
+	require.NoError(t, err)
+
+	store := &Store[testConfig]{
+		tree:   tree,
+		layers: layers,
+		prov:   prov,
+		tags:   tags,
+		opts:   options{filenames: []string{"base.yaml", "local.yaml"}},
+	}
+	store.value.Store(value)
+
+	// Clear the scalar; route via provenance (no explicit ToPath).
+	require.NoError(t, store.Set(func(c *testConfig) {
+		c.Name = ""
+	}))
+	require.NoError(t, store.Write())
+
+	// The owning layer must lose the key entirely (not retain a stale value
+	// nor write an empty string), while untouched siblings stay put.
+	var localMap map[string]any
+	raw, err := os.ReadFile(localPath)
+	require.NoError(t, err)
+	require.NoError(t, yaml.Unmarshal(raw, &localMap))
+	assert.NotContains(t, localMap, "name", "cleared scalar must be deleted from the owning layer file")
+	assert.Equal(t, 2, localMap["version"], "untouched sibling must remain")
+
+	// The merged value must now fall through to the lower layer.
+	assert.Equal(t, "base-name", store.Read().Name)
+}
