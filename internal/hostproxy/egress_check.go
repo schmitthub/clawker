@@ -14,9 +14,14 @@ import (
 // egressRule is a local copy of config.EgressRule's YAML-relevant fields.
 // Avoids importing internal/config, which would violate the package DAG.
 type egressRule struct {
-	Dst         string     `yaml:"dst"`
-	Proto       string     `yaml:"proto,omitempty"`
-	Port        int        `yaml:"port,omitempty"`
+	Dst   string `yaml:"dst"`
+	Proto string `yaml:"proto,omitempty"`
+	// Port is the dynamic port spec mirrored from config.EgressRule: a single
+	// port ("443") or an inclusive range ("9000-9100"). It MUST be a string —
+	// the firewall writes numeric-looking values quoted (port: "443") and range
+	// specs, both of which fail to unmarshal into an int and would poison the
+	// whole rules file (fail-closed → every /open/url blocked).
+	Port        string     `yaml:"port,omitempty"`
 	Action      string     `yaml:"action,omitempty"`
 	PathRules   []pathRule `yaml:"path_rules,omitempty"`
 	PathDefault string     `yaml:"path_default,omitempty"`
@@ -125,7 +130,7 @@ func matchRules(rules []egressRule, host, proto string, port int, path string) e
 	for i := range rules {
 		r := normalizeEgressRule(rules[i])
 
-		if !strings.EqualFold(r.Proto, proto) || r.Port != port {
+		if !strings.EqualFold(r.Proto, proto) || !portSpecMatches(r.Port, port) {
 			continue
 		}
 
@@ -222,17 +227,33 @@ func normalizeEgressRule(r egressRule) egressRule {
 	if r.Action == "" {
 		r.Action = "allow"
 	}
-	if r.Port == 0 {
+	if r.Port == "" {
 		switch strings.ToLower(r.Proto) {
 		case "https":
-			r.Port = 443
+			r.Port = "443"
 		case "http":
-			r.Port = 80
+			r.Port = "80"
 		case "ssh":
-			r.Port = 22
+			r.Port = "22"
 		}
 	}
 	return r
+}
+
+// portSpecMatches reports whether the request port p satisfies the rule's
+// dynamic port spec: a single port ("443") or an inclusive range ("9000-9100").
+// A range only ever attaches to opaque protos (tcp/ssh/udp); since /open/url
+// handles http/https only, a range never matches a browser URL in practice —
+// but the membership check is correct regardless. An unparseable spec matches
+// nothing.
+func portSpecMatches(spec string, p int) bool {
+	if lo, hi, ok := strings.Cut(spec, "-"); ok {
+		l, errLo := strconv.Atoi(lo)
+		h, errHi := strconv.Atoi(hi)
+		return errLo == nil && errHi == nil && p >= l && p <= h
+	}
+	n, err := strconv.Atoi(spec)
+	return err == nil && n == p
 }
 
 // matchKind classifies how a rule destination matched a host.

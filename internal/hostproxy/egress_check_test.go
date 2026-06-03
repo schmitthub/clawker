@@ -116,8 +116,8 @@ func TestMatchRules_ExactDenyBeatsWildcardAllow(t *testing.T) {
 	// A wildcard allow for .example.test must NOT shadow an exact deny for example.test.
 	// This is the critical case: exact rules always take priority regardless of order.
 	rules := []egressRule{
-		{Dst: ".example.test", Proto: "https", Port: 443, Action: "allow"},
-		{Dst: "example.test", Proto: "https", Port: 443, Action: "deny"},
+		{Dst: ".example.test", Proto: "https", Port: "443", Action: "allow"},
+		{Dst: "example.test", Proto: "https", Port: "443", Action: "deny"},
 	}
 
 	// Apex must be denied (exact deny wins over wildcard allow).
@@ -139,8 +139,8 @@ func TestMatchRules_ExactDenyBeatsWildcardAllow(t *testing.T) {
 func TestMatchRules_ExactAllowBeatsWildcardDeny(t *testing.T) {
 	// Reverse case: wildcard deny + exact allow. Exact allow must win for apex.
 	rules := []egressRule{
-		{Dst: ".example.test", Proto: "https", Port: 443, Action: "deny"},
-		{Dst: "example.test", Proto: "https", Port: 443, Action: "allow"},
+		{Dst: ".example.test", Proto: "https", Port: "443", Action: "deny"},
+		{Dst: "example.test", Proto: "https", Port: "443", Action: "allow"},
 	}
 
 	// Apex must be allowed (exact allow wins).
@@ -237,21 +237,21 @@ func TestNormalizeEgressRule(t *testing.T) {
 		name                  string
 		input                 egressRule
 		wantProto, wantAction string
-		wantPort              int
+		wantPort              string
 	}{
-		{"empty defaults to https/allow/443", egressRule{Dst: "example.test"}, "https", "allow", 443},
-		{"legacy tls translated to https", egressRule{Dst: "example.test", Proto: "tls"}, "https", "allow", 443},
-		{"tcp proto keeps port 0", egressRule{Dst: "example.test", Proto: "tcp"}, "tcp", "allow", 0},
-		{"explicit values preserved", egressRule{Dst: "x.test", Proto: "https", Port: 8443, Action: "deny"}, "https", "deny", 8443},
-		{"https with port 0 gets 443", egressRule{Dst: "x.test", Proto: "https"}, "https", "allow", 443},
-		{"http with port 0 gets 80", egressRule{Dst: "x.test", Proto: "http"}, "http", "allow", 80},
+		{"empty defaults to https/allow/443", egressRule{Dst: "example.test"}, "https", "allow", "443"},
+		{"legacy tls translated to https", egressRule{Dst: "example.test", Proto: "tls"}, "https", "allow", "443"},
+		{"tcp proto keeps empty port", egressRule{Dst: "example.test", Proto: "tcp"}, "tcp", "allow", ""},
+		{"explicit values preserved", egressRule{Dst: "x.test", Proto: "https", Port: "8443", Action: "deny"}, "https", "deny", "8443"},
+		{"https with empty port gets 443", egressRule{Dst: "x.test", Proto: "https"}, "https", "allow", "443"},
+		{"http with empty port gets 80", egressRule{Dst: "x.test", Proto: "http"}, "http", "allow", "80"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := normalizeEgressRule(tt.input)
 			if got.Proto != tt.wantProto || got.Action != tt.wantAction || got.Port != tt.wantPort {
-				t.Errorf("normalizeEgressRule() = {Proto:%q Action:%q Port:%d}, want {Proto:%q Action:%q Port:%d}",
+				t.Errorf("normalizeEgressRule() = {Proto:%q Action:%q Port:%q}, want {Proto:%q Action:%q Port:%q}",
 					got.Proto, got.Action, got.Port, tt.wantProto, tt.wantAction, tt.wantPort)
 			}
 		})
