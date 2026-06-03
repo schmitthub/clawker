@@ -36,6 +36,21 @@ const reaperRetryBudget = 32
 // up draining" instead of "clean shutdown with zombie pile".
 const orphanDrainRetryBudget = 32
 
+// orphanDrainGrace is how long phase 2 waits for reparented orphans to
+// exit on their own after the main child dies, before escalating to
+// signals. A well-behaved descendant mid-teardown exits inside this
+// window and is reaped without ever being signaled.
+const orphanDrainGrace = 2 * time.Second
+
+// orphanKillGrace is the per-step window for each escalation stage
+// (SIGTERM→SIGKILL, then SIGKILL→give-up). Shorter than the main
+// child's shutdownGrace: these are unsupervised reparented strays, not
+// the user's CMD, so we don't owe them a full graceful window. The
+// worst-case phase-2 duration (orphanDrainGrace + 2*orphanKillGrace)
+// stays under Docker's default 10s --stop-timeout so a concurrent
+// `docker stop` never races docker's own SIGKILL of the container.
+const orphanKillGrace = 2 * time.Second
+
 // spawnConfig is the all-inputs struct passed to spawnState.Run.
 type spawnConfig struct {
 	argv      []string
@@ -539,6 +554,14 @@ func (s *spawnState) runSignalForwarder(log *logger.Logger) {
 // drained by the main-child-exit cascade), then waits on
 // orphanDrainCh before phase 2 begins.
 //
+// Phase 2 is bounded: it gives reparented orphans a grace window to
+// exit, then escalates kill(-1, SIGTERM) -> grace -> kill(-1, SIGKILL)
+// so a daemonized orphan that outlives the user CMD can never wedge
+// PID 1 (and thus the container and the host's attached TTY) open
+// forever. Without the escalation, drainOrphans only reaps DEAD
+// children and loops until ECHILD, so one lingering orphan blocks
+// doneCh indefinitely.
+//
 // Closes doneCh exactly once on exit (or on panic via
 // recoverGoroutine). closeAllGates also fires on the panic-recovery
 // path so callers waiting on MainExited do not deadlock.
@@ -648,13 +671,33 @@ func (s *spawnState) runReaper(log *logger.Logger) {
 	// stage-child pids and leaves c.Wait returning ECHILD.
 	<-s.orphanDrainCh
 
-	// Phase 2: drain reparented orphans now that main has exited.
+	// Phase 2: drain reparented orphans now that main has exited. A
+	// well-behaved descendant exits on its own and is reaped inside the
+	// first grace window. But a daemonized orphan that outlives the user
+	// CMD — a stray `&` job, a detached MCP server, an escaped OAuth
+	// callback-forwarder — would otherwise keep PID 1 (and thus the
+	// container, and the host's attached raw-TTY) alive forever, because
+	// drainOrphans only REAPS dead children and never reaches ECHILD
+	// while a live orphan lingers. So escalate on a bounded schedule:
+	//
+	//	grace -> kill(-1, SIGTERM) -> grace -> kill(-1, SIGKILL) -> reap to ECHILD
+	//
+	// kill(-1, sig) signals every process in the container except PID 1
+	// (clawkerd) itself. It MUST be kill(-1), not a pgroup-scoped kill:
+	// escaped orphans reparent into their own session/pgroup, outside the
+	// main child's pgid, so Stop's -pgid targeting would miss them.
+	// finalWS was recorded in phase 1 and is never touched here, so the
+	// user CMD's bash-convention exit code survives the orphan kill.
+	//
 	// Bounded retry on unknown wait4(-1) errors: retry up to
 	// orphanDrainRetryBudget and abort loudly via the
 	// spawn_orphan_drain_aborted event if the kernel keeps returning
 	// errors, so operators distinguish "drain aborted" from
 	// "clean shutdown".
 	drainErrs := 0
+	termSent, killSent := false, false
+	escalate := time.NewTimer(orphanDrainGrace)
+	defer escalate.Stop()
 	for {
 		drained, err := s.drainOrphans(log)
 		if err != nil {
@@ -683,7 +726,55 @@ func (s *spawnState) runReaper(log *logger.Logger) {
 		select {
 		case <-sigchld:
 		case <-ticker.C:
+		case <-escalate.C:
+			switch {
+			case !termSent:
+				termSent = true
+				log.Warn().
+					Str("event", "spawn_orphan_drain_timeout").
+					Dur("grace", orphanDrainGrace).
+					Msg("clawkerd: reparented orphans outlived user CMD; SIGTERM to all")
+				s.killOrphans(log, unix.SIGTERM)
+				escalate.Reset(orphanKillGrace)
+			case !killSent:
+				killSent = true
+				log.Warn().
+					Str("event", "spawn_orphan_killed").
+					Dur("grace", orphanKillGrace).
+					Msg("clawkerd: orphans survived SIGTERM; SIGKILL to all")
+				s.killOrphans(log, unix.SIGKILL)
+				escalate.Reset(orphanKillGrace)
+			default:
+				// SIGKILL sent and orphans STILL unreaped after a full
+				// grace — pathological (uninterruptible D-state, or a
+				// kernel that won't surface the zombie). Stop waiting:
+				// close gates so PID 1 can exit; container teardown lets
+				// the kernel reap whatever remains. finalWS is intact, so
+				// the user CMD's exit code is still correct.
+				log.Error().
+					Str("event", "spawn_orphan_drain_giveup").
+					Msg("clawkerd: orphans unreaped after SIGKILL grace; exiting anyway")
+				s.setReaperErr(errors.New("clawkerd: orphans unreaped after SIGKILL grace; exiting anyway"))
+				s.closeAllGates()
+				return
+			}
 		}
+	}
+}
+
+// killOrphans signals every process in the container except clawkerd
+// (PID 1) itself via kill(-1, sig). Phase-2 escalation uses it to
+// terminate reparented orphans that outlived the user CMD. kill(-1) —
+// not -pgid — is required because escaped orphans reparent into their
+// own session, outside the main child's process group, so a
+// pgroup-scoped signal would miss them. ESRCH (nothing left to signal)
+// is the success case, not a failure.
+func (s *spawnState) killOrphans(log *logger.Logger, sig syscall.Signal) {
+	if err := unix.Kill(-1, sig); err != nil && !errors.Is(err, unix.ESRCH) {
+		log.Error().Err(err).
+			Str("event", "spawn_orphan_kill_failed").
+			Int("signo", int(sig)).
+			Msg("clawkerd: kill(-1) on orphan drain failed")
 	}
 }
 
