@@ -239,10 +239,6 @@ func (s *Store[T]) Set(fn func(*T)) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Snapshot the tree before mutation for diffing.
-	oldTree := make(map[string]any)
-	deepCopyMap(oldTree, s.tree)
-
 	// Deep copy current tree and deserialize a fresh *T.
 	cp := make(map[string]any)
 	deepCopyMap(cp, s.tree)
@@ -250,6 +246,18 @@ func (s *Store[T]) Set(fn func(*T)) error {
 	if err != nil {
 		return fmt.Errorf("storage: Set: deserializing tree copy: %w", err)
 	}
+
+	// Snapshot the struct-serialized form BEFORE mutation. Diffing
+	// serialized-before against serialized-after keeps both sides on the
+	// same representation, so type coercions (e.g. an on-disk yaml int
+	// `port: 22` coerced into a Go string field, re-serialized as "22") and
+	// structToMap's own empty-string/nil normalization cancel out. Diffing the
+	// raw parsed tree against the serialized form would spuriously flag
+	// untouched fields whose on-disk scalar type differs from the Go field
+	// type, dragging them into the write. A field cleared to its zero value
+	// (present in before, dropped from serialized) is correctly recorded as a
+	// delete rather than silently ignored.
+	before := structToMap(fresh)
 
 	// Apply the caller's mutation to the copy.
 	fn(fresh)
@@ -261,11 +269,11 @@ func (s *Store[T]) Set(fn func(*T)) error {
 		mergeIntoTree(s.tree, serialized)
 	}
 
-	// Record which leaf paths changed.
+	// Record which leaf paths changed via the symmetric serialized diff.
 	if s.dirtyPaths == nil {
 		s.dirtyPaths = make(map[string]dirtyOp)
 	}
-	diffTreePaths(oldTree, s.tree, "", s.tags,
+	diffTreePaths(before, serialized, "", s.tags,
 		func(path string) { s.dirtyPaths[path] = dirtySet },
 		func(path string) { s.dirtyPaths[path] = dirtyDeleted },
 	)
