@@ -10,9 +10,10 @@ import (
 
 	// Blank imports register the extension message types referenced by @type
 	// URLs in the generated config, so protojson can resolve them when parsing
-	// google.protobuf.Any fields. Add one entry per NEW @type the generator
-	// starts emitting (TLS, tcp_proxy, set_filter_state, DFP… land in later
-	// steps) or validation fails with "unable to resolve".
+	// google.protobuf.Any fields. The set below covers every @type the generator
+	// currently emits (HCM, tcp_proxy, udp_proxy, DFP, TLS, QUIC, access loggers,
+	// router…). Add one entry per NEW @type a future generator change starts
+	// emitting, or validation fails with "unable to resolve".
 	_ "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	_ "github.com/envoyproxy/go-control-plane/envoy/extensions/access_loggers/open_telemetry/v3"
 	_ "github.com/envoyproxy/go-control-plane/envoy/extensions/access_loggers/stream/v3"

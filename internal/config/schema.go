@@ -149,9 +149,11 @@ type EgressRule struct {
 	// self-secure pinned listener+cluster PER port in the range — never
 	// ORIGINAL_DST, so a compromised agent can't redirect within the range; it is
 	// ignored for http/https/ws/wss (those scope by Host/SNI, not a fan of ports).
-	// Values are validated (1..65535, lo<=hi) at ingestion via ParsePortSpec; an
-	// invalid spec drops the rule with an operator warning rather than silently
-	// widening access.
+	// Values are validated (1..65535, lo<=hi) at ingestion: firewall.ValidateRule
+	// rejects an invalid spec on the firewall add / BootstrapServicesPreStart
+	// path, so a bad port fails the operation rather than silently widening
+	// access. The defensive NormalizeAndDedup path drops-with-warning only if
+	// invalid data somehow reaches the store.
 	Port        string     `yaml:"port,omitempty" label:"Port" desc:"Destination port: a single port (443) or an inclusive range (9000-9100); empty = protocol default"`
 	Action      string     `yaml:"action,omitempty" label:"Action" desc:"Allow or deny traffic to this destination (default: allow)"`
 	PathRules   []PathRule `yaml:"path_rules,omitempty" label:"Path Rules" desc:"Fine-grained path filtering (only applies to https/http)"`
