@@ -5,6 +5,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 
@@ -14,9 +15,14 @@ import (
 // egressRule is a local copy of config.EgressRule's YAML-relevant fields.
 // Avoids importing internal/config, which would violate the package DAG.
 type egressRule struct {
-	Dst         string     `yaml:"dst"`
-	Proto       string     `yaml:"proto,omitempty"`
-	Port        int        `yaml:"port,omitempty"`
+	Dst   string `yaml:"dst"`
+	Proto string `yaml:"proto,omitempty"`
+	// Port is the dynamic port spec mirrored from config.EgressRule: a single
+	// port ("443") or an inclusive range ("9000-9100"). It MUST be a string —
+	// the firewall writes numeric-looking values quoted (port: "443") and range
+	// specs, both of which fail to unmarshal into an int and would poison the
+	// whole rules file (fail-closed → every /open/url blocked).
+	Port        string     `yaml:"port,omitempty"`
 	Action      string     `yaml:"action,omitempty"`
 	PathRules   []pathRule `yaml:"path_rules,omitempty"`
 	PathDefault string     `yaml:"path_default,omitempty"`
@@ -76,12 +82,43 @@ func CheckURLAgainstEgressRules(targetURL, rulesFilePath string) error {
 		return fmt.Errorf("cannot read egress rules: %w", err)
 	}
 
-	path := parsed.Path
-	if path == "" {
-		path = "/"
-	}
+	return matchRules(rules, host, proto, port, canonicalizePath(parsed.Path))
+}
 
-	return matchRules(rules, host, proto, port, path)
+// canonicalizePath collapses a URL path to the form the origin server will
+// actually resolve, so the path the rules match equals the path the host
+// browser fetches. Without this, an agent prefixes an allowed path and
+// "../"s out to a denied one — defeating path_default:deny entirely (e.g.
+// /schmitthub/clawker/../../victim against a per-repo allowlist).
+//
+// Two normalizations happen between the string we validate and the bytes the
+// origin serves, and we must replicate both or the matcher and the fetch
+// disagree:
+//
+//   - Backslashes. For http/https the WHATWG URL parser the host browser uses
+//     folds '\' to '/', so /v1/..\secret reaches the server as /v1/../secret.
+//     path.Clean is POSIX and treats '\' as an ordinary character, so we fold
+//     first or a backslash-disguised "../" sails straight through.
+//   - Dot-segments and duplicate slashes. path.Clean resolves "." / ".."
+//     (RFC 3986 §5.2.4) and merges "//". net/url has already percent-decoded
+//     the path by the time we see it (%2e->'.', %2f->'/'), so the encoded
+//     traversal variants collapse here too. Decoding-then-cleaning is
+//     intentionally stricter than a spec-compliant server (which keeps %2f
+//     literal) — the correct fail-closed direction for an allowlist.
+//
+// path.Clean strips a trailing slash, so restore it when the input had one:
+// a directory-prefix rule like "/schmitthub/" must still match a request to
+// the bare directory.
+func canonicalizePath(p string) string {
+	if p == "" {
+		return "/"
+	}
+	p = strings.ReplaceAll(p, "\\", "/")
+	cleaned := path.Clean(p)
+	if strings.HasSuffix(p, "/") && !strings.HasSuffix(cleaned, "/") {
+		cleaned += "/"
+	}
+	return cleaned
 }
 
 // schemeToProto maps a URL scheme to the egress rule proto and its default port.
@@ -114,39 +151,66 @@ func readEgressRules(path string) ([]egressRule, error) {
 }
 
 // matchRules checks if the given host/proto/port/path combination is allowed by
-// the rule set. Exact domain matches always take priority over wildcard matches
-// regardless of rule ordering — this prevents a wildcard allow from shadowing
-// an exact deny (or vice versa). Returns nil if allowed, an error if blocked or
-// no matching rule.
+// the rule set. Two priority rules combine, mirroring the Envoy generator so
+// the host-browser channel enforces the same verdict as the MITM firewall:
+//
+//   - Specificity: an exact domain/IP/CIDR match always beats a wildcard match,
+//     regardless of rule order, so a wildcard can never shadow an exact rule.
+//   - Deny-always-wins within a tier: if ANY matching rule in the winning tier
+//     denies, the request is denied even when an allow rule also matches. This
+//     is load-bearing for overlapping port specs — a range allow ("9000-9100")
+//     and a single-port deny ("9050") are stored under different keys, so both
+//     survive in the file and both match port 9050; Envoy resolves that to deny
+//     and so must we. A deny only counts when its own port spec actually covers
+//     the request port (enforced by the portSpecMatches gate below), so a deny
+//     scoped to a port outside the request never suppresses a legitimate allow.
+//
+// Returns nil if allowed, an error if denied or if no rule matches.
 func matchRules(rules []egressRule, host, proto string, port int, path string) error {
-	var wildcardMatch *egressRule
+	var exactAllow, wildcardAllow *egressRule
+	exactDeny, wildcardDeny := false, false
 
-	// Pass 1: find the best match. Exact domain wins; wildcard is fallback.
 	for i := range rules {
 		r := normalizeEgressRule(rules[i])
 
-		if !strings.EqualFold(r.Proto, proto) || r.Port != port {
+		if !strings.EqualFold(r.Proto, proto) || !portSpecMatches(r.Port, port) {
 			continue
 		}
 
-		matchType := dstMatchType(r.Dst, host)
-		if matchType == matchNone {
-			continue
-		}
-
-		if matchType == matchExact {
-			return evaluateRule(r, host, path)
-		}
-
-		// Wildcard match — remember first one as fallback.
-		if wildcardMatch == nil {
-			normalized := r
-			wildcardMatch = &normalized
+		switch dstMatchType(r.Dst, host) {
+		case matchExact:
+			if strings.EqualFold(r.Action, "allow") {
+				if exactAllow == nil {
+					rc := r
+					exactAllow = &rc
+				}
+			} else {
+				exactDeny = true
+			}
+		case matchWildcard:
+			if strings.EqualFold(r.Action, "allow") {
+				if wildcardAllow == nil {
+					rc := r
+					wildcardAllow = &rc
+				}
+			} else {
+				wildcardDeny = true
+			}
 		}
 	}
 
-	if wildcardMatch != nil {
-		return evaluateRule(*wildcardMatch, host, path)
+	// Exact tier first (higher specificity), deny before allow within it.
+	if exactDeny {
+		return fmt.Errorf("domain %q is denied by egress rules", host)
+	}
+	if exactAllow != nil {
+		return evaluateRule(*exactAllow, host, path)
+	}
+	if wildcardDeny {
+		return fmt.Errorf("domain %q is denied by egress rules", host)
+	}
+	if wildcardAllow != nil {
+		return evaluateRule(*wildcardAllow, host, path)
 	}
 
 	return fmt.Errorf("domain %q is not in the egress allow list", host)
@@ -222,17 +286,68 @@ func normalizeEgressRule(r egressRule) egressRule {
 	if r.Action == "" {
 		r.Action = "allow"
 	}
-	if r.Port == 0 {
+	if r.Port == "" {
 		switch strings.ToLower(r.Proto) {
 		case "https":
-			r.Port = 443
+			r.Port = "443"
 		case "http":
-			r.Port = 80
+			r.Port = "80"
 		case "ssh":
-			r.Port = 22
+			r.Port = "22"
 		}
 	}
 	return r
+}
+
+// portSpecMatches reports whether the request port p satisfies the rule's
+// dynamic port spec: a single port ("443") or an inclusive range ("9000-9100").
+// A range only ever attaches to opaque protos (tcp/ssh/udp); since /open/url
+// handles http/https only, a range never matches a browser URL in practice —
+// but the membership check is correct regardless.
+//
+// It MUST parse identically to config.ParsePortSpec, which is the boundary the
+// firewall validates every spec through before writing egress-rules.yaml. The
+// package DAG forbids importing internal/config, so the logic is duplicated —
+// keep it in lockstep. The divergence matters in the DENY direction: a deny
+// rule the firewall accepted but this function fails to parse would silently
+// not match and fall through to a wildcard allow, opening an exfil hole. An
+// empty/malformed/out-of-range spec matches nothing.
+func portSpecMatches(spec string, p int) bool {
+	lo, hi, ok := parsePortSpec(spec)
+	return ok && p >= lo && p <= hi
+}
+
+// parsePortSpec mirrors config.ParsePortSpec: it trims surrounding whitespace,
+// accepts a single port ("443") or an inclusive range ("9000-9100"), bounds-
+// checks every number to 1-65535, and rejects reversed ranges (lo>hi). ok is
+// false for an empty, malformed, or out-of-range spec.
+func parsePortSpec(spec string) (lo, hi int, ok bool) {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return 0, 0, false
+	}
+	if left, right, isRange := strings.Cut(spec, "-"); isRange {
+		l, okLo := parsePortNumber(left)
+		h, okHi := parsePortNumber(right)
+		if !okLo || !okHi || l > h {
+			return 0, 0, false
+		}
+		return l, h, true
+	}
+	n, okN := parsePortNumber(spec)
+	if !okN {
+		return 0, 0, false
+	}
+	return n, n, true
+}
+
+// parsePortNumber parses a single whitespace-trimmed, bounds-checked port.
+func parsePortNumber(s string) (int, bool) {
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil || n < 1 || n > 0xffff {
+		return 0, false
+	}
+	return n, true
 }
 
 // matchKind classifies how a rule destination matched a host.
