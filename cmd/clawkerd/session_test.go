@@ -62,6 +62,20 @@ func trueBinPath(t *testing.T) string {
 	return ""
 }
 
+// echoBinPath returns an absolute path to a real `echo` binary, using
+// the same closed-set, no-$PATH discipline as trueBinPath. `echo` is the
+// canonical fast-exit writer for the output-preservation regression test.
+func echoBinPath(t *testing.T) string {
+	t.Helper()
+	for _, p := range []string{"/bin/echo", "/usr/bin/echo"} {
+		if info, err := os.Stat(p); err == nil && !info.IsDir() {
+			return p
+		}
+	}
+	t.Skip("no `echo` binary at /bin/echo or /usr/bin/echo on this host")
+	return ""
+}
+
 // newTestSession builds a session whose sendCh and cmds map are
 // exposed but no sender goroutine runs — tests drain responses
 // directly off the channel. Returns the session plus a log buffer
@@ -308,18 +322,31 @@ func TestRunShellCommand_AuditLogOnSpawnFailure(t *testing.T) {
 	assert.True(t, sawSpawnErr, "SPAWN_FAILED response missing")
 }
 
-// TestStartShellCommand_InitialStdinCloseStdinRace pins the regression
-// fix for the bug that caused agent-init's `ssh` step to land an empty
-// known_hosts file: CP sends ShellCommand+InitialStdin and immediately
-// follows with CloseStdin. Without the stdinReady gate, routeCloseStdin
-// would run BEFORE the InitialStdin write goroutine, the Write would
-// return ErrClosedPipe, and the payload would silently vanish.
+// TestStartShellCommand_InitialStdinCloseStdinRace exercises the exact
+// CP ordering behind agent-init's empty `ssh` known_hosts file:
+// ShellCommand+InitialStdin immediately followed by CloseStdin, with
+// `cat` echoing its stdin back to stdout.
 //
-// We dispatch through the real receiver path (runReceiver → dispatch →
-// startShellCommand → ...) so the gate's race-window is fully
-// exercised; child is `cat` which echoes its stdin to stdout. CP
-// expects to see the InitialStdin payload back as a StdoutChunk; if
-// the race is unfixed, stdout is empty.
+// TWO independent races live on this path; both must hold for the
+// payload to survive:
+//
+//  1. The stdinReady gate orders CloseStdin AFTER the InitialStdin write.
+//     Without it routeCloseStdin closes the pipe before the write
+//     goroutine runs, the Write returns ErrClosedPipe, and the payload
+//     never reaches the child.
+//
+//  2. os.Pipe ownership of cat's stdout (see runShellCommand). This test
+//     was historically FLAKY — not because of the gate (which works), but
+//     because runShellCommand used cmd.StdoutPipe(), whose read end
+//     cmd.Wait() closes. cat is a fast-exit child: it echoed the payload
+//     and exited so fast that the stage reaper's c.Wait() closed the
+//     stdout read end before the drainer read it, truncating stdout to
+//     empty. The empty-stdout symptom looked identical to a gate failure,
+//     which sent earlier fixes chasing the gate. The structural fix is
+//     owning the pipe via os.Pipe so Wait never closes it mid-drain; the
+//     general guard for that half is TestRunShellCommand_FastExitOutputPreserved.
+//
+// Dispatched through the real receiver path so both windows are live.
 func TestStartShellCommand_InitialStdinCloseStdinRace(t *testing.T) {
 	const payload = "hello-from-initial-stdin\n"
 	const id = "init-stdin-race-1"
@@ -409,6 +436,55 @@ func TestRunShellCommand_FastExitNoIOError(t *testing.T) {
 					i, e.Code, e.Message)
 			}
 		}
+		cancel()
+	}
+}
+
+// TestRunShellCommand_FastExitOutputPreserved pins the DATA-preservation
+// half of the fast-exit contract that TestRunShellCommand_FastExitNoIOError
+// (no-IO_ERROR only) does not cover: a child that writes output then exits
+// immediately must have its FULL output delivered, not truncated.
+//
+// The regression: runShellCommand used cmd.StdoutPipe()/StderrPipe(), whose
+// read ends cmd.Wait() closes. A stage reaper calls c.Wait() concurrently
+// with the drain goroutine, so for a fast-exit child Wait could close the
+// read end before the drainer read the buffered output — silently truncating
+// it to empty (the empty `ssh` known_hosts init bug; this is also the true
+// cause behind the flaky TestStartShellCommand_InitialStdinCloseStdinRace,
+// which the stdinReady gate never actually addressed). Owning the pipes via
+// os.Pipe removes the close-on-Wait, so the drainer always reaches a clean
+// EOF and every byte survives.
+//
+// echo is the canonical fast-exit writer. Run it many times to keep the
+// drain-vs-reap race window covered across scheduler vagaries.
+func TestRunShellCommand_FastExitOutputPreserved(t *testing.T) {
+	echoPath := echoBinPath(t)
+	const N = 50
+	for i := range N {
+		s, _ := newTestSession()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		runUntilDone(t, ctx, s, &clawkerdv1.ShellCommand{
+			Stages: []*clawkerdv1.PipeStage{{Argv: []string{echoPath, "hello"}}},
+		}, fmt.Sprintf("fast-out-%d", i))
+
+		var stdout strings.Builder
+		var sawDone bool
+		for _, r := range drainAll(s) {
+			if c := r.GetStdout(); c != nil {
+				stdout.Write(c.Data)
+			}
+			if d := r.GetDone(); d != nil {
+				assert.Equal(t, int32(0), d.FinalExitCode)
+				sawDone = true
+			}
+			if e := r.GetError(); e != nil {
+				t.Fatalf("iter %d: unexpected Error response: code=%v msg=%q",
+					i, e.Code, e.Message)
+			}
+		}
+		assert.True(t, sawDone, "iter %d: Done response missing", i)
+		assert.Equal(t, "hello\n", stdout.String(),
+			"iter %d: fast-exit child stdout must be delivered in full, not truncated by Wait closing the read end mid-drain", i)
 		cancel()
 	}
 }

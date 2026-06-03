@@ -869,46 +869,79 @@ func (s *session) runShellCommand(ctx context.Context, rc *runningCommand, sc *c
 		}
 	}()
 
-	// Chain stage[i].stdout → stage[i+1].stdin via os pipes. Capture
-	// the final stage's stdout for streaming.
-	stagePipes := make([]io.ReadCloser, len(cmds)-1)
-	for i := 0; i < len(cmds)-1; i++ {
-		out, err := cmds[i].StdoutPipe()
-		if err != nil {
+	// stdout/stderr pipes are owned via os.Pipe rather than
+	// cmd.StdoutPipe()/StderrPipe(). cmd.Wait() closes the read end of
+	// every stdlib-created pipe (it tracks them in parentIOPipes); our
+	// stage reapers call c.Wait() concurrently with the drain goroutines,
+	// so a stdlib pipe lets Wait close the read end mid-drain and
+	// silently DISCARD buffered output a fast-exit child already wrote —
+	// the bug behind empty `ssh` known_hosts on init. A user-supplied
+	// *os.File is never tracked by exec (writerDescriptor/readerDescriptor
+	// return the *os.File without appending to childIOFiles/parentIOPipes,
+	// see os/exec/exec.go), so neither Start nor Wait ever touches these.
+	// We close the write ends right after Start — leaving the child as the
+	// sole writer so the reader EOFs exactly on child exit — and the read
+	// ends at teardown once the drainers have returned.
+	//
+	// createdPipes tracks every fd until the pipeline is live so a spawn
+	// failure (this loop or the Start loop below) closes them all; it is
+	// disarmed once Start succeeds, after which the drain/teardown path
+	// owns the read ends and the write ends are already closed.
+	var createdPipes []*os.File
+	defer func() {
+		for _, f := range createdPipes {
+			_ = f.Close()
+		}
+	}()
+	newPipe := func(label string) (r, w *os.File, ok bool) {
+		pr, pw, perr := os.Pipe()
+		if perr != nil {
 			s.send(ctx, errResponse(rc.id,
 				clawkerdv1.ErrorCode_ERROR_CODE_SPAWN_FAILED,
-				fmt.Sprintf("stage[%d] StdoutPipe: %v", i, err)))
+				fmt.Sprintf("%s pipe: %v", label, perr)))
 			s.closePipeOnce(rc.id, "stdin", stdinW, &closeStats)
 			auditOutcome = "spawn_failed"
-			return
+			return nil, nil, false
 		}
-		stagePipes[i] = out
-		cmds[i+1].Stdin = out
+		createdPipes = append(createdPipes, pr, pw)
+		return pr, pw, true
 	}
 
-	finalStdout, err := cmds[len(cmds)-1].StdoutPipe()
-	if err != nil {
-		s.send(ctx, errResponse(rc.id,
-			clawkerdv1.ErrorCode_ERROR_CODE_SPAWN_FAILED,
-			fmt.Sprintf("final stage StdoutPipe: %v", err)))
-		s.closePipeOnce(rc.id, "stdin", stdinW, &closeStats)
-		auditOutcome = "spawn_failed"
+	// Chain stage[i].stdout → stage[i+1].stdin; capture the final
+	// stage's stdout read end for streaming. writeEnds collects the
+	// parent's copy of every stdout/stderr write end so the Start loop
+	// can close them once each child owns its own dup.
+	var writeEnds []*os.File
+	stagePipes := make([]io.ReadCloser, len(cmds)-1)
+	for i := 0; i < len(cmds)-1; i++ {
+		pr, pw, ok := newPipe(fmt.Sprintf("stage[%d] stdout", i))
+		if !ok {
+			return
+		}
+		cmds[i].Stdout = pw
+		cmds[i+1].Stdin = pr
+		stagePipes[i] = pr
+		writeEnds = append(writeEnds, pw)
+	}
+
+	finalRead, finalWrite, ok := newPipe("final stage stdout")
+	if !ok {
 		return
 	}
+	cmds[len(cmds)-1].Stdout = finalWrite
+	finalStdout := io.ReadCloser(finalRead)
+	writeEnds = append(writeEnds, finalWrite)
 
 	// Per-stage stderr pipes for streaming StderrChunk.
 	stderrPipes := make([]io.ReadCloser, len(cmds))
 	for i := range cmds {
-		errPipe, perr := cmds[i].StderrPipe()
-		if perr != nil {
-			s.send(ctx, errResponse(rc.id,
-				clawkerdv1.ErrorCode_ERROR_CODE_SPAWN_FAILED,
-				fmt.Sprintf("stage[%d] StderrPipe: %v", i, perr)))
-			s.closePipeOnce(rc.id, "stdin", stdinW, &closeStats)
-			auditOutcome = "spawn_failed"
+		pr, pw, ok := newPipe(fmt.Sprintf("stage[%d] stderr", i))
+		if !ok {
 			return
 		}
-		stderrPipes[i] = errPipe
+		cmds[i].Stderr = pw
+		stderrPipes[i] = pr
+		writeEnds = append(writeEnds, pw)
 	}
 
 	// Start each stage. Failure mid-way kills already-started
@@ -928,6 +961,17 @@ func (s *session) runShellCommand(ctx context.Context, rc *runningCommand, sc *c
 			return
 		}
 	}
+
+	// All stages running. Close the parent's copy of every stdout/stderr
+	// write end so each child is the sole writer — otherwise the read
+	// ends never EOF (the parent fd keeps the pipe open) and the drainers
+	// block forever. With the write ends closed and the pipeline live,
+	// the read ends are now owned by the drain/teardown path, so disarm
+	// the spawn-failure cleanup. See the os.Pipe ownership note above.
+	for _, w := range writeEnds {
+		s.closePipeOnce(rc.id, "child_write_end", w, &closeStats)
+	}
+	createdPipes = nil
 
 	// All stages running. Tell CP.
 	s.send(ctx, &clawkerdv1.Response{
@@ -1089,6 +1133,16 @@ func (s *session) runShellCommand(ctx context.Context, rc *runningCommand, sc *c
 	// Wait for stdout/stderr drainers to finish so chunks can't
 	// arrive after Done.
 	wg.Wait()
+
+	// Drainers have returned, so close the read ends we own (os.Pipe,
+	// not stdlib StdoutPipe/StderrPipe — Wait never closed them). Closing
+	// before wg.Wait would race a drainer mid-Read; the stdlib's
+	// close-on-Wait of exactly these read ends mid-drain was the original
+	// truncated-output bug.
+	s.closePipeOnce(rc.id, "final_stdout", finalStdout, &closeStats)
+	for i, p := range stderrPipes {
+		s.closePipeOnce(rc.id, fmt.Sprintf("stage[%d]_stderr", i), p, &closeStats)
+	}
 
 	if timedOut.Load() {
 		s.send(ctx, errResponse(rc.id,
