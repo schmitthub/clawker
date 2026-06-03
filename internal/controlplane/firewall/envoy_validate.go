@@ -30,7 +30,7 @@ import (
 )
 
 // validateBootstrap parses generated envoy.yaml against Envoy's bootstrap proto
-// schema — pure Go, no Envoy binary, no sockets. It catches three classes of
+// schema — pure Go, no Envoy binary, no sockets. It catches two classes of
 // generator bug before the config is ever written:
 //   - structural: an unknown / typo'd field (protojson DiscardUnknown defaults
 //     to false) or a wrong value type → unmarshal error;

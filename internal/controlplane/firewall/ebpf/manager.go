@@ -406,8 +406,9 @@ func (m *Manager) CleanupStaleBypass() (int, error) {
 	return cleared, errors.Join(errs...)
 }
 
-// FlushAll clears all per-container eBPF state: empties container_map
-// and bypass_map, unpins every link. Called ONLY on drain-to-zero
+// FlushAll clears all per-container/per-flow eBPF state: empties
+// container_map, bypass_map, ratelimit_state, udp_flow_map, and
+// ratelimit_drops, then unpins every link. Called ONLY on drain-to-zero
 // shutdown (INV-B2-007) when no agents remain — this is the drain
 // complement to CleanupAllLinks, which only touches pinned links.
 //
@@ -1099,8 +1100,12 @@ type Route struct {
 }
 
 // dnsSeedTTLSeconds is the TTL for SyncRoutes-seeded IP-literal dns_cache
-// entries. SyncRoutes re-seeds on every rule change/reload, so a long TTL just
-// keeps the entry alive across the gaps without GarbageCollectDNS evicting it.
+// entries. Seeding is insert-only (seedDNSCacheIfAbsent uses UpdateNoExist and
+// no-ops on ErrKeyExist), so a re-seed on a subsequent rule change/reload never
+// refreshes an existing entry's TTL — it must outlive the reconcile cadence on
+// its own. The long TTL is therefore load-bearing: it keeps the seed alive
+// across reconciles without GarbageCollectDNS evicting it (which is also why
+// GarbageCollectDNS skips m.seededIPs while the IP rule is live).
 const dnsSeedTTLSeconds uint32 = 365 * 24 * 3600
 
 // NewContainerConfig builds a BPF container_config from network parameters.

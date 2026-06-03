@@ -11,15 +11,17 @@
 //
 // clawker.c — All clawker eBPF programs in a single compilation unit.
 //
-// Seven cgroup programs that replace iptables for per-container egress
+// Nine cgroup programs that replace iptables for per-container egress
 // control:
-//   1. cgroup/connect4    — IPv4 TCP/UDP: redirect to Envoy/CoreDNS + deny
-//   2. cgroup/sendmsg4    — IPv4 UDP: DNS redirect + non-DNS deny
-//   3. cgroup/recvmsg4    — IPv4 UDP: rewrite DNS response source
-//   4. cgroup/connect6    — IPv6: full IPv4-mapped routing + native deny
-//   5. cgroup/sendmsg6    — IPv6 UDP: IPv4-mapped DNS redirect + native deny
-//   6. cgroup/recvmsg6    — IPv6 UDP: rewrite IPv4-mapped DNS response source
-//   7. cgroup/sock_create — Raw socket blocking (ICMP prevention)
+//   1.  cgroup/connect4     — IPv4 TCP/UDP: redirect to Envoy/CoreDNS + deny
+//   2.  cgroup/sendmsg4     — IPv4 UDP: DNS redirect + non-DNS deny
+//   2b. cgroup/recvmsg4     — IPv4 UDP: restore DNS/routed-UDP reply source
+//   2c. cgroup/getpeername4 — IPv4 UDP: report original dst as connected peer
+//   3.  cgroup/connect6     — IPv6: full IPv4-mapped routing + native deny
+//   4.  cgroup/sendmsg6     — IPv6 UDP: IPv4-mapped DNS redirect + native deny
+//   4b. cgroup/recvmsg6     — IPv6 UDP: rewrite IPv4-mapped DNS response source
+//   4c. cgroup/getpeername6 — IPv6 UDP: report original dst (IPv4-mapped)
+//   5.  cgroup/sock_create  — Raw socket blocking (ICMP prevention)
 //
 // Routing DRY: the IPv4 and IPv4-mapped-over-IPv6 code paths share the same
 // routing decisions. All of that logic lives in decide_connect/decide_sendmsg
@@ -183,11 +185,12 @@ int clawker_sendmsg4(struct bpf_sock_addr *ctx)
 }
 
 // ---------------------------------------------------------------------------
-// Program 2b: cgroup/recvmsg4 — Rewrite UDP source on DNS responses
+// Program 2b: cgroup/recvmsg4 — Restore the reply source on redirected UDP
 // ---------------------------------------------------------------------------
-// Paired with sendmsg4: when sendmsg4 rewrites dst from 127.0.0.11 → CoreDNS,
-// the response arrives FROM CoreDNS. The app expects the response FROM
-// 127.0.0.11. This program fixes the source address on the response.
+// Paired with sendmsg4/connect4: when egress was rewritten dst→backend, the
+// response arrives FROM the backend but the app expects it FROM what it aimed
+// at. restore_v4_reply_source undoes both rewrites — DNS (CoreDNS → 127.0.0.11)
+// and routed UDP (Envoy → the original dst recorded in udp_flow_map).
 
 SEC("cgroup/recvmsg4")
 int clawker_recvmsg4(struct bpf_sock_addr *ctx)

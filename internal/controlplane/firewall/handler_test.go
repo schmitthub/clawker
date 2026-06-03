@@ -1509,6 +1509,8 @@ func TestHandler_AddRules_InvalidRule_FailsLaunch(t *testing.T) {
 		{"non-numeric port", &adminv1.EgressRule{Dst: "host.example.com", Proto: "tcp", Port: "44x", Action: "allow"}},
 		{"typo'd action", &adminv1.EgressRule{Dst: "host.example.com", Proto: "https", Port: "443", Action: "dney"}},
 		{"typo'd path_default", &adminv1.EgressRule{Dst: "host.example.com", Proto: "https", Port: "443", PathDefault: "denied"}},
+		{"empty path rule path", &adminv1.EgressRule{Dst: "host.example.com", Proto: "https", Port: "443", PathRules: []*adminv1.PathRule{{Path: "  ", Action: "allow"}}}},
+		{"typo'd path rule action", &adminv1.EgressRule{Dst: "host.example.com", Proto: "https", Port: "443", PathRules: []*adminv1.PathRule{{Path: "/x", Action: "dney"}}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

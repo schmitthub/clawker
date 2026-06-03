@@ -101,7 +101,9 @@ type permutation struct {
 
 // derive turns rules into permutations by cherry-picking each rule's layer
 // methods from its proto token (+ wildcard-ness) — the ONLY proto-aware step.
-// Deny rules are skipped (first-class deny lands later); unsupported tokens are
+// Non-opaque deny rules (http/https/ws/wss) are skipped — they are enforced by
+// absence + the egress deny floor; opaque deny rules (tcp/ssh/udp) DO build a
+// dedicated blackhole listener (first-class deny). Unsupported tokens are
 // skipped with a warning. Generation-wide facts that a single permutation cannot
 // decide in isolation (e.g. dfpActive — whether the shared plaintext chain must
 // carry the DFP filter) are computed once here and captured into the layer

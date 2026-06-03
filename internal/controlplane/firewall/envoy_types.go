@@ -173,12 +173,9 @@ func dedicatedPorts(r config.EgressRule, portFn func(config.EgressRule) int) []i
 	return []int{portFn(r)}
 }
 
-// parsePortRange parses an inclusive "lo-hi" port range. Returns ok=false for an
-// empty or malformed value (caller falls back to the single Port) — a malformed
-// range pins FEWER ports, never more, so the fallback is fail-closed.
-// parsePortRange was removed: the dynamic Port field is now parsed and
-// validated by config.ParsePortSpec (see internal/config/egress_port.go),
-// reached via EgressRule.PortSpan / EgressRule.SinglePort.
+// Port parsing/validation lives in config.ParsePortSpec (see
+// internal/config/egress_port.go), reached via EgressRule.PortSpan /
+// EgressRule.SinglePort.
 
 // dedicatedPortKey is the lookup key the deriver uses to map a rule to its
 // pre-assigned dedicated-listener port (host + effective dst port).

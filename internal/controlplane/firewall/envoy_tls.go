@@ -128,8 +128,9 @@ func serverNames(dst string, exactDomains map[string]bool) []string {
 //     server-side SNI gate; require_sni is unimplemented). A TCP chain also needs
 //     transport_protocol:tls so tls_inspector reads the ClientHello (needInspector);
 //     a QUIC chain matches by SNI alone (every QUIC connection is TLS 1.3).
-//   - IP-literal dst → original-destination gate: prefix_ranges + destination_port
-//     (TLS to an IP carries NO SNI, RFC 6066, so server_names can never match it).
+//   - IP-literal or CIDR dst → original-destination gate: prefix_ranges +
+//     destination_port (TLS to a raw IP carries NO SNI, RFC 6066, so server_names
+//     can never match it; a CIDR range has no single host to put in server_names).
 //     Recovering the eBPF-redirected original dst for these to match needs
 //     use_original_dst on the listener (needOriginalDst); per the island rule we
 //     emit the self-secure chain regardless — if the datapath can't yet recover the

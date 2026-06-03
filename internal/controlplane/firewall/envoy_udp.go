@@ -11,7 +11,8 @@ import (
 // QUIC-MITM termination today (HTTP/3); raw `udp_proxy` datagram forwarding lands
 // here too. QUIC is the crypto DECORATION on the UDP transport — it belongs HERE,
 // with UDP, never in a file named for TLS. The SNI gate (serverNames) and the
-// secure-port helper (httpsPort) are shared with the TCP transport (envoy_tcp.go).
+// secure-port helper (httpsPort) are shared with the TLS-on-TCP transport
+// (envoy_tls.go).
 //
 // Self-secure regardless of any other layer: a QUIC connection whose SNI matches
 // no server_names chain on this listener fails the handshake (no cert) — fail

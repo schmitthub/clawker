@@ -408,8 +408,9 @@ func RoutesFromRules(rules []config.EgressRule, ports EnvoyPorts) []ebpf.Route {
 		// allowed-domain from "denied" to "allowed". Plaintext http/ws have no
 		// cleartext h3 sibling, so they get no UDP route. Skipped if a raw `udp`
 		// rule already claimed this {domain, port} (raw-udp pass is authoritative).
-		// NOTE: connect4 (connected UDP) consumes this today; routing UNCONNECTED
-		// QUIC (sendmsg4) additionally requires the recvmsg4 reverse source-map.
+		// Both connected (connect4) and unconnected (sendmsg4) QUIC datagrams
+		// follow this route; recvmsg4/getpeername4 restore the reply source from
+		// udp_flow_map so the app observes responses as if from the original dst.
 		if proto == "https" || proto == "wss" {
 			if _, dup := udpSeen[key]; !dup {
 				udpSeen[key] = struct{}{}
@@ -426,9 +427,9 @@ func RoutesFromRules(rules []config.EgressRule, ports EnvoyPorts) []ebpf.Route {
 }
 
 // NormalizeAndDedup normalizes all rules and removes duplicates.
-// This handles legacy store files that contain port:0 rules written before
-// NormalizeRule defaulted TLS to 443 — after normalization those become
-// duplicates of the correctly-ported entries.
+// This handles store files that contain rules with an unset port: NormalizeRule
+// fills the proto default (e.g. https → 443) so they become duplicates of the
+// correctly-ported entries and collapse during dedup.
 //
 // Wildcard (.claude.ai) and exact (claude.ai) rules are NOT deduped against
 // each other — they are semantically distinct. A user may want unrestricted
@@ -482,14 +483,6 @@ func NormalizeAndDedup(rules []config.EgressRule) ([]config.EgressRule, []string
 	return out, warnings
 }
 
-// coalesceOpaquePortOverlaps merges opaque (tcp/ssh/udp) rules that share a
-// dst:proto:action and whose port spans overlap into one rule per contiguous
-// span, so the per-port dedicated-listener fan-out never emits a duplicate
-// listener. Non-opaque rules and rules without an explicit port span are passed
-// through untouched, in their original order; merged opaque rules take the
-// position of the group's first appearance. Only OVERLAPPING spans merge
-// (sharing ≥1 port) — adjacent-but-disjoint ranges (e.g. 4242 and 4243-4244)
-// stay separate, since distinct listeners on distinct ports don't collide.
 // resolveOpaquePortConflicts is the merge brain for opaque (tcp/ssh/udp) port
 // rules. A range is just shorthand for a set of per-port chains, so this folds
 // every opaque rule into two port-span sets per (dst, proto) — allow and deny —
@@ -501,11 +494,11 @@ func NormalizeAndDedup(rules []config.EgressRule) ([]config.EgressRule, []string
 //     tcp_<dst>_<port> / udp_<dst>_<port>), so an overlapping port would emit the
 //     SAME listener twice and fail generation.
 //   - Any port that appears in a deny span is CARVED OUT of the allow spans
-//     (subtractSpans) and emitted as an explicit deny rule. So `tcp 45-50 allow`
-//   - `tcp 47 deny` → allow {45-46, 48-50} + deny {47}; `tcp 45-50 deny` +
-//     `tcp 47 allow` → deny {45-50}, allow gone (the single allow is swallowed).
-//     Deny spans are emitted verbatim and ALWAYS persist — a denied port is never
-//     silently allowed by an overlapping allow range.
+//     (subtractSpans) and emitted as an explicit deny rule. Example: `tcp 45-50
+//     allow` with `tcp 47 deny` yields allow {45-46, 48-50} plus deny {47};
+//     `tcp 45-50 deny` with `tcp 47 allow` yields deny {45-50} and the single
+//     allow is swallowed. Deny spans are emitted verbatim and ALWAYS persist —
+//     a denied port is never silently allowed by an overlapping allow range.
 //
 // The output is the flat, conflict-free span set the generator loops over: allow
 // spans build pinned upstream listeners, deny spans build blackhole (deny-cluster)
@@ -631,15 +624,13 @@ func isDenyAction(action string) bool {
 }
 
 // subtractSpans removes every port covered by a deny span from the allow spans,
-// returning the remaining allow sub-spans. Both inputs MUST be the merged
-// (sorted, disjoint) output of mergeOverlappingSpans. A denied port is never
-// left in the result — this is the deny-wins carve-out.
-// subtractSpans removes every port covered by a deny span from the allow spans,
 // returning the remaining allow sub-spans. A denied port is never left in the
-// result — this is the deny-wins carve-out, an egress-security boundary, so the
-// running-cursor advance defensively sorts the deny spans first rather than
-// trusting callers to pass merged (sorted) input: an unsorted deny would silently
-// skip earlier spans and leave denied ports allowed (a fail-open shape).
+// result — this is the deny-wins carve-out, an egress-security boundary. The deny
+// spans are sorted internally before the running-cursor advance rather than
+// trusting callers to pass sorted input: an unsorted deny would silently skip
+// earlier spans and leave denied ports allowed (a fail-open shape). The allow
+// spans are consumed in input order and the result preserves that order, so
+// callers should pass merged (sorted, disjoint) allow spans for a clean result.
 func subtractSpans(allow, deny [][2]int) [][2]int {
 	if len(deny) == 0 {
 		return allow

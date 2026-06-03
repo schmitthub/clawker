@@ -152,6 +152,16 @@ func GenerateDomainCert(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, domai
 	return certPEM, keyPEM, nil
 }
 
+// certBasename is the flat on-disk filename stem for a dst's MITM cert/key. It
+// keeps dots (valid in filenames and unique per FQDN/IP) but folds the CIDR "/"
+// to "_" so a range dst (10.0.0.0/24) maps to a single flat file pair
+// (10.0.0.0_24-{cert,key}.pem) instead of a bogus subdirectory. The downstream
+// TLS context's cert reference must use this same basename so the listener finds
+// the file — both call sites flow through certBasename.
+func certBasename(dst string) string {
+	return strings.ReplaceAll(normalizeDomain(dst), "/", "_")
+}
+
 // RegenerateDomainCerts generates certificates for all TLS egress rules,
 // storing them in certDir/<domain>-cert.pem and <domain>-key.pem.
 // Every TLS rule gets a certificate — Envoy terminates TLS for all domains
@@ -164,16 +174,6 @@ func GenerateDomainCert(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, domai
 //
 // Cert generation runs before stale cleanup so that a partial failure leaves
 // previously-working certs intact rather than an empty directory.
-// certBasename is the flat on-disk filename stem for a dst's MITM cert/key. It
-// keeps dots (valid in filenames and unique per FQDN/IP) but folds the CIDR "/"
-// to "_" so a range dst (10.0.0.0/24) maps to a single flat file pair
-// (10.0.0.0_24-{cert,key}.pem) instead of a bogus subdirectory. The downstream
-// TLS context's cert reference must use this same basename so the listener finds
-// the file — both call sites flow through certBasename.
-func certBasename(dst string) string {
-	return strings.ReplaceAll(normalizeDomain(dst), "/", "_")
-}
-
 func RegenerateDomainCerts(rules []config.EgressRule, certDir string, caCert *x509.Certificate, caKey *ecdsa.PrivateKey) error {
 	if err := os.MkdirAll(certDir, 0o700); err != nil {
 		return fmt.Errorf("creating certs directory: %w", err)

@@ -14,7 +14,7 @@
 //	ebpf-manager dns-update <ip> <domainHash> <ttl>      Update DNS cache entry
 //	ebpf-manager gc-dns                                  Remove expired DNS cache entries
 //	ebpf-manager dump <cgroupPath>                       Inspect container_map for one cgroup
-//	ebpf-manager dump-routes [--json]                    Dump global route_map (every {domain_hash, dst_port} → envoy_port)
+//	ebpf-manager dump-routes [--json]                    Dump global route_map (every {domain_hash, dst_port, l4_proto} → envoy_port)
 //	ebpf-manager dump-containers [--json]                Dump container_map (every cgroup → BPF container_config)
 //	ebpf-manager dump-bypass [--json]                    Dump bypass_map (every cgroup → bypass flag)
 //	ebpf-manager dump-dns [--json]                       Dump dns_cache (every IP → {domain_hash, expire_ts})

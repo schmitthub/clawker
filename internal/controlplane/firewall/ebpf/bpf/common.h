@@ -13,10 +13,11 @@
 // So we pull the needed types from the pinned Linux UAPI header set
 // (<linux/bpf.h>, <linux/types.h>) instead of a committed vmlinux.h dump.
 // The UAPI pin is anchored via the linux-libc-dev package version in the
-// pinned builder image — see internal/ebpf/REPRODUCIBILITY.md.
+// pinned builder image — see BPF_APT_DEPS in the Makefile and gen.go.
 //
 // All BPF maps are shared across programs via pinning to /sys/fs/bpf/clawker/.
-// The Go userspace code (internal/ebpf/) mirrors these struct layouts exactly.
+// The Go userspace code (types.go in this package) mirrors these struct
+// layouts exactly.
 
 #ifndef __CLAWKER_COMMON_H
 #define __CLAWKER_COMMON_H
@@ -90,7 +91,7 @@ struct container_config {
 
 // DNS cache entry: resolved IP → domain identity.
 // Written by the CoreDNS dnsbpf plugin on every resolution; read by userspace
-// garbage collection (internal/ebpf Manager.GarbageCollectDNS). The BPF fast
+// garbage collection (Manager.GarbageCollectDNS). The BPF fast
 // path (clawker.c) only uses domain_hash for routing and does NOT check
 // expire_ts — expiration is enforced exclusively by userspace GC.
 struct dns_entry {
@@ -684,12 +685,12 @@ submit_event_nodst(__u64 cgroup_id, __u8 l4_proto, __u8 verdict)
 //   ENTER_ENFORCED    — proceed with normal routing decision; *cfg and
 //                       *cgroup_id are populated.
 //
-// Callers that do not care about bypass (recvmsg4/recvmsg6) pass
-// check_bypass = false. With check_bypass=false the function never
-// returns ENTER_BYPASSED. Source-rewrite for DNS responses is keyed by
-// CoreDNS IP, so a recvmsg from a bypassed container that never went
-// through CoreDNS won't match the rewrite predicate — honoring bypass
-// here is unnecessary.
+// Callers that do not care about bypass (recvmsg4/recvmsg6 and
+// getpeername4/getpeername6) pass check_bypass = false. With
+// check_bypass=false the function never returns ENTER_BYPASSED. These are
+// all response-side reverse-NAT restores keyed by CoreDNS/Envoy IP, so a
+// call from a bypassed container that never had its egress rewritten won't
+// match the restore predicate — honoring bypass here is unnecessary.
 //
 // enter_enforced calls metric_inc(ACTION_BYPASS) on the confirmed
 // bypass path so the existing metrics_map dump (consumed by the
