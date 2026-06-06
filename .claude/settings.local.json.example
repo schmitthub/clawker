@@ -1,12 +1,23 @@
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PROJECT_DIR}/.claude/hooks/serena-session-start.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Read|Edit",
         "hooks": [
           {
             "type": "command",
-            "command": "bash .claude/hooks/serena-first.sh",
+            "command": "bash ${CLAUDE_PROJECT_DIR}/.claude/hooks/serena-first.sh",
             "timeout": 5
           }
         ]
@@ -18,11 +29,14 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash .claude/hooks/serena-init-marker.sh",
+            "command": "bash ${CLAUDE_PROJECT_DIR}/.claude/hooks/serena-init-marker.sh",
             "timeout": 5
           }
         ]
       }
     ]
+  },
+  "enabledPlugins": {
+    "mintlify@claude-plugins-official": false
   }
 }

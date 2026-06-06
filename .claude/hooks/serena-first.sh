@@ -10,6 +10,11 @@
 MARKER="/tmp/.claude_serena_init_${PPID}"
 
 if [[ ! -f "$MARKER" ]]; then
+  # DENY: an "allow" decision's reason is NOT surfaced to the model — it only
+  # justifies auto-approval, so a "STOP" reason on an allow is silently ignored
+  # and the Read proceeds. "deny" blocks the tool AND feeds the reason back to
+  # the model as actionable feedback, forcing the init sequence to run first.
+  DECISION="deny"
   REASON="STOP. Serena has NOT been initialized this session. Before doing ANYTHING else, run the Serena init sequence:
 
 1. mcp__serena__initial_instructions
@@ -18,6 +23,7 @@ if [[ ! -f "$MARKER" ]]; then
 
 Do NOT proceed with Read/Edit until Serena init is complete."
 else
+  DECISION="allow"
   REASON="SERENA FIRST: Before reading or editing files, use Serena semantic tools to explore and understand existing related code. This avoids guessing, grepping, and writing repetitive overly-specific logic.
 
 Required workflow:
@@ -29,10 +35,10 @@ Required workflow:
 Try Serena for ANY file type (Go, Markdown, YAML, Bash, etc). Only fall back to Read/Edit if Serena does not support that language."
 fi
 
-jq -n --arg reason "$REASON" '{
+jq -n --arg reason "$REASON" --arg decision "$DECISION" '{
   hookSpecificOutput: {
     hookEventName: "PreToolUse",
-    permissionDecision: "allow",
+    permissionDecision: $decision,
     permissionDecisionReason: $reason
   }
 }'
