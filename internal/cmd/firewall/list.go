@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strings"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/cmdutil"
@@ -37,26 +36,15 @@ type pathRow struct {
 	Action string `json:"action"`
 }
 
-// effectivePathDefault mirrors firewall.EffectivePathDefault on the CLI
-// side so `firewall list` can show the catch-all action that Envoy will
-// actually enforce — explicit r.path_default wins, otherwise inferred
-// from the path_rules composition (any allow → deny; only deny → allow).
-// Returns "" when the rule has no path rules, so the table render code
-// keeps suppressing the sub-row for bare-domain rules.
-func effectivePathDefault(r *adminv1.EgressRule) string {
-	if pd := r.GetPathDefault(); pd != "" {
-		return pd
-	}
-	prs := r.GetPathRules()
-	if len(prs) == 0 {
+// displayPathDefault renders the catch-all action for `firewall list`. It
+// defers the inference to the canonical adminv1.EffectivePathDefault, adding
+// one presentation rule: a bare-domain rule (no path rules, no explicit
+// default) returns "" so the table keeps suppressing the catch-all sub-row.
+func displayPathDefault(r *adminv1.EgressRule) string {
+	if r.GetPathDefault() == "" && len(r.GetPathRules()) == 0 {
 		return ""
 	}
-	for _, pr := range prs {
-		if strings.EqualFold(pr.GetAction(), "allow") {
-			return "deny"
-		}
-	}
-	return "allow"
+	return adminv1.EffectivePathDefault(adminv1.EgressRuleFromProto(r))
 }
 
 // NewCmdList creates the firewall list command.
@@ -145,7 +133,7 @@ func listRun(ctx context.Context, opts *ListOptions) error {
 			Proto:       proto,
 			Port:        port,
 			Action:      action,
-			PathDefault: effectivePathDefault(r),
+			PathDefault: displayPathDefault(r),
 			Paths:       paths,
 		})
 	}

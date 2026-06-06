@@ -42,6 +42,7 @@ CoreDNS (DNS-level allow/deny).
 * [clawker firewall down](clawker_firewall_down) - Tear down the firewall stack
 * [clawker firewall enable](clawker_firewall_enable) - Enable firewall for a container
 * [clawker firewall list](clawker_firewall_list) - List active egress rules
+* [clawker firewall refresh](clawker_firewall_refresh) - Re-sync firewall rules from the current project config
 * [clawker firewall reload](clawker_firewall_reload) - Force-reload firewall configuration
 * [clawker firewall remove](clawker_firewall_remove) - Remove an egress rule
 * [clawker firewall rotate-ca](clawker_firewall_rotate-ca) - Rotate the firewall CA certificate

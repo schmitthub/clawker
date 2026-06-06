@@ -75,7 +75,7 @@ type Project interface {
 }
 ```
 
-- `EgressRules()` returns the full egress rule set for this project: required baseline (`cfg.RequiredFirewallRules()` — Claude API, OAuth, etc.) plus anything configured under `security.firewall` in clawker.yaml (explicit `rules` + `add_domains` shorthand normalized to TLS 443 allow rules). Consumed by `BootstrapServicesPreStart` in container start to populate the firewall via `FirewallAddRules`. Project-rule composition lives here rather than the firewall package because it's pure config projection — no firewall stack logic.
+- `EgressRules()` returns the full egress rule set for this project: required baseline (`cfg.RequiredFirewallRules()` — Claude API, OAuth, etc.) plus anything configured under `security.firewall` in the project config (explicit `rules` + `add_domains` shorthand normalized to TLS 443 allow rules). Consumed by `BootstrapServicesPreStart` in container start to populate the firewall via `FirewallAddRules`, and re-consumed on demand by the `clawker firewall refresh` CLI verb (same `EgressRules()` → `EgressRulesToProto` → `FirewallAddRules` path, no restart) to live-apply a project config egress edit. Project-rule composition lives here rather than the firewall package because it's pure config projection — no firewall stack logic.
 
 - `AddWorktree` rejects duplicates with `ErrWorktreeExists`. Returns enriched `WorktreeState`.
 - `RemoveWorktree(deleteBranch=true)`: worktree always removed; `ErrBranchNotFound` swallowed, other branch errors wrapped.

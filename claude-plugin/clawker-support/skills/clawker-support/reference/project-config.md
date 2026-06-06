@@ -155,8 +155,12 @@ User changed their clawker config but the change doesn't seem to apply.
    merged project config with provenance (which file each value comes from).
 
 3. **Build-time vs runtime**: Build-related config changes require a rebuild
-   (`clawker build --no-cache`). Agent and firewall config changes take
-   effect on next container creation. Fetch the current schema to check
+   (`clawker build --no-cache`). Agent config changes take effect on next
+   container creation. Firewall egress edits (`security.firewall.add_domains`
+   and `security.firewall.rules`) can be applied live with `clawker firewall
+   refresh` — it re-runs the container-start sync into the rules store without
+   a restart (add/update only; a rule *deleted* from the config is not pruned —
+   use `clawker firewall remove` for that). Fetch the current schema to check
    which fields are build-time vs runtime.
 
 4. **Local override hiding changes**: Check if a local override file exists

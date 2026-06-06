@@ -243,7 +243,7 @@ func checkPathRules(rules []pathRule, pathDefault, host, urlPath string) error {
 	}
 
 	// No path rule matched; resolve via the same allowlist/denylist inference
-	// the firewall side uses (firewall.EffectivePathDefault) so a denylist rule
+	// the firewall side uses (adminv1.EffectivePathDefault) so a denylist rule
 	// like `firewall add foo.com --path /admin --action deny` produces matching
 	// catch-all semantics across Envoy and the host proxy.
 	if action == "" {
@@ -256,7 +256,7 @@ func checkPathRules(rules []pathRule, pathDefault, host, urlPath string) error {
 	return nil
 }
 
-// effectivePathDefault mirrors firewall.EffectivePathDefault: explicit
+// effectivePathDefault mirrors adminv1.EffectivePathDefault: explicit
 // path_default wins; otherwise infer "deny" when any PathRule is allow
 // (allowlist mode) and "allow" when every PathRule is deny (denylist mode).
 // Must stay in lockstep with the firewall implementation — the same

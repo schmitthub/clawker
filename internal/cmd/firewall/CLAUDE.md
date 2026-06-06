@@ -14,6 +14,7 @@ Cobra commands for the `clawker firewall` command group. Manages the Envoy+CoreD
 | `add.go` | `firewall add <domain>` — add a domain to the allow list |
 | `remove.go` | `firewall remove <domain>` — remove a domain from the allow list |
 | `reload.go` | `firewall reload` — force-reload Envoy/CoreDNS config from rule state |
+| `refresh.go` | `firewall refresh` — re-read the current project's `clawker.yaml` and sync its egress rules into the store (live apply of yaml edits) |
 | `enable.go` | `firewall enable` — re-attach eBPF programs for a container |
 | `disable.go` | `firewall disable` — detach eBPF programs + restore direct DNS for a container |
 | `bypass.go` | `firewall bypass <duration>` — temporary unrestricted egress for a container |
@@ -36,6 +37,7 @@ Every run function now speaks typed gRPC via `f.AdminClient(ctx)` — no in-proc
 | `add` | `NewCmdAdd(f, runF)` | `<domain>` (required) | `--proto` (default `https`; accepts `http` for plaintext, `ssh`/`tcp`/opaque names), `--port` (dynamic spec: a single port `443` or an inclusive range `9000-9100`; empty = protocol default; validated 1..65535, lo<=hi), `--path` (URL path prefix; Envoy matches it as a prefix at request time), `--action` (`--path` and `--action` are required together; `--action` accepts `allow`/`deny`) | `FirewallAddRules` |
 | `remove` | `NewCmdRemove(f, runF)` | `<domain>` (required, tab-completable) | `--proto` (default `https`; legacy `tls` translated to `https`), `--port` (dynamic spec: single port or `lo-hi` range; must match the stored rule's port spec), `--path` (lookup is exact-string against the stored `Path`; omit to remove the whole entry) | `FirewallRemoveRule` (+ `FirewallListRules` for completion); with `--path` the call removes a single `PathRule` from the matching rule (`p.Path == path`), otherwise the whole rule; result status enum is `REMOVED` / `PATH_REMOVED` / `NOT_FOUND`. The CLI exits non-zero on `NOT_FOUND` (RPC succeeds, status drives the outcome) so a typo, wrong-proto/port, or unknown path never silently succeeds; the `NOT_FOUND` error message names the missing tuple and tells the user to run `clawker firewall list` |
 | `reload` | `NewCmdReload(f, runF)` | none | none | `FirewallReload` |
+| `refresh` | `NewCmdRefresh(f, runF)` | none | none | `FirewallAddRules` (re-syncs `proj.EgressRules()` → `adminv1.EgressRulesToProto`); global (no `--agent`); requires firewall enabled; add/update merge only (no prune — delete via `firewall remove`) |
 | `enable` | `NewCmdEnable(f, runF)` | none | `--agent` (required) | `FirewallEnable` |
 | `disable` | `NewCmdDisable(f, runF)` | none | `--agent` (required) | `FirewallDisable` |
 | `bypass` | `NewCmdBypass(f, runF)` | `<duration>` (required unless `--stop`) | `--agent` (required), `--stop`, `--non-interactive` | `FirewallBypass` (+ `FirewallEnable` for Ctrl+C/`--stop`) |
@@ -65,7 +67,7 @@ All other commands produce action output only (success/error messages via `fmt.F
 - **Stack lifecycle** (`up`, `down`): `FirewallInit` / `FirewallRemove` via `AdminClient`
 - **Infrastructure queries** (`status`, `list`, `reload`, `rotate-ca`): read-only RPCs on `AdminClient`
 - **Per-container operations** (`enable`, `disable`, `bypass`): `FirewallEnable` / `FirewallDisable` / `FirewallBypass` on `AdminClient`; `--agent` flag identifies the container
-- **Rule mutations** (`add`, `remove`): `FirewallAddRules` / `FirewallRemoveRule` on `AdminClient`; positional `<domain>` + `--proto`/`--port` flags. `add` also takes `--path`/`--action` (required-together) to attach a path-scoped rule to the entry; `remove --path` removes a single path entry by exact-string match without nuking the rule. Both verbs share one underlying merge semantic — yaml input and CLI input are peers.
+- **Rule mutations** (`add`, `remove`, `refresh`): `FirewallAddRules` / `FirewallRemoveRule` on `AdminClient`; positional `<domain>` + `--proto`/`--port` flags. `add` also takes `--path`/`--action` (required-together) to attach a path-scoped rule to the entry; `remove --path` removes a single path entry by exact-string match without nuking the rule. Both verbs share one underlying merge semantic — yaml input and CLI input are peers. `refresh` is the config-driven sibling of `add`: it re-reads the current project's `clawker.yaml` egress config (`security.firewall.add_domains` + `security.firewall.rules`) and replays the same `FirewallAddRules` merge that runs at container start, live-applying yaml edits without a restart. Like `add` it is add/update only — removing a domain from yaml does not prune it from the store (use `remove`).
 
 ## Shell Completion
 

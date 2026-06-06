@@ -168,6 +168,7 @@ clawker firewall status               # Health check
 clawker firewall list                 # Show active rules
 clawker firewall add pypi.org         # Allow a domain at runtime
 clawker firewall remove pypi.org      # Revoke access
+clawker firewall refresh              # Apply .clawker.yaml egress edits without a restart
 clawker firewall bypass 5m --agent dev  # Temporary unrestricted access
 ```
 

@@ -8,7 +8,6 @@ import (
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
-	fwcp "github.com/schmitthub/clawker/internal/controlplane/firewall"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -153,7 +152,7 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 			return fmt.Errorf("bootstrapping services: resolving current project: %w", err)
 		}
 		if _, err := adminClient.FirewallAddRules(ctx, &adminv1.FirewallAddRulesRequest{
-			Rules: fwcp.ConfigRulesToProto(proj.EgressRules()),
+			Rules: adminv1.EgressRulesToProto(proj.EgressRules()),
 		}); err != nil {
 			return fmt.Errorf("bootstrapping services: adding firewall rules: %w", err)
 		}

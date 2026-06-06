@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/config"
 )
 
@@ -259,7 +260,7 @@ func denyAllVHost() map[string]any {
 // first (Envoy is first-match-wins on prefix). The trailing default comes from
 // EffectivePathDefault.
 func httpRoutes(r config.EgressRule, cluster string, websocket bool) []any {
-	defaultDeny := strings.EqualFold(EffectivePathDefault(r), "deny")
+	defaultDeny := strings.EqualFold(adminv1.EffectivePathDefault(r), "deny")
 
 	if len(r.PathRules) == 0 {
 		if defaultDeny {

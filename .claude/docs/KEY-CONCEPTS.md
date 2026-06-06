@@ -30,7 +30,7 @@
 | `firewall.EBPFCgroupPath` / `firewall.DetectCgroupDriver` / `firewall.ResolveContainerID` | Pure helpers for cgroup path resolution; driver cached on `Handler` at startup via `DetectCgroupDriver` |
 | `project.Project.EgressRules()` | Builds complete rule set from project config (security.firewall rules + required internal rules like Claude API, Docker registry). Consumed by `BootstrapServicesPreStart` |
 | `firewall.EgressRulesFile` | `storage.Schema` implementation for `egress-rules.yaml` (owned by CP at `FirewallDataSubdir`) |
-| `firewall.ProtoRulesToConfig` / `firewall.ConfigRulesToProto` | Exported wire ↔ config rule translation used by `BootstrapServicesPostStart` |
+| `adminv1.EgressRulesToProto` / `adminv1.EgressRulesFromProto` | Wire ↔ config rule translation; lives beside the proto bindings in `api/admin/v1/conversion.go` (transport-edge converter shared by CP handler + CLI) |
 | `dnsbpf.Handler` | CoreDNS plugin (`internal/dnsbpf`) that intercepts DNS responses and writes IP → {domain_hash, TTL} entries to the BPF dns_cache map. Registered as `dnsbpf` directive in `cmd/coredns-clawker` |
 | `ebpf.Manager` | Go-side loader for clawker cgroup/sock programs (`internal/controlplane/firewall/ebpf`, compiled via bpf2go). CP calls `Load()` once at startup; `CleanupStaleBypass`/`FlushAll` drive defensive startup + drain-to-zero |
 | `ebpf.EBPFManager` | Interface consumed by `firewall.Handler`: Install/Remove/Enable/Disable/SyncRoutes/FlushAll. Mock: `firewall/ebpf/mocks.EBPFManagerMock` |
