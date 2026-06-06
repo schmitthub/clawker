@@ -332,7 +332,8 @@ All firewall operations are available under `clawker firewall`:
 | `clawker firewall list` | List all active egress rules |
 | `clawker firewall add DOMAIN` | Add a domain allow rule (use `--path` + `--action` to attach a path-scoped rule; `--path` is the URL path prefix the rule routes on at request time) |
 | `clawker firewall remove DOMAIN` | Remove a domain rule (use `--path` to drop a single path entry; the lookup is exact-string against the stored `path` so a typo or sub-prefix won't match) |
-| `clawker firewall reload` | Force regenerate Envoy/CoreDNS configs |
+| `clawker firewall reload` | Force regenerate Envoy/CoreDNS configs from the current rule **state** (does not re-read `.clawker.yaml`) |
+| `clawker firewall refresh` | Re-read the current project's `.clawker.yaml` and sync its `add_domains`/`rules` into the store live — apply yaml edits without a container restart |
 | `clawker firewall up` | Start the firewall daemon (usually automatic) |
 | `clawker firewall down` | Stop the firewall daemon |
 | `clawker firewall enable --agent AGENT` | Attach a container to the firewall network |
@@ -434,6 +435,8 @@ security:
     add_domains:
       - "api.openai.com"
 ```
+
+Edits to `.clawker.yaml` only take effect on the next container start. To apply them to running agents without a restart, run `clawker firewall refresh` — it re-reads the current project's config and syncs the new rules into the live store. (Sync is add/update only; domains you delete from the yaml are not pruned — use `clawker firewall remove` for that.)
 
 To attach a path-scoped rule onto an existing entry:
 

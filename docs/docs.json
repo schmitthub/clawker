@@ -236,6 +236,7 @@
               "cli-reference/clawker_firewall_add",
               "cli-reference/clawker_firewall_remove",
               "cli-reference/clawker_firewall_reload",
+              "cli-reference/clawker_firewall_refresh",
               "cli-reference/clawker_firewall_up",
               "cli-reference/clawker_firewall_down",
               "cli-reference/clawker_firewall_enable",

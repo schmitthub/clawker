@@ -14,6 +14,7 @@ Cobra commands for the `clawker firewall` command group. Manages the Envoy+CoreD
 | `add.go` | `firewall add <domain>` — add a domain to the allow list |
 | `remove.go` | `firewall remove <domain>` — remove a domain from the allow list |
 | `reload.go` | `firewall reload` — force-reload Envoy/CoreDNS config from rule state |
+| `refresh.go` | `firewall refresh` — re-read the current project's `clawker.yaml` and sync its egress rules into the store (live apply of yaml edits) |
 | `enable.go` | `firewall enable` — re-attach eBPF programs for a container |
 | `disable.go` | `firewall disable` — detach eBPF programs + restore direct DNS for a container |
 | `bypass.go` | `firewall bypass <duration>` — temporary unrestricted egress for a container |
