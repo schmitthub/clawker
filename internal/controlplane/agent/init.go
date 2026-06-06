@@ -128,6 +128,18 @@ else
     exit $?
 fi
 `
+
+	// preRunScript runs the every-start pre_run hook. No marker (runs every
+	// start) and no log/ready-file. The `[ -x … ] || exit 0` guard is a
+	// defensive regression net: with always-deliver the file is present, but
+	// if it ever goes missing the step no-ops instead of failing the plan.
+	// `[ -x … ] && …` would exit 1 when absent (fail the step); `&& … || true`
+	// would swallow a real failure (break the fatal contract) — this two-line
+	// form no-ops when absent AND propagates the exit code when present. The
+	// file carries #!/bin/bash + set -e from PrepareHookTar.
+	preRunScript = `[ -x "$HOME/.clawker/pre-run.sh" ] || exit 0
+"$HOME/.clawker/pre-run.sh"
+`
 )
 
 // gitconfigFilterScript is the rendered git-step body. Computed once
@@ -674,6 +686,18 @@ func (e *Executor) plan() []step {
 			Name: "post-init",
 			Shell: &clawkerdv1.ShellCommand{
 				Stages:         []*clawkerdv1.PipeStage{userStage(postInitScript)},
+				TimeoutSeconds: initStepTimeoutPostInit,
+			},
+		},
+		// pre-run runs the every-start hook right before the CMD. Delivered
+		// fresh by the CLI each start (BootstrapServicesPreStart); cwd is the
+		// container WorkingDir (clawkerd does not chdir during boot). May
+		// install packages → reuse the post-init timeout. Fatal: a non-zero
+		// exit halts the plan, agent-ready is never sent, the CMD never spawns.
+		shellStep{
+			Name: "pre-run",
+			Shell: &clawkerdv1.ShellCommand{
+				Stages:         []*clawkerdv1.PipeStage{userStage(preRunScript)},
 				TimeoutSeconds: initStepTimeoutPostInit,
 			},
 		},

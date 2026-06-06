@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -26,6 +29,7 @@ var expectedInitStepNames = []string{
 	"git-credentials",
 	"ssh",
 	"post-init",
+	"pre-run",
 	"agent-ready",
 }
 
@@ -223,6 +227,37 @@ func TestExecutor_Plan_PrivilegeAndShape(t *testing.T) {
 	_, isAgentReady := last.(agentReadyStep)
 	assert.True(t, isAgentReady, "agent-ready must be terminal (no step may follow)")
 
+	// pre-run must sit immediately after post-init and immediately
+	// before the terminal agent-ready — it runs every start, right before
+	// the CMD. It runs the preRunScript via userStage, carries the
+	// defensive `[ -x … ] || exit 0` guard, and (unlike post-init) no
+	// idempotency marker.
+	idxPostInit, idxPreRun, idxReady := -1, -1, -1
+	for i, st := range plan {
+		switch s := st.(type) {
+		case shellStep:
+			switch s.Name {
+			case "post-init":
+				idxPostInit = i
+			case "pre-run":
+				idxPreRun = i
+				require.Len(t, s.Shell.Stages, 1)
+				assert.Equal(t, []string{"sh", "-c", preRunScript}, s.Shell.Stages[0].Argv,
+					"pre-run must run preRunScript via userStage")
+				assert.Contains(t, preRunScript, "|| exit 0", "pre-run guard net must be present")
+				assert.NotContains(t, preRunScript, "post-initialized",
+					"pre-run must carry no idempotency marker")
+			}
+		case agentReadyStep:
+			if s.Name == "agent-ready" {
+				idxReady = i
+			}
+		}
+	}
+	require.NotEqual(t, -1, idxPreRun, "pre-run must be present in the plan")
+	assert.Equal(t, idxPostInit+1, idxPreRun, "pre-run must immediately follow post-init")
+	assert.Equal(t, idxReady-1, idxPreRun, "pre-run must immediately precede agent-ready")
+
 	for _, st := range plan {
 		if s, ok := st.(shellStep); ok && s.Name == "ssh" {
 			assert.NotEmpty(t, s.Shell.InitialStdin,
@@ -231,6 +266,50 @@ func TestExecutor_Plan_PrivilegeAndShape(t *testing.T) {
 		}
 	}
 	t.Fatal("ssh step missing from plan")
+}
+
+// TestPreRunScript_GuardSemantics executes preRunScript the same way the init
+// plan does (sh -c, as userStage runs it) against a real filesystem. It covers
+// the three behaviors the string assertions in TestExecutor_Plan_PrivilegeAndShape
+// cannot: absent file → no-op exit 0, present+success → exit 0, present+failure →
+// the script's own exit code propagates (the fatal contract). This is the
+// regression net for the `[ -x … ] || exit 0` guard the const comment warns is
+// easy to get wrong (`&&` exits 1 when absent; `&& … || true` swallows a real
+// failure — both would pass the string assertions but fail here).
+func TestPreRunScript_GuardSemantics(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash required (preRunScript's delivered wrapper uses #!/bin/bash)")
+	}
+
+	run := func(t *testing.T, body string, present bool) int {
+		t.Helper()
+		home := t.TempDir()
+		if present {
+			dir := filepath.Join(home, ".clawker")
+			require.NoError(t, os.MkdirAll(dir, 0o755))
+			// Mirror PrepareHookTar's wrapper: #!/bin/bash + set -e + body.
+			script := "#!/bin/bash\nset -e\n" + body
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "pre-run.sh"), []byte(script), 0o755))
+		}
+		cmd := exec.Command("sh", "-c", preRunScript)
+		cmd.Env = append(os.Environ(), "HOME="+home)
+		if err := cmd.Run(); err != nil {
+			var ee *exec.ExitError
+			require.ErrorAs(t, err, &ee)
+			return ee.ExitCode()
+		}
+		return 0
+	}
+
+	t.Run("absent file no-ops with exit 0", func(t *testing.T) {
+		assert.Equal(t, 0, run(t, "", false))
+	})
+	t.Run("present success exits 0", func(t *testing.T) {
+		assert.Equal(t, 0, run(t, "echo hi\n", true))
+	})
+	t.Run("present failure propagates exit code", func(t *testing.T) {
+		assert.Equal(t, 7, run(t, "exit 7\n", true))
+	})
 }
 
 // TestExecutor_Run_HappyPath drives the full plan with Done{0} on
@@ -641,7 +720,7 @@ func TestExecutor_Run_CloseStdinFollowsEveryShellStep(t *testing.T) {
 			closeCount++
 		}
 	}
-	assert.Equal(t, 6, shellCount, "expected 6 shell steps in the static plan")
+	assert.Equal(t, 7, shellCount, "expected 7 shell steps in the static plan")
 	assert.Equal(t, 1, agentReadyCount, "expected exactly one AgentReady step")
 	assert.Equal(t, shellCount, closeCount,
 		"every shell step needs exactly one CloseStdin (none for AgentReady)")

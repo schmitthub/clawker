@@ -230,8 +230,10 @@ agent:
     mount_projects: <boolean>  # default: true | required: false
   # Share files between host and container via ~/.clawker-share (read-only in container)
   enable_shared_dir: <boolean>  # default: false | required: false
-  # Shell commands run after container starts but before Claude Code launches (e.g. install MCP servers)
+  # Shell commands to run after container starts but before Claude Code launches (e.g. install MCP servers). Useful for seeding claude code config or running setup steps that require the container environment to be up. Runs only one time after container creation in the workdir with env vars loaded.
   post_init: <string>  # default: n/a | required: false
+  # Shell commands run on every container start, in the workdir, right before the CMD (default: claude) runs (e.g. npm install)
+  pre_run: <string>  # default: n/a | required: false
 workspace:
   # bind mounts your project live (edits sync); snapshot copies it (isolated, disposable)
   default_mode: <string>  # default: bind | required: true
@@ -334,7 +336,8 @@ The following tables are auto-generated from the schema struct tags in `internal
 | `editor` | string | — | Editor for git commits and interactive editing inside the container |
 | `visual` | string | — | Visual editor ($VISUAL) for the container |
 | `enable_shared_dir` | boolean | `false` | Share files between host and container via ~/.clawker-share (read-only in container) |
-| `post_init` | string | — | Shell commands run after container starts but before Claude Code launches (e.g. install MCP servers) |
+| `post_init` | string | — | Shell commands to run after container starts but before Claude Code launches (e.g. install MCP servers). Useful for seeding claude code config or running setup steps that require the container environment to be up. Runs only one time after container creation in the workdir with env vars loaded. |
+| `pre_run` | string | — | Shell commands run on every container start, in the workdir, right before the CMD (default: claude) runs (e.g. npm install) |
 
 
 #### claude_code

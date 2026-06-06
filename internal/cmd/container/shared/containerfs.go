@@ -133,20 +133,54 @@ type InjectPostInitOpts struct {
 // The entrypoint is responsible for running this script once on first start and creating
 // a ~/.claude/post-initialized marker to prevent re-runs on restart.
 func InjectPostInitScript(ctx context.Context, opts InjectPostInitOpts) error {
+	return InjectHookScript(ctx, InjectHookOpts{
+		ContainerID:     opts.ContainerID,
+		Script:          opts.Script,
+		Name:            "post-init",
+		Cfg:             opts.Cfg,
+		CopyToContainer: opts.CopyToContainer,
+		Log:             opts.Log,
+	})
+}
+
+// InjectHookOpts configures InjectHookScript.
+type InjectHookOpts struct {
+	// ContainerID is the Docker container ID to inject the script into.
+	ContainerID string
+	// Script is the user's hook content; empty yields a no-op wrapper.
+	Script string
+	// Name is the hook name; the script lands at ~/.clawker/<Name>.sh.
+	Name string
+	// Cfg provides config constants for containerfs.
+	Cfg config.Config
+	// CopyToContainer copies a tar archive to the container at the given destination path.
+	// In production, wire this to a function that calls (*docker.Client).CopyToContainer.
+	CopyToContainer CopyToContainerFn
+	// Log is the logger for diagnostic file logging.
+	Log *logger.Logger
+}
+
+// InjectHookScript tars a bash-wrapped hook script to ~/.clawker/<Name>.sh in
+// the container. An empty Script writes a valid no-op wrapper, so callers can
+// deliver unconditionally — overwriting any stale prior content when the hook
+// is unset.
+func InjectHookScript(ctx context.Context, opts InjectHookOpts) error {
 	if opts.CopyToContainer == nil {
-		return fmt.Errorf("InjectPostInitScript: CopyToContainerFn is required")
+		return fmt.Errorf("InjectHookScript: CopyToContainerFn is required")
 	}
 
-	tar, err := containerfs.PreparePostInitTar(opts.Cfg, opts.Script)
+	tar, err := containerfs.PrepareHookTar(opts.Cfg, opts.Script, opts.Name)
 	if err != nil {
-		return fmt.Errorf("failed to prepare post-init script: %w", err)
+		return fmt.Errorf("failed to prepare %s script: %w", opts.Name, err)
 	}
 
 	if err := opts.CopyToContainer(ctx, opts.ContainerID, containerHomeDir, tar); err != nil {
-		return fmt.Errorf("failed to inject post-init script: %w", err)
+		return fmt.Errorf("failed to inject %s script: %w", opts.Name, err)
 	}
 
-	opts.Log.Debug().Msg("injected post-init script into container")
+	if opts.Log != nil {
+		opts.Log.Debug().Str("hook", opts.Name).Msg("injected hook script into container")
+	}
 	return nil
 }
 

@@ -192,6 +192,7 @@ var initStepLabels = map[string]initStepLabel{
 	"git-credentials": {Active: "Configuring git credentials...", Done: "Git credentials configured"},
 	"ssh":             {Active: "Configuring SSH known_hosts...", Done: "SSH known_hosts configured"},
 	"post-init":       {Active: "Running post-init...", Done: "Post-init complete"},
+	"pre-run":         {Active: "Running pre-run hook...", Done: "Pre-run complete"},
 	"agent-ready":     {Active: "Running agent command...", Done: "Agent command running"},
 }
 

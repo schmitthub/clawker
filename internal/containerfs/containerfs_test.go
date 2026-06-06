@@ -699,6 +699,67 @@ func TestPreparePostInitTar(t *testing.T) {
 	}
 }
 
+// TestPrepareHookTar covers the two behaviors PrepareHookTar adds over the
+// post-init wrapper: a parameterized hook name (.clawker/<name>.sh) and an
+// empty script producing a valid no-op wrapper instead of an error. The tar
+// header mechanics (mode 0755, uid/gid, modtime) are exercised by
+// TestPreparePostInitTar, which now delegates to PrepareHookTar.
+func TestPrepareHookTar(t *testing.T) {
+	cfg := configmocks.NewBlankConfig()
+
+	// readHookFile skips the .clawker/ dir entry and returns the file
+	// entry's name + body, asserting exactly one file follows.
+	readHookFile := func(t *testing.T, reader io.Reader) (string, string) {
+		t.Helper()
+		tr := tar.NewReader(reader)
+		if _, err := tr.Next(); err != nil { // .clawker/ dir
+			t.Fatalf("tar next (dir): %v", err)
+		}
+		hdr, err := tr.Next()
+		if err != nil {
+			t.Fatalf("tar next (file): %v", err)
+		}
+		var buf bytes.Buffer
+		if _, err := io.Copy(&buf, tr); err != nil { // nosemgrep: go.lang.security.decompression_bomb.potential-dos-via-decompression-bomb
+			t.Fatalf("read tar entry: %v", err)
+		}
+		if _, err := tr.Next(); err != io.EOF {
+			t.Errorf("expected EOF after single file, got: %v", err)
+		}
+		return hdr.Name, buf.String()
+	}
+
+	// Named hook → .clawker/<name>.sh carrying the user body.
+	reader, err := PrepareHookTar(cfg, "npm install\n", "pre-run")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	name, content := readHookFile(t, reader)
+	if name != ".clawker/pre-run.sh" {
+		t.Errorf("file name: got %q, want .clawker/pre-run.sh", name)
+	}
+	if !strings.HasPrefix(content, "#!/bin/bash\nset -e\n") {
+		t.Errorf("missing shebang+set-e: %q", content)
+	}
+	if !strings.Contains(content, "npm install") {
+		t.Error("body missing user script")
+	}
+
+	// Empty script → bare no-op wrapper, no error (lets the CLI always
+	// deliver, overwriting any stale prior script when the hook is unset).
+	reader, err = PrepareHookTar(cfg, "", "pre-run")
+	if err != nil {
+		t.Fatalf("empty script should not error: %v", err)
+	}
+	name, content = readHookFile(t, reader)
+	if name != ".clawker/pre-run.sh" {
+		t.Errorf("file name: got %q, want .clawker/pre-run.sh", name)
+	}
+	if content != "#!/bin/bash\nset -e\n" {
+		t.Errorf("empty hook should be a bare no-op wrapper, got: %q", content)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Edge cases
 // ---------------------------------------------------------------------------

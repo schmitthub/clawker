@@ -170,6 +170,13 @@ func (f *FakeClient) SetupCopyToContainer() {
 	}
 }
 
+// SetupCopyToContainerError configures the fake to fail CopyToContainer with err.
+func (f *FakeClient) SetupCopyToContainerError(err error) {
+	f.FakeAPI.CopyToContainerFn = func(_ context.Context, _ string, _ client.CopyToContainerOptions) (client.CopyToContainerResult, error) {
+		return client.CopyToContainerResult{}, err
+	}
+}
+
 // SetupVolumeExists configures the fake to report whether a volume exists.
 // When exists is true, VolumeInspect returns a managed volume.
 // When exists is false, VolumeInspect returns a not-found error.

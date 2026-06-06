@@ -188,6 +188,7 @@ func TestRestartRun_Success(t *testing.T) {
 	fixture := mocks.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture)
 	fake.SetupContainerRestart()
+	fake.SetupCopyToContainer() // BootstrapServicesPreStart always delivers the pre_run hook
 
 	f, in, out, errOut := testRestartFactory(t, fake)
 
@@ -250,6 +251,7 @@ func TestRestartRun_PartialFailure(t *testing.T) {
 	fixture1 := mocks.RunningContainerFixture("myapp", "dev")
 	fake.SetupFindContainer("clawker.myapp.dev", fixture1)
 	fake.SetupContainerRestart()
+	fake.SetupCopyToContainer() // BootstrapServicesPreStart always delivers the pre_run hook
 
 	f, in, out, errOut := testRestartFactory(t, fake)
 

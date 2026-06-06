@@ -2,6 +2,24 @@
 
 Docker CLI-compatible container management commands. Subpackages (`run/`, `create/`, `start/`, etc.) are individual subcommands.
 
+## Container Lifecycle Hooks
+
+Where to add logic that must run at a lifecycle point. The deciding axis is **once (create) vs every start** — choose by how often the logic must run, not by which command the user typed.
+
+### Create-time — runs ONCE, at container creation
+
+`CreateContainer` (`shared/container_create.go`), shared by `run` and `create`: workspace mounts, config-volume seeding, env resolution, Docker create, agent bootstrap material, one-time `post_init` injection. Baked at creation and preserved across restarts; does NOT re-run on `start`/`restart`. Use for anything tied to the container's identity or volumes that should persist.
+
+### Every-start — runs on EVERY run / start / restart
+
+`ContainerStart` (`shared/container_start.go`) runs three phases in order; every start path funnels through them — `run`, `start`, and `restart --signal` go via `ContainerStart`, while plain `restart` (`restart/restart.go`) calls the two Bootstrap phases directly around `client.ContainerRestart`:
+
+1. `BootstrapServicesPreStart` — before Docker start: host proxy + CP ensure, firewall rules sync (if enabled), every-start `pre_run` hook delivery. Use for host-side prep that must precede the container process.
+2. Docker start (`client.ContainerStart` / `ContainerRestart`).
+3. `BootstrapServicesPostStart` — after Docker start: eBPF cgroup enroll (cgroup exists only now), GPG/SSH socket bridge. Use for anything needing the running container's cgroup/PID.
+
+In-container, CP then dispatches its init plan to clawkerd on every start (`internal/controlplane/agent`): the `post-init` step is marker-gated (once), `pre-run` runs every start. Mirror this once-vs-every choice when adding an init step (and add a matching `cmd/clawkerd/progress.go` label).
+
 ## Package Structure
 
 ```

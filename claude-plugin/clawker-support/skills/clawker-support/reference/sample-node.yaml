@@ -20,6 +20,12 @@ agent:
     claude mcp add -s local serena -- uvx --from git+https://github.com/oraios/serena@e9d21915660a66f8532260c527ab6afae94a6bd5 serena start-mcp-server --context claude-code --project "$(pwd)" --enable-web-dashboard false
     claude mcp add -s user --header "CONTEXT7_API_KEY: $CONTEXT7_API_KEY" --transport http context7 https://mcp.context7.com/mcp
     claude mcp add -s user -t http deepwiki https://mcp.deepwiki.com/mcp
+  # pre_run runs on EVERY start (run/start/restart), in the workdir, right before
+  # Claude Code. Use for deps that must re-sync each boot (post_init runs once and
+  # can't). Canonical case: node_modules in a tmpfs, or package.json drift.
+  # Non-zero exit is fatal (container won't reach ready).
+  pre_run: |
+    pnpm install
 build:
   image: node:24-bookworm
   packages:

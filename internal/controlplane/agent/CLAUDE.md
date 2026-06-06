@@ -68,6 +68,7 @@ now unexported helpers behind `Start`.
 | `peer_lookup_moby.go` | `MobyPeerLookup`, the production `ContainerByPeerIP` backed by the Docker daemon |
 | `handler.go` | `peerIdentity` projection + `peerIdentityFromContext` + `peerLeafFromContext` + `WithResolvedContainer` / `ResolvedContainerFromContext` ctx helpers |
 | `identity_interceptor.go` | `IdentityInterceptor(peerLookup, log)` — universal peer-IP-grounded identity gate applied to every AgentService RPC (no opt-out) |
+| `init.go` | `Executor` + static `plan()` of `ShellCommand` init steps dispatched to clawkerd over the Session before the terminal `agent-ready`. Step order: `docker-socket`, `config`, `git`, `git-credentials`, `ssh`, `post-init` (once, marker-gated), **`pre-run`** (every start), `agent-ready`. `pre-run` runs `preRunScript` via `userStage` — no marker (runs every start), the defensive `[ -x … ] \|\| exit 0` guard no-ops when the file is missing yet propagates the exit code when present (the script is delivered fresh each start by the CLI's `BootstrapServicesPreStart`). A non-zero exit is fatal: the plan halts and `agent-ready` is never sent. The pinned step vocabulary lives in `expectedInitStepNames` (init_test.go); step names map 1:1 to the TTY progress labels in `cmd/clawkerd/progress.go` (`initStepLabels`). |
 | `registry_mock_test.go` | moq-generated `RegistryMock` (test-only file; lives in `agent` package itself to break import cycle that prevented an `agent/mocks` subpackage from working) |
 
 ## Identity contract

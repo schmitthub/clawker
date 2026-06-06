@@ -185,6 +185,7 @@ security:
       - elixir.bootlin.com
       - index.crates.io
       - static.crates.io
+      - containers.dev
     rules:
       - action: allow
         dst: github.com

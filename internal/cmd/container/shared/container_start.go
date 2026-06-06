@@ -159,6 +159,37 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 		}
 	}
 
+	// Deliver the every-start pre_run hook to ~/.clawker/pre-run.sh. Always
+	// overwrite (user script when set, no-op wrapper when unset) so the
+	// on-disk script always reflects current config — value changes and
+	// removal are both handled with no staleness. CP runs it (pre-run
+	// step) right before the CMD. Not firewall-gated; a copy failure aborts
+	// the start.
+	if cmdOpts.Client == nil {
+		return fmt.Errorf("bootstrapping services: docker client provider is nil")
+	}
+	client, err := cmdOpts.Client(ctx)
+	if err != nil {
+		return fmt.Errorf("bootstrapping services: creating docker client: %w", err)
+	}
+	if client == nil {
+		return fmt.Errorf("bootstrapping services: docker client is nil")
+	}
+	var preRun string
+	if projectCfg != nil {
+		preRun = projectCfg.Agent.PreRun
+	}
+	if err := InjectHookScript(ctx, InjectHookOpts{
+		ContainerID:     container,
+		Script:          preRun,
+		Name:            "pre-run",
+		Cfg:             cfg,
+		CopyToContainer: NewCopyToContainerFn(client),
+		Log:             log,
+	}); err != nil {
+		return fmt.Errorf("bootstrapping services: injecting pre-run script: %w", err)
+	}
+
 	return nil
 }
 

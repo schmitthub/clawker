@@ -11,8 +11,19 @@ import (
 	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	cpbootmocks "github.com/schmitthub/clawker/internal/controlplane/cpboot/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
+	mocks "github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/logger"
 )
+
+// okClientProvider returns a Client provider backed by a fake whose
+// CopyToContainer succeeds. PreStart unconditionally delivers the pre_run
+// hook to the container, so a working docker client is now required.
+func okClientProvider(t *testing.T) func(context.Context) (*docker.Client, error) {
+	t.Helper()
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
+	fake.SetupCopyToContainer()
+	return func(context.Context) (*docker.Client, error) { return fake.Client, nil }
+}
 
 // noopCPManager returns a CP manager mock whose EnsureRunning is a no-op.
 // Bootstrap tests need it because CP is unconditionally brought up in
@@ -88,6 +99,7 @@ func TestBootstrapServices_MissingOptionalProvidersAreSkipped(t *testing.T) {
 	err := BootstrapServicesPreStart(context.Background(), "ctr", CommandOpts{
 		Config:       testRuntimeConfig("", `firewall: { enable: false }`),
 		ControlPlane: noopCPManager(),
+		Client:       okClientProvider(t),
 	})
 	if err != nil {
 		t.Fatalf("expected nil error when optional providers are omitted, got %v", err)
@@ -104,10 +116,63 @@ func TestBootstrapServices_NilProjectAndSettingsDoNotPanic(t *testing.T) {
 	err := BootstrapServicesPreStart(context.Background(), "ctr", CommandOpts{
 		Config:       func() (config.Config, error) { return cfg, nil },
 		ControlPlane: noopCPManager(),
+		Client:       okClientProvider(t),
 	})
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
+}
+
+// TestBootstrapServices_PreRunDelivery proves the every-start pre_run
+// contract: the hook script is always copied to the container (user body
+// when set, no-op wrapper when unset so a removed hook overwrites stale
+// content), and a copy failure aborts the start.
+func TestBootstrapServices_PreRunDelivery(t *testing.T) {
+	t.Parallel()
+
+	t.Run("delivers when pre_run set", func(t *testing.T) {
+		t.Parallel()
+		fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
+		fake.SetupCopyToContainer()
+		err := BootstrapServicesPreStart(context.Background(), "ctr", CommandOpts{
+			Config:       testRuntimeConfig(`agent: { pre_run: "npm install" }`, `firewall: { enable: false }`),
+			ControlPlane: noopCPManager(),
+			Client:       func(context.Context) (*docker.Client, error) { return fake.Client, nil },
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		fake.AssertCalledN(t, "CopyToContainer", 1)
+	})
+
+	t.Run("delivers no-op when pre_run unset", func(t *testing.T) {
+		t.Parallel()
+		fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
+		fake.SetupCopyToContainer()
+		err := BootstrapServicesPreStart(context.Background(), "ctr", CommandOpts{
+			Config:       testRuntimeConfig("", `firewall: { enable: false }`),
+			ControlPlane: noopCPManager(),
+			Client:       func(context.Context) (*docker.Client, error) { return fake.Client, nil },
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		fake.AssertCalledN(t, "CopyToContainer", 1)
+	})
+
+	t.Run("copy failure aborts the start", func(t *testing.T) {
+		t.Parallel()
+		fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
+		fake.SetupCopyToContainerError(errors.New("copy boom"))
+		err := BootstrapServicesPreStart(context.Background(), "ctr", CommandOpts{
+			Config:       testRuntimeConfig(`agent: { pre_run: "x" }`, `firewall: { enable: false }`),
+			ControlPlane: noopCPManager(),
+			Client:       func(context.Context) (*docker.Client, error) { return fake.Client, nil },
+		})
+		if err == nil || !strings.Contains(err.Error(), "injecting pre-run script") {
+			t.Fatalf("expected pre-run injection error, got %v", err)
+		}
+	})
 }
 
 func TestContainerStart_ClientValidation(t *testing.T) {
@@ -120,7 +185,9 @@ func TestContainerStart_ClientValidation(t *testing.T) {
 			Config:       testRuntimeConfig(`security: { enable_host_proxy: false }`, `firewall: { enable: false }`),
 			ControlPlane: noopCPManager(),
 		}, docker.ContainerStartOptions{ContainerID: "ctr"})
-		if err == nil || !strings.Contains(err.Error(), "starting container: docker client provider is nil") {
+		// PreStart now needs the docker client to deliver the pre_run hook, so
+		// the nil-provider guard fires there first (before ContainerStart's own).
+		if err == nil || !strings.Contains(err.Error(), "bootstrapping services: docker client provider is nil") {
 			t.Fatalf("expected nil client provider error, got %v", err)
 		}
 	})
@@ -133,7 +200,7 @@ func TestContainerStart_ClientValidation(t *testing.T) {
 			Client:       func(context.Context) (*docker.Client, error) { return nil, nil },
 			ControlPlane: noopCPManager(),
 		}, docker.ContainerStartOptions{ContainerID: "ctr"})
-		if err == nil || !strings.Contains(err.Error(), "starting container: docker client is nil") {
+		if err == nil || !strings.Contains(err.Error(), "bootstrapping services: docker client is nil") {
 			t.Fatalf("expected nil client error, got %v", err)
 		}
 	})

@@ -135,6 +135,12 @@ If your `clawker.yaml` includes a `post_init` script, it runs once during the in
 
 This is useful for project-specific setup like installing dependencies or configuring MCP servers — anything that needs to run inside the container with `agent.env` available, before Claude Code starts.
 
+### Pre-Run Scripts
+
+If your `clawker.yaml` includes a `pre_run` script, it runs on **every** container start — `run`, `start`, and `restart` — right before the user CMD is forked, in the container workdir. Unlike `post_init`, there is no marker: it re-runs unconditionally each time. The CLI re-delivers the script fresh on every start, so editing or removing `pre_run` takes effect on the next start without recreating the container.
+
+The canonical use case is `npm install` when `node_modules` lives in a tmpfs (wiped on stop/restart) or `package.json` drifts upstream — anything that must be re-established each boot. A non-zero exit is **fatal**: the init plan halts, `AgentReady` is never sent, and the container exits non-zero (Claude Code never starts).
+
 ## Volumes and Naming
 
 Clawker uses a consistent naming scheme for all Docker resources:
