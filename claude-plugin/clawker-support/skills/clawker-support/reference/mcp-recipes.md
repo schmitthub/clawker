@@ -159,6 +159,14 @@ If you see an existing config with package installs in `post_init`, recommend
 moving them to the appropriate build-time config section. The registration
 line stays in `post_init`.
 
+**Exception — deps that must re-run every start go in `agent.pre_run`, not
+`post_init`.** A few installs genuinely can't be baked at build-time because the
+artifact is wiped each run (e.g. `npm install` against a `node_modules` tmpfs)
+or drifts upstream (`package.json` changes). `post_init`'s marker blocks the
+re-run those need; `pre_run` runs on every start, in the workdir, right before
+the CMD. Build-time is still the default for everything stable — `pre_run` is
+only for the per-start re-sync case.
+
 ## Troubleshooting
 
 1. **"MCP not found"** — Did post_init run? Check for the marker file inside

@@ -129,7 +129,7 @@ build:
   packages: ["git", "ripgrep"]
   instructions: { env: {}, copy: [], root_run: [], user_run: [] }
   inject: { after_from: [], after_packages: [] }
-agent: { env_file: [], from_env: [], env: {}, post_init: "" }
+agent: { env_file: [], from_env: [], env: {}, post_init: "", pre_run: "" }
 workspace: { default_mode: "bind" }
 security: { firewall: { add_domains: [], rules: [] }, docker_socket: false, git_credentials: { forward_https: true, forward_ssh: true, forward_gpg: true, copy_git_config: true } }
 ```

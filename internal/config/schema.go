@@ -89,7 +89,8 @@ type AgentConfig struct {
 	Visual          string            `yaml:"visual,omitempty" label:"Visual Editor" desc:"Visual editor ($VISUAL) for the container"`
 	ClaudeCode      *ClaudeCodeConfig `yaml:"claude_code,omitempty"`
 	EnableSharedDir *bool             `yaml:"enable_shared_dir,omitempty" label:"Enable Shared Dir" desc:"Share files between host and container via ~/.clawker-share (read-only in container)" default:"false"`
-	PostInit        string            `yaml:"post_init,omitempty" label:"Post-Init Script" desc:"Shell commands run after container starts but before Claude Code launches (e.g. install MCP servers)"`
+	PostInit        string            `yaml:"post_init,omitempty" label:"Post-Init Script" desc:"Shell commands to run after container starts but before Claude Code launches (e.g. install MCP servers). Useful for seeding claude code config or running setup steps that require the container environment to be up. Runs only one time after container creation in the workdir with env vars loaded."`
+	PreRun          string            `yaml:"pre_run,omitempty" label:"Pre-Run Script" desc:"Shell commands run on every container start, in the workdir, right before the CMD (default: claude) runs (e.g. npm install)"`
 }
 
 // UseHostAuthEnabled returns whether host auth should be used (default: true).

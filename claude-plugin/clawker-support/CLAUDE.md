@@ -11,8 +11,8 @@ treat as authoritative.
 
 **When concrete details DO appear, they are deliberate and load-bearing.**
 They represent either stable architectural concepts (e.g., `agent.post_init`
-as the build-time vs runtime boundary) or curated reference samples that are
-manually kept current.
+as the build-time vs runtime boundary, and `agent.pre_run` as its once-vs-every-
+start counterpart) or curated reference samples that are manually kept current.
 
 ### Reference config samples
 

@@ -7,7 +7,7 @@ description: >
   points, firewall architecture, MCP setup, credential forwarding, and
   container lifecycle. Use when the user mentions clawker config, .clawker.yaml,
   blocked domains, build errors, Docker image build failures, post_init,
-  build.packages, container networking, or container issues — even without
+  pre_run, build.packages, container networking, or container issues — even without
   saying "clawker" explicitly.
 license: MIT
 compatibility: >
@@ -494,10 +494,20 @@ These are the things users consistently get wrong. Keep them in mind always:
   Claude Code config directory. The host and container are isolated environments
   with independent MCP configurations. See `reference/mcp-recipes.md`.
 
-- **Runtime config runs once per config volume.** A marker file on the config
+- **`post_init` runs once per config volume.** A marker file on the config
   volume prevents re-execution. Changing `post_init` has no effect until the
   marker is deleted or the config volume is removed and recreated. This is the
   most common reason `post_init` changes don't take effect.
+
+- **`pre_run` runs on every start — the once-vs-every counterpart.** `agent.pre_run`
+  runs on **every** container start (`run`/`start`/`restart`), in the workdir,
+  right before Claude Code (the CMD) launches. No marker; the CLI re-delivers it
+  fresh each start, so edits and removals take effect on the next start without
+  recreating the container. A non-zero exit is fatal — the container fails to
+  reach ready and Claude Code never starts. Use it for setup that must re-run
+  each boot (e.g. `npm install` against a tmpfs `node_modules`, or `package.json`
+  drift) — the every-start cases `post_init` can't cover because its marker blocks
+  re-runs.
 
 - **Settings is a separate schema.** `settings.yaml` is NOT project config. It
   does not participate in walk-up discovery or project inheritance. See

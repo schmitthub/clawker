@@ -10,7 +10,7 @@ Prepares host Claude Code configuration for container injection. Receives `confi
 | `ResolveHostProjectsDir() (string, bool, error)` | Resolve `<hostConfigDir>/projects` for the bind-mount path; returns `("", false, nil)` only when the projects dir is absent. Stat errors (EACCES, ELOOP, path-is-file) and propagated `ResolveHostConfigDir` errors come back as `(_, false, err)` with the path included. Symlinks resolve via `os.Stat`. Never creates the dir. |
 | `PrepareClaudeConfig(hostConfigDir, containerHomeDir, containerWorkDir string) (stagingDir string, cleanup func(), err error)` | Stage host config for volume copy (settings, plugins, agents, etc.) |
 | `PrepareCredentials(hostConfigDir string) (stagingDir string, cleanup func(), err error)` | Stage credentials from keyring or file fallback |
-| `PreparePostInitTar(cfg config.Config, script string) (io.Reader, error)` | Create tar with .clawker/post-init.sh (bash shebang + set -e + user script); extracts at /home/claude |
+| `PrepareHookTar(cfg config.Config, script, name string) (io.Reader, error)` | Create tar with .clawker/<name>.sh (bash shebang + set -e + user script); extracts at /home/claude. Empty script → bare no-op wrapper (lets callers always-deliver, overwriting stale content) |
 
 ## Dependencies
 
@@ -52,12 +52,6 @@ Each `Prepare*` function returns a temp directory with this layout:
 ```
 <tmpdir>/.claude/
   .credentials.json
-```
-
-### PreparePostInitTar
-Returns an `io.Reader` containing a tar archive with:
-```
-.clawker/post-init.sh   (#!/bin/bash + set -e + user script, mode 0755)
 ```
 
 ## Credential Resolution Order

@@ -611,91 +611,85 @@ func TestPrepareCredentials_NeitherSource(t *testing.T) {
 	}
 }
 
-func TestPreparePostInitTar_EmptyScript(t *testing.T) {
+// TestPrepareHookTar covers PrepareHookTar: a parameterized hook name
+// (.clawker/<name>.sh) and an empty script producing a valid no-op wrapper
+// instead of an error.
+func TestPrepareHookTar(t *testing.T) {
 	cfg := configmocks.NewBlankConfig()
-	_, err := PreparePostInitTar(cfg, "")
-	if err == nil {
-		t.Fatal("expected error for empty script")
-	}
-	if !strings.Contains(err.Error(), "empty") {
-		t.Errorf("error should mention empty: %v", err)
+
+	// readHookFile asserts the dir entry's header invariants, then returns
+	// the file entry's name + body, asserting exactly one file follows.
+	//
+	// Mode 0755 is load-bearing, not a tautological echo of the constructor:
+	// the agent init plan gates both hooks on the executable bit
+	// (`[ -x "$POST" ]`) and execs the script directly (not `bash <file>`),
+	// so a drop to 0644 silently no-ops the hook with no error surfaced
+	// (post-init even writes its DONE marker and never retries). uid/gid are
+	// asserted against cfg (not literal 1001) to exercise the config→header
+	// binding the unprivileged container user depends on to own and exec it.
+	readHookFile := func(t *testing.T, reader io.Reader) (string, string) {
+		t.Helper()
+		tr := tar.NewReader(reader)
+		dirHdr, err := tr.Next() // .clawker/ dir
+		if err != nil {
+			t.Fatalf("tar next (dir): %v", err)
+		}
+		if dirHdr.Mode != 0o755 {
+			t.Errorf("dir mode: got %#o, want %#o", dirHdr.Mode, 0o755)
+		}
+		if dirHdr.Uid != cfg.ContainerUID() || dirHdr.Gid != cfg.ContainerGID() {
+			t.Errorf("dir uid/gid: got %d/%d, want %d/%d",
+				dirHdr.Uid, dirHdr.Gid, cfg.ContainerUID(), cfg.ContainerGID())
+		}
+		hdr, err := tr.Next()
+		if err != nil {
+			t.Fatalf("tar next (file): %v", err)
+		}
+		if hdr.Mode != 0o755 {
+			t.Errorf("file mode: got %#o, want %#o (script must be executable)", hdr.Mode, 0o755)
+		}
+		if hdr.Uid != cfg.ContainerUID() || hdr.Gid != cfg.ContainerGID() {
+			t.Errorf("file uid/gid: got %d/%d, want %d/%d",
+				hdr.Uid, hdr.Gid, cfg.ContainerUID(), cfg.ContainerGID())
+		}
+		var buf bytes.Buffer
+		if _, err := io.Copy(&buf, tr); err != nil { // nosemgrep: go.lang.security.decompression_bomb.potential-dos-via-decompression-bomb
+			t.Fatalf("read tar entry: %v", err)
+		}
+		if _, err := tr.Next(); err != io.EOF {
+			t.Errorf("expected EOF after single file, got: %v", err)
+		}
+		return hdr.Name, buf.String()
 	}
 
-	// Whitespace-only should also fail
-	_, err = PreparePostInitTar(cfg, "   \n\t  ")
-	if err == nil {
-		t.Fatal("expected error for whitespace-only script")
-	}
-}
-
-func TestPreparePostInitTar(t *testing.T) {
-	cfg := configmocks.NewBlankConfig()
-	script := "claude mcp add -- npx -y @anthropic-ai/claude-code-mcp\nnpm install -g typescript\n"
-
-	reader, err := PreparePostInitTar(cfg, script)
+	// Named hook → .clawker/<name>.sh carrying the user body.
+	reader, err := PrepareHookTar(cfg, "npm install\n", "pre-run")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	name, content := readHookFile(t, reader)
+	if name != ".clawker/pre-run.sh" {
+		t.Errorf("file name: got %q, want .clawker/pre-run.sh", name)
+	}
+	if !strings.HasPrefix(content, "#!/bin/bash\nset -e\n") {
+		t.Errorf("missing shebang+set-e: %q", content)
+	}
+	if !strings.Contains(content, "npm install") {
+		t.Error("body missing user script")
+	}
 
-	tr := tar.NewReader(reader)
-
-	// First entry: .clawker/ directory
-	hdr, err := tr.Next()
+	// Empty script → bare no-op wrapper, no error (lets the CLI always
+	// deliver, overwriting any stale prior script when the hook is unset).
+	reader, err = PrepareHookTar(cfg, "", "pre-run")
 	if err != nil {
-		t.Fatalf("tar next (dir): %v", err)
+		t.Fatalf("empty script should not error: %v", err)
 	}
-	if hdr.Name != ".clawker/" {
-		t.Errorf("first tar entry name: got %q, want %q", hdr.Name, ".clawker/")
+	name, content = readHookFile(t, reader)
+	if name != ".clawker/pre-run.sh" {
+		t.Errorf("file name: got %q, want .clawker/pre-run.sh", name)
 	}
-	if hdr.Typeflag != tar.TypeDir {
-		t.Errorf("first tar entry type: got %d, want TypeDir (%d)", hdr.Typeflag, tar.TypeDir)
-	}
-	if hdr.Mode != 0o755 {
-		t.Errorf("dir mode: got %#o, want %#o", hdr.Mode, int64(0o755))
-	}
-	if hdr.Uid != 1001 || hdr.Gid != 1001 {
-		t.Errorf("dir uid/gid: got %d/%d, want 1001/1001", hdr.Uid, hdr.Gid)
-	}
-
-	// Second entry: .clawker/post-init.sh file
-	hdr, err = tr.Next()
-	if err != nil {
-		t.Fatalf("tar next (file): %v", err)
-	}
-	if hdr.Name != ".clawker/post-init.sh" {
-		t.Errorf("second tar entry name: got %q, want %q", hdr.Name, ".clawker/post-init.sh")
-	}
-	if hdr.Mode != 0o755 {
-		t.Errorf("file mode: got %#o, want %#o", hdr.Mode, int64(0o755))
-	}
-	if hdr.Uid != 1001 || hdr.Gid != 1001 {
-		t.Errorf("file uid/gid: got %d/%d, want 1001/1001", hdr.Uid, hdr.Gid)
-	}
-	if hdr.ModTime.IsZero() {
-		t.Error("file modtime should not be zero")
-	}
-
-	var buf bytes.Buffer
-	if _, err := io.Copy(&buf, tr); err != nil { // nosemgrep: go.lang.security.decompression_bomb.potential-dos-via-decompression-bomb
-		t.Fatalf("read tar entry: %v", err)
-	}
-
-	content := buf.String()
-	wantPrefix := "#!/bin/bash\nset -e\n"
-	if !strings.HasPrefix(content, wantPrefix) {
-		t.Errorf("script should start with shebang+set-e, got:\n%s", content)
-	}
-	if !strings.Contains(content, "claude mcp add") {
-		t.Error("script should contain user commands")
-	}
-	if !strings.Contains(content, "npm install -g typescript") {
-		t.Error("script should contain user commands")
-	}
-
-	// Should have no more entries
-	_, err = tr.Next()
-	if err != io.EOF {
-		t.Errorf("expected EOF, got: %v", err)
+	if content != "#!/bin/bash\nset -e\n" {
+		t.Errorf("empty hook should be a bare no-op wrapper, got: %q", content)
 	}
 }
 

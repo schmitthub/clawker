@@ -227,6 +227,7 @@ func setupContainerStart(fake *mocks.FakeClient) {
 		return mobyclient.NetworkConnectResult{}, nil
 	}
 	fake.SetupContainerStart()
+	fake.SetupCopyToContainer() // BootstrapServicesPreStart always delivers the pre_run hook
 }
 
 func TestStartRun_DockerConnectionError(t *testing.T) {
@@ -302,6 +303,7 @@ func TestStartRun_PartialFailure(t *testing.T) {
 		}
 		return mobyclient.ContainerStartResult{}, nil
 	}
+	fake.SetupCopyToContainer() // BootstrapServicesPreStart always delivers the pre_run hook
 
 	f, in, out, errOut := testStartFactory(t, fake)
 	cmd := NewCmdStart(f, nil)

@@ -113,7 +113,7 @@ Three-phase orchestration: pre-start bootstrap, Docker start, post-start bootstr
 Nil providers safely skipped (debug logged). `Config` is the only required provider.
 
 **Functions**:
-- `BootstrapServicesPreStart(ctx, container, cmdOpts)` -- firewall rules sync + daemon ensure + health wait (60s) + host proxy
+- `BootstrapServicesPreStart(ctx, container, cmdOpts)` -- firewall rules sync + daemon ensure + health wait (60s) + host proxy + always-deliver the `agent.pre_run` hook to `~/.clawker/pre-run.sh` (user script when set, no-op when unset; not firewall-gated; copy failure aborts the start). Now requires a working `Client` provider.
 - `BootstrapServicesPostStart(ctx, container, cmdOpts)` -- eBPF attachment + socket bridge
 - `ContainerStart(ctx, cmdOpts, startOpts) (ContainerStartResult, error)` -- runs all three phases; errors abort immediately
 
@@ -132,6 +132,7 @@ Nil providers safely skipped (debug logged). `Config` is the only required provi
 | `CopyToVolumeFn` / `CopyToContainerFn` / `CopyFromContainerFn` | Function types for Docker copy operations |
 | `InitConfigOpts` | Project/agent names, ContainerWorkDir, ClaudeCodeConfig, CopyToVolumeFn |
 | `InjectPostInitOpts` | Container ID, Script, CopyToContainerFn |
+| `InjectHookOpts` | Container ID, Script, Name, Cfg, CopyToContainerFn, Log |
 | `RebuildMissingImageOpts` | Image ref, IOStreams, TUI, Prompter, BuildImage fn, CommandVerb |
 | `AgentBootstrap` | CertPEM, KeyPEM, CACertPEM, Assertion |
 
@@ -145,7 +146,8 @@ Nil providers safely skipped (debug logged). `Config` is the only required provi
 | `CreateContainer(ctx, cfg, events)` | Single entry point -- workspace, config, env, create, inject |
 | `NeedsSocketBridge(cfg)` | Check if GPG/SSH bridge needed from project config |
 | `InitContainerConfig(ctx, opts)` | Copy host Claude config to volume |
-| `InjectPostInitScript(ctx, opts)` | Write `~/.clawker/post-init.sh` to container |
+| `InjectHookScript(ctx, opts)` | Tar a bash-wrapped hook to `~/.clawker/<Name>.sh`; empty `Script` → no-op wrapper (always-deliver overwrites stale content) |
+| `InjectPostInitScript(ctx, opts)` | Thin wrapper over `InjectHookScript` pinned to the `post-init` hook; used by the create path |
 | `ResolveAgentEnv(agent, projectDir)` | Merge env_file + from_env + env. Precedence: env_file < from_env < env |
 | `RebuildMissingDefaultImage(ctx, opts)` | Interactive rebuild flow with TUI progress |
 | `GenerateAgentBootstrap(...)` | Mint mTLS cert + JWT assertion for agent |
