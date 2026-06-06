@@ -118,10 +118,24 @@ while IFS= read -r line; do
 done
 `
 
+	// postInitScript runs the user's one-time post_init hook. Contract:
+	// attempted at most once per container lifecycle. DONE-first short
+	// circuits an already-attempted container; a missing script writes the
+	// marker and exits (nothing to do); a present script runs once. On
+	// success the marker is written so a restart never re-runs it; on
+	// failure the marker is NOT written and the exit code propagates — the
+	// step is fatal (plan halts, agent-ready never sent). A failed container
+	// is meant to be torn down rather than restarted; while that teardown
+	// does not yet exist, a manually-restarted failed container re-runs this
+	// hook (no marker was written).
+	//
+	// The `[ -x … ] || { …; }` brace group is load-bearing: `|| touch && exit`
+	// without braces binds as `([ -x ] || touch) && exit`, which exits 0 when
+	// the script EXISTS and never runs it. Do not remove the braces.
 	postInitScript = `POST="$HOME/.clawker/post-init.sh"
 DONE="$HOME/.claude/post-initialized"
-[ -x "$POST" ] || exit 0
 [ -f "$DONE" ] && exit 0
+[ -x "$POST" ] || { touch "$DONE"; exit 0; }
 if "$POST"; then
     touch "$DONE"
 else

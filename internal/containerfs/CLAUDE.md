@@ -11,7 +11,6 @@ Prepares host Claude Code configuration for container injection. Receives `confi
 | `PrepareClaudeConfig(hostConfigDir, containerHomeDir, containerWorkDir string) (stagingDir string, cleanup func(), err error)` | Stage host config for volume copy (settings, plugins, agents, etc.) |
 | `PrepareCredentials(hostConfigDir string) (stagingDir string, cleanup func(), err error)` | Stage credentials from keyring or file fallback |
 | `PrepareHookTar(cfg config.Config, script, name string) (io.Reader, error)` | Create tar with .clawker/<name>.sh (bash shebang + set -e + user script); extracts at /home/claude. Empty script → bare no-op wrapper (lets callers always-deliver, overwriting stale content) |
-| `PreparePostInitTar(cfg config.Config, script string) (io.Reader, error)` | Thin wrapper over `PrepareHookTar(cfg, script, "post-init")`; keeps the empty-script → error guard |
 
 ## Dependencies
 
@@ -53,12 +52,6 @@ Each `Prepare*` function returns a temp directory with this layout:
 ```
 <tmpdir>/.claude/
   .credentials.json
-```
-
-### PreparePostInitTar
-Returns an `io.Reader` containing a tar archive with:
-```
-.clawker/post-init.sh   (#!/bin/bash + set -e + user script, mode 0755)
 ```
 
 ## Credential Resolution Order

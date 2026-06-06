@@ -196,17 +196,6 @@ func PrepareCredentials(log *logger.Logger, hostConfigDir string) (stagingDir st
 	)
 }
 
-// PreparePostInitTar creates a tar archive containing a post-init script at .clawker/post-init.sh.
-// The script is prefixed with a bash shebang and set -e, then the user's commands verbatim.
-// The tar is designed for extraction at /home/claude, producing /home/claude/.clawker/post-init.sh.
-// Returns an error if the script is empty or whitespace-only.
-func PreparePostInitTar(cfg config.Config, script string) (io.Reader, error) {
-	if strings.TrimSpace(script) == "" {
-		return nil, fmt.Errorf("post-init script content is empty")
-	}
-	return PrepareHookTar(cfg, script, "post-init")
-}
-
 // PrepareHookTar tars a bash-wrapped user hook script to .clawker/<name>.sh
 // (mode 0755) for extraction at /home/claude. An empty script yields a valid
 // no-op wrapper ("#!/bin/bash\nset -e\n"), letting callers deliver a

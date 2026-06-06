@@ -1524,16 +1524,17 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 		return nil, err
 	}
 
-	// Track newly-created volumes for cleanup on failure.
-	// Only volumes created during this call are tracked — pre-existing volumes
-	// (with user session data) are never touched.
-	var createdVolumes []string
+	// Track resources created during this attempt so a failure past this point
+	// reclaims them atomically (see createScope.reclaim). Only volumes created
+	// during this call are tracked — pre-existing volumes (with user session
+	// data) are never touched.
+	scope := &createScope{client: client, log: log, events: events}
 	if wsResult.ConfigVolumeResult.ConfigCreated {
 		if vn, vnErr := docker.VolumeName(opts.ProjectName, agentName, docker.VolumePurposeConfig); vnErr != nil {
 			log.Error().Err(vnErr).Msg("cannot determine config volume name for cleanup tracking")
 			sendWarning(ctx, events, "workspace", fmt.Sprintf("Could not track config volume for cleanup: %v", vnErr))
 		} else {
-			createdVolumes = append(createdVolumes, vn)
+			scope.volumes = append(scope.volumes, vn)
 		}
 	}
 	if wsResult.ConfigVolumeResult.HistoryCreated {
@@ -1541,26 +1542,20 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 			log.Error().Err(vnErr).Msg("cannot determine history volume name for cleanup tracking")
 			sendWarning(ctx, events, "workspace", fmt.Sprintf("Could not track history volume for cleanup: %v", vnErr))
 		} else {
-			createdVolumes = append(createdVolumes, vn)
+			scope.volumes = append(scope.volumes, vn)
 		}
 	}
 	if wsResult.WorkspaceVolumeName != "" {
-		createdVolumes = append(createdVolumes, wsResult.WorkspaceVolumeName)
+		scope.volumes = append(scope.volumes, wsResult.WorkspaceVolumeName)
 	}
 
+	// On any failure past this point, reclaim created resources — container
+	// first (frees its volumes), then volumes. scope.containerID stays empty
+	// until the container is created, so pre-create failures reclaim volumes
+	// only.
 	defer func() {
-		if retErr == nil || len(createdVolumes) == 0 {
-			return
-		}
-		cleanupCtx := context.Background()
-		for _, vol := range createdVolumes {
-			if _, rmErr := client.VolumeRemove(cleanupCtx, vol, true); rmErr != nil {
-				log.Warn().Str("volume", vol).Err(rmErr).
-					Msg("failed to clean up volume after init failure")
-				sendWarning(ctx, events, "cleanup", fmt.Sprintf("Failed to remove volume %s: %v", vol, rmErr))
-			} else {
-				log.Debug().Str("volume", vol).Msg("cleaned up volume after init failure")
-			}
+		if retErr != nil {
+			scope.reclaim()
 		}
 	}()
 
@@ -1677,9 +1672,9 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 		return nil, fmt.Errorf("creating container: %w", err)
 	}
 
-	// Container created — volumes are now associated with it.
-	// Clear cleanup list so deferred cleanup won't remove them.
-	createdVolumes = nil
+	// Container created — register it for reclaim so any failure past this point
+	// tears down the container before its volumes.
+	scope.containerID = resp.ID
 
 	// Mint per-agent mTLS material + Hydra assertion JWT, tar into the
 	// container's BootstrapDir (writable layer survives stop/start/
@@ -1697,17 +1692,18 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 		Logger:             log,
 	}
 	if err := InstallAgentBootstrapMaterial(ctx, caCertPath, caKeyPath, signingKey, bootstrapOpts); err != nil {
-		cleanupCtx := context.Background()
-		if _, rmErr := client.ContainerRemove(cleanupCtx, resp.ID, true); rmErr != nil {
-			log.Warn().Str("containerID", resp.ID).Err(rmErr).
-				Msg("failed to clean up container after agent bootstrap failure")
-		}
 		return nil, fmt.Errorf("agent bootstrap: %w", err)
 	}
 
-	// Inject post-init script if configured. Last creation step;
-	// failure here removes the container so no orphan exists.
-	if projectCfg.Agent.PostInit != "" {
+	// Inject post-init script if configured. Last creation step; on failure the
+	// deferred reclaim tears down the container and its newly-created volumes, so
+	// no orphan remains. A blank (empty or whitespace-only) post_init is
+	// equivalent to unset — skip injection entirely rather than deliver a no-op
+	// wrapper (post_init is create-time once; there is no stale content to
+	// overwrite).
+	if strings.TrimSpace(projectCfg.Agent.PostInit) == "" {
+		log.Debug().Msg("no post_init script configured; skipping injection")
+	} else {
 		sendInfo(ctx, events, "container", "Injecting post-init script")
 		copyFn := NewCopyToContainerFn(client)
 		if err := InjectPostInitScript(ctx, InjectPostInitOpts{
@@ -1717,11 +1713,6 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 			CopyToContainer: copyFn,
 			Log:             log,
 		}); err != nil {
-			cleanupCtx := context.Background()
-			if _, rmErr := client.ContainerRemove(cleanupCtx, resp.ID, true); rmErr != nil {
-				log.Warn().Str("containerID", resp.ID).Err(rmErr).
-					Msg("failed to clean up container after injection failure")
-			}
 			return nil, fmt.Errorf("inject post-init script: %w", err)
 		}
 	}
@@ -1735,6 +1726,44 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 		WorkDir:          wd,
 		HostProxyRunning: hostProxyRunning,
 	}, nil
+}
+
+// createScope tracks the Docker resources brought into existence during a
+// single CreateContainer attempt so they can be reclaimed atomically when the
+// attempt fails. reclaim removes the container first — which frees its volumes,
+// since the Docker daemon refuses to delete an in-use volume — and only then
+// the newly-created volumes. Pre-existing/reused volumes are never tracked, so
+// they are never touched. This is the create-time counterpart to CP's resource
+// reaper for init-time failures.
+type createScope struct {
+	client      *docker.Client
+	log         *logger.Logger
+	events      chan<- CreateContainerEvent
+	containerID string   // empty until the container is created
+	volumes     []string // newly-created volumes only
+}
+
+// reclaim tears down the tracked resources, best-effort: a failed removal is
+// logged and the remaining removals still run. Container before volumes (Docker
+// refuses to delete an in-use volume). Uses a background context so a cancelled
+// request context does not abort cleanup.
+func (s *createScope) reclaim() {
+	ctx := context.Background()
+	if s.containerID != "" {
+		if _, err := s.client.ContainerRemove(ctx, s.containerID, true); err != nil {
+			s.log.Warn().Str("containerID", s.containerID).Err(err).
+				Msg("failed to clean up container after creation failure")
+		}
+	}
+	for _, vol := range s.volumes {
+		if _, err := s.client.VolumeRemove(ctx, vol, true); err != nil {
+			s.log.Warn().Str("volume", vol).Err(err).
+				Msg("failed to clean up volume after creation failure")
+			sendWarning(ctx, s.events, "cleanup", fmt.Sprintf("Failed to remove volume %s: %v", vol, err))
+		} else {
+			s.log.Debug().Str("volume", vol).Msg("cleaned up volume after creation failure")
+		}
+	}
 }
 
 // --- Event helpers ---

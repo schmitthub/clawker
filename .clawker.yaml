@@ -213,6 +213,8 @@ security:
             path: /mintlify/
           - action: allow
             path: /cloudflare/
+          - action: allow
+            path: /anthropics/claude-code/
       - action: allow
         dst: api.github.com
         insecure_skip_tls_verify: false
@@ -225,7 +227,7 @@ security:
           - action: allow
             path: /repos/oraios/serena/commits/
           - action: allow
-            path: /anthropics/claude-code/refs/heads/main/
+            path: /anthropics/claude-code/
           - action: allow
             path: /repos/upstash/context7/
           - action: allow
@@ -259,7 +261,7 @@ security:
           - action: allow
             path: /oraios/serena/
           - action: allow
-            path: /anthropics/claude-code/refs/heads/main/
+            path: /anthropics/claude-code/
           - action: allow
             path: /upstash/context7/master/plugins/claude/context7/skills/context7-mcp/
           - action: allow

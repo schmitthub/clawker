@@ -130,8 +130,8 @@ type InjectPostInitOpts struct {
 
 // InjectPostInitScript writes ~/.clawker/post-init.sh to a created (not started) container.
 // Must be called after ContainerCreate and before ContainerStart.
-// The entrypoint is responsible for running this script once on first start and creating
-// a ~/.claude/post-initialized marker to prevent re-runs on restart.
+// The control plane is responsible for attempting to run this script if it exists during first start after initial creation.
+// If script succeeds, or doesn't exist during first start, a ~/.claude/post-initialized marker is created to prevent re-runs on restart as per the contract.
 func InjectPostInitScript(ctx context.Context, opts InjectPostInitOpts) error {
 	return InjectHookScript(ctx, InjectHookOpts{
 		ContainerID:     opts.ContainerID,
