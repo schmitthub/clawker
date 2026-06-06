@@ -12,7 +12,7 @@ import (
 // and both server and CLI share one conversion instead of each reaching into
 // firewall internals for it.
 func EgressRuleToProto(r config.EgressRule) *EgressRule {
-	var paths []*PathRule
+	paths := make([]*PathRule, 0, len(r.PathRules))
 	for _, p := range r.PathRules {
 		paths = append(paths, &PathRule{Path: p.Path, Action: p.Action})
 	}
@@ -28,7 +28,7 @@ func EgressRuleToProto(r config.EgressRule) *EgressRule {
 
 // EgressRuleFromProto copies one *EgressRule → config.EgressRule.
 func EgressRuleFromProto(r *EgressRule) config.EgressRule {
-	var paths []config.PathRule
+	paths := make([]config.PathRule, 0, len(r.GetPathRules()))
 	for _, p := range r.GetPathRules() {
 		paths = append(paths, config.PathRule{Path: p.GetPath(), Action: p.GetAction()})
 	}
