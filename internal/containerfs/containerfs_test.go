@@ -617,17 +617,40 @@ func TestPrepareCredentials_NeitherSource(t *testing.T) {
 func TestPrepareHookTar(t *testing.T) {
 	cfg := configmocks.NewBlankConfig()
 
-	// readHookFile skips the .clawker/ dir entry and returns the file
-	// entry's name + body, asserting exactly one file follows.
+	// readHookFile asserts the dir entry's header invariants, then returns
+	// the file entry's name + body, asserting exactly one file follows.
+	//
+	// Mode 0755 is load-bearing, not a tautological echo of the constructor:
+	// the agent init plan gates both hooks on the executable bit
+	// (`[ -x "$POST" ]`) and execs the script directly (not `bash <file>`),
+	// so a drop to 0644 silently no-ops the hook with no error surfaced
+	// (post-init even writes its DONE marker and never retries). uid/gid are
+	// asserted against cfg (not literal 1001) to exercise the config→header
+	// binding the unprivileged container user depends on to own and exec it.
 	readHookFile := func(t *testing.T, reader io.Reader) (string, string) {
 		t.Helper()
 		tr := tar.NewReader(reader)
-		if _, err := tr.Next(); err != nil { // .clawker/ dir
+		dirHdr, err := tr.Next() // .clawker/ dir
+		if err != nil {
 			t.Fatalf("tar next (dir): %v", err)
+		}
+		if dirHdr.Mode != 0o755 {
+			t.Errorf("dir mode: got %#o, want %#o", dirHdr.Mode, 0o755)
+		}
+		if dirHdr.Uid != cfg.ContainerUID() || dirHdr.Gid != cfg.ContainerGID() {
+			t.Errorf("dir uid/gid: got %d/%d, want %d/%d",
+				dirHdr.Uid, dirHdr.Gid, cfg.ContainerUID(), cfg.ContainerGID())
 		}
 		hdr, err := tr.Next()
 		if err != nil {
 			t.Fatalf("tar next (file): %v", err)
+		}
+		if hdr.Mode != 0o755 {
+			t.Errorf("file mode: got %#o, want %#o (script must be executable)", hdr.Mode, 0o755)
+		}
+		if hdr.Uid != cfg.ContainerUID() || hdr.Gid != cfg.ContainerGID() {
+			t.Errorf("file uid/gid: got %d/%d, want %d/%d",
+				hdr.Uid, hdr.Gid, cfg.ContainerUID(), cfg.ContainerGID())
 		}
 		var buf bytes.Buffer
 		if _, err := io.Copy(&buf, tr); err != nil { // nosemgrep: go.lang.security.decompression_bomb.potential-dos-via-decompression-bomb
