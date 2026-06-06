@@ -102,6 +102,16 @@
                 "is_official": { "type": "keyword" }
               }
             },
+            "mcp_server": {
+              "properties": {
+                "name": { "type": "keyword" }
+              }
+            },
+            "mcp_tool": {
+              "properties": {
+                "name": { "type": "keyword" }
+              }
+            },
             "install": {
               "properties": {
                 "trigger": { "type": "keyword" }
