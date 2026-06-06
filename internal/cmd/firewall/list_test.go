@@ -237,7 +237,7 @@ func TestListRun_WithPaths(t *testing.T) {
 // path_default display for the denylist case (only deny path_rules, no
 // explicit r.path_default). Without inference, the list output would
 // silently hide the catch-all action and the user couldn't tell what
-// Envoy actually enforces. See firewall.EffectivePathDefault.
+// Envoy actually enforces. See adminv1.EffectivePathDefault.
 func TestListRun_WithDenylistPaths_InfersAllowDefault(t *testing.T) {
 	rules := []*adminv1.EgressRule{
 		{

@@ -35,7 +35,7 @@ Before presenting options, look up your agent name by reading the `CLAWKER_AGENT
 **Important: firewall command scoping.** Some firewall commands are
 per-container and require `--agent` (`bypass`, `enable`, `disable`).
 Others are global infrastructure and do NOT accept `--agent` (`status`,
-`list`, `add`, `remove`, `reload`, `up`, `down`, `rotate-ca`). Passing
+`list`, `add`, `remove`, `refresh`, `reload`, `up`, `down`, `rotate-ca`). Passing
 `--agent` to a global command will error. When in doubt, fetch
 `https://docs.clawker.dev/cli-reference/clawker_firewall` for current
 command signatures.
@@ -99,6 +99,7 @@ Firewall rules are stored in a persistent `egress-rules.yaml` file in clawker's 
 - **`add_domains`** in `clawker.yaml` — simple domain list, converted to TLS allow rules at startup
 - **`security.firewall.rules`** in `clawker.yaml` — full rule definitions (custom proto/port/action + optional path rules), synced at startup
 - **`clawker firewall add <domain>`** — applies the same merge at runtime; with `--path X --action Y` it attaches a path-scoped rule
+- **`clawker firewall refresh`** — re-reads the current project's `clawker.yaml` (`add_domains` + `security.firewall.rules`) and re-runs the startup sync into the store live, without restarting a container. This is how a `clawker.yaml` egress edit is applied to a running setup. Add/update only (same merge) — a domain deleted from `clawker.yaml` is NOT pruned by refresh; use `clawker firewall remove` for that.
 
 Rules are keyed by `dst:proto:port`. When a key already exists in the store, the new call merges in: caller wins on `Action`; caller wins on `PathDefault` only when the incoming value is non-empty (an empty incoming `path_default` preserves the stored value, so a bare `clawker firewall add` will not clobber a yaml-set `path_default` on the same rule). `PathRules` is unioned by `Path` with caller winning on same-`Path` collision; `--path` identifies a `PathRule` by exact-string match against the stored `path`, while at request time Envoy matches the stored `path` as a prefix when routing. A re-apply where every rule in the batch is identical to what's already in the store is a true no-op (no write, no reload); mixed batches still reconcile. Rules persist across container restarts. Removing a domain from `clawker.yaml` does **not** remove it from the store on its own — the workaround is `clawker firewall remove <domain>` (whole entry) or `clawker firewall remove <domain> --path <p>` (single path rule).
 
@@ -111,6 +112,7 @@ Rules are keyed by `dst:proto:port`. When a key already exists in the store, the
 | `clawker firewall status` | Health check, connected containers, rule count |
 | `clawker firewall list` | Show all active egress rules |
 | `clawker firewall remove <domain>` | Remove a domain from the allow list |
+| `clawker firewall refresh` | Live-apply `clawker.yaml` egress edits (re-sync `add_domains` + `security.firewall.rules` into the store without a restart; add/update only) |
 | `clawker firewall reload` | Force-reload firewall configuration |
 
 ## What you can and cannot do

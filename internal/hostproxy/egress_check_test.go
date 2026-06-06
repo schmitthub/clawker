@@ -326,7 +326,7 @@ func TestCheckPathRules(t *testing.T) {
 }
 
 // TestCheckPathRules_DenylistInference pins the parity with
-// firewall.EffectivePathDefault: a rule set where every PathRule is deny and
+// adminv1.EffectivePathDefault: a rule set where every PathRule is deny and
 // path_default is empty resolves the catch-all to "allow" (denylist mode), so
 // unmatched paths must pass on both Envoy and the host proxy.
 func TestCheckPathRules_DenylistInference(t *testing.T) {

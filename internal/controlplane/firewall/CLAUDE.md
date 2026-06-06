@@ -37,7 +37,7 @@ Closures (reconcileStackClosure + per-RPC bodies) call:
 
 | File | Purpose |
 |------|---------|
-| `handler.go` | `Handler` + `HandlerDeps` + `ContainerResolver` + `StackLifecycle` — 13 RPCs, bypass timer management, rules-store mutation helpers, `Proto↔Config` rule conversion |
+| `handler.go` | `Handler` + `HandlerDeps` + `ContainerResolver` + `StackLifecycle` — 13 RPCs, bypass timer management, rules-store mutation helpers. Wire↔config rule translation lives beside the proto bindings in `api/admin/v1` (`EgressRulesToProto`/`EgressRulesFromProto`), not here |
 | `stack.go` | `Stack` — Envoy + CoreDNS container lifecycle via DooD; image build helpers (`drainPullStream`, `ensureEnvoyImage`, `ensureCorednsImage`); health probing; `EnsureRunning`/`Stop`/`Reload`/`WaitForHealthy`/`Status` + IP/CIDR accessors |
 | `status.go` | `Status` struct returned by `Stack.Status` (per-container up state, IPs, rule count) |
 | `cgroup.go` | `DetectCgroupDriver(ctx, *docker.Client)`, `EBPFCgroupPath(driver, cid)`, `ResolveContainerID(ctx, *docker.Client, ref)`, `IsCanonicalContainerID` |
@@ -135,7 +135,7 @@ type ContainerResolver func(ctx context.Context, ref string) (id, cgroupPath str
 
 ### `EgressRulesFile` + rule helpers
 
-`EgressRulesFile` is the on-disk schema (`egress-rules.yaml`) — it implements `storage.Schema` via `Fields()` so the store engine can read field metadata. Project-level rule composition (required baseline + `security.firewall.rules` + `add_domains`) lives on `project.Project.EgressRules()` — the firewall package owns store/stack/certs, not project config. `BootstrapServicesPreStart` calls `proj.EgressRules()` and passes the result through `ConfigRulesToProto` to `FirewallAddRules`.
+`EgressRulesFile` is the on-disk schema (`egress-rules.yaml`) — it implements `storage.Schema` via `Fields()` so the store engine can read field metadata. Project-level rule composition (required baseline + `security.firewall.rules` + `add_domains`) lives on `project.Project.EgressRules()` — the firewall package owns store/stack/certs, not project config. `BootstrapServicesPreStart` calls `proj.EgressRules()` and passes the result through `adminv1.EgressRulesToProto` to `FirewallAddRules`. The `clawker firewall refresh` CLI verb re-runs this exact `proj.EgressRules()` → `EgressRulesToProto` → `FirewallAddRules` sync on demand (no restart), so a `clawker.yaml` egress edit can be live-applied; it is add/update-only (no prune — removed domains are deleted via `firewall remove`).
 
 Rule helpers are exported for reuse by `BootstrapServicesPostStart` and E2E tests:
 
@@ -144,7 +144,8 @@ Rule helpers are exported for reuse by `BootstrapServicesPostStart` and E2E test
 - `RuleKey(r) string` — dedup key (`dst:proto:port`)
 - `MergeRule(existing, incoming) EgressRule` — same-RuleKey merge for `addRulesToStore`. Caller wins on `Action`; caller wins on `PathDefault` only when non-empty (empty incoming preserves the stored value); `PathRules` union by `Path` (caller wins on same-`Path` collision). The single merge semantic used by both yaml-driven bootstrap reseeds and CLI `firewall add`.
 - `NormalizeAndDedup(rules) ([]EgressRule, []string)` — canonical form + dropped-duplicate notes
-- `ProtoRulesToConfig(in)` / `ConfigRulesToProto(in)` — wire ↔ config translation for the `BootstrapServicesPostStart` flow
+
+Wire↔config rule translation (`EgressRulesToProto` / `EgressRulesFromProto`) is NOT here — it lives beside the generated bindings in `api/admin/v1/conversion.go` so the gRPC types stay confined to the transport edge and both server and CLI share one converter without importing this (embed-heavy) package.
 
 ## Invariants
 
@@ -158,8 +159,8 @@ Rule helpers are exported for reuse by `BootstrapServicesPostStart` and E2E test
 ## Imports
 
 - **Uses**: `internal/config`, `internal/consts`, `internal/docker`, `internal/logger`, `internal/storage`, `internal/controlplane/firewall/ebpf`, `api/admin/v1`, `pkg/whail` (labels only), `github.com/moby/moby/api/types/*`.
-- **Used by**: `internal/controlplane` (composite server embeds `*Handler`; startup wires `Stack`); `cmd/clawker-cp/main.go` (Handler ctor + container resolver); `internal/cmd/container/shared/container_start.go` (`BootstrapServicesPreStart` calls `ProtoRulesToConfig`/`ConfigRulesToProto` — project-rule composition lives on `project.Project.EgressRules()`).
-- **Not imported by**: CLI commands — those go through `f.AdminClient(ctx)` which speaks gRPC to the running CP. No direct Go calls into `firewall.Handler` from CLI code.
+- **Used by**: `internal/controlplane` (composite server embeds `*Handler`; startup wires `Stack`); `cmd/clawker-cp/main.go` (Handler ctor + container resolver).
+- **Not imported by**: CLI commands — those go through `f.AdminClient(ctx)` which speaks gRPC to the running CP. No direct Go calls into `firewall.Handler` from CLI code. Wire↔config rule translation (`adminv1.EgressRulesToProto`/`EgressRulesFromProto`/`EffectivePathDefault`) lives in `api/admin/v1`, so the container-start path (`BootstrapServicesPreStart`) and `firewall refresh` convert `proj.EgressRules()` without importing this package.
 
 ## Test Patterns
 

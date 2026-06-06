@@ -10,7 +10,6 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
-	fwcp "github.com/schmitthub/clawker/internal/controlplane/firewall"
 	cpmocks "github.com/schmitthub/clawker/internal/controlplane/mocks"
 	"github.com/schmitthub/clawker/internal/project"
 	projectmocks "github.com/schmitthub/clawker/internal/project/mocks"
@@ -75,7 +74,7 @@ func TestRefreshCmd_SyncsProjectRules(t *testing.T) {
 	require.NoError(t, cmd.Execute())
 
 	require.NotNil(t, got)
-	want := fwcp.ConfigRulesToProto(twoRules)
+	want := adminv1.EgressRulesToProto(twoRules)
 	require.Len(t, got.GetRules(), len(want))
 	for i, w := range want {
 		assert.Equal(t, w.GetDst(), got.GetRules()[i].GetDst())

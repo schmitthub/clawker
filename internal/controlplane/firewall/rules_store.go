@@ -214,30 +214,6 @@ func RuleKey(r config.EgressRule) string {
 	return fmt.Sprintf("%s:%s:%s", r.Dst, r.Proto, r.Port)
 }
 
-// EffectivePathDefault resolves the catch-all action for HTTP paths under a
-// rule that don't match any explicit PathRule entry. Explicit PathDefault
-// always wins; otherwise the action is inferred from the path_rules
-// composition so a user who runs `firewall add foo.com --path /x --action
-// deny` gets denylist semantics (allow all paths except /x) without
-// having to know about the path_default knob:
-//
-//   - r.PathDefault non-empty               → r.PathDefault   (explicit override)
-//   - any PathRule with Action="allow"      → "deny"          (allowlist mode)
-//   - all PathRules have Action="deny"      → "allow"         (denylist mode)
-//   - no PathRules                          → "allow"         (vacuous; callers
-//     don't query this)
-func EffectivePathDefault(r config.EgressRule) string {
-	if r.PathDefault != "" {
-		return r.PathDefault
-	}
-	for _, pr := range r.PathRules {
-		if strings.EqualFold(pr.Action, "allow") {
-			return "deny"
-		}
-	}
-	return "allow"
-}
-
 // MergeRule merges incoming into existing for the same RuleKey. Caller wins
 // on Action; PathRules is unioned by Path with caller winning on same-path
 // collision. Callers MUST pre-normalize via NormalizeRule so scalar defaults

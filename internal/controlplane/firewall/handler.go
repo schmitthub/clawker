@@ -655,7 +655,7 @@ func (h *Handler) FirewallBypass(ctx context.Context, req *adminv1.FirewallBypas
 // queue-time the closure short-circuits to StackReloadResult{Restarted:
 // false} — the rule is still saved, next FirewallInit picks it up.
 func (h *Handler) FirewallAddRules(ctx context.Context, req *adminv1.FirewallAddRulesRequest) (*adminv1.FirewallAddRulesResult, error) {
-	rules := ProtoRulesToConfig(req.GetRules())
+	rules := adminv1.EgressRulesFromProto(req.GetRules())
 	// Validate every rule up front and report ALL problems at once. A bad rule
 	// from clawker.yaml (malformed port, inverted action, junk destination)
 	// fails the whole launch here — the error rides the RPC back to the CLI so
@@ -761,7 +761,7 @@ func (h *Handler) FirewallListRules(ctx context.Context, _ *adminv1.FirewallList
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	return &adminv1.FirewallListRulesResult{Rules: ConfigRulesToProto(r.Rules)}, nil
+	return &adminv1.FirewallListRulesResult{Rules: adminv1.EgressRulesToProto(r.Rules)}, nil
 }
 
 // AllResolvableDomains returns every domain name CoreDNS will serve a
@@ -1322,48 +1322,4 @@ func (h *Handler) removePathRuleFromStore(toRemove config.EgressRule, path strin
 		return false, fmt.Errorf("writing rules: %w", err)
 	}
 	return true, nil
-}
-
-// ProtoRulesToConfig copies []*adminv1.EgressRule → []config.EgressRule.
-// The two types track identical field sets; the dedicated mapper keeps
-// the handler free of gRPC types when calling into the rules store.
-func ProtoRulesToConfig(in []*adminv1.EgressRule) []config.EgressRule {
-	out := make([]config.EgressRule, 0, len(in))
-	for _, r := range in {
-		var paths []config.PathRule
-		for _, p := range r.GetPathRules() {
-			paths = append(paths, config.PathRule{Path: p.GetPath(), Action: p.GetAction()})
-		}
-		out = append(out, config.EgressRule{
-			Dst:         r.GetDst(),
-			Proto:       r.GetProto(),
-			Port:        r.GetPort(),
-			Action:      r.GetAction(),
-			PathRules:   paths,
-			PathDefault: r.GetPathDefault(),
-		})
-	}
-	return out
-}
-
-// ConfigRulesToProto copies []config.EgressRule → []*adminv1.EgressRule.
-// Exported because CLI command code needs the reverse mapping when
-// displaying rules returned from FirewallListRules.
-func ConfigRulesToProto(in []config.EgressRule) []*adminv1.EgressRule {
-	out := make([]*adminv1.EgressRule, 0, len(in))
-	for _, r := range in {
-		var paths []*adminv1.PathRule
-		for _, p := range r.PathRules {
-			paths = append(paths, &adminv1.PathRule{Path: p.Path, Action: p.Action})
-		}
-		out = append(out, &adminv1.EgressRule{
-			Dst:         r.Dst,
-			Proto:       r.Proto,
-			Port:        r.Port,
-			Action:      r.Action,
-			PathRules:   paths,
-			PathDefault: r.PathDefault,
-		})
-	}
-	return out
 }

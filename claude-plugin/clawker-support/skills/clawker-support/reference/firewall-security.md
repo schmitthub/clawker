@@ -78,7 +78,11 @@ clawker firewall add github.com --path /<owner>/<dep> --action allow
 Each `--action allow` path keeps the domain in allowlist mode (deny everything
 else). The runtime store and `.clawker.yaml` are separate — once the path set
 is settled, write it back into `.clawker.yaml` so it's shared with the team and
-survives a fresh rules store.
+survives a fresh rules store. After editing `.clawker.yaml`, apply it live with
+`clawker firewall refresh` (re-runs the startup sync into the store without a
+container restart) instead of re-typing each `clawker firewall add`. Refresh is
+add/update only — a rule *deleted* from the YAML is not pruned; use
+`clawker firewall remove` for that.
 
 ## Two gaps path rules can't cover
 

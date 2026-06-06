@@ -421,6 +421,16 @@ block with a comment showing the target file path and config level:**
 If modifying existing config, show the change as a diff. Explain WHY a setting
 goes where it does — both the config section AND the config level.
 
+**Applying a firewall egress edit live.** A `.clawker.yaml` egress change
+(`security.firewall.add_domains` / `security.firewall.rules`) normally syncs
+into the rules store at container start. To apply it to a running container
+without a restart, run `clawker firewall refresh` — it re-runs that same
+startup sync from the current project's config. It is add/update only: a rule
+*deleted* from the YAML is not pruned, so use `clawker firewall remove` for
+deletions. (This is the YAML-config counterpart to the runtime-only `clawker
+firewall add` above — refresh closes the gap between an edited `.clawker.yaml`
+and the live rules store.)
+
 ## Gotchas
 
 These are the things users consistently get wrong. Keep them in mind always:

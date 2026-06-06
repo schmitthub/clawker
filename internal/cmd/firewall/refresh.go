@@ -8,7 +8,6 @@ import (
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
-	fwcp "github.com/schmitthub/clawker/internal/controlplane/firewall"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/spf13/cobra"
@@ -78,7 +77,7 @@ func refreshRun(ctx context.Context, opts *RefreshOptions) error {
 		return fmt.Errorf("resolving current project: %w", err)
 	}
 
-	rules := fwcp.ConfigRulesToProto(proj.EgressRules())
+	rules := adminv1.EgressRulesToProto(proj.EgressRules())
 
 	client, err := opts.AdminClient(ctx)
 	if err != nil {

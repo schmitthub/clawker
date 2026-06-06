@@ -85,14 +85,16 @@ a container.
    **Important: firewall command scoping.** Some firewall commands are
    per-container and require `--agent` (`bypass`, `enable`, `disable`).
    Others are global infrastructure and do NOT accept `--agent` (`status`,
-   `list`, `add`, `remove`, `reload`, `up`, `down`, `rotate-ca`). Passing
+   `list`, `add`, `remove`, `refresh`, `reload`, `up`, `down`, `rotate-ca`). Passing
    `--agent` to a global command will error. When in doubt, fetch
    `https://docs.clawker.dev/cli-reference/clawker_firewall` for current
    command signatures.
 
 5. **Add the destination — scope it as narrowly as the work allows.** Either at
    runtime via `clawker firewall add` (immediate, doesn't persist to the config
-   file) or persistently in the project's clawker config. For http/https,
+   file) or persistently in the project's clawker config — then `clawker firewall
+   refresh` to live-apply the YAML edit without restarting the container. For
+   http/https,
    **prefer a path-scoped rule over a bare domain allow** when the agent only
    needs specific paths:
    ```bash

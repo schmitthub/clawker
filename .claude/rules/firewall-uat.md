@@ -17,7 +17,11 @@ the behavioral test.
   CANNOT run host `clawker` (see `feedback_no_host_clawker_in_container`).
 - **User (host operator):** mutates rules host-side —
   `clawker firewall add <host> [--proto https|http|ssh|tcp|wss|...] [--port N] [--path /p --action allow|deny]`.
-  Ask them to add/remove rules; then you re-probe.
+  Ask them to add/remove rules; then you re-probe. To live-apply a
+  `clawker.yaml` egress edit (`security.firewall.add_domains` /
+  `security.firewall.rules`) without a restart, have them run
+  `clawker firewall refresh` (global, no `--agent`; add/update only — deletes
+  still go through `clawker firewall remove`).
 
 `clawker firewall add` flags: `--proto` (default https), `--port` (default
 proto-specific), `--path` + `--action` (path-scoped rule, required together).
