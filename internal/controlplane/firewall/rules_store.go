@@ -402,6 +402,41 @@ func RoutesFromRules(rules []config.EgressRule, ports EnvoyPorts) []ebpf.Route {
 	return out
 }
 
+// SeedDomainsFromRules returns the destination strings that RoutesFromRules
+// seeds into dns_cache as IP literals — one entry per distinct bare-IPv4
+// dedicated-listener mapping (TCP/SSH/UDP). These are exactly the strings whose
+// ebpf.DomainHash equals the SeedIP routes' DomainHash, so feeding them through
+// the netlogger ReverseDNSMap lets it attribute those seeded entries (dst_host
+// becomes the IP literal) instead of logging them as unattributed.
+//
+// CoreDNS never resolves a literal IP, so these dsts are absent from
+// AllResolvableDomains (the Corefile zone set); the netlogger DomainSource is
+// the union of the two (see Handler.ReverseDNSDomains). This mirrors
+// mappingRoute's SeedIP condition in RoutesFromRules exactly — both walk
+// TCPMappings + UDPMappings and key off net.ParseIP(dst).To4(); the TLS pass
+// never seeds because it skips IP/CIDR destinations.
+func SeedDomainsFromRules(rules []config.EgressRule, ports EnvoyPorts) []string {
+	seen := make(map[string]struct{})
+	var out []string
+	add := func(dst string) {
+		if net.ParseIP(dst).To4() == nil {
+			return // FQDN (CoreDNS-resolved) or non-IPv4 — no SeedIP, no dns_cache seed
+		}
+		if _, dup := seen[dst]; dup {
+			return // one IP rule may fan out to many ports → one dns_cache key
+		}
+		seen[dst] = struct{}{}
+		out = append(out, dst)
+	}
+	for _, m := range TCPMappings(rules, ports) {
+		add(m.Dst)
+	}
+	for _, m := range UDPMappings(rules, ports) {
+		add(m.Dst)
+	}
+	return out
+}
+
 // NormalizeAndDedup normalizes all rules and removes duplicates.
 // This handles store files that contain rules with an unset port: NormalizeRule
 // fills the proto default (e.g. https → 443) so they become duplicates of the

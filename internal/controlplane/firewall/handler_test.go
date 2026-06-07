@@ -1187,6 +1187,51 @@ func TestHandler_AllResolvableDomains_NoStoreReturnsInternalHostsOnly(t *testing
 	}
 }
 
+// TestHandler_ReverseDNSDomains_IncludesIPSeeds asserts the netlogger
+// DomainSource unions the IP-literal seeds SyncRoutes writes into dns_cache on
+// top of the CoreDNS zone set. AllResolvableDomains omits IP/CIDR rules (they
+// are not zones), but a bare-IP rule still seeds dns_cache[ip]=DomainHash(ip);
+// feeding only the zone set left that seed permanently unattributed. The IP
+// literal's hash must now be covered so the reverse map can stamp dst_host.
+func TestHandler_ReverseDNSDomains_IncludesIPSeeds(t *testing.T) {
+	mock := noopMock()
+	h, _ := ruleStoreHandler(t, mock)
+
+	_, err := h.FirewallAddRules(context.Background(), &adminv1.FirewallAddRulesRequest{
+		Rules: []*adminv1.EgressRule{
+			{Dst: "github.com", Proto: "https", Port: "443", Action: "allow"},
+			{Dst: "45.79.112.203", Proto: "tcp", Port: "4242-4243", Action: "allow"}, // bare-IP seed
+			{Dst: "10.0.0.0/24", Proto: "tcp", Port: "443", Action: "allow"},         // CIDR — no seed
+		},
+	})
+	require.NoError(t, err)
+
+	got := h.ReverseDNSDomains()
+	gotSet := make(map[string]bool, len(got))
+	for _, d := range got {
+		gotSet[d] = true
+	}
+
+	// Superset of the CoreDNS zone set...
+	for _, d := range h.AllResolvableDomains() {
+		assert.Truef(t, gotSet[d], "ReverseDNSDomains must include zone %q; got %v", d, got)
+	}
+	// ...plus the bare-IP seed (which AllResolvableDomains omits)...
+	assert.Truef(t, gotSet["45.79.112.203"], "IP-literal seed missing; got %v", got)
+	assert.True(t, gotSet["github.com"])
+	// ...but never the CIDR (it rides the shared egress listener, no seed).
+	assert.Falsef(t, gotSet["10.0.0.0/24"], "CIDR must not be seeded; got %v", got)
+
+	// The seeded dns_cache hash is now attributable — the exact condition that
+	// silences netlogger_reverse_dns_unattributed.
+	hashes := make(map[uint32]bool, len(got))
+	for _, d := range got {
+		hashes[ebpf.DomainHash(d)] = true
+	}
+	assert.True(t, hashes[ebpf.DomainHash("45.79.112.203")],
+		"DomainHash of the IP seed must be present in ReverseDNSDomains")
+}
+
 // TestHandler_RemoveRule_Success covers the happy path: rule matches
 // exactly, store is mutated, reconcile fires.
 func TestHandler_RemoveRule_Success(t *testing.T) {

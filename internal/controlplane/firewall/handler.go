@@ -811,6 +811,29 @@ func (h *Handler) AllResolvableDomains() []string {
 	return out
 }
 
+// ReverseDNSDomains returns every string whose [ebpf.DomainHash] can appear in
+// the BPF dns_cache: the CoreDNS-served zones ([AllResolvableDomains]) plus the
+// IP-literal seeds [SyncRoutes] writes for bare-IP routes
+// ([SeedDomainsFromRules]). It is the netlogger reverse-DNS DomainSource.
+//
+// AllResolvableDomains alone is incomplete: it deliberately omits IP/CIDR rules
+// (they are not CoreDNS zones), but SyncRoutes still seeds dns_cache[ip] =
+// DomainHash(ip) for every bare-IP rule. Sourcing the reverse map from the
+// domain set only left each such seed permanently unattributed
+// (event=netlogger_reverse_dns_unattributed every refresh tick) and stamped its
+// egress records with an empty dst_host despite the destination being known.
+// Unioning the seeds in attributes those records to the IP literal and silences
+// the false-positive warning. Order is unspecified; the two sets never collide
+// (an IP literal is never a domain zone).
+func (h *Handler) ReverseDNSDomains() []string {
+	out := h.AllResolvableDomains()
+	if h.store == nil {
+		return out
+	}
+	rules, _ := NormalizeAndDedup(h.store.Read().Rules)
+	return append(out, SeedDomainsFromRules(rules, h.envoyPorts())...)
+}
+
 // FirewallReload regenerates configs and restarts Envoy+CoreDNS without
 // mutating the rule set. No pre-Submit work — it is a pure reconcile
 // signal against the current store contents.

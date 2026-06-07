@@ -89,6 +89,15 @@ const (
 	// default 10s stop timeout, run sequentially → ~20s worst case,
 	// leaving headroom.
 	cpDrainTimeout = 25 * time.Second
+	// dnsGCInterval is how often the CP sweeps expired entries out of the
+	// pinned dns_cache. CoreDNS (dnsbpf) writes one entry per resolved A
+	// record and nothing else reclaims them, so without this sweep the map
+	// grows unbounded over the CP lifetime and entries for since-removed
+	// zones linger as orphaned hashes (surfacing via netlogger as
+	// event=netlogger_reverse_dns_unattributed). IP-literal seeds are
+	// protected by GarbageCollectDNS (m.seededIPs), so a live IP rule's
+	// route is never reclaimed out from under it.
+	dnsGCInterval = 60 * time.Second
 )
 
 func main() {
@@ -842,7 +851,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 				Bus:                bus,
 				Docker:             dockerCli.APIClient,
 				Cfg:                cfg,
-				Domains:            handler.AllResolvableDomains,
+				Domains:            handler.ReverseDNSDomains,
 				OtelLoggerProvider: netloggerProvider,
 				Log:                log.With("component", "netlogger"),
 			})
@@ -898,6 +907,55 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 				Msg("netlogger ready — eBPF egress events exporting to OTLP")
 		}
 	}
+
+	// Step 9d: periodic dns_cache garbage collection. Reclaims expired
+	// entries the CoreDNS dnsbpf plugin wrote so the pinned map does not
+	// grow unbounded and stale orphaned hashes do not accumulate. Runs on
+	// watcherCtx so it stops on SIGTERM/drain-to-zero. Recovers per CP
+	// no-panic discipline — a sweep panic must not strand the loop and
+	// leave the map ungoverned.
+	dnsGCCtx, dnsGCCancel := context.WithCancel(watcherCtx)
+	var dnsGCWg sync.WaitGroup
+	dnsGCWg.Add(1)
+	go func() {
+		defer dnsGCWg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Error().Interface("panic", r).
+					Str("event", "dns_gc_panic").
+					Msg("dns_cache gc loop panicked — expired entries will accumulate until CP restart")
+			}
+		}()
+		ticker := time.NewTicker(dnsGCInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-dnsGCCtx.Done():
+				return
+			case <-ticker.C:
+				if n := ebpfMgr.GarbageCollectDNS(); n > 0 {
+					log.Debug().Int("cleared", n).
+						Str("event", "dns_gc_swept").
+						Msg("dns_cache gc removed expired entries")
+				}
+			}
+		}
+	}()
+	// Stop the dns_cache sweeper and wait for any in-flight sweep to finish
+	// before the BPF map fd it iterates/deletes is torn down — the same
+	// stop-before-teardown discipline netloggerSvc.Stop follows for the
+	// ringbuf reader on the shared dns_cache map. sync.Once so the drain
+	// callback (before FlushAll) and the deferred path can both call it;
+	// deferred here (after ebpfMgr.Close was deferred earlier) so LIFO runs
+	// this first, joining the goroutine before Close() shuts the fd.
+	var stopDNSGCOnce sync.Once
+	stopDNSGC := func() {
+		stopDNSGCOnce.Do(func() {
+			dnsGCCancel()
+			dnsGCWg.Wait()
+		})
+	}
+	defer stopDNSGC()
 
 	listAgents := func(ctx context.Context) (int, error) {
 		ids, err := listAgentIDs(ctx, listAgentsOpts{})
@@ -961,6 +1019,9 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 			}
 			shutdownCancel()
 		}
+		// Stop the dns_cache sweeper before eBPF teardown so a sweep in
+		// progress can't iterate/delete a map fd that's about to close.
+		stopDNSGC()
 		if err := ebpfMgr.FlushAll(); err != nil {
 			log.Error().Err(err).Msg("drain: ebpf flush failed")
 			errs = append(errs, fmt.Errorf("ebpf flush: %w", err))

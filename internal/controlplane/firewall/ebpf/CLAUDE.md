@@ -85,7 +85,7 @@ func (m *Manager) SyncRoutes(routes []Route) error          // replace global ro
 func (m *Manager) Disable(cgroupID uint64) error            // set bypass flag (unrestricted egress)
 func (m *Manager) Enable(cgroupID uint64) error             // clear bypass flag (restore enforcement)
 func (m *Manager) UpdateDNSCache(ip, domainHash, ttl uint32) error
-func (m *Manager) GarbageCollectDNS() int                   // returns number cleared
+func (m *Manager) GarbageCollectDNS() int                   // returns number cleared; CP main runs this on a periodic goroutine (dnsGCInterval) + break-glass CLI. Skips m.seededIPs.
 func (m *Manager) LookupContainer(cgroupID uint64) (clawkerContainerConfig, error)
 
 // Startup / shutdown maintenance — not on EBPFManager interface; called
