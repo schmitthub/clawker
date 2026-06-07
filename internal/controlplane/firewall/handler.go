@@ -801,11 +801,9 @@ func (h *Handler) reservedHosts() []string {
 // reverse-DNS union consistent (see [Handler.ReverseDNSDomains]).
 func (h *Handler) resolvableDomains(rules []config.EgressRule) []string {
 	internalHosts := h.reservedHosts()
-	reserved := make(map[string]bool, len(internalHosts))
 	out := make([]string, 0, len(internalHosts))
 	seen := make(map[string]bool, len(rules)+len(internalHosts))
 	for _, host := range internalHosts {
-		reserved[host] = true
 		seen[host] = true
 		out = append(out, host)
 	}
@@ -814,7 +812,7 @@ func (h *Handler) resolvableDomains(rules []config.EgressRule) []string {
 			continue
 		}
 		domain := normalizeDomain(r.Dst)
-		if reserved[domain] || seen[domain] {
+		if seen[domain] {
 			continue
 		}
 		seen[domain] = true

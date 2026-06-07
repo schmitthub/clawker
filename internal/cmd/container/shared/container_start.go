@@ -118,7 +118,7 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 	if cmdOpts.ControlPlane == nil {
 		return fmt.Errorf("bootstrapping services: no control plane manager provided")
 	}
-	if err := cmdOpts.ControlPlane().EnsureRunning(ctx); err != nil {
+	if _, err := cmdOpts.ControlPlane().EnsureRunning(ctx); err != nil {
 		return fmt.Errorf("bootstrapping services: ensuring control plane is running: %w", err)
 	}
 

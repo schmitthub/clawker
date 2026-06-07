@@ -24,9 +24,12 @@ import (
 type Manager interface {
 	// EnsureRunning is idempotent: it builds the CP image if missing,
 	// creates/starts the container on clawker-net, and blocks until the
-	// aggregate /healthz endpoint returns 200. Returns nil when the CP
-	// is running and healthy.
-	EnsureRunning(ctx context.Context) error
+	// aggregate /healthz endpoint returns 200 and the host↔CP clock is in
+	// sync. The returned duration is the clock offset (CP minus host) the
+	// gate measured; the container create path threads it into the agent
+	// assertion's iat instead of re-probing, while lifecycle callers
+	// (firewall up, controlplane up, every-start pre-start) ignore it.
+	EnsureRunning(ctx context.Context) (time.Duration, error)
 
 	// Stop removes the CP container. SIGTERM reaches PID 1 (clawker-cp),
 	// which drains the firewall stack and flushes per-container eBPF
@@ -72,18 +75,18 @@ func NewManager(
 	return &manager{client: client, config: cfg, logger: log}
 }
 
-func (m *manager) EnsureRunning(ctx context.Context) error {
+func (m *manager) EnsureRunning(ctx context.Context) (time.Duration, error) {
 	dc, err := m.client(ctx)
 	if err != nil {
-		return fmt.Errorf("connecting to Docker: %w", err)
+		return 0, fmt.Errorf("connecting to Docker: %w", err)
 	}
 	cfg, err := m.config()
 	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
+		return 0, fmt.Errorf("loading config: %w", err)
 	}
 	log, err := m.logger()
 	if err != nil {
-		return fmt.Errorf("initializing logger: %w", err)
+		return 0, fmt.Errorf("initializing logger: %w", err)
 	}
 	return EnsureRunning(ctx, EnsureOpts{
 		Docker: dc,

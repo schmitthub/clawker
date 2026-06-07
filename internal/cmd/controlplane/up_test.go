@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -46,7 +47,7 @@ func upOptsFrom(tb *testBed) *UpOptions {
 
 func TestUpRun_CallsEnsureRunningAndReportsSuccess(t *testing.T) {
 	tb := newTestBed(t)
-	tb.Mock.EnsureRunningFunc = func(_ context.Context) error { return nil }
+	tb.Mock.EnsureRunningFunc = func(_ context.Context) (time.Duration, error) { return 0, nil }
 
 	require.NoError(t, upRun(context.Background(), upOptsFrom(tb)))
 	assert.Len(t, tb.Mock.EnsureRunningCalls(), 1, "EnsureRunning must be invoked once")
@@ -56,7 +57,7 @@ func TestUpRun_CallsEnsureRunningAndReportsSuccess(t *testing.T) {
 func TestUpRun_WrapsEnsureRunningError(t *testing.T) {
 	tb := newTestBed(t)
 	bootErr := errors.New("healthz timed out")
-	tb.Mock.EnsureRunningFunc = func(_ context.Context) error { return bootErr }
+	tb.Mock.EnsureRunningFunc = func(_ context.Context) (time.Duration, error) { return 0, bootErr }
 
 	err := upRun(context.Background(), upOptsFrom(tb))
 	require.Error(t, err)

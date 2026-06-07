@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/shlex"
 	"github.com/moby/moby/api/types/container"
@@ -421,7 +422,7 @@ agent:
 		},
 		ControlPlane: func() cpboot.Manager {
 			return &cpmocks.ManagerMock{
-				EnsureRunningFunc: func(_ context.Context) error { return nil },
+				EnsureRunningFunc: func(_ context.Context) (time.Duration, error) { return 0, nil },
 			}
 		},
 		Prompter: func() *prompter.Prompter { return prompter.NewPrompter(tio) },
@@ -471,8 +472,8 @@ func TestCreateRun(t *testing.T) {
 		f, _, out, errOut := testFactory(t, fake, func(f *cmdutil.Factory) {
 			f.ControlPlane = func() cpboot.Manager {
 				return &cpmocks.ManagerMock{
-					EnsureRunningFunc: func(_ context.Context) error {
-						return errors.New("host↔CP clock skew exceeds tolerance")
+					EnsureRunningFunc: func(_ context.Context) (time.Duration, error) {
+						return 0, errors.New("host↔CP clock skew exceeds tolerance")
 					},
 				}
 			}
@@ -594,7 +595,7 @@ agent: { claude_code: { use_host_auth: false, mount_projects: false, config: { s
 			},
 			ControlPlane: func() cpboot.Manager {
 				return &cpmocks.ManagerMock{
-					EnsureRunningFunc: func(_ context.Context) error { return nil },
+					EnsureRunningFunc: func(_ context.Context) (time.Duration, error) { return 0, nil },
 				}
 			},
 			Prompter: func() *prompter.Prompter { return prompter.NewPrompter(tio) },

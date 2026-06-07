@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
@@ -30,7 +31,7 @@ func okClientProvider(t *testing.T) func(context.Context) (*docker.Client, error
 // BootstrapServicesPreStart (CP is core infra, not a firewall feature).
 func noopCPManager() func() cpboot.Manager {
 	m := &cpbootmocks.ManagerMock{
-		EnsureRunningFunc: func(context.Context) error { return nil },
+		EnsureRunningFunc: func(context.Context) (time.Duration, error) { return 0, nil },
 	}
 	return func() cpboot.Manager { return m }
 }

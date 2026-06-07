@@ -180,9 +180,17 @@ type EnsureOpts struct {
 	HostDirs HostDirs
 }
 
-func EnsureRunning(ctx context.Context, opts EnsureOpts) error {
+// EnsureRunning is the readiness gate: it brings the CP up (build image,
+// create/start container, /healthz green, host↔CP clock sync) and returns
+// once ready. The returned duration is the host↔CP clock offset (CP minus
+// host) the clock-sync step measured — the create path threads it into the
+// agent assertion's iat so the mint reuses the gate's measurement instead
+// of issuing a second GetSystemTime probe. Callers that don't mint
+// clock-sensitive material (firewall up, controlplane up, every-start
+// pre-start) ignore it.
+func EnsureRunning(ctx context.Context, opts EnsureOpts) (time.Duration, error) {
 	if err := opts.HostDirs.Validate(); err != nil {
-		return fmt.Errorf("controlplane: %w", err)
+		return 0, fmt.Errorf("controlplane: %w", err)
 	}
 
 	dc := opts.Docker
@@ -196,17 +204,17 @@ func EnsureRunning(ctx context.Context, opts EnsureOpts) error {
 	defer ensureMu.Unlock()
 
 	if err := ensureAuthFn(); err != nil {
-		return fmt.Errorf("ensure auth material: %w", err)
+		return 0, fmt.Errorf("ensure auth material: %w", err)
 	}
 
 	imageRef, err := ensureCPImageFn(ctx, dc, log)
 	if err != nil {
-		return fmt.Errorf("controlplane: %w", err)
+		return 0, fmt.Errorf("controlplane: %w", err)
 	}
 
 	summary, err := findCPContainer(ctx, dc)
 	if err != nil {
-		return fmt.Errorf("controlplane: find cp: %w", err)
+		return 0, fmt.Errorf("controlplane: find cp: %w", err)
 	}
 	if summary != nil {
 		desired, _ := cpBinaryHash()
@@ -214,7 +222,7 @@ func EnsureRunning(ctx context.Context, opts EnsureOpts) error {
 		if actual == desired {
 			if summary.State != container.StateRunning {
 				if _, err := dc.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: summary.ID}); err != nil {
-					return fmt.Errorf("controlplane: start existing cp: %w", err)
+					return 0, fmt.Errorf("controlplane: start existing cp: %w", err)
 				}
 			}
 			return cpReady(ctx, cfg)
@@ -228,7 +236,7 @@ func EnsureRunning(ctx context.Context, opts EnsureOpts) error {
 				Add("status", "running"),
 		})
 		if err != nil {
-			return fmt.Errorf("controlplane: list active agents: %w", err)
+			return 0, fmt.Errorf("controlplane: list active agents: %w", err)
 		}
 
 		if cpRunning || len(activeAgents.Items) > 0 {
@@ -239,7 +247,7 @@ func EnsureRunning(ctx context.Context, opts EnsureOpts) error {
 				Bool("cp_running", cpRunning).
 				Int("active_agent_count", len(activeAgents.Items)).
 				Msg("control plane upgrade blocked — active CP or agent containers present")
-			return fmt.Errorf("clawker was upgraded and the control plane needs to be replaced, but %d agent container(s) are still running and the existing control plane is %s.\n\nTo upgrade safely:\n  1. Stop all agents:        clawker container ls\n                             clawker container stop <name>\n  2. Shut down CP (one of):  wait — CP self-shuts-down once agents reach zero\n                             clawker controlplane down  (skip the wait)\n  3. Restart agents:         clawker run <name>\n\nIf agents fail to restart cleanly after upgrade, their embedded clawkerd may need rebuilding against the new CLI:\n  clawker build\n  clawker run <name>",
+			return 0, fmt.Errorf("clawker was upgraded and the control plane needs to be replaced, but %d agent container(s) are still running and the existing control plane is %s.\n\nTo upgrade safely:\n  1. Stop all agents:        clawker container ls\n                             clawker container stop <name>\n  2. Shut down CP (one of):  wait — CP self-shuts-down once agents reach zero\n                             clawker controlplane down  (skip the wait)\n  3. Restart agents:         clawker run <name>\n\nIf agents fail to restart cleanly after upgrade, their embedded clawkerd may need rebuilding against the new CLI:\n  clawker build\n  clawker run <name>",
 				len(activeAgents.Items),
 				map[bool]string{true: "still running", false: "stopped"}[cpRunning])
 		}
@@ -264,28 +272,28 @@ func EnsureRunning(ctx context.Context, opts EnsureOpts) error {
 				Str("container", consts.ContainerCP).
 				Err(err).
 				Msg("drift detected but force-remove failed; next EnsureRunning will retry")
-			return fmt.Errorf("controlplane: %w", err)
+			return 0, fmt.Errorf("controlplane: %w", err)
 		}
 	}
 
 	if _, err := dc.EnsureNetwork(ctx, whail.EnsureNetworkOptions{Name: cfg.ClawkerNetwork()}); err != nil {
-		return fmt.Errorf("controlplane: ensure clawker-net: %w", err)
+		return 0, fmt.Errorf("controlplane: ensure clawker-net: %w", err)
 	}
 
 	netInfo, err := fwcp.DiscoverNetwork(ctx, dc, cfg)
 	if err != nil {
-		return fmt.Errorf("controlplane: discover clawker-net: %w", err)
+		return 0, fmt.Errorf("controlplane: discover clawker-net: %w", err)
 	}
 	cpIP, err := fwcp.ComputeStaticIP(netInfo.Gateway, cfg.CPIPLastOctet())
 	if err != nil {
-		return fmt.Errorf("controlplane: compute cp static ip: %w", err)
+		return 0, fmt.Errorf("controlplane: compute cp static ip: %w", err)
 	}
 	if netInfo.Subnet.IsValid() && !netInfo.Subnet.Contains(cpIP) {
-		return fmt.Errorf("controlplane: cp static IP %s is outside network subnet %s (check CPIPLastOctet setting)", cpIP, netInfo.Subnet)
+		return 0, fmt.Errorf("controlplane: cp static IP %s is outside network subnet %s (check CPIPLastOctet setting)", cpIP, netInfo.Subnet)
 	}
 
 	if err := createCPContainer(ctx, dc, cfg, netInfo.NetworkID, cpIP, opts.HostDirs, imageRef, log); err != nil {
-		return fmt.Errorf("controlplane: %w", err)
+		return 0, fmt.Errorf("controlplane: %w", err)
 	}
 
 	return cpReady(ctx, cfg)
@@ -745,10 +753,12 @@ func cpBuildContext(binarySHA, version, revision, createdAt string) (io.Reader, 
 // returns success: /healthz green first, then host↔CP clock alignment.
 // Both must pass — a healthy CP whose clock has drifted from the host
 // would still mint poisoned agent assertions, so clock sync is a
-// first-class readiness condition, not an afterthought.
-func cpReady(ctx context.Context, cfg config.Config) error {
+// first-class readiness condition, not an afterthought. Returns the
+// host↔CP offset the clock-sync step measured so the create path can
+// reuse it for the agent assertion.
+func cpReady(ctx context.Context, cfg config.Config) (time.Duration, error) {
 	if err := healthzFn(ctx, cfg); err != nil {
-		return err
+		return 0, err
 	}
 	return clockSyncFn(ctx, cfg)
 }
@@ -759,7 +769,13 @@ func cpReady(ctx context.Context, cfg config.Config) error {
 // converges to real time once its NTP source re-syncs; this loop gives
 // it that window before any Hydra assertion (validated against the CP
 // clock with zero leeway) is minted. Respects ctx cancellation.
-func waitForCPClockSync(ctx context.Context, cfg config.Config) error {
+//
+// On success it returns the in-tolerance offset it measured (CP minus
+// host). The create path reuses this value to align the agent
+// assertion's iat instead of re-probing — the gate already paid for the
+// round trip, and the offset that just passed the gate is the precise
+// residual correction the assertion needs.
+func waitForCPClockSync(ctx context.Context, cfg config.Config) (time.Duration, error) {
 	adminPort := cfg.Settings().ControlPlane.AdminPort
 
 	start := time.Now()
@@ -776,10 +792,10 @@ func waitForCPClockSync(ctx context.Context, cfg config.Config) error {
 		// when the real cause was the caller's context expiring. The internal
 		// deadline is therefore kept independent of ctx — not clamped to it.
 		if err := ctx.Err(); err != nil {
-			return err
+			return 0, err
 		}
 		if time.Now().After(deadline) {
-			return newCPClockSyncTimeout(start, lastSkew, measured, lastErr)
+			return 0, newCPClockSyncTimeout(start, lastSkew, measured, lastErr)
 		}
 		skew, err := probeSkewFn(ctx, adminPort)
 		if err != nil {
@@ -787,12 +803,12 @@ func waitForCPClockSync(ctx context.Context, cfg config.Config) error {
 		} else {
 			lastSkew, measured = skew, true
 			if adminclient.AbsDuration(skew) <= cpClockSkewTolerance {
-				return nil
+				return skew, nil
 			}
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return 0, ctx.Err()
 		case <-time.After(cpClockSyncInterval):
 		}
 	}

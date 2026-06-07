@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/shlex"
 	"github.com/moby/moby/api/types/container"
@@ -829,7 +830,9 @@ agent:
 		},
 		ControlPlane: func() cpboot.Manager {
 			return &cpbootmocks.ManagerMock{
-				EnsureRunningFunc: func(context.Context) error { return nil },
+				// run calls EnsureRunning twice: the create-time gate and the
+				// every-start pre-start phase. One stub covers both.
+				EnsureRunningFunc: func(context.Context) (time.Duration, error) { return 0, nil },
 			}
 		},
 		AdminClient: func(_ context.Context) (adminv1.AdminServiceClient, error) {

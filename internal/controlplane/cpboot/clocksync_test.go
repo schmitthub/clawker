@@ -20,13 +20,16 @@ func TestWaitForCPClockSync_WithinTolerance_ReturnsImmediately(t *testing.T) {
 	t.Cleanup(func() { probeSkewFn = orig })
 
 	var n atomic.Int32
+	want := cpClockSkewTolerance - time.Millisecond
 	probeSkewFn = func(_ context.Context, _ int) (time.Duration, error) {
 		n.Add(1)
-		return cpClockSkewTolerance - time.Millisecond, nil
+		return want, nil
 	}
 
-	require.NoError(t, waitForCPClockSync(t.Context(), configmocks.NewBlankConfig()))
+	skew, err := waitForCPClockSync(t.Context(), configmocks.NewBlankConfig())
+	require.NoError(t, err)
 	assert.Equal(t, int32(1), n.Load(), "in-tolerance offset should pass on first probe")
+	assert.Equal(t, want, skew, "must return the in-tolerance offset it measured")
 }
 
 // TestWaitForCPClockSync_ConvergesAfterDrift: an offset over tolerance
@@ -43,8 +46,10 @@ func TestWaitForCPClockSync_ConvergesAfterDrift(t *testing.T) {
 		return 100 * time.Millisecond, nil // NTP caught up
 	}
 
-	require.NoError(t, waitForCPClockSync(t.Context(), configmocks.NewBlankConfig()))
+	skew, err := waitForCPClockSync(t.Context(), configmocks.NewBlankConfig())
+	require.NoError(t, err)
 	assert.GreaterOrEqual(t, n.Load(), int32(2), "must re-probe until within tolerance")
+	assert.Equal(t, 100*time.Millisecond, skew, "must return the converged offset, not an earlier out-of-tolerance one")
 }
 
 // TestWaitForCPClockSync_NonConvergence_ReturnsError: a chronically
@@ -61,7 +66,8 @@ func TestWaitForCPClockSync_NonConvergence_ReturnsError(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
 	defer cancel()
-	require.Error(t, waitForCPClockSync(ctx, configmocks.NewBlankConfig()))
+	_, err := waitForCPClockSync(ctx, configmocks.NewBlankConfig())
+	require.Error(t, err)
 }
 
 // TestNewCPClockSyncTimeout_BranchesOnMeasured: the unmeasured branch

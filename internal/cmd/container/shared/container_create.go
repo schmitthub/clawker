@@ -28,7 +28,6 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
-	"github.com/schmitthub/clawker/internal/controlplane/adminclient"
 	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	"github.com/schmitthub/clawker/internal/docker"
 
@@ -1470,6 +1469,14 @@ type CreateContainerOptions struct {
 	Log            *logger.Logger
 	Is256Color     bool
 	IsTrueColor    bool
+
+	// ClockSkew is the host↔CP offset (CP minus host) the create-time
+	// readiness gate (EnsureControlPlaneForCreate) measured. It aligns the
+	// agent assertion's iat to the CP clock domain Hydra validates against
+	// (zero leeway). The gate runs before CreateContainer and fails the
+	// whole create if the clock never converges, so when execution reaches
+	// the assertion mint this offset is already within tolerance.
+	ClockSkew time.Duration
 }
 
 // CreateContainerResult holds the outputs of CreateContainer.
@@ -1490,14 +1497,21 @@ type CreateContainerResult struct {
 // bootstrap material with no way to re-mint (the signing key never enters
 // the container). Shared by run and create so the gate can't be forgotten
 // by one path.
-func EnsureControlPlaneForCreate(ctx context.Context, controlPlane func() cpboot.Manager) error {
+//
+// It returns the host↔CP offset the readiness gate measured (CP minus
+// host). The caller threads this into CreateContainer so the assertion
+// mint reuses it instead of re-probing GetSystemTime — the gate just
+// measured an in-tolerance offset, so a second round trip would be
+// redundant.
+func EnsureControlPlaneForCreate(ctx context.Context, controlPlane func() cpboot.Manager) (time.Duration, error) {
 	if controlPlane == nil {
-		return fmt.Errorf("no control plane manager available")
+		return 0, fmt.Errorf("no control plane manager available")
 	}
-	if err := controlPlane().EnsureRunning(ctx); err != nil {
-		return fmt.Errorf("ensuring control plane is running: %w", err)
+	skew, err := controlPlane().EnsureRunning(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("ensuring control plane is running: %w", err)
 	}
-	return nil
+	return skew, nil
 }
 
 // CreateContainer is the single entry point for container creation, shared by
@@ -1705,29 +1719,18 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 	// mTLS peer. Container_id is embedded as a URI SAN in the leaf cert
 	// so CP can read the binding without a CLI-pre-staged row.
 	// Align the agent assertion's iat to the CP clock domain Hydra
-	// validates against (zero leeway). Best-effort: the cpboot clock-sync
-	// gate run by EnsureRunning before container creation already holds the
-	// offset within tolerance, so a probe failure here degrades to a
-	// host-clock iat (absorbed by the assertion's leeway floor) rather than
-	// aborting create.
-	skew, err := adminclient.ProbeClockSkew(ctx, opts.Config.Settings().ControlPlane.AdminPort)
-	if err != nil {
-		log.Warn().Err(err).Str("event", "agent_assertion_skew_probe_failed").Msg("could not measure CP clock skew; minting agent assertion in host clock domain")
-		// Surface a user-visible breadcrumb: the file log is the operator's
-		// triage surface, but if a residual skew later makes the container fail
-		// to authenticate, the only on-screen thread back to root cause is this
-		// line — the assertion is baked at create and cannot be re-minted.
-		sendWarning(ctx, events, "container", "Could not re-measure CP clock skew; proceeding with host clock. If the agent later fails to authenticate, check host↔CP clock sync.")
-		skew = 0
-	}
-
+	// validates against (zero leeway). The offset was measured by the
+	// EnsureControlPlaneForCreate gate (run before CreateContainer); that
+	// gate fails the whole create if the clock never converges, so reaching
+	// here means opts.ClockSkew is a within-tolerance offset measured
+	// moments ago — no second probe needed.
 	bootstrapOpts := InstallAgentBootstrapOptions{
 		Project:            projectSlug,
 		Agent:              agentTyped,
 		ContainerID:        resp.ID,
 		HydraTokenAudience: hydraTokenAudienceFromPort(opts.Config.Settings().ControlPlane.HydraPublicPort),
 		CopyToContainer:    NewCopyToContainerFn(client),
-		Skew:               skew,
+		Skew:               opts.ClockSkew,
 		Logger:             log,
 	}
 	if err := InstallAgentBootstrapMaterial(ctx, caCertPath, caKeyPath, signingKey, bootstrapOpts); err != nil {

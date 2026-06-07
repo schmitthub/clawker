@@ -169,8 +169,11 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 	}
 
 	// CP must be live and clock-synced before CreateContainer mints the
-	// agent bootstrap assertion (see EnsureControlPlaneForCreate).
-	if err := shared.EnsureControlPlaneForCreate(ctx, opts.ControlPlane); err != nil {
+	// agent bootstrap assertion (see EnsureControlPlaneForCreate). The gate
+	// returns the host↔CP clock offset it measured; CreateContainer reuses
+	// it for the assertion instead of re-probing.
+	clockSkew, err := shared.EnsureControlPlaneForCreate(ctx, opts.ControlPlane)
+	if err != nil {
 		return err
 	}
 
@@ -202,6 +205,7 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 			Log:            log,
 			Is256Color:     ios.Is256ColorSupported(),
 			IsTrueColor:    ios.IsTrueColorSupported(),
+			ClockSkew:      clockSkew,
 		}, events)
 		done <- outcome{r, err}
 	}()

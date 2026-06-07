@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/cmdutil"
@@ -49,7 +50,7 @@ func TestNewCmdUp_RunFReceivesOptions(t *testing.T) {
 func TestUpRun_EnsuresControlPlaneBeforeDial(t *testing.T) {
 	ios, _, _, _ := iostreams.Test()
 	mgr := &cpbootmocks.ManagerMock{
-		EnsureRunningFunc: func(_ context.Context) error { return nil },
+		EnsureRunningFunc: func(_ context.Context) (time.Duration, error) { return 0, nil },
 	}
 	adminCalled := false
 	opts := &UpOptions{
@@ -76,7 +77,7 @@ func TestUpRun_FailsFastWhenCPBootstrapFails(t *testing.T) {
 	ios, _, _, _ := iostreams.Test()
 	bootErr := errors.New("cp healthz timed out")
 	mgr := &cpbootmocks.ManagerMock{
-		EnsureRunningFunc: func(_ context.Context) error { return bootErr },
+		EnsureRunningFunc: func(_ context.Context) (time.Duration, error) { return 0, bootErr },
 	}
 	adminCalled := false
 	opts := &UpOptions{

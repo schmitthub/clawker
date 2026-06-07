@@ -54,7 +54,7 @@ WriteAgentBootstrapToContainer(ctx, containerID, copyFn CopyToContainerFn, b *Ag
 InstallAgentBootstrapMaterial(ctx, caCertPath, caKeyPath, signingKey, opts InstallAgentBootstrapOptions) error
 ```
 
-`skew` is the host↔CP clock offset (CP minus host) the caller measured via `adminclient.ProbeClockSkew`; it aligns the assertion's `iat` to the CP clock domain Hydra validates against (zero leeway), mirroring `adminclient.Dial`'s correction for the CLI's own assertion. Pass 0 when unmeasured. The create path gates on `EnsureControlPlaneForCreate(ctx, controlPlane)` (CP `EnsureRunning` = `/healthz` + clock sync) BEFORE this mint, so the offset is already within tolerance and the probe is a precise residual correction, not the primary safety mechanism.
+`skew` is the host↔CP clock offset (CP minus host); it aligns the assertion's `iat` to the CP clock domain Hydra validates against (zero leeway), mirroring `adminclient.Dial`'s correction for the CLI's own assertion. Pass 0 when unmeasured. The create path gets it from the `EnsureControlPlaneForCreate(ctx, controlPlane)` gate (CP `EnsureRunning` = `/healthz` + clock sync), which **returns** the offset its clock-sync step just measured — `CreateContainer` threads it through `CreateContainerOptions.ClockSkew` rather than issuing a second probe. The gate fails the whole create if the clock never converges, so the offset reaching the mint is always within tolerance and is a precise residual correction, not the primary safety mechanism.
 
 `project` + `agent` (user-typed short identifiers) feed `auth.AgentFullName` to compose the per-agent identity (`clawker.<project>.<agent>`), which rides in a `urn:clawker:agent:<full-name>` URI SAN on the minted cert. The x509 CN is the deterministic `consts.ContainerClawkerd` literal (the binary identity), not a per-agent value.
 
@@ -145,7 +145,7 @@ Nil providers safely skipped (debug logged). `Config` is the only required provi
 | `NewContainerOptions()` | Create ContainerOptions with initialized pflag.Value fields |
 | `AddFlags(flags, opts)` | Register all container flags on a pflag.FlagSet |
 | `MarkMutuallyExclusive(cmd)` | Mark `--agent`/`--name` mutually exclusive |
-| `EnsureControlPlaneForCreate(ctx, controlPlane)` | Gate run by `run`/`create` before `CreateContainer` mints the agent assertion: CP `EnsureRunning` (= `/healthz` green + host↔CP clock sync). Nil manager → error |
+| `EnsureControlPlaneForCreate(ctx, controlPlane) (time.Duration, error)` | Gate run by `run`/`create` before `CreateContainer` mints the agent assertion: CP `EnsureRunning` (= `/healthz` green + host↔CP clock sync). Returns the measured host↔CP offset for the caller to pass into `CreateContainerOptions.ClockSkew`. Nil manager → error |
 | `CreateContainer(ctx, cfg, events)` | Single entry point -- workspace, config, env, create, inject |
 | `NeedsSocketBridge(cfg)` | Check if GPG/SSH bridge needed from project config |
 | `InitContainerConfig(ctx, opts)` | Copy host Claude config to volume |
