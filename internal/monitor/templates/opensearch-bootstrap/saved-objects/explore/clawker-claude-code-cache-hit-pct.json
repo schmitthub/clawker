@@ -1,0 +1,25 @@
+{
+  "attributes": {
+    "hits": 0,
+    "uiState": "{\"activeTab\": \"explore_visualization_tab\"}",
+    "visualization": "{\"title\": \"\", \"chartType\": \"metric\", \"params\": {\"colorMode\": \"none\", \"percentageColor\": \"standard\", \"showPercentage\": false, \"showTitle\": true, \"textMode\": \"value\", \"thresholdOptions\": {\"baseColor\": \"#00BD6B\", \"thresholds\": []}, \"title\": \"\", \"useThresholdColor\": false, \"valueCalculation\": \"last\", \"unitId\": \"percentage\"}, \"axesMapping\": {\"facet\": \"Series\", \"time\": \"Time\", \"value\": \"Value\"}}",
+    "columns": [
+      "_source"
+    ],
+    "description": "",
+    "sort": [],
+    "title": "Cache Hit %",
+    "type": "metrics",
+    "version": 1,
+    "kibanaSavedObjectMeta": {
+      "searchSourceJSON": "{\"query\": {\"query\": \"sum(claude_code_token_usage_tokens_total{kind=\\\"cacheRead\\\"}) * 100 / (sum(claude_code_token_usage_tokens_total{kind=\\\"cacheCreation\\\"}) + sum(claude_code_token_usage_tokens_total{kind=\\\"cacheRead\\\"}))\", \"language\": \"PROMQL\", \"dataset\": {\"id\": \"clawker_prometheus\", \"title\": \"clawker_prometheus\", \"type\": \"PROMETHEUS\", \"language\": \"PROMQL\", \"timeFieldName\": \"Time\", \"dataSource\": {}, \"signalType\": \"metrics\"}}, \"filter\": [], \"indexRefName\": \"kibanaSavedObjectMeta.searchSourceJSON.index\"}"
+    }
+  },
+  "references": [
+    {
+      "name": "kibanaSavedObjectMeta.searchSourceJSON.index",
+      "id": "clawker_prometheus",
+      "type": "index-pattern"
+    }
+  ]
+}

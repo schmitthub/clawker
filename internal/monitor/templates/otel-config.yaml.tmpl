@@ -139,9 +139,22 @@ processors:
   # silently undercounts every Claude Code counter by 10-20× over a session.
   # Spanmetrics-derived RED metrics on the trusted pipeline are also delta
   # by default, so apply on both metrics pipelines.
+  #
+  # max_stale governs how long a stream's accumulated cumulative value is
+  # kept after its last delta sample; idle streams are evicted past it.
+  # The default (5m) silently drops one-shot/infrequent counters:
+  # claude_code.session.count fires exactly once at session start, and
+  # claude_code.pull_request.count / claude_code.commit.count fire only
+  # on the rare event, so within minutes their cumulative value is evicted
+  # and the `_total` series vanishes from the exporter even while the
+  # session is still alive. That defeats the exporter's metric_expiration
+  # (8760h) intent for `_total` series. max_stale=0 is invalid (errors),
+  # so align it with metric_expiration so every counter persists for the
+  # life of the (ephemeral, throwaway) stack; max_streams remains the
+  # memory bound.
   deltatocumulative:
     max_streams: 10000
-    max_stale: 5m
+    max_stale: 8760h
   # Provenance stamps. Each trusted source gets ingest_source=<name>
   # so cross-index queries can filter on a single field. service.name
   # is NOT overwritten — mTLS handshake authenticated the sender;

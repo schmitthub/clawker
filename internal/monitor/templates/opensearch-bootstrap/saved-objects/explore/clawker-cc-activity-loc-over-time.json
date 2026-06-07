@@ -1,0 +1,25 @@
+{
+  "attributes": {
+    "hits": 0,
+    "uiState": "{\"activeTab\": \"explore_visualization_tab\"}",
+    "visualization": "{\"title\":\"\",\"chartType\":\"area\",\"params\":{\"addLegend\":true,\"addTimeMarker\":false,\"legendPosition\":\"bottom\",\"legendTitle\":\"\",\"showFullTimeRange\":false,\"standardAxes\":[],\"thresholdOptions\":{\"baseColor\":\"#00BD6B\",\"thresholdStyle\":\"off\",\"thresholds\":[]},\"titleOptions\":{\"show\":false,\"titleName\":\"\"},\"tooltipOptions\":{\"mode\":\"all\"}},\"axesMapping\":{\"color\":\"Series\",\"x\":\"Time\",\"y\":\"Value\"}}",
+    "columns": [
+      "_source"
+    ],
+    "description": "",
+    "sort": [],
+    "title": "Lines of Code Over Time",
+    "type": "metrics",
+    "version": 1,
+    "kibanaSavedObjectMeta": {
+      "searchSourceJSON": "{\"query\":{\"query\":\"sum by (kind) (increase(claude_code_lines_of_code_count_total[5m]))\",\"language\":\"PROMQL\",\"dataset\":{\"id\":\"clawker_prometheus\",\"title\":\"clawker_prometheus\",\"type\":\"PROMETHEUS\",\"language\":\"PROMQL\",\"timeFieldName\":\"Time\",\"dataSource\":{},\"signalType\":\"metrics\"}},\"filter\":[],\"indexRefName\":\"kibanaSavedObjectMeta.searchSourceJSON.index\"}"
+    }
+  },
+  "references": [
+    {
+      "name": "kibanaSavedObjectMeta.searchSourceJSON.index",
+      "id": "clawker_prometheus",
+      "type": "index-pattern"
+    }
+  ]
+}

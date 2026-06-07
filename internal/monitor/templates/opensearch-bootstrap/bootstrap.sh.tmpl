@@ -273,6 +273,28 @@ if [ -z "${WS_ID}" ]; then
 fi
 echo "==> bootstrap: workspace 'Clawker' id=${WS_ID}"
 
+# Explore-flavor saved objects (PROMQL metrics panels) carry an
+# `index-pattern`-typed reference to `clawker_prometheus`, which is a
+# `data-connection`, not a real index-pattern SO. The bulk `_import`
+# endpoint rejects that as a missing reference, so these are created
+# per-object (the create path skips reference validation, same path the
+# OSD UI uses on save). POST them before the ndjson import so the
+# dashboard's panel references resolve.
+EXPLORE_DIR="${BOOTSTRAP_DIR}/saved-objects/explore"
+if [ -d "${EXPLORE_DIR}" ]; then
+  for f in "${EXPLORE_DIR}"/*.json; do
+    [ -e "${f}" ] || continue
+    so_id=$(basename "${f}" .json)
+    echo "==> bootstrap: POST explore saved object ${so_id}"
+    curl -fsS -X POST \
+      "${DASHBOARDS_URL}/w/${WS_ID}/api/saved_objects/explore/${so_id}?overwrite=true" \
+      -H "osd-xsrf: true" \
+      -H "Content-Type: application/json" \
+      --data-binary @"${f}" \
+      -o /dev/null
+  done
+fi
+
 # Import saved objects INTO the workspace. Posting against the global
 # /api/saved_objects/_import endpoint leaves SOs workspace-less, so
 # they're invisible inside the workspace UI even though the workspace
@@ -282,10 +304,24 @@ echo "==> bootstrap: workspace 'Clawker' id=${WS_ID}"
 NDJSON="${BOOTSTRAP_DIR}/saved-objects/clawker.ndjson"
 if [ -s "${NDJSON}" ]; then
   echo "==> bootstrap: importing saved objects from ${NDJSON} into workspace ${WS_ID}"
-  curl -fsS -X POST "${DASHBOARDS_URL}/w/${WS_ID}/api/saved_objects/_import?overwrite=true" \
+  # _import returns HTTP 200 even when individual objects fail (per-object
+  # errors live in the response body, not the status line). Capture the body
+  # and fail loudly on a non-200 status OR a "success":false payload, so a
+  # half-applied import can't masquerade as a healthy stack.
+  code=$(curl -sS -o /tmp/so_import -w '%{http_code}' -X POST \
+    "${DASHBOARDS_URL}/w/${WS_ID}/api/saved_objects/_import?overwrite=true" \
     -H "osd-xsrf: true" \
-    --form "file=@${NDJSON}" \
-    -o /dev/null
+    --form "file=@${NDJSON}")
+  if [ "${code}" != "200" ]; then
+    echo "    saved-object import failed: HTTP ${code}"
+    cat /tmp/so_import
+    exit 1
+  fi
+  if grep -qE '"success" *: *false' /tmp/so_import; then
+    echo "    saved-object import reported per-object failures:"
+    cat /tmp/so_import
+    exit 1
+  fi
 fi
 
 echo "==> bootstrap: complete"
