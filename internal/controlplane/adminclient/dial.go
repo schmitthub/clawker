@@ -85,18 +85,28 @@ func Dial(ctx context.Context, adminPort, hydraPort int, opts ...grpc.DialOption
 		MinVersion:   tls.VersionTLS13,
 	}
 
+	target := fmt.Sprintf("127.0.0.1:%d", adminPort)
+
 	hydraTokenURL := fmt.Sprintf("https://127.0.0.1:%d/oauth2/token", hydraPort)
-	ts := newTokenSource(signingKey, hydraTokenURL, tokenTLSCfg)
+	// probeSkew measures the host↔CP clock offset over the public
+	// GetSystemTime RPC (mTLS, no bearer token) so the token source can
+	// mint assertions in Hydra's clock domain. Built as a closure so the
+	// tokenSource stays transport-agnostic and unit-testable.
+	probeSkew := func(pctx context.Context) (time.Duration, error) {
+		return measureClockSkew(pctx, target, grpcTLSCfg)
+	}
+	ts := newTokenSource(signingKey, hydraTokenURL, tokenTLSCfg, probeSkew)
 
 	// Eagerly fetch the first token with bounded retry so dial tolerates
 	// concurrent CP bring-up (e.g. one goroutine starts a container while
 	// another issues an admin RPC). CP cold-start takes ~5-10s; a 15s
-	// window covers that without hanging on truly dead CPs.
+	// window covers that without hanging on truly dead CPs. The clock-skew
+	// probe runs lazily inside the same loop (first token attempt), so a
+	// transient probe failure during bring-up self-heals on retry rather
+	// than poisoning the whole window.
 	if err := retryInitialToken(ctx, ts); err != nil {
 		return nil, nil, fmt.Errorf("fetch initial access token: %w", err)
 	}
-
-	target := fmt.Sprintf("127.0.0.1:%d", adminPort)
 	dialOpts := append([]grpc.DialOption{}, opts...)
 	dialOpts = append(dialOpts,
 		grpc.WithTransportCredentials(credentials.NewTLS(grpcTLSCfg)),
@@ -179,10 +189,16 @@ type tokenSource struct {
 	signingKey *ecdsa.PrivateKey
 	tokenURL   string
 	tlsCfg     *tls.Config
+	// probeSkew measures the offset to add to the local clock to obtain the
+	// CP's clock (nil → skew stays 0, e.g. in unit tests). Called lazily on
+	// the first token fetch and cached once it succeeds.
+	probeSkew func(context.Context) (time.Duration, error)
 
 	mu        sync.Mutex
 	cached    string
 	expiresAt time.Time
+	skew      time.Duration
+	skewKnown bool
 }
 
 // tokenRefreshMargin is how far before expiry we proactively refresh.
@@ -191,11 +207,12 @@ type tokenSource struct {
 // token mid-flight.
 const tokenRefreshMargin = 30 * time.Second
 
-func newTokenSource(signingKey *ecdsa.PrivateKey, tokenURL string, tlsCfg *tls.Config) *tokenSource {
+func newTokenSource(signingKey *ecdsa.PrivateKey, tokenURL string, tlsCfg *tls.Config, probeSkew func(context.Context) (time.Duration, error)) *tokenSource {
 	return &tokenSource{
 		signingKey: signingKey,
 		tokenURL:   tokenURL,
 		tlsCfg:     tlsCfg,
+		probeSkew:  probeSkew,
 	}
 }
 
@@ -209,7 +226,17 @@ func (ts *tokenSource) token(ctx context.Context) (string, error) {
 		return ts.cached, nil
 	}
 
-	tok, expiresIn, err := fetchAccessToken(ctx, ts.signingKey, ts.tokenURL, ts.tlsCfg)
+	// Establish the CP clock offset before the first mint. Best-effort: a
+	// failed probe leaves skewKnown false so the next token attempt retries
+	// it (the residual leeway floor in BuildSignedAssertion still applies).
+	if !ts.skewKnown && ts.probeSkew != nil {
+		if s, err := ts.probeSkew(ctx); err == nil {
+			ts.skew = s
+			ts.skewKnown = true
+		}
+	}
+
+	tok, expiresIn, err := fetchAccessToken(ctx, ts.signingKey, ts.tokenURL, ts.tlsCfg, ts.skew)
 	if err != nil {
 		return "", err
 	}
@@ -234,13 +261,54 @@ func (ts *tokenSource) unaryInterceptor() grpc.UnaryClientInterceptor {
 // fetchAccessToken signs a JWT assertion and exchanges it at Hydra's
 // /oauth2/token endpoint for an access token. Returns the token and its
 // TTL (from expires_in, defaulting to 1 hour if absent).
-func fetchAccessToken(ctx context.Context, signingKey *ecdsa.PrivateKey, tokenURL string, tlsCfg *tls.Config) (string, time.Duration, error) {
+// measureClockSkew dials a short-lived mTLS connection (no bearer token —
+// GetSystemTime is the public bootstrap RPC) and returns the offset to add
+// to the local clock to obtain the CP's clock:
+//
+//	skew = cpNow - localMidpoint
+//
+// localMidpoint is the midpoint of the request window so round-trip latency
+// is discounted symmetrically. clawker-cp and Hydra share the container, so
+// this offset aligns the minted assertion's iat to the exact clock fosite
+// validates against — eliminating host↔CP drift (e.g. a Docker Desktop VM
+// lagging after the host sleeps) rather than guessing a fixed margin.
+func measureClockSkew(ctx context.Context, target string, tlsCfg *tls.Config) (time.Duration, error) {
+	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
+	if err != nil {
+		return 0, fmt.Errorf("dial cp for clock skew: %w", err)
+	}
+	defer conn.Close()
+
+	client := adminv1.NewAdminServiceClient(conn)
+	t0 := time.Now()
+	resp, err := client.GetSystemTime(ctx, &adminv1.GetSystemTimeRequest{})
+	if err != nil {
+		return 0, fmt.Errorf("get cp system time: %w", err)
+	}
+	return clockSkew(t0, time.Now(), resp.GetUnixNanos()), nil
+}
+
+// clockSkew computes the offset to add to the local clock to obtain the
+// CP's clock from a single GetSystemTime round trip: t0/t1 bracket the
+// call locally and cpUnixNanos is the CP's reported time. The local
+// reference is the request-window midpoint so symmetric round-trip latency
+// cancels out.
+func clockSkew(t0, t1 time.Time, cpUnixNanos int64) time.Duration {
+	localMid := t0.Add(t1.Sub(t0) / 2)
+	return time.Unix(0, cpUnixNanos).Sub(localMid)
+}
+
+func fetchAccessToken(ctx context.Context, signingKey *ecdsa.PrivateKey, tokenURL string, tlsCfg *tls.Config, skew time.Duration) (string, time.Duration, error) {
 	assertion, err := auth.BuildSignedAssertion(auth.AssertionClaims{
 		Issuer:           consts.ClientIDCLI,
 		Subject:          consts.ClientIDCLI,
 		Audience:         tokenURL,
 		JWTID:            uuid.NewString(),
 		ExpiresInSeconds: 30,
+		// Mint in the CP's clock domain: local now + measured offset. With
+		// skew==0 (probe unavailable) this is plain local now, still backed
+		// by the residual leeway floor in BuildSignedAssertion.
+		Now: time.Now().Add(skew),
 	}, signingKey)
 	if err != nil {
 		return "", 0, fmt.Errorf("build assertion: %w", err)

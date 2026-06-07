@@ -150,9 +150,10 @@ func NewAuthInterceptor(introspector Introspector, methodScopes map[string]strin
 // agent listener (clientID = consts.ClientIDAgent) so a future Hydra
 // misconfiguration that grants agent:self:register to a non-agent
 // client doesn't silently let the wrong client through. The admin
-// listener leaves this empty — admin scope is uniformly required and
-// the CLI client_id is the only one Hydra is currently configured to
-// grant it to. Returns the receiver for fluent chaining at construction.
+// listener leaves this empty — the admin scope is required on every
+// admin RPC except the public GetSystemTime, and the CLI client_id is
+// the only one Hydra is currently configured to grant that scope to.
+// Returns the receiver for fluent chaining at construction.
 func (a *AuthInterceptor) RequireClientID(clientID string) *AuthInterceptor {
 	a.requiredClientID = clientID
 	return a
@@ -193,7 +194,8 @@ func (a *AuthInterceptor) authorize(ctx context.Context, fullMethod string) erro
 		return status.Error(codes.Unauthenticated, "unauthorized")
 	}
 
-	// Empty scope means the method is public (e.g. Health).
+	// Empty scope means the method is public, served on mTLS alone with
+	// no bearer token (e.g. AdminService.GetSystemTime).
 	if requiredScope == "" {
 		return nil
 	}

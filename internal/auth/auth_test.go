@@ -572,6 +572,91 @@ func TestBuildSignedAssertion(t *testing.T) {
 		"signature must verify against signing key")
 }
 
+// TestBuildSignedAssertion_BackdatesIAT pins the clock-skew mitigation:
+// the assertion's iat must be backdated by assertionClockSkewLeeway so a
+// validator (Hydra/fosite) whose clock is slightly behind the minting
+// host does not reject it with "Token used before issued". fosite's
+// client-auth path enforces iat with zero leeway (now >= iat), so the
+// tolerance has to live here on the minting side. exp stays anchored to
+// real now (forward window unchanged); nbf is intentionally absent
+// (fosite rejects a future nbf with the same zero leeway).
+func TestBuildSignedAssertion_BackdatesIAT(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	const expiresIn = 30
+	before := time.Now()
+	signed, err := BuildSignedAssertion(AssertionClaims{
+		Issuer:           "clawker-cli",
+		Subject:          "clawker-cli",
+		Audience:         "http://127.0.0.1:4444/oauth2/token",
+		JWTID:            "test-jti",
+		ExpiresInSeconds: expiresIn,
+	}, key)
+	require.NoError(t, err)
+	after := time.Now()
+
+	tok, err := josejwt.ParseSigned(signed, []jose.SignatureAlgorithm{jose.ES256})
+	require.NoError(t, err)
+	var claims josejwt.Claims
+	require.NoError(t, tok.Claims(&key.PublicKey, &claims))
+
+	require.NotNil(t, claims.IssuedAt)
+	require.NotNil(t, claims.Expiry)
+	require.Nil(t, claims.NotBefore, "nbf must be absent — a future nbf would itself trip fosite's zero-leeway check")
+
+	iat := claims.IssuedAt.Time()
+	// iat is backdated: strictly before the call returned, by ~leeway.
+	assert.False(t, iat.After(after.Add(-assertionClockSkewLeeway)),
+		"iat (%s) must be backdated by at least the leeway from now (%s, leeway %s)", iat, after, assertionClockSkewLeeway)
+	// ...but not backdated more than the leeway (plus build slack).
+	assert.False(t, iat.Before(before.Add(-assertionClockSkewLeeway).Add(-5*time.Second)),
+		"iat (%s) backdated too far past leeway %s", iat, assertionClockSkewLeeway)
+
+	// exp stays a forward window from real now, not from the backdated iat.
+	exp := claims.Expiry.Time()
+	assert.InDelta(t, before.Add(expiresIn*time.Second).Unix(), exp.Unix(), 5,
+		"exp must be ~now+ExpiresInSeconds, got %s", exp)
+}
+
+// TestBuildSignedAssertion_HonorsInjectedNow pins the clock-injection
+// contract: when AssertionClaims.Now is set (the CLI passes CP-aligned
+// time), iat/exp are anchored to it, not to the local wall clock. This is
+// what lets the host mint an assertion in Hydra's clock domain even when
+// the host clock is far from the CP's.
+func TestBuildSignedAssertion_HonorsInjectedNow(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	// A reference clock deliberately far from real now (simulating a large
+	// host↔CP offset) so a regression that falls back to time.Now() fails.
+	ref := time.Now().Add(73 * time.Hour).Truncate(time.Second)
+	const expiresIn = 30
+
+	signed, err := BuildSignedAssertion(AssertionClaims{
+		Issuer:           "clawker-cli",
+		Subject:          "clawker-cli",
+		Audience:         "http://127.0.0.1:4444/oauth2/token",
+		JWTID:            "test-jti",
+		ExpiresInSeconds: expiresIn,
+		Now:              ref,
+	}, key)
+	require.NoError(t, err)
+
+	tok, err := josejwt.ParseSigned(signed, []jose.SignatureAlgorithm{jose.ES256})
+	require.NoError(t, err)
+	var claims josejwt.Claims
+	require.NoError(t, tok.Claims(&key.PublicKey, &claims))
+
+	require.NotNil(t, claims.IssuedAt)
+	require.NotNil(t, claims.Expiry)
+	// iat = ref - leeway; exp = ref + ExpiresInSeconds (both off ref, not now).
+	assert.Equal(t, ref.Add(-assertionClockSkewLeeway).Unix(), claims.IssuedAt.Time().Unix(),
+		"iat must anchor to injected Now minus leeway")
+	assert.Equal(t, ref.Add(expiresIn*time.Second).Unix(), claims.Expiry.Time().Unix(),
+		"exp must anchor to injected Now plus ExpiresInSeconds")
+}
+
 func TestBuildSignedAssertion_DifferentJTIs(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)

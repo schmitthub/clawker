@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-jose/go-jose/v4"
 	josejwt "github.com/go-jose/go-jose/v4/jwt"
@@ -40,12 +41,16 @@ func TestBuildAgentAssertion_ClaimsAndAlg(t *testing.T) {
 	assert.NotEmpty(t, claims.ID)
 	assert.True(t, strings.Count(claims.ID, "-") >= 4, "jti should be UUID-like, got %q", claims.ID)
 
-	// Expiry is roughly 24h ahead, with slack for build/test latency.
+	// Expiry is roughly 24h ahead of real now, with slack for build/test
+	// latency. iat is backdated by assertionClockSkewLeeway for clock-skew
+	// tolerance, so exp-iat is TTL+leeway, not TTL — measure exp from now.
 	require.NotNil(t, claims.Expiry)
 	require.NotNil(t, claims.IssuedAt)
-	exp := claims.Expiry.Time().Sub(claims.IssuedAt.Time())
-	assert.InDelta(t, AgentAssertionTTL.Seconds(), exp.Seconds(), 5,
-		"assertion TTL should be ~24h: got %s", exp)
+	ttlFromNow := time.Until(claims.Expiry.Time())
+	assert.InDelta(t, AgentAssertionTTL.Seconds(), ttlFromNow.Seconds(), 5,
+		"assertion expiry should be ~24h from now: got %s", ttlFromNow)
+	assert.True(t, claims.IssuedAt.Time().Before(time.Now()),
+		"iat must be backdated below now for clock-skew tolerance")
 }
 
 func TestBuildAgentAssertion_DistinctJTI(t *testing.T) {

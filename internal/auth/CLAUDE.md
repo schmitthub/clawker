@@ -60,32 +60,38 @@ All paths resolved via `internal/consts` (`AuthCACertPath`, `AuthCAKeyPath`, `Au
 
 ## Token exchange flow (moved to `adminclient/dial.go`)
 
-The `Dial` function and token exchange logic have moved to `internal/controlplane/adminclient/dial.go`. The flow is unchanged:
+The `Dial` function and token exchange logic live in `internal/controlplane/adminclient/dial.go`:
 
 1. `adminclient.Dial(ctx, adminPort, hydraPort)` loads CA cert, signing key, and CLI client cert
 2. Builds `tokenTLSCfg` (plain TLS, CA trust) and `grpcTLSCfg` (mTLS with client cert, CA trust)
-3. Constructs a `tokenSource` that lazily fetches + caches access tokens
-4. Returns a gRPC `ClientConn` with a unary interceptor that attaches `authorization: Bearer <token>` on every call
-5. Token fetch: POST to `https://127.0.0.1:<hydraPort>/oauth2/token` with:
+3. Measures host↔CP clock skew: dials a short-lived mTLS connection (no bearer token) and calls the PUBLIC `GetSystemTime` RPC, computing the offset (`measureClockSkew`/`clockSkew`) to add to the local clock to reach the CP's clock domain. Assertions are then minted in CP-aligned time via `AssertionClaims.Now`, because clawker-cp and Hydra share a container clock and Hydra/fosite validates the assertion's `iat` with zero clock-skew leeway. A small residual leeway floor (`assertionClockSkewLeeway`) covers the measurement remainder. The probe runs lazily on first token fetch, so a transient failure during CP bring-up self-heals on retry.
+4. Constructs a `tokenSource` that lazily fetches + caches access tokens
+5. Returns a gRPC `ClientConn` with a unary interceptor that attaches `authorization: Bearer <token>` on every call
+6. Token fetch: POST to `https://127.0.0.1:<hydraPort>/oauth2/token` with:
    - `grant_type=client_credentials`
    - `client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer`
    - `client_assertion=<ES256 JWT signed by CLI signing key>`
    - `scope=admin`
-6. Token cached until expiry - 30s refresh margin
+7. Token cached until expiry - 30s refresh margin
 
 ## Assertion claims (`assertion.go`)
 
 ```go
 type AssertionClaims struct {
-    Issuer    string        // "clawker-cli"
-    Subject   string        // "clawker-cli"
-    Audience  string        // Hydra token URL
-    ExpiresIn time.Duration // typically 5 min
-    JTI       string        // UUID per assertion (replay protection)
+    Issuer           string    // "clawker-cli" (iss == client_id)
+    Subject          string    // "clawker-cli" (sub == client_id)
+    Audience         string    // Hydra token endpoint URL
+    JWTID            string    // UUID per assertion (jti — replay protection)
+    ExpiresInSeconds int       // duration to exp (typically 30-60s)
+    Now              time.Time // reference clock for iat/exp; zero → time.Now().
+                               // Host CLI sets this to CP-aligned time (local now +
+                               // skew from GetSystemTime) so iat lands in Hydra's
+                               // clock domain; in-container minters (clawkerd) leave
+                               // it zero — they share Hydra's kernel clock.
 }
 ```
 
-`BuildSignedAssertion` signs with ES256 via `go-jose/v4/jwt`. `ValidateAssertionClaims` enforces non-empty fields and sane expiry.
+`BuildSignedAssertion` signs with ES256 via `go-jose/v4/jwt`, backdating `iat` by a small residual leeway floor (`assertionClockSkewLeeway`) on top of the reference clock. `ValidateAssertionClaims` enforces non-empty fields and sane expiry.
 
 ## Rotation
 

@@ -9,6 +9,22 @@ import (
 	"github.com/go-jose/go-jose/v4/jwt"
 )
 
+// assertionClockSkewLeeway backdates the assertion's iat as a small
+// defense-in-depth floor. fosite — which Hydra uses to validate
+// private_key_jwt client_assertions — enforces iat with ZERO tolerance
+// (now >= iat, "no accounting for clock skew" in token/jwt/map_claims.go)
+// and exposes no server-side leeway knob, so a minting clock even
+// marginally ahead of Hydra's clock yields HTTP 500 "Token used before
+// issued". The primary defense is clock alignment: callers exposed to
+// host↔CP drift (the CLI on Docker Desktop, whose LinuxKit VM clock lags
+// after the host sleeps) set AssertionClaims.Now to the CP's own clock via
+// GetSystemTime, eliminating the bulk of the skew. This floor only has to
+// absorb the residual — measurement RTT plus the gap before Hydra
+// validates — so it is deliberately small. nbf is left unset (a future
+// nbf would trip the same zero-leeway check). Backdating is safe: the
+// client-auth path applies no iat-too-old check.
+const assertionClockSkewLeeway = 15 * time.Second
+
 // AssertionClaims holds the claims for a client assertion JWT per RFC 7523.
 type AssertionClaims struct {
 	// Issuer (iss) — must be the client_id.
@@ -21,6 +37,12 @@ type AssertionClaims struct {
 	JWTID string
 	// ExpiresIn is the duration until expiration (typically 30-60s).
 	ExpiresInSeconds int
+	// Now is the reference clock for iat/exp. Zero → time.Now(). Callers
+	// subject to clock drift against Hydra (the host CLI) set this to
+	// CP-aligned time (local now + skew measured via GetSystemTime) so iat
+	// lands in Hydra's clock domain; in-container minters (clawkerd) leave
+	// it zero since they already share Hydra's kernel clock.
+	Now time.Time
 }
 
 // jwtClaims is the serialized form of AssertionClaims for JWT encoding.
@@ -50,14 +72,21 @@ func BuildSignedAssertion(claims AssertionClaims, signingKey *ecdsa.PrivateKey) 
 		return "", fmt.Errorf("create signer: %w", err)
 	}
 
-	now := time.Now()
+	// Reference clock: caller-supplied (CP-aligned) when set, else local.
+	now := claims.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
 	jc := jwtClaims{
 		Issuer:   claims.Issuer,
 		Subject:  claims.Subject,
 		Audience: claims.Audience,
 		JWTID:    claims.JWTID,
+		// exp is a forward window from the reference clock; iat is backdated
+		// by the residual leeway floor (nbf left unset — a future nbf trips
+		// the same zero-leeway check). See assertionClockSkewLeeway.
 		Expiry:   jwt.NewNumericDate(now.Add(time.Duration(claims.ExpiresInSeconds) * time.Second)),
-		IssuedAt: jwt.NewNumericDate(now),
+		IssuedAt: jwt.NewNumericDate(now.Add(-assertionClockSkewLeeway)),
 	}
 
 	signed, err := jwt.Signed(signer).Claims(jc).Serialize()

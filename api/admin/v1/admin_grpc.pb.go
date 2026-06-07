@@ -33,6 +33,7 @@ const (
 	AdminService_FirewallSyncRoutes_FullMethodName      = "/clawker.admin.v1.AdminService/FirewallSyncRoutes"
 	AdminService_FirewallResolveHostname_FullMethodName = "/clawker.admin.v1.AdminService/FirewallResolveHostname"
 	AdminService_ListAgents_FullMethodName              = "/clawker.admin.v1.AdminService/ListAgents"
+	AdminService_GetSystemTime_FullMethodName           = "/clawker.admin.v1.AdminService/GetSystemTime"
 )
 
 // AdminServiceClient is the client API for AdminService service.
@@ -114,6 +115,21 @@ type AdminServiceClient interface {
 	// with the control plane. Used by `clawker controlplane agents` and
 	// diagnostic tooling. Read-only; uniform admin scope.
 	ListAgents(ctx context.Context, in *ListAgentsRequest, opts ...grpc.CallOption) (*ListAgentsResult, error)
+	// GetSystemTime returns the control plane's current wall-clock time.
+	// This RPC is intentionally PUBLIC (empty scope in AdminMethodScopes —
+	// no bearer token required), because it bootstraps the very auth flow:
+	// the CLI calls it BEFORE minting a time-sensitive OAuth2 client
+	// assertion so it can align the assertion's `iat` to the CP's clock.
+	// fosite (Hydra's validator) checks `iat` with zero clock-skew leeway
+	// and exposes no server-side knob, so a host clock even slightly ahead
+	// of the CP container's clock would otherwise be rejected with HTTP 500
+	// "Token used before issued" (common with Docker Desktop's LinuxKit VM
+	// drifting behind wall-clock after the host sleeps). clawker-cp and
+	// Hydra share the container, so this clock is exactly the one fosite
+	// validates against. mTLS still applies at the listener — the CLI's
+	// client cert is long-lived (1y), so the handshake survives the skew;
+	// only the freshly-minted assertion needs the correction.
+	GetSystemTime(ctx context.Context, in *GetSystemTimeRequest, opts ...grpc.CallOption) (*GetSystemTimeResult, error)
 }
 
 type adminServiceClient struct {
@@ -264,6 +280,16 @@ func (c *adminServiceClient) ListAgents(ctx context.Context, in *ListAgentsReque
 	return out, nil
 }
 
+func (c *adminServiceClient) GetSystemTime(ctx context.Context, in *GetSystemTimeRequest, opts ...grpc.CallOption) (*GetSystemTimeResult, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetSystemTimeResult)
+	err := c.cc.Invoke(ctx, AdminService_GetSystemTime_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AdminServiceServer is the server API for AdminService service.
 // All implementations must embed UnimplementedAdminServiceServer
 // for forward compatibility.
@@ -343,6 +369,21 @@ type AdminServiceServer interface {
 	// with the control plane. Used by `clawker controlplane agents` and
 	// diagnostic tooling. Read-only; uniform admin scope.
 	ListAgents(context.Context, *ListAgentsRequest) (*ListAgentsResult, error)
+	// GetSystemTime returns the control plane's current wall-clock time.
+	// This RPC is intentionally PUBLIC (empty scope in AdminMethodScopes —
+	// no bearer token required), because it bootstraps the very auth flow:
+	// the CLI calls it BEFORE minting a time-sensitive OAuth2 client
+	// assertion so it can align the assertion's `iat` to the CP's clock.
+	// fosite (Hydra's validator) checks `iat` with zero clock-skew leeway
+	// and exposes no server-side knob, so a host clock even slightly ahead
+	// of the CP container's clock would otherwise be rejected with HTTP 500
+	// "Token used before issued" (common with Docker Desktop's LinuxKit VM
+	// drifting behind wall-clock after the host sleeps). clawker-cp and
+	// Hydra share the container, so this clock is exactly the one fosite
+	// validates against. mTLS still applies at the listener — the CLI's
+	// client cert is long-lived (1y), so the handshake survives the skew;
+	// only the freshly-minted assertion needs the correction.
+	GetSystemTime(context.Context, *GetSystemTimeRequest) (*GetSystemTimeResult, error)
 	mustEmbedUnimplementedAdminServiceServer()
 }
 
@@ -394,6 +435,9 @@ func (UnimplementedAdminServiceServer) FirewallResolveHostname(context.Context, 
 }
 func (UnimplementedAdminServiceServer) ListAgents(context.Context, *ListAgentsRequest) (*ListAgentsResult, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListAgents not implemented")
+}
+func (UnimplementedAdminServiceServer) GetSystemTime(context.Context, *GetSystemTimeRequest) (*GetSystemTimeResult, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetSystemTime not implemented")
 }
 func (UnimplementedAdminServiceServer) mustEmbedUnimplementedAdminServiceServer() {}
 func (UnimplementedAdminServiceServer) testEmbeddedByValue()                      {}
@@ -668,6 +712,24 @@ func _AdminService_ListAgents_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AdminService_GetSystemTime_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetSystemTimeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).GetSystemTime(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_GetSystemTime_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).GetSystemTime(ctx, req.(*GetSystemTimeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AdminService_ServiceDesc is the grpc.ServiceDesc for AdminService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -730,6 +792,10 @@ var AdminService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListAgents",
 			Handler:    _AdminService_ListAgents_Handler,
+		},
+		{
+			MethodName: "GetSystemTime",
+			Handler:    _AdminService_GetSystemTime_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

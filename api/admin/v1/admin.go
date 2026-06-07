@@ -12,7 +12,10 @@ const ServiceName = "clawker.admin.v1.AdminService"
 
 // AdminMethodScopes returns the method→scope map for every RPC on
 // AdminService. Every method is enforced at the uniform "admin" scope
-// (INV-B2-009); future cross-domain methods follow the same policy.
+// (INV-B2-009) EXCEPT GetSystemTime, which is intentionally public (empty
+// scope = no bearer token; see the AuthInterceptor public-method branch).
+// Future cross-domain methods follow the uniform-admin policy unless they
+// have an equally fundamental bootstrap reason to be public.
 //
 // Kept beside the generated bindings so proto additions fail closed: a
 // new RPC without a scope entry is caught by
@@ -21,6 +24,12 @@ const ServiceName = "clawker.admin.v1.AdminService"
 func AdminMethodScopes() map[string]string {
 	const svc = "/" + ServiceName + "/"
 	return map[string]string{
+		// GetSystemTime is PUBLIC (empty scope): the CLI calls it before it
+		// can mint an access token, to align its OAuth2 client-assertion
+		// `iat` to the CP's clock. Gating it on a token would be circular.
+		// mTLS at the listener still authenticates the channel.
+		svc + "GetSystemTime": "",
+
 		svc + "FirewallInit":            consts.ScopeAdmin,
 		svc + "FirewallRemove":          consts.ScopeAdmin,
 		svc + "FirewallEnable":          consts.ScopeAdmin,

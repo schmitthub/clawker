@@ -59,6 +59,9 @@ var _ v1.AdminServiceClient = &AdminServiceClientMock{}
 //			FirewallSyncRoutesFunc: func(ctx context.Context, in *v1.FirewallSyncRoutesRequest, opts ...grpc.CallOption) (*v1.FirewallSyncRoutesResult, error) {
 //				panic("mock out the FirewallSyncRoutes method")
 //			},
+//			GetSystemTimeFunc: func(ctx context.Context, in *v1.GetSystemTimeRequest, opts ...grpc.CallOption) (*v1.GetSystemTimeResult, error) {
+//				panic("mock out the GetSystemTime method")
+//			},
 //			ListAgentsFunc: func(ctx context.Context, in *v1.ListAgentsRequest, opts ...grpc.CallOption) (*v1.ListAgentsResult, error) {
 //				panic("mock out the ListAgents method")
 //			},
@@ -107,6 +110,9 @@ type AdminServiceClientMock struct {
 
 	// FirewallSyncRoutesFunc mocks the FirewallSyncRoutes method.
 	FirewallSyncRoutesFunc func(ctx context.Context, in *v1.FirewallSyncRoutesRequest, opts ...grpc.CallOption) (*v1.FirewallSyncRoutesResult, error)
+
+	// GetSystemTimeFunc mocks the GetSystemTime method.
+	GetSystemTimeFunc func(ctx context.Context, in *v1.GetSystemTimeRequest, opts ...grpc.CallOption) (*v1.GetSystemTimeResult, error)
 
 	// ListAgentsFunc mocks the ListAgents method.
 	ListAgentsFunc func(ctx context.Context, in *v1.ListAgentsRequest, opts ...grpc.CallOption) (*v1.ListAgentsResult, error)
@@ -230,6 +236,15 @@ type AdminServiceClientMock struct {
 			// Opts is the opts argument value.
 			Opts []grpc.CallOption
 		}
+		// GetSystemTime holds details about calls to the GetSystemTime method.
+		GetSystemTime []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// In is the in argument value.
+			In *v1.GetSystemTimeRequest
+			// Opts is the opts argument value.
+			Opts []grpc.CallOption
+		}
 		// ListAgents holds details about calls to the ListAgents method.
 		ListAgents []struct {
 			// Ctx is the ctx argument value.
@@ -253,6 +268,7 @@ type AdminServiceClientMock struct {
 	lockFirewallRotateCA        sync.RWMutex
 	lockFirewallStatus          sync.RWMutex
 	lockFirewallSyncRoutes      sync.RWMutex
+	lockGetSystemTime           sync.RWMutex
 	lockListAgents              sync.RWMutex
 }
 
@@ -773,6 +789,46 @@ func (mock *AdminServiceClientMock) FirewallSyncRoutesCalls() []struct {
 	mock.lockFirewallSyncRoutes.RLock()
 	calls = mock.calls.FirewallSyncRoutes
 	mock.lockFirewallSyncRoutes.RUnlock()
+	return calls
+}
+
+// GetSystemTime calls GetSystemTimeFunc.
+func (mock *AdminServiceClientMock) GetSystemTime(ctx context.Context, in *v1.GetSystemTimeRequest, opts ...grpc.CallOption) (*v1.GetSystemTimeResult, error) {
+	if mock.GetSystemTimeFunc == nil {
+		panic("AdminServiceClientMock.GetSystemTimeFunc: method is nil but AdminServiceClient.GetSystemTime was just called")
+	}
+	callInfo := struct {
+		Ctx  context.Context
+		In   *v1.GetSystemTimeRequest
+		Opts []grpc.CallOption
+	}{
+		Ctx:  ctx,
+		In:   in,
+		Opts: opts,
+	}
+	mock.lockGetSystemTime.Lock()
+	mock.calls.GetSystemTime = append(mock.calls.GetSystemTime, callInfo)
+	mock.lockGetSystemTime.Unlock()
+	return mock.GetSystemTimeFunc(ctx, in, opts...)
+}
+
+// GetSystemTimeCalls gets all the calls that were made to GetSystemTime.
+// Check the length with:
+//
+//	len(mockedAdminServiceClient.GetSystemTimeCalls())
+func (mock *AdminServiceClientMock) GetSystemTimeCalls() []struct {
+	Ctx  context.Context
+	In   *v1.GetSystemTimeRequest
+	Opts []grpc.CallOption
+} {
+	var calls []struct {
+		Ctx  context.Context
+		In   *v1.GetSystemTimeRequest
+		Opts []grpc.CallOption
+	}
+	mock.lockGetSystemTime.RLock()
+	calls = mock.calls.GetSystemTime
+	mock.lockGetSystemTime.RUnlock()
 	return calls
 }
 

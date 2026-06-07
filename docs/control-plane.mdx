@@ -146,6 +146,9 @@ The four Ory ports (`hydra_*`, `kratos_*`, `oathkeeper_*`) are **container-inter
 **CP container won't start.**
 Run `docker logs clawker-controlplane` (CP panic traces and Ory subprocess output land here, not in clawker's rotating logs). The most common causes: stale port bindings from a half-killed previous run (`clawker controlplane down` then retry), or auth material out of sync (try `clawker auth rotate`).
 
+**Container start fails with `Token used before issued` (Docker Desktop).**
+The error surfaces as `connecting to control plane: ... hydra returned 500: ... "Token used before issued"`, usually after the host sleeps and wakes. The Docker Desktop LinuxKit VM clock (where CP runs) has drifted behind the host clock, and Hydra rejects the CLI's signed OAuth2 assertion as future-dated. The CLI now aligns the assertion timestamp to CP's own clock automatically; if severe drift still trips it, restart Docker Desktop to resync the VM clock and retry.
+
 **`clawker firewall *` commands hang or fail with `connection refused`.**
 CP isn't running or `/healthz` is not green. `clawker controlplane status` confirms. `clawker controlplane up` brings it back.
 

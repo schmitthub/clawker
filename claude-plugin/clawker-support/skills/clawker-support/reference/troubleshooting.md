@@ -17,6 +17,7 @@ reference files. Check these first if the issue matches:
 | Monitoring stack (OTel/OpenSearch/Prometheus, workspace, empty indices) | `reference/monitoring.md` | Troubleshooting |
 | Securing git/VCS egress, can the agent push to/leak via other repos, credential-exfil hardening | `reference/firewall-security.md` | Full reference |
 | Control plane down or unreachable | This file | Control plane down or unhealthy |
+| `Token used before issued` / token fetch timeout on container start | This file | Control plane down or unhealthy |
 | Agent missing from CP registry | This file | Agent appears in clawker ps but missing from CP |
 
 ## Global issues
@@ -251,7 +252,16 @@ report `connection refused` against the CP.
    clawker auth rotate
    ```
 
-5. **Recovery — full restart**:
+5. **`Token used before issued` / token fetch times out on start**
+   (Docker Desktop). The startup error contains `connecting to control
+   plane: ... hydra returned 500: ... "Token used before issued"`, often
+   after the host slept/woke. The Docker Desktop LinuxKit VM clock (where
+   CP runs) has drifted behind the host clock, so Hydra rejects the CLI's
+   signed OAuth2 assertion as future-dated. The CLI auto-aligns to CP's
+   clock, so retry first; if it persists, restart Docker Desktop to resync
+   the VM clock, then retry the `clawker` command.
+
+6. **Recovery — full restart**:
    ```bash
    clawker controlplane down
    clawker controlplane up
