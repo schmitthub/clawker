@@ -30,6 +30,22 @@ Always attempt connections first — the domain may already be whitelisted. Only
 
 ### When a connection is blocked
 
+**Always surface a blocked connection to the user. Never silently route around it.**
+This is not optional. If an egress attempt fails — `NXDOMAIN` / "could not
+resolve host", connection reset/refused, or an Envoy `403` — you MUST stop and
+ask the user for firewall help. Do **not**:
+
+- quietly switch to a different tool, mirror, or endpoint to dodge the block,
+- skip the step, fake/guess the result, or implement a workaround that avoids
+  the destination,
+- treat the block as a dead end and move on without telling the user.
+
+A blocked egress is the user's decision to make, not yours to engineer around.
+When it happens, tell the user **exactly** what was blocked — host, port,
+protocol, and (for http/https) the path — and **why the task needs it**, then
+present the options below. Asking for firewall help is expected and normal; do
+it every time a destination is blocked.
+
 Before presenting options, look up your agent name by reading the `CLAWKER_AGENT` environment variable and use its value in the `--agent` flag of all commands that support it below.
 
 **Important: firewall command scoping.** Some firewall commands are
@@ -40,7 +56,10 @@ Others are global infrastructure and do NOT accept `--agent` (`status`,
 `https://docs.clawker.dev/cli-reference/clawker_firewall` for current
 command signatures.
 
-Present **all** of the following options to the user so they can choose. These are `clawker firewall` commands the user runs on the **host** — you cannot modify the firewall from inside this container.
+Present **all** of the options below so the user can choose. You can prepare
+option 1 yourself (it's an edit to a file in your workspace); options 2–4 are
+`clawker firewall` commands the user runs on the **host** — you cannot run them
+from inside this container.
 
 **Scope every allow as narrowly as the work needs.** A bare-domain allow lets
 the agent reach *every* path on that host; combined with forwarded git/API
@@ -49,7 +68,51 @@ to the specific URL path instead of the whole domain whenever the work only
 needs part of the host. Recommend the tightest rule that unblocks the task, not
 the broadest one that happens to work.
 
-1. **Whitelist the destination** (permanent, recommended for recurring needs).
+1. **Offer to add the rule to the project `clawker.yaml` for the user (recommended — this is the one option you can act on yourself).**
+
+   The project's `clawker.yaml` lives in your mounted workspace, so you *can*
+   edit it even though you can't run host `clawker firewall` commands. This is
+   the preferred path: the rule is durable, version-controlled, and reviewable.
+
+   **Always ask the user first** — e.g. "Want me to add an allow rule for
+   `raw.githubusercontent.com/open-telemetry/` to your `clawker.yaml`?" — and
+   only edit the file if they say yes. Add the destination under
+   `security.firewall`:
+
+   ```yaml
+   security:
+     firewall:
+       # Shorthand: HTTPS-only domains (each becomes an https:443 allow rule).
+       add_domains:
+         - registry.npmjs.org
+       # Full rules: custom proto/port/action + path scoping. Prefer this with
+       # path_rules over a bare add_domains entry when only part of a host is
+       # needed.
+       rules:
+         - dst: raw.githubusercontent.com
+           proto: https            # https (default) | http | ws | wss | ssh | tcp | udp
+           # port: "9000-9100"     # single port or inclusive range; empty = proto default
+           # action: allow         # allow (default) | deny
+           path_rules:             # path scoping (https/http only)
+             - path: /open-telemetry/
+               action: allow       # allowlist mode: this prefix allowed, all other paths denied
+   ```
+
+   Scope it as narrowly as the work needs (prefer `rules` + `path_rules` over a
+   bare `add_domains` entry when only part of a host is required).
+
+   **When you finish editing, instruct the user to run `clawker firewall refresh`
+   on the host** to live-apply the change — it re-reads this project's
+   `clawker.yaml` (`add_domains` + `security.firewall.rules`) into the running
+   firewall with no container restart. It is add/update only; removing a rule
+   later still requires `clawker firewall remove` on the host.
+
+   > This path only takes effect on the host when `CLAWKER_WORKSPACE_MODE=bind`
+   > — then your edit *is* the host file. In `snapshot` mode your edit stays
+   > inside the container; tell the user to make the same `clawker.yaml` change
+   > on the host before running `clawker firewall refresh`.
+
+2. **Whitelist directly from the host** (alternative to editing `clawker.yaml`; permanent).
 
    - **Path-scoped (preferred for http/https):**
      ```
@@ -72,7 +135,7 @@ the broadest one that happens to work.
      clawker firewall add <hostname> --proto ssh --port 22
      ```
 
-2. **Temporary bypass** (escape hatch — temporarily disables firewall rules):
+3. **Temporary bypass** (escape hatch — temporarily disables firewall rules):
    ```
    clawker firewall bypass <duration> --agent $CLAWKER_AGENT
    ```
@@ -81,7 +144,7 @@ the broadest one that happens to work.
    - Stop a background bypass: `clawker firewall bypass --stop --agent $CLAWKER_AGENT`
    - Auto-expires after the specified duration — firewall rules are automatically re-applied
 
-3. **Disable firewall for this container** (until re-enabled):
+4. **Disable firewall for this container** (until re-enabled):
    ```
    clawker firewall disable --agent $CLAWKER_AGENT
    ```
@@ -123,9 +186,10 @@ Rules are keyed by `dst:proto:port`. When a key already exists in the store, the
 - Use git (credentials and signing are forwarded from the host)
 - Access whitelisted network destinations
 - Access any network destination during an active bypass
+- Edit the project's `clawker.yaml` (a workspace file) to **propose** firewall rules under `security.firewall` — the user then applies them on the host with `clawker firewall refresh`
 
 **You cannot:**
-- Modify firewall rules (user must run `clawker firewall` commands on the host)
+- Apply firewall rules yourself — you can *propose* them by editing `clawker.yaml`, but the user must apply them on the host (`clawker firewall refresh` to sync `clawker.yaml`, or `clawker firewall add`/`remove` directly). You cannot run any `clawker firewall` command from inside this container.
 - Access the host filesystem outside of the mounted workspace
 - See or manage other Docker containers (clawker isolates resources)
 - Persist data outside of the workspace and config/history volumes
