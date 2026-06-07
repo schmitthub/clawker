@@ -216,6 +216,12 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 		}
 	}
 
+	// CP must be live and clock-synced before CreateContainer mints the
+	// agent bootstrap assertion (see EnsureControlPlaneForCreate).
+	if err := shared.EnsureControlPlaneForCreate(ctx, opts.ControlPlane); err != nil {
+		return err
+	}
+
 	// --- Phase B: Create container with spinner ---
 
 	events := make(chan shared.CreateContainerEvent, 16)

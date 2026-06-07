@@ -26,7 +26,16 @@ const AgentAssertionTTL = 24 * time.Hour
 // client_id + scope keeps the AuthZ surface clean even though the
 // signing key is shared. See `RegisterAgentClient` for the Hydra-side
 // counterpart.
-func BuildAgentAssertion(audience string, signingKey *ecdsa.PrivateKey) (string, error) {
+//
+// skew is the host↔CP clock offset (CP minus host) measured by the CLI
+// at mint time via adminclient.ProbeClockSkew. Unlike the CLI's own
+// assertion (minted in-process at exchange time), this assertion is
+// minted on the host but validated by Hydra against the CP clock, so the
+// CLI aligns iat to the CP domain — the same correction Dial applies for
+// the clawker-cli assertion. Pass 0 when the offset is unknown (degrades
+// to host-clock iat, which the 15s leeway floor absorbs for small skew;
+// the cpboot clock-sync gate keeps the residual within tolerance anyway).
+func BuildAgentAssertion(audience string, signingKey *ecdsa.PrivateKey, skew time.Duration) (string, error) {
 	if audience == "" {
 		return "", fmt.Errorf("agent assertion: audience required")
 	}
@@ -39,6 +48,7 @@ func BuildAgentAssertion(audience string, signingKey *ecdsa.PrivateKey) (string,
 		Audience:         audience,
 		JWTID:            uuid.NewString(),
 		ExpiresInSeconds: int(AgentAssertionTTL / time.Second),
+		Now:              time.Now().Add(skew),
 	}
 	return BuildSignedAssertion(claims, signingKey)
 }

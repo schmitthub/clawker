@@ -15,7 +15,7 @@ Host-side orchestration for the clawker control plane container. Split out of `i
 |------|---------|
 | `embed_cp.go` | `ClawkerCPBinary []byte` — `//go:embed assets/clawker-cp` |
 | `embed_ebpf.go` | `EBPFManagerBinary []byte` — `//go:embed assets/ebpf-manager` |
-| `bootstrap.go` | `EnsureRunning(ctx, EnsureOpts)` / `Stop(ctx, dc)` / `CPRunning(ctx, dc)` host-side lifecycle; `EnsureOpts` bundles `Docker` / `Config` / `Logger` / `HostDirs`. Drift gate: `cpBinaryHash` + `consts.LabelCPBinarySHA`. Image build: `cpImageDockerfile` recipe with content-derived tag (`cpImageRef`) and OCI provenance LABELs; `ensureCPImage` / `cpBuildContext`; `pruneStaleCPImages` post-build cleanup. Concurrent-bootstrap recovery: `recoverFromNameConflict` resolves Docker 409 via SHA match → image-creation-time ordering (`cpImageCreatedAt`) → retry sentinel `errCPRecoveryRetry`. Healthz: `waitForCPHealthz` + `CPHealthTimeoutError`. |
+| `bootstrap.go` | `EnsureRunning(ctx, EnsureOpts)` / `Stop(ctx, dc)` / `CPRunning(ctx, dc)` host-side lifecycle; `EnsureOpts` bundles `Docker` / `Config` / `Logger` / `HostDirs`. Drift gate: `cpBinaryHash` + `consts.LabelCPBinarySHA`. Image build: `cpImageDockerfile` recipe with content-derived tag (`cpImageRef`) and OCI provenance LABELs; `ensureCPImage` / `cpBuildContext`; `pruneStaleCPImages` post-build cleanup. Concurrent-bootstrap recovery: `recoverFromNameConflict` resolves Docker 409 via SHA match → image-creation-time ordering (`cpImageCreatedAt`) → retry sentinel `errCPRecoveryRetry`. Readiness gate: `cpReady` = `waitForCPHealthz` (+ `CPHealthTimeoutError`) then `waitForCPClockSync` (polls `adminclient.ProbeClockSkew`, + `newCPClockSyncTimeout`). |
 | `cp_container.go` | `BuildCPContainerConfig(cfg, CPContainerOpts)` → `*CPContainerConfig` — port bindings, mounts, labels, restart policy (INV-B1-005/006/008/009/015/017/018/020); defines `HostDirs{Config,Data,State,Cache}` + `Validate()`; injects the four `CLAWKER_HOST_*_DIR` env vars so the CP can compute sibling container bind `Mount.Source` values from host-FS paths |
 | `manager.go` | `Manager` interface (`EnsureRunning` / `Stop` / `IsRunning` / `ProbeHealthz`) + `NewManager(client, cfg, log)` constructor. Holds lazy Factory closures so callers who never touch the CP never resolve Docker/Config/Logger. |
 | `bootstrap_test.go` | Unit tests for `EnsureRunning` happy-path, idempotency, existing-stopped start-without-recreate, name-conflict recovery, healthz timeout, concurrent callers (INV-B2-006) |
@@ -33,10 +33,16 @@ var (
     ensureAuthFn    = auth.EnsureAuthMaterial
     ensureCPImageFn = ensureCPImage
     healthzFn       = waitForCPHealthz
+    clockSyncFn     = waitForCPClockSync          // host↔CP clock-sync gate
+    probeSkewFn     = adminclient.ProbeClockSkew  // single GetSystemTime probe
 )
 ```
 
-Tests overwrite these vars, exercise the flow against `dockermocks.FakeClient`, then restore. See `bootstrap_test.go`'s fixture pattern.
+Tests overwrite these vars, exercise the flow against `dockermocks.FakeClient`, then restore. See `bootstrap_test.go`'s fixture pattern. The fixture stubs `clockSyncFn` (real impl dials the CP's `GetSystemTime`) and counts invocations so both readiness exits assert the gate ran.
+
+### Readiness gate: `cpReady` = `/healthz` + clock sync
+
+Both `EnsureRunning` success exits (adopt-existing and freshly-created) return `cpReady(ctx, cfg)`, which runs `healthzFn` then `clockSyncFn`. The clock-sync step polls `adminclient.ProbeClockSkew` until `|skew| ≤ cpClockSkewTolerance` (2s) or `cpClockSyncTimeout` (30s) — a Docker Desktop VM clock that lagged during host sleep converges once NTP re-syncs, and CP is not considered "running" until host↔CP clocks align. This keeps the CLI from minting a Hydra agent assertion whose `iat` is in the CP's future (zero-leeway "token used before issued" → poisoned, non-re-mintable bootstrap material). On non-convergence `newCPClockSyncTimeout` returns an actionable error naming the lagging-VM cause and fix.
 
 ## Why the split
 
@@ -50,7 +56,7 @@ By moving the embeds + bootstrap + container config + Manager into this leaf sub
 
 ## Package imports
 
-**Uses**: `internal/auth`, `internal/config`, `internal/consts`, `internal/controlplane/firewall` (for `fwcp.EnvoyStackName` etc.), `internal/docker`, `internal/logger`, `pkg/whail`, `github.com/moby/moby/api/types/{container,mount,network}`.
+**Uses**: `internal/auth`, `internal/config`, `internal/consts`, `internal/controlplane/adminclient` (for `ProbeClockSkew` in the clock-sync gate), `internal/controlplane/firewall` (for `fwcp.EnvoyStackName` etc.), `internal/docker`, `internal/logger`, `pkg/whail`, `github.com/moby/moby/api/types/{container,mount,network}`.
 
 **Used by**: `internal/cmdutil` (Factory field type), `internal/cmd/factory/default.go` (`ensureRunning` seam + `controlPlaneFunc`), `internal/cmd/controlplane/{up,down,status}.go`, `internal/cmd/firewall/{down,status}.go` (`CPRunning` short-circuit), `test/e2e/harness/factory.go`, `test/e2e/controlplane_cli_test.go`.
 

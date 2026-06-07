@@ -8,6 +8,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	"github.com/schmitthub/clawker/internal/docker"
 
 	"github.com/schmitthub/clawker/internal/hostproxy"
@@ -31,6 +32,7 @@ type CreateOptions struct {
 	Config         func() (config.Config, error)
 	ProjectManager func() (project.ProjectManager, error)
 	HostProxy      func() hostproxy.HostProxyService
+	ControlPlane   func() cpboot.Manager
 	Prompter       func() *prompter.Prompter
 	Logger         func() (*logger.Logger, error)
 	Version        string
@@ -50,6 +52,7 @@ func NewCmdCreate(f *cmdutil.Factory, runF func(context.Context, *CreateOptions)
 		Config:                 f.Config,
 		ProjectManager:         f.ProjectManager,
 		HostProxy:              f.HostProxy,
+		ControlPlane:           f.ControlPlane,
 		Prompter:               f.Prompter,
 		Logger:                 f.Logger,
 		Version:                f.Version,
@@ -163,6 +166,12 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 		if !confirmed {
 			return cmdutil.SilentError
 		}
+	}
+
+	// CP must be live and clock-synced before CreateContainer mints the
+	// agent bootstrap assertion (see EnsureControlPlaneForCreate).
+	if err := shared.EnsureControlPlaneForCreate(ctx, opts.ControlPlane); err != nil {
+		return err
 	}
 
 	// --- Phase B: Create container with spinner ---

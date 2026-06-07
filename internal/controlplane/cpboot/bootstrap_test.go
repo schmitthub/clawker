@@ -43,12 +43,13 @@ type bootstrapFixture struct {
 }
 
 type bootstrapCalls struct {
-	image   atomic.Int32
-	healthz atomic.Int32
-	create  atomic.Int32
-	start   atomic.Int32
-	stop    atomic.Int32
-	remove  atomic.Int32
+	image     atomic.Int32
+	healthz   atomic.Int32
+	clockSync atomic.Int32
+	create    atomic.Int32
+	start     atomic.Int32
+	stop      atomic.Int32
+	remove    atomic.Int32
 }
 
 // newBootstrapFixture installs stubs on the package-level seams that
@@ -117,7 +118,7 @@ func newBootstrapFixture(t *testing.T) *bootstrapFixture {
 			},
 		}, nil
 	}
-	origImage, origHealthz := ensureCPImageFn, healthzFn
+	origImage, origHealthz, origClockSync := ensureCPImageFn, healthzFn, clockSyncFn
 	ensureCPImageFn = func(_ context.Context, _ *docker.Client, _ *logger.Logger) (string, error) {
 		calls.image.Add(1)
 		return cpImageRef(), nil
@@ -126,10 +127,16 @@ func newBootstrapFixture(t *testing.T) *bootstrapFixture {
 		calls.healthz.Add(1)
 		return nil
 	}
+	// Stub the clock-sync gate (real impl dials the CP's GetSystemTime).
+	clockSyncFn = func(_ context.Context, _ config.Config) error {
+		calls.clockSync.Add(1)
+		return nil
+	}
 
 	t.Cleanup(func() {
 		ensureCPImageFn = origImage
 		healthzFn = origHealthz
+		clockSyncFn = origClockSync
 	})
 	return &bootstrapFixture{cfg: cfg, fake: fake, calls: calls}
 }
@@ -226,6 +233,7 @@ func TestEnsureRunning_HappyPath_CreatesContainer(t *testing.T) {
 	assert.Equal(t, int32(1), f.calls.create.Load(), "container created once")
 	assert.Equal(t, int32(1), f.calls.start.Load(), "container started once")
 	assert.Equal(t, int32(1), f.calls.healthz.Load(), "healthz polled once")
+	assert.Equal(t, int32(1), f.calls.clockSync.Load(), "clock-sync gate runs on the create path")
 }
 
 // TestEnsureRunning_ForwardsSecurityOptToHostConfig pins the
@@ -274,6 +282,7 @@ func TestEnsureRunning_AlreadyRunning_IsNoOp(t *testing.T) {
 	assert.Zero(t, f.calls.create.Load(), "no create when already running")
 	assert.Zero(t, f.calls.start.Load(), "no start when already running")
 	assert.Equal(t, int32(1), f.calls.healthz.Load(), "healthz probed for running CP")
+	assert.Equal(t, int32(1), f.calls.clockSync.Load(), "clock-sync gate runs on the adopt path")
 }
 
 func TestEnsureRunning_ExistingStopped_StartsWithoutRecreate(t *testing.T) {

@@ -17,6 +17,8 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
+	cpmocks "github.com/schmitthub/clawker/internal/controlplane/cpboot/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/hostproxy"
@@ -416,6 +418,11 @@ agent:
 		HostProxy: func() hostproxy.HostProxyService {
 			return hostproxytest.NewMockManager()
 		},
+		ControlPlane: func() cpboot.Manager {
+			return &cpmocks.ManagerMock{
+				EnsureRunningFunc: func(_ context.Context) error { return nil },
+			}
+		},
 		Prompter: func() *prompter.Prompter { return prompter.NewPrompter(tio) },
 	}, in, out, errOut
 }
@@ -546,6 +553,11 @@ agent: { claude_code: { use_host_auth: false, mount_projects: false, config: { s
 			},
 			HostProxy: func() hostproxy.HostProxyService {
 				return hostproxytest.NewMockManager()
+			},
+			ControlPlane: func() cpboot.Manager {
+				return &cpmocks.ManagerMock{
+					EnsureRunningFunc: func(_ context.Context) error { return nil },
+				}
 			},
 			Prompter: func() *prompter.Prompter { return prompter.NewPrompter(tio) },
 		}

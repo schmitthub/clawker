@@ -24,6 +24,7 @@ import (
 	"github.com/schmitthub/clawker/internal/build"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
+	"github.com/schmitthub/clawker/internal/controlplane/adminclient"
 	fwcp "github.com/schmitthub/clawker/internal/controlplane/firewall"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -35,6 +36,20 @@ const (
 	// cpReady* bound /healthz polling after container start.
 	cpReadyTimeout  = 60 * time.Second
 	cpReadyInterval = 100 * time.Millisecond
+
+	// cpClockSync* gate readiness on host↔CP clock alignment, run as the
+	// final readiness check after /healthz is green. Hydra validates the
+	// CLI-signed agent assertion's iat against the CP clock with zero
+	// leeway, so a lagging Docker Desktop VM clock (e.g. after host sleep,
+	// before NTP re-syncs) would otherwise let the CLI bake an assertion
+	// whose iat is in the CP's future — a "token used before issued"
+	// rejection that poisons the container's bootstrap material with no way
+	// to re-mint (the signing key never enters the container). Polling until
+	// the offset falls within tolerance lets a freshly-woken VM clock catch
+	// up before any assertion is minted.
+	cpClockSkewTolerance = 2 * time.Second
+	cpClockSyncTimeout   = 30 * time.Second
+	cpClockSyncInterval  = 500 * time.Millisecond
 
 	// cpStopTimeout (seconds) is the grace period before SIGKILL on Stop.
 	cpStopTimeout = 30
@@ -58,6 +73,8 @@ var (
 	ensureAuthFn    = auth.EnsureAuthMaterial
 	ensureCPImageFn = ensureCPImage
 	healthzFn       = waitForCPHealthz
+	clockSyncFn     = waitForCPClockSync
+	probeSkewFn     = adminclient.ProbeClockSkew
 )
 
 // errCPRecoveryRetry is returned by recoverFromNameConflict when it
@@ -195,7 +212,7 @@ func EnsureRunning(ctx context.Context, opts EnsureOpts) error {
 					return fmt.Errorf("controlplane: start existing cp: %w", err)
 				}
 			}
-			return healthzFn(ctx, cfg)
+			return cpReady(ctx, cfg)
 		}
 
 		cpRunning := summary.State == container.StateRunning
@@ -266,7 +283,7 @@ func EnsureRunning(ctx context.Context, opts EnsureOpts) error {
 		return fmt.Errorf("controlplane: %w", err)
 	}
 
-	return healthzFn(ctx, cfg)
+	return cpReady(ctx, cfg)
 }
 
 // Stop removes the CP container. Used by `clawker controlplane down`.
@@ -717,6 +734,83 @@ func cpBuildContext(binarySHA, version, revision, createdAt string) (io.Reader, 
 		return nil, fmt.Errorf("tar close: %w", err)
 	}
 	return &buf, nil
+}
+
+// cpReady is the composite readiness gate run before EnsureRunning
+// returns success: /healthz green first, then host↔CP clock alignment.
+// Both must pass — a healthy CP whose clock has drifted from the host
+// would still mint poisoned agent assertions, so clock sync is a
+// first-class readiness condition, not an afterthought.
+func cpReady(ctx context.Context, cfg config.Config) error {
+	if err := healthzFn(ctx, cfg); err != nil {
+		return err
+	}
+	return clockSyncFn(ctx, cfg)
+}
+
+// waitForCPClockSync polls the public GetSystemTime RPC until the
+// host↔CP clock offset falls within cpClockSkewTolerance or the timeout
+// expires. A Docker Desktop VM clock that lagged during host sleep
+// converges to real time once its NTP source re-syncs; this loop gives
+// it that window before any Hydra assertion (validated against the CP
+// clock with zero leeway) is minted. Respects ctx cancellation.
+func waitForCPClockSync(ctx context.Context, cfg config.Config) error {
+	adminPort := cfg.Settings().ControlPlane.AdminPort
+
+	start := time.Now()
+	deadline := start.Add(cpClockSyncTimeout)
+	if dl, ok := ctx.Deadline(); ok && dl.Before(deadline) {
+		deadline = dl
+	}
+
+	var lastSkew time.Duration
+	var lastErr error
+	measured := false
+	for {
+		if time.Now().After(deadline) {
+			return newCPClockSyncTimeout(start, lastSkew, measured, lastErr)
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		skew, err := probeSkewFn(ctx, adminPort)
+		if err != nil {
+			lastErr = err
+		} else {
+			lastSkew, measured = skew, true
+			if absDuration(skew) <= cpClockSkewTolerance {
+				return nil
+			}
+		}
+		select {
+		case <-ctx.Done():
+			if errors.Is(ctx.Err(), context.Canceled) {
+				return ctx.Err()
+			}
+		case <-time.After(cpClockSyncInterval):
+		}
+	}
+}
+
+// newCPClockSyncTimeout builds the actionable error returned when the
+// host↔CP clock never converges. The message names the most common
+// cause (a lagging Docker Desktop VM clock after sleep) and the fix so
+// an operator isn't left re-debugging an opaque bootstrap failure.
+func newCPClockSyncTimeout(start time.Time, lastSkew time.Duration, measured bool, lastErr error) error {
+	waited := time.Since(start).Round(time.Millisecond)
+	if !measured {
+		return fmt.Errorf("control plane clock-sync probe never succeeded after %s (tolerance %s): %w", waited, cpClockSkewTolerance, lastErr)
+	}
+	return fmt.Errorf("control plane clock not in sync with host after %s: last measured offset %s exceeds tolerance %s — the Docker VM clock is likely lagging after host sleep; wait for it to re-sync (or restart Docker Desktop), then retry", waited, lastSkew.Round(time.Millisecond), cpClockSkewTolerance)
+}
+
+// absDuration returns the magnitude of d so clock skew is compared
+// regardless of direction (CP ahead of or behind the host).
+func absDuration(d time.Duration) time.Duration {
+	if d < 0 {
+		return -d
+	}
+	return d
 }
 
 // waitForCPHealthz polls http://127.0.0.1:<HealthPort>/healthz until the

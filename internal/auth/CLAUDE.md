@@ -62,7 +62,7 @@ All paths resolved via `internal/consts` (`AuthCACertPath`, `AuthCAKeyPath`, `Au
 
 The `Dial` function and token exchange logic live in `internal/controlplane/adminclient/dial.go`:
 
-1. `adminclient.Dial(ctx, adminPort, hydraPort)` loads CA cert, signing key, and CLI client cert
+1. `adminclient.Dial(ctx, adminPort, hydraPort, log)` loads CA cert, signing key, and CLI client cert
 2. Builds `tokenTLSCfg` (plain TLS, CA trust) and `grpcTLSCfg` (mTLS with client cert, CA trust)
 3. Measures host↔CP clock skew: dials a short-lived mTLS connection (no bearer token) and calls the PUBLIC `GetSystemTime` RPC, computing the offset (`measureClockSkew`/`clockSkew`) to add to the local clock to reach the CP's clock domain. Assertions are then minted in CP-aligned time via `AssertionClaims.Now`, because clawker-cp and Hydra share a container clock and Hydra/fosite validates the assertion's `iat` with zero clock-skew leeway. A small residual leeway floor (`assertionClockSkewLeeway`) covers the measurement remainder. The probe runs lazily on first token fetch, so a transient failure during CP bring-up self-heals on retry. A failed or implausible (`> maxPlausibleClockSkew`) measurement is discarded — never cached — and `adminclient.Dial` is passed a `*logger.Logger` so each degrade emits a structured `event=clock_skew_probe_unavailable` / `clock_skew_implausible` line; an operator can then tie a later Hydra "Token used before issued" 500 back to a skew-probe failure instead of re-debugging the opaque error.
 4. Constructs a `tokenSource` that lazily fetches + caches access tokens

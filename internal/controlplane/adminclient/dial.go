@@ -85,12 +85,7 @@ func Dial(ctx context.Context, adminPort, hydraPort int, log *logger.Logger, opt
 	}
 
 	// mTLS for gRPC AdminService (presents client cert).
-	grpcTLSCfg := &tls.Config{
-		RootCAs:      certPool,
-		Certificates: []tls.Certificate{clientCert},
-		ServerName:   consts.ContainerCP,
-		MinVersion:   tls.VersionTLS13,
-	}
+	grpcTLSCfg := mtlsConfig(certPool, clientCert)
 
 	target := fmt.Sprintf("127.0.0.1:%d", adminPort)
 
@@ -130,6 +125,53 @@ func Dial(ctx context.Context, adminPort, hydraPort int, log *logger.Logger, opt
 	}
 
 	return adminv1.NewAdminServiceClient(conn), conn, nil
+}
+
+// mtlsConfig builds the mTLS client config for the gRPC AdminService:
+// trusts the CLI CA, presents the CLI client cert, pins ServerName to
+// the CP container CN. Shared by Dial and clientGRPCTLSConfig so the
+// dial path and the standalone clock-skew probe present identical
+// credentials.
+func mtlsConfig(pool *x509.CertPool, clientCert tls.Certificate) *tls.Config {
+	return &tls.Config{
+		RootCAs:      pool,
+		Certificates: []tls.Certificate{clientCert},
+		ServerName:   consts.ContainerCP,
+		MinVersion:   tls.VersionTLS13,
+	}
+}
+
+// clientGRPCTLSConfig loads the CLI CA + client cert from auth material
+// and returns the mTLS config for dialing the AdminService. Used by
+// ProbeClockSkew, which needs the same transport credentials as Dial
+// but without the token-exchange machinery.
+func clientGRPCTLSConfig() (*tls.Config, error) {
+	caCert, err := auth.CACert()
+	if err != nil {
+		return nil, fmt.Errorf("load CA cert: %w", err)
+	}
+	clientCert, err := auth.LoadClientCert()
+	if err != nil {
+		return nil, fmt.Errorf("load client cert: %w", err)
+	}
+	pool := x509.NewCertPool()
+	pool.AddCert(caCert)
+	return mtlsConfig(pool, clientCert), nil
+}
+
+// ProbeClockSkew measures the host↔CP clock offset via a single mTLS
+// GetSystemTime round trip (the public bootstrap RPC, no bearer token).
+// Returned skew is the offset to add to the local clock to obtain the
+// CP's clock; positive means CP is ahead of the host. Callers use it to
+// gate work that mints Hydra assertions (validated against the CP clock
+// with zero leeway) until host and CP are aligned. Bounded internally by
+// clockSkewProbeTimeout; respects ctx cancellation/deadline.
+func ProbeClockSkew(ctx context.Context, adminPort int) (time.Duration, error) {
+	tlsCfg, err := clientGRPCTLSConfig()
+	if err != nil {
+		return 0, err
+	}
+	return measureClockSkew(ctx, fmt.Sprintf("127.0.0.1:%d", adminPort), tlsCfg)
 }
 
 // initialTokenDeadline bounds the retry window for the first Hydra token
@@ -224,12 +266,14 @@ const maxPlausibleClockSkew = 24 * time.Hour
 // token mid-flight.
 const tokenRefreshMargin = 30 * time.Second
 
-// clockSkewProbeTimeout bounds a single GetSystemTime probe independently of
-// the caller's context. token() can re-enter the probe from an interceptor on
-// any admin RPC (until skewKnown latches), so without this the probe would
-// inherit that RPC's arbitrary deadline. A skew measurement is one fast local
-// round trip to the CP; if it can't answer in this window the probe degrades
-// to the logged clock_skew_probe_unavailable path and the next refresh retries.
+// clockSkewProbeTimeout caps a single GetSystemTime probe at a hard upper
+// bound while still honoring the caller's context cancellation/deadline.
+// token() can re-enter the probe from an interceptor on any admin RPC
+// (until skewKnown latches), so without this cap the probe could inherit
+// that RPC's arbitrary (or absent) deadline and hang. A skew measurement
+// is one fast local round trip to the CP; if it can't answer in this window
+// the probe degrades to the logged clock_skew_probe_unavailable path and
+// the next refresh retries.
 const clockSkewProbeTimeout = 5 * time.Second
 
 func newTokenSource(signingKey *ecdsa.PrivateKey, tokenURL string, tlsCfg *tls.Config, probeSkew func(context.Context) (time.Duration, error), log *logger.Logger) *tokenSource {

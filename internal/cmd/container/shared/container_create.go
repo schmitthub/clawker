@@ -28,6 +28,8 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
+	"github.com/schmitthub/clawker/internal/controlplane/adminclient"
+	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	"github.com/schmitthub/clawker/internal/docker"
 
 	"github.com/schmitthub/clawker/internal/hostproxy"
@@ -1479,6 +1481,25 @@ type CreateContainerResult struct {
 	HostProxyRunning bool
 }
 
+// EnsureControlPlaneForCreate brings the control plane to full readiness
+// before a container's agent bootstrap assertion is minted in
+// CreateContainer. EnsureRunning blocks until /healthz is green AND the
+// host↔CP clock is in sync, so the assertion's iat lands in the CP clock
+// domain Hydra validates against (zero leeway). Gating here avoids baking
+// an assertion against an unsynced clock — which poisons the container's
+// bootstrap material with no way to re-mint (the signing key never enters
+// the container). Shared by run and create so the gate can't be forgotten
+// by one path.
+func EnsureControlPlaneForCreate(ctx context.Context, controlPlane func() cpboot.Manager) error {
+	if controlPlane == nil {
+		return fmt.Errorf("no control plane manager available")
+	}
+	if err := controlPlane().EnsureRunning(ctx); err != nil {
+		return fmt.Errorf("ensuring control plane is running: %w", err)
+	}
+	return nil
+}
+
 // CreateContainer is the single entry point for container creation, shared by
 // run and create commands. It performs workspace setup, config initialization,
 // environment resolution, Docker container creation, and post-create injection.
@@ -1683,12 +1704,25 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 	// captures the thumbprint at Register handler entry from the live
 	// mTLS peer. Container_id is embedded as a URI SAN in the leaf cert
 	// so CP can read the binding without a CLI-pre-staged row.
+	// Align the agent assertion's iat to the CP clock domain Hydra
+	// validates against (zero leeway). Best-effort: the cpboot clock-sync
+	// gate run by EnsureRunning before container creation already holds the
+	// offset within tolerance, so a probe failure here degrades to a
+	// host-clock iat (absorbed by the assertion's leeway floor) rather than
+	// aborting create.
+	skew, err := adminclient.ProbeClockSkew(ctx, opts.Config.Settings().ControlPlane.AdminPort)
+	if err != nil {
+		log.Warn().Err(err).Str("event", "agent_assertion_skew_probe_failed").Msg("could not measure CP clock skew; minting agent assertion in host clock domain")
+		skew = 0
+	}
+
 	bootstrapOpts := InstallAgentBootstrapOptions{
 		Project:            projectSlug,
 		Agent:              agentTyped,
 		ContainerID:        resp.ID,
 		HydraTokenAudience: hydraTokenAudienceFromPort(opts.Config.Settings().ControlPlane.HydraPublicPort),
 		CopyToContainer:    NewCopyToContainerFn(client),
+		Skew:               skew,
 		Logger:             log,
 	}
 	if err := InstallAgentBootstrapMaterial(ctx, caCertPath, caKeyPath, signingKey, bootstrapOpts); err != nil {
