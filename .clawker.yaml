@@ -215,6 +215,8 @@ security:
             path: /cloudflare/
           - action: allow
             path: /anthropics/claude-code/
+          - action: allow
+            path: /opensearch-project/OpenSearch-Dashboards/
       - action: allow
         dst: api.github.com
         insecure_skip_tls_verify: false
@@ -232,6 +234,8 @@ security:
             path: /repos/upstash/context7/
           - action: allow
             path: /repos/cilium/cilium/
+          - action: allow
+            path: /repos/opensearch-project/OpenSearch-Dashboards
           - action: deny
             path: /gists
           - action: deny
@@ -266,6 +270,8 @@ security:
             path: /upstash/context7/master/plugins/claude/context7/skills/context7-mcp/
           - action: allow
             path: /cilium/cilium/
+          - action: allow
+            path: /opensearch-project/OpenSearch-Dashboards/
         port: 443
         proto: https
       # tcpbin.com: TLS echo (:4243) as OPAQUE tcp — Envoy proxies the bytes (no MITM),
