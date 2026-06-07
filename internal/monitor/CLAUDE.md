@@ -2,6 +2,8 @@
 
 Templates for the monitoring stack (Docker Compose + OTEL Collector pipeline + Prometheus). Backed by OpenSearch (logs + traces) and Prometheus (metrics). OpenSearch Dashboards is the UI for logs/traces; Prometheus has its own UI for metrics.
 
+> Confirming live ingest/routing/rendering is **not** unit-testable — see `.claude/rules/monitoring.md` → "Runtime UAT" for the curl-container working-session loop (ask the user to `clawker monitor up`; you can't from inside a container).
+
 Service hostnames live in `internal/consts/monitoring.go`. `MonitoringServiceHostnames` (`otel-collector`, `prometheus`) is the subset wired into CoreDNS's `internalHosts` forward zones — only services agent containers legitimately need to dial. `opensearch-node` and `opensearch-dashboards` are intentionally omitted: agents never query indices directly, so those containers reach each other via Docker's embedded resolver without going through CoreDNS.
 
 ## Template Files

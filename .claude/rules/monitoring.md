@@ -1,6 +1,10 @@
 ---
 description: Monitoring stack guidelines (OpenSearch + Prometheus)
-paths: ["internal/monitor/**"]
+paths:
+  - "internal/monitor/**"
+  - "cmd/coredns-clawker/plugins/otel/**"
+  - "internal/controlplane/firewall/ebpf/netlogger/**"
+  - "internal/consts/monitoring.go"
 ---
 
 # Monitoring Rules
@@ -77,6 +81,46 @@ Envoy and CoreDNS access logs are scraped into OpenSearch with dedicated indices
 - Untrusted: `otlp` receiver (no client auth, plaintext) → `logs/in_untrusted` (`memory_limiter` → `resource/untrusted_otlp` stamps `ingest_source=untrusted_otlp` → `batch`) → `routing/untrusted` connector → `service.name=claude-code` reaches `logs/claude-code` and `service.name=clawker-cli` reaches `logs/clawker-cli`; everything else is dropped (`error_mode: ignore`, no `default_pipelines`). Spoofed `service.name=envoy`/`coredns`/`clawker-cp` from this lane goes nowhere. Metrics and traces on the untrusted lane go through dedicated pipelines (`metrics/untrusted`, `traces`) that also stamp `ingest_source=untrusted_otlp` so dashboards can separate forgeable sender-declared records from records anchored by mTLS handshake.
 - Trusted: `otlp/infra` receiver (mTLS, `client_ca_file` = **infra intermediate CA** — not the CLI root, which agents also hold) → `logs/in_trusted` (`memory_limiter` → `batch`) → `routing/trusted` connector (`error_mode: propagate`, `default_pipelines: [logs/trusted_unrouted]`) → dispatches by sender-declared `service.name` to `logs/cp` (`clawker-cp`), `logs/envoy` (`envoy`), `logs/coredns` (`coredns`), or `logs/netlogger` (`ebpf-egress`). Records with unmapped `service.name` land in `logs/trusted_unrouted` (debug-only — should never fire). mTLS is the auth boundary; `service.name` is honored, not overwritten.
 - Resilience: every pipeline begins with `memory_limiter` (compose hard-caps the collector at 200M, so this provides backpressure before OOM-kill). All `opensearch/*` exporters carry `sending_queue.enabled` + `retry_on_failure` so the OpenSearch startup window (collector waits for `service_healthy` via cluster-health endpoint) and short outages don't drop forensic data.
+
+## Runtime UAT (you assist — you cannot unit-test the stack)
+
+Golden files + template-render tests prove the generated compose/otel-config/bootstrap JSON is **valid**. They do NOT prove the live pipeline **ingests, routes, indexes, and renders**. There is no unit seam for "did a Claude Code log land in the `claude-code` index with the right mapping." That is observed live. When asked to confirm monitoring behavior, run a working-session loop with the user — mirror `.claude/rules/firewall-uat.md`:
+
+### 1. Locate yourself
+- `$CLAWKER_AGENT` set → inside an agent container. You **cannot** run `clawker monitor *` (host-only; `feedback_no_host_clawker_in_container`). Confirm — a plain dev shell with the repo also exists.
+- `$CLAWKER_AGENT` unset → host shell; you may drive `clawker monitor *` yourself. Host bash sandbox strips network/docker — use `dangerouslyDisableSandbox: true`.
+
+### 2. Bring the stack up (ask the user if you can't)
+- Lifecycle is CLI-owned: `clawker monitor up` / `status` / `down --volumes` (`feedback_cli_owns_compose_lifecycle`). In a container you cannot run it — ask the user to `clawker monitor up` and confirm `clawker monitor status` is green before you probe.
+- Stack is throwaway (`feedback_monitoring_stack_throwaway`): index-template / saved-object / compose edits need `clawker monitor down --volumes && clawker monitor up` to take effect. Ingest-pipeline *body* edits are the exception — resolved by name per-doc, so a plain `monitor up` re-runs them.
+
+### 3. Check the docker socket
+- Reaching OpenSearch / Dashboards from inside the agent needs the docker socket (`/var/run/docker.sock`, gated by `security.docker_socket`, **default OFF**). Probe: `docker info` (sandbox-disabled).
+- **No socket** → you cannot reach the stack from in-container. Drive UAT entirely through the user: they run the queries host-side and paste results.
+- **Socket present** → use the curl-container pattern below.
+
+### 4. Query via a container (you can't dial the indices directly)
+CoreDNS only resolves `otel-collector` + `prometheus` for agents (`MonitoringServiceHostnames`); `opensearch-node` / `opensearch-dashboards` are intentionally unresolvable (`feedback_clawker_container_no_direct_net`), and the collector/Prometheus paths are push/scrape, not query. So hit the service containers on their own loopback:
+
+```
+# OpenSearch — what actually indexed (opensearch-node ships curl)
+docker exec opensearch-node curl -s 'http://localhost:9200/_cat/indices?v'
+docker exec opensearch-node curl -s 'http://localhost:9200/claude-code/_search?size=1&sort=@timestamp:desc' | python3 -m json.tool
+docker exec opensearch-node curl -s 'http://localhost:9200/clawker-envoy/_mapping' | python3 -m json.tool
+
+# Prometheus — confirm a series exists (use a curl sidecar; prom image has no curl)
+docker run --rm --network container:prometheus --entrypoint curl curlimages/curl \
+  -s 'http://localhost:9090/api/v1/query?query=claude_code_token_usage'
+
+# Collector / bootstrap triage
+docker logs clawker-otel-collector --tail 50
+docker logs clawker-opensearch-bootstrap   # one-shot; non-zero exit = stack half-up by design
+```
+
+Pattern: `docker exec <svc> curl …` where the image bundles curl (`opensearch-node`); else `docker run --rm --network container:<svc> --entrypoint curl curlimages/curl …` (Envoy, Prometheus).
+
+### 5. Back-and-forth
+You probe → report what indexed / scraped / rendered → user mutates host-side (`monitor down --volumes && up`, config edit) → you re-probe. Never declare a pipeline / index / dashboard change "working" from golden tests alone.
 
 ## What NOT To Do
 
