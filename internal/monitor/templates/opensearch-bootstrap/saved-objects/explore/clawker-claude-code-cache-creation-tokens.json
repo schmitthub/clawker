@@ -1,16 +1,16 @@
 {
   "attributes": {
-    "title": "Cache Creation Tokens",
-    "description": "",
     "hits": 0,
+    "uiState": "{\"activeTab\": \"explore_visualization_tab\"}",
+    "visualization": "{\"title\": \"\", \"chartType\": \"metric\", \"params\": {\"colorMode\": \"none\", \"percentageColor\": \"standard\", \"showPercentage\": false, \"showTitle\": true, \"textMode\": \"value\", \"thresholdOptions\": {\"baseColor\": \"#00BD6B\", \"thresholds\": []}, \"title\": \"\", \"useThresholdColor\": false, \"valueCalculation\": \"last\", \"unitId\": \"short\"}, \"axesMapping\": {\"facet\": \"Series\", \"time\": \"Time\", \"value\": \"Value\"}}",
     "columns": [
       "_source"
     ],
+    "description": "",
     "sort": [],
-    "version": 1,
+    "title": "Cache Creation Tokens",
     "type": "metrics",
-    "visualization": "{\"title\": \"\", \"chartType\": \"metric\", \"params\": {\"colorMode\": \"none\", \"percentageColor\": \"standard\", \"showPercentage\": false, \"showTitle\": true, \"textMode\": \"value\", \"thresholdOptions\": {\"baseColor\": \"#00BD6B\", \"thresholds\": []}, \"title\": \"\", \"useThresholdColor\": false, \"valueCalculation\": \"last\", \"unitId\": \"short\"}, \"axesMapping\": {\"facet\": \"Series\", \"time\": \"Time\", \"value\": \"Value\"}}",
-    "uiState": "{\"activeTab\": \"explore_visualization_tab\"}",
+    "version": 1,
     "kibanaSavedObjectMeta": {
       "searchSourceJSON": "{\"query\": {\"query\": \"sum(claude_code_token_usage_tokens_total{kind=\\\"cacheCreation\\\"})\", \"language\": \"PROMQL\", \"dataset\": {\"id\": \"clawker_prometheus\", \"title\": \"clawker_prometheus\", \"type\": \"PROMETHEUS\", \"language\": \"PROMQL\", \"timeFieldName\": \"Time\", \"dataSource\": {}, \"signalType\": \"metrics\"}}, \"filter\": [], \"indexRefName\": \"kibanaSavedObjectMeta.searchSourceJSON.index\"}"
     }
@@ -18,8 +18,8 @@
   "references": [
     {
       "name": "kibanaSavedObjectMeta.searchSourceJSON.index",
-      "type": "index-pattern",
-      "id": "clawker_prometheus"
+      "id": "clawker_prometheus",
+      "type": "index-pattern"
     }
   ]
 }
