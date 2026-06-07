@@ -98,14 +98,40 @@ const (
 	// protected by GarbageCollectDNS (m.seededIPs), so a live IP rule's
 	// route is never reclaimed out from under it.
 	dnsGCInterval = 60 * time.Second
-	// dnsGCDegradedThreshold is how many consecutive panicking sweeps escalate
-	// the per-sweep dns_gc_panic Error into a distinct dns_gc_degraded line. A
-	// single bad pass is noise; a sweep that panics every interval means the
-	// map is no longer being reclaimed at all (the unbounded-growth failure
-	// this goroutine exists to prevent), which an operator must be able to tell
-	// apart from one transient panic in the greppable log surface.
+	// dnsGCDegradedThreshold is how many consecutive failed sweeps escalate the
+	// per-sweep dns_gc_panic/dns_gc_error into a distinct dns_gc_degraded line. A
+	// failed sweep is one that panicked OR that GarbageCollectDNS reported an
+	// error for (a wedged iterator, or expired entries that could not be
+	// deleted). A single bad pass is noise; a sweep that fails every interval
+	// means the map is no longer being reclaimed at all (the unbounded-growth
+	// failure this goroutine exists to prevent), which an operator must be able
+	// to tell apart from one transient hiccup in the greppable log surface.
 	dnsGCDegradedThreshold = 5
 )
+
+// dnsGCEscalator tracks the streak of consecutive failed dns_cache GC sweeps
+// and reports the single tick on which that streak first reaches threshold, so
+// the caller emits the "wedged GC" line exactly once per crossing rather than
+// every interval. Extracted from the GC goroutine so the off-by-one-prone
+// "escalate once, reset on success" logic is unit-testable without driving the
+// whole loop.
+type dnsGCEscalator struct {
+	threshold int
+	failures  int
+}
+
+// record folds one sweep outcome into the streak and returns true only on the
+// tick where the consecutive-failure count first equals the threshold. A
+// successful sweep (ok=true) resets the streak; the strict == means later ticks
+// in the same failing streak do not re-fire.
+func (e *dnsGCEscalator) record(ok bool) (escalate bool) {
+	if ok {
+		e.failures = 0
+		return false
+	}
+	e.failures++
+	return e.failures == e.threshold
+}
 
 func main() {
 	caCertPath := flag.String("tls-ca", consts.CPCACertPath, "CLI CA certificate")
@@ -928,8 +954,11 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	go func() {
 		defer dnsGCWg.Done()
 		// sweepOnce isolates one GC pass so a panic in it is recovered without
-		// tearing down the ticker loop. Returns false when the pass panicked so
-		// the loop can track consecutive failures and escalate.
+		// tearing down the ticker loop. Returns false when the pass panicked OR
+		// GarbageCollectDNS reported it could not reclaim (wedged iterator /
+		// failed deletes) so the loop can track consecutive failures and
+		// escalate — a sweep that "succeeds" but reclaims nothing is the exact
+		// silent-growth failure the escalation exists to catch.
 		sweepOnce := func() (ok bool) {
 			ok = true
 			defer func() {
@@ -940,7 +969,14 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 						Msg("dns_cache gc sweep panicked — skipping this pass, loop continues")
 				}
 			}()
-			if n := ebpfMgr.GarbageCollectDNS(); n > 0 {
+			n, err := ebpfMgr.GarbageCollectDNS()
+			if err != nil {
+				log.Warn().Err(err).
+					Str("event", "dns_gc_error").
+					Msg("dns_cache gc sweep could not reclaim — map may not be shrinking, loop continues")
+				return false
+			}
+			if n > 0 {
 				log.Debug().Int("cleared", n).
 					Str("event", "dns_gc_swept").
 					Msg("dns_cache gc removed expired entries")
@@ -949,24 +985,20 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		}
 		ticker := time.NewTicker(dnsGCInterval)
 		defer ticker.Stop()
-		consecutiveFailures := 0
+		escalator := dnsGCEscalator{threshold: dnsGCDegradedThreshold}
 		for {
 			select {
 			case <-dnsGCCtx.Done():
 				return
 			case <-ticker.C:
-				if sweepOnce() {
-					consecutiveFailures = 0
-					continue
-				}
-				// Every sweep since the last success has panicked: the map is
-				// no longer being reclaimed. Emit a distinct line at the
-				// threshold so an operator can tell a wedged GC from one
-				// transient panic. Logged once per crossing, not every tick.
-				if consecutiveFailures++; consecutiveFailures == dnsGCDegradedThreshold {
-					log.Error().Int("consecutive_failures", consecutiveFailures).
+				// Every sweep since the last success has failed: the map is no
+				// longer being reclaimed. Emit a distinct line on the tick that
+				// first crosses the threshold so an operator can tell a wedged
+				// GC from one transient failure. Logged once per crossing.
+				if escalator.record(sweepOnce()) {
+					log.Error().Int("consecutive_failures", escalator.failures).
 						Str("event", "dns_gc_degraded").
-						Msg("dns_cache gc has panicked every sweep — map no longer being reclaimed, may grow unbounded")
+						Msg("dns_cache gc has failed every sweep — map no longer being reclaimed, may grow unbounded")
 				}
 			}
 		}

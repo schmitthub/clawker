@@ -260,6 +260,15 @@ type tokenSource struct {
 // local clock plus the residual leeway floor.
 const maxPlausibleClockSkew = 24 * time.Hour
 
+// notableClockSkew is the offset above which an *accepted* (plausible)
+// measurement gets a breadcrumb. A few seconds of VM lag is routine and the
+// expected correction; a larger anchor — say minutes from a misconfigured NTP
+// rather than mere sleep lag — is exactly the case where a wrong-but-plausible
+// GetSystemTime reading would silently skew every subsequent mint. Logging the
+// applied value here gives an operator the one thread to pull when assertions
+// start carrying a surprising iat, without spamming the routine small-skew case.
+const notableClockSkew = 5 * time.Second
+
 // tokenRefreshMargin is how far before expiry we proactively refresh.
 // Hydra's default access token TTL is 1 hour; refreshing 30s early
 // ensures long-running operations (bypass timers) never hit an expired
@@ -323,6 +332,13 @@ func (ts *tokenSource) token(ctx context.Context) (string, error) {
 		default:
 			ts.skew = s
 			ts.skewKnown = true
+			if absDuration(s) > notableClockSkew {
+				ts.log.Warn().
+					Str("event", "clock_skew_applied").
+					Str("component", "adminclient").
+					Dur("applied_skew", s).
+					Msg("anchored assertions to a large host↔CP clock correction; if this is unexpected, verify the CP clock (NTP) rather than mere VM sleep lag")
+			}
 		}
 	}
 

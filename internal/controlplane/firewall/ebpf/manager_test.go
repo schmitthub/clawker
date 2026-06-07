@@ -428,22 +428,24 @@ func TestDeleteExpiredDNSEntries_CountsOnlyRealAndENOENTSuccess(t *testing.T) {
 		missing:   map[uint32]bool{3: true},
 		forcedErr: nil,
 	}
-	// First assert the happy path (keys 1, 2, 3) yields 3 cleared.
-	cleared := deleteExpiredDNSEntries(fake, []uint32{1, 2, 3}, logger.Nop())
-	if cleared != 3 {
-		t.Errorf("happy path: expected 3 cleared, got %d", cleared)
+	// First assert the happy path (keys 1, 2, 3) yields 3 cleared, 0 failed.
+	cleared, failed := deleteExpiredDNSEntries(fake, []uint32{1, 2, 3}, logger.Nop())
+	if cleared != 3 || failed != 0 {
+		t.Errorf("happy path: expected 3 cleared / 0 failed, got %d / %d", cleared, failed)
 	}
 	if len(fake.deleteCalls) != 3 {
 		t.Errorf("expected 3 Delete calls, got %d", len(fake.deleteCalls))
 	}
 
-	// Now force EPERM and assert keys 4, 5 are NOT counted.
+	// Now force EPERM and assert keys 4, 5 are NOT counted as cleared but ARE
+	// counted as failed — that failed count is what lets the GC loop detect a
+	// wedged map instead of treating the no-op sweep as progress.
 	fake.deleteCalls = nil
 	fake.missing = nil
 	fake.forcedErr = syscall.EPERM
-	cleared = deleteExpiredDNSEntries(fake, []uint32{4, 5}, logger.Nop())
-	if cleared != 0 {
-		t.Errorf("EPERM path: expected 0 cleared (deletes failed), got %d", cleared)
+	cleared, failed = deleteExpiredDNSEntries(fake, []uint32{4, 5}, logger.Nop())
+	if cleared != 0 || failed != 2 {
+		t.Errorf("EPERM path: expected 0 cleared / 2 failed, got %d / %d", cleared, failed)
 	}
 	if len(fake.deleteCalls) != 2 {
 		t.Errorf("expected 2 Delete attempts, got %d", len(fake.deleteCalls))
@@ -458,9 +460,9 @@ func TestDeleteExpiredDNSEntries_CountsOnlyRealAndENOENTSuccess(t *testing.T) {
 func TestDeleteExpiredDNSEntries_EmptyReturnsZero(t *testing.T) {
 	t.Parallel()
 	fake := &fakeDNSMap{}
-	cleared := deleteExpiredDNSEntries(fake, nil, logger.Nop())
-	if cleared != 0 {
-		t.Errorf("empty input: expected 0 cleared, got %d", cleared)
+	cleared, failed := deleteExpiredDNSEntries(fake, nil, logger.Nop())
+	if cleared != 0 || failed != 0 {
+		t.Errorf("empty input: expected 0 cleared / 0 failed, got %d / %d", cleared, failed)
 	}
 	if len(fake.deleteCalls) != 0 {
 		t.Errorf("empty input must not invoke Delete; got %d calls", len(fake.deleteCalls))

@@ -38,7 +38,9 @@ type AssertionClaims struct {
 	Audience string
 	// JWTID (jti) — cryptographically random unique ID.
 	JWTID string
-	// ExpiresIn is the duration until expiration (typically 30-60s).
+	// ExpiresInSeconds is the duration until expiration. The CLI assertion is
+	// short-lived (~30s); the agent assertion uses AgentAssertionTTL (24h), so
+	// callers set this per use site — do not assume a short value here.
 	ExpiresInSeconds int
 	// Now is the reference clock for iat/exp. Zero → time.Now(). Both
 	// host-minted assertions set it to CP-aligned time (local now + skew

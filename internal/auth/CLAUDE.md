@@ -36,11 +36,11 @@ Dials CP via:
 
 ## Agent cert mint
 
-`MintAgentCert(caCertPath, caKeyPath string, project ProjectSlug, agent AgentName)` returns an `AgentCert{CertPEM, KeyPEM, Thumbprint [32]byte}` — an ephemeral 24h mTLS leaf signed by the CLI CA.
+`MintAgentCert(caCertPath, caKeyPath string, project ProjectSlug, agent AgentName, containerID string)` returns an `AgentCert{CertPEM, KeyPEM, Thumbprint [32]byte}` — an ephemeral 24h mTLS leaf signed by the CLI CA.
 
 - Typed `ProjectSlug` / `AgentName` (built via `NewProjectSlug` / `NewAgentName` at the wire boundary) push validation upstream so the helper itself trusts its inputs.
-- `Thumbprint` is SHA-256 over the cert DER. The CP-side Register handler captures the live peer cert thumbprint and writes the agent registry sqlite row; the CLI never opens the sqlite DB directly.
-- The CN is composed via `CanonicalAgentCN(project, agent)` and pre-stored on the registry row alongside `AgentFullName` (the canonical `clawker.<project>.<agent>` identity used everywhere else in the codebase — `CanonicalAgentCN` exists only as the cert-subject format helper, not a general identity name).
+- `Thumbprint` is SHA-256 over the cert DER. The CP-side Register handler captures the live peer cert thumbprint and writes the agent registry sqlite row; the CLI never opens the sqlite DB directly. The displayed `AgentFullName` is reconstructed on demand from the row's `project` + `agent_name` columns — there is no precomputed identity column.
+- The x509 CN is the deterministic `consts.ContainerClawkerd` literal (the binary identity, not a per-agent value). Per-agent identity rides in SANs: `AgentFullName(project, agent)` → `clawker.<project>.<agent>` in a `urn:clawker:agent:<full-name>` URI SAN, and `containerID` in a `urn:clawker:container:<id>` URI SAN. Keeping identity out of the CN avoids x509's 64-byte CN limit for long random agent names.
 - PEM material is returned for in-memory bootstrap delivery only; never persisted on the host.
 
 ## Auth material layout
@@ -82,7 +82,7 @@ type AssertionClaims struct {
     Subject          string    // "clawker-cli" (sub == client_id)
     Audience         string    // Hydra token endpoint URL
     JWTID            string    // UUID per assertion (jti — replay protection)
-    ExpiresInSeconds int       // duration to exp (typically 30-60s)
+    ExpiresInSeconds int       // duration to exp (CLI assertion ~30s; agent assertion = AgentAssertionTTL/24h)
     Now              time.Time // reference clock for iat/exp; zero → time.Now().
                                // Both host-minted assertions set this to CP-aligned
                                // time (local now + skew from ProbeClockSkew) so iat

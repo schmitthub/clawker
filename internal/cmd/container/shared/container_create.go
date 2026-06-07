@@ -1713,6 +1713,11 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 	skew, err := adminclient.ProbeClockSkew(ctx, opts.Config.Settings().ControlPlane.AdminPort)
 	if err != nil {
 		log.Warn().Err(err).Str("event", "agent_assertion_skew_probe_failed").Msg("could not measure CP clock skew; minting agent assertion in host clock domain")
+		// Surface a user-visible breadcrumb: the file log is the operator's
+		// triage surface, but if a residual skew later makes the container fail
+		// to authenticate, the only on-screen thread back to root cause is this
+		// line — the assertion is baked at create and cannot be re-minted.
+		sendWarning(ctx, events, "container", "Could not re-measure CP clock skew; proceeding with host clock. If the agent later fails to authenticate, check host↔CP clock sync.")
 		skew = 0
 	}
 

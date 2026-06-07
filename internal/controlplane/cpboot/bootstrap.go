@@ -764,19 +764,22 @@ func waitForCPClockSync(ctx context.Context, cfg config.Config) error {
 
 	start := time.Now()
 	deadline := start.Add(cpClockSyncTimeout)
-	if dl, ok := ctx.Deadline(); ok && dl.Before(deadline) {
-		deadline = dl
-	}
 
 	var lastSkew time.Duration
 	var lastErr error
 	measured := false
 	for {
-		if time.Now().After(deadline) {
-			return newCPClockSyncTimeout(start, lastSkew, measured, lastErr)
-		}
+		// A caller cancel OR deadline wins and surfaces its OWN cause. This is
+		// deliberately checked before the clock-sync timeout below: the caller
+		// giving up is a different failure than the CP clock never converging,
+		// and an operator should not see the "Docker VM clock lagging" guidance
+		// when the real cause was the caller's context expiring. The internal
+		// deadline is therefore kept independent of ctx — not clamped to it.
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		if time.Now().After(deadline) {
+			return newCPClockSyncTimeout(start, lastSkew, measured, lastErr)
 		}
 		skew, err := probeSkewFn(ctx, adminPort)
 		if err != nil {
@@ -789,9 +792,7 @@ func waitForCPClockSync(ctx context.Context, cfg config.Config) error {
 		}
 		select {
 		case <-ctx.Done():
-			if errors.Is(ctx.Err(), context.Canceled) {
-				return ctx.Err()
-			}
+			return ctx.Err()
 		case <-time.After(cpClockSyncInterval):
 		}
 	}

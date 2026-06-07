@@ -152,3 +152,47 @@ func TestOtelOptionsFromEnv(t *testing.T) {
 		require.False(t, opts.Insecure, "bare host:port must default to TLS")
 	})
 }
+
+// TestDNSGCEscalator pins the "escalate once per crossing, reset on success"
+// contract of the dns_cache GC degraded detector. The bug this guards against:
+// a sweep that fails to reclaim must count toward the streak, and the
+// dns_gc_degraded line must fire exactly once when the streak first reaches the
+// threshold — not every tick after, and not at all if a success intervenes.
+func TestDNSGCEscalator(t *testing.T) {
+	t.Parallel()
+
+	t.Run("fires once at threshold, then stays quiet", func(t *testing.T) {
+		e := dnsGCEscalator{threshold: 3}
+		// Two failures: below threshold, no escalation.
+		assert.False(t, e.record(false))
+		assert.False(t, e.record(false))
+		// Third consecutive failure crosses the threshold exactly once.
+		assert.True(t, e.record(false))
+		assert.Equal(t, 3, e.failures)
+		// Further failures in the same streak must NOT re-fire.
+		assert.False(t, e.record(false))
+		assert.False(t, e.record(false))
+	})
+
+	t.Run("a success resets the streak", func(t *testing.T) {
+		e := dnsGCEscalator{threshold: 3}
+		assert.False(t, e.record(false))
+		assert.False(t, e.record(false))
+		// Success before the threshold clears the streak.
+		assert.False(t, e.record(true))
+		assert.Equal(t, 0, e.failures)
+		// The next failures start counting from zero again.
+		assert.False(t, e.record(false))
+		assert.False(t, e.record(false))
+		assert.True(t, e.record(false))
+	})
+
+	t.Run("re-arms after a post-degraded success", func(t *testing.T) {
+		e := dnsGCEscalator{threshold: 2}
+		assert.False(t, e.record(false))
+		assert.True(t, e.record(false)) // first crossing
+		assert.False(t, e.record(true)) // recover
+		assert.False(t, e.record(false))
+		assert.True(t, e.record(false)) // second crossing fires again
+	})
+}
