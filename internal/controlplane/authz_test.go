@@ -208,6 +208,44 @@ func TestAuthInterceptor_UnmappedMethod_Denied(t *testing.T) {
 	assert.Empty(t, introspector.IntrospectCalls())
 }
 
+// TestAuthInterceptor_EmptyScope_PublicMethod_NoToken_Allowed pins the public
+// (empty-scope) branch that GetSystemTime relies on for token-exchange
+// bootstrap: a method mapped to "" must be served on mTLS alone, with NO
+// bearer token, and the introspector must never be consulted. A regression
+// that treated empty scope as deny — or still demanded a token — would break
+// the CLI's clock-skew probe, and TestAdminMethodScopes_CoversAllRPCs (which
+// only checks map keys) would not catch it.
+//
+// The load-bearing proof is the deny-all introspector tripwire: if auth fell
+// through to introspection it would reject, so an empty IntrospectCalls() means
+// the empty-scope arm short-circuited before introspection. The error-code
+// check only pins that auth did not itself reject — it deliberately does NOT
+// assert the downstream handler outcome, which is a harness artifact here
+// (newTestServer registers the bare firewall Handler, whose
+// UnimplementedAdminServiceServer answers GetSystemTime; the production
+// adminServer returns a real time).
+func TestAuthInterceptor_EmptyScope_PublicMethod_NoToken_Allowed(t *testing.T) {
+	// GetSystemTime must be mapped to the empty scope — the precondition for
+	// this whole branch.
+	require.Equal(t, "", adminv1.AdminMethodScopes()["/"+adminv1.ServiceName+"/GetSystemTime"],
+		"GetSystemTime must be public (empty scope)")
+
+	introspector := denyAllIntrospector()
+	client := newTestServer(t, introspector, noopEBPF())
+
+	// No bearer token on the context at all.
+	_, err := client.GetSystemTime(context.Background(), &adminv1.GetSystemTimeRequest{})
+	if err != nil {
+		code := status.Code(err)
+		assert.NotEqual(t, codes.Unauthenticated, code,
+			"empty-scope method must not be rejected by auth")
+		assert.NotEqual(t, codes.PermissionDenied, code,
+			"empty-scope method must not be rejected by auth")
+	}
+	assert.Empty(t, introspector.IntrospectCalls(),
+		"a public (empty-scope) method must not consult the introspector")
+}
+
 func TestAuthInterceptor_IntrospectionError_Denied(t *testing.T) {
 	introspector := &cpmocks.IntrospectorMock{
 		IntrospectFunc: func(_ context.Context, _, _ string) (*controlplane.IntrospectionResult, error) {

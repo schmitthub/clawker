@@ -609,8 +609,10 @@ func TestBuildSignedAssertion_BackdatesIAT(t *testing.T) {
 	// iat is backdated: strictly before the call returned, by ~leeway.
 	assert.False(t, iat.After(after.Add(-assertionClockSkewLeeway)),
 		"iat (%s) must be backdated by at least the leeway from now (%s, leeway %s)", iat, after, assertionClockSkewLeeway)
-	// ...but not backdated more than the leeway (plus build slack).
-	assert.False(t, iat.Before(before.Add(-assertionClockSkewLeeway).Add(-5*time.Second)),
+	// ...but not backdated more than the leeway. The bound is before-leeway,
+	// loosened by 1s only for NumericDate second-truncation (iat floors to
+	// whole Unix seconds), not for arbitrary build slack.
+	assert.False(t, iat.Before(before.Add(-assertionClockSkewLeeway).Add(-time.Second)),
 		"iat (%s) backdated too far past leeway %s", iat, assertionClockSkewLeeway)
 
 	// exp stays a forward window from real now, not from the backdated iat.

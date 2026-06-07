@@ -31,9 +31,10 @@ type DomainSource func() []string
 // CoreDNS serves out of band. dnsbpf computes the same FNV-1a hash on
 // every A-record write into dns_cache, so the hash netlogger observes
 // on a security record matches DomainHash(d) for some d in the firewall
-// configuration — by construction, since GenerateCorefile and
-// ReverseDNSDomains share the same normalize/filter passes, and the
-// IP-literal seeds SyncRoutes writes are unioned in via SeedDomainsFromRules.
+// configuration — by construction: GenerateCorefile and AllResolvableDomains
+// share the same normalize/filter passes for the CoreDNS-served zone subset,
+// and the IP-literal seeds SyncRoutes writes (which CoreDNS never serves) are
+// unioned on top via SeedDomainsFromRules. ReverseDNSDomains is that union.
 //
 // The pinned dns_cache map is still walked on every refresh tick for
 // the observed-hash set. Hashes present in dns_cache but absent from

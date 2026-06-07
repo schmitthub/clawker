@@ -251,7 +251,8 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 			}
 
 			cp := cfg.Settings().ControlPlane
-			newClient, newConn, err := adminclient.Dial(ctx, cp.AdminPort, cp.HydraPublicPort,
+			log, _ := f.Logger()
+			newClient, newConn, err := adminclient.Dial(ctx, cp.AdminPort, cp.HydraPublicPort, log,
 				grpc.WithKeepaliveParams(harnessAdminKeepalive),
 			)
 			if err != nil {

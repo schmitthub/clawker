@@ -272,7 +272,10 @@ func adminClientFunc(f *cmdutil.Factory) func(context.Context) (adminv1.AdminSer
 		}
 
 		cp := cfg.Settings().ControlPlane
-		newClient, newConn, err := adminclient.Dial(ctx, cp.AdminPort, cp.HydraPublicPort,
+		// Logger is best-effort: a logger failure must not block the admin
+		// dial, but when present it carries the clock-skew degrade lines.
+		log, _ := f.Logger()
+		newClient, newConn, err := adminclient.Dial(ctx, cp.AdminPort, cp.HydraPublicPort, log,
 			grpc.WithKeepaliveParams(adminClientKeepalive),
 		)
 		if err != nil {

@@ -25,6 +25,7 @@ import (
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/consts"
+	"github.com/schmitthub/clawker/internal/logger"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
@@ -51,7 +52,13 @@ import (
 // Do NOT pass grpc.WithUnaryInterceptor — grpc-go stores it in a single
 // field with last-wins semantics, so your interceptor will be silently
 // dropped (baseline auth wins). Use grpc.WithChainUnaryInterceptor.
-func Dial(ctx context.Context, adminPort, hydraPort int, opts ...grpc.DialOption) (adminv1.AdminServiceClient, *grpc.ClientConn, error) {
+//
+// log receives the structured clock-skew degrade lines (nil → no-op). The
+// clock-skew probe is best-effort; when it can't be measured the assertion
+// is minted in the local clock domain, which the log surfaces so an operator
+// can tie a later Hydra "Token used before issued" back to a skew-probe
+// failure instead of re-debugging the opaque 500.
+func Dial(ctx context.Context, adminPort, hydraPort int, log *logger.Logger, opts ...grpc.DialOption) (adminv1.AdminServiceClient, *grpc.ClientConn, error) {
 	signingKey, err := auth.LoadSigningKey()
 	if err != nil {
 		return nil, nil, fmt.Errorf("load signing key: %w", err)
@@ -95,7 +102,7 @@ func Dial(ctx context.Context, adminPort, hydraPort int, opts ...grpc.DialOption
 	probeSkew := func(pctx context.Context) (time.Duration, error) {
 		return measureClockSkew(pctx, target, grpcTLSCfg)
 	}
-	ts := newTokenSource(signingKey, hydraTokenURL, tokenTLSCfg, probeSkew)
+	ts := newTokenSource(signingKey, hydraTokenURL, tokenTLSCfg, probeSkew, log)
 
 	// Eagerly fetch the first token with bounded retry so dial tolerates
 	// concurrent CP bring-up (e.g. one goroutine starts a container while
@@ -193,6 +200,7 @@ type tokenSource struct {
 	// CP's clock (nil → skew stays 0, e.g. in unit tests). Called lazily on
 	// the first token fetch and cached once it succeeds.
 	probeSkew func(context.Context) (time.Duration, error)
+	log       *logger.Logger
 
 	mu        sync.Mutex
 	cached    string
@@ -201,18 +209,31 @@ type tokenSource struct {
 	skewKnown bool
 }
 
+// maxPlausibleClockSkew bounds a trusted GetSystemTime measurement. Real
+// host↔CP drift (a Docker Desktop VM clock lagging after the host sleeps) is
+// seconds to a few minutes; a measured offset beyond this signals a garbage
+// or hostile clock reading we must not anchor assertions to — a bad iat would
+// poison every mint for this token source's lifetime once skewKnown latches.
+// Past the bound the measurement is discarded and minting falls back to the
+// local clock plus the residual leeway floor.
+const maxPlausibleClockSkew = 24 * time.Hour
+
 // tokenRefreshMargin is how far before expiry we proactively refresh.
 // Hydra's default access token TTL is 1 hour; refreshing 30s early
 // ensures long-running operations (bypass timers) never hit an expired
 // token mid-flight.
 const tokenRefreshMargin = 30 * time.Second
 
-func newTokenSource(signingKey *ecdsa.PrivateKey, tokenURL string, tlsCfg *tls.Config, probeSkew func(context.Context) (time.Duration, error)) *tokenSource {
+func newTokenSource(signingKey *ecdsa.PrivateKey, tokenURL string, tlsCfg *tls.Config, probeSkew func(context.Context) (time.Duration, error), log *logger.Logger) *tokenSource {
+	if log == nil {
+		log = logger.Nop()
+	}
 	return &tokenSource{
 		signingKey: signingKey,
 		tokenURL:   tokenURL,
 		tlsCfg:     tlsCfg,
 		probeSkew:  probeSkew,
+		log:        log,
 	}
 }
 
@@ -227,10 +248,27 @@ func (ts *tokenSource) token(ctx context.Context) (string, error) {
 	}
 
 	// Establish the CP clock offset before the first mint. Best-effort: a
-	// failed probe leaves skewKnown false so the next token attempt retries
-	// it (the residual leeway floor in BuildSignedAssertion still applies).
+	// failed or implausible probe leaves skewKnown false so the next token
+	// attempt retries it (the residual leeway floor in BuildSignedAssertion
+	// still applies). Both degrade paths are logged: when the probe never
+	// succeeds the mint silently falls back to the local clock domain, which
+	// re-exposes the host↔CP drift this measurement exists to absorb — without
+	// a breadcrumb a later Hydra "Token used before issued" 500 looks identical
+	// to the bug this fix removes.
 	if !ts.skewKnown && ts.probeSkew != nil {
-		if s, err := ts.probeSkew(ctx); err == nil {
+		switch s, err := ts.probeSkew(ctx); {
+		case err != nil:
+			ts.log.Warn().Err(err).
+				Str("event", "clock_skew_probe_unavailable").
+				Str("component", "adminclient").
+				Msg("CP clock-skew probe failed; minting assertion in local clock domain (Hydra may reject iat under host↔CP drift)")
+		case absDuration(s) > maxPlausibleClockSkew:
+			ts.log.Warn().
+				Str("event", "clock_skew_implausible").
+				Str("component", "adminclient").
+				Dur("measured_skew", s).
+				Msg("CP clock-skew measurement beyond plausible bound; discarding and minting in local clock domain")
+		default:
 			ts.skew = s
 			ts.skewKnown = true
 		}
@@ -258,9 +296,6 @@ func (ts *tokenSource) unaryInterceptor() grpc.UnaryClientInterceptor {
 	}
 }
 
-// fetchAccessToken signs a JWT assertion and exchanges it at Hydra's
-// /oauth2/token endpoint for an access token. Returns the token and its
-// TTL (from expires_in, defaulting to 1 hour if absent).
 // measureClockSkew dials a short-lived mTLS connection (no bearer token —
 // GetSystemTime is the public bootstrap RPC) and returns the offset to add
 // to the local clock to obtain the CP's clock:
@@ -298,6 +333,18 @@ func clockSkew(t0, t1 time.Time, cpUnixNanos int64) time.Duration {
 	return time.Unix(0, cpUnixNanos).Sub(localMid)
 }
 
+// absDuration returns the magnitude of d, used to bound a measured clock
+// skew regardless of drift direction (CP ahead of or behind the host).
+func absDuration(d time.Duration) time.Duration {
+	if d < 0 {
+		return -d
+	}
+	return d
+}
+
+// fetchAccessToken signs a JWT assertion and exchanges it at Hydra's
+// /oauth2/token endpoint for an access token. Returns the token and its
+// TTL (from expires_in, defaulting to 1 hour if absent).
 func fetchAccessToken(ctx context.Context, signingKey *ecdsa.PrivateKey, tokenURL string, tlsCfg *tls.Config, skew time.Duration) (string, time.Duration, error) {
 	assertion, err := auth.BuildSignedAssertion(auth.AssertionClaims{
 		Issuer:           consts.ClientIDCLI,

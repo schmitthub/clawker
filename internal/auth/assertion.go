@@ -9,20 +9,23 @@ import (
 	"github.com/go-jose/go-jose/v4/jwt"
 )
 
-// assertionClockSkewLeeway backdates the assertion's iat as a small
+// assertionClockSkewLeeway backdates the assertion's iat as a
 // defense-in-depth floor. fosite — which Hydra uses to validate
 // private_key_jwt client_assertions — enforces iat with ZERO tolerance
-// (now >= iat, "no accounting for clock skew" in token/jwt/map_claims.go)
-// and exposes no server-side leeway knob, so a minting clock even
-// marginally ahead of Hydra's clock yields HTTP 500 "Token used before
-// issued". The primary defense is clock alignment: callers exposed to
-// host↔CP drift (the CLI on Docker Desktop, whose LinuxKit VM clock lags
-// after the host sleeps) set AssertionClaims.Now to the CP's own clock via
-// GetSystemTime, eliminating the bulk of the skew. This floor only has to
-// absorb the residual — measurement RTT plus the gap before Hydra
-// validates — so it is deliberately small. nbf is left unset (a future
-// nbf would trip the same zero-leeway check). Backdating is safe: the
-// client-auth path applies no iat-too-old check.
+// (requires now >= iat with no clock-skew accounting) and exposes no
+// server-side leeway knob, so a minting clock even marginally ahead of
+// Hydra's clock yields HTTP 500 "Token used before issued". The primary
+// defense is clock alignment: callers exposed to host↔CP drift (the CLI on
+// Docker Desktop, whose LinuxKit VM clock lags after the host sleeps) set
+// AssertionClaims.Now to the CP's own clock via GetSystemTime, eliminating
+// the bulk of the skew. This floor only has to absorb the residual —
+// measurement RTT plus the gap before Hydra validates — so relative to that
+// sub-second residual it is deliberately generous, leaving headroom for an
+// imperfect skew measurement (or none at all, when the probe degraded). It
+// is applied unconditionally, including for in-container minters (clawkerd)
+// that already share Hydra's kernel clock, where it is a harmless backdate.
+// nbf is left unset (a future nbf would trip the same zero-leeway check).
+// Backdating is safe: the client-auth path applies no iat-too-old check.
 const assertionClockSkewLeeway = 15 * time.Second
 
 // AssertionClaims holds the claims for a client assertion JWT per RFC 7523.

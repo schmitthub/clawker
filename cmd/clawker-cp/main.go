@@ -912,20 +912,30 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// entries the CoreDNS dnsbpf plugin wrote so the pinned map does not
 	// grow unbounded and stale orphaned hashes do not accumulate. Runs on
 	// watcherCtx so it stops on SIGTERM/drain-to-zero. Recovers per CP
-	// no-panic discipline — a sweep panic must not strand the loop and
-	// leave the map ungoverned.
+	// no-panic discipline — the recover is per-sweep (inside the loop), so a
+	// single panicking sweep is logged and the loop keeps governing the map
+	// rather than surrendering it until CP restart.
 	dnsGCCtx, dnsGCCancel := context.WithCancel(watcherCtx)
 	var dnsGCWg sync.WaitGroup
 	dnsGCWg.Add(1)
 	go func() {
 		defer dnsGCWg.Done()
-		defer func() {
-			if r := recover(); r != nil {
-				log.Error().Interface("panic", r).
-					Str("event", "dns_gc_panic").
-					Msg("dns_cache gc loop panicked — expired entries will accumulate until CP restart")
+		// sweepOnce isolates one GC pass so a panic in it is recovered without
+		// tearing down the ticker loop.
+		sweepOnce := func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Error().Interface("panic", r).
+						Str("event", "dns_gc_panic").
+						Msg("dns_cache gc sweep panicked — skipping this pass, loop continues")
+				}
+			}()
+			if n := ebpfMgr.GarbageCollectDNS(); n > 0 {
+				log.Debug().Int("cleared", n).
+					Str("event", "dns_gc_swept").
+					Msg("dns_cache gc removed expired entries")
 			}
-		}()
+		}
 		ticker := time.NewTicker(dnsGCInterval)
 		defer ticker.Stop()
 		for {
@@ -933,11 +943,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 			case <-dnsGCCtx.Done():
 				return
 			case <-ticker.C:
-				if n := ebpfMgr.GarbageCollectDNS(); n > 0 {
-					log.Debug().Int("cleared", n).
-						Str("event", "dns_gc_swept").
-						Msg("dns_cache gc removed expired entries")
-				}
+				sweepOnce()
 			}
 		}
 	}()
@@ -1019,8 +1025,10 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 			}
 			shutdownCancel()
 		}
-		// Stop the dns_cache sweeper before eBPF teardown so a sweep in
-		// progress can't iterate/delete a map fd that's about to close.
+		// Stop the dns_cache sweeper as part of orderly eBPF teardown. FlushAll
+		// itself doesn't touch dns_cache, but the deferred ebpfMgr.Close() that
+		// follows shutdown closes every map fd — including the one the sweep
+		// iterates/deletes — so join the sweeper here before teardown proceeds.
 		stopDNSGC()
 		if err := ebpfMgr.FlushAll(); err != nil {
 			log.Error().Err(err).Msg("drain: ebpf flush failed")
