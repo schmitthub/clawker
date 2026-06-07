@@ -40,11 +40,16 @@ type AssertionClaims struct {
 	JWTID string
 	// ExpiresIn is the duration until expiration (typically 30-60s).
 	ExpiresInSeconds int
-	// Now is the reference clock for iat/exp. Zero → time.Now(). Callers
-	// subject to clock drift against Hydra (the host CLI) set this to
-	// CP-aligned time (local now + skew measured via GetSystemTime) so iat
-	// lands in Hydra's clock domain; in-container minters (clawkerd) leave
-	// it zero since they already share Hydra's kernel clock.
+	// Now is the reference clock for iat/exp. Zero → time.Now(). Both
+	// host-minted assertions set it to CP-aligned time (local now + skew
+	// measured via adminclient.ProbeClockSkew / GetSystemTime) so iat lands
+	// in the CP clock domain Hydra/fosite validates against with zero
+	// leeway: the CLI's own `clawker-cli` assertion (adminclient.Dial) and
+	// the `clawker-agent` assertion the CLI bakes into a container's
+	// bootstrap material (BuildAgentAssertion). clawkerd does not mint — it
+	// only exchanges the pre-minted agent assertion at Hydra. Zero is the
+	// fallback when skew is unmeasured (degrades to host-clock iat, which
+	// the residual leeway floor absorbs for small drift).
 	Now time.Time
 }
 

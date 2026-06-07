@@ -149,7 +149,10 @@ func cpImageDockerfile(binarySHA, version, revision, createdAt string) string {
 
 // EnsureRunning is the host-side entry point for bringing up the control
 // plane. Idempotent and concurrency-safe. Returns nil when the CP
-// container is running and /healthz is green.
+// container is running, /healthz is green, AND the host↔CP clock is in
+// sync within cpClockSkewTolerance (see cpReady). A green /healthz with a
+// clock still out of tolerance returns a clock-sync error, not nil — so
+// callers can gate assertion minting on a fully-ready CP.
 //
 // Drift gate: an existing CP container whose consts.LabelCPBinarySHA
 // matches the host clawker binary's embedded clawker-cp + ebpf-manager
@@ -160,8 +163,10 @@ func cpImageDockerfile(binarySHA, version, revision, createdAt string) string {
 // any mount/env/cmd change implies a host rebuild, which changes the
 // embedded bytes, which changes the SHA.
 //
-// On partial failure (container created but /healthz timed out) the
-// next call observes the stopped/unhealthy container and reconciles.
+// On partial failure (container created but /healthz or the clock-sync
+// gate timed out) the next call observes the running/unhealthy container
+// and re-runs the readiness gate (clock sync self-heals once the VM
+// clock re-syncs).
 // EnsureOpts bundles the inputs EnsureRunning needs. HostDirs is required;
 // callers resolve it host-side from consts.{ConfigDir,DataDir,StateDir,
 // CacheDir} before invoking. The CP container reads the host paths back

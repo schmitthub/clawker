@@ -146,8 +146,14 @@ The four Ory ports (`hydra_*`, `kratos_*`, `oathkeeper_*`) are **container-inter
 **CP container won't start.**
 Run `docker logs clawker-controlplane` (CP panic traces and Ory subprocess output land here, not in clawker's rotating logs). The most common causes: stale port bindings from a half-killed previous run (`clawker controlplane down` then retry), or auth material out of sync (try `clawker auth rotate`).
 
-**Container start fails with `Token used before issued` (Docker Desktop).**
-The error surfaces as `connecting to control plane: ... hydra returned 500: ... "Token used before issued"`, usually after the host sleeps and wakes. The Docker Desktop LinuxKit VM clock (where CP runs) has drifted behind the host clock, and Hydra rejects the CLI's signed OAuth2 assertion as future-dated. The CLI now aligns the assertion timestamp to CP's own clock automatically; if severe drift still trips it, restart Docker Desktop to resync the VM clock and retry.
+**`clawker run` / `clawker container create` fails with `control plane clock not in sync with host` (Docker Desktop).**
+Before creating a container, the CLI brings the control plane to full readiness — which includes checking that the host clock and CP's clock (the Docker Desktop LinuxKit VM clock, where CP runs) agree within a couple of seconds. If they don't converge within ~30s the command fails with:
+
+```text
+control plane clock not in sync with host after 30s: last measured offset 7.4s exceeds tolerance 2s — the Docker VM clock is likely lagging after host sleep; wait for it to re-sync (or restart Docker Desktop), then retry
+```
+
+This almost always happens after the host sleeps and wakes: the VM clock drifts behind real time until its NTP source re-syncs. The check exists because CP's auth (Hydra) validates the CLI-signed bootstrap assertion against CP's clock with zero leeway — creating a container against a drifted clock would otherwise bake unusable bootstrap material into it, with no way to re-mint (you'd have to delete and recreate). Wait a few seconds for the VM clock to catch up and retry, or restart Docker Desktop to force a resync. (The earlier symptom of this drift — a Hydra `Token used before issued` 500 at container start — is now caught by this pre-create check instead.)
 
 **`clawker firewall *` commands hang or fail with `connection refused`.**
 CP isn't running or `/healthz` is not green. `clawker controlplane status` confirms. `clawker controlplane up` brings it back.
