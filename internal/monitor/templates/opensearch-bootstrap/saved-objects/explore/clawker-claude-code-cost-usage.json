@@ -1,0 +1,25 @@
+{
+  "attributes": {
+    "title": "Claude Code Cost Usage",
+    "description": "",
+    "hits": 0,
+    "columns": [
+      "_source"
+    ],
+    "sort": [],
+    "version": 1,
+    "type": "metrics",
+    "visualization": "{\"title\":\"\",\"chartType\":\"area\",\"params\":{\"addLegend\":true,\"addTimeMarker\":false,\"legendPosition\":\"bottom\",\"legendTitle\":\"\",\"showFullTimeRange\":false,\"standardAxes\":[{\"axisRole\":\"x\",\"grid\":{\"showLines\":true},\"labels\":{\"filter\":true,\"rotate\":0,\"show\":true,\"truncate\":100},\"position\":\"bottom\",\"show\":true,\"title\":{\"text\":\"\"}},{\"axisRole\":\"y\",\"grid\":{\"showLines\":true},\"labels\":{\"filter\":true,\"rotate\":0,\"show\":true,\"truncate\":100},\"position\":\"left\",\"show\":true,\"title\":{\"text\":\"\"}}],\"thresholdOptions\":{\"baseColor\":\"#00BD6B\",\"thresholdStyle\":\"off\",\"thresholds\":[]},\"titleOptions\":{\"show\":false,\"titleName\":\"\"},\"tooltipOptions\":{\"mode\":\"all\"}},\"axesMapping\":{\"color\":\"Series\",\"x\":\"Time\",\"y\":\"Value\"}}",
+    "uiState": "{\"activeTab\":\"explore_visualization_tab\"}",
+    "kibanaSavedObjectMeta": {
+      "searchSourceJSON": "{\"query\":{\"query\":\"sum by (agent, project, model) (increase(claude_code_cost_usage_USD_total[5m]))\",\"language\":\"PROMQL\",\"dataset\":{\"dataSource\":{},\"id\":\"clawker_prometheus\",\"language\":\"PROMQL\",\"signalType\":\"metrics\",\"timeFieldName\":\"Time\",\"title\":\"clawker_prometheus\",\"type\":\"PROMETHEUS\"}},\"filter\":[],\"indexRefName\":\"kibanaSavedObjectMeta.searchSourceJSON.index\"}"
+    }
+  },
+  "references": [
+    {
+      "name": "kibanaSavedObjectMeta.searchSourceJSON.index",
+      "type": "index-pattern",
+      "id": "clawker_prometheus"
+    }
+  ]
+}

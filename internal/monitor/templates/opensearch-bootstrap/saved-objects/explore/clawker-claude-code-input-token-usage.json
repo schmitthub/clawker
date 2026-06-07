@@ -1,0 +1,25 @@
+{
+  "attributes": {
+    "title": "Claude Code Input Token Usage",
+    "description": "",
+    "hits": 0,
+    "columns": [
+      "_source"
+    ],
+    "sort": [],
+    "version": 1,
+    "type": "metrics",
+    "visualization": "{\"title\":\"\",\"chartType\":\"area\",\"params\":{\"addLegend\":true,\"addTimeMarker\":false,\"legendPosition\":\"bottom\",\"legendTitle\":\"\",\"showFullTimeRange\":false,\"standardAxes\":[],\"thresholdOptions\":{\"baseColor\":\"#00BD6B\",\"thresholdStyle\":\"off\",\"thresholds\":[]},\"titleOptions\":{\"show\":false,\"titleName\":\"\"},\"tooltipOptions\":{\"mode\":\"all\"}},\"axesMapping\":{\"color\":\"Series\",\"x\":\"Time\",\"y\":\"Value\"}}",
+    "uiState": "{\"activeTab\":\"explore_visualization_tab\"}",
+    "kibanaSavedObjectMeta": {
+      "searchSourceJSON": "{\"query\":{\"query\":\"sum by (agent, project, model, kind) (increase(claude_code_token_usage_tokens_total{kind=~\\\"input\\\"}[5m]))\",\"language\":\"PROMQL\",\"dataset\":{\"id\":\"clawker_prometheus\",\"title\":\"clawker_prometheus\",\"type\":\"PROMETHEUS\",\"language\":\"PROMQL\",\"timeFieldName\":\"Time\",\"dataSource\":{},\"signalType\":\"metrics\"}},\"filter\":[],\"indexRefName\":\"kibanaSavedObjectMeta.searchSourceJSON.index\"}"
+    }
+  },
+  "references": [
+    {
+      "name": "kibanaSavedObjectMeta.searchSourceJSON.index",
+      "type": "index-pattern",
+      "id": "clawker_prometheus"
+    }
+  ]
+}
