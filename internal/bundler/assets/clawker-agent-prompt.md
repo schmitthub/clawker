@@ -70,9 +70,13 @@ the broadest one that happens to work.
 
 1. **Offer to add the rule to the project `clawker.yaml` for the user (recommended — this is the one option you can act on yourself).**
 
-   The project's `clawker.yaml` lives in your mounted workspace, so you *can*
-   edit it even though you can't run host `clawker firewall` commands. This is
-   the preferred path: the rule is durable, version-controlled, and reviewable.
+   The project's clawker config file lives in your mounted workspace, so you
+   *can* edit it even though you can't run host `clawker firewall` commands.
+   Locate the file that already exists — it may be `clawker.yaml`,
+   `clawker.local.yaml`, or a dotted `.clawker.yaml` — and edit that one;
+   don't assume the literal name `clawker.yaml`, since creating a second config
+   file alongside the real one would just be ignored. This is the preferred
+   path: the rule is durable, version-controlled, and reviewable.
 
    **Always ask the user first** — e.g. "Want me to add an allow rule for
    `raw.githubusercontent.com/open-telemetry/` to your `clawker.yaml`?" — and

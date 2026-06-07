@@ -235,7 +235,7 @@ security:
           - action: allow
             path: /repos/cilium/cilium/
           - action: allow
-            path: /repos/opensearch-project/OpenSearch-Dashboards
+            path: /repos/opensearch-project/OpenSearch-Dashboards/
           - action: deny
             path: /gists
           - action: deny
