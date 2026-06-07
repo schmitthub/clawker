@@ -224,6 +224,14 @@ const maxPlausibleClockSkew = 24 * time.Hour
 // token mid-flight.
 const tokenRefreshMargin = 30 * time.Second
 
+// clockSkewProbeTimeout bounds a single GetSystemTime probe independently of
+// the caller's context. token() can re-enter the probe from an interceptor on
+// any admin RPC (until skewKnown latches), so without this the probe would
+// inherit that RPC's arbitrary deadline. A skew measurement is one fast local
+// round trip to the CP; if it can't answer in this window the probe degrades
+// to the logged clock_skew_probe_unavailable path and the next refresh retries.
+const clockSkewProbeTimeout = 5 * time.Second
+
 func newTokenSource(signingKey *ecdsa.PrivateKey, tokenURL string, tlsCfg *tls.Config, probeSkew func(context.Context) (time.Duration, error), log *logger.Logger) *tokenSource {
 	if log == nil {
 		log = logger.Nop()
@@ -308,6 +316,11 @@ func (ts *tokenSource) unaryInterceptor() grpc.UnaryClientInterceptor {
 // validates against — eliminating host↔CP drift (e.g. a Docker Desktop VM
 // lagging after the host sleeps) rather than guessing a fixed margin.
 func measureClockSkew(ctx context.Context, target string, tlsCfg *tls.Config) (time.Duration, error) {
+	// Bound the probe on its own deadline so its failure mode doesn't depend
+	// on the caller RPC that triggered this refresh (see clockSkewProbeTimeout).
+	ctx, cancel := context.WithTimeout(ctx, clockSkewProbeTimeout)
+	defer cancel()
+
 	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
 	if err != nil {
 		return 0, fmt.Errorf("dial cp for clock skew: %w", err)
