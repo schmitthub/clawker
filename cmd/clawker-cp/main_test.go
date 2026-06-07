@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -194,5 +195,55 @@ func TestDNSGCEscalator(t *testing.T) {
 		assert.False(t, e.record(true)) // recover
 		assert.False(t, e.record(false))
 		assert.True(t, e.record(false)) // second crossing fires again
+	})
+}
+
+// TestDNSGCSweep pins the per-sweep CP-resilience contract that the GC
+// goroutine depends on: a panicking sweep must be recovered and counted as a
+// failure (so the escalator can trip) rather than tearing down the loop and
+// stranding the dns_cache map unsupervised, and a sweep where GarbageCollectDNS
+// reports it could not reclaim must also count as a failure. A clean sweep is a
+// success regardless of how many entries it cleared. The escalator test covers
+// the boolean folding; this covers how each sweep outcome becomes that boolean.
+func TestDNSGCSweep(t *testing.T) {
+	t.Parallel()
+
+	t.Run("clean sweep that reclaimed entries is success", func(t *testing.T) {
+		t.Parallel()
+		ok := dnsGCSweep(func() (int, error) { return 3, nil }, logger.Nop())
+		require.True(t, ok)
+	})
+
+	t.Run("clean sweep that reclaimed nothing is still success", func(t *testing.T) {
+		t.Parallel()
+		// "swept nothing because nothing had expired" must not count as failure,
+		// or a healthy idle CP would escalate to dns_gc_degraded.
+		ok := dnsGCSweep(func() (int, error) { return 0, nil }, logger.Nop())
+		require.True(t, ok)
+	})
+
+	t.Run("GarbageCollectDNS error is a failed sweep", func(t *testing.T) {
+		t.Parallel()
+		var buf bytes.Buffer
+		log := logger.NewWriter(&buf)
+		ok := dnsGCSweep(func() (int, error) { return 0, errors.New("wedged") }, log)
+		require.False(t, ok, "an unreclaimable sweep must count toward escalation")
+		require.Contains(t, buf.String(), "dns_gc_error",
+			"a failed reclaim must emit the structured event for triage")
+	})
+
+	t.Run("panic is recovered, counted as failure, and logged", func(t *testing.T) {
+		t.Parallel()
+		var buf bytes.Buffer
+		log := logger.NewWriter(&buf)
+		// A panicking sweep must NOT propagate (which would kill the goroutine
+		// and strand the dns_cache map) — the whole point of the recover.
+		var ok bool
+		require.NotPanics(t, func() {
+			ok = dnsGCSweep(func() (int, error) { panic("boom") }, log)
+		})
+		require.False(t, ok, "a panicking sweep must count toward escalation")
+		require.Contains(t, buf.String(), "dns_gc_panic",
+			"a recovered panic must emit the structured event for triage")
 	})
 }

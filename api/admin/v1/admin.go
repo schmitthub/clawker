@@ -10,6 +10,15 @@ import "github.com/schmitthub/clawker/internal/consts"
 // ServiceName is the fully-qualified gRPC service name for AdminService.
 const ServiceName = "clawker.admin.v1.AdminService"
 
+// PublicScope is the scope value marking an RPC as intentionally public — no
+// bearer token required (mTLS at the listener still authenticates the channel).
+// It is a named sentinel so an intentional public method in AdminMethodScopes
+// reads as a deliberate choice rather than an accidental empty string. The
+// AuthInterceptor treats any empty required scope as public (it serves both
+// admin and agent scope maps, so it matches the bare value rather than this
+// package-specific symbol).
+const PublicScope = ""
+
 // AdminMethodScopes returns the method→scope map for every RPC on
 // AdminService. Every method is enforced at the uniform "admin" scope
 // (INV-B2-009) EXCEPT GetSystemTime, which is intentionally public (empty
@@ -24,11 +33,11 @@ const ServiceName = "clawker.admin.v1.AdminService"
 func AdminMethodScopes() map[string]string {
 	const svc = "/" + ServiceName + "/"
 	return map[string]string{
-		// GetSystemTime is PUBLIC (empty scope): the CLI calls it before it
-		// can mint an access token, to align its OAuth2 client-assertion
-		// `iat` to the CP's clock. Gating it on a token would be circular.
-		// mTLS at the listener still authenticates the channel.
-		svc + "GetSystemTime": "",
+		// GetSystemTime is PUBLIC: the CLI calls it before it can mint an
+		// access token, to align its OAuth2 client-assertion `iat` to the CP's
+		// clock. Gating it on a token would be circular. mTLS at the listener
+		// still authenticates the channel.
+		svc + "GetSystemTime": PublicScope,
 
 		svc + "FirewallInit":            consts.ScopeAdmin,
 		svc + "FirewallRemove":          consts.ScopeAdmin,

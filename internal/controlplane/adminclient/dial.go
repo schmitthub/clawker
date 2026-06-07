@@ -323,7 +323,7 @@ func (ts *tokenSource) token(ctx context.Context) (string, error) {
 				Str("event", "clock_skew_probe_unavailable").
 				Str("component", "adminclient").
 				Msg("CP clock-skew probe failed; minting assertion in local clock domain (Hydra may reject iat under host↔CP drift)")
-		case absDuration(s) > maxPlausibleClockSkew:
+		case AbsDuration(s) > maxPlausibleClockSkew:
 			ts.log.Warn().
 				Str("event", "clock_skew_implausible").
 				Str("component", "adminclient").
@@ -332,7 +332,7 @@ func (ts *tokenSource) token(ctx context.Context) (string, error) {
 		default:
 			ts.skew = s
 			ts.skewKnown = true
-			if absDuration(s) > notableClockSkew {
+			if AbsDuration(s) > notableClockSkew {
 				ts.log.Warn().
 					Str("event", "clock_skew_applied").
 					Str("component", "adminclient").
@@ -406,9 +406,10 @@ func clockSkew(t0, t1 time.Time, cpUnixNanos int64) time.Duration {
 	return time.Unix(0, cpUnixNanos).Sub(localMid)
 }
 
-// absDuration returns the magnitude of d, used to bound a measured clock
+// AbsDuration returns the magnitude of d, used to bound a measured clock
 // skew regardless of drift direction (CP ahead of or behind the host).
-func absDuration(d time.Duration) time.Duration {
+// Exported so the CP-side clock-sync gate (cpboot) shares one definition.
+func AbsDuration(d time.Duration) time.Duration {
 	if d < 0 {
 		return -d
 	}

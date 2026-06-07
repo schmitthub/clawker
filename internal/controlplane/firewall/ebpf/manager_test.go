@@ -469,6 +469,46 @@ func TestDeleteExpiredDNSEntries_EmptyReturnsZero(t *testing.T) {
 	}
 }
 
+// TestJoinDNSGCErrors pins the GarbageCollectDNS failure contract that the
+// caller's degraded-GC detector keys on: a sweep fails (non-nil error) if the
+// iterator wedged OR any expired-entry delete failed, and a clean sweep that
+// reclaimed nothing is success (nil). GarbageCollectDNS itself iterates a real
+// pinned *ebpf.Map that cannot be faked in a unit test, so the join logic is
+// extracted here to keep this contract under test — a future refactor that
+// dropped a join arm would silently stop the escalator from ever tripping,
+// reintroducing the unbounded dns_cache growth this whole sweep exists to catch.
+func TestJoinDNSGCErrors(t *testing.T) {
+	t.Parallel()
+	iterErr := errors.New("iterate boom")
+
+	tests := []struct {
+		name    string
+		iterErr error
+		failed  int
+		wantErr bool
+	}{
+		{name: "clean sweep, nothing expired", iterErr: nil, failed: 0, wantErr: false},
+		{name: "wedged iterator alone fails", iterErr: iterErr, failed: 0, wantErr: true},
+		{name: "failed deletes alone fail", iterErr: nil, failed: 3, wantErr: true},
+		{name: "both signals fail", iterErr: iterErr, failed: 2, wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := joinDNSGCErrors(tc.iterErr, tc.failed)
+			if tc.wantErr != (err != nil) {
+				t.Fatalf("joinDNSGCErrors(%v, %d) err = %v; wantErr = %v", tc.iterErr, tc.failed, err, tc.wantErr)
+			}
+			// The wedged-iterator cause must be preserved through the join so an
+			// operator grepping the logged error can tell a wedged iterator from
+			// failed deletes.
+			if tc.iterErr != nil && !errors.Is(err, iterErr) {
+				t.Errorf("joined error does not wrap the iterator error: %v", err)
+			}
+		})
+	}
+}
+
 // TestCgroupID_RejectsMaliciousPath asserts CgroupID refuses to open a file
 // whose path does not live under /sys/fs/cgroup/. This is the end-to-end
 // counterpart to TestValidateCgroupPath: the validator is called from inside

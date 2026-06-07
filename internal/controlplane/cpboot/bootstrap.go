@@ -786,7 +786,7 @@ func waitForCPClockSync(ctx context.Context, cfg config.Config) error {
 			lastErr = err
 		} else {
 			lastSkew, measured = skew, true
-			if absDuration(skew) <= cpClockSkewTolerance {
+			if adminclient.AbsDuration(skew) <= cpClockSkewTolerance {
 				return nil
 			}
 		}
@@ -805,18 +805,17 @@ func waitForCPClockSync(ctx context.Context, cfg config.Config) error {
 func newCPClockSyncTimeout(start time.Time, lastSkew time.Duration, measured bool, lastErr error) error {
 	waited := time.Since(start).Round(time.Millisecond)
 	if !measured {
+		// Defensive: waitForCPClockSync only reaches the !measured deadline
+		// branch after at least one failed probe, so lastErr is non-nil in
+		// practice. Guard anyway so a future restructure that could reach here
+		// without a recorded probe error never %w-wraps nil into a "%!w(<nil>)"
+		// cause that would muddy an operator's triage.
+		if lastErr == nil {
+			return fmt.Errorf("control plane clock-sync probe never succeeded after %s (tolerance %s)", waited, cpClockSkewTolerance)
+		}
 		return fmt.Errorf("control plane clock-sync probe never succeeded after %s (tolerance %s): %w", waited, cpClockSkewTolerance, lastErr)
 	}
 	return fmt.Errorf("control plane clock not in sync with host after %s: last measured offset %s exceeds tolerance %s — the Docker VM clock is likely lagging after host sleep; wait for it to re-sync (or restart Docker Desktop), then retry", waited, lastSkew.Round(time.Millisecond), cpClockSkewTolerance)
-}
-
-// absDuration returns the magnitude of d so clock skew is compared
-// regardless of direction (CP ahead of or behind the host).
-func absDuration(d time.Duration) time.Duration {
-	if d < 0 {
-		return -d
-	}
-	return d
 }
 
 // waitForCPHealthz polls http://127.0.0.1:<HealthPort>/healthz until the

@@ -921,25 +921,40 @@ func (m *Manager) GarbageCollectDNS() (cleared int, err error) {
 		expired = append(expired, ip)
 	}
 
-	var errs []error
-	if e := iter.Err(); e != nil {
+	iterErr := iter.Err()
+	if iterErr != nil {
 		// Iterator failure means we could not even enumerate the map, so this
-		// sweep reclaimed nothing. Surface it so the caller's degraded-GC
-		// detector trips on a persistently wedged iterator rather than treating
-		// the failed pass as a success.
-		m.log.Warn().Err(e).Msg("ebpf gc-dns: iterating dns_cache (next pass will retry)")
-		errs = append(errs, fmt.Errorf("iterate dns_cache: %w", e))
+		// sweep reclaimed nothing. It is surfaced (via joinDNSGCErrors) so the
+		// caller's degraded-GC detector trips on a persistently wedged iterator
+		// rather than treating the failed pass as a success.
+		m.log.Warn().Err(iterErr).Msg("ebpf gc-dns: iterating dns_cache (next pass will retry)")
 	}
 
 	cleared, failed := deleteExpiredDNSEntries(m.objs.DnsCache, expired, m.log)
+
+	return cleared, joinDNSGCErrors(iterErr, failed)
+}
+
+// joinDNSGCErrors assembles the error a single GarbageCollectDNS sweep reports
+// from the two independent ways a sweep can fail to reclaim. Either alone is
+// enough to fail the sweep so the caller's degraded-GC detector trips:
+//   - iterErr != nil: the map could not be enumerated, so the sweep reclaimed
+//     nothing (a wedged iterator).
+//   - failed > 0: expired, eligible entries were found but at least one Delete
+//     failed for a real reason (EPERM, ENOMEM, ...), so the map is not shrinking.
+//
+// A clean sweep (no iterator error, nothing failed) returns nil even when it
+// reclaimed zero entries — "swept nothing because nothing had expired" is
+// success, not failure, and must not count toward escalation.
+func joinDNSGCErrors(iterErr error, failed int) error {
+	var errs []error
+	if iterErr != nil {
+		errs = append(errs, fmt.Errorf("iterate dns_cache: %w", iterErr))
+	}
 	if failed > 0 {
-		// Entries were expired and eligible but every Delete failed for a real
-		// reason (EPERM, ENOMEM, ...). The map is not shrinking; report it so a
-		// streak of such sweeps escalates instead of looking like progress.
 		errs = append(errs, fmt.Errorf("%d dns_cache delete(s) failed", failed))
 	}
-
-	return cleared, errors.Join(errs...)
+	return errors.Join(errs...)
 }
 
 // LookupContainer returns the container_map entry for a given cgroup ID.

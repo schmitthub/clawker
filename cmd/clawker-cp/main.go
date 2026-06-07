@@ -133,6 +133,41 @@ func (e *dnsGCEscalator) record(ok bool) (escalate bool) {
 	return e.failures == e.threshold
 }
 
+// dnsGCSweep runs one dns_cache GC pass and reports whether it succeeded, per
+// the CP no-panic discipline. The recover is the load-bearing part: a panicking
+// sweep is logged (event=dns_gc_panic) and counted as a failure (ok=false)
+// without tearing down the caller's ticker loop, so the loop keeps governing the
+// map rather than surrendering it until CP restart. It also returns false when
+// GarbageCollectDNS reports it could not reclaim (wedged iterator / failed
+// deletes) — a sweep that "succeeds" but reclaims nothing is the exact
+// silent-growth failure the caller's escalation exists to catch. Extracted from
+// the GC goroutine so the panic→false and error→false mapping is unit-testable
+// without driving the whole loop. gc is normally ebpfMgr.GarbageCollectDNS.
+func dnsGCSweep(gc func() (int, error), log *logger.Logger) (ok bool) {
+	ok = true
+	defer func() {
+		if r := recover(); r != nil {
+			ok = false
+			log.Error().Interface("panic", r).
+				Str("event", "dns_gc_panic").
+				Msg("dns_cache gc sweep panicked — skipping this pass, loop continues")
+		}
+	}()
+	n, err := gc()
+	if err != nil {
+		log.Warn().Err(err).
+			Str("event", "dns_gc_error").
+			Msg("dns_cache gc sweep could not reclaim — map may not be shrinking, loop continues")
+		return false
+	}
+	if n > 0 {
+		log.Debug().Int("cleared", n).
+			Str("event", "dns_gc_swept").
+			Msg("dns_cache gc removed expired entries")
+	}
+	return ok
+}
+
 func main() {
 	caCertPath := flag.String("tls-ca", consts.CPCACertPath, "CLI CA certificate")
 	serverCertPath := flag.String("tls-cert", consts.CPTLSCertPath, "TLS server certificate")
@@ -953,36 +988,6 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	dnsGCWg.Add(1)
 	go func() {
 		defer dnsGCWg.Done()
-		// sweepOnce isolates one GC pass so a panic in it is recovered without
-		// tearing down the ticker loop. Returns false when the pass panicked OR
-		// GarbageCollectDNS reported it could not reclaim (wedged iterator /
-		// failed deletes) so the loop can track consecutive failures and
-		// escalate — a sweep that "succeeds" but reclaims nothing is the exact
-		// silent-growth failure the escalation exists to catch.
-		sweepOnce := func() (ok bool) {
-			ok = true
-			defer func() {
-				if r := recover(); r != nil {
-					ok = false
-					log.Error().Interface("panic", r).
-						Str("event", "dns_gc_panic").
-						Msg("dns_cache gc sweep panicked — skipping this pass, loop continues")
-				}
-			}()
-			n, err := ebpfMgr.GarbageCollectDNS()
-			if err != nil {
-				log.Warn().Err(err).
-					Str("event", "dns_gc_error").
-					Msg("dns_cache gc sweep could not reclaim — map may not be shrinking, loop continues")
-				return false
-			}
-			if n > 0 {
-				log.Debug().Int("cleared", n).
-					Str("event", "dns_gc_swept").
-					Msg("dns_cache gc removed expired entries")
-			}
-			return ok
-		}
 		ticker := time.NewTicker(dnsGCInterval)
 		defer ticker.Stop()
 		escalator := dnsGCEscalator{threshold: dnsGCDegradedThreshold}
@@ -995,7 +1000,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 				// longer being reclaimed. Emit a distinct line on the tick that
 				// first crosses the threshold so an operator can tell a wedged
 				// GC from one transient failure. Logged once per crossing.
-				if escalator.record(sweepOnce()) {
+				if escalator.record(dnsGCSweep(ebpfMgr.GarbageCollectDNS, log)) {
 					log.Error().Int("consecutive_failures", escalator.failures).
 						Str("event", "dns_gc_degraded").
 						Msg("dns_cache gc has failed every sweep — map no longer being reclaimed, may grow unbounded")

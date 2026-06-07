@@ -76,4 +76,12 @@ func TestNewCPClockSyncTimeout_BranchesOnMeasured(t *testing.T) {
 
 	measured := newCPClockSyncTimeout(time.Now().Add(-time.Second), 30*time.Second, true, boom)
 	assert.NotErrorIs(t, measured, boom, "measured path is standalone, must not wrap a stale probe error")
+
+	// Defensive nil-guard: the unmeasured path is unreachable in waitForCPClockSync
+	// without a recorded probe error, but a nil lastErr must never %w-wrap into a
+	// "%!w(<nil>)" cause — it must produce a clean, non-wrapping error.
+	nilCause := newCPClockSyncTimeout(time.Now(), 0, false, nil)
+	require.Error(t, nilCause, "unmeasured path must still return an error when lastErr is nil")
+	assert.Nil(t, errors.Unwrap(nilCause), "nil lastErr must not be wrapped (no %!w(<nil>) cause)")
+	assert.NotContains(t, nilCause.Error(), "<nil>", "rendered error must not leak a nil cause")
 }
