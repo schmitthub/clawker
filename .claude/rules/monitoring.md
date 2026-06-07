@@ -11,6 +11,19 @@ paths:
 
 > For event schemas and OpenSearch quirks, see `.claude/docs/MONITORING-REFERENCE.md`.
 
+> **Ground in the live telemetry spec before any monitoring work — do not guess.**
+> Claude Code's metric/event surface evolves and is far larger than whatever a
+> running stack happens to have emitted. Before designing dashboards, queries,
+> ingest pipelines, index templates, or collector config, ALWAYS load the
+> upstream spec into context:
+> **https://code.claude.com/docs/en/monitoring-usage.md** (the `.md` suffix
+> serves raw markdown — fetch that, not the rendered page). It is the source of
+> truth for every metric (name, unit, attributes), every event
+> (`claude_code.*` name + fields), the standard/identity attributes, and the
+> **"Audit security events"** mapping of security signals → events. Live probes
+> confirm what is *currently flowing*; the spec tells you what *exists*. Use both
+> — never infer a field, label, or event name from memory.
+
 ## Purpose
 The monitoring stack provides critical security observability into Clawker's internal operations for end users.
 

@@ -1,10 +1,73 @@
 {
-  "description": "Drop the redundant scalar attributes.agent / attributes.project that Claude Code reflects from OTEL_RESOURCE_ATTRIBUTES onto every event record (canonical clawker identity lives at resource.agent / resource.project; dashboards filter on those). The reflected scalar attributes.agent collides with the attributes.agent object mapping (Claude Code also emits agent.name / skill.name / plugin.name / marketplace.name attribution on api_request/api_error per its OTel schema), which dropped 100% of claude-code logs. Removing the reflected scalars frees attributes.agent for Claude Code's own object-shaped attribution. Then reshape Claude Code's split attributes.prompt emissions into a single object field. Some events (user_prompt) ship attributes.prompt as a scalar string AND a sibling attributes.prompt.id; others (hook_execution_*, tool_decision) ship only attributes.prompt.id. OpenSearch auto-expands the dotted key into a nested object, which collides with the scalar prompt mapping. Move the scalar to attributes.prompt.value and keep attributes.prompt.id under the same object. Paired with attributes.prompt: {properties: {id: keyword, value: text}} on the claude-code index template.",
+  "description": "Drop the redundant scalar attributes.agent / attributes.project that Claude Code reflects from OTEL_RESOURCE_ATTRIBUTES onto every event record (canonical clawker identity lives at resource.agent / resource.project; dashboards filter on those). The reflected scalar attributes.agent collides with the attributes.agent object mapping (Claude Code also emits agent.name / skill.name / plugin.name / marketplace.name attribution on api_request/api_error per its OTel schema), which dropped 100% of claude-code logs. Removing the reflected scalars frees attributes.agent for Claude Code's own object-shaped attribution. Then reshape Claude Code's split attributes.prompt emissions into a single object field. Some events (user_prompt) ship attributes.prompt as a scalar string AND a sibling attributes.prompt.id; others (hook_execution_*, tool_decision) ship only attributes.prompt.id. OpenSearch auto-expands the dotted key into a nested object, which collides with the scalar prompt mapping. Move the scalar to attributes.prompt.value and keep attributes.prompt.id under the same object. Paired with attributes.prompt: {properties: {id: keyword, value: text}} on the claude-code index template. Additionally, parse the attributes.tool_parameters JSON string (emitted under OTEL_LOG_TOOL_DETAILS=1 on tool_result/tool_decision) and promote its inner keys to flat, readable, aggregatable top-level attributes: mcp_server_name / mcp_tool_name (so a malicious MCP tool surfaces by name instead of hiding under the generic tool_name=mcp_tool), bash_command / full_command / tool_description, skill_name, subagent_type. The raw attributes.tool_parameters blob is kept but is unaggregatable text; these promoted fields are what dashboards display and group on. Paired with explicit keyword/text mappings on the claude-code index template.",
   "processors": [
     {
       "script": {
         "lang": "painless",
         "source": "if (ctx.attributes == null) { return; } ctx.attributes.remove('agent'); ctx.attributes.remove('project'); def p = ctx.attributes.get('prompt'); if (p instanceof String) { def id = ctx.attributes.remove('prompt.id'); ctx.attributes.remove('prompt'); Map obj = new HashMap(); obj.put('value', p); if (id != null) { obj.put('id', id); } ctx.attributes.put('prompt', obj); }"
+      }
+    },
+    {
+      "json": {
+        "field": "attributes.tool_parameters",
+        "target_field": "_tp",
+        "ignore_failure": true,
+        "if": "ctx.attributes != null && ctx.attributes.tool_parameters instanceof String && ctx.attributes.tool_parameters.startsWith('{')"
+      }
+    },
+    {
+      "rename": {
+        "field": "_tp.mcp_server_name",
+        "target_field": "attributes.mcp_server_name",
+        "ignore_missing": true
+      }
+    },
+    {
+      "rename": {
+        "field": "_tp.mcp_tool_name",
+        "target_field": "attributes.mcp_tool_name",
+        "ignore_missing": true
+      }
+    },
+    {
+      "rename": {
+        "field": "_tp.bash_command",
+        "target_field": "attributes.bash_command",
+        "ignore_missing": true
+      }
+    },
+    {
+      "rename": {
+        "field": "_tp.full_command",
+        "target_field": "attributes.full_command",
+        "ignore_missing": true
+      }
+    },
+    {
+      "rename": {
+        "field": "_tp.description",
+        "target_field": "attributes.tool_description",
+        "ignore_missing": true
+      }
+    },
+    {
+      "rename": {
+        "field": "_tp.skill_name",
+        "target_field": "attributes.skill_name",
+        "ignore_missing": true
+      }
+    },
+    {
+      "rename": {
+        "field": "_tp.subagent_type",
+        "target_field": "attributes.subagent_type",
+        "ignore_missing": true
+      }
+    },
+    {
+      "remove": {
+        "field": "_tp",
+        "ignore_missing": true
       }
     }
   ]
