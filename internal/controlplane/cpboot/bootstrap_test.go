@@ -128,7 +128,7 @@ func newBootstrapFixture(t *testing.T) *bootstrapFixture {
 		return nil
 	}
 	// Stub the clock-sync gate (real impl dials the CP's GetSystemTime).
-	clockSyncFn = func(_ context.Context, _ config.Config) error {
+	clockSyncFn = func(_ context.Context, _ config.Config, _ *logger.Logger) error {
 		calls.clockSync.Add(1)
 		return nil
 	}
@@ -350,7 +350,7 @@ func TestEnsureRunning_HealthzTimeout_SurfacesError(t *testing.T) {
 func TestEnsureRunning_ClockSyncFailure_SurfacesError(t *testing.T) {
 	f := newBootstrapFixture(t)
 	// /healthz is green (fixture default), but the clock never catches up.
-	clockSyncFn = func(_ context.Context, _ config.Config) error {
+	clockSyncFn = func(_ context.Context, _ config.Config, _ *logger.Logger) error {
 		f.calls.clockSync.Add(1)
 		return fmt.Errorf("cp clock never caught up to host (test sentinel)")
 	}

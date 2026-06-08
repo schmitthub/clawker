@@ -224,7 +224,7 @@ func EnsureRunning(ctx context.Context, opts EnsureOpts) error {
 					return fmt.Errorf("controlplane: start existing cp: %w", err)
 				}
 			}
-			return cpReady(ctx, cfg)
+			return cpReady(ctx, cfg, log)
 		}
 
 		cpRunning := summary.State == container.StateRunning
@@ -295,7 +295,7 @@ func EnsureRunning(ctx context.Context, opts EnsureOpts) error {
 		return fmt.Errorf("controlplane: %w", err)
 	}
 
-	return cpReady(ctx, cfg)
+	return cpReady(ctx, cfg, log)
 }
 
 // Stop removes the CP container. Used by `clawker controlplane down`.
@@ -754,11 +754,11 @@ func cpBuildContext(binarySHA, version, revision, createdAt string) (io.Reader, 
 // drifted from the host would let clawkerd exchange an assertion whose
 // (host-clock) iat is in the CP's future, so clock sync is a first-class
 // readiness condition, not an afterthought.
-func cpReady(ctx context.Context, cfg config.Config) error {
+func cpReady(ctx context.Context, cfg config.Config, log *logger.Logger) error {
 	if err := healthzFn(ctx, cfg); err != nil {
 		return err
 	}
-	return clockSyncFn(ctx, cfg)
+	return clockSyncFn(ctx, cfg, log)
 }
 
 // waitForCPClockSync polls the public GetSystemTime RPC until the CP clock
@@ -770,35 +770,45 @@ func cpReady(ctx context.Context, cfg config.Config) error {
 // validates iat against with zero leeway — has caught up. Returns nil once
 // the CP has caught up, an error on timeout/non-convergence. Respects ctx
 // cancellation.
-func waitForCPClockSync(ctx context.Context, cfg config.Config) error {
+func waitForCPClockSync(ctx context.Context, cfg config.Config, log *logger.Logger) error {
 	adminPort := cfg.Settings().ControlPlane.AdminPort
 
 	start := time.Now()
 	deadline := start.Add(cpClockSyncTimeout)
 
-	var lastErr error
+	log.Info().
+		Str("event", "cp_clock_sync").
+		Str("component", "cpboot.clocksync").
+		Msg("probing control plane clock convergence with host")
 	for {
-		// A caller cancel surfaces its OWN cause — a different failure than the
-		// CP clock never catching up. An operator should not see the "Docker VM
-		// clock lagging" guidance when the real cause was the caller's context
-		// expiring, so this is checked independently of the internal deadline.
+
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+
+		hostTime := time.Now().UTC()
 		cpTime, err := probeCPTimeFn(ctx, adminPort)
-		// Both sides compared in UTC: cpTime is UTC (Timestamp.AsTime), and the
-		// host's local TZ is normalized away by .UTC() so the comparison is a
-		// pure instant comparison regardless of where the host is configured.
-		if err == nil && !time.Now().UTC().After(cpTime) {
+
+		if err == nil && hostTime.Before(cpTime) {
+			log.Info().
+				Str("event", "cp_clock_converged").
+				Str("component", "cpboot.clocksync").
+				Msg(fmt.Sprintf("control plane clock caught up to host, hostTime=%s, cpTime=%s, cp_sub_delta=%s", hostTime, cpTime, cpTime.Sub(hostTime)))
 			return nil // CP clock has caught up to the host
 		}
-		if err != nil {
-			lastErr = err
-		} else {
-			lastErr = fmt.Errorf("CP clock still behind host (CP at %s)", cpTime.UTC().Format(time.RFC3339Nano))
-		}
+
+		log.Info().
+			Str("event", "cp_clock_probe").
+			Str("component", "cpboot.clocksync").
+			Msg(fmt.Sprintf("reprobing: control plane clock still behind host, hostTime=%s, cpTime=%s", hostTime, cpTime))
+
 		if time.Now().After(deadline) {
-			return newCPClockSyncTimeout(start, lastErr)
+			err := fmt.Errorf("cp clock sync deadline exceeded")
+			log.Error().
+				Str("event", "cp_clock_sync_timeout").
+				Str("component", "cpboot.clocksync").
+				Msg(err.Error())
+			return err
 		}
 		select {
 		case <-ctx.Done():
@@ -806,22 +816,6 @@ func waitForCPClockSync(ctx context.Context, cfg config.Config) error {
 		case <-time.After(cpClockSyncInterval):
 		}
 	}
-}
-
-// newCPClockSyncTimeout builds the actionable error returned when the CP
-// clock never catches up to the host. The message names the most common
-// cause (a lagging Docker Desktop VM clock after sleep) and the fix so an
-// operator isn't left re-debugging an opaque bootstrap failure. lastErr is
-// the most recent probe failure or behind-host observation.
-func newCPClockSyncTimeout(start time.Time, lastErr error) error {
-	waited := time.Since(start).Round(time.Millisecond)
-	if lastErr == nil {
-		// Defensive: the loop only reaches the deadline after at least one
-		// probe, so lastErr is non-nil in practice. Guard so a future
-		// restructure never %w-wraps a nil cause into a "%!w(<nil>)".
-		return fmt.Errorf("control plane clock did not catch up to host after %s", waited)
-	}
-	return fmt.Errorf("control plane clock did not catch up to host after %s: %w — the Docker VM clock is likely lagging after host sleep; wait for it to re-sync (or restart Docker Desktop), then retry", waited, lastErr)
 }
 
 // waitForCPHealthz polls http://127.0.0.1:<HealthPort>/healthz until the

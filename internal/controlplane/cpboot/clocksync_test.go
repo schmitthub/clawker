@@ -2,7 +2,6 @@ package cpboot
 
 import (
 	"context"
-	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -11,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // TestWaitForCPClockSync_CaughtUp_ReturnsImmediately: a single probe whose
@@ -25,7 +25,7 @@ func TestWaitForCPClockSync_CaughtUp_ReturnsImmediately(t *testing.T) {
 		return time.Now().UTC().Add(time.Second), nil // CP caught up to host
 	}
 
-	err := waitForCPClockSync(t.Context(), configmocks.NewBlankConfig())
+	err := waitForCPClockSync(t.Context(), configmocks.NewBlankConfig(), logger.Nop())
 	require.NoError(t, err)
 	assert.Equal(t, int32(1), n.Load(), "a caught-up CP clock should pass on first probe")
 }
@@ -44,7 +44,7 @@ func TestWaitForCPClockSync_ConvergesAfterDrift(t *testing.T) {
 		return time.Now().UTC().Add(time.Second), nil // NTP caught up
 	}
 
-	err := waitForCPClockSync(t.Context(), configmocks.NewBlankConfig())
+	err := waitForCPClockSync(t.Context(), configmocks.NewBlankConfig(), logger.Nop())
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, n.Load(), int32(2), "must re-probe until the CP catches up to the host")
 }
@@ -62,23 +62,6 @@ func TestWaitForCPClockSync_NonConvergence_ReturnsError(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
 	defer cancel()
-	err := waitForCPClockSync(ctx, configmocks.NewBlankConfig())
+	err := waitForCPClockSync(ctx, configmocks.NewBlankConfig(), logger.Nop())
 	require.Error(t, err)
-}
-
-// TestNewCPClockSyncTimeout_WrapsCause: the timeout error wraps the last
-// probe failure (so callers can errors.Is the root cause), and a nil cause
-// must not %w-wrap into a "%!w(<nil>)" rendering.
-func TestNewCPClockSyncTimeout_WrapsCause(t *testing.T) {
-	boom := errors.New("probe boom")
-
-	withCause := newCPClockSyncTimeout(time.Now().UTC().Add(-time.Second), boom)
-	assert.ErrorIs(t, withCause, boom, "timeout must wrap the last probe error")
-
-	// Defensive nil-guard: the loop only reaches the deadline after a probe,
-	// but a nil lastErr must never %w-wrap into a "%!w(<nil>)" cause.
-	nilCause := newCPClockSyncTimeout(time.Now(), nil)
-	require.Error(t, nilCause, "must still return an error when lastErr is nil")
-	assert.Nil(t, errors.Unwrap(nilCause), "nil lastErr must not be wrapped (no %!w(<nil>) cause)")
-	assert.NotContains(t, nilCause.Error(), "<nil>", "rendered error must not leak a nil cause")
 }
