@@ -92,16 +92,16 @@ func (s *adminServer) ListAgents(_ context.Context, _ *adminv1.ListAgentsRequest
 }
 
 // GetSystemTime returns the CP container's current wall-clock time as Unix
-// nanoseconds, computed from time.Now().UTC() so the value is an absolute UTC
-// instant independent of any TZ setting on the CP host. It is the public
-// bootstrap RPC (the public scope in
-// AdminMethodScopes) the CLI polls to wait until the CP clock has caught up
-// to the host before minting its OAuth2 client assertion: clawker-cp and
-// Hydra share this
-// container, so this is exactly the clock fosite validates the assertion's
-// `iat` against (with zero leeway). No registry, queue, or auth state is
-// touched — it must answer even while the rest of the CP is busy, since
-// it gates the caller's ability to authenticate at all.
+// nanoseconds. UnixNano counts from the Unix epoch and is inherently a
+// TZ-independent absolute instant, so no UTC conversion is needed here — the
+// CLI compares it against its own clock in the UTC domain on the read side.
+// It is the public bootstrap RPC (the public scope in AdminMethodScopes) the
+// CLI polls to wait until the CP clock has caught up to the host before minting
+// its OAuth2 client assertion: clawker-cp and Hydra share this container, so
+// this is exactly the clock fosite validates the assertion's `iat` against
+// (with zero leeway). No registry, queue, or auth state is touched — it must
+// answer even while the rest of the CP is busy, since it gates the caller's
+// ability to authenticate at all.
 func (s *adminServer) GetSystemTime(_ context.Context, _ *adminv1.GetSystemTimeRequest) (*adminv1.GetSystemTimeResult, error) {
-	return &adminv1.GetSystemTimeResult{UnixNanos: time.Now().UTC().UnixNano()}, nil
+	return &adminv1.GetSystemTimeResult{UnixNanos: time.Now().UnixNano()}, nil
 }

@@ -152,27 +152,6 @@ func cpImageDockerfile(binarySHA, version, revision, createdAt string) string {
 		"CMD [\"/usr/local/bin/clawker-cp\"]\n"
 }
 
-// EnsureRunning is the host-side entry point for bringing up the control
-// plane. Idempotent and concurrency-safe. Returns nil when the CP
-// container is running, /healthz is green, AND the CP clock has caught up
-// to the host (see cpReady). A green /healthz with the CP clock still
-// behind the host returns a clock-sync error, not nil — so a
-// container start blocks until the CP clock has reconverged with the host
-// before clawkerd exchanges its (host-clock-minted) agent assertion.
-//
-// Drift gate: an existing CP container whose consts.LabelCPBinarySHA
-// matches the host clawker binary's embedded clawker-cp + ebpf-manager
-// hash is adopted (started if stopped); any mismatch (including legacy
-// containers that predate the label) is force-removed and recreated so
-// the new mount/env spec reaches the running CP. Mount spec itself is
-// not inspected — mounts derive from compile-time constants only, so
-// any mount/env/cmd change implies a host rebuild, which changes the
-// embedded bytes, which changes the SHA.
-//
-// On partial failure (container created but /healthz or the clock-sync
-// gate timed out) the next call observes the running/unhealthy container
-// and re-runs the readiness gate (clock sync self-heals once the VM
-// clock re-syncs).
 // EnsureOpts bundles the inputs EnsureRunning needs. HostDirs is required;
 // callers resolve it host-side from consts.{ConfigDir,DataDir,StateDir,
 // CacheDir} before invoking. The CP container reads the host paths back
@@ -186,11 +165,28 @@ type EnsureOpts struct {
 	HostDirs HostDirs
 }
 
-// EnsureRunning is the readiness gate: it brings the CP up (build image,
-// create/start container, /healthz green, host↔CP clock sync) and returns
-// once ready. The clock-sync step is a readiness gate — it blocks until the
-// host↔CP clocks align — and surfaces no value; assertions are minted in the
-// host clock with no offset correction.
+// EnsureRunning is the host-side entry point for bringing up the control
+// plane. Idempotent and concurrency-safe. It builds the image, creates/starts
+// the container, then runs the readiness gate (see cpReady): it returns nil
+// only when the CP container is running, /healthz is green, AND the CP clock
+// has caught up to the host. A green /healthz with the CP clock still behind
+// the host returns a clock-sync error, not nil — so a container start blocks
+// until the CP clock has reconverged with the host before clawkerd exchanges
+// its (host-clock-minted) agent assertion. The clock-sync step's value is the
+// wait: EnsureRunning returns only error, no offset; assertions are minted in
+// the host clock with no correction.
+//
+// Drift gate: an existing CP container whose consts.LabelCPBinarySHA matches
+// the host clawker binary's embedded clawker-cp + ebpf-manager hash is adopted
+// (started if stopped); any mismatch (including legacy containers that predate
+// the label) is force-removed and recreated so the new mount/env spec reaches
+// the running CP. Mount spec itself is not inspected — mounts derive from
+// compile-time constants only, so any mount/env/cmd change implies a host
+// rebuild, which changes the embedded bytes, which changes the SHA.
+//
+// On partial failure (container created but /healthz or the clock-sync gate
+// timed out) the next call observes the running/unhealthy container and re-runs
+// the readiness gate (clock sync self-heals once the VM clock re-syncs).
 func EnsureRunning(ctx context.Context, opts EnsureOpts) error {
 	if err := opts.HostDirs.Validate(); err != nil {
 		return fmt.Errorf("controlplane: %w", err)

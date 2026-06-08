@@ -10,6 +10,10 @@
 #
 # Deleting the marker here forces re-init on every session boundary. Runs
 # unfiltered (startup|resume|clear|compact) so no boundary slips through.
+# jq parses session_id from stdin (consumed here; the heredoc below is the only
+# other output and reads no stdin). Warn loudly if jq is missing so the silent
+# $PPID fallback — the drift this keying fixes — is visible.
+command -v jq >/dev/null 2>&1 || echo "serena-session-start hook: jq not found; falling back to \$PPID, which drifts across hook spawns and can wedge the Serena gate. Install jq." >&2
 SID="$(jq -r '.session_id // empty')"
 rm -f "/tmp/.claude_serena_init_${SID:-$PPID}"
 

@@ -390,6 +390,11 @@ const (
 // scope landing in an admin map (or vice versa). The AuthInterceptor
 // treats this value as "skip the token check"; an empty or unmapped
 // scope fails closed (deny).
+//
+// Because it is untyped, ScopePublic also assigns into any other string
+// context — use it ONLY as a value in a service's method-scope map, never as
+// a client-id or other scope-shaped argument, where its universality is not
+// intended.
 const ScopePublic = "public"
 
 // OIDC client IDs.

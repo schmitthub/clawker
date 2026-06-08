@@ -177,9 +177,9 @@ session lifecycle + identity fields. `AgentRegistered.ApplyTo` sets
 
 ## Method scopes + interceptor
 
-- `controlplane.AgentMethodScopes()` maps
-  `/clawker.agent.v1.AgentService/Register` →
-  `consts.ScopeAgentSelfRegister`. AuthInterceptor on the agent
+- `agentv1.AgentMethodScopes()` (in `api/agent/v1`, beside the proto
+  bindings) maps `/clawker.agent.v1.AgentService/Register` →
+  `agentv1.ScopeSelfRegister`. AuthInterceptor on the agent
   listener fails closed on unmapped methods.
 - `IdentityInterceptor` runs a universal three-stage gate on every
   AgentService RPC (no opt-out — applies to Register too):
@@ -206,8 +206,7 @@ session lifecycle + identity fields. `AgentRegistered.ApplyTo` sets
 **Uses**: `internal/auth` (AgentFullName, NewAgentName,
 NewProjectSlug, ContainerIDFromCert, AgentFullNameFromCert,
 AgentSANScheme, ContainerSANScheme), `internal/consts` (Network,
-LabelAgent/Project/Purpose, ContainerCP, ContainerClawkerd,
-ScopeAgentSelfRegister),
+LabelAgent/Project/Purpose, ContainerCP, ContainerClawkerd),
 `internal/controlplane/dockerevents`, `internal/controlplane/overseer`,
 `internal/logger`, `api/agent/v1`, `api/clawkerd/v1`,
 `modernc.org/sqlite`, `github.com/moby/moby/api/types/{container,

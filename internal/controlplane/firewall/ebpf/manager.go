@@ -892,9 +892,15 @@ func deleteExpiredDNSEntries(m bypassMap, keys []uint32, log *logger.Logger) (cl
 }
 
 // GarbageCollectDNS removes expired entries from the dns_cache map and
-// returns the number of entries that were actually cleared. This routine
-// is retry-safe — transient delete failures are logged at Debug and the
-// next GC pass will try again.
+// returns (cleared, err): cleared is the number of entries actually evicted,
+// and err is non-nil (via joinDNSGCErrors) when the sweep could not reclaim —
+// the map could not be enumerated (wedged iterator) or an expired entry could
+// not be deleted for a real reason. A clean sweep that reclaims zero entries
+// still returns nil. The non-nil err lets the CP main loop's degraded-GC
+// detector trip on a persistently wedged sweep rather than mistaking a no-op
+// pass for progress. Individual delete failures are also logged at Debug and
+// the next GC pass retries them. The protected IP-literal seeds (m.seededIPs,
+// owned by SyncRoutes) are never evicted.
 func (m *Manager) GarbageCollectDNS() (cleared int, err error) {
 	now := uint32(time.Now().Unix())
 

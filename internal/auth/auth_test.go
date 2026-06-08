@@ -617,11 +617,13 @@ func TestBuildSignedAssertion_IATIsNow(t *testing.T) {
 		"exp must be ~now+ExpiresInSeconds, got %s", exp)
 }
 
-// TestBuildSignedAssertion_HonorsInjectedNow pins the clock-injection
-// contract: when AssertionClaims.Now is set (the CLI passes CP-aligned
-// time), iat/exp are anchored to it, not to the local wall clock. This is
-// what lets the host mint an assertion in Hydra's clock domain even when
-// the host clock is far from the CP's.
+// TestBuildSignedAssertion_HonorsInjectedNow pins the clock-injection seam:
+// when AssertionClaims.Now is set, iat/exp anchor to it rather than the local
+// wall clock. This seam exists only for deterministic test pinning — production
+// never sets Now (it leaves it zero → time.Now() and instead waits for the CP
+// clock to converge with the host before minting; see adminclient.Dial). The
+// large injected offset below proves a regression that fell back to time.Now()
+// would fail.
 func TestBuildSignedAssertion_HonorsInjectedNow(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)

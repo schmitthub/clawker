@@ -340,6 +340,29 @@ func TestEnsureRunning_HealthzTimeout_SurfacesError(t *testing.T) {
 	assert.Equal(t, int32(1), f.calls.create.Load(), "container still created before healthz")
 }
 
+// TestEnsureRunning_ClockSyncFailure_SurfacesError pins the readiness contract
+// end-to-end: a green /healthz with a CP clock that never converges must make
+// EnsureRunning FAIL, not succeed. The other clock-sync tests stub the gate to
+// return nil and only assert it was invoked; this one stubs it to error and
+// proves cpReady propagates that error out of EnsureRunning (a reorder that ran
+// the gate but swallowed its error, or returned nil after healthz, would regress
+// the whole point of gating create on clock sync).
+func TestEnsureRunning_ClockSyncFailure_SurfacesError(t *testing.T) {
+	f := newBootstrapFixture(t)
+	// /healthz is green (fixture default), but the clock never catches up.
+	clockSyncFn = func(_ context.Context, _ config.Config) error {
+		f.calls.clockSync.Add(1)
+		return fmt.Errorf("cp clock never caught up to host (test sentinel)")
+	}
+
+	err := EnsureRunning(t.Context(), f.ensureOpts())
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "cp clock never caught up to host (test sentinel)",
+		"clock-sync gate failure must propagate out of EnsureRunning")
+	assert.Equal(t, int32(1), f.calls.clockSync.Load(), "clock-sync gate ran")
+	assert.Equal(t, int32(1), f.calls.create.Load(), "container created before the clock-sync gate")
+}
+
 func TestEnsureRunning_ConcurrentCallers_SingleCreate(t *testing.T) {
 	// INV-B2-006: the package-level mutex must serialize overlapping
 	// EnsureRunning calls. The fake blocks ContainerCreate on a

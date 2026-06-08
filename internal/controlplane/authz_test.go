@@ -210,6 +210,59 @@ func TestAuthInterceptor_UnmappedMethod_Denied(t *testing.T) {
 	assert.Empty(t, introspector.IntrospectCalls())
 }
 
+// TestAuthInterceptor_MappedEmptyScope_Denied pins the OTHER half of the
+// fail-closed branch: a method that IS present in the scope map but maps to the
+// zero-value (empty) scope must still deny, and must never reach introspection.
+// TestAuthInterceptor_UnmappedMethod_Denied covers the absent-key half; this
+// covers the mapped-to-"" half. The hole this guards: a regression restoring
+// the empty string as the public sentinel (the pre-fix behavior) would reopen a
+// fail-open path that no other test catches — TestAdminMethodScopes_CoversAllRPCs
+// only checks key presence, and the public-scope test pins "public", not "".
+func TestAuthInterceptor_MappedEmptyScope_Denied(t *testing.T) {
+	introspector := allowAllIntrospector()
+
+	log := logger.Nop()
+	// Method is mapped, but to the zero-value scope — must fail closed, never
+	// be treated as public.
+	interceptor := controlplane.NewAuthInterceptor(introspector, map[string]adminv1.AdminScope{
+		"/" + adminv1.ServiceName + "/FirewallSyncRoutes": adminv1.AdminScope(""),
+	}, log)
+
+	srv := grpc.NewServer(
+		grpc.ChainUnaryInterceptor(interceptor.UnaryInterceptor()),
+	)
+	queue := cpfw.NewActionQueue(log)
+	t.Cleanup(func() { _ = queue.Close() })
+	handler := cpfw.NewHandler(cpfw.HandlerDeps{
+		EBPF:     noopEBPF(),
+		Resolver: nopContainerResolver,
+		Log:      log,
+		Queue:    queue,
+	})
+	adminv1.RegisterAdminServiceServer(srv, handler)
+
+	lis := bufconnListen(t)
+	go func() { srv.Serve(lis) }() //nolint:errcheck
+	t.Cleanup(srv.Stop)
+
+	conn, err := grpc.NewClient(
+		"passthrough:///bufconn",
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithContextDialer(bufconnDialer(lis)),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { conn.Close() })
+
+	client := adminv1.NewAdminServiceClient(conn)
+	ctx := withBearer(context.Background(), "admin-token")
+	_, err = client.FirewallSyncRoutes(ctx, &adminv1.FirewallSyncRoutesRequest{})
+	require.Error(t, err)
+	assert.Equal(t, codes.Unauthenticated, status.Code(err),
+		"a method mapped to the empty scope must fail closed, not be treated as public")
+	assert.Empty(t, introspector.IntrospectCalls(),
+		"the empty-scope deny must short-circuit before introspection")
+}
+
 // TestAuthInterceptor_PublicScope_PublicMethod_NoToken_Allowed pins the public
 // branch that GetSystemTime relies on for token-exchange bootstrap: a method
 // mapped to consts.ScopePublic must be served on mTLS alone, with NO bearer

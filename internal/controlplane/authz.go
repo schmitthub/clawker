@@ -198,7 +198,14 @@ func (a *AuthInterceptor[S]) authorize(ctx context.Context, fullMethod string) e
 	required, ok := a.methodScopes[fullMethod]
 	requiredScope := string(required)
 	if !ok || requiredScope == "" {
-		a.log.Warn().Str("method", fullMethod).Msg("authz: unmapped method denied")
+		// Both fail closed identically; distinguish the cause in the log so an
+		// operator can tell a missing proto-method scope entry from a method
+		// deliberately/accidentally mapped to the zero-value scope.
+		reason := "method has no scope entry"
+		if ok {
+			reason = "method mapped to empty scope"
+		}
+		a.log.Warn().Str("method", fullMethod).Str("reason", reason).Msg("authz: method denied (fail-closed)")
 		return status.Error(codes.Unauthenticated, "unauthorized")
 	}
 

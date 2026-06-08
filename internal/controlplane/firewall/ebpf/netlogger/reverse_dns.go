@@ -123,18 +123,10 @@ func (m *ReverseDNSMap) Lookup(hash uint32) string {
 // row or a DomainSource panic must not kill the netlogger pipeline
 // (CP no-panic discipline).
 func (m *ReverseDNSMap) Run(ctx context.Context, interval time.Duration) {
-	defer func() {
-		if r := recover(); r != nil {
-			m.log.Error().
-				Interface("panic", r).
-				Str("event", "netlogger_reverse_dns_panic").
-				Msg("reverse-DNS refresh loop panicked — Lookup will return cached values only")
-		}
-	}()
 	if interval <= 0 {
 		interval = 5 * time.Second
 	}
-	m.refresh()
+	m.refreshRecovered()
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
@@ -142,9 +134,28 @@ func (m *ReverseDNSMap) Run(ctx context.Context, interval time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			m.refresh()
+			m.refreshRecovered()
 		}
 	}
+}
+
+// refreshRecovered runs one refresh pass, recovering from a panic so a single
+// bad sweep is logged and skipped rather than tearing down the loop. A
+// top-level recover would catch the first panic and then return permanently,
+// freezing reverse-DNS attribution at the last good map for the rest of the CP
+// lifetime; recovering per-tick keeps the loop alive (mirrors the per-sweep
+// recover discipline of the dns_cache GC goroutine). Enforcement is unaffected
+// either way — this map only attributes egress records.
+func (m *ReverseDNSMap) refreshRecovered() {
+	defer func() {
+		if r := recover(); r != nil {
+			m.log.Error().
+				Interface("panic", r).
+				Str("event", "netlogger_reverse_dns_panic").
+				Msg("reverse-DNS refresh panicked — skipping this pass, Lookup serves cached values until the next tick")
+		}
+	}()
+	m.refresh()
 }
 
 // refresh rebuilds byHash from DomainSource and walks dns_cache to

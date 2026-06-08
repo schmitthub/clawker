@@ -12,6 +12,9 @@
 # one parent process — $PPID drifts between invocations, which stranded the
 # marker under one PID while the gate looked under another (permanent false
 # DENY). session_id arrives on stdin; fall back to $PPID only if absent.
+# jq is required (also for the decision JSON below); warn loudly if missing so
+# the silent $PPID fallback — the exact drift this keying fixes — is visible.
+command -v jq >/dev/null 2>&1 || echo "serena-first hook: jq not found; falling back to \$PPID, which drifts across hook spawns and can wedge the Serena gate. Install jq." >&2
 SID="$(jq -r '.session_id // empty')"
 MARKER="/tmp/.claude_serena_init_${SID:-$PPID}"
 

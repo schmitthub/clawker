@@ -246,9 +246,9 @@ type tokenSource struct {
 	mu        sync.Mutex
 	cached    string
 	expiresAt time.Time
-	// synced latches once the CP clock has been observed within
-	// clockSyncTolerance of the host, so the wait runs once per source and
-	// every subsequent refresh mints immediately.
+	// synced latches once the CP clock has been observed at or past the host
+	// clock, so the wait runs once per source and every subsequent refresh
+	// mints immediately.
 	synced bool
 }
 

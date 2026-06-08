@@ -6,5 +6,6 @@
 # under drifting parents, so a $PPID marker written here may never be seen by
 # the PreToolUse gate, leaving it stuck on a false DENY. Fall back to $PPID
 # only if session_id is absent.
+command -v jq >/dev/null 2>&1 || echo "serena-init-marker hook: jq not found; marker falls back to \$PPID and may not be seen by the PreToolUse gate. Install jq." >&2
 SID="$(jq -r '.session_id // empty')"
 touch "/tmp/.claude_serena_init_${SID:-$PPID}"
