@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -121,22 +122,28 @@ func (h *HydraIntrospector) Introspect(ctx context.Context, token, requiredScope
 // Flow: extract bearer token from gRPC metadata → introspect →
 // check active + scope → optional client_id pin → allow or deny.
 // Fail-closed on any error.
-type AuthInterceptor struct {
+//
+// It is generic over the service's scope type S (a distinct named string
+// type per service, e.g. adminv1.AdminScope, agentv1.AgentScope). Type
+// inference binds S from the methodScopes map at construction, so an
+// admin interceptor cannot be built from an agent scope map and vice
+// versa — cross-service scope wiring fails to compile.
+type AuthInterceptor[S ~string] struct {
 	introspector     Introspector
-	methodScopes     map[string]string // gRPC full method → required scope
-	requiredClientID string            // optional: when non-empty, token's client_id must match
+	methodScopes     map[string]S // gRPC full method → required scope
+	requiredClientID string       // optional: when non-empty, token's client_id must match
 	log              *logger.Logger
 }
 
 // NewAuthInterceptor creates an interceptor that validates tokens via
 // the given Introspector. methodScopes maps gRPC method names
 // (e.g. "/clawker.admin.v1.AdminService/Install") to required OAuth2
-// scopes (e.g. "admin").
-func NewAuthInterceptor(introspector Introspector, methodScopes map[string]string, log *logger.Logger) *AuthInterceptor {
+// scopes (e.g. adminv1.ScopeAdmin). S is inferred from the map.
+func NewAuthInterceptor[S ~string](introspector Introspector, methodScopes map[string]S, log *logger.Logger) *AuthInterceptor[S] {
 	if log == nil {
 		log = logger.Nop()
 	}
-	return &AuthInterceptor{
+	return &AuthInterceptor[S]{
 		introspector: introspector,
 		methodScopes: methodScopes,
 		log:          log,
@@ -154,13 +161,13 @@ func NewAuthInterceptor(introspector Introspector, methodScopes map[string]strin
 // admin RPC except the public GetSystemTime, and the CLI client_id is
 // the only one Hydra is currently configured to grant that scope to.
 // Returns the receiver for fluent chaining at construction.
-func (a *AuthInterceptor) RequireClientID(clientID string) *AuthInterceptor {
+func (a *AuthInterceptor[S]) RequireClientID(clientID string) *AuthInterceptor[S] {
 	a.requiredClientID = clientID
 	return a
 }
 
 // UnaryInterceptor returns a gRPC unary server interceptor.
-func (a *AuthInterceptor) UnaryInterceptor() grpc.UnaryServerInterceptor {
+func (a *AuthInterceptor[S]) UnaryInterceptor() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		if err := a.authorize(ctx, info.FullMethod); err != nil {
 			return nil, err
@@ -170,7 +177,7 @@ func (a *AuthInterceptor) UnaryInterceptor() grpc.UnaryServerInterceptor {
 }
 
 // StreamInterceptor returns a gRPC stream server interceptor.
-func (a *AuthInterceptor) StreamInterceptor() grpc.StreamServerInterceptor {
+func (a *AuthInterceptor[S]) StreamInterceptor() grpc.StreamServerInterceptor {
 	return func(srv any, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 		if err := a.authorize(stream.Context(), info.FullMethod); err != nil {
 			return err
@@ -180,23 +187,24 @@ func (a *AuthInterceptor) StreamInterceptor() grpc.StreamServerInterceptor {
 }
 
 // GRPCServerOptions returns gRPC server options wired with both interceptors.
-func (a *AuthInterceptor) GRPCServerOptions() []grpc.ServerOption {
+func (a *AuthInterceptor[S]) GRPCServerOptions() []grpc.ServerOption {
 	return []grpc.ServerOption{
 		grpc.UnaryInterceptor(a.UnaryInterceptor()),
 		grpc.StreamInterceptor(a.StreamInterceptor()),
 	}
 }
 
-func (a *AuthInterceptor) authorize(ctx context.Context, fullMethod string) error {
-	requiredScope, ok := a.methodScopes[fullMethod]
-	if !ok {
+func (a *AuthInterceptor[S]) authorize(ctx context.Context, fullMethod string) error {
+	required, ok := a.methodScopes[fullMethod]
+	requiredScope := string(required)
+	if !ok || requiredScope == "" {
 		a.log.Warn().Str("method", fullMethod).Msg("authz: unmapped method denied")
 		return status.Error(codes.Unauthenticated, "unauthorized")
 	}
 
-	// Empty scope means the method is public, served on mTLS alone with
-	// no bearer token (e.g. AdminService.GetSystemTime).
-	if requiredScope == "" {
+	// Public scope means the method is served on mTLS alone with
+	// no authz bearer token (e.g. AdminService.GetSystemTime).
+	if requiredScope == consts.ScopePublic {
 		return nil
 	}
 

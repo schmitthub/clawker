@@ -380,16 +380,17 @@ const (
 	InitStepTimeoutPostInitSeconds uint32 = 600
 )
 
-// Auth scopes (for gRPC method authorization).
-const (
-	ScopeAdmin = "admin"
-	// ScopeAgentSelfRegister gates clawkerd's calls on AgentService.
-	// AgentService proto is empty in this branch; Hydra still grants
-	// this scope so future inbound clawkerd→CP RPCs land with the
-	// auth chain intact. Finer-grained agent scopes can be added
-	// alongside future methods.
-	ScopeAgentSelfRegister = "agent:self:register"
-)
+// ScopePublic is the cross-service sentinel marking a gRPC method as
+// public — no bearer token required (the listener's mTLS still
+// authenticates the channel). It is intentionally UNTYPED so it assigns
+// into any service's distinct scope map (api/admin/v1.AdminScope,
+// api/agent/v1.AgentScope, …) — it is the one scope that legitimately
+// belongs to every service. Per-service scopes are distinct named types
+// defined beside their proto bindings, so the compiler rejects an agent
+// scope landing in an admin map (or vice versa). The AuthInterceptor
+// treats this value as "skip the token check"; an empty or unmapped
+// scope fails closed (deny).
+const ScopePublic = "public"
 
 // OIDC client IDs.
 const (

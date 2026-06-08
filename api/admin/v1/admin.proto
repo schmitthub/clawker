@@ -96,7 +96,7 @@ service AdminService {
   rpc ListAgents(ListAgentsRequest) returns (ListAgentsResult);
 
   // GetSystemTime returns the control plane's current wall-clock time.
-  // This RPC is intentionally PUBLIC (empty scope in AdminMethodScopes —
+  // This RPC is intentionally PUBLIC (the public scope in AdminMethodScopes —
   // no bearer token required), because it bootstraps the very auth flow:
   // the CLI calls it BEFORE minting a time-sensitive OAuth2 client
   // assertion so it can align the assertion's `iat` to the CP's clock.

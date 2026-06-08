@@ -166,11 +166,6 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 	}
 
 	// --- Phase B: Create container with spinner ---
-	//
-	// `create` never boots the control plane: the agent assertion is minted in
-	// the host clock (the source of truth) and the CP clock only needs to be
-	// converged before the container STARTS, which the pre-start CP-ensure
-	// handles. Creating a container must not spin up CP.
 
 	events := make(chan shared.CreateContainerEvent, 16)
 	type outcome struct {

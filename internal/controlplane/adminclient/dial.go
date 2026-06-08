@@ -451,11 +451,13 @@ func fetchAccessToken(ctx context.Context, signingKey *ecdsa.PrivateKey, tokenUR
 		return "", 0, fmt.Errorf("build assertion: %w", err)
 	}
 
+	adminScope := string(adminv1.ScopeAdmin)
+
 	form := url.Values{
 		"grant_type":            {"client_credentials"},
 		"client_assertion_type": {"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"},
 		"client_assertion":      {assertion},
-		"scope":                 {consts.ScopeAdmin},
+		"scope":                 {adminScope},
 	}
 
 	client := &http.Client{

@@ -511,7 +511,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// the CLI is the only client that holds the admin scope and we
 	// don't want to accidentally lock out a future second admin client.
 	agentInterceptor := controlplane.
-		NewAuthInterceptor(introspector, controlplane.AgentMethodScopes(), log).
+		NewAuthInterceptor(introspector, agentv1.AgentMethodScopes(), log).
 		RequireClientID(consts.ClientIDAgent)
 
 	grpcServer := grpc.NewServer(

@@ -375,7 +375,7 @@ func requireSliceEqual(t *testing.T, expected, actual []string) {
 // ---------------------------------------------------------------------------
 
 // testFactory builds a *cmdutil.Factory backed by a FakeClient for Tier 2 create tests.
-func testFactory(t *testing.T, fake *mocks.FakeClient, overrides ...func(*cmdutil.Factory)) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
+func testFactory(t *testing.T, fake *mocks.FakeClient) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 	// Isolate XDG dirs + mint per-test auth material. shared.CreateContainer
 	// reads the CA cert + signing key + agentregistry DB path through
@@ -389,7 +389,7 @@ func testFactory(t *testing.T, fake *mocks.FakeClient, overrides ...func(*cmduti
 	cwd, _ := os.Getwd()
 	t.Setenv("HOME", filepath.Dir(cwd))
 	tio, in, out, errOut := iostreams.Test()
-	f := &cmdutil.Factory{
+	return &cmdutil.Factory{
 		IOStreams: tio,
 		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
 		TUI:       tui.NewTUI(tio),
@@ -417,11 +417,7 @@ agent:
 			return hostproxytest.NewMockManager()
 		},
 		Prompter: func() *prompter.Prompter { return prompter.NewPrompter(tio) },
-	}
-	for _, override := range overrides {
-		override(f)
-	}
-	return f, in, out, errOut
+	}, in, out, errOut
 }
 
 func TestCreateRun(t *testing.T) {

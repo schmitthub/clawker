@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	agentv1 "github.com/schmitthub/clawker/api/agent/v1"
 	"github.com/schmitthub/clawker/internal/consts"
 )
 
@@ -65,8 +67,8 @@ func TestRegisterCLIClient_PayloadShape(t *testing.T) {
 	}
 
 	// Assert scope.
-	if v, _ := captured["scope"].(string); v != consts.ScopeAdmin {
-		t.Errorf("scope = %q, want %q", v, consts.ScopeAdmin)
+	if v, _ := captured["scope"].(string); v != string(adminv1.ScopeAdmin) {
+		t.Errorf("scope = %q, want %q", v, string(adminv1.ScopeAdmin))
 	}
 
 	// Assert jwks is wrapped.
@@ -143,8 +145,8 @@ func TestRegisterAgentClient_PayloadShape(t *testing.T) {
 	if id, _ := captured["client_id"].(string); id != consts.ClientIDAgent {
 		t.Errorf("client_id = %q, want %q", id, consts.ClientIDAgent)
 	}
-	if v, _ := captured["scope"].(string); v != consts.ScopeAgentSelfRegister {
-		t.Errorf("scope = %q, want %q", v, consts.ScopeAgentSelfRegister)
+	if v, _ := captured["scope"].(string); v != string(agentv1.ScopeSelfRegister) {
+		t.Errorf("scope = %q, want %q", v, string(agentv1.ScopeSelfRegister))
 	}
 }
 

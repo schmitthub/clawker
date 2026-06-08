@@ -829,8 +829,6 @@ agent:
 		},
 		ControlPlane: func() cpboot.Manager {
 			return &cpbootmocks.ManagerMock{
-				// run calls EnsureRunning twice: the create-time gate and the
-				// every-start pre-start phase. One stub covers both.
 				EnsureRunningFunc: func(context.Context) error { return nil },
 			}
 		},

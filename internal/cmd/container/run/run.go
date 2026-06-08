@@ -217,12 +217,6 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	}
 
 	// --- Phase B: Create container with spinner ---
-	//
-	// Creating a container does NOT boot the control plane: the agent
-	// assertion is minted in the host clock (the source of truth), and the
-	// pre-start CP-ensure (BootstrapServicesPreStart) waits for the CP clock
-	// to converge before clawkerd ever exchanges it. CP bring-up happens on
-	// start, below, not here.
 
 	events := make(chan shared.CreateContainerEvent, 16)
 	type outcome struct {

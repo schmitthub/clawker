@@ -1683,10 +1683,6 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 	// captures the thumbprint at Register handler entry from the live
 	// mTLS peer. Container_id is embedded as a URI SAN in the leaf cert
 	// so CP can read the binding without a CLI-pre-staged row.
-	// The assertion's iat is minted in the host clock (the source of truth);
-	// CP is intentionally NOT booted at create — the container only needs the
-	// CP clock converged before it STARTS, and the pre-start CP-ensure waits
-	// for that before clawkerd exchanges this baked assertion.
 	bootstrapOpts := InstallAgentBootstrapOptions{
 		Project:            projectSlug,
 		Agent:              agentTyped,

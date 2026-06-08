@@ -116,7 +116,7 @@ type AdminServiceClient interface {
 	// diagnostic tooling. Read-only; uniform admin scope.
 	ListAgents(ctx context.Context, in *ListAgentsRequest, opts ...grpc.CallOption) (*ListAgentsResult, error)
 	// GetSystemTime returns the control plane's current wall-clock time.
-	// This RPC is intentionally PUBLIC (empty scope in AdminMethodScopes —
+	// This RPC is intentionally PUBLIC (the public scope in AdminMethodScopes —
 	// no bearer token required), because it bootstraps the very auth flow:
 	// the CLI calls it BEFORE minting a time-sensitive OAuth2 client
 	// assertion so it can align the assertion's `iat` to the CP's clock.
@@ -370,7 +370,7 @@ type AdminServiceServer interface {
 	// diagnostic tooling. Read-only; uniform admin scope.
 	ListAgents(context.Context, *ListAgentsRequest) (*ListAgentsResult, error)
 	// GetSystemTime returns the control plane's current wall-clock time.
-	// This RPC is intentionally PUBLIC (empty scope in AdminMethodScopes —
+	// This RPC is intentionally PUBLIC (the public scope in AdminMethodScopes —
 	// no bearer token required), because it bootstraps the very auth flow:
 	// the CLI calls it BEFORE minting a time-sensitive OAuth2 client
 	// assertion so it can align the assertion's `iat` to the CP's clock.
