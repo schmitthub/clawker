@@ -252,14 +252,17 @@ report `connection refused` against the CP.
    clawker auth rotate
    ```
 
-5. **`Token used before issued` / token fetch times out on start**
-   (Docker Desktop). The startup error contains `connecting to control
-   plane: ... hydra returned 500: ... "Token used before issued"`, often
+5. **CP clock-sync error on start** (Docker Desktop). The startup error
+   reads `control plane clock did not catch up to host after ...`, often
    after the host slept/woke. The Docker Desktop LinuxKit VM clock (where
-   CP runs) has drifted behind the host clock, so Hydra rejects the CLI's
-   signed OAuth2 assertion as future-dated. The CLI auto-aligns to CP's
-   clock, so retry first; if it persists, restart Docker Desktop to resync
-   the VM clock, then retry the `clawker` command.
+   CP runs) has drifted behind the host clock. Rather than skew-correcting
+   the OAuth2 assertion's `iat`, the CLI/bootstrap **waits** for the CP
+   clock to catch up to the host and **fails fast** with this error if it
+   doesn't converge within the timeout — avoiding the underlying Hydra
+   `Token used before issued` 500 (a future-dated assertion). Retry first
+   (Docker usually re-syncs the VM clock on its own); if it persists,
+   restart Docker Desktop to force the resync, then retry the `clawker`
+   command.
 
 6. **Recovery — full restart**:
    ```bash
