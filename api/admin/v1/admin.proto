@@ -300,10 +300,12 @@ message ListAgentsResult {
 message GetSystemTimeRequest {}
 message GetSystemTimeResult {
   // unix_nanos is the CP's current wall-clock time as Unix nanoseconds since
-  // the epoch, computed from time.Now().UTC() so the value is an absolute UTC
-  // instant with no dependency on any TZ setting on the CP host. The CLI reads
-  // it back, normalizes to UTC, and compares against its own time.Now().UTC()
-  // to decide whether the CP clock has caught up to the host before minting.
+  // the epoch. Unix nanoseconds are an absolute instant counted from the epoch,
+  // so the value is inherently timezone-independent with no dependency on any TZ
+  // setting on the CP host (no UTC conversion is applied or needed server-side).
+  // The CLI reads it back, normalizes to the UTC domain, and compares against
+  // its own time.Now().UTC() to decide whether the CP clock has caught up to the
+  // host before minting.
   int64 unix_nanos = 1;
 }
 
