@@ -572,15 +572,13 @@ func TestBuildSignedAssertion(t *testing.T) {
 		"signature must verify against signing key")
 }
 
-// TestBuildSignedAssertion_BackdatesIAT pins the clock-skew mitigation:
-// the assertion's iat must be backdated by assertionClockSkewLeeway so a
-// validator (Hydra/fosite) whose clock is slightly behind the minting
-// host does not reject it with "Token used before issued". fosite's
-// client-auth path enforces iat with zero leeway (now >= iat), so the
-// tolerance has to live here on the minting side. exp stays anchored to
-// real now (forward window unchanged); nbf is intentionally absent
-// (fosite rejects a future nbf with the same zero leeway).
-func TestBuildSignedAssertion_BackdatesIAT(t *testing.T) {
+// TestBuildSignedAssertion_IATIsNow pins that iat is the mint clock with no
+// backdate: callers wait until the CP clock has caught up to the host before
+// exchanging, so a host-clock iat is already in the CP's past and fosite's
+// zero-leeway (now >= iat) check passes without any minting-side fudge. exp
+// stays a forward window from now; nbf is intentionally absent (fosite
+// rejects a future nbf with the same zero leeway).
+func TestBuildSignedAssertion_IATIsNow(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
@@ -606,16 +604,14 @@ func TestBuildSignedAssertion_BackdatesIAT(t *testing.T) {
 	require.Nil(t, claims.NotBefore, "nbf must be absent — a future nbf would itself trip fosite's zero-leeway check")
 
 	iat := claims.IssuedAt.Time()
-	// iat is backdated: strictly before the call returned, by ~leeway.
-	assert.False(t, iat.After(after.Add(-assertionClockSkewLeeway)),
-		"iat (%s) must be backdated by at least the leeway from now (%s, leeway %s)", iat, after, assertionClockSkewLeeway)
-	// ...but not backdated more than the leeway. The bound is before-leeway,
-	// loosened by 1s only for NumericDate second-truncation (iat floors to
-	// whole Unix seconds), not for arbitrary build slack.
-	assert.False(t, iat.Before(before.Add(-assertionClockSkewLeeway).Add(-time.Second)),
-		"iat (%s) backdated too far past leeway %s", iat, assertionClockSkewLeeway)
+	// iat == now (no backdate), modulo NumericDate second-truncation: iat
+	// floors to a whole Unix second, so allow a 1s slack below `before`.
+	assert.False(t, iat.Before(before.Add(-time.Second)),
+		"iat (%s) must be ~now, not backdated (before=%s)", iat, before)
+	assert.False(t, iat.After(after),
+		"iat (%s) must not be in the future (after=%s)", iat, after)
 
-	// exp stays a forward window from real now, not from the backdated iat.
+	// exp stays a forward window from now.
 	exp := claims.Expiry.Time()
 	assert.InDelta(t, before.Add(expiresIn*time.Second).Unix(), exp.Unix(), 5,
 		"exp must be ~now+ExpiresInSeconds, got %s", exp)
@@ -652,9 +648,9 @@ func TestBuildSignedAssertion_HonorsInjectedNow(t *testing.T) {
 
 	require.NotNil(t, claims.IssuedAt)
 	require.NotNil(t, claims.Expiry)
-	// iat = ref - leeway; exp = ref + ExpiresInSeconds (both off ref, not now).
-	assert.Equal(t, ref.Add(-assertionClockSkewLeeway).Unix(), claims.IssuedAt.Time().Unix(),
-		"iat must anchor to injected Now minus leeway")
+	// iat = ref; exp = ref + ExpiresInSeconds (both off ref, not now).
+	assert.Equal(t, ref.Unix(), claims.IssuedAt.Time().Unix(),
+		"iat must anchor to injected Now")
 	assert.Equal(t, ref.Add(expiresIn*time.Second).Unix(), claims.Expiry.Time().Unix(),
 		"exp must anchor to injected Now plus ExpiresInSeconds")
 }

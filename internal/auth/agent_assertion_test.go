@@ -42,15 +42,14 @@ func TestBuildAgentAssertion_ClaimsAndAlg(t *testing.T) {
 	assert.True(t, strings.Count(claims.ID, "-") >= 4, "jti should be UUID-like, got %q", claims.ID)
 
 	// Expiry is roughly 24h ahead of real now, with slack for build/test
-	// latency. iat is backdated by assertionClockSkewLeeway for clock-skew
-	// tolerance, so exp-iat is TTL+leeway, not TTL — measure exp from now.
+	// latency. iat is the mint clock (no backdate), so exp-iat is ~TTL.
 	require.NotNil(t, claims.Expiry)
 	require.NotNil(t, claims.IssuedAt)
 	ttlFromNow := time.Until(claims.Expiry.Time())
 	assert.InDelta(t, AgentAssertionTTL.Seconds(), ttlFromNow.Seconds(), 5,
 		"assertion expiry should be ~24h from now: got %s", ttlFromNow)
-	assert.True(t, claims.IssuedAt.Time().Before(time.Now()),
-		"iat must be backdated below now for clock-skew tolerance")
+	assert.False(t, claims.IssuedAt.Time().After(time.Now()),
+		"iat must be at or before now (no future-dating)")
 }
 
 func TestBuildAgentAssertion_DistinctJTI(t *testing.T) {

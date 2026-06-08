@@ -38,18 +38,16 @@ const (
 	cpReadyInterval = 100 * time.Millisecond
 
 	// cpClockSync* gate readiness on host↔CP clock alignment, run as the
-	// final readiness check after /healthz is green. The agent assertion is
+	// final readiness check after /healthz is green. All assertions are
 	// minted in the host clock (the source of truth); Hydra validates its iat
 	// against the CP clock with zero leeway. A lagging Docker Desktop VM clock
 	// (e.g. after host sleep, before it re-syncs to the host) would otherwise
 	// put a host-domain iat in the CP's future — a "token used before issued"
 	// rejection. Because EnsureRunning is the every-start precondition,
-	// polling until the offset falls within tolerance here guarantees the CP
-	// clock has reconverged with the host before clawkerd exchanges its baked
-	// assertion. CP is not considered "running" until the clocks align.
-	cpClockSkewTolerance = 2 * time.Second
-	cpClockSyncTimeout   = 30 * time.Second
-	cpClockSyncInterval  = 500 * time.Millisecond
+	// polling GetSystemTime until the CP clock is no longer behind the host
+	// guarantees it has caught up before assertion exchange begins.
+	cpClockSyncTimeout  = 30 * time.Second
+	cpClockSyncInterval = 500 * time.Millisecond
 
 	// cpStopTimeout (seconds) is the grace period before SIGKILL on Stop.
 	cpStopTimeout = 30
@@ -74,7 +72,7 @@ var (
 	ensureCPImageFn = ensureCPImage
 	healthzFn       = waitForCPHealthz
 	clockSyncFn     = waitForCPClockSync
-	probeSkewFn     = adminclient.ProbeClockSkew
+	probeCPTimeFn   = adminclient.ProbeCPTime
 )
 
 // errCPRecoveryRetry is returned by recoverFromNameConflict when it
@@ -137,6 +135,13 @@ func cpImageDockerfile(binarySHA, version, revision, createdAt string) string {
 		"FROM oryd/kratos:v26.2.0@sha256:2a13bb8d362c7a7ae33bd7c0f5168aee46921f15c916a06346db91c06dc76643 AS kratos\n" +
 		"FROM alpine:3.21@sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c AS musl\n" +
 		"FROM gcr.io/distroless/static-debian12@sha256:20bc6c0bc4d625a22a8fde3e55f6515709b32055ef8fb9cfbddaa06d1760f838\n" +
+		// Pin the CP container to UTC. clawker-cp (PID 1) and the Ory
+		// subprocesses it spawns (Hydra, Kratos, Oathkeeper) all inherit this
+		// env, so Hydra validates JWT iat in the same UTC domain the CLI mints
+		// in and our GetSystemTime reports in. JWT NumericDate is absolute
+		// epoch (RFC 7519), so this is defense-in-depth — it removes any
+		// dependence on the base image's default localtime.
+		"ENV TZ=UTC\n" +
 		"COPY --from=musl /lib/ld-musl-*.so.1 /lib/\n" +
 		"COPY --from=hydra /usr/bin/hydra /usr/local/bin/hydra\n" +
 		"COPY --from=oathkeeper /usr/bin/oathkeeper /usr/local/bin/oathkeeper\n" +
@@ -149,9 +154,9 @@ func cpImageDockerfile(binarySHA, version, revision, createdAt string) string {
 
 // EnsureRunning is the host-side entry point for bringing up the control
 // plane. Idempotent and concurrency-safe. Returns nil when the CP
-// container is running, /healthz is green, AND the host↔CP clock is in
-// sync within cpClockSkewTolerance (see cpReady). A green /healthz with a
-// clock still out of tolerance returns a clock-sync error, not nil — so a
+// container is running, /healthz is green, AND the CP clock has caught up
+// to the host (see cpReady). A green /healthz with the CP clock still
+// behind the host returns a clock-sync error, not nil — so a
 // container start blocks until the CP clock has reconverged with the host
 // before clawkerd exchanges its (host-clock-minted) agent assertion.
 //
@@ -760,14 +765,14 @@ func cpReady(ctx context.Context, cfg config.Config) error {
 	return clockSyncFn(ctx, cfg)
 }
 
-// waitForCPClockSync polls the public GetSystemTime RPC until the
-// host↔CP clock offset falls within cpClockSkewTolerance or the timeout
-// expires. A Docker Desktop VM clock that lagged during host sleep
-// reconverges with the host once Docker re-syncs it; this loop gives it
-// that window before the start proceeds, so clawkerd exchanges its
-// (host-clock-minted) Hydra assertion only after the CP clock — which
-// fosite validates iat against with zero leeway — has caught up. Returns
-// nil once converged, an error on timeout/non-convergence. Respects ctx
+// waitForCPClockSync polls the public GetSystemTime RPC until the CP clock
+// is no longer behind the host (the CP wall-clock at or after the host's
+// now) or the timeout expires. A Docker Desktop VM clock that lagged during
+// host sleep reconverges with the host once Docker re-syncs it; this loop
+// gives it that window before the start proceeds, so clawkerd exchanges its
+// (host-clock-minted) Hydra assertion only after the CP clock — which fosite
+// validates iat against with zero leeway — has caught up. Returns nil once
+// the CP has caught up, an error on timeout/non-convergence. Respects ctx
 // cancellation.
 func waitForCPClockSync(ctx context.Context, cfg config.Config) error {
 	adminPort := cfg.Settings().ControlPlane.AdminPort
@@ -775,30 +780,29 @@ func waitForCPClockSync(ctx context.Context, cfg config.Config) error {
 	start := time.Now()
 	deadline := start.Add(cpClockSyncTimeout)
 
-	var lastSkew time.Duration
 	var lastErr error
-	measured := false
 	for {
-		// A caller cancel OR deadline wins and surfaces its OWN cause. This is
-		// deliberately checked before the clock-sync timeout below: the caller
-		// giving up is a different failure than the CP clock never converging,
-		// and an operator should not see the "Docker VM clock lagging" guidance
-		// when the real cause was the caller's context expiring. The internal
-		// deadline is therefore kept independent of ctx — not clamped to it.
+		// A caller cancel surfaces its OWN cause — a different failure than the
+		// CP clock never catching up. An operator should not see the "Docker VM
+		// clock lagging" guidance when the real cause was the caller's context
+		// expiring, so this is checked independently of the internal deadline.
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if time.Now().After(deadline) {
-			return newCPClockSyncTimeout(start, lastSkew, measured, lastErr)
+		cpTime, err := probeCPTimeFn(ctx, adminPort)
+		// Both sides compared in UTC: cpTime is UTC (Timestamp.AsTime), and the
+		// host's local TZ is normalized away by .UTC() so the comparison is a
+		// pure instant comparison regardless of where the host is configured.
+		if err == nil && !time.Now().UTC().After(cpTime) {
+			return nil // CP clock has caught up to the host
 		}
-		skew, err := probeSkewFn(ctx, adminPort)
 		if err != nil {
 			lastErr = err
 		} else {
-			lastSkew, measured = skew, true
-			if adminclient.AbsDuration(skew) <= cpClockSkewTolerance {
-				return nil
-			}
+			lastErr = fmt.Errorf("CP clock still behind host (CP at %s)", cpTime.UTC().Format(time.RFC3339Nano))
+		}
+		if time.Now().After(deadline) {
+			return newCPClockSyncTimeout(start, lastErr)
 		}
 		select {
 		case <-ctx.Done():
@@ -808,24 +812,20 @@ func waitForCPClockSync(ctx context.Context, cfg config.Config) error {
 	}
 }
 
-// newCPClockSyncTimeout builds the actionable error returned when the
-// host↔CP clock never converges. The message names the most common
-// cause (a lagging Docker Desktop VM clock after sleep) and the fix so
-// an operator isn't left re-debugging an opaque bootstrap failure.
-func newCPClockSyncTimeout(start time.Time, lastSkew time.Duration, measured bool, lastErr error) error {
+// newCPClockSyncTimeout builds the actionable error returned when the CP
+// clock never catches up to the host. The message names the most common
+// cause (a lagging Docker Desktop VM clock after sleep) and the fix so an
+// operator isn't left re-debugging an opaque bootstrap failure. lastErr is
+// the most recent probe failure or behind-host observation.
+func newCPClockSyncTimeout(start time.Time, lastErr error) error {
 	waited := time.Since(start).Round(time.Millisecond)
-	if !measured {
-		// Defensive: waitForCPClockSync only reaches the !measured deadline
-		// branch after at least one failed probe, so lastErr is non-nil in
-		// practice. Guard anyway so a future restructure that could reach here
-		// without a recorded probe error never %w-wraps nil into a "%!w(<nil>)"
-		// cause that would muddy an operator's triage.
-		if lastErr == nil {
-			return fmt.Errorf("control plane clock-sync probe never succeeded after %s (tolerance %s)", waited, cpClockSkewTolerance)
-		}
-		return fmt.Errorf("control plane clock-sync probe never succeeded after %s (tolerance %s): %w", waited, cpClockSkewTolerance, lastErr)
+	if lastErr == nil {
+		// Defensive: the loop only reaches the deadline after at least one
+		// probe, so lastErr is non-nil in practice. Guard so a future
+		// restructure never %w-wraps a nil cause into a "%!w(<nil>)".
+		return fmt.Errorf("control plane clock did not catch up to host after %s", waited)
 	}
-	return fmt.Errorf("control plane clock not in sync with host after %s: last measured offset %s exceeds tolerance %s — the Docker VM clock is likely lagging after host sleep; wait for it to re-sync (or restart Docker Desktop), then retry", waited, lastSkew.Round(time.Millisecond), cpClockSkewTolerance)
+	return fmt.Errorf("control plane clock did not catch up to host after %s: %w — the Docker VM clock is likely lagging after host sleep; wait for it to re-sync (or restart Docker Desktop), then retry", waited, lastErr)
 }
 
 // waitForCPHealthz polls http://127.0.0.1:<HealthPort>/healthz until the

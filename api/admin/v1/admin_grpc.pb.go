@@ -120,15 +120,16 @@ type AdminServiceClient interface {
 	// no bearer token required), because it bootstraps the very auth flow:
 	// the CLI calls it BEFORE minting a time-sensitive OAuth2 client
 	// assertion so it can align the assertion's `iat` to the CP's clock.
-	// fosite (Hydra's validator) checks `iat` with zero clock-skew leeway
-	// and exposes no server-side knob, so a host clock even slightly ahead
-	// of the CP container's clock would otherwise be rejected with HTTP 500
-	// "Token used before issued" (common with Docker Desktop's LinuxKit VM
-	// drifting behind wall-clock after the host sleeps). clawker-cp and
-	// Hydra share the container, so this clock is exactly the one fosite
-	// validates against. mTLS still applies at the listener — the CLI's
-	// client cert is long-lived (1y), so the handshake survives the skew;
-	// only the freshly-minted assertion needs the correction.
+	// fosite (Hydra's validator) checks `iat` with zero leeway and exposes
+	// no server-side knob, so a host clock even slightly ahead of the CP
+	// container's clock would otherwise be rejected with HTTP 500 "Token used
+	// before issued" (common with Docker Desktop's LinuxKit VM drifting behind
+	// wall-clock after the host sleeps). clawker-cp and Hydra share the
+	// container, so this clock is exactly the one fosite validates against.
+	// The CLI polls this RPC and waits until the CP clock is no longer behind
+	// the host before minting, so the host-clock `iat` lands in the CP's past.
+	// mTLS still applies at the listener — the CLI's client cert is long-lived
+	// (1y), so the handshake survives a lagging CP clock.
 	GetSystemTime(ctx context.Context, in *GetSystemTimeRequest, opts ...grpc.CallOption) (*GetSystemTimeResult, error)
 }
 
@@ -374,15 +375,16 @@ type AdminServiceServer interface {
 	// no bearer token required), because it bootstraps the very auth flow:
 	// the CLI calls it BEFORE minting a time-sensitive OAuth2 client
 	// assertion so it can align the assertion's `iat` to the CP's clock.
-	// fosite (Hydra's validator) checks `iat` with zero clock-skew leeway
-	// and exposes no server-side knob, so a host clock even slightly ahead
-	// of the CP container's clock would otherwise be rejected with HTTP 500
-	// "Token used before issued" (common with Docker Desktop's LinuxKit VM
-	// drifting behind wall-clock after the host sleeps). clawker-cp and
-	// Hydra share the container, so this clock is exactly the one fosite
-	// validates against. mTLS still applies at the listener — the CLI's
-	// client cert is long-lived (1y), so the handshake survives the skew;
-	// only the freshly-minted assertion needs the correction.
+	// fosite (Hydra's validator) checks `iat` with zero leeway and exposes
+	// no server-side knob, so a host clock even slightly ahead of the CP
+	// container's clock would otherwise be rejected with HTTP 500 "Token used
+	// before issued" (common with Docker Desktop's LinuxKit VM drifting behind
+	// wall-clock after the host sleeps). clawker-cp and Hydra share the
+	// container, so this clock is exactly the one fosite validates against.
+	// The CLI polls this RPC and waits until the CP clock is no longer behind
+	// the host before minting, so the host-clock `iat` lands in the CP's past.
+	// mTLS still applies at the listener — the CLI's client cert is long-lived
+	// (1y), so the handshake survives a lagging CP clock.
 	GetSystemTime(context.Context, *GetSystemTimeRequest) (*GetSystemTimeResult, error)
 	mustEmbedUnimplementedAdminServiceServer()
 }

@@ -27,15 +27,13 @@ const AgentAssertionTTL = 24 * time.Hour
 // signing key is shared. See `RegisterAgentClient` for the Hydra-side
 // counterpart.
 //
-// iat is minted in the host clock with no skew correction. The host clock
-// is the source of truth: Docker forces the CP/VM clock to track the host,
-// so a host-minted iat is already in the domain Hydra validates against.
-// The only divergence is the transient window where a just-woken VM clock
-// still lags; that is handled by *waiting* for clock sync before the
+// iat is minted in the host clock. The host clock is the source of truth:
+// Docker forces the CP/VM clock to track the host, so a host-minted iat is
+// already in the domain Hydra validates against. The only divergence is the
+// transient window where a just-woken VM clock still lags; that is handled
+// by *waiting* until the CP clock has caught up to the host before the
 // assertion is exchanged (the pre-start CP-ensure for this baked agent
-// assertion, the dial-time wait for the CLI's own), not by shifting iat.
-// The fixed 15s leeway floor in BuildSignedAssertion remains as defensive
-// padding for sub-second host drift.
+// assertion, the dial-time wait for the CLI's own) — never by shifting iat.
 func BuildAgentAssertion(audience string, signingKey *ecdsa.PrivateKey) (string, error) {
 	if audience == "" {
 		return "", fmt.Errorf("agent assertion: audience required")

@@ -1664,10 +1664,11 @@ func (*GetSystemTimeRequest) Descriptor() ([]byte, []int) {
 
 type GetSystemTimeResult struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// unix_nanos is the CP's current wall-clock time as Unix nanoseconds
-	// (UTC). Nanosecond precision (vs Unix seconds elsewhere) keeps the
-	// CLI's host↔CP skew measurement sharp enough that the residual
-	// leeway on the minted assertion can stay tiny.
+	// unix_nanos is the CP's current wall-clock time as Unix nanoseconds since
+	// the epoch, computed from time.Now().UTC() so the value is an absolute UTC
+	// instant with no dependency on any TZ setting on the CP host. The CLI reads
+	// it back, normalizes to UTC, and compares against its own time.Now().UTC()
+	// to decide whether the CP clock has caught up to the host before minting.
 	UnixNanos     int64 `protobuf:"varint,1,opt,name=unix_nanos,json=unixNanos,proto3" json:"unix_nanos,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

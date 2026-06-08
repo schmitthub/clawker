@@ -84,7 +84,7 @@ func TestMintAgentCert_HappyPath(t *testing.T) {
 	_, err = tls.X509KeyPair(got.CertPEM, got.KeyPEM)
 	assert.NoError(t, err)
 
-	// 24h-ish lifetime — generous slack absorbs clock skew between test
+	// 24h-ish lifetime — generous slack absorbs clock drift between test
 	// runs without making the assertion useless.
 	lifetime := leaf.NotAfter.Sub(leaf.NotBefore)
 	assert.Greater(t, lifetime, 23*time.Hour)

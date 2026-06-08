@@ -690,7 +690,7 @@ func (s *session) dispatch(ctx context.Context, cmd *clawkerdv1.Command) {
 		}
 		s.handleAgentReady(ctx, cmd.CommandId)
 	default:
-		// Unknown payload is the canonical CP/clawkerd version-skew
+		// Unknown payload is the canonical CP/clawkerd version-mismatch
 		// signal — the proto added a Command variant that this clawkerd
 		// build doesn't know how to handle. Audit log per package
 		// CLAUDE.md: every command-dispatch outcome must be observable.
@@ -698,7 +698,7 @@ func (s *session) dispatch(ctx context.Context, cmd *clawkerdv1.Command) {
 			Str("event", "session_unknown_payload").
 			Str("command_id", cmd.CommandId).
 			Str("payload_type", fmt.Sprintf("%T", cmd.Payload)).
-			Msg("clawkerd: dispatch received unknown Command payload type — version skew?")
+			Msg("clawkerd: dispatch received unknown Command payload type — version mismatch?")
 		s.send(ctx, errResponse(cmd.CommandId,
 			clawkerdv1.ErrorCode_ERROR_CODE_INVALID_REQUEST,
 			fmt.Sprintf("unknown payload type %T", cmd.Payload)))

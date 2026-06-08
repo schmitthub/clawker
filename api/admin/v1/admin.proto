@@ -100,15 +100,16 @@ service AdminService {
   // no bearer token required), because it bootstraps the very auth flow:
   // the CLI calls it BEFORE minting a time-sensitive OAuth2 client
   // assertion so it can align the assertion's `iat` to the CP's clock.
-  // fosite (Hydra's validator) checks `iat` with zero clock-skew leeway
-  // and exposes no server-side knob, so a host clock even slightly ahead
-  // of the CP container's clock would otherwise be rejected with HTTP 500
-  // "Token used before issued" (common with Docker Desktop's LinuxKit VM
-  // drifting behind wall-clock after the host sleeps). clawker-cp and
-  // Hydra share the container, so this clock is exactly the one fosite
-  // validates against. mTLS still applies at the listener — the CLI's
-  // client cert is long-lived (1y), so the handshake survives the skew;
-  // only the freshly-minted assertion needs the correction.
+  // fosite (Hydra's validator) checks `iat` with zero leeway and exposes
+  // no server-side knob, so a host clock even slightly ahead of the CP
+  // container's clock would otherwise be rejected with HTTP 500 "Token used
+  // before issued" (common with Docker Desktop's LinuxKit VM drifting behind
+  // wall-clock after the host sleeps). clawker-cp and Hydra share the
+  // container, so this clock is exactly the one fosite validates against.
+  // The CLI polls this RPC and waits until the CP clock is no longer behind
+  // the host before minting, so the host-clock `iat` lands in the CP's past.
+  // mTLS still applies at the listener — the CLI's client cert is long-lived
+  // (1y), so the handshake survives a lagging CP clock.
   rpc GetSystemTime(GetSystemTimeRequest) returns (GetSystemTimeResult);
 }
 
@@ -298,10 +299,11 @@ message ListAgentsResult {
 
 message GetSystemTimeRequest {}
 message GetSystemTimeResult {
-  // unix_nanos is the CP's current wall-clock time as Unix nanoseconds
-  // (UTC). Nanosecond precision (vs Unix seconds elsewhere) keeps the
-  // CLI's host↔CP skew measurement sharp enough that the residual
-  // leeway on the minted assertion can stay tiny.
+  // unix_nanos is the CP's current wall-clock time as Unix nanoseconds since
+  // the epoch, computed from time.Now().UTC() so the value is an absolute UTC
+  // instant with no dependency on any TZ setting on the CP host. The CLI reads
+  // it back, normalizes to UTC, and compares against its own time.Now().UTC()
+  // to decide whether the CP clock has caught up to the host before minting.
   int64 unix_nanos = 1;
 }
 

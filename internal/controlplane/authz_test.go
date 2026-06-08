@@ -215,7 +215,7 @@ func TestAuthInterceptor_UnmappedMethod_Denied(t *testing.T) {
 // mapped to consts.ScopePublic must be served on mTLS alone, with NO bearer
 // token, and the introspector must never be consulted. A regression that
 // treated the public scope as deny — or still demanded a token — would break
-// the CLI's clock-skew probe, and TestAdminMethodScopes_CoversAllRPCs (which
+// the CLI's clock-sync probe, and TestAdminMethodScopes_CoversAllRPCs (which
 // only checks map keys) would not catch it.
 //
 // The load-bearing proof is the deny-all introspector tripwire: if auth fell

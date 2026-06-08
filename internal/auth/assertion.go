@@ -9,24 +9,6 @@ import (
 	"github.com/go-jose/go-jose/v4/jwt"
 )
 
-// assertionClockSkewLeeway backdates the assertion's iat as a
-// defense-in-depth floor. fosite — which Hydra uses to validate
-// private_key_jwt client_assertions — enforces iat with ZERO tolerance
-// (requires now >= iat with no clock-skew accounting) and exposes no
-// server-side leeway knob, so a minting clock even marginally ahead of
-// Hydra's clock yields HTTP 500 "Token used before issued". The primary
-// defense is clock alignment: the host clock is the source of truth
-// (Docker forces the CP/VM clock to track the host), and callers exposed to
-// the transient post-sleep window where a just-woken VM clock still lags
-// *wait* for the CP clock to reconverge before the assertion is exchanged,
-// rather than correcting iat. This floor only has to absorb sub-second
-// residual host drift, so it is deliberately generous. It is applied
-// unconditionally, including for in-container minters (clawkerd) that
-// already share Hydra's kernel clock, where it is a harmless backdate. nbf
-// is left unset (a future nbf would trip the same zero-leeway check).
-// Backdating is safe: the client-auth path applies no iat-too-old check.
-const assertionClockSkewLeeway = 15 * time.Second
-
 // AssertionClaims holds the claims for a client assertion JWT per RFC 7523.
 type AssertionClaims struct {
 	// Issuer (iss) — must be the client_id.
@@ -88,11 +70,13 @@ func BuildSignedAssertion(claims AssertionClaims, signingKey *ecdsa.PrivateKey) 
 		Subject:  claims.Subject,
 		Audience: claims.Audience,
 		JWTID:    claims.JWTID,
-		// exp is a forward window from the reference clock; iat is backdated
-		// by the residual leeway floor (nbf left unset — a future nbf trips
-		// the same zero-leeway check). See assertionClockSkewLeeway.
+		// exp is a forward window from the reference clock; iat is the
+		// reference clock itself (no backdate). nbf is left unset — a future
+		// nbf would trip fosite's zero-leeway check. Callers that exchange an
+		// assertion wait until the CP clock has caught up to the host first,
+		// so a host-clock iat is always in the CP's past.
 		Expiry:   jwt.NewNumericDate(now.Add(time.Duration(claims.ExpiresInSeconds) * time.Second)),
-		IssuedAt: jwt.NewNumericDate(now.Add(-assertionClockSkewLeeway)),
+		IssuedAt: jwt.NewNumericDate(now),
 	}
 
 	signed, err := jwt.Signed(signer).Claims(jc).Serialize()

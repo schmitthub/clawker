@@ -59,7 +59,7 @@ var errEmptyUserSpec = errors.New("clawkerd: empty user spec")
 //
 // /etc/passwd is read ONCE into a byte slice so GetExecUser and the
 // follow-up uid→name lookup operate on the same snapshot. A two-read
-// approach risks identity skew if the file is rewritten between reads
+// approach risks identity drift if the file is rewritten between reads
 // (admin tooling, package install) — uid/gid would come from snapshot
 // 1 and Name from snapshot 2. Single-read closes the race.
 //
