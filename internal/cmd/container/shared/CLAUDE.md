@@ -54,6 +54,8 @@ WriteAgentBootstrapToContainer(ctx, containerID, copyFn CopyToContainerFn, b *Ag
 InstallAgentBootstrapMaterial(ctx, caCertPath, caKeyPath, signingKey, opts InstallAgentBootstrapOptions) error
 ```
 
+The assertion's `iat` is minted in the host clock (the source of truth — Docker forces the CP/VM clock to track the host); there is **no** iat correction and **no** CP boot at create time. The container only needs the CP clock converged before it STARTS — the every-start `BootstrapServicesPreStart` CP-ensure (`EnsureRunning`, which blocks until the CP clock is in sync) handles that before clawkerd ever exchanges this baked assertion. Creating a container must not spin up CP.
+
 `project` + `agent` (user-typed short identifiers) feed `auth.AgentFullName` to compose the per-agent identity (`clawker.<project>.<agent>`), which rides in a `urn:clawker:agent:<full-name>` URI SAN on the minted cert. The x509 CN is the deterministic `consts.ContainerClawkerd` literal (the binary identity), not a per-agent value.
 
 `WriteAgentBootstrapToContainer` tars four files into `consts.BootstrapDir` (dir 0700, files 0400). Uses container writable layer (not tmpfs -- Docker's CopyToContainer cannot pre-populate tmpfs mounts).

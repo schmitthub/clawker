@@ -79,6 +79,8 @@ build:
       - go install github.com/matryer/moq@latest
       - go install github.com/goreleaser/goreleaser/v2@latest
       - go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+      - go install github.com/bufbuild/buf/cmd/buf@latest
+      - go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
       - uv tool install semgrep
       - curl https://sh.rustup.rs -sSf | sh -s -- -y
       - |-

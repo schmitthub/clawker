@@ -242,8 +242,11 @@ func runGCDNS(log *logger.Logger) {
 	}
 	defer mgr.Close()
 
-	removed := mgr.GarbageCollectDNS()
+	removed, err := mgr.GarbageCollectDNS()
 	fmt.Printf("gc-dns: removed %d expired entries\n", removed)
+	if err != nil {
+		fatal("gc-dns", err)
+	}
 }
 
 func runDump(log *logger.Logger, cgroupPath string) {

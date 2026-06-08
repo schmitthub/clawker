@@ -96,7 +96,8 @@ type Deps struct {
 	// each entry on every refresh tick to rebuild the hash→domain
 	// table the otelSink reads when stamping `dst_host` on each
 	// emitted security record. Production wiring: a closure over
-	// firewall.Handler.AllResolvableDomains. Nil is supported —
+	// firewall.Handler.ReverseDNSDomains (CoreDNS zones + IP-literal
+	// dns_cache seeds). Nil is supported —
 	// every emitted record then carries dst_host="" (degraded
 	// attribution; firewall enforcement unaffected).
 	Domains DomainSource

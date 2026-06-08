@@ -263,7 +263,7 @@ func exchangeAssertion(ctx context.Context, tokenURL, assertion string, tlsCfg *
 		"grant_type":            {"client_credentials"},
 		"client_assertion_type": {"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"},
 		"client_assertion":      {assertion},
-		"scope":                 {consts.ScopeAgentSelfRegister},
+		"scope":                 {string(agentv1.ScopeSelfRegister)},
 	}
 
 	httpClient := &http.Client{

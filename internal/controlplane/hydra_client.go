@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"time"
 
+	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	agentv1 "github.com/schmitthub/clawker/api/agent/v1"
 	"github.com/schmitthub/clawker/internal/consts"
 )
 
@@ -18,7 +20,7 @@ import (
 // JWKS (bind-mounted from the host). Idempotent: returns nil if the
 // client already exists (409 Conflict).
 func RegisterCLIClient(ctx context.Context, hydraAdminURL string, jwkData []byte, tlsCfg *tls.Config) error {
-	return registerHydraClient(ctx, hydraAdminURL, consts.ClientIDCLI, consts.ScopeAdmin, jwkData, tlsCfg)
+	return registerHydraClient(ctx, hydraAdminURL, consts.ClientIDCLI, string(adminv1.ScopeAdmin), jwkData, tlsCfg)
 }
 
 // RegisterAgentClient registers the clawker-agent OAuth2 client with
@@ -27,7 +29,7 @@ func RegisterCLIClient(ctx context.Context, hydraAdminURL string, jwkData []byte
 // the scope surface clean even though the signing key is shared.
 // Idempotent: returns nil on 409 Conflict.
 func RegisterAgentClient(ctx context.Context, hydraAdminURL string, jwkData []byte, tlsCfg *tls.Config) error {
-	return registerHydraClient(ctx, hydraAdminURL, consts.ClientIDAgent, consts.ScopeAgentSelfRegister, jwkData, tlsCfg)
+	return registerHydraClient(ctx, hydraAdminURL, consts.ClientIDAgent, string(agentv1.ScopeSelfRegister), jwkData, tlsCfg)
 }
 
 // registerHydraClient is the shared implementation; public callers

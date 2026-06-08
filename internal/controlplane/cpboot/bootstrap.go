@@ -24,6 +24,7 @@ import (
 	"github.com/schmitthub/clawker/internal/build"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
+	"github.com/schmitthub/clawker/internal/controlplane/adminclient"
 	fwcp "github.com/schmitthub/clawker/internal/controlplane/firewall"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -35,6 +36,18 @@ const (
 	// cpReady* bound /healthz polling after container start.
 	cpReadyTimeout  = 60 * time.Second
 	cpReadyInterval = 100 * time.Millisecond
+
+	// cpClockSync* gate readiness on host↔CP clock alignment, run as the
+	// final readiness check after /healthz is green. All assertions are
+	// minted in the host clock (the source of truth); Hydra validates its iat
+	// against the CP clock with zero leeway. A lagging Docker Desktop VM clock
+	// (e.g. after host sleep, before it re-syncs to the host) would otherwise
+	// put a host-domain iat in the CP's future — a "token used before issued"
+	// rejection. Because EnsureRunning is the every-start precondition,
+	// polling GetSystemTime until the CP clock is no longer behind the host
+	// guarantees it has caught up before assertion exchange begins.
+	cpClockSyncTimeout  = 30 * time.Second
+	cpClockSyncInterval = 500 * time.Millisecond
 
 	// cpStopTimeout (seconds) is the grace period before SIGKILL on Stop.
 	cpStopTimeout = 30
@@ -58,6 +71,8 @@ var (
 	ensureAuthFn    = auth.EnsureAuthMaterial
 	ensureCPImageFn = ensureCPImage
 	healthzFn       = waitForCPHealthz
+	clockSyncFn     = waitForCPClockSync
+	probeCPTimeFn   = adminclient.ProbeCPTime
 )
 
 // errCPRecoveryRetry is returned by recoverFromNameConflict when it
@@ -120,6 +135,13 @@ func cpImageDockerfile(binarySHA, version, revision, createdAt string) string {
 		"FROM oryd/kratos:v26.2.0@sha256:2a13bb8d362c7a7ae33bd7c0f5168aee46921f15c916a06346db91c06dc76643 AS kratos\n" +
 		"FROM alpine:3.21@sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c AS musl\n" +
 		"FROM gcr.io/distroless/static-debian12@sha256:20bc6c0bc4d625a22a8fde3e55f6515709b32055ef8fb9cfbddaa06d1760f838\n" +
+		// Pin the CP container to UTC. clawker-cp (PID 1) and the Ory
+		// subprocesses it spawns (Hydra, Kratos, Oathkeeper) all inherit this
+		// env, so Hydra validates JWT iat in the same UTC domain the CLI mints
+		// in and our GetSystemTime reports in. JWT NumericDate is absolute
+		// epoch (RFC 7519), so this is defense-in-depth — it removes any
+		// dependence on the base image's default localtime.
+		"ENV TZ=UTC\n" +
 		"COPY --from=musl /lib/ld-musl-*.so.1 /lib/\n" +
 		"COPY --from=hydra /usr/bin/hydra /usr/local/bin/hydra\n" +
 		"COPY --from=oathkeeper /usr/bin/oathkeeper /usr/local/bin/oathkeeper\n" +
@@ -130,21 +152,6 @@ func cpImageDockerfile(binarySHA, version, revision, createdAt string) string {
 		"CMD [\"/usr/local/bin/clawker-cp\"]\n"
 }
 
-// EnsureRunning is the host-side entry point for bringing up the control
-// plane. Idempotent and concurrency-safe. Returns nil when the CP
-// container is running and /healthz is green.
-//
-// Drift gate: an existing CP container whose consts.LabelCPBinarySHA
-// matches the host clawker binary's embedded clawker-cp + ebpf-manager
-// hash is adopted (started if stopped); any mismatch (including legacy
-// containers that predate the label) is force-removed and recreated so
-// the new mount/env spec reaches the running CP. Mount spec itself is
-// not inspected — mounts derive from compile-time constants only, so
-// any mount/env/cmd change implies a host rebuild, which changes the
-// embedded bytes, which changes the SHA.
-//
-// On partial failure (container created but /healthz timed out) the
-// next call observes the stopped/unhealthy container and reconciles.
 // EnsureOpts bundles the inputs EnsureRunning needs. HostDirs is required;
 // callers resolve it host-side from consts.{ConfigDir,DataDir,StateDir,
 // CacheDir} before invoking. The CP container reads the host paths back
@@ -158,6 +165,28 @@ type EnsureOpts struct {
 	HostDirs HostDirs
 }
 
+// EnsureRunning is the host-side entry point for bringing up the control
+// plane. Idempotent and concurrency-safe. It builds the image, creates/starts
+// the container, then runs the readiness gate (see cpReady): it returns nil
+// only when the CP container is running, /healthz is green, AND the CP clock
+// has caught up to the host. A green /healthz with the CP clock still behind
+// the host returns a clock-sync error, not nil — so a container start blocks
+// until the CP clock has reconverged with the host before clawkerd exchanges
+// its (host-clock-minted) agent assertion. The clock-sync step's value is the
+// wait: EnsureRunning returns only error, no offset; assertions are minted in
+// the host clock with no correction.
+//
+// Drift gate: an existing CP container whose consts.LabelCPBinarySHA matches
+// the host clawker binary's embedded clawker-cp + ebpf-manager hash is adopted
+// (started if stopped); any mismatch (including legacy containers that predate
+// the label) is force-removed and recreated so the new mount/env spec reaches
+// the running CP. Mount spec itself is not inspected — mounts derive from
+// compile-time constants only, so any mount/env/cmd change implies a host
+// rebuild, which changes the embedded bytes, which changes the SHA.
+//
+// On partial failure (container created but /healthz or the clock-sync gate
+// timed out) the next call observes the running/unhealthy container and re-runs
+// the readiness gate (clock sync self-heals once the VM clock re-syncs).
 func EnsureRunning(ctx context.Context, opts EnsureOpts) error {
 	if err := opts.HostDirs.Validate(); err != nil {
 		return fmt.Errorf("controlplane: %w", err)
@@ -195,7 +224,7 @@ func EnsureRunning(ctx context.Context, opts EnsureOpts) error {
 					return fmt.Errorf("controlplane: start existing cp: %w", err)
 				}
 			}
-			return healthzFn(ctx, cfg)
+			return cpReady(ctx, cfg, log)
 		}
 
 		cpRunning := summary.State == container.StateRunning
@@ -266,7 +295,7 @@ func EnsureRunning(ctx context.Context, opts EnsureOpts) error {
 		return fmt.Errorf("controlplane: %w", err)
 	}
 
-	return healthzFn(ctx, cfg)
+	return cpReady(ctx, cfg, log)
 }
 
 // Stop removes the CP container. Used by `clawker controlplane down`.
@@ -717,6 +746,102 @@ func cpBuildContext(binarySHA, version, revision, createdAt string) (io.Reader, 
 		return nil, fmt.Errorf("tar close: %w", err)
 	}
 	return &buf, nil
+}
+
+// cpReady is the composite readiness gate run before EnsureRunning
+// returns success: /healthz green first, then host↔CP clock alignment.
+// Both must pass — a start that proceeds while the CP clock is still
+// drifted from the host would let clawkerd exchange an assertion whose
+// (host-clock) iat is in the CP's future, so clock sync is a first-class
+// readiness condition, not an afterthought.
+func cpReady(ctx context.Context, cfg config.Config, log *logger.Logger) error {
+	if err := healthzFn(ctx, cfg); err != nil {
+		return err
+	}
+	return clockSyncFn(ctx, cfg, log)
+}
+
+// waitForCPClockSync polls the public GetSystemTime RPC until the CP clock
+// is no longer behind the host (the CP wall-clock at or after the host's
+// now) or the timeout expires. A Docker Desktop VM clock that lagged during
+// host sleep reconverges with the host once Docker re-syncs it; this loop
+// gives it that window before the start proceeds, so clawkerd exchanges its
+// (host-clock-minted) Hydra assertion only after the CP clock — which fosite
+// validates iat against with zero leeway — has caught up. Returns nil once
+// the CP has caught up, an error on timeout/non-convergence. Respects ctx
+// cancellation.
+func waitForCPClockSync(ctx context.Context, cfg config.Config, log *logger.Logger) error {
+	adminPort := cfg.Settings().ControlPlane.AdminPort
+
+	start := time.Now()
+	deadline := start.Add(cpClockSyncTimeout)
+
+	log.Info().
+		Str("event", "cp_clock_sync").
+		Str("component", "cpboot.clocksync").
+		Msg("probing control plane clock convergence with host")
+
+	// Track the last probe error separately from the "CP behind host" case:
+	// a probe that errors (CP not yet reachable, mTLS handshake, RPC failure)
+	// is a different fault than a probe that succeeds and reports a lagging
+	// clock. The per-iteration line must not mislabel one as the other, and the
+	// terminal timeout must carry the real cause so an operator isn't sent
+	// chasing a clock problem that is actually connectivity or auth.
+	var lastProbeErr error
+	for {
+
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		hostTime := time.Now().UTC()
+		cpTime, err := probeCPTimeFn(ctx, adminPort)
+
+		// converged once the CP clock is at or after the host's now
+		if err == nil && !hostTime.After(cpTime) {
+			log.Info().
+				Str("event", "cp_clock_converged").
+				Str("component", "cpboot.clocksync").
+				Msg(fmt.Sprintf("control plane clock caught up to host, hostTime=%s, cpTime=%s, cp_sub_delta=%s", hostTime, cpTime, cpTime.Sub(hostTime)))
+			return nil // CP clock has caught up to the host
+		}
+
+		// Both branches stay at Info: early probe errors and a still-lagging
+		// clock are both expected churn during cold start (the CP AdminPort may
+		// not be listening yet, and the VM clock re-syncs over a few seconds).
+		// The loop retries either way; only the terminal timeout is an error.
+		if err != nil {
+			lastProbeErr = err
+			log.Info().
+				Str("event", "cp_clock_probe").
+				Str("component", "cpboot.clocksync").
+				Msg(fmt.Sprintf("reprobing: control plane clock probe failed: %v", err))
+		} else {
+			log.Info().
+				Str("event", "cp_clock_probe").
+				Str("component", "cpboot.clocksync").
+				Msg(fmt.Sprintf("reprobing: control plane clock still behind host, hostTime=%s, cpTime=%s", hostTime, cpTime))
+		}
+
+		if time.Now().After(deadline) {
+			var timeoutErr error
+			if lastProbeErr != nil {
+				timeoutErr = fmt.Errorf("cp clock sync deadline exceeded (last probe: %w)", lastProbeErr)
+			} else {
+				timeoutErr = fmt.Errorf("cp clock sync deadline exceeded")
+			}
+			log.Error().
+				Str("event", "cp_clock_sync_timeout").
+				Str("component", "cpboot.clocksync").
+				Msg(timeoutErr.Error())
+			return timeoutErr
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(cpClockSyncInterval):
+		}
+	}
 }
 
 // waitForCPHealthz polls http://127.0.0.1:<HealthPort>/healthz until the

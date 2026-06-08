@@ -36,3 +36,13 @@ Next Steps:
 - [ ] clawker needs to remove containers if CP fails. containers should be atomic on any failure period 
 - [ ] **Firewall Envoy/CoreDNS sibling drift gate misses image/binary/config changes** ([#308](https://github.com/schmitthub/clawker/issues/308)). `firewall.Stack.ensureContainer` (`internal/controlplane/firewall/stack.go:791`) only compares `infra_certs_ready` + `otel_infra_port` labels — does NOT detect Envoy image digest bumps, embedded CoreDNS binary updates, or `envoy_config.go`/`coredns_config.go` template changes. Same bug class as CP drift gate (#300) but on the sibling containers CP manages. Security-relevant: a clawker CLI upgrade with an Envoy CVE patch, CoreDNS dnsbpf fix, or deny-chain hardening won't reach users until a rule mutation OR manual `docker rm`. Fix: stamp `cpBinaryHash()` as a third drift label so any CP-binary-affecting change recreates the siblings.
 - [ ] **Replace FNV domain hash with userspace-allocated identity (Cilium pattern).** `internal/controlplane/firewall/ebpf/types.go::DomainHash` derives a 32-bit FNV-1a from the domain string; that hash keys `dns_cache`, `route_map`, and lands on every netlogger record. Theoretically collision-vulnerable. Cilium uses sequential u32 identities allocated by userspace (`pkg/fqdn/namemanager`, `IPCache`); Tetragon doesn't do per-domain BPF enforcement at all. Fix: CP-side identity allocator, BPF maps re-keyed on `identity`, dnsbpf writes identities not hashes, netlogger reverse map collapses to identity→domain direct read. See Serena memory `initiative_route_identity_allocator` for scope.
+
+## Storeui 
+
+- [ ] multiline boxes should accept shift+enter for new lines and enter to save 
+- [ ] Audit fields for usage — "build.timeout", "build.start_period", "build.retries", "agent.includes" may be unused/legacy
+- [ ] "agent.memory" and similar fields should be grouped in an "advanced" collapsible section
+- [ ] Field descriptions inaccurate — "command" says "healthchecks", SHELL says "Default shell for RUN instructions" but it's the terminal shell env var
+- [ ] firewall rules editor should be a structured form, not multiline text
+- [ ] firewall rules preview shows raw Go map literal instead of formatted display
+- [ ] firewall rules duplication bug (github ssh appears twice)

@@ -8,7 +8,7 @@ Clawker containers are more than a simple `docker run`. Every container goes thr
 
 ## Container Lifecycle
 
-When you run `clawker run @` or `clawker container create @`, the container goes through four host-side phases before clawkerd takes over inside:
+When you run `clawker run @` or `clawker container create @`, the container goes through four host-side phases before clawkerd takes over inside. Creating a container does **not** require the control plane — the bootstrap material is minted against the **host** clock (the source of truth) and staged without contacting CP. The control-plane readiness and clock-sync gate is enforced later, on the **start** path (`clawker container start`, or the start half of `clawker run`): before clawkerd exchanges the baked-in assertion, the CLI ensures CP is up and waits until CP's clock has caught up to the host (see [control plane clock sync](/control-plane#troubleshooting) if a start fails this check). The four host-side phases are:
 
 1. **Workspace** — resolve the working directory, set up mounts, ensure volumes
 2. **Config** — initialize the Claude Code config volume (first run only)

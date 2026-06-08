@@ -867,34 +867,44 @@ func (m *Manager) seedDNSCacheIfAbsent(ip uint32, domainHash uint32, ttlSeconds 
 	return nil
 }
 
-// deleteExpiredDNSEntries clears the given keys from a BPF map, returning
-// the number of entries actually cleared. ErrKeyNotExist counts as cleared
-// (end-state matches intent — entry is gone, usually because another actor
-// raced us, e.g. the dnsbpf CoreDNS plugin rewrote the entry between
-// Iterate and Delete). Real delete failures (EPERM, ENOMEM, ...) are
-// logged at Debug level and NOT counted, so the caller's return value is
-// an honest "entries cleared" metric rather than an "entries we tried to
-// clear" count. Split out from GarbageCollectDNS for unit testability.
-func deleteExpiredDNSEntries(m bypassMap, keys []uint32, log *logger.Logger) int {
-	cleared := 0
+// deleteExpiredDNSEntries clears the given keys from a BPF map, returning the
+// number of entries actually cleared and the number whose Delete failed for a
+// real reason. ErrKeyNotExist counts as cleared (end-state matches intent —
+// entry is gone, usually because another actor raced us, e.g. the dnsbpf
+// CoreDNS plugin rewrote the entry between Iterate and Delete). Real delete
+// failures (EPERM, ENOMEM, ...) are logged at Debug level and counted as
+// failed, NOT cleared, so cleared is an honest "entries removed" metric and
+// failed lets the caller detect a sweep that enumerated work but reclaimed
+// nothing. Split out from GarbageCollectDNS for unit testability.
+func deleteExpiredDNSEntries(m bypassMap, keys []uint32, log *logger.Logger) (cleared, failed int, firstErr error) {
 	for _, key := range keys {
 		err := m.Delete(key)
 		if err == nil || errors.Is(err, ebpf.ErrKeyNotExist) {
 			cleared++
 			continue
 		}
+		failed++
+		if firstErr == nil {
+			firstErr = err // surface the cause (EPERM/ENOMEM/...), not just a count
+		}
 		if log != nil {
 			log.Debug().Err(err).Uint32("ip", key).Msg("ebpf gc-dns: deleting expired dns_cache entry (non-fatal)")
 		}
 	}
-	return cleared
+	return cleared, failed, firstErr
 }
 
 // GarbageCollectDNS removes expired entries from the dns_cache map and
-// returns the number of entries that were actually cleared. This routine
-// is retry-safe — transient delete failures are logged at Debug and the
-// next GC pass will try again.
-func (m *Manager) GarbageCollectDNS() int {
+// returns (cleared, err): cleared is the number of entries actually evicted,
+// and err is non-nil (via joinDNSGCErrors) when the sweep could not reclaim —
+// the map could not be enumerated (wedged iterator) or an expired entry could
+// not be deleted for a real reason. A clean sweep that reclaims zero entries
+// still returns nil. The non-nil err lets the CP main loop's degraded-GC
+// detector trip on a persistently wedged sweep rather than mistaking a no-op
+// pass for progress. Individual delete failures are also logged at Debug and
+// the next GC pass retries them. The protected IP-literal seeds (m.seededIPs,
+// owned by SyncRoutes) are never evicted.
+func (m *Manager) GarbageCollectDNS() (cleared int, err error) {
 	now := uint32(time.Now().Unix())
 
 	// Snapshot the protected IP-literal seeds. Their lifecycle is owned by
@@ -919,10 +929,45 @@ func (m *Manager) GarbageCollectDNS() int {
 		}
 		expired = append(expired, ip)
 	}
-	if err := iter.Err(); err != nil {
-		m.log.Warn().Err(err).Msg("ebpf gc-dns: iterating dns_cache (next pass will retry)")
+
+	iterErr := iter.Err()
+	if iterErr != nil {
+		// Iterator failure means we could not even enumerate the map, so this
+		// sweep reclaimed nothing. It is surfaced (via joinDNSGCErrors) so the
+		// caller's degraded-GC detector trips on a persistently wedged iterator
+		// rather than treating the failed pass as a success.
+		m.log.Warn().Err(iterErr).Msg("ebpf gc-dns: iterating dns_cache (next pass will retry)")
 	}
-	return deleteExpiredDNSEntries(m.objs.DnsCache, expired, m.log)
+
+	cleared, failed, firstDeleteErr := deleteExpiredDNSEntries(m.objs.DnsCache, expired, m.log)
+
+	return cleared, joinDNSGCErrors(iterErr, failed, firstDeleteErr)
+}
+
+// joinDNSGCErrors assembles the error a single GarbageCollectDNS sweep reports
+// from the two independent ways a sweep can fail to reclaim. Either alone is
+// enough to fail the sweep so the caller's degraded-GC detector trips:
+//   - iterErr != nil: the map could not be enumerated, so the sweep reclaimed
+//     nothing (a wedged iterator).
+//   - failed > 0: expired, eligible entries were found but at least one Delete
+//     failed for a real reason (EPERM, ENOMEM, ...), so the map is not shrinking.
+//
+// A clean sweep (no iterator error, nothing failed) returns nil even when it
+// reclaimed zero entries — "swept nothing because nothing had expired" is
+// success, not failure, and must not count toward escalation.
+func joinDNSGCErrors(iterErr error, failed int, firstDeleteErr error) error {
+	var errs []error
+	if iterErr != nil {
+		errs = append(errs, fmt.Errorf("iterate dns_cache: %w", iterErr))
+	}
+	if failed > 0 {
+		if firstDeleteErr != nil {
+			errs = append(errs, fmt.Errorf("%d dns_cache delete(s) failed (first: %w)", failed, firstDeleteErr))
+		} else {
+			errs = append(errs, fmt.Errorf("%d dns_cache delete(s) failed", failed))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // LookupContainer returns the container_map entry for a given cgroup ID.

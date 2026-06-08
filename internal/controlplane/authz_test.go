@@ -3,6 +3,7 @@ package controlplane_test
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -14,6 +15,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	agentv1 "github.com/schmitthub/clawker/api/agent/v1"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane"
 	cpfw "github.com/schmitthub/clawker/internal/controlplane/firewall"
@@ -172,7 +174,7 @@ func TestAuthInterceptor_UnmappedMethod_Denied(t *testing.T) {
 
 	log := logger.Nop()
 	// Empty scope map — nothing is mapped.
-	interceptor := controlplane.NewAuthInterceptor(introspector, map[string]string{}, log)
+	interceptor := controlplane.NewAuthInterceptor(introspector, map[string]adminv1.AdminScope{}, log)
 
 	srv := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(interceptor.UnaryInterceptor()),
@@ -206,6 +208,97 @@ func TestAuthInterceptor_UnmappedMethod_Denied(t *testing.T) {
 	assert.Equal(t, codes.Unauthenticated, status.Code(err),
 		"unmapped methods must be denied (fail-closed)")
 	assert.Empty(t, introspector.IntrospectCalls())
+}
+
+// TestAuthInterceptor_MappedEmptyScope_Denied pins the OTHER half of the
+// fail-closed branch: a method that IS present in the scope map but maps to the
+// zero-value (empty) scope must still deny, and must never reach introspection.
+// TestAuthInterceptor_UnmappedMethod_Denied covers the absent-key half; this
+// covers the mapped-to-"" half. The hole this guards: a regression restoring
+// the empty string as the public sentinel would reopen a
+// fail-open path that no other test catches — TestAdminMethodScopes_CoversAllRPCs
+// only checks key presence, and the public-scope test pins "public", not "".
+func TestAuthInterceptor_MappedEmptyScope_Denied(t *testing.T) {
+	introspector := allowAllIntrospector()
+
+	log := logger.Nop()
+	// Method is mapped, but to the zero-value scope — must fail closed, never
+	// be treated as public.
+	interceptor := controlplane.NewAuthInterceptor(introspector, map[string]adminv1.AdminScope{
+		"/" + adminv1.ServiceName + "/FirewallSyncRoutes": adminv1.AdminScope(""),
+	}, log)
+
+	srv := grpc.NewServer(
+		grpc.ChainUnaryInterceptor(interceptor.UnaryInterceptor()),
+	)
+	queue := cpfw.NewActionQueue(log)
+	t.Cleanup(func() { _ = queue.Close() })
+	handler := cpfw.NewHandler(cpfw.HandlerDeps{
+		EBPF:     noopEBPF(),
+		Resolver: nopContainerResolver,
+		Log:      log,
+		Queue:    queue,
+	})
+	adminv1.RegisterAdminServiceServer(srv, handler)
+
+	lis := bufconnListen(t)
+	go func() { srv.Serve(lis) }() //nolint:errcheck
+	t.Cleanup(srv.Stop)
+
+	conn, err := grpc.NewClient(
+		"passthrough:///bufconn",
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithContextDialer(bufconnDialer(lis)),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { conn.Close() })
+
+	client := adminv1.NewAdminServiceClient(conn)
+	ctx := withBearer(context.Background(), "admin-token")
+	_, err = client.FirewallSyncRoutes(ctx, &adminv1.FirewallSyncRoutesRequest{})
+	require.Error(t, err)
+	assert.Equal(t, codes.Unauthenticated, status.Code(err),
+		"a method mapped to the empty scope must fail closed, not be treated as public")
+	assert.Empty(t, introspector.IntrospectCalls(),
+		"the empty-scope deny must short-circuit before introspection")
+}
+
+// TestAuthInterceptor_PublicScope_PublicMethod_NoToken_Allowed pins the public
+// branch that GetSystemTime relies on for token-exchange bootstrap: a method
+// mapped to consts.ScopePublic must be served on mTLS alone, with NO bearer
+// token, and the introspector must never be consulted. A regression that
+// treated the public scope as deny — or still demanded a token — would break
+// the CLI's clock-sync probe, and TestAdminMethodScopes_CoversAllRPCs (which
+// only checks map keys) would not catch it.
+//
+// The load-bearing proof is the deny-all introspector tripwire: if auth fell
+// through to introspection it would reject, so an empty IntrospectCalls() means
+// the public arm short-circuited before introspection. The error-code check
+// only pins that auth did not itself reject — it deliberately does NOT assert
+// the downstream handler outcome, which is a harness artifact here
+// (newTestServer registers the bare firewall Handler, whose
+// UnimplementedAdminServiceServer answers GetSystemTime; the production
+// adminServer returns a real time).
+func TestAuthInterceptor_PublicScope_PublicMethod_NoToken_Allowed(t *testing.T) {
+	// GetSystemTime must be mapped to the public scope — the precondition for
+	// this whole branch.
+	require.Equal(t, consts.ScopePublic, string(adminv1.AdminMethodScopes()["/"+adminv1.ServiceName+"/GetSystemTime"]),
+		"GetSystemTime must be public (consts.ScopePublic)")
+
+	introspector := denyAllIntrospector()
+	client := newTestServer(t, introspector, noopEBPF())
+
+	// No bearer token on the context at all.
+	_, err := client.GetSystemTime(context.Background(), &adminv1.GetSystemTimeRequest{})
+	if err != nil {
+		code := status.Code(err)
+		assert.NotEqual(t, codes.Unauthenticated, code,
+			"public-scope method must not be rejected by auth")
+		assert.NotEqual(t, codes.PermissionDenied, code,
+			"public-scope method must not be rejected by auth")
+	}
+	assert.Empty(t, introspector.IntrospectCalls(),
+		"a public-scope method must not consult the introspector")
 }
 
 func TestAuthInterceptor_IntrospectionError_Denied(t *testing.T) {
@@ -285,6 +378,24 @@ func TestAdminMethodScopes_CoversAllRPCs(t *testing.T) {
 	// Exact count match as a belt-and-suspenders check.
 	assert.Equal(t, len(protoMethods), len(scopes),
 		"AdminMethodScopes() count (%d) must equal proto RPC count (%d)", len(scopes), len(protoMethods))
+}
+
+// TestScopeTypesAreDistinct is the runtime backstop for the compile-time
+// cross-service guard: AdminScope and AgentScope must be DISTINCT named
+// types, not aliases of one shared type. The compiler already rejects an
+// agent scope in AdminMethodScopes (and vice versa) precisely because the
+// types differ — but a future refactor that collapsed them back into
+// `type AdminScope = SharedScope` aliases would silently restore the
+// "buffet of scopes" hole without breaking any other test. This asserts
+// the property reflectively so that regression fails loudly: if the two
+// reflect.Types are equal, the distinctness (and the guard) is gone.
+func TestScopeTypesAreDistinct(t *testing.T) {
+	adminT := reflect.TypeFor[adminv1.AdminScope]()
+	agentT := reflect.TypeFor[agentv1.AgentScope]()
+	assert.NotEqual(t, adminT, agentT,
+		"AdminScope (%s) and AgentScope (%s) must be distinct types, not aliases — "+
+			"distinctness is what stops a cross-service scope from being wired into the wrong service",
+		adminT, agentT)
 }
 
 // --- RequireClientID (agent-listener pin) ---

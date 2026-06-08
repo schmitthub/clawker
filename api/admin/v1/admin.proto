@@ -94,6 +94,26 @@ service AdminService {
   // with the control plane. Used by `clawker controlplane agents` and
   // diagnostic tooling. Read-only; uniform admin scope.
   rpc ListAgents(ListAgentsRequest) returns (ListAgentsResult);
+
+  // GetSystemTime returns the control plane's current wall-clock time.
+  // This RPC is intentionally PUBLIC (the public scope in AdminMethodScopes —
+  // no bearer token required), because it bootstraps the very auth flow.
+  // The bootstrap assertion is minted in the HOST clock with no iat
+  // correction — the host clock is the source of truth and the CP container's
+  // clock is always forced toward it (Docker Desktop's LinuxKit VM tracks the
+  // host). fosite (Hydra's validator) checks `iat` with zero leeway and
+  // exposes no server-side knob, so a host-clock `iat` presented while the CP
+  // container's clock is momentarily behind the host (common right after the
+  // host sleeps, before the VM clock re-syncs) would be rejected with HTTP 500
+  // "Token used before issued". clawker-cp and Hydra share the container, so
+  // this clock is exactly the one fosite validates against. Because the CP
+  // clock always converges back to the host, the fix is to WAIT: the host-side
+  // CP-readiness gate on the container START path polls this RPC and blocks the
+  // start until the CP clock has caught up to the host, before clawkerd ever
+  // exchanges the baked assertion. mTLS still applies at the listener — the
+  // CLI's client cert is long-lived (1y), so the handshake survives a lagging
+  // CP clock.
+  rpc GetSystemTime(GetSystemTimeRequest) returns (GetSystemTimeResult);
 }
 
 // Route is one entry in the global route_map.
@@ -278,6 +298,18 @@ message FirewallResolveHostnameResult {
 message ListAgentsRequest {}
 message ListAgentsResult {
   repeated Agent agents = 1;
+}
+
+message GetSystemTimeRequest {}
+message GetSystemTimeResult {
+  // unix_nanos is the CP's current wall-clock time as Unix nanoseconds since
+  // the epoch. Unix nanoseconds are an absolute instant counted from the epoch,
+  // so the value is inherently timezone-independent with no dependency on any TZ
+  // setting on the CP host (no UTC conversion is applied or needed server-side).
+  // The host-side CP-readiness gate reads it back and compares against its own
+  // time.Now().UTC() to decide whether the CP clock has caught up to the host
+  // before the container start is allowed to proceed.
+  int64 unix_nanos = 1;
 }
 
 message Agent {

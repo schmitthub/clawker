@@ -89,7 +89,85 @@ const (
 	// default 10s stop timeout, run sequentially → ~20s worst case,
 	// leaving headroom.
 	cpDrainTimeout = 25 * time.Second
+	// dnsGCInterval is how often the CP sweeps expired entries out of the
+	// pinned dns_cache. CoreDNS (dnsbpf) writes one entry per resolved A
+	// record and nothing else reclaims them, so without this sweep the map
+	// grows unbounded over the CP lifetime and entries for since-removed
+	// zones linger as orphaned hashes (surfacing via netlogger as
+	// event=netlogger_reverse_dns_unattributed). IP-literal seeds are
+	// protected by GarbageCollectDNS (m.seededIPs), so a live IP rule's
+	// route is never reclaimed out from under it.
+	dnsGCInterval = 60 * time.Second
+	// dnsGCDegradedThreshold is how many consecutive failed sweeps escalate the
+	// per-sweep dns_gc_panic/dns_gc_error into a distinct dns_gc_degraded line. A
+	// failed sweep is one that panicked OR that GarbageCollectDNS reported an
+	// error for (a wedged iterator, or expired entries that could not be
+	// deleted). A single bad pass is noise; a sweep that fails every interval
+	// means the map is no longer being reclaimed at all (the unbounded-growth
+	// failure this goroutine exists to prevent), which an operator must be able
+	// to tell apart from one transient hiccup in the greppable log surface.
+	dnsGCDegradedThreshold = 5
 )
+
+// dnsGCEscalator tracks the streak of consecutive failed dns_cache GC sweeps
+// and reports the single tick on which that streak first reaches threshold, so
+// the caller emits the "wedged GC" line exactly once per crossing rather than
+// every interval. Extracted from the GC goroutine so the off-by-one-prone
+// "escalate once, reset on success" logic is unit-testable without driving the
+// whole loop.
+type dnsGCEscalator struct {
+	threshold int
+	failures  int
+}
+
+// record folds one sweep outcome into the streak and returns true only on the
+// tick where the consecutive-failure count first equals the threshold. A
+// successful sweep (ok=true) resets the streak; the strict == means later ticks
+// in the same failing streak do not re-fire.
+func (e *dnsGCEscalator) record(ok bool) (escalate bool) {
+	if ok {
+		e.failures = 0
+		return false
+	}
+	e.failures++
+	return e.failures == e.threshold
+}
+
+// dnsGCSweep runs one dns_cache GC pass and reports whether it succeeded, per
+// the CP no-panic discipline. The recover is the load-bearing part: a panicking
+// sweep is logged (event=dns_gc_panic) and counted as a failure (ok=false)
+// without tearing down the caller's ticker loop, so the loop keeps governing the
+// map rather than surrendering it until CP restart. It also returns false when
+// GarbageCollectDNS reports it could not reclaim (wedged iterator / failed
+// deletes). A clean sweep that simply had nothing to reclaim (n==0, err==nil) is
+// success (ok=true) — only a panic or a non-nil error counts as a failed sweep.
+// Extracted from
+// the GC goroutine so the panic→false and error→false mapping is unit-testable
+// without driving the whole loop. gc is normally ebpfMgr.GarbageCollectDNS.
+func dnsGCSweep(gc func() (int, error), log *logger.Logger) (ok bool) {
+	ok = true
+	defer func() {
+		if r := recover(); r != nil {
+			ok = false
+			log.Error().Interface("panic", r).
+				Str("event", "dns_gc_panic").
+				Msg("dns_cache gc sweep panicked — skipping this pass, loop continues")
+		}
+	}()
+	n, err := gc()
+	if err != nil {
+		log.Warn().Err(err).
+			Str("event", "dns_gc_error").
+			Msg("dns_cache gc sweep could not reclaim — map may not be shrinking, loop continues")
+		return false
+	}
+	if n > 0 {
+		log.Debug().Int("cleared", n).
+			Str("event", "dns_gc_swept").
+			Msg("dns_cache gc removed expired entries")
+	}
+	return ok
+}
 
 func main() {
 	caCertPath := flag.String("tls-ca", consts.CPCACertPath, "CLI CA certificate")
@@ -434,7 +512,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// the CLI is the only client that holds the admin scope and we
 	// don't want to accidentally lock out a future second admin client.
 	agentInterceptor := controlplane.
-		NewAuthInterceptor(introspector, controlplane.AgentMethodScopes(), log).
+		NewAuthInterceptor(introspector, agentv1.AgentMethodScopes(), log).
 		RequireClientID(consts.ClientIDAgent)
 
 	grpcServer := grpc.NewServer(
@@ -842,7 +920,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 				Bus:                bus,
 				Docker:             dockerCli.APIClient,
 				Cfg:                cfg,
-				Domains:            handler.AllResolvableDomains,
+				Domains:            handler.ReverseDNSDomains,
 				OtelLoggerProvider: netloggerProvider,
 				Log:                log.With("component", "netlogger"),
 			})
@@ -898,6 +976,54 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 				Msg("netlogger ready — eBPF egress events exporting to OTLP")
 		}
 	}
+
+	// Step 9d: periodic dns_cache garbage collection. Reclaims expired
+	// entries the CoreDNS dnsbpf plugin wrote so the pinned map does not
+	// grow unbounded and stale orphaned hashes do not accumulate. Runs on
+	// watcherCtx so it stops on SIGTERM/drain-to-zero. Recovers per CP
+	// no-panic discipline — the recover is per-sweep (inside the loop), so a
+	// single panicking sweep is logged and the loop keeps governing the map
+	// rather than surrendering it until CP restart.
+	dnsGCCtx, dnsGCCancel := context.WithCancel(watcherCtx)
+	var dnsGCWg sync.WaitGroup
+	dnsGCWg.Add(1)
+	go func() {
+		defer dnsGCWg.Done()
+		ticker := time.NewTicker(dnsGCInterval)
+		defer ticker.Stop()
+		escalator := dnsGCEscalator{threshold: dnsGCDegradedThreshold}
+		for {
+			select {
+			case <-dnsGCCtx.Done():
+				return
+			case <-ticker.C:
+				// Every sweep since the last success has failed: the map is no
+				// longer being reclaimed. Emit a distinct line on the tick that
+				// first crosses the threshold so an operator can tell a wedged
+				// GC from one transient failure. Logged once per crossing.
+				if escalator.record(dnsGCSweep(ebpfMgr.GarbageCollectDNS, log)) {
+					log.Error().Int("consecutive_failures", escalator.failures).
+						Str("event", "dns_gc_degraded").
+						Msg("dns_cache gc has failed every sweep — map no longer being reclaimed, may grow unbounded")
+				}
+			}
+		}
+	}()
+	// Stop the dns_cache sweeper and wait for any in-flight sweep to finish
+	// before the BPF map fd it iterates/deletes is torn down — the same
+	// stop-before-teardown discipline netloggerSvc.Stop follows for the
+	// ringbuf reader on the shared dns_cache map. sync.Once so the drain
+	// callback (before FlushAll) and the deferred path can both call it;
+	// deferred here (after ebpfMgr.Close was deferred earlier) so LIFO runs
+	// this first, joining the goroutine before Close() shuts the fd.
+	var stopDNSGCOnce sync.Once
+	stopDNSGC := func() {
+		stopDNSGCOnce.Do(func() {
+			dnsGCCancel()
+			dnsGCWg.Wait()
+		})
+	}
+	defer stopDNSGC()
 
 	listAgents := func(ctx context.Context) (int, error) {
 		ids, err := listAgentIDs(ctx, listAgentsOpts{})
@@ -961,6 +1087,11 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 			}
 			shutdownCancel()
 		}
+		// Stop the dns_cache sweeper as part of orderly eBPF teardown. FlushAll
+		// itself doesn't touch dns_cache, but the deferred ebpfMgr.Close() that
+		// follows shutdown closes every map fd — including the one the sweep
+		// iterates/deletes — so join the sweeper here before teardown proceeds.
+		stopDNSGC()
 		if err := ebpfMgr.FlushAll(); err != nil {
 			log.Error().Err(err).Msg("drain: ebpf flush failed")
 			errs = append(errs, fmt.Errorf("ebpf flush: %w", err))

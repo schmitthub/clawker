@@ -78,12 +78,9 @@ func Dial(ctx context.Context, adminPort, hydraPort int, opts ...grpc.DialOption
 	}
 
 	// mTLS for gRPC AdminService (presents client cert).
-	grpcTLSCfg := &tls.Config{
-		RootCAs:      certPool,
-		Certificates: []tls.Certificate{clientCert},
-		ServerName:   consts.ContainerCP,
-		MinVersion:   tls.VersionTLS13,
-	}
+	grpcTLSCfg := mtlsConfig(certPool, clientCert)
+
+	target := fmt.Sprintf("127.0.0.1:%d", adminPort)
 
 	hydraTokenURL := fmt.Sprintf("https://127.0.0.1:%d/oauth2/token", hydraPort)
 	ts := newTokenSource(signingKey, hydraTokenURL, tokenTLSCfg)
@@ -95,8 +92,6 @@ func Dial(ctx context.Context, adminPort, hydraPort int, opts ...grpc.DialOption
 	if err := retryInitialToken(ctx, ts); err != nil {
 		return nil, nil, fmt.Errorf("fetch initial access token: %w", err)
 	}
-
-	target := fmt.Sprintf("127.0.0.1:%d", adminPort)
 	dialOpts := append([]grpc.DialOption{}, opts...)
 	dialOpts = append(dialOpts,
 		grpc.WithTransportCredentials(credentials.NewTLS(grpcTLSCfg)),
@@ -113,6 +108,53 @@ func Dial(ctx context.Context, adminPort, hydraPort int, opts ...grpc.DialOption
 	}
 
 	return adminv1.NewAdminServiceClient(conn), conn, nil
+}
+
+// mtlsConfig builds the mTLS client config for the gRPC AdminService:
+// trusts the CLI CA, presents the CLI client cert, pins ServerName to
+// the CP container CN. Shared by Dial and clientGRPCTLSConfig so the
+// dial path and the standalone CP-time probe present identical
+// credentials.
+func mtlsConfig(pool *x509.CertPool, clientCert tls.Certificate) *tls.Config {
+	return &tls.Config{
+		RootCAs:      pool,
+		Certificates: []tls.Certificate{clientCert},
+		ServerName:   consts.ContainerCP,
+		MinVersion:   tls.VersionTLS13,
+	}
+}
+
+// clientGRPCTLSConfig loads the CLI CA + client cert from auth material
+// and returns the mTLS config for dialing the AdminService. Used by
+// ProbeCPTime, which needs the same transport credentials as Dial
+// but without the token-exchange machinery.
+func clientGRPCTLSConfig() (*tls.Config, error) {
+	caCert, err := auth.CACert()
+	if err != nil {
+		return nil, fmt.Errorf("load CA cert: %w", err)
+	}
+	clientCert, err := auth.LoadClientCert()
+	if err != nil {
+		return nil, fmt.Errorf("load client cert: %w", err)
+	}
+	pool := x509.NewCertPool()
+	pool.AddCert(caCert)
+	return mtlsConfig(pool, clientCert), nil
+}
+
+// ProbeCPTime returns the control plane's current wall-clock time via a
+// single mTLS GetSystemTime round trip (the public bootstrap RPC, no
+// bearer token). Callers gate assertion minting on it: an assertion's iat
+// is in the host clock, and Hydra/fosite validates iat against the CP
+// clock with zero leeway, so a caller waits until the CP clock is no
+// longer behind the host before minting. Bounded internally by
+// cpTimeProbeTimeout; respects ctx cancellation/deadline.
+func ProbeCPTime(ctx context.Context, adminPort int) (time.Time, error) {
+	tlsCfg, err := clientGRPCTLSConfig()
+	if err != nil {
+		return time.Time{}, err
+	}
+	return probeCPTime(ctx, fmt.Sprintf("127.0.0.1:%d", adminPort), tlsCfg)
 }
 
 // initialTokenDeadline bounds the retry window for the first Hydra token
@@ -191,6 +233,12 @@ type tokenSource struct {
 // token mid-flight.
 const tokenRefreshMargin = 30 * time.Second
 
+// cpTimeProbeTimeout caps a single GetSystemTime probe at a hard upper
+// bound while still honoring the caller's context cancellation/deadline,
+// so the probe can't inherit a caller's arbitrary (or absent) deadline and
+// hang. A CP-time probe is one fast local round trip to the CP.
+const cpTimeProbeTimeout = 5 * time.Second
+
 func newTokenSource(signingKey *ecdsa.PrivateKey, tokenURL string, tlsCfg *tls.Config) *tokenSource {
 	return &tokenSource{
 		signingKey: signingKey,
@@ -231,6 +279,31 @@ func (ts *tokenSource) unaryInterceptor() grpc.UnaryClientInterceptor {
 	}
 }
 
+// probeCPTime dials a short-lived mTLS connection (no bearer token —
+// GetSystemTime is the public bootstrap RPC) and returns the CP's current
+// wall-clock time as a UTC instant (the int64 nanos parsed and normalized to
+// UTC). Used by ProbeCPTime, which the cpboot readiness gate polls to wait
+// for the CP clock to catch up to the host before CP is declared ready.
+func probeCPTime(ctx context.Context, target string, tlsCfg *tls.Config) (time.Time, error) {
+	// Bound the probe on its own deadline so its failure mode doesn't depend
+	// on the caller RPC that triggered this refresh (see cpTimeProbeTimeout).
+	ctx, cancel := context.WithTimeout(ctx, cpTimeProbeTimeout)
+	defer cancel()
+
+	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
+	if err != nil {
+		return time.Time{}, fmt.Errorf("dial cp for system time: %w", err)
+	}
+	defer conn.Close()
+
+	client := adminv1.NewAdminServiceClient(conn)
+	resp, err := client.GetSystemTime(ctx, &adminv1.GetSystemTimeRequest{})
+	if err != nil {
+		return time.Time{}, fmt.Errorf("get cp system time: %w", err)
+	}
+	return time.Unix(0, resp.GetUnixNanos()).UTC(), nil
+}
+
 // fetchAccessToken signs a JWT assertion and exchanges it at Hydra's
 // /oauth2/token endpoint for an access token. Returns the token and its
 // TTL (from expires_in, defaulting to 1 hour if absent).
@@ -241,16 +314,21 @@ func fetchAccessToken(ctx context.Context, signingKey *ecdsa.PrivateKey, tokenUR
 		Audience:         tokenURL,
 		JWTID:            uuid.NewString(),
 		ExpiresInSeconds: 30,
+		// Minted in the host clock (Now unset → time.Now()), the source of
+		// truth. The cpboot readiness gate aligns the CP clock to the host when
+		// CP is brought up, so the host-clock iat clears Hydra's iat validation.
 	}, signingKey)
 	if err != nil {
 		return "", 0, fmt.Errorf("build assertion: %w", err)
 	}
 
+	adminScope := string(adminv1.ScopeAdmin)
+
 	form := url.Values{
 		"grant_type":            {"client_credentials"},
 		"client_assertion_type": {"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"},
 		"client_assertion":      {assertion},
-		"scope":                 {consts.ScopeAdmin},
+		"scope":                 {adminScope},
 	}
 
 	client := &http.Client{

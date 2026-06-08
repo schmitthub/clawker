@@ -97,12 +97,11 @@ You're now inside a containerized Claude Code session. Your project code is bind
 
 When you run this command, Clawker:
 
-1. Creates the container with your project directory mounted at its real host path, plus persistent volumes for Claude Code config (`~/.claude`) and shell history
-2. Brings up the clawker **control plane** if it isn't already running — a long-lived per-host daemon that owns the firewall lifecycle, eBPF program attachment, and the mTLS command channel to every agent
-3. Streams the container's mTLS bootstrap material (per-agent cert + key + CA + a single-use Hydra JWT) into the container before starting it
-4. Starts the container with `clawkerd` as PID 1; the control plane attaches eBPF firewall programs from outside and dials into `clawkerd` over mTLS to drive in-container init. When the monitoring stack is running, every firewall decision from those eBPF programs (allowed / denied / bypassed) begins streaming to the `clawker-ebpf-egress` OpenSearch index — see [Egress Observability](/observability)
-5. Forwards SSH/GPG agent sockets and Git HTTPS credentials from your host, copies your Claude Code settings/plugins/auth into the container, runs any `post_init` script you've configured
-6. Issues `AgentReady`, at which point `clawkerd` forks Claude Code as the unprivileged `claude` user (kernel-side privilege drop)
+1. Creates the container with your project directory mounted at its real host path, plus persistent volumes for Claude Code config (`~/.claude`) and shell history, and streams the container's mTLS bootstrap material (per-agent cert + key + CA + a single-use Hydra JWT, minted in your host's clock) into it
+2. Brings up the clawker **control plane** if it isn't already running — a long-lived per-host daemon that owns the firewall lifecycle, eBPF program attachment, and the mTLS command channel to every agent — and waits for it to be fully ready (including a host↔CP clock-sync check) before starting the container
+3. Starts the container with `clawkerd` as PID 1; the control plane attaches eBPF firewall programs from outside and dials into `clawkerd` over mTLS to drive in-container init. When the monitoring stack is running, every firewall decision from those eBPF programs (allowed / denied / bypassed) begins streaming to the `clawker-ebpf-egress` OpenSearch index — see [Egress Observability](/observability)
+4. Forwards SSH/GPG agent sockets and Git HTTPS credentials from your host, copies your Claude Code settings/plugins/auth into the container, runs any `post_init` script you've configured
+5. Issues `AgentReady`, at which point `clawkerd` forks Claude Code as the unprivileged `claude` user (kernel-side privilege drop)
 
 An automatically loaded prompt exists at `/etc/claude-code/CLAUDE.md`, so the agent knows it's in a clawker container and can help troubleshoot issues and provide guidance when running into constraints.
 

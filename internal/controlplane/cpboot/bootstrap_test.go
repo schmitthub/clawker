@@ -43,12 +43,13 @@ type bootstrapFixture struct {
 }
 
 type bootstrapCalls struct {
-	image   atomic.Int32
-	healthz atomic.Int32
-	create  atomic.Int32
-	start   atomic.Int32
-	stop    atomic.Int32
-	remove  atomic.Int32
+	image     atomic.Int32
+	healthz   atomic.Int32
+	clockSync atomic.Int32
+	create    atomic.Int32
+	start     atomic.Int32
+	stop      atomic.Int32
+	remove    atomic.Int32
 }
 
 // newBootstrapFixture installs stubs on the package-level seams that
@@ -117,7 +118,7 @@ func newBootstrapFixture(t *testing.T) *bootstrapFixture {
 			},
 		}, nil
 	}
-	origImage, origHealthz := ensureCPImageFn, healthzFn
+	origImage, origHealthz, origClockSync := ensureCPImageFn, healthzFn, clockSyncFn
 	ensureCPImageFn = func(_ context.Context, _ *docker.Client, _ *logger.Logger) (string, error) {
 		calls.image.Add(1)
 		return cpImageRef(), nil
@@ -126,10 +127,16 @@ func newBootstrapFixture(t *testing.T) *bootstrapFixture {
 		calls.healthz.Add(1)
 		return nil
 	}
+	// Stub the clock-sync gate (real impl dials the CP's GetSystemTime).
+	clockSyncFn = func(_ context.Context, _ config.Config, _ *logger.Logger) error {
+		calls.clockSync.Add(1)
+		return nil
+	}
 
 	t.Cleanup(func() {
 		ensureCPImageFn = origImage
 		healthzFn = origHealthz
+		clockSyncFn = origClockSync
 	})
 	return &bootstrapFixture{cfg: cfg, fake: fake, calls: calls}
 }
@@ -226,6 +233,7 @@ func TestEnsureRunning_HappyPath_CreatesContainer(t *testing.T) {
 	assert.Equal(t, int32(1), f.calls.create.Load(), "container created once")
 	assert.Equal(t, int32(1), f.calls.start.Load(), "container started once")
 	assert.Equal(t, int32(1), f.calls.healthz.Load(), "healthz polled once")
+	assert.Equal(t, int32(1), f.calls.clockSync.Load(), "clock-sync gate runs on the create path")
 }
 
 // TestEnsureRunning_ForwardsSecurityOptToHostConfig pins the
@@ -245,7 +253,8 @@ func TestEnsureRunning_ForwardsSecurityOptToHostConfig(t *testing.T) {
 		return mobyclient.ContainerCreateResult{ID: "cp-id"}, nil
 	}
 
-	require.NoError(t, EnsureRunning(t.Context(), f.ensureOpts()))
+	err := EnsureRunning(t.Context(), f.ensureOpts())
+	require.NoError(t, err)
 	require.NotNil(t, captured, "ContainerCreate must receive a HostConfig")
 	assert.Contains(t, captured.SecurityOpt, "apparmor=unconfined",
 		"createCPContainer must forward cpConfig.SecurityOpt into HostConfig")
@@ -270,10 +279,12 @@ func TestEnsureRunning_AlreadyRunning_IsNoOp(t *testing.T) {
 		}}, nil
 	}
 
-	require.NoError(t, EnsureRunning(t.Context(), f.ensureOpts()))
+	err := EnsureRunning(t.Context(), f.ensureOpts())
+	require.NoError(t, err)
 	assert.Zero(t, f.calls.create.Load(), "no create when already running")
 	assert.Zero(t, f.calls.start.Load(), "no start when already running")
 	assert.Equal(t, int32(1), f.calls.healthz.Load(), "healthz probed for running CP")
+	assert.Equal(t, int32(1), f.calls.clockSync.Load(), "clock-sync gate runs on the adopt path")
 }
 
 func TestEnsureRunning_ExistingStopped_StartsWithoutRecreate(t *testing.T) {
@@ -304,7 +315,8 @@ func TestEnsureRunning_ExistingStopped_StartsWithoutRecreate(t *testing.T) {
 		}, nil
 	}
 
-	require.NoError(t, EnsureRunning(t.Context(), f.ensureOpts()))
+	err = EnsureRunning(t.Context(), f.ensureOpts())
+	require.NoError(t, err)
 	assert.Zero(t, f.calls.create.Load(), "no create when only stopped")
 	assert.Equal(t, int32(1), f.calls.start.Load(), "existing container started")
 	assert.Zero(t, f.calls.remove.Load(), "no remove when binary SHA matches")
@@ -326,6 +338,29 @@ func TestEnsureRunning_HealthzTimeout_SurfacesError(t *testing.T) {
 	require.ErrorAs(t, err, &got)
 	assert.Equal(t, sentinel.URL, got.URL)
 	assert.Equal(t, int32(1), f.calls.create.Load(), "container still created before healthz")
+}
+
+// TestEnsureRunning_ClockSyncFailure_SurfacesError pins the readiness contract
+// end-to-end: a green /healthz with a CP clock that never converges must make
+// EnsureRunning FAIL, not succeed. The other clock-sync tests stub the gate to
+// return nil and only assert it was invoked; this one stubs it to error and
+// proves cpReady propagates that error out of EnsureRunning (a reorder that ran
+// the gate but swallowed its error, or returned nil after healthz, would regress
+// the whole point of gating create on clock sync).
+func TestEnsureRunning_ClockSyncFailure_SurfacesError(t *testing.T) {
+	f := newBootstrapFixture(t)
+	// /healthz is green (fixture default), but the clock never catches up.
+	clockSyncFn = func(_ context.Context, _ config.Config, _ *logger.Logger) error {
+		f.calls.clockSync.Add(1)
+		return fmt.Errorf("cp clock never caught up to host (test sentinel)")
+	}
+
+	err := EnsureRunning(t.Context(), f.ensureOpts())
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "cp clock never caught up to host (test sentinel)",
+		"clock-sync gate failure must propagate out of EnsureRunning")
+	assert.Equal(t, int32(1), f.calls.clockSync.Load(), "clock-sync gate ran")
+	assert.Equal(t, int32(1), f.calls.create.Load(), "container created before the clock-sync gate")
 }
 
 func TestEnsureRunning_ConcurrentCallers_SingleCreate(t *testing.T) {
@@ -455,7 +490,8 @@ func TestEnsureRunning_NameConflictRecovery_NoSecondCreate(t *testing.T) {
 		}, nil
 	}
 
-	require.NoError(t, EnsureRunning(t.Context(), f.ensureOpts()))
+	err = EnsureRunning(t.Context(), f.ensureOpts())
+	require.NoError(t, err)
 	// The recovery path must NOT re-issue a second ContainerCreate after
 	// picking up the pre-existing container — that's the whole point of
 	// the test name. The conflict happens during the first attempted
@@ -722,7 +758,8 @@ func TestEnsureRunning_RecreatesStoppedDriftedContainer(t *testing.T) {
 		}, nil
 	}
 
-	require.NoError(t, EnsureRunning(t.Context(), f.ensureOpts()))
+	err = EnsureRunning(t.Context(), f.ensureOpts())
+	require.NoError(t, err)
 	assert.Equal(t, int32(1), f.calls.remove.Load(),
 		"stopped + drifted container must be force-removed, not started")
 	assert.Equal(t, int32(1), f.calls.create.Load(),
@@ -789,7 +826,8 @@ func TestEnsureRunning_NameConflict_TheirsNewer_AdoptsPeer(t *testing.T) {
 		return mobyclient.ImageInspectResult{}, fmt.Errorf("unexpected image ref %q", ref)
 	}
 
-	require.NoError(t, EnsureRunning(t.Context(), f.ensureOpts()))
+	err := EnsureRunning(t.Context(), f.ensureOpts())
+	require.NoError(t, err)
 	assert.Equal(t, int32(1), f.calls.create.Load(),
 		"only the initial (conflict-ing) create attempt — no retry when peer wins")
 	assert.Zero(t, f.calls.remove.Load(),
@@ -862,7 +900,8 @@ func TestEnsureRunning_NameConflict_OursNewer_ReplacesPeer(t *testing.T) {
 		return mobyclient.ImageInspectResult{}, fmt.Errorf("unexpected image ref %q", ref)
 	}
 
-	require.NoError(t, EnsureRunning(t.Context(), f.ensureOpts()))
+	err := EnsureRunning(t.Context(), f.ensureOpts())
+	require.NoError(t, err)
 	assert.Equal(t, int32(1), f.calls.remove.Load(),
 		"older peer container must be force-removed")
 	assert.Equal(t, int32(2), f.calls.create.Load(),
@@ -1083,7 +1122,8 @@ func TestEnsureRunning_NameConflict_OurImageVanished_Retries(t *testing.T) {
 		return managedImageInspect(f.cfg, "2026-05-21T10:00:00Z"), nil
 	}
 
-	require.NoError(t, EnsureRunning(t.Context(), f.ensureOpts()))
+	err := EnsureRunning(t.Context(), f.ensureOpts())
+	require.NoError(t, err)
 	assert.Equal(t, int32(2), f.calls.create.Load(),
 		"vanished image must trigger retry, not abort: first create conflicts, second succeeds")
 	assert.Equal(t, int32(2), f.calls.image.Load(),

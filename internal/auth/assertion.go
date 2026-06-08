@@ -19,8 +19,18 @@ type AssertionClaims struct {
 	Audience string
 	// JWTID (jti) — cryptographically random unique ID.
 	JWTID string
-	// ExpiresIn is the duration until expiration (typically 30-60s).
+	// ExpiresInSeconds is the duration until expiration. The CLI assertion is
+	// short-lived (~30s); the agent assertion uses AgentAssertionTTL (24h), so
+	// callers set this per use site — do not assume a short value here.
 	ExpiresInSeconds int
+	// Now is the reference clock for iat/exp. Zero → time.Now(), which is
+	// what production always uses: the host clock is the source of truth
+	// (the CP/VM clock is Docker-forced to track it), so no per-mint clock
+	// override is applied. Host↔CP drift in the transient post-sleep window
+	// is handled by *waiting* for reconvergence before minting/exchanging,
+	// not by shifting this reference. Exists as an explicit seam so tests
+	// can pin iat/exp deterministically.
+	Now time.Time
 }
 
 // jwtClaims is the serialized form of AssertionClaims for JWT encoding.
@@ -50,12 +60,21 @@ func BuildSignedAssertion(claims AssertionClaims, signingKey *ecdsa.PrivateKey) 
 		return "", fmt.Errorf("create signer: %w", err)
 	}
 
-	now := time.Now()
+	// Reference clock: caller-supplied (test override) when set, else local.
+	now := claims.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
 	jc := jwtClaims{
 		Issuer:   claims.Issuer,
 		Subject:  claims.Subject,
 		Audience: claims.Audience,
 		JWTID:    claims.JWTID,
+		// exp is a forward window from the reference clock; iat is the
+		// reference clock itself (no backdate). nbf is left unset — a future
+		// nbf would trip fosite's zero-leeway check. Callers that exchange an
+		// assertion wait until the CP clock has caught up to the host first,
+		// so a host-clock iat is always in the CP's past.
 		Expiry:   jwt.NewNumericDate(now.Add(time.Duration(claims.ExpiresInSeconds) * time.Second)),
 		IssuedAt: jwt.NewNumericDate(now),
 	}

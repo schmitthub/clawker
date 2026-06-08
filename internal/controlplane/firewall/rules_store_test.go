@@ -111,6 +111,93 @@ func routePresent(out []ebpf.Route, hash uint32, dstPort, envoyPort uint16, l4 u
 	return false
 }
 
+// TestSeedDomainsFromRules covers which destinations SeedDomainsFromRules
+// surfaces — exactly the bare-IPv4 dedicated-listener mappings (TCP/SSH/UDP),
+// the ones SyncRoutes seeds into dns_cache. FQDNs (CoreDNS-resolved), CIDRs
+// (shared egress listener, no seed), and IP rules that ride the shared listener
+// (https/http to a bare IP — the TLS pass skips IP) must not appear.
+func TestSeedDomainsFromRules(t *testing.T) {
+	t.Parallel()
+	ports := firewall.EnvoyPorts{EgressPort: 10000, TCPPortBase: 11000, UDPPortBase: 12000}
+
+	tests := []struct {
+		name  string
+		rules []config.EgressRule
+		want  []string
+	}{
+		{
+			name:  "bare-ip tcp rule seeds the ip literal",
+			rules: []config.EgressRule{{Dst: "45.79.112.203", Proto: "tcp", Action: "allow", Port: "4243"}},
+			want:  []string{"45.79.112.203"},
+		},
+		{
+			name:  "bare-ip udp rule seeds the ip literal",
+			rules: []config.EgressRule{{Dst: "10.0.0.5", Proto: "udp", Action: "allow", Port: "3478"}},
+			want:  []string{"10.0.0.5"},
+		},
+		{
+			name:  "fqdn tcp rule does not seed (CoreDNS resolves it)",
+			rules: []config.EgressRule{{Dst: "github.com", Proto: "tcp", Action: "allow", Port: "22"}},
+			want:  nil,
+		},
+		{
+			name:  "cidr rule does not seed (rides shared egress listener)",
+			rules: []config.EgressRule{{Dst: "10.0.0.0/24", Proto: "tcp", Action: "allow", Port: "443"}},
+			want:  nil,
+		},
+		{
+			name:  "bare-ip https rule does not seed (TLS pass skips IP)",
+			rules: []config.EgressRule{{Dst: "1.2.3.4", Proto: "https", Action: "allow", Port: "443"}},
+			want:  nil,
+		},
+		{
+			name:  "ip rule with a port range collapses to a single dns_cache key",
+			rules: []config.EgressRule{{Dst: "45.79.112.203", Proto: "tcp", Action: "allow", Port: "4242-4243"}},
+			want:  []string{"45.79.112.203"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := firewall.SeedDomainsFromRules(tt.rules, ports)
+			assert.ElementsMatch(t, tt.want, got)
+		})
+	}
+}
+
+// TestSeedDomainsFromRules_MatchesSeedRoutes is the anti-drift guard: every
+// SeedIP route RoutesFromRules emits must have its hash covered by a string
+// SeedDomainsFromRules returns, and vice versa. If this holds, the netlogger
+// ReverseDNSMap attributes every seeded dns_cache entry — no orphaned hash can
+// fire netlogger_reverse_dns_unattributed. The two functions share TCPMappings
+// + UDPMappings, so this catches any future divergence in the SeedIP condition.
+func TestSeedDomainsFromRules_MatchesSeedRoutes(t *testing.T) {
+	t.Parallel()
+	ports := firewall.EnvoyPorts{EgressPort: 10000, TCPPortBase: 11000, UDPPortBase: 12000}
+	rules := []config.EgressRule{
+		{Dst: "45.79.112.203", Proto: "tcp", Action: "allow", Port: "4242-4243"},
+		{Dst: "10.0.0.5", Proto: "udp", Action: "allow", Port: "3478"},
+		{Dst: "github.com", Proto: "tcp", Action: "allow", Port: "22"},   // FQDN — no seed
+		{Dst: "api.example.com", Proto: "https", Action: "allow"},        // FQDN https — no seed
+		{Dst: "10.0.0.0/24", Proto: "tcp", Action: "allow", Port: "443"}, // CIDR — no seed
+		{Dst: "1.2.3.4", Proto: "https", Action: "allow", Port: "443"},   // bare-IP https — no seed
+	}
+
+	routeSeedHashes := make(map[uint32]struct{})
+	for _, r := range firewall.RoutesFromRules(rules, ports) {
+		if r.SeedIP != 0 {
+			routeSeedHashes[r.DomainHash] = struct{}{}
+		}
+	}
+
+	domainSeedHashes := make(map[uint32]struct{})
+	for _, d := range firewall.SeedDomainsFromRules(rules, ports) {
+		domainSeedHashes[ebpf.DomainHash(d)] = struct{}{}
+	}
+
+	assert.Equal(t, routeSeedHashes, domainSeedHashes,
+		"SeedDomainsFromRules hashes must equal the set of SeedIP route hashes")
+}
+
 func TestRoutesFromRules_TCPMappingsParity(t *testing.T) {
 	t.Parallel()
 	ports := firewall.EnvoyPorts{EgressPort: 10000, TCPPortBase: 11000, UDPPortBase: 12000}

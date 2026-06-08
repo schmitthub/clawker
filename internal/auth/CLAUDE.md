@@ -31,16 +31,16 @@ Dials CP via:
 | `agent_cert.go` | `MintAgentCert(caCertPath, caKeyPath string, project ProjectSlug, agent AgentName, containerID string)` returns an `AgentCert{CertPEM, KeyPEM, Thumbprint [32]byte}` — ephemeral 24h mTLS leaf signed by the CLI CA. **CN is the deterministic `consts.ContainerClawkerd` literal** (the binary identity, not a per-agent value); the per-agent `AgentFullName(project, agent)` → `clawker.<project>.<agent>` rides in a `urn:clawker:agent:<full-name>` URI SAN so a long random `docker.GenerateRandomName` output can't push the cert past x509's 64-byte CN limit. The `urn:clawker:container:<id>` URI SAN binds the cert to its container. Typed `ProjectSlug` / `AgentName` (built via `NewProjectSlug` / `NewAgentName` at the wire boundary) push validation upstream so the helper itself trusts its inputs. Helpers: `BuildAgentSAN` / `AgentFullNameFromCert` (agent SAN), `BuildContainerSAN` / `ContainerIDFromCert` (container SAN). `AgentFullNameFromCert` returns tri-state sentinels `ErrAgentSANMissing` / `ErrAgentSANMalformed` so the CP IdentityInterceptor can emit distinct structured-log events while presenting a uniform `PermissionDenied` over the wire. The thumbprint is SHA-256 over the cert DER. The CP-side Register handler captures the live peer cert thumbprint and writes the agent registry sqlite row — the CLI never opens the sqlite DB directly. The displayed AgentFullName is reconstructed on demand from the row's `project` + `agent_name` columns; there is no precomputed identity column. PEM material is returned for in-memory bootstrap delivery only; never persisted on the host. |
 | `identity.go` | Typed identity values `ProjectSlug` / `AgentName` for compile-time discipline (callers can't accidentally pass a raw string); `New*` constructors reject only the empty case for `AgentName` (empty `ProjectSlug` is the global-scope-agent signal (2-segment naming)); `Must*` for test/migration paths; `AgentFullName(project, agent)` composer. Charset / length / form constraints are NOT enforced here — input normalization for user-typed names happens upstream at `cmdutil.ProjectSlugify`, and Docker / x509 / `IdentityInterceptor` enforce their own constraints downstream at op time. |
 | `assertion.go` | `BuildSignedAssertion`, `ValidateAssertionClaims`, `AssertionClaims` — ES256 JWT assertion builder for `private_key_jwt` client auth |
-| `agent_assertion.go` | `BuildAgentAssertion(audience, signingKey)` + `AgentAssertionTTL` — ES256 client_assertion identifying clawkerd as the `clawker-agent` OAuth2 client. Same signing key as the CLI assertion; only iss/sub differ. 24h TTL covers typical container session length. |
-| ~~`cp_dial.go`~~ | **Moved to `internal/controlplane/adminclient/dial.go`** — `Dial(ctx, adminPort, hydraPort, ...grpc.DialOption)` returns `adminv1.AdminServiceClient`. See `adminclient` package. |
+| `agent_assertion.go` | `BuildAgentAssertion(audience, signingKey)` + `AgentAssertionTTL` — ES256 client_assertion identifying clawkerd as the `clawker-agent` OAuth2 client. Same signing key as the CLI assertion; only iss/sub differ. iat is minted in the host clock (the source of truth — Docker forces the CP/VM clock to track the host); no iat correction is applied. The transient post-sleep window where the VM clock lags is handled by *waiting* until the CP clock has caught up to the host before the assertion is exchanged (the pre-start CP-ensure), not by shifting iat. 24h TTL covers typical container session length. |
+| ~~`cp_dial.go`~~ | **Moved to `internal/controlplane/adminclient/dial.go`** — `Dial(ctx, adminPort, hydraPort, ...grpc.DialOption)` returns `(adminv1.AdminServiceClient, *grpc.ClientConn, error)`. See `adminclient` package. |
 
 ## Agent cert mint
 
-`MintAgentCert(caCertPath, caKeyPath string, project ProjectSlug, agent AgentName)` returns an `AgentCert{CertPEM, KeyPEM, Thumbprint [32]byte}` — an ephemeral 24h mTLS leaf signed by the CLI CA.
+`MintAgentCert(caCertPath, caKeyPath string, project ProjectSlug, agent AgentName, containerID string)` returns an `AgentCert{CertPEM, KeyPEM, Thumbprint [32]byte}` — an ephemeral 24h mTLS leaf signed by the CLI CA.
 
 - Typed `ProjectSlug` / `AgentName` (built via `NewProjectSlug` / `NewAgentName` at the wire boundary) push validation upstream so the helper itself trusts its inputs.
-- `Thumbprint` is SHA-256 over the cert DER. The CP-side Register handler captures the live peer cert thumbprint and writes the agent registry sqlite row; the CLI never opens the sqlite DB directly.
-- The CN is composed via `CanonicalAgentCN(project, agent)` and pre-stored on the registry row alongside `AgentFullName` (the canonical `clawker.<project>.<agent>` identity used everywhere else in the codebase — `CanonicalAgentCN` exists only as the cert-subject format helper, not a general identity name).
+- `Thumbprint` is SHA-256 over the cert DER. The CP-side Register handler captures the live peer cert thumbprint and writes the agent registry sqlite row; the CLI never opens the sqlite DB directly. The displayed `AgentFullName` is reconstructed on demand from the row's `project` + `agent_name` columns — there is no precomputed identity column.
+- The x509 CN is the deterministic `consts.ContainerClawkerd` literal (the binary identity, not a per-agent value). Per-agent identity rides in SANs: `AgentFullName(project, agent)` → `clawker.<project>.<agent>` in a `urn:clawker:agent:<full-name>` URI SAN, and `containerID` in a `urn:clawker:container:<id>` URI SAN. Keeping identity out of the CN avoids x509's 64-byte CN limit for long random agent names.
 - PEM material is returned for in-memory bootstrap delivery only; never persisted on the host.
 
 ## Auth material layout
@@ -60,32 +60,44 @@ All paths resolved via `internal/consts` (`AuthCACertPath`, `AuthCAKeyPath`, `Au
 
 ## Token exchange flow (moved to `adminclient/dial.go`)
 
-The `Dial` function and token exchange logic have moved to `internal/controlplane/adminclient/dial.go`. The flow is unchanged:
+The `Dial` function and token exchange logic live in `internal/controlplane/adminclient/dial.go`:
 
 1. `adminclient.Dial(ctx, adminPort, hydraPort)` loads CA cert, signing key, and CLI client cert
 2. Builds `tokenTLSCfg` (plain TLS, CA trust) and `grpcTLSCfg` (mTLS with client cert, CA trust)
-3. Constructs a `tokenSource` that lazily fetches + caches access tokens
-4. Returns a gRPC `ClientConn` with a unary interceptor that attaches `authorization: Bearer <token>` on every call
-5. Token fetch: POST to `https://127.0.0.1:<hydraPort>/oauth2/token` with:
+3. Mints the assertion in the **host clock** (the source of truth — `AssertionClaims.Now` unset → `time.Now()`; Docker forces the CP/VM clock to track the host). Hydra/fosite validates `iat` with zero leeway, but the dial path does **not** re-check the clock: host↔CP convergence is gated once at CP bring-up by the cpboot readiness gate (`waitForCPClockSync`), which is the precondition for any CP interaction, so by the time the CLI dials AdminService the CP clock is already at/ahead of the host and a host-clock `iat` is in the CP's past. (`GetSystemTime`/`ProbeCPTime` remain the probe that gate polls — the CLI token path no longer uses them.)
+4. Constructs a `tokenSource` that lazily fetches + caches access tokens
+5. Returns a gRPC `ClientConn` with a unary interceptor that attaches `authorization: Bearer <token>` on every call
+6. Token fetch: POST to `https://127.0.0.1:<hydraPort>/oauth2/token` with:
    - `grant_type=client_credentials`
    - `client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer`
    - `client_assertion=<ES256 JWT signed by CLI signing key>`
    - `scope=admin`
-6. Token cached until expiry - 30s refresh margin
+7. Token cached until expiry - 30s refresh margin
 
 ## Assertion claims (`assertion.go`)
 
 ```go
 type AssertionClaims struct {
-    Issuer    string        // "clawker-cli"
-    Subject   string        // "clawker-cli"
-    Audience  string        // Hydra token URL
-    ExpiresIn time.Duration // typically 5 min
-    JTI       string        // UUID per assertion (replay protection)
+    Issuer           string    // "clawker-cli" (iss == client_id)
+    Subject          string    // "clawker-cli" (sub == client_id)
+    Audience         string    // Hydra token endpoint URL
+    JWTID            string    // UUID per assertion (jti — replay protection)
+    ExpiresInSeconds int       // duration to exp (CLI assertion ~30s; agent assertion = AgentAssertionTTL/24h)
+    Now              time.Time // reference clock for iat/exp; zero → time.Now(),
+                               // which is what production always uses. The host
+                               // clock is the source of truth (the CP/VM clock is
+                               // Docker-forced to track it), so no per-mint clock
+                               // override is applied: the CLI's own assertion
+                               // (adminclient.Dial) and the clawker-agent assertion
+                               // baked into bootstrap material (BuildAgentAssertion)
+                               // both mint at host time, after *waiting* for the CP
+                               // clock to converge. clawkerd does not mint — it only
+                               // exchanges the pre-minted agent assertion. This field
+                               // is an explicit seam for deterministic tests.
 }
 ```
 
-`BuildSignedAssertion` signs with ES256 via `go-jose/v4/jwt`. `ValidateAssertionClaims` enforces non-empty fields and sane expiry.
+`BuildSignedAssertion` signs with ES256 via `go-jose/v4/jwt`, setting `iat` to the reference clock with no backdate (callers wait until the CP clock has caught up to the host before exchanging, so a host-clock `iat` is already in the CP's past). `ValidateAssertionClaims` enforces non-empty fields and sane expiry.
 
 ## Rotation
 

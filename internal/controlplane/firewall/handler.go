@@ -780,35 +780,72 @@ func (h *Handler) FirewallListRules(ctx context.Context, _ *adminv1.FirewallList
 // for attribution on security telemetry; queue contention would buy
 // nothing observable.
 func (h *Handler) AllResolvableDomains() []string {
-	internalHosts := append([]string{"docker.internal"}, consts.MonitoringServiceHostnames...)
-	reserved := make(map[string]bool, len(internalHosts))
-	for _, host := range internalHosts {
-		reserved[host] = true
-	}
-
-	out := make([]string, 0, len(internalHosts))
-	out = append(out, internalHosts...)
-
 	if h.store == nil {
-		return out
+		return h.reservedHosts()
 	}
 	rules, _ := NormalizeAndDedup(h.store.Read().Rules)
-	seen := make(map[string]bool, len(rules))
+	return h.resolvableDomains(rules)
+}
+
+// reservedHosts is the internal-host prefix shared by every resolvable-domain
+// path: docker.internal plus the monitoring service hostnames CoreDNS forwards
+// out of band. CoreDNS serves these regardless of the rule set.
+func (h *Handler) reservedHosts() []string {
+	return append([]string{"docker.internal"}, consts.MonitoringServiceHostnames...)
+}
+
+// resolvableDomains derives the CoreDNS zone set (reserved hosts + allow-rule
+// destinations, skipping IP/CIDR and deny rules) from an already-normalized
+// rule slice. It does no store I/O so a caller can feed it one snapshot and
+// reuse the same slice for [SeedDomainsFromRules], keeping both halves of the
+// reverse-DNS union consistent (see [Handler.ReverseDNSDomains]).
+func (h *Handler) resolvableDomains(rules []config.EgressRule) []string {
+	internalHosts := h.reservedHosts()
+	out := make([]string, 0, len(internalHosts))
+	seen := make(map[string]bool, len(rules)+len(internalHosts))
 	for _, host := range internalHosts {
 		seen[host] = true
+		out = append(out, host)
 	}
 	for _, r := range rules {
 		if !isAllowDomain(r) {
 			continue
 		}
 		domain := normalizeDomain(r.Dst)
-		if reserved[domain] || seen[domain] {
+		if seen[domain] {
 			continue
 		}
 		seen[domain] = true
 		out = append(out, domain)
 	}
 	return out
+}
+
+// ReverseDNSDomains returns every string whose [ebpf.DomainHash] can appear in
+// the BPF dns_cache: the CoreDNS-served zones ([AllResolvableDomains]) plus the
+// IP-literal seeds [SyncRoutes] writes for bare-IP routes
+// ([SeedDomainsFromRules]). It is the netlogger reverse-DNS DomainSource.
+//
+// AllResolvableDomains alone is incomplete: it deliberately omits IP/CIDR rules
+// (they are not CoreDNS zones), but SyncRoutes still seeds dns_cache[ip] =
+// DomainHash(ip) for every bare-IP rule. Sourcing the reverse map from the
+// domain set only left each such seed permanently unattributed
+// (event=netlogger_reverse_dns_unattributed every refresh tick) and stamped its
+// egress records with an empty dst_host despite the destination being known.
+// Unioning the seeds in attributes those records to the IP literal and silences
+// the false-positive warning. Order is unspecified; the two sets never collide
+// (an IP literal is never a domain zone).
+//
+// The rule snapshot is read once and feeds both the zone derivation and the
+// IP-seed derivation, so the two halves can never straddle a mid-flight rule
+// mutation (and the normalize pass runs once, not twice).
+func (h *Handler) ReverseDNSDomains() []string {
+	if h.store == nil {
+		return h.reservedHosts()
+	}
+	rules, _ := NormalizeAndDedup(h.store.Read().Rules)
+	out := h.resolvableDomains(rules)
+	return append(out, SeedDomainsFromRules(rules, h.envoyPorts())...)
 }
 
 // FirewallReload regenerates configs and restarts Envoy+CoreDNS without
