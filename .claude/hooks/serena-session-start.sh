@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 # SessionStart hook: re-arm the Serena init gate at every session boundary.
 #
-# The init marker (/tmp/.claude_serena_init_<PPID>) is keyed on $PPID — the
-# long-lived `claude` process, which survives /clear, /compact, and /resume.
-# Without this reset the PreToolUse DENY gate (serena-first.sh) fires only ONCE
-# per process lifetime: after the first init ever, every subsequent session
-# sees the stale marker and silently skips enforcement.
+# The init marker (/tmp/.claude_serena_init_<session_id>) is keyed on the Claude
+# session id from stdin — stable across hook spawns and /compact|/resume, where
+# $PPID is NOT (hooks run under drifting parents, so a $PPID marker written by
+# the PostToolUse companion may never be found by the PreToolUse gate). Without
+# this reset the PreToolUse DENY gate (serena-first.sh) would, after the first
+# init, see the stale marker and silently skip enforcement.
 #
 # Deleting the marker here forces re-init on every session boundary. Runs
 # unfiltered (startup|resume|clear|compact) so no boundary slips through.
-rm -f "/tmp/.claude_serena_init_${PPID}"
+SID="$(jq -r '.session_id // empty')"
+rm -f "/tmp/.claude_serena_init_${SID:-$PPID}"
 
 # stdout from a SessionStart hook is injected as session context — proactively
 # instruct the model to init before its first action so it doesn't eat a denied

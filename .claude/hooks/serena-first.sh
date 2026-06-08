@@ -3,11 +3,17 @@
 # Lives in settings.local.json (personal, not checked in) because
 # not all contributors have Serena configured.
 #
-# Session init tracking: checks for /tmp/.claude_serena_init_<ppid>.
+# Session init tracking: checks for /tmp/.claude_serena_init_<session_id>.
 # A companion PostToolUse hook on mcp__serena__check_onboarding_performed
 # creates this marker after Serena init completes.
 
-MARKER="/tmp/.claude_serena_init_${PPID}"
+# Key the init marker on the Claude session id (stable across hook spawns,
+# /compact, and /resume) rather than $PPID. Hooks are NOT guaranteed to share
+# one parent process — $PPID drifts between invocations, which stranded the
+# marker under one PID while the gate looked under another (permanent false
+# DENY). session_id arrives on stdin; fall back to $PPID only if absent.
+SID="$(jq -r '.session_id // empty')"
+MARKER="/tmp/.claude_serena_init_${SID:-$PPID}"
 
 if [[ ! -f "$MARKER" ]]; then
   # DENY: an "allow" decision's reason is NOT surfaced to the model — it only
