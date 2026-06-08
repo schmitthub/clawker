@@ -8,7 +8,6 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	"github.com/schmitthub/clawker/internal/docker"
 
 	"github.com/schmitthub/clawker/internal/hostproxy"
@@ -32,7 +31,6 @@ type CreateOptions struct {
 	Config         func() (config.Config, error)
 	ProjectManager func() (project.ProjectManager, error)
 	HostProxy      func() hostproxy.HostProxyService
-	ControlPlane   func() cpboot.Manager
 	Prompter       func() *prompter.Prompter
 	Logger         func() (*logger.Logger, error)
 	Version        string
@@ -52,7 +50,6 @@ func NewCmdCreate(f *cmdutil.Factory, runF func(context.Context, *CreateOptions)
 		Config:                 f.Config,
 		ProjectManager:         f.ProjectManager,
 		HostProxy:              f.HostProxy,
-		ControlPlane:           f.ControlPlane,
 		Prompter:               f.Prompter,
 		Logger:                 f.Logger,
 		Version:                f.Version,
@@ -168,16 +165,12 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 		}
 	}
 
-	// CP must be live and clock-synced before CreateContainer mints the
-	// agent bootstrap assertion (see EnsureControlPlaneForCreate). The gate
-	// returns the host↔CP clock offset it measured; CreateContainer reuses
-	// it for the assertion instead of re-probing.
-	clockSkew, err := shared.EnsureControlPlaneForCreate(ctx, opts.ControlPlane)
-	if err != nil {
-		return err
-	}
-
 	// --- Phase B: Create container with spinner ---
+	//
+	// `create` never boots the control plane: the agent assertion is minted in
+	// the host clock (the source of truth) and the CP clock only needs to be
+	// converged before the container STARTS, which the pre-start CP-ensure
+	// handles. Creating a container must not spin up CP.
 
 	events := make(chan shared.CreateContainerEvent, 16)
 	type outcome struct {
@@ -205,7 +198,6 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 			Log:            log,
 			Is256Color:     ios.Is256ColorSupported(),
 			IsTrueColor:    ios.IsTrueColorSupported(),
-			ClockSkew:      clockSkew,
 		}, events)
 		done <- outcome{r, err}
 	}()

@@ -27,15 +27,16 @@ const AgentAssertionTTL = 24 * time.Hour
 // signing key is shared. See `RegisterAgentClient` for the Hydra-side
 // counterpart.
 //
-// skew is the host↔CP clock offset (CP minus host) measured by the CLI
-// at mint time via adminclient.ProbeClockSkew. Unlike the CLI's own
-// assertion (minted in-process at exchange time), this assertion is
-// minted on the host but validated by Hydra against the CP clock, so the
-// CLI aligns iat to the CP domain — the same correction Dial applies for
-// the clawker-cli assertion. Pass 0 when the offset is unknown (degrades
-// to host-clock iat, which the 15s leeway floor absorbs for small skew;
-// the cpboot clock-sync gate keeps the residual within tolerance anyway).
-func BuildAgentAssertion(audience string, signingKey *ecdsa.PrivateKey, skew time.Duration) (string, error) {
+// iat is minted in the host clock with no skew correction. The host clock
+// is the source of truth: Docker forces the CP/VM clock to track the host,
+// so a host-minted iat is already in the domain Hydra validates against.
+// The only divergence is the transient window where a just-woken VM clock
+// still lags; that is handled by *waiting* for clock sync before the
+// assertion is exchanged (the pre-start CP-ensure for this baked agent
+// assertion, the dial-time wait for the CLI's own), not by shifting iat.
+// The fixed 15s leeway floor in BuildSignedAssertion remains as defensive
+// padding for sub-second host drift.
+func BuildAgentAssertion(audience string, signingKey *ecdsa.PrivateKey) (string, error) {
 	if audience == "" {
 		return "", fmt.Errorf("agent assertion: audience required")
 	}
@@ -48,7 +49,6 @@ func BuildAgentAssertion(audience string, signingKey *ecdsa.PrivateKey, skew tim
 		Audience:         audience,
 		JWTID:            uuid.NewString(),
 		ExpiresInSeconds: int(AgentAssertionTTL / time.Second),
-		Now:              time.Now().Add(skew),
 	}
 	return BuildSignedAssertion(claims, signingKey)
 }

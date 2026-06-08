@@ -1,15 +1,11 @@
 package shared
 
 import (
-	"context"
-	"errors"
 	"testing"
 	"time"
 
 	"github.com/moby/moby/api/types/container"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
-	cpbootmocks "github.com/schmitthub/clawker/internal/controlplane/cpboot/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
@@ -2818,52 +2814,5 @@ func TestContainerOptions_NewFlags(t *testing.T) {
 		err := flags.Parse([]string{})
 		require.NoError(t, err)
 		assert.Empty(t, opts.Workdir)
-	})
-}
-
-// TestEnsureControlPlaneForCreate covers the shared clock-sync gate both
-// run and create funnel through before minting the agent bootstrap assertion.
-// The failing direction is the load-bearing one: if EnsureRunningForCreate
-// errors (CP unhealthy or host↔CP clock not synced), the gate MUST surface a
-// wrapped error so the caller aborts before CreateContainer bakes an assertion
-// against an unsynced clock — bootstrap material that cannot be re-minted. On
-// success it returns the measured offset so CreateContainer reuses it for the
-// assertion instead of re-probing.
-func TestEnsureControlPlaneForCreate(t *testing.T) {
-	t.Parallel()
-
-	t.Run("nil manager errors", func(t *testing.T) {
-		_, err := EnsureControlPlaneForCreate(context.Background(), nil)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "no control plane manager available")
-	})
-
-	t.Run("EnsureRunningForCreate failure is wrapped and surfaced", func(t *testing.T) {
-		sentinel := errors.New("clock not synced")
-		var calls int
-		mgr := func() cpboot.Manager {
-			return &cpbootmocks.ManagerMock{
-				EnsureRunningFunc: func(context.Context) (time.Duration, error) { calls++; return 0, sentinel },
-			}
-		}
-		_, err := EnsureControlPlaneForCreate(context.Background(), mgr)
-		require.Error(t, err)
-		assert.ErrorIs(t, err, sentinel, "wrapped error must preserve the root cause for the caller")
-		assert.Contains(t, err.Error(), "ensuring control plane is running")
-		assert.Equal(t, 1, calls)
-	})
-
-	t.Run("EnsureRunningForCreate success returns the measured skew", func(t *testing.T) {
-		var calls int
-		want := 750 * time.Millisecond
-		mgr := func() cpboot.Manager {
-			return &cpbootmocks.ManagerMock{
-				EnsureRunningFunc: func(context.Context) (time.Duration, error) { calls++; return want, nil },
-			}
-		}
-		skew, err := EnsureControlPlaneForCreate(context.Background(), mgr)
-		require.NoError(t, err)
-		assert.Equal(t, want, skew, "gate must surface the offset it measured for the assertion mint")
-		assert.Equal(t, 1, calls)
 	})
 }

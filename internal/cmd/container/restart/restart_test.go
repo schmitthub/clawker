@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/google/shlex"
 	"github.com/schmitthub/clawker/internal/cmdutil"
@@ -178,7 +177,7 @@ func testRestartFactory(t *testing.T, fake *mocks.FakeClient) (*cmdutil.Factory,
 		},
 		ControlPlane: func() cpboot.Manager {
 			return &cpbootmocks.ManagerMock{
-				EnsureRunningFunc: func(context.Context) (time.Duration, error) { return 0, nil },
+				EnsureRunningFunc: func(context.Context) error { return nil },
 			}
 		},
 	}, in, out, errOut

@@ -7,7 +7,6 @@ import (
 	"context"
 	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	"sync"
-	"time"
 )
 
 // Ensure, that ManagerMock does implement cpboot.Manager.
@@ -20,7 +19,7 @@ var _ cpboot.Manager = &ManagerMock{}
 //
 //		// make and configure a mocked cpboot.Manager
 //		mockedManager := &ManagerMock{
-//			EnsureRunningFunc: func(ctx context.Context) (time.Duration, error) {
+//			EnsureRunningFunc: func(ctx context.Context) error {
 //				panic("mock out the EnsureRunning method")
 //			},
 //			IsRunningFunc: func(ctx context.Context) (bool, error) {
@@ -40,7 +39,7 @@ var _ cpboot.Manager = &ManagerMock{}
 //	}
 type ManagerMock struct {
 	// EnsureRunningFunc mocks the EnsureRunning method.
-	EnsureRunningFunc func(ctx context.Context) (time.Duration, error)
+	EnsureRunningFunc func(ctx context.Context) error
 
 	// IsRunningFunc mocks the IsRunning method.
 	IsRunningFunc func(ctx context.Context) (bool, error)
@@ -81,7 +80,7 @@ type ManagerMock struct {
 }
 
 // EnsureRunning calls EnsureRunningFunc.
-func (mock *ManagerMock) EnsureRunning(ctx context.Context) (time.Duration, error) {
+func (mock *ManagerMock) EnsureRunning(ctx context.Context) error {
 	if mock.EnsureRunningFunc == nil {
 		panic("ManagerMock.EnsureRunningFunc: method is nil but Manager.EnsureRunning was just called")
 	}

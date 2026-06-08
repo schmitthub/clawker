@@ -3,12 +3,10 @@ package create
 import (
 	"bytes"
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/shlex"
 	"github.com/moby/moby/api/types/container"
@@ -19,8 +17,6 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
-	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
-	cpmocks "github.com/schmitthub/clawker/internal/controlplane/cpboot/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/hostproxy"
@@ -420,11 +416,6 @@ agent:
 		HostProxy: func() hostproxy.HostProxyService {
 			return hostproxytest.NewMockManager()
 		},
-		ControlPlane: func() cpboot.Manager {
-			return &cpmocks.ManagerMock{
-				EnsureRunningFunc: func(_ context.Context) (time.Duration, error) { return 0, nil },
-			}
-		},
 		Prompter: func() *prompter.Prompter { return prompter.NewPrompter(tio) },
 	}
 	for _, override := range overrides {
@@ -456,39 +447,6 @@ func TestCreateRun(t *testing.T) {
 		require.Len(t, strings.TrimSpace(outStr), 12)
 
 		fake.AssertCalled(t, "ContainerCreate")
-	})
-
-	t.Run("clock-sync gate failure aborts before container is created", func(t *testing.T) {
-		// The whole point of EnsureControlPlaneForCreate: if the CP is not
-		// healthy + clock-synced, abort BEFORE CreateContainer mints (and bakes)
-		// an agent assertion against an unsynced clock. Assert both that the
-		// command surfaces the error and that no container was ever created —
-		// the latter pins the ordering (gate before create) that an always-nil
-		// CP mock cannot catch.
-		fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
-		fake.SetupContainerCreate()
-		fake.SetupCopyToContainer()
-
-		f, _, out, errOut := testFactory(t, fake, func(f *cmdutil.Factory) {
-			f.ControlPlane = func() cpboot.Manager {
-				return &cpmocks.ManagerMock{
-					EnsureRunningFunc: func(_ context.Context) (time.Duration, error) {
-						return 0, errors.New("host↔CP clock skew exceeds tolerance")
-					},
-				}
-			}
-		})
-		cmd := NewCmdCreate(f, nil)
-		cmd.SetArgs([]string{"alpine"})
-		cmd.SetIn(&bytes.Buffer{})
-		cmd.SetOut(out)
-		cmd.SetErr(errOut)
-
-		err := cmd.Execute()
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "ensuring control plane is running")
-		require.Contains(t, err.Error(), "clock skew")
-		fake.AssertNotCalled(t, "ContainerCreate")
 	})
 
 	t.Run("config init runs when config volume freshly created", func(t *testing.T) {
@@ -592,11 +550,6 @@ agent: { claude_code: { use_host_auth: false, mount_projects: false, config: { s
 			},
 			HostProxy: func() hostproxy.HostProxyService {
 				return hostproxytest.NewMockManager()
-			},
-			ControlPlane: func() cpboot.Manager {
-				return &cpmocks.ManagerMock{
-					EnsureRunningFunc: func(_ context.Context) (time.Duration, error) { return 0, nil },
-				}
 			},
 			Prompter: func() *prompter.Prompter { return prompter.NewPrompter(tio) },
 		}

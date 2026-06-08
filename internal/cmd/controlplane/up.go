@@ -47,7 +47,7 @@ reports 200.`,
 }
 
 func upRun(ctx context.Context, opts *UpOptions) error {
-	if _, err := opts.ControlPlane().EnsureRunning(ctx); err != nil {
+	if err := opts.ControlPlane().EnsureRunning(ctx); err != nil {
 		return fmt.Errorf("bringing control plane up: %w", err)
 	}
 	ios := opts.IOStreams

@@ -15,16 +15,15 @@ import (
 // (requires now >= iat with no clock-skew accounting) and exposes no
 // server-side leeway knob, so a minting clock even marginally ahead of
 // Hydra's clock yields HTTP 500 "Token used before issued". The primary
-// defense is clock alignment: callers exposed to host↔CP drift (the CLI on
-// Docker Desktop, whose LinuxKit VM clock lags after the host sleeps) set
-// AssertionClaims.Now to the CP's own clock via GetSystemTime, eliminating
-// the bulk of the skew. This floor only has to absorb the residual —
-// measurement RTT plus the gap before Hydra validates — so relative to that
-// sub-second residual it is deliberately generous, leaving headroom for an
-// imperfect skew measurement (or none at all, when the probe degraded). It
-// is applied unconditionally, including for in-container minters (clawkerd)
-// that already share Hydra's kernel clock, where it is a harmless backdate.
-// nbf is left unset (a future nbf would trip the same zero-leeway check).
+// defense is clock alignment: the host clock is the source of truth
+// (Docker forces the CP/VM clock to track the host), and callers exposed to
+// the transient post-sleep window where a just-woken VM clock still lags
+// *wait* for the CP clock to reconverge before the assertion is exchanged,
+// rather than correcting iat. This floor only has to absorb sub-second
+// residual host drift, so it is deliberately generous. It is applied
+// unconditionally, including for in-container minters (clawkerd) that
+// already share Hydra's kernel clock, where it is a harmless backdate. nbf
+// is left unset (a future nbf would trip the same zero-leeway check).
 // Backdating is safe: the client-auth path applies no iat-too-old check.
 const assertionClockSkewLeeway = 15 * time.Second
 
@@ -42,16 +41,13 @@ type AssertionClaims struct {
 	// short-lived (~30s); the agent assertion uses AgentAssertionTTL (24h), so
 	// callers set this per use site — do not assume a short value here.
 	ExpiresInSeconds int
-	// Now is the reference clock for iat/exp. Zero → time.Now(). Both
-	// host-minted assertions set it to CP-aligned time (local now + skew
-	// measured via adminclient.ProbeClockSkew / GetSystemTime) so iat lands
-	// in the CP clock domain Hydra/fosite validates against with zero
-	// leeway: the CLI's own `clawker-cli` assertion (adminclient.Dial) and
-	// the `clawker-agent` assertion the CLI bakes into a container's
-	// bootstrap material (BuildAgentAssertion). clawkerd does not mint — it
-	// only exchanges the pre-minted agent assertion at Hydra. Zero is the
-	// fallback when skew is unmeasured (degrades to host-clock iat, which
-	// the residual leeway floor absorbs for small drift).
+	// Now is the reference clock for iat/exp. Zero → time.Now(), which is
+	// what production always uses: the host clock is the source of truth
+	// (the CP/VM clock is Docker-forced to track it), so no per-mint clock
+	// override is applied. Host↔CP drift in the transient post-sleep window
+	// is handled by *waiting* for reconvergence before minting/exchanging,
+	// not by shifting this reference. Exists as an explicit seam so tests
+	// can pin iat/exp deterministically.
 	Now time.Time
 }
 
@@ -82,7 +78,7 @@ func BuildSignedAssertion(claims AssertionClaims, signingKey *ecdsa.PrivateKey) 
 		return "", fmt.Errorf("create signer: %w", err)
 	}
 
-	// Reference clock: caller-supplied (CP-aligned) when set, else local.
+	// Reference clock: caller-supplied (test override) when set, else local.
 	now := claims.Now
 	if now.IsZero() {
 		now = time.Now()

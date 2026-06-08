@@ -30,14 +30,19 @@ func fakeHydra(t *testing.T) (url string, tlsCfg *tls.Config) {
 	return srv.URL, &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
 }
 
-// TestTokenSource_SkewProbeRetryAndCache covers the stateful probe branch in
-// tokenSource.token: a failed probe must not block the token fetch and must
-// be retried on the next refresh; a successful probe caches the skew and is
-// not re-run; an implausible measurement is discarded (not cached). The pure
-// clockSkew math is covered separately — this exercises the integration the
-// "self-heals on retry" comment promises, which no E2E would surface (it would
-// just silently mint with skew=0).
-func TestTokenSource_SkewProbeRetryAndCache(t *testing.T) {
+// TestTokenSource_WaitsForClockSync covers the wait-before-mint branch in
+// tokenSource.token: the mint waits for the CP clock to converge with the host
+// (host is the source of truth — we wait, never shift iat), latches `synced`
+// once converged so later refreshes skip the wait, and on non-convergence
+// fails fast (leaving `synced` false so the next refresh retries). This is the
+// integration no E2E would surface — a wrong wait would silently mint under
+// drift and earn a later Hydra 500.
+func TestTokenSource_WaitsForClockSync(t *testing.T) {
+	// Shrink the wait so the timeout branch runs in ms, not the full 15s.
+	origTimeout, origInterval := clockSyncWaitTimeout, clockSyncInterval
+	clockSyncWaitTimeout, clockSyncInterval = 60*time.Millisecond, 5*time.Millisecond
+	t.Cleanup(func() { clockSyncWaitTimeout, clockSyncInterval = origTimeout, origInterval })
+
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -51,79 +56,78 @@ func TestTokenSource_SkewProbeRetryAndCache(t *testing.T) {
 		probeCalls++
 		return nextSkew, nextErr
 	}
-	ts := newTokenSource(key, url, tlsCfg, probe, nil)
+	ts := newTokenSource(key, url, tlsCfg, probe)
 
 	forceRefresh := func() { ts.expiresAt = time.Now().Add(-time.Hour) }
 
-	// 1. Probe fails: token still fetched, skew not cached.
-	nextErr = errors.New("cp not ready")
-	if tok, err := ts.token(context.Background()); err != nil || tok != "tok" {
-		t.Fatalf("token on probe failure = (%q, %v), want (\"tok\", nil)", tok, err)
+	// 1. Clock out of tolerance for the whole window: token must FAIL fast
+	// (no token minted) and `synced` must NOT latch — the next refresh retries
+	// the wait rather than assume convergence.
+	nextSkew = 10 * time.Second // > clockSyncTolerance
+	if tok, err := ts.token(context.Background()); err == nil || tok != "" {
+		t.Fatalf("token under non-convergence = (%q, %v), want (\"\", error)", tok, err)
 	}
-	if ts.skewKnown {
-		t.Fatal("skew must not be cached after a failed probe")
+	if ts.synced {
+		t.Fatal("synced must NOT latch when the clock never converged")
 	}
-	if probeCalls != 1 {
-		t.Fatalf("probeCalls = %d, want 1", probeCalls)
+	if probeCalls < 2 {
+		t.Fatalf("probeCalls = %d, want >=2 (the wait must poll, not give up after one probe)", probeCalls)
 	}
 
-	// 2. Implausible positive measurement (CP far ahead): discarded, still not
-	// cached, probe re-run.
+	// 2. Clock now within tolerance: the wait returns on the first in-tolerance
+	// probe and `synced` latches.
 	forceRefresh()
-	nextErr = nil
-	nextSkew = maxPlausibleClockSkew + time.Hour
+	callsBefore := probeCalls
+	nextSkew = clockSyncTolerance - time.Millisecond
 	if _, err := ts.token(context.Background()); err != nil {
 		t.Fatalf("token: %v", err)
 	}
-	if ts.skewKnown {
-		t.Fatal("implausible positive skew must be discarded, not cached")
+	if !ts.synced {
+		t.Fatal("synced must latch once the clock converged within tolerance")
 	}
-	if probeCalls != 2 {
-		t.Fatalf("probeCalls = %d, want 2 (retried after discard)", probeCalls)
+	if probeCalls != callsBefore+1 {
+		t.Fatalf("probeCalls = %d, want %d (one in-tolerance probe ends the wait)", probeCalls, callsBefore+1)
 	}
 
-	// 3. Implausible NEGATIVE measurement (CP far behind — the post-sleep
-	// Docker-VM-lag direction): also discarded. Guards the absDuration bound
-	// so a regression to a raw `s > max` comparison can't slip negative drift
-	// through.
+	// 3. Once synced, the probe is not re-run on subsequent refreshes.
 	forceRefresh()
-	nextSkew = -(maxPlausibleClockSkew + time.Hour)
+	callsBefore = probeCalls
 	if _, err := ts.token(context.Background()); err != nil {
 		t.Fatalf("token: %v", err)
 	}
-	if ts.skewKnown {
-		t.Fatal("implausible negative skew must be discarded, not cached")
-	}
-	if probeCalls != 3 {
-		t.Fatalf("probeCalls = %d, want 3 (retried after discard)", probeCalls)
-	}
-
-	// 4. Plausible measurement: cached.
-	forceRefresh()
-	nextSkew = 7 * time.Second
-	if _, err := ts.token(context.Background()); err != nil {
-		t.Fatalf("token: %v", err)
-	}
-	if !ts.skewKnown || ts.skew != 7*time.Second {
-		t.Fatalf("skew = (%s, known=%v), want (7s, true)", ts.skew, ts.skewKnown)
-	}
-	if probeCalls != 4 {
-		t.Fatalf("probeCalls = %d, want 4", probeCalls)
-	}
-
-	// 5. Once known, the probe is not re-run on subsequent refreshes.
-	forceRefresh()
-	if _, err := ts.token(context.Background()); err != nil {
-		t.Fatalf("token: %v", err)
-	}
-	if probeCalls != 4 {
-		t.Fatalf("probeCalls = %d, want 4 (skewKnown short-circuits the probe)", probeCalls)
+	if probeCalls != callsBefore {
+		t.Fatalf("probeCalls = %d, want %d (synced short-circuits the wait)", probeCalls, callsBefore)
 	}
 }
 
-// TestClockSkew verifies the offset math used to align the CLI's minted
-// assertion to the CP's clock. The local reference is the request-window
-// midpoint so symmetric round-trip latency cancels out.
+// TestTokenSource_WaitRespectsContext proves a caller's cancelled context
+// surfaces its own cause instead of degrading to a mint — a wedged clock must
+// not swallow the caller's deadline.
+func TestTokenSource_WaitRespectsContext(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	url, tlsCfg := fakeHydra(t)
+
+	probe := func(ctx context.Context) (time.Duration, error) {
+		return time.Hour, nil // perpetually out of tolerance
+	}
+	ts := newTokenSource(key, url, tlsCfg, probe)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, err := ts.token(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("token err = %v, want context.DeadlineExceeded", err)
+	}
+	if ts.synced {
+		t.Fatal("synced must not latch when the wait was cancelled")
+	}
+}
+
+// TestClockSkew verifies the offset math the clock-sync wait uses to decide
+// whether the CP clock has converged with the host. The local reference is the
+// request-window midpoint so symmetric round-trip latency cancels out.
 func TestClockSkew(t *testing.T) {
 	// Fixed local window: t0 .. t1, midpoint = t0 + 1ms.
 	t0 := time.Unix(1_000_000, 0)

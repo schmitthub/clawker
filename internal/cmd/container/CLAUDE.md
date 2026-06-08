@@ -10,7 +10,7 @@ Where to add logic that must run at a lifecycle point. The deciding axis is **on
 
 `CreateContainer` (`shared/container_create.go`), shared by `run` and `create`: workspace mounts, config-volume seeding, env resolution, Docker create, agent bootstrap material, one-time `post_init` injection. Baked at creation and preserved across restarts; does NOT re-run on `start`/`restart`. Use for anything tied to the container's identity or volumes that should persist.
 
-**Precondition:** `run`/`create` first call `shared.EnsureControlPlaneForCreate(ctx, controlPlane)` — a CP `EnsureRunning` gate (= `/healthz` green + host↔CP clock sync) that runs BEFORE `CreateContainer` mints the clock-skew-corrected agent assertion, so the assertion's `iat` lands in the CP clock domain Hydra validates against (zero leeway). This is distinct from — and runs before — the every-start `BootstrapServicesPreStart` CP-ensure below.
+**No CP at create:** creating a container does NOT boot the control plane — that is the wrong lifecycle point. The agent assertion is minted in the host clock (the source of truth; Docker forces the CP/VM clock to track the host), so a created container carries a valid baked assertion without CP being up. The CP clock only needs to be converged before the container STARTS, which the every-start `BootstrapServicesPreStart` CP-ensure (below) waits for before clawkerd exchanges the assertion.
 
 ### Every-start — runs on EVERY run / start / restart
 

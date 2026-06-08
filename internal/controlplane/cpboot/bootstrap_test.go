@@ -128,9 +128,9 @@ func newBootstrapFixture(t *testing.T) *bootstrapFixture {
 		return nil
 	}
 	// Stub the clock-sync gate (real impl dials the CP's GetSystemTime).
-	clockSyncFn = func(_ context.Context, _ config.Config) (time.Duration, error) {
+	clockSyncFn = func(_ context.Context, _ config.Config) error {
 		calls.clockSync.Add(1)
-		return 0, nil
+		return nil
 	}
 
 	t.Cleanup(func() {
@@ -226,7 +226,7 @@ func (f *bootstrapFixture) cpLabels() map[string]string {
 func TestEnsureRunning_HappyPath_CreatesContainer(t *testing.T) {
 	f := newBootstrapFixture(t)
 
-	_, err := EnsureRunning(t.Context(), f.ensureOpts())
+	err := EnsureRunning(t.Context(), f.ensureOpts())
 	require.NoError(t, err)
 
 	assert.Equal(t, int32(1), f.calls.image.Load(), "image ensured once")
@@ -253,7 +253,7 @@ func TestEnsureRunning_ForwardsSecurityOptToHostConfig(t *testing.T) {
 		return mobyclient.ContainerCreateResult{ID: "cp-id"}, nil
 	}
 
-	_, err := EnsureRunning(t.Context(), f.ensureOpts())
+	err := EnsureRunning(t.Context(), f.ensureOpts())
 	require.NoError(t, err)
 	require.NotNil(t, captured, "ContainerCreate must receive a HostConfig")
 	assert.Contains(t, captured.SecurityOpt, "apparmor=unconfined",
@@ -279,7 +279,7 @@ func TestEnsureRunning_AlreadyRunning_IsNoOp(t *testing.T) {
 		}}, nil
 	}
 
-	_, err := EnsureRunning(t.Context(), f.ensureOpts())
+	err := EnsureRunning(t.Context(), f.ensureOpts())
 	require.NoError(t, err)
 	assert.Zero(t, f.calls.create.Load(), "no create when already running")
 	assert.Zero(t, f.calls.start.Load(), "no start when already running")
@@ -315,7 +315,7 @@ func TestEnsureRunning_ExistingStopped_StartsWithoutRecreate(t *testing.T) {
 		}, nil
 	}
 
-	_, err = EnsureRunning(t.Context(), f.ensureOpts())
+	err = EnsureRunning(t.Context(), f.ensureOpts())
 	require.NoError(t, err)
 	assert.Zero(t, f.calls.create.Load(), "no create when only stopped")
 	assert.Equal(t, int32(1), f.calls.start.Load(), "existing container started")
@@ -332,7 +332,7 @@ func TestEnsureRunning_HealthzTimeout_SurfacesError(t *testing.T) {
 		return sentinel
 	}
 
-	_, err := EnsureRunning(t.Context(), f.ensureOpts())
+	err := EnsureRunning(t.Context(), f.ensureOpts())
 	require.Error(t, err)
 	var got *CPHealthTimeoutError
 	require.ErrorAs(t, err, &got)
@@ -397,7 +397,7 @@ func TestEnsureRunning_ConcurrentCallers_SingleCreate(t *testing.T) {
 	for i := 0; i < goroutines; i++ {
 		go func(idx int) {
 			defer wg.Done()
-			_, errs[idx] = EnsureRunning(t.Context(), f.ensureOpts())
+			errs[idx] = EnsureRunning(t.Context(), f.ensureOpts())
 		}(i)
 	}
 
@@ -467,7 +467,7 @@ func TestEnsureRunning_NameConflictRecovery_NoSecondCreate(t *testing.T) {
 		}, nil
 	}
 
-	_, err = EnsureRunning(t.Context(), f.ensureOpts())
+	err = EnsureRunning(t.Context(), f.ensureOpts())
 	require.NoError(t, err)
 	// The recovery path must NOT re-issue a second ContainerCreate after
 	// picking up the pre-existing container — that's the whole point of
@@ -735,7 +735,7 @@ func TestEnsureRunning_RecreatesStoppedDriftedContainer(t *testing.T) {
 		}, nil
 	}
 
-	_, err = EnsureRunning(t.Context(), f.ensureOpts())
+	err = EnsureRunning(t.Context(), f.ensureOpts())
 	require.NoError(t, err)
 	assert.Equal(t, int32(1), f.calls.remove.Load(),
 		"stopped + drifted container must be force-removed, not started")
@@ -803,7 +803,7 @@ func TestEnsureRunning_NameConflict_TheirsNewer_AdoptsPeer(t *testing.T) {
 		return mobyclient.ImageInspectResult{}, fmt.Errorf("unexpected image ref %q", ref)
 	}
 
-	_, err := EnsureRunning(t.Context(), f.ensureOpts())
+	err := EnsureRunning(t.Context(), f.ensureOpts())
 	require.NoError(t, err)
 	assert.Equal(t, int32(1), f.calls.create.Load(),
 		"only the initial (conflict-ing) create attempt — no retry when peer wins")
@@ -877,7 +877,7 @@ func TestEnsureRunning_NameConflict_OursNewer_ReplacesPeer(t *testing.T) {
 		return mobyclient.ImageInspectResult{}, fmt.Errorf("unexpected image ref %q", ref)
 	}
 
-	_, err := EnsureRunning(t.Context(), f.ensureOpts())
+	err := EnsureRunning(t.Context(), f.ensureOpts())
 	require.NoError(t, err)
 	assert.Equal(t, int32(1), f.calls.remove.Load(),
 		"older peer container must be force-removed")
@@ -1038,7 +1038,7 @@ func TestEnsureRunning_NameConflict_UnmanagedSquat(t *testing.T) {
 		return mobyclient.ContainerCreateResult{}, fmt.Errorf(`name "/clawker-controlplane" in use: %w`, cerrdefs.ErrConflict)
 	}
 
-	_, err := EnsureRunning(t.Context(), f.ensureOpts())
+	err := EnsureRunning(t.Context(), f.ensureOpts())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "in use by an unmanaged container",
 		"unmanaged squatter must surface as a typed message, not be silently adopted")
@@ -1099,7 +1099,7 @@ func TestEnsureRunning_NameConflict_OurImageVanished_Retries(t *testing.T) {
 		return managedImageInspect(f.cfg, "2026-05-21T10:00:00Z"), nil
 	}
 
-	_, err := EnsureRunning(t.Context(), f.ensureOpts())
+	err := EnsureRunning(t.Context(), f.ensureOpts())
 	require.NoError(t, err)
 	assert.Equal(t, int32(2), f.calls.create.Load(),
 		"vanished image must trigger retry, not abort: first create conflicts, second succeeds")
@@ -1167,7 +1167,7 @@ func TestEnsureRunning_NameConflict_ReensureImageFails(t *testing.T) {
 		return "", fmt.Errorf("simulated build failure")
 	}
 
-	_, err := EnsureRunning(t.Context(), f.ensureOpts())
+	err := EnsureRunning(t.Context(), f.ensureOpts())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "re-ensuring cp image before retry",
 		"reensure failure on retry must surface as a wrapped error")
@@ -1224,7 +1224,7 @@ func TestEnsureRunning_NameConflict_PeerImageInspectFails(t *testing.T) {
 		return mobyclient.ImageInspectResult{}, fmt.Errorf("unexpected ref %q", ref)
 	}
 
-	_, err := EnsureRunning(t.Context(), f.ensureOpts())
+	err := EnsureRunning(t.Context(), f.ensureOpts())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "inspecting recovered cp image",
 		"peer-image inspect failure must propagate as a wrapped error, not be silently adopted")
@@ -1289,7 +1289,7 @@ func TestCreateCPContainer_MaxAttemptsExhausted(t *testing.T) {
 		return mobyclient.ImageInspectResult{}, fmt.Errorf("unexpected ref %q", ref)
 	}
 
-	_, err := EnsureRunning(t.Context(), f.ensureOpts())
+	err := EnsureRunning(t.Context(), f.ensureOpts())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "exceeded 2 attempts",
 		"persistent create conflicts must bottom out at the maxCreateAttempts safety net")

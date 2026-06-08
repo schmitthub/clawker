@@ -25,7 +25,6 @@ import (
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/consts"
-	"github.com/schmitthub/clawker/internal/logger"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
@@ -53,12 +52,11 @@ import (
 // field with last-wins semantics, so your interceptor will be silently
 // dropped (baseline auth wins). Use grpc.WithChainUnaryInterceptor.
 //
-// log receives the structured clock-skew degrade lines (nil → no-op). The
-// clock-skew probe is best-effort; when it can't be measured the assertion
-// is minted in the local clock domain, which the log surfaces so an operator
-// can tie a later Hydra "Token used before issued" back to a skew-probe
-// failure instead of re-debugging the opaque 500.
-func Dial(ctx context.Context, adminPort, hydraPort int, log *logger.Logger, opts ...grpc.DialOption) (adminv1.AdminServiceClient, *grpc.ClientConn, error) {
+// The pre-mint clock-sync wait fails fast with a wrapped error on non-
+// convergence, so a lagging CP clock surfaces directly to the caller as a
+// "waiting for CP clock sync" error instead of an opaque later Hydra "Token
+// used before issued" 500 — no logger is needed on this path.
+func Dial(ctx context.Context, adminPort, hydraPort int, opts ...grpc.DialOption) (adminv1.AdminServiceClient, *grpc.ClientConn, error) {
 	signingKey, err := auth.LoadSigningKey()
 	if err != nil {
 		return nil, nil, fmt.Errorf("load signing key: %w", err)
@@ -90,20 +88,21 @@ func Dial(ctx context.Context, adminPort, hydraPort int, log *logger.Logger, opt
 	target := fmt.Sprintf("127.0.0.1:%d", adminPort)
 
 	hydraTokenURL := fmt.Sprintf("https://127.0.0.1:%d/oauth2/token", hydraPort)
-	// probeSkew measures the host↔CP clock offset over the public
-	// GetSystemTime RPC (mTLS, no bearer token) so the token source can
-	// mint assertions in Hydra's clock domain. Built as a closure so the
+	// probe measures the host↔CP clock offset over the public GetSystemTime
+	// RPC (mTLS, no bearer token). The token source loops it to *wait* for
+	// the CP clock to converge with the host before minting — it does not
+	// shift iat by the measured offset. Built as a closure so the
 	// tokenSource stays transport-agnostic and unit-testable.
-	probeSkew := func(pctx context.Context) (time.Duration, error) {
+	probe := func(pctx context.Context) (time.Duration, error) {
 		return measureClockSkew(pctx, target, grpcTLSCfg)
 	}
-	ts := newTokenSource(signingKey, hydraTokenURL, tokenTLSCfg, probeSkew, log)
+	ts := newTokenSource(signingKey, hydraTokenURL, tokenTLSCfg, probe)
 
 	// Eagerly fetch the first token with bounded retry so dial tolerates
 	// concurrent CP bring-up (e.g. one goroutine starts a container while
 	// another issues an admin RPC). CP cold-start takes ~5-10s; a 15s
-	// window covers that without hanging on truly dead CPs. The clock-skew
-	// probe runs lazily inside the same loop (first token attempt), so a
+	// window covers that without hanging on truly dead CPs. The clock-sync
+	// wait runs lazily inside the same loop (first token attempt), so a
 	// transient probe failure during bring-up self-heals on retry rather
 	// than poisoning the whole window.
 	if err := retryInitialToken(ctx, ts); err != nil {
@@ -238,36 +237,40 @@ type tokenSource struct {
 	signingKey *ecdsa.PrivateKey
 	tokenURL   string
 	tlsCfg     *tls.Config
-	// probeSkew measures the offset to add to the local clock to obtain the
-	// CP's clock (nil → skew stays 0, e.g. in unit tests). Called lazily on
-	// the first token fetch and cached once it succeeds.
-	probeSkew func(context.Context) (time.Duration, error)
-	log       *logger.Logger
+	// probe measures the host↔CP clock offset (nil → wait is skipped, e.g.
+	// in unit tests). Looped by waitForSync before the first mint to wait
+	// for the CP clock to converge with the host; never used to shift iat.
+	probe func(context.Context) (time.Duration, error)
 
 	mu        sync.Mutex
 	cached    string
 	expiresAt time.Time
-	skew      time.Duration
-	skewKnown bool
+	// synced latches once the CP clock has been observed within
+	// clockSyncTolerance of the host, so the wait runs once per source and
+	// every subsequent refresh mints immediately.
+	synced bool
 }
 
-// maxPlausibleClockSkew bounds a trusted GetSystemTime measurement. Real
-// host↔CP drift (a Docker Desktop VM clock lagging after the host sleeps) is
-// seconds to a few minutes; a measured offset beyond this signals a garbage
-// or hostile clock reading we must not anchor assertions to — a bad iat would
-// poison every mint for this token source's lifetime once skewKnown latches.
-// Past the bound the measurement is discarded and minting falls back to the
-// local clock plus the residual leeway floor.
-const maxPlausibleClockSkew = 24 * time.Hour
+// clockSyncTolerance is the host↔CP offset at or below which the clocks are
+// considered converged and minting may proceed. The host clock is the source
+// of truth (Docker forces the CP/VM clock to track it); this only bounds the
+// transient post-sleep window before the VM clock catches up.
+const clockSyncTolerance = 2 * time.Second
 
-// notableClockSkew is the offset above which an *accepted* (plausible)
-// measurement gets a breadcrumb. A few seconds of VM lag is routine and the
-// expected correction; a larger anchor — say minutes from a misconfigured NTP
-// rather than mere sleep lag — is exactly the case where a wrong-but-plausible
-// GetSystemTime reading would silently skew every subsequent mint. Logging the
-// applied value here gives an operator the one thread to pull when assertions
-// start carrying a surprising iat, without spamming the routine small-skew case.
-const notableClockSkew = 5 * time.Second
+// clockSyncWaitTimeout is a defensive backstop on how long the first mint
+// waits for the CP clock to converge before failing. On the eager-dial path
+// the caller ctx (initialTokenDeadline, 15s) bounds the wait and fires first;
+// this matches it so a caller without a deadline still can't hang. A just-woken
+// Docker Desktop VM clock reconverges in seconds — if it has not within this
+// window the CLI throws (no degrade, no best-effort mint: a mint under drift
+// would only earn the "token used before issued" 500 the wait exists to avoid).
+// Var (not const) so tests can shrink the wait — the only seam, never
+// reassigned in production.
+var clockSyncWaitTimeout = initialTokenDeadline
+
+// clockSyncInterval paces the convergence poll between probes. Var for the
+// same test-shrinking reason as clockSyncWaitTimeout.
+var clockSyncInterval = 500 * time.Millisecond
 
 // tokenRefreshMargin is how far before expiry we proactively refresh.
 // Hydra's default access token TTL is 1 hour; refreshing 30s early
@@ -277,24 +280,18 @@ const tokenRefreshMargin = 30 * time.Second
 
 // clockSkewProbeTimeout caps a single GetSystemTime probe at a hard upper
 // bound while still honoring the caller's context cancellation/deadline.
-// token() can re-enter the probe from an interceptor on any admin RPC
-// (until skewKnown latches), so without this cap the probe could inherit
-// that RPC's arbitrary (or absent) deadline and hang. A skew measurement
-// is one fast local round trip to the CP; if it can't answer in this window
-// the probe degrades to the logged clock_skew_probe_unavailable path and
-// the next refresh retries.
+// waitForSync can re-enter the probe from an interceptor on any admin RPC
+// (until synced latches), so without this cap the probe could inherit that
+// RPC's arbitrary (or absent) deadline and hang. A skew measurement is one
+// fast local round trip to the CP.
 const clockSkewProbeTimeout = 5 * time.Second
 
-func newTokenSource(signingKey *ecdsa.PrivateKey, tokenURL string, tlsCfg *tls.Config, probeSkew func(context.Context) (time.Duration, error), log *logger.Logger) *tokenSource {
-	if log == nil {
-		log = logger.Nop()
-	}
+func newTokenSource(signingKey *ecdsa.PrivateKey, tokenURL string, tlsCfg *tls.Config, probe func(context.Context) (time.Duration, error)) *tokenSource {
 	return &tokenSource{
 		signingKey: signingKey,
 		tokenURL:   tokenURL,
 		tlsCfg:     tlsCfg,
-		probeSkew:  probeSkew,
-		log:        log,
+		probe:      probe,
 	}
 }
 
@@ -308,47 +305,65 @@ func (ts *tokenSource) token(ctx context.Context) (string, error) {
 		return ts.cached, nil
 	}
 
-	// Establish the CP clock offset before the first mint. Best-effort: a
-	// failed or implausible probe leaves skewKnown false so the next token
-	// attempt retries it (the residual leeway floor in BuildSignedAssertion
-	// still applies). Both degrade paths are logged: when the probe never
-	// succeeds the mint silently falls back to the local clock domain, which
-	// re-exposes the host↔CP drift this measurement exists to absorb — without
-	// a breadcrumb a later Hydra "Token used before issued" 500 looks identical
-	// to the bug this fix removes.
-	if !ts.skewKnown && ts.probeSkew != nil {
-		switch s, err := ts.probeSkew(ctx); {
-		case err != nil:
-			ts.log.Warn().Err(err).
-				Str("event", "clock_skew_probe_unavailable").
-				Str("component", "adminclient").
-				Msg("CP clock-skew probe failed; minting assertion in local clock domain (Hydra may reject iat under host↔CP drift)")
-		case AbsDuration(s) > maxPlausibleClockSkew:
-			ts.log.Warn().
-				Str("event", "clock_skew_implausible").
-				Str("component", "adminclient").
-				Dur("measured_skew", s).
-				Msg("CP clock-skew measurement beyond plausible bound; discarding and minting in local clock domain")
-		default:
-			ts.skew = s
-			ts.skewKnown = true
-			if AbsDuration(s) > notableClockSkew {
-				ts.log.Warn().
-					Str("event", "clock_skew_applied").
-					Str("component", "adminclient").
-					Dur("applied_skew", s).
-					Msg("anchored assertions to a large host↔CP clock correction; if this is unexpected, verify the CP clock (NTP) rather than mere VM sleep lag")
-			}
+	// Wait for the CP clock to converge with the host before the first mint.
+	// The host clock is the source of truth (Docker forces the CP/VM clock to
+	// track it); Hydra/fosite validates the assertion iat against the CP clock
+	// with zero leeway, so we WAIT for reconvergence rather than shifting iat.
+	// Minting while the clock is still drifted would just earn the "token used
+	// before issued" 500 the wait exists to avoid, so non-convergence (or a
+	// cancelled caller ctx) fails fast with a clear cause instead. synced
+	// latches only on success, so a transient failure (CP cold-starting) self-
+	// heals on the next refresh.
+	if !ts.synced {
+		if err := ts.waitForSync(ctx); err != nil {
+			return "", fmt.Errorf("waiting for CP clock sync: %w", err)
 		}
+		ts.synced = true
 	}
 
-	tok, expiresIn, err := fetchAccessToken(ctx, ts.signingKey, ts.tokenURL, ts.tlsCfg, ts.skew)
+	tok, expiresIn, err := fetchAccessToken(ctx, ts.signingKey, ts.tokenURL, ts.tlsCfg)
 	if err != nil {
 		return "", err
 	}
 	ts.cached = tok
 	ts.expiresAt = time.Now().Add(expiresIn)
 	return tok, nil
+}
+
+// waitForSync polls the CP clock until it is within clockSyncTolerance of the
+// host or clockSyncWaitTimeout elapses. A probe error (CP still cold-starting)
+// or an out-of-tolerance offset (VM clock still lagging post-sleep) both keep
+// the loop going, so one wait covers both bring-up and reconvergence. Returns
+// nil on convergence; the caller's ctx cancellation/deadline takes precedence
+// and surfaces its own cause.
+func (ts *tokenSource) waitForSync(ctx context.Context) error {
+	if ts.probe == nil {
+		return nil // no transport (unit tests) — nothing to wait on
+	}
+	deadline := time.Now().Add(clockSyncWaitTimeout)
+	var lastErr error
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		skew, err := ts.probe(ctx)
+		if err == nil && AbsDuration(skew) <= clockSyncTolerance {
+			return nil
+		}
+		if err != nil {
+			lastErr = err
+		} else {
+			lastErr = fmt.Errorf("CP clock offset %s exceeds tolerance %s", skew.Round(time.Millisecond), clockSyncTolerance)
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("CP clock did not converge with host within %s: %w", clockSyncWaitTimeout, lastErr)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(clockSyncInterval):
+		}
+	}
 }
 
 // unaryInterceptor returns a gRPC interceptor that fetches a fresh token
@@ -372,9 +387,10 @@ func (ts *tokenSource) unaryInterceptor() grpc.UnaryClientInterceptor {
 //
 // localMidpoint is the midpoint of the request window so round-trip latency
 // is discounted symmetrically. clawker-cp and Hydra share the container, so
-// this offset aligns the minted assertion's iat to the exact clock fosite
-// validates against — eliminating host↔CP drift (e.g. a Docker Desktop VM
-// lagging after the host sleeps) rather than guessing a fixed margin.
+// this offset measures the host↔CP drift (e.g. a Docker Desktop VM lagging
+// after the host sleeps) that waitForSync loops on to *wait* for the CP
+// clock to reconverge with the host before minting — it is not used to
+// shift iat.
 func measureClockSkew(ctx context.Context, target string, tlsCfg *tls.Config) (time.Duration, error) {
 	// Bound the probe on its own deadline so its failure mode doesn't depend
 	// on the caller RPC that triggered this refresh (see clockSkewProbeTimeout).
@@ -419,17 +435,17 @@ func AbsDuration(d time.Duration) time.Duration {
 // fetchAccessToken signs a JWT assertion and exchanges it at Hydra's
 // /oauth2/token endpoint for an access token. Returns the token and its
 // TTL (from expires_in, defaulting to 1 hour if absent).
-func fetchAccessToken(ctx context.Context, signingKey *ecdsa.PrivateKey, tokenURL string, tlsCfg *tls.Config, skew time.Duration) (string, time.Duration, error) {
+func fetchAccessToken(ctx context.Context, signingKey *ecdsa.PrivateKey, tokenURL string, tlsCfg *tls.Config) (string, time.Duration, error) {
 	assertion, err := auth.BuildSignedAssertion(auth.AssertionClaims{
 		Issuer:           consts.ClientIDCLI,
 		Subject:          consts.ClientIDCLI,
 		Audience:         tokenURL,
 		JWTID:            uuid.NewString(),
 		ExpiresInSeconds: 30,
-		// Mint in the CP's clock domain: local now + measured offset. With
-		// skew==0 (probe unavailable) this is plain local now, still backed
-		// by the residual leeway floor in BuildSignedAssertion.
-		Now: time.Now().Add(skew),
+		// Minted in the host clock (Now unset → time.Now()). The host clock is
+		// the source of truth; token() has already waited for the CP clock to
+		// converge before reaching here, and the 15s leeway floor in
+		// BuildSignedAssertion covers sub-second residual drift.
 	}, signingKey)
 	if err != nil {
 		return "", 0, fmt.Errorf("build assertion: %w", err)

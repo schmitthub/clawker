@@ -76,7 +76,7 @@ func (*AgentBootstrap) GoString() string { return "AgentBootstrap{<redacted>}" }
 // The signature uses the typed auth.ProjectSlug / auth.AgentName so
 // the caller has gone through NewProjectSlug / NewAgentName at the CLI
 // flag boundary — a raw `string` cannot reach this function.
-func GenerateAgentBootstrap(caCertPath, caKeyPath string, project auth.ProjectSlug, agent auth.AgentName, containerID, hydraTokenURL string, signingKey *ecdsa.PrivateKey, skew time.Duration) (*AgentBootstrap, error) {
+func GenerateAgentBootstrap(caCertPath, caKeyPath string, project auth.ProjectSlug, agent auth.AgentName, containerID, hydraTokenURL string, signingKey *ecdsa.PrivateKey) (*AgentBootstrap, error) {
 	if agent.IsZero() {
 		return nil, fmt.Errorf("agent name required")
 	}
@@ -97,7 +97,7 @@ func GenerateAgentBootstrap(caCertPath, caKeyPath string, project auth.ProjectSl
 		return nil, fmt.Errorf("read CA cert: %w", err)
 	}
 
-	assertion, err := auth.BuildAgentAssertion(hydraTokenURL, signingKey, skew)
+	assertion, err := auth.BuildAgentAssertion(hydraTokenURL, signingKey)
 	if err != nil {
 		return nil, fmt.Errorf("build agent assertion: %w", err)
 	}
@@ -133,11 +133,6 @@ type InstallAgentBootstrapOptions struct {
 	// CopyToContainer streams the bootstrap tar into ContainerID's
 	// writable layer at consts.BootstrapDir.
 	CopyToContainer CopyToContainerFn
-	// Skew is the host↔CP clock offset (CP minus host) the caller
-	// measured via adminclient.ProbeClockSkew before minting. Aligns the
-	// agent assertion's iat to the CP clock domain that Hydra validates
-	// against. Zero when unmeasured (degrades to host-clock iat).
-	Skew time.Duration
 	// Logger receives a single info line on success. Required.
 	Logger *logger.Logger
 }
@@ -163,7 +158,7 @@ func InstallAgentBootstrapMaterial(ctx context.Context, caCertPath, caKeyPath st
 		return fmt.Errorf("install agent bootstrap material: copy-to-container fn required")
 	}
 
-	bootstrap, err := GenerateAgentBootstrap(caCertPath, caKeyPath, opts.Project, opts.Agent, opts.ContainerID, opts.HydraTokenAudience, signingKey, opts.Skew)
+	bootstrap, err := GenerateAgentBootstrap(caCertPath, caKeyPath, opts.Project, opts.Agent, opts.ContainerID, opts.HydraTokenAudience, signingKey)
 	if err != nil {
 		return fmt.Errorf("install agent bootstrap material: generate: %w", err)
 	}

@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/google/shlex"
 	mobyclient "github.com/moby/moby/client"
@@ -214,7 +213,7 @@ func testStartFactory(t *testing.T, fake *mocks.FakeClient) (*cmdutil.Factory, *
 		},
 		ControlPlane: func() cpboot.Manager {
 			return &cpbootmocks.ManagerMock{
-				EnsureRunningFunc: func(context.Context) (time.Duration, error) { return 0, nil },
+				EnsureRunningFunc: func(context.Context) error { return nil },
 			}
 		},
 	}, in, out, errOut
@@ -340,7 +339,7 @@ func TestStartRun_NilHostProxy(t *testing.T) {
 		HostProxy: func() hostproxy.HostProxyService { return nil },
 		ControlPlane: func() cpboot.Manager {
 			return &cpbootmocks.ManagerMock{
-				EnsureRunningFunc: func(context.Context) (time.Duration, error) { return 0, nil },
+				EnsureRunningFunc: func(context.Context) error { return nil },
 			}
 		},
 	}

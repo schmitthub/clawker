@@ -21,7 +21,7 @@ func TestBuildAgentAssertion_ClaimsAndAlg(t *testing.T) {
 	require.NoError(t, err)
 
 	const audience = "https://hydra.example/oauth2/token"
-	tok, err := BuildAgentAssertion(audience, key, 0)
+	tok, err := BuildAgentAssertion(audience, key)
 	require.NoError(t, err)
 
 	parsed, err := josejwt.ParseSigned(tok, []jose.SignatureAlgorithm{jose.ES256})
@@ -53,45 +53,13 @@ func TestBuildAgentAssertion_ClaimsAndAlg(t *testing.T) {
 		"iat must be backdated below now for clock-skew tolerance")
 }
 
-// TestBuildAgentAssertion_SkewShiftsIssuedAt proves the measured CP
-// clock offset is applied to the assertion's reference clock so iat/exp
-// land in Hydra's (CP's) clock domain. Without this, a host clock ahead
-// of the CP would mint an iat in Hydra's future → zero-leeway "token
-// used before issued" rejection.
-func TestBuildAgentAssertion_SkewShiftsIssuedAt(t *testing.T) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	const skew = 90 * time.Second // CP 90s ahead of host
-	before := time.Now()
-	tok, err := BuildAgentAssertion("https://hydra.example/oauth2/token", key, skew)
-	require.NoError(t, err)
-	after := time.Now()
-
-	parsed, err := josejwt.ParseSigned(tok, []jose.SignatureAlgorithm{jose.ES256})
-	require.NoError(t, err)
-	var claims josejwt.Claims
-	require.NoError(t, parsed.Claims(&key.PublicKey, &claims))
-	require.NotNil(t, claims.IssuedAt)
-
-	// iat = now + skew - assertionClockSkewLeeway. A +90s skew pushes it
-	// well past the 15s backdate, so iat must sit in the future relative
-	// to host now — proving the skew was applied, not dropped.
-	iat := claims.IssuedAt.Time()
-	assert.True(t, iat.After(after),
-		"iat must be shifted into the future by a positive CP skew, got %s vs now %s", iat, after)
-	lo := before.Add(skew - assertionClockSkewLeeway - 5*time.Second)
-	hi := after.Add(skew - assertionClockSkewLeeway + 5*time.Second)
-	assert.WithinRange(t, iat, lo, hi, "iat must equal now+skew-leeway")
-}
-
 func TestBuildAgentAssertion_DistinctJTI(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	a, err := BuildAgentAssertion("https://hydra.example/oauth2/token", key, 0)
+	a, err := BuildAgentAssertion("https://hydra.example/oauth2/token", key)
 	require.NoError(t, err)
-	b, err := BuildAgentAssertion("https://hydra.example/oauth2/token", key, 0)
+	b, err := BuildAgentAssertion("https://hydra.example/oauth2/token", key)
 	require.NoError(t, err)
 
 	assert.NotEqual(t, a, b, "two assertions must have distinct JTI → distinct serialised tokens")
@@ -108,13 +76,13 @@ func TestBuildAgentAssertion_RejectsBadInput(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("empty audience", func(t *testing.T) {
-		tok, err := BuildAgentAssertion("", goodKey, 0)
+		tok, err := BuildAgentAssertion("", goodKey)
 		require.Error(t, err)
 		assert.Empty(t, tok, "no token must be produced when validation fails")
 	})
 
 	t.Run("nil signing key", func(t *testing.T) {
-		tok, err := BuildAgentAssertion("https://hydra.example/oauth2/token", nil, 0)
+		tok, err := BuildAgentAssertion("https://hydra.example/oauth2/token", nil)
 		require.Error(t, err)
 		assert.Empty(t, tok)
 	})
@@ -128,7 +96,7 @@ func TestBuildAgentAssertion_RejectsBadInput(t *testing.T) {
 	t.Run("non-P256 ECDSA signing key (P-384)", func(t *testing.T) {
 		p384Key, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
 		require.NoError(t, err)
-		tok, err := BuildAgentAssertion("https://hydra.example/oauth2/token", p384Key, 0)
+		tok, err := BuildAgentAssertion("https://hydra.example/oauth2/token", p384Key)
 		require.Error(t, err)
 		assert.Empty(t, tok)
 	})
@@ -136,7 +104,7 @@ func TestBuildAgentAssertion_RejectsBadInput(t *testing.T) {
 	t.Run("non-P256 ECDSA signing key (P-521)", func(t *testing.T) {
 		p521Key, err := ecdsa.GenerateKey(elliptic.P521(), rand.Reader)
 		require.NoError(t, err)
-		tok, err := BuildAgentAssertion("https://hydra.example/oauth2/token", p521Key, 0)
+		tok, err := BuildAgentAssertion("https://hydra.example/oauth2/token", p521Key)
 		require.Error(t, err)
 		assert.Empty(t, tok)
 	})

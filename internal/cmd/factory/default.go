@@ -249,10 +249,9 @@ func clientFunc(f *cmdutil.Factory) func(context.Context) (*docker.Client, error
 // configuration.
 func adminClientFunc(f *cmdutil.Factory) func(context.Context) (adminv1.AdminServiceClient, error) {
 	var (
-		mu           sync.Mutex
-		conn         *grpc.ClientConn
-		client       adminv1.AdminServiceClient
-		loggerWarned bool
+		mu     sync.Mutex
+		conn   *grpc.ClientConn
+		client adminv1.AdminServiceClient
 	)
 	return func(ctx context.Context) (adminv1.AdminServiceClient, error) {
 		mu.Lock()
@@ -273,22 +272,7 @@ func adminClientFunc(f *cmdutil.Factory) func(context.Context) (adminv1.AdminSer
 		}
 
 		cp := cfg.Settings().ControlPlane
-		// Logger is best-effort: a logger failure must not block the admin
-		// dial, but when present it carries the clock-skew degrade lines that
-		// tie a later "Token used before issued" 500 back to root cause. If the
-		// logger itself is broken those breadcrumbs vanish into a Nop, so warn
-		// once on stderr — an operator must know logging is down rather than
-		// silently getting a degrade-line-free run.
-		log, logErr := f.Logger()
-		if logErr != nil && !loggerWarned {
-			loggerWarned = true
-			if f.IOStreams != nil {
-				cs := f.IOStreams.ColorScheme()
-				fmt.Fprintf(f.IOStreams.ErrOut, "%s logger init failed; clock-skew diagnostics will be unavailable: %v\n",
-					cs.WarningIcon(), logErr)
-			}
-		}
-		newClient, newConn, err := adminclient.Dial(ctx, cp.AdminPort, cp.HydraPublicPort, log,
+		newClient, newConn, err := adminclient.Dial(ctx, cp.AdminPort, cp.HydraPublicPort,
 			grpc.WithKeepaliveParams(adminClientKeepalive),
 		)
 		if err != nil {

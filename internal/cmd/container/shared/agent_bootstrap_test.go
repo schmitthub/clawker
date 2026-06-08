@@ -40,7 +40,7 @@ func TestGenerateAgentBootstrap_HappyPath(t *testing.T) {
 	caCert, caKey, signing := setupAuthEnv(t)
 
 	const project, agent, containerID = "alpha", "bravo", "abcdef0123456789"
-	b, err := GenerateAgentBootstrap(caCert, caKey, auth.MustProjectSlug(project), auth.MustAgentName(agent), containerID, "https://hydra.example/oauth2/token", signing, 0)
+	b, err := GenerateAgentBootstrap(caCert, caKey, auth.MustProjectSlug(project), auth.MustAgentName(agent), containerID, "https://hydra.example/oauth2/token", signing)
 	require.NoError(t, err)
 	require.NotNil(t, b)
 
@@ -75,7 +75,7 @@ func TestGenerateAgentBootstrap_EmptyProjectStillWorks(t *testing.T) {
 	// SAN encodes "clawker.<agent>" (matching docker.ContainerName);
 	// CN remains the binary literal.
 	caCert, caKey, signing := setupAuthEnv(t)
-	b, err := GenerateAgentBootstrap(caCert, caKey, auth.ProjectSlug{}, auth.MustAgentName("solo"), "fedcba9876543210", "https://h.example/o/t", signing, 0)
+	b, err := GenerateAgentBootstrap(caCert, caKey, auth.ProjectSlug{}, auth.MustAgentName("solo"), "fedcba9876543210", "https://h.example/o/t", signing)
 	require.NoError(t, err)
 	leaf := mustParseCert(t, b.CertPEM)
 	assert.Equal(t, consts.ContainerClawkerd, leaf.Subject.CommonName)
@@ -98,7 +98,7 @@ func TestGenerateAgentBootstrap_Validation(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := GenerateAgentBootstrap(caCert, caKey, auth.MustProjectSlug("proj"), tc.agent, tc.containerID, "https://h", tc.signing, 0)
+			_, err := GenerateAgentBootstrap(caCert, caKey, auth.MustProjectSlug("proj"), tc.agent, tc.containerID, "https://h", tc.signing)
 			require.Error(t, err)
 		})
 	}
