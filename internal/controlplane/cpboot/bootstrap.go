@@ -780,6 +780,14 @@ func waitForCPClockSync(ctx context.Context, cfg config.Config, log *logger.Logg
 		Str("event", "cp_clock_sync").
 		Str("component", "cpboot.clocksync").
 		Msg("probing control plane clock convergence with host")
+
+	// Track the last probe error separately from the "CP behind host" case:
+	// a probe that errors (CP not yet reachable, mTLS handshake, RPC failure)
+	// is a different fault than a probe that succeeds and reports a lagging
+	// clock. The per-iteration line must not mislabel one as the other, and the
+	// terminal timeout must carry the real cause so an operator isn't sent
+	// chasing a clock problem that is actually connectivity or auth.
+	var lastProbeErr error
 	for {
 
 		if err := ctx.Err(); err != nil {
@@ -789,7 +797,8 @@ func waitForCPClockSync(ctx context.Context, cfg config.Config, log *logger.Logg
 		hostTime := time.Now().UTC()
 		cpTime, err := probeCPTimeFn(ctx, adminPort)
 
-		if err == nil && hostTime.Before(cpTime) {
+		// converged once the CP clock is at or after the host's now
+		if err == nil && !hostTime.After(cpTime) {
 			log.Info().
 				Str("event", "cp_clock_converged").
 				Str("component", "cpboot.clocksync").
@@ -797,18 +806,35 @@ func waitForCPClockSync(ctx context.Context, cfg config.Config, log *logger.Logg
 			return nil // CP clock has caught up to the host
 		}
 
-		log.Info().
-			Str("event", "cp_clock_probe").
-			Str("component", "cpboot.clocksync").
-			Msg(fmt.Sprintf("reprobing: control plane clock still behind host, hostTime=%s, cpTime=%s", hostTime, cpTime))
+		// Both branches stay at Info: early probe errors and a still-lagging
+		// clock are both expected churn during cold start (the CP AdminPort may
+		// not be listening yet, and the VM clock re-syncs over a few seconds).
+		// The loop retries either way; only the terminal timeout is an error.
+		if err != nil {
+			lastProbeErr = err
+			log.Info().
+				Str("event", "cp_clock_probe").
+				Str("component", "cpboot.clocksync").
+				Msg(fmt.Sprintf("reprobing: control plane clock probe failed: %v", err))
+		} else {
+			log.Info().
+				Str("event", "cp_clock_probe").
+				Str("component", "cpboot.clocksync").
+				Msg(fmt.Sprintf("reprobing: control plane clock still behind host, hostTime=%s, cpTime=%s", hostTime, cpTime))
+		}
 
 		if time.Now().After(deadline) {
-			err := fmt.Errorf("cp clock sync deadline exceeded")
+			var timeoutErr error
+			if lastProbeErr != nil {
+				timeoutErr = fmt.Errorf("cp clock sync deadline exceeded (last probe: %w)", lastProbeErr)
+			} else {
+				timeoutErr = fmt.Errorf("cp clock sync deadline exceeded")
+			}
 			log.Error().
 				Str("event", "cp_clock_sync_timeout").
 				Str("component", "cpboot.clocksync").
-				Msg(err.Error())
-			return err
+				Msg(timeoutErr.Error())
+			return timeoutErr
 		}
 		select {
 		case <-ctx.Done():

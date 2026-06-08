@@ -876,7 +876,7 @@ func (m *Manager) seedDNSCacheIfAbsent(ip uint32, domainHash uint32, ttlSeconds 
 // failed, NOT cleared, so cleared is an honest "entries removed" metric and
 // failed lets the caller detect a sweep that enumerated work but reclaimed
 // nothing. Split out from GarbageCollectDNS for unit testability.
-func deleteExpiredDNSEntries(m bypassMap, keys []uint32, log *logger.Logger) (cleared, failed int) {
+func deleteExpiredDNSEntries(m bypassMap, keys []uint32, log *logger.Logger) (cleared, failed int, firstErr error) {
 	for _, key := range keys {
 		err := m.Delete(key)
 		if err == nil || errors.Is(err, ebpf.ErrKeyNotExist) {
@@ -884,11 +884,14 @@ func deleteExpiredDNSEntries(m bypassMap, keys []uint32, log *logger.Logger) (cl
 			continue
 		}
 		failed++
+		if firstErr == nil {
+			firstErr = err // surface the cause (EPERM/ENOMEM/...), not just a count
+		}
 		if log != nil {
 			log.Debug().Err(err).Uint32("ip", key).Msg("ebpf gc-dns: deleting expired dns_cache entry (non-fatal)")
 		}
 	}
-	return cleared, failed
+	return cleared, failed, firstErr
 }
 
 // GarbageCollectDNS removes expired entries from the dns_cache map and
@@ -936,9 +939,9 @@ func (m *Manager) GarbageCollectDNS() (cleared int, err error) {
 		m.log.Warn().Err(iterErr).Msg("ebpf gc-dns: iterating dns_cache (next pass will retry)")
 	}
 
-	cleared, failed := deleteExpiredDNSEntries(m.objs.DnsCache, expired, m.log)
+	cleared, failed, firstDeleteErr := deleteExpiredDNSEntries(m.objs.DnsCache, expired, m.log)
 
-	return cleared, joinDNSGCErrors(iterErr, failed)
+	return cleared, joinDNSGCErrors(iterErr, failed, firstDeleteErr)
 }
 
 // joinDNSGCErrors assembles the error a single GarbageCollectDNS sweep reports
@@ -952,13 +955,17 @@ func (m *Manager) GarbageCollectDNS() (cleared int, err error) {
 // A clean sweep (no iterator error, nothing failed) returns nil even when it
 // reclaimed zero entries — "swept nothing because nothing had expired" is
 // success, not failure, and must not count toward escalation.
-func joinDNSGCErrors(iterErr error, failed int) error {
+func joinDNSGCErrors(iterErr error, failed int, firstDeleteErr error) error {
 	var errs []error
 	if iterErr != nil {
 		errs = append(errs, fmt.Errorf("iterate dns_cache: %w", iterErr))
 	}
 	if failed > 0 {
-		errs = append(errs, fmt.Errorf("%d dns_cache delete(s) failed", failed))
+		if firstDeleteErr != nil {
+			errs = append(errs, fmt.Errorf("%d dns_cache delete(s) failed (first: %w)", failed, firstDeleteErr))
+		} else {
+			errs = append(errs, fmt.Errorf("%d dns_cache delete(s) failed", failed))
+		}
 	}
 	return errors.Join(errs...)
 }

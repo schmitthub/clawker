@@ -1668,9 +1668,9 @@ type GetSystemTimeResult struct {
 	// the epoch. Unix nanoseconds are an absolute instant counted from the epoch,
 	// so the value is inherently timezone-independent with no dependency on any TZ
 	// setting on the CP host (no UTC conversion is applied or needed server-side).
-	// The CLI reads it back, normalizes to the UTC domain, and compares against
-	// its own time.Now().UTC() to decide whether the CP clock has caught up to the
-	// host before minting.
+	// The host-side CP-readiness gate reads it back and compares against its own
+	// time.Now().UTC() to decide whether the CP clock has caught up to the host
+	// before the container start is allowed to proceed.
 	UnixNanos     int64 `protobuf:"varint,1,opt,name=unix_nanos,json=unixNanos,proto3" json:"unix_nanos,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

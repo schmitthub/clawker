@@ -146,11 +146,11 @@ The four Ory ports (`hydra_*`, `kratos_*`, `oathkeeper_*`) are **container-inter
 **CP container won't start.**
 Run `docker logs clawker-controlplane` (CP panic traces and Ory subprocess output land here, not in clawker's rotating logs). The most common causes: stale port bindings from a half-killed previous run (`clawker controlplane down` then retry), or auth material out of sync (try `clawker auth rotate`).
 
-**`clawker run` / `clawker container start` fails with `control plane clock did not catch up to host` (Docker Desktop).**
+**`clawker run` / `clawker container start` fails with `cp clock sync deadline exceeded` (Docker Desktop).**
 Before *starting* a container, the CLI brings the control plane to full readiness — which includes waiting until CP's clock (the Docker Desktop LinuxKit VM clock, where CP runs) has caught up to the host clock. The gate requires full convergence (zero leeway): CP's clock must reach the host instant. If it doesn't converge within ~30s the command fails with:
 
 ```text
-control plane clock did not catch up to host after 30s: CP clock still behind host (CP at 2026-06-08T12:00:00Z) — the Docker VM clock is likely lagging after host sleep; wait for it to re-sync (or restart Docker Desktop), then retry
+starting container: bootstrapping services: ensuring control plane is running: cp clock sync deadline exceeded
 ```
 
 This almost always happens after the host sleeps and wakes: the VM clock drifts behind real time until its NTP source re-syncs. The bootstrap assertion is minted in the **host** clock, while Hydra validates its `iat` against CP's clock with zero leeway — so exchanging it against a still-lagging CP clock would earn a Hydra `Token used before issued` 500. Rather than re-mint or skew-correct, the gate **waits** for the CP clock to reach the host before letting the container start, so nothing unusable is baked in: the baked assertion stays valid, and once the VM clock catches up a plain retry of `clawker run` / `clawker container start` succeeds — no need to delete and recreate. Wait a few seconds for the VM clock to catch up and retry, or restart Docker Desktop to force a resync. (The earlier symptom of this drift — that Hydra `Token used before issued` 500 at container start — is now caught by this pre-start gate instead.)

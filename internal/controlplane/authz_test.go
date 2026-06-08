@@ -215,7 +215,7 @@ func TestAuthInterceptor_UnmappedMethod_Denied(t *testing.T) {
 // zero-value (empty) scope must still deny, and must never reach introspection.
 // TestAuthInterceptor_UnmappedMethod_Denied covers the absent-key half; this
 // covers the mapped-to-"" half. The hole this guards: a regression restoring
-// the empty string as the public sentinel (the pre-fix behavior) would reopen a
+// the empty string as the public sentinel would reopen a
 // fail-open path that no other test catches — TestAdminMethodScopes_CoversAllRPCs
 // only checks key presence, and the public-scope test pins "public", not "".
 func TestAuthInterceptor_MappedEmptyScope_Denied(t *testing.T) {

@@ -24,8 +24,8 @@ import (
 type Manager interface {
 	// EnsureRunning is idempotent: it builds the CP image if missing,
 	// creates/starts the container on clawker-net, and blocks until the
-	// aggregate /healthz endpoint returns 200 and the host↔CP clock is in
-	// sync within tolerance. The clock-sync step is a readiness gate, not a
+	// aggregate /healthz endpoint returns 200 and the CP clock has caught up
+	// to the host. The clock-sync step is a readiness gate, not a
 	// value source: it guarantees the CP clock has reconverged with the host
 	// before a container start lets clawkerd exchange its (host-clock-minted)
 	// agent assertion.

@@ -139,8 +139,9 @@ func (e *dnsGCEscalator) record(ok bool) (escalate bool) {
 // without tearing down the caller's ticker loop, so the loop keeps governing the
 // map rather than surrendering it until CP restart. It also returns false when
 // GarbageCollectDNS reports it could not reclaim (wedged iterator / failed
-// deletes) — a sweep that "succeeds" but reclaims nothing is the exact
-// silent-growth failure the caller's escalation exists to catch. Extracted from
+// deletes). A clean sweep that simply had nothing to reclaim (n==0, err==nil) is
+// success (ok=true) — only a panic or a non-nil error counts as a failed sweep.
+// Extracted from
 // the GC goroutine so the panic→false and error→false mapping is unit-testable
 // without driving the whole loop. gc is normally ebpfMgr.GarbageCollectDNS.
 func dnsGCSweep(gc func() (int, error), log *logger.Logger) (ok bool) {

@@ -253,7 +253,8 @@ report `connection refused` against the CP.
    ```
 
 5. **CP clock-sync error on start** (Docker Desktop). The startup error
-   reads `control plane clock did not catch up to host after ...`, often
+   contains `cp clock sync deadline exceeded` (wrapped by the caller, e.g.
+   `bootstrapping services: ensuring control plane is running: ...`), often
    after the host slept/woke. The Docker Desktop LinuxKit VM clock (where
    CP runs) has drifted behind the host clock. Rather than skew-correcting
    the OAuth2 assertion's `iat`, the CLI/bootstrap **waits** for the CP

@@ -429,9 +429,12 @@ func TestDeleteExpiredDNSEntries_CountsOnlyRealAndENOENTSuccess(t *testing.T) {
 		forcedErr: nil,
 	}
 	// First assert the happy path (keys 1, 2, 3) yields 3 cleared, 0 failed.
-	cleared, failed := deleteExpiredDNSEntries(fake, []uint32{1, 2, 3}, logger.Nop())
+	cleared, failed, firstErr := deleteExpiredDNSEntries(fake, []uint32{1, 2, 3}, logger.Nop())
 	if cleared != 3 || failed != 0 {
 		t.Errorf("happy path: expected 3 cleared / 0 failed, got %d / %d", cleared, failed)
+	}
+	if firstErr != nil {
+		t.Errorf("happy path: expected nil firstErr, got %v", firstErr)
 	}
 	if len(fake.deleteCalls) != 3 {
 		t.Errorf("expected 3 Delete calls, got %d", len(fake.deleteCalls))
@@ -443,9 +446,12 @@ func TestDeleteExpiredDNSEntries_CountsOnlyRealAndENOENTSuccess(t *testing.T) {
 	fake.deleteCalls = nil
 	fake.missing = nil
 	fake.forcedErr = syscall.EPERM
-	cleared, failed = deleteExpiredDNSEntries(fake, []uint32{4, 5}, logger.Nop())
+	cleared, failed, firstErr = deleteExpiredDNSEntries(fake, []uint32{4, 5}, logger.Nop())
 	if cleared != 0 || failed != 2 {
 		t.Errorf("EPERM path: expected 0 cleared / 2 failed, got %d / %d", cleared, failed)
+	}
+	if !errors.Is(firstErr, syscall.EPERM) {
+		t.Errorf("EPERM path: expected firstErr to surface EPERM, got %v", firstErr)
 	}
 	if len(fake.deleteCalls) != 2 {
 		t.Errorf("expected 2 Delete attempts, got %d", len(fake.deleteCalls))
@@ -460,9 +466,12 @@ func TestDeleteExpiredDNSEntries_CountsOnlyRealAndENOENTSuccess(t *testing.T) {
 func TestDeleteExpiredDNSEntries_EmptyReturnsZero(t *testing.T) {
 	t.Parallel()
 	fake := &fakeDNSMap{}
-	cleared, failed := deleteExpiredDNSEntries(fake, nil, logger.Nop())
+	cleared, failed, firstErr := deleteExpiredDNSEntries(fake, nil, logger.Nop())
 	if cleared != 0 || failed != 0 {
 		t.Errorf("empty input: expected 0 cleared / 0 failed, got %d / %d", cleared, failed)
+	}
+	if firstErr != nil {
+		t.Errorf("empty input: expected nil firstErr, got %v", firstErr)
 	}
 	if len(fake.deleteCalls) != 0 {
 		t.Errorf("empty input must not invoke Delete; got %d calls", len(fake.deleteCalls))
@@ -480,30 +489,38 @@ func TestDeleteExpiredDNSEntries_EmptyReturnsZero(t *testing.T) {
 func TestJoinDNSGCErrors(t *testing.T) {
 	t.Parallel()
 	iterErr := errors.New("iterate boom")
+	deleteErr := errors.New("delete boom")
 
 	tests := []struct {
-		name    string
-		iterErr error
-		failed  int
-		wantErr bool
+		name      string
+		iterErr   error
+		failed    int
+		deleteErr error
+		wantErr   bool
 	}{
-		{name: "clean sweep, nothing expired", iterErr: nil, failed: 0, wantErr: false},
-		{name: "wedged iterator alone fails", iterErr: iterErr, failed: 0, wantErr: true},
-		{name: "failed deletes alone fail", iterErr: nil, failed: 3, wantErr: true},
-		{name: "both signals fail", iterErr: iterErr, failed: 2, wantErr: true},
+		{name: "clean sweep, nothing expired", iterErr: nil, failed: 0, deleteErr: nil, wantErr: false},
+		{name: "wedged iterator alone fails", iterErr: iterErr, failed: 0, deleteErr: nil, wantErr: true},
+		{name: "failed deletes alone fail", iterErr: nil, failed: 3, deleteErr: deleteErr, wantErr: true},
+		{name: "both signals fail", iterErr: iterErr, failed: 2, deleteErr: deleteErr, wantErr: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			err := joinDNSGCErrors(tc.iterErr, tc.failed)
+			err := joinDNSGCErrors(tc.iterErr, tc.failed, tc.deleteErr)
 			if tc.wantErr != (err != nil) {
-				t.Fatalf("joinDNSGCErrors(%v, %d) err = %v; wantErr = %v", tc.iterErr, tc.failed, err, tc.wantErr)
+				t.Fatalf("joinDNSGCErrors(%v, %d, %v) err = %v; wantErr = %v", tc.iterErr, tc.failed, tc.deleteErr, err, tc.wantErr)
 			}
 			// The wedged-iterator cause must be preserved through the join so an
 			// operator grepping the logged error can tell a wedged iterator from
 			// failed deletes.
 			if tc.iterErr != nil && !errors.Is(err, iterErr) {
 				t.Errorf("joined error does not wrap the iterator error: %v", err)
+			}
+			// The first delete failure's cause (EPERM/ENOMEM/...) must be
+			// preserved through the join so the dns_gc_error line names it,
+			// not just a count.
+			if tc.deleteErr != nil && !errors.Is(err, deleteErr) {
+				t.Errorf("joined error does not wrap the delete error: %v", err)
 			}
 		})
 	}
