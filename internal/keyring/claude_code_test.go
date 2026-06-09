@@ -87,16 +87,6 @@ func TestGetClaudeCodeCredentials(t *testing.T) {
 		"organizationUuid": "` + orgUUID + `"
 	}`
 
-	expiredJSON := `{
-		"claudeAiOauth": {
-			"accessToken":  "access",
-			"refreshToken": "refresh",
-			"expiresAt":    1000000000000,
-			"scopes":       ["scope1"]
-		},
-		"organizationUuid": "` + orgUUID + `"
-	}`
-
 	invalidUUIDJSON := `{
 		"claudeAiOauth": {
 			"accessToken":  "access",
@@ -146,11 +136,6 @@ func TestGetClaudeCodeCredentials(t *testing.T) {
 			name:    "invalid UUID",
 			raw:     invalidUUIDJSON,
 			wantErr: ErrInvalidSchema,
-		},
-		{
-			name:    "expired token",
-			raw:     expiredJSON,
-			wantErr: ErrTokenExpired,
 		},
 	}
 

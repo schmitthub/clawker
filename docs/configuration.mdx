@@ -224,7 +224,7 @@ agent:
     config:
       # How to initialize Claude Code config: copy syncs host settings/plugins, fresh starts clean
       strategy: <string>  # default: copy | required: false
-    # Let the container use your host API keys so you don't have to re-authenticate
+    # Let the container use your host Claude Code credentials so you don't have to re-authenticate. The credential will be copied in at creation and persisted in the container's volume, but the container will refresh its tokens independently. If new containers keep starting unauthenticated, log in on the host to rotate the refresh token seed.
     use_host_auth: <boolean>  # default: true | required: false
     # Bind mount host ~/.claude/projects/ into the container so auto-memory and sessions are shared across container runs and instances
     mount_projects: <boolean>  # default: true | required: false
@@ -345,7 +345,7 @@ The following tables are auto-generated from the schema struct tags in `internal
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `strategy` | string | `copy` | How to initialize Claude Code config: copy syncs host settings/plugins, fresh starts clean |
-| `use_host_auth` | boolean | `true` | Let the container use your host API keys so you don't have to re-authenticate |
+| `use_host_auth` | boolean | `true` | Let the container use your host Claude Code credentials so you don't have to re-authenticate. The credential will be copied in at creation and persisted in the container's volume, but the container will refresh its tokens independently. If new containers keep starting unauthenticated, log in on the host to rotate the refresh token seed. |
 | `mount_projects` | boolean | `true` | Bind mount host ~/.claude/projects/ into the container so auto-memory and sessions are shared across container runs and instances |
 
 
