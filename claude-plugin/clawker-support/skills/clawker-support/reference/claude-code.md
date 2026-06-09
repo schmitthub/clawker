@@ -1,14 +1,20 @@
-# Claude Code Host Authentication
+# Claude Code
 
-How clawker shares the host's Claude Code login with agent containers, and why
-that sharing has limits. Read this when a user reports authentication prompts
-(`/login`) inside containers, or asks how `use_host_auth` works.
+How clawker integrates with Claude Code inside agent containers. Today that
+means **authentication** — sharing the host login with containers and why that
+sharing has limits. (Other Claude Code topics get their own section here as they
+come up.)
+
+## Authentication
+
+Read this section when a user reports authentication prompts (`/login`) inside
+containers, or asks how `use_host_auth` works.
 
 `use_host_auth` (under `agent.claude_code`, default enabled) is the only knob.
 Fetch `https://docs.clawker.dev/configuration` for the current field path and
 schema — everything below is the stable model, not field syntax.
 
-## The credential model
+### The credential model
 
 Claude Code authenticates with an OAuth credential pair:
 
@@ -22,7 +28,7 @@ using the refresh token and writes the rotated pair back to the keychain. The
 user never sees a prompt as long as the refresh token is still valid. A prompt
 (`/login`) appears only when the refresh token itself is expired or revoked.
 
-## How clawker shares it with a container
+### How clawker shares it with a container
 
 When `use_host_auth` is enabled, clawker reads the host's stored Claude
 credentials **once, at container create time**, and writes them into the
@@ -52,19 +58,25 @@ every support question:
    could defeat the self-heal. For shared-host-auth to behave as described, let
    Claude Code use the file.
 
-3. **Isolation is one-way.** The container cannot write back to the host
-   keychain, and the host cannot reach an already-created container's volume.
-   Refreshing on one side never updates the other. This is by design — the
-   sandbox boundary — but it is the root of the `/login` confusion below.
+3. **The two sides never sync — by design.** clawker plants a byte-for-byte copy
+   of the credential at create time and nothing more. From then on the host and
+   the container refresh independently, and clawker propagates nothing between
+   them. That is deliberate on three counts: an agent must never write to the
+   host keychain (a hard security boundary); a single host login can back many
+   containers that each refresh their own volume on their own schedule, so there
+   is no coherent "sync" to perform; and Anthropic's terms reserve OAuth
+   credential handling — refresh, rotation, any mutation — to first-party Claude
+   Code. clawker only seeds the initial copy; it never takes part in a token
+   exchange. This one-way model is the root of the `/login` confusion below.
 
 An expired *access* token at create time is harmless: clawker injects it
 anyway, because the refresh token (not the access token) is what lets Claude
 Code recover, and it refreshes on first use. Only the **refresh token's**
 validity matters for whether a fresh container starts authenticated.
 
-## Troubleshooting
+### Troubleshooting
 
-### Repeated `/login` in new containers despite `use_host_auth` enabled
+#### Repeated `/login` in new containers despite `use_host_auth` enabled
 
 **Symptom.** Every new agent container prompts for `/login` even though
 `agent.claude_code.use_host_auth` is on.
@@ -74,11 +86,9 @@ revoked** when the container was created. The snapshot clawker copied in could
 not be refreshed, so Claude Code falls back to an interactive login. Nothing is
 misconfigured — the shared credential was simply stale at copy time.
 
-There is deliberately **no way to check or refresh the host's refresh token
-from inside a container.** The credential blob doesn't even expose the refresh
-token's expiry (only the access token's), and the sandbox can't touch the host
-keychain. So this isn't diagnosed by inspecting the container — it's reasoned
-about from the model above.
+This is reasoned about from the model above, not diagnosed from inside the
+container: the credential blob doesn't expose the refresh token's expiry, and
+the sandbox can't reach the host keychain.
 
 **For the container that already prompted: nothing more to do.** Once the user
 completes `/login` inside it, Claude Code writes the fresh, rotated credentials

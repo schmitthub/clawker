@@ -16,7 +16,7 @@ reference files. Check these first if the issue matches:
 | Disk space, build cache, Docker cleanup | `reference/docker-hygiene.md` | Full reference |
 | Monitoring stack (OTel/OpenSearch/Prometheus, workspace, empty indices) | `reference/monitoring.md` | Troubleshooting |
 | Securing git/VCS egress, can the agent push to/leak via other repos, credential-exfil hardening | `reference/firewall-security.md` | Full reference |
-| Repeated `/login` in new containers despite `use_host_auth`, how host Claude Code auth is shared | `reference/claude-code-auth.md` | Troubleshooting |
+| Repeated `/login` in new containers despite `use_host_auth`, how host Claude Code auth is shared | `reference/claude-code.md` | Authentication › Troubleshooting |
 | Control plane down or unreachable | This file | Control plane down or unhealthy |
 | `Token used before issued` / token fetch timeout on container start | This file | Control plane down or unhealthy |
 | Agent missing from CP registry | This file | Agent appears in clawker ps but missing from CP |

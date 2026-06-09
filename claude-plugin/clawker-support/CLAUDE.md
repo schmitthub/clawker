@@ -67,7 +67,7 @@ claude-plugin/clawker-support/
         ├── docker-hygiene.md     # Docker disk space diagnosis and cleanup
         ├── monitoring.md         # OTel + OpenSearch + Prometheus stack, Clawker workspace, telemetry env, troubleshooting
         ├── firewall-security.md  # Proactive VCS egress lockdown — git credential-exfil defense (HTTPS path-scoping, GitHub write surface, monitoring-discovery loop)
-        ├── claude-code-auth.md   # Claude Code host-auth credential model — create-time snapshot, volume self-heal, host↔container isolation, /login troubleshooting
+        ├── claude-code.md        # Claude Code integration — auth section: host-auth credential model, create-time snapshot, volume self-heal, one-way sync, /login troubleshooting
         └── known-issues.md       # Active bugs and workarounds
 ```
 
