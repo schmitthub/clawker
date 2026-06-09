@@ -3,6 +3,7 @@ package firewall
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/cmdutil"
@@ -19,6 +20,7 @@ type AddOptions struct {
 	Port        string
 	Path        string
 	Action      string
+	Methods     []string
 }
 
 // NewCmdAdd creates the firewall add command.
@@ -37,7 +39,12 @@ via hot-reload — no container restart required.
 Pass --path together with --action to add a path-scoped rule onto the domain
 entry instead of (or alongside) the bare-domain allow. Path rules accumulate
 across calls; a repeated --path with a different --action overwrites the
-prior action for that path.`,
+prior action for that path.
+
+Pass --methods to narrow a path rule to a set of HTTP request methods (e.g.
+GET,HEAD). The path rule's --action then applies only to those methods; other
+methods fall through to later rules / the path default. Empty = all methods.
+HTTP-family protos only (https/http/ws/wss).`,
 		Example: `  # Allow HTTPS traffic to a domain
   clawker firewall add registry.npmjs.org
 
@@ -48,7 +55,13 @@ prior action for that path.`,
   clawker firewall add api.example.com --proto tcp --port 8080
 
   # Add a path-scoped allow rule onto a domain entry
-  clawker firewall add api.example.com --path /v1 --action allow`,
+  clawker firewall add api.example.com --path /v1 --action allow
+
+  # Make a host read-only: allow GET/HEAD on all paths, deny the rest
+  clawker firewall add api.github.com --path / --action allow --methods GET,HEAD
+
+  # Deny mutating methods on a path prefix (reads still fall through)
+  clawker firewall add api.github.com --path /repos/ --action deny --methods POST,PUT,PATCH,DELETE`,
 		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.Domain = args[0]
@@ -63,6 +76,7 @@ prior action for that path.`,
 	cmd.Flags().StringVar(&opts.Port, "port", "", "Destination port: a single port (443) or an inclusive range (9000-9100); default: protocol-specific")
 	cmd.Flags().StringVar(&opts.Path, "path", "", "URL path prefix for a path-scoped rule, matched as a prefix at request time (requires --action)")
 	cmd.Flags().StringVar(&opts.Action, "action", "", "Action for the path rule: allow or deny (requires --path)")
+	cmd.Flags().StringSliceVar(&opts.Methods, "methods", nil, "HTTP methods the path rule applies to (e.g. GET,HEAD); empty = all methods. Requires --path/--action; https/http/ws/wss only")
 	cmd.MarkFlagsRequiredTogether("path", "action")
 
 	return cmd
@@ -71,6 +85,13 @@ prior action for that path.`,
 func addRun(ctx context.Context, opts *AddOptions) error {
 	ios := opts.IOStreams
 
+	// Rewrite the legacy `tls` alias to `https` before validation (mirrors
+	// NormalizeRule server-side) so downstream sees only real proto tokens — the
+	// proto gate and the stored rule both get `https`, not the L5/6 `tls` non-token.
+	if strings.EqualFold(opts.Proto, "tls") {
+		opts.Proto = "https"
+	}
+
 	if err := validatePortFlag(opts.Port); err != nil {
 		return err
 	}
@@ -78,6 +99,17 @@ func addRun(ctx context.Context, opts *AddOptions) error {
 		if opts.Action != "allow" && opts.Action != "deny" {
 			return cmdutil.FlagErrorf("--action must be \"allow\" or \"deny\", got %q", opts.Action)
 		}
+		// Path and method rules need an L7 HTTP request line to enforce against.
+		// On opaque protos (ssh/tcp/udp) they are silently ignored at generation,
+		// so reject here rather than accept a rule that can never take effect.
+		if !adminv1.IsHTTPFamilyProto(opts.Proto) {
+			return cmdutil.FlagErrorf("--path/--methods are only supported on https/http/ws/wss, not %q", opts.Proto)
+		}
+	}
+	// --methods narrows a path rule, so it needs one. MarkFlagsRequiredTogether
+	// can't express the one-way dependency (path/action are valid without methods).
+	if len(opts.Methods) > 0 && opts.Path == "" {
+		return cmdutil.FlagErrorf("--methods requires --path and --action")
 	}
 
 	client, err := opts.AdminClient(ctx)
@@ -92,7 +124,7 @@ func addRun(ctx context.Context, opts *AddOptions) error {
 		Action: "allow",
 	}
 	if opts.Path != "" {
-		rule.PathRules = []*adminv1.PathRule{{Path: opts.Path, Action: opts.Action}}
+		rule.PathRules = []*adminv1.PathRule{{Path: opts.Path, Action: opts.Action, Methods: opts.Methods}}
 	}
 
 	resp, err := callWithSpinner(ctx, ios, fmt.Sprintf("Adding firewall rule %s...", opts.Domain),

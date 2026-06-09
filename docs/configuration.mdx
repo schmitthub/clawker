@@ -252,12 +252,15 @@ security:
         port: <string>  # default: n/a | required: false
         # Allow or deny traffic to this destination (default: allow)
         action: <string>  # default: n/a | required: false
-        # Fine-grained path filtering (only applies to https/http)
+        # Fine-grained path filtering (only applies to http/https/ws/wss)
         path_rules:  # default: n/a | required: false
           # URL path prefix to match (e.g. /v1/api, /repos/myorg)
           - path: <string>  # default: n/a | required: false
             # Whether to allow or deny requests matching this path
             action: <string>  # default: n/a | required: false
+            # HTTP methods this path rule applies to (e.g. GET, HEAD); empty = all methods. Only meaningful for http/https/ws/wss.
+            methods:  # default: n/a | required: false
+              - <string>
         # What to do with HTTP paths that don't match any path rule (allow or deny)
         path_default: <string>  # default: n/a | required: false
         # Accept a self-signed/untrusted upstream TLS cert for this destination (default: false). Use only for trusted local-dev endpoints.

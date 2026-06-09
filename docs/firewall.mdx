@@ -218,8 +218,16 @@ Full rule specification for fine-grained control:
 | `proto` | string | `https` (default), `http`, `tcp`, `ssh`, `ws`, `wss`, `udp`, or any opaque L7 name for TCP pass-through. The legacy value `tls` is silently translated to `https`. |
 | `port` | string | Destination port: a single port (`"443"`) or an inclusive range (`"9000-9100"`). Empty means the protocol default (443 for https/wss, 80 for http/ws, 22 for ssh). |
 | `action` | string | `allow` or `deny` (default: `allow`) |
-| `path_rules` | list | Optional path prefix rules (each entry has `path` and `action`). Supported on `https` and `http` protocols only |
+| `path_rules` | list | Optional path prefix rules (each entry has `path`, `action`, and optional `methods`). Supported on `https`, `http`, `ws`, and `wss` protocols only |
 | `path_default` | string | Default action for paths not matching any `path_rules` entry (default: `deny`) |
+
+Each `path_rules` entry:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `path` | string | URL path prefix to match (e.g. `/v1`, `/repos/myorg`) |
+| `action` | string | `allow` or `deny` for requests matching this path (and methods, if set) |
+| `methods` | list | Optional HTTP methods this rule applies to (e.g. `[GET, HEAD]`). Empty = all methods. See [Method gating](#method-gating) below |
 
 #### Protocol behavior
 
@@ -280,6 +288,55 @@ security:
 ```
 
 All paths are forwarded except those starting with `/evil`, which get a `403`.
+
+#### Method gating
+
+Because the firewall MITM-terminates HTTPS, the decrypted HTTP request line --- including the request **method** --- is visible at the proxy. A path rule's optional `methods` field narrows its `action` to a set of HTTP verbs (`GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, ...). It is a **match condition**, not a separate verdict: `action` supplies the polarity, and methods not in the set fall through to later path rules or `path_default`.
+
+- Empty `methods` (the default) = the rule applies to **all** methods --- a rule with no `methods` field is method-agnostic.
+- `action: allow` + `methods` = allow-list those verbs (others fall through).
+- `action: deny` + `methods` = deny-list those verbs (others fall through).
+- HTTP-family protos only (`https`/`http`/`ws`/`wss`). On `tcp`/`ssh`/`udp` there is no HTTP request line, so `methods` (like `path_rules`) is ignored with a warning.
+
+There is no rule-level `methods` field. To make a whole host read-only, use a single `/` path rule --- a path rule for `/` matches every request:
+
+```yaml
+security:
+  firewall:
+    rules:
+      # GitHub read-only: allow GET/HEAD everywhere, deny every mutating method
+      - dst: "api.github.com"
+        proto: https
+        port: "443"
+        action: allow
+        path_rules:
+          - path: "/"
+            action: allow
+            methods: [GET, HEAD]
+        path_default: deny
+```
+
+A `GET` or `HEAD` to any path is forwarded; a `POST`/`PUT`/`PATCH`/`DELETE` matches no route and falls to `path_default: deny` → `403`. This blocks `git push` (`POST .../git-receive-pack`) and contents-API writes (`PUT|DELETE /repos/.../contents/...`) without enumerating every write path.
+
+The inverse --- block writes on a prefix while leaving reads open --- pairs `action: deny` with the mutating verbs:
+
+```yaml
+security:
+  firewall:
+    rules:
+      - dst: "api.github.com"
+        proto: https
+        port: "443"
+        action: allow
+        path_rules:
+          # deny writes under /repos/; GET/HEAD fall through to path_default
+          - path: "/repos/"
+            action: deny
+            methods: [POST, PUT, PATCH, DELETE]
+        path_default: allow
+```
+
+You can also set method gates from the CLI: `clawker firewall add api.github.com --path / --action allow --methods GET,HEAD`.
 
 **Mixed protocol examples:**
 

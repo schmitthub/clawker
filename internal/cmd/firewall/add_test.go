@@ -236,3 +236,92 @@ func TestAddCmd_AlreadyExists_WithPath_PrintsInfoLine(t *testing.T) {
 	assert.Contains(t, stdout, "/v1")
 	assert.NotContains(t, stdout, "Added path rule")
 }
+
+// TestAddCmd_Methods_AttachedToPathRule asserts --methods rides onto the
+// path rule in the outbound request.
+func TestAddCmd_Methods_AttachedToPathRule(t *testing.T) {
+	f, _, _ := testFactoryWithStreams(t)
+	var got *adminv1.FirewallAddRulesRequest
+	f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
+		return &cpmocks.AdminServiceClientMock{
+			FirewallAddRulesFunc: func(_ context.Context, req *adminv1.FirewallAddRulesRequest, _ ...grpc.CallOption) (*adminv1.FirewallAddRulesResult, error) {
+				got = req
+				return &adminv1.FirewallAddRulesResult{Statuses: []adminv1.AddRuleStatus{adminv1.AddRuleStatus_ADD_RULE_STATUS_ADDED}}, nil
+			},
+		}, nil
+	}
+	cmd := NewCmdAdd(f, nil)
+	cmd.SetContext(context.Background())
+	cmd.SetArgs([]string{"api.github.com", "--path", "/", "--action", "allow", "--methods", "GET,HEAD"})
+	require.NoError(t, cmd.Execute())
+	require.NotNil(t, got)
+	require.Len(t, got.GetRules(), 1)
+	require.Len(t, got.GetRules()[0].GetPathRules(), 1)
+	assert.Equal(t, []string{"GET", "HEAD"}, got.GetRules()[0].GetPathRules()[0].GetMethods())
+}
+
+// TestAddCmd_Methods_RequirePath rejects --methods without --path/--action
+// before any RPC fires.
+func TestAddCmd_Methods_RequirePath(t *testing.T) {
+	f, _, _ := testFactoryWithStreams(t)
+	called := false
+	f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
+		return &cpmocks.AdminServiceClientMock{
+			FirewallAddRulesFunc: func(_ context.Context, _ *adminv1.FirewallAddRulesRequest, _ ...grpc.CallOption) (*adminv1.FirewallAddRulesResult, error) {
+				called = true
+				return &adminv1.FirewallAddRulesResult{}, nil
+			},
+		}, nil
+	}
+	cmd := NewCmdAdd(f, nil)
+	cmd.SetContext(context.Background())
+	cmd.SetArgs([]string{"api.example.com", "--methods", "GET"})
+	require.Error(t, cmd.Execute())
+	assert.False(t, called, "RPC must not fire when --methods is set without --path")
+}
+
+// TestAddCmd_PathOnOpaqueProto_Rejected gates --path/--methods to HTTP-family
+// protos: an ssh rule with a path can never enforce the path, so it is rejected
+// at input validation rather than silently producing an ignored rule.
+func TestAddCmd_PathOnOpaqueProto_Rejected(t *testing.T) {
+	f, _, _ := testFactoryWithStreams(t)
+	called := false
+	f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
+		return &cpmocks.AdminServiceClientMock{
+			FirewallAddRulesFunc: func(_ context.Context, _ *adminv1.FirewallAddRulesRequest, _ ...grpc.CallOption) (*adminv1.FirewallAddRulesResult, error) {
+				called = true
+				return &adminv1.FirewallAddRulesResult{}, nil
+			},
+		}, nil
+	}
+	cmd := NewCmdAdd(f, nil)
+	cmd.SetContext(context.Background())
+	cmd.SetArgs([]string{"git.example.com", "--proto", "ssh", "--path", "/x", "--action", "allow"})
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "https/http/ws/wss")
+	assert.False(t, called, "RPC must not fire for a path rule on an opaque proto")
+}
+
+// TestAddCmd_TLSAlias_NormalizedToHTTPS confirms the legacy `--proto tls` alias
+// is rewritten to https in flight, so a path rule on it is accepted (not
+// rejected by the HTTP-family gate) and the stored rule carries https.
+func TestAddCmd_TLSAlias_NormalizedToHTTPS(t *testing.T) {
+	f, _, _ := testFactoryWithStreams(t)
+	var got *adminv1.FirewallAddRulesRequest
+	f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
+		return &cpmocks.AdminServiceClientMock{
+			FirewallAddRulesFunc: func(_ context.Context, req *adminv1.FirewallAddRulesRequest, _ ...grpc.CallOption) (*adminv1.FirewallAddRulesResult, error) {
+				got = req
+				return &adminv1.FirewallAddRulesResult{Statuses: []adminv1.AddRuleStatus{adminv1.AddRuleStatus_ADD_RULE_STATUS_ADDED}}, nil
+			},
+		}, nil
+	}
+	cmd := NewCmdAdd(f, nil)
+	cmd.SetContext(context.Background())
+	cmd.SetArgs([]string{"api.example.com", "--proto", "tls", "--path", "/v1", "--action", "allow"})
+	require.NoError(t, cmd.Execute())
+	require.NotNil(t, got)
+	require.Len(t, got.GetRules(), 1)
+	assert.Equal(t, "https", got.GetRules()[0].GetProto(), "tls alias must be rewritten to https")
+}
