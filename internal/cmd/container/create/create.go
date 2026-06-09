@@ -25,15 +25,16 @@ import (
 type CreateOptions struct {
 	*shared.ContainerCreateOptions
 
-	IOStreams      *iostreams.IOStreams
-	TUI            *tui.TUI
-	Client         func(context.Context) (*docker.Client, error)
-	Config         func() (config.Config, error)
-	ProjectManager func() (project.ProjectManager, error)
-	HostProxy      func() hostproxy.HostProxyService
-	Prompter       func() *prompter.Prompter
-	Logger         func() (*logger.Logger, error)
-	Version        string
+	IOStreams       *iostreams.IOStreams
+	TUI             *tui.TUI
+	Client          func(context.Context) (*docker.Client, error)
+	Config          func() (config.Config, error)
+	ProjectManager  func() (project.ProjectManager, error)
+	ProjectRegistry func() (*project.Registry, error)
+	HostProxy       func() hostproxy.HostProxyService
+	Prompter        func() *prompter.Prompter
+	Logger          func() (*logger.Logger, error)
+	Version         string
 
 	// flags stores the pflag.FlagSet for detecting explicitly changed flags
 	flags *pflag.FlagSet
@@ -49,6 +50,7 @@ func NewCmdCreate(f *cmdutil.Factory, runF func(context.Context, *CreateOptions)
 		Client:                 f.Client,
 		Config:                 f.Config,
 		ProjectManager:         f.ProjectManager,
+		ProjectRegistry:        f.ProjectRegistry,
 		HostProxy:              f.HostProxy,
 		Prompter:               f.Prompter,
 		Logger:                 f.Logger,
@@ -182,17 +184,18 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 	go func() {
 		defer close(events)
 		r, err := shared.CreateContainer(ctx, &shared.CreateContainerOptions{
-			Client:         client,
-			Config:         cfg,
-			ProjectName:    projectName,
-			Options:        containerOpts,
-			Flags:          opts.flags,
-			Version:        opts.Version,
-			ProjectManager: opts.ProjectManager,
-			HostProxy:      opts.HostProxy,
-			Log:            log,
-			Is256Color:     ios.Is256ColorSupported(),
-			IsTrueColor:    ios.IsTrueColorSupported(),
+			Client:          client,
+			Config:          cfg,
+			ProjectName:     projectName,
+			Options:         containerOpts,
+			Flags:           opts.flags,
+			Version:         opts.Version,
+			ProjectManager:  opts.ProjectManager,
+			ProjectRegistry: opts.ProjectRegistry,
+			HostProxy:       opts.HostProxy,
+			Log:             log,
+			Is256Color:      ios.Is256ColorSupported(),
+			IsTrueColor:     ios.IsTrueColorSupported(),
 		}, events)
 		done <- outcome{r, err}
 	}()

@@ -3,7 +3,6 @@ package shared
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -82,17 +81,15 @@ func testFlags() *cobra.Command {
 	return cmd
 }
 
-// testMockConfig returns a *configmocks.ConfigMock with GetProjectIgnoreFile and
-// GetProjectRoot stubbed to return safe temp paths (no registered project needed).
+// testMockConfig returns a *configmocks.ConfigMock for container-create tests.
+// Project-root / ignore-file resolution goes through the injected
+// ProjectRegistry closure, which reads the registry from the isolated data
+// dir set up by setupAuthEnv (testenv.New): with no registry on disk,
+// CreateContainer degrades to empty ignore patterns — the intended "not in
+// a project" behavior.
 // The cfg parameter ensures Project() returns a consistent project name for volume naming.
 func testMockConfig(project *config.Project) *configmocks.ConfigMock {
 	mock := configmocks.NewBlankConfig()
-	mock.GetProjectIgnoreFileFunc = func() (string, error) {
-		return filepath.Join(os.TempDir(), mock.ClawkerIgnoreName()), nil
-	}
-	mock.GetProjectRootFunc = func() (string, error) {
-		return os.TempDir(), nil
-	}
 	if project != nil {
 		mock.ProjectFunc = func() *config.Project { return project }
 	}
@@ -110,6 +107,9 @@ func testCreateConfig(fake *mocks.FakeClient, project *config.Project, container
 		Log:         logger.Nop(),
 		ProjectManager: func() (projectpkg.ProjectManager, error) {
 			return nil, fmt.Errorf("ProjectManager not available in test")
+		},
+		ProjectRegistry: func() (*projectpkg.Registry, error) {
+			return projectpkg.NewRegistry()
 		},
 		HostProxy: func() hostproxy.HostProxyService {
 			return hostproxytest.NewMockManager()
@@ -229,6 +229,9 @@ func TestCreateContainer_HostProxyFailure(t *testing.T) {
 		Log:     logger.Nop(),
 		ProjectManager: func() (projectpkg.ProjectManager, error) {
 			return nil, fmt.Errorf("ProjectManager not available in test")
+		},
+		ProjectRegistry: func() (*projectpkg.Registry, error) {
+			return projectpkg.NewRegistry()
 		},
 		HostProxy: func() hostproxy.HostProxyService {
 			return hostproxytest.NewFailingMockManager(fmt.Errorf("mock host proxy failure"))

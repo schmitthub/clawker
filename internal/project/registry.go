@@ -2,94 +2,118 @@ package project
 
 import (
 	"fmt"
+	"maps"
 	"path/filepath"
 
-	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/storage"
 )
 
-// projectRegistry is an internal facade for project registration and registry operations.
-// It is backed by a storage.Store[config.ProjectRegistry] for typed access.
-type projectRegistry struct {
-	store *storage.Store[config.ProjectRegistry]
+// Registry is the project registry facade — the single owner of registry
+// persistence (the registry file in the data dir) and project-root
+// resolution. Construct one per process via NewRegistry and inject it; the
+// CLI factory exposes it as f.ProjectRegistry. Nothing else constructs
+// registry storage.
+//
+// Registration/mutation methods are unexported: callers outside this package
+// mutate registry state through ProjectManager only.
+type Registry struct {
+	store *storage.Store[ProjectRegistry]
 }
 
-// newRegistryStore creates a new storage.Store for the project registry.
-func newRegistryStore() (*storage.Store[config.ProjectRegistry], error) {
-	return storage.NewStore[config.ProjectRegistry](
-		storage.WithFilenames("registry.yaml"),
-		storage.WithDataDir(),
-		storage.WithLock(),
-	)
+// RegistryOption configures NewRegistry.
+type RegistryOption func(*registryOptions)
+
+type registryOptions struct {
+	dir string
 }
 
-// newRegistry creates a project registry facade backed by the provided store.
-func newRegistry(store *storage.Store[config.ProjectRegistry]) *projectRegistry {
-	return &projectRegistry{store: store}
+// WithRegistryDir places the registry file in dir instead of the resolved
+// data directory. Injection seam for tests; production callers use the
+// default.
+func WithRegistryDir(dir string) RegistryOption {
+	return func(o *registryOptions) { o.dir = dir }
 }
 
-// Projects returns all project entries.
-func (r *projectRegistry) Projects() []config.ProjectEntry {
-	if r == nil || r.store == nil {
-		return []config.ProjectEntry{}
+// NewRegistry creates the project registry facade, reading the registry
+// through the storage layer (merge + lock) — the canonical path for clawker
+// files, never a raw file read.
+func NewRegistry(opts ...RegistryOption) (*Registry, error) {
+	var o registryOptions
+	for _, opt := range opts {
+		opt(&o)
 	}
-	reg := r.store.Get()
+	storageOpts := []storage.Option{
+		storage.WithFilenames(consts.RegistryFile),
+		storage.WithLock(),
+	}
+	if o.dir != "" {
+		storageOpts = append(storageOpts, storage.WithPaths(o.dir))
+	} else {
+		storageOpts = append(storageOpts, storage.WithDataDir())
+	}
+	store, err := storage.New[ProjectRegistry]("", storageOpts...)
+	if err != nil {
+		return nil, fmt.Errorf("project: loading registry: %w", err)
+	}
+	return &Registry{store: store}, nil
+}
+
+// projects returns all project entries.
+func (r *Registry) projects() []ProjectEntry {
+	if r == nil || r.store == nil {
+		return []ProjectEntry{}
+	}
+	reg := r.store.Read()
 	if reg == nil {
-		return []config.ProjectEntry{}
+		return []ProjectEntry{}
 	}
 	return reg.Projects
 }
 
-// List returns all project entries in undefined order.
-func (r *projectRegistry) List() []config.ProjectEntry {
-	entries := r.Projects()
-	result := make([]config.ProjectEntry, len(entries))
-	copy(result, entries)
+// list returns all project entries in undefined order. Each entry's Worktrees
+// map is cloned so callers never alias live store state.
+func (r *Registry) list() []ProjectEntry {
+	entries := r.projects()
+	result := make([]ProjectEntry, len(entries))
+	for i, entry := range entries {
+		entry.Worktrees = maps.Clone(entry.Worktrees)
+		result[i] = entry
+	}
 	return result
 }
 
-func (r *projectRegistry) findByResolvedRoot(root string) (int, config.ProjectEntry, bool, error) {
+func (r *Registry) findByResolvedRoot(root string) (int, ProjectEntry, bool, error) {
 	if r == nil || r.store == nil {
-		return -1, config.ProjectEntry{}, false, fmt.Errorf("registry not initialized")
+		return -1, ProjectEntry{}, false, fmt.Errorf("registry not initialized")
 	}
-	absRoot, err := filepath.Abs(root)
-	if err != nil {
-		return -1, config.ProjectEntry{}, false, fmt.Errorf("failed to get absolute path: %w", err)
-	}
-	resolvedRoot, err := filepath.EvalSymlinks(absRoot)
-	if err != nil {
-		resolvedRoot = absRoot
-	}
+	resolvedRoot := resolveRootPath(root)
 
-	entries := r.Projects()
+	entries := r.projects()
 	for i, entry := range entries {
-		entryResolvedRoot, evalErr := filepath.EvalSymlinks(entry.Root)
-		if evalErr != nil {
-			entryResolvedRoot = entry.Root
-		}
-		if entryResolvedRoot == resolvedRoot {
+		if resolveRootPath(entry.Root) == resolvedRoot {
 			return i, entry, true, nil
 		}
 	}
 
-	return -1, config.ProjectEntry{}, false, nil
+	return -1, ProjectEntry{}, false, nil
 }
 
-func (r *projectRegistry) ProjectByRoot(root string) (config.ProjectEntry, bool, error) {
+func (r *Registry) projectByRoot(root string) (ProjectEntry, bool, error) {
 	_, entry, ok, err := r.findByResolvedRoot(root)
 	if err != nil {
-		return config.ProjectEntry{}, false, err
+		return ProjectEntry{}, false, err
 	}
 	return entry, ok, nil
 }
 
-func (r *projectRegistry) setProjects(entries []config.ProjectEntry) error {
-	return r.store.Set(func(reg *config.ProjectRegistry) {
+func (r *Registry) setProjects(entries []ProjectEntry) error {
+	return r.store.Set(func(reg *ProjectRegistry) {
 		reg.Projects = entries
 	})
 }
 
-func (r *projectRegistry) RemoveByRoot(root string) error {
+func (r *Registry) removeByRoot(root string) error {
 	index, _, ok, err := r.findByResolvedRoot(root)
 	if err != nil {
 		return err
@@ -98,12 +122,13 @@ func (r *projectRegistry) RemoveByRoot(root string) error {
 		return ErrProjectNotFound
 	}
 
-	entries := r.Projects()
+	// Splice a copy, not the live slice, so store state only changes via Set.
+	entries := r.list()
 	entries = append(entries[:index], entries[index+1:]...)
 	return r.setProjects(entries)
 }
 
-func (r *projectRegistry) registerWorktree(projectRoot, branch, path string) error {
+func (r *Registry) registerWorktree(projectRoot, branch, path string) error {
 	if r == nil || r.store == nil {
 		return fmt.Errorf("registry not initialized")
 	}
@@ -114,24 +139,25 @@ func (r *projectRegistry) registerWorktree(projectRoot, branch, path string) err
 		return fmt.Errorf("worktree branch cannot be empty")
 	}
 
-	index, entry, ok, err := r.findByResolvedRoot(projectRoot)
+	index, _, ok, err := r.findByResolvedRoot(projectRoot)
 	if err != nil {
 		return err
 	}
 	if !ok {
 		return fmt.Errorf("project %q not found in registry", projectRoot)
 	}
-	if entry.Worktrees == nil {
-		entry.Worktrees = map[string]config.WorktreeEntry{}
-	}
-	entry.Worktrees[branch] = config.WorktreeEntry{Path: path, Branch: branch}
 
-	entries := r.Projects()
-	entries[index] = entry
+	// list() clones each entry's Worktrees map, so mutating the indexed entry
+	// never touches live store state.
+	entries := r.list()
+	if entries[index].Worktrees == nil {
+		entries[index].Worktrees = map[string]WorktreeEntry{}
+	}
+	entries[index].Worktrees[branch] = WorktreeEntry{Path: path, Branch: branch}
 	return r.setProjects(entries)
 }
 
-func (r *projectRegistry) unregisterWorktree(projectRoot, branch string) error {
+func (r *Registry) unregisterWorktree(projectRoot, branch string) error {
 	if r == nil || r.store == nil {
 		return fmt.Errorf("registry not initialized")
 	}
@@ -153,77 +179,78 @@ func (r *projectRegistry) unregisterWorktree(projectRoot, branch string) error {
 		return nil
 	}
 
-	delete(entry.Worktrees, branch)
-	entries := r.Projects()
-	entries[index] = entry
+	// list() clones each entry's Worktrees map, so deleting from the indexed
+	// entry never touches live store state.
+	entries := r.list()
+	delete(entries[index].Worktrees, branch)
 	return r.setProjects(entries)
 }
 
-// Save persists staged project registry changes to disk.
-func (r *projectRegistry) Save() error {
+// save persists staged project registry changes to disk.
+func (r *Registry) save() error {
 	if r == nil || r.store == nil {
 		return fmt.Errorf("registry not initialized")
 	}
 	return r.store.Write()
 }
 
-// Register adds a project by root path.
-func (r *projectRegistry) Register(displayName, rootDir string) (config.ProjectEntry, error) {
+// register adds a project by root path.
+func (r *Registry) register(displayName, rootDir string) (ProjectEntry, error) {
 	if r == nil || r.store == nil {
-		return config.ProjectEntry{}, fmt.Errorf("registry not initialized")
+		return ProjectEntry{}, fmt.Errorf("registry not initialized")
 	}
 
 	absRoot, err := filepath.Abs(rootDir)
 	if err != nil {
-		return config.ProjectEntry{}, fmt.Errorf("failed to get absolute path: %w", err)
+		return ProjectEntry{}, fmt.Errorf("failed to get absolute path: %w", err)
 	}
 
 	if _, _, ok, err := r.findByResolvedRoot(absRoot); err != nil {
-		return config.ProjectEntry{}, err
+		return ProjectEntry{}, err
 	} else if ok {
-		return config.ProjectEntry{}, ErrProjectExists
+		return ProjectEntry{}, ErrProjectExists
 	}
 
-	entry := config.ProjectEntry{Name: displayName, Root: absRoot}
-	entries := r.Projects()
+	entry := ProjectEntry{Name: displayName, Root: absRoot}
+	entries := r.list()
 	entries = append(entries, entry)
 	if err := r.setProjects(entries); err != nil {
-		return config.ProjectEntry{}, err
+		return ProjectEntry{}, err
 	}
-	if err := r.Save(); err != nil {
-		return config.ProjectEntry{}, err
+	if err := r.save(); err != nil {
+		return ProjectEntry{}, err
 	}
 
 	return entry, nil
 }
 
-func (r *projectRegistry) Update(entry config.ProjectEntry) (config.ProjectEntry, error) {
+func (r *Registry) update(entry ProjectEntry) (ProjectEntry, error) {
 	if r == nil || r.store == nil {
-		return config.ProjectEntry{}, fmt.Errorf("registry not initialized")
+		return ProjectEntry{}, fmt.Errorf("registry not initialized")
 	}
 	if entry.Root == "" {
-		return config.ProjectEntry{}, fmt.Errorf("project root cannot be empty")
+		return ProjectEntry{}, fmt.Errorf("project root cannot be empty")
 	}
 
 	index, existing, ok, err := r.findByResolvedRoot(entry.Root)
 	if err != nil {
-		return config.ProjectEntry{}, err
+		return ProjectEntry{}, err
 	}
 	if !ok {
-		return config.ProjectEntry{}, ErrProjectNotFound
+		return ProjectEntry{}, ErrProjectNotFound
 	}
 
 	if entry.Worktrees == nil {
-		entry.Worktrees = existing.Worktrees
+		entry.Worktrees = maps.Clone(existing.Worktrees)
 	}
 
-	entries := r.Projects()
+	entries := r.list()
 	entries[index] = entry
 	if err := r.setProjects(entries); err != nil {
-		return config.ProjectEntry{}, err
+		return ProjectEntry{}, err
 	}
-	if err := r.Save(); err != nil {
-		return config.ProjectEntry{}, err
+	if err := r.save(); err != nil {
+		return ProjectEntry{}, err
 	}
 
 	return entry, nil

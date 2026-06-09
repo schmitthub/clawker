@@ -9,23 +9,15 @@ import (
 	"path/filepath"
 
 	"github.com/google/uuid"
-	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/logger"
-	"github.com/schmitthub/clawker/internal/storage"
 	"github.com/schmitthub/clawker/internal/text"
 )
 
 var ErrNotInProjectPath = errors.New("not in a registered project path")
 var ErrProjectNotRegistered = errors.New("project root is not registered")
 var ErrWorktreeExists = errors.New("worktree already exists for branch")
-
-type worktreeRegistry interface {
-	Projects() []config.ProjectEntry
-	registerWorktree(projectRoot, branch, path string) error
-	unregisterWorktree(projectRoot, branch string) error
-	Save() error
-}
 
 type PruneStaleResult struct {
 	Prunable []string
@@ -35,22 +27,16 @@ type PruneStaleResult struct {
 }
 
 type worktreeService struct {
-	cfg             config.Config
-	log             *logger.Logger
-	registryStore   *storage.Store[config.ProjectRegistry]
-	newGitMgr       GitManagerFactory
-	registryFactory func() worktreeRegistry
+	log       *logger.Logger
+	reg       *Registry
+	newGitMgr GitManagerFactory
 }
 
-func newWorktreeService(cfg config.Config, log *logger.Logger, registryStore *storage.Store[config.ProjectRegistry], gitFactory GitManagerFactory) *worktreeService {
+func newWorktreeService(log *logger.Logger, reg *Registry, gitFactory GitManagerFactory) *worktreeService {
 	return &worktreeService{
-		cfg:           cfg,
-		log:           log,
-		registryStore: registryStore,
-		newGitMgr:     gitFactory,
-		registryFactory: func() worktreeRegistry {
-			return newRegistry(registryStore)
-		},
+		log:       log,
+		reg:       reg,
+		newGitMgr: gitFactory,
 	}
 }
 
@@ -77,19 +63,21 @@ func (s *worktreeService) addWorktree(projectRoot, branch, base string) (string,
 		return "", fmt.Errorf("initializing git manager: %w", err)
 	}
 
-	provider := newFlatWorktreeDirProvider(s.cfg, projectRoot, entry)
+	provider, err := newFlatWorktreeDirProvider(projectRoot, entry)
+	if err != nil {
+		return "", err
+	}
 	worktreePath, err := manager.SetupWorktree(provider, branch, base)
 	if err != nil {
 		return "", fmt.Errorf("creating worktree: %w", err)
 	}
 
-	registry := s.registryFactory()
-	if err := registry.registerWorktree(projectRoot, branch, worktreePath); err != nil {
+	if err := s.reg.registerWorktree(projectRoot, branch, worktreePath); err != nil {
 		_ = manager.RemoveWorktree(provider, branch)
 		return "", fmt.Errorf("updating project registry: %w", err)
 	}
 
-	if err := registry.Save(); err != nil {
+	if err := s.reg.save(); err != nil {
 		_ = manager.RemoveWorktree(provider, branch)
 		return "", fmt.Errorf("saving project registry: %w", err)
 	}
@@ -111,16 +99,18 @@ func (s *worktreeService) RemoveWorktree(_ context.Context, projectRoot, branch 
 		return fmt.Errorf("initializing git manager: %w", err)
 	}
 
-	provider := newFlatWorktreeDirProvider(s.cfg, projectRoot, entry)
+	provider, err := newFlatWorktreeDirProvider(projectRoot, entry)
+	if err != nil {
+		return err
+	}
 	if err := manager.RemoveWorktree(provider, branch); err != nil {
 		return fmt.Errorf("removing worktree: %w", err)
 	}
 
-	registry := s.registryFactory()
-	if err := registry.unregisterWorktree(projectRoot, branch); err != nil {
+	if err := s.reg.unregisterWorktree(projectRoot, branch); err != nil {
 		return fmt.Errorf("updating project registry: %w", err)
 	}
-	if err := registry.Save(); err != nil {
+	if err := s.reg.save(); err != nil {
 		return fmt.Errorf("saving project registry: %w", err)
 	}
 
@@ -205,13 +195,12 @@ func (s *worktreeService) PruneStaleWorktrees(_ context.Context, projectRoot str
 		return result, nil
 	}
 
-	registry := s.registryFactory()
 	for _, name := range result.Prunable {
-		if err := registry.unregisterWorktree(projectRoot, name); err != nil {
+		if err := s.reg.unregisterWorktree(projectRoot, name); err != nil {
 			result.Failed[name] = fmt.Errorf("updating project registry: %w", err)
 			continue
 		}
-		if err := registry.Save(); err != nil {
+		if err := s.reg.save(); err != nil {
 			result.Failed[name] = fmt.Errorf("saving project registry: %w", err)
 			continue
 		}
@@ -221,37 +210,19 @@ func (s *worktreeService) PruneStaleWorktrees(_ context.Context, projectRoot str
 	return result, nil
 }
 
-func (s *worktreeService) findProjectByRoot(projectRoot string) (config.ProjectEntry, error) {
+func (s *worktreeService) findProjectByRoot(projectRoot string) (ProjectEntry, error) {
 	if projectRoot == "" {
-		return config.ProjectEntry{}, fmt.Errorf("project root cannot be empty; the project registry may be corrupted — try re-registering with 'clawker project register'")
+		return ProjectEntry{}, fmt.Errorf("project root cannot be empty; the project registry may be corrupted — try re-registering with 'clawker project register'")
 	}
-	resolvedProjectRoot, err := filepath.EvalSymlinks(projectRoot)
-	if err != nil {
-		resolvedProjectRoot = filepath.Clean(projectRoot)
-	}
+	resolvedProjectRoot := resolveRootPath(projectRoot)
 
-	registry := s.registryFactory()
-	projects := registry.Projects()
-	for _, entry := range projects {
-		resolvedEntryRoot, err := filepath.EvalSymlinks(entry.Root)
-		if err != nil {
-			resolvedEntryRoot = filepath.Clean(entry.Root)
-		}
-		if resolvedEntryRoot == resolvedProjectRoot {
+	for _, entry := range s.reg.projects() {
+		if resolveRootPath(entry.Root) == resolvedProjectRoot {
 			return entry, nil
 		}
 	}
 
-	return config.ProjectEntry{}, ErrProjectNotRegistered
-}
-
-// worktreesRootDir returns the base directory where all worktree directories live.
-func worktreesRootDir(cfg config.Config) string {
-	root, err := cfg.WorktreesSubdir()
-	if err != nil || root == "" {
-		return filepath.Join(config.DataDir(), "worktrees")
-	}
-	return root
+	return ProjectEntry{}, ErrProjectNotRegistered
 }
 
 // generateWorktreeDirName produces a flat directory name for a worktree:
@@ -266,44 +237,15 @@ func generateWorktreeDirName(repoName, projectName string) string {
 	)
 }
 
-// NewWorktreeDirProvider creates a WorktreeDirProvider for the given project.
-// It looks up the project in the registry to populate known worktree paths,
-// enabling path reuse for existing worktrees and UUID-based generation for new ones.
-// External callers (e.g. container/shared) use this instead of the full project service.
-func NewWorktreeDirProvider(log *logger.Logger, cfg config.Config, projectRoot string) git.WorktreeDirProvider {
-	store, err := newRegistryStore()
+// newFlatWorktreeDirProvider creates a flatWorktreeDirProvider from a project
+// entry. It ensures the worktrees root directory exists; a failure to create
+// it is a real error and is propagated.
+func newFlatWorktreeDirProvider(projectRoot string, entry ProjectEntry) (*flatWorktreeDirProvider, error) {
+	worktreesRoot, err := consts.WorktreesSubdir()
 	if err != nil {
-		// Graceful degradation: return a provider with no known paths.
-		log.Warn().Err(err).Msg("could not load project registry; worktree path reuse disabled")
-		return &flatWorktreeDirProvider{
-			knownPaths: map[string]string{},
-		}
-	}
-	registry := newRegistry(store)
-	projects := registry.Projects()
-
-	resolvedRoot, err := filepath.EvalSymlinks(projectRoot)
-	if err != nil {
-		resolvedRoot = filepath.Clean(projectRoot)
+		return nil, fmt.Errorf("ensuring worktrees directory: %w", err)
 	}
 
-	var entry config.ProjectEntry
-	for _, p := range projects {
-		resolvedEntry, err := filepath.EvalSymlinks(p.Root)
-		if err != nil {
-			resolvedEntry = filepath.Clean(p.Root)
-		}
-		if resolvedEntry == resolvedRoot {
-			entry = p
-			break
-		}
-	}
-
-	return newFlatWorktreeDirProvider(cfg, projectRoot, entry)
-}
-
-// newFlatWorktreeDirProvider creates a flatWorktreeDirProvider from a project entry.
-func newFlatWorktreeDirProvider(cfg config.Config, projectRoot string, entry config.ProjectEntry) *flatWorktreeDirProvider {
 	knownPaths := make(map[string]string, len(entry.Worktrees))
 	for branch, wt := range entry.Worktrees {
 		if wt.Path != "" {
@@ -318,11 +260,11 @@ func newFlatWorktreeDirProvider(cfg config.Config, projectRoot string, entry con
 	}
 
 	return &flatWorktreeDirProvider{
-		worktreesRoot: worktreesRootDir(cfg),
+		worktreesRoot: worktreesRoot,
 		repoName:      repoName,
 		projectName:   projectName,
 		knownPaths:    knownPaths,
-	}
+	}, nil
 }
 
 // flatWorktreeDirProvider implements git.WorktreeDirProvider with flat UUID-based naming.

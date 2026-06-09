@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/project"
 	projectmocks "github.com/schmitthub/clawker/internal/project/mocks"
@@ -76,8 +75,8 @@ func TestRemoveRun_ProjectManagerError(t *testing.T) {
 
 func TestRemoveRun_UnknownProject(t *testing.T) {
 	mgr := projectmocks.NewMockProjectManager()
-	mgr.ListFunc = func(_ context.Context) ([]config.ProjectEntry, error) {
-		return []config.ProjectEntry{
+	mgr.ListFunc = func(_ context.Context) ([]project.ProjectEntry, error) {
+		return []project.ProjectEntry{
 			{Name: "alpha", Root: "/tmp/alpha"},
 		}, nil
 	}
@@ -98,8 +97,8 @@ func TestRemoveRun_UnknownProject(t *testing.T) {
 func TestRemoveRun_Success(t *testing.T) {
 	var removedRoots []string
 	mgr := projectmocks.NewMockProjectManager()
-	mgr.ListFunc = func(_ context.Context) ([]config.ProjectEntry, error) {
-		return []config.ProjectEntry{
+	mgr.ListFunc = func(_ context.Context) ([]project.ProjectEntry, error) {
+		return []project.ProjectEntry{
 			{Name: "alpha", Root: "/tmp/alpha"},
 			{Name: "beta", Root: "/tmp/beta"},
 		}, nil
@@ -126,8 +125,8 @@ func TestRemoveRun_Success(t *testing.T) {
 
 func TestRemoveRun_PartialFailure(t *testing.T) {
 	mgr := projectmocks.NewMockProjectManager()
-	mgr.ListFunc = func(_ context.Context) ([]config.ProjectEntry, error) {
-		return []config.ProjectEntry{
+	mgr.ListFunc = func(_ context.Context) ([]project.ProjectEntry, error) {
+		return []project.ProjectEntry{
 			{Name: "alpha", Root: "/tmp/alpha"},
 			{Name: "beta", Root: "/tmp/beta"},
 		}, nil
@@ -160,8 +159,8 @@ func TestRemoveRun_PartialFailure(t *testing.T) {
 
 func TestRemoveRun_ConfirmationDenied(t *testing.T) {
 	mgr := projectmocks.NewMockProjectManager()
-	mgr.ListFunc = func(_ context.Context) ([]config.ProjectEntry, error) {
-		return []config.ProjectEntry{
+	mgr.ListFunc = func(_ context.Context) ([]project.ProjectEntry, error) {
+		return []project.ProjectEntry{
 			{Name: "alpha", Root: "/tmp/alpha"},
 		}, nil
 	}
@@ -187,8 +186,8 @@ func TestRemoveRun_ConfirmationDenied(t *testing.T) {
 func TestRemoveRun_ConfirmationAccepted(t *testing.T) {
 	var removedRoots []string
 	mgr := projectmocks.NewMockProjectManager()
-	mgr.ListFunc = func(_ context.Context) ([]config.ProjectEntry, error) {
-		return []config.ProjectEntry{
+	mgr.ListFunc = func(_ context.Context) ([]project.ProjectEntry, error) {
+		return []project.ProjectEntry{
 			{Name: "alpha", Root: "/tmp/alpha"},
 		}, nil
 	}
@@ -218,8 +217,8 @@ func TestRemoveRun_ConfirmationAccepted(t *testing.T) {
 
 func TestRemoveRun_NonInteractiveRequiresYes(t *testing.T) {
 	mgr := projectmocks.NewMockProjectManager()
-	mgr.ListFunc = func(_ context.Context) ([]config.ProjectEntry, error) {
-		return []config.ProjectEntry{
+	mgr.ListFunc = func(_ context.Context) ([]project.ProjectEntry, error) {
+		return []project.ProjectEntry{
 			{Name: "alpha", Root: "/tmp/alpha"},
 		}, nil
 	}

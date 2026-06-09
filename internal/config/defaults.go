@@ -14,36 +14,36 @@ package config
 // they share IPs with api.anthropic.com.
 var requiredFirewallRules = []EgressRule{
 	// Claude Code — API and OAuth
-	{Dst: "api.anthropic.com", Proto: "https", Port: "443", Action: "allow"},
-	{Dst: "claude.com", Proto: "https", Port: "443", Action: "allow"},
-	{Dst: "platform.claude.com", Proto: "https", Port: "443", Action: "allow"},
+	{Dst: "api.anthropic.com", Proto: EgressProtoHTTPS, Port: EgressPortHTTPS, Action: EgressActionAllow},
+	{Dst: "claude.com", Proto: EgressProtoHTTPS, Port: EgressPortHTTPS, Action: EgressActionAllow},
+	{Dst: "platform.claude.com", Proto: EgressProtoHTTPS, Port: EgressPortHTTPS, Action: EgressActionAllow},
 	// .claude.ai serves both Claude Code OAuth + Anthropic-hosted UGC. The
 	// host-scope allow is required for login; the explicit deny PathRules
 	// scope out documented UGC surfaces so an injected prompt can't pivot
 	// an agent into fetching attacker-authored content from a trusted
 	// origin (public artifacts render HTML/JS; shared chats are UGC by
 	// definition). PathDefault is left empty so EffectivePathDefault
-	// returns "allow" — denylist mode keeps OAuth/login flows intact under
+	// returns the allow action — denylist mode keeps OAuth/login flows intact under
 	// `/` and `/login` (the only Allow patterns in claude.ai's robots.txt).
 	{
-		Dst: ".claude.ai", Proto: "https", Port: "443", Action: "allow",
+		Dst: ".claude.ai", Proto: EgressProtoHTTPS, Port: EgressPortHTTPS, Action: EgressActionAllow,
 		PathRules: []PathRule{
-			{Path: "/public/", Action: "deny"},
-			{Path: "/share/", Action: "deny"},
+			{Path: "/public/", Action: EgressActionDeny},
+			{Path: "/share/", Action: EgressActionDeny},
 		},
 	},
 	// Claude Code — MCP proxy
-	{Dst: "mcp-proxy.anthropic.com", Proto: "https", Port: "443", Action: "allow"},
+	{Dst: "mcp-proxy.anthropic.com", Proto: EgressProtoHTTPS, Port: EgressPortHTTPS, Action: EgressActionAllow},
 	// Node.js / npm — registry for `npm install -g` (presets + user_run) and
 	// runtime hook deps. Node is baked into every image; without registry
 	// access the unprivileged user cannot install global packages.
-	{Dst: "registry.npmjs.org", Proto: "https", Port: "443", Action: "allow"},
+	{Dst: "registry.npmjs.org", Proto: EgressProtoHTTPS, Port: EgressPortHTTPS, Action: EgressActionAllow},
 	// Claude Code — telemetry
-	{Dst: "sentry.io", Proto: "https", Port: "443", Action: "allow"},
-	{Dst: "statsig.anthropic.com", Proto: "https", Port: "443", Action: "allow"},
-	{Dst: "statsig.com", Proto: "https", Port: "443", Action: "allow"},
-	{Dst: ".datadoghq.com", Proto: "https", Port: "443", Action: "allow"},
-	{Dst: ".datadoghq.eu", Proto: "https", Port: "443", Action: "allow"},
+	{Dst: "sentry.io", Proto: EgressProtoHTTPS, Port: EgressPortHTTPS, Action: EgressActionAllow},
+	{Dst: "statsig.anthropic.com", Proto: EgressProtoHTTPS, Port: EgressPortHTTPS, Action: EgressActionAllow},
+	{Dst: "statsig.com", Proto: EgressProtoHTTPS, Port: EgressPortHTTPS, Action: EgressActionAllow},
+	{Dst: ".datadoghq.com", Proto: EgressProtoHTTPS, Port: EgressPortHTTPS, Action: EgressActionAllow},
+	{Dst: ".datadoghq.eu", Proto: EgressProtoHTTPS, Port: EgressPortHTTPS, Action: EgressActionAllow},
 }
 
 // requiredFirewallDomains is derived from requiredFirewallRules for backwards compatibility.

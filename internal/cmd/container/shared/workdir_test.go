@@ -13,9 +13,61 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
 	projectmocks "github.com/schmitthub/clawker/internal/project/mocks"
+	"github.com/schmitthub/clawker/internal/testenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// newTestRegistry constructs a registry over the isolated data dir that
+// NewIsolatedTestConfig points the CLAWKER_*_DIR env vars at.
+func newTestRegistry(t *testing.T) *project.Registry {
+	t.Helper()
+	reg, err := project.NewRegistry()
+	require.NoError(t, err)
+	return reg
+}
+
+// TestResolveProjectRoot_RegistryErrors pins the contract that a broken
+// registry surfaces as an error — it must never silently degrade to the
+// working directory, which would change the container's workspace mount
+// source. Only the benign ErrNotInProject degrades to "".
+func TestResolveProjectRoot_RegistryErrors(t *testing.T) {
+	t.Run("nil registry closure errors", func(t *testing.T) {
+		_, err := resolveProjectRoot(nil, logger.Nop())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "project registry not available")
+	})
+
+	t.Run("registry load failure surfaces", func(t *testing.T) {
+		closure := func() (*project.Registry, error) {
+			return nil, fmt.Errorf("corrupt registry yaml")
+		}
+		_, err := resolveProjectRoot(closure, logger.Nop())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "corrupt registry yaml")
+	})
+
+	t.Run("non-benign resolution failure surfaces", func(t *testing.T) {
+		// A zero-value Registry has no store; CurrentRoot fails with a real
+		// (non-ErrNotInProject) error that must propagate, not degrade to "".
+		closure := func() (*project.Registry, error) {
+			return &project.Registry{}, nil
+		}
+		_, err := resolveProjectRoot(closure, logger.Nop())
+		require.Error(t, err)
+		assert.NotErrorIs(t, err, project.ErrNotInProject)
+	})
+
+	t.Run("not-in-project degrades to empty root", func(t *testing.T) {
+		testenv.New(t) // isolated data dir, no registry on disk
+		closure := func() (*project.Registry, error) {
+			return project.NewRegistry()
+		}
+		root, err := resolveProjectRoot(closure, logger.Nop())
+		require.NoError(t, err)
+		assert.Empty(t, root)
+	})
+}
 
 func TestResolveWorkDir_Worktree(t *testing.T) {
 	tests := []struct {
@@ -78,7 +130,7 @@ func TestResolveWorkDir_Worktree(t *testing.T) {
 				return inMemGit.GitManager, nil
 			}
 
-			mgr, err := project.NewProjectManager(cfg, logger.Nop(), gitFactory)
+			mgr, err := project.NewProjectManager(logger.Nop(), gitFactory, cfg.Project().Name, newTestRegistry(t))
 			require.NoError(t, err)
 			ctx := context.Background()
 
@@ -99,8 +151,8 @@ func TestResolveWorkDir_Worktree(t *testing.T) {
 			pmFunc := func() (project.ProjectManager, error) { return mgr, nil }
 
 			wd, projectRootDir, err := resolveWorkDir(
-				ctx, containerOpts, cfg,
-				"dev", pmFunc, logger.Nop(),
+				ctx, containerOpts,
+				"dev", "", pmFunc, logger.Nop(),
 			)
 
 			if tt.wantErr {
@@ -138,11 +190,10 @@ func TestResolveWorkDir_WorktreeGetError(t *testing.T) {
 
 	containerOpts := &ContainerCreateOptions{Worktree: "feature/broken"}
 	pmFunc := func() (project.ProjectManager, error) { return mockMgr, nil }
-	cfg := configmocks.NewBlankConfig()
 
 	_, _, err := resolveWorkDir(
-		context.Background(), containerOpts, cfg,
-		"dev", pmFunc, logger.Nop(),
+		context.Background(), containerOpts,
+		"dev", "", pmFunc, logger.Nop(),
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cannot be retrieved")
@@ -199,11 +250,10 @@ func TestResolveWorkDir_UnhealthyStatuses(t *testing.T) {
 
 			containerOpts := &ContainerCreateOptions{Worktree: "feature/test"}
 			pmFunc := func() (project.ProjectManager, error) { return mockMgr, nil }
-			cfg := configmocks.NewBlankConfig()
 
 			_, _, err := resolveWorkDir(
-				context.Background(), containerOpts, cfg,
-				"dev", pmFunc, logger.Nop(),
+				context.Background(), containerOpts,
+				"dev", "", pmFunc, logger.Nop(),
 			)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.errContains)

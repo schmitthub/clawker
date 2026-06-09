@@ -68,16 +68,18 @@ func refreshRun(ctx context.Context, opts *RefreshOptions) error {
 		return errors.New("firewall is disabled — set `firewall.enable: true` in settings.yaml to use it")
 	}
 
+	// refresh re-reads the current project's config, so it only makes sense
+	// inside a project. Detect project presence before touching the firewall;
+	// the rules themselves come from the (project-anchored) config.
 	pm, err := opts.ProjectManager()
 	if err != nil {
 		return fmt.Errorf("loading project manager: %w", err)
 	}
-	proj, err := pm.CurrentProject(ctx)
-	if err != nil {
+	if _, err := pm.CurrentProject(ctx); err != nil {
 		return fmt.Errorf("resolving current project: %w", err)
 	}
 
-	rules := adminv1.EgressRulesToProto(proj.EgressRules())
+	rules := adminv1.EgressRulesToProto(cfg.EgressRules())
 
 	client, err := opts.AdminClient(ctx)
 	if err != nil {

@@ -11,19 +11,17 @@ import (
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/logger"
-	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 )
 
 type CommandOpts struct {
-	Client         func(context.Context) (*docker.Client, error)
-	Config         func() (config.Config, error)
-	ProjectManager func() (project.ProjectManager, error)
-	HostProxy      func() hostproxy.HostProxyService
-	ControlPlane   func() cpboot.Manager
-	AdminClient    func(context.Context) (adminv1.AdminServiceClient, error)
-	SocketBridge   func() socketbridge.SocketBridgeManager
-	Logger         func() (*logger.Logger, error)
+	Client       func(context.Context) (*docker.Client, error)
+	Config       func() (config.Config, error)
+	HostProxy    func() hostproxy.HostProxyService
+	ControlPlane func() cpboot.Manager
+	AdminClient  func(context.Context) (adminv1.AdminServiceClient, error)
+	SocketBridge func() socketbridge.SocketBridgeManager
+	Logger       func() (*logger.Logger, error)
 
 	// AgentName is the user-typed short agent name (e.g. "dev", "test").
 	// NOT the AgentFullName "clawker.project.agent" form — the
@@ -140,19 +138,8 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 			return fmt.Errorf("bootstrapping services: firewall init: %w", err)
 		}
 
-		if cmdOpts.ProjectManager == nil {
-			return fmt.Errorf("bootstrapping services: firewall is enabled but no project manager provided")
-		}
-		pm, err := cmdOpts.ProjectManager()
-		if err != nil {
-			return fmt.Errorf("bootstrapping services: loading project manager: %w", err)
-		}
-		proj, err := pm.CurrentProject(ctx)
-		if err != nil {
-			return fmt.Errorf("bootstrapping services: resolving current project: %w", err)
-		}
 		if _, err := adminClient.FirewallAddRules(ctx, &adminv1.FirewallAddRulesRequest{
-			Rules: adminv1.EgressRulesToProto(proj.EgressRules()),
+			Rules: adminv1.EgressRulesToProto(cfg.EgressRules()),
 		}); err != nil {
 			return fmt.Errorf("bootstrapping services: adding firewall rules: %w", err)
 		}

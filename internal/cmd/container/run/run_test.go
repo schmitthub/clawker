@@ -28,6 +28,7 @@ import (
 	"github.com/schmitthub/clawker/internal/hostproxy/hostproxytest"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/testenv"
 	"github.com/schmitthub/clawker/internal/tui"
@@ -804,6 +805,9 @@ func testFactory(t *testing.T, fake *mocks.FakeClient) (*cmdutil.Factory, *bytes
 		IOStreams: tio,
 		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
 		TUI:       tui.NewTUI(tio),
+		// Isolated data dir (testenv.New above) → empty registry →
+		// not-in-project cwd fallback.
+		ProjectRegistry: func() (*project.Registry, error) { return project.NewRegistry() },
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
@@ -816,12 +820,6 @@ agent:
   claude_code:
     mount_projects: false
 `, `firewall: { enable: false }`)
-			mock.GetProjectIgnoreFileFunc = func() (string, error) {
-				return filepath.Join(os.TempDir(), mock.ClawkerIgnoreName()), nil
-			}
-			mock.GetProjectRootFunc = func() (string, error) {
-				return os.TempDir(), nil
-			}
 			return mock, nil
 		},
 		HostProxy: func() hostproxy.HostProxyService {
@@ -917,12 +915,6 @@ agent:
   claude_code:
     mount_projects: false
 `, "")
-		testCfg.GetProjectIgnoreFileFunc = func() (string, error) {
-			return filepath.Join(os.TempDir(), testCfg.ClawkerIgnoreName()), nil
-		}
-		testCfg.GetProjectRootFunc = func() (string, error) {
-			return os.TempDir(), nil
-		}
 		fake := mocks.NewFakeClient(testCfg)
 		fake.SetupImageList() // empty — no project image found
 

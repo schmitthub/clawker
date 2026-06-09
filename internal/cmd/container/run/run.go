@@ -31,18 +31,19 @@ import (
 type RunOptions struct {
 	*shared.ContainerCreateOptions
 
-	IOStreams      *iostreams.IOStreams
-	TUI            *tui.TUI
-	Client         func(context.Context) (*docker.Client, error)
-	Config         func() (config.Config, error)
-	ProjectManager func() (project.ProjectManager, error)
-	HostProxy      func() hostproxy.HostProxyService
-	ControlPlane   func() cpboot.Manager
-	AdminClient    func(context.Context) (adminv1.AdminServiceClient, error)
-	SocketBridge   func() socketbridge.SocketBridgeManager
-	Prompter       func() *prompter.Prompter
-	Logger         func() (*logger.Logger, error)
-	Version        string
+	IOStreams       *iostreams.IOStreams
+	TUI             *tui.TUI
+	Client          func(context.Context) (*docker.Client, error)
+	Config          func() (config.Config, error)
+	ProjectManager  func() (project.ProjectManager, error)
+	ProjectRegistry func() (*project.Registry, error)
+	HostProxy       func() hostproxy.HostProxyService
+	ControlPlane    func() cpboot.Manager
+	AdminClient     func(context.Context) (adminv1.AdminServiceClient, error)
+	SocketBridge    func() socketbridge.SocketBridgeManager
+	Prompter        func() *prompter.Prompter
+	Logger          func() (*logger.Logger, error)
+	Version         string
 
 	// Run-specific options
 	Detach bool
@@ -65,6 +66,7 @@ func NewCmdRun(f *cmdutil.Factory, runF func(context.Context, *RunOptions) error
 		Client:                 f.Client,
 		Config:                 f.Config,
 		ProjectManager:         f.ProjectManager,
+		ProjectRegistry:        f.ProjectRegistry,
 		HostProxy:              f.HostProxy,
 		ControlPlane:           f.ControlPlane,
 		AdminClient:            f.AdminClient,
@@ -233,17 +235,18 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	go func() {
 		defer close(events)
 		r, err := shared.CreateContainer(ctx, &shared.CreateContainerOptions{
-			Client:         client,
-			Config:         cfg,
-			ProjectName:    projectName,
-			Options:        containerOpts,
-			Flags:          opts.flags,
-			Version:        opts.Version,
-			ProjectManager: opts.ProjectManager,
-			HostProxy:      opts.HostProxy,
-			Log:            log,
-			Is256Color:     ios.Is256ColorSupported(),
-			IsTrueColor:    ios.IsTrueColorSupported(),
+			Client:          client,
+			Config:          cfg,
+			ProjectName:     projectName,
+			Options:         containerOpts,
+			Flags:           opts.flags,
+			Version:         opts.Version,
+			ProjectManager:  opts.ProjectManager,
+			ProjectRegistry: opts.ProjectRegistry,
+			HostProxy:       opts.HostProxy,
+			Log:             log,
+			Is256Color:      ios.Is256ColorSupported(),
+			IsTrueColor:     ios.IsTrueColorSupported(),
 		}, events)
 		done <- outcome{r, err}
 	}()
@@ -282,16 +285,15 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	// container output to os.Stdout). Both detach and attach paths share the
 	// same pre-start, so the bootstrap effort isn't repeated downstream.
 	cmdOpts := shared.CommandOpts{
-		Client:         opts.Client,
-		Config:         opts.Config,
-		ProjectManager: opts.ProjectManager,
-		HostProxy:      opts.HostProxy,
-		ControlPlane:   opts.ControlPlane,
-		AdminClient:    opts.AdminClient,
-		SocketBridge:   opts.SocketBridge,
-		Logger:         opts.Logger,
-		AgentName:      opts.AgentName,
-		Project:        opts.Project,
+		Client:       opts.Client,
+		Config:       opts.Config,
+		HostProxy:    opts.HostProxy,
+		ControlPlane: opts.ControlPlane,
+		AdminClient:  opts.AdminClient,
+		SocketBridge: opts.SocketBridge,
+		Logger:       opts.Logger,
+		AgentName:    opts.AgentName,
+		Project:      opts.Project,
 	}
 	if err := ios.RunWithSpinner("Bootstrapping host services", func() error {
 		return shared.BootstrapServicesPreStart(ctx, o.result.ContainerID, cmdOpts)

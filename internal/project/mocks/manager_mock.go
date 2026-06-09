@@ -5,7 +5,6 @@ package mocks
 
 import (
 	"context"
-	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/project"
 	"sync"
 )
@@ -26,7 +25,7 @@ var _ project.ProjectManager = &ProjectManagerMock{}
 //			GetFunc: func(ctx context.Context, root string) (project.Project, error) {
 //				panic("mock out the Get method")
 //			},
-//			ListFunc: func(ctx context.Context) ([]config.ProjectEntry, error) {
+//			ListFunc: func(ctx context.Context) ([]project.ProjectEntry, error) {
 //				panic("mock out the List method")
 //			},
 //			ListProjectsFunc: func(ctx context.Context) ([]project.ProjectState, error) {
@@ -44,7 +43,7 @@ var _ project.ProjectManager = &ProjectManagerMock{}
 //			ResolvePathFunc: func(ctx context.Context, cwd string) (project.Project, error) {
 //				panic("mock out the ResolvePath method")
 //			},
-//			UpdateFunc: func(ctx context.Context, entry config.ProjectEntry) (project.Project, error) {
+//			UpdateFunc: func(ctx context.Context, entry project.ProjectEntry) (project.Project, error) {
 //				panic("mock out the Update method")
 //			},
 //		}
@@ -61,7 +60,7 @@ type ProjectManagerMock struct {
 	GetFunc func(ctx context.Context, root string) (project.Project, error)
 
 	// ListFunc mocks the List method.
-	ListFunc func(ctx context.Context) ([]config.ProjectEntry, error)
+	ListFunc func(ctx context.Context) ([]project.ProjectEntry, error)
 
 	// ListProjectsFunc mocks the ListProjects method.
 	ListProjectsFunc func(ctx context.Context) ([]project.ProjectState, error)
@@ -79,7 +78,7 @@ type ProjectManagerMock struct {
 	ResolvePathFunc func(ctx context.Context, cwd string) (project.Project, error)
 
 	// UpdateFunc mocks the Update method.
-	UpdateFunc func(ctx context.Context, entry config.ProjectEntry) (project.Project, error)
+	UpdateFunc func(ctx context.Context, entry project.ProjectEntry) (project.Project, error)
 
 	// calls tracks calls to the methods.
 	calls struct {
@@ -138,7 +137,7 @@ type ProjectManagerMock struct {
 			// Ctx is the ctx argument value.
 			Ctx context.Context
 			// Entry is the entry argument value.
-			Entry config.ProjectEntry
+			Entry project.ProjectEntry
 		}
 	}
 	lockCurrentProject sync.RWMutex
@@ -221,7 +220,7 @@ func (mock *ProjectManagerMock) GetCalls() []struct {
 }
 
 // List calls ListFunc.
-func (mock *ProjectManagerMock) List(ctx context.Context) ([]config.ProjectEntry, error) {
+func (mock *ProjectManagerMock) List(ctx context.Context) ([]project.ProjectEntry, error) {
 	if mock.ListFunc == nil {
 		panic("ProjectManagerMock.ListFunc: method is nil but ProjectManager.List was just called")
 	}
@@ -429,13 +428,13 @@ func (mock *ProjectManagerMock) ResolvePathCalls() []struct {
 }
 
 // Update calls UpdateFunc.
-func (mock *ProjectManagerMock) Update(ctx context.Context, entry config.ProjectEntry) (project.Project, error) {
+func (mock *ProjectManagerMock) Update(ctx context.Context, entry project.ProjectEntry) (project.Project, error) {
 	if mock.UpdateFunc == nil {
 		panic("ProjectManagerMock.UpdateFunc: method is nil but ProjectManager.Update was just called")
 	}
 	callInfo := struct {
 		Ctx   context.Context
-		Entry config.ProjectEntry
+		Entry project.ProjectEntry
 	}{
 		Ctx:   ctx,
 		Entry: entry,
@@ -452,11 +451,11 @@ func (mock *ProjectManagerMock) Update(ctx context.Context, entry config.Project
 //	len(mockedProjectManager.UpdateCalls())
 func (mock *ProjectManagerMock) UpdateCalls() []struct {
 	Ctx   context.Context
-	Entry config.ProjectEntry
+	Entry project.ProjectEntry
 } {
 	var calls []struct {
 		Ctx   context.Context
-		Entry config.ProjectEntry
+		Entry project.ProjectEntry
 	}
 	mock.lockUpdate.RLock()
 	calls = mock.calls.Update

@@ -8,10 +8,9 @@ package storage
 
 import "errors"
 
-// ErrNotInProject is returned when CWD is not within a registered project's
-// directory tree. Walk-up discovery falls back to home-level configs only.
-var ErrNotInProject = errors.New("storage: CWD is not within a registered project")
-
-// ErrRegistryNotFound is returned when the project registry file cannot be
-// located during walk-up discovery. Discovery continues with explicit paths.
-var ErrRegistryNotFound = errors.New("storage: project registry not found")
+// ErrAnchorNotAncestor reports a walk-up anchor that is neither the current
+// working directory nor one of its ancestors. An upward walk from CWD can
+// never reach such an anchor and would escape to the filesystem root, so
+// discovery refuses it as a caller programming error. The supported
+// "no walk-up" case is an empty anchor, which disables walk-up entirely.
+var ErrAnchorNotAncestor = errors.New("walk-up anchor is not the current working directory or an ancestor of it")

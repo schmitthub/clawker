@@ -8,7 +8,7 @@
 
 ## Architecture
 
-Two `storage.Store[T]` instances wrapped by a thin `configImpl`. Replaces Viper.
+Two `storage.Store[T]` instances wrapped by a thin `configImpl`.
 
 - `Store[Project]` — project config (`clawker.yaml`, `clawker.local.yaml`), walk-up + config dir discovery.
 - `Store[Settings]` — user settings (`settings.yaml`), config dir only.
@@ -23,19 +23,19 @@ State dir: `CLAWKER_STATE_DIR` > `$XDG_STATE_HOME/clawker` > `~/.local/state/cla
 
 ## Boundary
 
-- `config` owns **path resolution primitives** and file-backed config I/O (`GetProjectRoot()`, `GetProjectIgnoreFile()`, `ConfigDir()`).
-- `config` does **not** own project CRUD, slug/key resolution, or worktree lifecycle — those belong in `internal/project`.
+- `config` owns **path resolution primitives** and file-backed config I/O (`ConfigDir()`, `DataDir()`, `StateDir()`).
+- `config` does **not** own project CRUD, slug/key resolution, worktree lifecycle, or project-root resolution — those belong in `internal/project`. Project-root resolution lives there as methods on the exported `Registry` facade (`project.Registry.ResolveRoot`/`CurrentRoot`, registry-backed; `config` cannot read the registry schema without depending on the project domain).
 
 ## Files
 
 | File | Purpose |
 | --- | --- |
 | `config.go` | `Config` interface, `configImpl` struct, constructors (`NewConfig`, `NewBlankConfig`, `NewFromString`), store accessors, schema accessors |
-| `consts.go` | Deprecated Config interface wrappers + config-backed accessors. Only non-deprecated exports: `Mode` type (`ModeBind`/`ModeSnapshot`). All string constants and path helpers have moved to `internal/consts`. |
+| `consts.go` | Deprecated Config interface wrappers + config-backed accessors. Only non-deprecated exports: `Mode` type (`ModeBind`/`ModeSnapshot`). String constants and path helpers live in `internal/consts`. |
 | `schema.go` | All persisted schema structs + `ParseMode()` + convenience methods |
 | `defaults.go` | Firewall rules (`requiredFirewallDomains`, `requiredFirewallRules`), `DefaultIgnoreFile` |
 | `presets.go` | Language preset definitions (`Preset` type, `Presets()` function) for project init |
-| `resolve.go` | `ConfigDir()`/`DataDir()`/`StateDir()`, `GetProjectRoot`/`GetProjectIgnoreFile`, path helpers |
+| `resolve.go` | `ConfigDir()`/`DataDir()`/`StateDir()` package-level delegates to `internal/consts` |
 | `port.go` | `Port` type with `UnmarshalYAML` — typed wrapper for settings port fields |
 | `egress_port.go` | `ParsePortSpec`, `ValidatePortSpec`, `PortSpan`, `SinglePort` — port range parsing for egress rules |
 | `migrations.go` | `ProjectMigrations()`, `SettingsMigrations()` — schema migration functions applied at load time |
@@ -51,6 +51,7 @@ State dir: `CLAWKER_STATE_DIR` > `$XDG_STATE_HOME/clawker` > `~/.local/state/cla
 
 ```go
 func NewConfig(opts ...NewConfigOption) (Config, error)          // Full production loading (defaults + discovery + merge)
+func WithProjectRoot(root string) NewConfigOption                // Bounds project-config walk-up at root (caller resolves it, e.g. project.Registry.ResolveRoot). Empty root → walk-up disabled (config-dir only; correct for CP/host-proxy/bridge daemons).
 func NewBlankConfig() (Config, error)                           // Defaults only, no file discovery (test double base)
 func NewFromString(projectYAML, settingsYAML string) (Config, error) // Raw YAML, NO defaults (precise test control)
 func NewProjectStoreFromPreset(presetYAML string) (*storage.Store[Project], error) // Isolated project store from preset YAML only — no file discovery, no user-level merging. For project init.
@@ -58,10 +59,9 @@ func Presets() []Preset                                         // Language pres
 func ConfigDir() string                                         // Config directory path
 func DataDir() string                                           // XDG data dir (~/.local/share/clawker)
 func StateDir() string                                          // XDG state dir (~/.local/state/clawker)
-// Deprecated: use consts.SettingsFilePath / consts.UserProjectConfigFilePath / consts.ProjectRegistryFilePath.
+// Deprecated: use consts.SettingsFilePath / consts.UserProjectConfigFilePath.
 func SettingsFilePath() (string, error)
 func UserProjectConfigFilePath() (string, error)
-func ProjectRegistryFilePath() (string, error)
 ```
 
 ### Config Interface (method groups)
@@ -72,17 +72,19 @@ ProjectStore() *storage.Store[Project]     // Direct access to project config st
 SettingsStore() *storage.Store[Settings]   // Direct access to settings store
 ```
 
-**Schema accessors**: `Project()`, `Settings()`, `ClawkerIgnoreName()`, `RequiredFirewallDomains()`, `RequiredFirewallRules()`, `EgressRulesFileName()`
+**Schema accessors**: `Project()`, `Settings()`, `ClawkerIgnoreName()`, `RequiredFirewallDomains()`, `RequiredFirewallRules()`, `EgressRules()`, `EgressRulesFileName()`
+
+`EgressRules()` returns the full egress rule set as `[]EgressRule`: the required baseline (`RequiredFirewallRules()`) plus the project's `security.firewall` rules and `add_domains` shorthand.
 
 **Settings convenience accessors** (deprecated): `LoggingConfig()`, `MonitoringConfig()`, `HostProxyConfig()` return the corresponding nested struct directly. Equivalent to `SettingsStore().Read().Logging` etc. Prefer the typed store accessor in new code. Still in use in existing callers (e.g. `internal/bundler/dockerfile.go`, `internal/hostproxy/`).
 
 **Mutation**: Use `ProjectStore().Set(fn)` / `SettingsStore().Set(fn)` (returns error). Persist with `ProjectStore().Write()` / `SettingsStore().Write()`.
 
-**Filename accessors**: `ProjectConfigFileName()` (`"clawker.yaml"`), `SettingsFileName()` (`"settings.yaml"`), `ProjectRegistryFileName()` (`"projects.yaml"`)
+**Filename accessors**: `ProjectConfigFileName()` (`"clawker.yaml"`), `SettingsFileName()` (`"settings.yaml"`). The registry filename is `consts.RegistryFile` (`"registry.yaml"`) — there is no Config accessor for it; `internal/project` owns the registry.
 
-**Path resolution**: `GetProjectRoot()`, `GetProjectIgnoreFile()`, `ConfigDirEnvVar()`, `StateDirEnvVar()`, `DataDirEnvVar()`, `TestRepoDirEnvVar()`
+**Path resolution**: `ConfigDirEnvVar()`, `StateDirEnvVar()`, `DataDirEnvVar()`, `TestRepoDirEnvVar()` (project-root / ignore-file resolution lives in `internal/project`)
 
-**Subdir helpers** (ensure + return path): `MonitorSubdir()`, `BuildSubdir()`, `DockerfilesSubdir()`, `LogsSubdir()`, `PidsSubdir()`, `BridgesSubdir()`, `ShareSubdir()`, `WorktreesSubdir()`, `FirewallDataSubdir()`, `FirewallCertSubdir()`
+**Subdir helpers** (ensure + return path): `MonitorSubdir()`, `BuildSubdir()`, `DockerfilesSubdir()`, `LogsSubdir()`, `PidsSubdir()`, `BridgesSubdir()`, `ShareSubdir()`, `FirewallDataSubdir()`, `FirewallCertSubdir()`
 
 **PID/log file helpers**: `BridgePIDFilePath(containerID)`, `HostProxyPIDFilePath()`, `HostProxyLogFilePath()`
 
@@ -116,9 +118,11 @@ const ModeSnapshot Mode = "snapshot"
 
 **Workspace/Security**: `WorkspaceConfig` (`DefaultMode`), `SecurityConfig`, `FirewallConfig`, `GitCredentialsConfig`
 
-**Registry**: `ProjectRegistry`, `ProjectEntry`, `WorktreeEntry`
+**Egress vocabulary constants** (schema.go, next to `EgressRule` — the single home for these tokens): `EgressProtoHTTPS`, `EgressPortHTTPS`, `EgressActionAllow`, `EgressActionDeny`. Used by `EgressRules()` add_domains expansion and the required baseline in `defaults.go`; reference these instead of spelling the literals.
 
-**Errors**: `ErrNotInProject`, `KeyNotFoundError` (struct with `Key string` field, implements `error`)
+**Registry**: the registry schema (`ProjectRegistry`, `ProjectEntry`, `WorktreeEntry`) lives in `internal/project` — its sole owner. `config` has no registry surface.
+
+**Errors**: `KeyNotFoundError` (struct with `Key string` field, implements `error`). The project-resolution error (`ErrNotInProject`) lives in `internal/project`.
 
 ### Test Helpers (`mocks/stubs.go`)
 
@@ -139,6 +143,6 @@ Import as `configmocks "github.com/schmitthub/clawker/internal/config/mocks"`.
 - **Project vs Settings scope** — Project keys: `build`, `agent`, `workspace`, `security`. Settings keys: `logging`, `monitoring`, `host_proxy`. Project identity (name) is resolved at runtime via `project.ProjectManager.CurrentProject(ctx).Name()`, not stored in config.
 - **`*bool` pointers in schema** — Nil means "not set" (defaults apply). Non-nil `false` means "explicitly disabled". Callers must handle nil when accessing raw schema fields. Typed accessors like `FirewallEnabled()` handle nil-to-default conversion.
 - **Nil vs zero** — Nil pointers/slices mean "not set" (excluded from storage tree). Non-nil zero values mean "explicitly set to zero" (included). This is a semantic distinction in schema design.
-- **No env var overrides** — The old Viper-based `CLAWKER_*` env var binding has been removed. Env vars only affect directory resolution (`CLAWKER_CONFIG_DIR`, etc.), not config values.
-- **Registry moved to project** — `ProjectRegistry` schema type still lives here but the store (`Store[ProjectRegistry]`) is owned by `internal/project`.
+- **No env var overrides** — `CLAWKER_*` env vars affect only directory resolution (`CLAWKER_CONFIG_DIR`, etc.), not config values.
+- **Registry owned by project** — both the `ProjectRegistry`/`ProjectEntry`/`WorktreeEntry` schema types and the `Store[ProjectRegistry]` live in `internal/project`. `config` has no registry surface.
 - **Cross-process safety** — Storage uses `gofrs/flock` advisory lock + atomic temp-file rename. Lock files (`.lock` suffix) are left on disk intentionally.

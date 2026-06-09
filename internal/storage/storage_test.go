@@ -1231,17 +1231,7 @@ func TestStore_WalkUpLayerMerge(t *testing.T) {
 	}
 	levelNames := []string{"project", "level1", "level2", "level3"}
 	userConfigDir := filepath.Join(root, "user", "config")
-	dataDir := filepath.Join(root, "data")
-
 	require.NoError(t, os.MkdirAll(userConfigDir, 0o755))
-	require.NoError(t, os.MkdirAll(dataDir, 0o755))
-
-	// --- Registry ---
-	registryYAML := fmt.Sprintf("projects:\n  - root: %s\n", projectDir)
-	require.NoError(t, os.WriteFile(
-		filepath.Join(dataDir, "registry.yaml"),
-		[]byte(registryYAML), 0o644,
-	))
 
 	// --- Value pools ---
 	imagePool := []string{"go:1.22", "node:20", "python:3", "rust:1.80", "ruby:3.3"}
@@ -1428,12 +1418,13 @@ func TestStore_WalkUpLayerMerge(t *testing.T) {
 	}
 
 	// --- Discover ---
-	t.Setenv("CLAWKER_DATA_DIR", dataDir)
+	// Walk-up is generic: storage walks from CWD up to the anchor it's handed
+	// and holds no project-registry knowledge. Anchor at the project root.
 	t.Chdir(levels[len(levels)-1]) // CWD = deepest level
 
 	store, err := NewStore[testConfig](
 		WithFilenames("config.local.yaml", "config.yaml"),
-		WithWalkUp(),
+		WithWalkUp(projectDir),
 		WithPaths(userConfigDir),
 	)
 	require.NoError(t, err)
@@ -1835,16 +1826,7 @@ func TestStore_WalkUpGolden(t *testing.T) {
 	}
 	levelNames := []string{"project", "level1", "level2", "level3"}
 	userConfigDir := filepath.Join(root, "user", "config")
-	dataDir := filepath.Join(root, "data")
-
 	require.NoError(t, os.MkdirAll(userConfigDir, 0o755))
-	require.NoError(t, os.MkdirAll(dataDir, 0o755))
-
-	registryYAML := fmt.Sprintf("projects:\n  - root: %s\n", projectDir)
-	require.NoError(t, os.WriteFile(
-		filepath.Join(dataDir, "registry.yaml"),
-		[]byte(registryYAML), 0o644,
-	))
 
 	// --- Value pools (must match randomized test exactly) ---
 	imagePool := []string{"go:1.22", "node:20", "python:3", "rust:1.80", "ruby:3.3"}
@@ -1994,12 +1976,11 @@ func TestStore_WalkUpGolden(t *testing.T) {
 	userPath := filepath.Join(userConfigDir, "config.yaml")
 	writeFile(userPath, "name: user\nversion: 1\nbuild:\n  image: ubuntu\npackages:\n  - pkg-user\nenv:\n  EDITOR: vim\n")
 
-	t.Setenv("CLAWKER_DATA_DIR", dataDir)
 	t.Chdir(levels[len(levels)-1])
 
 	store, err := NewStore[testConfig](
 		WithFilenames("config.local.yaml", "config.yaml"),
-		WithWalkUp(),
+		WithWalkUp(projectDir),
 		WithPaths(userConfigDir),
 	)
 	require.NoError(t, err)
@@ -2043,6 +2024,110 @@ func TestStore_WalkUpGolden(t *testing.T) {
 	assert.Equal(t, goldenImage, cfg.Build.Image, "golden: image")
 	assert.Equal(t, goldenPackages, cfg.Packages, "golden: packages")
 	assert.Equal(t, goldenEnv, cfg.Env, "golden: env")
+}
+
+func TestStore_WalkUpAnchorGuard(t *testing.T) {
+	// Walk-up is bounded by a caller-supplied anchor that must be CWD or an
+	// ancestor of it. A non-ancestor anchor is a caller programming error and
+	// fails store construction with ErrAnchorNotAncestor; an empty anchor
+	// disables walk-up entirely (the supported "no walk-up" case).
+	//
+	// Layout (CWD = root/a/b; every level on the CWD→root spine holds a flat
+	// dotfile config so the probed range is observable through Layers()):
+	//
+	//	root/.config.yaml
+	//	root/a/.config.yaml
+	//	root/a/b/.config.yaml   ← CWD
+	//	root/a/b/c/             (descendant, no config)
+	//	root/sib/               (sibling branch, no config)
+	root := t.TempDir()
+	level1 := filepath.Join(root, "a")
+	cwd := filepath.Join(level1, "b")
+	descendant := filepath.Join(cwd, "c")
+	sibling := filepath.Join(root, "sib")
+	for _, dir := range []string{descendant, sibling} {
+		require.NoError(t, os.MkdirAll(dir, 0o755))
+	}
+	for _, dir := range []string{root, level1, cwd} {
+		path := filepath.Join(dir, ".config.yaml")
+		require.NoError(t, os.WriteFile(path, []byte("name: "+filepath.Base(dir)+"\n"), 0o644))
+	}
+
+	t.Chdir(cwd)
+
+	tests := []struct {
+		name      string
+		anchor    string
+		wantPaths []string // discovered layer paths, highest priority (CWD) first
+		wantErr   bool
+	}{
+		{
+			name:      "anchor equals CWD probes exactly CWD",
+			anchor:    cwd,
+			wantPaths: []string{filepath.Join(cwd, ".config.yaml")},
+		},
+		{
+			name:   "anchor one level up stops at anchor, file above excluded",
+			anchor: level1,
+			wantPaths: []string{
+				filepath.Join(cwd, ".config.yaml"),
+				filepath.Join(level1, ".config.yaml"),
+			},
+		},
+		{
+			name:   "anchor two levels up includes every level down to CWD",
+			anchor: root,
+			wantPaths: []string{
+				filepath.Join(cwd, ".config.yaml"),
+				filepath.Join(level1, ".config.yaml"),
+				filepath.Join(root, ".config.yaml"),
+			},
+		},
+		{
+			// The guard is pure path math (filepath.Rel never stats), so a
+			// nonexistent anchor fails identically to this sibling case.
+			name:    "sibling of CWD is not an ancestor",
+			anchor:  sibling,
+			wantErr: true,
+		},
+		{
+			name:    "descendant of CWD is not an ancestor",
+			anchor:  descendant,
+			wantErr: true,
+		},
+		{
+			// filepath.Rel cannot relate a relative anchor to the absolute
+			// CWD, so a relative anchor is refused like any non-ancestor.
+			name:    "relative anchor is refused",
+			anchor:  "a",
+			wantErr: true,
+		},
+		{
+			name:      "empty anchor disables walk-up without error",
+			anchor:    "",
+			wantPaths: nil,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store, err := NewStore[testConfig](
+				WithFilenames("config.yaml"),
+				WithWalkUp(tc.anchor),
+			)
+			if tc.wantErr {
+				require.Error(t, err)
+				assert.ErrorIs(t, err, ErrAnchorNotAncestor)
+				return
+			}
+			require.NoError(t, err)
+			var got []string
+			for _, l := range store.Layers() {
+				got = append(got, l.Path)
+			}
+			assert.Equal(t, tc.wantPaths, got)
+		})
+	}
 }
 
 func TestStore_Dirs_DedupWithPaths(t *testing.T) {

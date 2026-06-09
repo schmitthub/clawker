@@ -64,6 +64,9 @@ var _ config.Config = &ConfigMock{}
 //			DomainFunc: func() string {
 //				panic("mock out the Domain method")
 //			},
+//			EgressRulesFunc: func() []config.EgressRule {
+//				panic("mock out the EgressRules method")
+//			},
 //			EgressRulesFileNameFunc: func() string {
 //				panic("mock out the EgressRulesFileName method")
 //			},
@@ -96,12 +99,6 @@ var _ config.Config = &ConfigMock{}
 //			},
 //			FirewallDataSubdirFunc: func() (string, error) {
 //				panic("mock out the FirewallDataSubdir method")
-//			},
-//			GetProjectIgnoreFileFunc: func() (string, error) {
-//				panic("mock out the GetProjectIgnoreFile method")
-//			},
-//			GetProjectRootFunc: func() (string, error) {
-//				panic("mock out the GetProjectRoot method")
 //			},
 //			HostProxyConfigFunc: func() config.HostProxyConfig {
 //				panic("mock out the HostProxyConfig method")
@@ -190,9 +187,6 @@ var _ config.Config = &ConfigMock{}
 //			ProjectConfigFileNameFunc: func() string {
 //				panic("mock out the ProjectConfigFileName method")
 //			},
-//			ProjectRegistryFileNameFunc: func() string {
-//				panic("mock out the ProjectRegistryFileName method")
-//			},
 //			ProjectStoreFunc: func() *storage.Store[config.Project] {
 //				panic("mock out the ProjectStore method")
 //			},
@@ -231,9 +225,6 @@ var _ config.Config = &ConfigMock{}
 //			},
 //			TestRepoDirEnvVarFunc: func() string {
 //				panic("mock out the TestRepoDirEnvVar method")
-//			},
-//			WorktreesSubdirFunc: func() (string, error) {
-//				panic("mock out the WorktreesSubdir method")
 //			},
 //		}
 //
@@ -287,6 +278,9 @@ type ConfigMock struct {
 	// DomainFunc mocks the Domain method.
 	DomainFunc func() string
 
+	// EgressRulesFunc mocks the EgressRules method.
+	EgressRulesFunc func() []config.EgressRule
+
 	// EgressRulesFileNameFunc mocks the EgressRulesFileName method.
 	EgressRulesFileNameFunc func() string
 
@@ -319,12 +313,6 @@ type ConfigMock struct {
 
 	// FirewallDataSubdirFunc mocks the FirewallDataSubdir method.
 	FirewallDataSubdirFunc func() (string, error)
-
-	// GetProjectIgnoreFileFunc mocks the GetProjectIgnoreFile method.
-	GetProjectIgnoreFileFunc func() (string, error)
-
-	// GetProjectRootFunc mocks the GetProjectRoot method.
-	GetProjectRootFunc func() (string, error)
 
 	// HostProxyConfigFunc mocks the HostProxyConfig method.
 	HostProxyConfigFunc func() config.HostProxyConfig
@@ -413,9 +401,6 @@ type ConfigMock struct {
 	// ProjectConfigFileNameFunc mocks the ProjectConfigFileName method.
 	ProjectConfigFileNameFunc func() string
 
-	// ProjectRegistryFileNameFunc mocks the ProjectRegistryFileName method.
-	ProjectRegistryFileNameFunc func() string
-
 	// ProjectStoreFunc mocks the ProjectStore method.
 	ProjectStoreFunc func() *storage.Store[config.Project]
 
@@ -454,9 +439,6 @@ type ConfigMock struct {
 
 	// TestRepoDirEnvVarFunc mocks the TestRepoDirEnvVar method.
 	TestRepoDirEnvVarFunc func() string
-
-	// WorktreesSubdirFunc mocks the WorktreesSubdir method.
-	WorktreesSubdirFunc func() (string, error)
 
 	// calls tracks calls to the methods.
 	calls struct {
@@ -507,6 +489,9 @@ type ConfigMock struct {
 		// Domain holds details about calls to the Domain method.
 		Domain []struct {
 		}
+		// EgressRules holds details about calls to the EgressRules method.
+		EgressRules []struct {
+		}
 		// EgressRulesFileName holds details about calls to the EgressRulesFileName method.
 		EgressRulesFileName []struct {
 		}
@@ -539,12 +524,6 @@ type ConfigMock struct {
 		}
 		// FirewallDataSubdir holds details about calls to the FirewallDataSubdir method.
 		FirewallDataSubdir []struct {
-		}
-		// GetProjectIgnoreFile holds details about calls to the GetProjectIgnoreFile method.
-		GetProjectIgnoreFile []struct {
-		}
-		// GetProjectRoot holds details about calls to the GetProjectRoot method.
-		GetProjectRoot []struct {
 		}
 		// HostProxyConfig holds details about calls to the HostProxyConfig method.
 		HostProxyConfig []struct {
@@ -633,9 +612,6 @@ type ConfigMock struct {
 		// ProjectConfigFileName holds details about calls to the ProjectConfigFileName method.
 		ProjectConfigFileName []struct {
 		}
-		// ProjectRegistryFileName holds details about calls to the ProjectRegistryFileName method.
-		ProjectRegistryFileName []struct {
-		}
 		// ProjectStore holds details about calls to the ProjectStore method.
 		ProjectStore []struct {
 		}
@@ -675,9 +651,6 @@ type ConfigMock struct {
 		// TestRepoDirEnvVar holds details about calls to the TestRepoDirEnvVar method.
 		TestRepoDirEnvVar []struct {
 		}
-		// WorktreesSubdir holds details about calls to the WorktreesSubdir method.
-		WorktreesSubdir []struct {
-		}
 	}
 	lockBridgePIDFilePath       sync.RWMutex
 	lockBridgesSubdir           sync.RWMutex
@@ -694,6 +667,7 @@ type ConfigMock struct {
 	lockDataDirEnvVar           sync.RWMutex
 	lockDockerfilesSubdir       sync.RWMutex
 	lockDomain                  sync.RWMutex
+	lockEgressRules             sync.RWMutex
 	lockEgressRulesFileName     sync.RWMutex
 	lockEngineLabelPrefix       sync.RWMutex
 	lockEngineManagedLabel      sync.RWMutex
@@ -705,8 +679,6 @@ type ConfigMock struct {
 	lockEnvoyUDPPortBase        sync.RWMutex
 	lockFirewallCertSubdir      sync.RWMutex
 	lockFirewallDataSubdir      sync.RWMutex
-	lockGetProjectIgnoreFile    sync.RWMutex
-	lockGetProjectRoot          sync.RWMutex
 	lockHostProxyConfig         sync.RWMutex
 	lockHostProxyLogFilePath    sync.RWMutex
 	lockHostProxyPIDFilePath    sync.RWMutex
@@ -736,7 +708,6 @@ type ConfigMock struct {
 	lockPidsSubdir              sync.RWMutex
 	lockProject                 sync.RWMutex
 	lockProjectConfigFileName   sync.RWMutex
-	lockProjectRegistryFileName sync.RWMutex
 	lockProjectStore            sync.RWMutex
 	lockPrometheusURL           sync.RWMutex
 	lockPurposeAgent            sync.RWMutex
@@ -750,7 +721,6 @@ type ConfigMock struct {
 	lockShareSubdir             sync.RWMutex
 	lockStateDirEnvVar          sync.RWMutex
 	lockTestRepoDirEnvVar       sync.RWMutex
-	lockWorktreesSubdir         sync.RWMutex
 }
 
 // BridgePIDFilePath calls BridgePIDFilePathFunc.
@@ -1163,6 +1133,33 @@ func (mock *ConfigMock) DomainCalls() []struct {
 	return calls
 }
 
+// EgressRules calls EgressRulesFunc.
+func (mock *ConfigMock) EgressRules() []config.EgressRule {
+	if mock.EgressRulesFunc == nil {
+		panic("ConfigMock.EgressRulesFunc: method is nil but Config.EgressRules was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockEgressRules.Lock()
+	mock.calls.EgressRules = append(mock.calls.EgressRules, callInfo)
+	mock.lockEgressRules.Unlock()
+	return mock.EgressRulesFunc()
+}
+
+// EgressRulesCalls gets all the calls that were made to EgressRules.
+// Check the length with:
+//
+//	len(mockedConfig.EgressRulesCalls())
+func (mock *ConfigMock) EgressRulesCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockEgressRules.RLock()
+	calls = mock.calls.EgressRules
+	mock.lockEgressRules.RUnlock()
+	return calls
+}
+
 // EgressRulesFileName calls EgressRulesFileNameFunc.
 func (mock *ConfigMock) EgressRulesFileName() string {
 	if mock.EgressRulesFileNameFunc == nil {
@@ -1457,60 +1454,6 @@ func (mock *ConfigMock) FirewallDataSubdirCalls() []struct {
 	mock.lockFirewallDataSubdir.RLock()
 	calls = mock.calls.FirewallDataSubdir
 	mock.lockFirewallDataSubdir.RUnlock()
-	return calls
-}
-
-// GetProjectIgnoreFile calls GetProjectIgnoreFileFunc.
-func (mock *ConfigMock) GetProjectIgnoreFile() (string, error) {
-	if mock.GetProjectIgnoreFileFunc == nil {
-		panic("ConfigMock.GetProjectIgnoreFileFunc: method is nil but Config.GetProjectIgnoreFile was just called")
-	}
-	callInfo := struct {
-	}{}
-	mock.lockGetProjectIgnoreFile.Lock()
-	mock.calls.GetProjectIgnoreFile = append(mock.calls.GetProjectIgnoreFile, callInfo)
-	mock.lockGetProjectIgnoreFile.Unlock()
-	return mock.GetProjectIgnoreFileFunc()
-}
-
-// GetProjectIgnoreFileCalls gets all the calls that were made to GetProjectIgnoreFile.
-// Check the length with:
-//
-//	len(mockedConfig.GetProjectIgnoreFileCalls())
-func (mock *ConfigMock) GetProjectIgnoreFileCalls() []struct {
-} {
-	var calls []struct {
-	}
-	mock.lockGetProjectIgnoreFile.RLock()
-	calls = mock.calls.GetProjectIgnoreFile
-	mock.lockGetProjectIgnoreFile.RUnlock()
-	return calls
-}
-
-// GetProjectRoot calls GetProjectRootFunc.
-func (mock *ConfigMock) GetProjectRoot() (string, error) {
-	if mock.GetProjectRootFunc == nil {
-		panic("ConfigMock.GetProjectRootFunc: method is nil but Config.GetProjectRoot was just called")
-	}
-	callInfo := struct {
-	}{}
-	mock.lockGetProjectRoot.Lock()
-	mock.calls.GetProjectRoot = append(mock.calls.GetProjectRoot, callInfo)
-	mock.lockGetProjectRoot.Unlock()
-	return mock.GetProjectRootFunc()
-}
-
-// GetProjectRootCalls gets all the calls that were made to GetProjectRoot.
-// Check the length with:
-//
-//	len(mockedConfig.GetProjectRootCalls())
-func (mock *ConfigMock) GetProjectRootCalls() []struct {
-} {
-	var calls []struct {
-	}
-	mock.lockGetProjectRoot.RLock()
-	calls = mock.calls.GetProjectRoot
-	mock.lockGetProjectRoot.RUnlock()
 	return calls
 }
 
@@ -2297,33 +2240,6 @@ func (mock *ConfigMock) ProjectConfigFileNameCalls() []struct {
 	return calls
 }
 
-// ProjectRegistryFileName calls ProjectRegistryFileNameFunc.
-func (mock *ConfigMock) ProjectRegistryFileName() string {
-	if mock.ProjectRegistryFileNameFunc == nil {
-		panic("ConfigMock.ProjectRegistryFileNameFunc: method is nil but Config.ProjectRegistryFileName was just called")
-	}
-	callInfo := struct {
-	}{}
-	mock.lockProjectRegistryFileName.Lock()
-	mock.calls.ProjectRegistryFileName = append(mock.calls.ProjectRegistryFileName, callInfo)
-	mock.lockProjectRegistryFileName.Unlock()
-	return mock.ProjectRegistryFileNameFunc()
-}
-
-// ProjectRegistryFileNameCalls gets all the calls that were made to ProjectRegistryFileName.
-// Check the length with:
-//
-//	len(mockedConfig.ProjectRegistryFileNameCalls())
-func (mock *ConfigMock) ProjectRegistryFileNameCalls() []struct {
-} {
-	var calls []struct {
-	}
-	mock.lockProjectRegistryFileName.RLock()
-	calls = mock.calls.ProjectRegistryFileName
-	mock.lockProjectRegistryFileName.RUnlock()
-	return calls
-}
-
 // ProjectStore calls ProjectStoreFunc.
 func (mock *ConfigMock) ProjectStore() *storage.Store[config.Project] {
 	if mock.ProjectStoreFunc == nil {
@@ -2672,32 +2588,5 @@ func (mock *ConfigMock) TestRepoDirEnvVarCalls() []struct {
 	mock.lockTestRepoDirEnvVar.RLock()
 	calls = mock.calls.TestRepoDirEnvVar
 	mock.lockTestRepoDirEnvVar.RUnlock()
-	return calls
-}
-
-// WorktreesSubdir calls WorktreesSubdirFunc.
-func (mock *ConfigMock) WorktreesSubdir() (string, error) {
-	if mock.WorktreesSubdirFunc == nil {
-		panic("ConfigMock.WorktreesSubdirFunc: method is nil but Config.WorktreesSubdir was just called")
-	}
-	callInfo := struct {
-	}{}
-	mock.lockWorktreesSubdir.Lock()
-	mock.calls.WorktreesSubdir = append(mock.calls.WorktreesSubdir, callInfo)
-	mock.lockWorktreesSubdir.Unlock()
-	return mock.WorktreesSubdirFunc()
-}
-
-// WorktreesSubdirCalls gets all the calls that were made to WorktreesSubdir.
-// Check the length with:
-//
-//	len(mockedConfig.WorktreesSubdirCalls())
-func (mock *ConfigMock) WorktreesSubdirCalls() []struct {
-} {
-	var calls []struct {
-	}
-	mock.lockWorktreesSubdir.RLock()
-	calls = mock.calls.WorktreesSubdir
-	mock.lockWorktreesSubdir.RUnlock()
 	return calls
 }

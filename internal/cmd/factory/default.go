@@ -2,6 +2,7 @@ package factory
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -52,18 +53,19 @@ func cacheableState(s connectivity.State) bool {
 // Tests should NOT import this package — construct &cmdutil.Factory{} directly.
 func New(version string) *cmdutil.Factory {
 	f := &cmdutil.Factory{
-		Version: version,
-		Config:  configFunc(),
+		Version:         version,
+		ProjectRegistry: projectRegistryFunc(), // no dependencies; sole constructor of registry storage
 	}
 
+	f.Config = configFunc(f)                 // depends on ProjectRegistry (walk-up anchor)
+	f.ProjectManager = projectManagerFunc(f) // depends on Config (name override) + Logger + ProjectRegistry
 	f.Logger = loggerLazy(f)                 // depends on Config
 	f.HostProxy = hostProxyFunc(f)           // depends on Config
 	f.SocketBridge = socketBridgeFunc(f)     // depends on Config
 	f.IOStreams = ioStreams()                // TTY/color/CI detection
 	f.TUI = tuiFunc(f)                       // needs IOStreams
-	f.ProjectManager = projectManagerFunc(f) // depends on Config
 	f.Client = clientFunc(f)                 // depends on Config
-	f.GitManager = gitManagerFunc(f)         // depends on Config
+	f.GitManager = gitManagerFunc(f)         // anchors at the registry-resolved project root, no Config dependency
 	f.Prompter = prompterFunc(f)
 	f.AdminClient = adminClientFunc(f)   // depends on Config
 	f.ControlPlane = controlPlaneFunc(f) // depends on Config, Logger, Client
@@ -189,7 +191,16 @@ func projectManagerFunc(f *cmdutil.Factory) func() (project.ProjectManager, erro
 				err = fmt.Errorf("failed to get logger: %w", logErr)
 				return
 			}
-			svc, err = project.NewProjectManager(cfg, log, nil)
+			reg, regErr := f.ProjectRegistry()
+			if regErr != nil {
+				err = fmt.Errorf("loading project registry: %w", regErr)
+				return
+			}
+			// The clawker.yaml `name:` override is config-owned; resolve it here
+			// and pass it down as a primitive so PM stays config-free. This is a
+			// one-way edge (PM reads config); config never reads PM — its anchor
+			// comes from the shared registry facade.
+			svc, err = project.NewProjectManager(log, nil, cfg.Project().Name, reg)
 		})
 		return svc, err
 	}
@@ -329,16 +340,53 @@ func socketBridgeFunc(f *cmdutil.Factory) func() socketbridge.SocketBridgeManage
 	}
 }
 
+// projectRegistryFunc returns a lazy closure that constructs the project
+// registry facade once. This is the only production constructor of registry
+// storage — config walk-up anchoring, the git manager, the project manager,
+// and commands all share the instance through f.ProjectRegistry.
+func projectRegistryFunc() func() (*project.Registry, error) {
+	var (
+		once sync.Once
+		reg  *project.Registry
+		err  error
+	)
+	return func() (*project.Registry, error) {
+		once.Do(func() {
+			reg, err = project.NewRegistry()
+		})
+		return reg, err
+	}
+}
+
 // configFunc returns a lazy closure that creates a Config gateway once.
-// Config uses os.Getwd internally for project resolution.
-func configFunc() func() (config.Config, error) {
+// The project root that bounds project-config walk-up is resolved here via
+// the shared registry facade (f.ProjectRegistry — registry read through
+// storage, no config, no project manager) and handed to config as a plain
+// anchor path. Empty anchor (CWD not within a registered project) disables
+// walk-up. config never reaches back to the project manager, so the
+// dependency is one-way.
+func configFunc(f *cmdutil.Factory) func() (config.Config, error) {
 	var cachedConfig config.Config
 	var configError error
 	return func() (config.Config, error) {
 		if cachedConfig != nil || configError != nil {
 			return cachedConfig, configError
 		}
-		cachedConfig, configError = config.NewConfig()
+		reg, err := f.ProjectRegistry()
+		if err != nil {
+			configError = fmt.Errorf("loading project registry for config walk-up: %w", err)
+			return nil, configError
+		}
+		// CurrentRoot returns ErrNotInProject when CWD is not within a
+		// registered project — a normal condition (global-scope agents have no
+		// project). That degrades to an empty anchor, which disables walk-up.
+		// Any other error is unexpected and is surfaced rather than swallowed.
+		root, err := reg.CurrentRoot()
+		if err != nil && !errors.Is(err, project.ErrNotInProject) {
+			configError = fmt.Errorf("resolving project root for config walk-up: %w", err)
+			return nil, configError
+		}
+		cachedConfig, configError = config.NewConfig(config.WithProjectRoot(root))
 		return cachedConfig, configError
 	}
 }
@@ -351,8 +399,9 @@ func prompterFunc(f *cmdutil.Factory) func() *prompter.Prompter {
 }
 
 // gitManagerFunc returns a lazy closure that creates a GitManager once.
-// Uses project root from Config.GetProjectRoot() as the git repository path.
-// Returns error if not in a registered project or not a git repository.
+// Uses the project root resolved through the shared registry facade as the
+// git repository path. Returns error if not in a registered project or not a
+// git repository.
 func gitManagerFunc(f *cmdutil.Factory) func() (*git.GitManager, error) {
 	var (
 		once   sync.Once
@@ -361,12 +410,12 @@ func gitManagerFunc(f *cmdutil.Factory) func() (*git.GitManager, error) {
 	)
 	return func() (*git.GitManager, error) {
 		once.Do(func() {
-			cfg, err := f.Config()
+			reg, err := f.ProjectRegistry()
 			if err != nil {
-				mgrErr = fmt.Errorf("failed to get config: %w", err)
+				mgrErr = fmt.Errorf("loading project registry: %w", err)
 				return
 			}
-			projectRoot, err := cfg.GetProjectRoot()
+			projectRoot, err := reg.CurrentRoot()
 			if err != nil {
 				mgrErr = fmt.Errorf("failed to get project root: %w", err)
 				return

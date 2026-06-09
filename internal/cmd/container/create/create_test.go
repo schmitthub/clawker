@@ -23,6 +23,7 @@ import (
 	"github.com/schmitthub/clawker/internal/hostproxy/hostproxytest"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/testenv"
 	"github.com/schmitthub/clawker/internal/tui"
@@ -393,6 +394,9 @@ func testFactory(t *testing.T, fake *mocks.FakeClient) (*cmdutil.Factory, *bytes
 		IOStreams: tio,
 		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
 		TUI:       tui.NewTUI(tio),
+		// Isolated data dir (testenv.New above) → empty registry →
+		// not-in-project cwd fallback.
+		ProjectRegistry: func() (*project.Registry, error) { return project.NewRegistry() },
 		Client: func(_ context.Context) (*docker.Client, error) {
 			return fake.Client, nil
 		},
@@ -405,12 +409,6 @@ agent:
   claude_code:
     mount_projects: false
 `, "")
-			mock.GetProjectIgnoreFileFunc = func() (string, error) {
-				return filepath.Join(os.TempDir(), mock.ClawkerIgnoreName()), nil
-			}
-			mock.GetProjectRootFunc = func() (string, error) {
-				return os.TempDir(), nil
-			}
 			return mock, nil
 		},
 		HostProxy: func() hostproxy.HostProxyService {
@@ -519,12 +517,6 @@ workspace: { default_mode: "bind" }
 security: { enable_host_proxy: false }
 agent: { claude_code: { use_host_auth: false, mount_projects: false, config: { strategy: "fresh" } } }
 `, "")
-		useHostAuthCfg.GetProjectIgnoreFileFunc = func() (string, error) {
-			return filepath.Join(os.TempDir(), useHostAuthCfg.ClawkerIgnoreName()), nil
-		}
-		useHostAuthCfg.GetProjectRootFunc = func() (string, error) {
-			return os.TempDir(), nil
-		}
 		fake := mocks.NewFakeClient(useHostAuthCfg)
 		fake.SetupContainerCreate()
 		fake.SetupCopyToContainer()
@@ -538,6 +530,9 @@ agent: { claude_code: { use_host_auth: false, mount_projects: false, config: { s
 			IOStreams: tio,
 			Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
 			TUI:       tui.NewTUI(tio),
+			// Isolated data dir (testenv.New above) → empty registry →
+			// not-in-project cwd fallback.
+			ProjectRegistry: func() (*project.Registry, error) { return project.NewRegistry() },
 			Client: func(_ context.Context) (*docker.Client, error) {
 				return fake.Client, nil
 			},

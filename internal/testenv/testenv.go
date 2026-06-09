@@ -20,11 +20,13 @@
 package testenv
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
 )
@@ -58,7 +60,14 @@ func WithConfig() Option {
 		if e.config != nil {
 			return // already created (e.g. by WithProjectManager)
 		}
-		cfg, err := config.NewConfig()
+		// ErrNotInProject is the normal "no registered project" condition and
+		// degrades to an empty walk-up anchor; any other error is a real
+		// registry/storage failure and must fail the test loudly.
+		root, err := e.Registry(t).CurrentRoot()
+		if err != nil && !errors.Is(err, project.ErrNotInProject) {
+			t.Fatalf("testenv: resolving project root: %v", err)
+		}
+		cfg, err := config.NewConfig(config.WithProjectRoot(root))
 		if err != nil {
 			t.Fatalf("testenv: creating config: %v", err)
 		}
@@ -75,12 +84,25 @@ func WithProjectManager(gitFactory project.GitManagerFactory) Option {
 		// Ensure config is created first.
 		WithConfig()(t, e)
 
-		mgr, err := project.NewProjectManager(e.config, logger.Nop(), gitFactory)
+		mgr, err := project.NewProjectManager(logger.Nop(), gitFactory, e.config.Project().Name, e.Registry(t))
 		if err != nil {
 			t.Fatalf("testenv: creating project manager: %v", err)
 		}
 		e.projectManager = mgr
 	}
+}
+
+// Registry constructs a fresh project registry facade over the isolated data
+// directory (explicit injection — no env-var resolution). Fresh per call on
+// purpose: the underlying store snapshots the registry file at construction,
+// so tests that seed registry YAML must construct the registry afterwards.
+func (e *Env) Registry(t *testing.T) *project.Registry {
+	t.Helper()
+	reg, err := project.NewRegistry(project.WithRegistryDir(e.Dirs.Data))
+	if err != nil {
+		t.Fatalf("testenv: creating project registry: %v", err)
+	}
+	return reg
 }
 
 // New creates an isolated test environment. It:
@@ -146,7 +168,7 @@ const (
 	Settings
 	// EgressRules writes egress-rules.yaml to the state directory.
 	EgressRules
-	// ProjectRegistry writes projects.yaml to the data directory.
+	// ProjectRegistry writes registry.yaml to the data directory.
 	ProjectRegistry
 )
 
@@ -162,7 +184,7 @@ var configFiles = map[ConfigFile]configFileInfo{
 	ProjectConfigLocal: {filename: func() string { return "clawker.local.yaml" }, dotfile: true},
 	Settings:           {filename: func() string { return "settings.yaml" }, dir: func(e *Env) string { return e.Dirs.Config }},
 	EgressRules:        {filename: func() string { return "egress-rules.yaml" }, dir: func(e *Env) string { return e.Dirs.State }},
-	ProjectRegistry:    {filename: func() string { return "projects.yaml" }, dir: func(e *Env) string { return e.Dirs.Data }},
+	ProjectRegistry:    {filename: func() string { return consts.RegistryFile }, dir: func(e *Env) string { return e.Dirs.Data }},
 }
 
 // WriteYAML writes YAML content to the canonical location for the given file type.
