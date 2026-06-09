@@ -70,15 +70,10 @@ clawker worktree remove feature/auth
 # Remove multiple worktrees
 clawker worktree rm feature/auth feature/cache
 
-# Also delete the branch
-clawker worktree remove --delete-branch feature/auth
-
-# Force remove with uncommitted changes
-clawker worktree remove --force feature/auth
-```
+# Also delete the branch\nclawker worktree remove --delete-branch feature/auth\n```
 
 Safety checks prevent accidental data loss:
-- Refuses to remove worktrees with uncommitted changes (unless `--force`)
+- Refuses to remove worktrees with uncommitted changes
 - `--delete-branch` skips branch deletion when the branch has unmerged commits, prints a warning, and suggests `git branch -D` for force deletion — the worktree itself is still removed
 - `--delete-branch` returns an error when asked to delete the currently checked-out branch (`git.ErrIsCurrentBranch`) — the worktree is still removed
 

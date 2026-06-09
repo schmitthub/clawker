@@ -57,6 +57,8 @@ The branch itself is preserved unless --delete-branch is specified.`,
 	}
 
 	cmd.Flags().BoolVarP(&opts.Force, "force", "f", false, "Reserved for future use")
+	// Hidden: reserved for future use, not yet honored — keep off help text so it isn't advertised as a working escape hatch.
+	_ = cmd.Flags().MarkHidden("force")
 	cmd.Flags().BoolVar(&opts.DeleteBranch, "delete-branch", false, "Also delete the branch after removing the worktree")
 
 	return cmd

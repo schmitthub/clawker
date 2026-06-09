@@ -38,7 +38,6 @@ clawker worktree remove BRANCH [BRANCH...] [flags]
 
 ```
       --delete-branch   Also delete the branch after removing the worktree
-  -f, --force           Reserved for future use
   -h, --help            help for remove
 ```
 
