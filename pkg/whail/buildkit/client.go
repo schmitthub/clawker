@@ -20,7 +20,7 @@ import (
 )
 
 // DockerDialer abstracts the DialHijack capability on the moby client.
-// Engine.APIClient (which embeds *client.Client) satisfies this interface.
+// Engine.APIClient (which embeds client.APIClient, itself embedding HijackDialer) satisfies this interface.
 type DockerDialer interface {
 	DialHijack(ctx context.Context, url, proto string, meta map[string][]string) (net.Conn, error)
 }

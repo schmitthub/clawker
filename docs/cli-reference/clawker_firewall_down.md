@@ -8,8 +8,8 @@ Tear down the firewall stack
 
 ### Synopsis
 
-Stop the Envoy + CoreDNS firewall stack, detach all BPF programs,
-and flush eBPF state. Pending bypass timers are cancelled.
+Stop the Envoy + CoreDNS firewall stack. Pending bypass timers
+are cancelled.
 
 No-op if the stack is already stopped.
 

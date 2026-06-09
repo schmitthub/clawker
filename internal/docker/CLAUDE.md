@@ -23,9 +23,9 @@ Full terminal session lifecycle for interactive container sessions. `NewPTYHandl
 - **Volumes**: `clawker.project.agent-purpose` (workspace, config, history)
 - **Network**: from `config.Config.ClawkerNetwork()` (no constant in this package)
 
-Functions: `ValidateResourceName(name) error`, `ContainerName(project, agent) (string, error)`, `VolumeName(project, agent, purpose) (string, error)`, `ContainerNamesFromAgents(project, agents) ([]string, error)`, `ContainerNamePrefix`, `ImageTag`, `ParseContainerName`, `GenerateRandomName`. Constants: `NamePrefix = "clawker"`.
+Functions: `ValidateResourceName(name) error`, `ContainerName(project, agent) (string, error)`, `VolumeName(project, agent, purpose) (string, error)`, `ContainerNamesFromAgents(project, agents) ([]string, error)`, `ContainerNamePrefix`, `ImageTag`, `GenerateRandomName`. Constants: `NamePrefix = "clawker"`.
 
-**Validation**: `ValidateResourceName` validates user-sourced inputs (agent, project names) against Docker's container name rules: `^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`, max 128 chars. Built into `ContainerName` and `VolumeName` — callers cannot bypass validation. Internal `purpose` strings (`"config"`, `"history"`, `"workspace"`) are not validated.
+**Validation**: `ValidateResourceName` validates user-sourced inputs (agent, project names) against Docker's container name rules: `^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`. No length cap is enforced (Docker imposes none at the engine level). Built into `ContainerName` and `VolumeName` — callers cannot bypass validation. Internal `purpose` strings (`"config"`, `"history"`, `"workspace"`) are not validated.
 
 ## Labels
 
@@ -38,8 +38,8 @@ All label keys come from `config.Config` interface methods (`LabelManaged()`, `L
 ## Client (`client.go`)
 
 ```go
-func NewClient(ctx, cfg config.Config, opts ...ClientOption) (*Client, error)
-func NewClientFromEngine(engine *whail.Engine, cfg config.Config) *Client  // test constructor
+func NewClient(ctx context.Context, cfg config.Config, log *logger.Logger, opts ...ClientOption) (*Client, error)
+func NewClientFromEngine(engine *whail.Engine, cfg config.Config, log *logger.Logger) *Client  // test constructor
 type ClientOption func(*clientOptions)    // WithLabels(whail.LabelConfig)
 ```
 
@@ -69,7 +69,7 @@ type Container struct {
 
 ## Builder (`builder.go`)
 
-`NewBuilder(cli *Client, cfg *config.Project, workDir, projectName string)`. `Build(ctx, tag, opts)` builds the image; cache invalidation is delegated to the daemon-side builder (BuildKit layer cache or classic builder `probeCache`). `BuilderOptions`: `NoCache/Pull/SuppressOutput/BuildKitEnabled`, `Labels/Target/NetworkMode/BuildArgs/Tags/Dockerfile/OnProgress/ClaudeCodeVersion`.
+`NewBuilder(cli *Client, cfg *config.Project, workDir, projectName string)`. `Build(ctx, tag, opts)` builds the image; cache invalidation is delegated to the daemon-side builder (BuildKit layer cache or classic builder `probeCache`). `BuilderOptions`: `NoCache/Pull/SuppressOutput/BuildKitEnabled`, `Labels/Target/NetworkMode/BuildArgs/Tags/Dockerfile/OnProgress/OnComplete/ClaudeCodeVersion`.
 
 ## Default Image (`defaults.go`)
 
@@ -85,7 +85,7 @@ type Container struct {
 
 ## Volume Utilities (`volume.go`)
 
-`EnsureVolume(...)`, `CopyToVolume(...)`, `LoadIgnorePatterns(path)`, `FindIgnoredDirs(hostPath, patterns)`. CopyToVolume uses two-phase ownership fix: tar headers with UID/GID 1001 + post-copy chown via `Client.ChownImage` (default: `"busybox:latest"`). Tests use `harness.TestChownImage`.
+`EnsureVolume(...)`, `CopyToVolume(...)`, `LoadIgnorePatterns(path)`, `FindIgnoredDirs(hostPath, patterns)`. CopyToVolume uses two-phase ownership fix: tar headers with UID/GID 1001 + post-copy chown via `Client.ChownImage` (default: `"busybox:latest"`); set `Client.ChownImage` to override the chown image.
 
 `FindIgnoredDirs` walks a host directory and returns relative paths of directories matching ignore patterns. Used by bind mode to generate tmpfs overlay mounts. Key differences from snapshot's `shouldIgnore`: only returns directories, never masks `.git/` (bind mode needs git), and skips recursion into matched directories for performance.
 
@@ -120,9 +120,9 @@ Standalone fixture functions (`ContainerFixture`, `RunningContainerFixture`) use
 
 ## Gotchas
 
-- **`cfg` is unexported** — `Client.cfg` is a private field. Production code uses `NewClient(ctx, cfg, opts...)`. Test code in other packages uses `NewClientFromEngine(engine, cfg)` or `mocks.NewFakeClient(cfg)`.
+- **`cfg` is unexported** — `Client.cfg` is a private field. Production code uses `NewClient(ctx, cfg, log, opts...)`. Test code in other packages uses `NewClientFromEngine(engine, cfg, log)` or `mocks.NewFakeClient(cfg)`.
 - **No label constants exported** — all label keys come from `config.Config` methods. External packages that need label keys must hold a `config.Config` reference.
 - **`parseContainers` is a Client method** — it needs `c.cfg` for label keys when parsing container summaries.
 - **LSP false positives** — gopls reports false "no field or method" errors on `config.Config` interface and false "copylocks" warnings. These are stale LSP cache issues — the real compiler (`go build`) is authoritative.
-- **External caller cascade** — `NewFakeClient` signature changed from `NewFakeClient(opts...)` to `NewFakeClient(cfg, opts...)`. All ~150+ external callers need `configmocks.NewBlankConfig()` as first arg (`import configmocks "github.com/schmitthub/clawker/internal/config/mocks"`). `WithConfig` option was deleted.
+- **`NewFakeClient` requires cfg** — Signature is `NewFakeClient(cfg config.Config, opts ...FakeClientOption)`. All callers pass `configmocks.NewBlankConfig()` as first arg (`import configmocks "github.com/schmitthub/clawker/internal/config/mocks"`). There is no `WithConfig` option.
 

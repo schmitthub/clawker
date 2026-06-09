@@ -1,6 +1,6 @@
 # dnsbpf Package
 
-CoreDNS plugin that populates the clawker BPF `dns_cache` map in real time. Installed as a `dnsbpf` directive in the custom CoreDNS build (`cmd/coredns-clawker`), registered first in every server block so it wraps the downstream resolver (typically `forward`) and intercepts the response.
+CoreDNS plugin that populates the clawker BPF `dns_cache` map in real time. Installed as a `dnsbpf` directive in the custom CoreDNS build (`cmd/coredns-clawker`), registered second (after `otel`) in every server block so it wraps the downstream resolver (typically `forward`) and intercepts the response.
 
 Runtime owner: `internal/controlplane/firewall.Stack` builds the `clawker-coredns:latest` image on demand (embeds `cmd/coredns-clawker` via `//go:embed`), manages its container lifecycle, and provides the pinned `dns_cache` map at `/sys/fs/bpf/clawker/dns_cache`.
 
@@ -26,7 +26,7 @@ type MapWriter interface {
 type Handler struct {
     Next plugin.Handler
     Zone string    // Corefile zone (e.g., "github.com." or ".example.com.")
-    Map  MapWriter // Shared BPF map writer; nil in tests
+    Map  MapWriter // Shared BPF map writer; nil skips writes
 }
 
 type BPFMap struct { m *ebpf.Map }
@@ -40,7 +40,7 @@ const pluginName    = "dnsbpf"
 
 ## Domain Hash Contract
 
-The plugin computes the domain hash **from the Corefile zone name, not the query name**. This is load-bearing for wildcard zones: a `.example.com { dnsbpf; forward … }` block hashes `.example.com` once so every subdomain answered through that zone maps to the same hash that `internal/controlplane/firewall.Handler.FirewallSyncRoutes` wrote into `route_map`.
+The plugin computes the domain hash **from the Corefile zone name, not the query name**. This is load-bearing for wildcard zones: the Corefile generator (`coredns_config.go`) calls `normalizeDomain` on the destination before writing zone names, so a `.example.com` rule produces zone `example.com { dnsbpf; forward … }` (no leading dot). `zoneToDomain` strips the trailing dot, yielding `example.com`, and `DomainHash("example.com")` matches the hash that `internal/controlplane/firewall.Handler.FirewallSyncRoutes` wrote into `route_map` (which also calls `normalizeDomain` before `DomainHash`).
 
 The hash function is `clawkerebpf.DomainHash` (FNV-1a of `strings.ToLower(domain)`) — the exact same call `internal/controlplane/firewall/ebpf` and `internal/controlplane/firewall` (via `normalizeDomain`) use. Do not inline a second hash implementation here; reuse the one from `internal/controlplane/firewall/ebpf` so the three call sites stay synchronized.
 
@@ -61,7 +61,7 @@ The custom CoreDNS container (`clawker-coredns:latest`, built on demand by the C
 
 ## Test Seam
 
-`Handler.Map` is the `MapWriter` interface — tests construct a `Handler` with a fake map writer (e.g., a channel-backed recorder) and drive it via a `cannedHandler` stub as `Next`. This exercises the full A-record extraction path without a live BPF map or kernel.
+`Handler.Map` is the `MapWriter` interface — tests construct a `Handler` with a fake map writer (e.g., a mutex-guarded slice recorder) and drive it via a `cannedHandler` stub as `Next`. This exercises the full A-record extraction path without a live BPF map or kernel.
 
 ## Imports
 

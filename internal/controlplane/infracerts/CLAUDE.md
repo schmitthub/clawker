@@ -7,8 +7,9 @@ Short-lived mTLS client certificate issuer for clawker infrastructure services. 
 ```
 CLI root CA (auth.EnsureAuthMaterial — host-side, never enters CP)
   └── infra intermediate CA (CLI-minted, bind-mounted RO into CP)
-        ├── envoy-otel-client    (minted at firewall.Stack.EnsureRunning, 1y TTL)
-        ├── coredns-otel-client  (minted at firewall.Stack.EnsureRunning, 1y TTL)
+        ├── envoy-otel-client    (minted at firewall.Stack.EnsureRunning/Reload, 1y TTL)
+        ├── coredns-otel-client  (minted at firewall.Stack.EnsureRunning/Reload, 1y TTL)
+        ├── cp-otel-client       (minted via otelcerts.Service.LoadTLSConfig, per-handshake, in-process)
         └── <future infra service>
 ```
 
@@ -31,7 +32,7 @@ func (i *Issuer) IntermediatePEM() []byte
 ## Lifetime
 
 - **Intermediate**: provisioned once by the CLI at `auth.EnsureAuthMaterial` time (5-year TTL). Rotates when the CLI root rotates (`clawker auth rotate --force`).
-- **Leaves**: 1-year TTL (same shape as MITM domain certs). Re-issued on every `firewall.Stack.EnsureRunning` — container restart cadence is the rotation cadence. No renewal goroutine.
+- **Leaves**: 1-year TTL (same shape as MITM domain certs). Re-issued on every `firewall.Stack.EnsureRunning` / `Reload` — container restart cadence is the rotation cadence. No renewal goroutine.
 
 ## Why an intermediate (not direct CLI-mints-all)
 
@@ -42,8 +43,8 @@ func (i *Issuer) IntermediatePEM() []byte
 ## Imports
 
 - **Uses**: stdlib `crypto/*`, `encoding/pem`, `math/big`. No internal/ imports.
-- **Imported by**: `cmd/clawker-cp` (loads the intermediate at startup and hands it to `otelcerts.New`, which is then passed to `firewall.NewStack` as a `firewall.OtelCertProvisioner`), `internal/controlplane/otelcerts` (wraps `*Issuer` behind its `Issuer` interface and mints per-service material on demand), `internal/auth` (provisions the intermediate at `EnsureAuthMaterial` time). The firewall package does NOT import `infracerts` directly — it only sees the `OtelCertProvisioner` interface defined in `firewall/stack.go`.
+- **Imported by**: `cmd/clawker-cp` (loads the intermediate at startup and hands it to `otelcerts.New`, which is then passed to `firewall.NewStack` as a `firewall.OtelCertProvisioner`), `internal/controlplane/otelcerts` (wraps `*Issuer` behind its `Issuer` interface and mints per-service material on demand). The firewall package does NOT import `infracerts` directly — it only sees the `OtelCertProvisioner` interface defined in `firewall/stack.go`. (`internal/auth` provisions the intermediate CA itself using x509 directly — it does not import this package.)
 
 ## Degraded mode
 
-`*Issuer` reaches the firewall only indirectly: `cmd/clawker-cp` wraps it with `*otelcerts.Service` and hands the wrapper to `firewall.NewStack` behind the `firewall.OtelCertProvisioner` interface. A nil provisioner is tolerated by Stack — it skips the mTLS material bind-mounts and Envoy/CoreDNS run in **stdout-only degraded mode**: Envoy omits the OTel access-log sink AND the `otel_collector_als` cluster (sender-side gate on `als.MTLS` in `buildHTTPAccessLog` / `buildTCPAccessLog` / `buildClusters`); CoreDNS sees no `CLAWKER_COREDNS_OTEL_ENDPOINT` and installs `noopEmitter`. There is no plaintext OTLP fallback — infra services must never cross into the untrusted `otel-collector:4317` receiver lane reserved for agent containers. Stdout JSON sinks remain wired for `docker logs` triage; the OpenSearch ingestion path stays cold. The CP-side load failure emits `event=infra_issuer_unavailable` so operators can triage.
+`*Issuer` reaches the firewall only indirectly: `cmd/clawker-cp` wraps it with `*otelcerts.Service` and hands the wrapper to `firewall.NewStack` behind the `firewall.OtelCertProvisioner` interface. A nil provisioner is tolerated by Stack — it skips the mTLS material bind-mounts and Envoy/CoreDNS run in **stdout-only degraded mode**: Envoy omits the OTel access-log sink AND the `otel_collector_als` cluster (sender-side gate on `als.MTLS` in `buildHTTPAccessLog` / `buildTCPAccessLog` / `installOtelALSCluster`); CoreDNS sees no `CLAWKER_COREDNS_OTEL_ENDPOINT` and installs `noopEmitter`. There is no plaintext OTLP fallback — infra services must never cross into the untrusted `otel-collector:4317` receiver lane reserved for agent containers. Stdout JSON sinks remain wired for `docker logs` triage; the OpenSearch ingestion path stays cold. The CP-side load failure emits `event=otelcerts_unavailable` with `step=infracerts_load` so operators can triage.

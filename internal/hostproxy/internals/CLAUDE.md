@@ -72,7 +72,7 @@ The socket server is the container-side component of the socketbridge system. It
 3. Receives GPG public key data via muxrpc protocol and writes to `~/.gnupg/pubring.kbx`, `gpg.conf` (no-autostart), and `gpg-agent.conf` (sensible container defaults: no-grab, disable-scdaemon)
 4. Kills any pre-existing gpg-agent via `gpgconf --kill gpg-agent` (GPG's sanctioned mechanism — targets only the agent for the specific GNUPGHOME, no sudo needed)
 5. Forwards socket connections through muxrpc messages over stdin/stdout to the host-side bridge
-6. Logs to both stderr AND `/var/log/clawker/socket-server.log` (simple 1MB rotation)
+6. Logs to both stderr AND `/var/log/clawker/socket-server.log` (simple 1 MiB rotation)
 
 The host-side bridge (`internal/socketbridge`) launches this binary via `docker exec` and communicates using a binary muxrpc protocol.
 
@@ -125,7 +125,7 @@ Inside the container, the socket-server writes logs to:
 - **stderr** (visible via `docker logs` or bridge stderr capture)
 - **`/var/log/clawker/socket-server.log`** (persistent file, survives bridge restarts)
 
-Log rotation: when the log exceeds 1MB, it is renamed to `socket-server.log.1` on next startup.
+Log rotation: when the log exceeds 1 MiB, it is renamed to `socket-server.log.1` on next startup.
 
 To inspect logs inside a running container:
 ```bash

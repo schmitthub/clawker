@@ -298,10 +298,10 @@ func TestValidateCgroupPath(t *testing.T) {
 }
 
 // TestClearBypass_DeletesExistingEntry is the regression test for the
-// `firewall bypass --stop` re-enforcement fix (commit 6a00a212). Enable()
+// `firewall bypass --stop` re-enforcement fix. clearBypass (called from Install)
 // must remove any lingering BypassMap entry so the BPF fast path actually
-// re-enforces after a bypass is stopped. Before that commit the bypass flag
-// was orphaned and the container silently kept unrestricted egress.
+// re-enforces after a bypass is stopped. Without this clear, the bypass flag
+// is orphaned and the container silently keeps unrestricted egress.
 func TestClearBypass_DeletesExistingEntry(t *testing.T) {
 	t.Parallel()
 	const cgroupID uint64 = 123
@@ -325,7 +325,7 @@ func TestClearBypass_DeletesExistingEntry(t *testing.T) {
 }
 
 // TestClearBypass_IgnoresMissingEntry asserts the common case (no bypass
-// ever set) is a silent no-op. Enable() is called on every container start
+// ever set) is a silent no-op. Install() is called on every container start
 // and must not return an error when there is nothing to clear.
 func TestClearBypass_IgnoresMissingEntry(t *testing.T) {
 	t.Parallel()
@@ -346,10 +346,9 @@ func TestClearBypass_IgnoresMissingEntry(t *testing.T) {
 
 // TestClearBypass_WrapsOtherErrors asserts that non-ErrKeyNotExist failures
 // (e.g. EPERM from missing CAP_BPF, EINVAL from a corrupted map fd) surface
-// as errors instead of being silently swallowed as they were in commit
-// 6a00a212. Enable() currently treats the returned error as non-fatal, but
-// the error must be observable so the Warn log fires and future callers can
-// make a different decision.
+// as errors instead of being silently swallowed. Install() currently treats
+// the returned error as non-fatal, but the error must be observable so the
+// Warn log fires and future callers can make a different decision.
 func TestClearBypass_WrapsOtherErrors(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -614,8 +613,8 @@ func TestManager_FlushAll_NilObjsNoOp(t *testing.T) {
 	}
 }
 
-// TestManager_FlushAll_DrainsRatelimitMaps verifies the new ratelimit_state
-// + ratelimit_drops drain logic added in Task 1. Constructs the two maps
+// TestManager_FlushAll_DrainsRatelimitMaps verifies the ratelimit_state
+// + ratelimit_drops drain logic in FlushAll. Constructs the two maps
 // directly (no Load → no pinning → no privileges beyond CAP_BPF) and
 // wires them into a Manager, populates entries, then asserts FlushAll
 // leaves both maps empty. CP-restart determinism — token buckets must

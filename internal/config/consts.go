@@ -9,7 +9,7 @@
 //
 // What stays here (genuinely config-backed):
 //   - RequiredFirewallRules() — backed by requiredFirewallRules in defaults.go
-//   - OpenSearchURL/OpenSearchDashboardsURL/PrometheusURL — read MonitoringConfig() ports
+//   - OpenSearchURL/OpenSearchDashboardsURL/PrometheusURL/OtelCollectorURL — read MonitoringConfig() ports
 //   - The Mode type and ModeBind/ModeSnapshot values (config-domain enum;
 //     ParseMode lives in schema.go)
 

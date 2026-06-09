@@ -10,7 +10,7 @@ Zerolog-based file-only logging with optional OTEL bridge. Struct-based API — 
 
 **Factory noun**: Wired as a lazy closure on `cmdutil.Factory.Logger`. Commands capture `f.Logger` on their Options struct and resolve it in the run function. Library packages accept `*logger.Logger` in constructors.
 
-**Dual-destination**: When `OtelOptions` is provided, logs go to both the local file (lumberjack writer) and an OTEL collector via the `otelzerolog` bridge hook. OTEL failure is non-fatal — if the provider cannot be created, logging falls back to file-only with a warning.
+**Dual-destination**: When `OtelOptions` is provided, logs go to both the local file (lumberjack writer) and an OTEL collector via a custom `io.Writer` sink (`otelLogWriter`) that parses zerolog's JSON output and re-emits each record as an OTEL `log.Record` with all structured fields preserved. OTEL failure is non-fatal — if the provider cannot be created, logging falls back to file-only with a warning.
 
 **User-visible output**: Commands use `fmt.Fprintf(ios.ErrOut, ...)` with `ios.ColorScheme()` for warnings/status, and return errors to `Main()` for centralized rendering. See `cli-output-style-guide` memory for per-scenario details.
 
@@ -91,15 +91,15 @@ Transport is OTLP/gRPC, not OTLP/HTTP. Two distinct receivers exist on the colle
 
 ```go
 func New(opts Options) (*Logger, error)  // File logging + optional OTEL bridge (CLI/host path)
-func NewWriter(w io.Writer) *Logger       // Structured JSON to io.Writer, no rotation, no OTEL (container daemon path)
+func NewWriter(w io.Writer) *Logger       // Structured JSON to io.Writer, no rotation, no OTEL
 func Nop() *Logger                        // Discards all output (tests, disabled logging)
 ```
 
 `New` creates the log directory, configures lumberjack rotation, and optionally attaches the OTEL bridge. Returns error if `LogsDir` is empty or directory creation fails. OTEL failure is non-fatal (falls back to file-only).
 
-`NewWriter` is the constructor for **containerized daemons that want their structured JSON surfaced via `docker logs <container>`** (e.g. `clawker-cp`). No file rotation, no OTEL — the container runtime owns log lifecycle. Debug level by default.
+`NewWriter` writes structured JSON to an arbitrary `io.Writer` with no file rotation and no OTEL bridge. Used in tests (passing `*bytes.Buffer`) and as the degraded fallback in `clawker-cp` when `New` fails (writes to `os.Stderr`). Debug level by default.
 
-**Note**: `clawkerd` deliberately uses `New(...)` writing to `/var/log/clawker/clawkerd.log` inside the container instead of `NewWriter`. The reasoning is operational: per-agent containers can be many and may run with `--rm` so `docker logs` is short-lived; an on-disk rotated file (50MB / 7d / 3 backups) gives an operator a stable place to triage individual-agent issues across container churn. Material is bounded by the container's writable layer — `--rm` or `docker rm` reclaims it. See `cmd/clawkerd/CLAUDE.md` for the full level taxonomy.
+**Note**: Both `clawkerd` and `clawker-cp` use `New(...)` as their primary logger, not `NewWriter`. `clawker-cp` sets `EchoStdout: true` to mirror records to stdout so `docker logs clawker-controlplane` shows them alongside the file/OTEL sinks. `clawkerd` uses `New(...)` writing to `/var/log/clawker/clawkerd.log` without `EchoStdout` — per-agent containers can be many and may run with `--rm` so `docker logs` is short-lived; an on-disk rotated file (50MB / 7d / 3 backups) gives an operator a stable place to triage individual-agent issues across container churn. Material is bounded by the container's writable layer — `--rm` or `docker rm` reclaims it. See `cmd/clawkerd/CLAUDE.md` for the full level taxonomy.
 
 `Nop` returns a logger backed by `zerolog.Nop()` — zero allocation, no file I/O.
 

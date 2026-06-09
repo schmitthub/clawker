@@ -37,8 +37,7 @@ func NewCmdPrune(f *cmdutil.Factory, runF func(context.Context, *PruneOptions) e
 This command removes networks that have no connected containers.
 Use with caution as this may affect container communication.
 
-Note: The built-in clawker-net network will be preserved if containers
-are using it for the monitoring stack.`,
+Networks with connected containers are left untouched.`,
 		Example: `  # Remove all unused clawker networks
   clawker network prune
 

@@ -36,10 +36,6 @@ Main struct: `In io.Reader`, `Out io.Writer`, `ErrOut io.Writer`. Constructors: 
 
 `func Test() (*IOStreams, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer)` — For external packages needing test IOStreams. Returns raw `*bytes.Buffer` pointers for in/out/errOut. Uses `mocks.FakeTerm{}` (from `internal/term/mocks`). Non-TTY, no color by default.
 
-### testIOStreams (internal, unexported)
-
-Package-private test double in `iostreams_test.go`, accessed via shim: `var iostreamstest iostreamstestShim`. Embeds `*IOStreams`. Fields: `InBuf`, `OutBuf`, `ErrBuf *testBuffer`. Setup: `SetInteractive(bool)`, `SetColorEnabled(bool)`, `SetTerminalSize(w, h)`, `SetProgressEnabled(bool)`, `SetSpinnerDisabled(bool)`. Buffers: `InBuf.SetInput(s)`, `OutBuf.String()`, `ErrBuf.String()`, `OutBuf.Reset()`.
-
 ### ColorScheme
 
 `NewColorScheme(enabled, theme)` or `ios.ColorScheme()`. Query: `Enabled()`, `Theme()`.
@@ -55,11 +51,11 @@ All return unmodified string when disabled. Icons: Unicode+color or ASCII fallba
 
 ## IOStreams Methods
 
-**TTY**: `IsInputTTY()`, `IsOutputTTY()`, `IsStderrTTY()`, `IsInteractive()` (stdin+stdout), `CanPrompt()` (interactive AND not NeverPrompt)
+**TTY**: `IsInputTTY()`, `IsStdoutTTY()`, `IsStderrTTY()`, `IsInteractive()` (stdin+stdout), `CanPrompt()` (interactive AND not NeverPrompt)
 
 **Color**: `ColorEnabled()`, `SetColorEnabled(bool)`, `Is256ColorSupported()`, `IsTrueColorSupported()`, `ColorScheme()`, `DetectTerminalTheme()`, `TerminalTheme()` ("light"/"dark"/"none")
 
-**Terminal Size**: `TerminalWidth()` (default 80), `TerminalSize()` (default 80x24), `InvalidateTerminalSizeCache()`
+**Terminal Size**: `TerminalWidth()` (default 80)
 
 ### Spinners
 
@@ -173,7 +169,7 @@ Lipgloss-based pure functions for composing visual output:
 - Call `StartPager()` before any output
 - `CanPrompt()` false when `neverPrompt` set (CI)
 - `Blue()` = BlueStyle (`ColorDeepSkyBlue`, no bold); `Primary()` = TitleStyle (`ColorPrimary` = `ColorBurntOrange`, bold)
-- `tui/` re-exports styles, tokens, text, layout, time via `tui/iostreams.go`
+- `tui/` uses `iostreams` styles and layout helpers by direct import (no re-export file)
 
 ## Text Utilities
 

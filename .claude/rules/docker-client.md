@@ -16,6 +16,6 @@ paths: ["internal/docker/**", "pkg/whail/**"]
 - Per-operation `context.Context` as first parameter — never store context in structs
 - Use `context.Background()` in deferred cleanup (original context may be cancelled)
 - `IsContainerManaged()` returns `(false, nil)` for non-existent containers — not an error
-- All whail methods check `IsContainerManaged` first, return `ErrContainerNotFound` for unmanaged
+- All whail methods check `IsContainerManaged` first; unmanaged containers return `ErrContainerNotManaged` or `ErrContainerNotFound` depending on the method
 - Channel-based methods (ContainerWait): return nil response channel for unmanaged, use buffered error channels
 - See `internal/docker/CLAUDE.md` for full patterns

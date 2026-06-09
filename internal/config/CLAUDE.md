@@ -31,11 +31,16 @@ State dir: `CLAWKER_STATE_DIR` > `$XDG_STATE_HOME/clawker` > `~/.local/state/cla
 | File | Purpose |
 | --- | --- |
 | `config.go` | `Config` interface, `configImpl` struct, constructors (`NewConfig`, `NewBlankConfig`, `NewFromString`), store accessors, schema accessors |
-| `consts.go` | Private constants exposed via `Config` methods. Only export: `Mode` type (`ModeBind`/`ModeSnapshot`) |
+| `consts.go` | Deprecated Config interface wrappers + config-backed accessors. Only non-deprecated exports: `Mode` type (`ModeBind`/`ModeSnapshot`). All string constants and path helpers have moved to `internal/consts`. |
 | `schema.go` | All persisted schema structs + `ParseMode()` + convenience methods |
 | `defaults.go` | Firewall rules (`requiredFirewallDomains`, `requiredFirewallRules`), `DefaultIgnoreFile` |
 | `presets.go` | Language preset definitions (`Preset` type, `Presets()` function) for project init |
 | `resolve.go` | `ConfigDir()`/`DataDir()`/`StateDir()`, `GetProjectRoot`/`GetProjectIgnoreFile`, path helpers |
+| `port.go` | `Port` type with `UnmarshalYAML` — typed wrapper for settings port fields |
+| `egress_port.go` | `ParsePortSpec`, `ValidatePortSpec`, `PortSpan`, `SinglePort` — port range parsing for egress rules |
+| `migrations.go` | `ProjectMigrations()`, `SettingsMigrations()` — schema migration functions applied at load time |
+| `storeui/project/` | `Overrides`, `LayerTargets`, `Edit` — project store UI helpers |
+| `storeui/settings/` | `Overrides`, `LayerTargets`, `Edit` — settings store UI helpers |
 | `config_test.go` | Tests: constructors, defaults, validation, typed mutation, persistence, constants, env var overrides |
 | `mocks/config_mock.go` | moq-generated `ConfigMock` (do not edit) |
 | `mocks/stubs.go` | Test helpers: `NewBlankConfig()`, `NewFromString(projectYAML, settingsYAML)`, `NewIsolatedTestConfig(t)` |
@@ -53,6 +58,7 @@ func Presets() []Preset                                         // Language pres
 func ConfigDir() string                                         // Config directory path
 func DataDir() string                                           // XDG data dir (~/.local/share/clawker)
 func StateDir() string                                          // XDG state dir (~/.local/state/clawker)
+// Deprecated: use consts.SettingsFilePath / consts.UserProjectConfigFilePath / consts.ProjectRegistryFilePath.
 func SettingsFilePath() (string, error)
 func UserProjectConfigFilePath() (string, error)
 func ProjectRegistryFilePath() (string, error)
@@ -68,7 +74,7 @@ SettingsStore() *storage.Store[Settings]   // Direct access to settings store
 
 **Schema accessors**: `Project()`, `Settings()`, `ClawkerIgnoreName()`, `RequiredFirewallDomains()`, `RequiredFirewallRules()`, `EgressRulesFileName()`
 
-**Settings convenience accessors**: `LoggingConfig()`, `MonitoringConfig()`, `HostProxyConfig()` return the corresponding nested struct directly. Equivalent to `SettingsStore().Read().Logging` etc.; the typed store accessor is the preferred path for new code, but these helpers are not deprecated and remain in active use (e.g. `internal/bundler/dockerfile.go` reads `cfg.MonitoringConfig()` per render to flow OTEL endpoints into the Dockerfile).
+**Settings convenience accessors** (deprecated): `LoggingConfig()`, `MonitoringConfig()`, `HostProxyConfig()` return the corresponding nested struct directly. Equivalent to `SettingsStore().Read().Logging` etc. Prefer the typed store accessor in new code. Still in use in existing callers (e.g. `internal/bundler/dockerfile.go`, `internal/hostproxy/`).
 
 **Mutation**: Use `ProjectStore().Set(fn)` / `SettingsStore().Set(fn)` (returns error). Persist with `ProjectStore().Write()` / `SettingsStore().Write()`.
 
@@ -76,17 +82,17 @@ SettingsStore() *storage.Store[Settings]   // Direct access to settings store
 
 **Path resolution**: `GetProjectRoot()`, `GetProjectIgnoreFile()`, `ConfigDirEnvVar()`, `StateDirEnvVar()`, `DataDirEnvVar()`, `TestRepoDirEnvVar()`
 
-**Subdir helpers** (ensure + return path): `MonitorSubdir()`, `BuildSubdir()`, `DockerfilesSubdir()`, `LogsSubdir()`, `PidsSubdir()`, `BridgesSubdir()`, `ShareSubdir()`, `WorktreesSubdir()`, `FirewallDataSubdir()`
+**Subdir helpers** (ensure + return path): `MonitorSubdir()`, `BuildSubdir()`, `DockerfilesSubdir()`, `LogsSubdir()`, `PidsSubdir()`, `BridgesSubdir()`, `ShareSubdir()`, `WorktreesSubdir()`, `FirewallDataSubdir()`, `FirewallCertSubdir()`
 
 **PID/log file helpers**: `BridgePIDFilePath(containerID)`, `HostProxyPIDFilePath()`, `HostProxyLogFilePath()`
 
 **Domain/network**: `Domain()` ("clawker.dev"), `LabelDomain()` ("dev.clawker"), `ClawkerNetwork()` ("clawker-net")
 
-**Label keys**: `LabelPrefix()`, `LabelManaged()`, `LabelMonitoringStack()`, `LabelProject()`, `LabelAgent()`, `LabelVersion()`, `LabelImage()`, `LabelCreated()`, `LabelWorkdir()`, `LabelPurpose()`, `LabelTestName()`, `LabelBaseImage()`, `LabelFlavor()`, `LabelTest()`, `LabelE2ETest()`, `ManagedLabelValue()`, `EngineLabelPrefix()`, `EngineManagedLabel()`
+**Label keys**: `LabelPrefix()`, `LabelManaged()`, `LabelProject()`, `LabelAgent()`, `LabelVersion()`, `LabelImage()`, `LabelCreated()`, `LabelWorkdir()`, `LabelPurpose()`, `PurposeAgent()`, `PurposeMonitoring()`, `PurposeFirewall()`, `LabelTestName()`, `LabelBaseImage()`, `LabelFlavor()`, `LabelTest()`, `LabelE2ETest()`, `ManagedLabelValue()`, `EngineLabelPrefix()`, `EngineManagedLabel()`
 
 **Container constants**: `ContainerUID()` / `ContainerGID()` — deprecated delegates to `consts.ContainerUID()` / `consts.ContainerGID()`. The underlying consts resolve once at package init: on Linux hosts from `os.Getuid()` / `os.Getgid()` (the CLI invoker), falling back to 1001 when the kernel returns 0 (sudo) or -1; on non-Linux hosts (macOS, Windows) the fallback 1001 is taken unconditionally because Docker Desktop's virtiofs / gRPC-FUSE share masks container UID/GID at the boundary and baking the host's numeric IDs would also risk `groupadd --gid` collisions with low base-image GIDs (e.g. macOS staff=20 vs Debian dialout=20). CP-side code must use `consts.HostUID()` / `consts.HostGID()` instead — inside the CP container `os.Getuid()` is the CP image's UID, not the host's. See `internal/consts/controlplane.go`.
 
-**Monitoring URLs**: `OpenSearchURL()`, `OpenSearchDashboardsURL()`, `PrometheusURL()`
+**Monitoring URLs**: `OpenSearchURL()`, `OpenSearchDashboardsURL()`, `PrometheusURL()`, `OtelCollectorURL()`
 
 ### Exported Mode Type (consts.go)
 
@@ -120,11 +126,11 @@ Import as `configmocks "github.com/schmitthub/clawker/internal/config/mocks"`.
 
 | Helper | Returns | Use case |
 | --- | --- | --- |
-| `NewBlankConfig()` | `*ConfigMock` | Default test double with defaults; Set/Write panic |
-| `NewFromString(projectYAML, settingsYAML)` | `*ConfigMock` | Specific YAML values, NO defaults; Set/Write panic |
-| `NewIsolatedTestConfig(t)` | `Config` | File-backed; supports Set/Write/env overrides |
+| `NewBlankConfig()` | `*ConfigMock` | Default test double with defaults; read-only |
+| `NewFromString(projectYAML, settingsYAML)` | `*ConfigMock` | Specific YAML values, NO defaults; read-only |
+| `NewIsolatedTestConfig(t)` | `Config` | File-backed; supports `ProjectStore().Set(fn)`, `Write()`, env overrides |
 
-`NewBlankConfig`/`NewFromString` return moq `*ConfigMock` with read Func fields pre-wired. Override any Func field for partial mocking. Call `mock.ProjectCalls()` etc. for assertions. Set/Write methods are NOT wired — calling them panics via moq's nil-func guard, signaling that `NewIsolatedTestConfig` should be used for mutation tests.
+`NewBlankConfig`/`NewFromString` return moq `*ConfigMock` with read Func fields pre-wired. Override any Func field for partial mocking. Call `mock.ProjectCalls()` etc. for assertions. For mutation tests, use `NewIsolatedTestConfig` which returns a real file-backed `Config` with a live `storage.Store` that supports `ProjectStore().Set(fn)` / `SettingsStore().Set(fn)` and `Write()`.
 
 ## Gotchas
 

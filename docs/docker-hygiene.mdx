@@ -29,7 +29,7 @@ Clawker builds custom Docker images, creates config/history volumes, and spins u
 Clawker labels all its resources (`dev.clawker.*`), so its own prune commands only affect clawker resources:
 
 ```bash
-# Remove unused clawker images (keeps images referenced by running containers)
+# Remove dangling (untagged) clawker images
 clawker image prune
 
 # List clawker volumes and remove specific ones

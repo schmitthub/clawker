@@ -34,7 +34,7 @@ type InitOptions struct {
 func NewCmdInit(f *cmdutil.Factory, runF func(context.Context, *InitOptions) error) *cobra.Command
 ```
 
-Scaffolds monitoring stack config files (`compose.yaml`, `otel-config.yaml`, `prometheus.yaml`) plus the `opensearch-bootstrap/` asset tree (bootstrap.sh, component + index templates, ISM policies, Dashboards saved objects) in `cfg.MonitorSubdir()` via `monitor.WriteOpenSearchBootstrap`. Flags: `--force/-f` (overwrite existing).
+Scaffolds monitoring stack config files (`compose.yaml`, `otel-config.yaml`, `prometheus.yaml`) plus the `opensearch-bootstrap/` asset tree (bootstrap.sh, component templates, ingest pipelines, index templates, ISM policies, datasources, Dashboards saved objects) in `cfg.MonitorSubdir()` via `monitor.WriteOpenSearchBootstrap`. Flags: `--force/-f` (overwrite existing).
 
 ### monitor up
 

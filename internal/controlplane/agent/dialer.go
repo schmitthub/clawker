@@ -923,8 +923,8 @@ func (d *Dialer) capturePeer(rawCerts [][]byte, peer *peerInfo) {
 	// SAN. Subject.CommonName is the deterministic clawkerd binary
 	// literal (consts.ContainerClawkerd) and would yield the same
 	// string for every agent — the per-agent identity lives in the
-	// SAN. The dialer-side classifyRegistry compares only thumbprints
-	// post-Task-4; this field rides on SessionConnected purely as a
+	// SAN. The dialer-side classifyRegistry compares only thumbprints;
+	// this field rides on SessionConnected purely as a
 	// diagnostic so subscribers can log "which agent connected" without
 	// a separate registry lookup. SAN-vs-label drift detection lives
 	// upstream in IdentityInterceptor.
@@ -993,8 +993,7 @@ type drainResult struct {
 }
 
 // drainStream holds the Session open. Reads each Response and
-// discards (CP doesn't dispatch any further Commands in this commit).
-// Exits on EOF (peer close), ctx cancel (CP shutdown), or error.
+// discards. Exits on EOF (peer close), ctx cancel (CP shutdown), or error.
 func (d *Dialer) drainStream(ctx context.Context, stream clawkerdv1.ClawkerdService_SessionClient, log *logger.Logger) drainResult {
 	for {
 		resp, err := stream.Recv()

@@ -9,7 +9,7 @@ Claude Code credentials for injection into agent containers when
 ## Architecture
 
 ```
-keyring.go       — Raw ops: Set, Get, Delete + ErrNotFound, TimeoutError, MockInit
+keyring.go       — Raw ops: Set, Get, Delete + ErrNotFound, TimeoutError, MockInit, MockInitWithError
 service.go       — Generic pipeline: ServiceDef[T], getCredential[T], sentinels, helpers
 claude_code.go   — ClaudeCodeCredentials types + GetClaudeCodeCredentials()
 ```

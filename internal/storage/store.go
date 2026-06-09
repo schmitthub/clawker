@@ -11,6 +11,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// dirtyOp records the kind of mutation for a tracked field path.
+type dirtyOp int
+
+const (
+	dirtySet     dirtyOp = iota // field was set or updated
+	dirtyDeleted                // field was removed
+)
+
 // Store is a generic layered YAML store engine.
 // Both internal/config and internal/project compose a Store[T] with their
 // own schema types. The store handles file discovery, per-file loading with
@@ -25,15 +33,6 @@ import (
 //	Load:  file → node tree → merge → deserialize → immutable snapshot
 //	Set:   deep copy → mutate copy → serialize into tree → atomic swap
 //	Write: node tree → file
-//
-// dirtyOp records the kind of mutation for a tracked field path.
-type dirtyOp int
-
-const (
-	dirtySet     dirtyOp = iota // field was set or updated
-	dirtyDeleted                // field was removed
-)
-
 type Store[T Schema] struct {
 	value      atomic.Pointer[T]  // immutable snapshot — lock-free reads
 	tree       map[string]any     // merged node tree (persistence layer)
@@ -42,7 +41,7 @@ type Store[T Schema] struct {
 	prov       provenance         // field→layer mapping (internal)
 	opts       options            // construction options (internal)
 	tags       tagRegistry        // merge tags from T's struct type (internal)
-	mu         sync.Mutex         // guards tree + dirtyPaths + layers (Set/Write)
+	mu         sync.Mutex         // guards tree + dirtyPaths + layers (Set/Delete/Write/MarkForWrite/Refresh)
 }
 
 // LayerInfo describes a discovered configuration layer.

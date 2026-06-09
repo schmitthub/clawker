@@ -34,7 +34,7 @@ func NewCmdInit(f *cmdutil.Factory, runF func(context.Context, *InitOptions) err
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Scaffold monitoring configuration files",
-		Long: `Scaffolds the monitoring stack configuration files in ~/.clawker/monitor/.
+		Long: `Scaffolds the monitoring stack configuration files.
 
 This command generates:
   - compose.yaml        Docker Compose stack definition
@@ -188,9 +188,6 @@ func initRun(_ context.Context, opts *InitOptions) error {
 	mc := cfg.SettingsStore().Read().Monitoring
 	fmt.Fprintf(ios.ErrOut, "  2. Open OpenSearch Dashboards at http://localhost:%d\n", mc.OpenSearchDashboardsPort)
 	fmt.Fprintf(ios.ErrOut, "  3. Open Prometheus at http://localhost:%d\n", mc.PrometheusPort)
-	fmt.Fprintln(ios.ErrOut)
-	fmt.Fprintln(ios.ErrOut, "Note: The monitoring stack uses the clawker-net Docker network.")
-	fmt.Fprintln(ios.ErrOut, "      Run 'clawker start' or 'clawker run' to create the network if needed.")
 
 	return nil
 }

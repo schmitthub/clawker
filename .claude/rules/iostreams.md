@@ -11,6 +11,6 @@ paths: ["internal/iostreams/**", "internal/cmd/**"]
 - Simple spinners: `ios.StartSpinner(label)` / `ios.StartSpinnerWithType(type, label)` / `ios.RunWithSpinner(label, fn)` (writes to stderr)
 - Multi-step progress: use `f.TUI.RunProgress(progressMode, cfg, ch)` for tree displays (live-display scenario) — not `iostreams` directly
 - Check `ios.CanPrompt()` before interactive prompts (respects CI env var)
-- Test with `iostreams.Test()` — returns `(*IOStreams, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer)`, non-TTY, no colors, nil Logger
+- Test with `iostreams.Test()` — returns `(*IOStreams, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer)`, non-TTY, no colors (IOStreams carries no logger; access logger via `f.Logger` on Factory)
 - Import boundaries: only `iostreams` imports `lipgloss`; only `tui` imports `bubbletea`/`bubbles`
 - See `internal/iostreams/CLAUDE.md` for full API reference

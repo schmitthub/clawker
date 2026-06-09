@@ -88,7 +88,7 @@ Factory noun for presentation layer. Commands receive eagerly; hooks registered 
 func NewTUI(ios *iostreams.IOStreams) *TUI
 func (t *TUI) RegisterHooks(hooks ...LifecycleHook)
 func (t *TUI) RunProgress(mode string, cfg ProgressDisplayConfig, ch <-chan ProgressStep) ProgressResult
-func (t *TUI) RunWizard(fields []WizardField) (WizardResult, error)
+func (t *TUI) RunWizard(steps []WizardStep) (WizardResult, error)
 func (t *TUI) IOStreams() *iostreams.IOStreams
 ```
 
@@ -123,7 +123,7 @@ Three standalone BubbleTea field models. All use value semantics and share `Fiel
 ## StepperBar / WizardModel
 
 - `RenderStepperBar(steps, width) string` (`stepper.go`) — horizontal step progress. `Step{Title, Value, State}` with states `StepPendingState/ActiveState/CompleteState/SkippedState`. Icons: `✓` complete, `◉` active, `○` pending.
-- `WizardModel` (`wizard.go`) — multi-step form via `TUI.RunWizard(fields)` → `WizardResult{Values, Submitted}`. `WizardField{ID, Title, Prompt, Kind, Options, SkipIf}` with kinds `FieldSelect/Text/Confirm`. Navigation: Enter advance, Esc back, Ctrl+C cancel. `SkipIf` predicates respected in both directions.
+- `WizardStep` / `WizardPage` (`wizard.go`, `wizardpage.go`) — multi-step form via `TUI.RunWizard(steps []WizardStep)` → `WizardResult{Values, Submitted}`. `WizardStep{ID, Title, Page, SkipIf, HelpKeys}` where `Page` is a `WizardPage` interface. Construct pages via `NewSelectPage`, `NewTextPage`, `NewConfirmPage`, `NewBrowserPage` (`wizardpage.go`). Navigation: Enter advance, Esc back, Ctrl+C cancel. `SkipIf` predicates respected in both directions.
 
 ## FieldBrowserModel (`fieldbrowser.go`)
 

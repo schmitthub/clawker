@@ -37,7 +37,7 @@ type statusRow struct {
 // NewCmdStatus creates the controlplane status command. Tolerates an
 // absent CP without bootstrapping — when IsRunning returns false the
 // run function short-circuits before touching f.AdminClient (which
-// would trigger EnsureRunning via its lazy closure).
+// would attempt a dial to a stopped CP and fail fast).
 func NewCmdStatus(f *cmdutil.Factory, runF func(context.Context, *StatusOptions) error) *cobra.Command {
 	opts := &StatusOptions{
 		IOStreams:    f.IOStreams,
@@ -50,10 +50,9 @@ func NewCmdStatus(f *cmdutil.Factory, runF func(context.Context, *StatusOptions)
 		Short: "Show control plane health",
 		Long: `Report the health of the clawker control plane.
 
-Probes ` + "`/healthz`" + ` on the CP's HealthPort and, if the CP is up,
-best-effort queries the AdminService for firewall subsystem state.
-Tolerates a stopped CP — in that case the firewall fields are omitted
-and the CP is reported as down.`,
+Probes the control plane's health endpoint and, if the CP is up,
+reports firewall subsystem state. Tolerates a stopped CP — in that case
+the firewall fields are omitted and the CP is reported as down.`,
 		Example: `  # Show CP status
   clawker controlplane status
 

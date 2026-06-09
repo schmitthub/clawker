@@ -43,8 +43,7 @@ func TestCacheableState(t *testing.T) {
 	}
 }
 
-// TestAdminClientKeepaliveParams pins the keepalive constant. Values
-// must match the CP server-side config in internal/controlplane/server.go.
+// TestAdminClientKeepaliveParams pins the keepalive constant.
 func TestAdminClientKeepaliveParams(t *testing.T) {
 	if adminClientKeepalive.Time != 30*time.Second {
 		t.Errorf("adminClientKeepalive.Time = %s, want 30s", adminClientKeepalive.Time)

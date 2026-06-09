@@ -14,8 +14,7 @@ Worktrees allow running containers against different branches simultaneously
 without switching branches in your main repository. Each worktree is a
 separate checkout of the repository at a specific branch.
 
-Worktrees are created automatically when using 'clawker run --worktree `<branch>`'
-and stored under the clawker data directory (default: ~/.local/share/clawker/worktrees/).
+Worktrees are created automatically when using 'clawker run --worktree `<branch>`'.
 
 ### Examples
 
@@ -32,13 +31,7 @@ and stored under the clawker data directory (default: ~/.local/share/clawker/wor
   # Remove a worktree by branch name
   clawker worktree remove feat-42
 
-  # Remove a worktree and also delete the branch
-  clawker worktree remove --delete-branch feat-42
-
-  # Force remove a worktree with uncommitted changes
-  clawker worktree remove --force feat-42
-
-  # Preview stale entries that would be pruned
+  # Remove a worktree and also delete the branch\n  clawker worktree remove --delete-branch feat-42\n\n  # Preview stale entries that would be pruned
   clawker worktree prune --dry-run
 
   # Remove stale worktree entries from the registry

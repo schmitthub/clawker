@@ -15,10 +15,10 @@ import (
 // context cancelled). Publish under the same conditions returns false.
 var ErrClosed = errors.New("overseer closed")
 
-// ErrNotStarted is returned by Snapshot before Start. Publish before
-// Start returns false (buffered queue absorbs the send if there is
-// space; without a running loop nothing drains, so the safe contract
-// is "no consumer yet — your event is best-effort dropped").
+// ErrNotStarted is a defined sentinel for the not-yet-started state.
+// No public function currently returns it: Publish, Subscribe, and
+// Snapshot all return false/(zero,false) before Start. Retained for
+// callers that want a typed sentinel to check against.
 var ErrNotStarted = errors.New("overseer not started")
 
 // Overseer is the typed event bus + in-memory worldview state

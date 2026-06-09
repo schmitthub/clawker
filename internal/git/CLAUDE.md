@@ -57,6 +57,7 @@ Behavior details:
 branch, err := mgr.GetCurrentBranch()   // empty string when detached HEAD
 hash, err := mgr.ResolveRef(ref)
 exists, err := mgr.BranchExists(branch)
+err = mgr.CreateBranch(branch, base)    // base empty → HEAD; ErrBranchAlreadyExists if exists
 err = mgr.DeleteBranch(branch)
 ```
 
@@ -133,6 +134,7 @@ These are composed by `GitManager.SetupWorktree`/`RemoveWorktree` for domain wor
 - `ErrBranchNotFound`
 - `ErrBranchNotMerged`
 - `ErrIsCurrentBranch`
+- `ErrBranchAlreadyExists`
 
 Prefer `errors.Is` checks at command/service boundaries.
 

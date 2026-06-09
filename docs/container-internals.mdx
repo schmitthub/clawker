@@ -254,7 +254,7 @@ If you need extra capabilities for your workflow (e.g. `SYS_PTRACE` for debuggin
 
 ## Shared Directory
 
-When `agent.enable_shared_dir` is set to `true`, Clawker mounts a shared directory from `~/.local/share/clawker/share/` on the host into the container at `~/.clawker-share` (read-only). This lets you share files across all agents without including them in the workspace.
+When `agent.enable_shared_dir` is set to `true`, Clawker mounts a shared directory from `~/.local/share/clawker/.clawker-share/` on the host into the container at `~/.clawker-share` (read-only). This lets you share files across all agents without including them in the workspace.
 
 ## Security Controls
 

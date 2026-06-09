@@ -48,10 +48,10 @@ import (
 )
 
 // leafTTL is the validity window applied to every minted leaf.
-// Matches the previous firewall.Stack.ensureInfraClientCerts behavior
-// and the MITM domain cert shape; rotation is driven by firewall
-// Reload (disk path) or per-handshake re-mint (in-process path), not
-// by approaching expiry.
+// Matches the MITM domain cert shape (domainCertValidYears=1 in
+// firewall/certs.go); rotation is driven by firewall Reload (disk
+// path) or per-handshake re-mint (in-process path), not by
+// approaching expiry.
 const leafTTL = 365 * 24 * time.Hour
 
 // Issuer is the minimal surface this package needs from
@@ -213,8 +213,7 @@ func (s *Service) EnsureClient(svc string) (certPath, keyPath, caPath string, er
 // Issuer key rotation (a `clawker auth rotate` that re-issues the
 // intermediate) is NOT picked up at runtime — the GetClientCertificate
 // closure holds the Service reference and the Service's Issuer is the
-// one loaded at CP startup. Document this as a v1 limitation; restart
-// CP after a rotation.
+// one loaded at CP startup. Restart CP after a key rotation.
 func (s *Service) LoadTLSConfig(svc string) (*tls.Config, error) {
 	if svc == "" {
 		return nil, fmt.Errorf("otelcerts: svc must not be empty")

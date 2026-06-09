@@ -41,9 +41,9 @@ var errListenerConfig = errors.New("clawkerd listener: config error")
 //
 // onFatal is invoked when grpc.Serve returns a non-stop error (Serve
 // goroutine dead, no further commands can dispatch). main() wires it
-// to its NotifyContext stop func so the daemon exits cleanly rather
-// than hanging on ctx.Done with a bricked listener. nil onFatal is
-// rejected: a missing wiring would silently strand the daemon.
+// to a dedicated listenerFatalCh channel so the daemon exits cleanly
+// rather than hanging on ctx.Done with a bricked listener. nil onFatal
+// is rejected: a missing wiring would silently strand the daemon.
 //
 // Returns the running grpc.Server so main can Stop on shutdown. The
 // underlying net.Listener is owned by the goroutine that runs Serve

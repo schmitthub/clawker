@@ -2,7 +2,7 @@
 
 BPF loader + manager for clawker's cgroup programs. Lives under `internal/controlplane/` because ebpf is a **feature of the control plane**, not a peer service: once BPF programs are loaded into the kernel they persist independently of any userspace process, so there is no separate "ebpf service" to run. The CP owns `Manager.Load()` lifetime and drives everything through direct Go imports.
 
-The BPF source (`bpf/clawker.c`) and its generated Go bindings (`clawker_*_bpfel.go`) live here. The short-lived `cmd/` CLI stays as a break-glass debug tool for humans (see `cmd/CLAUDE.md`), but the real interface is `ControlPlaneService` gRPC.
+The BPF source (`bpf/clawker.c`) and its generated Go bindings (`clawker_*_bpfel.go`) live here. The short-lived `cmd/` CLI stays as a break-glass debug tool for humans (see `cmd/CLAUDE.md`), but the real interface is `AdminService` gRPC.
 
 ## Layout
 
@@ -54,7 +54,7 @@ All maps live at `PinPath = /sys/fs/bpf/clawker/`:
 | Field | Byte order | Why |
 |-------|-----------|-----|
 | `ts_ns`, `cgroup_id`, `domain_hash`, `dst_port`, `verdict`, `flags`, `l4_proto` | host | Userspace consumes via `binary.NativeEndian` on a `clawkerEgressEvent` struct (CO-RE `structs.HostLayout`). |
-| `dst_ip` | network | Matches `ctx->user_ip4` and `container_config` IP fields — userspace re-uses `Uint32ToIP` (NativeEndian → 4 net-order bytes → `net.IP`). |
+| `dst_ip` | network (`[16]uint8` slot) | IPv4 destinations occupy the first 4 bytes (network order, matching `ctx->user_ip4`); IPv6 fills all 16 bytes. Userspace decodes via `netip.AddrFrom4` (v4) or `netip.AddrFrom16` (v6) using `EgressFlagIPv6`/`EgressFlagIPv4Mapped`/`EgressFlagNoDst` to discriminate. `IPToBytes16` converts a `net.IP` to this slot shape. |
 
 Callers MUST `bpf_ntohs(ctx->user_port)` before passing `dst_port` to `submit_event`. The helper itself never swaps; pick-one-side keeps every emit site explicit and prevents double-swap bugs.
 
@@ -84,14 +84,14 @@ func (m *Manager) Remove(cgroupID uint64) error
 func (m *Manager) SyncRoutes(routes []Route) error          // replace global route_map atomically
 func (m *Manager) Disable(cgroupID uint64) error            // set bypass flag (unrestricted egress)
 func (m *Manager) Enable(cgroupID uint64) error             // clear bypass flag (restore enforcement)
-func (m *Manager) UpdateDNSCache(ip, domainHash, ttl uint32) error
+func (m *Manager) UpdateDNSCache(ip, domainHash, ttlSeconds uint32) error
 func (m *Manager) GarbageCollectDNS() (cleared int, err error)  // returns number cleared + a non-nil err when the sweep could not reclaim (wedged iterator or any expired-entry delete failed), so the CP main loop's degraded-GC detector trips on a wedge instead of treating a no-op pass as progress. CP main runs this on a periodic goroutine (dnsGCInterval) + break-glass CLI. Skips m.seededIPs.
 func (m *Manager) LookupContainer(cgroupID uint64) (clawkerContainerConfig, error)
 
 // Startup / shutdown maintenance — not on EBPFManager interface; called
 // by cmd/clawker-cp directly so the RPC surface stays pure.
 func (m *Manager) CleanupStaleBypass() (int, error)         // INV-B2-013: clear orphan bypass_map entries at startup
-func (m *Manager) FlushAll() error                          // INV-B2-007: drain-to-zero — empty container_map + bypass_map + ratelimit_state + ratelimit_drops, unpin links
+func (m *Manager) FlushAll() error                          // INV-B2-007: drain-to-zero — empty container_map + bypass_map + ratelimit_state + udp_flow_map + ratelimit_drops, unpin links
 
 // Read-only accessors for the netlogger subpackage. Return nil before
 // Load/OpenPinned; callers MUST nil-check.
@@ -106,11 +106,12 @@ Helpers in `types.go`:
 ```go
 const PinPath = "/sys/fs/bpf/clawker"
 
-type Route struct { DomainHash uint32; DstPort, EnvoyPort uint16; L4Proto uint8 } // L4Proto: L4ProtoTCP/L4ProtoUDP
+type Route struct { DomainHash uint32; DstPort, EnvoyPort uint16; L4Proto uint8; SeedIP uint32 } // L4Proto: L4ProtoTCP/L4ProtoUDP; SeedIP non-zero for IP-literal rules (SyncRoutes seeds dns_cache[SeedIP]=DomainHash)
 type ContainerConfig struct { /* mirrors bpf/common.h — Envoy/CoreDNS/gateway IPs, CIDR, host proxy */ }
 
 func IPToUint32(net.IP) uint32                              // network byte order (matches ctx->user_ip4)
 func Uint32ToIP(uint32) net.IP
+func IPToBytes16(net.IP) [16]uint8                          // converts to EgressEvent.DstIp slot (IPv4 in first 4 bytes, IPv6 fills all 16)
 func CIDRToAddrMask(cidr string) (addr, mask uint32, err error)
 func DomainHash(domain string) uint32                       // FNV-1a of lowercased domain
 func NewContainerConfig(envoyIP, corednsIP, gatewayIP, cidr, hostProxyIP string, hostProxyPort, egressPort uint16) (clawkerContainerConfig, error)

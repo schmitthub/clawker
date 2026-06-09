@@ -88,27 +88,27 @@ Container flag types, domain logic, container creation, and container start orch
 
 `shared.ContainerStart()` is the unified container start mechanism used by `run` and `start`. It accepts a `CommandOpts` struct (DI container with lazy function closures for all service providers) and implements a three-phase daemon bootstrap:
 
-1. **Pre-start** (`BootstrapServicesPreStart`) — firewall rules sync + daemon ensure + health wait (60s) + host proxy start
+1. **Pre-start** (`BootstrapServicesPreStart`) — host proxy start + CP ensure + health wait (60s) + firewall rules sync (if enabled) + every-start `pre_run` hook delivery
 2. **Docker start** — `client.ContainerStart` (the actual Docker API call)
 3. **Post-start** (`BootstrapServicesPostStart`) — eBPF program attachment for the container + socket bridge for GPG/SSH forwarding
 
 Errors at any phase abort immediately. See `shared/CLAUDE.md` section "Container Start Orchestration" for `CommandOpts` fields, function signatures, and full details.
 
-### Container Options (`container.go`)
+### Container Options (`container_create.go`)
 
-`ContainerOptions` — all container flags. `NewContainerOptions()`, `AddFlags(flags, opts)`, `MarkMutuallyExclusive(cmd)`.
+`ContainerCreateOptions` — all container CLI flags. `NewContainerOptions()`, `AddFlags(flags, opts)`, `MarkMutuallyExclusive(cmd)`.
 
 Key functions: `GetAgentName()`, `BuildConfigs(flags, mounts, cfg)`, `ValidateFlags()`, `ResolveAgentName(agent, generateRandom)`, `ParseLabelsToMap(labels)`, `MergeLabels(base, user)`, `NeedsSocketBridge(cfg)`.
 
-**Types**: `ContainerOptions`, `ListOpts`, `MapOpts`, `PortOpts`, `NetworkOpt` with `NetworkAttachmentOpts`.
+**Types**: `ContainerCreateOptions`, `ListOpts`, `MapOpts`, `PortOpts`, `NetworkOpt` with `NetworkAttachmentOpts`.
 
 **Flag categories**: Basic, Environment, Volumes, Networking, Resources, Security (incl. `--disable-firewall`), Health, Process & Runtime (incl. `--workdir`), Devices.
 
-### CreateContainer (`container.go`)
+### CreateContainer (`container_create.go`)
 
 Single entry point for container creation, shared by `run` and `create`. Performs all init steps: workspace setup, config initialization, environment resolution, Docker container creation, and post-create injection. Progress communicated via events channel (nil for silent mode).
 
-**Types**: `CreateContainerConfig`, `CreateContainerResult`, `CreateContainerEvent`, `StepStatus`, `MessageType`.
+**Types**: `CreateContainerOptions`, `CreateContainerResult`, `CreateContainerEvent`, `StepStatus`, `MessageType`.
 
 **Low-level helpers**: `InitContainerConfig(ctx, opts)` copies host Claude config to volume; `InjectPostInitScript(ctx, opts)` writes post-init script. Onboarding bypass is image-level (entrypoint seeds `~/.claude/.config.json`).
 
@@ -132,15 +132,15 @@ Commands use function references on Options structs. `NewCmd*` takes `*Factory` 
 
 ## Exec Credential Forwarding
 
-Auto-injects git credential env vars into exec'd processes. HTTPS via host proxy, SSH/GPG via socketbridge (`EnsureBridge`). Setup via `workspace.SetupGitCredentials()`.
+Auto-injects git credential env vars into exec'd processes via `workspace.SetupGitCredentials()`. HTTPS via host proxy; SSH/GPG env vars from the already-running socket bridge (set up at container start, not per-exec).
 
 ## SocketBridge Wiring
 
-`BootstrapServicesPostStart` calls `EnsureBridge` as part of the post-start phase (used by `run` and `start`). `exec` calls `EnsureBridge` directly (idempotent). `stop/remove` call `StopBridge` before Docker ops (best-effort, nil-safe).
+`BootstrapServicesPostStart` calls `EnsureBridge` as part of the post-start phase (used by `run` and `start`). `stop/remove` call `StopBridge` before Docker ops (best-effort, nil-safe).
 
 ## Testing
 
-Cobra+Factory pattern: `mocks.NewFakeClient(cfg)` → `testFactory(f)` → `NewCmdRun(f, nil)` → assert output + `fake.AssertCalled`. Per-package `testFactory`/`testConfig` helpers (not shared). See `.claude/memories/TESTING-REFERENCE.md`.
+Cobra+Factory pattern: `mocks.NewFakeClient(cfg)` → `testFactory(f)` → `NewCmdRun(f, nil)` → assert output + `fake.AssertCalled`. Per-package `testFactory`/`testConfig` helpers (not shared). See `.claude/docs/TESTING-REFERENCE.md`.
 
 **Tiers**: Tier 1 (flag parsing via `runF` trapdoor), Tier 2 (Cobra+Factory with `nil` runF), Tier 3 (unit, direct calls).
 

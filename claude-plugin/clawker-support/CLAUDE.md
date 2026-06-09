@@ -113,9 +113,9 @@ After making changes to the plugin:
 ## Dockerfile Template Sync
 
 The `Dockerfile.tmpl` in `reference/` is a copy of the actual template from
-`internal/bundler/`. If clawker's template changes, this copy must be updated
-to match. A pre-commit hook (`Plugin Dockerfile.tmpl drift check`) catches
-drift when both files are in the same commit.
+`internal/bundler/assets/Dockerfile.tmpl`. If clawker's template changes, this
+copy must be updated to match. A pre-commit hook (`Plugin Dockerfile.tmpl drift
+check`) catches drift when both files are in the same commit.
 
 When updating the template, never hardcode new field names into the skill —
 update methodology and docs URLs instead.

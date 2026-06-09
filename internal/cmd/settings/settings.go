@@ -13,8 +13,7 @@ func NewCmdSettings(f *cmdutil.Factory) *cobra.Command {
 		Long: `Manage clawker user settings.
 
 User settings control global behavior like logging, monitoring, and
-firewall configuration. The settings file location depends on your
-config directory (settings.yaml).`,
+firewall configuration.`,
 		Example: `  # Interactively edit user settings
   clawker settings edit`,
 	}

@@ -131,7 +131,7 @@ type WorkspaceConfig struct {
 	DefaultMode string `yaml:"default_mode" label:"Default Mode" desc:"bind mounts your project live (edits sync); snapshot copies it (isolated, disposable)" default:"bind" required:"true"`
 }
 
-// PathRule defines an HTTP path-level filtering rule for MITM inspection.
+// PathRule defines an HTTP/HTTPS path-level filtering rule for MITM inspection.
 type PathRule struct {
 	Path   string `yaml:"path" label:"Path" desc:"URL path prefix to match (e.g. /v1/api, /repos/myorg)"`
 	Action string `yaml:"action" label:"Action" desc:"Whether to allow or deny requests matching this path"`

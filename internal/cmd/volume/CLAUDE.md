@@ -13,7 +13,7 @@ Volume management for persistent workspace data and state.
 - `volume create` — create clawker volume
 - `volume inspect` — inspect volume details
 - `volume list` / `volume ls` — list clawker volumes
-- `volume prune` — remove unused agent volumes (default); `-a`/`--all` extends to all clawker-managed purposes
+- `volume prune` — remove unused agent volumes (default); `-a`/`--all` extends to all clawker-managed volumes (infrastructure included)
 - `volume remove` / `volume rm` — remove specific volumes
 
 ## Key Symbols

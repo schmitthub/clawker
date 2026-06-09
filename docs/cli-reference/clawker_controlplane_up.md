@@ -11,10 +11,8 @@ Start the control plane
 Bring the clawker control plane container up. Idempotent — safe to
 invoke while the CP is already running.
 
-This builds the CP image from embedded binaries if it's missing, ensures
-auth material (CA + server cert + CLI client cert), creates the CP
-container on clawker-net, and blocks until the aggregate /healthz probe
-reports 200.
+On first run it builds the control plane image and provisions its auth
+material, then waits until the control plane reports healthy.
 
 ```
 clawker controlplane up [flags]

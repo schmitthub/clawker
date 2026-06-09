@@ -144,11 +144,11 @@ func clientGRPCTLSConfig() (*tls.Config, error) {
 
 // ProbeCPTime returns the control plane's current wall-clock time via a
 // single mTLS GetSystemTime round trip (the public bootstrap RPC, no
-// bearer token). Callers gate assertion minting on it: an assertion's iat
-// is in the host clock, and Hydra/fosite validates iat against the CP
-// clock with zero leeway, so a caller waits until the CP clock is no
-// longer behind the host before minting. Bounded internally by
-// cpTimeProbeTimeout; respects ctx cancellation/deadline.
+// bearer token). The cpboot readiness gate (waitForCPClockSync) polls
+// this to wait until the CP clock is no longer behind the host before
+// declaring CP ready — a Docker Desktop VM clock that lagged during host
+// sleep must converge before any assertion is exchanged. Bounded
+// internally by cpTimeProbeTimeout; respects ctx cancellation/deadline.
 func ProbeCPTime(ctx context.Context, adminPort int) (time.Time, error) {
 	tlsCfg, err := clientGRPCTLSConfig()
 	if err != nil {
@@ -285,8 +285,8 @@ func (ts *tokenSource) unaryInterceptor() grpc.UnaryClientInterceptor {
 // UTC). Used by ProbeCPTime, which the cpboot readiness gate polls to wait
 // for the CP clock to catch up to the host before CP is declared ready.
 func probeCPTime(ctx context.Context, target string, tlsCfg *tls.Config) (time.Time, error) {
-	// Bound the probe on its own deadline so its failure mode doesn't depend
-	// on the caller RPC that triggered this refresh (see cpTimeProbeTimeout).
+	// Bound the probe on its own deadline so it doesn't inherit an absent
+	// or arbitrarily long caller deadline (see cpTimeProbeTimeout).
 	ctx, cancel := context.WithTimeout(ctx, cpTimeProbeTimeout)
 	defer cancel()
 

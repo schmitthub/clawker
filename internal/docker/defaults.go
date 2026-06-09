@@ -44,7 +44,7 @@ func (c *Client) BuildDefaultImage(ctx context.Context, flavor string, onProgres
 		c.log.Warn().Msg("BuildKit is not available — cache mount directives will be omitted and builds may be slower")
 	}
 
-	// 5. Generate dockerfiles (with BuildKit-conditional cache mounts)
+	// 4. Generate dockerfiles (with BuildKit-conditional cache mounts)
 	c.log.Debug().Str("output_dir", buildDir).Msg("generating dockerfiles")
 	dfMgr := bundler.NewDockerfileManager(c.cfg, &bundler.DockerFileManagerOptions{})
 	dfMgr.BuildKitEnabled = buildkitEnabled
@@ -52,7 +52,7 @@ func (c *Client) BuildDefaultImage(ctx context.Context, flavor string, onProgres
 		return fmt.Errorf("failed to generate dockerfiles: %w", err)
 	}
 
-	// 6. Find the dockerfile for selected flavor
+	// 5. Find the dockerfile for selected flavor
 	var latestVersion string
 	for v := range *versions {
 		latestVersion = v
@@ -75,13 +75,13 @@ func (c *Client) BuildDefaultImage(ctx context.Context, flavor string, onProgres
 		Str("flavor", flavor).
 		Msg("building image")
 
-	// 7. Create build context from dockerfiles directory
+	// 6. Create build context from dockerfiles directory
 	buildContext, err := bundler.CreateBuildContextFromDir(dockerfilesDir, dockerfilePath)
 	if err != nil {
 		return fmt.Errorf("failed to create build context: %w", err)
 	}
 
-	// 8. Build the image
+	// 7. Build the image
 	err = c.BuildImage(ctx, buildContext, BuildImageOpts{
 		Tags:       []string{DefaultImageTag},
 		Dockerfile: dockerfileName,

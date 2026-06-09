@@ -75,11 +75,11 @@ type HostProxyService interface {
 ## Constructors
 
 ```go
-func NewManager(cfg config.Config) (*Manager, error)       // validates port; returns error for invalid config
-func NewDaemon(cfg config.Config, opts ...DaemonOption) (*Daemon, error) // reads all settings from cfg.HostProxyConfig()
+func NewManager(cfg config.Config, log *logger.Logger) (*Manager, error)       // validates port; returns error for invalid config
+func NewDaemon(cfg config.Config, log *logger.Logger, opts ...DaemonOption) (*Daemon, error) // reads all settings from cfg.HostProxyConfig()
 func NewServer(port int, log *logger.Logger, rulesFilePath string) *Server // rulesFilePath empty = no egress enforcement
 func NewSessionStore() *SessionStore  // Starts cleanup goroutine; must call Stop()
-func NewCallbackChannel(store *SessionStore) *CallbackChannel
+func NewCallbackChannel(store *SessionStore, log *logger.Logger) *CallbackChannel
 ```
 
 **Config pattern**: `Manager` and `Daemon` store `cfg config.Config` on the struct. All settings read from `cfg.HostProxyConfig()` (port, poll interval, grace period, max consecutive errors). PID file from `cfg.HostProxyPIDFilePath()`, log file from `cfg.HostProxyLogFilePath()`, labels from `cfg.LabelManaged()`, etc. CLI flags override via functional options (`WithDaemonPort`, `WithPollInterval`, `WithGracePeriod`) — config object is never mutated.
@@ -110,10 +110,10 @@ func NewCallbackChannel(store *SessionStore) *CallbackChannel
 
 The `/open/url` endpoint enforces egress rules before opening URLs in the host browser. This closes a proven exfil vector: a container agent could otherwise encode stolen secrets in URL query params and use the host browser as an out-of-band channel, bypassing the Envoy+CoreDNS firewall entirely.
 
-`handleOpenURL` calls `CheckURLAgainstEgressRules(targetURL, rulesFilePath)` before `openBrowser()`. The function reads `egress-rules.yaml` just-in-time on every request (rules change at runtime — no caching), protected by `gofrs/flock` to avoid torn reads. The URL is parsed and matched against rules: scheme→proto, host→dst (exact + wildcard), port, path (longest prefix). Empty `rulesFilePath` (firewall disabled) skips the check for backwards compat.
+`handleOpenURL` calls `CheckURLAgainstEgressRules(targetURL, rulesFilePath)` before `openBrowser()`. The function reads `egress-rules.yaml` just-in-time on every request (rules change at runtime — no caching). The firewall daemon writes the rules file atomically (temp+fsync+rename), so no locking is needed for concurrent reads. The URL is parsed and matched against rules: scheme→proto, host→dst (exact + wildcard), port, path (longest prefix). Empty `rulesFilePath` (firewall disabled) skips the check for backwards compat.
 
 **Design constraints:**
-- **Leaf package**: does NOT import `internal/controlplane/firewall` or `internal/storage`. Reads YAML directly with `os.ReadFile` + `yaml.Unmarshal`. Mirror types for `EgressRulesFile`/`EgressRule`/`PathRule` are intentional copies.
+- **Leaf package**: does NOT import `internal/controlplane/firewall` or `internal/storage`. Reads YAML directly with `os.ReadFile` + `yaml.Unmarshal`. Mirror types for `egressRulesFile`/`egressRule`/`pathRule` are unexported intentional copies.
 - **Fail-closed**: missing/unreadable rules file → block all URLs. Action validation uses `!strings.EqualFold(action, "allow")` so typos fail closed.
 - **Userinfo rejection**: URLs with `user:pass@host` are rejected — no legitimate browser URL uses this and it enables smuggling.
 

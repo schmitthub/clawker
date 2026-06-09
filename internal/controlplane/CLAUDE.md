@@ -45,7 +45,7 @@ A panic, `log.Fatal`, `os.Exit`, or unrecovered goroutine in CP code:
 
 It's a safety net, not a recovery strategy. By the time it triggers, eBPF has been pinned with no supervisor for at least the time it took to crash → restart → crash 3× → backoff. The restart policy exists for transient hardware/scheduler hiccups, not for software bugs we should have caught.
 
-## Responsibilities (v1)
+## Responsibilities
 
 1. **Authoritative eBPF management** — the CP owns `ebpf.Manager.Load()` lifetime for its process lifetime. BPF programs are loaded once at boot and stay live. The manager exposes read-only accessors for the netlogger pipeline: `EventsRingbuf()`, `EventsDrops()`, `RatelimitDrops()`, `DNSCache()` (all nil before `Load`; callers MUST nil-check).
 2. **AdminService gRPC surface** — the host CLI calls firewall/eBPF operations as typed gRPC over mTLS TCP with OAuth2 JWT authorization.
@@ -81,13 +81,13 @@ The auth stack uses Ory Hydra as the OAuth2 provider (replaces the earlier custo
 | `ory_configs.go` | `WriteOryConfigs(cp)` — generates Hydra/Kratos/Oathkeeper YAML config files |
 | `subprocess.go` | `SubprocessManager` — manages Ory subprocess lifecycle (start, health, crash detection, shutdown) |
 | `otelclient.go` | `NewOtelLoggerProvider(OtelClientOptions) (*sdklog.LoggerProvider, error)` — generic constructor for per-subsystem OTel log providers pushing OTLP/gRPC over mTLS to the trusted-infra receiver. Owns: preflight TLS dial (fails fast when monitoring stack is down, no background reconnect), `otel.SetErrorHandler` routing to file logger, `otlploggrpc` retry (default 10s vs SDK default 1min), optional `ExporterWrap` hook for caller-supplied decorators (circuit breaker, counters). `internal/controlplane/firewall/ebpf/netlogger` is the first consumer; future emitters (sysexec events, etc.) wire here too. |
-| `cpboot/` | **Host-side CP bootstrap subpackage.** Contains `embed_cp.go` / `embed_ebpf.go` (`//go:embed assets/clawker-cp` + `assets/ebpf-manager`), `bootstrap.go` (`EnsureRunning` / `Stop` / `CPRunning`), `cp_container.go` (`BuildCPContainerConfig` → `CPContainerConfig`), `manager.go` (`Manager` interface + `NewManager`). Split out so `cmd/clawker-cp` can import `internal/controlplane` for `SubprocessManager` / `AdminServer` / `AgentWatcher` without dragging in the `go:embed` directives that would otherwise require the daemon to embed itself during its own build. |
+| `cpboot/` | **Host-side CP bootstrap subpackage.** Contains `embed_cp.go` / `embed_ebpf.go` (`//go:embed assets/clawker-cp` + `assets/ebpf-manager`), `bootstrap.go` (`EnsureRunning` / `Stop` / `CPRunning` package-level funcs), `cp_container.go` (`BuildCPContainerConfig` → `CPContainerConfig`), `manager.go` (`Manager` interface (`EnsureRunning` / `Stop` / `IsRunning` / `ProbeHealthz`) + `NewManager`). Split out so `cmd/clawker-cp` can import `internal/controlplane` for `SubprocessManager` / `AdminServer` / `AgentWatcher` without dragging in the `go:embed` directives that would otherwise require the daemon to embed itself during its own build. |
 | `mocks/` | moq-generated mocks: `IntrospectorMock`, `AdminServiceClientMock` |
 | `cpboot/mocks/` | moq-generated `ManagerMock` for the host-side CP lifecycle noun |
 
 ## AdminService composition
 
-`server.go` exposes the unexported `adminServer` type that embeds `*fwhandler.Handler` (and, in future branches, additional domain handlers). Method promotion produces the AdminServiceServer surface; `NewAdminServer(fw)` is the wiring point used by `cmd/clawker-cp/main.go`.
+`server.go` exposes the unexported `adminServer` type that embeds `*fwhandler.Handler` (and, in future branches, additional domain handlers). Method promotion produces the AdminServiceServer surface; `NewAdminServer(fw, agents, log)` is the wiring point used by `cmd/clawker-cp/main.go`.
 
 The 13 firewall RPCs live in `internal/controlplane/firewall/handler.go` — see `internal/controlplane/firewall/CLAUDE.md` for the per-RPC table. Future domains (Monitor, Hostproxy, Clawkerd) embed alongside; the `<Domain><Action>[<Object>]` proto naming convention prevents method-name collisions.
 
@@ -125,7 +125,7 @@ All RPCs require the uniform `admin` scope (INV-B2-009) with one deliberate exce
 ## Container Config (`cpboot/cp_container.go`)
 
 ```go
-func BuildCPContainerConfig(cfg config.Config) (*cpboot.CPContainerConfig, error)
+func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContainerConfig, error)
 ```
 
 All ports from `cfg.Settings().ControlPlane` (defaults via struct tags). Published to `127.0.0.1` only:
@@ -159,7 +159,7 @@ The eBPF subsystem lives at `firewall/ebpf/` — see `firewall/ebpf/CLAUDE.md` f
 ## Ory Config Generation (`ory_configs.go`)
 
 ```go
-func WriteOryConfigs(cp config.ControlPlaneSettings) error
+func WriteOryConfigs(cp config.ControlPlaneSettings, hydraSecret string) error
 ```
 
 Generates `/etc/clawker/{hydra,kratos,oathkeeper}.yaml`:

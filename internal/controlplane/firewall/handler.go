@@ -95,8 +95,7 @@ var _ StackLifecycle = (*Stack)(nil)
 
 // Handler implements adminv1.AdminServiceServer for the firewall domain.
 // Every Firewall* RPC submits its body as a closure to a single shared
-// ActionQueue so rapid-fire calls don't collide mid-restart (see
-// initiative memory `firewall-queue-initiative` for the full design).
+// ActionQueue so rapid-fire calls don't collide mid-restart.
 // Rule-CRUD and rotate-CA RPCs split store-side work (pre-Submit,
 // synchronous) from stack reconcile work (queued), so a durable rule
 // mutation is never lost even when the subsequent reload fails.

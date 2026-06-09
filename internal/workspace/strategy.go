@@ -98,8 +98,8 @@ const ClaudeProjectsTargetPath = "/home/claude/.claude/projects"
 // mount-namespace semantics, the deeper bind target layers over the
 // corresponding subdir of the per-agent config volume mount, sharing
 // auto-memory and session jsonls across container runs and instances.
-// hostProjectsDir must be an absolute path; the typical caller is
-// containerfs.ResolveHostProjectsDir.
+// hostProjectsDir must be an absolute path; the path is typically
+// obtained from containerfs.ResolveHostProjectsDir.
 func GetClaudeProjectsMount(hostProjectsDir string) (mount.Mount, error) {
 	if !filepath.IsAbs(hostProjectsDir) {
 		return mount.Mount{}, fmt.Errorf("claude projects mount source must be absolute, got %q", hostProjectsDir)

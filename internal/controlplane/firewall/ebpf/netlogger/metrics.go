@@ -41,9 +41,9 @@ import (
 //   - EmitSucceeded: incremented once per Sink.Emit return.
 //
 // Kernel-side drop dimensions (events_drops PERCPU_ARRAY,
-// ratelimit_drops HASH) live as gauges refreshed periodically by the
-// CP wiring — they read BPF state directly rather than being bumped
-// from Go code paths, so they aren't declared here.
+// ratelimit_drops HASH) are not scraped here; they are accessible via
+// Manager.EventsDrops() / Manager.RatelimitDrops() for direct BPF map
+// inspection but no Prometheus wiring reads them periodically.
 type Metrics struct {
 	RingbufReceived prometheus.Counter
 	RingbufErrors   prometheus.Counter

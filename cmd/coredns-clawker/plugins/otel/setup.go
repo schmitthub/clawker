@@ -56,10 +56,11 @@ func setup(c *caddy.Controller) error {
 
 // ensureSharedEmitter returns the process-wide Emitter, building it on
 // first call. Only successful construction of a real otelEmitter is
-// cached — a transient cert-read failure AND the "endpoint unset" path
-// both leave the cache empty so a later CoreDNS reload retries (firewall
-// stack may have wired CLAWKER_COREDNS_OTEL_ENDPOINT between attempts;
-// caching noopEmitter would latch the degraded state until process exit).
+// cached — a transient cert-read failure leaves the cache empty so a
+// later CoreDNS reload retries rather than permanently latching the
+// degraded state. The "endpoint unset" path also leaves the cache empty
+// (noopEmitter is returned per call but never stored) since endpoint
+// absence cannot change between reloads without container recreation.
 // noopEmitter is returned per call when the endpoint is unset, but never
 // stored in sharedEmitter.
 func ensureSharedEmitter() (Emitter, error) {

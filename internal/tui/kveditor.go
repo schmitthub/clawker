@@ -38,9 +38,9 @@ type kvPair struct {
 // Input: a label and a YAML-formatted string value (marshaled map[string]string).
 // Output: Value() returns the edited YAML string.
 //
-// This is a reusable building block for domain adapters that want a structured
-// map editor instead of the default YAML textarea. Wire it via the Editor factory
-// on [storeui.Override]. Currently unused — available for future domain customization.
+// The default [FieldBrowserModel] dispatch uses this as the built-in editor for
+// [BrowserMap] fields. It can also be wired as a custom editor via the Editor
+// factory on [storeui.Override] for domain adapters that need a different map UI.
 type KVEditorModel struct {
 	label      string
 	pairs      []kvPair

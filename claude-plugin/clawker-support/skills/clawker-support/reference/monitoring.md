@@ -12,17 +12,21 @@ Four containers brought up by `clawker monitor up`:
 
 - **OTel Collector** — receives OTLP/HTTP from agents on `:4318`, fans
   out to OpenSearch (logs) and Prometheus exporter (metrics).
-- **OpenSearch** — log storage. Five indices: `claude-code`,
-  `clawker-cli`, `clawker-cp`, `clawker-envoy`, `clawker-coredns`.
+- **OpenSearch** — log storage. Six indices: `claude-code`,
+  `clawker-cli`, `clawker-cp`, `clawker-envoy`, `clawker-coredns`,
+  `clawker-ebpf-egress`.
 - **OpenSearch Dashboards (OSD)** — UI at `http://localhost:5601`.
 - **Prometheus** — metrics scrape + UI at `http://localhost:9090`.
 
-A one-shot `clawker-opensearch-bootstrap` container runs before the
-collector and Prometheus start. It applies index templates, ingest
-pipelines, an ISM retention policy, the `clawker_prometheus`
-direct-query datasource, and imports the **Clawker analytics workspace**
-with index patterns + example visualizations. If bootstrap fails, the
-collector and Prometheus do not start.
+A one-shot `clawker-opensearch-bootstrap` container runs after
+OpenSearch is healthy and applies index templates, ingest pipelines, an
+ISM retention policy, the `clawker_prometheus` direct-query datasource,
+and imports the **Clawker analytics workspace** with index patterns +
+dashboards. The collector gates on bootstrap completing successfully —
+it never starts until the cluster is preconfigured. Prometheus starts in
+parallel with bootstrap (bootstrap depends on Prometheus being up so
+the datasource registration can validate the configured URI). If
+bootstrap fails, the collector does not start.
 
 ## How to get into the workspace
 
@@ -30,11 +34,13 @@ From the OpenSearch Dashboards splash / welcome screen, click
 **Clawker** under the **Analytics** panel on the far right of the page.
 
 Inside the workspace, the left navbar's **Explore** section has
-**Logs** (across all five indices) and **Metrics** (Prometheus-backed).
-Pre-built example visualizations and an example dashboard live under
-the workspace's **Dashboards** view — these are seeded by bootstrap as
-reference material; users are expected to build their own dashboards
-on top.
+**Logs** (across all six indices) and **Metrics** (Prometheus-backed).
+Three pre-built dashboards live under the workspace's **Dashboards**
+view — **Claude Code Cost & Usage** (session / cost / token / tool
+KPIs), **Claude Code Activity** (prompts, tooling, code editing,
+permissions, hooks, MCP, plugins audit), and **Clawker Networking**
+(Envoy / CoreDNS / eBPF egress action pies). Users are expected to
+build additional dashboards on top.
 
 The authoritative reference for the stack and its semantics is
 `https://docs.clawker.dev/monitoring` — fetch it for index field
@@ -66,8 +72,10 @@ predate `monitor up` will produce no data until they restart.
    ```
    Reports per-service container state and bootstrap exit status.
 
-2. **Did bootstrap fail?** If it did, the collector and Prometheus
-   never started. Inspect the bootstrap container's logs:
+2. **Did bootstrap fail?** If it did, the collector never started
+   (it gates on bootstrap). Prometheus starts in parallel — it may
+   be running even if bootstrap failed. Inspect the bootstrap
+   container's logs:
    ```
    docker logs clawker-opensearch-bootstrap
    ```
@@ -89,11 +97,12 @@ predate `monitor up` will produce no data until they restart.
 
 ### `claude-code` index has no documents
 
-Claude Code emits telemetry only when env vars enable it. The Dockerfile
-template bakes in `OTEL_*` resource/endpoint vars, but
-`CLAUDE_CODE_ENABLE_TELEMETRY=1` and the prompt/tool-detail flags must
-be set explicitly by the user (typically in their shell profile or a
-project `.env` file). Fetch
+Claude Code emits telemetry only when `CLAUDE_CODE_ENABLE_TELEMETRY=1`.
+Clawker sets this automatically — `1` when the monitoring stack is
+detected at container creation time, `0` otherwise. If the agent
+container was started before the monitoring stack came up, it has
+`CLAUDE_CODE_ENABLE_TELEMETRY=0` baked in for its lifetime. Restart the
+agent after `clawker monitor up` to pick up `=1`. Fetch
 `https://docs.clawker.dev/monitoring` for the current variable list
 and recommended values.
 
@@ -110,6 +119,7 @@ clawker firewall status
 
 Bootstrap likely failed or was skipped. Re-init:
 ```
+clawker monitor down --volumes
 clawker monitor init --force
 clawker monitor up
 ```

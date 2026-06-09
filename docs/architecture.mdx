@@ -69,7 +69,7 @@ Commands are organized under `internal/cmd/` with subpackages per subcommand:
 | `network` | list, create, inspect, remove, prune | Network management |
 | `project` | init, register, list, info, edit, remove | Project registration and config |
 | `worktree` | add, list, prune, remove | Git worktree management |
-| `firewall` | status, list, add, remove, reload, up, down, enable, disable, bypass, rotate-ca | Egress firewall control (all RPCs route through `f.AdminClient` to the CP daemon) |
+| `firewall` | status, list, add, remove, reload, refresh, up, down, enable, disable, bypass, rotate-ca | Egress firewall control (all RPCs route through `f.AdminClient` to the CP daemon) |
 | `controlplane` | up, down, status, agents | Break-glass control plane lifecycle + registered agent listing |
 | `auth` | rotate | CLI-side auth material (CA, server certs, OAuth2 signing key) |
 | `monitor` | init, up, down, status | Observability stack (OTel Collector, OpenSearch, OpenSearch Dashboards, Prometheus) |
@@ -109,7 +109,6 @@ Universally imported infrastructure. Their imports are leaf-only.
 |---------|---------|---------|
 | `config` | storage | Config loading/validation, schema types, path resolution. Composes `Store[Project]` + `Store[Settings]` |
 | `iostreams` | term, text | I/O streams, TTY detection, colors, styles, spinners, progress |
-| `ebpf` | logger | eBPF program loader/manager (cilium/ebpf) — pins maps and programs, attaches to container cgroups, `SyncRoutes` replaces the global `route_map` atomically |
 
 ### Domain Packages (import leaves + foundation)
 
@@ -168,7 +167,7 @@ Three packages form the configuration subsystem:
 
 - **`storage`** (leaf) — Generic `Store[T]` engine. Handles file discovery (static paths + walk-up), YAML loading with migrations, N-way merge with provenance tracking, and atomic writes. Zero domain knowledge.
 - **`config`** — Thin domain wrapper composing `Store[Project]` + `Store[Settings]`. Exposes the `Config` interface with schema types, path helpers, and ~40 accessor methods.
-- **`project`** — Project domain layer. Owns `projects.yaml` registry via its own `Store[ProjectRegistry]`. Handles registration CRUD, path resolution, worktree lifecycle.
+- **`project`** — Project domain layer. Owns the `registry.yaml` project registry via its own `Store[ProjectRegistry]`. Handles registration CRUD, path resolution, worktree lifecycle.
 
 Commands access config through the `Config` interface and `ProjectManager` interface — never `storage` directly.
 
@@ -178,7 +177,7 @@ Follows the GitHub CLI's three-layer pattern:
 
 1. **Wiring** (`internal/cmd/factory/`) — Creates `*cmdutil.Factory` with all deps as `sync.Once` closures. Called once at entry point. Tests never import this.
 
-2. **Contract** (`internal/cmdutil/`) — `Factory` is a pure struct with closure fields. Eager: `Version`, `IOStreams`, `TUI`. Lazy: `Config`, `Client`, `ProjectManager`, `GitManager`, `HostProxy`, `SocketBridge`, `Firewall`, `Logger`, `Prompter`.
+2. **Contract** (`internal/cmdutil/`) — `Factory` is a pure struct with closure fields. Eager: `Version`, `IOStreams`, `TUI`. Lazy: `Config`, `Client`, `ProjectManager`, `GitManager`, `HostProxy`, `SocketBridge`, `AdminClient`, `ControlPlane`, `HttpClient`, `Logger`, `Prompter`.
 
 3. **Consumers** (`internal/cmd/*/`) — Cherry-pick Factory closures into per-command `Options` structs. Run functions accept `*Options` only.
 

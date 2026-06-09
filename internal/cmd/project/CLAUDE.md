@@ -10,6 +10,7 @@ Project commands are the primary user interface for working with the `ProjectMan
 |------|---------|
 | `project.go` | `NewCmdProject(f)` — parent command |
 | `init/init.go` | `NewCmdProjectInit(f, runF)` — initialize project via preset picker + store-backed wizard |
+| `edit/edit.go` | `NewCmdProjectEdit(f, runF)` — interactively edit project config via storeui browser |
 | `register/register.go` | `NewCmdProjectRegister(f, runF)` — register existing project |
 | `list/list.go` | `NewCmdList(f, runF)` — list registered projects with format flags |
 | `info/info.go` | `NewCmdInfo(f, runF)` — show project details (name, root, worktrees, status) |
@@ -19,7 +20,8 @@ Project commands are the primary user interface for working with the `ProjectMan
 
 ## Subcommands
 
-- `project init` — initialize new project in current directory. Guided setup with language presets (Python, Go, Rust, TypeScript, Java, Ruby, C/C++, C#/.NET, Bare) and optional "Build from scratch" customization. Creates `.clawker.yaml` from preset YAML via `storage.NewFromString[Project]` + `WithDefaultsFromStruct`, optionally runs `storeui.Wizard[T]` for field customization, then writes via `store.Write(storage.ToPath(...))` and registers project. Non-interactive mode (`--yes`) defaults to Bare preset; `--yes --preset <name>` selects a specific preset. Shell completions for `--preset` are dynamically generated from `config.Presets()` via `RegisterFlagCompletionFunc`.
+- `project init` — initialize new project in current directory. Guided setup with language presets (Python, Go, Rust, TypeScript, Java, Ruby, C/C++, C#/.NET, Bare) and optional "Build from scratch" customization. Creates `.clawker.yaml` from preset YAML via `config.NewProjectStoreFromPreset`, optionally runs a `storeui.BuildBrowser`-based customize browser for field editing, then writes via `store.WriteTo(configPath)` and registers project. Non-interactive mode (`--yes`) defaults to Bare preset; `--yes --preset <name>` selects a specific preset. Shell completions for `--preset` are dynamically generated from `config.Presets()` via `RegisterFlagCompletionFunc`.
+- `project edit` — interactively edit existing project configuration. Opens a storeui browser TUI against `cfg.ProjectStore()` via `projectui.Edit`. No flags.
 - `project register` — register existing project in user's registry (`cfg.ProjectRegistryFileName()`)
 - `project list` (alias `ls`) — list all registered projects via `ProjectManager.ListProjects()`. Table output with NAME, ROOT, WORKTREES, STATUS columns. Supports `--format`/`--json`/`-q` flags via `FormatFlags`. Status reflects `ProjectState.Status` (ok, missing, inaccessible).
 - `project info NAME` — show detailed info for a single project via `ProjectManager.ListProjects()`: name, root, directory status, worktrees with health status. Supports `--json` output (no `--format`/`--quiet`).
@@ -49,13 +51,12 @@ func Run(ctx context.Context, opts *ProjectInitOptions) error
 
 // Internal types
 type initEnv struct { ... }            // Resolved deps + derived state shared by both init paths
-func resolveInitEnv(opts *ProjectInitOptions) (*initEnv, error)
-type performSetupInput struct { ... }  // Narrowed deps for performProjectSetup (ios, tui, force, ...)
+func resolveInitEnv(ctx context.Context, opts *ProjectInitOptions) (*initEnv, error)
+type performSetupInput struct { ... }  // Narrowed deps for performProjectSetup (ios, tui, vcs, force, ...)
 func performProjectSetup(ctx context.Context, in performSetupInput) error
-func bootstrapSettings() error
-func buildInitWizardFields(wctx wizardContext) []tui.WizardField
-func customizeWizardFields() []string
-func customizeWizardOverrides() []storeui.Override
+func buildInitWizardSteps(wctx wizardContext) []tui.WizardStep
+func customizeFields() []string
+func customizeOverrides() []storeui.Override
 func PresetCompletions() []cobra.Completion  // Dynamic completions from config.Presets()
 func presetByName(presets []config.Preset, name string) (config.Preset, bool)
 ```
@@ -64,41 +65,46 @@ func presetByName(presets []config.Preset, name string) (config.Preset, bool)
 
 ## Architecture
 
-`Run` dispatches to `runInteractive` (wizard) or `runNonInteractive` based on `--yes` flag and TTY detection. Both delegate to `performProjectSetup` for store creation, file writing, and registration.
+`Run` calls `auth.EnsureAuthMaterial()` first, then dispatches to `runInteractive` (wizard) or `runNonInteractive` based on `--yes` flag and TTY detection. Both delegate to `performProjectSetup` for store creation, file writing, and registration.
 
 ```
 Run()
+  ├── auth.EnsureAuthMaterial()
   ├── runInteractive()
-  │   ├── resolveInitEnv()           → factory nouns + bootstrap + derived state
-  │   ├── TUI.RunWizard(fields)     → name + preset + action
-  │   │   ├── overwrite declined    → register-only
-  │   │   ├── "Save and get started" → performProjectSetup(preset, customize=false)
-  │   │   ├── "Customize this preset" → performProjectSetup(preset, customize=true)
-  │   │   └── AutoCustomize preset   → performProjectSetup(preset, customize=true)
+  │   ├── resolveInitEnv(ctx, opts)   → factory nouns + settings bootstrap + derived state
+  │   ├── TUI.RunWizard(steps)        → name + preset + vcs + action
+  │   │   ├── overwrite declined      → register-only
+  │   │   ├── "Save and get started"  → performProjectSetup(preset, vcs, customize=false)
+  │   │   ├── "Customize this preset" → performProjectSetup(preset, vcs, customize=true)
+  │   │   └── AutoCustomize preset    → performProjectSetup(preset, vcs, customize=true)
   │   └── performProjectSetup()
-  │       ├── NewFromString[Project](preset.YAML) → store
-  │       ├── [if customize] storeui.Wizard[T](store) → field editing
-  │       ├── store.Write(ToPath(configPath))
+  │       ├── config.NewProjectStoreFromPreset(preset.YAML) → store
+  │       ├── store.Set(applyVCSToProject)
+  │       ├── [if customize] storeui.BuildBrowser + TUI.RunWizard(BrowserPage)
+  │       ├── store.WriteTo(configPath)
   │       ├── create .clawkerignore
   │       └── pm.Register(name, wd)
   └── runNonInteractive()                 (--yes or non-TTY)
-      ├── resolveInitEnv()
+      ├── resolveInitEnv(ctx, opts)
       ├── resolve preset (--preset <name> or default "Bare")
-      └── performProjectSetup(preset, customize=false)
+      └── performProjectSetup(preset, vcs, customize=false)
 ```
 
 ### Setup Wizard Fields
 
 | ID | Kind | Title | Default | SkipIf |
 |----|------|-------|---------|--------|
-| `overwrite` | Confirm | Overwrite | DefaultYes=false | `!configExists \|\| force` |
-| `project_name` | Text | Project | dir name lowercase (or positional arg) | `overwrite == "no"` |
-| `preset` | Select | Template | idx 0 | `overwrite == "no"` |
-| `action` | Select | Action | idx 0 (Save) | `overwrite == "no"` OR preset.AutoCustomize |
+| `overwrite` | Confirm | Overwrite | DefaultYes=false | `inSubdir \|\| !configExists \|\| force` |
+| `project_name` | Text | Project | dir name lowercase (or positional arg) | `inSubdir \|\| overwriteDeclined` |
+| `preset` | Select | Template | idx 0 | `overwriteDeclined` |
+| `vcs_provider` | Select | VCS | idx 0 (GitHub) | `overwriteDeclined` |
+| `git_protocol` | Select | Protocol | idx 0 (HTTPS) | `overwriteDeclined` |
+| `gpg_forward` | Confirm | GPG | DefaultYes=true | `overwriteDeclined` |
+| `action` | Select | Action | idx 0 (Save) | `overwriteDeclined` OR preset.AutoCustomize |
 
-### Customize Wizard Fields
+### Customize Browser Fields
 
-When user selects "Customize this preset" or "Build from scratch", `storeui.Wizard[T]` runs with these field paths:
+When user selects "Customize this preset" or "Build from scratch", `storeui.BuildBrowser` runs with these field paths (`customizeFields()` + `customizeOverrides()`):
 
 | Path | Kind | Override |
 |------|------|----------|
@@ -108,12 +114,13 @@ When user selects "Customize this preset" or "Build from scratch", `storeui.Wiza
 | `build.instructions.user_run` | StringSlice | — |
 | `build.inject.after_from` | StringSlice | — |
 | `build.inject.after_packages` | StringSlice | — |
+| `agent.post_init` | Text | — |
 | `security.firewall.add_domains` | StringSlice | — |
 | `workspace.default_mode` | Select | Options: `["bind", "snapshot"]` |
 
 ### Settings Bootstrap
 
-On first run, `bootstrapSettings()` checks if `settings.yaml` exists on disk (via `config.SettingsFilePath()`). If missing, writes `GenerateDefaultsYAML[Settings]()` to the config directory. This is silent — no user prompt.
+During `resolveInitEnv`, `cfg.SettingsStore().Write()` is called to ensure `settings.yaml` exists on disk with schema defaults. If the file already exists, `Write()` is a no-op. On failure a warning is printed to `ErrOut` but initialization continues.
 
 ### Project Name Normalization
 
@@ -132,16 +139,16 @@ Filenames are derived from `cfg.ProjectConfigFileName()` (main + `.local` varian
 
 ## Config Access Pattern
 
-`project init` creates a `storage.Store[config.Project]` from preset YAML via `storage.NewFromString[Project](preset.YAML, WithDefaultsFromStruct[Project]())`. Schema defaults fill any fields not specified by the preset. The store is written to the CWD dotfile via `store.Write(storage.ToPath(configPath))`. Uses `project.ProjectManager` for registry registration.
+`project init` creates an isolated store from preset YAML via `config.NewProjectStoreFromPreset(preset.YAML)` (no file discovery, no walk-up, no user-level config merging). VCS settings are applied via `store.Set(applyVCSToProject)`. The store is written to the CWD dotfile via `store.WriteTo(configPath)`. Uses `project.ProjectManager` for registry registration.
 
 ## Testing
 
 Tests use `runF` injection for flag/option capture. Key patterns:
 - `NewCmdProjectInit(f, captureFunc)` for flag parsing tests
-- `buildInitWizardFields(wctx)` tested for field definitions, SkipIf logic, preset options
+- `buildInitWizardSteps(wctx)` tested for step definitions, SkipIf logic, preset options
 - `performProjectSetup()` tested directly with `performSetupInput` for file creation/registration (avoids BubbleTea)
 - Project name normalization tested centrally in `internal/cmdutil/slugify_test.go`
-- `customizeWizardFields()` validated against `storeui.WalkFields` to ensure all paths match real schema fields
+- `customizeFields()` paths used to configure the storeui browser in `performProjectSetup`
 - `TestPerformProjectSetup_PresetRoundTrip` — table-driven test over all presets: write + reload + verify
 
 ```bash

@@ -50,10 +50,12 @@ func (e AgentRegistered) ApplyTo(s *overseer.State) {
 	s.Agents[e.ContainerID] = view
 }
 
-// AgentUntrusted fires when an identity outcome violates the trust
-// contract (thumbprint mismatch, CN mismatch, peer-IP mismatch,
-// Register failed). Session stays open (asymmetric trust); subscribers
-// enact policy.
+// AgentUntrusted fires when the dialer's post-handshake classification
+// violates the trust contract (thumbprint mismatch, registry lookup
+// failure, or Register failed). Session stays open (asymmetric trust);
+// subscribers enact policy. CN mismatch and peer-IP mismatch are
+// rejected upstream by IdentityInterceptor with PermissionDenied and
+// never reach this event.
 type AgentUntrusted struct {
 	ContainerID string
 	AgentName   string
@@ -124,7 +126,8 @@ func (e InitStarted) ApplyTo(s *overseer.State) {
 
 // InitStepStarted fires when the Executor dispatches one step's
 // ShellCommand. StepName is the wire-contract vocabulary subscribers
-// match against ("config", "git", "ssh", "post-init", "agent-ready").
+// match against ("docker-socket", "config", "git", "git-credentials",
+// "ssh", "post-init", "pre-run", "agent-ready").
 type InitStepStarted struct {
 	ContainerID string
 	AgentName   string

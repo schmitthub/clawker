@@ -11,9 +11,9 @@ import (
 // otherwise it must be a single port ("443") or an inclusive range ("9000-9100",
 // lo-hi), with every port in 1..65535 and lo<=hi.
 //
-// Validating here gives the user an immediate, descriptive error instead of a
-// rule that the control plane would silently drop at ingestion (a malformed
-// port must never collapse to a default and widen egress).
+// Validating here gives the user an immediate, descriptive error at the CLI
+// boundary; the control plane also validates and returns an error at ingestion,
+// but a malformed port must never collapse to a default and widen egress.
 func validatePortFlag(port string) error {
 	if _, _, _, err := config.ParsePortSpec(port); err != nil {
 		return cmdutil.FlagErrorf("--port: %v", err)

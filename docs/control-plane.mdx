@@ -17,12 +17,12 @@ The control plane is **not** the firewall. The firewall (Envoy + CoreDNS + eBPF)
 The CP container is a single binary, `clawker-cp`, running as PID 1. Inside it:
 
 - **Ory auth stack** — Hydra (OAuth2 token issuer, `client_credentials` + `private_key_jwt` ES256), Kratos (identity), and Oathkeeper (HTTP auth proxy) are subprocess-managed by the same PID. Token validation is fail-closed.
-- **AdminService gRPC** (mTLS + OAuth2 JWT, default port `7443` on host loopback) — the 13-method firewall control surface (`FirewallInit`, `FirewallEnable`, `FirewallAddRules`, `FirewallSyncRoutes`, `FirewallBypass`, …) plus `ListAgents`. Every CLI `clawker firewall *` and `clawker controlplane agents` call goes through this RPC.
+- **AdminService gRPC** (mTLS + OAuth2 JWT, default port `7443` on host loopback) — the 13-method firewall control surface (`FirewallInit`, `FirewallEnable`, `FirewallAddRules`, `FirewallSyncRoutes`, `FirewallBypass`, …) plus `ListAgents` and `GetSystemTime` (public-scope, no bearer token required — used by the clock-sync readiness gate). Every CLI `clawker firewall *` and `clawker controlplane agents` call goes through this RPC.
 - **AgentService gRPC** (mTLS, default in-container port `7444`, reachable only over `clawker-net`) — the surface clawkerd uses to register itself with CP and hold open a long-lived Session.
 - **Agent registry** — a sqlite database persisted on the host XDG data dir, keyed by SHA-256 of the agent's mTLS leaf cert thumbprint plus container ID. CP is the **sole** writer; reads go through `ListAgents`. The registry survives CP restarts.
 - **Overseer event bus + worldview** — an in-process typed pub/sub serializing container lifecycle (start/stop/destroy/rename), agent session lifecycle (connecting/connected/failed/broken), and trust verdict events into a deep-copyable `State` snapshot.
 - **Docker events feeder** — subscribes to the local Docker daemon's event stream (with reconnect), projects managed-label-filtered events onto the overseer bus.
-- **Agent watcher + clean self-shutdown** — polls Docker every 30s for `purpose=agent, managed=true` containers. After drain-to-zero (`missed_threshold × pollInterval + 60s` grace), it fires an ordered drain callback: cancel bypass timers → graceful gRPC stop → Stack stop → `netlogger.Stop` (drains the eBPF egress event pipeline and flushes the OTLP BatchProcessor BEFORE BPF maps go away) → eBPF `FlushAll` → exit code 0. The `on-failure` restart policy does not retrigger.
+- **Agent watcher + clean self-shutdown** — polls Docker every 30s for `purpose=agent, managed=true` containers. After drain-to-zero (60s grace period elapsed AND 2 consecutive zero-count polls), it fires an ordered drain callback: `actionQueue.Close` → graceful gRPC stop → cancel bypass timers → Stack stop → `netlogger.Stop` (drains the eBPF egress event pipeline and flushes the OTLP BatchProcessor BEFORE BPF maps go away) → DNS GC stop → eBPF `FlushAll` → exit code 0. The `on-failure` restart policy does not retrigger.
 - **eBPF egress event emitter (netlogger)** — drains a BPF ringbuf populated at every cgroup/connect/sendmsg/sock_create decision and emits OTLP log records on the same mTLS-gated infra lane the CP zerolog bridge uses. Distinct `service.name=ebpf-egress` so OpenSearch routes the stream to its own index. Degrades to `event=netlogger_unavailable` (no panics) when the collector is unreachable; firewall enforcement is unaffected. See [Egress Observability](/observability) for the record shape.
 - **Aggregate `/healthz`** — host-loopback HTTP on `HealthPort` (default `7080`) probes every internal service port before returning 200. Used by both `clawker controlplane status` and the host-side bootstrap to confirm readiness.
 
@@ -53,14 +53,14 @@ CP is the privileged side of the security boundary. Anything with write access t
 4. **Auth is centralized.** Hydra issues short-lived OAuth2 tokens for every CLI↔CP gRPC call, signed by the CLI-issued auth material. The CLI is the root of trust; CP only validates.
 
 <Warning>
-**CP crashing is a security incident, not an availability one.** If the CP container panics or exits uncleanly, the eBPF programs it attached remain pinned to your agent containers' cgroups — traffic keeps getting filtered by whatever rules were loaded at crash time, but no new rules can be applied, no bypass timers can expire, and no CP↔agent dispatch is available. Run `clawker controlplane status` if you suspect something is wrong; a `running: false` result with agents still up means you should `clawker controlplane up` to re-establish supervision.
+**CP crashing is a security incident, not an availability one.** If the CP container panics or exits uncleanly, the eBPF programs it attached remain pinned to your agent containers' cgroups — traffic keeps getting filtered by whatever rules were loaded at crash time, but no new rules can be applied, no bypass timers can expire, and no CP↔agent dispatch is available. Run `clawker controlplane status` if you suspect something is wrong; a `Container: stopped` result with agents still up means you should `clawker controlplane up` to re-establish supervision.
 </Warning>
 
 ## How CP Boots
 
 Two paths bring CP up:
 
-1. **Transparent bootstrap** — the first CLI call that needs CP (most firewall commands, container creation, anything that opens an `AdminClient`) runs `cpboot.EnsureRunning` under a host-side mutex. Steps: ensure `clawker-controlplane:latest` image exists (built on demand from the embedded binaries), `ContainerCreate` on `clawker-net` with a static IP, `ContainerStart`, then poll `http://127.0.0.1:<HealthPort>/healthz` until 200 or timeout. Idempotent — re-runs are no-ops once `/healthz` is green.
+1. **Transparent bootstrap** — the first CLI call that needs CP (most firewall commands, container creation, anything that opens an `AdminClient`) runs `cpboot.EnsureRunning` under a host-side mutex. Steps: ensure the CP image exists with a content-derived tag (`clawker-controlplane:bin-<sha>`, built on demand from the embedded binaries), `ContainerCreate` on `clawker-net` with a static IP, `ContainerStart`, then poll `http://127.0.0.1:<HealthPort>/healthz` until 200 or timeout. Idempotent — re-runs are no-ops once `/healthz` is green.
 2. **Break-glass** — `clawker controlplane up` calls the same `EnsureRunning` path explicitly, useful when you want to bring CP up without triggering a side-effect command.
 
 Either way, the CP image is built from binaries embedded in the `clawker` CLI itself (`clawker-cp`, `ebpf-manager`). There's no separate image to pull. See [Installation](/installation) for the BPF toolchain requirements when building from source.
@@ -78,7 +78,7 @@ All `clawker controlplane` subcommands are break-glass — useful for debugging,
 | Command | Purpose |
 |---------|---------|
 | `clawker controlplane up` | Idempotent `EnsureRunning`. Brings CP up if it isn't already; no-op if `/healthz` is green. |
-| `clawker controlplane down` | Stops the CP container. `clawker-cp`'s SIGTERM handler runs the clean drain (graceful gRPC stop → Stack stop → eBPF flush → exit 0). |
+| `clawker controlplane down` | Stops the CP container. `clawker-cp`'s SIGTERM handler runs the clean drain (`actionQueue.Close` → graceful gRPC stop → bypass timer cancel → Stack stop → netlogger stop → eBPF flush → exit 0). |
 | `clawker controlplane status` | Probes `/healthz`; if up, also fetches firewall subsystem state via the AdminService. Output via `--format json` for scripts. |
 | `clawker controlplane agents` | Lists every agent currently registered with CP — composite (`project`, `agent_name`) plus container ID, cert thumbprint, registration time, and last-seen time. Output via `--format json` for scripts. |
 
@@ -97,14 +97,13 @@ clawker controlplane status
 ```
 
 ```text
-Container:        clawker-controlplane (running)
-Image:            clawker-controlplane:latest
-IP:               192.168.215.202
-Health:           OK (http://127.0.0.1:7080/healthz)
-Firewall:         enabled, 12 rules, 3 enrolled containers
+Container:  running
+Healthz:    ✓
+Firewall:   ✓
+Rules:      12 active
 ```
 
-If `/healthz` is unreachable, the CLI reports `running: false` and the firewall fields are omitted. Bringing CP back up:
+If the CP container is not running, the CLI reports `Container: stopped` and the health and firewall fields are omitted. Bringing CP back up:
 
 ```bash
 clawker controlplane up
@@ -139,7 +138,7 @@ control_plane:
   kratos_admin_port: 4434
 ```
 
-The four Ory ports (`hydra_*`, `kratos_*`, `oathkeeper_*`) are **container-internal** — they are not exposed to the host. They appear in settings only so the in-container subprocesses agree on their port assignments.
+The Ory admin and API ports (`hydra_admin_port`, `kratos_public_port`, `kratos_admin_port`, `oathkeeper_api_port`) are **container-internal** — they are not published to the host. `hydra_public_port` and `oathkeeper_port` are published to `127.0.0.1` on the host. All ports appear in settings so the in-container subprocesses agree on their port assignments.
 
 ## Troubleshooting
 

@@ -11,11 +11,8 @@ import (
 )
 
 // ErrCallbackAlreadyReceived is returned when attempting to capture a callback
-// for a session that has already received one.
-// TODO: this is being printed over the claude REPL when its active. We have to
-// figure out how to print errors without overwriting onto the REPL ui.
-// either supress the printing of this if claude is active, or find a way to
-// print above/below the REPL.
+// for a session that has already received one. Callers treat it as a no-op
+// (browsers often send duplicate requests); it is never surfaced to the user.
 var ErrCallbackAlreadyReceived = errors.New("callback already received")
 
 // CallbackSessionType is the session type identifier for callback sessions.

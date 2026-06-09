@@ -11,7 +11,7 @@ import (
 )
 
 // WalkFields uses reflection to discover editable fields from a struct value.
-// It maps Go types to FieldKind: string→Text, bool→Bool, *bool→Bool, int→Int,
+// It maps Go types to FieldKind: string→Text, bool→Bool, *bool→Bool, int/int64→Int,
 // []string→StringSlice, time.Duration→Duration, map[string]string→Map,
 // []struct→StructSlice, nested struct→recurse, nil *struct→recurse zero value.
 // Unrecognized types fall back to KindStructSlice (enrichWithSchema overwrites

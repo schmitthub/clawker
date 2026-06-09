@@ -1,6 +1,6 @@
 # Whail Package
 
-Reusable Docker engine wrapper with automatic label-based resource isolation. Wraps `moby/moby/client` — **no other package may import moby client directly**.
+Reusable Docker engine wrapper with automatic label-based resource isolation. Wraps `moby/moby/client` — only `pkg/whail` and `internal/docker` may import the `APIClient` connector (with narrow exceptions for daemon processes; see `.claude/rules/docker-client.md`).
 
 All list/inspect/mutate operations automatically inject managed label filters. Callers cannot distinguish "not found" from "exists but unmanaged" — both are rejected.
 
@@ -56,8 +56,6 @@ type Engine struct {
 **`ContainerCreateOptions`**: `Config`, `HostConfig`, `NetworkingConfig`, `Platform`, `Name`, `ExtraLabels Labels`, `EnsureNetwork *EnsureNetworkOptions` — labels auto-merged, managed label enforced
 
 **`ContainerStartOptions`**: embeds `client.ContainerStartOptions` + `ContainerID`, `EnsureNetwork *EnsureNetworkOptions`
-
-**`EnsureNetworkOptions`**: embeds `client.NetworkCreateOptions` + `Name`, `Verbose`, `ExtraLabels Labels`
 
 ## Image Operations (6 methods)
 
@@ -155,7 +153,7 @@ Wire pattern: `engine.BuildKitImageBuilder = buildkit.NewImageBuilder(engine.API
 
 ## whailtest/ Package
 
-Function-field test doubles for `client.APIClient`. Only `pkg/whail` and `internal/docker` should import.
+Function-field test doubles for `client.APIClient`. Intended for `pkg/whail` and `internal/docker`; see `.claude/rules/docker-client.md` for the import boundary rule.
 
 - **`FakeAPIClient`**: function-field fake (nil = panic); `NewFakeAPIClient()`, `Reset()`
 - **`TestEngineOptions()`**: returns `EngineOptions` with test prefix
@@ -165,7 +163,7 @@ Function-field test doubles for `client.APIClient`. Only `pkg/whail` and `intern
 - **BuildKit**: `FakeBuildKitBuilder(capture)` with `BuildKitCapture{Opts, CallCount, Err, ProgressEvents, RecordedEvents}` — when `ProgressEvents` is set and `OnProgress` callback provided, emits events before returning. `FakeTimedBuildKitBuilder(capture)` — same but sleeps `RecordedEvents[i].Delay()` between events for realistic replay timing
 - **Build Scenarios** (`build_scenarios.go`): Pre-built `[]BuildProgressEvent` sequences matching real BuildKit output patterns. `SimpleBuildEvents()`, `CachedBuildEvents()`, `MultiStageBuildEvents()`, `ErrorBuildEvents()`, `LargeLogOutputEvents()`, `ManyStepsBuildEvents()`, `InternalOnlyEvents()`, `AllBuildScenarios()`. Helper: `StepDigest(n)` for deterministic sha256 digests
 - **Recorded Scenarios** (`recorded_scenario.go`): JSON-serializable event sequences with timing. `RecordedBuildEvent{DelayMs, Event}`, `RecordedBuildScenario{Name, Description, Events}`. Load/save: `LoadRecordedScenario(path)`, `LoadRecordedScenarioFromBytes(data)`, `SaveRecordedScenario(path, scenario)`. Generators: `RecordedScenarioFromEvents(name, desc, events, delay)`, `RecordedScenarioFromEventsWithTiming(...)`. `EventRecorder` wraps a `BuildProgressFunc` to capture wall-clock timing from real builds
-- **Testdata** (`testdata/*.json`): 7 recorded JSON scenarios (simple, cached, multi-stage, error, large-log, many-steps, internal-only) with synthetic timing. Regenerate: `GOLDEN_UPDATE=1 go test ./pkg/whail/whailtest/... -run TestSeed -v`
+- **Testdata** (`testdata/*.json`): 7 recorded JSON scenarios (simple, cached, multi-stage, error, large-log, many-steps, internal-only) with synthetic timing. Regenerate: `GOLDEN_UPDATE=1 go test ./pkg/whail/whailtest/... -run TestSeedRecordedScenarios -v`
 
 ## Key Invariants
 

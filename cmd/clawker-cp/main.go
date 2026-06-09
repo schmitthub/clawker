@@ -446,7 +446,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// otelCerts was wired pre-logger; both the firewall.Stack (for
 	// envoy/coredns leaf provisioning) and the CP's own OTLP exporter
 	// consume it. Degraded mode (nil otelCerts) is already logged via
-	// the event=infra_issuer_unavailable line above; container specs
+	// the event=otelcerts_unavailable line above; container specs
 	// drop the mTLS bind-mounts and CP's OTel push lane is closed.
 	stack := fwhandler.NewStack(dockerCli, cfg, log, rulesStore, otelCerts)
 
@@ -884,10 +884,10 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 			} else {
 				// Circuit breaker: 3 consecutive Export failures
 				// trip the breaker permanently for the rest of the
-				// CP lifetime. The counting-exporter wrap that the
-				// initiative listed for Prom metrics is deferred to
-				// a follow-up PR (see netlogger/metrics.go) — only
-				// the circuit breaker is wired today.
+				// CP lifetime. Prom counters (netlogger/metrics.go)
+				// are incremented in-process but not registered on
+				// a scrape endpoint — the circuit breaker is the
+				// only collector-resilience mechanism wired here.
 				circLog := log.With("component", "netlogger.circuit")
 				wrap := func(inner sdklog.Exporter) sdklog.Exporter {
 					return netlogger.NewCircuitExporter(inner, netlogger.CircuitOptions{

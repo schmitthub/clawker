@@ -27,13 +27,11 @@ import (
 )
 
 // adminClientKeepalive is the keepalive policy the CLI applies to the
-// long-lived CP AdminService connection. Values match the CP
-// server-side config in internal/controlplane/server.go. Time is how
-// long an idle connection sits before the client pings; Timeout is
-// how long we wait for the ping ack before declaring the path dead;
+// long-lived CP AdminService connection. Time is how long an idle
+// connection sits before the client pings; Timeout is how long we
+// wait for the ping ack before declaring the path dead;
 // PermitWithoutStream is false because the CLI only pings when an
-// RPC is in flight (CP server enforces the same via
-// MinTime/PermitWithoutStream).
+// RPC is in flight.
 var adminClientKeepalive = keepalive.ClientParameters{
 	Time:                30 * time.Second,
 	Timeout:             10 * time.Second,
@@ -202,7 +200,7 @@ func tuiFunc(f *cmdutil.Factory) *tui.TUI {
 	return tui.NewTUI(ios)
 }
 
-// ioStreams creates an IOStreams with TTY/color/CI detection and initializes the logger.
+// ioStreams creates an IOStreams with TTY/color/CI detection.
 func ioStreams() *iostreams.IOStreams {
 	ios := iostreams.System()
 	return ios
@@ -245,8 +243,7 @@ func clientFunc(f *cmdutil.Factory) func(context.Context) (*docker.Client, error
 //
 // Keepalive params (Time: 30s, Timeout: 10s, PermitWithoutStream: false)
 // let long-running CLI processes (monitor, bypass dashboard) detect
-// dead paths before the next RPC hangs. Values match the CP server-side
-// configuration.
+// dead paths before the next RPC hangs.
 func adminClientFunc(f *cmdutil.Factory) func(context.Context) (adminv1.AdminServiceClient, error) {
 	var (
 		mu     sync.Mutex
@@ -354,7 +351,7 @@ func prompterFunc(f *cmdutil.Factory) func() *prompter.Prompter {
 }
 
 // gitManagerFunc returns a lazy closure that creates a GitManager once.
-// Uses project root from Config.ProjectCfg.RootDir() as the git repository path.
+// Uses project root from Config.GetProjectRoot() as the git repository path.
 // Returns error if not in a registered project or not a git repository.
 func gitManagerFunc(f *cmdutil.Factory) func() (*git.GitManager, error) {
 	var (

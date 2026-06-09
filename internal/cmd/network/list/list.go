@@ -31,10 +31,7 @@ func NewCmdList(f *cmdutil.Factory, runF func(context.Context, *ListOptions) err
 		Use:     "list",
 		Aliases: []string{"ls"},
 		Short:   "List networks",
-		Long: `Lists all networks created by clawker.
-
-Networks are used for container communication and monitoring stack
-integration. The primary network is clawker-net.`,
+		Long:    `Lists all networks created by clawker.`,
 		Example: `  # List all clawker networks
   clawker network list
 

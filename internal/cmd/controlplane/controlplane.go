@@ -6,10 +6,9 @@ import (
 )
 
 // NewCmdControlPlane creates the parent command for control plane break-glass
-// management. Day-to-day callers do not need these verbs: `f.AdminClient`
-// transparently invokes `cpboot.EnsureRunning` on first use, so the
-// first `clawker firewall status` (or any other admin RPC) auto-boots the
-// CP. These commands exist for explicit lifecycle control during debugging
+// management. Day-to-day callers do not need these verbs: the CP is brought
+// up automatically during agent container start and by `clawker firewall up`.
+// These commands exist for explicit lifecycle control during debugging
 // and recovery.
 func NewCmdControlPlane(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{

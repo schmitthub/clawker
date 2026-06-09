@@ -29,17 +29,17 @@ In CI or non-TTY environments (checked via `ios.IsInteractive()`):
 ## Usage
 
 ```go
-prompter := f.Prompter()  // prompter.NewPrompter(ios)
+p := f.Prompter()  // prompter.NewPrompter(ios)
 
-name, err := prompter.String(prompter.PromptConfig{
+name, err := p.String(prompter.PromptConfig{
     Message:  "Project name",
     Default:  "my-project",
     Required: true,
 })
 
-proceed, err := prompter.Confirm("Continue?", false)
+proceed, err := p.Confirm("Continue?", false)
 
-idx, err := prompter.Select("Choose base image", []prompter.SelectOption{
+idx, err := p.Select("Choose base image", []prompter.SelectOption{
     {Label: "Debian Bookworm", Description: "Recommended"},
     {Label: "Alpine 3.22", Description: "Smaller image"},
 }, 0)

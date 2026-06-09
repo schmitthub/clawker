@@ -8,9 +8,8 @@ Disable firewall for a container
 
 ### Synopsis
 
-Remove an agent container from the firewall's per-container routing.
-BPF programs remain attached so re-enable is cheap; the fast path exits to
-bypass on lookup miss.
+Remove an agent container from per-container egress filtering.
+Re-enable later with 'clawker firewall enable'.
 
 ```
 clawker firewall disable [flags]

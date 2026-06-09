@@ -1,4 +1,4 @@
-// ebpf-manager is the entrypoint binary for the clawker eBPF manager container.
+// ebpf-manager is a break-glass CLI packaged inside the clawker-controlplane container image.
 //
 // It manages BPF programs and maps for per-container traffic routing.
 // Programs are loaded once (init), then commands operate on pinned maps.
@@ -321,7 +321,7 @@ func runDumpRoutes(log *logger.Logger, asJSON bool) {
 	}
 }
 
-// l4ProtoLabel renders a RouteKey.L4Proto byte for the break-glass dump.
+// l4ProtoLabel renders a Route.L4Proto byte for the break-glass dump.
 func l4ProtoLabel(p uint8) string {
 	switch p {
 	case clawkerebpf.L4ProtoTCP:

@@ -1875,7 +1875,7 @@ func setupHostProxy(ctx context.Context, events chan<- CreateContainerEvent, cfg
 	if err := hp.EnsureRunning(); err != nil {
 		log.Warn().Err(err).Msg("failed to start host proxy server")
 		sendWarning(ctx, events, "environment", "Host proxy failed to start. Browser authentication may not work.")
-		sendWarning(ctx, events, "environment", "To disable: set 'security.enable_host_proxy: false' in .clawker.yaml")
+		sendWarning(ctx, events, "environment", "To disable: set 'security.enable_host_proxy: false' in your project config")
 		return false
 	}
 
@@ -1905,7 +1905,7 @@ func buildCreateTimeEnv(ctx context.Context, opts *CreateContainerOptions, conta
 
 	cpSettings := opts.Config.Settings().ControlPlane
 	// Clawkerd agent endpoints — populated UNCONDITIONALLY (NOT gated on
-	// firewall). CP, clawker-net, and Hydra are core infrastructure and
+	// firewall). CP, the clawker network, and Hydra are core infrastructure and
 	// always run when an agent container is starting; the firewall is one
 	// optional CP-hosted feature. See the "CP ≠ firewall" callout in
 	// project-root CLAUDE.md.
@@ -1928,7 +1928,7 @@ func buildCreateTimeEnv(ctx context.Context, opts *CreateContainerOptions, conta
 	}
 	// Firewall: set the enabled flag (eBPF programs attached post-start via BootstrapServicesPostStart)
 	// + the CP /healthz URL the entrypoint polls before running CMD. Both
-	// containers share clawker-net, so Docker DNS resolves ContainerCP.
+	// containers share the clawker network, so Docker DNS resolves ContainerCP.
 	if opts.Config.Settings().Firewall.FirewallEnabled() {
 		envOpts.FirewallEnabled = true
 		envOpts.CPHealthzURL = "http://" + net.JoinHostPort(

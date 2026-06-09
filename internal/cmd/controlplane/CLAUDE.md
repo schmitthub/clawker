@@ -17,11 +17,12 @@ wants to control the CP lifecycle directly.
 
 | File | Purpose |
 |------|---------|
-| `controlplane.go` | Parent command `NewCmdControlPlane(f)` — registers `up`/`down`/`status` |
+| `controlplane.go` | Parent command `NewCmdControlPlane(f)` — registers `up`/`down`/`status`/`agents` |
 | `up.go` | `controlplane up` — wraps `Manager.EnsureRunning` (idempotent) |
-| `down.go` | `controlplane down` — `Manager.Stop` (CP container only); warns about orphan Envoy/CoreDNS |
+| `down.go` | `controlplane down` — `Manager.Stop` (CP container only); no orphan warning — CP drains its own firewall stack on SIGTERM |
 | `status.go` | `controlplane status` — `Manager.IsRunning` + `Manager.ProbeHealthz` + best-effort `FirewallStatus` RPC |
-| `up_test.go` / `down_test.go` / `status_test.go` | Unit tests driving the run functions through `mocks.ManagerMock` |
+| `agents.go` | `controlplane agents` — `AdminClient.ListAgents` snapshot of the agent registry |
+| `up_test.go` / `down_test.go` / `status_test.go` / `agents_test.go` | Unit tests driving the run functions through `mocks.ManagerMock` |
 
 ## Subcommand Table
 
@@ -30,6 +31,7 @@ wants to control the CP lifecycle directly.
 | `up` | `NewCmdUp(f, runF)` | none | none | `EnsureRunning` |
 | `down` | `NewCmdDown(f, runF)` | none | none | `IsRunning`, then `Stop` on the running path |
 | `status` | `NewCmdStatus(f, runF)` | none | `--format`, `--json`, `--quiet` | `IsRunning`, `ProbeHealthz`; plus best-effort `FirewallStatus` via `f.AdminClient` |
+| `agents` | `NewCmdAgents(f, runF)` | none | `--format`, `--json`, `--quiet` | none (uses `f.AdminClient` → `ListAgents`) |
 
 ## Factory dependency
 
@@ -105,26 +107,29 @@ silently breaks JSON unmarshaling on that side.
 
 ## Factory dependencies per verb
 
-| Field | `up` | `down` | `status` |
-|-------|:----:|:------:|:--------:|
-| `IOStreams` | ✓ | ✓ | ✓ |
-| `ControlPlane` | ✓ | ✓ | ✓ |
-| `AdminClient` | ­ | ­ | ✓ (best-effort) |
+| Field | `up` | `down` | `status` | `agents` |
+|-------|:----:|:------:|:--------:|:--------:|
+| `IOStreams` | ✓ | ✓ | ✓ | ✓ |
+| `TUI` | ­ | ­ | ­ | ✓ |
+| `Logger` | ­ | ­ | ­ | ✓ |
+| `ControlPlane` | ✓ | ✓ | ✓ | ­ |
+| `AdminClient` | ­ | ­ | ✓ (best-effort) | ✓ |
 
 ## Format flag support
 
-Only `status` accepts `--format`/`--json`/`--quiet` via `cmdutil.AddFormatFlags`.
+`status` and `agents` accept `--format`/`--json`/`--quiet` via `cmdutil.AddFormatFlags`.
 `up` and `down` are action verbs with fixed textual output. Semantic color
 methods (`cs.Success` / `cs.Error` / `cs.Info`, plus `cs.*Icon()`) are used
 throughout — no raw `cs.Red` / `cs.Green`.
 
 ## Import boundary
 
-The commands import `internal/controlplane` (for the `Manager` interface
+`up`, `down`, and `status` import `internal/controlplane/cpboot` (for the `Manager` interface
 type) but never import `pkg/whail` — the `*docker.Client` abstraction is
-held entirely behind `Manager`. All lifecycle side effects are reached
-through Manager methods, which is what makes the moq mock a complete
-substitute.
+held entirely behind `Manager`. `agents` imports only `api/admin/v1` for the
+`AdminServiceClient` surface. All lifecycle side effects are reached
+through Manager or AdminClient methods, which is what makes the moq mocks complete
+substitutes.
 
 ## Testing
 
@@ -135,8 +140,10 @@ substitute.
   methods panic, which is the failure signal for paths that shouldn't
   call them.
 - `status_test.go` adds a `statusHarness` that layers an
-  `AdminServiceClientMock` on top for the firewall-RPC assertions.
+  `AdminServiceClientMock` (from `internal/controlplane/mocks`) on top for the firewall-RPC assertions.
+- `agents_test.go` adds an `agentsHarness` that wires an `AdminServiceClientMock`
+  directly as `f.AdminClient` (no ControlPlane mock needed — the verb uses only
+  the AdminService gRPC surface).
 - E2E coverage lives in `test/e2e/controlplane_cli_test.go` — walks
   `up → up (idempotent) → status → down → status` and the no-op `down`
-  path on an absent CP. Authored in Task 7, deferred to the final
-  host-side review per the initiative E2E policy.
+  path on an absent CP.

@@ -182,11 +182,9 @@ type userFormattedError interface {
 
 // printError renders an error to the given writer. It dispatches based on
 // error type:
-//   - FlagError: prints the error followed by usage
+//   - FlagError: prints the error followed by usage and a help hint
 //   - userFormattedError: uses rich formatting (e.g., Docker error context)
 //   - default: prints failure icon + error message
-//
-// A contextual help hint is always appended.
 func printError(out io.Writer, cs *iostreams.ColorScheme, err error, cmd *cobra.Command) {
 	var flagErr *cmdutil.FlagError
 	var ufErr userFormattedError

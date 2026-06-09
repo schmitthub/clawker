@@ -43,8 +43,7 @@ Concrete implementation: `Manager`. Mock: `sockebridgemocks.SocketBridgeManagerM
 | `bridge_test.go` | Unit tests for Bridge, sendMessage, readLoop (`package socketbridge_test`) |
 | `manager_test.go` | Unit tests for Manager, PID file handling, process checks (`package socketbridge_test`) |
 | `mocks/manager_mock.go` | moq-generated `SocketBridgeManagerMock` (do not edit) |
-| `mocks/stubs.go` | `NewMockManager()` (no-op defaults), `CalledWith()` convenience helper |
-| `mocks/helpers.go` | `NewTestManager()`, `WriteTestMessage()`, `NopWriteCloser`, `FlushWriteCloser` |
+| `mocks/stubs.go` | `NewMockManager()` (no-op defaults), `CalledWith()` convenience helper, `NewTestManager()`, `WriteTestMessage()`, `NopWriteCloser`, `FlushWriteCloser` |
 
 ## Protocol
 
@@ -103,11 +102,11 @@ calls := mock.EnsureBridgeCalls() // []struct{ ContainerID string; GpgEnabled bo
 
 **Call tracking**: moq generates typed `*Calls()` methods (e.g. `EnsureBridgeCalls()`, `StopBridgeCalls()`) returning typed structs with named fields. `CalledWith(mock, method, containerID)` is a convenience wrapper.
 
-### Test Helpers (`mocks/helpers.go`)
+### Test Helpers (`mocks/stubs.go`)
 
 | Helper | Purpose |
 |--------|---------|
-| `NewTestManager(t, dir)` | Creates a `*socketbridge.Manager` with mock config isolated to temp dir. Sets env vars via Config interface methods (`ConfigDirEnvVar`, `StateDirEnvVar`, `DataDirEnvVar`) to prevent drift. |
+| `NewTestManager(t)` | Creates a `*socketbridge.Manager` with a file-backed config isolated via `configmocks.NewIsolatedTestConfig`. Returns `(*Manager, string)` where the string is the bridges state dir. |
 | `WriteTestMessage(buf, msg)` | Writes a protocol message in wire format |
 | `NopWriteCloser` | No-op `io.WriteCloser` |
 | `FlushWriteCloser{W}` | Wraps `io.Writer` with no-op Close |

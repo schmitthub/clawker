@@ -22,10 +22,11 @@ Heavy command helpers have been extracted to dedicated packages:
 | `filter.go` | `Filter`, `ParseFilters`, `ValidateFilterKeys`, `FilterFlags`, `AddFilterFlags` -- reusable `--filter key=value` flag handling |
 | `template.go` | `DefaultFuncMap`, `ExecuteTemplate` -- Go template execution for `--format TEMPLATE` output |
 | `worktree.go` | `ParseWorktreeFlag`, `WorktreeSpec` -- git worktree flag parsing |
+| `slugify.go` | `ProjectSlugify` -- normalizes raw project-name candidates into slugs safe for Docker/x509/gRPC |
 
 ## Factory (`factory.go`)
 
-Pure dependency injection container struct. 3 eager values + 9 lazy nouns. Closure fields are wired by `internal/cmd/factory/default.go`.
+Pure dependency injection container struct. 3 eager values + 11 lazy nouns. Closure fields are wired by `internal/cmd/factory/default.go`.
 
 ```go
 type Factory struct {
@@ -58,7 +59,7 @@ type Factory struct {
 - `ProjectManager()` -- lazy project manager for registration, worktree lifecycle
 - `GitManager()` -- lazy git manager for worktree operations; uses project root from Config
 - `HostProxy()` -- returns `hostproxy.HostProxyService` (interface); commands call `.EnsureRunning()` / `.IsRunning()` / `.ProxyURL()` on it. Mock: `hostproxytest.MockManager`
-- `SocketBridge()` -- returns `socketbridge.SocketBridgeManager` (interface); commands call `.EnsureBridge()` / `.StopBridge()` on it. Mock: `sockebridgemocks.MockManager`
+- `SocketBridge()` -- returns `socketbridge.SocketBridgeManager` (interface); commands call `.EnsureBridge()` / `.StopBridge()` on it. Mock: `sockebridgemocks.SocketBridgeManagerMock` (via `sockebridgemocks.NewMockManager()`)
 - `Prompter()` -- returns `*prompter.Prompter` for interactive prompts
 - `AdminClient(ctx)` -- lazy `adminv1.AdminServiceClient` (gRPC client to the CP AdminService). First call triggers `cpboot.EnsureRunning` then `adminclient.Dial` (package `internal/controlplane/adminclient`) with mTLS + OAuth2 JWT + keepalive; the closure caches `grpc.ClientConn` and only rebuilds on `TransientFailure`/`Shutdown`. Commands call the 13 `Firewall*` RPCs directly. Mock: `controlplane/mocks.AdminServiceClientMock`
 - `HttpClient()` -- lazy `*http.Client` for outbound HTTP from the CLI (first consumer: npm registry lookups during Claude Code version resolution in `bundler.ResolveLatestClaudeCodeVersion`). Tests substitute by setting `f.HttpClient = func() *http.Client { return &http.Client{Transport: stubRoundTripper{}} }` — `http.RoundTripper` is the stdlib mock seam (same shape as gh-CLI's `pkg/httpmock.Registry`). No project-defined interface; no test seam on production API.

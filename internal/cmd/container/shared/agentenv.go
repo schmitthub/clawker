@@ -56,7 +56,7 @@ func ResolveAgentEnv(agent config.AgentConfig, projectDir string, log *logger.Lo
 	return result, warnings, nil
 }
 
-// readEnvFile reads an env file and returns key-value pairs.
+// parseEnvFile reads an env file and returns key-value pairs.
 // Format: KEY=VALUE lines, # comments, blank lines skipped.
 // Bare KEY lines (no =) set the key to an empty string.
 func parseEnvFile(path string, log *logger.Logger) (map[string]string, error) {

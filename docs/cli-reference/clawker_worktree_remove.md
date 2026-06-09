@@ -13,9 +13,6 @@ Removes worktrees by their branch name.
 This removes both the git worktree metadata and the filesystem directory.
 The branch itself is preserved unless --delete-branch is specified.
 
-If the worktree has uncommitted changes, the command will fail unless
---force is used.
-
 ```
 clawker worktree remove BRANCH [BRANCH...] [flags]
 ```
@@ -35,16 +32,12 @@ clawker worktree remove BRANCH [BRANCH...] [flags]
 
   # Remove worktree and delete the branch
   clawker worktree remove --delete-branch feat-42
-
-  # Force remove a worktree with uncommitted changes
-  clawker worktree remove --force feat-42
 ```
 
 ### Options
 
 ```
       --delete-branch   Also delete the branch after removing the worktree
-  -f, --force           Force removal even if worktree has uncommitted changes
   -h, --help            help for remove
 ```
 

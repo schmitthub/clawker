@@ -13,9 +13,9 @@ import _ "embed"
 // or source tree. Like EBPFManagerBinary and the firewall CoreDNS binary,
 // it must match the Docker host's architecture (arm64 or amd64).
 //
-// At runtime the CP bootstrapper (B2 Task 3) writes this binary into an
-// on-demand Alpine image and starts the clawker-cp container from that
-// image. The daemon runs inside the container as PID 1.
+// At runtime the CP bootstrapper writes this binary into an on-demand
+// distroless/static-debian12 image and starts the clawker-cp container
+// from that image. The daemon runs inside the container as PID 1.
 //
 // Lives in the cpboot subpackage so cmd/clawker-cp can import
 // internal/controlplane without dragging in this embed directive —

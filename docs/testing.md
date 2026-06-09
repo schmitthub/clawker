@@ -70,7 +70,7 @@ GOLDEN_UPDATE=1 go test ./pkg/whail/whailtest/... -run TestSeedRecordedScenarios
 
 ### Firewall Corefile Golden
 
-The firewall package has a golden file test for CoreDNS config generation (`internal/firewall/coredns_test.go`). The golden file at `internal/firewall/testdata/corefile_basic.golden` must be hand-edited to update.
+The firewall package has a golden file test for CoreDNS config generation (`internal/controlplane/firewall/coredns_config_test.go`). The golden file at `internal/controlplane/firewall/testdata/corefile_basic.golden` must be hand-edited to update.
 
 ### Storage Oracle + Golden Strategy
 
@@ -168,8 +168,7 @@ Each package in the dependency DAG provides test utilities so dependents can moc
 | `internal/config` | `mocks/` | `NewBlankConfig()`, `NewFromString(projectYAML, settingsYAML)`, `NewIsolatedTestConfig(t)`, `ConfigMock` (moq-generated) |
 | `internal/git` | `gittest/` | `InMemoryGitManager` (memfs-backed, seeded with initial commit) |
 | `internal/project` | `mocks/` | `NewMockProjectManager()`, `NewMockProject(name, repoPath)`, `NewTestProjectManager(t, gitFactory)` |
-| `pkg/whail` | `whailtest/` | `FakeAPIClient` (80+ Fn fields, call recording), build scenarios (Simple, Cached, MultiStage, Error, etc.), `EventRecorder` |
-| `internal/firewall` | `mocks/` | `FirewallManagerMock` (moq-generated, 15 methods) |
+| `pkg/whail` | `whailtest/` | `FakeAPIClient` (46 Fn fields, call recording), build scenarios (Simple, Cached, MultiStage, Error, etc.), `EventRecorder` |
 | `internal/iostreams` | `Test()` | `iostreams.Test()` → `(*IOStreams, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer)` |
 | `internal/hostproxy` | `hostproxytest/` | `MockHostProxy` for integration tests |
 | `internal/storage` | `ValidateDirectories()` | XDG directory collision detection |
@@ -220,9 +219,6 @@ h := &harness.Harness{T: t, Opts: &harness.FactoryOptions{
     Config: func(opts ...config.NewConfigOption) (config.Config, error) {
         return testCfg, nil
     },
-    Firewall: func(dc mobyclient.APIClient, cfg config.Config, log *logger.Logger) (*firewall.Manager, error) {
-        return firewall.NewManager(dc, cfg, log)
-    },
 }}
 setup := h.NewIsolatedFS(nil)
 
@@ -230,7 +226,7 @@ result := h.Run("firewall", "status", "--json")
 require.Equal(t, 0, result.ExitCode, "stderr: %s", result.Stderr)
 ```
 
-Pass real constructors for any dependency you want to exercise against Docker. Some nil fields use test fakes (`configmocks.NewBlankConfig`, `mocks.FakeClient`, `hostproxytest.MockManager`, `firewallmocks.FirewallManagerMock`), while `Logger` always creates a real file logger via `logger.New`, and `ProjectManager`, `GitManager`, and `SocketBridge` default to nil.
+Pass real constructors for any dependency you want to exercise against Docker. Some nil fields use test fakes (`configmocks.NewBlankConfig`, `mocks.FakeClient`, `hostproxytest.MockManager`, `cpmocks.AdminServiceClientMock`), while `Logger` always creates a real file logger via `logger.New`, and `ProjectManager`, `GitManager`, and `SocketBridge` default to nil.
 
 #### Harness Types
 
@@ -240,7 +236,7 @@ Pass real constructors for any dependency you want to exercise against Docker. S
 | `RunResult` | CLI command outcome (`ExitCode`, `Err`, `Stdout`, `Stderr`, `Factory`) |
 | `SetupResult` | Embeds `*testenv.Env` + `ProjectDir` from `NewIsolatedFS` |
 | `FSOptions` | Override project dir name (default: `"testproject"`) |
-| `FactoryOptions` | 7 pluggable constructors: Config, Client, ProjectManager, GitManager, HostProxy, SocketBridge, Firewall |
+| `FactoryOptions` | 6 pluggable constructors (Config, Client, ProjectManager, GitManager, HostProxy, SocketBridge) + `UseRealAdminClient bool` + `ControlPlane` |
 
 #### Harness Functions
 
@@ -258,10 +254,11 @@ Pass real constructors for any dependency you want to exercise against Docker. S
 `NewIsolatedFS` registers a single cleanup chain:
 
 1. Stop daemons (firewall down, host-proxy stop)
-2. Remove shared firewall containers (clawker-envoy, clawker-coredns)
-3. Remove test-labeled containers, volumes, networks (by `dev.clawker.test.name` label)
+2. Remove shared firewall infrastructure containers (by `purpose=firewall` label)
+3. Remove control plane container (by `purpose=controlplane` label)
+4. Remove test-labeled containers, volumes, networks (by `dev.clawker.test.name` label)
 
-On failure, dumps `clawker.log` and `firewall.log` from the test's state dir.
+On failure, dumps `clawker.log`, `clawker-cpboot.log`, and `clawker-controlplane.log` from the test's state dir.
 
 ### Project Test Double Scenarios
 

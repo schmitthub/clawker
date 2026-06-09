@@ -157,7 +157,7 @@ fi
 )
 
 // gitconfigFilterScript is the rendered git-step body. Computed once
-// at package init; %s slot carries the workspace const.
+// at package init; %q slot carries the workspace const.
 var gitconfigFilterScript = fmt.Sprintf(gitconfigFilterTemplate, consts.HostGitConfigStagingPath)
 
 // step is one entry in the init plan. Sealed sum: shellStep or

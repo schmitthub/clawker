@@ -8,7 +8,7 @@ Remove unused agent volumes
 
 ### Synopsis
 
-Removes unused clawker-managed agent volumes (volumes labeled with purpose=agent).
+Removes unused clawker-managed agent volumes.
 
 By default all agent volumes are pruned — workspace, config, AND command
 history. Config and history volumes persist per-agent settings and shell

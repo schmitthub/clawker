@@ -45,9 +45,9 @@ func Edit(ios *iostreams.IOStreams, store *storage.Store[T], cfg config.Config) 
 **LayerTarget patterns:**
 
 - Check for `.clawker/` directory existence to decide between dir-form and flat-form local paths
-- Label targets descriptively: "Local", "User", "Original", "Project"
-- Use `shortenHome()` (or equivalent) for the Description field
-- Include `store.Layers()` entries as "Original" targets so users can save back to the file a value came from
+- `BuildLayerTargets` generates "Local" (CWD dotfile or `.clawker/` subdir) and "User" (config dir) automatically; discovered store layers use their shortened paths as labels
+- Use `ShortenHome()` for the Description field (exported from `internal/storeui`)
+- Include `store.Layers()` entries so users can save back to the file a value came from
 
 ### Step 2: Command Integration
 
@@ -59,7 +59,9 @@ type EditOptions struct {
     Config   func() (config.Config, error)
 }
 
-func NewCmdEdit(f *cmdutil.Factory, runF func(context.Context, *EditOptions) error) *cobra.Command
+func NewCmdSettingsEdit(f *cmdutil.Factory, runF func(context.Context, *EditOptions) error) *cobra.Command
+// or for project:
+func NewCmdProjectEdit(f *cmdutil.Factory, runF func(context.Context, *EditOptions) error) *cobra.Command
 ```
 
 The run function:
@@ -70,7 +72,7 @@ The run function:
 
 ### Step 3: Wire into Parent Command
 
-Add `edit.NewCmdEdit(f, nil)` to the parent command's `AddCommand` list.
+Add `edit.NewCmdSettingsEdit(f, nil)` (or the noun-appropriate constructor) to the parent command's `AddCommand` list.
 
 ## Orchestration Layer (internal/storeui)
 
@@ -80,10 +82,10 @@ Add `edit.NewCmdEdit(f, nil)` to the parent command's `AddCommand` list.
 Edit[T storage.Schema](ios, store, opts...):
   1. store.Read() → *T snapshot
   2. WalkFields(snapshot) → []Field via reflection (runtime values)
-  2b. enrichWithSchema(fields, snapshot.Fields()) → replace labels/descriptions/kinds with Schema struct tag metadata
+  2b. enrichWithSchema(fields, snapshot.Fields()) → replace labels/descriptions/kinds/defaults with Schema struct tag metadata
   3. ApplyOverrides(fields, overrides) → filtered + customized fields (TUI-specific only: Hidden, ReadOnly, Kind, Options)
   4. Map to tui types: fieldsToBrowserFields(), layersToBrowserLayers()
-  5. Wire OnFieldSaved callback
+  5. Wire OnFieldSaved, OnFieldDeleted, and OnRefresh callbacks
   6. tui.NewFieldBrowser(cfg) → tui.RunProgram()
   7. Return Result{Saved, Cancelled, SavedCount}
 ```
@@ -93,7 +95,8 @@ Edit[T storage.Schema](ios, store, opts...):
 When a user edits a field and picks a save target:
 
 1. `store.Set(func(t *T) { SetFieldValue(t, fieldPath, value) })` — update in-memory
-2. `store.Write(storage.ToPath(target.Path))` — persist dirty fields to the chosen layer file
+2. (conditional) `store.MarkForWrite(fieldPath)` — force-dirty the path when saving to a non-provenance-winner layer (i.e., the merged value is unchanged but the target layer file needs updating)
+3. `store.Write(storage.ToPath(target.Path))` — persist dirty fields to the chosen layer file
 
 `Write()` internally remerges layers, so the snapshot reflects the true merged state after each save. Values are type-coerced during `Set` via `SetFieldValue`.
 
@@ -136,9 +139,9 @@ Sets a field on a struct pointer by dotted YAML path (`"build.image"` → `Build
 
 ### FieldBrowserModel (`tui/fieldbrowser.go`)
 
-Domain-agnostic tabbed field browser. States: Browse → Edit → PickLayer.
+Domain-agnostic tabbed field browser. States: Browse → Edit → PickLayer → PickLayerDelete.
 
-**Configuration**: `BrowserConfig` with `Title`, `Fields []BrowserField`, `LayerTargets []BrowserLayerTarget`, `Layers []BrowserLayer`, `OnFieldSaved func(path, value string, targetIdx int) error`
+**Configuration**: `BrowserConfig` with `Title`, `Fields []BrowserField`, `LayerTargets []BrowserLayerTarget`, `Layers []BrowserLayer`, `OnFieldSaved func(path, value string, targetIdx int) error`, `OnFieldDeleted func(fieldPath string, targetIdx int) error`, `OnRefresh func() (fields []BrowserField, layers []BrowserLayer)`
 
 **Features:**
 - Fields grouped into tabs by top-level path key (e.g., "build", "security")
@@ -177,6 +180,7 @@ Multiline text editor wrapping `bubbles/textarea`.
 | `store.Layers()` | All discovered layers (for layer breakdown display) |
 | `store.Provenance(path)` | Which layer won a specific field |
 | `store.ProvenanceMap()` | All fields → source file paths |
+| `store.MarkForWrite(path)` | Force-mark a dotted path as dirty so it is included in the next `Write` |
 | `store.Write(storage.ToPath(path))` | Write to explicit absolute path |
 
 ## Testing Patterns
@@ -249,7 +253,7 @@ func TestFieldBrowser_TabNavigation(t *testing.T) {
         Fields: []tui.BrowserField{...},
     }
     m := tui.NewFieldBrowser(cfg)
-    m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})  // switch tab
+    m.Update(tea.KeyMsg{Type: tea.KeyRight})  // switch tab (pointer receiver mutates in-place)
     view := m.View()
     // Assert tab state, selected field, etc.
 }

@@ -13,8 +13,7 @@ Removes all clawker-managed networks that are not currently in use.
 This command removes networks that have no connected containers.
 Use with caution as this may affect container communication.
 
-Note: The built-in clawker-net network will be preserved if containers
-are using it for the monitoring stack.
+Networks with connected containers are left untouched.
 
 ```
 clawker network prune [OPTIONS] [flags]

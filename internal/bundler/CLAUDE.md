@@ -87,7 +87,7 @@ Wraps `NewVersionsManagerWithFetcher` + `registry.NewNPMClient(registry.WithHTTP
 
 **Production wiring:** `internal/cmd/image/build/build.go` calls this once per build, passing `f.HttpClient()` from the Factory.
 
-**Test wiring:** tests construct `&cmdutil.Factory{HttpClient: func() *http.Client { return &http.Client{Transport: stubRT} }}` where `stubRT` is a tiny `http.RoundTripper` returning canned npm responses. Mirrors gh-CLI's `pkg/httpmock.Registry` pattern — `http.RoundTripper` is the stdlib mock seam; no project-defined interface required.
+**Test wiring:** bundler tests use a package-local `stubRoundTripper` (implements `http.RoundTripper`) passed to `&http.Client{Transport: stubRT}`. `http.RoundTripper` is the stdlib mock seam; no project-defined interface required. Command-layer tests (in `internal/cmd/image/build/`) wire the same pattern through `cmdutil.Factory{HttpClient: ...}`.
 
 ### Claude Code Version Pinning (build-arg passthrough)
 
@@ -178,7 +178,7 @@ Embedded: `DockerfileTemplate`, `StatuslineScript`, `SettingsFile`, `ConfigFile`
 
 ```go
 const ClaudeCodePackage = "@anthropic-ai/claude-code"
-type ResolveOptions struct { Debug bool }
+type ResolveOptions struct { Debug bool; Output io.Writer }
 func NewVersionsManager() *VersionsManager
 func NewVersionsManagerWithFetcher(fetcher registry.Fetcher, cfg *VariantConfig) *VersionsManager
 func (m *VersionsManager) ResolveVersions(ctx, patterns, opts) (*registry.VersionsFile, error)
@@ -233,14 +233,15 @@ var ErrNoBuildImage error                                        // No build.ima
 var ErrVersionNotFound, ErrInvalidVersion, ErrNoVersions error  // Re-exported from registry/
 type NetworkError = registry.NetworkError   // { URL, Message, Err } -- Unwrap() supported
 type RegistryError = registry.RegistryError // { Package, StatusCode, Message } -- IsNotFound() bool
+type ParseError = registry.ParseError       // { URL, Snippet, Err } -- Unwrap() supported; HTTP 200 decode failure
 ```
 
 ## Dependencies
 
-Imports: `internal/config`, `internal/bundler/registry`, `internal/bundler/semver`, `internal/hostproxy/internals` (embed-only). **Does NOT import `internal/docker`** — this is a leaf package.
+Imports: `internal/config`, `internal/bundler/registry`, `internal/bundler/semver`, `internal/hostproxy/internals` (embed-only), `internal/clawkerd` (embed-only — `clawkerd.Binary`). **Does NOT import `internal/docker`** — this is a leaf package.
 
 ## Tests
 
-Unit tests: `dockerfile_test.go`, `build_test.go`, `defaults_test.go`, `firewall_test.go`. Subpackage: `registry/npm_test.go`, `semver/semver_test.go`. Docker integration: `test/whail/`.
+Unit tests: `dockerfile_test.go`, `build_test.go`, `defaults_test.go`, `versions_test.go`. Subpackage: `registry/npm_test.go`, `semver/semver_test.go`. Docker integration: `test/whail/`.
 
-Test helper: `testConfig(t, projectYAML) config.Config` wraps `config.NewFromString(projectYAML, settingsYAML)` with default monitoring settings — preferred test double for bundler tests. All test configs use YAML fixtures rather than mock/fake constructors.
+Test helper: `testConfig(t, projectYAML) config.Config` wraps `configmocks.NewFromString(cleanedProject, settingsYAML)` with default monitoring settings — preferred test double for bundler tests. All test configs use YAML fixtures rather than mock/fake constructors.

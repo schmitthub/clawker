@@ -37,10 +37,7 @@ func NewCmdRemove(f *cmdutil.Factory, runF func(context.Context, *RemoveOptions)
 		Long: `Removes worktrees by their branch name.
 
 This removes both the git worktree metadata and the filesystem directory.
-The branch itself is preserved unless --delete-branch is specified.
-
-If the worktree has uncommitted changes, the command will fail unless
---force is used.`,
+The branch itself is preserved unless --delete-branch is specified.`,
 		Example: `  # Remove a worktree
   clawker worktree remove feat-42
 
@@ -48,10 +45,7 @@ If the worktree has uncommitted changes, the command will fail unless
   clawker worktree rm feat-42 feat-43
 
   # Remove worktree and delete the branch
-  clawker worktree remove --delete-branch feat-42
-
-  # Force remove a worktree with uncommitted changes
-  clawker worktree remove --force feat-42`,
+  clawker worktree remove --delete-branch feat-42`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.Branches = args
@@ -62,7 +56,9 @@ If the worktree has uncommitted changes, the command will fail unless
 		},
 	}
 
-	cmd.Flags().BoolVarP(&opts.Force, "force", "f", false, "Force removal even if worktree has uncommitted changes")
+	cmd.Flags().BoolVarP(&opts.Force, "force", "f", false, "Reserved for future use")
+	// Hidden: reserved for future use, not yet honored — keep off help text so it isn't advertised as a working escape hatch.
+	_ = cmd.Flags().MarkHidden("force")
 	cmd.Flags().BoolVar(&opts.DeleteBranch, "delete-branch", false, "Also delete the branch after removing the worktree")
 
 	return cmd

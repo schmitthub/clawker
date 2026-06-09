@@ -6,7 +6,7 @@
 //
 // Resources mirrored:
 //   - container (Started/Stopped/Removed)
-//   - container→network edges (Attached/Detached)
+//   - container→network edges (Connected/Disconnected)
 //
 // Events not republished:
 //   - volume create/destroy — no consumer; internal bookkeeping was
@@ -33,7 +33,7 @@
 // The Docker events stream is a single long-lived HTTP connection.
 // Any error on the error channel kills the stream — the feeder
 // rebuilds it via reconcile + reopen. Reconcile re-publishes a
-// ContainerStarted event for every running container; Overseer's
+// DockerEvent{Action=start} envelope for every running container; Overseer's
 // applier hooks idempotently set Status=running.
 package dockerevents
 
@@ -52,8 +52,8 @@ import (
 )
 
 // EventsClient is the slice of moby's APIClient surface the feeder
-// uses. Real callers pass *docker.Client (which embeds *whail.Engine
-// which embeds client.APIClient). Tests can substitute a fake.
+// uses. Real callers pass the client.APIClient embedded in
+// docker.Client (via dockerCli.APIClient). Tests can substitute a fake.
 type EventsClient interface {
 	Events(ctx context.Context, options client.EventsListOptions) client.EventsResult
 	ContainerList(ctx context.Context, options client.ContainerListOptions) (client.ContainerListResult, error)

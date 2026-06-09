@@ -447,7 +447,7 @@ func BenchmarkSortStrings(b *testing.B) {
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		// Make a copy since sort modifies in place
+		// SortStrings returns a new slice and does not modify the input.
 		v := make([]string, len(versions))
 		copy(v, versions)
 		SortStrings(v)

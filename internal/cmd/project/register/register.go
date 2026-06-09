@@ -46,7 +46,7 @@ If no project name is provided, you will be prompted to enter one (or accept the
 current directory name as the default). Use --yes to accept the directory name
 without prompting.
 
-This is useful when a .clawker.yaml was manually created, copied from another
+This is useful when a project configuration was manually created, copied from another
 machine, or already exists and you want to register it locally.`,
 		Example: `  # Register with interactive prompt for project name
   clawker project register
@@ -99,7 +99,7 @@ func projectRegisterRun(ctx context.Context, opts *RegisterOptions) error {
 
 	// Determine project name. Hierarchy (highest priority first):
 	//   1. positional arg (opts.Name)
-	//   2. clawker.yaml::name override
+	//   2. project config name override
 	//   3. interactive prompt (or directory name in non-interactive mode)
 	// Every source is run through `cmdutil.ProjectSlugify` so the value
 	// persisted to the registry is Docker/x509-safe regardless of how it
@@ -131,7 +131,7 @@ func projectRegisterRun(ctx context.Context, opts *RegisterOptions) error {
 	}
 	projectName := cmdutil.ProjectSlugify(raw)
 	if projectName == "" {
-		return fmt.Errorf("project name resolved to empty after normalization (raw input %q); set `name` in clawker.yaml or pass a name argument", raw)
+		return fmt.Errorf("project name resolved to empty after normalization (raw input %q); set `name` in your project config or pass a name argument", raw)
 	}
 
 	registeredProject, err := projectManager.Register(ctx, projectName, wd)

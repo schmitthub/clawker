@@ -20,8 +20,8 @@ type discoveredFile struct {
 }
 
 // discover finds all config files matching the options.
-// Walk-up files come first (highest priority = closest to CWD),
-// followed by explicit path files (lowest priority = home-level).
+// Walk-up files come first (highest priority = closest to CWD), followed
+// by dir-probe files (WithDirs), then explicit path files (lowest priority).
 // Duplicate paths from overlapping discovery are removed (first wins).
 func discover(opts *options) ([]discoveredFile, error) {
 	var files []discoveredFile

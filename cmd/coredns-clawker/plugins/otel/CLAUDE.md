@@ -118,8 +118,8 @@ The plugin is the OTLP **client**. Material is issued + bind-mounted by `firewal
 
 `Handler.Emitter` is the `Emitter` interface — `otel_test.go` constructs a `Handler` with `recordingEmitter` (captures `QueryEvent`s into a slice, optionally returns an injected `err`) and drives it via `cannedHandler` as `Next`. This exercises:
 
-- Successful resolution path: response forwarded + one event emitted (`TestServeDNS_EmitsEventAndForwardsResponse`).
-- Resolver error path: `SERVFAIL` rcode + `Err` populated on the event (`TestServeDNS_EmitsEventOnResolverError`).
+- Successful resolution path: response forwarded + one event emitted (table case `"success forwards response and emits event"` in `TestServeDNS`).
+- Resolver error path: `SERVFAIL` rcode + `Err` populated on the event (table case `"resolver error emits SERVFAIL event and returns error"` in `TestServeDNS`).
 - `remoteIP` host:port splitting (`TestRemoteIP`).
 
 No live OTLP collector or real BPF/TLS material needed — the test surface is the `Emitter` interface, not the exporter pipeline.

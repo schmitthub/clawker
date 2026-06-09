@@ -41,15 +41,15 @@ go test ./test/whail/... -v -timeout 5m          # Whail BuildKit integration
 
 ### FactoryOptions (`factory.go`)
 
-Some nil fields use test fakes (`configmocks.NewBlankConfig`, `mocks.FakeClient`, `hostproxytest.MockManager`, `cpmocks.AdminServiceClientMock`, `cpmocks.ManagerMock`). `Logger` always creates a real file logger via `logger.New`. `ProjectManager`, `GitManager`, and `SocketBridge` default to nil. Set a field to the real constructor for integration tests.
+Some nil fields use test fakes (`configmocks.NewBlankConfig`, `mocks.NewFakeClient`, `hostproxytest.NewMockManager`, `cpmocks.AdminServiceClientMock`, `cpbootmocks.ManagerMock`). `Logger` always creates a real file logger via `logger.New`. `ProjectManager`, `GitManager`, and `SocketBridge` default to nil. Set a field to the real constructor for integration tests.
 
 | Field | Signature | Default |
 |-------|-----------|---------|
 | `Config` | `func(...config.NewConfigOption) (config.Config, error)` | `configmocks.NewBlankConfig()` |
-| `Client` | `func(ctx, cfg, log, ...docker.ClientOption) (*docker.Client, error)` | `mocks.FakeClient` |
+| `Client` | `func(ctx, cfg, log, ...docker.ClientOption) (*docker.Client, error)` | `mocks.NewFakeClient` |
 | `ProjectManager` | `func(cfg, log, project.GitManagerFactory) (project.ProjectManager, error)` | nil (no-op) |
 | `GitManager` | `func(string) (*git.GitManager, error)` | nil (no-op) |
-| `HostProxy` | `func(cfg, log) (*hostproxy.Manager, error)` | `hostproxytest.MockManager` |
+| `HostProxy` | `func(cfg, log) (*hostproxy.Manager, error)` | `hostproxytest.NewMockManager` |
 | `SocketBridge` | `func(cfg, log) socketbridge.SocketBridgeManager` | nil (no-op) |
 | `UseRealAdminClient` | `bool` — when true, wires a production-identical pure-dial AdminClient (mirrors `adminClientFunc` in `internal/cmd/factory/default.go`: mutex-guarded cache + `cacheableState` re-dial on TransientFailure/Shutdown + keepalive params via `adminclient.Dial`). Does **not** bootstrap the CP — CP lifecycle is owned by container-start and explicit `controlplane up` (see `ControlPlane` field below). When false, `cpmocks.AdminServiceClientMock` (no-op). |
 | `ControlPlane` | `func(cfg, log) cpboot.Manager` | `cpbootmocks.ManagerMock` (every method returns zero values so tests that don't touch CP verbs never bootstrap a real CP) |
@@ -91,11 +91,11 @@ require.Equal(t, 0, result.ExitCode, "stderr: %s", result.Stderr)
 ### Cleanup
 
 `NewIsolatedFS` registers a single cleanup chain:
-1. Stop daemons (`firewall down` via AdminClient, `controlplane down` to tear the CP container, `host-proxy stop`)
-2. Remove shared firewall containers (`clawker-envoy`, `clawker-coredns`, `clawker-controlplane`)
+1. Stop daemons via CLI (`firewall down`, `host-proxy stop`)
+2. Remove firewall infrastructure containers (by `purpose=firewall` label), then CP containers (by `purpose=controlplane` label)
 3. Remove test-labeled containers, volumes, networks (by `dev.clawker.test.name` label)
 
-On failure, dumps `clawker.log` and the CP container's `clawker-controlplane.log` from the test's state dir.
+On failure, dumps `clawker.log`, `clawker-cpboot.log`, and `clawker-controlplane.log` from the test's state dir.
 
 ### Internal Helpers
 
@@ -115,7 +115,7 @@ Tests exercise the full Envoy+CoreDNS firewall stack with real Docker.
 | `TestFirewall_Status` | `firewall status --json` reports health + rule count |
 | `TestFirewall_PathRules*` | HTTP and TLS MITM path rule enforcement |
 
-Tests drive the CP AdminService through `f.AdminClient(ctx)`. When `Opts.UseRealAdminClient == true`, the harness wires a production-identical pure-dial closure that mirrors `adminClientFunc` in `internal/cmd/factory/default.go` line-for-line (mutex-guarded cache, `cacheableState` re-dial on `TransientFailure`/`Shutdown`, keepalive params, `adminclient.Dial`). The closure does NOT bootstrap the CP — that's owned by container-start and explicit `controlplane up`. This is load-bearing for the fail-fast semantics: admin commands surface a clear error when the CP is down rather than silently spinning one up. Any divergence from production is a bug: E2E must exercise the code path the CLI ships with. Cleanup tears down Envoy+CoreDNS + the CP container before removing test resources.
+Tests drive the full CLI pipeline via `h.Run()`. The CP AdminService is reached indirectly through the production CLI code path. When `Opts.UseRealAdminClient == true`, the harness wires a production-identical pure-dial closure that mirrors `adminClientFunc` in `internal/cmd/factory/default.go` line-for-line (mutex-guarded cache, `cacheableState` re-dial on `TransientFailure`/`Shutdown`, keepalive params, `adminclient.Dial`). The closure does NOT bootstrap the CP — that's owned by container-start and explicit `controlplane up`. This is load-bearing for the fail-fast semantics: admin commands surface a clear error when the CP is down rather than silently spinning one up. Any divergence from production is a bug: E2E must exercise the code path the CLI ships with. Cleanup removes firewall and CP containers by purpose label before removing test resources.
 
 ## Debugging Resource Leaks
 
@@ -123,4 +123,4 @@ All test resources carry `dev.clawker.test=true` + `dev.clawker.test.name=TestNa
 
 ## Dependencies
 
-Imports: `internal/config`, `internal/config/mocks`, `internal/docker`, `internal/docker/mocks`, `internal/controlplane`, `internal/controlplane/mocks`, `internal/controlplane/cpboot`, `internal/controlplane/cpboot/mocks`, `internal/git`, `internal/hostproxy`, `internal/hostproxy/hostproxytest`, `internal/socketbridge`, `internal/cmdutil`, `internal/testenv`, `internal/iostreams`, `internal/logger`, `internal/project`
+Imports: `api/admin/v1`, `internal/config`, `internal/config/mocks`, `internal/docker`, `internal/docker/mocks`, `internal/controlplane/adminclient`, `internal/controlplane/mocks`, `internal/controlplane/cpboot`, `internal/controlplane/cpboot/mocks`, `internal/git`, `internal/hostproxy`, `internal/hostproxy/hostproxytest`, `internal/socketbridge`, `internal/cmdutil`, `internal/consts`, `internal/testenv`, `internal/iostreams`, `internal/logger`, `internal/project`, `internal/prompter`, `internal/tui`

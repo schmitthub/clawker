@@ -11,7 +11,7 @@ import (
 )
 
 // rpcTimeout bounds the quick AdminService calls the firewall CLI makes
-// (status, list, add, remove, refresh, enable, disable, bypass). The CP queue
+// (status, list, add, remove, refresh, enable, disable, bypass, down, rotate-ca). The CP queue
 // serializes work so a single RPC can wait behind other queued actions +
 // its own reconcile (worst case a few seconds). 15s gives comfortable
 // headroom while keeping a stuck CP from hanging the CLI indefinitely.

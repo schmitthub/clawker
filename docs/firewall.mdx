@@ -62,9 +62,11 @@ The hardcoded allowlist is deliberately **bare-bones** — only domains required
 | Domain | Purpose |
 |--------|---------|
 | `api.anthropic.com` | Claude API |
+| `claude.com` | OAuth/login |
 | `platform.claude.com` | OAuth token exchange |
-| `.claude.ai` | OAuth authorization, downloads |
+| `.claude.ai` | OAuth authorization, downloads (with `/public/` and `/share/` path-deny for UGC) |
 | `mcp-proxy.anthropic.com` | MCP tool server proxy |
+| `registry.npmjs.org` | npm (Node.js is baked into every image; required for global package installs) |
 | `sentry.io` | Error tracking |
 | `statsig.anthropic.com` | Feature flags |
 | `statsig.com` | Feature flags |
@@ -76,14 +78,14 @@ A leading dot (e.g., `.datadoghq.com`) is the **wildcard convention** — it mat
 </Info>
 
 <Warning>
-**GitHub, npm, PyPI, and all other services are NOT in this list.** When you run `clawker project init`, the generated `.clawker.yaml` template includes `github.com` and `api.github.com` as a convenience starting point — but these are project-level config entries, not system defaults. If you start from a blank config, GitHub SSH and HTTPS will be blocked.
+**GitHub, PyPI, and most other services are NOT in this list.** (npm registry is included because Node.js is baked into every image.) When you run `clawker project init`, the generated `.clawker.yaml` template includes `github.com` and `api.github.com` as a convenience starting point — but these are project-level config entries, not system defaults. If you start from a blank config, GitHub SSH and HTTPS will be blocked.
 
 You must explicitly configure every external domain your agent needs. This is by design — an AI agent should not have unrestricted internet access. Review your project's network dependencies and add them to `add_domains` or `rules` in your `.clawker.yaml`.
 </Warning>
 
 ### Common Setups
 
-Here are examples for common services your agent will likely need. **None of these are included by default** — add what you need to your `.clawker.yaml`.
+Here are examples for common services your agent will likely need. Add what you need to your `.clawker.yaml` (see the default allowlist above for what is already included).
 
 #### Git SSH (GitHub, GitLab, Bitbucket)
 
@@ -98,7 +100,7 @@ security:
     rules:
       - dst: github.com
         proto: ssh
-        port: 22
+        port: "22"
         action: allow
 ```
 
@@ -115,11 +117,11 @@ security:
     rules:
       - dst: gitlab.com
         proto: ssh
-        port: 22
+        port: "22"
         action: allow
       - dst: bitbucket.org
         proto: ssh
-        port: 22
+        port: "22"
         action: allow
 ```
 
@@ -129,8 +131,7 @@ security:
 security:
   firewall:
     add_domains:
-      # Node.js / npm
-      - registry.npmjs.org
+      # Node.js / npm — registry.npmjs.org is already in the default allowlist
       - registry.yarnpkg.com
       # Python / pip
       - pypi.org
@@ -146,7 +147,7 @@ security:
 
 #### Full Working Example
 
-A typical project that uses GitHub and npm:
+A typical project that uses GitHub and npm (npm registry is already in the default allowlist):
 
 ```yaml
 security:
@@ -154,11 +155,10 @@ security:
     add_domains:
       - github.com
       - api.github.com
-      - registry.npmjs.org
     rules:
       - dst: github.com
         proto: ssh
-        port: 22
+        port: "22"
         action: allow
 ```
 
@@ -183,18 +183,18 @@ security:
       - "registry.npmjs.org"
     rules:
       - dst: "api.example.com"
-        proto: tls
-        port: 443
+        proto: https
+        port: "443"
         action: allow
         path_rules:
-          - path: "/v1/chat/*"
+          - path: "/v1/chat"
             action: allow
         path_default: deny
 ```
 
 ### `add_domains`
 
-A convenience shorthand for allowlisting entire domains. Each entry is automatically converted to a TLS allow rule on port 443 with no path restrictions (allow-all routing through TLS inspection).
+A convenience shorthand for allowlisting entire domains. Each entry is automatically converted to an `https` allow rule on port 443 with no path restrictions (allow-all routing through TLS inspection).
 
 ```yaml
 security:
@@ -215,29 +215,24 @@ Full rule specification for fine-grained control:
 | Field | Type | Description |
 |-------|------|-------------|
 | `dst` | string | Domain name or IP address. Prefix with `.` for wildcard (e.g., `.datadoghq.com` matches all subdomains) |
-| `proto` | string | `tls`, `http`, `tcp`, or `ssh` |
-| `port` | int | Destination port |
+| `proto` | string | `https` (default), `http`, `tcp`, `ssh`, `ws`, `wss`, `udp`, or any opaque L7 name for TCP pass-through. The legacy value `tls` is silently translated to `https`. |
+| `port` | string | Destination port: a single port (`"443"`) or an inclusive range (`"9000-9100"`). Empty means the protocol default (443 for https/wss, 80 for http/ws, 22 for ssh). |
 | `action` | string | `allow` or `deny` (default: `allow`) |
-| `path_rules` | list | Optional path prefix rules (each entry has `path` and `action`). Supported on `tls` and `http` protocols |
+| `path_rules` | list | Optional path prefix rules (each entry has `path` and `action`). Supported on `https` and `http` protocols only |
 | `path_default` | string | Default action for paths not matching any `path_rules` entry (default: `deny`) |
 
 #### Protocol behavior
 
-- **`tls`** (default) --- HTTPS traffic. Envoy terminates TLS with a per-domain certificate, inspects HTTP traffic (paths visible in access logs), then re-encrypts upstream. With `path_rules`, per-path routing is applied; without `path_rules`, all traffic to the domain is allowed.
-- **`http`** --- Plain HTTP traffic. Envoy inspects the Host header for domain matching and applies path rules directly. No TLS involved.
+- **`https`** (default) --- HTTPS traffic. Envoy terminates TLS with a per-domain certificate, inspects HTTP traffic (paths visible in access logs), then re-encrypts upstream. With `path_rules`, per-path routing is applied; without `path_rules`, all traffic to the domain is allowed. `wss` is the WebSocket-over-TLS variant (same stack, WebSocket upgrade enabled per route).
+- **`http`** --- Plain HTTP traffic. Envoy inspects the Host header for domain matching and applies path rules directly. No TLS involved. `ws` is the WebSocket-over-HTTP variant.
+- **`udp`** --- Raw UDP datagrams. No domain or path inspection; each rule gets a dedicated `udp_proxy` listener pinned to the rule's host.
 - **`tcp`** --- Raw TCP forwarding to a specific port. No domain or path inspection. See the port-level routing note below.
 - **`ssh`** --- SSH traffic forwarding. Functionally identical to `tcp` but semantically distinct. See the port-level routing note below.
 
 <Warning>
-**TCP/SSH rules capture all traffic on the port, not just traffic to the whitelisted domain.** TLS and HTTP protocols carry domain metadata (SNI and Host header) that Envoy uses to match traffic to the correct rule. Raw TCP and SSH have no such mechanism. Resolving the domain to an IP and writing per-IP routing rules is not viable — IPs change frequently for large services (CDN edge rotations, load balancer failovers, anycast shifts), making IP-based rules brittle. Instead, clawker creates a single eBPF routing rule per destination port that redirects **all** traffic on that port to a dedicated Envoy TCP listener. Envoy resolves the whitelisted domain at connection time and forwards traffic there.
+**TCP/SSH rules pin all traffic on that port to the whitelisted host — the agent cannot reach any other server on that port.** TLS and HTTP protocols carry domain metadata (SNI and Host header) that Envoy uses to match traffic to the correct rule. Raw TCP and SSH have no such mechanism. Instead, each `ssh`/`tcp` rule gets its own dedicated eBPF route keyed by `(domain, port)` that redirects matching traffic to a dedicated Envoy TCP listener pinned to that domain. Envoy resolves the whitelisted domain at connection time and forwards traffic there.
 
-For example, a `proto: ssh` rule for `github.com` on port 22 means every outbound port 22 connection from the container — regardless of what IP or hostname the agent specifies — ends up at GitHub's SSH endpoint. The agent cannot reach any other SSH server. This is more restrictive than it might appear: it's not that arbitrary port 22 traffic is allowed through, it's that all port 22 traffic is funneled to a single destination.
-
-If multiple rules target the same port (e.g., SSH rules for both `github.com` and `gitlab.com` on port 22), the **first rule in the egress rules list wins** — the eBPF program evaluates rules in order and the first port match captures all traffic for that port. The second rule's Envoy listener would exist but never receive traffic. For this reason, **only one domain can effectively be whitelisted per TCP/SSH port**. If you need SSH access to both GitHub and GitLab, configure one provider to use HTTPS git instead, or use a non-standard SSH port if the provider supports it.
-
-<Info>
-Multi-domain support for TCP/SSH ports is a [tracked limitation](https://github.com/schmitthub/clawker/issues/235), deferred for after the control plane work. In the meantime, HTTPS git works for most multi-provider setups.
-</Info>
+For example, a `proto: ssh` rule for `github.com` on port 22 means every outbound port 22 connection from the container that resolved `github.com` ends up at GitHub's SSH endpoint. Multiple SSH rules for different hosts on the same port each get their own dedicated listener — `github.com:22` and `gitlab.com:22` are independent routes. An unresolved IP on port 22 (e.g. a hardcoded IP that didn't go through CoreDNS) has no matching route and is denied.
 
 **For security testers:** a successful `connect()` on a port with a whitelisted rule does not mean you have reached your intended target. The connection was silently redirected to the whitelisted service. Always verify the remote banner or certificate before concluding you have egress — otherwise you may be sending data to GitHub, GitLab, or another corporate service rather than your C2.
 </Warning>
@@ -255,8 +250,8 @@ security:
   firewall:
     rules:
       - dst: "api.example.com"
-        proto: tls
-        port: 443
+        proto: https
+        port: "443"
         action: allow
         path_rules:
           - path: "/v1/chat"
@@ -266,7 +261,7 @@ security:
         path_default: deny  # this is the default, shown for clarity
 ```
 
-Requests to `/v1/chat/completions` and `/v1/models` are forwarded. Everything else (e.g., `/admin`, `/internal`) gets a `403 Blocked by clawker firewall` response.
+Requests to `/v1/chat/completions` and `/v1/models` are forwarded. Everything else (e.g., `/admin`, `/internal`) gets a `403 Forbidden` response.
 
 **Pattern 2: Deny specific paths, allow everything else**
 
@@ -276,7 +271,7 @@ security:
     rules:
       - dst: "example.com"
         proto: http
-        port: 80
+        port: "80"
         action: allow
         path_rules:
           - path: "/evil"
@@ -293,8 +288,8 @@ security:
   firewall:
     rules:
       - dst: "api.example.com"
-        proto: tls
-        port: 443
+        proto: https
+        port: "443"
         action: allow
         path_rules:
           - path: "/v1/chat"
@@ -302,15 +297,15 @@ security:
         path_default: deny
       - dst: "git.internal.corp"
         proto: ssh
-        port: 22
+        port: "22"
         action: allow
       - dst: "10.0.0.5"
         proto: tcp
-        port: 8080
+        port: "8080"
         action: allow
       - dst: "example.com"
         proto: http
-        port: 80
+        port: "80"
         action: allow
 ```
 
@@ -336,8 +331,8 @@ All firewall operations are available under `clawker firewall`:
 | `clawker firewall refresh` | Re-read the current project's `.clawker.yaml` and sync its `add_domains`/`rules` into the store live — apply yaml edits without a container restart |
 | `clawker firewall up` | Start the firewall daemon (usually automatic) |
 | `clawker firewall down` | Stop the firewall daemon |
-| `clawker firewall enable --agent AGENT` | Attach a container to the firewall network |
-| `clawker firewall disable --agent AGENT` | Remove a container from the firewall network |
+| `clawker firewall enable --agent AGENT` | Re-enroll a container in the firewall's per-container routing (BPF programs stay attached; idempotent) |
+| `clawker firewall disable --agent AGENT` | Remove a container from the firewall's per-container routing (BPF programs stay attached; fast re-enable via `enable`) |
 | `clawker firewall bypass` | Temporary unrestricted egress (eBPF bypass flag + timed re-enable) |
 | `clawker firewall rotate-ca` | Regenerate CA and all domain certificates |
 
@@ -346,7 +341,7 @@ All firewall operations are available under `clawker firewall`:
 The firewall uses a self-signed certificate authority for TLS inspection. All HTTPS traffic is terminated at Envoy with per-domain certificates, inspected at the HTTP level (making request paths, methods, and response codes visible), then re-encrypted upstream.
 
 - An **ECDSA P256 CA** is auto-generated during `clawker build` and baked into agent container images via `update-ca-certificates`
-- Per-domain certificates are generated for **every** TLS rule --- Envoy terminates TLS for all allowed domains
+- Per-domain certificates are generated for **every** `https`/`wss` rule --- Envoy terminates TLS for all allowed TLS domains
 - Domains with `path_rules` get per-path routing; domains without get allow-all routing --- both go through TLS inspection
 - The CA keypair is persisted in the firewall data directory and shared between the bundler and firewall manager
 - Use `clawker firewall rotate-ca` to regenerate the CA and all domain certs
@@ -410,7 +405,7 @@ Disabling the firewall removes **all** outbound network restrictions. The agent 
 
 ### Health check failures
 
-Run `clawker firewall status` to see the health of the stack (Envoy, CoreDNS, and the eBPF subsystem). Envoy is probed over `clawker-net` on its internal admin port (`HTTP GET /`), and CoreDNS is probed on its host-published health port `18902` (`HTTP GET /health`). The eBPF subsystem is considered healthy when the pinned programs and maps under `/sys/fs/bpf/clawker/` are present — they survive across firewall stack restarts by design.
+Run `clawker firewall status` to see the health of the stack (Envoy, CoreDNS, and the eBPF subsystem). Envoy is probed over `clawker-net` on its internal health listener port 9902 (`HTTP GET /`), and CoreDNS is probed on its health port `18902` (`HTTP GET /health`). The eBPF subsystem is considered healthy when the pinned programs and maps under `/sys/fs/bpf/clawker/` are present — they survive across firewall stack restarts by design.
 
 If a container is unhealthy, try:
 

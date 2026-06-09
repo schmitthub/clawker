@@ -9,8 +9,8 @@ paths: ["./docs/**"]
 
 - `docs/docs.json` — Mintlify config (theme, nav, colors, integrations). **Not** `mint.json` (legacy name)
 - `docs/index.mdx` — Homepage
-- `docs/*.mdx` — Hand-authored pages (quickstart, installation, configuration)
-- `docs/cli-reference/*.md` — Auto-generated CLI reference (**never edit directly**). Generated via Makefile, checked in, freshness verified separately in CI
+- `docs/*.mdx` — Hand-authored pages (quickstart, installation, etc.). Exception: `docs/configuration.mdx` is **auto-generated** (from `cmd/gen-docs/configuration.mdx.tmpl` + schema struct tags — never edit directly)
+- `docs/cli-reference/*.md` — Auto-generated CLI reference (**never edit directly**). Generated via Makefile, checked in, freshness verified in CI (covers `docs/cli-reference/` and `docs/configuration.mdx`)
 - `docs/architecture.mdx`, `docs/design.mdx`, `docs/testing.md` — Developer docs with Mintlify frontmatter
 - `docs/custom.css` — Dark terminal theme overrides (surface colors, glassmorphism navbar, amber hover glow)
 - `docs/favicon.svg` — `>_` terminal prompt icon (amber `#f59e0b` on dark `#09090b`)
@@ -47,7 +47,7 @@ Mintlify parses **all** `.md`/`.mdx` files as MDX — there is no per-file way t
 
 ## Navigation Structure
 
-Sidebar groups: Getting Started, Guides, CLI Reference (10 collapsible sub-groups), Contributing.
+Sidebar groups: Quickstart, Security, Guides, CLI Reference (13 collapsible sub-groups: Top-Level Shortcuts, Container, Image, Volume, Network, Worktree, Monitor, Settings, Project, Firewall, Control Plane, Auth, Skill), Developer Guide.
 Navbar: Home → clawker.dev, GitHub link, Install button → /installation.
 
 ## Architecture

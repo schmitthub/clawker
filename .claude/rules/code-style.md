@@ -38,7 +38,7 @@ Commands fall into one of four output scenarios. Choose imports accordingly:
 
 | Scenario | Description | Packages | Example |
 |----------|-------------|----------|---------|
-| Non-interactive / static | Print and done. Data, status, results. | `iostreams` + `fmt` | `tableprinter.New(ios, headers...)` for data, `fmt.Fprintf(ios.ErrOut, ...)` for status |
+| Non-interactive / static | Print and done. Data, status, results. | `iostreams` + `fmt` | `f.TUI.NewTable(headers...)` for data, `fmt.Fprintf(ios.ErrOut, ...)` for status |
 | Static-interactive | Static streaming output with y/n prompts mid-flow. | `iostreams` + `prompter` | Config confirmation, `image prune` |
 | Live-display | No user input, but continuous rendering with layout management. | `iostreams` + `tui` | `image build` progress display |
 | Live-interactive | Full keyboard/mouse input, stateful navigation. | `iostreams` + `tui` | `monitor up` |
@@ -73,7 +73,7 @@ fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.WarningIcon(), "BuildKit is not available"
 - Stream rules above apply to static output. Live-display and live-interactive scenarios delegate rendering to the TUI layer — see `cli-output-style-guide` memory for per-scenario details
 
 ### Deprecated (do not use in new code)
-- `cmdutil.HandleError`, `cmdutil.PrintError`, `cmdutil.PrintWarning`, `cmdutil.PrintNextSteps`
+- `cmdutil.HandleError`, `cmdutil.PrintNextSteps`, `cmdutil.PrintErrorf`
 - `ios.PrintSuccess/Warning/Info/Failure()` — deleted
 - `ios.RenderHeader/Divider/KeyValue/Status()` — deleted
 
@@ -91,5 +91,5 @@ fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.WarningIcon(), "BuildKit is not available"
 - Use only the `config.Config` interface in consumers; never reach into `internal/config` internals.
 - Do not hardcode config file paths or constants in callers (`.clawker.yaml`, subdirs, label domains) when an interface method exists.
 - Read paths/constants through methods (`ConfigDir()`, `Domain()`, `LabelDomain()`, `LogsSubdir()`, etc.).
-- Typed mutation: `SetProject(fn func(*Project))` / `SetSettings(fn func(*Settings))` mutates in-memory; `WriteProject()` / `WriteSettings()` persists to disk.
+- Typed mutation: `ProjectStore().Set(fn func(*Project))` / `SettingsStore().Set(fn func(*Settings))` mutates in-memory; `ProjectStore().Write()` / `SettingsStore().Write()` persists to disk.
 - In tests, prefer `configmocks.NewBlankConfig()`, `configmocks.NewFromString(projectYAML, settingsYAML)`, and `configmocks.NewIsolatedTestConfig(t)` from `internal/config/mocks/` (import as `configmocks "github.com/schmitthub/clawker/internal/config/mocks"`).

@@ -131,6 +131,7 @@ type Event struct {
     IsIPv6      bool
     IsMapped    bool
     NoDst       bool       // sock_create — no destination exists
+    EmitSite    EmitSite   // which BPF program submitted the event; drives event.name
     DomainHash  uint32
     Domain      string
     Verdict     Verdict

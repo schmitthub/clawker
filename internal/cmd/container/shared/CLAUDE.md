@@ -4,13 +4,13 @@ Container flag types, domain orchestration, and container creation -- shared bet
 
 ## API
 
-### ContainerOptions (`container.go`)
+### ContainerCreateOptions (`container_create.go`)
 
-`ContainerOptions` -- all container CLI flags. `NewContainerOptions()`, `AddFlags(flags, opts)`, `MarkMutuallyExclusive(cmd)`.
+`ContainerCreateOptions` -- all container CLI flags. `NewContainerOptions()`, `AddFlags(flags, opts)`, `MarkMutuallyExclusive(cmd)`.
 
 Key functions: `GetAgentName()`, `BuildConfigs(flags, mounts, cfg)`, `ValidateFlags()`, `ResolveAgentName(agent, generateRandom)`, `ParseLabelsToMap(labels)`, `MergeLabels(base, user)`, `NeedsSocketBridge(cfg)`.
 
-### CreateContainer (`container.go`)
+### CreateContainer (`container_create.go`)
 
 Single entry point for container creation. Progress via events channel (nil for silent mode). Callers own all terminal output.
 
@@ -22,13 +22,16 @@ go func() {
     for ev := range events { /* drive spinner, collect warnings */ }
 }()
 
-result, err := shared.CreateContainer(ctx, &shared.CreateContainerConfig{
-    Client:     client,
-    Config:     cfg,
-    Options:    containerOpts,
-    Flags:      cmd.Flags(),
-    ProjectManager: f.ProjectManager,
-    HostProxy:  f.HostProxy,
+result, err := shared.CreateContainer(ctx, &shared.CreateContainerOptions{
+    Client:         client,
+    Config:         cfg,
+    ProjectName:    projectName,
+    Options:        containerOpts,
+    Flags:          cmd.Flags(),
+    Version:        version,
+    ProjectManager: opts.ProjectManager,
+    HostProxy:      opts.HostProxy,
+    Log:            log,
 }, events)
 close(events)
 <-done
@@ -49,7 +52,7 @@ type AgentBootstrap struct {
     Assertion       string  // Hydra client_assertion JWT (single-use)
 }
 
-GenerateAgentBootstrap(caCertPath, caKeyPath, project, agent, containerID, hydraTokenURL string, signingKey *ecdsa.PrivateKey) (*AgentBootstrap, error)
+GenerateAgentBootstrap(caCertPath, caKeyPath string, project auth.ProjectSlug, agent auth.AgentName, containerID, hydraTokenURL string, signingKey *ecdsa.PrivateKey) (*AgentBootstrap, error)
 WriteAgentBootstrapToContainer(ctx, containerID, copyFn CopyToContainerFn, b *AgentBootstrap) error
 InstallAgentBootstrapMaterial(ctx, caCertPath, caKeyPath, signingKey, opts InstallAgentBootstrapOptions) error
 ```
@@ -117,23 +120,23 @@ Nil providers safely skipped (debug logged). `Config` is the only required provi
 **Functions**:
 - `BootstrapServicesPreStart(ctx, container, cmdOpts)` -- firewall rules sync + daemon ensure + health wait (60s) + host proxy + always-deliver the `agent.pre_run` hook to `~/.clawker/pre-run.sh` (user script when set, no-op when unset; not firewall-gated; copy failure aborts the start). Now requires a working `Client` provider.
 - `BootstrapServicesPostStart(ctx, container, cmdOpts)` -- eBPF attachment + socket bridge
-- `ContainerStart(ctx, cmdOpts, startOpts) (ContainerStartResult, error)` -- runs all three phases; errors abort immediately
+- `ContainerStart(ctx, cmdOpts, startOpts) (mobyClient.ContainerStartResult, error)` -- runs all three phases; errors abort immediately
 
 ### Types
 
 | Type | Purpose |
 |------|---------|
-| `ContainerOptions` | All container CLI flags |
+| `ContainerCreateOptions` | All container CLI flags |
 | `CommandOpts` | DI container with lazy closures + AgentName/Project |
-| `CreateContainerConfig` | Inputs: Client, Config, Options, Flags, ProjectManager, HostProxy, Logger, Version |
+| `CreateContainerOptions` | Inputs: Client, Config, ProjectName, Options, Flags, Version, ProjectManager, HostProxy, Log, Is256Color, IsTrueColor |
 | `CreateContainerResult` | Outputs: ContainerID, AgentName, ContainerName, WorkDir, HostProxyRunning |
 | `CreateContainerEvent` | Channel event: Step, Status, Type, Message |
 | `StepStatus` | `StepRunning`, `StepComplete`, `StepCached` |
 | `MessageType` | `MessageInfo`, `MessageWarning` |
 | `ListOpts` / `MapOpts` / `PortOpts` / `NetworkOpt` | pflag.Value types for repeatable/map/port/network flags |
 | `CopyToVolumeFn` / `CopyToContainerFn` / `CopyFromContainerFn` | Function types for Docker copy operations |
-| `InitConfigOpts` | Project/agent names, ContainerWorkDir, ClaudeCodeConfig, CopyToVolumeFn |
-| `InjectPostInitOpts` | Container ID, Script, CopyToContainerFn |
+| `InitConfigOpts` | Project/agent names, ContainerWorkDir, ClaudeCodeConfig, CopyToVolumeFn, Log |
+| `InjectPostInitOpts` | Container ID, Script, Cfg, CopyToContainerFn, Log |
 | `InjectHookOpts` | Container ID, Script, Name, Cfg, CopyToContainerFn, Log |
 | `RebuildMissingImageOpts` | Image ref, IOStreams, TUI, Prompter, BuildImage fn, CommandVerb |
 | `AgentBootstrap` | CertPEM, KeyPEM, CACertPEM, Assertion |
@@ -142,7 +145,7 @@ Nil providers safely skipped (debug logged). `Config` is the only required provi
 
 | Function | Description |
 |----------|-------------|
-| `NewContainerOptions()` | Create ContainerOptions with initialized pflag.Value fields |
+| `NewContainerOptions()` | Create ContainerCreateOptions with initialized pflag.Value fields |
 | `AddFlags(flags, opts)` | Register all container flags on a pflag.FlagSet |
 | `MarkMutuallyExclusive(cmd)` | Mark `--agent`/`--name` mutually exclusive |
 | `CreateContainer(ctx, cfg, events)` | Single entry point -- workspace, config, env, create, inject |
@@ -150,7 +153,7 @@ Nil providers safely skipped (debug logged). `Config` is the only required provi
 | `InitContainerConfig(ctx, opts)` | Copy host Claude config to volume |
 | `InjectHookScript(ctx, opts)` | Tar a bash-wrapped hook to `~/.clawker/<Name>.sh`; empty `Script` → no-op wrapper (always-deliver overwrites stale content) |
 | `InjectPostInitScript(ctx, opts)` | Thin wrapper over `InjectHookScript` pinned to the `post-init` hook; used by the create path |
-| `ResolveAgentEnv(agent, projectDir)` | Merge env_file + from_env + env. Precedence: env_file < from_env < env |
+| `ResolveAgentEnv(agent, projectDir, log)` | Merge env_file + from_env + env. Precedence: env_file < from_env < env |
 | `RebuildMissingDefaultImage(ctx, opts)` | Interactive rebuild flow with TUI progress |
 | `GenerateAgentBootstrap(...)` | Mint mTLS cert + JWT assertion for agent |
 | `WriteAgentBootstrapToContainer(...)` | Tar bootstrap files into container |
@@ -180,7 +183,9 @@ Imports: `internal/cmdutil`, `internal/config`, `internal/containerfs`, `interna
 ## Testing
 
 - `shared/init_test.go` -- `CreateContainer` with `mocks.FakeClient` + `hostproxytest.MockManager`
-- `shared/container_test.go` -- Flag parsing, BuildConfigs, ValidateFlags, pflag.Value types
+- `shared/container_create_test.go` -- Flag parsing, BuildConfigs, ValidateFlags, pflag.Value types
+- `shared/container_start_test.go` -- `BootstrapServicesPreStart`/`PostStart` nil-safety, pre-run delivery, `ContainerStart` client validation
+- `shared/agent_bootstrap_test.go` -- `GenerateAgentBootstrap`, `WriteAgentBootstrapToContainer` tar shape, `InstallAgentBootstrapMaterial`
 - `shared/image_test.go` -- `RebuildMissingDefaultImage` interactive flow, `progressStatus` mapping
 - `shared/containerfs_test.go` -- Mock CopyToVolume/CopyToContainer trackers
 - `shared/workdir_test.go` -- `resolveWorkDir` worktree idempotent reuse

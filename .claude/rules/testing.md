@@ -34,7 +34,9 @@ Each package in the dependency DAG must provide test utilities so dependents can
 | `internal/project` | `mocks/` | `NewMockProjectManager()`, `NewMockProject(name, repoPath)`, `NewTestProjectManager(t, gitFactory)` |
 | `internal/git` | `gittest/` | `InMemoryGitManager` |
 | `pkg/whail` | `whailtest/` | `FakeAPIClient`, build scenarios, `EventRecorder` |
-| `internal/controlplane` | `mocks/` | `ControlPlaneServiceMock`, `ManagerMock`, `IntrospectorMock`, `AdminServiceClientMock`, `EBPFManagerMock` (all moq-generated) |
+| `internal/controlplane` | `mocks/` | `IntrospectorMock`, `AdminServiceClientMock` (moq-generated) |
+| `internal/controlplane/cpboot` | `mocks/` | `ManagerMock` (moq-generated) |
+| `internal/controlplane/firewall/ebpf` | `mocks/` | `EBPFManagerMock` (moq-generated) |
 | `internal/hostproxy` | `hostproxytest/` | `MockHostProxy`, `MockManager` |
 | `internal/iostreams` | `Test()` | `iostreams.Test()` → `(*IOStreams, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer)` |
 | `internal/storage` | `ValidateDirectories()` | XDG directory collision detection |
@@ -66,7 +68,6 @@ Typical mapping:
 - Defaults and typed getter behavior → `NewBlankConfig()`
 - Specific YAML values for schema/parsing tests → `NewFromString(projectYAML, settingsYAML)`
 - Typed mutation / persistence / env override tests → `NewIsolatedTestConfig(t)`
-- YAML strict validation errors → `config.ValidateProjectYAML(data)` directly
 
 ```bash
 go test ./internal/config -v

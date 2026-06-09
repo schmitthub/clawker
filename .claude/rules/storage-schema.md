@@ -19,6 +19,7 @@ Schema types use these struct tags as the single source of truth for field metad
 | `desc:"Help text"` | Field description | Empty | `desc:"Workspace mounting mode"` |
 | `default:"value"` | Default value (used by `GenerateDefaultsYAML`) | Empty | `default:"bind"` |
 | `required:"true"` | Marks load-bearing fields that must have a value | `false` | `required:"true"` |
+| `merge:"union"` | Merge strategy for slices/maps across layers: `"union"` = additive, `""` = last-wins | `""` (last-wins) | `merge:"union"` |
 
 ### Default Tag Value Formats
 
@@ -77,4 +78,4 @@ func (r ProjectRegistry) Fields() storage.FieldSet {
 
 ## No Hardcoded YAML Templates
 
-Default values live on struct tags, not in YAML string constants. `defaults.go` no longer contains template strings. The `clawker init` command generates YAML by marshaling a struct populated from defaults, not by string-manipulating a template.
+Default values live on struct tags, not in YAML string constants. `internal/config/defaults.go` contains firewall rules and constants, not YAML template strings. `clawker init` generates the project file by writing a preset-populated `storage.Store[Project]` via `store.WriteTo(configPath)`, not by string-manipulating a hardcoded template. Blank configs (e.g. `NewBlankConfig`) are populated via `GenerateDefaultsYAML[T]()` from the same struct tags.

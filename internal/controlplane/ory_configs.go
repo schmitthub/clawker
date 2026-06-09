@@ -24,7 +24,7 @@ import (
 //     Safe as a static value because the in-memory store is ephemeral.
 //   - Admin on 127.0.0.1: only reachable from within the CP container.
 //   - Public on 0.0.0.0: published to host for CLI token requests.
-//   - TTLs: 1h access token (matches tokenRefreshMargin=30s in cp_dial.go).
+//   - TTLs: 1h access token (matches tokenRefreshMargin=30s in internal/controlplane/adminclient/dial.go).
 //   - expose_internal_errors: true for --dev mode debugging.
 //   - TLS: uses the same self-signed cert as the gRPC admin API.
 //
@@ -69,7 +69,7 @@ log:
 //
 //	kratos serve --config /etc/clawker/kratos.yaml --dev --sqa-opt-out
 //
-// Kratos is not actively used in v1 (no user registration/login flows) but must
+// Kratos is not actively used (no user registration/login flows) but must
 // be running for the Ory stack to be fully operational. It will be used when the
 // webui is added (user accounts, session management).
 //
@@ -113,13 +113,13 @@ log:
 
 // buildOathkeeperConfig generates the Oathkeeper v26.2.0 config YAML.
 //
-// Validated against the internal/config/.oathkeeper.yaml reference and smoke-tested with:
+// Validated against the upstream Oathkeeper config schema and smoke-tested with:
 //
 //	oathkeeper serve --config /etc/clawker/oathkeeper.yaml
 //
 // Oathkeeper serves as the HTTP reverse proxy for future webui auth. gRPC auth
 // (CLI + agents) bypasses Oathkeeper entirely — it uses direct Hydra token
-// introspection via AuthInterceptor. Not actively routing traffic in v1.
+// introspection via AuthInterceptor. Not actively routing traffic.
 //
 // The error handler config is required in v26.2.0 — without it Oathkeeper has
 // no way to render errors. JSON fallback ensures API-style error responses.

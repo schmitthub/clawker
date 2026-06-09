@@ -372,9 +372,10 @@ func TestBuildContext_ClawkerdIsPID1(t *testing.T) {
 
 // TestBuildContext_ClaudeCodeVersionIsARG pins the ENV→ARG conversion. ARG
 // (not ENV) is required so the ARG-cache behaviour applies: a changed value
-// busts cache ONLY at first usage (the install RUN), not at the declaration
-// line — keeping apt/Node/git-delta/zsh-in-docker cached above. ENV would
-// create a layer whose hash propagates downward and bust every layer below.
+// busts cache at the ARG's declaration line (BuildKit) — so the declaration
+// is placed directly above its only consumer, keeping apt/Node/git-delta/
+// zsh-in-docker cached above. ENV would create a layer whose hash propagates
+// downward and bust every layer below.
 func TestBuildContext_ClaudeCodeVersionIsARG(t *testing.T) {
 	cfg := testConfig(t, minimalProjectYAML())
 	gen := newTestProjectGenerator(cfg, t.TempDir())

@@ -14,7 +14,7 @@
 ┌──────────────────────────────────────────────────────────────────────┐
 │  CLI Layer                                                            │
 │  cmd/clawker → internal/clawker → internal/cmd/root                   │
-│  10 command groups, 50+ subcommands (Cobra + Factory DI)              │
+│  12 command groups, 50+ subcommands (Cobra + Factory DI)              │
 └──────┬────────────────────────┬────────────────────┬─────────────────┘
        │                        │                    │
        ▼                        ▼                    ▼
@@ -258,7 +258,7 @@ Thin domain wrapper composing `storage.Store[Project]` + `storage.Store[Settings
 
 ### internal/cmd/* - CLI Commands
 
-11 command groups with 50+ subcommands, each in its own subpackage:
+12 command groups with 50+ subcommands, each in its own subpackage:
 
 | Command Group | Subcommands |
 |---------------|-------------|
@@ -268,13 +268,14 @@ Thin domain wrapper composing `storage.Store[Project]` + `storage.Store[Settings
 | `network/` | list, create, inspect, remove, prune |
 | `project/` | init, register, list, info, edit, remove |
 | `worktree/` | add, list, prune, remove |
-| `firewall/` | (single package — status, list, add, remove, reload, up, down, enable, disable, bypass, rotate-ca — all route through `f.AdminClient` gRPC to the CP daemon) |
-| `controlplane/` | up, down, status (break-glass host-side CP container lifecycle; normal CLI paths bring the CP up transparently on first `AdminClient` call) |
+| `auth/` | rotate |
+| `firewall/` | (single package — status, list, add, remove, reload, refresh, up, down, enable, disable, bypass, rotate-ca — all route through `f.AdminClient` gRPC to the CP daemon) |
+| `controlplane/` | up, down, status, agents (break-glass host-side CP container lifecycle; CP is bootstrapped by the container start path, not transparently via `AdminClient`) |
 | `monitor/` | init, up, down, status |
 | `settings/` | edit |
 | `skill/` | install, show, remove |
 
-**Top-level shortcuts**: `init` → `project init`, `build` → `image build`, `run`/`start` → `container run`/`start`, `generate`, `version`
+**Top-level shortcuts**: `init` → `project init`, plus 20 Docker-style aliases (e.g. `build`, `run`, `start`, `ps`, `rm`, `rmi`, `exec`, `logs`, `stop`, `attach`, …) — see `internal/cmd/root/aliases.go`. Also: `generate`, `version`.
 
 **Shared packages**: `container/shared/` and `skill/shared/` contain domain orchestration logic shared across subcommands within their group.
 
@@ -301,7 +302,7 @@ Constructor that builds a fully-wired `*cmdutil.Factory`. Imports all heavy depe
 
 **Dependency wiring order:**
 
-1. Config (lazy, `config.NewConfig()` via `sync.Once` — walk-up + settings load) → 2. HostProxy (lazy, reads Config) → 3. SocketBridge (lazy, reads Config) → 4. IOStreams (eager, logger initialized from Config) → 5. TUI (eager, wraps IOStreams) → 6. Project (lazy, owns registry.yaml independently from Config) → 7. Client (lazy, reads Config) → 8. GitManager (lazy, reads Config) → 9. Prompter (lazy)
+1. Config (lazy, `config.NewConfig()` via `sync.Once` — walk-up + settings load) → 2. Logger (lazy, reads Config) → 3. HostProxy (lazy, reads Config) → 4. SocketBridge (lazy, reads Config) → 5. IOStreams (eager, `iostreams.System()`) → 6. TUI (eager, wraps IOStreams) → 7. Project (lazy, owns registry.yaml independently from Config) → 8. Client (lazy, reads Config) → 9. GitManager (lazy, reads Config) → 10. Prompter (lazy) → 11. AdminClient (lazy, reads Config) → 12. ControlPlane (lazy, reads Config + Logger + Client)
 
 Tests never import this package — they construct minimal `&cmdutil.Factory{}` structs directly.
 
@@ -449,14 +450,14 @@ The CP container is the **single owner** of firewall state, eBPF lifetime, and E
 
 **Host-side bootstrap (`internal/controlplane/cpboot/bootstrap.go`):**
 
-- `EnsureRunning(ctx, dc, cfg, log)` — idempotent, mutex-guarded. Steps: ensure CP image → `ContainerCreate` (static IP via `NetworkingConfig.IPAMConfig.IPv4Address`, `on-failure` restart policy max 3) → `ContainerStart` → poll `/healthz` on `127.0.0.1:<HealthPort>`. Mount-mode reconciliation (stop+remove+recreate) if `FirewallDataSubdir` is RO or mount set diverges (INV-B2-006).
+- `EnsureRunning(ctx, EnsureOpts)` — idempotent, mutex-guarded. Steps: ensure CP image → `ContainerCreate` (static IP via `NetworkingConfig.IPAMConfig.IPv4Address`, `on-failure` restart policy max 3) → `ContainerStart` → poll `/healthz` on `127.0.0.1:<HealthPort>`. Mount-mode reconciliation (stop+remove+recreate) if `FirewallDataSubdir` is RO or mount set diverges (INV-B2-006).
 - `Stop(ctx, dc, log)` — stops the CP container; `clawker-cp`'s SIGTERM handler drains the firewall stack and flushes per-container eBPF state before exiting, so no orphans remain (INV-B2-008).
 
-Consumed via the `ensureRunning` package-level seam by `adminClientFunc`, so the first CLI `AdminClient` call transparently brings the CP up. The break-glass `clawker controlplane up/down/status` verbs expose these directly via `f.ControlPlane()`.
+`EnsureRunning` is called by `BootstrapServicesPreStart` on the container start/restart path — the CP is NOT bootstrapped transparently by `AdminClient` (which is a pure dial). The break-glass `clawker controlplane up/down/status/agents` verbs expose CP lifecycle directly via `f.ControlPlane()`.
 
 **CP self-shutdown (`internal/controlplane/watcher.go` + drain callback):**
 
-`AgentWatcher` polls Docker every 30s for containers with `purpose=agent, managed=true`. After `(missed_threshold=2) × pollInterval + grace=60s` of drain-to-zero, it fires the drain callback. Drain callback ordering (INV-B2-007, stricter than spec §6 prose): `handler.CancelAllBypassTimers` → `grpcServer.GracefulStop` → `firewall.Stack.Stop` → `ebpf.Manager.FlushAll`. The CP exits clean (code 0) and the `on-failure` restart policy does NOT retrigger.
+`AgentWatcher` polls Docker every 30s for containers with `purpose=agent, managed=true`. After `(missed_threshold=2) × pollInterval + grace=60s` of drain-to-zero, it fires the drain callback. Drain callback ordering (INV-B2-007): `actionQueue.Close` → `grpcServer.GracefulStop` → `handler.CancelAllBypassTimers` → `firewall.Stack.Stop` → `ebpf.Manager.FlushAll`. The CP exits clean (code 0) and the `on-failure` restart policy does NOT retrigger.
 
 Watcher hardening: `ListErrCeiling` bounds Docker-wedged blindness; `started atomic.Bool` enforces at-most-once `Run`; negative options panic instead of snapping to defaults.
 
@@ -482,13 +483,13 @@ Image builds use `drainBuildStream`/`drainPullStream` helpers that distinguish `
 
 **Certificate PKI:** Path-based egress rules require TLS interception. `EnsureCA` creates or loads a self-signed ECDSA P-256 CA keypair in `FirewallDataSubdir/certs`. `GenerateDomainCert` signs per-domain certificates for Envoy's MITM termination. `FirewallRotateCA` replaces the CA and re-signs all domain certs. The CA certificate is injected into agent containers at build time so TLS verification succeeds through the proxy.
 
-**Rule persistence:** Active egress rules are stored via `storage.Store[EgressRulesFile]` backed by `egress-rules.yaml` under `FirewallDataSubdir`. Rules are deduped by `dst:proto:port` composite key (`RuleKey`). `ProjectRules(cfg)` merges required internal rules (Claude API, Docker registry) with project-specific rules; `BootstrapServicesPostStart` sends the union to `FirewallAddRules` before issuing `FirewallEnable`.
+**Rule persistence:** Active egress rules are stored via `storage.Store[EgressRulesFile]` backed by `egress-rules.yaml` under `FirewallDataSubdir`. Rules are deduped by `dst:proto:port` composite key (`RuleKey`). `proj.EgressRules()` merges required internal rules (Claude API, Docker registry) with project-specific rules; `BootstrapServicesPreStart` sends the union to `FirewallAddRules`, then `BootstrapServicesPostStart` issues `FirewallEnable` (per-container, after docker start creates the cgroup).
 
 **Network isolation:** The CP creates an isolated Docker bridge network (`clawker-net`) with deterministic static IPs computed from the gateway address — `gateway+EnvoyIPLastOctet` (.2) for Envoy, `gateway+CoreDNSIPLastOctet` (.3) for CoreDNS, `gateway+CPIPLastOctet` (.202) for the CP container. Agent containers join this network with `--dns` pointing to the CoreDNS IP. Static-IP assignment cannot go through whail's `EnsureNetwork` helper (which hard-overwrites `EndpointSettings`) — call `dc.EnsureNetwork` first, then explicit `NetworkingConfig.IPAMConfig.IPv4Address` in `ContainerCreate`.
 
 **Custom CoreDNS container:** Runs with `CAP_BPF + CAP_SYS_ADMIN` and a bind mount of `/sys/fs/bpf` so the `dnsbpf` plugin can open the pinned `dns_cache` map. Image `clawker-coredns:latest` is built from `cmd/coredns-clawker` on demand by `firewall.Stack.ensureCorednsImage`. The stock `coredns/coredns:1.14.2` image is no longer used.
 
-**Integration points:** Commands call `f.AdminClient(ctx)` to obtain an `adminv1.AdminServiceClient`. `BootstrapServicesPostStart` issues 3 RPCs in order (FirewallInit → FirewallAddRules → FirewallEnable). Break-glass verbs use `f.ControlPlane()` for direct container lifecycle control.
+**Integration points:** Commands call `f.AdminClient(ctx)` to obtain an `adminv1.AdminServiceClient`. `BootstrapServicesPreStart` issues `FirewallInit` → `FirewallAddRules`; `BootstrapServicesPostStart` issues `FirewallEnable` (per-container). Break-glass verbs use `f.ControlPlane()` for direct container lifecycle control.
 
 ### internal/dnsbpf - CoreDNS Plugin
 
@@ -513,11 +514,11 @@ CLI-side dial shape: `internal/controlplane/adminclient.Dial` builds two TLS con
 
 Key packages:
 
-- `internal/controlplane` — `adminServer` composition (embeds `firewall.Handler` + explicit `ListAgents`), Ory auth machinery (`authz.go`, `hydra_client.go`, `startup.go`, `ory_configs.go`, `subprocess.go`), generic OTel log provider factory (`otelclient.go` — `NewOtelLoggerProvider`), `AgentMethodScopes` for the agent listener, `AgentWatcher`. Per-listener `AuthInterceptor` instances.
+- `internal/controlplane` — `adminServer` composition (embeds `firewall.Handler` + explicit `ListAgents`), Ory auth machinery (`authz.go`, `hydra_client.go`, `startup.go`, `ory_configs.go`, `subprocess.go`), generic OTel log provider factory (`otelclient.go` — `NewOtelLoggerProvider`), `AgentWatcher`. Per-listener `AuthInterceptor` instances (agent listener wired with `agentv1.AgentMethodScopes()` from `api/agent/v1`).
 - `internal/controlplane/agent` — **Unified CP-side agent surface.** Consolidates the prior `agentdial/` and `agentregistry/` packages into one package keyed on the agent axis. Contains: `Dialer` (CP→clawkerd outbound mTLS dial with permissive trust — see asymmetric trust in root CLAUDE.md), `Registry` interface + sqlite-backed `NewSQLiteWriter` (persisted identity keyed by SHA-256 cert thumbprint + container_id), `Handler` (AgentService.Register handler with container inspection + peer cert capture), `IdentityInterceptor` (cert-thumbprint → registry lookup, fail-secure opt-out for Register), `Start` umbrella (reap + evict subscriber + dial subscriber), and typed overseer events (`SessionConnecting/Connected/Failed/Broken`, `AgentRegistered`, `AgentUntrusted`). CP is the SOLE sqlite writer — fixes WAL coherence across macOS bind-mount. See `internal/controlplane/agent/CLAUDE.md`.
 - `internal/controlplane/overseer` — **Typed event bus + worldview state.** Generic pub/sub (`Publish[T]`, `Subscribe[T]`, `SubscribeFiltered[T]`) with single-goroutine event loop serializing `State` mutation. `State` holds `Containers` (map of `ContainerView`) and `Agents` (map of `Agent` with session lifecycle + identity + trust verdict). Events implement `applier` interface to mutate state. Deep-copy `Snapshot` for readers. Zero imports from CP siblings — producers import overseer, not reverse. See `internal/controlplane/overseer/CLAUDE.md`.
 - `internal/controlplane/dockerevents` — **Docker events feeder.** `Feeder` subscribes to Docker's event stream with automatic reconnection and publishes `DockerEvent` (wraps `events.Message`) to the overseer bus. `DockerEvent.ApplyTo` projects container start/stop/destroy + rename into `State.Containers`. `EventsClient` interface abstracts Docker API for testability. Includes `reconcile` (full container+network sync on reconnect) and managed-label filtering.
-- `internal/controlplane/adminclient` — **CLI-side AdminService dial.** `Dial(ctx, adminPort, hydraPort, ...grpc.DialOption)` returns `adminv1.AdminServiceClient`. Handles mTLS + auto-refreshing OAuth2 bearer token via Hydra `client_credentials` grant. Moved from the former `internal/auth/cp_dial.go`.
+- `internal/controlplane/adminclient` — **CLI-side AdminService dial.** `Dial(ctx, adminPort, hydraPort, ...grpc.DialOption)` returns `adminv1.AdminServiceClient`. Handles mTLS + auto-refreshing OAuth2 bearer token via Hydra `client_credentials` grant.
 - `internal/controlplane/firewall` — Firewall domain: `Handler` (13 RPCs), `Stack` (Envoy+CoreDNS lifecycle), `ActionQueue` (single-goroutine FIFO serializing all firewall mutations — bringup, teardown, reconcile, enable, disable, bypass), Envoy+CoreDNS config generators, certificate PKI, rules store, cgroup helpers, drift resolver, rich error types with gRPC status integration. See `internal/controlplane/firewall/CLAUDE.md`.
 - `internal/controlplane/firewall/ebpf` — BPF loader + manager + bpf2go bindings. See `internal/controlplane/firewall/ebpf/CLAUDE.md`.
 - `internal/controlplane/firewall/ebpf/netlogger` — userspace consumer of the BPF `events_ringbuf`. Enriches per-decision records with `{container_id, agent, project, domain}` via overseer enrollment + dockerevents eviction, ships OTLP log records (`service.name=ebpf-egress`) through `controlplane.NewOtelLoggerProvider` to the trusted-infra OTLP receiver. See `internal/controlplane/firewall/ebpf/netlogger/CLAUDE.md`.
@@ -527,7 +528,7 @@ Key packages:
 - `internal/clawkerd` — `//go:embed assets/clawkerd` exports the per-container daemon binary; bundler drops it into every per-project image at `/usr/local/bin/clawkerd`.
 - `cmd/clawkerd` — per-container agent daemon: mTLS listener on `:7700`, `ClawkerdService.Session` bidi-stream for CP command dispatch, `registerCoordinator` for one-time CP-triggered Register handshake. Boot sequence in `cmd/clawkerd/CLAUDE.md`.
 - `api/admin/v1` — AdminService proto + method-scope registration (`AdminMethodScopes`, covered by `TestAdminMethodScopes_CoversAllRPCs`).
-- `api/agent/v1` — AgentService proto. `Register` RPC for clawkerd→CP identity binding; method-scope map at `internal/controlplane/agent_method_scopes.go` maps it to `ScopeAgentSelfRegister`.
+- `api/agent/v1` — AgentService proto. `Register` RPC for clawkerd→CP identity binding; `AgentMethodScopes()` in `api/agent/v1/agent.go` maps it to `ScopeSelfRegister`.
 - `cmd/clawker-cp/main.go` — daemon entry point. Wires Ory stack + firewall `Handler` + `ActionQueue` + overseer bus + dockerevents `Feeder` + `agent.Start` (registry + dialer + evict/dial subscribers) + `AgentWatcher` + drain callback + admin listener + agent listener (with chained Auth + Identity interceptors) + `netlogger.Service` (via `NewOtelLoggerProvider` + `circuitExporter`).
 
 ## Command Dependency Injection Pattern
@@ -765,7 +766,7 @@ Each package with complex dependencies provides test infrastructure:
 | `controlplane/firewall/ebpf/mocks/` | `EBPFManagerMock` (moq-generated) |
 | `controlplane/firewall/ebpf/netlogger/` (test-only) | In-package seams: `Sink` interface (`recordingSink` for processor tests), `ContainerInspecter` interface (`fakeInspecter`), `readerSource` interface (`fakeRingbuf`); `newTestService` helper wires bus subscriptions without requiring CAP_BPF |
 | `hostproxy/hostproxytest/` | `MockHostProxy` |
-| `socketbridge/mocks/` | `MockManager` |
+| `socketbridge/mocks/` | `SocketBridgeManagerMock` (moq-generated) |
 | `iostreams` | `Test()` → `(*IOStreams, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer)` |
 | `term/mocks/` | `FakeTerm` — stub satisfying `iostreams.term` interface |
 | `storage` | `ValidateDirectories()` — XDG directory collision detection |

@@ -12,19 +12,21 @@ package, one umbrella entry point (`agent.Start`).
 
 ## Single entry point: `agent.Start`
 
-`cmd/clawker-cp/main.go` Step 8 wires the entire agent surface with one
-call:
+`cmd/clawker-cp/main.go` wires the agent gRPC listener and registry in
+Step 8, then calls `agent.Start` after Step 9 (SetReady) once the
+dialer is constructed:
 
 ```go
 agentCleanup, err := agent.Start(watcherCtx, agent.StartDeps{
     Registry:     agentReg,            // CP-owned sqlite writer
-    DockerLister: listAgentIDsAll,     // returns purpose=agent containers, All:true
+    DockerLister: func(ctx context.Context) ([]string, error) {
+        return listAgentIDs(ctx, listAgentsOpts{All: true})
+    },                                 // returns purpose=agent containers, All:true
     PeerLookup:   agentPeerLookup,     // peer-IP→Docker→labels resolver (required)
     Dialer:       dialer,              // agent.New(...) for CP→clawkerd
     Bus:          bus,
     Log:          log.With("component", "agent"),
 })
-defer agentCleanup()
 ```
 
 `Start` does, in order:
@@ -111,7 +113,7 @@ macOS bind-mount boundary.
    URI SAN, and the container_id in a `urn:clawker:container:<id>`
    URI SAN. Tars cert+key+ca+assertion JWT into the container, starts
    it. No registry row written here.
-2. **Session establishment**: CP dials clawkerd via `agentdial.Dialer`,
+2. **Session establishment**: CP dials clawkerd via `agent.Dialer`,
    completes mTLS + Hello, runs `classifyRegistry` → returns
    `outcomeRegistryMiss` because no row exists.
 3. **RegisterRequired dispatch**: dialer sends
@@ -204,9 +206,9 @@ session lifecycle + identity fields. `AgentRegistered.ApplyTo` sets
 ## Imports
 
 **Uses**: `internal/auth` (AgentFullName, NewAgentName,
-NewProjectSlug, ContainerIDFromCert, AgentFullNameFromCert,
-AgentSANScheme, ContainerSANScheme), `internal/consts` (Network,
-LabelAgent/Project/Purpose, ContainerCP, ContainerClawkerd),
+NewProjectSlug, ContainerIDFromCert, AgentFullNameFromCert),
+`internal/consts` (Network, LabelAgent/Project/Purpose,
+ContainerClawkerd),
 `internal/controlplane/dockerevents`, `internal/controlplane/overseer`,
 `internal/logger`, `api/agent/v1`, `api/clawkerd/v1`,
 `modernc.org/sqlite`, `github.com/moby/moby/api/types/{container,

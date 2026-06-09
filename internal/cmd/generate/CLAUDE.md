@@ -12,7 +12,10 @@ Generate Dockerfiles for Claude Code releases from npm registry.
 
 ```go
 type GenerateOptions struct {
-    IOStreams  *iostreams.IOStreams
+    IOStreams *iostreams.IOStreams
+    Config   func() (config.Config, error)
+    Logger   func() (*logger.Logger, error)
+
     Versions  []string
     SkipFetch bool
     Cleanup   bool

@@ -14,7 +14,7 @@ const DefaultPinPath = "/sys/fs/bpf/clawker/dns_cache"
 
 // dnsEntry mirrors struct dns_entry in bpf/common.h.
 // expire_ts uses wall-clock seconds (time.Now().Unix() + TTL), matching
-// the garbage collector in internal/ebpf/manager.go GarbageCollectDNS().
+// the garbage collector in internal/controlplane/firewall/ebpf/manager.go GarbageCollectDNS().
 type dnsEntry struct {
 	DomainHash uint32
 	ExpireTs   uint32

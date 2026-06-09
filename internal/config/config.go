@@ -20,11 +20,11 @@ type Config interface {
 	Settings() *Settings
 
 	// ProjectStore returns the underlying project config store.
-	// Prefer this over SetProject/WriteProject for direct store access.
+	// Use Store.Set(fn) to mutate and Store.Write() to persist.
 	ProjectStore() *storage.Store[Project]
 
 	// SettingsStore returns the underlying settings store.
-	// Prefer this over SetSettings/WriteSettings for direct store access.
+	// Use Store.Set(fn) to mutate and Store.Write() to persist.
 	SettingsStore() *storage.Store[Settings]
 
 	// Deprecated: Use SettingsStore().Read().Logging instead.

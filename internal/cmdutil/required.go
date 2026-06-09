@@ -136,7 +136,7 @@ func AgentArgsValidatorExact(n int) cobra.PositionalArgs {
 	}
 }
 
-// binName returns the name of the binary / root command (usually 'docker').
+// binName returns the name of the binary / root command (e.g. 'clawker').
 func binName(cmd *cobra.Command) string {
 	return cmd.Root().Name()
 }

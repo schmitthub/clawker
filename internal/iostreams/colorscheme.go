@@ -84,7 +84,7 @@ func (cs *ColorScheme) Greenf(format string, a ...any) string {
 	return cs.Green(fmt.Sprintf(format, a...))
 }
 
-// Blue returns the string in blue (primary color, no bold).
+// Blue returns the string in blue (DeepSkyBlue, no bold).
 func (cs *ColorScheme) Blue(s string) string {
 	return cs.render(BlueStyle, s)
 }

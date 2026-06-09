@@ -10,8 +10,7 @@ Stop the monitoring stack
 
 Stops the monitoring stack using Docker Compose.
 
-This stops and removes all monitoring containers while preserving
-the clawker-net Docker network for other clawker services.
+This stops and removes all monitoring containers.
 
 Without --volumes, OpenSearch data + the bootstrap-applied
 configuration (index templates, ISM policies, Dashboards index

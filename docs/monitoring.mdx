@@ -71,7 +71,7 @@ OTEL endpoints are baked into every Clawker image at build time. At container cr
 When the firewall is enabled, Envoy and CoreDNS access logs flow into OpenSearch alongside agent telemetry, plus a per-decision-point eBPF event stream that closes the bypass-mode forensic gap.
 
 - **Envoy access logs** (`clawker-envoy`) — `server.address` (host the client asked for), `network.peer.address`/`network.peer.port` (post-resolution upstream), `network.transport`/`network.protocol.name`/`network.protocol.version`, `tls.established`/`tls.protocol.version`/`tls.cipher`, `action` (clawker firewall verdict: `allowed`/`denied`), `response_code`/`response_code_details` (distinguishes Envoy `direct_response` from upstream `via_upstream`), duration breakdown (`req_duration_ms`/`resp_duration_ms`/`resp_tx_duration_ms`/`duration_ms`), and byte counters. Query `action:denied` for clawker firewall blocks; `response_code:>=400 AND action:allowed` for upstream errors.
-- **CoreDNS query logs** (`clawker-coredns`) — queried domain, qtype (A/AAAA), rcode (NOERROR / NXDOMAIN), resolution duration, and `action` (clawker firewall verdict: `allowed` / `denied`). Query `action:denied` for clawker DNS-layer blocks; `rcode:NXDOMAIN AND action:allowed` for allowed-zone upstream misses (typo, missing record). `rcode` is the DNS outcome; `action` is the firewall verdict — they can disagree.
+- **CoreDNS query logs** (`clawker-coredns`) — queried `domain`, `qtype` (A/AAAA), `rcode` (NOERROR / NXDOMAIN), resolution `duration`. `rcode:NXDOMAIN` is **ambiguous**: it covers both DNS-layer firewall blocks (non-allowlisted host) and legitimate misses inside allowed zones (typo, missing record). CoreDNS makes no per-query allow/deny decision — correlate `domain` against the allowlist, or use the eBPF egress stream below (explicit `action:denied`) for the authoritative block signal.
 - **eBPF egress events** (`clawker-ebpf-egress`) — one record per connect/sendmsg/sock_create decision carrying `action` (`allowed` / `denied` / `bypassed`), attribution (`agent`, `project`, `container_id`), the 4-tuple, and the resolved domain. The bypass case is the headline: bypassed traffic skips Envoy and CoreDNS entirely but still produces a netlogger record, so bypass windows leave a complete audit trail. See [Egress Observability](/observability) for the record shape and per-attribute reference.
 
 ## Setup
@@ -84,7 +84,7 @@ clawker monitor init
 
 This scaffolds configuration files in your data directory (`~/.local/share/clawker/monitor/`):
 
-- `compose.yaml` — Docker Compose definition for all four services
+- `compose.yaml` — Docker Compose definition for all services (four long-lived + one-shot bootstrap)
 - `otel-config.yaml` — OpenTelemetry Collector pipeline configuration
 - `prometheus.yaml` — Prometheus scrape targets
 
@@ -118,9 +118,10 @@ Open OpenSearch Dashboards at `http://localhost:5601`. From the splash / welcome
 
 Inside the workspace, the left navbar has an **Explore** section — click **Logs** or **Metrics** to browse. The preconfigured index patterns (`claude-code`, `clawker-cli`, `clawker-cp`, `clawker-envoy`, `clawker-coredns`, `clawker-ebpf-egress`) and the `clawker_prometheus` direct-query datasource are already wired, so logs and Prometheus metrics are both reachable from inside OSD. Raw Prometheus is also still available at `http://localhost:9090` if you prefer it.
 
-**Dashboards.** Two are preinstalled under the workspace's **Dashboards** view:
+**Dashboards.** Three are preinstalled under the workspace's **Dashboards** view:
 
-- **Claude Code** — KPI strip over Claude Code sessions, cost, input/output/cache tokens. Sourced from Prometheus counters.
+- **Claude Code Cost & Usage** — KPI strip over Claude Code sessions, cost, input/output/cache tokens. Sourced from Prometheus counters.
+- **Claude Code Activity** — Claude Code security activity audit: prompts, tooling, code editing, permissions, hooks, MCP, plugins — totals, distributions, and full event tables.
 - **Clawker Networking** — per-source firewall telemetry: three event-stream panels (Envoy access logs, CoreDNS query log, eBPF egress decisions) plus three verdict pies (Envoy `action`, CoreDNS `rcode`, eBPF `action`). Verdict pies use each source's own field — values not normalized so each component's truth stays visible (e.g. CoreDNS denies show as `NXDOMAIN`, not collapsed into `denied`). Red slices = denials. Sourced from OS log indices; no Prometheus counters for network telemetry today.
 
 Build your own off the index patterns + Prometheus datasource for anything not covered.
@@ -145,7 +146,7 @@ The stack is preconfigured every `monitor up`. A one-shot `clawker-opensearch-bo
 - **Empty index pre-creation** for the log indices so OSD Discover and dashboards don't error on initial load before the first record arrives
 - **`clawker_prometheus` direct-query datasource** registered via the OpenSearch SQL plugin so OSD can read Prometheus metrics without a federated proxy
 - **OSD `Clawker` workspace** with `features: ["use-case-all"]` so the explore-flavor `metrics` / `logs` / `traces` nav groups all mount
-- **Saved objects** imported INTO the Clawker workspace — index patterns for every log index, the `Claude Code` KPI dashboard (sessions, cost, input/output/cache tokens, filter-controls bar), and the `Clawker Networking` dashboard (Envoy / CoreDNS / eBPF event streams + verdict pies). Build additional dashboards off the index patterns + Prometheus datasource as needed.
+- **Saved objects** imported INTO the Clawker workspace — index patterns for every log index, the `Claude Code Cost & Usage` KPI dashboard (sessions, cost, input/output/cache tokens), the `Claude Code Activity` dashboard (prompts, tooling, code editing, permissions, hooks), and the `Clawker Networking` dashboard (Envoy / CoreDNS / eBPF event streams + verdict pies). Build additional dashboards off the index patterns + Prometheus datasource as needed.
 
 `otel-collector` gates on bootstrap completing successfully — it never starts until the cluster is preconfigured. Prometheus starts in parallel; bootstrap depends on Prometheus being up so the `clawker_prometheus` datasource registration can validate the configured URI. Bootstrap failure surfaces in `docker logs clawker-opensearch-bootstrap` and leaves the stack half-up by design (so wrong-mapped indices can't be silently created). The throwaway-stack model means picking up template/policy edits requires `monitor down --volumes && monitor up`; templates only apply at index creation.
 

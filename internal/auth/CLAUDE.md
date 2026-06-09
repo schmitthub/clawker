@@ -11,9 +11,9 @@ Generates + owns:                       Receives bind-mounted (RO):
   CA (P-256 ECDSA)                        CA cert (trust root)
   Signing key (ES256)                     CLI public JWK (verify assertions)
   Client cert (mTLS)                      Server cert + key (for TLS)
-  Server cert + key                       Hydra shared secret
-  Hydra shared secret (HMAC)
-  JWK export
+  Server cert + key                       CP client cert + key (outbound mTLS)
+  Hydra shared secret (HMAC)              Infra intermediate CA cert + key
+  JWK export                              (Hydra secret read via data dir)
 
 Dials CP via:
   1. mTLS handshake (client cert)
@@ -29,7 +29,7 @@ Dials CP via:
 |------|---------|
 | `auth_material.go` | `EnsureAuthMaterial`, `RotateAuthMaterial`, `CheckAuthMaterial`, `EnsureHydraSecret`, `LoadSigningKey`, `LoadClientCert`, `ReadJWK`, `CACert`, `AuthFileStatus` |
 | `agent_cert.go` | `MintAgentCert(caCertPath, caKeyPath string, project ProjectSlug, agent AgentName, containerID string)` returns an `AgentCert{CertPEM, KeyPEM, Thumbprint [32]byte}` — ephemeral 24h mTLS leaf signed by the CLI CA. **CN is the deterministic `consts.ContainerClawkerd` literal** (the binary identity, not a per-agent value); the per-agent `AgentFullName(project, agent)` → `clawker.<project>.<agent>` rides in a `urn:clawker:agent:<full-name>` URI SAN so a long random `docker.GenerateRandomName` output can't push the cert past x509's 64-byte CN limit. The `urn:clawker:container:<id>` URI SAN binds the cert to its container. Typed `ProjectSlug` / `AgentName` (built via `NewProjectSlug` / `NewAgentName` at the wire boundary) push validation upstream so the helper itself trusts its inputs. Helpers: `BuildAgentSAN` / `AgentFullNameFromCert` (agent SAN), `BuildContainerSAN` / `ContainerIDFromCert` (container SAN). `AgentFullNameFromCert` returns tri-state sentinels `ErrAgentSANMissing` / `ErrAgentSANMalformed` so the CP IdentityInterceptor can emit distinct structured-log events while presenting a uniform `PermissionDenied` over the wire. The thumbprint is SHA-256 over the cert DER. The CP-side Register handler captures the live peer cert thumbprint and writes the agent registry sqlite row — the CLI never opens the sqlite DB directly. The displayed AgentFullName is reconstructed on demand from the row's `project` + `agent_name` columns; there is no precomputed identity column. PEM material is returned for in-memory bootstrap delivery only; never persisted on the host. |
-| `identity.go` | Typed identity values `ProjectSlug` / `AgentName` for compile-time discipline (callers can't accidentally pass a raw string); `New*` constructors reject only the empty case for `AgentName` (empty `ProjectSlug` is the global-scope-agent signal (2-segment naming)); `Must*` for test/migration paths; `AgentFullName(project, agent)` composer. Charset / length / form constraints are NOT enforced here — input normalization for user-typed names happens upstream at `cmdutil.ProjectSlugify`, and Docker / x509 / `IdentityInterceptor` enforce their own constraints downstream at op time. |
+| `identity.go` | Typed identity values `ProjectSlug` / `AgentName` for compile-time discipline (callers can't accidentally pass a raw string); `New*` constructors reject only the empty case for `AgentName` (empty `ProjectSlug` is the global-scope-agent signal (2-segment naming)); `Must*` for test/migration paths. Charset / length / form constraints are NOT enforced here — input normalization for user-typed names happens upstream at `cmdutil.ProjectSlugify`, and Docker / x509 / `IdentityInterceptor` enforce their own constraints downstream at op time. |
 | `assertion.go` | `BuildSignedAssertion`, `ValidateAssertionClaims`, `AssertionClaims` — ES256 JWT assertion builder for `private_key_jwt` client auth |
 | `agent_assertion.go` | `BuildAgentAssertion(audience, signingKey)` + `AgentAssertionTTL` — ES256 client_assertion identifying clawkerd as the `clawker-agent` OAuth2 client. Same signing key as the CLI assertion; only iss/sub differ. iat is minted in the host clock (the source of truth — Docker forces the CP/VM clock to track the host); no iat correction is applied. The transient post-sleep window where the VM clock lags is handled by *waiting* until the CP clock has caught up to the host before the assertion is exchanged (the pre-start CP-ensure), not by shifting iat. 24h TTL covers typical container session length. |
 | ~~`cp_dial.go`~~ | **Moved to `internal/controlplane/adminclient/dial.go`** — `Dial(ctx, adminPort, hydraPort, ...grpc.DialOption)` returns `(adminv1.AdminServiceClient, *grpc.ClientConn, error)`. See `adminclient` package. |
@@ -45,7 +45,7 @@ Dials CP via:
 
 ## Auth material layout
 
-All paths resolved via `internal/consts` (`AuthCACertPath`, `AuthCAKeyPath`, `AuthServerCertPath`, `AuthServerKeyPath`, `AuthCLIClientCertPath`, `AuthCLIClientKeyPath`, `AuthCLISigningKeyPath`, `AuthCLISigningJWKPath`, `AuthHydraSecretPath`).
+All paths resolved via `internal/consts` (`AuthCACertPath`, `AuthCAKeyPath`, `AuthServerCertPath`, `AuthServerKeyPath`, `AuthCLIClientCertPath`, `AuthCLIClientKeyPath`, `AuthCLISigningKeyPath`, `AuthCLISigningJWKPath`, `HydraSystemSecretPath`, `AuthOtelServerCertPath`, `AuthOtelServerKeyPath`, `AuthCPClientCertPath`, `AuthCPClientKeyPath`, `AuthInfraCACertPath`, `AuthInfraCAKeyPath`).
 
 | File | Scope | Bind-mounted into CP? |
 |------|-------|------------------------|
@@ -55,8 +55,10 @@ All paths resolved via `internal/consts` (`AuthCACertPath`, `AuthCAKeyPath`, `Au
 | CLI client cert + key | CLI mTLS | No (used by CLI only) |
 | CLI signing key (ECDSA) | ES256 signer | No (private half stays on host) |
 | CLI signing JWK | public JWK export | Yes (RO — Hydra verifies assertions against this) |
-| Hydra shared secret | HMAC between CLI and Hydra | Yes (RO) |
-| Infra intermediate CA cert + key | CP signs runtime leaves for Envoy/CoreDNS | Yes (RO) — key stays on host + in CP |
+| Hydra shared secret | HMAC between CLI and Hydra | No (read inside CP via `auth.EnsureHydraSecret()` from data dir) |
+| OTel server cert + key | TLS identity for the monitoring OTel collector | No (used by `monitor init`, not the CP container) |
+| CP client cert + key | CP outbound mTLS identity (CN=ContainerCP, ClientAuth EKU) | Yes (RO) |
+| Infra intermediate CA cert + key | CP signs runtime leaves for Envoy/CoreDNS | Yes (RO) — cert + key both mounted |
 
 ## Token exchange flow (moved to `adminclient/dial.go`)
 
@@ -103,7 +105,7 @@ type AssertionClaims struct {
 
 `RotateAuthMaterial(forceSigningKey bool)`:
 
-1. Removes CA cert + key, server cert + key, CLI client cert + key
+1. Removes CA cert + key, server cert + key, CLI client cert + key, OTel server cert + key, CP client cert + key, infra intermediate CA cert + key
 2. If `forceSigningKey`: also removes signing key + JWK (invalidates Hydra client registration)
 3. Re-runs `EnsureAuthMaterial` to regenerate
 
@@ -114,7 +116,9 @@ The CP container must be restarted after rotation to re-read bind-mounted materi
 - `internal/cmd/factory` — `adminClientFunc` calls `adminclient.Dial` to mint the gRPC `AdminServiceClient` (cached + re-dialed on transient gRPC failures)
 - `internal/controlplane/cpboot` — `EnsureRunning` calls `EnsureAuthMaterial` so the CP container boots with a populated config dir
 - `internal/cmd/auth` — `rotate` subcommand calls `RotateAuthMaterial`
-- `cmd/clawker-cp` (via bind-mounts, not imports) — reads CA, server cert, JWK, Hydra secret at container startup
+- `internal/cmd/project/init` — calls `EnsureAuthMaterial` before container creation
+- `internal/cmd/monitor/init` — calls `EnsureAuthMaterial` to provision OTel mTLS material before mounting it into the monitoring stack
+- `cmd/clawker-cp` (via bind-mounts + `auth.EnsureHydraSecret()`) — reads CA, server cert, JWK, Hydra secret at container startup
 
 ## Tests
 
@@ -122,6 +126,6 @@ The CP container must be restarted after rotation to re-read bind-mounted materi
 
 ## Package imports
 
-**Uses**: `internal/consts` (path constants), `api/admin/v1` (gRPC client type), `go-jose/v4`, stdlib `crypto/*`, `google.golang.org/grpc`.
+**Uses**: `internal/consts` (path constants), `go-jose/v4` (JWT signing), `github.com/google/uuid` (jti), stdlib `crypto/*`.
 
 **No dependency on**: `internal/config`, `internal/logger` (pure crypto/IO — errors returned, caller logs).

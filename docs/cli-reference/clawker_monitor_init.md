@@ -8,7 +8,7 @@ Scaffold monitoring configuration files
 
 ### Synopsis
 
-Scaffolds the monitoring stack configuration files in ~/.clawker/monitor/.
+Scaffolds the monitoring stack configuration files.
 
 This command generates:
   - compose.yaml        Docker Compose stack definition

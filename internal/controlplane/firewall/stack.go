@@ -654,8 +654,7 @@ func (s *Stack) envoyContainerSpec(netInfo *NetworkInfo) containerSpec {
 	// later Reload would diverge from the running container. driftLabels
 	// stamps labelInfraCertsReady at create time; specMatchesContainer
 	// detects the mismatch and reloadContainer falls through to
-	// ensureContainer, which stop+remove+recreates with the new mount
-	// (see lines 808-991).
+	// ensureContainer, which stop+remove+recreates with the new mount.
 	if s.infraCertsReady {
 		mounts = append(mounts, mount.Mount{
 			Type:     mount.TypeBind,

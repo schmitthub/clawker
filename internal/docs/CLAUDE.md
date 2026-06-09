@@ -79,4 +79,4 @@ go run ./cmd/gen-docs --doc-path docs --markdown --website   # Mintlify-safe (MD
 
 ## Tests
 
-`docs_test.go`, `man_test.go`, `markdown_test.go`, `rst_test.go`, `yaml_test.go` — format-specific output tests.
+`configdoc_test.go`, `docs_test.go`, `man_test.go`, `markdown_test.go`, `rst_test.go`, `yaml_test.go` — format-specific output tests.

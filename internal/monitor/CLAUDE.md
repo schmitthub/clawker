@@ -63,14 +63,12 @@ Each port field drives **both** sides of the host:container publish mapping AND 
 | `OpenSearchNodeService` | `string` | Hostname for OpenSearch node — from `consts.MonitoringServiceOpenSearchNode` |
 | `OpenSearchDashboardsService` | `string` | Hostname for OpenSearch Dashboards — from `consts.MonitoringServiceOpenSearchDashboards` |
 | `OtelServerCertHostPath` / `OtelServerKeyHostPath` / `OtelCAHostPath` | `string` | Host paths to CLI-issued mTLS material gating the CP-only OTLP receiver (empty disables) |
-| `HostFilesystem` | `string` | Host path mounted at `/hostfs` for the hostmetrics receiver. Hardcoded `/` |
-| `DockerSocketPath` | `string` | Host path to the Docker daemon socket; mounted at `/var/run/docker.sock` for the docker_stats receiver. Sourced from `Settings.Docker.Socket` |
 | `OtelCollectorImage` / `PrometheusImage` / `OpenSearchImage` / `OpenSearchDashboardsImage` / `CurlImage` | `string` | Pinned image refs |
 | `OpenSearchBootstrapDirName` | `string` | Workdir subdir holding bootstrap.sh + JSON/NDJSON assets; bind-mounted into the bootstrap container |
 
 ### NewMonitorTemplateData(s *config.Settings) MonitorTemplateData
 
-Constructor that populates `MonitorTemplateData` from full `config.Settings`. Service hostnames come from the consts package; ports + heap come from `s.Monitoring`; `DockerSocketPath` comes from `s.Docker.Socket`; `HostFilesystem` is hardcoded `/`.
+Constructor that populates `MonitorTemplateData` from full `config.Settings`. Service hostnames come from the consts package; ports + heap come from `s.Monitoring`.
 
 ### RenderTemplate(name, tmplContent string, data MonitorTemplateData) (string, error)
 
@@ -104,19 +102,21 @@ templates/opensearch-bootstrap/
     claude-code-prompt-nest.json       # Painless: collapse scalar attributes.prompt + sibling prompt.id into one object
     netlogger-normalize.json           # Convert processor: stringify attributes.bpf_ts_ns so the UI doesn't localize the BPF monotonic timestamp as a comma-separated number
     envelope-normalize.json            # Painless: mirror severity.{text,number} → severityText/severityNumber + resource.service.name → resource.attributes.service.name so OSD explore's default log columns render; also strips the SS4O exporter's noisy `attributes.data_stream` envelope
+    envoy-normalize.json               # Painless: strip empty CommonProperties noise (cluster_name/log_name/node_name/zone_name), remove empty instrumentationScope, drop literal '-' sentinels from response_flags/upstream_transport_failure_reason, coerce tls.established string→boolean
   index-templates/
     claude-code.json                   # Full Claude Code OTLP log schema; default_pipeline=claude-code-prompt-nest, final_pipeline=envelope-normalize
     clawker-cli.json                   # Scalar attributes.event (zerolog Str("event", ...)); final_pipeline=envelope-normalize
     clawker-cp.json                    # Same shape as clawker-cli with cp-specific fields; default_pipeline=cp-actor-attr-nest, final_pipeline=envelope-normalize
-    clawker-envoy.json                 # Flat HTTP/TLS/TCP fields from Envoy ALS; final_pipeline=envelope-normalize
+    clawker-envoy.json                 # Flat HTTP/TLS/TCP fields from Envoy ALS; default_pipeline=envoy-normalize, final_pipeline=envelope-normalize
     clawker-coredns.json               # Structured dns.query attributes from CoreDNS otel plugin; final_pipeline=envelope-normalize
-    clawker-ebpf-egress.json             # eBPF egress event attributes (action + attribution + 4-tuple + domain) from netlogger (service.name=ebpf-egress); final_pipeline=envelope-normalize
+    clawker-ebpf-egress.json             # eBPF egress event attributes (action + attribution + 4-tuple + domain) from netlogger (service.name=ebpf-egress); default_pipeline=netlogger-normalize, final_pipeline=envelope-normalize
   ism-policies/
     clawker-retention.json             # 7d retention; ism_template covers all 6 indices
   datasources/
     clawker_prometheus.json.tmpl       # Prometheus connector for SQL/PPL + Dashboards Metrics Analytics
   saved-objects/
-    clawker.ndjson                     # Dashboards saved objects bundle (index patterns, visualizations, dashboards)
+    clawker.ndjson                     # Dashboards saved objects bundle (index patterns, visualizations, dashboards); workspace-scoped import via /w/<wsId>/api/saved_objects/_import
+    explore/                           # Explore-plugin PROMQL metrics panels; posted individually via /w/<wsId>/api/saved_objects/explore/<id>
 ```
 
 `monitor init` walks this tree via `WriteOpenSearchBootstrap`, renders `bootstrap.sh.tmpl` against `MonitorTemplateData` (only OpenSearch / Dashboards hostnames + ports), and copies the rest verbatim into `<monitorDir>/opensearch-bootstrap/`. That directory is bind-mounted RO into the bootstrap container at `/opensearch-bootstrap`.
@@ -162,7 +162,7 @@ Ingest pipeline bodies (`ingest-pipelines/*.json`) are the exception — they're
 
 Per OS docs, `default_pipeline` runs before document indexing, and `final_pipeline` runs after `default_pipeline` (and after any explicit `?pipeline=` override). Two roles:
 
-- `default_pipeline` is per-index: `cp-actor-attr-nest` for `clawker-cp`, `claude-code-prompt-nest` for `claude-code`, `netlogger-normalize` for `clawker-ebpf-egress`, unset for cli/envoy/coredns. These collapse source-specific dotted-key collisions or coerce wire-shape mismatches before the rest of the pipeline runs.
+- `default_pipeline` is per-index: `cp-actor-attr-nest` for `clawker-cp`, `claude-code-prompt-nest` for `claude-code`, `netlogger-normalize` for `clawker-ebpf-egress`, `envoy-normalize` for `clawker-envoy`, unset for cli/coredns. These collapse source-specific dotted-key collisions or coerce wire-shape mismatches before the rest of the pipeline runs.
 - `final_pipeline` is the shared `envelope-normalize` on all 6 indices. It writes the legacy SS4O envelope paths (`severityText`, `severityNumber`, `resource.attributes.<k>`) that the OSD explore plugin's default log columns read. The OTLP `opensearchexporter` in `ss4o` mode writes the canonical SS4O paths (`severity.{text,number}` nested, flat `resource.<k>`); OSD reads the legacy paths. Multiple upstream issues document the divergence with no merged fix (data-prepper#5791, opensearch-catalog#118, contrib#45428).
 
 ## OTEL Pipelines (otel-config.yaml.tmpl)
@@ -175,7 +175,7 @@ Every pipeline runs `memory_limiter` as its first processor — the collector co
 |----------|-----------|-----------|
 | `traces` | `otlp` (untrusted; `resource/untrusted_otlp` stamps `ingest_source=untrusted_otlp` so forgeable spans are distinguishable) | `opensearch/traces` (SS4O — dataset=traces, namespace=clawker), `spanmetrics` (→ metrics pipelines), `debug` |
 | `metrics/untrusted` | `otlp` (default path for Claude Code + agent metrics push; direct Prometheus OTLP push is the documented alternate). `resource/untrusted_otlp` stamps `ingest_source` before `transform/metrics` copies project/agent resource attrs to datapoint labels so the forgeable labels are always paired with the provenance marker | `prometheus` (scrape endpoint on `PrometheusMetricsPort` — Prometheus scrapes this), `debug` |
-| `metrics/trusted` | `prometheus/self` (collector self-scrape on :8888), `docker_stats` (unix socket), `hostmetrics` (`/hostfs`), `spanmetrics` (RED from traces) — all locally sourced, no sender-declared attrs to defend | `prometheus` (shared with `metrics/untrusted`), `debug` |
+| `metrics/trusted` | `prometheus/self` (collector self-scrape on :8888), `spanmetrics` (RED from traces) — all locally sourced, no sender-declared attrs to defend | `prometheus` (shared with `metrics/untrusted`), `debug` |
 | `logs/in_untrusted` | `otlp` (no client auth) | `routing/untrusted` connector — only `service.name=claude-code` and `service.name=clawker-cli` route downstream; everything else is dropped (`error_mode: ignore`, no `default_pipelines` — drops by design) |
 | `logs/claude-code` | `routing/untrusted` (when `service.name=claude-code`); `ingest_source=untrusted_otlp` already stamped at `logs/in_untrusted` | `opensearch/logs_claude_code` (index `claude-code`), `debug` |
 | `logs/clawker-cli` | `routing/untrusted` (when `service.name=clawker-cli` — stamped by `internal/logger.newOtelProvider` Resource when called with `OtelOptions.ServiceName="clawker-cli"`; wired in `internal/cmd/factory/default.go`) | `opensearch/logs_clawker_cli` (index `clawker-cli`), `debug` |
@@ -199,8 +199,6 @@ All `opensearch/*` exporters have `sending_queue.enabled: true` and `retry_on_fa
 **CoreDNS query logs**: ships via the in-tree `otel` CoreDNS plugin (`cmd/coredns-clawker/plugins/otel/`) which emits one structured `dns.query` OTLP log record per query (OTLP/gRPC + mTLS) to the collector's `otlp/infra` receiver. The plugin is the **first** directive in every server block (set in `cmd/coredns-clawker/main.go`) so it observes the final rcode + answer set after `forward`/`template`/etc. Endpoint host:port is wired by `firewall.Stack` via `CLAWKER_COREDNS_OTEL_ENDPOINT`; CLI-CA-chained leaf is bind-mounted at `/etc/clawker/auth/coredns/client.{pem,key}` + the CA at `/etc/clawker/auth/coredns/ca.pem`. Leaves are issued + rotated by `internal/controlplane/infracerts`; `tls.Config.GetClientCertificate` re-reads the leaf on every handshake so rotation requires no container restart. Each record carries `event.name=dns.query` plus attributes `client.address` (OTel-canonical, replaces colloquial `client_ip`), `zone`, `query_name`, `qtype`, `rcode`, `answer_count`, `duration_ms`, and (when non-empty) `answers`. There is no `action` attribute — CoreDNS makes no explicit allow/deny decision per query (it forwards or NXDOMAINs by zone), so `rcode` is the honest signal; a prior zone-derived `action` was provably wrong (a non-allowlisted subdomain of an exact-allow apex logged `action=allowed` while returning NXDOMAIN). No per-record `source=coredns` attribute — `service.name=coredns` (resource layer) + `ingest_source=coredns` (stamped post-routing) cover provenance. NXDOMAIN comes through with `rcode=NXDOMAIN`; resolver errors set `record.SetErr(...)` with `rcode=SERVFAIL`. The stdout `log` plugin is kept alongside for `docker logs clawker-coredns` triage when the monitoring stack is down — it is no longer scraped into OpenSearch.
 
 **netlogger eBPF egress events**: ships via netlogger's own `*sdklog.LoggerProvider` (built by `controlplane.NewOtelLoggerProvider`, see `internal/controlplane/firewall/ebpf/netlogger/CLAUDE.md`) over OTLP/gRPC + mTLS to the collector's `otlp/infra` receiver. The mTLS leaf is minted per-handshake from `otelcerts.Service.LoadTLSConfig("netlogger")` — chains through the same infra intermediate CA as the CP zerolog bridge, no new on-disk material. The provider carries `service.name=ebpf-egress` so `routing/trusted` lands records in `clawker-ebpf-egress` instead of `clawker-cp` — different retention + volume profile + consumer audience (per-agent security telemetry vs operator-facing daemon health). `event.name` is per-emit-site (`ebpf.egress.connect` / `ebpf.egress.sendmsg` / `ebpf.egress.sock_create`) so dashboards can filter by record kind. Each record carries that plus attributes `action` (`allowed`/`denied`/`bypassed`), `container_id`, `agent`, `project`, `cgroup_id`, `bpf_ts_ns`, `dst_ip`, `dst_port`, `l4_proto` + `l4_proto_code`, `ipv6`, `ipv4_mapped`, `no_dst`, `dst_host`, `domain_hash`. Strict directive with per-code-path carve-outs: every field is emitted on every record EXCEPT `dst_ip` (omitted when `!DstIP.IsValid()` — sock_create + native-IPv6-with-no-addr defensive), `dst_port` (omitted when `no_dst=true`), and `dst_host` (omitted when no DNS context — direct-IP connect). Operators partition via `_exists_:attributes.<key>`. `dst_ip` follows the Cilium / Tetragon address representation: a single attribute carrying either an IPv4 dotted-quad or an IPv6 colon-form string (BPF emits a flat 16-byte slot; OS `type: ip` mapping accepts both). No `source` or `component` per-record attributes — `service.name` + `ingest_source` resource attrs discriminate (the per-record dupes were dropped as schema rot). The CP boot path degrades to `event=netlogger_unavailable` when the collector preflight dial fails (20s deadline; no background reconnect), so firewall enforcement is unaffected when the monitoring stack is down.
-
-`docker_stats` reads container metrics from the Docker daemon socket bind-mounted RO at `/var/run/docker.sock` (host path from `Settings.Docker.Socket`). `hostmetrics` reads cpu/disk/load/filesystem/memory/network/paging/process metrics from `/hostfs` (host path hardcoded to `/`; the Linux VM root on Docker Desktop).
 
 `spanmetrics` is a connector — traces flow through it and re-emerge as RED (rate / errors / duration) metrics on the metrics pipeline. `prometheus/self` scrapes the collector's own telemetry endpoint so operational metrics for the collector itself land in Prometheus alongside agent telemetry. `debug` writes every batch to the collector's stdout — surfaces in `docker logs clawker-otel-collector`, verbose by design.
 

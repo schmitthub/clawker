@@ -78,7 +78,7 @@ See the [Configuration](/configuration) guide for the full reference.
 clawker build
 ```
 
-This builds a Docker image tagged `clawker-<project>:latest` using the settings in your `.clawker.yaml` — base image, system packages, Claude Code, and any custom instructions. The image is content-addressed, so rebuilds only happen when the config changes.
+This builds a Docker image tagged `clawker-<project>:latest` using the settings in your `.clawker.yaml` — base image, system packages, Claude Code, and any custom instructions. Docker's layer cache is used, so unchanged layers are skipped; use `--no-cache` to force a full rebuild.
 
 ## 4. Run Your First Agent
 

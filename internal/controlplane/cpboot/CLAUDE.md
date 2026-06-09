@@ -19,6 +19,7 @@ Host-side orchestration for the clawker control plane container. Split out of `i
 | `cp_container.go` | `BuildCPContainerConfig(cfg, CPContainerOpts)` → `*CPContainerConfig` — port bindings, mounts, labels, restart policy (INV-B1-005/006/008/009/015/017/018/020); defines `HostDirs{Config,Data,State,Cache}` + `Validate()`; injects the four `CLAWKER_HOST_*_DIR` env vars so the CP can compute sibling container bind `Mount.Source` values from host-FS paths |
 | `manager.go` | `Manager` interface (`EnsureRunning` / `Stop` / `IsRunning` / `ProbeHealthz`) + `NewManager(client, cfg, log)` constructor. Holds lazy Factory closures so callers who never touch the CP never resolve Docker/Config/Logger. |
 | `bootstrap_test.go` | Unit tests for `EnsureRunning` happy-path, idempotency, existing-stopped start-without-recreate, name-conflict recovery, healthz timeout, concurrent callers (INV-B2-006) |
+| `clocksync_test.go` | Unit tests for `waitForCPClockSync`: caught-up on first probe, convergence after drift/retries, non-convergence within the timeout returns an error |
 | `container_config_test.go` | Unit tests asserting `BuildCPContainerConfig` invariants (INV-B1-005/006/008/009/015/017/018/020) |
 | `ebpf_regression_test.go` | Port-publishing coverage + CP purpose-label exclusion from `container_map` (INV-B1-017) |
 | `mocks/manager_mock.go` | moq-generated `ManagerMock` for CLI tests that drive `controlplane up/down/status` without a real CP |
@@ -56,13 +57,13 @@ Both `EnsureRunning` success exits (adopt-existing and freshly-created) return `
 internal/controlplane/embed_cp.go: pattern assets/clawker-cp: no matching files found
 ```
 
-By moving the embeds + bootstrap + container config + Manager into this leaf subpackage, `cmd/clawker-cp` can still import the parent `controlplane` package for daemon-side symbols without pulling in the circular embed directives. `cpboot` is imported only by the host-side CLI (`internal/cmd/factory`, `internal/cmd/controlplane`, `internal/cmd/firewall`, `internal/cmd/container/shared`) and by the E2E test harness.
+By moving the embeds + bootstrap + container config + Manager into this leaf subpackage, `cmd/clawker-cp` can still import the parent `controlplane` package for daemon-side symbols without pulling in the circular embed directives. `cpboot` is imported only by the host-side CLI (`internal/cmdutil`, `internal/cmd/factory`, `internal/cmd/controlplane`, `internal/cmd/firewall`, `internal/cmd/container/{run,start,restart,shared}`) and by the E2E test harness.
 
 ## Package imports
 
-**Uses**: `internal/auth`, `internal/config`, `internal/consts`, `internal/controlplane/adminclient` (for `ProbeCPTime` in the clock-sync gate), `internal/controlplane/firewall` (for `fwcp.EnvoyStackName` etc.), `internal/docker`, `internal/logger`, `pkg/whail`, `github.com/moby/moby/api/types/{container,mount,network}`.
+**Uses**: `internal/auth`, `internal/config`, `internal/consts`, `internal/controlplane/adminclient` (for `ProbeCPTime` in the clock-sync gate), `internal/controlplane/firewall` (for `fwcp.DiscoverNetwork` / `fwcp.ComputeStaticIP`), `internal/docker`, `internal/logger`, `pkg/whail`, `github.com/moby/moby/api/types/{container,mount,network}`.
 
-**Used by**: `internal/cmdutil` (Factory field type), `internal/cmd/factory/default.go` (`ensureRunning` seam + `controlPlaneFunc`), `internal/cmd/controlplane/{up,down,status}.go`, `internal/cmd/firewall/{down,status}.go` (`CPRunning` short-circuit), `test/e2e/harness/factory.go`, `test/e2e/controlplane_cli_test.go`.
+**Used by**: `internal/cmdutil` (Factory field type), `internal/cmd/factory/default.go` (`ensureRunning` seam + `controlPlaneFunc`), `internal/cmd/controlplane/{up,down,status}.go`, `internal/cmd/firewall/{up,down,status}.go` (`CPRunning` short-circuit in `down`/`status`), `internal/cmd/container/{run,start,restart}` + `internal/cmd/container/shared` (CP lifecycle before container ops), `test/e2e/harness/factory.go`, `test/e2e/controlplane_cli_test.go`.
 
 **Does NOT import** `internal/controlplane` — no circular dependency.
 

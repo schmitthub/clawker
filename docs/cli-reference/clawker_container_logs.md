@@ -11,7 +11,7 @@ Fetch the logs of a container
 Fetches the logs of a clawker container.
 
 When --agent is provided, the container name is resolved as clawker.`<project>`.`<agent>`
-using the project from your .clawker.yaml configuration.
+using the project resolved from the current directory.
 
 Container name can be:
   - Full name: clawker.myproject.myagent

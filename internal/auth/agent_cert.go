@@ -221,7 +221,7 @@ func AgentFullName(project ProjectSlug, agent AgentName) string {
 // PEM-encoded cert, its matching key, and the SHA-256 thumbprint over
 // the cert DER. The three pieces are only meaningful as a unit — pairing
 // a thumbprint with a different cert breaks the cert-swap defense at
-// AgentService.Connect.
+// AgentService.Register.
 //
 // The String/GoString methods deliberately redact the contents so the
 // struct (which carries the per-agent private key) can never leak via

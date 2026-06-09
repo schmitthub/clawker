@@ -37,7 +37,7 @@ example, battle-tested in clawker's own `.clawker.yaml`:
   path_default: allow
   path_rules:
     - { action: allow, path: /repos/<owner>/<repo>/ }                   # your repo
-    - { action: allow, path: /anthropics/claude-code/refs/heads/main/ } # Claude Code auto-update — ALWAYS include
+    - { action: allow, path: /anthropics/claude-code/ }                   # Claude Code auto-update — ALWAYS include
     - { action: deny,  path: /gists }                                   # block gist creation (exfil channel); no trailing slash so bare POST /gists is caught
     - { action: deny,  path: /repos/ }                                  # every other repo blocked
 ```
@@ -51,8 +51,8 @@ example, battle-tested in clawker's own `.clawker.yaml`:
   github.com paths the agent legitimately needs (release downloads, git deps)
   via the monitoring loop below.
 
-- **Always include `/anthropics/claude-code/refs/heads/main/`** — Claude Code's
-  auto-update version check; omitting it breaks updates inside the agent.
+- **Always include `/anthropics/claude-code/`** — covers Claude Code's
+  auto-update checks and related API calls; omitting it breaks updates inside the agent.
 - **Trailing slash** scopes to sub-paths: `/repos/<owner>/<repo>/` allows
   reading code (`/contents`, `/git`, …) but not the bare repo-root endpoint —
   drop the slash if the workflow needs root metadata (e.g. `gh repo view`).

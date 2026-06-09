@@ -9,7 +9,7 @@ npm registry client and version metadata types for `internal/bundler`. Full API 
 | `fetcher.go` | `Fetcher` interface — `FetchVersions(ctx, pkg) ([]string, error)`, `FetchDistTags(ctx, pkg) (DistTags, error)`. The test seam for version resolution. |
 | `npm.go` | `NPMClient` — concrete `Fetcher` backed by `https://registry.npmjs.org`. Configurable via `WithHTTPClient`, `WithBaseURL`, `WithTimeout`. Default timeout 30s. |
 | `types.go` | `DistTags`, `VersionInfo`, `VersionsFile`, `NPMPackageInfo`, `NewVersionInfo(...)`. `VersionsFile.MarshalJSON` emits keys in semver-descending order for deterministic `versions.json` output. |
-| `errors.go` | `NetworkError` (with `Unwrap`), `RegistryError` (with `IsNotFound` for 404 detection), sentinel `ErrVersionNotFound`/`ErrInvalidVersion`/`ErrNoVersions`. `bundler/errors.go` re-exports these as type aliases so callers outside `registry` import `bundler` instead. |
+| `errors.go` | `NetworkError` (with `Unwrap`), `RegistryError` (with `IsNotFound` for 404 detection), `ParseError` (with `Unwrap`; HTTP-200 body decode failure, distinct from network failure), sentinel `ErrVersionNotFound`/`ErrInvalidVersion`/`ErrNoVersions`. `bundler/errors.go` re-exports these as type aliases so callers outside `registry` import `bundler` instead. |
 | `npm_test.go` | `httptest.Server` stubs for `FetchVersions`, `FetchDistTags`, 404 handling, network error paths. |
 
 ## Key Invariants

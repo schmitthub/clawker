@@ -44,8 +44,7 @@ This launches the following services:
   - OpenTelemetry Collector (ports 4317, 4318)
   - Prometheus (port 9090)
 
-The stack connects to the clawker-net Docker network, allowing
-Claude Code containers to send telemetry automatically.`,
+Agent containers send telemetry to the stack automatically.`,
 		Example: `  # Start the monitoring stack (detached)
   clawker monitor up
 
@@ -97,7 +96,7 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 		return fmt.Errorf("failed to access compose.yaml at %s: %w", composePath, err)
 	}
 
-	// Ensure clawker-net network exists (creates with managed labels if needed)
+	// Ensure the clawker network exists (creates with managed labels if needed)
 	client, err := opts.Client(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create Docker client: %w", err)

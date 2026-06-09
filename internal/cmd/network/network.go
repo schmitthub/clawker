@@ -17,10 +17,7 @@ func NewCmdNetwork(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "network",
 		Short: "Manage networks",
-		Long: `Manage clawker networks.
-
-Clawker uses a dedicated network (clawker-net) for container communication
-and monitoring stack integration.`,
+		Long:  `Manage clawker networks.`,
 		Example: `  # List clawker networks
   clawker network ls
 

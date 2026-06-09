@@ -120,12 +120,16 @@ clawkerd is PID 1 of the agent container. A panic that escapes a goroutine kills
 | `register.go` | CP-triggered Register handshake: Hydra token exchange + `AgentService.Register` mTLS dial |
 | `bootstrap_test.go` | `readBootstrap` happy path, per-file missing variants, empty-file rejection |
 | `listener_test.go` | `pinPeerCNToCP` unit tests + `runSession` audit-log integration test (bufconn TLS) + bad-CN / no-cert / untrusted-CA / plain-TCP rejection |
+| `progress_test.go` | `parseInitStep` table tests + `progressReporter` output/mute/nil-safety |
+| `recover_test.go` | `recoverGoroutine` panic callback + structured-log verification |
+| `register_test.go` | `registerCoordinator` happy path, retry/serialization, Hydra consumption semantics; `exchangeAssertion` transport/HTTP-error/token-type variants |
 | `session_test.go` | Dispatch/command_id contract, dup-ID rejection, ShellCommand audit log, spawn-failure outcome, concurrent-pipeline race-detector, `closePipeOnce` dedup, `routeSignal` reaper-race filter, `handleAgentReady` happy/reconnect/spawn-fail/unwired/panic |
 | `spawn_test.go`, `spawn_unix_test.go`, `spawn_linux_test.go` | spawn-state lifecycle (echo/sleep/false/exit-42), Stop signaling, double-Run idempotency, ready-file touch, descendant reap, signal-set composition, exit-code mapping |
+| `user_test.go` | `resolveUser` happy paths (name/uid/name:group/uid:gid), empty-spec and not-found errors, missing passwd/group file errors |
 
 ## Logging
 
-Structured zerolog via `internal/logger.New()` writing to `/var/log/clawker/clawkerd.log` (50MB rotation, 7d retain, 3 backups, gzip). clawkerd as PID 1 inherits Docker's stdout/stderr — Go runtime panics land there but NOT the rotated log (lumberjack is unsafe for multi-writer access). Every log line carries `agent=<name>` + `project=<slug>` for multi-agent filterability.
+Structured zerolog via `internal/logger.New()` writing to `/var/log/clawker/clawkerd.log` (50MB rotation, 7d retain, 3 backups). clawkerd as PID 1 inherits Docker's stdout/stderr — Go runtime panics land there but NOT the rotated log (lumberjack is unsafe for multi-writer access). Every log line carries `agent=<name>` + `project=<slug>` for multi-agent filterability.
 
 Levels:
 - **ERROR** — bootstrap-file read failure, listener bind failure, unrecoverable Serve return, spawn-goroutine panic recovery, agent-ready spawn failure

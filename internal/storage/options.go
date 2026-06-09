@@ -1,6 +1,6 @@
 package storage
 
-// Option configures store construction via NewStore.
+// Option configures store construction via New.
 type Option func(*options)
 
 // Migration is a caller-provided function that inspects a raw YAML map and

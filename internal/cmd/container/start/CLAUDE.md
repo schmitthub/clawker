@@ -34,7 +34,9 @@ Phase B: Container start via shared.ContainerStart()
          └── BootstrapServicesPostStart (eBPF program attachment, socket bridge)
 ```
 
-Both attach and non-attach paths delegate to `shared.ContainerStart()`, passing a `shared.CommandOpts` for DI. The `CommandOpts` wires: Config, Client, ProjectManager, HostProxy, SocketBridge, Logger. Firewall eBPF programs are attached from outside the container by the eBPF manager, not by a container entrypoint.
+Both attach and non-attach paths use `shared.CommandOpts` for DI. The `CommandOpts` wires: Config, Client, ProjectManager, HostProxy, ControlPlane, AdminClient, SocketBridge, Logger. Firewall eBPF programs are attached from outside the container by the eBPF manager, not by a container entrypoint.
+
+**Attach path detail**: `startRun` calls `shared.BootstrapServicesPreStart` directly (under a spinner, in cooked mode), then calls `attachAndStart` which calls `client.ContainerStart` + `shared.BootstrapServicesPostStart` directly — not via `shared.ContainerStart`. The non-attach path uses `shared.ContainerStart` (all three phases).
 
 See `shared/CLAUDE.md` for `ContainerStart`, `BootstrapServicesPreStart`, and `BootstrapServicesPostStart` docs.
 
@@ -46,5 +48,5 @@ See `shared/CLAUDE.md` for `ContainerStart`, `BootstrapServicesPreStart`, and `B
 
 - **Tier 1** (flag parsing): `start_test.go` — `TestNewCmdStart`, `TestCmdStart_Properties`
 - **Tier 2** (Cobra+Factory): `start_test.go` — `TestStartRun_Success`, `TestStartRun_MultipleContainers`, `TestStartRun_PartialFailure`, `TestStartRun_DockerConnectionError`, `TestStartRun_NilHostProxy`
-- **Integration**: `test/commands/container_start_test.go` — exercises non-attach path with real Docker
+- **Integration**: no dedicated file — non-attach path covered via e2e suite (`test/e2e/`)
 - **Visual UAT**: attach path tested manually (`clawker container start -ai <name>`)
