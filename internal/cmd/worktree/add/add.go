@@ -66,13 +66,13 @@ Otherwise the branch is created from the base ref (default: HEAD).`,
 	return cmd
 }
 
-func addRun(_ context.Context, opts *AddOptions) error {
+func addRun(ctx context.Context, opts *AddOptions) error {
 	projectManager, err := opts.ProjectManager()
 	if err != nil {
 		return fmt.Errorf("loading project manager: %w", err)
 	}
 
-	proj, err := projectManager.CurrentProject(context.Background())
+	proj, err := projectManager.CurrentProject(ctx)
 	if err != nil {
 		if errors.Is(err, project.ErrProjectNotFound) {
 			return fmt.Errorf("not in a registered project directory")
@@ -80,7 +80,7 @@ func addRun(_ context.Context, opts *AddOptions) error {
 		return err
 	}
 
-	wtPath, err := proj.CreateWorktree(context.Background(), opts.Branch, opts.Base, opts.NoTrack)
+	wtPath, err := proj.CreateWorktree(ctx, opts.Branch, opts.Base, opts.NoTrack)
 	if err != nil {
 		if errors.Is(err, project.ErrNotInProjectPath) || errors.Is(err, project.ErrProjectNotRegistered) {
 			return fmt.Errorf("not in a registered project directory")

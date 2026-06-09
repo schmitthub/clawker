@@ -2,6 +2,7 @@ package git
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1568,23 +1569,24 @@ func TestGitManager_SetupWorktree_RejectsExplicitRemoteRef(t *testing.T) {
 // created, the leaked branch ref must be removed. Otherwise a retry takes the
 // branch-exists path and silently skips tracking, masking the original failure.
 func TestGitManager_SetupWorktree_UpstreamFailureRollsBackBranch(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("fault injection relies on file permissions, which root bypasses")
+	}
+
 	fx := newRepoWithRemote(t)
 	provider := newFakeWorktreeDirProvider(t)
 
-	// Pre-seed a branch.<name> config section so go-git's CreateBranch (inside
-	// SetBranchUpstream) fails with ErrBranchExists — the worktree+branch ref
-	// are created first, then upstream config errors, triggering rollback.
-	cfg, err := fx.mgr.repo.Config()
-	require.NoError(t, err)
-	cfg.Branches[fx.remoteBranch] = &config.Branch{
-		Name:   fx.remoteBranch,
-		Remote: "origin",
-		Merge:  plumbing.NewBranchReferenceName(fx.remoteBranch),
-	}
-	require.NoError(t, fx.mgr.repo.SetConfig(cfg))
+	// Make .git/config unwritable so the tracking-config write inside
+	// SetBranchUpstream fails — the worktree+branch ref are created first,
+	// then upstream config errors, triggering rollback. (Reads still succeed,
+	// so everything up to the config write proceeds normally.)
+	cfgPath := filepath.Join(fx.mgr.repoRoot, ".git", "config")
+	require.NoError(t, os.Chmod(cfgPath, 0o444))
+	// Restore perms so TempDir cleanup can proceed; failure is unactionable.
+	t.Cleanup(func() { _ = os.Chmod(cfgPath, 0o644) })
 
-	_, err = fx.mgr.SetupWorktree(provider, fx.remoteBranch, "", false)
-	require.Error(t, err, "upstream config must fail on the pre-seeded branch section")
+	_, err := fx.mgr.SetupWorktree(provider, fx.remoteBranch, "", false)
+	require.Error(t, err, "upstream config must fail on the read-only config file")
 	assert.Contains(t, err.Error(), "configuring upstream")
 
 	// The branch ref created before the failure must be rolled back, so a retry
@@ -1592,6 +1594,41 @@ func TestGitManager_SetupWorktree_UpstreamFailureRollsBackBranch(t *testing.T) {
 	exists, bErr := fx.mgr.BranchExists(fx.remoteBranch)
 	require.NoError(t, bErr)
 	assert.False(t, exists, "leaked branch ref must be removed on upstream-config rollback")
+}
+
+// TestGitManager_SetupWorktree_StaleBranchConfigSectionIsUpserted pins
+// SetBranchUpstream's git parity: a pre-existing branch.<name> config section
+// (no local ref — e.g. left behind by a plumbing-level branch deletion, or
+// user-set keys for a branch that doesn't exist yet) must be updated in place
+// like `git branch --set-upstream-to`, not rejected — and unrelated keys in
+// the section must survive the update.
+func TestGitManager_SetupWorktree_StaleBranchConfigSectionIsUpserted(t *testing.T) {
+	fx := newRepoWithRemote(t)
+	provider := newFakeWorktreeDirProvider(t)
+
+	// Stale section: wrong remote/merge plus an unrelated user key, with no
+	// matching local branch ref. Seeded by editing .git/config directly —
+	// go-git's SetConfig rebuilds the branch section from typed fields and
+	// would drop a raw-only key, but keys parsed from the file are retained.
+	cfgPath := filepath.Join(fx.mgr.repoRoot, ".git", "config")
+	raw, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+	stale := fmt.Sprintf("[branch %q]\n\tremote = stale-remote\n\tmerge = refs/heads/stale-branch\n\trebase = true\n", fx.remoteBranch)
+	require.NoError(t, os.WriteFile(cfgPath, append(raw, stale...), 0o644))
+
+	path, err := fx.mgr.SetupWorktree(provider, fx.remoteBranch, "", false)
+	require.NoError(t, err, "a stale branch config section must not fail worktree creation")
+	require.NotEmpty(t, path)
+
+	// remote/merge were re-pointed at the dwim-resolved remote…
+	assertUpstream(t, fx.mgr, fx.remoteBranch, "origin", fx.remoteBranch)
+
+	// …and the unrelated key survived the upsert.
+	cfg, err := fx.mgr.repo.Config()
+	require.NoError(t, err)
+	assert.Equal(t, "true",
+		cfg.Raw.Section("branch").Subsection(fx.remoteBranch).Option("rebase"),
+		"unrelated branch config keys must be preserved")
 }
 
 func TestGitManager_SetupWorktree_AmbiguousRemoteBranch(t *testing.T) {

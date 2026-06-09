@@ -577,13 +577,42 @@ func (g *GitManager) ResolveRemoteTrackingBranch(branch string) (remote string, 
 // <remote>/<remoteBranch> (branch.<localBranch>.remote / .merge), matching
 // `git branch --set-upstream-to`. remoteBranch is the branch name on the remote,
 // which may differ from localBranch (e.g. `mybranch` tracking `origin/foo`).
+//
+// Like git, this is an upsert: a pre-existing branch.<localBranch> config
+// section (e.g. left behind by a plumbing-level branch deletion, or user-set
+// keys such as branch.<name>.rebase for a branch that doesn't exist yet) is
+// updated in place, preserving its unrelated keys, rather than rejected.
 func (g *GitManager) SetBranchUpstream(localBranch, remote, remoteBranch string) error {
-	if err := g.repo.CreateBranch(&gogitconfig.Branch{
+	merge := plumbing.NewBranchReferenceName(remoteBranch)
+	err := g.repo.CreateBranch(&gogitconfig.Branch{
 		Name:   localBranch,
 		Remote: remote,
-		Merge:  plumbing.NewBranchReferenceName(remoteBranch),
-	}); err != nil {
+		Merge:  merge,
+	})
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, gogit.ErrBranchExists) {
 		return fmt.Errorf("writing tracking config for %q: %w", localBranch, err)
+	}
+
+	// A branch.<localBranch> config section already exists. go-git's
+	// CreateBranch is create-only, but `git branch --set-upstream-to` updates
+	// the section in place — do the same. config.Branch retains unknown keys
+	// in its raw subsection, so only remote/merge change.
+	cfg, err := g.repo.Config()
+	if err != nil {
+		return fmt.Errorf("reading config to update tracking for %q: %w", localBranch, err)
+	}
+	b, ok := cfg.Branches[localBranch]
+	if !ok {
+		b = &gogitconfig.Branch{Name: localBranch}
+		cfg.Branches[localBranch] = b
+	}
+	b.Remote = remote
+	b.Merge = merge
+	if err := g.repo.SetConfig(cfg); err != nil {
+		return fmt.Errorf("updating tracking config for %q: %w", localBranch, err)
 	}
 	return nil
 }
