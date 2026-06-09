@@ -545,7 +545,7 @@ f, _, out, errOut := harness.NewFactory(t, &harness.FactoryOptions{
 |-------|-----------|---------|
 | `Config` | `func(...config.NewConfigOption) (config.Config, error)` | `configmocks.NewBlankConfig()` |
 | `Client` | `func(ctx, cfg, log, ...docker.ClientOption) (*docker.Client, error)` | `mocks.FakeClient` |
-| `ProjectManager` | `func(cfg, log, project.GitManagerFactory) (project.ProjectManager, error)` | nil (no-op) |
+| `ProjectManager` | `func(log, project.GitManagerFactory, nameOverride, *project.Registry) (project.ProjectManager, error)` | nil (no-op) |
 | `GitManager` | `func(string) (*git.GitManager, error)` | nil (no-op) |
 | `HostProxy` | `func(cfg, log) (*hostproxy.Manager, error)` | `hostproxytest.MockManager` |
 | `SocketBridge` | `func(cfg, log) socketbridge.SocketBridgeManager` | nil (no-op) |

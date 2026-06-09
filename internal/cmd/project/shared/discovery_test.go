@@ -77,7 +77,9 @@ func setupIsolatedProjectDir(t *testing.T, placement string, registered bool) (c
 	// ErrNotInProject is the normal "no registered project" condition and
 	// degrades to an empty walk-up anchor; any other error is a real
 	// registry/storage failure and must fail the test loudly.
-	root, err := project.CurrentProjectRoot()
+	reg, err := project.NewRegistry()
+	require.NoError(t, err)
+	root, err := reg.CurrentRoot()
 	if err != nil && !errors.Is(err, project.ErrNotInProject) {
 		t.Fatalf("resolving project root: %v", err)
 	}

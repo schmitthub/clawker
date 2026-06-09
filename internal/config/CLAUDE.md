@@ -24,7 +24,7 @@ State dir: `CLAWKER_STATE_DIR` > `$XDG_STATE_HOME/clawker` > `~/.local/state/cla
 ## Boundary
 
 - `config` owns **path resolution primitives** and file-backed config I/O (`ConfigDir()`, `DataDir()`, `StateDir()`).
-- `config` does **not** own project CRUD, slug/key resolution, worktree lifecycle, or project-root resolution — those belong in `internal/project`. Project-root and ignore-file resolution live there as `project.ResolveProjectRoot()` / `project.CurrentProjectRoot()` / `project.CurrentProjectIgnoreFile()` (registry-backed; `config` cannot read the registry schema without depending on the project domain).
+- `config` does **not** own project CRUD, slug/key resolution, worktree lifecycle, or project-root resolution — those belong in `internal/project`. Project-root resolution lives there as methods on the exported `Registry` facade (`project.Registry.ResolveRoot`/`CurrentRoot`, registry-backed; `config` cannot read the registry schema without depending on the project domain).
 
 ## Files
 
@@ -51,7 +51,7 @@ State dir: `CLAWKER_STATE_DIR` > `$XDG_STATE_HOME/clawker` > `~/.local/state/cla
 
 ```go
 func NewConfig(opts ...NewConfigOption) (Config, error)          // Full production loading (defaults + discovery + merge)
-func WithProjectRoot(root string) NewConfigOption                // Bounds project-config walk-up at root (caller resolves it, e.g. project.ResolveProjectRoot). Empty root → walk-up disabled (config-dir only; correct for CP/host-proxy/bridge daemons).
+func WithProjectRoot(root string) NewConfigOption                // Bounds project-config walk-up at root (caller resolves it, e.g. project.Registry.ResolveRoot). Empty root → walk-up disabled (config-dir only; correct for CP/host-proxy/bridge daemons).
 func NewBlankConfig() (Config, error)                           // Defaults only, no file discovery (test double base)
 func NewFromString(projectYAML, settingsYAML string) (Config, error) // Raw YAML, NO defaults (precise test control)
 func NewProjectStoreFromPreset(presetYAML string) (*storage.Store[Project], error) // Isolated project store from preset YAML only — no file discovery, no user-level merging. For project init.

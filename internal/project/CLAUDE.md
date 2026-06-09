@@ -8,35 +8,40 @@ Project commands (`internal/cmd/project/*`) are the primary user interface for w
 
 ## Boundary
 
-- `internal/config` owns config/path primitives (`Write`, env/path resolution, `ConfigDir`/`DataDir`/`StateDir`) and config-derived projections such as `cfg.EgressRules()`. The dependency runs one way: this package never imports `internal/config`; config resolves its own walk-up anchor via the standalone `ResolveProjectRoot`, and config-owned values (e.g. the clawker.yaml `name:` override) are passed in as primitives by the caller.
-- `internal/project` owns project CRUD semantics, project-root resolution (`ResolveProjectRoot`, `CurrentProjectRoot`, `CurrentProjectIgnoreFile`), worktree lifecycle orchestration, and runtime health enrichment (`ProjectState`, `ProjectStatus`). Project-root resolution reads the registry (`ProjectRegistry` schema), so it is project-domain — not a storage-leaf or config-path concern.
+- `internal/config` owns config/path primitives (`Write`, env/path resolution, `ConfigDir`/`DataDir`/`StateDir`) and config-derived projections such as `cfg.EgressRules()`. The dependency runs one way: this package never imports `internal/config`; the caller (CLI factory) resolves the walk-up anchor via `Registry.CurrentRoot` and passes it to config, and config-owned values (e.g. the clawker.yaml `name:` override) are passed in as primitives by the caller.
+- `internal/project` owns project CRUD semantics, project-root resolution (`Registry.ResolveRoot`/`CurrentRoot`), worktree lifecycle orchestration, and runtime health enrichment (`ProjectState`, `ProjectStatus`). Project-root resolution reads the registry (`ProjectRegistry` schema), so it is project-domain — not a storage-leaf or config-path concern.
 - Callers should consume `ProjectManager`/`Project` interfaces instead of mutating registry data directly.
 
 ## Visibility Rules
 
-- Public: interfaces and DTO types (`ProjectManager`, `Project`, `ProjectRecord`, `WorktreeRecord`, `WorktreeState`, `WorktreeStatus`, `ProjectState`, `ProjectStatus`, `PruneStaleResult`, `GitManagerFactory`, error sentinels).
-- Public helper: `NewWorktreeDirProvider(projectRoot)` — creates a `git.WorktreeDirProvider` for callers outside the worktree service.
-- Private implementation: `projectManager`, `projectHandle`, `projectRegistry`, `worktreeService`, `flatWorktreeDirProvider`.
+- Public: interfaces and DTO types (`ProjectManager`, `Project`, `ProjectRecord`, `WorktreeRecord`, `WorktreeState`, `WorktreeStatus`, `ProjectState`, `ProjectStatus`, `PruneStaleResult`, `GitManagerFactory`, error sentinels), plus the `Registry` facade (`NewRegistry`, `WithRegistryDir`, `ResolveRoot`, `CurrentRoot`).
+- `Registry` mutation methods (`register`, `update`, `removeByRoot`, worktree ops) are unexported — callers outside this package mutate registry state through `ProjectManager` only.
+- Private implementation: `projectManager`, `projectHandle`, `worktreeService`, `flatWorktreeDirProvider`.
 
 ## Key Files
 
 | File | Purpose |
 |---|---|
 | `manager.go` | Public interfaces, constructor, project handle behavior, `ListWorktrees` on both manager and handle |
-| `registry.go` | Internal registry facade over `storage.Store[ProjectRegistry]` read/set/write |
+| `registry.go` | Exported `Registry` facade over `storage.Store[ProjectRegistry]` — `NewRegistry` is the sole constructor of registry storage |
+| `resolve.go` | `Registry.ResolveRoot`/`CurrentRoot` project-root resolution + `resolveRootPath` normalization |
 | `registry_schema.go` | `ProjectRegistry`/`ProjectEntry`/`WorktreeEntry` schema types + `Fields()` (`storage.Schema`) |
-| `worktree_service.go` | Internal git + registry orchestration for worktrees, `flatWorktreeDirProvider`, `NewWorktreeDirProvider` |
+| `worktree_service.go` | Internal git + registry orchestration for worktrees, `flatWorktreeDirProvider` |
 | `project_test.go` | Full lifecycle tests: registration, worktree add/remove/prune, duplicate rejection |
 
 ## Public API
 
-### Constructor
+### Constructors
 
 ```go
-func NewProjectManager(log *logger.Logger, gitFactory GitManagerFactory, nameOverride string) (ProjectManager, error)
+func NewRegistry(opts ...RegistryOption) (*Registry, error)
+func WithRegistryDir(dir string) RegistryOption  // test injection: registry file in dir instead of the data dir
+func NewProjectManager(log *logger.Logger, gitFactory GitManagerFactory, nameOverride string, reg *Registry) (ProjectManager, error)
 ```
 
-`GitManagerFactory` is `func(projectRoot string) (*git.GitManager, error)`. Pass `nil` for production default (`git.NewGitManager`). `nameOverride` is the config-owned project name (the clawker.yaml `name:` value), resolved by the caller and passed as a primitive so this package never imports `internal/config`; the manager applies it in `CurrentProject`.
+`NewRegistry` builds the registry facade through the storage layer (merge + lock; default placement in the resolved data dir). It is constructed once per process by the CLI factory and injected everywhere (`f.ProjectRegistry`); nothing else constructs registry storage. The store snapshots the registry file at construction — sharing the one instance is what keeps resolution and CRUD coherent.
+
+`NewProjectManager` requires a non-nil `*Registry`. `GitManagerFactory` is `func(projectRoot string) (*git.GitManager, error)`. Pass `nil` for production default (`git.NewGitManager`). `nameOverride` is the config-owned project name (the clawker.yaml `name:` value), resolved by the caller and passed as a primitive so this package never imports `internal/config`; the manager applies it in `CurrentProject`.
 
 ### `ProjectManager`
 
@@ -56,7 +61,7 @@ type ProjectManager interface {
 
 - `List` sorts by root then name and returns deep-copied entries (cloned `Worktrees` maps) — callers never alias live registry state.
 - `ResolvePath` normalizes both sides with the shared `resolveRootPath` helper (`Abs` + `EvalSymlinks`, cleaned-path fallback for nonexistent paths), so symlinked and real paths match interchangeably.
-- `CurrentProject` tries `CurrentProjectRoot()`, then falls back to `os.Getwd()` only on the benign `ErrNotInProject`; real registry/storage failures propagate wrapped.
+- `CurrentProject` tries the injected registry's `CurrentRoot()`, then falls back to `os.Getwd()` only on the benign `ErrNotInProject`; real registry/storage failures propagate wrapped.
 - `ListProjects` returns enriched `ProjectState` views with runtime health checks (directory status, worktree state).
 - `ListWorktrees` aggregates across all registered projects.
 
@@ -125,19 +130,18 @@ type ProjectStatus string
 
 ## Project-Root Resolution (`resolve.go`)
 
-Registry-backed project-root resolution. The schema-agnostic `storage` leaf holds no project-domain knowledge; the resolver is injected into walk-up from here.
+Registry-backed project-root resolution as methods on the injected `Registry` facade. The schema-agnostic `storage` leaf holds no project-domain knowledge; the resolver is injected into walk-up from here.
 
 ```go
-func ResolveProjectRoot(cwd string) (string, error)   // deepest registered root that is an ancestor of cwd
-func CurrentProjectRoot() (string, error)             // os.Getwd() → ResolveProjectRoot
-func CurrentProjectIgnoreFile() (string, error)       // <root>/.clawkerignore
+func (r *Registry) ResolveRoot(cwd string) (string, error)  // deepest registered root that is an ancestor of cwd
+func (r *Registry) CurrentRoot() (string, error)            // os.Getwd() → ResolveRoot
 ```
 
-`ResolveProjectRoot` reads the registry (`ProjectRegistry` schema) through the storage layer (`newRegistryStore()` → `storage.Store[ProjectRegistry]`) — the canonical merge/lock path, never a raw file read. cwd is cleaned internally; cwd and each registered root are compared via the shared `resolveRootPath` helper (`Abs` + `EvalSymlinks`, cleaned-path fallback for nonexistent paths — also used by the registry facade, `ResolvePath`, and the worktree service), so a root registered through a symlink matches its real path and vice versa. The returned root is always expressed in cwd's own path form — a string-ancestor of the caller's cwd, valid as a walk-up anchor even when `os.Getwd` reports a logical symlinked path. It returns `ErrNotInProject` when cwd is not within any registered project root — including when a depth-changing symlink leaves the logical cwd with no project ancestor in its own path form (a resolved-space anchor would break config walk-up) — and returns a storage failure wrapped so it is not mistaken for "not in a project"; `CurrentProjectRoot` propagates the same distinction. The CLI factory and `internal/testenv` resolve the root here and pass it to `config.NewConfig(config.WithProjectRoot(root))` to bound clawker.yaml walk-up at the project root.
+`ResolveRoot` reads the registry snapshot held by the facade (loaded through the storage layer — the canonical merge/lock path, never a raw file read). cwd is cleaned internally; cwd and each registered root are compared via the shared `resolveRootPath` helper (`Abs` + `EvalSymlinks`, cleaned-path fallback for nonexistent paths — also used by the registry facade, `ResolvePath`, and the worktree service), so a root registered through a symlink matches its real path and vice versa. The returned root is always expressed in cwd's own path form — a string-ancestor of the caller's cwd, valid as a walk-up anchor even when `os.Getwd` reports a logical symlinked path. It returns `ErrNotInProject` when cwd is not within any registered project root — including when a depth-changing symlink leaves the logical cwd with no project ancestor in its own path form (a resolved-space anchor would break config walk-up); `CurrentRoot` propagates the same distinction, and `NewRegistry` surfaces storage failures at construction so they are never mistaken for "not in a project". The CLI factory resolves the root via `f.ProjectRegistry().CurrentRoot()` (and `internal/testenv` via `env.Registry(t)`) and passes it to `config.NewConfig(config.WithProjectRoot(root))` to bound clawker.yaml walk-up at the project root.
 
 ## Registry Facade (`registry.go`)
 
-Internal facade over `storage.Store[ProjectRegistry]` for registry persistence (`consts.RegistryFile` in the data dir). Ops: `Register`, `Update`, `RemoveByRoot`, `ProjectByRoot`, `registerWorktree`, `unregisterWorktree`.
+Exported `Registry` facade over `storage.Store[ProjectRegistry]` for registry persistence (`consts.RegistryFile` in the data dir). Mutation ops are unexported (`register`, `update`, `removeByRoot`, `projectByRoot`, `registerWorktree`, `unregisterWorktree`) — consumed in-package by `ProjectManager`.
 
 ## Worktree Service (`worktree_service.go`)
 
@@ -158,14 +162,6 @@ PruneStaleWorktrees(_ context.Context, projectRoot string, dryRun bool) (*PruneS
 Flat UUID-based naming under the worktrees root (`consts.WorktreesSubdir()`): `<repoName>-<projectName>-<sha256(uuid)[:12]>`. Registry (`ProjectEntry.Worktrees[branch].Path`) is the source of truth for path lookups.
 
 `flatWorktreeDirProvider` implements `git.WorktreeDirProvider`: reuses known path from registry for existing entries, generates UUID-based path for new ones. `newFlatWorktreeDirProvider` ensures the worktrees root exists and returns an error when creation fails — there is no un-ensured fallback path.
-
-### Public Helper
-
-```go
-func NewWorktreeDirProvider(projectRoot string) (git.WorktreeDirProvider, error)
-```
-
-For external callers needing a `WorktreeDirProvider` without the full project service. Errors when the registry cannot be loaded or the worktrees root directory cannot be ensured.
 
 ### Prune
 

@@ -2,7 +2,6 @@ package workspace
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,7 +11,6 @@ import (
 	"github.com/schmitthub/clawker/internal/containerfs"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
-	projectpkg "github.com/schmitthub/clawker/internal/project"
 )
 
 // SetupMountsConfig holds configuration for workspace mount setup
@@ -40,6 +38,11 @@ type SetupMountsConfig struct {
 	// Set to the host absolute path for Claude Code /resume compatibility.
 	// Must be set by callers (CreateContainer passes the resolved working directory).
 	ContainerPath string
+	// IgnoreFile is the path to the project's ignore file, resolved by the
+	// caller from the registry-backed project root (workspace receives the
+	// primitive and never resolves project identity itself). Empty when no
+	// project is registered — no ignore patterns are loaded.
+	IgnoreFile string
 }
 
 // SetupMountsResult holds the results from setting up workspace mounts.
@@ -95,17 +98,12 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 		return nil, fmt.Errorf("invalid workspace mode: %w", err)
 	}
 
-	// Load .clawkerignore patterns (empty when no project is registered)
+	// Load ignore patterns (no ignore file when no project is registered)
 	var ignorePatterns []string
-	ignoreFile, err := projectpkg.CurrentProjectIgnoreFile()
-	if err != nil {
-		if !errors.Is(err, projectpkg.ErrNotInProject) {
-			return nil, fmt.Errorf("failed to resolve ignore file: %w", err)
-		}
-	} else {
-		ignorePatterns, err = docker.LoadIgnorePatterns(ignoreFile)
+	if cfg.IgnoreFile != "" {
+		ignorePatterns, err = docker.LoadIgnorePatterns(cfg.IgnoreFile)
 		if err != nil {
-			return nil, fmt.Errorf("failed to load %s: %w", ignoreFile, err)
+			return nil, fmt.Errorf("failed to load %s: %w", cfg.IgnoreFile, err)
 		}
 	}
 

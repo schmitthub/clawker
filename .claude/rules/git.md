@@ -45,4 +45,4 @@ paths: ["internal/git/**"]
 ## API Stability
 
 - `WorktreeDirProvider` interface is the contract with the project package
-- Adding methods requires coordinated changes to `internal/project.flatWorktreeDirProvider` (and `NewWorktreeDirProvider`)
+- Adding methods requires coordinated changes to `internal/project.flatWorktreeDirProvider`

@@ -36,10 +36,11 @@ type Factory struct {
     TUI      *tui.TUI
 
     // Lazy nouns (each returns a thing; commands call methods on the thing)
-    Client         func(context.Context) (*docker.Client, error)
-    Config         func() (config.Config, error)
-    Logger         func() (*logger.Logger, error)
-    ProjectManager func() (project.ProjectManager, error)
+    Client          func(context.Context) (*docker.Client, error)
+    Config          func() (config.Config, error)
+    Logger          func() (*logger.Logger, error)
+    ProjectRegistry func() (*project.Registry, error)
+    ProjectManager  func() (project.ProjectManager, error)
     GitManager     func() (*git.GitManager, error)
     HostProxy      func() hostproxy.HostProxyService
     SocketBridge   func() socketbridge.SocketBridgeManager
@@ -56,8 +57,9 @@ type Factory struct {
 - `Client(ctx)` -- lazy Docker client (connects on first call)
 - `Config()` -- lazy config (loads project, settings, registry)
 - `Logger()` -- lazy `*logger.Logger` (file-only zerolog); commands capture on Options struct, resolve in run function. Tests: `func() (*logger.Logger, error) { return logger.Nop(), nil }`
-- `ProjectManager()` -- lazy project manager for registration, worktree lifecycle
-- `GitManager()` -- lazy git manager for worktree operations; uses project root from Config
+- `ProjectRegistry()` -- lazy `*project.Registry`, the process-wide project registry facade and sole constructor of registry storage; Config walk-up anchoring, GitManager, ProjectManager, and commands all share it
+- `ProjectManager()` -- lazy project manager for registration, worktree lifecycle (built over `ProjectRegistry`)
+- `GitManager()` -- lazy git manager for worktree operations; anchors at the registry-resolved project root
 - `HostProxy()` -- returns `hostproxy.HostProxyService` (interface); commands call `.EnsureRunning()` / `.IsRunning()` / `.ProxyURL()` on it. Mock: `hostproxytest.MockManager`
 - `SocketBridge()` -- returns `socketbridge.SocketBridgeManager` (interface); commands call `.EnsureBridge()` / `.StopBridge()` on it. Mock: `sockebridgemocks.SocketBridgeManagerMock` (via `sockebridgemocks.NewMockManager()`)
 - `Prompter()` -- returns `*prompter.Prompter` for interactive prompts

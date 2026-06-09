@@ -38,7 +38,7 @@ func mkdirAll(t *testing.T, env *testenv.Env, elem ...string) string {
 	return dir
 }
 
-func TestResolveProjectRoot(t *testing.T) {
+func TestRegistry_ResolveRoot(t *testing.T) {
 	tests := []struct {
 		name    string
 		setup   func(t *testing.T, env *testenv.Env) (cwd, wantRoot string)
@@ -182,7 +182,7 @@ func TestResolveProjectRoot(t *testing.T) {
 			env := testenv.New(t)
 			cwd, wantRoot := tt.setup(t, env)
 
-			got, err := project.ResolveProjectRoot(cwd)
+			got, err := env.Registry(t).ResolveRoot(cwd)
 			if tt.wantErr != nil {
 				assert.ErrorIs(t, err, tt.wantErr)
 				return
@@ -193,12 +193,12 @@ func TestResolveProjectRoot(t *testing.T) {
 	}
 }
 
-// TestCurrentProjectRoot_ConfigWalkUpSeam proves the factory chain end to end:
-// CurrentProjectRoot (logical, PWD-honoring os.Getwd) → config.NewConfig with
+// TestRegistry_CurrentRoot_ConfigWalkUpSeam proves the factory chain end to end:
+// Registry.CurrentRoot (logical, PWD-honoring os.Getwd) → config.NewConfig with
 // the result as walk-up anchor. The anchor returned through a symlinked cwd
 // must never trip storage's anchor-not-ancestor guard, which compares against
 // the same logical cwd.
-func TestCurrentProjectRoot_ConfigWalkUpSeam(t *testing.T) {
+func TestRegistry_CurrentRoot_ConfigWalkUpSeam(t *testing.T) {
 	t.Run("symlinked cwd anchor survives config walk-up", func(t *testing.T) {
 		env := testenv.New(t)
 		real := mkdirAll(t, env, "real")
@@ -210,7 +210,7 @@ func TestCurrentProjectRoot_ConfigWalkUpSeam(t *testing.T) {
 		// t.Chdir sets PWD, so os.Getwd reports the logical symlinked path.
 		t.Chdir(filepath.Join(link, "sub"))
 
-		root, err := project.CurrentProjectRoot()
+		root, err := env.Registry(t).CurrentRoot()
 		require.NoError(t, err)
 		assert.Equal(t, link, root, "root must be in cwd's own (symlinked) path form")
 
@@ -230,7 +230,7 @@ func TestCurrentProjectRoot_ConfigWalkUpSeam(t *testing.T) {
 
 		t.Chdir(shortcut)
 
-		root, err := project.CurrentProjectRoot()
+		root, err := env.Registry(t).CurrentRoot()
 		assert.ErrorIs(t, err, project.ErrNotInProject)
 		assert.Empty(t, root)
 

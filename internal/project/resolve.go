@@ -6,8 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/schmitthub/clawker/internal/consts"
 )
 
 // ErrNotInProject is returned when the current working directory is not within
@@ -33,31 +31,27 @@ func resolveRootPath(path string) string {
 	return resolved
 }
 
-// ResolveProjectRoot reads the project registry and returns the deepest
-// registered project root that is an ancestor of cwd. cwd is cleaned and
+// ResolveRoot reads the project registry and returns the deepest registered
+// project root that is an ancestor of cwd. cwd is cleaned and
 // symlink-normalized here, so callers may pass it as-is. Callers pass the
 // result to config.NewConfig to bound project-config walk-up.
 //
-// The registry is read through the storage layer (merge + lock) — the
-// canonical path for clawker files, never a raw file read. A missing or empty
-// registry yields no match. cwd and each registered root are compared via
-// resolveRootPath so a root registered through a symlink matches its real
-// path (and vice versa). The returned root is always expressed in cwd's own
-// path form — a string-ancestor of the cwd the caller navigates from — so it
-// stays a valid walk-up anchor even when os.Getwd reports a logical, symlinked
-// path (e.g. macOS /tmp). Returns ErrNotInProject when cwd is not within any
-// registered project root, including when a depth-changing symlink leaves the
-// logical cwd with no project ancestor in its own path form; a storage failure
-// reading the registry is returned wrapped, so it is not mistaken for "not in
-// a project".
-func ResolveProjectRoot(cwd string) (string, error) {
+// A missing or empty registry yields no match. cwd and each registered root
+// are compared via resolveRootPath so a root registered through a symlink
+// matches its real path (and vice versa). The returned root is always
+// expressed in cwd's own path form — a string-ancestor of the cwd the caller
+// navigates from — so it stays a valid walk-up anchor even when os.Getwd
+// reports a logical, symlinked path (e.g. macOS /tmp). Returns
+// ErrNotInProject when cwd is not within any registered project root,
+// including when a depth-changing symlink leaves the logical cwd with no
+// project ancestor in its own path form.
+func (r *Registry) ResolveRoot(cwd string) (string, error) {
+	if r == nil || r.store == nil {
+		return "", fmt.Errorf("project: registry not initialized")
+	}
 	cwd = filepath.Clean(cwd)
 
-	store, err := newRegistryStore()
-	if err != nil {
-		return "", fmt.Errorf("project: loading registry: %w", err)
-	}
-	registry := store.Read()
+	registry := r.store.Read()
 
 	// Find the deepest registered root that is an ancestor of cwd, comparing
 	// in symlink-resolved space.
@@ -111,26 +105,14 @@ func ResolveProjectRoot(cwd string) (string, error) {
 	return "", ErrNotInProject
 }
 
-// CurrentProjectRoot resolves the project root for the current working
-// directory. Returns ErrNotInProject (via ResolveProjectRoot) when CWD is not
-// within any registered project root; a storage failure reading the registry is
-// returned wrapped, so callers can branch on errors.Is(err, ErrNotInProject)
-// without masking real errors.
-func CurrentProjectRoot() (string, error) {
+// CurrentRoot resolves the project root for the current working directory.
+// Returns ErrNotInProject (via ResolveRoot) when CWD is not within any
+// registered project root, so callers can branch on
+// errors.Is(err, ErrNotInProject) without masking real errors.
+func (r *Registry) CurrentRoot() (string, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return "", fmt.Errorf("project: getting current working directory: %w", err)
 	}
-	return ResolveProjectRoot(cwd)
-}
-
-// CurrentProjectIgnoreFile returns the path to the .clawkerignore file at the
-// current project root. It surfaces ErrNotInProject (via CurrentProjectRoot)
-// when CWD is not within a registered project.
-func CurrentProjectIgnoreFile() (string, error) {
-	root, err := CurrentProjectRoot()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(root, consts.IgnoreFile), nil
+	return r.ResolveRoot(cwd)
 }

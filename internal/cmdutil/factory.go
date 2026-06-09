@@ -34,16 +34,21 @@ type Factory struct {
 	TUI       *tui.TUI
 
 	// Lazy nouns
-	Client         func(context.Context) (*docker.Client, error)
-	Config         func() (config.Config, error)
-	Logger         func() (*logger.Logger, error)
-	ProjectManager func() (project.ProjectManager, error)
-	GitManager     func() (*git.GitManager, error)
-	HostProxy      func() hostproxy.HostProxyService
-	SocketBridge   func() socketbridge.SocketBridgeManager
-	Prompter       func() *prompter.Prompter
-	AdminClient    func(context.Context) (adminv1.AdminServiceClient, error)
-	ControlPlane   func() cpboot.Manager
+	Client func(context.Context) (*docker.Client, error)
+	Config func() (config.Config, error)
+	Logger func() (*logger.Logger, error)
+	// ProjectRegistry is the process-wide project registry facade — the
+	// single constructor of registry storage. Config walk-up anchoring,
+	// the project manager, and any command needing project-root resolution
+	// all share this instance.
+	ProjectRegistry func() (*project.Registry, error)
+	ProjectManager  func() (project.ProjectManager, error)
+	GitManager      func() (*git.GitManager, error)
+	HostProxy       func() hostproxy.HostProxyService
+	SocketBridge    func() socketbridge.SocketBridgeManager
+	Prompter        func() *prompter.Prompter
+	AdminClient     func(context.Context) (adminv1.AdminServiceClient, error)
+	ControlPlane    func() cpboot.Manager
 	// HttpClient returns the *http.Client used for outbound HTTP from the
 	// CLI (first consumer: npm registry lookups for Claude Code version
 	// resolution). Tests substitute by setting this field to a closure that

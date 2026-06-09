@@ -63,7 +63,7 @@ func WithConfig() Option {
 		// ErrNotInProject is the normal "no registered project" condition and
 		// degrades to an empty walk-up anchor; any other error is a real
 		// registry/storage failure and must fail the test loudly.
-		root, err := project.CurrentProjectRoot()
+		root, err := e.Registry(t).CurrentRoot()
 		if err != nil && !errors.Is(err, project.ErrNotInProject) {
 			t.Fatalf("testenv: resolving project root: %v", err)
 		}
@@ -84,12 +84,25 @@ func WithProjectManager(gitFactory project.GitManagerFactory) Option {
 		// Ensure config is created first.
 		WithConfig()(t, e)
 
-		mgr, err := project.NewProjectManager(logger.Nop(), gitFactory, e.config.Project().Name)
+		mgr, err := project.NewProjectManager(logger.Nop(), gitFactory, e.config.Project().Name, e.Registry(t))
 		if err != nil {
 			t.Fatalf("testenv: creating project manager: %v", err)
 		}
 		e.projectManager = mgr
 	}
+}
+
+// Registry constructs a fresh project registry facade over the isolated data
+// directory (explicit injection — no env-var resolution). Fresh per call on
+// purpose: the underlying store snapshots the registry file at construction,
+// so tests that seed registry YAML must construct the registry afterwards.
+func (e *Env) Registry(t *testing.T) *project.Registry {
+	t.Helper()
+	reg, err := project.NewRegistry(project.WithRegistryDir(e.Dirs.Data))
+	if err != nil {
+		t.Fatalf("testenv: creating project registry: %v", err)
+	}
+	return reg
 }
 
 // New creates an isolated test environment. It:

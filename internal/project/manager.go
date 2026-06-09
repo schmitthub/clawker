@@ -12,7 +12,6 @@ import (
 
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/logger"
-	"github.com/schmitthub/clawker/internal/storage"
 )
 
 var ErrProjectNotFound = errors.New("project not found")
@@ -121,34 +120,34 @@ type projectHandle struct {
 }
 
 type projectManager struct {
-	nameOverride  string
-	log           *logger.Logger
-	registryStore *storage.Store[ProjectRegistry]
-	newGitMgr     GitManagerFactory
+	nameOverride string
+	log          *logger.Logger
+	reg          *Registry
+	newGitMgr    GitManagerFactory
 }
 
-// NewProjectManager builds a project manager. nameOverride is the config-owned
-// project name (clawker.yaml `name:`), resolved by the caller and passed as a
-// primitive so this package never imports config. config resolves its own
-// walk-up anchor from the standalone ResolveProjectRoot, so the dependency runs
-// one way — the manager reads config-derived values, config never reads the
+// NewProjectManager builds a project manager over an injected Registry — the
+// manager never constructs registry storage itself. nameOverride is the
+// config-owned project name (clawker.yaml `name:`), resolved by the caller and
+// passed as a primitive so this package never imports config. config resolves
+// its own walk-up anchor from Registry.CurrentRoot, so the dependency runs one
+// way — the manager reads config-derived values, config never reads the
 // manager.
-func NewProjectManager(log *logger.Logger, gitFactory GitManagerFactory, nameOverride string) (ProjectManager, error) {
+func NewProjectManager(log *logger.Logger, gitFactory GitManagerFactory, nameOverride string, reg *Registry) (ProjectManager, error) {
+	if reg == nil {
+		return nil, fmt.Errorf("project: registry is required")
+	}
 	if gitFactory == nil {
 		gitFactory = func(root string) (*git.GitManager, error) {
 			return git.NewGitManager(root)
 		}
 	}
-	registryStore, err := newRegistryStore()
-	if err != nil {
-		return nil, fmt.Errorf("project: loading registry: %w", err)
-	}
-	return &projectManager{nameOverride: nameOverride, log: log, registryStore: registryStore, newGitMgr: gitFactory}, nil
+	return &projectManager{nameOverride: nameOverride, log: log, reg: reg, newGitMgr: gitFactory}, nil
 }
 
 // Register adds or updates a project registration and returns a project object.
 func (s *projectManager) Register(_ context.Context, name string, repoPath string) (Project, error) {
-	entry, err := s.registry().Register(name, repoPath)
+	entry, err := s.reg.register(name, repoPath)
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +156,7 @@ func (s *projectManager) Register(_ context.Context, name string, repoPath strin
 
 // Update updates an existing registered project by root identity.
 func (s *projectManager) Update(_ context.Context, entry ProjectEntry) (Project, error) {
-	updated, err := s.registry().Update(entry)
+	updated, err := s.reg.update(entry)
 	if err != nil {
 		return nil, err
 	}
@@ -167,7 +166,7 @@ func (s *projectManager) Update(_ context.Context, entry ProjectEntry) (Project,
 // List returns all registered projects.
 
 func (s *projectManager) List(_ context.Context) ([]ProjectEntry, error) {
-	projects := s.registry().List()
+	projects := s.reg.list()
 	sort.Slice(projects, func(i, j int) bool {
 		if projects[i].Root == projects[j].Root {
 			return projects[i].Name < projects[j].Name
@@ -226,14 +225,13 @@ func (s *projectManager) ListProjects(ctx context.Context) ([]ProjectState, erro
 // Remove deletes a project registration.
 
 func (s *projectManager) Remove(_ context.Context, root string) error {
-	registry := s.registry()
-	if err := registry.RemoveByRoot(root); err != nil {
+	if err := s.reg.removeByRoot(root); err != nil {
 		if errors.Is(err, ErrProjectNotFound) {
 			return ErrProjectNotFound
 		}
 		return err
 	}
-	if err := registry.Save(); err != nil {
+	if err := s.reg.save(); err != nil {
 		return err
 	}
 	return nil
@@ -241,7 +239,7 @@ func (s *projectManager) Remove(_ context.Context, root string) error {
 
 // Get loads a registered project by root path.
 func (s *projectManager) Get(_ context.Context, root string) (Project, error) {
-	entry, ok, err := s.registry().ProjectByRoot(root)
+	entry, ok, err := s.reg.projectByRoot(root)
 	if err != nil {
 		return nil, err
 	}
@@ -257,8 +255,7 @@ func (s *projectManager) Get(_ context.Context, root string) (Project, error) {
 func (s *projectManager) ResolvePath(_ context.Context, cwd string) (Project, error) {
 	resolvedPath := resolveRootPath(cwd)
 
-	registry := s.registry()
-	for _, entry := range registry.List() {
+	for _, entry := range s.reg.list() {
 		if resolveRootPath(entry.Root) == resolvedPath {
 			return &projectHandle{manager: s, record: projectRecordFromEntry(entry)}, nil
 		}
@@ -280,7 +277,7 @@ func (s *projectManager) CurrentProject(ctx context.Context) (Project, error) {
 	}
 	var resolved Project
 	var resolveErr error
-	projectRoot, err := CurrentProjectRoot()
+	projectRoot, err := s.reg.CurrentRoot()
 	// ErrNotInProject is the benign "no registered project for CWD" condition
 	// and degrades to the cwd-based fallback below; any other error is a real
 	// registry/storage failure and must surface instead of being mistaken for
@@ -603,12 +600,8 @@ func (p *projectHandle) GetWorktree(ctx context.Context, branch string) (Worktre
 	return WorktreeState{}, ErrWorktreeNotFound
 }
 
-func (s *projectManager) registry() *projectRegistry {
-	return newRegistry(s.registryStore)
-}
-
 func (s *projectManager) worktrees() *worktreeService {
-	return newWorktreeService(s.log, s.registryStore, s.newGitMgr)
+	return newWorktreeService(s.log, s.reg, s.newGitMgr)
 }
 
 func projectRecordFromEntry(entry ProjectEntry) ProjectRecord {

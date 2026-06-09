@@ -70,7 +70,7 @@ We do **not** inherit Docker's threat model. If Docker allows catastrophic comma
 
 A clawker project is defined by a `.clawker/` directory containing configuration files. Every clawker command requires project context.
 
-**Project Resolution**: project-root resolution lives in `internal/project` (`ResolveProjectRoot`/`CurrentProjectRoot`), reading the registry. Callers resolve the root and pass it to `config.NewConfig(config.WithProjectRoot(root))`, which bounds the project-config walk-up merge (see §2.4) at that directory. `config` receives the root as a plain path; it does not resolve it. The `Config` interface exposes typed accessors — all file paths and constants are private to the package.
+**Project Resolution**: project-root resolution lives in `internal/project` as methods on the exported `Registry` facade (`ResolveRoot`/`CurrentRoot`), reading the registry. The CLI factory constructs one `Registry` per process (`f.ProjectRegistry`) and every consumer shares it. Callers resolve the root and pass it to `config.NewConfig(config.WithProjectRoot(root))`, which bounds the project-config walk-up merge (see §2.4) at that directory. `config` receives the root as a plain path; it does not resolve it. The `Config` interface exposes typed accessors — all file paths and constants are private to the package.
 
 **Project identity** is decoupled from configuration:
 - `internal/config` — configuration file I/O, walk-up loading, path helpers

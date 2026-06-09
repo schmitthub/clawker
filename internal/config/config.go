@@ -189,7 +189,7 @@ func WithDefaultSettingsYAML(yaml string) NewConfigOption {
 
 // WithProjectRoot bounds project-config walk-up discovery at the project root:
 // the store walks from CWD up to root (inclusive). The caller resolves the root
-// (e.g. via project.ResolveProjectRoot) and passes it in; config does not
+// (e.g. via project.Registry.ResolveRoot) and passes it in; config does not
 // resolve it. An empty root disables walk-up, so discovery uses the config dir
 // only — correct for consumers that never resolve project config from a working
 // directory (CP / host-proxy / bridge daemons), which read only settings.yaml.

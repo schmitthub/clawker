@@ -53,6 +53,7 @@ Pass `nil` for `gitFactory` if worktree operations are not needed.
 
 - `env.Config()` — panics if `WithConfig()` was not applied
 - `env.ProjectManager()` — panics if `WithProjectManager()` was not applied
+- `env.Registry(t)` — constructs a fresh `*project.Registry` over the isolated data dir (`project.WithRegistryDir`). Fresh per call: the store snapshots the registry file at construction, so construct after seeding registry YAML
 - `env.Dirs` — always available (struct field, not method)
 - `env.WriteYAML(t, file, dir, content)` — writes YAML content to the canonical location for the given `ConfigFile`. For project configs (`ProjectConfig`, `ProjectConfigLocal`), `dir` is the project directory; for others, `dir` is ignored and the appropriate XDG directory is used
 

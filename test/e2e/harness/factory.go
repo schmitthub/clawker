@@ -58,7 +58,7 @@ func cacheableState(s connectivity.State) bool {
 type FactoryOptions struct {
 	Config         func(...config.NewConfigOption) (config.Config, error)
 	Client         func(context.Context, config.Config, *logger.Logger, ...docker.ClientOption) (*docker.Client, error)
-	ProjectManager func(*logger.Logger, project.GitManagerFactory, string) (project.ProjectManager, error)
+	ProjectManager func(*logger.Logger, project.GitManagerFactory, string, *project.Registry) (project.ProjectManager, error)
 	GitManager     func(string) (*git.GitManager, error)
 	HostProxy      func(config.Config, *logger.Logger) (*hostproxy.Manager, error)
 	SocketBridge   func(config.Config, *logger.Logger) socketbridge.SocketBridgeManager
@@ -155,6 +155,22 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 	}
 	f.Client = resolveClient
 
+	// --- ProjectRegistry ---
+	// Production-default registry (data-dir resolution), shared by
+	// ProjectManager, GitManager, and commands — mirrors f.ProjectRegistry
+	// wiring in internal/cmd/factory/default.go.
+	var (
+		regOnce sync.Once
+		reg     *project.Registry
+		regErr  error
+	)
+	f.ProjectRegistry = func() (*project.Registry, error) {
+		regOnce.Do(func() {
+			reg, regErr = project.NewRegistry()
+		})
+		return reg, regErr
+	}
+
 	// --- ProjectManager ---
 	var (
 		pmOnce sync.Once
@@ -169,7 +185,12 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 					pmErr = cErr
 					return
 				}
-				pm, pmErr = opts.ProjectManager(logger.Nop(), nil, c.Project().Name)
+				r, rErr := f.ProjectRegistry()
+				if rErr != nil {
+					pmErr = rErr
+					return
+				}
+				pm, pmErr = opts.ProjectManager(logger.Nop(), nil, c.Project().Name, r)
 			}
 		})
 		return pm, pmErr
@@ -178,9 +199,13 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 	// --- GitManager ---
 	f.GitManager = func() (*git.GitManager, error) {
 		if opts.GitManager != nil {
-			root, rErr := project.CurrentProjectRoot()
+			r, rErr := f.ProjectRegistry()
 			if rErr != nil {
 				return nil, rErr
+			}
+			root, rootErr := r.CurrentRoot()
+			if rootErr != nil {
+				return nil, rootErr
 			}
 			return opts.GitManager(root)
 		}
