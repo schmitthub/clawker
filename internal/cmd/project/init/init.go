@@ -502,7 +502,7 @@ func runNonInteractive(ctx context.Context, opts *ProjectInitOptions) error {
 		fmt.Fprintln(ios.ErrOut)
 		fmt.Fprintln(ios.ErrOut, "Next Steps:")
 		fmt.Fprintln(ios.ErrOut, "  - Use --force to overwrite the existing configuration")
-		fmt.Fprintln(ios.ErrOut, "  - Or edit the existing .clawker.yaml manually")
+		fmt.Fprintln(ios.ErrOut, "  - Or edit your existing project config manually")
 		fmt.Fprintln(ios.ErrOut, "  - Or run 'clawker project register' to register the existing project")
 		return fmt.Errorf("configuration already exists")
 	}
@@ -595,7 +595,7 @@ func performProjectSetup(ctx context.Context, in performSetupInput) error {
 	// exactly the preset values + VCS configuration. User-level and parent
 	// configs are layered at runtime via normal config loading, not baked into
 	// the project file. Using config.NewConfig here would discover the user's
-	// ~/.config/clawker/clawker.yaml and merge it into the store, causing:
+	// user-level clawker config and merge it into the store, causing:
 	//   - Preset build settings to be shadowed (not written)
 	//   - User-level firewall domains to bleed into the project file
 	//   - VCS rules from the user config to conflict with the selected VCS

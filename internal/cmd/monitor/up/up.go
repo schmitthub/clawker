@@ -96,7 +96,7 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 		return fmt.Errorf("failed to access compose.yaml at %s: %w", composePath, err)
 	}
 
-	// Ensure clawker-net network exists (creates with managed labels if needed)
+	// Ensure the clawker network exists (creates with managed labels if needed)
 	client, err := opts.Client(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create Docker client: %w", err)
