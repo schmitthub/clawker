@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// FieldKind classifies a configuration field's data type for schema consumers
+// FieldKind classifies a schema field's data type for schema consumers
 // (TUI editors, doc generators, CLI help).
 type FieldKind int
 
@@ -54,7 +54,7 @@ func (k FieldKind) String() string {
 	}
 }
 
-// Field describes a single configuration field's schema metadata.
+// Field describes a single schema field's metadata.
 // Concrete implementations are created by [NewField] or [NormalizeFields].
 type Field interface {
 	Path() string        // Dotted YAML path (e.g. "build.image").
@@ -74,7 +74,7 @@ type FieldSet interface {
 	Len() int                    // Number of fields.
 }
 
-// Schema is the contract that configuration types implement to expose their
+// Schema is the contract that schema types implement to expose their
 // field metadata. [Store] is constrained to Schema, making field descriptions
 // a compile-time requirement for all stored types.
 type Schema interface {

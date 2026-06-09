@@ -242,6 +242,19 @@ VERSION=$(get_version)
 cd "$DIR" 2>/dev/null
 branch=$(git --no-optional-locks rev-parse --abbrev-ref HEAD 2>/dev/null)
 
+# Uncommitted file count: staged, unstaged, and untracked changes collapsed
+# into one red counter. Any non-zero = work that is lost if this worktree
+# directory is deleted without committing — the one thing a worktree agent,
+# flying blind without an IDE, most needs to catch before closing. One
+# --porcelain line per path, so the line count is a deduped file count.
+git_status=""
+if [ -n "$branch" ]; then
+    dirty=$(git --no-optional-locks status --porcelain 2>/dev/null | grep -c .)
+    if [ "$dirty" -gt 0 ]; then
+        git_status=$(printf "${RED}✗%d${NC}" "$dirty")
+    fi
+fi
+
 # Worktree detection: .git file = worktree, .git dir = regular repo
 is_worktree=false
 if [ -f "${DIR}/.git" ]; then
@@ -280,6 +293,8 @@ if [ -n "$branch" ]; then
     else
         line1+=$(printf " ${GRAY}%s${NC}" "${GIT}$branch")
     fi
+    # Uncommitted file counter after the branch (e.g. ✗3)
+    [ -n "$git_status" ] && line1+=" $git_status"
 fi
 
 # Pipe before host mount

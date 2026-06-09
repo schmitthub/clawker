@@ -137,8 +137,23 @@ type PathRule struct {
 	Action string `yaml:"action" label:"Action" desc:"Whether to allow or deny requests matching this path"`
 }
 
+// Egress vocabulary for the EgressRule / PathRule Proto, Port, and Action
+// fields. EgressRule is the type these values decorate, so its package is the
+// single home for the constants — reference them instead of spelling the
+// literals.
+const (
+	// EgressProtoHTTPS is the default EgressRule protocol (TLS-MITM HCM).
+	EgressProtoHTTPS = "https"
+	// EgressPortHTTPS is the EgressProtoHTTPS default destination port.
+	EgressPortHTTPS = "443"
+	// EgressActionAllow permits traffic matching a rule (the default action).
+	EgressActionAllow = "allow"
+	// EgressActionDeny blocks traffic matching a rule.
+	EgressActionDeny = "deny"
+)
+
 // EgressRule defines a single egress firewall rule.
-// Dst is the domain or IP, Proto defaults to "https" (TLS-MITM HCM), Action defaults to "allow".
+// Dst is the domain or IP, Proto defaults to EgressProtoHTTPS (TLS-MITM HCM), Action defaults to EgressActionAllow.
 // The legacy value `proto: tls` is silently translated to `proto: https` at normalization time.
 type EgressRule struct {
 	Dst   string `yaml:"dst" label:"Destination" desc:"Domain or IP the container needs to reach (e.g. api.github.com, registry.npmjs.org)"`
@@ -418,27 +433,4 @@ type TelemetryConfig struct {
 	LogUserPrompts         *bool  `yaml:"log_user_prompts,omitempty" label:"Log User Prompts" desc:"Capture user prompts in telemetry (disable for privacy)" default:"true"`
 	IncludeAccountUUID     *bool  `yaml:"include_account_uuid,omitempty" label:"Include Account UUID" desc:"Tag telemetry with your Anthropic account ID (useful for multi-user setups)" default:"true"`
 	IncludeSessionID       *bool  `yaml:"include_session_id,omitempty" label:"Include Session ID" desc:"Tag telemetry with session ID to correlate events across a single run" default:"true"`
-}
-
-// ProjectEntry represents a project in the registry.
-type ProjectEntry struct {
-	Name      string                   `yaml:"name" label:"Name" desc:"Project slug identifier"`
-	Root      string                   `yaml:"root" label:"Root" desc:"Filesystem path to project root"`
-	Worktrees map[string]WorktreeEntry `yaml:"worktrees,omitempty" label:"Worktrees" desc:"Active worktrees for this project"`
-}
-
-// WorktreeEntry represents a worktree within a project.
-type WorktreeEntry struct {
-	Path   string `yaml:"path" label:"Path" desc:"Filesystem path to worktree"`
-	Branch string `yaml:"branch,omitempty" label:"Branch" desc:"Git branch for this worktree"`
-}
-
-// ProjectRegistry is the on-disk structure for projects.yaml.
-type ProjectRegistry struct {
-	Projects []ProjectEntry `yaml:"projects" label:"Projects" desc:"Registered projects"`
-}
-
-// Fields implements [storage.Schema] for ProjectRegistry.
-func (r ProjectRegistry) Fields() storage.FieldSet {
-	return storage.NormalizeFields(r)
 }

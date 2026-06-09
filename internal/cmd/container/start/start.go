@@ -144,14 +144,13 @@ func startRun(ctx context.Context, opts *StartOptions) error {
 		// then handles attach + docker start + post-start without re-running
 		// pre-start.
 		cmdOpts := shared.CommandOpts{
-			Client:         opts.Client,
-			Config:         opts.Config,
-			ProjectManager: opts.ProjectManager,
-			HostProxy:      opts.HostProxy,
-			ControlPlane:   opts.ControlPlane,
-			AdminClient:    opts.AdminClient,
-			SocketBridge:   opts.SocketBridge,
-			Logger:         opts.Logger,
+			Client:       opts.Client,
+			Config:       opts.Config,
+			HostProxy:    opts.HostProxy,
+			ControlPlane: opts.ControlPlane,
+			AdminClient:  opts.AdminClient,
+			SocketBridge: opts.SocketBridge,
+			Logger:       opts.Logger,
 		}
 		if err := ios.RunWithSpinner("Bootstrapping host services", func() error {
 			return shared.BootstrapServicesPreStart(ctx, containerName, cmdOpts)
@@ -384,14 +383,13 @@ func startContainersWithoutAttach(ctx context.Context, ios *iostreams.IOStreams,
 	for _, name := range containers {
 		_, err := shared.ContainerStart(ctx,
 			shared.CommandOpts{
-				Client:         opts.Client,
-				Config:         opts.Config,
-				ProjectManager: opts.ProjectManager,
-				HostProxy:      opts.HostProxy,
-				ControlPlane:   opts.ControlPlane,
-				AdminClient:    opts.AdminClient,
-				SocketBridge:   opts.SocketBridge,
-				Logger:         opts.Logger,
+				Client:       opts.Client,
+				Config:       opts.Config,
+				HostProxy:    opts.HostProxy,
+				ControlPlane: opts.ControlPlane,
+				AdminClient:  opts.AdminClient,
+				SocketBridge: opts.SocketBridge,
+				Logger:       opts.Logger,
 			},
 			docker.ContainerStartOptions{
 				ContainerID: name,

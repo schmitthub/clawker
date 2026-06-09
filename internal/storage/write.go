@@ -114,7 +114,7 @@ func (s *Store[T]) defaultWritePath() (string, error) {
 //
 // Excluded (meaning "not set") at the struct-field level only:
 //   - Nil pointers and nil slices (via encodeValue)
-//   - Empty strings on direct struct fields (config schemas use bare string,
+//   - Empty strings on direct struct fields (schemas use bare string,
 //     not *string, for optional fields — "" means "not set")
 //
 // The empty-string filter applies only to direct struct fields, NOT to

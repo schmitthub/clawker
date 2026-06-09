@@ -46,7 +46,7 @@ Closures (reconcileStackClosure + per-RPC bodies) call:
 | Per-svc OTel mTLS material | Provided by `*otelcerts.Service` — see `internal/controlplane/otelcerts/CLAUDE.md`. `Stack` holds an `OtelCertProvisioner` reference and dispatches one `EnsureClient` call per sibling (envoy, coredns) inside `ensureConfigs` so `Reload` rotates with the config refresh. No-op when the provisioner is nil — stdout-only degraded mode: Envoy emits no OTel access logs (sink + cluster dropped); CoreDNS otel plugin installs noopEmitter. Atomic write, pair-check, and 0o755/0o644 perms are owned by the provisioner. Note: netlogger's mTLS material is NOT provisioned by `firewall.Stack` — `cmd/clawker-cp/main.go` mints its per-handshake leaf directly via `otelcerts.Service.LoadTLSConfig("netlogger")` and hands the resulting `*tls.Config` to `controlplane.NewOtelLoggerProvider`. |
 | `coredns_config.go` | Corefile generation; wildcard rules → subtree-forward zones; exact-only rules → forward apex + NXDOMAIN-subdomain template (`fallthrough`); deny rules → dedicated NXDOMAIN zones (win via longest-zone match); `dnsbpf` plugin directive; catch-all NXDOMAIN |
 | `certs.go` | CA keypair generation/loading; per-domain cert signing; wildcard SANs; `RotateCA` |
-| `rules_store.go` | `EgressRulesFile` schema + `NewRulesStore(cfg)` + rule helpers (`ValidateDst`, `NormalizeRule`, `RuleKey`, `NormalizeAndDedup`). Project-level rule composition lives on `project.Project.EgressRules()` — firewall doesn't know about project config. |
+| `rules_store.go` | `EgressRulesFile` schema + `NewRulesStore(cfg)` + rule helpers (`ValidateDst`, `NormalizeRule`, `RuleKey`, `NormalizeAndDedup`). Project-level rule composition lives on `config.Config.EgressRules()` — firewall doesn't compose project rules. |
 | `network.go` | `NetworkInfo` + `DiscoverNetwork(ctx, *docker.Client, cfg)` + `ComputeStaticIP(gateway, lastOctet)` |
 | `embed_coredns.go` | `//go:embed assets/coredns-clawker` — exported `CoreDNSClawkerBinary` |
 | `errors.go` | Sentinels (`ErrEnvoyUnhealthy`, `ErrCoreDNSUnhealthy`, `ErrCPUnhealthy`) + `HealthTimeoutError` |
@@ -138,7 +138,7 @@ type ContainerResolver func(ctx context.Context, ref string) (id, cgroupPath str
 
 ### `EgressRulesFile` + rule helpers
 
-`EgressRulesFile` is the on-disk schema (`egress-rules.yaml`) — it implements `storage.Schema` via `Fields()` so the store engine can read field metadata. Project-level rule composition (required baseline + `security.firewall.rules` + `add_domains`) lives on `project.Project.EgressRules()` — the firewall package owns store/stack/certs, not project config. `BootstrapServicesPreStart` calls `proj.EgressRules()` and passes the result through `adminv1.EgressRulesToProto` to `FirewallAddRules`. The `clawker firewall refresh` CLI verb re-runs this exact `proj.EgressRules()` → `EgressRulesToProto` → `FirewallAddRules` sync on demand (no restart), so a `clawker.yaml` egress edit can be live-applied; it is add/update-only (no prune — removed domains are deleted via `firewall remove`).
+`EgressRulesFile` is the on-disk schema (`egress-rules.yaml`) — it implements `storage.Schema` via `Fields()` so the store engine can read field metadata. Project-level rule composition (required baseline + `security.firewall.rules` + `add_domains`) lives on `config.Config.EgressRules()` — the firewall package owns store/stack/certs, not rule composition. `BootstrapServicesPreStart` (`internal/cmd/container/shared/container_start.go`) calls `cfg.EgressRules()` and passes the result through `adminv1.EgressRulesToProto` to `FirewallAddRules`. The `clawker firewall refresh` CLI verb re-runs this exact `cfg.EgressRules()` → `EgressRulesToProto` → `FirewallAddRules` sync on demand (no restart), so a `clawker.yaml` egress edit can be live-applied; it is add/update-only (no prune — removed domains are deleted via `firewall remove`).
 
 Rule helpers are exported for reuse by `BootstrapServicesPostStart` and E2E tests:
 
@@ -163,7 +163,7 @@ Wire↔config rule translation (`EgressRulesToProto` / `EgressRulesFromProto`) i
 
 - **Uses**: `internal/config`, `internal/consts`, `internal/docker`, `internal/logger`, `internal/storage`, `internal/controlplane/firewall/ebpf`, `api/admin/v1`, `pkg/whail` (labels only), `github.com/moby/moby/api/types/*`.
 - **Used by**: `internal/controlplane` (composite server embeds `*Handler`; startup wires `Stack`); `cmd/clawker-cp/main.go` (Handler ctor + container resolver).
-- **Not imported by**: CLI commands — those go through `f.AdminClient(ctx)` which speaks gRPC to the running CP. No direct Go calls into `firewall.Handler` from CLI code. Wire↔config rule translation (`adminv1.EgressRulesToProto`/`EgressRulesFromProto`/`EffectivePathDefault`) lives in `api/admin/v1`, so the container-start path (`BootstrapServicesPreStart`) and `firewall refresh` convert `proj.EgressRules()` without importing this package.
+- **Not imported by**: CLI commands — those go through `f.AdminClient(ctx)` which speaks gRPC to the running CP. No direct Go calls into `firewall.Handler` from CLI code. Wire↔config rule translation (`adminv1.EgressRulesToProto`/`EgressRulesFromProto`/`EffectivePathDefault`) lives in `api/admin/v1`, so the container-start path (`BootstrapServicesPreStart`) and `firewall refresh` convert `cfg.EgressRules()` without importing this package.
 
 ## Test Patterns
 

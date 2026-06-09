@@ -11,8 +11,8 @@ type Migration func(raw map[string]any) bool
 // options holds the accumulated construction configuration.
 type options struct {
 	filenames       []string
-	defaults        string // raw YAML string for the base layer
-	walkUp          bool
+	defaults        string   // raw YAML string for the base layer
+	walkUpAnchor    string   // bound walk-up from CWD up to this dir (inclusive); empty disables walk-up
 	dirs            []string // directories probed with dual placement (highest priority first)
 	paths           []string // explicit directories to probe (no dual placement)
 	migrations      []Migration
@@ -49,7 +49,7 @@ func WithDefaultsFromStruct[T Schema]() Option {
 
 // WithDefaultFilename sets the filename used when writing to a directory with
 // no existing file layers. Without this, filenames[0] is used, which may be
-// a local override variant rather than the main config file.
+// a local override variant rather than the main file.
 func WithDefaultFilename(name string) Option {
 	return func(o *options) {
 		o.defaultFilename = name
@@ -67,16 +67,22 @@ func WithDotDefault() Option {
 	}
 }
 
-// WithWalkUp enables bounded walk-up discovery from CWD to the registered
-// project root. The store resolves both CWD and project root internally:
-// CWD via os.Getwd(), project root by reading the registry at dataDir().
-// At each level the store checks for .clawker/{filename} (dir form) first,
-// then .{filename} (flat dotfile form). Walk-up never proceeds past the
-// project root. If CWD is not within a registered project, walk-up is
-// skipped and discovery falls back to explicit paths only.
-func WithWalkUp() Option {
+// WithWalkUp enables bounded walk-up discovery from CWD up to anchorDir
+// (inclusive). The store resolves CWD via os.Getwd(); anchorDir is a plain
+// directory supplied by the caller (the storage engine holds no project-domain
+// knowledge of how it was chosen). At each level the store checks for
+// .clawker/{filename} (dir form) first, then .{filename} (flat dotfile form).
+// Walk-up never proceeds past anchorDir.
+//
+// anchorDir must be CWD or an ancestor of it. A non-ancestor anchor (a path
+// beside or below CWD, a relative path, or a garbage path) is a caller
+// programming error: store construction fails with an error wrapping
+// ErrAnchorNotAncestor rather than letting the walk escape to the filesystem
+// root. An empty anchorDir disables walk-up, so discovery falls back to
+// explicit paths only.
+func WithWalkUp(anchorDir string) Option {
 	return func(o *options) {
-		o.walkUp = true
+		o.walkUpAnchor = anchorDir
 	}
 }
 
@@ -84,7 +90,7 @@ func WithWalkUp() Option {
 // Each directory uses the same dual-placement logic as walk-up: if a .clawker/
 // subdirectory exists, it probes .clawker/{filename} (dir form); otherwise it
 // probes .{filename} (flat dotfile form). Both .yaml and .yml extensions are
-// accepted. No registry required.
+// accepted.
 // Directories are probed in the order given (first = highest priority).
 // Priority: walk-up > dirs > explicit paths (WithPaths/WithConfigDir/etc.).
 func WithDirs(dirs ...string) Option {
@@ -126,7 +132,7 @@ func WithCacheDir() Option {
 }
 
 // WithPaths adds explicit directories to the discovery path list.
-// Files are probed as {dir}/{filename} for each configured filename.
+// Files are probed as {dir}/{filename} for each requested filename.
 func WithPaths(dirs ...string) Option {
 	return func(o *options) {
 		o.paths = append(o.paths, dirs...)
@@ -143,7 +149,8 @@ func WithMigrations(fns ...Migration) Option {
 }
 
 // WithLock enables flock-based advisory locking for Write operations.
-// Use for stores that need cross-process mutual exclusion (e.g. registry).
+// Use for stores that need cross-process mutual exclusion (e.g. a store
+// written by concurrent CLI invocations).
 func WithLock() Option {
 	return func(o *options) {
 		o.lock = true

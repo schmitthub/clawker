@@ -12,6 +12,8 @@ import (
 	"github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/project"
+	"github.com/schmitthub/clawker/internal/testenv"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/schmitthub/clawker/pkg/whail/whailtest"
@@ -26,6 +28,7 @@ import (
 func TestBuildProgress_Pipeline(t *testing.T) {
 	for _, scenario := range whailtest.AllBuildScenarios() { // TODO: This should not be importing whail test doubles its suposed to test from the docker packages
 		t.Run(scenario.Name, func(t *testing.T) {
+			env := testenv.New(t)
 			t.Setenv("DOCKER_BUILDKIT", "1")
 
 			testCfg := configmocks.NewFromString(`
@@ -58,6 +61,12 @@ monitoring:
 					return testCfg, nil
 				},
 				Logger: func() (*logger.Logger, error) { return logger.Nop(), nil },
+				// Isolated data dir (testenv above) → empty registry →
+				// ErrNotInProject → cwd fallback, hermetic from any real
+				// registry on the host.
+				ProjectRegistry: func() (*project.Registry, error) {
+					return env.Registry(t), nil
+				},
 				HttpClient: func() *http.Client {
 					return stubHTTPClient("2.99.99-test")
 				},
@@ -95,6 +104,7 @@ monitoring:
 
 // TestBuildProgress_SimplePipeline validates specific output content for the simple scenario.
 func TestBuildProgress_SimplePipeline(t *testing.T) {
+	env := testenv.New(t)
 	t.Setenv("DOCKER_BUILDKIT", "1")
 
 	testCfg := configmocks.NewFromString(`
@@ -127,6 +137,9 @@ monitoring:
 			return testCfg, nil
 		},
 		Logger: func() (*logger.Logger, error) { return logger.Nop(), nil },
+		ProjectRegistry: func() (*project.Registry, error) {
+			return env.Registry(t), nil
+		},
 		HttpClient: func() *http.Client {
 			return stubHTTPClient("2.99.99-test")
 		},
@@ -154,6 +167,7 @@ monitoring:
 
 // TestBuildProgress_Suppressed verifies that --quiet suppresses progress output.
 func TestBuildProgress_Suppressed(t *testing.T) {
+	env := testenv.New(t)
 	t.Setenv("DOCKER_BUILDKIT", "1")
 
 	testCfg := configmocks.NewFromString(`
@@ -186,6 +200,9 @@ monitoring:
 			return testCfg, nil
 		},
 		Logger: func() (*logger.Logger, error) { return logger.Nop(), nil },
+		ProjectRegistry: func() (*project.Registry, error) {
+			return env.Registry(t), nil
+		},
 		HttpClient: func() *http.Client {
 			return stubHTTPClient("2.99.99-test")
 		},
@@ -208,6 +225,7 @@ monitoring:
 
 // TestBuildProgress_CaptureCallCount verifies the fake builder is invoked exactly once.
 func TestBuildProgress_CaptureCallCount(t *testing.T) {
+	env := testenv.New(t)
 	t.Setenv("DOCKER_BUILDKIT", "1")
 
 	testCfg := configmocks.NewFromString(`
@@ -240,6 +258,9 @@ monitoring:
 			return testCfg, nil
 		},
 		Logger: func() (*logger.Logger, error) { return logger.Nop(), nil },
+		ProjectRegistry: func() (*project.Registry, error) {
+			return env.Registry(t), nil
+		},
 		HttpClient: func() *http.Client {
 			return stubHTTPClient("2.99.99-test")
 		},

@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/testenv"
 )
@@ -17,11 +16,11 @@ func NewMockProjectManager() *ProjectManagerMock {
 		RegisterFunc: func(ctx context.Context, name string, repoPath string) (project.Project, error) {
 			return nil, nil
 		},
-		UpdateFunc: func(ctx context.Context, entry config.ProjectEntry) (project.Project, error) {
+		UpdateFunc: func(ctx context.Context, entry project.ProjectEntry) (project.Project, error) {
 			return nil, nil
 		},
-		ListFunc: func(ctx context.Context) ([]config.ProjectEntry, error) {
-			return []config.ProjectEntry{}, nil
+		ListFunc: func(ctx context.Context) ([]project.ProjectEntry, error) {
+			return []project.ProjectEntry{}, nil
 		},
 		RemoveFunc: func(ctx context.Context, root string) error {
 			return nil
@@ -58,10 +57,7 @@ func NewMockProject(name, repoPath string) *ProjectMock {
 				Worktrees: map[string]project.WorktreeRecord{},
 			}, nil
 		},
-		EgressRulesFunc: func() []config.EgressRule {
-			return nil
-		},
-		CreateWorktreeFunc: func(ctx context.Context, branch, base string, noTrack bool) (string, error) {
+		CreateWorktreeFunc: func(ctx context.Context, branch, base string) (string, error) {
 			return "", nil
 		},
 		AddWorktreeFunc: func(ctx context.Context, branch, base string) (project.WorktreeState, error) {

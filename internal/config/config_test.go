@@ -120,7 +120,6 @@ func TestConstantAccessors(t *testing.T) {
 	assert.Equal(t, ".clawkerignore", cfg.ClawkerIgnoreName())
 	assert.Equal(t, "clawker.yaml", cfg.ProjectConfigFileName())
 	assert.Equal(t, "settings.yaml", cfg.SettingsFileName())
-	assert.Equal(t, "projects.yaml", cfg.ProjectRegistryFileName())
 	assert.Equal(t, "clawker.dev", cfg.Domain())
 	assert.Equal(t, "dev.clawker", cfg.LabelDomain())
 	assert.Equal(t, "clawker-net", cfg.ClawkerNetwork())

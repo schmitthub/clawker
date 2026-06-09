@@ -106,7 +106,6 @@ Three-phase orchestration: pre-start bootstrap, Docker start, post-start bootstr
 |-------|------|---------|
 | `Client` | `func(ctx) (*docker.Client, error)` | Docker client provider |
 | `Config` | `func() (config.Config, error)` | Config provider (required) |
-| `ProjectManager` | `func() (project.ProjectManager, error)` | Project manager provider |
 | `HostProxy` | `func() hostproxy.HostProxyService` | Host proxy provider |
 | `ControlPlane` | `func() cpboot.Manager` | CP container lifecycle |
 | `AdminClient` | `func(ctx) (adminv1.AdminServiceClient, error)` | CP gRPC client (mTLS + OAuth2) |

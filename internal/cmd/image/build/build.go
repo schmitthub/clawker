@@ -3,6 +3,7 @@ package build
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -24,13 +25,14 @@ import (
 
 // BuildOptions contains the options for the build command.
 type BuildOptions struct {
-	IOStreams      *iostreams.IOStreams
-	TUI            *tui.TUI
-	Config         func() (config.Config, error)
-	Logger         func() (*logger.Logger, error)
-	Client         func(context.Context) (*docker.Client, error)
-	ProjectManager func() (project.ProjectManager, error)
-	HttpClient     func() *http.Client
+	IOStreams       *iostreams.IOStreams
+	TUI             *tui.TUI
+	Config          func() (config.Config, error)
+	Logger          func() (*logger.Logger, error)
+	Client          func(context.Context) (*docker.Client, error)
+	ProjectManager  func() (project.ProjectManager, error)
+	ProjectRegistry func() (*project.Registry, error)
+	HttpClient      func() *http.Client
 
 	File      string   // -f, --file (Dockerfile path)
 	Tags      []string // -t, --tag (multiple allowed)
@@ -48,13 +50,14 @@ type BuildOptions struct {
 // NewCmdBuild creates the image build command.
 func NewCmdBuild(f *cmdutil.Factory, runF func(context.Context, *BuildOptions) error) *cobra.Command {
 	opts := &BuildOptions{
-		IOStreams:      f.IOStreams,
-		TUI:            f.TUI,
-		Config:         f.Config,
-		Logger:         f.Logger,
-		Client:         f.Client,
-		ProjectManager: f.ProjectManager,
-		HttpClient:     f.HttpClient,
+		IOStreams:       f.IOStreams,
+		TUI:             f.TUI,
+		Config:          f.Config,
+		Logger:          f.Logger,
+		Client:          f.Client,
+		ProjectManager:  f.ProjectManager,
+		ProjectRegistry: f.ProjectRegistry,
+		HttpClient:      f.HttpClient,
 	}
 
 	cmd := &cobra.Command{
@@ -153,9 +156,22 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 		}
 	}
 
-	// Get working directory from project root, or fall back to current directory
-	wd, wdErr := cfgGateway.GetProjectRoot()
-	if wdErr != nil || wd == "" {
+	// Get working directory from the registry-resolved project root, or fall
+	// back to current directory. ErrNotInProject is the normal "no registered
+	// project" condition; any other error is a real registry/storage failure
+	// and is surfaced rather than silently overwritten by the fallback.
+	if opts.ProjectRegistry == nil {
+		return fmt.Errorf("project registry not available")
+	}
+	reg, regErr := opts.ProjectRegistry()
+	if regErr != nil {
+		return fmt.Errorf("loading project registry: %w", regErr)
+	}
+	wd, wdErr := reg.CurrentRoot()
+	if wdErr != nil && !errors.Is(wdErr, project.ErrNotInProject) {
+		return fmt.Errorf("resolving project root: %w", wdErr)
+	}
+	if wd == "" {
 		wd, wdErr = os.Getwd()
 		if wdErr != nil {
 			return fmt.Errorf("failed to get working directory: %w", wdErr)

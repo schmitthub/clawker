@@ -11,6 +11,7 @@ import (
 	"github.com/go-git/go-git/v6/plumbing/object"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/git/gittest"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -19,6 +20,15 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// newTestRegistry constructs a registry over the isolated data dir that the
+// test environment points the CLAWKER_*_DIR env vars at.
+func newTestRegistry(t *testing.T) *project.Registry {
+	t.Helper()
+	reg, err := project.NewRegistry()
+	require.NoError(t, err)
+	return reg
+}
 
 // debugDirs walks a directory tree, logs every entry, and prints file contents inline.
 func debugDirs(t *testing.T, label, root string) {
@@ -64,7 +74,7 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 		t.Logf("config.ConfigDir() = %s", config.ConfigDir())
 		t.Logf("config.DataDir()   = %s", config.DataDir())
 		t.Logf("config.StateDir()  = %s", config.StateDir())
-		wtDir, wtErr := cfg.WorktreesSubdir()
+		wtDir, wtErr := consts.WorktreesSubdir()
 		t.Logf("cfg.WorktreesSubdir() = %s (err=%v)", wtDir, wtErr)
 
 		base := filepath.Dir(os.Getenv(cfg.ConfigDirEnvVar())) // parent of config/
@@ -76,7 +86,7 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 			return inMemGit.GitManager, nil
 		}
 
-		mgr, err := project.NewProjectManager(cfg, logger.Nop(), factory)
+		mgr, err := project.NewProjectManager(logger.Nop(), factory, cfg.Project().Name, newTestRegistry(t))
 		require.NoError(t, err)
 		ctx := context.Background()
 
@@ -88,7 +98,7 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 		t.Log("\n--- after Register ---")
 		debugDirs(t, "post-register layout", base)
 
-		// chdir so GetProjectRoot() resolves against the registry
+		// chdir so Registry.CurrentRoot() resolves against the registry
 		oldWd, err := os.Getwd()
 		require.NoError(t, err)
 		require.NoError(t, os.Chdir(resolvedRoot))
@@ -138,7 +148,7 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 			return inMemGit.GitManager, nil
 		}
 
-		mgr, err := project.NewProjectManager(cfg, logger.Nop(), factory)
+		mgr, err := project.NewProjectManager(logger.Nop(), factory, cfg.Project().Name, newTestRegistry(t))
 		require.NoError(t, err)
 		ctx := context.Background()
 
@@ -183,7 +193,7 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 			return inMemGit.GitManager, nil
 		}
 
-		mgr, err := project.NewProjectManager(cfg, logger.Nop(), factory)
+		mgr, err := project.NewProjectManager(logger.Nop(), factory, cfg.Project().Name, newTestRegistry(t))
 		require.NoError(t, err)
 		ctx := context.Background()
 
@@ -228,7 +238,7 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 			return inMemGit.GitManager, nil
 		}
 
-		mgr, err := project.NewProjectManager(cfg, logger.Nop(), factory)
+		mgr, err := project.NewProjectManager(logger.Nop(), factory, cfg.Project().Name, newTestRegistry(t))
 		require.NoError(t, err)
 		ctx := context.Background()
 
@@ -277,7 +287,7 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 			return inMemGit.GitManager, nil
 		}
 
-		mgr, err := project.NewProjectManager(cfg, logger.Nop(), factory)
+		mgr, err := project.NewProjectManager(logger.Nop(), factory, cfg.Project().Name, newTestRegistry(t))
 		require.NoError(t, err)
 		ctx := context.Background()
 
@@ -327,7 +337,7 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 			return inMemGit.GitManager, nil
 		}
 
-		mgr, err := project.NewProjectManager(cfg, logger.Nop(), factory)
+		mgr, err := project.NewProjectManager(logger.Nop(), factory, cfg.Project().Name, newTestRegistry(t))
 		require.NoError(t, err)
 		ctx := context.Background()
 
@@ -366,7 +376,7 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 			return inMemGit.GitManager, nil
 		}
 
-		mgr, err := project.NewProjectManager(cfg, logger.Nop(), factory)
+		mgr, err := project.NewProjectManager(logger.Nop(), factory, cfg.Project().Name, newTestRegistry(t))
 		require.NoError(t, err)
 		ctx := context.Background()
 
@@ -477,7 +487,7 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 			return inMemGit.GitManager, nil
 		}
 
-		mgr, err := project.NewProjectManager(cfg, logger.Nop(), factory)
+		mgr, err := project.NewProjectManager(logger.Nop(), factory, cfg.Project().Name, newTestRegistry(t))
 		require.NoError(t, err)
 		ctx := context.Background()
 
@@ -515,7 +525,7 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 			return inMemGit.GitManager, nil
 		}
 
-		mgr, err := project.NewProjectManager(cfg, logger.Nop(), factory)
+		mgr, err := project.NewProjectManager(logger.Nop(), factory, cfg.Project().Name, newTestRegistry(t))
 		require.NoError(t, err)
 		ctx := context.Background()
 
@@ -566,7 +576,7 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 			return gitMgr, nil
 		}
 
-		mgr, err := project.NewProjectManager(cfg, logger.Nop(), factory)
+		mgr, err := project.NewProjectManager(logger.Nop(), factory, cfg.Project().Name, newTestRegistry(t))
 		require.NoError(t, err)
 		ctx := context.Background()
 
@@ -662,6 +672,37 @@ func TestList(t *testing.T) {
 		require.NoError(t, err)
 		assert.Len(t, entries, 2)
 	})
+
+	t.Run("returned entries do not alias registry state", func(t *testing.T) {
+		mgr := projectmocks.NewTestProjectManager(t, nil)
+		ctx := context.Background()
+		root := t.TempDir()
+
+		_, err := mgr.Register(ctx, "alias-test", root)
+		require.NoError(t, err)
+		_, err = mgr.Update(ctx, project.ProjectEntry{
+			Name: "alias-test",
+			Root: root,
+			Worktrees: map[string]project.WorktreeEntry{
+				"main": {Path: filepath.Join(root, "wt"), Branch: "main"},
+			},
+		})
+		require.NoError(t, err)
+
+		entries, err := mgr.List(ctx)
+		require.NoError(t, err)
+		require.Len(t, entries, 1)
+		require.Contains(t, entries[0].Worktrees, "main")
+
+		// Mutate the returned map — the registry must not observe it.
+		entries[0].Worktrees["rogue"] = project.WorktreeEntry{Path: "/rogue", Branch: "rogue"}
+
+		again, err := mgr.List(ctx)
+		require.NoError(t, err)
+		require.Len(t, again, 1)
+		assert.NotContains(t, again[0].Worktrees, "rogue")
+		assert.Contains(t, again[0].Worktrees, "main")
+	})
 }
 
 func TestGet(t *testing.T) {
@@ -743,7 +784,7 @@ func TestUpdate(t *testing.T) {
 		_, err := mgr.Register(ctx, "old-name", root)
 		require.NoError(t, err)
 
-		updated, err := mgr.Update(ctx, config.ProjectEntry{
+		updated, err := mgr.Update(ctx, project.ProjectEntry{
 			Name: "new-name",
 			Root: root,
 		})
@@ -759,7 +800,7 @@ func TestUpdate(t *testing.T) {
 		mgr := projectmocks.NewTestProjectManager(t, nil)
 		ctx := context.Background()
 
-		_, err := mgr.Update(ctx, config.ProjectEntry{
+		_, err := mgr.Update(ctx, project.ProjectEntry{
 			Name: "ghost",
 			Root: "/nonexistent",
 		})

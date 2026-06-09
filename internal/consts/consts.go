@@ -114,13 +114,19 @@ const (
 
 // File names (not paths — paths are runtime-resolved via accessor funcs below).
 const (
-	ProjectConfigFile   = "clawker.yaml"
-	SettingsFile        = "settings.yaml"
-	ProjectRegistryFile = "projects.yaml"
-	IgnoreFile          = ".clawkerignore"
-	EgressRulesFile     = "egress-rules.yaml"
-	EnvoyConfigFile     = "envoy.yaml"
-	Corefile            = "Corefile"
+	ProjectConfigFile = "clawker.yaml"
+	SettingsFile      = "settings.yaml"
+	// RegistryFile is the project registry filename. The registry lives in
+	// the data dir (resolved via the config DataDir() accessor) and is owned
+	// by internal/project.
+	// This const is the single source of truth for the name — internal/project
+	// references it both for the owner store and for walk-up project-root
+	// resolution; no other package redeclares the literal.
+	RegistryFile    = "registry.yaml"
+	IgnoreFile      = ".clawkerignore"
+	EgressRulesFile = "egress-rules.yaml"
+	EnvoyConfigFile = "envoy.yaml"
+	Corefile        = "Corefile"
 	// ControlPlaneDBFile is the sqlite database the CP daemon owns under
 	// ControlPlaneSubdir. agentregistry holds the `agents` table; future
 	// CP-owned tables share the same file.
@@ -494,7 +500,7 @@ func ensureDir(dir string) (string, error) {
 // absConfigFilePath returns the absolute path <ConfigDir()>/<fileName>.
 // The config directory is NOT created by this helper — callers that need
 // the directory to exist should write through SettingsFilePath/
-// ProjectRegistryFilePath/UserProjectConfigFilePath and ensure as needed.
+// UserProjectConfigFilePath and ensure as needed.
 func absConfigFilePath(fileName string) (string, error) {
 	path := filepath.Join(ConfigDir(), fileName)
 	absPath, err := filepath.Abs(path)
@@ -977,9 +983,6 @@ func SettingsFilePath() (string, error) { return absConfigFilePath(SettingsFile)
 // UserProjectConfigFilePath returns the absolute path to the user-level
 // clawker.yaml file.
 func UserProjectConfigFilePath() (string, error) { return absConfigFilePath(ProjectConfigFile) }
-
-// ProjectRegistryFilePath returns the absolute path to the project registry file.
-func ProjectRegistryFilePath() (string, error) { return absConfigFilePath(ProjectRegistryFile) }
 
 // ---------------------------------------------------------------------------
 // URI / address accessors

@@ -1464,10 +1464,14 @@ type CreateContainerOptions struct {
 	Flags          *pflag.FlagSet
 	Version        string
 	ProjectManager func() (project.ProjectManager, error)
-	HostProxy      func() hostproxy.HostProxyService
-	Log            *logger.Logger
-	Is256Color     bool
-	IsTrueColor    bool
+	// ProjectRegistry is the shared registry facade (f.ProjectRegistry) used
+	// to resolve the registry-backed project root for the workspace mount
+	// source and ignore-file loading.
+	ProjectRegistry func() (*project.Registry, error)
+	HostProxy       func() hostproxy.HostProxyService
+	Log             *logger.Logger
+	Is256Color      bool
+	IsTrueColor     bool
 }
 
 // CreateContainerResult holds the outputs of CreateContainer.
@@ -1505,9 +1509,21 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 		return nil, err
 	}
 
-	wd, projectRootDir, err := resolveWorkDir(ctx, containerOpts, opts.Config, agentName, opts.ProjectManager, log)
+	projectRoot, err := resolveProjectRoot(opts.ProjectRegistry, log)
 	if err != nil {
 		return nil, err
+	}
+
+	wd, projectRootDir, err := resolveWorkDir(ctx, containerOpts, agentName, projectRoot, opts.ProjectManager, log)
+	if err != nil {
+		return nil, err
+	}
+
+	// Ignore file lives at the registry-resolved project root; empty root
+	// (no registered project) means no ignore patterns.
+	var ignoreFile string
+	if projectRoot != "" {
+		ignoreFile = filepath.Join(projectRoot, consts.IgnoreFile)
 	}
 
 	wsResult, err := workspace.SetupMounts(ctx, client, workspace.SetupMountsConfig{
@@ -1518,6 +1534,7 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 		WorkDir:        wd,
 		ProjectRootDir: projectRootDir,
 		ContainerPath:  wd, // Mount at host absolute path for Claude Code /resume compatibility
+		IgnoreFile:     ignoreFile,
 		Log:            log,
 	})
 	if err != nil {
@@ -1799,7 +1816,32 @@ func sendCached(ctx context.Context, ch chan<- CreateContainerEvent, step, msg s
 // resolveWorkDir determines the working directory for the container.
 // When --worktree is set, it routes through ProjectManager to ensure the worktree
 // is registered in the project registry (not just created at the git level).
-func resolveWorkDir(ctx context.Context, containerOpts *ContainerCreateOptions, cfgGateway config.Config, agentName string, projectManager func() (project.ProjectManager, error), log *logger.Logger) (wd string, projectRootDir string, err error) {
+// resolveProjectRoot resolves the registry-backed project root for the
+// current working directory through the shared registry facade. The benign
+// ErrNotInProject degrades to "" (callers fall back to the working
+// directory); any other error is a real registry/storage failure — surfacing
+// it prevents a corrupt registry from silently changing the container's
+// workspace mount source.
+func resolveProjectRoot(registry func() (*project.Registry, error), log *logger.Logger) (string, error) {
+	if registry == nil {
+		return "", fmt.Errorf("project registry not available")
+	}
+	reg, err := registry()
+	if err != nil {
+		return "", fmt.Errorf("loading project registry: %w", err)
+	}
+	root, err := reg.CurrentRoot()
+	if err != nil {
+		if !errors.Is(err, project.ErrNotInProject) {
+			return "", fmt.Errorf("resolving project root: %w", err)
+		}
+		log.Debug().Err(err).Msg("not in a registered project, falling back to working directory")
+		return "", nil
+	}
+	return root, nil
+}
+
+func resolveWorkDir(ctx context.Context, containerOpts *ContainerCreateOptions, agentName string, projectRoot string, projectManager func() (project.ProjectManager, error), log *logger.Logger) (wd string, projectRootDir string, err error) {
 	if containerOpts.Worktree != "" {
 		wtSpec, err := cmdutil.ParseWorktreeFlag(containerOpts.Worktree, agentName)
 		if err != nil {
@@ -1842,11 +1884,10 @@ func resolveWorkDir(ctx context.Context, containerOpts *ContainerCreateOptions, 
 		return wd, proj.RepoPath(), nil
 	}
 
-	wd, wdErr := cfgGateway.GetProjectRoot()
-	if wdErr != nil {
-		log.Debug().Err(wdErr).Msg("could not resolve project root, falling back to working directory")
-		wd = ""
-	}
+	// Non-worktree path: mount source is the registry-resolved project root
+	// (already resolved by the caller; "" when not in a registered project),
+	// falling back to the working directory.
+	wd = projectRoot
 	if wd == "" {
 		wd, err = os.Getwd()
 		if err != nil {

@@ -38,9 +38,6 @@ func SettingsFilePath() (string, error) { return consts.SettingsFilePath() }
 // Deprecated: use consts.UserProjectConfigFilePath.
 func UserProjectConfigFilePath() (string, error) { return consts.UserProjectConfigFilePath() }
 
-// Deprecated: use consts.ProjectRegistryFilePath.
-func ProjectRegistryFilePath() (string, error) { return consts.ProjectRegistryFilePath() }
-
 // ---------------------------------------------------------------------------
 // Config interface methods — every method below is a one-line delegation to
 // internal/consts. Deprecated: import consts directly in new code.
@@ -54,9 +51,6 @@ func (c *configImpl) ProjectConfigFileName() string { return consts.ProjectConfi
 
 // Deprecated: use consts.SettingsFile.
 func (c *configImpl) SettingsFileName() string { return consts.SettingsFile }
-
-// Deprecated: use consts.ProjectRegistryFile.
-func (c *configImpl) ProjectRegistryFileName() string { return consts.ProjectRegistryFile }
 
 // Deprecated: use consts.Domain.
 func (c *configImpl) Domain() string { return consts.Domain }
@@ -165,9 +159,6 @@ func (c *configImpl) HostProxyPIDFilePath() (string, error) { return consts.Host
 
 // Deprecated: use consts.ShareSubdir.
 func (c *configImpl) ShareSubdir() (string, error) { return consts.ShareSubdir() }
-
-// Deprecated: use consts.WorktreesSubdir.
-func (c *configImpl) WorktreesSubdir() (string, error) { return consts.WorktreesSubdir() }
 
 // Deprecated: use consts.LabelPrefix.
 func (c *configImpl) LabelPrefix() string { return consts.LabelPrefix }

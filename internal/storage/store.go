@@ -44,7 +44,7 @@ type Store[T Schema] struct {
 	mu         sync.Mutex         // guards tree + dirtyPaths + layers (Set/Delete/Write/MarkForWrite/Refresh)
 }
 
-// LayerInfo describes a discovered configuration layer.
+// LayerInfo describes a discovered file layer.
 type LayerInfo struct {
 	Filename string         // which filename matched (e.g., "clawker.yaml")
 	Path     string         // resolved absolute path
@@ -73,7 +73,7 @@ func NewStore[T Schema](opts ...Option) (*Store[T], error) {
 // they have never been persisted.
 //
 // With no options, the store has no file discovery — useful for seeding
-// a new config that will be written via Write(ToPath(...)).
+// a new value that will be written via Write(ToPath(...)).
 func NewFromString[T Schema](raw string, opts ...Option) (*Store[T], error) {
 	o := options{}
 	for _, opt := range opts {
@@ -179,7 +179,7 @@ func (s *Store[T]) Get() *T {
 	return s.value.Load()
 }
 
-// Layers returns information about the discovered configuration layers.
+// Layers returns information about the discovered file layers.
 // Layers are ordered from highest priority (index 0) to lowest.
 // No lock needed — layers are immutable after construction.
 func (s *Store[T]) Layers() []LayerInfo {
@@ -515,7 +515,7 @@ func ToLayer(idx int) WriteOption {
 // Only fields mutated since the last Write (via Set or Delete) are
 // written. Set fields are merged into the target file; deleted fields
 // are removed from it. This ensures per-field precision in multi-layer
-// configurations.
+// setups.
 //
 // Without options, each dirty field is routed to the layer it
 // originated from (via provenance). Fields without provenance route
@@ -658,7 +658,7 @@ func (s *Store[T]) MarkForWrite(path string) {
 //
 // Note: Write() already remerges and injects new layers for files it
 // writes, so Refresh is only needed for external changes (e.g. another
-// process modified a config file).
+// process modified a file).
 func (s *Store[T]) Refresh() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
