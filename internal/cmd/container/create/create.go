@@ -68,7 +68,9 @@ Container names follow clawker conventions: clawker.project.agent
 When --agent is provided, the container is named clawker.<project>.<agent> where
 project is resolved from the current directory. When --name is provided, it overrides this.
 
-If IMAGE is "@", clawker will resolve the project's built image with :latest tag.`,
+If IMAGE is "@", clawker resolves the built image for the current scope: the
+project image inside a registered project, or the global image (built with
+"clawker build" outside any project) elsewhere.`,
 		Example: `  # Create a container with a specific agent name and interactive TTY
   clawker container create -it --agent ralph @ 
 
@@ -138,10 +140,10 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 		}
 		if resolvedImage == nil {
 			cs := ios.ColorScheme()
-			fmt.Fprintf(ios.ErrOut, "%s No image specified and no project image found\n", cs.FailureIcon())
+			fmt.Fprintf(ios.ErrOut, "%s No built image found for \"@\"\n", cs.FailureIcon())
 			fmt.Fprintf(ios.ErrOut, "\n%s Next steps:\n", cs.InfoIcon())
-			fmt.Fprintln(ios.ErrOut, "  1. Specify an image: clawker container create IMAGE")
-			fmt.Fprintln(ios.ErrOut, "  2. Build a project image: clawker build")
+			fmt.Fprintln(ios.ErrOut, "  1. Build an image first: clawker build")
+			fmt.Fprintln(ios.ErrOut, "  2. Or specify an image: clawker container create IMAGE")
 			return cmdutil.SilentError
 		}
 

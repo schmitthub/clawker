@@ -610,84 +610,33 @@ func requireSliceEqual(t *testing.T, expected, actual []string) {
 // TestImageArg tests image argument handling for the run command.
 // Tests @ symbol resolution (using mock Docker client) and explicit image pass-through.
 func TestImageArg(t *testing.T) {
-	// Tests for @ symbol resolution (uses mocks.FakeClient)
-	// ResolveImageWithSource resolves project images only (no default image fallback).
-	// Returns nil when no project image with :latest tag is found.
-	t.Run("@ symbol resolution", func(t *testing.T) {
-		tests := []struct {
-			name          string
-			projectName   string
-			fakeImages    []string // Images to return from fake ImageList
-			wantReference string
-			wantSource    docker.ImageSource
-			wantNil       bool // Expect nil result (no resolution)
-		}{
-			{
-				name:          "@ resolves to project image when exists",
-				projectName:   "myproject",
-				fakeImages:    []string{"clawker-myproject:latest"},
-				wantReference: "clawker-myproject:latest",
-				wantSource:    docker.ImageSourceProject,
-			},
-			{
-				name:        "@ returns nil when no project image",
-				projectName: "myproject",
-				fakeImages:  []string{}, // No project images
-				wantNil:     true,
-			},
-			{
-				name:        "@ returns nil for empty project",
-				projectName: "",
-				fakeImages:  []string{},
-				wantNil:     true,
-			},
-			{
-				name:          "@ prefers latest-tagged project image",
-				projectName:   "myproject",
-				fakeImages:    []string{"clawker-myproject:latest", "other:tag"},
-				wantReference: "clawker-myproject:latest",
-				wantSource:    docker.ImageSourceProject,
-			},
-			{
-				name:        "@ ignores non-latest project images",
-				projectName: "myproject",
-				fakeImages:  []string{"clawker-myproject:v1.0"}, // No :latest tag
-				wantNil:     true,
-			},
+	// Command-level @ wiring: runRun resolves @ via ResolveImageWithSource and
+	// hands the resolved reference to container create. Resolution semantics
+	// themselves (scope keying, no ladder, no config fallback) are locked in
+	// internal/docker/image_resolve_test.go with a filter-emulating fake.
+	t.Run("@ resolves built image and creates container with it", func(t *testing.T) {
+		fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
+		// No ProjectManager on the factory → global scope → global image.
+		fake.SetupImageList(whail.ImageSummary{RepoTags: []string{docker.ImageTag("")}})
+		var gotCreate moby.ContainerCreateOptions
+		fake.FakeAPI.ContainerCreateFn = func(_ context.Context, opts moby.ContainerCreateOptions) (moby.ContainerCreateResult, error) {
+			gotCreate = opts
+			return moby.ContainerCreateResult{ID: "abcdef123456789"}, nil
 		}
+		fake.SetupCopyToContainer()
+		fake.SetupContainerStart()
 
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				ctx := context.Background()
+		f, in, out, errOut := testFactory(t, fake)
+		cmd := NewCmdRun(f, nil)
+		cmd.SetArgs([]string{"--detach", "@"})
+		cmd.SetIn(in)
+		cmd.SetOut(out)
+		cmd.SetErr(errOut)
 
-				testCfg := configmocks.NewBlankConfig()
-
-				// Create fake Docker client with the config
-				fake := mocks.NewFakeClient(testCfg)
-
-				// Build image summaries and configure fake
-				var summaries []whail.ImageSummary
-				for _, ref := range tt.fakeImages {
-					summaries = append(summaries, whail.ImageSummary{
-						RepoTags: []string{ref},
-					})
-				}
-				fake.SetupImageList(summaries...)
-
-				// Call the resolution method on the client with projectName
-				result, err := fake.Client.ResolveImageWithSource(ctx, tt.projectName)
-				require.NoError(t, err)
-
-				if tt.wantNil {
-					require.Nil(t, result, "expected nil result")
-					return
-				}
-
-				require.NotNil(t, result, "expected non-nil result")
-				require.Equal(t, tt.wantReference, result.Reference)
-				require.Equal(t, tt.wantSource, result.Source)
-			})
-		}
+		err := cmd.Execute()
+		require.NoError(t, err)
+		require.NotNil(t, gotCreate.Config)
+		require.Equal(t, docker.ImageTag(""), gotCreate.Config.Image)
 	})
 
 	// Tests for explicit image pass-through (no resolution, no mock needed)
@@ -945,8 +894,8 @@ agent:
 		require.ErrorIs(t, err, cmdutil.SilentError)
 
 		errOutput := errOut.String()
-		require.Contains(t, errOutput, "No image specified")
-		require.Contains(t, errOutput, "no project image found")
+		require.Contains(t, errOutput, "No built image found")
+		require.Contains(t, errOutput, "clawker build")
 
 		fake.AssertNotCalled(t, "ContainerCreate")
 	})

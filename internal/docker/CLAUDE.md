@@ -45,7 +45,7 @@ type ClientOption func(*clientOptions)    // WithLabels(whail.LabelConfig)
 
 `Client` embeds `*whail.Engine`. Fields: `cfg config.Config` (interface, always set), `BuildDefaultImageFunc BuildDefaultImageFn`, `ChownImage string`.
 
-**Image methods**: `Close()`, `ResolveImage(ctx, projectName)`, `ResolveImageWithSource(ctx, projectName)`, `BuildImage(ctx, reader, opts)`, `ImageExists(ctx, ref)`.
+**Image methods**: `Close()`, `ResolveImageWithSource(ctx, projectName)`, `BuildImage(ctx, reader, opts)`, `ImageExists(ctx, ref)`.
 
 ### Container type
 
@@ -65,7 +65,7 @@ type Container struct {
 | `FindContainerByAgent` | `(ctx context.Context, project, agent string) (string, *container.Summary, error)` — returns (name, summary, err); not-found = `(name, nil, nil)` |
 | `RemoveContainerWithVolumes` | `(ctx context.Context, containerID string, force bool) error` — stops + removes container + associated volumes |
 
-**Image resolution**: `ImageSource` enum (`Explicit`/`Project`/`Config`). `ResolvedImage` struct (Reference + Source). `ResolveImageWithSource(ctx, projectName)` resolves via a two-step chain: (1) Docker images matching the project label with `:latest` tag → `ImageSourceProject`, (2) fallback to `cfg.Project().Build.Image` → `ImageSourceConfig`. Returns `nil, nil` when neither source yields an image. `ResolveImage(ctx, projectName)` is a convenience wrapper returning just the reference string. `projectName` is the resolved project identity (from `project.ProjectManager.CurrentProject(ctx).Name()` at the command layer); empty string means no registered project.
+**Image resolution**: `ImageSource` enum (`Project`/`Global`). `ResolvedImage` struct (Reference + Source). `ResolveImageWithSource(ctx, projectName)` is scope-keyed: project scope (non-empty `projectName`) looks up Docker images matching the project label with `:latest` tag → `ImageSourceProject`; global scope (empty `projectName`) looks up the clawker-managed global image (`ImageTag("")`, managed filter + reference match — global images intentionally carry no project label) → `ImageSourceGlobal`. Returns `nil, nil` when no built image exists for the scope. Scopes do not ladder (a project with no built image never resolves the global image), and there is deliberately no fallback to `cfg.Project().Build.Image` — that is a bare base image, never runnable as an agent. `projectName` is the resolved project identity (from `project.ProjectManager.CurrentProject(ctx).Name()` at the command layer); empty string means no registered project.
 
 ## Builder (`builder.go`)
 

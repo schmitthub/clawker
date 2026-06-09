@@ -10,9 +10,8 @@ import (
 type ImageSource string
 
 const (
-	ImageSourceExplicit ImageSource = "explicit" // User specified via CLI or args
-	ImageSourceProject  ImageSource = "project"  // Found via project label search
-	ImageSourceConfig   ImageSource = "config"   // From merged config (build.image)
+	ImageSourceProject ImageSource = "project" // Found via project label search
+	ImageSourceGlobal  ImageSource = "global"  // Globally built image (built outside any project)
 )
 
 // ResolvedImage contains the result of image resolution with source tracking.
@@ -51,39 +50,65 @@ func (c *Client) findProjectImage(ctx context.Context, projectName string) (stri
 	return "", nil
 }
 
-// ResolveImage resolves the image reference to use.
-// projectName is the resolved project identity (from ProjectManager); empty for unregistered projects.
-// Returns empty string if no image could be resolved.
-func (c *Client) ResolveImage(ctx context.Context, projectName string) (string, error) {
-	result, err := c.ResolveImageWithSource(ctx, projectName)
+// findGlobalImage searches for the clawker-managed global image — the image
+// `clawker build` produces outside any registered project, tagged ImageTag("").
+// Global-scope images intentionally omit the project label, so the lookup is
+// the managed filter plus a reference match on the global tag. Returns the
+// image reference if found, or empty string if not found.
+func (c *Client) findGlobalImage(ctx context.Context) (string, error) {
+	globalRef := ImageTag("")
+	f := c.ClawkerFilter().
+		Add("reference", globalRef)
+
+	result, err := c.ImageList(ctx, ImageListOptions{
+		Filters: f,
+	})
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to list images: %w", err)
 	}
-	if result == nil {
-		return "", nil
+
+	for _, img := range result.Items {
+		for _, tag := range img.RepoTags {
+			if tag == globalRef {
+				return tag, nil
+			}
+		}
 	}
-	return result.Reference, nil
+
+	return "", nil
 }
 
 // ResolveImageWithSource resolves the image to use for container operations.
-// projectName is the resolved project identity (from ProjectManager); empty for unregistered projects.
+// projectName is the resolved project identity (from ProjectManager); empty
+// for global scope (no registered project).
 //
-// Resolution order:
-//  1. Docker label lookup — clawker-managed image matching project label with :latest tag
-//  2. Config fallback — merged build.image from all config layers (project, user, defaults)
+// Resolution is scope-keyed:
+//   - project scope: clawker-managed image matching the project label with :latest tag
+//   - global scope: the clawker-managed global image (ImageTag(""))
 //
-// Returns nil if no image could be resolved (caller decides what to do).
+// Returns nil if no built image exists for the scope — the caller decides what
+// to do. There is deliberately no fallback to the configured build.image: that
+// is a bare base image (no Claude Code, no clawkerd) and is never runnable as
+// an agent. Scopes do not ladder: inside a project, a missing project image
+// resolves to nil rather than silently running the global image.
 func (c *Client) ResolveImageWithSource(ctx context.Context, projectName string) (*ResolvedImage, error) {
+	if projectName == "" {
+		globalImage, err := c.findGlobalImage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("auto-detect global image: %w", err)
+		}
+		if globalImage != "" {
+			return &ResolvedImage{Reference: globalImage, Source: ImageSourceGlobal}, nil
+		}
+		return nil, nil
+	}
+
 	projectImage, err := c.findProjectImage(ctx, projectName)
 	if err != nil {
 		return nil, fmt.Errorf("auto-detect project image: %w", err)
 	}
 	if projectImage != "" {
 		return &ResolvedImage{Reference: projectImage, Source: ImageSourceProject}, nil
-	}
-
-	if configImage := c.cfg.Project().Build.Image; configImage != "" {
-		return &ResolvedImage{Reference: configImage, Source: ImageSourceConfig}, nil
 	}
 
 	return nil, nil
