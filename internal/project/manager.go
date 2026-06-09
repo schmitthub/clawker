@@ -101,7 +101,11 @@ type Project interface {
 	Name() string
 	RepoPath() string
 	Record() (ProjectRecord, error)
-	CreateWorktree(ctx context.Context, branch, base string) (string, error)
+	// CreateWorktree creates a worktree for branch. When base is empty and branch
+	// is not a local head, a uniquely-matching remote-tracking branch is used as
+	// the base with upstream tracking configured (the dwim rule). noTrack
+	// suppresses upstream tracking (parity with `git worktree add --no-track`).
+	CreateWorktree(ctx context.Context, branch, base string, noTrack bool) (string, error)
 	AddWorktree(ctx context.Context, branch, base string) (WorktreeState, error)
 	RemoveWorktree(ctx context.Context, branch string, deleteBranch bool) error
 	PruneStaleWorktrees(ctx context.Context, dryRun bool) (*PruneStaleResult, error)

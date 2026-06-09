@@ -67,7 +67,7 @@ func (s *worktreeService) addWorktree(projectRoot, branch, base string, noTrack 
 	if err != nil {
 		return "", err
 	}
-	worktreePath, err := manager.SetupWorktree(provider, branch, base)
+	worktreePath, err := manager.SetupWorktree(provider, branch, base, noTrack)
 	if err != nil {
 		return "", fmt.Errorf("creating worktree: %w", err)
 	}
