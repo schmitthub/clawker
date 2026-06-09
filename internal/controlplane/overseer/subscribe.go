@@ -34,7 +34,7 @@ func Publish[T Event](o *Overseer, ev T) bool {
 	}
 	if !o.started.Load() {
 		// Without a running loop nothing drains; queueing would be a
-		// silent black hole. Mirrors informer.ErrNotStarted policy.
+		// silent black hole. Return false so the producer can react.
 		return false
 	}
 	select {
@@ -151,8 +151,7 @@ type subscriber struct {
 }
 
 // offer attempts a non-blocking send. On full buffer, drops the
-// oldest event and pushes the new one (drop-oldest, matching the
-// informer's semantics). Returns false on drop.
+// oldest event and pushes the new one (drop-oldest). Returns false on drop.
 func (s *subscriber) offer(ev Event) bool {
 	select {
 	case s.ch <- ev:

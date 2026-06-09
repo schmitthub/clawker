@@ -16,7 +16,7 @@ the behavioral test.
 - **You (in-container):** exercise egress with the probe tools below. You
   CANNOT run host `clawker` (see `feedback_no_host_clawker_in_container`).
 - **User (host operator):** mutates rules host-side —
-  `clawker firewall add <host> [--proto https|http|ssh|tcp|wss|...] [--port N] [--path /p --action allow|deny]`.
+  `clawker firewall add <host> [--proto https|http|ssh|tcp|wss|...] [--port N|lo-hi] [--path /p --action allow|deny]`.
   Ask them to add/remove rules; then you re-probe. To live-apply a
   `clawker.yaml` egress edit (`security.firewall.add_domains` /
   `security.firewall.rules`) without a restart, have them run
@@ -24,7 +24,7 @@ the behavioral test.
   still go through `clawker firewall remove`).
 
 `clawker firewall add` flags: `--proto` (default https), `--port` (default
-proto-specific), `--path` + `--action` (path-scoped rule, required together).
+proto-specific; single port `443` or inclusive range `9000-9100`), `--path` + `--action` (path-scoped rule, required together).
 
 ## Probe tools available in-container
 

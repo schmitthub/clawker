@@ -5,7 +5,7 @@ paths: ["internal/tui/**"]
 
 # TUI Rules
 
-- **Import boundary**: `internal/tui/` must NOT import `lipgloss` directly. Use qualified imports from `internal/iostreams` (e.g., `iostreams.PanelStyle`) and `internal/text` (e.g., `text.Truncate`). The `import_boundary_test.go` enforces this.
+- **Import boundary**: `internal/tui/` must NOT import `lipgloss` directly. Use qualified imports from `internal/iostreams` (e.g., `iostreams.PanelStyle`) and `internal/text` (e.g., `text.Truncate`). The `import_boundary_test.go` enforces the lipgloss ban.
 - Use qualified style references: `iostreams.HeaderStyle`, `iostreams.PanelStyle`, `iostreams.ListItemSelectedStyle`
 - Use qualified color constants: `iostreams.ColorPrimary`, `iostreams.ColorSuccess`, `iostreams.ColorError`
 - Use type inference (`:=`) for local style variables: `style := iostreams.PanelStyle` (avoids naming lipgloss.Style)
@@ -59,13 +59,13 @@ Run with `tui.RunDashboard(ios, renderer, cfg, eventCh)`. Returns `DashboardResu
 
 `StatusBarModel` with left/center/right sections and pre-built indicator functions:
 
-- `ModeIndicator(label)`, `ConnectionIndicator(connected)`, `TimerIndicator(elapsed)`, `CounterIndicator(current, total)`
-- Render helpers: `RenderStatusBar(cs, left, center, right, width)`, `RenderStatusBarWithSections(cs, sections, width)`
+- `ModeIndicator(mode, active)`, `ConnectionIndicator(connected)`, `TimerIndicator(label, value)`, `CounterIndicator(label, current, total)`
+- Render helpers: `RenderStatusBar(left, center, right, width)`, `RenderStatusBarWithSections(sections, width)`
 
 ## Help Bar (`help.go`)
 
 `HelpModel` for key binding display with configurable layout:
 
 - `RenderHelpBar(bindings, width)` — single-line help
-- `RenderHelpGrid(bindings, width)` — multi-column grid
+- `RenderHelpGrid(bindings, columns, width)` — multi-column grid
 - Pre-built binding sets: `NavigationBindings()`, `QuitBindings()`, `AllBindings()`, `HelpBinding()`, `QuickHelp()`

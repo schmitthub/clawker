@@ -23,7 +23,8 @@ This package replaces the prior `internal/controlplane/informer/` (deleted). The
 | `Close() error` | Stop loop, close every subscriber channel. Idempotent. |
 | `Snapshot(ctx) (State, bool)` | Deep-copied worldview snapshot. Returns false on closed bus or ctx cancel. |
 | `Stats() Stats` | Counter snapshot (subscribers, published total, dropped total, queue depth, known containers/sessions). |
-| `ErrClosed` / `ErrNotStarted` | Sentinels (returned only by `Snapshot`; `Publish` returns `false`). |
+| `ErrClosed` | Returned by `Start` when called after `Close`. `Publish` and `Subscribe` return `false` on a closed bus; `Snapshot` returns `(State{}, false)`. |
+| `ErrNotStarted` | Defined sentinel; currently no function returns it (`Publish`/`Subscribe`/`Snapshot` all return `false` when the bus has not been started). |
 
 ### Generic Pub/Sub API (`subscribe.go`)
 
@@ -56,6 +57,8 @@ A producer event type may also implement an unexported `applier` interface (`App
 - `dockerevents.DockerEvent` — single envelope wrapping moby's `events.Message` verbatim. Its `ApplyTo` switches on the embedded `(Type, Action)` pair: container start/restart/unpause → `Status=running`; die/stop/kill/oom → `Status=stopped`; destroy → delete; rename → update `Name`. Network events and any other (Type, Action) combination fall through with no state side effect (Overseer doesn't project network edges into State). Subscribers express intent via `SubscribeFiltered` predicates on `ev.Type` + `ev.Action`.
 - `agent.SessionConnecting/Connected/Failed/Broken` — populate `State.Agents[ContainerID]` (session-axis fields)
 - `agent.AgentRegistered/AgentUntrusted` — populate `State.Agents[ContainerID]` (registration + trust verdict)
+- `agent.InitStarted/InitStepStarted/InitStepCompleted/InitStepFailed/InitCompleted/InitFailed` — populate `State.Agents[ContainerID].Init` (init-axis fields). All implement `ApplyTo`.
+- `agent.ReapDegraded` — pure pub/sub notification (no `ApplyTo`; does not project into worldview State).
 - `ebpf.EBPFContainerEnrolled{CgroupID, ContainerID, OccurredAt}` — published by `firewall.Handler.FirewallEnable` after the `container_map` write succeeds. No `ApplyTo` (not projected into worldview State). The netlogger subsystem consumes these events to hydrate its `cgroup_id → {container_id, agent, project}` label cache; the existing `dockerevents.DockerEvent` `die`/`destroy` actions drive the matching eviction half.
 
 Events that don't implement applier are routed to subscribers without touching State.
@@ -89,7 +92,7 @@ axis (durable identity). The `Agent` struct unifies session lifecycle
 | State lives in the bus | Worldview is a function of event history; centralizing it lets `Snapshot` serialize cleanly with publishes through the loop. |
 | Snapshot is deep copy | Caller may retain and mutate without affecting other readers. |
 | Filter / ApplyTo run on the loop with `recover` | A panicking event handler is contained to its event, doesn't kill the bus. |
-| Volume / Image events dropped | Zero subscribers in v1; revive when needed. |
+| Volume / Image events dropped | Zero subscribers currently; revive when needed. |
 | Graph features removed | `Relation`, `LinkRelation`, `Neighbors`, `Get`, `List`, `History`, `Patch` had zero production consumers. `Snapshot` covers any future read need. |
 
 ## Usage Patterns

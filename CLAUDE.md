@@ -176,7 +176,7 @@ All external dependencies pinned to exact versions with integrity verification. 
 | Container images in code | SHA256 digest | `DefaultGoBuilderImage = "golang:...@sha256:..."` |
 | Go tool installs | Exact version or SHA | `go install tool@v2.0.1` |
 
-All `@sha256:` pins must be multi-arch manifest lists (`application/vnd.oci.image.index.v1+json`). Verify with `docker buildx imagetools inspect`. Firewall stack binaries are built fresh from pinned BPF toolchain inputs — `BPF_APT_DEPS` in the Makefile pins clang/llvm/libbpf-dev/linux-libc-dev versions; CI runs `sudo make bpf-deps` on `ubuntu-latest`, while `Dockerfile.controlplane` provides the same path for macOS devs. Nothing generated is committed.
+All `@sha256:` pins must be multi-arch manifest lists (`application/vnd.oci.image.index.v1+json`). Verify with `docker buildx imagetools inspect`. Firewall stack binaries are built fresh from pinned BPF toolchain inputs — `BPF_APT_DEPS` in the Makefile pins clang/llvm/libbpf-dev/linux-libc-dev versions; CI runs `sudo make bpf-deps` on its pinned Ubuntu runner (see `.github/workflows/`), while `Dockerfile.controlplane` provides the same path for macOS devs. Nothing generated is committed.
 
 ## Testing
 

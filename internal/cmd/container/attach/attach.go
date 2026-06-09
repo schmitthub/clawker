@@ -25,7 +25,7 @@ type AttachOptions struct {
 	HostProxy      func() hostproxy.HostProxyService
 	Logger         func() (*logger.Logger, error)
 
-	Agent      bool // treat argument as agent name(resolves to clawker.<project>.<agent>)
+	Agent      bool // treat argument as agent name (resolves to clawker.<project>.<agent>)
 	NoStdin    bool
 	SigProxy   bool
 	DetachKeys string

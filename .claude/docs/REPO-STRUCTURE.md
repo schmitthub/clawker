@@ -5,7 +5,8 @@ Reference map of the clawker repo. Lazy-loaded from root `CLAUDE.md`.
 ```
 ├── api/
 │   ├── admin/v1/              # AdminService protobuf (CLI → CP gRPC)
-│   └── agent/v1/              # AgentService protobuf (Register RPC for clawkerd→CP identity binding)
+│   ├── agent/v1/              # AgentService protobuf (Register RPC for clawkerd→CP identity binding)
+│   └── clawkerd/v1/           # ClawkerdService protobuf (Session RPC for CP→clawkerd dispatch)
 ├── cmd/
 │   ├── clawker/               # Main CLI binary
 │   ├── clawker-cp/            # Control plane daemon (PID 1 in CP container)
@@ -64,8 +65,8 @@ Reference map of the clawker repo. Lazy-loaded from root `CLAUDE.md`.
 │   └── workspace/             # Bind vs Snapshot strategies
 ├── pkg/whail/                 # Reusable Docker engine with label-based isolation
 ├── test/
+│   ├── adversarial/           # Adversarial C2 harness (Go server + SQLite, exposed via ngrok)
 │   ├── e2e/                   # E2E integration tests
 │   └── whail/                 # Whail BuildKit integration tests
-├── scripts/                   # install.sh, install-hooks.sh, check-claude-freshness.sh, etc.
-└── templates/                 # clawker.yaml scaffolding
+└── scripts/                   # install.sh, install-hooks.sh, check-claude-freshness.sh, etc.
 ```

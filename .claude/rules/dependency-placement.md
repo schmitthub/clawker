@@ -40,7 +40,7 @@ FIELD     (command imports package directly)
 
 | Package | Contains |
 |---------|----------|
-| `internal/cmdutil/` | Factory struct, output utilities, arg validators (lightweight, no docker import) |
+| `internal/cmdutil/` | Factory struct, output utilities, arg validators (imports `internal/docker` only for the `*docker.Client` closure type on `Factory`) |
 | `internal/bundler/` | Dockerfile generation, flavor selection, version management (leaf — no docker import) |
 | `internal/project/` | Project registration in user registry |
 | `internal/containerfs/` | Host Claude config preparation — tar archives for config volume (leaf — config types only, no docker runtime) |
@@ -48,4 +48,4 @@ FIELD     (command imports package directly)
 | `internal/controlplane/` | CP daemon core: startup orchestrator, Ory auth stack, AdminService composition, agent watcher |
 | `internal/controlplane/cpboot/` | Host-side CP lifecycle: `EnsureRunning`/`Stop`/`CPRunning`, `BuildCPContainerConfig`, `Manager` interface + `NewManager`, embedded clawker-cp + ebpf-manager binaries. Split from `internal/controlplane/` so `cmd/clawker-cp` can import the parent daemon package without dragging in `go:embed` directives for its own binary |
 | `internal/controlplane/firewall/` | Firewall `Handler` (13 RPCs), `Stack` (Envoy+CoreDNS lifecycle), Envoy+CoreDNS config generators, certificate management, rules store, network discovery, cgroup helpers |
-| `internal/controlplane/firewall/ebpf/` | eBPF loader + `Manager` (cgroup programs, pinned maps); break-glass `ebpf-manager` CLI under `cmd/` |
+| `internal/controlplane/firewall/ebpf/` | eBPF loader + `Manager` (cgroup programs, pinned maps); break-glass `ebpf-manager` CLI under `internal/controlplane/firewall/ebpf/cmd/` |

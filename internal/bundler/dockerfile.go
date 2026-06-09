@@ -63,7 +63,7 @@ const (
 	// DefaultGoBuilderImage is the Go toolchain image used for builder stages.
 	//
 	// Pinned to exact patch version + multi-arch manifest-list (OCI image
-	// index) SHA digest matching go.mod (go 1.25.10). The digest MUST be a
+	// index) SHA digest. The digest MUST be a
 	// manifest list so cross-platform builds can select the right per-arch
 	// manifest at pull time. Verify via:
 	//   docker buildx imagetools inspect golang:<version>-alpine

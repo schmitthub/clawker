@@ -39,7 +39,7 @@ func NewResizeHandler(resizeFunc func(height, width uint) error, getSize func() 
 (*ResizeHandler).TriggerResize() // Manual resize trigger (for +1/-1 trick)
 ```
 
-**Consumers**: `internal/docker/pty.go` (StreamWithResize), `internal/cmd/container/run`
+**Consumers**: `internal/docker/pty.go` (StreamWithResize), `internal/cmd/container/run`, `internal/cmd/container/attach`, `internal/cmd/container/exec`, `internal/cmd/container/start`
 
 ## Design
 

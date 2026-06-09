@@ -381,8 +381,10 @@ func TestCheckForUpdate_GoroutineChannelPattern(t *testing.T) {
 	dir := t.TempDir()
 	stateFile := filepath.Join(dir, "update-state.yaml")
 
-	// Simulate the exact pattern used in Main():
-	// cancellable context + unbuffered channel + blocking read
+	// Simulate the goroutine+channel pattern used in Main():
+	// goroutine sends once, blocking read receives the result.
+	// (Main uses a buffered(1) channel to prevent goroutine leak on early return;
+	// unbuffered is fine here because the test always reads.)
 	ch := make(chan *CheckResult)
 	go func() {
 		rel, _ := checkForUpdateWithURL(t, stateFile, "1.0.0", srv.URL)

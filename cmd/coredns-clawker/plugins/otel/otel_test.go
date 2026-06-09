@@ -366,11 +366,11 @@ func TestSetup_RejectsCorefileArgs(t *testing.T) {
 
 // TestEnsureSharedEmitter_EmptyEndpoint_NotCached pins the lifecycle
 // behavior of ensureSharedEmitter when CLAWKER_COREDNS_OTEL_ENDPOINT
-// is unset: returns noopEmitter but does NOT cache it. A subsequent
-// call (modeling a CoreDNS reload after firewall.Stack wired the env
-// var) must construct a real emitter rather than returning the
-// previously-built noop. Caching noop would latch the degraded state
-// until process exit.
+// is unset: returns noopEmitter but does NOT cache it. The env var is
+// set at container creation and cannot change via an in-process
+// CoreDNS reload, so not caching keeps the retry path open for
+// transient construction failures (e.g. cert read error on first
+// call) without permanently latching the degraded state.
 func TestEnsureSharedEmitter_EmptyEndpoint_NotCached(t *testing.T) {
 	// Reset shared cache state for hermetic test.
 	prev := sharedEmitter
@@ -386,6 +386,6 @@ func TestEnsureSharedEmitter_EmptyEndpoint_NotCached(t *testing.T) {
 		t.Fatalf("expected noopEmitter when endpoint unset, got %T", e1)
 	}
 	if sharedEmitter != nil {
-		t.Fatal("noopEmitter must NOT be cached — reload after env-var fix would be stuck on noop")
+		t.Fatal("noopEmitter must NOT be cached — a later construction attempt after a transient failure would be stuck on noop")
 	}
 }

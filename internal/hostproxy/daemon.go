@@ -221,7 +221,7 @@ func (d *Daemon) watchContainers(ctx context.Context) {
 }
 
 // countClawkerContainers returns the number of running agent containers.
-// Filters directly on purpose=agent — every managed container now has an
+// Filters directly on purpose=agent — every managed container has an
 // explicit purpose label ("agent", "monitoring", "firewall").
 func (d *Daemon) countClawkerContainers(ctx context.Context) (int, error) {
 	f := client.Filters{}

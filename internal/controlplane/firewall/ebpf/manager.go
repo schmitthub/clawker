@@ -338,7 +338,7 @@ func (m *Manager) cleanupStaleLinks() {
 }
 
 // cleanupLinks removes stale pinned links for a cgroup ID.
-// This ensures re-Enable() attaches fresh programs, not stale ones from a previous run.
+// This ensures re-Install() attaches fresh programs, not stale ones from a previous run.
 func (m *Manager) cleanupLinks(cgroupID uint64) {
 	// Close in-memory links if we have them.
 	if links, ok := m.links[cgroupID]; ok {
@@ -605,7 +605,7 @@ func (m *Manager) cgroupAttachments() []cgroupAttachment {
 func (m *Manager) Install(cgroupID uint64, cgroupPath string, cfg clawkerContainerConfig) error {
 	m.linksMu.Lock()
 	defer m.linksMu.Unlock()
-	// Clean up stale links from previous Enable() calls for this cgroup.
+	// Clean up stale links from previous Install() calls for this cgroup.
 	// Stale links keep old programs attached, causing silent misbehavior.
 	m.cleanupLinks(cgroupID)
 

@@ -357,13 +357,13 @@ Once the stack is up:
 
 - **OpenSearch Dashboards** — http://localhost:5601 — Discover view for log exploration
 - **Prometheus UI** — http://localhost:9090 — metrics + ad-hoc PromQL
-- **OpenSearch API** — http://localhost:9200 — REST access to the `claude-code` (Claude Code logs), `clawker-cli` (host CLI logs), `clawker-cp` (control-plane logs), `clawker-envoy` (firewall egress access logs), and `clawker-coredns` (firewall DNS query logs) indices
+- **OpenSearch API** — http://localhost:9200 — REST access to the `claude-code` (Claude Code logs), `clawker-cli` (host CLI logs), `clawker-cp` (control-plane logs), `clawker-envoy` (firewall egress access logs), `clawker-coredns` (firewall DNS query logs), and `clawker-ebpf-egress` (eBPF egress decisions) indices
 
 > **Preconfigured out-of-box.** Every `monitor up` runs a one-shot `clawker-opensearch-bootstrap` container that applies index templates (with explicit field mappings per source), ingest pipelines, a default 7-day ISM retention policy, a `clawker_prometheus` direct-query datasource, and a **`Clawker` analytics workspace** with index patterns + example visualizations imported. `otel-collector` and `prometheus` don't start until bootstrap exits cleanly.
 >
 > **Get into the workspace:** from the OSD splash / welcome screen click **Clawker** under the **Analytics** panel on the far right. **See logs or metrics:** in the workspace UI's left navbar, under **Explore**, click **Logs** or **Metrics**.
 >
-> Robust pre-made dashboards are planned. For now, build your own from the index patterns and the Prometheus datasource — an example dashboard + KPI visualizations ship under the workspace's **Dashboards** view for inspiration or direct use.
+> Three dashboards ship preinstalled under the workspace's **Dashboards** view: **Claude Code Cost & Usage** (sessions, cost, token counters), **Claude Code Activity** (tool usage, code edits, hooks, MCP, plugins), and **Clawker Networking** (Envoy access logs, CoreDNS query log, eBPF egress decisions). Build additional dashboards off the index patterns and Prometheus datasource as needed.
 
 ## Roadmap / Known Issues
 

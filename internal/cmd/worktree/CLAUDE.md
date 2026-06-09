@@ -64,14 +64,14 @@ Lists all git worktrees for the current project.
 
 ```go
 type ListOptions struct {
-    IOStreams  *iostreams.IOStreams
-    GitManager func() (*git.GitManager, error)
+    IOStreams      *iostreams.IOStreams
     ProjectManager func() (project.ProjectManager, error)
-    Quiet      bool
+    All   bool
+    Quiet bool
 }
 ```
 
-**Output columns:** Branch, Path, HEAD, Modified, Status
+**Output columns:** Branch, Path, HEAD, Modified, Status (when `--all`: PROJECT prepended)
 
 **Status values:**
 
@@ -83,6 +83,7 @@ type ListOptions struct {
 
 **Flags:**
 
+- `--all` / `-a` — List worktrees across all registered projects
 - `--quiet` / `-q` — Suppress headers, show branch names only
 
 **Prune Warning:** When stale entries are detected, shows a warning suggesting `clawker worktree prune`.
@@ -119,10 +120,8 @@ Removes git worktrees by branch name.
 
 ```go
 type RemoveOptions struct {
-    IOStreams    *iostreams.IOStreams
-    GitManager   func() (*git.GitManager, error)
+    IOStreams      *iostreams.IOStreams
     ProjectManager func() (project.ProjectManager, error)
-    Prompter     func() *prompter.Prompter
     Force        bool
     DeleteBranch bool
     Branches     []string
@@ -132,20 +131,18 @@ type RemoveOptions struct {
 **Flags:**
 
 - `--force` — Remove even with uncommitted changes
-- `--delete-branch` — Also delete the git branch after removing worktree (uses `GitManager.DeleteBranch`)
+- `--delete-branch` — Also delete the git branch after removing worktree
 
 **Safety checks:**
 
 - Verifies worktree has no uncommitted changes (unless `--force`)
 - If status cannot be verified, requires `--force`
-- `--delete-branch` refuses to delete branches with unmerged commits (like `git branch -d`): prints warning and suggests `git branch -D` for force deletion. The worktree is still removed successfully.
-- `--delete-branch` refuses to delete the currently checked-out branch (`git.ErrIsCurrentBranch`)
-- If branch ref doesn't exist when `--delete-branch` is used, silently succeeds (branch already gone)
+- `--delete-branch` shows a warning and suggests `git branch -D` when branch has unmerged commits (`git.ErrBranchNotMerged`); the worktree is still removed successfully
 - Batch operation: processes multiple branches, reports all errors at end
 
 **Internal helpers:**
 
-- `handleBranchDelete(ios, gitMgr, branch)` — Extracted helper for branch deletion with user-friendly error reporting. Tested directly with `gittest.InMemoryGitManager` (doesn't require worktree filesystem operations).
+- `removeSingleWorktree(ctx, opts, proj, branch)` — per-branch orchestration; handles `ErrBranchNotMerged` with user-friendly warning
 
 ## Command Patterns
 
@@ -153,26 +150,26 @@ Commands use Factory function references (not direct Factory access):
 
 ```go
 opts := &ListOptions{
-    IOStreams:  f.IOStreams,
-    GitManager: f.GitManager,
+    IOStreams:      f.IOStreams,
     ProjectManager: f.ProjectManager,
 }
 ```
 
 ## Dependencies
 
-- `f.GitManager()` — Access to git operations via `internal/git.GitManager`
 - `f.ProjectManager()` — Project-layer manager built from `config.Config`
 
 ## Testing
 
-Tests use the Cobra+Factory pattern without Docker (worktree commands only interact with git/filesystem).
+Tests use the Cobra+Factory pattern without Docker (worktree commands only interact with git/filesystem). Tests construct `&cmdutil.Factory{}` literals directly and inject `project/mocks.NewMockProjectManager()` via `runF` or via the `ProjectManager` func field.
 
 ```go
-// testFactory helper creates Factory with faked GitManager and Config
-f, ios := testFactory(t, gitMgr, cfg)
-cmd := NewCmdList(f, nil)
-cmd.SetArgs([]string{})
+f := &cmdutil.Factory{IOStreams: ios}
+cmd := NewCmdRemove(f, func(_ context.Context, opts *RemoveOptions) error {
+    // assertions on opts
+    return nil
+})
+cmd.SetArgs([]string{"--force", "feat-a"})
 err := cmd.Execute()
 ```
 

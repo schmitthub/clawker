@@ -39,6 +39,15 @@ import (
 //	tls/
 //	  server.pem         ← server cert signed by CLI CA (bind-mounted into CP)
 //	  server.key         ← server private key (bind-mounted into CP)
+//	otel/
+//	  server.pem         ← OTel collector server cert (bind-mounted into collector)
+//	  server.key         ← OTel collector server key (0644, readable by collector uid)
+//	cp/
+//	  client.pem         ← CP outbound mTLS client cert (bind-mounted into CP)
+//	  client.key         ← CP outbound mTLS client key (0600, bind-mounted into CP)
+//	infra-ca/
+//	  infra-ca.pem       ← infra intermediate CA cert (bind-mounted into CP)
+//	  infra-ca.key       ← infra intermediate CA key (0600, bind-mounted into CP)
 
 // EnsureAuthMaterial checks for existing auth material and creates any
 // that is missing. Idempotent — safe to call on every CLI invocation.
@@ -49,6 +58,9 @@ import (
 //  2. ES256 signing keypair — for private_key_jwt auth with Hydra
 //  3. Server cert — signed by the CLI CA, bind-mounted into CP
 //  4. Client cert — signed by the CLI CA, used for mTLS to AdminService
+//  5. OTel server cert — for the monitoring collector's CP-only OTLP receiver
+//  6. CP client cert — CP's outbound mTLS identity for OTLP push and Session dials
+//  7. Infra intermediate CA — signed by the CLI CA, CP mints short-lived infra leaves from it
 func EnsureAuthMaterial() error {
 	if err := consts.EnsureAuthDirs(); err != nil {
 		return fmt.Errorf("ensure auth dirs: %w", err)

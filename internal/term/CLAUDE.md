@@ -21,7 +21,7 @@ The cascade: `term.FromEnv()` → `iostreams.System()` → `factory.ioStreams()`
 | `term.go` | `Term` — terminal capability detection (TTY, color, width, size) |
 | `raw.go` | `RawMode` — low-level termios control, TTY detection, terminal size |
 | `console.go` | Platform-specific: `enableVirtualTerminalProcessing(*os.File) error`, `openTTY() (*os.File, error)` |
-| `mocks/stubs.go` | `FakeTerm` — 7-method stub satisfying `iostreams.term` interface |
+| `mocks/stubs.go` | `FakeTerm` — 6-method stub satisfying `iostreams.term` interface |
 
 ## Term (Terminal Capabilities)
 
@@ -48,7 +48,6 @@ func FromEnv() Term  // Read capabilities from real system environment (value re
 (*Term).IsColorEnabled() bool       // basic color support
 (*Term).Is256ColorSupported() bool  // 256 color support
 (*Term).IsTrueColorSupported() bool // 24-bit true color support
-(*Term).Width() int                 // detected terminal width in columns
 (Term).Size() (int, int, error)     // terminal size with /dev/tty fallback and widthPercent scaling; returns -1 on error
 ```
 
@@ -58,7 +57,7 @@ func FromEnv() Term  // Read capabilities from real system environment (value re
 - **Color Disabled**: `IsColorDisabled()` — `NO_COLOR != ""` or `CLICOLOR == "0"` blocks color
 - **Basic color**: `IsColorForced() || (!IsColorDisabled() && stdoutIsTTY)`
 - **Virtual terminal**: `enableVirtualTerminalProcessing(os.Stdout)` — Windows VT100 support detection (no-op on Unix)
-- **256 color**: Virtual terminal OR `TERM` contains `256color` OR `COLORTERM` contains `256color` OR truecolor
+- **256 color**: Virtual terminal OR `TERM` contains `"256"` OR `COLORTERM` contains `"256"` OR truecolor
 - **TrueColor**: Virtual terminal OR `TERM`/`COLORTERM` contains `truecolor` or `24bit`
 
 ## RawMode
@@ -102,7 +101,7 @@ func GetTerminalSize(fd int) (width, height int, err error)    // wraps x/term.G
 ## Test Infrastructure
 
 - `term_test.go` — unit tests for Term struct and FromEnv()
-- `mocks/stubs.go` — `FakeTerm` struct satisfying the `iostreams.term` interface (7 methods: `IsTTY`, `IsColorEnabled`, `Is256ColorSupported`, `IsTrueColorSupported`, `Theme`, `Size`, `Width`). All return false/empty/80. Used by `iostreams.Test()`.
+- `mocks/stubs.go` — `FakeTerm` struct satisfying the `iostreams.term` interface (6 methods: `IsTTY`, `IsColorEnabled`, `Is256ColorSupported`, `IsTrueColorSupported`, `Theme`, `Size`). All return false/empty/zero; `Size()` returns `(80, -1, nil)`. Used by `iostreams.Test()`.
 
 ## Import Boundary (Critical)
 

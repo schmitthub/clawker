@@ -86,10 +86,10 @@ type CPContainerConfig struct {
 	// ExtraHosts adds /etc/hosts entries inside the CP container.
 	// Used to map host.docker.internal → host-gateway so the daemon
 	// can reach host-loopback-bound services (currently the OTEL
-	// collector OTLP HTTP receiver). Agent containers cannot reach the
-	// same address because the BPF firewall redirects gateway traffic
-	// for non-hostproxy ports to Envoy; the CP is exempt because it
-	// owns container_map and is never enrolled.
+	// collector OTLP/gRPC receiver on OtelInfraPort). Agent containers
+	// cannot reach the same address because the BPF firewall redirects
+	// gateway traffic for non-hostproxy ports to Envoy; the CP is
+	// exempt because it owns container_map and is never enrolled.
 	ExtraHosts []string
 }
 
@@ -329,7 +329,7 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 			consts.EnvHostStateDir + "=" + opts.HostDirs.State,
 			consts.EnvHostCacheDir + "=" + opts.HostDirs.Cache,
 			// Plumb host UID/GID into the CP container so userStage can drop
-			// to the same UID baked into the agent image. See consts.HostUID().
+			// to the same UID baked into the agent image. See consts.ContainerUID().
 			consts.EnvHostUID + "=" + strconv.Itoa(consts.ContainerUID()),
 			consts.EnvHostGID + "=" + strconv.Itoa(consts.ContainerGID()),
 		}, otelLogsEnv(cfg)...),

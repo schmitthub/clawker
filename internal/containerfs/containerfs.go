@@ -1,6 +1,6 @@
 // Package containerfs prepares host Claude Code configuration for container injection.
 //
-// This is a leaf package: it imports internal/keyring, internal/logger, and stdlib only.
+// This is a leaf package: it imports internal/config, internal/keyring, internal/logger, and stdlib only.
 // No docker imports allowed.
 package containerfs
 
@@ -400,8 +400,6 @@ func stagePlugins(log *logger.Logger, hostDir, stagingDir, containerHomeDir, con
 	return nil
 }
 
-// rewriteJSONPaths recursively walks a JSON value and rewrites matching keys
-// string values that start with hostPrefix with containerPrefix.
 // pathRewriteRule describes a JSON key whose string value should be rewritten.
 type pathRewriteRule struct {
 	key           string // JSON key to match

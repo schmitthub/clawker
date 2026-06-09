@@ -48,8 +48,10 @@ All constructors take a `*logger.Logger` — pass `logger.Nop()` in tests.
 
 ```go
 type SetupMountsConfig struct {
+    Log            *logger.Logger // Logger for diagnostic file logging
     ModeOverride   string        // CLI flag value (empty = use config default)
     Cfg            config.Config // Config interface (provides project schema, ignore file, share dir)
+    ProjectName    string        // Resolved project name for volume naming (empty when no project registered)
     AgentName      string
     WorkDir        string        // Host working directory (empty = os.Getwd() fallback)
     ProjectRootDir string        // Main repo root for worktree .git mounting (empty for non-worktree)

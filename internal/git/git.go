@@ -216,9 +216,9 @@ func (g *GitManager) SetupWorktree(dirs WorktreeDirProvider, branch, base string
 	}
 
 	// 6. Create git worktree
-	// Use directory basename as worktree name (already slugified by GetOrCreateWorktreeDir).
+	// Use directory basename as worktree name (filesystem-safe path returned by GetOrCreateWorktreeDir).
 	// Branch names like "a/foo" have slashes that go-git rejects in worktree names,
-	// but the path basename "a-foo" is safe. This matches native git behavior.
+	// but the directory basename contains no slashes. This matches native git behavior.
 	if branchExists {
 		// Branch exists - check it out without creating a new one
 		if err := wt.AddWithExistingBranch(wtPath, wtName, branchRef); err != nil {
@@ -267,7 +267,7 @@ func (g *GitManager) RemoveWorktree(dirs WorktreeDirProvider, branch string) err
 		return fmt.Errorf("initializing worktree manager: %w", err)
 	}
 	// Use directory basename as worktree name (matches SetupWorktree behavior).
-	// The worktree was created with the slugified name, not the branch name.
+	// The worktree was registered with the directory basename, not the branch name.
 	wtName := filepath.Base(wtPath)
 	if err := wt.Remove(wtName); err != nil {
 		return fmt.Errorf("removing git worktree: %w", err)

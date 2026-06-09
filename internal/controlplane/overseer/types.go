@@ -41,14 +41,12 @@ type Event interface {
 
 // Options configures an Overseer. Zero values are valid.
 type Options struct {
-	// PublishBufferSize bounds the bus's input queue. Defaults to 2048,
-	// matching the informer's WriteQueueSize. A full queue blocks
-	// Publish callers (back-pressure to producers).
+	// PublishBufferSize bounds the bus's input queue. Defaults to 2048.
+	// A full queue blocks Publish callers (back-pressure to producers).
 	PublishBufferSize int
 	// SubscriberBuffer bounds each subscriber's typed channel. Defaults
-	// to 256, matching the informer's SubscriberBuffer. Full buffer →
-	// drop-oldest, increment DroppedTotal. Overseer never blocks on a
-	// slow consumer.
+	// to 256. Full buffer → drop-oldest, increment DroppedTotal.
+	// Overseer never blocks on a slow consumer.
 	SubscriberBuffer int
 	// Logger receives audit lines (every dropped delivery, every close).
 	// Nil defaults to logger.Nop().

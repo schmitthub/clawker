@@ -8,8 +8,8 @@ Remove stale worktree entries from the registry
 
 ### Synopsis
 
-Removes worktree entries from the project registry when both the worktree
-directory and git metadata no longer exist.
+Removes worktree entries from the project registry when the worktree
+directory, git metadata, or branch no longer exists.
 
 This can happen when:
 - Native 'git worktree remove' was used (bypasses clawker registry)

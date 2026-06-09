@@ -32,7 +32,7 @@ Project commands (`internal/cmd/project/*`) are the primary user interface for w
 ### Constructor
 
 ```go
-func NewProjectManager(cfg config.Config, gitFactory GitManagerFactory) ProjectManager
+func NewProjectManager(cfg config.Config, log *logger.Logger, gitFactory GitManagerFactory) (ProjectManager, error)
 ```
 
 `GitManagerFactory` is `func(projectRoot string) (*git.GitManager, error)`. Pass `nil` for production default (`git.NewGitManager`).
@@ -151,7 +151,7 @@ Flat UUID-based naming under `cfg.WorktreesSubdir()`: `<repoName>-<projectName>-
 ### Public Helper
 
 ```go
-func NewWorktreeDirProvider(cfg config.Config, projectRoot string) git.WorktreeDirProvider
+func NewWorktreeDirProvider(log *logger.Logger, cfg config.Config, projectRoot string) git.WorktreeDirProvider
 ```
 
 For external callers needing a `WorktreeDirProvider` without the full project service.
@@ -166,8 +166,8 @@ Import as `projectmocks "github.com/schmitthub/clawker/internal/project/mocks"`.
 
 - `NewMockProjectManager()` — panic-safe `*ProjectManagerMock` with no-op defaults.
 - `NewMockProject(name, repoPath)` — `*ProjectMock` with read accessors and no-op mutations.
-- `NewTestProjectManager(t, gitFactory)` — real `ProjectManager` backed by `configmocks.NewIsolatedTestConfig(t)`.
+- `NewTestProjectManager(t, gitFactory)` — real `ProjectManager` backed by `testenv.New(t, testenv.WithProjectManager(gitFactory))`.
 
 ## Dependencies
 
-`internal/config`, `internal/git`, `internal/text`, `github.com/google/uuid`
+`internal/config`, `internal/git`, `internal/logger`, `internal/storage`, `internal/text`, `github.com/google/uuid`

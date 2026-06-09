@@ -1,7 +1,7 @@
 // Command coredns-clawker is a custom CoreDNS build embedding two in-tree
 // plugins: dnsbpf and otel.
 //
-// dnsbpf intercepts DNS responses and writes IP -> {domain_hash, TTL}
+// dnsbpf intercepts DNS responses and writes IP -> {domain_hash, expire_ts}
 // entries to the eBPF dns_cache map, enabling real-time BPF-based routing
 // decisions without stale seed data.
 //

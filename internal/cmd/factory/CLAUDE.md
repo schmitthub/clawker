@@ -5,15 +5,15 @@ real dependency implementations. Called exactly once at the CLI entry point.
 
 ## Domain: Clawker-Specific Configuration
 
-**Responsibility**: Apply clawker-specific environment configuration on top of standard terminal behavior.
+**Responsibility**: Wire IOStreams from the standard terminal layer; does not override terminal env vars.
 
-The factory `ioStreams()` helper calls `iostreams.System()` then applies clawker-specific config. It does NOT handle standard terminal env vars — those belong in lower layers.
+The factory `ioStreams()` helper calls `iostreams.System()` and returns the result unchanged. It does NOT handle standard terminal env vars — those belong in lower layers.
 
 | Layer | Package | Responsibility | Env Vars |
 |-------|---------|----------------|----------|
 | Capabilities | `term` | What the terminal supports | `TERM`, `COLORTERM`, `NO_COLOR` |
 | Behavior | `iostreams` | Terminal UX (theme, progress, paging) | `CLAWKER_PAGER`, `PAGER` |
-| **App Config** | `factory` | Clawker-specific preferences | `CLAWKER_SPINNER_DISABLED` |
+| **App Config** | `factory` | Clawker-specific wiring | (none currently) |
 
 The cascade: `term.FromEnv()` → `iostreams.System()` → `factory.ioStreams()`
 
@@ -40,37 +40,33 @@ f := &cmdutil.Factory{IOStreams: tio, TUI: tui.NewTUI(tio), Version: "1.0.0"}
 ## Extracted Helper Pattern
 
 `New()` delegates to extracted helper functions for each Factory field:
-- `ioStreams(f)` -- creates IOStreams + initializes logger (eager, needs `f.Config()` for settings)
-- `tui.NewTUI(ios)` -- creates TUI struct bound to IOStreams (eager, inline in `New()`)
+- `ioStreams()` -- creates IOStreams via `iostreams.System()` (eager, no Config dependency)
+- `tuiFunc(f)` -- creates TUI struct bound to IOStreams (eager, separate helper in `default.go`)
 - `clientFunc(f)` -- returns lazy Docker client constructor; closes over `f.Config()` to pass `*config.Config` to `docker.NewClient`
-- `configFunc()` -- returns lazy `config.Provider` gateway constructor (the `Config` implementation uses `os.Getwd()` internally and lazy-loads project, settings, registry via `sync.Once`)
-- `gitManagerFunc(f)` -- returns lazy git manager constructor; uses project root from `f.Config().ProjectCfg().RootDir()`
-- `hostProxyFunc()` -- returns lazy host proxy manager constructor
+- `configFunc()` -- returns lazy `config.Config` gateway constructor (uses `os.Getwd()` internally; lazy-loads project, settings, registry)
+- `gitManagerFunc(f)` -- returns lazy git manager constructor; uses project root from `cfg.GetProjectRoot()`
+- `hostProxyFunc(f)` -- returns lazy host proxy manager constructor
 - `adminClientFunc(f)` -- returns a lazy `adminv1.AdminServiceClient` constructor; closes over `f.Config()` only. Pure dial — does NOT bootstrap the CP (CP lifecycle lives in `controlPlaneFunc` / `cpboot.Manager`; CP is brought up by agent-container start flows and the explicit `clawker controlplane up` / `clawker firewall up` verbs). Reads `cp.AdminPort` / `cp.HydraPublicPort` from settings and calls `adminclient.Dial(ctx, adminPort, hydraPort, grpc.WithKeepaliveParams(...))` with mTLS + OAuth2 JWT; subsequent calls return the cached `grpc.ClientConn` unless it has entered `TransientFailure`/`Shutdown`, in which case the closure closes the conn and rebuilds. Admin commands invoked when the CP is down fail fast. No test seams — callers substitute via `AdminServiceClient` mocks at the Factory level (`cpmocks.AdminServiceClientMock`). No raw moby client.
 - `controlPlaneFunc(f)` -- returns a `sync.Once`-cached `func() cpboot.Manager` that constructs a single `cpboot.NewManager(f.Client, f.Config, f.Logger)` per Factory. The `Manager` holds lazy Factory closures, not eagerly resolved Docker/Config/Logger values, so a caller that never touches the CP never resolves them. Consumed by the break-glass verbs in `internal/cmd/controlplane/` and intended for any future caller that needs to drive the CP lifecycle without hitting the AdminService.
-- `socketBridgeFunc()` -- returns lazy `socketbridge.SocketBridgeManager` constructor (wraps `socketbridge.NewManager()`)
-- `prompterFunc(ios)` -- returns lazy prompter constructor
+- `socketBridgeFunc(f)` -- returns lazy `socketbridge.SocketBridgeManager` constructor (wraps `socketbridge.NewManager()`)
+- `prompterFunc(f)` -- returns lazy prompter constructor
+- `projectManagerFunc(f)` -- returns lazy `project.ProjectManager` constructor; depends on Config and Logger
+- `httpClientFunc()` -- returns lazy `*http.Client` with 30s timeout; used for npm registry lookups (Claude Code version resolution)
 
 Each helper is a standalone function in `default.go`, making the wiring easy to read and test.
 
 All closures use `sync.Once` for lazy single-initialization within the `config.Config` gateway or within the helper closures themselves.
 
-**Dependency ordering in `New()`**: Config is constructed first, then `ioStreams(f)` (needs `f.Config().Settings` for logger init), then IOStreams-dependent fields (TUI, Prompter).
+**Dependency ordering in `New()`**: Config is constructed first, then `loggerLazy(f)` (needs `f.Config()` for settings), then `ioStreams()` (no Config dependency), then IOStreams-dependent fields (TUI, Prompter).
 
 ## Logger Initialization
 
-Logger initialization happens inside `ioStreams(f)`:
-1. Reads `f.Config().UserSettings()` (Viper already resolved ENV > config > defaults)
-2. Calls `logger.NewLogger()` with file config (rotation, compression) and optional OTEL config
-3. Logger is a separate Factory lazy noun (`f.Logger`), not part of IOStreams
-4. Falls back to `logger.Init()` (nop) if `LogsDir()` fails
-
-Previously, logger init lived in `root.go`'s `initializeLogger()` — now consolidated into the factory.
+Logger initialization happens inside `loggerLazy(f)` (separate from `ioStreams()`):
+1. Reads `cfg.SettingsStore().Read().Logging` for file/OTEL config
+2. Calls `logger.New(opts)` with file config (rotation, compression) and optional OTEL config
+3. Returns `logger.Nop()` if file logging is explicitly disabled via settings
+4. Logger is a separate Factory lazy noun (`f.Logger`), not part of IOStreams
 
 ## Environment Variables
 
-| Variable | Effect |
-|----------|--------|
-| `CLAWKER_SPINNER_DISABLED` | Static text instead of animated spinner |
-
-Note: Standard terminal env vars (`TERM`, `COLORTERM`, `NO_COLOR`) are handled by `term.FromEnv()`. Factory handles only clawker-specific config.
+Standard terminal env vars (`TERM`, `COLORTERM`, `NO_COLOR`) are handled by `term.FromEnv()`. The factory itself reads no additional env vars; clawker-specific runtime behavior (e.g. spinner mode) is controlled programmatically via `IOStreams` setters or settings.

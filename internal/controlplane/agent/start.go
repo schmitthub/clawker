@@ -49,7 +49,10 @@ type StartDeps struct {
 //     against `docker rm`s that landed while CP was down.
 //  2. Subscribe to dockerevents.DockerEvent for the evict path —
 //     filter on container/destroy; consumer evicts the registry row.
-//  3. Subscribe to dockerevents.DockerEvent for the dial path —
+//  3. Subscribe to dockerevents.DockerEvent for the session-cancel path —
+//     filter on container/{die,stop,kill,oom,destroy}; consumer calls
+//     dialer.CancelDial so the in-flight Session tears down immediately.
+//  4. Subscribe to dockerevents.DockerEvent for the dial path —
 //     filter on container/start|restart|unpause with purpose=agent;
 //     consumer calls dialer.DialAgent.
 //

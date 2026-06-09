@@ -15,7 +15,6 @@ type projectRegistry struct {
 }
 
 // newRegistryStore creates a new storage.Store for the project registry.
-// Called once during ProjectManager construction.
 func newRegistryStore() (*storage.Store[config.ProjectRegistry], error) {
 	return storage.NewStore[config.ProjectRegistry](
 		storage.WithFilenames("registry.yaml"),

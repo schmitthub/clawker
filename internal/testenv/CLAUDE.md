@@ -25,8 +25,9 @@ func New(t *testing.T, opts ...Option) *Env
 
 1. Creates temp directory (symlink-resolved for macOS `/var` → `/private/var`)
 2. Creates four XDG subdirs: `config/`, `data/`, `state/`, `cache/`
-3. Sets `CLAWKER_CONFIG_DIR`, `CLAWKER_DATA_DIR`, `CLAWKER_STATE_DIR`, `CLAWKER_CACHE_DIR` (restored on cleanup via `t.Setenv`)
-4. Applies options in order
+3. Sets `HOME` to the temp base and creates `~/.claude/` (so container init finds host config dir)
+4. Sets `CLAWKER_CONFIG_DIR`, `CLAWKER_DATA_DIR`, `CLAWKER_STATE_DIR`, `CLAWKER_CACHE_DIR` (restored on cleanup via `t.Setenv`)
+5. Applies options in order
 
 ## Options
 
@@ -74,7 +75,9 @@ pm := env.ProjectManager()
 pm.Register(ctx, "myapp", "/path/to/repo")
 
 // With git manager for worktree tests
-env := testenv.New(t, testenv.WithProjectManager(gittest.NewInMemoryFactory()))
+inMemGit := gittest.NewInMemoryGitManager(t, repoRoot)
+factory := func(_ string) (*git.GitManager, error) { return inMemGit.GitManager, nil }
+env := testenv.New(t, testenv.WithProjectManager(factory))
 ```
 
 ## Delegation Pattern

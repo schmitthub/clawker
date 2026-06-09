@@ -159,7 +159,8 @@ func execRun(ctx context.Context, opts *ExecOptions) error {
 	}
 
 	// Setup git credential forwarding for exec sessions
-	// This enables GPG signing and git credential helpers in exec'd commands
+	// This enables HTTPS credential helpers in exec'd commands.
+	// SSH and GPG forwarding are via the socketbridge (set up at container start, not per-exec).
 	cfg, err := opts.Config()
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
@@ -180,7 +181,7 @@ func execRun(ctx context.Context, opts *ExecOptions) error {
 		}
 	}
 
-	// Setup git credentials (includes GPG forwarding env vars)
+	// Setup git credentials (HTTPS env var + git config mount)
 	if p != nil {
 		gitSetup := workspace.SetupGitCredentials(p.Security.GitCredentials, hostProxyRunning, log)
 		opts.Env = append(opts.Env, gitSetup.Env...)

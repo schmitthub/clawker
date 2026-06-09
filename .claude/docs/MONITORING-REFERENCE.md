@@ -128,7 +128,7 @@ Logged once per BPF egress decision (per-cgroup rate-limited by `ratelimit_state
 | `bpf_ts_ns` | int64 | `Event.BPFTsNs` (raw `bpf_ktime_get_ns`) |
 | `dst_ip` | string | `Event.DstIP.String()`. **Omitted** when `!Event.DstIP.IsValid()` (sock_create with `no_dst=true`; defensive guard against an unset address). |
 | `dst_port` | string | `strconv.FormatUint(uint64(Event.DstPort), 10)` — opaque port identifier; emitted as string for the same reason as `cgroup_id` (keyword dimension, not metric). OSD formats numeric fields with thousands separators ("4,318") which is wrong for an ID-shaped axis. **Omitted** when `Event.NoDst` is true (sock_create has no destination port). |
-| `l4_proto` | string | `SOCK_STREAM` / `SOCK_DGRAM` / `SOCK_RAW` name |
+| `l4_proto` | string | `stream` / `dgram` / `raw` (kernel SOCK_* type decoded by `l4ProtoString`) |
 | `l4_proto_code` | int | raw SOCK code (resilient to renames) |
 | `ipv6` | bool | native IPv6 |
 | `ipv4_mapped` | bool | `::ffff:x.x.x.x` |

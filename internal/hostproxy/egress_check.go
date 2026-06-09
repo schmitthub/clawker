@@ -42,7 +42,7 @@ type egressRulesFile struct {
 
 // CheckURLAgainstEgressRules checks whether targetURL is permitted by the egress
 // rules in rulesFilePath. Returns nil if allowed, an error describing the block
-// reason otherwise. The rules file is read on every call (no caching) with a
+// reason otherwise. The rules file is read on every call (no caching).
 // The firewall daemon writes atomically (temp+fsync+rename), so no locking needed.
 func CheckURLAgainstEgressRules(targetURL, rulesFilePath string) error {
 	parsed, err := url.Parse(targetURL)

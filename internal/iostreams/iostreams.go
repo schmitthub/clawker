@@ -250,7 +250,7 @@ func (s *IOStreams) IsStderrTTY() bool {
 // ColorEnabled returns whether color output is enabled.
 // Returns true if:
 // - Explicitly enabled via SetColorEnabled(true)
-// - Auto-detect mode and stdout is a TTY
+// - Auto-detect mode and the terminal reports color is enabled (e.g., stdout is a TTY, or CLICOLOR_FORCE is set)
 func (s *IOStreams) ColorEnabled() bool {
 	if s.colorOverride {
 		return s.colorEnabled
@@ -498,7 +498,7 @@ func (w *fdWriter) Fd() uintptr {
 	return w.fd
 }
 
-// fdWriteCloser represents a wrapped stdout Writer that preserves the original file descriptor
+// fdWriteCloser represents a WriteCloser that preserves the original file descriptor
 type fdWriteCloser struct {
 	io.WriteCloser
 	fd uintptr

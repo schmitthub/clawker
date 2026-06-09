@@ -15,8 +15,8 @@ Cobra commands for the `clawker firewall` command group. Manages the Envoy+CoreD
 | `remove.go` | `firewall remove <domain>` — remove a domain from the allow list |
 | `reload.go` | `firewall reload` — force-reload Envoy/CoreDNS config from rule state |
 | `refresh.go` | `firewall refresh` — re-read the current project's `clawker.yaml` and sync its egress rules into the store (live apply of yaml edits) |
-| `enable.go` | `firewall enable` — re-attach eBPF programs for a container |
-| `disable.go` | `firewall disable` — detach eBPF programs + restore direct DNS for a container |
+| `enable.go` | `firewall enable` — re-enroll a container in per-container routing (idempotent; use after `disable`) |
+| `disable.go` | `firewall disable` — remove container from per-container routing (eBPF programs remain attached; fast-path exits to bypass on lookup miss) |
 | `bypass.go` | `firewall bypass <duration>` — temporary unrestricted egress for a container |
 | `rotate_ca.go` | `firewall rotate-ca` — regenerate CA keypair and domain certs |
 
@@ -43,7 +43,7 @@ Every run function now speaks typed gRPC via `f.AdminClient(ctx)` — no in-proc
 | `bypass` | `NewCmdBypass(f, runF)` | `<duration>` (required unless `--stop`) | `--agent` (required), `--stop`, `--non-interactive` | `FirewallBypass` (+ `FirewallEnable` for Ctrl+C/`--stop`) |
 | `rotate-ca` | `NewCmdRotateCA(f, runF)` | none | none | `FirewallRotateCA` |
 
-The hidden `serve` subcommand (pre-B2 daemon entrypoint) is deleted — the firewall has no host-side daemon; lifecycle is owned by the CP container.
+The hidden `serve` subcommand is intentionally absent — the firewall has no host-side daemon; lifecycle is owned by the CP container.
 
 ## Options Pattern
 

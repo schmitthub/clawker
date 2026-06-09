@@ -299,7 +299,6 @@ func GenMarkdownWebsite(cmd *cobra.Command, w io.Writer, linkHandler func(string
 
 // EscapeMDXProse wraps bare <word> angle-bracket placeholders in backticks
 // so MDX parsers treat them as inline code rather than JSX tags.
-// Text already inside backticks is left unchanged.
 func EscapeMDXProse(s string) string {
 	return angleBracketRe.ReplaceAllString(s, "`<$1>`")
 }

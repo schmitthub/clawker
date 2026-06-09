@@ -6,7 +6,7 @@ icon: "binoculars"
 
 When the firewall is enabled, clawker's control plane runs **netlogger** — a userspace pipeline that drains an eBPF ringbuf populated by the cgroup/connect/sendmsg/sock_create programs and emits one OTLP log record per egress decision. Every connect, sendmsg, and socket-create call from a managed agent container produces a record carrying the kernel's verdict (`allowed` / `denied` / `bypassed`), the container's attribution (`agent`, `project`, `container_id`), the destination 4-tuple, and the resolved domain when DNS context is available.
 
-The headline use is **bypass-mode forensic coverage**. The firewall's bypass switch (`clawker firewall bypass <duration> --agent <name>`) intentionally short-circuits enforcement so the operator can perform supervised exploration without rule churn. Before netlogger, bypassed traffic flowed without leaving an enforcement record — the so-called "forensic black hole" of bypass mode. netlogger emits a `verdict=bypassed` record at the same decision points that would have emitted `allowed`/`denied`, so an audit trail exists for every bypass window without changing enforcement semantics.
+The headline use is **bypass-mode forensic coverage**. The firewall's bypass switch (`clawker firewall bypass <duration> --agent <name>`) intentionally short-circuits enforcement so the operator can perform supervised exploration without rule churn. Before netlogger, bypassed traffic flowed without leaving an enforcement record — the so-called "forensic black hole" of bypass mode. netlogger emits an `action=bypassed` record at the same decision points that would have emitted `allowed`/`denied`, so an audit trail exists for every bypass window without changing enforcement semantics.
 
 ## Record Shape
 
@@ -21,7 +21,7 @@ Attributes carried on each record (most are unconditional — empty strings and 
 
 | Attribute | Type | Description |
 |-----------|------|-------------|
-| `verdict` | keyword | `allowed`, `denied`, or `bypassed` |
+| `action` | keyword | `allowed`, `denied`, or `bypassed` |
 | `container_id` | keyword | Docker container ID (empty if cgroup_id not yet in label cache) |
 | `agent` | keyword | `dev.clawker.agent` label (empty if cache miss) |
 | `project` | keyword | `dev.clawker.project` label (empty for global-scope agents or cache miss) |
@@ -74,7 +74,7 @@ The index is preconfigured by the `clawker-opensearch-bootstrap` one-shot servic
 
 **Not in this stream.** netlogger records the **decision** — the moment the kernel approved, denied, or bypassed an outbound connection. Byte counts and durations belong to the L7 proxy lifecycle, not the decision point.
 
-For `verdict=allowed` records, the matching Envoy access log carries `bytes_sent`, `bytes_received`, `duration_ms`. Operators pivot from a netlogger record to the corresponding Envoy record by 5-tuple at query time. For `verdict=denied` records there are no bytes to record — no traffic flowed. For `verdict=bypassed` records, only the netlogger record exists — Envoy and CoreDNS enforcement are skipped under bypass by design.
+For `action=allowed` records, the matching Envoy access log carries `bytes_sent`, `bytes_received`, `duration_ms`. Operators pivot from a netlogger record to the corresponding Envoy record by 5-tuple at query time. For `action=denied` records there are no bytes to record — no traffic flowed. For `action=bypassed` records, only the netlogger record exists — Envoy and CoreDNS enforcement are skipped under bypass by design.
 
 Sock_ops-based per-connection byte tracking inside BPF is not on this stream's roadmap. It would double the BPF surface area, leave UDP/connectionless flows without an analogous signal, and overlap with Envoy's access-log emission for the cases where it matters.
 

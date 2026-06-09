@@ -21,12 +21,13 @@ func NewCmdRoot(f *cmdutil.Factory, version, buildDate string) (*cobra.Command, 
 
 ## PersistentPreRunE
 
-Logger is initialized by `factory.ioStreams()` during Factory construction. PersistentPreRunE logs startup info via `logger.Debug()`.
+Currently a no-op (`return nil`). Cobra error/usage output is silenced globally via `SilenceErrors`/`SilenceUsage`; error rendering is handled in `Main`.
 
 ## Registered Commands
 
 - **Top-level:** `init` (alias for `project init`), `project`, `settings`, `skill`, `monitor`, `generate`, `version`
-- **Management:** `auth`, `container`, `firewall`, `image`, `volume`, `network`, `worktree`
+- **Management:** `auth`, `container`, `controlplane`, `firewall`, `image`, `volume`, `network`, `worktree`
+- **Hidden internal:** `hostproxy`, `bridge`
 
 ## Testing
 

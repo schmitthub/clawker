@@ -8,8 +8,8 @@ Prepares host Claude Code configuration for container injection. Receives `confi
 |----------|---------|
 | `ResolveHostConfigDir() (string, error)` | Find host ~/.claude/ dir ($CLAUDE_CONFIG_DIR or default). Relative `$CLAUDE_CONFIG_DIR` is resolved to absolute via `filepath.Abs` (multi-account workflows set it relative to CWD). |
 | `ResolveHostProjectsDir() (string, bool, error)` | Resolve `<hostConfigDir>/projects` for the bind-mount path; returns `("", false, nil)` only when the projects dir is absent. Stat errors (EACCES, ELOOP, path-is-file) and propagated `ResolveHostConfigDir` errors come back as `(_, false, err)` with the path included. Symlinks resolve via `os.Stat`. Never creates the dir. |
-| `PrepareClaudeConfig(hostConfigDir, containerHomeDir, containerWorkDir string) (stagingDir string, cleanup func(), err error)` | Stage host config for volume copy (settings, plugins, agents, etc.) |
-| `PrepareCredentials(hostConfigDir string) (stagingDir string, cleanup func(), err error)` | Stage credentials from keyring or file fallback |
+| `PrepareClaudeConfig(log *logger.Logger, hostConfigDir, containerHomeDir, containerWorkDir string) (stagingDir string, cleanup func(), err error)` | Stage host config for volume copy (settings, plugins, agents, etc.) |
+| `PrepareCredentials(log *logger.Logger, hostConfigDir string) (stagingDir string, cleanup func(), err error)` | Stage credentials from keyring or file fallback |
 | `PrepareHookTar(cfg config.Config, script, name string) (io.Reader, error)` | Create tar with .clawker/<name>.sh (bash shebang + set -e + user script); extracts at /home/claude. Empty script → bare no-op wrapper (lets callers always-deliver, overwriting stale content) |
 
 ## Dependencies

@@ -42,15 +42,15 @@ clawker build              # Builds clawker-myapp:latest
 clawker run -it --agent dev @  # Resolves @ to clawker-myapp:latest
 ```
 
-Images are content-addressed -- Clawker hashes the build configuration and only rebuilds when the config changes.
+Clawker uses Docker's layer cache (BuildKit or classic) to skip unchanged layers. Use `clawker build --no-cache` to force a full rebuild.
 
 ## Build Instructions
 
-The `instructions` block provides type-safe Dockerfile directives. Each field maps to a Dockerfile instruction:
+The `instructions` block provides type-safe build and runtime directives:
 
 ### env
 
-Set environment variables baked into the image:
+Set environment variables injected into the container at start time:
 
 ```yaml
 build:

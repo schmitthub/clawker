@@ -27,7 +27,6 @@ Exec injects git credential env vars into exec'd processes automatically:
 
 1. **Host proxy** — if enabled, `CLAWKER_HOST_PROXY=<url>` for HTTPS credential forwarding
 2. **Git credentials** — `workspace.SetupGitCredentials()` provides env for HTTPS/SSH/GPG
-3. **Socket bridge** — `SocketBridge.EnsureBridge()` starts/ensures SSH/GPG agent forwarding daemon
 
 ## TTY Mode: Stream + Resize Pattern
 
@@ -50,7 +49,7 @@ defer resizeHandler.Stop()
 
 // 4. Wait for stream, then check exit code
 <-streamDone
-checkExecExitCode(ctx, client, execID)
+checkExecExitCode(ctx, client, execID, log)
 ```
 
 ## Non-TTY Mode
@@ -76,7 +75,6 @@ All errors use `return fmt.Errorf("context: %w", err)` for centralized rendering
 - `internal/docker` — PTYHandler, ExecCreate/Start/Attach/Inspect/Resize
 - `internal/signals` — ResizeHandler for SIGWINCH monitoring
 - `internal/hostproxy` — Host proxy for credential forwarding
-- `internal/socketbridge` — SSH/GPG agent socket forwarding
 - `internal/workspace` — SetupGitCredentials for exec sessions
 - Logging via `*logger.Logger` (Factory lazy noun) — resolved eagerly in `execRun` via `opts.Logger()`
 
@@ -84,4 +82,4 @@ All errors use `return fmt.Errorf("context: %w", err)` for centralized rendering
 
 - **Tier 1**: Flag parsing via `runF` trapdoor — all flags, agent mode, args parsing
 - **Tier 2**: Cobra+Factory with `mocks.FakeClient` — Docker connection error, container not found, container not running, detach mode, non-TTY happy path, non-zero exit code
-- TTY path requires real terminal — covered by integration tests in `test/commands/`
+- TTY path requires real terminal — covered by integration tests in `test/e2e/`

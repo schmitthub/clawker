@@ -27,10 +27,11 @@ type processor struct {
 // record cannot kill the goroutine and silently strand the BPF
 // programs pinned with no userspace consumer.
 //
-// ctx is honoured separately from queue closure because Service.Stop
-// closes the queue AFTER the reader returns; ctx cancellation is the
-// outer-scope signal (Service.Stop also cancels the inner ctx for
-// belt-and-braces).
+// ctx is honoured separately from queue closure because the reader
+// goroutine closes the queue after drain returns (Service.Stop closes
+// the ringbuf, which causes drain to return on ErrClosed); ctx
+// cancellation is the outer-scope signal (Service.Stop also cancels
+// the inner ctx for belt-and-braces).
 func (p *processor) run(ctx context.Context) {
 	defer func() {
 		if rec := recover(); rec != nil {

@@ -54,7 +54,7 @@ func (s *Service) EnsureClient(svc string) (certPath, keyPath, caPath string, er
 
 // LoadTLSConfig returns a *tls.Config with a GetClientCertificate
 // hook that re-mints per TLS handshake. Used in-process by the CP
-// OTLP exporter (svc="clawker-cp") and by the netlogger pipeline
+// OTLP exporter (svc="cp") and by the netlogger pipeline
 // (svc="netlogger") — leaf material never lands on disk.
 //
 // Only callable by code running inside the CP process: the closure
@@ -108,7 +108,7 @@ The directory mode is load-bearing for non-root in-container readers
 (Envoy distroless runs UID 101). Docker bind-mounts preserve host
 inode perms; a `0o700` dir blocks traversal even when the file would
 be readable. `0o644` on the key is constrained by the same UID rule.
-See commit 07b73371.
+These permissions are enforced in `EnsureClient` and must not be changed.
 
 ## Lifetime / rotation
 
@@ -123,13 +123,13 @@ See commit 07b73371.
   malformed/mismatched output so a buggy issuer can't half-overwrite a
   prior-good pair into a broken state.
 
-## v1 limitation: issuer key rotation
+## Known limitation: issuer key rotation
 
 `LoadTLSConfig`'s `GetClientCertificate` closure holds the `*Service`
 reference, which holds the `Issuer` reference loaded at CP startup. A
 `clawker auth rotate` that replaces the intermediate's private key is
 NOT picked up at runtime — the closure keeps signing with the stale
-signer until CP restart. Document this; do not fix in v1.
+signer until CP restart. Restart CP after a key rotation.
 
 ## Health gating vs. exporter buffering
 
@@ -153,10 +153,12 @@ this immediately after `logger.New`.
 - **Uses**: stdlib `crypto/*`, `internal/logger`. No internal/
   controlplane/firewall imports (this is the layering boundary; see
   `feedback_no_layering_violations.md`).
-- **Imported by**: `cmd/clawker-cp` (constructs the Service; wires it
-  into firewall.NewStack AND uses LoadTLSConfig for the CP's own OTel
-  exporter), `internal/controlplane/firewall` (consumes via the
-  package-local `OtelCertProvisioner` interface; tests pass a fake).
+- **Imported by**: `cmd/clawker-cp` only (constructs the Service; wires it
+  into `firewall.NewStack` as an `OtelCertProvisioner` AND calls
+  `LoadTLSConfig` for the CP's own OTel exporter and the netlogger
+  pipeline). `internal/controlplane/firewall` does NOT import this package
+  — it defines the `OtelCertProvisioner` interface itself and `*Service`
+  satisfies it structurally; tests supply a local fake.
 
 ## Why this lives outside the firewall package
 

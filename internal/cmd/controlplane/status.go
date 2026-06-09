@@ -37,7 +37,7 @@ type statusRow struct {
 // NewCmdStatus creates the controlplane status command. Tolerates an
 // absent CP without bootstrapping — when IsRunning returns false the
 // run function short-circuits before touching f.AdminClient (which
-// would trigger EnsureRunning via its lazy closure).
+// would attempt a dial to a stopped CP and fail fast).
 func NewCmdStatus(f *cmdutil.Factory, runF func(context.Context, *StatusOptions) error) *cobra.Command {
 	opts := &StatusOptions{
 		IOStreams:    f.IOStreams,

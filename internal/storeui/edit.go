@@ -152,8 +152,8 @@ func WithLayerTargets(targets []LayerTarget) Option {
 }
 
 // BuildBrowser creates a FieldBrowserModel for a storage.Store[T] without
-// running it. The returned model can be embedded as a WizardPage or run
-// standalone via tui.RunProgram. All save/delete callbacks are wired.
+// running it. The returned model can be wrapped as a WizardPage via
+// tui.NewBrowserPage or run standalone via tui.RunProgram. All save/delete callbacks are wired.
 func BuildBrowser[T storage.Schema](store *storage.Store[T], opts ...Option) (*tui.FieldBrowserModel, error) {
 	cfg := editOptions{
 		title:     "Configuration Editor",
@@ -267,7 +267,7 @@ func BuildBrowser[T storage.Schema](store *storage.Store[T], opts ...Option) (*t
 //  2. WalkFields(snapshot) → fields
 //  3. Filter skip paths, ApplyOverrides
 //  4. Map storeui.Field → tui.BrowserField, run tui.FieldBrowserModel
-//  5. OnFieldSaved callback: store.Set + writeFieldToFile per field
+//  5. OnFieldSaved callback: store.Set + store.Write(storage.ToPath(target)) per field
 //  6. Return Result
 func Edit[T storage.Schema](ios *iostreams.IOStreams, store *storage.Store[T], opts ...Option) (Result, error) {
 	cfg := editOptions{
@@ -454,9 +454,6 @@ func fieldsToBrowserFields(fields []Field, provMap map[string]string) []tui.Brow
 	return out
 }
 
-// lookupLayerFieldValue finds the raw value for a dotted field path in a
-// specific layer identified by its file path. Returns nil if the layer is
-// not found or the field is absent from that layer's data.
 // normalizeLayerValue formats a raw YAML-decoded value into the same string
 // representation that the TUI editor produces, enabling accurate comparison
 // to avoid spurious MarkForWrite calls.
@@ -476,6 +473,9 @@ func normalizeLayerValue(v any) string {
 	}
 }
 
+// lookupLayerFieldValue finds the raw value for a dotted field path in a
+// specific layer identified by its file path. Returns nil if the layer is
+// not found or the field is absent from that layer's data.
 func lookupLayerFieldValue(layers []storage.LayerInfo, layerPath, fieldPath string) any {
 	for _, l := range layers {
 		if l.Path != layerPath {
@@ -569,7 +569,7 @@ func fieldKindToBrowserKind(k FieldKind) tui.BrowserFieldKind {
 	case KindStructSlice:
 		return tui.BrowserStructSlice
 	default:
-		// Consumer-defined kinds (>= KindLast) degrade to read-only display.
+		// Consumer-defined kinds (> KindLast) degrade to read-only display.
 		// No panic — the kind is known to storage, we just don't have an editor.
 		return tui.BrowserStructSlice
 	}

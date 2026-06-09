@@ -66,9 +66,9 @@ func NewItemListEditor(label string, value string, fields []StructFieldDef) Item
 // overwrite existing data with no feedback. When wiring this editor into a domain
 // adapter, this MUST be fixed: capture the parse error into an errMsg field (like
 // KVEditorModel does at kveditor.go:77-83), surface it via Err(), and render it
-// inline via renderValidationError(). The current Err() at line 312 is hardcoded
-// to "" — it needs to return the captured parse error. See KVEditorModel for the
-// correct pattern. Do NOT wire this editor without fixing this first.
+// inline via renderValidationError(). The current Err() (see Err() method below)
+// is hardcoded to "" — it needs to return the captured parse error. See
+// KVEditorModel for the correct pattern. Do NOT wire this editor without fixing this first.
 func parseYAMLItems(value string, fields []StructFieldDef) []map[string]string {
 	if value == "" {
 		return nil

@@ -29,8 +29,9 @@ var PrometheusTemplate string
 
 // OpenSearchBootstrapFS embeds the bootstrap asset tree (script + index
 // templates + ISM policies + saved objects). `monitor init` walks this
-// FS and writes each file to <workdir>/opensearch-bootstrap/. Only
-// `bootstrap.sh.tmpl` is templated; the JSON/NDJSON payloads ship
+// FS and writes each file to <workdir>/opensearch-bootstrap/. Files
+// ending in `.tmpl` (bootstrap.sh.tmpl, datasources/clawker_prometheus.json.tmpl)
+// are rendered via RenderTemplate; the JSON/NDJSON payloads ship
 // verbatim so users can audit them as static config.
 //
 //go:embed all:templates/opensearch-bootstrap

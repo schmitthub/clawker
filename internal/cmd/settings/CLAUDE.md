@@ -47,4 +47,4 @@ The heavy lifting lives in `internal/config/storeui/settings` (domain adapter �
 
 ## Testing
 
-`edit_test.go` — Factory DI + Cobra invocation via `runF` seam. Uses `configmocks.NewIsolatedTestConfig(t)` for the mutable `Store[Settings]`.
+`edit_test.go` — Factory DI + Cobra wiring only: arg-rejection and `runF` injection. No config double needed (the `runF` seam short-circuits `editRun` before any store access).

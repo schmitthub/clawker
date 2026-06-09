@@ -22,8 +22,7 @@ var (
 // Reason constant for gRPC errdetails.ErrorInfo so the CLI can dispatch
 // remediation without string-matching status messages.
 //
-// Layering (see initiative memory `firewall-queue-initiative` → "Three-
-// layer failure model"): CLI-dial sentinels fire before the queue is
+// Layering: CLI-dial sentinels fire before the queue is
 // touched; pre-Submit sentinels fire inside the RPC handler before the
 // store write lands; queued-closure sentinels fire on the worker after
 // the store write has already committed — partial success by design.

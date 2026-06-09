@@ -79,10 +79,13 @@ The C2 auto-decodes captured data based on the test ID's spec:
 | `b64_body` | Base64 raw POST body |
 | `b64_cookie` | Base64 in `session=` cookie |
 | `b64_ua` | Base64 in User-Agent header |
+| `b64_json_m` | Base64 in JSON `.m` field (chunked) |
 | `b64_query` | Base64 in `c=` query param |
 | `gzip_body` | Gzipped POST body (handles double-gzip) |
 | `b64_raw` | Base64 raw (UDP/ICMP) |
 | `reversed` | Reversed string in `.d` field |
+| `reversed_array` | Join `.p` JSON array, reverse |
+| `interleaved` | Tab chars removed from `.d` field |
 | `xor_b64` | XOR 0x55 + base64 in `.d` field |
 | `header_name_b64` | Base64 chunks as `X-*` header names |
 | `multi_value_header` | Base64 split across `X-Telemetry` header values |
@@ -192,11 +195,11 @@ edge** → host `:7777`; raw UDP via an ngrok **UDP** tunnel → host `:5454`
 
 ## Payloads
 
-`payloads/01-31` are reference shell scripts from a prior project. They demonstrate various evasion techniques (encoding, steganography, protocol tricks, timing) but target a different container environment. Kept for reference on how the C2 decode pipeline works.
+`payloads/01-30` are reference shell scripts from a prior project. They demonstrate various evasion techniques (encoding, steganography, protocol tricks, timing) but target a different container environment. Kept for reference on how the C2 decode pipeline works.
 
 ## Scripts
 
-`scripts/run-tests.sh` is an automated orchestrator from the prior project. Could be adapted in the future to use clawker CLI commands (e.g. `clawker run @ --prompt "..."`) to pass adversarial prompts to Claude Code inside a firewall-protected container — combining prompt injection with exfil testing to see if the agent acts on malicious instructions and whether the firewall catches the attempt.
+`scripts/` currently contains only `setup.sh`. A future automated orchestrator could use clawker CLI commands (e.g. `clawker run @ --prompt "..."`) to pass adversarial prompts to Claude Code inside a firewall-protected container — combining prompt injection with exfil testing to see if the agent acts on malicious instructions and whether the firewall catches the attempt.
 
 ## Files
 
@@ -206,12 +209,11 @@ test/adversarial/
 ├── Dockerfile                   # Multi-stage Go build for C2 server
 ├── compose.yml                  # Docker Compose (attacker on testnet)
 ├── attacker-server/
-│   ├── go.mod                   # Go 1.25.10, sqlite
+│   ├── go.mod                   # go module + sqlite deps
 │   ├── go.sum
 │   └── main.go                  # C2 server
 ├── payloads/
-│   └── 01..31                   # Reference payloads (from prior project)
+│   └── 01..30                   # Reference payloads (from prior project)
 └── scripts/
-    ├── setup.sh                 # One-time setup (generates TLS certs)
-    └── run-tests.sh             # Orchestrator from prior project (future: adapt for clawker CLI)
+    └── setup.sh                 # One-time setup (generates TLS certs)
 ```

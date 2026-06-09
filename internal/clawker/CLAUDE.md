@@ -43,7 +43,12 @@ cmd, err := rootCmd.ExecuteC()
 // Blocking read below waits for it; HTTP client has its own 5s timeout.
 // defer updateCancel() handles cleanup on exit.
 if err != nil {
-    if !errors.Is(err, cmdutil.SilentError) {
+    switch {
+    case errors.Is(err, cmdutil.SilentError):
+        // Already displayed — no-op
+    case errors.Is(err, whail.ErrDockerNotAvailable):
+        printDockerInstallHelper(f.IOStreams.ErrOut, f.IOStreams.ColorScheme(), err)
+    default:
         printError(f.IOStreams.ErrOut, f.IOStreams.ColorScheme(), err, cmd)
     }
     printUpdateNotification(f.IOStreams, <-updateMessageChan) // Blocking read
@@ -54,10 +59,9 @@ printUpdateNotification(f.IOStreams, <-updateMessageChan) // Blocking read
 ```
 
 **Error type dispatch in `printError()`:**
-- `FlagError` — prints error + command usage string
+- `FlagError` — prints error + command usage string + `"Run '<cmd> --help' for more information"`
 - `userFormattedError` (duck-typed `FormatUserError()`) — rich Docker error formatting
 - default — prints failure icon + error message (`cs.FailureIcon() + err`)
-- Always appends contextual `"Run '<cmd> --help' for more information"`
 
 **Commands never print their own errors.** They return typed errors that bubble up to Main(). Warnings and next-steps guidance are printed inline by commands using `fmt.Fprintf(ios.ErrOut, ...)` with `ios.ColorScheme()`.
 

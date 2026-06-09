@@ -17,7 +17,6 @@ type VariantConfig struct {
 }
 
 // DefaultVariantConfig returns the default variant configuration.
-// This matches the configuration from versions.sh.
 func DefaultVariantConfig() *VariantConfig {
 	arches := []string{"amd64", "arm64v8"}
 

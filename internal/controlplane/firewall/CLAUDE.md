@@ -57,7 +57,7 @@ Closures (reconcileStackClosure + per-RPC bodies) call:
 
 ## Handler RPCs (B2 scope-corrected surface — 13 methods)
 
-Every RPC requires the uniform `"admin"` scope (INV-B2-009). Per-method scope diversification is intentionally not used; see `.correctless/specs/cp-initiative/branch-2-cp-owns-firewall.md` §8.
+Every RPC requires the uniform `"admin"` scope (INV-B2-009). Per-method scope diversification is intentionally not used.
 
 | RPC | Scope | Purpose |
 |-----|-------|---------|
@@ -88,7 +88,9 @@ type HandlerDeps struct {
     Resolver   ContainerResolver      // required — per-container RPCs
     Log        *logger.Logger         // optional — defaults to Nop
     Queue      *ActionQueue           // required — every RPC submits through it
+    Bus        *overseer.Overseer     // optional — nil-tolerant; FirewallEnable skips publish when nil
     CertDirFn  func() (string, error) // optional — certs path for RotateCA
+    ListAgents func(ctx context.Context) ([]string, error) // optional — nil skips agent re-enrollment on FirewallInit
 }
 
 func NewHandler(deps HandlerDeps) *Handler  // panics on missing EBPF, Resolver, or Queue
@@ -110,19 +112,20 @@ channel, which the Handler translates to `ErrQueueClosed` +
 ```go
 type Stack struct { /* docker.Client, config.Config, logger, Store */ }
 
-func NewStack(dc *docker.Client, cfg config.Config, log *logger.Logger, store *storage.Store[EgressRulesFile]) *Stack
+func NewStack(dc *docker.Client, cfg config.Config, log *logger.Logger, store *storage.Store[EgressRulesFile], otelCerts OtelCertProvisioner) *Stack
 func (s *Stack) EnsureRunning(ctx) error
 func (s *Stack) Stop(ctx) error
 func (s *Stack) Reload(ctx) error
 func (s *Stack) WaitForHealthy(ctx) error
 func (s *Stack) Status(ctx) (*Status, error)
+func (s *Stack) NetworkInfo(ctx) (*NetworkInfo, error)
 func (s *Stack) EnvoyIP() string
 func (s *Stack) CoreDNSIP() string
 func (s *Stack) NetworkID() string
 func (s *Stack) CIDR() string
 ```
 
-`StackLifecycle` is the Handler-facing interface — `*Stack` satisfies it. Keep Handler unit-testable by passing a Stack fake.
+`StackLifecycle` is the Handler-facing interface — `*Stack` satisfies it. It exposes `EnsureRunning`, `Stop`, `Reload`, `Status`, and `NetworkInfo`; `WaitForHealthy` is on `*Stack` directly but is not part of the interface. Keep Handler unit-testable by passing a Stack fake.
 
 ### `ContainerResolver`
 
@@ -168,7 +171,7 @@ Wire↔config rule translation (`EgressRulesToProto` / `EgressRulesFromProto`) i
 - **FakeClient managed-label jail**: `whail.ContainerInspect` re-invokes `ContainerInspectFn` inside `IsContainerManaged` — test fakes must return `Config.Labels[managedKey]=ManagedLabelValue` in inspect responses, otherwise real callers see `ErrContainerNotFound`.
 - **Stop/Reload no-op tests** need affirmative assertions (`NotContains(fake.Calls, "ContainerStop")`, `FileExists(envoy.yaml)`) or they pass trivially without exercising the short-circuit.
 - **Envoy-gen tests (`envoy_config_test.go`)** — ONE comprehensive golden, NOT one-per-feature. New coverage (any new proto/dst-type/path/ws/DFP/QUIC/cert/port-range permutation or interaction) is added by extending the `comprehensiveRules` const + re-blessing `comprehensive`/`comprehensive_mtls`, NOT by adding a new `*.envoy.golden` per feature. The only standalone cases allowed are generation-wide-fact-OFF shapes a mega-config can't express (`http_exact_only`/`https_exact_only` = DFP absent, `ssh` = no egress listener/deny floor) and fail-closed (`wantErrContains`) cases. Full rules: `.claude/rules/envoy.md` → Testing §.
-- **Golden files**: `testdata/corefile_basic.golden` is hand-edited to update (no `GOLDEN_UPDATE=1` hook). `testdata/envoy/*.envoy.golden` re-bless via `GOLDEN_UPDATE=1 go test ./internal/controlplane/firewall/ -run TestGenerateEnvoyConfig`.
+- **Golden files**: `testdata/corefile_basic.golden` and `testdata/corefile_wildcard_deny.golden` are hand-edited to update (no `GOLDEN_UPDATE=1` hook). `testdata/envoy/*.envoy.golden` re-bless via `GOLDEN_UPDATE=1 go test ./internal/controlplane/firewall/ -run TestGenerateEnvoyConfig`.
 - **E2E tests**: `test/e2e/firewall_test.go` (composite flows through the CLI — blocked domain, allowed domain, add/remove rules, status, path rules, bypass end-to-end including natural-expiry + gone-container error paths) and `test/e2e/controlplane_cli_test.go` (break-glass `controlplane up/status/down` verbs). E2E means through `harness.Run(...)` — no direct `Stack`/`Handler` construction belongs under `test/e2e/`.
 
 ## Gotchas
@@ -183,4 +186,3 @@ Wire↔config rule translation (`EgressRulesToProto` / `EgressRulesFromProto`) i
 - `ebpf/CLAUDE.md` — eBPF subsystem details + pinned map contract
 - `.claude/rules/envoy.md` — Envoy config rules + verification workflow
 - `.claude/rules/firewall-uat.md` — runtime BEHAVIORAL UAT (in-container probe tools, allow/deny/upgrade/SSH-routing discriminators, live config spot-check, C2 harness). Golden+validate prove the config is valid; this proves it enforces.
-- `.correctless/specs/cp-initiative/branch-2-cp-owns-firewall.md` — migration spec + invariants

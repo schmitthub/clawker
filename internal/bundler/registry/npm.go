@@ -106,7 +106,7 @@ func (c *NPMClient) fetchPackageInfo(ctx context.Context, pkg string) (*NPMPacka
 
 	// Abbreviated metadata: drops per-version README/scripts/peerDeps blobs.
 	// Full metadata for @anthropic-ai/claude-code (148+ versions) blows past
-	// the 1 MiB read cap below, causing silent truncation → JSON parse error.
+	// the 16 MiB read cap below, causing silent truncation → JSON parse error.
 	// Abbreviated keeps dist-tags + version keys (all this client needs).
 	req.Header.Set("Accept", "application/vnd.npm.install-v1+json")
 

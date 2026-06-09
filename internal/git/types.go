@@ -49,8 +49,8 @@ type WorktreeDirEntry struct {
 // unconcerned with caller configuration/layout details.
 type WorktreeDirProvider interface {
 	// GetOrCreateWorktreeDir returns the path to a worktree directory,
-	// creating it if it doesn't exist. The name is typically a branch name
-	// which will be slugified for filesystem safety.
+	// creating it if it doesn't exist. The name is typically a branch name;
+	// the returned path is implementation-defined and filesystem-safe (no slashes).
 	GetOrCreateWorktreeDir(name string) (string, error)
 
 	// GetWorktreeDir returns the path to an existing worktree directory.

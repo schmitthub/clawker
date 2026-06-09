@@ -764,8 +764,8 @@ func (s *session) startShellCommand(ctx context.Context, id string, sc *clawkerd
 // Audit logging: clawkerd runs as root inside the container and
 // ShellCommand can dispatch arbitrary argv with arbitrary uid/gid. The
 // CN-pinned mTLS listener is the only trust boundary today (CP is the
-// sole authorized caller); per-command argv allow-listing is a v2
-// concern. Until then, every command emits a structured
+// sole authorized caller); no per-command argv allow-list or policy
+// gate is implemented. Every command emits a structured
 // `shell_command_started` event per stage at Info with full argv +
 // cwd + uid/gid, and a `shell_command_done` event with duration +
 // outcome at Info on terminal exit. Operators forwarding clawkerd's
@@ -1169,12 +1169,11 @@ func (s *session) runShellCommand(ctx context.Context, rc *runningCommand, sc *c
 //
 //   - io.EOF: peer wrote-and-closed.
 //   - io.ErrClosedPipe: in-process io.Pipe peer closed.
-//   - os.ErrClosed (wrapped in *fs.PathError): exec.Cmd.Wait closes
-//     stdout/stderr pipes after seeing the command exit (per stdlib
-//     docs). For fast-exit commands the reaper can win the race
-//     against an in-flight Read on the drain side; the stdlib then
-//     returns "read |0: file already closed". Without this filter, CP
-//     sees ERROR_CODE_IO_ERROR even though Wait completed cleanly.
+//   - os.ErrClosed (wrapped in *fs.PathError): the read end of an
+//     os.Pipe was closed (e.g. by the spawn-failure cleanup path)
+//     while a drain goroutine had an in-flight Read, producing
+//     "read |0: file already closed". Without this filter, CP sees
+//     ERROR_CODE_IO_ERROR even though the pipeline terminated cleanly.
 func isExpectedDrainEnd(err error) bool {
 	return errors.Is(err, io.EOF) ||
 		errors.Is(err, io.ErrClosedPipe) ||

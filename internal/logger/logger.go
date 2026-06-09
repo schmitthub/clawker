@@ -73,8 +73,8 @@ type OtelOptions struct {
 	// emitted log record. Required when the collector routes on this
 	// attribute (routing/trusted, routing/untrusted in otel-config.yaml).
 	// Empty leaves the SDK default ("unknown_service:<binary>") which is
-	// dropped silently at the routing connector. Callers: "clawker-cli"
-	// (host CLI), "clawker-cp" (control plane).
+	// dropped silently at the routing connector. Example caller: "clawker-cli"
+	// (host CLI, set in internal/cmd/factory/default.go).
 	ServiceName string
 
 	// mTLS configuration. Two mutually-exclusive shapes:
@@ -139,14 +139,12 @@ func Nop() *Logger {
 }
 
 // NewWriter creates a logger that writes structured JSON to the given
-// io.Writer. No file rotation, no OTEL bridge — this is the constructor
-// for containerized daemons (clawker-cp, clawkerd) that want their
-// structured logs captured by the container runtime's stdout/stderr
-// collection so `docker logs <container>` shows them.
+// io.Writer. No file rotation, no OTEL bridge.
 //
-// Use logger.New when you want file-based logging with rotation (that's
-// the CLI/host-side path). Use NewWriter inside containers where the
-// container runtime owns log lifecycle.
+// Use logger.New for file-based logging with rotation (the primary path
+// for daemons and the CLI). Use NewWriter as a fallback when New fails —
+// for example, writing to os.Stderr when the log directory is unavailable.
+// Also useful in tests that capture output via a *bytes.Buffer.
 func NewWriter(w io.Writer) *Logger {
 	zl := zerolog.New(w).
 		Level(zerolog.DebugLevel).
@@ -408,10 +406,10 @@ func newOtelProvider(cfg *OtelOptions, fileLogger zerolog.Logger) (*sdklog.Logge
 }
 
 // buildOtelMTLSConfig loads the client keypair and trust roots for the
-// OTLP exporter's mTLS handshake. The client cert is presented during
-// the handshake; the receiver gates `require_client_certificate: true`
-// on a CA bundle so only CLI-issued certs (currently the daemon's
-// cp-client cert) connect.
+// OTLP exporter's mTLS handshake from the file-path triple in OtelOptions.
+// The client cert is presented during the handshake; the receiver gates
+// `require_client_certificate: true` on a CA bundle so only certs signed
+// by the trusted CA connect.
 func buildOtelMTLSConfig(cfg *OtelOptions) (*tls.Config, error) {
 	clientCert, err := tls.LoadX509KeyPair(cfg.ClientCertFile, cfg.ClientKeyFile)
 	if err != nil {

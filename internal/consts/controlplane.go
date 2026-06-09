@@ -204,12 +204,12 @@ const (
 
 	CPOathkeeperConfigFilename = "oathkeeper.yaml"
 
-	// KratosConfigPath
+	// CPKratosConfigPath is the container-side path to the Kratos config file.
 	CPKratosConfigPath = CPClawkerDir + "/" + CPKratosConfigFilename
 
-	// HydraConfigPath
+	// CPHydraConfigPath is the container-side path to the Hydra config file.
 	CPHydraConfigPath = CPClawkerDir + "/" + CPHydraConfigFilename
 
-	// OathkeeperConfigPath
+	// CPOathkeeperConfigPath is the container-side path to the Oathkeeper config file.
 	CPOathkeeperConfigPath = CPClawkerDir + "/" + CPOathkeeperConfigFilename
 )

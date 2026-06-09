@@ -230,7 +230,7 @@ report `connection refused` against the CP.
    ```bash
    clawker controlplane status
    ```
-   Reports container running state, IP on `clawker-net`, `/healthz` result,
+   Reports container running state, `/healthz` result,
    and (if reachable) firewall subsystem state.
 
 2. **Bring CP up explicitly**:
@@ -292,7 +292,7 @@ mTLS bootstrap material is invalid.
    ```bash
    docker logs <container-name>
    ```
-   Look for `event=register_failed` or TLS handshake errors.
+   Look for `event=register_rpc_failed`, `event=register_dial_failed`, or TLS handshake errors.
 
 3. **Rotate auth and restart the agent**:
    ```bash

@@ -16,8 +16,8 @@ Clawker's packages follow a strict **DAG (Directed Acyclic Graph)**:
 │  Packages   │     │  Packages   │     │  Packages   │     │             │
 ├─────────────┤     ├─────────────┤     ├─────────────┤     ├─────────────┤
 │ git, logger │     │ bundler     │     │ docker,     │     │ cmd/*       │
-│ iostreams   │     │             │     │ workspace,  │     │             │
-│ config      │     │             │     │ loop      │     │             │
+│ iostreams   │     │             │     │ workspace   │     │             │
+│ config      │     │             │     │             │     │             │
 └─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘
        │                                       │                   │
        ▼                                       ▼                   ▼
@@ -76,7 +76,8 @@ Each package with complex dependencies provides test infrastructure:
 | `internal/git` | `gittest/` | `InMemoryGitManager` |
 | `internal/project` | `mocks/` | `NewMockProjectManager()`, `NewMockProject(name, repoPath)`, `NewTestProjectManager(t, gitFactory)` |
 | `pkg/whail` | `whailtest/` | `FakeAPIClient`, build scenarios, `EventRecorder` |
-| `internal/controlplane` | `mocks/` | `ControlPlaneServiceMock`, `ManagerMock`, `IntrospectorMock`, `AdminServiceClientMock` (moq) |
+| `internal/controlplane` | `mocks/` | `AdminServiceClientMock`, `IntrospectorMock` (moq) |
+| `internal/controlplane/cpboot` | `mocks/` | `ManagerMock` (moq) |
 | `internal/controlplane/firewall/ebpf` | `mocks/` | `EBPFManagerMock` (moq) |
 | `internal/hostproxy` | `hostproxytest/` | `MockHostProxy`, `MockManager` |
 | `internal/iostreams` | `Test()` | `iostreams.Test()` → `(*IOStreams, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer)` |
@@ -188,17 +189,14 @@ The project package exposes scenario-oriented doubles so dependents can choose t
 
 ### 1) Pure mock manager (no config/git reads or writes)
 
-Use `projectmocks.NewProjectManagerMock()` when you only need interface-level behavior in unit tests.
+Use `projectmocks.NewMockProjectManager()` when you only need interface-level behavior in unit tests.
 
 ```go
 import projectmocks "github.com/schmitthub/clawker/internal/project/mocks"
 
-mgr := projectmocks.NewProjectManagerMock()
+mgr := projectmocks.NewMockProjectManager()
 mgr.GetFunc = func(_ context.Context, root string) (project.Project, error) {
-    return projectmocks.NewProjectMockFromRecord(project.ProjectRecord{
-        Name: "demo",
-        Root: root,
-    }), nil
+    return projectmocks.NewMockProject("demo", root), nil
 }
 ```
 
@@ -538,7 +536,6 @@ f, _, out, errOut := harness.NewFactory(t, &harness.FactoryOptions{
     Config:         config.NewConfig,        // real config
     Client:         docker.NewClient,        // real Docker client
     ProjectManager: project.NewProjectManager,
-    Firewall:       firewall.NewManager,     // real firewall
 })
 ```
 
@@ -546,13 +543,14 @@ f, _, out, errOut := harness.NewFactory(t, &harness.FactoryOptions{
 
 | Field | Signature | Default |
 |-------|-----------|---------|
-| `Config` | `func() (config.Config, error)` | `configmocks.NewBlankConfig()` |
+| `Config` | `func(...config.NewConfigOption) (config.Config, error)` | `configmocks.NewBlankConfig()` |
 | `Client` | `func(ctx, cfg, log, ...docker.ClientOption) (*docker.Client, error)` | `mocks.FakeClient` |
 | `ProjectManager` | `func(cfg, log, project.GitManagerFactory) (project.ProjectManager, error)` | nil (no-op) |
 | `GitManager` | `func(string) (*git.GitManager, error)` | nil (no-op) |
 | `HostProxy` | `func(cfg, log) (*hostproxy.Manager, error)` | `hostproxytest.MockManager` |
 | `SocketBridge` | `func(cfg, log) socketbridge.SocketBridgeManager` | nil (no-op) |
-| `Firewall` | `func(mobyclient.APIClient, cfg, log) (*firewall.Manager, error)` | `firewallmocks.FirewallManagerMock` |
+| `UseRealAdminClient` | `bool` | `false` (wires no-op `AdminServiceClientMock`) |
+| `ControlPlane` | `func(cfg, log) cpboot.Manager` | nil (wires no-op `ManagerMock`) |
 
 ### Per-package testFactory Pattern
 
@@ -688,10 +686,10 @@ import configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 cfg := configmocks.NewBlankConfig()
 
 // Test double from YAML — in-memory *ConfigMock, Set/Write/Watch panic
-cfg := configmocks.NewFromString(`build: { image: "alpine:3.20" }`)
+cfg := configmocks.NewFromString(`build: { image: "alpine:3.20" }`, "")
 
 // File-backed config for mutation tests
-cfg, read := configmocks.NewIsolatedTestConfig(t)
+cfg := configmocks.NewIsolatedTestConfig(t)
 ```
 
 **Factory wiring in tests:**
@@ -721,7 +719,6 @@ gitMgr := gittest.NewInMemoryGitManager()
 | Config with specific YAML values | `configmocks.NewFromString(projectYAML, settingsYAML)` |
 | Config needing SetProject/WriteProject | `configmocks.NewIsolatedTestConfig(t)` |
 | Test git operations without filesystem | `gittest.NewInMemoryGitManager()` |
-| Test git operations with real branches | `gittest.NewTestRepoOnDisk(t)` |
 
 ---
 
@@ -906,10 +903,10 @@ The oracle+golden dual-guard pattern is appropriate when:
 - Regression protection and exploration serve **different purposes**
 
 ```bash
-go test ./internal/storage -v                              # Runs both oracle + golden
-go test ./internal/storage -run TestMerge_Oracle -v        # Oracle only (randomized)
-go test ./internal/storage -run TestMerge_Golden -v        # Golden only (fixed baseline)
-make storage-golden                                        # Interactive golden update
+go test ./internal/storage -v                                          # Runs both oracle + golden
+go test ./internal/storage -run TestStore_WalkUpLayerMerge -v          # Oracle only (randomized)
+go test ./internal/storage -run TestStore_WalkUpGolden -v              # Golden only (fixed baseline)
+make storage-golden                                                    # Interactive golden update
 ```
 
 ---
@@ -928,7 +925,7 @@ Battle-tested insights from the multi-phase testing initiative (Phases 1-4a):
 - Docker names always have leading `/` in API responses
 - `ContainerInspectResult` wraps response — labels at `inspect.Container.Config.Labels`
 - `VolumeListAll` delegates to `VolumeList` — both return `VolumeListResult` with `.Items`
-- `config.FirewallConfig.Enable` is `bool` (not `*bool`), while `SecurityConfig.EnableHostProxy` is `*bool` — inconsistent nullability
+- `FirewallSettings.Enable` is `*bool` (settings.yaml global switch); `FirewallConfig` (clawker.yaml per-project) has no `Enable` field; `SecurityConfig.EnableHostProxy` is `*bool`
 
 ### FakeAPIClient Pattern
 

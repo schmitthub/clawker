@@ -25,7 +25,7 @@ func NewCmdStop() *cobra.Command       // Flags: --wait duration
 
 ## Pattern: Config + Functional Options
 
-Commands load config via `config.NewConfig()`. `serve` collects changed flags into `[]hostproxy.DaemonOption` functional options, then calls `hostproxy.NewDaemon(cfg, opts...)`. This allows CLI flags to override config values without mutating the config object. PID file always comes from `cfg.HostProxyPIDFilePath()` (no `--pid-file` flag).
+Commands load config via `config.NewConfig()`. `serve` collects changed flags into `[]hostproxy.DaemonOption` functional options, then calls `hostproxy.NewDaemon(cfg, log, opts...)`. This allows CLI flags to override config values without mutating the config object. PID file always comes from `cfg.HostProxyPIDFilePath()` (no `--pid-file` flag).
 
 `status` and `stop` read PID file path from `cfg.HostProxyPIDFilePath()` directly.
 

@@ -46,7 +46,7 @@ const (
 	// rolled into UntrustedReasonRegisterFailed (with the specific
 	// classification in the structured log line). Resurfacing them as
 	// distinct event reasons would require plumbing structured failure
-	// codes through RegisterDone.error — out of scope for this branch.
+	// codes through RegisterDone.error — not currently done.
 	UntrustedReasonRegisterFailed UntrustedReason = "register_failed"
 )
 

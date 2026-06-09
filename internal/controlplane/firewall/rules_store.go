@@ -266,15 +266,20 @@ func mergePathRules(existing, incoming []config.PathRule) []config.PathRule {
 // normalizeDomain + ebpf.DomainHash form the shared hashing contract
 // across firewall / dnsbpf / ebpf).
 //
-// TLS/HTTP rules route to the main egress listener (ports.EgressPort).
-// SSH/TCP rules route to their dedicated per-rule TCP listener port
-// (ports.TCPPortBase + index). The TCP/SSH branch drives routes directly
-// from TCPMappings so eBPF routes and Envoy listeners stay in lockstep:
-// matching allow semantics (empty Action == allow), matching IP/CIDR
-// filtering, and matching tcpDefaultPort defaulting (ssh→22, tcp→443)
-// for rules with Port==0. Any divergence here silently misroutes traffic
-// (e.g. SSH landing on the main TLS listener — tls_inspector sees raw
-// TCP, no SNI match, deny chain resets).
+// TLS/HTTP rules (http/https/ws/wss) emit L4ProtoTCP routes to the
+// main egress listener (ports.EgressPort). https/wss FQDN rules also
+// emit L4ProtoUDP routes to EgressPort for the h3-over-https QUIC sibling
+// (quicSNIChainLayer). SSH/TCP rules route to their dedicated per-rule TCP
+// listener port (ports.TCPPortBase + index). Raw UDP rules route to their
+// dedicated per-rule UDP listener port (ports.UDPPortBase + index),
+// emitting L4ProtoUDP routes. The TCP/SSH and raw-UDP branches drive
+// routes directly from TCPMappings and UDPMappings respectively so eBPF
+// routes and Envoy listeners stay in lockstep: matching allow semantics
+// (empty Action == allow), matching IP/CIDR filtering, and matching
+// tcpDefaultPort / udpDefaultPort defaulting for rules with Port==0.
+// Any divergence here silently misroutes traffic (e.g. SSH landing on
+// the main TLS listener — tls_inspector sees raw TCP, no SNI match,
+// deny chain resets).
 func RoutesFromRules(rules []config.EgressRule, ports EnvoyPorts) []ebpf.Route {
 	out := make([]ebpf.Route, 0, len(rules))
 

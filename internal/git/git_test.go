@@ -74,7 +74,7 @@ func (f *fakeWorktreeDirProvider) GetOrCreateWorktreeDir(name string) (string, e
 	if path, ok := f.worktrees[name]; ok {
 		return path, nil
 	}
-	// Slugify the name like the real config does (replace slashes with hyphens)
+	// Slugify the name for the fake provider (real provider uses UUID-based naming)
 	slug := strings.ReplaceAll(name, "/", "-")
 	path := filepath.Join(f.baseDir, slug)
 	if err := os.MkdirAll(path, 0755); err != nil {
@@ -481,9 +481,9 @@ func TestGitManager_SetupWorktree(t *testing.T) {
 	})
 
 	t.Run("handles branch names with slashes", func(t *testing.T) {
-		// This was Bug #3: branch names like "a/output-styling" would fail
+		// Branch names like "a/output-styling" cannot be used directly as worktree names
 		// because go-git rejects slashes in worktree names.
-		// The fix uses filepath.Base(wtPath) as the worktree name (already slugified).
+		// SetupWorktree uses filepath.Base(wtPath) as the worktree name to avoid this.
 		path, err := mgr.SetupWorktree(provider, "feature/test-slash", "")
 		require.NoError(t, err)
 		assert.NotEmpty(t, path)

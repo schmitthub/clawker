@@ -59,7 +59,7 @@ func NewWithOptions(ctx context.Context, opts EngineOptions) (*Engine, error) {
 		opts.ManagedLabel = DefaultManagedLabel
 	}
 
-	// Create the underlying Docker client using moby/moby v0.2.1 API.
+	// Create the underlying Docker client (moby/moby/client; version pinned in go.mod).
 	// client.New is lazy — it only configures the client, not connecting to
 	// the daemon. Connection errors surface at HealthCheck (Ping) below.
 	realClient, err := client.New(client.FromEnv)

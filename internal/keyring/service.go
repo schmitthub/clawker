@@ -44,7 +44,7 @@ type ServiceDef[T any] struct {
 // Error pipeline (fast-fail):
 //  1. User() fails      → wrapped error
 //  2. Get() fails       → ErrNotFound (no entry) or *TimeoutError
-//  3. raw == ""         → ErrEmptyCredential (entry exists but blank)
+//  3. strings.TrimSpace(raw) == "" → ErrEmptyCredential (entry exists but blank)
 //  4. Parse() fails     → ErrInvalidSchema wrapping the parse error
 //  5. Validate() fails  → returns the validation error directly (when set)
 func getCredential[T any](def ServiceDef[T]) (*T, error) {
@@ -89,7 +89,7 @@ func currentOSUser() (string, error) {
 	return u.Username, nil
 }
 
-// jsonParse returns a Parse function that JSON-unmarshals raw into *T.
+// jsonParse is a Parse function that JSON-unmarshals raw into *T.
 func jsonParse[T any](raw string) (*T, error) {
 	var v T
 	if err := json.Unmarshal([]byte(raw), &v); err != nil {

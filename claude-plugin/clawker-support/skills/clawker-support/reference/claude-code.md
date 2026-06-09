@@ -108,8 +108,10 @@ out the simpler causes:
 
 - `use_host_auth` is actually disabled for this project/agent (it defaults on,
   but a config may set it off). Confirm against the live config schema.
-- The container was created in "fresh" mode, which intentionally skips copying
-  host config and credentials.
+- The container was created with `agent.claude_code.config.strategy: fresh`,
+  which skips copying host settings and plugins (clean slate). Credential
+  injection is controlled separately by `use_host_auth`; if both are disabled,
+  the container starts with no credentials and no host config.
 - The user was never authenticated on the host at all — in that case container
   creation fails with an explicit "no credentials found" error rather than a
   silent `/login` prompt, so this is a different symptom.

@@ -70,9 +70,9 @@ const (
 	wssDFPClusterName = "wss_dfp"
 
 	// denyClusterName is the STATIC, zero-endpoint cluster backing the egress
-	// listener's default_filter_chain: a tls connection whose SNI matches no
-	// server_names chain (unknown/absent SNI) is tcp_proxy'd here and reset. The
-	// server-side half of the SNI gate (require_sni is unimplemented in Envoy).
+	// listener's default_filter_chain: any flow matching no allow chain —
+	// a TLS connection with unknown/absent SNI, or a raw-TCP flow to a
+	// disallowed host/port — is tcp_proxy'd here and reset.
 	denyClusterName = "deny_cluster"
 
 	// Per-domain MITM cert file paths inside the Envoy container. certs.go signs

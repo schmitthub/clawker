@@ -95,7 +95,7 @@ name: my-app
 
 The override applies at every command run (it's read from the project config, not the registry). The hierarchy is: positional/CLI flag > `.clawker.yaml::name` > directory-derived slug.
 
-The registry lives at `~/.local/share/clawker/registry.yaml` and maps project names to filesystem paths (managed via `clawker project` commands):
+The registry is `registry.yaml` under clawker's data directory — `$XDG_DATA_HOME/clawker` (with `$XDG_DATA_HOME` itself defaulting to `~/.local/share` per the XDG Base Directory spec), or `$CLAWKER_DATA_DIR` when set — and maps project names to filesystem paths (managed via `clawker project` commands):
 
 ```yaml
 projects:
@@ -606,10 +606,10 @@ You can also place a `clawker.yaml` in `~/.config/clawker/` to set user-level pr
 
 Clawker follows the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/). Files are organized across three directories:
 
-| Directory | Default Path | Contents |
-|-----------|-------------|----------|
-| Config | `~/.config/clawker/` | `settings.yaml`, `clawker.yaml` (user-level project overrides) |
-| Data | `~/.local/share/clawker/` | `registry.yaml`, worktree directories, `.clawker-share` |
-| State | `~/.local/state/clawker/` | Log files, PID files, update cache |
+| Directory | Location | Contents |
+|-----------|----------|----------|
+| Config | `$XDG_CONFIG_HOME/clawker` | `settings.yaml`, `clawker.yaml` (user-level project overrides) |
+| Data | `$XDG_DATA_HOME/clawker` | `registry.yaml`, worktree directories, `.clawker-share` |
+| State | `$XDG_STATE_HOME/clawker` | Log files, PID files, update cache |
 
-Override with environment variables: `CLAWKER_CONFIG_DIR`, `CLAWKER_DATA_DIR`, `CLAWKER_STATE_DIR`.
+These follow the XDG base directories, which themselves default to `~/.config`, `~/.local/share`, and `~/.local/state` when the `XDG_*_HOME` vars are unset — so on a typical machine the directories land at `~/.config/clawker`, `~/.local/share/clawker`, and `~/.local/state/clawker`. To point clawker somewhere else without touching your XDG vars, set `CLAWKER_CONFIG_DIR`, `CLAWKER_DATA_DIR`, or `CLAWKER_STATE_DIR` — each takes precedence over its `XDG_*_HOME` counterpart. (On Windows, `%AppData%` / `%LOCALAPPDATA%` stand in for the unset XDG defaults.)

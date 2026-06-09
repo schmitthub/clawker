@@ -174,20 +174,21 @@ Settings and config are **never collapsed** — different concerns, different ev
 ```go
 // Host infrastructure — ~/.config/clawker/settings.yaml only
 type Settings struct {
-    DefaultImage string           `yaml:"default_image,omitempty"`
-    Logging      LoggingConfig    `yaml:"logging"`
-    HostProxy    HostProxyConfig  `yaml:"host_proxy"`
-    Monitoring   MonitoringConfig `yaml:"monitoring"`
+    Logging      LoggingConfig        `yaml:"logging,omitempty"`
+    Monitoring   MonitoringConfig     `yaml:"monitoring,omitempty"`
+    HostProxy    HostProxyConfig      `yaml:"host_proxy,omitempty"`
+    Firewall     FirewallSettings     `yaml:"firewall,omitempty"`
+    ControlPlane ControlPlaneSettings `yaml:"control_plane,omitempty"`
+    Docker       DockerSettings       `yaml:"docker,omitempty"`
 }
 
 // Project defaults — tiered via walk-up (global → project → local)
 type Project struct {
-    Version   string          `yaml:"version"`
     Name      string          `yaml:"name,omitempty"`
     Build     BuildConfig     `yaml:"build"`
+    Agent     AgentConfig     `yaml:"agent"`
     Workspace WorkspaceConfig `yaml:"workspace"`
     Security  SecurityConfig  `yaml:"security"`
-    Agent     AgentConfig     `yaml:"agent"`
 }
 ```
 
@@ -202,35 +203,33 @@ Single access point with namespaced sub-accessors. One factory closure (`f.Confi
 
 ```go
 type Config interface {
-    // Store accessors — each delegates to a composed Store[T].Get()
-    Settings() Settings         // → ~/.config/clawker/settings.yaml
-    Project() *Project          // → merged walk-up result
+    // Store accessors (preferred — direct access to the underlying Store[T])
+    ProjectStore() *storage.Store[Project]   // → project config store
+    SettingsStore() *storage.Store[Settings] // → settings store
 
-    // Typed mutation — separate methods per store (different generic types)
-    SetProject(fn func(*Project))              // in-memory mutation → tree update
-    SetSettings(fn func(*Settings))            // in-memory mutation → tree update
-    WriteProject(filename ...string) error     // provenance-routed atomic write
-    WriteSettings(filename ...string) error    // provenance-routed atomic write
+    // Schema accessors
+    Settings() *Settings         // → ~/.config/clawker/settings.yaml
+    Project() *Project           // → merged walk-up result
 
     // Path helpers, constants, labels (~40 methods)
-    ConfigDir() string
+    ConfigDirEnvVar() string
     Domain() string
     LabelDomain() string
     // ...
 }
 ```
 
-`cfg.SetProject(fn)` / `cfg.WriteProject()` and `pm.Set(fn)` / `pm.Write()` share the same familiar API shape — thin wrappers around `Store[T].Set` / `Store[T].Write`, consistent across all things that compose `Store[T]`.
+`cfg.ProjectStore().Set(fn)` / `cfg.ProjectStore().Write()` and `cfg.SettingsStore().Set(fn)` / `cfg.SettingsStore().Write()` are the mutation API — thin wrappers on `Store[T].Set` / `Store[T].Write`.
 
 **Usage:**
 - `cfg.Project().Build.Image` — from merged config walk-up
-- `cfg.Settings().Logging.FileEnabled` — from settings.yaml
-- `cfg.MonitoringConfig()` — typed convenience accessor
+- `cfg.Settings().Logging.MaxSizeMB` — from settings.yaml
+- `cfg.MonitoringConfig()` — deprecated convenience accessor (prefer `cfg.SettingsStore().Read().Monitoring`)
 - `cfg.ConfigDirEnvVar()` — constants via interface methods
 
 **No collision risk:** If both schemas grow a `Build` section, `cfg.Settings().Build` vs `cfg.Project().Build`.
 
-**No generic `Get(key)` / `Set(key, val)`.** Typed mutation via `SetProject(fn)` / `SetSettings(fn)` only.
+**No generic `Get(key)` / `Set(key, val)`.** Typed mutation via `cfg.ProjectStore().Set(fn)` / `cfg.SettingsStore().Set(fn)` only.
 
 #### Node Tree Architecture
 
@@ -322,24 +321,24 @@ func migrateOldBuildKey(raw map[string]any) bool {
 
 #### Write Model
 
-All writes go through `Set*()` + `Write*()` on the composed `Store[T]`:
+All writes go through `Set(fn)` + `Write()` on the store obtained from the `Config` interface:
 
 ```go
-cfg.SetProject(func(p *Project) { p.Build.Image = "ubuntu:24.04" })
-cfg.WriteProject("clawker.local.yaml")
+cfg.ProjectStore().Set(func(p *Project) { p.Build.Image = "ubuntu:24.04" })
+cfg.ProjectStore().Write("clawker.local.yaml")
 
-cfg.SetSettings(func(s *Settings) { s.DefaultImage = "custom:latest" })
-cfg.WriteSettings()
+cfg.SettingsStore().Set(func(s *Settings) { s.Logging.MaxSizeMB = 100 })
+cfg.SettingsStore().Write()
 ```
 
 | Call | Target File | Writer | When |
 |------|-------------|--------|------|
-| `cfg.WriteSettings()` | `~/.config/clawker/settings.yaml` | `clawker project init` (bootstrap), image commands | Settings mutation |
-| `cfg.WriteProject()` | Auto-routed by provenance | Programmatic | Project config updates |
-| `cfg.WriteProject("clawker.local.yaml")` | First layer matching filename | User/programmatic | Personal overrides |
+| `cfg.SettingsStore().Write()` | `~/.config/clawker/settings.yaml` | `clawker project init` (bootstrap), settings commands | Settings mutation |
+| `cfg.ProjectStore().Write()` | Auto-routed by provenance | Programmatic | Project config updates |
+| `cfg.ProjectStore().Write("clawker.local.yaml")` | First layer matching filename | User/programmatic | Personal overrides |
 | `pm.Write()` | `~/.local/share/clawker/registry.yaml` | `internal/project` | Runtime CRUD |
 
-Write semantics: `Set*()` mutates in-memory struct + serializes back into node tree via `structToMap`. `Write*()` persists the current tree — routes fields by provenance, read-merge-write per file with atomic I/O (temp+fsync+rename).
+Write semantics: `Set(fn)` mutates in-memory struct + serializes back into node tree via `structToMap`. `Write()` persists the current tree — routes fields by provenance, read-merge-write per file with atomic I/O (temp+fsync+rename).
 
 Settings files do NOT need locking — per-machine, no concurrent writers. Registry uses flock (owned by `internal/project`).
 
@@ -472,10 +471,10 @@ Returns *cmdutil.Factory                      Commands consume
 with all closures wired                       *cmdutil.Factory
 ```
 
-Factory is a pure struct with 9 closure/value fields — no methods. 3 eager (set directly), 6 lazy (closures with `sync.Once`):
+Factory is a pure struct with closure/value fields — no methods. 3 eager (set directly), rest lazy (closures):
 
 **Eager**: `Version` (string), `IOStreams` (`*iostreams.IOStreams`), `TUI` (`*tui.TUI`)
-**Lazy**: `Config` (`func() (config.Config, error)`), `Client` (`func(ctx) (*docker.Client, error)`), `GitManager` (`func() (*git.GitManager, error)`), `HostProxy` (`func() hostproxy.HostProxyService`), `SocketBridge` (`func() socketbridge.SocketBridgeManager`), `Prompter` (`func() *prompter.Prompter`)
+**Lazy**: `Config` (`func() (config.Config, error)`), `Client` (`func(ctx) (*docker.Client, error)`), `Logger` (`func() (*logger.Logger, error)`), `ProjectManager` (`func() (project.ProjectManager, error)`), `GitManager` (`func() (*git.GitManager, error)`), `HostProxy` (`func() hostproxy.HostProxyService`), `SocketBridge` (`func() socketbridge.SocketBridgeManager`), `Prompter` (`func() *prompter.Prompter`), `AdminClient` (`func(ctx) (adminv1.AdminServiceClient, error)`), `ControlPlane` (`func() cpboot.Manager`), `HttpClient` (`func() *http.Client`)
 
 The constructor in `internal/cmd/factory/default.go` wires all closures. Commands extract closures into per-command Options structs. Run functions only accept `*Options`, never `*Factory`.
 
@@ -507,7 +506,7 @@ FIELD     (command imports package directly)
 Rules:
 - Implementation always lives in `internal/<package>/` — never in `cmdutil/`
 - `cmdutil/` contains only: Factory struct (DI container), output utilities, arg validators
-- Heavy command helpers live in dedicated packages: `internal/bundler/` (build utilities), `internal/project/` (registration), `internal/docker/` (container naming). Image resolution helpers live in `internal/cmdutil/` (`ResolveImageWithSource`, `FindProjectImage`)
+- Heavy command helpers live in dedicated packages: `internal/bundler/` (build utilities), `internal/project/` (registration), `internal/docker/` (container naming, image resolution — `ResolveImageWithSource`, `ResolveImage`)
 
 See also `.claude/rules/dependency-placement.md` (auto-loaded).
 
@@ -545,13 +544,10 @@ Clawker-specific middleware that builds on the External Engine:
 
 ```go
 type Client struct {
-    engine  docker.Engine
-    config  *config.Config
-    project string
-}
-
-func (c *Client) RunAgent(ctx context.Context, agent string, opts RunOptions) error {
-    // High-level operation combining multiple engine calls
+    Engine *whail.Engine
+    cfg    config.Config
+    log    *logger.Logger
+    // ...
 }
 ```
 
@@ -596,7 +592,7 @@ All Docker nouns are supported:
 
 **Configuration Verbs**:
 
-- `config check` - Validate configuration
+- `settings edit` - Edit user settings
 
 **Observability Verbs**:
 
@@ -719,13 +715,13 @@ The firewall uses an **Envoy proxy + custom CoreDNS + eBPF manager** trio runnin
 - **Stale pin recovery**: `ebpf.Manager.Load()` detects pinned maps whose key/value sizes changed (e.g., after the `route_key` schema change) and removes them before loading new programs. Prevents startup failures after BPF struct changes.
 - **Agent container capabilities**: Agent containers need zero Linux capabilities. The eBPF manager container handles BPF program loading/attachment from outside. The custom CoreDNS container requires `CAP_BPF + CAP_SYS_ADMIN` (plus a `/sys/fs/bpf` bind mount) so the `dnsbpf` plugin can open the pinned `dns_cache` map and write entries.
 
-**Daemon isolation**: The firewall runs as a separate detached process (`EnsureDaemon()`), not as part of the CLI command. The daemon manages container lifecycle and runs dual health check loops (Envoy HTTP + CoreDNS HTTP, 5s interval). A container watcher loop (30s) exits the daemon when no clawker containers are running.
+**Firewall container lifecycle**: The firewall runs as Docker containers managed by `Stack.EnsureRunning()`, called from CP startup. `Stack` manages container lifecycle and runs dual health check loops (Envoy HTTP + CoreDNS HTTP, 5s interval). The CP's agent watcher drives the `drain-to-zero` path that calls `Stack.Stop()` when no clawker containers are running.
 
 **Network design**: All firewall containers and agent containers share a `clawker-net` Docker bridge network. Envoy gets `.2`, CoreDNS `.3`, and the eBPF manager `.4` (static IPs computed from the network gateway). eBPF `cgroup/connect4`/`connect6` programs rewrite agent container `connect()` calls to route traffic to Envoy/CoreDNS IPs.
 
 **Startup ordering is security-critical**: `EnsureRunning` starts the eBPF container and runs `init` BEFORE Envoy and CoreDNS, because the `dnsbpf` plugin opens the pinned `dns_cache` map on CoreDNS startup and fails to boot if it doesn't exist. The `regenerateAndRestart` path preserves this invariant — it re-runs init and `syncRoutes` before restarting Envoy/CoreDNS.
 
-**Unified embedded image pattern**: Both the eBPF manager and custom CoreDNS binaries are cross-compiled for Linux, embedded in the clawker binary via `go:embed` (`ebpf_embed.go`, `coredns_embed.go`), and built into Docker images on first use via the shared `embeddedImageSpec` + `ensureEmbeddedImage` pattern. Inline Dockerfiles are SHA-pinned to `alpine:3.21`.
+**Embedded binaries**: The eBPF manager binary is embedded via `internal/controlplane/cpboot/embed_ebpf.go` (`go:embed`); the custom CoreDNS binary via `internal/controlplane/firewall/embed_coredns.go`. Each package builds its image on demand from the embedded binary using an inline Dockerfile SHA-pinned to `alpine:3.21`.
 
 **Rule merge strategy**: System-required rules (Claude API, Docker registry) are always present. Project rules from `.clawker.yaml` (`add_domains`, `rules`) merge additively — project rules never replace system rules. Dedup key: `destination:protocol:port`. The rules store uses `storage.Store[EgressRulesFile]` with file-level locking.
 
@@ -899,9 +895,9 @@ and plugin installation on every container creation.
 **Init flow** (orchestrated by `shared.CreateContainer()` in `cmd/container/shared/container.go`):
 
 Progress streamed via events channel (`chan CreateContainerEvent`). Steps:
-1. **workspace** — `workspace.SetupMounts()` + `workspace.EnsureConfigVolumes()`
+1. **workspace** — `workspace.SetupMounts()` (internally calls `EnsureConfigVolumes()`)
 2. **config** (skipped if volume cached) — `containerfs.PrepareClaudeConfig()` + `containerfs.PrepareCredentials()` → `docker.CopyToVolume()`
-3. **environment** — `config.ResolveAgentEnv()` merges env_file/from_env/env → runtime env vars (warnings sent as `MessageWarning` events)
+3. **environment** — `shared.ResolveAgentEnv()` merges env_file/from_env/env → runtime env vars (warnings sent as `MessageWarning` events)
 4. **container** — validate flags, `BuildConfigs()`, `docker.ContainerCreate()` + `InjectPostInitScript()` (when `agent.post_init` configured). Onboarding bypass is image-level: entrypoint seeds `~/.claude/.config.json` from staged defaults
 
 **Key packages**: `internal/containerfs` (tar preparation, path rewriting),
@@ -919,8 +915,8 @@ Tests run against real Docker—no mocking:
 
 **Before completing any code change:**
 
-1. Run `go test ./...` - all unit tests must pass
-2. Run `go test ./internal/cmd/...` - all integration tests must pass
+1. Run `make test` - all unit tests must pass
+2. Run `go test ./test/e2e/... -v -timeout 10m` - Docker-backed integration tests (requires Docker)
 
 ### 11.2 Table-Driven Tests
 

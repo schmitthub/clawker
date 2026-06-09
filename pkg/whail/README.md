@@ -7,7 +7,7 @@ Wraps `github.com/moby/moby/client`. **No other package may import moby directly
 ## Quick Start
 
 ```go
-import "github.com/anthropics/clawker/pkg/whail"
+import "github.com/schmitthub/clawker/pkg/whail"
 
 engine, err := whail.New(ctx)
 if err != nil {
@@ -73,8 +73,8 @@ BuildKit support is isolated in a subpackage (`pkg/whail/buildkit/`) to avoid pu
 
 ```go
 import (
-    "github.com/anthropics/clawker/pkg/whail"
-    "github.com/anthropics/clawker/pkg/whail/buildkit"
+    "github.com/schmitthub/clawker/pkg/whail"
+    "github.com/schmitthub/clawker/pkg/whail/buildkit"
 )
 
 engine, _ := whail.New(ctx)
@@ -227,7 +227,7 @@ pkg/whail/
     image.go        ImageBuild (legacy), ImageBuildKit (BuildKit), ImageRemove, ImageList, etc.
     types.go        Re-exported Docker SDK types, ImageBuildKitOptions
     buildkit.go     BuildKitEnabled() detection (moby types only, not moby/buildkit)
-    errors.go       DockerError type with 47 error constructors
+    errors.go       DockerError type with 49 error constructors
     labels.go       MergeLabels, LabelFilter, filter utilities
     container.go    Container operations
     volume.go       Volume operations

@@ -9,7 +9,7 @@
 //	env := testenv.New(t)
 //	env.Dirs.Data // absolute path
 //
-//	// With real config (config, socketbridge tests):
+//	// With real config (config mutation tests):
 //	env := testenv.New(t, testenv.WithConfig())
 //	env.Config() // config.Config backed by temp dirs
 //
@@ -85,9 +85,10 @@ func WithProjectManager(gitFactory project.GitManagerFactory) Option {
 
 // New creates an isolated test environment. It:
 //  1. Creates temp directories for config, data, state, and cache
-//  2. Sets CLAWKER_CONFIG_DIR, CLAWKER_DATA_DIR, CLAWKER_STATE_DIR,
+//  2. Sets HOME to the temp base and creates ~/.claude/
+//  3. Sets CLAWKER_CONFIG_DIR, CLAWKER_DATA_DIR, CLAWKER_STATE_DIR,
 //     CLAWKER_CACHE_DIR env vars (restored on test cleanup)
-//  3. Applies any options (WithConfig, WithProjectManager)
+//  4. Applies any options (WithConfig, WithProjectManager)
 func New(t *testing.T, opts ...Option) *Env {
 	t.Helper()
 
@@ -153,7 +154,7 @@ const (
 type configFileInfo struct {
 	filename func() string       // canonical filename
 	dir      func(e *Env) string // target directory (nil = use caller-provided dir)
-	dotfile  bool                // prepend "." to filename (dual placement dotfile form)
+	dotfile  bool                // prepend "." to filename
 }
 
 var configFiles = map[ConfigFile]configFileInfo{
