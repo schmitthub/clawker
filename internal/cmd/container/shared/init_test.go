@@ -82,7 +82,7 @@ func testFlags() *cobra.Command {
 }
 
 // testMockConfig returns a *configmocks.ConfigMock for container-create tests.
-// Project-root / ignore-file resolution now lives in internal/project and reads
+// Project-root / ignore-file resolution lives in internal/project and reads
 // the registry from the isolated data dir set up by setupAuthEnv (testenv.New):
 // with no registry on disk, workspace.SetupMounts degrades to empty ignore
 // patterns, which is the intended "not in a project" behavior.

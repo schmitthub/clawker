@@ -84,7 +84,7 @@ SettingsStore() *storage.Store[Settings]   // Direct access to settings store
 
 **Path resolution**: `ConfigDirEnvVar()`, `StateDirEnvVar()`, `DataDirEnvVar()`, `TestRepoDirEnvVar()` (project-root / ignore-file resolution lives in `internal/project`)
 
-**Subdir helpers** (ensure + return path): `MonitorSubdir()`, `BuildSubdir()`, `DockerfilesSubdir()`, `LogsSubdir()`, `PidsSubdir()`, `BridgesSubdir()`, `ShareSubdir()`, `WorktreesSubdir()`, `FirewallDataSubdir()`, `FirewallCertSubdir()`
+**Subdir helpers** (ensure + return path): `MonitorSubdir()`, `BuildSubdir()`, `DockerfilesSubdir()`, `LogsSubdir()`, `PidsSubdir()`, `BridgesSubdir()`, `ShareSubdir()`, `FirewallDataSubdir()`, `FirewallCertSubdir()`
 
 **PID/log file helpers**: `BridgePIDFilePath(containerID)`, `HostProxyPIDFilePath()`, `HostProxyLogFilePath()`
 
@@ -117,6 +117,8 @@ const ModeSnapshot Mode = "snapshot"
 **Agent**: `AgentConfig`, `ClaudeCodeConfig`, `ClaudeCodeConfigOptions`
 
 **Workspace/Security**: `WorkspaceConfig` (`DefaultMode`), `SecurityConfig`, `FirewallConfig`, `GitCredentialsConfig`
+
+**Egress vocabulary constants** (schema.go, next to `EgressRule` — the single home for these tokens): `EgressProtoHTTPS`, `EgressPortHTTPS`, `EgressActionAllow`, `EgressActionDeny`. Used by `EgressRules()` add_domains expansion and the required baseline in `defaults.go`; reference these instead of spelling the literals.
 
 **Registry**: the registry schema (`ProjectRegistry`, `ProjectEntry`, `WorktreeEntry`) lives in `internal/project` — its sole owner. `config` has no registry surface.
 

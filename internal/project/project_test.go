@@ -89,7 +89,7 @@ func TestProjectManager_FullLifecycle(t *testing.T) {
 		t.Log("\n--- after Register ---")
 		debugDirs(t, "post-register layout", base)
 
-		// chdir so GetProjectRoot() resolves against the registry
+		// chdir so CurrentProjectRoot() resolves against the registry
 		oldWd, err := os.Getwd()
 		require.NoError(t, err)
 		require.NoError(t, os.Chdir(resolvedRoot))
@@ -662,6 +662,37 @@ func TestList(t *testing.T) {
 		entries, err := mgr.List(ctx)
 		require.NoError(t, err)
 		assert.Len(t, entries, 2)
+	})
+
+	t.Run("returned entries do not alias registry state", func(t *testing.T) {
+		mgr := projectmocks.NewTestProjectManager(t, nil)
+		ctx := context.Background()
+		root := t.TempDir()
+
+		_, err := mgr.Register(ctx, "alias-test", root)
+		require.NoError(t, err)
+		_, err = mgr.Update(ctx, project.ProjectEntry{
+			Name: "alias-test",
+			Root: root,
+			Worktrees: map[string]project.WorktreeEntry{
+				"main": {Path: filepath.Join(root, "wt"), Branch: "main"},
+			},
+		})
+		require.NoError(t, err)
+
+		entries, err := mgr.List(ctx)
+		require.NoError(t, err)
+		require.Len(t, entries, 1)
+		require.Contains(t, entries[0].Worktrees, "main")
+
+		// Mutate the returned map — the registry must not observe it.
+		entries[0].Worktrees["rogue"] = project.WorktreeEntry{Path: "/rogue", Branch: "rogue"}
+
+		again, err := mgr.List(ctx)
+		require.NoError(t, err)
+		require.Len(t, again, 1)
+		assert.NotContains(t, again[0].Worktrees, "rogue")
+		assert.Contains(t, again[0].Worktrees, "main")
 	})
 }
 

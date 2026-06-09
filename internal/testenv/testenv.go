@@ -20,6 +20,7 @@
 package testenv
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -59,7 +60,13 @@ func WithConfig() Option {
 		if e.config != nil {
 			return // already created (e.g. by WithProjectManager)
 		}
-		root, _ := project.CurrentProjectRoot()
+		// ErrNotInProject is the normal "no registered project" condition and
+		// degrades to an empty walk-up anchor; any other error is a real
+		// registry/storage failure and must fail the test loudly.
+		root, err := project.CurrentProjectRoot()
+		if err != nil && !errors.Is(err, project.ErrNotInProject) {
+			t.Fatalf("testenv: resolving project root: %v", err)
+		}
 		cfg, err := config.NewConfig(config.WithProjectRoot(root))
 		if err != nil {
 			t.Fatalf("testenv: creating config: %v", err)

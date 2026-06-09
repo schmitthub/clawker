@@ -1842,7 +1842,14 @@ func resolveWorkDir(ctx context.Context, containerOpts *ContainerCreateOptions, 
 
 	wd, wdErr := project.CurrentProjectRoot()
 	if wdErr != nil {
-		log.Debug().Err(wdErr).Msg("could not resolve project root, falling back to working directory")
+		// ErrNotInProject is the normal "no registered project" condition and
+		// falls back to the working directory. Any other error is a real
+		// registry/storage failure — surfacing it prevents a corrupt registry
+		// from silently changing the container's workspace mount source.
+		if !errors.Is(wdErr, project.ErrNotInProject) {
+			return "", "", fmt.Errorf("resolving project root: %w", wdErr)
+		}
+		log.Debug().Err(wdErr).Msg("not in a registered project, falling back to working directory")
 		wd = ""
 	}
 	if wd == "" {

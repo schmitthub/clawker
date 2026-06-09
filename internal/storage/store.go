@@ -73,7 +73,7 @@ func NewStore[T Schema](opts ...Option) (*Store[T], error) {
 // they have never been persisted.
 //
 // With no options, the store has no file discovery — useful for seeding
-// a new config that will be written via Write(ToPath(...)).
+// a new value that will be written via Write(ToPath(...)).
 func NewFromString[T Schema](raw string, opts ...Option) (*Store[T], error) {
 	o := options{}
 	for _, opt := range opts {
@@ -515,7 +515,7 @@ func ToLayer(idx int) WriteOption {
 // Only fields mutated since the last Write (via Set or Delete) are
 // written. Set fields are merged into the target file; deleted fields
 // are removed from it. This ensures per-field precision in multi-layer
-// configurations.
+// setups.
 //
 // Without options, each dirty field is routed to the layer it
 // originated from (via provenance). Fields without provenance route

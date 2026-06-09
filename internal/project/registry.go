@@ -2,6 +2,7 @@ package project
 
 import (
 	"fmt"
+	"maps"
 	"path/filepath"
 
 	"github.com/schmitthub/clawker/internal/consts"
@@ -16,7 +17,7 @@ type projectRegistry struct {
 
 // newRegistryStore creates a new storage.Store for the project registry.
 func newRegistryStore() (*storage.Store[ProjectRegistry], error) {
-	return storage.NewStore[ProjectRegistry](
+	return storage.New[ProjectRegistry]("",
 		storage.WithFilenames(consts.RegistryFile),
 		storage.WithDataDir(),
 		storage.WithLock(),
@@ -33,18 +34,22 @@ func (r *projectRegistry) Projects() []ProjectEntry {
 	if r == nil || r.store == nil {
 		return []ProjectEntry{}
 	}
-	reg := r.store.Get()
+	reg := r.store.Read()
 	if reg == nil {
 		return []ProjectEntry{}
 	}
 	return reg.Projects
 }
 
-// List returns all project entries in undefined order.
+// List returns all project entries in undefined order. Each entry's Worktrees
+// map is cloned so callers never alias live store state.
 func (r *projectRegistry) List() []ProjectEntry {
 	entries := r.Projects()
 	result := make([]ProjectEntry, len(entries))
-	copy(result, entries)
+	for i, entry := range entries {
+		entry.Worktrees = maps.Clone(entry.Worktrees)
+		result[i] = entry
+	}
 	return result
 }
 
@@ -52,22 +57,11 @@ func (r *projectRegistry) findByResolvedRoot(root string) (int, ProjectEntry, bo
 	if r == nil || r.store == nil {
 		return -1, ProjectEntry{}, false, fmt.Errorf("registry not initialized")
 	}
-	absRoot, err := filepath.Abs(root)
-	if err != nil {
-		return -1, ProjectEntry{}, false, fmt.Errorf("failed to get absolute path: %w", err)
-	}
-	resolvedRoot, err := filepath.EvalSymlinks(absRoot)
-	if err != nil {
-		resolvedRoot = absRoot
-	}
+	resolvedRoot := resolveRootPath(root)
 
 	entries := r.Projects()
 	for i, entry := range entries {
-		entryResolvedRoot, evalErr := filepath.EvalSymlinks(entry.Root)
-		if evalErr != nil {
-			entryResolvedRoot = entry.Root
-		}
-		if entryResolvedRoot == resolvedRoot {
+		if resolveRootPath(entry.Root) == resolvedRoot {
 			return i, entry, true, nil
 		}
 	}
@@ -98,7 +92,8 @@ func (r *projectRegistry) RemoveByRoot(root string) error {
 		return ErrProjectNotFound
 	}
 
-	entries := r.Projects()
+	// Splice a copy, not the live slice, so store state only changes via Set.
+	entries := r.List()
 	entries = append(entries[:index], entries[index+1:]...)
 	return r.setProjects(entries)
 }
@@ -114,20 +109,21 @@ func (r *projectRegistry) registerWorktree(projectRoot, branch, path string) err
 		return fmt.Errorf("worktree branch cannot be empty")
 	}
 
-	index, entry, ok, err := r.findByResolvedRoot(projectRoot)
+	index, _, ok, err := r.findByResolvedRoot(projectRoot)
 	if err != nil {
 		return err
 	}
 	if !ok {
 		return fmt.Errorf("project %q not found in registry", projectRoot)
 	}
-	if entry.Worktrees == nil {
-		entry.Worktrees = map[string]WorktreeEntry{}
-	}
-	entry.Worktrees[branch] = WorktreeEntry{Path: path, Branch: branch}
 
-	entries := r.Projects()
-	entries[index] = entry
+	// List() clones each entry's Worktrees map, so mutating the indexed entry
+	// never touches live store state.
+	entries := r.List()
+	if entries[index].Worktrees == nil {
+		entries[index].Worktrees = map[string]WorktreeEntry{}
+	}
+	entries[index].Worktrees[branch] = WorktreeEntry{Path: path, Branch: branch}
 	return r.setProjects(entries)
 }
 
@@ -153,9 +149,10 @@ func (r *projectRegistry) unregisterWorktree(projectRoot, branch string) error {
 		return nil
 	}
 
-	delete(entry.Worktrees, branch)
-	entries := r.Projects()
-	entries[index] = entry
+	// List() clones each entry's Worktrees map, so deleting from the indexed
+	// entry never touches live store state.
+	entries := r.List()
+	delete(entries[index].Worktrees, branch)
 	return r.setProjects(entries)
 }
 
@@ -185,7 +182,7 @@ func (r *projectRegistry) Register(displayName, rootDir string) (ProjectEntry, e
 	}
 
 	entry := ProjectEntry{Name: displayName, Root: absRoot}
-	entries := r.Projects()
+	entries := r.List()
 	entries = append(entries, entry)
 	if err := r.setProjects(entries); err != nil {
 		return ProjectEntry{}, err
@@ -214,10 +211,10 @@ func (r *projectRegistry) Update(entry ProjectEntry) (ProjectEntry, error) {
 	}
 
 	if entry.Worktrees == nil {
-		entry.Worktrees = existing.Worktrees
+		entry.Worktrees = maps.Clone(existing.Worktrees)
 	}
 
-	entries := r.Projects()
+	entries := r.List()
 	entries[index] = entry
 	if err := r.setProjects(entries); err != nil {
 		return ProjectEntry{}, err

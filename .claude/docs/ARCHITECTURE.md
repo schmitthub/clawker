@@ -175,10 +175,10 @@ Write:  tree → route by provenance → per-file atomic write
 
 | Mode | Options | Use case |
 |------|---------|----------|
-| Walk-up | `WithWalkUp()` | Config — CWD to project root, non-deterministic |
+| Walk-up | `WithWalkUp(anchorDir)` | Config — CWD up to a caller-supplied anchor (config passes the resolved project root), non-deterministic |
 | Static | `WithConfigDir()` / `WithDataDir()` / `WithPaths()` | Registry, settings — known XDG locations |
 
-**Filename-driven:** Store takes ordered filenames on construction (e.g., `"clawker.yaml"`, `"clawker.local.yaml"`). Walk-up is non-deterministic — at each level, checks `.clawker/{filename}` (dir form) first, falls back to `.{filename}` (flat dotfile). Both `.yaml`/`.yml` accepted. Bounded at registered project root — never reaches HOME.
+**Filename-driven:** Store takes ordered filenames on construction (e.g., `"clawker.yaml"`, `"clawker.local.yaml"`). Walk-up is non-deterministic — at each level, checks `.clawker/{filename}` (dir form) first, falls back to `.{filename}` (flat dotfile). Both `.yaml`/`.yml` accepted. Bounded at the anchor directory — never reaches HOME; an empty anchor disables walk-up entirely.
 
 **XDG convenience options:** `WithConfigDir()`, `WithDataDir()`, `WithStateDir()`, `WithCacheDir()` resolve directory paths and add them to the explicit path list. Precedence: `CLAWKER_*_DIR` > `XDG_*_HOME` > default. Explicit paths check `{dir}/{filename}` directly (no dir/flat form).
 
@@ -302,7 +302,7 @@ Constructor that builds a fully-wired `*cmdutil.Factory`. Imports all heavy depe
 
 **Dependency wiring order:**
 
-1. Config (lazy, `config.NewConfig()` via `sync.Once` — walk-up + settings load) → 2. Logger (lazy, reads Config) → 3. HostProxy (lazy, reads Config) → 4. SocketBridge (lazy, reads Config) → 5. IOStreams (eager, `iostreams.System()`) → 6. TUI (eager, wraps IOStreams) → 7. Project (lazy, owns registry.yaml independently from Config) → 8. Client (lazy, reads Config) → 9. GitManager (lazy, reads Config) → 10. Prompter (lazy) → 11. AdminClient (lazy, reads Config) → 12. ControlPlane (lazy, reads Config + Logger + Client)
+1. Config (lazy, `config.NewConfig()` via `sync.Once` — settings load + project walk-up anchored at `project.CurrentProjectRoot()`) → 2. ProjectManager (lazy, reads Config for the `name:` override + Logger; registry CRUD lives in `internal/project`) → 3. Logger (lazy, reads Config) → 4. HostProxy (lazy, reads Config) → 5. SocketBridge (lazy, reads Config) → 6. IOStreams (eager, `iostreams.System()`) → 7. TUI (eager, wraps IOStreams) → 8. Client (lazy, reads Config) → 9. GitManager (lazy, anchors at `project.CurrentProjectRoot()` — no Config dependency) → 10. Prompter (lazy) → 11. AdminClient (lazy, reads Config) → 12. ControlPlane (lazy, reads Config + Logger + Client) → 13. HttpClient (lazy, stdlib `*http.Client`)
 
 Tests never import this package — they construct minimal `&cmdutil.Factory{}` structs directly.
 

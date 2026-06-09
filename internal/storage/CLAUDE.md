@@ -26,7 +26,7 @@ Write: node tree → route by provenance → per-file atomic write (temp+fsync+r
 
 | File | Purpose |
 | --- | --- |
-| `errors.go` | Package doc only — storage is schema-agnostic; project-domain errors live in `internal/project` |
+| `errors.go` | Package doc + `ErrAnchorNotAncestor` sentinel (non-ancestor walk-up anchor). Storage is schema-agnostic; project-domain errors live in `internal/project` |
 | `store.go` | `Store[T]`, `NewStore[T]`, `NewFromString[T]`, `Read`, `Get` (deprecated), `Set`, `Write`, `Layers`, `LayerInfo`, `mergeIntoTree` |
 | `options.go` | `Option` type, `Migration` type, all `With*` constructors |
 | `discover.go` | Walk-up + explicit path discovery, dual placement logic. Walk-up is bounded by a caller-supplied anchor directory — storage holds no registry/project knowledge |
@@ -86,7 +86,7 @@ func (s *Store[T]) Layers() []LayerInfo               // Discovered layers, high
 
 ### Walk-up anchor (injected)
 
-Walk-up bounding is a plain anchor directory passed to `WithWalkUp(anchorDir)`: storage walks from CWD up to that directory (inclusive). Storage is schema-agnostic and holds no project-registry knowledge — the caller chooses the anchor (`config` passes the project root from `project.ResolveProjectRoot`). An empty anchor disables walk-up, so discovery falls back to explicit paths.
+Walk-up bounding is a plain anchor directory passed to `WithWalkUp(anchorDir)`: storage walks from CWD up to that directory (inclusive). Storage is schema-agnostic and holds no project-registry knowledge — the caller chooses the anchor (`config` passes the project root from `project.ResolveProjectRoot`). An empty anchor disables walk-up, so discovery falls back to explicit paths. A non-ancestor anchor (beside/below CWD, relative, or garbage) is a caller programming error — store construction fails with an error wrapping `ErrAnchorNotAncestor`.
 
 ### Options
 

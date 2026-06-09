@@ -28,7 +28,7 @@
 | `firewall.Stack` | CP-side Envoy + CoreDNS container lifecycle — `EnsureRunning`/`Stop`/`Reload`/`WaitForHealthy`/`Status` + IP/CIDR accessors. Uses `*docker.Client` via DooD |
 | `firewall.ContainerResolver` | Injectable Docker lookup: `(ctx, ref) → (id, cgroupPath, exists, err)`. Production wiring: `cmd/clawker-cp/main.go::containerResolverFromDocker`. `exists=false` + `err=nil` is the "container gone" signal |
 | `firewall.EBPFCgroupPath` / `firewall.DetectCgroupDriver` / `firewall.ResolveContainerID` | Pure helpers for cgroup path resolution; driver detected once at CP startup via `DetectCgroupDriver` and captured in the `containerResolverFromDocker` closure (not stored on `Handler`) |
-| `config.Config.EgressRules()` | Builds complete rule set from project config (security.firewall rules + required internal rules like Claude API, Docker registry). Consumed by `BootstrapServicesPreStart` |
+| `config.Config.EgressRules()` | Builds complete rule set from project config (security.firewall rules + required internal rules like Claude API, Docker registry). Consumed by `BootstrapServicesPreStart` and `clawker firewall refresh` |
 | `firewall.EgressRulesFile` | `storage.Schema` implementation for `egress-rules.yaml` (owned by CP at `FirewallDataSubdir`) |
 | `adminv1.EgressRulesToProto` / `adminv1.EgressRulesFromProto` | Wire ↔ config rule translation; lives beside the proto bindings in `api/admin/v1/conversion.go` (transport-edge converter shared by CP handler + CLI) |
 | `dnsbpf.Handler` | CoreDNS plugin (`internal/dnsbpf`) that intercepts DNS responses and writes IP → {domain_hash, TTL} entries to the BPF dns_cache map. Registered as `dnsbpf` directive in `cmd/coredns-clawker` |
@@ -108,7 +108,7 @@
 | `storage.ProvenanceMap` | `Store[T].ProvenanceMap() map[string]string` — all dotted paths → source file paths |
 | `storage.Write(ToPath)` | `Store[T].Write(ToPath(path)) error` — persist to explicit absolute path, bypassing provenance routing |
 | `Package DAG` | leaf → middle → composite import hierarchy (see ARCHITECTURE.md) |
-| `ProjectRegistry` | Persistent slug→path map in `registry.yaml` (`consts.RegistryFile`, data dir); CRUD/orchestration/resolution is owned by `internal/project` |
+| `ProjectRegistry` | Persistent slug→path map in the registry file (`consts.RegistryFile`, data dir); CRUD/orchestration/resolution is owned by `internal/project` |
 | `project.ProjectManager` | Project-layer domain API: registration, resolution, worktree lifecycle. Constructor: `NewProjectManager(log, gitFactory, nameOverride)` — config-free; the caller supplies the `clawker.yaml` `name:` override as a primitive. `ListWorktrees(ctx)` aggregates across all projects; `Project.ListWorktrees(ctx)` returns enriched state for one project. Project-root resolution: `project.ResolveProjectRoot`/`CurrentProjectRoot`/`CurrentProjectIgnoreFile` |
 | `config.Config` | Configuration and path-resolution contract. Owns config file I/O and path helpers (`ConfigDir`, `DataDir`, `StateDir`, `Write`). It does not own project CRUD/worktree lifecycle or project-root resolution |
 | `build.Version` / `build.Date` | Build-time metadata injected via ldflags; `DEV` default with `debug.ReadBuildInfo` fallback |

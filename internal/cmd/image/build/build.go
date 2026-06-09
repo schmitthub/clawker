@@ -3,6 +3,7 @@ package build
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -153,9 +154,15 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 		}
 	}
 
-	// Get working directory from project root, or fall back to current directory
+	// Get working directory from project root, or fall back to current
+	// directory. ErrNotInProject is the normal "no registered project"
+	// condition; any other error is a real registry/storage failure and is
+	// surfaced rather than silently overwritten by the fallback.
 	wd, wdErr := project.CurrentProjectRoot()
-	if wdErr != nil || wd == "" {
+	if wdErr != nil && !errors.Is(wdErr, project.ErrNotInProject) {
+		return fmt.Errorf("resolving project root: %w", wdErr)
+	}
+	if wd == "" {
 		wd, wdErr = os.Getwd()
 		if wdErr != nil {
 			return fmt.Errorf("failed to get working directory: %w", wdErr)

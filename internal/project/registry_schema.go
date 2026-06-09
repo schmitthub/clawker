@@ -16,7 +16,7 @@ type WorktreeEntry struct {
 }
 
 // ProjectRegistry is the on-disk structure for the project registry
-// (registry.yaml in the data dir). internal/project is its sole owner: the
+// (consts.RegistryFile in the data dir). internal/project is its sole owner: the
 // registry store, walk-up resolver, and all CRUD live here.
 type ProjectRegistry struct {
 	Projects []ProjectEntry `yaml:"projects" label:"Projects" desc:"Registered projects"`

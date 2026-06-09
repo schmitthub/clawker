@@ -23,11 +23,9 @@ func discover(opts *options) ([]discoveredFile, error) {
 	if opts.walkUpAnchor != "" {
 		walkUpFiles, err := walkUp(opts.filenames, opts.walkUpAnchor)
 		if err != nil {
-			// Walk-up failures are non-fatal — fall through to explicit paths.
-			_ = err
-		} else {
-			files = append(files, walkUpFiles...)
+			return nil, fmt.Errorf("storage: walk-up discovery: %w", err)
 		}
+		files = append(files, walkUpFiles...)
 	}
 
 	for _, dir := range opts.dirs {
@@ -44,11 +42,11 @@ func discover(opts *options) ([]discoveredFile, error) {
 // is a plain directory supplied by the caller — storage holds no knowledge of
 // how it was chosen.
 //
-// anchor must be CWD or an ancestor of it. If it is not (a garbage path, or a
-// real directory elsewhere on the filesystem), an upward walk would never reach
-// it and would escape to the filesystem root, pulling in stray files above the
-// intended bound. In that case walk-up is skipped (no files) rather than
-// allowed to escape.
+// anchor must be CWD or an ancestor of it. If it is not (a garbage path, a
+// relative path, or a real directory elsewhere on the filesystem), an upward
+// walk would never reach it and would escape to the filesystem root, pulling
+// in stray files above the intended bound. That is a caller programming error,
+// so walkUp returns ErrAnchorNotAncestor rather than escaping.
 func walkUp(filenames []string, anchor string) ([]discoveredFile, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -58,11 +56,11 @@ func walkUp(filenames []string, anchor string) ([]discoveredFile, error) {
 	anchor = filepath.Clean(anchor)
 
 	rel, relErr := filepath.Rel(anchor, cwd)
-	// An anchor that can't be related to CWD (e.g. a different volume) or that
-	// sits below/beside it is not an ancestor — skip walk-up rather than escape
-	// upward. A nil error here is intentional: this is "no walk-up", not a failure.
+	// An anchor that can't be related to CWD (a relative path or a different
+	// volume) or that sits below/beside it is not an ancestor — refuse it
+	// rather than escape upward.
 	if relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return nil, nil //nolint:nilerr // un-relatable anchor → skip walk-up, not an error
+		return nil, fmt.Errorf("%w: anchor %q, cwd %q", ErrAnchorNotAncestor, anchor, cwd)
 	}
 
 	var files []discoveredFile

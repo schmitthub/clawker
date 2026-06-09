@@ -15,7 +15,7 @@ Project commands (`internal/cmd/project/*`) are the primary user interface for w
 ## Visibility Rules
 
 - Public: interfaces and DTO types (`ProjectManager`, `Project`, `ProjectRecord`, `WorktreeRecord`, `WorktreeState`, `WorktreeStatus`, `ProjectState`, `ProjectStatus`, `PruneStaleResult`, `GitManagerFactory`, error sentinels).
-- Public helper: `NewWorktreeDirProvider(log, projectRoot)` — creates a `git.WorktreeDirProvider` for external callers (e.g. `container/shared`).
+- Public helper: `NewWorktreeDirProvider(projectRoot)` — creates a `git.WorktreeDirProvider` for callers outside the worktree service.
 - Private implementation: `projectManager`, `projectHandle`, `projectRegistry`, `worktreeService`, `flatWorktreeDirProvider`.
 
 ## Key Files
@@ -54,8 +54,9 @@ type ProjectManager interface {
 }
 ```
 
-- `List` sorts by root then name. `ResolvePath` normalizes with `Abs` + `EvalSymlinks` fallback.
-- `CurrentProject` tries `CurrentProjectRoot()`, then falls back to `os.Getwd()`.
+- `List` sorts by root then name and returns deep-copied entries (cloned `Worktrees` maps) — callers never alias live registry state.
+- `ResolvePath` normalizes both sides with the shared `resolveRootPath` helper (`Abs` + `EvalSymlinks`, cleaned-path fallback for nonexistent paths), so symlinked and real paths match interchangeably.
+- `CurrentProject` tries `CurrentProjectRoot()`, then falls back to `os.Getwd()` only on the benign `ErrNotInProject`; real registry/storage failures propagate wrapped.
 - `ListProjects` returns enriched `ProjectState` views with runtime health checks (directory status, worktree state).
 - `ListWorktrees` aggregates across all registered projects.
 
@@ -132,7 +133,7 @@ func CurrentProjectRoot() (string, error)             // os.Getwd() → ResolveP
 func CurrentProjectIgnoreFile() (string, error)       // <root>/.clawkerignore
 ```
 
-`ResolveProjectRoot` reads the registry (`ProjectRegistry` schema) through the storage layer (`newRegistryStore()` → `storage.Store[ProjectRegistry]`) — the canonical merge/migrate/lock path, never a raw file read. It returns `ErrNotInProject` when cwd is not within any registered project root, and returns a storage failure wrapped so it is not mistaken for "not in a project"; `CurrentProjectRoot` propagates the same distinction. The CLI factory and `internal/testenv` resolve the root here and pass it to `config.NewConfig(config.WithProjectRoot(root))` to bound clawker.yaml walk-up at the project root.
+`ResolveProjectRoot` reads the registry (`ProjectRegistry` schema) through the storage layer (`newRegistryStore()` → `storage.Store[ProjectRegistry]`) — the canonical merge/lock path, never a raw file read. cwd is cleaned internally; cwd and each registered root are compared via the shared `resolveRootPath` helper (`Abs` + `EvalSymlinks`, cleaned-path fallback for nonexistent paths — also used by the registry facade, `ResolvePath`, and the worktree service), so a root registered through a symlink matches its real path and vice versa. The returned root is always expressed in cwd's own path form — a string-ancestor of the caller's cwd, valid as a walk-up anchor even when `os.Getwd` reports a logical symlinked path. It returns `ErrNotInProject` when cwd is not within any registered project root — including when a depth-changing symlink leaves the logical cwd with no project ancestor in its own path form (a resolved-space anchor would break config walk-up) — and returns a storage failure wrapped so it is not mistaken for "not in a project"; `CurrentProjectRoot` propagates the same distinction. The CLI factory and `internal/testenv` resolve the root here and pass it to `config.NewConfig(config.WithProjectRoot(root))` to bound clawker.yaml walk-up at the project root.
 
 ## Registry Facade (`registry.go`)
 
@@ -154,17 +155,17 @@ PruneStaleWorktrees(_ context.Context, projectRoot string, dryRun bool) (*PruneS
 
 ### Directory Naming
 
-Flat UUID-based naming under the worktrees root (`consts.WorktreesSubdir()`, falling back to `consts.WorktreesPath()`): `<repoName>-<projectName>-<sha256(uuid)[:12]>`. Registry (`ProjectEntry.Worktrees[branch].Path`) is the source of truth for path lookups.
+Flat UUID-based naming under the worktrees root (`consts.WorktreesSubdir()`): `<repoName>-<projectName>-<sha256(uuid)[:12]>`. Registry (`ProjectEntry.Worktrees[branch].Path`) is the source of truth for path lookups.
 
-`flatWorktreeDirProvider` implements `git.WorktreeDirProvider`: reuses known path from registry for existing entries, generates UUID-based path for new ones.
+`flatWorktreeDirProvider` implements `git.WorktreeDirProvider`: reuses known path from registry for existing entries, generates UUID-based path for new ones. `newFlatWorktreeDirProvider` ensures the worktrees root exists and returns an error when creation fails — there is no un-ensured fallback path.
 
 ### Public Helper
 
 ```go
-func NewWorktreeDirProvider(log *logger.Logger, projectRoot string) git.WorktreeDirProvider
+func NewWorktreeDirProvider(projectRoot string) (git.WorktreeDirProvider, error)
 ```
 
-For external callers needing a `WorktreeDirProvider` without the full project service.
+For external callers needing a `WorktreeDirProvider` without the full project service. Errors when the registry cannot be loaded or the worktrees root directory cannot be ensured.
 
 ### Prune
 

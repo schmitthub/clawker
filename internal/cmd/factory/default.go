@@ -57,14 +57,14 @@ func New(version string) *cmdutil.Factory {
 		Config:  configFunc(),
 	}
 
-	f.ProjectManager = projectManagerFunc(f)
-	f.Logger = loggerLazy(f)             // depends on Config
-	f.HostProxy = hostProxyFunc(f)       // depends on Config
-	f.SocketBridge = socketBridgeFunc(f) // depends on Config
-	f.IOStreams = ioStreams()            // TTY/color/CI detection
-	f.TUI = tuiFunc(f)                   // needs IOStreams
-	f.Client = clientFunc(f)             // depends on Config
-	f.GitManager = gitManagerFunc(f)     // depends on Config
+	f.ProjectManager = projectManagerFunc(f) // depends on Config (name override) + Logger
+	f.Logger = loggerLazy(f)                 // depends on Config
+	f.HostProxy = hostProxyFunc(f)           // depends on Config
+	f.SocketBridge = socketBridgeFunc(f)     // depends on Config
+	f.IOStreams = ioStreams()                // TTY/color/CI detection
+	f.TUI = tuiFunc(f)                       // needs IOStreams
+	f.Client = clientFunc(f)                 // depends on Config
+	f.GitManager = gitManagerFunc(f)         // anchors at project.CurrentProjectRoot(), no Config dependency
 	f.Prompter = prompterFunc(f)
 	f.AdminClient = adminClientFunc(f)   // depends on Config
 	f.ControlPlane = controlPlaneFunc(f) // depends on Config, Logger, Client

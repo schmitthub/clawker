@@ -157,14 +157,13 @@ func restartContainer(ctx context.Context, client *docker.Client, name string, c
 		}
 		_, err = shared.ContainerStart(ctx,
 			shared.CommandOpts{
-				Client:         opts.Client,
-				Config:         opts.Config,
-				ProjectManager: opts.ProjectManager,
-				HostProxy:      opts.HostProxy,
-				ControlPlane:   opts.ControlPlane,
-				AdminClient:    opts.AdminClient,
-				SocketBridge:   opts.SocketBridge,
-				Logger:         opts.Logger,
+				Client:       opts.Client,
+				Config:       opts.Config,
+				HostProxy:    opts.HostProxy,
+				ControlPlane: opts.ControlPlane,
+				AdminClient:  opts.AdminClient,
+				SocketBridge: opts.SocketBridge,
+				Logger:       opts.Logger,
 			},
 			docker.ContainerStartOptions{
 				ContainerID: c.ID,
@@ -179,14 +178,13 @@ func restartContainer(ctx context.Context, client *docker.Client, name string, c
 	timeout := opts.Timeout
 	errBootstrapPre := shared.BootstrapServicesPreStart(
 		ctx, c.ID, shared.CommandOpts{
-			Client:         opts.Client,
-			Config:         opts.Config,
-			ProjectManager: opts.ProjectManager,
-			HostProxy:      opts.HostProxy,
-			ControlPlane:   opts.ControlPlane,
-			AdminClient:    opts.AdminClient,
-			SocketBridge:   opts.SocketBridge,
-			Logger:         opts.Logger,
+			Client:       opts.Client,
+			Config:       opts.Config,
+			HostProxy:    opts.HostProxy,
+			ControlPlane: opts.ControlPlane,
+			AdminClient:  opts.AdminClient,
+			SocketBridge: opts.SocketBridge,
+			Logger:       opts.Logger,
 		})
 	if errBootstrapPre != nil {
 		return fmt.Errorf("bootstrapping services for container %q: %w", name, errBootstrapPre)
@@ -194,14 +192,13 @@ func restartContainer(ctx context.Context, client *docker.Client, name string, c
 	_, err = client.ContainerRestart(ctx, c.ID, &timeout)
 	errBootstrapPost := shared.BootstrapServicesPostStart(
 		ctx, c.ID, shared.CommandOpts{
-			Client:         opts.Client,
-			Config:         opts.Config,
-			ProjectManager: opts.ProjectManager,
-			HostProxy:      opts.HostProxy,
-			ControlPlane:   opts.ControlPlane,
-			AdminClient:    opts.AdminClient,
-			SocketBridge:   opts.SocketBridge,
-			Logger:         opts.Logger,
+			Client:       opts.Client,
+			Config:       opts.Config,
+			HostProxy:    opts.HostProxy,
+			ControlPlane: opts.ControlPlane,
+			AdminClient:  opts.AdminClient,
+			SocketBridge: opts.SocketBridge,
+			Logger:       opts.Logger,
 		})
 	if errBootstrapPost != nil {
 		return fmt.Errorf("bootstrapping services for container %q: %w", name, errBootstrapPost)

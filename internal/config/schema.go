@@ -137,8 +137,23 @@ type PathRule struct {
 	Action string `yaml:"action" label:"Action" desc:"Whether to allow or deny requests matching this path"`
 }
 
+// Egress vocabulary for the EgressRule / PathRule Proto, Port, and Action
+// fields. EgressRule is the type these values decorate, so its package is the
+// single home for the constants — reference them instead of spelling the
+// literals.
+const (
+	// EgressProtoHTTPS is the default EgressRule protocol (TLS-MITM HCM).
+	EgressProtoHTTPS = "https"
+	// EgressPortHTTPS is the EgressProtoHTTPS default destination port.
+	EgressPortHTTPS = "443"
+	// EgressActionAllow permits traffic matching a rule (the default action).
+	EgressActionAllow = "allow"
+	// EgressActionDeny blocks traffic matching a rule.
+	EgressActionDeny = "deny"
+)
+
 // EgressRule defines a single egress firewall rule.
-// Dst is the domain or IP, Proto defaults to "https" (TLS-MITM HCM), Action defaults to "allow".
+// Dst is the domain or IP, Proto defaults to EgressProtoHTTPS (TLS-MITM HCM), Action defaults to EgressActionAllow.
 // The legacy value `proto: tls` is silently translated to `proto: https` at normalization time.
 type EgressRule struct {
 	Dst   string `yaml:"dst" label:"Destination" desc:"Domain or IP the container needs to reach (e.g. api.github.com, registry.npmjs.org)"`

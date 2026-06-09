@@ -282,16 +282,15 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	// container output to os.Stdout). Both detach and attach paths share the
 	// same pre-start, so the bootstrap effort isn't repeated downstream.
 	cmdOpts := shared.CommandOpts{
-		Client:         opts.Client,
-		Config:         opts.Config,
-		ProjectManager: opts.ProjectManager,
-		HostProxy:      opts.HostProxy,
-		ControlPlane:   opts.ControlPlane,
-		AdminClient:    opts.AdminClient,
-		SocketBridge:   opts.SocketBridge,
-		Logger:         opts.Logger,
-		AgentName:      opts.AgentName,
-		Project:        opts.Project,
+		Client:       opts.Client,
+		Config:       opts.Config,
+		HostProxy:    opts.HostProxy,
+		ControlPlane: opts.ControlPlane,
+		AdminClient:  opts.AdminClient,
+		SocketBridge: opts.SocketBridge,
+		Logger:       opts.Logger,
+		AgentName:    opts.AgentName,
+		Project:      opts.Project,
 	}
 	if err := ios.RunWithSpinner("Bootstrapping host services", func() error {
 		return shared.BootstrapServicesPreStart(ctx, o.result.ContainerID, cmdOpts)

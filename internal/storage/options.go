@@ -74,8 +74,10 @@ func WithDotDefault() Option {
 // .clawker/{filename} (dir form) first, then .{filename} (flat dotfile form).
 // Walk-up never proceeds past anchorDir.
 //
-// anchorDir must be CWD or an ancestor of it; an anchor that is not above CWD
-// is refused (walk-up skipped) rather than allowed to escape to the filesystem
+// anchorDir must be CWD or an ancestor of it. A non-ancestor anchor (a path
+// beside or below CWD, a relative path, or a garbage path) is a caller
+// programming error: store construction fails with an error wrapping
+// ErrAnchorNotAncestor rather than letting the walk escape to the filesystem
 // root. An empty anchorDir disables walk-up, so discovery falls back to
 // explicit paths only.
 func WithWalkUp(anchorDir string) Option {
@@ -88,7 +90,7 @@ func WithWalkUp(anchorDir string) Option {
 // Each directory uses the same dual-placement logic as walk-up: if a .clawker/
 // subdirectory exists, it probes .clawker/{filename} (dir form); otherwise it
 // probes .{filename} (flat dotfile form). Both .yaml and .yml extensions are
-// accepted. No registry required.
+// accepted.
 // Directories are probed in the order given (first = highest priority).
 // Priority: walk-up > dirs > explicit paths (WithPaths/WithConfigDir/etc.).
 func WithDirs(dirs ...string) Option {
@@ -147,7 +149,8 @@ func WithMigrations(fns ...Migration) Option {
 }
 
 // WithLock enables flock-based advisory locking for Write operations.
-// Use for stores that need cross-process mutual exclusion (e.g. registry).
+// Use for stores that need cross-process mutual exclusion (e.g. a store
+// written by concurrent CLI invocations).
 func WithLock() Option {
 	return func(o *options) {
 		o.lock = true

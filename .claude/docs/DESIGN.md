@@ -119,7 +119,7 @@ dev.clawker.agent=<agent-name>
 
 ### Project Registry Lifecycle
 
-1. **Register**: `clawker project init` or `clawker project register` adds a slug→path entry to the registry (`registry.yaml`, data dir; owned by `internal/project`)
+1. **Register**: `clawker project init` or `clawker project register` adds a slug→path entry to the registry file (`consts.RegistryFile`, data dir; owned by `internal/project`)
 2. **Lookup**: `Factory.Config()` returns a `config.Config` — the single interface all callers receive. Project resolution uses registry + `os.Getwd()` internally
 3. **Orphan projects**: If no project is resolved, resources get 2-segment names and omit the project label
 

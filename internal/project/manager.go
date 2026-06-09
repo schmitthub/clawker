@@ -251,24 +251,15 @@ func (s *projectManager) Get(_ context.Context, root string) (Project, error) {
 	return &projectHandle{manager: s, record: projectRecordFromEntry(entry)}, nil
 }
 
-// ResolvePath resolves an arbitrary path to a registered project.
+// ResolvePath resolves an arbitrary path to a registered project. Both sides
+// are normalized via resolveRootPath (absolute + symlink-resolved with a
+// cleaned fallback) so symlinked and real paths match interchangeably.
 func (s *projectManager) ResolvePath(_ context.Context, cwd string) (Project, error) {
-	absPath, err := filepath.Abs(cwd)
-	if err != nil {
-		return nil, fmt.Errorf("resolving absolute path: %w", err)
-	}
-	resolvedPath, err := filepath.EvalSymlinks(absPath)
-	if err != nil {
-		resolvedPath = filepath.Clean(absPath)
-	}
+	resolvedPath := resolveRootPath(cwd)
 
 	registry := s.registry()
 	for _, entry := range registry.List() {
-		resolvedRoot, rootErr := filepath.EvalSymlinks(entry.Root)
-		if rootErr != nil {
-			resolvedRoot = filepath.Clean(entry.Root)
-		}
-		if resolvedRoot == resolvedPath {
+		if resolveRootPath(entry.Root) == resolvedPath {
 			return &projectHandle{manager: s, record: projectRecordFromEntry(entry)}, nil
 		}
 	}
@@ -290,6 +281,13 @@ func (s *projectManager) CurrentProject(ctx context.Context) (Project, error) {
 	var resolved Project
 	var resolveErr error
 	projectRoot, err := CurrentProjectRoot()
+	// ErrNotInProject is the benign "no registered project for CWD" condition
+	// and degrades to the cwd-based fallback below; any other error is a real
+	// registry/storage failure and must surface instead of being mistaken for
+	// an unregistered directory.
+	if err != nil && !errors.Is(err, ErrNotInProject) {
+		return nil, fmt.Errorf("resolving current project root: %w", err)
+	}
 	if err == nil {
 		resolved, resolveErr = s.ResolvePath(ctx, projectRoot)
 	}

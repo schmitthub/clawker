@@ -258,7 +258,7 @@ func (c *configImpl) EgressRules() []EgressRule {
 	if projectFw != nil {
 		rules = append(rules, projectFw.Rules...)
 		for _, d := range projectFw.AddDomains {
-			rules = append(rules, EgressRule{Dst: d, Proto: "https", Port: "443", Action: "allow"})
+			rules = append(rules, EgressRule{Dst: d, Proto: EgressProtoHTTPS, Port: EgressPortHTTPS, Action: EgressActionAllow})
 		}
 	}
 	return rules

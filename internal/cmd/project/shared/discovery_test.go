@@ -1,6 +1,7 @@
 package shared_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -73,8 +74,14 @@ func setupIsolatedProjectDir(t *testing.T, placement string, registered bool) (c
 
 	t.Chdir(projectDir)
 
-	root, _ := project.CurrentProjectRoot()
-	cfg, err := config.NewConfig(config.WithProjectRoot(root))
+	// ErrNotInProject is the normal "no registered project" condition and
+	// degrades to an empty walk-up anchor; any other error is a real
+	// registry/storage failure and must fail the test loudly.
+	root, err := project.CurrentProjectRoot()
+	if err != nil && !errors.Is(err, project.ErrNotInProject) {
+		t.Fatalf("resolving project root: %v", err)
+	}
+	cfg, err = config.NewConfig(config.WithProjectRoot(root))
 	require.NoError(t, err)
 
 	return cfg, projectDir

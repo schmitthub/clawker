@@ -117,7 +117,8 @@ const (
 	ProjectConfigFile = "clawker.yaml"
 	SettingsFile      = "settings.yaml"
 	// RegistryFile is the project registry filename. The registry lives in
-	// the data dir (DataDir()/registry.yaml) and is owned by internal/project.
+	// the data dir (resolved via the config DataDir() accessor) and is owned
+	// by internal/project.
 	// This const is the single source of truth for the name — internal/project
 	// references it both for the owner store and for walk-up project-root
 	// resolution; no other package redeclares the literal.
@@ -640,11 +641,6 @@ func BuildSubdir() (string, error) { return subdirPath(buildDir, DataDir) }
 
 // WorktreesSubdir ensures and returns the worktrees subdirectory path under DataDir.
 func WorktreesSubdir() (string, error) { return subdirPath(worktreesDir, DataDir) }
-
-// WorktreesPath returns the worktrees directory path under DataDir without
-// ensuring it exists — for callers that need the path even when directory
-// creation failed (best-effort fallback).
-func WorktreesPath() string { return filepath.Join(DataDir(), worktreesDir) }
 
 // ShareSubdir ensures and returns the shared directory path under DataDir.
 func ShareSubdir() (string, error) { return subdirPath(shareDir, DataDir) }
