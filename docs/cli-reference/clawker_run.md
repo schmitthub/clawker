@@ -15,7 +15,9 @@ Container names follow clawker conventions: clawker.project.agent
 When --agent is provided, the container is named clawker.`<project>`.`<agent>` where
 project is resolved from the current directory.
 
-If IMAGE is "@", clawker will resolve the project's built image with :latest tag.
+If IMAGE is "@", clawker resolves the built image for the current scope: the
+project image inside a registered project, or the global image (built with
+"clawker build" outside any project) elsewhere.
 
 ```
 clawker run [OPTIONS] IMAGE [COMMAND] [ARG...] [flags]

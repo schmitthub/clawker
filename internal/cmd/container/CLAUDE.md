@@ -116,7 +116,7 @@ Single entry point for container creation, shared by `run` and `create`. Perform
 
 ## Image Resolution (@ Symbol)
 
-`opts.Image == "@"` → `client.ResolveImageWithSource(ctx, projectName)`. Source types: `ImageSourceExplicit`, `ImageSourceProject`, `ImageSourceConfig`. Resolution chain: Docker label lookup → `cfg.Project().Build.Image` fallback. Project name resolved via `project.ProjectManager.CurrentProject(ctx).Name()`. Returns `nil` when neither source yields an image (caller decides next action).
+`opts.Image == "@"` → `client.ResolveImageWithSource(ctx, projectName)`. Source types: `ImageSourceProject`, `ImageSourceGlobal`. Resolution is scope-keyed: project scope (non-empty `projectName`) → project-label image lookup; global scope (empty `projectName`) → global image lookup (`ImageTag("")`). Scopes do not ladder, and there is no `build.image` config fallback — that is a bare base image, never runnable as an agent. Project name resolved via `project.ProjectManager.CurrentProject(ctx).Name()`. Returns `nil` when no built image exists for the scope (caller prints next-steps guidance pointing at `clawker build`).
 
 ## Home Directory Safety
 

@@ -2,114 +2,94 @@ package docker
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	moby "github.com/moby/moby/client"
 )
 
-func TestFindProjectImage_EmptyProject(t *testing.T) {
-	ctx := context.Background()
-	cfg := testConfig(t, `{}`)
-	client, _ := newTestClientWithConfig(cfg)
-
-	// Empty projectName returns empty string immediately (no Docker call)
-	result, err := client.findProjectImage(ctx, "")
-	if err != nil {
-		t.Errorf("findProjectImage() unexpected error = %v", err)
-	}
-	if result != "" {
-		t.Errorf("findProjectImage() = %q, want empty string", result)
-	}
-}
-
-func TestResolveImageWithSource_ProjectOnly(t *testing.T) {
+func TestFindGlobalImage(t *testing.T) {
 	ctx := context.Background()
 
-	tests := []struct {
-		name        string
-		projectName string
-		wantNil     bool
-	}{
-		{
-			name:        "returns nil for empty project name",
-			projectName: "",
-			wantNil:     true,
-		},
-		{
-			name:        "returns nil when no project image found",
-			projectName: "myproject",
-			wantNil:     true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := testConfig(t, `{}`)
-			client, fakeAPI := newTestClientWithConfig(cfg)
-
-			// Wire ImageList to return empty results
-			fakeAPI.ImageListFn = func(_ context.Context, _ moby.ImageListOptions) (moby.ImageListResult, error) {
-				return moby.ImageListResult{}, nil
-			}
-
-			result, err := client.ResolveImageWithSource(ctx, tt.projectName)
-			if err != nil {
-				t.Fatalf("ResolveImageWithSource() unexpected error: %v", err)
-			}
-
-			if tt.wantNil {
-				if result != nil {
-					t.Errorf("ResolveImageWithSource() = %+v, want nil", result)
-				}
-				return
-			}
-
-			if result == nil {
-				t.Fatal("ResolveImageWithSource() returned nil, want non-nil")
-			}
-		})
-	}
-}
-
-func TestResolveImageWithSource_ConfigFallback(t *testing.T) {
-	ctx := context.Background()
-
-	t.Run("falls back to build.image from config", func(t *testing.T) {
-		cfg := testConfig(t, `build:
-  image: "clawker-default:latest"`)
+	t.Run("finds global image and filters by managed label + global reference", func(t *testing.T) {
+		cfg := testConfig(t, `{}`)
 		client, fakeAPI := newTestClientWithConfig(cfg)
 
-		fakeAPI.ImageListFn = func(_ context.Context, _ moby.ImageListOptions) (moby.ImageListResult, error) {
-			return moby.ImageListResult{}, nil
+		var gotOpts moby.ImageListOptions
+		fakeAPI.ImageListFn = func(_ context.Context, opts moby.ImageListOptions) (moby.ImageListResult, error) {
+			gotOpts = opts
+			return moby.ImageListResult{
+				Items: []ImageSummary{
+					{RepoTags: []string{ImageTag("")}},
+				},
+			}, nil
 		}
 
-		result, err := client.ResolveImageWithSource(ctx, "")
+		result, err := client.findGlobalImage(ctx)
 		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
+			t.Fatalf("findGlobalImage() unexpected error: %v", err)
 		}
-		if result == nil {
-			t.Fatal("expected non-nil result from config fallback")
+		if result != ImageTag("") {
+			t.Errorf("findGlobalImage() = %q, want %q", result, ImageTag(""))
 		}
-		if result.Reference != "clawker-default:latest" {
-			t.Errorf("Reference = %q, want %q", result.Reference, "clawker-default:latest")
+
+		labelFilters := gotOpts.Filters["label"]
+		if _, ok := labelFilters[cfg.LabelManaged()+"="+cfg.ManagedLabelValue()]; !ok {
+			t.Errorf("ImageList filters missing managed label, got %v", labelFilters)
 		}
-		if result.Source != ImageSourceConfig {
-			t.Errorf("Source = %q, want %q", result.Source, ImageSourceConfig)
+		refFilters := gotOpts.Filters["reference"]
+		if _, ok := refFilters[ImageTag("")]; !ok {
+			t.Errorf("ImageList filters missing global reference %q, got %v", ImageTag(""), refFilters)
 		}
 	})
 
-	t.Run("project image wins over config", func(t *testing.T) {
-		cfg := testConfig(t, `build:
-  image: "clawker-default:latest"`)
+	t.Run("ignores images without the exact global tag", func(t *testing.T) {
+		cfg := testConfig(t, `{}`)
 		client, fakeAPI := newTestClientWithConfig(cfg)
 
 		fakeAPI.ImageListFn = func(_ context.Context, _ moby.ImageListOptions) (moby.ImageListResult, error) {
 			return moby.ImageListResult{
 				Items: []ImageSummary{
-					{RepoTags: []string{"myproject:latest"}},
+					{RepoTags: []string{"clawker:v1.0", "clawker-myproject:latest"}},
 				},
 			}, nil
 		}
+
+		result, err := client.findGlobalImage(ctx)
+		if err != nil {
+			t.Fatalf("findGlobalImage() unexpected error: %v", err)
+		}
+		if result != "" {
+			t.Errorf("findGlobalImage() = %q, want empty string", result)
+		}
+	})
+}
+
+func TestResolveImageWithSource(t *testing.T) {
+	ctx := context.Background()
+
+	// imageListByFilter emulates daemon-side filtering: project-label queries
+	// return projectItems, global-reference queries return globalItems.
+	imageListByFilter := func(projectLabel string, projectItems, globalItems []ImageSummary) func(context.Context, moby.ImageListOptions) (moby.ImageListResult, error) {
+		return func(_ context.Context, opts moby.ImageListOptions) (moby.ImageListResult, error) {
+			if _, ok := opts.Filters["reference"][ImageTag("")]; ok {
+				return moby.ImageListResult{Items: globalItems}, nil
+			}
+			for key := range opts.Filters["label"] {
+				if strings.HasPrefix(key, projectLabel+"=") {
+					return moby.ImageListResult{Items: projectItems}, nil
+				}
+			}
+			return moby.ImageListResult{}, nil
+		}
+	}
+
+	t.Run("project scope resolves project image", func(t *testing.T) {
+		cfg := testConfig(t, `{}`)
+		client, fakeAPI := newTestClientWithConfig(cfg)
+		fakeAPI.ImageListFn = imageListByFilter(cfg.LabelProject(),
+			[]ImageSummary{{RepoTags: []string{"clawker-myproject:latest"}}}, nil)
 
 		result, err := client.ResolveImageWithSource(ctx, "myproject")
 		if err != nil {
@@ -118,47 +98,95 @@ func TestResolveImageWithSource_ConfigFallback(t *testing.T) {
 		if result == nil {
 			t.Fatal("expected non-nil result")
 		}
-		if result.Reference != "myproject:latest" {
-			t.Errorf("Reference = %q, want %q", result.Reference, "myproject:latest")
+		if result.Reference != "clawker-myproject:latest" {
+			t.Errorf("Reference = %q, want %q", result.Reference, "clawker-myproject:latest")
 		}
 		if result.Source != ImageSourceProject {
 			t.Errorf("Source = %q, want %q", result.Source, ImageSourceProject)
 		}
 	})
 
-	t.Run("returns nil when no project image and no config image", func(t *testing.T) {
+	t.Run("project scope does not ladder to global image", func(t *testing.T) {
 		cfg := testConfig(t, `{}`)
 		client, fakeAPI := newTestClientWithConfig(cfg)
+		fakeAPI.ImageListFn = imageListByFilter(cfg.LabelProject(),
+			nil, []ImageSummary{{RepoTags: []string{ImageTag("")}}})
 
-		fakeAPI.ImageListFn = func(_ context.Context, _ moby.ImageListOptions) (moby.ImageListResult, error) {
-			return moby.ImageListResult{}, nil
+		result, err := client.ResolveImageWithSource(ctx, "myproject")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
 		}
+		if result != nil {
+			t.Errorf("expected nil (no project image, global must not leak into project scope), got %+v", result)
+		}
+	})
+
+	t.Run("global scope resolves global image", func(t *testing.T) {
+		cfg := testConfig(t, `{}`)
+		client, fakeAPI := newTestClientWithConfig(cfg)
+		fakeAPI.ImageListFn = imageListByFilter(cfg.LabelProject(),
+			nil, []ImageSummary{{RepoTags: []string{ImageTag("")}}})
+
+		result, err := client.ResolveImageWithSource(ctx, "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result == nil {
+			t.Fatal("expected non-nil result for global image")
+		}
+		if result.Reference != ImageTag("") {
+			t.Errorf("Reference = %q, want %q", result.Reference, ImageTag(""))
+		}
+		if result.Source != ImageSourceGlobal {
+			t.Errorf("Source = %q, want %q", result.Source, ImageSourceGlobal)
+		}
+	})
+
+	t.Run("global scope never falls back to config build.image", func(t *testing.T) {
+		// build.image is a bare base image (no Claude Code, no clawkerd) —
+		// handing it to run/create is never right. Locks the removal of the
+		// config fallback arm.
+		cfg := testConfig(t, `build:
+  image: "buildpack-deps:bookworm-scm"`)
+		client, fakeAPI := newTestClientWithConfig(cfg)
+		fakeAPI.ImageListFn = imageListByFilter(cfg.LabelProject(), nil, nil)
 
 		result, err := client.ResolveImageWithSource(ctx, "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if result != nil {
-			t.Errorf("expected nil, got %+v", result)
+			t.Errorf("expected nil (config build.image must not resolve), got %+v", result)
 		}
 	})
-}
 
-func TestResolveImage_EmptyProject(t *testing.T) {
-	ctx := context.Background()
-	cfg := testConfig(t, `{}`)
-	client, fakeAPI := newTestClientWithConfig(cfg)
+	t.Run("project scope never falls back to config build.image", func(t *testing.T) {
+		cfg := testConfig(t, `build:
+  image: "buildpack-deps:bookworm-scm"`)
+		client, fakeAPI := newTestClientWithConfig(cfg)
+		fakeAPI.ImageListFn = imageListByFilter(cfg.LabelProject(), nil, nil)
 
-	// Wire ImageList to return empty results
-	fakeAPI.ImageListFn = func(_ context.Context, _ moby.ImageListOptions) (moby.ImageListResult, error) {
-		return moby.ImageListResult{}, nil
-	}
+		result, err := client.ResolveImageWithSource(ctx, "myproject")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result != nil {
+			t.Errorf("expected nil (config build.image must not resolve), got %+v", result)
+		}
+	})
 
-	got, err := client.ResolveImage(ctx, "")
-	if err != nil {
-		t.Fatalf("ResolveImage() returned unexpected error: %v", err)
-	}
-	if got != "" {
-		t.Errorf("ResolveImage() = %q, want empty string", got)
-	}
+	t.Run("global scope wraps lookup errors", func(t *testing.T) {
+		cfg := testConfig(t, `{}`)
+		client, fakeAPI := newTestClientWithConfig(cfg)
+
+		listErr := errors.New("daemon unavailable")
+		fakeAPI.ImageListFn = func(_ context.Context, _ moby.ImageListOptions) (moby.ImageListResult, error) {
+			return moby.ImageListResult{}, listErr
+		}
+
+		_, err := client.ResolveImageWithSource(ctx, "")
+		if !errors.Is(err, listErr) {
+			t.Errorf("error = %v, want wrapped %v", err, listErr)
+		}
+	})
 }

@@ -89,7 +89,7 @@ clawker run -it --rm --agent dev @ --dangerously-skip-permissions
 - `-it` — interactive mode with a terminal attached
 - `--rm` — removes the container when it finishes (recommended, volumes are preserved)
 - `--agent dev` — names this container `clawker.<project>.dev`
-- `@` — shortcut that resolves to your project's built image
+- `@` — shortcut that resolves to your built image (the project image here; outside a project it resolves to the global image from a global `clawker build`)
 
 You're now inside a containerized Claude Code session. Your project code is bind-mounted (live sync), your Git credentials are forwarded, and the network firewall is active. Arguments after the image (`@`) are passed directly to Claude Code inside the container.
 

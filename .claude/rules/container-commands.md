@@ -5,7 +5,7 @@ paths: ["internal/cmd/container/**"]
 
 # Container Command Rules
 
-- `@` symbol triggers `client.ResolveImageWithSource(ctx, projectName)` for automatic image resolution (Docker labels → `cfg.Project().Build.Image` config fallback); project name resolved via `project.ProjectManager.CurrentProject(ctx).Name()`
+- `@` symbol triggers `client.ResolveImageWithSource(ctx, projectName)` for automatic image resolution — scope-keyed: project-label image in project scope, global image (`ImageTag("")`) when no project; no `build.image` config fallback; project name resolved via `project.ProjectManager.CurrentProject(ctx).Name()`
 - Shared container flags and domain logic live in `internal/cmd/container/shared/` package
 - Always use `f.Client(ctx)` from Factory — never `docker.NewClient()` directly
 - Do NOT `defer client.Close()` — Factory manages client lifecycle
