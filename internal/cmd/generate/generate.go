@@ -43,7 +43,6 @@ func NewCmdGenerate(f *cmdutil.Factory, runF func(context.Context, *GenerateOpti
 		Long: `Fetches Claude Code versions from npm and generates Dockerfiles.
 
 Generates versions.json and Dockerfiles for each version/variant combination.
-Files are saved to ~/.local/share/clawker/build/ (or use --output to specify a directory).
 
 If no versions are specified, displays current versions.json.
 If versions are specified, fetches them from npm and generates Dockerfiles.

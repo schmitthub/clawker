@@ -159,7 +159,7 @@ func NewCmdProjectInit(f *cmdutil.Factory, runF func(context.Context, *ProjectIn
 	cmd := &cobra.Command{
 		Use:   "init [project-name]",
 		Short: "Initialize a new project or configuration file",
-		Long: `Creates a .clawker.yaml configuration file in the current directory.
+		Long: `Creates a project configuration file in the current directory.
 
 When run at a project root, performs full project setup: creates config and
 .clawkerignore files, and registers the project. When run inside an existing

@@ -31,9 +31,8 @@ func NewCmdDisable(f *cmdutil.Factory, runF func(context.Context, *DisableOption
 	cmd := &cobra.Command{
 		Use:   "disable",
 		Short: "Disable firewall for a container",
-		Long: `Remove an agent container from the firewall's per-container routing.
-BPF programs remain attached so re-enable is cheap; the fast path exits to
-bypass on lookup miss.`,
+		Long: `Remove an agent container from per-container egress filtering.
+Re-enable later with 'clawker firewall enable'.`,
 		Example: `  # Disable firewall for an agent container
   clawker firewall disable --agent dev`,
 		RunE: func(cmd *cobra.Command, args []string) error {

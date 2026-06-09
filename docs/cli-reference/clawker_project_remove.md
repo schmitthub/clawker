@@ -11,7 +11,7 @@ Remove projects from the registry
 Removes one or more projects from the clawker project registry.
 
 This only removes the project's registration — it does not delete any files
-from disk. The project directory and clawker.yaml remain untouched.
+from disk. The project directory and its configuration file remain untouched.
 
 Use 'clawker project list' to see registered project names.
 

@@ -28,7 +28,7 @@ func NewCmdProjectEdit(f *cmdutil.Factory, runF func(context.Context, *EditOptio
 	cmd := &cobra.Command{
 		Use:   "edit",
 		Short: "Interactively edit project configuration",
-		Long:  `Opens an interactive TUI for browsing and editing project configuration (clawker.yaml).`,
+		Long:  `Opens an interactive TUI for browsing and editing project configuration.`,
 		Example: `  # Edit project configuration
   clawker project edit`,
 		Args: cobra.NoArgs,

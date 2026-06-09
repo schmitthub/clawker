@@ -13,7 +13,7 @@ Create and run a new clawker container from the specified image.
 Container names follow clawker conventions: clawker.project.agent
 
 When --agent is provided, the container is named clawker.`<project>`.`<agent>` where
-project comes from .clawker.yaml.
+project is resolved from the current directory.
 
 If IMAGE is "@", clawker will resolve the project's built image with :latest tag.
 

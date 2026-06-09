@@ -8,7 +8,7 @@ Interactively edit project configuration
 
 ### Synopsis
 
-Opens an interactive TUI for browsing and editing project configuration (clawker.yaml).
+Opens an interactive TUI for browsing and editing project configuration.
 
 ```
 clawker project edit [flags]

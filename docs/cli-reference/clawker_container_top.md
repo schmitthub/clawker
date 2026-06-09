@@ -13,7 +13,7 @@ Display the running processes of a clawker container.
 Additional arguments are passed directly to ps as options.
 
 When --agent is provided, the container name is resolved as clawker.`<project>`.`<agent>`
-using the project from your .clawker.yaml configuration.
+using the project resolved from the current directory.
 
 Container name can be:
   - Full name: clawker.myproject.myagent

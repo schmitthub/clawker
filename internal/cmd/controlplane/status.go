@@ -50,10 +50,9 @@ func NewCmdStatus(f *cmdutil.Factory, runF func(context.Context, *StatusOptions)
 		Short: "Show control plane health",
 		Long: `Report the health of the clawker control plane.
 
-Probes ` + "`/healthz`" + ` on the CP's HealthPort and, if the CP is up,
-best-effort queries the AdminService for firewall subsystem state.
-Tolerates a stopped CP — in that case the firewall fields are omitted
-and the CP is reported as down.`,
+Probes the control plane's health endpoint and, if the CP is up,
+reports firewall subsystem state. Tolerates a stopped CP — in that case
+the firewall fields are omitted and the CP is reported as down.`,
 		Example: `  # Show CP status
   clawker controlplane status
 

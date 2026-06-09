@@ -40,13 +40,12 @@ func NewCmdBypass(f *cmdutil.Factory, runF func(context.Context, *BypassOptions)
 		Short: "Temporarily bypass firewall for a container",
 		Long: `Grant a container unrestricted egress for a specified duration.
 
-Calls FirewallBypass on the control plane, which sets the BPF bypass flag
-and starts a server-side dead-man timer that automatically re-enables
-enforcement when the timer fires. The timer survives CLI exit.
+Enforcement automatically re-enables when the duration expires. Expiry is
+tracked server-side, so it survives CLI exit.
 
 By default the command blocks with a countdown timer. Press Ctrl+C to
 stop the bypass early (re-enables firewall). Press q/Esc to detach
-(bypass remains active until the server-side timer fires).
+(bypass remains active until it expires).
 
 Use --non-interactive to start bypass and return immediately (fire-and-forget).
 Use --stop to cancel an active bypass immediately.`,

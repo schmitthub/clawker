@@ -50,17 +50,11 @@ func NewCmdAgents(f *cmdutil.Factory, runF func(context.Context, *AgentsOptions)
 	cmd := &cobra.Command{
 		Use:   "agents",
 		Short: "List agents currently registered with the control plane",
-		Long: `Snapshot every agent currently registered with the control plane.
+		Long: `List every agent currently registered with the control plane.
 
-The control plane is the sole writer of the agent registry — entries
-are written server-side at AgentService.Register handler entry when CP
-captures the live mTLS peer's cert thumbprint. This command queries
-AdminService.ListAgents over mTLS gRPC to retrieve the snapshot.
-
-Identity is channel-bound: the certificate thumbprint shown here is
-the SHA-256 over the agent's mTLS leaf cert. Agents are uniquely
-identified by the composite (project, agent_name) — agents with the
-same short name in different projects appear as separate rows.`,
+The thumbprint shown is the SHA-256 of the agent's certificate. Agents
+are uniquely identified by the (project, agent_name) pair — agents with
+the same name in different projects appear as separate rows.`,
 		Example: `  # Show all registered agents
   clawker controlplane agents
 

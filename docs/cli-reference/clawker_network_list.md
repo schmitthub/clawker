@@ -10,9 +10,6 @@ List networks
 
 Lists all networks created by clawker.
 
-Networks are used for container communication and monitoring stack
-integration. The primary network is clawker-net.
-
 ```
 clawker network list [flags]
 ```

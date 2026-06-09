@@ -21,8 +21,7 @@ Worktrees allow running containers against different branches simultaneously
 without switching branches in your main repository. Each worktree is a
 separate checkout of the repository at a specific branch.
 
-Worktrees are created automatically when using 'clawker run --worktree <branch>'
-and stored under the clawker data directory (default: ~/.local/share/clawker/worktrees/).`,
+Worktrees are created automatically when using 'clawker run --worktree <branch>'.`,
 		Example: `  # Create a worktree for a new branch
   clawker worktree add feat-42
 

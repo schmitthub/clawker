@@ -10,9 +10,6 @@ Manage networks
 
 Manage clawker networks.
 
-Clawker uses a dedicated network (clawker-net) for container communication
-and monitoring stack integration.
-
 ### Examples
 
 ```

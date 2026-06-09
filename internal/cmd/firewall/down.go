@@ -32,8 +32,8 @@ func NewCmdDown(f *cmdutil.Factory, runF func(context.Context, *DownOptions) err
 	cmd := &cobra.Command{
 		Use:   "down",
 		Short: "Tear down the firewall stack",
-		Long: `Stop the Envoy + CoreDNS firewall stack, detach all BPF programs,
-and flush eBPF state. Pending bypass timers are cancelled.
+		Long: `Stop the Envoy + CoreDNS firewall stack. Pending bypass timers
+are cancelled.
 
 No-op if the stack is already stopped.`,
 		Example: `  # Tear down the firewall stack

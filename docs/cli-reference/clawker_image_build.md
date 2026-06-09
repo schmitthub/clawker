@@ -10,9 +10,9 @@ Build an image from a clawker project
 
 Builds a container image from a clawker project configuration.
 
-The image is built from the project's .clawker.yaml configuration,
-generating a Dockerfile and building the image. Alternatively,
-use -f/--file to specify a custom Dockerfile.
+The image is built from the project's configuration, generating a
+Dockerfile and building the image. Alternatively, use -f/--file to
+specify a custom Dockerfile.
 
 Multiple tags can be applied to the built image using -t/--tag.
 Build-time variables can be passed using --build-arg.

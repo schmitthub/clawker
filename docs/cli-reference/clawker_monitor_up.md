@@ -17,8 +17,7 @@ This launches the following services:
   - OpenTelemetry Collector (ports 4317, 4318)
   - Prometheus (port 9090)
 
-The stack connects to the clawker-net Docker network, allowing
-Claude Code containers to send telemetry automatically.
+Agent containers send telemetry to the stack automatically.
 
 ```
 clawker monitor up [flags]

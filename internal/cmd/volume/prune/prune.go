@@ -34,7 +34,7 @@ func NewCmdPrune(f *cmdutil.Factory, runF func(context.Context, *PruneOptions) e
 	cmd := &cobra.Command{
 		Use:   "prune [OPTIONS]",
 		Short: "Remove unused agent volumes",
-		Long: `Removes unused clawker-managed agent volumes (volumes labeled with purpose=agent).
+		Long: `Removes unused clawker-managed agent volumes.
 
 By default all agent volumes are pruned — workspace, config, AND command
 history. Config and history volumes persist per-agent settings and shell

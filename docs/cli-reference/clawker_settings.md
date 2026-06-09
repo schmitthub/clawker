@@ -11,8 +11,7 @@ Manage clawker user settings
 Manage clawker user settings.
 
 User settings control global behavior like logging, monitoring, and
-firewall configuration. The settings file location depends on your
-config directory (settings.yaml).
+firewall configuration.
 
 ### Examples
 
