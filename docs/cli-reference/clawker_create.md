@@ -138,7 +138,7 @@ clawker create [OPTIONS] IMAGE [COMMAND] [ARG...] [flags]
       --volume-driver string                Optional volume driver for the container
       --volumes-from stringArray            Mount volumes from the specified container(s)
       --workdir string                      Override container working directory
-      --worktree string                     Use git worktree: 'branch' to use/create, 'branch:base' to create from base
+      --worktree string                     Use git worktree: 'branch' to use/create (checks out a matching remote-tracking branch with upstream when one exists), 'branch:base' to create from base
 ```
 
 ### Options inherited from parent commands

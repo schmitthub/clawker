@@ -19,9 +19,12 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 
 	gogit "github.com/go-git/go-git/v6"
+	gogitconfig "github.com/go-git/go-git/v6/config"
 	"github.com/go-git/go-git/v6/plumbing"
 	gogitstorer "github.com/go-git/go-git/v6/plumbing/storer"
 )
@@ -41,6 +44,16 @@ var (
 
 	// ErrBranchAlreadyExists is returned when creating a branch that already exists.
 	ErrBranchAlreadyExists = errors.New("branch already exists")
+
+	// ErrAmbiguousRemoteBranch is returned when a branch name matches remote-tracking
+	// refs in more than one remote and checkout.defaultRemote does not disambiguate.
+	ErrAmbiguousRemoteBranch = errors.New("branch matches multiple remotes")
+
+	// ErrExplicitRemoteRef is returned when a worktree branch name is itself an
+	// explicit remote-tracking ref (e.g. "origin/foo" where the ref exists).
+	// Native git would detach HEAD there, which clawker's branch-keyed worktrees
+	// do not support; the caller is steered to the bare name or colon-base form.
+	ErrExplicitRemoteRef = errors.New("branch name is a remote-tracking ref")
 )
 
 // GitManager is the top-level facade for git operations.
@@ -151,13 +164,25 @@ func (g *GitManager) Worktrees() (*WorktreeManager, error) {
 // SetupWorktree creates or gets a worktree for the given branch.
 // It orchestrates: directory creation (via provider) + git worktree add.
 //
+// When the branch does not exist locally, SetupWorktree mirrors native
+// `git worktree add` branch resolution:
+//   - base != "": create the branch at base. If base is a remote-tracking branch
+//     (e.g. "origin/foo"), the new branch is also set up to track it (git's
+//     --track default for a remote-tracking start point).
+//   - base == "": if a remote-tracking ref matching branch exists in exactly one
+//     remote (the "dwim" rule), branch from that remote tip and configure upstream
+//     tracking. Otherwise create a new local branch from HEAD.
+//
 // Parameters:
 //   - dirs: Provider for worktree directory management
 //   - branch: Branch name to check out (created if doesn't exist)
-//   - base: Base ref to create branch from (empty string uses HEAD)
+//   - base: Base ref to create branch from (empty string uses HEAD or a matching
+//     remote-tracking branch)
+//   - noTrack: suppress upstream tracking config even when the branch is derived
+//     from a remote-tracking ref (parity with `git worktree add --no-track`)
 //
 // Returns the worktree path ready for mounting.
-func (g *GitManager) SetupWorktree(dirs WorktreeDirProvider, branch, base string) (string, error) {
+func (g *GitManager) SetupWorktree(dirs WorktreeDirProvider, branch, base string, noTrack bool) (string, error) {
 	// 1. Get or create caller-managed worktree directory
 	wtPath, err := dirs.GetOrCreateWorktreeDir(branch)
 	if err != nil {
@@ -228,21 +253,79 @@ func (g *GitManager) SetupWorktree(dirs WorktreeDirProvider, branch, base string
 			return "", fmt.Errorf("creating git worktree for existing branch: %w", err)
 		}
 	} else {
-		// Branch doesn't exist - create it
+		// Reject an explicit remote-tracking ref used as the branch name (e.g.
+		// "origin/foo" when refs/remotes/origin/foo exists). Native git detaches
+		// HEAD there; clawker's branch-keyed worktrees do not support detached
+		// HEAD, so steer the user to the bare name (which dwim-tracks the remote)
+		// rather than silently creating a literal "origin/foo" local branch.
+		// Only fires when no explicit base is given and the ref actually exists;
+		// a genuine lookup error must surface, not be read as "ref absent".
+		if base == "" {
+			if remote, remoteBranch, ok := g.splitRemoteBranch(branch); ok {
+				_, refErr := g.repo.Reference(plumbing.NewRemoteReferenceName(remote, remoteBranch), true)
+				switch {
+				case refErr == nil:
+					return "", fmt.Errorf(
+						"%w: %q; use %q to create a worktree that tracks it",
+						ErrExplicitRemoteRef, branch, remoteBranch)
+				case errors.Is(refErr, plumbing.ErrReferenceNotFound):
+					// Genuinely absent — fall through to normal branch creation.
+				default:
+					return "", fmt.Errorf("checking remote-tracking ref %s/%s: %w", remote, remoteBranch, refErr)
+				}
+			}
+		}
+
+		// Branch doesn't exist - create it. Resolve the base commit and decide
+		// whether the new branch should track a remote-tracking branch.
 		var baseCommit plumbing.Hash
-		if base != "" {
+		var upRemote, upRemoteBranch string // empty upRemote => no upstream to set
+
+		switch {
+		case base != "":
 			hash, err := g.repo.ResolveRevision(plumbing.Revision(base))
 			if err != nil {
 				return "", fmt.Errorf("resolving base %q: %w", base, err)
 			}
 			baseCommit = *hash
+			// git's --track default: a remote-tracking start point becomes upstream.
+			if remote, remoteBranch, ok := g.splitRemoteBranch(base); ok {
+				upRemote, upRemoteBranch = remote, remoteBranch
+			}
+		default:
+			// No base: consult remote-tracking refs (the dwim rule) before
+			// falling back to HEAD, matching native `git worktree add`.
+			remote, hash, found, rErr := g.ResolveRemoteTrackingBranch(branch)
+			if rErr != nil {
+				return "", rErr
+			}
+			if found {
+				baseCommit = hash
+				upRemote, upRemoteBranch = remote, branch
+			}
 		}
 
 		if err := wt.AddWithNewBranch(wtPath, wtName, branchRef, baseCommit); err != nil {
-			// Clean up directory and git metadata on failure
+			// Clean up directory and git metadata on failure. AddWithNewBranch
+			// writes the branch ref into the shared store before checking out, so
+			// a mid-way failure can strand it — wt.Remove only drops worktree
+			// metadata, never branch refs. Remove the ref too (best effort).
 			_ = os.RemoveAll(wtPath)
 			_ = wt.Remove(wtName) // best effort - may not exist if Add failed early
+			_ = g.repo.Storer.RemoveReference(branchRef)
 			return "", fmt.Errorf("creating git worktree: %w", err)
+		}
+
+		if upRemote != "" && !noTrack {
+			if err := g.SetBranchUpstream(branch, upRemote, upRemoteBranch); err != nil {
+				// The branch ref created by AddWithNewBranch outlives wt.Remove;
+				// drop it too, or a retry would take the branch-exists path and
+				// silently skip tracking (the original failure would be masked).
+				_ = os.RemoveAll(wtPath)
+				_ = wt.Remove(wtName)
+				_ = g.repo.Storer.RemoveReference(branchRef)
+				return "", fmt.Errorf("configuring upstream for %q: %w", branch, err)
+			}
 		}
 	}
 
@@ -435,6 +518,102 @@ func (g *GitManager) BranchExists(branch string) (bool, error) {
 		return false, fmt.Errorf("checking branch %q: %w", branch, err)
 	}
 	return true, nil
+}
+
+// ResolveRemoteTrackingBranch looks for a remote-tracking ref matching branch
+// across all configured remotes — the "dwim" rule native `git worktree add` uses
+// when a branch name is not a local head.
+//
+// It returns the remote name and tip hash when exactly one remote has
+// refs/remotes/<remote>/<branch>. When multiple remotes match, checkout.defaultRemote
+// disambiguates; absent that, it returns ErrAmbiguousRemoteBranch naming the
+// candidates. When no remote has the branch, it returns found=false with a nil
+// error so callers fall back to creating a new local branch from HEAD — exactly
+// as native git does.
+func (g *GitManager) ResolveRemoteTrackingBranch(branch string) (remote string, hash plumbing.Hash, found bool, err error) {
+	remotes, err := g.repo.Remotes()
+	if err != nil {
+		return "", plumbing.ZeroHash, false, fmt.Errorf("listing remotes: %w", err)
+	}
+
+	hashes := make(map[string]plumbing.Hash)
+	var matched []string
+	for _, r := range remotes {
+		name := r.Config().Name
+		ref, refErr := g.repo.Reference(plumbing.NewRemoteReferenceName(name, branch), true)
+		if refErr != nil {
+			if errors.Is(refErr, plumbing.ErrReferenceNotFound) {
+				continue
+			}
+			return "", plumbing.ZeroHash, false, fmt.Errorf("resolving remote-tracking branch %s/%s: %w", name, branch, refErr)
+		}
+		matched = append(matched, name)
+		hashes[name] = ref.Hash()
+	}
+
+	switch len(matched) {
+	case 0:
+		return "", plumbing.ZeroHash, false, nil
+	case 1:
+		return matched[0], hashes[matched[0]], true, nil
+	default:
+		def, defErr := g.checkoutDefaultRemote()
+		if defErr != nil {
+			return "", plumbing.ZeroHash, false, defErr
+		}
+		if def != "" {
+			if h, ok := hashes[def]; ok {
+				return def, h, true, nil
+			}
+		}
+		sort.Strings(matched)
+		return "", plumbing.ZeroHash, false, fmt.Errorf(
+			"%w: branch %q exists in remotes [%s]; set checkout.defaultRemote to disambiguate",
+			ErrAmbiguousRemoteBranch, branch, strings.Join(matched, ", "))
+	}
+}
+
+// SetBranchUpstream writes tracking config so localBranch tracks
+// <remote>/<remoteBranch> (branch.<localBranch>.remote / .merge), matching
+// `git branch --set-upstream-to`. remoteBranch is the branch name on the remote,
+// which may differ from localBranch (e.g. `mybranch` tracking `origin/foo`).
+func (g *GitManager) SetBranchUpstream(localBranch, remote, remoteBranch string) error {
+	if err := g.repo.CreateBranch(&gogitconfig.Branch{
+		Name:   localBranch,
+		Remote: remote,
+		Merge:  plumbing.NewBranchReferenceName(remoteBranch),
+	}); err != nil {
+		return fmt.Errorf("writing tracking config for %q: %w", localBranch, err)
+	}
+	return nil
+}
+
+// splitRemoteBranch splits a ref like "origin/feature/foo" into its remote
+// ("origin") and branch ("feature/foo") parts when the leading segment names a
+// configured remote. Returns ok=false when the leading segment is not a remote
+// (so a local branch base like "feature/foo" is never mistaken for a remote ref).
+func (g *GitManager) splitRemoteBranch(ref string) (remote, branch string, ok bool) {
+	idx := strings.IndexByte(ref, '/')
+	if idx <= 0 || idx == len(ref)-1 {
+		return "", "", false
+	}
+	candidate := ref[:idx]
+	if _, err := g.repo.Remote(candidate); err != nil {
+		return "", "", false
+	}
+	return candidate, ref[idx+1:], true
+}
+
+// checkoutDefaultRemote returns the checkout.defaultRemote config value (empty
+// string when the option is unset). A config-read failure is a real fault, not
+// "unset", so it is surfaced rather than collapsed into an empty value — the
+// caller must not mistake an unreadable config for an absent disambiguator.
+func (g *GitManager) checkoutDefaultRemote() (string, error) {
+	cfg, err := g.repo.Config()
+	if err != nil {
+		return "", fmt.Errorf("reading repository config: %w", err)
+	}
+	return cfg.Raw.Section("checkout").Option("defaultRemote"), nil
 }
 
 // DeleteBranch deletes a branch ref and its config (equivalent to `git branch -d`).

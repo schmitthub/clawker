@@ -152,7 +152,7 @@ All worktree service methods accept `projectRoot` from the calling `projectHandl
 ### Internal API
 
 ```go
-CreateWorktree(_ context.Context, projectRoot, branch, base string) (string, error)
+CreateWorktree(_ context.Context, projectRoot, branch, base string, noTrack bool) (string, error)
 RemoveWorktree(_ context.Context, projectRoot, branch string, deleteBranch bool) error
 PruneStaleWorktrees(_ context.Context, projectRoot string, dryRun bool) (*PruneStaleResult, error)
 ```

@@ -39,7 +39,7 @@ wt, err := mgr.Worktrees()
 ### High-Level Orchestration (caller-integrated)
 
 ```go
-path, err := mgr.SetupWorktree(provider, branch, base)
+path, err := mgr.SetupWorktree(provider, branch, base, noTrack)
 err = mgr.RemoveWorktree(provider, branch)
 infos, err := mgr.ListWorktrees(entries)
 ```
@@ -48,6 +48,21 @@ Behavior details:
 
 - `SetupWorktree` validates/reuses existing directories when possible.
 - `SetupWorktree` removes orphaned git metadata for a target worktree before fresh creation.
+- `SetupWorktree` branch resolution mirrors native `git worktree add` (no network):
+  - branch is a local head → check it out.
+  - `base != ""` → create the branch at base; if base is a remote-tracking branch
+    (`origin/foo`) the new branch also tracks it.
+  - `base == ""` and a remote-tracking ref matching branch exists in exactly one
+    remote (the dwim rule) → branch from that remote tip and configure upstream;
+    multiple remotes → `checkout.defaultRemote` or `ErrAmbiguousRemoteBranch`;
+    no match → new local branch from HEAD.
+  - `noTrack` suppresses the upstream config (parity with `--no-track`).
+  - branch name is itself an existing remote-tracking ref (`origin/foo`) with no
+    explicit base → `ErrExplicitRemoteRef`. Native git detaches HEAD there;
+    clawker's branch-keyed worktrees do not support detached HEAD, so it steers
+    the caller to the bare name (which dwim-tracks the remote) instead of
+    creating a literal `origin/foo` branch. (Branch is the worktree identity by
+    design — detached HEAD is intentionally unsupported.)
 - `RemoveWorktree` removes both git metadata and caller-managed directory.
 - `ListWorktrees` returns `WorktreeInfo` for all known worktrees, including recoverable error states.
 
@@ -59,7 +74,17 @@ hash, err := mgr.ResolveRef(ref)
 exists, err := mgr.BranchExists(branch)
 err = mgr.CreateBranch(branch, base)    // base empty → HEAD; ErrBranchAlreadyExists if exists
 err = mgr.DeleteBranch(branch)
+
+// Remote-tracking (dwim) helpers, used by SetupWorktree:
+remote, hash, found, err := mgr.ResolveRemoteTrackingBranch(branch) // refs/remotes/*/<branch>
+err = mgr.SetBranchUpstream(localBranch, remote, remoteBranch)      // branch.<local>.{remote,merge}
 ```
+
+`ResolveRemoteTrackingBranch` returns `found=false` (nil error) when no remote has
+the branch; `ErrAmbiguousRemoteBranch` when multiple remotes match and
+`checkout.defaultRemote` does not disambiguate. `SetBranchUpstream`'s `remoteBranch`
+is the branch name on the remote (may differ from `localBranch`, e.g. a local
+`mybranch` tracking `origin/foo`).
 
 `DeleteBranch` is equivalent to safe `git branch -d` semantics:
 
@@ -135,6 +160,8 @@ These are composed by `GitManager.SetupWorktree`/`RemoveWorktree` for domain wor
 - `ErrBranchNotMerged`
 - `ErrIsCurrentBranch`
 - `ErrBranchAlreadyExists`
+- `ErrAmbiguousRemoteBranch`
+- `ErrExplicitRemoteRef`
 
 Prefer `errors.Is` checks at command/service boundaries.
 

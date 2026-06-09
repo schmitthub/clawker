@@ -26,9 +26,26 @@ clawker worktree add feature/cache --base main
 
 # Branch names with slashes are supported
 clawker worktree add hotfix/login-redirect
+
+# Check out a fetched remote branch with upstream tracking
+git fetch origin dependabot/go_modules/foo
+clawker worktree add dependabot/go_modules/foo
+
+# ...or create the branch without tracking the remote
+clawker worktree add dependabot/go_modules/foo --no-track
 ```
 
-The worktree directory is created under `~/.local/share/clawker/worktrees/<repoName>-<projectName>-<sha256(uuid)[:12]>/`. If the branch already exists, it's checked out in the new worktree. If it doesn't exist, it's created from the base ref (default: HEAD).
+The worktree directory is created under `~/.local/share/clawker/worktrees/<repoName>-<projectName>-<sha256(uuid)[:12]>/`.
+
+Branch resolution mirrors native `git worktree add` (no network is performed):
+
+- If the branch already exists locally, it's checked out in the new worktree.
+- If it doesn't exist locally but a **remote-tracking branch** matching the name exists in exactly one remote (e.g. after `git fetch`), the branch is created from the remote tip and set up to **track** it — so `git pull`/`git push` work immediately. Pass `--no-track` to skip the upstream configuration. When the name matches more than one remote, set `checkout.defaultRemote` to disambiguate.
+- Otherwise the branch is created from the base ref (default: HEAD).
+
+<Note>
+Pass the **bare** branch name (`fix/login`), not an `origin/`-prefixed ref. Clawker worktrees are identified by branch, so an explicit remote-tracking ref that exists (e.g. `origin/fix/login` after `git fetch`) is rejected with a hint — pass the bare `fix/login` and it is created from the remote tip with tracking. (Unlike `git worktree add origin/fix/login`, which detaches HEAD; clawker's branch-keyed worktrees do not support detached HEAD.)
+</Note>
 
 If the worktree already exists in the registry, the command returns an error. Use `clawker worktree list` to check existing worktrees, or use the `--worktree` flag on container commands for idempotent "get or create" behavior.
 
@@ -105,7 +122,7 @@ A worktree is considered prunable when any of: the directory is missing, git met
 
 ## Automatic Worktree Creation via `--worktree`
 
-Container commands accept a `--worktree` flag that automatically creates or reuses a worktree:
+Container commands accept a `--worktree` flag that automatically creates or reuses a worktree. It is a happy-path shortcut: like `clawker worktree add` it checks out a matching remote-tracking branch with upstream when one exists, but it does not expose the full flag surface (use `clawker worktree add` for options such as `--no-track`):
 
 ```bash
 # Container commands
