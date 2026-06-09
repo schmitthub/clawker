@@ -816,12 +816,6 @@ agent:
   claude_code:
     mount_projects: false
 `, `firewall: { enable: false }`)
-			mock.GetProjectIgnoreFileFunc = func() (string, error) {
-				return filepath.Join(os.TempDir(), mock.ClawkerIgnoreName()), nil
-			}
-			mock.GetProjectRootFunc = func() (string, error) {
-				return os.TempDir(), nil
-			}
 			return mock, nil
 		},
 		HostProxy: func() hostproxy.HostProxyService {
@@ -917,12 +911,6 @@ agent:
   claude_code:
     mount_projects: false
 `, "")
-		testCfg.GetProjectIgnoreFileFunc = func() (string, error) {
-			return filepath.Join(os.TempDir(), testCfg.ClawkerIgnoreName()), nil
-		}
-		testCfg.GetProjectRootFunc = func() (string, error) {
-			return os.TempDir(), nil
-		}
 		fake := mocks.NewFakeClient(testCfg)
 		fake.SetupImageList() // empty — no project image found
 

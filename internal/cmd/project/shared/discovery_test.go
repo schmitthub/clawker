@@ -10,6 +10,8 @@ import (
 
 	"github.com/schmitthub/clawker/internal/cmd/project/shared"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
+	"github.com/schmitthub/clawker/internal/project"
 )
 
 // setupIsolatedProjectDir creates an isolated config environment, optionally
@@ -46,7 +48,7 @@ func setupIsolatedProjectDir(t *testing.T, placement string, registered bool) (c
 
 	if registered {
 		registryContent := "projects:\n  - name: test-project\n    root: " + projectDir + "\n"
-		require.NoError(t, os.WriteFile(filepath.Join(dataDir, "registry.yaml"), []byte(registryContent), 0o644))
+		require.NoError(t, os.WriteFile(filepath.Join(dataDir, consts.RegistryFile), []byte(registryContent), 0o644))
 	}
 
 	minimalYAML := "build:\n  image: alpine\n"
@@ -71,7 +73,8 @@ func setupIsolatedProjectDir(t *testing.T, placement string, registered bool) (c
 
 	t.Chdir(projectDir)
 
-	cfg, err := config.NewConfig()
+	root, _ := project.CurrentProjectRoot()
+	cfg, err := config.NewConfig(config.WithProjectRoot(root))
 	require.NoError(t, err)
 
 	return cfg, projectDir

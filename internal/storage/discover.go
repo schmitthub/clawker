@@ -5,32 +5,25 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"gopkg.in/yaml.v3"
 )
 
-// registryFilename is the well-known filename for the project registry.
-// Used by walk-up discovery to resolve project roots.
-const registryFilename = "registry.yaml"
-
-// discoveredFile represents a config file found during discovery.
+// discoveredFile represents a file found during discovery.
 type discoveredFile struct {
 	path     string // absolute path to the file
 	filename string // which filename matched (e.g., "clawker.yaml")
 }
 
-// discover finds all config files matching the options.
+// discover finds all files matching the options.
 // Walk-up files come first (highest priority = closest to CWD), followed
 // by dir-probe files (WithDirs), then explicit path files (lowest priority).
 // Duplicate paths from overlapping discovery are removed (first wins).
 func discover(opts *options) ([]discoveredFile, error) {
 	var files []discoveredFile
 
-	if opts.walkUp {
-		walkUpFiles, err := walkUp(opts.filenames)
+	if opts.walkUpAnchor != "" {
+		walkUpFiles, err := walkUp(opts.filenames, opts.walkUpAnchor)
 		if err != nil {
 			// Walk-up failures are non-fatal — fall through to explicit paths.
-			// ErrNotInProject and ErrRegistryNotFound are expected conditions.
 			_ = err
 		} else {
 			files = append(files, walkUpFiles...)
@@ -46,19 +39,30 @@ func discover(opts *options) ([]discoveredFile, error) {
 	return dedup(files), nil
 }
 
-// walkUp resolves CWD and project root from the registry, then walks from
-// CWD to the project root (inclusive) probing for config files at each level.
-// Returns files in CWD-first order (highest priority first).
-func walkUp(filenames []string) ([]discoveredFile, error) {
+// walkUp walks from CWD up to anchor (inclusive), probing for matching files at
+// each level. Returns files in CWD-first order (highest priority first). anchor
+// is a plain directory supplied by the caller — storage holds no knowledge of
+// how it was chosen.
+//
+// anchor must be CWD or an ancestor of it. If it is not (a garbage path, or a
+// real directory elsewhere on the filesystem), an upward walk would never reach
+// it and would escape to the filesystem root, pulling in stray files above the
+// intended bound. In that case walk-up is skipped (no files) rather than
+// allowed to escape.
+func walkUp(filenames []string, anchor string) ([]discoveredFile, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, fmt.Errorf("storage: getting CWD: %w", err)
 	}
 	cwd = filepath.Clean(cwd)
+	anchor = filepath.Clean(anchor)
 
-	root, err := resolveProjectRoot(cwd)
-	if err != nil {
-		return nil, err
+	rel, relErr := filepath.Rel(anchor, cwd)
+	// An anchor that can't be related to CWD (e.g. a different volume) or that
+	// sits below/beside it is not an ancestor — skip walk-up rather than escape
+	// upward. A nil error here is intentional: this is "no walk-up", not a failure.
+	if relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return nil, nil //nolint:nilerr // un-relatable anchor → skip walk-up, not an error
 	}
 
 	var files []discoveredFile
@@ -67,7 +71,7 @@ func walkUp(filenames []string) ([]discoveredFile, error) {
 	for {
 		files = append(files, probeDir(dir, filenames)...)
 
-		if dir == root {
+		if dir == anchor {
 			break
 		}
 		parent := filepath.Dir(dir)
@@ -80,67 +84,7 @@ func walkUp(filenames []string) ([]discoveredFile, error) {
 	return files, nil
 }
 
-// ResolveProjectRoot resolves the project root for the current working directory
-// by reading the project registry and finding the deepest registered root that
-// contains CWD. Returns ErrRegistryNotFound if the registry does not exist,
-// and ErrNotInProject if CWD is not within any registered project.
-func ResolveProjectRoot() (string, error) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "", fmt.Errorf("storage: getting CWD: %w", err)
-	}
-	cwd = filepath.Clean(cwd)
-	return resolveProjectRoot(cwd)
-}
-
-// resolveProjectRoot reads the registry file and finds the registered project
-// root that contains cwd. Returns ErrRegistryNotFound if the registry file
-// does not exist, and ErrNotInProject if cwd is not within any registered project.
-func resolveProjectRoot(cwd string) (string, error) {
-	registryPath := filepath.Join(dataDir(), registryFilename)
-
-	data, err := os.ReadFile(registryPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", ErrRegistryNotFound
-		}
-		return "", fmt.Errorf("storage: reading registry %s: %w", registryPath, err)
-	}
-
-	var registry struct {
-		Projects []struct {
-			Root string `yaml:"root"`
-		} `yaml:"projects"`
-	}
-	if err := yaml.Unmarshal(data, &registry); err != nil {
-		return "", fmt.Errorf("storage: parsing registry %s: %w", registryPath, err)
-	}
-
-	// Find the deepest project root that is an ancestor of cwd.
-	var bestMatch string
-	for _, p := range registry.Projects {
-		root := filepath.Clean(p.Root)
-		if root == "" {
-			continue
-		}
-		rel, relErr := filepath.Rel(root, cwd)
-		if relErr != nil {
-			continue
-		}
-		if rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))) {
-			if len(root) > len(bestMatch) {
-				bestMatch = root
-			}
-		}
-	}
-
-	if bestMatch == "" {
-		return "", ErrNotInProject
-	}
-	return bestMatch, nil
-}
-
-// probeDir checks a single directory for config files using dual placement.
+// probeDir checks a single directory for matching files using dual placement.
 // If .clawker/ directory exists, checks .clawker/{filename} (dir form).
 // Otherwise, checks .{filename} (flat dotfile form).
 // Both .yaml and .yml extensions are accepted.
@@ -176,7 +120,7 @@ func probeDir(dir string, filenames []string) []discoveredFile {
 }
 
 // probeExplicitDirs checks explicit directories for files.
-// No dual placement — just {dir}/{filename} for each configured filename.
+// No dual placement — just {dir}/{filename} for each requested filename.
 func probeExplicitDirs(dirs []string, filenames []string) []discoveredFile {
 	var files []discoveredFile
 	for _, dir := range dirs {

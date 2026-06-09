@@ -44,7 +44,7 @@ type Store[T Schema] struct {
 	mu         sync.Mutex         // guards tree + dirtyPaths + layers (Set/Delete/Write/MarkForWrite/Refresh)
 }
 
-// LayerInfo describes a discovered configuration layer.
+// LayerInfo describes a discovered file layer.
 type LayerInfo struct {
 	Filename string         // which filename matched (e.g., "clawker.yaml")
 	Path     string         // resolved absolute path
@@ -179,7 +179,7 @@ func (s *Store[T]) Get() *T {
 	return s.value.Load()
 }
 
-// Layers returns information about the discovered configuration layers.
+// Layers returns information about the discovered file layers.
 // Layers are ordered from highest priority (index 0) to lowest.
 // No lock needed — layers are immutable after construction.
 func (s *Store[T]) Layers() []LayerInfo {
@@ -658,7 +658,7 @@ func (s *Store[T]) MarkForWrite(path string) {
 //
 // Note: Write() already remerges and injects new layers for files it
 // writes, so Refresh is only needed for external changes (e.g. another
-// process modified a config file).
+// process modified a file).
 func (s *Store[T]) Refresh() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

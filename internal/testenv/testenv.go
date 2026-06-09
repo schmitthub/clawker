@@ -25,6 +25,7 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
 )
@@ -58,7 +59,8 @@ func WithConfig() Option {
 		if e.config != nil {
 			return // already created (e.g. by WithProjectManager)
 		}
-		cfg, err := config.NewConfig()
+		root, _ := project.CurrentProjectRoot()
+		cfg, err := config.NewConfig(config.WithProjectRoot(root))
 		if err != nil {
 			t.Fatalf("testenv: creating config: %v", err)
 		}
@@ -75,7 +77,7 @@ func WithProjectManager(gitFactory project.GitManagerFactory) Option {
 		// Ensure config is created first.
 		WithConfig()(t, e)
 
-		mgr, err := project.NewProjectManager(e.config, logger.Nop(), gitFactory)
+		mgr, err := project.NewProjectManager(logger.Nop(), gitFactory, e.config.Project().Name)
 		if err != nil {
 			t.Fatalf("testenv: creating project manager: %v", err)
 		}
@@ -146,7 +148,7 @@ const (
 	Settings
 	// EgressRules writes egress-rules.yaml to the state directory.
 	EgressRules
-	// ProjectRegistry writes projects.yaml to the data directory.
+	// ProjectRegistry writes registry.yaml to the data directory.
 	ProjectRegistry
 )
 
@@ -162,7 +164,7 @@ var configFiles = map[ConfigFile]configFileInfo{
 	ProjectConfigLocal: {filename: func() string { return "clawker.local.yaml" }, dotfile: true},
 	Settings:           {filename: func() string { return "settings.yaml" }, dir: func(e *Env) string { return e.Dirs.Config }},
 	EgressRules:        {filename: func() string { return "egress-rules.yaml" }, dir: func(e *Env) string { return e.Dirs.State }},
-	ProjectRegistry:    {filename: func() string { return "projects.yaml" }, dir: func(e *Env) string { return e.Dirs.Data }},
+	ProjectRegistry:    {filename: func() string { return consts.RegistryFile }, dir: func(e *Env) string { return e.Dirs.Data }},
 }
 
 // WriteYAML writes YAML content to the canonical location for the given file type.

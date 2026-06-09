@@ -78,7 +78,7 @@ func TestResolveWorkDir_Worktree(t *testing.T) {
 				return inMemGit.GitManager, nil
 			}
 
-			mgr, err := project.NewProjectManager(cfg, logger.Nop(), gitFactory)
+			mgr, err := project.NewProjectManager(logger.Nop(), gitFactory, cfg.Project().Name)
 			require.NoError(t, err)
 			ctx := context.Background()
 
@@ -99,7 +99,7 @@ func TestResolveWorkDir_Worktree(t *testing.T) {
 			pmFunc := func() (project.ProjectManager, error) { return mgr, nil }
 
 			wd, projectRootDir, err := resolveWorkDir(
-				ctx, containerOpts, cfg,
+				ctx, containerOpts,
 				"dev", pmFunc, logger.Nop(),
 			)
 
@@ -138,10 +138,9 @@ func TestResolveWorkDir_WorktreeGetError(t *testing.T) {
 
 	containerOpts := &ContainerCreateOptions{Worktree: "feature/broken"}
 	pmFunc := func() (project.ProjectManager, error) { return mockMgr, nil }
-	cfg := configmocks.NewBlankConfig()
 
 	_, _, err := resolveWorkDir(
-		context.Background(), containerOpts, cfg,
+		context.Background(), containerOpts,
 		"dev", pmFunc, logger.Nop(),
 	)
 	require.Error(t, err)
@@ -199,10 +198,9 @@ func TestResolveWorkDir_UnhealthyStatuses(t *testing.T) {
 
 			containerOpts := &ContainerCreateOptions{Worktree: "feature/test"}
 			pmFunc := func() (project.ProjectManager, error) { return mockMgr, nil }
-			cfg := configmocks.NewBlankConfig()
 
 			_, _, err := resolveWorkDir(
-				context.Background(), containerOpts, cfg,
+				context.Background(), containerOpts,
 				"dev", pmFunc, logger.Nop(),
 			)
 			require.Error(t, err)

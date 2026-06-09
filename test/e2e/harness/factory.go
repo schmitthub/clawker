@@ -58,7 +58,7 @@ func cacheableState(s connectivity.State) bool {
 type FactoryOptions struct {
 	Config         func(...config.NewConfigOption) (config.Config, error)
 	Client         func(context.Context, config.Config, *logger.Logger, ...docker.ClientOption) (*docker.Client, error)
-	ProjectManager func(config.Config, *logger.Logger, project.GitManagerFactory) (project.ProjectManager, error)
+	ProjectManager func(*logger.Logger, project.GitManagerFactory, string) (project.ProjectManager, error)
 	GitManager     func(string) (*git.GitManager, error)
 	HostProxy      func(config.Config, *logger.Logger) (*hostproxy.Manager, error)
 	SocketBridge   func(config.Config, *logger.Logger) socketbridge.SocketBridgeManager
@@ -169,7 +169,7 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 					pmErr = cErr
 					return
 				}
-				pm, pmErr = opts.ProjectManager(c, logger.Nop(), nil)
+				pm, pmErr = opts.ProjectManager(logger.Nop(), nil, c.Project().Name)
 			}
 		})
 		return pm, pmErr
@@ -178,11 +178,7 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 	// --- GitManager ---
 	f.GitManager = func() (*git.GitManager, error) {
 		if opts.GitManager != nil {
-			c, cErr := resolveConfig()
-			if cErr != nil {
-				return nil, cErr
-			}
-			root, rErr := c.GetProjectRoot()
+			root, rErr := project.CurrentProjectRoot()
 			if rErr != nil {
 				return nil, rErr
 			}

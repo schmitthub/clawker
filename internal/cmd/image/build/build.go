@@ -154,7 +154,7 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 	}
 
 	// Get working directory from project root, or fall back to current directory
-	wd, wdErr := cfgGateway.GetProjectRoot()
+	wd, wdErr := project.CurrentProjectRoot()
 	if wdErr != nil || wd == "" {
 		wd, wdErr = os.Getwd()
 		if wdErr != nil {

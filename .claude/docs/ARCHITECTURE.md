@@ -483,7 +483,7 @@ Image builds use `drainBuildStream`/`drainPullStream` helpers that distinguish `
 
 **Certificate PKI:** Path-based egress rules require TLS interception. `EnsureCA` creates or loads a self-signed ECDSA P-256 CA keypair in `FirewallDataSubdir/certs`. `GenerateDomainCert` signs per-domain certificates for Envoy's MITM termination. `FirewallRotateCA` replaces the CA and re-signs all domain certs. The CA certificate is injected into agent containers at build time so TLS verification succeeds through the proxy.
 
-**Rule persistence:** Active egress rules are stored via `storage.Store[EgressRulesFile]` backed by `egress-rules.yaml` under `FirewallDataSubdir`. Rules are deduped by `dst:proto:port` composite key (`RuleKey`). `proj.EgressRules()` merges required internal rules (Claude API, Docker registry) with project-specific rules; `BootstrapServicesPreStart` sends the union to `FirewallAddRules`, then `BootstrapServicesPostStart` issues `FirewallEnable` (per-container, after docker start creates the cgroup).
+**Rule persistence:** Active egress rules are stored via `storage.Store[EgressRulesFile]` backed by `egress-rules.yaml` under `FirewallDataSubdir`. Rules are deduped by `dst:proto:port` composite key (`RuleKey`). `cfg.EgressRules()` merges required internal rules (Claude API, Docker registry) with project-specific rules; `BootstrapServicesPreStart` sends the union to `FirewallAddRules`, then `BootstrapServicesPostStart` issues `FirewallEnable` (per-container, after docker start creates the cgroup).
 
 **Network isolation:** The CP creates an isolated Docker bridge network (`clawker-net`) with deterministic static IPs computed from the gateway address — `gateway+EnvoyIPLastOctet` (.2) for Envoy, `gateway+CoreDNSIPLastOctet` (.3) for CoreDNS, `gateway+CPIPLastOctet` (.202) for the CP container. Agent containers join this network with `--dns` pointing to the CoreDNS IP. Static-IP assignment cannot go through whail's `EnsureNetwork` helper (which hard-overwrites `EndpointSettings`) — call `dc.EnsureNetwork` first, then explicit `NetworkingConfig.IPAMConfig.IPv4Address` in `ContainerCreate`.
 
@@ -682,7 +682,7 @@ Domain packages form a directed acyclic graph verified via `goda`. Tiers describ
 │                                                                 │
 │  Core business logic. Import leaves and foundation packages.     │
 │                                                                 │
-│  project → config, git, logger, storage, text                   │
+│  project → consts, git, logger, storage, text                   │
 │  bundler → config + own subpackages                             │
 │  tui → iostreams, text                                          │
 │  prompter → iostreams                                           │
@@ -737,7 +737,7 @@ Domain packages form a directed acyclic graph verified via `goda`. Tiers describ
 ```
   ✓  foundation → leaf             config imports storage
   ✓  domain → leaf                 controlplane/firewall imports storage
-  ✓  domain → foundation           project imports config
+  ✓  domain → foundation           bundler imports config
   ✓  composite → domain            docker imports bundler
   ✓  composite → foundation        docker imports config
 

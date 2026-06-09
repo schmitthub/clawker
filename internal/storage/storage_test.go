@@ -1231,17 +1231,7 @@ func TestStore_WalkUpLayerMerge(t *testing.T) {
 	}
 	levelNames := []string{"project", "level1", "level2", "level3"}
 	userConfigDir := filepath.Join(root, "user", "config")
-	dataDir := filepath.Join(root, "data")
-
 	require.NoError(t, os.MkdirAll(userConfigDir, 0o755))
-	require.NoError(t, os.MkdirAll(dataDir, 0o755))
-
-	// --- Registry ---
-	registryYAML := fmt.Sprintf("projects:\n  - root: %s\n", projectDir)
-	require.NoError(t, os.WriteFile(
-		filepath.Join(dataDir, "registry.yaml"),
-		[]byte(registryYAML), 0o644,
-	))
 
 	// --- Value pools ---
 	imagePool := []string{"go:1.22", "node:20", "python:3", "rust:1.80", "ruby:3.3"}
@@ -1428,12 +1418,13 @@ func TestStore_WalkUpLayerMerge(t *testing.T) {
 	}
 
 	// --- Discover ---
-	t.Setenv("CLAWKER_DATA_DIR", dataDir)
+	// Walk-up is generic: storage walks from CWD up to the anchor it's handed
+	// and holds no project-registry knowledge. Anchor at the project root.
 	t.Chdir(levels[len(levels)-1]) // CWD = deepest level
 
 	store, err := NewStore[testConfig](
 		WithFilenames("config.local.yaml", "config.yaml"),
-		WithWalkUp(),
+		WithWalkUp(projectDir),
 		WithPaths(userConfigDir),
 	)
 	require.NoError(t, err)
@@ -1835,16 +1826,7 @@ func TestStore_WalkUpGolden(t *testing.T) {
 	}
 	levelNames := []string{"project", "level1", "level2", "level3"}
 	userConfigDir := filepath.Join(root, "user", "config")
-	dataDir := filepath.Join(root, "data")
-
 	require.NoError(t, os.MkdirAll(userConfigDir, 0o755))
-	require.NoError(t, os.MkdirAll(dataDir, 0o755))
-
-	registryYAML := fmt.Sprintf("projects:\n  - root: %s\n", projectDir)
-	require.NoError(t, os.WriteFile(
-		filepath.Join(dataDir, "registry.yaml"),
-		[]byte(registryYAML), 0o644,
-	))
 
 	// --- Value pools (must match randomized test exactly) ---
 	imagePool := []string{"go:1.22", "node:20", "python:3", "rust:1.80", "ruby:3.3"}
@@ -1994,12 +1976,11 @@ func TestStore_WalkUpGolden(t *testing.T) {
 	userPath := filepath.Join(userConfigDir, "config.yaml")
 	writeFile(userPath, "name: user\nversion: 1\nbuild:\n  image: ubuntu\npackages:\n  - pkg-user\nenv:\n  EDITOR: vim\n")
 
-	t.Setenv("CLAWKER_DATA_DIR", dataDir)
 	t.Chdir(levels[len(levels)-1])
 
 	store, err := NewStore[testConfig](
 		WithFilenames("config.local.yaml", "config.yaml"),
-		WithWalkUp(),
+		WithWalkUp(projectDir),
 		WithPaths(userConfigDir),
 	)
 	require.NoError(t, err)

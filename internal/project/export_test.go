@@ -1,9 +1,5 @@
 package project
 
-import (
-	"github.com/schmitthub/clawker/internal/config"
-)
-
 type ProjectHandleForTest = projectHandle
 
 func NewProjectHandleForTest(record ProjectRecord) *projectHandle {
@@ -26,11 +22,11 @@ func (r *RegistryForTest) RemoveByRoot(root string) error {
 	return r.registry.RemoveByRoot(root)
 }
 
-func (r *RegistryForTest) Projects() []config.ProjectEntry {
+func (r *RegistryForTest) Projects() []ProjectEntry {
 	return r.registry.Projects()
 }
 
-func (r *RegistryForTest) Update(entry config.ProjectEntry) (config.ProjectEntry, error) {
+func (r *RegistryForTest) Update(entry ProjectEntry) (ProjectEntry, error) {
 	return r.registry.Update(entry)
 }
 
@@ -38,6 +34,6 @@ func (r *RegistryForTest) Save() error {
 	return r.registry.Save()
 }
 
-func (r *RegistryForTest) ProjectByRoot(root string) (config.ProjectEntry, bool, error) {
+func (r *RegistryForTest) ProjectByRoot(root string) (ProjectEntry, bool, error) {
 	return r.registry.ProjectByRoot(root)
 }

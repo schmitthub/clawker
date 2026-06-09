@@ -5,11 +5,11 @@
 - `.claude/rules/storage-schema.md` — struct tag contract, default formats, KindFunc extension, new-field checklist
 - `.claude/docs/ARCHITECTURE.md` — package DAG (storage is a leaf), configuration triad diagram
 - `.claude/docs/DESIGN.md` §2.4 — configuration system rationale, merge strategy, write model
-- `internal/config/CLAUDE.md` — consumer API reference; composes `Store[ConfigFile]` + `Store[SettingsFile]`
+- `internal/config/CLAUDE.md` — consumer API reference; composes `Store[Project]` + `Store[Settings]`
 
 ## Architecture
 
-Generic layered YAML store engine. Leaf package (zero internal imports). Both `internal/config` and `internal/project` compose a `Store[T]` with their own schema types. Replaces Viper.
+Generic layered YAML store engine. Leaf package (zero internal imports). Both `internal/config` and `internal/project` compose a `Store[T]` with their own schema types.
 
 **Copy-on-write model**: node tree (`map[string]any`) is the merge/persistence layer. Immutable `*T` snapshots published via `atomic.Pointer` — readers are lock-free.
 
@@ -26,10 +26,10 @@ Write: node tree → route by provenance → per-file atomic write (temp+fsync+r
 
 | File | Purpose |
 | --- | --- |
-| `errors.go` | Package doc, `ErrNotInProject`, `ErrRegistryNotFound` |
+| `errors.go` | Package doc only — storage is schema-agnostic; project-domain errors live in `internal/project` |
 | `store.go` | `Store[T]`, `NewStore[T]`, `NewFromString[T]`, `Read`, `Get` (deprecated), `Set`, `Write`, `Layers`, `LayerInfo`, `mergeIntoTree` |
 | `options.go` | `Option` type, `Migration` type, all `With*` constructors |
-| `discover.go` | Walk-up + explicit path discovery, `ResolveProjectRoot`, dual placement logic |
+| `discover.go` | Walk-up + explicit path discovery, dual placement logic. Walk-up is bounded by a caller-supplied anchor directory — storage holds no registry/project knowledge |
 | `load.go` | Per-file YAML load, migration runner, `unmarshal[T]` |
 | `merge.go` | N-way map fold, `tagRegistry`, `fieldMeta`, `mergeTrees`, `provenance` |
 | `write.go` | `structToMap`, `encodeValue`, provenance-based routing (with ancestor walk-up), atomic I/O, flock |
@@ -84,17 +84,13 @@ func (s *Store[T]) Refresh() error                     // Re-read layers from di
 func (s *Store[T]) Layers() []LayerInfo               // Discovered layers, highest→lowest priority
 ```
 
-### Utility Functions
+### Walk-up anchor (injected)
 
-```go
-func ResolveProjectRoot() (string, error)  // CWD → registry lookup → deepest matching project root
-```
-
-Returns `ErrRegistryNotFound` or `ErrNotInProject` on failure.
+Walk-up bounding is a plain anchor directory passed to `WithWalkUp(anchorDir)`: storage walks from CWD up to that directory (inclusive). Storage is schema-agnostic and holds no project-registry knowledge — the caller chooses the anchor (`config` passes the project root from `project.ResolveProjectRoot`). An empty anchor disables walk-up, so discovery falls back to explicit paths.
 
 ### Options
 
-`WithFilenames(names...)`, `WithDefaults(yaml)`, `WithDefaultsFromStruct[T Schema]()`, `WithWalkUp()`, `WithDirs(dirs...)`, `WithConfigDir()`, `WithDataDir()`, `WithStateDir()`, `WithCacheDir()`, `WithPaths(dirs...)`, `WithMigrations(fns...)`, `WithLock()`
+`WithFilenames(names...)`, `WithDefaults(yaml)`, `WithDefaultsFromStruct[T Schema]()`, `WithWalkUp(anchorDir string)`, `WithDirs(dirs...)`, `WithConfigDir()`, `WithDataDir()`, `WithStateDir()`, `WithCacheDir()`, `WithPaths(dirs...)`, `WithMigrations(fns...)`, `WithLock()`
 
 ## Internal Architecture
 
@@ -102,7 +98,7 @@ Returns `ErrRegistryNotFound` or `ErrNotInProject` on failure.
 
 | Mode | Option | Behavior |
 |------|--------|----------|
-| Walk-up | `WithWalkUp()` | CWD → project root, dual placement per level (`.clawker/{file}` or `.{file}`). Bounded at project root. |
+| Walk-up | `WithWalkUp(anchorDir)` | CWD → anchorDir, dual placement per level (`.clawker/{file}` or `.{file}`). Bounded at anchorDir; empty disables walk-up. |
 | Dir probe | `WithDirs(dirs...)` | Dual placement per directory, no registry needed. First dir = highest priority. |
 | Explicit | `WithConfigDir()`, `WithDataDir()`, `WithPaths()` | Direct `{dir}/{filename}` probe (no dual placement). Lowest priority. |
 
@@ -132,7 +128,7 @@ Each checks: `CLAWKER_*_DIR` > `XDG_*_HOME` > platform default (`~/.config/clawk
 
 ## Composition by Consumers
 
-`internal/config` composes `Store[Project]` (walk-up + user config dir + migrations + defaults-from-struct) and `Store[Settings]`. `internal/project` composes `Store[Registry]` with `WithDataDir() + WithLock()`. Callers use `Config` and `ProjectManager` interfaces, not `Store[T]` directly.
+`internal/config` composes `Store[Project]` (walk-up + user config dir + migrations + defaults-from-struct) and `Store[Settings]`. `internal/project` composes `Store[ProjectRegistry]` with `WithDataDir() + WithLock()`. Callers use `Config` and `ProjectManager` interfaces, not `Store[T]` directly.
 
 ## Testing
 

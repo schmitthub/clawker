@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/storage"
@@ -46,8 +45,8 @@ type ProjectState struct {
 //go:generate moq -rm -pkg mocks -out mocks/manager_mock.go . ProjectManager
 type ProjectManager interface {
 	Register(ctx context.Context, name string, repoPath string) (Project, error)
-	Update(ctx context.Context, entry config.ProjectEntry) (Project, error)
-	List(ctx context.Context) ([]config.ProjectEntry, error)
+	Update(ctx context.Context, entry ProjectEntry) (Project, error)
+	List(ctx context.Context) ([]ProjectEntry, error)
 	ListProjects(ctx context.Context) ([]ProjectState, error)
 	Remove(ctx context.Context, root string) error
 	Get(ctx context.Context, root string) (Project, error)
@@ -103,12 +102,6 @@ type Project interface {
 	Name() string
 	RepoPath() string
 	Record() (ProjectRecord, error)
-	// EgressRules returns the full egress rule set for this project:
-	// the required baseline (Claude API, OAuth, etc.) plus anything the
-	// user configured under security.firewall in clawker.yaml
-	// (explicit rules + add_domains shorthand). Consumed by container
-	// start to populate the firewall via FirewallAddRules.
-	EgressRules() []config.EgressRule
 	CreateWorktree(ctx context.Context, branch, base string) (string, error)
 	AddWorktree(ctx context.Context, branch, base string) (WorktreeState, error)
 	RemoveWorktree(ctx context.Context, branch string, deleteBranch bool) error
@@ -128,13 +121,19 @@ type projectHandle struct {
 }
 
 type projectManager struct {
-	cfg           config.Config
+	nameOverride  string
 	log           *logger.Logger
-	registryStore *storage.Store[config.ProjectRegistry]
+	registryStore *storage.Store[ProjectRegistry]
 	newGitMgr     GitManagerFactory
 }
 
-func NewProjectManager(cfg config.Config, log *logger.Logger, gitFactory GitManagerFactory) (ProjectManager, error) {
+// NewProjectManager builds a project manager. nameOverride is the config-owned
+// project name (clawker.yaml `name:`), resolved by the caller and passed as a
+// primitive so this package never imports config. config resolves its own
+// walk-up anchor from the standalone ResolveProjectRoot, so the dependency runs
+// one way — the manager reads config-derived values, config never reads the
+// manager.
+func NewProjectManager(log *logger.Logger, gitFactory GitManagerFactory, nameOverride string) (ProjectManager, error) {
 	if gitFactory == nil {
 		gitFactory = func(root string) (*git.GitManager, error) {
 			return git.NewGitManager(root)
@@ -144,7 +143,7 @@ func NewProjectManager(cfg config.Config, log *logger.Logger, gitFactory GitMana
 	if err != nil {
 		return nil, fmt.Errorf("project: loading registry: %w", err)
 	}
-	return &projectManager{cfg: cfg, log: log, registryStore: registryStore, newGitMgr: gitFactory}, nil
+	return &projectManager{nameOverride: nameOverride, log: log, registryStore: registryStore, newGitMgr: gitFactory}, nil
 }
 
 // Register adds or updates a project registration and returns a project object.
@@ -157,7 +156,7 @@ func (s *projectManager) Register(_ context.Context, name string, repoPath strin
 }
 
 // Update updates an existing registered project by root identity.
-func (s *projectManager) Update(_ context.Context, entry config.ProjectEntry) (Project, error) {
+func (s *projectManager) Update(_ context.Context, entry ProjectEntry) (Project, error) {
 	updated, err := s.registry().Update(entry)
 	if err != nil {
 		return nil, err
@@ -167,7 +166,7 @@ func (s *projectManager) Update(_ context.Context, entry config.ProjectEntry) (P
 
 // List returns all registered projects.
 
-func (s *projectManager) List(_ context.Context) ([]config.ProjectEntry, error) {
+func (s *projectManager) List(_ context.Context) ([]ProjectEntry, error) {
 	projects := s.registry().List()
 	sort.Slice(projects, func(i, j int) bool {
 		if projects[i].Root == projects[j].Root {
@@ -176,7 +175,7 @@ func (s *projectManager) List(_ context.Context) ([]config.ProjectEntry, error) 
 		return projects[i].Root < projects[j].Root
 	})
 
-	result := make([]config.ProjectEntry, len(projects))
+	result := make([]ProjectEntry, len(projects))
 	copy(result, projects)
 	return result, nil
 }
@@ -285,13 +284,12 @@ func (s *projectManager) ResolvePath(_ context.Context, cwd string) (Project, er
 // (file) < --name flag (handled at init/register write path, persisting
 // the chosen value into the registry).
 func (s *projectManager) CurrentProject(ctx context.Context) (Project, error) {
-	if s == nil || s.cfg == nil {
+	if s == nil {
 		return nil, fmt.Errorf("project manager not initialized")
 	}
-
 	var resolved Project
 	var resolveErr error
-	projectRoot, err := s.cfg.GetProjectRoot()
+	projectRoot, err := CurrentProjectRoot()
 	if err == nil {
 		resolved, resolveErr = s.ResolvePath(ctx, projectRoot)
 	}
@@ -306,7 +304,7 @@ func (s *projectManager) CurrentProject(ctx context.Context) (Project, error) {
 		return nil, resolveErr
 	}
 
-	if override := strings.TrimSpace(s.cfg.Project().Name); override != "" {
+	if override := strings.TrimSpace(s.nameOverride); override != "" {
 		if h, ok := resolved.(*projectHandle); ok {
 			h.record.Name = override
 		}
@@ -354,26 +352,6 @@ func (p *projectHandle) Record() (ProjectRecord, error) {
 		return ProjectRecord{}, ErrProjectHandleNotInitialized
 	}
 	return p.record, nil
-}
-
-// EgressRules returns the full egress rule set for this project:
-// required baseline + anything configured under security.firewall
-// (explicit rules + add_domains shorthand).
-func (p *projectHandle) EgressRules() []config.EgressRule {
-	if p == nil || p.manager == nil || p.manager.cfg == nil {
-		return nil
-	}
-	cfg := p.manager.cfg
-	var rules []config.EgressRule
-	rules = append(rules, cfg.RequiredFirewallRules()...)
-	projectFw := cfg.Project().Security.Firewall
-	if projectFw != nil {
-		rules = append(rules, projectFw.Rules...)
-		for _, d := range projectFw.AddDomains {
-			rules = append(rules, config.EgressRule{Dst: d, Proto: "https", Port: "443", Action: "allow"})
-		}
-	}
-	return rules
 }
 
 // CreateWorktree creates a worktree for this project.
@@ -632,10 +610,10 @@ func (s *projectManager) registry() *projectRegistry {
 }
 
 func (s *projectManager) worktrees() *worktreeService {
-	return newWorktreeService(s.cfg, s.log, s.registryStore, s.newGitMgr)
+	return newWorktreeService(s.log, s.registryStore, s.newGitMgr)
 }
 
-func projectRecordFromEntry(entry config.ProjectEntry) ProjectRecord {
+func projectRecordFromEntry(entry ProjectEntry) ProjectRecord {
 	record := ProjectRecord{
 		Name:      entry.Name,
 		Root:      entry.Root,

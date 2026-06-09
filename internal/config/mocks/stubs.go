@@ -39,6 +39,8 @@ func NewFromString(projectYAML, settingsYAML string) *ConfigMock {
 func newMockFrom(cfg config.Config) *ConfigMock {
 	mock := &ConfigMock{}
 
+	mock.EgressRulesFunc = cfg.EgressRules
+
 	// Store accessors
 	mock.ProjectStoreFunc = cfg.ProjectStore
 	mock.SettingsStoreFunc = cfg.SettingsStore
@@ -52,14 +54,11 @@ func newMockFrom(cfg config.Config) *ConfigMock {
 	mock.RequiredFirewallDomainsFunc = cfg.RequiredFirewallDomains
 	mock.EgressRulesFileNameFunc = cfg.EgressRulesFileName
 	mock.RequiredFirewallRulesFunc = cfg.RequiredFirewallRules
-	mock.GetProjectRootFunc = cfg.GetProjectRoot
-	mock.GetProjectIgnoreFileFunc = cfg.GetProjectIgnoreFile
 
 	// Constants
 	mock.ClawkerIgnoreNameFunc = cfg.ClawkerIgnoreName
 	mock.ProjectConfigFileNameFunc = cfg.ProjectConfigFileName
 	mock.SettingsFileNameFunc = cfg.SettingsFileName
-	mock.ProjectRegistryFileNameFunc = cfg.ProjectRegistryFileName
 	mock.DomainFunc = cfg.Domain
 	mock.LabelDomainFunc = cfg.LabelDomain
 	mock.ConfigDirEnvVarFunc = cfg.ConfigDirEnvVar
@@ -97,7 +96,6 @@ func newMockFrom(cfg config.Config) *ConfigMock {
 	mock.FirewallDataSubdirFunc = cfg.FirewallDataSubdir
 	mock.FirewallCertSubdirFunc = cfg.FirewallCertSubdir
 	mock.ShareSubdirFunc = cfg.ShareSubdir
-	mock.WorktreesSubdirFunc = cfg.WorktreesSubdir
 	mock.BridgePIDFilePathFunc = cfg.BridgePIDFilePath
 	mock.HostProxyPIDFilePathFunc = cfg.HostProxyPIDFilePath
 	mock.HostProxyLogFilePathFunc = cfg.HostProxyLogFilePath

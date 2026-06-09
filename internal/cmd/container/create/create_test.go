@@ -405,12 +405,6 @@ agent:
   claude_code:
     mount_projects: false
 `, "")
-			mock.GetProjectIgnoreFileFunc = func() (string, error) {
-				return filepath.Join(os.TempDir(), mock.ClawkerIgnoreName()), nil
-			}
-			mock.GetProjectRootFunc = func() (string, error) {
-				return os.TempDir(), nil
-			}
 			return mock, nil
 		},
 		HostProxy: func() hostproxy.HostProxyService {
@@ -519,12 +513,6 @@ workspace: { default_mode: "bind" }
 security: { enable_host_proxy: false }
 agent: { claude_code: { use_host_auth: false, mount_projects: false, config: { strategy: "fresh" } } }
 `, "")
-		useHostAuthCfg.GetProjectIgnoreFileFunc = func() (string, error) {
-			return filepath.Join(os.TempDir(), useHostAuthCfg.ClawkerIgnoreName()), nil
-		}
-		useHostAuthCfg.GetProjectRootFunc = func() (string, error) {
-			return os.TempDir(), nil
-		}
 		fake := mocks.NewFakeClient(useHostAuthCfg)
 		fake.SetupContainerCreate()
 		fake.SetupCopyToContainer()

@@ -4,7 +4,6 @@
 package config
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/schmitthub/clawker/internal/storage"
@@ -36,6 +35,7 @@ type Config interface {
 	// Deprecated: Use SettingsStore().Read().HostProxy instead.
 	HostProxyConfig() HostProxyConfig
 
+	EgressRules() []EgressRule
 	Domain() string
 	LabelDomain() string
 	ConfigDirEnvVar() string
@@ -53,7 +53,6 @@ type Config interface {
 	HostProxyLogFilePath() (string, error)
 	HostProxyPIDFilePath() (string, error)
 	ShareSubdir() (string, error)
-	WorktreesSubdir() (string, error)
 	LabelPrefix() string
 	LabelManaged() string
 	LabelProject() string
@@ -109,12 +108,7 @@ type Config interface {
 	CoreDNSHealthPath() string
 	ProjectConfigFileName() string
 	SettingsFileName() string
-	ProjectRegistryFileName() string
-	GetProjectRoot() (string, error)
-	GetProjectIgnoreFile() (string, error)
 }
-
-var ErrNotInProject = errors.New("current directory is not within a configured project root")
 
 type configImpl struct {
 	project  *storage.Store[Project]
@@ -126,6 +120,7 @@ type NewConfigOption func(*newConfigOptions)
 type newConfigOptions struct {
 	projectYAML  string
 	settingsYAML string
+	projectRoot  string
 }
 
 // NewConfig loads all clawker configuration files into a Config.
@@ -147,7 +142,7 @@ func NewConfig(opts ...NewConfigOption) (Config, error) {
 		projectOpts = append(projectOpts, storage.WithDefaultsFromStruct[Project]())
 	}
 	projectOpts = append(projectOpts,
-		storage.WithWalkUp(),
+		storage.WithWalkUp(options.projectRoot),
 		storage.WithConfigDir(),
 		storage.WithDotDefault(),
 		storage.WithMigrations(ProjectMigrations()...),
@@ -189,6 +184,18 @@ func WithDefaultProjectYAML(yaml string) NewConfigOption {
 func WithDefaultSettingsYAML(yaml string) NewConfigOption {
 	return func(o *newConfigOptions) {
 		o.settingsYAML = yaml
+	}
+}
+
+// WithProjectRoot bounds project-config walk-up discovery at the project root:
+// the store walks from CWD up to root (inclusive). The caller resolves the root
+// (e.g. via project.ResolveProjectRoot) and passes it in; config does not
+// resolve it. An empty root disables walk-up, so discovery uses the config dir
+// only — correct for consumers that never resolve project config from a working
+// directory (CP / host-proxy / bridge daemons), which read only settings.yaml.
+func WithProjectRoot(root string) NewConfigOption {
+	return func(o *newConfigOptions) {
+		o.projectRoot = root
 	}
 }
 
@@ -239,6 +246,22 @@ func NewFromString(projectYAML, settingsYAML string) (Config, error) {
 		project:  projectStore,
 		settings: settingsStore,
 	}, nil
+}
+
+// EgressRules returns the full egress rule set for this project:
+// required baseline + anything configured under security.firewall
+// (explicit rules + add_domains shorthand).
+func (c *configImpl) EgressRules() []EgressRule {
+	var rules []EgressRule
+	rules = append(rules, c.RequiredFirewallRules()...)
+	projectFw := c.Project().Security.Firewall
+	if projectFw != nil {
+		rules = append(rules, projectFw.Rules...)
+		for _, d := range projectFw.AddDomains {
+			rules = append(rules, EgressRule{Dst: d, Proto: "https", Port: "443", Action: "allow"})
+		}
+	}
+	return rules
 }
 
 // --- Store accessors ---

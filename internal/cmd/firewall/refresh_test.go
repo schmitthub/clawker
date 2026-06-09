@@ -25,12 +25,14 @@ var twoRules = []config.EgressRule{
 	{Dst: "git.example.com", Proto: "ssh", Port: "22", Action: "allow"},
 }
 
-// refreshFactory wires a refresh-ready Factory: blank/enabled config unless
-// overridden, a project manager whose CurrentProject returns a project with
-// the given egress rules (or currentProjErr), and the captured streams.
-func refreshFactory(t *testing.T, cfg config.Config, rules []config.EgressRule, currentProjErr error) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer) {
+// refreshFactory wires a refresh-ready Factory: the given config with its
+// EgressRules overridden to return the supplied rules, a project manager whose
+// CurrentProject succeeds (or returns currentProjErr to simulate "no project"),
+// and the captured streams.
+func refreshFactory(t *testing.T, cfg *configmocks.ConfigMock, rules []config.EgressRule, currentProjErr error) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 	f, out, errOut := testFactoryWithStreams(t)
+	cfg.EgressRulesFunc = func() []config.EgressRule { return rules }
 	f.Config = func() (config.Config, error) { return cfg, nil }
 	f.ProjectManager = func() (project.ProjectManager, error) {
 		return &projectmocks.ProjectManagerMock{
@@ -38,9 +40,7 @@ func refreshFactory(t *testing.T, cfg config.Config, rules []config.EgressRule, 
 				if currentProjErr != nil {
 					return nil, currentProjErr
 				}
-				return &projectmocks.ProjectMock{
-					EgressRulesFunc: func() []config.EgressRule { return rules },
-				}, nil
+				return &projectmocks.ProjectMock{}, nil
 			},
 		}, nil
 	}

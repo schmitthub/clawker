@@ -2,6 +2,7 @@ package factory
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -56,14 +57,14 @@ func New(version string) *cmdutil.Factory {
 		Config:  configFunc(),
 	}
 
-	f.Logger = loggerLazy(f)                 // depends on Config
-	f.HostProxy = hostProxyFunc(f)           // depends on Config
-	f.SocketBridge = socketBridgeFunc(f)     // depends on Config
-	f.IOStreams = ioStreams()                // TTY/color/CI detection
-	f.TUI = tuiFunc(f)                       // needs IOStreams
-	f.ProjectManager = projectManagerFunc(f) // depends on Config
-	f.Client = clientFunc(f)                 // depends on Config
-	f.GitManager = gitManagerFunc(f)         // depends on Config
+	f.ProjectManager = projectManagerFunc(f)
+	f.Logger = loggerLazy(f)             // depends on Config
+	f.HostProxy = hostProxyFunc(f)       // depends on Config
+	f.SocketBridge = socketBridgeFunc(f) // depends on Config
+	f.IOStreams = ioStreams()            // TTY/color/CI detection
+	f.TUI = tuiFunc(f)                   // needs IOStreams
+	f.Client = clientFunc(f)             // depends on Config
+	f.GitManager = gitManagerFunc(f)     // depends on Config
 	f.Prompter = prompterFunc(f)
 	f.AdminClient = adminClientFunc(f)   // depends on Config
 	f.ControlPlane = controlPlaneFunc(f) // depends on Config, Logger, Client
@@ -189,7 +190,11 @@ func projectManagerFunc(f *cmdutil.Factory) func() (project.ProjectManager, erro
 				err = fmt.Errorf("failed to get logger: %w", logErr)
 				return
 			}
-			svc, err = project.NewProjectManager(cfg, log, nil)
+			// The clawker.yaml `name:` override is config-owned; resolve it here
+			// and pass it down as a primitive so PM stays config-free. This is a
+			// one-way edge (PM reads config); config never reads PM — its anchor
+			// comes from the standalone project.CurrentProjectRoot.
+			svc, err = project.NewProjectManager(log, nil, cfg.Project().Name)
 		})
 		return svc, err
 	}
@@ -330,7 +335,11 @@ func socketBridgeFunc(f *cmdutil.Factory) func() socketbridge.SocketBridgeManage
 }
 
 // configFunc returns a lazy closure that creates a Config gateway once.
-// Config uses os.Getwd internally for project resolution.
+// The project root that bounds project-config walk-up is resolved here via the
+// standalone project.CurrentProjectRoot (registry read through storage, no
+// config, no project manager) and handed to config as a plain anchor path.
+// Empty anchor (CWD not within a registered project) disables walk-up. config
+// never reaches back to the project manager, so the dependency is one-way.
 func configFunc() func() (config.Config, error) {
 	var cachedConfig config.Config
 	var configError error
@@ -338,7 +347,16 @@ func configFunc() func() (config.Config, error) {
 		if cachedConfig != nil || configError != nil {
 			return cachedConfig, configError
 		}
-		cachedConfig, configError = config.NewConfig()
+		// CurrentProjectRoot returns ErrNotInProject when CWD is not within a
+		// registered project — a normal condition (global-scope agents have no
+		// project). That degrades to an empty anchor, which disables walk-up.
+		// Any other error is unexpected and is surfaced rather than swallowed.
+		root, err := project.CurrentProjectRoot()
+		if err != nil && !errors.Is(err, project.ErrNotInProject) {
+			configError = fmt.Errorf("resolving project root for config walk-up: %w", err)
+			return nil, configError
+		}
+		cachedConfig, configError = config.NewConfig(config.WithProjectRoot(root))
 		return cachedConfig, configError
 	}
 }
@@ -351,9 +369,9 @@ func prompterFunc(f *cmdutil.Factory) func() *prompter.Prompter {
 }
 
 // gitManagerFunc returns a lazy closure that creates a GitManager once.
-// Uses project root from Config.GetProjectRoot() as the git repository path.
-// Returns error if not in a registered project or not a git repository.
-func gitManagerFunc(f *cmdutil.Factory) func() (*git.GitManager, error) {
+// Uses project root from project.CurrentProjectRoot() as the git repository
+// path. Returns error if not in a registered project or not a git repository.
+func gitManagerFunc(_ *cmdutil.Factory) func() (*git.GitManager, error) {
 	var (
 		once   sync.Once
 		mgr    *git.GitManager
@@ -361,12 +379,7 @@ func gitManagerFunc(f *cmdutil.Factory) func() (*git.GitManager, error) {
 	)
 	return func() (*git.GitManager, error) {
 		once.Do(func() {
-			cfg, err := f.Config()
-			if err != nil {
-				mgrErr = fmt.Errorf("failed to get config: %w", err)
-				return
-			}
-			projectRoot, err := cfg.GetProjectRoot()
+			projectRoot, err := project.CurrentProjectRoot()
 			if err != nil {
 				mgrErr = fmt.Errorf("failed to get project root: %w", err)
 				return

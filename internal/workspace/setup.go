@@ -12,6 +12,7 @@ import (
 	"github.com/schmitthub/clawker/internal/containerfs"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
+	projectpkg "github.com/schmitthub/clawker/internal/project"
 )
 
 // SetupMountsConfig holds configuration for workspace mount setup
@@ -96,9 +97,9 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 
 	// Load .clawkerignore patterns (empty when no project is registered)
 	var ignorePatterns []string
-	ignoreFile, err := cfg.Cfg.GetProjectIgnoreFile()
+	ignoreFile, err := projectpkg.CurrentProjectIgnoreFile()
 	if err != nil {
-		if !errors.Is(err, config.ErrNotInProject) {
+		if !errors.Is(err, projectpkg.ErrNotInProject) {
 			return nil, fmt.Errorf("failed to resolve ignore file: %w", err)
 		}
 	} else {

@@ -1505,7 +1505,7 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 		return nil, err
 	}
 
-	wd, projectRootDir, err := resolveWorkDir(ctx, containerOpts, opts.Config, agentName, opts.ProjectManager, log)
+	wd, projectRootDir, err := resolveWorkDir(ctx, containerOpts, agentName, opts.ProjectManager, log)
 	if err != nil {
 		return nil, err
 	}
@@ -1799,7 +1799,7 @@ func sendCached(ctx context.Context, ch chan<- CreateContainerEvent, step, msg s
 // resolveWorkDir determines the working directory for the container.
 // When --worktree is set, it routes through ProjectManager to ensure the worktree
 // is registered in the project registry (not just created at the git level).
-func resolveWorkDir(ctx context.Context, containerOpts *ContainerCreateOptions, cfgGateway config.Config, agentName string, projectManager func() (project.ProjectManager, error), log *logger.Logger) (wd string, projectRootDir string, err error) {
+func resolveWorkDir(ctx context.Context, containerOpts *ContainerCreateOptions, agentName string, projectManager func() (project.ProjectManager, error), log *logger.Logger) (wd string, projectRootDir string, err error) {
 	if containerOpts.Worktree != "" {
 		wtSpec, err := cmdutil.ParseWorktreeFlag(containerOpts.Worktree, agentName)
 		if err != nil {
@@ -1840,7 +1840,7 @@ func resolveWorkDir(ctx context.Context, containerOpts *ContainerCreateOptions, 
 		return wd, proj.RepoPath(), nil
 	}
 
-	wd, wdErr := cfgGateway.GetProjectRoot()
+	wd, wdErr := project.CurrentProjectRoot()
 	if wdErr != nil {
 		log.Debug().Err(wdErr).Msg("could not resolve project root, falling back to working directory")
 		wd = ""

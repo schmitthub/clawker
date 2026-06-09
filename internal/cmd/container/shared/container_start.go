@@ -143,16 +143,8 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 		if cmdOpts.ProjectManager == nil {
 			return fmt.Errorf("bootstrapping services: firewall is enabled but no project manager provided")
 		}
-		pm, err := cmdOpts.ProjectManager()
-		if err != nil {
-			return fmt.Errorf("bootstrapping services: loading project manager: %w", err)
-		}
-		proj, err := pm.CurrentProject(ctx)
-		if err != nil {
-			return fmt.Errorf("bootstrapping services: resolving current project: %w", err)
-		}
 		if _, err := adminClient.FirewallAddRules(ctx, &adminv1.FirewallAddRulesRequest{
-			Rules: adminv1.EgressRulesToProto(proj.EgressRules()),
+			Rules: adminv1.EgressRulesToProto(cfg.EgressRules()),
 		}); err != nil {
 			return fmt.Errorf("bootstrapping services: adding firewall rules: %w", err)
 		}

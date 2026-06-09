@@ -70,7 +70,7 @@ We do **not** inherit Docker's threat model. If Docker allows catastrophic comma
 
 A clawker project is defined by a `.clawker/` directory containing configuration files. Every clawker command requires project context.
 
-**Project Resolution**: `config.NewConfig()` performs a walk-up merge of configuration files (see §2.4) and resolves the current project from the registry via `GetProjectRoot()`. The `Config` interface exposes typed accessors — all file paths and constants are private to the package.
+**Project Resolution**: project-root resolution lives in `internal/project` (`ResolveProjectRoot`/`CurrentProjectRoot`), reading the registry. Callers resolve the root and pass it to `config.NewConfig(config.WithProjectRoot(root))`, which bounds the project-config walk-up merge (see §2.4) at that directory. `config` receives the root as a plain path; it does not resolve it. The `Config` interface exposes typed accessors — all file paths and constants are private to the package.
 
 **Project identity** is decoupled from configuration:
 - `internal/config` — configuration file I/O, walk-up loading, path helpers
@@ -119,7 +119,7 @@ dev.clawker.agent=<agent-name>
 
 ### Project Registry Lifecycle
 
-1. **Register**: `clawker project init` or `clawker project register` adds a slug→path entry to `cfg.ProjectRegistryFileName()`
+1. **Register**: `clawker project init` or `clawker project register` adds a slug→path entry to the registry (`registry.yaml`, data dir; owned by `internal/project`)
 2. **Lookup**: `Factory.Config()` returns a `config.Config` — the single interface all callers receive. Project resolution uses registry + `os.Getwd()` internally
 3. **Orphan projects**: If no project is resolved, resources get 2-segment names and omit the project label
 
@@ -348,7 +348,7 @@ Settings files do NOT need locking — per-machine, no concurrent writers. Regis
 |---------|------|---------|
 | `internal/storage` | Node tree engine (map-based merge, provenance), structToMap (omitempty-safe), atomic write (temp+rename), flock, YAML read/write | Leaf — zero internal imports |
 | `internal/config` | `settings.yaml` + `clawker.yaml` walk-up. One `Config` interface. Two schemas. | `storage`, `logger` |
-| `internal/project` | `registry.yaml`. Project domain: registration, resolution, worktree lifecycle. | `storage`, `config`, `iostreams`, `logger` |
+| `internal/project` | `registry.yaml`. Project domain: registration, resolution, worktree lifecycle. | `storage`, `consts`, `git`, `logger`, `text` |
 
 `internal/project` is a middle-tier domain package ("if I want project operations, I go here"). Registry is its persistence layer, not its identity — don't rename to `internal/registry`.
 
