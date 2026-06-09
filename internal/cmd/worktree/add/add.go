@@ -17,8 +17,9 @@ type AddOptions struct {
 	IOStreams      *iostreams.IOStreams
 	ProjectManager func() (project.ProjectManager, error)
 
-	Branch string
-	Base   string
+	Branch  string
+	Base    string
+	NoTrack bool
 }
 
 // NewCmdAdd creates the worktree add command.
@@ -35,15 +36,20 @@ func NewCmdAdd(f *cmdutil.Factory, runF func(context.Context, *AddOptions) error
 
 If the worktree already exists, the command will fail.
 If the branch exists but isn't checked out elsewhere, it's checked out in the new worktree.
-If the branch doesn't exist, it's created from the base ref (default: HEAD).`,
+If the branch doesn't exist but a remote-tracking branch matches its name (e.g. after
+'git fetch'), it's created from the remote tip with upstream tracking configured.
+Otherwise the branch is created from the base ref (default: HEAD).`,
 		Example: `  # Create a worktree for a new branch
   clawker worktree add feat-42
 
   # Create a worktree from a specific base
   clawker worktree add feat-43 --base main
 
-  # Create a worktree for a branch with slashes
-  clawker worktree add feature/new-login`,
+  # Check out a fetched remote branch with upstream tracking
+  clawker worktree add feature/new-login
+
+  # Create the branch without tracking the remote
+  clawker worktree add feature/new-login --no-track`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.Branch = args[0]
@@ -55,6 +61,7 @@ If the branch doesn't exist, it's created from the base ref (default: HEAD).`,
 	}
 
 	cmd.Flags().StringVar(&opts.Base, "base", "", "Base ref to create branch from (default: HEAD)")
+	cmd.Flags().BoolVar(&opts.NoTrack, "no-track", false, "Do not set up upstream tracking when basing the branch on a remote-tracking branch")
 
 	return cmd
 }
@@ -73,7 +80,7 @@ func addRun(_ context.Context, opts *AddOptions) error {
 		return err
 	}
 
-	wtPath, err := proj.CreateWorktree(context.Background(), opts.Branch, opts.Base)
+	wtPath, err := proj.CreateWorktree(context.Background(), opts.Branch, opts.Base, opts.NoTrack)
 	if err != nil {
 		if errors.Is(err, project.ErrNotInProjectPath) || errors.Is(err, project.ErrProjectNotRegistered) {
 			return fmt.Errorf("not in a registered project directory")

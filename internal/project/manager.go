@@ -109,7 +109,13 @@ type Project interface {
 	// (explicit rules + add_domains shorthand). Consumed by container
 	// start to populate the firewall via FirewallAddRules.
 	EgressRules() []config.EgressRule
-	CreateWorktree(ctx context.Context, branch, base string) (string, error)
+	// CreateWorktree creates a worktree for branch. When base is empty and branch
+	// is not a local head, a uniquely-matching remote-tracking branch is used as
+	// the base with upstream tracking configured (the dwim rule). noTrack
+	// suppresses upstream tracking (parity with `git worktree add --no-track`).
+	CreateWorktree(ctx context.Context, branch, base string, noTrack bool) (string, error)
+	// AddWorktree creates or reuses a worktree and returns its state. It always
+	// uses the default track-on-match behavior (no --no-track surface here).
 	AddWorktree(ctx context.Context, branch, base string) (WorktreeState, error)
 	RemoveWorktree(ctx context.Context, branch string, deleteBranch bool) error
 	PruneStaleWorktrees(ctx context.Context, dryRun bool) (*PruneStaleResult, error)
@@ -377,11 +383,11 @@ func (p *projectHandle) EgressRules() []config.EgressRule {
 }
 
 // CreateWorktree creates a worktree for this project.
-func (p *projectHandle) CreateWorktree(ctx context.Context, branch, base string) (string, error) {
+func (p *projectHandle) CreateWorktree(ctx context.Context, branch, base string, noTrack bool) (string, error) {
 	if p == nil || p.manager == nil {
 		return "", ErrProjectHandleNotInitialized
 	}
-	worktreePath, err := p.manager.worktrees().CreateWorktree(ctx, p.record.Root, branch, base)
+	worktreePath, err := p.manager.worktrees().CreateWorktree(ctx, p.record.Root, branch, base, noTrack)
 	if err != nil {
 		return "", err
 	}
@@ -394,7 +400,7 @@ func (p *projectHandle) CreateWorktree(ctx context.Context, branch, base string)
 
 // AddWorktree creates or reuses a worktree and returns its state.
 func (p *projectHandle) AddWorktree(ctx context.Context, branch, base string) (WorktreeState, error) {
-	worktreePath, err := p.CreateWorktree(ctx, branch, base)
+	worktreePath, err := p.CreateWorktree(ctx, branch, base, false)
 	if err != nil {
 		return WorktreeState{}, err
 	}

@@ -23,7 +23,7 @@ var _ project.Project = &ProjectMock{}
 //			AddWorktreeFunc: func(ctx context.Context, branch string, base string) (project.WorktreeState, error) {
 //				panic("mock out the AddWorktree method")
 //			},
-//			CreateWorktreeFunc: func(ctx context.Context, branch string, base string) (string, error) {
+//			CreateWorktreeFunc: func(ctx context.Context, branch string, base string, noTrack bool) (string, error) {
 //				panic("mock out the CreateWorktree method")
 //			},
 //			EgressRulesFunc: func() []config.EgressRule {
@@ -61,7 +61,7 @@ type ProjectMock struct {
 	AddWorktreeFunc func(ctx context.Context, branch string, base string) (project.WorktreeState, error)
 
 	// CreateWorktreeFunc mocks the CreateWorktree method.
-	CreateWorktreeFunc func(ctx context.Context, branch string, base string) (string, error)
+	CreateWorktreeFunc func(ctx context.Context, branch string, base string, noTrack bool) (string, error)
 
 	// EgressRulesFunc mocks the EgressRules method.
 	EgressRulesFunc func() []config.EgressRule
@@ -106,6 +106,8 @@ type ProjectMock struct {
 			Branch string
 			// Base is the base argument value.
 			Base string
+			// NoTrack is the noTrack argument value.
+			NoTrack bool
 		}
 		// EgressRules holds details about calls to the EgressRules method.
 		EgressRules []struct {
@@ -201,23 +203,25 @@ func (mock *ProjectMock) AddWorktreeCalls() []struct {
 }
 
 // CreateWorktree calls CreateWorktreeFunc.
-func (mock *ProjectMock) CreateWorktree(ctx context.Context, branch string, base string) (string, error) {
+func (mock *ProjectMock) CreateWorktree(ctx context.Context, branch string, base string, noTrack bool) (string, error) {
 	if mock.CreateWorktreeFunc == nil {
 		panic("ProjectMock.CreateWorktreeFunc: method is nil but Project.CreateWorktree was just called")
 	}
 	callInfo := struct {
-		Ctx    context.Context
-		Branch string
-		Base   string
+		Ctx     context.Context
+		Branch  string
+		Base    string
+		NoTrack bool
 	}{
-		Ctx:    ctx,
-		Branch: branch,
-		Base:   base,
+		Ctx:     ctx,
+		Branch:  branch,
+		Base:    base,
+		NoTrack: noTrack,
 	}
 	mock.lockCreateWorktree.Lock()
 	mock.calls.CreateWorktree = append(mock.calls.CreateWorktree, callInfo)
 	mock.lockCreateWorktree.Unlock()
-	return mock.CreateWorktreeFunc(ctx, branch, base)
+	return mock.CreateWorktreeFunc(ctx, branch, base, noTrack)
 }
 
 // CreateWorktreeCalls gets all the calls that were made to CreateWorktree.
@@ -225,14 +229,16 @@ func (mock *ProjectMock) CreateWorktree(ctx context.Context, branch string, base
 //
 //	len(mockedProject.CreateWorktreeCalls())
 func (mock *ProjectMock) CreateWorktreeCalls() []struct {
-	Ctx    context.Context
-	Branch string
-	Base   string
+	Ctx     context.Context
+	Branch  string
+	Base    string
+	NoTrack bool
 } {
 	var calls []struct {
-		Ctx    context.Context
-		Branch string
-		Base   string
+		Ctx     context.Context
+		Branch  string
+		Base    string
+		NoTrack bool
 	}
 	mock.lockCreateWorktree.RLock()
 	calls = mock.calls.CreateWorktree

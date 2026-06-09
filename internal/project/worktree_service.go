@@ -54,11 +54,11 @@ func newWorktreeService(cfg config.Config, log *logger.Logger, registryStore *st
 	}
 }
 
-func (s *worktreeService) CreateWorktree(_ context.Context, projectRoot, branch, base string) (string, error) {
-	return s.addWorktree(projectRoot, branch, base)
+func (s *worktreeService) CreateWorktree(_ context.Context, projectRoot, branch, base string, noTrack bool) (string, error) {
+	return s.addWorktree(projectRoot, branch, base, noTrack)
 }
 
-func (s *worktreeService) addWorktree(projectRoot, branch, base string) (string, error) {
+func (s *worktreeService) addWorktree(projectRoot, branch, base string, noTrack bool) (string, error) {
 	entry, err := s.findProjectByRoot(projectRoot)
 	if err != nil {
 		return "", err
@@ -78,7 +78,7 @@ func (s *worktreeService) addWorktree(projectRoot, branch, base string) (string,
 	}
 
 	provider := newFlatWorktreeDirProvider(s.cfg, projectRoot, entry)
-	worktreePath, err := manager.SetupWorktree(provider, branch, base)
+	worktreePath, err := manager.SetupWorktree(provider, branch, base, noTrack)
 	if err != nil {
 		return "", fmt.Errorf("creating worktree: %w", err)
 	}

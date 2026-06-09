@@ -230,7 +230,7 @@ func AddFlags(flags *pflag.FlagSet, opts *ContainerCreateOptions) {
 	flags.StringVar(&opts.ContainerIDFile, "cidfile", "", "Write the container ID to the file")
 	flags.StringArrayVar(&opts.GroupAdd, "group-add", nil, "Add additional groups to join")
 	flags.StringVar(&opts.Mode, "mode", "", "Workspace mode: 'bind' (live sync) or 'snapshot' (isolated copy)")
-	flags.StringVar(&opts.Worktree, "worktree", "", "Use git worktree: 'branch' to use/create, 'branch:base' to create from base")
+	flags.StringVar(&opts.Worktree, "worktree", "", "Use git worktree: 'branch' to use/create (checks out a matching remote-tracking branch with upstream when one exists), 'branch:base' to create from base")
 
 	// Resource limit flags
 	flags.VarP(&opts.Memory, "memory", "m", "Memory limit (e.g., 512m, 2g)")
@@ -1819,7 +1819,9 @@ func resolveWorkDir(ctx context.Context, containerOpts *ContainerCreateOptions, 
 			return "", "", fmt.Errorf("cannot use --worktree: not in a registered project directory: %w", err)
 		}
 
-		wd, err = proj.CreateWorktree(ctx, wtSpec.Branch, wtSpec.Base)
+		// --worktree is a happy-path shortcut: always default track-on-match
+		// (no --no-track surface here; use `clawker worktree add` for that).
+		wd, err = proj.CreateWorktree(ctx, wtSpec.Branch, wtSpec.Base, false)
 		if err != nil {
 			if !errors.Is(err, project.ErrWorktreeExists) {
 				return "", "", fmt.Errorf("setting up worktree %q for agent %q: %w", wtSpec.Branch, agentName, err)

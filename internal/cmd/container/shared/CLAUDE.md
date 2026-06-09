@@ -166,11 +166,11 @@ Nil providers safely skipped (debug logged). `Config` is the only required provi
 Resolves host path for container workspace mount when `--worktree` is set:
 
 1. `cmdutil.ParseWorktreeFlag(value, agentName)` -> `WorktreeSpec{Branch, Base}`
-2. `proj.CreateWorktree(ctx, branch, base)` -- on `ErrWorktreeExists`, falls back to `proj.GetWorktree`
+2. `proj.CreateWorktree(ctx, branch, base, false)` -- on `ErrWorktreeExists`, falls back to `proj.GetWorktree`
 3. Only `WorktreeHealthy` accepted; stale -> error suggesting `clawker worktree prune`
 4. Returns `(worktreePath, proj.RepoPath(), nil)`
 
-The `--worktree` flag is idempotent (get-or-create), unlike `clawker worktree add` (create-only).
+The `--worktree` flag is idempotent (get-or-create), unlike `clawker worktree add` (create-only). It is a limited happy-path shortcut: it always passes `noTrack=false` (default track-on-match — a branch matching a remote-tracking ref is checked out from the remote tip with upstream configured). The `--no-track` opt-out lives only on `clawker worktree add`, not on this shortcut.
 
 ## Home Directory Safety (`safety.go`)
 

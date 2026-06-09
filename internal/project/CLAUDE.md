@@ -66,7 +66,7 @@ type Project interface {
     RepoPath() string
     Record() (ProjectRecord, error)
     EgressRules() []config.EgressRule
-    CreateWorktree(ctx context.Context, branch, base string) (string, error)
+    CreateWorktree(ctx context.Context, branch, base string, noTrack bool) (string, error)
     AddWorktree(ctx context.Context, branch, base string) (WorktreeState, error)
     RemoveWorktree(ctx context.Context, branch string, deleteBranch bool) error
     PruneStaleWorktrees(ctx context.Context, dryRun bool) (*PruneStaleResult, error)
@@ -77,6 +77,11 @@ type Project interface {
 
 - `EgressRules()` returns the full egress rule set for this project: required baseline (`cfg.RequiredFirewallRules()` — Claude API, OAuth, etc.) plus anything configured under `security.firewall` in the project config (explicit `rules` + `add_domains` shorthand normalized to TLS 443 allow rules). Consumed by `BootstrapServicesPreStart` in container start to populate the firewall via `FirewallAddRules`, and re-consumed on demand by the `clawker firewall refresh` CLI verb (same `EgressRules()` → `EgressRulesToProto` → `FirewallAddRules` path, no restart) to live-apply a project config egress edit. Project-rule composition lives here rather than the firewall package because it's pure config projection — no firewall stack logic.
 
+- `CreateWorktree`: when `base` is empty and `branch` is not a local head, a
+  uniquely-matching remote-tracking branch is used as the base with upstream
+  tracking configured (the dwim rule, matching native `git worktree add`).
+  `noTrack` suppresses the upstream config. `AddWorktree` always uses the default
+  track-on-match behavior (no `--no-track` surface).
 - `AddWorktree` rejects duplicates with `ErrWorktreeExists`. Returns enriched `WorktreeState`.
 - `RemoveWorktree(deleteBranch=true)`: worktree always removed; `ErrBranchNotFound` swallowed, other branch errors wrapped.
 - `ListWorktrees` enriches registry data with git-level detail (HEAD, detached state, inspect errors) and performs multi-layer health checks: directory existence, `.git` file presence, git metadata existence, branch existence, lock file presence.
@@ -137,7 +142,7 @@ All worktree service methods accept `projectRoot` from the calling `projectHandl
 ### Internal API
 
 ```go
-CreateWorktree(_ context.Context, projectRoot, branch, base string) (string, error)
+CreateWorktree(_ context.Context, projectRoot, branch, base string, noTrack bool) (string, error)
 RemoveWorktree(_ context.Context, projectRoot, branch string, deleteBranch bool) error
 PruneStaleWorktrees(_ context.Context, projectRoot string, dryRun bool) (*PruneStaleResult, error)
 ```

@@ -40,7 +40,7 @@ func TestResolveWorkDir_Worktree(t *testing.T) {
 			branch: "feature/existing",
 			setup: func(t *testing.T, proj project.Project) string {
 				t.Helper()
-				path, err := proj.CreateWorktree(context.Background(), "feature/existing", "")
+				path, err := proj.CreateWorktree(context.Background(), "feature/existing", "", false)
 				require.NoError(t, err)
 				return path
 			},
@@ -56,7 +56,7 @@ func TestResolveWorkDir_Worktree(t *testing.T) {
 			branch: "feature/stale",
 			setup: func(t *testing.T, proj project.Project) string {
 				t.Helper()
-				path, err := proj.CreateWorktree(context.Background(), "feature/stale", "")
+				path, err := proj.CreateWorktree(context.Background(), "feature/stale", "", false)
 				require.NoError(t, err)
 				require.NoError(t, os.RemoveAll(path))
 				return ""
@@ -122,7 +122,7 @@ func TestResolveWorkDir_Worktree(t *testing.T) {
 
 func TestResolveWorkDir_WorktreeGetError(t *testing.T) {
 	mockProj := &projectmocks.ProjectMock{
-		CreateWorktreeFunc: func(_ context.Context, _, _ string) (string, error) {
+		CreateWorktreeFunc: func(_ context.Context, _, _ string, _ bool) (string, error) {
 			return "", project.ErrWorktreeExists
 		},
 		GetWorktreeFunc: func(_ context.Context, _ string) (project.WorktreeState, error) {
@@ -179,7 +179,7 @@ func TestResolveWorkDir_UnhealthyStatuses(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockProj := &projectmocks.ProjectMock{
-				CreateWorktreeFunc: func(_ context.Context, _, _ string) (string, error) {
+				CreateWorktreeFunc: func(_ context.Context, _, _ string, _ bool) (string, error) {
 					return "", project.ErrWorktreeExists
 				},
 				GetWorktreeFunc: func(_ context.Context, branch string) (project.WorktreeState, error) {

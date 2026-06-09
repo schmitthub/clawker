@@ -41,18 +41,23 @@ type AddOptions struct {
     ProjectManager func() (project.ProjectManager, error)
     Branch    string
     Base      string
+    NoTrack   bool
 }
 ```
 
 **Flags:**
 
 - `--base REF` — Base ref to create branch from (default: HEAD). Only used if branch doesn't exist.
+- `--no-track` — Do not configure upstream tracking when the branch is derived from a remote-tracking branch (parity with `git worktree add --no-track`).
 
 **Behavior:**
 
 - If worktree already exists in registry → error (`ErrWorktreeExists`). This is strict creation semantics.
 - If branch exists but not checked out elsewhere → check it out in new worktree
-- If branch doesn't exist → create from base ref
+- If branch doesn't exist but a remote-tracking ref matches its name (the dwim rule, e.g. after `git fetch`) → create from the remote tip with upstream tracking (unless `--no-track`)
+- Otherwise → create from base ref
+
+`clawker worktree add` is the canonical, full-surface worktree command — tracking flags live here. The `--worktree` shortcut on container commands is a limited happy-path alias (default track-on-match, no flag surface).
 
 For idempotent "get or create" behavior, use `--worktree` on container commands instead (see `internal/cmd/container/shared/CLAUDE.md`).
 
