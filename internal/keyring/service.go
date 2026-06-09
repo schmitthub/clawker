@@ -6,14 +6,10 @@ import (
 	"fmt"
 	"os/user"
 	"strings"
-	"time"
 )
 
 // Sentinel errors returned by the service-credential pipeline.
 var (
-	// ErrTokenExpired indicates the credential's expiry timestamp is in the past.
-	ErrTokenExpired = errors.New("token has expired")
-
 	// ErrInvalidSchema indicates the raw keyring value could not be parsed into the
 	// expected credential struct (e.g. malformed JSON).
 	ErrInvalidSchema = errors.New("credential data does not match expected schema")
@@ -50,7 +46,7 @@ type ServiceDef[T any] struct {
 //  2. Get() fails       → ErrNotFound (no entry) or *TimeoutError
 //  3. raw == ""         → ErrEmptyCredential (entry exists but blank)
 //  4. Parse() fails     → ErrInvalidSchema wrapping the parse error
-//  5. Validate() fails  → returns validation error directly (e.g. ErrTokenExpired)
+//  5. Validate() fails  → returns the validation error directly (when set)
 func getCredential[T any](def ServiceDef[T]) (*T, error) {
 	u, err := def.User()
 	if err != nil {
@@ -100,10 +96,4 @@ func jsonParse[T any](raw string) (*T, error) {
 		return nil, err
 	}
 	return &v, nil
-}
-
-// isExpired reports whether a unix-millisecond timestamp is in the past.
-// A zero or negative value is treated as "no expiry" and returns false.
-func isExpired(unixMillis int64) bool {
-	return unixMillis > 0 && time.Now().After(time.UnixMilli(unixMillis))
 }

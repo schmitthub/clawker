@@ -67,6 +67,7 @@ claude-plugin/clawker-support/
         ├── docker-hygiene.md     # Docker disk space diagnosis and cleanup
         ├── monitoring.md         # OTel + OpenSearch + Prometheus stack, Clawker workspace, telemetry env, troubleshooting
         ├── firewall-security.md  # Proactive VCS egress lockdown — git credential-exfil defense (HTTPS path-scoping, GitHub write surface, monitoring-discovery loop)
+        ├── claude-code-auth.md   # Claude Code host-auth credential model — create-time snapshot, volume self-heal, host↔container isolation, /login troubleshooting
         └── known-issues.md       # Active bugs and workarounds
 ```
 
@@ -86,12 +87,18 @@ diagnostics (clawker not found, firewall, credentials, container won't start).
 
 ## Versioning
 
-Plugin version lives in `.claude-plugin/plugin.json`. Bump it for every
-release-worthy change:
+Plugin version lives in `.claude-plugin/plugin.json`. **Every change bumps the
+patch number (`1.0.Z` → `1.0.Z+1`). No exceptions.**
 
-- **Patch** (0.x.Y): Typo fixes, wording improvements
-- **Minor** (0.X.0): New reference files, workflow changes, structural refactors
-- **Major** (X.0.0): Breaking changes to skill behavior or methodology
+The version IS the delivery mechanism. This plugin is served from a separate
+repo, and the release pipeline only picks up a change when the version
+increments (the marketplace caches by version). A change with no bump stays in
+this repo and never reaches users — so "is this worth a bump?" is the wrong
+question: if you touched the plugin, bump it. A typo fix, a new reference file,
+and a workflow rewrite are each just the next patch.
+
+Keep it patch-only. Minor/major are reserved for a deliberate, announced change
+in how the plugin works, which effectively never happens here.
 
 ## Completion Gate
 
@@ -100,7 +107,8 @@ After making changes to the plugin:
 1. Check that `known-issues.md` is still accurate — remove entries for fixed bugs
 2. Verify reference file cross-references are consistent (troubleshooting routing
    table, SKILL.md research step references)
-3. Bump the version in `plugin.json` if the change is user-visible
+3. Bump the patch version in `plugin.json` (see Versioning — the release
+   pipeline requires an increment per change)
 
 ## Dockerfile Template Sync
 

@@ -76,7 +76,7 @@ type ClaudeCodeConfigOptions struct {
 // ClaudeCodeConfig controls Claude Code settings and authentication in containers.
 type ClaudeCodeConfig struct {
 	Config        ClaudeCodeConfigOptions `yaml:"config"`
-	UseHostAuth   *bool                   `yaml:"use_host_auth,omitempty" label:"Use Host Auth" desc:"Let the container use your host API keys so you don't have to re-authenticate" default:"true"`
+	UseHostAuth   *bool                   `yaml:"use_host_auth,omitempty" label:"Use Host Auth" desc:"Let the container use your host Claude Code credentials so you don't have to re-authenticate. The credential will be copied in at creation and persisted in the container's volume, but the container will refresh its tokens independently. If new containers keep starting unauthenticated, log in on the host to rotate the refresh token seed." default:"true"`
 	MountProjects *bool                   `yaml:"mount_projects,omitempty" label:"Mount Host Projects" desc:"Bind mount host ~/.claude/projects/ into the container so auto-memory and sessions are shared across container runs and instances" default:"true"`
 }
 

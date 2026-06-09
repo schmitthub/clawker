@@ -347,6 +347,15 @@ integrates with.
     abuses forwarded git credentials to exfil to an arbitrary repo (domain-only
     sandboxes can't stop this; clawker's HTTPS path allow/deny can).
 
+15. **Claude Code host auth (`/login` prompts in containers)** — When the user
+    asks how `use_host_auth` shares their host login, or reports being prompted
+    for `/login` inside containers despite host auth being on, read
+    `reference/claude-code-auth.md`. It covers the create-time credential
+    snapshot, why the config volume self-heals across restarts, and the one-way
+    host↔container isolation that explains why an expired host refresh token
+    forces a one-time re-login (and why re-authenticating on the host fixes only
+    future containers).
+
 ### Step 4: Analyze — classify and decide placement
 
 Cross-reference your research to classify every item. This is the most common
