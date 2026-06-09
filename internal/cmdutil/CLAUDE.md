@@ -55,7 +55,7 @@ type Factory struct {
 - `Version`, `IOStreams` -- set eagerly at construction
 - `TUI` -- eager `*tui.TUI` presentation layer noun; commands call `.RunProgress()` on it. Hooks are registered post-construction via `.RegisterHooks()` (pointer sharing ensures commands see hooks registered in PersistentPreRunE)
 - `Client(ctx)` -- lazy Docker client (connects on first call)
-- `Config()` -- lazy config (loads project, settings, registry)
+- `Config()` -- lazy config (loads project + settings; project-config walk-up is anchored by the project root resolved via `ProjectRegistry`)
 - `Logger()` -- lazy `*logger.Logger` (file-only zerolog); commands capture on Options struct, resolve in run function. Tests: `func() (*logger.Logger, error) { return logger.Nop(), nil }`
 - `ProjectRegistry()` -- lazy `*project.Registry`, the process-wide project registry facade and sole constructor of registry storage; Config walk-up anchoring, GitManager, ProjectManager, and commands all share it
 - `ProjectManager()` -- lazy project manager for registration, worktree lifecycle (built over `ProjectRegistry`)
