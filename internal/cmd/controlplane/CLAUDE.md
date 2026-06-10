@@ -18,7 +18,7 @@ wants to control the CP lifecycle directly.
 | File | Purpose |
 |------|---------|
 | `controlplane.go` | Parent command `NewCmdControlPlane(f)` — registers `up`/`down`/`status`/`agents` |
-| `up.go` | `controlplane up` — wraps `Manager.EnsureRunning` (idempotent) |
+| `up.go` | `controlplane up` — wraps `Manager.EnsureRunning` (idempotent); when `firewall.enable` (settings.yaml) is true, also brings the firewall stack up via `firewall.BringUpStack` (idempotent `FirewallInit`) |
 | `down.go` | `controlplane down` — `Manager.Stop` (CP container only); no orphan warning — CP drains its own firewall stack on SIGTERM |
 | `status.go` | `controlplane status` — `Manager.IsRunning` + `Manager.ProbeHealthz` + best-effort `FirewallStatus` RPC |
 | `agents.go` | `controlplane agents` — `AdminClient.ListAgents` snapshot of the agent registry |
@@ -28,7 +28,7 @@ wants to control the CP lifecycle directly.
 
 | Command | Constructor | Args | Flags | Manager methods |
 |---------|-------------|------|-------|-----------------|
-| `up` | `NewCmdUp(f, runF)` | none | none | `EnsureRunning` |
+| `up` | `NewCmdUp(f, runF)` | none | none | `EnsureRunning`; then, when `firewall.enable` (settings.yaml) is true, `FirewallInit` via `f.AdminClient` (`firewall.BringUpStack`) |
 | `down` | `NewCmdDown(f, runF)` | none | none | `IsRunning`, then `Stop` on the running path |
 | `status` | `NewCmdStatus(f, runF)` | none | `--format`, `--json`, `--quiet` | `IsRunning`, `ProbeHealthz`; plus best-effort `FirewallStatus` via `f.AdminClient` |
 | `agents` | `NewCmdAgents(f, runF)` | none | `--format`, `--json`, `--quiet` | none (uses `f.AdminClient` → `ListAgents`) |
@@ -45,6 +45,27 @@ No package-level seams. Tests inject a `*mocks.ManagerMock` by overriding
 `tb.F.ControlPlane` on the per-test `testBed`; each test programs only the
 methods it exercises, so an unexpected call to an unprogrammed method
 panics — that's the assertion for paths that should short-circuit.
+
+## `controlplane up` and firewall bringup
+
+`firewall.enable` (settings.yaml) means the firewall stack should be up
+whenever the CP is. Two cooperating mechanisms deliver that:
+
+1. **CP-side (fresh boots)**: the CP daemon itself reads settings at
+   startup and, when enabled, runs an async in-process `FirewallInit`
+   (`settingsFirewallBringup` in `cmd/clawker-cp/main.go`). Covers CP
+   boots no CLI observes (restart policy, container-start bootstrap).
+2. **CLI-side (idempotent path)**: `upRun` loads config after
+   `EnsureRunning` and, when enabled, dials `f.AdminClient` and calls
+   `firewall.BringUpStack` — the same spinner + shared-deadline +
+   exposure-warning UX as `firewall up`. This covers the case where the
+   CP was already running with the stack down (e.g. after `firewall
+   down`) and makes the verb block until the stack is healthy.
+
+When `firewall.enable` is false the verb prints only the CP success
+line — bringing up a stack the user disabled would be a policy
+violation. A failed stack bringup returns an error (and prints the
+stack-down exposure warning) even though the CP itself is up.
 
 ## `controlplane down` and firewall teardown (INV-B2-008, reworked)
 
@@ -112,8 +133,9 @@ silently breaks JSON unmarshaling on that side.
 | `IOStreams` | ✓ | ✓ | ✓ | ✓ |
 | `TUI` | ­ | ­ | ­ | ✓ |
 | `Logger` | ­ | ­ | ­ | ✓ |
+| `Config` | ✓ | ­ | ­ | ­ |
 | `ControlPlane` | ✓ | ✓ | ✓ | ­ |
-| `AdminClient` | ­ | ­ | ✓ (best-effort) | ✓ |
+| `AdminClient` | ✓ (firewall-enabled only) | ­ | ✓ (best-effort) | ✓ |
 
 ## Format flag support
 
@@ -127,7 +149,11 @@ throughout — no raw `cs.Red` / `cs.Green`.
 `up`, `down`, and `status` import `internal/controlplane/cpboot` (for the `Manager` interface
 type) but never import `pkg/whail` — the `*docker.Client` abstraction is
 held entirely behind `Manager`. `agents` imports only `api/admin/v1` for the
-`AdminServiceClient` surface. All lifecycle side effects are reached
+`AdminServiceClient` surface. `up` additionally imports the sibling
+command package `internal/cmd/firewall` for the exported
+`BringUpStack` helper so both verbs share one bringup UX (spinner,
+shared RPC deadline, exposure warning, remediation hints) instead of
+duplicating it. All lifecycle side effects are reached
 through Manager or AdminClient methods, which is what makes the moq mocks complete
 substitutes.
 

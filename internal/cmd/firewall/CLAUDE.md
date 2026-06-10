@@ -7,7 +7,7 @@ Cobra commands for the `clawker firewall` command group. Manages the Envoy+CoreD
 | File | Purpose |
 |------|---------|
 | `firewall.go` | Parent command `NewCmdFirewall(f)` — registers all 12 subcommands |
-| `up.go` | `firewall up` — FirewallInit RPC (idempotent stack-up) |
+| `up.go` | `firewall up` — FirewallInit RPC (idempotent stack-up). Also exports `BringUpStack(ctx, ios, client)` — the spinner + shared-deadline + exposure-warning bringup UX — reused by `controlplane up` when `firewall.enable` (settings.yaml) is true |
 | `down.go` | `firewall down` — FirewallRemove RPC (global teardown) |
 | `status.go` | `firewall status` — show firewall health, container IPs, rule count |
 | `list.go` | `firewall list` (alias `ls`) — list active egress rules (sorted alphabetically by domain) |

@@ -271,6 +271,9 @@ report `connection refused` against the CP.
    clawker controlplane down
    clawker controlplane up
    ```
+   With `firewall.enable` set in settings.yaml (the default),
+   `controlplane up` also brings the Envoy + CoreDNS firewall stack back
+   up — no separate `clawker firewall up` is needed.
 
 ---
 

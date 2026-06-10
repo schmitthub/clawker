@@ -66,6 +66,8 @@ Two paths bring CP up:
 
 Either way, the CP image is built from binaries embedded in the `clawker` CLI itself (`clawker-cp`, `ebpf-manager`). There's no separate image to pull. See [Installation](/installation) for the BPF toolchain requirements when building from source.
 
+On every boot, CP reads `firewall.enable` from settings and — when enabled (the default) — starts the Envoy + CoreDNS firewall stack itself in the background. That covers boots no CLI command observes, like Docker's restart policy resurrecting a crashed CP. A failed stack bringup degrades (CP stays up and logs it) rather than crashing; the next `clawker firewall up` or container start retries it.
+
 ### Networking
 
 CP joins `clawker-net` with a deterministic static IP computed by replacing the gateway's last octet with `202` — so e.g. `192.168.215.202` on a default Docker bridge with gateway `192.168.215.1`. The CLI talks to it over host loopback for `AdminClient` (mTLS gRPC on port `7443`) and `/healthz` (plain HTTP on port `7080`). The agent listener (`7444`) is **only** reachable from other containers on `clawker-net`.
@@ -78,7 +80,7 @@ All `clawker controlplane` subcommands are break-glass — useful for debugging,
 
 | Command | Purpose |
 |---------|---------|
-| `clawker controlplane up` | Idempotent `EnsureRunning`. Brings CP up if it isn't already; no-op if `/healthz` is green. |
+| `clawker controlplane up` | Idempotent `EnsureRunning`. Brings CP up if it isn't already; no-op if `/healthz` is green. When the firewall is enabled in settings (`firewall.enable`, the default), also brings the Envoy + CoreDNS firewall stack up and waits until it's healthy. |
 | `clawker controlplane down` | Stops the CP container. `clawker-cp`'s SIGTERM handler runs the clean drain (`actionQueue.Close` → graceful gRPC stop → bypass timer cancel → Stack stop → netlogger stop → eBPF flush → exit 0). |
 | `clawker controlplane status` | Probes `/healthz`; if up, also fetches firewall subsystem state via the AdminService. Output via `--format json` for scripts. |
 | `clawker controlplane agents` | Lists every agent currently registered with CP — composite (`project`, `agent_name`) plus container ID, cert thumbprint, registration time, and last-seen time. Output via `--format json` for scripts. |

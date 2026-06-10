@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -244,6 +245,46 @@ func TestDNSGCSweep(t *testing.T) {
 		})
 		require.False(t, ok, "a panicking sweep must count toward escalation")
 		require.Contains(t, buf.String(), "dns_gc_panic",
+			"a recovered panic must emit the structured event for triage")
+	})
+}
+
+// TestSettingsFirewallBringup pins the CP-resilience contract for the
+// settings-driven firewall stack bringup that runs at CP startup when
+// firewall.enable (settings.yaml) is true: an init failure or panic must
+// degrade with the structured event=firewall_stack_unavailable line —
+// never escape and kill PID 1, which would strand pinned eBPF programs
+// unsupervised (the "CP crashing is a security incident" invariant).
+func TestSettingsFirewallBringup(t *testing.T) {
+	t.Parallel()
+
+	t.Run("success emits no degrade event", func(t *testing.T) {
+		t.Parallel()
+		var buf bytes.Buffer
+		log := logger.NewWriter(&buf)
+		settingsFirewallBringup(func(_ context.Context) error { return nil }, log)
+		require.NotContains(t, buf.String(), "firewall_stack_unavailable")
+		require.Contains(t, buf.String(), "firewall stack up",
+			"successful bringup must leave a positive log line for the operator")
+	})
+
+	t.Run("init error degrades with structured event", func(t *testing.T) {
+		t.Parallel()
+		var buf bytes.Buffer
+		log := logger.NewWriter(&buf)
+		settingsFirewallBringup(func(_ context.Context) error { return errors.New("envoy unhealthy") }, log)
+		require.Contains(t, buf.String(), "firewall_stack_unavailable",
+			"a failed bringup must emit the structured event for triage")
+	})
+
+	t.Run("panic is recovered and degrades", func(t *testing.T) {
+		t.Parallel()
+		var buf bytes.Buffer
+		log := logger.NewWriter(&buf)
+		require.NotPanics(t, func() {
+			settingsFirewallBringup(func(_ context.Context) error { panic("boom") }, log)
+		})
+		require.Contains(t, buf.String(), "firewall_stack_unavailable",
 			"a recovered panic must emit the structured event for triage")
 	})
 }
