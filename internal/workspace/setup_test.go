@@ -131,6 +131,50 @@ func TestBuildWorktreeGitMounts_PreservesExistingConfig(t *testing.T) {
 	}
 }
 
+func TestBuildWorktreeGitMounts_ReadOnlyConfigPreserved(t *testing.T) {
+	tmpDir := t.TempDir()
+	gitDir := filepath.Join(tmpDir, ".git")
+	if err := os.Mkdir(gitDir, 0755); err != nil {
+		t.Fatalf("failed to create .git directory: %v", err)
+	}
+	content := []byte("[core]\n\trepositoryformatversion = 0\n")
+	cfgPath := filepath.Join(gitDir, "config")
+	if err := os.WriteFile(cfgPath, content, 0444); err != nil {
+		t.Fatalf("failed to write read-only .git/config: %v", err)
+	}
+
+	if _, err := buildWorktreeGitMounts(tmpDir); err != nil {
+		t.Fatalf("buildWorktreeGitMounts() error = %v, want nil on read-only config", err)
+	}
+
+	got, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("failed to read .git/config: %v", err)
+	}
+	if string(got) != string(content) {
+		t.Errorf(".git/config content changed: got %q, want %q", got, content)
+	}
+}
+
+func TestBuildWorktreeGitMounts_ConfigIsSymlink(t *testing.T) {
+	tmpDir := t.TempDir()
+	gitDir := filepath.Join(tmpDir, ".git")
+	if err := os.Mkdir(gitDir, 0755); err != nil {
+		t.Fatalf("failed to create .git directory: %v", err)
+	}
+	target := filepath.Join(tmpDir, "elsewhere-config")
+	if err := os.WriteFile(target, []byte("[core]\n"), 0644); err != nil {
+		t.Fatalf("failed to write symlink target: %v", err)
+	}
+	if err := os.Symlink(target, filepath.Join(gitDir, "config")); err != nil {
+		t.Fatalf("failed to create .git/config symlink: %v", err)
+	}
+
+	if _, err := buildWorktreeGitMounts(tmpDir); err == nil {
+		t.Fatal("buildWorktreeGitMounts() error = nil, want error on symlinked .git/config")
+	}
+}
+
 func TestBuildWorktreeGitMounts_ProjectRootNotExist(t *testing.T) {
 	nonExistentDir := filepath.Join(t.TempDir(), "does-not-exist")
 

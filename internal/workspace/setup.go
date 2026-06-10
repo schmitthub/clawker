@@ -270,13 +270,30 @@ func buildWorktreeGitMounts(projectRootDir string) ([]mount.Mount, error) {
 	if err := os.MkdirAll(hooksDir, 0o755); err != nil {
 		return nil, fmt.Errorf("cannot ensure .git/hooks at %s: %w", hooksDir, err)
 	}
+	// Only create .git/config when missing — an existing config may
+	// legitimately be read-only, and it only needs to EXIST as the RO bind
+	// source below; opening it for write would fail EACCES for no reason.
 	configFile := filepath.Join(gitDir, "config")
-	cf, err := os.OpenFile(configFile, os.O_WRONLY|os.O_CREATE, 0o644) // no O_TRUNC: existing content untouched
-	if err != nil {
-		return nil, fmt.Errorf("cannot ensure .git/config at %s: %w", configFile, err)
-	}
-	if err := cf.Close(); err != nil {
-		return nil, fmt.Errorf("cannot ensure .git/config at %s: %w", configFile, err)
+	switch info, err := os.Lstat(configFile); {
+	case err == nil:
+		// Exists. Reject a symlink or directory — the RO bind expects a
+		// regular file, and a symlink here is a host-redirect vector.
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf(".git/config at %s is a symlink (refusing to bind a redirected config)", configFile)
+		}
+		if info.IsDir() {
+			return nil, fmt.Errorf(".git/config at %s is a directory, expected a file", configFile)
+		}
+	case os.IsNotExist(err):
+		cf, cerr := os.OpenFile(configFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if cerr != nil {
+			return nil, fmt.Errorf("cannot create .git/config at %s: %w", configFile, cerr)
+		}
+		if cerr := cf.Close(); cerr != nil {
+			return nil, fmt.Errorf("cannot finalize .git/config at %s: %w", configFile, cerr)
+		}
+	default:
+		return nil, fmt.Errorf("cannot access .git/config at %s: %w", configFile, err)
 	}
 
 	// Source == Target on all three: same absolute path preserves worktree
