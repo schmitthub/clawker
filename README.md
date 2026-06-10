@@ -130,12 +130,6 @@ clawker go dev
 
 Clawker ships [command aliases](#command-aliases) that expand to full invocations (`go` for disposable agents, `wt` for worktree agents), and you can define your own with `clawker alias set`.
 
-You can ask claude code to assist you in writing a more appropriate config file for the project using the support skill `clawker skill install` or this prompt:  
-
-```bash
-create a @.clawker.yaml file appropriate for this repos stack. Clawker configuration can be understood here: https://docs.clawker.dev/configuration.md
-```
-
 This:
 - Builds a project-scoped container image (`clawker-<project>:latest`, with `@` as a shortcut when you are in the project directory), using the default Dockerfile template
 - Starts and attaches your terminal to the container (`clawker.<project>.dev`) using that image (via the `@` identifier), with your current working directory bind-mounted (i.e., live share)
@@ -146,6 +140,12 @@ If you want persistence, omit `--rm` and start the same container again later wi
 You can also keep it running by detaching (`Ctrl+P`, `Ctrl+Q`) and reattach later with `clawker attach --agent example` to the same terminal session.
 
 If you want to learn more about image customization, worktree support, monitoring, and other bells and whistles, keep reading for the walkthrough below.
+
+You can ask claude code to assist you in writing a more appropriate config file for the project using the support skill `clawker skill install` (recommended) or this prompt:  
+
+```bash
+create a `./.clawker.yaml` file appropriate for this repos stack. Clawker configuration can be understood here: https://docs.clawker.dev/configuration.md
+```
 
 ## Walkthrough
 
