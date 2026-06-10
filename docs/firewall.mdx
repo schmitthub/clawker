@@ -2,6 +2,7 @@
 title: "Firewall Guide"
 description: "eBPF + CoreDNS + Envoy network firewall architecture, configuration, CLI commands, and troubleshooting"
 icon: "fire-flame-curved"
+keywords: ["mythos-class", "security", "AI container sandbox", "Claude Code", "Fable 5", "Anthropic", "egress firewall", "eBPF", "Envoy", "CoreDNS", "network isolation"]
 ---
 
 Clawker ships a **deny-by-default network firewall** that restricts all container egress to explicitly allowed domains. The firewall runs as a shared stack — an Envoy egress proxy, a custom CoreDNS resolver with a `dnsbpf` plugin, and a set of eBPF cgroup programs — managed automatically by clawker on an isolated Docker bridge network. One firewall stack serves all clawker-managed containers on the host (1:N). It provides DNS-level blocking, per-domain TCP routing, and TLS-level inspection without granting your agent containers any special privileges.

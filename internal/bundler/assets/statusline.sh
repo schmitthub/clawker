@@ -255,10 +255,25 @@ if [ -n "$branch" ]; then
     fi
 fi
 
-# Worktree detection: .git file = worktree, .git dir = regular repo
+# Worktree detection: the .git *file* exists only at the worktree root, so a
+# path check fails from any subdirectory. Instead compare git-dir
+# (<main>/.git/worktrees/<name> in a linked worktree) against the common dir
+# (<main>/.git) — they resolve to the same path only in a regular repo.
 is_worktree=false
-if [ -f "${DIR}/.git" ]; then
-    is_worktree=true
+if [ -n "$branch" ]; then
+    # --path-format=absolute (git 2.31+) canonicalizes both paths so the
+    # compare can't false-positive on mixed formats: from a subdirectory of a
+    # regular repo, --git-dir is absolute while --git-common-dir is
+    # cwd-relative ("/repo/.git" vs "../.git"). Older git echoes the unknown
+    # flag to *stdout* with exit 0, polluting the first line — so only trust
+    # the compare when git_dir parsed as an absolute path; anything else
+    # degrades to no indicator.
+    git_dirs=$(git --no-optional-locks rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null)
+    git_dir=${git_dirs%%$'\n'*}
+    git_common_dir=${git_dirs##*$'\n'}
+    case "$git_dir" in
+        /*) [ "$git_dir" != "$git_common_dir" ] && is_worktree=true ;;
+    esac
 fi
 
 # Vim mode

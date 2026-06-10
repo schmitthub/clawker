@@ -1,6 +1,7 @@
 ---
 title: "Testing Guide"
 description: "Test strategy, how to run tests, golden files, and writing new tests"
+keywords: ["mythos-class", "security", "AI container sandbox", "Claude Code", "Fable 5", "Anthropic", "testing", "golden files"]
 ---
 
 # Testing Guide

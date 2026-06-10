@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-<code>clawker</code> is a cli for orchestrating, monitoring, and automating portable <code>devcontainers</code> for <code>Claude Code</code> agents. It works on any MacOS/Linux host with docker installed. I wrote this because I didn't want to have to pay someone to run claude code agents with <code>--dangerously-skip-permissions</code> when containers have been around for a decade, and claude code's sandbox mode is the temu version of a container. <code>clawker</code> offers many convenience features beyond just building and running claude code in a container using a Dockerfile (you don't even have to write a Dockerfile it's got you covered).
+<code>clawker</code> is a cli for orchestrating, monitoring, and automating portable <code>devcontainers</code> for <code>Claude Code</code> agents — a security-first AI container sandbox for Anthropic's models, including the latest mythos-class <code>Fable 5</code>. It works on any MacOS/Linux host with docker installed. I wrote this because I didn't want to have to pay someone to run claude code agents with <code>--dangerously-skip-permissions</code> when containers have been around for a decade, and claude code's sandbox mode is the temu version of a container. <code>clawker</code> offers many convenience features beyond just building and running claude code in a container using a Dockerfile (you don't even have to write a Dockerfile it's got you covered).
 </p>
 
 <div align="center">

@@ -2,6 +2,7 @@
 title: "Threat Model"
 description: "Why AI agents need containment, what attack surfaces clawker mitigates, and what you're responsible for"
 icon: "crosshairs"
+keywords: ["mythos-class", "security", "AI container sandbox", "Claude Code", "Fable 5", "Anthropic", "threat model", "prompt injection", "AI agent security", "agent containment"]
 ---
 
 AI coding agents are not traditional CLI tools. They make autonomous decisions about what files to read and write, what commands to run, what network requests to make, and what credentials to use. They do this with full conviction — even when they're wrong. They hallucinate file paths, lose context mid-task, get tunnel vision on a broken approach, and can be coerced by adversarial content embedded in the data they fetch. Handing one of these agents unrestricted code execution, full filesystem access, and open network on your bare-metal host is reckless.
