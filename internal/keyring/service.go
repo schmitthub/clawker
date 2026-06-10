@@ -76,6 +76,36 @@ func getCredential[T any](def ServiceDef[T]) (*T, error) {
 	return cred, nil
 }
 
+// getRawCredential is the fetch → empty-guard pipeline, returning the keyring
+// value verbatim (no Parse, no Validate, no marshal round-trip).
+//
+// Use this for injection paths that must preserve the stored blob byte-for-byte
+// — re-encoding a parsed struct fabricates zero-value fields for keys the host
+// omitted and silently drops keys the struct does not model. Use getCredential
+// instead when you need typed field access.
+//
+// Error pipeline (fast-fail) mirrors getCredential steps 1–3:
+//  1. User() fails                 → wrapped error
+//  2. Get() fails                  → ErrNotFound (no entry) or *TimeoutError
+//  3. strings.TrimSpace(raw) == "" → ErrEmptyCredential (entry exists but blank)
+func getRawCredential[T any](def ServiceDef[T]) (string, error) {
+	u, err := def.User()
+	if err != nil {
+		return "", fmt.Errorf("resolve keyring user: %w", err)
+	}
+
+	raw, err := Get(def.ServiceName, u)
+	if err != nil {
+		return "", err // ErrNotFound or *TimeoutError — pass through
+	}
+
+	if strings.TrimSpace(raw) == "" {
+		return "", fmt.Errorf("%w: service %q", ErrEmptyCredential, def.ServiceName)
+	}
+
+	return raw, nil
+}
+
 // ---------------------------------------------------------------------------
 // Reusable helpers — any ServiceDef can reference these.
 // ---------------------------------------------------------------------------

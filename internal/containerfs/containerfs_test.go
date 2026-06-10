@@ -534,19 +534,12 @@ func TestPrepareCredentials_FromKeyring(t *testing.T) {
 		t.Fatalf("get current user: %v", err)
 	}
 
-	validJSON := `{
-		"claudeAiOauth": {
-			"accessToken":      "test-access",
-			"refreshToken":     "test-refresh",
-			"expiresAt":        4102444800000,
-			"scopes":           ["scope1"],
-			"subscriptionType": "pro",
-			"rateLimitTier":    "tier1"
-		},
-		"organizationUuid": "550e8400-e29b-41d4-a716-446655440000"
-	}`
+	// Host blob that omits organizationUuid and carries a key the keyring struct
+	// does not model. The staged file must be a byte-for-byte copy: no
+	// fabricated zero-value organizationUuid, no dropped unknown key.
+	hostBlob := `{"claudeAiOauth":{"accessToken":"test-access","refreshToken":"test-refresh"},"unknownKey":"keepme"}`
 
-	if err := keyring.Set("Claude Code-credentials", current.Username, validJSON); err != nil {
+	if err := keyring.Set("Claude Code-credentials", current.Username, hostBlob); err != nil {
 		t.Fatalf("seed keyring: %v", err)
 	}
 
@@ -564,13 +557,10 @@ func TestPrepareCredentials_FromKeyring(t *testing.T) {
 		t.Fatalf("read credentials: %v", err)
 	}
 
-	var creds map[string]any
-	if err := json.Unmarshal(data, &creds); err != nil {
-		t.Fatalf("unmarshal credentials: %v", err)
-	}
-
-	if _, ok := creds["claudeAiOauth"]; !ok {
-		t.Error("credentials should contain claudeAiOauth")
+	// Verbatim equality subsumes the no-fabrication guarantee: the host blob
+	// omits organizationUuid, so an equal staged file cannot have fabricated one.
+	if string(data) != hostBlob {
+		t.Errorf("keyring blob not copied verbatim:\n got %q\nwant %q", string(data), hostBlob)
 	}
 }
 

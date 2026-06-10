@@ -34,6 +34,24 @@ var claudeCodeService = ServiceDef[ClaudeCodeCredentials]{
 
 // GetClaudeCodeCredentials fetches and parses the current user's Claude Code
 // credentials from the OS keychain.
+//
+// The parsed struct is lossy: keys the host omits surface as zero values and
+// keys absent from the struct are dropped. Readers that only need typed fields
+// can use it; injection paths must use GetClaudeCodeCredentialsRaw to preserve
+// the blob verbatim.
 func GetClaudeCodeCredentials() (*ClaudeCodeCredentials, error) {
 	return getCredential(claudeCodeService)
+}
+
+// GetClaudeCodeCredentialsRaw fetches the current user's Claude Code credential
+// blob from the OS keychain verbatim, without parsing or re-encoding.
+//
+// Claude Code stores this as a plain JSON object (not a JWT) and refreshes it in
+// place at runtime using the embedded refreshToken. The blob must be injected
+// byte-for-byte: round-tripping it through ClaudeCodeCredentials would fabricate
+// a zero-value organizationUuid for a host that omits the key (claiming an org
+// the user is not a member of, which the refresh endpoint rejects) and would
+// drop any field the struct does not model.
+func GetClaudeCodeCredentialsRaw() (string, error) {
+	return getRawCredential(claudeCodeService)
 }

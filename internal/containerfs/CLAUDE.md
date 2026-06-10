@@ -56,8 +56,8 @@ Each `Prepare*` function returns a temp directory with this layout:
 
 ## Credential Resolution Order
 
-1. OS keyring via `keyring.GetClaudeCodeCredentials()`
-2. File fallback: `<hostConfigDir>/.credentials.json`
+1. OS keyring via `keyring.GetClaudeCodeCredentialsRaw()` — blob written verbatim (no struct round-trip; see keyring CLAUDE.md "Typed vs Raw fetch")
+2. File fallback: `<hostConfigDir>/.credentials.json` — copied byte-for-byte
 3. Error with actionable message if neither source available
 
 ## Testing

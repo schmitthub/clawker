@@ -160,15 +160,14 @@ func PrepareCredentials(log *logger.Logger, hostConfigDir string) (stagingDir st
 
 	credsDst := filepath.Join(stagingClaudeDir, ".credentials.json")
 
-	// Try keyring first.
-	creds, keyringErr := keyring.GetClaudeCodeCredentials()
+	// Try keyring first. Write the blob verbatim — never round-trip through a
+	// typed struct, which would fabricate zero-value fields (e.g. a zero
+	// organizationUuid the user is not a member of, which the refresh endpoint
+	// rejects) and drop keys the struct does not model. This mirrors the
+	// byte-for-byte copy the file fallback below performs.
+	raw, keyringErr := keyring.GetClaudeCodeCredentialsRaw()
 	if keyringErr == nil {
-		data, err := json.Marshal(creds)
-		if err != nil {
-			cleanupFn()
-			return "", nil, fmt.Errorf("marshal keyring credentials: %w", err)
-		}
-		if err := os.WriteFile(credsDst, data, 0o600); err != nil {
+		if err := os.WriteFile(credsDst, []byte(raw), 0o600); err != nil {
 			cleanupFn()
 			return "", nil, fmt.Errorf("write credentials: %w", err)
 		}
