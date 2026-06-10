@@ -281,18 +281,40 @@ echo "==> bootstrap: workspace 'Clawker' id=${WS_ID}"
 # OSD UI uses on save). POST them before the ndjson import so the
 # dashboard's panel references resolve.
 EXPLORE_DIR="${BOOTSTRAP_DIR}/saved-objects/explore"
+# Each OSD saved-object write blocks ~1s on the system-index refresh, so a
+# sequential loop costs ~1s per object (~20s+ total). POST through a small
+# sliding window instead: at most EXPLORE_POOL curls in flight, waiting on
+# the oldest before launching the next — fast without flooding the one-shot
+# container or OSD. Positional params hold the in-flight pid queue (POSIX sh
+# has no arrays; the script takes no args, so $@ is free).
+EXPLORE_POOL=3
 if [ -d "${EXPLORE_DIR}" ]; then
+  explore_failed=""
+  set --
   for f in "${EXPLORE_DIR}"/*.json; do
     [ -e "${f}" ] || continue
     so_id=$(basename "${f}" .json)
     echo "==> bootstrap: POST explore saved object ${so_id}"
-    curl -fsS -X POST \
-      "${DASHBOARDS_URL}/w/${WS_ID}/api/saved_objects/explore/${so_id}?overwrite=true" \
-      -H "osd-xsrf: true" \
-      -H "Content-Type: application/json" \
-      --data-binary @"${f}" \
-      -o /dev/null
+    { curl -fsS -X POST \
+        "${DASHBOARDS_URL}/w/${WS_ID}/api/saved_objects/explore/${so_id}?overwrite=true" \
+        -H "osd-xsrf: true" \
+        -H "Content-Type: application/json" \
+        --data-binary @"${f}" \
+        -o /dev/null \
+        || { echo "==> bootstrap: explore saved object ${so_id} FAILED" >&2; exit 1; }; } &
+    set -- "$@" "$!"
+    if [ "$#" -ge "${EXPLORE_POOL}" ]; then
+      wait "$1" || explore_failed=1
+      shift
+    fi
   done
+  for pid in "$@"; do
+    wait "${pid}" || explore_failed=1
+  done
+  [ -z "${explore_failed}" ] || {
+    echo "==> bootstrap: explore saved object import failed" >&2
+    exit 1
+  }
 fi
 
 # Import saved objects INTO the workspace. Posting against the global

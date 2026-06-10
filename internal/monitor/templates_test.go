@@ -2,6 +2,8 @@ package monitor
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -276,5 +278,50 @@ func TestRenderTemplate_InvalidTemplate(t *testing.T) {
 	_, err := RenderTemplate("bad", "{{.Missing}", MonitorTemplateData{})
 	if err == nil {
 		t.Error("RenderTemplate should fail on invalid template syntax")
+	}
+}
+
+func TestWriteOpenSearchBootstrap_PrunesStaleFiles(t *testing.T) {
+	destDir := filepath.Join(t.TempDir(), OpenSearchBootstrapDirName)
+
+	// Simulate a rendered dir from an older template version: a saved-object
+	// file that no longer exists in the embedded tree. bootstrap.sh loops over
+	// every *.json in the dir, so a stale file would re-import on every
+	// monitor up regardless of volume wipes.
+	staleDir := filepath.Join(destDir, "saved-objects", "explore")
+	if err := os.MkdirAll(staleDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stale := filepath.Join(staleDir, "clawker-removed-from-templates.json")
+	if err := os.WriteFile(stale, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	data := NewMonitorTemplateData(testSettings(t, `
+monitoring:
+  otel_collector_port: 4318
+  otel_grpc_port: 4317
+  prometheus_port: 9090
+  prometheus_metrics_port: 8889
+  opensearch_port: 9200
+  opensearch_dashboards_port: 5601
+  opensearch_heap_mb: 512
+`))
+	if err := WriteOpenSearchBootstrap(destDir, data); err != nil {
+		t.Fatalf("WriteOpenSearchBootstrap: %v", err)
+	}
+
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Errorf("stale file survived re-render: %s", stale)
+	}
+	// The mirror itself must still be complete.
+	for _, want := range []string{
+		"bootstrap.sh",
+		filepath.Join("saved-objects", "clawker.ndjson"),
+		filepath.Join("saved-objects", "explore", "clawker-claude-code-model-usage.json"),
+	} {
+		if _, err := os.Stat(filepath.Join(destDir, want)); err != nil {
+			t.Errorf("expected %s after render: %v", want, err)
+		}
 	}
 }
