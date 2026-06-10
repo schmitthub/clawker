@@ -25,7 +25,7 @@ config in `(.)clawker.yaml`.
   `aliases` key, merged across all layers (project files in the walk-up,
   the user-level `clawker.yaml` in the config dir, shipped defaults) and
   are managed with the `clawker alias` command group. See
-  `https://docs.clawker.dev/configuration#command-aliases`
+  `https://docs.clawker.dev/aliases`
 
 ## When NOT to consult settings
 

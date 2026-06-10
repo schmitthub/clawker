@@ -33,6 +33,19 @@ overrides win over project config.
 Fetch `https://docs.clawker.dev/configuration` for the current merge
 behavior, field-level precedence details, and available merge strategies.
 
+## Command Aliases
+
+The project config's `aliases` key defines CLI shortcuts expanded before
+execution (the value is appended to `clawker`, with `$1..$N` positional
+placeholders). Aliases merge key-by-key across ALL layers — walk-up files,
+the user-level `clawker.yaml` in the config dir, and shipped defaults
+(`go` = disposable agent run, `wt` = agent on a worktree). Managed via the
+`clawker alias` command group: `set` writes the user-level file, `export`
+publishes active aliases into the project's own config file, `delete`
+removes a name from every file layer (shipped defaults can only be
+overridden, never deleted). Fetch `https://docs.clawker.dev/aliases` for
+expansion semantics and the full rules.
+
 ## Reference Config Samples
 
 Working config samples are in standalone files to avoid bloating this

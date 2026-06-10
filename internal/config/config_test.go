@@ -49,7 +49,7 @@ func TestNewBlankConfig_settingsDefaults(t *testing.T) {
 
 	// Shipped default aliases (tag → GenerateDefaultsYAML → merge pipeline)
 	assert.Equal(t, "run --rm -it --agent $1 @ --dangerously-skip-permissions", cfg.Project().Aliases["go"])
-	assert.Equal(t, "container run --rm -it --agent $1 --worktree $2:main @ --dangerously-skip-permissions", cfg.Project().Aliases["wt"])
+	assert.Equal(t, "run --rm -it --agent $1 --worktree $2 @ --dangerously-skip-permissions", cfg.Project().Aliases["wt"])
 }
 
 func TestNewFromString_projectOnly(t *testing.T) {

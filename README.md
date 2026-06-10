@@ -36,6 +36,7 @@
       - [Run a container](#run-a-container)
   - [Creating and Using Containers](#creating-and-using-containers)
   - [The `@` Image Shortcut](#the--image-shortcut)
+  - [Command Aliases](#command-aliases)
   - [Working with Worktrees](#working-with-worktrees)
   - [Managing Resources](#managing-resources)
   - [Monitoring](#monitoring)
@@ -69,6 +70,7 @@ When I began experimenting with Claude Code to keep up with the Agentic AI trend
 - **Project-based namespace isolation** of container resources. Clawker detects if it's in a project directory and automatically, via docker label prefixes, lets you filter for resources with re-usable names like "dev" or "main" that are scoped to the project. So you can have a "dev" container in multiple projects without conflict, and you can easily filter `clawker ps --filter agent=dev` to see all your dev containers across projects or `clawker ps --project myapp` to see all containers for a specific project.
 - **Dedicated Docker network** that all containers run in
 - **Jailed from host Docker resources** via `pkg/whail` (whale jail), a standalone package that decorates the moby SDK to prevent callers from seeing resources without the automatically applied management labels. I might use this package in other "agent in container" solutions. So I don't have to worry about accidentally deleting non-clawker managed containers/volumes/images, etc.
+- **Command aliases** — one-word shortcuts expanded to full clawker invocations with `$1..$N` positional placeholders. Ships with `go` (disposable agent: `clawker go dev`) and `wt` (agent on a fresh worktree: `clawker wt auth feature/auth:main`) out of the box; define your own with `clawker alias set` and commit them to the project config with `clawker alias export` so the whole team gets them
 - **Docker CLI-esque commands** for managing containers, Clawker isn't a passthrough to Docker CLI; it uses the moby SDK (via `pkg/whail`). This allowed me to add more flags, modify the behavior, etc over what docker cli offers
 - **Git worktree management and commands**: pass a worktree flag to container run or create commands to automatically create a git worktree in the Clawker home project directory and bind mount it to the container workdir. Also has cli commands and flags to list and manage worktrees created by clawker, uses `go-git` under the hood to avoid relying on the host git binary
 - **Optional monitoring stack** — OTel Collector + OpenSearch (logs) + OpenSearch Dashboards + Prometheus (metrics) on `clawker-net`. Every container has the environment variables baked in to push OTLP telemetry when the stack is running, and is silenced when it isn't
@@ -119,6 +121,14 @@ clawker init
 clawker build
 clawker run -it --rm --agent dev @ --dangerously-skip-permissions
 ```
+
+That last command has a built-in shorthand — the shipped `go` alias:
+
+```bash
+clawker go dev
+```
+
+Clawker ships [command aliases](#command-aliases) that expand to full invocations (`go` for disposable agents, `wt` for worktree agents), and you can define your own with `clawker alias set`.
 
 You can ask claude code to assist you in writing a more appropriate config file for the project using this prompt: 
 
@@ -175,6 +185,8 @@ So to do that let's say you're working on a feature branch with host claude code
 
 ```bash
 clawker run -it --rm --agent dev --worktree hotfix/example:main @ --dangerously-skip-permissions
+# or the shipped alias for exactly that:
+clawker wt dev hotfix/example:main
 ```
 
 This creates and attaches my terminal to a new claude instance isolated in a container environment with a git worktree dir created under `~/.local/share/clawker/worktrees/` (or honors the override `$CLAWKER_DATA_DIR`) off of my main branch. Since it has all my plugins, skills, auth tokens, git creds, mcps installed, build deps instantly, it's just a matter of telling the little rascal what to do and letting it go bananas and create a pr about it. I'll periodically check in on it to see how it's doing in another tab. Or you can detach `ctrl p+q` and return to your terminal; to reattach to the same session use `clawker attach --agent dev`. Ez pz no ssh/tmux bullshit, no vscode devcontainer window, no VPS with heavy IO latency, or setting up dedicated servers, or having to pay someone to do it for you.  
@@ -282,6 +294,28 @@ clawker run -it @                     # Uses clawker-<project>:latest
 clawker run -it --agent dev @         # Same, with agent name
 clawker container create --agent test @
 ```
+
+## Command Aliases
+
+Aliases are shortcuts expanded before execution — the alias value is appended to `clawker` in place of the alias name, with `$1`..`$N` positional placeholders and extra arguments appended. Two ship as defaults:
+
+```bash
+clawker go dev                       # → clawker run --rm -it --agent dev @ --dangerously-skip-permissions
+clawker wt auth feature/auth:main    # → clawker run --rm -it --agent auth --worktree feature/auth:main @ --dangerously-skip-permissions
+```
+
+Define your own and share them with your team via the project config:
+
+```bash
+clawker alias set lg "logs \$1 --tail \$2"   # personal alias (user-level clawker.yaml)
+clawker lg web 50                            # → clawker logs web --tail 50
+
+clawker alias list                           # NAME / EXPANSION / SOURCE
+clawker alias export                         # publish active aliases into the project's .clawker.yaml
+clawker alias delete lg                      # remove from every config file that defines it
+```
+
+Aliases defined in a repository's `clawker.yaml` apply automatically to everyone working in that project. Full guide: [docs.clawker.dev/aliases](https://docs.clawker.dev/aliases)
 
 ## Working with Worktrees
 

@@ -18,7 +18,7 @@ Aliases are customizable shortcuts expanded before execution
   # Define an alias
   clawker alias set fable "container run --rm -it --agent fable @ --dangerously-skip-permissions --model \"claude-fable-5\""
 
-  clawker alias set wt "container run --rm -it --agent \$1 --worktree \$2:main @ --dangerously-skip-permissions"
+  clawker alias set wtm "container run --rm -it --agent \$1 --worktree \$2:main @ --dangerously-skip-permissions"
 
   # List configured aliases
   clawker alias list

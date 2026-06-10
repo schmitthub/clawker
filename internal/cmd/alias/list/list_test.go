@@ -66,7 +66,7 @@ func TestListRun_JSON(t *testing.T) {
 	require.Len(t, rows, 3)
 	assert.Equal(t, aliasRow{Name: "go", Expansion: "run --rm -it --agent $1 @ --dangerously-skip-permissions", Source: sourceDefault}, rows[0])
 	assert.Equal(t, aliasRow{Name: "v", Expansion: "version", Source: path}, rows[1])
-	assert.Equal(t, aliasRow{Name: "wt", Expansion: "container run --rm -it --agent $1 --worktree $2:main @ --dangerously-skip-permissions", Source: sourceDefault}, rows[2])
+	assert.Equal(t, aliasRow{Name: "wt", Expansion: "run --rm -it --agent $1 --worktree $2 @ --dangerously-skip-permissions", Source: sourceDefault}, rows[2])
 }
 
 func TestListRun_OverriddenDefaultReportsFile(t *testing.T) {

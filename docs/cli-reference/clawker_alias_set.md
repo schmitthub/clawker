@@ -30,7 +30,7 @@ clawker alias set <alias> <expansion> [flags]
   clawker alias set fable "container run --rm -it --agent fable @ --dangerously-skip-permissions --model \"claude-fable-5\""
 
   # Positional placeholders
-  clawker alias set wt "container run --rm -it --agent \$1 --worktree \$2:main @ --dangerously-skip-permissions"
+  clawker alias set wtm "container run --rm -it --agent \$1 --worktree \$2:main @ --dangerously-skip-permissions"
 
   # Overwrite an existing alias
   clawker alias set go "run --rm -it --agent go @" --clobber

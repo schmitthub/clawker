@@ -65,6 +65,6 @@ Behavior contract:
 - Empty/whitespace expansion = invalid entry, skipped like multiword names.
 - Cyclic alias chains are detected at registration (first-token walk with a seen-set) and skipped.
 - nil `f.Config` (gen-docs builds root with a bare Factory) or a config load error skips registration without failing root construction.
-- Shipped defaults (default tag on `Project.Aliases`): `go` → `run --rm -it --agent $1 @ --dangerously-skip-permissions`; `wt` → `container run --rm -it --agent $1 --worktree $2:main @ --dangerously-skip-permissions`.
+- Shipped defaults (default tag on `Project.Aliases`): `go` → `run --rm -it --agent $1 @ --dangerously-skip-permissions`; `wt` → `run --rm -it --agent $1 --worktree $2 @ --dangerously-skip-permissions` (`$2` is a `branch[:base]` worktree spec).
 
 The `clawker alias` command group (`internal/cmd/alias/`) manages these; root wires its shadow-builtin validator as a closure over `builtinCommandExists`.
