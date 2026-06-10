@@ -255,10 +255,22 @@ if [ -n "$branch" ]; then
     fi
 fi
 
-# Worktree detection: .git file = worktree, .git dir = regular repo
+# Worktree detection: ask git rather than stat'ing ${DIR}/.git — the .git
+# *file* only exists at the worktree root, so a path check silently fails the
+# moment the session cwd is a subdirectory. In a linked worktree the git-dir
+# (<main>/.git/worktrees/<name>) differs from the common dir (<main>/.git);
+# in a regular repo they are identical from any depth.
 is_worktree=false
-if [ -f "${DIR}/.git" ]; then
-    is_worktree=true
+if [ -n "$branch" ]; then
+    # --path-format=absolute: both paths come back canonical, so the string
+    # compare can't false-positive on relative-vs-absolute (a regular repo at
+    # its root reports ".git" vs "/path/.git" without it).
+    git_dirs=$(git --no-optional-locks rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null)
+    git_dir=${git_dirs%%$'\n'*}
+    git_common_dir=${git_dirs##*$'\n'}
+    if [ -n "$git_dir" ] && [ "$git_dir" != "$git_common_dir" ]; then
+        is_worktree=true
+    fi
 fi
 
 # Vim mode

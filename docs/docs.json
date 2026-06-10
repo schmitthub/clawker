@@ -3,7 +3,15 @@
   "theme": "maple",
   "name": "Clawker",
   "favicon": "/favicon.svg",
-  "description": "Claude Code agent-in-container orchestration and automation",
+  "description": "Clawker — a secure AI container sandbox for Anthropic Claude Code agents. Orchestrate, monitor, and automate mythos-class Fable 5 agents in isolated Docker containers.",
+  "seo": {
+    "metatags": {
+      "keywords": "mythos-class, security, AI container sandbox, Claude Code, Fable 5, Anthropic, agent sandbox, egress firewall, Docker, agent orchestration",
+      "og:site_name": "Clawker",
+      "og:description": "Secure AI container sandbox for Anthropic Claude Code agents — orchestration, egress firewall, and monitoring for mythos-class Fable 5 agents."
+    },
+    "indexing": "all"
+  },
   "appearance": {
     "default": "dark",
     "strict": true

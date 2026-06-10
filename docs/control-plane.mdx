@@ -2,6 +2,7 @@
 title: "Control Plane"
 description: "The clawker control plane — what it is, what it does, and how to interact with it"
 icon: "tower-control"
+keywords: ["mythos-class", "security", "AI container sandbox", "Claude Code", "Fable 5", "Anthropic", "control plane", "mTLS", "agent registry"]
 ---
 
 The clawker **control plane** (CP) is a long-lived, privileged Go service that runs as `cmd/clawker-cp` (PID 1) inside the `clawker-controlplane` Docker container. It is the authoritative supervisor for every clawker-managed agent on the host — it owns the agent identity registry, the egress firewall lifecycle, the eBPF program lifetime, and the CP↔agent command channel.
