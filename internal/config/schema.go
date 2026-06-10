@@ -12,11 +12,12 @@ import (
 //
 // Project is a pure persisted schema model for clawker.yaml.
 type Project struct {
-	Name      string          `yaml:"name,omitempty" label:"Project Name" desc:"Override the project slug derived from the directory name (set this when the directory name isn't a good clawker identifier — e.g. dots, spaces, unicode)"`
-	Build     BuildConfig     `yaml:"build"`
-	Agent     AgentConfig     `yaml:"agent"`
-	Workspace WorkspaceConfig `yaml:"workspace"`
-	Security  SecurityConfig  `yaml:"security"`
+	Name      string            `yaml:"name,omitempty" label:"Project Name" desc:"Override the project slug derived from the directory name (set this when the directory name isn't a good clawker identifier — e.g. dots, spaces, unicode)"`
+	Build     BuildConfig       `yaml:"build"`
+	Agent     AgentConfig       `yaml:"agent"`
+	Workspace WorkspaceConfig   `yaml:"workspace"`
+	Security  SecurityConfig    `yaml:"security"`
+	Aliases   map[string]string `yaml:"aliases,omitempty" label:"Aliases" desc:"Command aliases shared with the team via 'clawker alias import' and 'clawker alias export'; never applied automatically" merge:"union"`
 }
 
 // Fields implements [storage.Schema] for Project.
@@ -314,6 +315,7 @@ type Settings struct {
 	Firewall     FirewallSettings     `yaml:"firewall,omitempty"`
 	ControlPlane ControlPlaneSettings `yaml:"control_plane,omitempty"`
 	Docker       DockerSettings       `yaml:"docker,omitempty"`
+	Aliases      map[string]string    `yaml:"aliases,omitempty" label:"Aliases" desc:"Command aliases expanded before execution; the value is appended to 'clawker' and supports $1..$N placeholders; an empty value disables an alias" merge:"union" default:"dev=run --rm -it --agent dev @ --dangerously-skip-permissions"`
 }
 
 // DockerSettings configures host Docker access. Per-project Docker

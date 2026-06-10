@@ -1,6 +1,7 @@
 package root
 
 import (
+	aliascmd "github.com/schmitthub/clawker/internal/cmd/alias"
 	authcmd "github.com/schmitthub/clawker/internal/cmd/auth"
 	bridgecmd "github.com/schmitthub/clawker/internal/cmd/bridge"
 	"github.com/schmitthub/clawker/internal/cmd/container"
@@ -57,8 +58,8 @@ Workspace modes:
 	cmd.SilenceErrors = true
 	cmd.SilenceUsage = true
 
-	// Register top-level aliases (shortcuts to subcommands)
-	registerAliases(cmd, f)
+	// Register built-in top-level aliases (shortcuts to subcommands)
+	registerBuiltinAliases(cmd, f)
 
 	// Add non-alias top-level commands
 	cmd.AddCommand(initcmd.NewCmdInit(f, nil))
@@ -69,6 +70,7 @@ Workspace modes:
 	cmd.AddCommand(generate.NewCmdGenerate(f, nil))
 
 	// Add management commands
+	cmd.AddCommand(aliascmd.NewCmdAlias(f, func(name string) bool { return builtinCommandExists(cmd, name) }))
 	cmd.AddCommand(authcmd.NewCmdAuth(f))
 	cmd.AddCommand(container.NewCmdContainer(f))
 	cmd.AddCommand(controlplanecmd.NewCmdControlPlane(f))
@@ -84,6 +86,9 @@ Workspace modes:
 
 	// Add version subcommand
 	cmd.AddCommand(versioncmd.NewCmdVersion(f, version, buildDate))
+
+	// Register user-configured aliases last — existing commands win collisions
+	registerUserAliases(cmd, f)
 
 	return cmd, nil
 }

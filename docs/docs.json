@@ -228,6 +228,17 @@
             ]
           },
           {
+            "group": "Alias",
+            "pages": [
+              "cli-reference/clawker_alias",
+              "cli-reference/clawker_alias_set",
+              "cli-reference/clawker_alias_list",
+              "cli-reference/clawker_alias_delete",
+              "cli-reference/clawker_alias_import",
+              "cli-reference/clawker_alias_export"
+            ]
+          },
+          {
             "group": "Project",
             "pages": [
               "cli-reference/clawker_project",

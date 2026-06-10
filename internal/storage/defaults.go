@@ -19,6 +19,8 @@ import (
 //   - KindBool → YAML bool (true/false)
 //   - KindInt → YAML int
 //   - KindStringSlice → YAML sequence (comma-separated tag → []string)
+//   - KindMap → YAML mapping (comma-separated key=value tag → map[string]string;
+//     split on the first "=" per entry, so values may contain "=" but not ",")
 //   - KindDuration → YAML string (e.g. "30s")
 //   - KindText → YAML string
 func GenerateDefaultsYAML[T Schema]() string {
@@ -93,6 +95,18 @@ func parseDefaultValue(raw string, kind FieldKind) any {
 			out = append(out, s)
 		}
 		return out
+	case KindMap:
+		entries := strings.Split(raw, ",")
+		m := make(map[string]string, len(entries))
+		for _, e := range entries {
+			k, v, ok := strings.Cut(e, "=")
+			k = strings.TrimSpace(k)
+			if !ok || k == "" {
+				panic(fmt.Sprintf("storage.parseDefaultValue: invalid map entry %q in default %q (want key=value)", e, raw))
+			}
+			m[k] = v
+		}
+		return m
 	case KindDuration:
 		if _, err := time.ParseDuration(raw); err != nil {
 			panic(fmt.Sprintf("storage.parseDefaultValue: invalid duration default %q: %v", raw, err))
