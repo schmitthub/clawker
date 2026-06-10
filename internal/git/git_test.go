@@ -772,32 +772,6 @@ func TestGitManager_ListWorktrees_OrphanedDirectory(t *testing.T) {
 	assert.Equal(t, orphanDir, orphanInfo.Path)
 }
 
-func TestGitManager_SetupWorktree_SucceedsWithExistingBranch(t *testing.T) {
-	// After the fix, SetupWorktree should succeed with an existing branch
-	// by using AddWithExistingBranch instead of AddWithNewBranch.
-	_, repoDir := newTestRepoOnDisk(t)
-	mgr, err := NewGitManager(repoDir)
-	require.NoError(t, err)
-
-	wt, err := mgr.Worktrees()
-	require.NoError(t, err)
-
-	provider := newFakeWorktreeDirProvider(t)
-
-	// Create a worktree for the existing master branch - should succeed now
-	path, err := mgr.SetupWorktree(provider, "master", "", false)
-	require.NoError(t, err)
-	assert.NotEmpty(t, path)
-
-	// Verify the worktree is on master
-	wtRepo, err := wt.Open(path)
-	require.NoError(t, err)
-
-	head, err := wtRepo.Head()
-	require.NoError(t, err)
-	assert.Equal(t, "master", head.Name().Short())
-}
-
 func TestGitManager_SetupWorktree_CleanupOnInvalidBase(t *testing.T) {
 	_, repoDir := newTestRepoOnDisk(t)
 	mgr, err := NewGitManager(repoDir)
@@ -1028,10 +1002,18 @@ func TestGitManager_SetupWorktree_CleansUpGitMetadataOnFailure(t *testing.T) {
 }
 
 func TestGitManager_SetupWorktree_ExistingBranchWorksCorrectly(t *testing.T) {
-	// This test verifies that SetupWorktree correctly uses AddWithExistingBranch
-	// for branches that already exist, instead of failing.
+	// This test verifies that SetupWorktree uses AddWithExistingBranch for a
+	// branch that already exists (instead of failing) and lands the worktree on
+	// that branch. The branch must NOT be checked out at root — that collision
+	// is refused (see TestSetupWorktree_RefusesBranchCheckedOutAtRoot).
 
-	_, repoDir := newTestRepoOnDisk(t)
+	repo, repoDir := newTestRepoOnDisk(t)
+	headRef, err := repo.Head()
+	require.NoError(t, err)
+	// Create an existing branch without checking it out at root (root stays on master).
+	require.NoError(t, repo.Storer.SetReference(
+		plumbing.NewHashReference(plumbing.NewBranchReferenceName("feature/existing"), headRef.Hash())))
+
 	mgr, err := NewGitManager(repoDir)
 	require.NoError(t, err)
 
@@ -1040,8 +1022,7 @@ func TestGitManager_SetupWorktree_ExistingBranchWorksCorrectly(t *testing.T) {
 
 	provider := newFakeWorktreeDirProvider(t)
 
-	// Setup worktree for master (which already exists)
-	path, err := mgr.SetupWorktree(provider, "master", "", false)
+	path, err := mgr.SetupWorktree(provider, "feature/existing", "", false)
 	require.NoError(t, err)
 	assert.NotEmpty(t, path)
 
@@ -1051,13 +1032,13 @@ func TestGitManager_SetupWorktree_ExistingBranchWorksCorrectly(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, exists)
 
-	// Verify the worktree is on master
+	// Verify the worktree is on the existing branch
 	wtRepo, err := wt.Open(path)
 	require.NoError(t, err)
 
 	head, err := wtRepo.Head()
 	require.NoError(t, err)
-	assert.Equal(t, "master", head.Name().Short())
+	assert.Equal(t, "feature/existing", head.Name().Short())
 }
 
 func TestWorktreeManager_AddWithNewBranch_NoSlugifiedBranch(t *testing.T) {
@@ -1671,4 +1652,60 @@ func TestGitManager_SetupWorktree_AmbiguousRemoteBranch(t *testing.T) {
 		assert.Equal(t, fx.remoteTip, head.Hash())
 		assertUpstream(t, fx.mgr, fx.remoteBranch, "upstream", fx.remoteBranch)
 	})
+}
+
+// checkoutNewBranchAtRoot creates and checks out a branch in the main worktree
+// (the repo root checkout), so the branch becomes root's HEAD.
+func checkoutNewBranchAtRoot(t *testing.T, repo *gogit.Repository, branch string) {
+	t.Helper()
+	wt, err := repo.Worktree()
+	require.NoError(t, err)
+	require.NoError(t, wt.Checkout(&gogit.CheckoutOptions{
+		Branch: plumbing.NewBranchReferenceName(branch),
+		Create: true,
+	}))
+}
+
+// TestSetupWorktree_RefusesBranchCheckedOutAtRoot pins the interlock native
+// `git worktree add` enforces but go-git's experimental worktree package does
+// not: a branch already checked out at the repo root cannot be checked out
+// again in a worktree (the shared ref would let a worktree commit slide root's
+// HEAD onto a commit root never materialized).
+func TestSetupWorktree_RefusesBranchCheckedOutAtRoot(t *testing.T) {
+	repo, repoDir := newTestRepoOnDisk(t)
+	checkoutNewBranchAtRoot(t, repo, "feature/x")
+
+	mgr, err := NewGitManager(repoDir)
+	require.NoError(t, err)
+	provider := newFakeWorktreeDirProvider(t)
+
+	_, err = mgr.SetupWorktree(provider, "feature/x", "", false)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrBranchAlreadyCheckedOut)
+	assert.Contains(t, err.Error(), repoDir, "error must name the conflicting checkout path")
+	assert.Contains(t, err.Error(), "feature/x")
+}
+
+// TestFindBranchCheckout_DetectsLinkedWorktree exercises the linked-worktree
+// arm of the interlock: a branch held by another linked worktree is detected.
+// (The branch-keyed dir provider prevents two worktrees for one branch through
+// SetupWorktree itself, so the linked arm is verified on the helper directly.)
+func TestFindBranchCheckout_DetectsLinkedWorktree(t *testing.T) {
+	_, repoDir := newTestRepoOnDisk(t)
+	mgr, err := NewGitManager(repoDir)
+	require.NoError(t, err)
+	provider := newFakeWorktreeDirProvider(t)
+
+	wtPath, err := mgr.SetupWorktree(provider, "feature/z", "", false)
+	require.NoError(t, err)
+
+	loc, found, err := mgr.findBranchCheckout("feature/z")
+	require.NoError(t, err)
+	assert.True(t, found, "branch checked out in a linked worktree must be detected")
+	assert.NotEmpty(t, loc)
+	assert.Equal(t, filepath.Base(wtPath), filepath.Base(loc), "should resolve the conflicting worktree path")
+
+	_, found, err = mgr.findBranchCheckout("feature/not-checked-out")
+	require.NoError(t, err)
+	assert.False(t, found, "a branch checked out nowhere must not be flagged")
 }

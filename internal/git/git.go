@@ -54,6 +54,12 @@ var (
 	// Native git would detach HEAD there, which clawker's branch-keyed worktrees
 	// do not support; the caller is steered to the bare name or colon-base form.
 	ErrExplicitRemoteRef = errors.New("branch name is a remote-tracking ref")
+
+	// ErrBranchAlreadyCheckedOut is returned when a worktree is requested for a
+	// branch that is already checked out elsewhere (the repo root checkout or
+	// another linked worktree). Native `git worktree add` refuses this; go-git's
+	// experimental worktree package does not, so SetupWorktree enforces it.
+	ErrBranchAlreadyCheckedOut = errors.New("branch is already checked out in another worktree")
 )
 
 // GitManager is the top-level facade for git operations.
@@ -245,6 +251,16 @@ func (g *GitManager) SetupWorktree(dirs WorktreeDirProvider, branch, base string
 	// Branch names like "a/foo" have slashes that go-git rejects in worktree names,
 	// but the directory basename contains no slashes. This matches native git behavior.
 	if branchExists {
+		// Refuse if the branch is already checked out elsewhere (root or another
+		// worktree). go-git would happily create a second checkout of one branch;
+		// a commit in either then slides the other's HEAD onto content it never
+		// materialized. Mirror native `git worktree add`'s interlock.
+		if loc, inUse, err := g.findBranchCheckout(branch); err != nil {
+			return "", fmt.Errorf("checking branch checkout state: %w", err)
+		} else if inUse {
+			return "", fmt.Errorf("%w: %q is checked out at %s", ErrBranchAlreadyCheckedOut, branch, loc)
+		}
+
 		// Branch exists - check it out without creating a new one
 		if err := wt.AddWithExistingBranch(wtPath, wtName, branchRef); err != nil {
 			// Clean up directory and git metadata on failure
@@ -463,6 +479,72 @@ func (g *GitManager) GetCurrentBranch() (string, error) {
 	}
 
 	return head.Name().Short(), nil
+}
+
+// findBranchCheckout reports the filesystem path of an existing checkout (the
+// repo root or a linked worktree) that currently has `branch` as its HEAD,
+// mirroring the interlock native `git worktree add` enforces. It returns
+// ("", false, nil) when the branch is checked out nowhere. Detached worktrees
+// never collide (no branch). In-memory repos have no on-disk worktree metadata,
+// so only the root checkout is consulted.
+func (g *GitManager) findBranchCheckout(branch string) (string, bool, error) {
+	// Root checkout (the main worktree).
+	current, err := g.GetCurrentBranch()
+	if err != nil {
+		return "", false, fmt.Errorf("resolving current branch: %w", err)
+	}
+	if current == branch {
+		return g.RepoRoot(), true, nil
+	}
+
+	gitDir := g.GitDir()
+	if gitDir == "" {
+		return "", false, nil // in-memory repo: no linked-worktree metadata
+	}
+	wt, err := g.Worktrees()
+	if err != nil {
+		return "", false, fmt.Errorf("initializing worktree manager: %w", err)
+	}
+	slugs, err := wt.List()
+	if err != nil {
+		return "", false, fmt.Errorf("listing worktrees: %w", err)
+	}
+
+	want := plumbing.NewBranchReferenceName(branch)
+	for _, slug := range slugs {
+		headPath := filepath.Join(gitDir, "worktrees", slug, "HEAD")
+		data, err := os.ReadFile(headPath)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				continue // racing prune / partial metadata, not our collision
+			}
+			return "", false, fmt.Errorf("reading worktree HEAD %s: %w", headPath, err)
+		}
+		// A worktree on a branch records "ref: refs/heads/<branch>"; a detached
+		// worktree records a bare hash and never collides.
+		const symPrefix = "ref: "
+		line := strings.TrimSpace(string(data))
+		if !strings.HasPrefix(line, symPrefix) {
+			continue
+		}
+		if plumbing.ReferenceName(strings.TrimPrefix(line, symPrefix)) != want {
+			continue
+		}
+		return g.worktreePathFromSlug(gitDir, slug), true, nil
+	}
+	return "", false, nil
+}
+
+// worktreePathFromSlug resolves a linked worktree's checkout directory from its
+// gitdir pointer (best-effort, for the conflict message). The gitdir file holds
+// "<worktree>/.git"; its parent is the checkout. Falls back to the slug when the
+// pointer is unreadable — the collision is real regardless of the label.
+func (g *GitManager) worktreePathFromSlug(gitDir, slug string) string {
+	data, err := os.ReadFile(filepath.Join(gitDir, "worktrees", slug, "gitdir"))
+	if err != nil {
+		return slug
+	}
+	return filepath.Dir(strings.TrimSpace(string(data)))
 }
 
 // ResolveRef resolves a reference (branch, tag, commit) to a commit hash.

@@ -29,6 +29,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/git"
 
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -1865,6 +1866,13 @@ func resolveWorkDir(ctx context.Context, containerOpts *ContainerCreateOptions, 
 		// (no --no-track surface here; use `clawker worktree add` for that).
 		wd, err = proj.CreateWorktree(ctx, wtSpec.Branch, wtSpec.Base, false)
 		if err != nil {
+			if errors.Is(err, git.ErrBranchAlreadyCheckedOut) {
+				// Branch is checked out elsewhere (the main repo or another
+				// worktree); git forbids a second checkout of one branch.
+				return "", "", fmt.Errorf(
+					"%w\nswitch the other checkout off the branch (e.g. `git switch <other-branch>` there), "+
+						"or pass `--worktree <new-branch>` to let clawker create and own a fresh branch", err)
+			}
 			if !errors.Is(err, project.ErrWorktreeExists) {
 				return "", "", fmt.Errorf("setting up worktree %q for agent %q: %w", wtSpec.Branch, agentName, err)
 			}
