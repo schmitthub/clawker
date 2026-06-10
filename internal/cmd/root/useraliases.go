@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/google/shlex"
+	"github.com/schmitthub/clawker/internal/cmd/alias/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/spf13/cobra"
@@ -53,8 +54,12 @@ func registerUserAliases(root *cobra.Command, f *cmdutil.Factory) {
 			// Empty expansion disables an alias (the only way to turn off a
 			// defaults-layer alias, since union merge keeps the key present).
 			log.Debug().Str("alias", name).Msg("user alias disabled: empty expansion")
-		case len(strings.Fields(name)) != 1:
-			log.Debug().Str("alias", name).Msg("user alias skipped: name must be a single word")
+		case shared.ValidateName(name) != nil:
+			// Match alias set/import write-time validation: rejects multi-word,
+			// padded, and "-"-prefixed names. A padded key like "run " would
+			// otherwise register a cobra command whose derived Name() collides
+			// with the builtin and can shadow it at dispatch.
+			log.Debug().Str("alias", name).Msg("user alias skipped: invalid name")
 		case builtinCommandExists(root, name):
 			log.Debug().Str("alias", name).Msg("user alias skipped: shadows an existing command")
 		case aliasChainCyclic(name, aliases):
@@ -147,8 +152,13 @@ func aliasChainCyclic(name string, aliases map[string]string) bool {
 			return true
 		}
 		seen[cur] = true
-		fields := strings.Fields(aliases[cur])
-		if len(fields) == 0 {
+		// Tokenize with shlex to match expandAlias — strings.Fields keeps
+		// quote characters, letting a quoted cycle (a: `"b"`, b: `"a"`)
+		// slip past detection while still dispatching at runtime.
+		fields, err := shlex.Split(aliases[cur])
+		if err != nil || len(fields) == 0 {
+			// Unsplittable expansion can't execute as a chain; expandAlias
+			// surfaces the same error at runtime.
 			return false
 		}
 		next := fields[0]

@@ -87,6 +87,17 @@ func importRun(_ context.Context, opts *ImportOptions) error {
 	}
 	sort.Strings(names)
 
+	// Expansion targets may reference other aliases from the same import
+	// batch, so validate against existing settings aliases plus every
+	// incoming entry.
+	known := make(map[string]string, len(existing)+len(incoming))
+	for name, expansion := range existing {
+		known[name] = expansion
+	}
+	for name, expansion := range incoming {
+		known[name] = expansion
+	}
+
 	accepted := make(map[string]string, len(incoming))
 	var added, overwritten, skipped int
 	for _, name := range names {
@@ -101,7 +112,7 @@ func importRun(_ context.Context, opts *ImportOptions) error {
 			skipped++
 			continue
 		}
-		if _, err := shared.SplitExpansion(expansion); err != nil {
+		if err := shared.ValidateExpansionTarget(name, expansion, opts.ValidCommand, known); err != nil {
 			fmt.Fprintf(ios.ErrOut, "%s Skipping %q: %v\n", cs.WarningIcon(), name, err)
 			skipped++
 			continue

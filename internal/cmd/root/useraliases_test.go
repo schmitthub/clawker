@@ -144,6 +144,20 @@ func TestRegisterUserAliases(t *testing.T) {
 		assert.Nil(t, findOwnCommand(root, "two"))
 	})
 
+	t.Run("invalid names skipped", func(t *testing.T) {
+		f := newAliasTestFactory(t, "aliases:\n  \"run \": version\n  \" run \": version\n  \"-f\": version\n")
+		root, err := NewCmdRoot(f, "", "")
+		require.NoError(t, err)
+
+		assert.Nil(t, findOwnCommand(root, "run "), "padded key must not register")
+		assert.Nil(t, findOwnCommand(root, " run "), "padded key must not register")
+		assert.Nil(t, findOwnCommand(root, "-f"), "dash-prefixed key must not register")
+		// Padded "run " must not shadow the builtin run command.
+		cmd, _, findErr := root.Find([]string{"run"})
+		require.NoError(t, findErr)
+		assert.Empty(t, cmd.Annotations[AnnotationAliasExpansion], "builtin run shadowed by padded alias key")
+	})
+
 	t.Run("cyclic chain skipped, valid chain registered", func(t *testing.T) {
 		f := newAliasTestFactory(t, "aliases:\n  a: b\n  b: a\n  c: a extra\n  d: version\n  e: d --verbose\n")
 		root, err := NewCmdRoot(f, "", "")
@@ -154,6 +168,15 @@ func TestRegisterUserAliases(t *testing.T) {
 		assert.Nil(t, findOwnCommand(root, "c"), "c heads into the a<->b cycle")
 		assert.NotNil(t, findOwnCommand(root, "d"))
 		assert.NotNil(t, findOwnCommand(root, "e"), "chain e->d->version is acyclic")
+	})
+
+	t.Run("quoted cyclic chain skipped", func(t *testing.T) {
+		f := newAliasTestFactory(t, "aliases:\n  qa: '\"qb\"'\n  qb: '\"qa\"'\n")
+		root, err := NewCmdRoot(f, "", "")
+		require.NoError(t, err)
+
+		assert.Nil(t, findOwnCommand(root, "qa"), "quoted qa<->qb cycle")
+		assert.Nil(t, findOwnCommand(root, "qb"), "quoted qa<->qb cycle")
 	})
 
 	t.Run("nil config closure leaves root buildable", func(t *testing.T) {

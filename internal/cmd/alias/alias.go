@@ -38,7 +38,9 @@ project aliases into settings, and 'clawker alias export' publishes
 settings aliases into the project config. Project aliases are never
 applied automatically.`,
 		Example: `  # Define an alias
-  clawker alias set co "container run --rm -it"
+  clawker alias set fable "container run --rm -it --agent fable @ --dangerously-skip-permissions --model \"claude-fable-5\""
+  
+  clawker alias set wt "container run --rm -it --agent $1 --worktree $2:main @ --dangerously-skip-permissions"
 
   # List configured aliases
   clawker alias list
