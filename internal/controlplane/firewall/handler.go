@@ -264,6 +264,13 @@ func resultAs[T any](val any) (T, error) {
 // ActionBringup work unit.
 func (h *Handler) FirewallInit(ctx context.Context, _ *adminv1.FirewallInitRequest) (*adminv1.FirewallInitResult, error) {
 	val, err := h.submit(ActionBringup, func(qctx context.Context) (any, error) {
+		// Bound the whole bringup server-side. The queue ctx has no
+		// deadline (and the caller ctx is not propagated into the
+		// closure), so without this an unresponsive registry mid-pull
+		// would wedge the bringup forever — turning the CP startup gate
+		// into an indefinite pre-ready hang instead of a loud exit.
+		qctx, cancel := context.WithTimeout(qctx, consts.FirewallStackBringupTimeout)
+		defer cancel()
 		if err := h.stack.EnsureRunning(qctx); err != nil {
 			return nil, err
 		}

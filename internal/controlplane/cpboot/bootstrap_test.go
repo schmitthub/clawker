@@ -2,6 +2,7 @@ package cpboot
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -123,7 +124,7 @@ func newBootstrapFixture(t *testing.T) *bootstrapFixture {
 		calls.image.Add(1)
 		return cpImageRef(), nil
 	}
-	healthzFn = func(_ context.Context, _ config.Config) error {
+	healthzFn = func(_ context.Context, _ *docker.Client, _ config.Config) error {
 		calls.healthz.Add(1)
 		return nil
 	}
@@ -327,7 +328,7 @@ func TestEnsureRunning_HealthzTimeout_SurfacesError(t *testing.T) {
 	// timeout error rather than blocking indefinitely.
 	f := newBootstrapFixture(t)
 	sentinel := &CPHealthTimeoutError{Timeout: 5 * time.Millisecond, URL: "http://127.0.0.1:7080/healthz"}
-	healthzFn = func(_ context.Context, _ config.Config) error {
+	healthzFn = func(_ context.Context, _ *docker.Client, _ config.Config) error {
 		f.calls.healthz.Add(1)
 		return sentinel
 	}
@@ -527,6 +528,137 @@ func TestStop_ExistingContainer_StopsAndRemoves(t *testing.T) {
 	assert.Equal(t, int32(1), f.calls.remove.Load())
 }
 
+// TestCPTerminalError pins the fail-fast feedback contract of the healthz
+// wait's container-state discrimination: terminally-exited and removed
+// containers abort the wait with typed errors; everything transient
+// (running, mid-restart, Docker hiccups) keeps the loop polling, with
+// lookup failures surfaced on the second return for timeout diagnostics.
+func TestCPTerminalError(t *testing.T) {
+	newClient := func(t *testing.T, state *container.State, inspectErr error) *docker.Client {
+		t.Helper()
+		cfg := configmocks.NewIsolatedTestConfig(t)
+		fake := dockermocks.NewFakeClient(cfg)
+		summaryState := container.StateRunning
+		if state != nil {
+			summaryState = state.Status
+		}
+		fake.SetupContainerList(container.Summary{
+			ID:     "cp-id",
+			Names:  []string{"/" + consts.ContainerCP},
+			State:  summaryState,
+			Labels: map[string]string{cfg.LabelManaged(): cfg.ManagedLabelValue()},
+		})
+		fake.FakeAPI.ContainerInspectFn = func(_ context.Context, id string, _ mobyclient.ContainerInspectOptions) (mobyclient.ContainerInspectResult, error) {
+			if inspectErr != nil {
+				return mobyclient.ContainerInspectResult{}, inspectErr
+			}
+			return mobyclient.ContainerInspectResult{
+				Container: container.InspectResponse{
+					ID: id,
+					Config: &container.Config{
+						Labels: map[string]string{cfg.LabelManaged(): cfg.ManagedLabelValue()},
+					},
+					HostConfig: &container.HostConfig{},
+					State:      state,
+				},
+			}, nil
+		}
+		return fake.Client
+	}
+
+	t.Run("exited and not restarting is terminal", func(t *testing.T) {
+		dc := newClient(t, &container.State{Status: container.StateExited, ExitCode: 1}, nil)
+		terminalErr, lookupErr := cpTerminalError(t.Context(), dc)
+		require.NoError(t, lookupErr)
+		var exitedErr *CPExitedError
+		require.ErrorAs(t, terminalErr, &exitedErr)
+		assert.Equal(t, 1, exitedErr.ExitCode, "container exit code must propagate for operator triage")
+	})
+
+	t.Run("removed container is terminal", func(t *testing.T) {
+		cfg := configmocks.NewIsolatedTestConfig(t)
+		fake := dockermocks.NewFakeClient(cfg)
+		fake.SetupContainerList() // empty list — CP container gone
+		terminalErr, lookupErr := cpTerminalError(t.Context(), fake.Client)
+		require.NoError(t, lookupErr)
+		var goneErr *CPGoneError
+		require.ErrorAs(t, terminalErr, &goneErr,
+			"a removed CP must abort the wait instead of burning the budget on transport errors")
+	})
+
+	t.Run("running keeps polling", func(t *testing.T) {
+		dc := newClient(t, &container.State{Status: container.StateRunning}, nil)
+		terminalErr, lookupErr := cpTerminalError(t.Context(), dc)
+		assert.NoError(t, terminalErr)
+		assert.NoError(t, lookupErr)
+	})
+
+	t.Run("mid-restart keeps polling", func(t *testing.T) {
+		dc := newClient(t, &container.State{Status: container.StateExited, Restarting: true, ExitCode: 1}, nil)
+		terminalErr, lookupErr := cpTerminalError(t.Context(), dc)
+		assert.NoError(t, terminalErr)
+		assert.NoError(t, lookupErr)
+	})
+
+	t.Run("list error keeps polling and surfaces lookup error", func(t *testing.T) {
+		errHiccup := errors.New("docker hiccup")
+		cfg := configmocks.NewIsolatedTestConfig(t)
+		fake := dockermocks.NewFakeClient(cfg)
+		fake.SetupContainerListError(errHiccup)
+		terminalErr, lookupErr := cpTerminalError(t.Context(), fake.Client)
+		assert.NoError(t, terminalErr)
+		assert.ErrorIs(t, lookupErr, errHiccup)
+	})
+
+	t.Run("inspect error keeps polling and surfaces lookup error", func(t *testing.T) {
+		errHiccup := errors.New("docker hiccup")
+		dc := newClient(t, &container.State{Status: container.StateExited, ExitCode: 1}, errHiccup)
+		terminalErr, lookupErr := cpTerminalError(t.Context(), dc)
+		assert.NoError(t, terminalErr)
+		assert.ErrorIs(t, lookupErr, errHiccup)
+	})
+}
+
+// TestWaitForCPHealthz_ExitedContainer_FailsFast pins the loop-level
+// fast-fail: with healthz unreachable and the CP container terminally
+// exited, the wait must return the typed *CPExitedError well before the
+// budget elapses (zero-value throttle state means the very first failed
+// probe triggers the container-state check) instead of burning the full
+// healthz budget on a generic timeout.
+func TestWaitForCPHealthz_ExitedContainer_FailsFast(t *testing.T) {
+	cfg := configmocks.NewIsolatedTestConfig(t)
+	fake := dockermocks.NewFakeClient(cfg)
+	fake.SetupContainerList(container.Summary{
+		ID:     "cp-id",
+		Names:  []string{"/" + consts.ContainerCP},
+		State:  container.StateExited,
+		Labels: map[string]string{cfg.LabelManaged(): cfg.ManagedLabelValue()},
+	})
+	fake.FakeAPI.ContainerInspectFn = func(_ context.Context, id string, _ mobyclient.ContainerInspectOptions) (mobyclient.ContainerInspectResult, error) {
+		return mobyclient.ContainerInspectResult{
+			Container: container.InspectResponse{
+				ID: id,
+				Config: &container.Config{
+					Labels: map[string]string{cfg.LabelManaged(): cfg.ManagedLabelValue()},
+				},
+				HostConfig: &container.HostConfig{},
+				State:      &container.State{Status: container.StateExited, ExitCode: 1},
+			},
+		}, nil
+	}
+	// Port 1 on loopback: nothing listens, so every healthz probe fails
+	// at the transport layer (the branch that runs the state check).
+	cfgUnreachable := configmocks.NewFromString("", "control_plane:\n  health_port: 1\n")
+
+	start := time.Now()
+	err := waitForCPHealthz(t.Context(), fake.Client, cfgUnreachable)
+	var exitedErr *CPExitedError
+	require.ErrorAs(t, err, &exitedErr)
+	assert.Equal(t, 1, exitedErr.ExitCode)
+	assert.Less(t, time.Since(start), 10*time.Second,
+		"exited container must abort the wait long before the healthz budget elapses")
+}
+
 func TestWaitForCPHealthz_ContextCancelled_ReturnsCtxErr(t *testing.T) {
 	// The poller respects context cancellation before the healthCheck
 	// deadline. Immediately-cancelled context short-circuits the first
@@ -534,7 +666,7 @@ func TestWaitForCPHealthz_ContextCancelled_ReturnsCtxErr(t *testing.T) {
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	err := waitForCPHealthz(ctx, cfg)
+	err := waitForCPHealthz(ctx, nil, cfg)
 	assert.ErrorIs(t, err, context.Canceled)
 }
 
@@ -559,7 +691,7 @@ func TestWaitForCPHealthz_Timeout_ReturnsTypedError(t *testing.T) {
 	// still proving the deadline-path returns the typed error.
 	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
 	defer cancel()
-	err = waitForCPHealthz(ctx, cfg)
+	err = waitForCPHealthz(ctx, nil, cfg)
 	require.Error(t, err)
 	var timeoutErr *CPHealthTimeoutError
 	require.ErrorAs(t, err, &timeoutErr, "must return *CPHealthTimeoutError, got %T: %v", err, err)

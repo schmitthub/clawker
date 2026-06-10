@@ -180,6 +180,13 @@ func RenderTemplate(name, tmplContent string, data MonitorTemplateData) (string,
 func WriteOpenSearchBootstrap(destDir string, data MonitorTemplateData) error {
 	const root = "templates/" + OpenSearchBootstrapDirName
 
+	// destDir holds only generated content — wipe it so files removed from
+	// the embedded tree don't linger and get re-imported by bootstrap.sh,
+	// which loops over every file in the rendered dir.
+	if err := os.RemoveAll(destDir); err != nil {
+		return fmt.Errorf("clear bootstrap dir %s: %w", destDir, err)
+	}
+
 	return fs.WalkDir(OpenSearchBootstrapFS, root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err

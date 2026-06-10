@@ -76,7 +76,7 @@ Renders a Go `text/template` string with the given `MonitorTemplateData`. Return
 
 ### WriteOpenSearchBootstrap(destDir string, data MonitorTemplateData) error
 
-Walks `OpenSearchBootstrapFS` and mirrors it into `destDir`, preserving directory structure. `.tmpl` files are rendered with `MonitorTemplateData` and written with the suffix stripped (and `0755` so `bootstrap.sh` is executable); JSON/NDJSON files are copied verbatim (`0644`). Existing files are overwritten unconditionally — `monitor init` enforces the `--force` gate at the entry point.
+Wipes `destDir` (it holds only generated content), then walks `OpenSearchBootstrapFS` and mirrors it into `destDir`, preserving directory structure. `.tmpl` files are rendered with `MonitorTemplateData` and written with the suffix stripped (and `0755` so `bootstrap.sh` is executable); JSON/NDJSON files are copied verbatim (`0644`). The wipe-first mirror means files removed from the embedded tree disappear from the rendered dir too — without it, a stale saved-object JSON would be re-imported by `bootstrap.sh` (which loops over every file in the dir) on every `monitor up`, surviving volume wipes. `monitor init` enforces the `--force` gate at the entry point.
 
 ## Usage
 

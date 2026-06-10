@@ -235,23 +235,33 @@ const (
 )
 
 // Firewall stack bringup timeouts. Single source of truth shared by the CP
-// (Stack.WaitForHealthy) and the CLI (FirewallInit/FirewallReload RPC deadlines)
-// so the two cannot drift apart. The drift that matters: if the CLI deadline is
-// SHORTER than the server health wait, the CLI aborts with a generic
-// "context deadline exceeded" before the server's real ErrEnvoyUnhealthy
-// surfaces — hiding the actual cause from the user. Deriving the CLI deadline
-// from the server budget guarantees CLI >= server.
+// (Stack.WaitForHealthy, the queued bringup closure) and the CLI
+// (FirewallInit/FirewallReload RPC deadlines) so the budgets cannot drift
+// apart. The drift that matters: if a downstream budget is SHORTER than the
+// upstream one it waits on, the downstream caller aborts with a generic
+// "context deadline exceeded" before the real upstream error (e.g.
+// ErrEnvoyUnhealthy) surfaces — hiding the actual cause. Deriving each
+// budget from the one beneath it guarantees health <= bringup <= RPC.
 const (
 	// FirewallStackHealthTimeout bounds Stack.WaitForHealthy's probe loop —
 	// how long the CP waits for Envoy + CoreDNS to answer their health endpoints
 	// before returning ErrEnvoyUnhealthy/ErrCoreDNSUnhealthy.
 	FirewallStackHealthTimeout = 60 * time.Second
+	// FirewallStackBringupTimeout bounds the whole queued bringup closure
+	// server-side (image pulls + container creates + the health wait). Without
+	// it a wedged registry connection during ImagePull would hang the bringup
+	// forever — for the CP startup gate that means a CP that never binds
+	// /healthz, never exits, and never triggers its restart policy. The
+	// headroom above the health budget is for pulls and creates.
+	FirewallStackBringupTimeout = FirewallStackHealthTimeout + 120*time.Second
 	// FirewallStackBringupRPCTimeout is the CLI's RPC deadline for the
-	// stack-bringing RPCs (FirewallInit, FirewallReload). It must exceed the
-	// server's health wait PLUS the unbounded pre-health work (image pull +
-	// container create) so the real server error reaches the user instead of a
-	// premature client deadline. Derived from the health budget + headroom.
-	FirewallStackBringupRPCTimeout = FirewallStackHealthTimeout + 60*time.Second
+	// stack-bringing RPCs (FirewallInit, FirewallReload), derived from the
+	// server-side bringup budget + headroom so the real server error reaches
+	// the user instead of a premature client deadline. Second consumer:
+	// cpboot.waitForCPHealthz extends its host-side readiness budget by this
+	// value when the firewall is enabled — shrinking it shrinks that wait too
+	// and can reintroduce spurious CPHealthTimeoutErrors on first-boot pulls.
+	FirewallStackBringupRPCTimeout = FirewallStackBringupTimeout + 30*time.Second
 )
 
 // Control plane port defaults. These are flag defaults for the CP binary

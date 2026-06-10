@@ -44,11 +44,12 @@ func newControlPlaneHarness(t *testing.T) *harness.Harness {
 // TestControlPlaneCLI_UpStatusDown walks the break-glass verbs in
 // their intended order on a fresh env:
 //  1. `controlplane status` before up — container absent, exit 0.
-//  2. `controlplane up` — CP boots; `/healthz` green; idempotent on
+//  2. `controlplane up` — CP boots; `/healthz` green; firewall stack
+//     comes up too (firewall.enable defaults true); idempotent on
 //     repeat call.
 //  3. `controlplane status --json` — container running + healthz ok.
-//  4. `controlplane down` — CP removed; stderr carries the orphan-firewall
-//     warning.
+//  4. `controlplane down` — CP removed; CP's SIGTERM handler runs the
+//     full firewall + eBPF teardown, so no orphan-firewall warning fires.
 //  5. `controlplane status` after down — back to the absent baseline.
 func TestControlPlaneCLI_UpStatusDown(t *testing.T) {
 	if testing.Short() {
@@ -67,6 +68,10 @@ func TestControlPlaneCLI_UpStatusDown(t *testing.T) {
 	up := h.Run("controlplane", "up")
 	require.NoError(t, up.Err, "controlplane up failed: %s", up.Stderr)
 	assert.Contains(t, up.Stdout, "Control plane is up")
+	// firewall.enable defaults true — the verb must also bring the
+	// Envoy + CoreDNS stack up and block until it's healthy.
+	assert.Contains(t, up.Stdout, "Firewall stack up",
+		"controlplane up must bring the firewall stack up when firewall.enable is set")
 
 	// Idempotent re-invocation — must succeed and not duplicate the
 	// container. A second `up` on an already-running CP is the canonical
@@ -82,6 +87,8 @@ func TestControlPlaneCLI_UpStatusDown(t *testing.T) {
 		"status output must parse as JSON: %q", statusUp.Stdout)
 	assert.True(t, running.ContainerRunning, "CP container should be running")
 	assert.True(t, running.HealthzOK, "healthz should be reporting 200")
+	assert.True(t, running.FirewallRunning, "firewall stack should be up after controlplane up (firewall.enable defaults true)")
+	assert.True(t, running.FirewallReady, "firewall stack should be healthy after controlplane up")
 
 	down := h.Run("controlplane", "down")
 	require.NoError(t, down.Err, "controlplane down failed: %s", down.Stderr)

@@ -14,6 +14,9 @@ invoke while the CP is already running.
 On first run it builds the control plane image and provisions its auth
 material, then waits until the control plane reports healthy.
 
+When the firewall is enabled in settings.yaml (firewall.enable, the
+default), the Envoy + CoreDNS firewall stack is brought up as well.
+
 ```
 clawker controlplane up [flags]
 ```
@@ -21,7 +24,7 @@ clawker controlplane up [flags]
 ### Examples
 
 ```
-  # Start the control plane
+  # Start the control plane (and the firewall stack, per settings)
   clawker controlplane up
 ```
 

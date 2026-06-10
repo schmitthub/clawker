@@ -18,7 +18,7 @@ wants to control the CP lifecycle directly.
 | File | Purpose |
 |------|---------|
 | `controlplane.go` | Parent command `NewCmdControlPlane(f)` — registers `up`/`down`/`status`/`agents` |
-| `up.go` | `controlplane up` — wraps `Manager.EnsureRunning` (idempotent) |
+| `up.go` | `controlplane up` — wraps `Manager.EnsureRunning` (idempotent); when `firewall.enable` (settings.yaml) is true, also brings the firewall stack up via `firewall.BringUpStack` (idempotent `FirewallInit`) |
 | `down.go` | `controlplane down` — `Manager.Stop` (CP container only); no orphan warning — CP drains its own firewall stack on SIGTERM |
 | `status.go` | `controlplane status` — `Manager.IsRunning` + `Manager.ProbeHealthz` + best-effort `FirewallStatus` RPC |
 | `agents.go` | `controlplane agents` — `AdminClient.ListAgents` snapshot of the agent registry |
@@ -28,7 +28,7 @@ wants to control the CP lifecycle directly.
 
 | Command | Constructor | Args | Flags | Manager methods |
 |---------|-------------|------|-------|-----------------|
-| `up` | `NewCmdUp(f, runF)` | none | none | `EnsureRunning` |
+| `up` | `NewCmdUp(f, runF)` | none | none | `EnsureRunning`; then, when `firewall.enable` (settings.yaml) is true, `FirewallInit` via `f.AdminClient` (`firewall.BringUpStack`) |
 | `down` | `NewCmdDown(f, runF)` | none | none | `IsRunning`, then `Stop` on the running path |
 | `status` | `NewCmdStatus(f, runF)` | none | `--format`, `--json`, `--quiet` | `IsRunning`, `ProbeHealthz`; plus best-effort `FirewallStatus` via `f.AdminClient` |
 | `agents` | `NewCmdAgents(f, runF)` | none | `--format`, `--json`, `--quiet` | none (uses `f.AdminClient` → `ListAgents`) |
@@ -41,10 +41,47 @@ cpboot/manager.go` and is wired in `internal/cmd/factory/default.go` via
 `controlPlaneFunc(f)` (a `sync.Once`-cached closure that calls
 `cpboot.NewManager(f.Client, f.Config, f.Logger)`).
 
-No package-level seams. Tests inject a `*mocks.ManagerMock` by overriding
-`tb.F.ControlPlane` on the per-test `testBed`; each test programs only the
-methods it exercises, so an unexpected call to an unprogrammed method
-panics — that's the assertion for paths that should short-circuit.
+No package-level seams. Tests inject test doubles by overriding Factory
+closures on the per-test `testBed`: a `*mocks.ManagerMock` on
+`tb.F.ControlPlane` (always), plus — for the `up` firewall paths — a
+`ConfigMock` on `tb.F.Config` (`withSettings`), an
+`AdminServiceClientMock` on `tb.F.AdminClient` (`withAdminMock`), and a
+`dockermocks.FakeClient` on `tb.F.Client` (`withDockerFake`). Each test
+programs only the methods it exercises, so an unexpected call to an
+unprogrammed method panics — that's the assertion for paths that should
+short-circuit.
+
+## `controlplane up` and firewall bringup
+
+`firewall.enable` (settings.yaml) means the firewall stack should be up
+whenever the CP is. Two cooperating mechanisms deliver that:
+
+1. **CP-side (every boot, startup gate)**: the CP daemon reads settings
+   at startup and, when enabled, runs the in-process `FirewallInit`
+   synchronously BEFORE `SetReady` (the settings-driven firewall
+   bringup gate in `cmd/clawker-cp/main.go`).
+   A bringup failure fails CP startup (exit code 1) — fail-closed and
+   loud, never silently unenforced. `/healthz` green therefore implies
+   the stack is up when the firewall is enabled, and the host-side
+   `cpboot` healthz wait extends its budget accordingly (and fail-fasts
+   with a diagnostic error if the CP container terminally exits). Covers
+   CP boots no CLI observes (restart policy, container-start bootstrap).
+2. **CLI-side (idempotent path)**: `upRun` loads config after
+   `EnsureRunning` and, when enabled, dials `f.AdminClient` and calls
+   `firewall.BringUpStack` — the same spinner + shared-deadline +
+   exposure-warning UX as `firewall up`. This covers the case where the
+   CP was already running with the stack down (e.g. after `firewall
+   down`); on a fresh boot it is a fast idempotent no-op because the
+   startup gate already brought the stack up.
+
+When `firewall.enable` is false the verb never starts the stack —
+bringing up a stack the user disabled would be a policy violation. It
+does, however, check (via `f.Client`, advisory — lookup failures warn,
+never fail the verb) whether a previously-started Envoy/CoreDNS sibling
+is still running, and prints a stderr warning pointing at
+`clawker firewall down` when settings say off but the stack is still
+enforcing. A failed stack bringup returns an error (and prints the
+stack-down exposure warning) even though the CP itself is up.
 
 ## `controlplane down` and firewall teardown (INV-B2-008, reworked)
 
@@ -112,8 +149,10 @@ silently breaks JSON unmarshaling on that side.
 | `IOStreams` | ✓ | ✓ | ✓ | ✓ |
 | `TUI` | ­ | ­ | ­ | ✓ |
 | `Logger` | ­ | ­ | ­ | ✓ |
+| `Config` | ✓ | ­ | ­ | ­ |
+| `Client` | ✓ (firewall-disabled advisory check) | ­ | ­ | ­ |
 | `ControlPlane` | ✓ | ✓ | ✓ | ­ |
-| `AdminClient` | ­ | ­ | ✓ (best-effort) | ✓ |
+| `AdminClient` | ✓ (firewall-enabled only) | ­ | ✓ (best-effort) | ✓ |
 
 ## Format flag support
 
@@ -125,11 +164,17 @@ throughout — no raw `cs.Red` / `cs.Green`.
 ## Import boundary
 
 `up`, `down`, and `status` import `internal/controlplane/cpboot` (for the `Manager` interface
-type) but never import `pkg/whail` — the `*docker.Client` abstraction is
-held entirely behind `Manager`. `agents` imports only `api/admin/v1` for the
-`AdminServiceClient` surface. All lifecycle side effects are reached
-through Manager or AdminClient methods, which is what makes the moq mocks complete
-substitutes.
+type) but never import `pkg/whail`. CP lifecycle side effects are reached
+through Manager or AdminClient methods, which is what makes the moq mocks
+complete substitutes. `agents` imports only `api/admin/v1` for the
+`AdminServiceClient` surface. `up` additionally imports the sibling
+command package `internal/cmd/firewall` for the exported
+`BringUpStack` helper so both verbs share one bringup UX (spinner,
+shared RPC deadline, exposure warning, remediation hints) instead of
+duplicating it, and `internal/docker` (via `f.Client` +
+a label-filtered `ContainerList` on the firewall purpose label) for the
+read-only firewall-disabled advisory check — the one Docker touch in this package, deliberately not
+routed through Manager because it is not a CP lifecycle operation.
 
 ## Testing
 

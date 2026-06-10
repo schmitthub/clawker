@@ -39,10 +39,10 @@ const (
 	envoyContainerName   = "clawker-envoy"
 	corednsContainerName = "clawker-coredns"
 
-	// healthCheckTimeout bounds WaitForHealthy by default. Callers supply
-	// deadlines via ctx when they want different behavior. Shared with the CLI's
-	// bringup RPC deadline (consts.FirewallStackBringupRPCTimeout derives from
-	// this) so the client never times out before the server's real health error.
+	// healthCheckTimeout bounds WaitForHealthy. A ctx deadline can only
+	// tighten it, never extend it. Shared with the CLI's bringup RPC deadline
+	// (consts.FirewallStackBringupRPCTimeout derives from this) so the client
+	// never times out before the server's real health error.
 	healthCheckTimeout  = consts.FirewallStackHealthTimeout
 	healthCheckInterval = 500 * time.Millisecond
 
@@ -62,6 +62,16 @@ const (
 	// exporting to the stale port. Including the port in drift labels
 	// forces a recreate (not just a restart) when it changes.
 	labelOtelInfraPort = "dev.clawker.firewall.otel_infra_port"
+
+	// labelStackBuildSHA stamps the CP's embedded-binary hash
+	// (consts.CPBinarySHA, injected by host bootstrap at CP create) on
+	// both siblings. Every other staleness vector — the pinned Envoy
+	// image const, the embedded coredns-clawker binary, the
+	// envoy_config/coredns_config templates, the containerSpec shape —
+	// is compiled into clawker-cp, so a CP built from different bytes
+	// MUST recreate the siblings rather than adopt ones an older build
+	// created.
+	labelStackBuildSHA = "dev.clawker.firewall.stack_build_sha"
 )
 
 // Stack manages the Envoy + CoreDNS container pair via Docker-outside-of-
@@ -106,7 +116,7 @@ type Stack struct {
 // OpenSearch pipeline has no filelog receiver — the trusted OTLP push
 // path is the only ingestion route, and it stays cold. This matches the
 // CP-side degraded path (see cmd/clawker-cp/main.go: event=
-// infra_issuer_unavailable).
+// otelcerts_unavailable).
 type OtelCertProvisioner interface {
 	// EnsureClient mints + writes per-service mTLS client material under
 	// the provisioner's destination directory, atomically. Re-runs
@@ -252,12 +262,19 @@ func (s *Stack) WaitForHealthy(ctx context.Context) error {
 	}
 
 	start := time.Now()
+	// The ctx deadline only ever tightens the budget (min of the two): the
+	// queued bringup closure carries a whole-bringup deadline, and letting it
+	// replace the health budget would defer health failures to the outer
+	// deadline — surfacing them as a generic DeadlineExceeded instead of the
+	// typed ErrEnvoyUnhealthy/ErrCoreDNSUnhealthy.
 	deadline := start.Add(healthCheckTimeout)
 	if dl, ok := ctx.Deadline(); ok {
 		if time.Until(dl) <= 0 {
 			return context.DeadlineExceeded
 		}
-		deadline = dl
+		if dl.Before(deadline) {
+			deadline = dl
+		}
 	}
 
 	httpClient := &http.Client{Timeout: 2 * time.Second}
@@ -762,6 +779,7 @@ func (s *Stack) driftLabels() map[string]string {
 	return map[string]string{
 		labelInfraCertsReady: strconv.FormatBool(s.infraCertsReady),
 		labelOtelInfraPort:   strconv.Itoa(int(s.cfg.SettingsStore().Read().Monitoring.OtelInfraPort)),
+		labelStackBuildSHA:   consts.CPBinarySHA,
 	}
 }
 
@@ -784,12 +802,12 @@ func specMatchesContainer(actual map[string]string, want map[string]string) bool
 // already running AND its drift-significant labels match the desired
 // spec it returns without change.
 //
-// Spec drift triggers a stop + remove + recreate. Today the only
-// drift axis is labelInfraCertsReady, which controls whether the
-// mTLS-OTLP bind-mount + env are wired (see envoy/coredns spec
-// helpers). A plain ContainerRestart would leave create-time env
-// and mounts stale across an infraCertsReady flip — recreating is
-// the only way to push the new layout into the live container.
+// Spec drift triggers a stop + remove + recreate. The drift axes are
+// the labels stamped by driftLabels: each captures create-time state
+// (the mTLS-OTLP bind-mount/env shape, the OTLP infra port, the CP
+// build hash whose embedded binaries/templates produced the sibling)
+// that a plain ContainerRestart cannot refresh — recreating is the
+// only way to push a new create-time layout into the live container.
 func (s *Stack) ensureContainer(ctx context.Context, name string, spec containerSpec) error {
 	summary, err := s.findByName(ctx, name)
 	if err != nil {
@@ -815,7 +833,9 @@ func (s *Stack) ensureContainer(ctx context.Context, name string, spec container
 			Str("running_infra_certs_ready", summary.Labels[labelInfraCertsReady]).
 			Str("desired_otel_infra_port", spec.labels[labelOtelInfraPort]).
 			Str("running_otel_infra_port", summary.Labels[labelOtelInfraPort]).
-			Msg("recreating firewall container — desired mTLS bind/env state diverges from running container")
+			Str("desired_stack_build_sha", spec.labels[labelStackBuildSHA]).
+			Str("running_stack_build_sha", summary.Labels[labelStackBuildSHA]).
+			Msg("recreating firewall container — desired spec diverges from running container")
 		if err := s.stopAndRemove(ctx, name); err != nil {
 			return fmt.Errorf("recreating %s on spec drift: %w", name, err)
 		}

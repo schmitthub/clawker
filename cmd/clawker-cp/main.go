@@ -308,35 +308,31 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	subMgr := controlplane.NewSubprocessManager(log)
 	orchestrator := controlplane.NewCPStartupOrchestrator()
 
-	// --- Step 0: Write Ory config files ---
 	hydraSecret, err := auth.EnsureHydraSecret()
 	if err != nil {
-		return fmt.Errorf("step 0 (hydra secret): %w", err)
+		return fmt.Errorf("hydra secret: %w", err)
 	}
 	if err := controlplane.WriteOryConfigs(cp, hydraSecret); err != nil {
-		return fmt.Errorf("step 0 (write ory configs): %w", err)
+		return fmt.Errorf("write ory configs: %w", err)
 	}
 	log.Info().Msg("Ory config files written")
 
-	// --- Step 1: Start Kratos ---
 	kratosCmd := exec.Command("kratos", "serve",
 		"--config", consts.CPKratosConfigPath,
 	)
 	if err := subMgr.Start("kratos", kratosCmd); err != nil {
-		return fmt.Errorf("step 1 (kratos): %w", err)
+		return fmt.Errorf("kratos: %w", err)
 	}
 
-	// --- Step 2: Start Hydra ---
 	hydraCmd := exec.Command("hydra", "serve", "all",
 		"--config", consts.CPHydraConfigPath,
 		"--sqa-opt-out",
 		"--dev",
 	)
 	if err := subMgr.Start("hydra", hydraCmd); err != nil {
-		return fmt.Errorf("step 2 (hydra): %w", err)
+		return fmt.Errorf("hydra: %w", err)
 	}
 
-	// --- Step 3: Wait for both healthy ---
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -344,11 +340,11 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// client registration, and mTLS client cert verification.
 	caCertPEM, err := os.ReadFile(caCertPath)
 	if err != nil {
-		return fmt.Errorf("step 3 (read CA cert): %w", err)
+		return fmt.Errorf("read CA cert: %w", err)
 	}
 	caCertPool := x509.NewCertPool()
 	if !caCertPool.AppendCertsFromPEM(caCertPEM) {
-		return fmt.Errorf("step 3: failed to parse CA cert")
+		return fmt.Errorf("failed to parse CA cert")
 	}
 	caTLS := &tls.Config{
 		RootCAs:    caCertPool,
@@ -360,50 +356,46 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		URL: fmt.Sprintf("https://127.0.0.1:%d/health/alive", cp.KratosPublicPort), Interval: healthCheckInterval, Timeout: healthCheckTimeout,
 		TLS: caTLS,
 	}); err != nil {
-		return fmt.Errorf("step 3 (kratos health): %w", err)
+		return fmt.Errorf("kratos health: %w", err)
 	}
 	if err := subMgr.WaitHealthy(ctx, "hydra", controlplane.HealthCheck{
 		URL: fmt.Sprintf("https://127.0.0.1:%d/health/alive", cp.HydraPublicPort), Interval: healthCheckInterval, Timeout: healthCheckTimeout,
 		TLS: caTLS,
 	}); err != nil {
-		return fmt.Errorf("step 3 (hydra health): %w", err)
+		return fmt.Errorf("hydra health: %w", err)
 	}
 
-	// --- Step 3b: Wait for Hydra admin port ---
-	// The public health check (step 3) confirms the public listener is ready,
+	// The public health check above confirms the public listener is ready,
 	// but client registration goes to the admin port — a separate listener
 	// that may take longer under resource pressure. Wait for it explicitly.
 	if err := subMgr.WaitHealthy(ctx, "hydra", controlplane.HealthCheck{
 		URL: fmt.Sprintf("https://127.0.0.1:%d/health/alive", cp.HydraAdminPort), Interval: healthCheckInterval, Timeout: healthCheckTimeout,
 		TLS: caTLS,
 	}); err != nil {
-		return fmt.Errorf("step 3b (hydra admin health): %w", err)
+		return fmt.Errorf("hydra admin health: %w", err)
 	}
 
 	// Configure aggregate health probes. The /healthz endpoint will actively
 	// probe ALL service ports — it only returns 200 when every one responds.
 	orchestrator.SetServiceProbes(cp, caTLS)
 
-	// --- Step 4: Read CLI JWK ---
 	jwkData, err := os.ReadFile(jwkPath)
 	if err != nil {
-		return fmt.Errorf("step 4 (read JWK %s): %w", jwkPath, err)
+		return fmt.Errorf("read JWK %s: %w", jwkPath, err)
 	}
 	log.Info().Str("jwk_path", jwkPath).Msg("CLI JWK loaded")
 
-	// --- Step 5: Register CLI + agent clients with Hydra ---
 	// See controlplane.RegisterAgentClient for why both clients share
 	// one JWK with distinct client_id + scope.
 	hydraAdminURL := fmt.Sprintf("https://127.0.0.1:%d", cp.HydraAdminPort)
 	if err := controlplane.RegisterCLIClient(ctx, hydraAdminURL, jwkData, caTLS); err != nil {
-		return fmt.Errorf("step 5 (register CLI client): %w", err)
+		return fmt.Errorf("register CLI client: %w", err)
 	}
 	if err := controlplane.RegisterAgentClient(ctx, hydraAdminURL, jwkData, caTLS); err != nil {
-		return fmt.Errorf("step 5 (register agent client): %w", err)
+		return fmt.Errorf("register agent client: %w", err)
 	}
 	log.Info().Msg("CLI + agent clients registered with Hydra")
 
-	// --- Step 6: Start Oathkeeper ---
 	// Oathkeeper runs as an HTTP reverse proxy for future webui auth.
 	// gRPC auth (CLI + agents) bypasses Oathkeeper entirely — it uses
 	// direct Hydra token introspection via AuthInterceptor.
@@ -411,15 +403,15 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		"--config", consts.CPOathkeeperConfigPath,
 	)
 	if err := subMgr.Start("oathkeeper", oathkeeperCmd); err != nil {
-		return fmt.Errorf("step 6 (oathkeeper): %w", err)
+		return fmt.Errorf("oathkeeper: %w", err)
 	}
 
-	// Step 6b: Docker client. Used by the container resolver (bypass
+	// Docker client. Used by the container resolver (bypass
 	// dead-man timer), the firewall stack (Envoy + CoreDNS sibling
 	// containers over DooD), and the AgentWatcher poll loop.
 	dockerCli, err := docker.NewClient(ctx, cfg, log)
 	if err != nil {
-		return fmt.Errorf("step 6b (docker client): %w", err)
+		return fmt.Errorf("docker client: %w", err)
 	}
 	defer dockerCli.Close()
 
@@ -429,17 +421,17 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// path formats.
 	cgroupDriver, err := fwhandler.DetectCgroupDriver(ctx, dockerCli)
 	if err != nil {
-		return fmt.Errorf("step 6b (cgroup driver): %w", err)
+		return fmt.Errorf("cgroup driver: %w", err)
 	}
 	log.Info().Str("cgroup_driver", cgroupDriver).Msg("Docker cgroup driver detected")
 
 	containerResolver := containerResolverFromDocker(dockerCli, cgroupDriver)
 
-	// Step 6c: Firewall stack handle. Host bootstrap owns EnsureRunning;
+	// Firewall stack handle. Host bootstrap owns EnsureRunning;
 	// the drain-to-zero path below owns Stop.
 	rulesStore, err := fwhandler.NewRulesStore(cfg)
 	if err != nil {
-		return fmt.Errorf("step 6c (rules store): %w", err)
+		return fmt.Errorf("rules store: %w", err)
 	}
 	// Infra intermediate CA — bind-mounted RO by cpboot at startup.
 	// firewall.Stack uses it to mint short-lived mTLS client leaves
@@ -450,10 +442,9 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// drop the mTLS bind-mounts and CP's OTel push lane is closed.
 	stack := fwhandler.NewStack(dockerCli, cfg, log, rulesStore, otelCerts)
 
-	// --- Step 7: Load eBPF programs ---
 	ebpfMgr := ebpf.NewManager(log)
 	if err := ebpfMgr.Load(); err != nil {
-		return fmt.Errorf("step 7 (ebpf load): %w", err)
+		return fmt.Errorf("ebpf load: %w", err)
 	}
 	// ebpfMgr.Close failures are joined with retErr so the on-failure
 	// restart policy retriggers investigation rather than silently
@@ -466,7 +457,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	}()
 	log.Info().Msg("eBPF programs loaded")
 
-	// Step 7b: Defensive startup cleanup (INV-B2-013).
+	// Defensive startup cleanup (INV-B2-013).
 	// Load() already cleans up pinned link files for dead cgroups. A
 	// mirror pass for bypass_map is needed because cgroup IDs are
 	// reusable across container generations — a leftover bypass entry
@@ -474,20 +465,19 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// unrestricted egress.
 	cleared, err := ebpfMgr.CleanupStaleBypass()
 	if err != nil {
-		return fmt.Errorf("step 7b (defensive bypass cleanup): %w", err)
+		return fmt.Errorf("defensive bypass cleanup: %w", err)
 	}
 	if cleared > 0 {
 		log.Info().Int("cleared", cleared).Msg("defensive startup: cleared stale bypass_map entries")
 	}
 
-	// --- Step 8: Start gRPC admin API ---
 	serverCert, err := tls.LoadX509KeyPair(serverCertPath, serverKeyPath)
 	if err != nil {
-		return fmt.Errorf("step 8 (load server cert): %w", err)
+		return fmt.Errorf("load server cert: %w", err)
 	}
 
 	// mTLS: require client certificates signed by the CLI CA.
-	// caCertPool already contains the CA cert (parsed at step 3).
+	// caCertPool already contains the CA cert (parsed during the Ory health waits).
 	// Authorization is still via OAuth2 bearer tokens — mTLS authenticates
 	// the transport channel.
 	tlsCfg := &tls.Config{
@@ -542,7 +532,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// Started before the first inbound RPC can fire — otherwise the
 	// enroll event drops silently and downstream subscribers miss
 	// the binding for that cgroup. The dockerevents feeder +
-	// agent.Start subscribers still wire up in step 9a below.
+	// agent.Start subscribers still wire up with the dockerevents feeder below.
 	watcherCtx, watcherCancel := context.WithCancel(context.Background())
 	defer watcherCancel()
 
@@ -559,7 +549,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		PublishHook: overseer.NewLoggerHook(busLog),
 	})
 	if err := bus.Start(watcherCtx); err != nil {
-		return fmt.Errorf("step 8 (overseer start): %w", err)
+		return fmt.Errorf("overseer start: %w", err)
 	}
 	// listAgentIDs enumerates managed agent container IDs. Two callers
 	// at two scopes:
@@ -618,11 +608,11 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// data dir comes up with the schema applied before NewSQLiteWriter
 	// queries SELECT COUNT (which would otherwise see "no such table").
 	if err := agent.EnsureSchema(consts.CPControlPlaneDBPath, log.With("component", "agent")); err != nil {
-		return fmt.Errorf("step 8 (agent ensure schema): %w", err)
+		return fmt.Errorf("agent ensure schema: %w", err)
 	}
 	agentReg, err := agent.NewSQLiteWriter(consts.CPControlPlaneDBPath, log.With("component", "agent"))
 	if err != nil {
-		return fmt.Errorf("step 8 (agent sqlite): %w", err)
+		return fmt.Errorf("agent sqlite: %w", err)
 	}
 
 	// Peer-IP→Docker→labels resolver. Maps a live mTLS peer IP to
@@ -635,7 +625,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 
 	grpcLis, err := net.Listen("tcp", "0.0.0.0:"+strconv.Itoa(cp.AdminPort))
 	if err != nil {
-		return fmt.Errorf("step 8 (grpc listen): %w", err)
+		return fmt.Errorf("grpc listen: %w", err)
 	}
 
 	// Agent listener — bound to clawker-net only (NOT host-published).
@@ -682,7 +672,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		)
 		agentLis, err = net.Listen("tcp", "0.0.0.0:"+strconv.Itoa(cp.AgentPort))
 		if err != nil {
-			return fmt.Errorf("step 8 (agent grpc listen): %w", err)
+			return fmt.Errorf("agent grpc listen: %w", err)
 		}
 
 		// Register the AgentService.Register handler. IdentityInterceptor
@@ -697,7 +687,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 			log.With("component", "agent-register"),
 		)
 		if herr != nil {
-			return fmt.Errorf("step 8 (agent register handler): %w", herr)
+			return fmt.Errorf("agent register handler: %w", herr)
 		}
 		agentv1.RegisterAgentServiceServer(agentServer, registerHandler)
 	}
@@ -723,7 +713,51 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		}()
 	}
 
-	// --- Step 9: healthz ---
+	// Settings-driven firewall bringup (startup gate).
+	//
+	// firewall.enable (settings.yaml) means the stack must be up whenever
+	// the CP is — not only when a CLI verb (`firewall up`, `container
+	// start`) happens to send FirewallInit. Run the same queued
+	// FirewallInit the CLI RPC path uses (route_map seed + agent
+	// re-enrollment included) synchronously, BEFORE SetReady: a green
+	// /healthz must mean "everything the settings enable is enforcing".
+	// This covers CP boots no CLI observes — the on-failure restart
+	// policy resurrecting a crashed CP with agents still running.
+	//
+	// A bringup failure FAILS CP startup (pre-SetReady startup-gate exit,
+	// code 1 — same doctrine as the CleanupStaleBypass gate): the user
+	// needs that feedback loudly. Degrading instead would leave agents
+	// either unusable (eBPF redirecting egress at a dead Envoy) or, worse,
+	// silently unenforced while the user believes the firewall is on. No
+	// eBPF flush happens on this exit path — existing per-container state
+	// stays pinned, so already-enrolled agents stay fail-closed rather
+	// than fail-open. The host-side healthz wait extends its budget for
+	// this gate (cpboot.waitForCPHealthz).
+	//
+	// (Background ctx: FirewallInit's real work runs on the ActionQueue
+	// under the queue's own ctx — the caller ctx is not load-bearing.)
+	//
+	// Re-enrollment events published here precede netlogger construction
+	// (below), so netlogger's LabelCache stays cold for agents that
+	// outlived the previous CP until the next FirewallInit/FirewallEnable
+	// — telemetry enrichment only; enforcement is unaffected.
+	if cfg.Settings().Firewall.FirewallEnabled() {
+		log.Info().Str("component", "firewall-bringup").
+			Msg("firewall bringup: starting stack (settings firewall.enable)")
+		if _, err := handler.FirewallInit(context.Background(), &adminv1.FirewallInitRequest{}); err != nil {
+			// The startup-gate exit lands only on os.Stderr (docker logs);
+			// this is the rotating-log record an unattended boot leaves
+			// behind — without it the log file ends at "starting stack"
+			// and the CP looks hung, not failed.
+			log.Error().Err(err).
+				Str("event", "firewall_bringup_failed").
+				Str("component", "firewall-bringup").
+				Msg("firewall bringup failed — CP exiting (startup gate); enrolled agents stay fail-closed against pinned eBPF state; inspect docker logs and re-run `clawker controlplane up`")
+			return fmt.Errorf("firewall bringup: %w", err)
+		}
+		log.Info().Str("component", "firewall-bringup").Msg("firewall stack up")
+	}
+
 	orchestrator.SetReady()
 
 	healthMux := http.NewServeMux()
@@ -739,9 +773,9 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		}
 	}()
 
-	// Step 9a: dockerevents feeder.
+	// dockerevents feeder.
 	//
-	// Wires the dockerevents feeder onto the bus created in step 8;
+	// Wires the dockerevents feeder onto the overseer bus;
 	// agent.Start (below) hangs its container/{start,destroy}
 	// subscribers off the same bus.
 	feeder, err := dockerevents.New(dockerCli.APIClient, bus, dockerevents.Options{
@@ -750,7 +784,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		Logger:            log,
 	})
 	if err != nil {
-		return fmt.Errorf("step 9a (dockerevents feeder): %w", err)
+		return fmt.Errorf("dockerevents feeder: %w", err)
 	}
 	// feederCtx is a child of watcherCtx so SIGTERM/drain-to-zero both
 	// reach it; feederCancel exists separately so drainCallbackBody can
@@ -822,7 +856,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		}
 	}()
 
-	// Step 9c: netlogger — eBPF egress event emitter. Drains the
+	// netlogger — eBPF egress event emitter. Drains the
 	// per-decision-point ringbuf populated by BPF and pushes enriched
 	// records to the trusted-infra OTLP receiver over a distinct
 	// service.name. Degraded paths (no otelcerts, no infra endpoint
@@ -977,7 +1011,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		}
 	}
 
-	// Step 9d: periodic dns_cache garbage collection. Reclaims expired
+	// Periodic dns_cache garbage collection. Reclaims expired
 	// entries the CoreDNS dnsbpf plugin wrote so the pinned map does not
 	// grow unbounded and stale orphaned hashes do not accumulate. Runs on
 	// watcherCtx so it stops on SIGTERM/drain-to-zero. Recovers per CP
