@@ -13,11 +13,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Alias source values reported in the SOURCE column / JSON output.
-const (
-	sourceDefault = "default"
-	sourceUser    = "user"
-)
+// sourceDefault is the SOURCE value for aliases served by the shipped
+// defaults layer (no file provenance).
+const sourceDefault = "default"
 
 // disabledDisplay marks an alias whose expansion is empty (disabled).
 const disabledDisplay = "(disabled)"
@@ -50,8 +48,9 @@ func NewCmdList(f *cmdutil.Factory, runF func(context.Context, *ListOptions) err
 		Short:   "List configured command aliases",
 		Long: `Lists all configured command aliases with their expansions.
 
-The SOURCE column distinguishes shipped defaults from user-defined
-aliases. An alias with an empty expansion is disabled.`,
+The SOURCE column shows the config file providing the winning value,
+or "default" for shipped defaults. An alias with an empty expansion
+is disabled.`,
 		Example: `  # List aliases
   clawker alias list
 
@@ -79,19 +78,14 @@ func listRun(_ context.Context, opts *ListOptions) error {
 	if err != nil {
 		return err
 	}
-	aliases := cfg.Settings().Aliases
+	aliases := cfg.Project().Aliases
 	if len(aliases) == 0 {
 		fmt.Fprintln(ios.ErrOut, "No aliases configured.")
 		fmt.Fprintln(ios.ErrOut, "Use 'clawker alias set <alias> <expansion>' to create one.")
 		return nil
 	}
 
-	defaults, err := shared.DefaultAliases()
-	if err != nil {
-		return err
-	}
-
-	rows := buildAliasRows(aliases, defaults)
+	rows := buildAliasRows(cfg, aliases)
 
 	switch {
 	case opts.Format.Quiet:
@@ -121,15 +115,15 @@ func listRun(_ context.Context, opts *ListOptions) error {
 }
 
 // buildAliasRows converts the merged alias map into sorted display rows.
-// An alias counts as a default while its expansion matches the shipped
-// value or is disabled (a disabled default is still the default alias);
-// an overridden default reports as user.
-func buildAliasRows(aliases, defaults map[string]string) []aliasRow {
+// SOURCE is the file that provides the winning value (via store
+// provenance), or "default" for entries served by the shipped defaults
+// layer.
+func buildAliasRows(cfg config.Config, aliases map[string]string) []aliasRow {
 	rows := make([]aliasRow, 0, len(aliases))
 	for name, expansion := range aliases {
-		source := sourceUser
-		if def, ok := defaults[name]; ok && (def == expansion || expansion == "") {
-			source = sourceDefault
+		source := sourceDefault
+		if winner, ok := cfg.ProjectStore().Provenance(shared.AliasFieldPath(name)); ok && winner.Path != "" {
+			source = winner.Path
 		}
 		rows = append(rows, aliasRow{Name: name, Expansion: expansion, Source: source})
 	}

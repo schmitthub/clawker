@@ -2,10 +2,10 @@
 
 `settings.yaml` is a **separate schema** from project config. It manages
 global clawker infrastructure: the services and daemons that clawker runs on
-the host (logging, monitoring, host proxy, firewall lifecycle), plus
-user-level CLI preferences such as command aliases. It does NOT control what
-goes into agent containers — build config, agent config, firewall rules, and
-workspace settings are all project config in `(.)clawker.yaml`.
+the host (logging, monitoring, host proxy, firewall lifecycle). It does NOT
+control what goes into agent containers — build config, agent config,
+firewall rules, workspace settings, and command aliases are all project
+config in `(.)clawker.yaml`.
 
 ## Key differences from project config
 
@@ -21,10 +21,10 @@ workspace settings are all project config in `(.)clawker.yaml`.
 - User asks about clawker CLI preferences or global behavior
 - Troubleshooting clawker infrastructure (logging, monitoring, host proxy)
 - User wants to change how clawker's host-level services operate
-- User asks about command aliases (e.g. `clawker dev`): active aliases live
-  in settings and are managed with the `clawker alias` command group. The
-  project config's aliases key is a sharing vehicle only — never applied
-  automatically; `clawker alias import` adopts it deliberately. See
+- Command aliases are NOT settings: they live in the project config's
+  `aliases` key, merged across all layers (project files in the walk-up,
+  the user-level `clawker.yaml` in the config dir, shipped defaults) and
+  are managed with the `clawker alias` command group. See
   `https://docs.clawker.dev/configuration#command-aliases`
 
 ## When NOT to consult settings

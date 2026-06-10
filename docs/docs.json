@@ -234,7 +234,6 @@
               "cli-reference/clawker_alias_set",
               "cli-reference/clawker_alias_list",
               "cli-reference/clawker_alias_delete",
-              "cli-reference/clawker_alias_import",
               "cli-reference/clawker_alias_export"
             ]
           },

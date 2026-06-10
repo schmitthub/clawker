@@ -10,8 +10,9 @@ List configured command aliases
 
 Lists all configured command aliases with their expansions.
 
-The SOURCE column distinguishes shipped defaults from user-defined
-aliases. An alias with an empty expansion is disabled.
+The SOURCE column shows the config file providing the winning value,
+or "default" for shipped defaults. An alias with an empty expansion
+is disabled.
 
 ```
 clawker alias list [flags]

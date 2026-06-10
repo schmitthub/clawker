@@ -39,7 +39,10 @@ The expansion is appended to 'clawker' in place of the alias name; any
 extra arguments are appended after it. Use $1..$N in the expansion to
 place positional arguments explicitly.
 
-Aliases are stored in user settings (settings.yaml). An alias cannot
+Aliases are written to the user-level project config in the clawker
+config directory. Project config files closer to the working directory
+take precedence on name collisions; use 'clawker alias export' to
+publish an alias into the project's own config file. An alias cannot
 shadow an existing clawker command. Overwriting an existing alias
 requires --clobber.`,
 		Example: `  # Shortcut with appended arguments
@@ -49,7 +52,7 @@ requires --clobber.`,
   clawker alias set lg "logs $1 --tail $2"
 
   # Overwrite an existing alias
-  clawker alias set dev "run --rm -it --agent dev @" --clobber`,
+  clawker alias set go "run --rm -it --agent go @" --clobber`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.Name = args[0]
@@ -79,7 +82,7 @@ func setRun(_ context.Context, opts *SetOptions) error {
 		return err
 	}
 
-	aliases := cfg.Settings().Aliases
+	aliases := cfg.Project().Aliases
 	_, exists := aliases[opts.Name]
 	if exists && !opts.Clobber {
 		return fmt.Errorf("alias %q already exists; use --clobber to overwrite it", opts.Name)
@@ -89,24 +92,29 @@ func setRun(_ context.Context, opts *SetOptions) error {
 		return err
 	}
 
-	store := cfg.SettingsStore()
-	if err := store.Set(func(s *config.Settings) {
-		if s.Aliases == nil {
-			s.Aliases = make(map[string]string)
-		}
-		s.Aliases[opts.Name] = opts.Expansion
-	}); err != nil {
-		return fmt.Errorf("updating settings: %w", err)
-	}
-	if err := store.Write(); err != nil {
-		return fmt.Errorf("saving settings: %w", err)
+	target, err := shared.SetTarget()
+	if err != nil {
+		return fmt.Errorf("resolving user config file: %w", err)
 	}
 
-	cs := opts.IOStreams.ColorScheme()
+	ios := opts.IOStreams
+	cs := ios.ColorScheme()
+	if err := shared.WriteAliases(ios.Out, target, func(m map[string]string) {
+		m[opts.Name] = opts.Expansion
+	}); err != nil {
+		return err
+	}
 	verb := "Added"
 	if exists {
 		verb = "Changed"
 	}
-	fmt.Fprintf(opts.IOStreams.Out, "%s %s alias %q: %s\n", cs.SuccessIcon(), verb, opts.Name, opts.Expansion)
+	fmt.Fprintf(ios.Out, "%s %s alias %q: %s\n", cs.SuccessIcon(), verb, opts.Name, opts.Expansion)
+
+	// Walk-up project files outrank the user config-dir file in the merge —
+	// a same-named alias there keeps winning over what was just written.
+	winner, ok := cfg.ProjectStore().Provenance(shared.AliasFieldPath(opts.Name))
+	if ok && winner.Path != "" && !shared.SamePath(winner.Path, target) {
+		fmt.Fprintf(ios.ErrOut, "%s Alias %q is also defined in %s, which takes precedence\n", cs.WarningIcon(), opts.Name, winner.Path)
+	}
 	return nil
 }

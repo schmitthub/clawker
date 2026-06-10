@@ -282,8 +282,8 @@ security:
     forward_gpg: <boolean>  # default: true | required: false
     # Sync your host .gitconfig (aliases, user.name, user.email) into the container
     copy_git_config: <boolean>  # default: true | required: false
-# Command aliases shared with the team via 'clawker alias import' and 'clawker alias export'; never applied automatically
-aliases:  # default: n/a | required: false
+# Command aliases expanded before execution; the value is appended to 'clawker' and supports $1..$N placeholders; an empty value disables an alias; merged across all config layers
+aliases:  # default: go=run --rm -it --agent $1 @ --dangerously-skip-permissions | required: false
   <key>: <value>
 
 ```
@@ -394,7 +394,7 @@ The following tables are auto-generated from the schema struct tags in `internal
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `aliases` | key-value map | — | Command aliases shared with the team via 'clawker alias import' and 'clawker alias export'; never applied automatically |
+| `aliases` | key-value map | `go=run --rm -it --agent $1 @ --dangerously-skip-permissions` | Command aliases expanded before execution; the value is appended to 'clawker' and supports $1..$N placeholders; an empty value disables an alias; merged across all config layers |
 
 
 ## Interactive Editing
@@ -508,9 +508,6 @@ control_plane:
 docker:
   # Host path to the Docker daemon socket
   socket: <string>  # default: /var/run/docker.sock | required: false
-# Command aliases expanded before execution; the value is appended to 'clawker' and supports $1..$N placeholders; an empty value disables an alias
-aliases:  # default: dev=run --rm -it --agent dev @ --dangerously-skip-permissions | required: false
-  <key>: <value>
 
 ```
 
@@ -617,28 +614,37 @@ Global settings live at `~/.config/clawker/settings.yaml`. The following tables 
 | `socket` | string | `/var/run/docker.sock` | Host path to the Docker daemon socket |
 
 
-### aliases
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `aliases` | key-value map | `dev=run --rm -it --agent dev @ --dangerously-skip-permissions` | Command aliases expanded before execution; the value is appended to 'clawker' and supports $1..$N placeholders; an empty value disables an alias |
-
-
 You can also place a `clawker.yaml` in `~/.config/clawker/` to set user-level project config defaults. This file is merged as the lowest-priority project config layer (just above built-in defaults), so any project-level `.clawker.yaml` overrides it.
 
 ## Command Aliases
 
-The `aliases` key in `settings.yaml` defines command shortcuts that are expanded before execution. The alias value is appended to `clawker` in place of the alias name, and any further arguments are appended after it:
+The `aliases` key in the project config defines command shortcuts that are expanded before execution. The alias value is appended to `clawker` in place of the alias name, and any further arguments are appended after it:
 
 ```yaml
 aliases:
-  dev: run --rm -it --agent dev @ --dangerously-skip-permissions
+  go: run --rm -it --agent $1 @ --dangerously-skip-permissions
   lg: logs $1 --tail $2
 ```
 
-With this configuration, `clawker dev --model opus` runs `clawker run --rm -it --agent dev @ --dangerously-skip-permissions --model opus`, and `clawker lg web 50` runs `clawker logs web --tail 50`. Values may reference positional arguments as `$1`..`$N`; arguments beyond the highest placeholder are appended.
+With this configuration, `clawker go fable --model opus` runs `clawker run --rm -it --agent fable @ --dangerously-skip-permissions --model opus`, and `clawker lg web 50` runs `clawker logs web --tail 50`. Values may reference positional arguments as `$1`..`$N`; arguments beyond the highest placeholder are appended.
 
-Clawker ships the `dev` alias above as a default. Manage aliases with the `clawker alias` command group (`set`, `list`, `delete`), by editing `settings.yaml` directly, or interactively via `clawker settings edit`.
+Aliases merge across every project config layer, like any other project config key: project files discovered in the walk-up override the user-level `clawker.yaml` in the config directory, which overrides shipped defaults. Clawker ships the `go` alias above as a default.
+
+Manage aliases with the `clawker alias` command group:
+
+```bash
+# Write an alias to the user-level clawker.yaml in the config directory
+clawker alias set lg "logs $1 --tail $2"
+
+# Publish your active aliases into the project's own config file
+# (the most local config file found in the walk-up; never creates a file)
+clawker alias export
+
+# Remove an alias from every config file that defines it
+clawker alias delete lg
+```
+
+Every command that writes a file prints the absolute path it wrote. `clawker alias list` shows which file provides each alias in its SOURCE column.
 
 Rules and limitations:
 
@@ -647,20 +653,7 @@ Rules and limitations:
 - An alias may expand to another alias, but cyclic chains are skipped at startup.
 - Shell-style aliases (running arbitrary shell commands) are not supported — expansions always invoke clawker commands.
 - Because the alias command disables flag parsing, even `--help` is forwarded into the expansion.
-
-### Sharing Aliases with Your Team
-
-The project config (`clawker.yaml`) also accepts an `aliases` key, but it is a sharing vehicle only — **project aliases are never applied automatically**. A cloned repository cannot silently define command names on your machine.
-
-```bash
-# Adopt the aliases shared in the project config (deliberate, validated)
-clawker alias import
-
-# Publish your active aliases into the project's clawker.yaml
-clawker alias export
-```
-
-Import validates each entry and skips anything that shadows a built-in command; existing aliases are kept unless `--clobber` is given. Export writes to the project's shared config file (never a `.local.` override) so the aliases can be committed and adopted by teammates with `clawker alias import`.
+- Aliases in a repository's `clawker.yaml` apply automatically when you work inside that project — review the `aliases` key of projects you clone.
 
 ## Directory Structure
 

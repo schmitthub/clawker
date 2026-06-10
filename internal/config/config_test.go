@@ -48,7 +48,7 @@ func TestNewBlankConfig_settingsDefaults(t *testing.T) {
 	assert.Equal(t, 18374, hp.Manager.Port)
 
 	// Shipped default alias (tag → GenerateDefaultsYAML → merge pipeline)
-	assert.Equal(t, "run --rm -it --agent dev @ --dangerously-skip-permissions", s.Aliases["dev"])
+	assert.Equal(t, "run --rm -it --agent $1 @ --dangerously-skip-permissions", cfg.Project().Aliases["go"])
 }
 
 func TestNewFromString_projectOnly(t *testing.T) {

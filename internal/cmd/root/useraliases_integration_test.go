@@ -92,31 +92,32 @@ func TestAliasLifecycle_Integration(t *testing.T) {
 	t.Chdir(proj)
 
 	projectFile := filepath.Join(proj, ".clawker.yaml")
-	settingsFile := filepath.Join(env.Dirs.Config, "settings.yaml")
+	userConfigFile := filepath.Join(env.Dirs.Config, "clawker.yaml")
 
 	// --- clawker init: registers the project and writes the full config.
 	_, _, err := runCLI(t, "init", "--yes")
 	require.NoError(t, err)
 	initFile := readYAMLFile(t, projectFile)
 	require.Contains(t, initFile, "build", "init materializes the full project config")
-	require.NotContains(t, initFile, "aliases", "init ships no project aliases")
+	require.NotContains(t, initFile, "aliases", "init ships no project aliases — the default stays in the virtual defaults layer")
 
-	// Settings were bootstrapped with the shipped default alias.
-	settings := readYAMLFile(t, settingsFile)
-	aliases, ok := settings["aliases"].(map[string]any)
-	require.True(t, ok, "settings bootstrap includes the aliases key")
-	assert.Contains(t, aliases["dev"], "--agent dev")
-
-	// --- shipped default registers and the help surface shows it.
+	// --- shipped default registers from the defaults layer and the help
+	// surface shows it.
 	stdout, _, err := runCLI(t, "--help")
 	require.NoError(t, err)
-	assert.Contains(t, stdout, "dev")
-	assert.Contains(t, stdout, "Alias for")
+	assert.Contains(t, stdout, "Alias for \"run --rm", "default go alias registers")
 
-	// --- alias set persists; a later invocation dispatches it.
+	// --- alias set writes the user config-dir clawker.yaml and reports it;
+	// a later invocation dispatches the alias.
 	stdout, _, err = runCLI(t, "alias", "set", "ver", "version")
 	require.NoError(t, err)
 	assert.Contains(t, stdout, `Added alias "ver"`)
+	assert.Contains(t, stdout, "Wrote "+userConfigFile)
+
+	userFile := readYAMLFile(t, userConfigFile)
+	userAliases, ok := userFile["aliases"].(map[string]any)
+	require.True(t, ok, "alias set writes the user config-dir clawker.yaml")
+	assert.Equal(t, "version", userAliases["ver"])
 
 	stdout, _, err = runCLI(t, "ver")
 	require.NoError(t, err)
@@ -129,42 +130,54 @@ func TestAliasLifecycle_Integration(t *testing.T) {
 	require.ErrorContains(t, err, "not enough arguments")
 
 	// --- alias export publishes into the init-written project file without
-	// disturbing the rest of it.
+	// disturbing the rest of it; shipped defaults are never exported.
 	stdout, _, err = runCLI(t, "alias", "export")
 	require.NoError(t, err)
 	assert.Contains(t, stdout, "Exported")
+	assert.Contains(t, stdout, projectFile, "export reports the file it wrote")
 
 	exported := readYAMLFile(t, projectFile)
 	exportedAliases, ok := exported["aliases"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "version", exportedAliases["ver"])
-	assert.Contains(t, exportedAliases["dev"], "--agent dev")
+	assert.NotContains(t, exportedAliases, "go", "shipped default is not exported")
 	for key, val := range initFile {
 		assert.Equal(t, val, exported[key], "export must not disturb init-written key %q", key)
 	}
 
-	// --- delete removes the user alias; the dispatch surface drops it.
-	_, _, err = runCLI(t, "alias", "delete", "ver")
+	// --- delete removes the alias from EVERY file that defines it (user
+	// config-dir file from set, project file from export) in one call.
+	stdout, _, err = runCLI(t, "alias", "delete", "ver")
 	require.NoError(t, err)
+	assert.Contains(t, stdout, "Wrote "+projectFile)
+	assert.Contains(t, stdout, "Wrote "+userConfigFile)
 	_, _, err = runCLI(t, "ver")
 	require.Error(t, err, "deleted alias no longer dispatches")
 
-	// --- import deliberately re-adopts the project-shared alias.
-	stdout, _, err = runCLI(t, "alias", "import")
-	require.NoError(t, err)
-	assert.Contains(t, stdout, "1 added")
+	afterDelete := readYAMLFile(t, projectFile)
+	if aliasesAfter, ok := afterDelete["aliases"].(map[string]any); ok {
+		assert.NotContains(t, aliasesAfter, "ver", "delete cleared the project file entry")
+	}
 
-	stdout, _, err = runCLI(t, "ver")
+	// --- a teammate-committed alias living ONLY in the project file applies
+	// automatically — all config layers are live, no adoption step.
+	afterDelete["aliases"] = map[string]any{"team": "version"}
+	teamData, err := yaml.Marshal(afterDelete)
 	require.NoError(t, err)
-	assert.Contains(t, stdout, "9.9.9-test", "imported alias dispatches again")
+	require.NoError(t, os.WriteFile(projectFile, teamData, 0o644))
 
-	// --- delete the shipped default: disabled (empty value), not removed.
-	_, _, err = runCLI(t, "alias", "delete", "dev")
+	stdout, _, err = runCLI(t, "team")
 	require.NoError(t, err)
-	settings = readYAMLFile(t, settingsFile)
-	aliases, ok = settings["aliases"].(map[string]any)
+	assert.Contains(t, stdout, "9.9.9-test", "project-file alias dispatches without any import step")
+
+	// --- delete the shipped default: disabled (empty value in the user
+	// config-dir file), not removed.
+	_, _, err = runCLI(t, "alias", "delete", "go")
+	require.NoError(t, err)
+	userFile = readYAMLFile(t, userConfigFile)
+	userAliases, ok = userFile["aliases"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "", aliases["dev"], "default alias disabled via empty expansion")
+	assert.Equal(t, "", userAliases["go"], "default alias disabled via empty expansion")
 	stdout, _, err = runCLI(t, "--help")
 	require.NoError(t, err)
 	assert.NotContains(t, stdout, "Alias for \"run --rm", "disabled default no longer registers")

@@ -8,7 +8,7 @@ Root CLI command, global flags, logger initialization, and top-level aliases.
 |------|---------|
 | `root.go` | `NewCmdRoot(f, version, buildDate)` — root command with global flags and subcommand registration |
 | `aliases.go` | `Alias` type, `registerBuiltinAliases()`, `topLevelAliases` — hardcoded top-level command shortcuts (Docker CLI pattern) |
-| `useraliases.go` | `registerUserAliases()`, `expandAlias()`, `AnnotationAliasExpansion` — user-configured aliases from settings |
+| `useraliases.go` | `registerUserAliases()`, `expandAlias()`, `AnnotationAliasExpansion` — user-configured aliases from the merged project config |
 
 ## Key Symbols
 
@@ -29,7 +29,7 @@ Currently a no-op (`return nil`). Cobra error/usage output is silenced globally 
 - **Top-level:** `init` (alias for `project init`), `project`, `settings`, `skill`, `monitor`, `generate`, `version`
 - **Management:** `alias`, `auth`, `container`, `controlplane`, `firewall`, `image`, `volume`, `network`, `worktree`
 - **Hidden internal:** `hostproxy`, `bridge`
-- **User aliases:** registered last from `cfg.Settings().Aliases` (see below)
+- **User aliases:** registered last from `cfg.Project().Aliases` (merged across all project config layers; see below)
 
 ## Testing
 
@@ -48,7 +48,7 @@ func registerBuiltinAliases(root *cobra.Command, f *cmdutil.Factory)
 
 ## User Aliases (`useraliases.go`)
 
-User-configured aliases from `settings.yaml` (`Settings.Aliases`), gh-CLI-shaped:
+User-configured aliases from the merged project config (`Project.Aliases` — walk-up files > user config-dir `clawker.yaml` > shipped defaults), gh-CLI-shaped:
 
 ```go
 func registerUserAliases(root *cobra.Command, f *cmdutil.Factory)   // never fails root construction
@@ -62,9 +62,9 @@ Behavior contract:
 
 - Called LAST in `NewCmdRoot` — existing commands always win name collisions (skipped with a debug log).
 - Each alias is a cobra command with `DisableFlagParsing: true`; RunE expands placeholders, shlex-splits, appends extra args, then `root.SetArgs(expanded); root.Execute()`.
-- Empty/whitespace expansion = disabled alias (the union-merged defaults layer keeps keys present; `dev: ""` turns off the shipped default).
+- Empty/whitespace expansion = disabled alias (the union-merged defaults layer keeps keys present; `go: ""` turns off the shipped default).
 - Cyclic alias chains are detected at registration (first-token walk with a seen-set) and skipped.
 - nil `f.Config` (gen-docs builds root with a bare Factory) or a config load error skips registration without failing root construction.
-- Shipped default: `dev` → `run --rm -it --agent dev @ --dangerously-skip-permissions` (default tag on `Settings.Aliases`).
+- Shipped default: `go` → `run --rm -it --agent $1 @ --dangerously-skip-permissions` (default tag on `Project.Aliases`).
 
 The `clawker alias` command group (`internal/cmd/alias/`) manages these; root wires its shadow-builtin validator as a closure over `builtinCommandExists`.

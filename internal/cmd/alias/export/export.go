@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/schmitthub/clawker/internal/cmd/alias/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
@@ -16,8 +17,6 @@ import (
 type ExportOptions struct {
 	IOStreams *iostreams.IOStreams
 	Config    func() (config.Config, error)
-
-	Clobber bool
 }
 
 // NewCmdExport creates the `clawker alias export` command.
@@ -32,19 +31,14 @@ func NewCmdExport(f *cmdutil.Factory, runF func(context.Context, *ExportOptions)
 		Short: "Export aliases to the project config",
 		Long: `Export active command aliases into the project config's aliases key.
 
-Writes the current alias set (disabled aliases excluded) into the
-project's shared config file so teammates can adopt them with
-'clawker alias import'. Local override files are never the target.
-Aliases already present in the project config are kept unless
---clobber is given.
-
-The project config's aliases key is a sharing vehicle only — project
-aliases are never applied automatically.`,
+Writes the current alias set into the most local project config file
+discovered in the walk-up, so the aliases are version-controlled with
+the project. Export never creates a new file — it requires an existing
+project config (see 'clawker init'). Disabled aliases and shipped
+defaults are not exported, and entries the target file already
+provides are left as they are.`,
 		Example: `  # Share your aliases with the team
-  clawker alias export
-
-  # Overwrite existing project aliases
-  clawker alias export --clobber`,
+  clawker alias export`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if runF != nil {
@@ -53,8 +47,6 @@ aliases are never applied automatically.`,
 			return exportRun(cmd.Context(), opts)
 		},
 	}
-
-	cmd.Flags().BoolVar(&opts.Clobber, "clobber", false, "Overwrite aliases already in the project config")
 
 	return cmd
 }
@@ -73,60 +65,39 @@ func exportRun(_ context.Context, opts *ExportOptions) error {
 		return err
 	}
 
-	active := cfg.Settings().Aliases
+	// Collect aliases worth publishing: skip disabled entries, shipped
+	// defaults (never baked into project files), and entries whose winning
+	// value already lives in the target itself.
+	active := cfg.Project().Aliases
+	exported := make(map[string]string, len(active))
 	names := make([]string, 0, len(active))
 	for name, expansion := range active {
 		if expansion == "" {
 			continue // disabled
 		}
+		winner, ok := cfg.ProjectStore().Provenance(shared.AliasFieldPath(name))
+		if !ok || winner.Path == "" {
+			continue // shipped default — never published into project files
+		}
+		if shared.SamePath(winner.Path, target) {
+			continue // target already provides this value
+		}
+		exported[name] = expansion
 		names = append(names, name)
 	}
 	if len(names) == 0 {
-		fmt.Fprintln(ios.ErrOut, "No active aliases to export.")
+		fmt.Fprintln(ios.ErrOut, "No aliases to export.")
 		return nil
 	}
 	sort.Strings(names)
 
-	// Write through an isolated store on the target file so only alias
-	// entries land in it (see shared.OpenExportStore).
-	store, err := shared.OpenExportStore(target)
-	if err != nil {
+	if err := shared.WriteAliases(ios.Out, target, func(m map[string]string) {
+		for name, expansion := range exported {
+			m[name] = expansion
+		}
+	}); err != nil {
 		return err
 	}
-	existing := store.Read().Aliases
-	exported := make(map[string]string, len(names))
-	var added, overwritten, skipped int
-	for _, name := range names {
-		if _, exists := existing[name]; exists {
-			if !opts.Clobber {
-				fmt.Fprintf(ios.ErrOut, "%s Skipping %q: already in the project config (use --clobber to overwrite)\n", cs.WarningIcon(), name)
-				skipped++
-				continue
-			}
-			overwritten++
-		} else {
-			added++
-		}
-		exported[name] = active[name]
-	}
-
-	if len(exported) > 0 {
-		if err := store.Set(func(p *config.Project) {
-			if p.Aliases == nil {
-				p.Aliases = make(map[string]string)
-			}
-			for name, expansion := range exported {
-				p.Aliases[name] = expansion
-			}
-		}); err != nil {
-			return fmt.Errorf("updating project config: %w", err)
-		}
-		if err := store.WriteTo(target); err != nil {
-			return fmt.Errorf("saving project config: %w", err)
-		}
-	}
-
-	fmt.Fprintf(ios.Out, "%s Exported %d alias(es) to %s: %d added, %d overwritten, %d skipped\n",
-		cs.SuccessIcon(), len(exported), target, added, overwritten, skipped)
+	fmt.Fprintf(ios.Out, "%s Exported %d alias(es): %s\n", cs.SuccessIcon(), len(names), strings.Join(names, ", "))
 	return nil
 }

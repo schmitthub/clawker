@@ -14,7 +14,10 @@ The expansion is appended to 'clawker' in place of the alias name; any
 extra arguments are appended after it. Use $1..$N in the expansion to
 place positional arguments explicitly.
 
-Aliases are stored in user settings (settings.yaml). An alias cannot
+Aliases are written to the user-level project config in the clawker
+config directory. Project config files closer to the working directory
+take precedence on name collisions; use 'clawker alias export' to
+publish an alias into the project's own config file. An alias cannot
 shadow an existing clawker command. Overwriting an existing alias
 requires --clobber.
 
@@ -32,7 +35,7 @@ clawker alias set <alias> <expansion> [flags]
   clawker alias set lg "logs $1 --tail $2"
 
   # Overwrite an existing alias
-  clawker alias set dev "run --rm -it --agent dev @" --clobber
+  clawker alias set go "run --rm -it --agent go @" --clobber
 ```
 
 ### Options

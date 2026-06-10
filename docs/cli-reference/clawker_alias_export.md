@@ -10,14 +10,12 @@ Export aliases to the project config
 
 Export active command aliases into the project config's aliases key.
 
-Writes the current alias set (disabled aliases excluded) into the
-project's shared config file so teammates can adopt them with
-'clawker alias import'. Local override files are never the target.
-Aliases already present in the project config are kept unless
---clobber is given.
-
-The project config's aliases key is a sharing vehicle only — project
-aliases are never applied automatically.
+Writes the current alias set into the most local project config file
+discovered in the walk-up, so the aliases are version-controlled with
+the project. Export never creates a new file — it requires an existing
+project config (see 'clawker init'). Disabled aliases and shipped
+defaults are not exported, and entries the target file already
+provides are left as they are.
 
 ```
 clawker alias export [flags]
@@ -28,16 +26,12 @@ clawker alias export [flags]
 ```
   # Share your aliases with the team
   clawker alias export
-
-  # Overwrite existing project aliases
-  clawker alias export --clobber
 ```
 
 ### Options
 
 ```
-      --clobber   Overwrite aliases already in the project config
-  -h, --help      help for export
+  -h, --help   help for export
 ```
 
 ### Options inherited from parent commands

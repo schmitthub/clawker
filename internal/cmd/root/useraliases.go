@@ -21,8 +21,10 @@ var placeholderPattern = regexp.MustCompile(`\$(\d+)`)
 // alias command's raw expansion string.
 const AnnotationAliasExpansion = "alias-expansion"
 
-// registerUserAliases registers user-configured aliases from settings as
-// top-level commands. It must be called after every real command is
+// registerUserAliases registers user-configured aliases from the merged
+// project config (all layers: walk-up files, the user config-dir file, and
+// shipped defaults) as top-level commands. It must be called after every
+// real command is
 // registered, because existing commands always win name collisions.
 //
 // It never fails root construction: a nil Config closure (e.g. docs
@@ -40,7 +42,7 @@ func registerUserAliases(root *cobra.Command, f *cmdutil.Factory) {
 		return
 	}
 
-	aliases := cfg.Settings().Aliases
+	aliases := cfg.Project().Aliases
 	names := make([]string, 0, len(aliases))
 	for name := range aliases {
 		names = append(names, name)

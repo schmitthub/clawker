@@ -83,14 +83,14 @@ func TestExpandAlias(t *testing.T) {
 	}
 }
 
-func newAliasTestFactory(t *testing.T, settingsYAML string) *cmdutil.Factory {
+func newAliasTestFactory(t *testing.T, projectYAML string) *cmdutil.Factory {
 	t.Helper()
 	tio, _, _, _ := iostreams.Test()
 	return &cmdutil.Factory{
 		IOStreams: tio,
 		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
 		Config: func() (config.Config, error) {
-			return configmocks.NewFromString("", settingsYAML), nil
+			return configmocks.NewFromString(projectYAML, ""), nil
 		},
 	}
 }

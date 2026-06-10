@@ -17,7 +17,7 @@ type Project struct {
 	Agent     AgentConfig       `yaml:"agent"`
 	Workspace WorkspaceConfig   `yaml:"workspace"`
 	Security  SecurityConfig    `yaml:"security"`
-	Aliases   map[string]string `yaml:"aliases,omitempty" label:"Aliases" desc:"Command aliases shared with the team via 'clawker alias import' and 'clawker alias export'; never applied automatically" merge:"union"`
+	Aliases   map[string]string `yaml:"aliases,omitempty" label:"Aliases" desc:"Command aliases expanded before execution; the value is appended to 'clawker' and supports $1..$N placeholders; an empty value disables an alias; merged across all config layers" merge:"union" default:"go=run --rm -it --agent $1 @ --dangerously-skip-permissions"`
 }
 
 // Fields implements [storage.Schema] for Project.
@@ -315,7 +315,6 @@ type Settings struct {
 	Firewall     FirewallSettings     `yaml:"firewall,omitempty"`
 	ControlPlane ControlPlaneSettings `yaml:"control_plane,omitempty"`
 	Docker       DockerSettings       `yaml:"docker,omitempty"`
-	Aliases      map[string]string    `yaml:"aliases,omitempty" label:"Aliases" desc:"Command aliases expanded before execution; the value is appended to 'clawker' and supports $1..$N placeholders; an empty value disables an alias" merge:"union" default:"dev=run --rm -it --agent dev @ --dangerously-skip-permissions"`
 }
 
 // DockerSettings configures host Docker access. Per-project Docker

@@ -73,28 +73,29 @@ func TestExportTarget(t *testing.T) {
 		return mock
 	}
 
-	t.Run("prefers shared project file over local variant", func(t *testing.T) {
+	t.Run("most local highest-priority file wins, local variant included", func(t *testing.T) {
 		proj := t.TempDir()
-		shared := write(t, proj, ".clawker.yaml")
-		write(t, proj, ".clawker.local.yaml")
+		write(t, proj, ".clawker.yaml")
+		local := write(t, proj, ".clawker.local.yaml")
 
 		got, err := ExportTarget(newCfg(t, proj))
 		require.NoError(t, err)
-		assert.Equal(t, shared, got)
+		assert.Equal(t, local, got)
 	})
 
-	t.Run("only local variant present errors", func(t *testing.T) {
+	t.Run("only local variant present is a valid target", func(t *testing.T) {
 		proj := t.TempDir()
-		write(t, proj, ".clawker.local.yaml")
+		local := write(t, proj, ".clawker.local.yaml")
 
-		_, err := ExportTarget(newCfg(t, proj))
-		assert.ErrorContains(t, err, "no shared project config")
+		got, err := ExportTarget(newCfg(t, proj))
+		require.NoError(t, err)
+		assert.Equal(t, local, got)
 	})
 
 	t.Run("user-level config-dir file is not a target", func(t *testing.T) {
 		write(t, configDir, "clawker.yaml")
 
 		_, err := ExportTarget(newCfg(t))
-		assert.ErrorContains(t, err, "no shared project config")
+		assert.ErrorContains(t, err, "no project config found")
 	})
 }

@@ -16,41 +16,48 @@ import (
 )
 
 // newExportEnv builds a project dir with a sparse .clawker.yaml — standing
-// in for an init-written file that predates newer schema fields — and a
-// config whose project store discovers it and whose settings carry the
-// given aliases. The sparse file is what makes the surgical-write contract
-// observable: export must not backfill the missing fields.
-func newExportEnv(t *testing.T, settingsAliases map[string]string) (config.Config, string) {
+// in for an init-written file that predates newer schema fields — plus a
+// user config-dir clawker.yaml carrying the given aliases, and a config
+// whose project store discovers both over the shipped defaults. The sparse
+// file is what makes the surgical-write contract observable: export must
+// not backfill the missing fields.
+func newExportEnv(t *testing.T, userAliasesYAML, targetYAML string) (config.Config, string) {
 	t.Helper()
-	t.Setenv("CLAWKER_CONFIG_DIR", t.TempDir())
+	configDir := t.TempDir()
+	t.Setenv("CLAWKER_CONFIG_DIR", configDir)
+	if userAliasesYAML != "" {
+		require.NoError(t, os.WriteFile(filepath.Join(configDir, "clawker.yaml"), []byte(userAliasesYAML), 0o644))
+	}
 
 	proj := t.TempDir()
 	target := filepath.Join(proj, ".clawker.yaml")
-	require.NoError(t, os.WriteFile(target, []byte("build:\n  image: node:20-slim\n"), 0o644))
+	require.NoError(t, os.WriteFile(target, []byte(targetYAML), 0o644))
 
-	store, err := storage.New[config.Project]("",
+	store, err := storage.New[config.Project](storage.GenerateDefaultsYAML[config.Project](),
 		storage.WithFilenames("clawker.local.yaml", "clawker.yaml"),
 		storage.WithDirs(proj),
+		storage.WithConfigDir(),
 	)
 	require.NoError(t, err)
 
-	settings := &config.Settings{Aliases: settingsAliases}
 	mock := configmocks.NewBlankConfig()
 	mock.ProjectStoreFunc = func() *storage.Store[config.Project] { return store }
-	mock.SettingsFunc = func() *config.Settings { return settings }
+	mock.ProjectFunc = func() *config.Project { return store.Read() }
 	return mock, target
 }
 
-func executeExport(t *testing.T, cfg config.Config, args ...string) error {
+func executeExport(t *testing.T, cfg config.Config, args ...string) (stdout string, err error) {
 	t.Helper()
-	tio, _, _, _ := iostreams.Test()
+	tio, _, out, _ := iostreams.Test()
 	f := &cmdutil.Factory{
 		IOStreams: tio,
 		Config:    func() (config.Config, error) { return cfg, nil },
 	}
 	cmd := NewCmdExport(f, nil)
 	cmd.SetArgs(args)
-	return cmd.Execute()
+	cmd.SetOut(out)
+	err = cmd.Execute()
+	return out.String(), err
 }
 
 func readYAML(t *testing.T, path string) map[string]any {
@@ -64,11 +71,10 @@ func readYAML(t *testing.T, path string) map[string]any {
 
 func TestExportRun(t *testing.T) {
 	t.Run("writes only alias entries, preserves file content", func(t *testing.T) {
-		cfg, target := newExportEnv(t, map[string]string{
-			"v":   "version",
-			"off": "", // disabled — never exported
-		})
-		require.NoError(t, executeExport(t, cfg))
+		cfg, target := newExportEnv(t, "aliases:\n  v: version\n  off: \"\"\n", "build:\n  image: node:20-slim\n")
+		stdout, err := executeExport(t, cfg)
+		require.NoError(t, err)
+		assert.Contains(t, stdout, "Wrote "+target)
 
 		m := readYAML(t, target)
 		aliases, ok := m["aliases"].(map[string]any)
@@ -76,6 +82,8 @@ func TestExportRun(t *testing.T) {
 		assert.Equal(t, "version", aliases["v"])
 		_, hasOff := aliases["off"]
 		assert.False(t, hasOff, "disabled aliases are not exported")
+		_, hasGo := aliases["go"]
+		assert.False(t, hasGo, "shipped defaults are not exported")
 
 		build, ok := m["build"].(map[string]any)
 		require.True(t, ok, "existing file content must survive")
@@ -85,17 +93,27 @@ func TestExportRun(t *testing.T) {
 		assert.False(t, hasAgent, "schema defaults must not be materialized into the project file")
 	})
 
-	t.Run("existing project alias kept unless clobber", func(t *testing.T) {
-		cfg, target := newExportEnv(t, map[string]string{"v": "version --short"})
-		// The export store opens the target at run time, so rewriting the
-		// file after env construction is visible to the command.
-		require.NoError(t, os.WriteFile(target, []byte("aliases:\n  v: version\n"), 0o644))
+	t.Run("entries the target already provides are untouched", func(t *testing.T) {
+		// The target itself defines v — it is the merged winner, so export
+		// only adds w and leaves v exactly as written.
+		cfg, target := newExportEnv(t, "aliases:\n  w: version\n", "aliases:\n  v: version\n")
 
-		require.NoError(t, executeExport(t, cfg))
-		assert.Equal(t, "version", readYAML(t, target)["aliases"].(map[string]any)["v"])
+		_, err := executeExport(t, cfg)
+		require.NoError(t, err)
+		aliases := readYAML(t, target)["aliases"].(map[string]any)
+		assert.Equal(t, "version", aliases["v"])
+		assert.Equal(t, "version", aliases["w"])
+	})
 
-		require.NoError(t, executeExport(t, cfg, "--clobber"))
-		assert.Equal(t, "version --short", readYAML(t, target)["aliases"].(map[string]any)["v"])
+	t.Run("nothing to export reports and writes nothing", func(t *testing.T) {
+		cfg, target := newExportEnv(t, "", "build:\n  image: node:20-slim\n")
+		stdout, err := executeExport(t, cfg)
+		require.NoError(t, err)
+		assert.NotContains(t, stdout, "Wrote")
+
+		m := readYAML(t, target)
+		_, hasAliases := m["aliases"]
+		assert.False(t, hasAliases, "no aliases key written")
 	})
 
 	t.Run("no project config errors", func(t *testing.T) {
@@ -105,7 +123,7 @@ func TestExportRun(t *testing.T) {
 		mock := configmocks.NewBlankConfig()
 		mock.ProjectStoreFunc = func() *storage.Store[config.Project] { return store }
 
-		err = executeExport(t, mock)
-		assert.ErrorContains(t, err, "no shared project config")
+		_, err = executeExport(t, mock)
+		assert.ErrorContains(t, err, "no project config found")
 	})
 }

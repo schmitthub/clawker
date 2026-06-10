@@ -4,11 +4,13 @@ package shared
 
 import (
 	"fmt"
+	"io"
 	"path/filepath"
 	"strings"
 
 	"github.com/google/shlex"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/storage"
 )
 
@@ -67,19 +69,27 @@ func ValidateExpansionTarget(name, expansion string, validCommand ValidCommandFu
 }
 
 // DefaultAliases returns the shipped default alias map (the defaults layer
-// of user settings, independent of any files on disk).
+// of the project config, independent of any files on disk).
 func DefaultAliases() (map[string]string, error) {
 	cfg, err := config.NewBlankConfig()
 	if err != nil {
-		return nil, fmt.Errorf("loading default settings: %w", err)
+		return nil, fmt.Errorf("loading default config: %w", err)
 	}
-	return cfg.Settings().Aliases, nil
+	return cfg.Project().Aliases, nil
+}
+
+// SetTarget resolves the file that alias set writes to: the user-level
+// project config in the clawker config directory (the base config file
+// layer). The file is created on first write if missing.
+func SetTarget() (string, error) {
+	return consts.UserProjectConfigFilePath()
 }
 
 // ExportTarget resolves the project config file that alias export writes
-// to: the highest-priority discovered project layer that is shared —
-// i.e. not a local override variant and not the user-level project config
-// in the clawker config directory.
+// to: the most local, highest-priority discovered project layer in the
+// walk-up. Export never creates files — only already-discovered layers
+// qualify — and the user-level project config in the clawker config
+// directory is not a walk-up layer.
 func ExportTarget(cfg config.Config) (string, error) {
 	configDir := filepath.Clean(config.ConfigDir())
 	for _, layer := range cfg.ProjectStore().Layers() {
@@ -90,22 +100,19 @@ func ExportTarget(cfg config.Config) (string, error) {
 		if filepath.Dir(path) == configDir {
 			continue // user-level project config, not the project's
 		}
-		if strings.Contains(filepath.Base(path), ".local.") {
-			continue // local override — never the sharing target
-		}
 		return path, nil
 	}
-	return "", fmt.Errorf("no shared project config found; run inside a clawker project (see 'clawker init')")
+	return "", fmt.Errorf("no project config found in the walk-up; run inside a clawker project (see 'clawker init')")
 }
 
-// OpenExportStore opens an isolated store on the export target file only —
-// no defaults layer, no walk-up, no user-level merging. This scopes export's
-// write to exactly the alias entries: the composite project store marks every
+// OpenFileStore opens an isolated store on a single project config file —
+// no defaults layer, no walk-up, no user-level merging. This scopes a write
+// to exactly the alias entries: the composite project store marks every
 // defaults-provenance field dirty at construction (how init/bootstrap
 // materializes defaults), so a write through it would also backfill any
 // schema fields the file doesn't carry — fine for init, surprising as a side
 // effect of an alias command.
-func OpenExportStore(target string) (*storage.Store[config.Project], error) {
+func OpenFileStore(target string) (*storage.Store[config.Project], error) {
 	store, err := storage.New[config.Project]("",
 		storage.WithPaths(filepath.Dir(target)),
 		storage.WithFilenames(filepath.Base(target)),
@@ -114,4 +121,58 @@ func OpenExportStore(target string) (*storage.Store[config.Project], error) {
 		return nil, fmt.Errorf("opening project config %s: %w", target, err)
 	}
 	return store, nil
+}
+
+// AliasFieldPath returns the dotted store path for one alias entry,
+// e.g. "aliases.go" — the key used in provenance and layer lookups.
+func AliasFieldPath(name string) string {
+	return "aliases." + name
+}
+
+// SamePath reports whether a and b denote the same file after cleaning.
+func SamePath(a, b string) bool {
+	return filepath.Clean(a) == filepath.Clean(b)
+}
+
+// WriteAliases applies mutate to the isolated store on path (see
+// OpenFileStore), persists it, and reports the write on out. mutate
+// receives a non-nil aliases map.
+func WriteAliases(out io.Writer, path string, mutate func(map[string]string)) error {
+	store, err := OpenFileStore(path)
+	if err != nil {
+		return err
+	}
+	if err := store.Set(func(p *config.Project) {
+		if p.Aliases == nil {
+			p.Aliases = make(map[string]string)
+		}
+		mutate(p.Aliases)
+	}); err != nil {
+		return fmt.Errorf("updating %s: %w", path, err)
+	}
+	if err := store.WriteTo(path); err != nil {
+		return fmt.Errorf("saving %s: %w", path, err)
+	}
+	fmt.Fprintf(out, "Wrote %s\n", path)
+	return nil
+}
+
+// LayersContaining returns the absolute paths of every discovered file
+// layer whose raw data carries an entry for the alias, ordered highest
+// priority first. Defaults (virtual) layers are excluded.
+func LayersContaining(cfg config.Config, name string) []string {
+	var paths []string
+	for _, layer := range cfg.ProjectStore().Layers() {
+		if layer.Path == "" {
+			continue // defaults / string-backed layer
+		}
+		aliases, ok := layer.Data["aliases"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if _, ok := aliases[name]; ok {
+			paths = append(paths, layer.Path)
+		}
+	}
+	return paths
 }
