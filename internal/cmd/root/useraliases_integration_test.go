@@ -170,15 +170,11 @@ func TestAliasLifecycle_Integration(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, stdout, "9.9.9-test", "project-file alias dispatches without any import step")
 
-	// --- delete the shipped default: disabled (empty value in the user
-	// config-dir file), not removed.
+	// --- shipped defaults are immutable: delete with no file entries
+	// errors and the default keeps registering.
 	_, _, err = runCLI(t, "alias", "delete", "go")
-	require.NoError(t, err)
-	userFile = readYAMLFile(t, userConfigFile)
-	userAliases, ok = userFile["aliases"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "", userAliases["go"], "default alias disabled via empty expansion")
+	require.ErrorContains(t, err, "shipped default")
 	stdout, _, err = runCLI(t, "--help")
 	require.NoError(t, err)
-	assert.NotContains(t, stdout, "Alias for \"run --rm", "disabled default no longer registers")
+	assert.Contains(t, stdout, "Alias for \"run --rm", "default still registers")
 }

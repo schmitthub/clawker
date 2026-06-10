@@ -62,7 +62,7 @@ Behavior contract:
 
 - Called LAST in `NewCmdRoot` — existing commands always win name collisions (skipped with a debug log).
 - Each alias is a cobra command with `DisableFlagParsing: true`; RunE expands placeholders, shlex-splits, appends extra args, then `root.SetArgs(expanded); root.Execute()`.
-- Empty/whitespace expansion = disabled alias (the union-merged defaults layer keeps keys present; `go: ""` turns off the shipped default).
+- Empty/whitespace expansion = invalid entry, skipped like multiword names.
 - Cyclic alias chains are detected at registration (first-token walk with a seen-set) and skipped.
 - nil `f.Config` (gen-docs builds root with a bare Factory) or a config load error skips registration without failing root construction.
 - Shipped defaults (default tag on `Project.Aliases`): `go` → `run --rm -it --agent $1 @ --dangerously-skip-permissions`; `wt` → `container run --rm -it --agent $1 --worktree $2:main @ --dangerously-skip-permissions`.

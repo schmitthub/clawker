@@ -282,7 +282,7 @@ security:
     forward_gpg: <boolean>  # default: true | required: false
     # Sync your host .gitconfig (aliases, user.name, user.email) into the container
     copy_git_config: <boolean>  # default: true | required: false
-# Command aliases expanded before execution; the value is appended to 'clawker' and supports $1..$N placeholders; an empty value disables an alias; merged across all config layers
+# Command aliases expanded before execution; the value is appended to 'clawker' and supports $1..$N placeholders; merged across all config layers
 aliases:  # default: go=run --rm -it --agent $1 @ --dangerously-skip-permissions,wt=container run --rm -it --agent $1 --worktree $2:main @ --dangerously-skip-permissions | required: false
   <key>: <value>
 
@@ -394,7 +394,7 @@ The following tables are auto-generated from the schema struct tags in `internal
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `aliases` | key-value map | `go=run --rm -it --agent $1 @ --dangerously-skip-permissions,wt=container run --rm -it --agent $1 --worktree $2:main @ --dangerously-skip-permissions` | Command aliases expanded before execution; the value is appended to 'clawker' and supports $1..$N placeholders; an empty value disables an alias; merged across all config layers |
+| `aliases` | key-value map | `go=run --rm -it --agent $1 @ --dangerously-skip-permissions,wt=container run --rm -it --agent $1 --worktree $2:main @ --dangerously-skip-permissions` | Command aliases expanded before execution; the value is appended to 'clawker' and supports $1..$N placeholders; merged across all config layers |
 
 
 ## Interactive Editing
@@ -650,7 +650,7 @@ Every command that writes a file prints the absolute path it wrote. `clawker ali
 Rules and limitations:
 
 - An alias can never shadow a built-in command — the real command always wins.
-- Setting an alias's value to an empty string disables it. This is also how `clawker alias delete` turns off a shipped default, since defaults can't be removed outright.
+- Shipped defaults cannot be deleted — only overridden (`clawker alias set <name> <expansion> --clobber`). Deleting an override restores the default.
 - An alias may expand to another alias, but cyclic chains are skipped at startup.
 - Shell-style aliases (running arbitrary shell commands) are not supported — expansions always invoke clawker commands.
 - Because the alias command disables flag parsing, even `--help` is forwarded into the expansion.

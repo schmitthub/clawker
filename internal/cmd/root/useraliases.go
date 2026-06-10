@@ -53,9 +53,8 @@ func registerUserAliases(root *cobra.Command, f *cmdutil.Factory) {
 		expansion := aliases[name]
 		switch {
 		case strings.TrimSpace(expansion) == "":
-			// Empty expansion disables an alias (the only way to turn off a
-			// defaults-layer alias, since union merge keeps the key present).
-			log.Debug().Str("alias", name).Msg("user alias disabled: empty expansion")
+			// Nothing to execute — skip, like any other invalid entry.
+			log.Debug().Str("alias", name).Msg("user alias skipped: empty expansion")
 		case shared.ValidateName(name) != nil:
 			// Match alias set/import write-time validation: rejects multi-word,
 			// padded, and "-"-prefixed names. A padded key like "run " would

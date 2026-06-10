@@ -17,8 +17,9 @@ import (
 // defaults layer (no file provenance).
 const sourceDefault = "default"
 
-// disabledDisplay marks an alias whose expansion is empty (disabled).
-const disabledDisplay = "(disabled)"
+// emptyDisplay marks an alias whose expansion is empty — nothing to
+// execute, so the loader skips it.
+const emptyDisplay = "(empty)"
 
 // ListOptions holds dependencies for the alias list command.
 type ListOptions struct {
@@ -46,11 +47,6 @@ func NewCmdList(f *cmdutil.Factory, runF func(context.Context, *ListOptions) err
 		Use:     "list",
 		Aliases: []string{"ls"},
 		Short:   "List configured command aliases",
-		Long: `Lists all configured command aliases with their expansions.
-
-The SOURCE column shows the config file providing the winning value,
-or "default" for shipped defaults. An alias with an empty expansion
-is disabled.`,
 		Example: `  # List aliases
   clawker alias list
 
@@ -106,7 +102,7 @@ func listRun(_ context.Context, opts *ListOptions) error {
 		for _, r := range rows {
 			expansion := r.Expansion
 			if expansion == "" {
-				expansion = cs.Muted(disabledDisplay)
+				expansion = cs.Muted(emptyDisplay)
 			}
 			tp.AddRow(r.Name, expansion, r.Source)
 		}

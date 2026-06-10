@@ -242,7 +242,7 @@ Every command that writes a file prints the absolute path it wrote. `clawker ali
 Rules and limitations:
 
 - An alias can never shadow a built-in command — the real command always wins.
-- Setting an alias's value to an empty string disables it. This is also how `clawker alias delete` turns off a shipped default, since defaults can't be removed outright.
+- Shipped defaults cannot be deleted — only overridden (`clawker alias set <name> <expansion> --clobber`). Deleting an override restores the default.
 - An alias may expand to another alias, but cyclic chains are skipped at startup.
 - Shell-style aliases (running arbitrary shell commands) are not supported — expansions always invoke clawker commands.
 - Because the alias command disables flag parsing, even `--help` is forwarded into the expansion.

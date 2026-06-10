@@ -65,31 +65,24 @@ func TestDeleteRun(t *testing.T) {
 		assert.ErrorContains(t, err, "no alias")
 	})
 
-	t.Run("default alias is disabled not removed, second delete errors", func(t *testing.T) {
+	t.Run("shipped default with no file entries cannot be deleted", func(t *testing.T) {
 		testenv.New(t)
-		stdout, err := executeDelete(t, "go")
-		require.NoError(t, err)
-		assert.Contains(t, stdout, "Disabled default alias")
-
-		expansion, exists := loadAliases(t)["go"]
-		assert.True(t, exists, "default alias key must survive (union merge)")
-		assert.Empty(t, expansion, "default alias should be disabled via empty expansion")
-
-		_, err = executeDelete(t, "go")
-		assert.ErrorContains(t, err, "already disabled")
+		_, err := executeDelete(t, "go")
+		assert.ErrorContains(t, err, "shipped default")
+		assert.ErrorContains(t, err, "--clobber", "error points at overriding instead")
 	})
 
-	t.Run("overridden default is cleared from the file and disabled", func(t *testing.T) {
+	t.Run("deleting an override restores the shipped default", func(t *testing.T) {
 		env := testenv.New(t)
 		path := seedUserAliases(t, env, "aliases:\n  go: version\n")
 
 		stdout, err := executeDelete(t, "go")
 		require.NoError(t, err)
 		assert.Contains(t, stdout, "Wrote "+path)
-		assert.Contains(t, stdout, "Disabled default alias")
+		assert.Contains(t, stdout, "shipped default \"go\" restored")
 
 		expansion, exists := loadAliases(t)["go"]
-		assert.True(t, exists, "defaults-layer key survives")
-		assert.Empty(t, expansion, "override replaced by the disabling empty expansion")
+		assert.True(t, exists, "defaults-layer value resurfaces")
+		assert.Contains(t, expansion, "--agent $1", "merged value is the shipped default again")
 	})
 }

@@ -8,7 +8,7 @@ Expansion/registration itself lives in `internal/cmd/root/useraliases.go`; this 
 
 - **One home**: `Project.Aliases` (`merge:"union"`, shipped defaults `go` + `wt`). Active aliases are the merged `aliases` key across ALL project config layers — walk-up files (closest to CWD wins) > user-level `clawker.yaml` in the config dir > shipped defaults. The root command registers from this merged view; project-file aliases apply automatically.
 - **Write targets**: `set` always writes the user config-dir `clawker.yaml` (`shared.SetTarget`); `export` writes the most local discovered walk-up file (`shared.ExportTarget`, never creates files); `delete` removes the entry from EVERY file layer that carries it (`shared.LayersContaining`) so one delete clears the name. Every file write prints `Wrote <abs path>`.
-- Disabling: empty-string expansion. Union merge keeps defaults-layer keys present, so `delete` on a shipped default writes `""` to the user config-dir file instead of removing the key.
+- Shipped defaults are immutable: `delete` operates on file entries only — deleting an override restores the default; a pure default errors (override with `set --clobber` instead). There is NO disable/masking concept; an empty-string value is just an invalid entry the loader skips.
 - There is no `alias import` — with all layers live, adoption is automatic.
 
 ## Files
@@ -19,8 +19,8 @@ Expansion/registration itself lives in `internal/cmd/root/useraliases.go`; this 
 | `shared/shared.go` | `ValidCommandFunc`, `ValidateName`, `SplitExpansion`, `ValidateExpansionTarget`, `DefaultAliases`, `SetTarget`, `ExportTarget`, `OpenFileStore`, `AliasFieldPath`, `LayersContaining` |
 | `set/set.go` | `alias set <name> <expansion> [--clobber]` — validates name (no builtin shadowing) + expansion target, writes the user config-dir file; warns when a walk-up layer shadows the new value |
 | `list/list.go` | `alias list` — NAME/EXPANSION/SOURCE table (SOURCE = providing file path via store provenance, or `default`), `--json`/`--format`/`-q` |
-| `delete/delete.go` | `alias delete <name>` (alias `rm`) — removes the key from every file layer; disables defaults via `""` in the user config-dir file |
-| `export/export.go` | `alias export` — publishes active aliases into the most local walk-up config file; skips disabled entries, shipped defaults, and entries the target already provides (no `--clobber`: the target is the highest-priority layer, so its entries are always the merged winners) |
+| `delete/delete.go` | `alias delete <name>` (alias `rm`) — removes the key from every file layer; errors on a pure shipped default (immutable base) |
+| `export/export.go` | `alias export` — publishes active aliases into the most local walk-up config file; skips empty entries, shipped defaults, and entries the target already provides (no `--clobber`: the target is the highest-priority layer, so its entries are always the merged winners) |
 
 ## Key Wiring
 
@@ -28,7 +28,7 @@ Expansion/registration itself lives in `internal/cmd/root/useraliases.go`; this 
 - **All file writes go through `shared.OpenFileStore(target)`** — an isolated `storage.Store[config.Project]` on the target file only, scoping the write to exactly the alias entries. The composite `cfg.ProjectStore()` marks defaults-provenance fields dirty at construction (the mechanism init/bootstrap uses to materialize defaults); on an init-current file that set is empty, but on a file missing newer schema fields a composite write would backfill them as a side effect. Alias writes stay surgical instead.
 - `shared.ExportTarget(cfg)` returns the first discovered file layer outside the config dir — the most local, highest-priority walk-up file, local variants included. Errors when no walk-up file exists (export never creates files).
 - Per-key provenance: union maps merge key-by-key, so `cfg.ProjectStore().Provenance("aliases.<name>")` resolves the providing layer — used by list (SOURCE), set (shadow warning), and export (default/target exclusion).
-- `shared.DefaultAliases()` (via `config.NewBlankConfig()`) distinguishes shipped defaults for delete's disable-vs-remove decision.
+- `shared.DefaultAliases()` (via `config.NewBlankConfig()`) lets delete tailor its messaging/error for shipped defaults.
 - `init` does NOT materialize the default alias into project files — `NewProjectStoreFromPreset` carries no defaults layer, so the shipped `go` alias stays virtual.
 
 ## Testing

@@ -17,7 +17,7 @@ type Project struct {
 	Agent     AgentConfig       `yaml:"agent"`
 	Workspace WorkspaceConfig   `yaml:"workspace"`
 	Security  SecurityConfig    `yaml:"security"`
-	Aliases   map[string]string `yaml:"aliases,omitempty" label:"Aliases" desc:"Command aliases expanded before execution; the value is appended to 'clawker' and supports $1..$N placeholders; an empty value disables an alias; merged across all config layers" merge:"union" default:"go=run --rm -it --agent $1 @ --dangerously-skip-permissions,wt=container run --rm -it --agent $1 --worktree $2:main @ --dangerously-skip-permissions"`
+	Aliases   map[string]string `yaml:"aliases,omitempty" label:"Aliases" desc:"Command aliases expanded before execution; the value is appended to 'clawker' and supports $1..$N placeholders; merged across all config layers" merge:"union" default:"go=run --rm -it --agent $1 @ --dangerously-skip-permissions,wt=container run --rm -it --agent $1 --worktree $2:main @ --dangerously-skip-permissions"`
 }
 
 // Fields implements [storage.Schema] for Project.

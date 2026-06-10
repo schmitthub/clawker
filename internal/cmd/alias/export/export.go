@@ -29,14 +29,6 @@ func NewCmdExport(f *cmdutil.Factory, runF func(context.Context, *ExportOptions)
 	cmd := &cobra.Command{
 		Use:   "export",
 		Short: "Export aliases to the project config",
-		Long: `Export active command aliases into the project config's aliases key.
-
-Writes the current alias set into the most local project config file
-discovered in the walk-up, so the aliases are version-controlled with
-the project. Export never creates a new file — it requires an existing
-project config (see 'clawker init'). Disabled aliases and shipped
-defaults are not exported, and entries the target file already
-provides are left as they are.`,
 		Example: `  # Share your aliases with the team
   clawker alias export`,
 		Args: cobra.NoArgs,
@@ -65,7 +57,7 @@ func exportRun(_ context.Context, opts *ExportOptions) error {
 		return err
 	}
 
-	// Collect aliases worth publishing: skip disabled entries, shipped
+	// Collect aliases worth publishing: skip empty entries, shipped
 	// defaults (never baked into project files), and entries whose winning
 	// value already lives in the target itself.
 	active := cfg.Project().Aliases
@@ -73,7 +65,7 @@ func exportRun(_ context.Context, opts *ExportOptions) error {
 	names := make([]string, 0, len(active))
 	for name, expansion := range active {
 		if expansion == "" {
-			continue // disabled
+			continue // empty — nothing to execute
 		}
 		winner, ok := cfg.ProjectStore().Provenance(shared.AliasFieldPath(name))
 		if !ok || winner.Path == "" {

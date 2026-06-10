@@ -8,12 +8,6 @@ List configured command aliases
 
 ### Synopsis
 
-Lists all configured command aliases with their expansions.
-
-The SOURCE column shows the config file providing the winning value,
-or "default" for shipped defaults. An alias with an empty expansion
-is disabled.
-
 ```
 clawker alias list [flags]
 ```
