@@ -146,14 +146,14 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 
 	// Mount main repo's .git directory for worktree support
 	if cfg.ProjectRootDir != "" {
-		gitMount, err := buildWorktreeGitMount(cfg.ProjectRootDir)
+		gitMounts, err := buildWorktreeGitMounts(cfg.ProjectRootDir)
 		if err != nil {
 			return nil, err
 		}
-		mounts = append(mounts, *gitMount)
+		mounts = append(mounts, gitMounts...)
 		cfg.Log.Debug().
-			Str("gitdir", gitMount.Source).
-			Msg("mounting main repo .git for worktree")
+			Str("gitdir", gitMounts[0].Source).
+			Msg("mounting main repo .git for worktree (hooks and config masked read-only)")
 	}
 
 	// Ensure config volumes (returns creation state for init orchestration)
@@ -220,11 +220,27 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 	}, nil
 }
 
-// buildWorktreeGitMount creates a bind mount for the main repository's .git directory.
-// This is needed for worktree support because worktrees use a .git file that references
-// the main repo's .git directory. By mounting at the same absolute path, git commands
-// work correctly inside the container.
-func buildWorktreeGitMount(projectRootDir string) (*mount.Mount, error) {
+// buildWorktreeGitMounts creates the bind mounts for the main repository's
+// .git directory required by a worktree workspace.
+//
+// The .git directory itself is mounted read-write at its original absolute
+// path (Source == Target) so the paths git recorded in the worktree's .git
+// file resolve, and so git inside the worktree can write objects, refs, and
+// its .git/worktrees/<name>/ metadata.
+//
+// .git/hooks and .git/config are masked with read-only binds stacked over the
+// RW mount: both are host-code-execution vectors — a hook planted from the
+// container, or config keys like core.hooksPath, core.fsmonitor, or
+// filter.*.smudge, execute on the HOST the next time the host user runs git
+// in the main checkout. Worktree mode promises more isolation than bind mode;
+// leaving these writable would silently grant bind-equivalent access to the
+// whole repo. Nothing in clawker's in-container flows writes either path
+// (in-container git config is --global only; the GPG override is env-based
+// for exactly this reason). The known in-worktree casualties are loud, not
+// silent: `git config --local`, `git remote add`, and `git push -u` fail on
+// the read-only config (upstream tracking is already configured host-side at
+// worktree creation, so plain `git push` works).
+func buildWorktreeGitMounts(projectRootDir string) ([]mount.Mount, error) {
 	// Resolve symlinks to match git's behavior. Git records absolute paths with
 	// symlinks resolved (e.g., on macOS /var -> /private/var). The mount target
 	// must match the path git wrote in the worktree's .git file.
@@ -246,10 +262,61 @@ func buildWorktreeGitMount(projectRootDir string) (*mount.Mount, error) {
 		return nil, fmt.Errorf(".git at %s is not a directory (expected main repository, got worktree)", gitDir)
 	}
 
-	return &mount.Mount{
-		Type:     mount.TypeBind,
-		Source:   gitDir,
-		Target:   gitDir, // Same absolute path preserves worktree references
-		ReadOnly: false,
+	// Ensure the protected paths exist on the host before binding them
+	// read-only. A missing source would fail the mount — and skipping the
+	// mount instead would let the agent create the path inside the RW .git
+	// region, reopening the vector.
+	hooksDir := filepath.Join(gitDir, "hooks")
+	if err := os.MkdirAll(hooksDir, 0o755); err != nil {
+		return nil, fmt.Errorf("cannot ensure .git/hooks at %s: %w", hooksDir, err)
+	}
+	// Only create .git/config when missing — an existing config may
+	// legitimately be read-only, and it only needs to EXIST as the RO bind
+	// source below; opening it for write would fail EACCES for no reason.
+	configFile := filepath.Join(gitDir, "config")
+	switch info, err := os.Lstat(configFile); {
+	case err == nil:
+		// Exists. Reject a symlink or directory — the RO bind expects a
+		// regular file, and a symlink here is a host-redirect vector.
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf(".git/config at %s is a symlink (refusing to bind a redirected config)", configFile)
+		}
+		if info.IsDir() {
+			return nil, fmt.Errorf(".git/config at %s is a directory, expected a file", configFile)
+		}
+	case os.IsNotExist(err):
+		cf, cerr := os.OpenFile(configFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if cerr != nil {
+			return nil, fmt.Errorf("cannot create .git/config at %s: %w", configFile, cerr)
+		}
+		if cerr := cf.Close(); cerr != nil {
+			return nil, fmt.Errorf("cannot finalize .git/config at %s: %w", configFile, cerr)
+		}
+	default:
+		return nil, fmt.Errorf("cannot access .git/config at %s: %w", configFile, err)
+	}
+
+	// Source == Target on all three: same absolute path preserves worktree
+	// references. Docker applies mounts ordered by destination depth, so the
+	// RO binds layer over the RW parent.
+	return []mount.Mount{
+		{
+			Type:     mount.TypeBind,
+			Source:   gitDir,
+			Target:   gitDir,
+			ReadOnly: false,
+		},
+		{
+			Type:     mount.TypeBind,
+			Source:   configFile,
+			Target:   configFile,
+			ReadOnly: true,
+		},
+		{
+			Type:     mount.TypeBind,
+			Source:   hooksDir,
+			Target:   hooksDir,
+			ReadOnly: true,
+		},
 	}, nil
 }

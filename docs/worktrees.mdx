@@ -205,4 +205,17 @@ When a container is created with `--worktree`, two mounts are set up:
 
 By mounting both at their real host paths, git commands inside the container work correctly — the `.git` file's reference resolves, git finds the shared metadata, and operations like `git log`, `git status`, and `git commit` behave normally.
 
+### Protected `.git` paths
+
+The main `.git` mount is read-write (commits from the worktree write objects, refs, and per-worktree metadata there), but two paths inside it are masked with **read-only** binds:
+
+- `.git/hooks/` — a hook planted from inside the container would execute on the *host* the next time you run git in the main checkout.
+- `.git/config` — config keys like `core.hooksPath`, `core.fsmonitor`, or `filter.*` can execute arbitrary commands; from a worktree, `git config --local` writes to this shared file.
+
+This keeps worktree containers meaningfully more isolated than bind mode. The trade-off: `git config --local`, `git remote add`, and `git push -u` fail inside a worktree container (the config file is read-only). Upstream tracking is already configured on the host when the worktree is created, so a plain `git push` works without `-u`.
+
+### Go builds inside worktree containers
+
+Worktree containers set `GOFLAGS=-buildvcs=false`. Go's VCS stamping cannot work in a linked worktree: the `go` tool only recognizes a `.git` *directory* (a worktree has a `.git` file), so it walks up to the mounted main `.git`, where stamping would either fail (`error obtaining VCS status: exit status 128`) or record the wrong revision. Set `GOFLAGS` in `agent.env` to override.
+
 See [Container Internals](/container-internals) for the complete explanation of workspace mounting, git integration, and session persistence.

@@ -88,11 +88,15 @@ Failure handling:
 
 **Worktree support**: When using `--worktree`, the worktree directory is set as `WorkDir`. Additionally, `ProjectRootDir` must be set to the main repository root so that the `.git` directory can be mounted into the container. Git worktrees use a `.git` **file** (not directory) that references the main repo's `.git/worktrees/<name>/` metadata. By mounting the main `.git` directory at its original absolute path in the container, git commands work correctly inside the worktree.
 
-The `buildWorktreeGitMount(projectRootDir string) (*mount.Mount, error)` helper validates and creates the `.git` mount:
+The `buildWorktreeGitMounts(projectRootDir string) ([]mount.Mount, error)` helper validates and creates the `.git` mounts:
 - Resolves symlinks to match git's behavior (e.g., `/var` → `/private/var` on macOS)
 - Returns clear errors if `ProjectRootDir` doesn't exist or has permission issues
 - Validates `.git` exists and is a directory (not a worktree `.git` file)
-- Returns a bind mount with `Source == Target` (same absolute path) for worktree reference resolution
+- Returns three bind mounts, all with `Source == Target` (same absolute path) for worktree reference resolution:
+  1. `.git` read-write (worktree git ops write objects, refs, `.git/worktrees/<name>/`)
+  2. `.git/config` read-only and 3. `.git/hooks` read-only — masked over the RW mount because both are host-code-execution vectors (planted hooks / `core.hooksPath` / `core.fsmonitor` / `filter.*` run on the host's next git op in the main checkout). Missing `config`/`hooks` are created host-side first so the RO bind always has a source; skipping would let the agent create them in the RW region. Known in-worktree casualties (loud failures, not silent): `git config --local`, `git remote add`, `git push -u` — upstream tracking is configured host-side at worktree creation, so plain `git push` works.
+
+Worktree containers also get `GOFLAGS=-buildvcs=false` (see `docker.RuntimeEnvOpts.Worktree`): Go's VCS discovery only recognizes a `.git` directory, walks up past the worktree's `.git` file to the mounted main `.git`, and either fails exit 128 (dubious ownership on the root-owned mount-parent scaffold) or would stamp the wrong revision. Stamping can never be correct in this topology.
 
 ## Git Credentials
 

@@ -29,6 +29,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/git"
 
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -1606,7 +1607,7 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 	workspaceMounts = append(workspaceMounts, gitSetup.Mounts...)
 	containerOpts.Env = append(containerOpts.Env, gitSetup.Env...)
 
-	runtimeEnv, envWarnings, err := buildCreateTimeEnv(ctx, opts, containerOpts, agentName, wd, log)
+	runtimeEnv, envWarnings, err := buildCreateTimeEnv(ctx, opts, containerOpts, agentName, wd, projectRootDir, log)
 	if err != nil {
 		return nil, err
 	}
@@ -1865,6 +1866,13 @@ func resolveWorkDir(ctx context.Context, containerOpts *ContainerCreateOptions, 
 		// (no --no-track surface here; use `clawker worktree add` for that).
 		wd, err = proj.CreateWorktree(ctx, wtSpec.Branch, wtSpec.Base, false)
 		if err != nil {
+			if errors.Is(err, git.ErrBranchAlreadyCheckedOut) {
+				// Branch is checked out elsewhere (the main repo or another
+				// worktree); git forbids a second checkout of one branch.
+				return "", "", fmt.Errorf(
+					"%w\nswitch the other checkout off the branch (e.g. `git switch <other-branch>` there), "+
+						"or pass `--worktree <new-branch>` to let clawker create and own a fresh branch", err)
+			}
 			if !errors.Is(err, project.ErrWorktreeExists) {
 				return "", "", fmt.Errorf("setting up worktree %q for agent %q: %w", wtSpec.Branch, agentName, err)
 			}
@@ -1930,8 +1938,10 @@ func setupHostProxy(ctx context.Context, events chan<- CreateContainerEvent, cfg
 }
 
 // buildCreateTimeEnv constructs container runtime environment variables.
-// Returns env vars, warnings (e.g. unset from_env vars), and error.
-func buildCreateTimeEnv(ctx context.Context, opts *CreateContainerOptions, containerOpts *ContainerCreateOptions, agentName, wd string, log *logger.Logger) (env []string, warnings []string, retErr error) {
+// projectRootDir is the main repo root when the workspace is a git worktree
+// (empty otherwise) — the same signal workspace.SetupMounts keys the .git
+// mount on. Returns env vars, warnings (e.g. unset from_env vars), and error.
+func buildCreateTimeEnv(ctx context.Context, opts *CreateContainerOptions, containerOpts *ContainerCreateOptions, agentName, wd, projectRootDir string, log *logger.Logger) (env []string, warnings []string, retErr error) {
 	projectCfg := opts.Config.Project()
 	workspaceMode := containerOpts.Mode
 	if workspaceMode == "" {
@@ -1958,6 +1968,7 @@ func buildCreateTimeEnv(ctx context.Context, opts *CreateContainerOptions, conta
 		Agent:             agentName,
 		WorkspaceMode:     workspaceMode,
 		WorkspaceSource:   wd,
+		Worktree:          projectRootDir != "",
 		Editor:            projectCfg.Agent.Editor,
 		Visual:            projectCfg.Agent.Visual,
 		Is256Color:        opts.Is256Color,

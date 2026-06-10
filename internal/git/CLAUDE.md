@@ -48,6 +48,14 @@ Behavior details:
 
 - `SetupWorktree` validates/reuses existing directories when possible.
 - `SetupWorktree` removes orphaned git metadata for a target worktree before fresh creation.
+- `SetupWorktree` refuses to create a worktree for an existing branch that is already
+  checked out elsewhere — the repo root checkout or another linked worktree —
+  returning `ErrBranchAlreadyCheckedOut` (path named in the wrapped message). This
+  is the interlock native `git worktree add` enforces; go-git's experimental
+  worktree package does not, so without it two checkouts could share one branch
+  ref and a commit in either would slide the other's HEAD. The guard fires only on
+  fresh creation; idempotent reuse of an already-established worktree returns
+  before it. New branches can't collide, so only the existing-branch path is gated.
 - `SetupWorktree` branch resolution mirrors native `git worktree add` (no network):
   - branch is a local head → check it out.
   - `base != ""` → create the branch at base; if base is a remote-tracking branch
@@ -164,6 +172,7 @@ These are composed by `GitManager.SetupWorktree`/`RemoveWorktree` for domain wor
 - `ErrBranchAlreadyExists`
 - `ErrAmbiguousRemoteBranch`
 - `ErrExplicitRemoteRef`
+- `ErrBranchAlreadyCheckedOut`
 
 Prefer `errors.Is` checks at command/service boundaries.
 

@@ -12,41 +12,175 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
-func TestBuildWorktreeGitMount_Success(t *testing.T) {
+// findMountByTarget returns the mount with the given target, or nil.
+func findMountByTarget(mounts []mount.Mount, target string) *mount.Mount {
+	for i := range mounts {
+		if mounts[i].Target == target {
+			return &mounts[i]
+		}
+	}
+	return nil
+}
+
+func TestBuildWorktreeGitMounts_Success(t *testing.T) {
 	tmpDir := t.TempDir()
 	gitDir := filepath.Join(tmpDir, ".git")
 	if err := os.Mkdir(gitDir, 0755); err != nil {
 		t.Fatalf("failed to create .git directory: %v", err)
 	}
 
-	m, err := buildWorktreeGitMount(tmpDir)
+	mounts, err := buildWorktreeGitMounts(tmpDir)
 	if err != nil {
-		t.Fatalf("buildWorktreeGitMount() error = %v, want nil", err)
+		t.Fatalf("buildWorktreeGitMounts() error = %v, want nil", err)
 	}
 
 	resolvedTmpDir, _ := filepath.EvalSymlinks(tmpDir)
 	expectedGitDir := filepath.Join(resolvedTmpDir, ".git")
 
+	if len(mounts) != 3 {
+		t.Fatalf("len(mounts) = %d, want 3 (.git RW + config RO + hooks RO)", len(mounts))
+	}
+
+	m := findMountByTarget(mounts, expectedGitDir)
+	if m == nil {
+		t.Fatalf("no mount with target %q", expectedGitDir)
+	}
 	if m.Type != mount.TypeBind {
 		t.Errorf("mount.Type = %v, want %v", m.Type, mount.TypeBind)
 	}
 	if m.Source != expectedGitDir {
-		t.Errorf("mount.Source = %q, want %q", m.Source, expectedGitDir)
-	}
-	if m.Target != expectedGitDir {
-		t.Errorf("mount.Target = %q, want %q (should match Source)", m.Target, expectedGitDir)
+		t.Errorf("mount.Source = %q, want %q (should match Target)", m.Source, expectedGitDir)
 	}
 	if m.ReadOnly {
-		t.Error("mount.ReadOnly = true, want false")
+		t.Error(".git mount.ReadOnly = true, want false (worktree git ops need RW objects/refs)")
+	}
+
+	// Missing hooks/ and config must be created host-side so the RO binds
+	// always have a source — skipping the mount instead would let the agent
+	// create them inside the RW .git region, reopening the host-exec vector.
+	hooksInfo, err := os.Stat(filepath.Join(gitDir, "hooks"))
+	if err != nil || !hooksInfo.IsDir() {
+		t.Errorf(".git/hooks not created as directory (info=%v, err=%v)", hooksInfo, err)
+	}
+	configInfo, err := os.Stat(filepath.Join(gitDir, "config"))
+	if err != nil || configInfo.IsDir() {
+		t.Errorf(".git/config not created as file (info=%v, err=%v)", configInfo, err)
 	}
 }
 
-func TestBuildWorktreeGitMount_ProjectRootNotExist(t *testing.T) {
+func TestBuildWorktreeGitMounts_ProtectsHooksAndConfig(t *testing.T) {
+	// The main .git is mounted RW, but .git/hooks and .git/config are
+	// host-exec vectors (planted hooks / core.hooksPath / fsmonitor run on
+	// the HOST's next git op). They must be masked by read-only binds.
+	tmpDir := t.TempDir()
+	gitDir := filepath.Join(tmpDir, ".git")
+	if err := os.MkdirAll(filepath.Join(gitDir, "hooks"), 0755); err != nil {
+		t.Fatalf("failed to create .git/hooks: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(gitDir, "config"), []byte("[core]\n"), 0644); err != nil {
+		t.Fatalf("failed to create .git/config: %v", err)
+	}
+
+	mounts, err := buildWorktreeGitMounts(tmpDir)
+	if err != nil {
+		t.Fatalf("buildWorktreeGitMounts() error = %v, want nil", err)
+	}
+
+	resolvedTmpDir, _ := filepath.EvalSymlinks(tmpDir)
+	expectedGitDir := filepath.Join(resolvedTmpDir, ".git")
+
+	for _, sub := range []string{"config", "hooks"} {
+		target := filepath.Join(expectedGitDir, sub)
+		m := findMountByTarget(mounts, target)
+		if m == nil {
+			t.Fatalf("no mount with target %q", target)
+		}
+		if m.Type != mount.TypeBind {
+			t.Errorf("%s mount.Type = %v, want %v", sub, m.Type, mount.TypeBind)
+		}
+		if m.Source != target {
+			t.Errorf("%s mount.Source = %q, want %q (Source must equal Target)", sub, m.Source, target)
+		}
+		if !m.ReadOnly {
+			t.Errorf("%s mount.ReadOnly = false, want true (host-exec vector must be masked)", sub)
+		}
+	}
+}
+
+func TestBuildWorktreeGitMounts_PreservesExistingConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	gitDir := filepath.Join(tmpDir, ".git")
+	if err := os.Mkdir(gitDir, 0755); err != nil {
+		t.Fatalf("failed to create .git directory: %v", err)
+	}
+	content := []byte("[remote \"origin\"]\n\turl = https://example.com/repo.git\n")
+	if err := os.WriteFile(filepath.Join(gitDir, "config"), content, 0644); err != nil {
+		t.Fatalf("failed to write .git/config: %v", err)
+	}
+
+	if _, err := buildWorktreeGitMounts(tmpDir); err != nil {
+		t.Fatalf("buildWorktreeGitMounts() error = %v, want nil", err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(gitDir, "config"))
+	if err != nil {
+		t.Fatalf("failed to read .git/config: %v", err)
+	}
+	if string(got) != string(content) {
+		t.Errorf(".git/config content changed: got %q, want %q", got, content)
+	}
+}
+
+func TestBuildWorktreeGitMounts_ReadOnlyConfigPreserved(t *testing.T) {
+	tmpDir := t.TempDir()
+	gitDir := filepath.Join(tmpDir, ".git")
+	if err := os.Mkdir(gitDir, 0755); err != nil {
+		t.Fatalf("failed to create .git directory: %v", err)
+	}
+	content := []byte("[core]\n\trepositoryformatversion = 0\n")
+	cfgPath := filepath.Join(gitDir, "config")
+	if err := os.WriteFile(cfgPath, content, 0444); err != nil {
+		t.Fatalf("failed to write read-only .git/config: %v", err)
+	}
+
+	if _, err := buildWorktreeGitMounts(tmpDir); err != nil {
+		t.Fatalf("buildWorktreeGitMounts() error = %v, want nil on read-only config", err)
+	}
+
+	got, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("failed to read .git/config: %v", err)
+	}
+	if string(got) != string(content) {
+		t.Errorf(".git/config content changed: got %q, want %q", got, content)
+	}
+}
+
+func TestBuildWorktreeGitMounts_ConfigIsSymlink(t *testing.T) {
+	tmpDir := t.TempDir()
+	gitDir := filepath.Join(tmpDir, ".git")
+	if err := os.Mkdir(gitDir, 0755); err != nil {
+		t.Fatalf("failed to create .git directory: %v", err)
+	}
+	target := filepath.Join(tmpDir, "elsewhere-config")
+	if err := os.WriteFile(target, []byte("[core]\n"), 0644); err != nil {
+		t.Fatalf("failed to write symlink target: %v", err)
+	}
+	if err := os.Symlink(target, filepath.Join(gitDir, "config")); err != nil {
+		t.Fatalf("failed to create .git/config symlink: %v", err)
+	}
+
+	if _, err := buildWorktreeGitMounts(tmpDir); err == nil {
+		t.Fatal("buildWorktreeGitMounts() error = nil, want error on symlinked .git/config")
+	}
+}
+
+func TestBuildWorktreeGitMounts_ProjectRootNotExist(t *testing.T) {
 	nonExistentDir := filepath.Join(t.TempDir(), "does-not-exist")
 
-	_, err := buildWorktreeGitMount(nonExistentDir)
+	_, err := buildWorktreeGitMounts(nonExistentDir)
 	if err == nil {
-		t.Fatal("buildWorktreeGitMount() error = nil, want error about non-existent directory")
+		t.Fatal("buildWorktreeGitMounts() error = nil, want error about non-existent directory")
 	}
 
 	if !containsAll(err.Error(), "failed to resolve symlinks for project root", nonExistentDir) {
@@ -54,12 +188,12 @@ func TestBuildWorktreeGitMount_ProjectRootNotExist(t *testing.T) {
 	}
 }
 
-func TestBuildWorktreeGitMount_GitDirNotExist(t *testing.T) {
+func TestBuildWorktreeGitMounts_GitDirNotExist(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	_, err := buildWorktreeGitMount(tmpDir)
+	_, err := buildWorktreeGitMounts(tmpDir)
 	if err == nil {
-		t.Fatal("buildWorktreeGitMount() error = nil, want error about missing .git")
+		t.Fatal("buildWorktreeGitMounts() error = nil, want error about missing .git")
 	}
 
 	if !containsAll(err.Error(), ".git not found", "required for worktree support") {
@@ -67,16 +201,16 @@ func TestBuildWorktreeGitMount_GitDirNotExist(t *testing.T) {
 	}
 }
 
-func TestBuildWorktreeGitMount_GitIsFile(t *testing.T) {
+func TestBuildWorktreeGitMounts_GitIsFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	gitFile := filepath.Join(tmpDir, ".git")
 	if err := os.WriteFile(gitFile, []byte("gitdir: /some/path/.git/worktrees/foo\n"), 0644); err != nil {
 		t.Fatalf("failed to create .git file: %v", err)
 	}
 
-	_, err := buildWorktreeGitMount(tmpDir)
+	_, err := buildWorktreeGitMounts(tmpDir)
 	if err == nil {
-		t.Fatal("buildWorktreeGitMount() error = nil, want error about .git not being a directory")
+		t.Fatal("buildWorktreeGitMounts() error = nil, want error about .git not being a directory")
 	}
 
 	if !containsAll(err.Error(), "not a directory", "expected main repository, got worktree") {
@@ -84,7 +218,7 @@ func TestBuildWorktreeGitMount_GitIsFile(t *testing.T) {
 	}
 }
 
-func TestBuildWorktreeGitMount_SymlinkResolution(t *testing.T) {
+func TestBuildWorktreeGitMounts_SymlinkResolution(t *testing.T) {
 	tmpDir := t.TempDir()
 	mainRepoDir := filepath.Join(tmpDir, "main-repo")
 	if err := os.Mkdir(mainRepoDir, 0755); err != nil {
@@ -100,19 +234,20 @@ func TestBuildWorktreeGitMount_SymlinkResolution(t *testing.T) {
 		t.Fatalf("failed to create symlink: %v", err)
 	}
 
-	m, err := buildWorktreeGitMount(symlinkDir)
+	mounts, err := buildWorktreeGitMounts(symlinkDir)
 	if err != nil {
-		t.Fatalf("buildWorktreeGitMount() error = %v, want nil", err)
+		t.Fatalf("buildWorktreeGitMounts() error = %v, want nil", err)
 	}
 
 	resolvedMainRepoDir, _ := filepath.EvalSymlinks(mainRepoDir)
 	expectedGitDir := filepath.Join(resolvedMainRepoDir, ".git")
 
+	m := findMountByTarget(mounts, expectedGitDir)
+	if m == nil {
+		t.Fatalf("no mount with target %q (should be resolved path, not symlink)", expectedGitDir)
+	}
 	if m.Source != expectedGitDir {
 		t.Errorf("mount.Source = %q, want %q (should be resolved path, not symlink)", m.Source, expectedGitDir)
-	}
-	if m.Target != expectedGitDir {
-		t.Errorf("mount.Target = %q, want %q (should match resolved Source)", m.Target, expectedGitDir)
 	}
 }
 
