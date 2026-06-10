@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"net"
 	"reflect"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 
+	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/config"
 	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
 	"github.com/schmitthub/clawker/internal/storage"
@@ -153,6 +155,29 @@ func ValidateRule(r config.EgressRule) error {
 		if err := validateActionField("path rule action", pr.Action); err != nil {
 			return err
 		}
+		for _, m := range pr.Methods {
+			if err := validateMethod(m); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// methodTokenRe matches a safe HTTP method token. Methods are embedded into a
+// safe_regex alternation in the generated route match, so they must be confined
+// to a metacharacter-free charset — a token starting with a letter, followed by
+// letters or hyphens (covers GET/POST/PATCH and extensions like MKCALENDAR /
+// PROPFIND-style WebDAV verbs) — to prevent regex injection.
+var methodTokenRe = regexp.MustCompile(`^[A-Za-z][A-Za-z-]*$`)
+
+// validateMethod rejects an HTTP method token that is empty or carries
+// characters outside the safe token charset. Case-insensitive (NormalizeRule
+// uppercases); the check is on shape, not a fixed verb allow-list, so custom
+// methods stay expressible.
+func validateMethod(m string) error {
+	if !methodTokenRe.MatchString(strings.TrimSpace(m)) {
+		return fmt.Errorf("invalid HTTP method %q: must match %s", m, methodTokenRe.String())
 	}
 	return nil
 }
@@ -199,7 +224,45 @@ func NormalizeRule(r config.EgressRule) config.EgressRule {
 			r.Port = "22"
 		}
 	}
+	// Normalize each path rule's method set (uppercase, dedup, sort) so the
+	// generated :method matcher is deterministic. Copy the slice + elements so a
+	// shared backing array from the caller is never mutated in place.
+	if len(r.PathRules) > 0 {
+		prs := make([]config.PathRule, len(r.PathRules))
+		copy(prs, r.PathRules)
+		for i := range prs {
+			prs[i].Methods = normalizeMethods(prs[i].Methods)
+		}
+		r.PathRules = prs
+	}
 	return r
+}
+
+// normalizeMethods canonicalizes a path rule's HTTP method set: uppercase, trim,
+// drop empties, dedup, and sort. Returns nil for an empty/all-empty input so the
+// "all methods" case stays a nil slice (no :method matcher emitted).
+func normalizeMethods(methods []string) []string {
+	if len(methods) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(methods))
+	out := make([]string, 0, len(methods))
+	for _, m := range methods {
+		m = strings.ToUpper(strings.TrimSpace(m))
+		if m == "" {
+			continue
+		}
+		if _, dup := seen[m]; dup {
+			continue
+		}
+		seen[m] = struct{}{}
+		out = append(out, m)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	sort.Strings(out)
+	return out
 }
 
 // RuleKey returns the dedup key for an egress rule: dst:proto:port.
@@ -467,6 +530,11 @@ func NormalizeAndDedup(rules []config.EgressRule) ([]config.EgressRule, []string
 		if err := r.ValidatePortSpec(); err != nil {
 			warnings = append(warnings, fmt.Sprintf("skipping rule %s:%s: %v", r.Dst, r.Proto, err))
 			continue
+		}
+		// Surface path/method rules set on a non-HTTP proto: they are ignored at
+		// generation (no L7 request line), so warn rather than silently no-op.
+		if w := pathRuleEnforcementWarning(r); w != "" {
+			warnings = append(warnings, w)
 		}
 		// Dedup only TRULY-identical entries: fold the action into the dedup key so
 		// a same dst:proto:port allow AND deny both survive. RuleKey alone (no action)
@@ -739,6 +807,31 @@ func isOpaqueProto(proto string) bool {
 	default:
 		return false
 	}
+}
+
+// pathRuleEnforcementWarning returns a warning when a rule carries path rules or
+// method gates on a proto that has no L7 HTTP request line to enforce them
+// against (opaque tcp/ssh/udp, or any unsupported token). It mirrors the
+// generator's behavior — those rules are silently ignored at generation — by
+// surfacing the no-op so an operator isn't lulled into a false sense of
+// enforcement. Returns "" when nothing is ignored. Shares the HTTP-family
+// definition with the CLI input gate via adminv1.IsHTTPFamilyProto.
+func pathRuleEnforcementWarning(r config.EgressRule) string {
+	if adminv1.IsHTTPFamilyProto(r.Proto) || len(r.PathRules) == 0 {
+		return ""
+	}
+	hasMethods := false
+	for _, pr := range r.PathRules {
+		if len(pr.Methods) > 0 {
+			hasMethods = true
+			break
+		}
+	}
+	what := "path rules"
+	if hasMethods {
+		what = "path/method rules"
+	}
+	return fmt.Sprintf("ignoring %s on %s:%s — not an HTTP-family proto (http/https/ws/wss); no L7 request line to inspect", what, r.Dst, r.Proto)
 }
 
 // mergeOverlappingSpans sorts [lo,hi] spans ascending and merges any that

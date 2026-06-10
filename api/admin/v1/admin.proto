@@ -138,6 +138,9 @@ message EgressRule {
 message PathRule {
   string path = 1;
   string action = 2;
+  // HTTP methods this path rule's action applies to (e.g. ["GET", "HEAD"]).
+  // Empty = all methods. HTTP-family protos only; ignored on opaque protos.
+  repeated string methods = 3;
 }
 
 // ---------------------------------------------------------------------------

@@ -135,6 +135,15 @@ type WorkspaceConfig struct {
 type PathRule struct {
 	Path   string `yaml:"path" label:"Path" desc:"URL path prefix to match (e.g. /v1/api, /repos/myorg)"`
 	Action string `yaml:"action" label:"Action" desc:"Whether to allow or deny requests matching this path"`
+	// Methods scopes this path rule's Action to a set of HTTP request methods
+	// (e.g. [GET, HEAD]). Empty or nil = all methods (the rule is
+	// method-agnostic). It is a MATCH condition, not a separate verdict:
+	// Action supplies the polarity (allow these methods / deny these methods);
+	// methods not in the set fall through to later path rules / path_default.
+	// Compiled to an Envoy :method header match — HTTP-family protos only
+	// (http/https/ws/wss). On opaque protos (tcp/ssh/udp) it is ignored with a
+	// warning, exactly like Path. Values are normalized to uppercase.
+	Methods []string `yaml:"methods,omitempty" label:"Methods" desc:"HTTP methods this path rule applies to (e.g. GET, HEAD); empty = all methods. Only meaningful for http/https/ws/wss."`
 }
 
 // Egress vocabulary for the EgressRule / PathRule Proto, Port, and Action
@@ -172,7 +181,7 @@ type EgressRule struct {
 	// invalid data somehow reaches the store.
 	Port        string     `yaml:"port,omitempty" label:"Port" desc:"Destination port: a single port (443) or an inclusive range (9000-9100); empty = protocol default"`
 	Action      string     `yaml:"action,omitempty" label:"Action" desc:"Allow or deny traffic to this destination (default: allow)"`
-	PathRules   []PathRule `yaml:"path_rules,omitempty" label:"Path Rules" desc:"Fine-grained path filtering (only applies to https/http)"`
+	PathRules   []PathRule `yaml:"path_rules,omitempty" label:"Path Rules" desc:"Fine-grained path filtering (only applies to http/https/ws/wss)"`
 	PathDefault string     `yaml:"path_default,omitempty" label:"Path Default" desc:"What to do with HTTP paths that don't match any path rule (allow or deny)"`
 	// InsecureSkipTLSVerify, when true, makes Envoy accept an untrusted/self-signed
 	// upstream TLS certificate for this destination (trust_chain_verification:

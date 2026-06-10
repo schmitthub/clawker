@@ -290,9 +290,12 @@ func (x *EgressRule) GetPathDefault() string {
 }
 
 type PathRule struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
-	Action        string                 `protobuf:"bytes,2,opt,name=action,proto3" json:"action,omitempty"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Path   string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	Action string                 `protobuf:"bytes,2,opt,name=action,proto3" json:"action,omitempty"`
+	// HTTP methods this path rule's action applies to (e.g. ["GET", "HEAD"]).
+	// Empty = all methods. HTTP-family protos only; ignored on opaque protos.
+	Methods       []string `protobuf:"bytes,3,rep,name=methods,proto3" json:"methods,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -339,6 +342,13 @@ func (x *PathRule) GetAction() string {
 		return x.Action
 	}
 	return ""
+}
+
+func (x *PathRule) GetMethods() []string {
+	if x != nil {
+		return x.Methods
+	}
+	return nil
 }
 
 type FirewallInitRequest struct {
@@ -1830,10 +1840,11 @@ const file_admin_v1_admin_proto_rawDesc = "" +
 	"\x06action\x18\x04 \x01(\tR\x06action\x129\n" +
 	"\n" +
 	"path_rules\x18\x05 \x03(\v2\x1a.clawker.admin.v1.PathRuleR\tpathRules\x12!\n" +
-	"\fpath_default\x18\x06 \x01(\tR\vpathDefault\"6\n" +
+	"\fpath_default\x18\x06 \x01(\tR\vpathDefault\"P\n" +
 	"\bPathRule\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x16\n" +
-	"\x06action\x18\x02 \x01(\tR\x06action\"\x15\n" +
+	"\x06action\x18\x02 \x01(\tR\x06action\x12\x18\n" +
+	"\amethods\x18\x03 \x03(\tR\amethods\"\x15\n" +
 	"\x13FirewallInitRequest\"m\n" +
 	"\x12FirewallInitResult\x12\x19\n" +
 	"\benvoy_ip\x18\x01 \x01(\tR\aenvoyIp\x12\x1d\n" +

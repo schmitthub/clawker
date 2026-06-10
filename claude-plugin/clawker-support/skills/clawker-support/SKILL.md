@@ -345,7 +345,11 @@ integrates with.
     `api.github.com` (and other VCS) over HTTPS to only the project's repos —
     clawker's defense against the live attack class where a compromised agent
     abuses forwarded git credentials to exfil to an arbitrary repo (domain-only
-    sandboxes can't stop this; clawker's HTTPS path allow/deny can).
+    sandboxes can't stop this; clawker's HTTPS path allow/deny can). It also
+    covers **method gating** (a path rule's `methods` field, or `--methods` on
+    `firewall add`) — deny mutating verbs (`POST`/`PUT`/`PATCH`/`DELETE`) to make
+    a host read-only, the coarse backstop for write endpoints path rules don't
+    enumerate.
 
 15. **Claude Code host auth (`/login` prompts in containers)** — When the user
     asks how `use_host_auth` shares their host login, or reports being prompted

@@ -84,6 +84,48 @@ container restart) instead of re-typing each `clawker firewall add`. Refresh is
 add/update only — a rule *deleted* from the YAML is not pruned; use
 `clawker firewall remove` for that.
 
+## Method gating — the coarse write backstop
+
+Because HTTPS is MITM-terminated, the firewall sees the request **method**. A
+path rule's optional `methods` field narrows its `action` to a set of HTTP
+verbs — it is a match condition, not a separate verdict, so `action` supplies
+the polarity and unlisted methods fall through to later rules / `path_default`.
+Empty `methods` = all methods (the rule is method-agnostic). HTTP-family protos only
+(`https`/`http`/`ws`/`wss`).
+
+This is the durable backstop path scoping can't be: one "deny mutating methods"
+rule covers write endpoints **that don't exist yet**. GitHub writes ride
+mutating verbs (`git push` = `POST .../git-receive-pack`; contents API =
+`PUT|DELETE`; Git Data = `POST|PATCH`); reads are `GET`. So a method gate kills
+push-to-arbitrary-repo and contents-write exfil without enumerating every write
+path.
+
+```yaml
+# Make a VCS host read-only: allow GET/HEAD everywhere, deny the rest.
+- action: allow
+  dst: api.github.com
+  proto: https
+  port: 443
+  path_default: deny
+  path_rules:
+    - { action: allow, path: /, methods: [GET, HEAD] }
+```
+
+Or deny writes on a prefix while leaving reads open (`action: deny` + the
+mutating verbs; `GET` falls through):
+
+```yaml
+  path_rules:
+    - { action: deny, path: /repos/, methods: [POST, PUT, PATCH, DELETE] }
+```
+
+CLI equivalent (runtime, hot-reloaded):
+`clawker firewall add api.github.com --path / --action allow --methods GET,HEAD`.
+
+Compose with path scoping: longest-prefix path still selects the route, the
+method gate then allow/denies within it. There is no rule-level `methods` — a
+`/` path rule is the host-wide form.
+
 ## Two gaps path rules can't cover
 
 - **SSH git (port 22) is opaque** — nobody can path-filter it; an allowed

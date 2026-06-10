@@ -22,8 +22,8 @@ func TestProtoRulesRoundTrip(t *testing.T) {
 			in: []*EgressRule{{
 				Dst: "api.example.com", Proto: "https", Port: "443", Action: "allow",
 				PathRules: []*PathRule{
-					{Path: "/v1", Action: "allow"},
-					{Path: "/admin", Action: "deny"},
+					{Path: "/v1", Action: "allow", Methods: []string{"GET", "HEAD"}},
+					{Path: "/admin", Action: "deny", Methods: []string{"POST"}},
 				},
 				PathDefault: "deny",
 			}},
@@ -79,6 +79,7 @@ func TestProtoRulesRoundTrip(t *testing.T) {
 					gp := got.GetPathRules()[j]
 					assert.Equal(t, wp.GetPath(), gp.GetPath(), "PathRules[%d].Path", j)
 					assert.Equal(t, wp.GetAction(), gp.GetAction(), "PathRules[%d].Action", j)
+					assert.Equal(t, wp.GetMethods(), gp.GetMethods(), "PathRules[%d].Methods", j)
 				}
 			}
 		})

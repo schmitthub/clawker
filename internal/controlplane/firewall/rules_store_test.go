@@ -767,3 +767,83 @@ func TestMergeRule_EmptyIncomingPathDefault_PreservesExisting(t *testing.T) {
 	got := firewall.MergeRule(existing, incoming)
 	assert.Equal(t, "deny", got.PathDefault, "empty incoming PathDefault does not clobber existing")
 }
+
+// TestValidateRule_Methods covers HTTP-method-token validation: well-formed
+// tokens pass; anything carrying regex metacharacters (which would otherwise be
+// embedded into the generated safe_regex alternation) is rejected.
+func TestValidateRule_Methods(t *testing.T) {
+	t.Parallel()
+	mk := func(methods ...string) config.EgressRule {
+		return config.EgressRule{
+			Dst: "api.example.com", Proto: "https", Port: "443",
+			PathRules: []config.PathRule{{Path: "/", Action: "allow", Methods: methods}},
+		}
+	}
+	tests := []struct {
+		name    string
+		rule    config.EgressRule
+		wantErr bool
+	}{
+		{"valid single", mk("GET"), false},
+		{"valid multi", mk("GET", "HEAD", "POST"), false},
+		{"valid lowercase token (case normalized later)", mk("get"), false},
+		{"valid webdav extension verb", mk("MKCALENDAR"), false},
+		{"empty methods ok", mk(), false},
+		{"regex metachar rejected", mk("GET|HEAD"), true},
+		{"glob metachar rejected", mk("GE.*"), true},
+		{"space rejected", mk("GET POST"), true},
+		{"empty token rejected", mk(""), true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := firewall.ValidateRule(tc.rule)
+			if tc.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+// TestNormalizeRule_Methods confirms a path rule's method set is uppercased,
+// deduped, and sorted — and that an all-empty set collapses to nil so no
+// :method matcher is emitted for the "all methods" case.
+func TestNormalizeRule_Methods(t *testing.T) {
+	t.Parallel()
+	in := config.EgressRule{
+		Dst: "api.example.com", Proto: "https", Port: "443",
+		PathRules: []config.PathRule{
+			{Path: "/", Action: "allow", Methods: []string{"post", "GET", "get", " head "}},
+			{Path: "/x", Action: "deny", Methods: []string{"", "  "}},
+		},
+	}
+	out := firewall.NormalizeRule(in)
+	assert.Equal(t, []string{"GET", "HEAD", "POST"}, out.PathRules[0].Methods)
+	assert.Nil(t, out.PathRules[1].Methods)
+	// Input must not be mutated in place (shared backing array safety).
+	assert.Equal(t, []string{"post", "GET", "get", " head "}, in.PathRules[0].Methods)
+}
+
+// TestNormalizeAndDedup_MethodsOnOpaqueWarns verifies that path/method rules on
+// a non-HTTP proto surface a warning (they are ignored at generation), while the
+// same shape on an HTTP-family proto does not.
+func TestNormalizeAndDedup_MethodsOnOpaqueWarns(t *testing.T) {
+	t.Parallel()
+	opaque := []config.EgressRule{{
+		Dst: "db.example.com", Proto: "tcp", Port: "5432",
+		PathRules: []config.PathRule{{Path: "/", Action: "deny", Methods: []string{"POST"}}},
+	}}
+	_, warnings := firewall.NormalizeAndDedup(opaque)
+	require.Len(t, warnings, 1)
+	assert.Contains(t, warnings[0], "db.example.com")
+	assert.Contains(t, warnings[0], "HTTP-family")
+
+	httpFamily := []config.EgressRule{{
+		Dst: "api.example.com", Proto: "https", Port: "443",
+		PathRules: []config.PathRule{{Path: "/", Action: "allow", Methods: []string{"GET"}}},
+	}}
+	_, warnings = firewall.NormalizeAndDedup(httpFamily)
+	assert.Empty(t, warnings)
+}

@@ -252,21 +252,23 @@ func denyAllVHost() map[string]any {
 	return map[string]any{
 		"name":    "deny_all",
 		"domains": []string{"*"},
-		"routes":  []any{httpDenyRoute("/")},
+		"routes":  []any{httpDenyRoute("/", nil)},
 	}
 }
 
 // httpRoutes converts a rule's path rules into Envoy routes, longest-prefix
 // first (Envoy is first-match-wins on prefix). The trailing default comes from
-// EffectivePathDefault.
+// EffectivePathDefault. A path rule's Methods narrow the route to a set of HTTP
+// verbs (a :method header match); methods not in the set fall through to a later
+// route / the default. The synthesized trailing "/" default is method-agnostic.
 func httpRoutes(r config.EgressRule, cluster string, websocket bool) []any {
 	defaultDeny := strings.EqualFold(adminv1.EffectivePathDefault(r), "deny")
 
 	if len(r.PathRules) == 0 {
 		if defaultDeny {
-			return []any{httpDenyRoute("/")}
+			return []any{httpDenyRoute("/", nil)}
 		}
-		return []any{httpAllowRoute("/", cluster, websocket)}
+		return []any{httpAllowRoute("/", cluster, websocket, nil)}
 	}
 
 	prs := append([]config.PathRule(nil), r.PathRules...)
@@ -275,19 +277,20 @@ func httpRoutes(r config.EgressRule, cluster string, websocket bool) []any {
 	var routes []any
 	for _, pr := range prs {
 		if strings.EqualFold(pr.Action, "allow") {
-			routes = append(routes, httpAllowRoute(pr.Path, cluster, websocket))
+			routes = append(routes, httpAllowRoute(pr.Path, cluster, websocket, pr.Methods))
 		} else {
-			routes = append(routes, httpDenyRoute(pr.Path))
+			routes = append(routes, httpDenyRoute(pr.Path, pr.Methods))
 		}
 	}
 	if defaultDeny {
-		return append(routes, httpDenyRoute("/"))
+		return append(routes, httpDenyRoute("/", nil))
 	}
-	return append(routes, httpAllowRoute("/", cluster, websocket))
+	return append(routes, httpAllowRoute("/", cluster, websocket, nil))
 }
 
-// httpAllowRoute forwards a path prefix to the upstream cluster.
-func httpAllowRoute(prefix, cluster string, websocket bool) map[string]any {
+// httpAllowRoute forwards a path prefix (optionally narrowed to a set of HTTP
+// methods) to the upstream cluster.
+func httpAllowRoute(prefix, cluster string, websocket bool, methods []string) map[string]any {
 	route := map[string]any{"cluster": cluster, "timeout": "0s"}
 	// ws/wss enrichment: a per-route upgrade_configs entry enables the WebSocket
 	// upgrade on THIS allow route (RFC 6455 over h1.1, RFC 8441 Extended CONNECT
@@ -297,20 +300,57 @@ func httpAllowRoute(prefix, cluster string, websocket bool) map[string]any {
 		route["upgrade_configs"] = []any{map[string]any{"upgrade_type": "websocket"}}
 	}
 	return map[string]any{
-		"match":    map[string]any{"prefix": prefix},
+		"match":    routeMatch(prefix, methods),
 		"metadata": clawkerActionMetadata("allowed"),
 		"route":    route,
 	}
 }
 
-// httpDenyRoute 403s a path prefix via direct_response.
-func httpDenyRoute(prefix string) map[string]any {
+// httpDenyRoute 403s a path prefix (optionally narrowed to a set of HTTP
+// methods) via direct_response.
+func httpDenyRoute(prefix string, methods []string) map[string]any {
 	return map[string]any{
-		"match":    map[string]any{"prefix": prefix},
+		"match":    routeMatch(prefix, methods),
 		"metadata": clawkerActionMetadata("denied"),
 		"direct_response": map[string]any{
 			"status": 403,
 			"body":   map[string]any{"inline_string": firewallBlockedBody},
+		},
+	}
+}
+
+// routeMatch builds an Envoy RouteMatch: a path prefix plus, when methods is
+// non-empty, a :method pseudo-header matcher narrowing the route to those verbs.
+// methods are pre-normalized (uppercase, deduped, sorted) by NormalizeRule.
+func routeMatch(prefix string, methods []string) map[string]any {
+	match := map[string]any{"prefix": prefix}
+	if h := methodHeaderMatch(methods); h != nil {
+		match["headers"] = h
+	}
+	return match
+}
+
+// methodHeaderMatch returns the RouteMatch `headers` list gating on the :method
+// pseudo-header, or nil when no methods are set. One method → an exact
+// StringMatcher; multiple → a safe_regex alternation (RE2 full-string match, so
+// "GET|HEAD" matches exactly GET or HEAD). Methods are sanitized to a token
+// charset by ValidateRule so they cannot inject regex metacharacters. The
+// google_re2 engine field is deprecated at Envoy proto 3.0 and omitted (RE2 is
+// the default engine).
+func methodHeaderMatch(methods []string) []any {
+	if len(methods) == 0 {
+		return nil
+	}
+	var stringMatch map[string]any
+	if len(methods) == 1 {
+		stringMatch = map[string]any{"exact": methods[0]}
+	} else {
+		stringMatch = map[string]any{"safe_regex": map[string]any{"regex": strings.Join(methods, "|")}}
+	}
+	return []any{
+		map[string]any{
+			"name":         ":method",
+			"string_match": stringMatch,
 		},
 	}
 }

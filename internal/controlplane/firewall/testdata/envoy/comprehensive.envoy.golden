@@ -886,12 +886,21 @@ static_resources:
                                             Forbidden
                                     status: 403
                                   match:
+                                    headers:
+                                        - name: :method
+                                          string_match:
+                                            exact: DELETE
                                     prefix: /v1/internal
                                   metadata:
                                     filter_metadata:
                                         clawker:
                                             action: denied
                                 - match:
+                                    headers:
+                                        - name: :method
+                                          string_match:
+                                            safe_regex:
+                                                regex: GET|HEAD
                                     prefix: /v1
                                   metadata:
                                     filter_metadata:
@@ -1453,6 +1462,10 @@ static_resources:
                                     cluster: tls_api_github_com_443
                                     timeout: 0s
                                 - match:
+                                    headers:
+                                        - name: :method
+                                          string_match:
+                                            exact: GET
                                     prefix: /repos/envoyproxy/
                                   metadata:
                                     filter_metadata:
@@ -1467,6 +1480,11 @@ static_resources:
                                             Forbidden
                                     status: 403
                                   match:
+                                    headers:
+                                        - name: :method
+                                          string_match:
+                                            safe_regex:
+                                                regex: DELETE|PATCH|POST|PUT
                                     prefix: /repos/
                                   metadata:
                                     filter_metadata:
@@ -3003,6 +3021,10 @@ static_resources:
                                     cluster: tls_api_github_com_443
                                     timeout: 0s
                                 - match:
+                                    headers:
+                                        - name: :method
+                                          string_match:
+                                            exact: GET
                                     prefix: /repos/envoyproxy/
                                   metadata:
                                     filter_metadata:
@@ -3017,6 +3039,11 @@ static_resources:
                                             Forbidden
                                     status: 403
                                   match:
+                                    headers:
+                                        - name: :method
+                                          string_match:
+                                            safe_regex:
+                                                regex: DELETE|PATCH|POST|PUT
                                     prefix: /repos/
                                   metadata:
                                     filter_metadata:

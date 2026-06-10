@@ -82,10 +82,14 @@ rules:
     port: 80
     path_default: deny
     path_rules:
+      # method gate, multi-method allow (safe_regex): only GET/HEAD on /v1
       - path: /v1
         action: allow
+        methods: [GET, HEAD]
+      # method gate, single-method deny (exact): block DELETE on /v1/internal
       - path: /v1/internal
         action: deny
+        methods: [DELETE]
   # --- https: exact FQDN (QUIC sibling), apex dedup, wildcard (httpsDFPActive), path rules ---
   - dst: api.anthropic.com
     proto: https
@@ -100,10 +104,15 @@ rules:
     path_rules:
       - path: /repos/schmitthub/clawker/
         action: allow
+      # method gate, single-method allow (exact): only GET on this prefix
       - path: /repos/envoyproxy/
         action: allow
+        methods: [GET]
+      # method gate, multi-method deny (safe_regex): block writes on /repos/,
+      # reads fall through to path_default: allow
       - path: /repos/
         action: deny
+        methods: [POST, PUT, PATCH, DELETE]
   - dst: raw.githubusercontent.com
     proto: https
     port: 443

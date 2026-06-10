@@ -14,7 +14,7 @@ import (
 func EgressRuleToProto(r config.EgressRule) *EgressRule {
 	paths := make([]*PathRule, 0, len(r.PathRules))
 	for _, p := range r.PathRules {
-		paths = append(paths, &PathRule{Path: p.Path, Action: p.Action})
+		paths = append(paths, &PathRule{Path: p.Path, Action: p.Action, Methods: p.Methods})
 	}
 	return &EgressRule{
 		Dst:         r.Dst,
@@ -30,7 +30,7 @@ func EgressRuleToProto(r config.EgressRule) *EgressRule {
 func EgressRuleFromProto(r *EgressRule) config.EgressRule {
 	paths := make([]config.PathRule, 0, len(r.GetPathRules()))
 	for _, p := range r.GetPathRules() {
-		paths = append(paths, config.PathRule{Path: p.GetPath(), Action: p.GetAction()})
+		paths = append(paths, config.PathRule{Path: p.GetPath(), Action: p.GetAction(), Methods: p.GetMethods()})
 	}
 	return config.EgressRule{
 		Dst:         r.GetDst(),
@@ -59,6 +59,24 @@ func EgressRulesFromProto(in []*EgressRule) []config.EgressRule {
 		out = append(out, EgressRuleFromProto(r))
 	}
 	return out
+}
+
+// IsHTTPFamilyProto reports whether a proto token carries an L7 HTTP request
+// line the firewall can inspect (so path rules and method gates are
+// enforceable). A closed allow-list: every non-HTTP proto (ftp, smtp, postgres,
+// the opaque tcp/ssh/udp, an unknown token, ...) falls through to false, so the
+// set never needs maintenance as protos are added. Lives beside
+// EffectivePathDefault as shared rule semantics so the CLI (input gating) and
+// the firewall generator (enforcement + warnings) agree on one definition.
+// Operates on real proto tokens only — the legacy `tls` alias is rewritten to
+// `https` before this is reached (NormalizeRule server-side; addRun for CLI input).
+func IsHTTPFamilyProto(proto string) bool {
+	switch strings.ToLower(proto) {
+	case "http", "https", "ws", "wss":
+		return true
+	default:
+		return false
+	}
 }
 
 // EffectivePathDefault resolves the catch-all action for HTTP paths under a
