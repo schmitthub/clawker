@@ -441,17 +441,6 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// the event=otelcerts_unavailable line above; container specs
 	// drop the mTLS bind-mounts and CP's OTel push lane is closed.
 	stack := fwhandler.NewStack(dockerCli, cfg, log, rulesStore, otelCerts)
-	// Degraded-path visibility: without the injected binary hash the
-	// sibling drift gate falls back to the legacy two-label compare, so
-	// a CLI upgrade would not recreate Envoy/CoreDNS. Enforcement
-	// itself is unaffected; never fatal.
-	if consts.CPBinarySHA == "" {
-		log.Warn().
-			Str("event", "stack_build_sha_unavailable").
-			Str("component", "firewall.stack").
-			Str("env", consts.EnvCPBinarySHA).
-			Msg("binary-hash env not set on CP container — sibling binary-drift recreate gate degraded to legacy label compare")
-	}
 
 	ebpfMgr := ebpf.NewManager(log)
 	if err := ebpfMgr.Load(); err != nil {

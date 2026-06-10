@@ -42,9 +42,7 @@ var (
 	HostCacheDir  = os.Getenv(EnvHostCacheDir)
 
 	// CPBinarySHA is the embedded-binary hash injected via EnvCPBinarySHA.
-	// Empty outside the CP container; when empty inside the CP the
-	// sibling drift gate degrades to the legacy label compare (the CP
-	// daemon logs the degraded path at startup).
+	// Used by CP to detect drift when managing embedded infra components
 	CPBinarySHA = os.Getenv(EnvCPBinarySHA)
 )
 
