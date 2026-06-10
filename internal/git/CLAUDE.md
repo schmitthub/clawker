@@ -84,7 +84,9 @@ err = mgr.SetBranchUpstream(localBranch, remote, remoteBranch)      // branch.<l
 the branch; `ErrAmbiguousRemoteBranch` when multiple remotes match and
 `checkout.defaultRemote` does not disambiguate. `SetBranchUpstream`'s `remoteBranch`
 is the branch name on the remote (may differ from `localBranch`, e.g. a local
-`mybranch` tracking `origin/foo`).
+`mybranch` tracking `origin/foo`). Like `git branch --set-upstream-to`, it upserts:
+a pre-existing `branch.<local>` config section is updated in place (unrelated keys
+preserved), never rejected.
 
 `DeleteBranch` is equivalent to safe `git branch -d` semantics:
 
