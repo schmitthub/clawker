@@ -20,6 +20,14 @@ const (
 	EnvHostCacheDir  = "CLAWKER_HOST_CACHE_DIR"
 	EnvHostUID       = "CLAWKER_HOST_UID"
 	EnvHostGID       = "CLAWKER_HOST_GID"
+
+	// EnvCPBinarySHA carries the SHA-256 of the embedded clawker-cp +
+	// ebpf-manager bytes (the LabelCPBinarySHA value) into the CP
+	// container, where firewall.Stack stamps it as a sibling drift
+	// label. The hash is computed host-side from cpboot's go:embed
+	// assets — unavailable inside the CP binary itself — hence the env
+	// hop.
+	EnvCPBinarySHA = "CLAWKER_CP_BINARY_SHA"
 )
 
 // Host-FS XDG-shaped directory roots resolved from the env vars above.
@@ -32,6 +40,12 @@ var (
 	HostDataDir   = os.Getenv(EnvHostDataDir)
 	HostStateDir  = os.Getenv(EnvHostStateDir)
 	HostCacheDir  = os.Getenv(EnvHostCacheDir)
+
+	// CPBinarySHA is the embedded-binary hash injected via EnvCPBinarySHA.
+	// Empty outside the CP container; when empty inside the CP the
+	// sibling drift gate degrades to the legacy label compare (the CP
+	// daemon logs the degraded path at startup).
+	CPBinarySHA = os.Getenv(EnvCPBinarySHA)
 )
 
 // HostIDResolution captures the outcome of parsing CLAWKER_HOST_UID /

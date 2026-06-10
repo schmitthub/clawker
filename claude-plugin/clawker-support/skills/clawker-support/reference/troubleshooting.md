@@ -247,7 +247,7 @@ report `connection refused` against the CP.
    ```
    A CP that exits immediately with `firewall.enable` set may be failing
    its firewall bringup startup gate (the boot fails by design rather
-   than running unenforced) — the log shows `step 8c (firewall bringup)`
+   than running unenforced) — the log shows `firewall bringup:`
    with the underlying Envoy/CoreDNS error. Fix the cause, or set
    `firewall.enable: false` in settings.yaml to run unprotected.
 

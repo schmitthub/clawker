@@ -62,6 +62,16 @@ const (
 	// exporting to the stale port. Including the port in drift labels
 	// forces a recreate (not just a restart) when it changes.
 	labelOtelInfraPort = "dev.clawker.firewall.otel_infra_port"
+
+	// labelStackBuildSHA stamps the CP's embedded-binary hash
+	// (consts.CPBinarySHA, injected by host bootstrap at CP create) on
+	// both siblings. Every other staleness vector — the pinned Envoy
+	// image const, the embedded coredns-clawker binary, the
+	// envoy_config/coredns_config templates, the containerSpec shape —
+	// is compiled into clawker-cp, so a CP built from different bytes
+	// MUST recreate the siblings rather than adopt ones an older build
+	// created.
+	labelStackBuildSHA = "dev.clawker.firewall.stack_build_sha"
 )
 
 // Stack manages the Envoy + CoreDNS container pair via Docker-outside-of-
@@ -762,6 +772,7 @@ func (s *Stack) driftLabels() map[string]string {
 	return map[string]string{
 		labelInfraCertsReady: strconv.FormatBool(s.infraCertsReady),
 		labelOtelInfraPort:   strconv.Itoa(int(s.cfg.SettingsStore().Read().Monitoring.OtelInfraPort)),
+		labelStackBuildSHA:   consts.CPBinarySHA,
 	}
 }
 
@@ -815,7 +826,9 @@ func (s *Stack) ensureContainer(ctx context.Context, name string, spec container
 			Str("running_infra_certs_ready", summary.Labels[labelInfraCertsReady]).
 			Str("desired_otel_infra_port", spec.labels[labelOtelInfraPort]).
 			Str("running_otel_infra_port", summary.Labels[labelOtelInfraPort]).
-			Msg("recreating firewall container — desired mTLS bind/env state diverges from running container")
+			Str("desired_stack_build_sha", spec.labels[labelStackBuildSHA]).
+			Str("running_stack_build_sha", summary.Labels[labelStackBuildSHA]).
+			Msg("recreating firewall container — desired spec diverges from running container")
 		if err := s.stopAndRemove(ctx, name); err != nil {
 			return fmt.Errorf("recreating %s on spec drift: %w", name, err)
 		}

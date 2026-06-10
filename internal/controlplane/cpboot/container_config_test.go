@@ -163,6 +163,24 @@ func TestINV_B1_015_CPImageTag(t *testing.T) {
 		"container labels must carry the full SHA-256 of the embedded binaries so EnsureRunning's staleness compare works")
 }
 
+// TestCPContainer_BinarySHAEnv_Emitted — the CP container must receive
+// the embedded-binary hash via env so firewall.Stack (running inside
+// the CP, where cpboot's embeds are unavailable) can stamp the same
+// value as a sibling drift label. Env and label must agree: the label
+// gates CP adoption host-side, the env gates Envoy/CoreDNS adoption
+// CP-side.
+func TestCPContainer_BinarySHAEnv_Emitted(t *testing.T) {
+	testenv.New(t)
+	cfg := configmocks.NewBlankConfig()
+
+	cpConfig, err := BuildCPContainerConfig(cfg, testCPOpts())
+	require.NoError(t, err)
+
+	full, _ := cpBinaryHash()
+	assert.Contains(t, cpConfig.Env, consts.EnvCPBinarySHA+"="+full,
+		"container env must carry the same full binary SHA as the %s label", consts.LabelCPBinarySHA)
+}
+
 // Tests INV-B1-018 [unit]: CP container labels.
 func TestINV_B1_018_CPContainerLabels(t *testing.T) {
 	testenv.New(t)

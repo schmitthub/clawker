@@ -53,7 +53,8 @@ whenever the CP is. Two cooperating mechanisms deliver that:
 
 1. **CP-side (every boot, startup gate)**: the CP daemon reads settings
    at startup and, when enabled, runs the in-process `FirewallInit`
-   synchronously BEFORE `SetReady` (step 8c in `cmd/clawker-cp/main.go`).
+   synchronously BEFORE `SetReady` (the settings-driven firewall
+   bringup gate in `cmd/clawker-cp/main.go`).
    A bringup failure fails CP startup (exit code 1) — fail-closed and
    loud, never silently unenforced. `/healthz` green therefore implies
    the stack is up when the firewall is enabled, and the host-side

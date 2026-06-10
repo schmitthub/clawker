@@ -332,6 +332,10 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 			// to the same UID baked into the agent image. See consts.ContainerUID().
 			consts.EnvHostUID + "=" + strconv.Itoa(consts.ContainerUID()),
 			consts.EnvHostGID + "=" + strconv.Itoa(consts.ContainerGID()),
+			// Same hash as the LabelCPBinarySHA label above; the CP
+			// re-stamps it as a firewall-sibling drift label
+			// (firewall.Stack.driftLabels). See consts.EnvCPBinarySHA.
+			consts.EnvCPBinarySHA + "=" + binarySHA,
 		}, otelLogsEnv(cfg)...),
 		ExtraHosts:  []string{"host.docker.internal:host-gateway"},
 		Cmd:         []string{"/usr/local/bin/clawker-cp"},
