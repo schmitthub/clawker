@@ -1606,7 +1606,7 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 	workspaceMounts = append(workspaceMounts, gitSetup.Mounts...)
 	containerOpts.Env = append(containerOpts.Env, gitSetup.Env...)
 
-	runtimeEnv, envWarnings, err := buildCreateTimeEnv(ctx, opts, containerOpts, agentName, wd, log)
+	runtimeEnv, envWarnings, err := buildCreateTimeEnv(ctx, opts, containerOpts, agentName, wd, projectRootDir, log)
 	if err != nil {
 		return nil, err
 	}
@@ -1930,8 +1930,10 @@ func setupHostProxy(ctx context.Context, events chan<- CreateContainerEvent, cfg
 }
 
 // buildCreateTimeEnv constructs container runtime environment variables.
-// Returns env vars, warnings (e.g. unset from_env vars), and error.
-func buildCreateTimeEnv(ctx context.Context, opts *CreateContainerOptions, containerOpts *ContainerCreateOptions, agentName, wd string, log *logger.Logger) (env []string, warnings []string, retErr error) {
+// projectRootDir is the main repo root when the workspace is a git worktree
+// (empty otherwise) — the same signal workspace.SetupMounts keys the .git
+// mount on. Returns env vars, warnings (e.g. unset from_env vars), and error.
+func buildCreateTimeEnv(ctx context.Context, opts *CreateContainerOptions, containerOpts *ContainerCreateOptions, agentName, wd, projectRootDir string, log *logger.Logger) (env []string, warnings []string, retErr error) {
 	projectCfg := opts.Config.Project()
 	workspaceMode := containerOpts.Mode
 	if workspaceMode == "" {
@@ -1958,6 +1960,7 @@ func buildCreateTimeEnv(ctx context.Context, opts *CreateContainerOptions, conta
 		Agent:             agentName,
 		WorkspaceMode:     workspaceMode,
 		WorkspaceSource:   wd,
+		Worktree:          projectRootDir != "",
 		Editor:            projectCfg.Agent.Editor,
 		Visual:            projectCfg.Agent.Visual,
 		Is256Color:        opts.Is256Color,

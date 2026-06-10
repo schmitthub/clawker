@@ -15,7 +15,12 @@ BINARY_NAME := clawker
 CLAWKER_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 CLAWKER_REVISION ?= $(shell git rev-parse HEAD 2>/dev/null || echo "unknown")
 GO ?= go
-GOFLAGS := -trimpath
+# Append to (not clobber) any inherited GOFLAGS: worktree containers set
+# GOFLAGS=-buildvcs=false because Go cannot stamp linked worktrees there
+# (the .git-file walk lands on the mounted main .git and exits 128).
+# (make re-exports the merged value to recipes only when GOFLAGS was already
+# in the environment; host builds without GOFLAGS are unchanged.)
+GOFLAGS := -trimpath $(GOFLAGS)
 # Dev builds leave build.Date empty; release goreleaser stamps it via
 # {{.CommitDate}} in .goreleaser.yaml.
 LDFLAGS := -s -w \

@@ -81,7 +81,7 @@ type Container struct {
 
 ## Environment (`env.go`)
 
-`RuntimeEnv(opts RuntimeEnvOpts) ([]string, error)` — builds container env vars. Precedence: base → terminal → agent env → instruction env. Sorted by key.
+`RuntimeEnv(opts RuntimeEnvOpts) ([]string, error)` — builds container env vars. Precedence: base → terminal → agent env → instruction env. Sorted by key. `Worktree: true` (linked-worktree workspace) adds `GOFLAGS=-buildvcs=false` — Go cannot stamp linked worktrees (its VCS walk skips the `.git` file and lands on the mounted main `.git`); user env overrides.
 
 ## Volume Utilities (`volume.go`)
 

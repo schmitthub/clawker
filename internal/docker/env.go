@@ -19,6 +19,9 @@ type RuntimeEnvOpts struct {
 	Agent           string
 	WorkspaceMode   string // "bind" or "snapshot"
 	WorkspaceSource string // host path being mounted
+	// Worktree marks a workspace that is a linked git worktree, with the main
+	// repo's .git directory mounted separately (see workspace.SetupMounts).
+	Worktree bool
 
 	// Editor preferences
 	Editor string
@@ -174,6 +177,18 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 			return nil, fmt.Errorf("failed to marshal remote sockets: %w", err)
 		}
 		m["CLAWKER_REMOTE_SOCKETS"] = string(socketsBytes)
+	}
+
+	// Worktree containers: disable Go VCS stamping. Go's VCS discovery only
+	// recognizes a .git *directory* — it skips a linked worktree's .git file
+	// and walks up to the bind-mounted main .git, where `git status` either
+	// fails with exit 128 (dubious ownership: the repo top-level is a
+	// root-owned Docker scaffold dir) or, if unblocked, would stamp the wrong
+	// revision (the main checkout's HEAD with the entire tree appearing
+	// deleted, since only .git is mounted). Stamping can never be correct in
+	// this topology, so default it off. agent.env / instruction env override.
+	if opts.Worktree {
+		m["GOFLAGS"] = "-buildvcs=false"
 	}
 
 	// Agent env vars (override base defaults and terminal)

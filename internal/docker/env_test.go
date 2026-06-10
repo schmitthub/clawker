@@ -100,6 +100,35 @@ func TestRuntimeEnv_Precedence(t *testing.T) {
 	assert.Contains(t, env, "SHARED=from-instructions", "instruction env should override agent env")
 }
 
+func TestRuntimeEnv_WorktreeDisablesGoVCSStamping(t *testing.T) {
+	env, err := RuntimeEnv(RuntimeEnvOpts{Worktree: true})
+	require.NoError(t, err)
+
+	assert.Contains(t, env, "GOFLAGS=-buildvcs=false",
+		"worktree containers must disable Go VCS stamping (go cannot stamp linked worktrees; the main .git mount makes it fail or stamp the wrong revision)")
+}
+
+func TestRuntimeEnv_NonWorktreeNoGoFlags(t *testing.T) {
+	env, err := RuntimeEnv(RuntimeEnvOpts{})
+	require.NoError(t, err)
+
+	for _, e := range env {
+		assert.False(t, strings.HasPrefix(e, "GOFLAGS="),
+			"should not set GOFLAGS for non-worktree containers")
+	}
+}
+
+func TestRuntimeEnv_WorktreeGoFlagsAgentEnvOverride(t *testing.T) {
+	env, err := RuntimeEnv(RuntimeEnvOpts{
+		Worktree: true,
+		AgentEnv: map[string]string{"GOFLAGS": "-buildvcs=auto"},
+	})
+	require.NoError(t, err)
+
+	assert.Contains(t, env, "GOFLAGS=-buildvcs=auto", "agent env should override the worktree GOFLAGS default")
+	assert.NotContains(t, env, "GOFLAGS=-buildvcs=false")
+}
+
 func TestRuntimeEnv_256Color(t *testing.T) {
 	env, err := RuntimeEnv(RuntimeEnvOpts{
 		Is256Color: true,
