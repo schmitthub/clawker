@@ -130,7 +130,7 @@ clawker go dev
 
 Clawker ships [command aliases](#command-aliases) that expand to full invocations (`go` for disposable agents, `wt` for worktree agents), and you can define your own with `clawker alias set`.
 
-You can ask claude code to assist you in writing a more appropriate config file for the project using this prompt: 
+You can ask claude code to assist you in writing a more appropriate config file for the project using the support skill `clawker skill install` or this prompt:  
 
 ```bash
 create a @.clawker.yaml file appropriate for this repos stack. Clawker configuration can be understood here: https://docs.clawker.dev/configuration.md
