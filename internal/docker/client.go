@@ -560,11 +560,6 @@ func (c *Client) FindContainerByAgent(ctx context.Context, project, agent string
 	return containerName, ctr, nil
 }
 
-// ContainerRunning reports whether a managed container with the exact
-// name exists and is currently running. Absence is a clean false, not
-// an error — callers asking "is X up?" have no remediation for a
-// not-found, unlike FindContainerByName's error-returning contract.
-
 // RemoveContainerWithVolumes removes a container and its associated volumes.
 // If force is true, volume cleanup errors are logged but not returned.
 // If force is false, volume cleanup errors are returned.
