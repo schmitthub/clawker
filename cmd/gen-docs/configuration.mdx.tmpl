@@ -215,18 +215,19 @@ The `aliases` key in the project config defines command shortcuts that are expan
 ```yaml
 aliases:
   go: run --rm -it --agent $1 @ --dangerously-skip-permissions
+  wt: container run --rm -it --agent $1 --worktree $2:main @ --dangerously-skip-permissions
   lg: logs $1 --tail $2
 ```
 
 With this configuration, `clawker go fable --model opus` runs `clawker run --rm -it --agent fable @ --dangerously-skip-permissions --model opus`, and `clawker lg web 50` runs `clawker logs web --tail 50`. Values may reference positional arguments as `$1`..`$N`; arguments beyond the highest placeholder are appended.
 
-Aliases merge across every project config layer, like any other project config key: project files discovered in the walk-up override the user-level `clawker.yaml` in the config directory, which overrides shipped defaults. Clawker ships the `go` alias above as a default.
+Aliases merge across every project config layer, like any other project config key: project files discovered in the walk-up override the user-level `clawker.yaml` in the config directory, which overrides shipped defaults. Clawker ships the `go` and `wt` aliases above as defaults (`wt` starts an agent on a [worktree](/worktrees)).
 
 Manage aliases with the `clawker alias` command group:
 
 ```bash
 # Write an alias to the user-level clawker.yaml in the config directory
-clawker alias set lg "logs $1 --tail $2"
+clawker alias set lg "logs \$1 --tail \$2"
 
 # Publish your active aliases into the project's own config file
 # (the most local config file found in the walk-up; never creates a file)

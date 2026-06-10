@@ -27,21 +27,11 @@ func NewCmdAlias(f *cmdutil.Factory, validCommand shared.ValidCommandFunc) *cobr
 		Short: "Manage command aliases",
 		Long: `Manage user-defined command aliases.
 
-Aliases are shortcuts expanded before execution: the stored value is
-appended to 'clawker' in place of the alias name, and any further
-arguments are appended after it. Values may reference positional
-arguments as $1..$N.
-
-Aliases live in the project config's aliases key and merge across all
-layers: project files discovered in the walk-up override the user-level
-clawker.yaml in the config directory, which overrides shipped defaults.
-'clawker alias set' writes the user-level file; 'clawker alias export'
-publishes aliases into the project's own config file so they are
-version-controlled with the repo.`,
+Aliases are customizable shortcuts expanded before execution`,
 		Example: `  # Define an alias
   clawker alias set fable "container run --rm -it --agent fable @ --dangerously-skip-permissions --model \"claude-fable-5\""
 
-  clawker alias set wt "container run --rm -it --agent $1 --worktree $2:main @ --dangerously-skip-permissions"
+  clawker alias set wt "container run --rm -it --agent \$1 --worktree \$2:main @ --dangerously-skip-permissions"
 
   # List configured aliases
   clawker alias list

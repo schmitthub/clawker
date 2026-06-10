@@ -65,6 +65,6 @@ Behavior contract:
 - Empty/whitespace expansion = disabled alias (the union-merged defaults layer keeps keys present; `go: ""` turns off the shipped default).
 - Cyclic alias chains are detected at registration (first-token walk with a seen-set) and skipped.
 - nil `f.Config` (gen-docs builds root with a bare Factory) or a config load error skips registration without failing root construction.
-- Shipped default: `go` → `run --rm -it --agent $1 @ --dangerously-skip-permissions` (default tag on `Project.Aliases`).
+- Shipped defaults (default tag on `Project.Aliases`): `go` → `run --rm -it --agent $1 @ --dangerously-skip-permissions`; `wt` → `container run --rm -it --agent $1 --worktree $2:main @ --dangerously-skip-permissions`.
 
 The `clawker alias` command group (`internal/cmd/alias/`) manages these; root wires its shadow-builtin validator as a closure over `builtinCommandExists`.

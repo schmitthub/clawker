@@ -14,12 +14,10 @@ The expansion is appended to 'clawker' in place of the alias name; any
 extra arguments are appended after it. Use $1..$N in the expansion to
 place positional arguments explicitly.
 
-Aliases are written to the user-level project config in the clawker
-config directory. Project config files closer to the working directory
-take precedence on name collisions; use 'clawker alias export' to
-publish an alias into the project's own config file. An alias cannot
-shadow an existing clawker command. Overwriting an existing alias
-requires --clobber.
+Be cautious with placeholders: most shells expand $1 before clawker
+sees it. Escape them ("\$1") or single-quote the expansion.
+
+Overwriting an existing alias requires --clobber.
 
 ```
 clawker alias set <alias> <expansion> [flags]
@@ -29,10 +27,10 @@ clawker alias set <alias> <expansion> [flags]
 
 ```
   # Shortcut with appended arguments
-  clawker alias set co "container run --rm -it"
+  clawker alias set fable "container run --rm -it --agent fable @ --dangerously-skip-permissions --model \"claude-fable-5\""
 
   # Positional placeholders
-  clawker alias set lg "logs $1 --tail $2"
+  clawker alias set wt "container run --rm -it --agent \$1 --worktree \$2:main @ --dangerously-skip-permissions"
 
   # Overwrite an existing alias
   clawker alias set go "run --rm -it --agent go @" --clobber

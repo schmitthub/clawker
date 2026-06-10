@@ -63,9 +63,10 @@ func TestListRun_JSON(t *testing.T) {
 
 	var rows []aliasRow
 	require.NoError(t, json.Unmarshal([]byte(stdout), &rows))
-	require.Len(t, rows, 2)
+	require.Len(t, rows, 3)
 	assert.Equal(t, aliasRow{Name: "go", Expansion: "run --rm -it --agent $1 @ --dangerously-skip-permissions", Source: sourceDefault}, rows[0])
 	assert.Equal(t, aliasRow{Name: "v", Expansion: "version", Source: path}, rows[1])
+	assert.Equal(t, aliasRow{Name: "wt", Expansion: "container run --rm -it --agent $1 --worktree $2:main @ --dangerously-skip-permissions", Source: sourceDefault}, rows[2])
 }
 
 func TestListRun_OverriddenDefaultReportsFile(t *testing.T) {
@@ -75,7 +76,7 @@ func TestListRun_OverriddenDefaultReportsFile(t *testing.T) {
 
 	var rows []aliasRow
 	require.NoError(t, json.Unmarshal([]byte(stdout), &rows))
-	require.Len(t, rows, 1)
+	require.Len(t, rows, 2)
 	assert.Equal(t, aliasRow{Name: "go", Expansion: "version", Source: path}, rows[0])
 }
 
@@ -86,7 +87,7 @@ func TestListRun_DisabledDefaultReportsDisablingFile(t *testing.T) {
 
 	var rows []aliasRow
 	require.NoError(t, json.Unmarshal([]byte(stdout), &rows))
-	require.Len(t, rows, 1)
+	require.Len(t, rows, 2)
 	assert.Equal(t, aliasRow{Name: "go", Expansion: "", Source: path}, rows[0],
 		"disabled default stays listed; SOURCE is the file holding the disabling entry")
 }

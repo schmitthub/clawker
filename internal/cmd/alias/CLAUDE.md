@@ -6,7 +6,7 @@ Expansion/registration itself lives in `internal/cmd/root/useraliases.go`; this 
 
 ## Data Model
 
-- **One home**: `Project.Aliases` (`merge:"union"`, shipped default `go`). Active aliases are the merged `aliases` key across ALL project config layers — walk-up files (closest to CWD wins) > user-level `clawker.yaml` in the config dir > shipped defaults. The root command registers from this merged view; project-file aliases apply automatically.
+- **One home**: `Project.Aliases` (`merge:"union"`, shipped defaults `go` + `wt`). Active aliases are the merged `aliases` key across ALL project config layers — walk-up files (closest to CWD wins) > user-level `clawker.yaml` in the config dir > shipped defaults. The root command registers from this merged view; project-file aliases apply automatically.
 - **Write targets**: `set` always writes the user config-dir `clawker.yaml` (`shared.SetTarget`); `export` writes the most local discovered walk-up file (`shared.ExportTarget`, never creates files); `delete` removes the entry from EVERY file layer that carries it (`shared.LayersContaining`) so one delete clears the name. Every file write prints `Wrote <abs path>`.
 - Disabling: empty-string expansion. Union merge keeps defaults-layer keys present, so `delete` on a shipped default writes `""` to the user config-dir file instead of removing the key.
 - There is no `alias import` — with all layers live, adoption is automatic.
