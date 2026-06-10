@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/moby/moby/api/types/container"
+	moby "github.com/moby/moby/client"
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/cmd/firewall"
 	"github.com/schmitthub/clawker/internal/cmdutil"
@@ -104,15 +106,15 @@ func warnIfStackRunning(ctx context.Context, opts *UpOptions, ios *iostreams.IOS
 		fmt.Fprintf(ios.ErrOut, "%s could not check firewall stack state: %v\n", cs.WarningIcon(), err)
 		return
 	}
-	for _, name := range []string{consts.ContainerEnvoy, consts.ContainerCoreDNS} {
-		running, err := dc.ContainerRunning(ctx, name)
-		if err != nil {
-			fmt.Fprintf(ios.ErrOut, "%s could not check firewall stack state: %v\n", cs.WarningIcon(), err)
-			return
-		}
-		if running {
-			fmt.Fprintf(ios.ErrOut, "%s firewall is disabled in settings but the stack is still running and enforcing — run `clawker firewall down` to remove it\n", cs.WarningIcon())
-			return
-		}
+	filter := moby.Filters{}.
+		Add("label", consts.LabelPurpose+"="+consts.PurposeFirewall).
+		Add("status", string(container.StateRunning))
+	result, err := dc.ContainerList(ctx, moby.ContainerListOptions{Filters: filter})
+	if err != nil {
+		fmt.Fprintf(ios.ErrOut, "%s could not check firewall stack state: %v\n", cs.WarningIcon(), err)
+		return
+	}
+	if len(result.Items) > 0 {
+		fmt.Fprintf(ios.ErrOut, "%s firewall is disabled in settings but the stack is still running and enforcing — run `clawker firewall down` to remove it\n", cs.WarningIcon())
 	}
 }

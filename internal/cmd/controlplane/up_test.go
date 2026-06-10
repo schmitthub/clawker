@@ -139,8 +139,9 @@ func TestUpRun_FirewallDisabled_SkipsStack(t *testing.T) {
 // TestUpRun_FirewallDisabled_WarnsWhenStackStillRunning pins the
 // settings/reality hint: firewall.enable false + a stack container
 // still running must produce a stderr warning pointing at
-// `clawker firewall down`, while the verb still succeeds. Both sibling
-// names are covered so dropping either from the check loop fails here.
+// `clawker firewall down`, while the verb still succeeds. The check is
+// a single label-filtered ContainerList (purpose=firewall), so any
+// stack sibling matches; both names are exercised as fixture data.
 func TestUpRun_FirewallDisabled_WarnsWhenStackStillRunning(t *testing.T) {
 	for _, name := range []string{consts.ContainerEnvoy, consts.ContainerCoreDNS} {
 		t.Run(name, func(t *testing.T) {
@@ -148,9 +149,10 @@ func TestUpRun_FirewallDisabled_WarnsWhenStackStillRunning(t *testing.T) {
 			tb.Mock.EnsureRunningFunc = func(_ context.Context) error { return nil }
 			withSettings(tb, "firewall:\n  enable: false\n")
 			withDockerFake(tb, container.Summary{
-				ID:    name + "-id",
-				Names: []string{"/" + name},
-				State: container.StateRunning,
+				ID:     name + "-id",
+				Names:  []string{"/" + name},
+				State:  container.StateRunning,
+				Labels: map[string]string{consts.LabelPurpose: consts.PurposeFirewall},
 			})
 
 			require.NoError(t, upRun(context.Background(), upOptsFrom(tb)))

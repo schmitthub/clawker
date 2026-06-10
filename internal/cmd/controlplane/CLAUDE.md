@@ -172,8 +172,8 @@ command package `internal/cmd/firewall` for the exported
 `BringUpStack` helper so both verbs share one bringup UX (spinner,
 shared RPC deadline, exposure warning, remediation hints) instead of
 duplicating it, and `internal/docker` (via `f.Client` +
-`docker.Client.ContainerRunning`) for the read-only firewall-disabled
-advisory check — the one Docker touch in this package, deliberately not
+a label-filtered `ContainerList` on the firewall purpose label) for the
+read-only firewall-disabled advisory check — the one Docker touch in this package, deliberately not
 routed through Manager because it is not a CP lifecycle operation.
 
 ## Testing
