@@ -15,9 +15,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// newExportEnv builds a project dir with a minimal .clawker.yaml and a
+// newExportEnv builds a project dir with a sparse .clawker.yaml — standing
+// in for an init-written file that predates newer schema fields — and a
 // config whose project store discovers it and whose settings carry the
-// given aliases.
+// given aliases. The sparse file is what makes the surgical-write contract
+// observable: export must not backfill the missing fields.
 func newExportEnv(t *testing.T, settingsAliases map[string]string) (config.Config, string) {
 	t.Helper()
 	t.Setenv("CLAWKER_CONFIG_DIR", t.TempDir())

@@ -99,11 +99,12 @@ func ExportTarget(cfg config.Config) (string, error) {
 }
 
 // OpenExportStore opens an isolated store on the export target file only —
-// no defaults layer, no walk-up, no user-level merging. The composite
-// project store pre-marks every defaults-provenance field dirty (the
-// settings-bootstrap behavior), so writing through it would materialize all
-// schema defaults into the project file; the isolated store writes only the
-// alias entries.
+// no defaults layer, no walk-up, no user-level merging. This scopes export's
+// write to exactly the alias entries: the composite project store marks every
+// defaults-provenance field dirty at construction (how init/bootstrap
+// materializes defaults), so a write through it would also backfill any
+// schema fields the file doesn't carry — fine for init, surprising as a side
+// effect of an alias command.
 func OpenExportStore(target string) (*storage.Store[config.Project], error) {
 	store, err := storage.New[config.Project]("",
 		storage.WithPaths(filepath.Dir(target)),

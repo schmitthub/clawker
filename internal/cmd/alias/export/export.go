@@ -88,8 +88,7 @@ func exportRun(_ context.Context, opts *ExportOptions) error {
 	sort.Strings(names)
 
 	// Write through an isolated store on the target file so only alias
-	// entries land in it — the composite project store would materialize
-	// every schema default into the file.
+	// entries land in it (see shared.OpenExportStore).
 	store, err := shared.OpenExportStore(target)
 	if err != nil {
 		return err
