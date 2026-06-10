@@ -248,7 +248,9 @@ report `connection refused` against the CP.
    A CP that exits immediately with `firewall.enable` set may be failing
    its firewall bringup startup gate (the boot fails by design rather
    than running unenforced) — the log shows `firewall bringup:`
-   with the underlying Envoy/CoreDNS error. Fix the cause, or set
+   with the underlying Envoy/CoreDNS error, and the rotating
+   control-plane log records a structured `event=firewall_bringup_failed`
+   line with the same cause. Fix the cause, or set
    `firewall.enable: false` in settings.yaml to run unprotected.
 
 4. **Auth material out of sync** (CP reports TLS or OAuth2 errors): rotate

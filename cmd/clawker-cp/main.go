@@ -745,6 +745,14 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		log.Info().Str("component", "firewall-bringup").
 			Msg("firewall bringup: starting stack (settings firewall.enable)")
 		if _, err := handler.FirewallInit(context.Background(), &adminv1.FirewallInitRequest{}); err != nil {
+			// The startup-gate exit lands only on os.Stderr (docker logs);
+			// this is the rotating-log record an unattended boot leaves
+			// behind — without it the log file ends at "starting stack"
+			// and the CP looks hung, not failed.
+			log.Error().Err(err).
+				Str("event", "firewall_bringup_failed").
+				Str("component", "firewall-bringup").
+				Msg("firewall bringup failed — CP exiting (startup gate); enrolled agents stay fail-closed against pinned eBPF state; inspect docker logs and re-run `clawker controlplane up`")
 			return fmt.Errorf("firewall bringup: %w", err)
 		}
 		log.Info().Str("component", "firewall-bringup").Msg("firewall stack up")

@@ -39,10 +39,10 @@ const (
 	envoyContainerName   = "clawker-envoy"
 	corednsContainerName = "clawker-coredns"
 
-	// healthCheckTimeout bounds WaitForHealthy by default. Callers supply
-	// deadlines via ctx when they want different behavior. Shared with the CLI's
-	// bringup RPC deadline (consts.FirewallStackBringupRPCTimeout derives from
-	// this) so the client never times out before the server's real health error.
+	// healthCheckTimeout bounds WaitForHealthy. A ctx deadline can only
+	// tighten it, never extend it. Shared with the CLI's bringup RPC deadline
+	// (consts.FirewallStackBringupRPCTimeout derives from this) so the client
+	// never times out before the server's real health error.
 	healthCheckTimeout  = consts.FirewallStackHealthTimeout
 	healthCheckInterval = 500 * time.Millisecond
 
@@ -116,7 +116,7 @@ type Stack struct {
 // OpenSearch pipeline has no filelog receiver — the trusted OTLP push
 // path is the only ingestion route, and it stays cold. This matches the
 // CP-side degraded path (see cmd/clawker-cp/main.go: event=
-// infra_issuer_unavailable).
+// otelcerts_unavailable).
 type OtelCertProvisioner interface {
 	// EnsureClient mints + writes per-service mTLS client material under
 	// the provisioner's destination directory, atomically. Re-runs
@@ -262,12 +262,19 @@ func (s *Stack) WaitForHealthy(ctx context.Context) error {
 	}
 
 	start := time.Now()
+	// The ctx deadline only ever tightens the budget (min of the two): the
+	// queued bringup closure carries a whole-bringup deadline, and letting it
+	// replace the health budget would defer health failures to the outer
+	// deadline — surfacing them as a generic DeadlineExceeded instead of the
+	// typed ErrEnvoyUnhealthy/ErrCoreDNSUnhealthy.
 	deadline := start.Add(healthCheckTimeout)
 	if dl, ok := ctx.Deadline(); ok {
 		if time.Until(dl) <= 0 {
 			return context.DeadlineExceeded
 		}
-		deadline = dl
+		if dl.Before(deadline) {
+			deadline = dl
+		}
 	}
 
 	httpClient := &http.Client{Timeout: 2 * time.Second}
@@ -795,12 +802,12 @@ func specMatchesContainer(actual map[string]string, want map[string]string) bool
 // already running AND its drift-significant labels match the desired
 // spec it returns without change.
 //
-// Spec drift triggers a stop + remove + recreate. Today the only
-// drift axis is labelInfraCertsReady, which controls whether the
-// mTLS-OTLP bind-mount + env are wired (see envoy/coredns spec
-// helpers). A plain ContainerRestart would leave create-time env
-// and mounts stale across an infraCertsReady flip — recreating is
-// the only way to push the new layout into the live container.
+// Spec drift triggers a stop + remove + recreate. The drift axes are
+// the labels stamped by driftLabels: each captures create-time state
+// (the mTLS-OTLP bind-mount/env shape, the OTLP infra port, the CP
+// build hash whose embedded binaries/templates produced the sibling)
+// that a plain ContainerRestart cannot refresh — recreating is the
+// only way to push a new create-time layout into the live container.
 func (s *Stack) ensureContainer(ctx context.Context, name string, spec containerSpec) error {
 	summary, err := s.findByName(ctx, name)
 	if err != nil {

@@ -560,6 +560,26 @@ func (c *Client) FindContainerByAgent(ctx context.Context, project, agent string
 	return containerName, ctr, nil
 }
 
+// ContainerRunning reports whether a managed container with the exact
+// name exists and is currently running. Absence is a clean false, not
+// an error — callers asking "is X up?" have no remediation for a
+// not-found, unlike FindContainerByName's error-returning contract.
+func (c *Client) ContainerRunning(ctx context.Context, name string) (bool, error) {
+	filters := whail.Filters{}.Add("name", name)
+	result, err := c.ContainerList(ctx, whail.ContainerListOptions{All: true, Filters: filters})
+	if err != nil {
+		return false, fmt.Errorf("listing %s: %w", name, err)
+	}
+	for _, ctr := range result.Items {
+		for _, n := range ctr.Names {
+			if n == "/"+name || n == name {
+				return ctr.State == container.StateRunning, nil
+			}
+		}
+	}
+	return false, nil
+}
+
 // RemoveContainerWithVolumes removes a container and its associated volumes.
 // If force is true, volume cleanup errors are logged but not returned.
 // If force is false, volume cleanup errors are returned.

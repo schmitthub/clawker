@@ -528,16 +528,26 @@ func TestStop_ExistingContainer_StopsAndRemoves(t *testing.T) {
 	assert.Equal(t, int32(1), f.calls.remove.Load())
 }
 
-// TestCPExitedError pins the fail-fast feedback contract of the healthz
-// wait: a terminally exited CP container (a firewall startup-gate
-// failure exits code 1 by design) must abort the readiness wait with a
-// diagnostic error instead of burning the remaining budget, while
-// transient states (running, mid-restart) and inspect failures keep the
-// poll loop going.
-func TestCPExitedError(t *testing.T) {
-	newClient := func(state *container.State, inspectErr error) *docker.Client {
+// TestCPTerminalError pins the fail-fast feedback contract of the healthz
+// wait's container-state discrimination: terminally-exited and removed
+// containers abort the wait with typed errors; everything transient
+// (running, mid-restart, Docker hiccups) keeps the loop polling, with
+// lookup failures surfaced on the second return for timeout diagnostics.
+func TestCPTerminalError(t *testing.T) {
+	newClient := func(t *testing.T, state *container.State, inspectErr error) *docker.Client {
+		t.Helper()
 		cfg := configmocks.NewIsolatedTestConfig(t)
 		fake := dockermocks.NewFakeClient(cfg)
+		summaryState := container.StateRunning
+		if state != nil {
+			summaryState = state.Status
+		}
+		fake.SetupContainerList(container.Summary{
+			ID:     "cp-id",
+			Names:  []string{"/" + consts.ContainerCP},
+			State:  summaryState,
+			Labels: map[string]string{cfg.LabelManaged(): cfg.ManagedLabelValue()},
+		})
 		fake.FakeAPI.ContainerInspectFn = func(_ context.Context, id string, _ mobyclient.ContainerInspectOptions) (mobyclient.ContainerInspectResult, error) {
 			if inspectErr != nil {
 				return mobyclient.ContainerInspectResult{}, inspectErr
@@ -557,26 +567,55 @@ func TestCPExitedError(t *testing.T) {
 	}
 
 	t.Run("exited and not restarting is terminal", func(t *testing.T) {
-		dc := newClient(&container.State{Status: container.StateExited, ExitCode: 1}, nil)
-		err := cpExitedError(t.Context(), dc)
+		dc := newClient(t, &container.State{Status: container.StateExited, ExitCode: 1}, nil)
+		terminalErr, lookupErr := cpTerminalError(t.Context(), dc)
+		require.NoError(t, lookupErr)
 		var exitedErr *CPExitedError
-		require.ErrorAs(t, err, &exitedErr)
+		require.ErrorAs(t, terminalErr, &exitedErr)
 		assert.Equal(t, 1, exitedErr.ExitCode, "container exit code must propagate for operator triage")
 	})
 
+	t.Run("removed container is terminal", func(t *testing.T) {
+		cfg := configmocks.NewIsolatedTestConfig(t)
+		fake := dockermocks.NewFakeClient(cfg)
+		fake.SetupContainerList() // empty list — CP container gone
+		terminalErr, lookupErr := cpTerminalError(t.Context(), fake.Client)
+		require.NoError(t, lookupErr)
+		var goneErr *CPGoneError
+		require.ErrorAs(t, terminalErr, &goneErr,
+			"a removed CP must abort the wait instead of burning the budget on transport errors")
+	})
+
 	t.Run("running keeps polling", func(t *testing.T) {
-		dc := newClient(&container.State{Status: container.StateRunning}, nil)
-		assert.NoError(t, cpExitedError(t.Context(), dc))
+		dc := newClient(t, &container.State{Status: container.StateRunning}, nil)
+		terminalErr, lookupErr := cpTerminalError(t.Context(), dc)
+		assert.NoError(t, terminalErr)
+		assert.NoError(t, lookupErr)
 	})
 
 	t.Run("mid-restart keeps polling", func(t *testing.T) {
-		dc := newClient(&container.State{Status: container.StateExited, Restarting: true, ExitCode: 1}, nil)
-		assert.NoError(t, cpExitedError(t.Context(), dc))
+		dc := newClient(t, &container.State{Status: container.StateExited, Restarting: true, ExitCode: 1}, nil)
+		terminalErr, lookupErr := cpTerminalError(t.Context(), dc)
+		assert.NoError(t, terminalErr)
+		assert.NoError(t, lookupErr)
 	})
 
-	t.Run("inspect error keeps polling", func(t *testing.T) {
-		dc := newClient(nil, errors.New("docker hiccup"))
-		assert.NoError(t, cpExitedError(t.Context(), dc))
+	t.Run("list error keeps polling and surfaces lookup error", func(t *testing.T) {
+		errHiccup := errors.New("docker hiccup")
+		cfg := configmocks.NewIsolatedTestConfig(t)
+		fake := dockermocks.NewFakeClient(cfg)
+		fake.SetupContainerListError(errHiccup)
+		terminalErr, lookupErr := cpTerminalError(t.Context(), fake.Client)
+		assert.NoError(t, terminalErr)
+		assert.ErrorIs(t, lookupErr, errHiccup)
+	})
+
+	t.Run("inspect error keeps polling and surfaces lookup error", func(t *testing.T) {
+		errHiccup := errors.New("docker hiccup")
+		dc := newClient(t, &container.State{Status: container.StateExited, ExitCode: 1}, errHiccup)
+		terminalErr, lookupErr := cpTerminalError(t.Context(), dc)
+		assert.NoError(t, terminalErr)
+		assert.ErrorIs(t, lookupErr, errHiccup)
 	})
 }
 
@@ -589,6 +628,12 @@ func TestCPExitedError(t *testing.T) {
 func TestWaitForCPHealthz_ExitedContainer_FailsFast(t *testing.T) {
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	fake := dockermocks.NewFakeClient(cfg)
+	fake.SetupContainerList(container.Summary{
+		ID:     "cp-id",
+		Names:  []string{"/" + consts.ContainerCP},
+		State:  container.StateExited,
+		Labels: map[string]string{cfg.LabelManaged(): cfg.ManagedLabelValue()},
+	})
 	fake.FakeAPI.ContainerInspectFn = func(_ context.Context, id string, _ mobyclient.ContainerInspectOptions) (mobyclient.ContainerInspectResult, error) {
 		return mobyclient.ContainerInspectResult{
 			Container: container.InspectResponse{

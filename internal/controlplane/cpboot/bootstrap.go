@@ -862,9 +862,11 @@ func waitForCPClockSync(ctx context.Context, cfg config.Config, log *logger.Logg
 //   - When a healthz probe fails at the transport layer, the CP
 //     container's state is checked (throttled): an exited,
 //     not-restarting container is a terminal startup-gate failure (the
-//     CP exits code 1 by design when the firewall bringup fails), and
-//     burning the rest of the budget would only delay the feedback the
-//     operator needs.
+//     CP exits code 1 by design when the firewall bringup fails) and a
+//     removed container is a terminal concurrent teardown — in both
+//     cases burning the rest of the budget would only delay the
+//     feedback the operator needs. Transient lookup failures keep the
+//     loop polling and surface on the timeout error's diagnostics.
 func waitForCPHealthz(ctx context.Context, dc *docker.Client, cfg config.Config) error {
 	url := fmt.Sprintf("http://127.0.0.1:%d/healthz", cfg.Settings().ControlPlane.HealthPort)
 	httpClient := &http.Client{Timeout: 2 * time.Second}
@@ -882,13 +884,14 @@ func waitForCPHealthz(ctx context.Context, dc *docker.Client, cfg config.Config)
 	var lastErr error
 	var lastStatus int
 	var lastBody string
+	var lastLookupErr error
 	var lastStateCheck time.Time
 	for {
 		// Deadline check first so a DeadlineExceeded surfaces the typed
 		// error with last-probe diagnostics rather than bare ctx.Err().
 		// Caller Canceled returns the bare ctx error via the select below.
 		if time.Now().After(deadline) {
-			return newCPHealthTimeout(start, url, lastStatus, lastBody, lastErr)
+			return newCPHealthTimeout(start, url, lastStatus, lastBody, lastErr, lastLookupErr)
 		}
 		if err := ctx.Err(); err != nil {
 			return err
@@ -906,8 +909,16 @@ func waitForCPHealthz(ctx context.Context, dc *docker.Client, cfg config.Config)
 			// once per second to keep Docker inspect chatter bounded.
 			if time.Since(lastStateCheck) >= time.Second {
 				lastStateCheck = time.Now()
-				if exitErr := cpExitedError(ctx, dc); exitErr != nil {
-					return exitErr
+				terminalErr, lookupErr := cpTerminalError(ctx, dc)
+				if terminalErr != nil {
+					var exitErr *CPExitedError
+					if errors.As(terminalErr, &exitErr) {
+						exitErr.FirewallEnabled = cfg.Settings().Firewall.FirewallEnabled()
+					}
+					return terminalErr
+				}
+				if lookupErr != nil {
+					lastLookupErr = lookupErr
 				}
 			}
 		} else {
@@ -933,36 +944,75 @@ func waitForCPHealthz(ctx context.Context, dc *docker.Client, cfg config.Config)
 // the readiness wait — the shape a failed pre-SetReady startup gate
 // (e.g. the firewall bringup) produces by design. Typed so callers and
 // tests can discriminate it from a *CPHealthTimeoutError without string
-// matching.
+// matching. FirewallEnabled gates the firewall-bringup hint so a boot
+// with the firewall disabled doesn't point operators at the wrong
+// subsystem.
 type CPExitedError struct {
-	ExitCode int
+	ExitCode        int
+	FirewallEnabled bool
 }
 
 func (e *CPExitedError) Error() string {
-	return fmt.Sprintf(
-		"control plane container exited (code %d) during startup — inspect `docker logs %s` for the failing startup step. A firewall bringup failure exits by design when the firewall is enabled in settings; fix the cause, or disable the firewall in settings.yaml to run unprotected",
+	if e.ExitCode == 0 {
+		return fmt.Sprintf(
+			"control plane container %s exited cleanly (code 0) during startup — likely a concurrent shutdown (drain-to-zero or `clawker controlplane down`); re-run `clawker controlplane up`",
+			consts.ContainerCP)
+	}
+	msg := fmt.Sprintf(
+		"control plane container exited (code %d) during startup — inspect `docker logs %s` for the failing startup step",
 		e.ExitCode, consts.ContainerCP)
+	if e.FirewallEnabled {
+		msg += ". A firewall bringup failure exits by design when the firewall is enabled in settings; fix the cause, or disable the firewall in settings.yaml to run unprotected"
+	}
+	return msg
 }
 
-// cpExitedError inspects the CP container and returns a terminal
-// *CPExitedError when it has exited and is not mid-restart; nil
-// otherwise. Lookup errors also return nil — the healthz loop keeps
-// polling through transient Docker hiccups rather than aborting the
-// readiness wait.
-func cpExitedError(ctx context.Context, dc *docker.Client) error {
+// CPGoneError reports that the CP container disappeared during the
+// readiness wait — a concurrent teardown (`clawker controlplane down`,
+// manual `docker rm -f`) removed it. Terminal: every further probe
+// would fail at transport and burn the remaining budget without new
+// information. Typed so callers and tests can discriminate it without
+// string matching.
+type CPGoneError struct{}
+
+func (e *CPGoneError) Error() string {
+	return fmt.Sprintf(
+		"control plane container %s no longer exists — it was removed while the readiness wait was in progress (concurrent `clawker controlplane down`?); re-run `clawker controlplane up`",
+		consts.ContainerCP)
+}
+
+// cpTerminalError checks the CP container and returns a terminal error
+// when further healthz polling cannot succeed: *CPGoneError when the
+// container no longer exists, *CPExitedError when it has exited and is
+// not mid-restart. Transient Docker lookup failures come back on the
+// second return — the loop keeps polling through them rather than
+// aborting the readiness wait, but the caller can fold a persistent
+// lookup problem into its timeout diagnostics.
+func cpTerminalError(ctx context.Context, dc *docker.Client) (error, error) {
 	if dc == nil {
-		return nil
+		return nil, nil
 	}
+	summary, err := findCPContainer(ctx, dc)
+	if err != nil {
+		return nil, err
+	}
+	if summary == nil {
+		return &CPGoneError{}, nil
+	}
+	if summary.State != container.StateExited {
+		return nil, nil
+	}
+	// Exited per the list — inspect for the restart-policy flag and the
+	// exit code (neither is on the list summary).
 	inspect, err := dc.ContainerInspect(ctx, consts.ContainerCP, whail.ContainerInspectOptions{})
 	if err != nil || inspect.Container.State == nil {
-		//nolint:nilerr // a failed inspect is a transient Docker hiccup, not a verdict on the CP — keep the healthz loop polling
-		return nil
+		return nil, err
 	}
 	st := inspect.Container.State
 	if st.Status != container.StateExited || st.Restarting {
-		return nil
+		return nil, nil
 	}
-	return &CPExitedError{ExitCode: st.ExitCode}
+	return &CPExitedError{ExitCode: st.ExitCode}, nil
 }
 
 // readBodySnippet reads up to healthzBodySnippetMax bytes from r for
@@ -987,15 +1037,21 @@ type CPHealthTimeoutError struct {
 	LastStatus int
 	LastBody   string
 	Err        error
+	// LookupErr carries the last CP container lookup failure observed
+	// during the wait — a persistent Docker-daemon problem (permissions,
+	// API version) would otherwise repeat invisibly for the whole budget
+	// and leave no trace in this error.
+	LookupErr error
 }
 
-func newCPHealthTimeout(start time.Time, url string, lastStatus int, lastBody string, lastErr error) *CPHealthTimeoutError {
+func newCPHealthTimeout(start time.Time, url string, lastStatus int, lastBody string, lastErr, lastLookupErr error) *CPHealthTimeoutError {
 	return &CPHealthTimeoutError{
 		Timeout:    time.Since(start),
 		URL:        url,
 		LastStatus: lastStatus,
 		LastBody:   lastBody,
 		Err:        lastErr,
+		LookupErr:  lastLookupErr,
 	}
 }
 
@@ -1003,9 +1059,12 @@ func (e *CPHealthTimeoutError) Error() string {
 	msg := fmt.Sprintf("clawker-cp did not become ready within %s (healthz at %s)", e.Timeout, e.URL)
 	switch {
 	case e.Err != nil:
-		return fmt.Sprintf("%s; last transport error: %v", msg, e.Err)
+		msg = fmt.Sprintf("%s; last transport error: %v", msg, e.Err)
 	case e.LastStatus != 0:
-		return fmt.Sprintf("%s; last status: HTTP %d; body: %q", msg, e.LastStatus, e.LastBody)
+		msg = fmt.Sprintf("%s; last status: HTTP %d; body: %q", msg, e.LastStatus, e.LastBody)
+	}
+	if e.LookupErr != nil {
+		msg = fmt.Sprintf("%s; last container lookup error: %v", msg, e.LookupErr)
 	}
 	return msg
 }

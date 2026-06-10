@@ -41,8 +41,11 @@ var (
 	HostStateDir  = os.Getenv(EnvHostStateDir)
 	HostCacheDir  = os.Getenv(EnvHostCacheDir)
 
-	// CPBinarySHA is the embedded-binary hash injected via EnvCPBinarySHA.
-	// Used by CP to detect drift when managing embedded infra components
+	// CPBinarySHA is the embedded-binary hash injected via EnvCPBinarySHA
+	// (see that comment for provenance). firewall.Stack stamps it as the
+	// stack-build drift label on the Envoy/CoreDNS siblings so a CP built
+	// from different embedded bytes recreates them instead of adopting
+	// stale ones.
 	CPBinarySHA = os.Getenv(EnvCPBinarySHA)
 )
 

@@ -8,7 +8,9 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/firewall"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
+	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
 )
@@ -16,6 +18,7 @@ import (
 type UpOptions struct {
 	IOStreams    *iostreams.IOStreams
 	Config       func() (config.Config, error)
+	Client       func(context.Context) (*docker.Client, error)
 	ControlPlane func() cpboot.Manager
 	AdminClient  func(context.Context) (adminv1.AdminServiceClient, error)
 }
@@ -31,6 +34,7 @@ func NewCmdUp(f *cmdutil.Factory, runF func(context.Context, *UpOptions) error) 
 	opts := &UpOptions{
 		IOStreams:    f.IOStreams,
 		Config:       f.Config,
+		Client:       f.Client,
 		ControlPlane: f.ControlPlane,
 		AdminClient:  f.AdminClient,
 	}
@@ -71,6 +75,7 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 	if !cfg.Settings().Firewall.FirewallEnabled() {
+		warnIfStackRunning(ctx, opts, ios)
 		return nil
 	}
 
@@ -83,4 +88,31 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 		return fmt.Errorf("connecting to control plane: %w", err)
 	}
 	return firewall.BringUpStack(ctx, ios, client)
+}
+
+// warnIfStackRunning closes the settings/reality gap on the opt-out
+// path: with firewall.enable false the verb must not start (or tear
+// down) the stack, but a stack left running from before the setting
+// flipped is still enforcing — silently saying nothing would leave the
+// user believing their settings reflect reality. Advisory only: lookup
+// failures are surfaced as a warning, never as a verb failure — the CP
+// itself is already up.
+func warnIfStackRunning(ctx context.Context, opts *UpOptions, ios *iostreams.IOStreams) {
+	cs := ios.ColorScheme()
+	dc, err := opts.Client(ctx)
+	if err != nil {
+		fmt.Fprintf(ios.ErrOut, "%s could not check firewall stack state: %v\n", cs.WarningIcon(), err)
+		return
+	}
+	for _, name := range []string{consts.ContainerEnvoy, consts.ContainerCoreDNS} {
+		running, err := dc.ContainerRunning(ctx, name)
+		if err != nil {
+			fmt.Fprintf(ios.ErrOut, "%s could not check firewall stack state: %v\n", cs.WarningIcon(), err)
+			return
+		}
+		if running {
+			fmt.Fprintf(ios.ErrOut, "%s firewall is disabled in settings but the stack is still running and enforcing — run `clawker firewall down` to remove it\n", cs.WarningIcon())
+			return
+		}
+	}
 }

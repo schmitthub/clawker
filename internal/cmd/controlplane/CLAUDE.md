@@ -41,10 +41,15 @@ cpboot/manager.go` and is wired in `internal/cmd/factory/default.go` via
 `controlPlaneFunc(f)` (a `sync.Once`-cached closure that calls
 `cpboot.NewManager(f.Client, f.Config, f.Logger)`).
 
-No package-level seams. Tests inject a `*mocks.ManagerMock` by overriding
-`tb.F.ControlPlane` on the per-test `testBed`; each test programs only the
-methods it exercises, so an unexpected call to an unprogrammed method
-panics — that's the assertion for paths that should short-circuit.
+No package-level seams. Tests inject test doubles by overriding Factory
+closures on the per-test `testBed`: a `*mocks.ManagerMock` on
+`tb.F.ControlPlane` (always), plus — for the `up` firewall paths — a
+`ConfigMock` on `tb.F.Config` (`withSettings`), an
+`AdminServiceClientMock` on `tb.F.AdminClient` (`withAdminMock`), and a
+`dockermocks.FakeClient` on `tb.F.Client` (`withDockerFake`). Each test
+programs only the methods it exercises, so an unexpected call to an
+unprogrammed method panics — that's the assertion for paths that should
+short-circuit.
 
 ## `controlplane up` and firewall bringup
 
@@ -69,9 +74,13 @@ whenever the CP is. Two cooperating mechanisms deliver that:
    down`); on a fresh boot it is a fast idempotent no-op because the
    startup gate already brought the stack up.
 
-When `firewall.enable` is false the verb prints only the CP success
-line — bringing up a stack the user disabled would be a policy
-violation. A failed stack bringup returns an error (and prints the
+When `firewall.enable` is false the verb never starts the stack —
+bringing up a stack the user disabled would be a policy violation. It
+does, however, check (via `f.Client`, advisory — lookup failures warn,
+never fail the verb) whether a previously-started Envoy/CoreDNS sibling
+is still running, and prints a stderr warning pointing at
+`clawker firewall down` when settings say off but the stack is still
+enforcing. A failed stack bringup returns an error (and prints the
 stack-down exposure warning) even though the CP itself is up.
 
 ## `controlplane down` and firewall teardown (INV-B2-008, reworked)
@@ -141,6 +150,7 @@ silently breaks JSON unmarshaling on that side.
 | `TUI` | ­ | ­ | ­ | ✓ |
 | `Logger` | ­ | ­ | ­ | ✓ |
 | `Config` | ✓ | ­ | ­ | ­ |
+| `Client` | ✓ (firewall-disabled advisory check) | ­ | ­ | ­ |
 | `ControlPlane` | ✓ | ✓ | ✓ | ­ |
 | `AdminClient` | ✓ (firewall-enabled only) | ­ | ✓ (best-effort) | ✓ |
 
@@ -154,15 +164,17 @@ throughout — no raw `cs.Red` / `cs.Green`.
 ## Import boundary
 
 `up`, `down`, and `status` import `internal/controlplane/cpboot` (for the `Manager` interface
-type) but never import `pkg/whail` — the `*docker.Client` abstraction is
-held entirely behind `Manager`. `agents` imports only `api/admin/v1` for the
+type) but never import `pkg/whail`. CP lifecycle side effects are reached
+through Manager or AdminClient methods, which is what makes the moq mocks
+complete substitutes. `agents` imports only `api/admin/v1` for the
 `AdminServiceClient` surface. `up` additionally imports the sibling
 command package `internal/cmd/firewall` for the exported
 `BringUpStack` helper so both verbs share one bringup UX (spinner,
 shared RPC deadline, exposure warning, remediation hints) instead of
-duplicating it. All lifecycle side effects are reached
-through Manager or AdminClient methods, which is what makes the moq mocks complete
-substitutes.
+duplicating it, and `internal/docker` (via `f.Client` +
+`docker.Client.ContainerRunning`) for the read-only firewall-disabled
+advisory check — the one Docker touch in this package, deliberately not
+routed through Manager because it is not a CP lifecycle operation.
 
 ## Testing
 

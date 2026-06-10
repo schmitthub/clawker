@@ -6,6 +6,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/moby/moby/api/types/container"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -14,9 +15,12 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	"github.com/schmitthub/clawker/internal/controlplane/cpboot/mocks"
 	cpmocks "github.com/schmitthub/clawker/internal/controlplane/mocks"
+	"github.com/schmitthub/clawker/internal/docker"
+	dockermocks "github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/iostreams"
 )
 
@@ -49,9 +53,21 @@ func upOptsFrom(tb *testBed) *UpOptions {
 	return &UpOptions{
 		IOStreams:    tb.F.IOStreams,
 		Config:       tb.F.Config,
+		Client:       tb.F.Client,
 		ControlPlane: tb.F.ControlPlane,
 		AdminClient:  tb.F.AdminClient,
 	}
+}
+
+// withDockerFake wires a FakeClient as f.Client, listing the given
+// container summaries (empty = no firewall stack containers).
+func withDockerFake(tb *testBed, containers ...container.Summary) *dockermocks.FakeClient {
+	fake := dockermocks.NewFakeClient(configmocks.NewBlankConfig())
+	fake.SetupContainerList(containers...)
+	tb.F.Client = func(_ context.Context) (*docker.Client, error) {
+		return fake.Client, nil
+	}
+	return fake
 }
 
 // withSettings wires a ConfigMock built from the given settings YAML
@@ -106,6 +122,7 @@ func TestUpRun_FirewallDisabled_SkipsStack(t *testing.T) {
 	tb := newTestBed(t)
 	tb.Mock.EnsureRunningFunc = func(_ context.Context) error { return nil }
 	withSettings(tb, "firewall:\n  enable: false\n")
+	withDockerFake(tb) // no stack containers — no warning expected
 	dialed := false
 	tb.F.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
 		dialed = true
@@ -116,6 +133,32 @@ func TestUpRun_FirewallDisabled_SkipsStack(t *testing.T) {
 	assert.False(t, dialed, "AdminClient must not be dialed when firewall.enable is false")
 	assert.Contains(t, tb.Stdout.String(), "Control plane is up")
 	assert.NotContains(t, tb.Stdout.String(), "Firewall stack up")
+	assert.NotContains(t, tb.Stderr.String(), "still running", "no warning when no stack containers exist")
+}
+
+// TestUpRun_FirewallDisabled_WarnsWhenStackStillRunning pins the
+// settings/reality hint: firewall.enable false + a stack container
+// still running must produce a stderr warning pointing at
+// `clawker firewall down`, while the verb still succeeds. Both sibling
+// names are covered so dropping either from the check loop fails here.
+func TestUpRun_FirewallDisabled_WarnsWhenStackStillRunning(t *testing.T) {
+	for _, name := range []string{consts.ContainerEnvoy, consts.ContainerCoreDNS} {
+		t.Run(name, func(t *testing.T) {
+			tb := newTestBed(t)
+			tb.Mock.EnsureRunningFunc = func(_ context.Context) error { return nil }
+			withSettings(tb, "firewall:\n  enable: false\n")
+			withDockerFake(tb, container.Summary{
+				ID:    name + "-id",
+				Names: []string{"/" + name},
+				State: container.StateRunning,
+			})
+
+			require.NoError(t, upRun(context.Background(), upOptsFrom(tb)))
+			stderr := tb.Stderr.String()
+			assert.Contains(t, stderr, "still running", "warning must flag the settings/reality gap")
+			assert.Contains(t, stderr, "clawker firewall down", "warning must carry the remediation command")
+		})
+	}
 }
 
 // TestUpRun_FirewallInitError_WarnsAndFails pins the failure surface:

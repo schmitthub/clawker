@@ -69,10 +69,10 @@ func newDriftFixture(t *testing.T) (*dockermocks.FakeClient, *Stack, container.S
 }
 
 // TestStack_ensureContainer_RecreatesOnStackBuildSHADrift exercises the
-// upgrade path: a running sibling stamped with an older build SHA (or,
-// equivalently, a legacy sibling with no SHA label at all — same
-// compare branch) must be stopped, removed, and recreated even though
-// infra_certs_ready and otel_infra_port still match.
+// stale-binary path: a running sibling stamped with an older build SHA
+// must be stopped, removed, and recreated even though infra_certs_ready
+// and otel_infra_port still match. (The legacy no-label-at-all variant
+// has its own test below.)
 func TestStack_ensureContainer_RecreatesOnStackBuildSHADrift(t *testing.T) {
 	overrideCPBinarySHAForTest(t, "sha-new")
 	fake, s, running := newDriftFixture(t)
@@ -111,4 +111,60 @@ func TestStack_ensureContainer_AdoptsOnMatchingStackBuildSHA(t *testing.T) {
 	assert.NotContains(t, fake.FakeAPI.Calls, "ContainerStop")
 	assert.NotContains(t, fake.FakeAPI.Calls, "ContainerRemove")
 	assert.NotContains(t, fake.FakeAPI.Calls, "ContainerCreate")
+}
+
+// TestStack_ensureContainer_RecreatesOnMissingStackBuildSHALabel pins
+// the real upgrade path separately from the different-value case: every
+// sibling created by a pre-SHA-label build has NO labelStackBuildSHA
+// key at all. The two ride the same compare branch today only because
+// specMatchesContainer reads the missing key as "" via map zero-value —
+// a rewrite that tolerates absent keys would break upgrades while the
+// different-value test stays green.
+func TestStack_ensureContainer_RecreatesOnMissingStackBuildSHALabel(t *testing.T) {
+	overrideCPBinarySHAForTest(t, "sha-new")
+	fake, s, running := newDriftFixture(t)
+	delete(running.Labels, labelStackBuildSHA)
+	fake.SetupContainerList(running)
+
+	spec := containerSpec{
+		image:     "img:test",
+		staticIP:  "172.20.0.2",
+		networkID: "net-test",
+		labels:    s.driftLabels(),
+	}
+	require.NoError(t, s.ensureContainer(context.Background(), envoyContainerName, spec))
+
+	assert.Contains(t, fake.FakeAPI.Calls, "ContainerStop", "legacy unlabeled sibling must be stopped")
+	assert.Contains(t, fake.FakeAPI.Calls, "ContainerRemove", "legacy unlabeled sibling must be removed")
+	assert.Contains(t, fake.FakeAPI.Calls, "ContainerCreate", "sibling must be recreated from the new spec")
+}
+
+// TestContainerSpecs_CarryDriftLabels closes the wiring gap the tests
+// above structurally cannot see: they build containerSpec literals with
+// labels: s.driftLabels() themselves. If a refactor dropped that field
+// from the production spec constructors, specMatchesContainer would
+// iterate an empty want map and adopt every stale sibling forever —
+// with every drift test still green. Assert the production specs carry
+// the full drift label set.
+func TestContainerSpecs_CarryDriftLabels(t *testing.T) {
+	overrideCPBinarySHAForTest(t, "sha-wired")
+	testenv.New(t)
+	cfg := configmocks.NewIsolatedTestConfig(t)
+	s := NewStack(nil, cfg, logger.Nop(), nil, nil)
+	netInfo := &NetworkInfo{NetworkID: "net-test", EnvoyIP: "172.20.0.2", CoreDNSIP: "172.20.0.3"}
+
+	want := s.driftLabels()
+	require.NotEmpty(t, want)
+	require.Equal(t, "sha-wired", want[labelStackBuildSHA])
+
+	for name, spec := range map[string]containerSpec{
+		"envoy":   s.envoyContainerSpec(netInfo),
+		"coredns": s.corednsContainerSpec(netInfo),
+	} {
+		t.Run(name, func(t *testing.T) {
+			for k, v := range want {
+				assert.Equal(t, v, spec.labels[k], "drift label %s must be wired into the %s spec", k, name)
+			}
+		})
+	}
 }
