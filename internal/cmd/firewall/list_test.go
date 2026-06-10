@@ -233,6 +233,54 @@ func TestListRun_WithPaths(t *testing.T) {
 	})
 }
 
+// TestListRun_WithMethodGatedPaths verifies method-gated path rules surface
+// in both output modes: JSON carries the methods array, and the table shows
+// a METHODS column so the user can tell a GET-only allow from a full allow.
+func TestListRun_WithMethodGatedPaths(t *testing.T) {
+	rules := []*adminv1.EgressRule{
+		{
+			Dst:   "api.example.com",
+			Proto: "https",
+			Port:  "443",
+			PathRules: []*adminv1.PathRule{
+				{Path: "/blog/", Action: "allow", Methods: []string{"GET", "HEAD"}},
+				{Path: "/resume/", Action: "allow"},
+			},
+		},
+	}
+
+	t.Run("json includes methods and omits when empty", func(t *testing.T) {
+		f, stdout := newListCmd(t, rules, nil)
+		cmd := NewCmdList(f, nil)
+		cmd.SetContext(context.Background())
+		cmd.SetArgs([]string{"--json"})
+
+		require.NoError(t, cmd.Execute())
+
+		var rows []ruleRow
+		require.NoError(t, json.Unmarshal([]byte(stdout.String()), &rows))
+		require.Len(t, rows, 1)
+		require.Len(t, rows[0].Paths, 2)
+		assert.Equal(t, []string{"GET", "HEAD"}, rows[0].Paths[0].Methods)
+		assert.Nil(t, rows[0].Paths[1].Methods)
+		// Method-less path rule must not emit a "methods" key.
+		assert.NotContains(t, stdout.String(), `"methods":null`)
+	})
+
+	t.Run("table renders methods column on gated sub-row", func(t *testing.T) {
+		f, stdout := newListCmd(t, rules, nil)
+		cmd := NewCmdList(f, nil)
+		cmd.SetContext(context.Background())
+		cmd.SetArgs([]string{})
+
+		require.NoError(t, cmd.Execute())
+
+		out := stdout.String()
+		assert.Contains(t, out, "METHODS")
+		assert.Contains(t, out, "GET,HEAD")
+	})
+}
+
 // TestListRun_WithDenylistPaths_InfersAllowDefault locks in the inferred
 // path_default display for the denylist case (only deny path_rules, no
 // explicit r.path_default). Without inference, the list output would
@@ -262,10 +310,13 @@ func TestListRun_WithDenylistPaths_InfersAllowDefault(t *testing.T) {
 		out := stdout.String()
 		assert.Contains(t, out, "  /admin")
 		assert.Contains(t, out, "  path default")
-		// "allow" must appear after "path default" in the output (sub-row action).
+		// ACTION follows DOMAIN, so the inferred "allow" must appear on the
+		// same line, after the "path default" label.
 		defaultIdx := strings.Index(out, "path default")
 		require.NotEqual(t, -1, defaultIdx)
-		assert.Contains(t, out[defaultIdx:], "allow")
+		lineEnd := strings.Index(out[defaultIdx:], "\n")
+		require.NotEqual(t, -1, lineEnd)
+		assert.Contains(t, out[defaultIdx:defaultIdx+lineEnd], "allow")
 	})
 
 	t.Run("json carries inferred path_default", func(t *testing.T) {

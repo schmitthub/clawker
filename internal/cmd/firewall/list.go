@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/cmdutil"
@@ -32,8 +33,9 @@ type ruleRow struct {
 
 // pathRow is a single path-scoped rule entry under a domain.
 type pathRow struct {
-	Path   string `json:"path"`
-	Action string `json:"action"`
+	Path    string   `json:"path"`
+	Action  string   `json:"action"`
+	Methods []string `json:"methods,omitempty"`
 }
 
 // displayPathDefault renders the catch-all action for `firewall list`. It
@@ -123,7 +125,7 @@ func listRun(ctx context.Context, opts *ListOptions) error {
 				if pAction == "" {
 					pAction = "allow"
 				}
-				paths = append(paths, pathRow{Path: p.GetPath(), Action: pAction})
+				paths = append(paths, pathRow{Path: p.GetPath(), Action: pAction, Methods: p.GetMethods()})
 			}
 			sort.Slice(paths, func(i, j int) bool { return paths[i].Path < paths[j].Path })
 		}
@@ -162,14 +164,14 @@ func listRun(ctx context.Context, opts *ListOptions) error {
 		return cmdutil.ExecuteTemplate(ios.Out, opts.Format.Template(), cmdutil.ToAny(rows))
 
 	default:
-		tp := opts.TUI.NewTable("DOMAIN", "PROTO", "PORT", "ACTION")
+		tp := opts.TUI.NewTable("DOMAIN", "ACTION", "PROTO", "PORT", "METHODS")
 		for _, r := range rows {
-			tp.AddRow(r.Domain, r.Proto, r.Port, r.Action)
+			tp.AddRow(r.Domain, r.Action, r.Proto, r.Port, "")
 			for _, p := range r.Paths {
-				tp.AddRow("  "+p.Path, "", "", p.Action)
+				tp.AddRow("  "+p.Path, p.Action, "", "", strings.Join(p.Methods, ","))
 			}
 			if r.PathDefault != "" {
-				tp.AddRow("  path default", "", "", r.PathDefault)
+				tp.AddRow("  path default", r.PathDefault, "", "", "")
 			}
 		}
 		return tp.Render()
