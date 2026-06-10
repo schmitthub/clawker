@@ -51,16 +51,22 @@ panics — that's the assertion for paths that should short-circuit.
 `firewall.enable` (settings.yaml) means the firewall stack should be up
 whenever the CP is. Two cooperating mechanisms deliver that:
 
-1. **CP-side (fresh boots)**: the CP daemon itself reads settings at
-   startup and, when enabled, runs an async in-process `FirewallInit`
-   (`settingsFirewallBringup` in `cmd/clawker-cp/main.go`). Covers CP
-   boots no CLI observes (restart policy, container-start bootstrap).
+1. **CP-side (every boot, startup gate)**: the CP daemon reads settings
+   at startup and, when enabled, runs the in-process `FirewallInit`
+   synchronously BEFORE `SetReady` (step 8c in `cmd/clawker-cp/main.go`).
+   A bringup failure fails CP startup (exit code 1) — fail-closed and
+   loud, never silently unenforced. `/healthz` green therefore implies
+   the stack is up when the firewall is enabled, and the host-side
+   `cpboot` healthz wait extends its budget accordingly (and fail-fasts
+   with a diagnostic error if the CP container terminally exits). Covers
+   CP boots no CLI observes (restart policy, container-start bootstrap).
 2. **CLI-side (idempotent path)**: `upRun` loads config after
    `EnsureRunning` and, when enabled, dials `f.AdminClient` and calls
    `firewall.BringUpStack` — the same spinner + shared-deadline +
    exposure-warning UX as `firewall up`. This covers the case where the
    CP was already running with the stack down (e.g. after `firewall
-   down`) and makes the verb block until the stack is healthy.
+   down`); on a fresh boot it is a fast idempotent no-op because the
+   startup gate already brought the stack up.
 
 When `firewall.enable` is false the verb prints only the CP success
 line — bringing up a stack the user disabled would be a policy

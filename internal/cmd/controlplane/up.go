@@ -24,9 +24,9 @@ type UpOptions struct {
 // Manager.EnsureRunning — idempotent — and, when firewall.enable
 // (settings.yaml) is true, brings the firewall stack up via the same
 // idempotent FirewallInit the `firewall up` verb sends. A freshly
-// booted CP starts the stack itself from the same setting; the CLI-side
-// call covers the idempotent path (CP already running, stack down) and
-// makes the verb block until the stack is actually healthy.
+// booted CP starts the stack itself as a pre-ready startup gate (boot
+// fails if bringup fails); the CLI-side call covers the idempotent path
+// (CP already running, stack down — e.g. after `firewall down`).
 func NewCmdUp(f *cmdutil.Factory, runF func(context.Context, *UpOptions) error) *cobra.Command {
 	opts := &UpOptions{
 		IOStreams:    f.IOStreams,

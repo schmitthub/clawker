@@ -224,7 +224,7 @@ func EnsureRunning(ctx context.Context, opts EnsureOpts) error {
 					return fmt.Errorf("controlplane: start existing cp: %w", err)
 				}
 			}
-			return cpReady(ctx, cfg, log)
+			return cpReady(ctx, dc, cfg, log)
 		}
 
 		cpRunning := summary.State == container.StateRunning
@@ -295,7 +295,7 @@ func EnsureRunning(ctx context.Context, opts EnsureOpts) error {
 		return fmt.Errorf("controlplane: %w", err)
 	}
 
-	return cpReady(ctx, cfg, log)
+	return cpReady(ctx, dc, cfg, log)
 }
 
 // Stop removes the CP container. Used by `clawker controlplane down`.
@@ -754,8 +754,8 @@ func cpBuildContext(binarySHA, version, revision, createdAt string) (io.Reader, 
 // drifted from the host would let clawkerd exchange an assertion whose
 // (host-clock) iat is in the CP's future, so clock sync is a first-class
 // readiness condition, not an afterthought.
-func cpReady(ctx context.Context, cfg config.Config, log *logger.Logger) error {
-	if err := healthzFn(ctx, cfg); err != nil {
+func cpReady(ctx context.Context, dc *docker.Client, cfg config.Config, log *logger.Logger) error {
+	if err := healthzFn(ctx, dc, cfg); err != nil {
 		return err
 	}
 	return clockSyncFn(ctx, cfg, log)
@@ -853,12 +853,28 @@ func waitForCPClockSync(ctx context.Context, cfg config.Config, log *logger.Logg
 // outcome (transport error, HTTP status, body snippet) so operators can
 // distinguish "port never bound" from "503 because Hydra is down"
 // without re-running under debug logging.
-func waitForCPHealthz(ctx context.Context, cfg config.Config) error {
+//
+// Two firewall-aware behaviors:
+//   - The wait budget extends by the stack-bringup bound when
+//     firewall.enable is set — the CP gates SetReady on the firewall
+//     stack bringup (image pull/build + container create + health wait
+//     all happen before /healthz turns green).
+//   - When a healthz probe fails at the transport layer, the CP
+//     container's state is checked (throttled): an exited,
+//     not-restarting container is a terminal startup-gate failure (the
+//     CP exits code 1 by design when the firewall bringup fails), and
+//     burning the rest of the budget would only delay the feedback the
+//     operator needs.
+func waitForCPHealthz(ctx context.Context, dc *docker.Client, cfg config.Config) error {
 	url := fmt.Sprintf("http://127.0.0.1:%d/healthz", cfg.Settings().ControlPlane.HealthPort)
 	httpClient := &http.Client{Timeout: 2 * time.Second}
 
 	start := time.Now()
-	deadline := start.Add(cpReadyTimeout)
+	budget := cpReadyTimeout
+	if cfg.Settings().Firewall.FirewallEnabled() {
+		budget += consts.FirewallStackBringupRPCTimeout
+	}
+	deadline := start.Add(budget)
 	if dl, ok := ctx.Deadline(); ok && dl.Before(deadline) {
 		deadline = dl
 	}
@@ -866,6 +882,7 @@ func waitForCPHealthz(ctx context.Context, cfg config.Config) error {
 	var lastErr error
 	var lastStatus int
 	var lastBody string
+	var lastStateCheck time.Time
 	for {
 		// Deadline check first so a DeadlineExceeded surfaces the typed
 		// error with last-probe diagnostics rather than bare ctx.Err().
@@ -883,6 +900,16 @@ func waitForCPHealthz(ctx context.Context, cfg config.Config) error {
 		resp, err := httpClient.Do(req)
 		if err != nil {
 			lastErr = err
+			// healthz unreachable — the container may be terminally dead.
+			// A 503 response (else-branch) proves the CP process is alive,
+			// so the state check only runs on transport failure, at most
+			// once per second to keep Docker inspect chatter bounded.
+			if time.Since(lastStateCheck) >= time.Second {
+				lastStateCheck = time.Now()
+				if exitErr := cpExitedError(ctx, dc); exitErr != nil {
+					return exitErr
+				}
+			}
 		} else {
 			lastStatus = resp.StatusCode
 			if resp.StatusCode == http.StatusOK {
@@ -900,6 +927,42 @@ func waitForCPHealthz(ctx context.Context, cfg config.Config) error {
 		case <-time.After(cpReadyInterval):
 		}
 	}
+}
+
+// CPExitedError reports that the CP container terminally exited during
+// the readiness wait — the shape a failed pre-SetReady startup gate
+// (e.g. the firewall bringup) produces by design. Typed so callers and
+// tests can discriminate it from a *CPHealthTimeoutError without string
+// matching.
+type CPExitedError struct {
+	ExitCode int
+}
+
+func (e *CPExitedError) Error() string {
+	return fmt.Sprintf(
+		"control plane container exited (code %d) during startup — inspect `docker logs %s` for the failing startup step. A firewall bringup failure exits by design when the firewall is enabled in settings; fix the cause, or disable the firewall in settings.yaml to run unprotected",
+		e.ExitCode, consts.ContainerCP)
+}
+
+// cpExitedError inspects the CP container and returns a terminal
+// *CPExitedError when it has exited and is not mid-restart; nil
+// otherwise. Lookup errors also return nil — the healthz loop keeps
+// polling through transient Docker hiccups rather than aborting the
+// readiness wait.
+func cpExitedError(ctx context.Context, dc *docker.Client) error {
+	if dc == nil {
+		return nil
+	}
+	inspect, err := dc.ContainerInspect(ctx, consts.ContainerCP, whail.ContainerInspectOptions{})
+	if err != nil || inspect.Container.State == nil {
+		//nolint:nilerr // a failed inspect is a transient Docker hiccup, not a verdict on the CP — keep the healthz loop polling
+		return nil
+	}
+	st := inspect.Container.State
+	if st.Status != container.StateExited || st.Restarting {
+		return nil
+	}
+	return &CPExitedError{ExitCode: st.ExitCode}
 }
 
 // readBodySnippet reads up to healthzBodySnippetMax bytes from r for

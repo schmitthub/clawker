@@ -723,6 +723,43 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		}()
 	}
 
+	// --- Step 8c: settings-driven firewall bringup (startup gate) ---
+	//
+	// firewall.enable (settings.yaml) means the stack must be up whenever
+	// the CP is — not only when a CLI verb (`firewall up`, `container
+	// start`) happens to send FirewallInit. Run the same queued
+	// FirewallInit the CLI RPC path uses (route_map seed + agent
+	// re-enrollment included) synchronously, BEFORE SetReady: a green
+	// /healthz must mean "everything the settings enable is enforcing".
+	// This covers CP boots no CLI observes — the on-failure restart
+	// policy resurrecting a crashed CP with agents still running.
+	//
+	// A bringup failure FAILS CP startup (pre-SetReady startup-gate exit,
+	// code 1 — same doctrine as the CleanupStaleBypass gate): the user
+	// needs that feedback loudly. Degrading instead would leave agents
+	// either unusable (eBPF redirecting egress at a dead Envoy) or, worse,
+	// silently unenforced while the user believes the firewall is on. No
+	// eBPF flush happens on this exit path — existing per-container state
+	// stays pinned, so already-enrolled agents stay fail-closed rather
+	// than fail-open. The host-side healthz wait extends its budget for
+	// this gate (cpboot.waitForCPHealthz).
+	//
+	// (Background ctx: FirewallInit's real work runs on the ActionQueue
+	// under the queue's own ctx — the caller ctx is not load-bearing.)
+	//
+	// Re-enrollment events published here precede netlogger construction
+	// (step 9c), so netlogger's LabelCache stays cold for agents that
+	// outlived the previous CP until the next FirewallInit/FirewallEnable
+	// — telemetry enrichment only; enforcement is unaffected.
+	if cfg.Settings().Firewall.FirewallEnabled() {
+		log.Info().Str("component", "firewall-bringup").
+			Msg("firewall bringup: starting stack (settings firewall.enable)")
+		if _, err := handler.FirewallInit(context.Background(), &adminv1.FirewallInitRequest{}); err != nil {
+			return fmt.Errorf("step 8c (firewall bringup): %w", err)
+		}
+		log.Info().Str("component", "firewall-bringup").Msg("firewall stack up")
+	}
+
 	// --- Step 9: healthz ---
 	orchestrator.SetReady()
 
@@ -738,26 +775,6 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 			serveFailed <- fmt.Errorf("healthz serve: %w", err)
 		}
 	}()
-
-	// Settings-driven firewall stack bringup. firewall.enable
-	// (settings.yaml) means the stack should be up whenever the CP is —
-	// not only when a CLI verb (`firewall up`, `container start`)
-	// happens to send FirewallInit. This covers CP boots no CLI
-	// observes: the on-failure restart policy resurrecting a crashed CP,
-	// and `controlplane up` on a host with agents already running.
-	// Async because the pre-health work (image pull/build + container
-	// create) is unbounded on first boot — blocking SetReady would blow
-	// the CLI's cpReadyTimeout healthz wait. Degradation semantics live
-	// on settingsFirewallBringup.
-	// (Background, not watcherCtx: FirewallInit's real work runs on the
-	// ActionQueue under the queue's own ctx, and drain closes the queue
-	// first — the caller ctx is not load-bearing for cancellation.)
-	if cfg.Settings().Firewall.FirewallEnabled() {
-		go settingsFirewallBringup(func(ctx context.Context) error {
-			_, err := handler.FirewallInit(ctx, &adminv1.FirewallInitRequest{})
-			return err
-		}, log.With("component", "firewall-bringup"))
-	}
 
 	// Step 9a: dockerevents feeder.
 	//
@@ -1445,36 +1462,6 @@ func wireInitExecutor(bus *overseer.Overseer, log *logger.Logger) *agent.Executo
 		Str("event", "agent_init_executor_unavailable").
 		Msg("agent.init: Executor construction failed; CP-driven init disabled — agent containers will hang on the entrypoint fifo until timeout. CP otherwise continues.")
 	return nil
-}
-
-// settingsFirewallBringup is the body of the settings-driven firewall
-// stack bringup goroutine that fires at CP startup when firewall.enable
-// (settings.yaml) is true. init is the in-process FirewallInit call —
-// the same queued bringup the CLI RPC path uses, so route_map seeding
-// and agent re-enrollment behavior are identical and the ActionQueue
-// serializes it against any concurrent CLI-triggered bringup.
-//
-// Failure degrades, never crashes: the stack staying down leaves agent
-// egress in the state warnStackDownExposure describes CLI-side, but CP,
-// registry, AdminService, and eBPF supervision all stay up, and the
-// next FirewallInit (container start or `clawker firewall up`) retries.
-// The recover honors the CP no-panic invariant — a bringup bug must not
-// kill PID 1 and strand pinned eBPF programs unsupervised.
-func settingsFirewallBringup(init func(context.Context) error, log *logger.Logger) {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Error().Interface("panic", r).
-				Str("event", "firewall_stack_unavailable").
-				Msg("startup firewall bringup panicked; stack may be down — agents enroll via container start or `clawker firewall up`. CP otherwise continues.")
-		}
-	}()
-	if err := init(context.Background()); err != nil {
-		log.Error().Err(err).
-			Str("event", "firewall_stack_unavailable").
-			Msg("startup firewall bringup failed; stack is down — agent egress protection inactive until the next successful FirewallInit (container start or `clawker firewall up`). CP otherwise continues.")
-		return
-	}
-	log.Info().Msg("firewall stack up (settings firewall.enable)")
 }
 
 // logHostIdentity surfaces a degraded-mode warn on the rotating CP
