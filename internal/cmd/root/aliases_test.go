@@ -18,7 +18,7 @@ func TestTopLevelAliases(t *testing.T) {
 		Logger:    func() (*logger.Logger, error) { return logger.Nop(), nil },
 	}
 	root := &cobra.Command{Use: "clawker"}
-	registerAliases(root, f)
+	registerBuiltinAliases(root, f)
 
 	// Verify we're testing all expected aliases
 	require.Equal(t, 20, len(topLevelAliases), "expected 20 aliases in topLevelAliases")

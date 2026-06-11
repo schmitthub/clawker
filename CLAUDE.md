@@ -115,7 +115,7 @@ See `.claude/docs/KEY-CONCEPTS.md` for the full type/abstraction index. Package-
 See `docs/cli-reference/` for auto-generated command reference.
 
 **Top-level shortcuts**: `init`, `build`, `run`, `start`, `monitor *`, `generate`, `version`
-**Management**: `auth *`, `container *`, `volume *`, `network *`, `image *`, `project *`, `worktree *`, `firewall *`, `controlplane *`, `settings *`, `skill *`
+**Management**: `alias *`, `auth *`, `container *`, `volume *`, `network *`, `image *`, `project *`, `worktree *`, `firewall *`, `controlplane *`, `settings *`, `skill *`
 
 ## Configuration
 

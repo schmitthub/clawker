@@ -94,6 +94,16 @@ clawker run -it --rm --agent dev @ --dangerously-skip-permissions
 
 You're now inside a containerized Claude Code session. Your project code is bind-mounted (live sync), your Git credentials are forwarded, and the network firewall is active. Arguments after the image (`@`) are passed directly to Claude Code inside the container.
 
+<Tip>
+That whole command has a built-in shorthand — the `go` alias:
+
+```bash
+clawker go dev
+```
+
+Clawker ships [command aliases](/aliases) that expand to full invocations, and you can define your own with `clawker alias set`. See the [Command Aliases](/aliases) guide.
+</Tip>
+
 ### What Happens Behind the Scenes
 
 When you run this command, Clawker:
@@ -119,6 +129,13 @@ clawker run -it --rm --agent cache --worktree feature/cache:main @ --dangerously
 ```
 
 The `--worktree branch:base` flag creates a Git worktree off the base branch and mounts it into the container. Each agent works on its own branch with no conflicts.
+
+The shipped `wt` [alias](/aliases) collapses each of those commands to three words:
+
+```bash
+clawker wt auth feature/auth:main
+clawker wt cache feature/cache:main
+```
 
 ```bash
 # See all worktrees
@@ -177,6 +194,9 @@ clawker firewall bypass 5m --agent dev  # Temporary unrestricted access
 <CardGroup cols={2}>
   <Card title="Configuration" icon="gear" href="/configuration">
     Full `.clawker.yaml` reference with layered config and monorepo support
+  </Card>
+  <Card title="Command Aliases" icon="bolt" href="/aliases">
+    One-word shortcuts for full agent launches — shipped defaults, placeholders, team sharing
   </Card>
   <Card title="Security & Firewall" icon="shield" href="/security">
     Understand the deny-by-default firewall and how to configure domain access

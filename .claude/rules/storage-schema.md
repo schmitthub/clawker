@@ -30,6 +30,7 @@ Schema types use these struct tags as the single source of truth for field metad
 | `*bool` | KindBool | `"true"` or `"false"` | `default:"true"` |
 | `int` / `int64` | KindInt | Decimal string | `default:"50"` |
 | `[]string` | KindStringSlice | Comma-separated | `default:"git,curl,ripgrep"` |
+| `map[string]string` | KindMap | Comma-separated `key=value` (split on first `=`; values may contain `=` but not `,`) | `default:"dev=run --rm -it @"` |
 | `time.Duration` | KindDuration | Go duration string | `default:"30s"` |
 
 ## Key Functions

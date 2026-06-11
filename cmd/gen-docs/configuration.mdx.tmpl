@@ -208,6 +208,18 @@ Global settings live at `~/.config/clawker/settings.yaml`. The following tables 
 
 You can also place a `clawker.yaml` in `~/.config/clawker/` to set user-level project config defaults. This file is merged as the lowest-priority project config layer (just above built-in defaults), so any project-level `.clawker.yaml` overrides it.
 
+## Command Aliases
+
+The `aliases` key in the project config defines command shortcuts that are expanded before execution, merged across every config layer like any other project config key:
+
+```yaml
+aliases:
+  go: run --rm -it --agent $1 @ --dangerously-skip-permissions
+  lg: logs $1 --tail $2
+```
+
+Manage them with the `clawker alias` command group (`set`, `list`, `export`, `delete`). See the [Command Aliases](/aliases) guide for expansion semantics, shipped defaults, team sharing, and the full rules.
+
 ## Directory Structure
 
 Clawker follows the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/). Files are organized across three directories:

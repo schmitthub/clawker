@@ -125,10 +125,11 @@ var topLevelAliases = []Alias{
 	},
 }
 
-// registerAliases adds all top-level aliases to the root command.
+// registerBuiltinAliases adds all top-level aliases to the root command.
 // Each alias gets a fresh command instance from its factory, ensuring
 // flags, RunE, and other properties are inherited automatically.
-func registerAliases(root *cobra.Command, f *cmdutil.Factory) {
+// User-configured aliases are a separate mechanism — see useraliases.go.
+func registerBuiltinAliases(root *cobra.Command, f *cmdutil.Factory) {
 	for _, alias := range topLevelAliases {
 		if alias.Use == "" {
 			panic("alias has empty Use field")

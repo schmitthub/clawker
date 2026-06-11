@@ -12,11 +12,12 @@ import (
 //
 // Project is a pure persisted schema model for clawker.yaml.
 type Project struct {
-	Name      string          `yaml:"name,omitempty" label:"Project Name" desc:"Override the project slug derived from the directory name (set this when the directory name isn't a good clawker identifier — e.g. dots, spaces, unicode)"`
-	Build     BuildConfig     `yaml:"build"`
-	Agent     AgentConfig     `yaml:"agent"`
-	Workspace WorkspaceConfig `yaml:"workspace"`
-	Security  SecurityConfig  `yaml:"security"`
+	Name      string            `yaml:"name,omitempty" label:"Project Name" desc:"Override the project slug derived from the directory name (set this when the directory name isn't a good clawker identifier — e.g. dots, spaces, unicode)"`
+	Build     BuildConfig       `yaml:"build"`
+	Agent     AgentConfig       `yaml:"agent"`
+	Workspace WorkspaceConfig   `yaml:"workspace"`
+	Security  SecurityConfig    `yaml:"security"`
+	Aliases   map[string]string `yaml:"aliases,omitempty" label:"Aliases" desc:"Command aliases expanded before execution; the value is appended to 'clawker' and supports $1..$N placeholders; merged across all config layers" merge:"union" default:"go=run --rm -it --agent $1 @ --dangerously-skip-permissions,wt=run --rm -it --agent $1 --worktree $2 @ --dangerously-skip-permissions"`
 }
 
 // Fields implements [storage.Schema] for Project.

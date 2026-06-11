@@ -46,6 +46,13 @@ type defaultsTestEmpty struct {
 
 func (d defaultsTestEmpty) Fields() FieldSet { return NormalizeFields(d) }
 
+type defaultsTestMap struct {
+	Aliases map[string]string `yaml:"aliases" default:"go=run --flag @ value,ver=version" desc:"Aliases"`
+	Labels  map[string]string `yaml:"labels" desc:"No default"`
+}
+
+func (d defaultsTestMap) Fields() FieldSet { return NormalizeFields(d) }
+
 // --- GenerateDefaultsYAML tests ---
 
 func TestGenerateDefaultsYAML_SimpleTypes(t *testing.T) {
@@ -166,6 +173,47 @@ func TestWithDefaultsFromStruct_ViaRealStore(t *testing.T) {
 	assert.Empty(t, snap.NoDefault)
 }
 
+func TestGenerateDefaultsYAML_MapField(t *testing.T) {
+	out := GenerateDefaultsYAML[defaultsTestMap]()
+	require.NotEmpty(t, out)
+
+	var m map[string]any
+	require.NoError(t, yaml.Unmarshal([]byte(out), &m))
+
+	aliases, ok := m["aliases"].(map[string]any)
+	require.True(t, ok, "aliases should be a YAML mapping")
+	assert.Equal(t, "run --flag @ value", aliases["go"])
+	assert.Equal(t, "version", aliases["ver"])
+
+	// labels has no default and should not appear
+	_, exists := m["labels"]
+	assert.False(t, exists, "map fields without defaults should not appear")
+
+	// Generated defaults survive the store pipeline as the typed map.
+	store, err := NewFromString[defaultsTestMap](out)
+	require.NoError(t, err)
+	snap := store.Read()
+	assert.Equal(t, map[string]string{"go": "run --flag @ value", "ver": "version"}, snap.Aliases)
+	assert.Empty(t, snap.Labels)
+}
+
+func TestParseDefaultValue_Map(t *testing.T) {
+	// Multiple pairs
+	assert.Equal(t, map[string]string{"a": "1", "b": "2"}, parseDefaultValue("a=1,b=2", KindMap))
+
+	// Value containing '=' — split on first '=' only
+	assert.Equal(t, map[string]string{"k": "a=b"}, parseDefaultValue("k=a=b", KindMap))
+
+	// Empty value is allowed (disable semantics live at the consumer)
+	assert.Equal(t, map[string]string{"k": ""}, parseDefaultValue("k=", KindMap))
+
+	// Entry missing '=' panics
+	assert.Panics(t, func() { parseDefaultValue("noequals", KindMap) })
+
+	// Empty key panics
+	assert.Panics(t, func() { parseDefaultValue("=v", KindMap) })
+}
+
 func TestParseDefaultValue_EdgeCases(t *testing.T) {
 	// Valid cases
 	assert.Equal(t, false, parseDefaultValue("false", KindBool))
@@ -186,7 +234,6 @@ func TestParseDefaultValue_EdgeCases(t *testing.T) {
 	assert.Panics(t, func() { parseDefaultValue("a,,b", KindStringSlice) })
 
 	// Kinds that don't support defaults panic
-	assert.Panics(t, func() { parseDefaultValue("whatever", KindMap) })
 	assert.Panics(t, func() { parseDefaultValue("whatever", KindStructSlice) })
 	assert.Panics(t, func() { parseDefaultValue("whatever", KindLast+1) })
 }

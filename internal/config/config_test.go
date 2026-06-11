@@ -46,6 +46,10 @@ func TestNewBlankConfig_settingsDefaults(t *testing.T) {
 	// Host proxy defaults
 	hp := cfg.HostProxyConfig()
 	assert.Equal(t, 18374, hp.Manager.Port)
+
+	// Shipped default aliases (tag → GenerateDefaultsYAML → merge pipeline)
+	assert.Equal(t, "run --rm -it --agent $1 @ --dangerously-skip-permissions", cfg.Project().Aliases["go"])
+	assert.Equal(t, "run --rm -it --agent $1 --worktree $2 @ --dangerously-skip-permissions", cfg.Project().Aliases["wt"])
 }
 
 func TestNewFromString_projectOnly(t *testing.T) {

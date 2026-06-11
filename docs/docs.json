@@ -98,6 +98,7 @@
         "group": "Guides",
         "pages": [
           "configuration",
+          "aliases",
           "security",
           "firewall",
           "observability",
@@ -225,6 +226,16 @@
             "pages": [
               "cli-reference/clawker_settings",
               "cli-reference/clawker_settings_edit"
+            ]
+          },
+          {
+            "group": "Alias",
+            "pages": [
+              "cli-reference/clawker_alias",
+              "cli-reference/clawker_alias_set",
+              "cli-reference/clawker_alias_list",
+              "cli-reference/clawker_alias_delete",
+              "cli-reference/clawker_alias_export"
             ]
           },
           {

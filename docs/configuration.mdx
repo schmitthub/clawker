@@ -282,6 +282,9 @@ security:
     forward_gpg: <boolean>  # default: true | required: false
     # Sync your host .gitconfig (aliases, user.name, user.email) into the container
     copy_git_config: <boolean>  # default: true | required: false
+# Command aliases expanded before execution; the value is appended to 'clawker' and supports $1..$N placeholders; merged across all config layers
+aliases:  # default: go=run --rm -it --agent $1 @ --dangerously-skip-permissions,wt=run --rm -it --agent $1 --worktree $2 @ --dangerously-skip-permissions | required: false
+  <key>: <value>
 
 ```
 
@@ -385,6 +388,13 @@ The following tables are auto-generated from the schema struct tags in `internal
 | `forward_ssh` | boolean | `true` | Let git use your host SSH keys for cloning and pushing |
 | `forward_gpg` | boolean | `true` | Let git sign commits using your host GPG keys |
 | `copy_git_config` | boolean | `true` | Sync your host .gitconfig (aliases, user.name, user.email) into the container |
+
+
+### aliases
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `aliases` | key-value map | `go=run --rm -it --agent $1 @ --dangerously-skip-permissions,wt=run --rm -it --agent $1 --worktree $2 @ --dangerously-skip-permissions` | Command aliases expanded before execution; the value is appended to 'clawker' and supports $1..$N placeholders; merged across all config layers |
 
 
 ## Interactive Editing
@@ -605,6 +615,18 @@ Global settings live at `~/.config/clawker/settings.yaml`. The following tables 
 
 
 You can also place a `clawker.yaml` in `~/.config/clawker/` to set user-level project config defaults. This file is merged as the lowest-priority project config layer (just above built-in defaults), so any project-level `.clawker.yaml` overrides it.
+
+## Command Aliases
+
+The `aliases` key in the project config defines command shortcuts that are expanded before execution, merged across every config layer like any other project config key:
+
+```yaml
+aliases:
+  go: run --rm -it --agent $1 @ --dangerously-skip-permissions
+  lg: logs $1 --tail $2
+```
+
+Manage them with the `clawker alias` command group (`set`, `list`, `export`, `delete`). See the [Command Aliases](/aliases) guide for expansion semantics, shipped defaults, team sharing, and the full rules.
 
 ## Directory Structure
 

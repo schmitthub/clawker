@@ -1,0 +1,131 @@
+---
+title: "Command Aliases"
+description: "Define shortcuts that expand to full clawker commands — shipped defaults, positional placeholders, and team sharing via project config"
+icon: "bolt"
+keywords: ["mythos-class", "security", "AI container sandbox", "Claude Code", "Fable 5", "Anthropic", "command aliases", "CLI shortcuts", "clawker alias"]
+---
+
+Aliases are user-defined shortcuts expanded before execution: the alias value is appended to `clawker` in place of the alias name, and any further arguments are appended after it. They turn long, flag-heavy invocations into one-word commands.
+
+```bash
+# Instead of typing this every time...
+clawker run --rm -it --agent dev @ --dangerously-skip-permissions
+
+# ...type this
+clawker go dev
+```
+
+## Shipped Defaults
+
+Clawker ships two aliases out of the box:
+
+| Alias | Expansion | What it does |
+|-------|-----------|--------------|
+| `go` | `run --rm -it --agent $1 @ --dangerously-skip-permissions` | Launch a disposable interactive agent: `clawker go dev` |
+| `wt` | `run --rm -it --agent $1 --worktree $2 @ --dangerously-skip-permissions` | Launch an agent on a fresh [worktree](/worktrees) — `$2` is a `branch[:base]` spec: `clawker wt auth feature/auth:main` |
+
+Defaults are always active — no setup required. They can be overridden (see [Deleting and Overriding](#deleting-and-overriding)) but never deleted.
+
+## How Expansion Works
+
+The expansion may reference positional arguments as `$1`..`$N`; arguments beyond the highest placeholder are appended after the expansion. Without placeholders, all arguments are appended.
+
+```yaml
+aliases:
+  go: run --rm -it --agent $1 @ --dangerously-skip-permissions
+  lg: logs $1 --tail $2
+```
+
+- `clawker go fable --model opus` runs `clawker run --rm -it --agent fable @ --dangerously-skip-permissions --model opus`
+- `clawker lg web 50` runs `clawker logs web --tail 50`
+- Invoking an alias with fewer arguments than its highest placeholder is an error (`expansion references $2 but 1 given`)
+- Placeholders substitute before the expansion is tokenized (same model as the gh CLI), so an argument containing spaces splits into separate tokens through a bare `$1`. Quote the placeholder in the alias definition — `clawker alias set ex 'container exec "$1" sh'` — to keep the substituted value a single argument.
+
+## Defining Aliases
+
+```bash
+clawker alias set lg "logs \$1 --tail \$2"
+```
+
+`alias set` writes to the user-level `clawker.yaml` in your config directory, so the alias is available in every project. Overwriting an existing alias requires `--clobber`.
+
+<Warning>
+Most shells expand `$1` before clawker sees it. Escape placeholders (`\$1`) or single-quote the expansion.
+</Warning>
+
+You can also define aliases directly in any project config file under the `aliases` key — they apply automatically to anyone working inside that project:
+
+```yaml
+# .clawker.yaml
+aliases:
+  fable: container run --rm -it --agent fable @ --dangerously-skip-permissions --model "claude-fable-5"
+```
+
+## Listing Aliases
+
+```bash
+clawker alias list
+```
+
+The SOURCE column shows which file provides each alias (or `default` for shipped defaults). `--json`, `--format`, and `-q` are available for scripting.
+
+## Sharing with Your Team
+
+```bash
+clawker alias export
+```
+
+`alias export` publishes your active aliases into the project's own config file — the most local config file found in the walk-up (it never creates one). Committed aliases then apply automatically for everyone who works in the repository.
+
+Export skips shipped defaults, empty entries, and aliases the target file already provides.
+
+## Deleting and Overriding
+
+```bash
+clawker alias delete lg
+```
+
+`alias delete` removes the alias from **every** config file that defines it, so one delete clears the name. Every command that writes a file prints the absolute path it wrote.
+
+Shipped defaults are immutable — they can't be deleted, only overridden:
+
+```bash
+clawker alias set go "run --rm -it --agent \$1 @" --clobber
+```
+
+Deleting an override restores the shipped default.
+
+## Layering
+
+Aliases merge across every project config layer, like any other project config key — key by key, so different layers can each contribute aliases:
+
+1. Project files discovered in the walk-up (closest to your working directory wins)
+2. The user-level `clawker.yaml` in the config directory
+3. Shipped defaults
+
+See [Configuration](/configuration#how-configuration-works) for the full layering model.
+
+## Rules and Limitations
+
+- An alias can never shadow a built-in command — the real command always wins.
+- An alias may expand to another alias, but cyclic chains are skipped at startup.
+- Shell-style aliases (running arbitrary shell commands) are not supported — expansions always invoke clawker commands.
+- Because alias commands disable flag parsing, even `--help` is forwarded into the expansion.
+- Aliases in a repository's project config apply automatically when you work inside that project — review the `aliases` key of projects you clone.
+
+## CLI Reference
+
+<CardGroup cols={2}>
+  <Card title="clawker alias set" href="/cli-reference/clawker_alias_set">
+    Create or update an alias
+  </Card>
+  <Card title="clawker alias list" href="/cli-reference/clawker_alias_list">
+    List aliases with their source file
+  </Card>
+  <Card title="clawker alias export" href="/cli-reference/clawker_alias_export">
+    Publish aliases into the project config
+  </Card>
+  <Card title="clawker alias delete" href="/cli-reference/clawker_alias_delete">
+    Remove an alias from every file layer
+  </Card>
+</CardGroup>
