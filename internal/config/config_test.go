@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -126,7 +127,7 @@ func TestConstantAccessors(t *testing.T) {
 	assert.Equal(t, "settings.yaml", cfg.SettingsFileName())
 	assert.Equal(t, "clawker.dev", cfg.Domain())
 	assert.Equal(t, "dev.clawker", cfg.LabelDomain())
-	assert.Equal(t, "clawker-net", cfg.ClawkerNetwork())
+	assert.Equal(t, consts.Network, cfg.ClawkerNetwork())
 
 }
 

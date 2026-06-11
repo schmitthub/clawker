@@ -10,7 +10,7 @@
 //     binary identity; mismatch means the peer is not presenting a
 //     CLI-minted agent cert.
 //     (b) Resolve the kernel-attested peer IP to the purpose=agent
-//     container that owns it on clawker-net (via ContainerByPeerIP),
+//     container that owns it on the clawker network (via ContainerByPeerIP),
 //     reading the project/agent labels as the authoritative identity
 //     source — Docker is independent ground truth.
 //     (c) Compose the label-derived AgentFullName and constant-time

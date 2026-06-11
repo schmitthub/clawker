@@ -44,9 +44,9 @@ const (
 type ContainerConfig struct {
 	EnvoyIP       uint32 // Envoy static IP (network byte order)
 	CoreDNSIP     uint32 // CoreDNS static IP (network byte order)
-	GatewayIP     uint32 // clawker-net gateway IP (network byte order)
-	NetAddr       uint32 // clawker-net network address (network byte order)
-	NetMask       uint32 // clawker-net subnet mask (network byte order)
+	GatewayIP     uint32 // the clawker network gateway IP (network byte order)
+	NetAddr       uint32 // clawker network address (network byte order)
+	NetMask       uint32 // the clawker network subnet mask (network byte order)
 	HostProxyIP   uint32 // Host proxy resolved IP (network byte order)
 	HostProxyPort uint16 // Host proxy port (host byte order)
 	EgressPort    uint16 // Envoy egress listener port (host byte order)

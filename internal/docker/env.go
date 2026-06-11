@@ -32,12 +32,12 @@ type RuntimeEnvOpts struct {
 	// CPHealthzURL is the plain-HTTP /healthz URL the entrypoint polls
 	// before running CMD. Empty string skips the poll (only meaningful
 	// when FirewallEnabled=false). Reachable via Docker's bridge DNS
-	// because the agent container and CP share clawker-net.
+	// because the agent container and CP share the clawker network.
 	CPHealthzURL string
 
 	// clawkerd bootstrap targets. clawkerd reads these to find the CP's
 	// Hydra public endpoint (token exchange) and the CP's agent gRPC
-	// listener on clawker-net (Connect dial), and to know which slot
+	// listener on the clawker network (Connect dial), and to know which slot
 	// to consume at Connect time. Empty string omits the env var.
 	ClawkerdHydraURL  string // CLAWKER_CP_HYDRA_URL
 	ClawkerdAgentAddr string // CLAWKER_CP_AGENT_ADDR

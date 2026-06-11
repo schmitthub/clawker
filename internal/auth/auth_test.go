@@ -329,7 +329,7 @@ func TestOtelServerCertSignedByCA(t *testing.T) {
 	// one of the platforms.
 	assert.Contains(t, cert.DNSNames, "host.docker.internal")
 	assert.Contains(t, cert.DNSNames, "localhost")
-	// clawker-net dial path (Envoy ALS, CoreDNS otel plugin) verifies SNI
+	// clawker-network dial path (Envoy ALS, CoreDNS otel plugin) verifies SNI
 	// against this SAN — drop it and gRPC handshakes fail with
 	// "certificate is valid for ..., not otel-collector".
 	assert.Contains(t, cert.DNSNames, consts.MonitoringServiceOtelCollector)

@@ -77,14 +77,14 @@ type Config interface {
 	ContainerUID() int
 	ContainerGID() int
 	// In-cluster base URLs (host + port) for monitoring services
-	// reachable from clawker-net. Composed from
+	// reachable from the clawker network. Composed from
 	// [consts.MonitoringService*] hostnames + the corresponding
 	// MonitoringConfig port. No path component.
 	OpenSearchURL() string
 	OpenSearchDashboardsURL() string
 	PrometheusURL() string
 
-	// OtelCollectorURL is the OTLP collector base URL on clawker-net
+	// OtelCollectorURL is the OTLP collector base URL on the clawker network
 	// (no path). Wire it into the container as OTEL_EXPORTER_OTLP_ENDPOINT
 	// — the OTel SDK derives /v1/metrics, /v1/logs, /v1/traces by
 	// appending the standard path per signal, so a single base covers

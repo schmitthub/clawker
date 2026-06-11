@@ -495,7 +495,7 @@ func installOtelALSCluster(cfg *EnvoyConfig, als ALSConfig) error {
 // only emits it when als.MTLS is true; infra services must never push OTLP
 // across the untrusted lane.
 //
-// STRICT_DNS resolves `otel-collector` (clawker-net DNS) on every refresh; h2 is
+// STRICT_DNS resolves `otel-collector` (clawker-network DNS) on every refresh; h2 is
 // required because OTLP/gRPC runs on HTTP/2. The upstream TLS context loads the
 // leaf+intermediate chain bind-mounted at /etc/envoy/otel-tls/client.{pem,key}
 // and validates the collector's server cert against the CLI root CA at ca.pem.

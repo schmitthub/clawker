@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/shlex"
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/stretchr/testify/require"
 )
@@ -21,24 +22,24 @@ func TestNewCmdInspect(t *testing.T) {
 	}{
 		{
 			name:         "single network",
-			input:        "clawker-net",
-			wantNetworks: []string{"clawker-net"},
+			input:        consts.Network,
+			wantNetworks: []string{consts.Network},
 		},
 		{
 			name:         "multiple networks",
-			input:        "clawker-net myapp-net",
-			wantNetworks: []string{"clawker-net", "myapp-net"},
+			input:        consts.Network + " myapp-net",
+			wantNetworks: []string{consts.Network, "myapp-net"},
 		},
 		{
 			name:         "verbose flag",
-			input:        "-v clawker-net",
-			wantNetworks: []string{"clawker-net"},
+			input:        "-v " + consts.Network,
+			wantNetworks: []string{consts.Network},
 			wantVerbose:  true,
 		},
 		{
 			name:         "verbose flag long",
-			input:        "--verbose clawker-net",
-			wantNetworks: []string{"clawker-net"},
+			input:        "--verbose " + consts.Network,
+			wantNetworks: []string{consts.Network},
 			wantVerbose:  true,
 		},
 		{

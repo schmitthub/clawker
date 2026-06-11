@@ -1,7 +1,7 @@
 package consts
 
 // Monitoring stack service names. Each value is the hostname its
-// container registers under on clawker-net (compose service key →
+// container registers under on the clawker network (compose service key →
 // Docker DNS). A subset — see [MonitoringServiceHostnames] — is
 // forwarded by CoreDNS to Docker's embedded resolver so agent
 // containers can dial the OTEL collector and Prometheus when the
@@ -34,7 +34,7 @@ const (
 // prometheus is included for workflows that scrape it from agent code.
 // opensearch-node + opensearch-dashboards are deliberately omitted —
 // agents push telemetry through the collector and never query/write
-// the indices directly. Containers on clawker-net that DO need those
+// the indices directly. Containers on the clawker network that DO need those
 // (the collector, the dashboards UI, the one-shot bootstrap container)
 // reach them via Docker's embedded resolver without going through
 // CoreDNS. The bootstrap container has no constant in this file either

@@ -357,7 +357,7 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 // Endpoint: https://host.docker.internal:<OtelInfraPort>. CP is exempt
 // from the BPF firewall (not enrolled in container_map) and has
 // host.docker.internal mapped via ExtraHosts, so the dial reaches the
-// host-loopback-bound docker port forwarder. Agents on clawker-net
+// host-loopback-bound docker port forwarder. Agents on the clawker network
 // cannot present a CLI-signed client cert and so the receiver rejects
 // their TLS handshake — the gate is crypto, not network.
 //

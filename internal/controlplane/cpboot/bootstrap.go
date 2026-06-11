@@ -847,7 +847,7 @@ func waitForCPClockSync(ctx context.Context, cfg config.Config, log *logger.Logg
 // waitForCPHealthz polls http://127.0.0.1:<HealthPort>/healthz until the
 // CP reports aggregate readiness (HTTP 200) or the ctx/timeout expires.
 // Separate from firewall.Stack.WaitForHealthy because the CP's healthz
-// is exposed on a published host port, not via clawker-net.
+// is exposed on a published host port, not via the clawker network.
 //
 // On timeout, the returned *CPHealthTimeoutError carries the last probe
 // outcome (transport error, HTTP status, body snippet) so operators can

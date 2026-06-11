@@ -178,7 +178,7 @@ func (s *Stack) EnsureRunning(ctx context.Context) error {
 	return nil
 }
 
-// Stop removes Envoy + CoreDNS. The clawker-net network and eBPF state
+// Stop removes Envoy + CoreDNS. The clawker network and eBPF state
 // are intentionally left intact: agent containers may still be attached
 // to the network, and BPF links are owned by the CP's ebpf.Manager.
 // The control plane container is owned by host-side bootstrap.
@@ -250,7 +250,7 @@ func (s *Stack) Reload(ctx context.Context) error {
 // return HTTP 200 or the context deadline expires. On deadline expiry the
 // error wraps one or both of ErrEnvoyUnhealthy/ErrCoreDNSUnhealthy.
 //
-// Probes hit clawker-net via internal container IPs — the CP shares the
+// Probes hit the clawker network via internal container IPs — the CP shares the
 // network, so host port forwarding is not required.
 func (s *Stack) WaitForHealthy(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
@@ -390,7 +390,7 @@ func (s *Stack) discoverOrEmpty() NetworkInfo {
 
 // --- Internal helpers ---
 
-// ensureNetworkAndDiscover creates clawker-net if missing and returns the
+// ensureNetworkAndDiscover creates the clawker network if missing and returns the
 // discovered topology. The CLI is the primary owner of network creation;
 // the defensive guard here protects against a stale CP image that starts
 // before bootstrap has run EnsureNetwork host-side.

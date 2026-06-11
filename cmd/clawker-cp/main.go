@@ -617,7 +617,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 
 	// Peer-IP→Docker→labels resolver. Maps a live mTLS peer IP to
 	// the `purpose=agent` container owning that endpoint on
-	// clawker-net so the identity surface can ground its trust check
+	// the clawker network so the identity surface can ground its trust check
 	// on a kernel-attested source instead of cert claims.
 	agentPeerLookup := agent.NewMobyPeerLookup(dockerCli.APIClient, log.With("component", "agent-peer-lookup"))
 
@@ -628,7 +628,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		return fmt.Errorf("grpc listen: %w", err)
 	}
 
-	// Agent listener — bound to clawker-net only (NOT host-published).
+	// Agent listener — bound to the clawker network only (NOT host-published).
 	// Same mTLS material as the admin listener (server cert + CLI CA
 	// pool); the per-listener AuthInterceptor enforces the agent-side
 	// method-scope vocabulary so admin and agent surfaces fail closed
@@ -1400,7 +1400,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 // stack's CP-only receiver via host.docker.internal. CP is BPF-exempt
 // (not enrolled in container_map) and ExtraHosts maps the gateway
 // alias, so the dial reaches the host loopback published port. Agents
-// on clawker-net cannot reach this endpoint AND cannot present an
+// on the clawker network cannot reach this endpoint AND cannot present an
 // intermediate-chained client cert — two layers of isolation.
 func otelOptionsFromEnv() *logger.OtelOptions {
 	raw := os.Getenv(consts.EnvOTLPLogsEndpoint)

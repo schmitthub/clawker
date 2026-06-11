@@ -31,7 +31,7 @@ const (
 //
 // Transport: mTLS over TCP on clawkerd's listener inside the agent
 // container (port consts.DefaultClawkerdPort), reachable from CP via
-// clawker-net. The listener
+// the clawker network. The listener
 // requires a peer cert chained to the clawker CA AND pins the peer's
 // CN to consts.ContainerCP — the sole legitimate caller is CP. Any
 // other clawker-CA-signed cert (e.g. another agent's) is rejected at
@@ -83,7 +83,7 @@ type ClawkerdService_SessionClient = grpc.BidiStreamingClient[Command, Response]
 //
 // Transport: mTLS over TCP on clawkerd's listener inside the agent
 // container (port consts.DefaultClawkerdPort), reachable from CP via
-// clawker-net. The listener
+// the clawker network. The listener
 // requires a peer cert chained to the clawker CA AND pins the peer's
 // CN to consts.ContainerCP — the sole legitimate caller is CP. Any
 // other clawker-CA-signed cert (e.g. another agent's) is rejected at

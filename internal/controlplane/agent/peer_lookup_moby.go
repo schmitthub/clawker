@@ -44,7 +44,7 @@ func NewMobyPeerLookup(cli mobyclient.APIClient, log *logger.Logger) *MobyPeerLo
 }
 
 // LookupByIP walks every `purpose=agent` container and returns the
-// one whose clawker-net endpoint IP matches ip. The walk is
+// one whose clawker-network endpoint IP matches ip. The walk is
 // exhaustive: ambiguous-IP advertisements (multiple containers with
 // overlapping endpoint state during restart cycles) return
 // ErrAmbiguousPeerIP rather than picking the first match. A

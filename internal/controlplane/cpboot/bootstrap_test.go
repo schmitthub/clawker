@@ -63,7 +63,7 @@ func newBootstrapFixture(t *testing.T) *bootstrapFixture {
 	fake := dockermocks.NewFakeClient(cfg)
 	calls := &bootstrapCalls{}
 
-	// Network inspect returns a valid clawker-net with IPAM so
+	// Network inspect returns a valid clawker network with IPAM so
 	// DiscoverNetwork + ComputeStaticIP succeed.
 	fake.FakeAPI.NetworkInspectFn = func(_ context.Context, name string, _ mobyclient.NetworkInspectOptions) (mobyclient.NetworkInspectResult, error) {
 		return mobyclient.NetworkInspectResult{
@@ -738,7 +738,7 @@ func TestBuildCPContainerConfig_RestartPolicyOnFailure(t *testing.T) {
 }
 
 func TestBuildCPContainerConfig_ClawkerNetAttachment(t *testing.T) {
-	// INV-B2-014: CP container attaches to clawker-net so it can reach
+	// INV-B2-014: CP container attaches to the clawker network so it can reach
 	// Envoy and CoreDNS by their internal IPs.
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	cpCfg, err := BuildCPContainerConfig(cfg, testCPOpts())

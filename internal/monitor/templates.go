@@ -83,7 +83,7 @@ type MonitorTemplateData struct {
 	// OpenSearch JVM heap (MB) for both -Xms and -Xmx.
 	OpenSearchHeapMB int
 
-	// Service hostnames on clawker-net (compose service keys + cross-service
+	// Service hostnames on the clawker network (compose service keys + cross-service
 	// references). Mirror consts.MonitoringService*.
 	OtelCollectorService        string
 	PrometheusService           string

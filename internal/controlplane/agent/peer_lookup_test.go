@@ -290,7 +290,7 @@ func TestContainerByPeerIP_InspectError_StillFindsMatchAfter(t *testing.T) {
 
 // TestContainerByPeerIP_AmbiguousMatch pins the trust-anchor
 // fail-closed contract: when two purpose=agent containers advertise
-// endpoints on the same clawker-net IP (transient stale endpoints
+// endpoints on the same clawker-network IP (transient stale endpoints
 // during a restart cycle), the resolver returns ErrAmbiguousPeerIP
 // rather than picking the first match. Grounding the trust anchor
 // on first-match-wins would create a race window where an attacker
