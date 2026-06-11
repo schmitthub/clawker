@@ -137,7 +137,7 @@ func InjectPostInitScript(ctx context.Context, opts InjectPostInitOpts) error {
 	return InjectHookScript(ctx, InjectHookOpts{
 		ContainerID:     opts.ContainerID,
 		Script:          opts.Script,
-		Name:            "post-init",
+		Name:            consts.HookPostInit,
 		Cfg:             opts.Cfg,
 		CopyToContainer: opts.CopyToContainer,
 		Log:             opts.Log,

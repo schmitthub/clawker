@@ -100,7 +100,7 @@ func (c *Client) Close() error {
 // IsMonitoringActive checks if the clawker monitoring stack is running.
 // It looks for the otel-collector container on the clawker-net network.
 func (c *Client) IsMonitoringActive(ctx context.Context) bool {
-	f := whail.Filters{}.Add("name", consts.MonitoringServiceOtelCollector).Add("status", "running")
+	f := whail.Filters{}.Add(filterName, consts.MonitoringServiceOtelCollector).Add(filterStatus, statusRunning)
 	result, err := c.ContainerList(ctx, whail.ContainerListOptions{
 		Filters: f,
 	})
@@ -156,7 +156,7 @@ func (c *Client) chownImage() string {
 	if c.ChownImage != "" {
 		return c.ChownImage
 	}
-	return "busybox:latest"
+	return defaultChownImage
 }
 
 // BuildImageOpts contains options for building an image.

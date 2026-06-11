@@ -41,7 +41,7 @@ func toSolveOpt(opts whail.ImageBuildKitOptions) (bkclient.SolveOpt, error) {
 
 	// No cache
 	if opts.NoCache {
-		attrs["no-cache"] = ""
+		attrs[attrNoCache] = ""
 	}
 
 	// Target stage
@@ -85,21 +85,21 @@ func toSolveOpt(opts whail.ImageBuildKitOptions) (bkclient.SolveOpt, error) {
 	// exporter — the standard "image" exporter is only available in standalone
 	// buildkitd. See github.com/docker/docker/builder/builder-next/exporter.
 	exportAttrs := map[string]string{
-		"push": "false",
+		attrPush: "false",
 	}
 	if len(opts.Tags) > 0 {
-		exportAttrs["name"] = strings.Join(opts.Tags, ",")
+		exportAttrs[attrName] = strings.Join(opts.Tags, ",")
 	}
 
 	solveOpt := bkclient.SolveOpt{
-		Frontend:      "dockerfile.v0",
+		Frontend:      frontendDockerfile,
 		FrontendAttrs: attrs,
 		LocalMounts: map[string]fsutil.FS{
-			"context":    contextFS,
-			"dockerfile": dockerfileFS,
+			localMountContext:    contextFS,
+			localMountDockerfile: dockerfileFS,
 		},
 		Exports: []bkclient.ExportEntry{{
-			Type:  "moby",
+			Type:  exporterMoby,
 			Attrs: exportAttrs,
 		}},
 	}

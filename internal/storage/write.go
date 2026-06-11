@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/schmitthub/clawker/internal/consts"
 	"gopkg.in/yaml.v3"
 )
 
@@ -95,7 +96,7 @@ func (s *Store[T]) defaultWritePath() (string, error) {
 			return "", fmt.Errorf("storage: creating directory %s: %w", dir, err)
 		}
 		if s.opts.dotDefault {
-			clawkerDir := filepath.Join(dir, ".clawker")
+			clawkerDir := filepath.Join(dir, consts.DotClawkerDir)
 			if info, statErr := os.Stat(clawkerDir); statErr == nil && info.IsDir() {
 				return filepath.Join(clawkerDir, fname), nil
 			}

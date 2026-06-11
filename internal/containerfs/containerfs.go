@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/keyring"
 	"github.com/schmitthub/clawker/internal/logger"
 )
@@ -28,7 +29,7 @@ import (
 // downstream consumers (e.g. workspace.GetClaudeProjectsMount) get a usable
 // bind-mount source.
 func ResolveHostConfigDir() (string, error) {
-	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
+	if dir := os.Getenv(claudeConfigDirEnv); dir != "" {
 		abs, err := filepath.Abs(dir)
 		if err != nil {
 			return "", fmt.Errorf("CLAUDE_CONFIG_DIR=%q cannot be resolved to an absolute path: %w", dir, err)
@@ -48,7 +49,7 @@ func ResolveHostConfigDir() (string, error) {
 		return "", fmt.Errorf("cannot determine home directory: %w", err)
 	}
 
-	claudeDir := filepath.Join(home, ".claude")
+	claudeDir := filepath.Join(home, consts.ClaudeDir)
 	if info, err := os.Stat(claudeDir); err == nil && info.IsDir() {
 		return claudeDir, nil
 	}
@@ -68,7 +69,7 @@ func ResolveHostProjectsDir() (string, bool, error) {
 	if err != nil {
 		return "", false, err
 	}
-	dir := filepath.Join(hostConfigDir, "projects")
+	dir := filepath.Join(hostConfigDir, consts.ClaudeProjectsSubdir)
 	info, err := os.Stat(dir)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
@@ -98,7 +99,7 @@ func PrepareClaudeConfig(log *logger.Logger, hostConfigDir, containerHomeDir, co
 		}
 	}
 
-	stagingClaudeDir := filepath.Join(tmpDir, ".claude")
+	stagingClaudeDir := filepath.Join(tmpDir, consts.ClaudeDir)
 	if err := os.MkdirAll(stagingClaudeDir, 0o755); err != nil {
 		cleanupFn()
 		return "", nil, fmt.Errorf("create staging .claude dir: %w", err)
@@ -111,7 +112,7 @@ func PrepareClaudeConfig(log *logger.Logger, hostConfigDir, containerHomeDir, co
 	}
 
 	// Copy directories: agents/, skills/, commands/
-	for _, dir := range []string{"agents", "skills", "commands"} {
+	for _, dir := range []string{agentsSubdir, skillsSubdir, commandsSubdir} {
 		if err := stageDirectory(log, hostConfigDir, stagingClaudeDir, dir); err != nil {
 			cleanupFn()
 			return "", nil, fmt.Errorf("stage %s: %w", dir, err)
@@ -119,8 +120,8 @@ func PrepareClaudeConfig(log *logger.Logger, hostConfigDir, containerHomeDir, co
 	}
 
 	// CLAUDE.md — user-level instructions
-	claudeMDSrc := filepath.Join(hostConfigDir, "CLAUDE.md")
-	if err := copyFile(claudeMDSrc, filepath.Join(stagingClaudeDir, "CLAUDE.md")); err != nil {
+	claudeMDSrc := filepath.Join(hostConfigDir, claudeMDFile)
+	if err := copyFile(claudeMDSrc, filepath.Join(stagingClaudeDir, claudeMDFile)); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			log.Debug().Msg("CLAUDE.md not found on host, skipping")
 		} else {
@@ -152,13 +153,13 @@ func PrepareCredentials(log *logger.Logger, hostConfigDir string) (stagingDir st
 		}
 	}
 
-	stagingClaudeDir := filepath.Join(tmpDir, ".claude")
+	stagingClaudeDir := filepath.Join(tmpDir, consts.ClaudeDir)
 	if err := os.MkdirAll(stagingClaudeDir, 0o755); err != nil {
 		cleanupFn()
 		return "", nil, fmt.Errorf("create staging .claude dir: %w", err)
 	}
 
-	credsDst := filepath.Join(stagingClaudeDir, ".credentials.json")
+	credsDst := filepath.Join(stagingClaudeDir, credentialsFile)
 
 	// Try keyring first. Write the blob verbatim — never round-trip through a
 	// typed struct, which would fabricate zero-value fields (e.g. a zero
@@ -178,7 +179,7 @@ func PrepareCredentials(log *logger.Logger, hostConfigDir string) (stagingDir st
 	log.Debug().Err(keyringErr).Msg("keyring credentials not available, trying file fallback")
 
 	// Fallback to file.
-	filePath := filepath.Join(hostConfigDir, ".credentials.json")
+	filePath := filepath.Join(hostConfigDir, credentialsFile)
 	data, fileErr := os.ReadFile(filePath)
 	if fileErr == nil && len(data) > 0 {
 		if err := os.WriteFile(credsDst, data, 0o600); err != nil {
@@ -210,7 +211,7 @@ func PrepareHookTar(cfg config.Config, script, name string) (io.Reader, error) {
 	// Directory entry: .clawker/
 	dirHdr := &tar.Header{
 		Typeflag: tar.TypeDir,
-		Name:     ".clawker/",
+		Name:     consts.DotClawkerDir + "/",
 		Mode:     0o755,
 		Uid:      cfg.ContainerUID(),
 		Gid:      cfg.ContainerGID(),
@@ -222,7 +223,7 @@ func PrepareHookTar(cfg config.Config, script, name string) (io.Reader, error) {
 
 	// File entry: .clawker/<name>.sh
 	fileHdr := &tar.Header{
-		Name:    ".clawker/" + name + ".sh",
+		Name:    consts.DotClawkerDir + "/" + name + ".sh",
 		Mode:    0o755,
 		Size:    int64(len(content)),
 		Uid:     cfg.ContainerUID(),
@@ -250,7 +251,7 @@ func PrepareHookTar(cfg config.Config, script, name string) (io.Reader, error) {
 // stageSettings reads settings.json from hostDir and writes only the
 // enabledPlugins key to stagingDir/settings.json.
 func stageSettings(log *logger.Logger, hostDir, stagingDir string) error {
-	src := filepath.Join(hostDir, "settings.json")
+	src := filepath.Join(hostDir, settingsFile)
 
 	data, err := os.ReadFile(src)
 	if os.IsNotExist(err) {
@@ -266,14 +267,14 @@ func stageSettings(log *logger.Logger, hostDir, stagingDir string) error {
 		return fmt.Errorf("parse settings.json: %w", err)
 	}
 
-	enabledPlugins, ok := full["enabledPlugins"]
+	enabledPlugins, ok := full[enabledPluginsKey]
 	if !ok {
 		log.Debug().Msg("settings.json has no enabledPlugins key, skipping")
 		return nil
 	}
 
 	filtered := map[string]any{
-		"enabledPlugins": enabledPlugins,
+		enabledPluginsKey: enabledPlugins,
 	}
 
 	out, err := json.MarshalIndent(filtered, "", "  ")
@@ -281,7 +282,7 @@ func stageSettings(log *logger.Logger, hostDir, stagingDir string) error {
 		return fmt.Errorf("marshal filtered settings: %w", err)
 	}
 
-	dst := filepath.Join(stagingDir, "settings.json")
+	dst := filepath.Join(stagingDir, settingsFile)
 	return os.WriteFile(dst, out, 0o644)
 }
 
@@ -307,7 +308,7 @@ func stageDirectory(log *logger.Logger, hostDir, stagingDir, name string) error 
 // stagePlugins copies the plugins/ directory (including cache/) and rewrites
 // host-absolute paths in known_marketplaces.json and installed_plugins.json.
 func stagePlugins(log *logger.Logger, hostDir, stagingDir, containerHomeDir, containerWorkDir string) error {
-	src := filepath.Join(hostDir, "plugins")
+	src := filepath.Join(hostDir, pluginsSubdir)
 
 	resolved, err := filepath.EvalSymlinks(src)
 	if os.IsNotExist(err) {
@@ -318,7 +319,7 @@ func stagePlugins(log *logger.Logger, hostDir, stagingDir, containerHomeDir, con
 		return fmt.Errorf("resolve symlinks for plugins: %w", err)
 	}
 
-	dst := filepath.Join(stagingDir, "plugins")
+	dst := filepath.Join(stagingDir, pluginsSubdir)
 	if err := os.MkdirAll(dst, 0o755); err != nil {
 		return fmt.Errorf("create plugins staging dir: %w", err)
 	}
@@ -334,7 +335,7 @@ func stagePlugins(log *logger.Logger, hostDir, stagingDir, containerHomeDir, con
 		}
 
 		// Skip install-counts-cache.json at the top level.
-		if rel == "install-counts-cache.json" {
+		if rel == installCountsFile {
 			return nil
 		}
 
@@ -367,11 +368,11 @@ func stagePlugins(log *logger.Logger, hostDir, stagingDir, containerHomeDir, con
 	}
 
 	// Build rewrite rules for host→container path translation.
-	hostPluginsPrefix := filepath.Join(hostDir, "plugins")
-	containerPluginsPrefix := filepath.Join(containerHomeDir, ".claude", "plugins")
+	hostPluginsPrefix := filepath.Join(hostDir, pluginsSubdir)
+	containerPluginsPrefix := filepath.Join(containerHomeDir, consts.ClaudeDir, pluginsSubdir)
 
 	// Rewrite known_marketplaces.json if it exists.
-	mpPath := filepath.Join(dst, "known_marketplaces.json")
+	mpPath := filepath.Join(dst, knownMarketplacesFile)
 	if _, statErr := os.Stat(mpPath); statErr == nil {
 		if err := rewriteJSONFile(mpPath, []pathRewriteRule{
 			{key: "installPath", hostPrefix: hostPluginsPrefix, containerPath: containerPluginsPrefix},
@@ -384,7 +385,7 @@ func stagePlugins(log *logger.Logger, hostDir, stagingDir, containerHomeDir, con
 	}
 
 	// Rewrite installed_plugins.json if it exists.
-	ipPath := filepath.Join(dst, "installed_plugins.json")
+	ipPath := filepath.Join(dst, installedPluginsFile)
 	if _, statErr := os.Stat(ipPath); statErr == nil {
 		if err := rewriteJSONFile(ipPath, []pathRewriteRule{
 			{key: "installPath", hostPrefix: hostPluginsPrefix, containerPath: containerPluginsPrefix},

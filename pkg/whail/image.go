@@ -105,9 +105,9 @@ func (e *Engine) ImagesPrune(ctx context.Context, dangling bool) (client.ImagePr
 	// dangling=false means remove all unused images
 	// Note: Docker defaults to dangling=true, so we must explicitly set false
 	if dangling {
-		f = f.Add("dangling", "true")
+		f = f.Add(filterDangling, filterTrue)
 	} else {
-		f = f.Add("dangling", "false")
+		f = f.Add(filterDangling, filterFalse)
 	}
 	result, err := e.APIClient.ImagePrune(ctx, client.ImagePruneOptions{Filters: f})
 	if err != nil {

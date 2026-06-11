@@ -164,6 +164,24 @@ const (
 // workspace-level .claude directory (workspace masking).
 const ClaudeDir = ".claude"
 
+// ClaudeProjectsSubdir is the projects subdirectory of ClaudeDir
+// (auto-memory + session transcripts). containerfs seeds it; workspace
+// bind-mounts the host's copy over it.
+const ClaudeProjectsSubdir = "projects"
+
+// DotClawkerDir is the hidden clawker directory name — the dotted
+// project-config directory variant in a repo root, and the in-container
+// $HOME/.clawker directory where hook scripts land.
+const DotClawkerDir = "." + NamePrefix
+
+// Lifecycle hook names. The CLI delivers <name>.sh scripts under the
+// in-container DotClawkerDir; clawkerd's init plan runs the matching
+// step (the plan step Name and the script basename must agree).
+const (
+	HookPostInit = "post-init"
+	HookPreRun   = "pre-run"
+)
+
 // Auth material subdirectory segments under authDir. Shared by the
 // host-side Auth*Dir accessors, EnsureAuthDirs, and the container-side
 // CP*Path constants in controlplane.go — both sides of each bind mount

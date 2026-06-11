@@ -76,7 +76,7 @@ func NewWithOptions(ctx context.Context, opts EngineOptions) (*Engine, error) {
 		APIClient:         realClient,
 		options:           opts,
 		managedLabelKey:   opts.LabelPrefix + "." + opts.ManagedLabel,
-		managedLabelValue: "true",
+		managedLabelValue: defaultManagedLabelValue,
 		// logger:    logger,
 	}
 
@@ -104,7 +104,7 @@ func NewFromExisting(c client.APIClient, opts ...EngineOptions) *Engine {
 		APIClient:         c,
 		options:           o,
 		managedLabelKey:   o.LabelPrefix + "." + o.ManagedLabel,
-		managedLabelValue: "true",
+		managedLabelValue: defaultManagedLabelValue,
 	}
 }
 
@@ -139,13 +139,13 @@ func (e *Engine) injectManagedFilter(existing client.Filters) client.Filters {
 	result := existing.Clone()
 
 	// Add managed filter to the copy
-	result = result.Add("label", e.managedLabelKey+"="+e.managedLabelValue)
+	result = result.Add(filterLabel, e.managedLabelKey+"="+e.managedLabelValue)
 	return result
 }
 
 // newManagedFilter creates a new filter with just the managed label.
 func (e *Engine) newManagedFilter() client.Filters {
-	return client.Filters{}.Add("label", e.managedLabelKey+"="+e.managedLabelValue)
+	return client.Filters{}.Add(filterLabel, e.managedLabelKey+"="+e.managedLabelValue)
 }
 
 // managedLabels returns the base labels that mark a resource as managed.

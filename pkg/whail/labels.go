@@ -76,7 +76,7 @@ func (c *LabelConfig) ImageLabels(extra ...map[string]string) map[string]string 
 // LabelFilter creates a Docker filter for a single label key=value.
 // The key should include the prefix (e.g., "com.myapp.managed").
 func LabelFilter(key, value string) client.Filters {
-	return client.Filters{}.Add("label", key+"="+value)
+	return client.Filters{}.Add(filterLabel, key+"="+value)
 }
 
 // LabelFilterMultiple creates a Docker filter from multiple label key=value pairs.
@@ -84,7 +84,7 @@ func LabelFilter(key, value string) client.Filters {
 func LabelFilterMultiple(labels map[string]string) client.Filters {
 	f := client.Filters{}
 	for k, v := range labels {
-		f = f.Add("label", k+"="+v)
+		f = f.Add(filterLabel, k+"="+v)
 	}
 	return f
 }
@@ -92,14 +92,14 @@ func LabelFilterMultiple(labels map[string]string) client.Filters {
 // AddLabelFilter adds a label filter to an existing client.Filters.
 // Returns a new Filters (immutable pattern).
 func AddLabelFilter(f client.Filters, key, value string) client.Filters {
-	return f.Add("label", key+"="+value)
+	return f.Add(filterLabel, key+"="+value)
 }
 
 // MergeLabelFilters merges label filters into an existing client.Filters.
 // Returns a new Filters (immutable pattern).
 func MergeLabelFilters(f client.Filters, labels map[string]string) client.Filters {
 	for k, v := range labels {
-		f = f.Add("label", k+"="+v)
+		f = f.Add(filterLabel, k+"="+v)
 	}
 	return f
 }

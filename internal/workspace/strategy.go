@@ -7,6 +7,7 @@ import (
 
 	"github.com/moby/moby/api/types/mount"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
 )
@@ -78,7 +79,7 @@ func GetConfigVolumeMounts(projectName, agentName string) ([]mount.Mount, error)
 		{
 			Type:   mount.TypeVolume,
 			Source: configVol,
-			Target: "/home/claude/.claude",
+			Target: consts.ContainerHomeDir + "/" + consts.ClaudeDir,
 		},
 		{
 			Type:   mount.TypeVolume,
@@ -91,7 +92,7 @@ func GetConfigVolumeMounts(projectName, agentName string) ([]mount.Mount, error)
 // ClaudeProjectsTargetPath is the in-container destination for the host
 // ~/.claude/projects/ bind mount. Single source of truth — keep in sync
 // with /home/claude/.claude (the per-agent config volume target).
-const ClaudeProjectsTargetPath = "/home/claude/.claude/projects"
+const ClaudeProjectsTargetPath = consts.ContainerHomeDir + "/" + consts.ClaudeDir + "/" + consts.ClaudeProjectsSubdir
 
 // GetClaudeProjectsMount returns a bind mount sharing the host's
 // ~/.claude/projects/ into /home/claude/.claude/projects. Per Linux

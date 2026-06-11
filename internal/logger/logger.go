@@ -21,6 +21,14 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
+// Rotating file sink defaults.
+const (
+	defaultLogFileName   = "clawker.log"
+	defaultLogMaxSizeMB  = 50
+	defaultLogMaxAgeDays = 7
+	defaultLogMaxBackups = 3
+)
+
 // Logger wraps zerolog with file rotation and optional OTEL export.
 // Create with New or Nop. Safe for concurrent use after construction.
 type Logger struct {
@@ -38,7 +46,7 @@ type Options struct {
 	LogsDir string
 
 	// Filename overrides the log file name within LogsDir.
-	// Defaults to "clawker.log" when empty.
+	// Defaults to defaultLogFileName when empty.
 	Filename string
 
 	// File rotation settings.
@@ -114,21 +122,21 @@ type OtelOptions struct {
 
 func (o *Options) maxSizeMB() int {
 	if o.MaxSizeMB <= 0 {
-		return 50
+		return defaultLogMaxSizeMB
 	}
 	return o.MaxSizeMB
 }
 
 func (o *Options) maxAgeDays() int {
 	if o.MaxAgeDays <= 0 {
-		return 7
+		return defaultLogMaxAgeDays
 	}
 	return o.MaxAgeDays
 }
 
 func (o *Options) maxBackups() int {
 	if o.MaxBackups <= 0 {
-		return 3
+		return defaultLogMaxBackups
 	}
 	return o.MaxBackups
 }
@@ -169,7 +177,7 @@ func New(opts Options) (*Logger, error) {
 
 	filename := opts.Filename
 	if filename == "" {
-		filename = "clawker.log"
+		filename = defaultLogFileName
 	}
 
 	fw := &lumberjack.Logger{
