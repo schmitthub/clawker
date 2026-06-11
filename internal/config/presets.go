@@ -111,7 +111,10 @@ security:
 // is set globally there. registry.npmjs.org is in the required firewall set
 // (see internal/config/defaults.go). TypeScript-specific tooling (pnpm, tsc)
 // layers on top.
-const typescriptPreset = `build:
+const typescriptPreset = `agent:
+  pre_run: |
+    npm install
+build:
   image: "buildpack-deps:bookworm-scm"
   packages:
     - ripgrep
