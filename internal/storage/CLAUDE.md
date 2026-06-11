@@ -9,7 +9,7 @@
 
 ## Architecture
 
-Generic layered YAML store engine. Leaf package (zero internal imports). Both `internal/config` and `internal/project` compose a `Store[T]` with their own schema types.
+Generic layered YAML store engine. Leaf package — the only `internal/` import is `internal/consts` (stdlib-only, for XDG directory resolution). Both `internal/config` and `internal/project` compose a `Store[T]` with their own schema types.
 
 **Copy-on-write model**: node tree (`map[string]any`) is the merge/persistence layer. Immutable `*T` snapshots published via `atomic.Pointer` — readers are lock-free.
 
@@ -33,7 +33,7 @@ Write: node tree → route by provenance → per-file atomic write (temp+fsync+r
 | `load.go` | Per-file YAML load, migration runner, `unmarshal[T]` |
 | `merge.go` | N-way map fold, `tagRegistry`, `fieldMeta`, `mergeTrees`, `provenance` |
 | `write.go` | `structToMap`, `encodeValue`, provenance-based routing (with ancestor walk-up), atomic I/O, flock |
-| `resolver.go` | XDG directory resolution: `configDir`, `dataDir`, `stateDir`, `cacheDir` |
+| `resolver.go` | XDG directory resolution (`configDir`, `dataDir`, `stateDir`, `cacheDir`) — delegates to `internal/consts` |
 | `field.go` | `Field`, `FieldSet`, `Schema` interfaces, `FieldKind` constants, `NormalizeFields[T]`, `NewField`, `NewFieldSet` |
 | `defaults.go` | `GenerateDefaultsYAML[T]`, `parseDefaultValue` |
 
@@ -124,7 +124,7 @@ Empty strings excluded because config schemas use bare `string` (not `*string`) 
 
 ### XDG Resolution (`resolver.go`)
 
-Each checks: `CLAWKER_*_DIR` > `XDG_*_HOME` > platform default (`~/.config/clawker`, etc.). Windows: `%AppData%`/`%LOCALAPPDATA%` fallbacks.
+Delegates to `internal/consts` — the single XDG resolver (`CLAWKER_*_DIR` > `XDG_*_HOME` > platform default; Windows `%AppData%`/`%LOCALAPPDATA%` fallbacks; cache additionally falls back to `os.TempDir()`). consts is foundational (stdlib-only imports), so this is the one sanctioned `internal/` import in storage. Precedence is pinned by tests in `internal/consts`.
 
 ## Composition by Consumers
 

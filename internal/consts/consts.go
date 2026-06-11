@@ -680,7 +680,9 @@ func StateDir() string {
 }
 
 // CacheDir returns the clawker cache directory.
-// Resolution: CLAWKER_CACHE_DIR > XDG_CACHE_HOME/clawker > ~/.cache/clawker
+// Resolution: CLAWKER_CACHE_DIR > XDG_CACHE_HOME/clawker > ~/.cache/clawker,
+// with a final os.TempDir() fallback when no home directory is available —
+// cache is transient and can live anywhere.
 func CacheDir() string {
 	if a := os.Getenv(EnvCacheDir); a != "" {
 		return a
@@ -693,8 +695,10 @@ func CacheDir() string {
 			return filepath.Join(c, NamePrefix, "cache")
 		}
 	}
-	d, _ := os.UserHomeDir()
-	return filepath.Join(d, ".cache", NamePrefix)
+	if d, _ := os.UserHomeDir(); d != "" {
+		return filepath.Join(d, ".cache", NamePrefix)
+	}
+	return filepath.Join(os.TempDir(), NamePrefix+"-cache")
 }
 
 // ---------------------------------------------------------------------------

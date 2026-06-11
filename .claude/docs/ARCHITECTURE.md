@@ -157,7 +157,7 @@ Three packages form the configuration subsystem. `storage` is the engine, `confi
 
 ### internal/storage - Layered YAML Store Engine
 
-Generic `Store[T]` that handles the full lifecycle of layered YAML configuration. Zero internal imports (leaf package). See `internal/storage/CLAUDE.md` for detailed API reference.
+Generic `Store[T]` that handles the full lifecycle of layered YAML configuration. Leaf package — its only `internal/` import is `internal/consts` (itself stdlib-only), for XDG directory resolution. See `internal/storage/CLAUDE.md` for detailed API reference.
 
 **Node tree architecture:** The node tree (`map[string]any`) is the merge engine and persistence layer. The typed struct `*T` is a deserialized view — the read/write API. Merge operates on maps only; the struct is deserialized from the merged tree at end of construction. This avoids the `omitempty` problem (YAML marshaling drops zero-value fields like `false` or `0`).
 
@@ -742,6 +742,8 @@ Domain packages form a directed acyclic graph verified via `goda`. Tiers describ
   ✓  composite → foundation        docker imports config
 
   ✗  leaf → anything internal      storage must never import config
+                                   (internal/consts is exempt: stdlib-only,
+                                   foundational vocabulary)
   ✗  foundation ↔ foundation       config must never import iostreams
   ✗  Any cycle                     A → B → A is always wrong
 ```
