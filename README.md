@@ -72,7 +72,7 @@ When I began experimenting with Claude Code to keep up with the Agentic AI trend
 - **Jailed from host Docker resources** via `pkg/whail` (whale jail), a standalone package that decorates the moby SDK to prevent callers from seeing resources without the automatically applied management labels. I might use this package in other "agent in container" solutions. So I don't have to worry about accidentally deleting non-clawker managed containers/volumes/images, etc.
 - **Command aliases** — one-word shortcuts expanded to full clawker invocations with `$1..$N` positional placeholders. Ships with `go` (disposable agent: `clawker go dev`) and `wt` (agent on a fresh worktree: `clawker wt auth feature/auth:main`) out of the box; define your own with `clawker alias set` and commit them to the project config with `clawker alias export` so the whole team gets them
 - **Docker CLI-esque commands** for managing containers, Clawker isn't a passthrough to Docker CLI; it uses the moby SDK (via `pkg/whail`). This allowed me to add more flags, modify the behavior, etc over what docker cli offers
-- **Git worktree management and commands**: pass a worktree flag to container run or create commands to automatically create a git worktree in the Clawker home project directory and bind mount it to the container workdir. Also has cli commands and flags to list and manage worktrees created by clawker, uses `go-git` under the hood to avoid relying on the host git binary
+- **Git worktree management and commands**: pass a worktree flag to container run or create commands to automatically create a git worktree in the Clawker home project directory and bind mount it to the container workdir. Also has cli commands and flags to list and manage worktrees created by clawker, uses `go-git` under the hood to avoid relying on the host git binary. Worktree containers ship extra security lockdown for unattended sessions — see [worktree caveats](https://docs.clawker.dev/worktrees#worktree-caveats)
 - **Optional monitoring stack** — OTel Collector + OpenSearch (logs) + OpenSearch Dashboards + Prometheus (metrics) on `clawker-net`. Every container has the environment variables baked in to push OTLP telemetry when the stack is running, and is silenced when it isn't
 - **Interactive configuration editing**: TUI-based editors for project config (`clawker project edit`) and user settings (`clawker settings edit`) with tabbed field browsing, per-field type-appropriate editors (text, boolean, list, multiline), layer-aware provenance display showing which file each value comes from, and per-field save targeting to choose which config layer to write to
 
@@ -190,6 +190,8 @@ clawker wt dev hotfix/example:main
 ```
 
 This creates and attaches my terminal to a new claude instance isolated in a container environment with a git worktree dir created under `~/.local/share/clawker/worktrees/` (or honors the override `$CLAWKER_DATA_DIR`) off of my main branch. Since it has all my plugins, skills, auth tokens, git creds, mcps installed, build deps instantly, it's just a matter of telling the little rascal what to do and letting it go bananas and create a pr about it. I'll periodically check in on it to see how it's doing in another tab. Or you can detach `ctrl p+q` and return to your terminal; to reattach to the same session use `clawker attach --agent dev`. Ez pz no ssh/tmux bullshit, no vscode devcontainer window, no VPS with heavy IO latency, or setting up dedicated servers, or having to pay someone to do it for you.  
+
+> Worktree containers mask `.git/hooks` and `.git/config` read-only — a security measure that keeps unattended agents from planting host-executable git hooks/config. It changes a few git behaviors inside the container (notably `git push -u` won't persist upstream tracking). Read the [worktree caveats](https://docs.clawker.dev/worktrees#worktree-caveats) before your first session.
 
 I can see my worktree paths and open them in an IDE if I want to do some manual work or review the code... or never care about where they are, `clawker` remembers and auto mounts them using branches as an identifier. You can use `clawker worktree` commands to manage them, or `git worktree`. 
 
@@ -319,7 +321,7 @@ Aliases defined in a repository's project config apply automatically to everyone
 
 ## Working with Worktrees
 
-Run separate agents per git worktree for parallel development:
+Run separate agents per git worktree for parallel development. Worktree containers apply extra security lockdown (read-only `.git/hooks` + `.git/config` masks) to make unattended sessions safer — see [worktree caveats](https://docs.clawker.dev/worktrees#worktree-caveats) for the behavioral differences:
 
 ```bash
 # Use the --worktree flag for automatic worktree creation and mounting in containers

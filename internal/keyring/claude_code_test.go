@@ -164,3 +164,56 @@ func TestGetClaudeCodeCredentials(t *testing.T) {
 		})
 	}
 }
+
+// TestGetClaudeCodeCredentialsRaw verifies the raw fetch returns the keyring
+// blob byte-for-byte: it must NOT round-trip through the typed struct, which
+// would fabricate a zero-value organizationUuid for a host that omits the key
+// and would drop any key absent from the struct.
+func TestGetClaudeCodeCredentialsRaw(t *testing.T) {
+	tests := []struct {
+		name      string
+		raw       string
+		doNotSeed bool
+		wantErr   error
+	}{
+		{
+			// Host omits organizationUuid and carries a key the struct does not
+			// model. Verbatim copy must preserve both exactly.
+			name: "omitted org and unknown key preserved verbatim",
+			raw:  `{"claudeAiOauth":{"accessToken":"access","refreshToken":"refresh"},"unknownKey":"keepme"}`,
+		},
+		{
+			name:      "not found",
+			doNotSeed: true,
+			wantErr:   ErrNotFound,
+		},
+		{
+			name:    "empty credential",
+			raw:     "",
+			wantErr: ErrEmptyCredential,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			seedKeyring(t, tt.raw, tt.doNotSeed)
+
+			got, err := GetClaudeCodeCredentialsRaw()
+
+			if tt.wantErr != nil {
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("expected error wrapping %v, got: %v", tt.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			// Byte-for-byte equality subsumes the no-fabrication guarantee: the
+			// fixture omits organizationUuid, so an equal blob cannot contain it.
+			if got != tt.raw {
+				t.Errorf("raw blob mutated:\n got %q\nwant %q", got, tt.raw)
+			}
+		})
+	}
+}

@@ -11,8 +11,23 @@ Claude Code credentials for injection into agent containers when
 ```
 keyring.go       — Raw ops: Set, Get, Delete + ErrNotFound, TimeoutError, MockInit, MockInitWithError
 service.go       — Generic pipeline: ServiceDef[T], getCredential[T], sentinels, helpers
-claude_code.go   — ClaudeCodeCredentials types + GetClaudeCodeCredentials()
+claude_code.go   — ClaudeCodeCredentials types + GetClaudeCodeCredentials() / GetClaudeCodeCredentialsRaw()
 ```
+
+## Typed vs Raw fetch
+
+| Function | Pipeline | Use for |
+|----------|----------|---------|
+| `getCredential[T]` (typed, e.g. `GetClaudeCodeCredentials`) | fetch → empty-guard → parse → validate | Readers that need typed field access |
+| `getRawCredential[T]` (raw, e.g. `GetClaudeCodeCredentialsRaw`) | fetch → empty-guard | Injection paths that must preserve the blob byte-for-byte |
+
+> **Never round-trip a credential blob through its struct for injection.** The
+> Claude Code blob is plain JSON (not a JWT). Re-encoding a parsed struct
+> fabricates zero-value fields for keys the host omitted — a zero
+> `organizationUuid` claims an org the user is not a member of, which the
+> refresh endpoint rejects — and silently drops keys the struct does not model.
+> `containerfs.PrepareCredentials` uses the raw fetch and writes the blob
+> verbatim, matching its file-fallback path.
 
 ## Error Types
 

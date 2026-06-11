@@ -62,6 +62,10 @@ For a normal (non-worktree) project, the `.git` directory is part of your worksp
 
 ### Worktree Support
 
+<Note>
+Worktree containers mask `.git/hooks` and `.git/config` read-only as a security measure for unattended sessions. See [Worktree Caveats](/worktrees#worktree-caveats) for the behavioral consequences (`git config --local`, `git remote add`, `git push -u`).
+</Note>
+
 Git worktrees are more complex. A worktree is a separate checkout of your repository that shares the same `.git` metadata as the main repo. The worktree directory contains a `.git` **file** (not a directory) that points back to the main repository's `.git/worktrees/<name>/` metadata.
 
 The challenge: those `.git` file references use **absolute host paths**. If the main repo is at `/Users/schmitthub/Code/myapp`, the worktree's `.git` file says something like:

@@ -37,6 +37,48 @@ recreate). Do **not** suggest `git config --global --add safe.directory` for
 the main repo path — git at that path sees the whole tree as deleted, and a
 `git add -A` there would stage mass deletions into the host's real index.
 
+## Empty refreshToken / forced /login in older containers
+
+Containers created with an older clawker release injected a host keychain
+credential blob that was round-tripped through a typed struct, fabricating a
+zero-value `organizationUuid` (`00000000-...`) the user is not a member of.
+Claude Code's token refresh endpoint rejects that claim, and Claude Code is
+known to **wipe its stored credential with empty data when a refresh fails**
+(upstream anthropics/claude-code behavior) — the user sees an empty
+`refreshToken` in `~/.claude/.credentials.json` and a forced `/login` at boot.
+
+Current releases inject the credential blob byte-for-byte (no re-marshal), so
+new containers are unaffected. The poisoned blob persists in existing config
+volumes, though.
+
+Fix: upgrade clawker, then **recreate the container** (credentials are
+re-injected from the host at container create) — or run `/login` once inside
+the existing container. Re-authenticating on the host fixes only future
+containers, not existing volumes.
+
+## git push -u / upstream tracking in worktree containers
+
+Worktree containers mask the main repo's `.git/hooks/` and `.git/config` with
+read-only binds. This is a deliberate security measure (always on): anything
+written to those paths from inside the container would execute on the *host*
+the next time the user runs git in the main checkout. See
+`https://docs.clawker.dev/worktrees#worktree-caveats`.
+
+Consequences inside the container: `git config --local` and `git remote add`
+fail loudly; `git push -u` **pushes successfully but fails to persist upstream
+tracking** (easy-to-miss warning — upstream config lives in the read-only
+shared `.git/config`).
+
+Symptom after the session: the user removes the worktree, checks the branch
+out in the repo root, and plain `git push` reports no upstream — even though
+the branch was pushed and has an open PR. Tracking was never persisted.
+
+Fix: one-time on the host: `git push -u origin <branch>` (or
+`git branch --set-upstream-to=origin/<branch>`). Inside the container, push
+with an explicit refspec: `git push origin HEAD`. Branches that already
+existed on the remote at worktree creation get tracking configured host-side
+automatically and are unaffected.
+
 ## --worktree on a branch already checked out
 
 `clawker run --worktree <branch>` for a branch that is already checked out in

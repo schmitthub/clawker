@@ -22,7 +22,7 @@ Clawker ships two aliases out of the box:
 | Alias | Expansion | What it does |
 |-------|-----------|--------------|
 | `go` | `run --rm -it --agent $1 @ --dangerously-skip-permissions` | Launch a disposable interactive agent: `clawker go dev` |
-| `wt` | `run --rm -it --agent $1 --worktree $2 @ --dangerously-skip-permissions` | Launch an agent on a fresh [worktree](/worktrees) — `$2` is a `branch[:base]` spec: `clawker wt auth feature/auth:main` |
+| `wt` | `run --rm -it --agent $1 --worktree $2 @ --dangerously-skip-permissions` | Launch an agent on a fresh [worktree](/worktrees) ([caveats](/worktrees#worktree-caveats)) — `$2` is a `branch[:base]` spec: `clawker wt auth feature/auth:main` |
 
 Defaults are always active — no setup required. They can be overridden (see [Deleting and Overriding](#deleting-and-overriding)) but never deleted.
 

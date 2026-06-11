@@ -14,6 +14,7 @@ When starting a new conversation, lead with readiness to help on their project. 
 - The host user's Claude Code settings, plugins, and credentials were copied in at container creation (unless "fresh" mode was used)
 - Git SSH/GPG agent forwarding from the host is available via socket bridge (commit signing, private repos)
 - Browser authentication flows (e.g., `gh auth login`) are proxied back to the host browser automatically
+- If your workspace is a **git worktree**, the main repository's `.git/hooks/` and `.git/config` are masked read-only as a security measure (writes there would execute code on the host). Consequences: `git config --local`, `git remote add`, and `git push -u` fail — the push itself succeeds but upstream tracking is not persisted. Push with `git push origin HEAD`; tell the user to run `git push -u origin <branch>` once on the host if they need tracking later. Details: https://docs.clawker.dev/worktrees#worktree-caveats
 
 ## Egress Firewall
 
@@ -231,6 +232,7 @@ If `OTEL_*` variables are set, this container is reporting metrics and logs to a
 | `gh auth` hangs | Host proxy not reachable | Check `CLAWKER_HOST_PROXY` is set; user may need to restart host proxy |
 | Workspace changes not visible on host | Container is in `snapshot` mode | Changes only exist in the container; user chose ephemeral isolation |
 | Package install fails (network) | Package repo domain not whitelisted | User needs to `clawker firewall add` the repo domain |
+| `git push -u` / `git config --local` / `git remote add` fails in a worktree container | Read-only security masks on the shared main `.git` (hooks/config) | Expected behavior — push with `git push origin HEAD`; set tracking host-side later; see https://docs.clawker.dev/worktrees#worktree-caveats |
 
 ## Resources
 
