@@ -84,6 +84,15 @@ This builds a Docker image tagged `clawker-<project>:latest` using the settings 
 ## 4. Run Your First Agent
 
 ```bash
+clawker go dev
+```
+
+You're now inside a containerized Claude Code session. Your project code is bind-mounted (live sync), your Git credentials are forwarded, and the network firewall is active. 
+
+<Tip>
+The "go" command is a built-in alias for 
+
+```bash
 clawker run -it --rm --agent dev @ --dangerously-skip-permissions
 ```
 
@@ -91,15 +100,8 @@ clawker run -it --rm --agent dev @ --dangerously-skip-permissions
 - `--rm` — removes the container when it finishes (recommended, volumes are preserved)
 - `--agent dev` — names this container `clawker.<project>.dev`
 - `@` — shortcut that resolves to your built image (the project image here; outside a project it resolves to the global image from a global `clawker build`)
+- `--dangerously-skip-permissions` — the infamous claude code yolo flag. You can treat anything after the `@` as a normal `claude` invocation, including `-c` to continue your previous session. You can also pass arguments after an alias, like `clawker go dev -c`.
 
-You're now inside a containerized Claude Code session. Your project code is bind-mounted (live sync), your Git credentials are forwarded, and the network firewall is active. Arguments after the image (`@`) are passed directly to Claude Code inside the container.
-
-<Tip>
-That whole command has a built-in shorthand — the `go` alias:
-
-```bash
-clawker go dev
-```
 
 Clawker ships [command aliases](/aliases) that expand to full invocations, and you can define your own with `clawker alias set`. See the [Command Aliases](/aliases) guide.
 </Tip>

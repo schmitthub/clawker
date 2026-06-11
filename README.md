@@ -119,25 +119,25 @@ The fastest path to a seamless containerized Claude Code instance, with all your
 cd your-project
 clawker init 
 clawker build
-clawker run -it --rm --agent dev @ --dangerously-skip-permissions
-```
-
-That last command has a built-in shorthand — the shipped `go` alias:
-
-```bash
 clawker go dev
 ```
 
-Clawker ships [command aliases](#command-aliases) that expand to full invocations (`go` for disposable agents, `wt` for worktree agents), and you can define your own with `clawker alias set`.
-
-This:
-- Builds a project-scoped container image (`clawker-<project>:latest`, with `@` as a shortcut when you are in the project directory), using the default Dockerfile template
-- Starts and attaches your terminal to the container (`clawker.<project>.dev`) using that image (via the `@` identifier), with your current working directory bind-mounted (i.e., live share)
-- Copies your host Claude Code settings, plugins, authentication, skills, etc. for a seamless transition from host to container development.
- 
-The `--rm` flag removes the container when you exit, so it's perfect for quick tasks or experimentation.
-If you want persistence, omit `--rm` and start the same container again later with `clawker start -a -i --agent example`.
-You can also keep it running by detaching (`Ctrl+P`, `Ctrl+Q`) and reattach later with `clawker attach --agent example` to the same terminal session.
+> [!NOTE]
+> The `go` command is a built-in alias for:  
+>
+> ```bash
+> clawker run -it --rm --agent dev @ --dangerously-skip-permissions
+> ```
+>
+> - `-it` — interactive mode with a terminal attached
+> - `--rm` — removes the container when it finishes (recommended, volumes are preserved)
+> - `--agent dev` — names this container `clawker.<project>.dev`
+> - `@` — shortcut that resolves to your built image (the project image here; outside a project it resolves to the global image from a global `clawker build`)
+> - `--dangerously-skip-permissions` — the infamous claude code yolo flag. You can treat anything after the `@` as a normal `claude` invocation, including `-c` to continue your previous session. You can also pass arguments after an alias, like `clawker go dev -c`.
+>
+> The other built-in alias `wt` spawns an agent container in a worktree automatically. For example: `clawker wt feat feat/feat` (worktree off currently checked out branch) or `clawker wt auth feature/auth:main` (to specify a base branch)
+>
+> Clawker ships [command aliases](/aliases) that expand to full invocations, and you can define your own with `clawker alias set`. See the [Command Aliases](/aliases) guide.
 
 If you want to learn more about image customization, worktree support, monitoring, and other bells and whistles, keep reading for the walkthrough below.
 
