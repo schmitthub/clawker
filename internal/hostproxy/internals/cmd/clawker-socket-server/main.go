@@ -109,7 +109,7 @@ func logln(msg string) {
 // SocketConfig defines a socket to create and forward.
 type SocketConfig struct {
 	Path string `json:"path"` // Unix socket path
-	Type string `json:"type"` // "gpg-agent" or "ssh-agent"
+	Type string `json:"type"` // consts.SocketTypeGPGAgent or consts.SocketTypeSSHAgent
 }
 
 // Message represents a protocol message.
@@ -211,7 +211,7 @@ func run() int {
 	// Check if GPG forwarding is enabled - if so, wait for PUBKEY message
 	hasGPG := false
 	for _, s := range sockets {
-		if s.Type == "gpg-agent" {
+		if s.Type == consts.SocketTypeGPGAgent {
 			hasGPG = true
 			break
 		}
@@ -239,7 +239,7 @@ func run() int {
 		// Kill any existing gpg-agent that may have been auto-started before
 		// our config files were in place. This is GPG's sanctioned mechanism.
 		for _, s := range sockets {
-			if s.Type == "gpg-agent" {
+			if s.Type == consts.SocketTypeGPGAgent {
 				killExistingGPGAgent(filepath.Dir(s.Path))
 				break
 			}
@@ -301,7 +301,7 @@ func (f *Forwarder) setupGPGPubkey(pubkey []byte) error {
 	// Find GPG socket path to determine .gnupg directory
 	var gnupgDir string
 	for _, s := range f.sockets {
-		if s.Type == "gpg-agent" {
+		if s.Type == consts.SocketTypeGPGAgent {
 			gnupgDir = filepath.Dir(s.Path)
 			break
 		}

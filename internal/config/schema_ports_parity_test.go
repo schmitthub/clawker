@@ -10,10 +10,12 @@ import (
 
 // TestControlPlanePortDefaultsMatchConsts pins the struct-tag defaults on
 // ControlPlaneSettings to the consts.Default* port constants. Struct tags
-// cannot reference consts, so the two spellings can silently drift — the
-// consts feed URL constructors and test fixtures, the tags feed the
-// storage defaulting layer; a mismatch sends those callers to a port the
-// CP never bound.
+// cannot reference consts, so the two spellings can silently drift; the
+// tags feed the storage defaulting layer, while the consts exist for
+// programmatic callers (flag defaults, fixtures, future URL builders) —
+// this parity is what makes the consts trustworthy to use. It also
+// catches a malformed default tag, which would corrupt
+// GenerateDefaultsYAML output.
 func TestControlPlanePortDefaultsMatchConsts(t *testing.T) {
 	want := map[string]int{
 		"AdminPort":         consts.DefaultCPAdminPort,

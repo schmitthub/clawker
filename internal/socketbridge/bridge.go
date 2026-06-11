@@ -45,7 +45,7 @@ const (
 // SocketConfig defines a socket to forward.
 type SocketConfig struct {
 	Path string `json:"path"` // Unix socket path in container
-	Type string `json:"type"` // "gpg-agent" or "ssh-agent"
+	Type string `json:"type"` // consts.SocketTypeGPGAgent or consts.SocketTypeSSHAgent
 }
 
 // Message represents a protocol message.
