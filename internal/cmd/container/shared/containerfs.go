@@ -7,13 +7,14 @@ import (
 	"path/filepath"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/containerfs"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // containerHomeDir is the home directory for the claude user inside containers.
-const containerHomeDir = "/home/claude"
+const containerHomeDir = consts.ContainerHomeDir
 
 // CopyToVolumeFn is the signature for copying a directory to a Docker volume.
 // Matches *docker.Client.CopyToVolume.

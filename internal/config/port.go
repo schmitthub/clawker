@@ -23,8 +23,8 @@ func (p *Port) UnmarshalYAML(node *yaml.Node) error {
 	if err := node.Decode(&v); err != nil {
 		return fmt.Errorf("port: %w", err)
 	}
-	if v < 1 || v > 65535 {
-		return fmt.Errorf("port %d out of range (must be 1-65535)", v)
+	if v < 1 || v > maxPort {
+		return fmt.Errorf("port %d out of range (must be 1-%d)", v, maxPort)
 	}
 	*p = Port(v)
 	return nil

@@ -34,9 +34,9 @@ func ParseFormat(raw string) (Format, error) {
 	switch {
 	case raw == "":
 		return Format{mode: ModeDefault}, nil
-	case raw == "table":
+	case raw == ModeTable:
 		return Format{mode: ModeTable}, nil
-	case raw == "json":
+	case raw == ModeJSON:
 		return Format{mode: ModeJSON}, nil
 	case strings.HasPrefix(raw, "table "):
 		tmpl := strings.TrimPrefix(raw, "table ")

@@ -6,6 +6,7 @@ package config
 import (
 	"fmt"
 
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/storage"
 )
 
@@ -133,8 +134,8 @@ func NewConfig(opts ...NewConfigOption) (Config, error) {
 		opt(options)
 	}
 	projectOpts := []storage.Option{
-		storage.WithFilenames("clawker.local.yaml", "clawker.yaml"),
-		storage.WithDefaultFilename("clawker.yaml"),
+		storage.WithFilenames(consts.ProjectLocalConfigFile, consts.ProjectConfigFile),
+		storage.WithDefaultFilename(consts.ProjectConfigFile),
 	}
 	if options.projectYAML != "" {
 		projectOpts = append(projectOpts, storage.WithDefaults(options.projectYAML))
@@ -153,7 +154,7 @@ func NewConfig(opts ...NewConfigOption) (Config, error) {
 	}
 
 	settingsOpts := []storage.Option{
-		storage.WithFilenames("settings.yaml"),
+		storage.WithFilenames(consts.SettingsFile),
 	}
 	if options.settingsYAML != "" {
 		settingsOpts = append(settingsOpts, storage.WithDefaults(options.settingsYAML))

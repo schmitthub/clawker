@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/schmitthub/clawker/internal/consts"
 )
 
 // WorktreeSpec holds the parsed --worktree flag value.
@@ -66,7 +68,7 @@ func generateBranchName(agentName string) string {
 	if agentName == "" {
 		agentName = "session"
 	}
-	return fmt.Sprintf("clawker-%s-%s", agentName, timestamp)
+	return fmt.Sprintf("%s-%s-%s", consts.NamePrefix, agentName, timestamp)
 }
 
 // validateBranchName checks if a branch name is safe.

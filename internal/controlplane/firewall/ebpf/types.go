@@ -25,10 +25,19 @@ import (
 	"hash/fnv"
 	"net"
 	"strings"
+
+	"github.com/schmitthub/clawker/internal/consts"
 )
 
 // PinPath is the filesystem path where BPF maps are pinned.
-const PinPath = "/sys/fs/bpf/clawker"
+const PinPath = consts.BPFFSRoot + "/" + consts.NamePrefix
+
+// Pinned map names. MUST match the `ebpf:` struct tags in the generated
+// bpfel bindings (which come from the map names in bpf/common.h).
+const (
+	ContainerMapName = "container_map"
+	DNSCacheMapName  = "dns_cache"
+)
 
 // ContainerConfig mirrors struct container_config in bpf/common.h.
 // All IP fields are in network byte order. Port fields are host byte order.

@@ -277,8 +277,8 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 		// BPF filesystem for pinned maps.
 		{
 			Type:   mount.TypeBind,
-			Source: "/sys/fs/bpf",
-			Target: "/sys/fs/bpf",
+			Source: consts.BPFFSRoot,
+			Target: consts.BPFFSRoot,
 		},
 		// Docker socket — CP needs Docker API access to verify container
 		// existence (bypass timer dead-man switch, future lifecycle ops).

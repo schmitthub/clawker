@@ -138,14 +138,14 @@ func New(t *testing.T, opts ...Option) *Env {
 	t.Setenv("HOME", base)
 
 	// Create minimal ~/.claude/ so container init can find host config dir.
-	if err := os.MkdirAll(filepath.Join(base, ".claude"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(base, consts.ClaudeDir), 0o755); err != nil {
 		t.Fatalf("testenv: creating .claude dir: %v", err)
 	}
 
-	t.Setenv("CLAWKER_CONFIG_DIR", dirs.Config)
-	t.Setenv("CLAWKER_DATA_DIR", dirs.Data)
-	t.Setenv("CLAWKER_STATE_DIR", dirs.State)
-	t.Setenv("CLAWKER_CACHE_DIR", dirs.Cache)
+	t.Setenv(consts.EnvConfigDir, dirs.Config)
+	t.Setenv(consts.EnvDataDir, dirs.Data)
+	t.Setenv(consts.EnvStateDir, dirs.State)
+	t.Setenv(consts.EnvCacheDir, dirs.Cache)
 
 	env := &Env{Dirs: dirs}
 
@@ -180,10 +180,10 @@ type configFileInfo struct {
 }
 
 var configFiles = map[ConfigFile]configFileInfo{
-	ProjectConfig:      {filename: func() string { return "clawker.yaml" }, dotfile: true},
-	ProjectConfigLocal: {filename: func() string { return "clawker.local.yaml" }, dotfile: true},
-	Settings:           {filename: func() string { return "settings.yaml" }, dir: func(e *Env) string { return e.Dirs.Config }},
-	EgressRules:        {filename: func() string { return "egress-rules.yaml" }, dir: func(e *Env) string { return e.Dirs.State }},
+	ProjectConfig:      {filename: func() string { return consts.ProjectConfigFile }, dotfile: true},
+	ProjectConfigLocal: {filename: func() string { return consts.ProjectLocalConfigFile }, dotfile: true},
+	Settings:           {filename: func() string { return consts.SettingsFile }, dir: func(e *Env) string { return e.Dirs.Config }},
+	EgressRules:        {filename: func() string { return consts.EgressRulesFile }, dir: func(e *Env) string { return e.Dirs.State }},
 	ProjectRegistry:    {filename: func() string { return consts.RegistryFile }, dir: func(e *Env) string { return e.Dirs.Data }},
 }
 

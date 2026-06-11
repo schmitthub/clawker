@@ -174,7 +174,7 @@ func main() {
 	serverCertPath := flag.String("tls-cert", consts.CPTLSCertPath, "TLS server certificate")
 	serverKeyPath := flag.String("tls-key", consts.CPTLSKeyPath, "TLS server key")
 	jwkPath := flag.String("jwk", consts.CPCLIPubKeyPath, "CLI signing JWK (bind-mounted)")
-	logDir := flag.String("log-dir", "/var/log/clawker", "directory for persistent audit logs")
+	logDir := flag.String("log-dir", consts.CPLogsPath, "directory for persistent audit logs")
 	flag.Parse()
 
 	if err := run(*caCertPath, *serverCertPath, *serverKeyPath, *jwkPath, *logDir); err != nil {

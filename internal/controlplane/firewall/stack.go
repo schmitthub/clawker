@@ -36,8 +36,8 @@ const (
 	envoyImage      = "envoyproxy/envoy:distroless-v1.37.1@sha256:4d9226b9fd4d1449887de7cde785beb24b12e47d6e79021dec3c79e362609432"
 	corednsImageTag = "clawker-coredns:latest"
 
-	envoyContainerName   = "clawker-envoy"
-	corednsContainerName = "clawker-coredns"
+	envoyContainerName   = consts.ContainerEnvoy
+	corednsContainerName = consts.ContainerCoreDNS
 
 	// healthCheckTimeout bounds WaitForHealthy. A ctx deadline can only
 	// tighten it, never extend it. Shared with the CLI's bringup RPC deadline
@@ -728,11 +728,11 @@ func (s *Stack) corednsContainerSpec(netInfo *NetworkInfo) containerSpec {
 			ReadOnly: true,
 		},
 		{
-			// The dnsbpf plugin updates the pinned dns_cache map at
-			// /sys/fs/bpf/clawker/dns_cache in real time.
+			// The dnsbpf plugin updates the pinned dns_cache map
+			// under the clawker BPF pin path in real time.
 			Type:   mount.TypeBind,
-			Source: "/sys/fs/bpf",
-			Target: "/sys/fs/bpf",
+			Source: consts.BPFFSRoot,
+			Target: consts.BPFFSRoot,
 		},
 	}
 	var env []string

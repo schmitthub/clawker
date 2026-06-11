@@ -59,7 +59,7 @@ import (
 // /var/log/clawker/ so an operator triaging issues finds early-boot
 // bootstrap failures AND structured log events under one directory.
 // The Dockerfile pre-creates the path.
-const logsDir = "/var/log/clawker"
+const logsDir = consts.CPLogsPath
 
 // logFilename is the rotated log file's basename — distinct from
 // clawker.log on the host so an operator triaging issues can tell at a
