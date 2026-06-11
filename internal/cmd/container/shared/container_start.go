@@ -303,7 +303,7 @@ func ContainerStart(ctx context.Context, cmdOpts CommandOpts, startOpts docker.C
 	}
 	result, err := client.ContainerStart(ctx, startOpts)
 	if err != nil {
-		return &result, err
+		return &result, ReapFailedStart(client, startOpts.ContainerID, fmt.Errorf("starting container: %w", err))
 	}
 
 	if postErr := BootstrapServicesPostStart(ctx, startOpts.ContainerID, cmdOpts); postErr != nil {
