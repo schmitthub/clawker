@@ -259,7 +259,7 @@ func forwardCallback(client *http.Client, port int, data *CallbackData) error {
 		return fmt.Errorf("callback data has empty HTTP method")
 	}
 
-	hosts := []string{"localhost", consts.LoopbackIPv4, "::1"}
+	hosts := []string{"localhost", consts.Localhost, "::1"}
 	var errs []string
 	for _, host := range hosts {
 		attemptErr := forwardCallbackToHost(client, host, port, data)

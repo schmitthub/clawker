@@ -758,7 +758,7 @@ func ReadJWK() (json.RawMessage, error) {
 //     siblings over the docker network. Without this SAN the gRPC SNI
 //     check fails: "certificate is valid for ... not otel-collector".
 var (
-	otelServerDNSNames = []string{consts.HostDockerInternal, "localhost", consts.MonitoringServiceOtelCollector}
+	otelServerDNSNames = []string{"host.docker.internal", "localhost", consts.MonitoringServiceOtelCollector}
 	otelServerIPs      = []net.IP{net.IPv4(127, 0, 0, 1)}
 )
 

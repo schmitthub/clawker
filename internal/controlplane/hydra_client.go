@@ -46,7 +46,7 @@ func registerHydraClient(ctx context.Context, hydraAdminURL, clientID, scope str
 
 	body := map[string]any{
 		"client_id":                       clientID,
-		"grant_types":                     []string{consts.GrantTypeClientCredentials},
+		"grant_types":                     []string{"client_credentials"},
 		"token_endpoint_auth_method":      "private_key_jwt",
 		"token_endpoint_auth_signing_alg": "ES256",
 		"scope":                           scope,

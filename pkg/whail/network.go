@@ -84,7 +84,7 @@ func (e *Engine) NetworkList(ctx context.Context, extraFilters ...map[string]str
 	f := e.newManagedFilter()
 	for _, labels := range extraFilters {
 		for k, v := range labels {
-			f = f.Add(filterLabel, k+"="+v)
+			f = f.Add("label", k+"="+v)
 		}
 	}
 	result, err := e.APIClient.NetworkList(ctx, client.NetworkListOptions{Filters: f})

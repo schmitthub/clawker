@@ -8,7 +8,6 @@ import (
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/spf13/cobra"
@@ -110,11 +109,11 @@ func listRun(ctx context.Context, opts *ListOptions) error {
 	for _, r := range rules {
 		proto := r.GetProto()
 		if proto == "" {
-			proto = consts.EgressProtoHTTPS
+			proto = "https"
 		}
 		action := r.GetAction()
 		if action == "" {
-			action = consts.EgressActionAllow
+			action = "allow"
 		}
 		port := r.GetPort()
 
@@ -124,7 +123,7 @@ func listRun(ctx context.Context, opts *ListOptions) error {
 			for _, p := range pr {
 				pAction := p.GetAction()
 				if pAction == "" {
-					pAction = consts.EgressActionAllow
+					pAction = "allow"
 				}
 				paths = append(paths, pathRow{Path: p.GetPath(), Action: pAction, Methods: p.GetMethods()})
 			}

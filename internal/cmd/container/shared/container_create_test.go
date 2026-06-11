@@ -183,7 +183,7 @@ func TestPortOpts(t *testing.T) {
 	t.Run("port with host IP", func(t *testing.T) {
 		opts := NewPortOpts()
 
-		require.NoError(t, opts.Set(consts.LoopbackIPv4+":8080:80"))
+		require.NoError(t, opts.Set(consts.Localhost+":8080:80"))
 
 		bindings := opts.GetPortBindings()
 		assert.Equal(t, 1, len(bindings))
@@ -191,7 +191,7 @@ func TestPortOpts(t *testing.T) {
 		// Check that host IP was parsed
 		for _, binding := range bindings {
 			assert.Equal(t, 1, len(binding))
-			assert.Equal(t, consts.LoopbackIPv4, binding[0].HostIP.String())
+			assert.Equal(t, consts.Localhost, binding[0].HostIP.String())
 		}
 	})
 

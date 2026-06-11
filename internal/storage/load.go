@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/schmitthub/clawker/internal/consts"
 	"gopkg.in/yaml.v3"
 )
 
@@ -32,7 +31,7 @@ func loadFile(path string, migrations []Migration) (map[string]any, error) {
 		if mErr != nil {
 			return nil, fmt.Errorf("storage: encoding migrated %s: %w", path, mErr)
 		}
-		if err := atomicWrite(path, encoded, consts.FilePerm); err != nil {
+		if err := atomicWrite(path, encoded, 0o644); err != nil {
 			return nil, fmt.Errorf("storage: saving migrated %s: %w", path, err)
 		}
 	}

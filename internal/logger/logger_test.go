@@ -316,7 +316,7 @@ func TestNew_OtelFallback(t *testing.T) {
 		LogsDir:   dir,
 		MaxSizeMB: 1,
 		Otel: &OtelOptions{
-			Endpoint:       consts.LoopbackIPv4 + ":19876",
+			Endpoint:       consts.Localhost + ":19876",
 			Insecure:       true,
 			ExportInterval: 50 * time.Millisecond,
 			MaxQueueSize:   10,

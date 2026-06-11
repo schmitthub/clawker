@@ -30,7 +30,7 @@ func (c *Client) findProjectImage(ctx context.Context, projectName string) (stri
 	}
 
 	f := c.ClawkerFilter().
-		Add(filterLabel, c.cfg.LabelProject()+"="+projectName)
+		Add("label", c.cfg.LabelProject()+"="+projectName)
 
 	result, err := c.ImageList(ctx, ImageListOptions{
 		Filters: f,
@@ -41,7 +41,7 @@ func (c *Client) findProjectImage(ctx context.Context, projectName string) (stri
 
 	for _, img := range result.Items {
 		for _, tag := range img.RepoTags {
-			if strings.HasSuffix(tag, ":"+latestTag) {
+			if strings.HasSuffix(tag, ":latest") {
 				return tag, nil
 			}
 		}

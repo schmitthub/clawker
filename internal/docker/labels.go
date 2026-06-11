@@ -62,20 +62,20 @@ func (c *Client) NetworkLabels() map[string]string {
 
 // ClawkerFilter returns Docker filter for listing all clawker resources.
 func (c *Client) ClawkerFilter() whail.Filters {
-	return whail.Filters{}.Add(filterLabel, c.cfg.LabelManaged()+"="+c.cfg.ManagedLabelValue())
+	return whail.Filters{}.Add("label", c.cfg.LabelManaged()+"="+c.cfg.ManagedLabelValue())
 }
 
 // ProjectFilter returns Docker filter for a specific project.
 func (c *Client) ProjectFilter(project string) whail.Filters {
 	return whail.Filters{}.
-		Add(filterLabel, c.cfg.LabelManaged()+"="+c.cfg.ManagedLabelValue()).
-		Add(filterLabel, c.cfg.LabelProject()+"="+project)
+		Add("label", c.cfg.LabelManaged()+"="+c.cfg.ManagedLabelValue()).
+		Add("label", c.cfg.LabelProject()+"="+project)
 }
 
 // AgentFilter returns Docker filter for a specific agent within a project.
 func (c *Client) AgentFilter(project, agent string) whail.Filters {
 	return whail.Filters{}.
-		Add(filterLabel, c.cfg.LabelManaged()+"="+c.cfg.ManagedLabelValue()).
-		Add(filterLabel, c.cfg.LabelProject()+"="+project).
-		Add(filterLabel, c.cfg.LabelAgent()+"="+agent)
+		Add("label", c.cfg.LabelManaged()+"="+c.cfg.ManagedLabelValue()).
+		Add("label", c.cfg.LabelProject()+"="+project).
+		Add("label", c.cfg.LabelAgent()+"="+agent)
 }

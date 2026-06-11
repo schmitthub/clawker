@@ -14,7 +14,7 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
-// Handler serves the Register RPC on the CP's clawker-network agent
+// Handler serves the Register RPC on the CP's clawker network agent
 // listener and is the SOLE writer of the agentregistry sqlite DB.
 // IdentityInterceptor has already grounded the peer in the
 // daemon-attested container identity (peer IP → purpose=agent

@@ -208,7 +208,7 @@ const (
 
 // authSubdirs enumerates every auth subdirectory. EnsureAuthDirs creates
 // each with 0o700; a new Auth*Dir accessor must add its segment here so
-// the directory gets the tightened mode instead of the DirPerm default
+// the directory gets the tightened mode instead of the 0o755 default
 // from subdirPathUnder.
 var authSubdirs = []string{
 	authCASubdir, authCLISubdir, authTLSSubdir,
@@ -261,28 +261,9 @@ const (
 
 // Well-known addresses.
 const (
-	// HostDockerInternal is Docker's magic hostname that resolves to the
-	// host gateway from inside containers.
-	HostDockerInternal = "host.docker.internal"
-	// LoopbackIPv4 is the IPv4 loopback address. Used for host-published
+	// Localhost is the IPv4 loopback address. Used for host-published
 	// port bindings and intra-container localhost dials.
-	LoopbackIPv4 = "127.0.0.1"
-	// DockerEmbeddedDNS is the fixed address of Docker's embedded DNS
-	// resolver inside user-defined networks.
-	DockerEmbeddedDNS = "127.0.0.11"
-	// DockerInternalZone is the DNS zone for Docker's magic hostnames;
-	// HostDockerInternal is a subdomain of it.
-	DockerInternalZone = "docker.internal"
-	// DockerHostGateway is Docker's special ExtraHosts value that maps a
-	// hostname to the host gateway address.
-	DockerHostGateway = "host-gateway"
-)
-
-// BPF filesystem.
-const (
-	// BPFFSRoot is the kernel's BPF filesystem mount point. Clawker pins
-	// its eBPF programs and maps under <BPFFSRoot>/<NamePrefix>.
-	BPFFSRoot = "/sys/fs/bpf"
+	Localhost = "127.0.0.1"
 )
 
 // Container names.
@@ -607,14 +588,6 @@ const (
 	SocketTypeGPGAgent = "gpg-agent"
 )
 
-// Default filesystem permissions for clawker-owned files and directories.
-// Deliberately tighter modes (e.g. the 0o700 auth tree) stay explicit at
-// their call sites.
-const (
-	FilePerm os.FileMode = 0o644
-	DirPerm  os.FileMode = 0o755
-)
-
 // ---------------------------------------------------------------------------
 // XDG directory resolution — env var lookup with platform-appropriate fallbacks.
 // No I/O beyond os.Getenv / os.UserHomeDir. No mkdir — callers ensure dirs.
@@ -636,7 +609,7 @@ func subdirPath(subdir string, baseDirFunc func() string) (string, error) {
 // subdirPathUnder ensures and returns <baseDir>/<subdir>.
 func subdirPathUnder(subdir string, baseDir string) (string, error) {
 	fullPath := filepath.Join(baseDir, subdir)
-	if err := os.MkdirAll(fullPath, DirPerm); err != nil {
+	if err := os.MkdirAll(fullPath, 0o755); err != nil {
 		return "", fmt.Errorf("creating config subdir %s: %w", fullPath, err)
 	}
 	return fullPath, nil
@@ -644,7 +617,7 @@ func subdirPathUnder(subdir string, baseDir string) (string, error) {
 
 // ensureDir creates dir (and any parents) with 0o755 and returns dir.
 func ensureDir(dir string) (string, error) {
-	if err := os.MkdirAll(dir, DirPerm); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("creating dir %s: %w", dir, err)
 	}
 	return dir, nil

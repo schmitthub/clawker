@@ -30,7 +30,7 @@ import (
 )
 
 // PinPath is the filesystem path where BPF maps are pinned.
-const PinPath = consts.BPFFSRoot + "/" + consts.NamePrefix
+const PinPath = "/sys/fs/bpf/" + consts.NamePrefix
 
 // Pinned map names. MUST match the `ebpf:` struct tags in the generated
 // bpfel bindings (which come from the map names in bpf/common.h).

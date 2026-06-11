@@ -76,7 +76,7 @@ func (e *Engine) VolumeList(ctx context.Context, extraFilters ...map[string]stri
 	f := e.newManagedFilter()
 	for _, labels := range extraFilters {
 		for k, v := range labels {
-			f = f.Add(filterLabel, k+"="+v)
+			f = f.Add("label", k+"="+v)
 		}
 	}
 	result, err := e.APIClient.VolumeList(ctx, client.VolumeListOptions{Filters: f})
@@ -115,7 +115,7 @@ func (e *Engine) VolumesPrune(ctx context.Context, all bool, extraFilters ...map
 	f := e.newManagedFilter()
 	for _, labels := range extraFilters {
 		for k, v := range labels {
-			f = f.Add(filterLabel, k+"="+v)
+			f = f.Add("label", k+"="+v)
 		}
 	}
 	result, err := e.APIClient.VolumePrune(ctx, client.VolumePruneOptions{All: all, Filters: f})

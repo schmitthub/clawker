@@ -47,7 +47,7 @@ const (
 //     cannot be re-attempted for that container — registration is
 //     one-time per container creation.
 //
-// Transport: mTLS over TCP on the CP's clawker-network agent listener.
+// Transport: mTLS over TCP on the CP's clawker network agent listener.
 // Server requires a client cert chained to the CLI CA; authorization
 // via Hydra-issued bearer tokens scoped to the `clawker-agent` OAuth2
 // client (scope `agent:self:register`).
@@ -108,7 +108,7 @@ func (c *agentServiceClient) Register(ctx context.Context, in *RegisterRequest, 
 //     cannot be re-attempted for that container — registration is
 //     one-time per container creation.
 //
-// Transport: mTLS over TCP on the CP's clawker-network agent listener.
+// Transport: mTLS over TCP on the CP's clawker network agent listener.
 // Server requires a client cert chained to the CLI CA; authorization
 // via Hydra-issued bearer tokens scoped to the `clawker-agent` OAuth2
 // client (scope `agent:self:register`).

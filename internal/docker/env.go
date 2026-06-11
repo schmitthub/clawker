@@ -153,7 +153,7 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 		var sockets []map[string]string
 		if opts.GPGForwardingEnabled {
 			sockets = append(sockets, map[string]string{
-				"path": "/home/claude/.gnupg/S.gpg-agent",
+				"path": consts.ContainerHomeDir + "/.gnupg/S.gpg-agent",
 				"type": consts.SocketTypeGPGAgent,
 			})
 			// Override gpg.program via env vars so the container's gpg binary is used
@@ -165,12 +165,13 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 			m["GIT_CONFIG_VALUE_0"] = "/usr/bin/gpg"
 		}
 		if opts.SSHForwardingEnabled {
+			sshAgentSock := consts.ContainerHomeDir + "/.ssh/agent.sock"
 			sockets = append(sockets, map[string]string{
-				"path": "/home/claude/.ssh/agent.sock",
+				"path": sshAgentSock,
 				"type": consts.SocketTypeSSHAgent,
 			})
 			// SSH tools need SSH_AUTH_SOCK to find the forwarded socket
-			m["SSH_AUTH_SOCK"] = "/home/claude/.ssh/agent.sock"
+			m["SSH_AUTH_SOCK"] = sshAgentSock
 		}
 		socketsBytes, err := json.Marshal(sockets)
 		if err != nil {

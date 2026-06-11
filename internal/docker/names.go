@@ -207,7 +207,7 @@ func VolumeName(project, agent, purpose string) (string, error) {
 // ImageTag generates image tag: clawker-project:latest
 func ImageTag(project string) string {
 	if project == "" {
-		return NamePrefix + ":" + latestTag
+		return NamePrefix + ":latest"
 	}
-	return fmt.Sprintf("%s-%s:%s", NamePrefix, project, latestTag)
+	return fmt.Sprintf("%s-%s:latest", NamePrefix, project)
 }

@@ -36,7 +36,7 @@ serve:
     host: 0.0.0.0
     port: %d
   admin:
-    host: `+consts.LoopbackIPv4+`
+    host: `+consts.Localhost+`
     port: %d
   tls:
     enabled: true
@@ -51,7 +51,7 @@ secrets:
     - %s
 urls:
   self:
-    issuer: https://`+consts.LoopbackIPv4+`:%d/
+    issuer: https://`+consts.Localhost+`:%d/
 oauth2:
   expose_internal_errors: true
 ttl:
@@ -83,7 +83,7 @@ func buildKratosConfig(cp config.ControlPlaneSettings) string {
 dsn: memory
 serve:
   public:
-    host: `+consts.LoopbackIPv4+`
+    host: `+consts.Localhost+`
     port: %d
     tls:
       cert:
@@ -91,7 +91,7 @@ serve:
       key:
         path: %s
   admin:
-    host: `+consts.LoopbackIPv4+`
+    host: `+consts.Localhost+`
     port: %d
     tls:
       cert:
@@ -99,7 +99,7 @@ serve:
       key:
         path: %s
 selfservice:
-  default_browser_return_url: https://`+consts.LoopbackIPv4+`:4455/
+  default_browser_return_url: https://`+consts.Localhost+`:4455/
 identity:
   default_schema_id: default
   schemas:
@@ -137,7 +137,7 @@ func buildOathkeeperConfig(cp config.ControlPlaneSettings) string {
       key:
         path: %s
   api:
-    host: `+consts.LoopbackIPv4+`
+    host: `+consts.Localhost+`
     port: %d
     tls:
       cert:

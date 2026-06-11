@@ -731,8 +731,8 @@ func (s *Stack) corednsContainerSpec(netInfo *NetworkInfo) containerSpec {
 			// The dnsbpf plugin updates the pinned dns_cache map
 			// under the clawker BPF pin path in real time.
 			Type:   mount.TypeBind,
-			Source: consts.BPFFSRoot,
-			Target: consts.BPFFSRoot,
+			Source: "/sys/fs/bpf",
+			Target: "/sys/fs/bpf",
 		},
 	}
 	var env []string

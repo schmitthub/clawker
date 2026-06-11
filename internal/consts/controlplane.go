@@ -144,21 +144,6 @@ var (
 	HostControlPlaneDBPath = filepath.Join(HostControlPlaneSubdir, ControlPlaneDBFile)
 )
 
-// Ory subprocess names. Each doubles as the binary name on PATH inside
-// the CP container and as the subprocess-manager registration key.
-const (
-	OryKratos     = "kratos"
-	OryHydra      = "hydra"
-	OryOathkeeper = "oathkeeper"
-)
-
-// CPHealthzPath is the HTTP path of the CP daemon's health endpoint.
-const CPHealthzPath = "/healthz"
-
-// OryHealthAlivePath is the health endpoint path shared by the Ory
-// services (Kratos, Hydra).
-const OryHealthAlivePath = "/health/alive"
-
 const (
 	// CPLogsPath is the container-side clawker log directory. In the CP
 	// container it is bind-mounted from the host's state/logs directory;
@@ -242,11 +227,11 @@ const (
 	// table; future CP-owned tables share the same file.
 	CPControlPlaneDBPath = CPControlPlaneDir + "/" + ControlPlaneDBFile
 
-	CPKratosConfigFilename = OryKratos + ".yaml"
+	CPKratosConfigFilename = "kratos.yaml"
 
-	CPHydraConfigFilename = OryHydra + ".yaml"
+	CPHydraConfigFilename = "hydra.yaml"
 
-	CPOathkeeperConfigFilename = OryOathkeeper + ".yaml"
+	CPOathkeeperConfigFilename = "oathkeeper.yaml"
 
 	// CPKratosConfigPath is the container-side path to the Kratos config file.
 	CPKratosConfigPath = CPClawkerDir + "/" + CPKratosConfigFilename

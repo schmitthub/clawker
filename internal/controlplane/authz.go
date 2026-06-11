@@ -273,13 +273,13 @@ func extractBearerToken(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("no metadata")
 	}
 
-	vals := md.Get(consts.HeaderAuthorization)
+	vals := md.Get("authorization")
 	if len(vals) == 0 {
 		return "", fmt.Errorf("no authorization header")
 	}
 
 	auth := vals[0]
-	const prefix = consts.BearerPrefix
+	const prefix = "Bearer "
 	if !strings.HasPrefix(auth, prefix) {
 		return "", fmt.Errorf("not a bearer token")
 	}

@@ -5,7 +5,6 @@ import (
 	"sort"
 	"time"
 
-	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/storage"
 )
 
@@ -149,19 +148,18 @@ type PathRule struct {
 }
 
 // Egress vocabulary for the EgressRule / PathRule Proto, Port, and Action
-// fields. The canonical constants live in internal/consts (egress.go) so
-// the firewall config generators, the CLI, and the config schema share one
-// spelling; these aliases keep the config package's established names
-// working for existing callers.
+// fields. EgressRule is the type these values decorate, so its package is the
+// single home for the constants — reference them instead of spelling the
+// literals.
 const (
 	// EgressProtoHTTPS is the default EgressRule protocol (TLS-MITM HCM).
-	EgressProtoHTTPS = consts.EgressProtoHTTPS
+	EgressProtoHTTPS = "https"
 	// EgressPortHTTPS is the EgressProtoHTTPS default destination port.
-	EgressPortHTTPS = consts.EgressPortHTTPS
+	EgressPortHTTPS = "443"
 	// EgressActionAllow permits traffic matching a rule (the default action).
-	EgressActionAllow = consts.EgressActionAllow
+	EgressActionAllow = "allow"
 	// EgressActionDeny blocks traffic matching a rule.
-	EgressActionDeny = consts.EgressActionDeny
+	EgressActionDeny = "deny"
 )
 
 // EgressRule defines a single egress firewall rule.

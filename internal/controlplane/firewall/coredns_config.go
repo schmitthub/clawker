@@ -41,7 +41,7 @@ func GenerateCorefile(rules []config.EgressRule, healthPort int) ([]byte, error)
 	// compose template and this list cannot drift — rename one and the other
 	// follows by construction.
 	internalHosts := append(
-		[]string{consts.DockerInternalZone}, // covers Docker magic hostnames incl. the host gateway name
+		[]string{"docker.internal"}, // covers Docker magic hostnames incl. the host gateway name
 		consts.MonitoringServiceHostnames...,
 	)
 
@@ -111,7 +111,7 @@ func GenerateCorefile(rules []config.EgressRule, healthPort int) ([]byte, error)
 	// Internal host forward zones (Docker DNS). Never exact-scoped — e.g.
 	// host.docker.internal is a subdomain of docker.internal and must resolve.
 	for _, host := range internalHosts {
-		writeAllowZone(&b, host, []string{consts.DockerEmbeddedDNS}, false)
+		writeAllowZone(&b, host, []string{"127.0.0.11"}, false)
 	}
 
 	// Catch-all zone: NXDOMAIN for everything not explicitly allowed.
@@ -132,7 +132,7 @@ func GenerateCorefile(rules []config.EgressRule, healthPort int) ([]byte, error)
 // (not an IP address or CIDR range).
 func isAllowDomain(r config.EgressRule) bool {
 	action := strings.ToLower(r.Action)
-	if action != consts.EgressActionAllow && action != "" {
+	if action != "allow" && action != "" {
 		return false
 	}
 	return !isIPOrCIDR(r.Dst)
@@ -177,7 +177,7 @@ func isWildcardDomain(d string) bool {
 // isDenyRule reports whether r explicitly denies a domain destination.
 // IP/CIDR deny rules are handled by Envoy/eBPF, not CoreDNS.
 func isDenyRule(r config.EgressRule) bool {
-	return strings.EqualFold(r.Action, consts.EgressActionDeny) && !isIPOrCIDR(r.Dst)
+	return strings.EqualFold(r.Action, "deny") && !isIPOrCIDR(r.Dst)
 }
 
 // subdomainRegex builds a CoreDNS template `match` regex that matches any

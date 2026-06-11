@@ -11,7 +11,6 @@ import (
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/consts"
 	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
 	"github.com/schmitthub/clawker/internal/storage"
 )
@@ -189,7 +188,7 @@ func validateMethod(m string) error {
 // policy footgun that turns an intended block into an open egress path.
 func validateActionField(name, val string) error {
 	switch strings.ToLower(val) {
-	case "", consts.EgressActionAllow, consts.EgressActionDeny:
+	case "", "allow", "deny":
 		return nil
 	default:
 		return fmt.Errorf("invalid %s %q: must be \"allow\" or \"deny\"", name, val)
@@ -206,22 +205,22 @@ func validateActionField(name, val string) error {
 // Config-side values stay present-tense (allow/deny) — the access log emits
 // past-tense verdict values (allowed/denied) independently.
 func NormalizeRule(r config.EgressRule) config.EgressRule {
-	if strings.ToLower(r.Proto) == consts.EgressProtoLegacyTLS {
-		r.Proto = consts.EgressProtoHTTPS
+	if strings.ToLower(r.Proto) == "tls" {
+		r.Proto = "https"
 	}
 	if r.Proto == "" {
-		r.Proto = consts.EgressProtoHTTPS
+		r.Proto = "https"
 	}
 	if r.Action == "" {
-		r.Action = consts.EgressActionAllow
+		r.Action = "allow"
 	}
 	if r.Port == "" {
 		switch strings.ToLower(r.Proto) {
-		case consts.EgressProtoHTTPS, consts.EgressProtoWSS:
+		case "https", "wss":
 			r.Port = "443"
-		case consts.EgressProtoHTTP, consts.EgressProtoWS:
+		case "http", "ws":
 			r.Port = "80"
-		case consts.EgressProtoSSH:
+		case "ssh":
 			r.Port = "22"
 		}
 	}
@@ -407,14 +406,14 @@ func RoutesFromRules(rules []config.EgressRule, ports EnvoyPorts) []ebpf.Route {
 	seen := make(map[string]struct{})
 	for _, r := range rules {
 		action := strings.ToLower(r.Action)
-		if action != consts.EgressActionAllow && action != "" {
+		if action != "allow" && action != "" {
 			continue
 		}
 		proto := strings.ToLower(r.Proto)
-		if proto == consts.EgressProtoSSH || proto == consts.EgressProtoTCP {
+		if proto == "ssh" || proto == "tcp" {
 			continue // handled above (TCPMappings → dedicated TCP listener)
 		}
-		if proto == consts.EgressProtoUDP {
+		if proto == "udp" {
 			continue // handled above (UDPMappings → dedicated udp_proxy listener, L4ProtoUDP)
 		}
 		if isIPOrCIDR(r.Dst) {
@@ -456,7 +455,7 @@ func RoutesFromRules(rules []config.EgressRule, ports EnvoyPorts) []ebpf.Route {
 		// Both connected (connect4) and unconnected (sendmsg4) QUIC datagrams
 		// follow this route; recvmsg4/getpeername4 restore the reply source from
 		// udp_flow_map so the app observes responses as if from the original dst.
-		if proto == consts.EgressProtoHTTPS || proto == consts.EgressProtoWSS {
+		if proto == "https" || proto == "wss" {
 			if _, dup := udpSeen[key]; !dup {
 				udpSeen[key] = struct{}{}
 				out = append(out, ebpf.Route{
@@ -542,9 +541,9 @@ func NormalizeAndDedup(rules []config.EgressRule) ([]config.EgressRule, []string
 		// keeps just the first and silently drops the other — the deny would vanish.
 		// Both surviving lets resolveOpaquePortConflicts carve (when a range is
 		// present) or the generator reject loud (an all-single allow/deny clash).
-		action := consts.EgressActionAllow
+		action := "allow"
 		if isDenyAction(r.Action) {
-			action = consts.EgressActionDeny
+			action = "deny"
 		}
 		key := RuleKey(r) + "\x00" + action
 		if _, exists := seen[key]; exists {
@@ -705,7 +704,7 @@ func resolveOpaquePortConflicts(rules []config.EgressRule) ([]config.EgressRule,
 // isDenyAction reports whether an egress rule action denies. Empty action
 // defaults to allow (see NormalizeRule), so only an explicit "deny" denies.
 func isDenyAction(action string) bool {
-	return strings.ToLower(action) == consts.EgressActionDeny
+	return strings.ToLower(action) == "deny"
 }
 
 // subtractSpans removes every port covered by a deny span from the allow spans,
@@ -785,9 +784,9 @@ func rulesCanonicalEqual(a, b []config.EgressRule) bool {
 		return false
 	}
 	sortKey := func(r config.EgressRule) string {
-		action := consts.EgressActionAllow
+		action := "allow"
 		if isDenyAction(r.Action) {
-			action = consts.EgressActionDeny
+			action = "deny"
 		}
 		return RuleKey(r) + "\x00" + action
 	}
@@ -803,7 +802,7 @@ func rulesCanonicalEqual(a, b []config.EgressRule) bool {
 // are subject to port-overlap coalescing.
 func isOpaqueProto(proto string) bool {
 	switch strings.ToLower(proto) {
-	case consts.EgressProtoTCP, consts.EgressProtoSSH, consts.EgressProtoUDP:
+	case "tcp", "ssh", "udp":
 		return true
 	default:
 		return false

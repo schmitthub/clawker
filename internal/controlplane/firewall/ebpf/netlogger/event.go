@@ -105,7 +105,7 @@ type Event struct {
 	Project     string
 
 	// Network 4-tuple destination side. SrcIP is the container's own
-	// clawker-network IP, redundant with attribution — not carried.
+	// clawker network IP, redundant with attribution — not carried.
 	//
 	// DstIP is invalid (zero netip.Addr) when NoDst=true (sock_create
 	// events have no destination). The sink omits the OTLP dst_ip

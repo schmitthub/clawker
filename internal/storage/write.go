@@ -82,7 +82,7 @@ func (s *Store[T]) defaultWritePath() (string, error) {
 		if len(s.opts.paths) > 0 {
 			// Explicit dir (e.g. config dir) — no dot prefix.
 			dir := s.opts.paths[0]
-			if err := os.MkdirAll(dir, consts.DirPerm); err != nil {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
 				return "", fmt.Errorf("storage: creating directory %s: %w", dir, err)
 			}
 			return filepath.Join(dir, fname), nil
@@ -92,7 +92,7 @@ func (s *Store[T]) defaultWritePath() (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("storage: resolving CWD for default write path: %w", err)
 		}
-		if err := os.MkdirAll(dir, consts.DirPerm); err != nil {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return "", fmt.Errorf("storage: creating directory %s: %w", dir, err)
 		}
 		if s.opts.dotDefault {
@@ -265,7 +265,7 @@ func setLiteralStyle(node *yaml.Node) {
 // to guarantee same-filesystem rename semantics.
 func atomicWrite(path string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, consts.DirPerm); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("storage: creating directory for %s: %w", path, err)
 	}
 
@@ -354,7 +354,7 @@ func writeFieldsToPath(path string, sets map[string]any, deletes []string, lock 
 			return fmt.Errorf("storage: encoding %s: %w", path, err)
 		}
 
-		return atomicWrite(path, encoded, consts.FilePerm)
+		return atomicWrite(path, encoded, 0o644)
 	}
 
 	if lock {

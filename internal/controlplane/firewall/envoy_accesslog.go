@@ -3,20 +3,6 @@ package firewall
 import (
 	"maps"
 	"sort"
-
-	"github.com/schmitthub/clawker/internal/consts"
-)
-
-// OTel network semconv values recorded on access-log records:
-// network.transport (actual L4) and network.protocol.name (L7). Distinct
-// vocabulary from the consts.EgressProto* rule tokens even where the
-// spellings coincide — opaque chains record the rule token verbatim as
-// the protocol name, HCM chains always record protoNameHTTP.
-const (
-	netTransportTCP  = "tcp"
-	netTransportUDP  = "udp"
-	netTransportQUIC = "quic"
-	protoNameHTTP    = "http"
 )
 
 // envoy_accesslog.go holds the access-log builders shared by every HCM and
@@ -54,9 +40,9 @@ func buildHTTPAccessLog(tlsTerminated bool, transport, action string, als ALSCon
 	// transport is the ACTUAL L4 (tcp for the TCP egress chains, quic for the
 	// HTTP/3-over-QUIC chains) — never hardcoded, so the QUIC HCM that reuses this
 	// app block reports quic, not tcp.
-	sinks := []any{stdoutAccessLogEntry(transport, protoNameHTTP, tlsEst, action, extra)}
+	sinks := []any{stdoutAccessLogEntry(transport, "http", tlsEst, action, extra)}
 	if als.MTLS {
-		sinks = append(sinks, otelAccessLogEntry(transport, protoNameHTTP, tlsEst, action, extra))
+		sinks = append(sinks, otelAccessLogEntry(transport, "http", tlsEst, action, extra))
 	}
 	return sinks
 }
@@ -87,24 +73,24 @@ func buildTCPAccessLog(transport, l7Proto, serverAddress, action string, als ALS
 // emit time. The verdict is NEVER inferred from response_code.
 func accessLogFields(transport, l7Proto, tlsEstablished, action string, extra map[string]string) map[string]string {
 	f := map[string]string{
-		"server.address":             "%REQUESTED_SERVER_NAME%",
-		consts.OTelAttrClientAddress: "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%",
-		"listener_ip":                "%DOWNSTREAM_LOCAL_ADDRESS_WITHOUT_PORT%",
-		"network.peer.address":       "%UPSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%",
-		"network.peer.port":          "%UPSTREAM_REMOTE_PORT%",
-		"response_flags":             "%RESPONSE_FLAGS%",
-		"bytes_sent":                 "%BYTES_SENT%",
-		"bytes_received":             "%BYTES_RECEIVED%",
-		"upstream_bytes_sent":        "%UPSTREAM_WIRE_BYTES_SENT%",
-		"upstream_bytes_received":    "%UPSTREAM_WIRE_BYTES_RECEIVED%",
-		consts.OTelAttrDurationMS:    "%DURATION%",
-		"tls.protocol.version":       "%DOWNSTREAM_TLS_VERSION%",
-		"tls.cipher":                 "%DOWNSTREAM_TLS_CIPHER%",
-		"upstream_tls_version":       "%UPSTREAM_TLS_VERSION%",
-		"upstream_tls_cipher":        "%UPSTREAM_TLS_CIPHER%",
-		"network.transport":          transport,
-		"network.protocol.name":      l7Proto,
-		consts.OTelAttrAction:        action,
+		"server.address":          "%REQUESTED_SERVER_NAME%",
+		"client.address":          "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%",
+		"listener_ip":             "%DOWNSTREAM_LOCAL_ADDRESS_WITHOUT_PORT%",
+		"network.peer.address":    "%UPSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%",
+		"network.peer.port":       "%UPSTREAM_REMOTE_PORT%",
+		"response_flags":          "%RESPONSE_FLAGS%",
+		"bytes_sent":              "%BYTES_SENT%",
+		"bytes_received":          "%BYTES_RECEIVED%",
+		"upstream_bytes_sent":     "%UPSTREAM_WIRE_BYTES_SENT%",
+		"upstream_bytes_received": "%UPSTREAM_WIRE_BYTES_RECEIVED%",
+		"duration_ms":             "%DURATION%",
+		"tls.protocol.version":    "%DOWNSTREAM_TLS_VERSION%",
+		"tls.cipher":              "%DOWNSTREAM_TLS_CIPHER%",
+		"upstream_tls_version":    "%UPSTREAM_TLS_VERSION%",
+		"upstream_tls_cipher":     "%UPSTREAM_TLS_CIPHER%",
+		"network.transport":       transport,
+		"network.protocol.name":   l7Proto,
+		"action":                  action,
 	}
 	if tlsEstablished != "" {
 		f["tls.established"] = tlsEstablished
@@ -156,7 +142,7 @@ func otelAccessLogEntry(transport, l7Proto, tlsEstablished, action string, extra
 			"resource_attributes": map[string]any{
 				"values": []any{
 					map[string]any{
-						"key":   consts.OTelAttrServiceName,
+						"key":   "service.name",
 						"value": map[string]any{"string_value": "envoy"},
 					},
 				},

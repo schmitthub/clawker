@@ -80,9 +80,9 @@ func Dial(ctx context.Context, adminPort, hydraPort int, opts ...grpc.DialOption
 	// mTLS for gRPC AdminService (presents client cert).
 	grpcTLSCfg := mtlsConfig(certPool, clientCert)
 
-	target := fmt.Sprintf(consts.LoopbackIPv4+":%d", adminPort)
+	target := fmt.Sprintf(consts.Localhost+":%d", adminPort)
 
-	hydraTokenURL := fmt.Sprintf("https://"+consts.LoopbackIPv4+":%d"+consts.OAuth2TokenPath, hydraPort)
+	hydraTokenURL := fmt.Sprintf("https://"+consts.Localhost+":%d/oauth2/token", hydraPort)
 	ts := newTokenSource(signingKey, hydraTokenURL, tokenTLSCfg)
 
 	// Eagerly fetch the first token with bounded retry so dial tolerates
@@ -154,7 +154,7 @@ func ProbeCPTime(ctx context.Context, adminPort int) (time.Time, error) {
 	if err != nil {
 		return time.Time{}, err
 	}
-	return probeCPTime(ctx, fmt.Sprintf(consts.LoopbackIPv4+":%d", adminPort), tlsCfg)
+	return probeCPTime(ctx, fmt.Sprintf(consts.Localhost+":%d", adminPort), tlsCfg)
 }
 
 // initialTokenDeadline bounds the retry window for the first Hydra token
@@ -274,7 +274,7 @@ func (ts *tokenSource) unaryInterceptor() grpc.UnaryClientInterceptor {
 		if err != nil {
 			return fmt.Errorf("refreshing access token for %s: %w", method, err)
 		}
-		ctx = metadata.AppendToOutgoingContext(ctx, consts.HeaderAuthorization, consts.BearerPrefix+tok)
+		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+tok)
 		return invoker(ctx, method, req, reply, cc, opts...)
 	}
 }
@@ -325,8 +325,8 @@ func fetchAccessToken(ctx context.Context, signingKey *ecdsa.PrivateKey, tokenUR
 	adminScope := string(adminv1.ScopeAdmin)
 
 	form := url.Values{
-		"grant_type":            {consts.GrantTypeClientCredentials},
-		"client_assertion_type": {consts.ClientAssertionTypeJWTBearer},
+		"grant_type":            {"client_credentials"},
+		"client_assertion_type": {"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"},
 		"client_assertion":      {assertion},
 		"scope":                 {adminScope},
 	}

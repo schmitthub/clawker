@@ -21,7 +21,7 @@ import (
 // getFreePort returns an available TCP port on localhost.
 func getFreePort(t *testing.T) int {
 	t.Helper()
-	l, err := net.Listen("tcp", consts.LoopbackIPv4+":0")
+	l, err := net.Listen("tcp", consts.Localhost+":0")
 	if err != nil {
 		t.Fatalf("failed to get free port: %v", err)
 	}
@@ -687,7 +687,7 @@ func TestServer_DynamicListenerStartStop(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Verify the listener is actually listening on the port
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf(consts.LoopbackIPv4+":%d", port), 1*time.Second)
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf(consts.Localhost+":%d", port), 1*time.Second)
 	if err != nil {
 		t.Fatalf("expected dynamic listener to be listening on port %d: %v", port, err)
 	}
@@ -712,7 +712,7 @@ func TestServer_DynamicListenerStartStop(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Verify the listener has stopped
-	conn, err = net.DialTimeout("tcp", fmt.Sprintf(consts.LoopbackIPv4+":%d", port), 100*time.Millisecond)
+	conn, err = net.DialTimeout("tcp", fmt.Sprintf(consts.Localhost+":%d", port), 100*time.Millisecond)
 	if err == nil {
 		conn.Close()
 		t.Errorf("expected dynamic listener to be stopped, but port %d is still open", port)
@@ -753,7 +753,7 @@ func TestServer_DynamicListenerCapture(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Make a request to the dynamic listener (simulating OAuth callback)
-	callbackURL := fmt.Sprintf("http://"+consts.LoopbackIPv4+":%d/callback?code=AUTH_CODE&state=RANDOM_STATE", port)
+	callbackURL := fmt.Sprintf("http://"+consts.Localhost+":%d/callback?code=AUTH_CODE&state=RANDOM_STATE", port)
 	resp, err := http.Get(callbackURL)
 	if err != nil {
 		t.Fatalf("failed to make callback request: %v", err)

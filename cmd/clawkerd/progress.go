@@ -7,7 +7,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/schmitthub/clawker/internal/consts"
 	"golang.org/x/sys/unix"
 )
 
@@ -187,14 +186,14 @@ type initStepLabel struct {
 // back to the raw step in both forms so a CP that adds a plan entry
 // without a label still renders something sensible.
 var initStepLabels = map[string]initStepLabel{
-	"docker-socket":     {Active: "Configuring Docker socket...", Done: "Docker socket configured"},
-	"config":            {Active: "Seeding agent config...", Done: "Agent config seeded"},
-	"git":               {Active: "Configuring git...", Done: "Git configured"},
-	"git-credentials":   {Active: "Configuring git credentials...", Done: "Git credentials configured"},
-	"ssh":               {Active: "Configuring SSH known_hosts...", Done: "SSH known_hosts configured"},
-	consts.HookPostInit: {Active: "Running post-init...", Done: "Post-init complete"},
-	consts.HookPreRun:   {Active: "Running pre-run hook...", Done: "Pre-run complete"},
-	"agent-ready":       {Active: "Running agent command...", Done: "Agent command running"},
+	"docker-socket":   {Active: "Configuring Docker socket...", Done: "Docker socket configured"},
+	"config":          {Active: "Seeding agent config...", Done: "Agent config seeded"},
+	"git":             {Active: "Configuring git...", Done: "Git configured"},
+	"git-credentials": {Active: "Configuring git credentials...", Done: "Git credentials configured"},
+	"ssh":             {Active: "Configuring SSH known_hosts...", Done: "SSH known_hosts configured"},
+	"post-init":       {Active: "Running post-init...", Done: "Post-init complete"},
+	"pre-run":         {Active: "Running pre-run hook...", Done: "Pre-run complete"},
+	"agent-ready":     {Active: "Running agent command...", Done: "Agent command running"},
 }
 
 // parseInitStep extracts the step label from a CP-issued init

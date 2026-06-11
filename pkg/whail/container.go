@@ -262,7 +262,7 @@ func (e *Engine) ContainerListRunning(ctx context.Context) ([]container.Summary,
 func (e *Engine) ContainerListByLabels(ctx context.Context, labels map[string]string, all bool) ([]container.Summary, error) {
 	f := e.newManagedFilter()
 	for k, v := range labels {
-		f = f.Add(filterLabel, k+"="+v)
+		f = f.Add("label", k+"="+v)
 	}
 	result, err := e.APIClient.ContainerList(ctx, client.ContainerListOptions{
 		All:     all,
@@ -399,7 +399,7 @@ func (e *Engine) ExecCreate(ctx context.Context, containerID string, opts client
 // Returns ErrContainerNotFound if not found. Only returns containers with the managed label.
 func (e *Engine) FindContainerByName(ctx context.Context, name string) (*container.Summary, error) {
 	f := e.newManagedFilter()
-	f = f.Add(filterName, name)
+	f = f.Add("name", name)
 
 	result, err := e.APIClient.ContainerList(ctx, client.ContainerListOptions{
 		All:     true,

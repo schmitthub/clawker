@@ -317,19 +317,19 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	}
 	log.Info().Msg("Ory config files written")
 
-	kratosCmd := exec.Command(consts.OryKratos, "serve",
+	kratosCmd := exec.Command("kratos", "serve",
 		"--config", consts.CPKratosConfigPath,
 	)
-	if err := subMgr.Start(consts.OryKratos, kratosCmd); err != nil {
+	if err := subMgr.Start("kratos", kratosCmd); err != nil {
 		return fmt.Errorf("kratos: %w", err)
 	}
 
-	hydraCmd := exec.Command(consts.OryHydra, "serve", "all",
+	hydraCmd := exec.Command("hydra", "serve", "all",
 		"--config", consts.CPHydraConfigPath,
 		"--sqa-opt-out",
 		"--dev",
 	)
-	if err := subMgr.Start(consts.OryHydra, hydraCmd); err != nil {
+	if err := subMgr.Start("hydra", hydraCmd); err != nil {
 		return fmt.Errorf("hydra: %w", err)
 	}
 
@@ -352,14 +352,14 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		MinVersion: tls.VersionTLS13,
 	}
 
-	if err := subMgr.WaitHealthy(ctx, consts.OryKratos, controlplane.HealthCheck{
-		URL: fmt.Sprintf("https://"+consts.LoopbackIPv4+":%d"+consts.OryHealthAlivePath, cp.KratosPublicPort), Interval: healthCheckInterval, Timeout: healthCheckTimeout,
+	if err := subMgr.WaitHealthy(ctx, "kratos", controlplane.HealthCheck{
+		URL: fmt.Sprintf("https://"+consts.Localhost+":%d/health/alive", cp.KratosPublicPort), Interval: healthCheckInterval, Timeout: healthCheckTimeout,
 		TLS: caTLS,
 	}); err != nil {
 		return fmt.Errorf("kratos health: %w", err)
 	}
-	if err := subMgr.WaitHealthy(ctx, consts.OryHydra, controlplane.HealthCheck{
-		URL: fmt.Sprintf("https://"+consts.LoopbackIPv4+":%d"+consts.OryHealthAlivePath, cp.HydraPublicPort), Interval: healthCheckInterval, Timeout: healthCheckTimeout,
+	if err := subMgr.WaitHealthy(ctx, "hydra", controlplane.HealthCheck{
+		URL: fmt.Sprintf("https://"+consts.Localhost+":%d/health/alive", cp.HydraPublicPort), Interval: healthCheckInterval, Timeout: healthCheckTimeout,
 		TLS: caTLS,
 	}); err != nil {
 		return fmt.Errorf("hydra health: %w", err)
@@ -368,8 +368,8 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// The public health check above confirms the public listener is ready,
 	// but client registration goes to the admin port — a separate listener
 	// that may take longer under resource pressure. Wait for it explicitly.
-	if err := subMgr.WaitHealthy(ctx, consts.OryHydra, controlplane.HealthCheck{
-		URL: fmt.Sprintf("https://"+consts.LoopbackIPv4+":%d"+consts.OryHealthAlivePath, cp.HydraAdminPort), Interval: healthCheckInterval, Timeout: healthCheckTimeout,
+	if err := subMgr.WaitHealthy(ctx, "hydra", controlplane.HealthCheck{
+		URL: fmt.Sprintf("https://"+consts.Localhost+":%d/health/alive", cp.HydraAdminPort), Interval: healthCheckInterval, Timeout: healthCheckTimeout,
 		TLS: caTLS,
 	}); err != nil {
 		return fmt.Errorf("hydra admin health: %w", err)
@@ -387,7 +387,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 
 	// See controlplane.RegisterAgentClient for why both clients share
 	// one JWK with distinct client_id + scope.
-	hydraAdminURL := fmt.Sprintf("https://"+consts.LoopbackIPv4+":%d", cp.HydraAdminPort)
+	hydraAdminURL := fmt.Sprintf("https://"+consts.Localhost+":%d", cp.HydraAdminPort)
 	if err := controlplane.RegisterCLIClient(ctx, hydraAdminURL, jwkData, caTLS); err != nil {
 		return fmt.Errorf("register CLI client: %w", err)
 	}
@@ -399,10 +399,10 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// Oathkeeper runs as an HTTP reverse proxy for future webui auth.
 	// gRPC auth (CLI + agents) bypasses Oathkeeper entirely — it uses
 	// direct Hydra token introspection via AuthInterceptor.
-	oathkeeperCmd := exec.Command(consts.OryOathkeeper, "serve",
+	oathkeeperCmd := exec.Command("oathkeeper", "serve",
 		"--config", consts.CPOathkeeperConfigPath,
 	)
-	if err := subMgr.Start(consts.OryOathkeeper, oathkeeperCmd); err != nil {
+	if err := subMgr.Start("oathkeeper", oathkeeperCmd); err != nil {
 		return fmt.Errorf("oathkeeper: %w", err)
 	}
 
@@ -491,7 +491,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// method-scope vocabulary. Both share a single Hydra introspector —
 	// tokens are checked against the same Hydra instance regardless of
 	// which listener received them.
-	hydraIntrospectURL := fmt.Sprintf("https://"+consts.LoopbackIPv4+":%d"+consts.OAuth2IntrospectPath, cp.HydraAdminPort)
+	hydraIntrospectURL := fmt.Sprintf("https://"+consts.Localhost+":%d/admin/oauth2/introspect", cp.HydraAdminPort)
 	introspector := controlplane.NewHydraIntrospector(hydraIntrospectURL, caTLS)
 	authInterceptor := controlplane.NewAuthInterceptor(introspector, adminv1.AdminMethodScopes(), log)
 	// Pin the agent interceptor to consts.ClientIDAgent — defense in
@@ -761,7 +761,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	orchestrator.SetReady()
 
 	healthMux := http.NewServeMux()
-	healthMux.Handle(consts.CPHealthzPath, orchestrator.HealthzHandler())
+	healthMux.Handle("/healthz", orchestrator.HealthzHandler())
 	healthServer := &http.Server{
 		Addr:    "0.0.0.0:" + strconv.Itoa(cp.HealthPort),
 		Handler: healthMux,

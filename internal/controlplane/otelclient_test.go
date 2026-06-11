@@ -73,7 +73,7 @@ func TestNewOtelLoggerProvider_RequiredFields(t *testing.T) {
 func TestNewOtelLoggerProvider_PreflightFailure(t *testing.T) {
 	// Bind, then close — we want a port that's known-closed but
 	// without depending on a fixed number being free on the host.
-	lis, err := net.Listen("tcp", consts.LoopbackIPv4+":0")
+	lis, err := net.Listen("tcp", consts.Localhost+":0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestNewOtelLoggerProvider_PreflightFailure(t *testing.T) {
 // Logger() / Shutdown() lifecycle.
 func TestNewOtelLoggerProvider_Constructs(t *testing.T) {
 	serverCert, clientTLS := selfSignedTLSPair(t)
-	lis, err := tls.Listen("tcp", consts.LoopbackIPv4+":0", &tls.Config{
+	lis, err := tls.Listen("tcp", consts.Localhost+":0", &tls.Config{
 		Certificates: []tls.Certificate{serverCert},
 		MinVersion:   tls.VersionTLS12,
 	})

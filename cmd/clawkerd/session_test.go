@@ -765,7 +765,7 @@ func TestHandleRegisterRequired_HappyPath(t *testing.T) {
 	}
 	// Prevent the inner runOnce from rejecting on missing env.
 	s.register.hydraURL = "https://hydra.test"
-	s.register.agentAddr = consts.LoopbackIPv4 + ":1"
+	s.register.agentAddr = consts.Localhost + ":1"
 	caPEM, certPEM, keyPEM := validPEMs(t)
 	s.register.boot = &bootstrap{
 		CertPEM:   certPEM,
@@ -801,7 +801,7 @@ func TestHandleRegisterRequired_PanicRecovery(t *testing.T) {
 		return true, ""
 	}
 	s.register.hydraURL = "https://hydra.test"
-	s.register.agentAddr = consts.LoopbackIPv4 + ":1"
+	s.register.agentAddr = consts.Localhost + ":1"
 	caPEM, certPEM, keyPEM := validPEMs(t)
 	s.register.boot = &bootstrap{
 		CertPEM:   certPEM,

@@ -14,7 +14,6 @@ import (
 	"github.com/coredns/coredns/plugin"
 	"github.com/coredns/coredns/plugin/pkg/nonwriter"
 	"github.com/miekg/dns"
-	"github.com/schmitthub/clawker/internal/consts"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
@@ -136,27 +135,27 @@ func NewEmitter(opts Options) (Emitter, error) {
 
 func (e *otelEmitter) Emit(ctx context.Context, event QueryEvent) error {
 	var record otellog.Record
-	record.SetEventName(consts.OTelEventDNSQuery)
+	record.SetEventName("dns.query")
 	record.SetTimestamp(event.Timestamp)
 	record.SetObservedTimestamp(time.Now().UTC())
 	record.SetSeverity(otellog.SeverityInfo)
 	record.SetSeverityText("INFO")
 	record.SetBody(otellog.StringValue("CoreDNS query handled"))
 	record.AddAttributes(
-		otellog.String(consts.OTelAttrClientAddress, event.ClientIP),
-		otellog.String(consts.OTelAttrZone, event.Zone),
-		otellog.String(consts.OTelAttrQueryName, event.QueryName),
-		otellog.String(consts.OTelAttrQType, event.QueryType),
-		otellog.String(consts.OTelAttrRCode, event.RCode),
-		otellog.Int(consts.OTelAttrAnswerCount, event.AnswerCount),
-		otellog.Float64(consts.OTelAttrDurationMS, float64(event.Duration)/float64(time.Millisecond)),
+		otellog.String("client.address", event.ClientIP),
+		otellog.String("zone", event.Zone),
+		otellog.String("query_name", event.QueryName),
+		otellog.String("qtype", event.QueryType),
+		otellog.String("rcode", event.RCode),
+		otellog.Int("answer_count", event.AnswerCount),
+		otellog.Float64("duration_ms", float64(event.Duration)/float64(time.Millisecond)),
 	)
 	if len(event.Answers) > 0 {
 		values := make([]otellog.Value, 0, len(event.Answers))
 		for _, answer := range event.Answers {
 			values = append(values, otellog.StringValue(answer))
 		}
-		record.AddAttributes(otellog.Slice(consts.OTelAttrAnswers, values...))
+		record.AddAttributes(otellog.Slice("answers", values...))
 	}
 	if event.Err != nil {
 		record.SetErr(event.Err)
@@ -247,7 +246,7 @@ func newProvider(opts Options) (*sdklog.LoggerProvider, error) {
 		processorOpts = append(processorOpts, sdklog.WithExportInterval(opts.ExportInterval))
 	}
 
-	res := resource.NewSchemaless(attribute.String(consts.OTelAttrServiceName, "coredns"))
+	res := resource.NewSchemaless(attribute.String("service.name", "coredns"))
 	processor := sdklog.NewBatchProcessor(exporter, processorOpts...)
 	return sdklog.NewLoggerProvider(
 		sdklog.WithResource(res),

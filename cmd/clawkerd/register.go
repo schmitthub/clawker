@@ -140,7 +140,7 @@ func (rc *registerCoordinator) runOnce(ctx context.Context, log *logger.Logger) 
 	}
 
 	// 1. Hydra token exchange.
-	tokenURL := strings.TrimRight(rc.hydraURL, "/") + consts.OAuth2TokenPath
+	tokenURL := strings.TrimRight(rc.hydraURL, "/") + "/oauth2/token"
 	tokenTLS, err := buildTokenTLSConfig(rc.boot.CACertPEM)
 	if err != nil {
 		log.Error().Err(err).Str("event", "token_tls_config_failed").Msg("build token TLS config")
@@ -212,7 +212,7 @@ type bearerCreds struct {
 }
 
 func (c bearerCreds) GetRequestMetadata(_ context.Context, _ ...string) (map[string]string, error) {
-	return map[string]string{consts.HeaderAuthorization: consts.BearerPrefix + c.token}, nil
+	return map[string]string{"authorization": "Bearer " + c.token}, nil
 }
 
 func (bearerCreds) RequireTransportSecurity() bool { return true }
@@ -260,8 +260,8 @@ func buildDialTLSConfig(certPEM, keyPEM, caPEM []byte) (*tls.Config, error) {
 // retrying with the same assertion is meaningful.
 func exchangeAssertion(ctx context.Context, tokenURL, assertion string, tlsCfg *tls.Config) (string, bool, error) {
 	form := url.Values{
-		"grant_type":            {consts.GrantTypeClientCredentials},
-		"client_assertion_type": {consts.ClientAssertionTypeJWTBearer},
+		"grant_type":            {"client_credentials"},
+		"client_assertion_type": {"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"},
 		"client_assertion":      {assertion},
 		"scope":                 {string(agentv1.ScopeSelfRegister)},
 	}

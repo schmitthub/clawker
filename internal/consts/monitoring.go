@@ -64,29 +64,11 @@ const (
 	EnvClaudeCodeEnableTelemetry = "CLAUDE_CODE_ENABLE_TELEMETRY"
 )
 
-// OTel log record vocabulary for the firewall observability lane. These
-// are an OpenSearch index wire contract: index templates and dashboards
-// key on them. Shared by the coredns-clawker otel plugin (DNS queries)
-// and the Envoy access-log generator (client.address / service.name /
-// duration_ms).
-const (
-	OTelEventDNSQuery     = "dns.query"
-	OTelAttrClientAddress = "client.address"
-	OTelAttrServiceName   = "service.name"
-	OTelAttrZone          = "zone"
-	OTelAttrQueryName     = "query_name"
-	OTelAttrQType         = "qtype"
-	OTelAttrRCode         = "rcode"
-	OTelAttrAnswerCount   = "answer_count"
-	OTelAttrAnswers       = "answers"
-	OTelAttrDurationMS    = "duration_ms"
-	OTelAttrAction        = "action"
-)
-
-// Per-record firewall verdict values for the OTelAttrAction attribute,
+// Per-record firewall verdict values for the `action` log attribute,
 // stamped by the Envoy access-log generator and netlogger's eBPF egress
-// events. Distinct vocabulary from EgressAction* (rule configuration);
-// do not conflate the two.
+// events. An OpenSearch index wire contract: index templates and
+// dashboards key on these values. Distinct vocabulary from the egress
+// rule allow/deny action tokens; do not conflate the two.
 const (
 	VerdictAllowed  = "allowed"
 	VerdictDenied   = "denied"

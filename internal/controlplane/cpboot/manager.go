@@ -130,7 +130,7 @@ func (m *manager) ProbeHealthz(ctx context.Context) (int, error) {
 // one polls for readiness with retries; this one is a point-in-time
 // snapshot for `controlplane status`.
 func probeHealthz(ctx context.Context, port int) (int, error) {
-	url := fmt.Sprintf("http://"+consts.LoopbackIPv4+":%d"+consts.CPHealthzPath, port)
+	url := fmt.Sprintf("http://"+consts.Localhost+":%d/healthz", port)
 	httpClient := &http.Client{Timeout: probeHealthzTimeout}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {

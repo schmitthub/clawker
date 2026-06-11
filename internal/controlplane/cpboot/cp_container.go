@@ -94,7 +94,7 @@ type CPContainerConfig struct {
 }
 
 // localhost is the 127.0.0.1 address used for all published port bindings.
-var localhost = netip.MustParseAddr(consts.LoopbackIPv4)
+var localhost = netip.MustParseAddr(consts.Localhost)
 
 // BuildCPContainerConfig constructs the CPContainerConfig for the control
 // plane container. Reads all ports from cfg.Settings().ControlPlane —
@@ -277,8 +277,8 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 		// BPF filesystem for pinned maps.
 		{
 			Type:   mount.TypeBind,
-			Source: consts.BPFFSRoot,
-			Target: consts.BPFFSRoot,
+			Source: "/sys/fs/bpf",
+			Target: "/sys/fs/bpf",
 		},
 		// Docker socket — CP needs Docker API access to verify container
 		// existence (bypass timer dead-man switch, future lifecycle ops).
@@ -337,7 +337,7 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 			// (firewall.Stack.driftLabels). See consts.EnvCPBinarySHA.
 			consts.EnvCPBinarySHA + "=" + binarySHA,
 		}, otelLogsEnv(cfg)...),
-		ExtraHosts:  []string{consts.HostDockerInternal + ":" + consts.DockerHostGateway},
+		ExtraHosts:  []string{"host.docker.internal:host-gateway"},
 		Cmd:         []string{"/usr/local/bin/clawker-cp"},
 		NetworkName: consts.Network,
 		// on-failure (not unless-stopped/always) so the CP's graceful

@@ -32,7 +32,7 @@ type Client struct {
 	BuildDefaultImageFunc BuildDefaultImageFn
 
 	// ChownImage overrides the image used for CopyToVolume's chown step.
-	// When empty, defaults to defaultChownImage. Tests set this to a locally-built
+	// When empty, defaults to "busybox:latest". Tests set this to a locally-built
 	// labeled image to avoid DockerHub pulls and ensure test-label propagation.
 	ChownImage string
 }
@@ -100,7 +100,7 @@ func (c *Client) Close() error {
 // IsMonitoringActive checks if the clawker monitoring stack is running.
 // It looks for the otel-collector container on the clawker network.
 func (c *Client) IsMonitoringActive(ctx context.Context) bool {
-	f := whail.Filters{}.Add(filterName, consts.MonitoringServiceOtelCollector).Add(filterStatus, statusRunning)
+	f := whail.Filters{}.Add("name", consts.MonitoringServiceOtelCollector).Add("status", "running")
 	result, err := c.ContainerList(ctx, whail.ContainerListOptions{
 		Filters: f,
 	})
@@ -151,12 +151,12 @@ func (c *Client) imageExistsRaw(ctx context.Context, ref string) (bool, error) {
 }
 
 // chownImage returns the image used for CopyToVolume's chown step.
-// Defaults to defaultChownImage when ChownImage is empty.
+// Defaults to "busybox:latest" when ChownImage is empty.
 func (c *Client) chownImage() string {
 	if c.ChownImage != "" {
 		return c.ChownImage
 	}
-	return defaultChownImage
+	return "busybox:latest"
 }
 
 // BuildImageOpts contains options for building an image.
