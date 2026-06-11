@@ -95,6 +95,29 @@ func TestINV_B1_006_PublicMaterialIsMounted(t *testing.T) {
 	}
 }
 
+// Tests INV-B1-008 [unit]: all published CP ports bind to loopback only.
+//
+// Asserts loopback-ness semantically (netip.Addr.IsLoopback) instead of
+// comparing against the const production uses (tautology) or pinning one
+// literal representation: any zero or non-loopback HostIP publishes the
+// CP's admin/auth/health ports on every host interface.
+func TestINV_B1_008_AllPortsPublishedToLoopbackOnly(t *testing.T) {
+	testenv.New(t)
+	cfg := configmocks.NewBlankConfig()
+
+	cpConfig, err := BuildCPContainerConfig(cfg, testCPOpts())
+	require.NoError(t, err)
+	require.NotEmpty(t, cpConfig.PortBindings)
+
+	for portKey, bindings := range cpConfig.PortBindings {
+		require.NotEmpty(t, bindings, "port %s has no bindings", portKey)
+		for _, binding := range bindings {
+			assert.True(t, binding.HostIP.IsLoopback(),
+				"port %s must be published to a loopback address, got %q", portKey, binding.HostIP)
+		}
+	}
+}
+
 // Tests INV-B1-008 [unit]: Admin port comes from Settings, not hardcoded.
 func TestINV_B1_008_AdminPortFromSettings(t *testing.T) {
 	testenv.New(t)

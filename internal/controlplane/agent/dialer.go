@@ -612,7 +612,7 @@ func (d *Dialer) establishWithRetry(ctx context.Context, containerID string, log
 			log.With("agent", agent, "project", project).Error().Err(err).
 				Int("attempt", attempt).
 				Str("event", "agentdial_attempt_addr_extract_failed").
-				Msg("clawker-net address extraction failed; aborting cycle")
+				Msg(consts.Network + " address extraction failed; aborting cycle")
 			return establishResult{Agent: agent, Project: project, Attempt: attempt, Outcome: outcomeAddrInvalid}
 		}
 
@@ -771,7 +771,7 @@ func (d *Dialer) resolveAgent(ctx context.Context, containerID string) (mobycont
 // create time.
 func clawkerNetAddr(c mobycontainer.InspectResponse) (string, error) {
 	if c.NetworkSettings == nil {
-		return "", errors.New("container has no NetworkSettings (clawker-net contract violation)")
+		return "", errors.New("container has no NetworkSettings (" + consts.Network + " contract violation)")
 	}
 	endpoint, ok := c.NetworkSettings.Networks[consts.Network]
 	if !ok || !endpoint.IPAddress.IsValid() {

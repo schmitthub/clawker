@@ -6,6 +6,7 @@ import (
 	"net/netip"
 
 	"github.com/schmitthub/clawker/internal/auth"
+	"github.com/schmitthub/clawker/internal/consts"
 )
 
 // ResolvedContainer is the authoritative identity of an agent
@@ -24,7 +25,7 @@ type ResolvedContainer struct {
 // container on the clawker network has an endpoint IP matching
 // the requested peer IP. Callers MUST treat this as a hard
 // authentication failure.
-var ErrNoContainerForPeerIP = errors.New("no purpose=agent container with matching clawker-net IP")
+var ErrNoContainerForPeerIP = errors.New("no purpose=agent container with matching " + consts.Network + " IP")
 
 // ErrInvalidAgentLabel is returned when the container matched by peer
 // IP carries a missing or malformed dev.clawker.agent label. A missing
