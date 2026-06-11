@@ -20,6 +20,10 @@ func TestValidateName(t *testing.T) {
 	assert.Error(t, ValidateName("two words"))
 	assert.Error(t, ValidateName(" padded"))
 	assert.Error(t, ValidateName("-flagish"))
+	assert.Error(t, ValidateName("a.b"))
+	assert.Error(t, ValidateName("a.b.c"))
+	assert.Error(t, ValidateName(".lead"))
+	assert.Error(t, ValidateName("trail."))
 }
 
 func TestSplitExpansion(t *testing.T) {

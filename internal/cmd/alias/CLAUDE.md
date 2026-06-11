@@ -8,7 +8,7 @@ Expansion/registration itself lives in `internal/cmd/root/useraliases.go`; this 
 
 - **One home**: `Project.Aliases` (`merge:"union"`, shipped defaults `go` + `wt`). Active aliases are the merged `aliases` key across ALL project config layers — walk-up files (closest to CWD wins) > user-level `clawker.yaml` in the config dir > shipped defaults. The root command registers from this merged view; project-file aliases apply automatically.
 - **Write targets**: `set` always writes the user config-dir `clawker.yaml` (`shared.SetTarget`); `export` writes the most local discovered walk-up file (`shared.ExportTarget`, never creates files); `delete` removes the entry from EVERY file layer that carries it (`shared.LayersContaining`) so one delete clears the name. Every file write prints `Wrote <abs path>`.
-- Shipped defaults are immutable: `delete` operates on file entries only — deleting an override restores the default; a pure default errors (override with `set --clobber` instead). There is NO disable/masking concept; an empty-string value is just an invalid entry the loader skips.
+- Shipped defaults are immutable: `delete` operates on file entries only — deleting an override restores the default; a pure default errors (override with `set --clobber` instead).
 - There is no `alias import` — with all layers live, adoption is automatic.
 
 ## Files
@@ -29,7 +29,7 @@ Expansion/registration itself lives in `internal/cmd/root/useraliases.go`; this 
 - `shared.ExportTarget(cfg)` returns the first discovered file layer outside the config dir — the most local, highest-priority walk-up file, local variants included. Errors when no walk-up file exists (export never creates files).
 - Per-key provenance: union maps merge key-by-key, so `cfg.ProjectStore().Provenance("aliases.<name>")` resolves the providing layer — used by list (SOURCE), set (shadow warning), and export (default/target exclusion).
 - `shared.DefaultAliases()` (via `config.NewBlankConfig()`) lets delete tailor its messaging/error for shipped defaults.
-- `init` does NOT materialize the default alias into project files — `NewProjectStoreFromPreset` carries no defaults layer, so the shipped `go` alias stays virtual.
+- `init` does NOT materialize default aliases into project files — `NewProjectStoreFromPreset` carries no defaults layer, so the shipped `go` and `wt` aliases stay virtual.
 
 ## Testing
 

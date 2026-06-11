@@ -59,6 +59,30 @@ func TestExpandAlias(t *testing.T) {
 			want:      []string{"exec", "web", "sh", "-c", "echo hi"},
 		},
 		{
+			// gh parity: $N substitutes before shlex splitting, so a
+			// space-containing arg through a bare placeholder splits.
+			name:      "space-containing arg through bare placeholder splits",
+			expansion: "logs $1",
+			args:      []string{"my container"},
+			want:      []string{"logs", "my", "container"},
+		},
+		{
+			// Quoting the placeholder in the alias definition keeps the
+			// substituted value one token (the gh-documented idiom).
+			name:      "space-containing arg through quoted placeholder stays one token",
+			expansion: `exec "$1" sh`,
+			args:      []string{"my container"},
+			want:      []string{"exec", "my container", "sh"},
+		},
+		{
+			// Args beyond the max placeholder append after shlex splitting
+			// and must never be re-split.
+			name:      "space-containing extra arg appended verbatim",
+			expansion: "logs $1",
+			args:      []string{"web", "a b"},
+			want:      []string{"logs", "web", "a b"},
+		},
+		{
 			name:      "not enough args",
 			expansion: "logs $1 --tail $2",
 			args:      []string{"web"},

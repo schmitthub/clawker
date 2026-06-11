@@ -39,6 +39,7 @@ aliases:
 - `clawker go fable --model opus` runs `clawker run --rm -it --agent fable @ --dangerously-skip-permissions --model opus`
 - `clawker lg web 50` runs `clawker logs web --tail 50`
 - Invoking an alias with fewer arguments than its highest placeholder is an error (`expansion references $2 but 1 given`)
+- Placeholders substitute before the expansion is tokenized (same model as the gh CLI), so an argument containing spaces splits into separate tokens through a bare `$1`. Quote the placeholder in the alias definition — `clawker alias set ex 'container exec "$1" sh'` — to keep the substituted value a single argument.
 
 ## Defining Aliases
 
@@ -110,7 +111,7 @@ See [Configuration](/configuration#how-configuration-works) for the full layerin
 - An alias may expand to another alias, but cyclic chains are skipped at startup.
 - Shell-style aliases (running arbitrary shell commands) are not supported — expansions always invoke clawker commands.
 - Because alias commands disable flag parsing, even `--help` is forwarded into the expansion.
-- Aliases in a repository's `clawker.yaml` apply automatically when you work inside that project — review the `aliases` key of projects you clone.
+- Aliases in a repository's project config apply automatically when you work inside that project — review the `aliases` key of projects you clone.
 
 ## CLI Reference
 

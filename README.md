@@ -315,7 +315,7 @@ clawker alias export                         # publish active aliases into the p
 clawker alias delete lg                      # remove from every config file that defines it
 ```
 
-Aliases defined in a repository's `clawker.yaml` apply automatically to everyone working in that project. Full guide: [docs.clawker.dev/aliases](https://docs.clawker.dev/aliases)
+Aliases defined in a repository's project config apply automatically to everyone working in that project. Full guide: [docs.clawker.dev/aliases](https://docs.clawker.dev/aliases)
 
 ## Working with Worktrees
 

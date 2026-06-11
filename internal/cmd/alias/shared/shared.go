@@ -28,6 +28,12 @@ func ValidateName(name string) error {
 		return fmt.Errorf("alias name %q must be a single word", name)
 	case strings.HasPrefix(name, "-"):
 		return fmt.Errorf("alias name %q must not start with %q", name, "-")
+	case strings.Contains(name, "."):
+		// The store addresses alias entries by the dotted field path
+		// "aliases.<name>"; a dot in the name reparses as nesting — set
+		// writes the wrong nested shape (corrupting the file) and delete
+		// silently no-ops on disk.
+		return fmt.Errorf("alias name %q must not contain %q", name, ".")
 	}
 	return nil
 }

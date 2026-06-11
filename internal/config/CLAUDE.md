@@ -141,7 +141,7 @@ Import as `configmocks "github.com/schmitthub/clawker/internal/config/mocks"`.
 - **Unknown fields are silently accepted** by `NewFromString`/`NewConfig`.
 - **`NewFromString` has NO defaults** — only caller-provided values. `NewBlankConfig` has defaults. This mirrors storage's `NewFromString` vs `NewStore` distinction.
 - **Project vs Settings scope** — Project keys: `build`, `agent`, `workspace`, `security`, `aliases`. Settings keys: `logging`, `monitoring`, `host_proxy`, `firewall`, `control_plane`, `docker`. Project identity (name) is resolved at runtime via `project.ProjectManager.CurrentProject(ctx).Name()`, not stored in config.
-- **Aliases are project config** — `Project.Aliases` (union-merged across all layers, ships a default `go` alias) is what the CLI registers as commands; walk-up files, the user config-dir `clawker.yaml`, and shipped defaults all apply. Settings has no aliases key.
+- **Aliases are project config** — `Project.Aliases` (union-merged across all layers, ships default `go` and `wt` aliases) is what the CLI registers as commands; walk-up files, the user config-dir `clawker.yaml`, and shipped defaults all apply. Settings has no aliases key.
 - **`*bool` pointers in schema** — Nil means "not set" (defaults apply). Non-nil `false` means "explicitly disabled". Callers must handle nil when accessing raw schema fields. Typed accessors like `FirewallEnabled()` handle nil-to-default conversion.
 - **Nil vs zero** — Nil pointers/slices mean "not set" (excluded from storage tree). Non-nil zero values mean "explicitly set to zero" (included). This is a semantic distinction in schema design.
 - **No env var overrides** — `CLAWKER_*` env vars affect only directory resolution (`CLAWKER_CONFIG_DIR`, etc.), not config values.

@@ -97,6 +97,9 @@ func newUserAliasCmd(name, expansion string) *cobra.Command {
 // expandAlias substitutes $1..$N positional placeholders in expansion with
 // args, splits the result into argv tokens, and appends any args beyond the
 // highest placeholder index. Without placeholders, all args are appended.
+// Substituting before splitting is deliberate gh-CLI parity: a
+// space-containing arg through a bare $N splits into separate tokens, and
+// the alias definition quotes the placeholder ("$1") to keep it one token.
 func expandAlias(expansion string, args []string) ([]string, error) {
 	maxIdx := 0
 	if strings.Contains(expansion, "$") {
