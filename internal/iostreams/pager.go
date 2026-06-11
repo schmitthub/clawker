@@ -11,9 +11,9 @@ import (
 )
 
 // getPagerCommand returns the pager command to use.
-// Order of precedence: CLAWKER_PAGER > PAGER > platform default
+// Order of precedence: consts.EnvPager > PAGER > platform default
 func getPagerCommand() string {
-	// Check CLAWKER_PAGER first
+	// Check the clawker-specific pager override first
 	if pager := os.Getenv(consts.EnvPager); pager != "" {
 		return pager
 	}

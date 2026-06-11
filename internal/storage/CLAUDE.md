@@ -9,7 +9,7 @@
 
 ## Architecture
 
-Generic layered YAML store engine. Leaf package — the only `internal/` import is `internal/consts` (stdlib-only, for XDG directory resolution). Both `internal/config` and `internal/project` compose a `Store[T]` with their own schema types.
+Generic layered YAML store engine. Leaf package — the only `internal/` import is `internal/consts` (stdlib-only, for XDG directory resolution and the dotted config-directory name). Both `internal/config` and `internal/project` compose a `Store[T]` with their own schema types.
 
 **Copy-on-write model**: node tree (`map[string]any`) is the merge/persistence layer. Immutable `*T` snapshots published via `atomic.Pointer` — readers are lock-free.
 

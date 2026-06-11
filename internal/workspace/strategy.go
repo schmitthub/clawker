@@ -90,8 +90,9 @@ func GetConfigVolumeMounts(projectName, agentName string) ([]mount.Mount, error)
 }
 
 // ClaudeProjectsTargetPath is the in-container destination for the host
-// ~/.claude/projects/ bind mount. Single source of truth — keep in sync
-// with /home/claude/.claude (the per-agent config volume target).
+// ~/.claude/projects/ bind mount. Composed from the same consts as the
+// per-agent config volume target in GetConfigVolumeMounts, so the two
+// paths cannot drift.
 const ClaudeProjectsTargetPath = consts.ContainerHomeDir + "/" + consts.ClaudeDir + "/" + consts.ClaudeProjectsSubdir
 
 // GetClaudeProjectsMount returns a bind mount sharing the host's

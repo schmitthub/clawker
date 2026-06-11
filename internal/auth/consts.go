@@ -2,9 +2,12 @@ package auth
 
 import "github.com/schmitthub/clawker/internal/consts"
 
-// Certificate Subject vocabulary for clawker-minted material. CN values
-// are pinned by verifiers (see each minting site); the Organization is
-// the brand string shared with resource naming.
+// Certificate Subject vocabulary for clawker-minted material. These CN
+// values appear in minted certs and are pinned by unit tests; runtime
+// verification is chain- and SAN-based (the runtime CN pins are
+// consts.ContainerCP and consts.ContainerClawkerd, defined in
+// internal/consts). The Organization is the brand string shared with
+// resource naming.
 const (
 	// cliCACommonName is the CLI root CA's Subject CN.
 	cliCACommonName = "clawker CLI CA"

@@ -9,8 +9,8 @@ import (
 // TestEnsureAuthDirsCoversAllAccessors guards the authSubdirs contract:
 // every Auth*Dir accessor's directory must be created by EnsureAuthDirs
 // with the tightened 0o700 mode. An accessor whose segment is missing
-// from authSubdirs would fall through to subdirPathUnder's 0o755
-// (0o755) default, silently loosening key-material directory perms.
+// from authSubdirs would fall through to subdirPathUnder's default
+// 0o755, silently loosening key-material directory perms.
 func TestEnsureAuthDirsCoversAllAccessors(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("unix permission modes")

@@ -208,7 +208,7 @@ func PrepareHookTar(cfg config.Config, script, name string) (io.Reader, error) {
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
 
-	// Directory entry: .clawker/
+	// Directory entry: the in-container DotClawkerDir
 	dirHdr := &tar.Header{
 		Typeflag: tar.TypeDir,
 		Name:     consts.DotClawkerDir + "/",
@@ -221,7 +221,7 @@ func PrepareHookTar(cfg config.Config, script, name string) (io.Reader, error) {
 		return nil, fmt.Errorf("write dir header: %w", err)
 	}
 
-	// File entry: .clawker/<name>.sh
+	// File entry: <name>.sh under DotClawkerDir
 	fileHdr := &tar.Header{
 		Name:    consts.DotClawkerDir + "/" + name + ".sh",
 		Mode:    0o755,

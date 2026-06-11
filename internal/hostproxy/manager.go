@@ -144,7 +144,7 @@ func (m *Manager) isDaemonRunning() bool {
 
 // startDaemon spawns a daemon subprocess.
 func (m *Manager) startDaemon() error {
-	// CLAWKER_EXECUTABLE overrides os.Executable() for test environments
+	// consts.EnvExecutable overrides os.Executable() for test environments
 	// where the running binary is a Go test binary, not the clawker CLI.
 	exe := os.Getenv(consts.EnvExecutable)
 	if exe == "" {

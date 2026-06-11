@@ -363,11 +363,11 @@ const (
 	DefaultKratosPublicPort  = 4433
 	DefaultKratosAdminPort   = 4434
 	// DefaultCPAgentPort is the in-container gRPC port for the agent
-	// listener (mTLS, clawker-net only). Matches the
+	// listener (mTLS, clawker network only). Matches the
 	// ControlPlaneSettings.AgentPort struct-tag default.
 	DefaultCPAgentPort = 7444
 	// DefaultClawkerdPort is the in-container gRPC port for the
-	// clawkerd listener (mTLS, clawker-net only). CP dials this
+	// clawkerd listener (mTLS, clawker network only). CP dials this
 	// port to dispatch commands; the listener pins peer CN to
 	// ContainerCP.
 	DefaultClawkerdPort = 7700

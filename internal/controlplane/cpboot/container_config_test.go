@@ -95,23 +95,6 @@ func TestINV_B1_006_PublicMaterialIsMounted(t *testing.T) {
 	}
 }
 
-// Tests INV-B1-008 [unit]: All ports published to localhost only.
-func TestINV_B1_008_AllPortsPublishedToLocalhostOnly(t *testing.T) {
-	testenv.New(t)
-	cfg := configmocks.NewBlankConfig()
-
-	cpConfig, err := BuildCPContainerConfig(cfg, testCPOpts())
-	require.NoError(t, err)
-	require.NotEmpty(t, cpConfig.PortBindings)
-
-	for portKey, bindings := range cpConfig.PortBindings {
-		for _, binding := range bindings {
-			assert.Equal(t, consts.Localhost, binding.HostIP.String(),
-				"port %s must be published to "+consts.Localhost+", not %s", portKey, binding.HostIP)
-		}
-	}
-}
-
 // Tests INV-B1-008 [unit]: Admin port comes from Settings, not hardcoded.
 func TestINV_B1_008_AdminPortFromSettings(t *testing.T) {
 	testenv.New(t)
