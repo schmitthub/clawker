@@ -16,6 +16,37 @@ Common patterns:
 - Test multiple approaches to the same problem in parallel
 - Keep the main branch clean while agents experiment on feature branches
 
+## Worktree Caveats
+
+Worktree containers are locked down harder than bind-mode containers, **by design**. They are built for unattended agent sessions (`--dangerously-skip-permissions`), and a worktree shares the main repository's `.git` directory with your host. Anything written to `.git/hooks/` or `.git/config` from inside the container — a planted hook, `core.hooksPath`, `core.fsmonitor`, a `filter.*` driver — would execute **on your host** the next time you run git in the main checkout. To close that vector, both paths are masked **read-only** inside worktree containers. This is a deliberate security measure, always on, and it changes some git behaviors you may take for granted:
+
+| Operation in a worktree container | Behavior |
+|---|---|
+| `git commit`, `git push`, `git fetch`, `git log`, `git status` | Work normally |
+| `git config --local` | Fails — config file is read-only |
+| `git remote add` | Fails — writes to the shared config |
+| `git push -u` / `--set-upstream` | **Push succeeds**, but the upstream tracking write fails (the warning is easy to miss) |
+
+### Upstream tracking
+
+Upstream tracking lives in the shared `.git/config`, which is read-only inside the container, so where tracking comes from depends on how the branch was born:
+
+- **Branch already existed on the remote** when the worktree was created (e.g. after `git fetch`): tracking is configured host-side at creation, and a plain `git push` works immediately inside the container.
+- **New branch created in the worktree** (the typical `--worktree feature/x:main` flow): no upstream exists, and it cannot be set from inside the container. Push with an explicit refspec instead — `git push origin HEAD` — and PR creation (`gh pr create`) works fine.
+
+After you remove the worktree and check the branch out on the host, a plain `git push` will report there is no upstream — even though the branch was pushed and has an open PR. Tracking was never persisted; set it once on the host:
+
+```bash
+git push -u origin <branch>     # or: git branch --set-upstream-to=origin/<branch>
+```
+
+### Other differences
+
+- **Go builds**: worktree containers set `GOFLAGS=-buildvcs=false` because Go's VCS stamping cannot work in a linked worktree. Override via `agent.env`. See [Go builds inside worktree containers](#go-builds-inside-worktree-containers).
+- **Branch-keyed, no detached HEAD**: clawker worktrees are identified by branch name; detached-HEAD worktrees are unsupported.
+
+The lockdown is currently not configurable — secure by default. A policy gate to relax it per project is planned.
+
 ## Creating Worktrees
 
 ```bash
@@ -213,7 +244,7 @@ The main `.git` mount is read-write (commits from the worktree write objects, re
 - `.git/hooks/` — a hook planted from inside the container would execute on the *host* the next time you run git in the main checkout.
 - `.git/config` — config keys like `core.hooksPath`, `core.fsmonitor`, or `filter.*` can execute arbitrary commands; from a worktree, `git config --local` writes to this shared file.
 
-This keeps worktree containers meaningfully more isolated than bind mode. The trade-off: `git config --local`, `git remote add`, and `git push -u` fail inside a worktree container (the config file is read-only). Upstream tracking is already configured on the host when the worktree is created, so a plain `git push` works without `-u`.
+This keeps worktree containers meaningfully more isolated than bind mode. The trade-off: `git config --local`, `git remote add`, and `git push -u` fail inside a worktree container (the config file is read-only). Upstream tracking is configured host-side at creation **only when the branch already existed on the remote**; branches born in the worktree have no upstream — push with `git push origin HEAD`. See [Worktree Caveats](#worktree-caveats) for the full behavioral rundown and the post-removal fix.
 
 ### Go builds inside worktree containers
 
