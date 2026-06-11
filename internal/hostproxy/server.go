@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -106,8 +107,8 @@ func (s *Server) Start() error {
 	// This is necessary because Docker Desktop's host.docker.internal can
 	// resolve to either IPv4 or IPv6 depending on the system configuration.
 	addresses := []string{
-		fmt.Sprintf("127.0.0.1:%d", s.port), // IPv4 loopback
-		fmt.Sprintf("[::1]:%d", s.port),     // IPv6 loopback
+		fmt.Sprintf(consts.LoopbackIPv4+":%d", s.port), // IPv4 loopback
+		fmt.Sprintf("[::1]:%d", s.port),                // IPv6 loopback
 	}
 
 	var listeners []net.Listener
@@ -211,7 +212,7 @@ func (s *Server) startDynamicListener(port int, sessionID string) error {
 	}
 
 	addresses := []string{
-		fmt.Sprintf("127.0.0.1:%d", port),
+		fmt.Sprintf(consts.LoopbackIPv4+":%d", port),
 		fmt.Sprintf("[::1]:%d", port),
 	}
 

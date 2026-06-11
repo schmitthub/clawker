@@ -499,7 +499,7 @@ func TestValidateAssertionClaims(t *testing.T) {
 	valid := AssertionClaims{
 		Issuer:           "clawker-cli",
 		Subject:          "clawker-cli",
-		Audience:         "http://127.0.0.1:4444/oauth2/token",
+		Audience:         "http://" + consts.LoopbackIPv4 + ":4444/oauth2/token",
 		JWTID:            "unique-id",
 		ExpiresInSeconds: 30,
 	}
@@ -536,7 +536,7 @@ func TestBuildSignedAssertion(t *testing.T) {
 	claims := AssertionClaims{
 		Issuer:           "clawker-cli",
 		Subject:          "clawker-cli",
-		Audience:         "http://127.0.0.1:4444/oauth2/token",
+		Audience:         "http://" + consts.LoopbackIPv4 + ":4444/oauth2/token",
 		JWTID:            "test-jti",
 		ExpiresInSeconds: 30,
 	}
@@ -561,7 +561,7 @@ func TestBuildSignedAssertion(t *testing.T) {
 	require.NoError(t, json.Unmarshal(payloadJSON, &payload))
 	assert.Equal(t, "clawker-cli", payload["iss"])
 	assert.Equal(t, "clawker-cli", payload["sub"])
-	assert.Equal(t, "http://127.0.0.1:4444/oauth2/token", payload["aud"])
+	assert.Equal(t, "http://"+consts.LoopbackIPv4+":4444/oauth2/token", payload["aud"])
 	assert.Equal(t, "test-jti", payload["jti"])
 
 	// Verify signature using go-jose (handles JWS R||S format).
@@ -587,7 +587,7 @@ func TestBuildSignedAssertion_IATIsNow(t *testing.T) {
 	signed, err := BuildSignedAssertion(AssertionClaims{
 		Issuer:           "clawker-cli",
 		Subject:          "clawker-cli",
-		Audience:         "http://127.0.0.1:4444/oauth2/token",
+		Audience:         "http://" + consts.LoopbackIPv4 + ":4444/oauth2/token",
 		JWTID:            "test-jti",
 		ExpiresInSeconds: expiresIn,
 	}, key)
@@ -636,7 +636,7 @@ func TestBuildSignedAssertion_HonorsInjectedNow(t *testing.T) {
 	signed, err := BuildSignedAssertion(AssertionClaims{
 		Issuer:           "clawker-cli",
 		Subject:          "clawker-cli",
-		Audience:         "http://127.0.0.1:4444/oauth2/token",
+		Audience:         "http://" + consts.LoopbackIPv4 + ":4444/oauth2/token",
 		JWTID:            "test-jti",
 		ExpiresInSeconds: expiresIn,
 		Now:              ref,
@@ -664,7 +664,7 @@ func TestBuildSignedAssertion_DifferentJTIs(t *testing.T) {
 	claims := AssertionClaims{
 		Issuer:           "clawker-cli",
 		Subject:          "clawker-cli",
-		Audience:         "http://127.0.0.1:4444/oauth2/token",
+		Audience:         "http://" + consts.LoopbackIPv4 + ":4444/oauth2/token",
 		JWTID:            "jti-1",
 		ExpiresInSeconds: 30,
 	}

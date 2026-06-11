@@ -929,7 +929,7 @@ func envoyAdmin() map[string]any {
 	return map[string]any{
 		"address": map[string]any{
 			"socket_address": map[string]any{
-				"address":    "127.0.0.1",
+				"address":    consts.LoopbackIPv4,
 				"port_value": envoyAdminPort,
 			},
 		},

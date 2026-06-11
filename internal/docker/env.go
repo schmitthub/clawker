@@ -73,13 +73,13 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 		m[consts.EnvAgent] = opts.Agent
 	}
 	if opts.WorkspaceMode != "" {
-		m["CLAWKER_WORKSPACE_MODE"] = opts.WorkspaceMode
+		m[consts.EnvWorkspaceMode] = opts.WorkspaceMode
 	}
 	if opts.WorkspaceSource != "" {
-		m["CLAWKER_WORKSPACE_SOURCE"] = opts.WorkspaceSource
+		m[consts.EnvWorkspaceSource] = opts.WorkspaceSource
 	}
 	if opts.Version != "" {
-		m["CLAWKER_VERSION"] = opts.Version
+		m[consts.EnvVersion] = opts.Version
 	}
 
 	// Base defaults: editor/visual
@@ -104,10 +104,10 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 
 	// Firewall (simple flag — eBPF programs attached post-start via manager.Enable)
 	if opts.FirewallEnabled {
-		m["CLAWKER_FIREWALL_ENABLED"] = "true"
+		m[consts.EnvFirewallEnabled] = "true"
 	}
 	if opts.CPHealthzURL != "" {
-		m["CLAWKER_CP_HEALTHZ_URL"] = opts.CPHealthzURL
+		m[consts.EnvCPHealthzURL] = opts.CPHealthzURL
 	}
 
 	// clawkerd bootstrap env vars — only what the daemon can authoritatively
@@ -154,7 +154,7 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 		if opts.GPGForwardingEnabled {
 			sockets = append(sockets, map[string]string{
 				"path": "/home/claude/.gnupg/S.gpg-agent",
-				"type": "gpg-agent",
+				"type": consts.SocketTypeGPGAgent,
 			})
 			// Override gpg.program via env vars so the container's gpg binary is used
 			// regardless of what the host's gitconfig (global or local) specifies.
@@ -167,7 +167,7 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 		if opts.SSHForwardingEnabled {
 			sockets = append(sockets, map[string]string{
 				"path": "/home/claude/.ssh/agent.sock",
-				"type": "ssh-agent",
+				"type": consts.SocketTypeSSHAgent,
 			})
 			// SSH tools need SSH_AUTH_SOCK to find the forwarded socket
 			m["SSH_AUTH_SOCK"] = "/home/claude/.ssh/agent.sock"
@@ -176,7 +176,7 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal remote sockets: %w", err)
 		}
-		m["CLAWKER_REMOTE_SOCKETS"] = string(socketsBytes)
+		m[consts.EnvRemoteSockets] = string(socketsBytes)
 	}
 
 	// Worktree containers: disable Go VCS stamping. Go's VCS discovery only

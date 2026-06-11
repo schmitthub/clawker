@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -80,7 +81,7 @@ func newTestCoordinator(t *testing.T, exchange exchangeFunc, dialFn func(context
 		KeyPEM:    keyPEM,
 		CACertPEM: caPEM,
 		Assertion: "fake.jwt.assertion",
-	}, "https://hydra.test/oauth2/token", "127.0.0.1:9999", "agent", "proj")
+	}, "https://hydra.test/oauth2/token", consts.LoopbackIPv4+":9999", "agent", "proj")
 	rc.exchange = exchange
 	rc.dialAndRegister = dialFn
 	return rc
@@ -186,7 +187,7 @@ func TestRegisterCoordinator_EnvMissing_NotConsumed(t *testing.T) {
 		KeyPEM:    keyPEM,
 		CACertPEM: caPEM,
 		Assertion: "fake",
-	}, "" /* hydraURL unset */, "127.0.0.1:1", "agent", "proj")
+	}, "" /* hydraURL unset */, consts.LoopbackIPv4+":1", "agent", "proj")
 
 	ok, errMsg := rc.Run(context.Background(), logger.Nop())
 	require.False(t, ok)
@@ -234,7 +235,7 @@ func TestExchangeAssertion_TransportFailure_NotConsumed(t *testing.T) {
 	tlsCfg := &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, consumed, err := exchangeAssertion(ctx, "https://127.0.0.1:1/oauth2/token", "fake", tlsCfg)
+	_, consumed, err := exchangeAssertion(ctx, "https://"+consts.LoopbackIPv4+":1/oauth2/token", "fake", tlsCfg)
 	require.Error(t, err)
 	assert.False(t, consumed)
 }

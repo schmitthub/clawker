@@ -11,6 +11,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -23,7 +24,7 @@ func newMockConfigWithPort(t *testing.T, port int) config.Config {
 // getFreeMgrPort returns an available TCP port for manager tests.
 func getFreeMgrPort(t *testing.T) int {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := net.Listen("tcp", consts.LoopbackIPv4+":0")
 	if err != nil {
 		t.Fatalf("failed to get free port: %v", err)
 	}
@@ -225,7 +226,7 @@ func TestManagerHealthCheck(t *testing.T) {
 
 	// Start a mock server
 	server := &http.Server{
-		Addr: fmt.Sprintf("127.0.0.1:%d", port),
+		Addr: fmt.Sprintf(consts.LoopbackIPv4+":%d", port),
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
@@ -260,7 +261,7 @@ func TestManagerIsPortInUse(t *testing.T) {
 
 	// Start a mock clawker host proxy
 	server := &http.Server{
-		Addr: fmt.Sprintf("127.0.0.1:%d", port),
+		Addr: fmt.Sprintf(consts.LoopbackIPv4+":%d", port),
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
@@ -290,7 +291,7 @@ func TestManagerIsPortInUseWithWrongService(t *testing.T) {
 
 	// Start a server that returns a different service identifier
 	server := &http.Server{
-		Addr: fmt.Sprintf("127.0.0.1:%d", port),
+		Addr: fmt.Sprintf(consts.LoopbackIPv4+":%d", port),
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)

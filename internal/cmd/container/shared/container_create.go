@@ -1930,7 +1930,7 @@ func setupHostProxy(ctx context.Context, events chan<- CreateContainerEvent, cfg
 		return false
 	}
 
-	envVar := "CLAWKER_HOST_PROXY=" + hp.ProxyURL()
+	envVar := consts.EnvHostProxy + "=" + hp.ProxyURL()
 	containerOpts.Env = append(containerOpts.Env, envVar)
 	log.Debug().Str("env", envVar).Msg("host proxy started, injected env var")
 

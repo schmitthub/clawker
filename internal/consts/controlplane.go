@@ -160,8 +160,10 @@ const CPHealthzPath = "/healthz"
 const OryHealthAlivePath = "/health/alive"
 
 const (
-	// CPLogsPath is the container-side directory for CP logs.
-	// Bind-mounted from the host's state/logs directory.
+	// CPLogsPath is the container-side clawker log directory. In the CP
+	// container it is bind-mounted from the host's state/logs directory;
+	// agent-container helpers (the socket server) write theirs to the
+	// same path in the container's own filesystem.
 	CPLogsPath = "/var/log/clawker"
 
 	// CPDockerSockPath is the host-side Docker socket path.

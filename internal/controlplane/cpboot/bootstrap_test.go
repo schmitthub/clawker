@@ -327,7 +327,7 @@ func TestEnsureRunning_HealthzTimeout_SurfacesError(t *testing.T) {
 	// /healthz never returns 200 — EnsureRunning must propagate the
 	// timeout error rather than blocking indefinitely.
 	f := newBootstrapFixture(t)
-	sentinel := &CPHealthTimeoutError{Timeout: 5 * time.Millisecond, URL: "http://127.0.0.1:7080/healthz"}
+	sentinel := &CPHealthTimeoutError{Timeout: 5 * time.Millisecond, URL: "http://" + consts.LoopbackIPv4 + ":7080/healthz"}
 	healthzFn = func(_ context.Context, _ *docker.Client, _ config.Config) error {
 		f.calls.healthz.Add(1)
 		return sentinel

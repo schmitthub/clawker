@@ -26,6 +26,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/schmitthub/clawker/internal/consts"
 )
 
 // CallbackData matches the CallbackData struct from the host proxy.
@@ -49,7 +51,7 @@ func main() {
 	// Parse flags
 	sessionID := flag.String("session", os.Getenv("CALLBACK_SESSION"), "Callback session ID")
 	port := flag.Int("port", 0, "Local port to forward callback to")
-	proxyURL := flag.String("proxy", os.Getenv("CLAWKER_HOST_PROXY"), "Host proxy URL")
+	proxyURL := flag.String("proxy", os.Getenv(consts.EnvHostProxy), "Host proxy URL")
 	timeout := flag.Int("timeout", 300, "Timeout in seconds (default: 300)")
 	pollInterval := flag.Int("poll", 2, "Poll interval in seconds (default: 2)")
 	cleanup := flag.Bool("cleanup", true, "Delete session after forwarding (default: true)")
@@ -257,7 +259,7 @@ func forwardCallback(client *http.Client, port int, data *CallbackData) error {
 		return fmt.Errorf("callback data has empty HTTP method")
 	}
 
-	hosts := []string{"localhost", "127.0.0.1", "::1"}
+	hosts := []string{"localhost", consts.LoopbackIPv4, "::1"}
 	var errs []string
 	for _, host := range hosts {
 		attemptErr := forwardCallbackToHost(client, host, port, data)

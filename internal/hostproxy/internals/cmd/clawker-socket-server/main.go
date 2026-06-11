@@ -34,6 +34,8 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	"github.com/schmitthub/clawker/internal/consts"
 )
 
 // ProtocolVersion is the muxrpc wire protocol version.
@@ -60,7 +62,7 @@ const (
 var logWriter io.Writer = os.Stderr
 
 const (
-	logDir     = "/var/log/clawker"
+	logDir     = consts.CPLogsPath
 	logFile    = "socket-server.log"
 	maxLogSize = 1 << 20 // 1 MiB
 )
@@ -181,7 +183,7 @@ func run() int {
 	defer cleanupLog()
 
 	// Read socket config from environment
-	socketsJSON := os.Getenv("CLAWKER_REMOTE_SOCKETS")
+	socketsJSON := os.Getenv(consts.EnvRemoteSockets)
 	if socketsJSON == "" {
 		logln("[socket-forwarder] error: CLAWKER_REMOTE_SOCKETS not set")
 		return 1

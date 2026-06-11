@@ -106,8 +106,8 @@ func TestINV_B1_008_AllPortsPublishedToLocalhostOnly(t *testing.T) {
 
 	for portKey, bindings := range cpConfig.PortBindings {
 		for _, binding := range bindings {
-			assert.Equal(t, "127.0.0.1", binding.HostIP.String(),
-				"port %s must be published to 127.0.0.1, not %s", portKey, binding.HostIP)
+			assert.Equal(t, consts.LoopbackIPv4, binding.HostIP.String(),
+				"port %s must be published to "+consts.LoopbackIPv4+", not %s", portKey, binding.HostIP)
 		}
 	}
 }

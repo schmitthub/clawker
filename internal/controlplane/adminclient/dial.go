@@ -80,9 +80,9 @@ func Dial(ctx context.Context, adminPort, hydraPort int, opts ...grpc.DialOption
 	// mTLS for gRPC AdminService (presents client cert).
 	grpcTLSCfg := mtlsConfig(certPool, clientCert)
 
-	target := fmt.Sprintf("127.0.0.1:%d", adminPort)
+	target := fmt.Sprintf(consts.LoopbackIPv4+":%d", adminPort)
 
-	hydraTokenURL := fmt.Sprintf("https://127.0.0.1:%d/oauth2/token", hydraPort)
+	hydraTokenURL := fmt.Sprintf("https://"+consts.LoopbackIPv4+":%d/oauth2/token", hydraPort)
 	ts := newTokenSource(signingKey, hydraTokenURL, tokenTLSCfg)
 
 	// Eagerly fetch the first token with bounded retry so dial tolerates
@@ -154,7 +154,7 @@ func ProbeCPTime(ctx context.Context, adminPort int) (time.Time, error) {
 	if err != nil {
 		return time.Time{}, err
 	}
-	return probeCPTime(ctx, fmt.Sprintf("127.0.0.1:%d", adminPort), tlsCfg)
+	return probeCPTime(ctx, fmt.Sprintf(consts.LoopbackIPv4+":%d", adminPort), tlsCfg)
 }
 
 // initialTokenDeadline bounds the retry window for the first Hydra token

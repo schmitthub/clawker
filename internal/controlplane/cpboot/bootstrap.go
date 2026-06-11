@@ -868,7 +868,7 @@ func waitForCPClockSync(ctx context.Context, cfg config.Config, log *logger.Logg
 //     feedback the operator needs. Transient lookup failures keep the
 //     loop polling and surface on the timeout error's diagnostics.
 func waitForCPHealthz(ctx context.Context, dc *docker.Client, cfg config.Config) error {
-	url := fmt.Sprintf("http://127.0.0.1:%d/healthz", cfg.Settings().ControlPlane.HealthPort)
+	url := fmt.Sprintf("http://"+consts.LoopbackIPv4+":%d/healthz", cfg.Settings().ControlPlane.HealthPort)
 	httpClient := &http.Client{Timeout: 2 * time.Second}
 
 	start := time.Now()

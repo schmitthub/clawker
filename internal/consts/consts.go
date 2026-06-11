@@ -241,6 +241,12 @@ const (
 	// DockerEmbeddedDNS is the fixed address of Docker's embedded DNS
 	// resolver inside user-defined networks.
 	DockerEmbeddedDNS = "127.0.0.11"
+	// DockerInternalZone is the DNS zone for Docker's magic hostnames;
+	// HostDockerInternal is a subdomain of it.
+	DockerInternalZone = "docker.internal"
+	// DockerHostGateway is Docker's special ExtraHosts value that maps a
+	// hostname to the host gateway address.
+	DockerHostGateway = "host-gateway"
 )
 
 // BPF filesystem.
@@ -559,6 +565,9 @@ const (
 	// EnvHostProxy is the host proxy URL used for browser auth and git
 	// credential forwarding.
 	EnvHostProxy = "CLAWKER_HOST_PROXY"
+	// EnvGitHTTPS signals that HTTPS git credential forwarding is active;
+	// the in-container credential helper bails when unset.
+	EnvGitHTTPS = "CLAWKER_GIT_HTTPS"
 )
 
 // Bridged socket types. Wire vocabulary shared by the env payload

@@ -154,9 +154,9 @@ docker:
 	// metrics to whatever network the host is on. If you change this
 	// policy, update both the template and this assertion together.
 	for _, hostBind := range []string{
-		fmt.Sprintf("127.0.0.1:%d:%d", data.PrometheusPort, data.PrometheusPort),
-		fmt.Sprintf("127.0.0.1:%d:%d", data.OpenSearchPort, data.OpenSearchPort),
-		fmt.Sprintf("127.0.0.1:%d:%d", data.OpenSearchDashboardsPort, data.OpenSearchDashboardsPort),
+		fmt.Sprintf(consts.LoopbackIPv4+":%d:%d", data.PrometheusPort, data.PrometheusPort),
+		fmt.Sprintf(consts.LoopbackIPv4+":%d:%d", data.OpenSearchPort, data.OpenSearchPort),
+		fmt.Sprintf(consts.LoopbackIPv4+":%d:%d", data.OpenSearchDashboardsPort, data.OpenSearchDashboardsPort),
 	} {
 		if !strings.Contains(result, hostBind) {
 			t.Errorf("compose.yaml missing loopback bind %q — sensitive port must not be exposed on all interfaces", hostBind)

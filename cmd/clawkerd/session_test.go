@@ -21,6 +21,7 @@ import (
 	"google.golang.org/grpc"
 
 	clawkerdv1 "github.com/schmitthub/clawker/api/clawkerd/v1"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -764,7 +765,7 @@ func TestHandleRegisterRequired_HappyPath(t *testing.T) {
 	}
 	// Prevent the inner runOnce from rejecting on missing env.
 	s.register.hydraURL = "https://hydra.test"
-	s.register.agentAddr = "127.0.0.1:1"
+	s.register.agentAddr = consts.LoopbackIPv4 + ":1"
 	caPEM, certPEM, keyPEM := validPEMs(t)
 	s.register.boot = &bootstrap{
 		CertPEM:   certPEM,
@@ -800,7 +801,7 @@ func TestHandleRegisterRequired_PanicRecovery(t *testing.T) {
 		return true, ""
 	}
 	s.register.hydraURL = "https://hydra.test"
-	s.register.agentAddr = "127.0.0.1:1"
+	s.register.agentAddr = consts.LoopbackIPv4 + ":1"
 	caPEM, certPEM, keyPEM := validPEMs(t)
 	s.register.boot = &bootstrap{
 		CertPEM:   certPEM,

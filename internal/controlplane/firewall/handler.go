@@ -1115,16 +1115,16 @@ func (h *Handler) resolveHostProxy(ctx context.Context) (ip string, port uint16,
 	if resolve == nil {
 		resolve = net.DefaultResolver.LookupHost
 	}
-	addrs, err := resolve(ctx, "host.docker.internal")
+	addrs, err := resolve(ctx, consts.HostDockerInternal)
 	if err != nil {
-		return "", 0, fmt.Errorf("looking up host.docker.internal: %w", err)
+		return "", 0, fmt.Errorf("looking up %s: %w", consts.HostDockerInternal, err)
 	}
 	if len(addrs) == 0 {
-		return "", 0, fmt.Errorf("host.docker.internal resolved to no addresses")
+		return "", 0, fmt.Errorf("%s resolved to no addresses", consts.HostDockerInternal)
 	}
 	ip = strings.TrimSpace(addrs[0])
 	if ip == "" {
-		return "", 0, fmt.Errorf("host.docker.internal resolved to empty address")
+		return "", 0, fmt.Errorf("%s resolved to empty address", consts.HostDockerInternal)
 	}
 	return ip, port, nil
 }

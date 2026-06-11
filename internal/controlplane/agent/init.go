@@ -97,8 +97,8 @@ else
 fi
 `
 
-	gitCredentialsScript = `[ -n "$CLAWKER_HOST_PROXY" ] || exit 0
-[ "$CLAWKER_GIT_HTTPS" = "true" ] || exit 0
+	gitCredentialsScript = `[ -n "$` + consts.EnvHostProxy + `" ] || exit 0
+[ "$` + consts.EnvGitHTTPS + `" = "true" ] || exit 0
 git config --global credential.helper clawker
 `
 
