@@ -97,7 +97,7 @@ type Container struct {
 
 ## Type Re-exports (`types.go`)
 
-Re-exports ~37 Docker types from whail. Key groups: container/exec options, image options/results, volume/network options, copy options, resource management, wait conditions.
+Re-exports ~37 Docker types from whail. Key groups: container/exec options, image options/results, volume/network options, copy options, resource management, wait conditions. Also re-exports the `ErrNotManaged` sentinel (managed-label jail refusal; a NotFound during the managed check collapses to it) so commands can `errors.Is`-match without importing whail.
 
 ## Testing (`mocks/`)
 
@@ -111,7 +111,7 @@ Standalone fixture functions (`ContainerFixture`, `RunningContainerFixture`) use
 
 **Setup helpers** (all on `*FakeClient`):
 - **Container lifecycle**: `SetupContainerCreate/Start/Stop/Kill/Pause/Unpause/Rename/Restart/Update/Remove`
-- **Container I/O**: `SetupContainerResize/Attach/Wait(exitCode)/Inspect(id, summary)/Logs(logs)/Top(titles, processes)/Stats(json)`
+- **Container I/O**: `SetupContainerResize/Attach/Wait(exitCode)/Inspect(id, summary)/InspectReapState(autoRemove, running)/Logs(logs)/Top(titles, processes)/Stats(json)`
 - **Exec**: `SetupExecCreate(execID)/ExecStart/ExecAttach/ExecAttachWithOutput(data)/ExecInspect`
 - **Copy**: `SetupCopyToContainer/CopyFromContainer`
 - **Volumes/Networks**: `SetupVolumeExists/VolumeCreate/NetworkExists/NetworkCreate`

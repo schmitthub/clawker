@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/google/shlex"
+	mobyClient "github.com/moby/moby/client"
+	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
@@ -181,6 +183,69 @@ func testRestartFactory(t *testing.T, fake *mocks.FakeClient) (*cmdutil.Factory,
 			}
 		},
 	}, in, out, errOut
+}
+
+// TestRestartRun_PreStartFailureReapsAutoRemove pins the plain-restart
+// wiring of reap-on-failed-start: a pre-start bootstrap failure on a
+// stopped AutoRemove (--rm) container removes it so its name is freed.
+func TestRestartRun_PreStartFailureReapsAutoRemove(t *testing.T) {
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
+	fixture := mocks.ContainerFixture("myapp", "dev", "img")
+	fake.SetupFindContainer("clawker.myapp.dev", fixture)
+	fake.SetupContainerRemove()
+	// Override inspect (after SetupFindContainer) to mark the container
+	// AutoRemove + stopped, so the reap admits the remove.
+	fake.SetupContainerInspectReapState(true, false)
+
+	f, in, out, errOut := testRestartFactory(t, fake)
+	f.ControlPlane = func() cpboot.Manager {
+		return &cpbootmocks.ManagerMock{
+			EnsureRunningFunc: func(context.Context) error { return fmt.Errorf("cp boom") },
+		}
+	}
+
+	cmd := NewCmdRestart(f, nil)
+	cmd.SetArgs([]string{"clawker.myapp.dev"})
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+
+	err := cmd.Execute()
+	require.ErrorIs(t, err, cmdutil.SilentError)
+	require.Contains(t, errOut.String(), shared.ReapedNotice)
+	fake.AssertCalled(t, "ContainerRemove")
+	fake.AssertNotCalled(t, "ContainerRestart")
+}
+
+// TestRestartRun_RestartFailureReapsAutoRemove pins that a failed
+// ContainerRestart call surfaces the restart error itself (post-start
+// bootstrap is never run against a container that didn't restart) and reaps
+// a stopped AutoRemove container.
+func TestRestartRun_RestartFailureReapsAutoRemove(t *testing.T) {
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
+	fixture := mocks.ContainerFixture("myapp", "dev", "img")
+	fake.SetupFindContainer("clawker.myapp.dev", fixture)
+	fake.SetupCopyToContainer() // pre-start delivers the pre_run hook
+	fake.SetupContainerRemove()
+	fake.SetupContainerInspectReapState(true, false)
+	fake.FakeAPI.ContainerRestartFn = func(_ context.Context, _ string, _ mobyClient.ContainerRestartOptions) (mobyClient.ContainerRestartResult, error) {
+		return mobyClient.ContainerRestartResult{}, fmt.Errorf("restart boom")
+	}
+
+	f, in, out, errOut := testRestartFactory(t, fake)
+
+	cmd := NewCmdRestart(f, nil)
+	cmd.SetArgs([]string{"clawker.myapp.dev"})
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+
+	err := cmd.Execute()
+	require.ErrorIs(t, err, cmdutil.SilentError)
+	require.Contains(t, errOut.String(), "restart boom")
+	require.Contains(t, errOut.String(), shared.ReapedNotice)
+	fake.AssertCalled(t, "ContainerRestart")
+	fake.AssertCalled(t, "ContainerRemove")
 }
 
 func TestRestartRun_Success(t *testing.T) {

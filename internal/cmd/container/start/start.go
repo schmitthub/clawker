@@ -155,7 +155,8 @@ func startRun(ctx context.Context, opts *StartOptions) error {
 		if err := ios.RunWithSpinner("Bootstrapping host services", func() error {
 			return shared.BootstrapServicesPreStart(ctx, containerName, cmdOpts)
 		}); err != nil {
-			return fmt.Errorf("starting container: %w", err)
+			// Reap a never-started --rm container so its name is freed.
+			return shared.ReapFailedStart(client, containerName, fmt.Errorf("pre-start bootstrapping failed: %w", err))
 		}
 		return attachAndStart(ctx, ios, log, client, containerName, cfg, cmdOpts, opts)
 	}
@@ -263,7 +264,7 @@ func attachAndStart(ctx context.Context, ios *iostreams.IOStreams, log *logger.L
 		},
 	}); err != nil {
 		log.Debug().Err(err).Msg("container start failed")
-		return fmt.Errorf("starting container: %w", err)
+		return shared.ReapFailedStart(client, containerID, fmt.Errorf("starting container: %w", err))
 	}
 	if err := shared.BootstrapServicesPostStart(ctx, containerID, cmdOpts); err != nil {
 		return fmt.Errorf("starting container: %w", err)

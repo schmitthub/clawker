@@ -300,14 +300,16 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	if err := ios.RunWithSpinner("Bootstrapping host services", func() error {
 		return shared.BootstrapServicesPreStart(ctx, o.result.ContainerID, cmdOpts)
 	}); err != nil {
-		return fmt.Errorf("starting container: %w", err)
+		// Reap-on-failed-start: this invocation just created the container —
+		// free its name so the same command can simply be re-run.
+		return shared.ReapFailedStart(client, o.result.ContainerID, fmt.Errorf("pre-start bootstrapping failed: %w", err))
 	}
 
 	if opts.Detach {
 		// Pre-start already ran; just docker start + post-start (eBPF attach +
 		// socket bridge). No spinner — detach output is the container ID.
 		if _, err := client.ContainerStart(ctx, docker.ContainerStartOptions{ContainerID: o.result.ContainerID}); err != nil {
-			return fmt.Errorf("starting container: %w", err)
+			return shared.ReapFailedStart(client, o.result.ContainerID, fmt.Errorf("starting container: %w", err))
 		}
 		if err := shared.BootstrapServicesPostStart(ctx, o.result.ContainerID, cmdOpts); err != nil {
 			return fmt.Errorf("starting container: %w", err)
@@ -403,7 +405,7 @@ func attachThenStart(ctx context.Context, client *docker.Client, containerID str
 	log.Debug().Msg("starting container")
 	if _, err := client.ContainerStart(ctx, docker.ContainerStartOptions{ContainerID: containerID}); err != nil {
 		log.Debug().Err(err).Msg("container start failed")
-		return fmt.Errorf("starting container: %w", err)
+		return shared.ReapFailedStart(client, containerID, fmt.Errorf("starting container: %w", err))
 	}
 	if err := shared.BootstrapServicesPostStart(ctx, containerID, cmdOpts); err != nil {
 		return fmt.Errorf("starting container: %w", err)

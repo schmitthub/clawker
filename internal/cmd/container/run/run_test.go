@@ -854,6 +854,58 @@ func TestRunRun(t *testing.T) {
 		fake.AssertCalled(t, "ContainerCreate")
 	})
 
+	t.Run("pre-start failure reaps auto-remove container", func(t *testing.T) {
+		fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
+		fake.SetupContainerCreate()
+		fake.SetupCopyToContainer()
+		fake.SetupContainerRemove()
+		fake.SetupContainerInspectReapState(true, false)
+
+		f, in, out, errOut := testFactory(t, fake)
+		f.ControlPlane = func() cpboot.Manager {
+			return &cpbootmocks.ManagerMock{
+				EnsureRunningFunc: func(context.Context) error { return fmt.Errorf("cp boom") },
+			}
+		}
+		cmd := NewCmdRun(f, nil)
+
+		cmd.SetArgs([]string{"--detach", "--rm", "alpine"})
+		cmd.SetIn(in)
+		cmd.SetOut(out)
+		cmd.SetErr(errOut)
+
+		err := cmd.Execute()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), shared.ReapedNotice)
+		fake.AssertCalled(t, "ContainerRemove")
+		fake.AssertNotCalled(t, "ContainerStart")
+	})
+
+	t.Run("docker start failure reaps auto-remove container", func(t *testing.T) {
+		fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
+		fake.SetupContainerCreate()
+		fake.SetupCopyToContainer()
+		fake.SetupContainerRemove()
+		fake.SetupContainerInspectReapState(true, false)
+		fake.FakeAPI.ContainerStartFn = func(_ context.Context, _ string, _ moby.ContainerStartOptions) (moby.ContainerStartResult, error) {
+			return moby.ContainerStartResult{}, fmt.Errorf("start boom")
+		}
+
+		f, in, out, errOut := testFactory(t, fake)
+		cmd := NewCmdRun(f, nil)
+
+		cmd.SetArgs([]string{"--detach", "--rm", "alpine"})
+		cmd.SetIn(in)
+		cmd.SetOut(out)
+		cmd.SetErr(errOut)
+
+		err := cmd.Execute()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), shared.ReapedNotice)
+		fake.AssertCalled(t, "ContainerStart")
+		fake.AssertCalled(t, "ContainerRemove")
+	})
+
 	t.Run("non-interactive @ with no project image returns error", func(t *testing.T) {
 		// With no project image and no default image fallback, @ should fail
 		// with a "no image found" message guiding the user.

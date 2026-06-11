@@ -72,6 +72,14 @@ type (
 	DockerError = whail.DockerError
 )
 
+// Sentinel errors re-exported from whail for errors.Is matching.
+var (
+	// ErrNotManaged matches errors from the managed-label jail: the resource
+	// either lacks the managed label or no longer exists (a NotFound during
+	// the managed check collapses to this).
+	ErrNotManaged = whail.ErrNotManaged
+)
+
 // Container configuration types.
 type (
 	Resources             = whail.Resources

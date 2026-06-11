@@ -119,6 +119,8 @@ func (e *DockerError) FormatUserError() string  // formatted with numbered next 
 
 49 `Err*` constructor functions. Pattern: `Err<Resource><Action>Failed(name, err)` returns `*DockerError` with contextual message and remediation steps. Examples: `ErrDockerNotRunning`, `ErrImageNotFound`, `ErrImageRemoveFailed`, `ErrContainerCreateFailed`, `ErrVolumeRemoveFailed`, `ErrNetworkConnectFailed`, `ErrBuildKitNotConfigured`.
 
+**Sentinels** (matched via `DockerError.Is`, work through any `fmt.Errorf` wrapping): `ErrDockerNotAvailable` (daemon unreachable, Op "connect"), `ErrNotManaged` (managed-label jail refusal, Op "managed_check" — also what a NotFound during the managed check collapses to; re-exported as `docker.ErrNotManaged`).
+
 ## BuildKit Detection
 
 **`Pinger`** interface: `Ping(ctx, client.PingOptions) (client.PingResult, error)`
