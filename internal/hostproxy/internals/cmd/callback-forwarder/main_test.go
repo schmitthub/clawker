@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/schmitthub/clawker/internal/consts"
 )
 
 func TestBuildLocalCallbackURL(t *testing.T) {
@@ -18,7 +16,7 @@ func TestBuildLocalCallbackURL(t *testing.T) {
 		t.Fatalf("unexpected localhost URL: %s", got)
 	}
 
-	if got := buildLocalCallbackURL(consts.Localhost, 43123, data); got != "http://"+consts.Localhost+":43123/callback?code=abc&state=xyz" {
+	if got := buildLocalCallbackURL("127.0.0.1", 43123, data); got != "http://127.0.0.1:43123/callback?code=abc&state=xyz" {
 		t.Fatalf("unexpected IPv4 URL: %s", got)
 	}
 
@@ -28,7 +26,7 @@ func TestBuildLocalCallbackURL(t *testing.T) {
 }
 
 func TestForwardCallbackFallsBackToIPv4(t *testing.T) {
-	port := freeTCPPort(t, consts.Localhost+":0")
+	port := freeTCPPort(t, "127.0.0.1:0")
 
 	received := make(chan *http.Request, 1)
 	mux := http.NewServeMux()
@@ -37,7 +35,7 @@ func TestForwardCallbackFallsBackToIPv4(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	ln, err := net.Listen("tcp4", fmt.Sprintf(consts.Localhost+":%d", port))
+	ln, err := net.Listen("tcp4", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
 		t.Fatalf("listen tcp4: %v", err)
 	}
@@ -113,12 +111,12 @@ func TestForwardCallbackAggregatesErrors(t *testing.T) {
 	client := &http.Client{Timeout: 200 * time.Millisecond}
 	data := &CallbackData{Method: http.MethodGet, Path: "/callback"}
 
-	err := forwardCallback(client, freeTCPPort(t, consts.Localhost+":0"), data)
+	err := forwardCallback(client, freeTCPPort(t, "127.0.0.1:0"), data)
 	if err == nil {
 		t.Fatal("expected forwardCallback to fail")
 	}
 	msg := err.Error()
-	for _, want := range []string{"localhost:", consts.Localhost + ":", "::1:"} {
+	for _, want := range []string{"localhost:", "127.0.0.1:", "::1:"} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("expected error to mention %q, got %q", want, msg)
 		}

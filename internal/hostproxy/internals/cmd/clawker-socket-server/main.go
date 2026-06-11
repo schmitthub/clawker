@@ -1,3 +1,8 @@
+// TRIPWIRE: stdlib only — compiled standalone in Docker (//go:embed, no go.mod
+// in the build stage). NEVER import clawker-module packages (e.g. internal/consts);
+// it breaks the image build. Inline literals here are intentional, exempt from
+// the no-hardcoded-strings policy. See internal/hostproxy/internals/CLAUDE.md.
+//
 // socket-forwarder is a multiplexing socket forwarder that runs inside clawker
 // containers. It communicates with the host via stdin/stdout using a simple
 // length-prefixed binary protocol, similar to VS Code's muxrpc approach.
@@ -34,8 +39,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-
-	"github.com/schmitthub/clawker/internal/consts"
 )
 
 // ProtocolVersion is the muxrpc wire protocol version.
@@ -62,7 +65,7 @@ const (
 var logWriter io.Writer = os.Stderr
 
 const (
-	logDir     = consts.CPLogsPath
+	logDir     = "/var/log/clawker"
 	logFile    = "socket-server.log"
 	maxLogSize = 1 << 20 // 1 MiB
 )
@@ -109,7 +112,7 @@ func logln(msg string) {
 // SocketConfig defines a socket to create and forward.
 type SocketConfig struct {
 	Path string `json:"path"` // Unix socket path
-	Type string `json:"type"` // consts.SocketTypeGPGAgent or consts.SocketTypeSSHAgent
+	Type string `json:"type"` // "gpg-agent" or "ssh-agent"
 }
 
 // Message represents a protocol message.
@@ -183,7 +186,7 @@ func run() int {
 	defer cleanupLog()
 
 	// Read socket config from environment
-	socketsJSON := os.Getenv(consts.EnvRemoteSockets)
+	socketsJSON := os.Getenv("CLAWKER_REMOTE_SOCKETS")
 	if socketsJSON == "" {
 		logln("[socket-forwarder] error: CLAWKER_REMOTE_SOCKETS not set")
 		return 1
@@ -211,7 +214,7 @@ func run() int {
 	// Check if GPG forwarding is enabled - if so, wait for PUBKEY message
 	hasGPG := false
 	for _, s := range sockets {
-		if s.Type == consts.SocketTypeGPGAgent {
+		if s.Type == "gpg-agent" {
 			hasGPG = true
 			break
 		}
@@ -239,7 +242,7 @@ func run() int {
 		// Kill any existing gpg-agent that may have been auto-started before
 		// our config files were in place. This is GPG's sanctioned mechanism.
 		for _, s := range sockets {
-			if s.Type == consts.SocketTypeGPGAgent {
+			if s.Type == "gpg-agent" {
 				killExistingGPGAgent(filepath.Dir(s.Path))
 				break
 			}
@@ -301,7 +304,7 @@ func (f *Forwarder) setupGPGPubkey(pubkey []byte) error {
 	// Find GPG socket path to determine .gnupg directory
 	var gnupgDir string
 	for _, s := range f.sockets {
-		if s.Type == consts.SocketTypeGPGAgent {
+		if s.Type == "gpg-agent" {
 			gnupgDir = filepath.Dir(s.Path)
 			break
 		}
