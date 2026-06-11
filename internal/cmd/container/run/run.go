@@ -300,7 +300,11 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	if err := ios.RunWithSpinner("Bootstrapping host services", func() error {
 		return shared.BootstrapServicesPreStart(ctx, o.result.ContainerID, cmdOpts)
 	}); err != nil {
-		return fmt.Errorf("starting container: %w", err)
+		// Reap-on-failed-start: this invocation just created the container;
+		// if it was destined for AutoRemove (--rm) the daemon will never
+		// honor that for a container that never started — remove it here so
+		// the name is freed and the same command can simply be re-run.
+		return shared.ReapFailedStart(client, o.result.ContainerID, fmt.Errorf("starting container: %w", err))
 	}
 
 	if opts.Detach {

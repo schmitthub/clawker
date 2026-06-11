@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/google/shlex"
+	containertypes "github.com/moby/moby/api/types/container"
+	mobyClient "github.com/moby/moby/client"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
@@ -181,6 +183,51 @@ func testRestartFactory(t *testing.T, fake *mocks.FakeClient) (*cmdutil.Factory,
 			}
 		},
 	}, in, out, errOut
+}
+
+// TestRestartRun_PreStartFailureReapsAutoRemove pins the plain-restart
+// wiring of reap-on-failed-start: a pre-start bootstrap failure on a
+// stopped AutoRemove (--rm) container removes it so its name is freed.
+func TestRestartRun_PreStartFailureReapsAutoRemove(t *testing.T) {
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
+	fixture := mocks.ContainerFixture("myapp", "dev", "img")
+	fake.SetupFindContainer("clawker.myapp.dev", fixture)
+	fake.SetupContainerRemove()
+	// Override inspect (after SetupFindContainer) to mark the container
+	// AutoRemove + stopped, with the managed label so whail admits the remove.
+	fake.FakeAPI.ContainerInspectFn = func(_ context.Context, id string, _ mobyClient.ContainerInspectOptions) (mobyClient.ContainerInspectResult, error) {
+		return mobyClient.ContainerInspectResult{
+			Container: containertypes.InspectResponse{
+				ID: id,
+				Config: &containertypes.Config{
+					Labels: map[string]string{
+						fake.Cfg.LabelManaged(): fake.Cfg.ManagedLabelValue(),
+					},
+				},
+				HostConfig: &containertypes.HostConfig{AutoRemove: true},
+				State:      &containertypes.State{Running: false},
+			},
+		}, nil
+	}
+
+	f, in, out, errOut := testRestartFactory(t, fake)
+	f.ControlPlane = func() cpboot.Manager {
+		return &cpbootmocks.ManagerMock{
+			EnsureRunningFunc: func(context.Context) error { return fmt.Errorf("cp boom") },
+		}
+	}
+
+	cmd := NewCmdRestart(f, nil)
+	cmd.SetArgs([]string{"clawker.myapp.dev"})
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+
+	err := cmd.Execute()
+	require.ErrorIs(t, err, cmdutil.SilentError)
+	require.Contains(t, errOut.String(), "removed it")
+	fake.AssertCalled(t, "ContainerRemove")
+	fake.AssertNotCalled(t, "ContainerRestart")
 }
 
 func TestRestartRun_Success(t *testing.T) {

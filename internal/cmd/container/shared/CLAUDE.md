@@ -119,7 +119,8 @@ Nil providers safely skipped (debug logged). `Config` is the only required provi
 **Functions**:
 - `BootstrapServicesPreStart(ctx, container, cmdOpts)` -- firewall rules sync + daemon ensure + health wait (60s) + host proxy + always-deliver the `agent.pre_run` hook to `~/.clawker/pre-run.sh` (user script when set, no-op when unset; not firewall-gated; copy failure aborts the start). Now requires a working `Client` provider.
 - `BootstrapServicesPostStart(ctx, container, cmdOpts)` -- eBPF attachment + socket bridge
-- `ContainerStart(ctx, cmdOpts, startOpts) (mobyClient.ContainerStartResult, error)` -- runs all three phases; errors abort immediately
+- `ContainerStart(ctx, cmdOpts, startOpts) (*mobyClient.ContainerStartResult, error)` -- runs all three phases; errors abort immediately. The docker client is resolved BEFORE pre-start so a pre-start failure can reap. The result is the SDK's verbatim; nil means the Docker start call was never reached — the wrapper never fabricates an SDK result value (moby reserves the right to add fields to ContainerStartResult).
+- `ReapFailedStart(client, containerID, startErr) error` -- reap-on-failed-start: when a start sequence fails, removes the container ONLY if it is destined for AutoRemove (`--rm`) and not running. Docker honors AutoRemove solely on exit-after-start, so a `--rm` container whose start never succeeded would otherwise squat its name forever in a stopped `created` state, blocking a re-run. Non-AutoRemove and running containers are left untouched. Always returns a non-nil error derived from `startErr`; cleanup uses a background context so Ctrl+C cannot abort it. Callers: `ContainerStart` (pre-start failure), `run` (pre-start failure on the just-created container), `restart` (plain-path pre-start failure)
 
 ### Types
 

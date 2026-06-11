@@ -256,32 +256,61 @@ func BootstrapServicesPostStart(ctx context.Context, container string, cmdOpts C
 	return nil
 }
 
-func ContainerStart(ctx context.Context, cmdOpts CommandOpts, startOpts docker.ContainerStartOptions) (mobyClient.ContainerStartResult, error) {
-	err := BootstrapServicesPreStart(ctx, startOpts.ContainerID, cmdOpts)
-	if err != nil {
-		return mobyClient.ContainerStartResult{}, err
+// ReapFailedStart removes a container whose start sequence failed, but only
+// when the container is destined for AutoRemove (--rm) and is not running.
+// Docker honors AutoRemove solely on exit-after-start, so a container whose
+// start never succeeded would otherwise squat its name forever in a stopped
+// created state. Non-AutoRemove containers are left untouched — standard
+// docker semantics. Always returns a non-nil error derived from startErr so
+// callers can return it directly. Cleanup runs on a background context so
+// caller cancellation (Ctrl+C) cannot abort it.
+func ReapFailedStart(client *docker.Client, containerID string, startErr error) error {
+	ctx := context.Background()
+	res, inspErr := client.ContainerInspect(ctx, containerID, mobyClient.ContainerInspectOptions{})
+	if inspErr != nil {
+		return fmt.Errorf("%w; additionally, inspecting container for cleanup failed: %w", startErr, inspErr)
 	}
+	c := res.Container
+	if c.HostConfig == nil || !c.HostConfig.AutoRemove || (c.State != nil && c.State.Running) {
+		return startErr
+	}
+	if _, rmErr := client.ContainerRemove(ctx, containerID, true); rmErr != nil {
+		return fmt.Errorf("%w; additionally, the auto-remove container could not be removed: %w", startErr, rmErr)
+	}
+	return fmt.Errorf("%w (container was set to auto-remove and never started; removed it — safe to re-run)", startErr)
+}
+
+// ContainerStart runs the three start phases: pre-start bootstrap, the Docker
+// start call, post-start bootstrap. The result is the SDK's verbatim — nil
+// means the Docker start call was never reached (this function NEVER
+// fabricates an SDK result value; moby reserves the right to add fields to
+// ContainerStartResult, and an invented zero value would silently
+// misrepresent them).
+func ContainerStart(ctx context.Context, cmdOpts CommandOpts, startOpts docker.ContainerStartOptions) (*mobyClient.ContainerStartResult, error) {
 	if cmdOpts.Client == nil {
-		return mobyClient.ContainerStartResult{}, fmt.Errorf("starting container: docker client provider is nil")
+		return nil, fmt.Errorf("starting container: docker client provider is nil")
 	}
 	client, err := cmdOpts.Client(ctx)
 	if err != nil {
-		return mobyClient.ContainerStartResult{}, fmt.Errorf("starting container: creating docker client: %w", err)
+		return nil, fmt.Errorf("starting container: creating docker client: %w", err)
 	}
 	if client == nil {
-		return mobyClient.ContainerStartResult{}, fmt.Errorf("starting container: docker client is nil")
+		return nil, fmt.Errorf("starting container: docker client is nil")
 	}
 
+	if err := BootstrapServicesPreStart(ctx, startOpts.ContainerID, cmdOpts); err != nil {
+		return nil, ReapFailedStart(client, startOpts.ContainerID, fmt.Errorf("pre-start bootstrapping failed: %w", err))
+	}
 	result, err := client.ContainerStart(ctx, startOpts)
 	if err != nil {
-		return result, err
+		return &result, err
 	}
 
 	if postErr := BootstrapServicesPostStart(ctx, startOpts.ContainerID, cmdOpts); postErr != nil {
-		return result, postErr
+		return &result, postErr
 	}
 
-	return result, nil
+	return &result, nil
 }
 
 // hydraTokenAudienceFromPort returns the canonical `aud` claim value

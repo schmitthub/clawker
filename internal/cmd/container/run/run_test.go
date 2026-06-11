@@ -854,6 +854,48 @@ func TestRunRun(t *testing.T) {
 		fake.AssertCalled(t, "ContainerCreate")
 	})
 
+	t.Run("pre-start failure reaps auto-remove container", func(t *testing.T) {
+		fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
+		fake.SetupContainerCreate()
+		fake.SetupCopyToContainer()
+		fake.SetupContainerRemove()
+		// Mark the created container AutoRemove + stopped, with the managed
+		// label so whail admits the remove.
+		fake.FakeAPI.ContainerInspectFn = func(_ context.Context, id string, _ moby.ContainerInspectOptions) (moby.ContainerInspectResult, error) {
+			return moby.ContainerInspectResult{
+				Container: container.InspectResponse{
+					ID: id,
+					Config: &container.Config{
+						Labels: map[string]string{
+							fake.Cfg.LabelManaged(): fake.Cfg.ManagedLabelValue(),
+						},
+					},
+					HostConfig: &container.HostConfig{AutoRemove: true},
+					State:      &container.State{Running: false},
+				},
+			}, nil
+		}
+
+		f, in, out, errOut := testFactory(t, fake)
+		f.ControlPlane = func() cpboot.Manager {
+			return &cpbootmocks.ManagerMock{
+				EnsureRunningFunc: func(context.Context) error { return fmt.Errorf("cp boom") },
+			}
+		}
+		cmd := NewCmdRun(f, nil)
+
+		cmd.SetArgs([]string{"--detach", "--rm", "alpine"})
+		cmd.SetIn(in)
+		cmd.SetOut(out)
+		cmd.SetErr(errOut)
+
+		err := cmd.Execute()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "removed it")
+		fake.AssertCalled(t, "ContainerRemove")
+		fake.AssertNotCalled(t, "ContainerStart")
+	})
+
 	t.Run("non-interactive @ with no project image returns error", func(t *testing.T) {
 		// With no project image and no default image fallback, @ should fail
 		// with a "no image found" message guiding the user.
