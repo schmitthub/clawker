@@ -44,3 +44,33 @@ var MonitoringServiceHostnames = []string{
 	MonitoringServiceOtelCollector,
 	MonitoringServicePrometheus,
 }
+
+// OpenTelemetry SDK env var names (the OTel spec's spellings) plus the
+// clawker-specific CoreDNS endpoint override.
+const (
+	// EnvOTLPEndpoint is the OTLP exporter base endpoint env var.
+	EnvOTLPEndpoint = "OTEL_EXPORTER_OTLP_ENDPOINT"
+	// EnvOTLPLogsEndpoint is the logs-signal OTLP endpoint env var.
+	EnvOTLPLogsEndpoint = "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"
+	// EnvCoreDNSOtelEndpoint points the coredns-clawker otel plugin at
+	// the collector's OTLP gRPC endpoint (CP↔CoreDNS contract).
+	EnvCoreDNSOtelEndpoint = "CLAWKER_COREDNS_OTEL_ENDPOINT"
+)
+
+// OTel log record vocabulary for the firewall observability lane. These
+// are an OpenSearch index wire contract: index templates and dashboards
+// key on them. Shared by the coredns-clawker otel plugin (DNS queries)
+// and the Envoy access-log generator (client.address / service.name /
+// duration_ms).
+const (
+	OTelEventDNSQuery     = "dns.query"
+	OTelAttrClientAddress = "client.address"
+	OTelAttrServiceName   = "service.name"
+	OTelAttrZone          = "zone"
+	OTelAttrQueryName     = "query_name"
+	OTelAttrQType         = "qtype"
+	OTelAttrRCode         = "rcode"
+	OTelAttrAnswerCount   = "answer_count"
+	OTelAttrAnswers       = "answers"
+	OTelAttrDurationMS    = "duration_ms"
+)

@@ -144,6 +144,21 @@ var (
 	HostControlPlaneDBPath = filepath.Join(HostControlPlaneSubdir, ControlPlaneDBFile)
 )
 
+// Ory subprocess names. Each doubles as the binary name on PATH inside
+// the CP container and as the subprocess-manager registration key.
+const (
+	OryKratos     = "kratos"
+	OryHydra      = "hydra"
+	OryOathkeeper = "oathkeeper"
+)
+
+// CPHealthzPath is the HTTP path of the CP daemon's health endpoint.
+const CPHealthzPath = "/healthz"
+
+// OryHealthAlivePath is the health endpoint path shared by the Ory
+// services (Kratos, Hydra).
+const OryHealthAlivePath = "/health/alive"
+
 const (
 	// CPLogsPath is the container-side directory for CP logs.
 	// Bind-mounted from the host's state/logs directory.
@@ -166,16 +181,16 @@ const (
 	CPMaxRestartRetries = 3
 
 	// CPCACertPath is the container-side path for the CP's CA certificate.
-	CPCACertPath = CPClawkerDir + "/auth/tls/ca.pem"
+	CPCACertPath = CPClawkerDir + "/" + authDir + "/" + authTLSSubdir + "/" + CACertFile
 
 	// CPTLSCertPath and CPTLSKeyPath are the container-side paths for the CP's TLS certificate and private key.
-	CPTLSCertPath = CPClawkerDir + "/auth/tls/server.pem"
+	CPTLSCertPath = CPClawkerDir + "/" + authDir + "/" + authTLSSubdir + "/" + ServerCertFile
 
 	// CPTLSKeyPath is the container-side path for the CP's TLS private key.
-	CPTLSKeyPath = CPClawkerDir + "/auth/tls/server.key"
+	CPTLSKeyPath = CPClawkerDir + "/" + authDir + "/" + authTLSSubdir + "/" + ServerKeyFile
 
 	// CPCLIPubKeyPath is the container-side path for the CLI's public signing key (JWK).
-	CPCLIPubKeyPath = CPClawkerDir + "/auth/cli/signing-jwk.json"
+	CPCLIPubKeyPath = CPClawkerDir + "/" + authDir + "/" + authCLISubdir + "/" + SigningJWKFile
 
 	// CPClientCertPath / CPClientKeyPath are the container-side paths
 	// for the CP's outbound mTLS identity. CN equals ContainerCP and
@@ -184,8 +199,8 @@ const (
 	// OTLP receiver, etc.) accepts this cert. One identity cert
 	// across all CP-as-client uses keeps the contract simple — the
 	// cert IS "this is the CP".
-	CPClientCertPath = CPClawkerDir + "/auth/cp/client.pem"
-	CPClientKeyPath  = CPClawkerDir + "/auth/cp/client.key"
+	CPClientCertPath = CPClawkerDir + "/" + authDir + "/" + authCPSubdir + "/" + ClientCertFile
+	CPClientKeyPath  = CPClawkerDir + "/" + authDir + "/" + authCPSubdir + "/" + ClientKeyFile
 
 	// CPInfraCACertPath / CPInfraCAKeyPath are the container-side paths
 	// for the infra intermediate CA the CP uses to mint short-lived
@@ -197,8 +212,8 @@ const (
 	// lane to envoy/coredns/cp senders — a CLI-root-signed agent leaf
 	// cannot chain to the intermediate and is rejected at the TLS
 	// handshake. See internal/controlplane/infracerts for the Issuer.
-	CPInfraCACertPath = CPClawkerDir + "/auth/infra-ca/infra-ca.pem"
-	CPInfraCAKeyPath  = CPClawkerDir + "/auth/infra-ca/infra-ca.key"
+	CPInfraCACertPath = CPClawkerDir + "/" + authDir + "/" + authInfraCASubdir + "/" + InfraCACertFile
+	CPInfraCAKeyPath  = CPClawkerDir + "/" + authDir + "/" + authInfraCASubdir + "/" + InfraCAKeyFile
 
 	// CPFirewallDataDir is the container-side directory for CP-managed firewall state.
 	CPFirewallDataDir = CPClawkerDataDir + "/firewall"
@@ -211,13 +226,13 @@ const (
 	// CPControlPlaneDBPath is the container-side path to the sqlite
 	// database the CP daemon owns. agentregistry holds the `agents`
 	// table; future CP-owned tables share the same file.
-	CPControlPlaneDBPath = CPControlPlaneDir + "/controlplane.db"
+	CPControlPlaneDBPath = CPControlPlaneDir + "/" + ControlPlaneDBFile
 
-	CPKratosConfigFilename = "kratos.yaml"
+	CPKratosConfigFilename = OryKratos + ".yaml"
 
-	CPHydraConfigFilename = "hydra.yaml"
+	CPHydraConfigFilename = OryHydra + ".yaml"
 
-	CPOathkeeperConfigFilename = "oathkeeper.yaml"
+	CPOathkeeperConfigFilename = OryOathkeeper + ".yaml"
 
 	// CPKratosConfigPath is the container-side path to the Kratos config file.
 	CPKratosConfigPath = CPClawkerDir + "/" + CPKratosConfigFilename
