@@ -8,6 +8,7 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/storage"
 	"github.com/stretchr/testify/assert"
@@ -34,7 +35,7 @@ func newExportEnv(t *testing.T, userAliasesYAML, targetYAML string) (config.Conf
 	require.NoError(t, os.WriteFile(target, []byte(targetYAML), 0o644))
 
 	store, err := storage.New[config.Project](storage.GenerateDefaultsYAML[config.Project](),
-		storage.WithFilenames("clawker.local.yaml", "clawker.yaml"),
+		storage.WithFilenames(consts.ProjectLocalConfigFile, consts.ProjectConfigFile),
 		storage.WithDirs(proj),
 		storage.WithConfigDir(),
 	)

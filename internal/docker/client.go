@@ -13,6 +13,7 @@ import (
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/pkg/whail"
 )
@@ -97,9 +98,9 @@ func (c *Client) Close() error {
 }
 
 // IsMonitoringActive checks if the clawker monitoring stack is running.
-// It looks for the otel-collector container on the clawker-net network.
+// It looks for the otel-collector container on the clawker network.
 func (c *Client) IsMonitoringActive(ctx context.Context) bool {
-	f := whail.Filters{}.Add("name", "otel-collector").Add("status", "running")
+	f := whail.Filters{}.Add("name", consts.MonitoringServiceOtelCollector).Add("status", "running")
 	result, err := c.ContainerList(ctx, whail.ContainerListOptions{
 		Filters: f,
 	})
@@ -108,7 +109,7 @@ func (c *Client) IsMonitoringActive(ctx context.Context) bool {
 		return false
 	}
 
-	// Check if any otel-collector container is running on clawker-net
+	// Check if any otel-collector container is running on the clawker network
 	for _, ctr := range result.Items {
 		if ctr.NetworkSettings != nil {
 			for netName := range ctr.NetworkSettings.Networks {
@@ -641,7 +642,7 @@ func (c *Client) removeAgentVolumes(ctx context.Context, project, agent string, 
 	// Fallback: try removing by known volume names (for unlabeled volumes or if list failed).
 	// Names come from Docker labels on existing resources — should always be valid.
 	var knownVolumes []string
-	for _, purpose := range []string{"workspace", "config", "history"} {
+	for _, purpose := range VolumePurposes {
 		vn, vnErr := VolumeName(project, agent, purpose)
 		if vnErr != nil {
 			c.log.Warn().Err(vnErr).Str("purpose", purpose).Msg("skipping volume cleanup: invalid name")

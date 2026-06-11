@@ -445,8 +445,8 @@ const (
 	// land here; it stays in the retry loop and surfaces as
 	// outcomeRetryExhausted on deadline.
 	outcomeContainerGone
-	// outcomeAddrInvalid: clawker-net contract violation — the
-	// container exists and is running but has no clawker-net endpoint
+	// outcomeAddrInvalid: clawker network contract violation — the
+	// container exists and is running but has no clawker network endpoint
 	// (no NetworkSettings, missing endpoint, or invalid IP). Terminal:
 	// retrying won't fix a misconfigured network attachment, and
 	// subscribers driving containment policy off Reason need this to
@@ -612,7 +612,7 @@ func (d *Dialer) establishWithRetry(ctx context.Context, containerID string, log
 			log.With("agent", agent, "project", project).Error().Err(err).
 				Int("attempt", attempt).
 				Str("event", "agentdial_attempt_addr_extract_failed").
-				Msg("clawker-net address extraction failed; aborting cycle")
+				Msg(consts.Network + " address extraction failed; aborting cycle")
 			return establishResult{Agent: agent, Project: project, Attempt: attempt, Outcome: outcomeAddrInvalid}
 		}
 
@@ -766,12 +766,12 @@ func (d *Dialer) resolveAgent(ctx context.Context, containerID string) (mobycont
 }
 
 // clawkerNetAddr extracts the host:port dial target from an inspect
-// response. Containers without a clawker-net endpoint are a
+// response. Containers without a clawker network endpoint are a
 // contract violation — every managed agent container is attached at
 // create time.
 func clawkerNetAddr(c mobycontainer.InspectResponse) (string, error) {
 	if c.NetworkSettings == nil {
-		return "", errors.New("container has no NetworkSettings (clawker-net contract violation)")
+		return "", errors.New("container has no NetworkSettings (" + consts.Network + " contract violation)")
 	}
 	endpoint, ok := c.NetworkSettings.Networks[consts.Network]
 	if !ok || !endpoint.IPAddress.IsValid() {

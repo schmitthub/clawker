@@ -6,13 +6,15 @@ import (
 	"os"
 	"runtime"
 	"syscall"
+
+	"github.com/schmitthub/clawker/internal/consts"
 )
 
 // getPagerCommand returns the pager command to use.
-// Order of precedence: CLAWKER_PAGER > PAGER > platform default
+// Order of precedence: consts.EnvPager > PAGER > platform default
 func getPagerCommand() string {
-	// Check CLAWKER_PAGER first
-	if pager := os.Getenv("CLAWKER_PAGER"); pager != "" {
+	// Check the clawker-specific pager override first
+	if pager := os.Getenv(consts.EnvPager); pager != "" {
 		return pager
 	}
 

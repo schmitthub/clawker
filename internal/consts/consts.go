@@ -112,10 +112,24 @@ const (
 	EnvTestRepoDir = "CLAWKER_TEST_REPO_DIR"
 )
 
+// Host-side behavior override env vars.
+const (
+	// EnvExecutable overrides the clawker binary path used when
+	// re-invoking clawker as a daemon (host proxy spawn, e2e harness).
+	EnvExecutable = "CLAWKER_EXECUTABLE"
+	// EnvNoUpdateNotifier disables the update notifier when non-empty.
+	EnvNoUpdateNotifier = "CLAWKER_NO_UPDATE_NOTIFIER"
+	// EnvPager overrides the pager program for paged output.
+	EnvPager = "CLAWKER_PAGER"
+)
+
 // File names (not paths — paths are runtime-resolved via accessor funcs below).
 const (
 	ProjectConfigFile = "clawker.yaml"
-	SettingsFile      = "settings.yaml"
+	// ProjectLocalConfigFile is the gitignored per-developer override that
+	// shadows ProjectConfigFile when both exist in a project root.
+	ProjectLocalConfigFile = "clawker.local.yaml"
+	SettingsFile           = "settings.yaml"
 	// RegistryFile is the project registry filename. The registry lives in
 	// the data dir (resolved via the config DataDir() accessor) and is owned
 	// by internal/project.
@@ -156,6 +170,70 @@ const (
 	controlPlaneDir    = "controlplane"
 )
 
+// ClaudeDir is the Claude Code configuration directory name, both as
+// $HOME/.claude inside containers (containerfs seeding) and as the
+// workspace-level .claude directory (workspace masking).
+const ClaudeDir = ".claude"
+
+// ClaudeProjectsSubdir is the projects subdirectory of ClaudeDir
+// (auto-memory + session transcripts). containerfs seeds it; workspace
+// bind-mounts the host's copy over it.
+const ClaudeProjectsSubdir = "projects"
+
+// DotClawkerDir is the hidden clawker directory name — the dotted
+// project-config directory variant in a repo root, and the in-container
+// $HOME/.clawker directory where hook scripts land.
+const DotClawkerDir = "." + NamePrefix
+
+// Lifecycle hook names. The CLI delivers <name>.sh scripts under the
+// in-container DotClawkerDir; clawkerd's init plan runs the matching
+// step (the plan step Name and the script basename must agree).
+const (
+	HookPostInit = "post-init"
+	HookPreRun   = "pre-run"
+)
+
+// Auth material subdirectory segments under authDir. Shared by the
+// host-side Auth*Dir accessors, EnsureAuthDirs, and the container-side
+// CP*Path constants in controlplane.go — both sides of each bind mount
+// build from these so the paths cannot drift apart.
+const (
+	authCASubdir      = "ca"
+	authCLISubdir     = "cli"
+	authTLSSubdir     = "tls"
+	authOtelSubdir    = "otel"
+	authCPSubdir      = "cp"
+	authInfraCASubdir = "infra-ca"
+)
+
+// authSubdirs enumerates every auth subdirectory. EnsureAuthDirs creates
+// each with 0o700; a new Auth*Dir accessor must add its segment here so
+// the directory gets the tightened mode instead of the 0o755 default
+// from subdirPathUnder.
+var authSubdirs = []string{
+	authCASubdir, authCLISubdir, authTLSSubdir,
+	authOtelSubdir, authCPSubdir, authInfraCASubdir,
+}
+
+// Auth material file basenames. Same drift contract as the subdir
+// segments above: host-side writers (internal/auth, otelcerts,
+// infracerts) and container-side readers (controlplane.go CP*Path)
+// reference these, never the literals.
+const (
+	CACertFile      = "ca.pem"
+	CAKeyFile       = "ca.key"
+	ClientCertFile  = "client.pem"
+	ClientKeyFile   = "client.key"
+	ServerCertFile  = "server.pem"
+	ServerKeyFile   = "server.key"
+	InfraCACertFile = "infra-ca.pem"
+	InfraCAKeyFile  = "infra-ca.key"
+	SigningKeyFile  = "signing.key"
+	SigningJWKFile  = "signing-jwk.json"
+	// hydraSystemSecretFile persists the Hydra system secret under authDir.
+	hydraSystemSecretFile = "hydra-system-secret"
+)
+
 // PID and log file names.
 const (
 	HostProxyPIDFile    = "hostproxy.pid"
@@ -179,6 +257,13 @@ const (
 const (
 	// Network is the shared Docker bridge network name.
 	Network = "clawker-net"
+)
+
+// Well-known addresses.
+const (
+	// Localhost is the IPv4 loopback address. Used for host-published
+	// port bindings and intra-container localhost dials.
+	Localhost = "127.0.0.1"
 )
 
 // Container names.
@@ -269,17 +354,20 @@ const (
 // cfg.Settings().ControlPlane.<field> which gets defaults from struct tags
 // via the storage layer.
 const (
-	DefaultCPAdminPort     = 7443
-	DefaultCPHealthPort    = 7080
-	DefaultHydraPublicPort = 4444
-	DefaultHydraAdminPort  = 4445
-	DefaultOathkeeperPort  = 4456
+	DefaultCPAdminPort       = 7443
+	DefaultCPHealthPort      = 7080
+	DefaultHydraPublicPort   = 4444
+	DefaultHydraAdminPort    = 4445
+	DefaultOathkeeperPort    = 4456
+	DefaultOathkeeperAPIPort = 4457
+	DefaultKratosPublicPort  = 4433
+	DefaultKratosAdminPort   = 4434
 	// DefaultCPAgentPort is the in-container gRPC port for the agent
-	// listener (mTLS, clawker-net only). Matches the
+	// listener (mTLS, clawker network only). Matches the
 	// ControlPlaneSettings.AgentPort struct-tag default.
 	DefaultCPAgentPort = 7444
 	// DefaultClawkerdPort is the in-container gRPC port for the
-	// clawkerd listener (mTLS, clawker-net only). CP dials this
+	// clawkerd listener (mTLS, clawker network only). CP dials this
 	// port to dispatch commands; the listener pins peer CN to
 	// ContainerCP.
 	DefaultClawkerdPort = 7700
@@ -470,6 +558,34 @@ const (
 	// SysProcAttr.Credential when forking the user CMD. Empty/unset
 	// falls back to ContainerUser ("claude").
 	EnvClawkerUser = "CLAWKER_USER"
+	// EnvWorkspaceMode carries the workspace mode ("bind" or "snapshot")
+	// into the container for agent self-diagnosis.
+	EnvWorkspaceMode = "CLAWKER_WORKSPACE_MODE"
+	// EnvWorkspaceSource is the host path of the mounted workspace.
+	EnvWorkspaceSource = "CLAWKER_WORKSPACE_SOURCE"
+	// EnvVersion is the clawker version that created the container.
+	EnvVersion = "CLAWKER_VERSION"
+	// EnvFirewallEnabled signals whether the egress firewall is active.
+	EnvFirewallEnabled = "CLAWKER_FIREWALL_ENABLED"
+	// EnvCPHealthzURL points in-container tooling at the CP health endpoint.
+	EnvCPHealthzURL = "CLAWKER_CP_HEALTHZ_URL"
+	// EnvRemoteSockets is a JSON array describing the host sockets
+	// (SSH agent, GPG agent) bridged into the container.
+	EnvRemoteSockets = "CLAWKER_REMOTE_SOCKETS"
+	// EnvHostProxy is the host proxy URL used for browser auth and git
+	// credential forwarding.
+	EnvHostProxy = "CLAWKER_HOST_PROXY"
+	// EnvGitHTTPS signals that HTTPS git credential forwarding is active;
+	// the in-container credential helper bails when unset.
+	EnvGitHTTPS = "CLAWKER_GIT_HTTPS"
+)
+
+// Bridged socket types. Wire vocabulary shared by the env payload
+// builder (internal/docker), the in-container socket server, and the
+// host-side socket bridge.
+const (
+	SocketTypeSSHAgent = "ssh-agent"
+	SocketTypeGPGAgent = "gpg-agent"
 )
 
 // ---------------------------------------------------------------------------
@@ -527,15 +643,15 @@ func ConfigDir() string {
 		return a
 	}
 	if b := os.Getenv(xdgConfigHome); b != "" {
-		return filepath.Join(b, "clawker")
+		return filepath.Join(b, NamePrefix)
 	}
 	if runtime.GOOS == "windows" {
 		if c := os.Getenv("AppData"); c != "" {
-			return filepath.Join(c, "clawker")
+			return filepath.Join(c, NamePrefix)
 		}
 	}
 	d, _ := os.UserHomeDir()
-	return filepath.Join(d, ".config", "clawker")
+	return filepath.Join(d, ".config", NamePrefix)
 }
 
 // DataDir returns the clawker data directory.
@@ -545,15 +661,15 @@ func DataDir() string {
 		return a
 	}
 	if b := os.Getenv(xdgDataHome); b != "" {
-		return filepath.Join(b, "clawker")
+		return filepath.Join(b, NamePrefix)
 	}
 	if runtime.GOOS == "windows" {
 		if c := os.Getenv("LOCALAPPDATA"); c != "" {
-			return filepath.Join(c, "clawker")
+			return filepath.Join(c, NamePrefix)
 		}
 	}
 	d, _ := os.UserHomeDir()
-	return filepath.Join(d, ".local", "share", "clawker")
+	return filepath.Join(d, ".local", "share", NamePrefix)
 }
 
 // StateDir returns the clawker state directory.
@@ -563,33 +679,37 @@ func StateDir() string {
 		return a
 	}
 	if b := os.Getenv(xdgStateHome); b != "" {
-		return filepath.Join(b, "clawker")
+		return filepath.Join(b, NamePrefix)
 	}
 	if runtime.GOOS == "windows" {
 		if c := os.Getenv("AppData"); c != "" {
-			return filepath.Join(c, "clawker", "state")
+			return filepath.Join(c, NamePrefix, "state")
 		}
 	}
 	d, _ := os.UserHomeDir()
-	return filepath.Join(d, ".local", "state", "clawker")
+	return filepath.Join(d, ".local", "state", NamePrefix)
 }
 
 // CacheDir returns the clawker cache directory.
-// Resolution: CLAWKER_CACHE_DIR > XDG_CACHE_HOME/clawker > ~/.cache/clawker
+// Resolution: CLAWKER_CACHE_DIR > XDG_CACHE_HOME/clawker > ~/.cache/clawker,
+// with a final os.TempDir() fallback when no home directory is available —
+// cache is transient and can live anywhere.
 func CacheDir() string {
 	if a := os.Getenv(EnvCacheDir); a != "" {
 		return a
 	}
 	if b := os.Getenv(xdgCacheHome); b != "" {
-		return filepath.Join(b, "clawker")
+		return filepath.Join(b, NamePrefix)
 	}
 	if runtime.GOOS == "windows" {
 		if c := os.Getenv("LOCALAPPDATA"); c != "" {
-			return filepath.Join(c, "clawker", "cache")
+			return filepath.Join(c, NamePrefix, "cache")
 		}
 	}
-	d, _ := os.UserHomeDir()
-	return filepath.Join(d, ".cache", "clawker")
+	if d, _ := os.UserHomeDir(); d != "" {
+		return filepath.Join(d, ".cache", NamePrefix)
+	}
+	return filepath.Join(os.TempDir(), NamePrefix+"-cache")
 }
 
 // ---------------------------------------------------------------------------
@@ -669,13 +789,19 @@ func DockerfilesSubdir() (string, error) {
 // auth/tls/ for server TLS.
 
 // AuthCADir ensures and returns the auth/ca directory under DataDir.
-func AuthCADir() (string, error) { return subdirPathUnder(filepath.Join(authDir, "ca"), DataDir()) }
+func AuthCADir() (string, error) {
+	return subdirPathUnder(filepath.Join(authDir, authCASubdir), DataDir())
+}
 
 // AuthCLIDir ensures and returns the auth/cli directory under DataDir.
-func AuthCLIDir() (string, error) { return subdirPathUnder(filepath.Join(authDir, "cli"), DataDir()) }
+func AuthCLIDir() (string, error) {
+	return subdirPathUnder(filepath.Join(authDir, authCLISubdir), DataDir())
+}
 
 // AuthTLSDir ensures and returns the auth/tls directory under DataDir.
-func AuthTLSDir() (string, error) { return subdirPathUnder(filepath.Join(authDir, "tls"), DataDir()) }
+func AuthTLSDir() (string, error) {
+	return subdirPathUnder(filepath.Join(authDir, authTLSSubdir), DataDir())
+}
 
 // HydraSystemSecretPath returns the path to the persisted Hydra system secret
 // file under the auth/ directory. The parent directory is created if needed.
@@ -684,7 +810,7 @@ func HydraSystemSecretPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "hydra-system-secret"), nil
+	return filepath.Join(dir, hydraSystemSecretFile), nil
 }
 
 // EnsureAuthDirs creates the auth material directory tree. Called by
@@ -693,7 +819,10 @@ func HydraSystemSecretPath() (string, error) {
 // keys readable by container uids) cannot be reached by other local
 // users via permissive home/$XDG_DATA_HOME modes.
 func EnsureAuthDirs() error {
-	dirs := []string{"auth", "auth/ca", "auth/cli", "auth/tls", "auth/otel", "auth/infra-ca"}
+	dirs := []string{authDir}
+	for _, sub := range authSubdirs {
+		dirs = append(dirs, filepath.Join(authDir, sub))
+	}
 	for _, sub := range dirs {
 		path := filepath.Join(DataDir(), sub)
 		if err := os.MkdirAll(path, 0o700); err != nil {
@@ -711,7 +840,7 @@ func EnsureAuthDirs() error {
 // monitoring stack: a server cert mounted into the otel-collector
 // container and a client cert mounted into clawker-cp.
 func AuthOtelDir() (string, error) {
-	return subdirPathUnder(filepath.Join(authDir, "otel"), DataDir())
+	return subdirPathUnder(filepath.Join(authDir, authOtelSubdir), DataDir())
 }
 
 func AuthCACertPath() (string, error) {
@@ -719,7 +848,7 @@ func AuthCACertPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "ca.pem"), nil
+	return filepath.Join(dir, CACertFile), nil
 }
 
 func AuthCAKeyPath() (string, error) {
@@ -727,7 +856,7 @@ func AuthCAKeyPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "ca.key"), nil
+	return filepath.Join(dir, CAKeyFile), nil
 }
 
 func AuthCLISigningKeyPath() (string, error) {
@@ -735,7 +864,7 @@ func AuthCLISigningKeyPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "signing.key"), nil
+	return filepath.Join(dir, SigningKeyFile), nil
 }
 
 func AuthCLISigningJWKPath() (string, error) {
@@ -743,7 +872,7 @@ func AuthCLISigningJWKPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "signing-jwk.json"), nil
+	return filepath.Join(dir, SigningJWKFile), nil
 }
 
 func AuthCLIClientCertPath() (string, error) {
@@ -751,7 +880,7 @@ func AuthCLIClientCertPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "client.pem"), nil
+	return filepath.Join(dir, ClientCertFile), nil
 }
 
 func AuthCLIClientKeyPath() (string, error) {
@@ -759,7 +888,7 @@ func AuthCLIClientKeyPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "client.key"), nil
+	return filepath.Join(dir, ClientKeyFile), nil
 }
 
 func AuthServerCertPath() (string, error) {
@@ -767,7 +896,7 @@ func AuthServerCertPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "server.pem"), nil
+	return filepath.Join(dir, ServerCertFile), nil
 }
 
 func AuthServerKeyPath() (string, error) {
@@ -775,7 +904,7 @@ func AuthServerKeyPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "server.key"), nil
+	return filepath.Join(dir, ServerKeyFile), nil
 }
 
 // AuthOtelServerCertPath returns the path to the otel-collector's
@@ -786,7 +915,7 @@ func AuthOtelServerCertPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "server.pem"), nil
+	return filepath.Join(dir, ServerCertFile), nil
 }
 
 // AuthOtelServerKeyPath returns the path to the otel-collector's
@@ -796,7 +925,7 @@ func AuthOtelServerKeyPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "server.key"), nil
+	return filepath.Join(dir, ServerKeyFile), nil
 }
 
 // AuthInfraCADir ensures and returns the auth/infra-ca directory under
@@ -806,7 +935,7 @@ func AuthOtelServerKeyPath() (string, error) {
 // are bind-mounted RO into the CP container; the key never leaves
 // host disk + the CP process.
 func AuthInfraCADir() (string, error) {
-	return subdirPathUnder(filepath.Join(authDir, "infra-ca"), DataDir())
+	return subdirPathUnder(filepath.Join(authDir, authInfraCASubdir), DataDir())
 }
 
 // AuthInfraCACertPath returns the path to the infra intermediate CA
@@ -816,7 +945,7 @@ func AuthInfraCACertPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "infra-ca.pem"), nil
+	return filepath.Join(dir, InfraCACertFile), nil
 }
 
 // AuthInfraCAKeyPath returns the path to the infra intermediate CA
@@ -827,7 +956,7 @@ func AuthInfraCAKeyPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "infra-ca.key"), nil
+	return filepath.Join(dir, InfraCAKeyFile), nil
 }
 
 // AuthCPDir ensures and returns the auth/cp directory under the
@@ -837,7 +966,7 @@ func AuthInfraCAKeyPath() (string, error) {
 // channel, and any future outbound mTLS where the peer needs to
 // authenticate that the caller is the control plane.
 func AuthCPDir() (string, error) {
-	return subdirPathUnder(filepath.Join(authDir, "cp"), DataDir())
+	return subdirPathUnder(filepath.Join(authDir, authCPSubdir), DataDir())
 }
 
 // AuthCPClientCertPath returns the path to the CP's outbound mTLS
@@ -848,7 +977,7 @@ func AuthCPClientCertPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "client.pem"), nil
+	return filepath.Join(dir, ClientCertFile), nil
 }
 
 // AuthCPClientKeyPath returns the path to the CP's outbound mTLS
@@ -858,7 +987,7 @@ func AuthCPClientKeyPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "client.key"), nil
+	return filepath.Join(dir, ClientKeyFile), nil
 }
 
 // --- State dir paths (under StateDir) ---

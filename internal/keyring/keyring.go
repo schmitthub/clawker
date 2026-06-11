@@ -16,6 +16,10 @@ import (
 	"github.com/zalando/go-keyring"
 )
 
+// keyringTimeout bounds every OS keyring call — a locked or unresponsive
+// Secret Service must not hang the CLI.
+const keyringTimeout = 3 * time.Second
+
 // ErrNotFound is returned when no secret exists for the given service+user.
 var ErrNotFound = errors.New("secret not found in keyring")
 
@@ -38,7 +42,7 @@ func Set(service, user, secret string) error {
 	select {
 	case err := <-ch:
 		return err
-	case <-time.After(3 * time.Second):
+	case <-time.After(keyringTimeout):
 		return &TimeoutError{"timeout while trying to set secret in keyring"}
 	}
 }
@@ -63,7 +67,7 @@ func Get(service, user string) (string, error) {
 			return "", ErrNotFound
 		}
 		return res.val, res.err
-	case <-time.After(3 * time.Second):
+	case <-time.After(keyringTimeout):
 		return "", &TimeoutError{"timeout while trying to get secret from keyring"}
 	}
 }
@@ -78,7 +82,7 @@ func Delete(service, user string) error {
 	select {
 	case err := <-ch:
 		return err
-	case <-time.After(3 * time.Second):
+	case <-time.After(keyringTimeout):
 		return &TimeoutError{"timeout while trying to delete secret from keyring"}
 	}
 }

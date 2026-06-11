@@ -314,8 +314,8 @@ func ensureCA() error {
 	tmpl := &x509.Certificate{
 		SerialNumber: serial,
 		Subject: pkix.Name{
-			CommonName:   "clawker CLI CA",
-			Organization: []string{"clawker"},
+			CommonName:   cliCACommonName,
+			Organization: []string{certOrganization},
 		},
 		NotBefore:             now.Add(-5 * time.Minute),
 		NotAfter:              now.AddDate(5, 0, 0), // 5 years
@@ -475,7 +475,7 @@ func ensureServerCert() error {
 		SerialNumber: serial,
 		Subject: pkix.Name{
 			CommonName:   consts.ContainerCP,
-			Organization: []string{"clawker"},
+			Organization: []string{certOrganization},
 		},
 		NotBefore:   now.Add(-5 * time.Minute),
 		NotAfter:    now.AddDate(1, 0, 0),
@@ -538,7 +538,7 @@ func ensureClientCert() error {
 		SerialNumber: serial,
 		Subject: pkix.Name{
 			CommonName:   "clawker-cli",
-			Organization: []string{"clawker"},
+			Organization: []string{certOrganization},
 		},
 		NotBefore:   now.Add(-5 * time.Minute),
 		NotAfter:    now.AddDate(1, 0, 0),
@@ -687,8 +687,8 @@ func ensureInfraIntermediateCA() error {
 	tmpl := &x509.Certificate{
 		SerialNumber: serial,
 		Subject: pkix.Name{
-			CommonName:   "clawker infra intermediate CA",
-			Organization: []string{"clawker"},
+			CommonName:   infraCACommonName,
+			Organization: []string{certOrganization},
 		},
 		NotBefore:             now.Add(-5 * time.Minute),
 		NotAfter:              now.AddDate(5, 0, 0),
@@ -742,7 +742,7 @@ func ReadJWK() (json.RawMessage, error) {
 //     Subject "clawker-cp" so the receiver can audit which client is
 //     pushing in case future scoping is added.
 //
-// Agents on clawker-net cannot reach the receiver because they lack
+// Agents on the clawker network cannot reach the receiver because they lack
 // any cert signed by the CLI CA — the TLS handshake fails before any
 // data is accepted. No BPF rule needed; auth is the boundary.
 
@@ -753,7 +753,7 @@ func ReadJWK() (json.RawMessage, error) {
 //   - host.docker.internal: CP dials this from the host-side 127.0.0.1
 //     publish.
 //   - localhost / 127.0.0.1: host-side debug, future tools.
-//   - otel-collector (consts.MonitoringServiceOtelCollector): clawker-net
+//   - otel-collector (consts.MonitoringServiceOtelCollector): the clawker network
 //     DNS name used by Envoy ALS and the CoreDNS OTel plugin dialing
 //     siblings over the docker network. Without this SAN the gRPC SNI
 //     check fails: "certificate is valid for ... not otel-collector".
@@ -837,8 +837,8 @@ func ensureOtelServerCert() error {
 	tmpl := &x509.Certificate{
 		SerialNumber: serial,
 		Subject: pkix.Name{
-			CommonName:   "clawker-otel-collector",
-			Organization: []string{"clawker"},
+			CommonName:   otelCollectorCommonName,
+			Organization: []string{certOrganization},
 		},
 		NotBefore:   now.Add(-5 * time.Minute),
 		NotAfter:    now.AddDate(1, 0, 0),
@@ -902,7 +902,7 @@ func ensureCPClientCert() error {
 		SerialNumber: serial,
 		Subject: pkix.Name{
 			CommonName:   consts.ContainerCP,
-			Organization: []string{"clawker"},
+			Organization: []string{certOrganization},
 		},
 		NotBefore:   now.Add(-5 * time.Minute),
 		NotAfter:    now.AddDate(1, 0, 0),

@@ -9,6 +9,7 @@ import (
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 )
 
 // envoy_http.go — the L7 app block: the HTTP connection manager and everything
@@ -301,7 +302,7 @@ func httpAllowRoute(prefix, cluster string, websocket bool, methods []string) ma
 	}
 	return map[string]any{
 		"match":    routeMatch(prefix, methods),
-		"metadata": clawkerActionMetadata("allowed"),
+		"metadata": clawkerActionMetadata(consts.VerdictAllowed),
 		"route":    route,
 	}
 }
@@ -311,7 +312,7 @@ func httpAllowRoute(prefix, cluster string, websocket bool, methods []string) ma
 func httpDenyRoute(prefix string, methods []string) map[string]any {
 	return map[string]any{
 		"match":    routeMatch(prefix, methods),
-		"metadata": clawkerActionMetadata("denied"),
+		"metadata": clawkerActionMetadata(consts.VerdictDenied),
 		"direct_response": map[string]any{
 			"status": 403,
 			"body":   map[string]any{"inline_string": firewallBlockedBody},

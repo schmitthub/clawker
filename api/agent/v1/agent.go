@@ -1,7 +1,7 @@
 // Package v1 defines the gRPC AgentService for clawkerd-to-CP communication.
 //
 // AgentService is the agent-side surface clawkerd dials on the CP's
-// clawker-net agent listener. Today the only RPC is Register — the
+// agent listener on the clawker network. Today the only RPC is Register — the
 // one-time CP-driven handshake binding the agent's cert thumbprint to its
 // container identity.
 package v1

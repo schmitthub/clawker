@@ -190,7 +190,7 @@ session lifecycle + identity fields. `AgentRegistered.ApplyTo` sets
      peer presenting a non-clawkerd cert before reaching any handler.
   2. **Peer IP → Docker → labels** — resolves the kernel-attested
      peer IP to the `purpose=agent` container owning that endpoint
-     on clawker-net via `ContainerByPeerIP`, reads the
+     on the clawker network via `ContainerByPeerIP`, reads the
      `dev.clawker.{project,agent}` labels as the authoritative
      identity source.
   3. **Cert SAN ↔ label cross-check** — composes the label-derived

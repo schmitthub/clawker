@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -44,7 +45,7 @@ const (
 // SocketConfig defines a socket to forward.
 type SocketConfig struct {
 	Path string `json:"path"` // Unix socket path in container
-	Type string `json:"type"` // "gpg-agent" or "ssh-agent"
+	Type string `json:"type"` // consts.SocketTypeGPGAgent or consts.SocketTypeSSHAgent
 }
 
 // Message represents a protocol message.
@@ -288,9 +289,9 @@ func (b *Bridge) handleOpen(msg Message) {
 // resolveHostSocket returns the host Unix socket path for the given type.
 func resolveHostSocket(socketType string) (string, error) {
 	switch socketType {
-	case "gpg-agent":
+	case consts.SocketTypeGPGAgent:
 		return getGPGExtraSocket()
-	case "ssh-agent":
+	case consts.SocketTypeSSHAgent:
 		path := os.Getenv("SSH_AUTH_SOCK")
 		if path == "" {
 			return "", fmt.Errorf("SSH_AUTH_SOCK not set on host; SSH agent forwarding unavailable")

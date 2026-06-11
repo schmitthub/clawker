@@ -1,3 +1,8 @@
+// TRIPWIRE: stdlib only — compiled standalone in Docker (//go:embed, no go.mod
+// in the build stage). NEVER import clawker-module packages (e.g. internal/consts);
+// it breaks the image build. Inline literals here are intentional, exempt from
+// the no-hardcoded-strings policy. See internal/hostproxy/internals/CLAUDE.md.
+//
 // socket-forwarder is a multiplexing socket forwarder that runs inside clawker
 // containers. It communicates with the host via stdin/stdout using a simple
 // length-prefixed binary protocol, similar to VS Code's muxrpc approach.

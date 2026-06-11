@@ -63,7 +63,7 @@ func newBootstrapFixture(t *testing.T) *bootstrapFixture {
 	fake := dockermocks.NewFakeClient(cfg)
 	calls := &bootstrapCalls{}
 
-	// Network inspect returns a valid clawker-net with IPAM so
+	// Network inspect returns a valid clawker network with IPAM so
 	// DiscoverNetwork + ComputeStaticIP succeed.
 	fake.FakeAPI.NetworkInspectFn = func(_ context.Context, name string, _ mobyclient.NetworkInspectOptions) (mobyclient.NetworkInspectResult, error) {
 		return mobyclient.NetworkInspectResult{
@@ -327,7 +327,7 @@ func TestEnsureRunning_HealthzTimeout_SurfacesError(t *testing.T) {
 	// /healthz never returns 200 — EnsureRunning must propagate the
 	// timeout error rather than blocking indefinitely.
 	f := newBootstrapFixture(t)
-	sentinel := &CPHealthTimeoutError{Timeout: 5 * time.Millisecond, URL: "http://127.0.0.1:7080/healthz"}
+	sentinel := &CPHealthTimeoutError{Timeout: 5 * time.Millisecond, URL: "http://" + consts.Localhost + ":7080/healthz"}
 	healthzFn = func(_ context.Context, _ *docker.Client, _ config.Config) error {
 		f.calls.healthz.Add(1)
 		return sentinel
@@ -738,7 +738,7 @@ func TestBuildCPContainerConfig_RestartPolicyOnFailure(t *testing.T) {
 }
 
 func TestBuildCPContainerConfig_ClawkerNetAttachment(t *testing.T) {
-	// INV-B2-014: CP container attaches to clawker-net so it can reach
+	// INV-B2-014: CP container attaches to the clawker network so it can reach
 	// Envoy and CoreDNS by their internal IPs.
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	cpCfg, err := BuildCPContainerConfig(cfg, testCPOpts())

@@ -95,7 +95,7 @@ regardless of which trigger fires:
 1. `actionQueue.Close` drains accepted submissions.
 2. `grpcServer.GracefulStop` retires in-flight RPCs.
 3. `handler.CancelAllBypassTimers` stops dead-man timers.
-4. `stack.Stop` removes the Envoy + CoreDNS containers from `clawker-net`.
+4. `stack.Stop` removes the Envoy + CoreDNS containers from the clawker network.
 5. `ebpfMgr.FlushAll` wipes `container_map` + `bypass_map` so a
    subsequent `controlplane up` starts with a clean per-container state.
 

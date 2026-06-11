@@ -42,7 +42,7 @@ func resolvedCtx(t *testing.T, leaf *x509.Certificate, resolved ResolvedContaine
 			PeerCertificates: []*x509.Certificate{leaf},
 		},
 	}
-	addr, err := net.ResolveTCPAddr("tcp", "127.0.0.1:52000")
+	addr, err := net.ResolveTCPAddr("tcp", consts.Localhost+":52000")
 	require.NoError(t, err)
 	ctx := peer.NewContext(context.Background(), &peer.Peer{
 		Addr:     addr,

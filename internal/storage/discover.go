@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/schmitthub/clawker/internal/consts"
 )
 
 // discoveredFile represents a file found during discovery.
@@ -89,7 +91,7 @@ func walkUp(filenames []string, anchor string) ([]discoveredFile, error) {
 func probeDir(dir string, filenames []string) []discoveredFile {
 	var files []discoveredFile
 
-	clawkerDir := filepath.Join(dir, ".clawker")
+	clawkerDir := filepath.Join(dir, consts.DotClawkerDir)
 	hasDirForm := isDir(clawkerDir)
 
 	for _, fname := range filenames {

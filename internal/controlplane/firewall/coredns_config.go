@@ -31,7 +31,7 @@ func GenerateCorefile(rules []config.EgressRule, healthPort int) ([]byte, error)
 	var b strings.Builder
 
 	// Docker internal names: forward to Docker's own embedded DNS (127.0.0.11).
-	// CoreDNS runs on clawker-net, so its 127.0.0.11 can resolve container names
+	// CoreDNS runs on the clawker network, so its 127.0.0.11 can resolve container names
 	// and host.docker.internal for all containers on the same network.
 	// These zones ensure Docker networking works when resolv.conf points to CoreDNS.
 	// They are reserved — egress rules matching these names are skipped from the
@@ -41,7 +41,7 @@ func GenerateCorefile(rules []config.EgressRule, healthPort int) ([]byte, error)
 	// compose template and this list cannot drift — rename one and the other
 	// follows by construction.
 	internalHosts := append(
-		[]string{"docker.internal"}, // host.docker.internal, gateway.docker.internal
+		[]string{"docker.internal"}, // covers Docker magic hostnames incl. the host gateway name
 		consts.MonitoringServiceHostnames...,
 	)
 

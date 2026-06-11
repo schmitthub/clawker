@@ -9,6 +9,7 @@ import (
 	mobyClient "github.com/moby/moby/client"
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
@@ -170,7 +171,7 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 	if err := InjectHookScript(ctx, InjectHookOpts{
 		ContainerID:     container,
 		Script:          preRun,
-		Name:            "pre-run",
+		Name:            consts.HookPreRun,
 		Cfg:             cfg,
 		CopyToContainer: NewCopyToContainerFn(client),
 		Log:             log,
@@ -345,5 +346,5 @@ func ContainerStart(ctx context.Context, cmdOpts CommandOpts, startOpts docker.C
 // `urls.self.issuer` config, regardless of which network path the
 // request arrived on.
 func hydraTokenAudienceFromPort(port int) string {
-	return fmt.Sprintf("https://127.0.0.1:%d/oauth2/token", port)
+	return fmt.Sprintf("https://"+consts.Localhost+":%d/oauth2/token", port)
 }

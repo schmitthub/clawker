@@ -9,6 +9,7 @@ import (
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
@@ -176,7 +177,7 @@ func execRun(ctx context.Context, opts *ExecOptions) error {
 			log.Warn().Err(err).Msg("failed to start host proxy for exec")
 		} else if hp.IsRunning() {
 			hostProxyRunning = true
-			opts.Env = append(opts.Env, "CLAWKER_HOST_PROXY="+hp.ProxyURL())
+			opts.Env = append(opts.Env, consts.EnvHostProxy+"="+hp.ProxyURL())
 			log.Debug().Str("url", hp.ProxyURL()).Msg("injected host proxy env for exec")
 		}
 	}

@@ -6,6 +6,7 @@ package config
 import (
 	"fmt"
 
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/storage"
 )
 
@@ -76,14 +77,14 @@ type Config interface {
 	ContainerUID() int
 	ContainerGID() int
 	// In-cluster base URLs (host + port) for monitoring services
-	// reachable from clawker-net. Composed from
+	// reachable from the clawker network. Composed from
 	// [consts.MonitoringService*] hostnames + the corresponding
 	// MonitoringConfig port. No path component.
 	OpenSearchURL() string
 	OpenSearchDashboardsURL() string
 	PrometheusURL() string
 
-	// OtelCollectorURL is the OTLP collector base URL on clawker-net
+	// OtelCollectorURL is the OTLP collector base URL on the clawker network
 	// (no path). Wire it into the container as OTEL_EXPORTER_OTLP_ENDPOINT
 	// — the OTel SDK derives /v1/metrics, /v1/logs, /v1/traces by
 	// appending the standard path per signal, so a single base covers
@@ -133,8 +134,8 @@ func NewConfig(opts ...NewConfigOption) (Config, error) {
 		opt(options)
 	}
 	projectOpts := []storage.Option{
-		storage.WithFilenames("clawker.local.yaml", "clawker.yaml"),
-		storage.WithDefaultFilename("clawker.yaml"),
+		storage.WithFilenames(consts.ProjectLocalConfigFile, consts.ProjectConfigFile),
+		storage.WithDefaultFilename(consts.ProjectConfigFile),
 	}
 	if options.projectYAML != "" {
 		projectOpts = append(projectOpts, storage.WithDefaults(options.projectYAML))
@@ -153,7 +154,7 @@ func NewConfig(opts ...NewConfigOption) (Config, error) {
 	}
 
 	settingsOpts := []storage.Option{
-		storage.WithFilenames("settings.yaml"),
+		storage.WithFilenames(consts.SettingsFile),
 	}
 	if options.settingsYAML != "" {
 		settingsOpts = append(settingsOpts, storage.WithDefaults(options.settingsYAML))

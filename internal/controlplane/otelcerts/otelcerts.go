@@ -44,6 +44,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -184,9 +185,9 @@ func (s *Service) EnsureClient(svc string) (certPath, keyPath, caPath string, er
 		return "", "", "", fmt.Errorf("otelcerts: validate %s cert/key pair: %w", svc, err)
 	}
 
-	certPath = filepath.Join(svcDir, "client.pem")
-	keyPath = filepath.Join(svcDir, "client.key")
-	caPath = filepath.Join(svcDir, "ca.pem")
+	certPath = filepath.Join(svcDir, consts.ClientCertFile)
+	keyPath = filepath.Join(svcDir, consts.ClientKeyFile)
+	caPath = filepath.Join(svcDir, consts.CACertFile)
 
 	if err := writeFileAtomic(caPath, s.rootCA, 0o644); err != nil {
 		return "", "", "", fmt.Errorf("otelcerts: write %s ca.pem: %w", svc, err)

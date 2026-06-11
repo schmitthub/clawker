@@ -74,7 +74,7 @@ func startMTLSServer(t *testing.T, introspector *cpmocks.IntrospectorMock, ebpfM
 	})
 	adminv1.RegisterAdminServiceServer(srv, handler)
 
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	lis, err := net.Listen("tcp", consts.Localhost+":0")
 	require.NoError(t, err)
 
 	go func() {

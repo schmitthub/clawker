@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 )
 
 const healthCacheTTL = 2 * time.Second
@@ -54,13 +55,13 @@ func NewCPStartupOrchestrator() *CPStartupOrchestrator {
 func (o *CPStartupOrchestrator) SetServiceProbes(cp config.ControlPlaneSettings, tlsCfg *tls.Config) {
 	o.tlsCfg = tlsCfg
 	o.probes = []serviceProbe{
-		{name: "hydra-public", addr: fmt.Sprintf("127.0.0.1:%d", cp.HydraPublicPort), tls: true},
-		{name: "hydra-admin", addr: fmt.Sprintf("127.0.0.1:%d", cp.HydraAdminPort), tls: true},
-		{name: "kratos-public", addr: fmt.Sprintf("127.0.0.1:%d", cp.KratosPublicPort), tls: true},
-		{name: "kratos-admin", addr: fmt.Sprintf("127.0.0.1:%d", cp.KratosAdminPort), tls: true},
-		{name: "oathkeeper-proxy", addr: fmt.Sprintf("127.0.0.1:%d", cp.OathkeeperPort), tls: true},
-		{name: "oathkeeper-api", addr: fmt.Sprintf("127.0.0.1:%d", cp.OathkeeperAPIPort), tls: true},
-		{name: "grpc-admin", addr: fmt.Sprintf("127.0.0.1:%d", cp.AdminPort), tls: false},
+		{name: "hydra-public", addr: fmt.Sprintf(consts.Localhost+":%d", cp.HydraPublicPort), tls: true},
+		{name: "hydra-admin", addr: fmt.Sprintf(consts.Localhost+":%d", cp.HydraAdminPort), tls: true},
+		{name: "kratos-public", addr: fmt.Sprintf(consts.Localhost+":%d", cp.KratosPublicPort), tls: true},
+		{name: "kratos-admin", addr: fmt.Sprintf(consts.Localhost+":%d", cp.KratosAdminPort), tls: true},
+		{name: "oathkeeper-proxy", addr: fmt.Sprintf(consts.Localhost+":%d", cp.OathkeeperPort), tls: true},
+		{name: "oathkeeper-api", addr: fmt.Sprintf(consts.Localhost+":%d", cp.OathkeeperAPIPort), tls: true},
+		{name: "grpc-admin", addr: fmt.Sprintf(consts.Localhost+":%d", cp.AdminPort), tls: false},
 	}
 }
 

@@ -97,8 +97,8 @@ else
 fi
 `
 
-	gitCredentialsScript = `[ -n "$CLAWKER_HOST_PROXY" ] || exit 0
-[ "$CLAWKER_GIT_HTTPS" = "true" ] || exit 0
+	gitCredentialsScript = `[ -n "$` + consts.EnvHostProxy + `" ] || exit 0
+[ "$` + consts.EnvGitHTTPS + `" = "true" ] || exit 0
 git config --global credential.helper clawker
 `
 
@@ -132,7 +132,7 @@ done
 	// The `[ -x … ] || { …; }` brace group is load-bearing: `|| touch && exit`
 	// without braces binds as `([ -x ] || touch) && exit`, which exits 0 when
 	// the script EXISTS and never runs it. Do not remove the braces.
-	postInitScript = `POST="$HOME/.clawker/post-init.sh"
+	postInitScript = `POST="$HOME/` + consts.DotClawkerDir + `/` + consts.HookPostInit + `.sh"
 DONE="$HOME/.claude/post-initialized"
 [ -f "$DONE" ] && exit 0
 [ -x "$POST" ] || { touch "$DONE"; exit 0; }
@@ -151,8 +151,8 @@ fi
 	// would swallow a real failure (break the fatal contract) — this two-line
 	// form no-ops when absent AND propagates the exit code when present. The
 	// file carries #!/bin/bash + set -e from PrepareHookTar.
-	preRunScript = `[ -x "$HOME/.clawker/pre-run.sh" ] || exit 0
-"$HOME/.clawker/pre-run.sh"
+	preRunScript = `[ -x "$HOME/` + consts.DotClawkerDir + `/` + consts.HookPreRun + `.sh" ] || exit 0
+"$HOME/` + consts.DotClawkerDir + `/` + consts.HookPreRun + `.sh"
 `
 )
 
@@ -697,7 +697,7 @@ func (e *Executor) plan() []step {
 			},
 		},
 		shellStep{
-			Name: "post-init",
+			Name: consts.HookPostInit,
 			Shell: &clawkerdv1.ShellCommand{
 				Stages:         []*clawkerdv1.PipeStage{userStage(postInitScript)},
 				TimeoutSeconds: initStepTimeoutPostInit,
@@ -709,7 +709,7 @@ func (e *Executor) plan() []step {
 		// install packages → reuse the post-init timeout. Fatal: a non-zero
 		// exit halts the plan, agent-ready is never sent, the CMD never spawns.
 		shellStep{
-			Name: "pre-run",
+			Name: consts.HookPreRun,
 			Shell: &clawkerdv1.ShellCommand{
 				Stages:         []*clawkerdv1.PipeStage{userStage(preRunScript)},
 				TimeoutSeconds: initStepTimeoutPostInit,

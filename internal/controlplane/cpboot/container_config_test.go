@@ -95,8 +95,13 @@ func TestINV_B1_006_PublicMaterialIsMounted(t *testing.T) {
 	}
 }
 
-// Tests INV-B1-008 [unit]: All ports published to localhost only.
-func TestINV_B1_008_AllPortsPublishedToLocalhostOnly(t *testing.T) {
+// Tests INV-B1-008 [unit]: all published CP ports bind to loopback only.
+//
+// Asserts loopback-ness semantically (netip.Addr.IsLoopback) instead of
+// comparing against the const production uses (tautology) or pinning one
+// literal representation: any zero or non-loopback HostIP publishes the
+// CP's admin/auth/health ports on every host interface.
+func TestINV_B1_008_AllPortsPublishedToLoopbackOnly(t *testing.T) {
 	testenv.New(t)
 	cfg := configmocks.NewBlankConfig()
 
@@ -105,9 +110,10 @@ func TestINV_B1_008_AllPortsPublishedToLocalhostOnly(t *testing.T) {
 	require.NotEmpty(t, cpConfig.PortBindings)
 
 	for portKey, bindings := range cpConfig.PortBindings {
+		require.NotEmpty(t, bindings, "port %s has no bindings", portKey)
 		for _, binding := range bindings {
-			assert.Equal(t, "127.0.0.1", binding.HostIP.String(),
-				"port %s must be published to 127.0.0.1, not %s", portKey, binding.HostIP)
+			assert.True(t, binding.HostIP.IsLoopback(),
+				"port %s must be published to a loopback address, got %q", portKey, binding.HostIP)
 		}
 	}
 }

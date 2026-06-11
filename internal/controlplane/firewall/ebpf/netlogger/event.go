@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"time"
 
+	"github.com/schmitthub/clawker/internal/consts"
 	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
 )
 
@@ -25,11 +26,11 @@ const (
 func (v Verdict) String() string {
 	switch v {
 	case VerdictAllowed:
-		return "allowed"
+		return consts.VerdictAllowed
 	case VerdictDenied:
-		return "denied"
+		return consts.VerdictDenied
 	case VerdictBypassed:
-		return "bypassed"
+		return consts.VerdictBypassed
 	default:
 		return fmt.Sprintf("unknown(%d)", uint8(v))
 	}
@@ -104,7 +105,7 @@ type Event struct {
 	Project     string
 
 	// Network 4-tuple destination side. SrcIP is the container's own
-	// clawker-net IP, redundant with attribution — not carried.
+	// clawker network IP, redundant with attribution — not carried.
 	//
 	// DstIP is invalid (zero netip.Addr) when NoDst=true (sock_create
 	// events have no destination). The sink omits the OTLP dst_ip

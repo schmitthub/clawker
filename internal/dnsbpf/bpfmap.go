@@ -10,7 +10,7 @@ import (
 )
 
 // DefaultPinPath is where the eBPF manager pins the dns_cache map.
-const DefaultPinPath = "/sys/fs/bpf/clawker/dns_cache"
+const DefaultPinPath = clawkerebpf.PinPath + "/" + clawkerebpf.DNSCacheMapName
 
 // dnsEntry mirrors struct dns_entry in bpf/common.h.
 // expire_ts uses wall-clock seconds (time.Now().Unix() + TTL), matching

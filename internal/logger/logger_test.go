@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/schmitthub/clawker/internal/consts"
 )
 
 func TestNew_WritesToFile(t *testing.T) {
@@ -314,7 +316,7 @@ func TestNew_OtelFallback(t *testing.T) {
 		LogsDir:   dir,
 		MaxSizeMB: 1,
 		Otel: &OtelOptions{
-			Endpoint:       "127.0.0.1:19876",
+			Endpoint:       consts.Localhost + ":19876",
 			Insecure:       true,
 			ExportInterval: 50 * time.Millisecond,
 			MaxQueueSize:   10,

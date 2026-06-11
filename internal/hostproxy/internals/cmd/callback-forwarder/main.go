@@ -1,3 +1,8 @@
+// TRIPWIRE: stdlib only — compiled standalone in Docker (//go:embed, no go.mod
+// in the build stage). NEVER import clawker-module packages (e.g. internal/consts);
+// it breaks the image build. Inline literals here are intentional, exempt from
+// the no-hardcoded-strings policy. See internal/hostproxy/internals/CLAUDE.md.
+//
 // callback-forwarder polls the host proxy for captured OAuth callback data and
 // forwards it to the local HTTP server (Claude Code's callback listener).
 //

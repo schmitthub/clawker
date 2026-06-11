@@ -320,7 +320,7 @@ func MintAgentCert(caCertPath, caKeyPath string, project ProjectSlug, agent Agen
 			// from x509's 64-byte CN limit (which used to force a
 			// 24-char cap on docker.GenerateRandomName output).
 			CommonName:   consts.ContainerClawkerd,
-			Organization: []string{"clawker"},
+			Organization: []string{certOrganization},
 		},
 		NotBefore: now.Add(-5 * time.Minute),
 		NotAfter:  now.Add(24 * time.Hour),

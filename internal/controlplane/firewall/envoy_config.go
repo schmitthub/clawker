@@ -456,7 +456,7 @@ func denyDefaultFilterChain(als ALSConfig) map[string]any {
 					"@type":       "type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy",
 					"stat_prefix": "egress_deny",
 					"cluster":     denyClusterName,
-					"access_log":  buildTCPAccessLog("tcp", "", "%REQUESTED_SERVER_NAME%", "denied", als),
+					"access_log":  buildTCPAccessLog("tcp", "", "%REQUESTED_SERVER_NAME%", consts.VerdictDenied, als),
 				},
 			},
 		},
@@ -495,13 +495,14 @@ func installOtelALSCluster(cfg *EnvoyConfig, als ALSConfig) error {
 // only emits it when als.MTLS is true; infra services must never push OTLP
 // across the untrusted lane.
 //
-// STRICT_DNS resolves `otel-collector` (clawker-net DNS) on every refresh; h2 is
+// STRICT_DNS resolves the collector's clawker network DNS name
+// (consts.MonitoringServiceOtelCollector) on every refresh; h2 is
 // required because OTLP/gRPC runs on HTTP/2. The upstream TLS context loads the
 // leaf+intermediate chain bind-mounted at /etc/envoy/otel-tls/client.{pem,key}
-// and validates the collector's server cert against the CLI root CA at ca.pem.
-// SNI is set to "otel-collector" so Envoy presents the expected hostname in the
-// ClientHello, and match_typed_subject_alt_names pins the upstream cert to that
-// SAN — defense-in-depth on top of the CLI-root trust boundary so a different
+// and validates the collector's server cert against the CLI root CA.
+// SNI is set to that same service name so Envoy presents the expected hostname
+// in the ClientHello, and match_typed_subject_alt_names pins the upstream cert
+// to that SAN — defense-in-depth on top of the CLI-root trust boundary so a different
 // CLI-root-chained leaf (a future infra service) can't impersonate the collector
 // for this cluster.
 func buildOtelALSCluster(als ALSConfig) map[string]any {
@@ -615,7 +616,7 @@ func buildHealthListener(port int) map[string]any {
 										"routes": []any{
 											map[string]any{
 												"match":    map[string]any{"prefix": "/"},
-												"metadata": clawkerActionMetadata("allowed"),
+												"metadata": clawkerActionMetadata(consts.VerdictAllowed),
 												"direct_response": map[string]any{
 													"status": 200,
 													"body":   map[string]any{"inline_string": "ok"},
@@ -929,7 +930,7 @@ func envoyAdmin() map[string]any {
 	return map[string]any{
 		"address": map[string]any{
 			"socket_address": map[string]any{
-				"address":    "127.0.0.1",
+				"address":    consts.Localhost,
 				"port_value": envoyAdminPort,
 			},
 		},

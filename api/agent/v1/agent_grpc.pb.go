@@ -27,7 +27,7 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
 // AgentService is the inbound gRPC surface clawkerd calls on the CP's
-// clawker-net agent listener. Today the only RPC is Register, the
+// agent listener on the clawker network. Today the only RPC is Register, the
 // one-time-per-container provenance handshake CP triggers via a
 // RegisterRequired Command on the existing CP→clawkerd Session stream.
 //
@@ -47,7 +47,7 @@ const (
 //     cannot be re-attempted for that container — registration is
 //     one-time per container creation.
 //
-// Transport: mTLS over TCP on the CP's clawker-net agent listener.
+// Transport: mTLS over TCP on the CP's clawker network agent listener.
 // Server requires a client cert chained to the CLI CA; authorization
 // via Hydra-issued bearer tokens scoped to the `clawker-agent` OAuth2
 // client (scope `agent:self:register`).
@@ -88,7 +88,7 @@ func (c *agentServiceClient) Register(ctx context.Context, in *RegisterRequest, 
 // for forward compatibility.
 //
 // AgentService is the inbound gRPC surface clawkerd calls on the CP's
-// clawker-net agent listener. Today the only RPC is Register, the
+// agent listener on the clawker network. Today the only RPC is Register, the
 // one-time-per-container provenance handshake CP triggers via a
 // RegisterRequired Command on the existing CP→clawkerd Session stream.
 //
@@ -108,7 +108,7 @@ func (c *agentServiceClient) Register(ctx context.Context, in *RegisterRequest, 
 //     cannot be re-attempted for that container — registration is
 //     one-time per container creation.
 //
-// Transport: mTLS over TCP on the CP's clawker-net agent listener.
+// Transport: mTLS over TCP on the CP's clawker network agent listener.
 // Server requires a client cert chained to the CLI CA; authorization
 // via Hydra-issued bearer tokens scoped to the `clawker-agent` OAuth2
 // client (scope `agent:self:register`).

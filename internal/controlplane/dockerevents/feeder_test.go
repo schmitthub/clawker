@@ -15,6 +15,7 @@ import (
 	mobyclient "github.com/moby/moby/client"
 	"github.com/stretchr/testify/require"
 
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane/overseer"
 	"github.com/schmitthub/clawker/internal/logger"
 )
@@ -270,13 +271,13 @@ func TestReconcile_PopulatesContainersInWorldview(t *testing.T) {
 				Labels: map[string]string{testManagedKey: testManagedValue},
 				NetworkSettings: &mobycontainer.NetworkSettingsSummary{
 					Networks: map[string]*mobynetwork.EndpointSettings{
-						"clawker-net": {NetworkID: "net1"},
+						consts.Network: {NetworkID: "net1"},
 					},
 				},
 			},
 		}},
 		networkListResult: mobyclient.NetworkListResult{Items: []mobynetwork.Summary{
-			{Network: mobynetwork.Network{ID: "net1", Name: "clawker-net", Driver: "bridge", Scope: "local",
+			{Network: mobynetwork.Network{ID: "net1", Name: consts.Network, Driver: "bridge", Scope: "local",
 				Labels: map[string]string{testManagedKey: testManagedValue}}},
 		}},
 	}
@@ -313,13 +314,13 @@ func TestReconcile_PublishesNetworkConnected(t *testing.T) {
 				Labels: map[string]string{testManagedKey: testManagedValue},
 				NetworkSettings: &mobycontainer.NetworkSettingsSummary{
 					Networks: map[string]*mobynetwork.EndpointSettings{
-						"clawker-net": {NetworkID: "net1"},
+						consts.Network: {NetworkID: "net1"},
 					},
 				},
 			},
 		}},
 		networkListResult: mobyclient.NetworkListResult{Items: []mobynetwork.Summary{
-			{Network: mobynetwork.Network{ID: "net1", Name: "clawker-net",
+			{Network: mobynetwork.Network{ID: "net1", Name: consts.Network,
 				Labels: map[string]string{testManagedKey: testManagedValue}}},
 		}},
 	}

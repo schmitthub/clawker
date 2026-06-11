@@ -32,12 +32,12 @@ type RuntimeEnvOpts struct {
 	// CPHealthzURL is the plain-HTTP /healthz URL the entrypoint polls
 	// before running CMD. Empty string skips the poll (only meaningful
 	// when FirewallEnabled=false). Reachable via Docker's bridge DNS
-	// because the agent container and CP share clawker-net.
+	// because the agent container and CP share the clawker network.
 	CPHealthzURL string
 
 	// clawkerd bootstrap targets. clawkerd reads these to find the CP's
 	// Hydra public endpoint (token exchange) and the CP's agent gRPC
-	// listener on clawker-net (Connect dial), and to know which slot
+	// listener on the clawker network (Connect dial), and to know which slot
 	// to consume at Connect time. Empty string omits the env var.
 	ClawkerdHydraURL  string // CLAWKER_CP_HYDRA_URL
 	ClawkerdAgentAddr string // CLAWKER_CP_AGENT_ADDR
@@ -73,13 +73,13 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 		m[consts.EnvAgent] = opts.Agent
 	}
 	if opts.WorkspaceMode != "" {
-		m["CLAWKER_WORKSPACE_MODE"] = opts.WorkspaceMode
+		m[consts.EnvWorkspaceMode] = opts.WorkspaceMode
 	}
 	if opts.WorkspaceSource != "" {
-		m["CLAWKER_WORKSPACE_SOURCE"] = opts.WorkspaceSource
+		m[consts.EnvWorkspaceSource] = opts.WorkspaceSource
 	}
 	if opts.Version != "" {
-		m["CLAWKER_VERSION"] = opts.Version
+		m[consts.EnvVersion] = opts.Version
 	}
 
 	// Base defaults: editor/visual
@@ -104,10 +104,10 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 
 	// Firewall (simple flag — eBPF programs attached post-start via manager.Enable)
 	if opts.FirewallEnabled {
-		m["CLAWKER_FIREWALL_ENABLED"] = "true"
+		m[consts.EnvFirewallEnabled] = "true"
 	}
 	if opts.CPHealthzURL != "" {
-		m["CLAWKER_CP_HEALTHZ_URL"] = opts.CPHealthzURL
+		m[consts.EnvCPHealthzURL] = opts.CPHealthzURL
 	}
 
 	// clawkerd bootstrap env vars — only what the daemon can authoritatively
@@ -137,7 +137,7 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 		resourceAttrs = append(resourceAttrs, "agent="+opts.Agent)
 	}
 	if len(resourceAttrs) > 0 {
-		m["OTEL_RESOURCE_ATTRIBUTES"] = strings.Join(resourceAttrs, ",")
+		m[consts.EnvOTelResourceAttributes] = strings.Join(resourceAttrs, ",")
 	}
 
 	// Disable telemetry when monitoring stack is not running.
@@ -145,7 +145,7 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 	// here so containers don't silently attempt exports to unreachable otel-collector.
 	// Users can still force-enable via agent.env (applied after this).
 	if !opts.MonitoringActive {
-		m["CLAUDE_CODE_ENABLE_TELEMETRY"] = "0"
+		m[consts.EnvClaudeCodeEnableTelemetry] = "0"
 	}
 
 	// Socket forwarding (consumed by clawker-socket-server binary inside container)
@@ -153,8 +153,8 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 		var sockets []map[string]string
 		if opts.GPGForwardingEnabled {
 			sockets = append(sockets, map[string]string{
-				"path": "/home/claude/.gnupg/S.gpg-agent",
-				"type": "gpg-agent",
+				"path": consts.ContainerHomeDir + "/.gnupg/S.gpg-agent",
+				"type": consts.SocketTypeGPGAgent,
 			})
 			// Override gpg.program via env vars so the container's gpg binary is used
 			// regardless of what the host's gitconfig (global or local) specifies.
@@ -165,18 +165,19 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 			m["GIT_CONFIG_VALUE_0"] = "/usr/bin/gpg"
 		}
 		if opts.SSHForwardingEnabled {
+			sshAgentSock := consts.ContainerHomeDir + "/.ssh/agent.sock"
 			sockets = append(sockets, map[string]string{
-				"path": "/home/claude/.ssh/agent.sock",
-				"type": "ssh-agent",
+				"path": sshAgentSock,
+				"type": consts.SocketTypeSSHAgent,
 			})
 			// SSH tools need SSH_AUTH_SOCK to find the forwarded socket
-			m["SSH_AUTH_SOCK"] = "/home/claude/.ssh/agent.sock"
+			m["SSH_AUTH_SOCK"] = sshAgentSock
 		}
 		socketsBytes, err := json.Marshal(sockets)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal remote sockets: %w", err)
 		}
-		m["CLAWKER_REMOTE_SOCKETS"] = string(socketsBytes)
+		m[consts.EnvRemoteSockets] = string(socketsBytes)
 	}
 
 	// Worktree containers: disable Go VCS stamping. Go's VCS discovery only

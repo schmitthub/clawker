@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane/overseer"
 	"github.com/schmitthub/clawker/internal/logger"
 )
@@ -356,7 +357,7 @@ func TestDispatch_NetworkCreate_PublishesForManaged(t *testing.T) {
 
 	t.Run("managed", func(t *testing.T) {
 		cli := &netInspectClient{got: mobynetwork.Inspect{Network: mobynetwork.Network{
-			Name:   "clawker-net",
+			Name:   consts.Network,
 			Driver: "bridge",
 			Scope:  "local",
 			Labels: map[string]string{testManagedKey: testManagedValue, "clawker": "true"},

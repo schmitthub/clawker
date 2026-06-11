@@ -23,7 +23,7 @@ import (
 // inject a fake without reaching into package-level seams.
 type Manager interface {
 	// EnsureRunning is idempotent: it builds the CP image if missing,
-	// creates/starts the container on clawker-net, and blocks until the
+	// creates/starts the container on the clawker network, and blocks until the
 	// aggregate /healthz endpoint returns 200 and the CP clock has caught up
 	// to the host. The clock-sync step is a readiness gate, not a
 	// value source: it guarantees the CP clock has reconverged with the host
@@ -130,7 +130,7 @@ func (m *manager) ProbeHealthz(ctx context.Context) (int, error) {
 // one polls for readiness with retries; this one is a point-in-time
 // snapshot for `controlplane status`.
 func probeHealthz(ctx context.Context, port int) (int, error) {
-	url := fmt.Sprintf("http://127.0.0.1:%d/healthz", port)
+	url := fmt.Sprintf("http://"+consts.Localhost+":%d/healthz", port)
 	httpClient := &http.Client{Timeout: probeHealthzTimeout}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {

@@ -94,7 +94,7 @@ type CPContainerConfig struct {
 }
 
 // localhost is the 127.0.0.1 address used for all published port bindings.
-var localhost = netip.MustParseAddr("127.0.0.1")
+var localhost = netip.MustParseAddr(consts.Localhost)
 
 // BuildCPContainerConfig constructs the CPContainerConfig for the control
 // plane container. Reads all ports from cfg.Settings().ControlPlane —
@@ -357,7 +357,7 @@ func BuildCPContainerConfig(cfg config.Config, opts CPContainerOpts) (*CPContain
 // Endpoint: https://host.docker.internal:<OtelInfraPort>. CP is exempt
 // from the BPF firewall (not enrolled in container_map) and has
 // host.docker.internal mapped via ExtraHosts, so the dial reaches the
-// host-loopback-bound docker port forwarder. Agents on clawker-net
+// host-loopback-bound docker port forwarder. Agents on the clawker network
 // cannot present a CLI-signed client cert and so the receiver rejects
 // their TLS handshake — the gate is crypto, not network.
 //
@@ -375,7 +375,7 @@ func otelLogsEnv(cfg config.Config) []string {
 	mon := cfg.SettingsStore().Read().Monitoring
 	endpoint := fmt.Sprintf("https://host.docker.internal:%d", mon.OtelInfraPort)
 	return []string{
-		"OTEL_EXPORTER_OTLP_ENDPOINT=" + endpoint,
+		consts.EnvOTLPEndpoint + "=" + endpoint,
 		// mTLS material is NOT injected via env. The CP-side exporter
 		// is wired in-process via internal/controlplane/otelcerts —
 		// leaves are minted from the infra intermediate on every

@@ -522,6 +522,58 @@ func TestPrepareClaudeConfig_SymlinksResolved(t *testing.T) {
 	}
 }
 
+func TestPrepareClaudeConfig_BrokenSymlinkSkipped(t *testing.T) {
+	hostDir := t.TempDir()
+
+	// Plugins cache with a dangling symlink (stale plugin file removed by an
+	// update) next to a valid file — mirrors Claude Code leaving broken cache
+	// symlinks behind.
+	cacheDir := filepath.Join(hostDir, "plugins", "cache", "my-plugin")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cacheDir, "good.md"), []byte("good"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(hostDir, "plugins", "marketplaces", "gone"), filepath.Join(cacheDir, "SKILL.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	// Same shape inside agents/ to exercise the copyDir path.
+	agentsDir := filepath.Join(hostDir, "agents")
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agentsDir, "agent.md"), []byte("agent"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(hostDir, "no-such-target"), filepath.Join(agentsDir, "dangling.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	stagingDir, cleanup, err := PrepareClaudeConfig(logger.Nop(), hostDir, "/home/claude", "/workspace")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer cleanup()
+
+	// Valid files copied.
+	if _, err := os.Stat(filepath.Join(stagingDir, ".claude", "plugins", "cache", "my-plugin", "good.md")); err != nil {
+		t.Errorf("good.md should be copied: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(stagingDir, ".claude", "agents", "agent.md")); err != nil {
+		t.Errorf("agent.md should be copied: %v", err)
+	}
+
+	// Broken symlinks skipped, not staged.
+	if _, err := os.Lstat(filepath.Join(stagingDir, ".claude", "plugins", "cache", "my-plugin", "SKILL.md")); !os.IsNotExist(err) {
+		t.Error("broken plugin symlink should be skipped")
+	}
+	if _, err := os.Lstat(filepath.Join(stagingDir, ".claude", "agents", "dangling.md")); !os.IsNotExist(err) {
+		t.Error("broken agents symlink should be skipped")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // PrepareCredentials
 // ---------------------------------------------------------------------------

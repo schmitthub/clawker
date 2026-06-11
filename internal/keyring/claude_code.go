@@ -2,6 +2,10 @@ package keyring
 
 import "github.com/google/uuid"
 
+// claudeCodeCredentialsService is the OS keyring service name Claude
+// Code stores its credential blob under.
+const claudeCodeCredentialsService = "Claude Code-credentials"
+
 // ClaudeCodeCredentials is the top-level JSON schema stored in the OS keychain
 // by Claude Code under the service name "Claude Code-credentials".
 type ClaudeCodeCredentials struct {
@@ -27,7 +31,7 @@ type ClaudeAiOauth struct {
 // to refresh in place at runtime. Gating on expiry here would discard a
 // perfectly refreshable credential.
 var claudeCodeService = ServiceDef[ClaudeCodeCredentials]{
-	ServiceName: "Claude Code-credentials",
+	ServiceName: claudeCodeCredentialsService,
 	User:        currentOSUser,
 	Parse:       jsonParse[ClaudeCodeCredentials],
 }

@@ -145,8 +145,10 @@ var (
 )
 
 const (
-	// CPLogsPath is the container-side directory for CP logs.
-	// Bind-mounted from the host's state/logs directory.
+	// CPLogsPath is the container-side clawker log directory. In the CP
+	// container it is bind-mounted from the host's state/logs directory;
+	// agent-container helpers (the socket server) write theirs to the
+	// same path in the container's own filesystem.
 	CPLogsPath = "/var/log/clawker"
 
 	// CPDockerSockPath is the host-side Docker socket path.
@@ -160,22 +162,34 @@ const (
 	// CPClawkerConfigDir is the container-side directory for Clawker config.
 	CPClawkerConfigDir = CPClawkerDir + "/config"
 
+	// cpAuthDir is the container-side root of the auth material tree —
+	// the in-container mirror of the host-side authDir under DataDir.
+	// The CP*Path constants below build on it plus the per-subdir
+	// segments so the container-side paths track the host-side
+	// Auth*Dir accessors (same authDir/auth*Subdir/*File building
+	// blocks; the paths cannot drift apart).
+	cpAuthDir        = CPClawkerDir + "/" + authDir
+	cpAuthTLSDir     = cpAuthDir + "/" + authTLSSubdir
+	cpAuthCLIDir     = cpAuthDir + "/" + authCLISubdir
+	cpAuthCPDir      = cpAuthDir + "/" + authCPSubdir
+	cpAuthInfraCADir = cpAuthDir + "/" + authInfraCASubdir
+
 	// CPMaxRestartRetries bounds Docker's on-failure restart loop so a
 	// persistently crashing CP stays down until the user runs
 	// `clawker controlplane up`.
 	CPMaxRestartRetries = 3
 
 	// CPCACertPath is the container-side path for the CP's CA certificate.
-	CPCACertPath = CPClawkerDir + "/auth/tls/ca.pem"
+	CPCACertPath = cpAuthTLSDir + "/" + CACertFile
 
 	// CPTLSCertPath and CPTLSKeyPath are the container-side paths for the CP's TLS certificate and private key.
-	CPTLSCertPath = CPClawkerDir + "/auth/tls/server.pem"
+	CPTLSCertPath = cpAuthTLSDir + "/" + ServerCertFile
 
 	// CPTLSKeyPath is the container-side path for the CP's TLS private key.
-	CPTLSKeyPath = CPClawkerDir + "/auth/tls/server.key"
+	CPTLSKeyPath = cpAuthTLSDir + "/" + ServerKeyFile
 
 	// CPCLIPubKeyPath is the container-side path for the CLI's public signing key (JWK).
-	CPCLIPubKeyPath = CPClawkerDir + "/auth/cli/signing-jwk.json"
+	CPCLIPubKeyPath = cpAuthCLIDir + "/" + SigningJWKFile
 
 	// CPClientCertPath / CPClientKeyPath are the container-side paths
 	// for the CP's outbound mTLS identity. CN equals ContainerCP and
@@ -184,8 +198,8 @@ const (
 	// OTLP receiver, etc.) accepts this cert. One identity cert
 	// across all CP-as-client uses keeps the contract simple — the
 	// cert IS "this is the CP".
-	CPClientCertPath = CPClawkerDir + "/auth/cp/client.pem"
-	CPClientKeyPath  = CPClawkerDir + "/auth/cp/client.key"
+	CPClientCertPath = cpAuthCPDir + "/" + ClientCertFile
+	CPClientKeyPath  = cpAuthCPDir + "/" + ClientKeyFile
 
 	// CPInfraCACertPath / CPInfraCAKeyPath are the container-side paths
 	// for the infra intermediate CA the CP uses to mint short-lived
@@ -197,8 +211,8 @@ const (
 	// lane to envoy/coredns/cp senders — a CLI-root-signed agent leaf
 	// cannot chain to the intermediate and is rejected at the TLS
 	// handshake. See internal/controlplane/infracerts for the Issuer.
-	CPInfraCACertPath = CPClawkerDir + "/auth/infra-ca/infra-ca.pem"
-	CPInfraCAKeyPath  = CPClawkerDir + "/auth/infra-ca/infra-ca.key"
+	CPInfraCACertPath = cpAuthInfraCADir + "/" + InfraCACertFile
+	CPInfraCAKeyPath  = cpAuthInfraCADir + "/" + InfraCAKeyFile
 
 	// CPFirewallDataDir is the container-side directory for CP-managed firewall state.
 	CPFirewallDataDir = CPClawkerDataDir + "/firewall"
@@ -211,7 +225,7 @@ const (
 	// CPControlPlaneDBPath is the container-side path to the sqlite
 	// database the CP daemon owns. agentregistry holds the `agents`
 	// table; future CP-owned tables share the same file.
-	CPControlPlaneDBPath = CPControlPlaneDir + "/controlplane.db"
+	CPControlPlaneDBPath = CPControlPlaneDir + "/" + ControlPlaneDBFile
 
 	CPKratosConfigFilename = "kratos.yaml"
 

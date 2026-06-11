@@ -22,6 +22,7 @@ Imports: `internal/config`, `internal/keyring`, `internal/logger`, stdlib only. 
 - CLAUDE.md: Direct copy if present (user-level instructions)
 - agents/, skills/, commands/: Full recursive copy, symlinks resolved
 - plugins/: Full recursive copy including cache/, minus install-counts-cache.json
+- Broken symlinks: warn-logged and skipped (Claude Code leaves dangling cache symlinks after plugin updates and ignores them itself)
 - known_marketplaces.json: `installPath` and `installLocation` values rewritten for container paths
 - installed_plugins.json: `installPath` rewritten for container paths, `projectPath` replaced with `containerWorkDir`
 - Missing files/dirs: logged and skipped (not errors)

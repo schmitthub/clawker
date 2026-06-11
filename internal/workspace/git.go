@@ -3,6 +3,7 @@ package workspace
 import (
 	"github.com/moby/moby/api/types/mount"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -24,7 +25,7 @@ func SetupGitCredentials(cfg *config.GitCredentialsConfig, hostProxyRunning bool
 
 	// HTTPS credential forwarding (requires host proxy)
 	if cfg.GitHTTPSEnabled(hostProxyRunning) {
-		result.Env = append(result.Env, "CLAWKER_GIT_HTTPS=true")
+		result.Env = append(result.Env, consts.EnvGitHTTPS+"=true")
 		log.Debug().Msg("git HTTPS credential forwarding enabled")
 	}
 

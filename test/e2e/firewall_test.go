@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
@@ -411,17 +412,17 @@ func TestFirewall_IntraNetworkBypass(t *testing.T) {
 	h := newFirewallHarness(t)
 	ctx := context.Background()
 
-	// Boot a container to trigger firewall startup and create clawker-net.
+	// Boot a container to trigger firewall startup and create the clawker network.
 	bootRes := h.RunInContainer("intra-net-boot", "echo", "started")
 	require.NoError(t, bootRes.Err, "boot container failed\nstdout: %s\nstderr: %s",
 		bootRes.Stdout, bootRes.Stderr)
 
-	// Start a simple HTTP listener on clawker-net — no firewall rule for this service.
+	// Start a simple HTTP listener on the clawker network — no firewall rule for this service.
 	listenerName := fmt.Sprintf("clawker-test-listener-%d", time.Now().UnixNano())
 	//nolint:gosec // args are test-controlled
 	startCmd := exec.CommandContext(ctx, "docker", "run", "-d",
 		"--name", listenerName,
-		"--network", "clawker-net",
+		"--network", consts.Network,
 		"busybox", "sh", "-c",
 		"mkdir -p /www && echo OK > /www/index.html && httpd -f -p 8080 -h /www")
 	startOut, err := startCmd.CombinedOutput()
@@ -430,10 +431,10 @@ func TestFirewall_IntraNetworkBypass(t *testing.T) {
 		_ = exec.CommandContext(context.Background(), "docker", "rm", "-f", listenerName).Run()
 	})
 
-	// Get the listener's IP on clawker-net.
+	// Get the listener's IP on the clawker network.
 	//nolint:gosec // args are test-controlled
 	ipOut, err := exec.CommandContext(ctx, "docker", "inspect", "-f",
-		`{{(index .NetworkSettings.Networks "clawker-net").IPAddress}}`,
+		`{{(index .NetworkSettings.Networks "`+consts.Network+`").IPAddress}}`,
 		listenerName).Output()
 	require.NoError(t, err, "inspect listener IP failed")
 	listenerIP := strings.TrimSpace(string(ipOut))
@@ -605,7 +606,7 @@ func TestFirewall_DockerInternalDNS(t *testing.T) {
 		hostRes.Stdout, hostRes.Stderr)
 	assert.NotEmpty(t, strings.TrimSpace(hostRes.Stdout), "should get an IP for host.docker.internal")
 
-	// If monitoring stack is running (otel-collector on clawker-net), verify it resolves.
+	// If monitoring stack is running (otel-collector on the clawker network), verify it resolves.
 	otelRes := h.ExecInContainer("dns-test", "getent", "hosts", "otel-collector")
 	t.Logf("otel-collector: stdout=%q stderr=%q err=%v", otelRes.Stdout, otelRes.Stderr, otelRes.Err)
 	if otelRes.Err == nil {

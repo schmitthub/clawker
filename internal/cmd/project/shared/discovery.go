@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/storage"
 )
 
@@ -31,7 +32,7 @@ func HasLocalProjectConfig(cfg config.Config, dir string) bool {
 	mainFile := cfg.ProjectConfigFileName() // "clawker.yaml"
 	ext := filepath.Ext(mainFile)           // ".yaml"
 	base := strings.TrimSuffix(mainFile, ext)
-	localFile := base + ".local" + ext // "clawker.local.yaml"
+	localFile := base + ".local" + ext // the gitignored local override variant
 
 	probe, err := storage.NewStore[config.Project](
 		storage.WithFilenames(mainFile, localFile),
@@ -57,7 +58,7 @@ func isLayerUnderDir(layer storage.LayerInfo, dirPrefix string) bool {
 
 	// Dir form: dir/.clawker/clawker.yaml
 	parent := filepath.Dir(clean)
-	if filepath.Dir(parent)+string(filepath.Separator) == dirPrefix && filepath.Base(parent) == ".clawker" {
+	if filepath.Dir(parent)+string(filepath.Separator) == dirPrefix && filepath.Base(parent) == consts.DotClawkerDir {
 		return true
 	}
 

@@ -1,6 +1,6 @@
 # Network Command Package
 
-Network management for `clawker-net` dedicated container network.
+Network management for the dedicated clawker container network.
 
 ## Files
 
@@ -22,4 +22,4 @@ Network management for `clawker-net` dedicated container network.
 func NewCmdNetwork(f *cmdutil.Factory) *cobra.Command
 ```
 
-Parent command only (no RunE). Aggregates subcommands from dedicated packages. Clawker uses `clawker-net` for container communication and monitoring stack.
+Parent command only (no RunE). Aggregates subcommands from dedicated packages. Clawker uses the clawker network for container communication and the monitoring stack.

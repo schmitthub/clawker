@@ -1,7 +1,7 @@
 package consts
 
 // Monitoring stack service names. Each value is the hostname its
-// container registers under on clawker-net (compose service key →
+// container registers under on the clawker network (compose service key →
 // Docker DNS). A subset — see [MonitoringServiceHostnames] — is
 // forwarded by CoreDNS to Docker's embedded resolver so agent
 // containers can dial the OTEL collector and Prometheus when the
@@ -34,7 +34,7 @@ const (
 // prometheus is included for workflows that scrape it from agent code.
 // opensearch-node + opensearch-dashboards are deliberately omitted —
 // agents push telemetry through the collector and never query/write
-// the indices directly. Containers on clawker-net that DO need those
+// the indices directly. Containers on the clawker network that DO need those
 // (the collector, the dashboards UI, the one-shot bootstrap container)
 // reach them via Docker's embedded resolver without going through
 // CoreDNS. The bootstrap container has no constant in this file either
@@ -44,3 +44,33 @@ var MonitoringServiceHostnames = []string{
 	MonitoringServiceOtelCollector,
 	MonitoringServicePrometheus,
 }
+
+// OpenTelemetry SDK env var names (the OTel spec's spellings) plus the
+// clawker-specific CoreDNS endpoint override.
+const (
+	// EnvOTLPEndpoint is the OTLP exporter base endpoint env var.
+	EnvOTLPEndpoint = "OTEL_EXPORTER_OTLP_ENDPOINT"
+	// EnvOTLPLogsEndpoint is the logs-signal OTLP endpoint env var.
+	EnvOTLPLogsEndpoint = "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"
+	// EnvCoreDNSOtelEndpoint points the coredns-clawker otel plugin at
+	// the collector's OTLP gRPC endpoint (CP↔CoreDNS contract).
+	EnvCoreDNSOtelEndpoint = "CLAWKER_COREDNS_OTEL_ENDPOINT"
+	// EnvOTelResourceAttributes carries comma-joined resource attributes
+	// (project/agent segmentation) per the OTel SDK spec.
+	EnvOTelResourceAttributes = "OTEL_RESOURCE_ATTRIBUTES"
+	// EnvClaudeCodeEnableTelemetry toggles Claude Code's telemetry export;
+	// the env builder overrides the image-baked default to 0 when the
+	// monitoring stack is down.
+	EnvClaudeCodeEnableTelemetry = "CLAUDE_CODE_ENABLE_TELEMETRY"
+)
+
+// Per-record firewall verdict values for the `action` log attribute,
+// stamped by the Envoy access-log generator and netlogger's eBPF egress
+// events. An OpenSearch index wire contract: index templates and
+// dashboards key on these values. Distinct vocabulary from the egress
+// rule allow/deny action tokens; do not conflate the two.
+const (
+	VerdictAllowed  = "allowed"
+	VerdictDenied   = "denied"
+	VerdictBypassed = "bypassed"
+)

@@ -157,7 +157,7 @@ Three packages form the configuration subsystem. `storage` is the engine, `confi
 
 ### internal/storage - Layered YAML Store Engine
 
-Generic `Store[T]` that handles the full lifecycle of layered YAML configuration. Zero internal imports (leaf package). See `internal/storage/CLAUDE.md` for detailed API reference.
+Generic `Store[T]` that handles the full lifecycle of layered YAML configuration. Leaf package — its only `internal/` import is `internal/consts` (itself stdlib-only), for XDG directory resolution and the dotted config-directory name. See `internal/storage/CLAUDE.md` for detailed API reference.
 
 **Node tree architecture:** The node tree (`map[string]any`) is the merge engine and persistence layer. The typed struct `*T` is a deserialized view — the read/write API. Merge operates on maps only; the struct is deserialized from the merged tree at end of construction. This avoids the `omitempty` problem (YAML marshaling drops zero-value fields like `false` or `0`).
 
@@ -350,7 +350,7 @@ User interaction utilities with TTY and CI awareness.
 | `internal/containerfs` | Host Claude config preparation for container init: copies settings, plugins, credentials to config volume; prepares post-init script tar (leaf — keyring + logger only) |
 | `internal/term` | Terminal capabilities, raw mode, size detection (leaf — stdlib + x/term only) |
 | `internal/signals` | OS signal utilities — `SetupSignalContext`, `ResizeHandler` (leaf — stdlib only) |
-| `internal/storage` | `Store[T]` — generic layered YAML store engine: discovery (static/walk-up), load+migrate, merge with provenance, scoped writes, atomic I/O, flock. **Leaf** — zero internal imports. See `internal/storage/CLAUDE.md` |
+| `internal/storage` | `Store[T]` — generic layered YAML store engine: discovery (static/walk-up), load+migrate, merge with provenance, scoped writes, atomic I/O, flock. **Leaf** — only internal import is `internal/consts` (stdlib-only). See `internal/storage/CLAUDE.md` |
 | `internal/config` | Thin wrapper composing `Store[Project]` + `Store[Settings]`. Exposes `Config` interface with namespaced accessors, path/constant helpers (~40 methods). **Foundation** — imports storage only. See `internal/config/CLAUDE.md` |
 | `internal/monitor` | Observability stack templates (OTel Collector, OpenSearch, OpenSearch Dashboards, Prometheus) |
 | `internal/logger` | Zerolog setup |
@@ -656,7 +656,7 @@ Domain packages form a directed acyclic graph verified via `goda`. Tiers describ
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  LEAF PACKAGES — zero internal imports                           │
+│  LEAF PACKAGES — no internal imports (consts exempt: stdlib-only) │
 │                                                                 │
 │  Import: standard library only (or external-only like go-git)   │
 │  Imported by: anyone                                            │
@@ -742,6 +742,8 @@ Domain packages form a directed acyclic graph verified via `goda`. Tiers describ
   ✓  composite → foundation        docker imports config
 
   ✗  leaf → anything internal      storage must never import config
+                                   (internal/consts is exempt: stdlib-only,
+                                   foundational vocabulary)
   ✗  foundation ↔ foundation       config must never import iostreams
   ✗  Any cycle                     A → B → A is always wrong
 ```

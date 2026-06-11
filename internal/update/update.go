@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/schmitthub/clawker/internal/consts"
 	"gopkg.in/yaml.v3"
 )
 
@@ -51,12 +52,12 @@ type githubRelease struct {
 
 // ShouldCheckForUpdate returns false if update checks should be suppressed.
 // Suppression conditions:
-//   - CLAWKER_NO_UPDATE_NOTIFIER env var is set (non-empty)
+//   - consts.EnvNoUpdateNotifier env var is set (non-empty)
 //   - CI env var is set (non-empty) — standard CI detection
 //   - currentVersion is "DEV" — development build
 //   - stateFilePath is non-empty and cache is fresh (checked < 24h ago)
 func ShouldCheckForUpdate(stateFilePath, currentVersion string) bool {
-	if os.Getenv("CLAWKER_NO_UPDATE_NOTIFIER") != "" {
+	if os.Getenv(consts.EnvNoUpdateNotifier) != "" {
 		return false
 	}
 	if os.Getenv("CI") != "" {

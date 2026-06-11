@@ -36,7 +36,7 @@ func newStackFixture(t *testing.T) *stackFixture {
 	require.NoError(t, err)
 
 	fake := dockermocks.NewFakeClient(cfg)
-	// Default: clawker-net exists with managed labels + a valid IPAM
+	// Default: the clawker network exists with managed labels + a valid IPAM
 	// config matching config defaults. Tests wanting a missing-network
 	// scenario override NetworkInspectFn to return ErrNetworkNotFound.
 	fake.FakeAPI.NetworkInspectFn = func(_ context.Context, name string, _ mobyclient.NetworkInspectOptions) (mobyclient.NetworkInspectResult, error) {
@@ -66,7 +66,7 @@ func newStackFixture(t *testing.T) *stackFixture {
 }
 
 func TestStack_Accessors_EmptyWhenNetworkMissing(t *testing.T) {
-	// Pre-bring-up state: the clawker-net network does not exist yet.
+	// Pre-bring-up state: the clawker network does not exist yet.
 	// Accessors must return empty strings rather than panicking or
 	// returning stale values.
 	cfg := configmocks.NewIsolatedTestConfig(t)

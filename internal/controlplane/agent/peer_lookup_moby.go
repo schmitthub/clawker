@@ -44,7 +44,7 @@ func NewMobyPeerLookup(cli mobyclient.APIClient, log *logger.Logger) *MobyPeerLo
 }
 
 // LookupByIP walks every `purpose=agent` container and returns the
-// one whose clawker-net endpoint IP matches ip. The walk is
+// one whose clawker network endpoint IP matches ip. The walk is
 // exhaustive: ambiguous-IP advertisements (multiple containers with
 // overlapping endpoint state during restart cycles) return
 // ErrAmbiguousPeerIP rather than picking the first match. A
@@ -120,7 +120,7 @@ func (m *MobyPeerLookup) LookupByIP(ctx context.Context, ip netip.Addr) (Resolve
 			Stringer("peer_ip", ip).
 			Strs("container_ids", ids).
 			Str("event", "peer_lookup_ambiguous_match").
-			Msg("multiple purpose=agent containers advertise the same clawker-net IP — failing closed")
+			Msg("multiple purpose=agent containers advertise the same " + consts.Network + " IP — failing closed")
 		return ResolvedContainer{}, ErrAmbiguousPeerIP
 	}
 

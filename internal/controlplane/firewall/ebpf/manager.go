@@ -185,9 +185,9 @@ func (m *Manager) OpenPinned() error {
 	// them. The netlogger pipeline consumes them via the in-process
 	// EventsRingbuf() / EventsDrops() accessors instead.
 	maps := map[string]**ebpf.Map{
-		"container_map":   &m.objs.ContainerMap,
+		ContainerMapName:  &m.objs.ContainerMap,
 		"bypass_map":      &m.objs.BypassMap,
-		"dns_cache":       &m.objs.DnsCache,
+		DNSCacheMapName:   &m.objs.DnsCache,
 		"route_map":       &m.objs.RouteMap,
 		"udp_flow_map":    &m.objs.UdpFlowMap,
 		"metrics_map":     &m.objs.MetricsMap,
@@ -287,7 +287,7 @@ func (m *Manager) cleanupStaleLinks() {
 	// in the container_map (if it exists). A cgroup in container_map is
 	// an active enforcement target — keep its links. Everything else is stale.
 	liveIDs := make(map[uint64]bool)
-	containerMap, err := ebpf.LoadPinnedMap(filepath.Join(m.pinPath, "container_map"), nil)
+	containerMap, err := ebpf.LoadPinnedMap(filepath.Join(m.pinPath, ContainerMapName), nil)
 	if err == nil {
 		defer containerMap.Close()
 		for id := range cgroupIDs {

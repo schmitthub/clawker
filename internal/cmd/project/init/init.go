@@ -823,7 +823,7 @@ func customizeOverrides() []storeui.Override {
 		{
 			Path:    "workspace.default_mode",
 			Kind:    storeui.Ptr(storeui.KindSelect),
-			Options: []string{"bind", "snapshot"},
+			Options: []string{string(config.ModeBind), string(config.ModeSnapshot)},
 		},
 	}
 }

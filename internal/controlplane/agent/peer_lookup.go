@@ -6,6 +6,7 @@ import (
 	"net/netip"
 
 	"github.com/schmitthub/clawker/internal/auth"
+	"github.com/schmitthub/clawker/internal/consts"
 )
 
 // ResolvedContainer is the authoritative identity of an agent
@@ -21,10 +22,10 @@ type ResolvedContainer struct {
 }
 
 // ErrNoContainerForPeerIP is returned when no `purpose=agent`
-// container on the clawker-net network has an endpoint IP matching
+// container on the clawker network has an endpoint IP matching
 // the requested peer IP. Callers MUST treat this as a hard
 // authentication failure.
-var ErrNoContainerForPeerIP = errors.New("no purpose=agent container with matching clawker-net IP")
+var ErrNoContainerForPeerIP = errors.New("no purpose=agent container with matching " + consts.Network + " IP")
 
 // ErrInvalidAgentLabel is returned when the container matched by peer
 // IP carries a missing or malformed dev.clawker.agent label. A missing
@@ -37,7 +38,7 @@ var ErrNoContainerForPeerIP = errors.New("no purpose=agent container with matchi
 var ErrInvalidAgentLabel = errors.New("agent container has invalid identity label")
 
 // ErrAmbiguousPeerIP is returned when two or more `purpose=agent`
-// containers on clawker-net advertise endpoints with the same peer
+// containers on the clawker network advertise endpoints with the same peer
 // IP. Docker can transiently leave stale endpoints in
 // NetworkSettings.Networks during restart cycles, and grounding the
 // trust anchor on the first match would create a race window. Fail
@@ -46,7 +47,7 @@ var ErrInvalidAgentLabel = errors.New("agent container has invalid identity labe
 var ErrAmbiguousPeerIP = errors.New("multiple purpose=agent containers match peer IP")
 
 // ContainerByPeerIP resolves a live mTLS peer IP to the
-// `purpose=agent` container owning that IP on clawker-net. Returns
+// `purpose=agent` container owning that IP on the clawker network. Returns
 // ErrNoContainerForPeerIP when nothing matches,
 // ErrInvalidAgentLabel when the matching container's dev.clawker.agent
 // label is missing or malformed (an absent dev.clawker.project label

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/storage"
 	"github.com/schmitthub/clawker/internal/tui"
@@ -29,7 +30,7 @@ func ShortenHome(p string) string {
 // ResolveLocalPath determines the CWD dot-file path using dual-placement:
 // if .clawker/ dir exists → .clawker/{filename}, otherwise → .{filename}.
 func ResolveLocalPath(cwd, filename string) string {
-	clawkerDir := filepath.Join(cwd, ".clawker")
+	clawkerDir := filepath.Join(cwd, consts.DotClawkerDir)
 	if info, err := os.Stat(clawkerDir); err == nil && info.IsDir() {
 		return filepath.Join(clawkerDir, filename)
 	}
