@@ -381,6 +381,28 @@ func (f *FakeClient) SetupContainerInspect(containerID string, c container.Summa
 	}
 }
 
+// SetupContainerInspectReapState configures ContainerInspect to report a
+// managed container with the given AutoRemove and Running flags — the state
+// shared.ReapFailedStart inspects when deciding whether to remove a container
+// whose start failed. Labels include the managed key so the whail jail admits
+// a follow-up ContainerRemove.
+func (f *FakeClient) SetupContainerInspectReapState(autoRemove, running bool) {
+	f.FakeAPI.ContainerInspectFn = func(_ context.Context, id string, _ client.ContainerInspectOptions) (client.ContainerInspectResult, error) {
+		return client.ContainerInspectResult{
+			Container: container.InspectResponse{
+				ID: id,
+				Config: &container.Config{
+					Labels: map[string]string{
+						f.Cfg.LabelManaged(): f.Cfg.ManagedLabelValue(),
+					},
+				},
+				HostConfig: &container.HostConfig{AutoRemove: autoRemove},
+				State:      &container.State{Running: running},
+			},
+		}, nil
+	}
+}
+
 // SetupContainerLogs configures the fake to return the given string as log
 // output. The logs are returned as a plain io.ReadCloser (suitable for
 // non-multiplexed TTY output).

@@ -187,12 +187,14 @@ func restartContainer(ctx context.Context, client *docker.Client, name string, c
 			Logger:       opts.Logger,
 		})
 	if errBootstrapPre != nil {
-		// Reap-on-failed-start: an AutoRemove (--rm) container that never
-		// starts is never cleaned up by the daemon — remove it here so its
-		// name is freed. Running and non-AutoRemove containers untouched.
-		return shared.ReapFailedStart(client, c.ID, fmt.Errorf("bootstrapping services for container %q: %w", name, errBootstrapPre))
+		// Reap a never-started --rm container so its name is freed.
+		return shared.ReapFailedStart(client, c.ID, fmt.Errorf("pre-start bootstrapping failed: %w", errBootstrapPre))
 	}
-	_, err = client.ContainerRestart(ctx, c.ID, &timeout)
+	if _, err := client.ContainerRestart(ctx, c.ID, &timeout); err != nil {
+		// Surface the restart failure itself — don't run post-start against a
+		// container that never restarted — and reap if it is a stopped --rm.
+		return shared.ReapFailedStart(client, c.ID, fmt.Errorf("restarting container: %w", err))
+	}
 	errBootstrapPost := shared.BootstrapServicesPostStart(
 		ctx, c.ID, shared.CommandOpts{
 			Client:       opts.Client,
@@ -206,5 +208,5 @@ func restartContainer(ctx context.Context, client *docker.Client, name string, c
 	if errBootstrapPost != nil {
 		return fmt.Errorf("bootstrapping services for container %q: %w", name, errBootstrapPost)
 	}
-	return err
+	return nil
 }

@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/shlex"
 	mobyclient "github.com/moby/moby/client"
+	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
@@ -269,6 +270,62 @@ func TestStartRun_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out.String(), "clawker.myapp.dev")
 	fake.AssertCalled(t, "ContainerStart")
+}
+
+// TestStartRun_PreStartFailureReapsAutoRemove pins the non-attach path: a
+// pre-start bootstrap failure (via shared.ContainerStart) removes a stopped
+// AutoRemove (--rm) container so its name is freed.
+func TestStartRun_PreStartFailureReapsAutoRemove(t *testing.T) {
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
+	fake.SetupContainerRemove()
+	fake.SetupContainerInspectReapState(true, false)
+
+	f, in, out, errOut := testStartFactory(t, fake)
+	f.ControlPlane = func() cpboot.Manager {
+		return &cpbootmocks.ManagerMock{
+			EnsureRunningFunc: func(context.Context) error { return fmt.Errorf("cp boom") },
+		}
+	}
+
+	cmd := NewCmdStart(f, nil)
+	cmd.SetArgs([]string{"clawker.myapp.dev"})
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+
+	err := cmd.Execute()
+	require.ErrorIs(t, err, cmdutil.SilentError)
+	require.Contains(t, errOut.String(), shared.ReapedNotice)
+	fake.AssertCalled(t, "ContainerRemove")
+	fake.AssertNotCalled(t, "ContainerStart")
+}
+
+// TestStartRun_AttachPreStartFailureReapsAutoRemove pins the attach path,
+// which calls BootstrapServicesPreStart directly (not via
+// shared.ContainerStart): the same pre-start failure must reap too.
+func TestStartRun_AttachPreStartFailureReapsAutoRemove(t *testing.T) {
+	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
+	fake.SetupContainerRemove()
+	fake.SetupContainerInspectReapState(true, false)
+
+	f, in, out, errOut := testStartFactory(t, fake)
+	f.ControlPlane = func() cpboot.Manager {
+		return &cpbootmocks.ManagerMock{
+			EnsureRunningFunc: func(context.Context) error { return fmt.Errorf("cp boom") },
+		}
+	}
+
+	cmd := NewCmdStart(f, nil)
+	cmd.SetArgs([]string{"--attach", "clawker.myapp.dev"})
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), shared.ReapedNotice)
+	fake.AssertCalled(t, "ContainerRemove")
+	fake.AssertNotCalled(t, "ContainerStart")
 }
 
 func TestStartRun_MultipleContainers(t *testing.T) {

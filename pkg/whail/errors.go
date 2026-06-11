@@ -11,6 +11,12 @@ import (
 // Use errors.Is(err, ErrDockerNotAvailable) to detect this condition.
 var ErrDockerNotAvailable = errors.New("docker not available")
 
+// ErrNotManaged is a sentinel error indicating the managed-label jail
+// refused an operation: the resource either lacks the managed label or no
+// longer exists (a NotFound during the managed check collapses to this).
+// Use errors.Is(err, ErrNotManaged) to detect this condition.
+var ErrNotManaged = errors.New("not managed by this tool")
+
 // DockerError represents a user-friendly Docker error with remediation steps.
 // It wraps underlying Docker SDK errors with context and actionable guidance.
 type DockerError struct {
@@ -31,11 +37,19 @@ func (e *DockerError) Unwrap() error {
 	return e.Err
 }
 
-// Is supports sentinel error matching. A DockerError with Op "connect"
-// matches ErrDockerNotAvailable, allowing errors.Is detection through
-// any depth of fmt.Errorf wrapping without polluting the Err chain.
+// Is supports sentinel error matching, allowing errors.Is detection through
+// any depth of fmt.Errorf wrapping without polluting the Err chain. A
+// DockerError with Op "connect" matches ErrDockerNotAvailable; one with Op
+// "managed_check" matches ErrNotManaged.
 func (e *DockerError) Is(target error) bool {
-	return target == ErrDockerNotAvailable && e.Op == "connect"
+	switch target {
+	case ErrDockerNotAvailable:
+		return e.Op == "connect"
+	case ErrNotManaged:
+		return e.Op == "managed_check"
+	default:
+		return false
+	}
 }
 
 // FormatUserError formats the error for display to users with next steps.

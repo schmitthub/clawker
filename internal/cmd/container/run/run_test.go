@@ -859,22 +859,7 @@ func TestRunRun(t *testing.T) {
 		fake.SetupContainerCreate()
 		fake.SetupCopyToContainer()
 		fake.SetupContainerRemove()
-		// Mark the created container AutoRemove + stopped, with the managed
-		// label so whail admits the remove.
-		fake.FakeAPI.ContainerInspectFn = func(_ context.Context, id string, _ moby.ContainerInspectOptions) (moby.ContainerInspectResult, error) {
-			return moby.ContainerInspectResult{
-				Container: container.InspectResponse{
-					ID: id,
-					Config: &container.Config{
-						Labels: map[string]string{
-							fake.Cfg.LabelManaged(): fake.Cfg.ManagedLabelValue(),
-						},
-					},
-					HostConfig: &container.HostConfig{AutoRemove: true},
-					State:      &container.State{Running: false},
-				},
-			}, nil
-		}
+		fake.SetupContainerInspectReapState(true, false)
 
 		f, in, out, errOut := testFactory(t, fake)
 		f.ControlPlane = func() cpboot.Manager {
@@ -891,9 +876,34 @@ func TestRunRun(t *testing.T) {
 
 		err := cmd.Execute()
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "removed it")
+		require.Contains(t, err.Error(), shared.ReapedNotice)
 		fake.AssertCalled(t, "ContainerRemove")
 		fake.AssertNotCalled(t, "ContainerStart")
+	})
+
+	t.Run("docker start failure reaps auto-remove container", func(t *testing.T) {
+		fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
+		fake.SetupContainerCreate()
+		fake.SetupCopyToContainer()
+		fake.SetupContainerRemove()
+		fake.SetupContainerInspectReapState(true, false)
+		fake.FakeAPI.ContainerStartFn = func(_ context.Context, _ string, _ moby.ContainerStartOptions) (moby.ContainerStartResult, error) {
+			return moby.ContainerStartResult{}, fmt.Errorf("start boom")
+		}
+
+		f, in, out, errOut := testFactory(t, fake)
+		cmd := NewCmdRun(f, nil)
+
+		cmd.SetArgs([]string{"--detach", "--rm", "alpine"})
+		cmd.SetIn(in)
+		cmd.SetOut(out)
+		cmd.SetErr(errOut)
+
+		err := cmd.Execute()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), shared.ReapedNotice)
+		fake.AssertCalled(t, "ContainerStart")
+		fake.AssertCalled(t, "ContainerRemove")
 	})
 
 	t.Run("non-interactive @ with no project image returns error", func(t *testing.T) {
