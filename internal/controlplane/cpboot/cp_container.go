@@ -375,7 +375,7 @@ func otelLogsEnv(cfg config.Config) []string {
 	mon := cfg.SettingsStore().Read().Monitoring
 	endpoint := fmt.Sprintf("https://host.docker.internal:%d", mon.OtelInfraPort)
 	return []string{
-		"OTEL_EXPORTER_OTLP_ENDPOINT=" + endpoint,
+		consts.EnvOTLPEndpoint + "=" + endpoint,
 		// mTLS material is NOT injected via env. The CP-side exporter
 		// is wired in-process via internal/controlplane/otelcerts —
 		// leaves are minted from the infra intermediate on every

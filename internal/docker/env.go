@@ -137,7 +137,7 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 		resourceAttrs = append(resourceAttrs, "agent="+opts.Agent)
 	}
 	if len(resourceAttrs) > 0 {
-		m["OTEL_RESOURCE_ATTRIBUTES"] = strings.Join(resourceAttrs, ",")
+		m[consts.EnvOTelResourceAttributes] = strings.Join(resourceAttrs, ",")
 	}
 
 	// Disable telemetry when monitoring stack is not running.
@@ -145,7 +145,7 @@ func RuntimeEnv(opts RuntimeEnvOpts) ([]string, error) {
 	// here so containers don't silently attempt exports to unreachable otel-collector.
 	// Users can still force-enable via agent.env (applied after this).
 	if !opts.MonitoringActive {
-		m["CLAUDE_CODE_ENABLE_TELEMETRY"] = "0"
+		m[consts.EnvClaudeCodeEnableTelemetry] = "0"
 	}
 
 	// Socket forwarding (consumed by clawker-socket-server binary inside container)

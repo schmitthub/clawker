@@ -55,6 +55,13 @@ const (
 	// EnvCoreDNSOtelEndpoint points the coredns-clawker otel plugin at
 	// the collector's OTLP gRPC endpoint (CP↔CoreDNS contract).
 	EnvCoreDNSOtelEndpoint = "CLAWKER_COREDNS_OTEL_ENDPOINT"
+	// EnvOTelResourceAttributes carries comma-joined resource attributes
+	// (project/agent segmentation) per the OTel SDK spec.
+	EnvOTelResourceAttributes = "OTEL_RESOURCE_ATTRIBUTES"
+	// EnvClaudeCodeEnableTelemetry toggles Claude Code's telemetry export;
+	// the env builder overrides the image-baked default to 0 when the
+	// monitoring stack is down.
+	EnvClaudeCodeEnableTelemetry = "CLAUDE_CODE_ENABLE_TELEMETRY"
 )
 
 // OTel log record vocabulary for the firewall observability lane. These

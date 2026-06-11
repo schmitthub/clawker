@@ -82,7 +82,7 @@ func Dial(ctx context.Context, adminPort, hydraPort int, opts ...grpc.DialOption
 
 	target := fmt.Sprintf(consts.LoopbackIPv4+":%d", adminPort)
 
-	hydraTokenURL := fmt.Sprintf("https://"+consts.LoopbackIPv4+":%d/oauth2/token", hydraPort)
+	hydraTokenURL := fmt.Sprintf("https://"+consts.LoopbackIPv4+":%d"+consts.OAuth2TokenPath, hydraPort)
 	ts := newTokenSource(signingKey, hydraTokenURL, tokenTLSCfg)
 
 	// Eagerly fetch the first token with bounded retry so dial tolerates
@@ -274,7 +274,7 @@ func (ts *tokenSource) unaryInterceptor() grpc.UnaryClientInterceptor {
 		if err != nil {
 			return fmt.Errorf("refreshing access token for %s: %w", method, err)
 		}
-		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+tok)
+		ctx = metadata.AppendToOutgoingContext(ctx, consts.HeaderAuthorization, consts.BearerPrefix+tok)
 		return invoker(ctx, method, req, reply, cc, opts...)
 	}
 }
@@ -325,8 +325,8 @@ func fetchAccessToken(ctx context.Context, signingKey *ecdsa.PrivateKey, tokenUR
 	adminScope := string(adminv1.ScopeAdmin)
 
 	form := url.Values{
-		"grant_type":            {"client_credentials"},
-		"client_assertion_type": {"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"},
+		"grant_type":            {consts.GrantTypeClientCredentials},
+		"client_assertion_type": {consts.ClientAssertionTypeJWTBearer},
 		"client_assertion":      {assertion},
 		"scope":                 {adminScope},
 	}

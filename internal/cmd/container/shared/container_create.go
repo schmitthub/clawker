@@ -1988,7 +1988,7 @@ func buildCreateTimeEnv(ctx context.Context, opts *CreateContainerOptions, conta
 		envOpts.CPHealthzURL = "http://" + net.JoinHostPort(
 			consts.ContainerCP,
 			strconv.Itoa(opts.Config.Settings().ControlPlane.HealthPort),
-		) + "/healthz"
+		) + consts.CPHealthzPath
 	}
 
 	if projectCfg.Security.GitCredentials != nil {

@@ -346,5 +346,5 @@ func ContainerStart(ctx context.Context, cmdOpts CommandOpts, startOpts docker.C
 // `urls.self.issuer` config, regardless of which network path the
 // request arrived on.
 func hydraTokenAudienceFromPort(port int) string {
-	return fmt.Sprintf("https://"+consts.LoopbackIPv4+":%d/oauth2/token", port)
+	return fmt.Sprintf("https://"+consts.LoopbackIPv4+":%d"+consts.OAuth2TokenPath, port)
 }

@@ -746,7 +746,7 @@ func (s *Stack) corednsContainerSpec(netInfo *NetworkInfo) containerSpec {
 		// otlploggrpc.WithEndpoint takes a host:port; the plugin upgrades
 		// to TLS via the client cert config it loads from the bind-mounted
 		// paths below.
-		env = append(env, fmt.Sprintf("CLAWKER_COREDNS_OTEL_ENDPOINT=%s:%d",
+		env = append(env, fmt.Sprintf(consts.EnvCoreDNSOtelEndpoint+"=%s:%d",
 			consts.MonitoringServiceOtelCollector,
 			s.cfg.SettingsStore().Read().Monitoring.OtelInfraPort))
 	}

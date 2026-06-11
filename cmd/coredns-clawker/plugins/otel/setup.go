@@ -9,11 +9,12 @@ import (
 	"github.com/coredns/caddy"
 	"github.com/coredns/coredns/core/dnsserver"
 	"github.com/coredns/coredns/plugin"
+	"github.com/schmitthub/clawker/internal/consts"
 )
 
 const (
 	pluginName  = "otel"
-	envEndpoint = "CLAWKER_COREDNS_OTEL_ENDPOINT"
+	envEndpoint = consts.EnvCoreDNSOtelEndpoint
 
 	defaultClientCertPath = "/etc/clawker/auth/coredns/client.pem"
 	defaultClientKeyPath  = "/etc/clawker/auth/coredns/client.key"

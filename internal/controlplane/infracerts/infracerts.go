@@ -37,6 +37,8 @@ import (
 	"math/big"
 	"os"
 	"time"
+
+	"github.com/schmitthub/clawker/internal/consts"
 )
 
 // Issuer signs short-lived mTLS client leaves for clawker infra
@@ -145,7 +147,7 @@ func (i *Issuer) MintClient(serviceName string, ttl time.Duration) (chainPEM, ke
 		SerialNumber: serial,
 		Subject: pkix.Name{
 			CommonName:   serviceName,
-			Organization: []string{"clawker"},
+			Organization: []string{consts.NamePrefix},
 		},
 		NotBefore:   now.Add(-5 * time.Minute),
 		NotAfter:    now.Add(ttl),

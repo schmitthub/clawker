@@ -314,8 +314,8 @@ func ensureCA() error {
 	tmpl := &x509.Certificate{
 		SerialNumber: serial,
 		Subject: pkix.Name{
-			CommonName:   "clawker CLI CA",
-			Organization: []string{"clawker"},
+			CommonName:   cliCACommonName,
+			Organization: []string{certOrganization},
 		},
 		NotBefore:             now.Add(-5 * time.Minute),
 		NotAfter:              now.AddDate(5, 0, 0), // 5 years
@@ -475,7 +475,7 @@ func ensureServerCert() error {
 		SerialNumber: serial,
 		Subject: pkix.Name{
 			CommonName:   consts.ContainerCP,
-			Organization: []string{"clawker"},
+			Organization: []string{certOrganization},
 		},
 		NotBefore:   now.Add(-5 * time.Minute),
 		NotAfter:    now.AddDate(1, 0, 0),
@@ -538,7 +538,7 @@ func ensureClientCert() error {
 		SerialNumber: serial,
 		Subject: pkix.Name{
 			CommonName:   "clawker-cli",
-			Organization: []string{"clawker"},
+			Organization: []string{certOrganization},
 		},
 		NotBefore:   now.Add(-5 * time.Minute),
 		NotAfter:    now.AddDate(1, 0, 0),
@@ -687,8 +687,8 @@ func ensureInfraIntermediateCA() error {
 	tmpl := &x509.Certificate{
 		SerialNumber: serial,
 		Subject: pkix.Name{
-			CommonName:   "clawker infra intermediate CA",
-			Organization: []string{"clawker"},
+			CommonName:   infraCACommonName,
+			Organization: []string{certOrganization},
 		},
 		NotBefore:             now.Add(-5 * time.Minute),
 		NotAfter:              now.AddDate(5, 0, 0),
@@ -837,8 +837,8 @@ func ensureOtelServerCert() error {
 	tmpl := &x509.Certificate{
 		SerialNumber: serial,
 		Subject: pkix.Name{
-			CommonName:   "clawker-otel-collector",
-			Organization: []string{"clawker"},
+			CommonName:   otelCollectorCommonName,
+			Organization: []string{certOrganization},
 		},
 		NotBefore:   now.Add(-5 * time.Minute),
 		NotAfter:    now.AddDate(1, 0, 0),
@@ -902,7 +902,7 @@ func ensureCPClientCert() error {
 		SerialNumber: serial,
 		Subject: pkix.Name{
 			CommonName:   consts.ContainerCP,
-			Organization: []string{"clawker"},
+			Organization: []string{certOrganization},
 		},
 		NotBefore:   now.Add(-5 * time.Minute),
 		NotAfter:    now.AddDate(1, 0, 0),
