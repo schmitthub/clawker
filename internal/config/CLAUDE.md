@@ -88,7 +88,7 @@ SettingsStore() *storage.Store[Settings]   // Direct access to settings store
 
 **PID/log file helpers**: `BridgePIDFilePath(containerID)`, `HostProxyPIDFilePath()`, `HostProxyLogFilePath()`
 
-**Domain/network**: `Domain()` ("clawker.dev"), `LabelDomain()` ("dev.clawker"), `ClawkerNetwork()` ("clawker-net")
+**Domain/network**: `Domain()` ("clawker.dev"), `LabelDomain()` ("dev.clawker"), `ClawkerNetwork()` (the clawker network name)
 
 **Label keys**: `LabelPrefix()`, `LabelManaged()`, `LabelProject()`, `LabelAgent()`, `LabelVersion()`, `LabelImage()`, `LabelCreated()`, `LabelWorkdir()`, `LabelPurpose()`, `PurposeAgent()`, `PurposeMonitoring()`, `PurposeFirewall()`, `LabelTestName()`, `LabelBaseImage()`, `LabelFlavor()`, `LabelTest()`, `LabelE2ETest()`, `ManagedLabelValue()`, `EngineLabelPrefix()`, `EngineManagedLabel()`
 
@@ -118,7 +118,7 @@ const ModeSnapshot Mode = "snapshot"
 
 **Workspace/Security**: `WorkspaceConfig` (`DefaultMode`), `SecurityConfig`, `FirewallConfig`, `GitCredentialsConfig`
 
-**Egress vocabulary constants** (schema.go, next to `EgressRule` — the single home for these tokens): `EgressProtoHTTPS`, `EgressPortHTTPS`, `EgressActionAllow`, `EgressActionDeny`. Used by `EgressRules()` add_domains expansion and the required baseline in `defaults.go`; reference these instead of spelling the literals.
+**Egress vocabulary constants**: the canonical proto/action tokens live in `internal/consts/egress.go` (`consts.EgressProto*`, `consts.EgressAction*`, `consts.EgressPortHTTPS`); `schema.go` keeps `EgressProtoHTTPS`/`EgressPortHTTPS`/`EgressActionAllow`/`EgressActionDeny` as aliases for existing callers. Used by `EgressRules()` add_domains expansion and the required baseline in `defaults.go`; reference the constants instead of spelling the literals.
 
 **Registry**: the registry schema (`ProjectRegistry`, `ProjectEntry`, `WorktreeEntry`) lives in `internal/project` — its sole owner. `config` has no registry surface.
 

@@ -49,7 +49,7 @@ type UpOptions struct {
 func NewCmdUp(f *cmdutil.Factory, runF func(context.Context, *UpOptions) error) *cobra.Command
 ```
 
-Starts monitoring stack via Docker Compose. Ensures `clawker-net` network exists. The one-shot `clawker-opensearch-bootstrap` service runs first (after OpenSearch reaches `service_healthy`) and applies index templates / ISM policies / Dashboards saved objects; `otel-collector` and `prometheus` gate on its `service_completed_successfully` so they never start against an unprovisioned cluster. Flags: `--detach` (default: true).
+Starts monitoring stack via Docker Compose. Ensures the clawker network exists. The one-shot `clawker-opensearch-bootstrap` service runs first (after OpenSearch reaches `service_healthy`) and applies index templates / ISM policies / Dashboards saved objects; `otel-collector` and `prometheus` gate on its `service_completed_successfully` so they never start against an unprovisioned cluster. Flags: `--detach` (default: true).
 
 ### monitor down
 
@@ -80,4 +80,4 @@ Shows monitoring stack status (running/stopped), container details, and service 
 
 ## Config Access Pattern
 
-Subcommands use `config.Config` interface via `opts.Config()` (multi-return). Monitor directory resolved via `cfg.MonitorSubdir()`, network name via `cfg.ClawkerNetwork()`, in-cluster service URLs via `cfg.OpenSearchURL()` / `cfg.OpenSearchDashboardsURL()` / `cfg.PrometheusURL()` (zero-arg; returns clawker-net hostnames for in-network consumers). Host-facing URLs printed to the user are formatted as `http://localhost:<port>` directly from `cfg.SettingsStore().Read().Monitoring` ports.
+Subcommands use `config.Config` interface via `opts.Config()` (multi-return). Monitor directory resolved via `cfg.MonitorSubdir()`, network name via `cfg.ClawkerNetwork()`, in-cluster service URLs via `cfg.OpenSearchURL()` / `cfg.OpenSearchDashboardsURL()` / `cfg.PrometheusURL()` (zero-arg; returns clawker-network hostnames for in-network consumers). Host-facing URLs printed to the user are formatted as `http://localhost:<port>` directly from `cfg.SettingsStore().Read().Monitoring` ports.

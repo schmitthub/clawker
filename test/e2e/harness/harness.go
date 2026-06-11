@@ -149,7 +149,7 @@ func ensureClawkerBinary(t *testing.T) {
 
 	_, thisFile, _, _ := runtime.Caller(0)
 	repoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..", "..")
-	t.Setenv("CLAWKER_EXECUTABLE", filepath.Join(repoRoot, "bin", "clawker"))
+	t.Setenv(consts.EnvExecutable, filepath.Join(repoRoot, "bin", "clawker"))
 }
 
 // cleanupTestEnvironment is the single cleanup entrypoint for all e2e tests.

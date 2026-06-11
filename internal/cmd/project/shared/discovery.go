@@ -32,7 +32,7 @@ func HasLocalProjectConfig(cfg config.Config, dir string) bool {
 	mainFile := cfg.ProjectConfigFileName() // "clawker.yaml"
 	ext := filepath.Ext(mainFile)           // ".yaml"
 	base := strings.TrimSuffix(mainFile, ext)
-	localFile := base + ".local" + ext // "clawker.local.yaml"
+	localFile := base + ".local" + ext // the gitignored local override variant
 
 	probe, err := storage.NewStore[config.Project](
 		storage.WithFilenames(mainFile, localFile),

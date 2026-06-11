@@ -350,7 +350,7 @@ User interaction utilities with TTY and CI awareness.
 | `internal/containerfs` | Host Claude config preparation for container init: copies settings, plugins, credentials to config volume; prepares post-init script tar (leaf — keyring + logger only) |
 | `internal/term` | Terminal capabilities, raw mode, size detection (leaf — stdlib + x/term only) |
 | `internal/signals` | OS signal utilities — `SetupSignalContext`, `ResizeHandler` (leaf — stdlib only) |
-| `internal/storage` | `Store[T]` — generic layered YAML store engine: discovery (static/walk-up), load+migrate, merge with provenance, scoped writes, atomic I/O, flock. **Leaf** — zero internal imports. See `internal/storage/CLAUDE.md` |
+| `internal/storage` | `Store[T]` — generic layered YAML store engine: discovery (static/walk-up), load+migrate, merge with provenance, scoped writes, atomic I/O, flock. **Leaf** — only internal import is `internal/consts` (stdlib-only). See `internal/storage/CLAUDE.md` |
 | `internal/config` | Thin wrapper composing `Store[Project]` + `Store[Settings]`. Exposes `Config` interface with namespaced accessors, path/constant helpers (~40 methods). **Foundation** — imports storage only. See `internal/config/CLAUDE.md` |
 | `internal/monitor` | Observability stack templates (OTel Collector, OpenSearch, OpenSearch Dashboards, Prometheus) |
 | `internal/logger` | Zerolog setup |
@@ -656,7 +656,7 @@ Domain packages form a directed acyclic graph verified via `goda`. Tiers describ
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  LEAF PACKAGES — zero internal imports                           │
+│  LEAF PACKAGES — no internal imports (consts exempt: stdlib-only) │
 │                                                                 │
 │  Import: standard library only (or external-only like go-git)   │
 │  Imported by: anyone                                            │

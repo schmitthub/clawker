@@ -59,7 +59,7 @@ type Container struct {
 
 | Method | Signature |
 |--------|-----------|
-| `IsMonitoringActive` | `(ctx context.Context) bool` — checks for otel-collector on clawker-net |
+| `IsMonitoringActive` | `(ctx context.Context) bool` — checks for otel-collector on the clawker network |
 | `ListContainers` | `(ctx context.Context, includeAll bool) ([]Container, error)` — all managed containers |
 | `ListContainersByProject` | `(ctx context.Context, project string, includeAll bool) ([]Container, error)` — project-scoped |
 | `FindContainerByAgent` | `(ctx context.Context, project, agent string) (string, *container.Summary, error)` — returns (name, summary, err); not-found = `(name, nil, nil)` |
@@ -85,7 +85,7 @@ type Container struct {
 
 ## Volume Utilities (`volume.go`)
 
-`EnsureVolume(...)`, `CopyToVolume(...)`, `LoadIgnorePatterns(path)`, `FindIgnoredDirs(hostPath, patterns)`. CopyToVolume uses two-phase ownership fix: tar headers with UID/GID 1001 + post-copy chown via `Client.ChownImage` (default: `"busybox:latest"`); set `Client.ChownImage` to override the chown image.
+`EnsureVolume(...)`, `CopyToVolume(...)`, `LoadIgnorePatterns(path)`, `FindIgnoredDirs(hostPath, patterns)`. CopyToVolume uses two-phase ownership fix: tar headers with UID/GID 1001 + post-copy chown via `Client.ChownImage` (default: `defaultChownImage`); set `Client.ChownImage` to override the chown image.
 
 `FindIgnoredDirs` walks a host directory and returns relative paths of directories matching ignore patterns. Used by bind mode to generate tmpfs overlay mounts. Key differences from snapshot's `shouldIgnore`: only returns directories, never masks `.git/` (bind mode needs git), and skips recursion into matched directories for performance.
 

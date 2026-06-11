@@ -112,6 +112,17 @@ const (
 	EnvTestRepoDir = "CLAWKER_TEST_REPO_DIR"
 )
 
+// Host-side behavior override env vars.
+const (
+	// EnvExecutable overrides the clawker binary path used when
+	// re-invoking clawker as a daemon (host proxy spawn, e2e harness).
+	EnvExecutable = "CLAWKER_EXECUTABLE"
+	// EnvNoUpdateNotifier disables the update notifier when non-empty.
+	EnvNoUpdateNotifier = "CLAWKER_NO_UPDATE_NOTIFIER"
+	// EnvPager overrides the pager program for paged output.
+	EnvPager = "CLAWKER_PAGER"
+)
+
 // File names (not paths — paths are runtime-resolved via accessor funcs below).
 const (
 	ProjectConfigFile = "clawker.yaml"

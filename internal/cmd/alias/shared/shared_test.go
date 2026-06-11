@@ -7,6 +7,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -65,7 +66,7 @@ func TestExportTarget(t *testing.T) {
 
 	newCfg := func(t *testing.T, dirs ...string) config.Config {
 		t.Helper()
-		opts := []storage.Option{storage.WithFilenames("clawker.local.yaml", "clawker.yaml")}
+		opts := []storage.Option{storage.WithFilenames(consts.ProjectLocalConfigFile, consts.ProjectConfigFile)}
 		if len(dirs) > 0 {
 			opts = append(opts, storage.WithDirs(dirs...))
 		}

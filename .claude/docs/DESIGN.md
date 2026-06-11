@@ -346,7 +346,7 @@ Settings files do NOT need locking — per-machine, no concurrent writers. Regis
 
 | Package | Owns | Imports |
 |---------|------|---------|
-| `internal/storage` | Node tree engine (map-based merge, provenance), structToMap (omitempty-safe), atomic write (temp+rename), flock, YAML read/write | Leaf — zero internal imports |
+| `internal/storage` | Node tree engine (map-based merge, provenance), structToMap (omitempty-safe), atomic write (temp+rename), flock, YAML read/write | Leaf — only internal import is `internal/consts` (stdlib-only) |
 | `internal/config` | `settings.yaml` + `clawker.yaml` walk-up. One `Config` interface. Two schemas. | `storage`, `logger` |
 | `internal/project` | `registry.yaml`. Project domain: registration, resolution, worktree lifecycle. | `storage`, `consts`, `git`, `logger`, `text` |
 
