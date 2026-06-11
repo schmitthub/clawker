@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 )
 
 const (
@@ -201,7 +202,7 @@ func RegenerateDomainCerts(rules []config.EgressRule, certDir string, caCert *x5
 		// over TLS — same downstream TLS termination as https, just with an
 		// upgrade enrichment). Plaintext http/ws, opaque TCP/SSH/UDP, and any
 		// other proto pass through without TLS termination.
-		if p := strings.ToLower(rule.Proto); p != "https" && p != "wss" {
+		if p := strings.ToLower(rule.Proto); p != consts.EgressProtoHTTPS && p != consts.EgressProtoWSS {
 			continue
 		}
 		// Every TLS-terminated dst gets a MITM cert — FQDN (dNSName SANs), IP

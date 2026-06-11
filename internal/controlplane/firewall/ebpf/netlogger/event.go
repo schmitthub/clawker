@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"time"
 
+	"github.com/schmitthub/clawker/internal/consts"
 	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
 )
 
@@ -25,11 +26,11 @@ const (
 func (v Verdict) String() string {
 	switch v {
 	case VerdictAllowed:
-		return "allowed"
+		return consts.VerdictAllowed
 	case VerdictDenied:
-		return "denied"
+		return consts.VerdictDenied
 	case VerdictBypassed:
-		return "bypassed"
+		return consts.VerdictBypassed
 	default:
 		return fmt.Sprintf("unknown(%d)", uint8(v))
 	}

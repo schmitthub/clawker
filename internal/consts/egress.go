@@ -13,6 +13,10 @@ const (
 	EgressProtoSSH   = "ssh"
 	EgressProtoTCP   = "tcp"
 	EgressProtoUDP   = "udp"
+	// EgressProtoLegacyTLS is the deprecated alias for EgressProtoHTTPS —
+	// "tls" was always TLS-terminated HCM-inspected HTTPS. Normalization
+	// translates it; nothing else should branch on it.
+	EgressProtoLegacyTLS = "tls"
 )
 
 // Egress rule actions.

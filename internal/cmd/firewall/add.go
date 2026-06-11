@@ -7,6 +7,7 @@ import (
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
 )
@@ -72,7 +73,7 @@ HTTP-family protos only (https/http/ws/wss).`,
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.Proto, "proto", "https", "Protocol: https (default), http, ssh, tcp, or any opaque protocol name")
+	cmd.Flags().StringVar(&opts.Proto, "proto", consts.EgressProtoHTTPS, "Protocol: https (default), http, ssh, tcp, or any opaque protocol name")
 	cmd.Flags().StringVar(&opts.Port, "port", "", "Destination port: a single port (443) or an inclusive range (9000-9100); default: protocol-specific")
 	cmd.Flags().StringVar(&opts.Path, "path", "", "URL path prefix for a path-scoped rule, matched as a prefix at request time (requires --action)")
 	cmd.Flags().StringVar(&opts.Action, "action", "", "Action for the path rule: allow or deny (requires --path)")
@@ -88,15 +89,15 @@ func addRun(ctx context.Context, opts *AddOptions) error {
 	// Rewrite the legacy `tls` alias to `https` before validation (mirrors
 	// NormalizeRule server-side) so downstream sees only real proto tokens — the
 	// proto gate and the stored rule both get `https`, not the L5/6 `tls` non-token.
-	if strings.EqualFold(opts.Proto, "tls") {
-		opts.Proto = "https"
+	if strings.EqualFold(opts.Proto, consts.EgressProtoLegacyTLS) {
+		opts.Proto = consts.EgressProtoHTTPS
 	}
 
 	if err := validatePortFlag(opts.Port); err != nil {
 		return err
 	}
 	if opts.Path != "" {
-		if opts.Action != "allow" && opts.Action != "deny" {
+		if opts.Action != consts.EgressActionAllow && opts.Action != consts.EgressActionDeny {
 			return cmdutil.FlagErrorf("--action must be \"allow\" or \"deny\", got %q", opts.Action)
 		}
 		// Path and method rules need an L7 HTTP request line to enforce against.
@@ -121,7 +122,7 @@ func addRun(ctx context.Context, opts *AddOptions) error {
 		Dst:    opts.Domain,
 		Proto:  opts.Proto,
 		Port:   opts.Port,
-		Action: "allow",
+		Action: consts.EgressActionAllow,
 	}
 	if opts.Path != "" {
 		rule.PathRules = []*adminv1.PathRule{{Path: opts.Path, Action: opts.Action, Methods: opts.Methods}}

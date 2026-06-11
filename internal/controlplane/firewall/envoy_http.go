@@ -9,6 +9,7 @@ import (
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 )
 
 // envoy_http.go — the L7 app block: the HTTP connection manager and everything
@@ -209,9 +210,9 @@ func httpDomains(dst string, port, barePort int) []string {
 func httpHCM(codec string, tlsTerminated bool, httpFilters []any, als ALSConfig, vhosts []any, websocket bool) map[string]any {
 	// The L4 the access log reports follows the codec: HTTP/3 rides QUIC (UDP),
 	// everything else (AUTO: http/https/ws/wss) rides TCP.
-	transport := "tcp"
+	transport := netTransportTCP
 	if codec == "HTTP3" {
-		transport = "quic"
+		transport = netTransportQUIC
 	}
 	tc := map[string]any{
 		"@type":       "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
@@ -262,7 +263,7 @@ func denyAllVHost() map[string]any {
 // verbs (a :method header match); methods not in the set fall through to a later
 // route / the default. The synthesized trailing "/" default is method-agnostic.
 func httpRoutes(r config.EgressRule, cluster string, websocket bool) []any {
-	defaultDeny := strings.EqualFold(adminv1.EffectivePathDefault(r), "deny")
+	defaultDeny := strings.EqualFold(adminv1.EffectivePathDefault(r), consts.EgressActionDeny)
 
 	if len(r.PathRules) == 0 {
 		if defaultDeny {
@@ -276,7 +277,7 @@ func httpRoutes(r config.EgressRule, cluster string, websocket bool) []any {
 
 	var routes []any
 	for _, pr := range prs {
-		if strings.EqualFold(pr.Action, "allow") {
+		if strings.EqualFold(pr.Action, consts.EgressActionAllow) {
 			routes = append(routes, httpAllowRoute(pr.Path, cluster, websocket, pr.Methods))
 		} else {
 			routes = append(routes, httpDenyRoute(pr.Path, pr.Methods))
@@ -301,7 +302,7 @@ func httpAllowRoute(prefix, cluster string, websocket bool, methods []string) ma
 	}
 	return map[string]any{
 		"match":    routeMatch(prefix, methods),
-		"metadata": clawkerActionMetadata("allowed"),
+		"metadata": clawkerActionMetadata(consts.VerdictAllowed),
 		"route":    route,
 	}
 }
@@ -311,7 +312,7 @@ func httpAllowRoute(prefix, cluster string, websocket bool, methods []string) ma
 func httpDenyRoute(prefix string, methods []string) map[string]any {
 	return map[string]any{
 		"match":    routeMatch(prefix, methods),
-		"metadata": clawkerActionMetadata("denied"),
+		"metadata": clawkerActionMetadata(consts.VerdictDenied),
 		"direct_response": map[string]any{
 			"status": 403,
 			"body":   map[string]any{"inline_string": firewallBlockedBody},

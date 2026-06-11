@@ -5,6 +5,18 @@ import (
 	"sort"
 )
 
+// OTel network semconv values recorded on access-log records:
+// network.transport (actual L4) and network.protocol.name (L7). Distinct
+// vocabulary from the consts.EgressProto* rule tokens even where the
+// spellings coincide — opaque chains record the rule token verbatim as
+// the protocol name, HCM chains always record protoNameHTTP.
+const (
+	netTransportTCP  = "tcp"
+	netTransportUDP  = "udp"
+	netTransportQUIC = "quic"
+	protoNameHTTP    = "http"
+)
+
 // envoy_accesslog.go holds the access-log builders shared by every HCM and
 // tcp_proxy clawker emits. Two sinks: a stdout JSON sink (always, for
 // `docker logs clawker-envoy` triage) and the OpenTelemetry ALS sink (only when
@@ -40,9 +52,9 @@ func buildHTTPAccessLog(tlsTerminated bool, transport, action string, als ALSCon
 	// transport is the ACTUAL L4 (tcp for the TCP egress chains, quic for the
 	// HTTP/3-over-QUIC chains) — never hardcoded, so the QUIC HCM that reuses this
 	// app block reports quic, not tcp.
-	sinks := []any{stdoutAccessLogEntry(transport, "http", tlsEst, action, extra)}
+	sinks := []any{stdoutAccessLogEntry(transport, protoNameHTTP, tlsEst, action, extra)}
 	if als.MTLS {
-		sinks = append(sinks, otelAccessLogEntry(transport, "http", tlsEst, action, extra))
+		sinks = append(sinks, otelAccessLogEntry(transport, protoNameHTTP, tlsEst, action, extra))
 	}
 	return sinks
 }

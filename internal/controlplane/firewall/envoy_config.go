@@ -134,7 +134,7 @@ func derive(rules []config.EgressRule, ports EnvoyPorts) ([]permutation, []strin
 		// ignored — the base http/https rule owns the route structure; the ws/wss
 		// rule contributes only the upgrade flag (the additive "expand the existing
 		// stack" UX). Author path rules on the base rule, not the ws/wss one.
-		if proto := strings.ToLower(r.Proto); proto == "ws" || proto == "wss" {
+		if proto := strings.ToLower(r.Proto); proto == consts.EgressProtoWS || proto == consts.EgressProtoWSS {
 			key := originKey(r)
 			if gen.explicitBaseOrigins[key] || promoted[key] {
 				continue
@@ -151,7 +151,7 @@ func derive(rules []config.EgressRule, ports EnvoyPorts) ([]permutation, []strin
 		// almost never chains to a public CA, so Envoy refuses the upstream handshake
 		// (fail-closed, secure by default) unless insecure_skip_tls_verify is set. Not
 		// an error — a UX nudge so the operator knows why the upstream is rejected.
-		if isCIDR(r.Dst) && baseProto(strings.ToLower(r.Proto)) == "https" && !r.InsecureSkipTLSVerify {
+		if isCIDR(r.Dst) && baseProto(strings.ToLower(r.Proto)) == consts.EgressProtoHTTPS && !r.InsecureSkipTLSVerify {
 			warnings = append(warnings, fmt.Sprintf("https to CIDR %s reencrypts to the original in-range host; Envoy will refuse the upstream TLS handshake unless that host presents a CA-trusted cert — set insecure_skip_tls_verify: true to accept self-signed in-range upstreams (MITM inspection still applies)", r.Dst))
 		}
 		for i, ls := range lists {
@@ -217,7 +217,7 @@ func deriveGenFacts(rules []config.EgressRule, ports EnvoyPorts) genFacts {
 		udpListenerPorts:    map[string]int{},
 	}
 	for _, r := range rules {
-		if a := strings.ToLower(r.Action); a != "allow" && a != "" {
+		if a := strings.ToLower(r.Action); a != consts.EgressActionAllow && a != "" {
 			continue
 		}
 		proto := strings.ToLower(r.Proto)
@@ -225,16 +225,16 @@ func deriveGenFacts(rules []config.EgressRule, ports EnvoyPorts) genFacts {
 		// ws→http, wss→https. All http/https-family facts are computed against the
 		// base so a ws/wss rule contributes to DFP / exact-SNI exactly like its base.
 		base := baseProto(proto)
-		if proto == "ws" || proto == "wss" {
+		if proto == consts.EgressProtoWS || proto == consts.EgressProtoWSS {
 			g.wsOrigins[originKey(r)] = true
 		}
-		if proto == "http" || proto == "https" {
+		if proto == consts.EgressProtoHTTP || proto == consts.EgressProtoHTTPS {
 			g.explicitBaseOrigins[originKey(r)] = true
 		}
-		if base == "http" && isWildcardDomain(r.Dst) {
+		if base == consts.EgressProtoHTTP && isWildcardDomain(r.Dst) {
 			g.httpDFPActive = true
 		}
-		if base == "https" && !isWildcardDomain(r.Dst) {
+		if base == consts.EgressProtoHTTPS && !isWildcardDomain(r.Dst) {
 			g.httpsExactDomains[normalizeDomain(r.Dst)] = true
 		}
 	}
@@ -263,7 +263,7 @@ func layersFor(r config.EgressRule, gen genFacts) [][]layer {
 		return ls
 	}
 	switch strings.ToLower(r.Proto) {
-	case "http":
+	case consts.EgressProtoHTTP:
 		// http/ws to a CIDR: the dst is a known range, so it rides a prefix_ranges
 		// raw_buffer chain (NOT the catch-all tcpEgressLayer) → plaintext ORIGINAL_DST
 		// → a single wildcard-host vhost (the prefix_ranges gate is the boundary; a
@@ -277,7 +277,7 @@ func layersFor(r config.EgressRule, gen genFacts) [][]layer {
 			return [][]layer{withWS(tcpEgressLayer, httpWildcardUpstreamLayer, app)}
 		}
 		return [][]layer{withWS(tcpEgressLayer, httpExactUpstreamLayer, app)}
-	case "https":
+	case consts.EgressProtoHTTPS:
 		// https emits TWO sibling chains per rule: a TCP tls chain (egress
 		// listener) and a QUIC/h3 chain (egress_quic listener). Both reuse the
 		// same upstream + app blocks; only the transport differs (tls-over-tcp vs
@@ -316,7 +316,7 @@ func layersFor(r config.EgressRule, gen genFacts) [][]layer {
 			withWS(tcpTransport, httpsExactUpstreamLayer, httpAppLayer(appDFP{})),
 			withWS(quicTransport, httpsExactUpstreamLayer, httpAppLayer(appDFP{})),
 		}
-	case "ssh", "tcp":
+	case consts.EgressProtoSSH, consts.EgressProtoTCP:
 		// Opaque TCP: dedicated listener → tcp_proxy → pinned cluster, NO app
 		// block (no L7 to inspect — the pin is the gate). ssh and raw tcp differ
 		// only in the proto token recorded as network.protocol.name.
@@ -379,7 +379,7 @@ func layersFor(r config.EgressRule, gen genFacts) [][]layer {
 			})
 		}
 		return lists
-	case "udp":
+	case consts.EgressProtoUDP:
 		// Opaque raw UDP: dedicated UDP listener → udp_proxy listener filter →
 		// pinned cluster, NO app block. Same self-secure shape as opaque TCP over a
 		// UDP socket, with the same port_range fan-out. Port pre-assigned in
@@ -456,7 +456,7 @@ func denyDefaultFilterChain(als ALSConfig) map[string]any {
 					"@type":       "type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy",
 					"stat_prefix": "egress_deny",
 					"cluster":     denyClusterName,
-					"access_log":  buildTCPAccessLog("tcp", "", "%REQUESTED_SERVER_NAME%", "denied", als),
+					"access_log":  buildTCPAccessLog(netTransportTCP, "", "%REQUESTED_SERVER_NAME%", consts.VerdictDenied, als),
 				},
 			},
 		},
@@ -615,7 +615,7 @@ func buildHealthListener(port int) map[string]any {
 										"routes": []any{
 											map[string]any{
 												"match":    map[string]any{"prefix": "/"},
-												"metadata": clawkerActionMetadata("allowed"),
+												"metadata": clawkerActionMetadata(consts.VerdictAllowed),
 												"direct_response": map[string]any{
 													"status": 200,
 													"body":   map[string]any{"inline_string": "ok"},
@@ -853,10 +853,10 @@ func validateDedicatedLayout(rules []config.EgressRule, ports EnvoyPorts) error 
 // range cert + reencrypt ORIGINAL_DST) and is NOT rejected here.
 func validateProtoDstSupport(rules []config.EgressRule) error {
 	for _, r := range rules {
-		if a := strings.ToLower(r.Action); a != "allow" && a != "" {
+		if a := strings.ToLower(r.Action); a != consts.EgressActionAllow && a != "" {
 			continue
 		}
-		if strings.ToLower(r.Proto) == "udp" && isCIDR(r.Dst) {
+		if strings.ToLower(r.Proto) == consts.EgressProtoUDP && isCIDR(r.Dst) {
 			return fmt.Errorf("envoy config: raw udp to a CIDR range %q is not supported (udp_proxy cannot forward to the original destination); use a single IP dst or split the range into per-host rules", r.Dst)
 		}
 	}
@@ -871,9 +871,9 @@ func effectiveDstPort(r config.EgressRule) int {
 		return p
 	}
 	switch strings.ToLower(r.Proto) {
-	case "http", "ws":
+	case consts.EgressProtoHTTP, consts.EgressProtoWS:
 		return defaultHTTPPort
-	case "ssh":
+	case consts.EgressProtoSSH:
 		return sshDefaultPort
 	default:
 		return defaultDestPort
@@ -884,17 +884,17 @@ func effectiveDstPort(r config.EgressRule) int {
 // with like: empty and legacy "tls" both mean https (matching NormalizeRule).
 func canonicalProto(p string) string {
 	switch p = strings.ToLower(p); p {
-	case "", "tls":
-		return "https"
+	case "", consts.EgressProtoLegacyTLS:
+		return consts.EgressProtoHTTPS
 	// ws/wss are an enrichment OF the http/https stack for an origin, not a
 	// competing stack — so for collision purposes they ARE their base proto. This
 	// lets `https` + `wss` (or `http` + `ws`) compose on one host:port instead of
 	// tripping the one-stack-per-host:port guard, while `http` + `https` still
 	// collide (genuinely two stacks).
-	case "ws":
-		return "http"
-	case "wss":
-		return "https"
+	case consts.EgressProtoWS:
+		return consts.EgressProtoHTTP
+	case consts.EgressProtoWSS:
+		return consts.EgressProtoHTTPS
 	default:
 		return p
 	}
@@ -906,10 +906,10 @@ func canonicalProto(p string) string {
 // ws/wss rule into its base stack.
 func baseProto(p string) string {
 	switch p = strings.ToLower(p); p {
-	case "ws":
-		return "http"
-	case "wss":
-		return "https"
+	case consts.EgressProtoWS:
+		return consts.EgressProtoHTTP
+	case consts.EgressProtoWSS:
+		return consts.EgressProtoHTTPS
 	default:
 		return p
 	}

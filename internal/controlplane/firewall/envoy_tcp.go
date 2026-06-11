@@ -1,6 +1,10 @@
 package firewall
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/schmitthub/clawker/internal/consts"
+)
 
 // envoy_tcp.go — the raw TCP transport block (L4 ONLY). A transport block binds
 // the listener and sets the L4 filter_chain_match. TCP carries cleartext here;
@@ -92,7 +96,7 @@ func tcpProxyTerminalLayer(l7Proto string) layer {
 				"@type":       "type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy",
 				"stat_prefix": ctx.upstreamCluster,
 				"cluster":     ctx.upstreamCluster,
-				"access_log":  buildTCPAccessLog("tcp", l7Proto, host, "allowed", ctx.als),
+				"access_log":  buildTCPAccessLog(netTransportTCP, l7Proto, host, consts.VerdictAllowed, ctx.als),
 			},
 		})
 		return nil
@@ -118,7 +122,7 @@ func tcpDenyTerminalLayer(l7Proto string) layer {
 				"@type":       "type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy",
 				"stat_prefix": denyClusterName,
 				"cluster":     denyClusterName,
-				"access_log":  buildTCPAccessLog("tcp", l7Proto, host, "denied", ctx.als),
+				"access_log":  buildTCPAccessLog(netTransportTCP, l7Proto, host, consts.VerdictDenied, ctx.als),
 			},
 		})
 		return nil

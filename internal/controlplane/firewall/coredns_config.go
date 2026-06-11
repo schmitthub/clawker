@@ -132,7 +132,7 @@ func GenerateCorefile(rules []config.EgressRule, healthPort int) ([]byte, error)
 // (not an IP address or CIDR range).
 func isAllowDomain(r config.EgressRule) bool {
 	action := strings.ToLower(r.Action)
-	if action != "allow" && action != "" {
+	if action != consts.EgressActionAllow && action != "" {
 		return false
 	}
 	return !isIPOrCIDR(r.Dst)
@@ -177,7 +177,7 @@ func isWildcardDomain(d string) bool {
 // isDenyRule reports whether r explicitly denies a domain destination.
 // IP/CIDR deny rules are handled by Envoy/eBPF, not CoreDNS.
 func isDenyRule(r config.EgressRule) bool {
-	return strings.EqualFold(r.Action, "deny") && !isIPOrCIDR(r.Dst)
+	return strings.EqualFold(r.Action, consts.EgressActionDeny) && !isIPOrCIDR(r.Dst)
 }
 
 // subdomainRegex builds a CoreDNS template `match` regex that matches any

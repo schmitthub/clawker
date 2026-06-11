@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"gopkg.in/yaml.v3"
 )
 
@@ -94,7 +95,7 @@ func TCPMappings(rules []config.EgressRule, ports EnvoyPorts) []TCPMapping {
 	// fails closed; TCP-CIDR rides prefix_ranges (a separate datapath gap tracked
 	// elsewhere).
 	return dedicatedMappings(rules, ports.TCPPortBase,
-		func(p string) bool { return p == "ssh" || p == "tcp" }, tcpDefaultPort, isCIDR)
+		func(p string) bool { return p == consts.EgressProtoSSH || p == consts.EgressProtoTCP }, tcpDefaultPort, isCIDR)
 }
 
 // UDPMappings computes raw-UDP port mappings from egress rules — the udp_proxy
@@ -107,7 +108,7 @@ func UDPMappings(rules []config.EgressRule, ports EnvoyPorts) []TCPMapping {
 	// UDP skips only CIDR — a UDP-IP rule still needs its own dedicated listener
 	// (UDP has no filter chains to ride the shared listener); UDP-CIDR fails closed.
 	return dedicatedMappings(rules, ports.UDPPortBase,
-		func(p string) bool { return p == "udp" }, udpDefaultPort, isCIDR)
+		func(p string) bool { return p == consts.EgressProtoUDP }, udpDefaultPort, isCIDR)
 }
 
 // dedicatedMappings is the shared, deterministic per-rule dedicated-listener port
@@ -188,7 +189,7 @@ func tcpDefaultPort(r config.EgressRule) int {
 	if p, ok := r.SinglePort(); ok {
 		return p
 	}
-	if strings.EqualFold(r.Proto, "ssh") {
+	if strings.EqualFold(r.Proto, consts.EgressProtoSSH) {
 		return sshDefaultPort
 	}
 	return defaultDestPort

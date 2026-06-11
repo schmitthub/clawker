@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 )
 
 // EgressRuleToProto copies one config.EgressRule → *EgressRule. The wire and
@@ -72,7 +73,7 @@ func EgressRulesFromProto(in []*EgressRule) []config.EgressRule {
 // `https` before this is reached (NormalizeRule server-side; addRun for CLI input).
 func IsHTTPFamilyProto(proto string) bool {
 	switch strings.ToLower(proto) {
-	case "http", "https", "ws", "wss":
+	case consts.EgressProtoHTTP, consts.EgressProtoHTTPS, consts.EgressProtoWS, consts.EgressProtoWSS:
 		return true
 	default:
 		return false
@@ -99,9 +100,9 @@ func EffectivePathDefault(r config.EgressRule) string {
 		return r.PathDefault
 	}
 	for _, pr := range r.PathRules {
-		if strings.EqualFold(pr.Action, "allow") {
-			return "deny"
+		if strings.EqualFold(pr.Action, consts.EgressActionAllow) {
+			return consts.EgressActionDeny
 		}
 	}
-	return "allow"
+	return consts.EgressActionAllow
 }

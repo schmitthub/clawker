@@ -73,4 +73,15 @@ const (
 	OTelAttrAnswerCount   = "answer_count"
 	OTelAttrAnswers       = "answers"
 	OTelAttrDurationMS    = "duration_ms"
+	OTelAttrAction        = "action"
+)
+
+// Per-record firewall verdict values for the OTelAttrAction attribute,
+// stamped by the Envoy access-log generator and netlogger's eBPF egress
+// events. Distinct vocabulary from EgressAction* (rule configuration);
+// do not conflate the two.
+const (
+	VerdictAllowed  = "allowed"
+	VerdictDenied   = "denied"
+	VerdictBypassed = "bypassed"
 )

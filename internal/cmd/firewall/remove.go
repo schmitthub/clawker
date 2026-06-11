@@ -7,6 +7,7 @@ import (
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
 )
@@ -53,7 +54,7 @@ immediately via hot-reload — no container restart required.`,
 
 	cmd.ValidArgsFunction = domainCompletions(opts.AdminClient)
 
-	cmd.Flags().StringVar(&opts.Proto, "proto", "https", "L7 protocol (legacy 'tls' value translated to 'https')")
+	cmd.Flags().StringVar(&opts.Proto, "proto", consts.EgressProtoHTTPS, "L7 protocol (legacy 'tls' value translated to 'https')")
 	cmd.Flags().StringVar(&opts.Port, "port", "", "Destination port: a single port (443) or an inclusive range (9000-9100)")
 	cmd.Flags().StringVar(&opts.Path, "path", "", "Remove a single path rule by its stored path (exact string match); omit to remove the whole entry")
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 )
 
 // envoy_udp.go — the UDP transport blocks, peer of envoy_tcp.go. A transport
@@ -100,7 +101,7 @@ func udpProxyTerminalLayer(ctx *genCtx) error {
 					},
 				},
 			},
-			"access_log": buildTCPAccessLog("udp", "udp", host, "allowed", ctx.als),
+			"access_log": buildTCPAccessLog(netTransportUDP, consts.EgressProtoUDP, host, consts.VerdictAllowed, ctx.als),
 		},
 	}
 	return ctx.cfg.SetListenerField(ctx.listener, "listener_filters", []any{udpProxy})
@@ -131,7 +132,7 @@ func udpDenyTerminalLayer(ctx *genCtx) error {
 					},
 				},
 			},
-			"access_log": buildTCPAccessLog("udp", "udp", host, "denied", ctx.als),
+			"access_log": buildTCPAccessLog(netTransportUDP, consts.EgressProtoUDP, host, consts.VerdictDenied, ctx.als),
 		},
 	}
 	return ctx.cfg.SetListenerField(ctx.listener, "listener_filters", []any{udpProxy})
