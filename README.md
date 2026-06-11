@@ -117,6 +117,10 @@ The fastest path to a seamless containerized Claude Code instance, with all your
 
 ```bash
 cd your-project
+
+# Optional but recommended: set up monitoring to get logs and metrics from your containers
+clawker monitor init && clawker monitor up
+
 clawker init 
 clawker build
 clawker go dev
@@ -126,8 +130,10 @@ clawker go dev
 > The `go` command is a built-in alias for:  
 >
 > ```bash
-> clawker run -it --rm --agent dev @ --dangerously-skip-permissions
+> clawker run -it --rm --agent $1 @ --dangerously-skip-permissions
 > ```
+>
+> So `clawker go dev` expands to the full command above with `$1=dev`. The flags mean:  
 >
 > - `-it` — interactive mode with a terminal attached
 > - `--rm` — removes the container when it finishes (recommended, volumes are preserved)
