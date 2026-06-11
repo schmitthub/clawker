@@ -302,7 +302,7 @@ func stageDirectory(log *logger.Logger, hostDir, stagingDir, name string) error 
 	}
 
 	dst := filepath.Join(stagingDir, name)
-	return copyDir(resolved, dst)
+	return copyDir(log, resolved, dst)
 }
 
 // stagePlugins copies the plugins/ directory (including cache/) and rewrites
@@ -339,29 +339,7 @@ func stagePlugins(log *logger.Logger, hostDir, stagingDir, containerHomeDir, con
 			return nil
 		}
 
-		target := filepath.Join(dst, rel)
-
-		// Handle symlinks: resolve and recurse if directory, copy if file.
-		if d.Type()&os.ModeSymlink != 0 {
-			realPath, err := filepath.EvalSymlinks(path)
-			if err != nil {
-				return fmt.Errorf("resolve symlink %s: %w", path, err)
-			}
-			info, err := os.Stat(realPath)
-			if err != nil {
-				return fmt.Errorf("stat symlink target %s: %w", realPath, err)
-			}
-			if info.IsDir() {
-				return copyDir(realPath, target)
-			}
-			return copyFile(realPath, target)
-		}
-
-		if d.IsDir() {
-			return os.MkdirAll(target, 0o755)
-		}
-
-		return copyFile(path, target)
+		return copyEntry(log, path, d, filepath.Join(dst, rel))
 	})
 	if err != nil {
 		return fmt.Errorf("walk plugins: %w", err)
@@ -462,8 +440,40 @@ func rewriteJSONPaths(v any, rules []pathRewriteRule) {
 	}
 }
 
-// copyDir recursively copies a directory tree.
-func copyDir(src, dst string) error {
+// copyEntry copies a single walked entry to target: symlinks are resolved
+// and recursed if directories or copied if files, with broken symlinks
+// skipped under a warning — Claude Code leaves dangling cache symlinks
+// behind after plugin updates and ignores them itself.
+func copyEntry(log *logger.Logger, path string, d fs.DirEntry, target string) error {
+	if d.Type()&os.ModeSymlink != 0 {
+		realPath, err := filepath.EvalSymlinks(path)
+		if os.IsNotExist(err) {
+			log.Warn().Str("path", path).Msg("skipping broken symlink")
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("resolve symlink %s: %w", path, err)
+		}
+		info, err := os.Stat(realPath)
+		if err != nil {
+			return fmt.Errorf("stat symlink target %s: %w", realPath, err)
+		}
+		if info.IsDir() {
+			return copyDir(log, realPath, target)
+		}
+		return copyFile(realPath, target)
+	}
+
+	if d.IsDir() {
+		return os.MkdirAll(target, 0o755)
+	}
+
+	return copyFile(path, target)
+}
+
+// copyDir recursively copies a directory tree, resolving symlinks and
+// skipping broken ones with a warning.
+func copyDir(log *logger.Logger, src, dst string) error {
 	return filepath.WalkDir(src, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -474,29 +484,7 @@ func copyDir(src, dst string) error {
 			return err
 		}
 
-		target := filepath.Join(dst, rel)
-
-		// Handle symlinks: resolve and recurse if directory, copy if file.
-		if d.Type()&os.ModeSymlink != 0 {
-			realPath, err := filepath.EvalSymlinks(path)
-			if err != nil {
-				return fmt.Errorf("resolve symlink %s: %w", path, err)
-			}
-			info, err := os.Stat(realPath)
-			if err != nil {
-				return fmt.Errorf("stat symlink target %s: %w", realPath, err)
-			}
-			if info.IsDir() {
-				return copyDir(realPath, target)
-			}
-			return copyFile(realPath, target)
-		}
-
-		if d.IsDir() {
-			return os.MkdirAll(target, 0o755)
-		}
-
-		return copyFile(path, target)
+		return copyEntry(log, path, d, filepath.Join(dst, rel))
 	})
 }
 
