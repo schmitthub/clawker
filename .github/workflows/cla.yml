@@ -22,15 +22,19 @@ jobs:
   cla:
     runs-on: ubuntu-24.04
     steps:
-      # The upstream CLA-assistant action is archived but still functional.
-      # Repo policy requires a commit-SHA pin (no floating tags).
+      # Pinned to our own fork of the CLA-assistant action. Upstream
+      # (contributor-assistant/github-action) is archived — no security patches
+      # land there — and this action runs privileged (pull_request_target with a
+      # write token), so we keep it under our control. The SHA is upstream's
+      # audited v2.6.1 commit, now in our custody; repo policy requires a
+      # commit-SHA pin (no floating tags).
       - name: "CLA Assistant"
         if: >
           (github.event.issue.pull_request
            && (github.event.comment.body == 'recheck'
                || github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA'))
           || github.event_name == 'pull_request_target'
-        uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08  # v2.6.1
+        uses: schmitthub/contributor-assistant@ca4a40a7d1004f18d9960b404b97e5f30a505a08  # v2.6.1 (fork)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
