@@ -32,7 +32,9 @@ type Config struct {
 
 `BindStrategy` — Direct host mount (live sync). `GetMounts()` generates tmpfs overlays for directories matching `.clawkerignore` patterns (file-level patterns like `*.env` cannot be enforced in bind mode). Prepare/Cleanup are no-ops. `ShouldPreserve()` returns true.
 
-`SnapshotStrategy` — Ephemeral volume copy (isolated). Creates volume and copies files on Prepare. `IgnorePatterns` are applied during tar archive creation to exclude matching files/directories. `ShouldPreserve()` returns false. Extra methods: `VolumeName() string`, `WasCreated() bool`.
+`SnapshotStrategy` — Ephemeral volume copy (isolated). Creates volume and copies files on Prepare. `IgnorePatterns` are applied during tar archive creation to exclude matching files/directories — the only exclusion authority (there is no hardcoded `.git` skip; `.git` is copied so in-container git works, and isolation comes from the copy being a disposable volume, not from withholding history). `ShouldPreserve()` returns false. Extra methods: `VolumeName() string`, `WasCreated() bool`.
+
+**Worktree + snapshot are mutually exclusive.** Worktrees bind the host's main `.git` read-write (see Worktree support below); layering a snapshot copy on top would let in-container writes reach the host repo, defeating snapshot isolation. `SetupMounts` rejects the combination (after mode resolution, before `strategy.Prepare`) with an error pointing the user at `workspace.default_mode: bind` / `--mode bind`. `CreateContainer` (`internal/cmd/container/shared`) also fails fast on the same invariant before creating a git worktree.
 
 ### Constructors
 
@@ -65,6 +67,8 @@ type SetupMountsResult struct {
     ContainerPath       string    // Resolved container-side workspace mount path
 }
 
+func ResolveMode(override, defaultMode string) (config.Mode, error)  // mode precedence: CLI --mode override wins, else config default; empty resolves to ModeBind (ParseMode default), only unrecognized non-empty errors
+var ErrWorktreeSnapshot error  // sentinel: worktree + snapshot rejected. SetupMounts keys on ProjectRootDir != ""; CreateContainer fail-fast keys on the --worktree flag — equivalent because resolveWorkDir sets ProjectRootDir iff a worktree is requested
 func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConfig) (*SetupMountsResult, error)
 func GetConfigVolumeMounts(projectName, agentName string) ([]mount.Mount, error)
 func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, agentName string) (ConfigVolumeResult, error)

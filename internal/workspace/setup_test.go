@@ -1,12 +1,14 @@
 package workspace
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/moby/moby/api/types/mount"
+	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -275,6 +277,77 @@ func TestSetupMounts_RelativeContainerPath(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "must be absolute") {
 		t.Errorf("error message = %q, should mention 'must be absolute'", err.Error())
+	}
+}
+
+func TestSetupMounts_RejectsWorktreeInSnapshotMode(t *testing.T) {
+	// Worktree (ProjectRootDir set) + snapshot must be rejected before any
+	// Docker call — the nil client proves the guard fires early. Covers both
+	// the explicit --mode override and the config workspace.default_mode path.
+	tests := []struct {
+		name         string
+		cfg          config.Config
+		modeOverride string
+	}{
+		{
+			name:         "explicit --mode snapshot override",
+			cfg:          configmocks.NewBlankConfig(),
+			modeOverride: "snapshot",
+		},
+		{
+			name:         "config workspace.default_mode: snapshot",
+			cfg:          configmocks.NewFromString("workspace:\n  default_mode: snapshot\n", ""),
+			modeOverride: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := SetupMounts(t.Context(), nil, SetupMountsConfig{
+				Log:            logger.Nop(),
+				Cfg:            tt.cfg,
+				ModeOverride:   tt.modeOverride,
+				ContainerPath:  "/workspace",
+				WorkDir:        t.TempDir(),
+				ProjectRootDir: t.TempDir(), // non-empty == worktree
+			})
+			if !errors.Is(err, ErrWorktreeSnapshot) {
+				t.Fatalf("SetupMounts() error = %v, want ErrWorktreeSnapshot", err)
+			}
+		})
+	}
+}
+
+func TestResolveMode(t *testing.T) {
+	tests := []struct {
+		name        string
+		override    string
+		defaultMode string
+		want        config.Mode
+		wantErr     bool
+	}{
+		{name: "override wins over default", override: "snapshot", defaultMode: "bind", want: config.ModeSnapshot},
+		{name: "empty override falls back to default", override: "", defaultMode: "snapshot", want: config.ModeSnapshot},
+		{name: "both empty resolves to bind", override: "", defaultMode: "", want: config.ModeBind},
+		{name: "unrecognized value errors", override: "bogus", defaultMode: "bind", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ResolveMode(tt.override, tt.defaultMode)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("ResolveMode(%q, %q) error = nil, want error", tt.override, tt.defaultMode)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ResolveMode(%q, %q) unexpected error = %v", tt.override, tt.defaultMode, err)
+			}
+			if got != tt.want {
+				t.Errorf("ResolveMode(%q, %q) = %v, want %v", tt.override, tt.defaultMode, got, tt.want)
+			}
+		})
 	}
 }
 

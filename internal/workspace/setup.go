@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +13,25 @@ import (
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
 )
+
+// ErrWorktreeSnapshot is returned when a git worktree is requested together
+// with snapshot workspace mode. The two are mutually exclusive: a worktree
+// binds the host's main .git read-write, and a snapshot copy on top of that
+// would let in-container writes reach the host repo, defeating snapshot
+// isolation. Snapshot already isolates the workspace from the host on its own.
+var ErrWorktreeSnapshot = errors.New("worktrees are not supported in snapshot mode (snapshot already isolates the workspace from the host); set workspace.default_mode: bind or pass --mode bind")
+
+// ResolveMode applies workspace-mode precedence: an explicit override (CLI
+// --mode flag) wins, otherwise the project's configured default mode. An empty
+// resulting value resolves to ModeBind (config.ParseMode's default); only an
+// unrecognized non-empty value returns an error.
+func ResolveMode(override, defaultMode string) (config.Mode, error) {
+	modeStr := override
+	if modeStr == "" {
+		modeStr = defaultMode
+	}
+	return config.ParseMode(modeStr)
+}
 
 // SetupMountsConfig holds configuration for workspace mount setup
 type SetupMountsConfig struct {
@@ -88,14 +108,15 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 
 	// Determine workspace mode (CLI flag overrides config default)
 	project := cfg.Cfg.Project()
-	modeStr := cfg.ModeOverride
-	if modeStr == "" {
-		modeStr = project.Workspace.DefaultMode
-	}
-
-	mode, err := config.ParseMode(modeStr)
+	mode, err := ResolveMode(cfg.ModeOverride, project.Workspace.DefaultMode)
 	if err != nil {
 		return nil, fmt.Errorf("invalid workspace mode: %w", err)
+	}
+
+	// Worktree (ProjectRootDir set) + snapshot is mutually exclusive — see
+	// ErrWorktreeSnapshot.
+	if cfg.ProjectRootDir != "" && mode == config.ModeSnapshot {
+		return nil, ErrWorktreeSnapshot
 	}
 
 	// Load ignore patterns (no ignore file when no project is registered)

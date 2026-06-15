@@ -17,6 +17,7 @@ import (
 	"github.com/schmitthub/clawker/internal/hostproxy/hostproxytest"
 	"github.com/schmitthub/clawker/internal/logger"
 	projectpkg "github.com/schmitthub/clawker/internal/project"
+	"github.com/schmitthub/clawker/internal/workspace"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
@@ -138,6 +139,51 @@ func TestCreateContainer_HappyPath(t *testing.T) {
 	require.Equal(t, "test-agent", result.AgentName)
 	require.Equal(t, "clawker.testproject.test-agent", result.ContainerName)
 	fake.AssertCalled(t, "ContainerCreate")
+}
+
+// snapshotModeProject builds a *config.Project whose workspace.default_mode is
+// snapshot, for exercising the config-default branch of the worktree guard.
+func snapshotModeProject(t *testing.T) *config.Project {
+	t.Helper()
+	cfg, err := config.NewFromString("workspace:\n  default_mode: snapshot\n", "")
+	require.NoError(t, err)
+	return cfg.Project()
+}
+
+// TestCreateContainer_RejectsWorktreeInSnapshotMode locks in the fail-fast
+// guard: worktree + snapshot must be rejected before resolveWorkDir creates a
+// git worktree on disk. This is a distinct guard from the one in
+// workspace.SetupMounts. ContainerCreate must never be called — the rejection
+// happens before any Docker work. Covers both the --mode override and the
+// config workspace.default_mode paths.
+func TestCreateContainer_RejectsWorktreeInSnapshotMode(t *testing.T) {
+	setupAuthEnv(t)
+	tests := []struct {
+		name    string
+		project *config.Project
+		mode    string
+	}{
+		{name: "explicit --mode snapshot override", project: testConfig(), mode: "snapshot"},
+		{name: "config workspace.default_mode: snapshot", project: snapshotModeProject(t), mode: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
+
+			containerOpts := NewContainerOptions()
+			containerOpts.Image = "alpine"
+			containerOpts.Agent = "test-agent"
+			containerOpts.Worktree = "feature/x"
+			containerOpts.Mode = tt.mode
+
+			_, err := CreateContainer(context.Background(),
+				testCreateConfig(fake, tt.project, containerOpts, testFlags()), nil)
+
+			require.ErrorIs(t, err, workspace.ErrWorktreeSnapshot)
+			fake.AssertNotCalled(t, "ContainerCreate")
+		})
+	}
 }
 
 func TestCreateContainer_ContainerCreateError(t *testing.T) {

@@ -44,6 +44,7 @@ git push -u origin <branch>     # or: git branch --set-upstream-to=origin/<branc
 
 - **Go builds**: worktree containers set `GOFLAGS=-buildvcs=false` because Go's VCS stamping cannot work in a linked worktree. Override via `agent.env`. See [Go builds inside worktree containers](#go-builds-inside-worktree-containers).
 - **Branch-keyed, no detached HEAD**: clawker worktrees are identified by branch name; detached-HEAD worktrees are unsupported.
+- **Bind mode only**: worktrees require `workspace.default_mode: bind` (or `--mode bind`). They are rejected in snapshot mode — a worktree binds the host's main `.git` read-write, and a snapshot copy on top of that would let in-container writes reach your host repo, defeating snapshot isolation. Snapshot mode already isolates the workspace from the host on its own, so the two are mutually exclusive.
 
 The lockdown is currently not configurable — secure by default. A policy gate to relax it per project is planned.
 
