@@ -91,7 +91,7 @@ homebrew_casks:
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: https://github.com/schmitthub/clawker
     description: "Development containers for AI coding agents"
-    license: "MIT"
+    license: "AGPL-3.0-or-later"
     hooks:
       post:
         install: |

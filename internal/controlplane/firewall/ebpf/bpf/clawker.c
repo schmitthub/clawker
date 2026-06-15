@@ -5,8 +5,8 @@
 // bpf_map_lookup_elem, cgroup sock_addr redirection, etc.) behind a GPL
 // license declaration — setting `_license[] = "GPL"` at the bottom of this
 // file is a runtime requirement enforced by the verifier when loading on any
-// production kernel. The rest of the clawker repository remains under the
-// MIT license. The resulting .o object file is loaded into the kernel at
+// production kernel. The rest of the clawker repository is licensed under
+// AGPL-3.0-or-later. The resulting .o object file is loaded into the kernel at
 // runtime via cilium/ebpf; it is not statically linked into the Go binary.
 //
 // clawker.c — All clawker eBPF programs in a single compilation unit.

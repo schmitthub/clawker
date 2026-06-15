@@ -228,6 +228,10 @@ security:
           - action: allow
             path: /repos/schmitthub/clawker
           - action: allow
+            path: /repos/schmitthub/claude-plugins
+          - action: allow
+            path: /repos/schmitthub/contributor-assistant
+          - action: allow
             path: /repos/envoyproxy/
           - action: allow
             path: /repos/oraios/serena/commits/
