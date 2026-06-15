@@ -11,6 +11,7 @@ Some preamble that must be ignored.
 
 ## [0.12.0] - 2026-06-11
 <!-- clawker: tag=feature docs=https://docs.clawker.dev/aliases -->
+<!-- a plain release note that must never render -->
 
 ### Added
 

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -60,6 +61,15 @@ func TestLoader_ForceRefresh_Fetches(t *testing.T) {
 	}
 	if len(entries) != 1 || entries[0].Version != "0.12.0" {
 		t.Fatalf("entries = %+v, want one 0.12.0 entry", entries)
+	}
+	// The loader's job is to deliver the parsed Body the teaser renders — a
+	// version-only assertion would stay green if Parse dropped the body. The
+	// section bullet must survive; the legacy "<!-- clawker: -->" line must not.
+	if !strings.Contains(entries[0].Body, "A feature.") {
+		t.Errorf("entry body missing parsed section bullet, got %q", entries[0].Body)
+	}
+	if strings.Contains(entries[0].Body, "<!--") {
+		t.Errorf("entry body leaked HTML comment, got %q", entries[0].Body)
 	}
 	if hits.Load() != 1 {
 		t.Errorf("hits = %d, want 1", hits.Load())
@@ -196,6 +206,10 @@ func TestLoader_FetchError_FallsBackToCache(t *testing.T) {
 	}
 	if len(entries) != 1 || entries[0].Version != "0.12.0" {
 		t.Fatalf("entries = %+v, want cached 0.12.0 entry", entries)
+	}
+	// The cache path must parse the body too, not just the version header.
+	if !strings.Contains(entries[0].Body, "A feature.") {
+		t.Errorf("cached entry body missing parsed section bullet, got %q", entries[0].Body)
 	}
 }
 

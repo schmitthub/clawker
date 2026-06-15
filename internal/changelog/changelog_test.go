@@ -10,9 +10,9 @@ import (
 )
 
 // loadFixture reads testdata/CHANGELOG.md, which mirrors the real CHANGELOG.md
-// shape (preamble + an "## [Unreleased]" section + header + metadata comment +
-// Keep-a-Changelog subsections + trailing link references) so parser tests are
-// stable regardless of the curated content.
+// shape (preamble + an "## [Unreleased]" section + version headers +
+// Keep-a-Changelog subsections + HTML comments + trailing link references) so
+// parser tests are stable regardless of the curated content.
 func loadFixture(t *testing.T) []byte {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("testdata", "CHANGELOG.md"))
@@ -90,38 +90,14 @@ func TestParse_Body(t *testing.T) {
 		}
 	}
 
-	// HTML comments (incl. the legacy clawker metadata line) and the link
-	// reference block must not leak into the body.
-	for _, bad := range []string{"<!--", "clawker:", "releases/tag"} {
+	// HTML comments (both the legacy "<!-- clawker: -->" metadata line and a
+	// plain note) and the link-reference block must not leak into the body. The
+	// "<!--" guard catches any comment flavor; "plain release note" pins the
+	// non-clawker comment specifically.
+	for _, bad := range []string{"<!--", "clawker:", "plain release note", "releases/tag"} {
 		if strings.Contains(first.Body, bad) {
 			t.Errorf("body leaked %q:\n%s", bad, first.Body)
 		}
-	}
-}
-
-// TestParse_HTMLCommentStripped asserts an HTML comment between the header and
-// the body is dropped from the rendered body (so neither a plain note nor a
-// legacy "<!-- clawker: -->" line leaks through), while the bullet survives.
-func TestParse_HTMLCommentStripped(t *testing.T) {
-	raw := []byte(`## [1.0.0] - 2026-01-01
-<!-- not clawker metadata -->
-
-### Added
-
-- A thing.
-`)
-	entries, err := Parse(raw)
-	if err != nil {
-		t.Fatalf("Parse: %v", err)
-	}
-	if len(entries) != 1 {
-		t.Fatalf("got %d entries, want 1", len(entries))
-	}
-	if strings.Contains(entries[0].Body, "<!--") {
-		t.Errorf("body leaked HTML comment: %q", entries[0].Body)
-	}
-	if !strings.Contains(entries[0].Body, "A thing.") {
-		t.Errorf("body missing bullet: %q", entries[0].Body)
 	}
 }
 
@@ -131,7 +107,6 @@ func TestParse_HTMLCommentStripped(t *testing.T) {
 // against someone "simplifying" the HasPatch() guard down to IsValid.
 func TestParse_PartialSemverHeaderSkipped(t *testing.T) {
 	raw := []byte(`## [0.12] - 2026-01-01
-<!-- clawker: tag=feature -->
 
 ### Added
 
