@@ -425,4 +425,8 @@ Clawker is free software: GNU Affero General Public License v3.0 or later (AGPL-
 
 The AGPL's network-use clause (section 13) is deliberate: if you run a modified Clawker as a network service, you must offer its source to users of that service. This keeps Clawker free and open — for learning from and building on, not for closed SaaS wrappers.
 
+**Commercial licensing.** Don't want the AGPL's copyleft and network-use obligations — for example, to embed Clawker in a closed-source product or service? A commercial license is available. Contact andrew@ajschmitt.io.
+
+**Contributing.** Contributions are accepted under a Contributor License Agreement ([CLA.md](CLA.md)): you keep your copyright, your work is published under the AGPL, and you grant the maintainer the right to also offer it under a commercial license. This is what keeps dual-licensing possible.
+
 > I feel obligated to state this... **Clawker** is a portmanteau of Claude + Docker. The project was at first named `claucker`, but reading it, saying it, and especially typing it always felt awkward to my brain because it violates the phonetic rules of English. Before I was aware of the whole `clawdbot` `openclaw` `clawthis` `clawthat` naming craze, I changed it to be the "correct" phonetic spelling, `clawker`, purely because it just rolls off the fingers when typing it. For those reasons I'm not going to change the name, but I want to make it clear the decision wasn't to chase a trend and this has no relation to openclaw.  

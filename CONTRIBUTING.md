@@ -122,6 +122,14 @@ Package-specific docs live in `internal/*/CLAUDE.md` files.
 
 Please read and follow our [Code of Conduct](CODE_OF_CONDUCT.md). Be kind, be constructive, be welcoming.
 
-## License
+## License & Contributor Agreement
 
-By contributing, you agree that your contributions will be licensed under the [GNU Affero General Public License v3.0 or later](LICENSE).
+Clawker is dual-licensed: AGPL-3.0-or-later for everyone, with commercial
+licenses available from the maintainer. So that contributions can ship under
+both, this project uses a Contributor License Agreement: you keep copyright of
+your work, your contribution is published under the AGPL-3.0-or-later, and you
+grant the maintainer the right to also license it under commercial terms.
+
+Read the full text in [CLA.md](CLA.md). On your first pull request, a CLA
+assistant asks you to sign by commenting a short confirmation phrase; merging is
+gated until you do.
