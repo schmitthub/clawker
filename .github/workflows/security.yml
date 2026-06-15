@@ -38,10 +38,10 @@ jobs:
         run: |
           if [ -n "$BASE_SHA" ]; then
             echo "Incremental scan against base $BASE_SHA"
-            semgrep scan --sarif --output semgrep.sarif --baseline-commit "$BASE_SHA" --config p/golang --config p/security-audit --error
+            semgrep scan --sarif --output semgrep.sarif --baseline-commit "$BASE_SHA" --config p/golang --config p/security-audit --config p/github-actions --config .semgrep/ --error
           else
             echo "Full scan (no baseline)"
-            semgrep scan --sarif --output semgrep.sarif --config p/golang --config p/security-audit --error
+            semgrep scan --sarif --output semgrep.sarif --config p/golang --config p/security-audit --config p/github-actions --config .semgrep/ --error
           fi
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}

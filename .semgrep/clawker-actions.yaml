@@ -1,0 +1,31 @@
+rules:
+  - id: clawker-pull-request-target-cache
+    languages: [yaml]
+    severity: ERROR
+    message: >-
+      This workflow triggers on `pull_request_target` AND uses a cache-capable
+      action (`actions/cache`, or a `setup-*` action whose cache defaults on).
+      `pull_request_target` runs in the BASE-branch cache scope, so any cache it
+      writes is later restored by push-to-main and release workflows — the
+      GitHub Actions cache-poisoning primitive behind the May 2026 TanStack
+      supply-chain compromise (a privileged release job restored a poisoned
+      build cache and had its publish/OIDC token lifted from runner memory).
+      Do not share a cache from a `pull_request_target` job: set `cache: false`
+      on the setup-* action, drop `actions/cache`, or move the cached build to a
+      `pull_request` job (PR-scoped cache, unreachable from main/release). If the
+      cache is provably safe, add a justified
+      `# nosemgrep: clawker-pull-request-target-cache` on the `uses:` line.
+    paths:
+      include:
+        - ".github/workflows/*.yml"
+        - ".github/workflows/*.yaml"
+    patterns:
+      - pattern-inside: |
+          on:
+            ...
+            pull_request_target: ...
+          ...
+      - pattern: "uses: $U"
+      - metavariable-regex:
+          metavariable: $U
+          regex: "^actions/(cache|setup-go|setup-node|setup-python|setup-java|setup-dotnet|setup-ruby)"

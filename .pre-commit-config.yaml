@@ -19,6 +19,16 @@ repos:
         language: system
         types: [go]
         pass_filenames: false
+      - id: semgrep-actions
+        name: Semgrep GitHub Actions
+        # Scans workflow YAML: p/github-actions catches the pull_request_target
+        # checkout (pwn-request); .semgrep/ adds the pull_request_target cache
+        # (poisoning) rule. Separate hook so workflow edits are gated even when
+        # no Go file changes. CI mirror: security.yml.
+        entry: semgrep scan --config p/github-actions --config .semgrep/ --error
+        language: system
+        files: ^\.github/workflows/.*\.ya?ml$
+        pass_filenames: false
 
   # ── Lint ──────────────────────────────────────────────────────────────────
   - repo: https://github.com/golangci/golangci-lint
