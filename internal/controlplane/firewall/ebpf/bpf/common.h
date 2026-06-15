@@ -2,7 +2,8 @@
 //
 // GPL-2.0 is required here (see clawker.c licensing note) because the BPF
 // helpers invoked from files that #include this header are kernel-gated to
-// GPL-licensed programs. The rest of the clawker repository is MIT-licensed.
+// GPL-licensed programs. This compilation unit stays GPL-2.0 for that kernel
+// requirement; the rest of the clawker repository is AGPL-3.0-or-later.
 //
 // common.h — Shared types, maps, and routing helpers for clawker eBPF
 // programs.

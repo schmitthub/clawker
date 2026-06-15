@@ -124,4 +124,4 @@ Please read and follow our [Code of Conduct](CODE_OF_CONDUCT.md). Be kind, be co
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the [MIT License](LICENSE).
+By contributing, you agree that your contributions will be licensed under the [GNU Affero General Public License v3.0 or later](LICENSE).
