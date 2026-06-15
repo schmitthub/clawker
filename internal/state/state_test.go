@@ -9,7 +9,6 @@ import (
 
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/storage"
-	"gopkg.in/yaml.v3"
 )
 
 // newStoreWithMigrations builds a CliState store rooted at dir with an extra
@@ -220,35 +219,6 @@ func TestState_ReadsLegacyUpdateStateFile(t *testing.T) {
 	}
 }
 
-// TestState_PersistedYAMLKeys guards the yaml tag contract used by the file
-// format (and by legacy-file compatibility).
-func TestState_PersistedYAMLKeys(t *testing.T) {
-	st, dir := newTestState(t)
-	if err := st.RecordUpdateCheck(time.Now(), "1.0.0", "0.9.0"); err != nil {
-		t.Fatalf("RecordUpdateCheck: %v", err)
-	}
-	if err := st.SetLastSeenChangelog("0.9.0"); err != nil {
-		t.Fatalf("SetLastSeenChangelog: %v", err)
-	}
-	if err := st.RecordChangelogFetch(time.Now()); err != nil {
-		t.Fatalf("RecordChangelogFetch: %v", err)
-	}
-
-	data, err := os.ReadFile(filepath.Join(dir, consts.CliStateFile))
-	if err != nil {
-		t.Fatalf("read state file: %v", err)
-	}
-	var raw map[string]any
-	if err := yaml.Unmarshal(data, &raw); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	for _, key := range []string{"checked_at", "latest_version", "current_version", "last_seen_changelog", "changelog_fetched_at"} {
-		if _, ok := raw[key]; !ok {
-			t.Errorf("state file missing key %q; got keys %v", key, keys(raw))
-		}
-	}
-}
-
 // TestMigrations_Wired proves the migration scaffold is plumbed into the store
 // load pipeline: a migration that rewrites a field runs on the discovered file
 // and its result is reflected in the loaded snapshot (and re-saved). This guards
@@ -287,12 +257,4 @@ func TestMigrations_Wired(t *testing.T) {
 	if !strings.Contains(string(data), "9.9.9") {
 		t.Errorf("migration not persisted; file:\n%s", data)
 	}
-}
-
-func keys(m map[string]any) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
 }

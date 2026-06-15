@@ -40,7 +40,7 @@ Suppressed when: `CLAWKER_NO_UPDATE_NOTIFIER` set, `CI` set, version is `"DEV"`,
 
 ## Show-Once Changelog Teaser
 
-`maybeShowChangelog(f, cliState, buildVersion, priorCurrentVersion)` runs
+`maybeShowChangelog(f, cliState, entries, buildVersion, priorCurrentVersion)` runs
 **after** the command completes (in both the error and success paths, right
 after `printUpdateNotification`), surfacing curated changelog entries gained
 since the last shown version. It mirrors the update-notifier discipline:
@@ -68,6 +68,7 @@ if cursor == "":                              # first changelog-aware run
     prior = priorCurrentVersion               # snapshot from Main() pre-goroutine
     if prior != "" and prior < cur: cursor = prior   # bootstrap catch-up
     else: SetLastSeenChangelog(cur); return          # no catch-up — seed cursor silently
+if entries == nil: return                          # background load failed / empty — leave cursor, retry next run
 gained = changelog.Between(entries, cursor, cur)   # entries loaded in background
 if gained and not suppressed: teaser (titles + per-entry docs link); SetLastSeenChangelog(cur)
 elif not gained:              SetLastSeenChangelog(cur)   # nothing new — sync silently

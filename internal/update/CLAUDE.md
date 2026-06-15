@@ -97,6 +97,8 @@ State file (owned by `internal/state`): `config.StateDir()/update-state.yaml`
 suppression conditions, TTL via passed timestamp (zero = never checked),
 newer/same/older versions (all return a populated `CheckResult` with the
 appropriate `IsNewer`), API errors, malformed JSON, empty tag_name, context
-cancellation, v-prefix handling, and the goroutine channel pattern. The test
-helper `checkForUpdateWithURL` injects the test server URL. No state-file tests
-live here — persistence is `internal/state`'s concern.
+cancellation, and v-prefix handling. Tests drive the unexported `checkForUpdate`
+core (the URL-parameterized body of `CheckForUpdate`) against the httptest URL,
+so they exercise the real gate→fetch→assemble path rather than a parallel
+reimplementation. No state-file tests live here — persistence is
+`internal/state`'s concern.

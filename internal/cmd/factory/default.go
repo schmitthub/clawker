@@ -402,8 +402,13 @@ func changelogFunc(f *cmdutil.Factory) func() (*changelog.Loader, error) {
 				err = fmt.Errorf("failed to get state: %w", stErr)
 				return
 			}
+			log, logErr := f.Logger()
+			if logErr != nil {
+				err = fmt.Errorf("failed to get logger: %w", logErr)
+				return
+			}
 			cachePath := filepath.Join(config.StateDir(), consts.ChangelogCacheFile)
-			loader = changelog.NewLoader(f.HttpClient(), changelog.ChangelogURL, cachePath, st, changelog.DefaultTTL)
+			loader = changelog.NewLoader(f.HttpClient(), changelog.ChangelogURL, cachePath, st, changelog.DefaultTTL, log)
 		})
 		return loader, err
 	}

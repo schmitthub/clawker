@@ -134,8 +134,9 @@ prints the teaser (`printChangelogTeaser`) to `ios.ErrOut` — a "📣 What's ne
 clawker:" header followed by one bullet per gained entry (`v<version> <title>`)
 and a per-entry "learn more: <docs URL>" line. Suppressed on non-TTY / `CI` /
 `CLAWKER_NO_UPDATE_NOTIFIER` / dev build (`currentVersion == consts.DevVersion`).
-The cursor is `state.LastSeenChangelog()`, bootstrapped from the recorded
-`current_version` on the first changelog-aware run.
+The cursor is `state.LastSeenChangelog()`; on the first changelog-aware run it
+bootstraps from the `priorCurrentVersion` snapshot — captured in `Main()` before
+the update goroutine overwrites `current_version`, not a live read.
 
 Cursor algorithm:
 
@@ -143,9 +144,10 @@ Cursor algorithm:
 cur = build.Version; if cur == DEV: return
 cursor = state.LastSeenChangelog()
 if cursor == "":                              # first changelog-aware run
-    prior = state.CurrentVersion()            # already recorded by the update checker
+    prior = priorCurrentVersion               # snapshot in Main() BEFORE the update goroutine overwrites current_version
     if prior != "" and prior < cur: cursor = prior          # bootstrap catch-up
     else: SetLastSeenChangelog(cur); return                 # no catch-up — seed cursor silently
+if entries == nil: return                     # background load failed / empty — leave cursor, retry next run
 gained = changelog.Between(entries, cursor, cur)
 if gained and not suppressed: teaser (titles + per-entry docs link); SetLastSeenChangelog(cur)
 elif not gained:              SetLastSeenChangelog(cur)      # nothing new — sync silently

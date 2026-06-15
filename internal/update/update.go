@@ -88,13 +88,27 @@ func ShouldCheckForUpdate(lastCheckedAt time.Time, currentVersion string) bool {
 // The context controls the HTTP request lifetime — cancel it to abort cleanly.
 // repo should be "owner/name", e.g. "schmitthub/clawker".
 func CheckForUpdate(ctx context.Context, lastCheckedAt time.Time, currentVersion, repo string) (*CheckResult, error) {
+	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo)
+	result, err := checkForUpdate(ctx, lastCheckedAt, currentVersion, url)
+	if err != nil {
+		return nil, fmt.Errorf("checking %s: %w", repo, err)
+	}
+	return result, nil
+}
+
+// checkForUpdate is the URL-parameterized core of CheckForUpdate: the exported
+// wrapper builds the GitHub API URL from repo and delegates here. Keeping the
+// core unexported lets tests exercise the real gate→fetch→assemble path against
+// an httptest URL without a parallel reimplementation and without putting a URL
+// seam on the exported signature.
+func checkForUpdate(ctx context.Context, lastCheckedAt time.Time, currentVersion, url string) (*CheckResult, error) {
 	if !ShouldCheckForUpdate(lastCheckedAt, currentVersion) {
 		return nil, nil
 	}
 
-	release, err := fetchLatestRelease(ctx, repo)
+	release, err := fetchLatestReleaseFromURL(ctx, url)
 	if err != nil {
-		return nil, fmt.Errorf("checking %s: %w", repo, err)
+		return nil, err
 	}
 
 	latestVersion := strings.TrimPrefix(release.TagName, "v")
@@ -108,14 +122,9 @@ func CheckForUpdate(ctx context.Context, lastCheckedAt time.Time, currentVersion
 	}, nil
 }
 
-// fetchLatestRelease queries the GitHub API for the latest release.
-func fetchLatestRelease(ctx context.Context, repo string) (*githubRelease, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo)
-	return fetchLatestReleaseFromURL(ctx, url)
-}
-
-// fetchLatestReleaseFromURL fetches release info from the given URL.
-// Separated from fetchLatestRelease to allow test URL injection.
+// fetchLatestReleaseFromURL fetches and decodes a GitHub release from the given
+// URL. The URL is supplied by checkForUpdate (built from the repo), which keeps
+// this function URL-agnostic so tests can point it at an httptest server.
 func fetchLatestReleaseFromURL(ctx context.Context, url string) (*githubRelease, error) {
 	client := &http.Client{Timeout: httpTimeout}
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)

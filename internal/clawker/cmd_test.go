@@ -240,6 +240,25 @@ func TestMaybeShowChangelog_NilStateNoop(t *testing.T) {
 	}
 }
 
+// TestMaybeShowChangelog_NilEntriesLeavesCursor: when the background load failed
+// (nil entries) but a cursor is already established, the teaser stays silent and
+// the cursor is left untouched so the next interactive run retries once entries
+// load successfully.
+func TestMaybeShowChangelog_NilEntriesLeavesCursor(t *testing.T) {
+	f, st, errOut := newChangelogTestFactory(t, true)
+	if err := st.SetLastSeenChangelog("0.11.0"); err != nil {
+		t.Fatalf("SetLastSeenChangelog: %v", err)
+	}
+
+	maybeShowChangelog(f, st, nil, "0.12.0", "")
+	if errOut.String() != "" {
+		t.Errorf("nil entries must print nothing, got:\n%s", errOut.String())
+	}
+	if got := st.LastSeenChangelog(); got != "0.11.0" {
+		t.Errorf("nil-entries run must leave cursor at 0.11.0, got %q", got)
+	}
+}
+
 func TestPrintDockerInstallHelper(t *testing.T) {
 	var buf bytes.Buffer
 	cs := iostreams.NewColorScheme(false, "") // no color for test assertions

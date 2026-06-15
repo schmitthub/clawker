@@ -46,9 +46,9 @@ per-entry HTML-comment metadata line directly under each version header.
   (`Added → feature`, `Fixed/Security → fix`, `Removed/Deprecated → breaking`,
   `Changed → changed`).
 - **Body**: everything between the metadata comment and the next version header
-  (or the trailing link-reference block), rendered verbatim by the CLI. The
-  metadata comment and `[x.y.z]: <url>` link-reference lines never leak into the
-  body.
+  (or the trailing link-reference block). `Title` is derived from it; the teaser
+  renders `Title`, not `Body`. The metadata comment and `[x.y.z]: <url>`
+  link-reference lines never leak into the body.
 - **`Title`**: derived from the first bullet of the body — bold markers and the
   leading `- ` stripped, truncated at the first period.
 
@@ -60,7 +60,7 @@ type Entry struct {
     Date    string // "2026-06-11"
     Tag     Tag    // feature|fix|breaking|perf|changed (string subtype)
     Title   string // first headline of the body
-    Body    string // markdown body, rendered verbatim by the CLI
+    Body    string // full markdown body (parsed; Title is derived from it — teaser renders Title)
     Docs    string // optional docs URL from metadata
 }
 

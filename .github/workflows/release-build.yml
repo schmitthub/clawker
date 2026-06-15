@@ -63,7 +63,9 @@ jobs:
       # the committed changelog, no build, no API. A tag with no matching
       # section yields an empty file (no-op), leaving just the auto commit
       # groups. The awk matches the literal `## [<version>] ` prefix (leading
-      # `v` stripped from the tag) and copies through to the next `## [` header.
+      # `v` stripped from the tag) and copies through to the next `## [` header,
+      # dropping the `<!-- clawker: ... -->` metadata line (invisible on GitHub
+      # but otherwise present in the raw release body).
       - name: Extract curated release-notes header
         run: |
           set -euo pipefail
@@ -71,6 +73,7 @@ jobs:
           awk -v ver="## [${VERSION}]" '
             index($0, ver) == 1 { collecting = 1; print; next }
             collecting && /^## \[/ { exit }
+            collecting && /^<!-- clawker:/ { next }
             collecting { print }
           ' CHANGELOG.md > release-notes.md
           echo "::group::release-notes.md"

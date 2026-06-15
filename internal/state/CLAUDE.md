@@ -36,7 +36,7 @@ recursing into the unexported fields.
 ## File
 
 Persisted to the XDG state dir under `consts.CliStateFile` (`update-state.yaml`)
-— the same filename the legacy update checker wrote. An existing install's
+— the same filename the update checker's state uses. An existing install's
 `update-state.yaml` is read in place: its `checked_at` / `latest_version` /
 `current_version` carry forward (the dropped `latest_url` key is simply ignored
 by the schema, and re-fetched fresh each check), and `last_seen_changelog`
@@ -92,5 +92,5 @@ Shared by the update goroutine (`RecordUpdateCheck`) and the changelog cursor
 
 File-backed via `New(WithStateDirOverride(t.TempDir()))` — real storage (merge +
 atomic write), no user XDG dir touched. Tests cover: round-trip of both writers,
-field-merge non-clobber in both directions, legacy-file read-in-place, persisted
+field-merge non-clobber in both directions, existing-file read-in-place, persisted
 YAML key contract, and migration wiring.

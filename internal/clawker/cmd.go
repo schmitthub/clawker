@@ -267,10 +267,11 @@ func changelogSuppressed(ios *iostreams.IOStreams) bool {
 //	if cursor == "":                       # first changelog-aware run
 //	    prior = priorCurrentVersion        # snapshot from Main() pre-goroutine
 //	    if prior != "" and prior < cur: cursor = prior   # bootstrap catch-up
-//	    else: SetLastSeenChangelog(cur); welcome one-liner; return
-//	entries = changelog.Between(cursor, cur)
-//	if entries and not suppressed: show teaser; SetLastSeenChangelog(cur)
-//	elif not entries:              SetLastSeenChangelog(cur)   # sync silently
+//	    else: SetLastSeenChangelog(cur); return          # seed cursor silently
+//	if entries == nil: return              # background load failed / empty — retry next run
+//	gained = changelog.Between(entries, cursor, cur)
+//	if gained and not suppressed: show teaser; SetLastSeenChangelog(cur)
+//	elif not gained:              SetLastSeenChangelog(cur)   # sync silently
 //	# else suppressed: leave cursor — retry next interactive run
 //
 // priorCurrentVersion is the current_version snapshotted in Main() BEFORE the

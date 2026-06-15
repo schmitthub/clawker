@@ -91,7 +91,7 @@ func TestCheckForUpdate_NewerVersion(t *testing.T) {
 	srv := newReleaseServer("v2.0.0", "https://github.com/schmitthub/clawker/releases/tag/v2.0.0")
 	defer srv.Close()
 
-	result, err := checkForUpdateWithURL(t, time.Time{}, "1.0.0", srv.URL)
+	result, err := checkForUpdate(context.Background(), time.Time{}, "1.0.0", srv.URL)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestCheckForUpdate_SameVersion(t *testing.T) {
 	srv := newReleaseServer("v1.0.0", "https://github.com/schmitthub/clawker/releases/tag/v1.0.0")
 	defer srv.Close()
 
-	result, err := checkForUpdateWithURL(t, time.Time{}, "1.0.0", srv.URL)
+	result, err := checkForUpdate(context.Background(), time.Time{}, "1.0.0", srv.URL)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestCheckForUpdate_OlderRemote(t *testing.T) {
 	srv := newReleaseServer("v0.9.0", "https://github.com/schmitthub/clawker/releases/tag/v0.9.0")
 	defer srv.Close()
 
-	result, err := checkForUpdateWithURL(t, time.Time{}, "1.0.0", srv.URL)
+	result, err := checkForUpdate(context.Background(), time.Time{}, "1.0.0", srv.URL)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestCheckForUpdate_APIError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	result, err := checkForUpdateWithURL(t, time.Time{}, "1.0.0", srv.URL)
+	result, err := checkForUpdate(context.Background(), time.Time{}, "1.0.0", srv.URL)
 	if err == nil {
 		t.Error("expected error on API failure, got nil")
 	}
@@ -196,7 +196,7 @@ func TestCheckForUpdate_VPrefixHandling(t *testing.T) {
 	defer srv.Close()
 
 	// Pass version with v prefix
-	result, err := checkForUpdateWithURL(t, time.Time{}, "v1.0.0", srv.URL)
+	result, err := checkForUpdate(context.Background(), time.Time{}, "v1.0.0", srv.URL)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -254,33 +254,6 @@ func TestIsNewer(t *testing.T) {
 				t.Errorf("IsNewer(%q, %q) = %v, want %v", tt.latest, tt.current, got, tt.want)
 			}
 		})
-	}
-}
-
-func TestCheckForUpdate_GoroutineChannelPattern(t *testing.T) {
-	clearUpdateEnv(t)
-
-	srv := newReleaseServer("v3.0.0", "https://github.com/schmitthub/clawker/releases/tag/v3.0.0")
-	defer srv.Close()
-
-	// Simulate the goroutine+channel pattern used in Main():
-	// goroutine sends once, blocking read receives the result.
-	ch := make(chan *CheckResult)
-	go func() {
-		rel, _ := checkForUpdateWithURL(t, time.Time{}, "1.0.0", srv.URL)
-		ch <- rel
-	}()
-
-	result := <-ch
-
-	if result == nil {
-		t.Fatal("expected CheckResult from goroutine, got nil")
-	}
-	if result.LatestVersion != "3.0.0" {
-		t.Errorf("LatestVersion = %q, want %q", result.LatestVersion, "3.0.0")
-	}
-	if result.CurrentVersion != "1.0.0" {
-		t.Errorf("CurrentVersion = %q, want %q", result.CurrentVersion, "1.0.0")
 	}
 }
 
@@ -348,29 +321,4 @@ func newReleaseServer(tagName, htmlURL string) *httptest.Server {
 			HTMLURL: htmlURL,
 		})
 	}))
-}
-
-// checkForUpdateWithURL mirrors CheckForUpdate but targets a test server URL.
-func checkForUpdateWithURL(t *testing.T, lastCheckedAt time.Time, currentVersion, apiURL string) (*CheckResult, error) {
-	t.Helper()
-
-	if !ShouldCheckForUpdate(lastCheckedAt, currentVersion) {
-		return nil, nil
-	}
-
-	ctx := context.Background()
-	release, err := fetchLatestReleaseFromURL(ctx, apiURL)
-	if err != nil {
-		return nil, err
-	}
-
-	latestVersion := strings.TrimPrefix(release.TagName, "v")
-	currentBare := strings.TrimPrefix(currentVersion, "v")
-
-	return &CheckResult{
-		CurrentVersion: currentBare,
-		LatestVersion:  latestVersion,
-		ReleaseURL:     release.HTMLURL,
-		IsNewer:        IsNewer(latestVersion, currentBare),
-	}, nil
 }

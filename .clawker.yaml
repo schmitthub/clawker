@@ -282,7 +282,7 @@ security:
           - action: allow
             path: /opensearch-project/OpenSearch-Dashboards/
           - action: allow
-            path: contributor-assistant/github-action/
+            path: /contributor-assistant/github-action/
         port: 443
         proto: https
   git_credentials:

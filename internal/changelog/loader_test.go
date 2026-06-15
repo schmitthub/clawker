@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/state"
 )
 
@@ -51,7 +52,7 @@ func TestLoader_ForceRefresh_Fetches(t *testing.T) {
 	srv, hits := countingServer(t)
 	st := newTestState(t)
 	cachePath := filepath.Join(t.TempDir(), "cache.md")
-	l := NewLoader(srv.Client(), srv.URL, cachePath, st, DefaultTTL)
+	l := NewLoader(srv.Client(), srv.URL, cachePath, st, DefaultTTL, logger.Nop())
 
 	entries, err := l.Load(context.Background(), true)
 	if err != nil {
@@ -83,7 +84,7 @@ func TestLoader_FreshCache_NoFetch(t *testing.T) {
 	if err := st.RecordChangelogFetch(time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	l := NewLoader(srv.Client(), srv.URL, cachePath, st, DefaultTTL)
+	l := NewLoader(srv.Client(), srv.URL, cachePath, st, DefaultTTL, logger.Nop())
 
 	entries, err := l.Load(context.Background(), false)
 	if err != nil {
@@ -110,7 +111,7 @@ func TestLoader_FreshCache_FileMissing_Fetches(t *testing.T) {
 	if err := st.RecordChangelogFetch(time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	l := NewLoader(srv.Client(), srv.URL, cachePath, st, DefaultTTL)
+	l := NewLoader(srv.Client(), srv.URL, cachePath, st, DefaultTTL, logger.Nop())
 
 	entries, err := l.Load(context.Background(), false)
 	if err != nil {
@@ -127,6 +128,35 @@ func TestLoader_FreshCache_FileMissing_Fetches(t *testing.T) {
 	}
 }
 
+// TestLoader_FreshCache_CorruptBytes_DegradesToEmpty asserts that a fresh cache
+// file containing non-changelog garbage degrades safely: Parse is total (it
+// skips unrecognized lines rather than erroring), so Load returns an empty entry
+// list with no error, no panic, and no network fetch. The teaser then simply
+// shows nothing until the next TTL-driven re-fetch.
+func TestLoader_FreshCache_CorruptBytes_DegradesToEmpty(t *testing.T) {
+	srv, hits := countingServer(t)
+	st := newTestState(t)
+	cachePath := filepath.Join(t.TempDir(), "cache.md")
+	if err := os.WriteFile(cachePath, []byte("\x00\x01 not a changelog \xff"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RecordChangelogFetch(time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	l := NewLoader(srv.Client(), srv.URL, cachePath, st, DefaultTTL, logger.Nop())
+
+	entries, err := l.Load(context.Background(), false)
+	if err != nil {
+		t.Fatalf("Load should degrade to empty, got error: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("entries = %+v, want none from corrupt cache", entries)
+	}
+	if hits.Load() != 0 {
+		t.Errorf("hits = %d, want 0 (fresh cache should not fetch even if corrupt)", hits.Load())
+	}
+}
+
 // TestLoader_StaleCache_Fetches asserts that a stale fetch timestamp triggers a
 // network fetch even without forceRefresh. The clock is injected so the staleness
 // is deterministic.
@@ -137,7 +167,7 @@ func TestLoader_StaleCache_Fetches(t *testing.T) {
 	if err := st.RecordChangelogFetch(time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	l := NewLoader(srv.Client(), srv.URL, cachePath, st, DefaultTTL)
+	l := NewLoader(srv.Client(), srv.URL, cachePath, st, DefaultTTL, logger.Nop())
 	// Advance the clock past the TTL so the recorded fetch is stale.
 	l.now = func() time.Time { return time.Now().Add(2 * DefaultTTL) }
 
@@ -158,7 +188,7 @@ func TestLoader_FetchError_FallsBackToCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Unreachable URL → fetch fails; cache present → fallback succeeds.
-	l := NewLoader(http.DefaultClient, "http://127.0.0.1:0/nope", cachePath, st, DefaultTTL)
+	l := NewLoader(http.DefaultClient, "http://127.0.0.1:0/nope", cachePath, st, DefaultTTL, logger.Nop())
 
 	entries, err := l.Load(context.Background(), true)
 	if err != nil {
@@ -174,7 +204,7 @@ func TestLoader_FetchError_FallsBackToCache(t *testing.T) {
 func TestLoader_FetchError_NoCache_ReturnsError(t *testing.T) {
 	st := newTestState(t)
 	cachePath := filepath.Join(t.TempDir(), "missing.md")
-	l := NewLoader(http.DefaultClient, "http://127.0.0.1:0/nope", cachePath, st, DefaultTTL)
+	l := NewLoader(http.DefaultClient, "http://127.0.0.1:0/nope", cachePath, st, DefaultTTL, logger.Nop())
 
 	if _, err := l.Load(context.Background(), true); err == nil {
 		t.Fatal("expected an error when fetch fails and no cache exists")
@@ -186,7 +216,7 @@ func TestLoader_FetchError_NoCache_ReturnsError(t *testing.T) {
 func TestLoader_NilState_AlwaysFetches(t *testing.T) {
 	srv, hits := countingServer(t)
 	cachePath := filepath.Join(t.TempDir(), "cache.md")
-	l := NewLoader(srv.Client(), srv.URL, cachePath, nil, DefaultTTL)
+	l := NewLoader(srv.Client(), srv.URL, cachePath, nil, DefaultTTL, logger.Nop())
 
 	for range 2 {
 		if _, err := l.Load(context.Background(), false); err != nil {

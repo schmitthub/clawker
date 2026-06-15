@@ -15,6 +15,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/state"
 )
 
@@ -36,6 +37,7 @@ type Loader struct {
 	cachePath string
 	st        *state.State
 	ttl       time.Duration
+	log       *logger.Logger
 	// now is the clock, injected for tests; defaults to time.Now. It is an
 	// unexported field set in NewLoader, not a parameter on any exported
 	// signature, so production callers never see a test seam.
@@ -46,13 +48,16 @@ type Loader struct {
 // Fetch use its own short-timeout client, and a nil st disables the TTL gate
 // (every Load fetches). url is the raw CHANGELOG.md URL (changelog.ChangelogURL
 // in production); cachePath is the on-disk cache file (under the state dir).
-func NewLoader(client *http.Client, url, cachePath string, st *state.State, ttl time.Duration) *Loader {
+// log records degrade-path diagnostics to the file log; pass logger.Nop() in
+// tests.
+func NewLoader(client *http.Client, url, cachePath string, st *state.State, ttl time.Duration, log *logger.Logger) *Loader {
 	return &Loader{
 		client:    client,
 		url:       url,
 		cachePath: cachePath,
 		st:        st,
 		ttl:       ttl,
+		log:       log,
 		now:       time.Now,
 	}
 }
@@ -70,8 +75,15 @@ func (l *Loader) Load(ctx context.Context, forceRefresh bool) ([]Entry, error) {
 	if forceRefresh || l.stale() {
 		raw, err := Fetch(ctx, l.client, l.url)
 		if err != nil {
-			// Network failed — fall back to the cache if we have one.
+			// Network failed — fall back to the cache if we have one. The fetch
+			// error is non-actionable for the user (the teaser is best-effort)
+			// but is logged so a persistent fetch failure — e.g. a 404 before
+			// CHANGELOG.md lands on main, or a firewall/DNS block — is
+			// diagnosable from the file log instead of vanishing.
 			if cached, cacheErr := os.ReadFile(l.cachePath); cacheErr == nil {
+				if l.log != nil {
+					l.log.Debug().Err(err).Str("url", l.url).Msg("changelog fetch failed; serving cached copy")
+				}
 				return Parse(cached)
 			}
 			return nil, err

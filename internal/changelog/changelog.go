@@ -17,7 +17,7 @@ type Entry struct {
 	Date    string // "2026-06-11"
 	Tag     Tag    // "feature" | "fix" | "breaking" | "perf" | "changed" — from metadata, else derived from the ### subsection
 	Title   string // first headline line of the body (without the leading bullet/bold markers)
-	Body    string // markdown body for the entry, rendered verbatim by the CLI
+	Body    string // full markdown body of the entry (parsed; Title is derived from it — the teaser renders Title, not Body)
 	Docs    string // optional docs URL from metadata
 }
 
