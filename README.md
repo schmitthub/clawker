@@ -423,6 +423,8 @@ Please read our [Code of Conduct](CODE_OF_CONDUCT.md) before participating.
 
 Clawker is free software: GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later) — see [LICENSE](LICENSE).
 
+One subproject is the exception: the `claude-plugin/clawker-support/` plugin is licensed separately under the MIT License — see [its LICENSE](claude-plugin/clawker-support/LICENSE). Everything else in this repository is AGPL-3.0-or-later as described below.
+
 The AGPL's network-use clause (section 13) is deliberate: if you run a modified Clawker as a network service, you must offer its source to users of that service. This keeps Clawker free and open — for learning from and building on, not for closed SaaS wrappers.
 
 **Commercial licensing.** Don't want the AGPL's copyleft and network-use obligations — for example, to embed Clawker in a closed-source product or service? A commercial license is available. Contact andrew@ajschmitt.io.
