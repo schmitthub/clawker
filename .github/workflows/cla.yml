@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   cla:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       # The upstream CLA-assistant action is archived but still functional.
       # Repo policy requires a commit-SHA pin (no floating tags).
@@ -23,15 +23,15 @@ jobs:
           (github.event.comment.body == 'recheck'
            || github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA')
           || github.event_name == 'pull_request_target'
-        uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08  # frozen: v2.6.1
+        uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08  # v2.6.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           path-to-signatures: 'signatures/version1/cla.json'
           path-to-document: 'https://github.com/schmitthub/clawker/blob/main/CLA.md'
-          # Signatures are committed directly to this branch via GITHUB_TOKEN.
-          # It must stay UNPROTECTED (keep it out of main's branch protection),
-          # and must exist before the first PR.
+          # Signatures are committed directly to the cla-signatures branch via
+          # GITHUB_TOKEN. It must stay UNPROTECTED (keep it out of main's branch
+          # protection), and must exist before the first PR.
           branch: 'cla-signatures'
           allowlist: 'schmitthub,dependabot[bot]'
           custom-pr-sign-comment: 'I have read the CLA Document and I hereby sign the CLA'
