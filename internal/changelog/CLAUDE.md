@@ -5,8 +5,8 @@ Parser + transformer + runtime loader for the curated, hand-maintained
 
 The package splits cleanly into a **pure core** and an **I/O layer**:
 
-- **Pure core** (`changelog.go`, `parse.go`): `Parse` / `Between` /
-  `ForVersion` operate entirely on caller-supplied bytes and do **no I/O**. They
+- **Pure core** (`changelog.go`, `parse.go`): `Parse` / `Between`
+  operate entirely on caller-supplied bytes and do **no I/O**. They
   never import `net/http` or `os` — a stateless transformer with no dependency
   on where the bytes came from. The only dependency is `internal/semver` (a
   stdlib-only leaf) for version comparison.
@@ -58,7 +58,7 @@ per-entry HTML-comment metadata line directly under each version header.
 type Entry struct {
     Version string // "0.12.2" (bare, no v) — semver anchor
     Date    string // "2026-06-11"
-    Tag     string // feature|fix|breaking|perf|changed
+    Tag     Tag    // feature|fix|breaking|perf|changed (string subtype)
     Title   string // first headline of the body
     Body    string // markdown body, rendered verbatim by the CLI
     Docs    string // optional docs URL from metadata
@@ -66,11 +66,10 @@ type Entry struct {
 
 func Parse(raw []byte) ([]Entry, error)              // parse CHANGELOG.md bytes, newest-first; skips non-semver sections
 func Between(entries []Entry, lo, hi string) []Entry // filter to lo < version <= hi (cursor range); no re-parse
-func ForVersion(entries []Entry, v string) (Entry, bool) // exact version match; no re-parse
 ```
 
-`Parse` is the only pure entry point that touches raw bytes. `Between` and
-`ForVersion` are pure slice transforms over already-parsed entries — they do not
+`Parse` is the only pure entry point that touches raw bytes. `Between` is a
+pure slice transform over already-parsed entries — it does not
 re-parse. Version arguments accept an optional leading `v` (`v0.12.0` ==
 `0.12.0`). `Between` is lo-exclusive / hi-inclusive: a `v0.5.0 → v0.12.0` jump
 returns every gained entry; `v0.11.0 → v0.12.0` returns one.
@@ -106,15 +105,14 @@ signature.
 `internal/config` — the cache path is passed in as a plain string
 (`config.StateDir()/consts.ChangelogCacheFile`, resolved by the Factory).
 Exposed as the Factory noun `f.Changelog func() (*changelog.Loader, error)`,
-wired in `internal/cmd/factory/default.go::changelogFunc`. The `clawker
-changelog` command force-refreshes; the show-once teaser in
-`internal/clawker/Main` is TTL-gated and loads in a background goroutine so it
-never blocks the user's command.
+wired in `internal/cmd/factory/default.go::changelogFunc`. Its sole consumer is
+the show-once teaser in `internal/clawker/Main`, which is TTL-gated and loads in
+a background goroutine so it never blocks the user's command.
 
 ## Semver compare
 
 Version comparison is delegated to the shared `internal/semver` package:
-`Between` / `ForVersion` call `semver.CompareStrings` (v-tolerant and total —
+`Between` calls `semver.CompareStrings` (v-tolerant and total —
 unparseable versions sort low, never panic), and the parser's header validator
 uses `semver.Parse(...).HasPatch()`. No local semver code remains.
 
@@ -124,7 +122,8 @@ uses `semver.Parse(...).HasPatch()`. No local semver code remains.
   fixture mirroring the real shape, stable regardless of curated content):
   header + metadata parsing, `## [Unreleased]` skip, shape invariants
   (valid version/date/tag/title, strict newest-first), plain-comment ignore,
-  `Between` ranges (incl. v0.5→v0.12 spanning), `ForVersion` hit/miss.
+  `Between` ranges (incl. v0.5→v0.12 spanning), partial-semver header skip,
+  `tagFromSubsection` mapping (all branches).
 - `fetch_test.go` — `Fetch` over `httptest`: success, non-200 error, cancelled
   context, nil-client default.
 - `loader_test.go` — `Loader.Load` over `httptest` + a request counter + a

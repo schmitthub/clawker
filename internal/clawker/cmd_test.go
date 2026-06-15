@@ -126,20 +126,17 @@ func TestMaybeShowChangelog_BootstrapUsesSnapshotNotLiveCurrentVersion(t *testin
 	}
 }
 
-// TestMaybeShowChangelog_WelcomeOnFirstRunNoCatchup: empty cursor and no prior
-// (or prior >= current) seeds the cursor and prints the welcome one-liner only.
-func TestMaybeShowChangelog_WelcomeOnFirstRunNoCatchup(t *testing.T) {
+// TestMaybeShowChangelog_FirstRunNoCatchupSeedsSilently: empty cursor and no
+// prior (or prior >= current) seeds the cursor at the current version and
+// prints nothing — there is no catch-up history to surface.
+func TestMaybeShowChangelog_FirstRunNoCatchupSeedsSilently(t *testing.T) {
 	f, st, errOut := newChangelogTestFactory(t, true)
 
-	// No prior recorded → empty snapshot → no catch-up, welcome only.
+	// No prior recorded → empty snapshot → no catch-up, silent seed.
 	maybeShowChangelog(f, st, teaserEntries(), "0.12.0", "")
 
-	out := errOut.String()
-	if !strings.Contains(out, "curated changelog") {
-		t.Errorf("expected welcome one-liner, got:\n%s", out)
-	}
-	if strings.Contains(out, "What's new") {
-		t.Errorf("welcome run must not show the catch-up teaser, got:\n%s", out)
+	if out := errOut.String(); out != "" {
+		t.Errorf("first-run no-catchup must print nothing, got:\n%s", out)
 	}
 	if got := st.LastSeenChangelog(); got != "0.12.0" {
 		t.Errorf("cursor = %q, want 0.12.0 seeded", got)

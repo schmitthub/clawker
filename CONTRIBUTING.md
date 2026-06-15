@@ -121,13 +121,14 @@ The HTML comment carries machine-readable metadata, invisible when rendered on
 GitHub:
 
 - `tag=` — one of `feature`, `fix`, `breaking`, `changed`, `perf`. Drives the
-  label shown in `clawker changelog`. If omitted, it is derived from the
+  label associated with the entry. If omitted, it is derived from the
   Keep a Changelog `###` subsection.
 - `docs=` — optional URL to the relevant docs page.
 
-**One source, three surfaces.** The same `CHANGELOG.md` feeds the
-`clawker changelog` command, its show-once-on-upgrade teaser, and the curated
-header at the top of the GitHub release notes. The CLI does not embed the file —
+**One source, two surfaces.** The same `CHANGELOG.md` feeds a
+show-once-on-upgrade teaser (printed on the first interactive run after an
+upgrade) and the curated header at the top of the GitHub release notes. The CLI
+does not embed the file —
 it fetches the raw `CHANGELOG.md` from `main` over the network at runtime (the
 CLI runs on the host and is always online). The release header is extracted in
 CI: an `awk` step in `release-build.yml` pulls this release's `## [VERSION]`

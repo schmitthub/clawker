@@ -97,6 +97,36 @@ func TestLoader_FreshCache_NoFetch(t *testing.T) {
 	}
 }
 
+// TestLoader_FreshCache_FileMissing_Fetches asserts the recovery branch where
+// the TTL gate considers the cache fresh (a fetch timestamp was recorded) but
+// the cache file was deleted out-of-band: Load falls through to a network fetch,
+// persists, and returns the parsed entries rather than failing.
+func TestLoader_FreshCache_FileMissing_Fetches(t *testing.T) {
+	srv, hits := countingServer(t)
+	st := newTestState(t)
+	// Cache path points at a file that does not exist.
+	cachePath := filepath.Join(t.TempDir(), "missing.md")
+	// Record a fresh fetch timestamp so the TTL gate reports the cache as fresh.
+	if err := st.RecordChangelogFetch(time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	l := NewLoader(srv.Client(), srv.URL, cachePath, st, DefaultTTL)
+
+	entries, err := l.Load(context.Background(), false)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Version != "0.12.0" {
+		t.Fatalf("entries = %+v, want one 0.12.0 entry", entries)
+	}
+	if hits.Load() != 1 {
+		t.Errorf("hits = %d, want 1 (fresh-but-missing cache should fetch)", hits.Load())
+	}
+	if _, err := os.Stat(cachePath); err != nil {
+		t.Errorf("cache file not written after recovery fetch: %v", err)
+	}
+}
+
 // TestLoader_StaleCache_Fetches asserts that a stale fetch timestamp triggers a
 // network fetch even without forceRefresh. The clock is injected so the staleness
 // is deterministic.

@@ -64,20 +64,16 @@ clawker version
 Upgrade the same way you installed — `brew upgrade schmitthub/tap/clawker`, re-run
 the install script, or `git pull && make clawker` from source.
 
-Clawker keeps you informed about what changed:
+After an upgrade, a one-time **"What's new" note** is printed to standard error
+on your first interactive run. It lists the curated changelog entries you gained
+since your previous version — each with a title and a "learn more" docs link —
+then shows once and never repeats for that upgrade. The entries come from the
+curated `CHANGELOG.md`, which is fetched over the network and covers the handful
+of releases that actually changed what you see or do.
 
-- **`clawker changelog`** shows the curated, user-facing changelog — the handful
-  of releases that actually changed what you see or do. It defaults to the entry
-  for your running version; use `--all` for the full history or `--since v0.10.0`
-  for everything released after a given version.
-- **A one-time "What's new" note** is printed to standard error on your first
-  interactive run after an upgrade, listing the entries you gained and pointing
-  you at `clawker changelog`. It shows once per upgrade and never blocks a
-  command.
-
-Both surfaces are suppressed in non-interactive contexts (no TTY, `CI` set) and
-can be opted out entirely by setting `CLAWKER_NO_UPDATE_NOTIFIER` — the same
-switch that silences the new-version update notifier.
+The note is suppressed in non-interactive contexts (no TTY, `CI` set) and can be
+opted out entirely by setting `CLAWKER_NO_UPDATE_NOTIFIER` — the same switch that
+silences the new-version update notifier.
 
 ## First-Time Setup
 

@@ -8,11 +8,10 @@
 // merge is what lets the background 24h update goroutine and the foreground
 // changelog cursor write the same file without clobbering each other.
 //
-// The file lives in the state dir under consts.CliStateFile. It is the same
-// filename the legacy update checker wrote, so an existing install's
-// update-state.yaml is picked up in place — its checked_at / latest_version /
-// current_version carry forward, and the new last_seen_changelog field simply
-// starts empty.
+// The file lives in the state dir under consts.CliStateFile, the same key the
+// update checker uses. An existing install's state file is read in place — its
+// checked_at / latest_version / current_version carry forward, and
+// last_seen_changelog starts empty.
 package state
 
 import (
@@ -55,10 +54,10 @@ func (s CliState) Fields() storage.FieldSet {
 // any returns true. The list is intentionally additive — append a migration
 // here when the schema evolves; never edit a shipped one in place.
 //
-// The current list is empty: the legacy update-state.yaml shares this schema's
-// yaml keys exactly (checked_at / latest_version / current_version), so it is
-// read in place with no transformation; the new last_seen_changelog field just
-// starts absent and is seeded at runtime by the changelog cursor logic.
+// The current list is empty: the CLI state file shares this schema's yaml keys
+// exactly (checked_at / latest_version / current_version), so it is read in
+// place with no transformation; last_seen_changelog starts absent and is seeded
+// at runtime by the changelog cursor logic.
 func Migrations() []storage.Migration {
 	return []storage.Migration{}
 }

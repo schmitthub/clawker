@@ -2,9 +2,8 @@
 
 Status: describes the SHIPPED design on branch `chore/better-release-notes`.
 One curated `CHANGELOG.md` at the repo root is the single source of truth. It
-feeds three surfaces: the `clawker changelog` command, a show-once upgrade
-teaser in `Main()`, and the curated header of the GitHub release notes. There
-is no second source and no drift.
+feeds two surfaces: a show-once upgrade teaser in `Main()` and the curated
+header of the GitHub release notes. There is no second source and no drift.
 
 ## Problem
 
@@ -21,8 +20,8 @@ learn about the changes that matter.
      `changelog.groups`; rendered as the `## Changelog` section of the release.
    - **Curated changelog** — the product. A hand-maintained, canonical
      `CHANGELOG.md` (Keep a Changelog format), ~a dozen entries lifetime. Drives
-     the CLI surfaces and the curated release-notes header. This is where user
-     value lives.
+     the show-once teaser and the curated release-notes header. This is where
+     user value lives.
 2. **`CHANGELOG.md` at repo root**, Keep a Changelog format, parseable by header
    convention. Per-entry machine metadata rides in an **HTML comment** (invisible
    on GitHub), NOT YAML frontmatter (mid-file frontmatter renders as ugly
@@ -63,13 +62,13 @@ learn about the changes that matter.
 ```go
 func Parse(raw []byte) ([]Entry, error)        // newest-first; skips non-semver sections (e.g. "## [Unreleased]")
 func Between(entries []Entry, lo, hi string) []Entry  // lo < version <= hi (semver compare); accepts leading v
-func ForVersion(entries []Entry, v string) (Entry, bool)
 ```
 
 `Entry` carries `Version`, `Date`, `Tag`, `Title`, `Body`, `Docs`. The semver
 compare reuses `internal/update`'s `IsNewer` rather than duplicating it. There is
-no `RenderMarkdown` — the terminal renderer lives in the command package, and the
-release header is produced by the workflow (see below), not by Go code.
+no `RenderMarkdown` — the teaser renders titles + a per-entry docs link inline in
+the consumer, and the release header is produced by the workflow (see below), not
+by Go code.
 
 **I/O layer** (`fetch.go`, `loader.go`):
 
@@ -123,16 +122,7 @@ Migrated from the legacy whole-struct `update-state.yaml`.
 New noun `Changelog func() (*changelog.Loader, error)`, wired in
 `cmd/factory/default.go::changelogFunc` (deps: `State` + `HttpClient`; cache path
 = `config.StateDir()/consts.ChangelogCacheFile`). `State` is the `f.State` noun.
-
-### `internal/cmd/changelog` — the `clawker changelog` command
-
-Flags: `--version vX`, `--all`, `--since vX` (the old `--format markdown` flag is
-GONE). `RunE` resolves `f.Changelog()` → `opts.Loader`, **force-refreshes**
-(`Load(ctx, true)`), then selects entries and renders colored / emoji terminal
-output to `ios.Out`. A load failure prints a `cs.WarningIcon()` note to
-`ios.ErrOut` and exits 0 (degrade, never fail the command). Tests inject the
-loader via `f.Changelog` backed by an `httptest` server serving a fixture
-`CHANGELOG.md`.
+The only consumer is the show-once teaser.
 
 ### `internal/clawker` `Main()` — show-once teaser
 
@@ -140,7 +130,9 @@ A second background goroutine (`changelogChan`, buffered 1, shares the update
 context) TTL-gated-loads entries (`Load(ctx, false)`) while the command runs.
 After the command completes, `maybeShowChangelog(f, st, entries, cur, prior)`
 filters the pre-loaded slice with `changelog.Between(entries, cursor, cur)` and
-prints the teaser to `ios.ErrOut`. Suppressed on non-TTY / `CI` /
+prints the teaser (`printChangelogTeaser`) to `ios.ErrOut` — a "📣 What's new in
+clawker:" header followed by one bullet per gained entry (`v<version> <title>`)
+and a per-entry "learn more: <docs URL>" line. Suppressed on non-TTY / `CI` /
 `CLAWKER_NO_UPDATE_NOTIFIER` / dev build (`currentVersion == consts.DevVersion`).
 The cursor is `state.LastSeenChangelog()`, bootstrapped from the recorded
 `current_version` on the first changelog-aware run.
@@ -153,9 +145,9 @@ cursor = state.LastSeenChangelog()
 if cursor == "":                              # first changelog-aware run
     prior = state.CurrentVersion()            # already recorded by the update checker
     if prior != "" and prior < cur: cursor = prior          # bootstrap catch-up
-    else: SetLastSeenChangelog(cur); welcome one-liner (if not suppressed); return
+    else: SetLastSeenChangelog(cur); return                 # no catch-up — seed cursor silently
 gained = changelog.Between(entries, cursor, cur)
-if gained and not suppressed: teaser (titles + "run clawker changelog"); SetLastSeenChangelog(cur)
+if gained and not suppressed: teaser (titles + per-entry docs link); SetLastSeenChangelog(cur)
 elif not gained:              SetLastSeenChangelog(cur)      # nothing new — sync silently
 # else suppressed: leave cursor, retry next interactive run
 ```
@@ -180,9 +172,8 @@ The curated header is extracted **in the workflow**, not by Go code:
   `## Changelog`. The release body is therefore: curated header → auto commit
   groups → footer.
 
-There is no `make clawker` / `clawker changelog --format markdown` rendering step
-in the release pipeline, and no `release.header` / `RELEASE_HEADER` env var in
-`.goreleaser.yaml`.
+There is no `make clawker` / markdown-rendering step in the release pipeline, and
+no `release.header` / `RELEASE_HEADER` env var in `.goreleaser.yaml`.
 
 ## Component map
 
@@ -192,7 +183,6 @@ CHANGELOG.md (root, curated)                          ← human-authored; entry 
    ├─ raw fetch over network (tip-of-main, fail-safe) ─┐
    │                                                    ▼
    │                            internal/changelog (Loader: fetch + cache + TTL + Parse)
-   │                                ├─► clawker changelog [--version vX|--all|--since vX]   (internal/cmd/changelog)
    │                                └─► show-once teaser in internal/clawker Main()         (f.State cursor)
    │
    └─ awk extract `## [x.y.z]` → release-notes.md → goreleaser --release-header   (release-build.yml + .goreleaser.yaml)

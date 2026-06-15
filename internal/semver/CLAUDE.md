@@ -21,7 +21,7 @@ comparison all share this one package.
 
 ## v-Tolerant String Helpers
 
-- `CompareStrings(a, b string) int` — compares two version strings (returns -1/0/+1), tolerant of a leading `v` (`v1.2.3` == `1.2.3`). Total and panic-free: an unparseable version sorts **below** any valid version, and two unparseable versions compare equal. This keeps callers total — `internal/changelog`'s `Between`/`ForVersion` range queries use it.
+- `CompareStrings(a, b string) int` — compares two version strings (returns -1/0/+1), tolerant of a leading `v` (`v1.2.3` == `1.2.3`). Total and panic-free: an unparseable version sorts **below** any valid version, and two unparseable versions compare equal. This keeps callers total — `internal/changelog`'s `Between` range queries use it.
 - `IsValidLoose(s string) bool` — like `IsValid` but tolerant of a leading `v`. `internal/update`'s `IsNewer` uses it to gate the conservative "unparseable → not newer" contract before comparing.
 
 ## Dependencies

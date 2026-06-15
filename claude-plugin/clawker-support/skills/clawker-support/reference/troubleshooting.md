@@ -224,33 +224,28 @@ User reports the container fails to start or immediately exits.
 
 ## No release notes after upgrade
 
-User upgraded clawker but never saw the one-time changelog note, or wonders
+User upgraded clawker but never saw the one-time "What's new" note, or wonders
 where to find what changed.
 
-This is expected behavior, not a bug. Two surfaces exist:
+This is expected behavior, not a bug. After an upgrade, a one-time note is
+printed to standard error on the first *interactive* run, listing the curated
+changelog entries gained since the previous version (each with a title and a
+"learn more" docs link), then never again for that upgrade. The entries come
+from the curated `CHANGELOG.md`, fetched over the network.
 
-1. **`clawker changelog`** — the curated, user-facing changelog, available any
-   time. Defaults to the running version's entry; `--all` shows full history,
-   `--since <version>` shows everything after a given version. This always works,
-   regardless of TTY or environment.
-
-2. **The one-time changelog note** — printed to standard error on the first
-   *interactive* run after an upgrade, then never again for that upgrade.
-
-The one-time note is intentionally suppressed (the changelog command is not) in
-any of these cases:
+The note is intentionally suppressed in any of these cases:
 
 - **Standard error is not a TTY** (output piped/redirected, non-interactive
   shell) — the note never prints.
 - **`CI` is set** — treated as a non-interactive environment.
 - **`CLAWKER_NO_UPDATE_NOTIFIER` is set** (any non-empty value) — the user opted
-  out of both the new-version update notifier and the changelog note.
+  out of both the new-version update notifier and the "What's new" note.
 - The running binary is a dev build (no injected version).
 
-If the user wants to see what changed regardless, point them at
-`clawker changelog --all`. If they expected the note but it never appeared, check
-those suppression conditions — most often output was not a terminal or
-`CLAWKER_NO_UPDATE_NOTIFIER`/`CI` was set in their environment.
+If the user expected the note but it never appeared, check those suppression
+conditions — most often output was not a terminal or `CLAWKER_NO_UPDATE_NOTIFIER`/
+`CI` was set in their environment. To see the full curated changelog regardless,
+point them at the `CHANGELOG.md` at the root of the clawker repository.
 
 ---
 

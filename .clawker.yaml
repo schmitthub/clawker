@@ -243,6 +243,8 @@ security:
             path: /repos/cilium/cilium/
           - action: allow
             path: /repos/opensearch-project/OpenSearch-Dashboards/
+          - action: allow
+            path: /repos/contributor-assistant/github-action/
           - action: deny
             path: /gists
           - action: deny
@@ -279,6 +281,8 @@ security:
             path: /cilium/cilium/
           - action: allow
             path: /opensearch-project/OpenSearch-Dashboards/
+          - action: allow
+            path: contributor-assistant/github-action/
         port: 443
         proto: https
   git_credentials:

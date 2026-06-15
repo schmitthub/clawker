@@ -85,7 +85,22 @@ func Main() int {
 	defer updateCancel()
 	updateMessageChan := make(chan *update.CheckResult, 1)
 	go func() {
-		rel, err := checkForUpdate(updateCtx, lastCheckedAt, buildVersion)
+		// Guarantee exactly one send on the buffered(1) channel on every path,
+		// including a panic: the deferred func always runs, runs once, and is
+		// the sole sender. A panic in this teaser goroutine must not crash the
+		// user's command — recover, log, and report no update.
+		var rel *update.CheckResult
+		defer func() {
+			if r := recover(); r != nil {
+				if log, logErr := f.Logger(); logErr == nil {
+					log.Debug().Interface("panic", r).Msg("update check goroutine panicked")
+				}
+				rel = nil
+			}
+			updateMessageChan <- rel
+		}()
+		var err error
+		rel, err = checkForUpdate(updateCtx, lastCheckedAt, buildVersion)
 		if err != nil {
 			if log, logErr := f.Logger(); logErr == nil {
 				log.Debug().Err(err).Msg("update check failed")
@@ -103,7 +118,6 @@ func Main() int {
 				}
 			}
 		}
-		updateMessageChan <- rel
 	}()
 
 	// Load the curated changelog in the background (TTL-gated, NOT force-refresh)
@@ -113,23 +127,35 @@ func Main() int {
 	// so the goroutine can send and exit even if Main() returns early.
 	changelogChan := make(chan []changelog.Entry, 1)
 	go func() {
+		// Guarantee exactly one send on the buffered(1) channel on every path,
+		// including a panic: the deferred func always runs, runs once, and is
+		// the sole sender. A panic in this teaser goroutine must not crash the
+		// user's command — recover, log, and show nothing.
+		var entries []changelog.Entry
+		defer func() {
+			if r := recover(); r != nil {
+				if log, logErr := f.Logger(); logErr == nil {
+					log.Debug().Interface("panic", r).Msg("changelog goroutine panicked")
+				}
+				entries = nil
+			}
+			changelogChan <- entries
+		}()
 		loader, err := f.Changelog()
 		if err != nil {
 			if log, logErr := f.Logger(); logErr == nil {
 				log.Debug().Err(err).Msg("building changelog loader")
 			}
-			changelogChan <- nil
 			return
 		}
-		entries, err := loader.Load(updateCtx, false)
+		entries, err = loader.Load(updateCtx, false)
 		if err != nil {
 			if log, logErr := f.Logger(); logErr == nil {
 				log.Debug().Err(err).Msg("loading changelog for teaser")
 			}
-			changelogChan <- nil
+			entries = nil
 			return
 		}
-		changelogChan <- entries
 	}()
 
 	// Create root command with build metadata
@@ -232,13 +258,14 @@ func changelogSuppressed(ios *iostreams.IOStreams) bool {
 	return false
 }
 
-// maybeShowChangelog runs the cursor-driven show-once changelog teaser after the
-// command completes, mirroring the update-notifier discipline (stderr, TTY-only,
-// suppressible). It implements the design brief's cursor algorithm:
+// maybeShowChangelog runs the cursor-driven show-once teaser after the command
+// completes, surfacing curated changelog entries gained since the last shown
+// version. It mirrors the update-notifier discipline (stderr, TTY-only,
+// suppressible) and implements the design brief's cursor algorithm:
 //
 //	cursor = state.LastSeenChangelog
 //	if cursor == "":                       # first changelog-aware run
-//	    prior = state.CurrentVersion       # recorded by the update checker
+//	    prior = priorCurrentVersion        # snapshot from Main() pre-goroutine
 //	    if prior != "" and prior < cur: cursor = prior   # bootstrap catch-up
 //	    else: SetLastSeenChangelog(cur); welcome one-liner; return
 //	entries = changelog.Between(cursor, cur)
@@ -246,13 +273,12 @@ func changelogSuppressed(ios *iostreams.IOStreams) bool {
 //	elif not entries:              SetLastSeenChangelog(cur)   # sync silently
 //	# else suppressed: leave cursor — retry next interactive run
 //
-// The state facade may be nil (state store unavailable) — then this is a no-op.
-// All persistence is best-effort: a write failure is logged, never surfaced.
-// maybeShowChangelog surfaces curated changelog entries gained since the last
-// shown version. priorCurrentVersion is the current_version snapshotted in
-// Main() BEFORE the update goroutine launched; the bootstrap uses it (not a
-// live read of st.CurrentVersion()) so the catch-up detection can't race the
-// goroutine's RecordUpdateCheck write.
+// priorCurrentVersion is the current_version snapshotted in Main() BEFORE the
+// update goroutine launched; the bootstrap uses it (not a live read of
+// st.CurrentVersion()) so the catch-up detection can't race the goroutine's
+// RecordUpdateCheck write. The state facade may be nil (state store
+// unavailable) — then this is a no-op. All persistence is best-effort: a write
+// failure is logged, never surfaced.
 func maybeShowChangelog(f *cmdutil.Factory, st *state.State, entries []changelog.Entry, currentVersion, priorCurrentVersion string) {
 	if st == nil || currentVersion == consts.DevVersion {
 		return
@@ -280,12 +306,9 @@ func maybeShowChangelog(f *cmdutil.Factory, st *state.State, entries []changelog
 		if prior != "" && update.IsNewer(cur, prior) {
 			cursor = prior
 		} else {
-			// No catch-up to show: seed the cursor at the current version and
-			// greet the user once.
+			// No catch-up to show: seed the cursor at the current version
+			// silently.
 			logWrite(st.SetLastSeenChangelog(cur))
-			if !suppressed {
-				printChangelogWelcome(ios)
-			}
 			return
 		}
 	}
@@ -311,16 +334,8 @@ func maybeShowChangelog(f *cmdutil.Factory, st *state.State, entries []changelog
 	}
 }
 
-// printChangelogWelcome prints the one-time greeting shown on the very first run
-// of a changelog-aware binary when there is no catch-up history to display.
-func printChangelogWelcome(ios *iostreams.IOStreams) {
-	cs := ios.ColorScheme()
-	fmt.Fprintf(ios.ErrOut, "\n%s clawker now ships a curated changelog. Run %s to see what changed.\n",
-		cs.InfoIcon(), cs.Bold("clawker changelog"))
-}
-
 // printChangelogTeaser lists the titles of the entries gained since the last
-// shown version and points the user at the full `clawker changelog` command.
+// shown version, surfacing each entry's docs URL as the "learn more" pointer.
 func printChangelogTeaser(ios *iostreams.IOStreams, entries []changelog.Entry) {
 	cs := ios.ColorScheme()
 	fmt.Fprintf(ios.ErrOut, "\n%s What's new in clawker:\n", cs.Info("📣"))
@@ -330,8 +345,10 @@ func printChangelogTeaser(ios *iostreams.IOStreams, entries []changelog.Entry) {
 			title = e.Version
 		}
 		fmt.Fprintf(ios.ErrOut, "  %s %s %s\n", cs.Muted("•"), cs.Bold("v"+e.Version), title)
+		if e.Docs != "" {
+			fmt.Fprintf(ios.ErrOut, "    %s\n", cs.Muted("learn more: "+e.Docs))
+		}
 	}
-	fmt.Fprintf(ios.ErrOut, "Run %s for details.\n", cs.Bold("clawker changelog --all"))
 }
 
 // printDockerInstallHelper renders a user-friendly message when the Docker

@@ -163,8 +163,8 @@ const (
 	// CP-owned tables share the same file.
 	ControlPlaneDBFile = "controlplane.db"
 	// CliStateFile is the CLI's persisted runtime state in the state dir
-	// (update-check cache + changelog cursor). Historically written only by
-	// the update checker; now backed by internal/state via storage.Store.
+	// (update-check cache + changelog cursor), backed by internal/state via
+	// storage.Store.
 	CliStateFile = "update-state.yaml"
 	// ChangelogCacheFile caches the raw CHANGELOG.md bytes fetched from GitHub
 	// in the state dir, so the changelog surface degrades gracefully when the

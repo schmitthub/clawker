@@ -52,8 +52,8 @@ type Factory struct {
 	State func() (*state.State, error)
 	// Changelog is the process-wide curated-changelog loader: it fetches
 	// CHANGELOG.md from GitHub, caches it in the state dir, TTL-gates re-fetches
-	// against State, and parses entries. Shared by the `clawker changelog`
-	// command (force-refresh) and the show-once teaser in Main (TTL-gated).
+	// against State, and parses entries. Drives the show-once "what's new"
+	// teaser in Main (TTL-gated, background goroutine).
 	Changelog    func() (*changelog.Loader, error)
 	GitManager   func() (*git.GitManager, error)
 	HostProxy    func() hostproxy.HostProxyService

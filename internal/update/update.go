@@ -32,10 +32,6 @@ const CacheTTL = 24 * time.Hour
 // httpTimeout is the maximum time for the GitHub API request.
 const httpTimeout = 5 * time.Second
 
-// devVersion is the sentinel version of a local development build, for which
-// update checks are always suppressed.
-const devVersion = "DEV"
-
 // CheckResult is the outcome of an update check. It always carries the fetched
 // latest version and release URL so the caller can persist them, regardless of
 // whether an upgrade is available. IsNewer reports whether LatestVersion is a
@@ -71,7 +67,7 @@ func ShouldCheckForUpdate(lastCheckedAt time.Time, currentVersion string) bool {
 	if os.Getenv("CI") != "" {
 		return false
 	}
-	if currentVersion == devVersion {
+	if currentVersion == consts.DevVersion {
 		return false
 	}
 	if !lastCheckedAt.IsZero() && time.Since(lastCheckedAt) < CacheTTL {

@@ -46,7 +46,7 @@ func parse(raw string) ([]Entry, error) {
 
 		if tag, docs, ok := parseMetaComment(trimmed); ok {
 			if tag != "" {
-				cur.Tag = tag
+				cur.Tag = Tag(tag)
 			}
 			if docs != "" {
 				cur.Docs = docs
@@ -123,7 +123,7 @@ func parseMetaComment(line string) (tag, docs string, ok bool) {
 
 // tagFromSubsection derives a tag from the first Keep-a-Changelog subsection
 // heading when no explicit metadata tag is present.
-func tagFromSubsection(subsection string) string {
+func tagFromSubsection(subsection string) Tag {
 	switch strings.ToLower(strings.TrimSpace(subsection)) {
 	case sectionAdded:
 		return TagFeature

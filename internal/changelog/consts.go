@@ -35,14 +35,19 @@ const (
 	dateSeparator = " - "
 )
 
-// Recognized entry tags. TagFromSubsection maps a Keep-a-Changelog "###"
+// Tag is the closed set of entry tags. It is a string subtype so it still
+// formats and renders verbatim, while letting the compiler enforce that only
+// the named constants flow through the tag-handling switches.
+type Tag string
+
+// Recognized entry tags. tagFromSubsection maps a Keep-a-Changelog "###"
 // subsection heading to a tag when no explicit metadata tag is present.
 const (
-	TagFeature  = "feature"
-	TagFix      = "fix"
-	TagBreaking = "breaking"
-	TagPerf     = "perf"
-	TagChanged  = "changed"
+	TagFeature  Tag = "feature"
+	TagFix      Tag = "fix"
+	TagBreaking Tag = "breaking"
+	TagPerf     Tag = "perf"
+	TagChanged  Tag = "changed"
 )
 
 // Keep a Changelog standard subsection headings (case-insensitive match).

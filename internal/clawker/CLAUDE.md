@@ -14,7 +14,7 @@ Called from `cmd/clawker/main.go`. Build metadata (version, date) lives in `inte
 
 After Factory construction, `Main()` calls `storage.ValidateDirectories()` to fail fast if XDG directories collide (e.g. `CLAWKER_DATA_DIR == CLAWKER_CONFIG_DIR`) before any file I/O. On exit, a deferred `f.Logger().Close()` flushes zerolog file output and shuts down the OTEL provider.
 
-All symbols are in `cmd.go` (`Main`, `checkForUpdate`, `printUpdateNotification`, `maybeShowChangelog`, `changelogSuppressed`, `printChangelogWelcome`, `printChangelogTeaser`, `printDockerInstallHelper`, `printError`, `userFormattedError` duck-type interface).
+All symbols are in `cmd.go` (`Main`, `checkForUpdate`, `printUpdateNotification`, `maybeShowChangelog`, `changelogSuppressed`, `printChangelogTeaser`, `printDockerInstallHelper`, `printError`, `userFormattedError` duck-type interface).
 
 ## Background Update Check
 
@@ -67,18 +67,20 @@ cursor = state.LastSeenChangelog()
 if cursor == "":                              # first changelog-aware run
     prior = priorCurrentVersion               # snapshot from Main() pre-goroutine
     if prior != "" and prior < cur: cursor = prior   # bootstrap catch-up
-    else: SetLastSeenChangelog(cur); welcome one-liner (if not suppressed); return
+    else: SetLastSeenChangelog(cur); return          # no catch-up — seed cursor silently
 gained = changelog.Between(entries, cursor, cur)   # entries loaded in background
-if entries and not suppressed: teaser (titles + "clawker changelog"); SetLastSeenChangelog(cur)
-elif not entries:              SetLastSeenChangelog(cur)   # nothing new — sync silently
+if gained and not suppressed: teaser (titles + per-entry docs link); SetLastSeenChangelog(cur)
+elif not gained:              SetLastSeenChangelog(cur)   # nothing new — sync silently
 # else suppressed: leave cursor — retry next interactive run
 ```
 
-A suppressed run with entries leaves the cursor untouched (retries next
-interactive run); the silent-sync and welcome paths advance the cursor even when
-output is suppressed, because there is nothing the user would have seen anyway.
-`printChangelogWelcome` / `printChangelogTeaser` render to `ios.ErrOut`; the
-teaser points users at the `clawker changelog` command (`internal/cmd/changelog`).
+A suppressed run with gained entries leaves the cursor untouched (retries next
+interactive run); the silent-sync and first-run-no-catch-up paths advance the
+cursor even when output is suppressed, because there is nothing the user would
+have seen anyway. The first run with no catch-up just seeds the cursor silently —
+there is no welcome message. `printChangelogTeaser` renders to `ios.ErrOut`: a
+"📣 What's new in clawker:" header, then one bullet per gained entry
+(`v<version> <title>`) with a per-entry "learn more: <docs URL>" line.
 
 ### Changelog entries are loaded in the background
 

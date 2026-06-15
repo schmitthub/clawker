@@ -39,7 +39,11 @@ func TestParse_HeadersAndMetadata(t *testing.T) {
 
 	// Newest-first, version + date parsed from the header. The "## [Unreleased]"
 	// section is skipped (non-semver token), so it never appears here.
-	want := []struct{ ver, date, tag, docs string }{
+	want := []struct {
+		ver, date string
+		tag       Tag
+		docs      string
+	}{
 		{"0.12.0", "2026-06-11", TagFeature, "https://docs.clawker.dev/aliases"},
 		{"0.11.0", "2026-06-10", TagFix, ""},
 		{"0.5.0", "2026-03-20", TagFeature, ""}, // tag derived from "### Added"
@@ -116,6 +120,27 @@ func TestParse_PlainHTMLCommentIgnored(t *testing.T) {
 	}
 }
 
+// TestParse_PartialSemverHeaderSkipped guards the parser's HasPatch() check: a
+// bracket token like "0.12" is loosely parseable by semver.Parse but lacks a
+// patch component, so the version header must be skipped (no entry). This guards
+// against someone "simplifying" the HasPatch() guard down to IsValid.
+func TestParse_PartialSemverHeaderSkipped(t *testing.T) {
+	raw := []byte(`## [0.12] - 2026-01-01
+<!-- clawker: tag=feature -->
+
+### Added
+
+- A thing.
+`)
+	entries, err := Parse(raw)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("got %d entries, want 0 (partial-semver header must be skipped): %+v", len(entries), entries)
+	}
+}
+
 func TestBetween_Range(t *testing.T) {
 	all := parseFixture(t)
 
@@ -150,28 +175,35 @@ func TestBetween_Range(t *testing.T) {
 	}
 }
 
-func TestForVersion_HitAndMiss(t *testing.T) {
-	all := parseFixture(t)
-
-	if e, ok := ForVersion(all, "0.11.0"); !ok {
-		t.Errorf("0.11.0 not found")
-	} else if e.Tag != TagFix {
-		t.Errorf("0.11.0 tag = %q", e.Tag)
-	}
-	// Leading v normalizes.
-	if _, ok := ForVersion(all, "v0.12.0"); !ok {
-		t.Errorf("v0.12.0 not found")
-	}
-	// Miss.
-	if _, ok := ForVersion(all, "9.9.9"); ok {
-		t.Errorf("9.9.9 unexpectedly found")
-	}
-}
-
 func versions(es []Entry) []string {
 	out := make([]string, len(es))
 	for i, e := range es {
 		out[i] = e.Version
 	}
 	return out
+}
+
+// TestTagFromSubsection covers every Keep-a-Changelog subsection → Tag mapping,
+// plus the default arm for an unrecognized heading. Only Added → feature is
+// exercised elsewhere (via the parser); the rest are otherwise untested.
+func TestTagFromSubsection(t *testing.T) {
+	cases := []struct {
+		subsection string
+		want       Tag
+	}{
+		{"Added", TagFeature},
+		{"Fixed", TagFix},
+		{"Security", TagFix},
+		{"Removed", TagBreaking},
+		{"Deprecated", TagBreaking},
+		{"Changed", TagChanged},
+		{"Frobnicated", ""}, // unknown subsection → default (no tag)
+	}
+	for _, c := range cases {
+		t.Run(c.subsection, func(t *testing.T) {
+			if got := tagFromSubsection(c.subsection); got != c.want {
+				t.Errorf("tagFromSubsection(%q) = %q, want %q", c.subsection, got, c.want)
+			}
+		})
+	}
 }
