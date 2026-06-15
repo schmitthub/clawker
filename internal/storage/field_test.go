@@ -16,6 +16,7 @@ type fieldTestConfig struct {
 	Version  int               `yaml:"version" label:"Version" desc:"Schema version" default:"1"`
 	Enabled  bool              `yaml:"enabled" desc:"Whether the project is enabled"`
 	Timeout  time.Duration     `yaml:"timeout" label:"Timeout" desc:"Operation timeout"`
+	SeenAt   time.Time         `yaml:"seen_at" label:"Seen At" desc:"Last seen timestamp"`
 	Tags     []string          `yaml:"tags" desc:"Project tags"`
 	Build    fieldTestBuild    `yaml:"build"`
 	Optional *fieldTestNested  `yaml:"optional"`
@@ -58,6 +59,7 @@ func TestNormalizeFields_AllTypeMappings(t *testing.T) {
 		{"version", KindInt},
 		{"enabled", KindBool},
 		{"timeout", KindDuration},
+		{"seen_at", KindTime},
 		{"tags", KindStringSlice},
 		{"build.image", KindText},
 		{"build.target", KindText},
@@ -148,10 +150,10 @@ func TestNormalizeFields_TaglessFallbacks(t *testing.T) {
 
 func TestNormalizeFields_FieldCount(t *testing.T) {
 	fs := NormalizeFields(fieldTestConfig{})
-	// name, version, enabled, timeout, tags, build.image, build.target,
-	// optional.port, debug, env = 10 leaf fields.
+	// name, version, enabled, timeout, seen_at, tags, build.image, build.target,
+	// optional.port, debug, env = 11 leaf fields.
 	// Also implicitly validates that unexported fields (internal) are skipped.
-	assert.Equal(t, 10, fs.Len(), "unexpected field count — update if struct changes")
+	assert.Equal(t, 11, fs.Len(), "unexpected field count — update if struct changes")
 }
 
 func TestNormalizeFields_PanicOnNonStruct(t *testing.T) {

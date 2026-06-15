@@ -21,4 +21,4 @@ npm registry client and version metadata types for `internal/bundler`. Full API 
 
 ## Dependencies
 
-Imports: stdlib only plus `internal/bundler/semver`. Leaf of the registry subtree — don't pull in config/docker/logger here.
+Imports: stdlib only plus `internal/semver`. Leaf of the registry subtree — don't pull in config/docker/logger here.

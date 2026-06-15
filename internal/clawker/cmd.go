@@ -5,18 +5,22 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/signal"
-	"path/filepath"
+	"strings"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/schmitthub/clawker/internal/build"
+	"github.com/schmitthub/clawker/internal/changelog"
 	"github.com/schmitthub/clawker/internal/cmd/factory"
 	"github.com/schmitthub/clawker/internal/cmd/root"
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/state"
 	"github.com/schmitthub/clawker/internal/storage"
 	"github.com/schmitthub/clawker/internal/update"
 	"github.com/schmitthub/clawker/pkg/whail"
@@ -47,6 +51,31 @@ func Main() int {
 		}
 	}()
 
+	// Read the CLI state store synchronously, before launching the update
+	// goroutine, so (a) the update freshness gate sees the prior check and
+	// (b) the changelog cursor bootstrap reads current_version before the
+	// goroutine rewrites it (field-merge already prevents clobber, but the
+	// synchronous read keeps the bootstrap deterministic). A missing/unreadable
+	// state store degrades to a nil facade: the update check proceeds with a
+	// zero "never checked" time and the changelog teaser is skipped. Errors are
+	// logged to the file log, never surfaced.
+	var cliState *state.State
+	var lastCheckedAt time.Time
+	var priorCurrentVersion string
+	if st, err := f.State(); err == nil {
+		cliState = st
+		lastCheckedAt = st.LastCheckedAt()
+		// Snapshot current_version BEFORE the update goroutine overwrites it
+		// via RecordUpdateCheck. The changelog cursor bootstrap needs the
+		// version persisted by the *previous* binary to detect a catch-up
+		// upgrade; reading it live would race the goroutine and always lose
+		// (the goroutine sets current_version to the running binary, so the
+		// bootstrap would see prior == cur and skip the gained-entries teaser).
+		priorCurrentVersion = st.CurrentVersion()
+	} else if log, logErr := f.Logger(); logErr == nil {
+		log.Debug().Err(err).Msg("reading CLI state")
+	}
+
 	// Start background update check with cancellable context.
 	// Pattern from gh CLI: goroutine + buffered channel + blocking read.
 	// Context cancellation aborts the HTTP request when the command finishes first.
@@ -56,13 +85,51 @@ func Main() int {
 	defer updateCancel()
 	updateMessageChan := make(chan *update.CheckResult, 1)
 	go func() {
-		rel, err := checkForUpdate(updateCtx, buildVersion)
+		rel, err := checkForUpdate(updateCtx, lastCheckedAt, buildVersion)
 		if err != nil {
 			if log, logErr := f.Logger(); logErr == nil {
 				log.Debug().Err(err).Msg("update check failed")
 			}
 		}
+		// Persist the check result (checked_at + versions) via the storage-
+		// backed state facade — a field merge that never touches the changelog
+		// cursor. Best-effort: a write failure is logged, not surfaced.
+		if rel != nil {
+			if st, stErr := f.State(); stErr == nil {
+				if wErr := st.RecordUpdateCheck(time.Now(), rel.LatestVersion, rel.CurrentVersion); wErr != nil {
+					if log, logErr := f.Logger(); logErr == nil {
+						log.Debug().Err(wErr).Msg("recording update check result")
+					}
+				}
+			}
+		}
 		updateMessageChan <- rel
+	}()
+
+	// Load the curated changelog in the background (TTL-gated, NOT force-refresh)
+	// so the show-once teaser never blocks the user's command on network I/O. The
+	// loader fetches CHANGELOG.md when the cache is stale, otherwise reads the
+	// cache. On any error the teaser shows nothing — entries is nil. Buffered(1)
+	// so the goroutine can send and exit even if Main() returns early.
+	changelogChan := make(chan []changelog.Entry, 1)
+	go func() {
+		loader, err := f.Changelog()
+		if err != nil {
+			if log, logErr := f.Logger(); logErr == nil {
+				log.Debug().Err(err).Msg("building changelog loader")
+			}
+			changelogChan <- nil
+			return
+		}
+		entries, err := loader.Load(updateCtx, false)
+		if err != nil {
+			if log, logErr := f.Logger(); logErr == nil {
+				log.Debug().Err(err).Msg("loading changelog for teaser")
+			}
+			changelogChan <- nil
+			return
+		}
+		changelogChan <- entries
 	}()
 
 	// Create root command with build metadata
@@ -99,6 +166,7 @@ func Main() int {
 
 		// Blocking read — goroutine always sends exactly once
 		printUpdateNotification(f.IOStreams, <-updateMessageChan)
+		maybeShowChangelog(f, cliState, <-changelogChan, buildVersion, priorCurrentVersion)
 
 		var exitErr *cmdutil.ExitError
 		if errors.As(err, &exitErr) {
@@ -109,24 +177,22 @@ func Main() int {
 
 	// Blocking read — goroutine always sends exactly once
 	printUpdateNotification(f.IOStreams, <-updateMessageChan)
+	maybeShowChangelog(f, cliState, <-changelogChan, buildVersion, priorCurrentVersion)
 
 	return 0
 }
 
-// checkForUpdate wraps update.CheckForUpdate with state file resolution.
-// Returns (nil, nil) if the state path can't be determined.
-func checkForUpdate(ctx context.Context, currentVersion string) (*update.CheckResult, error) {
-	stateFile := updateStatePath()
-	if stateFile == "" {
-		return nil, nil
-	}
-	return update.CheckForUpdate(ctx, stateFile, currentVersion, "schmitthub/clawker")
+// checkForUpdate wraps update.CheckForUpdate. update is pure (no persistence):
+// the caller supplies the last-checked timestamp for freshness gating and
+// persists the result itself via f.State.
+func checkForUpdate(ctx context.Context, lastCheckedAt time.Time, currentVersion string) (*update.CheckResult, error) {
+	return update.CheckForUpdate(ctx, lastCheckedAt, currentVersion, consts.GitHubRepo)
 }
 
 // printUpdateNotification prints a version upgrade notification to stderr
 // if a newer version is available. Only shown on interactive terminals.
 func printUpdateNotification(ios *iostreams.IOStreams, result *update.CheckResult) {
-	if result == nil {
+	if result == nil || !result.IsNewer {
 		return
 	}
 	if !ios.IsStderrTTY() {
@@ -140,20 +206,132 @@ func printUpdateNotification(ios *iostreams.IOStreams, result *update.CheckResul
 		cs.Cyan(result.LatestVersion))
 	fmt.Fprintf(ios.ErrOut, "To upgrade:\n")
 	fmt.Fprintf(ios.ErrOut, "  %s\n", cs.Bold("brew upgrade clawker"))
-	fmt.Fprintf(ios.ErrOut, "  %s\n", cs.Bold("curl -fsSL https://raw.githubusercontent.com/schmitthub/clawker/main/scripts/install.sh | bash"))
+	fmt.Fprintf(ios.ErrOut, "  %s\n", cs.Bold("curl -fsSL "+consts.RawGitHubBaseURL+"/"+consts.GitHubRepo+"/main/scripts/install.sh | bash"))
 	fmt.Fprintf(ios.ErrOut, "%s\n", cs.Yellow(result.ReleaseURL))
 	fmt.Fprintf(ios.ErrOut, "\n%s After upgrading, run %s in each project to apply security fixes and avoid breaking changes.\n",
 		cs.WarningIcon(), cs.Bold("clawker build"))
 }
 
-// updateStatePath returns the path to the update state cache file.
-// Returns empty string if the clawker state directory cannot be determined.
-func updateStatePath() string {
-	stateDir := config.StateDir()
-	if stateDir == "" {
-		return ""
+// changelogSuppressed reports whether the show-once changelog teaser must stay
+// silent. It mirrors the update-notifier discipline: stderr must be a TTY, and
+// the same opt-out env vars (CLAWKER_NO_UPDATE_NOTIFIER, CI) apply. A suppressed
+// run leaves the cursor untouched so the teaser retries on the next interactive
+// run.
+func changelogSuppressed(ios *iostreams.IOStreams) bool {
+	if !ios.IsStderrTTY() {
+		return true
 	}
-	return filepath.Join(stateDir, "update-state.yaml")
+	if os.Getenv(consts.EnvNoUpdateNotifier) != "" {
+		return true
+	}
+	// "CI" is the canonical cross-tool CI-detection env var (kept literal,
+	// matching internal/update's convention).
+	if os.Getenv("CI") != "" {
+		return true
+	}
+	return false
+}
+
+// maybeShowChangelog runs the cursor-driven show-once changelog teaser after the
+// command completes, mirroring the update-notifier discipline (stderr, TTY-only,
+// suppressible). It implements the design brief's cursor algorithm:
+//
+//	cursor = state.LastSeenChangelog
+//	if cursor == "":                       # first changelog-aware run
+//	    prior = state.CurrentVersion       # recorded by the update checker
+//	    if prior != "" and prior < cur: cursor = prior   # bootstrap catch-up
+//	    else: SetLastSeenChangelog(cur); welcome one-liner; return
+//	entries = changelog.Between(cursor, cur)
+//	if entries and not suppressed: show teaser; SetLastSeenChangelog(cur)
+//	elif not entries:              SetLastSeenChangelog(cur)   # sync silently
+//	# else suppressed: leave cursor — retry next interactive run
+//
+// The state facade may be nil (state store unavailable) — then this is a no-op.
+// All persistence is best-effort: a write failure is logged, never surfaced.
+// maybeShowChangelog surfaces curated changelog entries gained since the last
+// shown version. priorCurrentVersion is the current_version snapshotted in
+// Main() BEFORE the update goroutine launched; the bootstrap uses it (not a
+// live read of st.CurrentVersion()) so the catch-up detection can't race the
+// goroutine's RecordUpdateCheck write.
+func maybeShowChangelog(f *cmdutil.Factory, st *state.State, entries []changelog.Entry, currentVersion, priorCurrentVersion string) {
+	if st == nil || currentVersion == consts.DevVersion {
+		return
+	}
+	cur := strings.TrimPrefix(currentVersion, "v")
+	ios := f.IOStreams
+	suppressed := changelogSuppressed(ios)
+
+	logWrite := func(err error) {
+		if err == nil {
+			return
+		}
+		if log, logErr := f.Logger(); logErr == nil {
+			log.Debug().Err(err).Msg("persisting changelog cursor")
+		}
+	}
+
+	cursor := st.LastSeenChangelog()
+	if cursor == "" {
+		// First run of a changelog-aware binary. Bootstrap the cursor from the
+		// version the previous binary recorded (snapshotted in Main() before
+		// the update goroutine could overwrite it) so an upgrade across a
+		// changelog-blind binary still surfaces the gained entries.
+		prior := strings.TrimPrefix(priorCurrentVersion, "v")
+		if prior != "" && update.IsNewer(cur, prior) {
+			cursor = prior
+		} else {
+			// No catch-up to show: seed the cursor at the current version and
+			// greet the user once.
+			logWrite(st.SetLastSeenChangelog(cur))
+			if !suppressed {
+				printChangelogWelcome(ios)
+			}
+			return
+		}
+	}
+
+	// entries were loaded in the background (TTL-gated network fetch + cache) in
+	// Main(); a nil slice means the load failed or there was nothing to show —
+	// the teaser stays silent and the cursor is left for the next run to retry.
+	if entries == nil {
+		return
+	}
+
+	gained := changelog.Between(entries, cursor, cur)
+	switch {
+	case len(gained) == 0:
+		// Nothing new in the curated changelog — advance the cursor silently.
+		logWrite(st.SetLastSeenChangelog(cur))
+	case !suppressed:
+		printChangelogTeaser(ios, gained)
+		logWrite(st.SetLastSeenChangelog(cur))
+	default:
+		// Suppressed (non-TTY / CI / opt-out): leave the cursor so the teaser
+		// retries on the next interactive run.
+	}
+}
+
+// printChangelogWelcome prints the one-time greeting shown on the very first run
+// of a changelog-aware binary when there is no catch-up history to display.
+func printChangelogWelcome(ios *iostreams.IOStreams) {
+	cs := ios.ColorScheme()
+	fmt.Fprintf(ios.ErrOut, "\n%s clawker now ships a curated changelog. Run %s to see what changed.\n",
+		cs.InfoIcon(), cs.Bold("clawker changelog"))
+}
+
+// printChangelogTeaser lists the titles of the entries gained since the last
+// shown version and points the user at the full `clawker changelog` command.
+func printChangelogTeaser(ios *iostreams.IOStreams, entries []changelog.Entry) {
+	cs := ios.ColorScheme()
+	fmt.Fprintf(ios.ErrOut, "\n%s What's new in clawker:\n", cs.Info("📣"))
+	for _, e := range entries {
+		title := e.Title
+		if title == "" {
+			title = e.Version
+		}
+		fmt.Fprintf(ios.ErrOut, "  %s %s %s\n", cs.Muted("•"), cs.Bold("v"+e.Version), title)
+	}
+	fmt.Fprintf(ios.ErrOut, "Run %s for details.\n", cs.Bold("clawker changelog --all"))
 }
 
 // printDockerInstallHelper renders a user-friendly message when the Docker

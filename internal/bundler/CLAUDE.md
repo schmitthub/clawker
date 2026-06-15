@@ -16,7 +16,6 @@ Leaf package: Dockerfile generation, version management, and build configuration
 
 | Package | Purpose |
 |---------|---------|
-| `semver/` | Semantic version parsing, comparison, sorting, matching |
 | `registry/` | npm registry client, version info types, fetcher interface |
 | `assets/` | Dockerfile template, statusline script, claude config seeds, agent prompt, embedded clawkerd binary (PID 1) |
 
@@ -197,21 +196,7 @@ func (c *VariantConfig) IsAlpine(variant string) bool
 func (c *VariantConfig) VariantNames() []string
 ```
 
-## Subpackage: `semver/`
-
-```go
-type Version struct { Major, Minor, Patch int; Prerelease, Build, Original string }  // Minor/Patch=-1 if unset
-func Parse(s string) (*Version, error)          // Partial: "2", "2.1", "2.1.3-beta+build"
-func MustParse(s string) *Version               // Panics on error
-func IsValid(s string) bool
-func Compare(a, b *Version) int                 // -1/0/1; prereleases < releases
-func Sort(vs []*Version); SortDesc(vs []*Version)
-func SortStrings(vs []string) []string; SortStringsDesc(vs []string) []string  // Filter invalid
-func Match(versions []string, target string) (string, bool)  // Best match for partial pattern
-func FilterValid(versions []string) []string
-```
-
-`Version` methods: `HasMinor()`, `HasPatch()`, `HasPrerelease()`, `String()`.
+Semver parsing/comparison lives in the top-level `internal/semver` package (moved out of bundler).
 
 ## Subpackage: `registry/`
 
@@ -238,10 +223,10 @@ type ParseError = registry.ParseError       // { URL, Snippet, Err } -- Unwrap()
 
 ## Dependencies
 
-Imports: `internal/config`, `internal/bundler/registry`, `internal/bundler/semver`, `internal/hostproxy/internals` (embed-only), `internal/clawkerd` (embed-only — `clawkerd.Binary`). **Does NOT import `internal/docker`** — this is a leaf package.
+Imports: `internal/config`, `internal/bundler/registry`, `internal/semver`, `internal/hostproxy/internals` (embed-only), `internal/clawkerd` (embed-only — `clawkerd.Binary`). **Does NOT import `internal/docker`** — this is a leaf package.
 
 ## Tests
 
-Unit tests: `dockerfile_test.go`, `build_test.go`, `defaults_test.go`, `versions_test.go`. Subpackage: `registry/npm_test.go`, `semver/semver_test.go`. Docker integration: `test/whail/`.
+Unit tests: `dockerfile_test.go`, `build_test.go`, `defaults_test.go`, `versions_test.go`. Subpackage: `registry/npm_test.go`. Docker integration: `test/whail/`.
 
 Test helper: `testConfig(t, projectYAML) config.Config` wraps `configmocks.NewFromString(cleanedProject, settingsYAML)` with default monitoring settings — preferred test double for bundler tests. All test configs use YAML fixtures rather than mock/fake constructors.

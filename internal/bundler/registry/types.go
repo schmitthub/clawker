@@ -5,7 +5,7 @@ package registry
 import (
 	"encoding/json"
 
-	"github.com/schmitthub/clawker/internal/bundler/semver"
+	"github.com/schmitthub/clawker/internal/semver"
 )
 
 // DistTags maps dist-tag names to version strings.

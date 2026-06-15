@@ -17,6 +17,7 @@ reference files. Check these first if the issue matches:
 | Monitoring stack (OTel/OpenSearch/Prometheus, workspace, empty indices) | `reference/monitoring.md` | Troubleshooting |
 | Securing git/VCS egress, can the agent push to/leak via other repos, credential-exfil hardening | `reference/firewall-security.md` | Full reference |
 | Repeated `/login` in new containers despite `use_host_auth`, how host Claude Code auth is shared | `reference/claude-code.md` | Authentication › Troubleshooting |
+| Didn't see "What's new" / release notes after upgrade | This file | No release notes after upgrade |
 | Control plane down or unreachable | This file | Control plane down or unhealthy |
 | `Token used before issued` / token fetch timeout on container start | This file | Control plane down or unhealthy |
 | Agent missing from CP registry | This file | Agent appears in clawker ps but missing from CP |
@@ -218,6 +219,38 @@ User reports the container fails to start or immediately exits.
    clawker controlplane status
    clawker controlplane up         # idempotent — brings CP up if needed
    ```
+
+---
+
+## No release notes after upgrade
+
+User upgraded clawker but never saw the one-time changelog note, or wonders
+where to find what changed.
+
+This is expected behavior, not a bug. Two surfaces exist:
+
+1. **`clawker changelog`** — the curated, user-facing changelog, available any
+   time. Defaults to the running version's entry; `--all` shows full history,
+   `--since <version>` shows everything after a given version. This always works,
+   regardless of TTY or environment.
+
+2. **The one-time changelog note** — printed to standard error on the first
+   *interactive* run after an upgrade, then never again for that upgrade.
+
+The one-time note is intentionally suppressed (the changelog command is not) in
+any of these cases:
+
+- **Standard error is not a TTY** (output piped/redirected, non-interactive
+  shell) — the note never prints.
+- **`CI` is set** — treated as a non-interactive environment.
+- **`CLAWKER_NO_UPDATE_NOTIFIER` is set** (any non-empty value) — the user opted
+  out of both the new-version update notifier and the changelog note.
+- The running binary is a dev build (no injected version).
+
+If the user wants to see what changed regardless, point them at
+`clawker changelog --all`. If they expected the note but it never appeared, check
+those suppression conditions — most often output was not a terminal or
+`CLAWKER_NO_UPDATE_NOTIFIER`/`CI` was set in their environment.
 
 ---
 

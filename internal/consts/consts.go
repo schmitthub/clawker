@@ -112,6 +112,23 @@ const (
 	EnvTestRepoDir = "CLAWKER_TEST_REPO_DIR"
 )
 
+// DevVersion is the sentinel build.Version of a local development build (no
+// ldflags). The update notifier and the changelog show-once teaser both
+// suppress on it — a dev build has no released version to compare against.
+const DevVersion = "DEV"
+
+// GitHub project identity. Single source of truth for the owner/repo slug,
+// referenced by the update checker (releases API) and the changelog fetcher
+// (raw CHANGELOG.md). Other packages build their URLs from these consts rather
+// than re-spelling the literal.
+const (
+	// GitHubRepo is the "owner/name" slug of the clawker repository.
+	GitHubRepo = "schmitthub/clawker"
+	// RawGitHubBaseURL is the base host for raw file content on GitHub.
+	// Joined with a repo slug, ref, and path to fetch a file's raw bytes.
+	RawGitHubBaseURL = "https://raw.githubusercontent.com"
+)
+
 // Host-side behavior override env vars.
 const (
 	// EnvExecutable overrides the clawker binary path used when
@@ -145,6 +162,14 @@ const (
 	// ControlPlaneSubdir. agentregistry holds the `agents` table; future
 	// CP-owned tables share the same file.
 	ControlPlaneDBFile = "controlplane.db"
+	// CliStateFile is the CLI's persisted runtime state in the state dir
+	// (update-check cache + changelog cursor). Historically written only by
+	// the update checker; now backed by internal/state via storage.Store.
+	CliStateFile = "update-state.yaml"
+	// ChangelogCacheFile caches the raw CHANGELOG.md bytes fetched from GitHub
+	// in the state dir, so the changelog surface degrades gracefully when the
+	// network is unavailable and a TTL gate avoids re-fetching on every run.
+	ChangelogCacheFile = "changelog-cache.md"
 )
 
 // Subdirectory names within XDG base dirs.

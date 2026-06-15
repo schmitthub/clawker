@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	"github.com/schmitthub/clawker/internal/changelog"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	"github.com/schmitthub/clawker/internal/docker"
@@ -15,6 +16,7 @@ import (
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/socketbridge"
+	"github.com/schmitthub/clawker/internal/state"
 	"github.com/schmitthub/clawker/internal/tui"
 )
 
@@ -43,12 +45,22 @@ type Factory struct {
 	// all share this instance.
 	ProjectRegistry func() (*project.Registry, error)
 	ProjectManager  func() (project.ProjectManager, error)
-	GitManager      func() (*git.GitManager, error)
-	HostProxy       func() hostproxy.HostProxyService
-	SocketBridge    func() socketbridge.SocketBridgeManager
-	Prompter        func() *prompter.Prompter
-	AdminClient     func(context.Context) (adminv1.AdminServiceClient, error)
-	ControlPlane    func() cpboot.Manager
+	// State is the process-wide CLI runtime-state facade (update-check cache +
+	// changelog cursor), backed by storage.Store[CliState]. Field-merge
+	// mutation means independent writers (the background update goroutine and
+	// the foreground changelog cursor) never clobber each other.
+	State func() (*state.State, error)
+	// Changelog is the process-wide curated-changelog loader: it fetches
+	// CHANGELOG.md from GitHub, caches it in the state dir, TTL-gates re-fetches
+	// against State, and parses entries. Shared by the `clawker changelog`
+	// command (force-refresh) and the show-once teaser in Main (TTL-gated).
+	Changelog    func() (*changelog.Loader, error)
+	GitManager   func() (*git.GitManager, error)
+	HostProxy    func() hostproxy.HostProxyService
+	SocketBridge func() socketbridge.SocketBridgeManager
+	Prompter     func() *prompter.Prompter
+	AdminClient  func(context.Context) (adminv1.AdminServiceClient, error)
+	ControlPlane func() cpboot.Manager
 	// HttpClient returns the *http.Client used for outbound HTTP from the
 	// CLI (first consumer: npm registry lookups for Claude Code version
 	// resolution). Tests substitute by setting this field to a closure that

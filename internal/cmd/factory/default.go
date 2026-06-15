@@ -5,12 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"sync"
 	"time"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	"github.com/schmitthub/clawker/internal/changelog"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane/adminclient"
 	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	"github.com/schmitthub/clawker/internal/docker"
@@ -21,6 +24,7 @@ import (
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/socketbridge"
+	"github.com/schmitthub/clawker/internal/state"
 	"github.com/schmitthub/clawker/internal/tui"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/connectivity"
@@ -55,6 +59,7 @@ func New(version string) *cmdutil.Factory {
 	f := &cmdutil.Factory{
 		Version:         version,
 		ProjectRegistry: projectRegistryFunc(), // no dependencies; sole constructor of registry storage
+		State:           stateFunc(),           // no dependencies; resolves the state dir itself
 	}
 
 	f.Config = configFunc(f)                 // depends on ProjectRegistry (walk-up anchor)
@@ -70,6 +75,7 @@ func New(version string) *cmdutil.Factory {
 	f.AdminClient = adminClientFunc(f)   // depends on Config
 	f.ControlPlane = controlPlaneFunc(f) // depends on Config, Logger, Client
 	f.HttpClient = httpClientFunc()      // stdlib *http.Client; tests substitute via custom RoundTripper
+	f.Changelog = changelogFunc(f)       // depends on State + HttpClient; resolves the cache path via config.StateDir()
 
 	return f
 }
@@ -355,6 +361,51 @@ func projectRegistryFunc() func() (*project.Registry, error) {
 			reg, err = project.NewRegistry()
 		})
 		return reg, err
+	}
+}
+
+// stateFunc returns a lazy closure that constructs the CLI runtime-state
+// facade once. It has no Factory dependencies — the storage layer resolves the
+// state dir from XDG itself. Shared by the background update goroutine
+// (RecordUpdateCheck) and the changelog cursor (SetLastSeenChangelog); their
+// writes are independent field merges, so neither clobbers the other.
+func stateFunc() func() (*state.State, error) {
+	var (
+		once sync.Once
+		st   *state.State
+		err  error
+	)
+	return func() (*state.State, error) {
+		once.Do(func() {
+			st, err = state.New()
+		})
+		return st, err
+	}
+}
+
+// changelogFunc returns a lazy closure that constructs the curated-changelog
+// loader once. It wires the shared HTTP client (f.HttpClient), the state facade
+// (f.State, for the fetch-TTL gate), the canonical changelog URL
+// (changelog.ChangelogURL — raw CHANGELOG.md on main), and the on-disk cache
+// path (state dir / consts.ChangelogCacheFile). config.StateDir() resolves the
+// state dir from XDG, matching where internal/state writes update-state.yaml.
+func changelogFunc(f *cmdutil.Factory) func() (*changelog.Loader, error) {
+	var (
+		once   sync.Once
+		loader *changelog.Loader
+		err    error
+	)
+	return func() (*changelog.Loader, error) {
+		once.Do(func() {
+			st, stErr := f.State()
+			if stErr != nil {
+				err = fmt.Errorf("failed to get state: %w", stErr)
+				return
+			}
+			cachePath := filepath.Join(config.StateDir(), consts.ChangelogCacheFile)
+			loader = changelog.NewLoader(f.HttpClient(), changelog.ChangelogURL, cachePath, st, changelog.DefaultTTL)
+		})
+		return loader, err
 	}
 }
 

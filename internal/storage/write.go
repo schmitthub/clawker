@@ -189,6 +189,11 @@ func encodeValue(v reflect.Value) any {
 		return encodeValue(v.Elem())
 
 	case reflect.Struct:
+		// time.Time is a struct with no exported fields; structToMap would
+		// flatten it to {}. Emit it as a scalar — yaml.v3 marshals it RFC3339.
+		if v.Type() == reflect.TypeFor[time.Time]() {
+			return v.Interface()
+		}
 		if v.CanAddr() {
 			return structToMap(v.Addr().Interface())
 		}

@@ -425,6 +425,29 @@ func TestFilterValid(t *testing.T) {
 	}
 }
 
+func TestCompareStrings(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want int
+	}{
+		{"0.12.0", "0.11.0", 1},
+		{"0.11.0", "0.12.0", -1},
+		{"0.12.0", "0.12.0", 0},
+		{"v0.12.0", "0.12.0", 0},      // leading "v" tolerated on either side
+		{"0.12.0", "v0.12.0", 0},      // ditto
+		{"1.0.0", "0.99.99", 1},       // major dominates
+		{"0.12.3-rc.1", "0.12.3", -1}, // prerelease sorts before release
+		{"garbage", "0.0.0", -1},      // unparseable sorts below any valid version
+		{"0.0.0", "garbage", 1},       // ...symmetrically
+		{"garbage", "nonsense", 0},    // two unparseable compare equal
+	}
+	for _, c := range cases {
+		if got := CompareStrings(c.a, c.b); got != c.want {
+			t.Errorf("CompareStrings(%q, %q) = %d, want %d", c.a, c.b, got, c.want)
+		}
+	}
+}
+
 func BenchmarkParse(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_, _ = Parse("1.2.3-alpha+build")

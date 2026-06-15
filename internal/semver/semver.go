@@ -203,6 +203,45 @@ func Compare(a, b *Version) int {
 	return 0
 }
 
+// CompareStrings compares two version strings, tolerant of a leading "v"
+// (so "v0.12.0" and "0.12.0" compare equal). Unparseable versions sort below
+// any valid version (and equal to one another), which keeps callers such as
+// changelog range queries and the update checker total and panic-free
+// regardless of input. Returns -1, 0, or +1 for a<b, a==b, a>b.
+func CompareStrings(a, b string) int {
+	va, aok := parseLoose(a)
+	vb, bok := parseLoose(b)
+	switch {
+	case aok && bok:
+		return Compare(va, vb)
+	case aok:
+		return 1
+	case bok:
+		return -1
+	default:
+		return 0
+	}
+}
+
+// parseLoose parses a version string tolerant of surrounding whitespace and a
+// single leading "v". It reports ok=false when the string is not a valid
+// version (Parse rejects a "v" prefix, so it is stripped first).
+func parseLoose(s string) (*Version, bool) {
+	v, err := Parse(strings.TrimPrefix(strings.TrimSpace(s), "v"))
+	if err != nil {
+		return nil, false
+	}
+	return v, true
+}
+
+// IsValidLoose reports whether s is a valid version, tolerant of surrounding
+// whitespace and a single leading "v" (unlike IsValid, which rejects the "v"
+// prefix). Useful for callers that work with "v"-prefixed release tags.
+func IsValidLoose(s string) bool {
+	_, ok := parseLoose(s)
+	return ok
+}
+
 // Sort sorts a slice of versions in ascending order.
 func Sort(versions []*Version) {
 	sort.Slice(versions, func(i, j int) bool {

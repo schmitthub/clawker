@@ -9,7 +9,7 @@ import (
 	"os"
 
 	"github.com/schmitthub/clawker/internal/bundler/registry"
-	"github.com/schmitthub/clawker/internal/bundler/semver"
+	"github.com/schmitthub/clawker/internal/semver"
 )
 
 const (

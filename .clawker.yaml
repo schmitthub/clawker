@@ -220,10 +220,6 @@ security:
             path: /anthropics/claude-code/
           - action: allow
             path: /opensearch-project/OpenSearch-Dashboards/
-          - action: allow
-            path: /orhun/git-cliff/
-          - action: allow
-            path: /actions/ai-inference/
       - action: allow
         dst: api.github.com
         insecure_skip_tls_verify: false
@@ -247,10 +243,6 @@ security:
             path: /repos/cilium/cilium/
           - action: allow
             path: /repos/opensearch-project/OpenSearch-Dashboards/
-          - action: allow
-            path: /repos/orhun/git-cliff
-          - action: allow
-            path: /repos/actions/ai-inference
           - action: deny
             path: /gists
           - action: deny
@@ -287,10 +279,6 @@ security:
             path: /cilium/cilium/
           - action: allow
             path: /opensearch-project/OpenSearch-Dashboards/
-          - action: allow
-            path: /orhun/git-cliff/
-          - action: allow
-            path: /actions/ai-inference/
         port: 443
         proto: https
   git_credentials:

@@ -1,11 +1,15 @@
-// Package update checks GitHub for newer clawker releases and caches results.
+// Package update checks GitHub for newer clawker releases.
 //
-// Foundation-tier package: stdlib + net/http + yaml.v3, no internal imports.
-// The caller passes the current version string (no dependency on internal/build).
+// Foundation-tier package: stdlib + net/http, no internal persistence imports
+// (NOT internal/storage, NOT internal/state). It is a pure fetch+compare unit —
+// the caller passes the current version and the timestamp of the last check,
+// and persists the result itself (via internal/state). This keeps update free
+// of any state-file ownership so the 24h update goroutine and the changelog
+// cursor can share one storage-backed state without clobbering each other.
 //
-// Designed for background use — the caller launches CheckForUpdate in a goroutine
-// with a cancellable context. Context cancellation cleanly aborts the HTTP request
-// when the CLI command finishes before the check completes.
+// Designed for background use — the caller launches CheckForUpdate in a
+// goroutine with a cancellable context. Context cancellation cleanly aborts the
+// HTTP request when the CLI command finishes before the check completes.
 package update
 
 import (
@@ -14,34 +18,33 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/schmitthub/clawker/internal/consts"
-	"gopkg.in/yaml.v3"
+	"github.com/schmitthub/clawker/internal/semver"
 )
 
-// cacheTTL is how long a cached check result is considered fresh.
-const cacheTTL = 24 * time.Hour
+// CacheTTL is how long a recorded check result is considered fresh. The caller
+// compares it against the persisted last-checked timestamp.
+const CacheTTL = 24 * time.Hour
 
 // httpTimeout is the maximum time for the GitHub API request.
 const httpTimeout = 5 * time.Second
 
-// StateEntry is the cached update check result, persisted as YAML.
-type StateEntry struct {
-	CheckedAt      time.Time `yaml:"checked_at"`
-	LatestVersion  string    `yaml:"latest_version"`
-	LatestURL      string    `yaml:"latest_url"`
-	CurrentVersion string    `yaml:"current_version"`
-}
+// devVersion is the sentinel version of a local development build, for which
+// update checks are always suppressed.
+const devVersion = "DEV"
 
-// CheckResult is returned when a newer version is available.
+// CheckResult is the outcome of an update check. It always carries the fetched
+// latest version and release URL so the caller can persist them, regardless of
+// whether an upgrade is available. IsNewer reports whether LatestVersion is a
+// newer semver than CurrentVersion (the only case worth notifying the user).
 type CheckResult struct {
 	CurrentVersion string
 	LatestVersion  string
 	ReleaseURL     string
+	IsNewer        bool
 }
 
 // githubRelease is a partial response from the GitHub releases API.
@@ -55,36 +58,41 @@ type githubRelease struct {
 //   - consts.EnvNoUpdateNotifier env var is set (non-empty)
 //   - CI env var is set (non-empty) — standard CI detection
 //   - currentVersion is "DEV" — development build
-//   - stateFilePath is non-empty and cache is fresh (checked < 24h ago)
-func ShouldCheckForUpdate(stateFilePath, currentVersion string) bool {
+//   - lastCheckedAt is within CacheTTL (a check ran recently)
+//
+// lastCheckedAt is the timestamp of the last recorded check, supplied by the
+// caller from persisted state; a zero value means "never checked".
+func ShouldCheckForUpdate(lastCheckedAt time.Time, currentVersion string) bool {
 	if os.Getenv(consts.EnvNoUpdateNotifier) != "" {
 		return false
 	}
+	// "CI" is the canonical cross-tool CI-detection env var (not a clawker
+	// const) — kept as a literal, matching every other tool's convention.
 	if os.Getenv("CI") != "" {
 		return false
 	}
-	if currentVersion == "DEV" {
+	if currentVersion == devVersion {
 		return false
 	}
-	if stateFilePath != "" {
-		if entry, err := readState(stateFilePath); err == nil {
-			if time.Since(entry.CheckedAt) < cacheTTL {
-				return false
-			}
-		}
+	if !lastCheckedAt.IsZero() && time.Since(lastCheckedAt) < CacheTTL {
+		return false
 	}
 	return true
 }
 
-// CheckForUpdate checks the GitHub API for a newer release of the given repo.
-// Returns (nil, nil) if the current version is latest or checks are suppressed.
+// CheckForUpdate checks the GitHub API for the latest release of the given repo.
+// It is pure: it performs no persistence. The caller passes lastCheckedAt from
+// persisted state for freshness gating and persists the returned result itself.
+//
+// Returns (nil, nil) if checks are suppressed (see ShouldCheckForUpdate).
 // Returns (nil, error) on API/network failures.
-// Returns (*CheckResult, nil) when a newer version is available.
+// Returns (*CheckResult, nil) otherwise — CheckResult.IsNewer reports whether a
+// newer version is available; the fetched version/URL are always populated.
 //
 // The context controls the HTTP request lifetime — cancel it to abort cleanly.
 // repo should be "owner/name", e.g. "schmitthub/clawker".
-func CheckForUpdate(ctx context.Context, stateFilePath, currentVersion, repo string) (*CheckResult, error) {
-	if !ShouldCheckForUpdate(stateFilePath, currentVersion) {
+func CheckForUpdate(ctx context.Context, lastCheckedAt time.Time, currentVersion, repo string) (*CheckResult, error) {
+	if !ShouldCheckForUpdate(lastCheckedAt, currentVersion) {
 		return nil, nil
 	}
 
@@ -96,25 +104,11 @@ func CheckForUpdate(ctx context.Context, stateFilePath, currentVersion, repo str
 	latestVersion := strings.TrimPrefix(release.TagName, "v")
 	currentBare := strings.TrimPrefix(currentVersion, "v")
 
-	// Write cache regardless of comparison result
-	entry := StateEntry{
-		CheckedAt:      time.Now(),
-		LatestVersion:  latestVersion,
-		LatestURL:      release.HTMLURL,
-		CurrentVersion: currentBare,
-	}
-	if stateFilePath != "" {
-		_ = writeState(stateFilePath, entry)
-	}
-
-	if !isNewer(latestVersion, currentBare) {
-		return nil, nil
-	}
-
 	return &CheckResult{
 		CurrentVersion: currentBare,
 		LatestVersion:  latestVersion,
 		ReleaseURL:     release.HTMLURL,
+		IsNewer:        IsNewer(latestVersion, currentBare),
 	}, nil
 }
 
@@ -155,80 +149,12 @@ func fetchLatestReleaseFromURL(ctx context.Context, url string) (*githubRelease,
 	return &release, nil
 }
 
-// isNewer returns true if latest is a newer semver than current.
-// Both should be bare versions without "v" prefix (e.g. "1.2.3").
-func isNewer(latest, current string) bool {
-	latestParts := parseSemver(latest)
-	currentParts := parseSemver(current)
-
-	if latestParts == nil || currentParts == nil {
-		// Can't determine ordering — don't claim newer
-		return false
-	}
-
-	for i := range 3 {
-		if latestParts[i] > currentParts[i] {
-			return true
-		}
-		if latestParts[i] < currentParts[i] {
-			return false
-		}
-	}
-	return false
-}
-
-// parseSemver parses "MAJOR.MINOR.PATCH" into a 3-element []int.
-// Returns nil if parsing fails.
-func parseSemver(v string) []int {
-	// Strip any pre-release suffix (e.g. "1.2.3-beta.1" → "1.2.3")
-	if idx := strings.IndexByte(v, '-'); idx != -1 {
-		v = v[:idx]
-	}
-
-	parts := strings.Split(v, ".")
-	if len(parts) != 3 {
-		return nil
-	}
-
-	result := make([]int, 3)
-	for i, p := range parts {
-		n, err := strconv.Atoi(p)
-		if err != nil {
-			return nil
-		}
-		result[i] = n
-	}
-	return result
-}
-
-// readState reads the cached state file.
-func readState(path string) (*StateEntry, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var entry StateEntry
-	if err := yaml.Unmarshal(data, &entry); err != nil {
-		return nil, err
-	}
-	return &entry, nil
-}
-
-// writeState atomically writes the state file (write to temp, rename).
-func writeState(path string, entry StateEntry) error {
-	data, err := yaml.Marshal(entry)
-	if err != nil {
-		return err
-	}
-
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+// IsNewer reports whether latest is a newer version than current. Both accept an
+// optional leading "v" (e.g. "v1.2.3" == "1.2.3"); an unparseable version is
+// treated as not-newer. Delegates to the shared internal/semver comparator.
+func IsNewer(latest, current string) bool {
+	// Conservative: when either side is unparseable, ordering is undefined, so
+	// do not claim an upgrade is available (avoids nagging non-release builds).
+	return semver.IsValidLoose(latest) && semver.IsValidLoose(current) &&
+		semver.CompareStrings(latest, current) > 0
 }

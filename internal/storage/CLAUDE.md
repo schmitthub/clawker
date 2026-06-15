@@ -42,7 +42,7 @@ Write: node tree → route by provenance → per-file atomic write (temp+fsync+r
 ### Schema Contract
 
 ```go
-type FieldKind int  // KindText, KindBool, KindSelect, KindInt, KindStringSlice, KindDuration, KindMap, KindStructSlice, KindLast
+type FieldKind int  // KindText, KindBool, KindSelect, KindInt, KindStringSlice, KindDuration, KindTime, KindMap, KindStructSlice, KindLast
 
 type Field interface {
     Path() string; Kind() FieldKind; Label() string; Description() string; Default() string; Required() bool
@@ -149,6 +149,7 @@ Deepest fixture level always has both `config.local.yaml` and `config.yaml` with
 - **Unknown keys survive** — `mergeIntoTree` preserves tree keys not in the struct schema.
 - **Walk-up is bounded** — never reaches `~/.config/clawker/`. Home-level configs added via `WithConfigDir()`.
 - **Nil vs zero** — Nil pointers/slices/empty strings = "not set". Non-nil zero values = "explicitly set".
+- **`time.Time` is a scalar leaf (`KindTime`)** — although it is a Go struct, both `NormalizeFields` and the `structToMap`/`encodeValue` write path special-case it: it is classified as a leaf and serialized as an RFC3339 scalar via yaml.v3, never recursed into its unexported fields. Used by `internal/state`'s `CliState.CheckedAt`.
 - **Dirty is store-wide** — `Set` marks entire store dirty, not individual fields.
 - **`NewFromString` stores have no write paths** — `Set()` + `Write()` will error by design.
 - **File locking is advisory** — `flock` is cooperative. Lock files (`.lock` suffix) left on disk intentionally.

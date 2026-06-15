@@ -41,7 +41,8 @@ FIELD     (command imports package directly)
 | Package | Contains |
 |---------|----------|
 | `internal/cmdutil/` | Factory struct, output utilities, arg validators (imports `internal/docker` only for the `*docker.Client` closure type on `Factory`) |
-| `internal/bundler/` | Dockerfile generation, flavor selection, version management (leaf — no docker import) |
+| `internal/bundler/` | Dockerfile generation, flavor selection, npm version resolution (leaf — no docker import) |
+| `internal/semver/` | General semver utilities — parse/compare/sort/match plus v-tolerant string compare; leaf, stdlib only, safe across the DAG (bundler, changelog, update) |
 | `internal/project/` | Project registration in user registry |
 | `internal/containerfs/` | Host Claude config preparation — tar archives for config volume (leaf — config types only, no docker runtime) |
 | `internal/docker/` | Container naming, image resolution, image building (`Builder`, `BuildDefaultImage`), Docker middleware |

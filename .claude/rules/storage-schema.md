@@ -32,6 +32,7 @@ Schema types use these struct tags as the single source of truth for field metad
 | `[]string` | KindStringSlice | Comma-separated | `default:"git,curl,ripgrep"` |
 | `map[string]string` | KindMap | Comma-separated `key=value` (split on first `=`; values may contain `=` but not `,`) | `default:"dev=run --rm -it @"` |
 | `time.Duration` | KindDuration | Go duration string | `default:"30s"` |
+| `time.Time` | KindTime | RFC3339 scalar (serialized via yaml.v3, not recursed) | (usually no default) |
 
 ## Key Functions
 
