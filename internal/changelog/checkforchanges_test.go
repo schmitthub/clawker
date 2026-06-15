@@ -91,8 +91,7 @@ func callerVersion(t *testing.T, s string) *semver.Version {
 
 // TestCheckForChanges_Ranges drives the (cursor, current] diff through the real
 // entry point: the cursor is seeded as a raw string in state and parsed by
-// CheckForChanges (prod), not pre-parsed by the test. persist=false isolates the
-// range from the advance behavior.
+// CheckForChanges (prod), not pre-parsed by the test.
 func TestCheckForChanges_Ranges(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -117,7 +116,7 @@ func TestCheckForChanges_Ranges(t *testing.T) {
 			st := newTestState(t)
 			seedCursor(t, st, c.cursor)
 
-			gained, err := CheckForChanges(context.Background(), st, callerVersion(t, c.current), false)
+			gained, err := CheckForChanges(context.Background(), st, callerVersion(t, c.current))
 			if err != nil {
 				t.Fatalf("CheckForChanges: %v", err)
 			}
@@ -140,7 +139,7 @@ func TestCheckForChanges_FirstRunSeedsCursorNoFetch(t *testing.T) {
 	hits := serveChangelog(t, http.StatusOK, changesFixture)
 	st := newTestState(t) // cursor starts empty
 
-	gained, err := CheckForChanges(context.Background(), st, callerVersion(t, "0.12.0"), true)
+	gained, err := CheckForChanges(context.Background(), st, callerVersion(t, "0.12.0"))
 	if err != nil {
 		t.Fatalf("CheckForChanges: %v", err)
 	}
@@ -164,7 +163,7 @@ func TestCheckForChanges_GarbageCursorTreatedAsFirstRun(t *testing.T) {
 	st := newTestState(t)
 	seedCursor(t, st, "not-a-version")
 
-	gained, err := CheckForChanges(context.Background(), st, callerVersion(t, "0.12.0"), true)
+	gained, err := CheckForChanges(context.Background(), st, callerVersion(t, "0.12.0"))
 	if err != nil {
 		t.Fatalf("CheckForChanges: %v", err)
 	}
@@ -179,14 +178,15 @@ func TestCheckForChanges_GarbageCursorTreatedAsFirstRun(t *testing.T) {
 	}
 }
 
-// TestCheckForChanges_AdvancesCursorWhenPersist: with a seeded cursor and
-// persist=true the cursor advances to current after a successful check.
-func TestCheckForChanges_AdvancesCursorWhenPersist(t *testing.T) {
+// TestCheckForChanges_AdvancesCursor: with a seeded cursor the cursor advances
+// to current after a successful check. The persist gate is gone — CheckForChanges
+// is only called on a non-suppressed run, so it always advances.
+func TestCheckForChanges_AdvancesCursor(t *testing.T) {
 	serveChangelog(t, http.StatusOK, changesFixture)
 	st := newTestState(t)
 	seedCursor(t, st, "0.10.0")
 
-	gained, err := CheckForChanges(context.Background(), st, callerVersion(t, "0.12.0"), true)
+	gained, err := CheckForChanges(context.Background(), st, callerVersion(t, "0.12.0"))
 	if err != nil {
 		t.Fatalf("CheckForChanges: %v", err)
 	}
@@ -198,24 +198,35 @@ func TestCheckForChanges_AdvancesCursorWhenPersist(t *testing.T) {
 	}
 }
 
-// TestCheckForChanges_NoAdvanceWhenSuppressed: with persist=false the gained
-// range is returned but the cursor is left untouched, so a suppressed run
-// retries next time.
-func TestCheckForChanges_NoAdvanceWhenSuppressed(t *testing.T) {
-	serveChangelog(t, http.StatusOK, changesFixture)
-	st := newTestState(t)
-	seedCursor(t, st, "0.10.0")
+// TestCheckForChanges_StoresCanonicalCursor: a current parsed from a v-prefixed
+// string ("v0.12.0") is stored canonical (bare "0.12.0") via String(), not the
+// v-prefixed Original(). Asserted on both cursor-store sites — the first-run
+// seed and the advance.
+func TestCheckForChanges_StoresCanonicalCursor(t *testing.T) {
+	t.Run("first_run_seed", func(t *testing.T) {
+		serveChangelog(t, http.StatusOK, changesFixture)
+		st := newTestState(t) // empty cursor → first-run seed path
 
-	gained, err := CheckForChanges(context.Background(), st, callerVersion(t, "0.12.0"), false)
-	if err != nil {
-		t.Fatalf("CheckForChanges: %v", err)
-	}
-	if got := versions(gained); len(got) != 2 {
-		t.Fatalf("gained = %v, want 2 entries", got)
-	}
-	if cur := st.LastSeenChangelog(); cur != "0.10.0" {
-		t.Errorf("cursor = %q with persist=false, want untouched 0.10.0", cur)
-	}
+		if _, err := CheckForChanges(context.Background(), st, callerVersion(t, "v0.12.0")); err != nil {
+			t.Fatalf("CheckForChanges: %v", err)
+		}
+		if cur := st.LastSeenChangelog(); cur != "0.12.0" {
+			t.Errorf("seeded cursor = %q, want canonical 0.12.0 (not v-prefixed)", cur)
+		}
+	})
+
+	t.Run("advance", func(t *testing.T) {
+		serveChangelog(t, http.StatusOK, changesFixture)
+		st := newTestState(t)
+		seedCursor(t, st, "0.10.0") // diff path → advance
+
+		if _, err := CheckForChanges(context.Background(), st, callerVersion(t, "v0.12.0")); err != nil {
+			t.Fatalf("CheckForChanges: %v", err)
+		}
+		if cur := st.LastSeenChangelog(); cur != "0.12.0" {
+			t.Errorf("advanced cursor = %q, want canonical 0.12.0 (not v-prefixed)", cur)
+		}
+	})
 }
 
 // TestCheckForChanges_NilStateNoOp: a nil state facade is a silent no-op — no
@@ -224,7 +235,7 @@ func TestCheckForChanges_NoAdvanceWhenSuppressed(t *testing.T) {
 func TestCheckForChanges_NilStateNoOp(t *testing.T) {
 	hits := serveChangelog(t, http.StatusOK, changesFixture)
 
-	gained, err := CheckForChanges(context.Background(), nil, callerVersion(t, "0.12.0"), true)
+	gained, err := CheckForChanges(context.Background(), nil, callerVersion(t, "0.12.0"))
 	if err != nil {
 		t.Fatalf("CheckForChanges: %v", err)
 	}
@@ -243,7 +254,7 @@ func TestCheckForChanges_FetchErrorNoAdvance(t *testing.T) {
 	st := newTestState(t)
 	seedCursor(t, st, "0.10.0")
 
-	_, err := CheckForChanges(context.Background(), st, callerVersion(t, "0.12.0"), true)
+	_, err := CheckForChanges(context.Background(), st, callerVersion(t, "0.12.0"))
 	if err == nil {
 		t.Fatal("expected error on non-200 response")
 	}

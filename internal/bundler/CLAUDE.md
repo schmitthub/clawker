@@ -196,7 +196,7 @@ func (c *VariantConfig) IsAlpine(variant string) bool
 func (c *VariantConfig) VariantNames() []string
 ```
 
-Semver parsing/comparison lives in the top-level `internal/semver` package (moved out of bundler).
+Semver parsing/comparison uses `github.com/Masterminds/semver/v3` directly (`semver.NewConstraint` + `Constraint.Check` for partial-match resolution in `versions.go`; `semver.NewVersion` / `*semver.Version` accessors elsewhere).
 
 ## Subpackage: `registry/`
 
@@ -223,7 +223,7 @@ type ParseError = registry.ParseError       // { URL, Snippet, Err } -- Unwrap()
 
 ## Dependencies
 
-Imports: `internal/config`, `internal/bundler/registry`, `internal/semver`, `internal/hostproxy/internals` (embed-only), `internal/clawkerd` (embed-only — `clawkerd.Binary`). **Does NOT import `internal/docker`** — this is a leaf package.
+Imports: `internal/config`, `internal/bundler/registry`, `github.com/Masterminds/semver/v3`, `internal/hostproxy/internals` (embed-only), `internal/clawkerd` (embed-only — `clawkerd.Binary`). **Does NOT import `internal/docker`** — this is a leaf package.
 
 ## Tests
 

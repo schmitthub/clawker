@@ -1,6 +1,7 @@
 # Clawker Package
 
-Application entry point, centralized error rendering, and background update notification.
+Application entry point, centralized error rendering, and background notifications
+(the update notifier and the show-once changelog teaser).
 
 ## Exported Symbols
 
@@ -14,7 +15,39 @@ Called from `cmd/clawker/main.go`. Build metadata (version, date) lives in `inte
 
 After Factory construction, `Main()` calls `storage.ValidateDirectories()` to fail fast if XDG directories collide (e.g. `CLAWKER_DATA_DIR == CLAWKER_CONFIG_DIR`) before any file I/O. On exit, a deferred `f.Logger().Close()` flushes zerolog file output and shuts down the OTEL provider.
 
-All symbols are in `cmd.go` (`Main`, `checkForUpdate`, `printUpdateNotification`, `maybeShowChangelog`, `changelogSuppressed`, `printChangelogTeaser`, `printDockerInstallHelper`, `printError`, `userFormattedError` duck-type interface).
+All symbols are in `cmd.go` (`Main`, `notificationsSuppressed`, `printUpdateNotification`, `printChangelogTeaser`, `printDockerInstallHelper`, `printError`, `userFormattedError` duck-type interface).
+
+## Root context
+
+`Main()` creates one root context (`ctx := context.Background()`) up front. Every
+cancellable child derives **directly** from it — the update goroutine context, the
+changelog goroutine context, and the SIGINT/SIGTERM `signal.NotifyContext`. They
+are deliberately *not* chained: `signal.NotifyContext` returns a fresh context, so
+chaining would clobber the update/changelog cancel functions.
+
+## The single notification gate
+
+`notificationsSuppressed(ios) bool` is the **one** gate for BOTH background
+notifications. It is computed once, up front, in `Main`:
+
+```go
+return !ios.IsStderrTTY() || os.Getenv(consts.EnvNoNotifier) != "" || os.Getenv("CI") != ""
+```
+
+(`"CI"` is the canonical cross-tool CI-detection env var, kept literal.
+`consts.EnvNoNotifier` is `CLAWKER_NO_NOTIFIER`.)
+
+When `suppressed` is true, **neither** background goroutine is launched — so a
+suppressed run does **zero network I/O and no state writes** (no update fetch, no
+changelog cursor advance). This is a conscious, accepted behavior change: the
+env/CI/TTY opt-out now lives here in the caller. `internal/update` and
+`internal/changelog` no longer enforce suppression themselves — `update` only
+applies its own TTL freshness gate, and `changelog.CheckForChanges` always
+advances the cursor and is therefore only called on a non-suppressed run.
+
+The two renderers (`printUpdateNotification`, `printChangelogTeaser`) are still
+called **unconditionally** after the command runs; each self-guards (nil info /
+empty entries) so calling them on a suppressed run is a safe no-op.
 
 ## CLI state facade
 
@@ -23,50 +56,32 @@ All symbols are in `cmd.go` (`Main`, `checkForUpdate`, `printUpdateNotification`
 changelog teaser). A missing/unreadable store degrades to a nil facade: the
 update check proceeds with a zero "never checked" time and the changelog teaser
 is a silent no-op. The same facade is shared by both background goroutines; they
-write **disjoint** fields (`RecordUpdateCheck` vs `SetLastSeenChangelog`), so
-neither clobbers the other and no snapshotting is needed.
+write **disjoint** fields, so neither clobbers the other and no snapshotting is
+needed.
 
 ## Background Update Check
 
-`internal/update` reads the freshness gate from the state facade and persists the
-result there itself. The goroutine follows the gh CLI pattern: `context.WithCancel`
-+ buffered(1) channel + blocking read.
+Launched only when `!suppressed`. The goroutine follows the gh CLI pattern:
+`context.WithCancel` + buffered(1) channel + blocking drain.
 
-- Goroutine calls `checkForUpdate(ctx, cliState, buildVersion)`, which wraps `update.CheckForUpdate(ctx, st, buildVersion, consts.GitHubRepo)`. That function reads `st.LastCheckedAt()` for the gate and persists `st.RecordUpdateCheck(now, latestVersion)` on success. Best-effort: a persistence failure is logged, not surfaced.
-- The goroutine recovers from panics and always sends exactly once on the buffered(1) channel.
-- Context is NOT cancelled after `ExecuteC()` — the goroutine needs to complete so it can record the check; `defer updateCancel()` handles cleanup on exit.
-- Buffered(1) channel prevents a goroutine leak if `Main()` returns early.
-- Blocking read (`<-updateMessageChan`) after `ExecuteC()` waits for it; the HTTP client's own 5s timeout bounds the worst-case wait.
-- `printUpdateNotification()` prints to stderr only if the result is non-nil, `result.IsNewer` is true, and stderr is a TTY.
+- The goroutine calls `update.CheckForUpdate(updateCtx, cliState, buildVersion, consts.GitHubRepo)` directly (no wrapper). That function applies its TTL freshness gate from the state facade and persists `RecordUpdateCheck` on success. It returns `(nil, nil)` when the running version is up to date or the check is TTL-fresh; it returns `(*update.ReleaseInfo, nil)` **only** when a newer release exists. A non-nil error may accompany a nil result — it is logged, never surfaced.
+- The goroutine recovers from panics (logged at `Warn`, file-only) and always sends exactly once on the buffered(1) channel.
+- The update/changelog contexts are NOT cancelled after `ExecuteC()` — the goroutines need to complete so they can persist their state; the deferred cancels handle cleanup on exit.
+- The buffered(1) channels prevent a goroutine leak if `Main()` returns early.
+- The drain (`<-updateMessageChan`) runs only when goroutines were launched; the HTTP client's own timeout bounds the worst-case wait.
+- `printUpdateNotification(ios, info)` self-guards on a nil `info` (nothing to report) and otherwise renders the upgrade notice to stderr. There is no longer a `result.IsNewer` field or an in-renderer TTY check — "nothing to report" is `nil`, and TTY/CI/opt-out is the up-front gate's job.
 
 State file (owned by `internal/state`): `config.StateDir()/update-state.yaml` (`consts.CliStateFile`).
 
-Suppressed when: `CLAWKER_NO_UPDATE_NOTIFIER` set, `CI` set, or the last check was
-< 24h ago (`update.CacheTTL`, gated on the persisted `checked_at`). A non-release
-build (unparseable version) is handled naturally by `IsNewer` returning false —
-there is no DEV gate.
-
 ## Show-Once Changelog Teaser
 
-The cursor lifecycle lives entirely in `internal/changelog`. `Main()` only
-parses the running version and renders the result:
+Launched only when `!suppressed`. The cursor lifecycle lives entirely in
+`internal/changelog`; `Main()` only parses the running version and renders the
+result:
 
-- A **second background goroutine** (with its own cancellable context, not the
-  update check's) parses `build.Version` with `semver.NewVersion` (after
-  trimming a leading `v`). On a parse error — a non-release build whose version
-  is not semver — it logs and shows nothing (the parse failure is the signal, not
-  an explicit dev-build gate). Otherwise it calls
-  `changelog.CheckForChanges(ctx, cliState, current, persistCursor)` and sends
-  the gained `[]changelog.Entry` on a buffered(1) `changelogChan`. The goroutine
-  recovers from panics and always sends exactly once.
-- `persistCursor = !changelogSuppressed(ios)`. `changelogSuppressed` mirrors the
-  update-notifier discipline (stderr must be a TTY; `CLAWKER_NO_UPDATE_NOTIFIER`
-  and `CI` opt-out). On a suppressed run `CheckForChanges` leaves the cursor for
-  the next interactive run to advance.
-- After the command completes (both error and success paths, right after
-  `printUpdateNotification`), `maybeShowChangelog(f, <-changelogChan)` blocks on
-  the channel and **renders only** — it does no fetching or cursor logic. It
-  prints nothing when there are no gained entries or when `changelogSuppressed`.
+- A **second background goroutine** (its own cancellable context, not the update check's) parses `build.Version` with `semver.NewVersion` directly — the Masterminds regex tolerates a leading `v`, so there is no manual `TrimPrefix`. On a parse error — a non-release build whose version is not semver — it logs and shows nothing (the parse failure is the signal, not an explicit dev-build gate). Otherwise it calls `changelog.CheckForChanges(changelogCtx, cliState, current)` and sends the gained `[]changelog.Entry` on a buffered(1) `changelogChan`. The goroutine recovers from panics (logged at `Warn`, file-only) and always sends exactly once.
+- `changelog.CheckForChanges` no longer takes a `persist` flag — it **always** advances the cursor, which is why it is only ever called on a non-suppressed run (gated by `notificationsSuppressed`).
+- After the command completes (both error and success paths), the drain blocks on `changelogChan` and `printChangelogTeaser(f.IOStreams, gained)` is called unconditionally; it self-guards on an empty slice.
 
 `changelog.CheckForChanges` owns the read/first-run-seed/advance of the cursor
 (see `internal/changelog/CLAUDE.md`): first run seeds at current and shows
@@ -85,9 +100,9 @@ single per-entry tag or headline.
 
 ```go
 cmd, err := rootCmd.ExecuteC()
-// Context NOT cancelled here — goroutine needs to complete for cache write.
-// Blocking read below waits for it; HTTP client has its own 5s timeout.
-// defer updateCancel() handles cleanup on exit.
+// update/changelog contexts NOT cancelled here — goroutines need to complete to
+// persist their state. The drain below waits for them (only when they were
+// launched); each I/O client has its own timeout. Deferred cancels clean up.
 if err != nil {
     switch {
     case errors.Is(err, cmdutil.SilentError):
@@ -97,12 +112,15 @@ if err != nil {
     default:
         printError(f.IOStreams.ErrOut, f.IOStreams.ColorScheme(), err, cmd)
     }
-    printUpdateNotification(f.IOStreams, <-updateMessageChan) // Blocking read
-    // ExitError propagates container exit codes
-    // Default: return 1
+    drainNotifications() // drains + renders both; no-op on a suppressed run
+    // ExitError propagates container exit codes; default: return 1
 }
-printUpdateNotification(f.IOStreams, <-updateMessageChan) // Blocking read
+drainNotifications()
 ```
+
+`drainNotifications` is a single closure shared by the error and success paths:
+when `!suppressed` it reads both channels; then it always calls
+`printUpdateNotification` and `printChangelogTeaser` (both self-guard).
 
 **Error type dispatch in `printError()`:**
 - `FlagError` — prints error + command usage string + `"Run '<cmd> --help' for more information"`

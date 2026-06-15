@@ -44,7 +44,6 @@ f := &cmdutil.Factory{IOStreams: tio, TUI: tui.NewTUI(tio), Version: "1.0.0"}
 - `tuiFunc(f)` -- creates TUI struct bound to IOStreams (eager, separate helper in `default.go`)
 - `clientFunc(f)` -- returns lazy Docker client constructor; closes over `f.Config()` to pass `*config.Config` to `docker.NewClient`
 - `projectRegistryFunc()` -- returns lazy `*project.Registry` constructor (`project.NewRegistry()`); the sole production constructor of registry storage, shared by Config, GitManager, ProjectManager, and commands via `f.ProjectRegistry`
-- `stateFunc()` -- returns lazy `*state.State` constructor (`state.New()`); the CLI runtime-state facade (`storage.Store[CliState]`). No Factory dependencies — storage resolves the state dir from XDG. Shared by the background update goroutine (`RecordUpdateCheck`) and the changelog cursor (`SetLastSeenChangelog`); independent field-merge writes never clobber each other
 - `configFunc(f)` -- returns lazy `config.Config` gateway constructor (lazy-loads project + settings stores; the registry is touched only through `f.ProjectRegistry().CurrentRoot()` for the walk-up anchor). Resolves the project root at the call site and passes it to `config.NewConfig(config.WithProjectRoot(root))` to bound project-config walk-up (empty root → walk-up disabled)
 - `gitManagerFunc(f)` -- returns lazy git manager constructor; uses the project root from `f.ProjectRegistry().CurrentRoot()`
 - `hostProxyFunc(f)` -- returns lazy host proxy manager constructor

@@ -5,10 +5,10 @@ and surfaces the entries gained since the show-once cursor. The package owns the
 cursor lifecycle end to end — read, first-run seed, and advance all live here,
 backed by `internal/state`.
 
-The single exported entry point is `CheckForChanges` (`changes.go`); `Entry` is
-the parsed unit. The parser (`parse.go`) and the cursor range query (`between`)
-are pure, unexported helpers — nothing outside the package composes them
-independently.
+The single exported entry point is `CheckForChanges` (`changelog.go`, alongside
+`Entry` and the `between` range query); `Entry` is the parsed unit. The parser
+(`parse.go`) and the cursor range query (`between`) are pure, unexported
+helpers — nothing outside the package composes them independently.
 
 There is **no on-disk cache and no TTL**: the curated changelog is small,
 best-effort, and the CLI runs on the host where it is always online, so each
@@ -62,7 +62,7 @@ type Entry struct {
 }
 
 // CheckForChanges owns the show-once cursor end to end.
-func CheckForChanges(ctx context.Context, st *state.State, current *semver.Version, persist bool) ([]Entry, error)
+func CheckForChanges(ctx context.Context, st *state.State, current *semver.Version) ([]Entry, error)
 
 var ChangelogURL string // raw CHANGELOG.md on main (consts.RawGitHubBaseURL + consts.GitHubRepo)
 ```
@@ -71,17 +71,23 @@ var ChangelogURL string // raw CHANGELOG.md on main (consts.RawGitHubBaseURL + c
 
 - **`st == nil`** (state store unavailable) → silent no-op, returns `nil, nil`.
 - **First run** — the cursor (`st.LastSeenChangelog()`) is empty or does not
-  parse as a version → seed the cursor at `current` (when `persist`) and return
-  `nil` **without fetching**. There is **no catch-up backfill** across a
-  changelog-blind upgrade; the cursor is "last seen" from here on.
+  parse as a version → seed the cursor at `current` and return `nil` **without
+  fetching**. There is **no catch-up backfill** across a changelog-blind
+  upgrade; the cursor is "last seen" from here on.
 - **Otherwise** → GET `ChangelogURL` (context-aware, 5s `fetchTimeout`, non-200
-  is an error), `parse`, and return the entries in `(cursor, current]` via
-  `between` (newest-first, cursor-exclusive / current-inclusive).
+  is an error), `parse`, return the entries in `(cursor, current]` via `between`
+  (newest-first, cursor-exclusive / current-inclusive), and advance the cursor
+  to `current`.
 
-`persist` is `false` on a suppressed run (non-TTY / CI / opt-out): the cursor is
-left untouched so the teaser retries on the next interactive run. The cursor
-write is best-effort — a write failure is returned (with any gained entries) for
-the caller to log.
+There is **no `persist` gate**: `CheckForChanges` is only ever called on a
+non-suppressed run, so it always seeds/advances the cursor. (Suppression — non-
+TTY / CI / opt-out — is decided by the caller, which simply does not call
+`CheckForChanges` on a suppressed run.) The cursor write is best-effort — a write
+failure is returned (with any gained entries) for the caller to log.
+
+The cursor is stored via `current.String()` (canonical bare semver, e.g.
+`0.12.0`) at **both** store sites — the first-run seed and the advance — so a
+`v`-prefixed `current` (`v0.12.0`) still lands as bare `0.12.0` at rest.
 
 `current` is an already-parsed `*semver.Version`: the caller (`internal/clawker`
 `Main`) parses `build.Version` and passes it, exactly as it parses the cursor
@@ -108,11 +114,12 @@ stdlib `net/http`. No on-disk cache, no clock, no Factory noun.
   `StrictNewVersion`), body preservation across a multi-kind release (Added +
   Fixed both survive) with inline links intact, HTML-comment + link-reference
   stripping.
-- `changes_test.go` — `CheckForChanges` over `httptest` + a request-hit counter
-  + a `state.WithStateDirOverride` store: the cursor is seeded as a **raw
-  string** (prod parses it), so the range table, the first-run-seeds-no-fetch
-  path, the **garbage-cursor → first-run** failure branch, persist-advances /
-  no-persist-leaves, nil-state no-op, and fetch-error-no-advance all run through
-  the real entry point. The range logic is **not** unit-tested in isolation —
-  proving it through `CheckForChanges` keeps the cursor parse (prod's job) on the
-  wire.
+- `checkforchanges_test.go` — `CheckForChanges` over `httptest` + a request-hit
+  counter + a `state.WithStateDirOverride` store: the cursor is seeded as a
+  **raw string** (prod parses it), so the range table, the
+  first-run-seeds-no-fetch path, the **garbage-cursor → first-run** failure
+  branch, always-advances, the **`String()` canonical-cursor** assertion (a
+  `v0.12.0` current stored as `0.12.0` at both the seed and advance sites),
+  nil-state no-op, and fetch-error-no-advance all run through the real entry
+  point. The range logic is **not** unit-tested in isolation — proving it
+  through `CheckForChanges` keeps the cursor parse (prod's job) on the wire.

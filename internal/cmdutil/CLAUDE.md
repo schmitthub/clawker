@@ -41,8 +41,9 @@ type Factory struct {
     Logger          func() (*logger.Logger, error)
     ProjectRegistry func() (*project.Registry, error)
     ProjectManager  func() (project.ProjectManager, error)
-    State          func() (*state.State, error)
-    Changelog      func() (*changelog.Loader, error)
+    // NOTE: CLI runtime-state (internal/state) and the changelog teaser
+    // (internal/changelog) are intentionally NOT Factory nouns — Main
+    // constructs them directly (single consumer).
     GitManager     func() (*git.GitManager, error)
     HostProxy      func() hostproxy.HostProxyService
     SocketBridge   func() socketbridge.SocketBridgeManager
@@ -61,8 +62,6 @@ type Factory struct {
 - `Logger()` -- lazy `*logger.Logger` (file-only zerolog); commands capture on Options struct, resolve in run function. Tests: `func() (*logger.Logger, error) { return logger.Nop(), nil }`
 - `ProjectRegistry()` -- lazy `*project.Registry`, the process-wide project registry facade and sole constructor of registry storage; Config walk-up anchoring, GitManager, ProjectManager, and commands all share it
 - `ProjectManager()` -- lazy project manager for registration, worktree lifecycle (built over `ProjectRegistry`)
-- `State()` -- lazy `*state.State`, the process-wide CLI runtime-state facade (`storage.Store[CliState]`: update-check cache + changelog cursor). No dependencies (storage resolves the state dir from XDG). Field-merge mutation (`RecordUpdateCheck` / `SetLastSeenChangelog` / `RecordChangelogFetch`) so the background update goroutine, the changelog cursor, and the changelog fetch-TTL never clobber each other. Tests: `func() (*state.State, error) { return state.New(state.WithStateDirOverride(t.TempDir())) }`
-- `Changelog()` -- lazy `*changelog.Loader`, the process-wide curated-changelog loader (fetches CHANGELOG.md from GitHub, caches it in the state dir, TTL-gates re-fetches against `State`, parses entries). Built from `f.HttpClient`, `f.State`, `changelog.ChangelogURL`, and `config.StateDir()/consts.ChangelogCacheFile`. Consumed by the show-once teaser in `Main` (TTL-gated, background goroutine). Tests: set `f.Changelog = func() (*changelog.Loader, error) { return changelog.NewLoader(srv.Client(), srv.URL, cachePath, nil, changelog.DefaultTTL, logger.Nop()), nil }` over an `httptest` server.
 - `GitManager()` -- lazy git manager for worktree operations; anchors at the registry-resolved project root
 - `HostProxy()` -- returns `hostproxy.HostProxyService` (interface); commands call `.EnsureRunning()` / `.IsRunning()` / `.ProxyURL()` on it. Mock: `hostproxytest.MockManager`
 - `SocketBridge()` -- returns `socketbridge.SocketBridgeManager` (interface); commands call `.EnsureBridge()` / `.StopBridge()` on it. Mock: `sockebridgemocks.SocketBridgeManagerMock` (via `sockebridgemocks.NewMockManager()`)

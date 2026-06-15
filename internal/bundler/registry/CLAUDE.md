@@ -16,9 +16,9 @@ npm registry client and version metadata types for `internal/bundler`. Full API 
 
 - `NewNPMClient()` defaults are safe for production (`baseURL = defaultNPMRegistry`, `timeout = defaultTimeout = 30s`).
 - `RegistryError.IsNotFound()` is the canonical way to distinguish "package doesn't exist" from other HTTP failures — don't grep the error string.
-- `VersionsFile.MarshalJSON` delegates ordering to `semver.SortStringsDesc` so written files are stable across runs (golden tests rely on this).
+- `VersionsFile.MarshalJSON` orders keys via `VersionsFile.SortedKeys`, which parses each key into a `semver.Collection` and `sort.Sort(sort.Reverse(...))` (semver-descending), so written files are stable across runs (golden tests rely on this).
 - `NPMClient.fetchPackageInfo` reads at most 1 KiB of error body on non-200 responses — avoids runaway memory on a broken registry mirror.
 
 ## Dependencies
 
-Imports: stdlib only plus `internal/semver`. Leaf of the registry subtree — don't pull in config/docker/logger here.
+Imports: stdlib only plus `github.com/Masterminds/semver/v3`. Leaf of the registry subtree — don't pull in config/docker/logger here.

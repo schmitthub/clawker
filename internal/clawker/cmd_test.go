@@ -8,16 +8,14 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/changelog"
-	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/update"
 	"github.com/schmitthub/clawker/pkg/whail"
 )
 
 // sampleEntries is the gained-entry slice the render tests feed into
-// maybeShowChangelog. Rendering is the unit under test here; the
+// printChangelogTeaser. Rendering is the unit under test here; the
 // fetch→parse→diff that produces these is covered in internal/changelog
 // (changes_test.go), so a hand-built slice is the right input at this layer.
 func sampleEntries() []changelog.Entry {
@@ -27,32 +25,49 @@ func sampleEntries() []changelog.Entry {
 	}
 }
 
-// newChangelogTestFactory builds a Factory for the teaser render/suppress
-// tests. ttyStderr forces the stderr-TTY gate so the suppression branches can be
-// exercised. Ambient teaser-suppression env (CI / opt-out) is neutralized so the
-// tests drive the real TTY/opt-out logic, not the host env. The cursor lifecycle
-// itself lives in internal/changelog and is tested there (changes_test.go), so
-// these tests need no state facade.
-func newChangelogTestFactory(t *testing.T, ttyStderr bool) (*cmdutil.Factory, *bytes.Buffer) {
-	t.Helper()
-	t.Setenv("CI", "")
-	t.Setenv(consts.EnvNoUpdateNotifier, "")
+// teaserIOStreams builds a test IOStreams for the changelog teaser render tests.
+// The teaser no longer gates on the TTY itself — suppression is decided once in
+// Main via notificationsSuppressed — so these tests exercise the pure rendering
+// path with whatever IOStreams they are given.
+func teaserIOStreams() (*iostreams.IOStreams, *bytes.Buffer) {
 	tio, _, _, errOut := iostreams.Test()
-	tio.SetStderrTTY(ttyStderr)
-
-	nop := logger.Nop()
-	f := &cmdutil.Factory{
-		IOStreams: tio,
-		Logger:    func() (*logger.Logger, error) { return nop, nil },
-	}
-	return f, errOut
+	return tio, errOut
 }
 
-// TestMaybeShowChangelog_RendersWhenInteractive: gained entries render the
-// teaser header and version headers on an interactive (TTY) stderr.
-func TestMaybeShowChangelog_RendersWhenInteractive(t *testing.T) {
-	f, errOut := newChangelogTestFactory(t, true)
-	maybeShowChangelog(f, sampleEntries())
+// TestNotificationsSuppressed is the single suppression gate for BOTH the update
+// notifier and the changelog teaser. The ambient CI / opt-out env is neutralized
+// so the table drives the real TTY/opt-out logic, not the host environment.
+func TestNotificationsSuppressed(t *testing.T) {
+	tests := []struct {
+		name      string
+		stderrTTY bool
+		noNotify  string
+		ci        string
+		want      bool
+	}{
+		{name: "clean interactive", stderrTTY: true, want: false},
+		{name: "non-TTY stderr", stderrTTY: false, want: true},
+		{name: "opt-out env set", stderrTTY: true, noNotify: "1", want: true},
+		{name: "CI set", stderrTTY: true, ci: "1", want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("CI", tt.ci)
+			t.Setenv(consts.EnvNoNotifier, tt.noNotify)
+			tio, _, _, _ := iostreams.Test()
+			tio.SetStderrTTY(tt.stderrTTY)
+			if got := notificationsSuppressed(tio); got != tt.want {
+				t.Errorf("notificationsSuppressed = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestPrintChangelogTeaser_RendersHeaders: gained entries render the teaser
+// header and per-release version headers.
+func TestPrintChangelogTeaser_RendersHeaders(t *testing.T) {
+	tio, errOut := teaserIOStreams()
+	printChangelogTeaser(tio, sampleEntries())
 	out := errOut.String()
 	if !strings.Contains(out, "What's new in clawker") {
 		t.Errorf("expected teaser header, got:\n%s", out)
@@ -64,12 +79,12 @@ func TestMaybeShowChangelog_RendersWhenInteractive(t *testing.T) {
 	}
 }
 
-// TestMaybeShowChangelog_RendersBody: the teaser renders each entry's
+// TestPrintChangelogTeaser_RendersBody: the teaser renders each entry's
 // Keep-a-Changelog body, not just the version header.
-func TestMaybeShowChangelog_RendersBody(t *testing.T) {
-	f, errOut := newChangelogTestFactory(t, true)
-	f.IOStreams.SetColorEnabled(false) // ASCII so body substrings assert cleanly
-	maybeShowChangelog(f, sampleEntries())
+func TestPrintChangelogTeaser_RendersBody(t *testing.T) {
+	tio, errOut := teaserIOStreams()
+	tio.SetColorEnabled(false) // ASCII so body substrings assert cleanly
+	printChangelogTeaser(tio, sampleEntries())
 	out := errOut.String()
 	for _, want := range []string{"Command aliases", "Worktree masks"} {
 		if !strings.Contains(out, want) {
@@ -78,33 +93,14 @@ func TestMaybeShowChangelog_RendersBody(t *testing.T) {
 	}
 }
 
-// TestMaybeShowChangelog_EmptyGainedSilent: no gained entries → nothing printed.
-func TestMaybeShowChangelog_EmptyGainedSilent(t *testing.T) {
-	f, errOut := newChangelogTestFactory(t, true)
-	maybeShowChangelog(f, nil)
+// TestPrintChangelogTeaser_EmptySelfGuard: no gained entries → nothing printed.
+// This is the teaser's own empty self-guard (mirrors printUpdateNotification's
+// nil guard), so suppression no longer has to be the caller's concern.
+func TestPrintChangelogTeaser_EmptySelfGuard(t *testing.T) {
+	tio, errOut := teaserIOStreams()
+	printChangelogTeaser(tio, nil)
 	if out := errOut.String(); out != "" {
 		t.Errorf("no gained entries must print nothing, got:\n%s", out)
-	}
-}
-
-// TestMaybeShowChangelog_SuppressedNonTTY: a non-TTY stderr suppresses the
-// teaser even with gained entries.
-func TestMaybeShowChangelog_SuppressedNonTTY(t *testing.T) {
-	f, errOut := newChangelogTestFactory(t, false)
-	maybeShowChangelog(f, sampleEntries())
-	if out := errOut.String(); out != "" {
-		t.Errorf("non-TTY must suppress the teaser, got:\n%s", out)
-	}
-}
-
-// TestMaybeShowChangelog_SuppressedByEnv: the update-notifier opt-out env
-// suppresses the teaser on a TTY too.
-func TestMaybeShowChangelog_SuppressedByEnv(t *testing.T) {
-	f, errOut := newChangelogTestFactory(t, true)
-	t.Setenv(consts.EnvNoUpdateNotifier, "1")
-	maybeShowChangelog(f, sampleEntries())
-	if out := errOut.String(); out != "" {
-		t.Errorf("opt-out env must suppress the teaser, got:\n%s", out)
 	}
 }
 
@@ -144,97 +140,49 @@ func TestPrintDockerInstallHelper_SentinelDetection(t *testing.T) {
 	}
 }
 
-func TestPrintUpdateNotification_NilResult(t *testing.T) {
+func TestPrintUpdateNotification_NilInfo(t *testing.T) {
 	tio, _, _, errOut := iostreams.Test()
 
 	printUpdateNotification(tio, nil)
 
 	if errOut.String() != "" {
-		t.Errorf("expected no output for nil result, got %q", errOut.String())
+		t.Errorf("expected no output for nil info, got %q", errOut.String())
 	}
 }
 
-func TestPrintUpdateNotification_NonTTY(t *testing.T) {
+func TestPrintUpdateNotification_RendersBody(t *testing.T) {
 	tio, _, _, errOut := iostreams.Test()
-	// Default: non-TTY — should suppress output
 
-	result := &update.CheckResult{
+	// A non-nil ReleaseInfo always renders — the not-newer / TTL-fresh cases are
+	// represented as a nil info from update.CheckForUpdate (covered above), and
+	// TTY/CI/opt-out suppression is gated once in Main (notificationsSuppressed),
+	// not in this renderer.
+	info := &update.ReleaseInfo{
 		CurrentVersion: "1.0.0",
 		LatestVersion:  "2.0.0",
 		ReleaseURL:     "https://github.com/schmitthub/clawker/releases/tag/v2.0.0",
-		IsNewer:        true,
 	}
 
-	printUpdateNotification(tio, result)
-
-	if errOut.String() != "" {
-		t.Errorf("expected no output for non-TTY stderr, got %q", errOut.String())
-	}
-}
-
-func TestPrintUpdateNotification_NotNewerSuppressed(t *testing.T) {
-	tio, _, _, errOut := iostreams.Test()
-	tio.SetStderrTTY(true)
-
-	// A check result that is NOT newer (e.g. user is up to date) must not
-	// notify, even on a TTY. The result still carries fetched data so the
-	// caller can persist it; only IsNewer gates the notification.
-	result := &update.CheckResult{
-		CurrentVersion: "2.0.0",
-		LatestVersion:  "2.0.0",
-		ReleaseURL:     "https://github.com/schmitthub/clawker/releases/tag/v2.0.0",
-		IsNewer:        false,
-	}
-
-	printUpdateNotification(tio, result)
-
-	if errOut.String() != "" {
-		t.Errorf("expected no output when not newer, got %q", errOut.String())
-	}
-}
-
-func TestPrintUpdateNotification_TTYWithResult(t *testing.T) {
-	tio, _, _, errOut := iostreams.Test()
-	tio.SetStderrTTY(true)
-
-	result := &update.CheckResult{
-		CurrentVersion: "1.0.0",
-		LatestVersion:  "2.0.0",
-		ReleaseURL:     "https://github.com/schmitthub/clawker/releases/tag/v2.0.0",
-		IsNewer:        true,
-	}
-
-	printUpdateNotification(tio, result)
+	printUpdateNotification(tio, info)
 
 	output := errOut.String()
 	if output == "" {
-		t.Fatal("expected notification output on TTY stderr, got empty")
+		t.Fatal("expected notification output for non-nil info, got empty")
 	}
-	if !strings.Contains(output, "1.0.0") {
-		t.Errorf("output should contain current version '1.0.0', got %q", output)
+	wantParts := []string{
+		"1.0.0",
+		"2.0.0",
+		"A new release of clawker is available:",
+		"To upgrade:",
+		"brew upgrade clawker",
+		"install.sh",
+		"clawker build",
+		"in each project",
+		"https://github.com/schmitthub/clawker/releases/tag/v2.0.0",
 	}
-	if !strings.Contains(output, "2.0.0") {
-		t.Errorf("output should contain latest version '2.0.0', got %q", output)
-	}
-	if !strings.Contains(output, "A new release of clawker is available:") {
-		t.Errorf("output should contain announcement text, got %q", output)
-	}
-	if !strings.Contains(output, "To upgrade:") {
-		t.Errorf("output should contain upgrade header, got %q", output)
-	}
-	if !strings.Contains(output, "brew upgrade clawker") {
-		t.Errorf("output should contain brew upgrade instructions, got %q", output)
-	}
-	if !strings.Contains(output, "install.sh") {
-		t.Errorf("output should contain install script reference, got %q", output)
-	}
-	if !strings.Contains(output, "clawker build") {
-		t.Errorf("output should contain build command, got %q", output)
-	}
-	if !strings.Contains(output, "in each project") {
-		t.Errorf("output should contain per-project rebuild reminder, got %q", output)
-	}
-	if !strings.Contains(output, "https://github.com/schmitthub/clawker/releases/tag/v2.0.0") {
-		t.Errorf("output should contain release URL, got %q", output)
+	for _, want := range wantParts {
+		if !strings.Contains(output, want) {
+			t.Errorf("output missing %q, got %q", want, output)
+		}
 	}
 }

@@ -5,175 +5,110 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/schmitthub/clawker/internal/state"
 )
 
-func TestShouldCheckForUpdate_Suppressed(t *testing.T) {
-	tests := []struct {
-		name    string
-		envVars map[string]string
-		want    bool
-	}{
-		{
-			name:    "suppressed by CLAWKER_NO_UPDATE_NOTIFIER",
-			envVars: map[string]string{"CLAWKER_NO_UPDATE_NOTIFIER": "1"},
-			want:    false,
-		},
-		{
-			name:    "suppressed by CI",
-			envVars: map[string]string{"CI": "true"},
-			want:    false,
-		},
-		{
-			name: "allowed when no suppression",
-			want: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			clearUpdateEnv(t)
-			for k, v := range tt.envVars {
-				t.Setenv(k, v)
-			}
-
-			// Zero lastCheckedAt → "never checked", so TTL never suppresses.
-			got := ShouldCheckForUpdate(time.Time{})
-			if got != tt.want {
-				t.Errorf("ShouldCheckForUpdate() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestShouldCheckForUpdate_FreshCache(t *testing.T) {
-	clearUpdateEnv(t)
-
-	got := ShouldCheckForUpdate(time.Now())
+	got := shouldCheckForUpdate(time.Now())
 	if got {
-		t.Error("ShouldCheckForUpdate() = true, want false (fresh check)")
+		t.Error("shouldCheckForUpdate() = true, want false (fresh check)")
 	}
 }
 
 func TestShouldCheckForUpdate_StaleCache(t *testing.T) {
-	clearUpdateEnv(t)
-
-	got := ShouldCheckForUpdate(time.Now().Add(-25 * time.Hour))
+	got := shouldCheckForUpdate(time.Now().Add(-25 * time.Hour))
 	if !got {
-		t.Error("ShouldCheckForUpdate() = false, want true (stale check)")
+		t.Error("shouldCheckForUpdate() = false, want true (stale check)")
 	}
 }
 
 func TestShouldCheckForUpdate_FutureTimestampStale(t *testing.T) {
-	clearUpdateEnv(t)
-
 	// A future lastCheckedAt (clock skew, later corrected) must not be treated
-	// as fresh: time.Since goes negative and would spuriously satisfy < CacheTTL,
+	// as fresh: time.Since goes negative and would spuriously satisfy < cacheTTL,
 	// suppressing checks until wall-clock catches up.
-	got := ShouldCheckForUpdate(time.Now().Add(48 * time.Hour))
+	got := shouldCheckForUpdate(time.Now().Add(48 * time.Hour))
 	if !got {
-		t.Error("ShouldCheckForUpdate() = false, want true (future timestamp = stale)")
+		t.Error("shouldCheckForUpdate() = false, want true (future timestamp = stale)")
 	}
 }
 
 func TestShouldCheckForUpdate_ZeroTimeNeverChecked(t *testing.T) {
-	clearUpdateEnv(t)
-
-	got := ShouldCheckForUpdate(time.Time{})
+	got := shouldCheckForUpdate(time.Time{})
 	if !got {
-		t.Error("ShouldCheckForUpdate() = false, want true (zero time = never checked)")
+		t.Error("shouldCheckForUpdate() = false, want true (zero time = never checked)")
 	}
 }
 
 func TestCheckForUpdate_NewerVersion(t *testing.T) {
-	clearUpdateEnv(t)
-
 	srv := newReleaseServer("v2.0.0", "https://github.com/schmitthub/clawker/releases/tag/v2.0.0")
 	defer srv.Close()
 
-	result, err := checkForUpdate(context.Background(), time.Time{}, "1.0.0", srv.URL)
+	info, err := checkForUpdate(context.Background(), nil, "1.0.0", srv.URL)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result == nil {
-		t.Fatal("expected CheckResult, got nil")
+	if info == nil {
+		t.Fatal("expected *ReleaseInfo for a newer release, got nil")
 	}
-	if !result.IsNewer {
-		t.Error("expected IsNewer = true for 2.0.0 over 1.0.0")
+	if info.CurrentVersion != "1.0.0" {
+		t.Errorf("CurrentVersion = %q, want %q", info.CurrentVersion, "1.0.0")
 	}
-	if result.CurrentVersion != "1.0.0" {
-		t.Errorf("CurrentVersion = %q, want %q", result.CurrentVersion, "1.0.0")
+	if info.LatestVersion != "2.0.0" {
+		t.Errorf("LatestVersion = %q, want %q", info.LatestVersion, "2.0.0")
 	}
-	if result.LatestVersion != "2.0.0" {
-		t.Errorf("LatestVersion = %q, want %q", result.LatestVersion, "2.0.0")
-	}
-	if result.ReleaseURL != "https://github.com/schmitthub/clawker/releases/tag/v2.0.0" {
-		t.Errorf("ReleaseURL = %q", result.ReleaseURL)
+	if info.ReleaseURL != "https://github.com/schmitthub/clawker/releases/tag/v2.0.0" {
+		t.Errorf("ReleaseURL = %q", info.ReleaseURL)
 	}
 }
 
 func TestCheckForUpdate_SameVersion(t *testing.T) {
-	clearUpdateEnv(t)
-
 	srv := newReleaseServer("v1.0.0", "https://github.com/schmitthub/clawker/releases/tag/v1.0.0")
 	defer srv.Close()
 
-	result, err := checkForUpdate(context.Background(), time.Time{}, "1.0.0", srv.URL)
+	// Not newer → nil result (nil MEANS "no newer release").
+	info, err := checkForUpdate(context.Background(), nil, "1.0.0", srv.URL)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result == nil {
-		t.Fatal("expected CheckResult (with IsNewer=false), got nil")
-	}
-	if result.IsNewer {
-		t.Errorf("expected IsNewer = false for same version, got %+v", result)
-	}
-	if result.LatestVersion != "1.0.0" {
-		t.Errorf("LatestVersion = %q, want %q (fetched data always populated)", result.LatestVersion, "1.0.0")
+	if info != nil {
+		t.Errorf("expected nil for same version (not newer), got %+v", info)
 	}
 }
 
 func TestCheckForUpdate_OlderRemote(t *testing.T) {
-	clearUpdateEnv(t)
-
 	srv := newReleaseServer("v0.9.0", "https://github.com/schmitthub/clawker/releases/tag/v0.9.0")
 	defer srv.Close()
 
-	result, err := checkForUpdate(context.Background(), time.Time{}, "1.0.0", srv.URL)
+	// Current is newer → nil result.
+	info, err := checkForUpdate(context.Background(), nil, "1.0.0", srv.URL)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result == nil {
-		t.Fatal("expected CheckResult (with IsNewer=false), got nil")
-	}
-	if result.IsNewer {
-		t.Errorf("expected IsNewer = false (current is newer), got %+v", result)
+	if info != nil {
+		t.Errorf("expected nil when current is newer, got %+v", info)
 	}
 }
 
 func TestCheckForUpdate_APIError(t *testing.T) {
-	clearUpdateEnv(t)
-
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer srv.Close()
 
-	result, err := checkForUpdate(context.Background(), time.Time{}, "1.0.0", srv.URL)
+	info, err := checkForUpdate(context.Background(), nil, "1.0.0", srv.URL)
 	if err == nil {
 		t.Error("expected error on API failure, got nil")
 	}
-	if result != nil {
-		t.Errorf("expected nil result on API error, got %+v", result)
+	if info != nil {
+		t.Errorf("expected nil result on API error, got %+v", info)
 	}
 }
 
 func TestCheckForUpdate_ContextCancellation(t *testing.T) {
-	clearUpdateEnv(t)
-
 	// Server that blocks until context is cancelled
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		<-r.Context().Done()
@@ -193,37 +128,85 @@ func TestCheckForUpdate_ContextCancellation(t *testing.T) {
 }
 
 func TestCheckForUpdate_VPrefixHandling(t *testing.T) {
-	clearUpdateEnv(t)
-
 	srv := newReleaseServer("v2.0.0", "https://github.com/schmitthub/clawker/releases/tag/v2.0.0")
 	defer srv.Close()
 
 	// Pass version with v prefix
-	result, err := checkForUpdate(context.Background(), time.Time{}, "v1.0.0", srv.URL)
+	info, err := checkForUpdate(context.Background(), nil, "v1.0.0", srv.URL)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result == nil {
-		t.Fatal("expected CheckResult, got nil")
+	if info == nil {
+		t.Fatal("expected *ReleaseInfo, got nil")
 	}
-	if result.CurrentVersion != "1.0.0" {
-		t.Errorf("CurrentVersion = %q, want %q (v prefix should be stripped)", result.CurrentVersion, "1.0.0")
+	if info.CurrentVersion != "1.0.0" {
+		t.Errorf("CurrentVersion = %q, want %q (v prefix should be stripped)", info.CurrentVersion, "1.0.0")
 	}
 }
 
-func TestCheckForUpdate_SuppressedReturnsNil(t *testing.T) {
-	clearUpdateEnv(t)
-	t.Setenv("CLAWKER_NO_UPDATE_NOTIFIER", "1")
-
-	srv := newReleaseServer("v2.0.0", "https://example.com")
+// TestCheckForUpdate_TTLFreshSuppresses proves a TTL-fresh state short-circuits
+// before any fetch: the server is wired to fail the test if hit.
+func TestCheckForUpdate_TTLFreshSuppresses(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("fetch should not happen when state is TTL-fresh")
+	}))
 	defer srv.Close()
 
-	result, err := CheckForUpdate(context.Background(), nil, "1.0.0", "schmitthub/clawker")
+	st, err := state.New(state.WithStateDirOverride(t.TempDir()))
+	if err != nil {
+		t.Fatalf("state.New: %v", err)
+	}
+	// Record a fresh check so the TTL gate suppresses.
+	if err := st.RecordUpdateCheck(time.Now(), "1.0.0"); err != nil {
+		t.Fatalf("RecordUpdateCheck: %v", err)
+	}
+
+	info, err := checkForUpdate(context.Background(), st, "1.0.0", srv.URL)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != nil {
-		t.Errorf("expected nil result when suppressed, got %+v", result)
+	if info != nil {
+		t.Errorf("expected nil result when TTL-fresh, got %+v", info)
+	}
+}
+
+// TestCheckForUpdate_NotNewerAdvancesCheckedAt is the regression guard for the
+// persist-on-fetch-success contract: a NOT-NEWER fetch must still advance
+// checked_at (and record latest_version). If persistence were keyed on isNewer,
+// checked_at would never advance on the common not-newer path, the TTL gate
+// would never throttle, and clawker would hit the GitHub API every run.
+func TestCheckForUpdate_NotNewerAdvancesCheckedAt(t *testing.T) {
+	srv := newReleaseServer("v1.0.0", "https://github.com/schmitthub/clawker/releases/tag/v1.0.0")
+	defer srv.Close()
+
+	st, err := state.New(state.WithStateDirOverride(t.TempDir()))
+	if err != nil {
+		t.Fatalf("state.New: %v", err)
+	}
+	if !st.LastCheckedAt().IsZero() {
+		t.Fatalf("precondition: LastCheckedAt should be zero, got %v", st.LastCheckedAt())
+	}
+
+	before := time.Now()
+	// Same version as current → not newer → nil result, but the fetch succeeded.
+	info, err := checkForUpdate(context.Background(), st, "1.0.0", srv.URL)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if info != nil {
+		t.Fatalf("expected nil result (not newer), got %+v", info)
+	}
+
+	// checked_at must have advanced despite the not-newer outcome.
+	got := st.LastCheckedAt()
+	if got.IsZero() {
+		t.Fatal("checked_at did not advance on a not-newer fetch (persist skipped)")
+	}
+	if got.Before(before) {
+		t.Errorf("checked_at = %v, want >= %v", got, before)
+	}
+	if st.LatestVersion() != "1.0.0" {
+		t.Errorf("latest_version = %q, want %q", st.LatestVersion(), "1.0.0")
 	}
 }
 
@@ -245,7 +228,7 @@ func TestIsNewer(t *testing.T) {
 		// Unparseable versions — fallback returns false (don't claim newer).
 		// This is also where a non-release build is handled: an unparseable
 		// current ("DEV" placeholder, "nightly", etc.) never reports an upgrade,
-		// so no explicit dev-build gate is needed in ShouldCheckForUpdate.
+		// so no explicit dev-build gate is needed in shouldCheckForUpdate.
 		{"invalid", "1.0.0", false},
 		{"1.0.0", "invalid", false},
 		{"invalid", "invalid", false},
@@ -256,17 +239,15 @@ func TestIsNewer(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.latest+"_vs_"+tt.current, func(t *testing.T) {
-			got := IsNewer(tt.latest, tt.current)
+			got := isNewer(tt.latest, tt.current)
 			if got != tt.want {
-				t.Errorf("IsNewer(%q, %q) = %v, want %v", tt.latest, tt.current, got, tt.want)
+				t.Errorf("isNewer(%q, %q) = %v, want %v", tt.latest, tt.current, got, tt.want)
 			}
 		})
 	}
 }
 
 func TestCheckForUpdate_MalformedJSON(t *testing.T) {
-	clearUpdateEnv(t)
-
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("not json at all"))
@@ -284,8 +265,6 @@ func TestCheckForUpdate_MalformedJSON(t *testing.T) {
 }
 
 func TestCheckForUpdate_EmptyTagName(t *testing.T) {
-	clearUpdateEnv(t)
-
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(githubRelease{TagName: "", HTMLURL: "https://example.com"})
 	}))
@@ -305,20 +284,6 @@ func TestCheckForUpdate_EmptyTagName(t *testing.T) {
 }
 
 // --- test helpers ---
-
-// clearUpdateEnv unsets env vars that suppress update checks.
-// Uses manual save/restore instead of t.Setenv to properly unset (not empty) vars.
-func clearUpdateEnv(t *testing.T) {
-	t.Helper()
-	for _, key := range []string{"CLAWKER_NO_UPDATE_NOTIFIER", "CI"} {
-		if orig, ok := os.LookupEnv(key); ok {
-			t.Cleanup(func() { os.Setenv(key, orig) })
-		} else {
-			t.Cleanup(func() { os.Unsetenv(key) })
-		}
-		os.Unsetenv(key)
-	}
-}
 
 // newReleaseServer returns an httptest server that responds with a GitHub release.
 func newReleaseServer(tagName, htmlURL string) *httptest.Server {

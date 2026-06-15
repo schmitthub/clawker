@@ -236,12 +236,12 @@ The note is intentionally suppressed in any of these cases:
 - **Not an interactive terminal** (output piped/redirected, non-interactive
   shell).
 - **`CI` is set** — treated as a non-interactive environment.
-- **`CLAWKER_NO_UPDATE_NOTIFIER` is set** (any non-empty value) — the user opted
+- **`CLAWKER_NO_NOTIFIER` is set** (any non-empty value) — the user opted
   out of both the new-version update notifier and the "What's new" note.
 - The running binary is a dev build (no injected version).
 
 If the user expected the note but it never appeared, check those suppression
-conditions — most often output was not a terminal or `CLAWKER_NO_UPDATE_NOTIFIER`/
+conditions — most often output was not a terminal or `CLAWKER_NO_NOTIFIER`/
 `CI` was set in their environment. To see the full curated changelog regardless,
 point them at the `CHANGELOG.md` at the root of the clawker repository.
 
