@@ -56,6 +56,18 @@ re-injected from the host at container create) — or run `/login` once inside
 the existing container. Re-authenticating on the host fixes only future
 containers, not existing volumes.
 
+**Do not confuse this fixed bug with normal rotation.** Claude Code also blanks
+its stored `refreshToken` (same empty-on-failed-refresh behavior) for an
+entirely *expected* reason: refresh tokens are single-use, so if the host or
+another container "turns in" the shared token first, this container's copy is
+invalidated (`invalid_grant`) and a one-time `/login` follows. That is not a
+clawker defect and recreating the container does not prevent it — it is inherent
+to sharing one rotating credential across two holders. Full model and
+troubleshooting in `claude-code.md`. The struct-roundtrip bug above is
+distinguished by a zero-value `organizationUuid` in the poisoned blob and is
+fixed in current releases; rotation-induced `/login` has no such fingerprint and
+is permanent by design.
+
 ## git push -u / upstream tracking in worktree containers
 
 Worktree containers mask the main repo's `.git/hooks/` and `.git/config` with
