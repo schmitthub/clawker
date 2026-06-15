@@ -15,30 +15,21 @@ func TestShouldCheckForUpdate_Suppressed(t *testing.T) {
 	tests := []struct {
 		name    string
 		envVars map[string]string
-		version string
 		want    bool
 	}{
 		{
 			name:    "suppressed by CLAWKER_NO_UPDATE_NOTIFIER",
 			envVars: map[string]string{"CLAWKER_NO_UPDATE_NOTIFIER": "1"},
-			version: "1.0.0",
 			want:    false,
 		},
 		{
 			name:    "suppressed by CI",
 			envVars: map[string]string{"CI": "true"},
-			version: "1.0.0",
 			want:    false,
 		},
 		{
-			name:    "suppressed by DEV version",
-			version: "DEV",
-			want:    false,
-		},
-		{
-			name:    "allowed when no suppression",
-			version: "1.0.0",
-			want:    true,
+			name: "allowed when no suppression",
+			want: true,
 		},
 	}
 
@@ -50,7 +41,7 @@ func TestShouldCheckForUpdate_Suppressed(t *testing.T) {
 			}
 
 			// Zero lastCheckedAt → "never checked", so TTL never suppresses.
-			got := ShouldCheckForUpdate(time.Time{}, tt.version)
+			got := ShouldCheckForUpdate(time.Time{})
 			if got != tt.want {
 				t.Errorf("ShouldCheckForUpdate() = %v, want %v", got, tt.want)
 			}
@@ -61,7 +52,7 @@ func TestShouldCheckForUpdate_Suppressed(t *testing.T) {
 func TestShouldCheckForUpdate_FreshCache(t *testing.T) {
 	clearUpdateEnv(t)
 
-	got := ShouldCheckForUpdate(time.Now(), "1.0.0")
+	got := ShouldCheckForUpdate(time.Now())
 	if got {
 		t.Error("ShouldCheckForUpdate() = true, want false (fresh check)")
 	}
@@ -70,16 +61,28 @@ func TestShouldCheckForUpdate_FreshCache(t *testing.T) {
 func TestShouldCheckForUpdate_StaleCache(t *testing.T) {
 	clearUpdateEnv(t)
 
-	got := ShouldCheckForUpdate(time.Now().Add(-25*time.Hour), "1.0.0")
+	got := ShouldCheckForUpdate(time.Now().Add(-25 * time.Hour))
 	if !got {
 		t.Error("ShouldCheckForUpdate() = false, want true (stale check)")
+	}
+}
+
+func TestShouldCheckForUpdate_FutureTimestampStale(t *testing.T) {
+	clearUpdateEnv(t)
+
+	// A future lastCheckedAt (clock skew, later corrected) must not be treated
+	// as fresh: time.Since goes negative and would spuriously satisfy < CacheTTL,
+	// suppressing checks until wall-clock catches up.
+	got := ShouldCheckForUpdate(time.Now().Add(48 * time.Hour))
+	if !got {
+		t.Error("ShouldCheckForUpdate() = false, want true (future timestamp = stale)")
 	}
 }
 
 func TestShouldCheckForUpdate_ZeroTimeNeverChecked(t *testing.T) {
 	clearUpdateEnv(t)
 
-	got := ShouldCheckForUpdate(time.Time{}, "1.0.0")
+	got := ShouldCheckForUpdate(time.Time{})
 	if !got {
 		t.Error("ShouldCheckForUpdate() = false, want true (zero time = never checked)")
 	}
@@ -215,7 +218,7 @@ func TestCheckForUpdate_SuppressedReturnsNil(t *testing.T) {
 	srv := newReleaseServer("v2.0.0", "https://example.com")
 	defer srv.Close()
 
-	result, err := CheckForUpdate(context.Background(), time.Time{}, "1.0.0", "schmitthub/clawker")
+	result, err := CheckForUpdate(context.Background(), nil, "1.0.0", "schmitthub/clawker")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -239,12 +242,16 @@ func TestIsNewer(t *testing.T) {
 		{"0.2.0", "0.1.3", true},
 		{"0.1.4", "0.1.3", true},
 		{"0.1.3", "0.1.3", false},
-		// Unparseable versions — fallback returns false (don't claim newer)
+		// Unparseable versions — fallback returns false (don't claim newer).
+		// This is also where a non-release build is handled: an unparseable
+		// current ("DEV" placeholder, "nightly", etc.) never reports an upgrade,
+		// so no explicit dev-build gate is needed in ShouldCheckForUpdate.
 		{"invalid", "1.0.0", false},
 		{"1.0.0", "invalid", false},
 		{"invalid", "invalid", false},
 		{"foo", "bar", false},
 		{"nightly", "1.0.0", false},
+		{"2.0.0", "DEV", false},
 	}
 
 	for _, tt := range tests {

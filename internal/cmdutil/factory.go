@@ -5,7 +5,6 @@ import (
 	"net/http"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
-	"github.com/schmitthub/clawker/internal/changelog"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	"github.com/schmitthub/clawker/internal/docker"
@@ -16,7 +15,6 @@ import (
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/socketbridge"
-	"github.com/schmitthub/clawker/internal/state"
 	"github.com/schmitthub/clawker/internal/tui"
 )
 
@@ -45,16 +43,10 @@ type Factory struct {
 	// all share this instance.
 	ProjectRegistry func() (*project.Registry, error)
 	ProjectManager  func() (project.ProjectManager, error)
-	// State is the process-wide CLI runtime-state facade (update-check cache +
-	// changelog cursor), backed by storage.Store[CliState]. Field-merge
-	// mutation means independent writers (the background update goroutine and
-	// the foreground changelog cursor) never clobber each other.
-	State func() (*state.State, error)
-	// Changelog is the process-wide curated-changelog loader: it fetches
-	// CHANGELOG.md from GitHub, caches it in the state dir, TTL-gates re-fetches
-	// against State, and parses entries. Drives the show-once "what's new"
-	// teaser in Main (TTL-gated, background goroutine).
-	Changelog    func() (*changelog.Loader, error)
+	// CLI runtime-state (internal/state) and the changelog loader
+	// (internal/changelog) are intentionally NOT Factory nouns: both are used
+	// only by Main (the background update check + the show-once teaser), so Main
+	// constructs them directly rather than carrying single-consumer closures here.
 	GitManager   func() (*git.GitManager, error)
 	HostProxy    func() hostproxy.HostProxyService
 	SocketBridge func() socketbridge.SocketBridgeManager

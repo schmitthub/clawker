@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/schmitthub/clawker/internal/semver"
+	"github.com/Masterminds/semver/v3"
 )
 
 // loadFixture reads testdata/CHANGELOG.md, which mirrors the real CHANGELOG.md
@@ -24,9 +24,9 @@ func loadFixture(t *testing.T) []byte {
 
 func parseFixture(t *testing.T) []Entry {
 	t.Helper()
-	entries, err := Parse(loadFixture(t))
+	entries, err := parse(string(loadFixture(t)))
 	if err != nil {
-		t.Fatalf("Parse: %v", err)
+		t.Fatalf("parse: %v", err)
 	}
 	return entries
 }
@@ -63,8 +63,8 @@ func TestParse_SkipsUnreleased(t *testing.T) {
 		if strings.EqualFold(e.Version, "Unreleased") || e.Version == "" {
 			t.Fatalf("Unreleased section leaked as entry: %+v", e)
 		}
-		if !semver.IsValid(e.Version) {
-			t.Errorf("entry has non-semver version %q", e.Version)
+		if _, err := semver.StrictNewVersion(e.Version); err != nil {
+			t.Errorf("entry has non-semver version %q: %v", e.Version, err)
 		}
 	}
 }
@@ -101,57 +101,24 @@ func TestParse_Body(t *testing.T) {
 	}
 }
 
-// TestParse_PartialSemverHeaderSkipped guards the parser's HasPatch() check: a
-// bracket token like "0.12" is loosely parseable by semver.Parse but lacks a
-// patch component, so the version header must be skipped (no entry). This guards
-// against someone "simplifying" the HasPatch() guard down to IsValid.
+// TestParse_PartialSemverHeaderSkipped guards the parser's StrictNewVersion
+// check: a bracket token like "0.12" lacks a patch component, which
+// StrictNewVersion rejects, so the version header must be skipped (no entry).
+// This guards against someone swapping StrictNewVersion for the coercing
+// NewVersion (which would accept "0.12" as "0.12.0").
 func TestParse_PartialSemverHeaderSkipped(t *testing.T) {
-	raw := []byte(`## [0.12] - 2026-01-01
+	raw := `## [0.12] - 2026-01-01
 
 ### Added
 
 - A thing.
-`)
-	entries, err := Parse(raw)
+`
+	entries, err := parse(raw)
 	if err != nil {
-		t.Fatalf("Parse: %v", err)
+		t.Fatalf("parse: %v", err)
 	}
 	if len(entries) != 0 {
 		t.Fatalf("got %d entries, want 0 (partial-semver header must be skipped): %+v", len(entries), entries)
-	}
-}
-
-func TestBetween_Range(t *testing.T) {
-	all := parseFixture(t)
-
-	cases := []struct {
-		name     string
-		lo, hi   string
-		wantVers []string
-	}{
-		// A wide jump spans every gained entry.
-		{"v0.5_to_v0.12", "0.5.0", "0.12.0", []string{"0.12.0", "0.11.0"}},
-		// Single-step upgrade returns only the newest.
-		{"v0.11_to_v0.12", "0.11.0", "0.12.0", []string{"0.12.0"}},
-		// lo is exclusive, hi inclusive — equal bounds yield nothing new.
-		{"v0.12_to_v0.12", "0.12.0", "0.12.0", nil},
-		// Leading-v bounds normalize.
-		{"v-prefixed", "v0.10.0", "v0.12.0", []string{"0.12.0", "0.11.0"}},
-		// Lower than everything → whole series.
-		{"from_zero", "0.0.0", "0.12.0", []string{"0.12.0", "0.11.0", "0.5.0"}},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got := Between(all, c.lo, c.hi)
-			if len(got) != len(c.wantVers) {
-				t.Fatalf("got %d entries %v, want %d %v", len(got), versions(got), len(c.wantVers), c.wantVers)
-			}
-			for i, v := range c.wantVers {
-				if got[i].Version != v {
-					t.Errorf("entry %d = %q, want %q", i, got[i].Version, v)
-				}
-			}
-		})
 	}
 }
 

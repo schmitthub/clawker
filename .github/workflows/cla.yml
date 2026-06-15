@@ -1,4 +1,10 @@
-# SEE: https://github.com/schmitthub/contributor-assistant/blob/<$PINNED_SHA>/README.md for more information
+# DO NOT review or edit this file without FIRST reading the upstream action's
+# README at the exact SHA this workflow pins (the `uses:` line below). This file
+# is copied verbatim from it; the `on:`/`permissions:`/`if:` semantics are the
+# action's contract, NOT ours to reason about from memory. `<$PINNED_SHA>` is an
+# intentional placeholder: substitute the pinned `uses:` SHA to get the matching
+# docs. Do not hardcode the SHA here (it would drift from the `uses:` pin).
+# SEE: https://github.com/schmitthub/contributor-assistant/blob/<$PINNED_SHA>/README.md
 
 name: "CLA Assistant"
 

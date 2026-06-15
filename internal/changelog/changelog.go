@@ -1,15 +1,12 @@
-// Package changelog parses and transforms the curated CHANGELOG.md (Keep a
-// Changelog format). The core Parse/Between functions are pure: they
-// operate entirely on caller-supplied bytes and perform no I/O. Network fetch
-// (fetch.go) and the fetch+cache+TTL+parse orchestration (loader.go) are kept
-// in separate files; the parser/transformer here never imports net/http or os.
-//
-// The typical flow: a Loader fetches the CHANGELOG.md content over the network
-// (caching it on disk), Parse turns the bytes into entries, and Between
-// filters them.
+// Package changelog fetches the curated CHANGELOG.md (Keep a Changelog format)
+// and surfaces the entries gained since a cursor version. The single exported
+// entry point is CheckForChanges (changes.go); Entry is the parsed unit. The
+// parser (parse.go) and the cursor range query (between) are pure, unexported
+// helpers — they operate on bytes/slices and the package keeps them internal
+// because nothing outside the package composes them independently.
 package changelog
 
-import "github.com/schmitthub/clawker/internal/semver"
+import "github.com/Masterminds/semver/v3"
 
 // Entry is one curated changelog version section, parsed from CHANGELOG.md.
 // A release is a set of changes of mixed kinds spanning many merged PRs, so an
@@ -22,22 +19,19 @@ type Entry struct {
 	Body    string // the Keep-a-Changelog markdown body (### sections + bullets), rendered verbatim
 }
 
-// Parse parses raw CHANGELOG.md bytes (Keep a Changelog format) into version
-// entries, newest-first (file order — the file is authored newest-first).
-// Non-semver version sections (e.g. "## [Unreleased]") are skipped.
-func Parse(raw []byte) ([]Entry, error) {
-	return parse(string(raw))
-}
-
-// Between returns the entries with lo < version <= hi (semver comparison), in
+// between returns the entries with lo < version <= hi (semver comparison), in
 // the same order as the input slice. It is the cursor range query: a
 // v0.5.0→v0.12.0 jump returns every gained entry; v0.11.0→v0.12.0 returns one.
-// Either bound may be passed with or without a leading "v". It does not
-// re-parse — callers pass already-parsed entries.
-func Between(entries []Entry, lo, hi string) []Entry {
+// Each entry's Version was validated as a full semver by the parser, so a parse
+// failure here is not expected; such an entry is skipped defensively.
+func between(entries []Entry, lo, hi *semver.Version) []Entry {
 	out := make([]Entry, 0, len(entries))
 	for _, e := range entries {
-		if semver.CompareStrings(e.Version, lo) > 0 && semver.CompareStrings(e.Version, hi) <= 0 {
+		v, err := semver.NewVersion(e.Version)
+		if err != nil {
+			continue
+		}
+		if v.Compare(lo) > 0 && v.Compare(hi) <= 0 {
 			out = append(out, e)
 		}
 	}

@@ -3,7 +3,7 @@ package changelog
 import (
 	"strings"
 
-	"github.com/schmitthub/clawker/internal/semver"
+	"github.com/Masterminds/semver/v3"
 )
 
 // parse splits raw Keep-a-Changelog markdown into version entries. Each entry
@@ -69,9 +69,10 @@ func parseVersionHeader(line string) (version, date string, ok bool) {
 		return "", "", false
 	}
 	// The bracket token must be a full "x.y.z" semver (tolerating a leading
-	// "v"); a non-semver like "Unreleased" or a partial like "0.12" is skipped.
+	// "v"); StrictNewVersion rejects both a non-semver like "Unreleased" and a
+	// partial like "0.12" (it requires all three components), so this skips them.
 	version = strings.TrimPrefix(strings.TrimSpace(bracket), "v")
-	if parsed, err := semver.Parse(version); err != nil || !parsed.HasPatch() {
+	if _, err := semver.StrictNewVersion(version); err != nil {
 		return "", "", false
 	}
 	// The remainder is "- YYYY-MM-DD" (or empty for an undated header). Split on

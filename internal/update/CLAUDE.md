@@ -1,24 +1,25 @@
 # Update Package
 
-Pure update checker for clawker releases. Queries the GitHub releases API and
-compares the latest tag against the running version. **It performs no
-persistence** — the caller supplies the last-checked timestamp for freshness
-gating and persists the result itself (via `internal/state`).
+Update checker for clawker releases. Queries the GitHub releases API, compares
+the latest tag against the running version, reads the freshness gate from CLI
+state (`internal/state`), and persists the check result there itself.
 
-**Foundation-tier package:** stdlib + `net/http`. It imports only
-`internal/consts` and `internal/semver` (a pure stdlib leaf — for version
-comparison). It must NOT import `internal/storage` or `internal/state` —
-state-file ownership lives in `internal/state`, and keeping update pure is what
-lets the background update goroutine and the changelog cursor share one
-storage-backed state without clobbering each other.
+**Foundation-tier package:** stdlib + `net/http`. Imports `internal/consts`,
+`internal/state`, and `github.com/Masterminds/semver/v3` (for version
+comparison). The version-comparison core (`checkForUpdate` / `ShouldCheckForUpdate`)
+stays pure — it takes a plain timestamp and does no I/O — while the exported
+`CheckForUpdate` owns the state read + write.
 
 The caller passes the current version string (no dependency on `internal/build`).
+`RecordUpdateCheck` is a field merge that writes only the update-check fields, so
+it never clobbers the changelog cursor that `internal/changelog` writes to the
+same state file.
 
 ## Exported Types
 
 ```go
 // CheckResult is the outcome of a check. The fetched version/URL are always
-// populated (so the caller can persist them); IsNewer reports whether an
+// populated (so the caller can persist/display them); IsNewer reports whether an
 // upgrade is available (the only case worth notifying the user).
 type CheckResult struct {
     CurrentVersion string
@@ -29,21 +30,27 @@ type CheckResult struct {
 ```
 
 `CacheTTL` (24h) is exported so the caller can reason about freshness; `update`
-itself only applies it inside `ShouldCheckForUpdate` against the passed
-timestamp.
+itself only applies it inside `ShouldCheckForUpdate` against the passed timestamp.
 
 ## Exported Functions
 
 ```go
-func ShouldCheckForUpdate(lastCheckedAt time.Time, currentVersion string) bool
-func CheckForUpdate(ctx context.Context, lastCheckedAt time.Time, currentVersion, repo string) (*CheckResult, error)
-func IsNewer(latest, current string) bool   // delegates to internal/semver
+func ShouldCheckForUpdate(lastCheckedAt time.Time) bool
+func CheckForUpdate(ctx context.Context, st *state.State, currentVersion, repo string) (*CheckResult, error)
+func IsNewer(latest, current string) bool
 ```
 
-`IsNewer` is a thin wrapper over `internal/semver`: it returns
-`semver.IsValidLoose(latest) && semver.IsValidLoose(current) &&
-semver.CompareStrings(latest, current) > 0`, preserving the conservative
-"unparseable → not newer" contract. There is no local semver code.
+`CheckForUpdate` reads `st.LastCheckedAt()` for the freshness gate and, on a
+successful check, persists `st.RecordUpdateCheck(time.Now(), latestVersion)`. A
+nil `st` disables both (the check proceeds with a zero "never checked" time and
+nothing is persisted). A best-effort persistence failure is returned alongside
+the result for the caller to log.
+
+`IsNewer` parses both sides with `semver.NewVersion` (coercing, v-tolerant) and
+compares: when either side is unparseable, ordering is undefined so it returns
+false. This conservative contract is **also where a non-release build is
+handled** — an unparseable current version (the `"DEV"` placeholder, `"nightly"`,
+etc.) never reports an upgrade, so no explicit dev-build gate is needed anywhere.
 
 ## Suppression Conditions
 
@@ -53,37 +60,41 @@ semver.CompareStrings(latest, current) > 0`, preserving the conservative
 |-----------|-----------|
 | `CLAWKER_NO_UPDATE_NOTIFIER` env set (`consts.EnvNoUpdateNotifier`) | User opt-out |
 | `CI` env set | Standard CI detection (canonical cross-tool var, kept literal) |
-| `currentVersion == "DEV"` | Development build |
-| `lastCheckedAt` within `CacheTTL` (and non-zero) | Rate limiting |
+| `lastCheckedAt` within `CacheTTL` (and non-zero, non-future) | Rate limiting |
 
-A zero `lastCheckedAt` means "never checked" — the TTL gate never suppresses.
+A zero `lastCheckedAt` means "never checked" — the TTL gate never suppresses. A
+future timestamp (clock skew, later corrected) is treated as stale, not fresh
+(`elapsed >= 0` guard), so it does not spuriously suppress checks. There is **no
+dev-build gate** here — a non-release build is naturally handled by `IsNewer`
+(unparseable → not newer), and opting out is the env var's job.
 
 ## CheckForUpdate Flow
 
-1. Call `ShouldCheckForUpdate(lastCheckedAt, ...)` — return `(nil, nil)` if suppressed
-2. HTTP GET `https://api.github.com/repos/{owner}/{repo}/releases/latest` (5s timeout, context-aware)
-3. Parse `tag_name` and `html_url` from JSON response
-4. Strip `v` prefixes; compute `IsNewer` via the shared `internal/semver` comparator (unparseable → "not newer")
-5. Return `(*CheckResult, nil)` — always populated; `IsNewer` flags whether to notify
-6. On any error: return `(nil, error)` — caller decides how to handle
+1. Read `st.LastCheckedAt()` (zero if `st == nil`); `ShouldCheckForUpdate` →
+   return `(nil, nil)` if suppressed
+2. HTTP GET `https://api.github.com/repos/{owner}/{repo}/releases/latest` (5s
+   timeout, context-aware)
+3. Parse `tag_name` and `html_url` from JSON
+4. Strip `v` prefixes; compute `IsNewer` via `semver.NewVersion` + `Compare`
+   (unparseable → "not newer")
+5. Persist `st.RecordUpdateCheck(now, latestVersion)` (skipped if `st == nil`)
+6. Return `(*CheckResult, nil)` — always populated; `IsNewer` flags whether to
+   notify. On any fetch error: `(nil, error)`
 
-**No file I/O.** The caller persists `CheckResult` (checked_at + versions) via
-`f.State.RecordUpdateCheck`.
-
-## Context Support
-
-`CheckForUpdate` accepts `context.Context` as first parameter, threaded through
-to `http.NewRequestWithContext`. The HTTP client has its own 5s timeout
-(`httpTimeout`) which bounds request duration independently of context.
+The unexported `checkForUpdate(ctx, lastCheckedAt, currentVersion, url)` is the
+URL-parameterized core (no state) that the exported wrapper builds the GitHub URL
+for and delegates to — tests drive it against an httptest URL.
 
 ## Integration Point
 
 Wired into `internal/clawker/cmd.go:Main()` (gh CLI pattern):
 
-- `Main()` reads `f.State.LastCheckedAt()` synchronously before launching the goroutine
+- `Main` constructs the `*state.State` facade directly (it is not a Factory noun)
 - `context.WithCancel` creates a cancellable context for the HTTP request
-- Buffered(1) channel (`make(chan *update.CheckResult, 1)`) — goroutine sends exactly once
-- The goroutine persists the result via `f.State.RecordUpdateCheck(time.Now(), latest, current)` — a storage field merge that never touches the changelog cursor
+- Buffered(1) channel (`make(chan *update.CheckResult, 1)`); the goroutine sends
+  exactly once and recovers from panics
+- The goroutine calls `update.CheckForUpdate(ctx, st, buildVersion, consts.GitHubRepo)`,
+  which persists the result itself
 - Blocking read (`<-updateMessageChan`) after the command completes
 - `printUpdateNotification` notifies only when `result.IsNewer` and stderr is a TTY
 - Errors logged via `logger.Debug().Err(err)` (always to file log)
@@ -94,11 +105,11 @@ State file (owned by `internal/state`): `config.StateDir()/update-state.yaml`
 ## Testing
 
 `update_test.go` uses `net/http/httptest` to mock the GitHub API. Tests cover:
-suppression conditions, TTL via passed timestamp (zero = never checked),
-newer/same/older versions (all return a populated `CheckResult` with the
-appropriate `IsNewer`), API errors, malformed JSON, empty tag_name, context
-cancellation, and v-prefix handling. Tests drive the unexported `checkForUpdate`
-core (the URL-parameterized body of `CheckForUpdate`) against the httptest URL,
-so they exercise the real gate→fetch→assemble path rather than a parallel
-reimplementation. No state-file tests live here — persistence is
-`internal/state`'s concern.
+env/CI/TTL suppression (including the future-timestamp-is-stale guard), newer/
+same/older versions (all return a populated `CheckResult` with the appropriate
+`IsNewer`), API errors, malformed JSON, empty tag_name, context cancellation,
+v-prefix handling, and `IsNewer` over a table that includes unparseable inputs
+(`"DEV"`, `"nightly"`, etc. → not newer — the relocated dev-build behavior).
+Tests drive the unexported `checkForUpdate` core against the httptest URL, so they
+exercise the real gate→fetch→assemble path. State persistence/non-clobber is
+covered in `internal/state`.

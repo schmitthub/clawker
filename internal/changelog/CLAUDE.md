@@ -1,19 +1,18 @@
 # internal/changelog
 
-Parser + transformer + runtime loader for the curated, hand-maintained
-`CHANGELOG.md` (Keep a Changelog format).
+Fetches the curated, hand-maintained `CHANGELOG.md` (Keep a Changelog format)
+and surfaces the entries gained since the show-once cursor. The package owns the
+cursor lifecycle end to end — read, first-run seed, and advance all live here,
+backed by `internal/state`.
 
-The package splits cleanly into a **pure core** and an **I/O layer**:
+The single exported entry point is `CheckForChanges` (`changes.go`); `Entry` is
+the parsed unit. The parser (`parse.go`) and the cursor range query (`between`)
+are pure, unexported helpers — nothing outside the package composes them
+independently.
 
-- **Pure core** (`changelog.go`, `parse.go`): `Parse` / `Between`
-  operate entirely on caller-supplied bytes and do **no I/O**. They
-  never import `net/http` or `os` — a stateless transformer with no dependency
-  on where the bytes came from. The only dependency is `internal/semver` (a
-  stdlib-only leaf) for version comparison.
-- **I/O layer** (`fetch.go`, `loader.go`): `Fetch` GETs the raw bytes over the
-  network; `Loader` orchestrates fetch + on-disk cache + TTL gate + parse with
-  graceful degradation. This is the only part that touches the filesystem and
-  the CLI state store.
+There is **no on-disk cache and no TTL**: the curated changelog is small,
+best-effort, and the CLI runs on the host where it is always online, so each
+non-first run fetches fresh. Callers treat any error as "no changelog to show".
 
 This is the curated changelog: the root `CHANGELOG.md` covers only the handful
 of releases that change the user surface, not every tech-debt or dependency
@@ -39,19 +38,19 @@ single classifying kind or headline: the whole section body is the unit.
 ```
 
 - **Version header**: `## [x.y.z] - YYYY-MM-DD`. The bracketed token must be a
-  bare semver; a non-semver like `[Unreleased]` is **skipped** (never yields an
-  entry). Authored newest-first.
+  full `x.y.z` semver (tolerating a leading `v`). `parseVersionHeader` validates
+  it with `semver.StrictNewVersion`, which rejects both a non-semver like
+  `[Unreleased]` and a partial like `[0.12]` — those sections are **skipped**
+  (never yield an entry). Authored newest-first.
 - **Body**: everything between the version header and the next version header
   (or the trailing link-reference block), preserved as markdown — every
   `### Added/Fixed/Changed/...` subsection of the release, its bullets, and any
-  inline links. There is no per-release kind or title; the teaser renders the
-  body as markdown.
-- **Links**: relevant docs go inline in the bullets (`[Docs](<url>)`), where
-  they associate with a specific change — not a single per-release URL.
+  inline links. The teaser renders the body as markdown; there is no per-release
+  kind or title.
+- **Links**: relevant docs go inline in the bullets (`[Docs](<url>)`).
 - **HTML comments** (`<!-- ... -->` on their own line) are stripped from the
-  body so they never render. This also drops any legacy `<!-- clawker: -->`
-  metadata line lingering in an older source. The `[x.y.z]: <url>`
-  link-reference block never leaks into a body either.
+  body so they never render (including any legacy `<!-- clawker: -->` line). The
+  `[x.y.z]: <url>` link-reference block never leaks into a body either.
 
 ## API
 
@@ -62,74 +61,58 @@ type Entry struct {
     Body    string // the Keep-a-Changelog markdown body (### sections + bullets), rendered verbatim
 }
 
-func Parse(raw []byte) ([]Entry, error)              // parse CHANGELOG.md bytes, newest-first; skips non-semver sections
-func Between(entries []Entry, lo, hi string) []Entry // filter to lo < version <= hi (cursor range); no re-parse
+// CheckForChanges owns the show-once cursor end to end.
+func CheckForChanges(ctx context.Context, st *state.State, current *semver.Version, persist bool) ([]Entry, error)
+
+var ChangelogURL string // raw CHANGELOG.md on main (consts.RawGitHubBaseURL + consts.GitHubRepo)
 ```
 
-The teaser renders `Body` as markdown via `ios.RenderMarkdown` (see
-`internal/iostreams/markdown.go`). The parser stays pure — it produces the
-markdown body; rendering is the display layer's job.
+`CheckForChanges` behavior:
 
-`Parse` is the only pure entry point that touches raw bytes. `Between` is a
-pure slice transform over already-parsed entries — it does not
-re-parse. Version arguments accept an optional leading `v` (`v0.12.0` ==
-`0.12.0`). `Between` is lo-exclusive / hi-inclusive: a `v0.5.0 → v0.12.0` jump
-returns every gained entry; `v0.11.0 → v0.12.0` returns one.
+- **`st == nil`** (state store unavailable) → silent no-op, returns `nil, nil`.
+- **First run** — the cursor (`st.LastSeenChangelog()`) is empty or does not
+  parse as a version → seed the cursor at `current` (when `persist`) and return
+  `nil` **without fetching**. There is **no catch-up backfill** across a
+  changelog-blind upgrade; the cursor is "last seen" from here on.
+- **Otherwise** → GET `ChangelogURL` (context-aware, 5s `fetchTimeout`, non-200
+  is an error), `parse`, and return the entries in `(cursor, current]` via
+  `between` (newest-first, cursor-exclusive / current-inclusive).
 
-### Fetch + Loader (I/O layer)
+`persist` is `false` on a suppressed run (non-TTY / CI / opt-out): the cursor is
+left untouched so the teaser retries on the next interactive run. The cursor
+write is best-effort — a write failure is returned (with any gained entries) for
+the caller to log.
 
-```go
-var ChangelogURL string  // raw CHANGELOG.md on main (built from consts.RawGitHubBaseURL + consts.GitHubRepo)
-const DefaultTTL = 24 * time.Hour
+`current` is an already-parsed `*semver.Version`: the caller (`internal/clawker`
+`Main`) parses `build.Version` and passes it, exactly as it parses the cursor
+string out of state inside `CheckForChanges`. There is no DEV special-case — a
+non-release build whose version does not parse never reaches `CheckForChanges`
+(Main logs and skips), and an unparseable cursor in state is treated as a first
+run.
 
-func Fetch(ctx context.Context, client *http.Client, url string) ([]byte, error)
+## Semver
 
-type Loader struct{ /* unexported */ }
-func NewLoader(client *http.Client, url, cachePath string, st *state.State, ttl time.Duration, log *logger.Logger) *Loader
-func (l *Loader) Load(ctx context.Context, forceRefresh bool) ([]Entry, error)
-```
+Version handling uses `github.com/Masterminds/semver/v3` directly (no internal
+semver wrapper): `StrictNewVersion` for the header gate, `NewVersion` (coercing,
+v-tolerant) + `(*Version).Compare` for the cursor and `between` bounds.
 
-`Fetch` mirrors `internal/update`'s HTTP discipline: context-aware request,
-short client timeout (nil client → its own 5s client), non-200 → error, raw
-bytes back. It does no parsing.
+## Dependencies
 
-`Loader.Load` ties it together: when `forceRefresh` is true OR the cache is
-stale (`now - state.ChangelogFetchedAt() > ttl`) OR absent → `Fetch`; on success
-it writes the cache file, records the fetch timestamp
-(`state.RecordChangelogFetch`), and parses. On a fetch failure it falls back to
-the on-disk cache if present, else returns the error. A fresh cache is read +
-parsed without the network. **Degrade silently:** callers treat any returned
-error as "no changelog to show". The clock is an injected unexported `now` field
-(defaults to `time.Now`), set in `NewLoader` — no test seam on any exported
-signature.
-
-`Loader` imports `internal/state` (for the TTL gate) but **not**
-`internal/config` — the cache path is passed in as a plain string
-(`config.StateDir()/consts.ChangelogCacheFile`, resolved by the Factory).
-Exposed as the Factory noun `f.Changelog func() (*changelog.Loader, error)`,
-wired in `internal/cmd/factory/default.go::changelogFunc`. Its sole consumer is
-the show-once teaser in `internal/clawker/Main`, which is TTL-gated and loads in
-a background goroutine so it never blocks the user's command.
-
-## Semver compare
-
-Version comparison is delegated to the shared `internal/semver` package:
-`Between` calls `semver.CompareStrings` (v-tolerant and total —
-unparseable versions sort low, never panic), and the parser's header validator
-uses `semver.Parse(...).HasPatch()`. No local semver code remains.
+`internal/state` (cursor read/seed/advance), `github.com/Masterminds/semver/v3`,
+stdlib `net/http`. No on-disk cache, no clock, no Factory noun.
 
 ## Testing
 
-- `changelog_test.go` — pure-core table tests against `testdata/CHANGELOG.md` (a
-  fixture mirroring the real shape, stable regardless of curated content):
-  header parsing, `## [Unreleased]` skip, body preservation across a multi-kind
-  release (Added + Fixed both survive) with inline links intact, HTML-comment +
-  link-reference stripping, `Between` ranges (incl. v0.5→v0.12 spanning),
-  partial-semver header skip.
-- `fetch_test.go` — `Fetch` over `httptest`: success, non-200 error, cancelled
-  context, nil-client default.
-- `loader_test.go` — `Loader.Load` over `httptest` + a request counter + a
-  temp-dir cache + a `state.WithStateDirOverride` store + injected clock:
-  force-refresh fetches, fresh-cache no-fetch, stale-cache fetches,
-  fetch-error→cache-fallback, fetch-error+no-cache→error, nil-state always
-  fetches.
+- `changelog_test.go` — pure parser table tests against `testdata/CHANGELOG.md`:
+  header parsing, `## [Unreleased]` + partial-header skip (guards
+  `StrictNewVersion`), body preservation across a multi-kind release (Added +
+  Fixed both survive) with inline links intact, HTML-comment + link-reference
+  stripping.
+- `changes_test.go` — `CheckForChanges` over `httptest` + a request-hit counter
+  + a `state.WithStateDirOverride` store: the cursor is seeded as a **raw
+  string** (prod parses it), so the range table, the first-run-seeds-no-fetch
+  path, the **garbage-cursor → first-run** failure branch, persist-advances /
+  no-persist-leaves, nil-state no-op, and fetch-error-no-advance all run through
+  the real entry point. The range logic is **not** unit-tested in isolation —
+  proving it through `CheckForChanges` keeps the cursor parse (prod's job) on the
+  wire.

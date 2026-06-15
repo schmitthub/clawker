@@ -103,27 +103,24 @@ releases that change what a user sees or does.
 - **Tech-debt, refactor, chore, and dependency-bump PRs add nothing.** They are
   not user-facing and do not belong in the curated changelog.
 
-**Entry format.** Add a new `## [VERSION] - DATE` section at the top, followed
-immediately by an HTML-comment metadata line, then the Keep a Changelog
-`### Added` / `### Changed` / `### Fixed` / `### Removed` body. Also add the
-matching reference-link line at the bottom of the file.
+**Entry format.** Add a new `## [VERSION] - DATE` section at the top, with the
+Keep a Changelog `### Added` / `### Changed` / `### Fixed` / `### Removed` body.
+Also add the matching reference-link line at the bottom of the file. The format
+is plain Keep a Changelog — there is no per-entry metadata; the whole section
+body is rendered verbatim as markdown.
 
 ```markdown
 ## [0.13.0] - 2026-07-01
-<!-- clawker: tag=feature docs=https://docs.clawker.dev/some-page -->
 
 ### Added
 
 - **Headline of the change.** A sentence or two of user-facing detail.
+  Link relevant docs inline where they belong: [Docs](https://docs.clawker.dev/some-page).
 ```
 
-The HTML comment carries machine-readable metadata, invisible when rendered on
-GitHub:
-
-- `tag=` — one of `feature`, `fix`, `breaking`, `changed`, `perf`. Drives the
-  label associated with the entry. If omitted, it is derived from the
-  Keep a Changelog `###` subsection.
-- `docs=` — optional URL to the relevant docs page.
+Put docs links inline in the bullet next to the change they describe. HTML
+comment lines are stripped from the rendered body, so a metadata comment would
+be silently dropped — don't add one.
 
 **One source, two surfaces.** The same `CHANGELOG.md` feeds a
 show-once-on-upgrade teaser (printed on the first interactive run after an

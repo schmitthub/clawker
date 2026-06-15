@@ -112,11 +112,6 @@ const (
 	EnvTestRepoDir = "CLAWKER_TEST_REPO_DIR"
 )
 
-// DevVersion is the sentinel build.Version of a local development build (no
-// ldflags). The update notifier and the changelog show-once teaser both
-// suppress on it — a dev build has no released version to compare against.
-const DevVersion = "DEV"
-
 // GitHub project identity. Single source of truth for the owner/repo slug,
 // referenced by the update checker (releases API) and the changelog fetcher
 // (raw CHANGELOG.md). Other packages build their URLs from these consts rather
@@ -166,10 +161,6 @@ const (
 	// (update-check cache + changelog cursor), backed by internal/state via
 	// storage.Store.
 	CliStateFile = "update-state.yaml"
-	// ChangelogCacheFile caches the raw CHANGELOG.md bytes fetched from GitHub
-	// in the state dir, so the changelog surface degrades gracefully when the
-	// network is unavailable and a TTL gate avoids re-fetching on every run.
-	ChangelogCacheFile = "changelog-cache.md"
 )
 
 // Subdirectory names within XDG base dirs.

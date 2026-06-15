@@ -40,7 +40,7 @@ func TestState_RecordUpdateCheck_RoundTrip(t *testing.T) {
 	st, dir := newTestState(t)
 
 	checkedAt := time.Now().Truncate(time.Second)
-	if err := st.RecordUpdateCheck(checkedAt, "1.2.3", "1.0.0"); err != nil {
+	if err := st.RecordUpdateCheck(checkedAt, "1.2.3"); err != nil {
 		t.Fatalf("RecordUpdateCheck: %v", err)
 	}
 
@@ -55,9 +55,6 @@ func TestState_RecordUpdateCheck_RoundTrip(t *testing.T) {
 	}
 	if got.LatestVersion != "1.2.3" {
 		t.Errorf("LatestVersion = %q, want %q", got.LatestVersion, "1.2.3")
-	}
-	if got.CurrentVersion != "1.0.0" {
-		t.Errorf("CurrentVersion = %q, want %q", got.CurrentVersion, "1.0.0")
 	}
 }
 
@@ -84,7 +81,7 @@ func TestState_FieldMerge_NoClobber(t *testing.T) {
 	st, dir := newTestState(t)
 
 	checkedAt := time.Now().Truncate(time.Second)
-	if err := st.RecordUpdateCheck(checkedAt, "2.0.0", "1.5.0"); err != nil {
+	if err := st.RecordUpdateCheck(checkedAt, "2.0.0"); err != nil {
 		t.Fatalf("RecordUpdateCheck: %v", err)
 	}
 
@@ -113,9 +110,6 @@ func TestState_FieldMerge_NoClobber(t *testing.T) {
 	if got.LatestVersion != "2.0.0" {
 		t.Errorf("LatestVersion clobbered: got %q, want %q", got.LatestVersion, "2.0.0")
 	}
-	if got.CurrentVersion != "1.5.0" {
-		t.Errorf("CurrentVersion clobbered: got %q, want %q", got.CurrentVersion, "1.5.0")
-	}
 
 	// And the reverse: an update-check write must not clobber the cursor.
 	updateFacade, err := New(WithStateDirOverride(dir))
@@ -123,7 +117,7 @@ func TestState_FieldMerge_NoClobber(t *testing.T) {
 		t.Fatalf("update New: %v", err)
 	}
 	newCheckedAt := checkedAt.Add(48 * time.Hour)
-	if err := updateFacade.RecordUpdateCheck(newCheckedAt, "3.0.0", "1.5.0"); err != nil {
+	if err := updateFacade.RecordUpdateCheck(newCheckedAt, "3.0.0"); err != nil {
 		t.Fatalf("RecordUpdateCheck (2): %v", err)
 	}
 	final, err := New(WithStateDirOverride(dir))
@@ -138,56 +132,11 @@ func TestState_FieldMerge_NoClobber(t *testing.T) {
 	}
 }
 
-// TestState_RecordChangelogFetch_DoesNotClobber proves the new fetch-timestamp
-// writer field-merges: it persists changelog_fetched_at without disturbing the
-// changelog cursor or the update-check fields, mirroring the invariant the other
-// writers guarantee.
-func TestState_RecordChangelogFetch_DoesNotClobber(t *testing.T) {
-	st, dir := newTestState(t)
-
-	checkedAt := time.Now().Truncate(time.Second)
-	if err := st.RecordUpdateCheck(checkedAt, "2.0.0", "1.5.0"); err != nil {
-		t.Fatalf("RecordUpdateCheck: %v", err)
-	}
-	if err := st.SetLastSeenChangelog("1.5.0"); err != nil {
-		t.Fatalf("SetLastSeenChangelog: %v", err)
-	}
-
-	// Fetch-timestamp write through a SEPARATE facade instance (mirrors the
-	// loader writing while the update goroutine / cursor own other fields).
-	fetchFacade, err := New(WithStateDirOverride(dir))
-	if err != nil {
-		t.Fatalf("fetch New: %v", err)
-	}
-	fetchedAt := checkedAt.Add(time.Hour)
-	if err := fetchFacade.RecordChangelogFetch(fetchedAt); err != nil {
-		t.Fatalf("RecordChangelogFetch: %v", err)
-	}
-
-	reopened, err := New(WithStateDirOverride(dir))
-	if err != nil {
-		t.Fatalf("reopen New: %v", err)
-	}
-	got := reopened.Read()
-	if !got.ChangelogFetchedAt.Equal(fetchedAt) {
-		t.Errorf("ChangelogFetchedAt = %v, want %v", got.ChangelogFetchedAt, fetchedAt)
-	}
-	// The cursor and update-check fields must survive the fetch-timestamp write.
-	if got.LastSeenChangelog != "1.5.0" {
-		t.Errorf("LastSeenChangelog clobbered: got %q, want %q", got.LastSeenChangelog, "1.5.0")
-	}
-	if !got.CheckedAt.Equal(checkedAt) {
-		t.Errorf("CheckedAt clobbered: got %v, want %v", got.CheckedAt, checkedAt)
-	}
-	if got.LatestVersion != "2.0.0" {
-		t.Errorf("LatestVersion clobbered: got %q, want %q", got.LatestVersion, "2.0.0")
-	}
-}
-
-// TestState_ReadsLegacyUpdateStateFile proves the migration-in-place: a file
-// written by the legacy update checker (no last_seen_changelog key, with a now-
-// dropped latest_url key) is read in place, its shared fields carried forward
-// and the cursor starting empty.
+// TestState_ReadsLegacyUpdateStateFile proves the read-in-place behavior: a file
+// written by an older binary (no last_seen_changelog key, with the now-dropped
+// latest_url and current_version keys) is read in place — its still-current
+// fields carry forward, the dropped keys are ignored, and the cursor starts
+// empty.
 func TestState_ReadsLegacyUpdateStateFile(t *testing.T) {
 	dir := t.TempDir()
 	legacy := "" +
@@ -208,9 +157,6 @@ func TestState_ReadsLegacyUpdateStateFile(t *testing.T) {
 	if got.LatestVersion != "0.11.0" {
 		t.Errorf("LatestVersion = %q, want %q", got.LatestVersion, "0.11.0")
 	}
-	if got.CurrentVersion != "0.10.0" {
-		t.Errorf("CurrentVersion = %q, want %q", got.CurrentVersion, "0.10.0")
-	}
 	if got.CheckedAt.IsZero() {
 		t.Error("CheckedAt = zero, want the legacy timestamp carried forward")
 	}
@@ -226,16 +172,16 @@ func TestState_ReadsLegacyUpdateStateFile(t *testing.T) {
 // currently empty.
 func TestMigrations_Wired(t *testing.T) {
 	dir := t.TempDir()
-	// Seed a file with a stale current_version the probe migration will rewrite.
-	seed := "current_version: 0.0.1\nlast_seen_changelog: 0.0.1\n"
+	// Seed a file with a stale latest_version the probe migration will rewrite.
+	seed := "latest_version: 0.0.1\nlast_seen_changelog: 0.0.1\n"
 	path := filepath.Join(dir, consts.CliStateFile)
 	if err := os.WriteFile(path, []byte(seed), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	store, err := newStoreWithMigrations(dir, func(raw map[string]any) bool {
-		if raw["current_version"] == "0.0.1" {
-			raw["current_version"] = "9.9.9"
+		if raw["latest_version"] == "0.0.1" {
+			raw["latest_version"] = "9.9.9"
 			return true
 		}
 		return false
@@ -245,8 +191,8 @@ func TestMigrations_Wired(t *testing.T) {
 	}
 
 	got := store.Read()
-	if got.CurrentVersion != "9.9.9" {
-		t.Errorf("migration did not run: CurrentVersion = %q, want %q", got.CurrentVersion, "9.9.9")
+	if got.LatestVersion != "9.9.9" {
+		t.Errorf("migration did not run: LatestVersion = %q, want %q", got.LatestVersion, "9.9.9")
 	}
 
 	// Migration returning true must have triggered an atomic re-save.

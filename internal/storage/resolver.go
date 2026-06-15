@@ -33,6 +33,7 @@ type dirEntry struct {
 // ValidateDirectories resolves all four XDG-style directories and returns an
 // error if any two resolve to the same path. This catches misconfiguration
 // (e.g. CLAWKER_DATA_DIR accidentally pointing at the config directory).
+// TODO belongs in config package
 func ValidateDirectories() error {
 	dirs := []dirEntry{
 		{"config", configDir()},

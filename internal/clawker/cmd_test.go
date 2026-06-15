@@ -2,409 +2,110 @@ package clawker
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/schmitthub/clawker/internal/changelog"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
-	"github.com/schmitthub/clawker/internal/state"
 	"github.com/schmitthub/clawker/internal/update"
 	"github.com/schmitthub/clawker/pkg/whail"
 )
 
-// teaserChangelogFixture is real Keep-a-Changelog markdown spanning the version
-// bounds the catch-up tests assert against. The teaser tests parse it through
-// changelog.Parse rather than hand-building Entry structs, so they exercise the
-// real parser-to-cursor seam (a hand-built slice would mask a Parse regression).
-const teaserChangelogFixture = `# Changelog
-
-## [0.12.0] - 2026-06-11
-
-### Added
-
-- **Command aliases.** Define your own shortcuts.
-
-### Fixed
-
-- **Alias expansion order.** Positional args substitute correctly.
-
-## [0.11.0] - 2026-06-10
-
-### Fixed
-
-- **Worktree masks.** Containers protect the host repository.
-
-## [0.10.3] - 2026-06-01
-
-### Fixed
-
-- **A patch.** A small fix.
-
-## [0.10.0] - 2026-05-20
-
-### Added
-
-- **A minor.** A new capability.
-
-## [0.8.0] - 2026-04-20
-
-### Added
-
-- **Older feature.** Shipped a while ago.
-
-## [0.6.0] - 2026-03-25
-
-### Changed
-
-- **A change.** Adjusted behavior.
-
-## [0.5.0] - 2026-03-20
-
-### Added
-
-- **Firewall.** Egress firewall stack.
-
-[0.12.0]: https://github.com/schmitthub/clawker/releases/tag/v0.12.0
-`
-
-// teaserEntries parses teaserChangelogFixture into the newest-first entry slice
-// the show-once teaser tests pass into maybeShowChangelog (entries are loaded in
-// Main() and threaded in, not fetched here). Driving it through changelog.Parse
-// keeps the tests honest about the real entry shape.
-func teaserEntries(t *testing.T) []changelog.Entry {
-	t.Helper()
-	entries, err := changelog.Parse([]byte(teaserChangelogFixture))
-	if err != nil {
-		t.Fatalf("Parse teaser fixture: %v", err)
+// sampleEntries is the gained-entry slice the render tests feed into
+// maybeShowChangelog. Rendering is the unit under test here; the
+// fetch→parse→diff that produces these is covered in internal/changelog
+// (changes_test.go), so a hand-built slice is the right input at this layer.
+func sampleEntries() []changelog.Entry {
+	return []changelog.Entry{
+		{Version: "0.12.0", Date: "2026-06-11", Body: "### Added\n\n- **Command aliases.** Define your own shortcuts."},
+		{Version: "0.11.0", Date: "2026-06-10", Body: "### Fixed\n\n- **Worktree masks.** Protect the host repository."},
 	}
-	return entries
 }
 
-// newChangelogTestFactory builds a Factory + file-backed state facade for the
-// show-once teaser tests. ttyStderr forces the stderr-TTY gate so the suppression
-// branches can be exercised directly. The state file lives in a fresh temp dir.
-func newChangelogTestFactory(t *testing.T, ttyStderr bool) (*cmdutil.Factory, *state.State, *bytes.Buffer) {
+// newChangelogTestFactory builds a Factory for the teaser render/suppress
+// tests. ttyStderr forces the stderr-TTY gate so the suppression branches can be
+// exercised. Ambient teaser-suppression env (CI / opt-out) is neutralized so the
+// tests drive the real TTY/opt-out logic, not the host env. The cursor lifecycle
+// itself lives in internal/changelog and is tested there (changes_test.go), so
+// these tests need no state facade.
+func newChangelogTestFactory(t *testing.T, ttyStderr bool) (*cmdutil.Factory, *bytes.Buffer) {
 	t.Helper()
-	// Neutralize ambient teaser-suppression env so these tests exercise the
-	// real TTY/opt-out logic rather than the host environment. GitHub Actions
-	// sets CI=true, which changelogSuppressed honors and which would otherwise
-	// silence every teaser-expecting case. "CI" is the canonical cross-tool
-	// CI-detection var (kept literal, matching changelogSuppressed). Tests that
-	// want env-driven suppression re-set these after calling this helper.
 	t.Setenv("CI", "")
 	t.Setenv(consts.EnvNoUpdateNotifier, "")
 	tio, _, _, errOut := iostreams.Test()
 	tio.SetStderrTTY(ttyStderr)
-
-	st, err := state.New(state.WithStateDirOverride(t.TempDir()))
-	if err != nil {
-		t.Fatalf("state.New: %v", err)
-	}
 
 	nop := logger.Nop()
 	f := &cmdutil.Factory{
 		IOStreams: tio,
 		Logger:    func() (*logger.Logger, error) { return nop, nil },
 	}
-	return f, st, errOut
+	return f, errOut
 }
 
-// TestMaybeShowChangelog_BootstrapFromCurrentVersion: first changelog-aware run
-// (empty cursor) with a prior current_version below the running version surfaces
-// the gained entries, then advances the cursor so a second run is silent. The
-// prior is the snapshot Main() takes before the update goroutine runs.
-func TestMaybeShowChangelog_BootstrapFromCurrentVersion(t *testing.T) {
-	f, st, errOut := newChangelogTestFactory(t, true)
-
-	// Main() snapshotted prior current_version 0.10.0 before the update
-	// goroutine overwrote it; it is threaded in as the priorCurrentVersion arg.
-	maybeShowChangelog(f, st, teaserEntries(t), "0.12.0", "0.10.0")
-
+// TestMaybeShowChangelog_RendersWhenInteractive: gained entries render the
+// teaser header and version headers on an interactive (TTY) stderr.
+func TestMaybeShowChangelog_RendersWhenInteractive(t *testing.T) {
+	f, errOut := newChangelogTestFactory(t, true)
+	maybeShowChangelog(f, sampleEntries())
 	out := errOut.String()
 	if !strings.Contains(out, "What's new in clawker") {
 		t.Errorf("expected teaser header, got:\n%s", out)
 	}
-	// 0.10.0 < v <= 0.12.0 → 0.10.3, 0.11.0, 0.12.0 must appear; 0.10.0 must not.
-	for _, want := range []string{"v0.12.0", "v0.11.0", "v0.10.3"} {
+	for _, want := range []string{"v0.12.0", "v0.11.0"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("teaser missing %s, got:\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "v0.10.0 ") {
-		t.Errorf("0.10.0 is the exclusive lower bound and must not appear, got:\n%s", out)
-	}
-	if got := st.LastSeenChangelog(); got != "0.12.0" {
-		t.Errorf("cursor = %q, want 0.12.0 after showing", got)
-	}
-
-	// Second run: cursor already at current, nothing new → silent, no teaser.
-	errOut.Reset()
-	maybeShowChangelog(f, st, teaserEntries(t), "0.12.0", "0.10.0")
-	if errOut.String() != "" {
-		t.Errorf("expected silent second run, got:\n%s", errOut.String())
-	}
 }
 
-// TestMaybeShowChangelog_BootstrapUsesSnapshotNotLiveCurrentVersion guards the
-// ordering race the snapshot exists to defeat: in production the update
-// goroutine runs RecordUpdateCheck and overwrites current_version to the
-// RUNNING binary before maybeShowChangelog reads it. If the bootstrap read
-// current_version live, prior would equal cur and the catch-up teaser would
-// never fire on the exact upgrade path it exists for. Here the store's live
-// current_version is already the running version (0.12.0) — simulating that
-// overwrite — yet the snapshotted prior (0.10.0) still drives a catch-up.
-func TestMaybeShowChangelog_BootstrapUsesSnapshotNotLiveCurrentVersion(t *testing.T) {
-	f, st, errOut := newChangelogTestFactory(t, true)
-
-	// The goroutine already overwrote current_version to the running binary.
-	if err := st.RecordUpdateCheck(time.Now(), "0.12.0", "0.12.0"); err != nil {
-		t.Fatalf("RecordUpdateCheck: %v", err)
-	}
-	if live := st.CurrentVersion(); live != "0.12.0" {
-		t.Fatalf("precondition: live current_version = %q, want 0.12.0", live)
-	}
-
-	// Pass the version Main() snapshotted BEFORE that overwrite (0.10.0). A
-	// live read would see 0.12.0 == cur and take the welcome branch; the
-	// snapshot must win and surface the gained entries instead.
-	maybeShowChangelog(f, st, teaserEntries(t), "0.12.0", "0.10.0")
-
+// TestMaybeShowChangelog_RendersBody: the teaser renders each entry's
+// Keep-a-Changelog body, not just the version header.
+func TestMaybeShowChangelog_RendersBody(t *testing.T) {
+	f, errOut := newChangelogTestFactory(t, true)
+	f.IOStreams.SetColorEnabled(false) // ASCII so body substrings assert cleanly
+	maybeShowChangelog(f, sampleEntries())
 	out := errOut.String()
-	if !strings.Contains(out, "What's new in clawker") {
-		t.Errorf("snapshot prior must drive the catch-up teaser, got:\n%s", out)
-	}
-	if strings.Contains(out, "curated changelog") {
-		t.Errorf("must not fall through to the welcome branch, got:\n%s", out)
-	}
-	if !strings.Contains(out, "v0.11.0") {
-		t.Errorf("teaser missing entries gained since the snapshot, got:\n%s", out)
+	for _, want := range []string{"Command aliases", "Worktree masks"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("rendered teaser missing body %q, got:\n%s", want, out)
+		}
 	}
 }
 
-// TestMaybeShowChangelog_FirstRunNoCatchupSeedsSilently: empty cursor and no
-// prior (or prior >= current) seeds the cursor at the current version and
-// prints nothing — there is no catch-up history to surface.
-func TestMaybeShowChangelog_FirstRunNoCatchupSeedsSilently(t *testing.T) {
-	f, st, errOut := newChangelogTestFactory(t, true)
-
-	// No prior recorded → empty snapshot → no catch-up, silent seed.
-	maybeShowChangelog(f, st, teaserEntries(t), "0.12.0", "")
-
+// TestMaybeShowChangelog_EmptyGainedSilent: no gained entries → nothing printed.
+func TestMaybeShowChangelog_EmptyGainedSilent(t *testing.T) {
+	f, errOut := newChangelogTestFactory(t, true)
+	maybeShowChangelog(f, nil)
 	if out := errOut.String(); out != "" {
-		t.Errorf("first-run no-catchup must print nothing, got:\n%s", out)
-	}
-	if got := st.LastSeenChangelog(); got != "0.12.0" {
-		t.Errorf("cursor = %q, want 0.12.0 seeded", got)
+		t.Errorf("no gained entries must print nothing, got:\n%s", out)
 	}
 }
 
-// TestMaybeShowChangelog_ShowsOnceThenSilent: with an explicit cursor, the teaser
-// fires once and the cursor advances so the next run is silent.
-func TestMaybeShowChangelog_ShowsOnceThenSilent(t *testing.T) {
-	f, st, errOut := newChangelogTestFactory(t, true)
-	if err := st.SetLastSeenChangelog("0.11.0"); err != nil {
-		t.Fatalf("SetLastSeenChangelog: %v", err)
-	}
-
-	maybeShowChangelog(f, st, teaserEntries(t), "0.12.0", "")
-	if !strings.Contains(errOut.String(), "v0.12.0") {
-		t.Errorf("expected v0.12.0 in first teaser, got:\n%s", errOut.String())
-	}
-
-	errOut.Reset()
-	maybeShowChangelog(f, st, teaserEntries(t), "0.12.0", "")
-	if errOut.String() != "" {
-		t.Errorf("expected silent second run after cursor advanced, got:\n%s", errOut.String())
+// TestMaybeShowChangelog_SuppressedNonTTY: a non-TTY stderr suppresses the
+// teaser even with gained entries.
+func TestMaybeShowChangelog_SuppressedNonTTY(t *testing.T) {
+	f, errOut := newChangelogTestFactory(t, false)
+	maybeShowChangelog(f, sampleEntries())
+	if out := errOut.String(); out != "" {
+		t.Errorf("non-TTY must suppress the teaser, got:\n%s", out)
 	}
 }
 
-// TestMaybeShowChangelog_MultiVersionCatchup: a v0.5→v0.12 jump surfaces the whole
-// gained series.
-func TestMaybeShowChangelog_MultiVersionCatchup(t *testing.T) {
-	f, st, errOut := newChangelogTestFactory(t, true)
-	if err := st.SetLastSeenChangelog("0.5.0"); err != nil {
-		t.Fatalf("SetLastSeenChangelog: %v", err)
-	}
-
-	maybeShowChangelog(f, st, teaserEntries(t), "0.12.0", "")
-	out := errOut.String()
-	for _, want := range []string{"v0.12.0", "v0.10.0", "v0.8.0", "v0.6.0"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("multi-version catch-up missing %s, got:\n%s", want, out)
-		}
-	}
-	if strings.Contains(out, "v0.5.0 ") {
-		t.Errorf("0.5.0 is the exclusive lower bound and must not appear, got:\n%s", out)
-	}
-}
-
-// TestMaybeShowChangelog_SuppressedLeavesCursor: when suppressed (non-TTY here),
-// the teaser stays silent AND the cursor is left untouched so it retries later.
-func TestMaybeShowChangelog_SuppressedLeavesCursor(t *testing.T) {
-	f, st, errOut := newChangelogTestFactory(t, false) // non-TTY → suppressed
-	if err := st.SetLastSeenChangelog("0.11.0"); err != nil {
-		t.Fatalf("SetLastSeenChangelog: %v", err)
-	}
-
-	maybeShowChangelog(f, st, teaserEntries(t), "0.12.0", "")
-	if errOut.String() != "" {
-		t.Errorf("expected silence when suppressed, got:\n%s", errOut.String())
-	}
-	if got := st.LastSeenChangelog(); got != "0.11.0" {
-		t.Errorf("suppressed run must leave cursor at 0.11.0, got %q", got)
-	}
-}
-
-// TestMaybeShowChangelog_SuppressedByEnv: the update-notifier opt-out env also
-// suppresses the changelog teaser (and leaves the cursor).
+// TestMaybeShowChangelog_SuppressedByEnv: the update-notifier opt-out env
+// suppresses the teaser on a TTY too.
 func TestMaybeShowChangelog_SuppressedByEnv(t *testing.T) {
-	f, st, errOut := newChangelogTestFactory(t, true) // TTY, but env opts out
-	t.Setenv(consts.EnvNoUpdateNotifier, "1")         // set after the helper's neutralize
-	if err := st.SetLastSeenChangelog("0.11.0"); err != nil {
-		t.Fatalf("SetLastSeenChangelog: %v", err)
+	f, errOut := newChangelogTestFactory(t, true)
+	t.Setenv(consts.EnvNoUpdateNotifier, "1")
+	maybeShowChangelog(f, sampleEntries())
+	if out := errOut.String(); out != "" {
+		t.Errorf("opt-out env must suppress the teaser, got:\n%s", out)
 	}
-
-	maybeShowChangelog(f, st, teaserEntries(t), "0.12.0", "")
-	if errOut.String() != "" {
-		t.Errorf("expected silence with opt-out env, got:\n%s", errOut.String())
-	}
-	if got := st.LastSeenChangelog(); got != "0.11.0" {
-		t.Errorf("opt-out run must leave cursor at 0.11.0, got %q", got)
-	}
-}
-
-// TestMaybeShowChangelog_DevVersionNoop: a DEV build never shows the teaser.
-func TestMaybeShowChangelog_DevVersionNoop(t *testing.T) {
-	f, st, errOut := newChangelogTestFactory(t, true)
-	maybeShowChangelog(f, st, teaserEntries(t), "DEV", "")
-	if errOut.String() != "" {
-		t.Errorf("DEV build must not show a teaser, got:\n%s", errOut.String())
-	}
-	if got := st.LastSeenChangelog(); got != "" {
-		t.Errorf("DEV build must not touch the cursor, got %q", got)
-	}
-}
-
-// TestMaybeShowChangelog_NilStateNoop: a nil state facade (store unavailable) is
-// a silent no-op.
-func TestMaybeShowChangelog_NilStateNoop(t *testing.T) {
-	f, _, errOut := newChangelogTestFactory(t, true)
-	maybeShowChangelog(f, nil, teaserEntries(t), "0.12.0", "0.10.0")
-	if errOut.String() != "" {
-		t.Errorf("nil state must be a no-op, got:\n%s", errOut.String())
-	}
-}
-
-// TestMaybeShowChangelog_NilEntriesLeavesCursor: when the background load failed
-// (nil entries) but a cursor is already established, the teaser stays silent and
-// the cursor is left untouched so the next interactive run retries once entries
-// load successfully.
-func TestMaybeShowChangelog_NilEntriesLeavesCursor(t *testing.T) {
-	f, st, errOut := newChangelogTestFactory(t, true)
-	if err := st.SetLastSeenChangelog("0.11.0"); err != nil {
-		t.Fatalf("SetLastSeenChangelog: %v", err)
-	}
-
-	maybeShowChangelog(f, st, nil, "0.12.0", "")
-	if errOut.String() != "" {
-		t.Errorf("nil entries must print nothing, got:\n%s", errOut.String())
-	}
-	if got := st.LastSeenChangelog(); got != "0.11.0" {
-		t.Errorf("nil-entries run must leave cursor at 0.11.0, got %q", got)
-	}
-}
-
-// TestMaybeShowChangelog_E2E_RendersParsedBody drives the whole seam end to end
-// — changelog bytes over httptest → Loader.Load (fetch + Parse) →
-// maybeShowChangelog → Between → printChangelogTeaser → RenderMarkdown — instead
-// of hand-built entries. It is the only test that pins the contract this pass
-// shipped: the loader emits the parsed Body AND the teaser renders it. Deleting
-// the body-render line in printChangelogTeaser, or dropping Body in parse, must
-// turn this RED (the version-header asserts in the other tests would not).
-func TestMaybeShowChangelog_E2E_RendersParsedBody(t *testing.T) {
-	f, st, errOut := newChangelogTestFactory(t, true)
-	// ASCII markdown so the body substrings assert deterministically (no ANSI).
-	f.IOStreams.SetColorEnabled(false)
-
-	const fixture = `# Changelog
-
-## [Unreleased]
-<!-- work in progress -->
-
-### Added
-
-- **Unreleased thing.** Must never render.
-
-## [0.12.0] - 2026-06-11
-<!-- clawker: tag=feature -->
-
-### Added
-
-- **User-configurable command aliases.** Define your own shortcuts.
-
-### Fixed
-
-- **Alias expansion order.** Positional args now substitute correctly.
-
-## [0.11.0] - 2026-06-10
-
-### Fixed
-
-- **Worktree host protection.** Read-only masks.
-
-## [0.5.0] - 2026-03-20
-
-### Added
-
-- **Global egress firewall stack.** Shared Envoy and CoreDNS.
-
-[0.12.0]: https://github.com/schmitthub/clawker/releases/tag/v0.12.0
-`
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(fixture))
-	}))
-	t.Cleanup(srv.Close)
-
-	cachePath := filepath.Join(t.TempDir(), "cache.md")
-	loader := changelog.NewLoader(srv.Client(), srv.URL, cachePath, st, changelog.DefaultTTL, logger.Nop())
-	entries, err := loader.Load(context.Background(), true)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-
-	// Upgrade 0.10.0 → 0.12.0: 0.12.0 and 0.11.0 are gained; 0.5.0 is below the
-	// exclusive lower bound; Unreleased is never an entry.
-	maybeShowChangelog(f, st, entries, "0.12.0", "0.10.0")
-
-	out := errOut.String()
-	// Rendered body content of the gained releases — not just version headers.
-	for _, want := range []string{"configurable command aliases", "Alias expansion order", "Worktree host protection"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("rendered teaser missing gained body %q, got:\n%s", want, out)
-		}
-	}
-	// The non-gained 0.5.0 body (below the exclusive lower bound) and the
-	// never-an-entry Unreleased body must be absent — this guards Between's
-	// bounds and the non-semver skip through to the rendered output.
-	for _, bad := range []string{"egress firewall", "Unreleased thing"} {
-		if strings.Contains(out, bad) {
-			t.Errorf("teaser leaked non-gained body %q, got:\n%s", bad, out)
-		}
-	}
-	// NOTE: comment/link-ref stripping is NOT asserted here — glamour also drops
-	// HTML comments and link-ref definitions when rendering, so a teaser-output
-	// check would stay green even if the parser's stripping broke. That guarantee
-	// is owned by TestParse_Body, which asserts on the parsed Body pre-render.
 }
 
 func TestPrintDockerInstallHelper(t *testing.T) {

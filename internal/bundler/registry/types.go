@@ -4,8 +4,9 @@ package registry
 
 import (
 	"encoding/json"
+	"sort"
 
-	"github.com/schmitthub/clawker/internal/semver"
+	"github.com/Masterminds/semver/v3"
 )
 
 // DistTags maps dist-tag names to version strings.
@@ -25,26 +26,20 @@ type VersionInfo struct {
 }
 
 // NewVersionInfo creates a VersionInfo from a parsed semver.Version.
+// A Masterminds *Version is always complete — NewVersion coerces a partial like
+// "2.1" to "2.1.0", so Minor/Patch are unconditionally set (no HasMinor/HasPatch
+// guards). Major/Minor/Patch are uint64; the JSON contract uses int.
 func NewVersionInfo(v *semver.Version, debianDefault, alpineDefault string, variants map[string][]string) *VersionInfo {
-	info := &VersionInfo{
-		FullVersion:   v.Original,
-		Major:         v.Major,
+	return &VersionInfo{
+		FullVersion:   v.Original(),
+		Major:         int(v.Major()),
+		Minor:         int(v.Minor()),
+		Patch:         int(v.Patch()),
+		Prerelease:    v.Prerelease(),
 		DebianDefault: debianDefault,
 		AlpineDefault: alpineDefault,
 		Variants:      variants,
 	}
-
-	if v.HasMinor() {
-		info.Minor = v.Minor
-	}
-	if v.HasPatch() {
-		info.Patch = v.Patch
-	}
-	if v.HasPrerelease() {
-		info.Prerelease = v.Prerelease
-	}
-
-	return info
 }
 
 // VersionsFile represents the structure of versions.json.
@@ -60,9 +55,22 @@ func (v VersionsFile) Keys() []string {
 	return keys
 }
 
-// SortedKeys returns version keys sorted by semver (descending).
+// SortedKeys returns version keys sorted by semver (descending). Unparseable
+// keys are dropped (keys are resolved full versions, so this is defensive).
 func (v VersionsFile) SortedKeys() []string {
-	return semver.SortStringsDesc(v.Keys())
+	parsed := make(semver.Collection, 0, len(v))
+	for k := range v {
+		if ver, err := semver.NewVersion(k); err == nil {
+			parsed = append(parsed, ver)
+		}
+	}
+	sort.Sort(sort.Reverse(parsed))
+
+	keys := make([]string, len(parsed))
+	for i, ver := range parsed {
+		keys[i] = ver.Original()
+	}
+	return keys
 }
 
 // MarshalJSON implements json.Marshaler to output versions in sorted order.

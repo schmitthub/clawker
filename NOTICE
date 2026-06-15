@@ -152,6 +152,7 @@ github.com/emirpasic/gods                                                      I
 MIT
 ================================================================================
 
+github.com/Masterminds/semver/v3                                               MIT
 github.com/alecthomas/chroma/v2                                                MIT
 github.com/apparentlymart/go-cidr/cidr                                         MIT
 github.com/aymanbagabas/go-osc52/v2                                            MIT

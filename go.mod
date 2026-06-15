@@ -3,6 +3,7 @@ module github.com/schmitthub/clawker
 go 1.25.11
 
 require (
+	github.com/Masterminds/semver/v3 v3.4.0
 	github.com/a8m/tree v0.0.0-20240104212747-2c8764a5f17e
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
