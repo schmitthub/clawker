@@ -24,7 +24,7 @@ version is the ceiling so nothing premature leaks.
     via `internal/semver`.
   - I/O (fetch.go/loader.go): `Fetch(ctx,client,url)→[]byte` (nil client→5s
     timeout; non-200→err). `Loader` = fetch+cache+TTL+parse, silent degrade
-    (fetch fail → cached bytes else err). `NewLoader(client,url,cachePath,st,ttl)`
+    (fetch fail → cached bytes else err). `NewLoader(client,url,cachePath,st,ttl,log)`
     + `Load(ctx,forceRefresh)`. Clock = unexported `now` field (no test seam).
     Imports `internal/state` (TTL gate), NOT `internal/config` (cachePath=string).
     `var ChangelogURL = consts.RawGitHubBaseURL+"/"+consts.GitHubRepo+"/main/CHANGELOG.md"`.

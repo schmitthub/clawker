@@ -59,13 +59,12 @@ permissions:
    - Generates SHA256 checksums.
    - Signs checksums with cosign (keyless, OIDC).
    - Generates SBOMs via syft for each archive (SPDX-JSON) — published as release assets, NOT attested separately.
-   - Creates GitHub Release. The body is: curated `## Release Highlights` header
-     (rendered by `clawker changelog --version <tag> --format markdown` from the
-     committed/embedded `CHANGELOG.md` — a pre-goreleaser step builds clawker via
-     `make clawker` and exports the output into the `RELEASE_HEADER` env var
-     because `release.header.from_file` is GoReleaser Pro-only) → auto
-     `## Changelog` commit groups (`changelog.groups`, excludes
-     docs/test/ci/chore/merge). See the `changelog-whatsnew-system` memory.
+   - Creates GitHub Release. The body is: a curated release-notes header (an awk
+     step extracts the `## [x.y.z]` section from the committed root `CHANGELOG.md`
+     into `release-notes.md`, passed to GoReleaser via `--release-header`;
+     hermetic — no build, no API, empty file when the tag has no matching
+     section) → auto `## Changelog` commit groups (`changelog.groups`, excludes
+     docs/test/ci/chore/merge). See the `changelog-system` memory.
 7. **Attest release artifacts** — single `actions/attest@v4` step. `subject-path` glob covers `dist/clawker_*.tar.gz` + `embeds/amd64/*` + `embeds/arm64/*` = 12 subjects in one attestation. Mode auto-detected as SLSA build provenance (no `sbom-path`, no `predicate-*` inputs). The predicate is auto-generated from GitHub Actions context: source commit, workflow ref, builder ID, runner environment. That source-commit binding transitively pins every reproducibility input in the source tree (Makefile `BPF_APT_DEPS`, `Dockerfile.controlplane`, `.goreleaser.yaml`, `gen.go` clang flags + bpf2go pin, BPF C sources, workflow YAMLs with pinned action SHAs).
 
 ## Platforms Built

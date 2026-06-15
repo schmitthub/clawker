@@ -10,6 +10,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/changelog"
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/state"
@@ -38,6 +39,14 @@ func teaserEntries() []changelog.Entry {
 // branches can be exercised directly. The state file lives in a fresh temp dir.
 func newChangelogTestFactory(t *testing.T, ttyStderr bool) (*cmdutil.Factory, *state.State, *bytes.Buffer) {
 	t.Helper()
+	// Neutralize ambient teaser-suppression env so these tests exercise the
+	// real TTY/opt-out logic rather than the host environment. GitHub Actions
+	// sets CI=true, which changelogSuppressed honors and which would otherwise
+	// silence every teaser-expecting case. "CI" is the canonical cross-tool
+	// CI-detection var (kept literal, matching changelogSuppressed). Tests that
+	// want env-driven suppression re-set these after calling this helper.
+	t.Setenv("CI", "")
+	t.Setenv(consts.EnvNoUpdateNotifier, "")
 	tio, _, _, errOut := iostreams.Test()
 	tio.SetStderrTTY(ttyStderr)
 
@@ -203,8 +212,8 @@ func TestMaybeShowChangelog_SuppressedLeavesCursor(t *testing.T) {
 // TestMaybeShowChangelog_SuppressedByEnv: the update-notifier opt-out env also
 // suppresses the changelog teaser (and leaves the cursor).
 func TestMaybeShowChangelog_SuppressedByEnv(t *testing.T) {
-	t.Setenv("CLAWKER_NO_UPDATE_NOTIFIER", "1")
 	f, st, errOut := newChangelogTestFactory(t, true) // TTY, but env opts out
+	t.Setenv(consts.EnvNoUpdateNotifier, "1")         // set after the helper's neutralize
 	if err := st.SetLastSeenChangelog("0.11.0"); err != nil {
 		t.Fatalf("SetLastSeenChangelog: %v", err)
 	}

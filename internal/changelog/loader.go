@@ -123,7 +123,7 @@ func (l *Loader) persist(raw []byte) {
 // stale reports whether the cache is past its TTL (or there is no recorded
 // fetch). A nil state store or a zero TTL means "always stale" (always fetch).
 func (l *Loader) stale() bool {
-	if l.st == nil {
+	if l.st == nil || l.ttl <= 0 {
 		return true
 	}
 	last := l.st.ChangelogFetchedAt()

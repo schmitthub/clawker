@@ -130,21 +130,21 @@ changelog:
   # Group the auto commit log by conventional-commit prefix. Order is the
   # display order; the first matching group wins, so the catch-all "Other"
   # (order 99) must sort last. Squash-merge collapses each PR to its title, so
-  # the regex matches the title prefix (the leading `.*?` tolerates an optional
+  # the regex matches the title prefix (the leading `.*` tolerates an optional
   # scope/emoji preamble). The Dependencies group is listed before Features/Fixes
   # so `fix(deps)` / `build(deps)` land in Dependencies rather than Bug Fixes.
   groups:
     - title: "📦 Dependencies"
-      regexp: '^.*?(deps|build\(deps\))'
+      regexp: '^.*(deps|build\(deps\))'
       order: 0
     - title: "🚀 Features"
-      regexp: '^.*?feat(\(.+\))??!?:'
+      regexp: '^.*feat(\(.+\))?!?:'
       order: 1
     - title: "🐛 Bug Fixes"
-      regexp: '^.*?fix(\(.+\))??!?:'
+      regexp: '^.*fix(\(.+\))?!?:'
       order: 2
     - title: "⚡ Performance"
-      regexp: '^.*?perf(\(.+\))??!?:'
+      regexp: '^.*perf(\(.+\))?!?:'
       order: 3
     - title: Other
       order: 99

@@ -83,7 +83,7 @@ const DefaultTTL = 24 * time.Hour
 func Fetch(ctx context.Context, client *http.Client, url string) ([]byte, error)
 
 type Loader struct{ /* unexported */ }
-func NewLoader(client *http.Client, url, cachePath string, st *state.State, ttl time.Duration) *Loader
+func NewLoader(client *http.Client, url, cachePath string, st *state.State, ttl time.Duration, log *logger.Logger) *Loader
 func (l *Loader) Load(ctx context.Context, forceRefresh bool) ([]Entry, error)
 ```
 

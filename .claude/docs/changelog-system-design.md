@@ -75,7 +75,7 @@ by Go code.
 ```go
 func Fetch(ctx, client, url) ([]byte, error)   // mirrors update's HTTP discipline; nil client → 5s timeout; non-200 → err
 type Loader struct { /* ... */ }               // fetch + on-disk cache + TTL + parse, degrades silently
-func NewLoader(client, url, cachePath, st, ttl) *Loader
+func NewLoader(client, url, cachePath, st, ttl, log) *Loader
 func (l *Loader) Load(ctx, forceRefresh) ([]Entry, error)
 
 var ChangelogURL = consts.RawGitHubBaseURL + "/" + consts.GitHubRepo + "/main/CHANGELOG.md"
