@@ -18,7 +18,8 @@ the Claude Code plugin and skill authoring conventions:
   are loaded by skill agents during execution. They teach methodology — they
   are not executed, compiled, or parsed programmatically.
 - **plugin.json is the package manifest.** It follows the Claude Code plugin
-  spec (`name`, `description`, `version`, `author`, `repository`, `homepage`).
+  spec (`name`, `description`, `version`, `author`, `license`, `repository`,
+  `homepage`).
 - Consult `https://docs.claude.com/en/docs/claude-code/plugins` for the
   current plugin and skill authoring standards when making structural changes.
 

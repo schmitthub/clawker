@@ -1,10 +1,11 @@
 {
   "name": "clawker-support",
   "description": "Clawker support expert for setup, configuration, and troubleshooting",
-  "version": "1.0.11",
+  "version": "1.0.12",
   "author": {
     "name": "schmitthub"
   },
+  "license": "MIT",
   "repository": "https://github.com/schmitthub/clawker",
   "homepage": "https://docs.clawker.dev"
 }
