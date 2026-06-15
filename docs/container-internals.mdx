@@ -58,7 +58,7 @@ Clawker makes git work seamlessly inside containers, even for advanced setups li
 
 ### Standard Repositories
 
-For a normal (non-worktree) project, the `.git` directory is part of your workspace and gets mounted along with everything else. Git commands inside the container work exactly as they do on your host.
+For a normal (non-worktree) project, the `.git` directory is part of your workspace and comes along with everything else — bind-mounted in bind mode, or copied into the volume in snapshot mode. Either way, git commands inside the container work exactly as they do on your host (snapshot's `.git` is a disposable copy, so history and commits inside the container never reach the host). Exclude it from a snapshot by adding `.git/` to `.clawkerignore`.
 
 ### Worktree Support
 

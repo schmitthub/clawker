@@ -111,17 +111,24 @@ func TestShouldIgnore(t *testing.T) {
 		want     bool
 	}{
 		{
-			name:     "empty patterns still ignores .git",
+			name:     ".git is copied by default (no longer hardcoded-ignored)",
 			path:     ".git",
 			isDir:    true,
 			patterns: []string{},
-			want:     true,
+			want:     false,
 		},
 		{
-			name:     ".git subdirectory ignored",
+			name:     ".git subdirectory copied by default",
 			path:     ".git/objects/pack",
 			isDir:    false,
 			patterns: []string{},
+			want:     false,
+		},
+		{
+			name:     ".git ignored only when explicitly listed in patterns",
+			path:     ".git",
+			isDir:    true,
+			patterns: []string{".git/"},
 			want:     true,
 		},
 		{

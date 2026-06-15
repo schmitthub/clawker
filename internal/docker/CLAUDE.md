@@ -87,7 +87,9 @@ type Container struct {
 
 `EnsureVolume(...)`, `CopyToVolume(...)`, `LoadIgnorePatterns(path)`, `FindIgnoredDirs(hostPath, patterns)`. CopyToVolume uses two-phase ownership fix: tar headers with UID/GID 1001 + post-copy chown via `Client.ChownImage` (defaults to a busybox image when unset); set `Client.ChownImage` to override.
 
-`FindIgnoredDirs` walks a host directory and returns relative paths of directories matching ignore patterns. Used by bind mode to generate tmpfs overlay mounts. Key differences from snapshot's `shouldIgnore`: only returns directories, never masks `.git/` (bind mode needs git), and skips recursion into matched directories for performance.
+`FindIgnoredDirs` walks a host directory and returns relative paths of directories matching ignore patterns. Used by bind mode to generate tmpfs overlay mounts. Key differences from snapshot's `shouldIgnore`: only returns directories, force-keeps `.git/` even if a pattern would match it (bind mode needs git for live development), and skips recursion into matched directories for performance.
+
+**Snapshot `.git` handling**: snapshot's `shouldIgnore` honors `.clawkerignore` patterns verbatim and has **no** hardcoded `.git` skip — `.git` is copied into the ephemeral volume by default (snapshot's isolation comes from the copy-to-volume direction, not from withholding git history), and is excluded only if a pattern explicitly matches it.
 
 `BindOverlayDirsFromPatterns(patterns) []string` — derives directory overlay targets from ignore patterns for bind mode. Only returns deterministic directory paths, skips file-glob patterns.
 

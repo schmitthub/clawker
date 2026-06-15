@@ -1515,6 +1515,19 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 		return nil, err
 	}
 
+	// Fail fast on worktree + snapshot before resolveWorkDir creates a git
+	// worktree we'd only reject later. workspace.SetupMounts enforces the same
+	// invariant as the load-bearing guard; this is the fail-fast UX layer.
+	if containerOpts.Worktree != "" {
+		mode, err := workspace.ResolveMode(containerOpts.Mode, projectCfg.Workspace.DefaultMode)
+		if err != nil {
+			return nil, fmt.Errorf("invalid workspace mode: %w", err)
+		}
+		if mode == config.ModeSnapshot {
+			return nil, workspace.ErrWorktreeSnapshot
+		}
+	}
+
 	wd, projectRootDir, err := resolveWorkDir(ctx, containerOpts, agentName, projectRoot, opts.ProjectManager, log)
 	if err != nil {
 		return nil, err

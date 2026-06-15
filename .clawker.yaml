@@ -20,7 +20,7 @@ build:
     root_run:
       - npm install -g wscat
       - |-
-        GH_VERSION=2.92.0 && \
+        GH_VERSION=2.94.0 && \
           ARCH=$(dpkg --print-architecture) && \
           GH_FILE="gh_${GH_VERSION}_linux_${ARCH}.tar.gz" && \
           CHECKSUMS_FILE="gh_${GH_VERSION}_checksums.txt" && \
@@ -277,12 +277,6 @@ security:
             path: /opensearch-project/OpenSearch-Dashboards/
         port: 443
         proto: https
-      # tcpbin.com: TLS echo (:4243) as OPAQUE tcp — Envoy proxies the bytes (no MITM),
-      # the agent runs TLS end-to-end through the dedicated STATIC listener.
-      - action: allow
-        dst: 45.79.112.203
-        proto: tcp
-        port: "4242-4243" # dynamic port: inclusive range → one dedicated STATIC listener per port
   git_credentials:
     copy_git_config: true
     forward_gpg: true

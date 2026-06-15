@@ -250,11 +250,6 @@ func createTarArchive(log *logger.Logger, srcDir string, buf io.Writer, ignorePa
 
 // shouldIgnore checks if a path should be ignored based on patterns.
 func shouldIgnore(log *logger.Logger, path string, isDir bool, patterns []string) bool {
-	// Always ignore .git directory
-	if path == ".git" || strings.HasPrefix(path, ".git/") || strings.HasPrefix(path, ".git\\") {
-		return true
-	}
-
 	for _, pattern := range patterns {
 		pattern = strings.TrimSpace(pattern)
 
@@ -455,7 +450,9 @@ func BindOverlayDirsFromPatterns(patterns []string) []string {
 //
 // Key differences from snapshot's shouldIgnore:
 //   - Only returns directories (file patterns like *.log are not actionable)
-//   - Does NOT mask .git/ (bind mode needs git for live development)
+//   - Force-keeps .git/ even if a pattern would match it (bind mode needs git
+//     for live development); snapshot's shouldIgnore honors patterns verbatim,
+//     including .git, and copies .git by default when no pattern excludes it
 //   - Skips recursion into matched directories (performance)
 func FindIgnoredDirs(log *logger.Logger, hostPath string, patterns []string) ([]string, error) {
 	if log == nil {
@@ -512,7 +509,6 @@ func FindIgnoredDirs(log *logger.Logger, hostPath string, patterns []string) ([]
 }
 
 // shouldIgnoreForBind checks if a directory path matches any of the given patterns.
-// Unlike shouldIgnore, this skips the hardcoded .git check (caller handles it).
 // The caller is responsible for passing only directory paths.
 func shouldIgnoreForBind(log *logger.Logger, path string, patterns []string) bool {
 	for _, pattern := range patterns {
