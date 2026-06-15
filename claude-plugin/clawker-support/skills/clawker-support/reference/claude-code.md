@@ -26,7 +26,29 @@ On the **host**, Claude Code keeps this pair in the OS keychain (with a file
 fallback). When the access token expires, Claude Code silently refreshes it
 using the refresh token and writes the rotated pair back to the keychain. The
 user never sees a prompt as long as the refresh token is still valid. A prompt
-(`/login`) appears only when the refresh token itself is expired or revoked.
+(`/login`) appears only when the refresh token itself is expired, revoked, or
+**already rotated away**.
+
+Refresh tokens are **single-use**: each refresh mints a new refresh token and
+**permanently invalidates the old one** (rotation with reuse detection). On the
+host this is invisible — one holder, one keychain, refreshes serialized behind a
+lock, so the rotated pair always lands cleanly. The wrinkle appears only when
+*two* holders share one refresh token, which is exactly what create-time copying
+produces (see below).
+
+**Who actually hits this, and how often.** A collision needs a *refresh*, and a
+refresh only fires once the access token expires. A container that lives shorter
+than the access-token lifetime never refreshes — it rides the inherited,
+still-valid access token and exits — so it never collides. Ephemeral and
+short-lived containers get the full zero-touch benefit with no downside. Only
+**long-lived** containers (ones that outlive the inherited access token) are
+exposed, and only **once**: the forced `/login` mints that container its own
+independent family, permanently decoupling it from the host. So this is a
+bounded, self-correcting, one-time-per-container event — not perpetual churn —
+and the host, as the most frequent refresher, stays current and is not the loser
+in practice. A user who wants a long-lived container to skip even that single
+prompt can set `use_host_auth: false` and `/login` once up front (own family
+from the start).
 
 ### How clawker shares it with a container
 
@@ -81,14 +103,25 @@ validity matters for whether a fresh container starts authenticated.
 **Symptom.** Every new agent container prompts for `/login` even though
 `agent.claude_code.use_host_auth` is on.
 
-**Most likely cause.** The host's **refresh token was already expired or
-revoked** when the container was created. The snapshot clawker copied in could
-not be refreshed, so Claude Code falls back to an interactive login. Nothing is
-misconfigured — the shared credential was simply stale at copy time.
+**Two causes, both expected, neither a misconfiguration:**
 
-This is reasoned about from the model above, not diagnosed from inside the
-container: the credential blob doesn't expose the refresh token's expiry, and
-the sandbox can't reach the host keychain.
+1. **The shared refresh token was rotated away (most common).** The credential
+   clawker copied in was valid at create time, but single-use rotation
+   invalidated this container's copy: the host — or another container created
+   from the same login — refreshed first and "turned the token in," so when
+   *this* container later tries to refresh its (now stale) copy, the OAuth
+   server rejects it (`invalid_grant`) and Claude Code clears the credential and
+   prompts. This is inherent to sharing one rotating credential across two
+   independent holders; it is not stale-at-copy and not a clawker defect.
+
+2. **The host's refresh token was already expired or revoked at create time.**
+   The snapshot could never be refreshed, so Claude Code falls back to login
+   from the start. The shared credential was simply stale when copied.
+
+Both are reasoned about from the model above, not diagnosed from inside the
+container: the credential blob doesn't expose the refresh token's expiry or
+rotation state, and the sandbox can't reach the host keychain. In either case
+the in-container fix is identical — one `/login`, then the volume self-heals.
 
 **For the container that already prompted: nothing more to do.** Once the user
 completes `/login` inside it, Claude Code writes the fresh, rotated credentials
