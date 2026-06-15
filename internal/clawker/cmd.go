@@ -335,20 +335,20 @@ func maybeShowChangelog(f *cmdutil.Factory, st *state.State, entries []changelog
 	}
 }
 
-// printChangelogTeaser lists the titles of the entries gained since the last
-// shown version, surfacing each entry's docs URL as the "learn more" pointer.
+// printChangelogTeaser renders the entries gained since the last shown version.
+// Each entry's full Keep-a-Changelog body is rendered as markdown (sections,
+// bullets, inline docs links) under a bold version header — a release spans
+// many kinds, so the body is the unit, not a single derived headline.
 func printChangelogTeaser(ios *iostreams.IOStreams, entries []changelog.Entry) {
 	cs := ios.ColorScheme()
 	fmt.Fprintf(ios.ErrOut, "\n%s What's new in clawker:\n", cs.Info("📣"))
 	for _, e := range entries {
-		title := e.Title
-		if title == "" {
-			title = e.Version
+		header := "v" + e.Version
+		if e.Date != "" {
+			header += " — " + e.Date
 		}
-		fmt.Fprintf(ios.ErrOut, "  %s %s %s\n", cs.Muted("•"), cs.Bold("v"+e.Version), title)
-		if e.Docs != "" {
-			fmt.Fprintf(ios.ErrOut, "    %s\n", cs.Muted("learn more: "+e.Docs))
-		}
+		fmt.Fprintf(ios.ErrOut, "\n%s\n", cs.Bold(header))
+		fmt.Fprintln(ios.ErrOut, strings.TrimRight(ios.RenderMarkdown(e.Body), "\n"))
 	}
 }
 

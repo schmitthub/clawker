@@ -22,35 +22,36 @@ section (GoReleaser).
 
 ## CHANGELOG.md format
 
-[Keep a Changelog](https://keepachangelog.com/) with one clawker convention: a
-per-entry HTML-comment metadata line directly under each version header.
+Plain [Keep a Changelog](https://keepachangelog.com/) — no clawker-specific
+metadata. A release is a set of changes spanning many PRs, so it carries no
+single classifying kind or headline: the whole section body is the unit.
 
 ```markdown
 ## [0.12.0] - 2026-06-11
-<!-- clawker: tag=feature docs=https://docs.clawker.dev/aliases -->
 
 ### Added
 
-- **User-configurable command aliases.** ...
+- **User-configurable command aliases.** ... [Docs](https://docs.clawker.dev/aliases)
+
+### Fixed
+
+- **Alias expansion order.** ...
 ```
 
 - **Version header**: `## [x.y.z] - YYYY-MM-DD`. The bracketed token must be a
   bare semver; a non-semver like `[Unreleased]` is **skipped** (never yields an
   entry). Authored newest-first.
-- **Metadata comment**: `<!-- clawker: tag=<tag> docs=<url> -->`. Invisible on
-  GitHub (HTML comment), NOT YAML frontmatter (mid-file frontmatter renders as
-  an ugly `<hr>` + literal text on GitHub). A plain HTML comment without the
-  `clawker:` keyword is ignored. Both `tag` and `docs` are optional.
-- **`tag`** is one of `feature | fix | breaking | perf | changed`. When absent,
-  it is derived from the first `### Added/Fixed/Removed/...` subsection
-  (`Added → feature`, `Fixed/Security → fix`, `Removed/Deprecated → breaking`,
-  `Changed → changed`).
-- **Body**: everything between the metadata comment and the next version header
-  (or the trailing link-reference block). `Title` is derived from it; the teaser
-  renders `Title`, not `Body`. The metadata comment and `[x.y.z]: <url>`
-  link-reference lines never leak into the body.
-- **`Title`**: derived from the first bullet of the body — bold markers and the
-  leading `- ` stripped, truncated at the first period.
+- **Body**: everything between the version header and the next version header
+  (or the trailing link-reference block), preserved as markdown — every
+  `### Added/Fixed/Changed/...` subsection of the release, its bullets, and any
+  inline links. There is no per-release kind or title; the teaser renders the
+  body as markdown.
+- **Links**: relevant docs go inline in the bullets (`[Docs](<url>)`), where
+  they associate with a specific change — not a single per-release URL.
+- **HTML comments** (`<!-- ... -->` on their own line) are stripped from the
+  body so they never render. This also drops any legacy `<!-- clawker: -->`
+  metadata line lingering in an older source. The `[x.y.z]: <url>`
+  link-reference block never leaks into a body either.
 
 ## API
 
@@ -58,15 +59,16 @@ per-entry HTML-comment metadata line directly under each version header.
 type Entry struct {
     Version string // "0.12.2" (bare, no v) — semver anchor
     Date    string // "2026-06-11"
-    Tag     Tag    // feature|fix|breaking|perf|changed (string subtype)
-    Title   string // first headline of the body
-    Body    string // full markdown body (parsed; Title is derived from it — teaser renders Title)
-    Docs    string // optional docs URL from metadata
+    Body    string // the Keep-a-Changelog markdown body (### sections + bullets), rendered verbatim
 }
 
 func Parse(raw []byte) ([]Entry, error)              // parse CHANGELOG.md bytes, newest-first; skips non-semver sections
 func Between(entries []Entry, lo, hi string) []Entry // filter to lo < version <= hi (cursor range); no re-parse
 ```
+
+The teaser renders `Body` as markdown via `ios.RenderMarkdown` (see
+`internal/iostreams/markdown.go`). The parser stays pure — it produces the
+markdown body; rendering is the display layer's job.
 
 `Parse` is the only pure entry point that touches raw bytes. `Between` is a
 pure slice transform over already-parsed entries — it does not
@@ -120,10 +122,10 @@ uses `semver.Parse(...).HasPatch()`. No local semver code remains.
 
 - `changelog_test.go` — pure-core table tests against `testdata/CHANGELOG.md` (a
   fixture mirroring the real shape, stable regardless of curated content):
-  header + metadata parsing, `## [Unreleased]` skip, shape invariants
-  (valid version/date/tag/title, strict newest-first), plain-comment ignore,
-  `Between` ranges (incl. v0.5→v0.12 spanning), partial-semver header skip,
-  `tagFromSubsection` mapping (all branches).
+  header parsing, `## [Unreleased]` skip, body preservation across a multi-kind
+  release (Added + Fixed both survive) with inline links intact, HTML-comment +
+  link-reference stripping, `Between` ranges (incl. v0.5→v0.12 spanning),
+  partial-semver header skip.
 - `fetch_test.go` — `Fetch` over `httptest`: success, non-200 error, cancelled
   context, nil-client default.
 - `loader_test.go` — `Loader.Load` over `httptest` + a request counter + a

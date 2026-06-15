@@ -12,13 +12,14 @@ package changelog
 import "github.com/schmitthub/clawker/internal/semver"
 
 // Entry is one curated changelog version section, parsed from CHANGELOG.md.
+// A release is a set of changes of mixed kinds spanning many merged PRs, so an
+// Entry carries no single classifying kind or headline: the whole
+// Keep-a-Changelog body — section headings, bullets, and inline links — is the
+// unit, rendered as markdown at display time.
 type Entry struct {
 	Version string // "0.12.2" (bare, no leading v) — the semver anchor
 	Date    string // "2026-06-11"
-	Tag     Tag    // "feature" | "fix" | "breaking" | "perf" | "changed" — from metadata, else derived from the ### subsection
-	Title   string // first headline line of the body (without the leading bullet/bold markers)
-	Body    string // full markdown body of the entry (parsed; Title is derived from it — the teaser renders Title, not Body)
-	Docs    string // optional docs URL from metadata
+	Body    string // the Keep-a-Changelog markdown body (### sections + bullets), rendered verbatim
 }
 
 // Parse parses raw CHANGELOG.md bytes (Keep a Changelog format) into version

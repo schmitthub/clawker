@@ -31,7 +31,7 @@ func parseFixture(t *testing.T) []Entry {
 	return entries
 }
 
-func TestParse_HeadersAndMetadata(t *testing.T) {
+func TestParse_Headers(t *testing.T) {
 	entries := parseFixture(t)
 	if len(entries) != 3 {
 		t.Fatalf("got %d entries, want 3", len(entries))
@@ -39,14 +39,10 @@ func TestParse_HeadersAndMetadata(t *testing.T) {
 
 	// Newest-first, version + date parsed from the header. The "## [Unreleased]"
 	// section is skipped (non-semver token), so it never appears here.
-	want := []struct {
-		ver, date string
-		tag       Tag
-		docs      string
-	}{
-		{"0.12.0", "2026-06-11", TagFeature, "https://docs.clawker.dev/aliases"},
-		{"0.11.0", "2026-06-10", TagFix, ""},
-		{"0.5.0", "2026-03-20", TagFeature, ""}, // tag derived from "### Added"
+	want := []struct{ ver, date string }{
+		{"0.12.0", "2026-06-11"},
+		{"0.11.0", "2026-06-10"},
+		{"0.5.0", "2026-03-20"},
 	}
 	for i, w := range want {
 		e := entries[i]
@@ -55,12 +51,6 @@ func TestParse_HeadersAndMetadata(t *testing.T) {
 		}
 		if e.Date != w.date {
 			t.Errorf("entry %d date = %q, want %q", i, e.Date, w.date)
-		}
-		if e.Tag != w.tag {
-			t.Errorf("entry %d tag = %q, want %q", i, e.Tag, w.tag)
-		}
-		if e.Docs != w.docs {
-			t.Errorf("entry %d docs = %q, want %q", i, e.Docs, w.docs)
 		}
 	}
 }
@@ -79,25 +69,40 @@ func TestParse_SkipsUnreleased(t *testing.T) {
 	}
 }
 
-func TestParse_TitleAndBody(t *testing.T) {
+// TestParse_Body asserts the body preserves the full Keep-a-Changelog markdown
+// — every section of a multi-kind release, the bullets, and inline links — while
+// stripping HTML comments (incl. the legacy "<!-- clawker: -->" line) and the
+// trailing link-reference block.
+func TestParse_Body(t *testing.T) {
 	entries := parseFixture(t)
 	first := entries[0]
-	if first.Title != "User-configurable command aliases" {
-		t.Errorf("title = %q", first.Title)
+
+	// A release spans multiple kinds: both the Added and Fixed sections survive.
+	for _, want := range []string{
+		"### Added",
+		"### Fixed",
+		"**User-configurable command aliases.**",
+		"[docs](https://docs.clawker.dev/aliases)", // inline link preserved verbatim
+		"**Alias expansion order.**",
+	} {
+		if !strings.Contains(first.Body, want) {
+			t.Errorf("body missing %q:\n%s", want, first.Body)
+		}
 	}
-	// The metadata comment and link references must not leak into the body.
-	if strings.Contains(first.Body, metaKeyword) {
-		t.Errorf("body leaked metadata comment: %q", first.Body)
-	}
-	if strings.Contains(first.Body, "releases/tag") {
-		t.Errorf("body leaked link reference: %q", first.Body)
-	}
-	if !strings.Contains(first.Body, subsectionPrefix+"Added") {
-		t.Errorf("body missing subsection heading: %q", first.Body)
+
+	// HTML comments (incl. the legacy clawker metadata line) and the link
+	// reference block must not leak into the body.
+	for _, bad := range []string{"<!--", "clawker:", "releases/tag"} {
+		if strings.Contains(first.Body, bad) {
+			t.Errorf("body leaked %q:\n%s", bad, first.Body)
+		}
 	}
 }
 
-func TestParse_PlainHTMLCommentIgnored(t *testing.T) {
+// TestParse_HTMLCommentStripped asserts an HTML comment between the header and
+// the body is dropped from the rendered body (so neither a plain note nor a
+// legacy "<!-- clawker: -->" line leaks through), while the bullet survives.
+func TestParse_HTMLCommentStripped(t *testing.T) {
 	raw := []byte(`## [1.0.0] - 2026-01-01
 <!-- not clawker metadata -->
 
@@ -112,11 +117,11 @@ func TestParse_PlainHTMLCommentIgnored(t *testing.T) {
 	if len(entries) != 1 {
 		t.Fatalf("got %d entries, want 1", len(entries))
 	}
-	if entries[0].Tag != TagFeature {
-		t.Errorf("tag = %q, want derived %q", entries[0].Tag, TagFeature)
+	if strings.Contains(entries[0].Body, "<!--") {
+		t.Errorf("body leaked HTML comment: %q", entries[0].Body)
 	}
-	if entries[0].Docs != "" {
-		t.Errorf("docs = %q, want empty", entries[0].Docs)
+	if !strings.Contains(entries[0].Body, "A thing.") {
+		t.Errorf("body missing bullet: %q", entries[0].Body)
 	}
 }
 
@@ -181,29 +186,4 @@ func versions(es []Entry) []string {
 		out[i] = e.Version
 	}
 	return out
-}
-
-// TestTagFromSubsection covers every Keep-a-Changelog subsection → Tag mapping,
-// plus the default arm for an unrecognized heading. Only Added → feature is
-// exercised elsewhere (via the parser); the rest are otherwise untested.
-func TestTagFromSubsection(t *testing.T) {
-	cases := []struct {
-		subsection string
-		want       Tag
-	}{
-		{"Added", TagFeature},
-		{"Fixed", TagFix},
-		{"Security", TagFix},
-		{"Removed", TagBreaking},
-		{"Deprecated", TagBreaking},
-		{"Changed", TagChanged},
-		{"Frobnicated", ""}, // unknown subsection → default (no tag)
-	}
-	for _, c := range cases {
-		t.Run(c.subsection, func(t *testing.T) {
-			if got := tagFromSubsection(c.subsection); got != c.want {
-				t.Errorf("tagFromSubsection(%q) = %q, want %q", c.subsection, got, c.want)
-			}
-		})
-	}
 }

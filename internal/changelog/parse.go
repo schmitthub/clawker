@@ -7,24 +7,19 @@ import (
 )
 
 // parse splits raw Keep-a-Changelog markdown into version entries. Each entry
-// begins at a "## [x.y.z] - YYYY-MM-DD" header. The header may be followed by an
-// HTML-comment metadata line ("<!-- clawker: tag=... docs=... -->"); everything
-// up to the next version header (or a link-reference block) is the entry body.
+// begins at a "## [x.y.z] - YYYY-MM-DD" header; everything up to the next
+// version header (or the trailing link-reference block) is the entry body,
+// preserved as markdown. HTML-comment lines are dropped so they never render.
 func parse(raw string) ([]Entry, error) {
 	var entries []Entry
 	var cur *Entry
 	var body []string
-	var firstSubsection string
 
 	flush := func() {
 		if cur == nil {
 			return
 		}
 		cur.Body = strings.Trim(strings.Join(body, "\n"), "\n")
-		if cur.Tag == "" {
-			cur.Tag = tagFromSubsection(firstSubsection)
-		}
-		cur.Title = titleFromBody(cur.Body)
 		entries = append(entries, *cur)
 	}
 
@@ -33,10 +28,8 @@ func parse(raw string) ([]Entry, error) {
 
 		if version, date, ok := parseVersionHeader(trimmed); ok {
 			flush()
-			e := Entry{Version: version, Date: date}
-			cur = &e
+			cur = &Entry{Version: version, Date: date}
 			body = nil
-			firstSubsection = ""
 			continue
 		}
 
@@ -44,14 +37,8 @@ func parse(raw string) ([]Entry, error) {
 			continue // preamble before the first version header
 		}
 
-		if tag, docs, ok := parseMetaComment(trimmed); ok {
-			if tag != "" {
-				cur.Tag = Tag(tag)
-			}
-			if docs != "" {
-				cur.Docs = docs
-			}
-			continue // metadata comment is not part of the rendered body
+		if isHTMLComment(trimmed) {
+			continue // comments (incl. legacy "<!-- clawker: -->") never render
 		}
 
 		// A link-reference definition block ("[0.12.3]: https://...") at the
@@ -60,10 +47,6 @@ func parse(raw string) ([]Entry, error) {
 			flush()
 			cur = nil
 			continue
-		}
-
-		if firstSubsection == "" && strings.HasPrefix(trimmed, subsectionPrefix) {
-			firstSubsection = strings.TrimSpace(strings.TrimPrefix(trimmed, subsectionPrefix))
 		}
 
 		body = append(body, line)
@@ -91,73 +74,19 @@ func parseVersionHeader(line string) (version, date string, ok bool) {
 	if parsed, err := semver.Parse(version); err != nil || !parsed.HasPatch() {
 		return "", "", false
 	}
-	after = strings.TrimSpace(after)
-	if sep := strings.Index(after, strings.TrimSpace(dateSeparator)); sep >= 0 {
-		date = strings.TrimSpace(after[sep+len(strings.TrimSpace(dateSeparator)):])
+	// The remainder is "- YYYY-MM-DD" (or empty for an undated header). Split on
+	// the first dash and take what follows; a date's own dashes are left intact.
+	if _, tail, found := strings.Cut(after, dateDash); found {
+		date = strings.TrimSpace(tail)
 	}
 	return version, date, true
 }
 
-// parseMetaComment extracts tag/docs from "<!-- clawker: tag=feature docs=<url> -->".
-// A plain HTML comment (no "clawker:" keyword) returns ok=false.
-func parseMetaComment(line string) (tag, docs string, ok bool) {
-	if !strings.HasPrefix(line, metaCommentPrefix) || !strings.HasSuffix(line, metaCommentSuffix) {
-		return "", "", false
-	}
-	inner := strings.TrimSuffix(strings.TrimPrefix(line, metaCommentPrefix), metaCommentSuffix)
-	inner = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(inner), metaKeyword))
-	for field := range strings.FieldsSeq(inner) {
-		key, val, found := strings.Cut(field, "=")
-		if !found {
-			continue
-		}
-		switch key {
-		case metaKeyTag:
-			tag = val
-		case metaKeyDocs:
-			docs = val
-		}
-	}
-	return tag, docs, true
-}
-
-// tagFromSubsection derives a tag from the first Keep-a-Changelog subsection
-// heading when no explicit metadata tag is present.
-func tagFromSubsection(subsection string) Tag {
-	switch strings.ToLower(strings.TrimSpace(subsection)) {
-	case sectionAdded:
-		return TagFeature
-	case sectionFixed:
-		return TagFix
-	case sectionRemoved, sectionDeprecated:
-		return TagBreaking
-	case sectionChanged:
-		return TagChanged
-	case sectionSecurity:
-		return TagFix
-	default:
-		return ""
-	}
-}
-
-// titleFromBody returns the first meaningful headline of an entry body: the
-// text of the first bullet, with bold markers and the leading "- " stripped, up
-// to the first sentence-ending period.
-func titleFromBody(body string) string {
-	for line := range strings.SplitSeq(body, "\n") {
-		t := strings.TrimSpace(line)
-		if t == "" || strings.HasPrefix(t, subsectionPrefix) {
-			continue
-		}
-		t = strings.TrimPrefix(t, "- ")
-		t = strings.TrimPrefix(t, "* ")
-		t = strings.ReplaceAll(t, "**", "")
-		if dot := strings.IndexByte(t, '.'); dot >= 0 {
-			t = t[:dot]
-		}
-		return strings.TrimSpace(t)
-	}
-	return ""
+// isHTMLComment reports whether a trimmed line is a single-line HTML comment
+// ("<!-- ... -->"). Such lines (including the legacy "<!-- clawker: ... -->"
+// metadata convention) are dropped from the body so they never render.
+func isHTMLComment(line string) bool {
+	return strings.HasPrefix(line, htmlCommentPrefix) && strings.HasSuffix(line, htmlCommentSuffix)
 }
 
 // isLinkReference reports whether a line is a markdown link-reference

@@ -227,16 +227,14 @@ User reports the container fails to start or immediately exits.
 User upgraded clawker but never saw the one-time "What's new" note, or wonders
 where to find what changed.
 
-This is expected behavior, not a bug. After an upgrade, a one-time note is
-printed to standard error on the first *interactive* run, listing the curated
-changelog entries gained since the previous version (each with a title and a
-"learn more" docs link), then never again for that upgrade. The entries come
-from the curated `CHANGELOG.md`, fetched over the network.
+This is expected behavior, not a bug. After an upgrade, a one-time note shows on
+the first *interactive* run, listing what changed since the previous version,
+then never repeats for that upgrade. The changelog is fetched over the network.
 
 The note is intentionally suppressed in any of these cases:
 
-- **Standard error is not a TTY** (output piped/redirected, non-interactive
-  shell) — the note never prints.
+- **Not an interactive terminal** (output piped/redirected, non-interactive
+  shell).
 - **`CI` is set** — treated as a non-interactive environment.
 - **`CLAWKER_NO_UPDATE_NOTIFIER` is set** (any non-empty value) — the user opted
   out of both the new-version update notifier and the "What's new" note.

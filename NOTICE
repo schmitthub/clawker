@@ -103,10 +103,12 @@ github.com/gogo/protobuf/proto                                                 B
 github.com/golang/protobuf/ptypes                                              BSD-3-Clause
 github.com/google/go-cmp/cmp                                                   BSD-3-Clause
 github.com/google/uuid                                                         BSD-3-Clause
+github.com/gorilla/css/scanner                                                 BSD-3-Clause
 github.com/grpc-ecosystem/grpc-gateway/v2                                      BSD-3-Clause
 github.com/grpc-ecosystem/grpc-opentracing/go/otgrpc                           BSD-3-Clause
 github.com/klauspost/compress                                                  BSD-3-Clause
 github.com/klauspost/compress/internal/snapref                                 BSD-3-Clause
+github.com/microcosm-cc/bluemonday                                             BSD-3-Clause
 github.com/miekg/dns                                                           BSD-3-Clause
 github.com/munnerz/goautoneg                                                   BSD-3-Clause
 github.com/planetscale/vtprotobuf                                              BSD-3-Clause
@@ -150,22 +152,27 @@ github.com/emirpasic/gods                                                      I
 MIT
 ================================================================================
 
+github.com/alecthomas/chroma/v2                                                MIT
 github.com/apparentlymart/go-cidr/cidr                                         MIT
 github.com/aymanbagabas/go-osc52/v2                                            MIT
+github.com/aymerick/douceur                                                    MIT
 github.com/beorn7/perks/quantile                                               MIT
 github.com/cenkalti/backoff/v5                                                 MIT
 github.com/cespare/xxhash/v2                                                   MIT
 github.com/charmbracelet/bubbles                                               MIT
 github.com/charmbracelet/bubbletea                                             MIT
 github.com/charmbracelet/colorprofile                                          MIT
+github.com/charmbracelet/glamour                                               MIT
 github.com/charmbracelet/lipgloss                                              MIT
 github.com/charmbracelet/x/ansi                                                MIT
 github.com/charmbracelet/x/cellbuf                                             MIT
+github.com/charmbracelet/x/exp/slice                                           MIT
 github.com/charmbracelet/x/term                                                MIT
 github.com/cilium/ebpf                                                         MIT
 github.com/clipperhouse/displaywidth                                           MIT
 github.com/clipperhouse/uax29/v2/graphemes                                     MIT
 github.com/cpuguy83/go-md2man/v2/md2man                                        MIT
+github.com/dlclark/regexp2                                                     MIT
 github.com/dustin/go-humanize                                                  MIT
 github.com/felixge/httpsnoop                                                   MIT
 github.com/golang-jwt/jwt/v5                                                   MIT
@@ -183,6 +190,7 @@ github.com/mdlayher/vsock                                                      M
 github.com/mfridman/interpolate                                                MIT
 github.com/muesli/ansi                                                         MIT
 github.com/muesli/cancelreader                                                 MIT
+github.com/muesli/reflow                                                       MIT
 github.com/muesli/termenv                                                      MIT
 github.com/ncruces/go-strftime                                                 MIT
 github.com/pressly/goose/v3                                                    MIT
@@ -196,6 +204,8 @@ github.com/sirupsen/logrus                                                     M
 github.com/stretchr/testify                                                    MIT
 github.com/tonistiigi/fsutil                                                   MIT
 github.com/xo/terminfo                                                         MIT
+github.com/yuin/goldmark                                                       MIT
+github.com/yuin/goldmark-emoji                                                 MIT
 github.com/zalando/go-keyring                                                  MIT
 github.com/zalando/go-keyring/internal/shellescape                             MIT
 go.uber.org/automaxprocs                                                       MIT

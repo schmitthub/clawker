@@ -24,13 +24,13 @@ import (
 // cover the bounds the catch-up tests assert against.
 func teaserEntries() []changelog.Entry {
 	return []changelog.Entry{
-		{Version: "0.12.0", Date: "2026-06-11", Tag: changelog.TagFeature, Title: "Aliases"},
-		{Version: "0.11.0", Date: "2026-06-10", Tag: changelog.TagFix, Title: "Worktree masks"},
-		{Version: "0.10.3", Date: "2026-06-01", Tag: changelog.TagFix, Title: "A patch"},
-		{Version: "0.10.0", Date: "2026-05-20", Tag: changelog.TagFeature, Title: "A minor"},
-		{Version: "0.8.0", Date: "2026-04-20", Tag: changelog.TagFeature, Title: "Older feature"},
-		{Version: "0.6.0", Date: "2026-03-25", Tag: changelog.TagChanged, Title: "A change"},
-		{Version: "0.5.0", Date: "2026-03-20", Tag: changelog.TagFeature, Title: "Firewall"},
+		{Version: "0.12.0", Date: "2026-06-11", Body: "### Added\n\n- **Command aliases.** Define your own shortcuts.\n\n### Fixed\n\n- **Alias expansion order.** Positional args substitute correctly."},
+		{Version: "0.11.0", Date: "2026-06-10", Body: "### Fixed\n\n- **Worktree masks.** Containers protect the host repository."},
+		{Version: "0.10.3", Date: "2026-06-01", Body: "### Fixed\n\n- **A patch.** A small fix."},
+		{Version: "0.10.0", Date: "2026-05-20", Body: "### Added\n\n- **A minor.** A new capability."},
+		{Version: "0.8.0", Date: "2026-04-20", Body: "### Added\n\n- **Older feature.** Shipped a while ago."},
+		{Version: "0.6.0", Date: "2026-03-25", Body: "### Changed\n\n- **A change.** Adjusted behavior."},
+		{Version: "0.5.0", Date: "2026-03-20", Body: "### Added\n\n- **Firewall.** Egress firewall stack."},
 	}
 }
 

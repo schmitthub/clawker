@@ -64,8 +64,8 @@ jobs:
       # section yields an empty file (no-op), leaving just the auto commit
       # groups. The awk matches the literal `## [<version>] ` prefix (leading
       # `v` stripped from the tag) and copies through to the next `## [` header,
-      # dropping the `<!-- clawker: ... -->` metadata line (invisible on GitHub
-      # but otherwise present in the raw release body).
+      # dropping any single-line HTML comment (matching the in-app changelog
+      # parser, which renders the section body as markdown).
       - name: Extract curated release-notes header
         run: |
           set -euo pipefail
@@ -73,7 +73,7 @@ jobs:
           awk -v ver="## [${VERSION}]" '
             index($0, ver) == 1 { collecting = 1; print; next }
             collecting && /^## \[/ { exit }
-            collecting && /^<!-- clawker:/ { next }
+            collecting && /^<!--/ { next }
             collecting { print }
           ' CHANGELOG.md > release-notes.md
           echo "::group::release-notes.md"

@@ -57,6 +57,14 @@ All return unmodified string when disabled. Icons: Unicode+color or ASCII fallba
 
 **Terminal Size**: `TerminalWidth()` (default 80)
 
+**Markdown**: `RenderMarkdown(body string) string` (markdown.go) — renders a
+markdown string to a styled terminal string via `glamour`, using a compact
+`ansi.StyleConfig` (no document margin/padding, plain headings) for short inline
+snippets like the changelog teaser. Color profile and dark/light theme follow
+this IOStreams' own detection (honors `SetColorEnabled`/NO_COLOR); a disabled
+scheme uses the ASCII base for plain text. `WordWrap(0)` (soft-wrap) avoids
+glamour's width-padding bloat. Best-effort: returns the raw input on error.
+
 ### Spinners
 
 ```go
@@ -177,4 +185,4 @@ Lipgloss-based pure functions for composing visual output:
 
 ## Import Boundary
 
-Canonical source for all visual styling. Can import: `lipgloss`, `lipgloss/table`, `internal/text`, `internal/term/mocks`, stdlib. Cannot import: `bubbletea`, `bubbles`, `internal/tui`, `internal/logger`, `rs/zerolog`. Only `internal/iostreams` imports `lipgloss` and `lipgloss/table`. The `internal/term/mocks` import provides `FakeTerm` for the `Test()` constructor.
+Canonical source for all visual styling. Can import: `lipgloss`, `lipgloss/table`, `glamour` (+ `glamour/ansi`, `glamour/styles`, `muesli/termenv` for `RenderMarkdown`), `internal/text`, `internal/term/mocks`, stdlib. Cannot import: `bubbletea`, `bubbles`, `internal/tui`, `internal/logger`, `rs/zerolog`. Only `internal/iostreams` imports `lipgloss` and `lipgloss/table`; `glamour` (which wraps lipgloss) is allowed here for the same reason — it is a CLI-output renderer, not interactive TUI. The `internal/term/mocks` import provides `FakeTerm` for the `Test()` constructor.

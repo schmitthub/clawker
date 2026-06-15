@@ -57,9 +57,8 @@ see `prior == cur` and silently skip the gained-entries teaser. A nil
 `cliState` (store unavailable) makes the teaser a silent no-op; an empty
 `priorCurrentVersion` means no prior was recorded → no catch-up.
 
-Cursor algorithm (from `.claude/docs/changelog-system-design.md`), persisted via
-`f.State.SetLastSeenChangelog` (a field merge that never touches the
-update-check fields):
+Cursor algorithm, persisted via `f.State.SetLastSeenChangelog` (a field merge
+that never touches the update-check fields):
 
 ```
 cur = build.Version; if cur == DEV or state == nil: return
@@ -70,7 +69,7 @@ if cursor == "":                              # first changelog-aware run
     else: SetLastSeenChangelog(cur); return          # no catch-up — seed cursor silently
 if entries == nil: return                          # background load failed / empty — leave cursor, retry next run
 gained = changelog.Between(entries, cursor, cur)   # entries loaded in background
-if gained and not suppressed: teaser (titles + per-entry docs link); SetLastSeenChangelog(cur)
+if gained and not suppressed: teaser (each release body rendered as markdown); SetLastSeenChangelog(cur)
 elif not gained:              SetLastSeenChangelog(cur)   # nothing new — sync silently
 # else suppressed: leave cursor — retry next interactive run
 ```
@@ -80,8 +79,11 @@ interactive run); the silent-sync and first-run-no-catch-up paths advance the
 cursor even when output is suppressed, because there is nothing the user would
 have seen anyway. The first run with no catch-up just seeds the cursor silently —
 there is no welcome message. `printChangelogTeaser` renders to `ios.ErrOut`: a
-"📣 What's new in clawker:" header, then one bullet per gained entry
-(`v<version> <title>`) with a per-entry "learn more: <docs URL>" line.
+"📣 What's new in clawker:" header, then per gained release a bold
+`v<version> — <date>` header followed by that release's Keep-a-Changelog body
+rendered as markdown via `ios.RenderMarkdown` (sections, bullets, inline docs
+links). A release spans many kinds, so the whole body is rendered — there is no
+single per-entry tag or headline.
 
 ### Changelog entries are loaded in the background
 

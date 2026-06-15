@@ -3,7 +3,7 @@
 Some preamble that must be ignored.
 
 ## [Unreleased]
-<!-- clawker: tag=feature -->
+<!-- a work-in-progress note that must never render -->
 
 ### Added
 
@@ -14,10 +14,14 @@ Some preamble that must be ignored.
 
 ### Added
 
-- **User-configurable command aliases.** Define your own shortcuts.
+- **User-configurable command aliases.** Define your own shortcuts. [docs](https://docs.clawker.dev/aliases)
+- **Worktree run shortcut.** Spin up a container on a new branch.
+
+### Fixed
+
+- **Alias expansion order.** Positional args now substitute correctly.
 
 ## [0.11.0] - 2026-06-10
-<!-- clawker: tag=fix -->
 
 ### Fixed
 
