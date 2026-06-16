@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/schmitthub/clawker/internal/state"
 	statemocks "github.com/schmitthub/clawker/internal/state/mocks"
 )
 
@@ -154,8 +155,8 @@ func TestCheckForUpdate_TTLFreshSuppresses(t *testing.T) {
 
 	// TTL-fresh state: LastCheckedAt is "now", so the freshness gate suppresses
 	// before any fetch or persist.
-	m := statemocks.NewStub()
-	m.LastCheckedAtFunc = func() time.Time { return time.Now() }
+	m := statemocks.NewBlankState()
+	m.StateFunc = func() *state.State { return &state.State{CheckedAt: time.Now()} }
 
 	info, err := checkForUpdate(context.Background(), m, "1.0.0", srv.URL)
 	if err != nil {
@@ -178,9 +179,9 @@ func TestCheckForUpdate_NotNewerAdvancesCheckedAt(t *testing.T) {
 	srv := newReleaseServer("v1.0.0", "https://github.com/schmitthub/clawker/releases/tag/v1.0.0")
 	defer srv.Close()
 
-	// Stub LastCheckedAt is zero → never checked → the freshness gate lets the
-	// check run.
-	m := statemocks.NewStub()
+	// Blank state's CheckedAt is zero → never checked → the freshness gate lets
+	// the check run.
+	m := statemocks.NewBlankState()
 
 	// Same version as current → not newer → nil result, but the fetch succeeded.
 	info, err := checkForUpdate(context.Background(), m, "1.0.0", srv.URL)

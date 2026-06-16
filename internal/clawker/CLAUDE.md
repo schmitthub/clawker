@@ -51,7 +51,7 @@ empty entries) so calling them on a suppressed run is a safe no-op.
 
 ## CLI state facade
 
-`Main()` constructs the `*state.State` facade directly via `state.New()` — it is
+`Main()` constructs the `state.StateStore` facade directly via `state.New()` — it is
 **not** a Factory noun, because it is used only here (the update check and the
 changelog teaser). A missing/unreadable store degrades to a nil facade: the
 update check proceeds with a zero "never checked" time and the changelog teaser
@@ -71,7 +71,7 @@ Launched only when `!suppressed`. The goroutine follows the gh CLI pattern:
 - The drain (`<-updateMessageChan`) runs only when goroutines were launched; the HTTP client's own timeout bounds the worst-case wait.
 - `printUpdateNotification(ios, info)` self-guards on a nil `info` (nothing to report) and otherwise renders the upgrade notice to stderr. There is no longer a `result.IsNewer` field or an in-renderer TTY check — "nothing to report" is `nil`, and TTY/CI/opt-out is the up-front gate's job.
 
-State file (owned by `internal/state`): `config.StateDir()/update-state.yaml` (`consts.CliStateFile`).
+State file (owned by `internal/state`): `config.StateDir()/update-state.yaml` (`consts.CLIStateFile`).
 
 ## Show-Once Changelog Teaser
 

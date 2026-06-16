@@ -4,7 +4,7 @@ Owns the CLI's persisted runtime state: the update-check cache (last-checked
 timestamp, latest observed version) and the changelog cursor (the last changelog
 version shown to the user).
 
-Backed by `storage.Store[CliState]` — the same engine `internal/config` and
+Backed by `storage.Store[State]` — the same engine `internal/config` and
 `internal/project` use. Every field mutation is a dirty-path merge under a mutex
 with atomic writes, never a whole-struct marshal+rename. That field merge is the
 whole point: the background 24h update goroutine and the foreground changelog
@@ -19,14 +19,14 @@ cursor write the same file without clobbering each other.
 ## Schema
 
 ```go
-type CliState struct {
+type State struct {
     CheckedAt         time.Time `yaml:"checked_at,omitempty"`          // last update check
     LatestVersion     string    `yaml:"latest_version,omitempty"`      // newest release seen (bare semver)
     LastSeenChangelog string    `yaml:"last_seen_changelog,omitempty"` // changelog cursor (empty = unseeded)
 }
 ```
 
-`CliState` implements `storage.Schema` via `Fields()` (plain `NormalizeFields`).
+`State` implements `storage.Schema` via `Fields()` (plain `NormalizeFields`).
 `CheckedAt` relies on storage's `KindTime` support — storage serializes it as an
 RFC3339 scalar instead of recursing into the unexported fields.
 
@@ -38,37 +38,40 @@ plumbing.
 
 ## File
 
-Persisted to the XDG state dir under `consts.CliStateFile` (`update-state.yaml`)
+Persisted to the XDG state dir under `consts.CLIStateFile` (`update-state.yaml`)
 — the same filename the update checker's state uses. An older install's
 `update-state.yaml` is read in place: its `checked_at` / `latest_version` carry
-forward, and `last_seen_changelog` starts empty. Dropped keys from an older
-binary (`latest_url`, `current_version`) are simply ignored by the schema — no
-rename, no migration needed.
+forward, and `last_seen_changelog` starts empty. Keys from an older binary
+(`latest_url`, `current_version`) are no longer in the schema, but storage
+preserves unknown keys on re-save — so the `dropLegacyUpdateKeys` migration
+strips them on load (see Migrations below).
 
 ## Public API
 
-`State` is an interface; `New` returns it and `stateImpl` is the
-storage-backed implementation. Consumers depend on the interface and mock it
-via `internal/state/mocks` (moq-generated `StateMock` + `NewStub()`), exactly
-like `config.Config` and `project.ProjectManager`.
+`StateStore` is the interface; `stateStoreImpl` (embedding
+`*storage.Store[State]`) is the storage-backed implementation. Consumers depend
+on the interface and mock it via `internal/state/mocks` (moq-generated
+`StateStoreMock` + `NewBlankState()`), exactly like `config.Config` and
+`project.ProjectManager`.
 
 ```go
-func New() (State, error)             // resolves the state dir from XDG; no test seam
+func New() (StateStore, error)                  // empty seed → file-backed store; resolves the state dir from XDG
+func NewFromString(seed string) (StateStore, error) // THE constructor; seed is a YAML virtual layer (New is NewFromString(""))
 
-func Migrations() []storage.Migration // additive scaffold; currently empty
+func StateMigrations() []storage.Migration      // additive list; currently [dropLegacyUpdateKeys]
 
-type State interface {
-	// Reads (immutable snapshot)
-	Read() CliState
-	LastCheckedAt() time.Time
-	LatestVersion() string
-	LastSeenChangelog() string
+type StateStore interface {
+	// Read: immutable snapshot of the schema struct.
+	State() *State
 
 	// Field-merge mutations (Set + Write; never whole-struct overwrite)
 	RecordUpdateCheck(checkedAt time.Time, latestVersion string) error
 	SetLastSeenChangelog(version string) error
 }
 ```
+
+Reads go through `st.State().<Field>` (e.g. `st.State().CheckedAt`,
+`st.State().LastSeenChangelog`) — there are no per-field getters.
 
 `RecordUpdateCheck` writes only the update-check fields;
 `SetLastSeenChangelog` writes only the cursor. Each is a `store.Set(fn)` that
@@ -78,16 +81,18 @@ exists to guarantee, covered by `TestState_FieldMerge_NoClobber`.
 
 ## Migrations
 
-`Migrations()` is wired into the store (`WithMigrations`) even though the list is
-currently empty — the scaffold is in place so the schema can evolve additively.
-Append a new migration here when the schema changes; never edit a shipped one.
-The migration pipeline itself is storage's contract, covered by
-`internal/storage` tests; `Migrations()` is currently the empty additive
-scaffold, so there is no state-specific migration to exercise.
+`StateMigrations()` is wired into the store (`WithMigrations`) and currently
+returns `[dropLegacyUpdateKeys]`. `dropLegacyUpdateKeys` strips the pre-store
+update-checker keys (`latest_url`, `current_version`) that are no longer in the
+schema: storage preserves unknown keys on re-save, so without it those dead keys
+would linger in `update-state.yaml` forever. It is idempotent (a file with
+neither key returns false → no re-save) and returns true to trigger an atomic
+re-save of the cleaned file at load time. The list is additive — append a new
+migration here when the schema changes; never edit a shipped one.
 
 ## Construction
 
-`State` is **not** a Factory noun. It is used only in `internal/clawker.Main()`
+`StateStore` is **not** a Factory noun. It is used only in `internal/clawker.Main()`
 (the background update check and the changelog teaser), so `Main` constructs it
 directly via `state.New()` and shares the one facade between the update
 goroutine (`RecordUpdateCheck`) and the changelog teaser (`SetLastSeenChangelog`,
@@ -104,4 +109,4 @@ user XDG dir touched, no production test seam. Reopening from disk is just
 another `New()` against the same isolated dir. Tests cover: round-trip of both
 writers, field-merge non-clobber in both directions, and existing-file
 read-in-place (including the dropped-key legacy file). Consumers mock the
-`State` interface via `mocks.NewStub()`.
+`StateStore` interface via `mocks.NewBlankState()` (or `mocks.NewFromString(yaml)`).

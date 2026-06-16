@@ -9,6 +9,7 @@ import (
 	"github.com/Masterminds/semver/v3"
 
 	"github.com/schmitthub/clawker/internal/state"
+	"github.com/schmitthub/clawker/internal/testenv"
 )
 
 // changesFixture is real Keep-a-Changelog markdown spanning the bounds the
@@ -55,9 +56,10 @@ func serveChangelog(t *testing.T, status int, body string) *int {
 	return &hits
 }
 
-func newTestState(t *testing.T) *state.State {
+func newTestState(t *testing.T) state.StateStore {
 	t.Helper()
-	st, err := state.New(state.WithStateDirOverride(t.TempDir()))
+	testenv.New(t)
+	st, err := state.New()
 	if err != nil {
 		t.Fatalf("state.New: %v", err)
 	}
@@ -68,7 +70,7 @@ func newTestState(t *testing.T) *state.State {
 // test exercises the diff path rather than the first-run bootstrap. The string
 // is intentionally un-validated here: CheckForChanges owns parsing it, including
 // the failure branch when it is not a version.
-func seedCursor(t *testing.T, st *state.State, version string) {
+func seedCursor(t *testing.T, st state.StateStore, version string) {
 	t.Helper()
 	if err := st.SetLastSeenChangelog(version); err != nil {
 		t.Fatalf("seed cursor: %v", err)
@@ -146,7 +148,7 @@ func TestCheckForChanges_FirstRunSeedsCursorNoFetch(t *testing.T) {
 	if len(gained) != 0 {
 		t.Errorf("first run returned %v, want no entries (no backfill)", versions(gained))
 	}
-	if cur := st.LastSeenChangelog(); cur != "0.12.0" {
+	if cur := st.State().LastSeenChangelog; cur != "0.12.0" {
 		t.Errorf("cursor = %q, want seeded to 0.12.0", cur)
 	}
 	if *hits != 0 {
@@ -170,7 +172,7 @@ func TestCheckForChanges_GarbageCursorTreatedAsFirstRun(t *testing.T) {
 	if len(gained) != 0 {
 		t.Errorf("garbage cursor returned %v, want no entries (first-run reseed)", versions(gained))
 	}
-	if cur := st.LastSeenChangelog(); cur != "0.12.0" {
+	if cur := st.State().LastSeenChangelog; cur != "0.12.0" {
 		t.Errorf("cursor = %q, want reseeded to 0.12.0", cur)
 	}
 	if *hits != 0 {
@@ -193,7 +195,7 @@ func TestCheckForChanges_AdvancesCursor(t *testing.T) {
 	if len(gained) == 0 {
 		t.Fatal("expected gained entries")
 	}
-	if cur := st.LastSeenChangelog(); cur != "0.12.0" {
+	if cur := st.State().LastSeenChangelog; cur != "0.12.0" {
 		t.Errorf("cursor = %q, want advanced to 0.12.0", cur)
 	}
 }
@@ -210,7 +212,7 @@ func TestCheckForChanges_StoresCanonicalCursor(t *testing.T) {
 		if _, err := CheckForChanges(context.Background(), st, callerVersion(t, "v0.12.0")); err != nil {
 			t.Fatalf("CheckForChanges: %v", err)
 		}
-		if cur := st.LastSeenChangelog(); cur != "0.12.0" {
+		if cur := st.State().LastSeenChangelog; cur != "0.12.0" {
 			t.Errorf("seeded cursor = %q, want canonical 0.12.0 (not v-prefixed)", cur)
 		}
 	})
@@ -223,7 +225,7 @@ func TestCheckForChanges_StoresCanonicalCursor(t *testing.T) {
 		if _, err := CheckForChanges(context.Background(), st, callerVersion(t, "v0.12.0")); err != nil {
 			t.Fatalf("CheckForChanges: %v", err)
 		}
-		if cur := st.LastSeenChangelog(); cur != "0.12.0" {
+		if cur := st.State().LastSeenChangelog; cur != "0.12.0" {
 			t.Errorf("advanced cursor = %q, want canonical 0.12.0 (not v-prefixed)", cur)
 		}
 	})
@@ -258,7 +260,7 @@ func TestCheckForChanges_FetchErrorNoAdvance(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error on non-200 response")
 	}
-	if cur := st.LastSeenChangelog(); cur != "0.10.0" {
+	if cur := st.State().LastSeenChangelog; cur != "0.10.0" {
 		t.Errorf("cursor advanced to %q on fetch error, want untouched 0.10.0", cur)
 	}
 }

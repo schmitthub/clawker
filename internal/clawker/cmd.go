@@ -58,7 +58,7 @@ func Main() int {
 	// Factory noun. A missing/unreadable state store degrades to a nil facade: the
 	// update check proceeds with a zero "never checked" time and the changelog
 	// teaser is a silent no-op. Errors are logged to the file log, never surfaced.
-	var cliState *state.State
+	var cliState state.StateStore
 	if st, err := state.New(); err == nil {
 		cliState = st
 	} else if log, logErr := f.Logger(); logErr == nil {

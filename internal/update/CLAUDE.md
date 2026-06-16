@@ -35,7 +35,7 @@ There is no `IsNewer` field: presence of a non-nil `*ReleaseInfo` is itself the
 ## Exported Function
 
 ```go
-func CheckForUpdate(ctx context.Context, st *state.State, currentVersion, repo string) (*ReleaseInfo, error)
+func CheckForUpdate(ctx context.Context, st state.StateStore, currentVersion, repo string) (*ReleaseInfo, error)
 ```
 
 Return contract:
@@ -46,7 +46,7 @@ Return contract:
 | `(*ReleaseInfo, nil)` | a **strictly newer** release is available |
 | `(nil, error)` | the fetch failed (API/network/decode) |
 
-`CheckForUpdate` reads `st.LastCheckedAt()` for the freshness gate. A nil `st`
+`CheckForUpdate` reads `st.State().CheckedAt` for the freshness gate. A nil `st`
 disables both the gate read and persistence (the check proceeds with a zero
 "never checked" time and nothing is persisted).
 
@@ -96,7 +96,7 @@ surface is just `CheckForUpdate` + `ReleaseInfo`.
 
 ## CheckForUpdate Flow
 
-1. Read `st.LastCheckedAt()` (zero if `st == nil`); `shouldCheckForUpdate` →
+1. Read `st.State().CheckedAt` (zero if `st == nil`); `shouldCheckForUpdate` →
    return `(nil, nil)` if TTL-fresh
 2. HTTP GET `https://api.github.com/repos/{owner}/{repo}/releases/latest` (5s
    timeout, context-aware)
@@ -110,13 +110,14 @@ surface is just `CheckForUpdate` + `ReleaseInfo`.
 The unexported `checkForUpdate(ctx, st, currentVersion, url)` is the
 URL-parameterized core that the exported wrapper builds the GitHub URL for and
 delegates to — tests drive it against an httptest URL (with a real
-`state.WithStateDirOverride` facade where persistence is asserted).
+file-backed store where persistence is asserted, or a `state/mocks` stub where
+only call counts matter).
 
 ## Integration Point
 
 Wired into `internal/clawker/cmd.go:Main()` (gh CLI pattern):
 
-- `Main` constructs the `*state.State` facade directly (it is not a Factory noun)
+- `Main` constructs the `state.StateStore` facade directly (it is not a Factory noun)
 - `Main` owns the env/CI opt-out decision (whether to launch the check at all)
 - `context.WithCancel` creates a cancellable context for the HTTP request
 - A buffered(1) channel carries the `*update.ReleaseInfo`; the goroutine sends
@@ -129,7 +130,7 @@ Wired into `internal/clawker/cmd.go:Main()` (gh CLI pattern):
 - Errors logged via `logger.Debug().Err(err)` (always to file log)
 
 State file (owned by `internal/state`): `config.StateDir()/update-state.yaml`
-(`consts.CliStateFile`).
+(`consts.CLIStateFile`).
 
 ## Testing
 
@@ -140,8 +141,9 @@ JSON, empty tag_name, context cancellation, v-prefix handling, and `isNewer` ove
 a table that includes unparseable inputs (`"DEV"`, `"nightly"`, etc. → not newer
 — the relocated dev-build behavior). A regression test
 (`TestCheckForUpdate_NotNewerAdvancesCheckedAt`) proves a not-newer fetch still
-advances `checked_at` via a real `state.WithStateDirOverride` facade — the
-persist-on-fetch-success contract. Tests drive the unexported `checkForUpdate`
+records the check by asserting `RecordUpdateCheckCalls()` on a
+`internal/state/mocks` stub (`NewBlankState()`) — the persist-on-fetch-success
+contract. Tests drive the unexported `checkForUpdate`
 core against the httptest URL, so they exercise the real
 gate→fetch→persist→assemble path. State persistence/non-clobber internals are
 covered in `internal/state`.

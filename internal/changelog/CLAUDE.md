@@ -62,7 +62,7 @@ type Entry struct {
 }
 
 // CheckForChanges owns the show-once cursor end to end.
-func CheckForChanges(ctx context.Context, st state.State, current *semver.Version) ([]Entry, error)
+func CheckForChanges(ctx context.Context, st state.StateStore, current *semver.Version) ([]Entry, error)
 
 var ChangelogURL string // raw CHANGELOG.md on main (consts.RawGitHubBaseURL + consts.GitHubRepo)
 ```
@@ -70,7 +70,7 @@ var ChangelogURL string // raw CHANGELOG.md on main (consts.RawGitHubBaseURL + c
 `CheckForChanges` behavior:
 
 - **`st == nil`** (state store unavailable) → silent no-op, returns `nil, nil`.
-- **First run** — the cursor (`st.LastSeenChangelog()`) is empty or does not
+- **First run** — the cursor (`st.State().LastSeenChangelog`) is empty or does not
   parse as a version → seed the cursor at `current` and return `nil` **without
   fetching**. There is **no catch-up backfill** across a changelog-blind
   upgrade; the cursor is "last seen" from here on.
@@ -115,7 +115,8 @@ stdlib `net/http`. No on-disk cache, no clock, no Factory noun.
   Fixed both survive) with inline links intact, HTML-comment + link-reference
   stripping.
 - `checkforchanges_test.go` — `CheckForChanges` over `httptest` + a request-hit
-  counter + a `state.WithStateDirOverride` store: the cursor is seeded as a
+  counter + a real isolated store (`testenv.New(t)` + `state.New()`): the cursor
+  is seeded as a
   **raw string** (prod parses it), so the range table, the
   first-run-seeds-no-fetch path, the **garbage-cursor → first-run** failure
   branch, always-advances, the **`String()` canonical-cursor** assertion (a
