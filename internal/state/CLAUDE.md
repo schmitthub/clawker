@@ -77,7 +77,7 @@ Reads go through `st.State().<Field>` (e.g. `st.State().CheckedAt`,
 `SetLastSeenChangelog` writes only the cursor. Each is a `store.Set(fn)` that
 mutates its fields in a deep copy, then `store.Write()`. Because the store merges
 by dirty path, neither clobbers the other — that invariant is what this package
-exists to guarantee, covered by `TestState_FieldMerge_NoClobber`.
+exists to guarantee, covered by `TestState_WritersDoNotClobber`.
 
 ## Migrations
 

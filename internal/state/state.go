@@ -2,17 +2,18 @@
 // (last-checked timestamp, latest observed version) and the changelog cursor
 // (the last changelog version the user has been shown).
 //
-// It is backed by storage.Store[CliState] — the same engine config and the
+// It is backed by storage.Store[State] — the same engine config and the
 // project registry use — so every field mutation is a dirty-path merge under a
 // mutex with atomic writes, never a whole-struct marshal+rename. That field
 // merge is what lets the background 24h update goroutine and the foreground
 // changelog cursor write the same file without clobbering each other.
 //
-// The file lives in the state dir under consts.CliStateFile, the same key the
+// The file lives in the state dir under consts.CLIStateFile, the same key the
 // update checker uses. An existing install's state file is read in place — its
 // checked_at / latest_version carry forward, and last_seen_changelog starts
-// empty. A legacy current_version key from an older binary is ignored (dropped
-// from the schema).
+// empty. Storage preserves unknown keys on re-save, so the dropLegacyUpdateKeys
+// migration strips the legacy latest_url / current_version keys from an older
+// binary's file on load rather than letting them linger.
 package state
 
 import (
@@ -41,7 +42,9 @@ type stateStoreImpl struct {
 	*storage.Store[State]
 }
 
-// NewFromString creates an seeded StateStore from YAML. Panics on invalid input.
+// NewFromString creates a StateStore seeded from a YAML string, returning an
+// error if the seed fails to load. The seed is merged as the lowest-priority
+// virtual layer through the real storage pipeline.
 func NewFromString(stateStr string) (StateStore, error) {
 	store, err := storage.NewFromString[State](stateStr,
 		storage.WithFilenames(consts.CLIStateFile),
