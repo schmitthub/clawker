@@ -55,8 +55,8 @@ on the interface and mock it via `internal/state/mocks` (moq-generated
 `project.ProjectManager`.
 
 ```go
-func New() (StateStore, error)                  // empty seed → file-backed store; resolves the state dir from XDG
-func NewFromString(seed string) (StateStore, error) // THE constructor; seed is a YAML virtual layer (New is NewFromString(""))
+func New() (StateStore, error)                  // production: file-backed store (filenames + WithDefaultFilename guard + migrations + state dir + lock); resolves the state dir from XDG
+func NewFromString(seed string) (StateStore, error) // in-memory test seam: seed-only, NO path options → no discovery, no disk, no migrations. NOT New("") — used by mocks/stubs + intra-pkg tests that don't need an isolated FS
 
 func StateMigrations() []storage.Migration      // additive list; currently [dropLegacyUpdateKeys]
 

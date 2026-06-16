@@ -172,9 +172,10 @@ func TestCheckForUpdate_TTLFreshSuppresses(t *testing.T) {
 
 // TestCheckForUpdate_NotNewerAdvancesCheckedAt is the regression guard for the
 // persist-on-fetch-success contract: a NOT-NEWER fetch must still advance
-// checked_at (and record latest_version). If persistence were keyed on isNewer,
-// checked_at would never advance on the common not-newer path, the TTL gate
-// would never throttle, and clawker would hit the GitHub API every run.
+// checked_at (and record latest_version). If persistence were keyed on the
+// newer/not-newer comparison, checked_at would never advance on the common
+// not-newer path, the TTL gate would never throttle, and clawker would hit the
+// GitHub API every run.
 func TestCheckForUpdate_NotNewerAdvancesCheckedAt(t *testing.T) {
 	srv := newReleaseServer("v1.0.0", "https://github.com/schmitthub/clawker/releases/tag/v1.0.0")
 	defer srv.Close()
@@ -192,7 +193,7 @@ func TestCheckForUpdate_NotNewerAdvancesCheckedAt(t *testing.T) {
 		t.Fatalf("expected nil result (not newer), got %+v", info)
 	}
 
-	// The mutation this guards: moving RecordUpdateCheck after the !isNewer
+	// The mutation this guards: moving RecordUpdateCheck after the not-newer
 	// return would record zero calls. Persistence must fire on the not-newer
 	// fetch, before the newer/not-newer decision.
 	calls := m.RecordUpdateCheckCalls()
@@ -201,43 +202,6 @@ func TestCheckForUpdate_NotNewerAdvancesCheckedAt(t *testing.T) {
 	}
 	if calls[0].LatestVersion != "1.0.0" {
 		t.Errorf("recorded latest_version = %q, want %q", calls[0].LatestVersion, "1.0.0")
-	}
-}
-
-func TestIsNewer(t *testing.T) {
-	tests := []struct {
-		latest  string
-		current string
-		want    bool
-	}{
-		{"2.0.0", "1.0.0", true},
-		{"1.1.0", "1.0.0", true},
-		{"1.0.1", "1.0.0", true},
-		{"1.0.0", "1.0.0", false},
-		{"0.9.0", "1.0.0", false},
-		{"1.0.0", "2.0.0", false},
-		{"0.2.0", "0.1.3", true},
-		{"0.1.4", "0.1.3", true},
-		{"0.1.3", "0.1.3", false},
-		// Unparseable versions — fallback returns false (don't claim newer).
-		// This is also where a non-release build is handled: an unparseable
-		// current ("DEV" placeholder, "nightly", etc.) never reports an upgrade,
-		// so no explicit dev-build gate is needed in shouldCheckForUpdate.
-		{"invalid", "1.0.0", false},
-		{"1.0.0", "invalid", false},
-		{"invalid", "invalid", false},
-		{"foo", "bar", false},
-		{"nightly", "1.0.0", false},
-		{"2.0.0", "DEV", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.latest+"_vs_"+tt.current, func(t *testing.T) {
-			got := isNewer(tt.latest, tt.current)
-			if got != tt.want {
-				t.Errorf("isNewer(%q, %q) = %v, want %v", tt.latest, tt.current, got, tt.want)
-			}
-		})
 	}
 }
 

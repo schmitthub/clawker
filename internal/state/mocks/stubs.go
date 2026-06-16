@@ -14,17 +14,19 @@ func NewBlankState() *StateStoreMock {
 }
 
 // NewFromString returns an in-memory *StateStoreMock seeded from YAML. The YAML
-// is parsed through the real schema (so legacy/partial inputs deserialize
-// exactly as production would), but the resulting snapshot is captured in
-// memory and the stub touches no disk: reads return the snapshot and writes are
-// record-only. Panics on invalid YAML to match test-stub ergonomics.
+// is parsed through the real schema, but state.NewFromString is the option-free
+// in-memory seam (no WithStateDir), so the store discovers nothing on disk and
+// touches no real XDG state dir: reads return the in-memory snapshot and writes
+// are record-only. Legacy-key migrations do NOT run on the seam — that path is
+// covered by intra-package New()+testenv tests. Panics on invalid YAML to match
+// test-stub ergonomics.
 func NewFromString(yaml string) *StateStoreMock {
 	st, err := state.NewFromString(yaml)
 	if err != nil {
 		panic(err)
 	}
-	// Read the snapshot once. This is a pure read (lazy create means no file is
-	// written), so no real XDG state dir is touched.
+	// state.NewFromString wires no path options, so this read discovers no file
+	// and touches no real XDG state dir — the snapshot is purely the seed.
 	snap := st.State()
 	return newMock(snap)
 }

@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/Masterminds/semver/v3"
@@ -53,9 +52,9 @@ type githubRelease struct {
 // check ran recently (within cacheTTL). Env/CI opt-out suppression is NOT handled
 // here — that is the caller's responsibility (see CheckForUpdate's doc).
 //
-// A non-release build whose version does not parse as semver naturally produces
-// no upgrade notification (isNewer returns false, so CheckForUpdate returns nil),
-// so no explicit dev-build gate is needed here.
+// A non-release build whose version does not parse as semver is rejected up front
+// by checkForUpdate (semver.NewVersion(currentVersion) fails before any fetch), so
+// no explicit dev-build gate is needed here.
 //
 // lastCheckedAt is the timestamp of the last recorded check, supplied by the
 // caller from persisted state; a zero value means "never checked".
@@ -114,6 +113,12 @@ func CheckForUpdate(ctx context.Context, st state.StateStore, currentVersion, re
 // advances on every successful fetch, not only when a newer release is found.
 func checkForUpdate(ctx context.Context, st state.StateStore, currentVersion, url string) (*ReleaseInfo, error) {
 	var lastCheckedAt time.Time
+
+	cv, err := semver.NewVersion(currentVersion)
+	if err != nil {
+		return nil, err
+	}
+
 	if st != nil {
 		lastCheckedAt = st.State().CheckedAt
 	}
@@ -126,24 +131,26 @@ func checkForUpdate(ctx context.Context, st state.StateStore, currentVersion, ur
 		return nil, err
 	}
 
-	latestVersion := strings.TrimPrefix(release.TagName, "v")
-	currentBare := strings.TrimPrefix(currentVersion, "v")
+	lv, err := semver.NewVersion(release.TagName)
+	if err != nil {
+		return nil, err
+	}
 
 	// Persist on fetch success, BEFORE the newer/not-newer decision, so the TTL
 	// gate throttles regardless of outcome. nil st skips persistence.
 	if st != nil {
-		if err := st.RecordUpdateCheck(time.Now(), latestVersion); err != nil {
+		if err := st.RecordUpdateCheck(time.Now(), lv.String()); err != nil {
 			return nil, fmt.Errorf("recording update check: %w", err)
 		}
 	}
 
-	if !isNewer(latestVersion, currentBare) {
+	if !lv.GreaterThan(cv) {
 		return nil, nil
 	}
 
 	return &ReleaseInfo{
-		CurrentVersion: currentBare,
-		LatestVersion:  latestVersion,
+		CurrentVersion: cv.String(),
+		LatestVersion:  lv.String(),
 		ReleaseURL:     release.HTMLURL,
 	}, nil
 }
@@ -178,21 +185,4 @@ func fetchLatestReleaseFromURL(ctx context.Context, url string) (*githubRelease,
 	}
 
 	return &release, nil
-}
-
-// isNewer reports whether latest is a newer version than current. Both accept an
-// optional leading "v" (Masterminds NewVersion tolerates it). Conservative: when
-// either side is unparseable, ordering is undefined, so do not claim an upgrade
-// is available — this is what keeps non-release builds (whose version may not
-// parse) from nagging, with no explicit dev-build branch.
-func isNewer(latest, current string) bool {
-	lv, err := semver.NewVersion(latest)
-	if err != nil {
-		return false
-	}
-	cv, err := semver.NewVersion(current)
-	if err != nil {
-		return false
-	}
-	return lv.Compare(cv) > 0
 }

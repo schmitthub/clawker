@@ -140,8 +140,11 @@ The engine-side rules that callers trip over:
   `storage: no write path available (no layers or filenames)`.
 - **`WithDefaultFilename` does not substitute for `WithFilenames`.** It only picks
   *which* name out of `filenames` to write (defaults to `filenames[0]`) and is
-  read *inside* the `len(filenames) > 0` block — inert on its own. Redundant for a
-  single-file store.
+  read *inside* the `len(filenames) > 0` block — inert on its own. Still wire it
+  even on a single-file store: it is a drift-proof guard that pins the write
+  target to the main file, so a later-added second filename (e.g. a `.local`
+  override placed first for read precedence) can't silently repoint fresh writes
+  to `filenames[0]`. See the store-backed-package rule.
 - **Pass directories, not file paths.** `WithStateDir`/`WithConfigDir`/`WithPaths`
   add a *directory*; storage joins `{dir}/{filename}`. Passing a pre-joined
   `{dir}/{file}` makes discovery probe `{dir}/{file}/{file}.yaml` and a write
@@ -187,6 +190,6 @@ Deepest fixture level always has both `config.local.yaml` and `config.yaml` with
 - **Nil vs zero** — Nil pointers/slices/empty strings = "not set". Non-nil zero values = "explicitly set".
 - **`time.Time` is a scalar leaf (`KindTime`)** — although it is a Go struct, both `NormalizeFields` and the `structToMap`/`encodeValue` write path special-case it: it is classified as a leaf and serialized as an RFC3339 scalar via yaml.v3, never recursed into its unexported fields. Used by `internal/state`'s `State.CheckedAt`.
 - **Dirty is store-wide** — `Set` marks entire store dirty, not individual fields.
-- **`WithFilenames` is load-bearing** — drives discovery AND the create-if-missing write gate. Omit it → existing files never found and `Write` fails `no write path available`. `WithDefaultFilename` does not substitute (inert without filenames). See Construction Contract above.
+- **`WithFilenames` is load-bearing** — drives discovery AND the create-if-missing write gate. Omit it → existing files never found and `Write` fails `no write path available`. `WithDefaultFilename` does not substitute (inert without filenames), but pair it in as a drift-proof guard that pins the write target. See Construction Contract above.
 - **A store writes only with a dir option + `WithFilenames`** — `New`/`NewFromString` with *no path options* is an in-memory double: `Write()` errors `no write path available` by design. Add `WithStateDir()`/`WithPaths()` + `WithFilenames()` and it discovers + lazily creates the file on first `Write`.
 - **File locking is advisory** — `flock` is cooperative. Lock files (`.lock` suffix) left on disk intentionally.

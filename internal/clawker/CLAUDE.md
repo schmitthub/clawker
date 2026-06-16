@@ -64,7 +64,7 @@ needed.
 Launched only when `!suppressed`. The goroutine follows the gh CLI pattern:
 `context.WithCancel` + buffered(1) channel + blocking drain.
 
-- The goroutine calls `update.CheckForUpdate(updateCtx, cliState, buildVersion, consts.GitHubRepo)` directly (no wrapper). That function applies its TTL freshness gate from the state facade and persists `RecordUpdateCheck` on success. It returns `(nil, nil)` when the running version is up to date or the check is TTL-fresh; it returns `(*update.ReleaseInfo, nil)` **only** when a newer release exists. A non-nil error may accompany a nil result — it is logged, never surfaced.
+- The goroutine calls `update.CheckForUpdate(updateCtx, cliState, buildVersion, consts.GitHubRepo)` directly (no wrapper), passing the raw `buildVersion` string — cmd.go imports no semver. `CheckForUpdate` owns all parsing: it validates `buildVersion` up front (a non-release `"DEV"` build fails the parse and returns `(nil, error)` **before** any fetch — the dev-build case, handled at the parse boundary, not a separate gate), applies its TTL freshness gate from the state facade, and persists `RecordUpdateCheck` on success. It returns `(nil, nil)` when up to date or TTL-fresh, `(*update.ReleaseInfo, nil)` **only** when a newer release exists, and `(nil, error)` on a fetch/parse failure — a non-nil error with a nil result is logged, never surfaced.
 - The goroutine recovers from panics (logged at `Warn`, file-only) and always sends exactly once on the buffered(1) channel.
 - The update/changelog contexts are NOT cancelled after `ExecuteC()` — the goroutines need to complete so they can persist their state; the deferred cancels handle cleanup on exit.
 - The buffered(1) channels prevent a goroutine leak if `Main()` returns early.

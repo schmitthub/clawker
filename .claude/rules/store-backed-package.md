@@ -59,57 +59,74 @@ type <x>StoreImpl struct {
 - **Writes are field-merge**, not whole-struct overwrite: `s.Set(func(st *<Schema>){ st.X = ... })` then `s.Write()`. Each write method touches a **disjoint** set of fields it owns, so independent writers (e.g. a background goroutine and a foreground path) cannot clobber each other. That disjoint-by-ownership invariant is the whole reason to back state with `storage.Store` instead of a raw marshal+rename.
 - **The package owns its errors.** Every storage error is wrapped `<pkg>: <verb>: %w`. Define package-local sentinels here, not in storage.
 
-## The constructor template — `New` + `NewFromString`, symbol-for-symbol
+## The constructor template — `New` (file-backed) + `NewFromString` (in-memory)
 
-Every store-backed package reproduces this **exact pair of symbols**. It is a
-template, not a suggestion: same names, same shapes, same delegation. Copy
-`internal/state` symbol-for-symbol and rename the domain noun.
+Every store-backed package reproduces this **pair of symbols** — but they are
+**not** a wrapper pair (`New` is *not* `NewFromString("")`). They serve different
+masters: `New` is the production, file-backed constructor that wires every
+option; `NewFromString` is a bare in-memory seed-only double for tests that don't
+need an isolated FS. Copy `internal/state` and rename the domain noun.
 
 ```go
-// New is the production entry point: empty seed → pure file-backed store.
+// New is the production entry point: a file-backed store. ALL option wiring lives
+// here, once — filenames, directory, migrations, lock.
 func New() (<X>Store, error) {
-	return NewFromString("")
-}
-
-// NewFromString is THE constructor. All option wiring lives here, once. The
-// seed is a YAML string merged as the lowest-priority virtual layer.
-func NewFromString(seed string) (<X>Store, error) {
-	store, err := storage.New[<Schema>](seed,
-		storage.WithFilenames(consts.<X>File), // LOAD-BEARING — see below
-		storage.WithStateDir(),                // or WithConfigDir/WithDataDir
+	store, err := storage.NewFromString[<Schema>]("",
+		storage.WithFilenames(consts.<X>File),        // LOAD-BEARING — see below
+		storage.WithDefaultFilename(consts.<X>File),  // drift-proof guard — see below
+		storage.WithStateDir(),                       // or WithConfigDir/WithDataDir
 		storage.WithMigrations(<X>Migrations()...),
-		storage.WithLock(),                    // if written by concurrent processes
+		storage.WithLock(),                           // if written by concurrent processes
 	)
 	if err != nil {
 		return nil, fmt.Errorf("<pkg>: loading <thing>: %w", err)
 	}
 	return &<x>StoreImpl{Store: store}, nil
 }
+
+// NewFromString is the in-memory test seam: the seed YAML is the ONLY layer,
+// deserialized through the real schema with NO directory, NO discovery, NO disk.
+// It deliberately omits every path option so it can never read or write a file —
+// that is the whole point. Used by mocks/stubs and intra-package tests that need
+// a seeded store without an isolated FS env. (NOT New-with-a-seed.)
+func NewFromString(seed string) (<X>Store, error) {
+	store, err := storage.NewFromString[<Schema>](seed)
+	if err != nil {
+		return nil, fmt.Errorf("<pkg>: loading <thing> from string: %w", err)
+	}
+	return &<x>StoreImpl{Store: store}, nil
+}
 ```
 
-### Why the pair exists — the seed string IS the seam
+### Why the pair exists — file-backed prod vs. in-memory seam
 
-This pairing is the single most important part of the template, because it
-removes the "variadic file seam" nonsense entirely:
+The two constructors are deliberately split, not a wrapper pair. They remove the
+"variadic file seam" nonsense entirely by seaming at the **data layer**, not the
+path:
 
-- **`NewFromString(seed)` is the one real constructor.** Every option — filenames,
-  directory, migrations, lock — is wired here, in exactly one place. `New()` is
-  literally `NewFromString("")`. There is no second wiring to drift out of sync.
-- **The `seed` is a data-layer seam, not a path seam.** Tests and prod edge cases
-  inject state by passing a YAML string — a real virtual layer through the real
-  merge + deserialize pipeline — *not* by redirecting the file. So you exercise
-  the actual production code path against arbitrary starting state (legacy keys,
-  partial files, migration inputs, zero values) with zero file I/O.
-- **That is why no directory-override option is ever needed.** Because state is
-  injected through the seed, you never need `With<X>Dir(dir)` (or any variadic) to
-  point the store at a test directory. Adding one is a testing.md rule #8
-  violation (production code added solely for a test seam) — and redundant, since
-  `NewFromString` already seams at the data layer and `testenv` already isolates
-  the real directory via `CLAWKER_<DIR>_DIR`.
+- **`New()` is the production constructor.** Every path option — filenames,
+  directory, migrations, lock — is wired here, in one place. It discovers an
+  existing file, lazily creates it on first `Write`, and runs migrations on load.
+  Production code (and intra-package tests that exercise the real file path) use
+  this.
+- **`NewFromString(seed)` is the in-memory test seam.** It wires NO path options,
+  so storage discovers nothing on disk and the seed is the only layer, parsed
+  through the real schema deserialize. A test gets a seeded snapshot with **zero
+  file I/O** and **no dependence on an isolated FS env**. This is what
+  `mocks/stubs.go` builds on — a consumer mock that reads `<Thing>()` is genuinely
+  deterministic, never reflecting a real on-disk file. (An earlier shape where
+  `New() == NewFromString("")` wired `WithStateDir` into the seam, so stubs
+  silently read the real `~/.local/state/...` file — the split fixes that.)
+- **The `seed` is a data-layer seam, not a path seam.** Tests inject state by
+  passing a YAML string, *not* by redirecting the file. So you never need a
+  `With<X>Dir(dir)` test override (a testing.md rule #8 violation) — `NewFromString`
+  seams at the data layer, and the real file-backed path is covered by `New()` +
+  `testenv` (which isolates `CLAWKER_<DIR>_DIR`).
 
-`storage.New[T]` and `storage.NewFromString[T]` are themselves the same engine
-call (`New` delegates to `NewFromString`) — the package-level pair mirrors the
-engine-level pair deliberately.
+Caveat: because `NewFromString` omits `WithMigrations`, a seed is **not** migrated
+— it deserializes through the schema but legacy-key stripping does not run.
+Migration behavior is covered by intra-package tests against the real `New()` +
+`testenv`, not the in-memory seam.
 
 ### `WithFilenames` is mandatory and load-bearing
 
@@ -124,11 +141,17 @@ and omitting it breaks both silently:
    → the gate is false → `Write` returns `storage: no write path available
    (no layers or filenames)`. The file is never created.
 
-`WithDefaultFilename(name)` does **not** substitute for this. It only selects
-*which* name out of `filenames` to write when there is more than one, and it
-defaults to `filenames[0]`. It is read *inside* the `len(filenames) > 0` block,
-so without `WithFilenames` it is inert. For a single-file store, never use
-`WithDefaultFilename` — it is redundant.
+`WithDefaultFilename(name)` does **not** substitute for this — it only selects
+*which* name out of `filenames` to write when there is more than one, and is read
+*inside* the `len(filenames) > 0` block, so without `WithFilenames` it is inert.
+
+But **wire it anyway, even for a today-single-file store** — it is a deliberate
+drift-proof guard, not redundancy. Without it, `defaultWritePath` falls back to
+`filenames[0]`. The moment a future change adds a second filename — e.g. a
+`.local` override variant placed first for read precedence — `filenames[0]`
+silently becomes that override and fresh writes start landing in the wrong file.
+Pinning `WithDefaultFilename(consts.<X>File)` to the main file makes the write
+target explicit and immune to that reordering. Cheap insurance; always pass it.
 
 ### Directory: pass a directory, never a pre-joined file path
 
@@ -175,7 +198,10 @@ own tests use the real file-backed store.
 ### `stubs.go` requirements
 
 ```go
-func NewBlank<X>() *<X>StoreMock { return newMockFrom(must(state.New())) }
+// Blank uses NewFromString("") — the in-memory seam — NOT New(). New() wires
+// WithStateDir and would read the real ~/.local/state/... file, making the stub
+// non-deterministic (it would reflect whatever the dev/CI box has on disk).
+func NewBlank<X>() *<X>StoreMock { return newMockFrom(must(state.NewFromString(""))) }
 func NewFromString(yaml string) *<X>StoreMock { return newMockFrom(must(state.NewFromString(yaml))) }
 
 // newMockFrom wires EVERY method — reads AND writes — to a seeded real store.

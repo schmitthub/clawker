@@ -5,10 +5,11 @@ the latest tag against the running version, reads the freshness gate from CLI
 state (`internal/state`), and persists the check there itself.
 
 **Foundation-tier package:** stdlib + `net/http`. Imports `internal/state` and
-`github.com/Masterminds/semver/v3` (for version comparison). The freshness gate
-(`shouldCheckForUpdate`) and the version comparison (`isNewer`) are pure — they
-take plain values and do no I/O — while `CheckForUpdate` owns the state read +
-write and the GitHub fetch.
+`github.com/Masterminds/semver/v3`. The package owns ALL semver work — the caller
+passes raw version strings and imports no semver. The freshness gate
+(`shouldCheckForUpdate`) is pure (a timestamp in, no I/O); `CheckForUpdate` owns
+the semver parse, the newer/not-newer comparison (`lv.GreaterThan(cv)`), the
+state read + write, and the GitHub fetch.
 
 The caller passes the current version string (no dependency on `internal/build`).
 `RecordUpdateCheck` is a field merge that writes only the update-check fields, so
@@ -50,7 +51,7 @@ Return contract:
 disables both the gate read and persistence (the check proceeds with a zero
 "never checked" time and nothing is persisted).
 
-### Persist on every successful fetch (not on isNewer)
+### Persist on every successful fetch (not on the newer/not-newer comparison)
 
 `st.RecordUpdateCheck(time.Now(), latestVersion)` fires on **every successful
 fetch** — keyed on fetch-success, not on whether a newer release was found — and
@@ -80,32 +81,36 @@ check ran recently:
 
 A zero `lastCheckedAt` means "never checked" — the TTL gate never suppresses. A
 future timestamp (clock skew, later corrected) is treated as stale, not fresh
-(`elapsed >= 0` guard), so it does not spuriously suppress checks. There is **no
-dev-build gate** — a non-release build is naturally handled by `isNewer`
-(unparseable → not newer, so `CheckForUpdate` returns `(nil, nil)`).
+(`elapsed >= 0` guard), so it does not spuriously suppress checks.
 
-`isNewer(latest, current string) bool` parses both sides with `semver.NewVersion`
-(coercing, v-tolerant) and compares: when either side is unparseable, ordering is
-undefined so it returns false. This conservative contract is **also where a
-non-release build is handled** — an unparseable current version (the `"DEV"`
-placeholder, `"nightly"`, etc.) never reports an upgrade, so no explicit
-dev-build gate is needed anywhere.
+**Dev-build handling lives at the parse boundary, not in a gate.**
+`checkForUpdate` parses `currentVersion` with `semver.NewVersion` **before** the
+fetch; a non-release build whose version is not parseable semver (`"DEV"`,
+`"nightly"`) fails there and returns `(nil, error)` without ever touching the
+GitHub API. The release tag from GitHub is parsed the same way
+(`semver.NewVersion(release.TagName)`), and the newer/not-newer decision is a
+plain `lv.GreaterThan(cv)` on the two parsed `*semver.Version` values — no
+constraint, no string round-trip. There is no separate `isNewer` helper and no
+caller-side dev gate: `internal/clawker/cmd.go` imports no semver, passes the raw
+`buildVersion` string, and lets this package own every parse.
 
-`cacheTTL`, `shouldCheckForUpdate`, and `isNewer` are unexported — the package
-surface is just `CheckForUpdate` + `ReleaseInfo`.
+`cacheTTL` and `shouldCheckForUpdate` are unexported — the package surface is
+just `CheckForUpdate` + `ReleaseInfo`.
 
 ## CheckForUpdate Flow
 
-1. Read `st.State().CheckedAt` (zero if `st == nil`); `shouldCheckForUpdate` →
+1. Parse `currentVersion` with `semver.NewVersion` (v-tolerant); unparseable
+   (e.g. `"DEV"`) → `(nil, error)`, before any fetch
+2. Read `st.State().CheckedAt` (zero if `st == nil`); `shouldCheckForUpdate` →
    return `(nil, nil)` if TTL-fresh
-2. HTTP GET `https://api.github.com/repos/{owner}/{repo}/releases/latest` (5s
+3. HTTP GET `https://api.github.com/repos/{owner}/{repo}/releases/latest` (5s
    timeout, context-aware)
-3. Parse `tag_name` and `html_url` from JSON
-4. Strip `v` prefixes
-5. **Persist** `st.RecordUpdateCheck(now, latestVersion)` (skipped if
+4. Read `html_url` + parse `tag_name` with `semver.NewVersion` (unparseable tag →
+   `(nil, error)`)
+5. **Persist** `st.RecordUpdateCheck(now, lv.String())` (skipped if
    `st == nil`) — before the newer/not-newer decision
-6. `isNewer` via `semver.NewVersion` + `Compare`; not newer → return `(nil, nil)`
-7. Return `(*ReleaseInfo, nil)`. On any fetch error: `(nil, error)`
+6. `lv.GreaterThan(cv)`; not newer → return `(nil, nil)`
+7. Return `(*ReleaseInfo, nil)`. On any fetch/parse error: `(nil, error)`
 
 The unexported `checkForUpdate(ctx, st, currentVersion, url)` is the
 URL-parameterized core that the exported wrapper builds the GitHub URL for and
@@ -137,9 +142,10 @@ State file (owned by `internal/state`): `config.StateDir()/update-state.yaml`
 `update_test.go` uses `net/http/httptest` to mock the GitHub API. Tests cover:
 TTL suppression (fresh/stale/zero-time, including the future-timestamp-is-stale
 guard), newer (→ `*ReleaseInfo`) vs same/older (→ nil), API errors, malformed
-JSON, empty tag_name, context cancellation, v-prefix handling, and `isNewer` over
-a table that includes unparseable inputs (`"DEV"`, `"nightly"`, etc. → not newer
-— the relocated dev-build behavior). A regression test
+JSON, empty tag_name, context cancellation, and v-prefix handling. The
+newer/same/older comparison is exercised through `CheckForUpdate` (newer →
+`*ReleaseInfo`, same/older → nil) rather than a standalone comparator test. A
+regression test
 (`TestCheckForUpdate_NotNewerAdvancesCheckedAt`) proves a not-newer fetch still
 records the check by asserting `RecordUpdateCheckCalls()` on a
 `internal/state/mocks` stub (`NewBlankState()`) — the persist-on-fetch-success

@@ -43,17 +43,25 @@ type Entry struct {
 //     returns the entries gained in (cursor, current] (newest first), and
 //     advances the cursor to current.
 //
-// The request is context-aware (cancel ctx to abort) and bounded by
-// fetchTimeout; a non-200 is an error.
+// current is the running-binary version string; it is parsed here (v-tolerant),
+// and an unparseable current — e.g. a non-release "DEV" build — returns an error
+// so the caller shows nothing. The request is context-aware (cancel ctx to abort)
+// and bounded by fetchTimeout; a non-200 is an error.
 //
 // This function is only ever called when notifications are NOT suppressed, so
 // it always advances the cursor — there is no persist gate. A nil st (state
 // store unavailable) is a silent no-op. The cursor write is best-effort: a
 // write failure is returned for the caller to log, but any gained entries are
 // still returned so the teaser can render.
-func CheckForChanges(ctx context.Context, st state.StateStore, current *semver.Version) ([]Entry, error) {
+func CheckForChanges(ctx context.Context, st state.StateStore, current string) ([]Entry, error) {
+
 	if st == nil {
 		return nil, nil
+	}
+
+	cv, err := semver.NewVersion(current)
+	if err != nil {
+		return nil, err
 	}
 
 	cursor, err := semver.NewVersion(st.State().LastSeenChangelog)
@@ -61,7 +69,7 @@ func CheckForChanges(ctx context.Context, st state.StateStore, current *semver.V
 		// First run of a changelog-aware binary: the cursor is empty (or an
 		// unparseable leftover). Seed it at current and show nothing — the cursor
 		// becomes the lower bound for the next run.
-		if err := st.SetLastSeenChangelog(current.String()); err != nil {
+		if err := st.SetLastSeenChangelog(cv.String()); err != nil {
 			return nil, fmt.Errorf("seeding changelog cursor: %w", err)
 		}
 		return nil, nil
@@ -91,9 +99,12 @@ func CheckForChanges(ctx context.Context, st state.StateStore, current *semver.V
 	if err != nil {
 		return nil, err
 	}
-	gained := between(entries, cursor, current)
+	gained, err := between(entries, cursor, cv)
+	if err != nil {
+		return nil, err
+	}
 
-	if err := st.SetLastSeenChangelog(current.String()); err != nil {
+	if err := st.SetLastSeenChangelog(cv.String()); err != nil {
 		return gained, fmt.Errorf("advancing changelog cursor: %w", err)
 	}
 	return gained, nil
@@ -102,18 +113,20 @@ func CheckForChanges(ctx context.Context, st state.StateStore, current *semver.V
 // between returns the entries with lo < version <= hi (semver comparison), in
 // the same order as the input slice. It is the cursor range query: a
 // v0.5.0→v0.12.0 jump returns every gained entry; v0.11.0→v0.12.0 returns one.
-// Each entry's Version was validated as a full semver by the parser, so a parse
-// failure here is not expected; such an entry is skipped defensively.
-func between(entries []Entry, lo, hi *semver.Version) []Entry {
+// lo and hi are already-parsed versions, so the bound check is a direct
+// (*Version).Compare — no constraint string to build and re-parse. Each entry's
+// Version was validated as a full semver by the parser, so a parse failure here
+// is unexpected and surfaced as an error rather than silently skipped.
+func between(entries []Entry, lo, hi *semver.Version) ([]Entry, error) {
 	out := make([]Entry, 0, len(entries))
 	for _, e := range entries {
 		v, err := semver.NewVersion(e.Version)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("parsing changelog entry version %q: %w", e.Version, err)
 		}
-		if v.Compare(lo) > 0 && v.Compare(hi) <= 0 {
+		if v.Compare(lo) > 0 && v.Compare(hi) <= 0 { // lo < v <= hi
 			out = append(out, e)
 		}
 	}
-	return out
+	return out, nil
 }

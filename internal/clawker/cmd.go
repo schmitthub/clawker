@@ -10,7 +10,6 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/Masterminds/semver/v3"
 	"github.com/spf13/cobra"
 
 	"github.com/schmitthub/clawker/internal/build"
@@ -109,7 +108,8 @@ func Main() int {
 				updateMessageChan <- rel
 			}()
 			var err error
-			// CheckForUpdate reads the freshness gate from cliState and persists the
+			// CheckForUpdate validates buildVersion as semver (skipping the fetch on a
+			// non-release "DEV" build), reads the freshness gate from cliState, and persists the
 			// result there itself (RecordUpdateCheck). It returns (nil, nil) when not
 			// newer or TTL-fresh; a non-nil rel only when a newer release exists. A
 			// non-nil err may accompany a nil rel — log it, report nothing.
@@ -138,27 +138,19 @@ func Main() int {
 				}
 				changelogChan <- g
 			}()
-			// build.Version is overwritten from build info at startup. On a non-release
-			// build whose version is not a parseable semver there is no range to diff,
-			// so show nothing — the parse failure is the signal, not an explicit
-			// dev-build gate. semver.NewVersion tolerates a leading "v" via its regex.
-			current, err := semver.NewVersion(buildVersion)
-			if err != nil {
-				if log, logErr := f.Logger(); logErr == nil {
-					log.Debug().Err(err).Str("version", buildVersion).Msg("unparseable build version; skipping changelog teaser")
-				}
-				return
-			}
+
 			// CheckForChanges always advances the cursor; it is only called on a
 			// non-suppressed run (gated above).
-			entries, err := changelog.CheckForChanges(changelogCtx, cliState, current)
+			entries, err := changelog.CheckForChanges(changelogCtx, cliState, buildVersion)
+			// CheckForChanges returns gained entries even when only the cursor
+			// persist fails, so capture them before bailing on the error.
+			g = entries
 			if err != nil {
 				if log, logErr := f.Logger(); logErr == nil {
 					log.Debug().Err(err).Msg("checking changelog for teaser")
 				}
 				return
 			}
-			g = entries
 		}()
 	}
 

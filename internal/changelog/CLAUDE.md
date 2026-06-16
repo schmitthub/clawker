@@ -62,7 +62,7 @@ type Entry struct {
 }
 
 // CheckForChanges owns the show-once cursor end to end.
-func CheckForChanges(ctx context.Context, st state.StateStore, current *semver.Version) ([]Entry, error)
+func CheckForChanges(ctx context.Context, st state.StateStore, current string) ([]Entry, error)
 
 var ChangelogURL string // raw CHANGELOG.md on main (consts.RawGitHubBaseURL + consts.GitHubRepo)
 ```
@@ -89,12 +89,12 @@ The cursor is stored via `current.String()` (canonical bare semver, e.g.
 `0.12.0`) at **both** store sites — the first-run seed and the advance — so a
 `v`-prefixed `current` (`v0.12.0`) still lands as bare `0.12.0` at rest.
 
-`current` is an already-parsed `*semver.Version`: the caller (`internal/clawker`
-`Main`) parses `build.Version` and passes it, exactly as it parses the cursor
-string out of state inside `CheckForChanges`. There is no DEV special-case — a
-non-release build whose version does not parse never reaches `CheckForChanges`
-(Main logs and skips), and an unparseable cursor in state is treated as a first
-run.
+`current` is the raw running-binary version **string**: the caller
+(`internal/clawker` `Main`) passes `build.Version` directly and imports no semver
+— `CheckForChanges` owns parsing it (v-tolerant), exactly as it parses the cursor
+string out of state. An unparseable `current` — a non-release `"DEV"` build —
+returns an error, so the caller logs and shows nothing (no separate DEV gate). An
+unparseable cursor in state is treated as a first run.
 
 ## Semver
 
