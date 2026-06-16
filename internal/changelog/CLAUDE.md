@@ -62,7 +62,7 @@ type Entry struct {
 }
 
 // CheckForChanges owns the show-once cursor end to end.
-func CheckForChanges(ctx context.Context, st *state.State, current *semver.Version) ([]Entry, error)
+func CheckForChanges(ctx context.Context, st state.State, current *semver.Version) ([]Entry, error)
 
 var ChangelogURL string // raw CHANGELOG.md on main (consts.RawGitHubBaseURL + consts.GitHubRepo)
 ```

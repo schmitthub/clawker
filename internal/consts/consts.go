@@ -161,7 +161,7 @@ const (
 	// CliStateFile is the CLI's persisted runtime state in the state dir
 	// (update-check cache + changelog cursor), backed by internal/state via
 	// storage.Store.
-	CliStateFile = "update-state.yaml"
+	CLIStateFile = "update-state.yaml"
 )
 
 // Subdirectory names within XDG base dirs.
@@ -689,6 +689,18 @@ func DataDir() string {
 	return filepath.Join(d, ".local", "share", NamePrefix)
 }
 
+// absStateFilePath returns the absolute path <StateDir()>/<fileName>.
+// The state directory is NOT created by this helper — callers that need
+// the directory to exist should write through StateFilePath and ensure as needed.
+func absStateFilePath(fileName string) (string, error) {
+	path := filepath.Join(StateDir(), fileName)
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolving absolute state path for %s: %w", fileName, err)
+	}
+	return absPath, nil
+}
+
 // StateDir returns the clawker state directory.
 // Resolution: CLAWKER_STATE_DIR > XDG_STATE_HOME/clawker > ~/.local/state/clawker
 func StateDir() string {
@@ -1139,6 +1151,18 @@ func SettingsFilePath() (string, error) { return absConfigFilePath(SettingsFile)
 // UserProjectConfigFilePath returns the absolute path to the user-level
 // clawker.yaml file.
 func UserProjectConfigFilePath() (string, error) { return absConfigFilePath(ProjectConfigFile) }
+
+// --- State-dir absolute file paths ---
+
+func EnsureStateDir() (string, error) { return ensureDir(StateDir()) }
+
+func CLIStateFilePath() (string, error) {
+	_, err := ensureDir(StateDir())
+	if err != nil {
+		return "", err
+	}
+	return absStateFilePath(CLIStateFile)
+}
 
 // ---------------------------------------------------------------------------
 // URI / address accessors

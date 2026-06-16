@@ -51,7 +51,7 @@ type Entry struct {
 // store unavailable) is a silent no-op. The cursor write is best-effort: a
 // write failure is returned for the caller to log, but any gained entries are
 // still returned so the teaser can render.
-func CheckForChanges(ctx context.Context, st *state.State, current *semver.Version) ([]Entry, error) {
+func CheckForChanges(ctx context.Context, st state.State, current *semver.Version) ([]Entry, error) {
 	if st == nil {
 		return nil, nil
 	}

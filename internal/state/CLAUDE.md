@@ -47,21 +47,27 @@ rename, no migration needed.
 
 ## Public API
 
+`State` is an interface; `New` returns it and `stateImpl` is the
+storage-backed implementation. Consumers depend on the interface and mock it
+via `internal/state/mocks` (moq-generated `StateMock` + `NewStub()`), exactly
+like `config.Config` and `project.ProjectManager`.
+
 ```go
-func New(opts ...Option) (*State, error)
-func WithStateDirOverride(dir string) Option  // test injection: state file in dir instead of the XDG state dir
+func New() (State, error)             // resolves the state dir from XDG; no test seam
 
-func Migrations() []storage.Migration         // additive scaffold; currently empty
+func Migrations() []storage.Migration // additive scaffold; currently empty
 
-// Reads (immutable snapshot)
-func (s *State) Read() CliState
-func (s *State) LastCheckedAt() time.Time
-func (s *State) LatestVersion() string
-func (s *State) LastSeenChangelog() string
+type State interface {
+	// Reads (immutable snapshot)
+	Read() CliState
+	LastCheckedAt() time.Time
+	LatestVersion() string
+	LastSeenChangelog() string
 
-// Field-merge mutations (Set + Write; never whole-struct overwrite)
-func (s *State) RecordUpdateCheck(checkedAt time.Time, latestVersion string) error
-func (s *State) SetLastSeenChangelog(version string) error
+	// Field-merge mutations (Set + Write; never whole-struct overwrite)
+	RecordUpdateCheck(checkedAt time.Time, latestVersion string) error
+	SetLastSeenChangelog(version string) error
+}
 ```
 
 `RecordUpdateCheck` writes only the update-check fields;
@@ -75,8 +81,9 @@ exists to guarantee, covered by `TestState_FieldMerge_NoClobber`.
 `Migrations()` is wired into the store (`WithMigrations`) even though the list is
 currently empty — the scaffold is in place so the schema can evolve additively.
 Append a new migration here when the schema changes; never edit a shipped one.
-`TestMigrations_Wired` proves the pipeline runs migrations on the discovered file
-and re-saves when one returns true.
+The migration pipeline itself is storage's contract, covered by
+`internal/storage` tests; `Migrations()` is currently the empty additive
+scaffold, so there is no state-specific migration to exercise.
 
 ## Construction
 
@@ -91,7 +98,10 @@ dependencies.
 
 ## Testing
 
-File-backed via `New(WithStateDirOverride(t.TempDir()))` — real storage (merge +
-atomic write), no user XDG dir touched. Tests cover: round-trip of both writers,
-field-merge non-clobber in both directions, existing-file read-in-place, persisted
-YAML key contract, and migration wiring.
+File-backed via `testenv.New(t)` (isolates `CLAWKER_STATE_DIR` to a temp dir)
+plus the real `New()` constructor — real storage (merge + atomic write), no
+user XDG dir touched, no production test seam. Reopening from disk is just
+another `New()` against the same isolated dir. Tests cover: round-trip of both
+writers, field-merge non-clobber in both directions, and existing-file
+read-in-place (including the dropped-key legacy file). Consumers mock the
+`State` interface via `mocks.NewStub()`.

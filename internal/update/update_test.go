@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/schmitthub/clawker/internal/state"
+	statemocks "github.com/schmitthub/clawker/internal/state/mocks"
 )
 
 func TestShouldCheckForUpdate_FreshCache(t *testing.T) {
@@ -152,21 +152,20 @@ func TestCheckForUpdate_TTLFreshSuppresses(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	st, err := state.New(state.WithStateDirOverride(t.TempDir()))
-	if err != nil {
-		t.Fatalf("state.New: %v", err)
-	}
-	// Record a fresh check so the TTL gate suppresses.
-	if err := st.RecordUpdateCheck(time.Now(), "1.0.0"); err != nil {
-		t.Fatalf("RecordUpdateCheck: %v", err)
-	}
+	// TTL-fresh state: LastCheckedAt is "now", so the freshness gate suppresses
+	// before any fetch or persist.
+	m := statemocks.NewStub()
+	m.LastCheckedAtFunc = func() time.Time { return time.Now() }
 
-	info, err := checkForUpdate(context.Background(), st, "1.0.0", srv.URL)
+	info, err := checkForUpdate(context.Background(), m, "1.0.0", srv.URL)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if info != nil {
 		t.Errorf("expected nil result when TTL-fresh, got %+v", info)
+	}
+	if got := len(m.RecordUpdateCheckCalls()); got != 0 {
+		t.Errorf("RecordUpdateCheck calls = %d, want 0 (no fetch, no persist)", got)
 	}
 }
 
@@ -179,17 +178,12 @@ func TestCheckForUpdate_NotNewerAdvancesCheckedAt(t *testing.T) {
 	srv := newReleaseServer("v1.0.0", "https://github.com/schmitthub/clawker/releases/tag/v1.0.0")
 	defer srv.Close()
 
-	st, err := state.New(state.WithStateDirOverride(t.TempDir()))
-	if err != nil {
-		t.Fatalf("state.New: %v", err)
-	}
-	if !st.LastCheckedAt().IsZero() {
-		t.Fatalf("precondition: LastCheckedAt should be zero, got %v", st.LastCheckedAt())
-	}
+	// Stub LastCheckedAt is zero → never checked → the freshness gate lets the
+	// check run.
+	m := statemocks.NewStub()
 
-	before := time.Now()
 	// Same version as current → not newer → nil result, but the fetch succeeded.
-	info, err := checkForUpdate(context.Background(), st, "1.0.0", srv.URL)
+	info, err := checkForUpdate(context.Background(), m, "1.0.0", srv.URL)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -197,16 +191,15 @@ func TestCheckForUpdate_NotNewerAdvancesCheckedAt(t *testing.T) {
 		t.Fatalf("expected nil result (not newer), got %+v", info)
 	}
 
-	// checked_at must have advanced despite the not-newer outcome.
-	got := st.LastCheckedAt()
-	if got.IsZero() {
-		t.Fatal("checked_at did not advance on a not-newer fetch (persist skipped)")
+	// The mutation this guards: moving RecordUpdateCheck after the !isNewer
+	// return would record zero calls. Persistence must fire on the not-newer
+	// fetch, before the newer/not-newer decision.
+	calls := m.RecordUpdateCheckCalls()
+	if len(calls) != 1 {
+		t.Fatalf("RecordUpdateCheck calls = %d, want 1 (persist on not-newer fetch)", len(calls))
 	}
-	if got.Before(before) {
-		t.Errorf("checked_at = %v, want >= %v", got, before)
-	}
-	if st.LatestVersion() != "1.0.0" {
-		t.Errorf("latest_version = %q, want %q", st.LatestVersion(), "1.0.0")
+	if calls[0].LatestVersion != "1.0.0" {
+		t.Errorf("recorded latest_version = %q, want %q", calls[0].LatestVersion, "1.0.0")
 	}
 }
 

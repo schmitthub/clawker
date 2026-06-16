@@ -3,204 +3,230 @@ package state
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/schmitthub/clawker/internal/consts"
-	"github.com/schmitthub/clawker/internal/storage"
+	"github.com/schmitthub/clawker/internal/testenv"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-// newStoreWithMigrations builds a CliState store rooted at dir with an extra
-// probe migration, exercising the same load+migrate pipeline New uses. It lets
-// the migration-wiring test inject a transformation without shipping a real
-// migration in production code.
-func newStoreWithMigrations(dir string, fns ...storage.Migration) (*storage.Store[CliState], error) {
-	return storage.New[CliState]("",
-		storage.WithFilenames(consts.CliStateFile),
-		storage.WithMigrations(fns...),
-		storage.WithLock(),
-		storage.WithPaths(dir),
-	)
+// fixedTime is a stable RFC3339 instant for round-trip assertions — avoids the
+// monotonic-clock / sub-second precision drift of time.Now().
+var fixedTime = time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+
+// TestState_New_CreatesFileAtDefaultLocation proves the create-if-missing path:
+// a fresh store with no file on disk writes to the resolved state dir under
+// consts.CLIStateFile, and the values read back after reopening from disk. This
+// is the whole reason WithFilenames is load-bearing.
+func TestState_New_CreatesFileAtDefaultLocation(t *testing.T) {
+	env := testenv.New(t)
+	want := filepath.Join(env.Dirs.State, consts.CLIStateFile)
+
+	// No file exists yet.
+	_, err := os.Stat(want)
+	require.True(t, os.IsNotExist(err), "state file should not exist before first write")
+
+	st, err := New()
+	require.NoError(t, err)
+	require.NoError(t, st.RecordUpdateCheck(fixedTime, "1.2.3"))
+
+	// First write created the file at the default location.
+	_, err = os.Stat(want)
+	require.NoError(t, err, "state file should exist at %s after first write", want)
+
+	// Reopening from disk reads the persisted values back.
+	reopened, err := New()
+	require.NoError(t, err)
+	got := reopened.State()
+	assert.True(t, got.CheckedAt.Equal(fixedTime), "CheckedAt: want %v, got %v", fixedTime, got.CheckedAt)
+	assert.Equal(t, "1.2.3", got.LatestVersion)
+	assert.Empty(t, got.LastSeenChangelog)
 }
 
-// newTestState builds a file-backed State rooted at a temp dir so tests touch
-// real storage (merge + atomic write) without the user's XDG state dir.
-func newTestState(t *testing.T) (*State, string) {
-	t.Helper()
-	dir := t.TempDir()
-	st, err := New(WithStateDirOverride(dir))
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	return st, dir
+// TestState_New_ReadsLegacyFileInPlace proves an existing on-disk state file
+// from an older binary is read in place: schema fields carry forward, dropped
+// keys (current_version, latest_url, no longer in the schema) are ignored, and
+// the changelog cursor starts empty. Real FS: exercises discovery + load over
+// the migration runner, the read-in-place contract the package guarantees.
+func TestState_New_ReadsLegacyFileInPlace(t *testing.T) {
+	env := testenv.New(t)
+	legacy := "current_version: 0.9.0\n" +
+		"latest_url: https://example.test/old\n" +
+		"checked_at: 2026-01-02T03:04:05Z\n" +
+		"latest_version: 1.2.3\n"
+	path := filepath.Join(env.Dirs.State, consts.CLIStateFile)
+	require.NoError(t, os.WriteFile(path, []byte(legacy), 0o644))
+
+	st, err := New()
+	require.NoError(t, err)
+
+	got := st.State()
+	assert.True(t, got.CheckedAt.Equal(fixedTime), "CheckedAt: want %v, got %v", fixedTime, got.CheckedAt)
+	assert.Equal(t, "1.2.3", got.LatestVersion)
+	assert.Empty(t, got.LastSeenChangelog, "changelog cursor starts unseeded")
 }
 
-func TestState_RecordUpdateCheck_RoundTrip(t *testing.T) {
-	st, dir := newTestState(t)
-
-	checkedAt := time.Now().Truncate(time.Second)
-	if err := st.RecordUpdateCheck(checkedAt, "1.2.3"); err != nil {
-		t.Fatalf("RecordUpdateCheck: %v", err)
+// TestStateMigrations walks the full legacy chain. One row per historical
+// on-disk shape ever shipped — add a row when you add a migration. Per row, real
+// FS: write the legacy file, load via New(), and assert (a) the typed read, (b)
+// the cleaned on-disk keys, and (c) idempotency (a second load leaves the file
+// byte-stable). Storage runs every migration on every load, so an oldest-shape
+// row implicitly exercises the whole chain.
+func TestStateMigrations(t *testing.T) {
+	cases := []struct {
+		name       string
+		legacy     string   // on-disk YAML as some past binary wrote it
+		want       State    // expected snapshot after the chain runs
+		absentKeys []string // keys that must be gone from the re-saved file
+	}{
+		{
+			name: "pre-store update checker drops latest_url + current_version",
+			legacy: "checked_at: 2026-01-02T03:04:05Z\n" +
+				"latest_version: 1.2.3\n" +
+				"latest_url: https://example.test/old\n" +
+				"current_version: 0.9.0\n",
+			want:       State{CheckedAt: fixedTime, LatestVersion: "1.2.3"},
+			absentKeys: []string{"latest_url", "current_version"},
+		},
 	}
 
-	// Re-open from disk to prove persistence, not just in-memory snapshot.
-	reopened, err := New(WithStateDirOverride(dir))
-	if err != nil {
-		t.Fatalf("reopen New: %v", err)
-	}
-	got := reopened.Read()
-	if !got.CheckedAt.Equal(checkedAt) {
-		t.Errorf("CheckedAt = %v, want %v", got.CheckedAt, checkedAt)
-	}
-	if got.LatestVersion != "1.2.3" {
-		t.Errorf("LatestVersion = %q, want %q", got.LatestVersion, "1.2.3")
-	}
-}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := testenv.New(t)
+			path := filepath.Join(env.Dirs.State, consts.CLIStateFile)
+			require.NoError(t, os.WriteFile(path, []byte(tc.legacy), 0o644))
 
-func TestState_SetLastSeenChangelog_RoundTrip(t *testing.T) {
-	st, dir := newTestState(t)
+			// Load runs the migration chain and re-saves the cleaned file.
+			st, err := New()
+			require.NoError(t, err)
 
-	if err := st.SetLastSeenChangelog("0.12.2"); err != nil {
-		t.Fatalf("SetLastSeenChangelog: %v", err)
-	}
+			// (a) typed read through the chain.
+			got := st.State()
+			assert.True(t, got.CheckedAt.Equal(tc.want.CheckedAt), "CheckedAt: want %v, got %v", tc.want.CheckedAt, got.CheckedAt)
+			assert.Equal(t, tc.want.LatestVersion, got.LatestVersion)
+			assert.Equal(t, tc.want.LastSeenChangelog, got.LastSeenChangelog)
 
-	reopened, err := New(WithStateDirOverride(dir))
-	if err != nil {
-		t.Fatalf("reopen New: %v", err)
-	}
-	if got := reopened.LastSeenChangelog(); got != "0.12.2" {
-		t.Errorf("LastSeenChangelog = %q, want %q", got, "0.12.2")
-	}
-}
+			// (b) on-disk cleanliness: dead keys stripped from the re-saved file.
+			migrated, err := os.ReadFile(path)
+			require.NoError(t, err)
+			for _, k := range tc.absentKeys {
+				assert.NotContains(t, string(migrated), k, "key %q should be stripped from the file", k)
+			}
 
-// TestState_SetLastSeenChangelog_DoesNotClobberUpdateFields is the core
-// invariant: a cursor write must field-merge, leaving the update-check fields
-// untouched (and vice versa). A whole-struct overwrite would zero them.
-func TestState_FieldMerge_NoClobber(t *testing.T) {
-	st, dir := newTestState(t)
-
-	checkedAt := time.Now().Truncate(time.Second)
-	if err := st.RecordUpdateCheck(checkedAt, "2.0.0"); err != nil {
-		t.Fatalf("RecordUpdateCheck: %v", err)
-	}
-
-	// Cursor write through a SEPARATE facade instance (mirrors the real split
-	// between the background update goroutine and the foreground cursor).
-	cursorFacade, err := New(WithStateDirOverride(dir))
-	if err != nil {
-		t.Fatalf("cursor New: %v", err)
-	}
-	if err := cursorFacade.SetLastSeenChangelog("1.5.0"); err != nil {
-		t.Fatalf("SetLastSeenChangelog: %v", err)
-	}
-
-	reopened, err := New(WithStateDirOverride(dir))
-	if err != nil {
-		t.Fatalf("reopen New: %v", err)
-	}
-	got := reopened.Read()
-	if got.LastSeenChangelog != "1.5.0" {
-		t.Errorf("LastSeenChangelog = %q, want %q", got.LastSeenChangelog, "1.5.0")
-	}
-	// The update-check fields written earlier must survive the cursor write.
-	if !got.CheckedAt.Equal(checkedAt) {
-		t.Errorf("CheckedAt clobbered: got %v, want %v", got.CheckedAt, checkedAt)
-	}
-	if got.LatestVersion != "2.0.0" {
-		t.Errorf("LatestVersion clobbered: got %q, want %q", got.LatestVersion, "2.0.0")
-	}
-
-	// And the reverse: an update-check write must not clobber the cursor.
-	updateFacade, err := New(WithStateDirOverride(dir))
-	if err != nil {
-		t.Fatalf("update New: %v", err)
-	}
-	newCheckedAt := checkedAt.Add(48 * time.Hour)
-	if err := updateFacade.RecordUpdateCheck(newCheckedAt, "3.0.0"); err != nil {
-		t.Fatalf("RecordUpdateCheck (2): %v", err)
-	}
-	final, err := New(WithStateDirOverride(dir))
-	if err != nil {
-		t.Fatalf("final New: %v", err)
-	}
-	if got := final.LastSeenChangelog(); got != "1.5.0" {
-		t.Errorf("cursor clobbered by update-check write: got %q, want %q", got, "1.5.0")
-	}
-	if got := final.LatestVersion(); got != "3.0.0" {
-		t.Errorf("LatestVersion = %q, want %q", got, "3.0.0")
+			// (c) idempotency: a second load fires no migration, leaves the file stable.
+			_, err = New()
+			require.NoError(t, err)
+			stable, err := os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Equal(t, string(migrated), string(stable), "second load must leave the file byte-stable")
+		})
 	}
 }
 
-// TestState_ReadsLegacyUpdateStateFile proves the read-in-place behavior: a file
-// written by an older binary (no last_seen_changelog key, with the now-dropped
-// latest_url and current_version keys) is read in place — its still-current
-// fields carry forward, the dropped keys are ignored, and the cursor starts
-// empty.
-func TestState_ReadsLegacyUpdateStateFile(t *testing.T) {
-	dir := t.TempDir()
-	legacy := "" +
-		"checked_at: 2026-06-01T10:00:00Z\n" +
-		"latest_version: 0.11.0\n" +
-		"latest_url: https://github.com/schmitthub/clawker/releases/tag/v0.11.0\n" +
-		"current_version: 0.10.0\n"
-	path := filepath.Join(dir, consts.CliStateFile)
-	if err := os.WriteFile(path, []byte(legacy), 0o644); err != nil {
-		t.Fatal(err)
+// TestState_SeedFromString covers the seed seam: NewFromString merges a YAML
+// string as the virtual layer, so State() reflects it without touching disk.
+// This is how consumer tests inject arbitrary starting state.
+func TestState_SeedFromString(t *testing.T) {
+	cases := []struct {
+		name        string
+		seed        string
+		wantChecked time.Time // zero value => expect IsZero
+		wantLatest  string
+		wantSeen    string
+	}{
+		{
+			name: "empty seed is all zero",
+			seed: "",
+		},
+		{
+			name:       "latest version only",
+			seed:       "latest_version: 1.2.3\n",
+			wantLatest: "1.2.3",
+		},
+		{
+			name:        "all fields populated",
+			seed:        "checked_at: 2026-01-02T03:04:05Z\nlatest_version: 1.2.3\nlast_seen_changelog: 0.13.0\n",
+			wantChecked: fixedTime,
+			wantLatest:  "1.2.3",
+			wantSeen:    "0.13.0",
+		},
+		{
+			name:       "legacy current_version key is ignored",
+			seed:       "current_version: 0.9.0\nlatest_version: 1.2.3\n",
+			wantLatest: "1.2.3",
+		},
+		{
+			name:        "absent cursor reads empty",
+			seed:        "checked_at: 2026-01-02T03:04:05Z\nlatest_version: 1.2.3\n",
+			wantChecked: fixedTime,
+			wantLatest:  "1.2.3",
+		},
 	}
 
-	st, err := New(WithStateDirOverride(dir))
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	got := st.Read()
-	if got.LatestVersion != "0.11.0" {
-		t.Errorf("LatestVersion = %q, want %q", got.LatestVersion, "0.11.0")
-	}
-	if got.CheckedAt.IsZero() {
-		t.Error("CheckedAt = zero, want the legacy timestamp carried forward")
-	}
-	if got.LastSeenChangelog != "" {
-		t.Errorf("LastSeenChangelog = %q, want empty (not yet seeded)", got.LastSeenChangelog)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			testenv.New(t)
+
+			st, err := NewFromString(tc.seed)
+			require.NoError(t, err)
+
+			got := st.State()
+			if tc.wantChecked.IsZero() {
+				assert.True(t, got.CheckedAt.IsZero(), "CheckedAt should be zero, got %v", got.CheckedAt)
+			} else {
+				assert.True(t, got.CheckedAt.Equal(tc.wantChecked), "CheckedAt: want %v, got %v", tc.wantChecked, got.CheckedAt)
+			}
+			assert.Equal(t, tc.wantLatest, got.LatestVersion)
+			assert.Equal(t, tc.wantSeen, got.LastSeenChangelog)
+		})
 	}
 }
 
-// TestMigrations_Wired proves the migration scaffold is plumbed into the store
-// load pipeline: a migration that rewrites a field runs on the discovered file
-// and its result is reflected in the loaded snapshot (and re-saved). This guards
-// the additive-migration contract even though the shipped Migrations() list is
-// currently empty.
-func TestMigrations_Wired(t *testing.T) {
-	dir := t.TempDir()
-	// Seed a file with a stale latest_version the probe migration will rewrite.
-	seed := "latest_version: 0.0.1\nlast_seen_changelog: 0.0.1\n"
-	path := filepath.Join(dir, consts.CliStateFile)
-	if err := os.WriteFile(path, []byte(seed), 0o644); err != nil {
-		t.Fatal(err)
+// TestState_WritersDoNotClobber proves the disjoint-by-ownership invariant: the
+// update-check writer and the changelog-cursor writer touch separate fields, so
+// two independent store instances writing the same file (the real production
+// shape — background update goroutine + foreground teaser) never wipe each
+// other's data. A whole-struct overwrite would fail this; field-merge passes.
+func TestState_WritersDoNotClobber(t *testing.T) {
+	cases := []struct {
+		name   string
+		first  func(t *testing.T, st StateStore)
+		second func(t *testing.T, st StateStore)
+	}{
+		{
+			name:   "update check then cursor",
+			first:  func(t *testing.T, st StateStore) { require.NoError(t, st.RecordUpdateCheck(fixedTime, "1.2.3")) },
+			second: func(t *testing.T, st StateStore) { require.NoError(t, st.SetLastSeenChangelog("0.13.0")) },
+		},
+		{
+			name:   "cursor then update check",
+			first:  func(t *testing.T, st StateStore) { require.NoError(t, st.SetLastSeenChangelog("0.13.0")) },
+			second: func(t *testing.T, st StateStore) { require.NoError(t, st.RecordUpdateCheck(fixedTime, "1.2.3")) },
+		},
 	}
 
-	store, err := newStoreWithMigrations(dir, func(raw map[string]any) bool {
-		if raw["latest_version"] == "0.0.1" {
-			raw["latest_version"] = "9.9.9"
-			return true
-		}
-		return false
-	})
-	if err != nil {
-		t.Fatalf("newStoreWithMigrations: %v", err)
-	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			testenv.New(t)
 
-	got := store.Read()
-	if got.LatestVersion != "9.9.9" {
-		t.Errorf("migration did not run: LatestVersion = %q, want %q", got.LatestVersion, "9.9.9")
-	}
+			first, err := New()
+			require.NoError(t, err)
+			tc.first(t, first)
 
-	// Migration returning true must have triggered an atomic re-save.
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read state file: %v", err)
-	}
-	if !strings.Contains(string(data), "9.9.9") {
-		t.Errorf("migration not persisted; file:\n%s", data)
+			// A separate facade over the same file performs the second write.
+			second, err := New()
+			require.NoError(t, err)
+			tc.second(t, second)
+
+			// Reopen from disk: both writers' fields survive.
+			got, err := New()
+			require.NoError(t, err)
+			st := got.State()
+			assert.True(t, st.CheckedAt.Equal(fixedTime), "CheckedAt: want %v, got %v", fixedTime, st.CheckedAt)
+			assert.Equal(t, "1.2.3", st.LatestVersion)
+			assert.Equal(t, "0.13.0", st.LastSeenChangelog)
+		})
 	}
 }

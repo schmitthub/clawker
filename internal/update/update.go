@@ -95,7 +95,7 @@ func shouldCheckForUpdate(lastCheckedAt time.Time) bool {
 //
 // The context controls the HTTP request lifetime — cancel it to abort cleanly.
 // repo should be "owner/name", e.g. "schmitthub/clawker".
-func CheckForUpdate(ctx context.Context, st *state.State, currentVersion, repo string) (*ReleaseInfo, error) {
+func CheckForUpdate(ctx context.Context, st state.State, currentVersion, repo string) (*ReleaseInfo, error) {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo)
 	info, err := checkForUpdate(ctx, st, currentVersion, url)
 	if err != nil {
@@ -112,7 +112,7 @@ func CheckForUpdate(ctx context.Context, st *state.State, currentVersion, repo s
 //
 // The persist call is UPSTREAM of the newer/not-newer decision so checked_at
 // advances on every successful fetch, not only when a newer release is found.
-func checkForUpdate(ctx context.Context, st *state.State, currentVersion, url string) (*ReleaseInfo, error) {
+func checkForUpdate(ctx context.Context, st state.State, currentVersion, url string) (*ReleaseInfo, error) {
 	var lastCheckedAt time.Time
 	if st != nil {
 		lastCheckedAt = st.LastCheckedAt()

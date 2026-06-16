@@ -2,6 +2,7 @@
 
 ## Related Docs
 
+- `.claude/rules/store-backed-package.md` — how to build a `Store[T]`-backed middle package (interface + impl + schema + migrations + mocks + tests); the construction contract
 - `.claude/rules/storage-schema.md` — struct tag contract, default formats, KindFunc extension, new-field checklist
 - `.claude/docs/ARCHITECTURE.md` — package DAG (storage is a leaf), configuration triad diagram
 - `.claude/docs/DESIGN.md` §2.4 — configuration system rationale, merge strategy, write model
@@ -20,7 +21,7 @@ Set:   deep copy → unmarshal → fn(copy) → structToMap → merge → atomic
 Write: node tree → route by provenance → per-file atomic write (temp+fsync+rename, flock)
 ```
 
-**Imported by:** `internal/config`, `internal/project`
+**Imported by:** `internal/config`, `internal/project`, `internal/state`
 
 ## Files
 
@@ -66,10 +67,17 @@ func NormalizeFields[T any](v T, opts ...NormalizeOption) FieldSet  // Reflect s
 ### Store Constructors
 
 ```go
-func NewStore[T Schema](opts ...Option) (*Store[T], error)   // Full pipeline: discover → load → migrate → merge → deserialize
-func NewFromString[T Schema](raw string) (*Store[T], error)  // Read-only: parse YAML, no discovery/write paths
-func GenerateDefaultsYAML[T Schema]() string                 // YAML from `default` struct tags
+func New[T Schema](seed string, opts ...Option) (*Store[T], error)          // Primary: discover → load → migrate → merge → deserialize. seed = lowest-priority virtual layer ("" for a normal file-backed store)
+func NewFromString[T Schema](raw string, opts ...Option) (*Store[T], error)  // Identical to New (New delegates here). raw seeds the virtual layer
+func NewStore[T Schema](opts ...Option) (*Store[T], error)                   // Deprecated: alias for New[T]("", opts...)
+func GenerateDefaultsYAML[T Schema]() string                                 // YAML from `default` struct tags
 ```
+
+`New` and `NewFromString` are the same call. With **no path options** the store
+is an in-memory double (discovery finds nothing; `Write` errors by design). With
+a directory option (`WithStateDir`/`WithPaths`/…) **plus `WithFilenames`**, it
+discovers an existing file and lazily creates it on first `Write`. See the
+**Construction Contract** below.
 
 ### Store[T] Methods
 
@@ -114,7 +122,35 @@ Priority: walk-up > dirs > explicit paths. Overlapping discovery deduplicated by
 
 Two modes: auto-route (each field → its provenance layer) or explicit (all fields → named file). Atomic write via temp+fsync+rename. Advisory flock with 10s timeout.
 
-`layerPathForKey` resolves write targets: (1) exact provenance match, (2) descendant prefix match, (3) ancestor walk-up for new entries without provenance.
+`layerPathForKey` resolves write targets for fields that already have a layer:
+(1) exact provenance match, (2) descendant prefix match, (3) ancestor walk-up for
+new entries without provenance. A field with **no** layer (fresh store, file not
+yet on disk) falls to `defaultWritePath`.
+
+### Construction Contract (`defaultWritePath`, the `filenames` gate)
+
+For the full middle-package recipe see `.claude/rules/store-backed-package.md`.
+The engine-side rules that callers trip over:
+
+- **`WithFilenames(name)` is load-bearing.** It drives BOTH (a) discovery — every
+  probe (`probeExplicitDirs`/`probeDir`/`walkUp`) loops over `filenames`, so an
+  empty list discovers nothing and an existing file is never found — and (b) the
+  create-if-missing write path: `defaultWritePath` is gated on
+  `if len(filenames) > 0`. Omit it and `Write` on a fresh store returns
+  `storage: no write path available (no layers or filenames)`.
+- **`WithDefaultFilename` does not substitute for `WithFilenames`.** It only picks
+  *which* name out of `filenames` to write (defaults to `filenames[0]`) and is
+  read *inside* the `len(filenames) > 0` block — inert on its own. Redundant for a
+  single-file store.
+- **Pass directories, not file paths.** `WithStateDir`/`WithConfigDir`/`WithPaths`
+  add a *directory*; storage joins `{dir}/{filename}`. Passing a pre-joined
+  `{dir}/{file}` makes discovery probe `{dir}/{file}/{file}.yaml` and a write
+  `MkdirAll` a directory named after the file.
+- **Create is lazy, on first `Write`.** Construction and read create nothing —
+  discovery is pure `os.Stat`, load tolerates a missing file as an empty layer.
+  The dir + file appear on the first successful `Write` (`defaultWritePath` →
+  `os.MkdirAll(dir)`, then `atomicWrite` → `MkdirAll(parent)` + temp + rename).
+  Consumers need not ensure the dir; eager ensure is allowed only as fail-fast.
 
 ### `structToMap` — omitempty-Safe Serializer
 
@@ -128,7 +164,7 @@ Delegates to `internal/consts` — the single XDG resolver (`CLAWKER_*_DIR` > `X
 
 ## Composition by Consumers
 
-`internal/config` composes `Store[Project]` (walk-up + user config dir + migrations + defaults-from-struct) and `Store[Settings]`. `internal/project` composes `Store[ProjectRegistry]` with `WithDataDir() + WithLock()`. Callers use `Config` and `ProjectManager` interfaces, not `Store[T]` directly.
+`internal/config` composes `Store[Project]` (walk-up + user config dir + migrations + defaults-from-struct) and `Store[Settings]`. `internal/project` composes `Store[ProjectRegistry]` with `WithDataDir() + WithLock()`. `internal/state` is the canonical **single-file** store (`WithFilenames + WithStateDir + WithLock`) — the reference for `.claude/rules/store-backed-package.md`. Callers use the `Config`, `ProjectManager`, and `StateStore` interfaces, not `Store[T]` directly.
 
 ## Testing
 
@@ -149,7 +185,8 @@ Deepest fixture level always has both `config.local.yaml` and `config.yaml` with
 - **Unknown keys survive** — `mergeIntoTree` preserves tree keys not in the struct schema.
 - **Walk-up is bounded** — never reaches `~/.config/clawker/`. Home-level configs added via `WithConfigDir()`.
 - **Nil vs zero** — Nil pointers/slices/empty strings = "not set". Non-nil zero values = "explicitly set".
-- **`time.Time` is a scalar leaf (`KindTime`)** — although it is a Go struct, both `NormalizeFields` and the `structToMap`/`encodeValue` write path special-case it: it is classified as a leaf and serialized as an RFC3339 scalar via yaml.v3, never recursed into its unexported fields. Used by `internal/state`'s `CliState.CheckedAt`.
+- **`time.Time` is a scalar leaf (`KindTime`)** — although it is a Go struct, both `NormalizeFields` and the `structToMap`/`encodeValue` write path special-case it: it is classified as a leaf and serialized as an RFC3339 scalar via yaml.v3, never recursed into its unexported fields. Used by `internal/state`'s `State.CheckedAt`.
 - **Dirty is store-wide** — `Set` marks entire store dirty, not individual fields.
-- **`NewFromString` stores have no write paths** — `Set()` + `Write()` will error by design.
+- **`WithFilenames` is load-bearing** — drives discovery AND the create-if-missing write gate. Omit it → existing files never found and `Write` fails `no write path available`. `WithDefaultFilename` does not substitute (inert without filenames). See Construction Contract above.
+- **A store writes only with a dir option + `WithFilenames`** — `New`/`NewFromString` with *no path options* is an in-memory double: `Write()` errors `no write path available` by design. Add `WithStateDir()`/`WithPaths()` + `WithFilenames()` and it discovers + lazily creates the file on first `Write`.
 - **File locking is advisory** — `flock` is cooperative. Lock files (`.lock` suffix) left on disk intentionally.
