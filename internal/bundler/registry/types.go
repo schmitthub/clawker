@@ -72,8 +72,6 @@ func (v VersionsFile) SortedKeys() []string {
 	return keys
 }
 
-// MarshalJSON implements json.Marshaler to output versions in sorted order.
-
 // NPMPackageInfo represents the npm registry response for a package.
 type NPMPackageInfo struct {
 	Name     string              `json:"name"`

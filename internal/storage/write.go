@@ -190,7 +190,7 @@ func encodeValue(v reflect.Value) any {
 
 	case reflect.Struct:
 		// time.Time is a struct with no exported fields; structToMap would
-		// flatten it to {}. Emit it as a scalar — yaml.v3 marshals it RFC3339.
+		// flatten it to {}. Emit it as a scalar — yaml.v3 marshals it RFC3339Nano.
 		if v.Type() == reflect.TypeFor[time.Time]() {
 			return v.Interface()
 		}

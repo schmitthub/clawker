@@ -53,7 +53,7 @@ func CheckForChanges(ctx context.Context, client *http.Client, st state.StateSto
 
 	cv, err := semver.NewVersion(current)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parsing current version %q: %w", current, err)
 	}
 
 	cursor, err := semver.NewVersion(st.State().LastSeenChangelog)

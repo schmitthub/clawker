@@ -104,7 +104,7 @@ func CheckForUpdate(ctx context.Context, client *http.Client, st state.StateStor
 
 	cv, err := semver.NewVersion(currentVersion)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parsing current version %q: %w", currentVersion, err)
 	}
 
 	if !shouldCheckForUpdate(st.State().CheckedAt) {
@@ -118,7 +118,7 @@ func CheckForUpdate(ctx context.Context, client *http.Client, st state.StateStor
 
 	lv, err := semver.NewVersion(release.TagName)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parsing release tag %q from %s: %w", release.TagName, repo, err)
 	}
 
 	// Persist on fetch success, BEFORE the newer/not-newer decision, so the TTL

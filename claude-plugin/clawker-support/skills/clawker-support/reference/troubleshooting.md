@@ -233,8 +233,10 @@ then never repeats for that upgrade. The changelog is fetched over the network.
 
 The note is intentionally suppressed in any of these cases:
 
-- **Not an interactive terminal** (output piped/redirected, non-interactive
-  shell).
+- **Not an interactive terminal** — for example a non-interactive shell.
+  (Redirecting or piping only the command's normal output, while the terminal
+  stays attached, does not suppress the note — it rides clawker's status
+  messages, not the command's data output.)
 - **`CI` is set** — treated as a non-interactive environment.
 - **`CLAWKER_NO_NOTIFIER` is set** (any non-empty value) — the user opted
   out of both the new-version update notifier and the "What's new" note.

@@ -31,7 +31,11 @@ type registryOptions struct {
 // WithRegistryDir places the registry file in dir instead of the resolved
 // data directory. Injection seam for tests; production callers use the
 // default.
-// TODO: Adding variadic functions just for test seams is a violation
+//
+// TODO: This variadic option exists only as a test seam, which violates
+// testing.md gotcha #8 (no production params solely for mockability). Replace
+// with a data-layer seed (cf. state.NewFromString, per store-backed-package.md)
+// and drop this option.
 func WithRegistryDir(dir string) RegistryOption {
 	return func(o *registryOptions) { o.dir = dir }
 }

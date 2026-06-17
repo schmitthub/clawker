@@ -18,7 +18,7 @@ const (
 	KindInt                          // int, int64
 	KindStringSlice                  // []string
 	KindDuration                     // time.Duration
-	KindTime                         // time.Time (serialized as an RFC3339 scalar)
+	KindTime                         // time.Time (serialized as an RFC3339Nano scalar)
 	KindMap                          // map[string]string (only — other map types must register via KindFunc)
 	KindStructSlice                  // []struct (non-string slice of structs)
 
@@ -294,7 +294,7 @@ func normalizeStruct(rt reflect.Type, prefix string, fields *[]Field, kindFunc K
 			*fields = append(*fields, &field{path: path, kind: KindDuration, label: label, desc: desc, def: def, required: req, mergeTag: merge})
 
 		case ft == reflect.TypeFor[time.Time]():
-			// time.Time is a struct, but it serializes as an RFC3339 scalar via
+			// time.Time is a struct, but it serializes as an RFC3339Nano scalar via
 			// yaml.v3 — treat it as an opaque leaf, never recurse into its
 			// unexported fields (which would flatten it to an empty map).
 			*fields = append(*fields, &field{path: path, kind: KindTime, label: label, desc: desc, def: def, required: req, mergeTag: merge})

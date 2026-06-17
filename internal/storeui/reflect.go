@@ -120,7 +120,7 @@ func walkStruct(val reflect.Value, typ reflect.Type, prefix string, fields *[]Fi
 			})
 
 		case ft == reflect.TypeOf(time.Time{}):
-			// time.Time is a struct but serializes as an RFC3339 scalar (parallel
+			// time.Time is a struct but serializes as an RFC3339Nano scalar (parallel
 			// to storage.normalizeStruct). Classify it as a leaf here — the generic
 			// reflect.Struct case below would recurse into its unexported fields and
 			// emit no field at all, silently dropping it from the editor. A zero time

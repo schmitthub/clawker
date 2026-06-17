@@ -24,11 +24,12 @@ import (
 	"github.com/schmitthub/clawker/internal/storage"
 )
 
-// State is the facade over the CLI's persisted runtime state. It is NOT a
-// Factory noun: Main constructs one per process via New and shares the single
-// facade between the background update check and the changelog teaser. Readers
-// get an immutable snapshot; mutators field-merge a single field without
-// disturbing siblings.
+// State is the schema struct for the CLI's persisted runtime state, surfaced
+// through the StateStore facade — a lazy, sync.Once-cached Factory noun
+// (f.CLIState()) constructed by the factory closure via New, not by Main. The
+// background update check and the changelog teaser share the one cached
+// instance. Readers get an immutable snapshot; mutators field-merge a single
+// field without disturbing siblings.
 //
 //go:generate moq -rm -pkg mocks -out mocks/state_mock.go . StateStore
 type StateStore interface {

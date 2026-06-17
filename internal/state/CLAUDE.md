@@ -28,7 +28,7 @@ type State struct {
 
 `State` implements `storage.Schema` via `Fields()` (plain `NormalizeFields`).
 `CheckedAt` relies on storage's `KindTime` support — storage serializes it as an
-RFC3339 scalar instead of recursing into the unexported fields.
+RFC3339Nano scalar instead of recursing into the unexported fields.
 
 The update-check fields (`checked_at` / `latest_version`) and the changelog
 cursor (`last_seen_changelog`) are **disjoint by ownership**: the update checker
