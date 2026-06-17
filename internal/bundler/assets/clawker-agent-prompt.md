@@ -95,12 +95,15 @@ the broadest one that happens to work.
        # needed.
        rules:
          - dst: raw.githubusercontent.com
-           proto: https            # https (default) | http | ws | wss | ssh | tcp | udp
-           # port: "9000-9100"     # single port or inclusive range; empty = proto default
+           proto: https            # https (default) | http | ws | wss | ssh | tcp | udp | any opaque L7 name
+           # port: "9000-9100"     # single port or inclusive range; empty = proto default (443 https/wss, 80 http/ws, 22 ssh)
            # action: allow         # allow (default) | deny
-           path_rules:             # path scoping (https/http only)
+           # insecure_skip_tls_verify: false  # accept a self-signed/untrusted upstream cert (https/wss only); default false
+           path_rules:             # path scoping — http/https/ws/wss only
              - path: /open-telemetry/
-               action: allow       # allowlist mode: this prefix allowed, all other paths denied
+               action: allow       # allow this prefix (no path_default below → every other path denied = allowlist mode)
+               # methods: [GET, HEAD]  # scope this rule to these HTTP methods; empty = all methods
+           # path_default: deny    # verdict for paths matching no rule (allow | deny)
    ```
 
    Scope it as narrowly as the work needs (prefer `rules` + `path_rules` over a
@@ -128,13 +131,14 @@ the broadest one that happens to work.
      other path on the host is denied**. Add one `--path … --action allow` per
      path the work legitimately needs; they accumulate across calls.
      `--action deny` blocklists a single path while leaving the rest of the
-     domain open.
+     domain open. Add `--methods GET,HEAD` to scope a path rule to specific
+     HTTP request methods (https/http/ws/wss only; requires `--path`/`--action`).
 
    - **Whole domain (only when every path is needed, or for non-HTTP protocols):**
      ```
      clawker firewall add <hostname>
      ```
-     Path rules apply only to `http`/`https`. `ssh`/`tcp`/`udp` are opaque (no
+     Path rules apply only to `http`/`https`/`ws`/`wss`. `ssh`/`tcp`/`udp` are opaque (no
      path metadata) — scope those by protocol and port instead:
      ```
      clawker firewall add <hostname> --proto ssh --port 22
