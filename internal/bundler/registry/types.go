@@ -3,7 +3,6 @@
 package registry
 
 import (
-	"encoding/json"
 	"sort"
 
 	"github.com/Masterminds/semver/v3"
@@ -74,27 +73,6 @@ func (v VersionsFile) SortedKeys() []string {
 }
 
 // MarshalJSON implements json.Marshaler to output versions in sorted order.
-func (v VersionsFile) MarshalJSON() ([]byte, error) {
-	// Create an ordered map
-	type orderedEntry struct {
-		Key   string
-		Value *VersionInfo
-	}
-
-	keys := v.SortedKeys()
-	entries := make([]orderedEntry, 0, len(keys))
-	for _, k := range keys {
-		entries = append(entries, orderedEntry{Key: k, Value: v[k]})
-	}
-
-	// Build JSON manually to preserve order
-	result := make(map[string]*VersionInfo, len(entries))
-	for _, e := range entries {
-		result[e.Key] = e.Value
-	}
-
-	return json.Marshal(result)
-}
 
 // NPMPackageInfo represents the npm registry response for a package.
 type NPMPackageInfo struct {

@@ -206,7 +206,7 @@ func NewNPMClient(opts ...Option) *NPMClient  // implements Fetcher
 func WithHTTPClient(*http.Client) Option; WithBaseURL(string) Option; WithTimeout(time.Duration) Option
 type DistTags map[string]string                         // "latest" -> "2.1.3"
 type VersionInfo struct { FullVersion, DebianDefault, AlpineDefault string; Major, Minor, Patch int; ... }
-type VersionsFile map[string]*VersionInfo               // Keys(), SortedKeys(), MarshalJSON()
+type VersionsFile map[string]*VersionInfo               // Keys(), SortedKeys()
 type NPMPackageInfo struct { Name string; DistTags; Versions map[string]struct{} }
 func NewVersionInfo(v *semver.Version, debianDefault, alpineDefault string, variants) *VersionInfo
 ```
