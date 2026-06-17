@@ -556,7 +556,11 @@ func TestDialAgent_DedupsConcurrentCallsForSameContainerID(t *testing.T) {
 	require.True(t, ok)
 
 	d.DialAgent(ctx, "container-A")
-	<-entered                       // first dial parked in resolveAgent — dedup key held
+	select {
+	case <-entered: // first dial parked in resolveAgent — dedup key held
+	case <-time.After(2 * time.Second):
+		t.Fatal("first dial goroutine never reached ContainerInspect")
+	}
 	d.DialAgent(ctx, "container-A") // dup — key present → guaranteed no-op
 	close(release)                  // let the first dial run to terminal failure
 
