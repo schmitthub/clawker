@@ -69,6 +69,23 @@ func TestSetFieldValue_Duration(t *testing.T) {
 	assert.Equal(t, time.Duration(0), v.Timeout)
 }
 
+func TestSetFieldValue_Time(t *testing.T) {
+	v := &timeStruct{}
+	require.NoError(t, SetFieldValue(v, "seen_at", "2026-01-02T03:04:05Z"))
+	assert.Equal(t, time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), v.SeenAt.UTC())
+
+	// Empty round-trips to the zero time (the "unset" representation).
+	require.NoError(t, SetFieldValue(v, "seen_at", ""))
+	assert.True(t, v.SeenAt.IsZero())
+}
+
+func TestSetFieldValue_InvalidTime(t *testing.T) {
+	v := &timeStruct{}
+	err := SetFieldValue(v, "seen_at", "not_a_time")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid time")
+}
+
 func TestSetFieldValue_NestedPath(t *testing.T) {
 	v := &nestedStruct{}
 	require.NoError(t, SetFieldValue(v, "build.image", "ubuntu:22.04"))

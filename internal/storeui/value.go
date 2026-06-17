@@ -13,6 +13,9 @@ import (
 // durationKind is the reflected type of time.Duration, stored for comparison convenience.
 var durationKind = reflect.TypeOf(time.Duration(0))
 
+// timeKind is the reflected type of time.Time, stored for comparison convenience.
+var timeKind = reflect.TypeOf(time.Time{})
+
 // SetFieldValue sets a field on a struct pointer by its dotted YAML path.
 // It walks the struct via yaml tags, allocates nil pointer-to-struct parents,
 // and performs type-aware conversion at the leaf.
@@ -123,6 +126,19 @@ func setLeaf(f reflect.Value, val string, path string) error {
 			return fmt.Errorf("storeui.SetFieldValue: invalid duration for %q: %w", path, err)
 		}
 		f.Set(reflect.ValueOf(d))
+
+	case ft == timeKind:
+		// Empty round-trips to the zero time (the "unset" representation produced
+		// by WalkFields); otherwise parse the RFC3339 scalar.
+		if val == "" {
+			f.Set(reflect.ValueOf(time.Time{}))
+			break
+		}
+		tv, err := time.Parse(time.RFC3339, val)
+		if err != nil {
+			return fmt.Errorf("storeui.SetFieldValue: invalid time for %q (want RFC3339): %w", path, err)
+		}
+		f.Set(reflect.ValueOf(tv))
 
 	case ft.Kind() == reflect.String:
 		f.SetString(val)

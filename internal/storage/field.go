@@ -233,8 +233,14 @@ func NormalizeFields[T any](v T, opts ...NormalizeOption) FieldSet {
 // metadata to fields. It recurses into nested structs and *structs.
 // kindFunc is an optional classifier for domain-specific types (may be nil).
 //
-// SYNC: storeui.classifyAndFormat has a parallel type-classification switch.
-// When adding a new type case here, update classifyAndFormat to match.
+// SYNC: several consumers carry a parallel FieldKind switch and must learn any
+// new kind added here, or that kind degrades to an unknown/wrong rendering:
+//   - storeui.walkStruct (reflect.go) — Go type → kind + runtime value formatting
+//   - storeui.setLeaf (value.go) — string → typed field on edit
+//   - storeui.fieldKindToBrowserKind (edit.go) — kind → TUI editor widget
+//   - storeui.classifyAndFormat (reflect.go) — map/slice/pointer fallback classifier
+//   - docs.kindToType (configdoc.go) — kind → human type label for the config docs
+//   - parseDefaultValue (defaults.go) — `default` tag → typed YAML value
 func normalizeStruct(rt reflect.Type, prefix string, fields *[]Field, kindFunc KindFunc) {
 	for i := 0; i < rt.NumField(); i++ {
 		sf := rt.Field(i)

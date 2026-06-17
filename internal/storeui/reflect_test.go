@@ -2,6 +2,7 @@ package storeui
 
 import (
 	"testing"
+	"time"
 
 	"github.com/schmitthub/clawker/internal/storage"
 	"github.com/stretchr/testify/assert"
@@ -92,6 +93,24 @@ func TestWalkFields_Duration(t *testing.T) {
 	assert.Equal(t, "timeout", fields[0].Path)
 	assert.Equal(t, KindDuration, fields[0].Kind)
 	assert.Equal(t, "5m0s", fields[0].Value)
+}
+
+func TestWalkFields_Time(t *testing.T) {
+	ts := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	fields := WalkFields(timeStruct{SeenAt: ts})
+
+	// time.Time must surface as a single RFC3339 leaf — NOT recursed into its
+	// unexported fields (which would emit zero fields and drop it from the editor).
+	require.Len(t, fields, 1)
+	assert.Equal(t, "seen_at", fields[0].Path)
+	assert.Equal(t, KindTime, fields[0].Kind)
+	assert.Equal(t, "2026-01-02T03:04:05Z", fields[0].Value)
+
+	// Zero time renders blank so it displays as "unset".
+	zero := WalkFields(timeStruct{})
+	require.Len(t, zero, 1)
+	assert.Equal(t, KindTime, zero[0].Kind)
+	assert.Equal(t, "", zero[0].Value)
 }
 
 func TestWalkFields_ComplexTypes(t *testing.T) {

@@ -7,7 +7,32 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/storage"
 )
+
+// TestKindToType_AllKinds locks the FieldKind → human type-label mapping. It is
+// the docs-side guard for the SYNC contract in storage.normalizeStruct: a kind
+// added to storage without a case here silently degrades to "string".
+func TestKindToType_AllKinds(t *testing.T) {
+	cases := []struct {
+		kind storage.FieldKind
+		want string
+	}{
+		{storage.KindText, "string"},
+		{storage.KindBool, "boolean"},
+		{storage.KindInt, "integer"},
+		{storage.KindStringSlice, "string list"},
+		{storage.KindDuration, "duration"},
+		{storage.KindTime, "timestamp"},
+		{storage.KindMap, "key-value map"},
+		{storage.KindStructSlice, "object list"},
+	}
+	for _, tc := range cases {
+		if got := kindToType(tc.kind); got != tc.want {
+			t.Errorf("kindToType(%s) = %q, want %q", tc.kind, got, tc.want)
+		}
+	}
+}
 
 func TestRenderYAMLSchema_ProjectContainsNestedStructTypes(t *testing.T) {
 	schema := renderYAMLSchema(reflect.TypeOf(config.Project{}), 0)

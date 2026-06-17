@@ -565,6 +565,10 @@ func fieldKindToBrowserKind(k FieldKind) tui.BrowserFieldKind {
 		return tui.BrowserStringSlice
 	case KindDuration:
 		return tui.BrowserDuration
+	case KindTime:
+		// An RFC3339 timestamp is a single-line scalar — edit it as plain text.
+		// (No dedicated BrowserTime widget; SetFieldValue validates on save.)
+		return tui.BrowserText
 	case KindMap:
 		return tui.BrowserMap
 	case KindStructSlice:
