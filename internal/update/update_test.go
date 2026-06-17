@@ -2,143 +2,235 @@ package update
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
 
+	"github.com/Masterminds/semver/v3"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/httpmock"
 	"github.com/schmitthub/clawker/internal/state"
 	statemocks "github.com/schmitthub/clawker/internal/state/mocks"
 )
 
-func TestShouldCheckForUpdate_FreshCache(t *testing.T) {
-	got := shouldCheckForUpdate(time.Now())
-	if got {
-		t.Error("shouldCheckForUpdate() = true, want false (fresh check)")
+func TestShouldCheckForUpdate(t *testing.T) {
+	tests := []struct {
+		name        string
+		lastChecked time.Time
+		want        bool
+	}{
+		{"fresh check within TTL suppresses", time.Now(), false},
+		{"stale check past TTL runs", time.Now().Add(-25 * time.Hour), true},
+		// A future lastCheckedAt (clock skew, later corrected) must NOT be treated
+		// as fresh: time.Since goes negative and would spuriously satisfy < cacheTTL,
+		// suppressing checks until wall-clock catches up.
+		{"future timestamp treated as stale", time.Now().Add(48 * time.Hour), true},
+		{"zero time never checked", time.Time{}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldCheckForUpdate(tt.lastChecked); got != tt.want {
+				t.Errorf("shouldCheckForUpdate() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
-func TestShouldCheckForUpdate_StaleCache(t *testing.T) {
-	got := shouldCheckForUpdate(time.Now().Add(-25 * time.Hour))
-	if !got {
-		t.Error("shouldCheckForUpdate() = false, want true (stale check)")
+// TestCheckForUpdate_VersionComparison drives the newer/same/older decision (and
+// v-prefix stripping) through the public CheckForUpdate: a non-nil *ReleaseInfo
+// MEANS "strictly newer", nil means "not newer". Each case uses a blank state so
+// the freshness gate lets the fetch run.
+func TestCheckForUpdate_VersionComparison(t *testing.T) {
+	const newerURL = "https://github.com/schmitthub/clawker/releases/tag/v2.0.0"
+	tests := []struct {
+		name    string
+		tag     string
+		htmlURL string
+		current string
+		want    *ReleaseInfo // nil = expect no newer release
+		wantErr error        // non-nil = expect error (e.g. unparseable current version)
+	}{
+		{
+			name:    "newer version returns release info",
+			tag:     "v2.0.0",
+			htmlURL: newerURL,
+			current: "1.0.0",
+			want:    &ReleaseInfo{CurrentVersion: "1.0.0", LatestVersion: "2.0.0", ReleaseURL: newerURL},
+		},
+		{
+			name:    "same version is not newer",
+			tag:     "v1.0.0",
+			htmlURL: "https://github.com/schmitthub/clawker/releases/tag/v1.0.0",
+			current: "1.0.0",
+			want:    nil,
+		},
+		{
+			name:    "older remote is not newer",
+			tag:     "v0.9.0",
+			htmlURL: "https://github.com/schmitthub/clawker/releases/tag/v0.9.0",
+			current: "1.0.0",
+			want:    nil,
+		},
+		{
+			name:    "v-prefixed current version is stripped",
+			tag:     "v2.0.0",
+			htmlURL: newerURL,
+			current: "v1.0.0",
+			want:    &ReleaseInfo{CurrentVersion: "1.0.0", LatestVersion: "2.0.0", ReleaseURL: newerURL},
+		},
+		{
+			name:    "dirty tag pre-release is newer than current",
+			tag:     "0.12.3-26-g1476a75f",
+			htmlURL: newerURL,
+			current: "0.12.2",
+			want:    &ReleaseInfo{CurrentVersion: "0.12.2", LatestVersion: "0.12.3-26-g1476a75f", ReleaseURL: newerURL},
+		},
+		{
+			name:    "alpha pre-release is newer than current",
+			tag:     "0.12.3-alpha",
+			htmlURL: newerURL,
+			current: "0.12.2",
+			want:    &ReleaseInfo{CurrentVersion: "0.12.2", LatestVersion: "0.12.3-alpha", ReleaseURL: newerURL},
+		},
+		{
+			name:    "rc pre-release is newer than current",
+			tag:     "0.12.3-rc.1",
+			htmlURL: newerURL,
+			current: "0.12.2",
+			want:    &ReleaseInfo{CurrentVersion: "0.12.2", LatestVersion: "0.12.3-rc.1", ReleaseURL: newerURL},
+		},
+		{
+			name:    "dev tag",
+			tag:     "DEV",
+			htmlURL: newerURL,
+			current: "0.12.2",
+			wantErr: semver.ErrInvalidSemVer, // DEV is not parseable semver, so CheckForUpdate returns an error (not a nil *ReleaseInfo)
+		},
+		{
+			name:    "rc pre-release is newer than current",
+			tag:     "(devel)",
+			htmlURL: newerURL,
+			current: "0.12.2",
+			wantErr: semver.ErrInvalidSemVer, // (devel) is not parseable semver, so CheckForUpdate returns an error (not a nil *ReleaseInfo)
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reg := releaseStub(tt.tag, tt.htmlURL)
+			st := statemocks.NewBlankState()
+
+			info, err := CheckForUpdate(context.Background(), reg.Client(), st, tt.current, consts.GitHubRepo)
+			if tt.wantErr != nil {
+				if err == nil {
+					t.Fatalf("expected error %v, got nil", tt.wantErr)
+				}
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("expected error %v, got %v", tt.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tt.want == nil {
+				if info != nil {
+					t.Errorf("expected nil (not newer), got %+v", info)
+				}
+				return
+			}
+			if info == nil {
+				t.Fatal("expected *ReleaseInfo, got nil")
+			}
+			if *info != *tt.want {
+				t.Errorf("ReleaseInfo = %+v, want %+v", *info, *tt.want)
+			}
+		})
 	}
 }
 
-func TestShouldCheckForUpdate_FutureTimestampStale(t *testing.T) {
-	// A future lastCheckedAt (clock skew, later corrected) must not be treated
-	// as fresh: time.Since goes negative and would spuriously satisfy < cacheTTL,
-	// suppressing checks until wall-clock catches up.
-	got := shouldCheckForUpdate(time.Now().Add(48 * time.Hour))
-	if !got {
-		t.Error("shouldCheckForUpdate() = false, want true (future timestamp = stale)")
+// TestCheckForUpdate_Errors covers fetch/parse failures that the public
+// CheckForUpdate must surface as (nil, error).
+func TestCheckForUpdate_Errors(t *testing.T) {
+	tests := []struct {
+		name string
+		reg  func() *httpmock.Registry
+	}{
+		{
+			name: "API 500 surfaces error",
+			reg: func() *httpmock.Registry {
+				reg := &httpmock.Registry{}
+				reg.Register(
+					httpmock.REST(http.MethodGet, "/releases/latest"),
+					httpmock.StatusStringResponse(http.StatusInternalServerError, ""),
+				)
+				return reg
+			},
+		},
+		{
+			// An empty tag_name is rejected at the semver parse inside CheckForUpdate
+			// (there is no separate empty-tag guard — semver.NewVersion("") fails).
+			name: "empty tag_name fails semver parse",
+			reg:  func() *httpmock.Registry { return releaseStub("", "https://example.com") },
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reg := tt.reg()
+			st := statemocks.NewBlankState()
+
+			info, err := CheckForUpdate(context.Background(), reg.Client(), st, "1.0.0", consts.GitHubRepo)
+			if err == nil {
+				t.Error("expected error, got nil")
+			}
+			if info != nil {
+				t.Errorf("expected nil result on error, got %+v", info)
+			}
+		})
 	}
 }
 
-func TestShouldCheckForUpdate_ZeroTimeNeverChecked(t *testing.T) {
-	got := shouldCheckForUpdate(time.Time{})
-	if !got {
-		t.Error("shouldCheckForUpdate() = false, want true (zero time = never checked)")
+// TestGetLatestReleaseInfo_Errors covers the decode/transport layer directly:
+// the unexported getLatestReleaseInfo must return (nil, error) on a bad body or
+// a dead context.
+func TestGetLatestReleaseInfo_Errors(t *testing.T) {
+	tests := []struct {
+		name string
+		reg  func() *httpmock.Registry
+		ctx  func() context.Context
+	}{
+		{
+			name: "malformed JSON fails decode",
+			reg: func() *httpmock.Registry {
+				reg := &httpmock.Registry{}
+				reg.Register(
+					httpmock.REST(http.MethodGet, "/releases/latest"),
+					httpmock.StringResponse("not json at all"),
+				)
+				return reg
+			},
+			ctx: context.Background,
+		},
+		{
+			name: "cancelled context fails fetch",
+			reg:  func() *httpmock.Registry { return releaseStub("v2.0.0", "https://example.com") },
+			ctx: func() context.Context {
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel() // Cancel immediately
+				return ctx
+			},
+		},
 	}
-}
-
-func TestCheckForUpdate_NewerVersion(t *testing.T) {
-	reg := releaseStub("v2.0.0", "https://github.com/schmitthub/clawker/releases/tag/v2.0.0")
-	st := statemocks.NewBlankState()
-
-	info, err := CheckForUpdate(context.Background(), reg.Client(), st, "1.0.0", consts.GitHubRepo)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if info == nil {
-		t.Fatal("expected *ReleaseInfo for a newer release, got nil")
-	}
-	if info.CurrentVersion != "1.0.0" {
-		t.Errorf("CurrentVersion = %q, want %q", info.CurrentVersion, "1.0.0")
-	}
-	if info.LatestVersion != "2.0.0" {
-		t.Errorf("LatestVersion = %q, want %q", info.LatestVersion, "2.0.0")
-	}
-	if info.ReleaseURL != "https://github.com/schmitthub/clawker/releases/tag/v2.0.0" {
-		t.Errorf("ReleaseURL = %q", info.ReleaseURL)
-	}
-}
-
-func TestCheckForUpdate_SameVersion(t *testing.T) {
-	reg := releaseStub("v1.0.0", "https://github.com/schmitthub/clawker/releases/tag/v1.0.0")
-	st := statemocks.NewBlankState()
-
-	// Not newer → nil result (nil MEANS "no newer release").
-	info, err := CheckForUpdate(context.Background(), reg.Client(), st, "1.0.0", consts.GitHubRepo)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if info != nil {
-		t.Errorf("expected nil for same version (not newer), got %+v", info)
-	}
-}
-
-func TestCheckForUpdate_OlderRemote(t *testing.T) {
-	reg := releaseStub("v0.9.0", "https://github.com/schmitthub/clawker/releases/tag/v0.9.0")
-	st := statemocks.NewBlankState()
-
-	// Current is newer → nil result.
-	info, err := CheckForUpdate(context.Background(), reg.Client(), st, "1.0.0", consts.GitHubRepo)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if info != nil {
-		t.Errorf("expected nil when current is newer, got %+v", info)
-	}
-}
-
-func TestCheckForUpdate_APIError(t *testing.T) {
-	reg := &httpmock.Registry{}
-	reg.Register(
-		httpmock.REST(http.MethodGet, "/releases/latest"),
-		httpmock.StatusStringResponse(http.StatusInternalServerError, ""),
-	)
-	st := statemocks.NewBlankState()
-
-	info, err := CheckForUpdate(context.Background(), reg.Client(), st, "1.0.0", consts.GitHubRepo)
-	if err == nil {
-		t.Error("expected error on API failure, got nil")
-	}
-	if info != nil {
-		t.Errorf("expected nil result on API error, got %+v", info)
-	}
-}
-
-func TestCheckForUpdate_ContextCancellation(t *testing.T) {
-	reg := releaseStub("v2.0.0", "https://example.com")
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // Cancel immediately
-
-	release, err := getLatestReleaseInfo(ctx, reg.Client(), consts.GitHubRepo)
-	if err == nil {
-		t.Error("expected error on cancelled context, got nil")
-	}
-	if release != nil {
-		t.Errorf("expected nil release, got %+v", release)
-	}
-}
-
-func TestCheckForUpdate_VPrefixHandling(t *testing.T) {
-	reg := releaseStub("v2.0.0", "https://github.com/schmitthub/clawker/releases/tag/v2.0.0")
-	st := statemocks.NewBlankState()
-
-	// Pass version with v prefix
-	info, err := CheckForUpdate(context.Background(), reg.Client(), st, "v1.0.0", consts.GitHubRepo)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if info == nil {
-		t.Fatal("expected *ReleaseInfo, got nil")
-	}
-	if info.CurrentVersion != "1.0.0" {
-		t.Errorf("CurrentVersion = %q, want %q (v prefix should be stripped)", info.CurrentVersion, "1.0.0")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			release, err := getLatestReleaseInfo(tt.ctx(), tt.reg().Client(), consts.GitHubRepo)
+			if err == nil {
+				t.Error("expected error, got nil")
+			}
+			if release != nil {
+				t.Errorf("expected nil release, got %+v", release)
+			}
+		})
 	}
 }
 
@@ -198,39 +290,6 @@ func TestCheckForUpdate_NotNewerAdvancesCheckedAt(t *testing.T) {
 	}
 	if calls[0].LatestVersion != "1.0.0" {
 		t.Errorf("recorded latest_version = %q, want %q", calls[0].LatestVersion, "1.0.0")
-	}
-}
-
-func TestCheckForUpdate_MalformedJSON(t *testing.T) {
-	reg := &httpmock.Registry{}
-	reg.Register(
-		httpmock.REST(http.MethodGet, "/releases/latest"),
-		httpmock.StringResponse("not json at all"),
-	)
-
-	release, err := getLatestReleaseInfo(context.Background(), reg.Client(), consts.GitHubRepo)
-	if err == nil {
-		t.Error("expected error on malformed JSON, got nil")
-	}
-	if release != nil {
-		t.Errorf("expected nil release, got %+v", release)
-	}
-}
-
-// TestCheckForUpdate_EmptyTagName: an empty tag_name from the API is rejected at
-// the semver parse inside CheckForUpdate (there is no separate empty-tag guard —
-// semver.NewVersion("") fails), so the public contract still surfaces an error
-// and never reports a release.
-func TestCheckForUpdate_EmptyTagName(t *testing.T) {
-	reg := releaseStub("", "https://example.com")
-	st := statemocks.NewBlankState()
-
-	info, err := CheckForUpdate(context.Background(), reg.Client(), st, "1.0.0", consts.GitHubRepo)
-	if err == nil {
-		t.Error("expected error on empty tag_name, got nil")
-	}
-	if info != nil {
-		t.Errorf("expected nil result on empty tag_name, got %+v", info)
 	}
 }
 

@@ -127,7 +127,7 @@ func CheckForUpdate(ctx context.Context, client *http.Client, st state.StateStor
 		return nil, fmt.Errorf("recording update check: %w", err)
 	}
 
-	if !lv.GreaterThan(cv) {
+	if !cv.LessThan(lv) {
 		return nil, nil
 	}
 

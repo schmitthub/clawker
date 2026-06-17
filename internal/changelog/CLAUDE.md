@@ -112,19 +112,20 @@ stdlib `net/http`. No on-disk cache, no clock, no Factory noun.
 
 ## Testing
 
-- `changelog_test.go` — pure parser table tests against `testdata/CHANGELOG.md`:
-  header parsing, `## [Unreleased]` + partial-header skip (guards
-  `StrictNewVersion`), body preservation across a multi-kind release (Added +
-  Fixed both survive) with inline links intact, HTML-comment + link-reference
-  stripping.
-- `checkforchanges_test.go` — `CheckForChanges` over an `internal/httpmock`
-  registry (`reg.Client()` injected; `len(reg.Requests)` is the request-hit
-  counter) + a real isolated store (`testenv.New(t)` + `state.New()`): the cursor
-  is seeded as a
-  **raw string** (prod parses it), so the range table, the
-  first-run-seeds-no-fetch path, the **garbage-cursor → first-run** failure
-  branch, always-advances, the **`String()` canonical-cursor** assertion (a
-  `v0.12.0` current stored as `0.12.0` at both the seed and advance sites),
-  the **nil-state error**, and fetch-error-no-advance all run through the real
-  entry point. The range logic is **not** unit-tested in isolation — proving it
-  through `CheckForChanges` keeps the cursor parse (prod's job) on the wire.
+All tests live in the single `changelog_test.go` (parser + `CheckForChanges`
+share the `versions` helper), split into two sections:
+
+- **Parser tests** — pure `parse` tests against `testdata/CHANGELOG.md`: header
+  parsing, `## [Unreleased]` + partial-header skip (guards `StrictNewVersion`),
+  body preservation across a multi-kind release (Added + Fixed both survive) with
+  inline links intact, HTML-comment + link-reference stripping.
+- **`CheckForChanges` tests** — over an `internal/httpmock` registry
+  (`reg.Client()` injected; `len(reg.Requests)` is the request-hit counter) + a
+  real isolated store (`testenv.New(t)` + `state.New()`): the cursor is seeded as
+  a **raw string** (prod parses it), so the range table, the first-run reseed
+  table (**empty + garbage cursor** → reseed, no fetch), always-advances, the
+  **`String()` canonical-cursor** assertion (a `v0.12.0` current stored as
+  `0.12.0` at both the seed and advance sites), the **nil-state error**, and
+  fetch-error-no-advance all run through the real entry point. The range logic is
+  **not** unit-tested in isolation — proving it through `CheckForChanges` keeps
+  the cursor parse (prod's job) on the wire.
