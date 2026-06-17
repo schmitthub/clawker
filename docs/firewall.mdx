@@ -1,11 +1,11 @@
 ---
-title: "Firewall Guide"
-description: "eBPF + CoreDNS + Envoy network firewall architecture, configuration, CLI commands, and troubleshooting"
+title: "Egress Firewall — Network Isolation for AI Agents"
+description: "Clawker's deny-by-default egress firewall for sandboxing AI coding agents: eBPF cgroup egress enforcement, CoreDNS, and Envoy deliver network isolation and data exfiltration prevention. Architecture, configuration, CLI commands, and troubleshooting."
 icon: "fire-flame-curved"
-keywords: ["mythos-class", "security", "AI container sandbox", "Claude Code", "Fable 5", "Anthropic", "egress firewall", "eBPF", "Envoy", "CoreDNS", "network isolation"]
+keywords: ["AI coding agent sandbox", "Claude Code sandbox", "self-hosted", "open source", "run Claude Code in Docker", "coding agent sandbox", "egress firewall", "eBPF", "Envoy", "CoreDNS", "network isolation"]
 ---
 
-Clawker ships a **deny-by-default network firewall** that restricts all container egress to explicitly allowed domains. The firewall runs as a shared stack — an Envoy egress proxy, a custom CoreDNS resolver with a `dnsbpf` plugin, and a set of eBPF cgroup programs — managed automatically by clawker on an isolated Docker bridge network. One firewall stack serves all clawker-managed containers on the host (1:N). It provides DNS-level blocking, per-domain TCP routing, and TLS-level inspection without granting your agent containers any special privileges.
+Clawker ships a **deny-by-default egress firewall** — the network isolation layer that makes it a sandbox for AI coding agents. It restricts all container egress to explicitly allowed domains, so a prompt-injected agent cannot exfiltrate your code or credentials to any destination outside your allowlist — egress to everything you haven't approved is denied at the kernel. The firewall runs as a shared stack — an Envoy egress proxy, a custom CoreDNS resolver with a `dnsbpf` plugin, and a set of eBPF cgroup programs that enforce egress at the kernel — managed automatically by clawker on an isolated Docker bridge network. One firewall stack serves all clawker-managed containers on the host (1:N). It provides DNS-level blocking, per-domain TCP routing, and TLS-level inspection without granting your agent containers any special privileges.
 
 ## Architecture
 

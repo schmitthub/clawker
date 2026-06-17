@@ -3,13 +3,13 @@
   "theme": "maple",
   "name": "Clawker",
   "favicon": "/favicon.svg",
-  "description": "Clawker — a secure AI container sandbox for Anthropic Claude Code agents. Orchestrate, monitor, and automate mythos-class Fable 5 agents in isolated Docker containers.",
+  "description": "Clawker is a free, open-source, self-hosted AI coding agent sandbox. Run Claude Code in Docker on your own machine with a deny-by-default egress firewall, prompt-injection and data-exfiltration protection, git credential forwarding, and parallel git-worktree agents.",
   "seo": {
     "metatags": {
-      "keywords": "mythos-class, security, AI container sandbox, Claude Code, Fable 5, Anthropic, agent sandbox, egress firewall, Docker, agent orchestration",
+      "keywords": "AI coding agent sandbox, Claude Code sandbox, run Claude Code in Docker, self-hosted, open source, egress firewall, prompt injection protection, network isolation, parallel Claude Code agents, git worktree, devcontainer alternative",
       "og:site_name": "Clawker",
-      "og:title": "Clawker — AI container sandbox for Claude Code agents",
-      "og:description": "Secure AI container sandbox for Anthropic Claude Code agents — orchestration, egress firewall, and monitoring for mythos-class Fable 5 agents.",
+      "og:title": "Clawker — Self-Hosted AI Coding Agent Sandbox",
+      "og:description": "Free, open-source sandbox to run Claude Code in Docker on your own machine — a self-hosted AI coding agent sandbox with a deny-by-default egress firewall, prompt-injection protection, and parallel git-worktree agents. No cloud, no subscription.",
       "og:image": "https://raw.githubusercontent.com/schmitthub/clawker/main/docs/assets/threat-model.png",
       "twitter:card": "summary_large_image",
       "twitter:image": "https://raw.githubusercontent.com/schmitthub/clawker/main/docs/assets/threat-model.png"
