@@ -145,3 +145,4 @@ Golden values are code, not files — `STORAGE_GOLDEN_BLESS` env var + `make sto
 5. **Error handling**: NEVER silently discard errors — log cleanup failures with `t.Logf`
 6. **Unit test imports**: Co-located `*_test.go` should NOT import `test/e2e/harness` (pulls Docker SDK).
 7. **Factory in tests**: Never call `factory.New()` outside `internal/clawker/cmd.go`. Use `&cmdutil.Factory{}` struct literals with test doubles.
+8. **YAGNI**: Adding production code, like variadic options, just to support test seams is a violation. Add only what production code needs; test doubles should adapt to that, not the other way around.

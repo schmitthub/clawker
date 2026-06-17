@@ -67,7 +67,7 @@ monitoring:
 				ProjectRegistry: func() (*project.Registry, error) {
 					return env.Registry(t), nil
 				},
-				HttpClient: func() *http.Client {
+				HttpClient: func() (*http.Client, error) {
 					return stubHTTPClient("2.99.99-test")
 				},
 			}
@@ -140,7 +140,7 @@ monitoring:
 		ProjectRegistry: func() (*project.Registry, error) {
 			return env.Registry(t), nil
 		},
-		HttpClient: func() *http.Client {
+		HttpClient: func() (*http.Client, error) {
 			return stubHTTPClient("2.99.99-test")
 		},
 	}
@@ -203,7 +203,7 @@ monitoring:
 		ProjectRegistry: func() (*project.Registry, error) {
 			return env.Registry(t), nil
 		},
-		HttpClient: func() *http.Client {
+		HttpClient: func() (*http.Client, error) {
 			return stubHTTPClient("2.99.99-test")
 		},
 	}
@@ -261,7 +261,7 @@ monitoring:
 		ProjectRegistry: func() (*project.Registry, error) {
 			return env.Registry(t), nil
 		},
-		HttpClient: func() *http.Client {
+		HttpClient: func() (*http.Client, error) {
 			return stubHTTPClient("2.99.99-test")
 		},
 	}

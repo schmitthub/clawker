@@ -21,6 +21,7 @@ import (
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/socketbridge"
+	"github.com/schmitthub/clawker/internal/state"
 	"github.com/schmitthub/clawker/internal/tui"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/connectivity"
@@ -55,6 +56,7 @@ func New(version string) *cmdutil.Factory {
 	f := &cmdutil.Factory{
 		Version:         version,
 		ProjectRegistry: projectRegistryFunc(), // no dependencies; sole constructor of registry storage
+		CLIState:        cliStateFunc(),        // no dependencies; state.New is self-contained
 	}
 
 	f.Config = configFunc(f)                 // depends on ProjectRegistry (walk-up anchor)
@@ -74,6 +76,24 @@ func New(version string) *cmdutil.Factory {
 	return f
 }
 
+// cliStateFunc returns a sync.Once-cached lazy closure that yields the CLI
+// runtime-state facade (state.New() — the update-check cache + changelog cursor).
+// It takes no dependencies; the error is real, since state.New() can fail on a
+// disk or migration error.
+func cliStateFunc() func() (state.StateStore, error) {
+	var (
+		once sync.Once
+		st   state.StateStore
+		err  error
+	)
+	return func() (state.StateStore, error) {
+		once.Do(func() {
+			st, err = state.New()
+		})
+		return st, err
+	}
+}
+
 // httpClientFunc returns a lazy closure that yields a shared *http.Client
 // for outbound HTTP from the CLI. First consumer:
 // bundler.ResolveLatestClaudeCodeVersion for npm registry lookups during
@@ -84,16 +104,23 @@ func New(version string) *cmdutil.Factory {
 // A 30s timeout is applied at the client level so a hung npm response
 // doesn't stall builds indefinitely. Default Transport (net/http) handles
 // connection pooling, keep-alives, and standard env-var proxy resolution.
-func httpClientFunc() func() *http.Client {
+//
+// The (*http.Client, error) signature is intentional even though constructing a
+// plain client is infallible today: the error is RESERVED so a future fallible
+// transport (custom CA bundle, proxy resolution, an auth round-tripper) can
+// surface a failure without rippling a signature change through every caller.
+// Until then it is always nil.
+func httpClientFunc() func() (*http.Client, error) {
 	var (
 		once   sync.Once
 		client *http.Client
+		err    error // reserved; see doc — currently never assigned
 	)
-	return func() *http.Client {
+	return func() (*http.Client, error) {
 		once.Do(func() {
 			client = &http.Client{Timeout: 30 * time.Second}
 		})
-		return client
+		return client, err
 	}
 }
 

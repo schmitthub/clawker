@@ -14,6 +14,10 @@ clawker CLI's "what's new" teaser renders the section bodies verbatim as
 markdown, and the release-notes workflow copies them into the GitHub release.
 Link to relevant docs inline in the bullets.
 
+## [0.12.4] - 2026-06-17
+
+- **Added:** Release notes notifications.
+
 ## [0.12.3] - 2026-06-15
 
 ### Fixed

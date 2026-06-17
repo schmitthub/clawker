@@ -52,7 +52,8 @@ f := &cmdutil.Factory{IOStreams: tio, TUI: tui.NewTUI(tio), Version: "1.0.0"}
 - `socketBridgeFunc(f)` -- returns lazy `socketbridge.SocketBridgeManager` constructor (wraps `socketbridge.NewManager()`)
 - `prompterFunc(f)` -- returns lazy prompter constructor
 - `projectManagerFunc(f)` -- returns lazy `project.ProjectManager` constructor; resolves Config, Logger, and ProjectRegistry, then calls `project.NewProjectManager(log, nil, cfg.Project().Name, reg)`, passing the `clawker.yaml` `name:` override down as a primitive. The edge is strictly one-way (PM reads config; config never reads PM — its walk-up anchor comes from the shared registry facade), so there is no cycle
-- `httpClientFunc()` -- returns lazy `*http.Client` with 30s timeout; used for npm registry lookups (Claude Code version resolution)
+- `httpClientFunc()` -- returns a lazy `func() (*http.Client, error)` with a 30s timeout; shared by npm registry lookups (Claude Code version resolution), the update checker, and the changelog teaser. The `error` return is **reserved** (constructing a plain client is infallible today) so a future fallible transport — custom CA bundle, proxy resolution, auth round-tripper — can surface failures without a signature change; until then it is always nil.
+- `cliStateFunc()` -- returns a lazy `func() (state.StateStore, error)` (`state.New()`, `sync.Once`-cached, no dependencies); the CLI runtime-state facade (update-check cache + changelog cursor) consumed by the background notifications in `Main`. The error is real — `state.New()` can fail on a disk/migration error.
 
 Each helper is a standalone function in `default.go`, making the wiring easy to read and test.
 

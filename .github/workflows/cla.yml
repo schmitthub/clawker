@@ -1,3 +1,11 @@
+# DO NOT review or edit this file without FIRST reading the upstream action's
+# README at the exact SHA this workflow pins (the `uses:` line below). This file
+# is copied verbatim from it; the `on:`/`permissions:`/`if:` semantics are the
+# action's contract, NOT ours to reason about from memory. `<$PINNED_SHA>` is an
+# intentional placeholder: substitute the pinned `uses:` SHA to get the matching
+# docs. Do not hardcode the SHA here (it would drift from the `uses:` pin).
+# SEE: https://github.com/schmitthub/contributor-assistant/blob/<$PINNED_SHA>/README.md
+
 name: "CLA Assistant"
 
 on:
@@ -20,6 +28,7 @@ permissions:
 
 jobs:
   cla:
+    name: "CLA Assistant"
     runs-on: ubuntu-24.04
     steps:
       # Pinned to our own fork of the CLA-assistant action. Upstream
@@ -29,12 +38,8 @@ jobs:
       # audited v2.6.1 commit, now in our custody; repo policy requires a
       # commit-SHA pin (no floating tags).
       - name: "CLA Assistant"
-        if: >
-          (github.event.issue.pull_request
-           && (github.event.comment.body == 'recheck'
-               || github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA'))
-          || github.event_name == 'pull_request_target'
-        uses: schmitthub/contributor-assistant@ca4a40a7d1004f18d9960b404b97e5f30a505a08  # v2.6.1 (fork)
+        if: (github.event.comment.body == 'recheck' || github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA') || github.event_name == 'pull_request_target'
+        uses: schmitthub/contributor-assistant@ca4a40a7d1004f18d9960b404b97e5f30a505a08  # v2.6.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -49,3 +54,14 @@ jobs:
           branch: 'cla-signatures'
           allowlist: 'schmitthub,dependabot[bot]'
           custom-pr-sign-comment: 'I have read the CLA Document and I hereby sign the CLA'
+
+          # the followings are the optional inputs - If the optional inputs are not given, then default values will be taken
+          #remote-organization-name: enter the remote organization name where the signatures should be stored (Default is storing the signatures in the same repository)
+          #remote-repository-name: enter the  remote repository name where the signatures should be stored (Default is storing the signatures in the same repository)
+          #create-file-commit-message: 'For example: Creating file for storing CLA Signatures'
+          #signed-commit-message: 'For example: $contributorName has signed the CLA in $owner/$repo#$pullRequestNo'
+          #custom-notsigned-prcomment: 'pull request comment with Introductory message to ask new contributors to sign'
+          #custom-pr-sign-comment: 'The signature to be committed in order to sign the CLA'
+          #custom-allsigned-prcomment: 'pull request comment when all contributors has signed, defaults to **CLA Assistant Lite bot** All Contributors have signed the CLA.'
+          #lock-pullrequest-aftermerge: false - if you don't want this bot to automatically lock the pull request after merging (default - true)
+          #use-dco-flag: true - If you are using DCO instead of CLA

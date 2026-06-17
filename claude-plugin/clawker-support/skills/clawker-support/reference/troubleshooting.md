@@ -17,6 +17,7 @@ reference files. Check these first if the issue matches:
 | Monitoring stack (OTel/OpenSearch/Prometheus, workspace, empty indices) | `reference/monitoring.md` | Troubleshooting |
 | Securing git/VCS egress, can the agent push to/leak via other repos, credential-exfil hardening | `reference/firewall-security.md` | Full reference |
 | Repeated `/login` in new containers despite `use_host_auth`, how host Claude Code auth is shared | `reference/claude-code.md` | Authentication › Troubleshooting |
+| Didn't see "What's new" / release notes after upgrade | This file | No release notes after upgrade |
 | Control plane down or unreachable | This file | Control plane down or unhealthy |
 | `Token used before issued` / token fetch timeout on container start | This file | Control plane down or unhealthy |
 | Agent missing from CP registry | This file | Agent appears in clawker ps but missing from CP |
@@ -218,6 +219,38 @@ User reports the container fails to start or immediately exits.
    clawker controlplane status
    clawker controlplane up         # idempotent — brings CP up if needed
    ```
+
+---
+
+## No release notes after upgrade
+
+User upgraded clawker but never saw the one-time "What's new" note, or wonders
+where to find what changed.
+
+This is expected behavior, not a bug. After an upgrade, a one-time note shows on
+the first *interactive* run, listing what changed since the previous version,
+then never repeats for that upgrade. The changelog is fetched over the network.
+
+The note is intentionally suppressed in any of these cases:
+
+- **Not an interactive terminal** — for example a non-interactive shell.
+  (Redirecting or piping only the command's normal output, while the terminal
+  stays attached, does not suppress the note — it rides clawker's status
+  messages, not the command's data output.)
+- **`CI` is set** — treated as a non-interactive environment.
+- **`CLAWKER_NO_NOTIFIER` is set** (any non-empty value) — the user opted
+  out of both the new-version update notifier and the "What's new" note.
+- The running binary is a dev build (no injected version).
+
+There is also a non-suppression case: the first interactive run after moving
+onto a clawker version that has this feature records the current version as a
+baseline and shows nothing — the note appears on the next upgrade after that. A
+user who upgraded *into* the feature for the first time correctly sees nothing.
+
+If the user expected the note but it never appeared, check those suppression
+conditions — most often output was not a terminal or `CLAWKER_NO_NOTIFIER`/
+`CI` was set in their environment. To see the full curated changelog regardless,
+point them at the `CHANGELOG.md` at the root of the clawker repository.
 
 ---
 

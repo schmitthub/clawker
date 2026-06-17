@@ -1,11 +1,16 @@
-// Package update checks GitHub for newer clawker releases and caches results.
+// Package update checks GitHub for newer clawker releases.
 //
-// Foundation-tier package: stdlib + net/http + yaml.v3, no internal imports.
-// The caller passes the current version string (no dependency on internal/build).
+// CheckForUpdate reads the last-checked timestamp from the CLI state facade
+// (internal/state) for freshness gating and persists the check there on every
+// successful fetch (RecordUpdateCheck — a field merge that never touches the
+// changelog cursor, so it cannot clobber a concurrent cursor write). A non-nil
+// *ReleaseInfo result means a strictly newer release exists; nil means
+// up-to-date, TTL-fresh, or not newer. Env/CI opt-out suppression is the
+// caller's responsibility — only the TTL freshness gate lives here.
 //
-// Designed for background use — the caller launches CheckForUpdate in a goroutine
-// with a cancellable context. Context cancellation cleanly aborts the HTTP request
-// when the CLI command finishes before the check completes.
+// Designed for background use — the caller launches CheckForUpdate in a
+// goroutine with a cancellable context. Context cancellation cleanly aborts the
+// HTTP request when the CLI command finishes before the check completes.
 package update
 
 import (
@@ -13,32 +18,22 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
-	"strconv"
-	"strings"
 	"time"
 
-	"github.com/schmitthub/clawker/internal/consts"
-	"gopkg.in/yaml.v3"
+	"github.com/Masterminds/semver/v3"
+
+	"github.com/schmitthub/clawker/internal/state"
 )
 
-// cacheTTL is how long a cached check result is considered fresh.
+// cacheTTL is how long a recorded check result is considered fresh. It is
+// compared against the persisted last-checked timestamp inside shouldCheckForUpdate.
 const cacheTTL = 24 * time.Hour
 
-// httpTimeout is the maximum time for the GitHub API request.
-const httpTimeout = 5 * time.Second
-
-// StateEntry is the cached update check result, persisted as YAML.
-type StateEntry struct {
-	CheckedAt      time.Time `yaml:"checked_at"`
-	LatestVersion  string    `yaml:"latest_version"`
-	LatestURL      string    `yaml:"latest_url"`
-	CurrentVersion string    `yaml:"current_version"`
-}
-
-// CheckResult is returned when a newer version is available.
-type CheckResult struct {
+// ReleaseInfo describes a strictly newer release than the running version. A
+// non-nil *ReleaseInfo MEANS "a newer release exists" — CheckForUpdate only
+// returns one when LatestVersion is a newer semver than CurrentVersion, so the
+// caller never has to re-check a flag.
+type ReleaseInfo struct {
 	CurrentVersion string
 	LatestVersion  string
 	ReleaseURL     string
@@ -50,85 +45,107 @@ type githubRelease struct {
 	HTMLURL string `json:"html_url"`
 }
 
-// ShouldCheckForUpdate returns false if update checks should be suppressed.
-// Suppression conditions:
-//   - consts.EnvNoUpdateNotifier env var is set (non-empty)
-//   - CI env var is set (non-empty) — standard CI detection
-//   - currentVersion is "DEV" — development build
-//   - stateFilePath is non-empty and cache is fresh (checked < 24h ago)
-func ShouldCheckForUpdate(stateFilePath, currentVersion string) bool {
-	if os.Getenv(consts.EnvNoUpdateNotifier) != "" {
+// shouldCheckForUpdate is the TTL freshness gate: it returns false only when a
+// check ran recently (within cacheTTL). Env/CI opt-out suppression is NOT handled
+// here — that is the caller's responsibility (see CheckForUpdate's doc).
+//
+// A non-release build whose version does not parse as semver is rejected up front
+// by CheckForUpdate (semver.NewVersion(currentVersion) fails before any fetch), so
+// no explicit dev-build gate is needed here.
+//
+// lastCheckedAt is the timestamp of the last recorded check, supplied by the
+// caller from persisted state; a zero value means "never checked".
+func shouldCheckForUpdate(lastCheckedAt time.Time) bool {
+	// A future lastCheckedAt (clock skew at write time, later corrected) must
+	// not count as fresh: time.Since would be negative and spuriously satisfy
+	// the < cacheTTL gate, suppressing checks until wall-clock catches up. The
+	// elapsed >= 0 guard drops future timestamps through to a fresh check.
+	if elapsed := time.Since(lastCheckedAt); !lastCheckedAt.IsZero() && elapsed >= 0 && elapsed < cacheTTL {
 		return false
-	}
-	if os.Getenv("CI") != "" {
-		return false
-	}
-	if currentVersion == "DEV" {
-		return false
-	}
-	if stateFilePath != "" {
-		if entry, err := readState(stateFilePath); err == nil {
-			if time.Since(entry.CheckedAt) < cacheTTL {
-				return false
-			}
-		}
 	}
 	return true
 }
 
-// CheckForUpdate checks the GitHub API for a newer release of the given repo.
-// Returns (nil, nil) if the current version is latest or checks are suppressed.
-// Returns (nil, error) on API/network failures.
-// Returns (*CheckResult, nil) when a newer version is available.
+// CheckForUpdate checks the GitHub API for the latest release of the given repo,
+// persists the check to CLI state, and reports a strictly newer release.
+//
+// Return contract:
+//   - (nil, nil)         — up-to-date, TTL-fresh, or the latest release is not
+//     newer than currentVersion. A non-nil result MEANS a newer release exists.
+//   - (*ReleaseInfo, nil) — a strictly newer release is available.
+//   - (nil, error)       — the fetch failed (API/network/decode).
+//
+// Persistence is keyed on FETCH SUCCESS, not on whether a newer release was
+// found: on every successful fetch (newer or not) it records checked_at +
+// latest_version via st.RecordUpdateCheck BEFORE the newer/not-newer decision.
+// This is what lets the TTL gate throttle — if persistence only happened on a
+// newer release, checked_at would never advance on the common not-newer path and
+// the GitHub API would be hit on every run. A nil st is a programming error (the
+// caller wires state via the factory) and returns an error before any fetch.
+//
+// client supplies the transport and timeout (the caller's Factory HttpClient in
+// production; an internal/httpmock stub in tests).
+//
+// Opt-out suppression (e.g. an env-var kill switch or CI detection) is the
+// CALLER's responsibility — shouldCheckForUpdate only applies the TTL freshness
+// gate. Defense-in-depth note: a future second caller that bypasses the cmd.go
+// opt-out gate would still reach the GitHub API here; the opt-out is not enforced
+// inside this package.
 //
 // The context controls the HTTP request lifetime — cancel it to abort cleanly.
 // repo should be "owner/name", e.g. "schmitthub/clawker".
-func CheckForUpdate(ctx context.Context, stateFilePath, currentVersion, repo string) (*CheckResult, error) {
-	if !ShouldCheckForUpdate(stateFilePath, currentVersion) {
+func CheckForUpdate(ctx context.Context, client *http.Client, st state.StateStore, currentVersion, repo string) (*ReleaseInfo, error) {
+
+	if st == nil {
+		// A nil state store is a programming error (the caller wires it via the
+		// factory); without it there is no TTL gate and no persistence.
+		return nil, fmt.Errorf("state: CheckForUpdate: nil StateStore")
+	}
+
+	cv, err := semver.NewVersion(currentVersion)
+	if err != nil {
+		return nil, fmt.Errorf("parsing current version %q: %w", currentVersion, err)
+	}
+
+	if !shouldCheckForUpdate(st.State().CheckedAt) {
 		return nil, nil
 	}
 
-	release, err := fetchLatestRelease(ctx, repo)
+	release, err := getLatestReleaseInfo(ctx, client, repo)
 	if err != nil {
 		return nil, fmt.Errorf("checking %s: %w", repo, err)
 	}
 
-	latestVersion := strings.TrimPrefix(release.TagName, "v")
-	currentBare := strings.TrimPrefix(currentVersion, "v")
-
-	// Write cache regardless of comparison result
-	entry := StateEntry{
-		CheckedAt:      time.Now(),
-		LatestVersion:  latestVersion,
-		LatestURL:      release.HTMLURL,
-		CurrentVersion: currentBare,
-	}
-	if stateFilePath != "" {
-		_ = writeState(stateFilePath, entry)
+	lv, err := semver.NewVersion(release.TagName)
+	if err != nil {
+		return nil, fmt.Errorf("parsing release tag %q from %s: %w", release.TagName, repo, err)
 	}
 
-	if !isNewer(latestVersion, currentBare) {
+	// Persist on fetch success, BEFORE the newer/not-newer decision, so the TTL
+	// gate throttles regardless of outcome.
+	if err := st.RecordUpdateCheck(time.Now(), lv.String()); err != nil {
+		return nil, fmt.Errorf("recording update check: %w", err)
+	}
+
+	if !cv.LessThan(lv) {
 		return nil, nil
 	}
 
-	return &CheckResult{
-		CurrentVersion: currentBare,
-		LatestVersion:  latestVersion,
+	return &ReleaseInfo{
+		CurrentVersion: cv.String(),
+		LatestVersion:  lv.String(),
 		ReleaseURL:     release.HTMLURL,
 	}, nil
 }
 
-// fetchLatestRelease queries the GitHub API for the latest release.
-func fetchLatestRelease(ctx context.Context, repo string) (*githubRelease, error) {
+// getLatestReleaseInfo GETs and decodes the latest GitHub release for repo using
+// the supplied client. The GitHub API URL is built from repo here; there is no
+// URL seam in the signature — tests inject a client whose transport is an
+// internal/httpmock stub, so this reaches no live network.
+func getLatestReleaseInfo(ctx context.Context, client *http.Client, repo string) (*githubRelease, error) {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo)
-	return fetchLatestReleaseFromURL(ctx, url)
-}
 
-// fetchLatestReleaseFromURL fetches release info from the given URL.
-// Separated from fetchLatestRelease to allow test URL injection.
-func fetchLatestReleaseFromURL(ctx context.Context, url string) (*githubRelease, error) {
-	client := &http.Client{Timeout: httpTimeout}
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -148,87 +165,6 @@ func fetchLatestReleaseFromURL(ctx context.Context, url string) (*githubRelease,
 	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
 		return nil, err
 	}
-	if release.TagName == "" {
-		return nil, fmt.Errorf("empty tag_name in response")
-	}
 
 	return &release, nil
-}
-
-// isNewer returns true if latest is a newer semver than current.
-// Both should be bare versions without "v" prefix (e.g. "1.2.3").
-func isNewer(latest, current string) bool {
-	latestParts := parseSemver(latest)
-	currentParts := parseSemver(current)
-
-	if latestParts == nil || currentParts == nil {
-		// Can't determine ordering — don't claim newer
-		return false
-	}
-
-	for i := range 3 {
-		if latestParts[i] > currentParts[i] {
-			return true
-		}
-		if latestParts[i] < currentParts[i] {
-			return false
-		}
-	}
-	return false
-}
-
-// parseSemver parses "MAJOR.MINOR.PATCH" into a 3-element []int.
-// Returns nil if parsing fails.
-func parseSemver(v string) []int {
-	// Strip any pre-release suffix (e.g. "1.2.3-beta.1" → "1.2.3")
-	if idx := strings.IndexByte(v, '-'); idx != -1 {
-		v = v[:idx]
-	}
-
-	parts := strings.Split(v, ".")
-	if len(parts) != 3 {
-		return nil
-	}
-
-	result := make([]int, 3)
-	for i, p := range parts {
-		n, err := strconv.Atoi(p)
-		if err != nil {
-			return nil
-		}
-		result[i] = n
-	}
-	return result
-}
-
-// readState reads the cached state file.
-func readState(path string) (*StateEntry, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var entry StateEntry
-	if err := yaml.Unmarshal(data, &entry); err != nil {
-		return nil, err
-	}
-	return &entry, nil
-}
-
-// writeState atomically writes the state file (write to temp, rename).
-func writeState(path string, entry StateEntry) error {
-	data, err := yaml.Marshal(entry)
-	if err != nil {
-		return err
-	}
-
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
 }

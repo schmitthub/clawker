@@ -220,6 +220,7 @@ func TestFieldKindToBrowserKind_CoverAllKinds(t *testing.T) {
 		{KindInt, tui.BrowserInt},
 		{KindStringSlice, tui.BrowserStringSlice},
 		{KindDuration, tui.BrowserDuration},
+		{KindTime, tui.BrowserText},
 		{KindMap, tui.BrowserMap},
 		{KindStructSlice, tui.BrowserStructSlice},
 	}

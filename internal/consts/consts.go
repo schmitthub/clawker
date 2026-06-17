@@ -112,13 +112,26 @@ const (
 	EnvTestRepoDir = "CLAWKER_TEST_REPO_DIR"
 )
 
+// GitHub project identity. Single source of truth for the owner/repo slug,
+// referenced by the update checker (releases API) and the changelog fetcher
+// (raw CHANGELOG.md). Other packages build their URLs from these consts rather
+// than re-spelling the literal.
+const (
+	// GitHubRepo is the "owner/name" slug of the clawker repository.
+	GitHubRepo = "schmitthub/clawker"
+	// RawGitHubBaseURL is the base host for raw file content on GitHub.
+	// Joined with a repo slug, ref, and path to fetch a file's raw bytes.
+	RawGitHubBaseURL = "https://raw.githubusercontent.com"
+)
+
 // Host-side behavior override env vars.
 const (
 	// EnvExecutable overrides the clawker binary path used when
 	// re-invoking clawker as a daemon (host proxy spawn, e2e harness).
 	EnvExecutable = "CLAWKER_EXECUTABLE"
-	// EnvNoUpdateNotifier disables the update notifier when non-empty.
-	EnvNoUpdateNotifier = "CLAWKER_NO_UPDATE_NOTIFIER"
+	// EnvNoNotifier disables all clawker notifications (the update notifier and
+	// the show-once changelog teaser) when non-empty.
+	EnvNoNotifier = "CLAWKER_NO_NOTIFIER"
 	// EnvPager overrides the pager program for paged output.
 	EnvPager = "CLAWKER_PAGER"
 )
@@ -145,6 +158,10 @@ const (
 	// ControlPlaneSubdir. agentregistry holds the `agents` table; future
 	// CP-owned tables share the same file.
 	ControlPlaneDBFile = "controlplane.db"
+	// CLIStateFile is the CLI's persisted runtime state in the state dir
+	// (update-check cache + changelog cursor), backed by internal/state via
+	// storage.Store.
+	CLIStateFile = "update-state.yaml"
 )
 
 // Subdirectory names within XDG base dirs.

@@ -85,8 +85,55 @@ Use descriptive branch names:
 1. **Code changes** with tests
 2. **Updated documentation** — if you change a package's public API, update its `CLAUDE.md` and relevant docs
 3. **Passing tests** — run `make test` at minimum before submitting
+4. **A changelog entry** — if the PR changes the user surface or adds behavior (see below)
 
-### PR Process
+### Changelog
+
+The root `CHANGELOG.md` is the **curated, human, user-facing** changelog, in
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format. It is *not* the
+exhaustive commit log — that is generated per release into the GitHub release's
+"Commits" section. `CHANGELOG.md` intentionally covers only the handful of
+releases that change what a user sees or does.
+
+- **If your PR changes the user surface or adds behavior** (a new command or
+  flag, a behavior change, a user-visible fix, a breaking change), add an entry
+  **in the same PR**, so it is committed before the release tag. Releases are
+  cut by tagging `main`, and the release notes are rendered from the committed
+  file — an entry added after the tag misses that release.
+- **Tech-debt, refactor, chore, and dependency-bump PRs add nothing.** They are
+  not user-facing and do not belong in the curated changelog.
+
+**Entry format.** Add a new `## [VERSION] - DATE` section at the top, with the
+Keep a Changelog `### Added` / `### Changed` / `### Fixed` / `### Removed` body.
+Also add the matching reference-link line at the bottom of the file. The format
+is plain Keep a Changelog — there is no per-entry metadata; the whole section
+body is rendered verbatim as markdown.
+
+```markdown
+## [0.13.0] - 2026-07-01
+
+### Added
+
+- **Headline of the change.** A sentence or two of user-facing detail.
+  Link relevant docs inline where they belong: [Docs](https://docs.clawker.dev/some-page).
+```
+
+Put docs links inline in the bullet next to the change they describe. HTML
+comment lines are stripped from the rendered body, so a metadata comment would
+be silently dropped — don't add one.
+
+**One source, two surfaces.** The same `CHANGELOG.md` feeds a
+show-once-on-upgrade teaser (printed on the first interactive run after an
+upgrade — except the first changelog-aware run, which seeds `last_seen_changelog`
+to the current version and shows nothing, with no catch-up backfill) and the
+curated header at the top of the GitHub release notes. The CLI
+does not embed the file —
+it fetches the raw `CHANGELOG.md` from `main` over the network at runtime (the
+CLI runs on the host and is always online). GitHub release notes are currently
+produced by GoReleaser's auto changelog groups (not extracted from `CHANGELOG.md`
+in CI yet). There is no second source to keep in sync.
+
+### PR Processs
 
 1. Fork the repository
 2. Create a feature branch from `main`

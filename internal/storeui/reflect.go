@@ -12,7 +12,7 @@ import (
 
 // WalkFields uses reflection to discover editable fields from a struct value.
 // It maps Go types to FieldKind: string→Text, bool→Bool, *bool→Bool, int/int64→Int,
-// []string→StringSlice, time.Duration→Duration, map[string]string→Map,
+// []string→StringSlice, time.Duration→Duration, time.Time→Time, map[string]string→Map,
 // []struct→StructSlice, nested struct→recurse, nil *struct→recurse zero value.
 // Unrecognized types fall back to KindStructSlice (enrichWithSchema overwrites
 // the kind from schema metadata afterward).
@@ -116,6 +116,25 @@ func walkStruct(val reflect.Value, typ reflect.Type, prefix string, fields *[]Fi
 				Label: name,
 				Kind:  KindDuration,
 				Value: fv.Interface().(time.Duration).String(),
+				Order: *order,
+			})
+
+		case ft == reflect.TypeOf(time.Time{}):
+			// time.Time is a struct but serializes as an RFC3339Nano scalar (parallel
+			// to storage.normalizeStruct). Classify it as a leaf here — the generic
+			// reflect.Struct case below would recurse into its unexported fields and
+			// emit no field at all, silently dropping it from the editor. A zero time
+			// renders blank so it displays as "unset" rather than the zero sentinel.
+			tv := fv.Interface().(time.Time)
+			val := ""
+			if !tv.IsZero() {
+				val = tv.Format(time.RFC3339Nano)
+			}
+			*fields = append(*fields, Field{
+				Path:  path,
+				Label: name,
+				Kind:  KindTime,
+				Value: val,
 				Order: *order,
 			})
 

@@ -161,6 +161,8 @@ func kindToType(k storage.FieldKind) string {
 		return "string list"
 	case storage.KindDuration:
 		return "duration"
+	case storage.KindTime:
+		return "timestamp"
 	case storage.KindMap:
 		return "key-value map"
 	case storage.KindStructSlice:

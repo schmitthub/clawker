@@ -18,6 +18,7 @@ const (
 	KindInt                          // int, int64
 	KindStringSlice                  // []string
 	KindDuration                     // time.Duration
+	KindTime                         // time.Time (serialized as an RFC3339Nano scalar)
 	KindMap                          // map[string]string (only — other map types must register via KindFunc)
 	KindStructSlice                  // []struct (non-string slice of structs)
 
@@ -43,6 +44,8 @@ func (k FieldKind) String() string {
 		return "StringSlice"
 	case KindDuration:
 		return "Duration"
+	case KindTime:
+		return "Time"
 	case KindMap:
 		return "Map"
 	case KindStructSlice:
@@ -230,8 +233,15 @@ func NormalizeFields[T any](v T, opts ...NormalizeOption) FieldSet {
 // metadata to fields. It recurses into nested structs and *structs.
 // kindFunc is an optional classifier for domain-specific types (may be nil).
 //
-// SYNC: storeui.classifyAndFormat has a parallel type-classification switch.
-// When adding a new type case here, update classifyAndFormat to match.
+// SYNC: several consumers carry a parallel FieldKind switch and must learn any
+// new kind added here, or that kind degrades to an unknown/wrong rendering:
+//   - storeui.walkStruct (reflect.go) — Go type → kind + runtime value formatting
+//   - storeui.setLeaf (value.go) — string → typed field on edit
+//   - storeui.fieldKindToBrowserKind (edit.go) — kind → TUI editor widget
+//   - storeui.classifyAndFormat (reflect.go) — only the map/slice/pointer kinds;
+//     scalar kinds are intercepted upstream in walkStruct and never reach it
+//   - docs.kindToType (configdoc.go) — kind → human type label for the config docs
+//   - parseDefaultValue (defaults.go) — `default` tag → typed YAML value
 func normalizeStruct(rt reflect.Type, prefix string, fields *[]Field, kindFunc KindFunc) {
 	for i := 0; i < rt.NumField(); i++ {
 		sf := rt.Field(i)
@@ -282,6 +292,12 @@ func normalizeStruct(rt reflect.Type, prefix string, fields *[]Field, kindFunc K
 		switch {
 		case ft == reflect.TypeFor[time.Duration]():
 			*fields = append(*fields, &field{path: path, kind: KindDuration, label: label, desc: desc, def: def, required: req, mergeTag: merge})
+
+		case ft == reflect.TypeFor[time.Time]():
+			// time.Time is a struct, but it serializes as an RFC3339Nano scalar via
+			// yaml.v3 — treat it as an opaque leaf, never recurse into its
+			// unexported fields (which would flatten it to an empty map).
+			*fields = append(*fields, &field{path: path, kind: KindTime, label: label, desc: desc, def: def, required: req, mergeTag: merge})
 
 		case ft.Kind() == reflect.String:
 			*fields = append(*fields, &field{path: path, kind: KindText, label: label, desc: desc, def: def, required: req, mergeTag: merge})

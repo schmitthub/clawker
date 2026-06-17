@@ -32,7 +32,7 @@ type BuildOptions struct {
 	Client          func(context.Context) (*docker.Client, error)
 	ProjectManager  func() (project.ProjectManager, error)
 	ProjectRegistry func() (*project.Registry, error)
-	HttpClient      func() *http.Client
+	HttpClient      func() (*http.Client, error)
 
 	File      string   // -f, --file (Dockerfile path)
 	Tags      []string // -t, --tag (multiple allowed)
@@ -234,16 +234,20 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 	// Resolution failure (offline, registry down) is non-fatal: warn and
 	// fall back to the literal "latest" — install RUN still works, cache
 	// just doesn't auto-bust until the next online build.
-	httpClient := opts.HttpClient()
-	claudeCodeVersion, resErr := bundler.ResolveLatestClaudeCodeVersion(ctx, httpClient)
-	if resErr != nil {
+	claudeCodeVersion := bundler.DefaultClaudeCodeVersion
+	httpClient, err := opts.HttpClient()
+	if err != nil {
+		log.Warn().Err(err).Msg("HTTP client initialization failed — cannot resolve latest Claude Code version, install layer cache will not bust until next online build")
+	} else if resolved, resErr := bundler.ResolveLatestClaudeCodeVersion(ctx, httpClient); resErr != nil {
 		log.Warn().Err(resErr).Msg("npm version resolution failed — install layer cache will not bust until next online build")
 		fmt.Fprintf(ios.ErrOut, "%s Could not resolve latest Claude Code version (%v) — using %q literal; cache will not bust on a new release until network returns\n",
 			cs.WarningIcon(), resErr, bundler.DefaultClaudeCodeVersion)
 	} else {
+		// Assign to the outer var so the resolved version actually reaches the
+		// build ARG below — a `:=` here would shadow and silently drop it.
+		claudeCodeVersion = resolved
 		log.Debug().Str("claude_code_version", claudeCodeVersion).Msg("resolved Claude Code version for ARG default")
 	}
-
 	// Build options. OnComplete stashes the digest into a closure variable;
 	// post-build handling (success log, --iidfile write) runs in the main
 	// goroutine after builder.Build returns so write/empty-digest errors

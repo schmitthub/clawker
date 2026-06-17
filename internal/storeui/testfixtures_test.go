@@ -40,6 +40,10 @@ type durationStruct struct {
 	Timeout time.Duration `yaml:"timeout,omitempty"`
 }
 
+type timeStruct struct {
+	SeenAt time.Time `yaml:"seen_at,omitempty"`
+}
+
 type complexStruct struct {
 	Name string            `yaml:"name"`
 	Env  map[string]string `yaml:"env,omitempty"`

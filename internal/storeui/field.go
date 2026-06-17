@@ -25,6 +25,7 @@ const (
 	KindInt         = storage.KindInt
 	KindStringSlice = storage.KindStringSlice
 	KindDuration    = storage.KindDuration
+	KindTime        = storage.KindTime
 	KindMap         = storage.KindMap
 	KindStructSlice = storage.KindStructSlice
 )

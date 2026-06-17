@@ -8,8 +8,9 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/Masterminds/semver/v3"
+
 	"github.com/schmitthub/clawker/internal/bundler/registry"
-	"github.com/schmitthub/clawker/internal/bundler/semver"
 )
 
 const (
@@ -138,7 +139,7 @@ func (m *VersionsManager) ResolveVersions(ctx context.Context, patterns []string
 		}
 
 		// Parse and create version info
-		v, err := semver.Parse(fullVersion)
+		v, err := semver.NewVersion(fullVersion)
 		if err != nil {
 			fmt.Fprintf(out, "warning: invalid version format %q: %v\n", fullVersion, err)
 			continue
@@ -169,18 +170,31 @@ func (m *VersionsManager) resolvePattern(ctx context.Context, pattern string, ve
 		return version, nil
 	}
 
-	// Validate pattern is a valid semver (full or partial)
-	if !semver.IsValid(pattern) {
-		return "", fmt.Errorf("invalid version format %q", pattern)
+	// Treat the pattern as a (possibly partial) semver constraint: "2.1" expands
+	// to ">=2.1.0 <2.2.0", "2.1.3" is exact equality. Prereleases are excluded by
+	// default unless the constraint string itself names one (Masterminds
+	// semantics) — preserving the old Match behavior (highest non-prerelease in
+	// range; an exact prerelease pattern still resolves).
+	constraint, err := semver.NewConstraint(pattern)
+	if err != nil {
+		return "", fmt.Errorf("invalid version format %q: %w", pattern, err)
 	}
 
-	// Try to match against available versions
-	match, ok := semver.Match(versions, pattern)
-	if !ok {
+	var best *semver.Version
+	for _, s := range versions {
+		v, err := semver.NewVersion(s)
+		if err != nil || !constraint.Check(v) {
+			continue
+		}
+		if best == nil || v.GreaterThan(best) {
+			best = v
+		}
+	}
+	if best == nil {
 		return "", fmt.Errorf("no version matching %q found", pattern)
 	}
 
-	return match, nil
+	return best.Original(), nil
 }
 
 // LoadVersionsFile loads a versions.json file from disk.

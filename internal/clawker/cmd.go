@@ -5,17 +5,19 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/signal"
-	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
 
 	"github.com/schmitthub/clawker/internal/build"
+	"github.com/schmitthub/clawker/internal/changelog"
 	"github.com/schmitthub/clawker/internal/cmd/factory"
 	"github.com/schmitthub/clawker/internal/cmd/root"
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/storage"
 	"github.com/schmitthub/clawker/internal/update"
@@ -40,30 +42,109 @@ func Main() int {
 		return 1
 	}
 
-	// Ensure logs and OTEL provider are flushed on exit
+	// Ensure logs and OTEL provider are flushed on exit.
+	// TODO: give logger a Shutdown(ctx) for bounded flush (ctx as flush deadline,
+	// not a replacement for Close).
 	defer func() {
 		if log, err := f.Logger(); err == nil {
 			log.Close()
 		}
 	}()
 
-	// Start background update check with cancellable context.
-	// Pattern from gh CLI: goroutine + buffered channel + blocking read.
-	// Context cancellation aborts the HTTP request when the command finishes first.
-	// Buffered(1) so the goroutine can send and exit even if Main() returns
+	// CLI runtime state (the update-check cache + changelog cursor) is resolved
+	// lazily inside checkForUpdate/checkForChanges via f.CLIState(). A state-store
+	// error there aborts that one background check and is logged to the file log,
+	// never surfaced.
+
+	// Single root context for the process. The SIGINT/SIGTERM signal context
+	// (below) and the two background-notification contexts all derive from it as
+	// siblings. The background contexts are cancelled explicitly right after the
+	// command returns (gh CLI pattern — see below the ExecuteC call), so they need
+	// not be children of the signal context to abort their I/O on Ctrl+C.
+	ctx := context.Background()
+
+	// notificationsSuppressed is the single gate for BOTH background notifications
+	// (update notifier + changelog teaser). When it is true we launch NEITHER
+	// goroutine, so a suppressed run does ZERO network I/O and no cursor persist —
+	// a conscious, accepted behavior change. The env/CI opt-out now lives here in
+	// the caller: internal/update and internal/changelog no longer enforce it.
+	suppressed := notificationsSuppressed(f.IOStreams)
+
+	// Background update check + changelog teaser, both gated by `suppressed`.
+	// Pattern from gh CLI: goroutine + buffered channel + blocking read. Context
+	// cancellation aborts in-flight I/O when the command finishes first. The
+	// buffered(1) channels let each goroutine send and exit even if Main() returns
 	// early (e.g. root command creation fails) without reading from the channel.
-	updateCtx, updateCancel := context.WithCancel(context.Background())
+	updateCtx, updateCancel := context.WithCancel(ctx)
 	defer updateCancel()
-	updateMessageChan := make(chan *update.CheckResult, 1)
-	go func() {
-		rel, err := checkForUpdate(updateCtx, buildVersion)
-		if err != nil {
-			if log, logErr := f.Logger(); logErr == nil {
-				log.Debug().Err(err).Msg("update check failed")
+	changelogCtx, changelogCancel := context.WithCancel(ctx)
+	defer changelogCancel()
+
+	updateMessageChan := make(chan *update.ReleaseInfo, 1)
+	changelogChan := make(chan []changelog.Entry, 1)
+
+	if !suppressed {
+		go func() {
+			// Guarantee exactly one send on the buffered(1) channel on every path,
+			// including a panic: the deferred func always runs, runs once, and is
+			// the sole sender. A panic in this teaser goroutine must not crash the
+			// user's command — recover, log, and report no update.
+			var rel *update.ReleaseInfo
+			defer func() {
+				if r := recover(); r != nil {
+					if log, logErr := f.Logger(); logErr == nil {
+						// TODO: CLAWKER_DEBUG env → stderr ConsoleWriter sink so devs
+						// see logs live.
+						log.Warn().Interface("panic", r).Msg("update check goroutine panicked")
+					}
+					rel = nil
+				}
+				updateMessageChan <- rel
+			}()
+			var err error
+			// CheckForUpdate validates buildVersion as semver (a non-release "DEV" build is not
+			// parseable semver and returns an error before any fetch), reads the freshness gate from cliState, and persists the
+			// result there itself (RecordUpdateCheck). It returns (nil, nil) when not
+			// newer or TTL-fresh; a non-nil rel only when a newer release exists. A
+			// non-nil err may accompany a nil rel — log it, report nothing.
+			rel, err = checkForUpdate(updateCtx, f, buildVersion, consts.GitHubRepo)
+			if err != nil {
+				if log, logErr := f.Logger(); logErr == nil {
+					log.Debug().Err(err).Msg("update check failed")
+				}
 			}
-		}
-		updateMessageChan <- rel
-	}()
+		}()
+
+		go func() {
+			// Guarantee exactly one send on the buffered(1) channel on every path,
+			// including a panic: the deferred func always runs, runs once, and is the
+			// sole sender. A panic in this teaser goroutine must not crash the user's
+			// command — recover, log, and show nothing.
+			var g []changelog.Entry
+			defer func() {
+				if r := recover(); r != nil {
+					if log, logErr := f.Logger(); logErr == nil {
+						// TODO: CLAWKER_DEBUG env → stderr ConsoleWriter sink so devs
+						// see logs live.
+						log.Warn().Interface("panic", r).Msg("changelog goroutine panicked")
+					}
+					g = nil
+				}
+				changelogChan <- g
+			}()
+
+			entries, err := checkForChanges(changelogCtx, f, buildVersion)
+			// CheckForChanges returns gained entries even when only the cursor
+			// persist fails, so capture them before bailing on the error.
+			g = entries
+			if err != nil {
+				if log, logErr := f.Logger(); logErr == nil {
+					log.Debug().Err(err).Msg("checking changelog for teaser")
+				}
+				return
+			}
+		}()
+	}
 
 	// Create root command with build metadata
 	rootCmd, err := root.NewCmdRoot(f, buildVersion, buildDate)
@@ -77,16 +158,37 @@ func Main() int {
 
 	// Wire SIGINT/SIGTERM to the root context so Ctrl+C propagates through
 	// cmd.Context() to every caller (WaitForHealthy, etc.) instead of hanging.
-	signalCtx, signalStop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	signalCtx, signalStop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer signalStop()
 	rootCmd.SetContext(signalCtx)
 
 	cmd, err := rootCmd.ExecuteC()
 
-	// Don't cancel the update context here — the goroutine needs to complete
-	// so it can write the cache file. The blocking read below waits for it,
-	// and the HTTP client has its own 5s timeout. defer updateCancel() handles
-	// cleanup on exit.
+	// gh CLI pattern: cancel the background checks now, before draining their
+	// channels. Cancelling aborts any in-flight HTTP so the drain returns promptly
+	// instead of blocking up to the 30s HTTP client timeout — most importantly
+	// after a Ctrl+C, where the command was already interrupted and the user wants
+	// out. A check that had not finished sends its zero value and is simply retried
+	// next run; its update cache / changelog cursor only advances on a completed
+	// check. The deferred cancels above remain for the early-return paths that
+	// never reach here (e.g. root command creation failing).
+	updateCancel()
+	changelogCancel()
+
+	// drainNotifications blocks on both channels (only when goroutines were
+	// launched) and renders both notifications. printUpdateNotification and
+	// printChangelogTeaser each self-guard on nil/empty, so calling them
+	// unconditionally on a suppressed run is a safe no-op.
+	drainNotifications := func() {
+		var updateInfo *update.ReleaseInfo
+		var gained []changelog.Entry
+		if !suppressed {
+			updateInfo = <-updateMessageChan
+			gained = <-changelogChan
+		}
+		printUpdateNotification(f.IOStreams, updateInfo)
+		printChangelogTeaser(f.IOStreams, gained)
+	}
 
 	if err != nil {
 		if errors.Is(err, cmdutil.SilentError) {
@@ -97,8 +199,7 @@ func Main() int {
 			printError(f.IOStreams.ErrOut, f.IOStreams.ColorScheme(), err, cmd)
 		}
 
-		// Blocking read — goroutine always sends exactly once
-		printUpdateNotification(f.IOStreams, <-updateMessageChan)
+		drainNotifications()
 
 		var exitErr *cmdutil.ExitError
 		if errors.As(err, &exitErr) {
@@ -107,53 +208,97 @@ func Main() int {
 		return 1
 	}
 
-	// Blocking read — goroutine always sends exactly once
-	printUpdateNotification(f.IOStreams, <-updateMessageChan)
+	drainNotifications()
 
 	return 0
 }
 
-// checkForUpdate wraps update.CheckForUpdate with state file resolution.
-// Returns (nil, nil) if the state path can't be determined.
-func checkForUpdate(ctx context.Context, currentVersion string) (*update.CheckResult, error) {
-	stateFile := updateStatePath()
-	if stateFile == "" {
-		return nil, nil
+// checkForChanges resolves the HttpClient and CLIState nouns from the Factory and
+// hands them to changelog.CheckForChanges. It is the changelog teaser's single
+// entry from Main; a noun-resolution error aborts just this one background check
+// and is logged by the caller, never surfaced.
+func checkForChanges(ctx context.Context, f *cmdutil.Factory, currentVersion string) ([]changelog.Entry, error) {
+	httpClient, err := f.HttpClient()
+	if err != nil {
+		return nil, err
 	}
-	return update.CheckForUpdate(ctx, stateFile, currentVersion, "schmitthub/clawker")
+	cliState, err := f.CLIState()
+	if err != nil {
+		return nil, err
+	}
+	return changelog.CheckForChanges(ctx, httpClient, cliState, currentVersion)
 }
 
-// printUpdateNotification prints a version upgrade notification to stderr
-// if a newer version is available. Only shown on interactive terminals.
-func printUpdateNotification(ios *iostreams.IOStreams, result *update.CheckResult) {
-	if result == nil {
-		return
+// checkForUpdate resolves the HttpClient and CLIState nouns from the Factory and
+// hands them to update.CheckForUpdate. It is the update notifier's single entry
+// from Main; a noun-resolution error aborts just this one background check and is
+// logged by the caller, never surfaced.
+func checkForUpdate(ctx context.Context, f *cmdutil.Factory, currentVersion, repo string) (*update.ReleaseInfo, error) {
+	httpClient, err := f.HttpClient()
+	if err != nil {
+		return nil, err
 	}
-	if !ios.IsStderrTTY() {
+	cliState, err := f.CLIState()
+	if err != nil {
+		return nil, err
+	}
+	return update.CheckForUpdate(ctx, httpClient, cliState, currentVersion, repo)
+}
+
+// notificationsSuppressed is the single gate for ALL clawker background
+// notifications (the update notifier and the show-once changelog teaser). It is
+// computed once in Main, up front: when true, neither background goroutine is
+// launched, so the run does zero network I/O and no state writes.
+func notificationsSuppressed(ios *iostreams.IOStreams) bool {
+	// "CI" is the canonical cross-tool CI-detection env var (kept literal).
+	return !ios.IsStderrTTY() || os.Getenv(consts.EnvNoNotifier) != "" || os.Getenv("CI") != ""
+}
+
+// printUpdateNotification prints a version upgrade notification to stderr.
+// It self-guards on a nil info (nothing to report); suppression for non-TTY /
+// CI / opt-out is gated once up front in Main (notificationsSuppressed).
+func printUpdateNotification(ios *iostreams.IOStreams, info *update.ReleaseInfo) {
+	if info == nil {
 		return
 	}
 
 	cs := ios.ColorScheme()
 	fmt.Fprintf(ios.ErrOut, "\n%s %s → %s\n",
 		cs.Yellow("A new release of clawker is available:"),
-		cs.Cyan(result.CurrentVersion),
-		cs.Cyan(result.LatestVersion))
+		cs.Cyan(info.CurrentVersion),
+		cs.Cyan(info.LatestVersion))
 	fmt.Fprintf(ios.ErrOut, "To upgrade:\n")
 	fmt.Fprintf(ios.ErrOut, "  %s\n", cs.Bold("brew upgrade clawker"))
-	fmt.Fprintf(ios.ErrOut, "  %s\n", cs.Bold("curl -fsSL https://raw.githubusercontent.com/schmitthub/clawker/main/scripts/install.sh | bash"))
-	fmt.Fprintf(ios.ErrOut, "%s\n", cs.Yellow(result.ReleaseURL))
+	fmt.Fprintf(ios.ErrOut, "  %s\n", cs.Bold("curl -fsSL "+consts.RawGitHubBaseURL+"/"+consts.GitHubRepo+"/main/scripts/install.sh | bash"))
+	fmt.Fprintf(ios.ErrOut, "%s\n", cs.Yellow(info.ReleaseURL))
 	fmt.Fprintf(ios.ErrOut, "\n%s After upgrading, run %s in each project to apply security fixes and avoid breaking changes.\n",
 		cs.WarningIcon(), cs.Bold("clawker build"))
 }
 
-// updateStatePath returns the path to the update state cache file.
-// Returns empty string if the clawker state directory cannot be determined.
-func updateStatePath() string {
-	stateDir := config.StateDir()
-	if stateDir == "" {
-		return ""
+// printChangelogTeaser renders the entries gained since the last shown version.
+// It self-guards on an empty slice (nothing to show); suppression for non-TTY /
+// CI / opt-out is gated once up front in Main (notificationsSuppressed). Each
+// entry's full Keep-a-Changelog body is rendered as markdown (sections, bullets,
+// inline docs links) under a bold version header — a release spans many kinds,
+// so the body is the unit, not a single derived headline.
+func printChangelogTeaser(ios *iostreams.IOStreams, entries []changelog.Entry) {
+	if len(entries) == 0 {
+		return
 	}
-	return filepath.Join(stateDir, "update-state.yaml")
+	cs := ios.ColorScheme()
+	icon := "[new]"
+	if cs.Enabled() {
+		icon = "📣"
+	}
+	fmt.Fprintf(ios.ErrOut, "\n%s What's new in clawker:\n", icon)
+	for _, e := range entries {
+		header := "v" + e.Version
+		if e.Date != "" {
+			header += " — " + e.Date
+		}
+		fmt.Fprintf(ios.ErrOut, "\n%s\n", cs.Bold(header))
+		fmt.Fprintln(ios.ErrOut, strings.TrimRight(ios.RenderMarkdown(e.Body), "\n"))
+	}
 }
 
 // printDockerInstallHelper renders a user-friendly message when the Docker

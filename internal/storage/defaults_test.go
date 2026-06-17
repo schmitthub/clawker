@@ -220,6 +220,7 @@ func TestParseDefaultValue_EdgeCases(t *testing.T) {
 	assert.Equal(t, "bind", parseDefaultValue("bind", KindText))
 	assert.Equal(t, "bind", parseDefaultValue("bind", KindSelect))
 	assert.Equal(t, "30s", parseDefaultValue("30s", KindDuration))
+	assert.Equal(t, "2026-01-01T00:00:00Z", parseDefaultValue("2026-01-01T00:00:00Z", KindTime))
 
 	// Invalid bool panics
 	assert.Panics(t, func() { parseDefaultValue("ture", KindBool) })
@@ -229,6 +230,9 @@ func TestParseDefaultValue_EdgeCases(t *testing.T) {
 
 	// Invalid duration panics
 	assert.Panics(t, func() { parseDefaultValue("not_a_duration", KindDuration) })
+
+	// Invalid time panics (must be RFC3339Nano)
+	assert.Panics(t, func() { parseDefaultValue("not_a_time", KindTime) })
 
 	// Empty entry in string slice panics
 	assert.Panics(t, func() { parseDefaultValue("a,,b", KindStringSlice) })
