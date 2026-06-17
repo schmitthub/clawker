@@ -108,8 +108,9 @@ just `CheckForUpdate` + `ReleaseInfo`.
    supplied client (timeout from the client, context-aware)
 4. Read `html_url` + parse `tag_name` with `semver.NewVersion` (unparseable tag →
    `(nil, error)`)
-5. **Persist** `st.RecordUpdateCheck(now, lv.String())` (skipped if
-   `st == nil`) — before the newer/not-newer decision
+5. **Persist** `st.RecordUpdateCheck(now, lv.String())` before the
+   newer/not-newer decision (`st` is guaranteed non-nil here — a nil `st` was
+   rejected in step 2)
 6. `!cv.LessThan(lv)`; not newer → return `(nil, nil)`
 7. Return `(*ReleaseInfo, nil)`. On any fetch/parse error: `(nil, error)`
 
