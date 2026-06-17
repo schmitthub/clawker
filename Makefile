@@ -795,7 +795,7 @@ restart: clawker-clean clawker
 	@tags="$$(docker images clawker-controlplane --format '{{.Repository}}:{{.Tag}}' 2>/dev/null)"; \
 		[ -n "$$tags" ] && echo "$$tags" | xargs docker rmi -f 2>/dev/null || true
 	@docker rmi clawker-coredns:latest 2>/dev/null || true
-	@@./bin/clawker controlplane up
+	@./bin/clawker controlplane up
 	@echo "Ready. Start with: ./bin/clawker run ..."
 
 # ============================================================================
