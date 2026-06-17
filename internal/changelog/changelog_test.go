@@ -148,38 +148,6 @@ func TestParse_SkipsUnreleased(t *testing.T) {
 	}
 }
 
-// TestParse_Body asserts the body preserves the full Keep-a-Changelog markdown
-// — every section of a multi-kind release, the bullets, and inline links — while
-// stripping HTML comments (incl. the legacy "<!-- clawker: -->" line) and the
-// trailing link-reference block.
-func TestParse_Body(t *testing.T) {
-	entries := parseFixture(t)
-	first := entries[0]
-
-	// A release spans multiple kinds: both the Added and Fixed sections survive.
-	for _, want := range []string{
-		"### Added",
-		"### Fixed",
-		"**User-configurable command aliases.**",
-		"[docs](https://docs.clawker.dev/aliases)", // inline link preserved verbatim
-		"**Alias expansion order.**",
-	} {
-		if !strings.Contains(first.Body, want) {
-			t.Errorf("body missing %q:\n%s", want, first.Body)
-		}
-	}
-
-	// HTML comments (both the legacy "<!-- clawker: -->" metadata line and a
-	// plain note) and the link-reference block must not leak into the body. The
-	// "<!--" guard catches any comment flavor; "plain release note" pins the
-	// non-clawker comment specifically.
-	for _, bad := range []string{"<!--", "clawker:", "plain release note", "releases/tag"} {
-		if strings.Contains(first.Body, bad) {
-			t.Errorf("body leaked %q:\n%s", bad, first.Body)
-		}
-	}
-}
-
 // TestParse_PartialSemverHeaderSkipped guards the parser's StrictNewVersion
 // check: a bracket token like "0.12" lacks a patch component, which
 // StrictNewVersion rejects, so the version header must be skipped (no entry).

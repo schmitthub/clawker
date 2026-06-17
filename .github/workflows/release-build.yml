@@ -56,37 +56,6 @@ jobs:
       - name: Install syft
         uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
 
-      # Extract the curated release-notes header for this tag directly from the
-      # committed root CHANGELOG.md (Keep a Changelog: `## [x.y.z] - DATE`
-      # section headers) into release-notes.md. GoReleaser prepends this via
-      # `--release-header` above its auto commit groups. Hermetic: reads only
-      # the committed changelog, no build, no API. A tag with no matching
-      # section yields an empty file (no-op), leaving just the auto commit
-      # groups. The awk matches the literal `## [<version>] ` prefix (leading
-      # `v` stripped from the tag) and copies through until the section closes:
-      # the next `## [` version header OR the trailing `[label]: url`
-      # link-reference block (the latter terminates the LAST section, which has
-      # no following header — without it the whole link block would bloat the
-      # notes). Single-line HTML comments are dropped after trimming leading/
-      # trailing whitespace. All three rules mirror the in-app changelog parser
-      # (internal/changelog/parse.go), which renders the section body as
-      # markdown: it trims each line, then drops `<!-- ... -->` comment lines and
-      # closes the entry on a `[label]:` link reference.
-      - name: Extract curated release-notes header
-        run: |
-          set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
-          awk -v ver="## [${VERSION}]" '
-            index($0, ver) == 1 { collecting = 1; print; next }
-            collecting && /^## \[/ { exit }
-            collecting && /^[[:space:]]*\[[^]]*\]:/ { exit }
-            collecting && /^[[:space:]]*<!--.*-->[[:space:]]*$/ { next }
-            collecting { print }
-          ' CHANGELOG.md > release-notes.md
-          echo "::group::release-notes.md"
-          cat release-notes.md
-          echo "::endgroup::"
-
       # `--parallelism 1` is REQUIRED. The two build IDs (clawker-amd64,
       # clawker-arm64) share the assets/ go:embed source paths and would race
       # on each other's pre-hooks under the default parallelism. Serializing
@@ -96,7 +65,7 @@ jobs:
         with:
           distribution: goreleaser
           version: "v2.15.4"
-          args: release --clean --parallelism 1 --release-header release-notes.md
+          args: release --clean --parallelism 1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}

@@ -21,10 +21,12 @@ func (s *IOStreams) RenderMarkdown(body string) string {
 	r, err := glamour.NewTermRenderer(
 		glamour.WithStyles(compactMarkdownStyle(s.TerminalTheme(), s.ColorEnabled())),
 		glamour.WithColorProfile(s.markdownColorProfile()),
-		// WordWrap(0) disables glamour's hard wrap. Hard-wrapping pads every
-		// line to the wrap width with styled trailing spaces (invisible in a
-		// terminal but ~15x the byte size); soft wrapping at the terminal edge
-		// is cleaner for a short teaser.
+		// WordWrap(0) disables glamour's hard wrap, letting the terminal soft-wrap
+		// at its own edge. Hard-wrapping (WordWrap > 0) pads every line out to the
+		// wrap width with trailing spaces (~15x the byte size) AND still does not
+		// hang-indent wrapped top-level list continuations — glamour drops those to
+		// column 0 either way — so it buys nothing here but bloat. Soft wrapping
+		// also keeps long tokens (URLs) intact instead of force-breaking them.
 		glamour.WithWordWrap(0),
 	)
 	if err != nil {
@@ -86,6 +88,13 @@ func compactMarkdownStyle(theme string, colorEnabled bool) ansi.StyleConfig {
 	cfg.H4.Prefix = ""
 	cfg.H5.Prefix = ""
 	cfg.H6.Prefix = ""
+
+	// Inline code: the built-in style pads with a leading/trailing space and a
+	// background block, which renders as stray spaces around each `code` span.
+	// Drop the padding and background; the foreground color alone marks it.
+	cfg.Code.Prefix = ""
+	cfg.Code.Suffix = ""
+	cfg.Code.BackgroundColor = nil
 
 	return cfg
 }
