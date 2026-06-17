@@ -105,8 +105,9 @@ func signLeaf(t *testing.T, cn, sanFullName string, notAfter time.Time, parent *
 // (PeerAgentFullName, PeerThumbprint) appear on the event payload.
 
 func TestCapturePeer_ValidChain(t *testing.T) {
+	const sanFullName = "clawker.proj.dev"
 	caCert, caKey := genCA(t, "clawker-ca", 24*time.Hour)
-	leafDER, leaf := signLeaf(t, "clawker.proj.dev", "clawker.proj.dev", time.Now().Add(time.Hour), caCert, caKey)
+	leafDER, _ := signLeaf(t, sanFullName, sanFullName, time.Now().Add(time.Hour), caCert, caKey)
 
 	pool := x509.NewCertPool()
 	pool.AddCert(caCert)
@@ -116,46 +117,64 @@ func TestCapturePeer_ValidChain(t *testing.T) {
 	d.capturePeer([][]byte{leafDER}, &peer)
 
 	assert.True(t, peer.ChainVerified, "trusted-CA chain must verify")
-	assert.Equal(t, leaf.Subject.CommonName, peer.PeerAgentFullName)
-	want := sha256.Sum256(leafDER)
-	assert.Equal(t, want, peer.PeerThumbprint)
+	// PeerAgentFullName is sourced from the URI SAN — assert the SAN
+	// value directly. TestCapturePeer_DistinctCNAndSAN pins that it is
+	// the SAN and not Subject.CommonName when the two differ.
+	assert.Equal(t, sanFullName, peer.PeerAgentFullName)
+	assert.Equal(t, sha256.Sum256(leafDER), peer.PeerThumbprint)
 	assert.Empty(t, peer.CaptureReason)
 }
 
-func TestCapturePeer_UntrustedRoot_DoesNotAbort(t *testing.T) {
-	wrongCA, wrongKey := genCA(t, "wrong-ca", 24*time.Hour)
-	leafDER, leaf := signLeaf(t, "clawker.proj.dev", "clawker.proj.dev", time.Now().Add(time.Hour), wrongCA, wrongKey)
+// TestCapturePeer_ChainVerifyFails covers the permissive-trust
+// invariant across both ways leaf.Verify can fail — an untrusted
+// signing root and an expired (but correctly-signed) leaf. Both must
+// yield ChainVerified=false while STILL populating PeerAgentFullName
+// (from the SAN) and PeerThumbprint, and never abort. capturePeer
+// routes both through the same leaf.Verify-failed branch; the only
+// difference is the underlying x509 reason, which capturePeer collapses
+// to "chain verify" either way — so this is one branch, two inputs.
+func TestCapturePeer_ChainVerifyFails(t *testing.T) {
+	const sanFullName = "clawker.proj.dev"
+	cases := []struct {
+		name  string
+		build func(t *testing.T) (leafDER []byte, pool *x509.CertPool)
+	}{
+		{
+			name: "untrusted root",
+			build: func(t *testing.T) ([]byte, *x509.CertPool) {
+				wrongCA, wrongKey := genCA(t, "wrong-ca", 24*time.Hour)
+				leafDER, _ := signLeaf(t, sanFullName, sanFullName, time.Now().Add(time.Hour), wrongCA, wrongKey)
+				trustedCA, _ := genCA(t, "trusted-ca", 24*time.Hour)
+				pool := x509.NewCertPool()
+				pool.AddCert(trustedCA)
+				return leafDER, pool
+			},
+		},
+		{
+			name: "expired leaf",
+			build: func(t *testing.T) ([]byte, *x509.CertPool) {
+				caCert, caKey := genCA(t, "clawker-ca", 24*time.Hour)
+				leafDER, _ := signLeaf(t, sanFullName, sanFullName, time.Now().Add(-time.Minute), caCert, caKey)
+				pool := x509.NewCertPool()
+				pool.AddCert(caCert)
+				return leafDER, pool
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			leafDER, pool := tc.build(t)
+			d := &Dialer{caPool: pool}
 
-	trustedCA, _ := genCA(t, "trusted-ca", 24*time.Hour)
-	pool := x509.NewCertPool()
-	pool.AddCert(trustedCA)
-	d := &Dialer{caPool: pool}
+			var peer peerInfo
+			d.capturePeer([][]byte{leafDER}, &peer)
 
-	var peer peerInfo
-	d.capturePeer([][]byte{leafDER}, &peer)
-
-	assert.False(t, peer.ChainVerified, "untrusted root must yield ChainVerified=false")
-	assert.Equal(t, leaf.Subject.CommonName, peer.PeerAgentFullName)
-	want := sha256.Sum256(leafDER)
-	assert.Equal(t, want, peer.PeerThumbprint)
-	assert.Contains(t, peer.CaptureReason, "chain verify")
-}
-
-func TestCapturePeer_ExpiredLeaf_DoesNotAbort(t *testing.T) {
-	caCert, caKey := genCA(t, "clawker-ca", 24*time.Hour)
-	leafDER, _ := signLeaf(t, "clawker.proj.dev", "clawker.proj.dev", time.Now().Add(-time.Minute), caCert, caKey)
-
-	pool := x509.NewCertPool()
-	pool.AddCert(caCert)
-	d := &Dialer{caPool: pool}
-
-	var peer peerInfo
-	d.capturePeer([][]byte{leafDER}, &peer)
-
-	assert.False(t, peer.ChainVerified, "expired leaf must yield ChainVerified=false")
-	assert.Equal(t, "clawker.proj.dev", peer.PeerAgentFullName)
-	assert.NotEqual(t, [sha256.Size]byte{}, peer.PeerThumbprint)
-	assert.Contains(t, peer.CaptureReason, "chain verify")
+			assert.False(t, peer.ChainVerified, "verify failure must yield ChainVerified=false")
+			assert.Equal(t, sanFullName, peer.PeerAgentFullName, "SAN must still be captured on verify failure")
+			assert.Equal(t, sha256.Sum256(leafDER), peer.PeerThumbprint)
+			assert.Contains(t, peer.CaptureReason, "chain verify")
+		})
+	}
 }
 
 func TestCapturePeer_NoCerts_SetsReason(t *testing.T) {
@@ -399,6 +418,13 @@ func TestCloseAndCheckLeak_SuccessResetsCounter(t *testing.T) {
 }
 
 func TestCloseAndCheckLeak_LogsCloseFailure(t *testing.T) {
+	// A close failure must emit a greppable structured event: operators
+	// grep the structured log surface for FD-leak signals (CP resilience
+	// doctrine — structured logs are the only operator-visible surface).
+	// The count/bail behavior is covered by BailsAfterCeiling and
+	// SuccessResetsCounter; this only pins that the event token is
+	// emitted, not the field values (which would be a brittle
+	// log-format assertion duplicating those tests).
 	c := &fakeCloser{errs: []error{errors.New("transport already shut down")}}
 	count := 0
 	var buf bytes.Buffer
@@ -406,9 +432,7 @@ func TestCloseAndCheckLeak_LogsCloseFailure(t *testing.T) {
 
 	d.closeAndCheckLeak(c, &count, logger.NewWriter(&buf))
 
-	got := buf.String()
-	assert.Contains(t, got, "agentdial_conn_close_failed")
-	assert.Contains(t, got, `"close_err_count":1`)
+	assert.Contains(t, buf.String(), "agentdial_conn_close_failed")
 }
 
 // --- DialAgent orchestration ---------------------------------------
@@ -427,9 +451,19 @@ func TestCloseAndCheckLeak_LogsCloseFailure(t *testing.T) {
 type fakeMobyForDialer struct {
 	mobyclient.APIClient
 	inspectErr error
+	// onInspect, when non-nil, is invoked at the start of every
+	// ContainerInspect call. The dedup test uses it as a channel gate
+	// to hold the first dial goroutine inside resolveAgent (dedup key
+	// held) until the second DialAgent call has been issued, making the
+	// concurrent-in-flight dedup assertion deterministic rather than a
+	// goroutine-scheduling coin-flip.
+	onInspect func()
 }
 
 func (f *fakeMobyForDialer) ContainerInspect(_ context.Context, _ string, _ mobyclient.ContainerInspectOptions) (mobyclient.ContainerInspectResult, error) {
+	if f.onInspect != nil {
+		f.onInspect()
+	}
 	if f.inspectErr != nil {
 		return mobyclient.ContainerInspectResult{}, f.inspectErr
 	}
@@ -487,14 +521,28 @@ func newDialerForTest(t *testing.T, docker mobyclient.APIClient, agents Registry
 }
 
 func TestDialAgent_DedupsConcurrentCallsForSameContainerID(t *testing.T) {
-	// Two DialAgent calls for the same containerID must produce
-	// exactly ONE SessionFailed event, not two. A regression that
-	// forgets the dedup map (or forgets to delete the entry on
-	// goroutine exit) would either spin two duplicate goroutines
-	// (this test catches that via the Attempts > 1 path) OR leave
-	// the dedup key permanent (caught separately by the
-	// "redial-after-teardown" test below).
-	docker := &fakeMobyForDialer{}
+	// Two DialAgent calls for the same containerID must produce exactly
+	// ONE SessionFailed event, not two. The dedup map only guards dials
+	// that are concurrently in-flight, so the test has to guarantee the
+	// first dial goroutine is still running (its dedup key still held)
+	// when the second call arrives. onInspect parks that goroutine
+	// inside resolveAgent until the second DialAgent has been issued.
+	//
+	// Without the gate the errContainerStopped resolve path returns on
+	// attempt 1 with no backoff, the first goroutine can run to terminal
+	// failure and clear its dedup key before the second call takes the
+	// lock, and the second call then spawns its own goroutine — turning
+	// the dedup assertion into a goroutine-scheduling coin-flip that is
+	// flaky on multi-core CI. The channel gate forces the overlap, so
+	// the dedup is exercised deterministically on any core count.
+	release := make(chan struct{})
+	entered := make(chan struct{}, 1)
+	docker := &fakeMobyForDialer{
+		onInspect: func() {
+			entered <- struct{}{}
+			<-release
+		},
+	}
 	regMock := &RegistryMock{
 		LookupByContainerIDFunc: func(string) (*Entry, error) {
 			return nil, ErrUnknownAgent
@@ -508,7 +556,9 @@ func TestDialAgent_DedupsConcurrentCallsForSameContainerID(t *testing.T) {
 	require.True(t, ok)
 
 	d.DialAgent(ctx, "container-A")
-	d.DialAgent(ctx, "container-A") // dup — should be a no-op
+	<-entered                       // first dial parked in resolveAgent — dedup key held
+	d.DialAgent(ctx, "container-A") // dup — key present → guaranteed no-op
+	close(release)                  // let the first dial run to terminal failure
 
 	select {
 	case ev := <-sub.C:
@@ -518,8 +568,10 @@ func TestDialAgent_DedupsConcurrentCallsForSameContainerID(t *testing.T) {
 		t.Fatal("timed out waiting for first SessionFailed event")
 	}
 
-	// Second event would mean dedup failed. Wait briefly to give a
-	// duplicate goroutine a chance to surface, then assert quiet.
+	// A second event would mean the dup spawned its own goroutine. With
+	// the gate forcing the overlap this is deterministic, not a race:
+	// if the dedup map were dropped, the dup's goroutine would also pass
+	// through the (now-closed) gate and publish a second SessionFailed.
 	select {
 	case ev := <-sub.C:
 		t.Fatalf("dedup violated — second SessionFailed arrived: %+v", ev)
@@ -616,52 +668,47 @@ func TestDialAgent_CtxCancelDuringResolveTearsDownCleanly(t *testing.T) {
 // --- shouldReconnect: post-drain decision -------------------------
 //
 // The runDial loop's reconnect decision is the load-bearing piece of
-// the broken-Session→re-establish path. The full integration is
-// hard to unit-test (real moby, real bufconn clawkerd, real TLS),
-// but the decision itself is a pure function of (ctx, drainResult).
-// These cases pin the matrix:
+// the broken-Session→re-establish path. The full integration is hard
+// to unit-test (real moby, real bufconn clawkerd, real TLS), but the
+// decision itself is a pure function of (ctx, drainResult). The matrix:
 //
-//	ctx alive  + drainGracefulEOF  → reconnect (peer closed, transient)
-//	ctx alive  + drainStreamErr    → reconnect (transport break, transient)
-//	ctx alive  + drainCtxCanceled  → DON'T reconnect (drain reported teardown)
-//	ctx done   + ANY               → DON'T reconnect (CP shutting down)
+//	ctx alive + drainGracefulEOF  → reconnect (peer closed, transient)
+//	ctx alive + drainStreamErr    → reconnect (transport break, transient)
+//	ctx alive + drainCtxCanceled  → DON'T reconnect (drain reported teardown)
+//	ctx done  + ANY               → DON'T reconnect (CP shutting down)
 //
 // A regression that drops the ctx.Err() guard would re-enter
 // establishWithRetry during CP shutdown and spam SessionConnecting/
 // SessionFailed on a draining bus. A regression that drops the
 // drainCtxCanceled guard would do the same when the drain itself
 // observes ctx.Done() before the loop body checks ctx.Err().
-
-func TestShouldReconnect_AliveCtx_GracefulEOFReconnects(t *testing.T) {
-	got := shouldReconnect(context.Background(), drainResult{Outcome: drainGracefulEOF, Reason: "peer closed"})
-	assert.True(t, got, "graceful EOF on a live ctx is the reconnect happy path")
-}
-
-func TestShouldReconnect_AliveCtx_StreamErrReconnects(t *testing.T) {
-	got := shouldReconnect(context.Background(), drainResult{Outcome: drainStreamErr, Reason: "io: broken pipe"})
-	assert.True(t, got, "transport break on a live ctx must trigger reconnect")
-}
-
-func TestShouldReconnect_AliveCtx_DrainCtxCanceledReturns(t *testing.T) {
-	// Defense in depth: drain itself observed ctx.Done() before the
-	// loop's own ctx.Err() check could trip. Reconnect must NOT
-	// fire — bus is heading down.
-	got := shouldReconnect(context.Background(), drainResult{Outcome: drainCtxCanceled})
-	assert.False(t, got, "drainCtxCanceled is a teardown signal regardless of ctx state")
-}
-
-func TestShouldReconnect_DoneCtx_ReturnsRegardlessOfDrain(t *testing.T) {
-	cancelled, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	cases := []drainResult{
-		{Outcome: drainGracefulEOF, Reason: "peer closed"},
-		{Outcome: drainStreamErr, Reason: "io: broken pipe"},
-		{Outcome: drainCtxCanceled},
+func TestShouldReconnect(t *testing.T) {
+	cases := []struct {
+		name    string
+		ctxDone bool
+		drain   drainResult
+		want    bool
+	}{
+		{"alive+gracefulEOF reconnects", false, drainResult{Outcome: drainGracefulEOF, Reason: "peer closed"}, true},
+		{"alive+streamErr reconnects", false, drainResult{Outcome: drainStreamErr, Reason: "io: broken pipe"}, true},
+		// Defense in depth: drain observed ctx.Done() before the loop's
+		// own ctx.Err() check could trip — teardown regardless of ctx.
+		{"alive+drainCtxCanceled tears down", false, drainResult{Outcome: drainCtxCanceled}, false},
+		// A cancelled parent ctx suppresses reconnect for every drain
+		// outcome (CP shutting down).
+		{"done+gracefulEOF tears down", true, drainResult{Outcome: drainGracefulEOF, Reason: "peer closed"}, false},
+		{"done+streamErr tears down", true, drainResult{Outcome: drainStreamErr, Reason: "io: broken pipe"}, false},
+		{"done+drainCtxCanceled tears down", true, drainResult{Outcome: drainCtxCanceled}, false},
 	}
-	for _, drain := range cases {
-		assert.Falsef(t, shouldReconnect(cancelled, drain),
-			"cancelled parent ctx must suppress reconnect for drain=%+v", drain)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if tc.ctxDone {
+				cancel()
+			}
+			assert.Equal(t, tc.want, shouldReconnect(ctx, tc.drain))
+		})
 	}
 }
 
