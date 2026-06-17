@@ -238,7 +238,8 @@ func NormalizeFields[T any](v T, opts ...NormalizeOption) FieldSet {
 //   - storeui.walkStruct (reflect.go) — Go type → kind + runtime value formatting
 //   - storeui.setLeaf (value.go) — string → typed field on edit
 //   - storeui.fieldKindToBrowserKind (edit.go) — kind → TUI editor widget
-//   - storeui.classifyAndFormat (reflect.go) — map/slice/pointer fallback classifier
+//   - storeui.classifyAndFormat (reflect.go) — only the map/slice/pointer kinds;
+//     scalar kinds are intercepted upstream in walkStruct and never reach it
 //   - docs.kindToType (configdoc.go) — kind → human type label for the config docs
 //   - parseDefaultValue (defaults.go) — `default` tag → typed YAML value
 func normalizeStruct(rt reflect.Type, prefix string, fields *[]Field, kindFunc KindFunc) {

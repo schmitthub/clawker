@@ -158,7 +158,7 @@ const (
 	// ControlPlaneSubdir. agentregistry holds the `agents` table; future
 	// CP-owned tables share the same file.
 	ControlPlaneDBFile = "controlplane.db"
-	// CliStateFile is the CLI's persisted runtime state in the state dir
+	// CLIStateFile is the CLI's persisted runtime state in the state dir
 	// (update-check cache + changelog cursor), backed by internal/state via
 	// storage.Store.
 	CLIStateFile = "update-state.yaml"

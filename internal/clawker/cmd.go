@@ -100,8 +100,8 @@ func Main() int {
 				updateMessageChan <- rel
 			}()
 			var err error
-			// CheckForUpdate validates buildVersion as semver (skipping the fetch on a
-			// non-release "DEV" build), reads the freshness gate from cliState, and persists the
+			// CheckForUpdate validates buildVersion as semver (a non-release "DEV" build is not
+			// parseable semver and returns an error before any fetch), reads the freshness gate from cliState, and persists the
 			// result there itself (RecordUpdateCheck). It returns (nil, nil) when not
 			// newer or TTL-fresh; a non-nil rel only when a newer release exists. A
 			// non-nil err may accompany a nil rel — log it, report nothing.

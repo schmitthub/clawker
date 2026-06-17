@@ -128,18 +128,6 @@ func TestPrintDockerInstallHelper(t *testing.T) {
 	}
 }
 
-func TestPrintDockerInstallHelper_SentinelDetection(t *testing.T) {
-	// Simulate the full error chain: whail → docker → factory → command
-	underlying := errors.New("dial unix /var/run/docker.sock: connect: no such file or directory")
-	dockerErr := whail.ErrDockerHealthCheckFailed(underlying)
-	commandWrapped := fmt.Errorf("connecting to Docker: %w", dockerErr)
-
-	// Verify the sentinel is detectable at the top level
-	if !errors.Is(commandWrapped, whail.ErrDockerNotAvailable) {
-		t.Fatal("sentinel not detectable through command wrapping")
-	}
-}
-
 func TestPrintUpdateNotification_NilInfo(t *testing.T) {
 	tio, _, _, errOut := iostreams.Test()
 

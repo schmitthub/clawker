@@ -8,7 +8,7 @@ state (`internal/state`), and persists the check there itself.
 `github.com/Masterminds/semver/v3`. The package owns ALL semver work — the caller
 passes raw version strings and imports no semver. The freshness gate
 (`shouldCheckForUpdate`) is pure (a timestamp in, no I/O); `CheckForUpdate` owns
-the semver parse, the newer/not-newer comparison (`lv.GreaterThan(cv)`), the
+the semver parse, the newer/not-newer comparison (`!cv.LessThan(lv)`), the
 state read + write, and the GitHub fetch.
 
 The caller passes the current version string (no dependency on `internal/build`).
@@ -90,7 +90,7 @@ fetch; a non-release build whose version is not parseable semver (`"DEV"`,
 `"nightly"`) fails there and returns `(nil, error)` without ever touching the
 GitHub API. The release tag from GitHub is parsed the same way
 (`semver.NewVersion(release.TagName)`), and the newer/not-newer decision is a
-plain `lv.GreaterThan(cv)` on the two parsed `*semver.Version` values — no
+plain `!cv.LessThan(lv)` on the two parsed `*semver.Version` values — no
 constraint, no string round-trip. There is no separate `isNewer` helper and no
 caller-side dev gate: `internal/clawker/cmd.go` imports no semver, passes the raw
 `buildVersion` string, and lets this package own every parse.
@@ -110,7 +110,7 @@ just `CheckForUpdate` + `ReleaseInfo`.
    `(nil, error)`)
 5. **Persist** `st.RecordUpdateCheck(now, lv.String())` (skipped if
    `st == nil`) — before the newer/not-newer decision
-6. `lv.GreaterThan(cv)`; not newer → return `(nil, nil)`
+6. `!cv.LessThan(lv)`; not newer → return `(nil, nil)`
 7. Return `(*ReleaseInfo, nil)`. On any fetch/parse error: `(nil, error)`
 
 The unexported `getLatestReleaseInfo(ctx, client, repo)` GETs and decodes the
@@ -122,16 +122,18 @@ transport is the seam) plus a `state/mocks` stub where only call counts matter.
 
 Wired into `internal/clawker/cmd.go:Main()` (gh CLI pattern):
 
-- `Main` constructs the `state.StateStore` facade directly (it is not a Factory noun)
 - `Main` owns the env/CI opt-out decision (whether to launch the check at all)
 - `context.WithCancel` creates a cancellable context for the HTTP request
 - A buffered(1) channel carries the `*update.ReleaseInfo`; the goroutine sends
   exactly once and recovers from panics
-- The goroutine calls `update.CheckForUpdate(ctx, st, buildVersion, consts.GitHubRepo)`,
-  which persists the check itself
+- The goroutine calls the `checkForUpdate(ctx, f, buildVersion, consts.GitHubRepo)`
+  helper, which resolves the `f.HttpClient()` + `f.CLIState()` Factory nouns and
+  calls `update.CheckForUpdate(ctx, client, st, buildVersion, consts.GitHubRepo)`
+  — the package persists the check itself
 - Blocking read after the command completes
-- The notification prints only when the result is non-nil (a newer release
-  exists) and stderr is a TTY
+- The notification prints whenever the result is non-nil (a newer release
+  exists); TTY/CI/opt-out suppression is the up-front `notificationsSuppressed`
+  gate's job, not the renderer's
 - Errors logged via `logger.Debug().Err(err)` (always to file log)
 
 State file (owned by `internal/state`): `config.StateDir()/update-state.yaml`
