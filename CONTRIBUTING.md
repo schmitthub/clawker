@@ -129,12 +129,11 @@ to the current version and shows nothing, with no catch-up backfill) and the
 curated header at the top of the GitHub release notes. The CLI
 does not embed the file —
 it fetches the raw `CHANGELOG.md` from `main` over the network at runtime (the
-CLI runs on the host and is always online). The release header is extracted in
-CI: an `awk` step in `release-build.yml` pulls this release's `## [VERSION]`
-section into a file passed to GoReleaser via `--release-header`, placing it above
-the auto commit groups. There is no second source to keep in sync.
+CLI runs on the host and is always online). GitHub release notes are currently
+produced by GoReleaser's auto changelog groups (not extracted from `CHANGELOG.md`
+in CI yet). There is no second source to keep in sync.
 
-### PR Process
+### PR Processs
 
 1. Fork the repository
 2. Create a feature branch from `main`

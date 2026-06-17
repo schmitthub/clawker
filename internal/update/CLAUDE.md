@@ -4,12 +4,11 @@ Update checker for clawker releases. Queries the GitHub releases API, compares
 the latest tag against the running version, reads the freshness gate from CLI
 state (`internal/state`), and persists the check there itself.
 
-**Foundation-tier package:** stdlib + `net/http`. Imports `internal/state` and
-`github.com/Masterminds/semver/v3`. The package owns ALL semver work — the caller
-passes raw version strings and imports no semver. The freshness gate
-(`shouldCheckForUpdate`) is pure (a timestamp in, no I/O); `CheckForUpdate` owns
-the semver parse, the newer/not-newer comparison (`!cv.LessThan(lv)`), the
-state read + write, and the GitHub fetch.
+**Dependencies:** stdlib + `net/http` + `internal/state` + `github.com/Masterminds/semver/v3`.
+The package owns ALL semver work — the caller passes raw version strings and imports no semver
+The freshness gate (`shouldCheckForUpdate`) is pure (a timestamp in, no I/O); `CheckForUpdate` 
+owns the semver parse, the newer/not-newer comparison (`!cv.LessThan(lv)`), the state 
+read + write, and the GitHub fetch.
 
 The caller passes the current version string (no dependency on `internal/build`).
 `RecordUpdateCheck` is a field merge that writes only the update-check fields, so
