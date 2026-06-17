@@ -231,7 +231,7 @@ func TestParseDefaultValue_EdgeCases(t *testing.T) {
 	// Invalid duration panics
 	assert.Panics(t, func() { parseDefaultValue("not_a_duration", KindDuration) })
 
-	// Invalid time panics (must be RFC3339)
+	// Invalid time panics (must be RFC3339Nano)
 	assert.Panics(t, func() { parseDefaultValue("not_a_time", KindTime) })
 
 	// Empty entry in string slice panics

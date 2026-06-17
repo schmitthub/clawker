@@ -129,14 +129,14 @@ func setLeaf(f reflect.Value, val string, path string) error {
 
 	case ft == timeKind:
 		// Empty round-trips to the zero time (the "unset" representation produced
-		// by WalkFields); otherwise parse the RFC3339 scalar.
+		// by WalkFields); otherwise parse the RFC3339Nano scalar.
 		if val == "" {
 			f.Set(reflect.ValueOf(time.Time{}))
 			break
 		}
-		tv, err := time.Parse(time.RFC3339, val)
+		tv, err := time.Parse(time.RFC3339Nano, val)
 		if err != nil {
-			return fmt.Errorf("storeui.SetFieldValue: invalid time for %q (want RFC3339): %w", path, err)
+			return fmt.Errorf("storeui.SetFieldValue: invalid time for %q (want RFC3339Nano): %w", path, err)
 		}
 		f.Set(reflect.ValueOf(tv))
 

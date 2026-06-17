@@ -128,7 +128,7 @@ func walkStruct(val reflect.Value, typ reflect.Type, prefix string, fields *[]Fi
 			tv := fv.Interface().(time.Time)
 			val := ""
 			if !tv.IsZero() {
-				val = tv.Format(time.RFC3339)
+				val = tv.Format(time.RFC3339Nano)
 			}
 			*fields = append(*fields, Field{
 				Path:  path,

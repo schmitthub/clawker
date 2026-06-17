@@ -22,7 +22,7 @@ import (
 //   - KindMap → YAML mapping (comma-separated key=value tag → map[string]string;
 //     split on the first "=" per entry, so values may contain "=" but not ",")
 //   - KindDuration → YAML string (e.g. "30s")
-//   - KindTime → YAML string (RFC3339, e.g. "2026-01-01T00:00:00Z")
+//   - KindTime → YAML string (RFC3339Nano, e.g. "2026-01-01T00:00:00Z")
 //   - KindText → YAML string
 func GenerateDefaultsYAML[T Schema]() string {
 	var zero T
@@ -114,10 +114,10 @@ func parseDefaultValue(raw string, kind FieldKind) any {
 		}
 		return raw // duration stored as string in YAML
 	case KindTime:
-		if _, err := time.Parse(time.RFC3339, raw); err != nil {
-			panic(fmt.Sprintf("storage.parseDefaultValue: invalid time default %q (want RFC3339): %v", raw, err))
+		if _, err := time.Parse(time.RFC3339Nano, raw); err != nil {
+			panic(fmt.Sprintf("storage.parseDefaultValue: invalid time default %q (want RFC3339Nano): %v", raw, err))
 		}
-		return raw // time stored as RFC3339 string in YAML
+		return raw // time stored as RFC3339Nano string in YAML
 	default:
 		panic(fmt.Sprintf("storage.parseDefaultValue: kind %v does not support defaults", kind))
 	}
