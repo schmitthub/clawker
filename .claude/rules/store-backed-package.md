@@ -19,7 +19,13 @@ schema, your filename, your directory, or your error vocabulary. The store-backe
 package is the **adapter** that owns all of that nuance and exposes a clean
 interface + mock so consumers never touch `storage.Store` directly.
 
-`internal/state` is the reference implementation. When in doubt, copy it.
+`internal/state` is the **blessed reference implementation** — a single, pure
+store-wrapping-a-schema package with no nil ceremony. Copy it verbatim
+(`state.go` + `schema.go` + `migrations.go` + `mocks/stubs.go` + `state_test.go`)
+and rename the domain noun. **Do NOT copy `internal/config` or `internal/project`**
+for the store wiring: they predate this cleanup and have drifted (named store
+fields, nil-receiver guards, bespoke constructors). When they conflict with
+`internal/state`, `internal/state` wins.
 
 ## Package layout
 
@@ -31,7 +37,7 @@ A single-file store-backed package `internal/<pkg>/` has exactly these files:
 | `schema.go` | The schema struct with `yaml`/`label`/`desc` tags + `Fields() storage.FieldSet`. The persisted shape, one place. See `storage-schema.md`. |
 | `migrations.go` | `<X>Migrations() []storage.Migration` — additive list; append on schema change, never edit a shipped one. |
 | `mocks/<pkg>_mock.go` | moq-generated `<X>StoreMock`. **DO NOT EDIT.** Regenerate with `go generate ./...`. |
-| `mocks/stubs.go` | Hand-written ergonomic doubles: `NewBlank<X>()`, `NewFromString(yaml)`, `newMockFrom()`. Mirrors `config/mocks`. |
+| `mocks/stubs.go` | Hand-written ergonomic doubles: `NewBlank<X>()`, `NewFromString(yaml)`, `newMock()`. Mirrors `config/mocks` **structurally only** (a `mocks/` subpackage = generated `_mock.go` + hand-written `stubs.go` of variant constructors) — NOT in write-wiring; see stubs.go requirements below. |
 | `<pkg>_test.go` | Intra-package tests — real `New()` + `testenv`, file-backed. |
 | `CLAUDE.md` | Package API reference. |
 
@@ -58,6 +64,7 @@ type <x>StoreImpl struct {
 - **Reads return an immutable snapshot.** `func (s *<x>StoreImpl) <Thing>() *<Schema> { return s.Read() }`.
 - **Writes are field-merge**, not whole-struct overwrite: `s.Set(func(st *<Schema>){ st.X = ... })` then `s.Write()`. Each write method touches a **disjoint** set of fields it owns, so independent writers (e.g. a background goroutine and a foreground path) cannot clobber each other. That disjoint-by-ownership invariant is the whole reason to back state with `storage.Store` instead of a raw marshal+rename.
 - **The package owns its errors.** Every storage error is wrapped `<pkg>: <verb>: %w`. Define package-local sentinels here, not in storage.
+- **No nil ceremony — this is the purity line.** The impl is unexported and handed out only as the interface, and the constructors return either a non-nil impl or an error — so a nil receiver, a nil embedded store, or a `storage.New*` returning `(nil, nil)` are all unreachable. Do **NOT** add `if s == nil` / `if s.store == nil` guards, `&<Schema>{}` read fallbacks, or `got nil store without error` checks. **Embed** `*storage.Store[<Schema>]` (named-field `store *storage.Store[<Schema>]` is the drift) and call the promoted primitives directly — `s.Read()` / `s.Set(...)` / `s.Write()`, never `s.store.Read()`. Those guards and the named field are exactly the degradation that crept into other packages; `internal/state` was scrubbed of them — keep new packages that clean.
 
 ## The constructor template — `New` (file-backed) + `NewFromString` (in-memory)
 
@@ -197,27 +204,57 @@ own tests use the real file-backed store.
 
 ### `stubs.go` requirements
 
-```go
-// Blank uses NewFromString("") — the in-memory seam — NOT New(). New() wires
-// WithStateDir and would read the real ~/.local/state/... file, making the stub
-// non-deterministic (it would reflect whatever the dev/CI box has on disk).
-func NewBlank<X>() *<X>StoreMock { return newMockFrom(must(state.NewFromString(""))) }
-func NewFromString(yaml string) *<X>StoreMock { return newMockFrom(must(state.NewFromString(yaml))) }
+The consumer stub seeds an in-memory store via `<pkg>.NewFromString` (the
+option-free seam), takes a **snapshot** of it, and returns a `*<X>StoreMock`
+whose read getter returns that snapshot and whose write methods are
+**record-only no-ops** (`return nil`). This is the blessed `internal/state` shape:
 
-// newMockFrom wires EVERY method — reads AND writes — to a seeded real store.
-func newMockFrom(s <pkg>.<X>Store) *<X>StoreMock {
+```go
+// NewBlank<X> is the default consumer double: an empty in-memory snapshot.
+func NewBlank<X>() *<X>StoreMock { return NewFromString("") }
+
+// NewFromString seeds the snapshot from YAML through the REAL schema. It uses
+// <pkg>.NewFromString — the option-free in-memory seam (NO WithStateDir), so it
+// discovers nothing on disk and touches no real XDG file. Panics on invalid YAML
+// to match test-stub ergonomics.
+func NewFromString(yaml string) *<X>StoreMock {
+	st, err := <pkg>.NewFromString(yaml)
+	if err != nil {
+		panic(err)
+	}
+	return newMock(st.<Thing>()) // pass the SNAPSHOT, not the store
+}
+
+// newMock: reads return the frozen snapshot; writes are record-only no-ops.
+func newMock(snap *<pkg>.<Schema>) *<X>StoreMock {
 	return &<X>StoreMock{
-		<Thing>Func:          s.<Thing>,   // <-- wire the read getter too
-		Set<FieldGroupA>Func: s.Set...,
-		Set<FieldGroupB>Func: s.Set...,
+		<Thing>Func:          func() *<pkg>.<Schema> { return snap },
+		Set<FieldGroupA>Func: func(...) error { return nil },
+		Set<FieldGroupB>Func: func(...) error { return nil },
 	}
 }
 ```
 
-Wire **every** func, the snapshot getter included. A moq method whose `Func` is
-nil panics when called — a blank stub that leaves the read getter unwired will
-panic the moment a consumer reads it. Fix the stub doc/comments to name the real
-types (`*<X>StoreMock`), not copy-pasted `*ConfigMock`.
+**Why writes are record-only no-ops, NOT wired to the seeded store.**
+`<pkg>.NewFromString("")` wires no path options, so its real `Write()` errors by
+design (`storage: no write path available`). Wiring a write method
+(`Set<X>Func: s.Set<X>`) would make every consumer `Set<X>(...)` call return that
+spurious write error — and "fixing" that by adding `WithStateDir` to the seam is
+the **cardinal sin**: the stub would then read/write the dev/CI box's real
+`~/.local/state/...` file and go non-deterministic. So reads serve the frozen
+seed snapshot; writes return `nil` and are asserted via moq's auto-recorded
+`Set<X>Calls()` — consumers check **what production wrote**, not read-back state.
+
+**Wire every Func.** A moq method whose `Func` is nil panics when called — leaving
+the read getter unwired panics the moment a consumer reads. Name the real type in
+docs/comments (`*<X>StoreMock`), never a copy-pasted `*ConfigMock`.
+
+> **Variant (don't reach for it by default):** if a package's writes are heavy or
+> genuinely path-dependent and you want mutation tests to hit a real store, leave
+> the write Funcs **unwired** (a call panics via moq's nil guard) and provide a
+> file-backed `NewIsolated<X>(t)` — the `internal/config` choice. The record-only
+> default above is blessed for simple disjoint field-merge writers like
+> `internal/state`; use the variant only when you can name why.
 
 ## Migrations and how to test them
 
@@ -268,7 +305,7 @@ cases := []struct {
 2. `migrations.go`: `<X>Migrations()` returning an additive list (empty is fine).
 3. `<pkg>.go`: interface + impl embedding `*storage.Store[<Schema>]` + `New`/`NewFromString` with **`WithFilenames` + a dir option** + the `//go:generate moq` directive. Wrap every storage error `<pkg>: …`.
 4. `go generate ./...` to emit `mocks/<pkg>_mock.go`.
-5. `mocks/stubs.go`: `NewBlank<X>`, `NewFromString`, `newMockFrom` — wire all funcs.
+5. `mocks/stubs.go`: `NewBlank<X>`, `NewFromString`, `newMock` — reads return the seed snapshot; writes are record-only no-ops (never wire writes to the in-memory seam — its `Write` errors by design). Wire every Func.
 6. `<pkg>_test.go`: real `New()` + `testenv`, file-backed. Add a `Test<X>Migrations` table (one row per legacy shape, with the idempotency check) the moment any migration exists.
 7. `CLAUDE.md`: API reference.
 

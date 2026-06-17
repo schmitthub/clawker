@@ -167,7 +167,7 @@ Delegates to `internal/consts` — the single XDG resolver (`CLAWKER_*_DIR` > `X
 
 ## Composition by Consumers
 
-`internal/config` composes `Store[Project]` (walk-up + user config dir + migrations + defaults-from-struct) and `Store[Settings]`. `internal/project` composes `Store[ProjectRegistry]` with `WithDataDir() + WithLock()`. `internal/state` is the canonical **single-file** store (`WithFilenames + WithStateDir + WithLock`) — the reference for `.claude/rules/store-backed-package.md`. Callers use the `Config`, `ProjectManager`, and `StateStore` interfaces, not `Store[T]` directly.
+`internal/config` composes `Store[Project]` (walk-up + user config dir + migrations + defaults-from-struct) and `Store[Settings]`. `internal/project` composes `Store[ProjectRegistry]` with `WithDataDir() + WithLock()`. `internal/state` is the canonical **single-file** store (`WithFilenames + WithStateDir + WithLock`) — the **blessed reference** for `.claude/rules/store-backed-package.md`: a pure store-wrapping-a-schema package with embedded `*storage.Store[State]` and zero nil ceremony. Copy `internal/state` verbatim for a new store-backed package, **not** the older `config`/`project` wiring (which has drifted — named store fields, nil guards). Callers use the `Config`, `ProjectManager`, and `StateStore` interfaces, not `Store[T]` directly.
 
 ## Testing
 
