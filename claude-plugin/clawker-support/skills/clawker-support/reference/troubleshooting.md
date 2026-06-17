@@ -242,6 +242,11 @@ The note is intentionally suppressed in any of these cases:
   out of both the new-version update notifier and the "What's new" note.
 - The running binary is a dev build (no injected version).
 
+There is also a non-suppression case: the first interactive run after moving
+onto a clawker version that has this feature records the current version as a
+baseline and shows nothing — the note appears on the next upgrade after that. A
+user who upgraded *into* the feature for the first time correctly sees nothing.
+
 If the user expected the note but it never appeared, check those suppression
 conditions — most often output was not a terminal or `CLAWKER_NO_NOTIFIER`/
 `CI` was set in their environment. To see the full curated changelog regardless,

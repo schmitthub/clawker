@@ -124,7 +124,9 @@ be silently dropped — don't add one.
 
 **One source, two surfaces.** The same `CHANGELOG.md` feeds a
 show-once-on-upgrade teaser (printed on the first interactive run after an
-upgrade) and the curated header at the top of the GitHub release notes. The CLI
+upgrade — except the first changelog-aware run, which seeds `last_seen_changelog`
+to the current version and shows nothing, with no catch-up backfill) and the
+curated header at the top of the GitHub release notes. The CLI
 does not embed the file —
 it fetches the raw `CHANGELOG.md` from `main` over the network at runtime (the
 CLI runs on the host and is always online). The release header is extracted in

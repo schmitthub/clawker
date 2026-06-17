@@ -70,7 +70,9 @@ shows that release's changelog section — the grouped changes (Added, Fixed,
 Changed, …) with any docs links — then shows once and never repeats for that
 upgrade. The entries come from the curated `CHANGELOG.md`, which is fetched over
 the network and covers the handful of releases that actually changed what you
-see or do.
+see or do. The first interactive run after you move onto a version with this
+feature just records your current version as the starting point and shows
+nothing; from your next upgrade onward it lists what changed.
 
 The note is suppressed when you're not at an interactive terminal (for example
 a non-interactive shell, or `CI` set) and can be opted out entirely by setting

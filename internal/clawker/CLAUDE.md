@@ -19,11 +19,13 @@ All symbols are in `cmd.go` (`Main`, `notificationsSuppressed`, `printUpdateNoti
 
 ## Root context
 
-`Main()` creates one root context (`ctx := context.Background()`) up front. Every
-cancellable child derives **directly** from it — the update goroutine context, the
-changelog goroutine context, and the SIGINT/SIGTERM `signal.NotifyContext`. They
-are deliberately *not* chained: `signal.NotifyContext` returns a fresh context, so
-chaining would clobber the update/changelog cancel functions.
+`Main()` creates one root context (`ctx := context.Background()`) up front. The
+update goroutine context, the changelog goroutine context, and the SIGINT/SIGTERM
+`signal.NotifyContext` all derive from it as **siblings**. The two background
+contexts are *not* children of the signal context — they don't need to be, because
+they are cancelled explicitly right after `ExecuteC()` returns (the gh CLI
+pattern; see below). Cancelling them there aborts any in-flight notification I/O,
+so the drain returns promptly even when the command was interrupted with Ctrl+C.
 
 ## The single notification gate
 
@@ -66,9 +68,9 @@ Launched only when `!suppressed`. The goroutine follows the gh CLI pattern:
 
 - The goroutine calls the `checkForUpdate(updateCtx, f, buildVersion, consts.GitHubRepo)` helper, which resolves `f.HttpClient()` + `f.CLIState()` and calls `update.CheckForUpdate(ctx, client, st, buildVersion, repo)`, passing the raw `buildVersion` string — cmd.go imports no semver. `CheckForUpdate` owns all parsing: it validates `buildVersion` up front (a non-release `"DEV"` build fails the parse and returns `(nil, error)` **before** any fetch — the dev-build case, handled at the parse boundary, not a separate gate), applies its TTL freshness gate from the state facade, and persists `RecordUpdateCheck` on success. It returns `(nil, nil)` when up to date or TTL-fresh, `(*update.ReleaseInfo, nil)` **only** when a newer release exists, and `(nil, error)` on a fetch/parse failure — a non-nil error with a nil result is logged, never surfaced.
 - The goroutine recovers from panics (logged at `Warn`, file-only) and always sends exactly once on the buffered(1) channel.
-- The update/changelog contexts are NOT cancelled after `ExecuteC()` — the goroutines need to complete so they can persist their state; the deferred cancels handle cleanup on exit.
+- The update/changelog contexts ARE cancelled right after `ExecuteC()` returns (the gh CLI pattern), *before* the drain. Cancelling aborts any in-flight HTTP so the drain returns promptly instead of blocking up to the 30s HTTP client timeout — the worst case being a Ctrl+C, where the command was already interrupted. A check that had not finished sends its zero value and is retried next run (its update cache / changelog cursor only advances on a completed check). The deferred cancels remain for the early-return paths that never reach the explicit cancel (e.g. root command creation failing).
 - The buffered(1) channels prevent a goroutine leak if `Main()` returns early.
-- The drain (`<-updateMessageChan`) runs only when goroutines were launched; the HTTP client's own timeout bounds the worst-case wait.
+- The drain (`<-updateMessageChan`) runs only when goroutines were launched; the explicit `updateCancel()`/`changelogCancel()` before the drain bound the worst-case wait — an aborted in-flight fetch unwinds promptly rather than waiting out the 30s HTTP timeout.
 - `printUpdateNotification(ios, info)` self-guards on a nil `info` (nothing to report) and otherwise renders the upgrade notice to stderr. There is no longer a `result.IsNewer` field or an in-renderer TTY check — "nothing to report" is `nil`, and TTY/CI/opt-out is the up-front gate's job.
 
 State file (owned by `internal/state`): `config.StateDir()/update-state.yaml` (`consts.CLIStateFile`).
@@ -100,9 +102,11 @@ single per-entry tag or headline.
 
 ```go
 cmd, err := rootCmd.ExecuteC()
-// update/changelog contexts NOT cancelled here — goroutines need to complete to
-// persist their state. The drain below waits for them (only when they were
-// launched); each I/O client has its own timeout. Deferred cancels clean up.
+// gh CLI pattern: cancel the background checks now, before draining, so the drain
+// returns promptly (it would otherwise block up to the 30s HTTP timeout after a
+// Ctrl+C). An unfinished check sends its zero value and is retried next run.
+updateCancel()
+changelogCancel()
 if err != nil {
     switch {
     case errors.Is(err, cmdutil.SilentError):

@@ -56,9 +56,11 @@ func Main() int {
 	// error there aborts that one background check and is logged to the file log,
 	// never surfaced.
 
-	// Single root context for the process; every cancellable child derives from
-	// it directly (do NOT chain — signal.NotifyContext reassignment would clobber
-	// the update/changelog cancels).
+	// Single root context for the process. The SIGINT/SIGTERM signal context
+	// (below) and the two background-notification contexts all derive from it as
+	// siblings. The background contexts are cancelled explicitly right after the
+	// command returns (gh CLI pattern — see below the ExecuteC call), so they need
+	// not be children of the signal context to abort their I/O on Ctrl+C.
 	ctx := context.Background()
 
 	// notificationsSuppressed is the single gate for BOTH background notifications
@@ -162,10 +164,16 @@ func Main() int {
 
 	cmd, err := rootCmd.ExecuteC()
 
-	// Don't cancel the update/changelog contexts here — the goroutines need to
-	// complete so they can persist their state. The drain below waits for them,
-	// and each I/O client has its own timeout. The deferred cancels handle cleanup
-	// on exit.
+	// gh CLI pattern: cancel the background checks now, before draining their
+	// channels. Cancelling aborts any in-flight HTTP so the drain returns promptly
+	// instead of blocking up to the 30s HTTP client timeout — most importantly
+	// after a Ctrl+C, where the command was already interrupted and the user wants
+	// out. A check that had not finished sends its zero value and is simply retried
+	// next run; its update cache / changelog cursor only advances on a completed
+	// check. The deferred cancels above remain for the early-return paths that
+	// never reach here (e.g. root command creation failing).
+	updateCancel()
+	changelogCancel()
 
 	// drainNotifications blocks on both channels (only when goroutines were
 	// launched) and renders both notifications. printUpdateNotification and
