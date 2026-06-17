@@ -14,7 +14,7 @@ When starting a new conversation, lead with readiness to help on their project. 
 - The host user's Claude Code settings, plugins, and credentials were copied in at container creation (unless "fresh" mode was used)
 - Git SSH/GPG agent forwarding from the host is available via socket bridge (commit signing, private repos)
 - Browser authentication flows (e.g., `gh auth login`) are proxied back to the host browser automatically
-- If your workspace is a **git worktree**, the main repository's `.git/hooks/` and `.git/config` are masked read-only as a security measure (writes there would execute code on the host). Consequences: `git config --local`, `git remote add`, and `git push -u` fail — the push itself succeeds but upstream tracking is not persisted. Push with `git push origin HEAD`; tell the user to run `git push -u origin <branch>` once on the host if they need tracking later. Details: https://docs.clawker.dev/worktrees#worktree-caveats
+- Your working directory might be a bind mounted git worktree — check `git rev-parse --is-inside-work-tree` and `git rev-parse --is-inside-git-dir` to confirm. Worktrees have some special caveats around git state visibility between host and container (see Troubleshooting below).
 
 ## Egress Firewall
 
@@ -95,12 +95,15 @@ the broadest one that happens to work.
        # needed.
        rules:
          - dst: raw.githubusercontent.com
-           proto: https            # https (default) | http | ws | wss | ssh | tcp | udp
-           # port: "9000-9100"     # single port or inclusive range; empty = proto default
+           proto: https            # https (default) | http | ws | wss | ssh | tcp | udp | any opaque L7 name
+           # port: "9000-9100"     # single port or inclusive range; empty = proto default (443 https/wss, 80 http/ws, 22 ssh)
            # action: allow         # allow (default) | deny
-           path_rules:             # path scoping (https/http only)
+           # insecure_skip_tls_verify: false  # accept a self-signed/untrusted upstream cert (https/wss only); default false
+           path_rules:             # path scoping — http/https/ws/wss only
              - path: /open-telemetry/
-               action: allow       # allowlist mode: this prefix allowed, all other paths denied
+               action: allow       # allow this prefix (no path_default below → every other path denied = allowlist mode)
+               # methods: [GET, HEAD]  # scope this rule to these HTTP methods; empty = all methods
+           # path_default: deny    # verdict for paths matching no rule (allow | deny)
    ```
 
    Scope it as narrowly as the work needs (prefer `rules` + `path_rules` over a
@@ -128,13 +131,14 @@ the broadest one that happens to work.
      other path on the host is denied**. Add one `--path … --action allow` per
      path the work legitimately needs; they accumulate across calls.
      `--action deny` blocklists a single path while leaving the rest of the
-     domain open.
+     domain open. Add `--methods GET,HEAD` to scope a path rule to specific
+     HTTP request methods (https/http/ws/wss only; requires `--path`/`--action`).
 
    - **Whole domain (only when every path is needed, or for non-HTTP protocols):**
      ```
      clawker firewall add <hostname>
      ```
-     Path rules apply only to `http`/`https`. `ssh`/`tcp`/`udp` are opaque (no
+     Path rules apply only to `http`/`https`/`ws`/`wss`. `ssh`/`tcp`/`udp` are opaque (no
      path metadata) — scope those by protocol and port instead:
      ```
      clawker firewall add <hostname> --proto ssh --port 22
@@ -232,7 +236,7 @@ If `OTEL_*` variables are set, this container is reporting metrics and logs to a
 | `gh auth` hangs | Host proxy not reachable | Check `CLAWKER_HOST_PROXY` is set; user may need to restart host proxy |
 | Workspace changes not visible on host | Container is in `snapshot` mode | Changes only exist in the container; user chose ephemeral isolation |
 | Package install fails (network) | Package repo domain not whitelisted | User needs to `clawker firewall add` the repo domain |
-| `git push -u` / `git config --local` / `git remote add` fails in a worktree container | Read-only security masks on the shared main `.git` (hooks/config) | Expected behavior — push with `git push origin HEAD`; set tracking host-side later; see https://docs.clawker.dev/worktrees#worktree-caveats |
+| In a worktree container, `git push -u` prints `error: could not write config file ...: Device or resource busy` then `set up to track`, but the branch has no upstream afterward | **Worktree only** — host `.git/config` is mounted read-only as a security measure; the push succeeds (exit 0) but the tracking write is blocked and silently dropped (the `set up to track` line is misleading) | Not a failure — the branch pushed; don't retry. Tell the user tracking wasn't saved; they can run `git push -u origin <branch>` on the host. See https://docs.clawker.dev/worktrees#worktree-caveats |
 
 ## Resources
 
