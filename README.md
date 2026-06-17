@@ -1,4 +1,4 @@
-# Clawker: Claude Code agent-in-container orchestration and automation
+# Clawker — self-hosted AI coding agent sandbox (run Claude Code in Docker)
 
 <p align="center">
   <a href="https://golang.org"><img src="https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go" alt="Go"></a>
@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-<code>clawker</code> is a cli for orchestrating, monitoring, and automating portable <code>devcontainers</code> for <code>Claude Code</code> agents — a security-first AI container sandbox for Anthropic's models, including the latest mythos-class <code>Fable 5</code>. It works on any MacOS/Linux host with docker installed. I wrote this because I didn't want to have to pay someone to run claude code agents with <code>--dangerously-skip-permissions</code> when containers have been around for a decade, and claude code's sandbox mode is the temu version of a container. <code>clawker</code> offers many convenience features beyond just building and running claude code in a container using a Dockerfile (you don't even have to write a Dockerfile it's got you covered).
+<code>clawker</code> is a free, open-source, self-hosted <strong>AI coding agent sandbox</strong> — a cli that runs <code>Claude Code</code> (and other AI agents) in isolated <code>Docker</code> containers on your own machine, no cloud and no subscription. It pairs a deny-by-default egress firewall (Envoy + custom CoreDNS + eBPF) for prompt-injection and data-exfiltration protection with the convenience features you actually want: image building, monitoring, parallel git-worktree agents, and credential forwarding — a devcontainer alternative that's local, free, <em>and</em> security-deep, for Anthropic's models including the latest mythos-class <code>Fable 5</code>. It works on any MacOS/Linux host with docker installed. I wrote this because I didn't want to have to pay someone to run claude code agents with <code>--dangerously-skip-permissions</code> when containers have been around for a decade, and claude code's sandbox mode is the temu version of a container. <code>clawker</code> offers many convenience features beyond just building and running claude code in a container using a Dockerfile (you don't even have to write a Dockerfile it's got you covered).
 </p>
 
 <div align="center">
@@ -26,7 +26,7 @@
 
 ## Table of Contents
 
-- [Clawker: Claude Code agent-in-container orchestration and automation](#clawker-claude-code-agent-in-container-orchestration-and-automation)
+- [Clawker — self-hosted AI coding agent sandbox (run Claude Code in Docker)](#clawker--self-hosted-ai-coding-agent-sandbox-run-claude-code-in-docker)
   - [Table of Contents](#table-of-contents)
   - [High-Level Feature Overview](#high-level-feature-overview)
   - [Installation](#installation)

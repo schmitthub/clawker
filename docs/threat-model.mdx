@@ -1,11 +1,11 @@
 ---
-title: "Threat Model"
-description: "Why AI agents need containment, what attack surfaces clawker mitigates, and what you're responsible for"
+title: "Threat Model — Prompt Injection & Exfiltration Protection"
+description: "Clawker's threat model for sandboxing AI coding agents: prompt injection protection through deny-by-default network isolation, data exfiltration prevention, container isolation, the attack surfaces it mitigates, and what you're responsible for."
 icon: "crosshairs"
-keywords: ["mythos-class", "security", "AI container sandbox", "Claude Code", "Fable 5", "Anthropic", "threat model", "prompt injection", "AI agent security", "agent containment"]
+keywords: ["AI coding agent sandbox", "Claude Code sandbox", "self-hosted", "open source", "run Claude Code in Docker", "coding agent sandbox", "threat model", "prompt injection", "AI agent security", "agent containment"]
 ---
 
-AI coding agents are not traditional CLI tools. They make autonomous decisions about what files to read and write, what commands to run, what network requests to make, and what credentials to use. They do this with full conviction — even when they're wrong. They hallucinate file paths, lose context mid-task, get tunnel vision on a broken approach, and can be coerced by adversarial content embedded in the data they fetch. Handing one of these agents unrestricted code execution, full filesystem access, and open network on your bare-metal host is reckless.
+Clawker is a self-hosted sandbox for AI coding agents, and its security model rests on a hard truth: you can't reliably stop an agent from being prompt-injected, so clawker instead strips the injection of any power to hurt you. AI coding agents are not traditional CLI tools. They make autonomous decisions about what files to read and write, what commands to run, what network requests to make, and what credentials to use. They do this with full conviction — even when they're wrong. They hallucinate file paths, lose context mid-task, get tunnel vision on a broken approach, and can be coerced by adversarial content embedded in the data they fetch. Handing one of these agents unrestricted code execution, full filesystem access, and open network on your bare-metal host is reckless. Clawker confines it to a Docker container behind a deny-by-default egress firewall: a coerced agent still can't reach your host system, and it can't send data anywhere you haven't explicitly allowed — running locally on your own machine, free and open-source.
 
 Clawker exists because containers have been solving this problem for over a decade. The agent runs inside a Docker container where it can thrash, experiment, and make mistakes freely — that's the whole point of a devcontainer. What matters is that the blast radius stops at the container boundary. The host filesystem, credentials, and network are protected by default, and every capability is restricted until you explicitly open it.
 
@@ -200,6 +200,27 @@ Directories listed in `.clawkerignore` (e.g. `node_modules/`, `vendor/`, `.venv/
 The `noexec` hardening pattern targets unattended ephemeral production containers where the entire root filesystem is read-only and tmpfs is the attacker's only writable surface — restricting `exec` on `/tmp` and `/dev/shm` blocks the classic "download and execute" post-compromise chain. That threat model does not apply to a development container. In our case, the workspace bind mount already has `exec`. An attacker who can drop a binary to `node_modules/` can just as easily drop it to the project root or `src/`. So `noexec` on the tmpfs overlays is a speed bump, not a barrier. The real controls are the egress firewall (prevents downloading payloads), the unprivileged user (prevents privilege escalation), and seccomp filtering (restricts dangerous syscalls).
 </Warning>
 
+## Git Hooks (Host Code Execution)
+
+**Threat:** A coerced or hallucinating agent writes a malicious git hook — `.git/hooks/post-checkout`, `pre-commit`, `post-merge`, and friends — into a bind-mounted repository. Git hooks are arbitrary executables that git runs automatically on common events.
+
+**Attack surface:** The `.git/hooks` directory of a bind-mounted repository.
+
+**Why it matters:** A hook the agent plants runs harmlessly *inside* the container when git runs there. The danger is deferred: the same `.git` directory is bind-mounted from the host, so the next time **you** run a git command on the host in that repository, the planted hook executes on your host — outside the container, with your user's privileges. That makes git hooks a sandbox-escape / host-code-execution vector the network firewall does not cover.
+
+**How clawker mitigates it:**
+
+- **Worktree containers mask hooks read-only.** When you run an agent on a git worktree (`--worktree`), clawker mounts the main repository's `.git/hooks` and `.git/config` read-only into the container, so the agent cannot plant or alter a hook the host would later execute. This is the recommended mode for unattended sessions — see [worktree caveats](/worktrees#worktree-caveats).
+- **Snapshot mode never reaches the host.** In `workspace.snapshot` mode the repository is a disposable copy inside a Docker volume; anything the agent writes to `.git/hooks` stays in the container and is discarded with it.
+
+<Warning>
+**Current gap:** A standard bind mount of a repository in `workspace.bind` mode (not a worktree) leaves that repository's own `.git/hooks` writable by the agent. A hook planted there will run the next time you invoke git on the host in that directory. Until the planned policy controls below ship, prefer **worktree** or **snapshot** mode for unattended or high-risk sessions, and review `.git/hooks` before running git on the host against a repo an agent has touched.
+</Warning>
+
+## Planned Hardening
+
+Clawker's shipped controls are network- and isolation-based: they constrain where the agent can *reach* and what it can *touch*. A planned policy layer extends this to what the agent is allowed to *attempt*. Using AppArmor profiles together with eBPF LSM / syscall hooks, you will be able to allow, deny, or monitor specific system calls and command execution per agent under your own policy — for example, denying writes to `.git/hooks`, alerting on `chmod +x` of a downloaded file, or blocking `ptrace`. This moves clawker from containing the blast radius toward constraining the agent's actions at the kernel before they happen. This capability is on the roadmap and not yet shipped.
+
 ## Summary
 
 | Threat | Primary Control | Default | Guide |
@@ -207,6 +228,7 @@ The `noexec` hardening pattern targets unattended ephemeral production container
 | Data exfiltration (network + DNS) | Network firewall + CoreDNS NXDOMAIN | On | [Firewall](/firewall) |
 | Data exfiltration (ICMP tunneling) | eBPF sock_create blocks SOCK_RAW | On | [Firewall](/firewall) |
 | Host filesystem damage | Container isolation + workspace mount scoping | On | [Container Internals](/container-internals) |
+| Git hook host code execution | Read-only `.git/hooks` + `.git/config` masks | Worktree mode | [Worktrees](/worktrees#worktree-caveats) |
 
 ## Shared Responsibility
 

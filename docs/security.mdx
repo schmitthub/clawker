@@ -1,11 +1,11 @@
 ---
-title: "Security"
-description: "Container security controls: firewall overview, Docker socket access, Linux capabilities, host proxy, and credential forwarding"
+title: "Security — Sandbox for AI Coding Agents"
+description: "How clawker's self-hosted AI coding agent sandbox secures Claude Code: deny-by-default egress firewall, container isolation, unprivileged execution, Docker socket scoping, and credential forwarding — free, local, no cloud."
 icon: "shield"
-keywords: ["mythos-class", "security", "AI container sandbox", "Claude Code", "Fable 5", "Anthropic", "container security", "egress firewall", "Linux capabilities"]
+keywords: ["AI coding agent sandbox", "Claude Code sandbox", "self-hosted", "open source", "run Claude Code in Docker", "coding agent sandbox", "container security", "egress firewall", "Linux capabilities"]
 ---
 
-Clawker runs every agent in an isolated Docker container with a default-on network firewall. This guide explains the container security controls and how to customize them.
+Clawker is a self-hosted AI coding agent sandbox: every agent runs in an isolated Docker container, unprivileged and behind a deny-by-default egress firewall. Network isolation is the foundation — prompt injection can change an agent's intent, but it cannot change the container's constraints: a coerced agent can't touch your host system, and it can't send data to any destination outside your allowlist, so exfiltration to an arbitrary attacker is denied at the network boundary. This is how you run Claude Code safely, including with `--dangerously-skip-permissions`, on your own machine — free, local, no cloud. This guide explains the container security controls and how to customize them.
 
 ## Network Firewall
 
