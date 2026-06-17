@@ -76,6 +76,10 @@ func New(version string) *cmdutil.Factory {
 	return f
 }
 
+// cliStateFunc returns a sync.Once-cached lazy closure that yields the CLI
+// runtime-state facade (state.New() — the update-check cache + changelog cursor).
+// It takes no dependencies; the error is real, since state.New() can fail on a
+// disk or migration error.
 func cliStateFunc() func() (state.StateStore, error) {
 	var (
 		once sync.Once

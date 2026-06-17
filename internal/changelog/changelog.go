@@ -83,6 +83,11 @@ func CheckForChanges(ctx context.Context, client *http.Client, st state.StateSto
 	return gained, nil
 }
 
+// getChangelogEntries GETs the curated CHANGELOG.md (ChangelogURL) with the
+// supplied client and parses it into entries (newest-first, as authored). The
+// request is context-aware and bounded by the client's own timeout; a non-200 is
+// an error. It is the package's only network hop — CheckForChanges owns the
+// cursor logic wrapped around it.
 func getChangelogEntries(ctx context.Context, client *http.Client) ([]Entry, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ChangelogURL, nil)
 	if err != nil {

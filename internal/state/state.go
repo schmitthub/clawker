@@ -74,6 +74,9 @@ func New() (StateStore, error) {
 	return &stateStoreImpl{Store: stateStore}, nil
 }
 
+// State returns an immutable snapshot of the persisted CLI state (delegates to
+// the embedded store's Read). Reads go through st.State().<Field>; there are no
+// per-field getters.
 func (s *stateStoreImpl) State() *State {
 	return s.Read()
 }

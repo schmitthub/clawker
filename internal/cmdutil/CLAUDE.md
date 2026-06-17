@@ -26,7 +26,7 @@ Heavy command helpers have been extracted to dedicated packages:
 
 ## Factory (`factory.go`)
 
-Pure dependency injection container struct. 3 eager values + 12 lazy nouns. Closure fields are wired by `internal/cmd/factory/default.go`.
+Pure dependency injection container struct. 3 eager values + 13 lazy nouns. Closure fields are wired by `internal/cmd/factory/default.go`.
 
 ```go
 type Factory struct {
@@ -39,18 +39,16 @@ type Factory struct {
     Client          func(context.Context) (*docker.Client, error)
     Config          func() (config.Config, error)
     Logger          func() (*logger.Logger, error)
+    CLIState        func() (state.StateStore, error)
     ProjectRegistry func() (*project.Registry, error)
     ProjectManager  func() (project.ProjectManager, error)
-    // NOTE: CLI runtime-state (internal/state) and the changelog teaser
-    // (internal/changelog) are intentionally NOT Factory nouns — Main
-    // constructs them directly (single consumer).
-    GitManager     func() (*git.GitManager, error)
-    HostProxy      func() hostproxy.HostProxyService
-    SocketBridge   func() socketbridge.SocketBridgeManager
-    Prompter       func() *prompter.Prompter
-    AdminClient    func(context.Context) (adminv1.AdminServiceClient, error)
-    ControlPlane   func() cpboot.Manager
-    HttpClient     func() *http.Client
+    GitManager      func() (*git.GitManager, error)
+    HostProxy       func() hostproxy.HostProxyService
+    SocketBridge    func() socketbridge.SocketBridgeManager
+    Prompter        func() *prompter.Prompter
+    AdminClient     func(context.Context) (adminv1.AdminServiceClient, error)
+    ControlPlane    func() cpboot.Manager
+    HttpClient      func() (*http.Client, error)
 }
 ```
 
@@ -60,6 +58,7 @@ type Factory struct {
 - `Client(ctx)` -- lazy Docker client (connects on first call)
 - `Config()` -- lazy config (loads project + settings; project-config walk-up is anchored by the project root resolved via `ProjectRegistry`)
 - `Logger()` -- lazy `*logger.Logger` (file-only zerolog); commands capture on Options struct, resolve in run function. Tests: `func() (*logger.Logger, error) { return logger.Nop(), nil }`
+- `CLIState()` -- lazy `state.StateStore` (CLI runtime-state, `internal/state`); used by Main's background update check and show-once teaser. Tests: `func() (state.StateStore, error) { return statemocks.NewBlankState(), nil }`
 - `ProjectRegistry()` -- lazy `*project.Registry`, the process-wide project registry facade and sole constructor of registry storage; Config walk-up anchoring, GitManager, ProjectManager, and commands all share it
 - `ProjectManager()` -- lazy project manager for registration, worktree lifecycle (built over `ProjectRegistry`)
 - `GitManager()` -- lazy git manager for worktree operations; anchors at the registry-resolved project root

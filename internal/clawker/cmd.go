@@ -205,6 +205,10 @@ func Main() int {
 	return 0
 }
 
+// checkForChanges resolves the HttpClient and CLIState nouns from the Factory and
+// hands them to changelog.CheckForChanges. It is the changelog teaser's single
+// entry from Main; a noun-resolution error aborts just this one background check
+// and is logged by the caller, never surfaced.
 func checkForChanges(ctx context.Context, f *cmdutil.Factory, currentVersion string) ([]changelog.Entry, error) {
 	httpClient, err := f.HttpClient()
 	if err != nil {
@@ -217,6 +221,10 @@ func checkForChanges(ctx context.Context, f *cmdutil.Factory, currentVersion str
 	return changelog.CheckForChanges(ctx, httpClient, cliState, currentVersion)
 }
 
+// checkForUpdate resolves the HttpClient and CLIState nouns from the Factory and
+// hands them to update.CheckForUpdate. It is the update notifier's single entry
+// from Main; a noun-resolution error aborts just this one background check and is
+// logged by the caller, never surfaced.
 func checkForUpdate(ctx context.Context, f *cmdutil.Factory, currentVersion, repo string) (*update.ReleaseInfo, error) {
 	httpClient, err := f.HttpClient()
 	if err != nil {

@@ -45,16 +45,12 @@ type Factory struct {
 	// all share this instance.
 	ProjectRegistry func() (*project.Registry, error)
 	ProjectManager  func() (project.ProjectManager, error)
-	// CLI runtime-state (internal/state) and the changelog loader
-	// (internal/changelog) are intentionally NOT Factory nouns: both are used
-	// only by Main (the background update check + the show-once teaser), so Main
-	// constructs them directly rather than carrying single-consumer closures here.
-	GitManager   func() (*git.GitManager, error)
-	HostProxy    func() hostproxy.HostProxyService
-	SocketBridge func() socketbridge.SocketBridgeManager
-	Prompter     func() *prompter.Prompter
-	AdminClient  func(context.Context) (adminv1.AdminServiceClient, error)
-	ControlPlane func() cpboot.Manager
+	GitManager      func() (*git.GitManager, error)
+	HostProxy       func() hostproxy.HostProxyService
+	SocketBridge    func() socketbridge.SocketBridgeManager
+	Prompter        func() *prompter.Prompter
+	AdminClient     func(context.Context) (adminv1.AdminServiceClient, error)
+	ControlPlane    func() cpboot.Manager
 	// HttpClient returns the *http.Client used for outbound HTTP from the
 	// CLI (first consumer: npm registry lookups for Claude Code version
 	// resolution). Tests substitute by setting this field to a closure that
