@@ -51,20 +51,20 @@ empty entries) so calling them on a suppressed run is a safe no-op.
 
 ## CLI state facade
 
-`Main()` constructs the `state.StateStore` facade directly via `state.New()` — it is
-**not** a Factory noun, because it is used only here (the update check and the
-changelog teaser). A missing/unreadable store degrades to a nil facade: the
-update check proceeds with a zero "never checked" time and the changelog teaser
-is a silent no-op. The same facade is shared by both background goroutines; they
-write **disjoint** fields, so neither clobbers the other and no snapshotting is
-needed.
+The `state.StateStore` facade is a lazy Factory noun (`f.CLIState()`), resolved
+inside the `checkForUpdate`/`checkForChanges` helpers alongside `f.HttpClient()`.
+A state-store error aborts that one background check and is logged to the file
+log, never surfaced; `update.CheckForUpdate` / `changelog.CheckForChanges` treat
+a nil store as a programming error (returning an error), not a silent no-op. The
+same facade is shared by both background goroutines; they write **disjoint**
+fields, so neither clobbers the other and no snapshotting is needed.
 
 ## Background Update Check
 
 Launched only when `!suppressed`. The goroutine follows the gh CLI pattern:
 `context.WithCancel` + buffered(1) channel + blocking drain.
 
-- The goroutine calls `update.CheckForUpdate(updateCtx, cliState, buildVersion, consts.GitHubRepo)` directly (no wrapper), passing the raw `buildVersion` string — cmd.go imports no semver. `CheckForUpdate` owns all parsing: it validates `buildVersion` up front (a non-release `"DEV"` build fails the parse and returns `(nil, error)` **before** any fetch — the dev-build case, handled at the parse boundary, not a separate gate), applies its TTL freshness gate from the state facade, and persists `RecordUpdateCheck` on success. It returns `(nil, nil)` when up to date or TTL-fresh, `(*update.ReleaseInfo, nil)` **only** when a newer release exists, and `(nil, error)` on a fetch/parse failure — a non-nil error with a nil result is logged, never surfaced.
+- The goroutine calls the `checkForUpdate(updateCtx, f, buildVersion, consts.GitHubRepo)` helper, which resolves `f.HttpClient()` + `f.CLIState()` and calls `update.CheckForUpdate(ctx, client, st, buildVersion, repo)`, passing the raw `buildVersion` string — cmd.go imports no semver. `CheckForUpdate` owns all parsing: it validates `buildVersion` up front (a non-release `"DEV"` build fails the parse and returns `(nil, error)` **before** any fetch — the dev-build case, handled at the parse boundary, not a separate gate), applies its TTL freshness gate from the state facade, and persists `RecordUpdateCheck` on success. It returns `(nil, nil)` when up to date or TTL-fresh, `(*update.ReleaseInfo, nil)` **only** when a newer release exists, and `(nil, error)` on a fetch/parse failure — a non-nil error with a nil result is logged, never surfaced.
 - The goroutine recovers from panics (logged at `Warn`, file-only) and always sends exactly once on the buffered(1) channel.
 - The update/changelog contexts are NOT cancelled after `ExecuteC()` — the goroutines need to complete so they can persist their state; the deferred cancels handle cleanup on exit.
 - The buffered(1) channels prevent a goroutine leak if `Main()` returns early.
@@ -79,7 +79,7 @@ Launched only when `!suppressed`. The cursor lifecycle lives entirely in
 `internal/changelog`; `Main()` only parses the running version and renders the
 result:
 
-- A **second background goroutine** (its own cancellable context, not the update check's) parses `build.Version` with `semver.NewVersion` directly — the Masterminds regex tolerates a leading `v`, so there is no manual `TrimPrefix`. On a parse error — a non-release build whose version is not semver — it logs and shows nothing (the parse failure is the signal, not an explicit dev-build gate). Otherwise it calls `changelog.CheckForChanges(changelogCtx, cliState, current)` and sends the gained `[]changelog.Entry` on a buffered(1) `changelogChan`. The goroutine recovers from panics (logged at `Warn`, file-only) and always sends exactly once.
+- A **second background goroutine** (its own cancellable context, not the update check's) parses `build.Version` with `semver.NewVersion` directly — the Masterminds regex tolerates a leading `v`, so there is no manual `TrimPrefix`. On a parse error — a non-release build whose version is not semver — it logs and shows nothing (the parse failure is the signal, not an explicit dev-build gate). Otherwise it calls the `checkForChanges(changelogCtx, f, current)` helper (which resolves `f.HttpClient()` + `f.CLIState()` and calls `changelog.CheckForChanges(ctx, client, st, current)`) and sends the gained `[]changelog.Entry` on a buffered(1) `changelogChan`. The goroutine recovers from panics (logged at `Warn`, file-only) and always sends exactly once.
 - `changelog.CheckForChanges` no longer takes a `persist` flag — it **always** advances the cursor, which is why it is only ever called on a non-suppressed run (gated by `notificationsSuppressed`).
 - After the command completes (both error and success paths), the drain blocks on `changelogChan` and `printChangelogTeaser(f.IOStreams, gained)` is called unconditionally; it self-guards on an empty slice.
 

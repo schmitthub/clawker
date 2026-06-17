@@ -15,6 +15,7 @@ import (
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/socketbridge"
+	"github.com/schmitthub/clawker/internal/state"
 	"github.com/schmitthub/clawker/internal/tui"
 )
 
@@ -34,9 +35,10 @@ type Factory struct {
 	TUI       *tui.TUI
 
 	// Lazy nouns
-	Client func(context.Context) (*docker.Client, error)
-	Config func() (config.Config, error)
-	Logger func() (*logger.Logger, error)
+	Client   func(context.Context) (*docker.Client, error)
+	Config   func() (config.Config, error)
+	Logger   func() (*logger.Logger, error)
+	CLIState func() (state.StateStore, error)
 	// ProjectRegistry is the process-wide project registry facade — the
 	// single constructor of registry storage. Config walk-up anchoring,
 	// the project manager, and any command needing project-root resolution
@@ -59,5 +61,5 @@ type Factory struct {
 	// returns a client whose Transport is a stubbed http.RoundTripper —
 	// same pattern as cli/cli's pkg/httpmock.Registry. No project-defined
 	// interface; the stdlib RoundTripper IS the seam.
-	HttpClient func() *http.Client
+	HttpClient func() (*http.Client, error)
 }

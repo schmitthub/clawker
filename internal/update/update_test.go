@@ -2,13 +2,12 @@ package update
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
-	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
+	"github.com/schmitthub/clawker/internal/consts"
+	"github.com/schmitthub/clawker/internal/httpmock"
 	"github.com/schmitthub/clawker/internal/state"
 	statemocks "github.com/schmitthub/clawker/internal/state/mocks"
 )
@@ -45,10 +44,10 @@ func TestShouldCheckForUpdate_ZeroTimeNeverChecked(t *testing.T) {
 }
 
 func TestCheckForUpdate_NewerVersion(t *testing.T) {
-	srv := newReleaseServer("v2.0.0", "https://github.com/schmitthub/clawker/releases/tag/v2.0.0")
-	defer srv.Close()
+	reg := releaseStub("v2.0.0", "https://github.com/schmitthub/clawker/releases/tag/v2.0.0")
+	st := statemocks.NewBlankState()
 
-	info, err := checkForUpdate(context.Background(), nil, "1.0.0", srv.URL)
+	info, err := CheckForUpdate(context.Background(), reg.Client(), st, "1.0.0", consts.GitHubRepo)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -67,11 +66,11 @@ func TestCheckForUpdate_NewerVersion(t *testing.T) {
 }
 
 func TestCheckForUpdate_SameVersion(t *testing.T) {
-	srv := newReleaseServer("v1.0.0", "https://github.com/schmitthub/clawker/releases/tag/v1.0.0")
-	defer srv.Close()
+	reg := releaseStub("v1.0.0", "https://github.com/schmitthub/clawker/releases/tag/v1.0.0")
+	st := statemocks.NewBlankState()
 
 	// Not newer → nil result (nil MEANS "no newer release").
-	info, err := checkForUpdate(context.Background(), nil, "1.0.0", srv.URL)
+	info, err := CheckForUpdate(context.Background(), reg.Client(), st, "1.0.0", consts.GitHubRepo)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -81,11 +80,11 @@ func TestCheckForUpdate_SameVersion(t *testing.T) {
 }
 
 func TestCheckForUpdate_OlderRemote(t *testing.T) {
-	srv := newReleaseServer("v0.9.0", "https://github.com/schmitthub/clawker/releases/tag/v0.9.0")
-	defer srv.Close()
+	reg := releaseStub("v0.9.0", "https://github.com/schmitthub/clawker/releases/tag/v0.9.0")
+	st := statemocks.NewBlankState()
 
 	// Current is newer → nil result.
-	info, err := checkForUpdate(context.Background(), nil, "1.0.0", srv.URL)
+	info, err := CheckForUpdate(context.Background(), reg.Client(), st, "1.0.0", consts.GitHubRepo)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -95,12 +94,14 @@ func TestCheckForUpdate_OlderRemote(t *testing.T) {
 }
 
 func TestCheckForUpdate_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer srv.Close()
+	reg := &httpmock.Registry{}
+	reg.Register(
+		httpmock.REST(http.MethodGet, "/releases/latest"),
+		httpmock.StatusStringResponse(http.StatusInternalServerError, ""),
+	)
+	st := statemocks.NewBlankState()
 
-	info, err := checkForUpdate(context.Background(), nil, "1.0.0", srv.URL)
+	info, err := CheckForUpdate(context.Background(), reg.Client(), st, "1.0.0", consts.GitHubRepo)
 	if err == nil {
 		t.Error("expected error on API failure, got nil")
 	}
@@ -110,16 +111,12 @@ func TestCheckForUpdate_APIError(t *testing.T) {
 }
 
 func TestCheckForUpdate_ContextCancellation(t *testing.T) {
-	// Server that blocks until context is cancelled
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		<-r.Context().Done()
-	}))
-	defer srv.Close()
+	reg := releaseStub("v2.0.0", "https://example.com")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
 
-	release, err := fetchLatestReleaseFromURL(ctx, srv.URL)
+	release, err := getLatestReleaseInfo(ctx, reg.Client(), consts.GitHubRepo)
 	if err == nil {
 		t.Error("expected error on cancelled context, got nil")
 	}
@@ -129,11 +126,11 @@ func TestCheckForUpdate_ContextCancellation(t *testing.T) {
 }
 
 func TestCheckForUpdate_VPrefixHandling(t *testing.T) {
-	srv := newReleaseServer("v2.0.0", "https://github.com/schmitthub/clawker/releases/tag/v2.0.0")
-	defer srv.Close()
+	reg := releaseStub("v2.0.0", "https://github.com/schmitthub/clawker/releases/tag/v2.0.0")
+	st := statemocks.NewBlankState()
 
 	// Pass version with v prefix
-	info, err := checkForUpdate(context.Background(), nil, "v1.0.0", srv.URL)
+	info, err := CheckForUpdate(context.Background(), reg.Client(), st, "v1.0.0", consts.GitHubRepo)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -146,24 +143,24 @@ func TestCheckForUpdate_VPrefixHandling(t *testing.T) {
 }
 
 // TestCheckForUpdate_TTLFreshSuppresses proves a TTL-fresh state short-circuits
-// before any fetch: the server is wired to fail the test if hit.
+// before any fetch: the registry records zero requests and nothing is persisted.
 func TestCheckForUpdate_TTLFreshSuppresses(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Error("fetch should not happen when state is TTL-fresh")
-	}))
-	defer srv.Close()
+	reg := releaseStub("v2.0.0", "https://example.com")
 
-	// TTL-fresh state: LastCheckedAt is "now", so the freshness gate suppresses
+	// TTL-fresh state: CheckedAt is "now", so the freshness gate suppresses
 	// before any fetch or persist.
 	m := statemocks.NewBlankState()
 	m.StateFunc = func() *state.State { return &state.State{CheckedAt: time.Now()} }
 
-	info, err := checkForUpdate(context.Background(), m, "1.0.0", srv.URL)
+	info, err := CheckForUpdate(context.Background(), reg.Client(), m, "1.0.0", consts.GitHubRepo)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if info != nil {
 		t.Errorf("expected nil result when TTL-fresh, got %+v", info)
+	}
+	if got := len(reg.Requests); got != 0 {
+		t.Errorf("fetch happened on TTL-fresh state: %d requests, want 0", got)
 	}
 	if got := len(m.RecordUpdateCheckCalls()); got != 0 {
 		t.Errorf("RecordUpdateCheck calls = %d, want 0 (no fetch, no persist)", got)
@@ -177,15 +174,14 @@ func TestCheckForUpdate_TTLFreshSuppresses(t *testing.T) {
 // not-newer path, the TTL gate would never throttle, and clawker would hit the
 // GitHub API every run.
 func TestCheckForUpdate_NotNewerAdvancesCheckedAt(t *testing.T) {
-	srv := newReleaseServer("v1.0.0", "https://github.com/schmitthub/clawker/releases/tag/v1.0.0")
-	defer srv.Close()
+	reg := releaseStub("v1.0.0", "https://github.com/schmitthub/clawker/releases/tag/v1.0.0")
 
 	// Blank state's CheckedAt is zero → never checked → the freshness gate lets
 	// the check run.
 	m := statemocks.NewBlankState()
 
 	// Same version as current → not newer → nil result, but the fetch succeeded.
-	info, err := checkForUpdate(context.Background(), m, "1.0.0", srv.URL)
+	info, err := CheckForUpdate(context.Background(), reg.Client(), m, "1.0.0", consts.GitHubRepo)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -206,14 +202,13 @@ func TestCheckForUpdate_NotNewerAdvancesCheckedAt(t *testing.T) {
 }
 
 func TestCheckForUpdate_MalformedJSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("not json at all"))
-	}))
-	defer srv.Close()
+	reg := &httpmock.Registry{}
+	reg.Register(
+		httpmock.REST(http.MethodGet, "/releases/latest"),
+		httpmock.StringResponse("not json at all"),
+	)
 
-	ctx := context.Background()
-	release, err := fetchLatestReleaseFromURL(ctx, srv.URL)
+	release, err := getLatestReleaseInfo(context.Background(), reg.Client(), consts.GitHubRepo)
 	if err == nil {
 		t.Error("expected error on malformed JSON, got nil")
 	}
@@ -222,33 +217,33 @@ func TestCheckForUpdate_MalformedJSON(t *testing.T) {
 	}
 }
 
+// TestCheckForUpdate_EmptyTagName: an empty tag_name from the API is rejected at
+// the semver parse inside CheckForUpdate (there is no separate empty-tag guard —
+// semver.NewVersion("") fails), so the public contract still surfaces an error
+// and never reports a release.
 func TestCheckForUpdate_EmptyTagName(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(githubRelease{TagName: "", HTMLURL: "https://example.com"})
-	}))
-	defer srv.Close()
+	reg := releaseStub("", "https://example.com")
+	st := statemocks.NewBlankState()
 
-	ctx := context.Background()
-	release, err := fetchLatestReleaseFromURL(ctx, srv.URL)
+	info, err := CheckForUpdate(context.Background(), reg.Client(), st, "1.0.0", consts.GitHubRepo)
 	if err == nil {
 		t.Error("expected error on empty tag_name, got nil")
 	}
-	if release != nil {
-		t.Errorf("expected nil release, got %+v", release)
-	}
-	if err != nil && !strings.Contains(err.Error(), "empty tag_name") {
-		t.Errorf("expected error to mention 'empty tag_name', got: %v", err)
+	if info != nil {
+		t.Errorf("expected nil result on empty tag_name, got %+v", info)
 	}
 }
 
 // --- test helpers ---
 
-// newReleaseServer returns an httptest server that responds with a GitHub release.
-func newReleaseServer(tagName, htmlURL string) *httptest.Server {
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(githubRelease{
-			TagName: tagName,
-			HTMLURL: htmlURL,
-		})
-	}))
+// releaseStub registers a GitHub "latest release" responder on a fresh httpmock
+// registry and returns it. reg.Client() is injected into CheckForUpdate, so the
+// test stays off live api.github.com with no URL seam in production code.
+func releaseStub(tagName, htmlURL string) *httpmock.Registry {
+	reg := &httpmock.Registry{}
+	reg.Register(
+		httpmock.REST(http.MethodGet, "/releases/latest"),
+		httpmock.JSONResponse(githubRelease{TagName: tagName, HTMLURL: htmlURL}),
+	)
+	return reg
 }

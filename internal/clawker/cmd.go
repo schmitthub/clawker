@@ -19,7 +19,6 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/state"
 	"github.com/schmitthub/clawker/internal/storage"
 	"github.com/schmitthub/clawker/internal/update"
 	"github.com/schmitthub/clawker/pkg/whail"
@@ -52,17 +51,10 @@ func Main() int {
 		}
 	}()
 
-	// Construct the CLI runtime-state facade directly — it is used only here in
-	// Main (the background update check and the changelog teaser), so it is not a
-	// Factory noun. A missing/unreadable state store degrades to a nil facade: the
-	// update check proceeds with a zero "never checked" time and the changelog
-	// teaser is a silent no-op. Errors are logged to the file log, never surfaced.
-	var cliState state.StateStore
-	if st, err := state.New(); err == nil {
-		cliState = st
-	} else if log, logErr := f.Logger(); logErr == nil {
-		log.Debug().Err(err).Msg("reading CLI state")
-	}
+	// CLI runtime state (the update-check cache + changelog cursor) is resolved
+	// lazily inside checkForUpdate/checkForChanges via f.CLIState(). A state-store
+	// error there aborts that one background check and is logged to the file log,
+	// never surfaced.
 
 	// Single root context for the process; every cancellable child derives from
 	// it directly (do NOT chain — signal.NotifyContext reassignment would clobber
@@ -113,7 +105,7 @@ func Main() int {
 			// result there itself (RecordUpdateCheck). It returns (nil, nil) when not
 			// newer or TTL-fresh; a non-nil rel only when a newer release exists. A
 			// non-nil err may accompany a nil rel — log it, report nothing.
-			rel, err = update.CheckForUpdate(updateCtx, cliState, buildVersion, consts.GitHubRepo)
+			rel, err = checkForUpdate(updateCtx, f, buildVersion, consts.GitHubRepo)
 			if err != nil {
 				if log, logErr := f.Logger(); logErr == nil {
 					log.Debug().Err(err).Msg("update check failed")
@@ -139,9 +131,7 @@ func Main() int {
 				changelogChan <- g
 			}()
 
-			// CheckForChanges always advances the cursor; it is only called on a
-			// non-suppressed run (gated above).
-			entries, err := changelog.CheckForChanges(changelogCtx, cliState, buildVersion)
+			entries, err := checkForChanges(changelogCtx, f, buildVersion)
 			// CheckForChanges returns gained entries even when only the cursor
 			// persist fails, so capture them before bailing on the error.
 			g = entries
@@ -213,6 +203,30 @@ func Main() int {
 	drainNotifications()
 
 	return 0
+}
+
+func checkForChanges(ctx context.Context, f *cmdutil.Factory, currentVersion string) ([]changelog.Entry, error) {
+	httpClient, err := f.HttpClient()
+	if err != nil {
+		return nil, err
+	}
+	cliState, err := f.CLIState()
+	if err != nil {
+		return nil, err
+	}
+	return changelog.CheckForChanges(ctx, httpClient, cliState, currentVersion)
+}
+
+func checkForUpdate(ctx context.Context, f *cmdutil.Factory, currentVersion, repo string) (*update.ReleaseInfo, error) {
+	httpClient, err := f.HttpClient()
+	if err != nil {
+		return nil, err
+	}
+	cliState, err := f.CLIState()
+	if err != nil {
+		return nil, err
+	}
+	return update.CheckForUpdate(ctx, httpClient, cliState, currentVersion, repo)
 }
 
 // notificationsSuppressed is the single gate for ALL clawker background

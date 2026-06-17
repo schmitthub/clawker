@@ -92,14 +92,14 @@ migration here when the schema changes; never edit a shipped one.
 
 ## Construction
 
-`StateStore` is **not** a Factory noun. It is used only in `internal/clawker.Main()`
-(the background update check and the changelog teaser), so `Main` constructs it
-directly via `state.New()` and shares the one facade between the update
-goroutine (`RecordUpdateCheck`) and the changelog teaser (`SetLastSeenChangelog`,
-via `changelog.CheckForChanges`). A missing/unreadable store degrades to a nil
-facade (the update check proceeds with a zero time; the teaser is a no-op). The
-storage layer resolves the state dir from XDG itself, so `New` has no
-dependencies.
+`StateStore` is a lazy Factory noun (`f.CLIState() (StateStore, error)`,
+`sync.Once`-cached). It is used only by the background update check and changelog
+teaser in `internal/clawker.Main()`, which resolve it via the factory closures
+`checkForUpdate`/`checkForChanges`. A missing/unreadable store surfaces as the
+`CLIState()` error, which aborts that one background check (logged to the file
+log) — `CheckForUpdate`/`CheckForChanges` themselves treat a nil store as a
+programming error and return an error rather than degrading. The storage layer
+resolves the state dir from XDG itself, so `New` has no dependencies.
 
 ## Testing
 

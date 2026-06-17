@@ -3,9 +3,9 @@ package changelog
 import (
 	"context"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
+	"github.com/schmitthub/clawker/internal/httpmock"
 	"github.com/schmitthub/clawker/internal/state"
 	"github.com/schmitthub/clawker/internal/testenv"
 )
@@ -36,22 +36,16 @@ const changesFixture = `# Changelog
 [0.12.0]: https://github.com/schmitthub/clawker/releases/tag/v0.12.0
 `
 
-// serveChangelog points ChangelogURL at an httptest server returning body for
-// the duration of the test, restoring the original URL on cleanup. The returned
-// pointer counts requests, so a test can assert whether the network was hit.
-func serveChangelog(t *testing.T, status int, body string) *int {
-	t.Helper()
-	hits := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		hits++
-		w.WriteHeader(status)
-		_, _ = w.Write([]byte(body))
-	}))
-	t.Cleanup(srv.Close)
-	orig := ChangelogURL
-	ChangelogURL = srv.URL
-	t.Cleanup(func() { ChangelogURL = orig })
-	return &hits
+// changelogStub returns an httpmock registry that serves body (with status) for
+// the CHANGELOG.md GET. The transport is the seam — production ChangelogURL is
+// never swapped. Tests assert whether the network was hit via len(reg.Requests).
+func changelogStub(status int, body string) *httpmock.Registry {
+	reg := &httpmock.Registry{}
+	reg.Register(
+		httpmock.REST(http.MethodGet, "CHANGELOG.md"),
+		httpmock.StatusStringResponse(status, body),
+	)
+	return reg
 }
 
 func newTestState(t *testing.T) state.StateStore {
@@ -98,11 +92,11 @@ func TestCheckForChanges_Ranges(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			serveChangelog(t, http.StatusOK, changesFixture)
+			reg := changelogStub(http.StatusOK, changesFixture)
 			st := newTestState(t)
 			seedCursor(t, st, c.cursor)
 
-			gained, err := CheckForChanges(context.Background(), st, c.current)
+			gained, err := CheckForChanges(context.Background(), reg.Client(), st, c.current)
 			if err != nil {
 				t.Fatalf("CheckForChanges: %v", err)
 			}
@@ -122,10 +116,10 @@ func TestCheckForChanges_Ranges(t *testing.T) {
 // changelog-aware run seeds the cursor at current and returns nil WITHOUT
 // hitting the network — there is no catch-up backfill.
 func TestCheckForChanges_FirstRunSeedsCursorNoFetch(t *testing.T) {
-	hits := serveChangelog(t, http.StatusOK, changesFixture)
+	reg := changelogStub(http.StatusOK, changesFixture)
 	st := newTestState(t) // cursor starts empty
 
-	gained, err := CheckForChanges(context.Background(), st, "0.12.0")
+	gained, err := CheckForChanges(context.Background(), reg.Client(), st, "0.12.0")
 	if err != nil {
 		t.Fatalf("CheckForChanges: %v", err)
 	}
@@ -135,8 +129,8 @@ func TestCheckForChanges_FirstRunSeedsCursorNoFetch(t *testing.T) {
 	if cur := st.State().LastSeenChangelog; cur != "0.12.0" {
 		t.Errorf("cursor = %q, want seeded to 0.12.0", cur)
 	}
-	if *hits != 0 {
-		t.Errorf("first run hit the changelog endpoint %d times, want 0 (no fetch)", *hits)
+	if len(reg.Requests) != 0 {
+		t.Errorf("first run hit the changelog endpoint %d times, want 0 (no fetch)", len(reg.Requests))
 	}
 }
 
@@ -145,11 +139,11 @@ func TestCheckForChanges_FirstRunSeedsCursorNoFetch(t *testing.T) {
 // treated as a first run (reseed at current, no fetch, no entries), not crash or
 // diff against garbage.
 func TestCheckForChanges_GarbageCursorTreatedAsFirstRun(t *testing.T) {
-	hits := serveChangelog(t, http.StatusOK, changesFixture)
+	reg := changelogStub(http.StatusOK, changesFixture)
 	st := newTestState(t)
 	seedCursor(t, st, "not-a-version")
 
-	gained, err := CheckForChanges(context.Background(), st, "0.12.0")
+	gained, err := CheckForChanges(context.Background(), reg.Client(), st, "0.12.0")
 	if err != nil {
 		t.Fatalf("CheckForChanges: %v", err)
 	}
@@ -159,8 +153,8 @@ func TestCheckForChanges_GarbageCursorTreatedAsFirstRun(t *testing.T) {
 	if cur := st.State().LastSeenChangelog; cur != "0.12.0" {
 		t.Errorf("cursor = %q, want reseeded to 0.12.0", cur)
 	}
-	if *hits != 0 {
-		t.Errorf("garbage-cursor run hit the endpoint %d times, want 0 (no fetch)", *hits)
+	if len(reg.Requests) != 0 {
+		t.Errorf("garbage-cursor run hit the endpoint %d times, want 0 (no fetch)", len(reg.Requests))
 	}
 }
 
@@ -168,11 +162,11 @@ func TestCheckForChanges_GarbageCursorTreatedAsFirstRun(t *testing.T) {
 // to current after a successful check. The persist gate is gone — CheckForChanges
 // is only called on a non-suppressed run, so it always advances.
 func TestCheckForChanges_AdvancesCursor(t *testing.T) {
-	serveChangelog(t, http.StatusOK, changesFixture)
+	reg := changelogStub(http.StatusOK, changesFixture)
 	st := newTestState(t)
 	seedCursor(t, st, "0.10.0")
 
-	gained, err := CheckForChanges(context.Background(), st, "0.12.0")
+	gained, err := CheckForChanges(context.Background(), reg.Client(), st, "0.12.0")
 	if err != nil {
 		t.Fatalf("CheckForChanges: %v", err)
 	}
@@ -190,10 +184,10 @@ func TestCheckForChanges_AdvancesCursor(t *testing.T) {
 // seed and the advance.
 func TestCheckForChanges_StoresCanonicalCursor(t *testing.T) {
 	t.Run("first_run_seed", func(t *testing.T) {
-		serveChangelog(t, http.StatusOK, changesFixture)
+		reg := changelogStub(http.StatusOK, changesFixture)
 		st := newTestState(t) // empty cursor → first-run seed path
 
-		if _, err := CheckForChanges(context.Background(), st, "v0.12.0"); err != nil {
+		if _, err := CheckForChanges(context.Background(), reg.Client(), st, "v0.12.0"); err != nil {
 			t.Fatalf("CheckForChanges: %v", err)
 		}
 		if cur := st.State().LastSeenChangelog; cur != "0.12.0" {
@@ -202,11 +196,11 @@ func TestCheckForChanges_StoresCanonicalCursor(t *testing.T) {
 	})
 
 	t.Run("advance", func(t *testing.T) {
-		serveChangelog(t, http.StatusOK, changesFixture)
+		reg := changelogStub(http.StatusOK, changesFixture)
 		st := newTestState(t)
 		seedCursor(t, st, "0.10.0") // diff path → advance
 
-		if _, err := CheckForChanges(context.Background(), st, "v0.12.0"); err != nil {
+		if _, err := CheckForChanges(context.Background(), reg.Client(), st, "v0.12.0"); err != nil {
 			t.Fatalf("CheckForChanges: %v", err)
 		}
 		if cur := st.State().LastSeenChangelog; cur != "0.12.0" {
@@ -215,32 +209,33 @@ func TestCheckForChanges_StoresCanonicalCursor(t *testing.T) {
 	})
 }
 
-// TestCheckForChanges_NilStateNoOp: a nil state facade is a silent no-op — no
-// panic, no entries, no fetch (the cursor lives in state, so there is nothing to
-// diff against).
-func TestCheckForChanges_NilStateNoOp(t *testing.T) {
-	hits := serveChangelog(t, http.StatusOK, changesFixture)
+// TestCheckForChanges_NilStateError: a nil state facade is a programming error —
+// it returns the typed nil-StateStore error with no entries and no fetch (the
+// cursor lives in state, so there is nothing to diff against).
+func TestCheckForChanges_NilStateError(t *testing.T) {
+	reg := changelogStub(http.StatusOK, changesFixture)
 
-	gained, err := CheckForChanges(context.Background(), nil, "0.12.0")
-	if err != nil {
-		t.Fatalf("CheckForChanges: %v", err)
+	gained, err := CheckForChanges(context.Background(), reg.Client(), nil, "0.12.0")
+	wantErr := "state: CheckForChanges: nil StateStore"
+	if err == nil || err.Error() != wantErr {
+		t.Fatalf("CheckForChanges error = %v, want %q", err, wantErr)
 	}
 	if len(gained) != 0 {
 		t.Errorf("nil state returned %v, want no entries", versions(gained))
 	}
-	if *hits != 0 {
-		t.Errorf("nil state hit the endpoint %d times, want 0", *hits)
+	if len(reg.Requests) != 0 {
+		t.Errorf("nil state hit the endpoint %d times, want 0", len(reg.Requests))
 	}
 }
 
 // TestCheckForChanges_FetchErrorNoAdvance: a non-200 surfaces an error and never
 // advances the cursor.
 func TestCheckForChanges_FetchErrorNoAdvance(t *testing.T) {
-	serveChangelog(t, http.StatusInternalServerError, "boom")
+	reg := changelogStub(http.StatusInternalServerError, "boom")
 	st := newTestState(t)
 	seedCursor(t, st, "0.10.0")
 
-	_, err := CheckForChanges(context.Background(), st, "0.12.0")
+	_, err := CheckForChanges(context.Background(), reg.Client(), st, "0.12.0")
 	if err == nil {
 		t.Fatal("expected error on non-200 response")
 	}

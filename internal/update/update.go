@@ -29,9 +29,6 @@ import (
 // compared against the persisted last-checked timestamp inside shouldCheckForUpdate.
 const cacheTTL = 24 * time.Hour
 
-// httpTimeout is the maximum time for the GitHub API request.
-const httpTimeout = 5 * time.Second
-
 // ReleaseInfo describes a strictly newer release than the running version. A
 // non-nil *ReleaseInfo MEANS "a newer release exists" — CheckForUpdate only
 // returns one when LatestVersion is a newer semver than CurrentVersion, so the
@@ -53,7 +50,7 @@ type githubRelease struct {
 // here — that is the caller's responsibility (see CheckForUpdate's doc).
 //
 // A non-release build whose version does not parse as semver is rejected up front
-// by checkForUpdate (semver.NewVersion(currentVersion) fails before any fetch), so
+// by CheckForUpdate (semver.NewVersion(currentVersion) fails before any fetch), so
 // no explicit dev-build gate is needed here.
 //
 // lastCheckedAt is the timestamp of the last recorded check, supplied by the
@@ -83,8 +80,11 @@ func shouldCheckForUpdate(lastCheckedAt time.Time) bool {
 // latest_version via st.RecordUpdateCheck BEFORE the newer/not-newer decision.
 // This is what lets the TTL gate throttle — if persistence only happened on a
 // newer release, checked_at would never advance on the common not-newer path and
-// the GitHub API would be hit on every run. A nil st disables both the gate read
-// and persistence (the check proceeds with a zero "never checked" time).
+// the GitHub API would be hit on every run. A nil st is a programming error (the
+// caller wires state via the factory) and returns an error before any fetch.
+//
+// client supplies the transport and timeout (the caller's Factory HttpClient in
+// production; an internal/httpmock stub in tests).
 //
 // Opt-out suppression (e.g. an env-var kill switch or CI detection) is the
 // CALLER's responsibility — shouldCheckForUpdate only applies the TTL freshness
@@ -94,41 +94,26 @@ func shouldCheckForUpdate(lastCheckedAt time.Time) bool {
 //
 // The context controls the HTTP request lifetime — cancel it to abort cleanly.
 // repo should be "owner/name", e.g. "schmitthub/clawker".
-func CheckForUpdate(ctx context.Context, st state.StateStore, currentVersion, repo string) (*ReleaseInfo, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo)
-	info, err := checkForUpdate(ctx, st, currentVersion, url)
-	if err != nil {
-		return nil, fmt.Errorf("checking %s: %w", repo, err)
-	}
-	return info, nil
-}
+func CheckForUpdate(ctx context.Context, client *http.Client, st state.StateStore, currentVersion, repo string) (*ReleaseInfo, error) {
 
-// checkForUpdate is the URL-parameterized core of CheckForUpdate: the exported
-// wrapper builds the GitHub API URL from repo and delegates here. Keeping the
-// core unexported lets tests exercise the real gate→fetch→persist→assemble path
-// against an httptest URL without a parallel reimplementation and without putting
-// a URL seam on the exported signature.
-//
-// The persist call is UPSTREAM of the newer/not-newer decision so checked_at
-// advances on every successful fetch, not only when a newer release is found.
-func checkForUpdate(ctx context.Context, st state.StateStore, currentVersion, url string) (*ReleaseInfo, error) {
-	var lastCheckedAt time.Time
+	if st == nil {
+		// A nil state store is a programming error (the caller wires it via the
+		// factory); without it there is no TTL gate and no persistence.
+		return nil, fmt.Errorf("state: CheckForUpdate: nil StateStore")
+	}
 
 	cv, err := semver.NewVersion(currentVersion)
 	if err != nil {
 		return nil, err
 	}
 
-	if st != nil {
-		lastCheckedAt = st.State().CheckedAt
-	}
-	if !shouldCheckForUpdate(lastCheckedAt) {
+	if !shouldCheckForUpdate(st.State().CheckedAt) {
 		return nil, nil
 	}
 
-	release, err := fetchLatestReleaseFromURL(ctx, url)
+	release, err := getLatestReleaseInfo(ctx, client, repo)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("checking %s: %w", repo, err)
 	}
 
 	lv, err := semver.NewVersion(release.TagName)
@@ -137,11 +122,9 @@ func checkForUpdate(ctx context.Context, st state.StateStore, currentVersion, ur
 	}
 
 	// Persist on fetch success, BEFORE the newer/not-newer decision, so the TTL
-	// gate throttles regardless of outcome. nil st skips persistence.
-	if st != nil {
-		if err := st.RecordUpdateCheck(time.Now(), lv.String()); err != nil {
-			return nil, fmt.Errorf("recording update check: %w", err)
-		}
+	// gate throttles regardless of outcome.
+	if err := st.RecordUpdateCheck(time.Now(), lv.String()); err != nil {
+		return nil, fmt.Errorf("recording update check: %w", err)
 	}
 
 	if !lv.GreaterThan(cv) {
@@ -155,12 +138,14 @@ func checkForUpdate(ctx context.Context, st state.StateStore, currentVersion, ur
 	}, nil
 }
 
-// fetchLatestReleaseFromURL fetches and decodes a GitHub release from the given
-// URL. The URL is supplied by checkForUpdate (built from the repo), which keeps
-// this function URL-agnostic so tests can point it at an httptest server.
-func fetchLatestReleaseFromURL(ctx context.Context, url string) (*githubRelease, error) {
-	client := &http.Client{Timeout: httpTimeout}
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+// getLatestReleaseInfo GETs and decodes the latest GitHub release for repo using
+// the supplied client. The GitHub API URL is built from repo here; there is no
+// URL seam in the signature — tests inject a client whose transport is an
+// internal/httpmock stub, so this reaches no live network.
+func getLatestReleaseInfo(ctx context.Context, client *http.Client, repo string) (*githubRelease, error) {
+	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -179,9 +164,6 @@ func fetchLatestReleaseFromURL(ctx context.Context, url string) (*githubRelease,
 	var release githubRelease
 	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
 		return nil, err
-	}
-	if release.TagName == "" {
-		return nil, fmt.Errorf("empty tag_name in response")
 	}
 
 	return &release, nil

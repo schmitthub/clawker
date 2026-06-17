@@ -11,16 +11,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"time"
 
 	"github.com/Masterminds/semver/v3"
 
 	"github.com/schmitthub/clawker/internal/state"
 )
-
-// fetchTimeout bounds the CHANGELOG.md request independently of the caller's
-// context, matching internal/update's httpTimeout.
-const fetchTimeout = 5 * time.Second
 
 // Entry is one curated changelog version section, parsed from CHANGELOG.md.
 // A release is a set of changes of mixed kinds spanning many merged PRs, so an
@@ -39,24 +34,21 @@ type Entry struct {
 //   - First run (no cursor, or an unparseable one): seeds the cursor at current
 //     and returns nil — there is NO catch-up backfill across a changelog-blind
 //     upgrade; the cursor IS "last seen" from here on.
-//   - Otherwise: GETs the curated CHANGELOG.md (ChangelogURL), parses it,
-//     returns the entries gained in (cursor, current] (newest first), and
-//     advances the cursor to current.
+//   - Otherwise: GETs the curated CHANGELOG.md (ChangelogURL) with the
+//     caller-supplied client, parses it, returns the entries gained in
+//     (cursor, current] (newest first), and advances the cursor to current.
 //
 // current is the running-binary version string; it is parsed here (v-tolerant),
 // and an unparseable current — e.g. a non-release "DEV" build — returns an error
 // so the caller shows nothing. The request is context-aware (cancel ctx to abort)
-// and bounded by fetchTimeout; a non-200 is an error.
-//
-// This function is only ever called when notifications are NOT suppressed, so
-// it always advances the cursor — there is no persist gate. A nil st (state
-// store unavailable) is a silent no-op. The cursor write is best-effort: a
-// write failure is returned for the caller to log, but any gained entries are
-// still returned so the teaser can render.
-func CheckForChanges(ctx context.Context, st state.StateStore, current string) ([]Entry, error) {
+// and bounded by the supplied client's timeout; a non-200 is an error. A nil st
+// is a programming error (the caller wires state) and returns an error. When the
+// cursor advance fails after a successful fetch, the gained entries are still
+// returned so the teaser can render.
+func CheckForChanges(ctx context.Context, client *http.Client, st state.StateStore, current string) ([]Entry, error) {
 
 	if st == nil {
-		return nil, nil
+		return nil, fmt.Errorf("state: CheckForChanges: nil StateStore")
 	}
 
 	cv, err := semver.NewVersion(current)
@@ -75,12 +67,29 @@ func CheckForChanges(ctx context.Context, st state.StateStore, current string) (
 		return nil, nil
 	}
 
+	entries, err := getChangelogEntries(ctx, client)
+	if err != nil {
+		return nil, fmt.Errorf("getting changelog entries: %w", err)
+	}
+
+	gained, err := between(entries, cursor, cv)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := st.SetLastSeenChangelog(cv.String()); err != nil {
+		return gained, fmt.Errorf("advancing changelog cursor: %w", err)
+	}
+	return gained, nil
+}
+
+func getChangelogEntries(ctx context.Context, client *http.Client) ([]Entry, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ChangelogURL, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	resp, err := (&http.Client{Timeout: fetchTimeout}).Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -99,15 +108,8 @@ func CheckForChanges(ctx context.Context, st state.StateStore, current string) (
 	if err != nil {
 		return nil, err
 	}
-	gained, err := between(entries, cursor, cv)
-	if err != nil {
-		return nil, err
-	}
 
-	if err := st.SetLastSeenChangelog(cv.String()); err != nil {
-		return gained, fmt.Errorf("advancing changelog cursor: %w", err)
-	}
-	return gained, nil
+	return entries, nil
 }
 
 // between returns the entries with lo < version <= hi (semver comparison), in

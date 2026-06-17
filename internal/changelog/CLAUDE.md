@@ -61,23 +61,26 @@ type Entry struct {
     Body    string // the Keep-a-Changelog markdown body (### sections + bullets), rendered verbatim
 }
 
-// CheckForChanges owns the show-once cursor end to end.
-func CheckForChanges(ctx context.Context, st state.StateStore, current string) ([]Entry, error)
+// CheckForChanges owns the show-once cursor end to end. The caller supplies the
+// *http.Client (the Factory's HttpClient noun in production; an internal/httpmock
+// stub in tests).
+func CheckForChanges(ctx context.Context, client *http.Client, st state.StateStore, current string) ([]Entry, error)
 
-var ChangelogURL string // raw CHANGELOG.md on main (consts.RawGitHubBaseURL + consts.GitHubRepo)
+const ChangelogURL string // raw CHANGELOG.md on main (consts.RawGitHubBaseURL + consts.GitHubRepo); a const, not a test seam — the injected client's transport is the seam
 ```
 
 `CheckForChanges` behavior:
 
-- **`st == nil`** (state store unavailable) → silent no-op, returns `nil, nil`.
+- **`st == nil`** → **error** (a programming error: the caller wires state via the
+  factory). It is not a silent no-op.
 - **First run** — the cursor (`st.State().LastSeenChangelog`) is empty or does not
   parse as a version → seed the cursor at `current` and return `nil` **without
   fetching**. There is **no catch-up backfill** across a changelog-blind
   upgrade; the cursor is "last seen" from here on.
-- **Otherwise** → GET `ChangelogURL` (context-aware, 5s `fetchTimeout`, non-200
-  is an error), `parse`, return the entries in `(cursor, current]` via `between`
-  (newest-first, cursor-exclusive / current-inclusive), and advance the cursor
-  to `current`.
+- **Otherwise** → GET `ChangelogURL` with the supplied client (context-aware,
+  bounded by the client's own timeout, non-200 is an error), `parse`, return the
+  entries in `(cursor, current]` via `between` (newest-first, cursor-exclusive /
+  current-inclusive), and advance the cursor to `current`.
 
 There is **no `persist` gate**: `CheckForChanges` is only ever called on a
 non-suppressed run, so it always seeds/advances the cursor. (Suppression — non-
@@ -114,13 +117,14 @@ stdlib `net/http`. No on-disk cache, no clock, no Factory noun.
   `StrictNewVersion`), body preservation across a multi-kind release (Added +
   Fixed both survive) with inline links intact, HTML-comment + link-reference
   stripping.
-- `checkforchanges_test.go` — `CheckForChanges` over `httptest` + a request-hit
-  counter + a real isolated store (`testenv.New(t)` + `state.New()`): the cursor
+- `checkforchanges_test.go` — `CheckForChanges` over an `internal/httpmock`
+  registry (`reg.Client()` injected; `len(reg.Requests)` is the request-hit
+  counter) + a real isolated store (`testenv.New(t)` + `state.New()`): the cursor
   is seeded as a
   **raw string** (prod parses it), so the range table, the
   first-run-seeds-no-fetch path, the **garbage-cursor → first-run** failure
   branch, always-advances, the **`String()` canonical-cursor** assertion (a
   `v0.12.0` current stored as `0.12.0` at both the seed and advance sites),
-  nil-state no-op, and fetch-error-no-advance all run through the real entry
-  point. The range logic is **not** unit-tested in isolation — proving it
+  the **nil-state error**, and fetch-error-no-advance all run through the real
+  entry point. The range logic is **not** unit-tested in isolation — proving it
   through `CheckForChanges` keeps the cursor parse (prod's job) on the wire.

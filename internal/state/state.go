@@ -37,7 +37,11 @@ type StateStore interface {
 	SetLastSeenChangelog(version string) error
 }
 
-// stateImpl is the storage-backed implementation of State.
+// stateStoreImpl is the storage-backed implementation of StateStore. It embeds
+// *storage.Store[State] for the Read/Set/Write primitives; those promoted methods
+// never leak past the StateStore interface, since the type is unexported and only
+// ever handed out as the interface (the canonical store-backed pattern — see
+// .claude/rules/store-backed-package.md).
 type stateStoreImpl struct {
 	*storage.Store[State]
 }

@@ -36,7 +36,7 @@ There is no `IsNewer` field: presence of a non-nil `*ReleaseInfo` is itself the
 ## Exported Function
 
 ```go
-func CheckForUpdate(ctx context.Context, st state.StateStore, currentVersion, repo string) (*ReleaseInfo, error)
+func CheckForUpdate(ctx context.Context, client *http.Client, st state.StateStore, currentVersion, repo string) (*ReleaseInfo, error)
 ```
 
 Return contract:
@@ -47,9 +47,10 @@ Return contract:
 | `(*ReleaseInfo, nil)` | a **strictly newer** release is available |
 | `(nil, error)` | the fetch failed (API/network/decode) |
 
-`CheckForUpdate` reads `st.State().CheckedAt` for the freshness gate. A nil `st`
-disables both the gate read and persistence (the check proceeds with a zero
-"never checked" time and nothing is persisted).
+`CheckForUpdate` reads `st.State().CheckedAt` for the freshness gate. The caller
+supplies the `*http.Client` (the Factory's HttpClient noun in production; an
+`internal/httpmock` stub in tests). A nil `st` is a programming error (the caller
+wires state via the factory) and returns an error before any fetch.
 
 ### Persist on every successful fetch (not on the newer/not-newer comparison)
 
@@ -84,7 +85,7 @@ future timestamp (clock skew, later corrected) is treated as stale, not fresh
 (`elapsed >= 0` guard), so it does not spuriously suppress checks.
 
 **Dev-build handling lives at the parse boundary, not in a gate.**
-`checkForUpdate` parses `currentVersion` with `semver.NewVersion` **before** the
+`CheckForUpdate` parses `currentVersion` with `semver.NewVersion` **before** the
 fetch; a non-release build whose version is not parseable semver (`"DEV"`,
 `"nightly"`) fails there and returns `(nil, error)` without ever touching the
 GitHub API. The release tag from GitHub is parsed the same way
@@ -101,10 +102,10 @@ just `CheckForUpdate` + `ReleaseInfo`.
 
 1. Parse `currentVersion` with `semver.NewVersion` (v-tolerant); unparseable
    (e.g. `"DEV"`) → `(nil, error)`, before any fetch
-2. Read `st.State().CheckedAt` (zero if `st == nil`); `shouldCheckForUpdate` →
-   return `(nil, nil)` if TTL-fresh
-3. HTTP GET `https://api.github.com/repos/{owner}/{repo}/releases/latest` (5s
-   timeout, context-aware)
+2. Reject a nil `st` (error); read `st.State().CheckedAt`; `shouldCheckForUpdate`
+   → return `(nil, nil)` if TTL-fresh
+3. HTTP GET `https://api.github.com/repos/{owner}/{repo}/releases/latest` via the
+   supplied client (timeout from the client, context-aware)
 4. Read `html_url` + parse `tag_name` with `semver.NewVersion` (unparseable tag →
    `(nil, error)`)
 5. **Persist** `st.RecordUpdateCheck(now, lv.String())` (skipped if
@@ -112,11 +113,10 @@ just `CheckForUpdate` + `ReleaseInfo`.
 6. `lv.GreaterThan(cv)`; not newer → return `(nil, nil)`
 7. Return `(*ReleaseInfo, nil)`. On any fetch/parse error: `(nil, error)`
 
-The unexported `checkForUpdate(ctx, st, currentVersion, url)` is the
-URL-parameterized core that the exported wrapper builds the GitHub URL for and
-delegates to — tests drive it against an httptest URL (with a real
-file-backed store where persistence is asserted, or a `state/mocks` stub where
-only call counts matter).
+The unexported `getLatestReleaseInfo(ctx, client, repo)` GETs and decodes the
+latest release; `CheckForUpdate` builds the GitHub URL from `repo` internally.
+There is **no URL seam** — tests inject an `internal/httpmock` client (its
+transport is the seam) plus a `state/mocks` stub where only call counts matter.
 
 ## Integration Point
 
@@ -139,7 +139,9 @@ State file (owned by `internal/state`): `config.StateDir()/update-state.yaml`
 
 ## Testing
 
-`update_test.go` uses `net/http/httptest` to mock the GitHub API. Tests cover:
+`update_test.go` uses an `internal/httpmock` registry to stub the GitHub API
+(`releaseStub` registers the `/releases/latest` responder; `reg.Client()` is
+injected into `CheckForUpdate`). Tests cover:
 TTL suppression (fresh/stale/zero-time, including the future-timestamp-is-stale
 guard), newer (→ `*ReleaseInfo`) vs same/older (→ nil), API errors, malformed
 JSON, empty tag_name, context cancellation, and v-prefix handling. The
@@ -149,7 +151,7 @@ regression test
 (`TestCheckForUpdate_NotNewerAdvancesCheckedAt`) proves a not-newer fetch still
 records the check by asserting `RecordUpdateCheckCalls()` on a
 `internal/state/mocks` stub (`NewBlankState()`) — the persist-on-fetch-success
-contract. Tests drive the unexported `checkForUpdate`
-core against the httptest URL, so they exercise the real
-gate→fetch→persist→assemble path. State persistence/non-clobber internals are
-covered in `internal/state`.
+contract. Tests drive `CheckForUpdate` (and the unexported `getLatestReleaseInfo`
+for the decode/cancellation cases) through an `internal/httpmock` client, so they
+exercise the real gate→fetch→persist→assemble path with no live network. State
+persistence/non-clobber internals are covered in `internal/state`.

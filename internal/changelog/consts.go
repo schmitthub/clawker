@@ -7,8 +7,10 @@ import "github.com/schmitthub/clawker/internal/consts"
 // anchored to the latest tag — is picked up with no re-release; the installed
 // binary version remains the ceiling for what the teaser shows, so pulling
 // tip-of-main leaks nothing premature. Built from the shared repo identity
-// consts rather than re-spelling the literal repo string.
-var ChangelogURL = consts.RawGitHubBaseURL + "/" + consts.GitHubRepo + "/main/CHANGELOG.md"
+// consts rather than re-spelling the literal repo string. It is a const, not a
+// test seam: tests inject an internal/httpmock client (the transport is the
+// seam), so the production URL is never swapped.
+const ChangelogURL = consts.RawGitHubBaseURL + "/" + consts.GitHubRepo + "/main/CHANGELOG.md"
 
 // Parsing tokens for the Keep a Changelog format. Centralized here so the
 // parser references named consts rather than scattering literals.
