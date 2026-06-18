@@ -257,7 +257,24 @@ func run(ctx context.Context, log *logger.Logger) (int, error) {
 		}
 	}
 
-	clawkerdSrv, err := startClawkerdListener(boot, register, spawnEntry, onListenerFatal, log, progress)
+	// cmdExitCh carries a command-requested daemon exit code: a
+	// ShellCommand dispatched with exit_on_non_zero that exited
+	// non-zero. The session signals it via requestExit; the main select
+	// below mirrors the code as PID 1's exit status after the normal
+	// teardown, so the failure surfaces to the user's terminal as the
+	// container exit code. Generic to the CP→clawkerd command service —
+	// init is its first consumer. Buffered cap 1 + non-blocking send:
+	// the first fatal command wins; the daemon is already tearing down,
+	// so later sends are irrelevant.
+	cmdExitCh := make(chan int, 1)
+	requestExit := func(code int) {
+		select {
+		case cmdExitCh <- code:
+		default:
+		}
+	}
+
+	clawkerdSrv, err := startClawkerdListener(boot, register, spawnEntry, onListenerFatal, log, progress, requestExit)
 	if err != nil {
 		log.Error().Err(err).Str("event", "clawkerd_listener_start_failed").Msg("start clawkerd listener")
 		// Wiring bugs and malformed bootstrap material are deterministic
@@ -279,6 +296,8 @@ func run(ctx context.Context, log *logger.Logger) (int, error) {
 	// orphan drain — so we have a clean window to Stop the listener
 	// before releasing phase 2.
 	var listenerFatalErr error
+	requestedExitCode := 0
+	exitRequested := false
 	select {
 	case <-ctx.Done():
 		log.Info().Str("event", "shutdown_signal_received").Msg("SIGTERM/SIGINT received")
@@ -310,6 +329,21 @@ func run(ctx context.Context, log *logger.Logger) (int, error) {
 			spawn.Stop(shutdownGrace)
 			<-spawn.MainExited()
 		}
+	case requestedExitCode = <-cmdExitCh:
+		exitRequested = true
+		log.Info().
+			Int("exit_code", requestedExitCode).
+			Str("event", "command_requested_exit").
+			Msg("clawkerd: command requested daemon exit (exit_on_non_zero); tearing down and mirroring exit code")
+		// A command requesting exit normally happens during init,
+		// before AgentReady spawns the user CMD. Stay generic: if a
+		// child is running (a future post-spawn consumer), tear it down
+		// gracefully like the other shutdown paths before mirroring the
+		// code.
+		if spawn.Spawned() {
+			spawn.Stop(shutdownGrace)
+			<-spawn.MainExited()
+		}
 	}
 
 	// Tear down the gRPC listener BEFORE phase 2 begins so
@@ -327,9 +361,18 @@ func run(ctx context.Context, log *logger.Logger) (int, error) {
 	// GracefulStop would hang indefinitely waiting for the streaming
 	// RPC handler to return. Force-close the listener: CP observes a
 	// connection error on its end (which is the correct signal — the
-	// agent is gone), in-flight ShellCommands were already drained by
-	// main-child exit cascade, and the container can finally
-	// terminate so the host `clawker run` exits raw-tty mode.
+	// agent is gone), and the container can finally terminate so the
+	// host `clawker run` exits raw-tty mode.
+	//
+	// The force-close does NOT lose a fatal command's terminal Response.
+	// On the command-requested-exit path the worker runs session.Stop
+	// (flush-then-quiesce) BEFORE requestExit wakes this loop, so that
+	// Done is already on the wire by the time we force-close here. On the
+	// SIGTERM / MainExited / listener-fatal paths there is no fatal
+	// terminal Response in flight — the main-child exit cascade already
+	// reaped in-flight pipelines — and the Session's own receiver-loop
+	// tail Stop runs only AFTER this force-close unblocks its parked Recv,
+	// so any residual queued Responses are discarded as before.
 	log.Info().Str("event", "clawkerd_listener_stopping").Msg("stopping listener")
 	clawkerdSrv.Stop()
 	log.Info().Str("event", "clawkerd_listener_stopped").Msg("listener torn down")
@@ -341,6 +384,15 @@ func run(ctx context.Context, log *logger.Logger) (int, error) {
 	spawn.BeginOrphanDrain()
 
 	exitCode := spawn.Wait()
+	// A command with exit_on_non_zero requested this exit; its mirrored
+	// code is authoritative over spawn.Wait() (no user CMD ran during
+	// init, or any child was torn down above). Surfaces to the container
+	// exit status so the user's terminal shows the failing command's code.
+	// Gated on an explicit flag, not a sentinel value, so a legitimately
+	// mirrored 0 is never confused with "no request".
+	if exitRequested {
+		exitCode = requestedExitCode
+	}
 	// Surface the spawn error as runErr so a Run failure (no child
 	// ever forked) propagates to the shutdown log line and main()'s
 	// non-zero-exit path. SpawnErr also reports reaper-bailout causes

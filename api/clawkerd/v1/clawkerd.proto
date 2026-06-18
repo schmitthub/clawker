@@ -81,6 +81,21 @@ message ShellCommand {
   // terminates the command with ERROR_CODE_TIMEOUT.
   uint32 timeout_seconds = 2;
   bytes initial_stdin = 3;
+  // print_output makes clawkerd echo this command's combined output to
+  // its controlling TTY, live, as the command runs. It governs ONLY the
+  // local echo: clawkerd always merges stdout+stderr into one ordered
+  // stream and always streams it to the caller as OutputChunk frames,
+  // regardless of this flag. The caller decides which commands are worth
+  // showing on the local console.
+  bool print_output = 4;
+  // exit_on_non_zero makes clawkerd terminate the daemon (PID 1) with
+  // this command's final exit code when the command exits non-zero,
+  // after echoing output per print_output. The decision that a command's
+  // failure is fatal lives in CP, encoded here as an instruction;
+  // clawkerd holds no policy and never inspects the code to decide its
+  // own fate absent this flag. The mirrored exit code surfaces to the
+  // user's terminal as the container exit status.
+  bool exit_on_non_zero = 5;
 }
 
 // PipeStage is one process in the pipeline. uid/gid drop privileges
@@ -117,11 +132,13 @@ message Signal {
 // Stdin/CloseStdin/Signal are silent.
 message Response {
   string command_id = 1;
+  // 5 was StderrChunk stderr; stdout+stderr are now one combined
+  // OutputChunk (field 4).
+  reserved 5;
   oneof payload {
     HelloAck hello_ack = 2;
     Started started = 3;
-    StdoutChunk stdout = 4;
-    StderrChunk stderr = 5;
+    OutputChunk output = 4;
     StageExit stage_exit = 6;
     Done done = 7;
     Error error = 8;
@@ -143,15 +160,13 @@ message RegisterDone {
 // Started signals that ShellCommand has spawned all stages.
 message Started {}
 
-// StdoutChunk carries bytes from the final stage's stdout.
-message StdoutChunk {
+// OutputChunk carries the command's combined output: every stage's
+// stderr and the final stage's stdout, merged into one stream in write
+// order (2>&1). clawkerd streams these to the caller for every command,
+// unconditionally — this is the command's output. The caller decides
+// what to do with it; print_output independently governs the local echo.
+message OutputChunk {
   bytes data = 1;
-}
-
-// StderrChunk carries bytes from a specific stage's stderr.
-message StderrChunk {
-  uint32 stage_index = 1;
-  bytes data = 2;
 }
 
 // StageExit is emitted as each pipeline stage exits. exit_code is

@@ -48,12 +48,20 @@ var errListenerConfig = errors.New("clawkerd listener: config error")
 // Returns the running grpc.Server so main can Stop on shutdown. The
 // underlying net.Listener is owned by the goroutine that runs Serve
 // and is closed by Stop.
-func startClawkerdListener(boot *bootstrap, register *registerCoordinator, spawnEntry func() error, onFatal func(error), log *logger.Logger, progress *progressReporter) (*grpc.Server, error) {
+func startClawkerdListener(boot *bootstrap, register *registerCoordinator, spawnEntry func() error, onFatal func(error), log *logger.Logger, progress *progressReporter, requestExit func(int)) (*grpc.Server, error) {
 	if spawnEntry == nil {
 		return nil, fmt.Errorf("%w: spawnEntry is required", errListenerConfig)
 	}
 	if onFatal == nil {
 		return nil, fmt.Errorf("%w: onFatal is required", errListenerConfig)
+	}
+	if requestExit == nil {
+		// exit_on_non_zero teardown is the container's clean-death path
+		// for a fatal command; a nil seam would silently fail to exit PID
+		// 1. Reject at construction so a wiring bug fails loud, matching
+		// spawnEntry/onFatal. Direct test construction (newTestSession)
+		// can still leave it nil — the runShellCommand guard covers that.
+		return nil, fmt.Errorf("%w: requestExit is required", errListenerConfig)
 	}
 	tlsCfg, err := buildListenerTLSConfig(boot.CertPEM, boot.KeyPEM, boot.CACertPEM)
 	if err != nil {
@@ -80,7 +88,7 @@ func startClawkerdListener(boot *bootstrap, register *registerCoordinator, spawn
 			PermitWithoutStream: true,
 		}),
 	)
-	clawkerdv1.RegisterClawkerdServiceServer(srv, &clawkerdServer{log: log, register: register, spawnEntry: spawnEntry, progress: progress})
+	clawkerdv1.RegisterClawkerdServiceServer(srv, &clawkerdServer{log: log, register: register, spawnEntry: spawnEntry, progress: progress, requestExit: requestExit})
 
 	go func() {
 		// PID-1 resilience: a panic inside grpc.Serve (e.g. from a
@@ -199,11 +207,17 @@ type clawkerdServer struct {
 	// status lines, no animation) shared across every Session for the
 	// process lifetime. Nil-tolerant; tests pass nil.
 	progress *progressReporter
+	// requestExit asks the main loop to graceful-shutdown PID 1 with a
+	// mirrored exit code, driven by a command carrying exit_on_non_zero.
+	// Shared across every Session. Production rejects a nil seam at
+	// startClawkerdListener; the session-level guard tolerates nil for
+	// direct test construction.
+	requestExit func(int)
 }
 
 // Session is the bidi command-dispatch channel from CP to clawkerd.
 // All per-stream state lives in runSession; this method just hands
 // off and lets the helper own the lifecycle.
 func (s *clawkerdServer) Session(stream clawkerdv1.ClawkerdService_SessionServer) error {
-	return runSession(stream, s.log, s.register, s.spawnEntry, s.progress)
+	return runSession(stream, s.log, s.register, s.spawnEntry, s.progress, s.requestExit)
 }

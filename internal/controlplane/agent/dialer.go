@@ -277,7 +277,7 @@ func (d *Dialer) DialAgent(ctx context.Context, containerID string) {
 			// idempotent.
 			cancel()
 		}()
-		d.runDial(dialCtx, containerID)
+		d.runDial(ctx, dialCtx, containerID)
 	}()
 }
 
@@ -298,12 +298,12 @@ func (d *Dialer) CancelDial(containerID string) {
 	cancel()
 }
 
-func (d *Dialer) runDial(ctx context.Context, containerID string) {
+func (d *Dialer) runDial(cpCtx context.Context, dialCtx context.Context, containerID string) {
 	log := d.log.With("container_id", containerID, "component", "agentdial")
 	closeErrCount := 0
 
 	for cycle := 1; ; cycle++ {
-		if ctx.Err() != nil {
+		if dialCtx.Err() != nil {
 			return
 		}
 
@@ -314,43 +314,43 @@ func (d *Dialer) runDial(ctx context.Context, containerID string) {
 		// docker daemon hiccup), the next attempt's inspect catches
 		// it instead of burning the 5min retry budget against a
 		// dead IP.
-		res := d.establishWithRetry(ctx, containerID, log.With("cycle", cycle))
+		res := d.establishWithRetry(dialCtx, containerID, log.With("cycle", cycle))
 		switch res.Outcome {
 		case outcomeCtxDone:
 			return
 		case outcomeContainerGone:
-			d.publishFailed(ctx, containerID, res.Agent, res.Project, res.Addr, "container_not_running", res.Attempt)
+			d.publishFailed(dialCtx, containerID, res.Agent, res.Project, res.Addr, "container_not_running", res.Attempt)
 			return
 		case outcomeAddrInvalid:
-			d.publishFailed(ctx, containerID, res.Agent, res.Project, res.Addr, "clawker_net_endpoint_missing", res.Attempt)
+			d.publishFailed(dialCtx, containerID, res.Agent, res.Project, res.Addr, "clawker_net_endpoint_missing", res.Attempt)
 			return
 		case outcomeRetryExhausted:
-			d.publishFailed(ctx, containerID, res.Agent, res.Project, res.Addr, "connect_total_timeout", res.Attempt)
+			d.publishFailed(dialCtx, containerID, res.Agent, res.Project, res.Addr, "connect_total_timeout", res.Attempt)
 			return
 		case outcomeSuccess:
 			// fallthrough — handled below
 		default:
 			log.Error().Int("outcome", int(res.Outcome)).Msg("agentdial: unrecognized establish outcome; treating as failure")
-			d.publishFailed(ctx, containerID, res.Agent, res.Project, res.Addr, "internal_unknown_outcome", res.Attempt)
+			d.publishFailed(dialCtx, containerID, res.Agent, res.Project, res.Addr, "internal_unknown_outcome", res.Attempt)
 			return
 		}
 
 		cycleLog := log.With("agent", res.Agent, "project", res.Project, "addr", res.Addr, "cycle", cycle)
-		d.publishConnected(ctx, containerID, res.Agent, res.Project, res.Addr, res.Attempt, res.PeerInfo)
+		d.publishConnected(dialCtx, containerID, res.Agent, res.Project, res.Addr, res.Attempt, res.PeerInfo)
 
 		// Classify the peer cert against the registry. Drives the
 		// agent-axis events (AgentRegistered for fresh registrations
 		// on Miss, AgentUntrusted for mismatch outcomes). The Session
 		// stream stays open in all cases — CP must remain reachable
 		// for containment commands even when the agent is untrusted.
-		d.dispatchAgentEvents(ctx, containerID, res, cycleLog)
+		d.dispatchAgentEvents(dialCtx, containerID, res, cycleLog)
 
 		// Init owns Recv during its phase; failures publish InitFailed
 		// but never close the Session (asymmetric trust). Re-runs on
 		// every Session reconnect — see Executor.
-		d.runInit(ctx, containerID, res, cycleLog)
+		d.runInit(cpCtx, containerID, res, cycleLog)
 
-		drain := d.drainStream(ctx, res.Stream, cycleLog)
+		drain := d.drainStream(dialCtx, res.Stream, cycleLog)
 		// Cancel the stream-scoped ctx so any goroutine still parked on
 		// stream.Recv (e.g. a leftover from a driveRegister timeout that
 		// preceded drainStream) is guaranteed to unblock before the next
@@ -359,7 +359,7 @@ func (d *Dialer) runDial(ctx context.Context, containerID string) {
 			res.StreamCancel()
 		}
 		if d.closeAndCheckLeak(res.Conn, &closeErrCount, cycleLog) {
-			d.publishFailed(ctx, containerID, res.Agent, res.Project, res.Addr,
+			d.publishFailed(dialCtx, containerID, res.Agent, res.Project, res.Addr,
 				fmt.Sprintf("fd-leak-ceiling: %d consecutive close failures", closeErrCount),
 				res.Attempt)
 			return
@@ -373,10 +373,10 @@ func (d *Dialer) runDial(ctx context.Context, containerID string) {
 		// shouldReconnect is the single decision point and the only
 		// thing the unit test for the reconnect-vs-teardown contract
 		// pins down.
-		if !shouldReconnect(ctx, drain) {
+		if !shouldReconnect(dialCtx, drain) {
 			return
 		}
-		d.publishBroken(ctx, containerID, res.Agent, res.Project, res.Addr, drain.Reason)
+		d.publishBroken(dialCtx, containerID, res.Agent, res.Project, res.Addr, drain.Reason)
 		cycleLog.Info().
 			Str("event", "agentdial_session_reconnecting").
 			Str("reason", drain.Reason).

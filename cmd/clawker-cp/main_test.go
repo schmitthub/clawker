@@ -23,7 +23,7 @@ func TestWireInitExecutor_NilBus(t *testing.T) {
 	var buf bytes.Buffer
 	log := logger.NewWriter(&buf)
 
-	exec := wireInitExecutor(nil, log)
+	exec := wireInitExecutor(nil, nil, log)
 
 	require.Nil(t, exec, "nil bus must yield nil Executor (degrade), not crash")
 	require.Contains(t, buf.String(), "agent_init_executor_unavailable",

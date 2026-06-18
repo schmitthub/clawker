@@ -9,9 +9,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/moby/moby/api/types/container"
+	moby "github.com/moby/moby/client"
 	clawkerdv1 "github.com/schmitthub/clawker/api/clawkerd/v1"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane/overseer"
+	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -125,9 +128,10 @@ done
 	// success the marker is written so a restart never re-runs it; on
 	// failure the marker is NOT written and the exit code propagates — the
 	// step is fatal (plan halts, agent-ready never sent). A failed container
-	// is meant to be torn down rather than restarted; while that teardown
-	// does not yet exist, a manually-restarted failed container re-runs this
-	// hook (no marker was written).
+	// is torn down rather than restarted: the step carries exit_on_non_zero
+	// so clawkerd self-exits with the mirrored code, and CP enforces a
+	// grace-then-SIGKILL backstop (killAfterGrace). A manually-restarted
+	// container re-runs this hook (no marker was written).
 	//
 	// The `[ -x … ] || { …; }` brace group is load-bearing: `|| touch && exit`
 	// without braces binds as `([ -x ] || touch) && exit`, which exits 0 when
@@ -234,8 +238,9 @@ type InitTarget struct {
 // per-Executor — concurrent Runs across different containers must not
 // be serialized.
 type Executor struct {
-	bus *overseer.Overseer
-	log *logger.Logger
+	bus       *overseer.Overseer
+	dockerCli *docker.Client
+	log       *logger.Logger
 }
 
 // NewExecutor constructs an Executor. nil log is replaced with
@@ -247,14 +252,14 @@ type Executor struct {
 // agent_init_executor_unset per dial) instead of crashing CP and
 // stranding the failure on os.Stderr where only `docker logs` sees it.
 // Matches the nil-bus contract on agent.New for the dialer.
-func NewExecutor(bus *overseer.Overseer, log *logger.Logger) (*Executor, error) {
+func NewExecutor(bus *overseer.Overseer, dockerCli *docker.Client, log *logger.Logger) (*Executor, error) {
 	if bus == nil {
 		return nil, errors.New("agent.NewExecutor: bus is required")
 	}
 	if log == nil {
 		log = logger.Nop()
 	}
-	return &Executor{bus: bus, log: log}, nil
+	return &Executor{bus: bus, dockerCli: dockerCli, log: log}, nil
 }
 
 // Run dispatches the init plan one step at a time, awaiting Done or
@@ -395,7 +400,20 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 				Str("detail", out.Detail).
 				Msg("agent.init: plan halted on step failure")
 			if err != nil {
+				// Transport-level failure (the stream broke): the Session
+				// is already gone and the dial loop's teardown handles the
+				// container. Don't race a kill here — a transient blip
+				// re-establishes and re-runs the plan (idempotency
+				// contract).
 				return err
+			}
+			// Command-level failure (non-zero exit / classified Error).
+			// The command definitively failed; enforce container teardown
+			// with the grace-then-SIGKILL backstop. Steps carry
+			// exit_on_non_zero so a healthy clawkerd self-exits within the
+			// grace; the SIGKILL only catches a wedged one.
+			if err := e.killAfterGrace(ctx, target.ContainerID, log); err != nil {
+				return fmt.Errorf("agent.init: step %q failed: %s; additionally, failed to kill container: %v", st.stepName(), out.Detail, err)
 			}
 			return fmt.Errorf("agent.init: step %q failed: %s", st.stepName(), out.Detail)
 		}
@@ -438,10 +456,28 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 	return nil
 }
 
-// maxStderrCapture caps how much stderr Run preserves on the failed-
-// step Detail. Truncation is marked explicitly so operators see the
-// boundary instead of guessing.
-const maxStderrCapture = 4096
+// maxOutputCapture caps how much of a command's combined output Run
+// folds into the failed-step Detail — a bounded log line, not the full
+// stream (which the caller receives in its entirety as OutputChunks).
+// Truncation is marked explicitly so operators see the boundary instead
+// of guessing.
+const maxOutputCapture = 4096
+
+// captureCapped appends data to buf, bounding the total at
+// maxOutputCapture and folding any overflow into *truncated. Shared by
+// runStep's combined-stdout and intermediate-stage-stderr capture.
+func captureCapped(buf *strings.Builder, truncated *int, data []byte) {
+	remaining := maxOutputCapture - buf.Len()
+	if remaining <= 0 {
+		*truncated += len(data)
+		return
+	}
+	if len(data) > remaining {
+		*truncated += len(data) - remaining
+		data = data[:remaining]
+	}
+	buf.Write(data)
+}
 
 // stepOutcome bundles the per-step result fields runStep produces.
 // Zero value means the step succeeded; populated values are produced
@@ -474,8 +510,8 @@ func stepFailedTransport(detail string) stepOutcome {
 }
 
 // stepFailedExit classifies a clawkerd Done with a non-zero exit
-// code. Stderr (truncated to maxStderrCapture) is folded into detail
-// upstream of this constructor.
+// code. The command's combined output (truncated to maxOutputCapture)
+// is folded into detail upstream of this constructor.
 func stepFailedExit(exit int32, detail string) stepOutcome {
 	return stepOutcome{
 		ExitCode: exit,
@@ -513,6 +549,53 @@ func stepFailedClassified(reason overseer.InitFailureReason, detail string) step
 // deliberately omitted — a duplicate budget here would race the
 // server-side timer and risk misclassifying a server-detected timeout
 // as a client-side break.
+// killAfterGrace ensures the agent container is torn down after a fatal
+// command. A command carrying exit_on_non_zero makes a healthy clawkerd
+// echo the output and self-exit PID 1 with the mirrored code, so CP waits
+// consts.CPAgentKillGrace for that clean self-exit — keyed on real
+// container liveness via ContainerWait — and escalates to SIGKILL only if
+// the container is still running past the grace (a wedged clawkerd, or a
+// timeout where clawkerd never self-exits). Generic to the CP→clawkerd
+// command service; returns an error only when the SIGKILL itself fails, so
+// the caller can report that the doomed container could not be torn down.
+//
+// ctx is the CP-lifetime context (NOT the dial ctx — that one is cancelled
+// by the very container/die this awaits). The wait rides ctx, so a CP
+// shutdown during the grace abandons the wait and proceeds straight to the
+// kill: a doomed container must not outlive CP. The kill itself runs on
+// context.Background(), because if ctx is what woke the wait (shutdown),
+// the moby client rejects a request on a cancelled ctx before it reaches
+// the daemon — the SIGKILL would never issue and the container would leak.
+func (e *Executor) killAfterGrace(ctx context.Context, containerID string, log *logger.Logger) error {
+	waitCtx, cancel := context.WithTimeout(ctx, consts.CPAgentKillGrace)
+	defer cancel()
+	wait := e.dockerCli.APIClient.ContainerWait(waitCtx, containerID, moby.ContainerWaitOptions{
+		Condition: container.WaitConditionNotRunning,
+	})
+	select {
+	case <-wait.Result:
+		log.Info().
+			Str("event", "agent_cmd_container_self_exit").
+			Str("container_id", containerID).
+			Msg("agent: container self-exited after fatal command; no kill needed")
+		return nil
+	case <-wait.Error:
+	case <-waitCtx.Done():
+	}
+	log.Warn().
+		Str("event", "agent_cmd_self_exit_grace_elapsed").
+		Str("container_id", containerID).
+		Msg("agent: container did not self-exit in time; escalating to SIGKILL")
+	if _, err := e.dockerCli.APIClient.ContainerKill(context.Background(), containerID, moby.ContainerKillOptions{Signal: "SIGKILL"}); err != nil {
+		log.Error().Err(err).
+			Str("event", "agent_cmd_kill_failed").
+			Str("container_id", containerID).
+			Msg("agent: SIGKILL after fatal command failed; manual cleanup may be required")
+		return fmt.Errorf("agent: SIGKILL after fatal command failed: %w", err)
+	}
+	return nil
+}
+
 func (e *Executor) runStep(ctx context.Context, stream clawkerdv1.ClawkerdService_SessionClient, containerID string, idx int, st step, log *logger.Logger) (stepOutcome, error) {
 	commandID := buildCommandID(containerID, st.stepName(), idx)
 
@@ -539,8 +622,8 @@ func (e *Executor) runStep(ctx context.Context, stream clawkerdv1.ClawkerdServic
 		}
 	}
 
-	var stderrBuf strings.Builder
-	stderrTruncated := 0
+	var outputBuf strings.Builder
+	outputTruncated := 0
 
 	for {
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -565,22 +648,17 @@ func (e *Executor) runStep(ctx context.Context, stream clawkerdv1.ClawkerdServic
 			continue
 		}
 		switch p := resp.Payload.(type) {
-		case *clawkerdv1.Response_Started, *clawkerdv1.Response_StageExit, *clawkerdv1.Response_Stdout:
-			// Init steps run with stdout discarded; only Stderr,
-			// Done, and Error feed the failure-detail/exit pipeline.
+		case *clawkerdv1.Response_Started, *clawkerdv1.Response_StageExit:
+			// Lifecycle frames — not part of the failure detail; await
+			// the terminal Done/Error.
 			continue
-		case *clawkerdv1.Response_Stderr:
-			if p.Stderr != nil {
-				data := p.Stderr.GetData()
-				if remaining := maxStderrCapture - stderrBuf.Len(); remaining > 0 {
-					if len(data) > remaining {
-						stderrTruncated += len(data) - remaining
-						data = data[:remaining]
-					}
-					stderrBuf.Write(data)
-				} else {
-					stderrTruncated += len(p.Stderr.GetData())
-				}
+		case *clawkerdv1.Response_Output:
+			// The command's combined output (the final stage's stdout and
+			// every stage's stderr, merged in write order). Capture it
+			// (capped) for the failure detail; the full stream reaches the
+			// caller regardless of this cap.
+			if p.Output != nil {
+				captureCapped(&outputBuf, &outputTruncated, p.Output.GetData())
 			}
 		case *clawkerdv1.Response_Done:
 			exit := p.Done.GetFinalExitCode()
@@ -588,10 +666,10 @@ func (e *Executor) runStep(ctx context.Context, stream clawkerdv1.ClawkerdServic
 				return stepSucceeded(), nil
 			}
 			detail := fmt.Sprintf("exit_code=%d", exit)
-			if s := strings.TrimSpace(stderrBuf.String()); s != "" {
-				detail += "; stderr: " + s
-				if stderrTruncated > 0 {
-					detail += fmt.Sprintf(" ... [%d bytes truncated]", stderrTruncated)
+			if s := strings.TrimSpace(outputBuf.String()); s != "" {
+				detail += "; output: " + s
+				if outputTruncated > 0 {
+					detail += fmt.Sprintf(" ... [%d bytes truncated]", outputTruncated)
 				}
 			}
 			return stepFailedExit(exit, detail), nil
@@ -665,6 +743,7 @@ func (e *Executor) plan() []step {
 					Gid:  0,
 				}},
 				TimeoutSeconds: initStepTimeoutDefault,
+				ExitOnNonZero:  true,
 			},
 		},
 		shellStep{
@@ -672,6 +751,7 @@ func (e *Executor) plan() []step {
 			Shell: &clawkerdv1.ShellCommand{
 				Stages:         []*clawkerdv1.PipeStage{userStage(configSeedScript)},
 				TimeoutSeconds: initStepTimeoutDefault,
+				ExitOnNonZero:  true,
 			},
 		},
 		shellStep{
@@ -679,6 +759,7 @@ func (e *Executor) plan() []step {
 			Shell: &clawkerdv1.ShellCommand{
 				Stages:         []*clawkerdv1.PipeStage{userStage(gitconfigFilterScript)},
 				TimeoutSeconds: initStepTimeoutDefault,
+				ExitOnNonZero:  true,
 			},
 		},
 		shellStep{
@@ -686,6 +767,7 @@ func (e *Executor) plan() []step {
 			Shell: &clawkerdv1.ShellCommand{
 				Stages:         []*clawkerdv1.PipeStage{userStage(gitCredentialsScript)},
 				TimeoutSeconds: initStepTimeoutDefault,
+				ExitOnNonZero:  true,
 			},
 		},
 		shellStep{
@@ -694,6 +776,7 @@ func (e *Executor) plan() []step {
 				Stages:         []*clawkerdv1.PipeStage{userStage(sshKnownHostsScript)},
 				InitialStdin:   []byte(defaultKnownHosts),
 				TimeoutSeconds: initStepTimeoutDefault,
+				ExitOnNonZero:  true,
 			},
 		},
 		shellStep{
@@ -701,6 +784,8 @@ func (e *Executor) plan() []step {
 			Shell: &clawkerdv1.ShellCommand{
 				Stages:         []*clawkerdv1.PipeStage{userStage(postInitScript)},
 				TimeoutSeconds: initStepTimeoutPostInit,
+				ExitOnNonZero:  true,
+				PrintOutput:    true,
 			},
 		},
 		// pre-run runs the every-start hook right before the CMD. Delivered
@@ -713,6 +798,8 @@ func (e *Executor) plan() []step {
 			Shell: &clawkerdv1.ShellCommand{
 				Stages:         []*clawkerdv1.PipeStage{userStage(preRunScript)},
 				TimeoutSeconds: initStepTimeoutPostInit,
+				ExitOnNonZero:  true,
+				PrintOutput:    true,
 			},
 		},
 		agentReadyStep{Name: "agent-ready"},

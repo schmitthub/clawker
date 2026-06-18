@@ -501,6 +501,19 @@ const (
 	InitStepTimeoutPostInitSeconds uint32 = 600
 )
 
+// CPAgentKillGrace bounds how long CP waits for an agent container to
+// exit on its own after dispatching a command with exit_on_non_zero
+// that exited non-zero. A healthy clawkerd echoes the failed command's
+// output and exits PID 1 with the mirrored exit code (clean teardown,
+// terminal restore); CP waits this long for that self-exit before
+// escalating to ContainerKill SIGKILL — the backstop for a wedged
+// clawkerd that cannot process its own shutdown. The grace bounds a
+// wait-then-SIGKILL backstop: the self-exit was already requested as the
+// command's exit_on_non_zero flag, so the backstop itself only waits,
+// then kills. Generic to the CP→clawkerd command service; init is its
+// first consumer.
+const CPAgentKillGrace = 15 * time.Second
+
 // ScopePublic is the cross-service sentinel marking a gRPC method as
 // public — no bearer token required (the listener's mTLS still
 // authenticates the channel). It is intentionally UNTYPED so it assigns

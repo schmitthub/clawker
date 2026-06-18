@@ -34,12 +34,25 @@ type fakeBidiStream struct {
 	grpc.ServerStream
 	sendErr  error
 	sendOnce sync.Once
+
+	mu   sync.Mutex
+	sent []*clawkerdv1.Response
 }
 
-func (f *fakeBidiStream) Send(*clawkerdv1.Response) error {
+func (f *fakeBidiStream) Send(r *clawkerdv1.Response) error {
+	f.mu.Lock()
+	f.sent = append(f.sent, r)
+	f.mu.Unlock()
 	var err error
 	f.sendOnce.Do(func() { err = f.sendErr })
 	return err
+}
+
+// sentResponses returns a snapshot of every Response Send has recorded.
+func (f *fakeBidiStream) sentResponses() []*clawkerdv1.Response {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]*clawkerdv1.Response(nil), f.sent...)
 }
 
 func (f *fakeBidiStream) Recv() (*clawkerdv1.Command, error) {
@@ -83,10 +96,19 @@ func echoBinPath(t *testing.T) string {
 // so tests can assert on emitted audit events.
 func newTestSession() (*session, *bytes.Buffer) {
 	var logBuf bytes.Buffer
+	// No sender goroutine runs in fixtures — tests drain responses
+	// directly off sendCh. senderDone is pre-closed so any Stop() the
+	// code under test triggers (e.g. the exit_on_non_zero path) returns
+	// immediately rather than waiting out senderDrainGrace.
+	senderDone := make(chan struct{})
+	close(senderDone)
 	s := &session{
-		log:    logger.NewWriter(&logBuf),
-		sendCh: make(chan *clawkerdv1.Response, 256),
-		cmds:   make(map[string]*runningCommand),
+		log:        logger.NewWriter(&logBuf),
+		sendCh:     make(chan *clawkerdv1.Response, 256),
+		cmds:       make(map[string]*runningCommand),
+		drainCh:    make(chan struct{}),
+		senderDone: senderDone,
+		cancel:     func() {},
 	}
 	return s, &logBuf
 }
@@ -100,6 +122,102 @@ func drainAll(s *session) []*clawkerdv1.Response {
 		default:
 			return out
 		}
+	}
+}
+
+// --- session teardown: Stop drains, does not discard ----------------
+
+// TestDrainAndSend_FlushesQueuedResponses proves the graceful-stop flush
+// owns its contract: drainAndSend SENDS every queued Response to the
+// stream and returns once the queue is empty, instead of discarding (what
+// the ctx-cancel teardown branch does). It is called directly — not
+// through the runSender select — so the assertion can only be satisfied
+// by drainAndSend itself; gutting it to discard makes this go red
+// deterministically (the runSender-select form raced the normal send loop
+// and false-greened). This is the core of the fix: a fatal command's
+// terminal Done must reach the caller before the listener force-close,
+// not vanish from sendCh.
+func TestDrainAndSend_FlushesQueuedResponses(t *testing.T) {
+	stream := &fakeBidiStream{}
+	s := &session{
+		log:    logger.NewWriter(&bytes.Buffer{}),
+		stream: stream,
+		sendCh: make(chan *clawkerdv1.Response, 8),
+		cmds:   make(map[string]*runningCommand),
+	}
+	for i := 0; i < 3; i++ {
+		s.sendCh <- &clawkerdv1.Response{CommandId: fmt.Sprintf("cmd-%d", i)}
+	}
+
+	cancelled := false
+	s.drainAndSend(func() { cancelled = true })
+
+	require.Len(t, stream.sentResponses(), 3,
+		"drainAndSend must flush every queued Response to the stream, not discard")
+	require.False(t, cancelled,
+		"a successful flush must not cancel the session")
+}
+
+// TestSession_Stop_IdempotentAndNoHang drives the real Stop primitive
+// with a live sender goroutine and pins the two contracts it uniquely
+// owns: Stop returns promptly — it waits on senderDone, which the sender
+// closes once drained, NOT the full senderDrainGrace — and a second Stop
+// is a no-op rather than a double-close panic on drainCh.
+//
+// That Stop *delivers* queued responses is pinned deterministically by
+// TestRunSender_DrainChFlushesQueuedResponses; asserting it here would
+// race the sender's normal send loop against the drain and prove nothing.
+func TestSession_Stop_IdempotentAndNoHang(t *testing.T) {
+	stream := &fakeBidiStream{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := &session{
+		log:        logger.NewWriter(&bytes.Buffer{}),
+		stream:     stream,
+		sendCh:     make(chan *clawkerdv1.Response, 8),
+		cmds:       make(map[string]*runningCommand),
+		drainCh:    make(chan struct{}),
+		senderDone: make(chan struct{}),
+		cancel:     cancel,
+	}
+	go func() {
+		defer close(s.senderDone)
+		s.runSender(ctx, cancel)
+	}()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.Stop()
+		s.Stop() // idempotent: a second call must not re-close drainCh
+	}()
+	select {
+	case <-done:
+	case <-time.After(senderDrainGrace + 2*time.Second):
+		t.Fatal("Stop hung past the drain grace")
+	}
+}
+
+// TestMirrorExitCode pins the exit-code clamp invariant directly: valid
+// 0-255 codes pass through, while the -1 signal sentinel (and any
+// out-of-range value) folds to a generic non-zero rather than surfacing
+// a negative or a truncated byte as the daemon's exit status.
+func TestMirrorExitCode(t *testing.T) {
+	cases := []struct {
+		name string
+		in   int32
+		want int
+	}{
+		{"zero passes through", 0, 0},
+		{"normal code passes through", 42, 42},
+		{"max valid passes through", 255, 255},
+		{"signal-killed -1 clamps to generic", -1, 1},
+		{"out-of-range high clamps to generic", 256, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, mirrorExitCode(tc.in))
+		})
 	}
 }
 
@@ -389,7 +507,7 @@ func TestStartShellCommand_InitialStdinCloseStdinRace(t *testing.T) {
 			if r == nil {
 				continue
 			}
-			if c := r.GetStdout(); c != nil && r.CommandId == id {
+			if c := r.GetOutput(); c != nil && r.CommandId == id {
 				stdout.Write(c.Data)
 			}
 			if d := r.GetDone(); d != nil && r.CommandId == id {
@@ -416,8 +534,8 @@ func TestStartShellCommand_InitialStdinCloseStdinRace(t *testing.T) {
 // the in-flight Read on the drain side, the stdlib returns
 // "read |0: file already closed" (a *fs.PathError wrapping
 // os.ErrClosed) — not io.EOF. Without isExpectedDrainEnd filtering
-// this, drainStdout/drainStderr would surface ERROR_CODE_IO_ERROR
-// even though clawkerd's own audit log records outcome=completed.
+// this, drainOutput would surface ERROR_CODE_IO_ERROR even though
+// clawkerd's own audit log records outcome=completed.
 //
 // /bin/true is the canonical fast exit. Run it many times to keep
 // the race window covered across scheduler vagaries; assert no
@@ -471,7 +589,7 @@ func TestRunShellCommand_FastExitOutputPreserved(t *testing.T) {
 		var stdout strings.Builder
 		var sawDone bool
 		for _, r := range drainAll(s) {
-			if c := r.GetStdout(); c != nil {
+			if c := r.GetOutput(); c != nil {
 				stdout.Write(c.Data)
 			}
 			if d := r.GetDone(); d != nil {
@@ -580,8 +698,7 @@ func TestClassifyDropPayload(t *testing.T) {
 		{"Error", &clawkerdv1.Response{Payload: &clawkerdv1.Response_Error{Error: &clawkerdv1.Error{}}}, payloadClassTerminal},
 		{"RegisterDone", &clawkerdv1.Response{Payload: &clawkerdv1.Response_RegisterDone{RegisterDone: &clawkerdv1.RegisterDone{}}}, payloadClassTerminal},
 		{"Started", &clawkerdv1.Response{Payload: &clawkerdv1.Response_Started{Started: &clawkerdv1.Started{}}}, payloadClassChunk},
-		{"Stdout", &clawkerdv1.Response{Payload: &clawkerdv1.Response_Stdout{Stdout: &clawkerdv1.StdoutChunk{}}}, payloadClassChunk},
-		{"Stderr", &clawkerdv1.Response{Payload: &clawkerdv1.Response_Stderr{Stderr: &clawkerdv1.StderrChunk{}}}, payloadClassChunk},
+		{"Output", &clawkerdv1.Response{Payload: &clawkerdv1.Response_Output{Output: &clawkerdv1.OutputChunk{}}}, payloadClassChunk},
 		{"StageExit", &clawkerdv1.Response{Payload: &clawkerdv1.Response_StageExit{StageExit: &clawkerdv1.StageExit{}}}, payloadClassChunk},
 	}
 	for _, tt := range tests {

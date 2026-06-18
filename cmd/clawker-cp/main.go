@@ -1184,7 +1184,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// TestExecutor_Plan_PrivilegeAndShape — keep the enumeration there
 	// so this comment can't drift. See wireInitExecutor for the degrade
 	// contract.
-	initExec := wireInitExecutor(bus, log)
+	initExec := wireInitExecutor(bus, dockerCli, log)
 	dialer, err := agent.New(
 		log.With("component", "agent"),
 		dockerCli.APIClient,
@@ -1450,8 +1450,8 @@ func parseOtlpEndpoint(raw string) (endpoint string, insecure bool) {
 // returns nil; CP keeps running. Extracted as its own function so the
 // degrade-not-crash invariant is unit-testable — see
 // TestWireInitExecutor_NilBus.
-func wireInitExecutor(bus *overseer.Overseer, log *logger.Logger) *agent.Executor {
-	exec, err := agent.NewExecutor(bus, log.With("component", "agent.init"))
+func wireInitExecutor(bus *overseer.Overseer, dockerCli *docker.Client, log *logger.Logger) *agent.Executor {
+	exec, err := agent.NewExecutor(bus, dockerCli, log.With("component", "agent.init"))
 	if err == nil {
 		return exec
 	}

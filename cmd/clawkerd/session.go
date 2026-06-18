@@ -36,6 +36,15 @@ const chunkBufSize = 32 * 1024
 // once) without backpressuring the producer goroutines.
 const sendQueueDepth = 64
 
+// senderDrainGrace bounds how long session.Stop waits for the sender
+// goroutine to flush sendCh to the stream before returning. A
+// cooperating CP reads the stream continuously, so the flush completes
+// in microseconds; the grace only caps a stalled or hostile peer so the
+// teardown of a fatal command can't wedge PID 1 indefinitely. After the
+// grace, Stop returns and the caller's listener force-close unsticks the
+// parked Send.
+const senderDrainGrace = 2 * time.Second
+
 // runSession is the entry point invoked by clawkerdServer.Session.
 // It owns the bidi gRPC stream for the lifetime of one CP-side dial:
 // receives Commands, spawns per-command worker goroutines, serializes
@@ -51,7 +60,7 @@ const sendQueueDepth = 64
 // invokes it to fork the user CMD; threaded through as a non-optional
 // dependency so a wiring bug fails loud at clawkerdServer construction
 // rather than silently no-op'ing on first AgentReady.
-func runSession(stream clawkerdv1.ClawkerdService_SessionServer, log *logger.Logger, register *registerCoordinator, spawnEntry func() error, progress *progressReporter) error {
+func runSession(stream clawkerdv1.ClawkerdService_SessionServer, log *logger.Logger, register *registerCoordinator, spawnEntry func() error, progress *progressReporter, requestExit func(int)) error {
 	ctx, cancel := context.WithCancel(stream.Context())
 	defer cancel()
 
@@ -82,13 +91,17 @@ func runSession(stream clawkerdv1.ClawkerdService_SessionServer, log *logger.Log
 	}()
 
 	s := &session{
-		log:        log,
-		stream:     stream,
-		sendCh:     make(chan *clawkerdv1.Response, sendQueueDepth),
-		cmds:       make(map[string]*runningCommand),
-		register:   register,
-		spawnEntry: spawnEntry,
-		progress:   progress,
+		log:         log,
+		stream:      stream,
+		sendCh:      make(chan *clawkerdv1.Response, sendQueueDepth),
+		cmds:        make(map[string]*runningCommand),
+		register:    register,
+		spawnEntry:  spawnEntry,
+		progress:    progress,
+		requestExit: requestExit,
+		cancel:      cancel,
+		drainCh:     make(chan struct{}),
+		senderDone:  make(chan struct{}),
 	}
 
 	// Sender goroutine: single writer to stream.Send (gRPC's
@@ -98,10 +111,13 @@ func runSession(stream clawkerdv1.ClawkerdService_SessionServer, log *logger.Log
 	// goroutines blocked on `sendCh <- resp` would park until the
 	// receiver loop independently noticed the broken transport,
 	// stretching the truncated-output window arbitrarily.
-	var senderWG sync.WaitGroup
-	senderWG.Add(1)
 	go func() {
-		defer senderWG.Done()
+		// senderDone closes on exit (panic or normal) so Stop can wait
+		// for the flush. LIFO defer order: recoverGoroutine runs first
+		// on panic (cancels ctx so producers unblock), then senderDone
+		// closes — Stop's drain-wait never deadlocks on a panicked
+		// sender.
+		defer close(s.senderDone)
 		// PID-1 resilience: a panic inside runSender (e.g. from a
 		// malformed gRPC frame nil-derefing inside stream.Send) would
 		// otherwise kill clawkerd. Recover, cancel the session ctx so
@@ -115,18 +131,12 @@ func runSession(stream clawkerdv1.ClawkerdService_SessionServer, log *logger.Log
 	// or ctx is cancelled.
 	recvErr := s.runReceiver(ctx)
 
-	// Stop accepting new commands and tear down anything still
-	// running. Cancelling each command's ctx propagates SIGKILL via
-	// exec.CommandContext.
-	cancel()
-	s.shutdownRunning()
-
-	// Wait for the sender goroutine to drain. It exits when ctx is
-	// done, but there may be in-flight Responses we want delivered.
-	// shutdownRunning above doesn't drain sendCh — sender does that
-	// via the ctx-done branch and any final sends after cancel are
-	// best-effort.
-	senderWG.Wait()
+	// Receiver returned (stream closed or broke). Quiesce the session
+	// through the single teardown primitive: cancel in-flight commands
+	// and flush any queued Responses to the stream. Stop is idempotent —
+	// a command-requested exit (exit_on_non_zero) may have already run it
+	// before signalling the daemon to exit.
+	s.Stop()
 
 	return recvErr
 }
@@ -161,6 +171,31 @@ type session struct {
 	// rather than re-emitting init banners. nil-tolerant; test fixtures
 	// leave it unset.
 	progress *progressReporter
+
+	// requestExit asks the main loop to run the normal graceful
+	// shutdown and exit PID 1 with the given code. Driven by a command
+	// carrying exit_on_non_zero that exited non-zero (the code is
+	// mirrored). Closed over a channel in main(); shared across every
+	// Session. Production rejects a nil seam at startClawkerdListener; the
+	// runShellCommand guard covers only direct test construction
+	// (newTestSession), where the self-exit degrades to a logged no-op.
+	requestExit func(code int)
+
+	// cancel tears down the session ctx (derived from the stream ctx in
+	// runSession). Stored so Stop can quiesce the session from a command
+	// worker goroutine, which holds only its own per-command ctx. This is
+	// a CancelFunc, not a stored context.Context.
+	cancel context.CancelFunc
+	// drainCh is closed by Stop to ask the sender to flush every queued
+	// Response to the stream (graceful) instead of discarding on the
+	// ctx-cancel teardown path.
+	drainCh chan struct{}
+	// senderDone is closed when the sender goroutine exits, so Stop can
+	// wait (bounded by senderDrainGrace) for the flush to finish.
+	senderDone chan struct{}
+	// stopOnce makes Stop idempotent: the runSession teardown tail and a
+	// command-requested exit (exit_on_non_zero) can both call it.
+	stopOnce sync.Once
 }
 
 // handleRegisterRequired drives the CP-triggered Register handshake.
@@ -475,6 +510,14 @@ func (s *session) runSender(ctx context.Context, cancel context.CancelFunc) {
 					return
 				}
 			}
+		case <-s.drainCh:
+			// Graceful stop (Stop closed drainCh): flush every queued
+			// Response to the stream, then exit. Unlike the ctx-cancel
+			// branch above — which sweeps and discards on teardown —
+			// this delivers a fatal command's terminal Response before
+			// the listener force-closes.
+			s.drainAndSend(cancel)
+			return
 		case resp := <-s.sendCh:
 			if resp == nil {
 				continue
@@ -497,6 +540,80 @@ func (s *session) runSender(ctx context.Context, cancel context.CancelFunc) {
 	}
 }
 
+// drainAndSend flushes every currently-buffered Response to the stream,
+// then returns. Used by the graceful-stop path (Stop closes drainCh) so
+// a fatal command's terminal Response is delivered before the listener
+// force-closes — the ctx-cancel teardown path discards instead. A Send
+// failure (stream already dead, e.g. after a force-close) cancels the
+// session and stops the drain.
+//
+// Correctness rests on the caller: Stop runs shutdownRunning() first and
+// is invoked by a worker that has already shipped its own terminal
+// Response, so no producer adds further frames a caller cares about. Any
+// late best-effort chunk from a cancelled sibling command that races the
+// empty-channel exit is droppable by the same contract as the ctx-cancel
+// sweep.
+func (s *session) drainAndSend(cancel context.CancelFunc) {
+	for {
+		select {
+		case resp := <-s.sendCh:
+			if resp == nil {
+				continue
+			}
+			if err := s.stream.Send(resp); err != nil {
+				s.log.Error().Err(err).
+					Str("event", "session_send_failed").
+					Str("command_id", resp.CommandId).
+					Msg("stream.Send failed during drain; cancelling session ctx and abandoning sender")
+				cancel()
+				return
+			}
+			s.settleInitStep(resp)
+		default:
+			return
+		}
+	}
+}
+
+// Stop sunsets all activity in the session — in-flight commands and
+// queued Responses — then returns once the session is quiesced. It does
+// NOT terminate the Session RPC handler: runReceiver stays parked on
+// stream.Recv (CP holds the stream open from its side), so the caller
+// still force-closes the listener to end the handler. Stop's job is to
+// guarantee that, before that force-close, every running command is
+// cancelled and every queued Response has been flushed to the stream —
+// closing the window where a fatal command's terminal Response sits in
+// sendCh and is lost to the force-close.
+//
+// Idempotent (sync.Once): both the runSession teardown tail and a
+// command-requested exit (exit_on_non_zero) call it.
+func (s *session) Stop() {
+	s.stopOnce.Do(func() {
+		// Cancel in-flight commands (SIGKILL their stages via
+		// exec.CommandContext). A command that triggered Stop itself has
+		// already shipped its terminal Response and finished its sends,
+		// so cancelling its already-settled ctx is a no-op.
+		s.shutdownRunning()
+		// Ask the sender to flush sendCh to the stream, then wait
+		// (bounded) for it to finish. A cooperating CP drains in
+		// microseconds; the grace caps a stalled peer so a fatal
+		// command's teardown can't wedge PID 1.
+		close(s.drainCh)
+		select {
+		case <-s.senderDone:
+		case <-time.After(senderDrainGrace):
+			s.log.Warn().
+				Str("event", "session_sender_drain_timeout").
+				Dur("grace", senderDrainGrace).
+				Msg("clawkerd: sender did not finish flushing within grace; proceeding to teardown")
+		}
+		// Sender has flushed (or timed out). Cancel the session ctx so
+		// any late s.send call no-ops via its ctx.Done branch instead of
+		// parking on a sendCh nobody drains.
+		s.cancel()
+	})
+}
+
 // settleInitStep emits the user-facing completion line for an init
 // step's terminal Response after a successful stream.Send. Non-init
 // CommandIDs (parseInitStep returns false) and non-terminal payloads
@@ -509,9 +626,12 @@ func (s *session) settleInitStep(resp *clawkerdv1.Response) {
 	if !ok {
 		return
 	}
-	switch resp.Payload.(type) {
+	switch p := resp.Payload.(type) {
 	case *clawkerdv1.Response_Done:
-		s.progress.EndStep(label, true)
+		// A non-zero exit is still a Done (only transport/protocol
+		// failures are Error), so the init progress line must reflect
+		// the exit code — otherwise a failed step renders the green ✓.
+		s.progress.EndStep(label, p.Done.GetFinalExitCode() == 0)
 	case *clawkerdv1.Response_Error:
 		s.progress.EndStep(label, false)
 	}
@@ -587,7 +707,7 @@ func classifyDropPayload(resp *clawkerdv1.Response) payloadClass {
 	switch resp.Payload.(type) {
 	case *clawkerdv1.Response_Done, *clawkerdv1.Response_Error, *clawkerdv1.Response_RegisterDone:
 		return payloadClassTerminal
-	case *clawkerdv1.Response_Started, *clawkerdv1.Response_Stdout, *clawkerdv1.Response_Stderr, *clawkerdv1.Response_StageExit:
+	case *clawkerdv1.Response_Started, *clawkerdv1.Response_Output, *clawkerdv1.Response_StageExit:
 		return payloadClassChunk
 	}
 	return payloadClassUnknown
@@ -758,7 +878,7 @@ func (s *session) startShellCommand(ctx context.Context, id string, sc *clawkerd
 }
 
 // runShellCommand is the per-command worker. Lifetime: spawn → reap.
-// Sends Started/Stdout/Stderr/StageExit/Done/Error responses through
+// Sends Started/Output/StageExit/Done/Error responses through
 // s.sendCh. Removes itself from s.cmds on exit.
 //
 // Audit logging: clawkerd runs as root inside the container and
@@ -924,25 +1044,25 @@ func (s *session) runShellCommand(ctx context.Context, rc *runningCommand, sc *c
 		writeEnds = append(writeEnds, pw)
 	}
 
-	finalRead, finalWrite, ok := newPipe("final stage stdout")
+	finalRead, finalWrite, ok := newPipe("combined output")
 	if !ok {
 		return
 	}
-	cmds[len(cmds)-1].Stdout = finalWrite
-	finalStdout := io.ReadCloser(finalRead)
-	writeEnds = append(writeEnds, finalWrite)
-
-	// Per-stage stderr pipes for streaming StderrChunk.
-	stderrPipes := make([]io.ReadCloser, len(cmds))
+	// One combined output stream. Every stage's stderr and the final
+	// stage's stdout share this single write end (2>&1), so the drainer
+	// reads the command's combined output in kernel write order — the
+	// interleaving a controlling terminal produces. An intermediate
+	// stage's STDOUT is pipeline data (it feeds the next stage's stdin)
+	// and stays on its own stage pipe; only stderr joins the combined
+	// stream. finalWrite is the sole parent copy no matter how many
+	// stages dup it on Start, so it is appended to writeEnds once and
+	// closed once.
 	for i := range cmds {
-		pr, pw, ok := newPipe(fmt.Sprintf("stage[%d] stderr", i))
-		if !ok {
-			return
-		}
-		cmds[i].Stderr = pw
-		stderrPipes[i] = pr
-		writeEnds = append(writeEnds, pw)
+		cmds[i].Stderr = finalWrite
 	}
+	cmds[len(cmds)-1].Stdout = finalWrite
+	combinedOut := io.ReadCloser(finalRead)
+	writeEnds = append(writeEnds, finalWrite)
 
 	// Start each stage. Failure mid-way kills already-started
 	// stages by ctx cancel.
@@ -1029,25 +1149,15 @@ func (s *session) runShellCommand(ctx context.Context, rc *runningCommand, sc *c
 	// stage reaped.
 	var wg sync.WaitGroup
 
-	// Stderr drainers — one per stage, tagged by stage_index.
-	for i := range cmds {
-
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			// PID-1 resilience: defer-LIFO means recover runs first
-			// on panic, then wg.Done — wg.Wait won't deadlock.
-			defer recoverGoroutine(s.log.With("command_id", rc.id, "stage_index", i), "drain_stderr", nil)
-			s.drainStderr(ctx, rc, uint32(i), stderrPipes[i])
-		}()
-	}
-
-	// Stdout drainer — final stage only.
+	// Single combined-output drainer: reads the one stream carrying the
+	// final stage's stdout and every stage's stderr, streams each chunk
+	// to the caller as an OutputChunk, and echoes it live to the local
+	// console when the command set print_output.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		defer recoverGoroutine(s.log.With("command_id", rc.id), "drain_stdout", nil)
-		s.drainStdout(ctx, rc, finalStdout)
+		defer recoverGoroutine(s.log.With("command_id", rc.id), "drain_output", nil)
+		s.drainOutput(ctx, rc, sc, combinedOut)
 	}()
 
 	// Stage reapers — emit StageExit for each as it finishes. Using
@@ -1139,10 +1249,7 @@ func (s *session) runShellCommand(ctx context.Context, rc *runningCommand, sc *c
 	// before wg.Wait would race a drainer mid-Read; the stdlib's
 	// close-on-Wait of exactly these read ends mid-drain was the original
 	// truncated-output bug.
-	s.closePipeOnce(rc.id, "final_stdout", finalStdout, &closeStats)
-	for i, p := range stderrPipes {
-		s.closePipeOnce(rc.id, fmt.Sprintf("stage[%d]_stderr", i), p, &closeStats)
-	}
+	s.closePipeOnce(rc.id, "combined_output", combinedOut, &closeStats)
 
 	if timedOut.Load() {
 		s.send(ctx, errResponse(rc.id,
@@ -1161,6 +1268,41 @@ func (s *session) runShellCommand(ctx context.Context, rc *runningCommand, sc *c
 	})
 	auditFinalExit = finalExit
 	auditOutcome = "completed"
+
+	// exit_on_non_zero: CP flagged this command's failure as fatal to
+	// the daemon. Mirror the command's exit code as clawkerd's (PID 1)
+	// exit status so it surfaces to the user's terminal as the container
+	// exit code. requestExit signals the main loop to run the normal
+	// graceful shutdown; the decision that this is fatal lives in CP
+	// (the flag), never in clawkerd. Production rejects a nil seam at
+	// startClawkerdListener, so the nil guard below covers only direct
+	// test construction, where the self-exit degrades to a logged no-op.
+	if sc.GetExitOnNonZero() && finalExit != 0 {
+		mirror := mirrorExitCode(finalExit)
+		s.log.Info().
+			Str("event", "command_exit_on_non_zero").
+			Str("command_id", rc.id).
+			Int32("final_exit_code", finalExit).
+			Int("mirrored_exit_code", mirror).
+			Msg("clawkerd: command exited non-zero with exit_on_non_zero set; requesting daemon shutdown mirroring exit code")
+		if s.requestExit != nil {
+			// Flush this command's terminal Done (and anything else
+			// queued) to the stream BEFORE signalling the daemon to
+			// exit. requestExit wakes the main loop, which force-closes
+			// the listener; without a flush first, the Done — still in
+			// sendCh — is lost to that force-close and CP misreads the
+			// fatal command as a transport break, discarding the output
+			// it captured. Stop quiesces the session and drains the
+			// sender; the force-close then only ends the parked receiver.
+			s.Stop()
+			s.requestExit(mirror)
+		} else {
+			s.log.Warn().
+				Str("event", "command_exit_on_non_zero_no_seam").
+				Str("command_id", rc.id).
+				Msg("clawkerd: exit_on_non_zero set but no requestExit seam wired; daemon will not self-exit")
+		}
+	}
 }
 
 // isExpectedDrainEnd reports whether err signals an orderly end of
@@ -1191,20 +1333,27 @@ func isStdinPeerClosed(err error) bool {
 	return errors.Is(err, io.ErrClosedPipe) || errors.Is(err, syscall.EPIPE)
 }
 
-// drainStdout reads chunks from the final stage's stdout pipe and
-// emits StdoutChunk responses until EOF or read error. Read errors
-// other than the orderly-close set are surfaced as IO_ERROR but do
-// not kill the pipeline — the reaper still emits Done/StageExit.
-func (s *session) drainStdout(ctx context.Context, rc *runningCommand, r io.ReadCloser) {
+// drainOutput reads the command's combined output stream — the final
+// stage's stdout plus every stage's stderr, merged at the shared write
+// end — and emits an OutputChunk per read until EOF or read error.
+// When the command set print_output it also echoes each chunk live to
+// the local console as the command runs. Read errors other than the
+// orderly-close set are surfaced as IO_ERROR but do not kill the
+// pipeline — the reaper still emits Done/StageExit.
+func (s *session) drainOutput(ctx context.Context, rc *runningCommand, sc *clawkerdv1.ShellCommand, r io.ReadCloser) {
+	echo := sc.GetPrintOutput()
 	buf := make([]byte, chunkBufSize)
 	for {
 		n, err := r.Read(buf)
 		if n > 0 {
 			data := make([]byte, n)
 			copy(data, buf[:n])
+			if echo {
+				s.progress.WriteOutput(data)
+			}
 			s.send(ctx, &clawkerdv1.Response{
 				CommandId: rc.id,
-				Payload:   &clawkerdv1.Response_Stdout{Stdout: &clawkerdv1.StdoutChunk{Data: data}},
+				Payload:   &clawkerdv1.Response_Output{Output: &clawkerdv1.OutputChunk{Data: data}},
 			})
 		}
 		if err == nil {
@@ -1215,36 +1364,7 @@ func (s *session) drainStdout(ctx context.Context, rc *runningCommand, r io.Read
 		}
 		s.send(ctx, errResponse(rc.id,
 			clawkerdv1.ErrorCode_ERROR_CODE_IO_ERROR,
-			fmt.Sprintf("stdout drain: %v", err)))
-		return
-	}
-}
-
-// drainStderr is the per-stage analog of drainStdout.
-func (s *session) drainStderr(ctx context.Context, rc *runningCommand, stageIndex uint32, r io.ReadCloser) {
-	buf := make([]byte, chunkBufSize)
-	for {
-		n, err := r.Read(buf)
-		if n > 0 {
-			data := make([]byte, n)
-			copy(data, buf[:n])
-			s.send(ctx, &clawkerdv1.Response{
-				CommandId: rc.id,
-				Payload: &clawkerdv1.Response_Stderr{Stderr: &clawkerdv1.StderrChunk{
-					StageIndex: stageIndex,
-					Data:       data,
-				}},
-			})
-		}
-		if err == nil {
-			continue
-		}
-		if isExpectedDrainEnd(err) {
-			return
-		}
-		s.send(ctx, errResponse(rc.id,
-			clawkerdv1.ErrorCode_ERROR_CODE_IO_ERROR,
-			fmt.Sprintf("stderr drain stage[%d]: %v", stageIndex, err)))
+			fmt.Sprintf("output drain: %v", err)))
 		return
 	}
 }
@@ -1480,6 +1600,18 @@ func exitCodeOf(c *exec.Cmd, waitErr error) int32 {
 		return int32(ws.ExitStatus())
 	}
 	return int32(c.ProcessState.ExitCode())
+}
+
+// mirrorExitCode maps a final-stage exit code onto a process exit status
+// (0-255) suitable for mirroring as the daemon's own exit. exitCodeOf
+// returns -1 for a signal-killed final stage (no clean code); fold that
+// — and any out-of-range value — to a generic non-zero rather than
+// surface a nonsensical negative or a truncated byte to the kernel.
+func mirrorExitCode(finalExit int32) int {
+	if finalExit < 0 || finalExit > 255 {
+		return 1
+	}
+	return int(finalExit)
 }
 
 // pipeCloseStats accumulates per-runShellCommand close-error

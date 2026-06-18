@@ -10,13 +10,30 @@ import (
 	"testing"
 	"time"
 
+	moby "github.com/moby/moby/client"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	clawkerdv1 "github.com/schmitthub/clawker/api/clawkerd/v1"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/controlplane/overseer"
+	"github.com/schmitthub/clawker/internal/docker"
+	dockermocks "github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/logger"
 )
+
+// selfExitDocker returns a *docker.Client whose ContainerWait reports the
+// container already not-running, so killAfterGrace takes the self-exit path
+// and never issues a SIGKILL. Used by Run tests that drive a fatal step (the
+// step failure — not container teardown — is what they assert).
+func selfExitDocker(t *testing.T) *docker.Client {
+	t.Helper()
+	fake := dockermocks.NewFakeClient(configmocks.NewBlankConfig())
+	fake.SetupContainerWait(0)
+	fake.SetupContainerKill()
+	return fake.Client
+}
 
 // expectedInitStepNames pins the static plan to the load-bearing
 // vocabulary subscribers (CLI WatchAgent, monitoring, log greppers)
@@ -154,7 +171,7 @@ func TestExecutor_Run_PanicInStep(t *testing.T) {
 	fake := newFakeStream(ctx)
 	stream := &panickingSendStream{fakeSessionStream: fake, panicAtSend: 1}
 
-	exec, err := NewExecutor(bus, logger.Nop())
+	exec, err := NewExecutor(bus, selfExitDocker(t), logger.Nop())
 	require.NoError(t, err)
 	target := InitTarget{ContainerID: "c-panic-1234567890ab", AgentName: "dev", Project: "clawker"}
 
@@ -182,7 +199,7 @@ func TestExecutor_Run_PanicInStep(t *testing.T) {
 // sees it. main.go logs and proceeds with initExec = nil; the dialer
 // logs agent_init_executor_unset per dial. CP stays up.
 func TestNewExecutor_NilBusReturnsError(t *testing.T) {
-	exec, err := NewExecutor(nil, logger.Nop())
+	exec, err := NewExecutor(nil, nil, logger.Nop())
 	require.Error(t, err, "NewExecutor must reject nil bus")
 	assert.Nil(t, exec)
 	assert.Contains(t, err.Error(), "bus is required")
@@ -205,7 +222,7 @@ func TestExecutor_Plan_PrivilegeAndShape(t *testing.T) {
 	bus := overseer.New(overseer.Options{})
 	require.NoError(t, bus.Start(context.Background()))
 	t.Cleanup(func() { _ = bus.Close() })
-	exec, err := NewExecutor(bus, logger.Nop())
+	exec, err := NewExecutor(bus, selfExitDocker(t), logger.Nop())
 	require.NoError(t, err)
 	plan := exec.plan()
 	require.NotEmpty(t, plan)
@@ -327,7 +344,7 @@ func TestExecutor_Run_HappyPath(t *testing.T) {
 	defer cancel()
 
 	stream := newFakeStream(ctx)
-	exec, errExec := NewExecutor(bus, logger.Nop())
+	exec, errExec := NewExecutor(bus, selfExitDocker(t), logger.Nop())
 	require.NoError(t, errExec)
 	target := InitTarget{ContainerID: "c-happy-1234567890ab", AgentName: "dev", Project: "clawker"}
 
@@ -393,7 +410,7 @@ func TestExecutor_Run_StepFailureHaltsAndPublishesFailed(t *testing.T) {
 	defer cancel()
 
 	stream := newFakeStream(ctx)
-	exec, errExec := NewExecutor(bus, logger.Nop())
+	exec, errExec := NewExecutor(bus, selfExitDocker(t), logger.Nop())
 	require.NoError(t, errExec)
 	target := InitTarget{ContainerID: "c-fail-9876543210ab", AgentName: "dev", Project: "clawker"}
 
@@ -409,7 +426,7 @@ func TestExecutor_Run_StepFailureHaltsAndPublishesFailed(t *testing.T) {
 			if stepCount == failAtIdx {
 				stream.recvCh <- recvFrame{resp: &clawkerdv1.Response{
 					CommandId: cmd.CommandId,
-					Payload:   &clawkerdv1.Response_Stderr{Stderr: &clawkerdv1.StderrChunk{Data: []byte("boom")}},
+					Payload:   &clawkerdv1.Response_Output{Output: &clawkerdv1.OutputChunk{Data: []byte("boom")}},
 				}}
 				stream.recvCh <- recvFrame{resp: &clawkerdv1.Response{
 					CommandId: cmd.CommandId,
@@ -462,7 +479,7 @@ func TestExecutor_Run_TransportError(t *testing.T) {
 	defer cancel()
 
 	stream := newFakeStream(ctx)
-	exec, errExec := NewExecutor(bus, logger.Nop())
+	exec, errExec := NewExecutor(bus, selfExitDocker(t), logger.Nop())
 	require.NoError(t, errExec)
 	target := InitTarget{ContainerID: "c-transport-1234567890ab", AgentName: "dev", Project: "clawker"}
 
@@ -513,7 +530,7 @@ func TestExecutor_Run_StreamErrorResponse(t *testing.T) {
 			defer cancel()
 
 			stream := newFakeStream(ctx)
-			exec, errExec := NewExecutor(bus, logger.Nop())
+			exec, errExec := NewExecutor(bus, selfExitDocker(t), logger.Nop())
 			require.NoError(t, errExec)
 			target := InitTarget{ContainerID: "c-err-1234567890ab", AgentName: "dev", Project: "clawker"}
 
@@ -573,7 +590,7 @@ func TestExecutor_Run_StateProjection(t *testing.T) {
 	defer completedSub.Unsubscribe()
 
 	target := InitTarget{ContainerID: "c-proj-1234567890ab", AgentName: "dev", Project: "clawker"}
-	exec, errExec := NewExecutor(bus, logger.Nop())
+	exec, errExec := NewExecutor(bus, selfExitDocker(t), logger.Nop())
 	require.NoError(t, errExec)
 
 	// Cycle 1: fail at step "config" (idx 1).
@@ -676,7 +693,7 @@ func TestExecutor_Run_CloseStdinFollowsEveryShellStep(t *testing.T) {
 	defer cancel()
 
 	stream := newFakeStream(ctx)
-	exec, errExec := NewExecutor(bus, logger.Nop())
+	exec, errExec := NewExecutor(bus, selfExitDocker(t), logger.Nop())
 	require.NoError(t, errExec)
 	target := InitTarget{ContainerID: "c-cs-1234567890ab", AgentName: "dev", Project: "clawker"}
 
@@ -740,7 +757,7 @@ func TestExecutor_Run_ParallelStreamsBothComplete(t *testing.T) {
 	require.NoError(t, bus.Start(context.Background()))
 	t.Cleanup(func() { _ = bus.Close() })
 
-	exec, err := NewExecutor(bus, logger.Nop())
+	exec, err := NewExecutor(bus, selfExitDocker(t), logger.Nop())
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -797,7 +814,7 @@ func TestExecutor_Run_PlanIdempotent(t *testing.T) {
 	require.True(t, ok)
 	defer completedSub.Unsubscribe()
 
-	exec, err := NewExecutor(bus, logger.Nop())
+	exec, err := NewExecutor(bus, selfExitDocker(t), logger.Nop())
 	require.NoError(t, err)
 	target := InitTarget{ContainerID: "c-idem-1234567890ab", AgentName: "dev", Project: "clawker"}
 
@@ -858,7 +875,7 @@ func TestExecutor_Run_IgnoresUnknownAndMismatchedFrames(t *testing.T) {
 	defer cancel()
 
 	stream := newFakeStream(ctx)
-	exec, errExec := NewExecutor(bus, logger.Nop())
+	exec, errExec := NewExecutor(bus, selfExitDocker(t), logger.Nop())
 	require.NoError(t, errExec)
 	target := InitTarget{ContainerID: "c-noise-1234567890ab", AgentName: "dev", Project: "clawker"}
 
@@ -882,12 +899,11 @@ func TestExecutor_Run_IgnoresUnknownAndMismatchedFrames(t *testing.T) {
 				CommandId: cmd.CommandId,
 				Payload:   &clawkerdv1.Response_Started{Started: &clawkerdv1.Started{}},
 			}}
-			// Stdout: explicit continue arm — init steps run with
-			// stdout discarded; only Stderr/Done/Error feed the
-			// failure pipeline.
+			// Output: the command's combined output — folded into the
+			// failure detail, discarded here because the step succeeds.
 			stream.recvCh <- recvFrame{resp: &clawkerdv1.Response{
 				CommandId: cmd.CommandId,
-				Payload:   &clawkerdv1.Response_Stdout{Stdout: &clawkerdv1.StdoutChunk{Data: []byte("ignored stdout")}},
+				Payload:   &clawkerdv1.Response_Output{Output: &clawkerdv1.OutputChunk{Data: []byte("captured output")}},
 			}}
 			// Real terminal frame.
 			stream.recvCh <- recvFrame{resp: &clawkerdv1.Response{
@@ -901,7 +917,7 @@ func TestExecutor_Run_IgnoresUnknownAndMismatchedFrames(t *testing.T) {
 	close(stream.sent)
 	<-doneFeeder
 	require.NoError(t, err,
-		"Run must tolerate noise frames (mismatched command_id, Started, Stdout) and succeed when the terminal Done lands")
+		"Run must tolerate noise frames (mismatched command_id, Started, Output) and succeed when the terminal Done lands")
 }
 
 // TestRunInit_NoExecutorWired pins the misconfiguration warning
@@ -916,4 +932,156 @@ func TestRunInit_NoExecutorWired(t *testing.T) {
 	d.runInit(context.Background(), "c-1", establishResult{}, stepLog)
 	assert.Contains(t, buf.String(), "agent_init_executor_unset",
 		"missing-executor path must emit the diagnostic event so operators can grep for it")
+}
+
+// TestExecutor_Run_CapturesCombinedOutputInDetail proves runStep folds
+// the command's combined output (one OutputChunk stream) into the failure
+// Detail. A regression that dropped output frames would leave the Detail
+// carrying only "exit_code=N".
+func TestExecutor_Run_CapturesCombinedOutputInDetail(t *testing.T) {
+	const failAtIdx = 2 // "git"
+	bus := overseer.New(overseer.Options{})
+	require.NoError(t, bus.Start(context.Background()))
+	t.Cleanup(func() { _ = bus.Close() })
+
+	caps := subscribeInitEvents(t, bus)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	stream := newFakeStream(ctx)
+	exec, errExec := NewExecutor(bus, selfExitDocker(t), logger.Nop())
+	require.NoError(t, errExec)
+	target := InitTarget{ContainerID: "c-out-1234567890ab", AgentName: "dev", Project: "clawker"}
+
+	doneFeeder := make(chan struct{})
+	stepCount := 0
+	go func() {
+		defer close(doneFeeder)
+		for cmd := range stream.sent {
+			if _, isClose := cmd.Payload.(*clawkerdv1.Command_CloseStdin); isClose {
+				continue
+			}
+			if stepCount == failAtIdx {
+				stream.recvCh <- recvFrame{resp: &clawkerdv1.Response{
+					CommandId: cmd.CommandId,
+					Payload:   &clawkerdv1.Response_Output{Output: &clawkerdv1.OutputChunk{Data: []byte("combined-output-xyz")}},
+				}}
+				stream.recvCh <- recvFrame{resp: &clawkerdv1.Response{
+					CommandId: cmd.CommandId,
+					Payload:   &clawkerdv1.Response_Done{Done: &clawkerdv1.Done{FinalExitCode: 1}},
+				}}
+			} else {
+				stream.recvCh <- recvFrame{resp: &clawkerdv1.Response{
+					CommandId: cmd.CommandId,
+					Payload:   &clawkerdv1.Response_Done{Done: &clawkerdv1.Done{FinalExitCode: 0}},
+				}}
+			}
+			stepCount++
+		}
+	}()
+
+	err := exec.Run(ctx, stream, target)
+	close(stream.sent)
+	<-doneFeeder
+	require.Error(t, err)
+
+	events := caps.drain(500 * time.Millisecond)
+	require.Len(t, events.stepFailed, 1)
+	assert.Contains(t, events.stepFailed[0].Detail, "combined-output-xyz",
+		"combined output must be folded into the failure detail")
+	assert.Contains(t, events.stepFailed[0].Detail, "output:",
+		"detail must label the captured combined output")
+}
+
+// TestPlan_ShellStepsCarryFlags pins the per-step flag policy the init
+// plan configures: every shell step sets exit_on_non_zero (a non-zero
+// exit halts the plan), and only the user-authored hooks (post-init,
+// pre-run) set print_output. clawker's own plumbing steps stay quiet on
+// success. The builder (command) passes the configured Shell through
+// untouched.
+func TestPlan_ShellStepsCarryFlags(t *testing.T) {
+	exec, err := NewExecutor(overseer.New(overseer.Options{}), nil, logger.Nop())
+	require.NoError(t, err)
+
+	var sawShellStep bool
+	for _, st := range exec.plan() {
+		sh, ok := st.(shellStep)
+		if !ok {
+			continue // agent-ready is not a ShellCommand
+		}
+		sawShellStep = true
+		cmd, follow := sh.command("init-test-" + sh.Name)
+		require.True(t, follow)
+		shell := cmd.GetShell()
+		require.NotNil(t, shell, "step %q must carry a ShellCommand", sh.Name)
+
+		assert.True(t, shell.GetExitOnNonZero(),
+			"every shell init step is fatal → exit_on_non_zero must be set (step %q)", sh.Name)
+
+		wantPrint := sh.Name == consts.HookPostInit || sh.Name == consts.HookPreRun
+		assert.Equal(t, wantPrint, shell.GetPrintOutput(),
+			"print_output must be set only for user hooks (step %q)", sh.Name)
+	}
+	require.True(t, sawShellStep, "plan must contain shell steps")
+}
+
+// TestKillAfterGrace_SelfExit: a container that reports not-running within
+// the grace is a clean self-exit — killAfterGrace returns nil and never
+// issues a SIGKILL.
+func TestKillAfterGrace_SelfExit(t *testing.T) {
+	fake := dockermocks.NewFakeClient(configmocks.NewBlankConfig())
+	fake.SetupContainerWait(0) // already not-running
+	fake.SetupContainerKill()
+	exec, err := NewExecutor(overseer.New(overseer.Options{}), fake.Client, logger.Nop())
+	require.NoError(t, err)
+
+	require.NoError(t, exec.killAfterGrace(context.Background(), "c-selfexit-1234567890ab", logger.Nop()))
+	fake.AssertNotCalled(t, "ContainerKill")
+}
+
+// TestKillAfterGrace_BackstopSIGKILL: when ContainerWait cannot confirm a
+// self-exit, killAfterGrace escalates to SIGKILL and reports success once
+// the kill lands.
+func TestKillAfterGrace_BackstopSIGKILL(t *testing.T) {
+	fake := dockermocks.NewFakeClient(configmocks.NewBlankConfig())
+	fake.FakeAPI.ContainerWaitFn = func(_ context.Context, _ string, _ moby.ContainerWaitOptions) moby.ContainerWaitResult {
+		errCh := make(chan error, 1)
+		errCh <- errors.New("wait stream broke")
+		return moby.ContainerWaitResult{Error: errCh}
+	}
+	fake.SetupContainerKill()
+	exec, err := NewExecutor(overseer.New(overseer.Options{}), fake.Client, logger.Nop())
+	require.NoError(t, err)
+
+	require.NoError(t, exec.killAfterGrace(context.Background(), "c-wedged-1234567890ab", logger.Nop()))
+	fake.AssertCalled(t, "ContainerKill")
+}
+
+// TestKillAfterGrace_ShutdownStillKillsOnLiveCtx: a CP shutdown cancels the
+// parent ctx mid-grace. killAfterGrace must still SIGKILL the doomed
+// container — and must issue that kill on a live (Background) context, not
+// the cancelled parent, or the moby client rejects it before it reaches the
+// daemon and the container leaks.
+func TestKillAfterGrace_ShutdownStillKillsOnLiveCtx(t *testing.T) {
+	fake := dockermocks.NewFakeClient(configmocks.NewBlankConfig())
+	// ContainerWait never resolves, so the only ready select arm is the
+	// cancelled parent ctx (the shutdown).
+	fake.FakeAPI.ContainerWaitFn = func(_ context.Context, _ string, _ moby.ContainerWaitOptions) moby.ContainerWaitResult {
+		return moby.ContainerWaitResult{} // nil channels — Result/Error never fire
+	}
+	var killCtxLive bool
+	fake.FakeAPI.ContainerKillFn = func(ctx context.Context, _ string, _ moby.ContainerKillOptions) (moby.ContainerKillResult, error) {
+		killCtxLive = ctx.Err() == nil
+		return moby.ContainerKillResult{}, nil
+	}
+	exec, err := NewExecutor(overseer.New(overseer.Options{}), fake.Client, logger.Nop())
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // CP shutdown already happened
+
+	require.NoError(t, exec.killAfterGrace(ctx, "c-shutdown-1234567890ab", logger.Nop()))
+	fake.AssertCalled(t, "ContainerKill")
+	assert.True(t, killCtxLive,
+		"SIGKILL must run on a live ctx (Background), not the cancelled parent — else the moby client rejects it before the daemon and the container leaks")
 }

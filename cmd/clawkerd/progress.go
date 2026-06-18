@@ -112,6 +112,23 @@ func (p *progressReporter) EndStep(label initStepLabel, ok bool) {
 	fmt.Fprintf(p.out, "  %s %s (failed)\n", p.red("✗"), label.Active)
 }
 
+// WriteOutput echoes raw captured command output to the boot console,
+// serialized against the status lines via the same mutex. Suppressed
+// once the reporter is stopped — post-spawn the user CMD owns the TTY,
+// so a command dispatched after boot cannot garble the user's session.
+// Nil-tolerant; empty writes are skipped.
+func (p *progressReporter) WriteOutput(b []byte) {
+	if p == nil || len(b) == 0 {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.stopped {
+		return
+	}
+	fmt.Fprintf(p.out, "%s", b)
+}
+
 // finalLabel is the fixed closing-banner text. Hard-coded (not a
 // parameter) so a caller can't accidentally burn the once-only Final
 // slot with an empty string.
