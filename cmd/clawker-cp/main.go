@@ -358,6 +358,15 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	signalCtx, signalStop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
 	defer signalStop()
 
+	// signalCtx drives cancellation but does not expose which signal fired.
+	// Keep a parallel buffered channel solely to record the signal value for the
+	// shutdown log line (and to disambiguate the teardown-failure message between
+	// SIGTERM/`docker stop` and SIGINT/Ctrl-C). Buffered(1) so delivery never
+	// blocks; cancellation is still owned by signalCtx.
+	sigValueCh := make(chan os.Signal, 1)
+	signal.Notify(sigValueCh, syscall.SIGTERM, syscall.SIGINT)
+	defer signal.Stop(sigValueCh)
+
 	// Build CLI CA cert pool — used for health checks, Hydra introspection,
 	// client registration, and mTLS client cert verification.
 	caCertPEM, err := os.ReadFile(caCertPath)
@@ -1309,7 +1318,19 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 
 	select {
 	case <-signalCtx.Done():
-		log.Info().Msg("shutdown signal received")
+		// signalCtx fired because a signal was delivered, so the value is
+		// already queued on sigValueCh; read it non-blocking (default guards
+		// against any theoretical stall). nil only in that guard case.
+		var sig os.Signal
+		select {
+		case sig = <-sigValueCh:
+		default:
+		}
+		shutdownLog := log.Info()
+		if sig != nil {
+			shutdownLog = shutdownLog.Stringer("signal", sig)
+		}
+		shutdownLog.Msg("shutdown signal received")
 		// Any subprocess exit past this point is part of graceful shutdown;
 		// suppress crash reporting so it doesn't race with us.
 		subMgr.BeginShutdown()
@@ -1324,7 +1345,14 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		// containers and stale BPF map state.
 		teardownCtx, teardownCancel := context.WithTimeout(context.Background(), cpDrainTimeout)
 		if err := drainCallback(teardownCtx); err != nil {
-			log.Error().Err(err).Msg("sigterm teardown failed")
+			// Generic message + the signal as a structured field: this arm
+			// fires on SIGTERM (docker stop) or SIGINT (Ctrl-C), so a
+			// hardcoded "sigterm" would misattribute a Ctrl-C teardown.
+			teardownLog := log.Error().Err(err)
+			if sig != nil {
+				teardownLog = teardownLog.Stringer("signal", sig)
+			}
+			teardownLog.Msg("shutdown teardown failed")
 		}
 		teardownCancel()
 	case err := <-watcherDone:

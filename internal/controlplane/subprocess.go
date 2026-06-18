@@ -157,13 +157,18 @@ func (m *SubprocessManager) WaitHealthy(ctx context.Context, name string, check 
 
 		select {
 		case <-ctx.Done():
-			// Distinguish the caller's context being canceled (e.g. a shutdown
-			// signal propagated through the parent context) from this check's
-			// own health-timeout deadline. WithTimeout(ctx, check.Timeout) at
-			// the top means ctx.Done() fires for both; reporting a parent
-			// cancellation as a phantom "did not become healthy within N"
-			// latency failure sends an operator chasing a startup problem that
-			// never existed.
+			// A parent *cancellation* (e.g. a SIGTERM/SIGINT shutdown propagated
+			// through the caller's context) surfaces as context.Canceled; report
+			// it as canceled, not as a phantom "did not become healthy within N"
+			// latency failure that would send an operator chasing a startup
+			// problem that never existed. Any *deadline* — including the
+			// WithTimeout(ctx, check.Timeout) installed at the top — surfaces as
+			// DeadlineExceeded and is reported as the health timeout. Callers
+			// pass a deadline-free context (CP uses signal.NotifyContext over
+			// context.Background), so the only deadline in play is this check's
+			// own; a caller that ever passes a deadline-bearing context would
+			// have it attributed here to the health timeout — revisit this
+			// branch (compare the parent ctx error) if that case is introduced.
 			if errors.Is(ctx.Err(), context.Canceled) {
 				return fmt.Errorf("subprocess %s health wait canceled: %w", name, ctx.Err())
 			}
