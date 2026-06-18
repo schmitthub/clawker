@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,7 +20,7 @@ func TestNew_WritesToFile(t *testing.T) {
 	}
 
 	l.Info().Msg("hello from test")
-	l.Close()
+	l.Close(context.Background())
 
 	content, err := os.ReadFile(filepath.Join(dir, "clawker.log"))
 	if err != nil {
@@ -42,7 +43,7 @@ func TestNew_AllLevels(t *testing.T) {
 	l.Info().Msg("i")
 	l.Warn().Msg("w")
 	l.Error().Msg("e")
-	l.Close()
+	l.Close(context.Background())
 
 	content, err := os.ReadFile(filepath.Join(dir, "clawker.log"))
 	if err != nil {
@@ -79,7 +80,7 @@ func TestNew_Compress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
-	defer l.Close()
+	defer l.Close(context.Background())
 
 	if l.fw == nil {
 		t.Fatal("file writer should not be nil")
@@ -102,7 +103,7 @@ func TestNop(t *testing.T) {
 		t.Error("Nop logger should have empty log file path")
 	}
 
-	if err := l.Close(); err != nil {
+	if err := l.Close(context.Background()); err != nil {
 		t.Errorf("Nop Close should not error: %v", err)
 	}
 }
@@ -117,7 +118,7 @@ func TestWith(t *testing.T) {
 
 	sub := l.With("project", "foo", "agent", "bar")
 	sub.Info().Msg("with context")
-	l.Close()
+	l.Close(context.Background())
 
 	content, err := os.ReadFile(filepath.Join(dir, "clawker.log"))
 	if err != nil {
@@ -154,7 +155,7 @@ func TestLogFilePath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
-	defer l.Close()
+	defer l.Close(context.Background())
 
 	want := filepath.Join(dir, "clawker.log")
 	if got := l.LogFilePath(); got != want {
@@ -170,10 +171,10 @@ func TestClose_Idempotent(t *testing.T) {
 		t.Fatalf("New failed: %v", err)
 	}
 
-	if err := l.Close(); err != nil {
+	if err := l.Close(context.Background()); err != nil {
 		t.Errorf("first Close: %v", err)
 	}
-	if err := l.Close(); err != nil {
+	if err := l.Close(context.Background()); err != nil {
 		t.Errorf("second Close: %v", err)
 	}
 }
@@ -221,7 +222,7 @@ func TestNew_NoStderrOutput(t *testing.T) {
 	}
 	l.Info().Msg("should not appear on stderr")
 	l.Warn().Msg("also not on stderr")
-	l.Close()
+	l.Close(context.Background())
 
 	w.Close()
 	os.Stderr = oldStderr
@@ -256,7 +257,7 @@ func TestNew_EchoStdout_MirrorsRecords(t *testing.T) {
 		t.Fatalf("New failed: %v", err)
 	}
 	l.Info().Str("event", "ready").Msg("clawker-cp ready")
-	l.Close()
+	l.Close(context.Background())
 
 	w.Close()
 	os.Stdout = oldStdout
@@ -294,7 +295,7 @@ func TestNew_EchoStdoutOff_KeepsStdoutQuiet(t *testing.T) {
 		t.Fatalf("New failed: %v", err)
 	}
 	l.Info().Msg("should not appear on stdout")
-	l.Close()
+	l.Close(context.Background())
 
 	w.Close()
 	os.Stdout = oldStdout
@@ -318,6 +319,7 @@ func TestNew_OtelFallback(t *testing.T) {
 		Otel: &OtelOptions{
 			Endpoint:       consts.Localhost + ":19876",
 			Insecure:       true,
+			Timeout:        50 * time.Millisecond,
 			ExportInterval: 50 * time.Millisecond,
 			MaxQueueSize:   10,
 		},
@@ -325,7 +327,99 @@ func TestNew_OtelFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New with OTEL should not fail: %v", err)
 	}
-	defer l.Close()
+	defer l.Close(context.Background())
 
 	l.Info().Msg("otel fallback test")
+}
+
+// TestClose_CanceledContext_ReturnsPromptly pins the exit-lag fix: Close must
+// honor a canceled caller context so the final OTEL flush unwinds immediately
+// instead of blocking on an unreachable collector. The CLI relies on exactly
+// this — it cancels the flush context when the command returns, so the deferred
+// Close never does a blocking final export. Before the fix Close ignored the
+// caller context entirely (hardcoded 5s context.Background()), so cancellation
+// could not stop the ~5s block; the blocking shutdown path had no coverage.
+func TestClose_CanceledContext_ReturnsPromptly(t *testing.T) {
+	dir := t.TempDir()
+
+	l, err := New(Options{
+		LogsDir:   dir,
+		MaxSizeMB: 1,
+		Otel: &OtelOptions{
+			// Nothing listens here: with a live context the final export
+			// would retry against the unreachable endpoint until the export
+			// timeout. A canceled context must short-circuit that.
+			Endpoint: consts.Localhost + ":19876",
+			Insecure: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("New with OTEL should not fail: %v", err)
+	}
+	if l.provider == nil {
+		t.Fatal("OTEL provider must be wired for this test to exercise the flush path")
+	}
+
+	l.Info().Msg("buffered record awaiting export")
+
+	// Mirror the CLI: the flush context is already canceled by the time Close
+	// runs (loggerCancel() fires before the deferred Close).
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	start := time.Now()
+	_ = l.Close(ctx)
+	elapsed := time.Since(start)
+
+	// A canceled context unwinds Shutdown's export immediately. The regressed
+	// behavior ignored the context and blocked ~5s on the export timeout. The
+	// 2s threshold sits well clear of both, so the test is fast and not flaky.
+	if elapsed >= 2*time.Second {
+		t.Errorf("Close blocked %v on a canceled context; the flush must unwind immediately", elapsed)
+	}
+}
+
+// TestClose_LiveContext_BoundedByExportTimeout pins the daemon shutdown path,
+// the symmetric partner to the canceled-context test. clawker-cp passes a live
+// (never-canceled) base context to Close, so a final flush against an
+// unreachable collector must be bounded by the exporter's own export timeout
+// (OtelOptions.Timeout), not ride the OTLP retry backoff (~1m MaxElapsedTime).
+// Without WithTimeout wired from OtelOptions.Timeout in newOtelProvider, this
+// blocks for tens of seconds — so the assertion goes red if that wiring
+// regresses.
+func TestClose_LiveContext_BoundedByExportTimeout(t *testing.T) {
+	dir := t.TempDir()
+
+	l, err := New(Options{
+		LogsDir:   dir,
+		MaxSizeMB: 1,
+		Otel: &OtelOptions{
+			// Unreachable endpoint + a short export timeout: the final flush
+			// must give up at the timeout, not ride the retry backoff.
+			Endpoint: consts.Localhost + ":19876",
+			Insecure: true,
+			Timeout:  100 * time.Millisecond,
+		},
+	})
+	if err != nil {
+		t.Fatalf("New with OTEL should not fail: %v", err)
+	}
+	if l.provider == nil {
+		t.Fatal("OTEL provider must be wired for this test to exercise the flush path")
+	}
+
+	l.Info().Msg("buffered record awaiting export")
+
+	// Live context — never canceled, mirroring clawker-cp's deferred
+	// log.Close(ctx) on the base background context.
+	start := time.Now()
+	_ = l.Close(context.Background())
+	elapsed := time.Since(start)
+
+	// The 100ms export timeout bounds the final flush. The 2s threshold sits
+	// well clear of it yet far under the ~1m retry MaxElapsedTime the unbounded
+	// path would block for — fast and not flaky.
+	if elapsed >= 2*time.Second {
+		t.Errorf("Close blocked %v on a live context; OtelOptions.Timeout must bound the flush", elapsed)
+	}
 }

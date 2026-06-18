@@ -124,7 +124,7 @@ func main() {
 	} else {
 		log.Info().Int("exit_code", exitCode).Str("event", "shutdown").Msg("clawkerd exiting")
 	}
-	if err := log.Close(); err != nil {
+	if err := log.Close(context.Background()); err != nil {
 		// Fallback to stderr because the logger itself is what's
 		// closing — any zerolog-routed surface is unreliable here.
 		fmt.Fprintf(os.Stderr, "clawkerd: logger close failed: %v\n", err)

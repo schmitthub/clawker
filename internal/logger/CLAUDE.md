@@ -138,7 +138,7 @@ func (l *Logger) LogFilePath() string      // log file path (empty for Nop)
 ### Lifecycle
 
 ```go
-func (l *Logger) Close() error  // flush OTEL + close file writer; safe to call multiple times
+func (l *Logger) Close(ctx context.Context) error  // flush OTEL (caller's ctx is the flush deadline; a canceled/expired ctx unwinds the export immediately) + close file writer; safe to call multiple times
 ```
 
 ## Factory Integration

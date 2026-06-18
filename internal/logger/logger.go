@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -298,7 +299,7 @@ func (l *Logger) LogFilePath() string {
 
 // Close flushes pending OTEL batches and closes the file writer.
 // Safe to call multiple times. Safe to call on a Nop logger.
-func (l *Logger) Close() error {
+func (l *Logger) Close(ctx context.Context) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -307,23 +308,33 @@ func (l *Logger) Close() error {
 	}
 	l.closed = true
 
-	var firstErr error
+	var provErr, fwErr error
 
 	if l.provider != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := l.provider.Shutdown(ctx); err != nil {
-			firstErr = fmt.Errorf("logger: shutdown OTEL provider: %w", err)
+		// Pass the caller's context straight through. The final synchronous
+		// export honors it, so a canceled or expired context unwinds the export
+		// (and the exporter's retry backoff) immediately rather than blocking on
+		// an unreachable collector — the caller owns the shutdown deadline. On a
+		// still-live context the bound is OtelOptions.Timeout when set, else the
+		// OTLP SDK's own default export timeout.
+		//
+		// A canceled/expired context is the intended CLI shutdown path (it
+		// cancels before this runs), so context.Canceled/DeadlineExceeded is the
+		// expected outcome here, not a failure — drop it instead of reporting it
+		// as a Close error that would mask the file-writer result below.
+		if err := l.provider.Shutdown(ctx); err != nil &&
+			!errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			provErr = fmt.Errorf("logger: shutdown OTEL provider: %w", err)
 		}
 	}
 
 	if l.fw != nil {
-		if err := l.fw.Close(); err != nil && firstErr == nil {
-			firstErr = fmt.Errorf("logger: close file writer: %w", err)
+		if err := l.fw.Close(); err != nil {
+			fwErr = fmt.Errorf("logger: close file writer: %w", err)
 		}
 	}
 
-	return firstErr
+	return errors.Join(provErr, fwErr)
 }
 
 // absorbingWriter forwards writes to an inner writer but always
