@@ -9,7 +9,7 @@ Full terminal session lifecycle for interactive container sessions. `NewPTYHandl
 | Method | Purpose |
 |--------|---------|
 | `Setup()` | Enable raw mode on stdin |
-| `Restore()` | Reset visual state (ANSI) + restore termios |
+| `Restore()` | Reset visual state (ANSI) + restore termios. Unconditionally disables the input/visual modes an in-container TUI enables but can't undo on an abrupt end (Ctrl-P+Q detach / kill): mouse tracking (`?1000/1002/1003/1006l`), bracketed paste (`?2004l`), focus reporting (`?1004l`), show cursor, SGR/charset reset — all idempotent, no side effects. The alt-screen leave (`?1049l`) is the lone exception: gated on `containerInAltScreen` because its DECRC cursor-restore squashes primary-screen output when emitted blind. `restoreSequence(inAlt)` is the pure decision (unit-tested); the scanner tracks alt-screen enter/leave in the output copy. |
 | `Stream(ctx, hijacked)` | Bidirectional I/O (stdin→conn, conn→stdout) |
 | `StreamWithResize(ctx, hijacked, resizeFunc)` | Stream + resize propagation |
 | `GetSize()` | Returns (width, height, err) |

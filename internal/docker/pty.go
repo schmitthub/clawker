@@ -1,23 +1,60 @@
 package docker
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/signals"
 	"github.com/schmitthub/clawker/internal/term"
 )
 
-// resetSequence contains ANSI escape sequences to reset terminal visual state.
-// - \x1b[?1049l : Leave alternate screen buffer
-// - \x1b[?25h  : Show cursor
-// - \x1b[0m    : Reset text attributes
-// - \x1b(B    : Select ASCII character set
-const resetSequence = "\x1b[?1049l\x1b[?25h\x1b[0m\x1b(B"
+// visualResetSequence undoes the terminal input/visual modes an in-container TUI
+// (Claude Code, vim, htop, …) turns on but never gets to turn off when the session
+// ends abruptly — a Ctrl-P+Q detach (the container keeps running) or a kill. Every
+// sequence here is an idempotent DECRST/SGR reset: none destroys on-screen content
+// or moves the cursor, so Restore emits them unconditionally. Disabling a mode that
+// was never enabled is a no-op, so we do not track which the container set.
+//   - \x1b[?25h   : Show cursor
+//   - \x1b[?1000l : Disable mouse button-event tracking
+//   - \x1b[?1002l : Disable mouse cell-motion tracking
+//   - \x1b[?1003l : Disable mouse all-motion tracking
+//   - \x1b[?1006l : Disable SGR (1006) mouse encoding
+//   - \x1b[?1004l : Disable focus in/out reporting
+//   - \x1b[?2004l : Disable bracketed paste
+//   - \x1b[0m     : Reset text attributes
+//   - \x1b(B      : Select ASCII character set
+//
+// Without the mouse resets, a detached session leaves the host terminal echoing raw
+// SGR mouse reports (e.g. "<35;95;29M") on every pointer move.
+const visualResetSequence = "\x1b[?25h" +
+	"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l" +
+	"\x1b[?1004l" +
+	"\x1b[?2004l" +
+	"\x1b[0m\x1b(B"
+
+// altScreenLeaveSeq leaves the alternate screen buffer. restoreSequence prepends it
+// ONLY when the container left us in the alt buffer (see PTYHandler.containerInAltScreen)
+// — a blind leave issues a DECRC cursor-restore that yanks the cursor to a stale
+// saved position and squashes plain primary-screen output (init progress, command
+// results) the moment the session exits. This is the one reset that is NOT idempotent,
+// which is why it alone is gated on tracked state.
+const altScreenLeaveSeq = "\x1b[?1049l"
+
+// restoreSequence is the full terminal reset Restore writes: visualResetSequence
+// always, with altScreenLeaveSeq prepended only when the container left us in the
+// alternate buffer. See those consts for why each is or isn't gated.
+func restoreSequence(containerInAltScreen bool) string {
+	if containerInAltScreen {
+		return altScreenLeaveSeq + visualResetSequence
+	}
+	return visualResetSequence
+}
 
 // PTYHandler manages the pseudo-terminal connection to a container
 type PTYHandler struct {
@@ -26,6 +63,14 @@ type PTYHandler struct {
 	stderr  *os.File
 	log     *logger.Logger
 	rawMode *term.RawMode
+
+	// containerInAltScreen records whether the container's output stream left
+	// the terminal in the alternate screen buffer — an alt-screen enter with no
+	// matching leave (e.g. an in-container TUI like Claude Code killed before it
+	// could emit its own leave). Set by the output-copy scanner, read by Restore.
+	// atomic because the scanner runs in the output goroutine while Restore runs
+	// on the caller's goroutine.
+	containerInAltScreen atomic.Bool
 
 	// mu protects concurrent access
 	mu sync.Mutex
@@ -88,7 +133,11 @@ func (p *PTYHandler) resetVisualStateUnlocked() {
 	if !p.rawMode.IsTerminal() {
 		return
 	}
-	if _, err := p.stdout.WriteString(resetSequence); err != nil {
+	// Only force-leave the alternate screen buffer when the container actually
+	// left us in it. Emitting the leave blindly squashes plain primary-screen
+	// output on exit (the DECRC cursor-restore that ?1049l performs).
+	seq := restoreSequence(p.containerInAltScreen.Load())
+	if _, err := p.stdout.WriteString(seq); err != nil {
 		p.log.Warn().Err(err).Msg("failed to write terminal reset sequence")
 	}
 }
@@ -102,7 +151,7 @@ func (p *PTYHandler) Stream(ctx context.Context, hijacked HijackedResponse) erro
 
 	// Copy container output to stdout
 	go func() {
-		_, err := io.Copy(p.stdout, hijacked.Reader)
+		_, err := io.Copy(newAltScreenTrackingWriter(p.stdout, &p.containerInAltScreen), hijacked.Reader)
 		if err != nil && err != io.EOF && !isClosedConnectionError(err) {
 			errCh <- err
 		}
@@ -168,7 +217,7 @@ func (p *PTYHandler) StreamWithResize(
 
 	// Copy container output to stdout
 	go func() {
-		_, err := io.Copy(p.stdout, hijacked.Reader)
+		_, err := io.Copy(newAltScreenTrackingWriter(p.stdout, &p.containerInAltScreen), hijacked.Reader)
 		if err != nil && err != io.EOF && !isClosedConnectionError(err) {
 			p.log.Debug().Err(err).Msg("error copying container output")
 			errCh <- err
@@ -224,4 +273,76 @@ func isClosedConnectionError(err error) bool {
 	// we fall back to string matching. This is fragile but matches the Go stdlib
 	// internal error string from net/fd_posix.go ("use of closed network connection").
 	return strings.Contains(err.Error(), "use of closed network connection")
+}
+
+// alt-screen DEC private-mode sequences. Entering any of these switches the
+// terminal to the alternate screen buffer; the matching `l` form leaves it.
+// Modern TUIs use 1049; 1047/47 are older variants tracked for completeness.
+var (
+	altScreenEnterSeqs = [][]byte{[]byte("\x1b[?1049h"), []byte("\x1b[?1047h"), []byte("\x1b[?47h")}
+	altScreenLeaveSeqs = [][]byte{[]byte("\x1b[?1049l"), []byte("\x1b[?1047l"), []byte("\x1b[?47l")}
+)
+
+// altScreenMaxSeqLen is the byte length of the longest tracked sequence
+// (\x1b[?1049h / \x1b[?1049l). The scanner retains this many bytes minus one
+// between writes so a sequence split across two reads is still matched.
+const altScreenMaxSeqLen = 8
+
+// altScreenTrackingWriter forwards every byte to w unchanged while watching the
+// stream for alt-screen enter/leave sequences, publishing the latest state to
+// flag. The container's own output is the source of truth for whether the
+// terminal was left in the alt buffer, so Restore can decide whether a corrective
+// leave is needed. Not safe for concurrent use — the output copy runs in a single
+// goroutine; flag is atomic only to publish across to Restore's goroutine.
+type altScreenTrackingWriter struct {
+	w     io.Writer
+	flag  *atomic.Bool
+	carry []byte // tail of the previous write that may prefix a split sequence
+}
+
+func newAltScreenTrackingWriter(w io.Writer, flag *atomic.Bool) *altScreenTrackingWriter {
+	return &altScreenTrackingWriter{w: w, flag: flag}
+}
+
+func (a *altScreenTrackingWriter) Write(p []byte) (int, error) {
+	a.scan(p)
+	return a.w.Write(p)
+}
+
+// scan updates flag from the alt-screen toggles in p, honoring a sequence split
+// across the previous write via the retained carry.
+func (a *altScreenTrackingWriter) scan(p []byte) {
+	a.carry = append(a.carry, p...)
+	buf := a.carry
+
+	enter := lastIndexOfAny(buf, altScreenEnterSeqs)
+	leave := lastIndexOfAny(buf, altScreenLeaveSeqs)
+	switch {
+	case enter > leave:
+		a.flag.Store(true)
+	case leave > enter:
+		a.flag.Store(false)
+	}
+
+	// Retain only a tail long enough to complete a sequence that begins at the
+	// very end of this write. The rightmost retained toggle is by construction
+	// the most recent one seen, so re-scanning it on the next write re-applies
+	// the same state — it can never override a newer toggle, which always sits
+	// further right.
+	if keep := altScreenMaxSeqLen - 1; len(buf) > keep {
+		n := copy(a.carry, buf[len(buf)-keep:])
+		a.carry = a.carry[:n]
+	}
+}
+
+// lastIndexOfAny returns the highest start index of any seq in b, or -1 if none
+// are present.
+func lastIndexOfAny(b []byte, seqs [][]byte) int {
+	last := -1
+	for _, s := range seqs {
+		if i := bytes.LastIndex(b, s); i > last {
+			last = i
+		}
+	}
+	return last
 }
