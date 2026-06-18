@@ -245,7 +245,7 @@ The main `.git` mount is read-write (commits from the worktree write objects, re
 - `.git/hooks/` — a hook planted from inside the container would execute on the *host* the next time you run git in the main checkout.
 - `.git/config` — config keys like `core.hooksPath`, `core.fsmonitor`, or `filter.*` can execute arbitrary commands; from a worktree, `git config --local` writes to this shared file.
 
-This keeps worktree containers meaningfully more isolated than bind mode. The trade-off: `git config --local`, `git remote add`, and `git push -u` fail inside a worktree container (the config file is read-only). Upstream tracking is configured host-side at creation **only when the branch already existed on the remote**; branches born in the worktree have no upstream — push with `git push origin HEAD`. See [Worktree Caveats](#worktree-caveats) for the full behavioral rundown and the post-removal fix.
+This keeps worktree containers meaningfully more isolated than bind mode. The trade-off: `git config --local` and `git remote add` fail inside a worktree container (the config file is read-only), and `git push -u` still pushes the branch but can't persist upstream tracking (the warning is easy to miss). Upstream tracking is configured host-side at creation **only when the branch already existed on the remote**; branches born in the worktree have no upstream — push with `git push origin HEAD`. See [Worktree Caveats](#worktree-caveats) for the full behavioral rundown and the post-removal fix.
 
 ### Go builds inside worktree containers
 
