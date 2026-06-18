@@ -26,14 +26,14 @@ import (
 // with (the legacy bash entrypoint + fifo wait was retired by the
 // PID-1 cutover; see cmd/clawkerd/CLAUDE.md).
 const (
-	initStepTimeoutDefault  = consts.InitStepTimeoutDefaultSeconds
-	initStepTimeoutPostInit = consts.InitStepTimeoutPostInitSeconds
+	execStepTimeoutDefault  = consts.ExecStepTimeoutDefaultSeconds
+	execStepTimeoutPostInit = consts.ExecStepTimeoutPostInitSeconds
 )
 
 // defaultKnownHosts is the openssh published host-key blob for the
 // common public Git forges (github.com, gitlab.com, bitbucket.org),
 // seeded into ~/.ssh/known_hosts on every init run via the ssh step's
-// InitialStdin. Update if upstream rotates.
+// ExecialStdin. Update if upstream rotates.
 //
 // Source: https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints
 //
@@ -121,7 +121,7 @@ while IFS= read -r line; do
 done
 `
 
-	// postInitScript runs the user's one-time post_init hook. Contract:
+	// postExecScript runs the user's one-time post_init hook. Contract:
 	// attempted at most once per container lifecycle. DONE-first short
 	// circuits an already-attempted container; a missing script writes the
 	// marker and exits (nothing to do); a present script runs once. On
@@ -200,6 +200,10 @@ type agentReadyStep struct {
 	Name string
 }
 
+type agentInitializedStep struct {
+	Name string
+}
+
 func (s agentReadyStep) stepName() string { return s.Name }
 func (agentReadyStep) isStep()            {}
 func (s agentReadyStep) command(id string) (*clawkerdv1.Command, bool) {
@@ -209,10 +213,19 @@ func (s agentReadyStep) command(id string) (*clawkerdv1.Command, bool) {
 	}, false
 }
 
-// InitTarget identifies the agent the Executor is initializing.
-// Threaded through every init event so subscribers see consistent
+func (s agentInitializedStep) stepName() string { return s.Name }
+func (agentInitializedStep) isStep()            {}
+func (s agentInitializedStep) command(id string) (*clawkerdv1.Command, bool) {
+	return &clawkerdv1.Command{
+		CommandId: id,
+		Payload:   &clawkerdv1.Command_AgentInitialized{AgentInitialized: &clawkerdv1.AgentInitialized{}},
+	}, false
+}
+
+// ExecTarget identifies the agent the Executor is executing against.
+// Threaded through every event so subscribers see consistent
 // identity fields without re-deriving from the registry.
-type InitTarget struct {
+type ExecTarget struct {
 	ContainerID string
 	AgentName   string
 	Project     string
@@ -262,21 +275,10 @@ func NewExecutor(bus *overseer.Overseer, dockerCli *docker.Client, log *logger.L
 	return &Executor{bus: bus, dockerCli: dockerCli, log: log}, nil
 }
 
-// Run dispatches the init plan one step at a time, awaiting Done or
-// Error per command before sending the next. Publishes init events
-// throughout. Returns the error that halted the run (transport
-// failure, step failure surfaced as a Go error), or nil on full
-// success.
-//
-// Caller invariant: stream must already have completed Hello/HelloAck
-// and any Register handshake. Run owns stream.Recv exclusively for
-// its duration — but per-stream, not per-Executor. Concurrent Runs
-// across different streams (the prod case: parallel agent containers
-// after a CP restart) execute in parallel.
-func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_SessionClient, target InitTarget) (runErr error) {
-	plan := e.plan()
+func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_SessionClient, target ExecTarget, plan []step, label string) (runErr error) {
+
 	startedAt := time.Now()
-	overseer.Publish(e.bus, InitStarted{
+	overseer.Publish(e.bus, ExecStarted{
 		ContainerID: target.ContainerID,
 		AgentName:   target.AgentName,
 		Project:     target.Project,
@@ -284,31 +286,31 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 		At:          startedAt,
 	})
 	log := e.log.With(
-		"component", "agent.init",
+		"component", fmt.Sprintf("agent.%s", label),
 		"container_id", target.ContainerID,
 		"agent", target.AgentName,
 		"project", target.Project,
 	)
 	log.Info().
-		Str("event", "agent_init_started").
+		Str("event", fmt.Sprintf("agent_%s_started", label)).
 		Int("step_count", len(plan)).
-		Msg("agent.init: dispatching plan")
+		Msg(fmt.Sprintf("agent.%s: dispatching plan", label))
 
 	// currentIdx / currentName are written at the head of each step
 	// iteration so the panic recover below can publish a synthetic
-	// InitStepFailed for the in-flight step. -1 means the panic
+	// ExecStepFailed for the in-flight step. -1 means the panic
 	// happened before any step started (plan setup, log composition,
-	// etc.) — only InitFailed is synthesized in that case.
+	// etc.) — only ExecFailed is synthesized in that case.
 	currentIdx, currentName := -1, ""
 	defer func() {
 		r := recover()
 		if r == nil {
 			return
 		}
-		// Return the recovered value as an error so dialer.runInit
+		// Return the recovered value as an error so dialer.runExec
 		// hits the existing error path (Session held open per
 		// asymmetric trust). Re-panicking would land in the dial
-		// goroutine's outer recover and strand the Init axis at
+		// goroutine's outer recover and strand the Exec axis at
 		// Running because that recover doesn't know step state.
 		now := time.Now()
 		dur := now.Sub(startedAt)
@@ -319,9 +321,9 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 			Str("event", "agent_init_panic").
 			Int("step_index", currentIdx).
 			Str("step", currentName).
-			Msg("agent.init: Executor.Run panicked; publishing synthetic terminal events; Session held open for containment")
+			Msg(fmt.Sprintf("agent.%s: Executor.Run panicked; publishing synthetic terminal events; Session held open for containment", label))
 		if currentIdx >= 0 {
-			overseer.Publish(e.bus, InitStepFailed{
+			overseer.Publish(e.bus, ExecStepFailed{
 				ContainerID: target.ContainerID,
 				AgentName:   target.AgentName,
 				Project:     target.Project,
@@ -329,17 +331,17 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 				StepIndex:   currentIdx,
 				Duration:    dur,
 				ExitCode:    -1,
-				Reason:      overseer.InitFailureReasonUnknown,
+				Reason:      overseer.ExecFailureReasonUnknown,
 				Detail:      detail,
 				At:          now,
 			})
 		}
-		overseer.Publish(e.bus, InitFailed{
+		overseer.Publish(e.bus, ExecFailed{
 			ContainerID: target.ContainerID,
 			AgentName:   target.AgentName,
 			Project:     target.Project,
 			FailedStep:  currentName,
-			Reason:      overseer.InitFailureReasonUnknown,
+			Reason:      overseer.ExecFailureReasonUnknown,
 			Detail:      detail,
 			Duration:    dur,
 			At:          now,
@@ -351,7 +353,7 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 		currentIdx = i
 		currentName = st.stepName()
 		stepStart := time.Now()
-		overseer.Publish(e.bus, InitStepStarted{
+		overseer.Publish(e.bus, ExecStepStarted{
 			ContainerID: target.ContainerID,
 			AgentName:   target.AgentName,
 			Project:     target.Project,
@@ -369,7 +371,7 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 		out, err := e.runStep(ctx, stream, target.ContainerID, i, st, log)
 		dur := time.Since(stepStart)
 		if out.Failed() {
-			overseer.Publish(e.bus, InitStepFailed{
+			overseer.Publish(e.bus, ExecStepFailed{
 				ContainerID: target.ContainerID,
 				AgentName:   target.AgentName,
 				Project:     target.Project,
@@ -381,7 +383,7 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 				Detail:      out.Detail,
 				At:          time.Now(),
 			})
-			overseer.Publish(e.bus, InitFailed{
+			overseer.Publish(e.bus, ExecFailed{
 				ContainerID: target.ContainerID,
 				AgentName:   target.AgentName,
 				Project:     target.Project,
@@ -417,7 +419,7 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 			}
 			return fmt.Errorf("agent.init: step %q failed: %s", st.stepName(), out.Detail)
 		}
-		overseer.Publish(e.bus, InitStepCompleted{
+		overseer.Publish(e.bus, ExecStepCompleted{
 			ContainerID: target.ContainerID,
 			AgentName:   target.AgentName,
 			Project:     target.Project,
@@ -436,13 +438,13 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 		// Reset between steps: a panic here (between iterations,
 		// e.g. during defer scheduling) must not be mis-attributed
 		// to the just-completed step. The recover gates synthetic
-		// InitStepFailed on currentIdx >= 0; -1 means "between
-		// steps — publish only InitFailed".
+		// ExecStepFailed on currentIdx >= 0; -1 means "between
+		// steps — publish only ExecFailed".
 		currentIdx, currentName = -1, ""
 	}
 
 	totalDur := time.Since(startedAt)
-	overseer.Publish(e.bus, InitCompleted{
+	overseer.Publish(e.bus, ExecCompleted{
 		ContainerID: target.ContainerID,
 		AgentName:   target.AgentName,
 		Project:     target.Project,
@@ -486,12 +488,12 @@ func captureCapped(buf *strings.Builder, truncated *int, data []byte) {
 // publish terminal events.
 type stepOutcome struct {
 	ExitCode int32
-	Reason   overseer.InitFailureReason
+	Reason   overseer.ExecFailureReason
 	Detail   string
 }
 
 func (o stepOutcome) Failed() bool {
-	return o.Reason != overseer.InitFailureReasonNone
+	return o.Reason != overseer.ExecFailureReasonNone
 }
 
 // stepSucceeded is the zero outcome — the only success shape.
@@ -500,11 +502,11 @@ func stepSucceeded() stepOutcome { return stepOutcome{} }
 // stepFailedTransport classifies any transport break (Send error,
 // Recv error, ctx cancel, premature EOF). The paired transport error
 // returned alongside drives Run's dispatch-halt branch; the outcome
-// carries the human-readable detail for the InitStepFailed event.
+// carries the human-readable detail for the ExecStepFailed event.
 func stepFailedTransport(detail string) stepOutcome {
 	return stepOutcome{
 		ExitCode: -1,
-		Reason:   overseer.InitFailureReasonTransportError,
+		Reason:   overseer.ExecFailureReasonTransportError,
 		Detail:   detail,
 	}
 }
@@ -515,7 +517,7 @@ func stepFailedTransport(detail string) stepOutcome {
 func stepFailedExit(exit int32, detail string) stepOutcome {
 	return stepOutcome{
 		ExitCode: exit,
-		Reason:   overseer.InitFailureReasonExitCode,
+		Reason:   overseer.ExecFailureReasonExitCode,
 		Detail:   detail,
 	}
 }
@@ -523,7 +525,7 @@ func stepFailedExit(exit int32, detail string) stepOutcome {
 // stepFailedClassified classifies a clawkerd Response_Error frame
 // (timeout, spawn failed, IO error, protocol violation, ...) into
 // the typed reason vocabulary subscribers branch on.
-func stepFailedClassified(reason overseer.InitFailureReason, detail string) stepOutcome {
+func stepFailedClassified(reason overseer.ExecFailureReason, detail string) stepOutcome {
 	return stepOutcome{
 		ExitCode: -1,
 		Reason:   reason,
@@ -535,11 +537,11 @@ func stepFailedClassified(reason overseer.InitFailureReason, detail string) step
 // or Error. Returns:
 //   - outcome: zero value on success, populated with Reason/Detail/
 //     ExitCode on step failure or transport break. Run consumes this
-//     to publish the terminal InitStepFailed + InitFailed events.
+//     to publish the terminal ExecStepFailed + ExecFailed events.
 //   - transport error: non-nil iff the stream is broken; the caller
 //     should bail Run after publishing terminal events. A non-nil
 //     err always pairs with outcome.Failed() == true (Reason ==
-//     InitFailureReasonTransportError) so Run branches on a single
+//     ExecFailureReasonTransportError) so Run branches on a single
 //     check.
 //
 // Bounding wait time: clawkerd enforces the per-stage timeout server-
@@ -698,19 +700,19 @@ func (e *Executor) runStep(ctx context.Context, stream clawkerdv1.ClawkerdServic
 // failure classification. New codes default to Unknown so producers
 // don't drop information silently — the human-readable detail still
 // carries the ErrorCode string.
-func classifyErrorCode(code clawkerdv1.ErrorCode) overseer.InitFailureReason {
+func classifyErrorCode(code clawkerdv1.ErrorCode) overseer.ExecFailureReason {
 	switch code {
 	case clawkerdv1.ErrorCode_ERROR_CODE_TIMEOUT:
-		return overseer.InitFailureReasonTimeout
+		return overseer.ExecFailureReasonTimeout
 	case clawkerdv1.ErrorCode_ERROR_CODE_SPAWN_FAILED:
-		return overseer.InitFailureReasonSpawnFailed
+		return overseer.ExecFailureReasonSpawnFailed
 	case clawkerdv1.ErrorCode_ERROR_CODE_IO_ERROR, clawkerdv1.ErrorCode_ERROR_CODE_NOT_FOUND:
-		return overseer.InitFailureReasonIOError
+		return overseer.ExecFailureReasonIOError
 	case clawkerdv1.ErrorCode_ERROR_CODE_INVALID_REQUEST,
 		clawkerdv1.ErrorCode_ERROR_CODE_UNKNOWN_COMMAND_ID:
-		return overseer.InitFailureReasonProtocol
+		return overseer.ExecFailureReasonProtocol
 	default:
-		return overseer.InitFailureReasonUnknown
+		return overseer.ExecFailureReasonUnknown
 	}
 }
 
@@ -724,103 +726,8 @@ func buildCommandID(containerID, stepName string, idx int) string {
 	return fmt.Sprintf("init-%s-%s-%d", prefix, stepName, idx)
 }
 
-// plan builds the static init step list. Order is load-bearing:
-// docker-socket runs first as the only privileged step, then user-
-// scoped steps populate ~/.claude / ~/.gitconfig / ~/.ssh before
-// post-init runs (which may reference any of them).
-//
-// AgentReady MUST be the terminal step. Any step appended after it
-// would race CMD execution — the entrypoint exec's the user CMD as
-// soon as AgentReady's fifo write lands.
-func (e *Executor) plan() []step {
-	return []step{
-		shellStep{
-			Name: "docker-socket",
-			Shell: &clawkerdv1.ShellCommand{
-				Stages: []*clawkerdv1.PipeStage{{
-					Argv: []string{"sh", "-c", `[ -S /var/run/docker.sock ] && chgrp docker /var/run/docker.sock || true`},
-					Uid:  0,
-					Gid:  0,
-				}},
-				TimeoutSeconds: initStepTimeoutDefault,
-				ExitOnNonZero:  true,
-			},
-		},
-		shellStep{
-			Name: "config",
-			Shell: &clawkerdv1.ShellCommand{
-				Stages:         []*clawkerdv1.PipeStage{userStage(configSeedScript)},
-				TimeoutSeconds: initStepTimeoutDefault,
-				ExitOnNonZero:  true,
-			},
-		},
-		shellStep{
-			Name: "git",
-			Shell: &clawkerdv1.ShellCommand{
-				Stages:         []*clawkerdv1.PipeStage{userStage(gitconfigFilterScript)},
-				TimeoutSeconds: initStepTimeoutDefault,
-				ExitOnNonZero:  true,
-			},
-		},
-		shellStep{
-			Name: "git-credentials",
-			Shell: &clawkerdv1.ShellCommand{
-				Stages:         []*clawkerdv1.PipeStage{userStage(gitCredentialsScript)},
-				TimeoutSeconds: initStepTimeoutDefault,
-				ExitOnNonZero:  true,
-			},
-		},
-		shellStep{
-			Name: "ssh",
-			Shell: &clawkerdv1.ShellCommand{
-				Stages:         []*clawkerdv1.PipeStage{userStage(sshKnownHostsScript)},
-				InitialStdin:   []byte(defaultKnownHosts),
-				TimeoutSeconds: initStepTimeoutDefault,
-				ExitOnNonZero:  true,
-			},
-		},
-		shellStep{
-			Name: consts.HookPostInit,
-			Shell: &clawkerdv1.ShellCommand{
-				Stages:         []*clawkerdv1.PipeStage{userStage(postInitScript)},
-				TimeoutSeconds: initStepTimeoutPostInit,
-				ExitOnNonZero:  true,
-				PrintOutput:    true,
-			},
-		},
-		// pre-run runs the every-start hook right before the CMD. Delivered
-		// fresh by the CLI each start (BootstrapServicesPreStart); cwd is the
-		// container WorkingDir (clawkerd does not chdir during boot). May
-		// install packages → reuse the post-init timeout. Fatal: a non-zero
-		// exit halts the plan, agent-ready is never sent, the CMD never spawns.
-		shellStep{
-			Name: consts.HookPreRun,
-			Shell: &clawkerdv1.ShellCommand{
-				Stages:         []*clawkerdv1.PipeStage{userStage(preRunScript)},
-				TimeoutSeconds: initStepTimeoutPostInit,
-				ExitOnNonZero:  true,
-				PrintOutput:    true,
-			},
-		},
-		agentReadyStep{Name: "agent-ready"},
-	}
-}
-
 // userStage returns a fresh PipeStage running `sh -c <script>` as the
 // unprivileged container user.
-//
-// HOME/USER override: clawkerd runs as root and spawns each stage
-// with SysProcAttr.Credential to drop privileges, but the setuid
-// syscall does NOT update HOME/USER env — they stay inherited from
-// clawkerd (HOME=/root). Init scripts reference $HOME for config seed
-// paths, gitconfig output, ssh known_hosts, post-init script
-// location; without an explicit override they'd write to /root
-// (permission denied). Any future ShellCommand dispatched with
-// uid != 0 must do the same — clawkerd is a dumb pipe.
-//
-// Uid/Gid: consts.HostUID()/HostGID() — see internal/consts/controlplane.go.
-// CP's os.Getuid() inside the CP container is the CP image's UID
-// (typically 0), not the host invoker's.
 func userStage(script string) *clawkerdv1.PipeStage {
 	return &clawkerdv1.PipeStage{
 		Argv: []string{"sh", "-c", script},

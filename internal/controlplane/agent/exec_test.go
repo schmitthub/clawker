@@ -35,11 +35,11 @@ func selfExitDocker(t *testing.T) *docker.Client {
 	return fake.Client
 }
 
-// expectedInitStepNames pins the static plan to the load-bearing
+// expectedExecStepNames pins the static plan to the load-bearing
 // vocabulary subscribers (CLI WatchAgent, monitoring, log greppers)
 // match against. Reordering or renaming any of these is a CP-side
 // breaking change and must be paired with subscriber updates.
-var expectedInitStepNames = []string{
+var expectedExecStepNames = []string{
 	"docker-socket",
 	"config",
 	"git",
@@ -53,29 +53,29 @@ var expectedInitStepNames = []string{
 // initEventCapture subscribes to every init event type before the
 // Executor runs so no event can race past the subscription.
 type initEventCapture struct {
-	started       overseer.Subscription[InitStarted]
-	stepStarted   overseer.Subscription[InitStepStarted]
-	stepCompleted overseer.Subscription[InitStepCompleted]
-	stepFailed    overseer.Subscription[InitStepFailed]
-	completed     overseer.Subscription[InitCompleted]
-	failed        overseer.Subscription[InitFailed]
+	started       overseer.Subscription[ExecStarted]
+	stepStarted   overseer.Subscription[ExecStepStarted]
+	stepCompleted overseer.Subscription[ExecStepCompleted]
+	stepFailed    overseer.Subscription[ExecStepFailed]
+	completed     overseer.Subscription[ExecCompleted]
+	failed        overseer.Subscription[ExecFailed]
 }
 
-func subscribeInitEvents(t *testing.T, bus *overseer.Overseer) *initEventCapture {
+func subscribeExecEvents(t *testing.T, bus *overseer.Overseer) *initEventCapture {
 	t.Helper()
 	c := &initEventCapture{}
 	var ok bool
-	c.started, ok = overseer.Subscribe[InitStarted](bus, "init-started")
+	c.started, ok = overseer.Subscribe[ExecStarted](bus, "init-started")
 	require.True(t, ok)
-	c.stepStarted, ok = overseer.Subscribe[InitStepStarted](bus, "init-step-started")
+	c.stepStarted, ok = overseer.Subscribe[ExecStepStarted](bus, "init-step-started")
 	require.True(t, ok)
-	c.stepCompleted, ok = overseer.Subscribe[InitStepCompleted](bus, "init-step-completed")
+	c.stepCompleted, ok = overseer.Subscribe[ExecStepCompleted](bus, "init-step-completed")
 	require.True(t, ok)
-	c.stepFailed, ok = overseer.Subscribe[InitStepFailed](bus, "init-step-failed")
+	c.stepFailed, ok = overseer.Subscribe[ExecStepFailed](bus, "init-step-failed")
 	require.True(t, ok)
-	c.completed, ok = overseer.Subscribe[InitCompleted](bus, "init-completed")
+	c.completed, ok = overseer.Subscribe[ExecCompleted](bus, "init-completed")
 	require.True(t, ok)
-	c.failed, ok = overseer.Subscribe[InitFailed](bus, "init-failed")
+	c.failed, ok = overseer.Subscribe[ExecFailed](bus, "init-failed")
 	require.True(t, ok)
 	t.Cleanup(func() {
 		c.started.Unsubscribe()
@@ -88,7 +88,7 @@ func subscribeInitEvents(t *testing.T, bus *overseer.Overseer) *initEventCapture
 	return c
 }
 
-// drainInitEvents reads from each event channel for up to wait, then
+// drainExecEvents reads from each event channel for up to wait, then
 // returns the collected slices. Used after the Executor returns so we
 // can assert on the full sequence without flake.
 func (c *initEventCapture) drain(wait time.Duration) initEventSlice {
@@ -115,16 +115,16 @@ func (c *initEventCapture) drain(wait time.Duration) initEventSlice {
 }
 
 type initEventSlice struct {
-	started       []InitStarted
-	stepStarted   []InitStepStarted
-	stepCompleted []InitStepCompleted
-	stepFailed    []InitStepFailed
-	completed     []InitCompleted
-	failed        []InitFailed
+	started       []ExecStarted
+	stepStarted   []ExecStepStarted
+	stepCompleted []ExecStepCompleted
+	stepFailed    []ExecStepFailed
+	completed     []ExecCompleted
+	failed        []ExecFailed
 }
 
 // (Step name + ordering is pinned by TestExecutor_Run_HappyPath, which
-// asserts events.stepStarted[i].StepName == expectedInitStepNames[i]
+// asserts events.stepStarted[i].StepName == expectedExecStepNames[i]
 // after a real Run dispatches every step. Step kind / stages shape is
 // enforced structurally by runStep's switch + Go's type system.)
 
@@ -148,47 +148,75 @@ func (p *panickingSendStream) Send(c *clawkerdv1.Command) error {
 // TestExecutor_Run_PanicInStep verifies the recover defer at the top
 // of Executor.Run. A panic mid-step (here: Send panics on the first
 // frame of the first step) must:
-//  1. NOT propagate up to dialer.runInit's caller (would crash CP).
-//  2. Convert to an error return so dialer.runInit's existing
+//  1. NOT propagate up to dialer.runExec's caller (would crash CP).
+//  2. Convert to an error return so dialer.runExec's existing
 //     log+continue path fires (Session held open per asymmetric
 //     trust).
-//  3. Publish synthetic InitStepFailed for the in-flight step so
-//     worldview consumers see the Init step axis transition out of
+//  3. Publish synthetic ExecStepFailed for the in-flight step so
+//     worldview consumers see the Exec step axis transition out of
 //     Running.
-//  4. Publish synthetic InitFailed so the Init lifecycle axis also
+//  4. Publish synthetic ExecFailed so the Exec lifecycle axis also
 //     transitions out of Running.
-//  5. NOT publish InitCompleted.
-func TestExecutor_Run_PanicInStep(t *testing.T) {
-	bus := overseer.New(overseer.Options{})
-	require.NoError(t, bus.Start(context.Background()))
-	t.Cleanup(func() { _ = bus.Close() })
+//  5. NOT publish ExecCompleted.
+func TestExecutor_Run(t *testing.T) {
+	tests := map[string]struct {
+		plan    []step
+		label   string
+		want    string
+		wantErr error
+	}{
+		"boot plan success": {
+			plan:    bootPlan,
+			label:   "boot",
+			want:    "success",
+			wantErr: nil,
+		},
+		"init plan success": {
+			plan:    initPlan,
+			label:   "init",
+			want:    "success",
+			wantErr: nil,
+		},
+	}
 
-	caps := subscribeInitEvents(t, bus)
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			bus := overseer.New(overseer.Options{})
+			require.NoError(t, bus.Start(context.Background()))
+			t.Cleanup(func() { _ = bus.Close() })
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+			caps := subscribeExecEvents(t, bus)
 
-	fake := newFakeStream(ctx)
-	stream := &panickingSendStream{fakeSessionStream: fake, panicAtSend: 1}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
 
-	exec, err := NewExecutor(bus, selfExitDocker(t), logger.Nop())
-	require.NoError(t, err)
-	target := InitTarget{ContainerID: "c-panic-1234567890ab", AgentName: "dev", Project: "clawker"}
+			fake := newFakeStream(ctx)
+			stream := &panickingSendStream{fakeSessionStream: fake, panicAtSend: 1}
 
-	err = exec.Run(ctx, stream, target)
-	require.Error(t, err, "panic must convert to error return (not propagate)")
-	assert.Contains(t, err.Error(), "panicked", "error must reference the panic")
+			exec, err := NewExecutor(bus, selfExitDocker(t), logger.Nop())
+			require.NoError(t, err)
+			target := ExecTarget{ContainerID: "c-panic-1234567890ab", AgentName: "dev", Project: "clawker"}
 
-	events := caps.drain(500 * time.Millisecond)
-	assert.Empty(t, events.completed, "InitCompleted must NOT fire on panic")
-	require.Len(t, events.failed, 1, "synthetic InitFailed must fire so Init axis transitions out of Running")
-	assert.Equal(t, overseer.InitFailureReasonUnknown, events.failed[0].Reason,
-		"panic classifies as Unknown — distinct from Transport/ExitCode")
-	assert.Contains(t, events.failed[0].Detail, "panicked")
-	require.Len(t, events.stepFailed, 1, "synthetic InitStepFailed must fire for the in-flight step (currentIdx=0)")
-	assert.Equal(t, "docker-socket", events.stepFailed[0].StepName,
-		"in-flight step name must be the first step (panic on first Send before any step completed)")
-	assert.Equal(t, 0, events.stepFailed[0].StepIndex)
+			err = exec.Run(ctx, stream, target, test.plan, test.label)
+			if test.wantErr != nil {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), test.wantErr.Error())
+			} else {
+				require.NoError(t, err)
+			}
+
+			events := caps.drain(500 * time.Millisecond)
+			assert.Empty(t, events.completed, "ExecCompleted must NOT fire on panic")
+			require.Len(t, events.failed, 1, "synthetic ExecFailed must fire so Exec axis transitions out of Running")
+			assert.Equal(t, overseer.ExecFailureReasonUnknown, events.failed[0].Reason,
+				"panic classifies as Unknown — distinct from Transport/ExitCode")
+			assert.Contains(t, events.failed[0].Detail, "panicked")
+			require.Len(t, events.stepFailed, 1, "synthetic ExecStepFailed must fire for the in-flight step (currentIdx=0)")
+			assert.Equal(t, "docker-socket", events.stepFailed[0].StepName,
+				"in-flight step name must be the first step (panic on first Send before any step completed)")
+			assert.Equal(t, 0, events.stepFailed[0].StepIndex)
+		})
+	}
 }
 
 // TestNewExecutor_NilBusReturnsError pins the constructor-time
@@ -211,7 +239,7 @@ func TestNewExecutor_NilBusReturnsError(t *testing.T) {
 //  1. docker-socket is the SOLE uid=0 step (privilege-drop contract).
 //  2. AgentReady is the LAST step (any later step would race CMD
 //     execution past the entrypoint fifo release).
-//  3. ssh's InitialStdin is non-empty (the host-key blob known_hosts
+//  3. ssh's ExecialStdin is non-empty (the host-key blob known_hosts
 //     consumes; an empty payload silently produces an empty file).
 //
 // The per-stage HOME/USER override + uid/gid match against
@@ -224,7 +252,7 @@ func TestExecutor_Plan_PrivilegeAndShape(t *testing.T) {
 	t.Cleanup(func() { _ = bus.Close() })
 	exec, err := NewExecutor(bus, selfExitDocker(t), logger.Nop())
 	require.NoError(t, err)
-	plan := exec.plan()
+	plan := exec.plan(true)
 	require.NotEmpty(t, plan)
 
 	var rootSteps []string
@@ -249,13 +277,13 @@ func TestExecutor_Plan_PrivilegeAndShape(t *testing.T) {
 	// the CMD. It runs the preRunScript via userStage, carries the
 	// defensive `[ -x … ] || exit 0` guard, and (unlike post-init) no
 	// idempotency marker.
-	idxPostInit, idxPreRun, idxReady := -1, -1, -1
+	idxPostExec, idxPreRun, idxReady := -1, -1, -1
 	for i, st := range plan {
 		switch s := st.(type) {
 		case shellStep:
 			switch s.Name {
 			case "post-init":
-				idxPostInit = i
+				idxPostExec = i
 			case "pre-run":
 				idxPreRun = i
 				require.Len(t, s.Shell.Stages, 1)
@@ -272,13 +300,13 @@ func TestExecutor_Plan_PrivilegeAndShape(t *testing.T) {
 		}
 	}
 	require.NotEqual(t, -1, idxPreRun, "pre-run must be present in the plan")
-	assert.Equal(t, idxPostInit+1, idxPreRun, "pre-run must immediately follow post-init")
+	assert.Equal(t, idxPostExec+1, idxPreRun, "pre-run must immediately follow post-init")
 	assert.Equal(t, idxReady-1, idxPreRun, "pre-run must immediately precede agent-ready")
 
 	for _, st := range plan {
 		if s, ok := st.(shellStep); ok && s.Name == "ssh" {
-			assert.NotEmpty(t, s.Shell.InitialStdin,
-				"ssh step must carry the known_hosts blob via InitialStdin")
+			assert.NotEmpty(t, s.Shell.ExecialStdin,
+				"ssh step must carry the known_hosts blob via ExecialStdin")
 			return
 		}
 	}
@@ -331,14 +359,14 @@ func TestPreRunScript_GuardSemantics(t *testing.T) {
 
 // TestExecutor_Run_HappyPath drives the full plan with Done{0} on
 // every step and verifies the event sequence subscribers see:
-// InitStarted, 7×(StepStarted,StepCompleted), InitCompleted; no
+// ExecStarted, 7×(StepStarted,StepCompleted), ExecCompleted; no
 // failures.
 func TestExecutor_Run_HappyPath(t *testing.T) {
 	bus := overseer.New(overseer.Options{})
 	require.NoError(t, bus.Start(context.Background()))
 	t.Cleanup(func() { _ = bus.Close() })
 
-	caps := subscribeInitEvents(t, bus)
+	caps := subscribeExecEvents(t, bus)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -346,7 +374,7 @@ func TestExecutor_Run_HappyPath(t *testing.T) {
 	stream := newFakeStream(ctx)
 	exec, errExec := NewExecutor(bus, selfExitDocker(t), logger.Nop())
 	require.NoError(t, errExec)
-	target := InitTarget{ContainerID: "c-happy-1234567890ab", AgentName: "dev", Project: "clawker"}
+	target := ExecTarget{ContainerID: "c-happy-1234567890ab", AgentName: "dev", Project: "clawker"}
 
 	// Stream-feeder goroutine: for each Command sent by Run, push back
 	// a matching Done{0}. Decouples the push timing from Send timing
@@ -374,18 +402,18 @@ func TestExecutor_Run_HappyPath(t *testing.T) {
 	require.NoError(t, err)
 
 	events := caps.drain(500 * time.Millisecond)
-	require.Len(t, events.started, 1, "exactly one InitStarted")
-	require.Len(t, events.completed, 1, "exactly one InitCompleted")
+	require.Len(t, events.started, 1, "exactly one ExecStarted")
+	require.Len(t, events.completed, 1, "exactly one ExecCompleted")
 	assert.Empty(t, events.stepFailed, "no step failures expected")
-	assert.Empty(t, events.failed, "no terminal InitFailed expected")
-	assert.Equal(t, len(expectedInitStepNames), events.started[0].StepCount)
+	assert.Empty(t, events.failed, "no terminal ExecFailed expected")
+	assert.Equal(t, len(expectedExecStepNames), events.started[0].StepCount)
 	assert.Equal(t, target.ContainerID, events.completed[0].ContainerID)
 
 	// Step events: every step name appears once in started and once in
 	// completed, in plan order.
-	require.Len(t, events.stepStarted, len(expectedInitStepNames))
-	require.Len(t, events.stepCompleted, len(expectedInitStepNames))
-	for i, name := range expectedInitStepNames {
+	require.Len(t, events.stepStarted, len(expectedExecStepNames))
+	require.Len(t, events.stepCompleted, len(expectedExecStepNames))
+	for i, name := range expectedExecStepNames {
 		assert.Equal(t, name, events.stepStarted[i].StepName, "stepStarted[%d]", i)
 		assert.Equal(t, i, events.stepStarted[i].StepIndex)
 		assert.Equal(t, name, events.stepCompleted[i].StepName, "stepCompleted[%d]", i)
@@ -395,16 +423,16 @@ func TestExecutor_Run_HappyPath(t *testing.T) {
 
 // TestExecutor_Run_StepFailureHaltsAndPublishesFailed feeds Done{0}
 // for the first N-1 steps and Done{exit=2,stderr="boom"} for step N.
-// Run must halt at step N, publish InitStepFailed{step:N} +
-// InitFailed{failed_step:N}, return a non-nil error, and NOT publish
-// InitCompleted.
+// Run must halt at step N, publish ExecStepFailed{step:N} +
+// ExecFailed{failed_step:N}, return a non-nil error, and NOT publish
+// ExecCompleted.
 func TestExecutor_Run_StepFailureHaltsAndPublishesFailed(t *testing.T) {
 	const failAtIdx = 2 // "git"
 	bus := overseer.New(overseer.Options{})
 	require.NoError(t, bus.Start(context.Background()))
 	t.Cleanup(func() { _ = bus.Close() })
 
-	caps := subscribeInitEvents(t, bus)
+	caps := subscribeExecEvents(t, bus)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -412,7 +440,7 @@ func TestExecutor_Run_StepFailureHaltsAndPublishesFailed(t *testing.T) {
 	stream := newFakeStream(ctx)
 	exec, errExec := NewExecutor(bus, selfExitDocker(t), logger.Nop())
 	require.NoError(t, errExec)
-	target := InitTarget{ContainerID: "c-fail-9876543210ab", AgentName: "dev", Project: "clawker"}
+	target := ExecTarget{ContainerID: "c-fail-9876543210ab", AgentName: "dev", Project: "clawker"}
 
 	doneFeeder := make(chan struct{})
 	stepCount := 0
@@ -446,19 +474,19 @@ func TestExecutor_Run_StepFailureHaltsAndPublishesFailed(t *testing.T) {
 	close(stream.sent)
 	<-doneFeeder
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), expectedInitStepNames[failAtIdx])
+	assert.Contains(t, err.Error(), expectedExecStepNames[failAtIdx])
 
 	events := caps.drain(500 * time.Millisecond)
 	require.Len(t, events.started, 1)
 	require.Len(t, events.stepFailed, 1)
 	require.Len(t, events.failed, 1)
-	assert.Empty(t, events.completed, "InitCompleted must NOT fire on failure")
-	assert.Equal(t, expectedInitStepNames[failAtIdx], events.stepFailed[0].StepName)
+	assert.Empty(t, events.completed, "ExecCompleted must NOT fire on failure")
+	assert.Equal(t, expectedExecStepNames[failAtIdx], events.stepFailed[0].StepName)
 	assert.Equal(t, int32(2), events.stepFailed[0].ExitCode)
-	assert.Equal(t, overseer.InitFailureReasonExitCode, events.stepFailed[0].Reason)
+	assert.Equal(t, overseer.ExecFailureReasonExitCode, events.stepFailed[0].Reason)
 	assert.Contains(t, events.stepFailed[0].Detail, "boom")
-	assert.Equal(t, expectedInitStepNames[failAtIdx], events.failed[0].FailedStep)
-	assert.Equal(t, overseer.InitFailureReasonExitCode, events.failed[0].Reason)
+	assert.Equal(t, expectedExecStepNames[failAtIdx], events.failed[0].FailedStep)
+	assert.Equal(t, overseer.ExecFailureReasonExitCode, events.failed[0].Reason)
 
 	// Steps after the failure must not have started.
 	require.Len(t, events.stepStarted, failAtIdx+1, "step dispatch must halt at first failure")
@@ -467,13 +495,13 @@ func TestExecutor_Run_StepFailureHaltsAndPublishesFailed(t *testing.T) {
 
 // TestExecutor_Run_TransportError covers the case where stream.Recv
 // returns a non-EOF error — the stream is broken; Run returns an
-// error and publishes InitFailed but nothing later.
+// error and publishes ExecFailed but nothing later.
 func TestExecutor_Run_TransportError(t *testing.T) {
 	bus := overseer.New(overseer.Options{})
 	require.NoError(t, bus.Start(context.Background()))
 	t.Cleanup(func() { _ = bus.Close() })
 
-	caps := subscribeInitEvents(t, bus)
+	caps := subscribeExecEvents(t, bus)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -481,7 +509,7 @@ func TestExecutor_Run_TransportError(t *testing.T) {
 	stream := newFakeStream(ctx)
 	exec, errExec := NewExecutor(bus, selfExitDocker(t), logger.Nop())
 	require.NoError(t, errExec)
-	target := InitTarget{ContainerID: "c-transport-1234567890ab", AgentName: "dev", Project: "clawker"}
+	target := ExecTarget{ContainerID: "c-transport-1234567890ab", AgentName: "dev", Project: "clawker"}
 
 	// Push an error frame that Run will see on its first Recv.
 	go func() {
@@ -498,26 +526,26 @@ func TestExecutor_Run_TransportError(t *testing.T) {
 	require.Len(t, events.stepFailed, 1, "transport failure must carry a step-level event so subscribers see WHICH step was in flight")
 	require.Len(t, events.failed, 1)
 	assert.Empty(t, events.completed)
-	assert.Equal(t, overseer.InitFailureReasonTransportError, events.failed[0].Reason)
+	assert.Equal(t, overseer.ExecFailureReasonTransportError, events.failed[0].Reason)
 	assert.Contains(t, events.failed[0].Detail, "rpc connection reset")
 }
 
 // TestExecutor_Run_StreamErrorResponse pins the typed-classification
 // surface for clawkerd-side ErrorCodes. Without explicit coverage, a
 // regression in classifyErrorCode (e.g. dropping the SPAWN_FAILED
-// case) would surface as InitFailureReasonUnknown on operator
+// case) would surface as ExecFailureReasonUnknown on operator
 // dashboards with no compile-time signal.
 func TestExecutor_Run_StreamErrorResponse(t *testing.T) {
 	cases := []struct {
 		name       string
 		code       clawkerdv1.ErrorCode
-		wantReason overseer.InitFailureReason
+		wantReason overseer.ExecFailureReason
 	}{
-		{"timeout", clawkerdv1.ErrorCode_ERROR_CODE_TIMEOUT, overseer.InitFailureReasonTimeout},
-		{"spawn_failed", clawkerdv1.ErrorCode_ERROR_CODE_SPAWN_FAILED, overseer.InitFailureReasonSpawnFailed},
-		{"io_error", clawkerdv1.ErrorCode_ERROR_CODE_IO_ERROR, overseer.InitFailureReasonIOError},
-		{"not_found", clawkerdv1.ErrorCode_ERROR_CODE_NOT_FOUND, overseer.InitFailureReasonIOError},
-		{"invalid_request", clawkerdv1.ErrorCode_ERROR_CODE_INVALID_REQUEST, overseer.InitFailureReasonProtocol},
+		{"timeout", clawkerdv1.ErrorCode_ERROR_CODE_TIMEOUT, overseer.ExecFailureReasonTimeout},
+		{"spawn_failed", clawkerdv1.ErrorCode_ERROR_CODE_SPAWN_FAILED, overseer.ExecFailureReasonSpawnFailed},
+		{"io_error", clawkerdv1.ErrorCode_ERROR_CODE_IO_ERROR, overseer.ExecFailureReasonIOError},
+		{"not_found", clawkerdv1.ErrorCode_ERROR_CODE_NOT_FOUND, overseer.ExecFailureReasonIOError},
+		{"invalid_request", clawkerdv1.ErrorCode_ERROR_CODE_INVALID_REQUEST, overseer.ExecFailureReasonProtocol},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -525,14 +553,14 @@ func TestExecutor_Run_StreamErrorResponse(t *testing.T) {
 			require.NoError(t, bus.Start(context.Background()))
 			t.Cleanup(func() { _ = bus.Close() })
 
-			caps := subscribeInitEvents(t, bus)
+			caps := subscribeExecEvents(t, bus)
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
 			stream := newFakeStream(ctx)
 			exec, errExec := NewExecutor(bus, selfExitDocker(t), logger.Nop())
 			require.NoError(t, errExec)
-			target := InitTarget{ContainerID: "c-err-1234567890ab", AgentName: "dev", Project: "clawker"}
+			target := ExecTarget{ContainerID: "c-err-1234567890ab", AgentName: "dev", Project: "clawker"}
 
 			done := make(chan struct{})
 			go func() {
@@ -568,9 +596,9 @@ func TestExecutor_Run_StreamErrorResponse(t *testing.T) {
 }
 
 // TestExecutor_Run_StateProjection drives Run twice (first with a
-// failure, then a success) and asserts the overseer worldview's Init
+// failure, then a success) and asserts the overseer worldview's Exec
 // axis reflects every transition: zero → Running → Failed → Running →
-// Completed, with Init.LastError clearing on the success cycle. The
+// Completed, with Exec.LastError clearing on the success cycle. The
 // projection contract is what subscribers (CLI WatchAgent, monitoring)
 // consume — an ApplyTo-method regression here would silently break
 // operator-facing UX.
@@ -582,14 +610,14 @@ func TestExecutor_Run_StateProjection(t *testing.T) {
 	// Subscribe to the terminal events BEFORE running so we can wait
 	// for them to drain through the bus loop before snapshotting —
 	// Publish enqueues asynchronously, ApplyTo runs on the loop.
-	failedSub, ok := overseer.Subscribe[InitFailed](bus, "proj-failed")
+	failedSub, ok := overseer.Subscribe[ExecFailed](bus, "proj-failed")
 	require.True(t, ok)
 	defer failedSub.Unsubscribe()
-	completedSub, ok := overseer.Subscribe[InitCompleted](bus, "proj-completed")
+	completedSub, ok := overseer.Subscribe[ExecCompleted](bus, "proj-completed")
 	require.True(t, ok)
 	defer completedSub.Unsubscribe()
 
-	target := InitTarget{ContainerID: "c-proj-1234567890ab", AgentName: "dev", Project: "clawker"}
+	target := ExecTarget{ContainerID: "c-proj-1234567890ab", AgentName: "dev", Project: "clawker"}
 	exec, errExec := NewExecutor(bus, selfExitDocker(t), logger.Nop())
 	require.NoError(t, errExec)
 
@@ -626,19 +654,19 @@ func TestExecutor_Run_StateProjection(t *testing.T) {
 	select {
 	case <-failedSub.C:
 	case <-time.After(time.Second):
-		t.Fatal("InitFailed did not drain")
+		t.Fatal("ExecFailed did not drain")
 	}
 	snap1, ok := bus.Snapshot(context.Background())
 	require.True(t, ok)
 	view1 := snap1.Agents[target.ContainerID]
-	assert.Equal(t, overseer.InitStatusFailed, view1.Init.Status())
-	assert.NotEmpty(t, view1.Init.LastError(), "Failed cycle must populate Init.LastError")
-	// StepName is set by InitStepStarted's ApplyTo and survives both
+	assert.Equal(t, overseer.ExecStatusFailed, view1.Exec.Status())
+	assert.NotEmpty(t, view1.Exec.LastError(), "Failed cycle must populate Exec.LastError")
+	// StepName is set by ExecStepStarted's ApplyTo and survives both
 	// WithStepError (mid-phase) and Fail (terminal). At idx 1 the
 	// running step is "config"; the terminal projection must preserve
 	// it so subscribers can render "failed during <step>".
-	assert.Equal(t, expectedInitStepNames[1], view1.Init.StepName(),
-		"Failed cycle must keep the in-flight StepName from InitStepStarted's ApplyTo")
+	assert.Equal(t, expectedExecStepNames[1], view1.Exec.StepName(),
+		"Failed cycle must keep the in-flight StepName from ExecStepStarted's ApplyTo")
 
 	// Cycle 2: full success.
 	{
@@ -667,14 +695,14 @@ func TestExecutor_Run_StateProjection(t *testing.T) {
 	select {
 	case <-completedSub.C:
 	case <-time.After(time.Second):
-		t.Fatal("InitCompleted did not drain")
+		t.Fatal("ExecCompleted did not drain")
 	}
 	snap2, ok := bus.Snapshot(context.Background())
 	require.True(t, ok)
 	view2 := snap2.Agents[target.ContainerID]
-	assert.Equal(t, overseer.InitStatusCompleted, view2.Init.Status())
-	assert.Empty(t, view2.Init.LastError(), "Completed cycle must clear stale Init.LastError")
-	assert.Equal(t, len(expectedInitStepNames), view2.Init.StepCount())
+	assert.Equal(t, overseer.ExecStatusCompleted, view2.Exec.Status())
+	assert.Empty(t, view2.Exec.LastError(), "Completed cycle must clear stale Exec.LastError")
+	assert.Equal(t, len(expectedExecStepNames), view2.Exec.StepCount())
 }
 
 // TestExecutor_Run_CloseStdinFollowsEveryShellStep pins the
@@ -695,7 +723,7 @@ func TestExecutor_Run_CloseStdinFollowsEveryShellStep(t *testing.T) {
 	stream := newFakeStream(ctx)
 	exec, errExec := NewExecutor(bus, selfExitDocker(t), logger.Nop())
 	require.NoError(t, errExec)
-	target := InitTarget{ContainerID: "c-cs-1234567890ab", AgentName: "dev", Project: "clawker"}
+	target := ExecTarget{ContainerID: "c-cs-1234567890ab", AgentName: "dev", Project: "clawker"}
 
 	var captured []*clawkerdv1.Command
 	done := make(chan struct{})
@@ -778,7 +806,7 @@ func TestExecutor_Run_ParallelStreamsBothComplete(t *testing.T) {
 				}}
 			}
 		}()
-		err := exec.Run(ctx, stream, InitTarget{ContainerID: containerID, AgentName: "dev", Project: "clawker"})
+		err := exec.Run(ctx, stream, ExecTarget{ContainerID: containerID, AgentName: "dev", Project: "clawker"})
 		close(stream.sent)
 		<-feederDone
 		return err
@@ -810,13 +838,13 @@ func TestExecutor_Run_PlanIdempotent(t *testing.T) {
 	require.NoError(t, bus.Start(context.Background()))
 	t.Cleanup(func() { _ = bus.Close() })
 
-	completedSub, ok := overseer.Subscribe[InitCompleted](bus, "idempotent-completed")
+	completedSub, ok := overseer.Subscribe[ExecCompleted](bus, "idempotent-completed")
 	require.True(t, ok)
 	defer completedSub.Unsubscribe()
 
 	exec, err := NewExecutor(bus, selfExitDocker(t), logger.Nop())
 	require.NoError(t, err)
-	target := InitTarget{ContainerID: "c-idem-1234567890ab", AgentName: "dev", Project: "clawker"}
+	target := ExecTarget{ContainerID: "c-idem-1234567890ab", AgentName: "dev", Project: "clawker"}
 
 	for cycle := 0; cycle < 2; cycle++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -844,15 +872,15 @@ func TestExecutor_Run_PlanIdempotent(t *testing.T) {
 		select {
 		case <-completedSub.C:
 		case <-time.After(time.Second):
-			t.Fatalf("cycle %d: InitCompleted did not drain", cycle)
+			t.Fatalf("cycle %d: ExecCompleted did not drain", cycle)
 		}
 
 		snap, ok := bus.Snapshot(context.Background())
 		require.True(t, ok)
 		view := snap.Agents[target.ContainerID]
-		assert.Equal(t, overseer.InitStatusCompleted, view.Init.Status(),
+		assert.Equal(t, overseer.ExecStatusCompleted, view.Exec.Status(),
 			"cycle %d: worldview must reach Completed", cycle)
-		assert.Empty(t, view.Init.LastError(),
+		assert.Empty(t, view.Exec.LastError(),
 			"cycle %d: LastError must clear on success — stale error from a prior cycle would mislead subscribers", cycle)
 	}
 }
@@ -877,7 +905,7 @@ func TestExecutor_Run_IgnoresUnknownAndMismatchedFrames(t *testing.T) {
 	stream := newFakeStream(ctx)
 	exec, errExec := NewExecutor(bus, selfExitDocker(t), logger.Nop())
 	require.NoError(t, errExec)
-	target := InitTarget{ContainerID: "c-noise-1234567890ab", AgentName: "dev", Project: "clawker"}
+	target := ExecTarget{ContainerID: "c-noise-1234567890ab", AgentName: "dev", Project: "clawker"}
 
 	doneFeeder := make(chan struct{})
 	go func() {
@@ -920,16 +948,16 @@ func TestExecutor_Run_IgnoresUnknownAndMismatchedFrames(t *testing.T) {
 		"Run must tolerate noise frames (mismatched command_id, Started, Output) and succeed when the terminal Done lands")
 }
 
-// TestRunInit_NoExecutorWired pins the misconfiguration warning
+// TestRunExec_NoExecutorWired pins the misconfiguration warning
 // behavior: a Dialer without Executor wired logs a warning event and
 // skips (does not panic, does not block). The warn log is the
 // operator-facing signal so a regression that drops NewExecutor
 // wiring is observable as a structured event, not a silent hang.
-func TestRunInit_NoExecutorWired(t *testing.T) {
+func TestRunExec_NoExecutorWired(t *testing.T) {
 	var buf bytes.Buffer
 	stepLog := logger.NewWriter(&buf)
 	d := &Dialer{log: logger.Nop()}
-	d.runInit(context.Background(), "c-1", establishResult{}, stepLog)
+	d.runExec(context.Background(), "c-1", establishResult{}, stepLog)
 	assert.Contains(t, buf.String(), "agent_init_executor_unset",
 		"missing-executor path must emit the diagnostic event so operators can grep for it")
 }
@@ -944,14 +972,14 @@ func TestExecutor_Run_CapturesCombinedOutputInDetail(t *testing.T) {
 	require.NoError(t, bus.Start(context.Background()))
 	t.Cleanup(func() { _ = bus.Close() })
 
-	caps := subscribeInitEvents(t, bus)
+	caps := subscribeExecEvents(t, bus)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	stream := newFakeStream(ctx)
 	exec, errExec := NewExecutor(bus, selfExitDocker(t), logger.Nop())
 	require.NoError(t, errExec)
-	target := InitTarget{ContainerID: "c-out-1234567890ab", AgentName: "dev", Project: "clawker"}
+	target := ExecTarget{ContainerID: "c-out-1234567890ab", AgentName: "dev", Project: "clawker"}
 
 	doneFeeder := make(chan struct{})
 	stepCount := 0
@@ -1004,7 +1032,7 @@ func TestPlan_ShellStepsCarryFlags(t *testing.T) {
 	require.NoError(t, err)
 
 	var sawShellStep bool
-	for _, st := range exec.plan() {
+	for _, st := range exec.plan(true) {
 		sh, ok := st.(shellStep)
 		if !ok {
 			continue // agent-ready is not a ShellCommand
@@ -1018,7 +1046,7 @@ func TestPlan_ShellStepsCarryFlags(t *testing.T) {
 		assert.True(t, shell.GetExitOnNonZero(),
 			"every shell init step is fatal → exit_on_non_zero must be set (step %q)", sh.Name)
 
-		wantPrint := sh.Name == consts.HookPostInit || sh.Name == consts.HookPreRun
+		wantPrint := sh.Name == consts.HookPostExec || sh.Name == consts.HookPreRun
 		assert.Equal(t, wantPrint, shell.GetPrintOutput(),
 			"print_output must be set only for user hooks (step %q)", sh.Name)
 	}

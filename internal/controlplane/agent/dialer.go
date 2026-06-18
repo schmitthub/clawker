@@ -345,10 +345,19 @@ func (d *Dialer) runDial(cpCtx context.Context, dialCtx context.Context, contain
 		// for containment commands even when the agent is untrusted.
 		d.dispatchAgentEvents(dialCtx, containerID, res, cycleLog)
 
-		// Init owns Recv during its phase; failures publish InitFailed
-		// but never close the Session (asymmetric trust). Re-runs on
-		// every Session reconnect — see Executor.
-		d.runInit(cpCtx, containerID, res, cycleLog)
+		// Init ran only on first start
+		if ok, err := shouldAgentInit(res); ok {
+			d.runPlan(cpCtx, containerID, res, cycleLog, initPlan, "init")
+		} else if err != nil {
+			cycleLog.Error().Err(err).Msg("agentdial: failed to determine if agent should init")
+		}
+
+		// Boot ran every time
+		if ok, err := shouldAgentBoot(res); ok {
+			d.runPlan(cpCtx, containerID, res, cycleLog, bootPlan, "boot")
+		} else if err != nil {
+			cycleLog.Error().Err(err).Msg("agentdial: failed to determine if agent should boot")
+		}
 
 		drain := d.drainStream(dialCtx, res.Stream, cycleLog)
 		// Cancel the stream-scoped ctx so any goroutine still parked on
@@ -484,6 +493,7 @@ var errContainerStopped = errors.New("container not running")
 // safe for concurrent Recv). runDial defers StreamCancel at end of
 // cycle so the stream is always torn down even on early returns.
 type establishResult struct {
+	HelloAck     *clawkerdv1.HelloAck
 	Conn         *grpc.ClientConn
 	Stream       clawkerdv1.ClawkerdService_SessionClient
 	StreamCancel context.CancelFunc
@@ -632,7 +642,7 @@ func (d *Dialer) establishWithRetry(ctx context.Context, containerID string, log
 			publishedConnecting = true
 		}
 
-		conn, stream, streamCancel, peer, dialErr := d.tryEstablish(ctx, addr, attemptLog)
+		conn, stream, streamCancel, peer, helloAck, dialErr := d.tryEstablish(ctx, addr, attemptLog)
 		if dialErr == nil {
 			return establishResult{
 				Conn:         conn,
@@ -644,6 +654,7 @@ func (d *Dialer) establishWithRetry(ctx context.Context, containerID string, log
 				Attempt:      attempt,
 				Outcome:      outcomeSuccess,
 				PeerInfo:     peer,
+				HelloAck:     helloAck,
 			}
 		}
 
@@ -711,11 +722,11 @@ func nextBackoff(backoff time.Duration) time.Duration {
 // always returns nil — the dialer is permissive and never aborts on
 // cert grounds. The dial flow drives registry classification +
 // event publication off the captured peerInfo.
-func (d *Dialer) tryEstablish(ctx context.Context, addr string, log *logger.Logger) (*grpc.ClientConn, clawkerdv1.ClawkerdService_SessionClient, context.CancelFunc, peerInfo, error) {
+func (d *Dialer) tryEstablish(ctx context.Context, addr string, log *logger.Logger) (*grpc.ClientConn, clawkerdv1.ClawkerdService_SessionClient, context.CancelFunc, peerInfo, *clawkerdv1.HelloAck, error) {
 	var peer peerInfo
 	conn, err := d.dial(ctx, addr, &peer)
 	if err != nil {
-		return nil, nil, nil, peerInfo{}, err
+		return nil, nil, nil, peerInfo{}, nil, err
 	}
 
 	// Stream-scoped ctx so driveRegister can cancel just this stream
@@ -726,15 +737,16 @@ func (d *Dialer) tryEstablish(ctx context.Context, addr string, log *logger.Logg
 	if err != nil {
 		streamCancel()
 		_ = conn.Close()
-		return nil, nil, nil, peerInfo{}, fmt.Errorf("open Session stream: %w", err)
+		return nil, nil, nil, peerInfo{}, nil, fmt.Errorf("open Session stream: %w", err)
 	}
 
-	if err := d.helloHandshake(stream, log); err != nil {
+	helloAck, err := d.helloHandshake(stream, log)
+	if err != nil {
 		streamCancel()
 		_ = conn.Close()
-		return nil, nil, nil, peerInfo{}, fmt.Errorf("Hello handshake: %w", err)
+		return nil, nil, nil, peerInfo{}, nil, fmt.Errorf("Hello handshake: %w", err)
 	}
-	return conn, stream, streamCancel, peer, nil
+	return conn, stream, streamCancel, peer, helloAck, nil
 }
 
 // resolveAgent inspects the container and returns the moby
@@ -946,25 +958,25 @@ func (d *Dialer) capturePeer(rawCerts [][]byte, peer *peerInfo) {
 
 // helloHandshake sends Hello and awaits HelloAck. Anything else as
 // the first Response is treated as a protocol violation.
-func (d *Dialer) helloHandshake(stream clawkerdv1.ClawkerdService_SessionClient, log *logger.Logger) error {
+func (d *Dialer) helloHandshake(stream clawkerdv1.ClawkerdService_SessionClient, log *logger.Logger) (*clawkerdv1.HelloAck, error) {
 	if err := stream.Send(&clawkerdv1.Command{
 		CommandId: "hello",
 		Payload:   &clawkerdv1.Command_Hello{Hello: &clawkerdv1.Hello{}},
 	}); err != nil {
-		return fmt.Errorf("send Hello: %w", err)
+		return nil, fmt.Errorf("send Hello: %w", err)
 	}
 	resp, err := stream.Recv()
 	if err != nil {
-		return fmt.Errorf("recv HelloAck: %w", err)
+		return nil, fmt.Errorf("recv HelloAck: %w", err)
 	}
 	if _, ok := resp.Payload.(*clawkerdv1.Response_HelloAck); !ok {
 		log.Error().
 			Str("event", "agentdial_hello_unexpected_response").
 			Str("got_type", fmt.Sprintf("%T", resp.Payload)).
 			Msg("clawkerd returned non-HelloAck for Hello")
-		return fmt.Errorf("expected HelloAck, got %T", resp.Payload)
+		return nil, fmt.Errorf("expected HelloAck, got %T", resp.Payload)
 	}
-	return nil
+	return &clawkerdv1.HelloAck{}, nil
 }
 
 // drainOutcome classifies why drainStream returned. Replaces the
@@ -1096,32 +1108,22 @@ func (d *Dialer) dispatchAgentEvents(ctx context.Context, containerID string, re
 	}
 }
 
-// runInit invokes the wired Executor against the open Session. No-op
-// (with a warning) if no Executor was set — operators see the
-// misconfiguration in the structured log; the entrypoint will then
-// time out on its fifo and the container will fail to launch CMD.
-//
-// Failure to complete init is NOT terminal for the Session: the stream
-// stays open so subsequent containment commands can still be
-// dispatched (asymmetric trust). The init failure is captured on the
-// overseer worldview via InitFailed; subscribers (CLI WatchAgent,
-// monitoring) consume that to surface to operators.
-func (d *Dialer) runInit(ctx context.Context, containerID string, res establishResult, log *logger.Logger) {
+func (d *Dialer) runPlan(ctx context.Context, containerID string, res establishResult, log *logger.Logger, plan []step, planName string) {
 	if d.initExec == nil {
 		log.Warn().
-			Str("event", "agent_init_executor_unset").
-			Msg("agent.init: no Executor wired on dialer; entrypoint will hang on its fifo until timeout")
+			Str("event", fmt.Sprintf("agent_%s_executor_unset", planName)).
+			Msgf("agent.%s: no Executor wired on dialer; entrypoint will hang on its fifo until timeout", planName)
 		return
 	}
-	target := InitTarget{
+	target := ExecTarget{
 		ContainerID: containerID,
 		AgentName:   res.Agent,
 		Project:     res.Project,
 	}
-	if err := d.initExec.Run(ctx, res.Stream, target); err != nil {
+	if err := d.initExec.Run(ctx, res.Stream, target, plan, planName); err != nil {
 		log.Warn().Err(err).
-			Str("event", "agent_init_run_failed").
-			Msg("agent.init: Executor.Run returned error; Session held open for containment")
+			Str("event", fmt.Sprintf("agent_%s_run_failed", planName)).
+			Msgf("agent.%s: Executor.Run returned error; Session held open for containment", planName)
 	}
 }
 

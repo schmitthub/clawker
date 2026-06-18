@@ -491,14 +491,14 @@ const (
 	ReadyMarkerPath = "/var/run/clawker/ready"
 )
 
-// Init-phase wall-clock ceilings used by the CP-driven init plan.
+// Exec-phase wall-clock ceilings used by the CP-driven init plan.
 // post-init governs the longest-running step. CP's per-step ceiling
-// in `internal/controlplane/agent/init.go::runStep` is the only
+// in `internal/controlplane/agent/exec.go::runStep` is the only
 // timeout that gates init now — clawkerd-as-PID-1 has no separate
 // shell-script ceiling to coordinate with.
 const (
-	InitStepTimeoutDefaultSeconds  uint32 = 30
-	InitStepTimeoutPostInitSeconds uint32 = 600
+	ExecStepTimeoutDefaultSeconds  uint32 = 30
+	ExecStepTimeoutPostInitSeconds uint32 = 600
 )
 
 // CPAgentKillGrace bounds how long CP waits for an agent container to

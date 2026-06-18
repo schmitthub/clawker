@@ -45,6 +45,7 @@ message Command {
     Signal signal = 6;
     RegisterRequired register_required = 7;
     AgentReady agent_ready = 8;
+    AgentInitialized agent_initialized = 9;
   }
 }
 
@@ -63,12 +64,15 @@ message Hello {}
 // clawkerd replies with RegisterDone correlated by command_id.
 message RegisterRequired {}
 
-// AgentReady is the terminal init-sequence signal. clawkerd releases
+// AgentReady is the terminal boot-sequence signal. clawkerd releases
 // the entrypoint to exec the user CMD. Idempotent on reconnect (no
 // reader → no-op success). Reply: Done{exit_code:0} on release or
 // reconnect-replay; Error{NOT_FOUND} if the fifo is missing entirely
 // (build drift); Error{IO_ERROR} on syscall-level failure.
 message AgentReady {}
+
+// AgentInitialized signals that the agent has completed its initialization sequence.
+message AgentInitialized {}
 
 // ShellCommand starts a shell pipeline. stages.len == 1 runs a
 // single command; stages.len > 1 chains stage[i].stdout into
@@ -146,7 +150,10 @@ message Response {
   }
 }
 
-message HelloAck {}
+message HelloAck {
+  bool initialized = 1; // true if this agent has already completed the init sequence
+  bool cmd_running = 2; // true if the container CMD is running (ie `claude`)
+}
 
 // RegisterDone is the terminal Response to a RegisterRequired Command.
 // ok=true signals AgentService.Register returned Welcome. ok=false
