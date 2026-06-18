@@ -257,10 +257,12 @@ func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConf
 // leaving these writable would silently grant bind-equivalent access to the
 // whole repo. Nothing in clawker's in-container flows writes either path
 // (in-container git config is --global only; the GPG override is env-based
-// for exactly this reason). The known in-worktree casualties are loud, not
-// silent: `git config --local`, `git remote add`, and `git push -u` fail on
-// the read-only config (upstream tracking is already configured host-side at
-// worktree creation, so plain `git push` works).
+// for exactly this reason). The known in-worktree casualties: `git config
+// --local` and `git remote add` fail loudly on the read-only config; `git push
+// -u` still pushes the branch (exit 0) but can't persist upstream tracking — an
+// easy-to-miss warning, not a hard failure. Tracking for branches that already
+// existed on the remote is set host-side at worktree creation, so plain `git
+// push` works for those.
 func buildWorktreeGitMounts(projectRootDir string) ([]mount.Mount, error) {
 	// Resolve symlinks to match git's behavior. Git records absolute paths with
 	// symlinks resolved (e.g., on macOS /var -> /private/var). The mount target
