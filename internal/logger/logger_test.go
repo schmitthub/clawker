@@ -413,7 +413,7 @@ func TestClose_LiveContext_BoundedByExportTimeout(t *testing.T) {
 	// Live context — never canceled, mirroring clawker-cp's deferred
 	// log.Close(ctx) on the base background context.
 	start := time.Now()
-	_ = l.Close(context.Background())
+	err = l.Close(context.Background())
 	elapsed := time.Since(start)
 
 	// The 100ms export timeout bounds the final flush. The 2s threshold sits
@@ -421,5 +421,13 @@ func TestClose_LiveContext_BoundedByExportTimeout(t *testing.T) {
 	// path would block for — fast and not flaky.
 	if elapsed >= 2*time.Second {
 		t.Errorf("Close blocked %v on a live context; OtelOptions.Timeout must bound the flush", elapsed)
+	}
+
+	// The export failure against the unreachable collector is the true outcome
+	// of the close and must surface — Close reports whatever Shutdown returns
+	// and no longer swallows context errors. Goes red if the suppression is
+	// reintroduced (which would hide a real daemon-path export failure).
+	if err == nil {
+		t.Error("Close returned nil on a live context with an unreachable collector; the export-timeout failure must surface")
 	}
 }

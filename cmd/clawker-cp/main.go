@@ -270,7 +270,18 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// flush is bounded by the OTLP SDK export timeout and the supervisor's
 	// SIGKILL grace, not an invented deadline.
 	ctx := context.Background()
-	defer log.Close(ctx)
+	defer func() {
+		// Surface a Close failure on stderr (→ docker logs), NOT into retErr.
+		// The OTEL mirror is non-fatal/self-healing by design (an unreachable
+		// collector is expected, not a teardown fault), and CP's exit code is a
+		// teardown-integrity signal — poisoning it would trip the on-failure
+		// restart policy on a benign telemetry outage. stderr also survives the
+		// logger itself closing here, unlike a log.Error() that races its own
+		// shutdown. Mirrors clawkerd's logger-close handling.
+		if cErr := log.Close(ctx); cErr != nil {
+			fmt.Fprintf(os.Stderr, "%s: logger close failed: %v\n", consts.ContainerCP, cErr)
+		}
+	}()
 	log.Info().Msg("starting")
 
 	// Wire the real logger into the Service now that logger.New has

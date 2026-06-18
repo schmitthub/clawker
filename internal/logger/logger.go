@@ -311,19 +311,14 @@ func (l *Logger) Close(ctx context.Context) error {
 	var provErr, fwErr error
 
 	if l.provider != nil {
-		// Pass the caller's context straight through. The final synchronous
-		// export honors it, so a canceled or expired context unwinds the export
-		// (and the exporter's retry backoff) immediately rather than blocking on
-		// an unreachable collector — the caller owns the shutdown deadline. On a
-		// still-live context the bound is OtelOptions.Timeout when set, else the
-		// OTLP SDK's own default export timeout.
-		//
-		// A canceled/expired context is the intended CLI shutdown path (it
-		// cancels before this runs), so context.Canceled/DeadlineExceeded is the
-		// expected outcome here, not a failure — drop it instead of reporting it
-		// as a Close error that would mask the file-writer result below.
-		if err := l.provider.Shutdown(ctx); err != nil &&
-			!errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		// ctx is the flush deadline. Shutdown honors it: a canceled or expired
+		// ctx unwinds the final export (and the exporter's retry backoff) at once
+		// rather than blocking on an unreachable collector. With a live ctx the
+		// bound is OtelOptions.Timeout when set, else the OTLP SDK default export
+		// timeout. Whatever Shutdown returns is the true outcome of the close —
+		// report it. Interpreting a ctx cancellation it requested (e.g. a caller
+		// that cancels for a fast exit) is the caller's job, not the logger's.
+		if err := l.provider.Shutdown(ctx); err != nil {
 			provErr = fmt.Errorf("logger: shutdown OTEL provider: %w", err)
 		}
 	}
