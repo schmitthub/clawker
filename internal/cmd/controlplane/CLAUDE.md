@@ -13,6 +13,13 @@ verbs in this package. Day-to-day operators rarely invoke this package —
 it exists for debugging, upgrades, and recovery paths where the operator
 wants to control the CP lifecycle directly.
 
+## Naming — "domain" is data-layer design vocabulary, never a runtime label
+
+Do NOT call runtime things "domains". "Domain" (DDD bounded context) belongs to the
+state/data-layer design discussion ONLY. It is not a name for packages or wiring. Call
+things what they are — the agent package, the dialer, the watcher, the executor — never
+"the agent domain" or `*Domain` symbols. No numbered `// Phase N` comment scaffolding.
+
 ## Contents
 
 | File | Purpose |

@@ -2,6 +2,22 @@
 
 The clawker control plane. A containerized, privileged, long-lived Go service that owns authoritative state for managed containers. The `clawker-controlplane` container runs `cmd/clawkercp` as PID 1, owns the firewall stack (Envoy + CoreDNS) and eBPF state, and serves the `AdminService` gRPC surface consumed by the CLI via `f.AdminClient(ctx)`.
 
+## Naming — "domain" is data-layer design vocabulary, never a runtime label
+
+Do NOT call runtime things "domains". "Domain" (DDD bounded context) belongs to the
+state/data-layer design discussion ONLY — how stores own and project their own data.
+It is not a name for packages or wiring.
+
+- It is the **agent package**, not "the agent domain". Packages are packages.
+- Wire **concrete things by their real names**: the dialer (`agent.New`), the watcher
+  (`NewAgentWatcher`), the init executor (`NewExecutor`), the registry subscriptions
+  (`agent.Start`). No `*Domain` symbol names. No `startAgentDomain`-style blobs — a
+  package is not a startable vehicle.
+- The CP wires those concrete constructors inline; it is not "an orchestrator calling
+  domain wrappers". Don't oversell DDD/"orchestrator" terminology.
+- `run()` reads top-to-bottom through concrete calls. No numbered `// Phase N` comment
+  scaffolding — a function that needs a comment table-of-contents is a god-function.
+
 ## Resilience contract — CP crashing is a security incident, NOT an availability one
 
 This is the most important invariant in this package. Read it before adding any failure path to CP code. See the root `CLAUDE.md` for the canonical statement; this section enforces it for code under `internal/controlplane/`.
