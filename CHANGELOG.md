@@ -14,6 +14,10 @@ clawker CLI's "what's new" teaser renders the section bodies verbatim as
 markdown, and the release-notes workflow copies them into the GitHub release.
 Link to relevant docs inline in the bullets.
 
+## [0.12.6] - 2026-06-18
+
+- **Fixed:** CLI OTEL logger no longer blocks command exit for up to 5 seconds when monitoring is down. 
+
 ## [0.12.5] - 2026-06-17
 
 - **Fixed:** Agent prompt causing agents to forgo setting up branch upstream tracking

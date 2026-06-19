@@ -65,7 +65,7 @@ func NewCmdBridgeServe() *cobra.Command {
 						Filename: fmt.Sprintf("bridge-%s.log", containerID[:12]),
 					}); lErr == nil {
 						log = l
-						defer log.Close()
+						defer log.Close(context.Background())
 					}
 				}
 			}

@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -156,6 +157,21 @@ func (m *SubprocessManager) WaitHealthy(ctx context.Context, name string, check 
 
 		select {
 		case <-ctx.Done():
+			// A parent *cancellation* (e.g. a SIGTERM/SIGINT shutdown propagated
+			// through the caller's context) surfaces as context.Canceled; report
+			// it as canceled, not as a phantom "did not become healthy within N"
+			// latency failure that would send an operator chasing a startup
+			// problem that never existed. Any *deadline* — including the
+			// WithTimeout(ctx, check.Timeout) installed at the top — surfaces as
+			// DeadlineExceeded and is reported as the health timeout. Callers
+			// pass a deadline-free context (CP uses signal.NotifyContext over
+			// context.Background), so the only deadline in play is this check's
+			// own; a caller that ever passes a deadline-bearing context would
+			// have it attributed here to the health timeout — revisit this
+			// branch (compare the parent ctx error) if that case is introduced.
+			if errors.Is(ctx.Err(), context.Canceled) {
+				return fmt.Errorf("subprocess %s health wait canceled: %w", name, ctx.Err())
+			}
 			return fmt.Errorf("subprocess %s did not become healthy within %s", name, check.Timeout)
 		case <-ticker.C:
 		}
