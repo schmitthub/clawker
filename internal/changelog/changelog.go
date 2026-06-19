@@ -109,7 +109,7 @@ func getChangelogEntries(ctx context.Context, client *http.Client) ([]Entry, err
 		return nil, fmt.Errorf("reading changelog response: %w", err)
 	}
 
-	entries, err := parse(string(raw))
+	entries, err := Parse(string(raw))
 	if err != nil {
 		return nil, err
 	}

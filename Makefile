@@ -677,7 +677,7 @@ test-clean:
 # "what's new" teaser shows it (glamour markdown). Use to eyeball a release
 # section — alerts, bullets, code spans — before shipping. No embed deps.
 changelog-preview:
-	@CLAWKER_PREVIEW_CHANGELOG=1 COLORTERM=truecolor $(GO) test ./internal/changelog/ -run TestPreviewLatestChangelogEntry -v 2>&1
+	@CLAWKER_PREVIEW_CHANGELOG=1 COLORTERM=truecolor $(GO) test ./internal/clawker/ -run TestPreviewLatestChangelogEntry -v 2>&1
 
 # ============================================================================
 # License Targets

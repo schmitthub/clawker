@@ -32,7 +32,7 @@ func loadFixture(t *testing.T) []byte {
 
 func parseFixture(t *testing.T) []Entry {
 	t.Helper()
-	entries, err := parse(string(loadFixture(t)))
+	entries, err := Parse(string(loadFixture(t)))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestParse_PartialSemverHeaderSkipped(t *testing.T) {
 
 - A thing.
 `
-	entries, err := parse(raw)
+	entries, err := Parse(raw)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
