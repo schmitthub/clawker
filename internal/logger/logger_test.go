@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -127,6 +128,32 @@ func TestWith(t *testing.T) {
 	s := string(content)
 	if !strings.Contains(s, "foo") || !strings.Contains(s, "bar") {
 		t.Errorf("log should contain context fields, got: %s", s)
+	}
+}
+
+func TestWith_RepeatedKeyDedupes(t *testing.T) {
+	var buf bytes.Buffer
+	l := NewWriter(&buf)
+
+	// Three layers each set "component" — the bug this guards against
+	// stacked all three into one line (clawker-controlplane, agent.init,
+	// agent.boot). The deduped logger keeps only the last value.
+	sub := l.With("component", "clawker-controlplane").
+		With("project", "demo").
+		With("component", "agent.init").
+		With("component", "agent.boot")
+	sub.Error().Str("event", "agent_init_failed").Msg("boom")
+
+	out := buf.String()
+	if got := strings.Count(out, `"component"`); got != 1 {
+		t.Fatalf("component key appears %d times, want 1; line: %s", got, out)
+	}
+	if !strings.Contains(out, `"component":"agent.boot"`) {
+		t.Errorf("expected last component value to win; line: %s", out)
+	}
+	// Unrelated keys set once still survive the rebuild.
+	if !strings.Contains(out, `"project":"demo"`) {
+		t.Errorf("expected project field preserved; line: %s", out)
 	}
 }
 

@@ -38,8 +38,50 @@ type Logger struct {
 	fw       *lumberjack.Logger
 	provider *sdklog.LoggerProvider
 
+	// base is the field-less root logger (sinks + timestamp, no With
+	// fields). With rebuilds zl from base each call so a repeated key
+	// (e.g. "component" set at each layer) collapses to one field
+	// instead of stacking — zerolog itself never dedupes keys.
+	base zerolog.Logger
+	// fields is the accumulated With context, deduped by key with the
+	// last value winning, in first-set order.
+	fields []logField
+
 	mu     sync.Mutex // guards Close
 	closed bool
+}
+
+// logField is one accumulated With key/value pair.
+type logField struct {
+	key string
+	val any
+}
+
+// mergeFields returns prev with keyvals applied: a key already present
+// keeps its position and takes the new value (last wins); a new key is
+// appended. The input slice is never mutated.
+func mergeFields(prev []logField, keyvals []any) []logField {
+	merged := make([]logField, len(prev))
+	copy(merged, prev)
+	for i := 0; i < len(keyvals); i += 2 {
+		key, ok := keyvals[i].(string)
+		if !ok {
+			panic(fmt.Sprintf("logger.With: key at index %d is %T, want string", i, keyvals[i]))
+		}
+		val := keyvals[i+1]
+		replaced := false
+		for j := range merged {
+			if merged[j].key == key {
+				merged[j].val = val
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			merged = append(merged, logField{key: key, val: val})
+		}
+	}
+	return merged
 }
 
 // Options configures the logger.
@@ -145,7 +187,8 @@ func (o *Options) maxBackups() int {
 
 // Nop returns a logger that discards all output.
 func Nop() *Logger {
-	return &Logger{zl: zerolog.Nop()}
+	nop := zerolog.Nop()
+	return &Logger{zl: nop, base: nop}
 }
 
 // NewWriter creates a logger that writes structured JSON to the given
@@ -161,7 +204,7 @@ func NewWriter(w io.Writer) *Logger {
 		With().
 		Timestamp().
 		Logger()
-	return &Logger{zl: zl}
+	return &Logger{zl: zl, base: zl}
 }
 
 // OtelOptionsFromEnv builds [OtelOptions] from the standard OTLP
@@ -271,6 +314,7 @@ func New(opts Options) (*Logger, error) {
 		Timestamp().
 		Logger()
 	l.zl = zl
+	l.base = zl
 
 	return l, nil
 }
@@ -281,22 +325,25 @@ func New(opts Options) (*Logger, error) {
 //
 //	projectLog := log.With("project", "foo", "agent", "bar")
 //	projectLog.Info().Msg("started")
-func (l *Logger) With(keyvals ...interface{}) *Logger {
+func (l *Logger) With(keyvals ...any) *Logger {
 	if len(keyvals)%2 != 0 {
 		panic("logger.With: odd number of key-value arguments")
 	}
-	ctx := l.zl.With()
-	for i := 0; i < len(keyvals); i += 2 {
-		key, ok := keyvals[i].(string)
-		if !ok {
-			panic(fmt.Sprintf("logger.With: key at index %d is %T, want string", i, keyvals[i]))
-		}
-		ctx = ctx.Interface(key, keyvals[i+1])
+	// Rebuild from the field-less base applying the deduped field set, so
+	// a key set at multiple layers (e.g. "component") collapses to a
+	// single field. Building incrementally off l.zl would stack duplicate
+	// keys — zerolog does not dedupe.
+	fields := mergeFields(l.fields, keyvals)
+	ctx := l.base.With()
+	for _, f := range fields {
+		ctx = ctx.Interface(f.key, f.val)
 	}
 	return &Logger{
 		zl:       ctx.Logger(),
 		fw:       l.fw,
 		provider: l.provider,
+		base:     l.base,
+		fields:   fields,
 	}
 }
 

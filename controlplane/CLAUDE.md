@@ -2,11 +2,16 @@
 
 The clawker control plane. A containerized, privileged, long-lived Go service that owns authoritative state for managed containers. The `clawker-controlplane` container runs `cmd/clawkercp` as PID 1, owns the firewall stack (Envoy + CoreDNS) and eBPF state, and serves the `AdminService` gRPC surface consumed by the CLI via `f.AdminClient(ctx)`.
 
-## Naming — "domain" is data-layer design vocabulary, never a runtime label
+## Naming — "domain" is data-layer design talk, never a runtime label
 
-Do NOT call runtime things "domains". "Domain" (DDD bounded context) belongs to the
-state/data-layer design discussion ONLY — how stores own and project their own data.
-It is not a name for packages or wiring.
+"Domain" (DDD bounded context) is a way to *think* about the data-layer design — how a
+piece of state owns and projects its own data. It is NOT a thing in the running system,
+NOT a name for a package, and NOT a vehicle you start, wire, or call.
+
+The implementation names its sub-components for what they are: a **Store**, a **Storage
+Repository** — components that live inside a package. There is no "domain handler", no
+"agent domain", no "future domains embed alongside". There is the agent package with its
+Store; the firewall handler; concrete RPC handlers.
 
 - It is the **agent package**, not "the agent domain". Packages are packages.
 - Wire **concrete things by their real names**: the dialer (`agent.New`), the watcher
@@ -103,9 +108,9 @@ The auth stack uses Ory Hydra as the OAuth2 provider (replaces the earlier custo
 
 ## AdminService composition
 
-`server.go` exposes the unexported `adminServer` type that embeds `*fwhandler.Handler` (and, in future branches, additional domain handlers). Method promotion produces the AdminServiceServer surface; `NewAdminServer(fw, agents, log)` is the wiring point used by `cmd/clawkercp/main.go`.
+`server.go` exposes the unexported `adminServer` type that embeds `*fwhandler.Handler` (and, in future branches, additional RPC handlers). Method promotion produces the AdminServiceServer surface; `NewAdminServer(fw, agents, log)` is the wiring point used by `cmd/clawkercp/main.go`.
 
-The 13 firewall RPCs live in `internal/controlplane/firewall/handler.go` — see `internal/controlplane/firewall/CLAUDE.md` for the per-RPC table. Future domains (Monitor, Hostproxy, Clawkerd) embed alongside; the `<Domain><Action>[<Object>]` proto naming convention prevents method-name collisions.
+The 13 firewall RPCs live in `internal/controlplane/firewall/handler.go` — see `internal/controlplane/firewall/CLAUDE.md` for the per-RPC table. Future handlers (Monitor, Hostproxy, Clawkerd) embed alongside; the `<Subsystem><Action>[<Object>]` proto naming convention prevents method-name collisions.
 
 All RPCs require the uniform `admin` scope (INV-B2-009) with one deliberate exception: `GetSystemTime` is mapped to the public scope (`consts.ScopePublic`) in `AdminMethodScopes()`, making it PUBLIC so the CLI can call it during token-exchange bootstrap before it holds a bearer token (the mTLS client cert is still required at the listener). An empty or unmapped scope fails closed (deny) — public is the explicit `ScopePublic` sentinel, never the zero value. Per-method scope diversification beyond this is intentionally not used — see Spec §8.
 

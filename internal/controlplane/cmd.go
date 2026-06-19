@@ -210,7 +210,7 @@ func Main() StatusCode {
 // It runs as the main process in the CP container, supervising Hydra,
 // Oathkeeper, Kratos as subprocesses. It loads eBPF programs, serves a
 // gRPC AdminService with Hydra token introspection, orchestrates the
-// Docker events feeder and the typed pub/sub topics each domain
+// Docker events feeder and the typed pub/sub topics each subsystem
 // produces to and consumes from, and reports readiness on /healthz.
 //
 // Oathkeeper runs as a subprocess for future webui HTTP auth. gRPC auth
@@ -262,7 +262,7 @@ func runDrainStage(log *logger.Logger, stage, event string, fn func()) (err erro
 // sequence only stops/closes them in the strict order below. Kept as a
 // struct so run() builds the drain callback with a single call rather than
 // an inline ~100-line closure, while the literal teardown ordering stays in
-// one package-local orchestrator function (not a domain package).
+// one package-local function.
 type drainDeps struct {
 	log               *logger.Logger
 	actionQueue       *fwhandler.ActionQueue
@@ -401,7 +401,7 @@ func startOryStack(ctx context.Context, cfg config.Config, subMgr *subprocess.Su
 	return caCertPool, caTLS, nil
 }
 
-// buildAgentInfra runs Phase 6: the durable sqlite agent registry (CP is the
+// buildAgentInfra builds the durable sqlite agent registry (CP is the
 // SOLE writer; EnsureSchema before NewSQLiteWriter so its SELECT COUNT sees the
 // table), the peer-IP→Docker→labels resolver (grounds identity trust on a
 // kernel-attested source, not cert claims), the managed-agent ContainerLister,
@@ -433,9 +433,9 @@ func buildAgentInfra(log *logger.Logger, dockerCli *docker.Client, cfg config.Co
 	return agentReg, agentPeerLookup, lister, agentRepo, nil
 }
 
-// startHealthz runs Phase 9: it serves the /healthz endpoint (the orchestrator's
+// startHealthz serves the /healthz endpoint (the orchestrator's
 // aggregate readiness + service-probe surface) on HealthPort in a goroutine,
-// returning the *http.Server so run()'s Phase 18 shutdown can GracefulStop it.
+// returning the *http.Server so run()'s shutdown sequence can GracefulStop it.
 // A non-ErrServerClosed listen failure is deposited on serveFailed so the serve
 // select tears down.
 func startHealthz(cp config.ControlPlaneSettings, log *logger.Logger, orchestrator *ControlPlane, serveFailed chan error) *http.Server {
@@ -454,7 +454,7 @@ func startHealthz(cp config.ControlPlaneSettings, log *logger.Logger, orchestrat
 	return healthServer
 }
 
-// firewallBringupGate runs Phase 8: the settings-driven firewall bringup startup
+// firewallBringupGate is the settings-driven firewall bringup startup
 // GATE. When firewall.enable (settings.yaml) is set, the stack must be up
 // whenever CP is — not only on a CLI FirewallInit — so the same queued
 // FirewallInit runs synchronously BEFORE SetReady, making a green /healthz mean
@@ -480,7 +480,7 @@ func firewallBringupGate(cfg config.Config, log *logger.Logger, handler *fwhandl
 	return nil
 }
 
-// startFeeder runs Phase 10: it constructs the dockerevents feeder — the sole
+// startFeeder constructs the dockerevents feeder — the sole
 // producer of DockerEvent — and launches its Supervise loop on a child of
 // watcherCtx. feederCancel is separate from watcherCtx so the drain sequence
 // can stop the feeder BEFORE closing topics (avoids dropped-publish noise);
@@ -504,7 +504,7 @@ func startFeeder(watcherCtx context.Context, cfg config.Config, log *logger.Logg
 	return feederCancel, feederDone, nil
 }
 
-// buildEnforcement runs Phase 4: the Docker client, cgroup-driver detection +
+// buildEnforcement builds the Docker client, cgroup-driver detection +
 // container resolver, the firewall rules store + Stack, and the eBPF load +
 // defensive stale-bypass cleanup. The eBPF Load and CleanupStaleBypass are
 // pre-SetReady startup GATES — any error returned here propagates out of run()
@@ -579,8 +579,8 @@ func buildEnforcement(ctx context.Context, cfg config.Config, log *logger.Logger
 	return dockerCli, containerResolver, rulesStore, stack, ebpfMgr, cleanup, nil
 }
 
-// grpcStackDeps carries the orchestrator-resolved handles Phase 7 builds the
-// firewall handler + gRPC servers against. caTLS/caCertPool are the single CA
+// grpcStackDeps carries the handles buildGRPCStack builds the firewall
+// handler + gRPC servers against. caTLS/caCertPool are the single CA
 // surface from the Ory stack — never rebuilt.
 type grpcStackDeps struct {
 	log               *logger.Logger
@@ -679,7 +679,7 @@ func newDrainCallback(deps drainDeps) func(context.Context) error {
 	}
 }
 
-// bootLogging stands up Phase 1's trusted-lane OTel cert provisioner and the
+// bootLogging stands up the trusted-lane OTel cert provisioner and the
 // process logger, returning the concrete *otelcerts.Service (for the post-logger
 // SetLogger + netlogger wiring), the fwhandler.OtelCertProvisioner interface (for
 // the firewall stack — UNTYPED nil on failure so the stack's `== nil` check fires;
@@ -759,9 +759,9 @@ func bootLogging(logDir string) (log *logger.Logger, otelCertsSvc *otelcerts.Ser
 	return log, otelCertsSvc, otelCerts, cleanup, nil
 }
 
-// buildTopics constructs the three typed pub/sub topics (one per domain
-// payload). The pipe holds zero state — each domain's Repository projects into
-// its own private store — and the single generic audit hook self-attaches
+// buildTopics constructs the three typed pub/sub topics (one per payload
+// type). The pipe holds zero state — each subscriber projects events into its
+// own private store — and the single generic audit hook self-attaches
 // inside NewTopic, so the orchestrator wires ZERO hooks. A topic build failure
 // fails CP startup (pre-SetReady): it is a wiring regression, not a degraded
 // subsystem.
@@ -810,7 +810,7 @@ type workerDeps struct {
 // event=netlogger_unavailable line; the returned provider is caller-owned (the
 // drain sequence Shutdowns it — Service.Stop does not).
 func startWorkers(watcherCtx context.Context, d workerDeps) (*netlogger.Service, *sdklog.LoggerProvider, func()) {
-	// Phase 11: pub/sub stats heartbeat — coarse per-topic + agent-worldview
+	// pub/sub stats heartbeat — coarse per-topic + agent-worldview
 	// health signal on the CP log (worldview size via the Repository's Len()).
 	pubsub.NewStatsHeartbeat(d.busLog, pubsub.DefaultStatsInterval,
 		pubsub.NewTopicStatsSource("docker", d.dockerTopic.Stats),
@@ -819,7 +819,7 @@ func startWorkers(watcherCtx context.Context, d workerDeps) (*netlogger.Service,
 		pubsub.NewWorldviewStatsSource("agent", d.agentRepo.Agents.Len),
 	).Start(watcherCtx)
 
-	// Phase 12: netlogger — drains the BPF per-decision ringbuf to the
+	// netlogger — drains the BPF per-decision ringbuf to the
 	// trusted-infra OTLP receiver.
 	netloggerSvc, netloggerProvider := netlogger.Start(watcherCtx, netlogger.StartDeps{
 		Cfg:           d.cfg,
@@ -832,7 +832,7 @@ func startWorkers(watcherCtx context.Context, d workerDeps) (*netlogger.Service,
 		Domains:       d.handler.ReverseDNSDomains,
 	})
 
-	// Phase 13: dns_cache GC — reclaims expired entries the CoreDNS dnsbpf
+	// dns_cache GC — reclaims expired entries the CoreDNS dnsbpf
 	// plugin wrote so the pinned map stays bounded. The sync.Once-guarded stop
 	// is called BOTH from the drain body (before FlushAll) AND deferred by run()
 	// (LIFO before ebpfMgr.Close), so an in-flight sweep is joined before the
@@ -842,10 +842,9 @@ func startWorkers(watcherCtx context.Context, d workerDeps) (*netlogger.Service,
 	return netloggerSvc, netloggerProvider, stopDNSGC
 }
 
-// agentDomainDeps carries the orchestrator-resolved handles the agent-domain
-// wiring (Phase 16) needs. Kept as a struct so startAgentDomain's signature
-// stays an orchestration call rather than an 8-positional-arg sprawl.
-type agentDomainDeps struct {
+// agentDialerDeps carries the handles startAgentDialer needs, grouped into
+// a struct so its signature stays one call rather than an 8-arg sprawl.
+type agentDialerDeps struct {
 	log         *logger.Logger
 	dockerCli   *docker.Client
 	agentTopic  *pubsub.Topic[agent.AgentEvent]
@@ -856,17 +855,17 @@ type agentDomainDeps struct {
 	caCertPool  *x509.CertPool
 }
 
-// startAgentDomain wires the agent domain: the CP-driven init Executor, the
-// CP→clawkerd Dialer, the agent-axis subscriptions, and the boot-time dial of
-// every already-running agent. It returns a cleanup closure run() defers
-// (no-op until agent.Start succeeds, so deferring it is always safe).
+// startAgentDialer wires the CP-driven init Executor, the CP→clawkerd Dialer,
+// the agent-axis subscriptions, and the boot-time dial of every already-running
+// agent. It returns a cleanup closure run() defers (no-op until agent.Start
+// succeeds, so deferring it is always safe).
 //
 // CP §3.4 degrade contract: a broken init Executor → initExec=nil (entrypoint
 // fifo timeout is the only user-visible effect); a broken dialer → dialer=nil
 // (CP→clawkerd dispatch disabled). Neither cascades — AdminService, firewall,
 // registry, and the AgentService listener all stay up. Every degrade emits its
 // own event=<subsystem>_unavailable line via wireInitExecutor / agent.New.
-func startAgentDomain(watcherCtx context.Context, d agentDomainDeps) func() {
+func startAgentDialer(watcherCtx context.Context, d agentDialerDeps) func() {
 	agentCleanup := func() {}
 
 	// The CP-driven init Executor runs the static init plan on each new
@@ -920,7 +919,7 @@ func startAgentDomain(watcherCtx context.Context, d agentDomainDeps) func() {
 }
 
 func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (retErr error) {
-	// Phase 1: trusted-lane OTel certs + logger (see bootLogging).
+	// trusted-lane OTel certs + logger (see bootLogging).
 	log, otelCertsSvc, otelCerts, logCleanup, err := bootLogging(logDir)
 	if err != nil {
 		return err
@@ -931,7 +930,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	ctx := context.Background()
 	defer logCleanup()
 
-	// Phase 2: config + signal-aware contexts. All ports come from
+	// config + signal-aware contexts. All ports come from
 	// settings.ControlPlane (config dir set by CLAWKER_CONFIG_DIR).
 	cfg, err := config.NewConfig()
 	if err != nil {
@@ -959,7 +958,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	watcherCtx, watcherCancel := context.WithCancel(ctx)
 	defer watcherCancel()
 
-	// Phase 3: Ory auth stack (Kratos, Hydra, Oathkeeper) — startup GATE 1 (see
+	// Ory auth stack (Kratos, Hydra, Oathkeeper) — startup GATE 1 (see
 	// startOryStack). caCertPool/caTLS are the single CA surface reused
 	// everywhere downstream; never rebuilt.
 	caCertPool, caTLS, err := startOryStack(signalCtx, cfg, subMgr, orchestrator, cp, caCertPath, jwkPath, log)
@@ -967,7 +966,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		return err
 	}
 
-	// Phase 4: Docker client + firewall stack + eBPF load — startup GATES (see
+	// Docker client + firewall stack + eBPF load — startup GATES (see
 	// buildEnforcement; ebpf Load + CleanupStaleBypass are pre-SetReady gates
 	// that exit 1 without flush). enforcementCleanup closes the eBPF manager
 	// (error joined into retErr) then the Docker client, on every return arm.
@@ -981,8 +980,8 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		return err
 	}
 
-	// Phase 5: typed pub/sub topics (see buildTopics). One topic per domain
-	// payload; the single generic audit hook self-attaches inside NewTopic.
+	// typed pub/sub topics (see buildTopics). One topic per payload type;
+	// the single generic audit hook self-attaches inside NewTopic.
 	busLog := log.With("component", "pubsub")
 	dockerTopic, agentTopic, enrolledTopic, err := buildTopics(busLog)
 	if err != nil {
@@ -999,14 +998,14 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		}
 	}()
 
-	// Phase 6: agent registry (sqlite) + peer lookup + lister + worldview
+	// agent registry (sqlite) + peer lookup + lister + worldview
 	// Repository with its two subscriptions wired — see buildAgentInfra.
 	agentReg, agentPeerLookup, lister, agentRepo, err := buildAgentInfra(log, dockerCli, cfg, agentTopic, dockerTopic)
 	if err != nil {
 		return err
 	}
 
-	// Phase 7: firewall handler + gRPC servers (admin + agent listeners) — see
+	// firewall handler + gRPC servers (admin + agent listeners) — see
 	// buildGRPCStack. The ActionQueue Close is drain step 1 (injected via
 	// HandlerDeps); grpcCleanup is the belt-and-braces close for non-drain
 	// exit paths.
@@ -1032,7 +1031,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	}
 	defer grpcCleanup()
 
-	// Phase 8: settings-driven firewall bringup — startup GATE, pre-SetReady
+	// settings-driven firewall bringup — startup GATE, pre-SetReady
 	// (see firewallBringupGate). A failure exits 1 without an eBPF flush.
 	if err := firewallBringupGate(cfg, log, handler); err != nil {
 		return err
@@ -1040,11 +1039,11 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 
 	orchestrator.SetReady()
 
-	// Phase 9: /healthz server (see startHealthz). Returns the server so
-	// Phase 18 can GracefulStop it.
+	// /healthz server (see startHealthz). Returns the server so the
+	// shutdown sequence can GracefulStop it.
 	healthServer := startHealthz(cp, log, orchestrator, serveFailed)
 
-	// Phase 10: dockerevents feeder — the sole producer of DockerEvent (see
+	// dockerevents feeder — the sole producer of DockerEvent (see
 	// startFeeder). feederCancel is the drain sequence's stop-before-topic-close
 	// handle; deferred here as belt-and-braces for non-drain exit.
 	feederCancel, feederDone, err := startFeeder(watcherCtx, cfg, log, dockerCli, dockerTopic, serveFailed)
@@ -1074,7 +1073,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	})
 	defer stopDNSGC()
 
-	// Phase 14: drain-to-zero teardown callback. newDrainCallback wraps
+	// drain-to-zero teardown callback. newDrainCallback wraps
 	// runDrainSequence in sync.Once so SIGTERM and the AgentWatcher's
 	// drain-to-zero converge on the same teardown — whichever trigger wins runs
 	// it exactly once; every later call returns the captured error, so run()'s
@@ -1104,7 +1103,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		enrolledTopic:     enrolledTopic,
 	})
 
-	// Phase 15: agent watcher (drain-to-zero trigger).
+	// agent watcher (drain-to-zero trigger).
 	watcher, err := agent.NewAgentWatcher(log, listAgents, drainCallback, agent.AgentWatcherOptions{})
 	if err != nil {
 		return fmt.Errorf("agent watcher: %w", err)
@@ -1130,10 +1129,10 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		watcherDone <- watcher.Run(watcherCtx)
 	}()
 
-	// Phase 16: agent domain wiring (init executor, dialer, subscriptions) —
-	// see startAgentDomain for the §3.4 degrade contract. agentCleanup is a
+	// Wire the init executor, CP→clawkerd dialer, and agent-axis subscriptions
+	// — see startAgentDialer for the §3.4 degrade contract. agentCleanup is a
 	// no-op until agent.Start succeeds, so deferring it is always safe.
-	agentCleanup := startAgentDomain(watcherCtx, agentDomainDeps{
+	agentCleanup := startAgentDialer(watcherCtx, agentDialerDeps{
 		log:         log,
 		dockerCli:   dockerCli,
 		agentTopic:  agentTopic,
@@ -1147,7 +1146,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 
 	log.Info().Msg("clawkercp ready")
 
-	// Phase 17: serve until shutdown trigger.
+	// serve until shutdown trigger.
 	select {
 	case <-signalCtx.Done():
 		// The signal value is already queued on sigValueCh; read it non-blocking.
@@ -1196,7 +1195,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	}
 	watcherCancel()
 
-	// Phase 18: reverse-order graceful shutdown. grpcStack.GracefulStop folds
+	// reverse-order graceful shutdown. grpcStack.GracefulStop folds
 	// the concurrent admin+agent stop + bounded-timeout + force-Stop fallback
 	// (drain step 2 ordering preserved); shutdownCtx bounds both it and the
 	// healthz shutdown at defaultShutdownWait.
