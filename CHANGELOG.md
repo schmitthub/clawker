@@ -16,9 +16,14 @@ Link to relevant docs inline in the bullets.
 
 ## [0.12.7] - 2026-06-19
 
-- **Fixed:** agent boot freezing on init/boot command failures (e.g. `post_init`, `pre_run`). 
-  clawkerd now prints the failure to stdout and exits, and the control plane reaps the
-  failed container if it doesn't shut down gracefully.
+### **⚠ ACTION REQUIRED — rebuild all agent container images**
+> Run `clawker build` in every project after updating. Containers built before 
+> this release run an outdated internal runtime and will be stopped automatically; 
+> they will not work until rebuilt.
+
+- **Fixed:** agent boot freezing on init/boot command failures (e.g. `post_init`,
+  `pre_run`). clawkerd now prints the failure to stdout and exits, and the control
+  plane reaps the failed container if it doesn't shut down gracefully.
 
 ## [0.12.6] - 2026-06-18
 

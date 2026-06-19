@@ -3,6 +3,7 @@
         bpf-deps ebpf ebpf-binary coredns-binary cp-binary \
         release-embeds verify-release-embeds stage-embeds-amd64 stage-embeds-arm64 \
         test test-unit test-ci test-commands test-whail test-internals test-agents test-acceptance test-all test-coverage test-clean test-e2e \
+        changelog-preview \
         licenses licenses-check \
         docs docs-check \
         pre-commit pre-commit-install \
@@ -671,6 +672,12 @@ test-clean:
 	@docker network rm $$(docker network ls -q --filter "label=dev.clawker.test=true") 2>/dev/null || true
 	@docker rmi -f $$(docker images -q --filter "label=dev.clawker.test=true") 2>/dev/null || true
 	@echo "Test cleanup complete!"
+
+# Preview the newest CHANGELOG.md entry rendered exactly as the post-upgrade
+# "what's new" teaser shows it (glamour markdown). Use to eyeball a release
+# section — alerts, bullets, code spans — before shipping. No embed deps.
+changelog-preview:
+	@CLAWKER_PREVIEW_CHANGELOG=1 COLORTERM=truecolor $(GO) test ./internal/changelog/ -run TestPreviewLatestChangelogEntry -v 2>&1
 
 # ============================================================================
 # License Targets
