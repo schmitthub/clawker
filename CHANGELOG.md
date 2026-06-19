@@ -16,7 +16,7 @@ Link to relevant docs inline in the bullets.
 
 ## [0.12.6] - 2026-06-18
 
-- **Fixed:** CLI otel logger timeout blocking cli command exit for 5 seconds if monitoring was down. 
+- **Fixed:** CLI OTEL logger no longer blocks command exit for up to 5 seconds when monitoring is down. 
 
 ## [0.12.5] - 2026-06-17
 
