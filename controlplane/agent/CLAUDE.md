@@ -3,8 +3,9 @@
 The unified CP-side surface for everything keyed on a clawker-managed
 agent: persisted identity registry, AgentService.Register handler,
 per-RPC IdentityInterceptor, CP→clawkerd Session dialer, and the
-agent-axis event types (`SessionConnecting/Connected/Failed/Broken`,
-`AgentRegistered`, `AgentUntrusted`).
+agent-axis event surface (a single `AgentEvent` envelope discriminated
+by `EventType`/`Action`/`Status`/`Reason`, published via `publish`,
+projected into an `AgentEventState` worldview).
 
 This package replaces the prior split between `agentdial`,
 `agentregistry`, and a stub `agent` package. One axis (the agent), one
@@ -24,7 +25,8 @@ agentCleanup, err := agent.Start(watcherCtx, agent.StartDeps{
     },                                 // returns purpose=agent containers, All:true
     PeerLookup:   agentPeerLookup,     // peer-IP→Docker→labels resolver (required)
     Dialer:       dialer,              // agent.New(...) for CP→clawkerd
-    Bus:          bus,
+    DockerTopic:  dockerTopic,         // *pubsub.Topic[dockerevents.DockerEvent]
+    AgentTopic:   agentTopic,          // *pubsub.Topic[AgentEvent]
     Log:          log.With("component", "agent"),
 })
 ```
@@ -62,9 +64,14 @@ now unexported helpers behind `Start`.
 | `start.go` | `Start(ctx, StartDeps)` umbrella + shared panic-loop guardrails for the two subscribers + private `reapOrphans` |
 | `registry.go` | `Registry` interface, `Entry`, `ErrUnknownAgent`, `NewRegistry` (in-memory test impl) |
 | `registry_sqlite.go` | sqlite-backed `Registry`: `NewSQLiteWriter`, `EnsureSchema`. Schema applied via goose migrations embedded from `migrations/*.sql` (see `applySchema`) |
-| `dialer.go` | `Dialer.DialAgent` — CP-side outbound mTLS dial to `ClawkerdService.Session`. Permissive trust posture (asymmetric: CP must always be reachable). Drives Register handshake on Miss, publishes Session* + AgentRegistered + AgentUntrusted events |
-| `events_session.go` | `SessionConnecting`, `SessionConnected`, `SessionFailed`, `SessionBroken` — all implement `overseer.applier` mutating `State.Agents` |
-| `events_agent.go` | `AgentRegistered{Ok, Reason}`, `AgentUntrusted{Reason UntrustedReason, Detail}` — also implement `applier` |
+| `dialer.go` | `Dialer.DialAgent` — CP-side outbound mTLS dial to `ClawkerdService.Session`. Also `New(...)` constructor and `DialAllRunning` initial-poll fan-out. Permissive trust posture (asymmetric: CP must always be reachable). Drives Register handshake on Miss, publishes `AgentEvent`s (session/registry actions) via `publish` |
+| `events.go` | The `AgentEvent` envelope and its vocabulary: `EventType` (session/exec/registry), `Action`, `Status`, `Reason`, plus the `Agent`/`Message` sub-structs and the `newAgentEvent` constructor |
+| `event_state.go` | `AgentEventState` (the state-repository projection target) + `ExecutorEventState` + `Trust` — the observed-now worldview value types a subscriber folds events into |
+| `publish.go` | `publish(topic *pubsub.Topic[AgentEvent], ev AgentEvent) bool` — the single producer seam. Stamps event ID/Timestamp/Source; nil-topic is a no-op; non-blocking |
+| `init_steps.go` | `initPlan` — the static one-time init step list (config/git/credentials/ssh/post-init) the Executor runs once per container |
+| `boot_steps.go` | `bootPlan` — the static every-start boot step list (docker-socket/pre-run) the Executor runs on each start |
+| `lister.go` | `ContainerLister` + `ListOpts` + `NewContainerLister` — Docker lookup of `purpose=agent` container IDs, used by `Start`/`DialAllRunning` |
+| `repository.go` | `AgentStore` (the `AgentEventState` worldview map) + `Repository` aggregator. `Subscribe`/`SubscribeDockerEvents` wire the stores to the agent + docker topics; `project` is the sole mutation path that folds an `AgentEvent` into the worldview |
 | `register_handler.go` | `Handler` (AgentService.Register handler) — consumes middleware-resolved identity from ctx, captures cert thumbprint, cross-checks cert container SAN + request fields against resolved truth, writes the registry row |
 | `peer_lookup.go` | `ContainerByPeerIP` interface + `ResolvedContainer` struct + sentinels (`ErrNoContainerForPeerIP`, `ErrInvalidAgentLabel`, `ErrAmbiguousPeerIP`) — peer-IP-grounded trust resolver. `ErrInvalidAgentLabel` fires only on a missing/malformed `dev.clawker.agent` label; a missing `dev.clawker.project` label is the legitimate global-scope-agent signal (2-segment naming) and resolves cleanly |
 | `peer_lookup_moby.go` | `MobyPeerLookup`, the production `ContainerByPeerIP` backed by the Docker daemon |
@@ -136,20 +143,20 @@ macOS bind-mount boundary.
    idempotently writes the row using the label-derived (authoritative)
    identity, returns Welcome.
 6. **clawkerd replies** with `Response{RegisterDone{ok:true}}`.
-7. **CP confirms** by re-looking-up the row, publishes
-   `AgentRegistered{Ok:true}` on the bus.
+7. **CP confirms** by re-looking-up the row, publishes an `AgentEvent`
+   (`ActionRegistered`/`RegisterOk`) via `publish`.
 
 Subsequent Sessions (after stop/start, CP restart, etc.) hit
 `outcomeRegistryMatch` at Hello time — no Register handshake fires.
-`AgentRegistered` is one-time per container; subscribers needing
-"this agent is currently registered" should query
-`State.Agents[containerID].Registered` instead.
+The registered transition is one-time per container; subscribers
+needing "this agent is currently registered" query the projected
+`AgentEventState.Registered` from the worldview store instead.
 
 ## Asymmetric trust (load-bearing)
 
 CP is the overlord. The dialer NEVER aborts on cert/identity grounds
-— Session stays open even when the agent is `AgentUntrusted` so CP
-can still dispatch containment commands. The Register handler DOES
+— Session stays open even when the agent projects as untrusted (an
+`ActionUntrusted` event) so CP can still dispatch containment commands. The Register handler DOES
 reject (`PermissionDenied`) on cert/IP/label mismatches because it's
 the gate that decides whether to write a row, not whether to keep
 the channel up.
@@ -157,25 +164,49 @@ the channel up.
 The clawkerd-side counterpart (`cmd/clawkerd/listener.go`) is STRICT:
 CP CN pin + Client-Auth EKU + CA chain enforced at TLS layer.
 
-## Trust outcomes via overseer events
+## Dialer construction + Hello handshake (init one-shot, boot every start)
 
-| Hello-time outcome | Events published |
+`New(...)` takes the agent `*pubsub.Topic[AgentEvent]` (the producer
+seam every dial outcome publishes onto), the Docker client, the
+`Registry`, the CP client cert material, and the optional init
+`*Executor`. `DialAgent` is the fire-and-forget per-container dial;
+`DialAllRunning(ctx, lister, opts)` is the CP-boot initial-poll
+fan-out — it lists every already-running agent and dials each, in its
+own panic-recovered goroutine so it never blocks readiness, fails CP,
+or strands the dispatch on a panic.
+
+`helloHandshake` returns clawkerd's REAL `HelloAck` (carrying
+`Initialized` and `CmdRunning`), not a fresh empty one. The prior
+empty-ACK behavior discarded those flags, so CP re-ran BOTH plans on
+every reconnect. With the real ACK, `utils.go` keys the plans:
+`shouldAgentInit` makes init one-shot off `HelloAck.Initialized` (the
+`initPlan` runs once per container), and `shouldAgentBoot` runs the
+`bootPlan` every start off `HelloAck.CmdRunning`.
+
+## Trust outcomes via agent events
+
+There is no overseer and no central `State.Agents` map. The dialer
+calls `publish(topic, newAgentEvent(...))` for each Hello-time
+outcome; a subscriber (`AgentStore.project`, wired via
+`Repository.Subscribe`) folds the event into the per-container
+`AgentEventState`, setting `SessionStatus`, `Registered`, `Trust`,
+`Thumbprint`, and `PeerAgentFullName`.
+
+Each outcome publishes an `AgentEvent` (carrying `Action`/`Status`/
+`Reason`) that the projection applies:
+
+| Hello-time outcome | `AgentEvent` published (projection effect) |
 |---|---|
-| Match | `SessionConnected` (with PeerAgentFullName/PeerThumbprint) |
-| Miss | `SessionConnected` → drive Register handshake → `AgentRegistered` (+ `AgentUntrusted{ReasonRegisterFailed}` on failure) |
-| ThumbprintMismatch | `SessionConnected` + `AgentUntrusted{ReasonThumbprintMismatch}` |
-| Lookup error | `SessionConnected` + `AgentUntrusted{ReasonCertInvalid, Detail: <err>}` |
+| Match | `ActionConnected`/`StatusConnected` (sets PeerAgentFullName + Thumbprint) |
+| Miss | `ActionConnected` → drive Register handshake → `ActionRegistered` (sets `Registered`); on failure `ActionUntrusted`/`ReasonRegisterFailed` |
+| ThumbprintMismatch | `ActionConnected` + `ActionUntrusted`/`ReasonThumbprintMismatch` |
+| Lookup error | `ActionConnected` + `ActionUntrusted`/`ReasonCertInvalid` (Detail: `<err>`) |
 
 Note: cert SAN AgentFullName vs label-derived AgentFullName drift is
 NOT classified here — the dialer is the OUTBOUND CP→clawkerd path and
 compares only thumbprints against the row. Trust-anchor drift is
 caught upstream by `IdentityInterceptor` on the agent's next inbound
 RPC (e.g. a subsequent Register retry).
-
-`SessionConnected.ApplyTo` populates `State.Agents[containerID]` with
-session lifecycle + identity fields. `AgentRegistered.ApplyTo` sets
-`Registered`. `AgentUntrusted.ApplyTo` sets `Trusted=false` +
-`UntrustedReason`.
 
 ## Method scopes + interceptor
 
@@ -209,7 +240,7 @@ session lifecycle + identity fields. `AgentRegistered.ApplyTo` sets
 NewProjectSlug, ContainerIDFromCert, AgentFullNameFromCert),
 `internal/consts` (Network, LabelAgent/Project/Purpose,
 ContainerClawkerd),
-`internal/controlplane/dockerevents`, `internal/controlplane/overseer`,
+`controlplane/dockerevents`, `controlplane/pubsub`,
 `internal/logger`, `api/agent/v1`, `api/clawkerd/v1`,
 `modernc.org/sqlite`, `github.com/moby/moby/api/types/{container,
 network}`, `github.com/moby/moby/client`,
@@ -235,7 +266,7 @@ on adminServer for ListAgents).
 ## Regenerating the mock
 
 ```bash
-cd internal/controlplane/agent && go generate ./...
+cd controlplane/agent && go generate ./...
 ```
 
 The `go:generate` directive on `Registry` writes

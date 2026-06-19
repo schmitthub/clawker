@@ -24,7 +24,7 @@ CP is the host daemon; clawkerd is the per-container daemon. They communicate ov
 
 3. Start listener on `consts.DefaultClawkerdPort` (`:7700`). This is the entire RPC surface.
 
-4. Build `spawnState` (in `spawn.go` + `spawn_unix.go`) and a `spawnEntry` closure that captures the resolved `ExecUser` + argv. Thread the closure through `startClawkerdListener` → `clawkerdServer` → `runSession` → `session` as a constructor argument so a wiring bug fails loud at construction (nil-thunk rejected at `startClawkerdListener`) rather than via a package-level mutable global. Spawn does NOT fire here — `handleAgentReady` invokes the closure when CP dispatches `AgentReady` as the terminal step of CP-driven init.
+4. Build `spawnState` (in `spawn.go` + `spawn_unix.go`) and a `spawnEntry` closure that captures the resolved `ExecUser` + argv. Thread the closure through `startClawkerdListener` → `clawkerdServer` → `runSession` → `session` as a constructor argument so a wiring bug fails loud at construction (nil-thunk rejected at `startClawkerdListener`) rather than via a package-level mutable global. `main.go` also passes the `spawnState` (`spawn`) down the same chain as the `state agentState` (used for HelloAck and `AgentInitialized`); unlike `spawnEntry`/`onFatal`/`requestExit`, `state` is intentionally **nil-tolerant** and is NOT rejected at `startClawkerdListener` (test fixtures leave it unset). Spawn does NOT fire here — `handleAgentReady` invokes the closure when CP dispatches `AgentReady` as the terminal step of CP-driven boot.
 
 5. Wait for `ctx.Done` (SIGTERM/SIGINT), `spawn.MainExited`, `listenerFatalCh`, or `cmdExitCh` (command-requested exit):
    - On `ctx.Done`: `spawn.Stop(10s)` forwards SIGTERM to the child pgroup, escalates to SIGKILL after grace, then blocks on `MainExited`.
@@ -84,9 +84,17 @@ Every `ShellCommand` dispatch emits two structured Info events:
 
 Volume: N+1 lines for an N-stage pipeline (2-3 lines typical). `incomplete` outcome means runShellCommand returned via an unexpected path — treat as a clawkerd bug.
 
+### Hello Handler
+
+The `Command_Hello` dispatch case replies `HelloAck{Initialized, CmdRunning}`, both read from the `state agentState` seam (`session.go` interface: `Initialized() bool`, `MarkInitialized()`, `Spawned() bool`; production impl = `spawnState`). This makes init/boot one-shot from CP's side: CP skips the one-time init plan once `Initialized` is true (the writable-layer marker exists) and skips the boot/spawn plan once `CmdRunning` (`Spawned()`) is true, instead of re-dispatching on every reconnect. Nil-tolerant — test fixtures leave `state` unset, so both fields report false.
+
 ### AgentReady Handler
 
-`handleAgentReady` is the terminal step of CP-driven init. Calls `s.spawnEntry` (the thunk threaded through `clawkerdServer` → `runSession` → `session` from `main()`); replies `Done{0}` on success, `Done{0}` on `errAlreadySpawned` (reconnect idempotency), `Error{IO_ERROR}` on any other spawn failure or on a nil thunk (production rejects nil at `startClawkerdListener` construction). `spawnState.Run`'s CAS is the source of truth for "already spawned".
+`handleAgentReady` is the terminal step of CP-driven *boot*. Calls `s.spawnEntry` (the thunk threaded through `clawkerdServer` → `runSession` → `session` from `main()`); replies `Done{0}` on success, `Done{0}` on `errAlreadySpawned` (reconnect idempotency), `Error{IO_ERROR}` on any other spawn failure or on a nil thunk (production rejects nil at `startClawkerdListener` construction). `spawnState.Run`'s CAS is the source of truth for "already spawned".
+
+### AgentInitialized Handler
+
+`handleAgentInitialized` is the terminal step of CP-driven *init* (distinct from `AgentReady`, the terminal step of *boot*). Like Hello, it runs synchronously on the receive loop. It calls `state.MarkInitialized()` (persists the writable-layer init marker — nil-tolerant) and replies `Done{0}`. This is what makes init one-time: the persisted marker is what `Initialized()` reads at the next Hello.
 
 ## Resilience Contract
 
@@ -112,7 +120,7 @@ clawkerd is PID 1 of the agent container. A panic that escapes a goroutine kills
 |------|---------|
 | `main.go` | Daemon entry + supervisor orchestrator: `run(ctx, log)` reads bootstrap, starts listener, builds `spawnState`, threads the `spawnEntry` closure into `startClawkerdListener`, drives the SIGTERM-or-MainExited select, sequences `Stop → BeginOrphanDrain → spawn.Wait`, returns the bash-convention exit code |
 | `listener.go` | CP→clawkerd inbound mTLS listener. `buildListenerTLSConfig` enforces RequireAndVerifyClientCert + dual-EKU server cert + chain validation; `pinPeerCNToCP` asserts peer is `ContainerCP` with `ClientAuth` EKU |
-| `session.go` | `runSession` per-stream owner: receive loop, sender goroutine, dispatch, ShellCommand pipeline (multi-stage exec, stdin/stdout/stderr fanout, signal forwarding, timeout watchdog, audit log). `handleAgentReady` invokes the `spawnEntry` thunk threaded through the session struct from `main()` (no package-level mutable global). Every stage's stderr and the final stage's stdout share one combined write end (`2>&1`), so a single `drainOutput` streams the command's combined output to the caller as `OutputChunk` (always, any size — no accumulation buffer or cap) and echoes it live to the boot console (via `progress.WriteOutput`) when `print_output` is set; `exit_on_non_zero` + a non-zero exit runs `Stop` (flush the terminal Response) then signals the `requestExit` thunk (mirrored code). Both flags are generic to the command service — clawkerd makes no policy decision, the caller sets the flags |
+| `session.go` | `runSession` per-stream owner: receive loop, sender goroutine, dispatch, ShellCommand pipeline (multi-stage exec, stdin/stdout/stderr fanout, signal forwarding, timeout watchdog, audit log). Defines the `state agentState` seam (`Initialized`/`MarkInitialized`/`Spawned`). `dispatch`'s `Command_Hello` case replies `HelloAck{Initialized, CmdRunning}` from `state`; `handleAgentInitialized` runs on the receive loop, calls `state.MarkInitialized()`, replies `Done{0}`. `handleAgentReady` invokes the `spawnEntry` thunk threaded through the session struct from `main()` (no package-level mutable global). Every stage's stderr and the final stage's stdout share one combined write end (`2>&1`), so a single `drainOutput` streams the command's combined output to the caller as `OutputChunk` (always, any size — no accumulation buffer or cap) and echoes it live to the boot console (via `progress.WriteOutput`) when `print_output` is set; `exit_on_non_zero` + a non-zero exit runs `Stop` (flush the terminal Response) then signals the `requestExit` thunk (mirrored code). Both flags are generic to the command service — clawkerd makes no policy decision, the caller sets the flags |
 | `spawn.go` | Cross-platform pure logic: `mapExitCode`, `envForUser`, `routeArgs`, `errAlreadySpawned`, `errEmptyArgv` |
 | `spawn_unix.go` | `//go:build unix` — `spawnState` lifecycle: `Run` (fork+exec with privilege drop + Setpgid + ready-file touch), `Wait`, `Stop`, `MainExited`, `BeginOrphanDrain`, signal forwarder, two-phase reaper. `buildSysProcAttr` builds the `*syscall.SysProcAttr` (Setpgid + optional Credential) — extracted so the privilege-drop wiring is unit-testable without root. |
 | `recover.go` | Resilience-contract `recoverGoroutine` helper: structured-log + onPanic hook for every long-lived goroutine in clawkerd (no build tag — shared by spawn_unix's reaper/forwarder/watchdog AND listener.go's Serve AND session.go's sender/worker/drainer/register handler). |
@@ -135,7 +143,7 @@ Structured zerolog via `internal/logger.New()` writing to `/var/log/clawker/claw
 Levels:
 - **ERROR** — bootstrap-file read failure, listener bind failure, unrecoverable Serve return, spawn-goroutine panic recovery, agent-ready spawn failure
 - **WARN** — pipe-close failures during pipeline teardown, signal forward failures (non-ESRCH), reaper main-already-reaped fallback, Stop SIGTERM/SIGKILL forward failures
-- **INFO** — state transitions: `boot`, `clawkerd_listener_started`, `daemon_idle`, `session_started`, `session_ended`, `shell_command_started`, `shell_command_done`, `agent_ready_spawned`, `agent_ready_already_spawned`, `spawn_started`, `spawn_main_reaped`, `main_child_exited`, `shutdown_signal_received`, `clawkerd_listener_stopping`, `clawkerd_listener_stopped`, `shutdown` (when run() returns nil; logged at ERROR when run() returns non-nil)
+- **INFO** — state transitions: `boot`, `clawkerd_listener_started`, `daemon_idle`, `session_started`, `session_ended`, `shell_command_started`, `shell_command_done`, `agent_initialized`, `agent_ready_spawned`, `agent_ready_already_spawned`, `spawn_started`, `spawn_main_reaped`, `main_child_exited`, `shutdown_signal_received`, `clawkerd_listener_stopping`, `clawkerd_listener_stopped`, `shutdown` (when run() returns nil; logged at ERROR when run() returns non-nil)
 - **DEBUG** — orphan-reap events, signal-after-exit filter
 
 The single allowed `os.Stderr` write is the logger init failure path in `main`.
@@ -153,3 +161,5 @@ The single allowed `os.Stderr` write is the logger init failure path in `main`.
 ## Lifetime
 
 Bootstrap material read once at boot, held in memory for process lifetime. The Hydra JWT is single-use: `registerCoordinator` (`register.go`) consumes it on the first CP-triggered Register and short-circuits subsequent dispatches. The container's writable layer dies on `--rm` or `docker rm`, bounding material lifetime to the container.
+
+**One-time init vs every-boot.** `consts.AgentInitializedMarkerPath` (`/var/lib/clawker/agent-initialized`) is written by `spawnState.MarkInitialized()` on `AgentInitialized` and read by `spawnState.Initialized()` at Hello. It lives in the container **writable layer** (NOT a volume, NOT tmpfs): it survives `docker stop`/`start`, so a restart re-runs only the boot plan and CP skips the one-time init plan; it is reclaimed by `docker rm`, so a recreated container re-initializes. A marker mkdir/write failure is logged (`WARN event=agent_initialized_marker_mkdir_failed` / `agent_initialized_marker_write_failed`) and tolerated — re-running the idempotent init plan on the next restart beats killing the container over a marker write.

@@ -14,6 +14,22 @@ Reference map of the clawker repo. Lazy-loaded from root `CLAUDE.md`.
 │   ├── clawkerd/              # Per-container agent daemon (Linux)
 │   ├── coredns-clawker/       # Custom CoreDNS with dnsbpf plugin (Linux)
 │   └── gen-docs/              # CLI doc generator
+├── controlplane/              # CP domains + infra (top-level; orchestrator lives in internal/controlplane)
+│   ├── adminclient/           # CLI-side AdminService gRPC dial (mTLS + OAuth2)
+│   ├── agent/                 # Unified agent surface: Dialer, Registry, Register handler, IdentityInterceptor, AgentEvent + state repo
+│   ├── auth/                  # Typed agent/project identity primitives (ProjectSlug, AgentName)
+│   ├── dockerevents/          # Docker events feeder + typed DockerEvent envelope + container state repo
+│   ├── firewall/              # Firewall: Handler (13 RPCs), Stack, Envoy+CoreDNS, rules store
+│   │   └── ebpf/              # eBPF loader + Manager
+│   │       └── netlogger/     # Per-decision egress event emitter (ringbuf → enrich → OTLP)
+│   ├── infracerts/            # CLI-root CA material (long-lived) for CP→clawkerd dial
+│   ├── manager/               # Host-side CP lifecycle (EnsureRunning/Stop/CPRunning), embedded clawkercp + ebpf-manager binaries
+│   ├── otel/                  # CP-side OTel logger provider factory (trusted-infra OTLP)
+│   ├── otelcerts/             # Short-lived infra leaves for trusted OTLP (CP/Envoy/CoreDNS/netlogger)
+│   ├── pubsub/                # Generic typed pub/sub pipe: Topic[T], Event[T] (dumb, stateless, panic-recovered delivery)
+│   ├── server/                # AdminService composition (NewAdminServer) + authz + AgentService listener wiring
+│   ├── subprocess/            # Ory subprocess lifecycle manager (start, health, crash, shutdown)
+│   └── mocks/
 ├── internal/
 │   ├── auth/                  # CLI-side auth material + CP dial helpers
 │   ├── build/                 # Build-time metadata (leaf, stdlib only)
@@ -30,18 +46,7 @@ Reference map of the clawker repo. Lazy-loaded from root `CLAUDE.md`.
 │   │   └── storeui/           # Domain adapters for storeui
 │   ├── consts/                # Cross-package constants
 │   ├── containerfs/           # Host Claude config preparation
-│   ├── controlplane/          # CP daemon: Ory auth, AdminService, agent watcher
-│   │   ├── agent/             # Unified agent surface: Dialer, Registry, Register handler, IdentityInterceptor, events
-│   │   ├── adminclient/       # CLI-side AdminService gRPC dial (mTLS + OAuth2)
-│   │   ├── cpboot/            # Host-side CP lifecycle (EnsureRunning/Stop), embedded clawkercp + ebpf-manager binaries
-│   │   ├── dockerevents/      # Docker events feeder + typed envelope
-│   │   ├── firewall/          # Firewall: Handler (13 RPCs), Stack, Envoy+CoreDNS, eBPF
-│   │   │   └── ebpf/          # eBPF loader + Manager
-│   │   │       └── netlogger/ # Per-decision egress event emitter (ringbuf → enrich → OTLP)
-│   │   ├── infracerts/        # CLI-root CA material (long-lived) for CP→clawkerd dial
-│   │   ├── otelcerts/         # Short-lived infra leaves for trusted OTLP (CP/Envoy/CoreDNS/netlogger)
-│   │   ├── overseer/          # Typed event bus + worldview state
-│   │   └── mocks/
+│   ├── controlplane/          # CP daemon orchestrator (cmd.go): constructs pub/sub topics + domain state repos, wires handlers, runs startup/drain
 │   ├── dnsbpf/                # CoreDNS plugin for BPF dns_cache
 │   ├── docker/                # Docker middleware (wraps pkg/whail + bundler)
 │   ├── docs/                  # CLI doc generation

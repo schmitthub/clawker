@@ -783,8 +783,8 @@ func buildTopics(busLog *logger.Logger) (
 	return dockerTopic, agentTopic, enrolledTopic, nil
 }
 
-// workerDeps carries the handles the long-lived observability workers (Phases
-// 11-13: pub/sub stats heartbeat, netlogger, dns_cache GC) are built against.
+// workerDeps carries the handles the long-lived observability workers
+// (pub/sub stats heartbeat, netlogger, dns_cache GC) are built against.
 type workerDeps struct {
 	log           *logger.Logger
 	busLog        *logger.Logger
@@ -1052,8 +1052,8 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	}
 	defer feederCancel()
 
-	// Phases 11-13: long-lived observability workers (stats heartbeat,
-	// netlogger, dns_cache GC) — see startWorkers. They run on watcherCtx, so
+	// long-lived observability workers (stats heartbeat, netlogger,
+	// dns_cache GC) — see startWorkers. They run on watcherCtx, so
 	// run()'s watcherCancel stops the heartbeat and GC transitively; the drain
 	// sequence stops netlogger + GC explicitly before FlushAll. The deferred
 	// stopDNSGC is belt-and-braces (LIFO before ebpfMgr.Close) so an in-flight

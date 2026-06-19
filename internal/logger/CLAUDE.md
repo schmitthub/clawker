@@ -129,7 +129,7 @@ func (l *Logger) Fatal() *zerolog.Event  // NEVER use in Cobra hooks — return 
 func (l *Logger) With(keyvals ...interface{}) *Logger
 ```
 
-Returns a new `*Logger` with additional structured fields. Accepts alternating key/value pairs where keys must be strings. Panics on odd argument count or non-string key.
+Returns a new `*Logger` with additional structured fields. Accepts alternating key/value pairs where keys must be strings. Panics on odd argument count or non-string key. Repeated keys are deduplicated (last value wins), so re-setting a key in a nested `With` replaces the inherited value rather than stacking a second copy.
 
 ```go
 projectLog := log.With("project", "foo", "agent", "bar")
