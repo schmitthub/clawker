@@ -21,8 +21,6 @@ import (
 
 	"github.com/moby/moby/api/types/events"
 	"github.com/rs/zerolog"
-
-	"github.com/schmitthub/clawker/internal/controlplane/overseer"
 )
 
 // DockerEvent is the bus envelope for any docker daemon event the
@@ -65,57 +63,17 @@ func (e DockerEvent) MarshalZerologObject(z *zerolog.Event) {
 	}
 }
 
-// ApplyTo projects moby's container actions onto Overseer's
-// ContainerView status enum. Network events have no State
-// projection in v1 — Overseer doesn't track network edges in its
-// worldview. Volume/image events also no-op (no consumer).
-//
-// The (Type, Action) → status switch lives here as the single
-// place that does the worldview-level coarsening; the source events
-// preserve full moby fidelity.
-func (e DockerEvent) ApplyTo(s *overseer.State) {
-	if e.Type != events.ContainerEventType {
-		return
+// copyStringMap returns nil for nil, otherwise a fresh map with the
+// same key/value pairs. Keeps Snapshot deep-copy honest.
+func copyStringMap(m map[string]string) map[string]string {
+	if m == nil {
+		return nil
 	}
-	switch e.Action {
-	case events.ActionStart, events.ActionRestart, events.ActionUnPause:
-		view := s.Containers[e.Actor.ID]
-		view.ID = e.Actor.ID
-		if name := e.Actor.Attributes["name"]; name != "" {
-			view.Name = name
-		}
-		view.Status = overseer.ContainerStatusRunning
-		view.Labels = stripEngineKeys(e.Actor.Attributes,
-			"image", "name", "exitCode", "signal", "oldName", "execDuration")
-		view.UpdatedAt = e.OccurredAt()
-		s.Containers[e.Actor.ID] = view
-
-	case events.ActionDie, events.ActionStop, events.ActionKill, events.ActionOOM:
-		view := s.Containers[e.Actor.ID]
-		view.ID = e.Actor.ID
-		view.Status = overseer.ContainerStatusStopped
-		view.UpdatedAt = e.OccurredAt()
-		s.Containers[e.Actor.ID] = view
-
-	case events.ActionDestroy:
-		// moby fires `destroy` for `docker rm` (verified vs live
-		// stream — zero `container/remove` actions observed).
-		// `events.ActionRemove` exists in the shared Action vocabulary
-		// but is image-only (`docker rmi`) and never reaches this
-		// switch for container events. ApplyTo is a projection, not
-		// the wire vocabulary, so it MUST NOT branch on ActionRemove.
-		delete(s.Containers, e.Actor.ID)
-
-	case events.ActionRename:
-		view := s.Containers[e.Actor.ID]
-		view.ID = e.Actor.ID
-		view.Name = e.Actor.Attributes["name"]
-		view.UpdatedAt = e.OccurredAt()
-		s.Containers[e.Actor.ID] = view
-
-		// Created / Paused / Unpaused-as-pure-edge and any unrecognised
-		// action: pure pub/sub, no State change.
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = v
 	}
+	return out
 }
 
 // stripEngineKeys returns a copy of attrs with the listed engine-set

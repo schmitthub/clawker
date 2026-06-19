@@ -53,6 +53,15 @@ type Overseer struct {
 
 	publishedTotal atomic.Uint64
 	droppedTotal   atomic.Uint64
+
+	stores   map[string]Projection
+	reducers []func(Event)
+}
+
+// Projection is a domain-owned slice of the worldview. Overseer holds
+// these behind a key and never references the concrete type.
+type Projection interface {
+	Clone() Projection // deep copy for Snapshot
 }
 
 // New constructs an Overseer with opts. The run loop is not active
@@ -79,6 +88,15 @@ func New(opts Options) *Overseer {
 		stopCh:        make(chan struct{}),
 		done:          make(chan struct{}),
 	}
+}
+
+// Register wires a domain's store + reducer in. Called once at
+// construction, before Run. T is the concrete store pointer (e.g.
+// *ContainerStore). reduce closes over store, mutates in place on the
+// bus loop, ignores events it doesn't own.
+func Register[T Projection](o *Overseer, key string, store T, reduce func(T, Event)) {
+	o.stores[key] = store
+	o.reducers = append(o.reducers, func(e Event) { reduce(store, e) })
 }
 
 // Start launches the run loop. Idempotent. Returns ErrClosed if called
@@ -110,26 +128,36 @@ func (o *Overseer) Close() error {
 	return nil
 }
 
+// Snapshot is an immutable, deep-copied cut of the worldview at one
+// instant, built on the bus loop so it's consistent with event
+// application. The caller may retain and read it freely; no internal
+// pointer aliases the live stores. Read concrete projections via Get
+// or a domain's From helper.
+type Snapshot struct {
+	stores        map[string]Projection // deep copies, one per registered domain
+	LastUpdatedAt time.Time
+}
+
 // Snapshot returns a deep copy of the current State. Returns
 // (zero, false) if the bus is closed or ctx cancels before the request
 // can be served.
-func (o *Overseer) Snapshot(ctx context.Context) (State, bool) {
+func (o *Overseer) Snapshot(ctx context.Context) (Snapshot, bool) {
 	if o.closed.Load() || !o.started.Load() {
-		return State{}, false
+		return Snapshot{}, false
 	}
-	resp := make(chan State, 1)
+	resp := make(chan Snapshot, 1)
 	select {
 	case <-o.stopCh:
-		return State{}, false
+		return Snapshot{}, false
 	case <-ctx.Done():
-		return State{}, false
+		return Snapshot{}, false
 	case o.snapshotCh <- snapshotReq{resp: resp}:
 	}
 	select {
 	case <-o.stopCh:
-		return State{}, false
+		return Snapshot{}, false
 	case <-ctx.Done():
-		return State{}, false
+		return Snapshot{}, false
 	case state := <-resp:
 		return state, true
 	}
@@ -256,7 +284,7 @@ func (o *Overseer) run(ctx context.Context) {
 // buggy event-handler is contained to that one event.
 func (o *Overseer) applyAndDispatch(state *State, subscribers map[reflect.Type]map[uint64]*subscriber, ev Event) {
 	o.publishedTotal.Add(1)
-	o.safeApply(state, ev)
+	o.apply(state, ev)
 	o.safeHook(ev)
 	group := subscribers[reflect.TypeOf(ev)]
 	for _, sub := range group {
@@ -273,9 +301,9 @@ func (o *Overseer) applyAndDispatch(state *State, subscribers map[reflect.Type]m
 	}
 }
 
-// safeApply invokes the applier hook (if any) under a recover so a
+// apply invokes the applier hook (if any) under a recover so a
 // panicking ApplyTo cannot kill the bus loop.
-func (o *Overseer) safeApply(state *State, ev Event) {
+func (o *Overseer) apply(state *State, ev Event) {
 	a, ok := ev.(applier)
 	if !ok {
 		return

@@ -153,9 +153,9 @@ func (p *panickingSendStream) Send(c *clawkerdv1.Command) error {
 //     log+continue path fires (Session held open per asymmetric
 //     trust).
 //  3. Publish synthetic ExecStepFailed for the in-flight step so
-//     worldview consumers see the Exec step axis transition out of
+//     worldview consumers see the ExecutorEventState step axis transition out of
 //     Running.
-//  4. Publish synthetic ExecFailed so the Exec lifecycle axis also
+//  4. Publish synthetic ExecFailed so the ExecutorEventState lifecycle axis also
 //     transitions out of Running.
 //  5. NOT publish ExecCompleted.
 func TestExecutor_Run(t *testing.T) {
@@ -596,9 +596,9 @@ func TestExecutor_Run_StreamErrorResponse(t *testing.T) {
 }
 
 // TestExecutor_Run_StateProjection drives Run twice (first with a
-// failure, then a success) and asserts the overseer worldview's Exec
+// failure, then a success) and asserts the overseer worldview's ExecutorEventState
 // axis reflects every transition: zero → Running → Failed → Running →
-// Completed, with Exec.LastError clearing on the success cycle. The
+// Completed, with ExecutorEventState.LastError clearing on the success cycle. The
 // projection contract is what subscribers (CLI WatchAgent, monitoring)
 // consume — an ApplyTo-method regression here would silently break
 // operator-facing UX.
