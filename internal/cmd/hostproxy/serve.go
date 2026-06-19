@@ -42,7 +42,7 @@ func NewCmdServe() *cobra.Command {
 			if logsDir, dirErr := cfg.LogsSubdir(); dirErr == nil {
 				if l, lErr := logger.New(logger.Options{LogsDir: logsDir, Filename: "hostproxy.log"}); lErr == nil {
 					log = l
-					defer l.Close()
+					defer l.Close(context.Background())
 				}
 			}
 

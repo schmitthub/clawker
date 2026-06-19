@@ -263,7 +263,25 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		fmt.Fprintf(os.Stderr, "%s: warning: file logging unavailable (%v), using stderr only\n", consts.ContainerCP, err)
 	}
 	log = log.With("component", consts.ContainerCP)
-	defer log.Close()
+	// Base context for the run, and the parent of signalCtx below. log.Close
+	// rides the base (not signalCtx) so the final flush survives the very signal
+	// that triggers shutdown; idempotent + deferred, it covers every arm where
+	// run returns (signal, drain-to-zero, subprocess-crash, startup error). The
+	// flush is bounded by the OTLP SDK export timeout and the supervisor's
+	// SIGKILL grace, not an invented deadline.
+	ctx := context.Background()
+	defer func() {
+		// Surface a Close failure on stderr (→ docker logs), NOT into retErr.
+		// The OTEL mirror is non-fatal/self-healing by design (an unreachable
+		// collector is expected, not a teardown fault), and CP's exit code is a
+		// teardown-integrity signal — poisoning it would trip the on-failure
+		// restart policy on a benign telemetry outage. stderr also survives the
+		// logger itself closing here, unlike a log.Error() that races its own
+		// shutdown. Mirrors clawkerd's logger-close handling.
+		if cErr := log.Close(ctx); cErr != nil {
+			fmt.Fprintf(os.Stderr, "%s: logger close failed: %v\n", consts.ContainerCP, cErr)
+		}
+	}()
 	log.Info().Msg("starting")
 
 	// Wire the real logger into the Service now that logger.New has
@@ -333,8 +351,21 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		return fmt.Errorf("hydra: %w", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	// Signal-aware context for startup + serve, forked off the base. SIGTERM is
+	// the `docker stop` path (CP is PID 1 of the controlplane container); SIGINT
+	// covers manual/dev runs. SIGKILL is absent by necessity — it cannot be
+	// caught and is the supervisor's hard backstop.
+	signalCtx, signalStop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
+	defer signalStop()
+
+	// signalCtx drives cancellation but does not expose which signal fired.
+	// Keep a parallel buffered channel solely to record the signal value for the
+	// shutdown log line (and to disambiguate the teardown-failure message between
+	// SIGTERM/`docker stop` and SIGINT/Ctrl-C). Buffered(1) so delivery never
+	// blocks; cancellation is still owned by signalCtx.
+	sigValueCh := make(chan os.Signal, 1)
+	signal.Notify(sigValueCh, syscall.SIGTERM, syscall.SIGINT)
+	defer signal.Stop(sigValueCh)
 
 	// Build CLI CA cert pool — used for health checks, Hydra introspection,
 	// client registration, and mTLS client cert verification.
@@ -352,13 +383,13 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		MinVersion: tls.VersionTLS13,
 	}
 
-	if err := subMgr.WaitHealthy(ctx, "kratos", controlplane.HealthCheck{
+	if err := subMgr.WaitHealthy(signalCtx, "kratos", controlplane.HealthCheck{
 		URL: fmt.Sprintf("https://"+consts.Localhost+":%d/health/alive", cp.KratosPublicPort), Interval: healthCheckInterval, Timeout: healthCheckTimeout,
 		TLS: caTLS,
 	}); err != nil {
 		return fmt.Errorf("kratos health: %w", err)
 	}
-	if err := subMgr.WaitHealthy(ctx, "hydra", controlplane.HealthCheck{
+	if err := subMgr.WaitHealthy(signalCtx, "hydra", controlplane.HealthCheck{
 		URL: fmt.Sprintf("https://"+consts.Localhost+":%d/health/alive", cp.HydraPublicPort), Interval: healthCheckInterval, Timeout: healthCheckTimeout,
 		TLS: caTLS,
 	}); err != nil {
@@ -368,7 +399,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// The public health check above confirms the public listener is ready,
 	// but client registration goes to the admin port — a separate listener
 	// that may take longer under resource pressure. Wait for it explicitly.
-	if err := subMgr.WaitHealthy(ctx, "hydra", controlplane.HealthCheck{
+	if err := subMgr.WaitHealthy(signalCtx, "hydra", controlplane.HealthCheck{
 		URL: fmt.Sprintf("https://"+consts.Localhost+":%d/health/alive", cp.HydraAdminPort), Interval: healthCheckInterval, Timeout: healthCheckTimeout,
 		TLS: caTLS,
 	}); err != nil {
@@ -388,10 +419,10 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// See controlplane.RegisterAgentClient for why both clients share
 	// one JWK with distinct client_id + scope.
 	hydraAdminURL := fmt.Sprintf("https://"+consts.Localhost+":%d", cp.HydraAdminPort)
-	if err := controlplane.RegisterCLIClient(ctx, hydraAdminURL, jwkData, caTLS); err != nil {
+	if err := controlplane.RegisterCLIClient(signalCtx, hydraAdminURL, jwkData, caTLS); err != nil {
 		return fmt.Errorf("register CLI client: %w", err)
 	}
-	if err := controlplane.RegisterAgentClient(ctx, hydraAdminURL, jwkData, caTLS); err != nil {
+	if err := controlplane.RegisterAgentClient(signalCtx, hydraAdminURL, jwkData, caTLS); err != nil {
 		return fmt.Errorf("register agent client: %w", err)
 	}
 	log.Info().Msg("CLI + agent clients registered with Hydra")
@@ -409,7 +440,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// Docker client. Used by the container resolver (bypass
 	// dead-man timer), the firewall stack (Envoy + CoreDNS sibling
 	// containers over DooD), and the AgentWatcher poll loop.
-	dockerCli, err := docker.NewClient(ctx, cfg, log)
+	dockerCli, err := docker.NewClient(signalCtx, cfg, log)
 	if err != nil {
 		return fmt.Errorf("docker client: %w", err)
 	}
@@ -419,7 +450,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	// cgroup paths come from firewall.EBPFCgroupPath in the firewall
 	// subpackage — the single source of truth for the systemd/cgroupfs
 	// path formats.
-	cgroupDriver, err := fwhandler.DetectCgroupDriver(ctx, dockerCli)
+	cgroupDriver, err := fwhandler.DetectCgroupDriver(signalCtx, dockerCli)
 	if err != nil {
 		return fmt.Errorf("cgroup driver: %w", err)
 	}
@@ -1285,12 +1316,21 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 
 	log.Info().Msg("clawker-cp ready")
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
-
 	select {
-	case sig := <-sigCh:
-		log.Info().Stringer("signal", sig).Msg("shutdown signal received")
+	case <-signalCtx.Done():
+		// signalCtx fired because a signal was delivered, so the value is
+		// already queued on sigValueCh; read it non-blocking (default guards
+		// against any theoretical stall). nil only in that guard case.
+		var sig os.Signal
+		select {
+		case sig = <-sigValueCh:
+		default:
+		}
+		shutdownLog := log.Info()
+		if sig != nil {
+			shutdownLog = shutdownLog.Stringer("signal", sig)
+		}
+		shutdownLog.Msg("shutdown signal received")
 		// Any subprocess exit past this point is part of graceful shutdown;
 		// suppress crash reporting so it doesn't race with us.
 		subMgr.BeginShutdown()
@@ -1305,7 +1345,14 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		// containers and stale BPF map state.
 		teardownCtx, teardownCancel := context.WithTimeout(context.Background(), cpDrainTimeout)
 		if err := drainCallback(teardownCtx); err != nil {
-			log.Error().Err(err).Msg("sigterm teardown failed")
+			// Generic message + the signal as a structured field: this arm
+			// fires on SIGTERM (docker stop) or SIGINT (Ctrl-C), so a
+			// hardcoded "sigterm" would misattribute a Ctrl-C teardown.
+			teardownLog := log.Error().Err(err)
+			if sig != nil {
+				teardownLog = teardownLog.Stringer("signal", sig)
+			}
+			teardownLog.Msg("shutdown teardown failed")
 		}
 		teardownCancel()
 	case err := <-watcherDone:

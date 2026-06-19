@@ -42,15 +42,6 @@ func Main() int {
 		return 1
 	}
 
-	// Ensure logs and OTEL provider are flushed on exit.
-	// TODO: give logger a Shutdown(ctx) for bounded flush (ctx as flush deadline,
-	// not a replacement for Close).
-	defer func() {
-		if log, err := f.Logger(); err == nil {
-			log.Close()
-		}
-	}()
-
 	// CLI runtime state (the update-check cache + changelog cursor) is resolved
 	// lazily inside checkForUpdate/checkForChanges via f.CLIState(). A state-store
 	// error there aborts that one background check and is logged to the file log,
@@ -162,6 +153,22 @@ func Main() int {
 	defer signalStop()
 	rootCmd.SetContext(signalCtx)
 
+	// Flush buffered logs + the OTEL provider on exit. loggerCtx is a child of the
+	// signal context, and loggerCancel() is called below (before draining the
+	// notifications) once the command has returned — so the deferred Close always
+	// runs with an already-canceled context and never does a blocking final
+	// export. A short-lived command must not block its own exit on an unreachable
+	// collector; every record is already durable in the file, and the OTEL batch
+	// rides the export interval during the run. A Ctrl+C cancels signalCtx, which
+	// tears the flush down the same way.
+	loggerCtx, loggerCancel := context.WithCancel(signalCtx)
+	defer loggerCancel()
+	defer func() {
+		if log, err := f.Logger(); err == nil {
+			_ = log.Close(loggerCtx)
+		}
+	}()
+
 	cmd, err := rootCmd.ExecuteC()
 
 	// gh CLI pattern: cancel the background checks now, before draining their
@@ -174,6 +181,10 @@ func Main() int {
 	// never reach here (e.g. root command creation failing).
 	updateCancel()
 	changelogCancel()
+	// Cancel the logger context now that the command has returned, so the
+	// deferred Close above unwinds its OTEL shutdown immediately instead of
+	// blocking exit on a final export.
+	loggerCancel()
 
 	// drainNotifications blocks on both channels (only when goroutines were
 	// launched) and renders both notifications. printUpdateNotification and

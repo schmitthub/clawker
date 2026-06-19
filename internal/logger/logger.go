@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -298,7 +299,7 @@ func (l *Logger) LogFilePath() string {
 
 // Close flushes pending OTEL batches and closes the file writer.
 // Safe to call multiple times. Safe to call on a Nop logger.
-func (l *Logger) Close() error {
+func (l *Logger) Close(ctx context.Context) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -307,23 +308,28 @@ func (l *Logger) Close() error {
 	}
 	l.closed = true
 
-	var firstErr error
+	var provErr, fwErr error
 
 	if l.provider != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
+		// ctx is the flush deadline. Shutdown honors it: a canceled or expired
+		// ctx unwinds the final export (and the exporter's retry backoff) at once
+		// rather than blocking on an unreachable collector. With a live ctx the
+		// bound is OtelOptions.Timeout when set, else the OTLP SDK default export
+		// timeout. Whatever Shutdown returns is the true outcome of the close —
+		// report it. Interpreting a ctx cancellation it requested (e.g. a caller
+		// that cancels for a fast exit) is the caller's job, not the logger's.
 		if err := l.provider.Shutdown(ctx); err != nil {
-			firstErr = fmt.Errorf("logger: shutdown OTEL provider: %w", err)
+			provErr = fmt.Errorf("logger: shutdown OTEL provider: %w", err)
 		}
 	}
 
 	if l.fw != nil {
-		if err := l.fw.Close(); err != nil && firstErr == nil {
-			firstErr = fmt.Errorf("logger: close file writer: %w", err)
+		if err := l.fw.Close(); err != nil {
+			fwErr = fmt.Errorf("logger: close file writer: %w", err)
 		}
 	}
 
-	return firstErr
+	return errors.Join(provErr, fwErr)
 }
 
 // absorbingWriter forwards writes to an inner writer but always
