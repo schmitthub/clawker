@@ -125,6 +125,100 @@ func drainAll(s *session) []*clawkerdv1.Response {
 	}
 }
 
+// fakeAgentState is a test double for the agentState seam.
+type fakeAgentState struct {
+	initialized bool
+	spawned     bool
+	marked      bool
+}
+
+func (f *fakeAgentState) Initialized() bool { return f.initialized }
+func (f *fakeAgentState) MarkInitialized()  { f.marked = true; f.initialized = true }
+func (f *fakeAgentState) Spawned() bool     { return f.spawned }
+
+// TestDispatch_AgentInitialized pins the fix for the container-kill
+// regression: clawkerd MUST handle Command_AgentInitialized (the init
+// plan's terminal step) by recording init completion and acking Done{0}.
+// Before the fix the dispatch default arm returned INVALID_REQUEST,
+// failing the step and tripping CP's killAfterGrace teardown.
+func TestDispatch_AgentInitialized(t *testing.T) {
+	t.Run("marks initialized and acks Done", func(t *testing.T) {
+		s, _ := newTestSession()
+		st := &fakeAgentState{}
+		s.state = st
+		s.dispatch(context.Background(), &clawkerdv1.Command{
+			CommandId: "init-agent-initialized",
+			Payload:   &clawkerdv1.Command_AgentInitialized{AgentInitialized: &clawkerdv1.AgentInitialized{}},
+		})
+		resps := drainAll(s)
+		require.Len(t, resps, 1)
+		require.Equal(t, "init-agent-initialized", resps[0].CommandId)
+		done := resps[0].GetDone()
+		require.NotNil(t, done, "AgentInitialized must ack Done, not Error")
+		require.Equal(t, int32(0), done.GetFinalExitCode())
+		require.True(t, st.marked, "AgentInitialized must record init completion")
+	})
+
+	t.Run("empty command_id rejected", func(t *testing.T) {
+		s, _ := newTestSession()
+		s.state = &fakeAgentState{}
+		s.dispatch(context.Background(), &clawkerdv1.Command{
+			Payload: &clawkerdv1.Command_AgentInitialized{AgentInitialized: &clawkerdv1.AgentInitialized{}},
+		})
+		resps := drainAll(s)
+		require.Len(t, resps, 1)
+		require.NotNil(t, resps[0].GetError())
+		require.Equal(t, clawkerdv1.ErrorCode_ERROR_CODE_INVALID_REQUEST, resps[0].GetError().GetCode())
+	})
+}
+
+// TestDispatch_HelloAck_ReflectsState pins the fix for the re-run
+// regression: HelloAck MUST carry the agent's init/cmd-running state so
+// CP makes init/boot one-shot. Before the fix Hello returned an empty
+// HelloAck, so shouldAgentInit/shouldAgentBoot were always true and CP
+// re-dispatched the plans on every reconnect.
+func TestDispatch_HelloAck_ReflectsState(t *testing.T) {
+	cases := []struct {
+		name              string
+		state             *fakeAgentState
+		wantInit, wantCmd bool
+	}{
+		{"fresh", &fakeAgentState{}, false, false},
+		{"initialized only", &fakeAgentState{initialized: true}, true, false},
+		{"initialized and running", &fakeAgentState{initialized: true, spawned: true}, true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := newTestSession()
+			s.state = tc.state
+			s.dispatch(context.Background(), &clawkerdv1.Command{
+				CommandId: "hello",
+				Payload:   &clawkerdv1.Command_Hello{Hello: &clawkerdv1.Hello{}},
+			})
+			resps := drainAll(s)
+			require.Len(t, resps, 1)
+			ack := resps[0].GetHelloAck()
+			require.NotNil(t, ack)
+			require.Equal(t, tc.wantInit, ack.GetInitialized())
+			require.Equal(t, tc.wantCmd, ack.GetCmdRunning())
+		})
+	}
+
+	t.Run("nil state is safe", func(t *testing.T) {
+		s, _ := newTestSession() // state left nil
+		s.dispatch(context.Background(), &clawkerdv1.Command{
+			CommandId: "hello",
+			Payload:   &clawkerdv1.Command_Hello{Hello: &clawkerdv1.Hello{}},
+		})
+		resps := drainAll(s)
+		require.Len(t, resps, 1)
+		ack := resps[0].GetHelloAck()
+		require.NotNil(t, ack)
+		require.False(t, ack.GetInitialized())
+		require.False(t, ack.GetCmdRunning())
+	})
+}
+
 // --- session teardown: Stop drains, does not discard ----------------
 
 // TestDrainAndSend_FlushesQueuedResponses proves the graceful-stop flush

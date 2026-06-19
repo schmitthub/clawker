@@ -489,6 +489,15 @@ const (
 	// external readiness probes look for it. Cleared on every
 	// container start.
 	ReadyMarkerPath = "/var/run/clawker/ready"
+	// AgentInitializedMarkerPath records that the CP-driven init plan
+	// completed for this container. clawkerd writes it when CP dispatches
+	// AgentInitialized (the init plan's terminal step) and reads it at
+	// Hello to populate HelloAck.Initialized, so CP skips the one-time
+	// init plan on a container restart while still re-running the boot
+	// plan. It lives in the container writable layer (NOT a volume, NOT
+	// tmpfs): it survives `docker stop`/`start` (restart) but is reclaimed
+	// by `docker rm`, so a freshly recreated container re-initializes.
+	AgentInitializedMarkerPath = "/var/lib/clawker/agent-initialized"
 )
 
 // Exec-phase wall-clock ceilings used by the CP-driven init plan.

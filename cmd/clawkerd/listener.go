@@ -48,7 +48,7 @@ var errListenerConfig = errors.New("clawkerd listener: config error")
 // Returns the running grpc.Server so main can Stop on shutdown. The
 // underlying net.Listener is owned by the goroutine that runs Serve
 // and is closed by Stop.
-func startClawkerdListener(boot *bootstrap, register *registerCoordinator, spawnEntry func() error, onFatal func(error), log *logger.Logger, progress *progressReporter, requestExit func(int)) (*grpc.Server, error) {
+func startClawkerdListener(boot *bootstrap, register *registerCoordinator, spawnEntry func() error, onFatal func(error), log *logger.Logger, progress *progressReporter, requestExit func(int), state agentState) (*grpc.Server, error) {
 	if spawnEntry == nil {
 		return nil, fmt.Errorf("%w: spawnEntry is required", errListenerConfig)
 	}
@@ -88,7 +88,7 @@ func startClawkerdListener(boot *bootstrap, register *registerCoordinator, spawn
 			PermitWithoutStream: true,
 		}),
 	)
-	clawkerdv1.RegisterClawkerdServiceServer(srv, &clawkerdServer{log: log, register: register, spawnEntry: spawnEntry, progress: progress, requestExit: requestExit})
+	clawkerdv1.RegisterClawkerdServiceServer(srv, &clawkerdServer{log: log, register: register, spawnEntry: spawnEntry, progress: progress, requestExit: requestExit, state: state})
 
 	go func() {
 		// PID-1 resilience: a panic inside grpc.Serve (e.g. from a
@@ -213,11 +213,16 @@ type clawkerdServer struct {
 	// startClawkerdListener; the session-level guard tolerates nil for
 	// direct test construction.
 	requestExit func(int)
+	// state reports init/cmd-running lifecycle for HelloAck and records
+	// init-plan completion on AgentInitialized. Shared across every
+	// Session for the process lifetime (the spawnState). Nil-tolerant;
+	// tests pass nil and Hello then reports false/false.
+	state agentState
 }
 
 // Session is the bidi command-dispatch channel from CP to clawkerd.
 // All per-stream state lives in runSession; this method just hands
 // off and lets the helper own the lifecycle.
 func (s *clawkerdServer) Session(stream clawkerdv1.ClawkerdService_SessionServer) error {
-	return runSession(stream, s.log, s.register, s.spawnEntry, s.progress, s.requestExit)
+	return runSession(stream, s.log, s.register, s.spawnEntry, s.progress, s.requestExit, s.state)
 }

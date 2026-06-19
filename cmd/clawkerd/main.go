@@ -274,7 +274,7 @@ func run(ctx context.Context, log *logger.Logger) (int, error) {
 		}
 	}
 
-	clawkerdSrv, err := startClawkerdListener(boot, register, spawnEntry, onListenerFatal, log, progress, requestExit)
+	clawkerdSrv, err := startClawkerdListener(boot, register, spawnEntry, onListenerFatal, log, progress, requestExit, spawn)
 	if err != nil {
 		log.Error().Err(err).Str("event", "clawkerd_listener_start_failed").Msg("start clawkerd listener")
 		// Wiring bugs and malformed bootstrap material are deterministic

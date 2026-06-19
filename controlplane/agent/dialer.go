@@ -1041,14 +1041,24 @@ func (d *Dialer) helloHandshake(stream clawkerdv1.ClawkerdService_SessionClient,
 	if err != nil {
 		return nil, fmt.Errorf("recv HelloAck: %w", err)
 	}
-	if _, ok := resp.Payload.(*clawkerdv1.Response_HelloAck); !ok {
+	ackPayload, ok := resp.Payload.(*clawkerdv1.Response_HelloAck)
+	if !ok {
 		log.Error().
 			Str("event", "agentdial_hello_unexpected_response").
 			Str("got_type", fmt.Sprintf("%T", resp.Payload)).
 			Msg("clawkerd returned non-HelloAck for Hello")
 		return nil, fmt.Errorf("expected HelloAck, got %T", resp.Payload)
 	}
-	return &clawkerdv1.HelloAck{}, nil
+	// Return the ACK clawkerd actually sent — it carries Initialized /
+	// CmdRunning, which shouldAgentInit / shouldAgentBoot read to make the
+	// init / boot plans one-shot. Returning a fresh empty HelloAck here
+	// (the prior behavior) discarded those flags, so CP re-ran both plans
+	// on every (re)connect.
+	ack := ackPayload.HelloAck
+	if ack == nil {
+		ack = &clawkerdv1.HelloAck{}
+	}
+	return ack, nil
 }
 
 // drainOutcome classifies why drainStream returned. Replaces the

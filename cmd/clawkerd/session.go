@@ -60,7 +60,7 @@ const senderDrainGrace = 2 * time.Second
 // invokes it to fork the user CMD; threaded through as a non-optional
 // dependency so a wiring bug fails loud at clawkerdServer construction
 // rather than silently no-op'ing on first AgentReady.
-func runSession(stream clawkerdv1.ClawkerdService_SessionServer, log *logger.Logger, register *registerCoordinator, spawnEntry func() error, progress *progressReporter, requestExit func(int)) error {
+func runSession(stream clawkerdv1.ClawkerdService_SessionServer, log *logger.Logger, register *registerCoordinator, spawnEntry func() error, progress *progressReporter, requestExit func(int), state agentState) error {
 	ctx, cancel := context.WithCancel(stream.Context())
 	defer cancel()
 
@@ -99,6 +99,7 @@ func runSession(stream clawkerdv1.ClawkerdService_SessionServer, log *logger.Log
 		spawnEntry:  spawnEntry,
 		progress:    progress,
 		requestExit: requestExit,
+		state:       state,
 		cancel:      cancel,
 		drainCh:     make(chan struct{}),
 		senderDone:  make(chan struct{}),
@@ -141,10 +142,27 @@ func runSession(stream clawkerdv1.ClawkerdService_SessionServer, log *logger.Log
 	return recvErr
 }
 
+// agentState reports + records the agent's init/run lifecycle so the
+// Hello handler can tell CP whether the init plan already ran and whether
+// the user CMD is up. CP reads these off HelloAck to make its init/boot
+// dispatch one-shot across Session reconnects, instead of re-running the
+// plan on every (re)connect. Backed by *spawnState in production; nil in
+// test fixtures (Hello then reports false/false, which is safe).
+type agentState interface {
+	Initialized() bool
+	MarkInitialized()
+	Spawned() bool
+}
+
 // session holds per-stream state. Lifetime == one Session RPC.
 type session struct {
 	log    *logger.Logger
 	stream clawkerdv1.ClawkerdService_SessionServer
+
+	// state reports init/cmd-running lifecycle for HelloAck and records
+	// init-plan completion on AgentInitialized. Shared across every
+	// Session for the process lifetime (it's the spawnState). nil-tolerant.
+	state agentState
 
 	sendCh chan *clawkerdv1.Response
 
@@ -374,6 +392,32 @@ func (s *session) handleAgentReady(ctx context.Context, commandID string) {
 			Str("command_id", commandID).
 			Msg("clawkerd: AgentReady on reconnect — child already running")
 	}
+	s.send(ctx, &clawkerdv1.Response{
+		CommandId: commandID,
+		Payload:   &clawkerdv1.Response_Done{Done: &clawkerdv1.Done{FinalExitCode: 0}},
+	})
+}
+
+// handleAgentInitialized records that the CP-driven init plan completed
+// (the terminal step of the init plan, dispatched before the boot plan).
+// Latching it lets the next Hello report Initialized=true so CP does not
+// re-run the init plan on a Session reconnect. Replies Done{0} so the
+// init plan's terminal step succeeds; without this case the dispatch
+// default arm returned INVALID_REQUEST, failing the step and tripping
+// CP's killAfterGrace teardown. Idempotent: a reconnect re-dispatch
+// re-marks (no-op) and re-acks.
+//
+// Runs synchronously on the receive loop (like Hello) — MarkInitialized
+// is a lock-free atomic store and send only enqueues, so there is no
+// blocking work to offload to a goroutine.
+func (s *session) handleAgentInitialized(ctx context.Context, commandID string) {
+	if s.state != nil {
+		s.state.MarkInitialized()
+	}
+	s.log.Info().
+		Str("event", "agent_initialized").
+		Str("command_id", commandID).
+		Msg("clawkerd: AgentInitialized — init plan complete")
 	s.send(ctx, &clawkerdv1.Response{
 		CommandId: commandID,
 		Payload:   &clawkerdv1.Response_Done{Done: &clawkerdv1.Done{FinalExitCode: 0}},
@@ -749,9 +793,20 @@ func (s *session) runReceiver(ctx context.Context) error {
 func (s *session) dispatch(ctx context.Context, cmd *clawkerdv1.Command) {
 	switch p := cmd.Payload.(type) {
 	case *clawkerdv1.Command_Hello:
+		// Report init/run lifecycle so CP makes init/boot one-shot: it
+		// skips the init plan once Initialized and the boot plan once the
+		// user CMD is running, instead of re-dispatching on every reconnect.
+		var initialized, cmdRunning bool
+		if s.state != nil {
+			initialized = s.state.Initialized()
+			cmdRunning = s.state.Spawned()
+		}
 		s.send(ctx, &clawkerdv1.Response{
 			CommandId: cmd.CommandId,
-			Payload:   &clawkerdv1.Response_HelloAck{HelloAck: &clawkerdv1.HelloAck{}},
+			Payload: &clawkerdv1.Response_HelloAck{HelloAck: &clawkerdv1.HelloAck{
+				Initialized: initialized,
+				CmdRunning:  cmdRunning,
+			}},
 		})
 	case *clawkerdv1.Command_Shell:
 		if cmd.CommandId == "" {
@@ -809,6 +864,14 @@ func (s *session) dispatch(ctx context.Context, cmd *clawkerdv1.Command) {
 			return
 		}
 		s.handleAgentReady(ctx, cmd.CommandId)
+	case *clawkerdv1.Command_AgentInitialized:
+		if cmd.CommandId == "" {
+			s.send(ctx, errResponse("",
+				clawkerdv1.ErrorCode_ERROR_CODE_INVALID_REQUEST,
+				"command_id required"))
+			return
+		}
+		s.handleAgentInitialized(ctx, cmd.CommandId)
 	default:
 		// Unknown payload is the canonical CP/clawkerd version-mismatch
 		// signal — the proto added a Command variant that this clawkerd
