@@ -227,8 +227,12 @@ func TestBootPlan_PreRunShape(t *testing.T) {
 	}
 	require.NotEqual(t, -1, idxPreRun, "pre-run must be present in the boot plan")
 	require.NotEqual(t, -1, idxReady, "agent-ready must be present in the boot plan")
+	// The boot tail is fixed: pre-run second-to-last, agent-ready last. New
+	// steps prepend to the head; this pair must stay terminal, in this order
+	// (mirrors bootPlanPost). Pinning both indices catches a reorder of the
+	// pair or any step wedged between them.
 	assert.Equal(t, len(bootPlan)-1, idxReady, "agent-ready must be the terminal step")
-	assert.Less(t, idxPreRun, idxReady, "pre-run must run before the terminal agent-ready")
+	assert.Equal(t, len(bootPlan)-2, idxPreRun, "pre-run must be the second-to-last step (immediately before agent-ready)")
 }
 
 // TestPreRunScript_GuardSemantics executes preRunScript the same way the

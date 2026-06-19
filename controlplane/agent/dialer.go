@@ -431,6 +431,28 @@ func (d *Dialer) runDial(cpCtx context.Context, dialCtx context.Context, contain
 			cycleLog.Error().Err(err).Msg("agentdial: failed to determine if agent should boot")
 		}
 
+		// Lifecycle invariant: CmdRunning implies Initialized — the CMD
+		// forks only after init completes. The inverse is structurally
+		// impossible; observing it means a CP bug or an out-of-band CMD
+		// fork. Track it on the trust axis. The dialer stays permissive
+		// (asymmetric trust): the Session stays open for containment and
+		// subscribers enact policy.
+		if agentInitBypassed(res) {
+			cycleLog.Warn().
+				Str("event", "agent_untrusted").
+				Str("reason", string(ReasonInitBypassed)).
+				Msg("CMD running while init never ran; agent untrusted")
+			publish(d.topic, newAgentEvent(
+				dialAgent(containerID, res),
+				Message{
+					Type:   RegistryEventType,
+					Action: ActionUntrusted,
+					Reason: ReasonInitBypassed,
+					Detail: "cmd_running without initialized",
+				},
+			))
+		}
+
 		drain := d.drainStream(dialCtx, res.Stream, cycleLog)
 		// Cancel the stream-scoped ctx so any goroutine still parked on
 		// stream.Recv (e.g. a leftover from a driveRegister timeout that
@@ -1459,6 +1481,7 @@ func (d *Dialer) publishFailed(ctx context.Context, containerID, agent, project,
 //
 // Skips bus emit when ctx is already done — the bus is on its way
 // down anyway and subscribers are about to be released.
+// TODO: cleanup all these publish wrappers
 func (d *Dialer) publishBroken(ctx context.Context, containerID, agent, project, addr, reason string) {
 	if ctx.Err() != nil {
 		return

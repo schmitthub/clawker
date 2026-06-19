@@ -28,8 +28,17 @@ var preRunStep shellStep = shellStep{
 	},
 }
 
-var bootPlan = []step{
+// bootPlanPost is the fixed boot tail: pre_run (the last user hook before
+// the CMD) then agent-ready (releases the CMD, must be terminal so no step
+// races the CMD past the entrypoint fifo). New boot steps prepend to
+// bootPlan's head; this pair stays last, in this order. Split out and named
+// so the ordering invariant survives future edits. Pinned by
+// TestBootPlan_PreRunShape.
+var bootPlanPost = []step{
 	preRunStep,
-	dockerSocketStep,
 	agentReadyStep{Name: "agent-ready"},
 }
+
+var bootPlan = append([]step{
+	dockerSocketStep,
+}, bootPlanPost...)

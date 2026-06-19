@@ -90,6 +90,10 @@ const (
 	ReasonThumbprintMismatch Reason = "cert_thumbprint_mismatch"
 	ReasonCertInvalid        Reason = "cert_invalid"
 	ReasonRegisterFailed     Reason = "register_failed"
+	// ReasonInitBypassed: the user CMD is running while init never ran —
+	// a structurally-impossible lifecycle state (CP bug or out-of-band CMD
+	// fork). See agentInitBypassed.
+	ReasonInitBypassed Reason = "init_bypassed"
 
 	// Exec-axis reasons: classified failure modes for a dispatched plan.
 	ReasonExitCode       Reason = "exit_code"
