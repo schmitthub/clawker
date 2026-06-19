@@ -7,10 +7,10 @@ import (
 	"testing"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	cpmocks "github.com/schmitthub/clawker/controlplane/mocks"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
-	cpmocks "github.com/schmitthub/clawker/internal/controlplane/mocks"
 	"github.com/schmitthub/clawker/internal/project"
 	projectmocks "github.com/schmitthub/clawker/internal/project/mocks"
 	"github.com/stretchr/testify/assert"

@@ -26,21 +26,21 @@ CP crashing is not an availability problem — it is a security boundary integri
 - No CP→clawkerd Session → no observation, no command dispatch, no containment.
 - `clawker controlplane status` reports CP down, but the user has to know to look. Stack traces land on `os.Stderr` → `docker logs <cp>`, NOT in the rotating `ControlPlaneLogFile` operators are wired to grep.
 
-**Therefore — design rules for any code reachable from `cmd/clawker-cp/main.go` after `SetReady`:**
+**Therefore — design rules for any code reachable from `cmd/clawkercp/main.go` after `SetReady`:**
 
 1. **No `panic()`. No `log.Fatal()`. No `os.Exit()`.** Constructors return `(nil, error)`. main.go logs and degrades.
 2. **Long-lived goroutines must `recover()`.** Heartbeats, watchers, RPC handlers — one bad event must not silently strand eBPF.
-3. **Subsystem failures degrade, never escalate.** Broken Executor → `initExec = nil`; broken dialer → `dialer = nil`. Everything else stays up. The patterns in `cmd/clawker-cp/main.go` — `wireInitExecutor` (initExec; emits `event=agent_init_executor_unavailable`) and the `agent.New(...)` block that degrades on error to `event=agent_dialer_unavailable` — are canonical.
+3. **Subsystem failures degrade, never escalate.** Broken Executor → `initExec = nil`; broken dialer → `dialer = nil`. Everything else stays up. The patterns in `cmd/clawkercp/main.go` — `wireInitExecutor` (initExec; emits `event=agent_init_executor_unavailable`) and the `agent.New(...)` block that degrades on error to `event=agent_dialer_unavailable` — are canonical.
 4. **Every degraded path emits a structured log line** (`event=<subsystem>_unavailable`) with component, error, and blast-radius fields. Operators will not see panic stacks; the structured log is the only surface.
 5. **The only acceptable hard-exits** are pre-`SetReady` startup gates (no agents running yet, eBPF not load-bearing) and the orchestrator's intentional drain-to-zero clean exit.
 
-If you're tempted to panic in CP code, you are about to turn a logic bug into a silent firewall failure. See `CLAUDE.md` (project root) and `internal/controlplane/CLAUDE.md` for the full statement and templates.
+If you're tempted to panic in CP code, you are about to turn a logic bug into a silent firewall failure. See `CLAUDE.md` (project root) and `controlplane/CLAUDE.md` for the full statement and templates.
 
 ## 0. Common Confusion: CP ≠ Firewall
 
 The Control Plane (CP) and the firewall are NOT the same thing. LLM sessions repeatedly conflate them — see project-root `CLAUDE.md` for the full callout. Summary:
 
-- **CP** = unconditional auth + gRPC infrastructure (AdminService on AdminPort, AgentService listener on AgentPort, sqlite-persisted agent registry, CP→clawkerd `agent.Dialer` outbound dialer, overseer event bus, mTLS, owns clawker-net). Always running whenever any clawker container exists. Boots via `cpboot.EnsureRunning`. There is no "disable CP" flag.
+- **CP** = unconditional auth + gRPC infrastructure (AdminService on AdminPort, AgentService listener on AgentPort, sqlite-persisted agent registry, CP→clawkerd `agent.Dialer` outbound dialer, pub/sub event topics, mTLS, owns clawker-net). Always running whenever any clawker container exists. Boots via `manager.EnsureRunning`. There is no "disable CP" flag.
 - **Firewall** = one optional subsystem CP manages (Envoy + CoreDNS + eBPF egress enforcement). Toggled by `firewall.enable` in `settings.yaml` (global). Per-project rules are separate (`security.firewall.add_domains` / `rules` in `clawker.yaml`).
 - Disabling firewall does NOT disable CP, clawker-net, mTLS, agent registry, agent.Dialer→clawkerd Session, ListAgents, or any non-firewall AdminService RPC.
 - **CP owns firewall**, not vice versa. Older framings that put firewall above or alongside CP are stale.
@@ -474,7 +474,7 @@ with all closures wired                       *cmdutil.Factory
 Factory is a pure struct with closure/value fields — no methods. 3 eager (set directly), rest lazy (closures):
 
 **Eager**: `Version` (string), `IOStreams` (`*iostreams.IOStreams`), `TUI` (`*tui.TUI`)
-**Lazy**: `Config` (`func() (config.Config, error)`), `Client` (`func(ctx) (*docker.Client, error)`), `Logger` (`func() (*logger.Logger, error)`), `ProjectManager` (`func() (project.ProjectManager, error)`), `GitManager` (`func() (*git.GitManager, error)`), `HostProxy` (`func() hostproxy.HostProxyService`), `SocketBridge` (`func() socketbridge.SocketBridgeManager`), `Prompter` (`func() *prompter.Prompter`), `AdminClient` (`func(ctx) (adminv1.AdminServiceClient, error)`), `ControlPlane` (`func() cpboot.Manager`), `HttpClient` (`func() *http.Client`)
+**Lazy**: `Config` (`func() (config.Config, error)`), `Client` (`func(ctx) (*docker.Client, error)`), `Logger` (`func() (*logger.Logger, error)`), `ProjectManager` (`func() (project.ProjectManager, error)`), `GitManager` (`func() (*git.GitManager, error)`), `HostProxy` (`func() hostproxy.HostProxyService`), `SocketBridge` (`func() socketbridge.SocketBridgeManager`), `Prompter` (`func() *prompter.Prompter`), `AdminClient` (`func(ctx) (adminv1.AdminServiceClient, error)`), `ControlPlane` (`func() manager.Manager`), `HttpClient` (`func() *http.Client`)
 
 The constructor in `internal/cmd/factory/default.go` wires all closures. Commands extract closures into per-command Options structs. Run functions only accept `*Options`, never `*Factory`.
 
@@ -697,13 +697,18 @@ This supplements environment variable passing for persistent credential storage.
 
 **Hot-reload semantics**: Rule changes regenerate `envoy.yaml` and `Corefile` on disk AND atomically replace the global BPF `route_map` via gRPC `AdminService.SyncRoutes` RPC to the CP. Envoy picks up config via container restart; CoreDNS via its reload plugin (2s poll). No agent container restarts required — all running containers immediately see the updated rules. The CP owns `Manager.Load()` lifetime in-process, so the pinned `dns_cache` map persists across rule reloads by construction (old hot-reload pinning bug from `ebpfExec("init")` era is gone).
 
-**Three-phase container start (bootstrap / start / post-bootstrap)**: During bootstrap, the firewall manager attaches eBPF cgroup programs to the container. clawkerd boots as PID 1, reads its mTLS bootstrap material, and serves the `:7700` listener while CP drives the init plan over the Session bidi-stream (`agent.post_init`, MCP setup, etc.). The terminal `AgentReady` command triggers clawkerd to fork the user CMD (default `claude`) with kernel-side privilege drop via `SysProcAttr.Credential` (start phase). Post-bootstrap hooks run after `AgentReady`.
+**CP-driven agent start — two plans (init, boot)**: clawkerd boots as PID 1, reads its mTLS bootstrap material, and serves the `:7700` listener. CP's `agent.Dialer` establishes the Session (Hello → HelloAck) and then runs two static plans over the Session bidi-stream, each gated on a flag in `HelloAck` so they're one-shot per condition (`controlplane/agent/{init_steps,boot_steps}.go`):
+
+- **Init plan** — one-time per container, runs only when `HelloAck.Initialized == false`. Steps in order: `docker-socket`, `config`, `git`, `git-credentials`, `ssh`, `post_init` (the `agent.post_init` hook), then the terminal `Command_AgentInitialized`. clawkerd handles `AgentInitialized` by writing a writable-layer marker file (`consts.AgentInitializedMarkerPath`); a later Hello then reports `Initialized == true` and the init plan is skipped.
+- **Boot plan** — runs on every start, only when `HelloAck.CmdRunning == false`. Steps in order: `pre_run` (the `agent.pre_run` hook), `docker-socket`, then the terminal `Command_AgentReady`. clawkerd handles `AgentReady` by forking the user CMD (default `claude`) with kernel-side privilege drop via `SysProcAttr.Credential`. `AgentReady` is no-op success on a reconnect where clawkerd already spawned the CMD.
+
+So `post_init` is an init step (one-time) and `pre_run` is a boot step (every start). On a `docker start` after stop, init is skipped (marker present) but boot re-runs and re-forks the CMD.
 
 **PID-1 privilege model**: eBPF programs are attached from outside the container by the eBPF manager. Agent containers require no elevated capabilities — they run fully unprivileged. clawkerd runs as root for log writes, bootstrap reads, and `Wait4(-1)` orphan drain; the user CMD is the privilege-dropped child, never the supervisor itself (kernel runs `setgroups → setgid → setuid` between fork and exec).
 
 #### Implementation
 
-The firewall uses an **Envoy proxy + custom CoreDNS + eBPF manager** trio running as managed Docker containers. eBPF cgroup programs perform all traffic routing. The CoreDNS image is a custom build (`clawker-coredns:latest`) of `cmd/coredns-clawker` embedding `internal/dnsbpf` — not stock `coredns/coredns`. See `.claude/docs/ARCHITECTURE.md` and `internal/controlplane/firewall/CLAUDE.md` for the as-built design.
+The firewall uses an **Envoy proxy + custom CoreDNS + eBPF manager** trio running as managed Docker containers. eBPF cgroup programs perform all traffic routing. The CoreDNS image is a custom build (`clawker-coredns:latest`) of `cmd/coredns-clawker` embedding `internal/dnsbpf` — not stock `coredns/coredns`. See `.claude/docs/ARCHITECTURE.md` and `controlplane/firewall/CLAUDE.md` for the as-built design.
 
 **Why this architecture:**
 - **DNS deny-by-default**: CoreDNS returns NXDOMAIN for unlisted domains — agents can't even resolve blocked hosts. Upstream: Cloudflare malware-blocking (`1.1.1.2`, `1.0.0.2`).
@@ -721,7 +726,7 @@ The firewall uses an **Envoy proxy + custom CoreDNS + eBPF manager** trio runnin
 
 **Startup ordering is security-critical**: `EnsureRunning` starts the eBPF container and runs `init` BEFORE Envoy and CoreDNS, because the `dnsbpf` plugin opens the pinned `dns_cache` map on CoreDNS startup and fails to boot if it doesn't exist. The `regenerateAndRestart` path preserves this invariant — it re-runs init and `syncRoutes` before restarting Envoy/CoreDNS.
 
-**Embedded binaries**: The eBPF manager binary is embedded via `internal/controlplane/cpboot/embed_ebpf.go` (`go:embed`); the custom CoreDNS binary via `internal/controlplane/firewall/embed_coredns.go`. Each package builds its image on demand from the embedded binary using an inline Dockerfile SHA-pinned to `alpine:3.21`.
+**Embedded binaries**: The eBPF manager binary is embedded via `controlplane/manager/embed_ebpf.go` (`go:embed`); the custom CoreDNS binary via `controlplane/firewall/embed_coredns.go`. Each package builds its image on demand from the embedded binary using an inline Dockerfile SHA-pinned to `alpine:3.21`.
 
 **Rule merge strategy**: System-required rules (Claude API, Docker registry) are always present. Project rules from `.clawker.yaml` (`add_domains`, `rules`) merge additively — project rules never replace system rules. Dedup key: `destination:protocol:port`. The rules store uses `storage.Store[EgressRulesFile]` with file-level locking.
 
@@ -739,10 +744,10 @@ Every BPF decision point (`connect4`/`connect6`, `sendmsg4`/`sendmsg6`, `recvmsg
 - **Kernel-fault drops** (ringbuf full or `bpf_ringbuf_reserve == NULL`) increment `events_drops` (PERCPU_ARRAY at key 0).
 - The ringbuf itself (`events_ringbuf`) is single-producer-per-decision-point, single-consumer, 256 KiB sized for 32-byte `egress_event` records.
 
-The userspace consumer is `netlogger.Service` (`internal/controlplane/firewall/ebpf/netlogger/`):
+The userspace consumer is `netlogger.Service` (`controlplane/firewall/ebpf/netlogger/`):
 
 1. **Drain**: A reader goroutine pulls records out of `events_ringbuf` via `cilium/ebpf/ringbuf` and forwards them through a bounded queue (default 8192) with drop-newest back-pressure (`QueueDropped` counter).
-2. **Enrichment**: A processor goroutine decodes each record into a typed `Event` and resolves `cgroup_id → {container_id, agent, project}` via `LabelCache`. The cache is hydrated by `ebpf.EBPFContainerEnrolled` overseer events published by `firewall.Handler.FirewallEnable` and evicted by `dockerevents.DockerEvent` with `Action ∈ {die, destroy}`. `domain_hash → domain` resolution goes through `ReverseDNSMap`, rebuilt every refresh tick from the firewall rule set.
+2. **Enrichment**: A processor goroutine decodes each record into a typed `Event` and resolves `cgroup_id → {container_id, agent, project}` via `LabelCache`. The cache is hydrated by `ebpf.EBPFContainerEnrolled` pub/sub events published by `firewall.Handler.FirewallEnable` and evicted by `dockerevents.DockerEvent` with `Action ∈ {die, destroy}`. `domain_hash → domain` resolution goes through `ReverseDNSMap`, rebuilt every refresh tick from the firewall rule set.
 3. **Emit**: An `otelSink` shapes the enriched record into an OTLP log record (scope `clawker.netlogger`, event name `ebpf.egress`, `service.name=ebpf-egress`) and pushes it through a `*sdklog.LoggerProvider` over mTLS gRPC to the trusted-infra OTLP receiver on `OtelInfraPort`. Records land in the `clawker-ebpf-egress` OpenSearch index. Strict directive: every `Event` field maps to an attribute on every emitted record — empty strings and zero numbers ship verbatim, never dropped.
 
 Collector-unavailable posture is binary per-CP-lifetime:
@@ -750,7 +755,7 @@ Collector-unavailable posture is binary per-CP-lifetime:
 - **Startup preflight**: `controlplane.NewOtelLoggerProvider` performs a one-shot TLS dial against the OTLP endpoint. Failure returns an error to CP main; main emits `event=netlogger_unavailable` with the failing `step` field, leaves `netloggerSvc=nil`, and CP runs degraded with no per-decision telemetry. Firewall enforcement is untouched.
 - **Runtime circuit breaker**: `netlogger.NewCircuitExporter` wraps the OTLP exporter inside the BatchProcessor. After 3 consecutive `Export` failures the breaker permanently trips, drops records on the floor, and emits a single `event=netlogger_collector_lost` line. No background reconnect — operators recover by restarting CP.
 
-Drain ordering (in `cmd/clawker-cp/main.go`'s drain callback) places `netloggerSvc.Stop(stopCtx)` BEFORE `ebpfMgr.FlushAll()` so the BatchProcessor flushes in-flight OTLP batches before the BPF maps the reader holds are torn down.
+Drain ordering (in `cmd/clawkercp/main.go`'s drain callback) places `netloggerSvc.Stop(stopCtx)` BEFORE `ebpfMgr.FlushAll()` so the BatchProcessor flushes in-flight OTLP batches before the BPF maps the reader holds are torn down.
 
 ### 7.3 Strict Label Ownership
 
@@ -796,7 +801,7 @@ No error, no duplicate—deterministic behavior.
 A Docker Compose stack on `clawker-net`:
 
 - **OpenTelemetry Collector** - Two OTLP receivers on distinct trust lanes: the untrusted `otlp` receiver (agent containers — Claude Code + clawker-cli telemetry) and the mTLS-gated `otlp/infra` receiver on `OtelInfraPort` (trusted CP-side emitters — CP zerolog bridge, Envoy access logs, CoreDNS otel plugin, netlogger). Routes logs into the six OpenSearch indices and exposes a Prometheus scrape endpoint for metrics. The two-lane split is load-bearing for netlogger's trust model — infra emitters carry per-handshake leaf certs minted by `otelcerts.Service` and never cross into the untrusted agent lane. A `traces` pipeline is configured but idle — agents don't emit spans today.
-- **OpenSearch** - Logs only, split into six indices: `claude-code` (Claude Code OTLP push, untrusted port), `clawker-cli` (host CLI OTLP push, untrusted port), `clawker-cp` (mTLS-gated CP push), `clawker-envoy` (Envoy access logs, mTLS-gated), `clawker-coredns` (CoreDNS query logs, mTLS-gated), and `clawker-ebpf-egress` (eBPF per-decision egress events from netlogger, `service.name=ebpf-egress`, mTLS-gated). Cross-index queries: `clawker-cp,claude-code,clawker-cli,clawker-envoy,clawker-coredns,clawker-ebpf-egress`.
+- **OpenSearch** - Logs only, split into six indices: `claude-code` (Claude Code OTLP push, untrusted port), `clawker-cli` (host CLI OTLP push, untrusted port), `clawkercp` (mTLS-gated CP push), `clawker-envoy` (Envoy access logs, mTLS-gated), `clawker-coredns` (CoreDNS query logs, mTLS-gated), and `clawker-ebpf-egress` (eBPF per-decision egress events from netlogger, `service.name=ebpf-egress`, mTLS-gated). Cross-index queries: `clawkercp,claude-code,clawker-cli,clawker-envoy,clawker-coredns,clawker-ebpf-egress`.
 - **OpenSearch Dashboards** - UI for log exploration (Discover)
 - **Prometheus** - Metrics storage + UI; also accepts direct OTLP push for callers willing to lose `/api/v1/metadata` coverage
 

@@ -10,7 +10,7 @@
 // This allows socket forwarding without requiring network access from the
 // container to the host - all communication happens over the docker exec channel.
 //
-// Build: go build -o socket-forwarder main.go
+// Build: go build -o socket-forwarder clawkercp.go
 // Usage: Launched via `docker exec -i <container> socket-forwarder`
 //
 // Environment:

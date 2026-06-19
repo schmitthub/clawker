@@ -8,12 +8,12 @@ import (
 
 	"github.com/google/shlex"
 	mobyClient "github.com/moby/moby/client"
+	"github.com/schmitthub/clawker/controlplane/manager"
+	cpbootmocks "github.com/schmitthub/clawker/controlplane/manager/mocks"
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
-	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
-	cpbootmocks "github.com/schmitthub/clawker/internal/controlplane/cpboot/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/iostreams"
@@ -177,7 +177,7 @@ func testRestartFactory(t *testing.T, fake *mocks.FakeClient) (*cmdutil.Factory,
 		Config: func() (config.Config, error) {
 			return configmocks.NewFromString("", `firewall: { enable: false }`), nil
 		},
-		ControlPlane: func() cpboot.Manager {
+		ControlPlane: func() manager.Manager {
 			return &cpbootmocks.ManagerMock{
 				EnsureRunningFunc: func(context.Context) error { return nil },
 			}
@@ -198,7 +198,7 @@ func TestRestartRun_PreStartFailureReapsAutoRemove(t *testing.T) {
 	fake.SetupContainerInspectReapState(true, false)
 
 	f, in, out, errOut := testRestartFactory(t, fake)
-	f.ControlPlane = func() cpboot.Manager {
+	f.ControlPlane = func() manager.Manager {
 		return &cpbootmocks.ManagerMock{
 			EnsureRunningFunc: func(context.Context) error { return fmt.Errorf("cp boom") },
 		}

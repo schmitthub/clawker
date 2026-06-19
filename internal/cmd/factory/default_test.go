@@ -23,7 +23,7 @@ func TestNew(t *testing.T) {
 
 // TestCacheableState pins the package-level helper. Closure-behavior
 // coverage (caching, rebuild on Shutdown, keepalive wiring) lives in
-// the E2E harness, which runs the real cpboot.EnsureRunning +
+// the E2E harness, which runs the real manager.EnsureRunning +
 // adminclient.Dial path — matches what the CLI ships with.
 func TestCacheableState(t *testing.T) {
 	cases := []struct {

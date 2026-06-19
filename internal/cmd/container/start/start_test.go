@@ -8,12 +8,12 @@ import (
 
 	"github.com/google/shlex"
 	mobyclient "github.com/moby/moby/client"
+	cpmanager "github.com/schmitthub/clawker/controlplane/manager"
+	cpbootmocks "github.com/schmitthub/clawker/controlplane/manager/mocks"
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
-	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
-	cpbootmocks "github.com/schmitthub/clawker/internal/controlplane/cpboot/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/hostproxy"
@@ -212,7 +212,7 @@ func testStartFactory(t *testing.T, fake *mocks.FakeClient) (*cmdutil.Factory, *
 		HostProxy: func() hostproxy.HostProxyService {
 			return hostproxytest.NewMockManager()
 		},
-		ControlPlane: func() cpboot.Manager {
+		ControlPlane: func() cpmanager.Manager {
 			return &cpbootmocks.ManagerMock{
 				EnsureRunningFunc: func(context.Context) error { return nil },
 			}
@@ -281,7 +281,7 @@ func TestStartRun_PreStartFailureReapsAutoRemove(t *testing.T) {
 	fake.SetupContainerInspectReapState(true, false)
 
 	f, in, out, errOut := testStartFactory(t, fake)
-	f.ControlPlane = func() cpboot.Manager {
+	f.ControlPlane = func() cpmanager.Manager {
 		return &cpbootmocks.ManagerMock{
 			EnsureRunningFunc: func(context.Context) error { return fmt.Errorf("cp boom") },
 		}
@@ -309,7 +309,7 @@ func TestStartRun_AttachPreStartFailureReapsAutoRemove(t *testing.T) {
 	fake.SetupContainerInspectReapState(true, false)
 
 	f, in, out, errOut := testStartFactory(t, fake)
-	f.ControlPlane = func() cpboot.Manager {
+	f.ControlPlane = func() cpmanager.Manager {
 		return &cpbootmocks.ManagerMock{
 			EnsureRunningFunc: func(context.Context) error { return fmt.Errorf("cp boom") },
 		}
@@ -394,7 +394,7 @@ func TestStartRun_NilHostProxy(t *testing.T) {
 			return configmocks.NewFromString(`security: { enable_host_proxy: false }`, `firewall: { enable: false }`), nil
 		},
 		HostProxy: func() hostproxy.HostProxyService { return nil },
-		ControlPlane: func() cpboot.Manager {
+		ControlPlane: func() cpmanager.Manager {
 			return &cpbootmocks.ManagerMock{
 				EnsureRunningFunc: func(context.Context) error { return nil },
 			}

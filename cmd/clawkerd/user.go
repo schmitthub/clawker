@@ -133,7 +133,7 @@ func lookupUsernameByUID(r io.Reader, uid int) (string, error) {
 }
 
 // passwdGroupPaths returns the production passwd/group file paths.
-// Wrapping them in a function gives main.go a single seam for path
+// Wrapping them in a function gives clawkercp.go a single seam for path
 // injection without touching resolveUser's signature.
 func passwdGroupPaths() (passwd, group string) {
 	return "/etc/passwd", "/etc/group"

@@ -259,7 +259,7 @@ Pass real constructors for any dependency you want to exercise against Docker. S
 3. Remove control plane container (by `purpose=controlplane` label)
 4. Remove test-labeled containers, volumes, networks (by `dev.clawker.test.name` label)
 
-On failure, dumps `clawker.log`, `clawker-cpboot.log`, and `clawker-controlplane.log` from the test's state dir.
+On failure, dumps `clawker.log`, `clawkercpboot.log`, and `clawker-controlplane.log` from the test's state dir.
 
 ### Project Test Double Scenarios
 

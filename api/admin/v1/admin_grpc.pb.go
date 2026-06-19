@@ -125,7 +125,7 @@ type AdminServiceClient interface {
 	// exposes no server-side knob, so a host-clock `iat` presented while the CP
 	// container's clock is momentarily behind the host (common right after the
 	// host sleeps, before the VM clock re-syncs) would be rejected with HTTP 500
-	// "Token used before issued". clawker-cp and Hydra share the container, so
+	// "Token used before issued". clawkercp and Hydra share the container, so
 	// this clock is exactly the one fosite validates against. Because the CP
 	// clock always converges back to the host, the fix is to WAIT: the host-side
 	// CP-readiness gate on the container START path polls this RPC and blocks the
@@ -383,7 +383,7 @@ type AdminServiceServer interface {
 	// exposes no server-side knob, so a host-clock `iat` presented while the CP
 	// container's clock is momentarily behind the host (common right after the
 	// host sleeps, before the VM clock re-syncs) would be rejected with HTTP 500
-	// "Token used before issued". clawker-cp and Hydra share the container, so
+	// "Token used before issued". clawkercp and Hydra share the container, so
 	// this clock is exactly the one fosite validates against. Because the CP
 	// clock always converges back to the host, the fix is to WAIT: the host-side
 	// CP-readiness gate on the container START path polls this RPC and blocks the

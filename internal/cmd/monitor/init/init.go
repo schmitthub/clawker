@@ -112,7 +112,7 @@ func initRun(_ context.Context, opts *InitOptions) error {
 	// auth.MintAgentCert) and infra leaves (envoy/coredns + cp via the
 	// intermediate). Using the CLI root as client_ca_file lets any
 	// agent container present a CLI-signed leaf and inject records
-	// with forged service.name=clawker-cp/envoy/coredns into the
+	// with forged service.name=clawkercp/envoy/coredns into the
 	// trusted forensic indices. The infra intermediate signs only
 	// envoy/coredns/cp leaves, so the chain validation locks the
 	// trusted lane to those senders.

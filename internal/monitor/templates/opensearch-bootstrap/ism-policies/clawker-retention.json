@@ -24,7 +24,7 @@
         "index_patterns": [
           "claude-code",
           "clawker-cli",
-          "clawker-cp",
+          "clawkercp",
           "clawker-envoy",
           "clawker-coredns",
           "clawker-ebpf-egress"

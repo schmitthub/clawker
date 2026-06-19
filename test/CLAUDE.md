@@ -95,7 +95,7 @@ require.Equal(t, 0, result.ExitCode, "stderr: %s", result.Stderr)
 2. Remove firewall infrastructure containers (by `purpose=firewall` label), then CP containers (by `purpose=controlplane` label)
 3. Remove test-labeled containers, volumes, networks (by `dev.clawker.test.name` label)
 
-On failure, dumps `clawker.log`, `clawker-cpboot.log`, and `clawker-controlplane.log` from the test's state dir.
+On failure, dumps `clawker.log`, `clawkercpboot.log`, and `clawker-controlplane.log` from the test's state dir.
 
 ### Internal Helpers
 

@@ -10,10 +10,10 @@ import (
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	"github.com/schmitthub/clawker/controlplane/manager"
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
@@ -38,7 +38,7 @@ type RunOptions struct {
 	ProjectManager  func() (project.ProjectManager, error)
 	ProjectRegistry func() (*project.Registry, error)
 	HostProxy       func() hostproxy.HostProxyService
-	ControlPlane    func() cpboot.Manager
+	ControlPlane    func() manager.Manager
 	AdminClient     func(context.Context) (adminv1.AdminServiceClient, error)
 	SocketBridge    func() socketbridge.SocketBridgeManager
 	Prompter        func() *prompter.Prompter

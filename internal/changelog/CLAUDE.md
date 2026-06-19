@@ -5,10 +5,12 @@ and surfaces the entries gained since the show-once cursor. The package owns the
 cursor lifecycle end to end — read, first-run seed, and advance all live here,
 backed by `internal/state`.
 
-The single exported entry point is `CheckForChanges` (`changelog.go`, alongside
-`Entry` and the `between` range query); `Entry` is the parsed unit. The parser
-(`parse.go`) and the cursor range query (`between`) are pure, unexported
-helpers — nothing outside the package composes them independently.
+The primary entry point is `CheckForChanges` (`changelog.go`, alongside `Entry`
+and the `between` range query); `Entry` is the parsed unit. `Parse` (`parse.go`)
+is also exported so tooling can render a local `CHANGELOG.md` through the same
+teaser path (the `changelog-preview` make target → `internal/clawker`
+`printChangelogTeaser`) instead of re-implementing the render. The cursor range
+query (`between`) stays an unexported helper.
 
 There is **no on-disk cache and no TTL**: the curated changelog is small,
 best-effort, and the CLI runs on the host where it is always online, so each
@@ -115,7 +117,7 @@ stdlib `net/http`. No on-disk cache, no clock, no Factory noun.
 All tests live in the single `changelog_test.go` (parser + `CheckForChanges`
 share the `versions` helper), split into two sections:
 
-- **Parser tests** — pure `parse` tests against `testdata/CHANGELOG.md`: header
+- **Parser tests** — pure `Parse` tests against `testdata/CHANGELOG.md`: header
   parsing, `## [Unreleased]` + partial-header skip (guards `StrictNewVersion`),
   body preservation across a multi-kind release (Added + Fixed both survive) with
   inline links intact, HTML-comment + link-reference stripping.

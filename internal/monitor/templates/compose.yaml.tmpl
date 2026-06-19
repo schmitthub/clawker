@@ -21,7 +21,7 @@ services:
 {{- if .OtelInfraPort}}
       # CLI-issued mTLS material for the CP-only receiver. Bound RO from
       # the CLI auth dir on the host. The CA bundle gates client certs
-      # to ones the CLI signed (currently just clawker-cp).
+      # to ones the CLI signed (currently just clawkercp).
       - {{.OtelServerCertHostPath}}:/etc/otel/tls/server.pem:ro
       - {{.OtelServerKeyHostPath}}:/etc/otel/tls/server.key:ro
       - {{.OtelCAHostPath}}:/etc/otel/tls/ca.pem:ro
@@ -37,7 +37,7 @@ services:
       - "127.0.0.1:{{.OtelGRPCPort}}:{{.OtelGRPCPort}}"
       - "127.0.0.1:{{.OtelCollectorPort}}:{{.OtelCollectorPort}}"
 {{- if .OtelInfraPort}}
-      # CP-only receiver — host loopback only. clawker-cp pushes via
+      # CP-only receiver — host loopback only. clawkercp pushes via
       # host.docker.internal:<port>. Agents trying the same address are
       # rejected by BPF (gateway:non-hostproxy → Envoy → reset);
       # additionally, mTLS would refuse them because they have no

@@ -43,7 +43,7 @@ curl -fsSL https://raw.githubusercontent.com/schmitthub/clawker/main/scripts/ins
 
 ## Build from Source
 
-Requires Go 1.25+. Use the Makefile entry point — `go install` is unsupported because the CLI `//go:embed`s several Linux binaries (`clawkerd`, `clawker-cp`, `ebpf-manager`, `coredns-clawker`) that are gitignored and produced by `make clawker`. Without them the build fails at compile time with a `pattern assets/...: no matching files found` error.
+Requires Go 1.25+. Use the Makefile entry point — `go install` is unsupported because the CLI `//go:embed`s several Linux binaries (`clawkerd`, `clawkercp`, `ebpf-manager`, `coredns-clawker`) that are gitignored and produced by `make clawker`. Without them the build fails at compile time with a `pattern assets/...: no matching files found` error.
 
 ```bash
 git clone https://github.com/schmitthub/clawker.git

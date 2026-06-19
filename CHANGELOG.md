@@ -14,6 +14,17 @@ clawker CLI's "what's new" teaser renders the section bodies verbatim as
 markdown, and the release-notes workflow copies them into the GitHub release.
 Link to relevant docs inline in the bullets.
 
+## [0.12.7] - 2026-06-19
+
+### **⚠ ACTION REQUIRED — rebuild all agent container images**
+> Run `clawker build` in every project after updating. Containers built before 
+> this release run an outdated internal runtime and will be stopped automatically; 
+> they will not work until rebuilt.
+
+- **Fixed:** agent boot freezing on init/boot command failures (e.g. `post_init`,
+  `pre_run`). clawkerd now prints the failure to stdout and exits, and the control
+  plane reaps the failed container if it doesn't shut down gracefully.
+
 ## [0.12.6] - 2026-06-18
 
 - **Fixed:** CLI OTEL logger no longer blocks command exit for up to 5 seconds when monitoring is down. 
@@ -144,16 +155,3 @@ Link to relevant docs inline in the bullets.
 - **Git credential forwarding.** SSH agent, GPG agent, and HTTPS git
   credentials are forwarded from the host through a socket bridge, so commits
   sign and private repositories clone inside the container.
-
-[0.12.3]: https://github.com/schmitthub/clawker/releases/tag/v0.12.3
-[0.12.0]: https://github.com/schmitthub/clawker/releases/tag/v0.12.0
-[0.11.0]: https://github.com/schmitthub/clawker/releases/tag/v0.11.0
-[0.10.3]: https://github.com/schmitthub/clawker/releases/tag/v0.10.3
-[0.10.0]: https://github.com/schmitthub/clawker/releases/tag/v0.10.0
-[0.9.0]: https://github.com/schmitthub/clawker/releases/tag/v0.9.0
-[0.8.0]: https://github.com/schmitthub/clawker/releases/tag/v0.8.0
-[0.7.0]: https://github.com/schmitthub/clawker/releases/tag/v0.7.0
-[0.6.0]: https://github.com/schmitthub/clawker/releases/tag/v0.6.0
-[0.5.0]: https://github.com/schmitthub/clawker/releases/tag/v0.5.0
-[0.3.0]: https://github.com/schmitthub/clawker/releases/tag/v0.3.0
-[0.1.0]: https://github.com/schmitthub/clawker/releases/tag/v0.1.0

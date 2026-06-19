@@ -6,9 +6,9 @@ import (
 	"testing"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	"github.com/schmitthub/clawker/controlplane/manager"
+	cpbootmocks "github.com/schmitthub/clawker/controlplane/manager/mocks"
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
-	cpbootmocks "github.com/schmitthub/clawker/internal/controlplane/cpboot/mocks"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/stretchr/testify/assert"
@@ -54,7 +54,7 @@ func TestUpRun_EnsuresControlPlaneBeforeDial(t *testing.T) {
 	adminCalled := false
 	opts := &UpOptions{
 		IOStreams:    ios,
-		ControlPlane: func() cpboot.Manager { return mgr },
+		ControlPlane: func() manager.Manager { return mgr },
 		AdminClient: func(_ context.Context) (adminv1.AdminServiceClient, error) {
 			adminCalled = true
 			// returning an error short-circuits before spinner RPC —
@@ -81,7 +81,7 @@ func TestUpRun_FailsFastWhenCPBootstrapFails(t *testing.T) {
 	adminCalled := false
 	opts := &UpOptions{
 		IOStreams:    ios,
-		ControlPlane: func() cpboot.Manager { return mgr },
+		ControlPlane: func() manager.Manager { return mgr },
 		AdminClient: func(_ context.Context) (adminv1.AdminServiceClient, error) {
 			adminCalled = true
 			return nil, nil

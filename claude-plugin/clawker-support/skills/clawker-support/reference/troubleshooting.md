@@ -213,8 +213,8 @@ User reports the container fails to start or immediately exits.
 6. **Control plane down**: Container init is dispatched by the clawker
    control plane (CP) over an mTLS Session to the per-container clawkerd
    daemon. If CP is unreachable, `clawkerd` boots the listener but never
-   gets `AgentReady` — the container hangs without spawning the user CMD
-   and the HEALTHCHECK never goes green.
+   receives the readiness signal from CP — the container hangs without
+   spawning the user CMD and the HEALTHCHECK never goes green.
    ```bash
    clawker controlplane status
    clawker controlplane up         # idempotent — brings CP up if needed

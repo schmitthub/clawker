@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/schmitthub/clawker/controlplane/manager"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
@@ -53,8 +53,8 @@ func TestBindMountUID_E2E(t *testing.T) {
 			Config:         config.NewConfig,
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
-			ControlPlane: func(cfg config.Config, log *logger.Logger) cpboot.Manager {
-				return cpboot.NewManager(
+			ControlPlane: func(cfg config.Config, log *logger.Logger) manager.Manager {
+				return manager.NewManager(
 					func(ctx context.Context) (*docker.Client, error) {
 						return docker.NewClient(ctx, cfg, log)
 					},

@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -130,6 +131,32 @@ func TestWith(t *testing.T) {
 	}
 }
 
+func TestWith_RepeatedKeyDedupes(t *testing.T) {
+	var buf bytes.Buffer
+	l := NewWriter(&buf)
+
+	// Three layers each set "component" — the bug this guards against
+	// stacked all three into one line (clawker-controlplane, agent.init,
+	// agent.boot). The deduped logger keeps only the last value.
+	sub := l.With("component", "clawker-controlplane").
+		With("project", "demo").
+		With("component", "agent.init").
+		With("component", "agent.boot")
+	sub.Error().Str("event", "agent_init_failed").Msg("boom")
+
+	out := buf.String()
+	if got := strings.Count(out, `"component"`); got != 1 {
+		t.Fatalf("component key appears %d times, want 1; line: %s", got, out)
+	}
+	if !strings.Contains(out, `"component":"agent.boot"`) {
+		t.Errorf("expected last component value to win; line: %s", out)
+	}
+	// Unrelated keys set once still survive the rebuild.
+	if !strings.Contains(out, `"project":"demo"`) {
+		t.Errorf("expected project field preserved; line: %s", out)
+	}
+}
+
 func TestWith_OddArgs_Panics(t *testing.T) {
 	defer func() {
 		if r := recover(); r == nil {
@@ -237,7 +264,7 @@ func TestNew_NoStderrOutput(t *testing.T) {
 }
 
 // TestNew_EchoStdout_MirrorsRecords pins the contract that
-// containerized daemons (clawker-cp) get every log record copied to
+// containerized daemons (clawkercp) get every log record copied to
 // os.Stdout so `docker logs <container>` is non-empty. A regression
 // that drops the os.Stdout sink would silently brick operator
 // triage; no other test exercises this property.
@@ -256,7 +283,7 @@ func TestNew_EchoStdout_MirrorsRecords(t *testing.T) {
 		os.Stdout = oldStdout
 		t.Fatalf("New failed: %v", err)
 	}
-	l.Info().Str("event", "ready").Msg("clawker-cp ready")
+	l.Info().Str("event", "ready").Msg("clawkercp ready")
 	l.Close(context.Background())
 
 	w.Close()
@@ -267,7 +294,7 @@ func TestNew_EchoStdout_MirrorsRecords(t *testing.T) {
 	r.Close()
 
 	got := string(buf[:n])
-	if !strings.Contains(got, "clawker-cp ready") {
+	if !strings.Contains(got, "clawkercp ready") {
 		t.Errorf("EchoStdout=true must mirror records to os.Stdout; got: %q", got)
 	}
 	if !strings.Contains(got, `"event":"ready"`) {
@@ -380,7 +407,7 @@ func TestClose_CanceledContext_ReturnsPromptly(t *testing.T) {
 }
 
 // TestClose_LiveContext_BoundedByExportTimeout pins the daemon shutdown path,
-// the symmetric partner to the canceled-context test. clawker-cp passes a live
+// the symmetric partner to the canceled-context test. clawkercp passes a live
 // (never-canceled) base context to Close, so a final flush against an
 // unreachable collector must be bounded by the exporter's own export timeout
 // (OtelOptions.Timeout), not ride the OTLP retry backoff (~1m MaxElapsedTime).
@@ -410,7 +437,7 @@ func TestClose_LiveContext_BoundedByExportTimeout(t *testing.T) {
 
 	l.Info().Msg("buffered record awaiting export")
 
-	// Live context — never canceled, mirroring clawker-cp's deferred
+	// Live context — never canceled, mirroring clawkercp's deferred
 	// log.Close(ctx) on the base background context.
 	start := time.Now()
 	err = l.Close(context.Background())
@@ -430,4 +457,98 @@ func TestClose_LiveContext_BoundedByExportTimeout(t *testing.T) {
 	if err == nil {
 		t.Error("Close returned nil on a live context with an unreachable collector; the export-timeout failure must surface")
 	}
+}
+
+// TestOtelOptionsFromEnv pins the secure-by-default OTLP-endpoint
+// resolution contract: the helper resolves only the endpoint + plaintext
+// flag from env (the logs-signal override winning over the generic var),
+// defaults to TLS for bare host:port, opts in to plaintext ONLY for an
+// explicit http:// scheme, and NEVER honors env-driven cert paths (those
+// would let an operator smuggle a CLI-root-direct leaf onto the trusted
+// lane). Moved out of internal/controlplane when the helper became a
+// logger-package concern.
+func TestOtelOptionsFromEnv(t *testing.T) {
+	t.Run("no env returns nil", func(t *testing.T) {
+		t.Setenv(consts.EnvOTLPLogsEndpoint, "")
+		t.Setenv(consts.EnvOTLPEndpoint, "")
+		if got := OtelOptionsFromEnv(); got != nil {
+			t.Fatalf("expected nil with no endpoint configured, got %+v", got)
+		}
+	})
+
+	t.Run("logs endpoint precedence over generic", func(t *testing.T) {
+		t.Setenv(consts.EnvOTLPLogsEndpoint, "https://logs:4319")
+		t.Setenv(consts.EnvOTLPEndpoint, "https://generic:4319")
+		opts := OtelOptionsFromEnv()
+		if opts == nil {
+			t.Fatal("expected non-nil opts")
+		}
+		if opts.Endpoint != "logs:4319" {
+			t.Errorf("endpoint: got %q, want %q", opts.Endpoint, "logs:4319")
+		}
+		if opts.Insecure {
+			t.Error("https endpoint must resolve secure (Insecure=false)")
+		}
+	})
+
+	t.Run("explicit http opts in to plaintext", func(t *testing.T) {
+		t.Setenv(consts.EnvOTLPLogsEndpoint, "")
+		t.Setenv(consts.EnvOTLPEndpoint, "http://collector:4317")
+		opts := OtelOptionsFromEnv()
+		if opts == nil {
+			t.Fatal("expected non-nil opts")
+		}
+		if opts.Endpoint != "collector:4317" {
+			t.Errorf("endpoint: got %q, want %q", opts.Endpoint, "collector:4317")
+		}
+		if !opts.Insecure {
+			t.Error("explicit http:// must opt in to plaintext (Insecure=true)")
+		}
+	})
+
+	t.Run("bare host_port defaults secure", func(t *testing.T) {
+		t.Setenv(consts.EnvOTLPLogsEndpoint, "")
+		t.Setenv(consts.EnvOTLPEndpoint, "collector.prod.internal:4319")
+		opts := OtelOptionsFromEnv()
+		if opts == nil {
+			t.Fatal("expected non-nil opts")
+		}
+		if opts.Endpoint != "collector.prod.internal:4319" {
+			t.Errorf("endpoint: got %q, want %q", opts.Endpoint, "collector.prod.internal:4319")
+		}
+		if opts.Insecure {
+			t.Error("bare host:port must default to TLS (Insecure=false)")
+		}
+	})
+
+	// CLI-root-direct cert env vars are deliberately ignored. The CP's
+	// trusted-lane exporter takes its TLSConfig in-process from
+	// internal/controlplane/otelcerts; honoring env-driven cert paths
+	// would let an operator smuggle in a CLI-root-direct leaf, which
+	// agent containers also hold — they could then forge
+	// service.name=clawkercp records on the trusted receiver.
+	t.Run("client cert env vars are not consulted", func(t *testing.T) {
+		t.Setenv(consts.EnvOTLPLogsEndpoint, "https://host:4319")
+		t.Setenv(consts.EnvOTLPEndpoint, "")
+		t.Setenv("OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE", "/c.pem")
+		t.Setenv("OTEL_EXPORTER_OTLP_CLIENT_KEY", "/k.pem")
+		t.Setenv("OTEL_EXPORTER_OTLP_CERTIFICATE", "/ca.pem")
+
+		opts := OtelOptionsFromEnv()
+		if opts == nil {
+			t.Fatal("expected non-nil opts")
+		}
+		if opts.ClientCertFile != "" {
+			t.Error("OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE must be ignored")
+		}
+		if opts.ClientKeyFile != "" {
+			t.Error("OTEL_EXPORTER_OTLP_CLIENT_KEY must be ignored")
+		}
+		if opts.CACertFile != "" {
+			t.Error("OTEL_EXPORTER_OTLP_CERTIFICATE must be ignored")
+		}
+		if opts.TLSConfig != nil {
+			t.Error("TLSConfig is wired in-process by the caller, not from env")
+		}
+	})
 }

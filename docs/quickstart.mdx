@@ -42,7 +42,7 @@ clawker monitor init    # Scaffold configs (one-time)
 clawker monitor up      # Start OTel Collector + OpenSearch + OpenSearch Dashboards + Prometheus
 ```
 
-Open OpenSearch Dashboards at `http://localhost:5601` to explore logs (costs, token usage, tool calls, session events, firewall egress, DNS queries, per-decision eBPF egress events including bypass windows), and Prometheus at `http://localhost:9090` for metrics. Index patterns for all six indices (`claude-code`, `clawker-cli`, `clawker-cp`, `clawker-envoy`, `clawker-coredns`, `clawker-ebpf-egress`) and the index field mappings + retention policy are preconfigured on every `monitor up` by the `clawker-opensearch-bootstrap` service. Open Discover and pick a pattern. See [Monitoring](/monitoring) for the bootstrap pipeline details and [Egress Observability](/observability) for the per-decision eBPF event record shape.
+Open OpenSearch Dashboards at `http://localhost:5601` to explore logs (costs, token usage, tool calls, session events, firewall egress, DNS queries, per-decision eBPF egress events including bypass windows), and Prometheus at `http://localhost:9090` for metrics. Index patterns for all six indices (`claude-code`, `clawker-cli`, `clawkercp`, `clawker-envoy`, `clawker-coredns`, `clawker-ebpf-egress`) and the index field mappings + retention policy are preconfigured on every `monitor up` by the `clawker-opensearch-bootstrap` service. Open Discover and pick a pattern. See [Monitoring](/monitoring) for the bootstrap pipeline details and [Egress Observability](/observability) for the per-decision eBPF event record shape.
 
 ```bash
 clawker monitor down    # Stop when done
@@ -137,7 +137,7 @@ When you run this command, Clawker:
 2. Brings up the clawker **control plane** if it isn't already running — a long-lived per-host daemon that owns the firewall lifecycle, eBPF program attachment, and the mTLS command channel to every agent — and waits for it to be fully ready (including a host↔CP clock-sync check) before starting the container
 3. Starts the container with `clawkerd` as PID 1; the control plane attaches eBPF firewall programs from outside and dials into `clawkerd` over mTLS to drive in-container init. When the monitoring stack is running, every firewall decision from those eBPF programs (allowed / denied / bypassed) begins streaming to the `clawker-ebpf-egress` OpenSearch index — see [Egress Observability](/observability)
 4. Forwards SSH/GPG agent sockets and Git HTTPS credentials from your host, copies your Claude Code settings/plugins/auth into the container, runs any `post_init` script you've configured
-5. Issues `AgentReady`, at which point `clawkerd` forks Claude Code as the unprivileged `claude` user (kernel-side privilege drop)
+5. Signals the agent is ready, at which point the agent daemon forks Claude Code as the unprivileged `claude` user (kernel-side privilege drop)
 
 An automatically loaded prompt exists at `/etc/claude-code/CLAUDE.md`, so the agent knows it's in a clawker container and can help troubleshoot issues and provide guidance when running into constraints.
 

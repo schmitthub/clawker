@@ -6,11 +6,15 @@ import (
 	"github.com/Masterminds/semver/v3"
 )
 
-// parse splits raw Keep-a-Changelog markdown into version entries. Each entry
+// Parse splits raw Keep-a-Changelog markdown into version entries. Each entry
 // begins at a "## [x.y.z] - YYYY-MM-DD" header; everything up to the next
 // version header (or the trailing link-reference block) is the entry body,
 // preserved as markdown. HTML-comment lines are dropped so they never render.
-func parse(raw string) ([]Entry, error) {
+//
+// Exported so tooling can render a local CHANGELOG.md through the same path the
+// teaser uses (see the changelog-preview make target); CheckForChanges is the
+// fetch+cursor entry point that callers normally use.
+func Parse(raw string) ([]Entry, error) {
 	var entries []Entry
 	var cur *Entry
 	var body []string

@@ -8,9 +8,9 @@ import (
 	cerrdefs "github.com/containerd/errdefs"
 	mobyClient "github.com/moby/moby/client"
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	"github.com/schmitthub/clawker/controlplane/manager"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
-	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -21,7 +21,7 @@ type CommandOpts struct {
 	Client       func(context.Context) (*docker.Client, error)
 	Config       func() (config.Config, error)
 	HostProxy    func() hostproxy.HostProxyService
-	ControlPlane func() cpboot.Manager
+	ControlPlane func() manager.Manager
 	AdminClient  func(context.Context) (adminv1.AdminServiceClient, error)
 	SocketBridge func() socketbridge.SocketBridgeManager
 	Logger       func() (*logger.Logger, error)

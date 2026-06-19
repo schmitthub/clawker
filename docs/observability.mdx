@@ -13,7 +13,7 @@ The headline use is **bypass-mode forensic coverage**. The firewall's bypass swi
 
 Each record is an OTel log emitted on the trusted infra OTLP lane with:
 
-- `service.name = ebpf-egress` (distinct from `clawker-cp` so retention + volume profile are independent)
+- `service.name = ebpf-egress` (distinct from `clawkercp` so retention + volume profile are independent)
 - `event.name = ebpf.egress.connect` / `ebpf.egress.sendmsg` / `ebpf.egress.sock_create` (per-emit-site so dashboards can filter by record kind without inspecting flag bits)
 - `body = "ebpf egress"`
 - `severity = INFO`
@@ -69,7 +69,7 @@ agent container egress decision
   OpenSearch index: clawker-ebpf-egress
 ```
 
-The index is preconfigured by the `clawker-opensearch-bootstrap` one-shot service every time `clawker monitor up` runs. The retention policy (default 7 days, throwaway-stack semantics) auto-attaches via the same ISM policy that covers the other clawker indices. Cross-index queries against `clawker-cp,clawker-envoy,clawker-coredns,clawker-ebpf-egress` work out of the box — `ingest_source` is stamped on every record for filtering.
+The index is preconfigured by the `clawker-opensearch-bootstrap` one-shot service every time `clawker monitor up` runs. The retention policy (default 7 days, throwaway-stack semantics) auto-attaches via the same ISM policy that covers the other clawker indices. Cross-index queries against `clawkercp,clawker-envoy,clawker-coredns,clawker-ebpf-egress` work out of the box — `ingest_source` is stamped on every record for filtering.
 
 ## Per-Connection Bytes and Duration
 

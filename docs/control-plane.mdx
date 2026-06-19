@@ -5,7 +5,7 @@ icon: "tower-control"
 keywords: ["AI coding agent sandbox", "Claude Code sandbox", "self-hosted", "open source", "run Claude Code in Docker", "coding agent sandbox", "control plane", "mTLS", "agent registry"]
 ---
 
-The clawker **control plane** (CP) is a long-lived, privileged Go service that runs as `cmd/clawker-cp` (PID 1) inside the `clawker-controlplane` Docker container. It is the authoritative supervisor for every clawker-managed agent on the host — it owns the agent identity registry, the egress firewall lifecycle, the eBPF program lifetime, and the CP↔agent command channel.
+The clawker **control plane** (CP) is a long-lived, privileged Go service that runs as `cmd/clawkercp` (PID 1) inside the `clawker-controlplane` Docker container. It is the authoritative supervisor for every clawker-managed agent on the host — it owns the agent identity registry, the egress firewall lifecycle, the eBPF program lifetime, and the CP↔agent command channel.
 
 You normally won't think about the control plane. The first time any clawker command needs it (`clawker firewall status`, `clawker run`, `clawker controlplane agents`, …), the CLI brings it up transparently. The `clawker controlplane` verb group exists for debugging, upgrades, and recovery — not day-to-day use.
 
@@ -15,7 +15,7 @@ The control plane is **not** the firewall. The firewall (Envoy + CoreDNS + eBPF)
 
 ## What CP Does
 
-The CP container is a single binary, `clawker-cp`, running as PID 1. Inside it:
+The CP container is a single binary, `clawkercp`, running as PID 1. Inside it:
 
 - **Ory auth stack** — Hydra (OAuth2 token issuer, `client_credentials` + `private_key_jwt` ES256), Kratos (identity), and Oathkeeper (HTTP auth proxy) are subprocess-managed by the same PID. Token validation is fail-closed.
 - **AdminService gRPC** (mTLS + OAuth2 JWT, default port `7443` on host loopback) — the 13-method firewall control surface (`FirewallInit`, `FirewallEnable`, `FirewallAddRules`, `FirewallSyncRoutes`, `FirewallBypass`, …) plus `ListAgents` and `GetSystemTime` (public-scope, no bearer token required — used by the clock-sync readiness gate). Every CLI `clawker firewall *` and `clawker controlplane agents` call goes through this RPC.
@@ -64,7 +64,7 @@ Two paths bring CP up:
 1. **Transparent bootstrap** — the first CLI call that needs CP (most firewall commands, container creation, anything that opens an `AdminClient`) runs `cpboot.EnsureRunning` under a host-side mutex. Steps: ensure the CP image exists with a content-derived tag (`clawker-controlplane:bin-<sha>`, built on demand from the embedded binaries), `ContainerCreate` on `clawker-net` with a static IP, `ContainerStart`, then poll `http://127.0.0.1:<HealthPort>/healthz` until 200 or timeout. Idempotent — re-runs are no-ops once `/healthz` is green.
 2. **Break-glass** — `clawker controlplane up` calls the same `EnsureRunning` path explicitly, useful when you want to bring CP up without triggering a side-effect command.
 
-Either way, the CP image is built from binaries embedded in the `clawker` CLI itself (`clawker-cp`, `ebpf-manager`). There's no separate image to pull. See [Installation](/installation) for the BPF toolchain requirements when building from source.
+Either way, the CP image is built from binaries embedded in the `clawker` CLI itself (`clawkercp`, `ebpf-manager`). There's no separate image to pull. See [Installation](/installation) for the BPF toolchain requirements when building from source.
 
 On every boot, CP reads `firewall.enable` from settings and — when enabled (the default) — starts the Envoy + CoreDNS firewall stack before reporting ready, so a green `/healthz` means the firewall is actually enforcing. That covers boots no CLI command observes, like Docker's restart policy resurrecting a crashed CP. A failed stack bringup **fails CP startup** (the container exits non-zero): running half-protected would leave agents either unusable (their egress redirected at a dead proxy) or, worse, silently unenforced while you believe the firewall is on. The CLI surfaces the exit with a pointer at `docker logs clawker-controlplane`; fix the cause and rerun, or disable the firewall in settings to run unprotected.
 
@@ -81,7 +81,7 @@ All `clawker controlplane` subcommands are break-glass — useful for debugging,
 | Command | Purpose |
 |---------|---------|
 | `clawker controlplane up` | Idempotent `EnsureRunning`. Brings CP up if it isn't already; no-op if `/healthz` is green. When the firewall is enabled in settings (`firewall.enable`, the default), also brings the Envoy + CoreDNS firewall stack up and waits until it's healthy. |
-| `clawker controlplane down` | Stops the CP container. `clawker-cp`'s SIGTERM handler runs the clean drain (`actionQueue.Close` → graceful gRPC stop → bypass timer cancel → Stack stop → netlogger stop → eBPF flush → exit 0). |
+| `clawker controlplane down` | Stops the CP container. `clawkercp`'s SIGTERM handler runs the clean drain (`actionQueue.Close` → graceful gRPC stop → bypass timer cancel → Stack stop → netlogger stop → eBPF flush → exit 0). |
 | `clawker controlplane status` | Probes `/healthz`; if up, also fetches firewall subsystem state via the AdminService. Output via `--format json` for scripts. |
 | `clawker controlplane agents` | Lists every agent currently registered with CP — composite (`project`, `agent_name`) plus container ID, cert thumbprint, registration time, and last-seen time. Output via `--format json` for scripts. |
 

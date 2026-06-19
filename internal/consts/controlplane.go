@@ -10,7 +10,7 @@ import (
 // CP can compute host-FS bind mount sources when it creates sibling
 // containers (Envoy, CoreDNS, etc.) via Docker-outside-of-Docker. All four
 // dir vars are required; a missing value is caught by
-// cpboot.HostDirs.Validate(). EnvHostUID / EnvHostGID are also set by the
+// manager.HostDirs.Validate(). EnvHostUID / EnvHostGID are also set by the
 // CLI; a missing value degrades to fallbackContainerUID/GID rather than
 // failing the boot, since most container ops still work at 1001.
 const (
@@ -21,10 +21,10 @@ const (
 	EnvHostUID       = "CLAWKER_HOST_UID"
 	EnvHostGID       = "CLAWKER_HOST_GID"
 
-	// EnvCPBinarySHA carries the SHA-256 of the embedded clawker-cp +
+	// EnvCPBinarySHA carries the SHA-256 of the embedded clawkercp +
 	// ebpf-manager bytes (the LabelCPBinarySHA value) into the CP
 	// container, where firewall.Stack stamps it as a sibling drift
-	// label. The hash is computed host-side from cpboot's go:embed
+	// label. The hash is computed host-side from manager's go:embed
 	// assets — unavailable inside the CP binary itself — hence the env
 	// hop.
 	EnvCPBinarySHA = "CLAWKER_CP_BINARY_SHA"

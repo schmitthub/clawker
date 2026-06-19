@@ -67,7 +67,7 @@ const (
 	LabelFlavor    = LabelPrefix + "flavor"
 	LabelTest      = LabelPrefix + "test"
 	LabelE2ETest   = LabelPrefix + "e2e-test"
-	// LabelCPBinarySHA stamps the SHA-256 of the embedded clawker-cp +
+	// LabelCPBinarySHA stamps the SHA-256 of the embedded clawkercp +
 	// ebpf-manager bytes onto the built CP image and running container.
 	// EnsureRunning compares the running container's label against the
 	// host clawker binary's embedded hash to detect drift.
@@ -258,11 +258,11 @@ const (
 	ControlPlaneLogFile = "clawker-controlplane.log"
 	// CPBootLogFile is the host-side CP-lifecycle log. The CP daemon owns
 	// ControlPlaneLogFile (it writes to it from inside the container via
-	// the bind-mounted logs dir); the host-side cpboot code that manages
+	// the bind-mounted logs dir); the host-side manager code that manages
 	// CP container lifecycle writes here instead so the two processes
 	// never concurrently append to the same file and shear each other's
 	// log lines.
-	CPBootLogFile   = "clawker-cpboot.log"
+	CPBootLogFile   = "clawker-manager.log"
 	BridgePIDSuffix = ".pid"
 	ReadyFile       = "ready"
 	GRPCSocketFile  = "grpc.sock"
@@ -302,7 +302,7 @@ const (
 const (
 	// CPImageRepo is the local Docker image repo for the built control plane image.
 	// The tag is content-derived (computed from the SHA-256 of the embedded
-	// clawker-cp + ebpf-manager binaries) so a stale image is impossible: the
+	// clawkercp + ebpf-manager binaries) so a stale image is impossible: the
 	// host clawker binary either resolves the tag and reuses, or rebuilds.
 	CPImageRepo = "clawker-controlplane"
 )
@@ -360,7 +360,7 @@ const (
 	// stack-bringing RPCs (FirewallInit, FirewallReload), derived from the
 	// server-side bringup budget + headroom so the real server error reaches
 	// the user instead of a premature client deadline. Second consumer:
-	// cpboot.waitForCPHealthz extends its host-side readiness budget by this
+	// manager.waitForCPHealthz extends its host-side readiness budget by this
 	// value when the firewall is enabled — shrinking it shrinks that wait too
 	// and can reintroduce spurious CPHealthTimeoutErrors on first-boot pulls.
 	FirewallStackBringupRPCTimeout = FirewallStackBringupTimeout + 30*time.Second
@@ -489,17 +489,39 @@ const (
 	// external readiness probes look for it. Cleared on every
 	// container start.
 	ReadyMarkerPath = "/var/run/clawker/ready"
+	// AgentInitializedMarkerPath records that the CP-driven init plan
+	// completed for this container. clawkerd writes it when CP dispatches
+	// AgentInitialized (the init plan's terminal step) and reads it at
+	// Hello to populate HelloAck.Initialized, so CP skips the one-time
+	// init plan on a container restart while still re-running the boot
+	// plan. It lives in the container writable layer (NOT a volume, NOT
+	// tmpfs): it survives `docker stop`/`start` (restart) but is reclaimed
+	// by `docker rm`, so a freshly recreated container re-initializes.
+	AgentInitializedMarkerPath = "/var/lib/clawker/agent-initialized"
 )
 
-// Init-phase wall-clock ceilings used by the CP-driven init plan.
+// Exec-phase wall-clock ceilings used by the CP-driven init plan.
 // post-init governs the longest-running step. CP's per-step ceiling
-// in `internal/controlplane/agent/init.go::runStep` is the only
+// in `internal/controlplane/agent/exec.go::runStep` is the only
 // timeout that gates init now — clawkerd-as-PID-1 has no separate
 // shell-script ceiling to coordinate with.
 const (
-	InitStepTimeoutDefaultSeconds  uint32 = 30
-	InitStepTimeoutPostInitSeconds uint32 = 600
+	ExecStepTimeoutDefaultSeconds  uint32 = 30
+	ExecStepTimeoutPostInitSeconds uint32 = 600
 )
+
+// CPAgentKillGrace bounds how long CP waits for an agent container to
+// exit on its own after dispatching a command with exit_on_non_zero
+// that exited non-zero. A healthy clawkerd echoes the failed command's
+// output and exits PID 1 with the mirrored exit code (clean teardown,
+// terminal restore); CP waits this long for that self-exit before
+// escalating to ContainerKill SIGKILL — the backstop for a wedged
+// clawkerd that cannot process its own shutdown. The grace bounds a
+// wait-then-SIGKILL backstop: the self-exit was already requested as the
+// command's exit_on_non_zero flag, so the backstop itself only waits,
+// then kills. Generic to the CP→clawkerd command service; init is its
+// first consumer.
+const CPAgentKillGrace = 15 * time.Second
 
 // ScopePublic is the cross-service sentinel marking a gRPC method as
 // public — no bearer token required (the listener's mTLS still
@@ -855,7 +877,7 @@ func EnsureAuthDirs() error {
 // AuthOtelDir ensures and returns the auth/otel directory under
 // DataDir. Holds the mTLS pair gating the CP-only OTLP receiver on the
 // monitoring stack: a server cert mounted into the otel-collector
-// container and a client cert mounted into clawker-cp.
+// container and a client cert mounted into clawkercp.
 func AuthOtelDir() (string, error) {
 	return subdirPathUnder(filepath.Join(authDir, authOtelSubdir), DataDir())
 }

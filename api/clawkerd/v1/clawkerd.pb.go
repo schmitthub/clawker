@@ -107,6 +107,7 @@ type Command struct {
 	//	*Command_Signal
 	//	*Command_RegisterRequired
 	//	*Command_AgentReady
+	//	*Command_AgentInitialized
 	Payload       isCommand_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -219,6 +220,15 @@ func (x *Command) GetAgentReady() *AgentReady {
 	return nil
 }
 
+func (x *Command) GetAgentInitialized() *AgentInitialized {
+	if x != nil {
+		if x, ok := x.Payload.(*Command_AgentInitialized); ok {
+			return x.AgentInitialized
+		}
+	}
+	return nil
+}
+
 type isCommand_Payload interface {
 	isCommand_Payload()
 }
@@ -251,6 +261,10 @@ type Command_AgentReady struct {
 	AgentReady *AgentReady `protobuf:"bytes,8,opt,name=agent_ready,json=agentReady,proto3,oneof"`
 }
 
+type Command_AgentInitialized struct {
+	AgentInitialized *AgentInitialized `protobuf:"bytes,9,opt,name=agent_initialized,json=agentInitialized,proto3,oneof"`
+}
+
 func (*Command_Hello) isCommand_Payload() {}
 
 func (*Command_Shell) isCommand_Payload() {}
@@ -264,6 +278,8 @@ func (*Command_Signal) isCommand_Payload() {}
 func (*Command_RegisterRequired) isCommand_Payload() {}
 
 func (*Command_AgentReady) isCommand_Payload() {}
+
+func (*Command_AgentInitialized) isCommand_Payload() {}
 
 // Hello is the first Command CP sends after the Session stream
 // opens. clawkerd replies with HelloAck. Liveness is otherwise
@@ -348,7 +364,7 @@ func (*RegisterRequired) Descriptor() ([]byte, []int) {
 	return file_clawkerd_v1_clawkerd_proto_rawDescGZIP(), []int{2}
 }
 
-// AgentReady is the terminal init-sequence signal. clawkerd releases
+// AgentReady is the terminal boot-sequence signal. clawkerd releases
 // the entrypoint to exec the user CMD. Idempotent on reconnect (no
 // reader → no-op success). Reply: Done{exit_code:0} on release or
 // reconnect-replay; Error{NOT_FOUND} if the fifo is missing entirely
@@ -389,6 +405,43 @@ func (*AgentReady) Descriptor() ([]byte, []int) {
 	return file_clawkerd_v1_clawkerd_proto_rawDescGZIP(), []int{3}
 }
 
+// AgentInitialized signals that the agent has completed its initialization sequence.
+type AgentInitialized struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AgentInitialized) Reset() {
+	*x = AgentInitialized{}
+	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AgentInitialized) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AgentInitialized) ProtoMessage() {}
+
+func (x *AgentInitialized) ProtoReflect() protoreflect.Message {
+	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AgentInitialized.ProtoReflect.Descriptor instead.
+func (*AgentInitialized) Descriptor() ([]byte, []int) {
+	return file_clawkerd_v1_clawkerd_proto_rawDescGZIP(), []int{4}
+}
+
 // ShellCommand starts a shell pipeline. stages.len == 1 runs a
 // single command; stages.len > 1 chains stage[i].stdout into
 // stage[i+1].stdin (a | b | c). stage[0].stdin is fed by
@@ -401,13 +454,28 @@ type ShellCommand struct {
 	// terminates the command with ERROR_CODE_TIMEOUT.
 	TimeoutSeconds uint32 `protobuf:"varint,2,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`
 	InitialStdin   []byte `protobuf:"bytes,3,opt,name=initial_stdin,json=initialStdin,proto3" json:"initial_stdin,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// print_output makes clawkerd echo this command's combined output to
+	// its controlling TTY, live, as the command runs. It governs ONLY the
+	// local echo: clawkerd always merges stdout+stderr into one ordered
+	// stream and always streams it to the caller as OutputChunk frames,
+	// regardless of this flag. The caller decides which commands are worth
+	// showing on the local console.
+	PrintOutput bool `protobuf:"varint,4,opt,name=print_output,json=printOutput,proto3" json:"print_output,omitempty"`
+	// exit_on_non_zero makes clawkerd terminate the daemon (PID 1) with
+	// this command's final exit code when the command exits non-zero,
+	// after echoing output per print_output. The decision that a command's
+	// failure is fatal lives in CP, encoded here as an instruction;
+	// clawkerd holds no policy and never inspects the code to decide its
+	// own fate absent this flag. The mirrored exit code surfaces to the
+	// user's terminal as the container exit status.
+	ExitOnNonZero bool `protobuf:"varint,5,opt,name=exit_on_non_zero,json=exitOnNonZero,proto3" json:"exit_on_non_zero,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ShellCommand) Reset() {
 	*x = ShellCommand{}
-	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[4]
+	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -419,7 +487,7 @@ func (x *ShellCommand) String() string {
 func (*ShellCommand) ProtoMessage() {}
 
 func (x *ShellCommand) ProtoReflect() protoreflect.Message {
-	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[4]
+	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -432,7 +500,7 @@ func (x *ShellCommand) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ShellCommand.ProtoReflect.Descriptor instead.
 func (*ShellCommand) Descriptor() ([]byte, []int) {
-	return file_clawkerd_v1_clawkerd_proto_rawDescGZIP(), []int{4}
+	return file_clawkerd_v1_clawkerd_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *ShellCommand) GetStages() []*PipeStage {
@@ -456,6 +524,20 @@ func (x *ShellCommand) GetInitialStdin() []byte {
 	return nil
 }
 
+func (x *ShellCommand) GetPrintOutput() bool {
+	if x != nil {
+		return x.PrintOutput
+	}
+	return false
+}
+
+func (x *ShellCommand) GetExitOnNonZero() bool {
+	if x != nil {
+		return x.ExitOnNonZero
+	}
+	return false
+}
+
 // PipeStage is one process in the pipeline. uid/gid drop privileges
 // per stage (e.g. install as root, post-install hook as user).
 type PipeStage struct {
@@ -471,7 +553,7 @@ type PipeStage struct {
 
 func (x *PipeStage) Reset() {
 	*x = PipeStage{}
-	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[5]
+	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -483,7 +565,7 @@ func (x *PipeStage) String() string {
 func (*PipeStage) ProtoMessage() {}
 
 func (x *PipeStage) ProtoReflect() protoreflect.Message {
-	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[5]
+	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -496,7 +578,7 @@ func (x *PipeStage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PipeStage.ProtoReflect.Descriptor instead.
 func (*PipeStage) Descriptor() ([]byte, []int) {
-	return file_clawkerd_v1_clawkerd_proto_rawDescGZIP(), []int{5}
+	return file_clawkerd_v1_clawkerd_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *PipeStage) GetArgv() []string {
@@ -545,7 +627,7 @@ type Stdin struct {
 
 func (x *Stdin) Reset() {
 	*x = Stdin{}
-	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[6]
+	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -557,7 +639,7 @@ func (x *Stdin) String() string {
 func (*Stdin) ProtoMessage() {}
 
 func (x *Stdin) ProtoReflect() protoreflect.Message {
-	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[6]
+	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -570,7 +652,7 @@ func (x *Stdin) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Stdin.ProtoReflect.Descriptor instead.
 func (*Stdin) Descriptor() ([]byte, []int) {
-	return file_clawkerd_v1_clawkerd_proto_rawDescGZIP(), []int{6}
+	return file_clawkerd_v1_clawkerd_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *Stdin) GetData() []byte {
@@ -589,7 +671,7 @@ type CloseStdin struct {
 
 func (x *CloseStdin) Reset() {
 	*x = CloseStdin{}
-	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[7]
+	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -601,7 +683,7 @@ func (x *CloseStdin) String() string {
 func (*CloseStdin) ProtoMessage() {}
 
 func (x *CloseStdin) ProtoReflect() protoreflect.Message {
-	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[7]
+	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -614,7 +696,7 @@ func (x *CloseStdin) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CloseStdin.ProtoReflect.Descriptor instead.
 func (*CloseStdin) Descriptor() ([]byte, []int) {
-	return file_clawkerd_v1_clawkerd_proto_rawDescGZIP(), []int{7}
+	return file_clawkerd_v1_clawkerd_proto_rawDescGZIP(), []int{8}
 }
 
 // Signal sends a POSIX signal to every stage in the pipeline (or to
@@ -629,7 +711,7 @@ type Signal struct {
 
 func (x *Signal) Reset() {
 	*x = Signal{}
-	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[8]
+	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -641,7 +723,7 @@ func (x *Signal) String() string {
 func (*Signal) ProtoMessage() {}
 
 func (x *Signal) ProtoReflect() protoreflect.Message {
-	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[8]
+	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -654,7 +736,7 @@ func (x *Signal) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Signal.ProtoReflect.Descriptor instead.
 func (*Signal) Descriptor() ([]byte, []int) {
-	return file_clawkerd_v1_clawkerd_proto_rawDescGZIP(), []int{8}
+	return file_clawkerd_v1_clawkerd_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *Signal) GetSigno() int32 {
@@ -677,8 +759,7 @@ type Response struct {
 	//
 	//	*Response_HelloAck
 	//	*Response_Started
-	//	*Response_Stdout
-	//	*Response_Stderr
+	//	*Response_Output
 	//	*Response_StageExit
 	//	*Response_Done
 	//	*Response_Error
@@ -690,7 +771,7 @@ type Response struct {
 
 func (x *Response) Reset() {
 	*x = Response{}
-	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[9]
+	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -702,7 +783,7 @@ func (x *Response) String() string {
 func (*Response) ProtoMessage() {}
 
 func (x *Response) ProtoReflect() protoreflect.Message {
-	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[9]
+	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -715,7 +796,7 @@ func (x *Response) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Response.ProtoReflect.Descriptor instead.
 func (*Response) Descriptor() ([]byte, []int) {
-	return file_clawkerd_v1_clawkerd_proto_rawDescGZIP(), []int{9}
+	return file_clawkerd_v1_clawkerd_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *Response) GetCommandId() string {
@@ -750,19 +831,10 @@ func (x *Response) GetStarted() *Started {
 	return nil
 }
 
-func (x *Response) GetStdout() *StdoutChunk {
+func (x *Response) GetOutput() *OutputChunk {
 	if x != nil {
-		if x, ok := x.Payload.(*Response_Stdout); ok {
-			return x.Stdout
-		}
-	}
-	return nil
-}
-
-func (x *Response) GetStderr() *StderrChunk {
-	if x != nil {
-		if x, ok := x.Payload.(*Response_Stderr); ok {
-			return x.Stderr
+		if x, ok := x.Payload.(*Response_Output); ok {
+			return x.Output
 		}
 	}
 	return nil
@@ -816,12 +888,8 @@ type Response_Started struct {
 	Started *Started `protobuf:"bytes,3,opt,name=started,proto3,oneof"`
 }
 
-type Response_Stdout struct {
-	Stdout *StdoutChunk `protobuf:"bytes,4,opt,name=stdout,proto3,oneof"`
-}
-
-type Response_Stderr struct {
-	Stderr *StderrChunk `protobuf:"bytes,5,opt,name=stderr,proto3,oneof"`
+type Response_Output struct {
+	Output *OutputChunk `protobuf:"bytes,4,opt,name=output,proto3,oneof"`
 }
 
 type Response_StageExit struct {
@@ -844,9 +912,7 @@ func (*Response_HelloAck) isResponse_Payload() {}
 
 func (*Response_Started) isResponse_Payload() {}
 
-func (*Response_Stdout) isResponse_Payload() {}
-
-func (*Response_Stderr) isResponse_Payload() {}
+func (*Response_Output) isResponse_Payload() {}
 
 func (*Response_StageExit) isResponse_Payload() {}
 
@@ -858,13 +924,15 @@ func (*Response_RegisterDone) isResponse_Payload() {}
 
 type HelloAck struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
+	Initialized   bool                   `protobuf:"varint,1,opt,name=initialized,proto3" json:"initialized,omitempty"`                 // true if this agent has already completed the init sequence
+	CmdRunning    bool                   `protobuf:"varint,2,opt,name=cmd_running,json=cmdRunning,proto3" json:"cmd_running,omitempty"` // true if the container CMD is running (ie `claude`)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *HelloAck) Reset() {
 	*x = HelloAck{}
-	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[10]
+	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -876,7 +944,7 @@ func (x *HelloAck) String() string {
 func (*HelloAck) ProtoMessage() {}
 
 func (x *HelloAck) ProtoReflect() protoreflect.Message {
-	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[10]
+	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -889,7 +957,21 @@ func (x *HelloAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HelloAck.ProtoReflect.Descriptor instead.
 func (*HelloAck) Descriptor() ([]byte, []int) {
-	return file_clawkerd_v1_clawkerd_proto_rawDescGZIP(), []int{10}
+	return file_clawkerd_v1_clawkerd_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *HelloAck) GetInitialized() bool {
+	if x != nil {
+		return x.Initialized
+	}
+	return false
+}
+
+func (x *HelloAck) GetCmdRunning() bool {
+	if x != nil {
+		return x.CmdRunning
+	}
+	return false
 }
 
 // RegisterDone is the terminal Response to a RegisterRequired Command.
@@ -906,7 +988,7 @@ type RegisterDone struct {
 
 func (x *RegisterDone) Reset() {
 	*x = RegisterDone{}
-	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[11]
+	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -918,7 +1000,7 @@ func (x *RegisterDone) String() string {
 func (*RegisterDone) ProtoMessage() {}
 
 func (x *RegisterDone) ProtoReflect() protoreflect.Message {
-	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[11]
+	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -931,7 +1013,7 @@ func (x *RegisterDone) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegisterDone.ProtoReflect.Descriptor instead.
 func (*RegisterDone) Descriptor() ([]byte, []int) {
-	return file_clawkerd_v1_clawkerd_proto_rawDescGZIP(), []int{11}
+	return file_clawkerd_v1_clawkerd_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *RegisterDone) GetOk() bool {
@@ -957,7 +1039,7 @@ type Started struct {
 
 func (x *Started) Reset() {
 	*x = Started{}
-	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[12]
+	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -969,7 +1051,7 @@ func (x *Started) String() string {
 func (*Started) ProtoMessage() {}
 
 func (x *Started) ProtoReflect() protoreflect.Message {
-	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[12]
+	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -982,77 +1064,35 @@ func (x *Started) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Started.ProtoReflect.Descriptor instead.
 func (*Started) Descriptor() ([]byte, []int) {
-	return file_clawkerd_v1_clawkerd_proto_rawDescGZIP(), []int{12}
+	return file_clawkerd_v1_clawkerd_proto_rawDescGZIP(), []int{13}
 }
 
-// StdoutChunk carries bytes from the final stage's stdout.
-type StdoutChunk struct {
+// OutputChunk carries the command's combined output: every stage's
+// stderr and the final stage's stdout, merged into one stream in write
+// order (2>&1). clawkerd streams these to the caller for every command,
+// unconditionally — this is the command's output. The caller decides
+// what to do with it; print_output independently governs the local echo.
+type OutputChunk struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Data          []byte                 `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *StdoutChunk) Reset() {
-	*x = StdoutChunk{}
-	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[13]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *StdoutChunk) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*StdoutChunk) ProtoMessage() {}
-
-func (x *StdoutChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[13]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use StdoutChunk.ProtoReflect.Descriptor instead.
-func (*StdoutChunk) Descriptor() ([]byte, []int) {
-	return file_clawkerd_v1_clawkerd_proto_rawDescGZIP(), []int{13}
-}
-
-func (x *StdoutChunk) GetData() []byte {
-	if x != nil {
-		return x.Data
-	}
-	return nil
-}
-
-// StderrChunk carries bytes from a specific stage's stderr.
-type StderrChunk struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	StageIndex    uint32                 `protobuf:"varint,1,opt,name=stage_index,json=stageIndex,proto3" json:"stage_index,omitempty"`
-	Data          []byte                 `protobuf:"bytes,2,opt,name=data,proto3" json:"data,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *StderrChunk) Reset() {
-	*x = StderrChunk{}
+func (x *OutputChunk) Reset() {
+	*x = OutputChunk{}
 	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *StderrChunk) String() string {
+func (x *OutputChunk) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*StderrChunk) ProtoMessage() {}
+func (*OutputChunk) ProtoMessage() {}
 
-func (x *StderrChunk) ProtoReflect() protoreflect.Message {
+func (x *OutputChunk) ProtoReflect() protoreflect.Message {
 	mi := &file_clawkerd_v1_clawkerd_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -1064,19 +1104,12 @@ func (x *StderrChunk) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use StderrChunk.ProtoReflect.Descriptor instead.
-func (*StderrChunk) Descriptor() ([]byte, []int) {
+// Deprecated: Use OutputChunk.ProtoReflect.Descriptor instead.
+func (*OutputChunk) Descriptor() ([]byte, []int) {
 	return file_clawkerd_v1_clawkerd_proto_rawDescGZIP(), []int{14}
 }
 
-func (x *StderrChunk) GetStageIndex() uint32 {
-	if x != nil {
-		return x.StageIndex
-	}
-	return 0
-}
-
-func (x *StderrChunk) GetData() []byte {
+func (x *OutputChunk) GetData() []byte {
 	if x != nil {
 		return x.Data
 	}
@@ -1249,7 +1282,7 @@ var File_clawkerd_v1_clawkerd_proto protoreflect.FileDescriptor
 
 const file_clawkerd_v1_clawkerd_proto_rawDesc = "" +
 	"\n" +
-	"\x1aclawkerd/v1/clawkerd.proto\x12\x13clawker.clawkerd.v1\"\xeb\x03\n" +
+	"\x1aclawkerd/v1/clawkerd.proto\x12\x13clawker.clawkerd.v1\"\xc1\x04\n" +
 	"\aCommand\x12\x1d\n" +
 	"\n" +
 	"command_id\x18\x01 \x01(\tR\tcommandId\x122\n" +
@@ -1261,16 +1294,20 @@ const file_clawkerd_v1_clawkerd_proto_rawDesc = "" +
 	"\x06signal\x18\x06 \x01(\v2\x1b.clawker.clawkerd.v1.SignalH\x00R\x06signal\x12T\n" +
 	"\x11register_required\x18\a \x01(\v2%.clawker.clawkerd.v1.RegisterRequiredH\x00R\x10registerRequired\x12B\n" +
 	"\vagent_ready\x18\b \x01(\v2\x1f.clawker.clawkerd.v1.AgentReadyH\x00R\n" +
-	"agentReadyB\t\n" +
+	"agentReady\x12T\n" +
+	"\x11agent_initialized\x18\t \x01(\v2%.clawker.clawkerd.v1.AgentInitializedH\x00R\x10agentInitializedB\t\n" +
 	"\apayload\"\a\n" +
 	"\x05Hello\"\x12\n" +
 	"\x10RegisterRequired\"\f\n" +
 	"\n" +
-	"AgentReady\"\x94\x01\n" +
+	"AgentReady\"\x12\n" +
+	"\x10AgentInitialized\"\xe0\x01\n" +
 	"\fShellCommand\x126\n" +
 	"\x06stages\x18\x01 \x03(\v2\x1e.clawker.clawkerd.v1.PipeStageR\x06stages\x12'\n" +
 	"\x0ftimeout_seconds\x18\x02 \x01(\rR\x0etimeoutSeconds\x12#\n" +
-	"\rinitial_stdin\x18\x03 \x01(\fR\finitialStdin\"\xc8\x01\n" +
+	"\rinitial_stdin\x18\x03 \x01(\fR\finitialStdin\x12!\n" +
+	"\fprint_output\x18\x04 \x01(\bR\vprintOutput\x12'\n" +
+	"\x10exit_on_non_zero\x18\x05 \x01(\bR\rexitOnNonZero\"\xc8\x01\n" +
 	"\tPipeStage\x12\x12\n" +
 	"\x04argv\x18\x01 \x03(\tR\x04argv\x12\x10\n" +
 	"\x03uid\x18\x02 \x01(\rR\x03uid\x12\x10\n" +
@@ -1285,32 +1322,29 @@ const file_clawkerd_v1_clawkerd_proto_rawDesc = "" +
 	"\n" +
 	"CloseStdin\"\x1e\n" +
 	"\x06Signal\x12\x14\n" +
-	"\x05signo\x18\x01 \x01(\x05R\x05signo\"\x94\x04\n" +
+	"\x05signo\x18\x01 \x01(\x05R\x05signo\"\xde\x03\n" +
 	"\bResponse\x12\x1d\n" +
 	"\n" +
 	"command_id\x18\x01 \x01(\tR\tcommandId\x12<\n" +
 	"\thello_ack\x18\x02 \x01(\v2\x1d.clawker.clawkerd.v1.HelloAckH\x00R\bhelloAck\x128\n" +
 	"\astarted\x18\x03 \x01(\v2\x1c.clawker.clawkerd.v1.StartedH\x00R\astarted\x12:\n" +
-	"\x06stdout\x18\x04 \x01(\v2 .clawker.clawkerd.v1.StdoutChunkH\x00R\x06stdout\x12:\n" +
-	"\x06stderr\x18\x05 \x01(\v2 .clawker.clawkerd.v1.StderrChunkH\x00R\x06stderr\x12?\n" +
+	"\x06output\x18\x04 \x01(\v2 .clawker.clawkerd.v1.OutputChunkH\x00R\x06output\x12?\n" +
 	"\n" +
 	"stage_exit\x18\x06 \x01(\v2\x1e.clawker.clawkerd.v1.StageExitH\x00R\tstageExit\x12/\n" +
 	"\x04done\x18\a \x01(\v2\x19.clawker.clawkerd.v1.DoneH\x00R\x04done\x122\n" +
 	"\x05error\x18\b \x01(\v2\x1a.clawker.clawkerd.v1.ErrorH\x00R\x05error\x12H\n" +
 	"\rregister_done\x18\t \x01(\v2!.clawker.clawkerd.v1.RegisterDoneH\x00R\fregisterDoneB\t\n" +
-	"\apayload\"\n" +
-	"\n" +
-	"\bHelloAck\"4\n" +
+	"\apayloadJ\x04\b\x05\x10\x06\"M\n" +
+	"\bHelloAck\x12 \n" +
+	"\vinitialized\x18\x01 \x01(\bR\vinitialized\x12\x1f\n" +
+	"\vcmd_running\x18\x02 \x01(\bR\n" +
+	"cmdRunning\"4\n" +
 	"\fRegisterDone\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x14\n" +
 	"\x05error\x18\x02 \x01(\tR\x05error\"\t\n" +
 	"\aStarted\"!\n" +
-	"\vStdoutChunk\x12\x12\n" +
-	"\x04data\x18\x01 \x01(\fR\x04data\"B\n" +
-	"\vStderrChunk\x12\x1f\n" +
-	"\vstage_index\x18\x01 \x01(\rR\n" +
-	"stageIndex\x12\x12\n" +
-	"\x04data\x18\x02 \x01(\fR\x04data\"_\n" +
+	"\vOutputChunk\x12\x12\n" +
+	"\x04data\x18\x01 \x01(\fR\x04data\"_\n" +
 	"\tStageExit\x12\x1f\n" +
 	"\vstage_index\x18\x01 \x01(\rR\n" +
 	"stageIndex\x12\x1b\n" +
@@ -1352,17 +1386,17 @@ var file_clawkerd_v1_clawkerd_proto_goTypes = []any{
 	(*Hello)(nil),            // 2: clawker.clawkerd.v1.Hello
 	(*RegisterRequired)(nil), // 3: clawker.clawkerd.v1.RegisterRequired
 	(*AgentReady)(nil),       // 4: clawker.clawkerd.v1.AgentReady
-	(*ShellCommand)(nil),     // 5: clawker.clawkerd.v1.ShellCommand
-	(*PipeStage)(nil),        // 6: clawker.clawkerd.v1.PipeStage
-	(*Stdin)(nil),            // 7: clawker.clawkerd.v1.Stdin
-	(*CloseStdin)(nil),       // 8: clawker.clawkerd.v1.CloseStdin
-	(*Signal)(nil),           // 9: clawker.clawkerd.v1.Signal
-	(*Response)(nil),         // 10: clawker.clawkerd.v1.Response
-	(*HelloAck)(nil),         // 11: clawker.clawkerd.v1.HelloAck
-	(*RegisterDone)(nil),     // 12: clawker.clawkerd.v1.RegisterDone
-	(*Started)(nil),          // 13: clawker.clawkerd.v1.Started
-	(*StdoutChunk)(nil),      // 14: clawker.clawkerd.v1.StdoutChunk
-	(*StderrChunk)(nil),      // 15: clawker.clawkerd.v1.StderrChunk
+	(*AgentInitialized)(nil), // 5: clawker.clawkerd.v1.AgentInitialized
+	(*ShellCommand)(nil),     // 6: clawker.clawkerd.v1.ShellCommand
+	(*PipeStage)(nil),        // 7: clawker.clawkerd.v1.PipeStage
+	(*Stdin)(nil),            // 8: clawker.clawkerd.v1.Stdin
+	(*CloseStdin)(nil),       // 9: clawker.clawkerd.v1.CloseStdin
+	(*Signal)(nil),           // 10: clawker.clawkerd.v1.Signal
+	(*Response)(nil),         // 11: clawker.clawkerd.v1.Response
+	(*HelloAck)(nil),         // 12: clawker.clawkerd.v1.HelloAck
+	(*RegisterDone)(nil),     // 13: clawker.clawkerd.v1.RegisterDone
+	(*Started)(nil),          // 14: clawker.clawkerd.v1.Started
+	(*OutputChunk)(nil),      // 15: clawker.clawkerd.v1.OutputChunk
 	(*StageExit)(nil),        // 16: clawker.clawkerd.v1.StageExit
 	(*Done)(nil),             // 17: clawker.clawkerd.v1.Done
 	(*Error)(nil),            // 18: clawker.clawkerd.v1.Error
@@ -1370,25 +1404,25 @@ var file_clawkerd_v1_clawkerd_proto_goTypes = []any{
 }
 var file_clawkerd_v1_clawkerd_proto_depIdxs = []int32{
 	2,  // 0: clawker.clawkerd.v1.Command.hello:type_name -> clawker.clawkerd.v1.Hello
-	5,  // 1: clawker.clawkerd.v1.Command.shell:type_name -> clawker.clawkerd.v1.ShellCommand
-	7,  // 2: clawker.clawkerd.v1.Command.stdin:type_name -> clawker.clawkerd.v1.Stdin
-	8,  // 3: clawker.clawkerd.v1.Command.close_stdin:type_name -> clawker.clawkerd.v1.CloseStdin
-	9,  // 4: clawker.clawkerd.v1.Command.signal:type_name -> clawker.clawkerd.v1.Signal
+	6,  // 1: clawker.clawkerd.v1.Command.shell:type_name -> clawker.clawkerd.v1.ShellCommand
+	8,  // 2: clawker.clawkerd.v1.Command.stdin:type_name -> clawker.clawkerd.v1.Stdin
+	9,  // 3: clawker.clawkerd.v1.Command.close_stdin:type_name -> clawker.clawkerd.v1.CloseStdin
+	10, // 4: clawker.clawkerd.v1.Command.signal:type_name -> clawker.clawkerd.v1.Signal
 	3,  // 5: clawker.clawkerd.v1.Command.register_required:type_name -> clawker.clawkerd.v1.RegisterRequired
 	4,  // 6: clawker.clawkerd.v1.Command.agent_ready:type_name -> clawker.clawkerd.v1.AgentReady
-	6,  // 7: clawker.clawkerd.v1.ShellCommand.stages:type_name -> clawker.clawkerd.v1.PipeStage
-	19, // 8: clawker.clawkerd.v1.PipeStage.env:type_name -> clawker.clawkerd.v1.PipeStage.EnvEntry
-	11, // 9: clawker.clawkerd.v1.Response.hello_ack:type_name -> clawker.clawkerd.v1.HelloAck
-	13, // 10: clawker.clawkerd.v1.Response.started:type_name -> clawker.clawkerd.v1.Started
-	14, // 11: clawker.clawkerd.v1.Response.stdout:type_name -> clawker.clawkerd.v1.StdoutChunk
-	15, // 12: clawker.clawkerd.v1.Response.stderr:type_name -> clawker.clawkerd.v1.StderrChunk
+	5,  // 7: clawker.clawkerd.v1.Command.agent_initialized:type_name -> clawker.clawkerd.v1.AgentInitialized
+	7,  // 8: clawker.clawkerd.v1.ShellCommand.stages:type_name -> clawker.clawkerd.v1.PipeStage
+	19, // 9: clawker.clawkerd.v1.PipeStage.env:type_name -> clawker.clawkerd.v1.PipeStage.EnvEntry
+	12, // 10: clawker.clawkerd.v1.Response.hello_ack:type_name -> clawker.clawkerd.v1.HelloAck
+	14, // 11: clawker.clawkerd.v1.Response.started:type_name -> clawker.clawkerd.v1.Started
+	15, // 12: clawker.clawkerd.v1.Response.output:type_name -> clawker.clawkerd.v1.OutputChunk
 	16, // 13: clawker.clawkerd.v1.Response.stage_exit:type_name -> clawker.clawkerd.v1.StageExit
 	17, // 14: clawker.clawkerd.v1.Response.done:type_name -> clawker.clawkerd.v1.Done
 	18, // 15: clawker.clawkerd.v1.Response.error:type_name -> clawker.clawkerd.v1.Error
-	12, // 16: clawker.clawkerd.v1.Response.register_done:type_name -> clawker.clawkerd.v1.RegisterDone
+	13, // 16: clawker.clawkerd.v1.Response.register_done:type_name -> clawker.clawkerd.v1.RegisterDone
 	0,  // 17: clawker.clawkerd.v1.Error.code:type_name -> clawker.clawkerd.v1.ErrorCode
 	1,  // 18: clawker.clawkerd.v1.ClawkerdService.Session:input_type -> clawker.clawkerd.v1.Command
-	10, // 19: clawker.clawkerd.v1.ClawkerdService.Session:output_type -> clawker.clawkerd.v1.Response
+	11, // 19: clawker.clawkerd.v1.ClawkerdService.Session:output_type -> clawker.clawkerd.v1.Response
 	19, // [19:20] is the sub-list for method output_type
 	18, // [18:19] is the sub-list for method input_type
 	18, // [18:18] is the sub-list for extension type_name
@@ -1409,12 +1443,12 @@ func file_clawkerd_v1_clawkerd_proto_init() {
 		(*Command_Signal)(nil),
 		(*Command_RegisterRequired)(nil),
 		(*Command_AgentReady)(nil),
+		(*Command_AgentInitialized)(nil),
 	}
-	file_clawkerd_v1_clawkerd_proto_msgTypes[9].OneofWrappers = []any{
+	file_clawkerd_v1_clawkerd_proto_msgTypes[10].OneofWrappers = []any{
 		(*Response_HelloAck)(nil),
 		(*Response_Started)(nil),
-		(*Response_Stdout)(nil),
-		(*Response_Stderr)(nil),
+		(*Response_Output)(nil),
 		(*Response_StageExit)(nil),
 		(*Response_Done)(nil),
 		(*Response_Error)(nil),

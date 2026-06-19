@@ -13,6 +13,14 @@ verbs in this package. Day-to-day operators rarely invoke this package —
 it exists for debugging, upgrades, and recovery paths where the operator
 wants to control the CP lifecycle directly.
 
+## Naming — "domain" is data-layer design talk, never a runtime label
+
+"Domain" (DDD bounded context) is a way to *think* about the data-layer design, not a
+thing in the running system. The implementation names sub-components for what they are —
+a **Store**, a **Storage Repository** inside a package. Call wiring what it is — the agent
+package, the dialer, the watcher, the executor — never "the agent domain", "domain
+handlers", or `*Domain` symbols. No numbered `// Phase N` comment scaffolding.
+
 ## Contents
 
 | File | Purpose |
@@ -59,7 +67,7 @@ whenever the CP is. Two cooperating mechanisms deliver that:
 1. **CP-side (every boot, startup gate)**: the CP daemon reads settings
    at startup and, when enabled, runs the in-process `FirewallInit`
    synchronously BEFORE `SetReady` (the settings-driven firewall
-   bringup gate in `cmd/clawker-cp/main.go`).
+   bringup gate in `cmd/clawkercp/main.go`).
    A bringup failure fails CP startup (exit code 1) — fail-closed and
    loud, never silently unenforced. `/healthz` green therefore implies
    the stack is up when the firewall is enabled, and the host-side
@@ -87,7 +95,7 @@ stack-down exposure warning) even though the CP itself is up.
 
 The CP owns Envoy and CoreDNS lifecycle end-to-end. `controlplane down`
 does a single thing — `docker stop clawker-controlplane` — which sends
-SIGTERM to PID 1 inside the CP (`cmd/clawker-cp/main.go`). The CP's
+SIGTERM to PID 1 inside the CP (`cmd/clawkercp/main.go`). The CP's
 SIGTERM handler converges on the same `drainCallback` as the
 drain-to-zero path via `sync.Once`, so the teardown runs exactly once
 regardless of which trigger fires:

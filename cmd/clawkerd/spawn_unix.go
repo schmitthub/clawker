@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -17,6 +18,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -375,6 +377,46 @@ func (s *spawnState) Done() <-chan struct{} {
 // occurred (e.g. SIGTERM arrives before AgentReady). Symmetric with
 // SpawnErr() — both report supervisor state to main().
 func (s *spawnState) Spawned() bool { return s.spawned() }
+
+// MarkInitialized records that the CP-driven init plan completed by
+// writing the marker file in the container writable layer. Called from
+// the AgentInitialized dispatch handler. Idempotent (re-touch on a
+// reconnect re-dispatch is harmless).
+//
+// A write failure is logged and tolerated, not fatal: the marker is an
+// optimization to skip the one-time init plan on a container restart, and
+// every init step is itself idempotent (config seed overwrites, post_init
+// guards on its own marker). Re-running init on the next restart is safe;
+// killing the container over a marker write would be a worse failure than
+// the wasted re-init. clawkerd's fail-fast posture is reserved for states
+// that would let the container run wrong — this is not one.
+func (s *spawnState) MarkInitialized() {
+	dir := filepath.Dir(consts.AgentInitializedMarkerPath)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		s.log.Warn().Err(err).
+			Str("event", "agent_initialized_marker_mkdir_failed").
+			Str("path", consts.AgentInitializedMarkerPath).
+			Msg("clawkerd: could not create init-marker dir; init plan will re-run on next restart")
+		return
+	}
+	if err := os.WriteFile(consts.AgentInitializedMarkerPath, nil, 0o600); err != nil {
+		s.log.Warn().Err(err).
+			Str("event", "agent_initialized_marker_write_failed").
+			Str("path", consts.AgentInitializedMarkerPath).
+			Msg("clawkerd: could not write init marker; init plan will re-run on next restart")
+	}
+}
+
+// Initialized reports whether the CP-driven init plan has completed for
+// this container, by probing the writable-layer marker. Read by the Hello
+// handler to populate HelloAck.Initialized so CP skips the one-time init
+// plan across a container restart. A stat error other than not-exist is
+// treated as "not initialized" (fail toward re-running idempotent init
+// rather than skipping it on a corrupt/unknown state).
+func (s *spawnState) Initialized() bool {
+	_, err := os.Stat(consts.AgentInitializedMarkerPath)
+	return err == nil
+}
 
 // SpawnErr returns the supervisor-level error main() should surface
 // on the shutdown line: the original Run error if Run failed, or the
@@ -877,7 +919,7 @@ func mapWaitStatus(ws syscall.WaitStatus) int {
 //
 //   - SIGCHLD: reaper handles it; forwarding would corrupt reap loops
 //   - SIGURG: Go runtime uses it for goroutine preemption
-//   - SIGTTIN/SIGTTOU: ignored by the supervisor itself (main.go's
+//   - SIGTTIN/SIGTTOU: ignored by the supervisor itself (clawkercp.go's
 //     signal.Ignore) because once the child becomes the tty foreground
 //     pgroup, any I/O by clawkerd would otherwise stop the daemon.
 //     The kernel-delivered TTOU is for the SUPERVISOR's I/O attempt —

@@ -4,15 +4,15 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/schmitthub/clawker/controlplane/manager"
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
 )
 
 type DownOptions struct {
 	IOStreams    *iostreams.IOStreams
-	ControlPlane func() cpboot.Manager
+	ControlPlane func() manager.Manager
 }
 
 // NewCmdDown creates the controlplane down command. Stops and removes

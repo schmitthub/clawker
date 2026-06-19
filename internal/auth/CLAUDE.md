@@ -118,7 +118,7 @@ The CP container must be restarted after rotation to re-read bind-mounted materi
 - `internal/cmd/auth` — `rotate` subcommand calls `RotateAuthMaterial`
 - `internal/cmd/project/init` — calls `EnsureAuthMaterial` before container creation
 - `internal/cmd/monitor/init` — calls `EnsureAuthMaterial` to provision OTel mTLS material before mounting it into the monitoring stack
-- `cmd/clawker-cp` (via bind-mounts + `auth.EnsureHydraSecret()`) — reads CA, server cert, JWK, Hydra secret at container startup
+- `cmd/clawkercp` (via bind-mounts + `auth.EnsureHydraSecret()`) — reads CA, server cert, JWK, Hydra secret at container startup
 
 ## Tests
 

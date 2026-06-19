@@ -1,5 +1,5 @@
 {
-  "index_patterns": ["clawker-cp"],
+  "index_patterns": ["clawkercp"],
   "priority": 100,
   "composed_of": ["clawker-common"],
   "template": {
@@ -34,7 +34,7 @@
     }
   },
   "_meta": {
-    "description": "clawker-cp zerolog records over mTLS-gated OTLP — scalar attributes.event keyword",
+    "description": "clawkercp zerolog records over mTLS-gated OTLP — scalar attributes.event keyword",
     "managed_by": "clawker-opensearch-bootstrap"
   }
 }

@@ -45,6 +45,7 @@ message Command {
     Signal signal = 6;
     RegisterRequired register_required = 7;
     AgentReady agent_ready = 8;
+    AgentInitialized agent_initialized = 9;
   }
 }
 
@@ -63,12 +64,15 @@ message Hello {}
 // clawkerd replies with RegisterDone correlated by command_id.
 message RegisterRequired {}
 
-// AgentReady is the terminal init-sequence signal. clawkerd releases
+// AgentReady is the terminal boot-sequence signal. clawkerd releases
 // the entrypoint to exec the user CMD. Idempotent on reconnect (no
 // reader → no-op success). Reply: Done{exit_code:0} on release or
 // reconnect-replay; Error{NOT_FOUND} if the fifo is missing entirely
 // (build drift); Error{IO_ERROR} on syscall-level failure.
 message AgentReady {}
+
+// AgentInitialized signals that the agent has completed its initialization sequence.
+message AgentInitialized {}
 
 // ShellCommand starts a shell pipeline. stages.len == 1 runs a
 // single command; stages.len > 1 chains stage[i].stdout into
@@ -81,6 +85,21 @@ message ShellCommand {
   // terminates the command with ERROR_CODE_TIMEOUT.
   uint32 timeout_seconds = 2;
   bytes initial_stdin = 3;
+  // print_output makes clawkerd echo this command's combined output to
+  // its controlling TTY, live, as the command runs. It governs ONLY the
+  // local echo: clawkerd always merges stdout+stderr into one ordered
+  // stream and always streams it to the caller as OutputChunk frames,
+  // regardless of this flag. The caller decides which commands are worth
+  // showing on the local console.
+  bool print_output = 4;
+  // exit_on_non_zero makes clawkerd terminate the daemon (PID 1) with
+  // this command's final exit code when the command exits non-zero,
+  // after echoing output per print_output. The decision that a command's
+  // failure is fatal lives in CP, encoded here as an instruction;
+  // clawkerd holds no policy and never inspects the code to decide its
+  // own fate absent this flag. The mirrored exit code surfaces to the
+  // user's terminal as the container exit status.
+  bool exit_on_non_zero = 5;
 }
 
 // PipeStage is one process in the pipeline. uid/gid drop privileges
@@ -117,11 +136,13 @@ message Signal {
 // Stdin/CloseStdin/Signal are silent.
 message Response {
   string command_id = 1;
+  // 5 was StderrChunk stderr; stdout+stderr are now one combined
+  // OutputChunk (field 4).
+  reserved 5;
   oneof payload {
     HelloAck hello_ack = 2;
     Started started = 3;
-    StdoutChunk stdout = 4;
-    StderrChunk stderr = 5;
+    OutputChunk output = 4;
     StageExit stage_exit = 6;
     Done done = 7;
     Error error = 8;
@@ -129,7 +150,10 @@ message Response {
   }
 }
 
-message HelloAck {}
+message HelloAck {
+  bool initialized = 1; // true if this agent has already completed the init sequence
+  bool cmd_running = 2; // true if the container CMD is running (ie `claude`)
+}
 
 // RegisterDone is the terminal Response to a RegisterRequired Command.
 // ok=true signals AgentService.Register returned Welcome. ok=false
@@ -143,15 +167,13 @@ message RegisterDone {
 // Started signals that ShellCommand has spawned all stages.
 message Started {}
 
-// StdoutChunk carries bytes from the final stage's stdout.
-message StdoutChunk {
+// OutputChunk carries the command's combined output: every stage's
+// stderr and the final stage's stdout, merged into one stream in write
+// order (2>&1). clawkerd streams these to the caller for every command,
+// unconditionally — this is the command's output. The caller decides
+// what to do with it; print_output independently governs the local echo.
+message OutputChunk {
   bytes data = 1;
-}
-
-// StderrChunk carries bytes from a specific stage's stderr.
-message StderrChunk {
-  uint32 stage_index = 1;
-  bytes data = 2;
 }
 
 // StageExit is emitted as each pipeline stage exits. exit_code is

@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	"github.com/schmitthub/clawker/controlplane/manager"
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
@@ -75,7 +75,7 @@ func statusRun(ctx context.Context, opts *StatusOptions) error {
 		if err != nil {
 			return fmt.Errorf("connecting to Docker: %w", err)
 		}
-		running, err := cpboot.CPRunning(ctx, dc)
+		running, err := manager.CPRunning(ctx, dc)
 		if err != nil {
 			return fmt.Errorf("checking control plane: %w", err)
 		}
