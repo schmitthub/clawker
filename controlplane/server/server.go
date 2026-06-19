@@ -8,6 +8,7 @@ package server
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -34,6 +35,13 @@ type adminServer struct {
 	log    *logger.Logger
 }
 
+// ErrNilRegistry is returned by NewAdminServer when no agent registry is
+// supplied. CP is the sole sqlite writer in this design, so any wiring
+// path that reaches the constructor without a registry is a programming
+// bug — surfaced as an error (not a panic) so the daemon degrades rather
+// than crashing and stranding eBPF.
+var ErrNilRegistry = errors.New("controlplane: NewAdminServer requires a non-nil agent registry")
+
 // compile-time: any future additions to AdminServiceServer must be
 // covered by one of the embedded domain handlers or this assertion fails.
 var _ adminv1.AdminServiceServer = (*adminServer)(nil)
@@ -41,18 +49,21 @@ var _ adminv1.AdminServiceServer = (*adminServer)(nil)
 // NewAdminServer returns the composite AdminServiceServer wired from
 // the supplied domain handlers. agents is required — CP is the sole
 // sqlite writer in this design, so any wiring path that reaches here
-// without a registry is a programming error.
+// without a registry returns ErrNilRegistry rather than panicking: the
+// control plane must never crash on a wiring fault (it would strand
+// pinned eBPF programs with no supervisor), so the caller logs a
+// structured event=<subsystem>_unavailable line and degrades.
 //
 //   - log defaults to logger.Nop() when nil. Production wiring passes
 //     the CP's structured logger.
-func NewAdminServer(fw *fwhandler.Handler, agents agent.Registry, log *logger.Logger) adminv1.AdminServiceServer {
+func NewAdminServer(fw *fwhandler.Handler, agents agent.Registry, log *logger.Logger) (adminv1.AdminServiceServer, error) {
+	if agents == nil {
+		return nil, ErrNilRegistry
+	}
 	if log == nil {
 		log = logger.Nop()
 	}
-	if agents == nil {
-		panic("controlplane.NewAdminServer: agents registry is required")
-	}
-	return &adminServer{Handler: fw, agents: agents, log: log}
+	return &adminServer{Handler: fw, agents: agents, log: log}, nil
 }
 
 // ListAgents returns a deterministic snapshot of every agent currently

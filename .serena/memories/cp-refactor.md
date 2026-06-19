@@ -1,5 +1,5 @@
 Product Requirements Document (PRD)
-Title: Type-Safe In-Memory Pub/Sub for the Clawker Control Plane
+Title: Type-Safe In-Memory Pub/Sub and State Repository Architecture for Clawker Control Plane
 Author: Control Plane Architect
 
 Status: Draft
@@ -29,7 +29,7 @@ The Central Orchestrator — the Control Plane itself (internal/controlplane/cmd
 3. Functional Requirements
 
 3.1 Standard Event Envelope
-All events share one generic envelope. Event time is an int64 of Unix Nanoseconds (time.Now().UnixNano()) — a compact, monotonic-friendly in-memory value. The raw domain struct rides in a generic Payload field, separating domain data from routing metadata. Type-specific log output derives from the Payload (the payload implements zerolog.LogObjectMarshaler plus an EventName()/OccurredAt() contract) so the audit hook surfaces domain identity without reflection or per-producer hook wiring.
+All events share one generic envelope. Event time is an int64 of Unix Nanoseconds (time.Now().UnixNano()) — a compact, monotonic-friendly in-memory value. The raw domain struct rides in a generic Payload field, separating domain data from routing metadata. Routing metadata (identity, time, producer) lives ONLY on the envelope — never duplicated onto the payload. The payload is pure domain data and implements zerolog.LogObjectMarshaler and nothing else; there is NO EventName()/OccurredAt() method contract on payloads (that is the legacy event-type-interface pattern this refactor removes). A single generic audit hook in controlplane/pubsub keys each log line on the envelope's Source and Timestamp and embeds the payload's marshaled fields. The hook is wired once inside pubsub (e.g. attached by NewTopic) — never hand-wired per topic in the orchestrator, and never reintroduced as a per-payload identity interface.
 
 3.2 Compile-Time Type Safety (Zero any Casting on the Public API)
 The compiler must reject a subscriber whose signature does not match the exact type parameter T of the pubsub.Topic[T] it subscribes to. Consumers read the payload natively (event.Payload.Action) — no type assertions, no JSON. (A multi-topic bus erases to any internally when routing across heterogeneous topics; that cost is contained to the engine and never surfaces in domain code.)

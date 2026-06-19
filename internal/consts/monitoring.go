@@ -1,5 +1,10 @@
 package consts
 
+import (
+	"os"
+	"strings"
+)
+
 // Monitoring stack service names. Each value is the hostname its
 // container registers under on the clawker network (compose service key →
 // Docker DNS). A subset — see [MonitoringServiceHostnames] — is
@@ -43,6 +48,42 @@ const (
 var MonitoringServiceHostnames = []string{
 	MonitoringServiceOtelCollector,
 	MonitoringServicePrometheus,
+}
+
+// ResolveOTLPEndpoint reads the standard OTLP endpoint env vars (the
+// logs-signal override [EnvOTLPLogsEndpoint] taking precedence over the
+// base [EnvOTLPEndpoint]) and normalises the value to the host:port form
+// that `otlploggrpc.WithEndpoint` accepts, returning whether it should be
+// sent plaintext. An empty endpoint means no OTLP target is configured.
+//
+// Default is secure: only an explicit `http://` scheme opts into
+// plaintext. A bare host:port or `https://` uses TLS so a misconfigured
+// prod env can't silently downgrade to cleartext telemetry. Shared by the
+// CP logger options builder and the netlogger startup path so a
+// scheme-handling change lands in exactly one place.
+func ResolveOTLPEndpoint() (endpoint string, insecure bool) {
+	raw := os.Getenv(EnvOTLPLogsEndpoint)
+	if raw == "" {
+		raw = os.Getenv(EnvOTLPEndpoint)
+	}
+	return parseOTLPEndpoint(raw)
+}
+
+// parseOTLPEndpoint strips a known scheme prefix and any path from an OTLP
+// endpoint value, reporting plaintext only for an explicit `http://`.
+func parseOTLPEndpoint(raw string) (endpoint string, insecure bool) {
+	rest := raw
+	switch {
+	case strings.HasPrefix(rest, "https://"):
+		rest = strings.TrimPrefix(rest, "https://")
+	case strings.HasPrefix(rest, "http://"):
+		insecure = true
+		rest = strings.TrimPrefix(rest, "http://")
+	}
+	if i := strings.IndexByte(rest, '/'); i >= 0 {
+		rest = rest[:i]
+	}
+	return rest, insecure
 }
 
 // OpenTelemetry SDK env var names (the OTel spec's spellings) plus the

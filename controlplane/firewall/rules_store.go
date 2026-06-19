@@ -10,8 +10,8 @@ import (
 	"strings"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	ebpf "github.com/schmitthub/clawker/controlplane/firewall/ebpf"
 	"github.com/schmitthub/clawker/internal/config"
-	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
 	"github.com/schmitthub/clawker/internal/storage"
 )
 

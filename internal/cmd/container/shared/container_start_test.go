@@ -10,10 +10,10 @@ import (
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
 	mobyClient "github.com/moby/moby/client"
+	"github.com/schmitthub/clawker/controlplane/manager"
+	cpbootmocks "github.com/schmitthub/clawker/controlplane/manager/mocks"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
-	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
-	cpbootmocks "github.com/schmitthub/clawker/internal/controlplane/manager/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	mocks "github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -32,11 +32,11 @@ func okClientProvider(t *testing.T) func(context.Context) (*docker.Client, error
 // noopCPManager returns a CP manager mock whose EnsureRunning is a no-op.
 // Bootstrap tests need it because CP is unconditionally brought up in
 // BootstrapServicesPreStart (CP is core infra, not a firewall feature).
-func noopCPManager() func() cpboot.Manager {
+func noopCPManager() func() manager.Manager {
 	m := &cpbootmocks.ManagerMock{
 		EnsureRunningFunc: func(context.Context) error { return nil },
 	}
-	return func() cpboot.Manager { return m }
+	return func() manager.Manager { return m }
 }
 
 func TestBootstrapServices_ErrorHandlingAndNilSafety(t *testing.T) {

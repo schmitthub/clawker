@@ -10,39 +10,31 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
+	"runtime/debug"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
 
-	cerrdefs "github.com/containerd/errdefs"
-	mobyclient "github.com/moby/moby/client"
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
-	agentv1 "github.com/schmitthub/clawker/api/agent/v1"
 	"github.com/schmitthub/clawker/controlplane/agent"
 	"github.com/schmitthub/clawker/controlplane/auth"
 	"github.com/schmitthub/clawker/controlplane/dockerevents"
 	fwhandler "github.com/schmitthub/clawker/controlplane/firewall"
 	ebpf "github.com/schmitthub/clawker/controlplane/firewall/ebpf"
 	"github.com/schmitthub/clawker/controlplane/firewall/ebpf/netlogger"
-	"github.com/schmitthub/clawker/controlplane/infracerts"
-	"github.com/schmitthub/clawker/controlplane/otel"
 	"github.com/schmitthub/clawker/controlplane/otelcerts"
-	"github.com/schmitthub/clawker/controlplane/overseer"
+	"github.com/schmitthub/clawker/controlplane/pubsub"
 	"github.com/schmitthub/clawker/controlplane/server"
 	"github.com/schmitthub/clawker/controlplane/subprocess"
-	authmat "github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/storage"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
 )
 
 type StatusCode = int
@@ -217,8 +209,9 @@ func Main() StatusCode {
 //
 // It runs as the main process in the CP container, supervising Hydra,
 // Oathkeeper, Kratos as subprocesses. It loads eBPF programs, serves a
-// gRPC AdminService with Hydra token introspection, owns the Docker
-// events feeder + Overseer bus, and reports readiness on /healthz.
+// gRPC AdminService with Hydra token introspection, orchestrates the
+// Docker events feeder and the typed pub/sub topics each domain
+// produces to and consumes from, and reports readiness on /healthz.
 //
 // Oathkeeper runs as a subprocess for future webui HTTP auth. gRPC auth
 // (CLI + agents) uses direct Hydra introspection — no Ory Go imports.
@@ -227,34 +220,8 @@ func Main() StatusCode {
 // /controlplane/CLAUDE.md and not duplicated here so the two
 // don't drift.
 
-// containerResolverFromDocker returns a firewall.ContainerResolver that
-// resolves a container reference to its canonical ID + BPF cgroup path
-// using the given cgroup driver. NotFound comes back as (cid, "", false,
-// nil) so the Handler can distinguish "container gone" from "Docker
-// unreachable". When the ref is itself a canonical 64-hex ID we preserve
-// it as the cid even on NotFound so the Handler's stored-cgroup_id
-// fallback in FirewallDisable still has a key to look up.
-func containerResolverFromDocker(dc *docker.Client, cgroupDriver string) fwhandler.ContainerResolver {
-	return func(ctx context.Context, ref string) (string, string, bool, error) {
-		cid, err := fwhandler.ResolveContainerID(ctx, dc, ref)
-		if err != nil {
-			if cerrdefs.IsNotFound(err) {
-				canonical := ""
-				if fwhandler.IsCanonicalContainerID(ref) {
-					canonical = ref
-				}
-				return canonical, "", false, nil
-			}
-			return "", "", false, err
-		}
-		return cid, fwhandler.EBPFCgroupPath(cgroupDriver, cid), true, nil
-	}
-}
-
 const (
 	defaultShutdownWait = 5 * time.Second
-	healthCheckInterval = 200 * time.Millisecond
-	healthCheckTimeout  = 30 * time.Second
 	// cpDrainTimeout bounds the full teardown sequence (firewall stack
 	// stop + eBPF flush + queue drain). Must be below the Docker SIGTERM
 	// grace period (cpStopTimeout in manager/bootstrap.go = 30s) so we
@@ -262,145 +229,475 @@ const (
 	// default 10s stop timeout, run sequentially → ~20s worst case,
 	// leaving headroom.
 	cpDrainTimeout = 25 * time.Second
-	// dnsGCInterval is how often the CP sweeps expired entries out of the
-	// pinned dns_cache. CoreDNS (dnsbpf) writes one entry per resolved A
-	// record and nothing else reclaims them, so without this sweep the map
-	// grows unbounded over the CP lifetime and entries for since-removed
-	// zones linger as orphaned hashes (surfacing via netlogger as
-	// event=netlogger_reverse_dns_unattributed). IP-literal seeds are
-	// protected by GarbageCollectDNS (m.seededIPs), so a live IP rule's
-	// route is never reclaimed out from under it.
-	dnsGCInterval = 60 * time.Second
-	// dnsGCDegradedThreshold is how many consecutive failed sweeps escalate the
-	// per-sweep dns_gc_panic/dns_gc_error into a distinct dns_gc_degraded line. A
-	// failed sweep is one that panicked OR that GarbageCollectDNS reported an
-	// error for (a wedged iterator, or expired entries that could not be
-	// deleted). A single bad pass is noise; a sweep that fails every interval
-	// means the map is no longer being reclaimed at all (the unbounded-growth
-	// failure this goroutine exists to prevent), which an operator must be able
-	// to tell apart from one transient hiccup in the greppable log surface.
-	dnsGCDegradedThreshold = 5
 )
 
-// dnsGCEscalator tracks the streak of consecutive failed dns_cache GC sweeps
-// and reports the single tick on which that streak first reaches threshold, so
-// the caller emits the "wedged GC" line exactly once per crossing rather than
-// every interval. Extracted from the GC goroutine so the off-by-one-prone
-// "escalate once, reset on success" logic is unit-testable without driving the
-// whole loop.
-type dnsGCEscalator struct {
-	threshold int
-	failures  int
-}
-
-// record folds one sweep outcome into the streak and returns true only on the
-// tick where the consecutive-failure count first equals the threshold. A
-// successful sweep (ok=true) resets the streak; the strict == means later ticks
-// in the same failing streak do not re-fire.
-func (e *dnsGCEscalator) record(ok bool) (escalate bool) {
-	if ok {
-		e.failures = 0
-		return false
-	}
-	e.failures++
-	return e.failures == e.threshold
-}
-
-// dnsGCSweep runs one dns_cache GC pass and reports whether it succeeded, per
-// the CP no-panic discipline. The recover is the load-bearing part: a panicking
-// sweep is logged (event=dns_gc_panic) and counted as a failure (ok=false)
-// without tearing down the caller's ticker loop, so the loop keeps governing the
-// map rather than surrendering it until CP restart. It also returns false when
-// GarbageCollectDNS reports it could not reclaim (wedged iterator / failed
-// deletes). A clean sweep that simply had nothing to reclaim (n==0, err==nil) is
-// success (ok=true) — only a panic or a non-nil error counts as a failed sweep.
-// Extracted from
-// the GC goroutine so the panic→false and error→false mapping is unit-testable
-// without driving the whole loop. gc is normally ebpfMgr.GarbageCollectDNS.
-func dnsGCSweep(gc func() (int, error), log *logger.Logger) (ok bool) {
-	ok = true
+// runDrainStage runs one CP drain-to-zero teardown stage under recover and
+// returns nil on clean completion or a non-nil error if the stage panicked.
+//
+// CP §3.4 invariant: the drain sequence MUST reach ebpfMgr.FlushAll on every
+// shutdown — it is the only thing that drops per-container eBPF state to zero,
+// and a skipped flush leaves the next CP inheriting a frozen rule set with
+// agents filtered against stale rules and no supervisor. The drain body runs
+// its stages (pre-flush teardown → FlushAll → topic teardown) as a linear
+// sequence of runDrainStage calls; because a panicking stage is contained here
+// rather than unwinding the whole function, control always returns to the
+// caller to invoke the next stage, so FlushAll is reached on any panic path.
+// The structured event is the only operator triage surface (panic stacks land
+// on stderr, not the rotating CP log).
+func runDrainStage(log *logger.Logger, stage, event string, fn func()) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			ok = false
-			log.Error().Interface("panic", r).
-				Str("event", "dns_gc_panic").
-				Msg("dns_cache gc sweep panicked — skipping this pass, loop continues")
+			log.Error().Interface("panic", r).Bytes("stack", debug.Stack()).
+				Str("event", event).
+				Msgf("drain: %s panicked; continuing teardown so ebpf flush still runs", stage)
+			err = fmt.Errorf("%s panic: %v", stage, r)
 		}
 	}()
-	n, err := gc()
-	if err != nil {
-		log.Warn().Err(err).
-			Str("event", "dns_gc_error").
-			Msg("dns_cache gc sweep could not reclaim — map may not be shrinking, loop continues")
-		return false
-	}
-	if n > 0 {
-		log.Debug().Int("cleared", n).
-			Str("event", "dns_gc_swept").
-			Msg("dns_cache gc removed expired entries")
-	}
-	return ok
+	fn()
+	return nil
 }
 
-func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (retErr error) {
-	// Load the infra intermediate + build the trusted-lane OTel cert
-	// provisioner BEFORE logger.New. The logger's OTLP exporter is
-	// locked in at construction time — it has no hot-reconfig hook —
-	// so the TLSConfig must be available at that moment. infracerts is
-	// cheap (reads two on-disk PEM files), so loading it early is
-	// strictly safer than late-binding a logger exporter that would
-	// otherwise need env-driven cert paths — agent containers carry
-	// CLI-root-direct leaves, so any env-readable cert path becomes a
-	// smuggling vector for service.name=clawkercp forgery.
-	//
-	// Defer all error logging until after logger.New so failures land
-	// in the structured log surface that operators are wired to watch,
-	// not stderr.
-	// Two-variable pattern is load-bearing for safe degraded-mode
-	// signaling: otelCerts (interface type) must remain plain
-	// interface-nil on any failure so the firewall stack's
-	// `s.otelCerts == nil` check fires. Assigning a typed-nil
-	// `(*otelcerts.Service)(nil)` into the interface would box
-	// non-nil, defeat the nil check, and dispatch EnsureClient on a
-	// nil receiver — turning the intended degraded mode into a panic
-	// that strands eBPF (see /controlplane/CLAUDE.md, "CP
-	// crashing is a security incident"). Keep the concrete *Service
-	// in `otelCertsSvc` for the post-logger SetLogger wiring; only
-	// assign into `otelCerts` on the success path.
-	var (
-		otelCertsSvc     *otelcerts.Service
-		otelCerts        fwhandler.OtelCertProvisioner
-		otelTLSConfig    *tls.Config
-		otelCertsErr     error
-		otelCertsErrStep string
-	)
-	if issuer, err := infracerts.Load(consts.CPInfraCACertPath, consts.CPInfraCAKeyPath); err != nil {
-		otelCertsErr = fmt.Errorf("infracerts load: %w", err)
-		otelCertsErrStep = "infracerts_load"
-	} else if otelDir, err := consts.OtelClientsDir(); err != nil {
-		otelCertsErr = fmt.Errorf("resolving otel-clients dir: %w", err)
-		otelCertsErrStep = "otel_clients_dir"
-	} else if rootCABytes, err := os.ReadFile(consts.CPCACertPath); err != nil {
-		otelCertsErr = fmt.Errorf("reading CLI root CA at %s: %w", consts.CPCACertPath, err)
-		otelCertsErrStep = "read_root_ca"
-	} else if svc, err := otelcerts.New(issuer, otelDir, rootCABytes, nil); err != nil {
-		otelCertsErr = fmt.Errorf("constructing otelcerts.Service: %w", err)
-		otelCertsErrStep = "service_new"
-	} else if tlsCfg, err := svc.LoadTLSConfig("cp"); err != nil {
-		otelCertsErr = fmt.Errorf("building cp tls.Config: %w", err)
-		otelCertsErrStep = "load_tls_config"
-	} else {
-		otelCertsSvc = svc
-		otelCerts = svc
-		otelTLSConfig = tlsCfg
+// drainDeps carries the orchestrator-owned handles the drain-to-zero
+// sequence acts on. These are constructed and owned by run(); the drain
+// sequence only stops/closes them in the strict order below. Kept as a
+// struct so run() builds the drain callback with a single call rather than
+// an inline ~100-line closure, while the literal teardown ordering stays in
+// one package-local orchestrator function (not a domain package).
+type drainDeps struct {
+	log               *logger.Logger
+	actionQueue       *fwhandler.ActionQueue
+	grpcStack         *server.GRPCStack
+	handler           *fwhandler.Handler
+	stack             *fwhandler.Stack
+	netloggerSvc      *netlogger.Service
+	netloggerProvider *sdklog.LoggerProvider
+	stopDNSGC         func()
+	ebpfMgr           *ebpf.Manager
+	feederCancel      context.CancelFunc
+	feederDone        <-chan struct{}
+	dockerTopic       *pubsub.Topic[dockerevents.DockerEvent]
+	agentTopic        *pubsub.Topic[agent.AgentEvent]
+	enrolledTopic     *pubsub.Topic[ebpf.EBPFContainerEnrolled]
+}
+
+// runDrainSequence executes the CP drain-to-zero teardown in the strict,
+// un-reorderable order (INV-B2-007):
+//
+//  1. actionQueue.Close drains accepted submissions then rejects new ones.
+//  2. grpcStack.GracefulStop refuses new RPCs, waits for in-flight handlers.
+//  3. handler.CancelAllBypassTimers cancels any bypass timer mid-retry.
+//  4. stack.Stop tears down the firewall stack (Envoy + CoreDNS).
+//  5. netlogger Stop + provider Shutdown (BEFORE flush so the ringbuf reader
+//     drains records before the BPF maps it holds are torn down).
+//  6. stopDNSGC stops the dns_cache sweeper (BEFORE flush so a sweep can't
+//     iterate/delete a dns_cache fd the deferred ebpfMgr.Close() is tearing
+//     down).
+//  7. ebpfMgr.FlushAll drops per-container eBPF state to zero.
+//  8. feederCancel + topic Close.
+//
+// Each stage runs under runDrainStage's recover (the safe wrapper). CP §3.4
+// invariant: FlushAll (stage 7) is the only thing that drops per-container
+// eBPF state to zero on shutdown — if an earlier stage panicked and unwound
+// the whole function, FlushAll would be skipped and the next CP would inherit
+// a frozen rule set with agents filtered against stale rules and no
+// supervisor. Containing each stage's panic to that stage lets the linear
+// sequence fall through to FlushAll on any panic path. Errors are aggregated
+// so a broken drain exits non-zero.
+func runDrainSequence(ctx context.Context, d drainDeps) error {
+	var errs []error
+	safe := func(stage, event string, fn func()) {
+		if err := runDrainStage(d.log, stage, event, fn); err != nil {
+			errs = append(errs, err)
+		}
 	}
 
-	// Wire the in-process TLSConfig into the logger's OTLP exporter.
-	// On any failure above, drop OtelOptions entirely (not just
-	// TLSConfig) so the logger stays file+stderr only — never half-
-	// init mTLS with no creds (would spam handshake failures) and
-	// never plaintext-fall-back to the untrusted lane.
-	otelOpts := otelOptionsFromEnv()
+	safe("pre-flush teardown", "drain_preflush_panic", func() {
+		if err := d.actionQueue.Close(); err != nil {
+			d.log.Warn().Err(err).Msg("actionQueue close failed")
+		}
+		d.grpcStack.GracefulStop(ctx)
+		d.handler.CancelAllBypassTimers()
+		if err := d.stack.Stop(ctx); err != nil {
+			d.log.Error().Err(err).Msg("drain: firewall stack stop failed")
+			errs = append(errs, fmt.Errorf("stack stop: %w", err))
+		}
+		// Stop netlogger BEFORE eBPF flush so the ringbuf reader drains
+		// in-flight records before we tear down the BPF maps the reader holds.
+		// Then Shutdown the OTLP provider so the BatchProcessor flushes
+		// in-flight batches — netlogger.Service.Stop deliberately does not
+		// touch the provider. Fresh 5s contexts: the outer ctx may already be
+		// cancelled and netlogger must not hold up CP drain past the
+		// AgentWatcher budget.
+		if d.netloggerSvc != nil {
+			stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if err := d.netloggerSvc.Stop(stopCtx); err != nil {
+				d.log.Error().Err(err).Msg("drain: netlogger stop failed")
+				errs = append(errs, fmt.Errorf("netlogger stop: %w", err))
+			}
+			stopCancel()
+		}
+		if d.netloggerProvider != nil {
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if err := d.netloggerProvider.Shutdown(shutdownCtx); err != nil {
+				d.log.Error().Err(err).Msg("drain: netlogger provider shutdown failed")
+				errs = append(errs, fmt.Errorf("netlogger provider shutdown: %w", err))
+			}
+			shutdownCancel()
+		}
+		d.stopDNSGC()
+	})
+
+	// Flush per-container eBPF state. Reached unconditionally — a panic in any
+	// pre-flush step was contained above, so this always runs.
+	safe("ebpf flush", "drain_ebpf_flush_panic", func() {
+		if err := d.ebpfMgr.FlushAll(); err != nil {
+			d.log.Error().Err(err).Msg("drain: ebpf flush failed")
+			errs = append(errs, fmt.Errorf("ebpf flush: %w", err))
+		}
+	})
+
+	// Stop the feeder before closing the topics so any in-flight Publish lands
+	// cleanly, then close every topic so subscriber drain goroutines exit.
+	// feederCancel is idempotent; feederDone closes once the goroutine returns.
+	safe("feeder/topic teardown", "drain_topic_teardown_panic", func() {
+		d.feederCancel()
+		<-d.feederDone
+		for _, t := range []struct {
+			name  string
+			close func() error
+		}{
+			{"docker", d.dockerTopic.Close},
+			{"agent", d.agentTopic.Close},
+			{"ebpf_enrolled", d.enrolledTopic.Close},
+		} {
+			if err := t.close(); err != nil {
+				d.log.Error().Err(err).Str("topic", t.name).Msg("drain: topic close failed")
+				errs = append(errs, fmt.Errorf("%s topic close: %w", t.name, err))
+			}
+		}
+	})
+
+	return errors.Join(errs...)
+}
+
+// startOryStack runs Phase 3: the Ory auth stack (Kratos, Hydra, Oathkeeper) —
+// startup GATE 1. NewOryStack builds the single CLI CA pool + caTLS up front;
+// Start runs the Ory choreography. It returns the single CA surface
+// (caCertPool, caTLS) every downstream consumer reuses — never rebuilt — and
+// configures the orchestrator's aggregate /healthz service probes. A failure
+// fails CP startup (pre-SetReady, code 1) WITHOUT an eBPF flush.
+func startOryStack(ctx context.Context, cfg config.Config, subMgr *subprocess.SubprocessManager, orchestrator *CPStartupOrchestrator, cp config.ControlPlaneSettings, caCertPath, jwkPath string, log *logger.Logger) (*x509.CertPool, *tls.Config, error) {
+	oryStack, err := auth.NewOryStack(cfg, subMgr, caCertPath, jwkPath, log)
+	if err != nil {
+		return nil, nil, fmt.Errorf("ory stack: %w", err)
+	}
+	if err := oryStack.Start(ctx); err != nil {
+		return nil, nil, err
+	}
+	caCertPool := oryStack.CACertPool()
+	caTLS := oryStack.CATLS()
+	// /healthz actively probes ALL service ports — 200 only when every responds.
+	orchestrator.SetServiceProbes(cp, caTLS)
+	return caCertPool, caTLS, nil
+}
+
+// buildAgentInfra runs Phase 6: the durable sqlite agent registry (CP is the
+// SOLE writer; EnsureSchema before NewSQLiteWriter so its SELECT COUNT sees the
+// table), the peer-IP→Docker→labels resolver (grounds identity trust on a
+// kernel-attested source, not cert claims), the managed-agent ContainerLister,
+// and the agent worldview Repository. It wires the Repository's two
+// subscriptions (agent topic per-container view + dockerevents evict-on-rm) —
+// the load-bearing projection; the heartbeat only reads its Len().
+func buildAgentInfra(log *logger.Logger, dockerCli *docker.Client, cfg config.Config, agentTopic *pubsub.Topic[agent.AgentEvent], dockerTopic *pubsub.Topic[dockerevents.DockerEvent]) (
+	agentReg agent.Registry,
+	agentPeerLookup *agent.MobyPeerLookup,
+	lister *agent.ContainerLister,
+	agentRepo *agent.Repository,
+	err error,
+) {
+	if err := agent.EnsureSchema(consts.CPControlPlaneDBPath, log.With("component", "agent")); err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("agent ensure schema: %w", err)
+	}
+	agentReg, err = agent.NewSQLiteWriter(consts.CPControlPlaneDBPath, log.With("component", "agent"))
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("agent sqlite: %w", err)
+	}
+	agentPeerLookup = agent.NewMobyPeerLookup(dockerCli.APIClient, log.With("component", "agent-peer-lookup"))
+	// ListOpts{} = running only (handler + watcher); ListOpts{All:true} =
+	// running + stopped (reaper + dial reconciler).
+	lister = agent.NewContainerLister(dockerCli.APIClient, cfg)
+
+	agentRepo = agent.NewRepository()
+	agentRepo.Subscribe(agentTopic)
+	agentRepo.SubscribeDockerEvents(dockerTopic)
+	return agentReg, agentPeerLookup, lister, agentRepo, nil
+}
+
+// startHealthz runs Phase 9: it serves the /healthz endpoint (the orchestrator's
+// aggregate readiness + service-probe surface) on HealthPort in a goroutine,
+// returning the *http.Server so run()'s Phase 18 shutdown can GracefulStop it.
+// A non-ErrServerClosed listen failure is deposited on serveFailed so the serve
+// select tears down.
+func startHealthz(cp config.ControlPlaneSettings, log *logger.Logger, orchestrator *CPStartupOrchestrator, serveFailed chan error) *http.Server {
+	healthMux := http.NewServeMux()
+	healthMux.Handle("/healthz", orchestrator.HealthzHandler())
+	healthServer := &http.Server{
+		Addr:    "0.0.0.0:" + strconv.Itoa(cp.HealthPort),
+		Handler: healthMux,
+	}
+	go func() {
+		log.Info().Int("port", cp.HealthPort).Msg("healthz serving")
+		if err := healthServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serveFailed <- fmt.Errorf("healthz serve: %w", err)
+		}
+	}()
+	return healthServer
+}
+
+// firewallBringupGate runs Phase 8: the settings-driven firewall bringup startup
+// GATE. When firewall.enable (settings.yaml) is set, the stack must be up
+// whenever CP is — not only on a CLI FirewallInit — so the same queued
+// FirewallInit runs synchronously BEFORE SetReady, making a green /healthz mean
+// "everything settings enable is enforcing". A failure returns an error that
+// fails CP startup (pre-SetReady, code 1) WITHOUT an eBPF flush — enrolled
+// agents stay fail-closed against pinned state. The structured
+// event=firewall_bringup_failed line is the operator's only triage surface (the
+// exit itself lands on stderr/docker logs).
+func firewallBringupGate(cfg config.Config, log *logger.Logger, handler *fwhandler.Handler) error {
+	if !cfg.Settings().Firewall.FirewallEnabled() {
+		return nil
+	}
+	log.Info().Str("component", "firewall-bringup").
+		Msg("firewall bringup: starting stack (settings firewall.enable)")
+	if _, err := handler.FirewallInit(context.Background(), &adminv1.FirewallInitRequest{}); err != nil {
+		log.Error().Err(err).
+			Str("event", "firewall_bringup_failed").
+			Str("component", "firewall-bringup").
+			Msg("firewall bringup failed — CP exiting (startup gate); enrolled agents stay fail-closed against pinned eBPF state; inspect docker logs and re-run `clawker controlplane up`")
+		return fmt.Errorf("firewall bringup: %w", err)
+	}
+	log.Info().Str("component", "firewall-bringup").Msg("firewall stack up")
+	return nil
+}
+
+// startFeeder runs Phase 10: it constructs the dockerevents feeder — the sole
+// producer of DockerEvent — and launches its Supervise loop on a child of
+// watcherCtx. feederCancel is separate from watcherCtx so the drain sequence
+// can stop the feeder BEFORE closing topics (avoids dropped-publish noise);
+// feederDone closes once the Supervise goroutine returns. Supervise wraps Run
+// with cancel-vs-error discrimination and the serveFailed send.
+func startFeeder(watcherCtx context.Context, cfg config.Config, log *logger.Logger, dockerCli *docker.Client, dockerTopic *pubsub.Topic[dockerevents.DockerEvent], serveFailed chan error) (context.CancelFunc, <-chan struct{}, error) {
+	feeder, err := dockerevents.New(dockerCli.APIClient, dockerTopic, dockerevents.Options{
+		ManagedLabelKey:   cfg.LabelManaged(),
+		ManagedLabelValue: cfg.ManagedLabelValue(),
+		Logger:            log,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("dockerevents feeder: %w", err)
+	}
+	feederCtx, feederCancel := context.WithCancel(watcherCtx)
+	feederDone := make(chan struct{})
+	go func() {
+		defer close(feederDone)
+		feeder.Supervise(feederCtx, serveFailed)
+	}()
+	return feederCancel, feederDone, nil
+}
+
+// buildEnforcement runs Phase 4: the Docker client, cgroup-driver detection +
+// container resolver, the firewall rules store + Stack, and the eBPF load +
+// defensive stale-bypass cleanup. The eBPF Load and CleanupStaleBypass are
+// pre-SetReady startup GATES — any error returned here propagates out of run()
+// BEFORE SetReady (exit code 1) WITHOUT an eBPF flush, so agents enrolled by a
+// previous CP stay fail-closed against pinned state.
+//
+// The returned cleanup closes the Docker client and the eBPF manager; run()
+// joins its error into retErr so the on-failure restart policy investigates a
+// partial teardown rather than silently blessing it.
+func buildEnforcement(ctx context.Context, cfg config.Config, log *logger.Logger, otelCerts fwhandler.OtelCertProvisioner) (
+	dockerCli *docker.Client,
+	containerResolver fwhandler.ContainerResolver,
+	rulesStore *storage.Store[fwhandler.EgressRulesFile],
+	stack *fwhandler.Stack,
+	ebpfMgr *ebpf.Manager,
+	cleanup func() error,
+	err error,
+) {
+	// Docker client serves the container resolver, the firewall stack (Envoy +
+	// CoreDNS siblings over DooD), and the AgentWatcher poll loop.
+	dockerCli, err = docker.NewClient(ctx, cfg, log)
+	if err != nil {
+		return nil, nil, nil, nil, nil, func() error { return nil }, fmt.Errorf("docker client: %w", err)
+	}
+	cleanup = func() error { dockerCli.Close(); return nil }
+
+	// Cgroup driver queried once and cached on the resolver (BPF cgroup paths
+	// come from firewall.EBPFCgroupPath, the single source of truth).
+	cgroupDriver, err := fwhandler.DetectCgroupDriver(ctx, dockerCli)
+	if err != nil {
+		return dockerCli, nil, nil, nil, nil, cleanup, fmt.Errorf("cgroup driver: %w", err)
+	}
+	log.Info().Str("cgroup_driver", cgroupDriver).Msg("Docker cgroup driver detected")
+	containerResolver = fwhandler.NewContainerResolver(dockerCli, cgroupDriver)
+
+	// Firewall stack handle. Host bootstrap owns EnsureRunning; the drain path
+	// owns Stop. Degraded mode (nil otelCerts) was logged as
+	// event=otelcerts_unavailable in bootLogging.
+	rulesStore, err = fwhandler.NewRulesStore(cfg)
+	if err != nil {
+		return dockerCli, containerResolver, nil, nil, nil, cleanup, fmt.Errorf("rules store: %w", err)
+	}
+	stack = fwhandler.NewStack(dockerCli, cfg, log, rulesStore, otelCerts)
+
+	ebpfMgr = ebpf.NewManager(log)
+	if err := ebpfMgr.Load(); err != nil {
+		return dockerCli, containerResolver, rulesStore, stack, nil, cleanup, fmt.Errorf("ebpf load: %w", err)
+	}
+	// Extend cleanup to also close the eBPF manager (join its error so a partial
+	// teardown is investigated, not silently blessed).
+	cleanup = func() error {
+		var errs []error
+		if cErr := ebpfMgr.Close(); cErr != nil {
+			log.Error().Err(cErr).Msg("ebpf close error")
+			errs = append(errs, fmt.Errorf("ebpf close: %w", cErr))
+		}
+		dockerCli.Close()
+		return errors.Join(errs...)
+	}
+	log.Info().Msg("eBPF programs loaded")
+
+	// Defensive startup cleanup (INV-B2-013): cgroup IDs are reusable across
+	// container generations, so a leftover bypass_map entry from a crashed
+	// previous CP could grant a fresh unrelated container unrestricted egress.
+	cleared, err := ebpfMgr.CleanupStaleBypass()
+	if err != nil {
+		return dockerCli, containerResolver, rulesStore, stack, ebpfMgr, cleanup, fmt.Errorf("defensive bypass cleanup: %w", err)
+	}
+	if cleared > 0 {
+		log.Info().Int("cleared", cleared).Msg("defensive startup: cleared stale bypass_map entries")
+	}
+	return dockerCli, containerResolver, rulesStore, stack, ebpfMgr, cleanup, nil
+}
+
+// grpcStackDeps carries the orchestrator-resolved handles Phase 7 builds the
+// firewall handler + gRPC servers against. caTLS/caCertPool are the single CA
+// surface from the Ory stack — never rebuilt.
+type grpcStackDeps struct {
+	log               *logger.Logger
+	cfg               config.Config
+	ebpfMgr           *ebpf.Manager
+	stack             *fwhandler.Stack
+	rulesStore        *storage.Store[fwhandler.EgressRulesFile]
+	containerResolver fwhandler.ContainerResolver
+	agentReg          agent.Registry
+	agentPeerLookup   *agent.MobyPeerLookup
+	lister            *agent.ContainerLister
+	enrolledTopic     *pubsub.Topic[ebpf.EBPFContainerEnrolled]
+	caCertPool        *x509.CertPool
+	caTLS             *tls.Config
+	cp                config.ControlPlaneSettings
+	serverCertPath    string
+	serverKeyPath     string
+}
+
+// buildGRPCStack constructs the firewall ActionQueue (the single-goroutine FIFO
+// worker every Firewall* RPC runs through — drain step 1, injected via
+// HandlerDeps), the firewall Handler, and the gRPC stack (admin always up;
+// agent listener up only when the IdentityInterceptor resolves), then starts
+// serving on the buffered serveFailed channel. It returns those handles plus a
+// belt-and-braces cleanup that closes the ActionQueue on non-drain exit paths.
+func buildGRPCStack(d grpcStackDeps) (
+	actionQueue *fwhandler.ActionQueue,
+	handler *fwhandler.Handler,
+	grpcStack *server.GRPCStack,
+	serveFailed chan error,
+	cleanup func(),
+	err error,
+) {
+	actionQueue = fwhandler.NewActionQueue(d.log)
+	cleanup = func() {
+		if err := actionQueue.Close(); err != nil {
+			d.log.Warn().Err(err).Msg("actionQueue close failed")
+		}
+	}
+
+	// Handler holds the publish-only enrolledTopic (FirewallEnable publishes
+	// EBPFContainerEnrolled; netlogger subscribes to hydrate its label cache).
+	handler, err = fwhandler.NewHandler(fwhandler.HandlerDeps{
+		EBPF:          d.ebpfMgr,
+		Stack:         d.stack,
+		Store:         d.rulesStore,
+		Cfg:           d.cfg,
+		Resolver:      d.containerResolver,
+		Log:           d.log,
+		Queue:         actionQueue,
+		EnrolledTopic: d.enrolledTopic,
+		ListAgents:    func(ctx context.Context) ([]string, error) { return d.lister.List(ctx, agent.ListOpts{}) },
+	})
+	if err != nil {
+		return actionQueue, nil, nil, nil, cleanup, fmt.Errorf("firewall handler: %w", err)
+	}
+
+	grpcStack, err = server.NewGRPCStack(server.GRPCDeps{
+		Handler:        handler,
+		Registry:       d.agentReg,
+		PeerLookup:     d.agentPeerLookup,
+		ServerCertPath: d.serverCertPath,
+		ServerKeyPath:  d.serverKeyPath,
+		CACertPool:     d.caCertPool,
+		CATLS:          d.caTLS,
+		HydraAdminPort: d.cp.HydraAdminPort,
+		AdminPort:      d.cp.AdminPort,
+		AgentPort:      d.cp.AgentPort,
+		Log:            d.log,
+	})
+	if err != nil {
+		return actionQueue, handler, nil, nil, cleanup, fmt.Errorf("grpc stack: %w", err)
+	}
+
+	// Buffered(4) so gRPC admin/agent, healthz, or the feeder can deposit a
+	// failure without blocking before the serve select is reached.
+	serveFailed = make(chan error, 4)
+	grpcStack.Serve(serveFailed)
+	return actionQueue, handler, grpcStack, serveFailed, cleanup, nil
+}
+
+// newDrainCallback wraps runDrainSequence in a sync.Once so SIGTERM and the
+// AgentWatcher's drain-to-zero converge on a single teardown — whichever
+// trigger wins runs the literal un-reorderable drain order (reaching
+// ebpfMgr.FlushAll under per-stage recover) exactly once. Every later call,
+// including run()'s final `return drainCallback(...)`, returns the captured
+// error without re-running the teardown.
+func newDrainCallback(deps drainDeps) func(context.Context) error {
+	var (
+		drainOnce sync.Once
+		drainErr  error
+	)
+	return func(ctx context.Context) error {
+		drainOnce.Do(func() { drainErr = runDrainSequence(ctx, deps) })
+		return drainErr
+	}
+}
+
+// bootLogging stands up Phase 1's trusted-lane OTel cert provisioner and the
+// process logger, returning the concrete *otelcerts.Service (for the post-logger
+// SetLogger + netlogger wiring), the fwhandler.OtelCertProvisioner interface (for
+// the firewall stack — UNTYPED nil on failure so the stack's `== nil` check fires;
+// never a typed-nil boxed into the interface), and a cleanup closure run() defers
+// to flush the logger on every return arm.
+//
+// LANDMINE: on cert-provisioner failure NewCPProvisioner returns literal nils for
+// all three values, and on ANY cert failure OtelOptions is dropped entirely (not
+// just the TLSConfig) so the logger never half-inits mTLS with no creds nor
+// plaintext-falls-back to the untrusted lane. The structured otelcerts/logger
+// degraded-event lines are emitted here (after the logger exists) so they land on
+// the structured surface, not stderr.
+func bootLogging(logDir string) (log *logger.Logger, otelCertsSvc *otelcerts.Service, otelCerts fwhandler.OtelCertProvisioner, cleanup func(), err error) {
+	// Build the OTel cert provisioner BEFORE logger.New — the logger's OTLP
+	// exporter locks in its TLSConfig at construction (no hot-reconfig hook).
+	otelCertsSvc, otelCerts, otelTLSConfig, otelCertsErr := otelcerts.NewCPProvisioner(nil)
+
+	otelOpts := logger.OtelOptionsFromEnv()
 	if otelTLSConfig != nil && otelOpts != nil {
 		otelOpts.TLSConfig = otelTLSConfig
 	} else {
@@ -414,50 +711,37 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		// clawker-controlplane` shows what the file/OTEL sinks see.
 		EchoStdout: true,
 	}
-	log, err := logger.New(loggerOpts)
-	loggerInitErr := err
-	if err != nil {
+	log, loggerInitErr := logger.New(loggerOpts)
+	if loggerInitErr != nil {
 		// Fall back to stderr-only if log dir isn't writable.
 		log = logger.NewWriter(os.Stderr)
-		fmt.Fprintf(os.Stderr, "%s: warning: file logging unavailable (%v), using stderr only\n", consts.ContainerCP, err)
+		fmt.Fprintf(os.Stderr, "%s: warning: file logging unavailable (%v), using stderr only\n", consts.ContainerCP, loggerInitErr)
 	}
 	log = log.With("component", consts.ContainerCP)
-	// Base context for the run, and the parent of signalCtx below. log.Close
-	// rides the base (not signalCtx) so the final flush survives the very signal
-	// that triggers shutdown; idempotent + deferred, it covers every arm where
-	// run returns (signal, drain-to-zero, subprocess-crash, startup error). The
-	// flush is bounded by the OTLP SDK export timeout and the supervisor's
-	// SIGKILL grace, not an invented deadline.
-	ctx := context.Background()
-	defer func() {
-		// Surface a Close failure on stderr (→ docker logs), NOT into retErr.
-		// The OTEL mirror is non-fatal/self-healing by design (an unreachable
-		// collector is expected, not a teardown fault), and CP's exit code is a
-		// teardown-integrity signal — poisoning it would trip the on-failure
-		// restart policy on a benign telemetry outage. stderr also survives the
-		// logger itself closing here, unlike a log.Error() that races its own
-		// shutdown. Mirrors clawkerd's logger-close handling.
-		if cErr := log.Close(ctx); cErr != nil {
+
+	// log.Close rides a fresh base context (not the signal context) so the
+	// final flush survives the shutdown signal; idempotent + deferred by run(),
+	// it covers every return arm.
+	cleanup = func() {
+		// Surface a Close failure on stderr (→ docker logs), NOT into retErr:
+		// the OTEL mirror is self-healing and CP's exit code is a
+		// teardown-integrity signal — a benign telemetry outage must not trip
+		// the on-failure restart policy.
+		if cErr := log.Close(context.Background()); cErr != nil {
 			fmt.Fprintf(os.Stderr, "%s: logger close failed: %v\n", consts.ContainerCP, cErr)
 		}
-	}()
+	}
 	log.Info().Msg("starting")
 
-	// Wire the real logger into the Service now that logger.New has
-	// succeeded. LoadTLSConfig's closure reads s.log lazily (at
-	// handshake time, well after this point), so post-construction
-	// SetLogger is safe and lets the per-handshake mint-failure event
-	// surface in the structured log.
+	// Wire the real logger in now (LoadTLSConfig reads s.log lazily at
+	// handshake time, so post-construction SetLogger is safe).
 	if otelCertsSvc != nil {
 		otelCertsSvc.SetLogger(log)
 	}
 
 	if loggerInitErr != nil {
-		// Surface the file-logger fallback as a structured event so
-		// the docker-logs surface (the only place stderr lands) at
-		// least contains a discoverable record. Note: the OTel bridge
-		// is also gone in this path because logger.NewWriter takes no
-		// OtelOptions — operators must know the trusted lane is dark.
+		// Stderr-only fallback also loses the OTel bridge (NewWriter takes no
+		// OtelOptions) — operators must know the trusted lane is dark.
 		log.Error().Err(loggerInitErr).
 			Str("event", "file_logger_unavailable").
 			Str("component", "logger").
@@ -468,14 +752,187 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		log.Error().Err(otelCertsErr).
 			Str("event", "otelcerts_unavailable").
 			Str("component", "otelcerts").
-			Str("step", otelCertsErrStep).
 			Msg("trusted-lane OTLP push disabled — CP and infra services run with file/stderr logs only")
 	}
 
 	logHostIdentity(log, consts.HostUIDResolution(), consts.HostGIDResolution())
+	return log, otelCertsSvc, otelCerts, cleanup, nil
+}
 
-	// Load config from the mounted config dir (CLAWKER_CONFIG_DIR set by
-	// the container env). All port values come from settings.ControlPlane.
+// buildTopics constructs the three typed pub/sub topics (one per domain
+// payload). The pipe holds zero state — each domain's Repository projects into
+// its own private store — and the single generic audit hook self-attaches
+// inside NewTopic, so the orchestrator wires ZERO hooks. A topic build failure
+// fails CP startup (pre-SetReady): it is a wiring regression, not a degraded
+// subsystem.
+func buildTopics(busLog *logger.Logger) (
+	dockerTopic *pubsub.Topic[dockerevents.DockerEvent],
+	agentTopic *pubsub.Topic[agent.AgentEvent],
+	enrolledTopic *pubsub.Topic[ebpf.EBPFContainerEnrolled],
+	err error,
+) {
+	if dockerTopic, err = pubsub.NewTopic[dockerevents.DockerEvent](busLog, pubsub.WithBuffer(2048)); err != nil {
+		return nil, nil, nil, fmt.Errorf("docker events topic: %w", err)
+	}
+	if agentTopic, err = pubsub.NewTopic[agent.AgentEvent](busLog, pubsub.WithBuffer(2048)); err != nil {
+		return nil, nil, nil, fmt.Errorf("agent events topic: %w", err)
+	}
+	if enrolledTopic, err = pubsub.NewTopic[ebpf.EBPFContainerEnrolled](busLog, pubsub.WithBuffer(2048)); err != nil {
+		return nil, nil, nil, fmt.Errorf("ebpf enrolled topic: %w", err)
+	}
+	return dockerTopic, agentTopic, enrolledTopic, nil
+}
+
+// workerDeps carries the handles the long-lived observability workers (Phases
+// 11-13: pub/sub stats heartbeat, netlogger, dns_cache GC) are built against.
+type workerDeps struct {
+	log           *logger.Logger
+	busLog        *logger.Logger
+	cfg           config.Config
+	ebpfMgr       *ebpf.Manager
+	dockerCli     *docker.Client
+	otelCertsSvc  *otelcerts.Service
+	handler       *fwhandler.Handler
+	agentRepo     *agent.Repository
+	dockerTopic   *pubsub.Topic[dockerevents.DockerEvent]
+	agentTopic    *pubsub.Topic[agent.AgentEvent]
+	enrolledTopic *pubsub.Topic[ebpf.EBPFContainerEnrolled]
+}
+
+// startWorkers launches the three long-lived observability workers on
+// watcherCtx and returns the netlogger service + its caller-owned provider +
+// the dns_cache GC stop func — the handles the drain sequence acts on. All
+// three recover internally per the CP no-panic discipline; the heartbeat and
+// GC are cancelled transitively when run() cancels watcherCtx, and the drain
+// sequence stops netlogger + GC explicitly before FlushAll.
+//
+// netlogger degrades to a nil service (drain skips Stop) on any failure with an
+// event=netlogger_unavailable line; the returned provider is caller-owned (the
+// drain sequence Shutdowns it — Service.Stop does not).
+func startWorkers(watcherCtx context.Context, d workerDeps) (*netlogger.Service, *sdklog.LoggerProvider, func()) {
+	// Phase 11: pub/sub stats heartbeat — coarse per-topic + agent-worldview
+	// health signal on the CP log (worldview size via the Repository's Len()).
+	pubsub.NewStatsHeartbeat(d.busLog, pubsub.DefaultStatsInterval,
+		pubsub.NewTopicStatsSource("docker", d.dockerTopic.Stats),
+		pubsub.NewTopicStatsSource("agent", d.agentTopic.Stats),
+		pubsub.NewTopicStatsSource("ebpf_enrolled", d.enrolledTopic.Stats),
+		pubsub.NewWorldviewStatsSource("agent", d.agentRepo.Agents.Len),
+	).Start(watcherCtx)
+
+	// Phase 12: netlogger — drains the BPF per-decision ringbuf to the
+	// trusted-infra OTLP receiver.
+	netloggerSvc, netloggerProvider := netlogger.Start(watcherCtx, netlogger.StartDeps{
+		Cfg:           d.cfg,
+		Log:           d.log,
+		Mgr:           d.ebpfMgr,
+		Docker:        d.dockerCli.APIClient,
+		OtelCerts:     d.otelCertsSvc,
+		EnrolledTopic: d.enrolledTopic,
+		EvictTopic:    d.dockerTopic,
+		Domains:       d.handler.ReverseDNSDomains,
+	})
+
+	// Phase 13: dns_cache GC — reclaims expired entries the CoreDNS dnsbpf
+	// plugin wrote so the pinned map stays bounded. The sync.Once-guarded stop
+	// is called BOTH from the drain body (before FlushAll) AND deferred by run()
+	// (LIFO before ebpfMgr.Close), so an in-flight sweep is joined before the
+	// dns_cache fd is torn down.
+	stopDNSGC := ebpf.NewDNSGarbageCollector(d.ebpfMgr, d.log, ebpf.DNSGCOpts{}).Start(watcherCtx)
+
+	return netloggerSvc, netloggerProvider, stopDNSGC
+}
+
+// agentDomainDeps carries the orchestrator-resolved handles the agent-domain
+// wiring (Phase 16) needs. Kept as a struct so startAgentDomain's signature
+// stays an orchestration call rather than an 8-positional-arg sprawl.
+type agentDomainDeps struct {
+	log         *logger.Logger
+	dockerCli   *docker.Client
+	agentTopic  *pubsub.Topic[agent.AgentEvent]
+	dockerTopic *pubsub.Topic[dockerevents.DockerEvent]
+	agentReg    agent.Registry
+	peerLookup  *agent.MobyPeerLookup
+	lister      *agent.ContainerLister
+	caCertPool  *x509.CertPool
+}
+
+// startAgentDomain wires the agent domain: the CP-driven init Executor, the
+// CP→clawkerd Dialer, the agent-axis subscriptions, and the boot-time dial of
+// every already-running agent. It returns a cleanup closure run() defers
+// (no-op until agent.Start succeeds, so deferring it is always safe).
+//
+// CP §3.4 degrade contract: a broken init Executor → initExec=nil (entrypoint
+// fifo timeout is the only user-visible effect); a broken dialer → dialer=nil
+// (CP→clawkerd dispatch disabled). Neither cascades — AdminService, firewall,
+// registry, and the AgentService listener all stay up. Every degrade emits its
+// own event=<subsystem>_unavailable line via wireInitExecutor / agent.New.
+func startAgentDomain(watcherCtx context.Context, d agentDomainDeps) func() {
+	agentCleanup := func() {}
+
+	// The CP-driven init Executor runs the static init plan on each new
+	// Session; without it the entrypoint hangs on its fifo until
+	// CLAWKER_INIT_TIMEOUT. wireInitExecutor holds the degrade contract.
+	initExec := wireInitExecutor(d.agentTopic, d.dockerCli, d.log)
+	dialer, err := agent.New(
+		d.log.With("component", "agent"),
+		d.dockerCli.APIClient,
+		d.agentTopic,
+		d.agentReg,
+		consts.CPClientCertPath,
+		consts.CPClientKeyPath,
+		d.caCertPool,
+		initExec,
+	)
+	if err != nil {
+		d.log.Error().Err(err).
+			Str("event", "agent_dialer_unavailable").
+			Msg("agent.dial: Dialer construction failed; CP→clawkerd command dispatch disabled. AdminService, firewall, registry, and AgentService listener continue.")
+		dialer = nil
+	}
+	if dialer == nil {
+		return agentCleanup
+	}
+
+	// agent.Start reaps orphan registry rows against live docker and
+	// subscribes to dockerTopic for evict / session-cancel / dial.
+	cleanup, err := agent.Start(watcherCtx, agent.StartDeps{
+		Registry: d.agentReg,
+		DockerLister: func(ctx context.Context) ([]string, error) {
+			return d.lister.List(ctx, agent.ListOpts{All: true})
+		},
+		PeerLookup:  d.peerLookup,
+		Dialer:      dialer,
+		DockerTopic: d.dockerTopic,
+		AgentTopic:  d.agentTopic,
+		Log:         d.log.With("component", "agent"),
+	})
+	if err != nil {
+		d.log.Error().Err(err).Msg("agent.Start failed; agent-axis subscriptions disabled")
+	} else {
+		agentCleanup = cleanup
+	}
+
+	// Dial every already-running agent at boot. DialAllRunning spawns its
+	// own recovered goroutine with bounded backoff — non-blocking and never
+	// fails CP if the list errors.
+	dialer.DialAllRunning(watcherCtx, d.lister, agent.ListOpts{})
+	return agentCleanup
+}
+
+func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (retErr error) {
+	// Phase 1: trusted-lane OTel certs + logger (see bootLogging).
+	log, otelCertsSvc, otelCerts, logCleanup, err := bootLogging(logDir)
+	if err != nil {
+		return err
+	}
+	// Base context for the run, parent of signalCtx; logCleanup rides its own
+	// base context so the final flush survives the shutdown signal. Deferred
+	// here so it covers every return arm.
+	ctx := context.Background()
+	defer logCleanup()
+
+	// Phase 2: config + signal-aware contexts. All ports come from
+	// settings.ControlPlane (config dir set by CLAWKER_CONFIG_DIR).
 	cfg, err := config.NewConfig()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
@@ -485,1001 +942,215 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	subMgr := subprocess.NewSubprocessManager(log)
 	orchestrator := NewCPStartupOrchestrator()
 
-	hydraSecret, err := authmat.EnsureHydraSecret()
-	if err != nil {
-		return fmt.Errorf("hydra secret: %w", err)
-	}
-	if err := auth.WriteOryConfigs(cp, hydraSecret); err != nil {
-		return fmt.Errorf("write ory configs: %w", err)
-	}
-	log.Info().Msg("Ory config files written")
-
-	kratosCmd := exec.Command("kratos", "serve",
-		"--config", consts.CPKratosConfigPath,
-	)
-	if err := subMgr.Start("kratos", kratosCmd); err != nil {
-		return fmt.Errorf("kratos: %w", err)
-	}
-
-	hydraCmd := exec.Command("hydra", "serve", "all",
-		"--config", consts.CPHydraConfigPath,
-		"--sqa-opt-out",
-		"--dev",
-	)
-	if err := subMgr.Start("hydra", hydraCmd); err != nil {
-		return fmt.Errorf("hydra: %w", err)
-	}
-
-	// Signal-aware context for startup + serve, forked off the base. SIGTERM is
-	// the `docker stop` path (CP is PID 1 of the controlplane container); SIGINT
-	// covers manual/dev runs. SIGKILL is absent by necessity — it cannot be
-	// caught and is the supervisor's hard backstop.
+	// Signal-aware context for startup + serve (SIGTERM = `docker stop`, CP is
+	// PID 1; SIGINT = dev runs). SIGKILL is the supervisor's uncatchable
+	// backstop.
 	signalCtx, signalStop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
 	defer signalStop()
 
-	// signalCtx drives cancellation but does not expose which signal fired.
-	// Keep a parallel buffered channel solely to record the signal value for the
-	// shutdown log line (and to disambiguate the teardown-failure message between
-	// SIGTERM/`docker stop` and SIGINT/Ctrl-C). Buffered(1) so delivery never
-	// blocks; cancellation is still owned by signalCtx.
+	// signalCtx hides which signal fired; this buffered(1) channel records the
+	// value for the shutdown log line. Cancellation is still owned by signalCtx.
 	sigValueCh := make(chan os.Signal, 1)
 	signal.Notify(sigValueCh, syscall.SIGTERM, syscall.SIGINT)
 	defer signal.Stop(sigValueCh)
 
-	// Build CLI CA cert pool — used for health checks, Hydra introspection,
-	// client registration, and mTLS client cert verification.
-	caCertPEM, err := os.ReadFile(caCertPath)
-	if err != nil {
-		return fmt.Errorf("read CA cert: %w", err)
-	}
-	caCertPool := x509.NewCertPool()
-	if !caCertPool.AppendCertsFromPEM(caCertPEM) {
-		return fmt.Errorf("failed to parse CA cert")
-	}
-	caTLS := &tls.Config{
-		RootCAs:    caCertPool,
-		ServerName: consts.ContainerCP,
-		MinVersion: tls.VersionTLS13,
-	}
-
-	if err := subMgr.WaitHealthy(signalCtx, "kratos", subprocess.HealthCheck{
-		URL: fmt.Sprintf("https://"+consts.Localhost+":%d/health/alive", cp.KratosPublicPort), Interval: healthCheckInterval, Timeout: healthCheckTimeout,
-		TLS: caTLS,
-	}); err != nil {
-		return fmt.Errorf("kratos health: %w", err)
-	}
-	if err := subMgr.WaitHealthy(signalCtx, "hydra", subprocess.HealthCheck{
-		URL: fmt.Sprintf("https://"+consts.Localhost+":%d/health/alive", cp.HydraPublicPort), Interval: healthCheckInterval, Timeout: healthCheckTimeout,
-		TLS: caTLS,
-	}); err != nil {
-		return fmt.Errorf("hydra health: %w", err)
-	}
-
-	// The public health check above confirms the public listener is ready,
-	// but client registration goes to the admin port — a separate listener
-	// that may take longer under resource pressure. Wait for it explicitly.
-	if err := subMgr.WaitHealthy(signalCtx, "hydra", subprocess.HealthCheck{
-		URL: fmt.Sprintf("https://"+consts.Localhost+":%d/health/alive", cp.HydraAdminPort), Interval: healthCheckInterval, Timeout: healthCheckTimeout,
-		TLS: caTLS,
-	}); err != nil {
-		return fmt.Errorf("hydra admin health: %w", err)
-	}
-
-	// Configure aggregate health probes. The /healthz endpoint will actively
-	// probe ALL service ports — it only returns 200 when every one responds.
-	orchestrator.SetServiceProbes(cp, caTLS)
-
-	jwkData, err := os.ReadFile(jwkPath)
-	if err != nil {
-		return fmt.Errorf("read JWK %s: %w", jwkPath, err)
-	}
-	log.Info().Str("jwk_path", jwkPath).Msg("CLI JWK loaded")
-
-	// See RegisterAgentClient for why both clients share
-	// one JWK with distinct client_id + scope.
-	hydraAdminURL := fmt.Sprintf("https://"+consts.Localhost+":%d", cp.HydraAdminPort)
-	if err := auth.RegisterCLIClient(signalCtx, hydraAdminURL, jwkData, caTLS); err != nil {
-		return fmt.Errorf("register CLI client: %w", err)
-	}
-	if err := auth.RegisterAgentClient(signalCtx, hydraAdminURL, jwkData, caTLS); err != nil {
-		return fmt.Errorf("register agent client: %w", err)
-	}
-	log.Info().Msg("CLI + agent clients registered with Hydra")
-
-	// Oathkeeper runs as an HTTP reverse proxy for future webui auth.
-	// gRPC (CLI + agents) bypasses Oathkeeper entirely — it uses
-	// direct Hydra token introspection via AuthInterceptor.
-	oathkeeperCmd := exec.Command("oathkeeper", "serve",
-		"--config", consts.CPOathkeeperConfigPath,
-	)
-	if err := subMgr.Start("oathkeeper", oathkeeperCmd); err != nil {
-		return fmt.Errorf("oathkeeper: %w", err)
-	}
-
-	// Docker client. Used by the container resolver (bypass
-	// dead-man timer), the firewall stack (Envoy + CoreDNS sibling
-	// containers over DooD), and the AgentWatcher poll loop.
-	dockerCli, err := docker.NewClient(signalCtx, cfg, log)
-	if err != nil {
-		return fmt.Errorf("docker client: %w", err)
-	}
-	defer dockerCli.Close()
-
-	// Query cgroup driver once at startup and cache on the resolver. BPF
-	// cgroup paths come from firewall.EBPFCgroupPath in the firewall
-	// subpackage — the single source of truth for the systemd/cgroupfs
-	// path formats.
-	cgroupDriver, err := fwhandler.DetectCgroupDriver(signalCtx, dockerCli)
-	if err != nil {
-		return fmt.Errorf("cgroup driver: %w", err)
-	}
-	log.Info().Str("cgroup_driver", cgroupDriver).Msg("Docker cgroup driver detected")
-
-	containerResolver := containerResolverFromDocker(dockerCli, cgroupDriver)
-
-	// Firewall stack handle. Host bootstrap owns EnsureRunning;
-	// the drain-to-zero path below owns Stop.
-	rulesStore, err := fwhandler.NewRulesStore(cfg)
-	if err != nil {
-		return fmt.Errorf("rules store: %w", err)
-	}
-	// Infra intermediate CA — bind-mounted RO by manager at startup.
-	// firewall.Stack uses it to mint short-lived mTLS client leaves
-	// otelCerts was wired pre-logger; both the firewall.Stack (for
-	// envoy/coredns leaf provisioning) and the CP's own OTLP exporter
-	// consume it. Degraded mode (nil otelCerts) is already logged via
-	// the event=otelcerts_unavailable line above; container specs
-	// drop the mTLS bind-mounts and CP's OTel push lane is closed.
-	stack := fwhandler.NewStack(dockerCli, cfg, log, rulesStore, otelCerts)
-
-	ebpfMgr := ebpf.NewManager(log)
-	if err := ebpfMgr.Load(); err != nil {
-		return fmt.Errorf("ebpf load: %w", err)
-	}
-	// ebpfMgr.Close failures are joined with retErr so the on-failure
-	// restart policy retriggers investigation rather than silently
-	// blessing a partial teardown.
-	defer func() {
-		if err := ebpfMgr.Close(); err != nil {
-			log.Error().Err(err).Msg("ebpf close error")
-			retErr = errors.Join(retErr, fmt.Errorf("ebpf close: %w", err))
-		}
-	}()
-	log.Info().Msg("eBPF programs loaded")
-
-	// Defensive startup cleanup (INV-B2-013).
-	// Load() already cleans up pinned link files for dead cgroups. A
-	// mirror pass for bypass_map is needed because cgroup IDs are
-	// reusable across container generations — a leftover bypass entry
-	// from a crashed previous CP could grant a fresh unrelated container
-	// unrestricted egress.
-	cleared, err := ebpfMgr.CleanupStaleBypass()
-	if err != nil {
-		return fmt.Errorf("defensive bypass cleanup: %w", err)
-	}
-	if cleared > 0 {
-		log.Info().Int("cleared", cleared).Msg("defensive startup: cleared stale bypass_map entries")
-	}
-
-	serverCert, err := tls.LoadX509KeyPair(serverCertPath, serverKeyPath)
-	if err != nil {
-		return fmt.Errorf("load server cert: %w", err)
-	}
-
-	// mTLS: require client certificates signed by the CLI CA.
-	// caCertPool already contains the CA cert (parsed during the Ory health waits).
-	// Authorization is still via OAuth2 bearer tokens — mTLS authenticates
-	// the transport channel.
-	tlsCfg := &tls.Config{
-		Certificates: []tls.Certificate{serverCert},
-		ClientAuth:   tls.RequireAndVerifyClientCert,
-		ClientCAs:    caCertPool,
-		MinVersion:   tls.VersionTLS13,
-	}
-
-	// Auth interceptors: one per listener so each enforces its own
-	// method-scope vocabulary. Both share a single Hydra introspector —
-	// tokens are checked against the same Hydra instance regardless of
-	// which listener received them.
-	hydraIntrospectURL := fmt.Sprintf("https://"+consts.Localhost+":%d/admin/oauth2/introspect", cp.HydraAdminPort)
-	introspector := auth.NewHydraIntrospector(hydraIntrospectURL, caTLS)
-	authInterceptor := auth.NewAuthInterceptor(introspector, adminv1.AdminMethodScopes(), log)
-	// Pin the agent interceptor to consts.ClientIDAgent — defense in
-	// depth on top of the agent:self:register scope. Today only the
-	// clawker-agent Hydra client is registered with that scope, so the
-	// pin only fires if a future Hydra misconfiguration grants the
-	// scope to another client. The admin interceptor stays unpinned —
-	// the CLI is the only client that holds the admin scope and we
-	// don't want to accidentally lock out a future second admin client.
-	agentInterceptor :=
-		auth.NewAuthInterceptor(introspector, agentv1.AgentMethodScopes(), log).
-			RequireClientID(consts.ClientIDAgent)
-
-	grpcServer := grpc.NewServer(
-		grpc.Creds(credentials.NewTLS(tlsCfg)),
-		grpc.ChainUnaryInterceptor(authInterceptor.UnaryInterceptor()),
-		grpc.ChainStreamInterceptor(authInterceptor.StreamInterceptor()),
-	)
-
-	// ActionQueue is the single-goroutine FIFO worker every Firewall*
-	// RPC runs through so rule-mutation/stack-restart cycles never
-	// collide. Constructed before the Handler so HandlerDeps.Queue is
-	// non-nil at NewHandler time (NewHandler panics otherwise). The
-	// final drain ordering (queue.Close → GracefulStop → bypass timer
-	// cancel → stack.Stop → ebpf.FlushAll) is owned by the
-	// drain-to-zero callback below so a single on-exit defer here is
-	// sufficient as a belt-and-braces against non-drain exit paths.
-	actionQueue := fwhandler.NewActionQueue(log)
-	defer func() {
-		if err := actionQueue.Close(); err != nil {
-			log.Warn().Err(err).Msg("actionQueue close failed")
-		}
-	}()
-
-	// Overseer bus: constructed + Started here, BEFORE the gRPC
-	// listener accepts. FirewallEnable publishes
-	// ebpf.EBPFContainerEnrolled on the bus, so the bus MUST be
-	// Started before the first inbound RPC can fire — otherwise the
-	// enroll event drops silently and downstream subscribers miss
-	// the binding for that cgroup. The dockerevents feeder +
-	// agent.Start subscribers still wire up with the dockerevents feeder below.
-	watcherCtx, watcherCancel := context.WithCancel(context.Background())
+	// watcherCtx is the lifetime of all long-lived workers (feeder, netlogger,
+	// dns GC, agent watcher, dial reconciler); SIGTERM and drain both cancel it.
+	watcherCtx, watcherCancel := context.WithCancel(ctx)
 	defer watcherCancel()
 
-	busLog := log.With("component", "overseer")
-	bus := overseer.New(overseer.Options{
-		Logger:            busLog,
-		PublishBufferSize: 2048,
-		SubscriberBuffer:  256,
-		// PublishHook emits one structured Info line per published
-		// event from the bus loop. Producers (dockerevents, agent,
-		// firewall) no longer pair manual log calls with each Publish
-		// — the hook is the single canonical source of bus-event log
-		// lines.
-		PublishHook: overseer.NewLoggerHook(busLog),
-	})
-	if err := bus.Start(watcherCtx); err != nil {
-		return fmt.Errorf("overseer start: %w", err)
-	}
-	// listAgentIDs enumerates managed agent container IDs. Two callers
-	// at two scopes:
-	//   - Firewall handler + AgentWatcher pass {} → running only. They
-	//     drive per-container BPF enforcement and drain-to-zero, both
-	//     of which only care about live containers.
-	//   - Reaper passes {All: true} → running + stopped + exited. A
-	//     stopped container can be `docker start`-ed back into life so
-	//     its registry row must survive; only `docker rm` orphans it.
-	// The label filter is non-overridable so a caller can't accidentally
-	// widen scope past purpose=agent.
-	type listAgentsOpts struct{ All bool }
-	listAgentIDs := func(ctx context.Context, opts listAgentsOpts) ([]string, error) {
-		filter := mobyclient.Filters{}.
-			Add("label", cfg.LabelManaged()+"="+cfg.ManagedLabelValue()).
-			Add("label", cfg.LabelPurpose()+"="+cfg.PurposeAgent())
-		result, err := dockerCli.APIClient.ContainerList(ctx, mobyclient.ContainerListOptions{
-			All:     opts.All,
-			Filters: filter,
-		})
-		if err != nil {
-			return nil, err
-		}
-		ids := make([]string, 0, len(result.Items))
-		for _, c := range result.Items {
-			ids = append(ids, c.ID)
-		}
-		return ids, nil
-	}
-	handler := fwhandler.NewHandler(fwhandler.HandlerDeps{
-		EBPF:       ebpfMgr,
-		Stack:      stack,
-		Store:      rulesStore,
-		Cfg:        cfg,
-		Resolver:   containerResolver,
-		Log:        log,
-		Queue:      actionQueue,
-		Bus:        bus,
-		ListAgents: func(ctx context.Context) ([]string, error) { return listAgentIDs(ctx, listAgentsOpts{}) },
-	})
-
-	// Agent registry is needed BOTH by the Register handler on the
-	// agent listener and by AdminService.ListAgents on the admin
-	// listener — construct it here so a single instance is shared.
-	// Backed by sqlite at consts.CPControlPlaneDBPath; the parent dir
-	// is bind-mounted RW from the host, so the DB survives CP container
-	// recreation and reloads on next boot.
-	//
-	// CP is the SOLE sqlite writer: it captures peer cert thumbprints
-	// at Register handler entry and writes the row, evicts on
-	// container/destroy via dockerevents, and reaps orphan rows at
-	// startup. The host CLI never opens this DB — that's what fixes
-	// the WAL coherence bug across the macOS bind-mount boundary.
-	//
-	// EnsureSchema runs first so a fresh CP container against an empty
-	// data dir comes up with the schema applied before NewSQLiteWriter
-	// queries SELECT COUNT (which would otherwise see "no such table").
-	if err := agent.EnsureSchema(consts.CPControlPlaneDBPath, log.With("component", "agent")); err != nil {
-		return fmt.Errorf("agent ensure schema: %w", err)
-	}
-	agentReg, err := agent.NewSQLiteWriter(consts.CPControlPlaneDBPath, log.With("component", "agent"))
+	// Phase 3: Ory auth stack (Kratos, Hydra, Oathkeeper) — startup GATE 1 (see
+	// startOryStack). caCertPool/caTLS are the single CA surface reused
+	// everywhere downstream; never rebuilt.
+	caCertPool, caTLS, err := startOryStack(signalCtx, cfg, subMgr, orchestrator, cp, caCertPath, jwkPath, log)
 	if err != nil {
-		return fmt.Errorf("agent sqlite: %w", err)
+		return err
 	}
 
-	// Peer-IP→Docker→labels resolver. Maps a live mTLS peer IP to
-	// the `purpose=agent` container owning that endpoint on
-	// the clawker network so the identity surface can ground its trust check
-	// on a kernel-attested source instead of cert claims.
-	agentPeerLookup := agent.NewMobyPeerLookup(dockerCli.APIClient, log.With("component", "agent-peer-lookup"))
-
-	adminv1.RegisterAdminServiceServer(grpcServer, server.NewAdminServer(handler, agentReg, log))
-
-	grpcLis, err := net.Listen("tcp", "0.0.0.0:"+strconv.Itoa(cp.AdminPort))
+	// Phase 4: Docker client + firewall stack + eBPF load — startup GATES (see
+	// buildEnforcement; ebpf Load + CleanupStaleBypass are pre-SetReady gates
+	// that exit 1 without flush). enforcementCleanup closes the eBPF manager
+	// (error joined into retErr) then the Docker client, on every return arm.
+	dockerCli, containerResolver, rulesStore, stack, ebpfMgr, enforcementCleanup, err := buildEnforcement(signalCtx, cfg, log, otelCerts)
+	// Register cleanup before the error check: buildEnforcement returns a
+	// non-nil cleanup even on a mid-construction failure (e.g. cgroup-driver
+	// detect fails after the Docker client opened), so a partial build still
+	// closes what it opened.
+	defer func() { retErr = errors.Join(retErr, enforcementCleanup()) }()
 	if err != nil {
-		return fmt.Errorf("grpc listen: %w", err)
+		return err
 	}
 
-	// Agent listener — bound to the clawker network only (NOT host-published).
-	// Same mTLS material as the admin listener (server cert + CLI CA
-	// pool); the per-listener AuthInterceptor enforces the agent-side
-	// method-scope vocabulary so admin and agent surfaces fail closed
-	// on cross-listener method names.
-	agentTLSCfg := &tls.Config{
-		Certificates: []tls.Certificate{serverCert},
-		ClientAuth:   tls.RequireAndVerifyClientCert,
-		ClientCAs:    caCertPool,
-		MinVersion:   tls.VersionTLS13,
-	}
-	// IdentityInterceptor runs AFTER AuthInterceptor: token + scope
-	// pass first, then the universal identity gate grounds trust in
-	// the kernel-attested peer IP (peer-IP → Docker → labels) and
-	// verifies the cert's urn:clawker:agent: URI SAN against the
-	// label-derived AgentFullName. Applies to every RPC including
-	// Register — no opt-out exists. A constructor failure (nil
-	// resolver — wiring regression) degrades the AgentService surface:
-	// no agent listener brought up, no Register handler registered;
-	// CP, firewall, registry, AdminService stay up so operators can
-	// still observe and contain. Failing closed here is correct — a
-	// half-wired trust gate is exactly the silent-failure surface root
-	// CLAUDE.md forbids.
-	identityUnary, identityStream, identityErr := agent.IdentityInterceptor(
-		agentPeerLookup,
-		log.With("component", "agent-identity"),
-	)
-	if identityErr != nil {
-		log.Error().Err(identityErr).
-			Str("component", "agent-identity").
-			Str("event", "agent_identity_unavailable").
-			Msg("agent identity gate unavailable; AgentService listener disabled, CP serve path otherwise unaffected")
+	// Phase 5: typed pub/sub topics (see buildTopics). One topic per domain
+	// payload; the single generic audit hook self-attaches inside NewTopic.
+	busLog := log.With("component", "pubsub")
+	dockerTopic, agentTopic, enrolledTopic, err := buildTopics(busLog)
+	if err != nil {
+		return err
 	}
 
-	var agentServer *grpc.Server
-	var agentLis net.Listener
-	if identityUnary != nil {
-		agentServer = grpc.NewServer(
-			grpc.Creds(credentials.NewTLS(agentTLSCfg)),
-			grpc.ChainUnaryInterceptor(agentInterceptor.UnaryInterceptor(), identityUnary),
-			grpc.ChainStreamInterceptor(agentInterceptor.StreamInterceptor(), identityStream),
-		)
-		agentLis, err = net.Listen("tcp", "0.0.0.0:"+strconv.Itoa(cp.AgentPort))
-		if err != nil {
-			return fmt.Errorf("agent grpc listen: %w", err)
-		}
-
-		// Register the AgentService.Register handler. IdentityInterceptor
-		// has already grounded the peer in a daemon-resolved container
-		// identity and attached it to ctx; the handler captures the cert
-		// thumbprint, cross-checks the cert's container_id SAN + request
-		// fields against the resolved truth, and writes the agentregistry
-		// row. The handler is the SOLE writer of the agentregistry sqlite
-		// DB.
-		registerHandler, herr := agent.NewHandler(
-			agentReg,
-			log.With("component", "agent-register"),
-		)
-		if herr != nil {
-			return fmt.Errorf("agent register handler: %w", herr)
-		}
-		agentv1.RegisterAgentServiceServer(agentServer, registerHandler)
-	}
-
-	// Cap covers gRPC admin, gRPC agent, healthz, and the dockerevents
-	// feeder. Buffered so any goroutine that fails before main reaches
-	// the select can deposit its error without blocking.
-	serveFailed := make(chan error, 4)
-
-	go func() {
-		log.Info().Int("port", cp.AdminPort).Msg("gRPC admin API serving")
-		if err := grpcServer.Serve(grpcLis); err != nil {
-			serveFailed <- fmt.Errorf("gRPC admin serve: %w", err)
+	// Belt-and-braces topic close for non-drain exit paths; the drain callback
+	// closes them explicitly first (after every producer/worker is cancelled).
+	defer func() {
+		for _, t := range []interface{ Close() error }{dockerTopic, agentTopic, enrolledTopic} {
+			if err := t.Close(); err != nil {
+				log.Warn().Err(err).Msg("topic close failed")
+			}
 		}
 	}()
 
-	if agentServer != nil {
-		go func() {
-			log.Info().Int("port", cp.AgentPort).Msg("gRPC agent API serving")
-			if err := agentServer.Serve(agentLis); err != nil {
-				serveFailed <- fmt.Errorf("gRPC agent serve: %w", err)
-			}
-		}()
+	// Phase 6: agent registry (sqlite) + peer lookup + lister + worldview
+	// Repository with its two subscriptions wired — see buildAgentInfra.
+	agentReg, agentPeerLookup, lister, agentRepo, err := buildAgentInfra(log, dockerCli, cfg, agentTopic, dockerTopic)
+	if err != nil {
+		return err
 	}
 
-	// Settings-driven firewall bringup (startup gate).
-	//
-	// firewall.enable (settings.yaml) means the stack must be up whenever
-	// the CP is — not only when a CLI verb (`firewall up`, `container
-	// start`) happens to send FirewallInit. Run the same queued
-	// FirewallInit the CLI RPC path uses (route_map seed + agent
-	// re-enrollment included) synchronously, BEFORE SetReady: a green
-	// /healthz must mean "everything the settings enable is enforcing".
-	// This covers CP boots no CLI observes — the on-failure restart
-	// policy resurrecting a crashed CP with agents still running.
-	//
-	// A bringup failure FAILS CP startup (pre-SetReady startup-gate exit,
-	// code 1 — same doctrine as the CleanupStaleBypass gate): the user
-	// needs that feedback loudly. Degrading instead would leave agents
-	// either unusable (eBPF redirecting egress at a dead Envoy) or, worse,
-	// silently unenforced while the user believes the firewall is on. No
-	// eBPF flush happens on this exit path — existing per-container state
-	// stays pinned, so already-enrolled agents stay fail-closed rather
-	// than fail-open. The host-side healthz wait extends its budget for
-	// this gate (manager.waitForCPHealthz).
-	//
-	// (Background ctx: FirewallInit's real work runs on the ActionQueue
-	// under the queue's own ctx — the caller ctx is not load-bearing.)
-	//
-	// Re-enrollment events published here precede netlogger construction
-	// (below), so netlogger's LabelCache stays cold for agents that
-	// outlived the previous CP until the next FirewallInit/FirewallEnable
-	// — telemetry enrichment only; enforcement is unaffected.
-	if cfg.Settings().Firewall.FirewallEnabled() {
-		log.Info().Str("component", "firewall-bringup").
-			Msg("firewall bringup: starting stack (settings firewall.enable)")
-		if _, err := handler.FirewallInit(context.Background(), &adminv1.FirewallInitRequest{}); err != nil {
-			// The startup-gate exit lands only on os.Stderr (docker logs);
-			// this is the rotating-log record an unattended boot leaves
-			// behind — without it the log file ends at "starting stack"
-			// and the CP looks hung, not failed.
-			log.Error().Err(err).
-				Str("event", "firewall_bringup_failed").
-				Str("component", "firewall-bringup").
-				Msg("firewall bringup failed — CP exiting (startup gate); enrolled agents stay fail-closed against pinned eBPF state; inspect docker logs and re-run `clawker controlplane up`")
-			return fmt.Errorf("firewall bringup: %w", err)
-		}
-		log.Info().Str("component", "firewall-bringup").Msg("firewall stack up")
+	// Phase 7: firewall handler + gRPC servers (admin + agent listeners) — see
+	// buildGRPCStack. The ActionQueue Close is drain step 1 (injected via
+	// HandlerDeps); grpcCleanup is the belt-and-braces close for non-drain
+	// exit paths.
+	actionQueue, handler, grpcStack, serveFailed, grpcCleanup, err := buildGRPCStack(grpcStackDeps{
+		log:               log,
+		cfg:               cfg,
+		ebpfMgr:           ebpfMgr,
+		stack:             stack,
+		rulesStore:        rulesStore,
+		containerResolver: containerResolver,
+		agentReg:          agentReg,
+		agentPeerLookup:   agentPeerLookup,
+		lister:            lister,
+		enrolledTopic:     enrolledTopic,
+		caCertPool:        caCertPool,
+		caTLS:             caTLS,
+		cp:                cp,
+		serverCertPath:    serverCertPath,
+		serverKeyPath:     serverKeyPath,
+	})
+	if err != nil {
+		return err
+	}
+	defer grpcCleanup()
+
+	// Phase 8: settings-driven firewall bringup — startup GATE, pre-SetReady
+	// (see firewallBringupGate). A failure exits 1 without an eBPF flush.
+	if err := firewallBringupGate(cfg, log, handler); err != nil {
+		return err
 	}
 
 	orchestrator.SetReady()
 
-	healthMux := http.NewServeMux()
-	healthMux.Handle("/healthz", orchestrator.HealthzHandler())
-	healthServer := &http.Server{
-		Addr:    "0.0.0.0:" + strconv.Itoa(cp.HealthPort),
-		Handler: healthMux,
-	}
-	go func() {
-		log.Info().Int("port", cp.HealthPort).Msg("healthz serving")
-		if err := healthServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			serveFailed <- fmt.Errorf("healthz serve: %w", err)
-		}
-	}()
+	// Phase 9: /healthz server (see startHealthz). Returns the server so
+	// Phase 18 can GracefulStop it.
+	healthServer := startHealthz(cp, log, orchestrator, serveFailed)
 
-	// dockerevents feeder.
-	//
-	// Wires the dockerevents feeder onto the overseer bus;
-	// agent.Start (below) hangs its container/{start,destroy}
-	// subscribers off the same bus.
-	feeder, err := dockerevents.New(dockerCli.APIClient, bus, dockerevents.Options{
-		ManagedLabelKey:   cfg.LabelManaged(),
-		ManagedLabelValue: cfg.ManagedLabelValue(),
-		Logger:            log,
-	})
+	// Phase 10: dockerevents feeder — the sole producer of DockerEvent (see
+	// startFeeder). feederCancel is the drain sequence's stop-before-topic-close
+	// handle; deferred here as belt-and-braces for non-drain exit.
+	feederCancel, feederDone, err := startFeeder(watcherCtx, cfg, log, dockerCli, dockerTopic, serveFailed)
 	if err != nil {
-		return fmt.Errorf("dockerevents feeder: %w", err)
+		return err
 	}
-	// feederCtx is a child of watcherCtx so SIGTERM/drain-to-zero both
-	// reach it; feederCancel exists separately so drainCallbackBody can
-	// stop the feeder BEFORE closing the bus (avoids dropped-publish
-	// noise on in-flight events when AgentWatcher fires the drain
-	// while watcherCtx is still alive).
-	feederCtx, feederCancel := context.WithCancel(watcherCtx)
 	defer feederCancel()
 
-	// agentCleanup is wired below once the dialer is constructed —
-	// agent.Start is the single entry point that consolidates startup
-	// reap, container/destroy → registry evict, and container/start →
-	// dial agent into one bundle. Initialized to a no-op so deferred
-	// cleanup is safe even if Start fails before assignment.
-	agentCleanup := func() {}
-	defer func() { agentCleanup() }()
-
-	feederDone := make(chan struct{})
-	go func() {
-		defer close(feederDone)
-		err := feeder.Run(feederCtx)
-		if err == nil || errors.Is(err, context.Canceled) {
-			return
-		}
-		// Non-cancel exit: the feeder's Run loop is supposed to retry
-		// internally on every reconcile/stream error. A real return
-		// means a wiring bug or unrecoverable contract violation —
-		// surface to serveFailed so the daemon exits non-zero and the
-		// on-failure restart policy retriggers.
-		log.Error().Err(err).Msg("dockerevents feeder exited with error")
-		select {
-		case serveFailed <- fmt.Errorf("dockerevents feeder: %w", err):
-		default:
-		}
-	}()
-
-	// Periodic Overseer stats heartbeat — gives an operator tailing
-	// the CP log (or querying OpenSearch) a coarse health signal
-	// without needing a dedicated metrics surface. 30s cadence is
-	// below the OTEL resilience window and trivial overhead.
-	statsCtx, statsCancel := context.WithCancel(watcherCtx)
-	defer statsCancel()
-	go func() {
-		// recover so a future Stats() panic doesn't silently kill the
-		// heartbeat loop and leave the operator without telemetry.
-		defer func() {
-			if r := recover(); r != nil {
-				log.Error().Interface("panic", r).Msg("overseer stats heartbeat panicked")
-			}
-		}()
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-statsCtx.Done():
-				return
-			case <-ticker.C:
-				st := bus.Stats()
-				log.Info().
-					Int("subscribers", st.Subscribers).
-					Uint64("published_total", st.PublishedTotal).
-					Uint64("dropped_total", st.DroppedTotal).
-					Int("queue_depth", st.QueueDepth).
-					Int("queue_capacity", st.QueueCapacity).
-					Int("containers_known", st.ContainersKnown).
-					Int("sessions_known", st.SessionsKnown).
-					Msg("overseer stats heartbeat")
-			}
-		}
-	}()
-
-	// netlogger — eBPF egress event emitter. Drains the
-	// per-decision-point ringbuf populated by BPF and pushes enriched
-	// records to the trusted-infra OTLP receiver over a distinct
-	// service.name. Degraded paths (no otelcerts, no infra endpoint
-	// in env, provider preflight failure, netlogger constructor
-	// error, Start failure) each emit event=netlogger_unavailable
-	// and leave netloggerSvc nil so the drain hook skips the Stop
-	// call. CP, firewall, and gRPC surface stay up.
-	//
-	// netloggerProvider is hoisted to the run scope so the drain
-	// callback can Shutdown it after netloggerSvc.Stop — netlogger
-	// deliberately does not own the provider's lifetime (see
-	// netlogger/CLAUDE.md), so a clean drain has to flush it from
-	// here or the BatchProcessor goroutine leaks past Stop without
-	// flushing in-flight batches.
-	var (
-		netloggerSvc      *netlogger.Service
-		netloggerProvider *sdklog.LoggerProvider
-	)
-	{
-		endpoint, insecure := "", false
-		if raw := os.Getenv(consts.EnvOTLPLogsEndpoint); raw != "" {
-			endpoint, insecure = parseOtlpEndpoint(raw)
-		} else if raw := os.Getenv(consts.EnvOTLPEndpoint); raw != "" {
-			endpoint, insecure = parseOtlpEndpoint(raw)
-		}
-
-		// unconfigured tracks the "operator never set an OTLP
-		// endpoint" path so the structured log line lands at Warn
-		// instead of Error. That case is a normal optional-monitoring
-		// deployment shape; an operator log surface that screams
-		// Error on every default-config boot trains them to filter
-		// netlogger_unavailable, masking real failures later.
-		unconfigured := false
-		var degradeErr error
-		var reason string
-		switch {
-		case otelCertsSvc == nil:
-			reason = "otelcerts unavailable"
-			degradeErr = fmt.Errorf("trusted-lane TLS material absent")
-		case endpoint == "":
-			reason = "no OTLP endpoint configured"
-			degradeErr = fmt.Errorf("OTEL_EXPORTER_OTLP_ENDPOINT not set")
-			unconfigured = true
-		case insecure:
-			// Trust lane requires mTLS — never push BPF telemetry
-			// over plaintext. An operator who configured http://
-			// for the CP zerolog bridge is signalling test-mode,
-			// not production-mode; degrade rather than smuggle
-			// records onto a non-trusted receiver.
-			reason = "OTLP endpoint is plaintext"
-			degradeErr = fmt.Errorf("netlogger requires mTLS endpoint, got insecure: %s", endpoint)
-		}
-
-		if degradeErr == nil {
-			tlsCfg, err := otelCertsSvc.LoadTLSConfig("netlogger")
-			if err != nil {
-				reason = "LoadTLSConfig"
-				degradeErr = fmt.Errorf("netlogger LoadTLSConfig: %w", err)
-			} else {
-				// Circuit breaker: 3 consecutive Export failures
-				// trip the breaker permanently for the rest of the
-				// CP lifetime. Prom counters (netlogger/metrics.go)
-				// are incremented in-process but not registered on
-				// a scrape endpoint — the circuit breaker is the
-				// only collector-resilience mechanism wired here.
-				circLog := log.With("component", "netlogger.circuit")
-				wrap := func(inner sdklog.Exporter) sdklog.Exporter {
-					return netlogger.NewCircuitExporter(inner, netlogger.CircuitOptions{
-						FailureThreshold: 3,
-						Log:              circLog,
-					})
-				}
-				netloggerProvider, err = otel.NewOtelLoggerProvider(otel.OtelClientOptions{
-					Endpoint:            endpoint,
-					TLSConfig:           tlsCfg,
-					ServiceName:         "ebpf-egress",
-					MaxQueueSize:        2048,
-					ExportInterval:      time.Second,
-					ExportTimeout:       30 * time.Second,
-					RetryMaxElapsedTime: 10 * time.Second,
-					PreflightTimeout:    20 * time.Second,
-					Log:                 log,
-					ExporterWrap:        wrap,
-				})
-				if err != nil {
-					reason = "NewOtelLoggerProvider"
-					degradeErr = fmt.Errorf("netlogger NewOtelLoggerProvider: %w", err)
-				}
-			}
-		}
-
-		if degradeErr == nil {
-			netloggerSvc, degradeErr = netlogger.New(netlogger.Deps{
-				Mgr:                ebpfMgr,
-				Bus:                bus,
-				Docker:             dockerCli.APIClient,
-				Cfg:                cfg,
-				Domains:            handler.ReverseDNSDomains,
-				OtelLoggerProvider: netloggerProvider,
-				Log:                log.With("component", "netlogger"),
-			})
-			if degradeErr != nil {
-				reason = "netlogger.New"
-			}
-		}
-
-		if degradeErr == nil {
-			if err := netloggerSvc.Start(watcherCtx); err != nil {
-				reason = "netlogger.Start"
-				degradeErr = fmt.Errorf("netlogger Start: %w", err)
-				netloggerSvc = nil
-			}
-		}
-
-		if degradeErr != nil {
-			ev := log.Error()
-			if unconfigured {
-				// Unconfigured is the expected shape when running
-				// without `clawker monitor up` — Warn is the right
-				// level so operators don't filter the netlogger
-				// event class out of triage.
-				ev = log.Warn()
-			}
-			ev.Err(degradeErr).
-				Str("event", "netlogger_unavailable").
-				Str("component", "netlogger").
-				Str("step", reason).
-				Msg("netlogger degraded — eBPF egress events will not be exported; firewall enforcement unaffected")
-			netloggerSvc = nil
-			// Shut down a provider we constructed but never handed
-			// off — leaving it live would leak a BatchProcessor
-			// goroutine retrying a doomed export for the rest of
-			// the CP lifetime. Shutdown errors are themselves
-			// degraded-state telemetry: log so an operator can see
-			// when teardown of a half-built provider stalls.
-			if netloggerProvider != nil {
-				shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-				if err := netloggerProvider.Shutdown(shutdownCtx); err != nil {
-					log.Warn().Err(err).
-						Str("event", "netlogger_provider_shutdown_failed").
-						Str("component", "netlogger").
-						Msg("provider Shutdown failed on degraded boot path; BatchProcessor goroutine may have leaked")
-				}
-				cancel()
-				netloggerProvider = nil
-			}
-		} else {
-			log.Info().
-				Str("component", "netlogger").
-				Str("endpoint", endpoint).
-				Msg("netlogger ready — eBPF egress events exporting to OTLP")
-		}
-	}
-
-	// Periodic dns_cache garbage collection. Reclaims expired
-	// entries the CoreDNS dnsbpf plugin wrote so the pinned map does not
-	// grow unbounded and stale orphaned hashes do not accumulate. Runs on
-	// watcherCtx so it stops on SIGTERM/drain-to-zero. Recovers per CP
-	// no-panic discipline — the recover is per-sweep (inside the loop), so a
-	// single panicking sweep is logged and the loop keeps governing the map
-	// rather than surrendering it until CP restart.
-	dnsGCCtx, dnsGCCancel := context.WithCancel(watcherCtx)
-	var dnsGCWg sync.WaitGroup
-	dnsGCWg.Add(1)
-	go func() {
-		defer dnsGCWg.Done()
-		ticker := time.NewTicker(dnsGCInterval)
-		defer ticker.Stop()
-		escalator := dnsGCEscalator{threshold: dnsGCDegradedThreshold}
-		for {
-			select {
-			case <-dnsGCCtx.Done():
-				return
-			case <-ticker.C:
-				// Every sweep since the last success has failed: the map is no
-				// longer being reclaimed. Emit a distinct line on the tick that
-				// first crosses the threshold so an operator can tell a wedged
-				// GC from one transient failure. Logged once per crossing.
-				if escalator.record(dnsGCSweep(ebpfMgr.GarbageCollectDNS, log)) {
-					log.Error().Int("consecutive_failures", escalator.failures).
-						Str("event", "dns_gc_degraded").
-						Msg("dns_cache gc has failed every sweep — map no longer being reclaimed, may grow unbounded")
-				}
-			}
-		}
-	}()
-	// Stop the dns_cache sweeper and wait for any in-flight sweep to finish
-	// before the BPF map fd it iterates/deletes is torn down — the same
-	// stop-before-teardown discipline netloggerSvc.Stop follows for the
-	// ringbuf reader on the shared dns_cache map. sync.Once so the drain
-	// callback (before FlushAll) and the deferred path can both call it;
-	// deferred here (after ebpfMgr.Close was deferred earlier) so LIFO runs
-	// this first, joining the goroutine before Close() shuts the fd.
-	var stopDNSGCOnce sync.Once
-	stopDNSGC := func() {
-		stopDNSGCOnce.Do(func() {
-			dnsGCCancel()
-			dnsGCWg.Wait()
-		})
-	}
+	// Phases 11-13: long-lived observability workers (stats heartbeat,
+	// netlogger, dns_cache GC) — see startWorkers. They run on watcherCtx, so
+	// run()'s watcherCancel stops the heartbeat and GC transitively; the drain
+	// sequence stops netlogger + GC explicitly before FlushAll. The deferred
+	// stopDNSGC is belt-and-braces (LIFO before ebpfMgr.Close) so an in-flight
+	// sweep is joined before the dns_cache fd is torn down.
+	netloggerSvc, netloggerProvider, stopDNSGC := startWorkers(watcherCtx, workerDeps{
+		log:           log,
+		busLog:        busLog,
+		cfg:           cfg,
+		ebpfMgr:       ebpfMgr,
+		dockerCli:     dockerCli,
+		otelCertsSvc:  otelCertsSvc,
+		handler:       handler,
+		agentRepo:     agentRepo,
+		dockerTopic:   dockerTopic,
+		agentTopic:    agentTopic,
+		enrolledTopic: enrolledTopic,
+	})
 	defer stopDNSGC()
 
+	// Phase 14: drain-to-zero teardown callback. newDrainCallback wraps
+	// runDrainSequence in sync.Once so SIGTERM and the AgentWatcher's
+	// drain-to-zero converge on the same teardown — whichever trigger wins runs
+	// it exactly once; every later call returns the captured error, so run()'s
+	// final `return drainCallback(...)` reports the drain outcome without
+	// re-running it.
 	listAgents := func(ctx context.Context) (int, error) {
-		ids, err := listAgentIDs(ctx, listAgentsOpts{})
+		ids, err := lister.List(ctx, agent.ListOpts{})
 		if err != nil {
 			return 0, err
 		}
 		return len(ids), nil
 	}
+	drainCallback := newDrainCallback(drainDeps{
+		log:               log,
+		actionQueue:       actionQueue,
+		grpcStack:         grpcStack,
+		handler:           handler,
+		stack:             stack,
+		netloggerSvc:      netloggerSvc,
+		netloggerProvider: netloggerProvider,
+		stopDNSGC:         stopDNSGC,
+		ebpfMgr:           ebpfMgr,
+		feederCancel:      feederCancel,
+		feederDone:        feederDone,
+		dockerTopic:       dockerTopic,
+		agentTopic:        agentTopic,
+		enrolledTopic:     enrolledTopic,
+	})
 
-	drainCallbackBody := func(ctx context.Context) error {
-		// Strict ordering (INV-B2-007):
-		//  1. actionQueue.Close drains accepted submissions to completion
-		//     then returns ErrClosed for any subsequent Submit — the
-		//     Handler's bypass-timer goroutines observe this and exit
-		//     cleanly instead of racing with FlushAll.
-		//  2. grpcServer.GracefulStop refuses new RPCs and waits for
-		//     in-flight handlers to return. With the queue closed any
-		//     handler still running hits ErrClosed from its pending
-		//     Submit and returns, so GracefulStop unblocks quickly.
-		//  3. Cancel any bypass timer that was mid-retry when Close
-		//     landed; safe no-op if the queue already drained them.
-		//  4. Stop the firewall stack (Envoy + CoreDNS).
-		//  5. Flush per-container eBPF state so the next CP starts clean.
-		// Errors are aggregated so a broken drain exits non-zero and the
-		// on-failure restart policy retriggers investigation rather than
-		// silently blessing partial teardown.
-		if err := actionQueue.Close(); err != nil {
-			log.Warn().Err(err).Msg("actionQueue close failed")
-		}
-		grpcServer.GracefulStop()
-		handler.CancelAllBypassTimers()
-		var errs []error
-		if err := stack.Stop(ctx); err != nil {
-			log.Error().Err(err).Msg("drain: firewall stack stop failed")
-			errs = append(errs, fmt.Errorf("stack stop: %w", err))
-		}
-		// Stop netlogger BEFORE eBPF flush so the ringbuf reader
-		// drains in-flight records before we tear down the BPF maps
-		// the reader holds. Then Shutdown the OTLP provider so the
-		// BatchProcessor flushes any in-flight batches to the
-		// collector — netlogger.Service.Stop deliberately does not
-		// touch the provider (lifetime is the caller's per
-		// netlogger/CLAUDE.md), so without this Shutdown call the
-		// "Stop before FlushAll" guarantee never actually flushes
-		// the OTLP queue. Fresh context bounded at 5s for each:
-		// the outer ctx may already be cancelled and we do not want
-		// netlogger to hold up CP drain past the AgentWatcher budget.
-		if netloggerSvc != nil {
-			stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			if err := netloggerSvc.Stop(stopCtx); err != nil {
-				log.Error().Err(err).Msg("drain: netlogger stop failed")
-				errs = append(errs, fmt.Errorf("netlogger stop: %w", err))
-			}
-			stopCancel()
-		}
-		if netloggerProvider != nil {
-			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			if err := netloggerProvider.Shutdown(shutdownCtx); err != nil {
-				log.Error().Err(err).Msg("drain: netlogger provider shutdown failed")
-				errs = append(errs, fmt.Errorf("netlogger provider shutdown: %w", err))
-			}
-			shutdownCancel()
-		}
-		// Stop the dns_cache sweeper as part of orderly eBPF teardown. FlushAll
-		// itself doesn't touch dns_cache, but the deferred ebpfMgr.Close() that
-		// follows shutdown closes every map fd — including the one the sweep
-		// iterates/deletes — so join the sweeper here before teardown proceeds.
-		stopDNSGC()
-		if err := ebpfMgr.FlushAll(); err != nil {
-			log.Error().Err(err).Msg("drain: ebpf flush failed")
-			errs = append(errs, fmt.Errorf("ebpf flush: %w", err))
-		}
-		// Stop the feeder before closing the bus so any in-flight
-		// Publish lands cleanly. feederCancel is idempotent; feederDone
-		// closes once the goroutine returns.
-		feederCancel()
-		<-feederDone
-		if err := bus.Close(); err != nil {
-			log.Error().Err(err).Msg("drain: overseer close failed")
-			errs = append(errs, fmt.Errorf("overseer close: %w", err))
-		}
-		return errors.Join(errs...)
+	// Phase 15: agent watcher (drain-to-zero trigger).
+	watcher, err := agent.NewAgentWatcher(log, listAgents, drainCallback, agent.AgentWatcherOptions{})
+	if err != nil {
+		return fmt.Errorf("agent watcher: %w", err)
 	}
-
-	// drainCallback wraps the body in sync.Once so SIGTERM and
-	// drain-to-zero converge on the same teardown. Whichever trigger
-	// wins runs the full sequence exactly once; the other observes the
-	// captured error via drainErr. This is what lets `clawker
-	// controlplane down` leave no orphan Envoy/CoreDNS containers —
-	// `docker stop` sends SIGTERM to PID 1, which now runs the same
-	// teardown as drain-to-zero.
-	var (
-		drainOnce sync.Once
-		drainErr  error
-	)
-	drainCallback := func(ctx context.Context) error {
-		drainOnce.Do(func() { drainErr = drainCallbackBody(ctx) })
-		return drainErr
-	}
-
-	watcher := agent.NewAgentWatcher(log, listAgents, drainCallback, agent.AgentWatcherOptions{})
 	watcherDone := make(chan error, 1)
 	go func() {
+		// CP no-panic discipline: this goroutine owns the drain-to-zero
+		// teardown (drainCallback runs ebpfMgr.FlushAll). A panic in watcher.Run
+		// must NOT unwind past the channel send, or watcherDone never receives,
+		// the serve select never drains, and PID 1 dies with eBPF pinned and
+		// unsupervised (§3.4). Convert any panic into a terminal shutdown error
+		// so the select still reaches drain, mirroring dockerevents.Feeder.Run.
+		defer func() {
+			if r := recover(); r != nil {
+				log.Error().
+					Interface("panic", r).
+					Bytes("stack", debug.Stack()).
+					Str("event", "agent_watcher_panic").
+					Msg("agent watcher goroutine panicked; converting to terminal shutdown so drain-to-zero/eBPF flush still runs")
+				watcherDone <- fmt.Errorf("agent watcher panic: %v", r)
+			}
+		}()
 		watcherDone <- watcher.Run(watcherCtx)
 	}()
 
-	// CP→clawkerd dial reconciler. Initial poll: open a Session to
-	// every running purpose=agent container so command dispatch is
-	// ready by the time anything wants to dispatch. The same DialAgent
-	// is the call target for the dockerevents container-start path
-	// added next; one dial code path, two callers.
-	//
-	// CP-readiness must NOT block on this. Failures (cert load, list
-	// containers, individual dial) are logged and the rest of CP
-	// proceeds — a misconfigured agent or a flapping clawkerd cannot
-	// hold the control plane down.
-	// Wire the CP-driven init Executor into the dialer at construction.
-	// Each new Session establish runs the static init plan against the
-	// open stream. Without this, the entrypoint hangs on its fifo until
-	// CLAWKER_INIT_TIMEOUT and the container fails to launch CMD.
-	// Container user identity (uid/gid/username/home) lives in consts
-	// and is read directly by the Executor. The plan shape is defined
-	// in agent.Executor.plan() and audited by
-	// TestExecutor_Plan_PrivilegeAndShape — keep the enumeration there
-	// so this comment can't drift. See wireInitExecutor for the degrade
-	// contract.
-	initExec := wireInitExecutor(bus, dockerCli, log)
-	dialer, err := agent.New(
-		log.With("component", "agent"),
-		dockerCli.APIClient,
-		bus,
-		agentReg,
-		consts.CPClientCertPath,
-		consts.CPClientKeyPath,
-		caCertPool,
-		initExec,
-	)
-	if err != nil {
-		log.Error().Err(err).
-			Str("event", "agent_dialer_unavailable").
-			Msg("agent.dial: Dialer construction failed; CP→clawkerd command dispatch disabled. AdminService, firewall, registry, and AgentService listener continue.")
-		dialer = nil
-	}
-	if dialer != nil {
-		// Single agent startup procedure: reap orphan registry rows
-		// against live docker, subscribe to container/destroy for
-		// registry evict, subscribe to container/start|restart|unpause
-		// for CP→clawkerd dial. Replaces the previously fragmented
-		// Reap + two Subscribe wirings.
-		cleanup, err := agent.Start(watcherCtx, agent.StartDeps{
-			Registry: agentReg,
-			DockerLister: func(ctx context.Context) ([]string, error) {
-				return listAgentIDs(ctx, listAgentsOpts{All: true})
-			},
-			PeerLookup: agentPeerLookup,
-			Dialer:     dialer,
-			Bus:        bus,
-			Log:        log.With("component", "agent"),
-		})
-		if err != nil {
-			log.Error().Err(err).Msg("agent.Start failed; agent-axis subscriptions disabled")
-		} else {
-			agentCleanup = cleanup
-		}
-
-		// Initial path: dial every already-running agent container at
-		// CP boot. Runs in its own goroutine — must NOT block CP
-		// readiness, must NOT fail CP if listAgentIDs errors.
-		//
-		// A single failed list strands every container that was already
-		// running at CP boot — those containers' ContainerStarted
-		// events fired before the dockerevents subscription started, so
-		// the runtime path won't pick them up either. Retry with
-		// bounded backoff (3 × 100/200/400ms, mirroring the reaper's
-		// listWithRetry pattern) absorbs the transient docker-daemon
-		// hiccup that's the dominant failure mode at boot.
-		go func() {
-			// recover so a panic deep in DialAgent (cert rotation race,
-			// nil deref in a future dialer change) doesn't silently
-			// strand every initial-poll agent without surfacing — this
-			// goroutine has no other observer. Same pattern as the
-			// overseer stats heartbeat below.
-			defer func() {
-				if r := recover(); r != nil {
-					log.Error().
-						Interface("panic", r).
-						Str("event", "agentdial_initial_poll_panic").
-						Str("component", "cp.agentdial").
-						Msg("initial agent dial goroutine panicked; initial-poll dispatch aborted (runtime ContainerStarted handlers unaffected)")
-				}
-			}()
-			const maxAttempts = 3
-			backoff := 100 * time.Millisecond
-			var initialAgents []string
-			var listErr error
-			for attempt := 1; attempt <= maxAttempts; attempt++ {
-				initialAgents, listErr = listAgentIDs(watcherCtx, listAgentsOpts{})
-				if listErr == nil {
-					if attempt > 1 {
-						log.Info().Int("attempt", attempt).Str("event", "agentdial_initial_list_recovered").Msg("list agent containers recovered after retry")
-					}
-					break
-				}
-				if attempt == maxAttempts {
-					break
-				}
-				log.Warn().Err(listErr).Int("attempt", attempt).Dur("backoff", backoff).Str("event", "agentdial_initial_list_retry").Msg("list agent containers failed; retrying")
-				select {
-				case <-watcherCtx.Done():
-					return
-				case <-time.After(backoff):
-				}
-				backoff *= 2
-			}
-			if listErr != nil {
-				log.Error().Err(listErr).Str("event", "agentdial_initial_list_failed").Msg("list agent containers")
-				return
-			}
-			for _, id := range initialAgents {
-				dialer.DialAgent(watcherCtx, id)
-			}
-			log.Info().Int("count", len(initialAgents)).Str("event", "agentdial_initial_poll_dispatched").Msg("dispatched initial CP→clawkerd dials")
-		}()
-	}
+	// Phase 16: agent domain wiring (init executor, dialer, subscriptions) —
+	// see startAgentDomain for the §3.4 degrade contract. agentCleanup is a
+	// no-op until agent.Start succeeds, so deferring it is always safe.
+	agentCleanup := startAgentDomain(watcherCtx, agentDomainDeps{
+		log:         log,
+		dockerCli:   dockerCli,
+		agentTopic:  agentTopic,
+		dockerTopic: dockerTopic,
+		agentReg:    agentReg,
+		peerLookup:  agentPeerLookup,
+		lister:      lister,
+		caCertPool:  caCertPool,
+	})
+	defer func() { agentCleanup() }()
 
 	log.Info().Msg("clawkercp ready")
 
+	// Phase 17: serve until shutdown trigger.
 	select {
 	case <-signalCtx.Done():
-		// signalCtx fired because a signal was delivered, so the value is
-		// already queued on sigValueCh; read it non-blocking (default guards
-		// against any theoretical stall). nil only in that guard case.
+		// The signal value is already queued on sigValueCh; read it non-blocking.
 		var sig os.Signal
 		select {
 		case sig = <-sigValueCh:
@@ -1490,23 +1161,15 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 			shutdownLog = shutdownLog.Stringer("signal", sig)
 		}
 		shutdownLog.Msg("shutdown signal received")
-		// Any subprocess exit past this point is part of graceful shutdown;
-		// suppress crash reporting so it doesn't race with us.
+		// Subprocess exits past this point are graceful shutdown; suppress
+		// crash reporting so it does not race the drain.
 		subMgr.BeginShutdown()
-		// Cancel the watcher and wait for it to exit so there's no race
-		// on drainCallback — sync.Once makes the actual teardown safe
-		// either way, but we want a deterministic ordering for logs.
+		// Cancel + join the watcher for deterministic log ordering (sync.Once
+		// makes the teardown safe either way).
 		watcherCancel()
 		<-watcherDone
-		// Run the full teardown: Envoy + CoreDNS stop, eBPF flush,
-		// queue drain. Without this, a `docker stop clawker-controlplane`
-		// (i.e. `clawker controlplane down`) would leave orphan firewall
-		// containers and stale BPF map state.
 		teardownCtx, teardownCancel := context.WithTimeout(context.Background(), cpDrainTimeout)
 		if err := drainCallback(teardownCtx); err != nil {
-			// Generic message + the signal as a structured field: this arm
-			// fires on SIGTERM (docker stop) or SIGINT (Ctrl-C), so a
-			// hardcoded "sigterm" would misattribute a Ctrl-C teardown.
 			teardownLog := log.Error().Err(err)
 			if sig != nil {
 				teardownLog = teardownLog.Stringer("signal", sig)
@@ -1522,9 +1185,6 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 			log.Info().Err(err).Msg("agent watcher cancelled — shutting down")
 		default:
 			log.Error().Err(err).Msg("agent watcher error — shutting down")
-			// Drain failures (stack stop / ebpf flush) already captured
-			// in drainErr via the sync.Once wrapper; the watcher just
-			// surfaced them.
 		}
 		subMgr.BeginShutdown()
 	case err := <-subMgr.CrashChan():
@@ -1536,117 +1196,24 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	}
 	watcherCancel()
 
-	// Reverse-order graceful shutdown.
-	shutdownDone := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		grpcServer.GracefulStop()
-	}()
-	if agentServer != nil {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			agentServer.GracefulStop()
-		}()
-	}
-	go func() {
-		wg.Wait()
-		close(shutdownDone)
-	}()
-
-	select {
-	case <-shutdownDone:
-	case <-time.After(defaultShutdownWait):
-		log.Warn().Msg("gRPC graceful stop timed out, forcing")
-		grpcServer.Stop()
-		if agentServer != nil {
-			agentServer.Stop()
-		}
-	}
-
+	// Phase 18: reverse-order graceful shutdown. grpcStack.GracefulStop folds
+	// the concurrent admin+agent stop + bounded-timeout + force-Stop fallback
+	// (drain step 2 ordering preserved); shutdownCtx bounds both it and the
+	// healthz shutdown at defaultShutdownWait.
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), defaultShutdownWait)
 	defer shutdownCancel()
+	grpcStack.GracefulStop(shutdownCtx)
 	if err := healthServer.Shutdown(shutdownCtx); err != nil {
 		log.Warn().Err(err).Msg("healthz shutdown error")
 	}
 
 	subMgr.Shutdown(defaultShutdownWait)
 	log.Info().Msg("clawkercp stopped")
-	return drainErr
-}
-
-// otelOptionsFromEnv builds logger.OtelOptions from the standard OTLP
-// environment variables. Returns nil when no endpoint is configured —
-// the logger then runs file-only and the CP daemon needs no OTEL
-// dependency at runtime.
-//
-// Per-signal `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` takes precedence over
-// the generic `OTEL_EXPORTER_OTLP_ENDPOINT`. Either may be a full URL
-// (`https://host.docker.internal:4319/v1/logs`) or a bare authority
-// (`host.docker.internal:4319`); the OTLP/gRPC exporter only needs
-// host:port, so we strip scheme/path here.
-//
-// Default is TLS. Bare host:port → TLS. `https://` → TLS. Only
-// explicit `http://` opts in to plaintext, so a misconfigured prod
-// endpoint can't silently downgrade.
-//
-// mTLS material is NOT taken from env. The CP's trusted-lane
-// exporter is wired in-process via /controlplane/otelcerts,
-// which mints leaves on each handshake from the bind-mounted infra
-// intermediate (see /controlplane/otelcerts/CLAUDE.md). Env-
-// driven cert paths are deliberately rejected so a future operator
-// can't smuggle in CLI-root-direct material — agent containers
-// already hold CLI-root-direct leaves and could forge
-// service.name=clawkercp records on the trusted receiver if the CP
-// honored an env-supplied cert path.
-//
-// The bridge endpoint is set up by manager to point at the monitor
-// stack's CP-only receiver via host.docker.internal. CP is BPF-exempt
-// (not enrolled in container_map) and ExtraHosts maps the gateway
-// alias, so the dial reaches the host loopback published port. Agents
-// on the clawker network cannot reach this endpoint AND cannot present an
-// intermediate-chained client cert — two layers of isolation.
-func otelOptionsFromEnv() *logger.OtelOptions {
-	raw := os.Getenv(consts.EnvOTLPLogsEndpoint)
-	if raw == "" {
-		raw = os.Getenv(consts.EnvOTLPEndpoint)
-	}
-	if raw == "" {
-		return nil
-	}
-
-	endpoint, insecure := parseOtlpEndpoint(raw)
-	if endpoint == "" {
-		return nil
-	}
-	return &logger.OtelOptions{
-		Endpoint: endpoint,
-		Insecure: insecure,
-	}
-}
-
-// parseOtlpEndpoint normalises an OTEL endpoint env value to the
-// host:port form `otlploggrpc.WithEndpoint` accepts, returning whether
-// it should be sent plaintext.
-//
-// Default is secure. Only an explicit `http://` scheme opts into
-// plaintext — a bare host:port or `https://` use TLS so a
-// misconfigured prod env can't silently downgrade to cleartext logs.
-func parseOtlpEndpoint(raw string) (endpoint string, insecure bool) {
-	rest := raw
-	switch {
-	case strings.HasPrefix(rest, "https://"):
-		rest = strings.TrimPrefix(rest, "https://")
-	case strings.HasPrefix(rest, "http://"):
-		insecure = true
-		rest = strings.TrimPrefix(rest, "http://")
-	}
-	if i := strings.IndexByte(rest, '/'); i >= 0 {
-		rest = rest[:i]
-	}
-	return rest, insecure
+	// drainCallback is idempotent (sync.Once): if a select arm already drained,
+	// this returns the captured error without re-running; on arms that didn't
+	// drain (watcher already ran it, or a never-served exit) it reports the
+	// recorded outcome. Never re-executes the teardown.
+	return drainCallback(context.Background())
 }
 
 // wireInitExecutor constructs the CP-driven init Executor and applies
@@ -1656,8 +1223,8 @@ func parseOtlpEndpoint(raw string) (endpoint string, insecure bool) {
 // returns nil; CP keeps running. Extracted as its own function so the
 // degrade-not-crash invariant is unit-testable — see
 // TestWireInitExecutor_NilBus.
-func wireInitExecutor(bus *overseer.Overseer, dockerCli *docker.Client, log *logger.Logger) *agent.Executor {
-	exec, err := agent.NewExecutor(bus, dockerCli, log.With("component", "agent.init"))
+func wireInitExecutor(topic *pubsub.Topic[agent.AgentEvent], dockerCli *docker.Client, log *logger.Logger) *agent.Executor {
+	exec, err := agent.NewExecutor(topic, dockerCli, log.With("component", "agent.init"))
 	if err == nil {
 		return exec
 	}

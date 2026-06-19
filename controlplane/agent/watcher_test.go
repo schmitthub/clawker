@@ -38,7 +38,7 @@ func TestAgentWatcher_DrainCallback(t *testing.T) {
 				return tc.callbackErr
 			}
 
-			w := NewAgentWatcher(logger.Nop(), listAgents, onDrain, AgentWatcherOptions{
+			w := mustNewWatcher(t, logger.Nop(), listAgents, onDrain, AgentWatcherOptions{
 				PollInterval:    10 * time.Millisecond,
 				MissedThreshold: 2,
 				GracePeriod:     50 * time.Millisecond,
@@ -77,7 +77,7 @@ func TestAgentWatcher_DoesNotDrainBeforeGrace(t *testing.T) {
 		return nil
 	}
 
-	w := NewAgentWatcher(logger.Nop(), listAgents, onDrain, AgentWatcherOptions{
+	w := mustNewWatcher(t, logger.Nop(), listAgents, onDrain, AgentWatcherOptions{
 		PollInterval:    5 * time.Millisecond,
 		MissedThreshold: 2,
 		GracePeriod:     200 * time.Millisecond,
@@ -112,7 +112,7 @@ func TestAgentWatcher_NonZeroCountResetsMissStreak(t *testing.T) {
 		return nil
 	}
 
-	w := NewAgentWatcher(logger.Nop(), listAgents, onDrain, AgentWatcherOptions{
+	w := mustNewWatcher(t, logger.Nop(), listAgents, onDrain, AgentWatcherOptions{
 		PollInterval:    5 * time.Millisecond,
 		MissedThreshold: 2,
 		GracePeriod:     20 * time.Millisecond,
@@ -154,7 +154,7 @@ func TestAgentWatcher_ListAgentsErrorResetsStreak(t *testing.T) {
 		return nil
 	}
 
-	w := NewAgentWatcher(logger.Nop(), listAgents, onDrain, AgentWatcherOptions{
+	w := mustNewWatcher(t, logger.Nop(), listAgents, onDrain, AgentWatcherOptions{
 		PollInterval:    5 * time.Millisecond,
 		MissedThreshold: 2,
 		GracePeriod:     10 * time.Millisecond,
@@ -186,7 +186,7 @@ func TestAgentWatcher_ListErrCeiling_SurfacesError(t *testing.T) {
 		return nil
 	}
 
-	w := NewAgentWatcher(logger.Nop(), listAgents, onDrain, AgentWatcherOptions{
+	w := mustNewWatcher(t, logger.Nop(), listAgents, onDrain, AgentWatcherOptions{
 		PollInterval:    2 * time.Millisecond,
 		MissedThreshold: 2,
 		GracePeriod:     5 * time.Millisecond,
@@ -218,7 +218,7 @@ func TestAgentWatcher_ContextCancellationReturnsError(t *testing.T) {
 		return nil
 	}
 
-	w := NewAgentWatcher(logger.Nop(), listAgents, onDrain, AgentWatcherOptions{
+	w := mustNewWatcher(t, logger.Nop(), listAgents, onDrain, AgentWatcherOptions{
 		PollInterval:    5 * time.Millisecond,
 		MissedThreshold: 2,
 		GracePeriod:     10 * time.Millisecond,
@@ -244,6 +244,82 @@ func TestAgentWatcher_ContextCancellationReturnsError(t *testing.T) {
 	}
 }
 
+// mustNewWatcher constructs an AgentWatcher and fails the test if the
+// constructor returns an error. Keeps the happy-path call sites terse
+// now that NewAgentWatcher returns (*AgentWatcher, error) rather than
+// panicking on misconfig.
+func mustNewWatcher(
+	t *testing.T,
+	log *logger.Logger,
+	listAgents func(context.Context) (int, error),
+	onDrain func(context.Context) error,
+	opts AgentWatcherOptions,
+) *AgentWatcher {
+	t.Helper()
+	w, err := NewAgentWatcher(log, listAgents, onDrain, opts)
+	if err != nil {
+		t.Fatalf("NewAgentWatcher: unexpected error: %v", err)
+	}
+	return w
+}
+
+// TestNewAgentWatcher_MisconfigReturnsError locks in the CP serve-path
+// contract: a nil callback or a negative option is a construction ERROR,
+// never a panic. A panic here would kill PID 1 and strand eBPF programs
+// unsupervised (see the resilience contract); the orchestrator must be
+// able to degrade on a typed error instead.
+func TestNewAgentWatcher_MisconfigReturnsError(t *testing.T) {
+	t.Parallel()
+
+	okList := func(context.Context) (int, error) { return 0, nil }
+	okDrain := func(context.Context) error { return nil }
+
+	tests := []struct {
+		name    string
+		listFn  func(context.Context) (int, error)
+		drainFn func(context.Context) error
+		opts    AgentWatcherOptions
+	}{
+		{name: "nil listAgents", listFn: nil, drainFn: okDrain},
+		{name: "nil onDrainToZero", listFn: okList, drainFn: nil},
+		{name: "negative poll interval", listFn: okList, drainFn: okDrain, opts: AgentWatcherOptions{PollInterval: -time.Second}},
+		{name: "negative missed threshold", listFn: okList, drainFn: okDrain, opts: AgentWatcherOptions{MissedThreshold: -1}},
+		{name: "negative grace period", listFn: okList, drainFn: okDrain, opts: AgentWatcherOptions{GracePeriod: -time.Second}},
+		{name: "negative list err ceiling", listFn: okList, drainFn: okDrain, opts: AgentWatcherOptions{ListErrCeiling: -1}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// The test itself proves no panic: a panic would fail the
+			// test outright rather than reaching the assertions.
+			w, err := NewAgentWatcher(logger.Nop(), tc.listFn, tc.drainFn, tc.opts)
+			if !errors.Is(err, ErrWatcherMisconfig) {
+				t.Fatalf("NewAgentWatcher: got err=%v, want ErrWatcherMisconfig", err)
+			}
+			if w != nil {
+				t.Fatalf("NewAgentWatcher: got non-nil watcher on misconfig")
+			}
+		})
+	}
+}
+
+// TestNewAgentWatcher_ValidConfigSucceeds proves the happy path returns
+// a usable watcher and a nil error.
+func TestNewAgentWatcher_ValidConfigSucceeds(t *testing.T) {
+	t.Parallel()
+
+	w, err := NewAgentWatcher(logger.Nop(),
+		func(context.Context) (int, error) { return 0, nil },
+		func(context.Context) error { return nil },
+		AgentWatcherOptions{},
+	)
+	if err != nil {
+		t.Fatalf("NewAgentWatcher: unexpected error: %v", err)
+	}
+	if w == nil {
+		t.Fatal("NewAgentWatcher: got nil watcher on valid config")
+	}
+}
+
 // TestAgentWatcher_RunTwice_ReturnsError guarantees the at-most-once
 // Run contract structurally — a second Run call must not spin up a
 // competing poll loop.
@@ -253,7 +329,7 @@ func TestAgentWatcher_RunTwice_ReturnsError(t *testing.T) {
 	listAgents := func(_ context.Context) (int, error) { return 1, nil }
 	onDrain := func(_ context.Context) error { return nil }
 
-	w := NewAgentWatcher(logger.Nop(), listAgents, onDrain, AgentWatcherOptions{
+	w := mustNewWatcher(t, logger.Nop(), listAgents, onDrain, AgentWatcherOptions{
 		PollInterval: 5 * time.Millisecond,
 		GracePeriod:  10 * time.Millisecond,
 	})

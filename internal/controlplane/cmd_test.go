@@ -14,45 +14,6 @@ import (
 // INV-B1-010: eBPF lifecycle ordering preserved
 // ---------------------------------------------------------------------------
 
-// Tests INV-B1-010 [unit]: /healthz returns 503 before eBPF Load() completes.
-// The ready atomic bool must be false until Load() succeeds, and the
-// /healthz handler must return non-200 until the bool is set.
-func TestINV_B1_010_HealthzReturns503BeforeReady(t *testing.T) {
-	orchestrator := NewCPStartupOrchestrator()
-	require.NotNil(t, orchestrator, "orchestrator must not be nil")
-
-	handler := orchestrator.HealthzHandler()
-	require.NotNil(t, handler, "healthz handler must not be nil")
-
-	// Before SetReady() is called, /healthz must return 503.
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, rec.Code,
-		"/healthz must return 503 before CP is ready")
-}
-
-// Tests INV-B1-010 [unit]: /healthz returns 200 after eBPF Load() completes.
-func TestINV_B1_010_HealthzReturns200AfterReady(t *testing.T) {
-	orchestrator := NewCPStartupOrchestrator()
-	require.NotNil(t, orchestrator, "orchestrator must not be nil")
-
-	handler := orchestrator.HealthzHandler()
-	require.NotNil(t, handler, "healthz handler must not be nil")
-
-	// Simulate successful startup.
-	orchestrator.SetReady()
-
-	// After SetReady(), /healthz must return 200.
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-
-	assert.Equal(t, http.StatusOK, rec.Code,
-		"/healthz must return 200 after CP is ready")
-}
-
 // Tests INV-B1-010 [unit]: IsReady() starts false and becomes true after SetReady().
 func TestINV_B1_010_IsReadyAtomicBool(t *testing.T) {
 	orchestrator := NewCPStartupOrchestrator()
@@ -70,9 +31,10 @@ func TestINV_B1_010_IsReadyAtomicBool(t *testing.T) {
 // INV-B1-013: CP health via HTTP endpoint with hard prerequisites
 // ---------------------------------------------------------------------------
 
-// Tests INV-B1-013 [unit]: /healthz returns 200 only after full initialization.
-// This is the same test as INV-B1-010 from the /healthz perspective,
-// but framed specifically around the "no partial states" requirement.
+// Tests INV-B1-013 [unit]: /healthz transitions 503 -> 200 across the
+// single SetReady() boundary — the "no partial states" requirement. This
+// is the consolidated 503-before / 200-after case for the HealthzHandler
+// path; the atomic-bool and eBPF-gating cases live in their own tests.
 func TestINV_B1_013_HealthzOnlyAfterFullInit(t *testing.T) {
 	orchestrator := NewCPStartupOrchestrator()
 	handler := orchestrator.HealthzHandler()
@@ -92,24 +54,6 @@ func TestINV_B1_013_HealthzOnlyAfterFullInit(t *testing.T) {
 		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 		assert.Equal(t, http.StatusOK, rec.Code)
 	})
-}
-
-// Tests INV-B1-013 [unit]: No ready files exist — readiness is HTTP-only.
-// This is a structural assertion: the CP must NOT use filesystem-based
-// readiness signaling.
-func TestINV_B1_013_NoReadyFiles(t *testing.T) {
-	// The CPStartupOrchestrator should use an atomic bool, not a ready file.
-	orchestrator := NewCPStartupOrchestrator()
-
-	// The orchestrator must expose healthz via HTTP handler, not a file.
-	handler := orchestrator.HealthzHandler()
-	assert.NotNil(t, handler,
-		"readiness must be exposed via HTTP handler, not filesystem")
-
-	// Verify the orchestrator has no file-writing methods by checking
-	// that it works without a data directory.
-	assert.False(t, orchestrator.IsReady(),
-		"orchestrator must work without any filesystem — pure atomic bool")
 }
 
 // ---------------------------------------------------------------------------

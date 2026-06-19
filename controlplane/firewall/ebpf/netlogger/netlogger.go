@@ -2,7 +2,7 @@
 // record with userspace attribution ({container_id, agent, project,
 // domain}), and hands the result to a Sink. It is the userspace half
 // of the per-decision-point egress event emitter: the BPF programs
-// in internal/controlplane/firewall/ebpf/bpf/ submit a fixed-size
+// in controlplane/firewall/ebpf/bpf/ submit a fixed-size
 // egress_event record at every decision point (connect4/6,
 // sendmsg4/6, sock_create); this package shapes those records into
 // the OTLP log stream the monitoring backend consumes.
@@ -31,10 +31,10 @@ import (
 	mobyclient "github.com/moby/moby/client"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 
+	"github.com/schmitthub/clawker/controlplane/dockerevents"
+	ebpf "github.com/schmitthub/clawker/controlplane/firewall/ebpf"
+	"github.com/schmitthub/clawker/controlplane/pubsub"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/controlplane/dockerevents"
-	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
-	"github.com/schmitthub/clawker/internal/controlplane/overseer"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -74,12 +74,19 @@ type Deps struct {
 	// Required.
 	Mgr *ebpf.Manager
 
-	// Bus is the overseer bus the Service subscribes to for
-	// LabelCache hydration (EBPFContainerEnrolled) and eviction
-	// (dockerevents.DockerEvent with container/die,destroy).
-	// Required — without a bus the cache never populates and
-	// every emitted record carries empty attribution.
-	Bus *overseer.Overseer
+	// EnrolledTopic is the typed topic the Service subscribes to for
+	// LabelCache hydration. The firewall handler publishes
+	// EBPFContainerEnrolled on it after a successful FirewallEnable.
+	// Required — without it the cache never populates and every
+	// emitted record carries empty attribution.
+	EnrolledTopic *pubsub.Topic[ebpf.EBPFContainerEnrolled]
+
+	// EvictTopic is the typed Docker-event topic the Service
+	// subscribes to for LabelCache eviction. The handler filters for
+	// container/{die,destroy} in its subscriber closure and drops the
+	// matching entry by container_id. Required — without it stale
+	// labels survive cgroup-id reuse.
+	EvictTopic *pubsub.Topic[dockerevents.DockerEvent]
 
 	// Docker is the daemon client used to fetch container labels
 	// when an EBPFContainerEnrolled event lands. One inspect per
@@ -157,17 +164,19 @@ type Service struct {
 	process *processor
 
 	// Lifecycle: started once, stopped once. cancel terminates the
-	// reverse-DNS refresher, the processor's outer ctx, and both
-	// subscriber goroutines. The derived ctx itself flows through
-	// closures rather than being held on the struct.
+	// reverse-DNS refresher and the processor's outer ctx. The derived
+	// ctx itself flows through closures rather than being held on the
+	// struct.
+	//
+	// The enroll/evict subscriptions are owned by the injected topics:
+	// Topic.Subscribe spins up the per-subscriber drain goroutine and
+	// bounded buffer, and the orchestrator's Topic.Close tears every
+	// subscriber down. The Service holds no per-subscription unsubscribe
+	// handle and starts no subscriber goroutine of its own.
 	startOnce sync.Once
 	stopOnce  sync.Once
 	wg        sync.WaitGroup
 	cancel    context.CancelFunc
-
-	// unsubs holds the two overseer subscription cancel funcs so
-	// Stop can drop them in order.
-	unsubs []func()
 }
 
 // New validates deps and constructs the Service. Returns
@@ -177,8 +186,10 @@ func New(deps Deps) (*Service, error) {
 	switch {
 	case deps.Mgr == nil:
 		return nil, errors.New("netlogger: Deps.Mgr required")
-	case deps.Bus == nil:
-		return nil, errors.New("netlogger: Deps.Bus required")
+	case deps.EnrolledTopic == nil:
+		return nil, errors.New("netlogger: Deps.EnrolledTopic required")
+	case deps.EvictTopic == nil:
+		return nil, errors.New("netlogger: Deps.EvictTopic required")
 	case deps.Docker == nil:
 		return nil, errors.New("netlogger: Deps.Docker required")
 	case deps.Cfg == nil:
@@ -229,7 +240,7 @@ func (s *Service) Metrics() *Metrics { return s.metrics }
 // bus subscription wired in Start.
 func (s *Service) LabelCache() *LabelCache { return s.cache }
 
-// Start subscribes to the overseer bus and launches the reader +
+// Start subscribes to the enroll + evict topics and launches the reader +
 // processor + reverse-DNS goroutines. Idempotent on success; the
 // second call returns nil without doing extra work. The subscription
 // wiring uses the FirewallInit re-enrollment sweep to hydrate the
@@ -269,7 +280,7 @@ func (s *Service) Start(ctx context.Context) error {
 		// Subscribe BEFORE launching goroutines so any
 		// EBPFContainerEnrolled event delivered while the goroutines
 		// spin up still lands in the LabelCache.
-		s.subscribeBus(innerCtx)
+		s.subscribeBus()
 
 		s.wg.Add(3)
 		go func() {
@@ -293,17 +304,18 @@ func (s *Service) Start(ctx context.Context) error {
 }
 
 // Stop drains the pipeline in the order documented in CLAUDE.md:
-//  1. Unsubscribe from the overseer bus so no new events feed the
-//     LabelCache mid-teardown.
-//  2. Close the ringbuf.Reader — reader.drain returns on
+//  1. Close the ringbuf.Reader — reader.drain returns on
 //     ringbuf.ErrClosed and closes the queue, which lets the
 //     processor drain remaining buffered records before exiting.
-//  3. Cancel the inner ctx so the reverse-DNS refresher and the
-//     subscriber goroutines (which select on ctx.Done as a
-//     belt-and-braces against a bus-closed unsubscribe race) exit.
-//  4. Wait on the goroutines with a bounded timeout. Beyond the
+//  2. Cancel the inner ctx so the reverse-DNS refresher exits on its
+//     next tick.
+//  3. Wait on the goroutines with a bounded timeout. Beyond the
 //     timeout we proceed so netlogger never blocks CP drain-to-zero;
 //     the OS reaps any straggler on exit.
+//
+// Enroll/evict subscription teardown is NOT done here — the injected
+// topics own it. The orchestrator's Topic.Close drops every subscriber
+// at drain-to-zero. Stop confines itself to what the Service launched.
 //
 // Returns the joined set of errors encountered during the four
 // steps so the caller's drain orchestrator can include them in its
@@ -312,9 +324,10 @@ func (s *Service) Start(ctx context.Context) error {
 func (s *Service) Stop(ctx context.Context) error {
 	var errs []error
 	s.stopOnce.Do(func() {
-		for _, unsub := range s.unsubs {
-			unsub()
-		}
+		// Subscription teardown is owned by the injected topics: the
+		// orchestrator's Topic.Close drops every subscriber. The
+		// Service only tears down what it owns — the ringbuf reader and
+		// the goroutines it launched.
 		if s.rb != nil {
 			if err := s.rb.Close(); err != nil {
 				s.deps.Log.Warn().
@@ -353,97 +366,45 @@ func (s *Service) Stop(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// subscribeBus wires the two overseer subscriptions netlogger
-// depends on. Each subscriber goroutine recovers; a malformed
-// event must not strand the BPF programs pinned with no consumer.
-// ctx is the inner lifecycle context cancelled by Stop.
-func (s *Service) subscribeBus(ctx context.Context) {
-	// Enrollment: the firewall handler publishes
-	// EBPFContainerEnrolled after a successful FirewallEnable.
-	// FirewallInit's re-enrollment sweep at CP boot ALSO calls
-	// FirewallEnable, so this single subscription covers both
-	// runtime and startup hydration without a separate backfill
-	// path.
-	enrollSub, ok := overseer.Subscribe[ebpf.EBPFContainerEnrolled](s.deps.Bus, "netlogger.enroll")
-	if ok {
-		s.unsubs = append(s.unsubs, enrollSub.Unsubscribe)
-		s.wg.Add(1)
-		go func() {
-			defer s.wg.Done()
-			defer func() {
-				if r := recover(); r != nil {
-					s.deps.Log.Error().
-						Interface("panic", r).
-						Str("event", "netlogger_enroll_subscriber_panic").
-						Msg("netlogger enroll subscriber panicked — LabelCache will not be hydrated")
-				}
-			}()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case ev, open := <-enrollSub.C:
-					if !open {
-						return
-					}
-					s.handleEnroll(ev)
-				}
-			}
-		}()
-	} else {
-		s.deps.Log.Warn().
-			Str("event", "netlogger_enroll_subscribe_failed").
-			Msg("overseer Subscribe[EBPFContainerEnrolled] returned false — bus may be closed")
-	}
+// subscribeBus wires the two topic subscriptions netlogger depends on.
+// Each subscription's delivery runs under the Topic's built-in
+// per-delivery recover, so a malformed event cannot strand the pinned
+// BPF programs with no consumer. The Topic owns the per-subscriber
+// goroutine + bounded buffer; the orchestrator's Topic.Close tears them
+// down at drain-to-zero, so the Service holds no unsubscribe handle.
+func (s *Service) subscribeBus() {
+	// Enrollment: the firewall handler publishes EBPFContainerEnrolled
+	// after a successful FirewallEnable. FirewallInit's re-enrollment
+	// sweep at CP boot ALSO calls FirewallEnable, so this single
+	// subscription covers both runtime and startup hydration without a
+	// separate backfill path.
+	//
+	// Topic.Subscribe owns the per-subscriber drain goroutine, its
+	// bounded buffer (drop-oldest on overflow), and a per-delivery
+	// recover — a panic in handleEnroll is contained to that one event
+	// and cannot strand eBPF. The orchestrator's Topic.Close tears the
+	// subscriber down at drain-to-zero.
+	s.deps.EnrolledTopic.Subscribe(func(evt pubsub.Event[ebpf.EBPFContainerEnrolled]) {
+		s.handleEnroll(evt.Payload)
+	})
 
-	// Eviction: dockerevents.DockerEvent already flows on the bus
-	// today; we filter for container/{die,destroy} and drop the
-	// matching LabelCache entry by container_id. Stop / kill / oom
-	// are also exit transitions but a container can be `docker
-	// start`-ed back after stop — only destroy is irrecoverable.
-	// die fires on every exit (incl. before destroy on auto-remove
-	// containers), so subscribing to both is the safest superset.
-	dieFilter := func(ev dockerevents.DockerEvent) bool {
+	// Eviction: dockerevents.DockerEvent flows on the evict topic. The
+	// die/destroy predicate is folded into the subscriber closure (the
+	// pipe carries no filtering). Stop / kill / oom are also exit
+	// transitions but a container can be `docker start`-ed back after
+	// stop — only destroy is irrecoverable. die fires on every exit
+	// (incl. before destroy on auto-remove containers), so handling both
+	// is the safest superset.
+	s.deps.EvictTopic.Subscribe(func(evt pubsub.Event[dockerevents.DockerEvent]) {
+		ev := evt.Payload
 		if ev.Type != mobyevents.ContainerEventType {
-			return false
+			return
 		}
 		switch ev.Action {
 		case mobyevents.ActionDie, mobyevents.ActionDestroy:
-			return true
+			s.cache.EvictByContainerID(ev.Actor.ID)
 		}
-		return false
-	}
-	evictSub, ok := overseer.SubscribeFiltered(s.deps.Bus, "netlogger.evict", dieFilter)
-	if ok {
-		s.unsubs = append(s.unsubs, evictSub.Unsubscribe)
-		s.wg.Add(1)
-		go func() {
-			defer s.wg.Done()
-			defer func() {
-				if r := recover(); r != nil {
-					s.deps.Log.Error().
-						Interface("panic", r).
-						Str("event", "netlogger_evict_subscriber_panic").
-						Msg("netlogger evict subscriber panicked — stale cache entries may persist")
-				}
-			}()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case ev, open := <-evictSub.C:
-					if !open {
-						return
-					}
-					s.cache.EvictByContainerID(ev.Actor.ID)
-				}
-			}
-		}()
-	} else {
-		s.deps.Log.Warn().
-			Str("event", "netlogger_evict_subscribe_failed").
-			Msg("overseer SubscribeFiltered[DockerEvent] returned false — bus may be closed")
-	}
+	})
 }
 
 // handleEnroll resolves a freshly-enrolled container's labels via

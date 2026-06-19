@@ -13,9 +13,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/schmitthub/clawker/controlplane/manager"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
-	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -41,8 +41,8 @@ func newFirewallHarness(t *testing.T, requiredServices ...string) *harness.Harne
 			Config:         config.NewConfig,
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
-			ControlPlane: func(cfg config.Config, log *logger.Logger) cpboot.Manager {
-				return cpboot.NewManager(
+			ControlPlane: func(cfg config.Config, log *logger.Logger) manager.Manager {
+				return manager.NewManager(
 					func(ctx context.Context) (*docker.Client, error) {
 						return docker.NewClient(ctx, cfg, log)
 					},
@@ -112,8 +112,8 @@ func TestFirewall_ICMPBlocked(t *testing.T) {
 			Config:         config.NewConfig,
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
-			ControlPlane: func(cfg config.Config, log *logger.Logger) cpboot.Manager {
-				return cpboot.NewManager(
+			ControlPlane: func(cfg config.Config, log *logger.Logger) manager.Manager {
+				return manager.NewManager(
 					func(ctx context.Context) (*docker.Client, error) {
 						return docker.NewClient(ctx, cfg, log)
 					},
@@ -267,8 +267,8 @@ func TestFirewall_ConfigRules(t *testing.T) {
 			Config:         config.NewConfig,
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
-			ControlPlane: func(cfg config.Config, log *logger.Logger) cpboot.Manager {
-				return cpboot.NewManager(
+			ControlPlane: func(cfg config.Config, log *logger.Logger) manager.Manager {
+				return manager.NewManager(
 					func(ctx context.Context) (*docker.Client, error) {
 						return docker.NewClient(ctx, cfg, log)
 					},
@@ -470,8 +470,8 @@ func TestFirewall_HostProxyReachable(t *testing.T) {
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
 			HostProxy:      hostproxy.NewManager,
-			ControlPlane: func(cfg config.Config, log *logger.Logger) cpboot.Manager {
-				return cpboot.NewManager(
+			ControlPlane: func(cfg config.Config, log *logger.Logger) manager.Manager {
+				return manager.NewManager(
 					func(ctx context.Context) (*docker.Client, error) {
 						return docker.NewClient(ctx, cfg, log)
 					},
@@ -525,8 +525,8 @@ func TestFirewall_SSHTCPMapping(t *testing.T) {
 			Config:         config.NewConfig,
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
-			ControlPlane: func(cfg config.Config, log *logger.Logger) cpboot.Manager {
-				return cpboot.NewManager(
+			ControlPlane: func(cfg config.Config, log *logger.Logger) manager.Manager {
+				return manager.NewManager(
 					func(ctx context.Context) (*docker.Client, error) {
 						return docker.NewClient(ctx, cfg, log)
 					},
@@ -679,8 +679,8 @@ func TestFirewall_DenySubdomainUnderWildcard(t *testing.T) {
 			Config:         config.NewConfig,
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
-			ControlPlane: func(cfg config.Config, log *logger.Logger) cpboot.Manager {
-				return cpboot.NewManager(
+			ControlPlane: func(cfg config.Config, log *logger.Logger) manager.Manager {
+				return manager.NewManager(
 					func(ctx context.Context) (*docker.Client, error) { return docker.NewClient(ctx, cfg, log) },
 					func() (config.Config, error) { return cfg, nil },
 					func() (*logger.Logger, error) { return log, nil },
@@ -739,8 +739,8 @@ func TestFirewall_HTTPDomainDetection(t *testing.T) {
 			Config:         config.NewConfig,
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
-			ControlPlane: func(cfg config.Config, log *logger.Logger) cpboot.Manager {
-				return cpboot.NewManager(
+			ControlPlane: func(cfg config.Config, log *logger.Logger) manager.Manager {
+				return manager.NewManager(
 					func(ctx context.Context) (*docker.Client, error) {
 						return docker.NewClient(ctx, cfg, log)
 					},
@@ -823,8 +823,8 @@ func TestFirewall_FirewallDisabled(t *testing.T) {
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
 			HostProxy:      hostproxy.NewManager,
-			ControlPlane: func(cfg config.Config, log *logger.Logger) cpboot.Manager {
-				return cpboot.NewManager(
+			ControlPlane: func(cfg config.Config, log *logger.Logger) manager.Manager {
+				return manager.NewManager(
 					func(ctx context.Context) (*docker.Client, error) {
 						return docker.NewClient(ctx, cfg, log)
 					},
@@ -881,8 +881,8 @@ func TestFirewall_PathRulesDefaultDeny(t *testing.T) {
 			Config:         config.NewConfig,
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
-			ControlPlane: func(cfg config.Config, log *logger.Logger) cpboot.Manager {
-				return cpboot.NewManager(
+			ControlPlane: func(cfg config.Config, log *logger.Logger) manager.Manager {
+				return manager.NewManager(
 					func(ctx context.Context) (*docker.Client, error) {
 						return docker.NewClient(ctx, cfg, log)
 					},
@@ -979,8 +979,8 @@ func TestFirewall_PathRulesExplicitDeny(t *testing.T) {
 			Config:         config.NewConfig,
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
-			ControlPlane: func(cfg config.Config, log *logger.Logger) cpboot.Manager {
-				return cpboot.NewManager(
+			ControlPlane: func(cfg config.Config, log *logger.Logger) manager.Manager {
+				return manager.NewManager(
 					func(ctx context.Context) (*docker.Client, error) {
 						return docker.NewClient(ctx, cfg, log)
 					},
@@ -1076,8 +1076,8 @@ func TestFirewall_TLSPathRulesDefaultDeny(t *testing.T) {
 			Config:         config.NewConfig,
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
-			ControlPlane: func(cfg config.Config, log *logger.Logger) cpboot.Manager {
-				return cpboot.NewManager(
+			ControlPlane: func(cfg config.Config, log *logger.Logger) manager.Manager {
+				return manager.NewManager(
 					func(ctx context.Context) (*docker.Client, error) {
 						return docker.NewClient(ctx, cfg, log)
 					},
@@ -1182,8 +1182,8 @@ func TestFirewall_PathRuleNormalizationDefeatsSmuggling(t *testing.T) {
 			Config:         config.NewConfig,
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
-			ControlPlane: func(cfg config.Config, log *logger.Logger) cpboot.Manager {
-				return cpboot.NewManager(
+			ControlPlane: func(cfg config.Config, log *logger.Logger) manager.Manager {
+				return manager.NewManager(
 					func(ctx context.Context) (*docker.Client, error) {
 						return docker.NewClient(ctx, cfg, log)
 					},
@@ -1287,8 +1287,8 @@ func TestFirewall_TLSPathRulesExplicitDeny(t *testing.T) {
 			Config:         config.NewConfig,
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
-			ControlPlane: func(cfg config.Config, log *logger.Logger) cpboot.Manager {
-				return cpboot.NewManager(
+			ControlPlane: func(cfg config.Config, log *logger.Logger) manager.Manager {
+				return manager.NewManager(
 					func(ctx context.Context) (*docker.Client, error) {
 						return docker.NewClient(ctx, cfg, log)
 					},
@@ -1385,8 +1385,8 @@ func TestFirewall_WildcardAndExactCoexist(t *testing.T) {
 			Config:         config.NewConfig,
 			Client:         docker.NewClient,
 			ProjectManager: project.NewProjectManager,
-			ControlPlane: func(cfg config.Config, log *logger.Logger) cpboot.Manager {
-				return cpboot.NewManager(
+			ControlPlane: func(cfg config.Config, log *logger.Logger) manager.Manager {
+				return manager.NewManager(
 					func(ctx context.Context) (*docker.Client, error) {
 						return docker.NewClient(ctx, cfg, log)
 					},

@@ -4,58 +4,73 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/events"
 	"github.com/moby/moby/client"
 
-	"github.com/schmitthub/clawker/internal/controlplane/overseer"
+	"github.com/schmitthub/clawker/controlplane/pubsub"
 )
 
-// Resource Kind strings owned by this feeder. The bus dispatches by
-// Go type, not by string — these constants exist for Docker filter
-// vocabulary only.
+// Resource Kind strings owned by this feeder. The topic carries a
+// single typed payload (DockerEvent); subscribers filter on
+// Payload.Type + Payload.Action — these constants exist for Docker
+// filter vocabulary only.
 const (
 	KindContainer = "container"
 	KindNetwork   = "network"
 )
 
-// parseExitCode coerces moby's stringly-typed exitCode attribute to
-// int32 once at the dispatch boundary, with a Debug audit on
-// malformed input so a moby contract change surfaces in logs without
-// breaking dispatch.
-func (f *Feeder) parseExitCode(raw, containerID string) int32 {
+// sourceName is the pubsub.Event.Source stamped on every envelope this
+// feeder publishes, identifying dockerevents as the producer for the
+// orchestrator's audit hook.
+const sourceName = "dockerevents"
+
+// auditExitCode validates moby's stringly-typed exitCode attribute at
+// the dispatch boundary purely for its side effect: a Debug audit line
+// on malformed input so a moby contract change surfaces in logs. The
+// parsed value is intentionally not returned — the raw exitCode string
+// rides verbatim in the published DockerEvent payload for any subscriber
+// that needs it, so coercing it here would be dead work.
+func (f *Feeder) auditExitCode(raw, containerID string) {
 	if raw == "" {
-		return 0
+		return
 	}
-	n, err := strconv.ParseInt(raw, 10, 32)
-	if err != nil {
+	if _, err := strconv.ParseInt(raw, 10, 32); err != nil {
 		f.log.Debug().
 			Err(err).
 			Str("event", "dockerevents_exit_code_parse_failed").
 			Str("container_id", containerID).
 			Str("raw", raw).
 			Msg("dockerevents: malformed exitCode attribute from moby")
-		return 0
 	}
-	return int32(n)
 }
 
-// publishDockerEvent fans the single DockerEvent envelope onto the
-// bus and logs a Warn line carrying ctxID (container_id where
-// available, network_id otherwise) when Publish drops it. The bus's
-// own drop-log only carries event name + queue capacity — pairing
+// publishDockerEvent wraps the DockerEvent in a pubsub envelope
+// (UnixNano timestamp from the event itself, dockerevents source) and
+// publishes it on the injected topic, logging a Warn line carrying
+// ctxID (container_id where available, network_id otherwise) when
+// Publish drops it. The topic's own drop-log only carries event name +
+// queue capacity — pairing
 // with ctxID at the producer site lets operators investigating "why
 // didn't subscriber X react to event Y" trace a thread back through
 // the timeline.
 func (f *Feeder) publishDockerEvent(ev DockerEvent, ctxID string) {
-	if overseer.Publish(f.bus, ev) {
+	envelope := pubsub.Event[DockerEvent]{
+		ID:        uuid.NewString(),
+		Timestamp: ev.TimeNano,
+		Source:    sourceName,
+		Payload:   ev,
+	}
+	if f.topic.Publish(envelope) {
 		return
 	}
 	f.log.Warn().
-		Str("event", ev.EventName()).
+		Str("event", fmt.Sprintf("docker.%s.%s", ev.Type, ev.Action)).
 		Str("ctx_id", ctxID).
 		Msg("dockerevents: publish dropped — bus full or closed")
 }
@@ -137,10 +152,10 @@ func shouldHandleAction(ev events.Message) bool {
 
 // dispatchContainer publishes the single DockerEvent envelope for the
 // incoming container event. Managed-set membership is the only
-// goroutine-local state mutation; consumers express intent via
-// SubscribeFiltered predicates on ev.Type + ev.Action.
+// goroutine-local state mutation; consumers fold their own predicate
+// on Payload.Type + Payload.Action into the Subscribe handler.
 //
-// The exitCode parse log (parseExitCode at Debug) is run for actions
+// The exitCode audit log (auditExitCode at Debug) is run for actions
 // that carry an exit code so a moby contract change surfaces in the
 // receive-side audit.
 func (f *Feeder) dispatchContainer(ev events.Message) {
@@ -163,7 +178,7 @@ func (f *Feeder) dispatchContainer(ev events.Message) {
 	default:
 		f.containers[id] = true
 		if ev.Action == events.ActionDie || ev.Action == events.ActionStop {
-			_ = f.parseExitCode(ev.Actor.Attributes["exitCode"], id)
+			f.auditExitCode(ev.Actor.Attributes["exitCode"], id)
 		}
 	}
 

@@ -14,21 +14,32 @@ import (
 	"google.golang.org/grpc/status"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	"github.com/schmitthub/clawker/controlplane/agent"
 	"github.com/schmitthub/clawker/internal/auth"
-	"github.com/schmitthub/clawker/internal/controlplane/agent"
 )
 
-// TestAdminServer_NewAdminServer_NilAgentsPanics pins that the
-// constructor rejects nil registry — CP is the sole sqlite writer,
-// any wiring path reaching the constructor without a registry is a
-// programming bug that must surface loudly at startup.
-func TestAdminServer_NewAdminServer_NilAgentsPanics(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("NewAdminServer(_, nil, _) must panic")
-		}
-	}()
-	NewAdminServer(nil, nil, nil)
+// TestAdminServer_NewAdminServer_NilAgentsErrors pins that the
+// constructor rejects a nil registry — CP is the sole sqlite writer, any
+// wiring path reaching the constructor without a registry is a
+// programming bug. It surfaces as ErrNilRegistry (not a panic) so the
+// daemon degrades rather than crashing and stranding pinned eBPF.
+func TestAdminServer_NewAdminServer_NilAgentsErrors(t *testing.T) {
+	srv, err := NewAdminServer(nil, nil, nil)
+	require.ErrorIs(t, err, ErrNilRegistry)
+	assert.Nil(t, srv)
+}
+
+// TestNewGRPCStack_NilHandlerErrors pins that the gRPC stack constructor
+// rejects a nil firewall handler — the handler backs the AdminService
+// surface, so any wiring path reaching the constructor without one is a
+// programming bug. It surfaces as ErrNilFirewallHandler (not a panic) so
+// the daemon degrades rather than crashing and stranding pinned eBPF.
+// The guard fires before any cert load or port bind, so the test needs
+// no filesystem or network setup.
+func TestNewGRPCStack_NilHandlerErrors(t *testing.T) {
+	stack, err := NewGRPCStack(GRPCDeps{Handler: nil})
+	require.ErrorIs(t, err, ErrNilFirewallHandler)
+	assert.Nil(t, stack)
 }
 
 func TestAdminServer_ListAgents_Snapshot(t *testing.T) {
@@ -104,7 +115,9 @@ func (f *fakeSnapshotRegistry) Snapshot() ([]agent.Entry, error) { return f.snap
 // intact but unreadable.
 func TestAdminServer_ListAgents_SnapshotError_ReturnsCodesInternal(t *testing.T) {
 	reg := &fakeSnapshotRegistry{snapErr: errors.New("sqlite query failed")}
-	srv := NewAdminServer(nil, reg, nil).(*adminServer)
+	srvIface, err := NewAdminServer(nil, reg, nil)
+	require.NoError(t, err)
+	srv := srvIface.(*adminServer)
 
 	resp, err := srv.ListAgents(context.Background(), &adminv1.ListAgentsRequest{})
 	require.Error(t, err)

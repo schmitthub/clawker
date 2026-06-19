@@ -5,13 +5,13 @@ package mocks
 
 import (
 	"context"
-	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
+	"github.com/schmitthub/clawker/controlplane/manager"
 	"sync"
 )
 
 // Ensure, that ManagerMock does implement manager.Manager.
 // If this is not the case, regenerate this file with moq.
-var _ cpboot.Manager = &ManagerMock{}
+var _ manager.Manager = &ManagerMock{}
 
 // ManagerMock is a mock implementation of manager.Manager.
 //

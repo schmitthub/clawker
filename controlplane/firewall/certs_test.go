@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/schmitthub/clawker/controlplane/firewall"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/controlplane/firewall"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

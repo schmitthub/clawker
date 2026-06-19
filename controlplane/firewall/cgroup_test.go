@@ -5,14 +5,15 @@ import (
 	"errors"
 	"testing"
 
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
 	mobyclient "github.com/moby/moby/client"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	fwcp "github.com/schmitthub/clawker/controlplane/firewall"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
-	fwcp "github.com/schmitthub/clawker/internal/controlplane/firewall"
 	dockermocks "github.com/schmitthub/clawker/internal/docker/mocks"
 )
 
@@ -139,4 +140,77 @@ func TestResolveContainerID_PropagatesLookupError(t *testing.T) {
 	_, err := fwcp.ResolveContainerID(t.Context(), fake.Client, "clawker.unknown.dev")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, sentinel)
+}
+
+func TestNewContainerResolver_ResolvesToCanonicalIDAndCgroupPath(t *testing.T) {
+	// Happy path: a friendly ref resolves through Docker to its canonical
+	// long ID, and the resolver pairs it with the BPF-attachable cgroup
+	// path for the detected driver.
+	const friendly = "clawker.myapp.dev"
+	cfg := configmocks.NewBlankConfig()
+	fake := dockermocks.NewFakeClient(cfg)
+	fake.FakeAPI.ContainerInspectFn = managedInspectFn(cfg, longHexID, nil)
+
+	resolve := fwcp.NewContainerResolver(fake.Client, "systemd")
+	id, cgroupPath, exists, err := resolve(t.Context(), friendly)
+	require.NoError(t, err)
+	assert.True(t, exists)
+	assert.Equal(t, longHexID, id)
+	assert.Equal(t, fwcp.EBPFCgroupPath("systemd", longHexID), cgroupPath)
+}
+
+func TestNewContainerResolver_MissingContainerSurfacesAsError(t *testing.T) {
+	// A friendly ref that Docker no longer knows is reported by the
+	// whail-backed *docker.Client as a "not managed" error (its managed
+	// jail swallows the raw NotFound before ResolveContainerID sees it).
+	// The resolver therefore surfaces it as a non-nil error with
+	// exists=false and an empty ID/cgroupPath — never a silent "gone".
+	cfg := configmocks.NewBlankConfig()
+	fake := dockermocks.NewFakeClient(cfg)
+	fake.FakeAPI.ContainerInspectFn = func(_ context.Context, _ string, _ mobyclient.ContainerInspectOptions) (mobyclient.ContainerInspectResult, error) {
+		return mobyclient.ContainerInspectResult{}, cerrdefs.ErrNotFound
+	}
+
+	resolve := fwcp.NewContainerResolver(fake.Client, "systemd")
+	id, cgroupPath, exists, err := resolve(t.Context(), "clawker.gone.dev")
+	require.Error(t, err)
+	assert.False(t, exists)
+	assert.Empty(t, id)
+	assert.Empty(t, cgroupPath)
+}
+
+func TestNewContainerResolver_CanonicalIDSkipsDockerRoundTrip(t *testing.T) {
+	// A canonical long-hex ref short-circuits inside ResolveContainerID and
+	// never touches Docker. ContainerInspect is left unset so a regression
+	// that drops the short-circuit would panic with "not implemented".
+	cfg := configmocks.NewBlankConfig()
+	fake := dockermocks.NewFakeClient(cfg)
+	fake.FakeAPI.ContainerInspectFn = nil
+
+	resolve := fwcp.NewContainerResolver(fake.Client, "cgroupfs")
+	id, cgroupPath, exists, err := resolve(t.Context(), longHexID)
+	require.NoError(t, err)
+	assert.True(t, exists)
+	assert.Equal(t, longHexID, id)
+	assert.Equal(t, fwcp.EBPFCgroupPath("cgroupfs", longHexID), cgroupPath)
+	assert.NotContains(t, fake.FakeAPI.Calls, "ContainerInspect")
+}
+
+func TestNewContainerResolver_PropagatesDockerError(t *testing.T) {
+	// A real Docker API failure (not NotFound) must surface as err with
+	// exists=false so the caller does NOT mistake an outage for "gone".
+	cfg := configmocks.NewBlankConfig()
+	fake := dockermocks.NewFakeClient(cfg)
+	sentinel := errors.New("docker daemon unreachable")
+	fake.FakeAPI.ContainerInspectFn = func(_ context.Context, _ string, _ mobyclient.ContainerInspectOptions) (mobyclient.ContainerInspectResult, error) {
+		return mobyclient.ContainerInspectResult{}, sentinel
+	}
+
+	resolve := fwcp.NewContainerResolver(fake.Client, "systemd")
+	id, cgroupPath, exists, err := resolve(t.Context(), "clawker.myapp.dev")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, sentinel)
+	assert.False(t, exists)
+	assert.Empty(t, id)
+	assert.Empty(t, cgroupPath)
 }

@@ -103,6 +103,14 @@ func Nop() *Logger                        // Discards all output (tests, disable
 
 `Nop` returns a logger backed by `zerolog.Nop()` — zero allocation, no file I/O.
 
+## Env-Driven OtelOptions
+
+```go
+func OtelOptionsFromEnv() *OtelOptions  // resolve endpoint + plaintext flag from OTLP env; nil when unconfigured
+```
+
+`OtelOptionsFromEnv` builds `*OtelOptions` from the standard OTLP endpoint env vars via `consts.ResolveOTLPEndpoint` (logs-signal `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` wins over the generic `OTEL_EXPORTER_OTLP_ENDPOINT`). Returns nil when no endpoint is set so the caller runs file-only. Secure by default: bare `host:port` and `https://` resolve to TLS; only an explicit `http://` opts in to plaintext, so a misconfigured prod endpoint cannot silently downgrade. mTLS material is NOT read from env — a trusted-lane caller (`clawkercp`) wires the in-process `OtelOptions.TLSConfig` shape separately so the leaf never lands on disk, and env-driven cert paths are deliberately not honored (an env-supplied CLI-root-direct leaf, which agent containers also hold, could otherwise forge `service.name=clawkercp` records on the trusted receiver).
+
 ## Methods
 
 ### Logging

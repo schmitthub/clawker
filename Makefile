@@ -133,9 +133,9 @@ clawker: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENERATED)
 # Nothing generated is ever committed to the repo: .o files, bpf2go Go
 # wrappers, and the extracted binaries are all gitignored.
 
-EBPF_BINARY := controlplane/cpboot/assets/ebpf-manager
+EBPF_BINARY := controlplane/manager/assets/ebpf-manager
 COREDNS_BINARY := controlplane/firewall/assets/coredns-clawker
-CP_BINARY := controlplane/cpboot/assets/clawkercp
+CP_BINARY := controlplane/manager/assets/clawkercp
 CLAWKERD_BINARY := internal/clawkerd/assets/clawkerd
 
 # Proto inputs + generated outputs. Declared early so targets that use

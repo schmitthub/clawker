@@ -7,8 +7,8 @@ import (
 	"net/netip"
 	"time"
 
+	ebpf "github.com/schmitthub/clawker/controlplane/firewall/ebpf"
 	"github.com/schmitthub/clawker/internal/consts"
-	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
 )
 
 // Verdict mirrors the BPF egress_verdict enum. Kept as a typed alias on

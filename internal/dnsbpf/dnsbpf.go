@@ -24,7 +24,7 @@ import (
 	"github.com/coredns/coredns/plugin/pkg/nonwriter"
 	"github.com/miekg/dns"
 
-	clawkerebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
+	clawkerebpf "github.com/schmitthub/clawker/controlplane/firewall/ebpf"
 )
 
 // MapWriter is the interface for writing to the BPF dns_cache map.

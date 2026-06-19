@@ -14,14 +14,14 @@ import (
 	moby "github.com/moby/moby/client"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	"github.com/schmitthub/clawker/controlplane/manager"
+	cpbootmocks "github.com/schmitthub/clawker/controlplane/manager/mocks"
+	controlplanemocks "github.com/schmitthub/clawker/controlplane/mocks"
 	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
-	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
-	cpbootmocks "github.com/schmitthub/clawker/internal/controlplane/manager/mocks"
-	controlplanemocks "github.com/schmitthub/clawker/internal/controlplane/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/hostproxy"
@@ -774,7 +774,7 @@ agent:
 		HostProxy: func() hostproxy.HostProxyService {
 			return hostproxytest.NewMockManager()
 		},
-		ControlPlane: func() cpboot.Manager {
+		ControlPlane: func() manager.Manager {
 			return &cpbootmocks.ManagerMock{
 				EnsureRunningFunc: func(context.Context) error { return nil },
 			}
@@ -862,7 +862,7 @@ func TestRunRun(t *testing.T) {
 		fake.SetupContainerInspectReapState(true, false)
 
 		f, in, out, errOut := testFactory(t, fake)
-		f.ControlPlane = func() cpboot.Manager {
+		f.ControlPlane = func() manager.Manager {
 			return &cpbootmocks.ManagerMock{
 				EnsureRunningFunc: func(context.Context) error { return fmt.Errorf("cp boom") },
 			}

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"time"
@@ -35,8 +36,8 @@ type AgentWatcher struct {
 
 // AgentWatcherOptions overrides default watcher tuning. Zero values
 // select defaults (PollInterval 30s, MissedThreshold 2, GracePeriod
-// 60s, ListErrCeiling 20). Negative values panic — silently snapping
-// to a default would hide caller misconfig.
+// 60s, ListErrCeiling 20). Negative values are a construction error —
+// silently snapping to a default would hide caller misconfig.
 type AgentWatcherOptions struct {
 	PollInterval    time.Duration
 	MissedThreshold int
@@ -47,25 +48,35 @@ type AgentWatcherOptions struct {
 	ListErrCeiling int
 }
 
-// NewAgentWatcher constructs an AgentWatcher. Nil callbacks or
-// negative option values panic — misconfig must fail loudly.
+// ErrWatcherMisconfig is returned by NewAgentWatcher when a required
+// callback is nil or an option is negative. The CP serve path never
+// panics on misconfig — the orchestrator surfaces this as a structured
+// event=agent_watcher_unavailable line and degrades.
+var ErrWatcherMisconfig = errors.New("controlplane: AgentWatcher misconfigured")
+
+// NewAgentWatcher constructs an AgentWatcher. A nil callback or a
+// negative option value returns (nil, ErrWatcherMisconfig) — misconfig
+// must fail loudly but NEVER via panic, because a panic on the CP serve
+// path kills PID 1 and strands eBPF programs unsupervised (see the
+// resilience contract). The orchestrator degrades the subsystem on
+// error instead.
 func NewAgentWatcher(
 	log *logger.Logger,
 	listAgents func(context.Context) (int, error),
 	onDrainToZero func(context.Context) error,
 	opts AgentWatcherOptions,
-) *AgentWatcher {
+) (*AgentWatcher, error) {
 	if log == nil {
 		log = logger.Nop()
 	}
 	if listAgents == nil {
-		panic("controlplane: AgentWatcher requires a non-nil listAgents")
+		return nil, fmt.Errorf("%w: listAgents is required", ErrWatcherMisconfig)
 	}
 	if onDrainToZero == nil {
-		panic("controlplane: AgentWatcher requires a non-nil onDrainToZero")
+		return nil, fmt.Errorf("%w: onDrainToZero is required", ErrWatcherMisconfig)
 	}
 	if opts.PollInterval < 0 || opts.MissedThreshold < 0 || opts.GracePeriod < 0 || opts.ListErrCeiling < 0 {
-		panic("controlplane: AgentWatcher options must not be negative")
+		return nil, fmt.Errorf("%w: options must not be negative", ErrWatcherMisconfig)
 	}
 	if opts.PollInterval == 0 {
 		opts.PollInterval = 30 * time.Second
@@ -87,7 +98,7 @@ func NewAgentWatcher(
 		listErrCeiling:  opts.ListErrCeiling,
 		listAgents:      listAgents,
 		onDrainToZero:   onDrainToZero,
-	}
+	}, nil
 }
 
 // Run blocks until ctx is cancelled, the drain-to-zero condition fires,

@@ -7,11 +7,11 @@ import (
 	"github.com/moby/moby/api/types/container"
 	moby "github.com/moby/moby/client"
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	"github.com/schmitthub/clawker/controlplane/manager"
 	"github.com/schmitthub/clawker/internal/cmd/firewall"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
-	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
@@ -21,7 +21,7 @@ type UpOptions struct {
 	IOStreams    *iostreams.IOStreams
 	Config       func() (config.Config, error)
 	Client       func(context.Context) (*docker.Client, error)
-	ControlPlane func() cpboot.Manager
+	ControlPlane func() manager.Manager
 	AdminClient  func(context.Context) (adminv1.AdminServiceClient, error)
 }
 

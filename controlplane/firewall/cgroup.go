@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/client"
 
 	"github.com/schmitthub/clawker/internal/docker"
@@ -55,6 +56,32 @@ func ResolveContainerID(ctx context.Context, dc *docker.Client, ref string) (str
 // the host-side resolver factory in cmd/clawkercp can apply the same
 // validation without re-implementing the predicate.
 func IsCanonicalContainerID(s string) bool { return isCanonicalContainerID(s) }
+
+// NewContainerResolver builds a ContainerResolver backed by a live Docker
+// client and a fixed cgroup driver (detected once via DetectCgroupDriver).
+//
+// It honors the ContainerResolver contract precisely: a Docker NotFound is
+// reported as (_, "", false, nil) — a nil error with exists=false — so the
+// caller can tell "container is gone" from "we couldn't talk to Docker". When
+// the missing reference is itself a canonical container ID, that ID is echoed
+// back as the first return value so callers retain the identity even though
+// Docker no longer knows it. Any other Docker API failure surfaces as err.
+func NewContainerResolver(dc *docker.Client, cgroupDriver string) ContainerResolver {
+	return func(ctx context.Context, ref string) (string, string, bool, error) {
+		cid, err := ResolveContainerID(ctx, dc, ref)
+		if err != nil {
+			if cerrdefs.IsNotFound(err) {
+				canonical := ""
+				if IsCanonicalContainerID(ref) {
+					canonical = ref
+				}
+				return canonical, "", false, nil
+			}
+			return "", "", false, err
+		}
+		return cid, EBPFCgroupPath(cgroupDriver, cid), true, nil
+	}
+}
 
 func isCanonicalContainerID(s string) bool {
 	if len(s) != 64 {

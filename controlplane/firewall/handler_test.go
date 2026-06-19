@@ -9,12 +9,12 @@ import (
 	"time"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	ebpf "github.com/schmitthub/clawker/controlplane/firewall/ebpf"
+	ebpfmocks "github.com/schmitthub/clawker/controlplane/firewall/ebpf/mocks"
+	"github.com/schmitthub/clawker/controlplane/pubsub"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/consts"
-	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
-	ebpfmocks "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf/mocks"
-	"github.com/schmitthub/clawker/internal/controlplane/overseer"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -124,7 +124,7 @@ func newTestHandler(t *testing.T, mock *ebpfmocks.EBPFManagerMock, resolver Cont
 	}
 	q := NewActionQueue(nil)
 	t.Cleanup(func() { _ = q.Close() })
-	h := NewHandler(HandlerDeps{
+	h, err := NewHandler(HandlerDeps{
 		EBPF:     mock,
 		Stack:    &fakeStack{},
 		Cfg:      testConfig(),
@@ -132,6 +132,7 @@ func newTestHandler(t *testing.T, mock *ebpfmocks.EBPFManagerMock, resolver Cont
 		Log:      logger.Nop(),
 		Queue:    q,
 	})
+	require.NoError(t, err)
 	h.resolveHostFn = func(_ context.Context, _ string) ([]string, error) {
 		return []string{"192.168.65.254"}, nil
 	}
@@ -151,6 +152,51 @@ func noopMock() *ebpfmocks.EBPFManagerMock {
 		SyncRoutesFunc: func(_ []ebpf.Route) error { return nil },
 		FlushAllFunc:   func() error { return nil },
 	}
+}
+
+// TestNewHandler_RequiredDeps pins the constructor's validation surface:
+// missing EBPF, Resolver, or Queue must return a typed sentinel error
+// (never panic — a CP wiring fault must degrade with a structured
+// event=<subsystem>_unavailable line rather than crash PID 1 and strand
+// pinned eBPF programs). A non-required dep (Stack/Store/Cfg) omitted is
+// fine — the happy case builds.
+func TestNewHandler_RequiredDeps(t *testing.T) {
+	q := NewActionQueue(nil)
+	t.Cleanup(func() { _ = q.Close() })
+
+	cases := []struct {
+		name    string
+		deps    HandlerDeps
+		wantErr error
+	}{
+		{
+			name:    "nil ebpf",
+			deps:    HandlerDeps{Resolver: nopResolver, Queue: q},
+			wantErr: ErrNilEBPFManager,
+		},
+		{
+			name:    "nil resolver",
+			deps:    HandlerDeps{EBPF: noopMock(), Queue: q},
+			wantErr: ErrNilResolver,
+		},
+		{
+			name:    "nil queue",
+			deps:    HandlerDeps{EBPF: noopMock(), Resolver: nopResolver},
+			wantErr: ErrNilQueue,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, err := NewHandler(tc.deps)
+			require.ErrorIs(t, err, tc.wantErr)
+			assert.Nil(t, h)
+		})
+	}
+
+	// Happy path: required deps present, optional deps omitted.
+	h, err := NewHandler(HandlerDeps{EBPF: noopMock(), Resolver: nopResolver, Queue: q})
+	require.NoError(t, err)
+	assert.NotNil(t, h)
 }
 
 func assertCode(t *testing.T, err error, want codes.Code) {
@@ -546,9 +592,10 @@ func TestHandler_StackRPCs_DelegateToStack(t *testing.T) {
 			stack := &fakeStack{statusResult: Status{Running: true}}
 			q := NewActionQueue(nil)
 			t.Cleanup(func() { _ = q.Close() })
-			h := NewHandler(HandlerDeps{
+			h, err := NewHandler(HandlerDeps{
 				EBPF: noopMock(), Stack: stack, Resolver: nopResolver, Log: logger.Nop(), Queue: q,
 			})
+			require.NoError(t, err)
 			require.NoError(t, tc.call(h))
 			assert.Equal(t, 1, tc.getCalls(stack), "stack method called exactly once")
 		})
@@ -559,10 +606,11 @@ func TestHandler_FirewallInit_StackFailure_PropagatesInternal(t *testing.T) {
 	stack := &fakeStack{ensureErr: errors.New("docker down")}
 	q := NewActionQueue(nil)
 	t.Cleanup(func() { _ = q.Close() })
-	h := NewHandler(HandlerDeps{
+	h, err := NewHandler(HandlerDeps{
 		EBPF: noopMock(), Stack: stack, Resolver: nopResolver, Log: logger.Nop(), Queue: q,
 	})
-	_, err := h.FirewallInit(context.Background(), &adminv1.FirewallInitRequest{})
+	require.NoError(t, err)
+	_, err = h.FirewallInit(context.Background(), &adminv1.FirewallInitRequest{})
 	assertCode(t, err, codes.Internal)
 }
 
@@ -598,27 +646,30 @@ func TestHandler_FirewallInit_ReenrollsRunningAgents(t *testing.T) {
 
 	q := NewActionQueue(nil)
 	t.Cleanup(func() { _ = q.Close() })
-	bus := overseer.New(overseer.Options{Logger: logger.Nop()})
-	require.NoError(t, bus.Start(context.Background()))
-	t.Cleanup(func() { _ = bus.Close() })
+	enrolled, err := pubsub.NewTopic[ebpf.EBPFContainerEnrolled](logger.Nop())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = enrolled.Close() })
 	// Subscribe BEFORE FirewallInit so the publish path is observable.
 	// netlogger's LabelCache hydration depends on this — without it
 	// every record from a re-enrolled agent carries empty attribution
-	// (the bug this regression locks in).
-	sub, ok := overseer.Subscribe[ebpf.EBPFContainerEnrolled](bus, "test.reenroll")
-	require.True(t, ok, "Subscribe must succeed on a live bus")
-	t.Cleanup(sub.Unsubscribe)
-
-	h := NewHandler(HandlerDeps{
-		EBPF:       mock,
-		Stack:      stack,
-		Cfg:        testConfig(),
-		Resolver:   resolver,
-		Log:        logger.Nop(),
-		Queue:      q,
-		Bus:        bus,
-		ListAgents: func(_ context.Context) ([]string, error) { return agents, nil },
+	// (the bug this regression locks in). The subscriber pushes each
+	// payload onto a buffered channel the assertions drain below.
+	enrollCh := make(chan ebpf.EBPFContainerEnrolled, 8)
+	enrolled.Subscribe(func(ev pubsub.Event[ebpf.EBPFContainerEnrolled]) {
+		enrollCh <- ev.Payload
 	})
+
+	h, err := NewHandler(HandlerDeps{
+		EBPF:          mock,
+		Stack:         stack,
+		Cfg:           testConfig(),
+		Resolver:      resolver,
+		Log:           logger.Nop(),
+		Queue:         q,
+		EnrolledTopic: enrolled,
+		ListAgents:    func(_ context.Context) ([]string, error) { return agents, nil },
+	})
+	require.NoError(t, err)
 	h.resolveHostFn = func(_ context.Context, _ string) ([]string, error) {
 		return []string{"192.168.65.254"}, nil
 	}
@@ -631,7 +682,7 @@ func TestHandler_FirewallInit_ReenrollsRunningAgents(t *testing.T) {
 		return testCgroupID, nil
 	}
 
-	_, err := h.FirewallInit(context.Background(), &adminv1.FirewallInitRequest{})
+	_, err = h.FirewallInit(context.Background(), &adminv1.FirewallInitRequest{})
 	require.NoError(t, err)
 	require.Len(t, mock.InstallCalls(), 2, "both agents must be enrolled during FirewallInit")
 
@@ -650,7 +701,7 @@ func TestHandler_FirewallInit_ReenrollsRunningAgents(t *testing.T) {
 	deadline := time.After(2 * time.Second)
 	for len(gotEnrolls) < 2 {
 		select {
-		case ev := <-sub.C:
+		case ev := <-enrollCh:
 			gotEnrolls[ev.CgroupID] = ev.ContainerID
 		case <-deadline:
 			t.Fatalf("timed out waiting for re-enrollment publish; got %d/%d events: %+v",
@@ -683,7 +734,7 @@ func TestHandler_FirewallInit_ReenrollContinuesOnPerAgentFailure(t *testing.T) {
 	}
 	q := NewActionQueue(nil)
 	t.Cleanup(func() { _ = q.Close() })
-	h := NewHandler(HandlerDeps{
+	h, err := NewHandler(HandlerDeps{
 		EBPF:       mock,
 		Stack:      stack,
 		Cfg:        testConfig(),
@@ -692,6 +743,7 @@ func TestHandler_FirewallInit_ReenrollContinuesOnPerAgentFailure(t *testing.T) {
 		Queue:      q,
 		ListAgents: func(_ context.Context) ([]string, error) { return []string{"broken", "healthy"}, nil },
 	})
+	require.NoError(t, err)
 	h.resolveHostFn = func(_ context.Context, _ string) ([]string, error) {
 		return []string{"192.168.65.254"}, nil
 	}
@@ -702,7 +754,7 @@ func TestHandler_FirewallInit_ReenrollContinuesOnPerAgentFailure(t *testing.T) {
 		return 222, nil
 	}
 
-	_, err := h.FirewallInit(context.Background(), &adminv1.FirewallInitRequest{})
+	_, err = h.FirewallInit(context.Background(), &adminv1.FirewallInitRequest{})
 	require.NoError(t, err, "per-agent failure must not fail Init")
 	assert.Equal(t, 2, installCalls, "both agents attempted; failure on one does not short-circuit")
 }
@@ -1000,7 +1052,7 @@ func ruleStoreHandler(t *testing.T, mock *ebpfmocks.EBPFManagerMock) (*Handler, 
 	stack := &fakeStack{statusResult: Status{Running: true}}
 	q := NewActionQueue(nil)
 	t.Cleanup(func() { _ = q.Close() })
-	h := NewHandler(HandlerDeps{
+	h, err := NewHandler(HandlerDeps{
 		EBPF:     mock,
 		Stack:    stack,
 		Store:    store,
@@ -1009,6 +1061,7 @@ func ruleStoreHandler(t *testing.T, mock *ebpfmocks.EBPFManagerMock) (*Handler, 
 		Log:      logger.Nop(),
 		Queue:    q,
 	})
+	require.NoError(t, err)
 	h.resolveHostFn = func(_ context.Context, _ string) ([]string, error) {
 		return []string{"192.168.65.254"}, nil
 	}

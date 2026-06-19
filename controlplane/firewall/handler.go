@@ -7,15 +7,18 @@ import (
 	"net"
 	"os"
 	"reflect"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	ebpf "github.com/schmitthub/clawker/controlplane/firewall/ebpf"
+	"github.com/schmitthub/clawker/controlplane/pubsub"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
-	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
-	"github.com/schmitthub/clawker/internal/controlplane/overseer"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/storage"
 	"google.golang.org/grpc/codes"
@@ -109,7 +112,7 @@ type Handler struct {
 	resolve    ContainerResolver
 	log        *logger.Logger
 	queue      *ActionQueue
-	bus        *overseer.Overseer
+	enrolled   *pubsub.Topic[ebpf.EBPFContainerEnrolled]
 	certDirF   func() (string, error)
 	listAgents func(ctx context.Context) ([]string, error)
 
@@ -154,11 +157,11 @@ type HandlerDeps struct {
 	Log      *logger.Logger
 	Queue    *ActionQueue
 
-	// Bus is the overseer bus the handler publishes ebpf-axis lifecycle
-	// events on after a successful FirewallEnable. Nil-tolerant for unit
-	// tests that exercise the RPC surface without a running bus —
-	// FirewallEnable simply skips the publish when Bus is nil.
-	Bus *overseer.Overseer
+	// EnrolledTopic is the typed pub/sub topic the handler publishes
+	// EBPFContainerEnrolled events on after a successful FirewallEnable.
+	// Nil-tolerant for unit tests that exercise the RPC surface without a
+	// wired topic — FirewallEnable simply skips the publish when nil.
+	EnrolledTopic *pubsub.Topic[ebpf.EBPFContainerEnrolled]
 
 	// CertDirFn optionally overrides FirewallCertSubdir resolution —
 	// tests pass a temp dir so RotateCA does not touch the real data path.
@@ -181,21 +184,27 @@ type HandlerDeps struct {
 // days.
 const maxBypassTimeout = time.Hour
 
-// NewHandler wires a firewall Handler. Panics on missing EBPF, Resolver,
-// or Queue — every RPC routes through the queue and hits eBPF/Resolver,
-// so nil there would surface as a confusing nil-deref deep inside the
-// gRPC interceptor chain. Stack / Store / Cfg are optional at
-// construction so tests that only exercise the ebpf-backed RPCs can skip
-// them; calls that need them fall through to a panic at the first nil
-// access with a clear line number.
-func NewHandler(deps HandlerDeps) *Handler {
+// eventSourceFirewall names the firewall handler as the producer on every
+// pub/sub envelope it publishes. The audit hook reads Event.Source to
+// attribute the line without inspecting the payload.
+const eventSourceFirewall = "firewall.handler"
+
+// NewHandler wires a firewall Handler. Returns an error on missing EBPF,
+// Resolver, or Queue — every RPC routes through the queue and hits
+// eBPF/Resolver, so nil there would surface as a confusing nil-deref deep
+// inside the gRPC interceptor chain. The control plane must never panic on
+// a wiring fault (it would strand pinned eBPF programs with no
+// supervisor), so the caller logs a structured event=<subsystem>_unavailable
+// line and degrades. Stack / Store / Cfg are optional at construction so
+// tests that only exercise the ebpf-backed RPCs can skip them.
+func NewHandler(deps HandlerDeps) (*Handler, error) {
 	switch {
 	case deps.EBPF == nil:
-		panic("firewall: NewHandler requires a non-nil EBPFManager")
+		return nil, ErrNilEBPFManager
 	case deps.Resolver == nil:
-		panic("firewall: NewHandler requires a non-nil ContainerResolver")
+		return nil, ErrNilResolver
 	case deps.Queue == nil:
-		panic("firewall: NewHandler requires a non-nil ActionQueue")
+		return nil, ErrNilQueue
 	}
 	log := deps.Log
 	if log == nil {
@@ -213,13 +222,13 @@ func NewHandler(deps HandlerDeps) *Handler {
 		resolve:        deps.Resolver,
 		log:            log,
 		queue:          deps.Queue,
-		bus:            deps.Bus,
+		enrolled:       deps.EnrolledTopic,
 		certDirF:       certDirFn,
 		listAgents:     deps.ListAgents,
 		cgroupIDFn:     ebpf.CgroupID,
 		bypassTimers:   make(map[string]*bypassEntry),
 		storedCgroupID: make(map[string]uint64),
-	}
+	}, nil
 }
 
 // submit routes a closure through the queue and type-asserts the
@@ -1130,6 +1139,23 @@ func (h *Handler) resolveHostProxy(ctx context.Context) (ip string, port uint16,
 }
 
 func (h *Handler) bypassTimerFired(cid string, entry *bypassEntry) {
+	// Recover first (runs last under LIFO) so a panic anywhere in this
+	// body — ContainerResolver lookup, cgroup stat, BPF map write, or
+	// queue result handling — cannot escape the time.AfterFunc goroutine
+	// and kill PID 1. A CP crash skips drain-to-zero and strands eBPF
+	// programs pinned and unsupervised (CLAUDE.md §3.4). One panicking
+	// dead-man timer must not take down the whole rule set; it degrades
+	// to a structured event the operator can act on.
+	defer func() {
+		if r := recover(); r != nil {
+			h.log.Error().
+				Interface("panic", r).
+				Bytes("stack", debug.Stack()).
+				Str("container_id", cid).
+				Str("event", "bypass_timer_panic").
+				Msg("bypass dead-man timer panicked; enforcement may not be restored for this container, reissue FirewallEnable")
+		}
+	}()
 	defer func() {
 		h.bypassTimersMu.Lock()
 		delete(h.bypassTimers, cid)
@@ -1174,30 +1200,36 @@ func (h *Handler) bypassTimerFired(cid string, entry *bypassEntry) {
 	}
 }
 
-// publishEnrolled emits EBPFContainerEnrolled on the overseer bus so
-// netlogger's LabelCache hydrates the cgroup_id → {container_id, labels}
-// mapping. Called from BOTH runtime FirewallEnable AND startup
-// reenrollAgents — netlogger records carry empty attribution until both
-// paths publish. Nil-bus tolerant (unit-test wiring). Publish is
-// non-blocking; the bus emits its own drop line, but we add a
+// publishEnrolled emits EBPFContainerEnrolled on the firewall's enroll
+// topic so netlogger's LabelCache hydrates the cgroup_id →
+// {container_id, labels} mapping. Called from BOTH runtime FirewallEnable
+// AND startup reenrollAgents — netlogger records carry empty attribution
+// until both paths publish. Nil-topic tolerant (unit-test wiring). Publish
+// is non-blocking; the topic emits its own drop line, but we add a
 // producer-side line naming the affected container_id + cgroup_id so an
 // operator can locate the blast radius (one cgroup of unattributed
 // netlogger records) from the structured log surface alone.
 func (h *Handler) publishEnrolled(containerID string, cgroupID uint64) {
-	if h.bus == nil {
+	if h.enrolled == nil {
 		return
 	}
-	ok := overseer.Publish(h.bus, ebpf.EBPFContainerEnrolled{
-		CgroupID:    cgroupID,
-		ContainerID: containerID,
-		At:          time.Now().UTC(),
+	now := time.Now().UTC()
+	ok := h.enrolled.Publish(pubsub.Event[ebpf.EBPFContainerEnrolled]{
+		ID:        uuid.NewString(),
+		Timestamp: now.UnixNano(),
+		Source:    eventSourceFirewall,
+		Payload: ebpf.EBPFContainerEnrolled{
+			CgroupID:    cgroupID,
+			ContainerID: containerID,
+			At:          now,
+		},
 	})
 	if !ok {
 		h.log.Warn().
 			Str("container_id", containerID).
 			Uint64("cgroup_id", cgroupID).
 			Str("event", "netlogger_enroll_publish_dropped").
-			Msg("overseer.Publish(EBPFContainerEnrolled) returned false — netlogger LabelCache will not hydrate for this cgroup; subsequent egress records will carry empty attribution")
+			Msg("enroll topic Publish(EBPFContainerEnrolled) returned false — netlogger LabelCache will not hydrate for this cgroup; subsequent egress records will carry empty attribution")
 	}
 }
 

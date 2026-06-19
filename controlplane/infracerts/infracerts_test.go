@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/schmitthub/clawker/internal/controlplane/infracerts"
+	"github.com/schmitthub/clawker/controlplane/infracerts"
 )
 
 // testCA produces a self-signed root and an intermediate CA signed by

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	clawkerebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
+	clawkerebpf "github.com/schmitthub/clawker/controlplane/firewall/ebpf"
 )
 
 func TestReverseDNSMap_LookupBeforeRefreshReturnsEmpty(t *testing.T) {

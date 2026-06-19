@@ -9,8 +9,8 @@ import (
 // LabelCache resolves a kernel-attested cgroup_id to the userspace
 // {container_id, agent, project} attribution the OTel sink ships on
 // every emitted record. Hydrated by EBPFContainerEnrolled events from
-// the overseer bus (one Docker ContainerInspect per enroll); evicted
-// by container die/destroy events on the same bus.
+// the enroll topic (one Docker ContainerInspect per enroll); evicted
+// by container die/destroy events from the evict topic.
 //
 // Storage shape: a free-list-backed slice of entries plus two index
 // maps (by cgroup_id, by container_id). The dual index is the

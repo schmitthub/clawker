@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/netip"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -13,10 +14,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/schmitthub/clawker/controlplane/dockerevents"
+	"github.com/schmitthub/clawker/controlplane/pubsub"
 	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/consts"
-	"github.com/schmitthub/clawker/internal/controlplane/dockerevents"
-	"github.com/schmitthub/clawker/internal/controlplane/overseer"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -27,6 +28,11 @@ type noopPeerLookup struct{}
 
 func (noopPeerLookup) LookupByIP(_ context.Context, _ netip.Addr) (ResolvedContainer, error) {
 	return ResolvedContainer{}, ErrNoContainerForPeerIP
+}
+
+// publishDocker offers a DockerEvent onto the topic.
+func publishDocker(topic *pubsub.Topic[dockerevents.DockerEvent], msg mobyevents.Message) {
+	topic.Publish(pubsub.Event[dockerevents.DockerEvent]{Payload: dockerevents.DockerEvent{Message: msg}})
 }
 
 // --- reapOrphans ---------------------------------------------------------
@@ -123,18 +129,15 @@ func TestSubscribeEvict_OnlyDestroyEvicts(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			reg := NewRegistry(nil)
 			mustAddTestEntry(t, reg, "ctr-target", "a", "p")
-			bus, cleanup := startTestBus(t)
-			defer cleanup()
+			topic := newDockerTopic(t)
 
-			cancelSub, err := subscribeEvict(t.Context(), reg, bus, logger.Nop())
-			require.NoError(t, err)
-			defer cancelSub()
+			subscribeEvict(t.Context(), topic, reg, logger.Nop())
 
-			overseer.Publish(bus, dockerevents.DockerEvent{Message: mobyevents.Message{
+			publishDocker(topic, mobyevents.Message{
 				Type:   mobyevents.ContainerEventType,
 				Action: tc.action,
 				Actor:  mobyevents.Actor{ID: "ctr-target"},
-			}})
+			})
 
 			require.Eventually(t, func() bool {
 				snap, err := reg.Snapshot()
@@ -194,19 +197,16 @@ func TestSubscribeSessionCancel_CancelsOnExitTransitions(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			bus, cleanup := startTestBus(t)
-			defer cleanup()
+			topic := newDockerTopic(t)
 			canc := &fakeCanceller{}
 
-			cancelSub, err := subscribeSessionCancel(t.Context(), canc, bus, logger.Nop())
-			require.NoError(t, err)
-			defer cancelSub()
+			subscribeSessionCancel(t.Context(), topic, canc, logger.Nop())
 
-			overseer.Publish(bus, dockerevents.DockerEvent{Message: mobyevents.Message{
+			publishDocker(topic, mobyevents.Message{
 				Type:   mobyevents.ContainerEventType,
 				Action: tc.action,
 				Actor:  mobyevents.Actor{ID: "ctr-target"},
-			}})
+			})
 
 			if tc.wantCancel {
 				require.Eventually(t, func() bool {
@@ -224,19 +224,16 @@ func TestSubscribeSessionCancel_CancelsOnExitTransitions(t *testing.T) {
 // TestSubscribeSessionCancel_NonContainerEventsIgnored: network/volume
 // events with matching action names must not trigger CancelDial.
 func TestSubscribeSessionCancel_NonContainerEventsIgnored(t *testing.T) {
-	bus, cleanup := startTestBus(t)
-	defer cleanup()
+	topic := newDockerTopic(t)
 	canc := &fakeCanceller{}
 
-	cancelSub, err := subscribeSessionCancel(t.Context(), canc, bus, logger.Nop())
-	require.NoError(t, err)
-	defer cancelSub()
+	subscribeSessionCancel(t.Context(), topic, canc, logger.Nop())
 
-	overseer.Publish(bus, dockerevents.DockerEvent{Message: mobyevents.Message{
+	publishDocker(topic, mobyevents.Message{
 		Type:   mobyevents.NetworkEventType,
 		Action: mobyevents.ActionDie,
 		Actor:  mobyevents.Actor{ID: "ctr-target"},
-	}})
+	})
 
 	time.Sleep(100 * time.Millisecond)
 	assert.Empty(t, canc.calls())
@@ -247,23 +244,20 @@ func TestSubscribeSessionCancel_NonContainerEventsIgnored(t *testing.T) {
 func TestSubscribeEvict_NonContainerEventsIgnored(t *testing.T) {
 	reg := NewRegistry(nil)
 	mustAddTestEntry(t, reg, "ctr-1", "a", "p")
-	bus, cleanup := startTestBus(t)
-	defer cleanup()
+	topic := newDockerTopic(t)
 
-	cancelSub, err := subscribeEvict(t.Context(), reg, bus, logger.Nop())
-	require.NoError(t, err)
-	defer cancelSub()
+	subscribeEvict(t.Context(), topic, reg, logger.Nop())
 
 	// Non-container/destroy event with the same Actor.ID — must not
 	// evict (network events use container-id-shaped IDs in some moby
 	// versions; the type filter is the gate).
-	overseer.Publish(bus, dockerevents.DockerEvent{Message: mobyevents.Message{
+	publishDocker(topic, mobyevents.Message{
 		Type:   mobyevents.NetworkEventType,
 		Action: mobyevents.ActionDestroy,
 		Actor:  mobyevents.Actor{ID: "ctr-1"},
-	}})
+	})
 
-	// Sleep briefly for the bus loop to run; row must persist.
+	// Sleep briefly for the drain goroutine to run; row must persist.
 	time.Sleep(100 * time.Millisecond)
 	snap, snapErr := reg.Snapshot()
 	require.NoError(t, snapErr)
@@ -272,105 +266,72 @@ func TestSubscribeEvict_NonContainerEventsIgnored(t *testing.T) {
 
 // --- subscribeDial: filter contract --------------------------------------
 
-// TestSubscribeDial_FiltersOnPurposeAgent pins that ONLY events with
-// the dev.clawker.purpose=agent label trigger DialAgent. CP itself,
+// TestDialEvent_FiltersOnPurposeAgent pins that ONLY events with the
+// dev.clawker.purpose=agent label pass the dial predicate. CP itself,
 // host proxy, and any other clawker-managed container must not be
-// dialed.
-func TestSubscribeDial_FiltersOnPurposeAgent(t *testing.T) {
+// dialed. Drives the production dialEvent predicate directly so the test
+// and the subscribeDial wiring cannot drift.
+func TestDialEvent_FiltersOnPurposeAgent(t *testing.T) {
 	cases := []struct {
-		name      string
-		action    mobyevents.Action
-		labels    map[string]string
-		wantDial  bool
-		wantDialN int
+		name     string
+		action   mobyevents.Action
+		labels   map[string]string
+		wantDial bool
 	}{
 		{
-			name:      "agent start dials",
-			action:    mobyevents.ActionStart,
-			labels:    map[string]string{consts.LabelPurpose: consts.PurposeAgent},
-			wantDial:  true,
-			wantDialN: 1,
+			name:     "agent start dials",
+			action:   mobyevents.ActionStart,
+			labels:   map[string]string{consts.LabelPurpose: consts.PurposeAgent},
+			wantDial: true,
 		},
 		{
-			name:      "agent restart dials",
-			action:    mobyevents.ActionRestart,
-			labels:    map[string]string{consts.LabelPurpose: consts.PurposeAgent},
-			wantDial:  true,
-			wantDialN: 1,
+			name:     "agent restart dials",
+			action:   mobyevents.ActionRestart,
+			labels:   map[string]string{consts.LabelPurpose: consts.PurposeAgent},
+			wantDial: true,
 		},
 		{
-			name:      "agent unpause dials",
-			action:    mobyevents.ActionUnPause,
-			labels:    map[string]string{consts.LabelPurpose: consts.PurposeAgent},
-			wantDial:  true,
-			wantDialN: 1,
+			name:     "agent unpause dials",
+			action:   mobyevents.ActionUnPause,
+			labels:   map[string]string{consts.LabelPurpose: consts.PurposeAgent},
+			wantDial: true,
 		},
 		{
-			name:      "non-agent start does NOT dial",
-			action:    mobyevents.ActionStart,
-			labels:    map[string]string{consts.LabelPurpose: "host-proxy"},
-			wantDial:  false,
-			wantDialN: 0,
+			name:     "non-agent start does NOT dial",
+			action:   mobyevents.ActionStart,
+			labels:   map[string]string{consts.LabelPurpose: "host-proxy"},
+			wantDial: false,
 		},
 		{
-			name:      "agent create does NOT dial",
-			action:    mobyevents.ActionCreate,
-			labels:    map[string]string{consts.LabelPurpose: consts.PurposeAgent},
-			wantDial:  false,
-			wantDialN: 0,
+			name:     "agent create does NOT dial",
+			action:   mobyevents.ActionCreate,
+			labels:   map[string]string{consts.LabelPurpose: consts.PurposeAgent},
+			wantDial: false,
 		},
 		{
-			name:      "agent stop does NOT dial",
-			action:    mobyevents.ActionStop,
-			labels:    map[string]string{consts.LabelPurpose: consts.PurposeAgent},
-			wantDial:  false,
-			wantDialN: 0,
+			name:     "agent stop does NOT dial",
+			action:   mobyevents.ActionStop,
+			labels:   map[string]string{consts.LabelPurpose: consts.PurposeAgent},
+			wantDial: false,
 		},
 		{
-			name:      "missing purpose label does NOT dial",
-			action:    mobyevents.ActionStart,
-			labels:    map[string]string{},
-			wantDial:  false,
-			wantDialN: 0,
+			name:     "missing purpose label does NOT dial",
+			action:   mobyevents.ActionStart,
+			labels:   map[string]string{},
+			wantDial: false,
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			bus, cleanup := startTestBus(t)
-			defer cleanup()
-
-			// Drive the production dialEventPredicate (the same closure
-			// subscribeDial wires onto the bus) against the test
-			// channel. Pinning the named predicate prevents drift
-			// between the test and the production filter.
-			sub, ok := overseer.SubscribeFiltered(bus, "test-dial", dialEventPredicate)
-			require.True(t, ok)
-			defer sub.Unsubscribe()
-
-			overseer.Publish(bus, dockerevents.DockerEvent{Message: mobyevents.Message{
+			ev := dockerevents.DockerEvent{Message: mobyevents.Message{
 				Type:   mobyevents.ContainerEventType,
 				Action: tc.action,
 				Actor: mobyevents.Actor{
 					ID:         "ctr-1",
 					Attributes: tc.labels,
 				},
-			}})
-
-			if tc.wantDial {
-				select {
-				case <-sub.C:
-					// ok
-				case <-time.After(200 * time.Millisecond):
-					t.Fatal("expected event to pass filter, none arrived")
-				}
-			} else {
-				select {
-				case <-sub.C:
-					t.Fatal("event arrived but should have been filtered out")
-				case <-time.After(100 * time.Millisecond):
-					// ok
-				}
-			}
+			}}
+			assert.Equal(t, tc.wantDial, dialEvent(ev))
 		})
 	}
 }
@@ -378,22 +339,23 @@ func TestSubscribeDial_FiltersOnPurposeAgent(t *testing.T) {
 // --- agent.Start: nil-deps validation -----------------------------------
 
 func TestStart_RejectsNilDeps(t *testing.T) {
-	bus, cleanup := startTestBus(t)
-	defer cleanup()
+	dockerTopic := newDockerTopic(t)
+	agentTopic := newAgentTopic(t)
 	reg := NewRegistry(nil)
 	dialer := &Dialer{log: logger.Nop(), dialing: make(map[string]context.CancelFunc)}
-	lister := ContainerLister(func(context.Context) ([]string, error) { return nil, nil })
+	lister := ContainerListFunc(func(context.Context) ([]string, error) { return nil, nil })
 	peerLookup := noopPeerLookup{}
 
 	cases := []struct {
 		name string
 		deps StartDeps
 	}{
-		{"nil registry", StartDeps{Bus: bus, DockerLister: lister, Dialer: dialer, PeerLookup: peerLookup}},
-		{"nil docker lister", StartDeps{Bus: bus, Registry: reg, Dialer: dialer, PeerLookup: peerLookup}},
-		{"nil bus", StartDeps{Registry: reg, DockerLister: lister, Dialer: dialer, PeerLookup: peerLookup}},
-		{"nil dialer", StartDeps{Bus: bus, Registry: reg, DockerLister: lister, PeerLookup: peerLookup}},
-		{"nil peer lookup", StartDeps{Bus: bus, Registry: reg, DockerLister: lister, Dialer: dialer}},
+		{"nil registry", StartDeps{DockerTopic: dockerTopic, AgentTopic: agentTopic, DockerLister: lister, Dialer: dialer, PeerLookup: peerLookup}},
+		{"nil docker lister", StartDeps{DockerTopic: dockerTopic, AgentTopic: agentTopic, Registry: reg, Dialer: dialer, PeerLookup: peerLookup}},
+		{"nil docker topic", StartDeps{AgentTopic: agentTopic, Registry: reg, DockerLister: lister, Dialer: dialer, PeerLookup: peerLookup}},
+		{"nil agent topic", StartDeps{DockerTopic: dockerTopic, Registry: reg, DockerLister: lister, Dialer: dialer, PeerLookup: peerLookup}},
+		{"nil dialer", StartDeps{DockerTopic: dockerTopic, AgentTopic: agentTopic, Registry: reg, DockerLister: lister, PeerLookup: peerLookup}},
+		{"nil peer lookup", StartDeps{DockerTopic: dockerTopic, AgentTopic: agentTopic, Registry: reg, DockerLister: lister, Dialer: dialer}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -404,21 +366,18 @@ func TestStart_RejectsNilDeps(t *testing.T) {
 }
 
 // TestStart_PublishesReapDegradedOnListerFailure pins the new event
-// surface: when reap fails (lister exhausts retries), Start
-// publishes ReapDegraded so worldview consumers know orphans may
-// persist.
+// surface: when reap fails (lister exhausts retries), Start publishes a
+// RegistryEventType/ActionReap AgentEvent so worldview consumers know
+// orphans may persist.
 func TestStart_PublishesReapDegradedOnListerFailure(t *testing.T) {
-	bus, cleanup := startTestBus(t)
-	defer cleanup()
-
-	sub, ok := overseer.Subscribe[ReapDegraded](bus, "test-reap")
-	require.True(t, ok)
-	defer sub.Unsubscribe()
+	dockerTopic := newDockerTopic(t)
+	agentTopic := newAgentTopic(t)
+	rec := recordAgent(agentTopic)
 
 	reg := NewRegistry(nil)
 	mustAddTestEntry(t, reg, "ctr-orphan", "a", "p")
 	dialer := &Dialer{log: logger.Nop(), dialing: make(map[string]context.CancelFunc)}
-	lister := ContainerLister(func(context.Context) ([]string, error) {
+	lister := ContainerListFunc(func(context.Context) ([]string, error) {
 		return nil, errors.New("daemon down")
 	})
 
@@ -427,18 +386,17 @@ func TestStart_PublishesReapDegradedOnListerFailure(t *testing.T) {
 		DockerLister: lister,
 		PeerLookup:   noopPeerLookup{},
 		Dialer:       dialer,
-		Bus:          bus,
+		DockerTopic:  dockerTopic,
+		AgentTopic:   agentTopic,
 		Log:          logger.Nop(),
 	})
 	require.NoError(t, err, "Start must NOT fail on reap failure (soft-fail)")
 	defer cleanupStart()
 
-	select {
-	case ev := <-sub.C:
-		assert.Contains(t, ev.Reason, "daemon down")
-	case <-time.After(2 * time.Second):
-		t.Fatal("expected ReapDegraded event")
-	}
+	require.Eventually(t, func() bool {
+		ev, ok := rec.firstWith(RegistryEventType, ActionReap)
+		return ok && strings.Contains(ev.Message.Detail, "daemon down")
+	}, 2*time.Second, 10*time.Millisecond, "expected reap-degraded AgentEvent")
 }
 
 // --- helpers -------------------------------------------------------------
@@ -459,11 +417,4 @@ func testThumb(s string) [32]byte {
 	var t [32]byte
 	copy(t[:], s)
 	return t
-}
-
-func startTestBus(t *testing.T) (*overseer.Overseer, func()) {
-	t.Helper()
-	bus := overseer.New(overseer.Options{Logger: logger.Nop()})
-	require.NoError(t, bus.Start(t.Context()))
-	return bus, func() { _ = bus.Close() }
 }

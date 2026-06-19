@@ -18,6 +18,16 @@ var (
 	ErrCPUnhealthy      = errors.New("clawker-controlplane not healthy")
 )
 
+// Constructor-validation sentinels. NewHandler returns these instead of
+// panicking so a wiring fault degrades the subsystem with a structured
+// event=<subsystem>_unavailable line rather than killing PID 1 (which
+// would strand pinned eBPF programs with no supervisor).
+var (
+	ErrNilEBPFManager = errors.New("firewall: NewHandler requires a non-nil EBPFManager")
+	ErrNilResolver    = errors.New("firewall: NewHandler requires a non-nil ContainerResolver")
+	ErrNilQueue       = errors.New("firewall: NewHandler requires a non-nil ActionQueue")
+)
+
 // Sentinels surfaced through the Handler and queue. Each has a companion
 // Reason constant for gRPC errdetails.ErrorInfo so the CLI can dispatch
 // remediation without string-matching status messages.

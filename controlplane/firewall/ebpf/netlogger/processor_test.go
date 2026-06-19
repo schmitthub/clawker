@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
+	ebpf "github.com/schmitthub/clawker/controlplane/firewall/ebpf"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 

@@ -6,7 +6,7 @@ package mocks
 import (
 	"sync"
 
-	"github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
+	"github.com/schmitthub/clawker/controlplane/firewall/ebpf"
 )
 
 // Ensure, that EBPFManagerMock does implement ebpf.EBPFManager.

@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
-	cpmocks "github.com/schmitthub/clawker/internal/controlplane/mocks"
+	cpmocks "github.com/schmitthub/clawker/controlplane/mocks"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

@@ -157,27 +157,29 @@ func Untrust(reason Reason) Trust {
 	return Trust{untrusted: true, reason: reason}
 }
 
-// Agent is the Overseer's in-memory worldview of one clawker-managed
-// agent. Three axes — session (SessionStatus, Address, Attempts,
-// LastError, Thumbprint), identity (Registered, Trust), and exec
-// (ExecutorEventState) — held as a single entity. The agentregistry sqlite store
-// remains the durable truth source for identity rows; this struct is
-// the observed-now view derived from events.
+// AgentEventState is the agent domain's own in-memory worldview of one
+// clawker-managed agent, held in this domain's AgentStore. Three axes —
+// session (SessionStatus, Address, Attempts, LastError, Thumbprint),
+// identity (Registered, Trust), and exec (ExecutorEventState) — held as
+// a single entity. The agentregistry sqlite store remains the durable
+// truth source for identity rows; this struct is the observed-now view
+// derived from the AgentEvent stream.
 //
 // LastError is the SESSION-axis last error (dial failures, broken
 // streams). ExecutorEventState-axis failures land in ExecutorEventState.LastError. Trust zero
 // value is "trusted with no reason" (see Trust).
 type AgentEventState struct {
-	ContainerID   string
-	AgentName     string
-	Project       string
-	Address       string
-	SessionStatus Status
-	Registered    bool
-	Trust         Trust
-	Thumbprint    [sha256.Size]byte
-	Attempts      int
-	LastError     string
-	UpdatedAt     time.Time
-	Executor      ExecutorEventState
+	ContainerID       string
+	AgentName         string
+	Project           string
+	Address           string
+	SessionStatus     Status
+	Registered        bool
+	Trust             Trust
+	Thumbprint        [sha256.Size]byte
+	PeerAgentFullName string
+	Attempts          int
+	LastError         string
+	UpdatedAt         time.Time
+	Executor          ExecutorEventState
 }

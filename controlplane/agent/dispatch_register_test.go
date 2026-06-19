@@ -5,184 +5,34 @@ import (
 	"crypto/sha256"
 	"errors"
 	"io"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc/metadata"
 
 	clawkerdv1 "github.com/schmitthub/clawker/api/clawkerd/v1"
 	"github.com/schmitthub/clawker/internal/auth"
-	"github.com/schmitthub/clawker/internal/controlplane/overseer"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
-// fakeSessionStream implements clawkerdv1.ClawkerdService_SessionClient
-// (= grpc.BidiStreamingClient[Command, Response]) deterministically.
-//
-// Send pushes onto a buffered channel so tests can assert which
-// commands were dispatched. Recv blocks until either a queued response
-// is available, the stream ctx is cancelled (returns ctx.Err), or a
-// preset recvErr is returned.
-type fakeSessionStream struct {
-	ctx    context.Context
-	sent   chan *clawkerdv1.Command
-	recvCh chan recvFrame
-
-	sendErr atomicError
+// registeredEvents returns every RegistryEventType/ActionRegistered
+// AgentEvent the recorder captured, in arrival order.
+func registeredEvents(rec *agentRecorder) []AgentEvent {
+	return rec.withAction(RegistryEventType, ActionRegistered)
 }
 
-type recvFrame struct {
-	resp *clawkerdv1.Response
-	err  error
-}
-
-// atomicError is a tiny mutex-guarded error cell so tests can flip
-// Send-error behavior between calls.
-type atomicError struct {
-	mu  sync.Mutex
-	err error
-}
-
-func (a *atomicError) Set(err error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.err = err
-}
-
-func (a *atomicError) Load() error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.err
-}
-
-func newFakeStream(ctx context.Context) *fakeSessionStream {
-	return &fakeSessionStream{
-		ctx:    ctx,
-		sent:   make(chan *clawkerdv1.Command, 8),
-		recvCh: make(chan recvFrame, 8),
-	}
-}
-
-func (f *fakeSessionStream) Send(c *clawkerdv1.Command) error {
-	if err := f.sendErr.Load(); err != nil {
-		return err
-	}
-	select {
-	case f.sent <- c:
-		return nil
-	case <-f.ctx.Done():
-		return f.ctx.Err()
-	}
-}
-
-func (f *fakeSessionStream) Recv() (*clawkerdv1.Response, error) {
-	select {
-	case fr := <-f.recvCh:
-		return fr.resp, fr.err
-	case <-f.ctx.Done():
-		return nil, f.ctx.Err()
-	}
-}
-
-func (f *fakeSessionStream) Header() (metadata.MD, error) { return metadata.MD{}, nil }
-func (f *fakeSessionStream) Trailer() metadata.MD         { return metadata.MD{} }
-func (f *fakeSessionStream) CloseSend() error             { return nil }
-func (f *fakeSessionStream) Context() context.Context     { return f.ctx }
-func (f *fakeSessionStream) SendMsg(any) error            { return nil }
-func (f *fakeSessionStream) RecvMsg(any) error            { return nil }
-
-// pushRegisterDone enqueues a RegisterDone response with the given
-// command_id and ok value.
-func (f *fakeSessionStream) pushRegisterDone(commandID string, ok bool, errMsg string) {
-	f.recvCh <- recvFrame{resp: &clawkerdv1.Response{
-		CommandId: commandID,
-		Payload: &clawkerdv1.Response_RegisterDone{RegisterDone: &clawkerdv1.RegisterDone{
-			Ok: ok, Error: errMsg,
-		}},
-	}}
-}
-
-// pushUnsolicited enqueues a non-RegisterDone response (e.g. Started)
-// to verify driveRegister's Recv loop discards mismatching frames.
-func (f *fakeSessionStream) pushUnsolicited() {
-	f.recvCh <- recvFrame{resp: &clawkerdv1.Response{
-		CommandId: "other",
-		Payload:   &clawkerdv1.Response_Started{Started: &clawkerdv1.Started{}},
-	}}
-}
-
-// eventCapture subscribes to AgentRegistered + AgentUntrusted BEFORE
-// the producer runs, so no event can race past the subscription. Tests
-// call .drain(wait) after the producer to collect events in arrival
-// order.
-type eventCapture struct {
-	regSub  overseer.Subscription[AgentRegistered]
-	untrSub overseer.Subscription[AgentUntrusted]
-}
-
-func subscribeEvents(t *testing.T, bus *overseer.Overseer) *eventCapture {
-	t.Helper()
-	regSub, ok := overseer.Subscribe[AgentRegistered](bus, "test-reg")
-	require.True(t, ok)
-	untrSub, ok := overseer.Subscribe[AgentUntrusted](bus, "test-unt")
-	require.True(t, ok)
-	t.Cleanup(func() {
-		regSub.Unsubscribe()
-		untrSub.Unsubscribe()
-	})
-	return &eventCapture{regSub: regSub, untrSub: untrSub}
-}
-
-func (ec *eventCapture) drain(wait time.Duration) (registered []AgentRegistered, untrusted []AgentUntrusted) {
-	deadline := time.After(wait)
-	for {
-		select {
-		case e := <-ec.regSub.C:
-			registered = append(registered, e)
-		case e := <-ec.untrSub.C:
-			untrusted = append(untrusted, e)
-		case <-deadline:
-			return
-		}
-	}
-}
-
-// newDriveRegisterDialer wires a Dialer with a started bus and the
-// supplied registry. Returns the dialer and an eventCapture that has
-// already subscribed to the relevant event types.
-func newDriveRegisterDialer(t *testing.T, reg Registry) (*Dialer, *eventCapture) {
-	t.Helper()
-	bus := overseer.New(overseer.Options{Logger: logger.Nop()})
-	require.NoError(t, bus.Start(t.Context()))
-	t.Cleanup(func() { _ = bus.Close() })
-	d := &Dialer{
-		log:    logger.Nop(),
-		bus:    bus,
-		agents: reg,
-	}
-	return d, subscribeEvents(t, bus)
-}
-
-// happyEstablishResult is the fixture for a Match-classified peer.
-func happyEstablishResult(stream *fakeSessionStream, peerCN string, peerThumb [sha256.Size]byte) establishResult {
-	return establishResult{
-		Stream:   stream,
-		Agent:    "dev",
-		Project:  "myapp",
-		Addr:     "10.0.0.1:7700",
-		Attempt:  1,
-		Outcome:  outcomeSuccess,
-		PeerInfo: peerInfo{PeerAgentFullName: peerCN, PeerThumbprint: peerThumb},
-	}
+// untrustedEvents returns every RegistryEventType/ActionUntrusted
+// AgentEvent the recorder captured, in arrival order.
+func untrustedEvents(rec *agentRecorder) []AgentEvent {
+	return rec.withAction(RegistryEventType, ActionUntrusted)
 }
 
 // --- driveRegister --------------------------------------------------------
 
 // TestDriveRegister_HappyPath: clawkerd replies with RegisterDone{ok:true};
-// dialer publishes AgentRegistered{Ok:true}, no AgentUntrusted.
+// dialer publishes a registered AgentEvent with RegisterOk=true and no
+// untrusted event.
 func TestDriveRegister_HappyPath(t *testing.T) {
 	thumb := sha256.Sum256([]byte("peer"))
 	reg := &RegistryMock{
@@ -195,7 +45,7 @@ func TestDriveRegister_HappyPath(t *testing.T) {
 			}, nil
 		},
 	}
-	d, ec := newDriveRegisterDialer(t, reg)
+	d, rec := dialerWithTopic(t, reg)
 
 	streamCtx, cancel := context.WithCancel(t.Context())
 	stream := newFakeStream(streamCtx)
@@ -206,19 +56,20 @@ func TestDriveRegister_HappyPath(t *testing.T) {
 
 	d.driveRegister(t.Context(), "abc", res, logger.Nop())
 
-	registered, untrusted := ec.drain(100 * time.Millisecond)
-	require.Len(t, registered, 1)
-	assert.True(t, registered[0].Ok)
-	assert.Equal(t, "abc", registered[0].ContainerID)
-	assert.Empty(t, untrusted)
+	require.Eventually(t, func() bool { return len(registeredEvents(rec)) == 1 }, time.Second, 10*time.Millisecond)
+	registered := registeredEvents(rec)
+	assert.True(t, registered[0].Message.RegisterOk)
+	assert.Equal(t, "abc", registered[0].Agent.ContainerID)
+	assert.Empty(t, untrustedEvents(rec))
 }
 
 // TestDriveRegister_RegisterDoneFailure_PublishesUntrusted: clawkerd
-// replies with RegisterDone{ok:false, error:"..."}; dialer publishes
-// AgentRegistered{Ok:false} AND AgentUntrusted{ReasonRegisterFailed}
-// so containment subscribers can branch on a single typed event.
+// replies with RegisterDone{ok:false, error:"..."}; dialer publishes a
+// registered AgentEvent with RegisterOk=false AND an untrusted event with
+// ReasonRegisterFailed so containment subscribers can branch on the typed
+// reason.
 func TestDriveRegister_RegisterDoneFailure_PublishesUntrusted(t *testing.T) {
-	d, ec := newDriveRegisterDialer(t, &RegistryMock{
+	d, rec := dialerWithTopic(t, &RegistryMock{
 		LookupByContainerIDFunc: func(string) (*Entry, error) { return nil, ErrUnknownAgent },
 	})
 
@@ -231,17 +82,19 @@ func TestDriveRegister_RegisterDoneFailure_PublishesUntrusted(t *testing.T) {
 
 	d.driveRegister(t.Context(), "abc", res, logger.Nop())
 
-	registered, untrusted := ec.drain(100 * time.Millisecond)
+	require.Eventually(t, func() bool { return len(untrustedEvents(rec)) == 1 }, time.Second, 10*time.Millisecond)
+	registered := registeredEvents(rec)
 	require.Len(t, registered, 1)
-	assert.False(t, registered[0].Ok)
+	assert.False(t, registered[0].Message.RegisterOk)
+	untrusted := untrustedEvents(rec)
 	require.Len(t, untrusted, 1)
-	assert.Equal(t, overseer.UntrustedReasonRegisterFailed, untrusted[0].Reason)
+	assert.Equal(t, ReasonRegisterFailed, untrusted[0].Message.Reason)
 }
 
-// TestDriveRegister_DiscardsUnsolicitedFrames: a Started Response with
-// the wrong command_id arrives BEFORE the RegisterDone — the inner
-// recv loop must skip it and continue waiting. A regression that
-// returned the first frame regardless would publish failure here.
+// TestDriveRegister_DiscardsUnsolicitedFrames: a Started Response with the
+// wrong command_id arrives BEFORE the RegisterDone — the inner recv loop
+// must skip it and continue waiting. A regression that returned the first
+// frame regardless would publish failure here.
 func TestDriveRegister_DiscardsUnsolicitedFrames(t *testing.T) {
 	thumb := sha256.Sum256([]byte("peer"))
 	reg := &RegistryMock{
@@ -254,7 +107,7 @@ func TestDriveRegister_DiscardsUnsolicitedFrames(t *testing.T) {
 			}, nil
 		},
 	}
-	d, ec := newDriveRegisterDialer(t, reg)
+	d, rec := dialerWithTopic(t, reg)
 
 	streamCtx, cancel := context.WithCancel(t.Context())
 	stream := newFakeStream(streamCtx)
@@ -266,16 +119,15 @@ func TestDriveRegister_DiscardsUnsolicitedFrames(t *testing.T) {
 
 	d.driveRegister(t.Context(), "abc", res, logger.Nop())
 
-	registered, _ := ec.drain(100 * time.Millisecond)
-	require.Len(t, registered, 1)
-	assert.True(t, registered[0].Ok)
+	require.Eventually(t, func() bool { return len(registeredEvents(rec)) == 1 }, time.Second, 10*time.Millisecond)
+	assert.True(t, registeredEvents(rec)[0].Message.RegisterOk)
 }
 
-// TestDriveRegister_SendFailure_PublishesFailure: stream.Send fails
-// (broken transport); driveRegister surfaces failure events and does
-// NOT block waiting for a Recv that will never come.
+// TestDriveRegister_SendFailure_PublishesFailure: stream.Send fails (broken
+// transport); driveRegister surfaces failure events and does NOT block
+// waiting for a Recv that will never come.
 func TestDriveRegister_SendFailure_PublishesFailure(t *testing.T) {
-	d, ec := newDriveRegisterDialer(t, &RegistryMock{})
+	d, rec := dialerWithTopic(t, &RegistryMock{})
 
 	streamCtx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -287,17 +139,17 @@ func TestDriveRegister_SendFailure_PublishesFailure(t *testing.T) {
 
 	d.driveRegister(t.Context(), "abc", res, logger.Nop())
 
-	registered, untrusted := ec.drain(100 * time.Millisecond)
+	require.Eventually(t, func() bool { return len(untrustedEvents(rec)) == 1 }, time.Second, 10*time.Millisecond)
+	registered := registeredEvents(rec)
 	require.Len(t, registered, 1)
-	assert.False(t, registered[0].Ok)
-	assert.Contains(t, registered[0].Reason, "send RegisterRequired")
-	require.Len(t, untrusted, 1)
+	assert.False(t, registered[0].Message.RegisterOk)
+	assert.Contains(t, registered[0].Message.Detail, "send RegisterRequired")
 }
 
-// TestDriveRegister_RecvError_PublishesFailure: Recv returns a
-// transport error mid-wait → publishRegisterFailure.
+// TestDriveRegister_RecvError_PublishesFailure: Recv returns a transport
+// error mid-wait → publishRegisterFailure.
 func TestDriveRegister_RecvError_PublishesFailure(t *testing.T) {
-	d, ec := newDriveRegisterDialer(t, &RegistryMock{})
+	d, rec := dialerWithTopic(t, &RegistryMock{})
 
 	streamCtx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -309,23 +161,20 @@ func TestDriveRegister_RecvError_PublishesFailure(t *testing.T) {
 
 	d.driveRegister(t.Context(), "abc", res, logger.Nop())
 
-	registered, untrusted := ec.drain(100 * time.Millisecond)
+	require.Eventually(t, func() bool { return len(untrustedEvents(rec)) == 1 }, time.Second, 10*time.Millisecond)
+	registered := registeredEvents(rec)
 	require.Len(t, registered, 1)
-	assert.False(t, registered[0].Ok)
-	assert.Contains(t, registered[0].Reason, "Recv RegisterDone")
-	require.Len(t, untrusted, 1)
+	assert.False(t, registered[0].Message.RegisterOk)
+	assert.Contains(t, registered[0].Message.Detail, "Recv RegisterDone")
 }
 
 // TestDriveRegister_ResponseErrorSurfaces pins the
 // Response_Error-during-register branch: when clawkerd rejects
-// RegisterRequired with a typed Error frame addressed to our
-// command_id, driveRegister surfaces the ErrorCode + message in the
-// AgentRegistered.Reason and AgentUntrusted.Detail rather than swallowing
-// it and timing out. Without this branch, an INVALID_REQUEST rejection
-// would manifest as an opaque "RegisterDone timeout" — operators would
-// see the symptom but not the cause.
+// RegisterRequired with a typed Error frame addressed to our command_id,
+// driveRegister surfaces the ErrorCode + message in the registered
+// event's Detail rather than swallowing it and timing out.
 func TestDriveRegister_ResponseErrorSurfaces(t *testing.T) {
-	d, ec := newDriveRegisterDialer(t, &RegistryMock{})
+	d, rec := dialerWithTopic(t, &RegistryMock{})
 
 	streamCtx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -348,25 +197,24 @@ func TestDriveRegister_ResponseErrorSurfaces(t *testing.T) {
 	require.Less(t, time.Since(start), registerRequiredTimeout/2,
 		"a typed Response_Error must short-circuit the wait — not fall through to the timeout")
 
-	registered, untrusted := ec.drain(100 * time.Millisecond)
-	require.Len(t, registered, 1)
-	require.False(t, registered[0].Ok,
-		"register must fail on a typed Response_Error; downstream Reason assertions assume failure")
-	assert.Contains(t, registered[0].Reason, "ERROR_CODE_INVALID_REQUEST")
-	assert.Contains(t, registered[0].Reason, "missing client_assertion")
-	require.Len(t, untrusted, 1)
+	require.Eventually(t, func() bool { return len(registeredEvents(rec)) == 1 }, time.Second, 10*time.Millisecond)
+	registered := registeredEvents(rec)
+	require.False(t, registered[0].Message.RegisterOk,
+		"register must fail on a typed Response_Error; downstream Detail assertions assume failure")
+	assert.Contains(t, registered[0].Message.Detail, "ERROR_CODE_INVALID_REQUEST")
+	assert.Contains(t, registered[0].Message.Detail, "missing client_assertion")
+	require.Len(t, untrustedEvents(rec), 1)
 }
 
 // TestDriveRegister_TimeoutCancelsStream: when no RegisterDone arrives
-// within the wait window, driveRegister cancels the stream-scoped
-// ctx so the inner Recv goroutine exits BEFORE driveRegister returns.
-// Without the cancel, drainStream would race the leftover goroutine
-// for stream.Recv() — undefined behavior.
+// within the wait window, driveRegister cancels the stream-scoped ctx so
+// the inner Recv goroutine exits BEFORE driveRegister returns. Without the
+// cancel, drainStream would race the leftover goroutine for stream.Recv().
 //
 // We don't wait the full registerRequiredTimeout (30s); instead we
 // pre-cancel the parent ctx to force the timeout path quickly.
 func TestDriveRegister_TimeoutCancelsStream(t *testing.T) {
-	d, ec := newDriveRegisterDialer(t, &RegistryMock{})
+	d, rec := dialerWithTopic(t, &RegistryMock{})
 
 	streamCtx, streamCancel := context.WithCancel(t.Context())
 	stream := newFakeStream(streamCtx)
@@ -381,23 +229,23 @@ func TestDriveRegister_TimeoutCancelsStream(t *testing.T) {
 
 	d.driveRegister(parentCtx, "abc", res, logger.Nop())
 
-	// Stream ctx must have been cancelled by driveRegister so the
-	// inner Recv goroutine exits.
+	// Stream ctx must have been cancelled by driveRegister so the inner
+	// Recv goroutine exits.
 	assert.Error(t, streamCtx.Err(), "stream ctx must be cancelled on timeout to unblock inner Recv")
 
-	registered, untrusted := ec.drain(100 * time.Millisecond)
-	require.Len(t, registered, 1)
-	assert.False(t, registered[0].Ok)
-	assert.Contains(t, registered[0].Reason, "RegisterDone timeout")
-	require.Len(t, untrusted, 1)
+	require.Eventually(t, func() bool { return len(registeredEvents(rec)) == 1 }, time.Second, 10*time.Millisecond)
+	registered := registeredEvents(rec)
+	assert.False(t, registered[0].Message.RegisterOk)
+	assert.Contains(t, registered[0].Message.Detail, "RegisterDone timeout")
+	require.Len(t, untrustedEvents(rec), 1)
 }
 
-// TestDriveRegister_RegistryLookupError_DistinguishedFromMissingRow:
-// a sqlite-side error after RegisterDone reports differently from
-// "no row" so containment subscribers can tell I/O failures apart
-// from "agent lied about Register success".
+// TestDriveRegister_RegistryLookupError_DistinguishedFromMissingRow: a
+// sqlite-side error after RegisterDone reports differently from "no row"
+// so containment subscribers can tell I/O failures apart from "agent lied
+// about Register success".
 func TestDriveRegister_RegistryLookupError_DistinguishedFromMissingRow(t *testing.T) {
-	d, ec := newDriveRegisterDialer(t, &RegistryMock{
+	d, rec := dialerWithTopic(t, &RegistryMock{
 		LookupByContainerIDFunc: func(string) (*Entry, error) {
 			return nil, errors.New("disk i/o error")
 		},
@@ -412,18 +260,18 @@ func TestDriveRegister_RegistryLookupError_DistinguishedFromMissingRow(t *testin
 
 	d.driveRegister(t.Context(), "abc", res, logger.Nop())
 
-	registered, untrusted := ec.drain(100 * time.Millisecond)
-	require.Len(t, registered, 1)
-	assert.False(t, registered[0].Ok)
-	assert.Contains(t, registered[0].Reason, "registry lookup error")
-	require.Len(t, untrusted, 1)
+	require.Eventually(t, func() bool { return len(registeredEvents(rec)) == 1 }, time.Second, 10*time.Millisecond)
+	registered := registeredEvents(rec)
+	assert.False(t, registered[0].Message.RegisterOk)
+	assert.Contains(t, registered[0].Message.Detail, "registry lookup error")
+	require.Len(t, untrustedEvents(rec), 1)
 }
 
-// TestDriveRegister_MissingRowAfterRegisterDone: success-reported but
-// row absent — clawkerd-side regression. Distinguished from I/O
-// error in the published reason.
+// TestDriveRegister_MissingRowAfterRegisterDone: success-reported but row
+// absent — clawkerd-side regression. Distinguished from I/O error in the
+// published detail.
 func TestDriveRegister_MissingRowAfterRegisterDone(t *testing.T) {
-	d, ec := newDriveRegisterDialer(t, &RegistryMock{
+	d, rec := dialerWithTopic(t, &RegistryMock{
 		LookupByContainerIDFunc: func(string) (*Entry, error) { return nil, ErrUnknownAgent },
 	})
 
@@ -436,17 +284,17 @@ func TestDriveRegister_MissingRowAfterRegisterDone(t *testing.T) {
 
 	d.driveRegister(t.Context(), "abc", res, logger.Nop())
 
-	registered, _ := ec.drain(100 * time.Millisecond)
-	require.Len(t, registered, 1)
-	assert.False(t, registered[0].Ok)
-	assert.Contains(t, registered[0].Reason, "registry row missing")
+	require.Eventually(t, func() bool { return len(registeredEvents(rec)) == 1 }, time.Second, 10*time.Millisecond)
+	registered := registeredEvents(rec)
+	assert.False(t, registered[0].Message.RegisterOk)
+	assert.Contains(t, registered[0].Message.Detail, "registry row missing")
 }
 
 // --- dispatchAgentEvents (load-bearing asymmetric-trust tests) -----------
 
 // TestDispatchAgentEvents_Match_PublishesNoExtraEvent: when the peer
-// matches a registry row, dispatchAgentEvents publishes nothing
-// extra (SessionConnected already populated worldview).
+// matches a registry row, dispatchAgentEvents publishes nothing extra (the
+// session-connected event already populated the worldview).
 func TestDispatchAgentEvents_Match_PublishesNoExtraEvent(t *testing.T) {
 	thumb := sha256.Sum256([]byte("peer"))
 	expectedAgentFullName := auth.AgentFullName(auth.MustProjectSlug("myapp"), auth.MustAgentName("dev"))
@@ -460,7 +308,7 @@ func TestDispatchAgentEvents_Match_PublishesNoExtraEvent(t *testing.T) {
 			}, nil
 		},
 	}
-	d, ec := newDriveRegisterDialer(t, reg)
+	d, rec := dialerWithTopic(t, reg)
 
 	streamCtx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -470,21 +318,22 @@ func TestDispatchAgentEvents_Match_PublishesNoExtraEvent(t *testing.T) {
 
 	d.dispatchAgentEvents(t.Context(), "abc", res, logger.Nop())
 
-	registered, untrusted := ec.drain(50 * time.Millisecond)
-	assert.Empty(t, registered, "Match must NOT publish AgentRegistered")
-	assert.Empty(t, untrusted, "Match must NOT publish AgentUntrusted")
+	// Give the pipe a beat to deliver anything that would have been
+	// published; a Match must publish neither registered nor untrusted.
+	time.Sleep(50 * time.Millisecond)
+	assert.Empty(t, registeredEvents(rec), "Match must NOT publish a registered event")
+	assert.Empty(t, untrustedEvents(rec), "Match must NOT publish an untrusted event")
 }
 
-// TestDispatchAgentEvents_OutcomesPinned pins the typed Reason for
-// each non-Match outcome — a regression that swapped
-// ThumbprintMismatch and LookupError in the switch would silently
-// mis-classify containment policy.
+// TestDispatchAgentEvents_OutcomesPinned pins the typed Reason for each
+// non-Match outcome — a regression that swapped ThumbprintMismatch and
+// LookupError in the switch would silently mis-classify containment policy.
 func TestDispatchAgentEvents_OutcomesPinned(t *testing.T) {
 	cases := []struct {
 		name       string
 		reg        *RegistryMock
 		peer       peerInfo
-		wantReason overseer.UntrustedReason
+		wantReason Reason
 	}{
 		{
 			name: "ThumbprintMismatch",
@@ -499,7 +348,7 @@ func TestDispatchAgentEvents_OutcomesPinned(t *testing.T) {
 				},
 			},
 			peer:       peerInfo{PeerAgentFullName: "clawker.myapp.dev", PeerThumbprint: sha256.Sum256([]byte("live-cert"))},
-			wantReason: overseer.UntrustedReasonThumbprintMismatch,
+			wantReason: ReasonThumbprintMismatch,
 		},
 		{
 			name: "LookupError",
@@ -509,12 +358,12 @@ func TestDispatchAgentEvents_OutcomesPinned(t *testing.T) {
 				},
 			},
 			peer:       peerInfo{PeerAgentFullName: "clawker.x.y", PeerThumbprint: sha256.Sum256([]byte("p"))},
-			wantReason: overseer.UntrustedReasonCertInvalid,
+			wantReason: ReasonCertInvalid,
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			d, ec := newDriveRegisterDialer(t, tc.reg)
+			d, rec := dialerWithTopic(t, tc.reg)
 			streamCtx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			stream := newFakeStream(streamCtx)
@@ -528,20 +377,17 @@ func TestDispatchAgentEvents_OutcomesPinned(t *testing.T) {
 
 			d.dispatchAgentEvents(t.Context(), "abc", res, logger.Nop())
 
-			_, untrusted := ec.drain(100 * time.Millisecond)
-			require.Len(t, untrusted, 1)
-			assert.Equal(t, tc.wantReason, untrusted[0].Reason)
+			require.Eventually(t, func() bool { return len(untrustedEvents(rec)) == 1 }, time.Second, 10*time.Millisecond)
+			assert.Equal(t, tc.wantReason, untrustedEvents(rec)[0].Message.Reason)
 		})
 	}
 }
 
 // TestDispatchAgentEvents_AsymmetricTrust_StreamStaysOpen pins the
-// load-bearing invariant of this branch: a ThumbprintMismatch
-// (untrusted classification) must NOT cancel or close the Session
-// stream — CP must remain reachable to dispatch containment commands
-// against the untrusted agent. We drive dispatchAgentEvents with a
-// mismatch and then verify the stream is still usable for further
-// commands (CloseSend not invoked, ctx not cancelled).
+// load-bearing invariant of this branch: a ThumbprintMismatch (untrusted
+// classification) must NOT cancel or close the Session stream — CP must
+// remain reachable to dispatch containment commands against the untrusted
+// agent.
 func TestDispatchAgentEvents_AsymmetricTrust_StreamStaysOpen(t *testing.T) {
 	reg := &RegistryMock{
 		LookupByContainerIDFunc: func(string) (*Entry, error) {
@@ -553,7 +399,7 @@ func TestDispatchAgentEvents_AsymmetricTrust_StreamStaysOpen(t *testing.T) {
 			}, nil
 		},
 	}
-	d, ec := newDriveRegisterDialer(t, reg)
+	d, rec := dialerWithTopic(t, reg)
 	streamCtx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	stream := newFakeStream(streamCtx)
@@ -574,7 +420,6 @@ func TestDispatchAgentEvents_AsymmetricTrust_StreamStaysOpen(t *testing.T) {
 	// Stream ctx must still be live — no cancellation on cert grounds.
 	assert.NoError(t, streamCtx.Err(), "stream must stay open after ThumbprintMismatch (asymmetric trust)")
 
-	_, untrusted := ec.drain(100 * time.Millisecond)
-	require.Len(t, untrusted, 1)
-	assert.Equal(t, overseer.UntrustedReasonThumbprintMismatch, untrusted[0].Reason)
+	require.Eventually(t, func() bool { return len(untrustedEvents(rec)) == 1 }, time.Second, 10*time.Millisecond)
+	assert.Equal(t, ReasonThumbprintMismatch, untrustedEvents(rec)[0].Message.Reason)
 }

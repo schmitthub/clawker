@@ -7,7 +7,7 @@ import (
 
 	"github.com/cilium/ebpf"
 
-	clawkerebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
+	clawkerebpf "github.com/schmitthub/clawker/controlplane/firewall/ebpf"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 

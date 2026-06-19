@@ -5,8 +5,8 @@ import (
 	"net/http"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	"github.com/schmitthub/clawker/controlplane/manager"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
@@ -50,7 +50,7 @@ type Factory struct {
 	SocketBridge    func() socketbridge.SocketBridgeManager
 	Prompter        func() *prompter.Prompter
 	AdminClient     func(context.Context) (adminv1.AdminServiceClient, error)
-	ControlPlane    func() cpboot.Manager
+	ControlPlane    func() manager.Manager
 	// HttpClient returns the *http.Client used for outbound HTTP from the
 	// CLI (first consumer: npm registry lookups for Claude Code version
 	// resolution). Tests substitute by setting this field to a closure that

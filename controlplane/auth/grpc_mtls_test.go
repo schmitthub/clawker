@@ -16,12 +16,12 @@ import (
 	"google.golang.org/grpc/status"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	cpauth "github.com/schmitthub/clawker/controlplane/auth"
+	cpmocks "github.com/schmitthub/clawker/controlplane/auth/mocks"
+	cpfw "github.com/schmitthub/clawker/controlplane/firewall"
+	ebpfmocks "github.com/schmitthub/clawker/controlplane/firewall/ebpf/mocks"
 	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/consts"
-	"github.com/schmitthub/clawker/internal/controlplane"
-	cpfw "github.com/schmitthub/clawker/internal/controlplane/firewall"
-	ebpfmocks "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf/mocks"
-	cpmocks "github.com/schmitthub/clawker/internal/controlplane/mocks"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/testenv"
 )
@@ -56,7 +56,7 @@ func startMTLSServer(t *testing.T, introspector *cpmocks.IntrospectorMock, ebpfM
 	}
 
 	log := logger.Nop()
-	interceptor := controlplane.NewAuthInterceptor(introspector, adminv1.AdminMethodScopes(), log)
+	interceptor := cpauth.NewAuthInterceptor(introspector, adminv1.AdminMethodScopes(), log)
 
 	srv := grpc.NewServer(
 		grpc.Creds(credentials.NewTLS(tlsCfg)),
@@ -66,12 +66,13 @@ func startMTLSServer(t *testing.T, introspector *cpmocks.IntrospectorMock, ebpfM
 
 	queue := cpfw.NewActionQueue(log)
 	t.Cleanup(func() { _ = queue.Close() })
-	handler := cpfw.NewHandler(cpfw.HandlerDeps{
+	handler, err := cpfw.NewHandler(cpfw.HandlerDeps{
 		EBPF:     ebpfMgr,
 		Resolver: nopContainerResolver,
 		Log:      log,
 		Queue:    queue,
 	})
+	require.NoError(t, err)
 	adminv1.RegisterAdminServiceServer(srv, handler)
 
 	lis, err := net.Listen("tcp", consts.Localhost+":0")

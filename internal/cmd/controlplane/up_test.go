@@ -12,13 +12,13 @@ import (
 	"google.golang.org/grpc"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	"github.com/schmitthub/clawker/controlplane/manager"
+	"github.com/schmitthub/clawker/controlplane/manager/mocks"
+	cpmocks "github.com/schmitthub/clawker/controlplane/mocks"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/consts"
-	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
-	"github.com/schmitthub/clawker/internal/controlplane/cpboot/mocks"
-	cpmocks "github.com/schmitthub/clawker/internal/controlplane/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	dockermocks "github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/iostreams"
@@ -44,7 +44,7 @@ func newTestBed(t *testing.T) *testBed {
 	mgr := &mocks.ManagerMock{}
 	f := &cmdutil.Factory{
 		IOStreams:    ios,
-		ControlPlane: func() cpboot.Manager { return mgr },
+		ControlPlane: func() manager.Manager { return mgr },
 	}
 	return &testBed{F: f, Mock: mgr, Stdout: stdout, Stderr: stderr}
 }

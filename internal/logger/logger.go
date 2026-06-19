@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
+	"github.com/schmitthub/clawker/internal/consts"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
@@ -161,6 +162,37 @@ func NewWriter(w io.Writer) *Logger {
 		Timestamp().
 		Logger()
 	return &Logger{zl: zl}
+}
+
+// OtelOptionsFromEnv builds [OtelOptions] from the standard OTLP
+// environment variables. It returns nil when no endpoint is configured —
+// the logger then runs file-only and the caller needs no OTEL dependency
+// at runtime.
+//
+// Per-signal OTEL_EXPORTER_OTLP_LOGS_ENDPOINT takes precedence over the
+// generic OTEL_EXPORTER_OTLP_ENDPOINT (resolved by
+// [consts.ResolveOTLPEndpoint]). Either may be a full URL
+// (https://host.docker.internal:4319/v1/logs) or a bare authority
+// (host.docker.internal:4319); the OTLP/gRPC exporter only needs
+// host:port, so scheme/path are stripped during resolution.
+//
+// Default is TLS. Bare host:port → TLS. https:// → TLS. Only explicit
+// http:// opts in to plaintext, so a misconfigured prod endpoint can't
+// silently downgrade.
+//
+// mTLS material is NOT taken from env. A trusted-lane caller (the clawkercp
+// daemon) wires the in-process [OtelOptions.TLSConfig] shape separately so
+// the leaf never lands on disk; env-driven cert paths are deliberately not
+// honored here. This helper only resolves the endpoint and plaintext flag.
+func OtelOptionsFromEnv() *OtelOptions {
+	endpoint, insecure := consts.ResolveOTLPEndpoint()
+	if endpoint == "" {
+		return nil
+	}
+	return &OtelOptions{
+		Endpoint: endpoint,
+		Insecure: insecure,
+	}
 }
 
 // New creates a logger with file output and optional OTEL bridge.

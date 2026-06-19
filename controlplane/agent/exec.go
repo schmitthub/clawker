@@ -12,8 +12,8 @@ import (
 	"github.com/moby/moby/api/types/container"
 	moby "github.com/moby/moby/client"
 	clawkerdv1 "github.com/schmitthub/clawker/api/clawkerd/v1"
+	"github.com/schmitthub/clawker/controlplane/pubsub"
 	"github.com/schmitthub/clawker/internal/consts"
-	"github.com/schmitthub/clawker/internal/controlplane/overseer"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
 )
@@ -231,6 +231,17 @@ type ExecTarget struct {
 	Project     string
 }
 
+// agent projects the ExecTarget onto the AgentEvent identity triple so
+// every exec-axis event carries consistent (container, agent, project)
+// fields.
+func (t ExecTarget) agent() Agent {
+	return Agent{
+		ContainerID: t.ContainerID,
+		AgentName:   t.AgentName,
+		Project:     t.Project,
+	}
+}
+
 // Executor dispatches the static CP-driven init plan against an open
 // Session stream. Owns Recv during Run; the dialer's drainStream
 // takes over after Run returns.
@@ -251,40 +262,38 @@ type ExecTarget struct {
 // per-Executor — concurrent Runs across different containers must not
 // be serialized.
 type Executor struct {
-	bus       *overseer.Overseer
+	topic     *pubsub.Topic[AgentEvent]
 	dockerCli *docker.Client
 	log       *logger.Logger
 }
 
 // NewExecutor constructs an Executor. nil log is replaced with
-// logger.Nop(). bus is required — Run publishes init events
-// unconditionally, so a nil bus would NPE deep inside overseer.Publish
-// on the first event dispatch. Returning an error lets the caller
-// (cmd/clawkercp/clawkercp.go) log the wiring bug to the structured log
-// surface and degrade gracefully (initExec = nil → dialer logs
+// logger.Nop(). topic is required — Run publishes exec events
+// unconditionally, so a nil topic is a wiring bug the caller must catch
+// at construction. Returning an error lets the caller
+// (the orchestrator) log the wiring bug to the structured log surface
+// and degrade gracefully (initExec = nil → dialer logs
 // agent_init_executor_unset per dial) instead of crashing CP and
 // stranding the failure on os.Stderr where only `docker logs` sees it.
-// Matches the nil-bus contract on agent.New for the dialer.
-func NewExecutor(bus *overseer.Overseer, dockerCli *docker.Client, log *logger.Logger) (*Executor, error) {
-	if bus == nil {
-		return nil, errors.New("agent.NewExecutor: bus is required")
+// Matches the nil-topic contract on agent.New for the dialer.
+func NewExecutor(topic *pubsub.Topic[AgentEvent], dockerCli *docker.Client, log *logger.Logger) (*Executor, error) {
+	if topic == nil {
+		return nil, errors.New("agent.NewExecutor: topic is required")
 	}
 	if log == nil {
 		log = logger.Nop()
 	}
-	return &Executor{bus: bus, dockerCli: dockerCli, log: log}, nil
+	return &Executor{topic: topic, dockerCli: dockerCli, log: log}, nil
 }
 
 func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_SessionClient, target ExecTarget, plan []step, label string) (runErr error) {
 
 	startedAt := time.Now()
-	overseer.Publish(e.bus, ExecStarted{
-		ContainerID: target.ContainerID,
-		AgentName:   target.AgentName,
-		Project:     target.Project,
-		StepCount:   len(plan),
-		At:          startedAt,
-	})
+	publish(e.topic, newAgentEvent(target.agent(), Message{
+		Type:      ExecutorEventType,
+		Action:    ActionExecStarted,
+		StepCount: len(plan),
+	}))
 	log := e.log.With(
 		"component", fmt.Sprintf("agent.%s", label),
 		"container_id", target.ContainerID,
@@ -323,29 +332,25 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 			Str("step", currentName).
 			Msg(fmt.Sprintf("agent.%s: Executor.Run panicked; publishing synthetic terminal events; Session held open for containment", label))
 		if currentIdx >= 0 {
-			overseer.Publish(e.bus, ExecStepFailed{
-				ContainerID: target.ContainerID,
-				AgentName:   target.AgentName,
-				Project:     target.Project,
-				StepName:    currentName,
-				StepIndex:   currentIdx,
-				Duration:    dur,
-				ExitCode:    -1,
-				Reason:      overseer.ExecFailureReasonUnknown,
-				Detail:      detail,
-				At:          now,
-			})
+			publish(e.topic, newAgentEvent(target.agent(), Message{
+				Type:      ExecutorEventType,
+				Action:    ActionExecStepFailed,
+				StepName:  currentName,
+				StepIndex: currentIdx,
+				Duration:  dur,
+				ExitCode:  -1,
+				Reason:    ReasonUnknown,
+				Detail:    detail,
+			}))
 		}
-		overseer.Publish(e.bus, ExecFailed{
-			ContainerID: target.ContainerID,
-			AgentName:   target.AgentName,
-			Project:     target.Project,
-			FailedStep:  currentName,
-			Reason:      overseer.ExecFailureReasonUnknown,
-			Detail:      detail,
-			Duration:    dur,
-			At:          now,
-		})
+		publish(e.topic, newAgentEvent(target.agent(), Message{
+			Type:     ExecutorEventType,
+			Action:   ActionExecFailed,
+			StepName: currentName,
+			Reason:   ReasonUnknown,
+			Detail:   detail,
+			Duration: dur,
+		}))
 		runErr = errors.New(detail)
 	}()
 
@@ -353,15 +358,13 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 		currentIdx = i
 		currentName = st.stepName()
 		stepStart := time.Now()
-		overseer.Publish(e.bus, ExecStepStarted{
-			ContainerID: target.ContainerID,
-			AgentName:   target.AgentName,
-			Project:     target.Project,
-			StepName:    st.stepName(),
-			StepIndex:   i,
-			StepCount:   len(plan),
-			At:          stepStart,
-		})
+		publish(e.topic, newAgentEvent(target.agent(), Message{
+			Type:      ExecutorEventType,
+			Action:    ActionExecStepStarted,
+			StepName:  st.stepName(),
+			StepIndex: i,
+			StepCount: len(plan),
+		}))
 		log.Info().
 			Str("event", "agent_init_step_started").
 			Str("step", st.stepName()).
@@ -371,28 +374,24 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 		out, err := e.runStep(ctx, stream, target.ContainerID, i, st, log)
 		dur := time.Since(stepStart)
 		if out.Failed() {
-			overseer.Publish(e.bus, ExecStepFailed{
-				ContainerID: target.ContainerID,
-				AgentName:   target.AgentName,
-				Project:     target.Project,
-				StepName:    st.stepName(),
-				StepIndex:   i,
-				Duration:    dur,
-				ExitCode:    out.ExitCode,
-				Reason:      out.Reason,
-				Detail:      out.Detail,
-				At:          time.Now(),
-			})
-			overseer.Publish(e.bus, ExecFailed{
-				ContainerID: target.ContainerID,
-				AgentName:   target.AgentName,
-				Project:     target.Project,
-				FailedStep:  st.stepName(),
-				Reason:      out.Reason,
-				Detail:      out.Detail,
-				Duration:    time.Since(startedAt),
-				At:          time.Now(),
-			})
+			publish(e.topic, newAgentEvent(target.agent(), Message{
+				Type:      ExecutorEventType,
+				Action:    ActionExecStepFailed,
+				StepName:  st.stepName(),
+				StepIndex: i,
+				Duration:  dur,
+				ExitCode:  out.ExitCode,
+				Reason:    out.Reason,
+				Detail:    out.Detail,
+			}))
+			publish(e.topic, newAgentEvent(target.agent(), Message{
+				Type:     ExecutorEventType,
+				Action:   ActionExecFailed,
+				StepName: st.stepName(),
+				Reason:   out.Reason,
+				Detail:   out.Detail,
+				Duration: time.Since(startedAt),
+			}))
 			log.Error().
 				Str("event", "agent_init_failed").
 				Str("step", st.stepName()).
@@ -419,16 +418,14 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 			}
 			return fmt.Errorf("agent.init: step %q failed: %s", st.stepName(), out.Detail)
 		}
-		overseer.Publish(e.bus, ExecStepCompleted{
-			ContainerID: target.ContainerID,
-			AgentName:   target.AgentName,
-			Project:     target.Project,
-			StepName:    st.stepName(),
-			StepIndex:   i,
-			Duration:    dur,
-			ExitCode:    out.ExitCode,
-			At:          time.Now(),
-		})
+		publish(e.topic, newAgentEvent(target.agent(), Message{
+			Type:      ExecutorEventType,
+			Action:    ActionExecStepCompleted,
+			StepName:  st.stepName(),
+			StepIndex: i,
+			Duration:  dur,
+			ExitCode:  out.ExitCode,
+		}))
 		log.Info().
 			Str("event", "agent_init_step_completed").
 			Str("step", st.stepName()).
@@ -444,13 +441,11 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 	}
 
 	totalDur := time.Since(startedAt)
-	overseer.Publish(e.bus, ExecCompleted{
-		ContainerID: target.ContainerID,
-		AgentName:   target.AgentName,
-		Project:     target.Project,
-		Duration:    totalDur,
-		At:          time.Now(),
-	})
+	publish(e.topic, newAgentEvent(target.agent(), Message{
+		Type:     ExecutorEventType,
+		Action:   ActionExecCompleted,
+		Duration: totalDur,
+	}))
 	log.Info().
 		Str("event", "agent_init_completed").
 		Dur("duration", totalDur).
@@ -488,12 +483,12 @@ func captureCapped(buf *strings.Builder, truncated *int, data []byte) {
 // publish terminal events.
 type stepOutcome struct {
 	ExitCode int32
-	Reason   overseer.ExecFailureReason
+	Reason   Reason
 	Detail   string
 }
 
 func (o stepOutcome) Failed() bool {
-	return o.Reason != overseer.ExecFailureReasonNone
+	return o.Reason != ReasonNone
 }
 
 // stepSucceeded is the zero outcome — the only success shape.
@@ -506,7 +501,7 @@ func stepSucceeded() stepOutcome { return stepOutcome{} }
 func stepFailedTransport(detail string) stepOutcome {
 	return stepOutcome{
 		ExitCode: -1,
-		Reason:   overseer.ExecFailureReasonTransportError,
+		Reason:   ReasonTransportError,
 		Detail:   detail,
 	}
 }
@@ -517,7 +512,7 @@ func stepFailedTransport(detail string) stepOutcome {
 func stepFailedExit(exit int32, detail string) stepOutcome {
 	return stepOutcome{
 		ExitCode: exit,
-		Reason:   overseer.ExecFailureReasonExitCode,
+		Reason:   ReasonExitCode,
 		Detail:   detail,
 	}
 }
@@ -525,7 +520,7 @@ func stepFailedExit(exit int32, detail string) stepOutcome {
 // stepFailedClassified classifies a clawkerd Response_Error frame
 // (timeout, spawn failed, IO error, protocol violation, ...) into
 // the typed reason vocabulary subscribers branch on.
-func stepFailedClassified(reason overseer.ExecFailureReason, detail string) stepOutcome {
+func stepFailedClassified(reason Reason, detail string) stepOutcome {
 	return stepOutcome{
 		ExitCode: -1,
 		Reason:   reason,
@@ -700,19 +695,19 @@ func (e *Executor) runStep(ctx context.Context, stream clawkerdv1.ClawkerdServic
 // failure classification. New codes default to Unknown so producers
 // don't drop information silently — the human-readable detail still
 // carries the ErrorCode string.
-func classifyErrorCode(code clawkerdv1.ErrorCode) overseer.ExecFailureReason {
+func classifyErrorCode(code clawkerdv1.ErrorCode) Reason {
 	switch code {
 	case clawkerdv1.ErrorCode_ERROR_CODE_TIMEOUT:
-		return overseer.ExecFailureReasonTimeout
+		return ReasonTimeout
 	case clawkerdv1.ErrorCode_ERROR_CODE_SPAWN_FAILED:
-		return overseer.ExecFailureReasonSpawnFailed
+		return ReasonSpawnFailed
 	case clawkerdv1.ErrorCode_ERROR_CODE_IO_ERROR, clawkerdv1.ErrorCode_ERROR_CODE_NOT_FOUND:
-		return overseer.ExecFailureReasonIOError
+		return ReasonIOError
 	case clawkerdv1.ErrorCode_ERROR_CODE_INVALID_REQUEST,
 		clawkerdv1.ErrorCode_ERROR_CODE_UNKNOWN_COMMAND_ID:
-		return overseer.ExecFailureReasonProtocol
+		return ReasonProtocolError
 	default:
-		return overseer.ExecFailureReasonUnknown
+		return ReasonUnknown
 	}
 }
 

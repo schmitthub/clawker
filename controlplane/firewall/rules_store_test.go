@@ -8,9 +8,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/schmitthub/clawker/controlplane/firewall"
+	ebpf "github.com/schmitthub/clawker/controlplane/firewall/ebpf"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/controlplane/firewall"
-	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
 )
 
 // TestValidateDst exercises the pure ValidateDst function across the full

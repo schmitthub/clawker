@@ -1,6 +1,7 @@
 // Package dockerevents subscribes to the Docker engine's event stream
 // and publishes typed lifecycle events for clawker-managed containers
-// and their network attachments to an *overseer.Overseer bus.
+// and their network attachments onto an injected
+// *pubsub.Topic[DockerEvent].
 //
 // Scope (v1)
 //
@@ -10,8 +11,7 @@
 //
 // Events not republished:
 //   - volume create/destroy — no consumer; internal bookkeeping was
-//     dropped along with the publishes (Overseer doesn't track volumes
-//     in its worldview).
+//     dropped along with the publishes (no subscriber tracks volumes).
 //   - image pull/tag/untag/delete — same.
 //   - network create/destroy — feeder still tracks managed networks
 //     internally to filter Connect/Disconnect events, but does not
@@ -33,21 +33,24 @@
 // The Docker events stream is a single long-lived HTTP connection.
 // Any error on the error channel kills the stream — the feeder
 // rebuilds it via reconcile + reopen. Reconcile re-publishes a
-// DockerEvent{Action=start} envelope for every running container; Overseer's
-// applier hooks idempotently set Status=running.
+// DockerEvent{Action=start} envelope for every running container;
+// subscribers that project state must keep their own apply idempotent
+// so the replay is harmless.
 package dockerevents
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"runtime/debug"
 	"strconv"
 	"time"
 
 	"github.com/moby/moby/api/types/events"
 	"github.com/moby/moby/client"
 
-	"github.com/schmitthub/clawker/internal/controlplane/overseer"
+	"github.com/schmitthub/clawker/controlplane/pubsub"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -86,13 +89,15 @@ const (
 	defaultReconnectMax = 30 * time.Second
 )
 
-// Feeder maintains a clawker-managed mirror of Docker container and
-// container→network state in an *overseer.Overseer.
+// Feeder republishes clawker-managed Docker container and
+// container→network lifecycle events onto a typed pub/sub topic. It
+// holds no projected worldview of its own beyond the goroutine-local
+// managed-object sets it needs to filter the stream.
 type Feeder struct {
-	cli  EventsClient
-	bus  *overseer.Overseer
-	log  *logger.Logger
-	opts Options
+	cli   EventsClient
+	topic *pubsub.Topic[DockerEvent]
+	log   *logger.Logger
+	opts  Options
 
 	// managed object sets — only mutated by Run's single goroutine, no
 	// lock needed. Populated by reconcile and patched by event dispatch.
@@ -107,14 +112,14 @@ type Feeder struct {
 	networksNeedRecheck map[string]bool
 }
 
-// New constructs a Feeder. Returns an error if cli or bus is nil, or
+// New constructs a Feeder. Returns an error if cli or topic is nil, or
 // if managed-label config is missing.
-func New(cli EventsClient, bus *overseer.Overseer, opts Options) (*Feeder, error) {
+func New(cli EventsClient, topic *pubsub.Topic[DockerEvent], opts Options) (*Feeder, error) {
 	if cli == nil {
 		return nil, errors.New("dockerevents: EventsClient is required")
 	}
-	if bus == nil {
-		return nil, errors.New("dockerevents: overseer is required")
+	if topic == nil {
+		return nil, errors.New("dockerevents: topic is required")
 	}
 	if opts.ManagedLabelKey == "" {
 		return nil, errors.New("dockerevents: ManagedLabelKey is required")
@@ -133,7 +138,7 @@ func New(cli EventsClient, bus *overseer.Overseer, opts Options) (*Feeder, error
 	}
 	return &Feeder{
 		cli:                 cli,
-		bus:                 bus,
+		topic:               topic,
 		log:                 opts.Logger.With("component", "dockerevents"),
 		opts:                opts,
 		containers:          make(map[string]bool),
@@ -149,7 +154,26 @@ func New(cli EventsClient, bus *overseer.Overseer, opts Options) (*Feeder, error
 // errors. A clean io.EOF (moby closed the stream cleanly) resets
 // backoff to ReconnectMin — common during routine moby behaviour and
 // shouldn't compound delay for what is not a real failure.
-func (f *Feeder) Run(ctx context.Context) error {
+func (f *Feeder) Run(ctx context.Context) (err error) {
+	// CP no-panic discipline: the feeder is the sole producer onto the
+	// docker topic and the busiest serve-path goroutine (fires on every
+	// Docker event). A nil-deref on an event actor map, or a moby
+	// response-shape change in the dispatch chain, must NOT panic PID 1 —
+	// that would skip drain-to-zero and strand the eBPF programs pinned
+	// and unsupervised while the user believes the firewall is enforcing.
+	// Convert any panic into a returned error so the launch site routes it
+	// to serveFailed and the on-failure restart policy retriggers.
+	defer func() {
+		if r := recover(); r != nil {
+			f.log.Error().
+				Interface("panic", r).
+				Bytes("stack", debug.Stack()).
+				Str("event", "dockerevents_feeder_panic").
+				Msg("dockerevents feeder goroutine panicked")
+			err = fmt.Errorf("dockerevents feeder panic: %v", r)
+		}
+	}()
+
 	backoff := f.opts.ReconnectMin
 	for {
 		if ctx.Err() != nil {
@@ -158,12 +182,13 @@ func (f *Feeder) Run(ctx context.Context) error {
 
 		// Anchor the events Since timestamp BEFORE listing. Any event
 		// that fires between t0 and the listing landing on the bus will
-		// be replayed on the events channel — Overseer applier hooks
-		// are idempotent so the duplicate is harmless.
+		// be replayed on the events channel — state-projecting
+		// subscribers keep their apply idempotent so the duplicate is
+		// harmless.
 		t0 := time.Now()
 
-		if err := f.reconcile(ctx); err != nil {
-			f.log.Error().Err(err).Msg("reconcile failed; backing off")
+		if rerr := f.reconcile(ctx); rerr != nil {
+			f.log.Error().Err(rerr).Msg("reconcile failed; backing off")
 			if !sleepCtx(ctx, backoff) {
 				return ctx.Err()
 			}
@@ -171,12 +196,12 @@ func (f *Feeder) Run(ctx context.Context) error {
 			continue
 		}
 
-		err := f.runStream(ctx, t0)
+		streamErr := f.runStream(ctx, t0)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if err != nil && !errors.Is(err, io.EOF) {
-			f.log.Warn().Err(err).Msg("events stream errored; backing off and reconnecting")
+		if streamErr != nil && !errors.Is(streamErr, io.EOF) {
+			f.log.Warn().Err(streamErr).Msg("events stream errored; backing off and reconnecting")
 			if !sleepCtx(ctx, backoff) {
 				return ctx.Err()
 			}
@@ -190,6 +215,34 @@ func (f *Feeder) Run(ctx context.Context) error {
 		if !sleepCtx(ctx, f.opts.ReconnectMin) {
 			return ctx.Err()
 		}
+	}
+}
+
+// Supervise runs the feeder to completion (Run) and routes a real
+// failure onto failed. It is the long-lived goroutine wrapper the CP
+// orchestrator launches as `go feeder.Supervise(ctx, serveFailed)`.
+//
+// Cancel-vs-error discrimination: Run returns ctx.Err() on a clean
+// SIGTERM / drain-to-zero cancel — that is the expected stop, not a
+// failure, so Supervise swallows it. Any other return means the Run
+// loop (which retries internally on every reconcile/stream error) gave
+// up: a wiring bug, an unrecoverable contract violation, or a recovered
+// panic (Run's deferred recover converts a panic into a returned
+// error). Such a return is surfaced to failed so the daemon exits
+// non-zero and the on-failure restart policy retriggers.
+//
+// The send is non-blocking (failed is buffered and the serve select may
+// already be draining a prior error) so a late feeder failure can never
+// wedge this goroutine and strand the eBPF programs.
+func (f *Feeder) Supervise(ctx context.Context, failed chan<- error) {
+	err := f.Run(ctx)
+	if err == nil || errors.Is(err, context.Canceled) {
+		return
+	}
+	f.log.Error().Err(err).Msg("dockerevents feeder exited with error")
+	select {
+	case failed <- fmt.Errorf("dockerevents feeder: %w", err):
+	default:
 	}
 }
 
@@ -207,7 +260,9 @@ func (f *Feeder) runStream(ctx context.Context, since time.Time) error {
 		// don't carry the network's labels (verified vs moby
 		// daemon/events.go), so the only safe filter shared across
 		// container + network events is `type`. Volume + image events
-		// are no longer subscribed to (Overseer doesn't track them).
+		// are not subscribed to: no domain consumes them today, so the
+		// stream filter is narrowed to container + network to avoid
+		// publishing envelopes nothing reads.
 		Filters: client.Filters{}.
 			Add("type",
 				string(events.ContainerEventType),

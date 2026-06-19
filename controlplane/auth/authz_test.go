@@ -16,12 +16,12 @@ import (
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	agentv1 "github.com/schmitthub/clawker/api/agent/v1"
+	"github.com/schmitthub/clawker/controlplane/auth"
+	cpmocks "github.com/schmitthub/clawker/controlplane/auth/mocks"
+	cpfw "github.com/schmitthub/clawker/controlplane/firewall"
+	ebpf "github.com/schmitthub/clawker/controlplane/firewall/ebpf"
+	ebpfmocks "github.com/schmitthub/clawker/controlplane/firewall/ebpf/mocks"
 	"github.com/schmitthub/clawker/internal/consts"
-	"github.com/schmitthub/clawker/internal/controlplane"
-	cpfw "github.com/schmitthub/clawker/internal/controlplane/firewall"
-	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
-	ebpfmocks "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf/mocks"
-	cpmocks "github.com/schmitthub/clawker/internal/controlplane/mocks"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -32,7 +32,7 @@ func newTestServer(t *testing.T, introspector *cpmocks.IntrospectorMock, ebpfMgr
 	t.Helper()
 
 	log := logger.Nop()
-	interceptor := controlplane.NewAuthInterceptor(introspector, adminv1.AdminMethodScopes(), log)
+	interceptor := auth.NewAuthInterceptor(introspector, adminv1.AdminMethodScopes(), log)
 
 	srv := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(interceptor.UnaryInterceptor()),
@@ -41,12 +41,13 @@ func newTestServer(t *testing.T, introspector *cpmocks.IntrospectorMock, ebpfMgr
 
 	queue := cpfw.NewActionQueue(log)
 	t.Cleanup(func() { _ = queue.Close() })
-	handler := cpfw.NewHandler(cpfw.HandlerDeps{
+	handler, err := cpfw.NewHandler(cpfw.HandlerDeps{
 		EBPF:     ebpfMgr,
 		Resolver: nopContainerResolver,
 		Log:      log,
 		Queue:    queue,
 	})
+	require.NoError(t, err)
 	adminv1.RegisterAdminServiceServer(srv, handler)
 
 	lis := bufconnListen(t)
@@ -72,8 +73,8 @@ func newTestServer(t *testing.T, introspector *cpmocks.IntrospectorMock, ebpfMgr
 // with admin scope.
 func allowAllIntrospector() *cpmocks.IntrospectorMock {
 	return &cpmocks.IntrospectorMock{
-		IntrospectFunc: func(_ context.Context, _, _ string) (*controlplane.IntrospectionResult, error) {
-			return &controlplane.IntrospectionResult{
+		IntrospectFunc: func(_ context.Context, _, _ string) (*auth.IntrospectionResult, error) {
+			return &auth.IntrospectionResult{
 				Active:   true,
 				Scope:    "admin",
 				ClientID: consts.ClientIDCLI,
@@ -86,8 +87,8 @@ func allowAllIntrospector() *cpmocks.IntrospectorMock {
 // denyAllIntrospector returns a mock that rejects every token.
 func denyAllIntrospector() *cpmocks.IntrospectorMock {
 	return &cpmocks.IntrospectorMock{
-		IntrospectFunc: func(_ context.Context, _, _ string) (*controlplane.IntrospectionResult, error) {
-			return &controlplane.IntrospectionResult{Active: false}, nil
+		IntrospectFunc: func(_ context.Context, _, _ string) (*auth.IntrospectionResult, error) {
+			return &auth.IntrospectionResult{Active: false}, nil
 		},
 	}
 }
@@ -135,9 +136,9 @@ func TestAuthInterceptor_ValidToken_WrongScope_Denied(t *testing.T) {
 	// not the "admin" scope SyncRoutes requires. Hydra returns
 	// active=false when the requested scope isn't granted.
 	introspector := &cpmocks.IntrospectorMock{
-		IntrospectFunc: func(_ context.Context, _, requiredScope string) (*controlplane.IntrospectionResult, error) {
+		IntrospectFunc: func(_ context.Context, _, requiredScope string) (*auth.IntrospectionResult, error) {
 			granted := "agent:read"
-			return &controlplane.IntrospectionResult{
+			return &auth.IntrospectionResult{
 				Active:   requiredScope == granted,
 				Scope:    granted,
 				ClientID: consts.ClientIDAgent,
@@ -174,19 +175,20 @@ func TestAuthInterceptor_UnmappedMethod_Denied(t *testing.T) {
 
 	log := logger.Nop()
 	// Empty scope map — nothing is mapped.
-	interceptor := controlplane.NewAuthInterceptor(introspector, map[string]adminv1.AdminScope{}, log)
+	interceptor := auth.NewAuthInterceptor(introspector, map[string]adminv1.AdminScope{}, log)
 
 	srv := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(interceptor.UnaryInterceptor()),
 	)
 	queue := cpfw.NewActionQueue(log)
 	t.Cleanup(func() { _ = queue.Close() })
-	handler := cpfw.NewHandler(cpfw.HandlerDeps{
+	handler, err := cpfw.NewHandler(cpfw.HandlerDeps{
 		EBPF:     noopEBPF(),
 		Resolver: nopContainerResolver,
 		Log:      log,
 		Queue:    queue,
 	})
+	require.NoError(t, err)
 	adminv1.RegisterAdminServiceServer(srv, handler)
 
 	lis := bufconnListen(t)
@@ -224,7 +226,7 @@ func TestAuthInterceptor_MappedEmptyScope_Denied(t *testing.T) {
 	log := logger.Nop()
 	// Method is mapped, but to the zero-value scope — must fail closed, never
 	// be treated as public.
-	interceptor := controlplane.NewAuthInterceptor(introspector, map[string]adminv1.AdminScope{
+	interceptor := auth.NewAuthInterceptor(introspector, map[string]adminv1.AdminScope{
 		"/" + adminv1.ServiceName + "/FirewallSyncRoutes": adminv1.AdminScope(""),
 	}, log)
 
@@ -233,12 +235,13 @@ func TestAuthInterceptor_MappedEmptyScope_Denied(t *testing.T) {
 	)
 	queue := cpfw.NewActionQueue(log)
 	t.Cleanup(func() { _ = queue.Close() })
-	handler := cpfw.NewHandler(cpfw.HandlerDeps{
+	handler, err := cpfw.NewHandler(cpfw.HandlerDeps{
 		EBPF:     noopEBPF(),
 		Resolver: nopContainerResolver,
 		Log:      log,
 		Queue:    queue,
 	})
+	require.NoError(t, err)
 	adminv1.RegisterAdminServiceServer(srv, handler)
 
 	lis := bufconnListen(t)
@@ -303,7 +306,7 @@ func TestAuthInterceptor_PublicScope_PublicMethod_NoToken_Allowed(t *testing.T) 
 
 func TestAuthInterceptor_IntrospectionError_Denied(t *testing.T) {
 	introspector := &cpmocks.IntrospectorMock{
-		IntrospectFunc: func(_ context.Context, _, _ string) (*controlplane.IntrospectionResult, error) {
+		IntrospectFunc: func(_ context.Context, _, _ string) (*auth.IntrospectionResult, error) {
 			return nil, fmt.Errorf("connection refused")
 		},
 	}
@@ -414,8 +417,8 @@ func TestAuthInterceptor_RequireClientID_Mismatch_Denied(t *testing.T) {
 	// — same generic error code/message as the missing-scope path so
 	// callers can't tell which check failed.
 	introspector := &cpmocks.IntrospectorMock{
-		IntrospectFunc: func(_ context.Context, _, _ string) (*controlplane.IntrospectionResult, error) {
-			return &controlplane.IntrospectionResult{
+		IntrospectFunc: func(_ context.Context, _, _ string) (*auth.IntrospectionResult, error) {
+			return &auth.IntrospectionResult{
 				Active:   true,
 				Scope:    "admin",
 				ClientID: "some-other-client",
@@ -425,7 +428,7 @@ func TestAuthInterceptor_RequireClientID_Mismatch_Denied(t *testing.T) {
 	}
 
 	log := logger.Nop()
-	interceptor := controlplane.
+	interceptor := auth.
 		NewAuthInterceptor(introspector, adminv1.AdminMethodScopes(), log).
 		RequireClientID(consts.ClientIDCLI)
 
@@ -435,12 +438,13 @@ func TestAuthInterceptor_RequireClientID_Mismatch_Denied(t *testing.T) {
 	)
 	queue := cpfw.NewActionQueue(log)
 	t.Cleanup(func() { _ = queue.Close() })
-	handler := cpfw.NewHandler(cpfw.HandlerDeps{
+	handler, err := cpfw.NewHandler(cpfw.HandlerDeps{
 		EBPF:     noopEBPF(),
 		Resolver: nopContainerResolver,
 		Log:      log,
 		Queue:    queue,
 	})
+	require.NoError(t, err)
 	adminv1.RegisterAdminServiceServer(srv, handler)
 
 	lis := bufconnListen(t)
@@ -468,8 +472,8 @@ func TestAuthInterceptor_RequireClientID_Match_Allowed(t *testing.T) {
 	// through. Anchors the positive path so a future regression that
 	// over-rejects (e.g. compares the wrong field) is caught.
 	introspector := &cpmocks.IntrospectorMock{
-		IntrospectFunc: func(_ context.Context, _, _ string) (*controlplane.IntrospectionResult, error) {
-			return &controlplane.IntrospectionResult{
+		IntrospectFunc: func(_ context.Context, _, _ string) (*auth.IntrospectionResult, error) {
+			return &auth.IntrospectionResult{
 				Active:   true,
 				Scope:    "admin",
 				ClientID: consts.ClientIDCLI,
@@ -479,7 +483,7 @@ func TestAuthInterceptor_RequireClientID_Match_Allowed(t *testing.T) {
 	}
 
 	log := logger.Nop()
-	interceptor := controlplane.
+	interceptor := auth.
 		NewAuthInterceptor(introspector, adminv1.AdminMethodScopes(), log).
 		RequireClientID(consts.ClientIDCLI)
 
@@ -489,12 +493,13 @@ func TestAuthInterceptor_RequireClientID_Match_Allowed(t *testing.T) {
 	)
 	queue := cpfw.NewActionQueue(log)
 	t.Cleanup(func() { _ = queue.Close() })
-	handler := cpfw.NewHandler(cpfw.HandlerDeps{
+	handler, err := cpfw.NewHandler(cpfw.HandlerDeps{
 		EBPF:     noopEBPF(),
 		Resolver: nopContainerResolver,
 		Log:      log,
 		Queue:    queue,
 	})
+	require.NoError(t, err)
 	adminv1.RegisterAdminServiceServer(srv, handler)
 
 	lis := bufconnListen(t)

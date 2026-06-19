@@ -9,10 +9,10 @@ import (
 	"time"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	"github.com/schmitthub/clawker/controlplane/adminclient"
+	"github.com/schmitthub/clawker/controlplane/manager"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/controlplane/adminclient"
-	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/git"
 	"github.com/schmitthub/clawker/internal/hostproxy"
@@ -458,14 +458,14 @@ func gitManagerFunc(f *cmdutil.Factory) func() (*git.GitManager, error) {
 // Config, and Logger closures so every caller — `clawker controlplane
 // up/down/status` and any future break-glass verb — observes the same
 // cached Docker singleton and settings snapshot as the rest of the CLI.
-func controlPlaneFunc(f *cmdutil.Factory) func() cpboot.Manager {
+func controlPlaneFunc(f *cmdutil.Factory) func() manager.Manager {
 	var (
 		once sync.Once
-		mgr  cpboot.Manager
+		mgr  manager.Manager
 	)
-	return func() cpboot.Manager {
+	return func() manager.Manager {
 		once.Do(func() {
-			mgr = cpboot.NewManager(f.Client, f.Config, f.Logger)
+			mgr = manager.NewManager(f.Client, f.Config, f.Logger)
 		})
 		return mgr
 	}

@@ -9,13 +9,13 @@ import (
 	"time"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	"github.com/schmitthub/clawker/controlplane/adminclient"
+	"github.com/schmitthub/clawker/controlplane/manager"
+	cpbootmocks "github.com/schmitthub/clawker/controlplane/manager/mocks"
+	cpmocks "github.com/schmitthub/clawker/controlplane/mocks"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
-	"github.com/schmitthub/clawker/internal/controlplane/adminclient"
-	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
-	cpbootmocks "github.com/schmitthub/clawker/internal/controlplane/manager/mocks"
-	cpmocks "github.com/schmitthub/clawker/internal/controlplane/mocks"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/docker/mocks"
 	"github.com/schmitthub/clawker/internal/git"
@@ -76,7 +76,7 @@ type FactoryOptions struct {
 	// host-side CP container lifecycle. When nil the harness wires a
 	// no-op ManagerMock (every method returns zero values / nil) so
 	// tests that don't exercise the CP verbs never bootstrap a real CP.
-	ControlPlane func(config.Config, *logger.Logger) cpboot.Manager
+	ControlPlane func(config.Config, *logger.Logger) manager.Manager
 }
 
 // NewFactory constructs a *cmdutil.Factory with lazy singletons.
@@ -292,9 +292,9 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 	// --- ControlPlane ---
 	var (
 		cpOnce sync.Once
-		cpMgr  cpboot.Manager
+		cpMgr  manager.Manager
 	)
-	f.ControlPlane = func() cpboot.Manager {
+	f.ControlPlane = func() manager.Manager {
 		cpOnce.Do(func() {
 			if opts.ControlPlane != nil {
 				c, cErr := resolveConfig()

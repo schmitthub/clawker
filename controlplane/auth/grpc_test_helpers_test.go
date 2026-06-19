@@ -5,7 +5,7 @@ import (
 	"net"
 	"testing"
 
-	cpfw "github.com/schmitthub/clawker/internal/controlplane/firewall"
+	cpfw "github.com/schmitthub/clawker/controlplane/firewall"
 	"google.golang.org/grpc/test/bufconn"
 )
 

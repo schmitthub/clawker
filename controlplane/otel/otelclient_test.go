@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/schmitthub/clawker/controlplane/otel"
 	"github.com/schmitthub/clawker/internal/consts"
-	"github.com/schmitthub/clawker/internal/controlplane"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -25,33 +25,33 @@ func TestNewOtelLoggerProvider_RequiredFields(t *testing.T) {
 
 	cases := []struct {
 		name string
-		opts controlplane.OtelClientOptions
+		opts otel.OtelClientOptions
 		want string
 	}{
 		{
 			name: "missing endpoint",
-			opts: controlplane.OtelClientOptions{TLSConfig: tlsCfg, ServiceName: "svc", Log: log, PreflightTimeout: -1},
+			opts: otel.OtelClientOptions{TLSConfig: tlsCfg, ServiceName: "svc", Log: log, PreflightTimeout: -1},
 			want: "Endpoint required",
 		},
 		{
 			name: "missing tls config",
-			opts: controlplane.OtelClientOptions{Endpoint: "host:1234", ServiceName: "svc", Log: log, PreflightTimeout: -1},
+			opts: otel.OtelClientOptions{Endpoint: "host:1234", ServiceName: "svc", Log: log, PreflightTimeout: -1},
 			want: "TLSConfig required",
 		},
 		{
 			name: "missing service name",
-			opts: controlplane.OtelClientOptions{Endpoint: "host:1234", TLSConfig: tlsCfg, Log: log, PreflightTimeout: -1},
+			opts: otel.OtelClientOptions{Endpoint: "host:1234", TLSConfig: tlsCfg, Log: log, PreflightTimeout: -1},
 			want: "ServiceName required",
 		},
 		{
 			name: "missing log",
-			opts: controlplane.OtelClientOptions{Endpoint: "host:1234", TLSConfig: tlsCfg, ServiceName: "svc", PreflightTimeout: -1},
+			opts: otel.OtelClientOptions{Endpoint: "host:1234", TLSConfig: tlsCfg, ServiceName: "svc", PreflightTimeout: -1},
 			want: "Log required",
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			provider, err := controlplane.NewOtelLoggerProvider(tc.opts)
+			provider, err := otel.NewOtelLoggerProvider(tc.opts)
 			if err == nil {
 				t.Fatalf("want error containing %q, got nil", tc.want)
 			}
@@ -80,7 +80,7 @@ func TestNewOtelLoggerProvider_PreflightFailure(t *testing.T) {
 	addr := lis.Addr().String()
 	_ = lis.Close()
 
-	provider, err := controlplane.NewOtelLoggerProvider(controlplane.OtelClientOptions{
+	provider, err := otel.NewOtelLoggerProvider(otel.OtelClientOptions{
 		Endpoint:         addr,
 		TLSConfig:        &tls.Config{MinVersion: tls.VersionTLS12},
 		ServiceName:      "test",
@@ -115,7 +115,7 @@ func TestNewOtelLoggerProvider_Constructs(t *testing.T) {
 	t.Cleanup(func() { _ = lis.Close() })
 	go acceptAndClose(lis)
 
-	provider, err := controlplane.NewOtelLoggerProvider(controlplane.OtelClientOptions{
+	provider, err := otel.NewOtelLoggerProvider(otel.OtelClientOptions{
 		Endpoint:            lis.Addr().String(),
 		TLSConfig:           clientTLS,
 		ServiceName:         "test-service",

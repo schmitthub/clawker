@@ -16,8 +16,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/internal/consts"
-	"github.com/schmitthub/clawker/internal/controlplane/overseer"
-	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // fakeEventsClient is a programmable EventsClient. Tests assign list
@@ -73,19 +71,17 @@ func (c *fakeEventsClient) NetworkInspect(_ context.Context, _ string, _ mobycli
 	return mobyclient.NetworkInspectResult{}, nil
 }
 
-func newFakeFeeder(t *testing.T, cli EventsClient, reconnectMin time.Duration) (*Feeder, *overseer.Overseer) {
+func newFakeFeeder(t *testing.T, cli EventsClient, reconnectMin time.Duration) (*Feeder, *recorder) {
 	t.Helper()
-	bus := overseer.New(overseer.Options{Logger: logger.Nop()})
-	require.NoError(t, bus.Start(context.Background()))
-	t.Cleanup(func() { _ = bus.Close() })
-	f, err := New(cli, bus, Options{
+	rec := newRecorder(t)
+	f, err := New(cli, rec.topic, Options{
 		ManagedLabelKey:   testManagedKey,
 		ManagedLabelValue: testManagedValue,
 		ReconnectMin:      reconnectMin,
 		ReconnectMax:      10 * reconnectMin,
 	})
 	require.NoError(t, err)
-	return f, bus
+	return f, rec
 }
 
 // TestRun_CtxCancelExits — Run returns ctx.Err() after cancel even
@@ -232,6 +228,121 @@ func TestRun_StreamErrorReopens(t *testing.T) {
 	<-done
 }
 
+// panicOnEventsClient reconciles cleanly (empty lists) but panics the
+// moment Run opens the events stream. It exercises the CP no-panic
+// discipline on the feeder's serve-path goroutine: a panic anywhere in
+// the Run -> runStream -> dispatch chain must be recovered and converted
+// into a returned error, never allowed to kill PID 1.
+type panicOnEventsClient struct{ *fakeEventsClient }
+
+func (c *panicOnEventsClient) Events(context.Context, mobyclient.EventsListOptions) mobyclient.EventsResult {
+	panic("synthetic dispatch-chain panic")
+}
+
+// TestRun_RecoversPanicAsError — a panic in the dispatch chain is
+// recovered and surfaced as Run's returned error rather than crashing
+// the process. Goes red if the deferred recover in Run is removed (the
+// panic would propagate and fail the test goroutine / take down PID 1
+// in production).
+func TestRun_RecoversPanicAsError(t *testing.T) {
+	cli := &panicOnEventsClient{fakeEventsClient: &fakeEventsClient{}}
+	f, _ := newFakeFeeder(t, cli, 5*time.Millisecond)
+
+	done := make(chan error, 1)
+	go func() { done <- f.Run(context.Background()) }()
+
+	select {
+	case err := <-done:
+		require.Error(t, err, "panic must be converted to a returned error")
+		require.Contains(t, err.Error(), "dockerevents feeder panic")
+		require.Contains(t, err.Error(), "synthetic dispatch-chain panic")
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return after dispatch-chain panic")
+	}
+}
+
+// TestSupervise_CancelSwallowed — a clean ctx cancel is the expected
+// drain-to-zero / SIGTERM stop, NOT a failure: Supervise returns
+// without depositing anything onto failed. Goes red if the
+// cancel-vs-error discrimination is dropped (a cancel would be routed
+// as a spurious serve failure and exit the daemon non-zero).
+func TestSupervise_CancelSwallowed(t *testing.T) {
+	cli := &fakeEventsClient{}
+	f, _ := newFakeFeeder(t, cli, 5*time.Millisecond)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	failed := make(chan error, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		f.Supervise(ctx, failed)
+	}()
+
+	require.Eventually(t, func() bool {
+		return cli.containerListCalls.Load() > 0
+	}, time.Second, time.Millisecond, "expected at least one reconcile pass")
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Supervise did not return after ctx cancel")
+	}
+
+	select {
+	case err := <-failed:
+		t.Fatalf("clean cancel must not be routed as a failure, got: %v", err)
+	default:
+	}
+}
+
+// TestSupervise_RoutesRealFailure — a non-cancel Run return (here a
+// recovered dispatch-chain panic) is surfaced onto failed, wrapped with
+// the feeder prefix. Goes red if Supervise stops routing failures (the
+// daemon would never exit non-zero on an unrecoverable feeder fault and
+// the on-failure restart policy would never retrigger).
+func TestSupervise_RoutesRealFailure(t *testing.T) {
+	cli := &panicOnEventsClient{fakeEventsClient: &fakeEventsClient{}}
+	f, _ := newFakeFeeder(t, cli, 5*time.Millisecond)
+
+	failed := make(chan error, 1)
+	go f.Supervise(context.Background(), failed)
+
+	select {
+	case err := <-failed:
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "dockerevents feeder")
+		require.Contains(t, err.Error(), "synthetic dispatch-chain panic")
+	case <-time.After(2 * time.Second):
+		t.Fatal("Supervise did not route the feeder failure onto failed")
+	}
+}
+
+// TestSupervise_NonBlockingSendOnFullChannel — when failed is already
+// saturated (the serve select is busy draining a prior error),
+// Supervise must NOT block trying to deposit a late feeder failure;
+// blocking here would wedge the goroutine and strand the eBPF programs.
+// Goes red if the send loses its default case.
+func TestSupervise_NonBlockingSendOnFullChannel(t *testing.T) {
+	cli := &panicOnEventsClient{fakeEventsClient: &fakeEventsClient{}}
+	f, _ := newFakeFeeder(t, cli, 5*time.Millisecond)
+
+	failed := make(chan error, 1)
+	failed <- errors.New("prior serve failure")
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		f.Supervise(context.Background(), failed)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Supervise blocked on a full failed channel")
+	}
+}
+
 // TestDrainErrAfterClose_SurfacesDelayedErr — when Messages channel
 // closes without an immediate Err, the function waits briefly for a
 // late-arriving error and surfaces it instead of returning EOF.
@@ -257,10 +368,11 @@ func TestDrainErrAfterClose_ReturnsEOFOnTimeout(t *testing.T) {
 
 // --- reconcile coverage ---
 
-// TestReconcile_PopulatesContainersInWorldview seeds the fake client
-// with one running container and asserts the Overseer State reflects
-// it as ContainerStatusRunning.
-func TestReconcile_PopulatesContainersInWorldview(t *testing.T) {
+// TestReconcile_PublishesRunningContainer seeds the fake client with one
+// running container and asserts reconcile republishes a synthetic
+// container/start DockerEvent envelope for it (name slash-trimmed, user
+// labels intact on the payload) and populates the feeder's managed-sets.
+func TestReconcile_PublishesRunningContainer(t *testing.T) {
 	cli := &fakeEventsClient{
 		containerListResult: mobyclient.ContainerListResult{Items: []mobycontainer.Summary{
 			{
@@ -281,26 +393,19 @@ func TestReconcile_PopulatesContainersInWorldview(t *testing.T) {
 				Labels: map[string]string{testManagedKey: testManagedValue}}},
 		}},
 	}
-	f, bus := newFakeFeeder(t, cli, 5*time.Millisecond)
+	f, rec := newFakeFeeder(t, cli, 5*time.Millisecond)
 
 	require.NoError(t, f.reconcile(context.Background()))
 
-	deadline := time.Now().Add(500 * time.Millisecond)
-	for time.Now().Before(deadline) {
-		state, _ := bus.Snapshot(context.Background())
-		if v, ok := state.Containers["ctr1"]; ok && v.Status == overseer.ContainerStatusRunning {
-			require.Equal(t, "app", v.Name, "leading slash on Names[0] must be trimmed")
-			require.True(t, f.containers["ctr1"])
-			require.True(t, f.networks["net1"])
-			return
-		}
-		time.Sleep(time.Millisecond)
-	}
-	t.Fatal("reconcile did not populate worldview within 500ms")
+	ev := rec.recvByAction(t, events.ContainerEventType, events.ActionStart)
+	require.Equal(t, "ctr1", ev.Payload.Actor.ID)
+	require.Equal(t, "app", ev.Payload.Actor.Attributes["name"], "leading slash on Names[0] must be trimmed")
+	require.True(t, f.containers["ctr1"])
+	require.True(t, f.networks["net1"])
 }
 
 // TestReconcile_PublishesNetworkConnected — a container with a
-// network attachment produces a NetworkConnected event after
+// network attachment produces a network/connect envelope after
 // reconcile. The synthetic envelope carries the container_id in
 // Actor.Attributes["container"] and the network_id in Actor.ID,
 // matching the wire-delivered shape so subscribers can't tell
@@ -324,27 +429,13 @@ func TestReconcile_PublishesNetworkConnected(t *testing.T) {
 				Labels: map[string]string{testManagedKey: testManagedValue}}},
 		}},
 	}
-	f, bus := newFakeFeeder(t, cli, 5*time.Millisecond)
-
-	sub, ok := overseer.Subscribe[DockerEvent](bus, "test")
-	require.True(t, ok)
-	defer sub.Unsubscribe()
+	f, rec := newFakeFeeder(t, cli, 5*time.Millisecond)
 
 	require.NoError(t, f.reconcile(context.Background()))
 
-	deadline := time.After(time.Second)
-	for {
-		select {
-		case ev := <-sub.C:
-			if ev.Type == events.NetworkEventType && ev.Action == events.ActionConnect {
-				require.Equal(t, "ctr1", ev.Actor.Attributes["container"])
-				require.Equal(t, "net1", ev.Actor.ID)
-				return
-			}
-		case <-deadline:
-			t.Fatal("did not receive network/connect after reconcile")
-		}
-	}
+	ev := rec.recvByAction(t, events.NetworkEventType, events.ActionConnect)
+	require.Equal(t, "ctr1", ev.Payload.Actor.Attributes["container"])
+	require.Equal(t, "net1", ev.Payload.Actor.ID)
 }
 
 // TestReconcile_PartialListErrorReturned — when any list call fails,

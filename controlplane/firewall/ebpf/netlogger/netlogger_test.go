@@ -11,12 +11,50 @@ import (
 	mobyevents "github.com/moby/moby/api/types/events"
 	mobyclient "github.com/moby/moby/client"
 
+	"github.com/schmitthub/clawker/controlplane/dockerevents"
+	ebpf "github.com/schmitthub/clawker/controlplane/firewall/ebpf"
+	"github.com/schmitthub/clawker/controlplane/pubsub"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
-	"github.com/schmitthub/clawker/internal/controlplane/dockerevents"
-	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
-	"github.com/schmitthub/clawker/internal/controlplane/overseer"
 	"github.com/schmitthub/clawker/internal/logger"
 )
+
+// testTopics builds the enroll + evict topics a Service consumes, closing
+// both on test cleanup so the per-subscriber drain goroutines exit.
+func testTopics(t *testing.T) (*pubsub.Topic[ebpf.EBPFContainerEnrolled], *pubsub.Topic[dockerevents.DockerEvent]) {
+	t.Helper()
+	enrolled, err := pubsub.NewTopic[ebpf.EBPFContainerEnrolled](logger.Nop())
+	if err != nil {
+		t.Fatalf("new enroll topic: %v", err)
+	}
+	evict, err := pubsub.NewTopic[dockerevents.DockerEvent](logger.Nop())
+	if err != nil {
+		t.Fatalf("new evict topic: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = enrolled.Close()
+		_ = evict.Close()
+	})
+	return enrolled, evict
+}
+
+// publishEnrolled is the test-side producer mirroring what
+// firewall.Handler.publishEnrolled does on the wire.
+func publishEnrolled(top *pubsub.Topic[ebpf.EBPFContainerEnrolled], payload ebpf.EBPFContainerEnrolled) bool {
+	return top.Publish(pubsub.Event[ebpf.EBPFContainerEnrolled]{
+		Timestamp: time.Now().UnixNano(),
+		Source:    "test",
+		Payload:   payload,
+	})
+}
+
+// publishDockerEvent is the test-side producer for the evict topic.
+func publishDockerEvent(top *pubsub.Topic[dockerevents.DockerEvent], payload dockerevents.DockerEvent) bool {
+	return top.Publish(pubsub.Event[dockerevents.DockerEvent]{
+		Timestamp: time.Now().UnixNano(),
+		Source:    "test",
+		Payload:   payload,
+	})
+}
 
 type fakeInspecter struct {
 	calls atomic.Int32
@@ -48,21 +86,11 @@ func inspectFor(id, agent, project string) mobyclient.ContainerInspectResult {
 	}
 }
 
-func newTestBus(t *testing.T) *overseer.Overseer {
-	t.Helper()
-	bus := overseer.New(overseer.Options{Logger: logger.Nop()})
-	if err := bus.Start(context.Background()); err != nil {
-		t.Fatalf("bus start: %v", err)
-	}
-	t.Cleanup(func() { _ = bus.Close() })
-	return bus
-}
-
 // TestService_New_RequiredDeps locks the constructor's validation
 // surface so a future caller can't accidentally land a nil dep and
 // see a panic deep in the run loop.
 func TestService_New_RequiredDeps(t *testing.T) {
-	bus := newTestBus(t)
+	enrolled, evict := testTopics(t)
 	insp := &fakeInspecter{}
 	cfg := configmocks.NewBlankConfig()
 	cases := []struct {
@@ -70,17 +98,19 @@ func TestService_New_RequiredDeps(t *testing.T) {
 		mutate func(d *Deps)
 	}{
 		{"nil mgr", func(d *Deps) { d.Mgr = nil }},
-		{"nil bus", func(d *Deps) { d.Bus = nil }},
+		{"nil enrolled topic", func(d *Deps) { d.EnrolledTopic = nil }},
+		{"nil evict topic", func(d *Deps) { d.EvictTopic = nil }},
 		{"nil docker", func(d *Deps) { d.Docker = nil }},
 		{"nil cfg", func(d *Deps) { d.Cfg = nil }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			d := Deps{
-				Mgr:    &ebpf.Manager{},
-				Bus:    bus,
-				Docker: insp,
-				Cfg:    cfg,
+				Mgr:           &ebpf.Manager{},
+				EnrolledTopic: enrolled,
+				EvictTopic:    evict,
+				Docker:        insp,
+				Cfg:           cfg,
 			}
 			tc.mutate(&d)
 			if _, err := New(d); err == nil {
@@ -97,17 +127,18 @@ func TestService_New_RequiredDeps(t *testing.T) {
 // the seam that proves the bus subscription, inspect lookup, and
 // cache mutate compose end-to-end without an explicit backfill.
 func TestService_Enroll_HydratesLabelCache(t *testing.T) {
-	bus := newTestBus(t)
+	enrolled, evict := testTopics(t)
 	insp := &fakeInspecter{out: map[string]mobyclient.ContainerInspectResult{
 		"cid-abc": inspectFor("cid-abc", "agent-x", "proj-y"),
 	}}
 	svc := newTestService(t, Deps{
-		Bus:    bus,
-		Docker: insp,
-		Cfg:    configmocks.NewBlankConfig(),
+		EnrolledTopic: enrolled,
+		EvictTopic:    evict,
+		Docker:        insp,
+		Cfg:           configmocks.NewBlankConfig(),
 	})
 
-	if !overseer.Publish(bus, ebpf.EBPFContainerEnrolled{
+	if !publishEnrolled(enrolled, ebpf.EBPFContainerEnrolled{
 		CgroupID:    7,
 		ContainerID: "cid-abc",
 		At:          time.Now(),
@@ -135,21 +166,22 @@ func TestService_Enroll_HydratesLabelCache(t *testing.T) {
 // entry on container/die so a reused cgroup_id can't return stale
 // labels.
 func TestService_Evict_OnDockerDieRemovesCacheEntry(t *testing.T) {
-	bus := newTestBus(t)
+	enrolled, evict := testTopics(t)
 	insp := &fakeInspecter{out: map[string]mobyclient.ContainerInspectResult{
 		"cid-abc": inspectFor("cid-abc", "agent-x", "proj-y"),
 	}}
 	svc := newTestService(t, Deps{
-		Bus:    bus,
-		Docker: insp,
-		Cfg:    configmocks.NewBlankConfig(),
+		EnrolledTopic: enrolled,
+		EvictTopic:    evict,
+		Docker:        insp,
+		Cfg:           configmocks.NewBlankConfig(),
 	})
 
-	overseer.Publish(bus, ebpf.EBPFContainerEnrolled{CgroupID: 7, ContainerID: "cid-abc", At: time.Now()})
+	publishEnrolled(enrolled, ebpf.EBPFContainerEnrolled{CgroupID: 7, ContainerID: "cid-abc", At: time.Now()})
 	if !eventuallyTrue(2*time.Second, func() bool { _, _, _, ok := svc.cache.Lookup(7); return ok }) {
 		t.Fatalf("cache did not hydrate before evict")
 	}
-	overseer.Publish(bus, dockerevents.DockerEvent{Message: mobyevents.Message{
+	publishDockerEvent(evict, dockerevents.DockerEvent{Message: mobyevents.Message{
 		Type:     mobyevents.ContainerEventType,
 		Action:   mobyevents.ActionDie,
 		Actor:    mobyevents.Actor{ID: "cid-abc"},
@@ -165,30 +197,31 @@ func TestService_Evict_OnDockerDieRemovesCacheEntry(t *testing.T) {
 // hydrated by the corresponding EBPFContainerEnrolled), and other
 // event types must not match at all.
 func TestService_Evict_IgnoresNonDieActions(t *testing.T) {
-	bus := newTestBus(t)
+	enrolled, evict := testTopics(t)
 	insp := &fakeInspecter{out: map[string]mobyclient.ContainerInspectResult{
 		"cid-abc": inspectFor("cid-abc", "agent-x", "proj-y"),
 	}}
 	svc := newTestService(t, Deps{
-		Bus:    bus,
-		Docker: insp,
-		Cfg:    configmocks.NewBlankConfig(),
+		EnrolledTopic: enrolled,
+		EvictTopic:    evict,
+		Docker:        insp,
+		Cfg:           configmocks.NewBlankConfig(),
 	})
 
-	overseer.Publish(bus, ebpf.EBPFContainerEnrolled{CgroupID: 7, ContainerID: "cid-abc", At: time.Now()})
+	publishEnrolled(enrolled, ebpf.EBPFContainerEnrolled{CgroupID: 7, ContainerID: "cid-abc", At: time.Now()})
 	eventuallyTrue(2*time.Second, func() bool { _, _, _, ok := svc.cache.Lookup(7); return ok })
 
 	// Non-die actions must not evict.
-	overseer.Publish(bus, dockerevents.DockerEvent{Message: mobyevents.Message{
+	publishDockerEvent(evict, dockerevents.DockerEvent{Message: mobyevents.Message{
 		Type: mobyevents.ContainerEventType, Action: mobyevents.ActionStart,
 		Actor: mobyevents.Actor{ID: "cid-abc"}, TimeNano: time.Now().UnixNano(),
 	}})
-	overseer.Publish(bus, dockerevents.DockerEvent{Message: mobyevents.Message{
+	publishDockerEvent(evict, dockerevents.DockerEvent{Message: mobyevents.Message{
 		Type: mobyevents.NetworkEventType, Action: mobyevents.ActionDisconnect,
 		Actor: mobyevents.Actor{ID: "cid-abc"}, TimeNano: time.Now().UnixNano(),
 	}})
 
-	// Give the bus a moment to dispatch both events before
+	// Give the topics a moment to dispatch both events before
 	// asserting non-eviction; without this the assertion might
 	// race the dispatch and pass for the wrong reason.
 	time.Sleep(50 * time.Millisecond)
@@ -202,15 +235,16 @@ func TestService_Evict_IgnoresNonDieActions(t *testing.T) {
 // leave the cache without an entry (the next emit lands with empty
 // attribution per the strict directive).
 func TestService_InspectFailureIsLogged_NotFatal(t *testing.T) {
-	bus := newTestBus(t)
+	enrolled, evict := testTopics(t)
 	insp := &fakeInspecter{err: errors.New("docker daemon unreachable")}
 	svc := newTestService(t, Deps{
-		Bus:    bus,
-		Docker: insp,
-		Cfg:    configmocks.NewBlankConfig(),
+		EnrolledTopic: enrolled,
+		EvictTopic:    evict,
+		Docker:        insp,
+		Cfg:           configmocks.NewBlankConfig(),
 	})
 
-	overseer.Publish(bus, ebpf.EBPFContainerEnrolled{CgroupID: 7, ContainerID: "cid-abc", At: time.Now()})
+	publishEnrolled(enrolled, ebpf.EBPFContainerEnrolled{CgroupID: 7, ContainerID: "cid-abc", At: time.Now()})
 	// The subscriber goroutine processes asynchronously; wait for
 	// the inspect call to land before asserting cache stayed empty.
 	if !eventuallyTrue(2*time.Second, func() bool { return insp.calls.Load() == 1 }) {
@@ -246,15 +280,9 @@ func newTestService(t *testing.T, d Deps) *Service {
 		sink:    nopSink{},
 		queue:   make(chan []byte, d.QueueBuffer),
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	svc.cancel = cancel
-	svc.subscribeBus(ctx)
-	t.Cleanup(func() {
-		for _, unsub := range svc.unsubs {
-			unsub()
-		}
-		svc.cancel()
-	})
+	// Subscription teardown is owned by the topics: testTopics closes
+	// both on cleanup, which drains the per-subscriber goroutines.
+	svc.subscribeBus()
 	return svc
 }
 

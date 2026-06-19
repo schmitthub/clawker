@@ -72,10 +72,9 @@ import (
 	"google.golang.org/grpc/keepalive"
 
 	clawkerdv1 "github.com/schmitthub/clawker/api/clawkerd/v1"
+	"github.com/schmitthub/clawker/controlplane/pubsub"
 	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/consts"
-
-	"github.com/schmitthub/clawker/controlplane/overseer"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -124,7 +123,7 @@ const closeErrCeiling = 5
 type Dialer struct {
 	log    *logger.Logger
 	docker mobyclient.APIClient
-	bus    *overseer.Overseer
+	topic  *pubsub.Topic[AgentEvent]
 	// agents is the CP-owned agentregistry (read+write). The dialer
 	// reads it at handshake time to classify the peer cert against
 	// the registered row: match (registered), miss (drives Register
@@ -150,25 +149,25 @@ type Dialer struct {
 
 // New constructs a Dialer. Returns an error if the CP client cert /
 // key cannot be loaded — better to fail at CP startup than to defer
-// the failure to the first dial.
+// the failure to the first dial. Returns (nil, error) on any nil
+// required dependency; never panics, per the CP serve-path contract.
 //
-// bus is required: the dialer publishes typed Session* events
-// (SessionConnecting / Connected / Failed / Broken) so other CP
-// components can subscribe to connection lifecycle without coupling
-// to the dialer directly. Pass a real *overseer.Overseer; tests can
-// use an in-memory bus (it's cheap).
+// topic is required: the dialer publishes the unified AgentEvent
+// (session connecting/connected/failed/broken, registry registered,
+// trust untrusted) so other CP domains can subscribe to the agent axis
+// without coupling to the dialer directly. Pass a real
+// *pubsub.Topic[AgentEvent]; tests can construct one cheaply.
 //
 // agents is required: every successful dial cross-checks the peer
 // cert against the registry row keyed by container_id and dispatches
-// the typed AgentRegistered / AgentUntrusted events accordingly. nil
-// agents would strand worldview consumers without a registration
-// signal.
-func New(log *logger.Logger, docker mobyclient.APIClient, bus *overseer.Overseer, agents Registry, certPath, keyPath string, caPool *x509.CertPool, initExec *Executor) (*Dialer, error) {
+// the registered / untrusted AgentEvents accordingly. nil agents would
+// strand worldview consumers without a registration signal.
+func New(log *logger.Logger, docker mobyclient.APIClient, topic *pubsub.Topic[AgentEvent], agents Registry, certPath, keyPath string, caPool *x509.CertPool, initExec *Executor) (*Dialer, error) {
 	if log == nil {
 		log = logger.Nop()
 	}
-	if bus == nil {
-		return nil, errors.New("agent.New: overseer is required")
+	if topic == nil {
+		return nil, errors.New("agent.New: topic is required")
 	}
 	if agents == nil {
 		return nil, errors.New("agent.New: agents registry is required")
@@ -183,7 +182,7 @@ func New(log *logger.Logger, docker mobyclient.APIClient, bus *overseer.Overseer
 	return &Dialer{
 		log:          log,
 		docker:       docker,
-		bus:          bus,
+		topic:        topic,
 		agents:       agents,
 		initExec:     initExec,
 		cpClientCert: cert,
@@ -253,20 +252,21 @@ func (d *Dialer) DialAgent(ctx context.Context, containerID string) {
 				Str("project", project).
 				Str("event", "agentdial_panic").
 				Msg("agent.dial: dial goroutine panicked; CP otherwise unaffected. Publishing synthetic SessionFailed so worldview consumers see a terminal lifecycle event.")
-			// Publish directly with context.Background() instead of
-			// the dial ctx: publishFailed short-circuits when the
-			// ctx is done, but the panic path needs the worldview
-			// transition to land even during shutdown — operators
-			// are about to lose every other signal. overseer.Publish
-			// is no-op on a closed bus (returns false; doesn't
-			// panic), so this is safe to call from the recover.
-			overseer.Publish(d.bus, SessionFailed{
-				ContainerID: containerID,
-				AgentName:   agentName,
-				Project:     project,
-				Reason:      fmt.Sprintf("dial_goroutine_panic: %v", r),
-				At:          time.Now(),
-			})
+			// Publish unconditionally (not via publishFailed, which
+			// short-circuits when the dial ctx is done): the panic path
+			// needs the worldview transition to land even during
+			// shutdown — operators are about to lose every other signal.
+			// publish is a no-op on a closed/full topic (returns false;
+			// never panics), so this is safe from the recover.
+			publish(d.topic, newAgentEvent(
+				Agent{ContainerID: containerID, AgentName: agentName, Project: project},
+				Message{
+					Type:   DialerEventType,
+					Action: ActionFailed,
+					Reason: ReasonFailed,
+					Detail: fmt.Sprintf("dial_goroutine_panic: %v", r),
+				},
+			))
 		}()
 		defer func() {
 			d.mu.Lock()
@@ -278,6 +278,78 @@ func (d *Dialer) DialAgent(ctx context.Context, containerID string) {
 			cancel()
 		}()
 		d.runDial(ctx, dialCtx, containerID)
+	}()
+}
+
+// Initial-dial poll parameters. These bound the one-shot reconcile that
+// dials every already-running agent at CP boot. The list call is the
+// only thing retried — DialAgent itself is fire-and-forget. Three
+// attempts with exponential backoff from initialDialListBackoff absorbs
+// the transient docker-daemon hiccup that is the dominant failure mode
+// at boot without delaying readiness materially.
+const (
+	initialDialMaxAttempts = 3
+	initialDialListBackoff = 100 * time.Millisecond
+)
+
+// DialAllRunning dials every already-running agent container at CP boot.
+// It spawns its own goroutine and returns immediately — it MUST NOT
+// block CP readiness, and MUST NOT fail CP if the list call errors.
+//
+// The list is retried with bounded exponential backoff
+// (initialDialMaxAttempts attempts from initialDialListBackoff) to
+// absorb the transient docker-daemon hiccup that dominates boot-time
+// failures. Each resolved container ID is handed to the fire-and-forget
+// DialAgent; the dialing dedup map keeps a later runtime ContainerStarted
+// event from spinning a duplicate dial against an already-open Session.
+//
+// The goroutine recovers: a panic deep in DialAgent (or the list path)
+// must not strand the initial-poll dispatch silently or take down PID 1
+// and freeze eBPF — runtime ContainerStarted handlers are unaffected.
+func (d *Dialer) DialAllRunning(ctx context.Context, lister *ContainerLister, opts ListOpts) {
+	go func() {
+		// recover so a panic deep in DialAgent doesn't silently strand
+		// every initial-poll agent without surfacing — this goroutine
+		// has no other observer.
+		defer func() {
+			if r := recover(); r != nil {
+				d.log.Error().
+					Interface("panic", r).
+					Str("event", "agentdial_initial_poll_panic").
+					Str("component", "cp.agentdial").
+					Msg("initial agent dial goroutine panicked; initial-poll dispatch aborted (runtime ContainerStarted handlers unaffected)")
+			}
+		}()
+		backoff := initialDialListBackoff
+		var initialAgents []string
+		var listErr error
+		for attempt := 1; attempt <= initialDialMaxAttempts; attempt++ {
+			initialAgents, listErr = lister.List(ctx, opts)
+			if listErr == nil {
+				if attempt > 1 {
+					d.log.Info().Int("attempt", attempt).Str("event", "agentdial_initial_list_recovered").Msg("list agent containers recovered after retry")
+				}
+				break
+			}
+			if attempt == initialDialMaxAttempts {
+				break
+			}
+			d.log.Warn().Err(listErr).Int("attempt", attempt).Dur("backoff", backoff).Str("event", "agentdial_initial_list_retry").Msg("list agent containers failed; retrying")
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(backoff):
+			}
+			backoff *= 2
+		}
+		if listErr != nil {
+			d.log.Error().Err(listErr).Str("event", "agentdial_initial_list_failed").Msg("list agent containers")
+			return
+		}
+		for _, id := range initialAgents {
+			d.DialAgent(ctx, id)
+		}
+		d.log.Info().Int("count", len(initialAgents)).Str("event", "agentdial_initial_poll_dispatched").Msg("dispatched initial CP→clawkerd dials")
 	}()
 }
 
@@ -1049,7 +1121,7 @@ const registerRequiredTimeout = 30 * time.Second
 //   - NotQueried (lookup error) → publish AgentUntrusted with detail
 //
 // Caller must have already called publishConnected — the agent state
-// in overseer is populated by the time we evaluate trust outcomes.
+// projection is populated by the time we evaluate trust outcomes.
 func (d *Dialer) dispatchAgentEvents(ctx context.Context, containerID string, res establishResult, log *logger.Logger) {
 	outcome, detail := d.classifyRegistry(res.PeerInfo.PeerThumbprint, containerID)
 
@@ -1069,15 +1141,16 @@ func (d *Dialer) dispatchAgentEvents(ctx context.Context, containerID string, re
 	case outcomeRegistryThumbprintMismatch:
 		log.Warn().
 			Str("event", "agent_untrusted").
-			Str("reason", string(overseer.UntrustedReasonThumbprintMismatch)).
+			Str("reason", string(ReasonThumbprintMismatch)).
 			Msg("registered cert thumbprint differs from live peer cert; agent untrusted")
-		overseer.Publish(d.bus, AgentUntrusted{
-			ContainerID: containerID,
-			AgentName:   res.Agent,
-			Project:     res.Project,
-			Reason:      overseer.UntrustedReasonThumbprintMismatch,
-			At:          time.Now(),
-		})
+		publish(d.topic, newAgentEvent(
+			dialAgent(containerID, res),
+			Message{
+				Type:   RegistryEventType,
+				Action: ActionUntrusted,
+				Reason: ReasonThumbprintMismatch,
+			},
+		))
 	default:
 		// outcomeRegistryNotQueried is the explicit lookup-error /
 		// wiring-bug case; fallthrough catches any future outcome
@@ -1097,14 +1170,15 @@ func (d *Dialer) dispatchAgentEvents(ctx context.Context, containerID string, re
 				Str("detail", detail).
 				Msg("registry classification could not be determined; agent untrusted")
 		}
-		overseer.Publish(d.bus, AgentUntrusted{
-			ContainerID: containerID,
-			AgentName:   res.Agent,
-			Project:     res.Project,
-			Reason:      overseer.UntrustedReasonCertInvalid,
-			Detail:      detail,
-			At:          time.Now(),
-		})
+		publish(d.topic, newAgentEvent(
+			dialAgent(containerID, res),
+			Message{
+				Type:   RegistryEventType,
+				Action: ActionUntrusted,
+				Reason: ReasonCertInvalid,
+				Detail: detail,
+			},
+		))
 	}
 }
 
@@ -1170,6 +1244,31 @@ func (d *Dialer) driveRegister(ctx context.Context, containerID string, res esta
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
+		// Recover so a panic in this spawned Recv goroutine can't crash
+		// PID 1 and strand eBPF — the parent DialAgent recover does NOT
+		// catch panics in goroutines it launches. On panic, signal the
+		// select below with a synthetic error so driveRegister unblocks
+		// (rather than waiting out the full register timeout) and the
+		// failure is classified, consistent with the package's other
+		// goroutine recovers. See internal/controlplane/CLAUDE.md
+		// "Resilience contract".
+		defer func() {
+			if r := recover(); r != nil {
+				log.Error().
+					Interface("panic", r).
+					Bytes("stack", debug.Stack()).
+					Str("container_id", containerID).
+					Str("event", "agentdial_register_recv_panic").
+					Msg("agent.dial: RegisterRequired Recv goroutine panicked; CP otherwise unaffected")
+				// Non-blocking send: ch is buffered (cap 1) and a prior
+				// successful path may already have sent; never block the
+				// recover.
+				select {
+				case ch <- recvResult{err: fmt.Errorf("RegisterRequired Recv panicked: %v", r)}:
+				default:
+				}
+			}
+		}()
 		for {
 			r, err := res.Stream.Recv()
 			if err != nil {
@@ -1243,13 +1342,14 @@ func (d *Dialer) driveRegister(ctx context.Context, containerID string, res esta
 	log.Info().
 		Str("event", "agent_registered").
 		Msg("CP-driven Register completed; row written")
-	overseer.Publish(d.bus, AgentRegistered{
-		ContainerID: containerID,
-		AgentName:   res.Agent,
-		Project:     res.Project,
-		Ok:          true,
-		At:          time.Now(),
-	})
+	publish(d.topic, newAgentEvent(
+		dialAgent(containerID, res),
+		Message{
+			Type:       RegistryEventType,
+			Action:     ActionRegistered,
+			RegisterOk: true,
+		},
+	))
 }
 
 func (d *Dialer) publishRegisterFailure(containerID string, res establishResult, reason string, log *logger.Logger) {
@@ -1257,22 +1357,24 @@ func (d *Dialer) publishRegisterFailure(containerID string, res establishResult,
 		Str("event", "agent_register_failed").
 		Str("reason", reason).
 		Msg("CP-driven Register did not complete; agent unprovenanceable")
-	overseer.Publish(d.bus, AgentRegistered{
-		ContainerID: containerID,
-		AgentName:   res.Agent,
-		Project:     res.Project,
-		Ok:          false,
-		Reason:      reason,
-		At:          time.Now(),
-	})
-	overseer.Publish(d.bus, AgentUntrusted{
-		ContainerID: containerID,
-		AgentName:   res.Agent,
-		Project:     res.Project,
-		Reason:      overseer.UntrustedReasonRegisterFailed,
-		Detail:      reason,
-		At:          time.Now(),
-	})
+	publish(d.topic, newAgentEvent(
+		dialAgent(containerID, res),
+		Message{
+			Type:       RegistryEventType,
+			Action:     ActionRegistered,
+			RegisterOk: false,
+			Detail:     reason,
+		},
+	))
+	publish(d.topic, newAgentEvent(
+		dialAgent(containerID, res),
+		Message{
+			Type:   RegistryEventType,
+			Action: ActionUntrusted,
+			Reason: ReasonRegisterFailed,
+			Detail: reason,
+		},
+	))
 }
 
 // publishConnecting records the start of a dial attempt. Status is
@@ -1281,20 +1383,21 @@ func (d *Dialer) publishRegisterFailure(containerID string, res establishResult,
 // container is missing labels (still publish — gives consumers a way
 // to surface "we're dialing something we can't identify").
 //
-// Logging is delegated to overseer's PublishHook so a single line
-// appears per event from the bus loop, instead of one here AND one
-// from the hook.
+// Logging is delegated to the orchestrator's audit hook on the topic so
+// a single line appears per event, instead of one here AND one from the
+// hook.
 func (d *Dialer) publishConnecting(ctx context.Context, containerID, agent, project, addr string) {
 	if ctx.Err() != nil {
 		return
 	}
-	overseer.Publish(d.bus, SessionConnecting{
-		ContainerID: containerID,
-		AgentName:   agent,
-		Project:     project,
-		Address:     addr,
-		At:          time.Now(),
-	})
+	publish(d.topic, newAgentEvent(
+		Agent{ContainerID: containerID, AgentName: agent, Project: project},
+		Message{
+			Type:    DialerEventType,
+			Action:  ActionConnecting,
+			Address: addr,
+		},
+	))
 }
 
 // publishConnected records that the Session handshake succeeded
@@ -1306,16 +1409,17 @@ func (d *Dialer) publishConnected(ctx context.Context, containerID, agent, proje
 	if ctx.Err() != nil {
 		return
 	}
-	overseer.Publish(d.bus, SessionConnected{
-		ContainerID:       containerID,
-		AgentName:         agent,
-		Project:           project,
-		Address:           addr,
-		Attempts:          attempt,
-		PeerAgentFullName: peer.PeerAgentFullName,
-		PeerThumbprint:    peer.PeerThumbprint,
-		At:                time.Now(),
-	})
+	publish(d.topic, newAgentEvent(
+		Agent{ContainerID: containerID, AgentName: agent, Project: project},
+		Message{
+			Type:              DialerEventType,
+			Action:            ActionConnected,
+			Address:           addr,
+			Attempts:          attempt,
+			PeerAgentFullName: peer.PeerAgentFullName,
+			PeerThumbprint:    peer.PeerThumbprint,
+		},
+	))
 }
 
 // publishFailed records that the retry budget exhausted before any
@@ -1326,15 +1430,17 @@ func (d *Dialer) publishFailed(ctx context.Context, containerID, agent, project,
 	if ctx.Err() != nil {
 		return
 	}
-	overseer.Publish(d.bus, SessionFailed{
-		ContainerID: containerID,
-		AgentName:   agent,
-		Project:     project,
-		Address:     addr,
-		Reason:      reason,
-		Attempts:    attempts,
-		At:          time.Now(),
-	})
+	publish(d.topic, newAgentEvent(
+		Agent{ContainerID: containerID, AgentName: agent, Project: project},
+		Message{
+			Type:     DialerEventType,
+			Action:   ActionFailed,
+			Address:  addr,
+			Attempts: attempts,
+			Reason:   ReasonFailed,
+			Detail:   reason,
+		},
+	))
 }
 
 // publishBroken records that an established Session terminated.
@@ -1347,12 +1453,24 @@ func (d *Dialer) publishBroken(ctx context.Context, containerID, agent, project,
 	if ctx.Err() != nil {
 		return
 	}
-	overseer.Publish(d.bus, SessionBroken{
+	publish(d.topic, newAgentEvent(
+		Agent{ContainerID: containerID, AgentName: agent, Project: project},
+		Message{
+			Type:    DialerEventType,
+			Action:  ActionBroken,
+			Address: addr,
+			Detail:  reason,
+		},
+	))
+}
+
+// dialAgent projects an establishResult onto the AgentEvent identity
+// triple. Used by the registry/trust-axis publishers, which key off the
+// inspect-derived agent/project labels captured during establishment.
+func dialAgent(containerID string, res establishResult) Agent {
+	return Agent{
 		ContainerID: containerID,
-		AgentName:   agent,
-		Project:     project,
-		Address:     addr,
-		Reason:      reason,
-		At:          time.Now(),
-	})
+		AgentName:   res.Agent,
+		Project:     res.Project,
+	}
 }

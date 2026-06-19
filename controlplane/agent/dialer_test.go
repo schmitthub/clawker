@@ -25,7 +25,6 @@ import (
 
 	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/consts"
-	"github.com/schmitthub/clawker/internal/controlplane/overseer"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -320,23 +319,19 @@ func TestClassifyRegistry_NilRegistryReturnsNotQueried(t *testing.T) {
 	assert.Equal(t, "registry not wired", detail)
 }
 
-// TestPublishConnected_DeliversPeerIntact pins the bus payload
-// contract: peer cert identity fields set on publishConnected land
-// on the SessionConnected event a subscriber receives. Subscribers
-// driving policy (containment, alerting) consume the typed fields
-// directly; a regression that drops a field on the wire wouldn't
-// surface from leaf-function tests alone.
+// TestPublishConnected_DeliversPeerIntact pins the event payload
+// contract: peer cert identity fields set on publishConnected land on the
+// connected AgentEvent a subscriber receives. Subscribers driving policy
+// (containment, alerting) consume the typed fields directly; a regression
+// that drops a field on the wire wouldn't surface from leaf-function tests
+// alone.
 func TestPublishConnected_DeliversPeerIntact(t *testing.T) {
-	bus := overseer.New(overseer.Options{Logger: logger.Nop()})
+	topic := newAgentTopic(t)
+	rec := recordAgent(topic)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	require.NoError(t, bus.Start(ctx))
-	defer func() { _ = bus.Close() }()
 
-	sub, ok := overseer.Subscribe[SessionConnected](bus, "test")
-	require.True(t, ok)
-
-	d := &Dialer{bus: bus}
+	d := &Dialer{topic: topic}
 	thumb := sha256.Sum256([]byte("peer-cert-bytes"))
 	peer := peerInfo{
 		ChainVerified:     true,
@@ -345,18 +340,19 @@ func TestPublishConnected_DeliversPeerIntact(t *testing.T) {
 	}
 	d.publishConnected(ctx, "ctr-prov", "dev", "proj", "10.1.1.5:7700", 3, peer)
 
-	select {
-	case ev := <-sub.C:
-		assert.Equal(t, "ctr-prov", ev.ContainerID)
-		assert.Equal(t, "dev", ev.AgentName)
-		assert.Equal(t, "proj", ev.Project)
-		assert.Equal(t, "10.1.1.5:7700", ev.Address)
-		assert.Equal(t, 3, ev.Attempts)
-		assert.Equal(t, "clawker.proj.dev", ev.PeerAgentFullName)
-		assert.Equal(t, thumb, ev.PeerThumbprint)
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for SessionConnected event on bus")
-	}
+	require.Eventually(t, func() bool {
+		_, ok := rec.firstWith(DialerEventType, ActionConnected)
+		return ok
+	}, 2*time.Second, 10*time.Millisecond, "timed out waiting for connected AgentEvent")
+
+	ev, _ := rec.firstWith(DialerEventType, ActionConnected)
+	assert.Equal(t, "ctr-prov", ev.Agent.ContainerID)
+	assert.Equal(t, "dev", ev.Agent.AgentName)
+	assert.Equal(t, "proj", ev.Agent.Project)
+	assert.Equal(t, "10.1.1.5:7700", ev.Message.Address)
+	assert.Equal(t, 3, ev.Message.Attempts)
+	assert.Equal(t, "clawker.proj.dev", ev.Message.PeerAgentFullName)
+	assert.Equal(t, thumb, ev.Message.PeerThumbprint)
 }
 
 // --- closeAndCheckLeak: FD-leak guard kept from prior test set -----
@@ -442,7 +438,7 @@ func TestCloseAndCheckLeak_LogsCloseFailure(t *testing.T) {
 // publication, and ctx-cancel teardown. Leaf functions
 // (capturePeer, classifyRegistry, closeAndCheckLeak) are exercised
 // independently above; this layer proves the wiring between them and
-// the overseer event publishers.
+// the AgentEvent publishers.
 
 // fakeMobyForDialer satisfies mobyclient.APIClient via embedding —
 // the embedded nil interface is fine because every test path here
@@ -497,11 +493,11 @@ func mintLeafKeypair(t *testing.T, cn string, parent *x509.Certificate, parentKe
 	return certPath, keyPath
 }
 
-// newDialerForTest builds a *Dialer with a fresh leaf cert + key
-// chained to a fresh CA, a real Overseer bus, and the supplied moby
-// fake + registry. The bus is started; caller cancels the returned
-// ctx to drain it.
-func newDialerForTest(t *testing.T, docker mobyclient.APIClient, agents Registry) (*Dialer, *overseer.Overseer, context.Context, context.CancelFunc) {
+// newDialerForTest builds a *Dialer with a fresh leaf cert + key chained
+// to a fresh CA, a real agent Topic, and the supplied moby fake +
+// registry. Returns a recorder already subscribed to the topic and a ctx
+// the caller cancels to tear down.
+func newDialerForTest(t *testing.T, docker mobyclient.APIClient, agents Registry) (*Dialer, *agentRecorder, context.Context, context.CancelFunc) {
 	t.Helper()
 
 	caCert, caKey := genCA(t, "clawker-ca", 24*time.Hour)
@@ -510,14 +506,26 @@ func newDialerForTest(t *testing.T, docker mobyclient.APIClient, agents Registry
 	caPool := x509.NewCertPool()
 	caPool.AddCert(caCert)
 
-	bus := overseer.New(overseer.Options{Logger: logger.Nop()})
+	topic := newAgentTopic(t)
+	rec := recordAgent(topic)
 	ctx, cancel := context.WithCancel(context.Background())
-	require.NoError(t, bus.Start(ctx))
 
-	d, err := New(logger.Nop(), docker, bus, agents, certPath, keyPath, caPool, nil)
+	d, err := New(logger.Nop(), docker, topic, agents, certPath, keyPath, caPool, nil)
 	require.NoError(t, err)
 
-	return d, bus, ctx, cancel
+	return d, rec, ctx, cancel
+}
+
+// awaitFailed waits until at least one session-failed AgentEvent has been
+// recorded and returns the first one. Fails the test on timeout.
+func awaitFailed(t *testing.T, rec *agentRecorder) AgentEvent {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		_, ok := rec.firstWith(DialerEventType, ActionFailed)
+		return ok
+	}, 2*time.Second, 10*time.Millisecond, "timed out waiting for session-failed AgentEvent")
+	ev, _ := rec.firstWith(DialerEventType, ActionFailed)
+	return ev
 }
 
 func TestDialAgent_DedupsConcurrentCallsForSameContainerID(t *testing.T) {
@@ -548,12 +556,8 @@ func TestDialAgent_DedupsConcurrentCallsForSameContainerID(t *testing.T) {
 			return nil, ErrUnknownAgent
 		},
 	}
-	d, bus, ctx, cancel := newDialerForTest(t, docker, regMock)
+	d, rec, ctx, cancel := newDialerForTest(t, docker, regMock)
 	defer cancel()
-	defer bus.Close()
-
-	sub, ok := overseer.Subscribe[SessionFailed](bus, "test")
-	require.True(t, ok)
 
 	d.DialAgent(ctx, "container-A")
 	select {
@@ -564,23 +568,18 @@ func TestDialAgent_DedupsConcurrentCallsForSameContainerID(t *testing.T) {
 	d.DialAgent(ctx, "container-A") // dup — key present → guaranteed no-op
 	close(release)                  // let the first dial run to terminal failure
 
-	select {
-	case ev := <-sub.C:
-		assert.Equal(t, "container-A", ev.ContainerID)
-		assert.Equal(t, "container_not_running", ev.Reason)
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for first SessionFailed event")
-	}
+	ev := awaitFailed(t, rec)
+	assert.Equal(t, "container-A", ev.Agent.ContainerID)
+	assert.Equal(t, "container_not_running", ev.Message.Detail)
 
 	// A second event would mean the dup spawned its own goroutine. With
-	// the gate forcing the overlap this is deterministic, not a race:
-	// if the dedup map were dropped, the dup's goroutine would also pass
-	// through the (now-closed) gate and publish a second SessionFailed.
-	select {
-	case ev := <-sub.C:
-		t.Fatalf("dedup violated — second SessionFailed arrived: %+v", ev)
-	case <-time.After(200 * time.Millisecond):
-	}
+	// the gate forcing the overlap this is deterministic, not a race: if
+	// the dedup map were dropped, the dup's goroutine would also pass
+	// through the (now-closed) gate and publish a second session-failed
+	// event. Allow a beat for any erroneous second publish to land.
+	time.Sleep(200 * time.Millisecond)
+	failed := rec.withAction(DialerEventType, ActionFailed)
+	require.Len(t, failed, 1, "dedup violated — a second session-failed event arrived")
 }
 
 func TestDialAgent_RedialsAfterTerminalFailureClearsDedup(t *testing.T) {
@@ -594,18 +593,14 @@ func TestDialAgent_RedialsAfterTerminalFailureClearsDedup(t *testing.T) {
 			return nil, ErrUnknownAgent
 		},
 	}
-	d, bus, ctx, cancel := newDialerForTest(t, docker, regMock)
+	d, rec, ctx, cancel := newDialerForTest(t, docker, regMock)
 	defer cancel()
-	defer bus.Close()
-
-	sub, ok := overseer.Subscribe[SessionFailed](bus, "test")
-	require.True(t, ok)
 
 	d.DialAgent(ctx, "container-B")
-	<-sub.C // first failure event — confirms first goroutine exited
+	awaitFailed(t, rec) // first failure event — confirms first goroutine exited
 
-	// Wait for dedup map cleanup (the deferred delete runs after
-	// runDial returns; the publishFailed path is part of runDial).
+	// Wait for dedup map cleanup (the deferred delete runs after runDial
+	// returns; the publishFailed path is part of runDial).
 	require.Eventually(t, func() bool {
 		d.mu.Lock()
 		_, present := d.dialing["container-B"]
@@ -614,12 +609,9 @@ func TestDialAgent_RedialsAfterTerminalFailureClearsDedup(t *testing.T) {
 	}, 1*time.Second, 10*time.Millisecond, "dedup entry must clear after terminal failure")
 
 	d.DialAgent(ctx, "container-B")
-	select {
-	case ev := <-sub.C:
-		assert.Equal(t, "container-B", ev.ContainerID)
-	case <-time.After(2 * time.Second):
-		t.Fatal("redial after terminal failure produced no event")
-	}
+	require.Eventually(t, func() bool {
+		return len(rec.withAction(DialerEventType, ActionFailed)) == 2
+	}, 2*time.Second, 10*time.Millisecond, "redial after terminal failure produced no second event")
 }
 
 func TestDialAgent_CtxCancelDuringResolveTearsDownCleanly(t *testing.T) {
@@ -639,28 +631,19 @@ func TestDialAgent_CtxCancelDuringResolveTearsDownCleanly(t *testing.T) {
 			return nil, ErrUnknownAgent
 		},
 	}
-	d, bus, ctx, cancel := newDialerForTest(t, docker, regMock)
-	defer bus.Close()
-
-	sub, ok := overseer.Subscribe[SessionFailed](bus, "test")
-	require.True(t, ok)
+	d, rec, ctx, cancel := newDialerForTest(t, docker, regMock)
 
 	cancel() // pre-cancel; runDial's first ctx.Err() check trips
 	d.DialAgent(ctx, "container-C")
 
-	// Channel may close (bus shutdown on ctx cancel) — we want zero
-	// SessionFailed VALUES delivered, but a closed-channel signal
-	// (ok=false) is fine.
-	select {
-	case ev, ok := <-sub.C:
-		if ok {
-			t.Fatalf("ctx-cancel must NOT publish SessionFailed; got: %+v", ev)
-		}
-	case <-time.After(500 * time.Millisecond):
-	}
+	// ctx-cancel must NOT publish a session-failed event. Allow a beat
+	// for any erroneous publish to land, then assert none did.
+	time.Sleep(500 * time.Millisecond)
+	assert.Empty(t, rec.withAction(DialerEventType, ActionFailed),
+		"ctx-cancel must NOT publish a session-failed event")
 
-	// And the dedup entry clears so a subsequent retry (with a fresh
-	// ctx) would run.
+	// And the dedup entry clears so a subsequent retry (with a fresh ctx)
+	// would run.
 	require.Eventually(t, func() bool {
 		d.mu.Lock()
 		_, present := d.dialing["container-C"]
@@ -744,23 +727,15 @@ func TestDialAgent_PanicInRunDial_DoesNotCrashCP_PublishesTerminal(t *testing.T)
 			return nil, ErrUnknownAgent
 		},
 	}
-	d, bus, ctx, cancel := newDialerForTest(t, docker, regMock)
+	d, rec, ctx, cancel := newDialerForTest(t, docker, regMock)
 	defer cancel()
-	defer bus.Close()
-
-	sub, ok := overseer.Subscribe[SessionFailed](bus, "test")
-	require.True(t, ok)
 
 	d.DialAgent(ctx, "container-panic")
 
-	select {
-	case ev := <-sub.C:
-		assert.Equal(t, "container-panic", ev.ContainerID)
-		assert.Contains(t, ev.Reason, "dial_goroutine_panic",
-			"recover must publish synthetic SessionFailed with the dial_goroutine_panic classification so subscribers driving containment can branch on it")
-	case <-time.After(2 * time.Second):
-		t.Fatal("recover failed to publish synthetic SessionFailed — either the panic crashed the goroutine without recover, or the publishFailed call inside the recover handler is wrong")
-	}
+	ev := awaitFailed(t, rec)
+	assert.Equal(t, "container-panic", ev.Agent.ContainerID)
+	assert.Contains(t, ev.Message.Detail, "dial_goroutine_panic",
+		"recover must publish a synthetic session-failed event with the dial_goroutine_panic detail so subscribers driving containment can branch on it")
 
 	require.Eventually(t, func() bool {
 		d.mu.Lock()

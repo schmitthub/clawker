@@ -6,8 +6,8 @@ import (
 	"github.com/rs/zerolog"
 )
 
-// EBPFContainerEnrolled is published on the overseer bus after a
-// successful FirewallEnable enrolls a container into the BPF
+// EBPFContainerEnrolled is published on the firewall's enroll topic after
+// a successful FirewallEnable enrolls a container into the BPF
 // container_map. The CgroupID and ContainerID together identify the
 // enrolled (cgroup, container) binding for downstream consumers.
 //
@@ -30,8 +30,6 @@ type EBPFContainerEnrolled struct {
 	At          time.Time
 }
 
-func (e EBPFContainerEnrolled) EventName() string     { return "ebpf.container.enrolled" }
-func (e EBPFContainerEnrolled) OccurredAt() time.Time { return e.At }
 func (e EBPFContainerEnrolled) MarshalZerologObject(z *zerolog.Event) {
 	z.Str("container_id", e.ContainerID).
 		Uint64("cgroup_id", e.CgroupID)

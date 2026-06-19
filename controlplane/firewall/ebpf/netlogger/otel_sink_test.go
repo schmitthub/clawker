@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
+	ebpf "github.com/schmitthub/clawker/controlplane/firewall/ebpf"
 	"github.com/schmitthub/clawker/internal/logger"
 	otellog "go.opentelemetry.io/otel/log"
 	sdklog "go.opentelemetry.io/otel/sdk/log"

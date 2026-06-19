@@ -5,9 +5,9 @@ import (
 	"fmt"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	"github.com/schmitthub/clawker/controlplane/manager"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/consts"
-	"github.com/schmitthub/clawker/internal/controlplane/cpboot"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/spf13/cobra"
 )
@@ -15,7 +15,7 @@ import (
 // UpOptions holds the options for the firewall up command.
 type UpOptions struct {
 	IOStreams    *iostreams.IOStreams
-	ControlPlane func() cpboot.Manager
+	ControlPlane func() manager.Manager
 	AdminClient  func(context.Context) (adminv1.AdminServiceClient, error)
 }
 

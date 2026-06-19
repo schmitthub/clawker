@@ -431,3 +431,97 @@ func TestClose_LiveContext_BoundedByExportTimeout(t *testing.T) {
 		t.Error("Close returned nil on a live context with an unreachable collector; the export-timeout failure must surface")
 	}
 }
+
+// TestOtelOptionsFromEnv pins the secure-by-default OTLP-endpoint
+// resolution contract: the helper resolves only the endpoint + plaintext
+// flag from env (the logs-signal override winning over the generic var),
+// defaults to TLS for bare host:port, opts in to plaintext ONLY for an
+// explicit http:// scheme, and NEVER honors env-driven cert paths (those
+// would let an operator smuggle a CLI-root-direct leaf onto the trusted
+// lane). Moved out of internal/controlplane when the helper became a
+// logger-package concern.
+func TestOtelOptionsFromEnv(t *testing.T) {
+	t.Run("no env returns nil", func(t *testing.T) {
+		t.Setenv(consts.EnvOTLPLogsEndpoint, "")
+		t.Setenv(consts.EnvOTLPEndpoint, "")
+		if got := OtelOptionsFromEnv(); got != nil {
+			t.Fatalf("expected nil with no endpoint configured, got %+v", got)
+		}
+	})
+
+	t.Run("logs endpoint precedence over generic", func(t *testing.T) {
+		t.Setenv(consts.EnvOTLPLogsEndpoint, "https://logs:4319")
+		t.Setenv(consts.EnvOTLPEndpoint, "https://generic:4319")
+		opts := OtelOptionsFromEnv()
+		if opts == nil {
+			t.Fatal("expected non-nil opts")
+		}
+		if opts.Endpoint != "logs:4319" {
+			t.Errorf("endpoint: got %q, want %q", opts.Endpoint, "logs:4319")
+		}
+		if opts.Insecure {
+			t.Error("https endpoint must resolve secure (Insecure=false)")
+		}
+	})
+
+	t.Run("explicit http opts in to plaintext", func(t *testing.T) {
+		t.Setenv(consts.EnvOTLPLogsEndpoint, "")
+		t.Setenv(consts.EnvOTLPEndpoint, "http://collector:4317")
+		opts := OtelOptionsFromEnv()
+		if opts == nil {
+			t.Fatal("expected non-nil opts")
+		}
+		if opts.Endpoint != "collector:4317" {
+			t.Errorf("endpoint: got %q, want %q", opts.Endpoint, "collector:4317")
+		}
+		if !opts.Insecure {
+			t.Error("explicit http:// must opt in to plaintext (Insecure=true)")
+		}
+	})
+
+	t.Run("bare host_port defaults secure", func(t *testing.T) {
+		t.Setenv(consts.EnvOTLPLogsEndpoint, "")
+		t.Setenv(consts.EnvOTLPEndpoint, "collector.prod.internal:4319")
+		opts := OtelOptionsFromEnv()
+		if opts == nil {
+			t.Fatal("expected non-nil opts")
+		}
+		if opts.Endpoint != "collector.prod.internal:4319" {
+			t.Errorf("endpoint: got %q, want %q", opts.Endpoint, "collector.prod.internal:4319")
+		}
+		if opts.Insecure {
+			t.Error("bare host:port must default to TLS (Insecure=false)")
+		}
+	})
+
+	// CLI-root-direct cert env vars are deliberately ignored. The CP's
+	// trusted-lane exporter takes its TLSConfig in-process from
+	// internal/controlplane/otelcerts; honoring env-driven cert paths
+	// would let an operator smuggle in a CLI-root-direct leaf, which
+	// agent containers also hold — they could then forge
+	// service.name=clawkercp records on the trusted receiver.
+	t.Run("client cert env vars are not consulted", func(t *testing.T) {
+		t.Setenv(consts.EnvOTLPLogsEndpoint, "https://host:4319")
+		t.Setenv(consts.EnvOTLPEndpoint, "")
+		t.Setenv("OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE", "/c.pem")
+		t.Setenv("OTEL_EXPORTER_OTLP_CLIENT_KEY", "/k.pem")
+		t.Setenv("OTEL_EXPORTER_OTLP_CERTIFICATE", "/ca.pem")
+
+		opts := OtelOptionsFromEnv()
+		if opts == nil {
+			t.Fatal("expected non-nil opts")
+		}
+		if opts.ClientCertFile != "" {
+			t.Error("OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE must be ignored")
+		}
+		if opts.ClientKeyFile != "" {
+			t.Error("OTEL_EXPORTER_OTLP_CLIENT_KEY must be ignored")
+		}
+		if opts.CACertFile != "" {
+			t.Error("OTEL_EXPORTER_OTLP_CERTIFICATE must be ignored")
+		}
+		if opts.TLSConfig != nil {
+			t.Error("TLSConfig is wired in-process by the caller, not from env")
+		}
+	})
+}

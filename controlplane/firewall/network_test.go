@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	fwcp "github.com/schmitthub/clawker/internal/controlplane/firewall"
+	fwcp "github.com/schmitthub/clawker/controlplane/firewall"
 )
 
 func TestComputeStaticIP(t *testing.T) {

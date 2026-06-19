@@ -7,7 +7,7 @@ import (
 	"net/netip"
 	"testing"
 
-	ebpf "github.com/schmitthub/clawker/internal/controlplane/firewall/ebpf"
+	ebpf "github.com/schmitthub/clawker/controlplane/firewall/ebpf"
 )
 
 // TestParseEvent_RoundTrip is the parser's load-bearing fixture: it
