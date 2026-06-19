@@ -46,11 +46,11 @@ const (
 
 const healthCacheTTL = 2 * time.Second
 
-// CPStartupOrchestrator manages the control plane's subprocess startup
+// ControlPlane manages the control plane's subprocess startup
 // sequence and health reporting. The /healthz endpoint actively probes
 // all internal service ports — it only returns 200 when every service
 // is responding.
-type CPStartupOrchestrator struct {
+type ControlPlane struct {
 	ready   atomic.Bool
 	probes  []serviceProbe
 	tlsCfg  *tls.Config
@@ -70,11 +70,11 @@ type serviceProbe struct {
 	tls  bool
 }
 
-// NewCPStartupOrchestrator creates a new startup orchestrator. The probes
+// NewControlPlane creates a new startup orchestrator. The probes
 // are configured later via SetServiceProbes once TLS config and port
 // values are available.
-func NewCPStartupOrchestrator() *CPStartupOrchestrator {
-	return &CPStartupOrchestrator{
+func NewControlPlane() *ControlPlane {
+	return &ControlPlane{
 		timeout: 2 * time.Second,
 	}
 }
@@ -83,7 +83,7 @@ func NewCPStartupOrchestrator() *CPStartupOrchestrator {
 // ControlPlaneSettings. Called during CP startup after TLS config is built.
 // All Ory services use HTTPS; the gRPC admin port is probed via raw TCP
 // (gRPC health check would require a client).
-func (o *CPStartupOrchestrator) SetServiceProbes(cp config.ControlPlaneSettings, tlsCfg *tls.Config) {
+func (o *ControlPlane) SetServiceProbes(cp config.ControlPlaneSettings, tlsCfg *tls.Config) {
 	o.tlsCfg = tlsCfg
 	o.probes = []serviceProbe{
 		{name: "hydra-public", addr: fmt.Sprintf(consts.Localhost+":%d", cp.HydraPublicPort), tls: true},
@@ -97,20 +97,20 @@ func (o *CPStartupOrchestrator) SetServiceProbes(cp config.ControlPlaneSettings,
 }
 
 // IsReady returns whether the CP has completed all startup steps.
-func (o *CPStartupOrchestrator) IsReady() bool {
+func (o *ControlPlane) IsReady() bool {
 	return o.ready.Load()
 }
 
 // SetReady marks the CP as ready. Called after all startup steps
 // (subprocesses, eBPF load, gRPC server) have succeeded.
-func (o *CPStartupOrchestrator) SetReady() {
+func (o *ControlPlane) SetReady() {
 	o.ready.Store(true)
 }
 
 // HealthzHandler returns an http.Handler for the /healthz endpoint.
 // Returns 200 only when SetReady was called AND all service probes pass.
 // If any service is down, returns 503 with a JSON body.
-func (o *CPStartupOrchestrator) HealthzHandler() http.Handler {
+func (o *ControlPlane) HealthzHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
@@ -135,7 +135,7 @@ func (o *CPStartupOrchestrator) HealthzHandler() http.Handler {
 // cachedHealth returns the cached health state, refreshing it if the
 // cache has expired. Uses double-check locking to minimize probe overhead
 // under concurrent requests.
-func (o *CPStartupOrchestrator) cachedHealth() (bool, string) {
+func (o *ControlPlane) cachedHealth() (bool, string) {
 	o.healthMu.RLock()
 	if time.Since(o.healthAt) < healthCacheTTL {
 		ok, failed := o.healthOK, o.healthFailed
@@ -167,7 +167,7 @@ func (o *CPStartupOrchestrator) cachedHealth() (bool, string) {
 }
 
 // probe checks if a single service endpoint is responding.
-func (o *CPStartupOrchestrator) probe(p serviceProbe) bool {
+func (o *ControlPlane) probe(p serviceProbe) bool {
 	if p.tls {
 		if o.tlsCfg == nil {
 			return false // fail-closed: TLS required but no config
@@ -380,13 +380,13 @@ func runDrainSequence(ctx context.Context, d drainDeps) error {
 	return errors.Join(errs...)
 }
 
-// startOryStack runs Phase 3: the Ory auth stack (Kratos, Hydra, Oathkeeper) —
+// startOryStack the Ory auth stack (Kratos, Hydra, Oathkeeper) —
 // startup GATE 1. NewOryStack builds the single CLI CA pool + caTLS up front;
 // Start runs the Ory choreography. It returns the single CA surface
 // (caCertPool, caTLS) every downstream consumer reuses — never rebuilt — and
 // configures the orchestrator's aggregate /healthz service probes. A failure
 // fails CP startup (pre-SetReady, code 1) WITHOUT an eBPF flush.
-func startOryStack(ctx context.Context, cfg config.Config, subMgr *subprocess.SubprocessManager, orchestrator *CPStartupOrchestrator, cp config.ControlPlaneSettings, caCertPath, jwkPath string, log *logger.Logger) (*x509.CertPool, *tls.Config, error) {
+func startOryStack(ctx context.Context, cfg config.Config, subMgr *subprocess.SubprocessManager, orchestrator *ControlPlane, cp config.ControlPlaneSettings, caCertPath, jwkPath string, log *logger.Logger) (*x509.CertPool, *tls.Config, error) {
 	oryStack, err := auth.NewOryStack(cfg, subMgr, caCertPath, jwkPath, log)
 	if err != nil {
 		return nil, nil, fmt.Errorf("ory stack: %w", err)
@@ -438,7 +438,7 @@ func buildAgentInfra(log *logger.Logger, dockerCli *docker.Client, cfg config.Co
 // returning the *http.Server so run()'s Phase 18 shutdown can GracefulStop it.
 // A non-ErrServerClosed listen failure is deposited on serveFailed so the serve
 // select tears down.
-func startHealthz(cp config.ControlPlaneSettings, log *logger.Logger, orchestrator *CPStartupOrchestrator, serveFailed chan error) *http.Server {
+func startHealthz(cp config.ControlPlaneSettings, log *logger.Logger, orchestrator *ControlPlane, serveFailed chan error) *http.Server {
 	healthMux := http.NewServeMux()
 	healthMux.Handle("/healthz", orchestrator.HealthzHandler())
 	healthServer := &http.Server{
@@ -940,7 +940,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	cp := cfg.Settings().ControlPlane
 
 	subMgr := subprocess.NewSubprocessManager(log)
-	orchestrator := NewCPStartupOrchestrator()
+	orchestrator := NewControlPlane()
 
 	// Signal-aware context for startup + serve (SIGTERM = `docker stop`, CP is
 	// PID 1; SIGINT = dev runs). SIGKILL is the supervisor's uncatchable

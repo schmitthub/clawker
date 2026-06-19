@@ -16,7 +16,7 @@ import (
 
 // Tests INV-B1-010 [unit]: IsReady() starts false and becomes true after SetReady().
 func TestINV_B1_010_IsReadyAtomicBool(t *testing.T) {
-	orchestrator := NewCPStartupOrchestrator()
+	orchestrator := NewControlPlane()
 
 	assert.False(t, orchestrator.IsReady(),
 		"IsReady() must be false before SetReady() is called")
@@ -36,7 +36,7 @@ func TestINV_B1_010_IsReadyAtomicBool(t *testing.T) {
 // is the consolidated 503-before / 200-after case for the HealthzHandler
 // path; the atomic-bool and eBPF-gating cases live in their own tests.
 func TestINV_B1_013_HealthzOnlyAfterFullInit(t *testing.T) {
-	orchestrator := NewCPStartupOrchestrator()
+	orchestrator := NewControlPlane()
 	handler := orchestrator.HealthzHandler()
 	require.NotNil(t, handler, "healthz handler must not be nil")
 
@@ -64,7 +64,7 @@ func TestINV_B1_013_HealthzOnlyAfterFullInit(t *testing.T) {
 // then 200 after Load completes. This verifies that the startup orchestrator
 // correctly gates healthz behind eBPF initialization.
 func TestINV_B1_010_EBPFLoadGatesHealthz(t *testing.T) {
-	orchestrator := NewCPStartupOrchestrator()
+	orchestrator := NewControlPlane()
 	handler := orchestrator.HealthzHandler()
 	require.NotNil(t, handler, "healthz handler must not be nil")
 
