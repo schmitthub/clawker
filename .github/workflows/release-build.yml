@@ -44,7 +44,7 @@ jobs:
         run: sudo apt-get update && sudo make bpf-deps
 
       # Native build of the four linux/{amd64,arm64} embed binaries
-      # (clawker-cp, clawkerd, ebpf-manager, coredns-clawker). Runs bpf2go
+      # (clawkercp, clawkerd, ebpf-manager, coredns-clawker). Runs bpf2go
       # via `go generate` plus 4×2 plain Go cross-compiles; no Docker.
       # Outputs staged under embeds/{amd64,arm64}/ for goreleaser pre-hooks.
       - name: Build linux embed sets
@@ -80,7 +80,7 @@ jobs:
       #   - 4 standalone CLI binaries from goreleaser dist/ ({linux,darwin}×{amd64,arm64}).
       #     Redundant with the archives (which contain the same bytes) but lets
       #     forensics verify a loose `clawker` binary by digest without unpacking.
-      #   - 8 linux embed binaries ({ebpf-manager,coredns-clawker,clawker-cp,clawkerd}
+      #   - 8 linux embed binaries ({ebpf-manager,coredns-clawker,clawkercp,clawkerd}
       #     × {amd64,arm64}). The CLI binary already embeds these, but attesting
       #     them individually lets verification of an extracted embed succeed
       #     without first hashing the host CLI it came from.
@@ -104,7 +104,7 @@ jobs:
           cp dist/clawker-arm64_darwin_arm64*/clawker "${SUBJECTS}/clawker_${VERSION}_darwin_arm64"
 
           for arch in amd64 arm64; do
-            for bin in ebpf-manager coredns-clawker clawker-cp clawkerd; do
+            for bin in ebpf-manager coredns-clawker clawkercp clawkerd; do
               cp "embeds/${arch}/${bin}" "${SUBJECTS}/${bin}_${VERSION}_linux_${arch}"
             done
           done

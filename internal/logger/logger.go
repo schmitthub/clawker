@@ -90,7 +90,7 @@ type OtelOptions struct {
 	//
 	//   - File-path triple (CACertFile + ClientCertFile + ClientKeyFile).
 	//     The exporter reads PEM material from disk at New time. No
-	//     in-tree consumer today — clawker-cp uses the TLSConfig path
+	//     in-tree consumer today — clawkercp uses the TLSConfig path
 	//     below, clawker-cli runs Insecure=true on the untrusted otlp
 	//     receiver (CLI leaves chain to the CLI root, not the infra
 	//     intermediate, so they cannot complete the otlp/infra
@@ -103,7 +103,7 @@ type OtelOptions struct {
 	//     *tls.Config (typically built by
 	//     internal/controlplane/otelcerts.Service.LoadTLSConfig with a
 	//     GetClientCertificate hook that re-mints on every handshake).
-	//     Used by the clawker-cp daemon's own OTel exporter so the leaf
+	//     Used by the clawkercp daemon's own OTel exporter so the leaf
 	//     never lands on disk and rotation matches the connection
 	//     lifecycle.
 	//
@@ -117,7 +117,7 @@ type OtelOptions struct {
 	// When non-nil, the exporter uses it directly and the file-path
 	// fields are not consulted. Construction is the caller's
 	// responsibility — see internal/controlplane/otelcerts for the
-	// trusted-lane wiring used by clawker-cp.
+	// trusted-lane wiring used by clawkercp.
 	TLSConfig *tls.Config
 }
 

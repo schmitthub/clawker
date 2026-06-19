@@ -67,7 +67,7 @@ const (
 	LabelFlavor    = LabelPrefix + "flavor"
 	LabelTest      = LabelPrefix + "test"
 	LabelE2ETest   = LabelPrefix + "e2e-test"
-	// LabelCPBinarySHA stamps the SHA-256 of the embedded clawker-cp +
+	// LabelCPBinarySHA stamps the SHA-256 of the embedded clawkercp +
 	// ebpf-manager bytes onto the built CP image and running container.
 	// EnsureRunning compares the running container's label against the
 	// host clawker binary's embedded hash to detect drift.
@@ -258,11 +258,11 @@ const (
 	ControlPlaneLogFile = "clawker-controlplane.log"
 	// CPBootLogFile is the host-side CP-lifecycle log. The CP daemon owns
 	// ControlPlaneLogFile (it writes to it from inside the container via
-	// the bind-mounted logs dir); the host-side cpboot code that manages
+	// the bind-mounted logs dir); the host-side manager code that manages
 	// CP container lifecycle writes here instead so the two processes
 	// never concurrently append to the same file and shear each other's
 	// log lines.
-	CPBootLogFile   = "clawker-cpboot.log"
+	CPBootLogFile   = "clawker-manager.log"
 	BridgePIDSuffix = ".pid"
 	ReadyFile       = "ready"
 	GRPCSocketFile  = "grpc.sock"
@@ -302,7 +302,7 @@ const (
 const (
 	// CPImageRepo is the local Docker image repo for the built control plane image.
 	// The tag is content-derived (computed from the SHA-256 of the embedded
-	// clawker-cp + ebpf-manager binaries) so a stale image is impossible: the
+	// clawkercp + ebpf-manager binaries) so a stale image is impossible: the
 	// host clawker binary either resolves the tag and reuses, or rebuilds.
 	CPImageRepo = "clawker-controlplane"
 )
@@ -360,7 +360,7 @@ const (
 	// stack-bringing RPCs (FirewallInit, FirewallReload), derived from the
 	// server-side bringup budget + headroom so the real server error reaches
 	// the user instead of a premature client deadline. Second consumer:
-	// cpboot.waitForCPHealthz extends its host-side readiness budget by this
+	// manager.waitForCPHealthz extends its host-side readiness budget by this
 	// value when the firewall is enabled — shrinking it shrinks that wait too
 	// and can reintroduce spurious CPHealthTimeoutErrors on first-boot pulls.
 	FirewallStackBringupRPCTimeout = FirewallStackBringupTimeout + 30*time.Second
@@ -868,7 +868,7 @@ func EnsureAuthDirs() error {
 // AuthOtelDir ensures and returns the auth/otel directory under
 // DataDir. Holds the mTLS pair gating the CP-only OTLP receiver on the
 // monitoring stack: a server cert mounted into the otel-collector
-// container and a client cert mounted into clawker-cp.
+// container and a client cert mounted into clawkercp.
 func AuthOtelDir() (string, error) {
 	return subdirPathUnder(filepath.Join(authDir, authOtelSubdir), DataDir())
 }

@@ -32,13 +32,13 @@ func TestMatchPattern(t *testing.T) {
 		},
 		{
 			name:    "wildcard extension match",
-			path:    "src/main.go",
+			path:    "src/clawkercp.go",
 			pattern: "*.go",
 			want:    true,
 		},
 		{
 			name:    "wildcard extension no match",
-			path:    "src/main.go",
+			path:    "src/clawkercp.go",
 			pattern: "*.txt",
 			want:    false,
 		},
@@ -133,7 +133,7 @@ func TestShouldIgnore(t *testing.T) {
 		},
 		{
 			name:     "no match returns false",
-			path:     "src/main.go",
+			path:     "src/clawkercp.go",
 			isDir:    false,
 			patterns: []string{"*.txt"},
 			want:     false,

@@ -237,7 +237,7 @@ func TestNew_NoStderrOutput(t *testing.T) {
 }
 
 // TestNew_EchoStdout_MirrorsRecords pins the contract that
-// containerized daemons (clawker-cp) get every log record copied to
+// containerized daemons (clawkercp) get every log record copied to
 // os.Stdout so `docker logs <container>` is non-empty. A regression
 // that drops the os.Stdout sink would silently brick operator
 // triage; no other test exercises this property.
@@ -256,7 +256,7 @@ func TestNew_EchoStdout_MirrorsRecords(t *testing.T) {
 		os.Stdout = oldStdout
 		t.Fatalf("New failed: %v", err)
 	}
-	l.Info().Str("event", "ready").Msg("clawker-cp ready")
+	l.Info().Str("event", "ready").Msg("clawkercp ready")
 	l.Close(context.Background())
 
 	w.Close()
@@ -267,7 +267,7 @@ func TestNew_EchoStdout_MirrorsRecords(t *testing.T) {
 	r.Close()
 
 	got := string(buf[:n])
-	if !strings.Contains(got, "clawker-cp ready") {
+	if !strings.Contains(got, "clawkercp ready") {
 		t.Errorf("EchoStdout=true must mirror records to os.Stdout; got: %q", got)
 	}
 	if !strings.Contains(got, `"event":"ready"`) {
@@ -380,7 +380,7 @@ func TestClose_CanceledContext_ReturnsPromptly(t *testing.T) {
 }
 
 // TestClose_LiveContext_BoundedByExportTimeout pins the daemon shutdown path,
-// the symmetric partner to the canceled-context test. clawker-cp passes a live
+// the symmetric partner to the canceled-context test. clawkercp passes a live
 // (never-canceled) base context to Close, so a final flush against an
 // unreachable collector must be bounded by the exporter's own export timeout
 // (OtelOptions.Timeout), not ride the OTLP retry backoff (~1m MaxElapsedTime).
@@ -410,7 +410,7 @@ func TestClose_LiveContext_BoundedByExportTimeout(t *testing.T) {
 
 	l.Info().Msg("buffered record awaiting export")
 
-	// Live context — never canceled, mirroring clawker-cp's deferred
+	// Live context — never canceled, mirroring clawkercp's deferred
 	// log.Close(ctx) on the base background context.
 	start := time.Now()
 	err = l.Close(context.Background())

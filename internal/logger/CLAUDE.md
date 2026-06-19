@@ -59,7 +59,7 @@ type OtelOptions struct {
     // Leaving it empty produces the SDK default "unknown_service:<binary>",
     // which the routing connector drops silently — records export
     // successfully but never reach a backend. Canonical values:
-    // "clawker-cli" (host CLI), "clawker-cp" (control plane daemon).
+    // "clawker-cli" (host CLI), "clawkercp" (control plane daemon).
     ServiceName string
 
     // mTLS material — two mutually-exclusive shapes; at most one may be
@@ -75,7 +75,7 @@ type OtelOptions struct {
     //   - In-process TLSConfig: caller passes a fully-formed *tls.Config
     //     (typically built by internal/controlplane/otelcerts with a
     //     GetClientCertificate hook that re-mints per handshake). Used by
-    //     clawker-cp so the leaf never lands on disk and rotation matches
+    //     clawkercp so the leaf never lands on disk and rotation matches
     //     the connection lifecycle. When non-nil, file-path fields are
     //     not consulted.
     CACertFile     string
@@ -85,7 +85,7 @@ type OtelOptions struct {
 }
 ```
 
-Transport is OTLP/gRPC, not OTLP/HTTP. Two distinct receivers exist on the collector: the unauthenticated `otlp` receiver (`OtelGRPCPort`, plaintext) which the host CLI logger targets, and the mTLS-gated `otlp/infra` receiver (`OtelInfraPort`, gRPC-only, infra-intermediate CA) which `clawker-cp` targets via the in-process `TLSConfig` shape. They share the wire format but not the trust boundary — see `internal/monitor/CLAUDE.md` "OTEL Pipelines". Dialing the HTTP port with a gRPC exporter returns 415 and silently drops every record.
+Transport is OTLP/gRPC, not OTLP/HTTP. Two distinct receivers exist on the collector: the unauthenticated `otlp` receiver (`OtelGRPCPort`, plaintext) which the host CLI logger targets, and the mTLS-gated `otlp/infra` receiver (`OtelInfraPort`, gRPC-only, infra-intermediate CA) which `clawkercp` targets via the in-process `TLSConfig` shape. They share the wire format but not the trust boundary — see `internal/monitor/CLAUDE.md` "OTEL Pipelines". Dialing the HTTP port with a gRPC exporter returns 415 and silently drops every record.
 
 ## Constructors
 
@@ -97,9 +97,9 @@ func Nop() *Logger                        // Discards all output (tests, disable
 
 `New` creates the log directory, configures lumberjack rotation, and optionally attaches the OTEL bridge. Returns error if `LogsDir` is empty or directory creation fails. OTEL failure is non-fatal (falls back to file-only).
 
-`NewWriter` writes structured JSON to an arbitrary `io.Writer` with no file rotation and no OTEL bridge. Used in tests (passing `*bytes.Buffer`) and as the degraded fallback in `clawker-cp` when `New` fails (writes to `os.Stderr`). Debug level by default.
+`NewWriter` writes structured JSON to an arbitrary `io.Writer` with no file rotation and no OTEL bridge. Used in tests (passing `*bytes.Buffer`) and as the degraded fallback in `clawkercp` when `New` fails (writes to `os.Stderr`). Debug level by default.
 
-**Note**: Both `clawkerd` and `clawker-cp` use `New(...)` as their primary logger, not `NewWriter`. `clawker-cp` sets `EchoStdout: true` to mirror records to stdout so `docker logs clawker-controlplane` shows them alongside the file/OTEL sinks. `clawkerd` uses `New(...)` writing to `/var/log/clawker/clawkerd.log` without `EchoStdout` — per-agent containers can be many and may run with `--rm` so `docker logs` is short-lived; an on-disk rotated file (50MB / 7d / 3 backups) gives an operator a stable place to triage individual-agent issues across container churn. Material is bounded by the container's writable layer — `--rm` or `docker rm` reclaims it. See `cmd/clawkerd/CLAUDE.md` for the full level taxonomy.
+**Note**: Both `clawkerd` and `clawkercp` use `New(...)` as their primary logger, not `NewWriter`. `clawkercp` sets `EchoStdout: true` to mirror records to stdout so `docker logs clawker-controlplane` shows them alongside the file/OTEL sinks. `clawkerd` uses `New(...)` writing to `/var/log/clawker/clawkerd.log` without `EchoStdout` — per-agent containers can be many and may run with `--rm` so `docker logs` is short-lived; an on-disk rotated file (50MB / 7d / 3 backups) gives an operator a stable place to triage individual-agent issues across container churn. Material is bounded by the container's writable layer — `--rm` or `docker rm` reclaims it. See `cmd/clawkerd/CLAUDE.md` for the full level taxonomy.
 
 `Nop` returns a logger backed by `zerolog.Nop()` — zero allocation, no file I/O.
 

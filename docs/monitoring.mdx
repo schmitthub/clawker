@@ -42,7 +42,7 @@ Claude Code emits logs, metrics, AND traces. Span export gates on the `CLAUDE_CO
 | Service | Image | Default Port | Purpose |
 |---------|-------|:---:|---------|
 | **OTEL Collector** | `otel/opentelemetry-collector-contrib` | 4318 (HTTP), 4317 (gRPC) | Receives telemetry from agents and routes it to backends |
-| **OpenSearch** | `opensearchproject/opensearch` | 9200 | Stores telemetry across the `claude-code` (Claude Code OTLP), `clawker-cli` (host CLI), `clawker-cp` (clawker-cp mTLS push), `clawker-envoy` (firewall HTTP/TLS/TCP access logs), `clawker-coredns` (firewall DNS query logs), `clawker-ebpf-egress` (eBPF per-decision egress events) log indices, plus the `traces`/`clawker` (SS4O) trace index |
+| **OpenSearch** | `opensearchproject/opensearch` | 9200 | Stores telemetry across the `claude-code` (Claude Code OTLP), `clawker-cli` (host CLI), `clawkercp` (clawkercp mTLS push), `clawker-envoy` (firewall HTTP/TLS/TCP access logs), `clawker-coredns` (firewall DNS query logs), `clawker-ebpf-egress` (eBPF per-decision egress events) log indices, plus the `traces`/`clawker` (SS4O) trace index |
 | **OpenSearch Dashboards** | `opensearchproject/opensearch-dashboards` | 5601 | UI for querying logs, dashboards, and (via the preconfigured `clawker_prometheus` direct-query datasource) Prometheus metrics |
 | **Prometheus** | `prom/prometheus` | 9090 | Time-series metrics storage and UI |
 | **clawker-opensearch-bootstrap** | `curlimages/curl` | — | One-shot init container. Runs after OpenSearch + Prometheus are reachable, before the collector starts; applies templates, ISM, datasource, workspace, saved objects, then exits |
@@ -117,7 +117,7 @@ clawker run -it --agent dev @
 
 Open OpenSearch Dashboards at `http://localhost:5601`. From the splash / welcome screen, under the **Analytics** panel on the far right, click **Clawker** to enter the auto-created workspace.
 
-Inside the workspace, the left navbar has an **Explore** section — click **Logs** or **Metrics** to browse. The preconfigured index patterns (`claude-code`, `clawker-cli`, `clawker-cp`, `clawker-envoy`, `clawker-coredns`, `clawker-ebpf-egress`) and the `clawker_prometheus` direct-query datasource are already wired, so logs and Prometheus metrics are both reachable from inside OSD. Raw Prometheus is also still available at `http://localhost:9090` if you prefer it.
+Inside the workspace, the left navbar has an **Explore** section — click **Logs** or **Metrics** to browse. The preconfigured index patterns (`claude-code`, `clawker-cli`, `clawkercp`, `clawker-envoy`, `clawker-coredns`, `clawker-ebpf-egress`) and the `clawker_prometheus` direct-query datasource are already wired, so logs and Prometheus metrics are both reachable from inside OSD. Raw Prometheus is also still available at `http://localhost:9090` if you prefer it.
 
 **Dashboards.** Three are preinstalled under the workspace's **Dashboards** view:
 

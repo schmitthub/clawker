@@ -8,7 +8,7 @@ keywords: ["AI coding agent sandbox", "Claude Code sandbox", "self-hosted", "ope
 
 ## System Overview
 
-Clawker is a CLI tool plus two long-lived daemons — `clawker-cp` (the control plane, one per host) and `clawkerd` (one per agent container) — that together manage isolated Docker containers for AI coding agents. The CLI is the root of trust; the daemons hold the security boundary at runtime.
+Clawker is a CLI tool plus two long-lived daemons — `clawkercp` (the control plane, one per host) and `clawkerd` (one per agent container) — that together manage isolated Docker containers for AI coding agents. The CLI is the root of trust; the daemons hold the security boundary at runtime.
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────┐
@@ -20,7 +20,7 @@ Clawker is a CLI tool plus two long-lived daemons — `clawker-cp` (the control 
        ▼                          ▼                      ▼
 ┌──────────────┐    ┌─────────────────────┐    ┌────────────────────────────┐
 │ Container    │    │ Configuration       │    │ Control Plane              │
-│ Subsystem    │    │ Subsystem           │    │ (cmd/clawker-cp, PID 1     │
+│ Subsystem    │    │ Subsystem           │    │ (cmd/clawkercp, PID 1     │
 │              │    │                     │    │  of clawker-controlplane)  │
 │ docker/      │    │ storage/ (engine)   │    │                            │
 │ workspace/   │    │ config/ (project)   │    │ AdminService gRPC (mTLS    │
@@ -126,7 +126,7 @@ Core business logic. Import leaves and foundation packages only.
 | `controlplane/agent` | auth, consts, dockerevents, overseer, logger | CP-side agent surface: Dialer, sqlite Registry, Register handler, IdentityInterceptor, session/agent events |
 | `controlplane/overseer` | logger | Typed event bus + in-memory `State` worldview (containers + agents) |
 | `controlplane/dockerevents` | overseer, logger | Docker events feeder (reconnecting stream → typed events on overseer bus) |
-| `controlplane/cpboot` | config, docker, logger (+ embedded clawker-cp + ebpf-manager binaries) | Host-side CP lifecycle: `EnsureRunning`/`Stop`/`CPRunning` |
+| `controlplane/cpboot` | config, docker, logger (+ embedded clawkercp + ebpf-manager binaries) | Host-side CP lifecycle: `EnsureRunning`/`Stop`/`CPRunning` |
 | `controlplane/adminclient` | auth, consts | CLI-side AdminService gRPC dial (mTLS + auto-refreshing OAuth2 bearer) |
 | `controlplane/firewall` | config, docker, logger, storage, controlplane/firewall/ebpf | Firewall `Handler` (13 RPCs), `Stack` (Envoy+CoreDNS lifecycle), `ActionQueue`, config generators, certificate PKI, rules store |
 | `controlplane/firewall/ebpf` | logger | eBPF program loader/manager, `SyncRoutes` replaces global `route_map` atomically; break-glass `ebpf-manager` CLI under `cmd/` |
@@ -216,7 +216,7 @@ func stopRun(ctx context.Context, opts *StopOptions) error {
 | `cpboot.Manager` | `internal/controlplane/cpboot` | Host-side CP container lifecycle (`EnsureRunning`/`Stop`/`CPRunning`) |
 | `agent.Registry` | `internal/controlplane/agent` | sqlite-backed agent identity (CP is sole writer) |
 | `overseer.Overseer` | `internal/controlplane/overseer` | Typed event bus + worldview state inside CP |
-| `cmd/clawker-cp` | `cmd/clawker-cp` | CP daemon entry point — PID 1 of the `clawker-controlplane` container |
+| `cmd/clawkercp` | `cmd/clawkercp` | CP daemon entry point — PID 1 of the `clawker-controlplane` container |
 | `cmd/clawkerd` | `cmd/clawkerd` | Per-container agent daemon — PID 1 of every agent container |
 | `cmd/coredns-clawker` | `cmd/coredns-clawker` | Custom CoreDNS entrypoint embedding `dnsbpf`; built into `clawker-coredns:latest` on demand |
 | `tui.TUI` | `internal/tui` | Factory noun for presentation layer |

@@ -13,7 +13,7 @@ Four containers brought up by `clawker monitor up`:
 - **OTel Collector** — receives OTLP/HTTP from agents on `:4318`, fans
   out to OpenSearch (logs) and Prometheus exporter (metrics).
 - **OpenSearch** — log storage. Six indices: `claude-code`,
-  `clawker-cli`, `clawker-cp`, `clawker-envoy`, `clawker-coredns`,
+  `clawker-cli`, `clawkercp`, `clawker-envoy`, `clawker-coredns`,
   `clawker-ebpf-egress`.
 - **OpenSearch Dashboards (OSD)** — UI at `http://localhost:5601`.
 - **Prometheus** — metrics scrape + UI at `http://localhost:9090`.

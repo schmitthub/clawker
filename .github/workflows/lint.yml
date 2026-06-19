@@ -16,8 +16,8 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
-      # Build the embedded control plane binaries first. internal/controlplane/cpboot
-      # go:embed's assets/clawker-cp + assets/ebpf-manager, internal/controlplane/firewall
+      # Build the embedded control plane binaries first. internal/controlplane/manager
+      # go:embed's assets/clawkercp + assets/ebpf-manager, internal/controlplane/firewall
       # go:embed's assets/coredns-clawker, and internal/controlplane/firewall/ebpf/manager.go
       # references types from the bpf2go-generated wrappers, so typecheck fails
       # without these files on disk. The composite action handles setup-go +

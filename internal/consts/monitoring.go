@@ -30,7 +30,7 @@ const (
 // so only widens CoreDNS forwarding for no reason.
 //
 // Scope: only services agent containers legitimately need to dial.
-// otel-collector is the OTLP push target for Claude Code + clawker-cp.
+// otel-collector is the OTLP push target for Claude Code + clawkercp.
 // prometheus is included for workflows that scrape it from agent code.
 // opensearch-node + opensearch-dashboards are deliberately omitted —
 // agents push telemetry through the collector and never query/write

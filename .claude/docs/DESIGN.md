@@ -26,11 +26,11 @@ CP crashing is not an availability problem — it is a security boundary integri
 - No CP→clawkerd Session → no observation, no command dispatch, no containment.
 - `clawker controlplane status` reports CP down, but the user has to know to look. Stack traces land on `os.Stderr` → `docker logs <cp>`, NOT in the rotating `ControlPlaneLogFile` operators are wired to grep.
 
-**Therefore — design rules for any code reachable from `cmd/clawker-cp/main.go` after `SetReady`:**
+**Therefore — design rules for any code reachable from `cmd/clawkercp/main.go` after `SetReady`:**
 
 1. **No `panic()`. No `log.Fatal()`. No `os.Exit()`.** Constructors return `(nil, error)`. main.go logs and degrades.
 2. **Long-lived goroutines must `recover()`.** Heartbeats, watchers, RPC handlers — one bad event must not silently strand eBPF.
-3. **Subsystem failures degrade, never escalate.** Broken Executor → `initExec = nil`; broken dialer → `dialer = nil`. Everything else stays up. The patterns in `cmd/clawker-cp/main.go` — `wireInitExecutor` (initExec; emits `event=agent_init_executor_unavailable`) and the `agent.New(...)` block that degrades on error to `event=agent_dialer_unavailable` — are canonical.
+3. **Subsystem failures degrade, never escalate.** Broken Executor → `initExec = nil`; broken dialer → `dialer = nil`. Everything else stays up. The patterns in `cmd/clawkercp/main.go` — `wireInitExecutor` (initExec; emits `event=agent_init_executor_unavailable`) and the `agent.New(...)` block that degrades on error to `event=agent_dialer_unavailable` — are canonical.
 4. **Every degraded path emits a structured log line** (`event=<subsystem>_unavailable`) with component, error, and blast-radius fields. Operators will not see panic stacks; the structured log is the only surface.
 5. **The only acceptable hard-exits** are pre-`SetReady` startup gates (no agents running yet, eBPF not load-bearing) and the orchestrator's intentional drain-to-zero clean exit.
 
@@ -750,7 +750,7 @@ Collector-unavailable posture is binary per-CP-lifetime:
 - **Startup preflight**: `controlplane.NewOtelLoggerProvider` performs a one-shot TLS dial against the OTLP endpoint. Failure returns an error to CP main; main emits `event=netlogger_unavailable` with the failing `step` field, leaves `netloggerSvc=nil`, and CP runs degraded with no per-decision telemetry. Firewall enforcement is untouched.
 - **Runtime circuit breaker**: `netlogger.NewCircuitExporter` wraps the OTLP exporter inside the BatchProcessor. After 3 consecutive `Export` failures the breaker permanently trips, drops records on the floor, and emits a single `event=netlogger_collector_lost` line. No background reconnect — operators recover by restarting CP.
 
-Drain ordering (in `cmd/clawker-cp/main.go`'s drain callback) places `netloggerSvc.Stop(stopCtx)` BEFORE `ebpfMgr.FlushAll()` so the BatchProcessor flushes in-flight OTLP batches before the BPF maps the reader holds are torn down.
+Drain ordering (in `cmd/clawkercp/main.go`'s drain callback) places `netloggerSvc.Stop(stopCtx)` BEFORE `ebpfMgr.FlushAll()` so the BatchProcessor flushes in-flight OTLP batches before the BPF maps the reader holds are torn down.
 
 ### 7.3 Strict Label Ownership
 
@@ -796,7 +796,7 @@ No error, no duplicate—deterministic behavior.
 A Docker Compose stack on `clawker-net`:
 
 - **OpenTelemetry Collector** - Two OTLP receivers on distinct trust lanes: the untrusted `otlp` receiver (agent containers — Claude Code + clawker-cli telemetry) and the mTLS-gated `otlp/infra` receiver on `OtelInfraPort` (trusted CP-side emitters — CP zerolog bridge, Envoy access logs, CoreDNS otel plugin, netlogger). Routes logs into the six OpenSearch indices and exposes a Prometheus scrape endpoint for metrics. The two-lane split is load-bearing for netlogger's trust model — infra emitters carry per-handshake leaf certs minted by `otelcerts.Service` and never cross into the untrusted agent lane. A `traces` pipeline is configured but idle — agents don't emit spans today.
-- **OpenSearch** - Logs only, split into six indices: `claude-code` (Claude Code OTLP push, untrusted port), `clawker-cli` (host CLI OTLP push, untrusted port), `clawker-cp` (mTLS-gated CP push), `clawker-envoy` (Envoy access logs, mTLS-gated), `clawker-coredns` (CoreDNS query logs, mTLS-gated), and `clawker-ebpf-egress` (eBPF per-decision egress events from netlogger, `service.name=ebpf-egress`, mTLS-gated). Cross-index queries: `clawker-cp,claude-code,clawker-cli,clawker-envoy,clawker-coredns,clawker-ebpf-egress`.
+- **OpenSearch** - Logs only, split into six indices: `claude-code` (Claude Code OTLP push, untrusted port), `clawker-cli` (host CLI OTLP push, untrusted port), `clawkercp` (mTLS-gated CP push), `clawker-envoy` (Envoy access logs, mTLS-gated), `clawker-coredns` (CoreDNS query logs, mTLS-gated), and `clawker-ebpf-egress` (eBPF per-decision egress events from netlogger, `service.name=ebpf-egress`, mTLS-gated). Cross-index queries: `clawkercp,claude-code,clawker-cli,clawker-envoy,clawker-coredns,clawker-ebpf-egress`.
 - **OpenSearch Dashboards** - UI for log exploration (Discover)
 - **Prometheus** - Metrics storage + UI; also accepts direct OTLP push for callers willing to lose `/api/v1/metadata` coverage
 

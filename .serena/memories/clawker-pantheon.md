@@ -10,7 +10,7 @@ future architecture diagram (tower of authority, arrows of trust).
 | Figure | Clawker component | Role |
 |--------|-------------------|------|
 | **Morgoth** | **CLI** | The true power. Root of trust. The user's will made manifest. Issues commands, makes declarations, creates and destroys at pleasure. Every clawker resource exists because CLI willed it to exist. |
-| **Sauron** | **Control Plane (`clawker-cp`)** | Morgoth's lieutenant. Carries out the work locally. Has independent power — sees the realm at wire speed, enforces policy, fuses multiple truth streams — but is ultimately CLI's minion. Defers to CLI claims, verifies them with its own sight, reports back. Never overrides CLI, only executes and attests. |
+| **Sauron** | **Control Plane (`clawkercp`)** | Morgoth's lieutenant. Carries out the work locally. Has independent power — sees the realm at wire speed, enforces policy, fuses multiple truth streams — but is ultimately CLI's minion. Defers to CLI claims, verifies them with its own sight, reports back. Never overrides CLI, only executes and attests. |
 | **Nazgûl** | **`clawkerd`** (phase 5+) | Sauron's bound servants, one inside each managed agent container. Ring-bearers — per-agent certs minted by Sauron, scoped to that agent alone. Report the agent's inner truth up to Sauron. Cannot speak to Morgoth directly; the chain of trust goes Nazgûl → Sauron → Morgoth. |
 | **The Eye** | **BPF ring buffer** (phase 6+) | Kernel-level omniscience. Wire-speed sight of what processes actually do — syscalls, network connects, execs. Not bound by user-space deception; a Nazgûl can lie, a process cannot hide from the Eye. Feeds Sauron's worldview as the ground-truth stream. |
 

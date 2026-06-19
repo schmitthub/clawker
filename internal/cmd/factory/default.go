@@ -454,7 +454,7 @@ func gitManagerFunc(f *cmdutil.Factory) func() (*git.GitManager, error) {
 }
 
 // controlPlaneFunc returns a lazy closure that constructs a
-// cpboot.Manager once. The Manager shares the Factory's Client,
+// manager.Manager once. The Manager shares the Factory's Client,
 // Config, and Logger closures so every caller — `clawker controlplane
 // up/down/status` and any future break-glass verb — observes the same
 // cached Docker singleton and settings snapshot as the rest of the CLI.

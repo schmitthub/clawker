@@ -636,7 +636,7 @@ func writeJWK(path string, pub *ecdsa.PublicKey) error {
 // infra intermediate (NOT the CLI root) so only intermediate-chained
 // leaves complete the handshake — agent leaves minted by
 // `auth.MintAgentCert` chain to the CLI root directly and are rejected,
-// which is what stops agents from forging `service.name=clawker-cp`
+// which is what stops agents from forging `service.name=clawkercp`
 // records on the trusted forensic indices. `monitor init` resolves the
 // bind-mount source via `consts.AuthInfraCACertPath()`. Adding a new
 // infra service is a CP-side change — the CLI does not learn about
@@ -738,8 +738,8 @@ func ReadJWK() (json.RawMessage, error) {
 //     works across Linux native (where host.docker.internal resolves
 //     to the bridge gateway) and Docker Desktop.
 //
-//   - cp-client.{pem,key}: presented by clawker-cp when pushing OTLP.
-//     Subject "clawker-cp" so the receiver can audit which client is
+//   - cp-client.{pem,key}: presented by clawkercp when pushing OTLP.
+//     Subject "clawkercp" so the receiver can audit which client is
 //     pushing in case future scoping is added.
 //
 // Agents on the clawker network cannot reach the receiver because they lack

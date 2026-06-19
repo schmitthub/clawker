@@ -9,7 +9,7 @@ Reference map of the clawker repo. Lazy-loaded from root `CLAUDE.md`.
 │   └── clawkerd/v1/           # ClawkerdService protobuf (Session RPC for CP→clawkerd dispatch)
 ├── cmd/
 │   ├── clawker/               # Main CLI binary
-│   ├── clawker-cp/            # Control plane daemon (PID 1 in CP container)
+│   ├── clawkercp/            # Control plane daemon (PID 1 in CP container)
 │   ├── clawker-generate/      # Code generation helper
 │   ├── clawkerd/              # Per-container agent daemon (Linux)
 │   ├── coredns-clawker/       # Custom CoreDNS with dnsbpf plugin (Linux)
@@ -33,7 +33,7 @@ Reference map of the clawker repo. Lazy-loaded from root `CLAUDE.md`.
 │   ├── controlplane/          # CP daemon: Ory auth, AdminService, agent watcher
 │   │   ├── agent/             # Unified agent surface: Dialer, Registry, Register handler, IdentityInterceptor, events
 │   │   ├── adminclient/       # CLI-side AdminService gRPC dial (mTLS + OAuth2)
-│   │   ├── cpboot/            # Host-side CP lifecycle (EnsureRunning/Stop), embedded clawker-cp + ebpf-manager binaries
+│   │   ├── cpboot/            # Host-side CP lifecycle (EnsureRunning/Stop), embedded clawkercp + ebpf-manager binaries
 │   │   ├── dockerevents/      # Docker events feeder + typed envelope
 │   │   ├── firewall/          # Firewall: Handler (13 RPCs), Stack, Envoy+CoreDNS, eBPF
 │   │   │   └── ebpf/          # eBPF loader + Manager

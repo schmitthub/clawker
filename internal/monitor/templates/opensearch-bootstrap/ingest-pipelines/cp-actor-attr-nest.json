@@ -1,5 +1,5 @@
 {
-  "description": "Nest flat dotted attributes.actor_attr.<k> keys into a single attributes.actor_attr object. The dispatch.go fanout in internal/controlplane/dockerevents emits one Str(\"actor_attr.\"+k, v) per Docker actor attribute; some attributes share dotted prefixes (e.g. com.docker.compose.project AND com.docker.compose.project.working_dir) which OpenSearch auto-expands into colliding leaf-vs-object mappings. Collapsing them into a single flat_object-mapped field side-steps the collision. Paired with attributes.actor_attr: {type: flat_object} on the clawker-cp index template.",
+  "description": "Nest flat dotted attributes.actor_attr.<k> keys into a single attributes.actor_attr object. The dispatch.go fanout in internal/controlplane/dockerevents emits one Str(\"actor_attr.\"+k, v) per Docker actor attribute; some attributes share dotted prefixes (e.g. com.docker.compose.project AND com.docker.compose.project.working_dir) which OpenSearch auto-expands into colliding leaf-vs-object mappings. Collapsing them into a single flat_object-mapped field side-steps the collision. Paired with attributes.actor_attr: {type: flat_object} on the clawkercp index template.",
   "processors": [
     {
       "script": {

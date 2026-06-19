@@ -84,7 +84,7 @@ func TestNewCmdInit(t *testing.T) {
 // intermediate CA (consts.AuthInfraCACertPath), NOT the CLI root
 // (consts.AuthCACertPath). Using the CLI root would let any CLI-
 // signed leaf — including agent-container leaves — chain to the
-// receiver's client_ca_file and forge service.name=clawker-cp
+// receiver's client_ca_file and forge service.name=clawkercp
 // records on the trusted forensic indices.
 func TestInitRun_OtelInfraCAHostPath(t *testing.T) {
 	compose, _ := renderMonitorConfigs(t)
@@ -150,9 +150,9 @@ func TestInitRun_OtelInfraTrustedPipelineIsolated(t *testing.T) {
 // TestInitRun_OtelUntrustedRoutingAllowlist pins the `routing/untrusted`
 // connector's table to exactly the two `service.name` values that may
 // legitimately push from the unauth lane: `claude-code` and
-// `clawker-cli`. Adding `clawker-cp`, `envoy`, or `coredns` to this
+// `clawker-cli`. Adding `clawkercp`, `envoy`, or `coredns` to this
 // table would let an agent container forge a trusted identity from
-// the plaintext OTLP port — the trusted indices (clawker-cp,
+// the plaintext OTLP port — the trusted indices (clawkercp,
 // clawker-envoy, clawker-coredns) must remain reachable only via
 // `routing/trusted` behind the mTLS gate.
 func TestInitRun_OtelUntrustedRoutingAllowlist(t *testing.T) {
@@ -175,7 +175,7 @@ func TestInitRun_OtelUntrustedRoutingAllowlist(t *testing.T) {
 			`attributes["service.name"] == "clawker-cli"`,
 		},
 		conditions,
-		"routing/untrusted must allow ONLY claude-code and clawker-cli — adding clawker-cp/envoy/coredns conditions opens spoofed trusted identities from the unauth lane")
+		"routing/untrusted must allow ONLY claude-code and clawker-cli — adding clawkercp/envoy/coredns conditions opens spoofed trusted identities from the unauth lane")
 }
 
 // otelMap parses otel-config.yaml and walks the given key path into a

@@ -4,7 +4,7 @@ receivers:
   # clawker-net or the host loopback can push. Records are dispatched
   # by routing/untrusted, which forwards only service.name=claude-code
   # and service.name=clawker-cli to their respective indices; every
-  # other service.name (including spoofed envoy/coredns/clawker-cp) is
+  # other service.name (including spoofed envoy/coredns/clawkercp) is
   # dropped at routing. The resource/untrusted_otlp processor stamps
   # ingest_source=untrusted_otlp on all records from this receiver so
   # dashboards can separate forgeable, sender-declared records from
@@ -288,7 +288,7 @@ exporters:
   opensearch/logs_cp:
     http:
       endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"
-    logs_index: clawker-cp
+    logs_index: clawkercp
     sending_queue:
       enabled: true
     retry_on_failure:
@@ -339,7 +339,7 @@ exporters:
   # action + attribution + 4-tuple emitted by the CP-side netlogger pipeline over the
   # same mTLS-gated infra lane the CP zerolog bridge uses. Distinct service.name routes
   # records into their own index so retention + volume profile are independent of the
-  # operator-facing daemon-health stream on clawker-cp.
+  # operator-facing daemon-health stream on clawkercp.
   opensearch/logs_netlogger:
     http:
       endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"
@@ -375,7 +375,7 @@ connectors:
   spanmetrics:
   # Route untrusted (plaintext OTLP) records. Only claude-code and
   # clawker-cli records reach their indices. An agent crafting
-  # `service.name=envoy`/`coredns`/`clawker-cp` from the unauth'd
+  # `service.name=envoy`/`coredns`/`clawkercp` from the unauth'd
   # port CANNOT reach the trusted indices — there is no such route
   # off this connector. default_pipelines catches any other
   # service.name (e.g. SDK default `unknown_service`, a misconfigured
@@ -405,7 +405,7 @@ connectors:
     default_pipelines: [logs/trusted_unrouted]
     table:
       - context: resource
-        condition: attributes["service.name"] == "clawker-cp"
+        condition: attributes["service.name"] == "clawkercp"
         pipelines: [logs/cp]
       - context: resource
         condition: attributes["service.name"] == "envoy"

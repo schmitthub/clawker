@@ -74,7 +74,7 @@ type MonitorTemplateData struct {
 	// together.
 	OtelCollectorPort        int
 	OtelGRPCPort             int // independent of HTTP port
-	OtelInfraPort            int // mTLS-gated host-loopback receiver for trusted infra push (clawker-cp + firewall Envoy + CoreDNS)
+	OtelInfraPort            int // mTLS-gated host-loopback receiver for trusted infra push (clawkercp + firewall Envoy + CoreDNS)
 	PrometheusPort           int
 	PrometheusMetricsPort    int
 	OpenSearchPort           int

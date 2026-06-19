@@ -11,7 +11,7 @@ Next Steps:
   3. Try pulling manually: docker pull clawker-controlplane:latest
 ```
 - [ ] `clawker controlplane up`/`clawker firewall up` give no status output, no progress spinner. just hangs until a success message. bad ux
-- [ ] `cmd/clawker-cp/main.go` should probably be a light wrapper around `internal/controlplane` package instead of doing all the work itself.
+- [ ] `cmd/clawkercp/main.go` should probably be a light wrapper around `internal/controlplane` package instead of doing all the work itself.
 - [ ] `clawker firewall up` doesn't need to display the stack ip and network id (its not even the name lol its a long random id). its totally useless info to the user.
 - [ ] controlplan up doesn't start firewall but should via settings
 - [ ] make localenv seems to break mounting on container create ie `clawker run` forcing a `docker run` and mounting the volumes seems to fix it. so something is up with bind mounting during container create, after the container is created. claude has no idea what to do its totally going in circles.

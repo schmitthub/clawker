@@ -156,6 +156,6 @@ func cleanupCPIfPresent(t *testing.T, timeout time.Duration) {
 	}
 	defer func() { _ = dc.Close() }()
 	if err := cpboot.Stop(ctx, dc); err != nil {
-		t.Logf("cleanup: cpboot.Stop: %v (ignoring — test robust)", err)
+		t.Logf("cleanup: manager.Stop: %v (ignoring — test robust)", err)
 	}
 }
