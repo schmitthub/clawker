@@ -1,4 +1,4 @@
-package main
+package clawkerd
 
 import (
 	"os"
@@ -32,7 +32,7 @@ func validBootstrapFiles() map[string]string {
 func TestReadBootstrap_HappyPath(t *testing.T) {
 	dir := writeBootstrapDir(t, validBootstrapFiles())
 
-	b, err := readBootstrap(dir)
+	b, err := ReadBootstrap(dir)
 	require.NoError(t, err)
 
 	assert.Equal(t, []byte("cert-pem"), b.CertPEM)
@@ -50,7 +50,7 @@ func TestReadBootstrap_MissingFile(t *testing.T) {
 			files := validBootstrapFiles()
 			delete(files, missing)
 			dir := writeBootstrapDir(t, files)
-			_, err := readBootstrap(dir)
+			_, err := ReadBootstrap(dir)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), missing)
 		})
@@ -64,7 +64,7 @@ func TestReadBootstrap_EmptyFile(t *testing.T) {
 	files := validBootstrapFiles()
 	files[consts.BootstrapCertFile] = ""
 	dir := writeBootstrapDir(t, files)
-	_, err := readBootstrap(dir)
+	_, err := ReadBootstrap(dir)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "empty")
 }

@@ -1,4 +1,4 @@
-package main
+package clawkerd
 
 import (
 	"context"
@@ -69,7 +69,7 @@ type registerCoordinator struct {
 	agentName string
 	project   string
 	// exchange is set to exchangeAssertion in production via
-	// newRegisterCoordinator; tests override it via newCoordinatorWithExchange.
+	// NewRegisterCoordinator; tests override it via newCoordinatorWithExchange.
 	exchange exchangeFunc
 	// dialAndRegister is the post-Hydra step (mTLS dial + Register
 	// RPC). Defaults to the real implementation; tests can short-
@@ -77,7 +77,7 @@ type registerCoordinator struct {
 	dialAndRegister func(ctx context.Context, log *logger.Logger, token string) (bool, string)
 }
 
-func newRegisterCoordinator(boot *bootstrap, hydraURL, agentAddr, agentName, project string) *registerCoordinator {
+func NewRegisterCoordinator(boot *bootstrap, hydraURL, agentAddr, agentName, project string) *registerCoordinator {
 	rc := &registerCoordinator{
 		boot:      boot,
 		hydraURL:  hydraURL,

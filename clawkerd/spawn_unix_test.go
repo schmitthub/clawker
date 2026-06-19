@@ -1,6 +1,6 @@
 //go:build unix
 
-package main
+package clawkerd
 
 import (
 	"bytes"
@@ -20,7 +20,7 @@ import (
 const fastReadyPoll = 10 * time.Second
 
 func TestSpawnState_RunWaitFalse(t *testing.T) {
-	s := newSpawnState(logger.Nop())
+	s := NewSpawnState(logger.Nop())
 	cfg := spawnConfig{
 		argv:   []string{"/bin/sh", "-c", "exit 1"},
 		stdout: &lockedBuf{},
@@ -38,7 +38,7 @@ func TestSpawnState_RunWaitFalse(t *testing.T) {
 }
 
 func TestSpawnState_RunWaitExit42(t *testing.T) {
-	s := newSpawnState(logger.Nop())
+	s := NewSpawnState(logger.Nop())
 	cfg := spawnConfig{
 		argv:   []string{"/bin/sh", "-c", "exit 42"},
 		stdout: &lockedBuf{},
@@ -59,7 +59,7 @@ func TestSpawnState_RunWaitExit42(t *testing.T) {
 // child that DOES handle SIGTERM exits within grace and the
 // supervisor returns 128+SIGTERM (not SIGKILL).
 func TestSpawnState_StopSignaled(t *testing.T) {
-	s := newSpawnState(logger.Nop())
+	s := NewSpawnState(logger.Nop())
 	cfg := spawnConfig{
 		// Plain sleep — SIGTERM kills sleep immediately, no escalation.
 		argv:   []string{"/bin/sleep", "30"},
@@ -85,7 +85,7 @@ func TestSpawnState_StopSignaled(t *testing.T) {
 // before entering the sleep loop so Stop cannot race trap-install
 // (which would SIGTERM-kill sh and produce a false-pass 143).
 func TestSpawnState_StopEscalatesToSIGKILL(t *testing.T) {
-	s := newSpawnState(logger.Nop())
+	s := NewSpawnState(logger.Nop())
 	stdout := &lockedBuf{}
 	cfg := spawnConfig{
 		argv:   []string{"/bin/sh", "-c", "trap '' TERM INT; echo READY; while :; do sleep 0.1; done"},
@@ -115,7 +115,7 @@ func TestSpawnState_StopEscalatesToSIGKILL(t *testing.T) {
 }
 
 func TestSpawnState_DoubleRunReturnsAlreadySpawned(t *testing.T) {
-	s := newSpawnState(logger.Nop())
+	s := NewSpawnState(logger.Nop())
 	cfg := spawnConfig{
 		argv:   []string{"/bin/sh", "-c", "exit 0"},
 		stdout: &lockedBuf{},
@@ -142,7 +142,7 @@ func TestSpawnState_DoubleRunReturnsAlreadySpawned(t *testing.T) {
 // reconnect would map errAlreadySpawned to Done{0} and tell CP "child
 // running fine" when no child ever started.
 func TestSpawnState_DoubleRunPropagatesOriginalSpawnError(t *testing.T) {
-	s := newSpawnState(logger.Nop())
+	s := NewSpawnState(logger.Nop())
 	cfg := spawnConfig{log: logger.Nop()} // empty argv → errEmptyArgv
 	first := s.Run(cfg)
 	if !errors.Is(first, errEmptyArgv) {
@@ -157,7 +157,7 @@ func TestSpawnState_DoubleRunPropagatesOriginalSpawnError(t *testing.T) {
 // TestSpawnState_SpawnErrorClosesDoneCh verifies that Done() unblocks
 // on a failed Run so a caller selecting on Done() doesn't deadlock.
 func TestSpawnState_SpawnErrorClosesDoneCh(t *testing.T) {
-	s := newSpawnState(logger.Nop())
+	s := NewSpawnState(logger.Nop())
 	cfg := spawnConfig{log: logger.Nop()}
 	if err := s.Run(cfg); err == nil {
 		t.Fatal("expected error from empty argv")
@@ -172,7 +172,7 @@ func TestSpawnState_SpawnErrorClosesDoneCh(t *testing.T) {
 func TestSpawnState_ReadyFileTouchedAfterStart(t *testing.T) {
 	dir := t.TempDir()
 	readyFile := filepath.Join(dir, "ready")
-	s := newSpawnState(logger.Nop())
+	s := NewSpawnState(logger.Nop())
 	cfg := spawnConfig{
 		argv:      []string{"/bin/sh", "-c", "exit 0"},
 		stdout:    &lockedBuf{},
@@ -195,7 +195,7 @@ func TestSpawnState_ReadyFileTouchedAfterStart(t *testing.T) {
 // main exits, reparented orphans (the backgrounded sleeper) must
 // drain before doneCh closes.
 func TestSpawnState_DescendantsReaped(t *testing.T) {
-	s := newSpawnState(logger.Nop())
+	s := NewSpawnState(logger.Nop())
 	cfg := spawnConfig{
 		argv:   []string{"/bin/sh", "-c", "(sleep 0.2; exit 0) & exit 0"},
 		stdout: &lockedBuf{},
@@ -218,7 +218,7 @@ func TestSpawnState_DescendantsReaped(t *testing.T) {
 }
 
 func TestSpawnState_RunErrorOnEmptyArgv(t *testing.T) {
-	s := newSpawnState(logger.Nop())
+	s := NewSpawnState(logger.Nop())
 	cfg := spawnConfig{log: logger.Nop()}
 	if err := s.Run(cfg); !errors.Is(err, errEmptyArgv) {
 		t.Fatalf("Run err = %v, want errEmptyArgv", err)
@@ -229,7 +229,7 @@ func TestSpawnState_RunErrorOnEmptyArgv(t *testing.T) {
 }
 
 func TestSpawnState_RunErrorOnUnresolvableArgv(t *testing.T) {
-	s := newSpawnState(logger.Nop())
+	s := NewSpawnState(logger.Nop())
 	failPath := func(string) (string, error) { return "", errors.New("synthetic ENOENT") }
 	cfg := spawnConfig{
 		argv:     []string{"definitely-not-a-binary"},
@@ -301,7 +301,7 @@ func TestForwardableSignals_ExcludesUnsafe(t *testing.T) {
 // before Run (e.g. SIGTERM lands during early-boot crash) must not
 // panic or block.
 func TestSpawnState_StopBeforeRunIsNoop(t *testing.T) {
-	s := newSpawnState(logger.Nop())
+	s := NewSpawnState(logger.Nop())
 	s.Stop(time.Millisecond)
 }
 

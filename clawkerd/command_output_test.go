@@ -1,4 +1,4 @@
-package main
+package clawkerd
 
 import (
 	"bytes"
@@ -59,7 +59,7 @@ func TestRunShellCommand_PrintOutputEcho(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s, _ := newTestSession()
 			var console bytes.Buffer
-			s.progress = newProgressReporter(&console)
+			s.progress = NewProgressReporter(&console)
 
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
@@ -127,7 +127,7 @@ func TestSettleInitStep_RendersExitCode(t *testing.T) {
 	t.Run("non-zero renders failed", func(t *testing.T) {
 		s, _ := newTestSession()
 		var console bytes.Buffer
-		s.progress = newProgressReporter(&console)
+		s.progress = NewProgressReporter(&console)
 		s.settleInitStep(&clawkerdv1.Response{
 			CommandId: commandID,
 			Payload:   &clawkerdv1.Response_Done{Done: &clawkerdv1.Done{FinalExitCode: 1}},
@@ -139,7 +139,7 @@ func TestSettleInitStep_RendersExitCode(t *testing.T) {
 	t.Run("zero renders success", func(t *testing.T) {
 		s, _ := newTestSession()
 		var console bytes.Buffer
-		s.progress = newProgressReporter(&console)
+		s.progress = NewProgressReporter(&console)
 		s.settleInitStep(&clawkerdv1.Response{
 			CommandId: commandID,
 			Payload:   &clawkerdv1.Response_Done{Done: &clawkerdv1.Done{FinalExitCode: 0}},

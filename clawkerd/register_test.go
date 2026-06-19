@@ -1,4 +1,4 @@
-package main
+package clawkerd
 
 import (
 	"context"
@@ -76,7 +76,7 @@ func stubDialAndRegister(ok bool, errMsg string) func(context.Context, *logger.L
 func newTestCoordinator(t *testing.T, exchange exchangeFunc, dialFn func(context.Context, *logger.Logger, string) (bool, string)) *registerCoordinator {
 	t.Helper()
 	caPEM, certPEM, keyPEM := validPEMs(t)
-	rc := newRegisterCoordinator(&bootstrap{
+	rc := NewRegisterCoordinator(&bootstrap{
 		CertPEM:   certPEM,
 		KeyPEM:    keyPEM,
 		CACertPEM: caPEM,
@@ -182,7 +182,7 @@ func TestRegisterCoordinator_PostHydraFailure_StillConsumed(t *testing.T) {
 // failures (CLAWKER_CP_HYDRA_URL unset) leave the assertion usable.
 func TestRegisterCoordinator_EnvMissing_NotConsumed(t *testing.T) {
 	caPEM, certPEM, keyPEM := validPEMs(t)
-	rc := newRegisterCoordinator(&bootstrap{
+	rc := NewRegisterCoordinator(&bootstrap{
 		CertPEM:   certPEM,
 		KeyPEM:    keyPEM,
 		CACertPEM: caPEM,

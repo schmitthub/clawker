@@ -1,6 +1,6 @@
 //go:build unix
 
-package main
+package clawkerd
 
 import (
 	"errors"
@@ -132,14 +132,36 @@ type spawnState struct {
 	orphanDrainOnce sync.Once
 }
 
-// newSpawnState returns a spawnState ready to receive Run.
-func newSpawnState(log *logger.Logger) *spawnState {
+// NewSpawnState returns a spawnState ready to receive Run.
+func NewSpawnState(log *logger.Logger) *spawnState {
 	return &spawnState{
 		log:           log,
 		runDoneCh:     make(chan struct{}),
 		doneCh:        make(chan struct{}),
 		mainExitedCh:  make(chan struct{}),
 		orphanDrainCh: make(chan struct{}),
+	}
+}
+
+// DefaultEntry returns the spawnEntry closure that handleAgentReady
+// invokes when CP dispatches AgentReady (the terminal step of CP-driven
+// boot). It captures the process's argv, environment, and standard
+// streams plus the resolved unprivileged user, forwarding them to Run.
+// Dir is left empty so the child inherits PID 1's cwd (the kernel set it
+// from Docker's WorkingDir), mirroring tini/gosu. readyFile is the
+// HEALTHCHECK marker touched immediately after the child Starts.
+func (s *spawnState) DefaultEntry(user *ExecUser) func() error {
+	return func() error {
+		return s.Run(spawnConfig{
+			argv:      os.Args[1:],
+			env:       os.Environ(),
+			user:      user,
+			stdin:     os.Stdin,
+			stdout:    os.Stdout,
+			stderr:    os.Stderr,
+			log:       s.log,
+			readyFile: consts.ReadyMarkerPath,
+		})
 	}
 }
 

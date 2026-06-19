@@ -1,44 +1,24 @@
-// Command clawkerd is the per-container agent daemon. It runs as
-// PID 1 of the agent container, owns the per-container
-// ClawkerdService listener that the CP dials for command dispatch,
-// and supervises the user CMD across its lifetime.
+// Package clawkerd is the entrypoint for the per-container agent daemon
+// binary. It owns Main()/run() — the supervisor orchestration — and
+// delegates every subsystem (mTLS listener, CP↔clawkerd Session, user
+// CMD supervision, registration, progress reporting) to the daemon
+// package github.com/schmitthub/clawker/clawkerd, imported here as
+// daemon. cmd/clawkerd/clawkerd.go is the thin os.Exit(Main()) shell.
 //
-// Boot sequence:
+// Boot sequence (full detail in clawkerd/CLAUDE.md):
 //
-//  1. Read bootstrap material delivered by the CLI to
-//     consts.BootstrapDir (cert.pem, key.pem, ca.pem, assertion.jwt).
-//     cert/key/ca are loaded into the listener's TLS config; the
-//     assertion JWT is held in memory for the CP-driven Register
-//     handshake (clawkerd exchanges it at Hydra for an access token
-//     when CP sends RegisterRequired on the Session stream).
-//  2. Start the ClawkerdService mTLS listener on
-//     consts.DefaultClawkerdPort. The listener pins peer CN to
-//     consts.ContainerCP so no other agent's CA-signed cert can
-//     connect.
-//  3. Resolve the unprivileged container user via $CLAWKER_USER and
-//     /etc/passwd; build the spawn state but do NOT spawn yet —
-//     handleAgentReady triggers the spawn when CP-driven init
-//     completes. Privilege drop happens in the child via
-//     SysProcAttr.Credential; clawkerd stays root.
-//  4. Wait for either ctx.Done (SIGTERM/SIGINT) or main child exit.
-//     On SIGTERM: forward to the child pgroup, escalate to SIGKILL
-//     after grace, then Stop (force-close) the listener and drain
-//     reparented orphans. On main exit: Stop first so in-flight
-//     session.go pipelines see a closed listener before the reaper
-//     transitions to Wait4(-1) — see spawnState's reaper phasing.
-//     Exit with the child's bash-convention exit code so Docker's
-//     restart-on-failure machinery sees the right value.
-//
-// Identity / registration: clawkerd performs a one-time, CP-driven
-// Register call when CP sends a RegisterRequired Command on the
-// Session stream. clawkerd exchanges the CLI-signed client_assertion
-// JWT at Hydra for an access token, mTLS-dials CP's AgentService, and
-// calls Register. CP captures the live mTLS peer's cert thumbprint at
-// handler entry and writes the (thumbprint, container_id) row into
-// agentregistry. The assertion is single-use; subsequent Sessions for
-// the same container observe an existing registry row and skip
-// Register.
-package main
+//  1. Read bootstrap material (cert/key/ca/assertion) from
+//     consts.BootstrapDir via daemon.ReadBootstrap.
+//  2. Start the ClawkerdService mTLS listener (CP-dialed) which pins
+//     the peer CN to consts.ContainerCP.
+//  3. Resolve the unprivileged container user; build the spawn state
+//     but do NOT spawn — handleAgentReady triggers the spawn when
+//     CP-driven init completes.
+//  4. Wait for ctx.Done (SIGTERM/SIGINT), main child exit, listener
+//     fatal, or a command-requested exit; tear the listener down before
+//     releasing the reaper's orphan drain; exit with the child's
+//     bash-convention exit code.
+package clawkerd
 
 import (
 	"context"
@@ -46,11 +26,10 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
 
+	daemon "github.com/schmitthub/clawker/clawkerd"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
 )
@@ -81,7 +60,12 @@ const shutdownGrace = 10 * time.Second
 // error.
 const exitCodeConfig = 2
 
-func main() {
+// Main is the clawkerd binary entrypoint. cmd/clawkerd/clawkerd.go calls
+// os.Exit(Main()). It owns the things main() must own because os.Exit
+// skips deferred funcs: SIGTTIN/SIGTTOU ignore (must run first), the
+// signal-cancelled context, eager logger init (the one allowed stderr
+// write is the logger-init-failure path), and explicit teardown ordering.
+func Main() int {
 	// Ignore SIGTTIN/SIGTTOU before any other setup. Once the spawn
 	// child becomes the controlling tty's foreground pgroup (via
 	// Foreground:true in spawn_unix.go), clawkerd is a background
@@ -112,7 +96,7 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "clawkerd: logger init failed: %v\n", err)
 		stop()
-		os.Exit(1)
+		return 1
 	}
 
 	exitCode, runErr := run(ctx, log)
@@ -130,14 +114,14 @@ func main() {
 		fmt.Fprintf(os.Stderr, "clawkerd: logger close failed: %v\n", err)
 	}
 	stop()
-	os.Exit(exitCode)
+	return exitCode
 }
 
 // run drives the daemon lifecycle. The returned exit code is
 // propagated to the container's exit (Docker `restart: on-failure`
 // reads it). Bash-convention encoding (128+signum for signaled
 // child) flows through spawnState.Wait. A non-nil error indicates a
-// pre-spawn bootstrap failure; main() forces a non-zero exit in
+// pre-spawn bootstrap failure; Main() forces a non-zero exit in
 // that case so a misconfigured container fails loud rather than
 // looking healthy.
 func run(ctx context.Context, log *logger.Logger) (int, error) {
@@ -168,7 +152,7 @@ func run(ctx context.Context, log *logger.Logger) (int, error) {
 	// Threaded through the listener → server → session chain so step
 	// boundaries observed in dispatch/send/handleAgentReady can drive
 	// the spinner. nil-safe, so a wiring oversight is benign.
-	progress := newProgressReporter(os.Stdout)
+	progress := daemon.NewProgressReporter(os.Stdout)
 	progress.Banner("Starting Clawker agent...")
 	defer progress.Stop()
 
@@ -180,8 +164,8 @@ func run(ctx context.Context, log *logger.Logger) (int, error) {
 	if userSpec == "" {
 		userSpec = consts.ContainerUser
 	}
-	passwdPath, groupPath := passwdGroupPaths()
-	execUser, err := resolveUser(userSpec, passwdPath, groupPath)
+	passwdPath, groupPath := daemon.PasswdGroupPaths()
+	execUser, err := daemon.ResolveUser(userSpec, passwdPath, groupPath)
 	if err != nil {
 		log.Error().Err(err).
 			Str("event", "resolve_user_failed").
@@ -190,7 +174,7 @@ func run(ctx context.Context, log *logger.Logger) (int, error) {
 		return exitCodeConfig, fmt.Errorf("resolve user %q: %w", userSpec, err)
 	}
 
-	boot, err := readBootstrap(consts.BootstrapDir)
+	boot, err := daemon.ReadBootstrap(consts.BootstrapDir)
 	if err != nil {
 		log.Error().Err(err).Str("event", "bootstrap_read_failed").Msg("read bootstrap")
 		return exitCodeConfig, fmt.Errorf("read bootstrap: %w", err)
@@ -203,7 +187,7 @@ func run(ctx context.Context, log *logger.Logger) (int, error) {
 	// lifetime so the (single-use) Hydra assertion is consumed at
 	// most once. CLAWKER_CP_HYDRA_URL + CLAWKER_CP_AGENT_ADDR may be
 	// empty at boot — Run() reports the failure on the first attempt.
-	register := newRegisterCoordinator(
+	register := daemon.NewRegisterCoordinator(
 		boot,
 		os.Getenv(consts.EnvClawkerdHydraURL),
 		os.Getenv(consts.EnvClawkerdAgentAddr),
@@ -214,37 +198,18 @@ func run(ctx context.Context, log *logger.Logger) (int, error) {
 	// Build the spawn state. The child is NOT forked here —
 	// handleAgentReady invokes spawnEntry when CP dispatches
 	// AgentReady, the terminal step of the CP-driven init plan. The
-	// reaper's Wait4(-1, WNOHANG) phase 2 is HELD by default; main()
+	// reaper's Wait4(-1, WNOHANG) phase 2 is HELD by default; run()
 	// releases it via BeginOrphanDrain only AFTER the listener Stop
 	// (force-close, NOT GracefulStop — see teardown below) and after
 	// the main-child-exit cascade has torn down session.go's
 	// in-flight ShellCommand pipelines, so phase 2 never races
-	// c.Wait for stage children.
-	spawn := newSpawnState(log)
-	spawnEntry := func() error {
-		return spawn.Run(spawnConfig{
-			argv: os.Args[1:],
-			// Leave Dir empty so the child inherits PID 1's cwd, which
-			// the kernel set from Docker's WorkingDir (image WORKDIR or
-			// HostConfig.WorkingDir). Mirrors tini/gosu — neither
-			// chdirs; both let Docker's WorkingDir pass through to the
-			// user CMD.
-			env:    os.Environ(),
-			user:   execUser,
-			stdin:  os.Stdin,
-			stdout: os.Stdout,
-			stderr: os.Stderr,
-			log:    log,
-			// HEALTHCHECK reads /var/run/clawker/ready. Touched
-			// immediately after exec.Cmd.Start returns nil so the
-			// healthy transition matches the user CMD becoming a
-			// real process.
-			readyFile: consts.ReadyMarkerPath,
-		})
-	}
+	// c.Wait for stage children. DefaultEntry captures argv/env/std
+	// streams + the resolved user (see clawkerd/spawn_unix.go).
+	spawn := daemon.NewSpawnState(log)
+	spawnEntry := spawn.DefaultEntry(execUser)
 
 	// listenerFatalCh fires once if the Serve goroutine dies on a
-	// non-stop error or panics. Without this signal, main() sits on
+	// non-stop error or panics. Without this signal, run() sits on
 	// ctx.Done with a bricked listener — container looks alive but
 	// CP cannot dispatch commands. Buffered cap 1: the listener fires
 	// at most once per failure, but a future refactor that retries
@@ -274,7 +239,7 @@ func run(ctx context.Context, log *logger.Logger) (int, error) {
 		}
 	}
 
-	clawkerdSrv, err := startClawkerdListener(boot, register, spawnEntry, onListenerFatal, log, progress, requestExit, spawn)
+	clawkerdSrv, err := daemon.StartClawkerdListener(boot, register, spawnEntry, onListenerFatal, log, progress, requestExit, spawn)
 	if err != nil {
 		log.Error().Err(err).Str("event", "clawkerd_listener_start_failed").Msg("start clawkerd listener")
 		// Wiring bugs and malformed bootstrap material are deterministic
@@ -282,7 +247,7 @@ func run(ctx context.Context, log *logger.Logger) (int, error) {
 		// instead of restart-looping the same broken state forever. Bind
 		// failures (port-in-use after a teardown race) stay transient.
 		code := 1
-		if errors.Is(err, errListenerConfig) {
+		if errors.Is(err, daemon.ErrListenerConfig) {
 			code = exitCodeConfig
 		}
 		return code, fmt.Errorf("start clawkerd listener: %w", err)
@@ -394,7 +359,7 @@ func run(ctx context.Context, log *logger.Logger) (int, error) {
 		exitCode = requestedExitCode
 	}
 	// Surface the spawn error as runErr so a Run failure (no child
-	// ever forked) propagates to the shutdown log line and main()'s
+	// ever forked) propagates to the shutdown log line and Main()'s
 	// non-zero-exit path. SpawnErr also reports reaper-bailout causes
 	// (retry-budget exhaustion, ECHILD on main, panic recovery) so a
 	// supervisor that aborted phase 1/2 without recording finalWS
@@ -410,55 +375,4 @@ func run(ctx context.Context, log *logger.Logger) (int, error) {
 		return exitCode, fmt.Errorf("listener fatal: %w", listenerFatalErr)
 	}
 	return exitCode, nil
-}
-
-// bootstrap is the in-memory copy of the four bootstrap files
-// clawkerd reads at boot. Assertion is the single-use Hydra
-// client_assertion JWT clawkerd exchanges for an access token when
-// CP triggers the Register handshake.
-type bootstrap struct {
-	CertPEM, KeyPEM, CACertPEM []byte
-	Assertion                  string
-}
-
-// readBootstrap reads the four bootstrap files from dir. Missing files
-// fail loudly — a partial boot is a security regression (e.g. cert
-// missing would let clawkerd proceed without the cert pinning that
-// defends against tmpfs swap).
-func readBootstrap(dir string) (*bootstrap, error) {
-	read := func(name string) ([]byte, error) {
-		path := filepath.Join(dir, name)
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil, fmt.Errorf("read %s: %w", name, err)
-		}
-		if len(data) == 0 {
-			return nil, fmt.Errorf("%s is empty", name)
-		}
-		return data, nil
-	}
-
-	cert, err := read(consts.BootstrapCertFile)
-	if err != nil {
-		return nil, err
-	}
-	key, err := read(consts.BootstrapKeyFile)
-	if err != nil {
-		return nil, err
-	}
-	ca, err := read(consts.BootstrapCAFile)
-	if err != nil {
-		return nil, err
-	}
-	assertion, err := read(consts.BootstrapAssertionFile)
-	if err != nil {
-		return nil, err
-	}
-
-	return &bootstrap{
-		CertPEM:   cert,
-		KeyPEM:    key,
-		CACertPEM: ca,
-		Assertion: strings.TrimSpace(string(assertion)),
-	}, nil
 }

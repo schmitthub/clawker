@@ -1,4 +1,4 @@
-package main
+package clawkerd
 
 import (
 	"errors"
@@ -47,9 +47,9 @@ func TestResolveUser_HappyPaths(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := resolveUser(tc.spec, passwdPath, groupPath)
+			got, err := ResolveUser(tc.spec, passwdPath, groupPath)
 			if err != nil {
-				t.Fatalf("resolveUser(%q) error: %v", tc.spec, err)
+				t.Fatalf("ResolveUser(%q) error: %v", tc.spec, err)
 			}
 			if got.UID() != tc.wantUID {
 				t.Errorf("UID = %d, want %d", got.UID(), tc.wantUID)
@@ -73,7 +73,7 @@ func TestResolveUser_HappyPaths(t *testing.T) {
 
 func TestResolveUser_EmptySpec(t *testing.T) {
 	passwdPath, groupPath := writePasswdGroup(t)
-	_, err := resolveUser("", passwdPath, groupPath)
+	_, err := ResolveUser("", passwdPath, groupPath)
 	if !errors.Is(err, errEmptyUserSpec) {
 		t.Fatalf("err = %v, want errEmptyUserSpec", err)
 	}
@@ -81,9 +81,9 @@ func TestResolveUser_EmptySpec(t *testing.T) {
 
 func TestResolveUser_NotFound(t *testing.T) {
 	passwdPath, groupPath := writePasswdGroup(t)
-	_, err := resolveUser("nosuchuser", passwdPath, groupPath)
+	_, err := ResolveUser("nosuchuser", passwdPath, groupPath)
 	if err == nil {
-		t.Fatalf("resolveUser unexpectedly succeeded for absent user")
+		t.Fatalf("ResolveUser unexpectedly succeeded for absent user")
 	}
 	if !strings.Contains(err.Error(), "nosuchuser") {
 		t.Errorf("err = %v, want spec %q in message", err, "nosuchuser")
@@ -92,9 +92,9 @@ func TestResolveUser_NotFound(t *testing.T) {
 
 func TestResolveUser_PasswdMissing(t *testing.T) {
 	_, groupPath := writePasswdGroup(t)
-	_, err := resolveUser("claude", filepath.Join(t.TempDir(), "no-such-passwd"), groupPath)
+	_, err := ResolveUser("claude", filepath.Join(t.TempDir(), "no-such-passwd"), groupPath)
 	if err == nil {
-		t.Fatalf("resolveUser unexpectedly succeeded with missing passwd")
+		t.Fatalf("ResolveUser unexpectedly succeeded with missing passwd")
 	}
 	if !strings.Contains(err.Error(), "passwd") {
 		t.Errorf("err = %v, want path attached", err)
@@ -103,9 +103,9 @@ func TestResolveUser_PasswdMissing(t *testing.T) {
 
 func TestResolveUser_GroupMissing(t *testing.T) {
 	passwdPath, _ := writePasswdGroup(t)
-	_, err := resolveUser("claude", passwdPath, filepath.Join(t.TempDir(), "no-such-group"))
+	_, err := ResolveUser("claude", passwdPath, filepath.Join(t.TempDir(), "no-such-group"))
 	if err == nil {
-		t.Fatalf("resolveUser unexpectedly succeeded with missing group")
+		t.Fatalf("ResolveUser unexpectedly succeeded with missing group")
 	}
 	if !strings.Contains(err.Error(), "group") {
 		t.Errorf("err = %v, want path attached", err)

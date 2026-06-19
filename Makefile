@@ -137,7 +137,7 @@ clawker: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENERATED)
 EBPF_BINARY := controlplane/manager/assets/ebpf-manager
 COREDNS_BINARY := controlplane/firewall/assets/coredns-clawker
 CP_BINARY := controlplane/manager/assets/clawkercp
-CLAWKERD_BINARY := internal/clawkerd/assets/clawkerd
+CLAWKERD_BINARY := clawkerd/embed/assets/clawkerd
 
 # Proto inputs + generated outputs. Declared early so targets that use
 # $(PROTO_GENERATED) further down in the file get a non-empty expansion
@@ -385,8 +385,8 @@ $(COREDNS_BINARY): $(COREDNS_BINARY_DEPS) $(BPF_BINDINGS)
 # ebpf-manager (break-glass).
 #
 # cp-binary depends on $(CLAWKERD_BINARY) because cmd/clawkercp transitively
-# imports internal/clawkerd via internal/docker → internal/bundler. The Go
-# build refuses to compile internal/clawkerd until its `//go:embed
+# imports clawkerd/embed via internal/docker → internal/bundler. The Go
+# build refuses to compile clawkerd/embed until its `//go:embed
 # assets/clawkerd` target exists on disk. Make builds prereqs in declared
 # order, but adding this as an explicit prerequisite of the file target
 # also makes parallel `make -j` correct.
@@ -400,11 +400,18 @@ $(CP_BINARY): $(CP_BINARY_DEPS) $(BPF_BINDINGS) $(CLAWKERD_BINARY)
 # BPF), so the build is a plain CGO_ENABLED=0 cross-compile to
 # linux/$(BUILDX_TARGETARCH) — no Docker buildx, no clang, no
 # Dockerfile.controlplane stage. The artifact is go:embed'd into the
-# clawker CLI via internal/clawkerd/embed.go and dropped into every
+# clawker CLI via clawkerd/embed/embed.go and dropped into every
 # per-project build context by internal/bundler.
+#
+# The build is `go build ./cmd/clawkerd`, whose superficial entrypoint
+# (cmd/clawkerd/clawkerd.go) is the sole importer of the true entrypoint
+# package under internal/ — which the toolchain pulls in transitively. By
+# design that internal package is NOT a path-listed prerequisite here (no
+# build target reaches into internal/); editing only the thin shell or the
+# daemon code in clawkerd/ re-triggers this rule.
 .PHONY: clawkerd-binary
 clawkerd-binary: $(CLAWKERD_BINARY)
-$(CLAWKERD_BINARY): $(PROTO_GENERATED) $(wildcard cmd/clawkerd/*.go) $(wildcard internal/consts/*.go) $(wildcard api/agent/v1/*.go) $(wildcard api/clawkerd/v1/*.go)
+$(CLAWKERD_BINARY): $(PROTO_GENERATED) $(wildcard cmd/clawkerd/*.go) $(wildcard clawkerd/*.go) $(wildcard internal/consts/*.go) $(wildcard api/agent/v1/*.go) $(wildcard api/clawkerd/v1/*.go)
 	@echo "Building clawkerd for linux/$(BUILDX_TARGETARCH)..."
 	@mkdir -p $(@D)
 	@GOOS=linux GOARCH=$(BUILDX_TARGETARCH) CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $@ ./cmd/clawkerd
@@ -642,9 +649,8 @@ endif
 test-clawkerd: $(PROTO_GENERATED)
 	@echo "Running clawkerd-focused unit tests..."
 	$(TEST_CMD) \
-		./cmd/clawkerd/... \
+		./clawkerd/... \
 		./internal/auth/... \
-		./internal/clawkerd/... \
 		./internal/cmd/container/shared/... \
 		./internal/cmd/controlplane/... \
 		./controlplane/agent/... \

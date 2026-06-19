@@ -11,9 +11,10 @@ Reference map of the clawker repo. Lazy-loaded from root `CLAUDE.md`.
 │   ├── clawker/               # Main CLI binary
 │   ├── clawkercp/            # Control plane daemon (PID 1 in CP container)
 │   ├── clawker-generate/      # Code generation helper
-│   ├── clawkerd/              # Per-container agent daemon (Linux)
+│   ├── clawkerd/              # Thin agent-daemon entrypoint (Linux): os.Exit(clawkerd.Main())
 │   ├── coredns-clawker/       # Custom CoreDNS with dnsbpf plugin (Linux)
 │   └── gen-docs/              # CLI doc generator
+├── clawkerd/                  # Per-container agent daemon (package clawkerd: listener/session/spawn/register/...); embed in clawkerd/embed (clawkerdembed.Binary)
 ├── controlplane/              # CP domains + infra (top-level; orchestrator lives in internal/controlplane)
 │   ├── adminclient/           # CLI-side AdminService gRPC dial (mTLS + OAuth2)
 │   ├── agent/                 # Unified agent surface: Dialer, Registry, Register handler, IdentityInterceptor, AgentEvent + state repo
@@ -35,7 +36,7 @@ Reference map of the clawker repo. Lazy-loaded from root `CLAUDE.md`.
 │   ├── build/                 # Build-time metadata (leaf, stdlib only)
 │   ├── bundler/               # Dockerfile generation, semver resolution, npm registry
 │   ├── clawker/               # Main application lifecycle
-│   ├── clawkerd/              # Embedded clawkerd binary (go:embed)
+│   ├── clawkerd/              # clawkerd daemon entrypoint package (Main/run in cmd.go); embed lives at top-level clawkerd/embed
 │   ├── cmd/                   # Cobra commands
 │   │   ├── factory/           # Factory constructor
 │   │   ├── settings/          # Settings commands

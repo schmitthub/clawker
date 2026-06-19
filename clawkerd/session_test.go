@@ -1,4 +1,4 @@
-package main
+package clawkerd
 
 import (
 	"bytes"
@@ -1139,7 +1139,7 @@ func TestHandleAgentReady_SpawnFails_IOError(t *testing.T) {
 
 // TestHandleAgentReady_Unwired_IOError pins the wiring-bug path:
 // AgentReady arrives on a session whose spawnEntry is nil. Production
-// can't reach this — startClawkerdListener rejects nil thunks at
+// can't reach this — StartClawkerdListener rejects nil thunks at
 // construction time — but the handler still defends the contract.
 // Reply with Error{IO_ERROR} (matching the panic-recovery branch's
 // "clawkerd-internal bug" classification) rather than timing out the

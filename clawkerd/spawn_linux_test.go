@@ -1,6 +1,6 @@
 //go:build linux
 
-package main
+package clawkerd
 
 import (
 	"bytes"
@@ -22,7 +22,7 @@ func TestSpawnState_PrivilegeDrop_Linux(t *testing.T) {
 	}
 	const targetUID = uint32(65534) // nobody on most distros; existence not required for this assertion since we skip the resolver
 	stdout := &lockedBuf{}
-	s := newSpawnState(logger.Nop())
+	s := NewSpawnState(logger.Nop())
 	cfg := spawnConfig{
 		argv:   []string{"/usr/bin/id", "-u"},
 		stdout: stdout,

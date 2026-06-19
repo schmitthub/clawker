@@ -17,7 +17,7 @@ Leaf package: Dockerfile generation, version management, and build configuration
 | Package | Purpose |
 |---------|---------|
 | `registry/` | npm registry client, version info types, fetcher interface |
-| `assets/` | Dockerfile template, statusline script, claude config seeds, agent prompt, embedded clawkerd binary (PID 1) |
+| `assets/` | Dockerfile template, statusline script, claude config seeds, agent prompt (the clawkerd binary is imported from `clawkerd/embed`, not stored here) |
 
 ## Build Cache Strategy
 
@@ -171,7 +171,7 @@ const DefaultClaudeCodeVersion, DefaultUsername, DefaultShell = "latest", "claud
 
 UID/GID come from `cfg.ContainerUID()` / `cfg.ContainerGID()` (no bundler-local constants).
 
-Embedded: `DockerfileTemplate`, `StatuslineScript`, `SettingsFile`, `ConfigFile`, `AgentPromptFile`, `HostOpenScript`, `CallbackForwarderSource`, `GitCredentialScript`, `SocketForwarderSource`. The pre-compiled clawkerd binary (`internal/clawkerd.Binary`) flows through `COPY clawkerd` as the last layer in the late root block — a clawkerd version bump invalidates only that layer via BuildKit/legacy content-keyed cache.
+Embedded: `DockerfileTemplate`, `StatuslineScript`, `SettingsFile`, `ConfigFile`, `AgentPromptFile`, `HostOpenScript`, `CallbackForwarderSource`, `GitCredentialScript`, `SocketForwarderSource`. The pre-compiled clawkerd binary (`clawkerdembed.Binary`, from `clawkerd/embed`) flows through `COPY clawkerd` as the last layer in the late root block — a clawkerd version bump invalidates only that layer via BuildKit/legacy content-keyed cache.
 
 ## Version Management (`versions.go`)
 
@@ -223,7 +223,7 @@ type ParseError = registry.ParseError       // { URL, Snippet, Err } -- Unwrap()
 
 ## Dependencies
 
-Imports: `internal/config`, `internal/bundler/registry`, `github.com/Masterminds/semver/v3`, `internal/hostproxy/internals` (embed-only), `internal/clawkerd` (embed-only — `clawkerd.Binary`). **Does NOT import `internal/docker`** — this is a leaf package.
+Imports: `internal/config`, `internal/bundler/registry`, `github.com/Masterminds/semver/v3`, `internal/hostproxy/internals` (embed-only), `clawkerd/embed` (embed-only — `clawkerdembed.Binary`). **Does NOT import `internal/docker`** — this is a leaf package.
 
 ## Tests
 

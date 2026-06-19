@@ -127,7 +127,7 @@ func (h *Harness) AgentConnect(t *testing.T, opts AgentDialOptions, req *agentv1
 **Implementation notes:**
 - Trust roots: load CLI CA via `consts.AuthCACertPath()` (already in test scope via `testenv`).
 - Mint cert: reuse `auth.MintAgentCert(caCertPath, caKeyPath, project, agent)` — already exercised by `internal/cmd/container/shared/agent_bootstrap.go`. Note the 4-arg signature post-composite-identity.
-- Hydra token: factor out the assertion + `/oauth2/token` POST from `cmd/clawkerd/main.go` into a shared helper in `internal/auth/agent_token.go` (today it's inlined in clawkerd; the e2e harness needs the same logic). Keep clawkerd as the only production caller; the harness imports the helper for tests only.
+- Hydra token: factor out the assertion + `/oauth2/token` POST from `clawkerd/register.go` into a shared helper in `internal/auth/agent_token.go` (today it's inlined in clawkerd; the e2e harness needs the same logic). Keep clawkerd as the only production caller; the harness imports the helper for tests only.
 - `PeerAddr` override: requires the e2e harness to bind a loopback alias (or run in a netns) so the dial originates from a non-clawker-net address. Most tests don't need this — `CrossContainerTheft` is the only one.
 - Bearer attached via `grpc.WithPerRPCCredentials` (matches clawkerd's production wiring; T7's lesson).
 
@@ -264,7 +264,7 @@ suite that's already slow.
    Option B: inline in harness only, accept the duplication.
    Option A is the right factoring (the duplication is otherwise a
    maintenance hazard if the assertion shape ever changes); ~30 LOC
-   move from `cmd/clawkerd/main.go` → `internal/auth/`.
+   move from `clawkerd/register.go` → `internal/auth/`.
 3. **`AdminService.ListSlots` debug RPC.** Tempting for the slot-state
    assertions but adds CP-side surface that has to be maintained
    forever. Defer until the indirect-Connect-retry approach proves

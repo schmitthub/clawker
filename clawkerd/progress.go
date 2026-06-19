@@ -1,4 +1,4 @@
-package main
+package clawkerd
 
 import (
 	"fmt"
@@ -46,7 +46,7 @@ type progressReporter struct {
 	stopped bool
 }
 
-// newProgressReporter returns a reporter that writes to out. TTY
+// NewProgressReporter returns a reporter that writes to out. TTY
 // detection probes TIOCGPGRP — same shape used by spawn_unix.go's
 // stdinCttyFd, portable across the unix targets clawkerd builds for
 // (TCGETS would be linux-only). progress.go has no //go:build unix
@@ -55,7 +55,7 @@ type progressReporter struct {
 // linux-only deployment. On a non-TTY out, ANSI color codes are
 // suppressed and the info icon falls back to "[info]" so log scrapes
 // stay clean.
-func newProgressReporter(out io.Writer) *progressReporter {
+func NewProgressReporter(out io.Writer) *progressReporter {
 	p := &progressReporter{out: out}
 	if f, ok := out.(*os.File); ok {
 		if _, err := unix.IoctlGetInt(int(f.Fd()), unix.TIOCGPGRP); err == nil {

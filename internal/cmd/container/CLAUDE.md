@@ -20,7 +20,7 @@ Where to add logic that must run at a lifecycle point. The deciding axis is **on
 2. Docker start (`client.ContainerStart` / `ContainerRestart`).
 3. `BootstrapServicesPostStart` — after Docker start: eBPF cgroup enroll (cgroup exists only now), GPG/SSH socket bridge. Use for anything needing the running container's cgroup/PID.
 
-In-container, CP then dispatches its init plan to clawkerd on every start (`internal/controlplane/agent`): the `post-init` step is marker-gated (once), `pre-run` runs every start. Mirror this once-vs-every choice when adding an init step (and add a matching `cmd/clawkerd/progress.go` label).
+In-container, CP then dispatches its init plan to clawkerd on every start (`internal/controlplane/agent`): the `post-init` step is marker-gated (once), `pre-run` runs every start. Mirror this once-vs-every choice when adding an init step (and add a matching `clawkerd/progress.go` label).
 
 ## Package Structure
 
