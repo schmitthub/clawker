@@ -16,7 +16,7 @@ Link to relevant docs inline in the bullets.
 
 ## [0.12.8] - 2026-06-20
 
-- **Fixed:** TypeScript preset's `pre_run` script now tolerates `npm install` failures instead of exiting the container, which could happen on transient registry errors or if the project hasn't set up its dependencies yet.  
+- **Fixed:** TypeScript preset's `pre_run` script now tolerates `npm install` failures instead of exiting the container, which could happen on transient registry errors or if the project hasn't set up its dependencies yet.
 
 ## [0.12.7] - 2026-06-19
 
