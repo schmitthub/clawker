@@ -11,14 +11,14 @@ description: >
   lint, vet, or otherwise analyze the full Go module tree. Embed targets
   hit on a Go build of the whole module:
 
-  - `internal/clawkerd` `go:embed`'s `clawkerd` (per-container daemon)
+  - `clawkerd/embed` `go:embed`'s `clawkerd` (per-container daemon)
   - `internal/controlplane/cpboot` `go:embed`'s `clawkercp` + `ebpf-manager`
   - `internal/controlplane/firewall` `go:embed`'s `coredns-clawker`
   - `internal/controlplane/firewall/ebpf/manager.go` references types
     declared in the bpf2go wrappers
 
   Build order: `clawkerd-binary` MUST come before `cp-binary` because
-  `cmd/clawkercp` transitively imports `internal/clawkerd` via
+  `cmd/clawkercp` transitively imports `clawkerd/embed` via
   `internal/docker` → `internal/bundler`, so the `clawkercp` Go build
   refuses to compile until the `//go:embed assets/clawkerd` target exists
   on disk. The Makefile encodes this dependency explicitly on `$(CP_BINARY)`,

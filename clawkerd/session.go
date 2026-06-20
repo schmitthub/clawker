@@ -1,4 +1,4 @@
-package main
+package clawkerd
 
 import (
 	"context"
@@ -194,7 +194,7 @@ type session struct {
 	// shutdown and exit PID 1 with the given code. Driven by a command
 	// carrying exit_on_non_zero that exited non-zero (the code is
 	// mirrored). Closed over a channel in main(); shared across every
-	// Session. Production rejects a nil seam at startClawkerdListener; the
+	// Session. Production rejects a nil seam at StartClawkerdListener; the
 	// runShellCommand guard covers only direct test construction
 	// (newTestSession), where the self-exit degrades to a logged no-op.
 	requestExit func(code int)
@@ -1338,7 +1338,7 @@ func (s *session) runShellCommand(ctx context.Context, rc *runningCommand, sc *c
 	// exit code. requestExit signals the main loop to run the normal
 	// graceful shutdown; the decision that this is fatal lives in CP
 	// (the flag), never in clawkerd. Production rejects a nil seam at
-	// startClawkerdListener, so the nil guard below covers only direct
+	// StartClawkerdListener, so the nil guard below covers only direct
 	// test construction, where the self-exit degrades to a logged no-op.
 	if sc.GetExitOnNonZero() && finalExit != 0 {
 		mirror := mirrorExitCode(finalExit)

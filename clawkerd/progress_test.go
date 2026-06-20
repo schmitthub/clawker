@@ -1,4 +1,4 @@
-package main
+package clawkerd
 
 import (
 	"bytes"
@@ -76,7 +76,7 @@ func TestParseInitStep(t *testing.T) {
 func TestProgressReporter_LinearOutput(t *testing.T) {
 	t.Parallel()
 	var buf bytes.Buffer
-	p := newProgressReporter(&buf)
+	p := NewProgressReporter(&buf)
 	if p.isTTY {
 		t.Fatalf("buffer must not register as TTY")
 	}
@@ -112,7 +112,7 @@ func TestProgressReporter_LinearOutput(t *testing.T) {
 func TestProgressReporter_StopMutesFurtherWrites(t *testing.T) {
 	t.Parallel()
 	var buf bytes.Buffer
-	p := newProgressReporter(&buf)
+	p := NewProgressReporter(&buf)
 
 	p.Banner("first")
 	p.Final()
@@ -138,7 +138,7 @@ func TestProgressReporter_StopMutesFurtherWrites(t *testing.T) {
 func TestProgressReporter_StopBeforeFinalSuppressesBanner(t *testing.T) {
 	t.Parallel()
 	var buf bytes.Buffer
-	p := newProgressReporter(&buf)
+	p := NewProgressReporter(&buf)
 
 	p.Stop()
 	p.Final()

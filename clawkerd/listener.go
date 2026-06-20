@@ -1,4 +1,4 @@
-package main
+package clawkerd
 
 import (
 	"crypto/subtle"
@@ -18,15 +18,15 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
-// errListenerConfig wraps deterministic pre-Serve failures (nil
+// ErrListenerConfig wraps deterministic pre-Serve failures (nil
 // thunk wiring bug, malformed bootstrap material) so main() can map
 // them to exit code 2 (config) instead of the generic 1 (transient).
 // Without this discriminator, a `restart: on-failure:max-retries=N`
 // container would restart-loop forever on a deterministic config bug
 // instead of trip-and-stop on the first failure.
-var errListenerConfig = errors.New("clawkerd listener: config error")
+var ErrListenerConfig = errors.New("clawkerd listener: config error")
 
-// startClawkerdListener binds the ClawkerdService listener on
+// StartClawkerdListener binds the ClawkerdService listener on
 // consts.DefaultClawkerdPort, registers the server impl, and starts
 // grpc.Serve in a goroutine. mTLS is required and the peer cert's CN
 // is pinned to consts.ContainerCP — sole legitimate caller is the
@@ -48,12 +48,12 @@ var errListenerConfig = errors.New("clawkerd listener: config error")
 // Returns the running grpc.Server so main can Stop on shutdown. The
 // underlying net.Listener is owned by the goroutine that runs Serve
 // and is closed by Stop.
-func startClawkerdListener(boot *bootstrap, register *registerCoordinator, spawnEntry func() error, onFatal func(error), log *logger.Logger, progress *progressReporter, requestExit func(int), state agentState) (*grpc.Server, error) {
+func StartClawkerdListener(boot *bootstrap, register *registerCoordinator, spawnEntry func() error, onFatal func(error), log *logger.Logger, progress *progressReporter, requestExit func(int), state agentState) (*grpc.Server, error) {
 	if spawnEntry == nil {
-		return nil, fmt.Errorf("%w: spawnEntry is required", errListenerConfig)
+		return nil, fmt.Errorf("%w: spawnEntry is required", ErrListenerConfig)
 	}
 	if onFatal == nil {
-		return nil, fmt.Errorf("%w: onFatal is required", errListenerConfig)
+		return nil, fmt.Errorf("%w: onFatal is required", ErrListenerConfig)
 	}
 	if requestExit == nil {
 		// exit_on_non_zero teardown is the container's clean-death path
@@ -61,11 +61,11 @@ func startClawkerdListener(boot *bootstrap, register *registerCoordinator, spawn
 		// 1. Reject at construction so a wiring bug fails loud, matching
 		// spawnEntry/onFatal. Direct test construction (newTestSession)
 		// can still leave it nil — the runShellCommand guard covers that.
-		return nil, fmt.Errorf("%w: requestExit is required", errListenerConfig)
+		return nil, fmt.Errorf("%w: requestExit is required", ErrListenerConfig)
 	}
 	tlsCfg, err := buildListenerTLSConfig(boot.CertPEM, boot.KeyPEM, boot.CACertPEM)
 	if err != nil {
-		return nil, fmt.Errorf("%w: TLS config: %w", errListenerConfig, err)
+		return nil, fmt.Errorf("%w: TLS config: %w", ErrListenerConfig, err)
 	}
 
 	addr := fmt.Sprintf(":%d", consts.DefaultClawkerdPort)
@@ -210,7 +210,7 @@ type clawkerdServer struct {
 	// requestExit asks the main loop to graceful-shutdown PID 1 with a
 	// mirrored exit code, driven by a command carrying exit_on_non_zero.
 	// Shared across every Session. Production rejects a nil seam at
-	// startClawkerdListener; the session-level guard tolerates nil for
+	// StartClawkerdListener; the session-level guard tolerates nil for
 	// direct test construction.
 	requestExit func(int)
 	// state reports init/cmd-running lifecycle for HelloAck and records

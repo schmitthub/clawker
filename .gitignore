@@ -45,7 +45,6 @@ embeds/
 /callback-forwarder
 /clawker-socket-server
 /clawker-generate
-/clawkerd
 /gen-docs
 
 # Binaries for programs and plugins
@@ -110,7 +109,7 @@ internal/controlplane/cpboot/assets/ebpf-manager
 internal/controlplane/cpboot/assets/clawker-cp
 internal/controlplane/firewall/assets/coredns-clawker
 # clawkerd is pure Go (no BPF deps); built by `make clawkerd-binary`.
-internal/clawkerd/assets/clawkerd
+clawkerd/embed/assets/clawkerd
 
 # Root-level build artifact from ad-hoc `go build ./cmd/clawkercp`
 /clawkercp

@@ -1,5 +1,5 @@
-// Package clawkerd embeds the per-container agent daemon binary into
-// the clawker CLI release. The bundler reads this byte slice and
+// Package clawkerdembed embeds the per-container agent daemon binary
+// into the clawker CLI release. The bundler reads this byte slice and
 // writes it into every per-project agent build context so each
 // generated image carries clawkerd as `/usr/local/bin/clawkerd`.
 //
@@ -8,7 +8,7 @@
 // dependencies, so the build is a plain CGO_ENABLED=0 cross-compile to
 // the target architecture — unlike ebpf-manager, which requires clang +
 // libbpf (via bpf2go) to compile the BPF byte code before the Go build.
-package clawkerd
+package clawkerdembed
 
 import _ "embed"
 

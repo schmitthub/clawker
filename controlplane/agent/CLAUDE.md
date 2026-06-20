@@ -125,7 +125,7 @@ macOS bind-mount boundary.
    `outcomeRegistryMiss` because no row exists.
 3. **RegisterRequired dispatch**: dialer sends
    `Command{RegisterRequired{}}` on the Session bidi stream.
-4. **Agent-side handshake** (in clawkerd, see `cmd/clawkerd/register.go`):
+4. **Agent-side handshake** (in clawkerd, see `clawkerd/register.go`):
    `registerCoordinator.Run` exchanges the single-use Hydra
    `client_assertion` JWT for an access token, mTLS-dials CP's
    AgentPort with `bearerCreds`, calls `AgentService.Register`.
@@ -161,7 +161,7 @@ reject (`PermissionDenied`) on cert/IP/label mismatches because it's
 the gate that decides whether to write a row, not whether to keep
 the channel up.
 
-The clawkerd-side counterpart (`cmd/clawkerd/listener.go`) is STRICT:
+The clawkerd-side counterpart (`clawkerd/listener.go`) is STRICT:
 CP CN pin + Client-Auth EKU + CA chain enforced at TLS layer.
 
 ## Dialer construction + Hello handshake (init one-shot, boot every start)

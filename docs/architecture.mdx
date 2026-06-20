@@ -132,7 +132,7 @@ Core business logic. Import leaves and foundation packages only.
 | `controlplane/firewall/ebpf` | logger | eBPF program loader/manager, `SyncRoutes` replaces global `route_map` atomically; break-glass `ebpf-manager` CLI under `cmd/` |
 | `controlplane/firewall/ebpf/netlogger` | controlplane/firewall/ebpf, controlplane/overseer, controlplane/dockerevents, docker, logger, OTel SDK | Per-decision-point egress event emitter — drains the BPF `events_ringbuf`, enriches by cgroup ID with container/agent/project attribution via overseer enrollment events, emits OTLP log records via a `*sdklog.LoggerProvider` (`service.name=ebpf-egress`) |
 | `dnsbpf` | controlplane/firewall/ebpf | CoreDNS plugin that writes DNS resolutions to the BPF `dns_cache` map in real time (embedded in `cmd/coredns-clawker`) |
-| `clawkerd` | (embed only) | `//go:embed assets/clawkerd` — exports the per-container daemon binary; bundler drops it into every per-project image at `/usr/local/bin/clawkerd` |
+| `clawkerd/embed` | (embed only) | embeds the compiled per-container daemon binary; bundler drops it into every per-project image at `/usr/local/bin/clawkerd` |
 | `hostproxy` | config, logger | Host proxy for container-to-host communication |
 | `socketbridge` | config, logger | SSH/GPG agent forwarding via muxrpc |
 | `containerfs` | config, keyring, logger | Host config preparation for container init |
@@ -217,7 +217,7 @@ func stopRun(ctx context.Context, opts *StopOptions) error {
 | `agent.Registry` | `internal/controlplane/agent` | sqlite-backed agent identity (CP is sole writer) |
 | `overseer.Overseer` | `internal/controlplane/overseer` | Typed event bus + worldview state inside CP |
 | `cmd/clawkercp` | `cmd/clawkercp` | CP daemon entry point — PID 1 of the `clawker-controlplane` container |
-| `cmd/clawkerd` | `cmd/clawkerd` | Per-container agent daemon — PID 1 of every agent container |
+| `cmd/clawkerd` | `cmd/clawkerd` | Entrypoint for the per-container agent daemon — PID 1 of every agent container |
 | `cmd/coredns-clawker` | `cmd/coredns-clawker` | Custom CoreDNS entrypoint embedding `dnsbpf`; built into `clawker-coredns:latest` on demand |
 | `tui.TUI` | `internal/tui` | Factory noun for presentation layer |
 

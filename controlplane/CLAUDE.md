@@ -58,7 +58,7 @@ A panic, `log.Fatal`, `os.Exit`, or unrecovered goroutine in CP code:
 
 ### Existing escape hatches you'll find in code (and must not add to)
 
-- The `register_panic` recover in `cmd/clawkerd/session.go::handleRegisterRequired` (NOT in CP — clawkerd-side, agent container can crash).
+- The `register_panic` recover in `clawkerd/session.go::handleRegisterRequired` (NOT in CP — clawkerd-side, agent container can crash).
 - The agent-watcher goroutine recover in `run()` (`internal/controlplane/cmd.go`, `event=agent_watcher_panic`) — keep doing this for new long-lived goroutines.
 - `firewall/handler.go` returns `status.Error(...)` for handler-level failures; never panics.
 

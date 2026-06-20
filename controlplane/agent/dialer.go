@@ -31,7 +31,7 @@
 // channel must be UP so CP can react. Aborting on cert grounds would
 // strand CP exactly at the moment governance is most needed.
 //
-// The asymmetric counterpart lives in cmd/clawkerd/listener.go: the
+// The asymmetric counterpart lives in clawkerd/listener.go: the
 // clawkerd-side listener is STRICT — CP CN pin + Client-Auth EKU + CA
 // chain enforced at TLS layer. clawkerd refuses any peer that isn't
 // CP. This pairs with the dialer's permissive client posture.

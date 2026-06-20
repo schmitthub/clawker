@@ -1,4 +1,4 @@
-package main
+package clawkerd
 
 import (
 	"bytes"
@@ -12,7 +12,7 @@ import (
 
 // ExecUser is the resolved identity material clawkerd hands to the
 // spawn path when starting the user CMD. Fields are unexported so
-// resolveUser is the sole producer — direct struct literals like
+// ResolveUser is the sole producer — direct struct literals like
 // `&ExecUser{}` (UID=0, silently re-introducing root) are not
 // representable. Pure data — no syscalls performed here; privilege
 // drop happens in the child via SysProcAttr.Credential between fork
@@ -45,17 +45,17 @@ func (u *ExecUser) Groups() []uint32 {
 
 func (u *ExecUser) Home() string { return u.home }
 
-// errEmptyUserSpec is returned by resolveUser when spec is empty.
+// errEmptyUserSpec is returned by ResolveUser when spec is empty.
 // Empty resolution is intentionally rejected: a missing CLAWKER_USER
 // would otherwise silently default to the moby library's "current
 // process" semantics, leaking clawkerd's root identity into the user
 // CMD.
 var errEmptyUserSpec = errors.New("clawkerd: empty user spec")
 
-// resolveUser parses spec ("name", "name:group", "uid", "uid:gid")
+// ResolveUser parses spec ("name", "name:group", "uid", "uid:gid")
 // against the passwd/group databases at the given paths. Production
 // callers pass "/etc/passwd" and "/etc/group" (returned by
-// passwdGroupPaths()); tests pass synthetic temp files.
+// PasswdGroupPaths()); tests pass synthetic temp files.
 //
 // /etc/passwd is read ONCE into a byte slice so GetExecUser and the
 // follow-up uid→name lookup operate on the same snapshot. A two-read
@@ -67,7 +67,7 @@ var errEmptyUserSpec = errors.New("clawkerd: empty user spec")
 // silently ignores open failures and passes a nil reader, which would
 // turn "passwd file missing" into "user not found" — a misleading
 // diagnostic.
-func resolveUser(spec, passwdPath, groupPath string) (*ExecUser, error) {
+func ResolveUser(spec, passwdPath, groupPath string) (*ExecUser, error) {
 	if spec == "" {
 		return nil, errEmptyUserSpec
 	}
@@ -132,9 +132,9 @@ func lookupUsernameByUID(r io.Reader, uid int) (string, error) {
 	return users[0].Name, nil
 }
 
-// passwdGroupPaths returns the production passwd/group file paths.
+// PasswdGroupPaths returns the production passwd/group file paths.
 // Wrapping them in a function gives clawkercp.go a single seam for path
-// injection without touching resolveUser's signature.
-func passwdGroupPaths() (passwd, group string) {
+// injection without touching ResolveUser's signature.
+func PasswdGroupPaths() (passwd, group string) {
 	return "/etc/passwd", "/etc/group"
 }

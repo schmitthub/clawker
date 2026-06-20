@@ -72,7 +72,7 @@ If you're tempted to write `panic()` in CP code, ask: "would this leave eBPF pro
 
 ## Asymmetric trust: dialer permissive, listener strict
 
-- **clawkerd-side listener (server):** STRICT. `cmd/clawkerd/listener.go` enforces CP CN pin + Client-Auth EKU + CA chain at TLS layer.
+- **clawkerd-side listener (server):** STRICT. `clawkerd/listener.go` enforces CP CN pin + Client-Auth EKU + CA chain at TLS layer.
 - **CP-side dialer (client):** PERMISSIVE. `internal/controlplane/agent.Dialer` never aborts on cert/identity grounds. Outcomes emitted as typed fields on `SessionConnected` overseer events. Dial only fails on connectivity.
 
 **Why permissive:** CP must reach clawkerd to issue containment commands even when certs are bad. Subscribers to `SessionConnected` enact policy; the dialer holds none.

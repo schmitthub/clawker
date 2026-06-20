@@ -20,8 +20,8 @@ import (
 	"text/template"
 	"time"
 
+	clawkerdembed "github.com/schmitthub/clawker/clawkerd/embed"
 	"github.com/schmitthub/clawker/internal/bundler/registry"
-	"github.com/schmitthub/clawker/internal/clawkerd"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/hostproxy/internals"
 )
@@ -187,7 +187,7 @@ func (m *DockerfileManager) GenerateDockerfiles(versions *registry.VersionsFile)
 	}
 
 	// Write all required scripts to the dockerfiles directory (only once).
-	// content is []byte so the multi-MB clawkerd.Binary passes through
+	// content is []byte so the multi-MB clawkerdembed.Binary passes through
 	// without a string<->[]byte round-trip copy at WriteFile.
 	scripts := []struct {
 		name    string
@@ -202,7 +202,7 @@ func (m *DockerfileManager) GenerateDockerfiles(versions *registry.VersionsFile)
 		{"callback-forwarder.go", []byte(CallbackForwarderSource), 0644},
 		{"git-credential-clawker.sh", []byte(GitCredentialScript), 0755},
 		{"clawker-socket-server.go", []byte(SocketForwarderSource), 0644},
-		{"clawkerd", clawkerd.Binary, 0755},
+		{"clawkerd", clawkerdembed.Binary, 0755},
 	}
 
 	for _, script := range scripts {
@@ -414,7 +414,7 @@ func (g *ProjectGenerator) GenerateBuildContextFromDockerfile(dockerfile []byte)
 	// Add the clawkerd binary itself — it's pre-compiled in the
 	// clawker CLI release and dropped into every per-project image
 	// at /usr/local/bin/clawkerd by the Dockerfile.
-	if err := addFileToTar(tw, "clawkerd", clawkerd.Binary); err != nil {
+	if err := addFileToTar(tw, "clawkerd", clawkerdembed.Binary); err != nil {
 		return nil, err
 	}
 
@@ -435,7 +435,7 @@ func (g *ProjectGenerator) WriteBuildContextToDir(dir string, dockerfile []byte)
 	}
 
 	// Write all supporting scripts (mirrors GenerateBuildContextFromDockerfile).
-	// content is []byte so the multi-MB clawkerd.Binary passes through
+	// content is []byte so the multi-MB clawkerdembed.Binary passes through
 	// without a string<->[]byte round-trip copy at WriteFile.
 	scripts := []struct {
 		name    string
@@ -450,7 +450,7 @@ func (g *ProjectGenerator) WriteBuildContextToDir(dir string, dockerfile []byte)
 		{"callback-forwarder.go", []byte(CallbackForwarderSource), 0644},
 		{"git-credential-clawker.sh", []byte(GitCredentialScript), 0755},
 		{"clawker-socket-server.go", []byte(SocketForwarderSource), 0644},
-		{"clawkerd", clawkerd.Binary, 0755},
+		{"clawkerd", clawkerdembed.Binary, 0755},
 	}
 
 	for _, s := range scripts {

@@ -137,7 +137,7 @@ clawker: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENERATED)
 EBPF_BINARY := controlplane/manager/assets/ebpf-manager
 COREDNS_BINARY := controlplane/firewall/assets/coredns-clawker
 CP_BINARY := controlplane/manager/assets/clawkercp
-CLAWKERD_BINARY := internal/clawkerd/assets/clawkerd
+CLAWKERD_BINARY := clawkerd/embed/assets/clawkerd
 
 # Proto inputs + generated outputs. Declared early so targets that use
 # $(PROTO_GENERATED) further down in the file get a non-empty expansion
@@ -194,26 +194,34 @@ COREDNS_BINARY_DEPS := \
 	$(wildcard internal/dnsbpf/*.go) \
 	controlplane/firewall/ebpf/types.go
 
-# Source dependencies for the clawkercp (control plane) binary. It
-# imports both internal/controlplane and controlplane/firewall/ebpf, plus
-# the generated proto types in api/admin/v1 and api/agent/v1. PROTO_GENERATED
-# is listed explicitly so that editing a `.proto` triggers the regeneration
-# rule (above) before the binary is rebuilt.
+# Source dependencies for the clawkercp (control plane) binary, built
+# via `go build ./cmd/clawkercp`. The list mirrors every first-party
+# package that build pulls from the controlplane/ and internal/controlplane
+# trees (cross-check with `go list -deps ./cmd/clawkercp | grep
+# schmitthub/clawker/...controlplane`) — internal/controlplane is the
+# entrypoint (Main/run); controlplane/* are its subsystems. PROTO_GENERATED
+# is listed explicitly so editing a `.proto` triggers the regeneration rule
+# (above) before the binary rebuilds. Deeper transitive deps (internal/consts,
+# logger, docker, ...) are intentionally not tracked: this is a first-party
+# staleness heuristic, not a full import-graph mirror.
 CP_BINARY_DEPS := \
 	$(BPF_BINDING_DEPS) \
 	$(PROTO_GENERATED) \
 	$(wildcard cmd/clawkercp/*.go) \
+	$(wildcard internal/controlplane/*.go) \
 	$(wildcard controlplane/*.go) \
 	$(wildcard controlplane/agent/*.go) \
-	$(wildcard controlplane/agentdial/*.go) \
-	$(wildcard controlplane/agentregistry/*.go) \
-	$(wildcard controlplane/agentslots/*.go) \
+	$(wildcard controlplane/auth/*.go) \
 	$(wildcard controlplane/dockerevents/*.go) \
 	$(wildcard controlplane/firewall/*.go) \
 	$(wildcard controlplane/firewall/ebpf/*.go) \
+	$(wildcard controlplane/firewall/ebpf/netlogger/*.go) \
 	$(wildcard controlplane/infracerts/*.go) \
-	$(wildcard controlplane/informer/*.go) \
-	$(wildcard controlplane/otelcerts/*.go)
+	$(wildcard controlplane/otel/*.go) \
+	$(wildcard controlplane/otelcerts/*.go) \
+	$(wildcard controlplane/pubsub/*.go) \
+	$(wildcard controlplane/server/*.go) \
+	$(wildcard controlplane/subprocess/*.go)
 
 # `docker buildx build --output=type=local,dest=...` exports a stage's
 # filesystem to a host directory. The `*-extract` stages in Dockerfile.controlplane
@@ -385,8 +393,8 @@ $(COREDNS_BINARY): $(COREDNS_BINARY_DEPS) $(BPF_BINDINGS)
 # ebpf-manager (break-glass).
 #
 # cp-binary depends on $(CLAWKERD_BINARY) because cmd/clawkercp transitively
-# imports internal/clawkerd via internal/docker → internal/bundler. The Go
-# build refuses to compile internal/clawkerd until its `//go:embed
+# imports clawkerd/embed via internal/docker → internal/bundler. The Go
+# build refuses to compile clawkerd/embed until its `//go:embed
 # assets/clawkerd` target exists on disk. Make builds prereqs in declared
 # order, but adding this as an explicit prerequisite of the file target
 # also makes parallel `make -j` correct.
@@ -400,17 +408,28 @@ $(CP_BINARY): $(CP_BINARY_DEPS) $(BPF_BINDINGS) $(CLAWKERD_BINARY)
 # BPF), so the build is a plain CGO_ENABLED=0 cross-compile to
 # linux/$(BUILDX_TARGETARCH) — no Docker buildx, no clang, no
 # Dockerfile.controlplane stage. The artifact is go:embed'd into the
-# clawker CLI via internal/clawkerd/embed.go and dropped into every
+# clawker CLI via clawkerd/embed/embed.go and dropped into every
 # per-project build context by internal/bundler.
+#
+# The build is `go build ./cmd/clawkerd`: the thin shell
+# (cmd/clawkerd/clawkerd.go) imports the real entrypoint package
+# internal/clawkerd (Main/run — the supervisor orchestration), which
+# imports the daemon package clawkerd. All three carry first-party
+# source for this binary, so all three are path-listed prerequisites
+# below — editing the orchestration in internal/clawkerd must retrigger
+# the rebuild, else the embedded binary goes stale against `go build`
+# output. Deeper transitive deps (logger, grpc, moby) are intentionally
+# not tracked: this is a first-party staleness heuristic, not a full
+# import-graph mirror.
 .PHONY: clawkerd-binary
 clawkerd-binary: $(CLAWKERD_BINARY)
-$(CLAWKERD_BINARY): $(PROTO_GENERATED) $(wildcard cmd/clawkerd/*.go) $(wildcard internal/consts/*.go) $(wildcard api/agent/v1/*.go) $(wildcard api/clawkerd/v1/*.go)
+$(CLAWKERD_BINARY): $(PROTO_GENERATED) $(wildcard cmd/clawkerd/*.go) $(wildcard internal/clawkerd/*.go) $(wildcard clawkerd/*.go) $(wildcard internal/consts/*.go) $(wildcard api/agent/v1/*.go) $(wildcard api/clawkerd/v1/*.go)
 	@echo "Building clawkerd for linux/$(BUILDX_TARGETARCH)..."
 	@mkdir -p $(@D)
 	@GOOS=linux GOARCH=$(BUILDX_TARGETARCH) CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $@ ./cmd/clawkerd
 
 # Build the standalone generate binary
-clawker-generate:
+clawker-generate: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENERATED)
 	@echo "Building clawker-generate $(CLAWKER_VERSION)..."
 	@mkdir -p $(BIN_DIR)
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/clawker-generate ./cmd/clawker-generate
@@ -639,17 +658,15 @@ endif
 # agentregistry, auth/agent_*, container start agent-bootstrap).
 # Excludes test/e2e and test/whail so this stays safe to run inside
 # a clawker container (e2e tears down the host CP).
-test-clawkerd: $(PROTO_GENERATED)
+test-clawkerd: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENERATED)
 	@echo "Running clawkerd-focused unit tests..."
 	$(TEST_CMD) \
-		./cmd/clawkerd/... \
-		./internal/auth/... \
+		./clawkerd/... \
 		./internal/clawkerd/... \
+		./internal/auth/... \
 		./internal/cmd/container/shared/... \
 		./internal/cmd/controlplane/... \
-		./controlplane/agent/... \
-		./controlplane/agentregistry/... \
-		./controlplane/agentslots/...
+		./controlplane/agent/...
 
 # All test suites
 test-all: test test-e2e test-whail
@@ -675,8 +692,11 @@ test-clean:
 
 # Preview the newest CHANGELOG.md entry rendered exactly as the post-upgrade
 # "what's new" teaser shows it (glamour markdown). Use to eyeball a release
-# section — alerts, bullets, code spans — before shipping. No embed deps.
-changelog-preview:
+# section — alerts, bullets, code spans — before shipping. Depends on the
+# embed binaries because internal/clawker links the full cobra tree, which
+# imports the go:embed-bearing controlplane/manager, controlplane/firewall
+# and clawkerd/embed packages.
+changelog-preview: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENERATED)
 	@CLAWKER_PREVIEW_CHANGELOG=1 COLORTERM=truecolor $(GO) test ./internal/clawker/ -run TestPreviewLatestChangelogEntry -v 2>&1
 
 # ============================================================================

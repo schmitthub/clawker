@@ -24,7 +24,7 @@ import (
 // CP's `runStep` ceiling is now the only init wall-clock gate —
 // clawkerd-as-PID-1 has no separate shell-script timeout to align
 // with (the legacy bash entrypoint + fifo wait was retired by the
-// PID-1 cutover; see cmd/clawkerd/CLAUDE.md).
+// PID-1 cutover; see clawkerd/CLAUDE.md).
 const (
 	execStepTimeoutDefault  = consts.ExecStepTimeoutDefaultSeconds
 	execStepTimeoutPostInit = consts.ExecStepTimeoutPostInitSeconds
