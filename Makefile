@@ -650,6 +650,7 @@ test-clawkerd: $(PROTO_GENERATED)
 	@echo "Running clawkerd-focused unit tests..."
 	$(TEST_CMD) \
 		./clawkerd/... \
+		./internal/clawkerd/... \
 		./internal/auth/... \
 		./internal/cmd/container/shared/... \
 		./internal/cmd/controlplane/... \
