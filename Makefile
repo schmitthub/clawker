@@ -658,7 +658,7 @@ endif
 # agentregistry, auth/agent_*, container start agent-bootstrap).
 # Excludes test/e2e and test/whail so this stays safe to run inside
 # a clawker container (e2e tears down the host CP).
-test-clawkerd: $(PROTO_GENERATED)
+test-clawkerd: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENERATED)
 	@echo "Running clawkerd-focused unit tests..."
 	$(TEST_CMD) \
 		./clawkerd/... \
