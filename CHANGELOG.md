@@ -14,9 +14,14 @@ clawker CLI's "what's new" teaser renders the section bodies verbatim as
 markdown, and the release-notes workflow copies them into the GitHub release.
 Link to relevant docs inline in the bullets.
 
+## [0.12.8] - 2026-06-20
+
+- **Fixed:** TypeScript preset's `pre_run` script now tolerates `npm install` failures instead of exiting the container, which could happen on transient registry errors or if the project hasn't set up its dependencies yet.  
+
 ## [0.12.7] - 2026-06-19
 
 ### **⚠ ACTION REQUIRED — rebuild all agent container images**
+
 > Run `clawker build` in every project after updating. Containers built before 
 > this release run an outdated internal runtime and will be stopped automatically; 
 > they will not work until rebuilt.

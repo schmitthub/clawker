@@ -113,7 +113,7 @@ security:
 // layers on top.
 const typescriptPreset = `agent:
   pre_run: |
-    npm install
+    npm install || true
 build:
   image: "buildpack-deps:bookworm-scm"
   packages:
