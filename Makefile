@@ -429,7 +429,7 @@ $(CLAWKERD_BINARY): $(PROTO_GENERATED) $(wildcard cmd/clawkerd/*.go) $(wildcard 
 	@GOOS=linux GOARCH=$(BUILDX_TARGETARCH) CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $@ ./cmd/clawkerd
 
 # Build the standalone generate binary
-clawker-generate:
+clawker-generate: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENERATED)
 	@echo "Building clawker-generate $(CLAWKER_VERSION)..."
 	@mkdir -p $(BIN_DIR)
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/clawker-generate ./cmd/clawker-generate
@@ -692,8 +692,11 @@ test-clean:
 
 # Preview the newest CHANGELOG.md entry rendered exactly as the post-upgrade
 # "what's new" teaser shows it (glamour markdown). Use to eyeball a release
-# section — alerts, bullets, code spans — before shipping. No embed deps.
-changelog-preview:
+# section — alerts, bullets, code spans — before shipping. Depends on the
+# embed binaries because internal/clawker links the full cobra tree, which
+# imports the go:embed-bearing controlplane/manager, controlplane/firewall
+# and clawkerd/embed packages.
+changelog-preview: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENERATED)
 	@CLAWKER_PREVIEW_CHANGELOG=1 COLORTERM=truecolor $(GO) test ./internal/clawker/ -run TestPreviewLatestChangelogEntry -v 2>&1
 
 # ============================================================================
