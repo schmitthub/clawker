@@ -15,7 +15,7 @@
 </p>
 
 <div align="center">
-  <img src="docs/assets/threat-model.png" alt="Threat Model: Bare Metal vs Sandbox vs Clawker Container" width="700">
+  <img src="docs/assets/system-diagram.png" alt="system diagram" width="700">
 </div>
 
 > Read more about clawker's threat model and security philosophy at [docs.clawker.dev/threat-model](https://docs.clawker.dev/threat-model)
