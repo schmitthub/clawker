@@ -113,7 +113,9 @@ security:
 // layers on top.
 const typescriptPreset = `agent:
   pre_run: |
-    npm install || true
+    if [ -f package.json ]; then
+      npm install || echo "warning: npm install failed; continuing"
+    fi
 build:
   image: "buildpack-deps:bookworm-scm"
   packages:
