@@ -245,6 +245,8 @@ security:
             path: /repos/opensearch-project/OpenSearch-Dashboards/
           - action: allow
             path: /repos/contributor-assistant/github-action/
+          - action: allow
+            path: /repos/actions/checkout/
           - action: deny
             path: /gists
           - action: deny
