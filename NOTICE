@@ -99,8 +99,6 @@ github.com/cyphar/filepath-securejoin                                          B
 github.com/go-git/gcfg/v2                                                      BSD-3-Clause
 github.com/go-jose/go-jose/v4/json                                             BSD-3-Clause
 github.com/gofrs/flock                                                         BSD-3-Clause
-github.com/gogo/protobuf/proto                                                 BSD-3-Clause
-github.com/golang/protobuf/ptypes                                              BSD-3-Clause
 github.com/google/go-cmp/cmp                                                   BSD-3-Clause
 github.com/google/uuid                                                         BSD-3-Clause
 github.com/gorilla/css/scanner                                                 BSD-3-Clause
