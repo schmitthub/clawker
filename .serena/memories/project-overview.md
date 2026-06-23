@@ -29,7 +29,7 @@ No build tags — directory separation only.
 ## Architecture Highlights
 - **Config**: `storage.Store[T]` typed layered YAML engine. `internal/config` composes `Store[Project]` + `Store[Settings]` with direct store accessors (`cfg.ProjectStore()`, `cfg.SettingsStore()`). `internal/project` owns `Store[ProjectRegistry]`. Old wrapper methods (`SetProject`, `WriteSettings`, etc.) deprecated.
 - **Labels**: `dev.clawker.*` prefix (OCI reverse-DNS). All label keys via `config.Config` methods.
-- **Container creation**: `shared.CreateContainer()` single entry point with events channel for progress.
+- **Container creation**: `shared.CreateContainer()` single entry point; diagnostics go to zerolog and the caller owns terminal output.
 - **Home dir safety**: `shared.IsOutsideHome(".")` guards `run`/`create` (prompt) when CWD is at or above `$HOME`.
 - **Image resolution**: 3-source chain — Docker labels (`ImageSourceProject`) → config `build.image` (`ImageSourceConfig`) → nil. `clawker init` persists built image to user-level `clawker.yaml`.
 - **Control Plane (landed 2026-04)**: `clawker-controlplane` container runs `clawkercp` daemon (PID 1) + Ory stack (Hydra/Oathkeeper/Kratos). CLI dials CP via mTLS TCP + OAuth2 JWT (Hydra introspection). CP owns `ebpf.Manager.Load()` in-process. See `internal/controlplane/CLAUDE.md`.

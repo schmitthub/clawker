@@ -108,7 +108,6 @@ The auth stack uses Ory Hydra as the OAuth2 provider (replaces the earlier custo
 | `adminclient/` | CLI-side AdminService dialer (`dial.go`): `Dial`, `ProbeCPTime`, `LoadClientCert`, the two TLS configs (token-endpoint plain TLS vs gRPC mTLS), token source. |
 | `infracerts/` | Trusted-infra (OTLP/monitoring) mTLS cert material. See `controlplane/infracerts/CLAUDE.md`. |
 | `otelcerts/` | OTel client cert provisioning. See `controlplane/otelcerts/CLAUDE.md`. |
-| `mocks/` | moq-generated `AdminServiceClientMock` for CLI tests speaking to the AdminService. |
 
 ## AdminService composition
 
@@ -212,9 +211,9 @@ Manages Ory service lifecycle. Crash reporting via channel. Shutdown sends SIGTE
 - `EBPFManager` interface — `controlplane/firewall/ebpf/mocks/EBPFManagerMock` for firewall handler tests.
 - `Introspector` interface — `controlplane/auth/mocks/IntrospectorMock` for authz tests (no real Hydra).
 - `manager.Manager` interface — `controlplane/manager/mocks/ManagerMock` for break-glass `controlplane up/down/status` CLI tests.
-- `adminv1.AdminServiceClient` — `controlplane/mocks/AdminServiceClientMock` for CLI tests that speak to the AdminService.
+- `adminv1.AdminServiceClient` — `api/admin/v1/mocks.AdminServiceClientMock` for CLI tests that speak to the AdminService.
 - `firewall.ContainerResolver` — handler-side injectable Docker lookup (see `controlplane/firewall/CLAUDE.md`).
-- `agent.Registry` — moq-generated `RegistryMock` (test-only file at `controlplane/agent/registry_mock_test.go`) for `IdentityInterceptor`, `ListAgents`, and the dialer-side classification tests that need a deterministic snapshot independent of dockerevents wiring.
+- `agent.Registry` — moq-generated `RegistryMock` (in `controlplane/agent/mocks/registry_mock.go`) for `IdentityInterceptor`, `ListAgents`, and the dialer-side classification tests that need a deterministic snapshot independent of dockerevents wiring.
 
 ## Test coverage
 

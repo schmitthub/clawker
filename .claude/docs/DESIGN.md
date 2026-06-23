@@ -474,7 +474,7 @@ with all closures wired                       *cmdutil.Factory
 Factory is a pure struct with closure/value fields — no methods. 3 eager (set directly), rest lazy (closures):
 
 **Eager**: `Version` (string), `IOStreams` (`*iostreams.IOStreams`), `TUI` (`*tui.TUI`)
-**Lazy**: `Config` (`func() (config.Config, error)`), `Client` (`func(ctx) (*docker.Client, error)`), `Logger` (`func() (*logger.Logger, error)`), `ProjectManager` (`func() (project.ProjectManager, error)`), `GitManager` (`func() (*git.GitManager, error)`), `HostProxy` (`func() hostproxy.HostProxyService`), `SocketBridge` (`func() socketbridge.SocketBridgeManager`), `Prompter` (`func() *prompter.Prompter`), `AdminClient` (`func(ctx) (adminv1.AdminServiceClient, error)`), `ControlPlane` (`func() manager.Manager`), `HttpClient` (`func() *http.Client`)
+**Lazy**: `Config` (`func() (config.Config, error)`), `Client` (`func(ctx) (*docker.Client, error)`), `Logger` (`func() (*logger.Logger, error)`), `ProjectManager` (`func() (project.ProjectManager, error)`), `GitManager` (`func() (*git.GitManager, error)`), `HostProxy` (`func() hostproxy.Service`), `SocketBridge` (`func() socketbridge.SocketBridgeManager`), `Prompter` (`func() *prompter.Prompter`), `AdminClient` (`func(ctx) (adminv1.AdminServiceClient, error)`), `ControlPlane` (`func() manager.Manager`), `HttpClient` (`func() *http.Client`)
 
 The constructor in `internal/cmd/factory/default.go` wires all closures. Commands extract closures into per-command Options structs. Run functions only accept `*Options`, never `*Factory`.
 
@@ -899,10 +899,10 @@ and plugin installation on every container creation.
 
 **Init flow** (orchestrated by `shared.CreateContainer()` in `cmd/container/shared/container.go`):
 
-Progress streamed via events channel (`chan CreateContainerEvent`). Steps:
+Developer diagnostics go to zerolog; the caller owns all terminal output. Steps:
 1. **workspace** — `workspace.SetupMounts()` (internally calls `EnsureConfigVolumes()`)
 2. **config** (skipped if volume cached) — `containerfs.PrepareClaudeConfig()` + `containerfs.PrepareCredentials()` → `docker.CopyToVolume()`
-3. **environment** — `shared.ResolveAgentEnv()` merges env_file/from_env/env → runtime env vars (warnings sent as `MessageWarning` events)
+3. **environment** — `shared.ResolveAgentEnv()` merges env_file/from_env/env → runtime env vars (warnings surfaced to the caller on the result)
 4. **container** — validate flags, `BuildConfigs()`, `docker.ContainerCreate()` + `InjectPostInitScript()` (when `agent.post_init` configured). Onboarding bypass is image-level: entrypoint seeds `~/.claude/.config.json` from staged defaults
 
 **Key packages**: `internal/containerfs` (tar preparation, path rewriting),

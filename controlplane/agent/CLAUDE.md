@@ -78,7 +78,7 @@ now unexported helpers behind `Start`.
 | `handler.go` | `peerIdentity` projection + `peerIdentityFromContext` + `peerLeafFromContext` + `WithResolvedContainer` / `ResolvedContainerFromContext` ctx helpers |
 | `identity_interceptor.go` | `IdentityInterceptor(peerLookup, log)` — universal peer-IP-grounded identity gate applied to every AgentService RPC (no opt-out) |
 | `exec.go` | `Executor` + static `plan()` of `ShellCommand` exec steps dispatched to clawkerd over the Session. |
-| `registry_mock_test.go` | moq-generated `RegistryMock` (test-only file; lives in `agent` package itself to break import cycle that prevented an `agent/mocks` subpackage from working) |
+| `mocks/registry_mock.go` | moq-generated `RegistryMock` (test-only file in the `agent/mocks` subpackage so dependents can import it) |
 
 ## Identity contract
 
@@ -255,7 +255,7 @@ on adminServer for ListAgents).
 
 ## Test seam
 
-- `Registry` — moq-generated `RegistryMock` in `registry_mock_test.go`
+- `Registry` — moq-generated `RegistryMock` in `mocks/registry_mock.go`
   (test-only, lives in the `agent` package itself).
 - `ContainerByPeerIP` — hand-rolled `fakePeerLookup` in
   `identity_interceptor_test.go`; the Register handler's tests stub
@@ -270,8 +270,8 @@ cd controlplane/agent && go generate ./...
 ```
 
 The `go:generate` directive on `Registry` writes
-`registry_mock_test.go` directly into the package. moq doesn't know
-the package's own type names; the generated file imports
-`agent` and references `agent.Entry` / `agent.Registry`. Strip the
-self-import and replace `agent.X` with `X` after regeneration (see
-the existing file for the post-edit shape — it's idempotent).
+`mocks/registry_mock.go` into the `agent/mocks` subpackage so
+dependents can import it. The generated mock lives in package
+`mocks` and references `agent.Entry` / `agent.Registry` via the
+parent import — no self-import stripping needed (see the existing
+file for the post-edit shape — it's idempotent).

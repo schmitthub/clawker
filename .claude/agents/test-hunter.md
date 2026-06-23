@@ -65,7 +65,7 @@ cat internal/docker/mocks/*.go             # FakeClient, fixtures
 cat internal/git/gittest/*.go              # InMemoryGitManager
 cat internal/config/mocks/*.go             # ConfigMock, NewBlankConfig, NewFromString, NewIsolatedTestConfig
 cat internal/project/mocks/*.go            # ProjectManagerMock, TestManagerHarness
-cat internal/controlplane/mocks/*.go       # ControlPlaneServiceMock, ManagerMock, IntrospectorMock, AdminServiceClientMock
+cat api/admin/v1/mocks/*.go controlplane/manager/mocks/*.go controlplane/auth/mocks/*.go   # AdminServiceClientMock, ManagerMock, IntrospectorMock
 cat internal/controlplane/firewall/ebpf/mocks/*.go  # EBPFManagerMock
 cat internal/hostproxy/hostproxytest/*.go  # MockHostProxy
 cat pkg/whail/whailtest/*.go              # FakeAPIClient, BuildKitCapture, golden file seeding

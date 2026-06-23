@@ -15,10 +15,9 @@
 | `WorkspaceStrategy` | Bind (live mount) vs Snapshot (ephemeral copy) |
 | `PTYHandler` | Raw terminal mode, bidirectional streaming (in `docker` package) |
 | `ContainerConfig` | Labels, naming (`clawker.project.agent`), volumes |
-| `CreateContainer()` | Single entry point for container creation (workspace, config, env, create, inject); shared by `run` and `create` via events channel for progress |
+| `CreateContainer()` | Single entry point for container creation (workspace, config, env, create, inject); shared by `run` and `create`. Diagnostics to zerolog; caller owns terminal output |
 | `IsOutsideHome(dir)` | Pure bool function in `container/shared/safety.go` — returns true when dir is `$HOME` or not within `$HOME`. Used by `run`/`create` (prompt) |
 | `CreateContainerConfig` / `CreateContainerResult` | Input/output types for `CreateContainer()` — all deps and runtime values |
-| `CreateContainerEvent` | Channel event: Step, Status (`StepRunning`/`StepComplete`/`StepCached`), Type (`MessageInfo`/`MessageWarning`), Message |
 | `clawker-share` | Optional read-only bind mount from `cfg.ShareSubdir()` into containers at `~/.clawker-share` when `agent.enable_shared_dir: true`; host dir created during `clawker project init`, re-created if missing during mount setup |
 | `containerfs` | Host Claude config preparation for container init: copies settings, plugins (incl. cache), credentials to config volume; rewrites host paths in plugin JSON files; prepares post-init script tar |
 | `ConfigVolumeResult` | Bool flags tracking which config volumes were freshly created (`ConfigCreated`, `HistoryCreated`) — returned by `workspace.EnsureConfigVolumes` |
@@ -45,7 +44,7 @@
 | `manager.Manager` | Factory-facing noun (`f.ControlPlane()`) wrapping host-side CP container lifecycle: `EnsureRunning`, `Stop`, `IsRunning`, `ProbeHealthz`. Lives in `controlplane/manager/`. Consumed by the break-glass `clawker controlplane up/down/status` verbs |
 | `manager.EnsureRunning` | Package-level host-side CP container bootstrap (idempotent, mutex-guarded, mount-mode reconciliation, health-poll). Consumed via `ensureRunning` seam by `adminClientFunc` |
 | `controlplane.AgentWatcher` | Polls Docker for `purpose=agent` containers; on drain-to-zero (past grace/threshold, `ListErrCeiling`-bounded) fires drain callback for CP self-shutdown (INV-B2-007). `Run` is at-most-once (`atomic.Bool`) |
-| `f.AdminClient(ctx)` | Factory lazy noun returning `adminv1.AdminServiceClient` — transparent CP bootstrap on first call, mTLS + OAuth2 + keepalive. Rebuilds `grpc.ClientConn` only on `TransientFailure`/`Shutdown`. Mock: `controlplane/mocks.AdminServiceClientMock` |
+| `f.AdminClient(ctx)` | Factory lazy noun returning `adminv1.AdminServiceClient` — transparent CP bootstrap on first call, mTLS + OAuth2 + keepalive. Rebuilds `grpc.ClientConn` only on `TransientFailure`/`Shutdown`. Mock: `api/admin/v1/mocks.AdminServiceClientMock` |
 | `agent.Registry` | Sqlite-persisted record of registered agents keyed by SHA-256 over the mTLS peer cert DER (`[sha256.Size]byte`). CP is the SOLE writer — writes rows via Register handler, evicts via dockerevents `container/destroy` + startup reap. Rows store `(thumbprint, container_id, project, agent_name, registered_at, last_seen)` with `project` / `agent_name` typed as `auth.ProjectSlug` / `auth.AgentName`; the displayed `AgentFullName` is reconstructed on demand. Surface: `Add`, `LookupByContainerID` (used by Register handler for idempotency + dialer for thumbprint-replay detection), `EvictByContainerID`, `Snapshot`. Goose-managed schema (migrations co-located + embedded). Backing store: `modernc.org/sqlite`. Lives in `controlplane/agent` |
 | `pubsub.Topic[T]` / `pubsub.Event[T]` | Generic in-memory pub/sub pipe for the CP — a dumb, stateless transport that knows only typed envelopes and subscribers, never agents/containers/firewalls. `Topic[T].Subscribe(func(Event[T]))` registers a typed handler; `Publish` is non-blocking with a back-pressure signal. Each subscriber gets a bounded buffer with drop-oldest on overflow (counted); every delivery runs under recover so one panicking subscriber can't kill PID 1 and strand eBPF (CP §3.4). No central worldview — each domain owns its own state. Lives in `controlplane/pubsub` |
 | Bounded-context state repositories | Each CP domain (`agent`, `dockerevents`, …) owns and projects its OWN private `Store`/`Repository`; a subscriber folds typed events into its store. No central `State`/`Snapshot`. Cross-domain reads happen only through a read-only interface the owning domain chooses to expose, injected by the orchestrator (`internal/controlplane/cmd.go`) — never direct state access |
@@ -62,8 +61,8 @@
 | `controlplane.AgentMethodScopes()` | Per-listener scope vocabulary for the agent gRPC listener. Currently one entry: `Register → ScopeSelfRegister`. Mirror of `AdminMethodScopes`; an `AuthInterceptor` wired with this map fails closed on unmapped methods, so a new RPC added without a scope entry is rejected at runtime |
 | `shared.CommandOpts` | DI container for container start orchestration — function closures: Client, Config, ProjectManager, HostProxy, ControlPlane, AdminClient, SocketBridge, Logger; plus plain string fields AgentName and Project |
 | `shared.ContainerStart()` | Three-phase container start: `BootstrapServicesPreStart` → docker start → `BootstrapServicesPostStart` (3 RPCs: FirewallInit → FirewallAddRules → FirewallEnable). Used by `run` and `start` |
-| `hostproxy.HostProxyService` | Interface for host proxy operations (EnsureRunning, IsRunning, ProxyURL); mock: `hostproxytest.MockManager` |
-| `hostproxy.Manager` | Concrete host proxy daemon manager (spawns subprocess); implements `HostProxyService` |
+| `hostproxy.Service` | Interface for host proxy operations (EnsureRunning, IsRunning, ProxyURL); mock: `hostproxytest.MockManager` |
+| `hostproxy.Manager` | Concrete host proxy daemon manager (spawns subprocess); implements `Service` |
 | `socketbridge.SocketBridgeManager` | Interface for socket bridge operations; mock: `sockebridgemocks.SocketBridgeManagerMock` |
 | `socketbridge.Manager` | Per-container SSH/GPG agent bridge daemon (muxrpc over docker exec) |
 | `iostreams.IOStreams` | I/O streams, TTY detection, colors, styles, spinners, progress, layout |

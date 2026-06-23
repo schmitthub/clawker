@@ -12,16 +12,9 @@ Key functions: `GetAgentName()`, `BuildConfigs(flags, mounts, cfg)`, `ValidateFl
 
 ### CreateContainer (`container_create.go`)
 
-Single entry point for container creation. Progress via events channel (nil for silent mode). Callers own all terminal output.
+Single entry point for container creation. Developer diagnostics go to zerolog; callers own all terminal output. Signature is `(ctx, *CreateContainerOptions)`, returning a `*CreateContainerResult`. Commands typically run it in a goroutine behind a spinner and collect the outcome on a channel.
 
 ```go
-events := make(chan CreateContainerEvent, 64)
-done := make(chan struct{})
-go func() {
-    defer close(done)
-    for ev := range events { /* drive spinner, collect warnings */ }
-}()
-
 result, err := shared.CreateContainer(ctx, &shared.CreateContainerOptions{
     Client:         client,
     Config:         cfg,
@@ -32,9 +25,7 @@ result, err := shared.CreateContainer(ctx, &shared.CreateContainerOptions{
     ProjectManager: opts.ProjectManager,
     HostProxy:      opts.HostProxy,
     Log:            log,
-}, events)
-close(events)
-<-done
+})
 ```
 
 **Steps** (streamed via events): workspace, config, environment, container (validate+build+create+inject).
@@ -106,7 +97,7 @@ Three-phase orchestration: pre-start bootstrap, Docker start, post-start bootstr
 |-------|------|---------|
 | `Client` | `func(ctx) (*docker.Client, error)` | Docker client provider |
 | `Config` | `func() (config.Config, error)` | Config provider (required) |
-| `HostProxy` | `func() hostproxy.HostProxyService` | Host proxy provider |
+| `HostProxy` | `func() hostproxy.Service` | Host proxy provider |
 | `ControlPlane` | `func() cpboot.Manager` | CP container lifecycle |
 | `AdminClient` | `func(ctx) (adminv1.AdminServiceClient, error)` | CP gRPC client (mTLS + OAuth2) |
 | `SocketBridge` | `func() socketbridge.SocketBridgeManager` | Socket bridge provider |
@@ -130,9 +121,6 @@ Nil providers safely skipped (debug logged). `Config` is the only required provi
 | `CommandOpts` | DI container with lazy closures + AgentName/Project |
 | `CreateContainerOptions` | Inputs: Client, Config, ProjectName, Options, Flags, Version, ProjectManager, HostProxy, Log, Is256Color, IsTrueColor |
 | `CreateContainerResult` | Outputs: ContainerID, AgentName, ContainerName, WorkDir, HostProxyRunning |
-| `CreateContainerEvent` | Channel event: Step, Status, Type, Message |
-| `StepStatus` | `StepRunning`, `StepComplete`, `StepCached` |
-| `MessageType` | `MessageInfo`, `MessageWarning` |
 | `ListOpts` / `MapOpts` / `PortOpts` / `NetworkOpt` | pflag.Value types for repeatable/map/port/network flags |
 | `CopyToVolumeFn` / `CopyToContainerFn` / `CopyFromContainerFn` | Function types for Docker copy operations |
 | `InitConfigOpts` | Project/agent names, ContainerWorkDir, ClaudeCodeConfig, CopyToVolumeFn, Log |

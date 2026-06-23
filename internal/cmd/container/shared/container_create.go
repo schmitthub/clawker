@@ -1458,7 +1458,6 @@ type CreateContainerResult struct {
 // run and create commands. It performs workspace setup, config initialization,
 // environment resolution, Docker container creation, and post-create injection.
 //
-// Progress is communicated via the events channel (nil for silent mode).
 // Developer diagnostics go to zerolog. Callers own all terminal output.
 //
 // Uses named return retErr so deferred volume cleanup can inspect the error.

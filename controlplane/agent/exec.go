@@ -692,7 +692,7 @@ func (e *Executor) runStep(ctx context.Context, stream clawkerdv1.ClawkerdServic
 }
 
 // classifyErrorCode maps a clawkerd ErrorCode to the typed init
-// failure classification. NewDialer codes default to Unknown so producers
+// failure classification. New codes default to Unknown so producers
 // don't drop information silently — the human-readable detail still
 // carries the ErrorCode string.
 func classifyErrorCode(code clawkerdv1.ErrorCode) Reason {

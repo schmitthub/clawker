@@ -220,6 +220,8 @@ security:
             path: /anthropics/claude-code/
           - action: allow
             path: /opensearch-project/OpenSearch-Dashboards/
+          - action: allow
+            path: /tekwizely/pre-commit-golang
       - action: allow
         dst: api.github.com
         insecure_skip_tls_verify: false

@@ -76,7 +76,8 @@ Each package with complex dependencies provides test infrastructure:
 | `internal/git` | `gittest/` | `InMemoryGitManager` |
 | `internal/project` | `mocks/` | `NewMockProjectManager()`, `NewMockProject(name, repoPath)`, `NewTestProjectManager(t, gitFactory)` |
 | `pkg/whail` | `whailtest/` | `FakeAPIClient`, build scenarios, `EventRecorder` |
-| `internal/controlplane` | `mocks/` | `AdminServiceClientMock`, `IntrospectorMock` (moq) |
+| `api/admin/v1` | `mocks/` | `AdminServiceClientMock` (moq) |
+| `controlplane/auth` | `mocks/` | `IntrospectorMock` (moq) |
 | `internal/controlplane/cpboot` | `mocks/` | `ManagerMock` (moq) |
 | `internal/controlplane/firewall/ebpf` | `mocks/` | `EBPFManagerMock` (moq) |
 | `internal/hostproxy` | `hostproxytest/` | `MockHostProxy`, `MockManager` |

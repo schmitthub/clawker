@@ -63,9 +63,9 @@ func WithGracePeriod(d time.Duration) DaemonOption
 ## Interface
 
 ```go
-// HostProxyService is the interface for host proxy operations used by container commands.
+// Service is the interface for host proxy operations used by container commands.
 // Concrete implementation: Manager. Mock: hostproxytest.MockManager.
-type HostProxyService interface {
+type Service interface {
     EnsureRunning() error
     IsRunning() bool
     ProxyURL() string
@@ -120,7 +120,7 @@ The `/open/url` endpoint enforces egress rules before opening URLs in the host b
 
 ### Startup readiness gate
 
-The firewall stack boots **after** the host proxy in container bootstrap, and the manager gates that bootstrap on the host proxy's `/health`. So `Daemon.Run` binds the server **first** (`/health` answers immediately, unblocking the firewall's own bringup), then runs `ensureEgressRulesReady` in a background goroutine. Gating the bind on firewall readiness would deadlock cold start; binding first is safe because `/open/url` is fail-closed per request regardless (see two-tier fail-closed above).
+The control plane and firewall stack boot **before** the host proxy in container bootstrap, so the host proxy's readiness gate (below) can assume the firewall is already coming up instead of racing it — starting the host proxy first would deadlock cold start, since its gate waits on the firewall. `Daemon.Run` binds the server **first** (`/health` answers immediately), then runs `ensureEgressRulesReady` in a background goroutine. Binding first is safe because `/open/url` is fail-closed per request regardless (see two-tier fail-closed above).
 
 `ensureEgressRulesReady` is a **three-stage sequential gate** — each stage is its own bounded loop and only starts once the prior one passes, so a later stage never races ahead of its prerequisite:
 
@@ -144,7 +144,7 @@ Container registers session via `/callback/register`. Server starts dynamic list
 
 ## Test Doubles (`hostproxytest/`)
 
-### MockManager (HostProxyService interface)
+### MockManager (Service interface)
 
 For unit tests — no subprocess spawning, no network I/O:
 

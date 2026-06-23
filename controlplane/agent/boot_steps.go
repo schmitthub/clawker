@@ -30,7 +30,7 @@ var preRunStep ShellStep = ShellStep{
 
 // bootPlanPost is the fixed boot tail: pre_run (the last user hook before
 // the CMD) then agent-ready (releases the CMD, must be terminal so no Step
-// races the CMD past the entrypoint fifo). NewDialer boot steps prepend to
+// races the CMD past the entrypoint fifo). New boot steps prepend to
 // BootPlan's head; this pair stays last, in this order. Split out and named
 // so the ordering invariant survives future edits. Pinned by
 // TestBootPlan_PreRunShape.

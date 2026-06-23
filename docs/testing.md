@@ -227,7 +227,7 @@ result := h.Run("firewall", "status", "--json")
 require.Equal(t, 0, result.ExitCode, "stderr: %s", result.Stderr)
 ```
 
-Pass real constructors for any dependency you want to exercise against Docker. Some nil fields use test fakes (`configmocks.NewBlankConfig`, `mocks.FakeClient`, `hostproxytest.MockManager`, `cpmocks.AdminServiceClientMock`), while `Logger` always creates a real file logger via `logger.New`, and `ProjectManager`, `GitManager`, and `SocketBridge` default to nil.
+Pass real constructors for any dependency you want to exercise against Docker. Some nil fields use test fakes (`configmocks.NewBlankConfig`, `mocks.FakeClient`, `hostproxytest.MockManager`, `adminv1mocks.AdminServiceClientMock`), while `Logger` always creates a real file logger via `logger.New`, and `ProjectManager`, `GitManager`, and `SocketBridge` default to nil.
 
 #### Harness Types
 
