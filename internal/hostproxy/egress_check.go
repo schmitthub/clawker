@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -32,6 +33,38 @@ type egressRule struct {
 type pathRule struct {
 	Path   string `yaml:"path"`
 	Action string `yaml:"action"`
+}
+
+// regexPathMarker mirrors firewall.regexPathMarker (controlplane/firewall/
+// rules_store.go): a leading "~" promotes a path rule from a literal prefix to
+// an RE2 regex. It is re-declared here as an intentional copy because hostproxy
+// is a leaf package that must not import the firewall package — the same reason
+// egressRule/pathRule are local mirrors. It MUST stay in lockstep: the same
+// egress-rules.yaml must match identically on both enforcement paths.
+const regexPathMarker = "~"
+
+// pathRuleMatches reports whether urlPath satisfies a stored rule path under the
+// same semantics the firewall's Envoy generation uses (pathSpecifier): a
+// "~"-prefixed pattern is an RE2 regex matched full-string (the marker stripped,
+// both ends anchored — mirroring Envoy safe_regex), and any other path is an
+// open-ended literal prefix. Go's regexp engine is RE2, so a pattern that
+// compiles here matches exactly as Envoy's safe_regex does.
+func pathRuleMatches(rulePath, urlPath string) bool {
+	rx, isRegex := strings.CutPrefix(rulePath, regexPathMarker)
+	if !isRegex {
+		return strings.HasPrefix(urlPath, rulePath)
+	}
+	// safe_regex is a full-string match; a leading "^" (accepted by the
+	// firewall's validatePathRulePath) is redundant once both ends are
+	// anchored, so trim it to avoid "^^".
+	re, err := regexp.Compile("^(?:" + strings.TrimPrefix(rx, "^") + ")$")
+	if err != nil {
+		// validatePathRulePath compiles every pattern before it reaches the
+		// rules file, so this is unreachable for a well-formed file. Fail
+		// closed regardless, consistent with this package's doctrine.
+		return false
+	}
+	return re.MatchString(urlPath)
 }
 
 // egressRulesFile matches the YAML structure of the egress rules file managed
@@ -227,7 +260,9 @@ func evaluateRule(r egressRule, host, path string) error {
 	return nil
 }
 
-// checkPathRules evaluates path-level rules using longest-prefix matching.
+// checkPathRules evaluates path-level rules via pathRuleMatches (literal prefix,
+// or RE2 regex for "~"-marked paths), longest stored-path wins on ties — the
+// same precedence the firewall applies when it sorts Envoy routes longest-first.
 func checkPathRules(rules []pathRule, pathDefault, host, urlPath string) error {
 	bestLen := -1
 	action := ""
@@ -236,7 +271,7 @@ func checkPathRules(rules []pathRule, pathDefault, host, urlPath string) error {
 		if pr.Path == "" {
 			continue
 		}
-		if strings.HasPrefix(urlPath, pr.Path) && len(pr.Path) > bestLen {
+		if pathRuleMatches(pr.Path, urlPath) && len(pr.Path) > bestLen {
 			bestLen = len(pr.Path)
 			action = pr.Action
 		}

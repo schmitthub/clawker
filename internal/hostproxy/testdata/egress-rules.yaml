@@ -82,3 +82,24 @@ rules:
     dst: cdn.example.test
     port: 80
     proto: http
+  # Regex (~) path rules — must enforce identically to Envoy safe_regex.
+  # Allowlist: only the two exact users (with optional trailing slash); the
+  # full-string anchor is what blocks the /users/<name>-evil prefix bypass.
+  - action: allow
+    dst: allowlist.example.test
+    port: 80
+    proto: http
+    path_default: deny
+    path_rules:
+      - path: "~/users/(clawker|anthropic)/?"
+        action: allow
+  # Denylist with default-allow: the regex deny must match, otherwise the host
+  # proxy would silently allow a path Envoy denies (the exfil direction).
+  - action: allow
+    dst: denylist.example.test
+    port: 80
+    proto: http
+    path_default: allow
+    path_rules:
+      - path: "~/admin(/.*)?"
+        action: deny

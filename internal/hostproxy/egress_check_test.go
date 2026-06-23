@@ -50,6 +50,15 @@ func TestCheckURLAgainstEgressRules(t *testing.T) {
 		// --- HTTP without path rules ---
 		{name: "http cdn any path", url: "http://cdn.example.test/assets/img.png", allowed: true},
 
+		// --- Regex (~) path rules: must match Envoy safe_regex exactly ---
+		{name: "regex allow exact user", url: "http://allowlist.example.test/users/clawker", allowed: true},
+		{name: "regex allow user trailing slash", url: "http://allowlist.example.test/users/anthropic/", allowed: true},
+		{name: "regex allow blocks prefix bypass", url: "http://allowlist.example.test/users/clawker-evil", allowed: false},
+		{name: "regex allow blocks other path", url: "http://allowlist.example.test/repos/clawker", allowed: false},
+		{name: "regex deny blocks subtree", url: "http://denylist.example.test/admin", allowed: false},
+		{name: "regex deny blocks subtree child", url: "http://denylist.example.test/admin/users", allowed: false},
+		{name: "regex deny allows other path", url: "http://denylist.example.test/public", allowed: true},
+
 		// --- IP address rules ---
 		{name: "ip exact match", url: "https://93.184.216.34/resource", allowed: true},
 		{name: "ip wrong address", url: "https://93.184.216.35/resource", allowed: false},

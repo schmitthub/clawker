@@ -289,8 +289,9 @@ func httpRoutes(r config.EgressRule, cluster string, websocket bool) []any {
 	return append(routes, httpAllowRoute("/", cluster, websocket, nil))
 }
 
-// httpAllowRoute forwards a path prefix (optionally narrowed to a set of HTTP
-// methods) to the upstream cluster.
+// httpAllowRoute forwards a path match — a literal prefix, or an RE2 regex when
+// the path is regex-marked (see pathSpecifier) — optionally narrowed to a set of
+// HTTP methods, to the upstream cluster.
 func httpAllowRoute(path, cluster string, websocket bool, methods []string) map[string]any {
 	route := map[string]any{"cluster": cluster, "timeout": "0s"}
 	// ws/wss enrichment: a per-route upgrade_configs entry enables the WebSocket
@@ -307,8 +308,9 @@ func httpAllowRoute(path, cluster string, websocket bool, methods []string) map[
 	}
 }
 
-// httpDenyRoute 403s a path prefix (optionally narrowed to a set of HTTP
-// methods) via direct_response.
+// httpDenyRoute 403s a path match — a literal prefix, or an RE2 regex when the
+// path is regex-marked (see pathSpecifier) — optionally narrowed to a set of
+// HTTP methods, via direct_response.
 func httpDenyRoute(path string, methods []string) map[string]any {
 	return map[string]any{
 		"match":    routeMatch(path, methods),
@@ -320,9 +322,10 @@ func httpDenyRoute(path string, methods []string) map[string]any {
 	}
 }
 
-// routeMatch builds an Envoy RouteMatch: a path prefix plus, when methods is
-// non-empty, a :method pseudo-header matcher narrowing the route to those verbs.
-// methods are pre-normalized (uppercase, deduped, sorted) by NormalizeRule.
+// routeMatch builds an Envoy RouteMatch: a path specifier (a literal prefix or
+// RE2 safe_regex, chosen by pathSpecifier) plus, when methods is non-empty, a
+// :method pseudo-header matcher narrowing the route to those verbs. methods are
+// pre-normalized (uppercase, deduped, sorted) by NormalizeRule.
 func routeMatch(path string, methods []string) map[string]any {
 	match := pathSpecifier(path)
 	if h := methodHeaderMatch(methods); h != nil {
