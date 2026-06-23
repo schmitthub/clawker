@@ -52,6 +52,23 @@ Where a `harness` descriptor must be born.
 Base images (`buildpack-deps`/`alpine`) are **harness-neutral** — no change. Node baked in
 *because* Claude hooks shell to `node`.
 
+### `internal/cmd/image/build/build.go` — the build command (build-time harness-selection injection point)
+
+This is where the **decided model** puts harness selection: `clawker build --harness <name>`
+(default from `settings.default_harness`). Today it is single-harness/Claude-only.
+
+| file:line | thing | fix |
+|---|---|---|
+| `build.go:217` | `imageTag := docker.ImageTag(projectName)` — image tag is **project-keyed only** | becomes (project, harness)-keyed — N project images, one per built harness; harness name into tag/labels |
+| `build.go:228` | `docker.NewBuilder(client, cfg, wd, projectName)` — no harness dimension | thread selected harness descriptor into builder |
+| `build.go:237` | `claudeCodeVersion := bundler.DefaultClaudeCodeVersion` | per-harness version default from descriptor |
+| `build.go:238-250` | resolves Claude Code "latest" via npm; warning "Could not resolve latest Claude Code version", debug field `claude_code_version` | per-harness version resolver (npm vs github-release vs binary); only runs for npm-distributed harnesses |
+| `build.go:261-275` | `BuilderOptions{ ... ClaudeCodeVersion: claudeCodeVersion }` | harness-agnostic version field + descriptor |
+| `build.go:305-307` | progress display `Title: "Building "+projectName`, `Subtitle: imageTag` | surface harness in build progress |
+| `build.go` (whole) | **no `--harness` flag exists** | add `--harness` flag (default = settings `default_harness`); resolve descriptor here, drives Dockerfile gen + image identity |
+
+Note: `auth.EnsureAuthMaterial()` (build.go:131) is clawker CP/firewall CA material — **harness-agnostic**, no change. BuildKit detection, label/build-arg parsing, iidfile, progress wiring all harness-neutral.
+
 ## 3. Container create — host-config staging
 
 `internal/containerfs/` hardcodes Claude's entire on-disk layout.
