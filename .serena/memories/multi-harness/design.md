@@ -88,6 +88,8 @@ JSON-key rewriting in `internal/containerfs`) cannot be expressed as pure data.
     project `post_init`)
   - egress fragment — its required floor + security path-rules
   - staging — a `HarnessStager` impl for the bespoke host-config staging
+  - skill/extension install — how the clawker-support skill installs into this harness (CLI binary,
+    marketplace/source format, scope vocabulary, install commands), or a declaration that it has none
 
 ## Extensibility tiers
 
@@ -123,6 +125,12 @@ From the inventory, across all subsystems:
 - Dockerfile install/seed/env → claude harness build fragment + assets
 - spawn `routeArgs "claude"`, `CMD ["claude"]` → claude harness CMD
 - CP `configSeedScript`/`postInitScript` → parameterized by harness descriptor
+- `clawker skill` (claude `plugin` CLI wrapper) → generic agent-skill command + per-harness selector
+  flag (`--claude`, ...); skill-install becomes a `Harness` fragment
+
+Note: clawker ships no MCP setup of its own. `agent.post_init` is arbitrary user content (may contain
+MCP setup or anything); the harness-keyed config map namespaces it so it only runs in its harness's
+container. The coupling is structural (where arbitrary hooks live), not a baked script to generalize.
 
 ## Open questions (undecided)
 
@@ -139,5 +147,5 @@ From the inventory, across all subsystems:
 ## Status
 
 Mechanic-level coupling mapped: containerfs staging, firewall floor, agent/build coupling,
-build.go. Remaining recon + the unlocated MCP setup tracked at the end of
-`claude-coupling-inventory.md`.
+build.go, `clawker skill` command. Remaining recon (Dockerfile install/seed, CP init script
+bodies + spawn) tracked at the end of `claude-coupling-inventory.md`.
