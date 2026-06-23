@@ -59,6 +59,27 @@ func TestCheckURLAgainstEgressRules(t *testing.T) {
 		{name: "regex deny blocks subtree child", url: "http://denylist.example.test/admin/users", allowed: false},
 		{name: "regex deny allows other path", url: "http://denylist.example.test/public", allowed: true},
 
+		// --- Percent-encoding cannot evade a deny. The host browser + origin
+		//     decode the path, so the host proxy decodes too (net/url) and the
+		//     denied resource is what gets matched. Keeping %xx literal here —
+		//     as Envoy's normalize_path does — would instead let "/%61dmin"
+		//     miss the deny and fall through to default-allow, a browser-channel
+		//     bypass. Decoding is the fail-closed direction for this channel. ---
+		{name: "regex deny blocks percent-encoded admin", url: "http://denylist.example.test/%61dmin", allowed: false},
+		{name: "regex deny blocks encoded slash child", url: "http://denylist.example.test/admin%2fusers", allowed: false},
+		{name: "regex allow honors percent-encoded user", url: "http://allowlist.example.test/users/%63lawker", allowed: true},
+
+		// --- Dot-segment directory normalization vs an end-anchored allow.
+		//     "/blog/." and "/blog/x/.." resolve to the directory "/blog/"
+		//     (RFC 3986 remove_dot_segments / Envoy normalize_path), which
+		//     "~/blog$" does NOT match. The host proxy must DENY them, matching
+		//     Envoy — else the host browser fetches a denied directory. ---
+		{name: "anchored exact blog allowed", url: "http://anchored.example.test/blog", allowed: true},
+		{name: "anchored blog dir denied", url: "http://anchored.example.test/blog/", allowed: false},
+		{name: "anchored blog dot-segment dir denied", url: "http://anchored.example.test/blog/.", allowed: false},
+		{name: "anchored blog dotdot dir denied", url: "http://anchored.example.test/blog/x/..", allowed: false},
+		{name: "anchored blog parent denied", url: "http://anchored.example.test/blog/..", allowed: false},
+
 		// --- IP address rules ---
 		{name: "ip exact match", url: "https://93.184.216.34/resource", allowed: true},
 		{name: "ip wrong address", url: "https://93.184.216.35/resource", allowed: false},
@@ -479,6 +500,14 @@ func TestCheckURLAgainstEgressRules_PathTraversal(t *testing.T) {
 		// --- traversal that legitimately nets back to an allowed path ---
 		{"dotdot net-allowed", "/v1/admin/../things", true},
 		{"dotdot churn net-allowed", "/v1/a/../b/../things", true},
+
+		// --- dot-segment that resolves to the allowed directory "/v1/" must
+		//     stay allowed: RFC 3986 keeps the trailing slash ("/v1/." and
+		//     "/v1/x/.." -> "/v1/"), so the canonical path still matches the
+		//     "/v1/" prefix rule. path.Clean alone drops the slash, which would
+		//     mis-block these as "/v1" (the bare, denied path). ---
+		{"dot-segment to dir allowed", "/v1/.", true},
+		{"dotdot back to dir allowed", "/v1/x/..", true},
 
 		// --- double-encoding: stays literal on a single-decode server, so it
 		// remains under /v1/ and never reaches /secret. Documents the boundary:

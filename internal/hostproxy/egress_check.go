@@ -139,19 +139,35 @@ func CheckURLAgainstEgressRules(targetURL, rulesFilePath string) error {
 //     intentionally stricter than a spec-compliant server (which keeps %2f
 //     literal) — the correct fail-closed direction for an allowlist.
 //
-// path.Clean strips a trailing slash, so restore it when the input had one:
-// a directory-prefix rule like "/schmitthub/" must still match a request to
-// the bare directory.
+// path.Clean strips the trailing slash that marks a directory, but RFC 3986
+// remove_dot_segments (which Envoy applies) keeps it — and the slash is
+// security-significant against an end-anchored rule like "~/blog$". So restore
+// it whenever the path resolves to a directory (see endsInDirectory), not only
+// when the literal input ended in "/": "/blog/." and "/blog/x/.." both resolve
+// to "/blog/", and a directory-prefix rule like "/schmitthub/" must still match
+// a request to the bare directory.
 func canonicalizePath(p string) string {
 	if p == "" {
 		return "/"
 	}
 	p = strings.ReplaceAll(p, "\\", "/")
 	cleaned := path.Clean(p)
-	if strings.HasSuffix(p, "/") && !strings.HasSuffix(cleaned, "/") {
+	// Restore the directory slash path.Clean drops (see func doc and endsInDirectory).
+	if endsInDirectory(p) && !strings.HasSuffix(cleaned, "/") {
 		cleaned += "/"
 	}
 	return cleaned
+}
+
+// endsInDirectory reports whether a backslash-folded path resolves to a
+// directory — it ends in "/", or in a final "." / ".." dot-segment ("/." or
+// "/.."). These are exactly the cases RFC 3986 remove_dot_segments terminates
+// with a trailing slash. A literal filename ending in a dot (e.g. "/blog...")
+// is not a dot-segment and is excluded.
+func endsInDirectory(p string) bool {
+	return strings.HasSuffix(p, "/") ||
+		strings.HasSuffix(p, "/.") ||
+		strings.HasSuffix(p, "/..")
 }
 
 // schemeToProto maps a URL scheme to the egress rule proto and its default port.
