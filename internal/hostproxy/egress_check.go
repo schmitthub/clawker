@@ -1,6 +1,7 @@
 package hostproxy
 
 import (
+	"errors"
 	"fmt"
 	"net/netip"
 	"net/url"
@@ -49,19 +50,31 @@ const regexPathMarker = "~"
 // both ends anchored — mirroring Envoy safe_regex), and any other path is an
 // open-ended literal prefix. Go's regexp engine is RE2, so a pattern that
 // compiles here matches exactly as Envoy's safe_regex does.
-func pathRuleMatches(rulePath, urlPath string) bool {
+// compilePathRegex maps a stored rule path to its request-time matcher. A
+// non-"~" path is a literal prefix (isRegex=false, re=nil). A "~"-prefixed path
+// is compiled to the same full-string-anchored RE2 form Envoy's safe_regex uses
+// (marker stripped, redundant leading "^" trimmed to avoid "^^"). The single
+// definition is shared by pathRuleMatches (request time) and readEgressRules
+// (load-time validation) so the two can never drift on what "compiles".
+func compilePathRegex(rulePath string) (re *regexp.Regexp, isRegex bool, err error) {
 	rx, isRegex := strings.CutPrefix(rulePath, regexPathMarker)
+	if !isRegex {
+		return nil, false, nil
+	}
+	re, err = regexp.Compile("^(?:" + strings.TrimPrefix(rx, "^") + ")$")
+	return re, true, err
+}
+
+func pathRuleMatches(rulePath, urlPath string) bool {
+	re, isRegex, err := compilePathRegex(rulePath)
 	if !isRegex {
 		return strings.HasPrefix(urlPath, rulePath)
 	}
-	// safe_regex is a full-string match; a leading "^" (accepted by the
-	// firewall's validatePathRulePath) is redundant once both ends are
-	// anchored, so trim it to avoid "^^".
-	re, err := regexp.Compile("^(?:" + strings.TrimPrefix(rx, "^") + ")$")
 	if err != nil {
-		// validatePathRulePath compiles every pattern before it reaches the
-		// rules file, so this is unreachable for a well-formed file. Fail
-		// closed regardless, consistent with this package's doctrine.
+		// Unreachable for a file that passed through readEgressRules, which
+		// rejects any uncompilable regex up front (mirroring Envoy refusing
+		// the whole config). Backstop: fail closed regardless, consistent
+		// with this package's doctrine.
 		return false
 	}
 	return re.MatchString(urlPath)
@@ -185,15 +198,61 @@ func schemeToProto(scheme string) (proto string, defaultPort int, err error) {
 // readEgressRules reads and parses the egress rules file. The firewall daemon
 // writes this file atomically (temp+fsync+rename), so concurrent reads always
 // see a complete snapshot — no locking needed.
+// errEgressRulesInvalid marks a present-but-corrupt egress rules file (a parse
+// failure or an uncompilable "~" regex) — an infrastructure/config error, not a
+// policy deny. It is the host proxy's analog of Envoy refusing to load an
+// invalid config: the daemon refuses to start on it (validateEgressRulesFile)
+// and a running daemon fails the request closed and loud (handleOpenURL).
+var errEgressRulesInvalid = errors.New("egress rules file invalid")
+
+// validateEgressRulesFile reports whether the egress rules file at path is
+// usable, for the daemon startup gate. It mirrors Envoy's config-load failsafe:
+// any unusable file — missing, unreadable, unparseable, or carrying an
+// uncompilable "~" regex — is a hard error so the host proxy refuses to start
+// (and thus fails container startup) rather than come up and silently deny
+// every /open/url while masking the cause. Only an empty path (firewall
+// genuinely disabled) is a legitimate skip; when enabled the file must exist
+// and be valid, exactly as Envoy will not boot without a valid config.
+func validateEgressRulesFile(path string) error {
+	if path == "" {
+		return nil
+	}
+	if _, err := readEgressRules(path); err != nil {
+		return err
+	}
+	return nil
+}
+
 func readEgressRules(path string) ([]egressRule, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		// Firewall is enabled (caller only sets a non-empty path then), so a
+		// missing or unreadable rules file is a broken trust boundary, not a
+		// policy decision — treat it as invalid like Envoy refusing to boot
+		// without a config: loud, fail-closed, refuse to start.
+		return nil, fmt.Errorf("%w: reading file: %w", errEgressRulesInvalid, err)
 	}
 
 	var f egressRulesFile
 	if err := yaml.Unmarshal(data, &f); err != nil {
-		return nil, fmt.Errorf("parsing egress rules: %w", err)
+		return nil, fmt.Errorf("%w: parsing: %w", errEgressRulesInvalid, err)
+	}
+
+	// Mirror Envoy's own failsafe. Envoy rejects the ENTIRE config if any
+	// safe_regex fails to compile, so a malformed regex takes the whole
+	// firewall fail-closed. The host proxy is a second evaluator on the same
+	// file with no such intrinsic check — without this gate a malformed "~"
+	// regex would be silently skipped at match time (pathRuleMatches), letting
+	// a path Envoy denies fall through to path_default and breaking the
+	// documented lockstep. A present-but-corrupt file is errEgressRulesInvalid:
+	// the daemon refuses to start (validateEgressRulesFile) and a running
+	// daemon fails the request closed and loud (handleOpenURL).
+	for _, r := range f.Rules {
+		for _, pr := range r.PathRules {
+			if _, _, err := compilePathRegex(pr.Path); err != nil {
+				return nil, fmt.Errorf("%w: rule %q: invalid regex path %q: %w", errEgressRulesInvalid, r.Dst, pr.Path, err)
+			}
+		}
 	}
 
 	return f.Rules, nil

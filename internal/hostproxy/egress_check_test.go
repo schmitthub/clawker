@@ -1,6 +1,7 @@
 package hostproxy
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -196,6 +197,90 @@ func TestCheckURLAgainstEgressRules_MalformedYAML(t *testing.T) {
 	err := CheckURLAgainstEgressRules("https://github.test/", f)
 	if err == nil {
 		t.Fatal("expected error for malformed YAML, got nil")
+	}
+}
+
+// TestCheckURLAgainstEgressRules_MalformedRegexFailsClosed verifies the host
+// proxy mirrors Envoy's own failsafe: Envoy rejects the ENTIRE config if any
+// safe_regex fails to compile, taking the whole firewall fail-closed. The host
+// proxy is a second evaluator on the same egress-rules.yaml with no such
+// intrinsic check, so a malformed "~" regex must fail the whole file closed —
+// otherwise the bad rule is silently skipped and the two enforcement paths
+// diverge. A malformed regex on one host must deny even an otherwise-allowed
+// URL on a different host.
+func TestCheckURLAgainstEgressRules_MalformedRegexFailsClosed(t *testing.T) {
+	tmp := t.TempDir()
+	f := filepath.Join(tmp, "bad-regex.yaml")
+	// github.test would be allowed in isolation; api.example.test carries an
+	// uncompilable regex path (unbalanced "(").
+	rules := "" +
+		"rules:\n" +
+		"  - action: allow\n" +
+		"    dst: github.test\n" +
+		"    port: 443\n" +
+		"    proto: https\n" +
+		"  - action: allow\n" +
+		"    dst: api.example.test\n" +
+		"    port: 80\n" +
+		"    proto: http\n" +
+		"    path_default: deny\n" +
+		"    path_rules:\n" +
+		"      - path: \"~/users/(clawker\"\n" +
+		"        action: allow\n"
+	if err := os.WriteFile(f, []byte(rules), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Even the otherwise-allowed URL on an unrelated host must be denied: a
+	// single malformed regex poisons the whole file (fail-closed), matching
+	// Envoy rejecting the entire config.
+	err := CheckURLAgainstEgressRules("https://github.test/", f)
+	if err == nil {
+		t.Fatal("expected malformed regex to fail the whole rules file closed, got nil (fail-open)")
+	}
+}
+
+// TestValidateEgressRulesFile covers the startup gate: a present-but-corrupt
+// rules file is a hard error (errEgressRulesInvalid) so the daemon can refuse
+// to start, mirroring Envoy refusing to boot on an invalid config. An empty
+// path (firewall disabled) or a not-yet-written file is not an error.
+func TestValidateEgressRulesFile(t *testing.T) {
+	tmp := t.TempDir()
+
+	corrupt := filepath.Join(tmp, "corrupt.yaml")
+	if err := os.WriteFile(corrupt, []byte("rules:\n  - dst: x.test\n    proto: http\n    port: \"80\"\n    path_rules:\n      - action: deny\n        path: \"~/[bad(\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	badYAML := filepath.Join(tmp, "bad.yaml")
+	if err := os.WriteFile(badYAML, []byte("{{not yaml"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name      string
+		path      string
+		wantError bool
+	}{
+		{name: "empty path (firewall disabled)", path: "", wantError: false},
+		{name: "missing file (firewall enabled, file gone)", path: filepath.Join(tmp, "nope.yaml"), wantError: true},
+		{name: "valid rules file", path: testRulesFile, wantError: false},
+		{name: "malformed regex", path: corrupt, wantError: true},
+		{name: "unparseable yaml", path: badYAML, wantError: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateEgressRulesFile(tc.path)
+			if tc.wantError {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				if !errors.Is(err, errEgressRulesInvalid) {
+					t.Fatalf("expected errEgressRulesInvalid, got %v", err)
+				}
+			} else if err != nil {
+				t.Fatalf("expected nil, got %v", err)
+			}
+		})
 	}
 }
 
