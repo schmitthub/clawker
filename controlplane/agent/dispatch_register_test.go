@@ -1,43 +1,45 @@
-package agent
+package agent_test
 
 import (
 	"context"
 	"crypto/sha256"
 	"errors"
-	"io"
 	"testing"
 	"time"
 
+	"github.com/schmitthub/clawker/controlplane/agent"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	clawkerdv1 "github.com/schmitthub/clawker/api/clawkerd/v1"
+	clawkerdv1mocks "github.com/schmitthub/clawker/api/clawkerd/v1/mocks"
+	agentmocks "github.com/schmitthub/clawker/controlplane/agent/mocks"
 	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
-// registeredEvents returns every RegistryEventType/ActionRegistered
+// registeredEvents returns every agent.RegistryEventType/ActionRegistered
 // AgentEvent the recorder captured, in arrival order.
-func registeredEvents(rec *agentRecorder) []AgentEvent {
-	return rec.withAction(RegistryEventType, ActionRegistered)
+func registeredEvents(rec *agentmocks.AgentRecorder) []agent.AgentEvent {
+	return rec.WithAction(agent.RegistryEventType, agent.ActionRegistered)
 }
 
-// untrustedEvents returns every RegistryEventType/ActionUntrusted
+// untrustedEvents returns every agent.RegistryEventType/agent.ActionUntrusted
 // AgentEvent the recorder captured, in arrival order.
-func untrustedEvents(rec *agentRecorder) []AgentEvent {
-	return rec.withAction(RegistryEventType, ActionUntrusted)
+func untrustedEvents(rec *agentmocks.AgentRecorder) []agent.AgentEvent {
+	return rec.WithAction(agent.RegistryEventType, agent.ActionUntrusted)
 }
 
-// --- driveRegister --------------------------------------------------------
+// --- DriveRegister --------------------------------------------------------
 
 // TestDriveRegister_HappyPath: clawkerd replies with RegisterDone{ok:true};
 // dialer publishes a registered AgentEvent with RegisterOk=true and no
 // untrusted event.
 func TestDriveRegister_HappyPath(t *testing.T) {
 	thumb := sha256.Sum256([]byte("peer"))
-	reg := &RegistryMock{
-		LookupByContainerIDFunc: func(string) (*Entry, error) {
-			return &Entry{
+	reg := &agentmocks.RegistryMock{
+		LookupByContainerIDFunc: func(string) (*agent.Entry, error) {
+			return &agent.Entry{
 				ContainerID: "abc",
 				AgentName:   auth.MustAgentName("dev"),
 				Project:     auth.MustProjectSlug("myapp"),
@@ -45,16 +47,16 @@ func TestDriveRegister_HappyPath(t *testing.T) {
 			}, nil
 		},
 	}
-	d, rec := dialerWithTopic(t, reg)
+	d, rec := agentmocks.DialerWithTopic(t, reg)
 
 	streamCtx, cancel := context.WithCancel(t.Context())
-	stream := newFakeStream(streamCtx)
-	stream.pushRegisterDone("register-abc", true, "")
+	_, stream := clawkerdv1mocks.NewServiceClientWithStream(streamCtx)
+	stream.PushRegisterDone("register-abc", true, "")
 
 	res := happyEstablishResult(stream, "clawker.myapp.dev", thumb)
 	res.StreamCancel = cancel
 
-	d.driveRegister(t.Context(), "abc", res, logger.Nop())
+	d.DriveRegister(t.Context(), "abc", res, logger.Nop())
 
 	require.Eventually(t, func() bool { return len(registeredEvents(rec)) == 1 }, time.Second, 10*time.Millisecond)
 	registered := registeredEvents(rec)
@@ -66,21 +68,21 @@ func TestDriveRegister_HappyPath(t *testing.T) {
 // TestDriveRegister_RegisterDoneFailure_PublishesUntrusted: clawkerd
 // replies with RegisterDone{ok:false, error:"..."}; dialer publishes a
 // registered AgentEvent with RegisterOk=false AND an untrusted event with
-// ReasonRegisterFailed so containment subscribers can branch on the typed
+// agent.ReasonRegisterFailed so containment subscribers can branch on the typed
 // reason.
 func TestDriveRegister_RegisterDoneFailure_PublishesUntrusted(t *testing.T) {
-	d, rec := dialerWithTopic(t, &RegistryMock{
-		LookupByContainerIDFunc: func(string) (*Entry, error) { return nil, ErrUnknownAgent },
+	d, rec := agentmocks.DialerWithTopic(t, &agentmocks.RegistryMock{
+		LookupByContainerIDFunc: func(string) (*agent.Entry, error) { return nil, agent.ErrUnknownAgent },
 	})
 
 	streamCtx, cancel := context.WithCancel(t.Context())
-	stream := newFakeStream(streamCtx)
-	stream.pushRegisterDone("register-abc", false, "Hydra rejected assertion")
+	stream := clawkerdv1mocks.NewFakeSessionStream(streamCtx)
+	stream.PushRegisterDone("register-abc", false, "Hydra rejected assertion")
 
 	res := happyEstablishResult(stream, "clawker.myapp.dev", sha256.Sum256([]byte("p")))
 	res.StreamCancel = cancel
 
-	d.driveRegister(t.Context(), "abc", res, logger.Nop())
+	d.DriveRegister(t.Context(), "abc", res, logger.Nop())
 
 	require.Eventually(t, func() bool { return len(untrustedEvents(rec)) == 1 }, time.Second, 10*time.Millisecond)
 	registered := registeredEvents(rec)
@@ -88,7 +90,7 @@ func TestDriveRegister_RegisterDoneFailure_PublishesUntrusted(t *testing.T) {
 	assert.False(t, registered[0].Message.RegisterOk)
 	untrusted := untrustedEvents(rec)
 	require.Len(t, untrusted, 1)
-	assert.Equal(t, ReasonRegisterFailed, untrusted[0].Message.Reason)
+	assert.Equal(t, agent.ReasonRegisterFailed, untrusted[0].Message.Reason)
 }
 
 // TestDriveRegister_DiscardsUnsolicitedFrames: a Started Response with the
@@ -97,9 +99,9 @@ func TestDriveRegister_RegisterDoneFailure_PublishesUntrusted(t *testing.T) {
 // frame regardless would publish failure here.
 func TestDriveRegister_DiscardsUnsolicitedFrames(t *testing.T) {
 	thumb := sha256.Sum256([]byte("peer"))
-	reg := &RegistryMock{
-		LookupByContainerIDFunc: func(string) (*Entry, error) {
-			return &Entry{
+	reg := &agentmocks.RegistryMock{
+		LookupByContainerIDFunc: func(string) (*agent.Entry, error) {
+			return &agent.Entry{
 				ContainerID: "abc",
 				AgentName:   auth.MustAgentName("dev"),
 				Project:     auth.MustProjectSlug("myapp"),
@@ -107,37 +109,37 @@ func TestDriveRegister_DiscardsUnsolicitedFrames(t *testing.T) {
 			}, nil
 		},
 	}
-	d, rec := dialerWithTopic(t, reg)
+	d, rec := agentmocks.DialerWithTopic(t, reg)
 
 	streamCtx, cancel := context.WithCancel(t.Context())
-	stream := newFakeStream(streamCtx)
-	stream.pushUnsolicited()
-	stream.pushRegisterDone("register-abc", true, "")
+	stream := clawkerdv1mocks.NewFakeSessionStream(streamCtx)
+	stream.PushUnsolicited()
+	stream.PushRegisterDone("register-abc", true, "")
 
 	res := happyEstablishResult(stream, "clawker.myapp.dev", thumb)
 	res.StreamCancel = cancel
 
-	d.driveRegister(t.Context(), "abc", res, logger.Nop())
+	d.DriveRegister(t.Context(), "abc", res, logger.Nop())
 
 	require.Eventually(t, func() bool { return len(registeredEvents(rec)) == 1 }, time.Second, 10*time.Millisecond)
 	assert.True(t, registeredEvents(rec)[0].Message.RegisterOk)
 }
 
 // TestDriveRegister_SendFailure_PublishesFailure: stream.Send fails (broken
-// transport); driveRegister surfaces failure events and does NOT block
+// transport); DriveRegister surfaces failure events and does NOT block
 // waiting for a Recv that will never come.
 func TestDriveRegister_SendFailure_PublishesFailure(t *testing.T) {
-	d, rec := dialerWithTopic(t, &RegistryMock{})
+	d, rec := agentmocks.DialerWithTopic(t, &agentmocks.RegistryMock{})
 
 	streamCtx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	stream := newFakeStream(streamCtx)
-	stream.sendErr.Set(errors.New("broken pipe"))
+	stream := clawkerdv1mocks.NewFakeSessionStream(streamCtx)
+	stream.SetSendError(errors.New("broken pipe"))
 
 	res := happyEstablishResult(stream, "clawker.myapp.dev", sha256.Sum256([]byte("p")))
 	res.StreamCancel = cancel
 
-	d.driveRegister(t.Context(), "abc", res, logger.Nop())
+	d.DriveRegister(t.Context(), "abc", res, logger.Nop())
 
 	require.Eventually(t, func() bool { return len(untrustedEvents(rec)) == 1 }, time.Second, 10*time.Millisecond)
 	registered := registeredEvents(rec)
@@ -149,17 +151,17 @@ func TestDriveRegister_SendFailure_PublishesFailure(t *testing.T) {
 // TestDriveRegister_RecvError_PublishesFailure: Recv returns a transport
 // error mid-wait → publishRegisterFailure.
 func TestDriveRegister_RecvError_PublishesFailure(t *testing.T) {
-	d, rec := dialerWithTopic(t, &RegistryMock{})
+	d, rec := agentmocks.DialerWithTopic(t, &agentmocks.RegistryMock{})
 
 	streamCtx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	stream := newFakeStream(streamCtx)
-	stream.recvCh <- recvFrame{err: io.ErrUnexpectedEOF}
+	stream := clawkerdv1mocks.NewFakeSessionStream(streamCtx)
+	stream.PushRecvError(errors.New("broken pipe"))
 
 	res := happyEstablishResult(stream, "clawker.myapp.dev", sha256.Sum256([]byte("p")))
 	res.StreamCancel = cancel
 
-	d.driveRegister(t.Context(), "abc", res, logger.Nop())
+	d.DriveRegister(t.Context(), "abc", res, logger.Nop())
 
 	require.Eventually(t, func() bool { return len(untrustedEvents(rec)) == 1 }, time.Second, 10*time.Millisecond)
 	registered := registeredEvents(rec)
@@ -171,30 +173,30 @@ func TestDriveRegister_RecvError_PublishesFailure(t *testing.T) {
 // TestDriveRegister_ResponseErrorSurfaces pins the
 // Response_Error-during-register branch: when clawkerd rejects
 // RegisterRequired with a typed Error frame addressed to our command_id,
-// driveRegister surfaces the ErrorCode + message in the registered
+// DriveRegister surfaces the ErrorCode + message in the registered
 // event's Detail rather than swallowing it and timing out.
 func TestDriveRegister_ResponseErrorSurfaces(t *testing.T) {
-	d, rec := dialerWithTopic(t, &RegistryMock{})
+	d, rec := agentmocks.DialerWithTopic(t, &agentmocks.RegistryMock{})
 
 	streamCtx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	stream := newFakeStream(streamCtx)
+	stream := clawkerdv1mocks.NewFakeSessionStream(streamCtx)
 
 	commandID := "register-abc"
-	stream.recvCh <- recvFrame{resp: &clawkerdv1.Response{
+	stream.PushResponse(&clawkerdv1.Response{
 		CommandId: commandID,
 		Payload: &clawkerdv1.Response_Error{Error: &clawkerdv1.Error{
 			Code:    clawkerdv1.ErrorCode_ERROR_CODE_INVALID_REQUEST,
 			Message: "missing client_assertion",
 		}},
-	}}
+	})
 
 	res := happyEstablishResult(stream, "clawker.myapp.dev", sha256.Sum256([]byte("p")))
 	res.StreamCancel = cancel
 
 	start := time.Now()
-	d.driveRegister(t.Context(), "abc", res, logger.Nop())
-	require.Less(t, time.Since(start), registerRequiredTimeout/2,
+	d.DriveRegister(t.Context(), "abc", res, logger.Nop())
+	require.Less(t, time.Since(start), agent.RegisterRequiredTimeout/2,
 		"a typed Response_Error must short-circuit the wait — not fall through to the timeout")
 
 	// publishRegisterFailure emits registered THEN untrusted on the same
@@ -212,17 +214,17 @@ func TestDriveRegister_ResponseErrorSurfaces(t *testing.T) {
 }
 
 // TestDriveRegister_TimeoutCancelsStream: when no RegisterDone arrives
-// within the wait window, driveRegister cancels the stream-scoped ctx so
-// the inner Recv goroutine exits BEFORE driveRegister returns. Without the
+// within the wait window, DriveRegister cancels the stream-scoped ctx so
+// the inner Recv goroutine exits BEFORE DriveRegister returns. Without the
 // cancel, drainStream would race the leftover goroutine for stream.Recv().
 //
 // We don't wait the full registerRequiredTimeout (30s); instead we
 // pre-cancel the parent ctx to force the timeout path quickly.
 func TestDriveRegister_TimeoutCancelsStream(t *testing.T) {
-	d, rec := dialerWithTopic(t, &RegistryMock{})
+	d, rec := agentmocks.DialerWithTopic(t, &agentmocks.RegistryMock{})
 
 	streamCtx, streamCancel := context.WithCancel(t.Context())
-	stream := newFakeStream(streamCtx)
+	stream := clawkerdv1mocks.NewFakeSessionStream(streamCtx)
 	// Do NOT enqueue a RegisterDone — Recv blocks indefinitely until ctx
 	// fires. Pre-cancel parent ctx so waitCtx.Done fires immediately.
 
@@ -232,9 +234,9 @@ func TestDriveRegister_TimeoutCancelsStream(t *testing.T) {
 	parentCtx, parentCancel := context.WithCancel(context.Background())
 	parentCancel() // trigger waitCtx.Done immediately
 
-	d.driveRegister(parentCtx, "abc", res, logger.Nop())
+	d.DriveRegister(parentCtx, "abc", res, logger.Nop())
 
-	// Stream ctx must have been cancelled by driveRegister so the inner
+	// Stream ctx must have been cancelled by DriveRegister so the inner
 	// Recv goroutine exits.
 	assert.Error(t, streamCtx.Err(), "stream ctx must be cancelled on timeout to unblock inner Recv")
 
@@ -252,20 +254,20 @@ func TestDriveRegister_TimeoutCancelsStream(t *testing.T) {
 // so containment subscribers can tell I/O failures apart from "agent lied
 // about Register success".
 func TestDriveRegister_RegistryLookupError_DistinguishedFromMissingRow(t *testing.T) {
-	d, rec := dialerWithTopic(t, &RegistryMock{
-		LookupByContainerIDFunc: func(string) (*Entry, error) {
+	d, rec := agentmocks.DialerWithTopic(t, &agentmocks.RegistryMock{
+		LookupByContainerIDFunc: func(string) (*agent.Entry, error) {
 			return nil, errors.New("disk i/o error")
 		},
 	})
 
 	streamCtx, cancel := context.WithCancel(t.Context())
-	stream := newFakeStream(streamCtx)
-	stream.pushRegisterDone("register-abc", true, "")
+	stream := clawkerdv1mocks.NewFakeSessionStream(streamCtx)
+	stream.PushRegisterDone("register-abc", true, "")
 
 	res := happyEstablishResult(stream, "clawker.myapp.dev", sha256.Sum256([]byte("p")))
 	res.StreamCancel = cancel
 
-	d.driveRegister(t.Context(), "abc", res, logger.Nop())
+	d.DriveRegister(t.Context(), "abc", res, logger.Nop())
 
 	require.Eventually(t, func() bool {
 		return len(registeredEvents(rec)) == 1 && len(untrustedEvents(rec)) == 1
@@ -280,18 +282,18 @@ func TestDriveRegister_RegistryLookupError_DistinguishedFromMissingRow(t *testin
 // absent — clawkerd-side regression. Distinguished from I/O error in the
 // published detail.
 func TestDriveRegister_MissingRowAfterRegisterDone(t *testing.T) {
-	d, rec := dialerWithTopic(t, &RegistryMock{
-		LookupByContainerIDFunc: func(string) (*Entry, error) { return nil, ErrUnknownAgent },
+	d, rec := agentmocks.DialerWithTopic(t, &agentmocks.RegistryMock{
+		LookupByContainerIDFunc: func(string) (*agent.Entry, error) { return nil, agent.ErrUnknownAgent },
 	})
 
 	streamCtx, cancel := context.WithCancel(t.Context())
-	stream := newFakeStream(streamCtx)
-	stream.pushRegisterDone("register-abc", true, "")
+	stream := clawkerdv1mocks.NewFakeSessionStream(streamCtx)
+	stream.PushRegisterDone("register-abc", true, "")
 
 	res := happyEstablishResult(stream, "clawker.myapp.dev", sha256.Sum256([]byte("p")))
 	res.StreamCancel = cancel
 
-	d.driveRegister(t.Context(), "abc", res, logger.Nop())
+	d.DriveRegister(t.Context(), "abc", res, logger.Nop())
 
 	require.Eventually(t, func() bool {
 		return len(registeredEvents(rec)) == 1 && len(untrustedEvents(rec)) == 1
@@ -301,7 +303,7 @@ func TestDriveRegister_MissingRowAfterRegisterDone(t *testing.T) {
 	assert.Contains(t, registered[0].Message.Detail, "registry row missing")
 	untrusted := untrustedEvents(rec)
 	require.Len(t, untrusted, 1)
-	assert.Equal(t, ReasonRegisterFailed, untrusted[0].Message.Reason)
+	assert.Equal(t, agent.ReasonRegisterFailed, untrusted[0].Message.Reason)
 }
 
 // --- dispatchAgentEvents (load-bearing asymmetric-trust tests) -----------
@@ -312,9 +314,9 @@ func TestDriveRegister_MissingRowAfterRegisterDone(t *testing.T) {
 func TestDispatchAgentEvents_Match_PublishesNoExtraEvent(t *testing.T) {
 	thumb := sha256.Sum256([]byte("peer"))
 	expectedAgentFullName := auth.AgentFullName(auth.MustProjectSlug("myapp"), auth.MustAgentName("dev"))
-	reg := &RegistryMock{
-		LookupByContainerIDFunc: func(string) (*Entry, error) {
-			return &Entry{
+	reg := &agentmocks.RegistryMock{
+		LookupByContainerIDFunc: func(string) (*agent.Entry, error) {
+			return &agent.Entry{
 				ContainerID: "abc",
 				AgentName:   auth.MustAgentName("dev"),
 				Project:     auth.MustProjectSlug("myapp"),
@@ -322,15 +324,15 @@ func TestDispatchAgentEvents_Match_PublishesNoExtraEvent(t *testing.T) {
 			}, nil
 		},
 	}
-	d, rec := dialerWithTopic(t, reg)
+	d, rec := agentmocks.DialerWithTopic(t, reg)
 
 	streamCtx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	stream := newFakeStream(streamCtx)
+	stream := clawkerdv1mocks.NewFakeSessionStream(streamCtx)
 	res := happyEstablishResult(stream, expectedAgentFullName, thumb)
 	res.StreamCancel = cancel
 
-	d.dispatchAgentEvents(t.Context(), "abc", res, logger.Nop())
+	d.DispatchAgentEvents(t.Context(), "abc", res, logger.Nop())
 
 	// Give the pipe a beat to deliver anything that would have been
 	// published; a Match must publish neither registered nor untrusted.
@@ -345,15 +347,15 @@ func TestDispatchAgentEvents_Match_PublishesNoExtraEvent(t *testing.T) {
 func TestDispatchAgentEvents_OutcomesPinned(t *testing.T) {
 	cases := []struct {
 		name       string
-		reg        *RegistryMock
-		peer       peerInfo
-		wantReason Reason
+		reg        *agentmocks.RegistryMock
+		peer       agent.PeerInfo
+		wantReason agent.Reason
 	}{
 		{
 			name: "ThumbprintMismatch",
-			reg: &RegistryMock{
-				LookupByContainerIDFunc: func(string) (*Entry, error) {
-					return &Entry{
+			reg: &agentmocks.RegistryMock{
+				LookupByContainerIDFunc: func(string) (*agent.Entry, error) {
+					return &agent.Entry{
 						ContainerID: "abc",
 						AgentName:   auth.MustAgentName("dev"),
 						Project:     auth.MustProjectSlug("myapp"),
@@ -361,27 +363,27 @@ func TestDispatchAgentEvents_OutcomesPinned(t *testing.T) {
 					}, nil
 				},
 			},
-			peer:       peerInfo{PeerAgentFullName: "clawker.myapp.dev", PeerThumbprint: sha256.Sum256([]byte("live-cert"))},
-			wantReason: ReasonThumbprintMismatch,
+			peer:       agent.PeerInfo{PeerAgentFullName: "clawker.myapp.dev", PeerThumbprint: sha256.Sum256([]byte("live-cert"))},
+			wantReason: agent.ReasonThumbprintMismatch,
 		},
 		{
 			name: "LookupError",
-			reg: &RegistryMock{
-				LookupByContainerIDFunc: func(string) (*Entry, error) {
+			reg: &agentmocks.RegistryMock{
+				LookupByContainerIDFunc: func(string) (*agent.Entry, error) {
 					return nil, errors.New("disk i/o failure")
 				},
 			},
-			peer:       peerInfo{PeerAgentFullName: "clawker.x.y", PeerThumbprint: sha256.Sum256([]byte("p"))},
-			wantReason: ReasonCertInvalid,
+			peer:       agent.PeerInfo{PeerAgentFullName: "clawker.x.y", PeerThumbprint: sha256.Sum256([]byte("p"))},
+			wantReason: agent.ReasonCertInvalid,
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			d, rec := dialerWithTopic(t, tc.reg)
+			d, rec := agentmocks.DialerWithTopic(t, tc.reg)
 			streamCtx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			stream := newFakeStream(streamCtx)
-			res := establishResult{
+			stream := clawkerdv1mocks.NewFakeSessionStream(streamCtx)
+			res := agent.EstablishResult{
 				Stream:       stream,
 				StreamCancel: cancel,
 				Agent:        "dev",
@@ -389,7 +391,7 @@ func TestDispatchAgentEvents_OutcomesPinned(t *testing.T) {
 				PeerInfo:     tc.peer,
 			}
 
-			d.dispatchAgentEvents(t.Context(), "abc", res, logger.Nop())
+			d.DispatchAgentEvents(t.Context(), "abc", res, logger.Nop())
 
 			require.Eventually(t, func() bool { return len(untrustedEvents(rec)) == 1 }, time.Second, 10*time.Millisecond)
 			assert.Equal(t, tc.wantReason, untrustedEvents(rec)[0].Message.Reason)
@@ -403,9 +405,9 @@ func TestDispatchAgentEvents_OutcomesPinned(t *testing.T) {
 // remain reachable to dispatch containment commands against the untrusted
 // agent.
 func TestDispatchAgentEvents_AsymmetricTrust_StreamStaysOpen(t *testing.T) {
-	reg := &RegistryMock{
-		LookupByContainerIDFunc: func(string) (*Entry, error) {
-			return &Entry{
+	reg := &agentmocks.RegistryMock{
+		LookupByContainerIDFunc: func(string) (*agent.Entry, error) {
+			return &agent.Entry{
 				ContainerID: "abc",
 				AgentName:   auth.MustAgentName("dev"),
 				Project:     auth.MustProjectSlug("myapp"),
@@ -413,27 +415,27 @@ func TestDispatchAgentEvents_AsymmetricTrust_StreamStaysOpen(t *testing.T) {
 			}, nil
 		},
 	}
-	d, rec := dialerWithTopic(t, reg)
+	d, rec := agentmocks.DialerWithTopic(t, reg)
 	streamCtx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	stream := newFakeStream(streamCtx)
+	stream := clawkerdv1mocks.NewFakeSessionStream(streamCtx)
 
-	res := establishResult{
+	res := agent.EstablishResult{
 		Stream:       stream,
 		StreamCancel: cancel,
 		Agent:        "dev",
 		Project:      "myapp",
-		PeerInfo: peerInfo{
+		PeerInfo: agent.PeerInfo{
 			PeerAgentFullName: "clawker.myapp.dev",
 			PeerThumbprint:    sha256.Sum256([]byte("live")),
 		},
 	}
 
-	d.dispatchAgentEvents(t.Context(), "abc", res, logger.Nop())
+	d.DispatchAgentEvents(t.Context(), "abc", res, logger.Nop())
 
 	// Stream ctx must still be live — no cancellation on cert grounds.
 	assert.NoError(t, streamCtx.Err(), "stream must stay open after ThumbprintMismatch (asymmetric trust)")
 
 	require.Eventually(t, func() bool { return len(untrustedEvents(rec)) == 1 }, time.Second, 10*time.Millisecond)
-	assert.Equal(t, ReasonThumbprintMismatch, untrustedEvents(rec)[0].Message.Reason)
+	assert.Equal(t, agent.ReasonThumbprintMismatch, untrustedEvents(rec)[0].Message.Reason)
 }

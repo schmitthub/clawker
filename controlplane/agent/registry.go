@@ -88,7 +88,7 @@ var ErrMalformedEntry = errors.New("agentregistry: malformed registry row")
 
 // Registry is the consumer-facing contract.
 //
-//go:generate moq -rm -pkg agent -out registry_mock_test.go . Registry
+//go:generate moq -rm -pkg mocks -out mocks/registry_mock.go . Registry
 type Registry interface {
 	// Add inserts an entry keyed by (Entry.Thumbprint, Entry.ContainerID).
 	// Container restart produces a new cert and a new thumbprint, so

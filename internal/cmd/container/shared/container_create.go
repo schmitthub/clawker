@@ -1426,37 +1426,7 @@ func filterSocketMountsForMacOS(mounts []mount.Mount) (filteredMounts []mount.Mo
 	return filteredMounts, socketBinds
 }
 
-// -----------------------------------------------------------------------------
-// CreateContainer — channel-based container creation with event streaming
-// -----------------------------------------------------------------------------
-
-// StepStatus represents the lifecycle state of a creation step.
-type StepStatus int
-
-const (
-	StepRunning  StepStatus = iota // Step in progress
-	StepComplete                   // Step finished successfully
-	StepCached                     // Step skipped (already done)
-)
-
-// MessageType classifies the severity of a step message.
-type MessageType int
-
-const (
-	MessageInfo    MessageType = iota // Informational substep update
-	MessageWarning                    // Non-fatal issue
-)
-
-// CreateContainerEvent is sent on the events channel during CreateContainer.
-// Callers use these to drive spinners, collect warnings, etc.
-type CreateContainerEvent struct {
-	Step    string      // "workspace", "config", "environment", "container"
-	Status  StepStatus  // Step lifecycle state
-	Message string      // User-facing text
-	Type    MessageType // Info or Warning
-}
-
-// CreateContainerOptions holds all inputs for CreateContainer.
+// ContainerOptions holds all inputs for CreateContainer.
 type CreateContainerOptions struct {
 	Client         *docker.Client
 	Config         config.Config
@@ -1469,7 +1439,7 @@ type CreateContainerOptions struct {
 	// to resolve the registry-backed project root for the workspace mount
 	// source and ignore-file loading.
 	ProjectRegistry func() (*project.Registry, error)
-	HostProxy       func() hostproxy.HostProxyService
+	HostProxy       func() hostproxy.Service
 	Log             *logger.Logger
 	Is256Color      bool
 	IsTrueColor     bool
@@ -1492,14 +1462,11 @@ type CreateContainerResult struct {
 // Developer diagnostics go to zerolog. Callers own all terminal output.
 //
 // Uses named return retErr so deferred volume cleanup can inspect the error.
-func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events chan<- CreateContainerEvent) (_ *CreateContainerResult, retErr error) {
+func CreateContainer(ctx context.Context, opts *CreateContainerOptions) (_ *CreateContainerResult, retErr error) {
 	projectCfg := opts.Config.Project()
 	containerOpts := opts.Options
 	client := opts.Client
 	log := opts.Log
-
-	// --- Step 1: Prepare workspace ---
-	sendInfo(ctx, events, "workspace", "Preparing workspace")
 
 	agentName := containerOpts.GetAgentName()
 	if agentName == "" {
@@ -1559,11 +1526,10 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 	// reclaims them atomically (see createScope.reclaim). Only volumes created
 	// during this call are tracked — pre-existing volumes (with user session
 	// data) are never touched.
-	scope := &createScope{client: client, log: log, events: events}
+	scope := &createScope{client: client, log: log}
 	if wsResult.ConfigVolumeResult.ConfigCreated {
 		if vn, vnErr := docker.VolumeName(opts.ProjectName, agentName, docker.VolumePurposeConfig); vnErr != nil {
 			log.Error().Err(vnErr).Msg("cannot determine config volume name for cleanup tracking")
-			sendWarning(ctx, events, "workspace", fmt.Sprintf("Could not track config volume for cleanup: %v", vnErr))
 		} else {
 			scope.volumes = append(scope.volumes, vn)
 		}
@@ -1571,7 +1537,6 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 	if wsResult.ConfigVolumeResult.HistoryCreated {
 		if vn, vnErr := docker.VolumeName(opts.ProjectName, agentName, docker.VolumePurposeHistory); vnErr != nil {
 			log.Error().Err(vnErr).Msg("cannot determine history volume name for cleanup tracking")
-			sendWarning(ctx, events, "workspace", fmt.Sprintf("Could not track history volume for cleanup: %v", vnErr))
 		} else {
 			scope.volumes = append(scope.volumes, vn)
 		}
@@ -1591,11 +1556,9 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 	}()
 
 	workspaceMounts := wsResult.Mounts
-	sendComplete(ctx, events, "workspace", "Workspace ready")
 
 	// --- Step 2: Initialize config ---
 	if wsResult.ConfigVolumeResult.ConfigCreated {
-		sendInfo(ctx, events, "config", "Initializing config")
 		if err := InitContainerConfig(ctx, InitConfigOpts{
 			ProjectName:      opts.ProjectName,
 			AgentName:        agentName,
@@ -1606,15 +1569,12 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 		}); err != nil {
 			return nil, fmt.Errorf("container init: %w", err)
 		}
-		sendComplete(ctx, events, "config", "Config initialized")
 	} else {
-		sendCached(ctx, events, "config", "Config volume cached")
 	}
 
 	// --- Step 3: Setup environment ---
-	sendInfo(ctx, events, "environment", "Setting up environment")
 
-	hostProxyRunning := setupHostProxy(ctx, events, projectCfg, containerOpts, opts.HostProxy, log)
+	hostProxyRunning := setupHostProxy(ctx, projectCfg, containerOpts, opts.HostProxy, log)
 
 	gitSetup := workspace.SetupGitCredentials(projectCfg.Security.GitCredentials, hostProxyRunning, log)
 	workspaceMounts = append(workspaceMounts, gitSetup.Mounts...)
@@ -1626,12 +1586,8 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 	}
 	containerOpts.Env = append(containerOpts.Env, runtimeEnv...)
 	for _, w := range envWarnings {
-		sendWarning(ctx, events, "environment", w)
+		log.Warn().Msg(w)
 	}
-	sendComplete(ctx, events, "environment", "Environment ready")
-
-	// --- Step 4: Create container ---
-	sendInfo(ctx, events, "container", fmt.Sprintf("Creating container (%s)", containerName))
 
 	if err := containerOpts.ValidateFlags(); err != nil {
 		return nil, fmt.Errorf("validating container flags: %w", err)
@@ -1735,7 +1691,6 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 	if strings.TrimSpace(projectCfg.Agent.PostInit) == "" {
 		log.Debug().Msg("no post_init script configured; skipping injection")
 	} else {
-		sendInfo(ctx, events, "container", "Injecting post-init script")
 		copyFn := NewCopyToContainerFn(client)
 		if err := InjectPostInitScript(ctx, InjectPostInitOpts{
 			ContainerID:     resp.ID,
@@ -1747,8 +1702,6 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 			return nil, fmt.Errorf("inject post-init script: %w", err)
 		}
 	}
-
-	sendComplete(ctx, events, "container", "Container created")
 
 	return &CreateContainerResult{
 		ContainerID:      resp.ID,
@@ -1769,7 +1722,6 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 type createScope struct {
 	client      *docker.Client
 	log         *logger.Logger
-	events      chan<- CreateContainerEvent
 	containerID string   // empty until the container is created
 	volumes     []string // newly-created volumes only
 }
@@ -1790,42 +1742,11 @@ func (s *createScope) reclaim() {
 		if _, err := s.client.VolumeRemove(ctx, vol, true); err != nil {
 			s.log.Warn().Str("volume", vol).Err(err).
 				Msg("failed to clean up volume after creation failure")
-			sendWarning(ctx, s.events, "cleanup", fmt.Sprintf("Failed to remove volume %s: %v", vol, err))
 		} else {
 			s.log.Debug().Str("volume", vol).Msg("cleaned up volume after creation failure")
 		}
 	}
 }
-
-// --- Event helpers ---
-
-func sendEvent(ctx context.Context, ch chan<- CreateContainerEvent, step string, status StepStatus, msgType MessageType, msg string) {
-	if ch == nil {
-		return
-	}
-	select {
-	case ch <- CreateContainerEvent{Step: step, Status: status, Type: msgType, Message: msg}:
-	case <-ctx.Done():
-	}
-}
-
-func sendInfo(ctx context.Context, ch chan<- CreateContainerEvent, step, msg string) {
-	sendEvent(ctx, ch, step, StepRunning, MessageInfo, msg)
-}
-
-func sendWarning(ctx context.Context, ch chan<- CreateContainerEvent, step, msg string) {
-	sendEvent(ctx, ch, step, StepRunning, MessageWarning, msg)
-}
-
-func sendComplete(ctx context.Context, ch chan<- CreateContainerEvent, step, msg string) {
-	sendEvent(ctx, ch, step, StepComplete, MessageInfo, msg)
-}
-
-func sendCached(ctx context.Context, ch chan<- CreateContainerEvent, step, msg string) {
-	sendEvent(ctx, ch, step, StepCached, MessageInfo, msg)
-}
-
-// --- Internal helpers (absorbed from init.go) ---
 
 // resolveWorkDir determines the working directory for the container.
 // When --worktree is set, it routes through ProjectManager to ensure the worktree
@@ -1919,7 +1840,7 @@ func resolveWorkDir(ctx context.Context, containerOpts *ContainerCreateOptions, 
 }
 
 // setupHostProxy starts the host proxy if enabled. Non-fatal — failures produce warnings.
-func setupHostProxy(ctx context.Context, events chan<- CreateContainerEvent, cfg *config.Project, containerOpts *ContainerCreateOptions, hostProxyFn func() hostproxy.HostProxyService, log *logger.Logger) bool {
+func setupHostProxy(ctx context.Context, cfg *config.Project, containerOpts *ContainerCreateOptions, hostProxyFn func() hostproxy.Service, log *logger.Logger) bool {
 	if !cfg.Security.HostProxyEnabled() {
 		log.Debug().Msg("host proxy disabled by config")
 		return false
@@ -1934,18 +1855,9 @@ func setupHostProxy(ctx context.Context, events chan<- CreateContainerEvent, cfg
 		return false
 	}
 
-	sendInfo(ctx, events, "environment", "Configuring host proxy")
-
-	if err := hp.EnsureRunning(); err != nil {
-		log.Warn().Err(err).Msg("failed to start host proxy server")
-		sendWarning(ctx, events, "environment", "Host proxy failed to start. Browser authentication may not work.")
-		sendWarning(ctx, events, "environment", "To disable: set 'security.enable_host_proxy: false' in your project config")
-		return false
-	}
-
 	envVar := consts.EnvHostProxy + "=" + hp.ProxyURL()
 	containerOpts.Env = append(containerOpts.Env, envVar)
-	log.Debug().Str("env", envVar).Msg("host proxy started, injected env var")
+	log.Debug().Str("env", envVar).Msg("appended host proxy env var")
 
 	return true
 }

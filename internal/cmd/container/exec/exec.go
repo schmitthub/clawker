@@ -9,14 +9,12 @@ import (
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/signals"
-	"github.com/schmitthub/clawker/internal/workspace"
 	"github.com/spf13/cobra"
 )
 
@@ -26,7 +24,7 @@ type ExecOptions struct {
 	Client         func(context.Context) (*docker.Client, error)
 	Config         func() (config.Config, error)
 	ProjectManager func() (project.ProjectManager, error)
-	HostProxy      func() hostproxy.HostProxyService
+	HostProxy      func() hostproxy.Service
 	Logger         func() (*logger.Logger, error)
 
 	Agent       bool // treat first argument as agent name(resolves to clawker.<project>.<agent>)
@@ -157,35 +155,6 @@ func execRun(ctx context.Context, opts *ExecOptions) error {
 	// Check if container is running
 	if c.State != "running" {
 		return fmt.Errorf("container %q is not running", containerName)
-	}
-
-	// Setup git credential forwarding for exec sessions
-	// This enables HTTPS credential helpers in exec'd commands.
-	// SSH and GPG forwarding are via the socketbridge (set up at container start, not per-exec).
-	cfg, err := opts.Config()
-	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
-	}
-	p := cfg.Project()
-
-	hostProxyRunning := false
-	if p != nil && p.Security.HostProxyEnabled() && opts.HostProxy != nil {
-		hp := opts.HostProxy()
-		if hp == nil {
-			log.Debug().Msg("host proxy function returned nil")
-		} else if err := hp.EnsureRunning(); err != nil {
-			log.Warn().Err(err).Msg("failed to start host proxy for exec")
-		} else if hp.IsRunning() {
-			hostProxyRunning = true
-			opts.Env = append(opts.Env, consts.EnvHostProxy+"="+hp.ProxyURL())
-			log.Debug().Str("url", hp.ProxyURL()).Msg("injected host proxy env for exec")
-		}
-	}
-
-	// Setup git credentials (HTTPS env var + git config mount)
-	if p != nil {
-		gitSetup := workspace.SetupGitCredentials(p.Security.GitCredentials, hostProxyRunning, log)
-		opts.Env = append(opts.Env, gitSetup.Env...)
 	}
 
 	// Create exec configuration

@@ -10,7 +10,7 @@ import (
 	dockercontainer "github.com/moby/moby/api/types/container"
 	mobyclient "github.com/moby/moby/client"
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
-	cpmocks "github.com/schmitthub/clawker/controlplane/mocks"
+	adminv1mocks "github.com/schmitthub/clawker/api/admin/v1/mocks"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
@@ -298,7 +298,7 @@ func TestRemoveRun_DisablesFirewallBeforeRemove(t *testing.T) {
 	}
 
 	var disabledID string
-	fwMock := &cpmocks.AdminServiceClientMock{
+	fwMock := &adminv1mocks.AdminServiceClientMock{
 		FirewallDisableFunc: func(_ context.Context, req *adminv1.FirewallDisableRequest, _ ...grpc.CallOption) (*adminv1.FirewallDisableResult, error) {
 			require.False(t, dockerRemoveCalled, "firewall must be disabled before docker remove")
 			disabledID = req.GetContainerId()
@@ -328,7 +328,7 @@ func TestRemoveRun_FirewallDisableErrorDoesNotFailRemove(t *testing.T) {
 		return mobyclient.ContainerRemoveResult{}, nil
 	}
 
-	fwMock := &cpmocks.AdminServiceClientMock{
+	fwMock := &adminv1mocks.AdminServiceClientMock{
 		FirewallDisableFunc: func(_ context.Context, _ *adminv1.FirewallDisableRequest, _ ...grpc.CallOption) (*adminv1.FirewallDisableResult, error) {
 			return nil, fmt.Errorf("bpf detach failed")
 		},
@@ -406,7 +406,7 @@ func TestRemoveRun_DockerConnectionError(t *testing.T) {
 
 // --- Per-package test helpers ---
 
-func testFactory(t *testing.T, fake *mocks.FakeClient, mock *sockebridgemocks.SocketBridgeManagerMock, adminMock *cpmocks.AdminServiceClientMock) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
+func testFactory(t *testing.T, fake *mocks.FakeClient, mock *sockebridgemocks.SocketBridgeManagerMock, adminMock *adminv1mocks.AdminServiceClientMock) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 	tio, in, out, errOut := iostreams.Test()
 

@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
-	cpmocks "github.com/schmitthub/clawker/controlplane/mocks"
+	adminv1mocks "github.com/schmitthub/clawker/api/admin/v1/mocks"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/tui"
@@ -24,7 +24,7 @@ func newListCmd(t *testing.T, rules []*adminv1.EgressRule, listErr error) (*cmdu
 	t.Helper()
 	ios, _, stdout, _ := iostreams.Test()
 
-	mock := &cpmocks.AdminServiceClientMock{
+	mock := &adminv1mocks.AdminServiceClientMock{
 		FirewallListRulesFunc: func(_ context.Context, _ *adminv1.FirewallListRulesRequest, _ ...grpc.CallOption) (*adminv1.FirewallListRulesResult, error) {
 			if listErr != nil {
 				return nil, listErr

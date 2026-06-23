@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/moby/moby/api/types/container"
+	adminv1mocks "github.com/schmitthub/clawker/api/admin/v1/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -14,7 +15,6 @@ import (
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/controlplane/manager"
 	"github.com/schmitthub/clawker/controlplane/manager/mocks"
-	cpmocks "github.com/schmitthub/clawker/controlplane/mocks"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
@@ -83,8 +83,8 @@ func withSettings(tb *testBed, settingsYAML string) {
 }
 
 // withAdminMock wires an AdminServiceClientMock through f.AdminClient.
-func withAdminMock(tb *testBed) *cpmocks.AdminServiceClientMock {
-	adminMock := &cpmocks.AdminServiceClientMock{}
+func withAdminMock(tb *testBed) *adminv1mocks.AdminServiceClientMock {
+	adminMock := &adminv1mocks.AdminServiceClientMock{}
 	tb.F.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
 		return adminMock, nil
 	}

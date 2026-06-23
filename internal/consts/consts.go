@@ -280,7 +280,8 @@ const (
 const (
 	// Localhost is the IPv4 loopback address. Used for host-published
 	// port bindings and intra-container localhost dials.
-	Localhost = "127.0.0.1"
+	Localhost          = "127.0.0.1"
+	DockerHostInternal = "host.docker.internal"
 )
 
 // Container names.

@@ -209,7 +209,7 @@ func testStartFactory(t *testing.T, fake *mocks.FakeClient) (*cmdutil.Factory, *
 		Config: func() (config.Config, error) {
 			return configmocks.NewFromString(`security: { enable_host_proxy: false }`, `firewall: { enable: false }`), nil
 		},
-		HostProxy: func() hostproxy.HostProxyService {
+		HostProxy: func() hostproxy.Service {
 			return hostproxytest.NewMockManager()
 		},
 		ControlPlane: func() cpmanager.Manager {
@@ -393,7 +393,7 @@ func TestStartRun_NilHostProxy(t *testing.T) {
 		Config: func() (config.Config, error) {
 			return configmocks.NewFromString(`security: { enable_host_proxy: false }`, `firewall: { enable: false }`), nil
 		},
-		HostProxy: func() hostproxy.HostProxyService { return nil },
+		HostProxy: func() hostproxy.Service { return nil },
 		ControlPlane: func() cpmanager.Manager {
 			return &cpbootmocks.ManagerMock{
 				EnsureRunningFunc: func(context.Context) error { return nil },

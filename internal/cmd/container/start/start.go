@@ -29,7 +29,7 @@ type StartOptions struct {
 	Client         func(context.Context) (*docker.Client, error)
 	Config         func() (config.Config, error)
 	ProjectManager func() (project.ProjectManager, error)
-	HostProxy      func() hostproxy.HostProxyService
+	HostProxy      func() hostproxy.Service
 	ControlPlane   func() manager.Manager
 	AdminClient    func(context.Context) (adminv1.AdminServiceClient, error)
 	SocketBridge   func() socketbridge.SocketBridgeManager

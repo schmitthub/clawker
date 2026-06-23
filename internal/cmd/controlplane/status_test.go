@@ -7,12 +7,12 @@ import (
 	"net/http"
 	"testing"
 
+	adminv1mocks "github.com/schmitthub/clawker/api/admin/v1/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
-	cpmocks "github.com/schmitthub/clawker/controlplane/mocks"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 )
 
@@ -21,13 +21,13 @@ import (
 // f.ControlPlane because status is the only command that uses both.
 type statusHarness struct {
 	tb        *testBed
-	adminMock *cpmocks.AdminServiceClientMock
+	adminMock *adminv1mocks.AdminServiceClientMock
 }
 
 func newStatusHarness(t *testing.T) *statusHarness {
 	t.Helper()
 	tb := newTestBed(t)
-	adminMock := &cpmocks.AdminServiceClientMock{}
+	adminMock := &adminv1mocks.AdminServiceClientMock{}
 	tb.F.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
 		return adminMock, nil
 	}

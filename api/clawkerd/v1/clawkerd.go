@@ -11,5 +11,7 @@
 // streams Responses correlated by command_id.
 package v1
 
+//go:generate moq -rm -pkg mocks -out mocks/client_mock.go . ClawkerdServiceClient
+
 // ServiceName is the fully-qualified gRPC service name for ClawkerdService.
 const ServiceName = "clawker.clawkerd.v1.ClawkerdService"

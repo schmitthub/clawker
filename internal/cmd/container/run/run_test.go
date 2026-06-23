@@ -12,11 +12,11 @@ import (
 	"github.com/google/shlex"
 	"github.com/moby/moby/api/types/container"
 	moby "github.com/moby/moby/client"
+	adminv1mocks "github.com/schmitthub/clawker/api/admin/v1/mocks"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/controlplane/manager"
 	cpbootmocks "github.com/schmitthub/clawker/controlplane/manager/mocks"
-	controlplanemocks "github.com/schmitthub/clawker/controlplane/mocks"
 	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
@@ -771,7 +771,7 @@ agent:
 `, `firewall: { enable: false }`)
 			return mock, nil
 		},
-		HostProxy: func() hostproxy.HostProxyService {
+		HostProxy: func() hostproxy.Service {
 			return hostproxytest.NewMockManager()
 		},
 		ControlPlane: func() manager.Manager {
@@ -780,7 +780,7 @@ agent:
 			}
 		},
 		AdminClient: func(_ context.Context) (adminv1.AdminServiceClient, error) {
-			return &controlplanemocks.AdminServiceClientMock{}, nil
+			return &adminv1mocks.AdminServiceClientMock{}, nil
 		},
 		Prompter: func() *prompter.Prompter { return prompter.NewPrompter(tio) },
 	}, in, out, errOut
@@ -930,7 +930,7 @@ agent:
 			Config: func() (config.Config, error) {
 				return testCfg, nil
 			},
-			HostProxy: func() hostproxy.HostProxyService {
+			HostProxy: func() hostproxy.Service {
 				return hostproxytest.NewMockManager()
 			},
 			Prompter: func() *prompter.Prompter { return nil },

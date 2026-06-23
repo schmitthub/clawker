@@ -5,7 +5,7 @@ import (
 	"github.com/schmitthub/clawker/internal/consts"
 )
 
-var dockerSocketStep shellStep = shellStep{
+var dockerSocketStep ShellStep = ShellStep{
 	Name: "docker-socket",
 	Shell: &clawkerdv1.ShellCommand{
 		Stages: []*clawkerdv1.PipeStage{{
@@ -18,10 +18,10 @@ var dockerSocketStep shellStep = shellStep{
 	},
 }
 
-var preRunStep shellStep = shellStep{
+var preRunStep ShellStep = ShellStep{
 	Name: consts.HookPreRun,
 	Shell: &clawkerdv1.ShellCommand{
-		Stages:         []*clawkerdv1.PipeStage{userStage(preRunScript)},
+		Stages:         []*clawkerdv1.PipeStage{userStage(PreRunScript)},
 		TimeoutSeconds: execStepTimeoutPostInit,
 		ExitOnNonZero:  true,
 		PrintOutput:    true,
@@ -29,16 +29,16 @@ var preRunStep shellStep = shellStep{
 }
 
 // bootPlanPost is the fixed boot tail: pre_run (the last user hook before
-// the CMD) then agent-ready (releases the CMD, must be terminal so no step
-// races the CMD past the entrypoint fifo). New boot steps prepend to
-// bootPlan's head; this pair stays last, in this order. Split out and named
+// the CMD) then agent-ready (releases the CMD, must be terminal so no Step
+// races the CMD past the entrypoint fifo). NewDialer boot steps prepend to
+// BootPlan's head; this pair stays last, in this order. Split out and named
 // so the ordering invariant survives future edits. Pinned by
 // TestBootPlan_PreRunShape.
-var bootPlanPost = []step{
+var bootPlanPost = []Step{
 	preRunStep,
-	agentReadyStep{Name: "agent-ready"},
+	AgentReadyStep{Name: "agent-ready"},
 }
 
-var bootPlan = append([]step{
+var BootPlan = append([]Step{
 	dockerSocketStep,
 }, bootPlanPost...)

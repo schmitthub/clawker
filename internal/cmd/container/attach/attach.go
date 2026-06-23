@@ -22,7 +22,7 @@ type AttachOptions struct {
 	IOStreams      *iostreams.IOStreams
 	Client         func(context.Context) (*docker.Client, error)
 	ProjectManager func() (project.ProjectManager, error)
-	HostProxy      func() hostproxy.HostProxyService
+	HostProxy      func() hostproxy.Service
 	Logger         func() (*logger.Logger, error)
 
 	Agent      bool // treat argument as agent name (resolves to clawker.<project>.<agent>)
@@ -123,15 +123,6 @@ func attachRun(ctx context.Context, opts *AttachOptions) error {
 	// Check if container is running
 	if c.State != "running" {
 		return fmt.Errorf("container %q is not running", container)
-	}
-
-	// Start host proxy so browser opening and other host actions work (non-fatal)
-	if opts.HostProxy != nil {
-		if hp := opts.HostProxy(); hp != nil {
-			if err := hp.EnsureRunning(); err != nil {
-				log.Warn().Err(err).Msg("failed to start host proxy for attach")
-			}
-		}
 	}
 
 	// Get container info to determine if it has a TTY

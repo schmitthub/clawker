@@ -864,7 +864,7 @@ type agentDialerDeps struct {
 // fifo timeout is the only user-visible effect); a broken dialer → dialer=nil
 // (CP→clawkerd dispatch disabled). Neither cascades — AdminService, firewall,
 // registry, and the AgentService listener all stay up. Every degrade emits its
-// own event=<subsystem>_unavailable line via wireInitExecutor / agent.New.
+// own event=<subsystem>_unavailable line via wireInitExecutor / agent.NewDialer.
 func startAgentDialer(watcherCtx context.Context, d agentDialerDeps) func() {
 	agentCleanup := func() {}
 
@@ -872,7 +872,7 @@ func startAgentDialer(watcherCtx context.Context, d agentDialerDeps) func() {
 	// Session; without it the entrypoint hangs on its fifo until
 	// CLAWKER_INIT_TIMEOUT. wireInitExecutor holds the degrade contract.
 	initExec := wireInitExecutor(d.agentTopic, d.dockerCli, d.log)
-	dialer, err := agent.New(
+	dialer, err := agent.NewDialer(
 		d.log.With("component", "agent"),
 		d.dockerCli.APIClient,
 		d.agentTopic,

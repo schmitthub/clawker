@@ -1,4 +1,4 @@
-package agent
+package agent_test
 
 import (
 	"context"
@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/schmitthub/clawker/controlplane/agent"
+	registrymock "github.com/schmitthub/clawker/controlplane/agent/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -35,7 +37,7 @@ import (
 // resolved-container reads both succeed. The peer.Addr value is an
 // arbitrary loopback addr — the handler doesn't compare against it
 // (the middleware already grounded the resolved container in peer IP).
-func resolvedCtx(t *testing.T, leaf *x509.Certificate, resolved ResolvedContainer) context.Context {
+func resolvedCtx(t *testing.T, leaf *x509.Certificate, resolved agent.ResolvedContainer) context.Context {
 	t.Helper()
 	tlsInfo := credentials.TLSInfo{
 		State: tls.ConnectionState{
@@ -48,18 +50,18 @@ func resolvedCtx(t *testing.T, leaf *x509.Certificate, resolved ResolvedContaine
 		Addr:     addr,
 		AuthInfo: tlsInfo,
 	})
-	return WithResolvedContainer(ctx, resolved)
+	return agent.WithResolvedContainer(ctx, resolved)
 }
 
 // resolvedFor is a convenience constructor for the typical resolved
 // container test inputs (project/agent/container_id).
-func resolvedFor(t *testing.T, project, agentName, containerID string) ResolvedContainer {
+func resolvedFor(t *testing.T, project, agentName, containerID string) agent.ResolvedContainer {
 	t.Helper()
 	proj, err := auth.NewProjectSlug(project)
 	require.NoError(t, err)
 	name, err := auth.NewAgentName(agentName)
 	require.NoError(t, err)
-	return ResolvedContainer{
+	return agent.ResolvedContainer{
 		ContainerID: containerID,
 		Project:     proj,
 		AgentName:   name,
@@ -129,11 +131,11 @@ func genTestCA(t *testing.T) (*x509.Certificate, *ecdsa.PrivateKey) {
 
 // newTestHandler builds a Register handler with a mock registry and
 // Nop logger.
-func newTestHandler(reg Registry) *Handler {
-	return &Handler{
-		registry: reg,
-		log:      logger.Nop(),
-		clock:    func() time.Time { return time.Unix(1700000000, 0).UTC() },
+func newTestHandler(reg agent.Registry) *agent.Handler {
+	return &agent.Handler{
+		Registry: reg,
+		Log:      logger.Nop(),
+		Clock:    func() time.Time { return time.Unix(1700000000, 0).UTC() },
 	}
 }
 
@@ -143,10 +145,10 @@ func TestRegister_HappyPath(t *testing.T) {
 	const project, agentName = "myapp", "dev"
 	leaf := signTestLeaf(t, caCert, caKey, consts.ContainerClawkerd, auth.AgentFullName(auth.MustProjectSlug(project), auth.MustAgentName(agentName)), containerID)
 
-	var added Entry
-	reg := &RegistryMock{
-		LookupByContainerIDFunc: func(string) (*Entry, error) { return nil, ErrUnknownAgent },
-		AddFunc: func(e Entry) error {
+	var added agent.Entry
+	reg := &registrymock.RegistryMock{
+		LookupByContainerIDFunc: func(string) (*agent.Entry, error) { return nil, agent.ErrUnknownAgent },
+		AddFunc: func(e agent.Entry) error {
 			added = e
 			return nil
 		},
@@ -173,7 +175,7 @@ func TestRegister_HappyPath(t *testing.T) {
 // runs in the handler is "agent_name required" — which is the
 // canonical malformed-input surface we keep verified here.
 func TestRegister_RequestValidation(t *testing.T) {
-	h := newTestHandler(&RegistryMock{})
+	h := newTestHandler(&registrymock.RegistryMock{})
 	cases := []struct {
 		name string
 		req  *agentv1.RegisterRequest
@@ -204,11 +206,11 @@ func TestRegister_CtxGates(t *testing.T) {
 		wantCode codes.Code
 	}{
 		{"missing resolved container", context.Background(), codes.Internal},
-		{"resolved present but peer cert stripped", WithResolvedContainer(context.Background(), resolved), codes.PermissionDenied},
+		{"resolved present but peer cert stripped", agent.WithResolvedContainer(context.Background(), resolved), codes.PermissionDenied},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			h := newTestHandler(&RegistryMock{})
+			h := newTestHandler(&registrymock.RegistryMock{})
 			_, err := h.Register(tc.ctx, &agentv1.RegisterRequest{AgentName: "dev", Project: "p"})
 			require.Error(t, err)
 			st, _ := status.FromError(err)
@@ -273,9 +275,9 @@ func TestRegister_IdentityCrossChecks(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			leaf := signTestLeaf(t, caCert, caKey, consts.ContainerClawkerd, tc.certAgentSAN, tc.leafContainerSAN)
 			addCalled := false
-			reg := &RegistryMock{
-				LookupByContainerIDFunc: func(string) (*Entry, error) { return nil, ErrUnknownAgent },
-				AddFunc: func(Entry) error {
+			reg := &registrymock.RegistryMock{
+				LookupByContainerIDFunc: func(string) (*agent.Entry, error) { return nil, agent.ErrUnknownAgent },
+				AddFunc: func(agent.Entry) error {
 					addCalled = true
 					return nil
 				},
@@ -308,35 +310,39 @@ func TestRegister_RegistryBranches(t *testing.T) {
 
 	cases := []struct {
 		name            string
-		lookup          func(string) (*Entry, error)
-		add             func(Entry) error
+		lookup          func(string) (*agent.Entry, error)
+		add             func(agent.Entry) error
 		wantCode        codes.Code // codes.OK = success
 		wantAddCalled   bool
 		failOnAddCalled bool // true → Add must not be reached
 	}{
 		{
-			name:          "idempotent retry — matching thumbprint, Add skipped",
-			lookup:        func(string) (*Entry, error) { return &Entry{ContainerID: containerID, Thumbprint: thumb}, nil },
-			add:           func(Entry) error { return nil },
+			name: "idempotent retry — matching thumbprint, Add skipped",
+			lookup: func(string) (*agent.Entry, error) {
+				return &agent.Entry{ContainerID: containerID, Thumbprint: thumb}, nil
+			},
+			add:           func(agent.Entry) error { return nil },
 			wantCode:      codes.OK,
 			wantAddCalled: false,
 		},
 		{
-			name:            "thumbprint replay — existing row, different thumbprint",
-			lookup:          func(string) (*Entry, error) { return &Entry{ContainerID: containerID, Thumbprint: otherThumb}, nil },
+			name: "thumbprint replay — existing row, different thumbprint",
+			lookup: func(string) (*agent.Entry, error) {
+				return &agent.Entry{ContainerID: containerID, Thumbprint: otherThumb}, nil
+			},
 			wantCode:        codes.PermissionDenied,
 			failOnAddCalled: true,
 		},
 		{
 			name:            "lookup i/o error (non-ErrUnknownAgent) → Internal, Add skipped",
-			lookup:          func(string) (*Entry, error) { return nil, errors.New("disk i/o error") },
+			lookup:          func(string) (*agent.Entry, error) { return nil, errors.New("disk i/o error") },
 			wantCode:        codes.Internal,
 			failOnAddCalled: true,
 		},
 		{
 			name:          "Add i/o error → Internal",
-			lookup:        func(string) (*Entry, error) { return nil, ErrUnknownAgent },
-			add:           func(Entry) error { return errors.New("UNIQUE constraint failed") },
+			lookup:        func(string) (*agent.Entry, error) { return nil, agent.ErrUnknownAgent },
+			add:           func(agent.Entry) error { return errors.New("UNIQUE constraint failed") },
 			wantCode:      codes.Internal,
 			wantAddCalled: true,
 		},
@@ -345,9 +351,9 @@ func TestRegister_RegistryBranches(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			addCalled := false
-			reg := &RegistryMock{
+			reg := &registrymock.RegistryMock{
 				LookupByContainerIDFunc: tc.lookup,
-				AddFunc: func(e Entry) error {
+				AddFunc: func(e agent.Entry) error {
 					addCalled = true
 					if tc.failOnAddCalled {
 						t.Fatalf("Add must not run for %s", tc.name)
@@ -392,16 +398,16 @@ func TestRegister_MalformedRowEvictThenRewrite(t *testing.T) {
 		evicted   bool
 		addCalled bool
 	)
-	reg := &RegistryMock{
-		LookupByContainerIDFunc: func(string) (*Entry, error) {
-			return nil, fmt.Errorf("agentregistry: query LookupByContainerID: %w", ErrMalformedEntry)
+	reg := &registrymock.RegistryMock{
+		LookupByContainerIDFunc: func(string) (*agent.Entry, error) {
+			return nil, fmt.Errorf("agentregistry: query LookupByContainerID: %w", agent.ErrMalformedEntry)
 		},
 		EvictByContainerIDFunc: func(id string) error {
 			evicted = true
 			assert.Equal(t, containerID, id, "evict must target the resolved container_id")
 			return nil
 		},
-		AddFunc: func(e Entry) error {
+		AddFunc: func(e agent.Entry) error {
 			addCalled = true
 			// Re-written row carries the middleware-resolved identity,
 			// not whatever was malformed on the old row.
@@ -433,12 +439,12 @@ func TestRegister_MalformedRowEvictFailure(t *testing.T) {
 	leaf := signTestLeaf(t, caCert, caKey, consts.ContainerClawkerd,
 		auth.AgentFullName(auth.MustProjectSlug(project), auth.MustAgentName(agentName)), containerID)
 
-	reg := &RegistryMock{
-		LookupByContainerIDFunc: func(string) (*Entry, error) {
-			return nil, fmt.Errorf("read: %w", ErrMalformedEntry)
+	reg := &registrymock.RegistryMock{
+		LookupByContainerIDFunc: func(string) (*agent.Entry, error) {
+			return nil, fmt.Errorf("read: %w", agent.ErrMalformedEntry)
 		},
 		EvictByContainerIDFunc: func(string) error { return errors.New("evict disk i/o") },
-		AddFunc:                func(Entry) error { t.Fatal("Add must not run after evict failure"); return nil },
+		AddFunc:                func(agent.Entry) error { t.Fatal("Add must not run after evict failure"); return nil },
 	}
 	h := newTestHandler(reg)
 

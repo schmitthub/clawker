@@ -11,7 +11,7 @@ import (
 	"google.golang.org/grpc"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
-	cpmocks "github.com/schmitthub/clawker/controlplane/mocks"
+	adminv1mocks "github.com/schmitthub/clawker/api/admin/v1/mocks"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -28,7 +28,7 @@ type agentsHarness struct {
 	opts      *AgentsOptions
 }
 
-func newAgentsHarness(t *testing.T, mock *cpmocks.AdminServiceClientMock) (*agentsHarness, *iostreams.IOStreams) {
+func newAgentsHarness(t *testing.T, mock *adminv1mocks.AdminServiceClientMock) (*agentsHarness, *iostreams.IOStreams) {
 	t.Helper()
 	ios, _, _, _ := iostreams.Test()
 	tuiInst := tui.NewTUI(ios)
@@ -49,7 +49,7 @@ func newAgentsHarness(t *testing.T, mock *cpmocks.AdminServiceClientMock) (*agen
 }
 
 func TestAgentsRun_EmptyResponse(t *testing.T) {
-	mock := &cpmocks.AdminServiceClientMock{
+	mock := &adminv1mocks.AdminServiceClientMock{
 		ListAgentsFunc: func(_ context.Context, _ *adminv1.ListAgentsRequest, _ ...grpc.CallOption) (*adminv1.ListAgentsResult, error) {
 			return &adminv1.ListAgentsResult{}, nil
 		},
@@ -66,7 +66,7 @@ func TestAgentsRun_EmptyResponse(t *testing.T) {
 }
 
 func TestAgentsRun_RendersTable(t *testing.T) {
-	mock := &cpmocks.AdminServiceClientMock{
+	mock := &adminv1mocks.AdminServiceClientMock{
 		ListAgentsFunc: func(_ context.Context, _ *adminv1.ListAgentsRequest, _ ...grpc.CallOption) (*adminv1.ListAgentsResult, error) {
 			return &adminv1.ListAgentsResult{
 				Agents: []*adminv1.Agent{{
@@ -95,7 +95,7 @@ func TestAgentsRun_RendersTable(t *testing.T) {
 }
 
 func TestAgentsRun_JSONOutput(t *testing.T) {
-	mock := &cpmocks.AdminServiceClientMock{
+	mock := &adminv1mocks.AdminServiceClientMock{
 		ListAgentsFunc: func(_ context.Context, _ *adminv1.ListAgentsRequest, _ ...grpc.CallOption) (*adminv1.ListAgentsResult, error) {
 			return &adminv1.ListAgentsResult{
 				Agents: []*adminv1.Agent{{
@@ -129,7 +129,7 @@ func TestAgentsRun_JSONOutput(t *testing.T) {
 }
 
 func TestAgentsRun_PropagatesAdminClientError(t *testing.T) {
-	h, _ := newAgentsHarness(t, &cpmocks.AdminServiceClientMock{})
+	h, _ := newAgentsHarness(t, &adminv1mocks.AdminServiceClientMock{})
 	h.opts.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
 		return nil, errors.New("dial boom")
 	}

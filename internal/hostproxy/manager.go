@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"strconv"
@@ -17,12 +18,12 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
-// HostProxyService is the interface for host proxy operations used by container commands.
+// Service is the interface for host proxy operations used by container commands.
 // Commands interact with the host proxy through this interface, enabling test doubles
 // that don't spawn daemon subprocesses.
 //
 // Concrete implementation: Manager. Mock: hostproxytest.MockManager.
-type HostProxyService interface {
+type Service interface {
 	// EnsureRunning ensures the host proxy is running. Spawns a daemon if needed.
 	EnsureRunning() error
 	// IsRunning returns whether the host proxy is currently running.
@@ -119,7 +120,13 @@ func (m *Manager) Port() int {
 // ProxyURL returns the URL containers should use to reach the host proxy.
 // This uses host.docker.internal which Docker automatically resolves to the host.
 func (m *Manager) ProxyURL() string {
-	return "http://" + net.JoinHostPort("host.docker.internal", strconv.Itoa(m.port))
+	host := net.JoinHostPort(consts.DockerHostInternal, strconv.Itoa(m.port))
+	scheme := "http"
+	u := url.URL{
+		Scheme: scheme,
+		Host:   host,
+	}
+	return u.String()
 }
 
 // isDaemonRunning checks if the daemon is running via PID file and health check.

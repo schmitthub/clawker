@@ -32,7 +32,7 @@ const (
 
 // defaultKnownHosts is the openssh published host-key blob for the
 // common public Git forges (github.com, gitlab.com, bitbucket.org),
-// seeded into ~/.ssh/known_hosts on every init run via the ssh step's
+// seeded into ~/.ssh/known_hosts on every init run via the ssh Step's
 // ExecialStdin. Update if upstream rotates.
 //
 // Source: https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints
@@ -55,7 +55,7 @@ bitbucket.org ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDQeJzhupRu0u0cdegZIa8e86EG2q
 // keep the dispatch CP-feature-flag-free: CP doesn't need to know
 // which optional features a given container has wired.
 const (
-	configSeedScript = `INIT_DIR="$HOME/.claude-init"
+	ConfigSeedScript = `INIT_DIR="$HOME/.claude-init"
 CONFIG_DIR="$HOME/.claude"
 [ -d "$INIT_DIR" ] || exit 0
 mkdir -p "$CONFIG_DIR"
@@ -74,7 +74,7 @@ else
 fi
 `
 
-	// gitconfigFilterTemplate strips [credential] sections from the
+	// GitconfigFilterTemplate strips [credential] sections from the
 	// host-mounted gitconfig before placing it under the unprivileged
 	// user's home. %q is replaced with consts.HostGitConfigStagingPath
 	// (Go-quoted so the bash literal never drifts from the workspace
@@ -86,7 +86,7 @@ fi
 	//     [credential] blocks) → discard the empty tmp; copying the
 	//     unfiltered file would leak credentials.
 	//   - awk syscall failed → discard tmp and bail; same rationale.
-	gitconfigFilterTemplate = `HOST_GITCONFIG=%q
+	GitconfigFilterTemplate = `HOST_GITCONFIG=%q
 [ -f "$HOST_GITCONFIG" ] || exit 0
 TMP="$HOME/.gitconfig.tmp"
 if awk '/^\[credential/ {in_cred=1; next} /^\[/ {in_cred=0} !in_cred {print}' "$HOST_GITCONFIG" > "$TMP" 2>/dev/null; then
@@ -100,15 +100,15 @@ else
 fi
 `
 
-	gitCredentialsScript = `[ -n "$` + consts.EnvHostProxy + `" ] || exit 0
+	GitCredentialsScript = `[ -n "$` + consts.EnvHostProxy + `" ] || exit 0
 [ "$` + consts.EnvGitHTTPS + `" = "true" ] || exit 0
 git config --global credential.helper clawker
 `
 
-	// sshKnownHostsScript reads the host blob from stdin (PipeStage's
+	// SshKnownHostsScript reads the host blob from stdin (PipeStage's
 	// initial_stdin) and appends only lines not already present.
 	// Idempotent across container restarts.
-	sshKnownHostsScript = `mkdir -p "$HOME/.ssh"
+	SshKnownHostsScript = `mkdir -p "$HOME/.ssh"
 chmod 700 "$HOME/.ssh"
 KH="$HOME/.ssh/known_hosts"
 touch "$KH"
@@ -121,14 +121,14 @@ while IFS= read -r line; do
 done
 `
 
-	// postExecScript runs the user's one-time post_init hook. Contract:
+	// PostInitScript runs the user's one-time post_init hook. Contract:
 	// attempted at most once per container lifecycle. DONE-first short
 	// circuits an already-attempted container; a missing script writes the
 	// marker and exits (nothing to do); a present script runs once. On
 	// success the marker is written so a restart never re-runs it; on
 	// failure the marker is NOT written and the exit code propagates — the
-	// step is fatal (plan halts, agent-ready never sent). A failed container
-	// is torn down rather than restarted: the step carries exit_on_non_zero
+	// Step is fatal (plan halts, agent-ready never sent). A failed container
+	// is torn down rather than restarted: the Step carries exit_on_non_zero
 	// so clawkerd self-exits with the mirrored code, and CP enforces a
 	// grace-then-SIGKILL backstop (killAfterGrace). A manually-restarted
 	// container re-runs this hook (no marker was written).
@@ -136,7 +136,7 @@ done
 	// The `[ -x … ] || { …; }` brace group is load-bearing: `|| touch && exit`
 	// without braces binds as `([ -x ] || touch) && exit`, which exits 0 when
 	// the script EXISTS and never runs it. Do not remove the braces.
-	postInitScript = `POST="$HOME/` + consts.DotClawkerDir + `/` + consts.HookPostInit + `.sh"
+	PostInitScript = `POST="$HOME/` + consts.DotClawkerDir + `/` + consts.HookPostInit + `.sh"
 DONE="$HOME/.claude/post-initialized"
 [ -f "$DONE" ] && exit 0
 [ -x "$POST" ] || { touch "$DONE"; exit 0; }
@@ -147,75 +147,75 @@ else
 fi
 `
 
-	// preRunScript runs the every-start pre_run hook. No marker (runs every
+	// PreRunScript runs the every-start pre_run hook. No marker (runs every
 	// start) and no log/ready-file. The `[ -x … ] || exit 0` guard is a
 	// defensive regression net: with always-deliver the file is present, but
-	// if it ever goes missing the step no-ops instead of failing the plan.
-	// `[ -x … ] && …` would exit 1 when absent (fail the step); `&& … || true`
+	// if it ever goes missing the Step no-ops instead of failing the plan.
+	// `[ -x … ] && …` would exit 1 when absent (fail the Step); `&& … || true`
 	// would swallow a real failure (break the fatal contract) — this two-line
 	// form no-ops when absent AND propagates the exit code when present. The
 	// file carries #!/bin/bash + set -e from PrepareHookTar.
-	preRunScript = `[ -x "$HOME/` + consts.DotClawkerDir + `/` + consts.HookPreRun + `.sh" ] || exit 0
+	PreRunScript = `[ -x "$HOME/` + consts.DotClawkerDir + `/` + consts.HookPreRun + `.sh" ] || exit 0
 "$HOME/` + consts.DotClawkerDir + `/` + consts.HookPreRun + `.sh"
 `
 )
 
 // gitconfigFilterScript is the rendered git-step body. Computed once
 // at package init; %q slot carries the workspace const.
-var gitconfigFilterScript = fmt.Sprintf(gitconfigFilterTemplate, consts.HostGitConfigStagingPath)
+var gitconfigFilterScript = fmt.Sprintf(GitconfigFilterTemplate, consts.HostGitConfigStagingPath)
 
-// step is one entry in the init plan. Sealed sum: shellStep or
-// agentReadyStep. Adding a new step kind is a compile-time change
-// (implement step) — runStep's type switch loses its runtime
-// "unknown step kind" branch entirely.
-type step interface {
-	stepName() string
-	// command builds the wire payload for this step under commandID.
+// Step is one entry in the init plan. Sealed sum: shellStep or
+// agentReadyStep. Adding a new Step kind is a compile-time change
+// (implement Step) — runStep's type switch loses its runtime
+// "unknown Step kind" branch entirely.
+type Step interface {
+	StepName() string
+	// Command builds the wire payload for this Step under commandID.
 	// followCloseStdin reports whether runStep should follow with a
 	// CloseStdin frame (true for shell steps that don't consume
 	// stdin; false for AgentReady which has no stdin pipe).
-	command(commandID string) (cmd *clawkerdv1.Command, followCloseStdin bool)
-	// isStep is the unexported sealing marker. A third implementer
+	Command(commandID string) (cmd *clawkerdv1.Command, followCloseStdin bool)
+	// IsStep is the unexported sealing marker. A third implementer
 	// outside this package is rejected at compile time; package-
 	// internal additions still need a paired runStep / plan() update
 	// by convention.
-	isStep()
+	IsStep()
 }
 
-type shellStep struct {
+type ShellStep struct {
 	Name  string
 	Shell *clawkerdv1.ShellCommand
 }
 
-func (s shellStep) stepName() string { return s.Name }
-func (shellStep) isStep()            {}
-func (s shellStep) command(id string) (*clawkerdv1.Command, bool) {
+func (s ShellStep) StepName() string { return s.Name }
+func (ShellStep) IsStep()            {}
+func (s ShellStep) Command(id string) (*clawkerdv1.Command, bool) {
 	return &clawkerdv1.Command{
 		CommandId: id,
 		Payload:   &clawkerdv1.Command_Shell{Shell: s.Shell},
 	}, true
 }
 
-type agentReadyStep struct {
+type AgentReadyStep struct {
 	Name string
 }
 
-type agentInitializedStep struct {
+type AgentInitializedStep struct {
 	Name string
 }
 
-func (s agentReadyStep) stepName() string { return s.Name }
-func (agentReadyStep) isStep()            {}
-func (s agentReadyStep) command(id string) (*clawkerdv1.Command, bool) {
+func (s AgentReadyStep) StepName() string { return s.Name }
+func (AgentReadyStep) IsStep()            {}
+func (s AgentReadyStep) Command(id string) (*clawkerdv1.Command, bool) {
 	return &clawkerdv1.Command{
 		CommandId: id,
 		Payload:   &clawkerdv1.Command_AgentReady{AgentReady: &clawkerdv1.AgentReady{}},
 	}, false
 }
 
-func (s agentInitializedStep) stepName() string { return s.Name }
-func (agentInitializedStep) isStep()            {}
-func (s agentInitializedStep) command(id string) (*clawkerdv1.Command, bool) {
+func (s AgentInitializedStep) StepName() string { return s.Name }
+func (AgentInitializedStep) IsStep()            {}
+func (s AgentInitializedStep) Command(id string) (*clawkerdv1.Command, bool) {
 	return &clawkerdv1.Command{
 		CommandId: id,
 		Payload:   &clawkerdv1.Command_AgentInitialized{AgentInitialized: &clawkerdv1.AgentInitialized{}},
@@ -275,7 +275,7 @@ type Executor struct {
 // and degrade gracefully (initExec = nil → dialer logs
 // agent_init_executor_unset per dial) instead of crashing CP and
 // stranding the failure on os.Stderr where only `docker logs` sees it.
-// Matches the nil-topic contract on agent.New for the dialer.
+// Matches the nil-topic contract on agent.NewDialer for the dialer.
 func NewExecutor(topic *pubsub.Topic[AgentEvent], dockerCli *docker.Client, log *logger.Logger) (*Executor, error) {
 	if topic == nil {
 		return nil, errors.New("agent.NewExecutor: topic is required")
@@ -286,10 +286,10 @@ func NewExecutor(topic *pubsub.Topic[AgentEvent], dockerCli *docker.Client, log 
 	return &Executor{topic: topic, dockerCli: dockerCli, log: log}, nil
 }
 
-func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_SessionClient, target ExecTarget, plan []step, label string) (runErr error) {
+func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_SessionClient, target ExecTarget, plan []Step, label string) (runErr error) {
 
 	startedAt := time.Now()
-	publish(e.topic, newAgentEvent(target.agent(), Message{
+	Publish(e.topic, newAgentEvent(target.agent(), Message{
 		Type:      ExecutorEventType,
 		Action:    ActionExecStarted,
 		StepCount: len(plan),
@@ -332,7 +332,7 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 			Str("step", currentName).
 			Msg(fmt.Sprintf("agent.%s: Executor.Run panicked; publishing synthetic terminal events; Session held open for containment", label))
 		if currentIdx >= 0 {
-			publish(e.topic, newAgentEvent(target.agent(), Message{
+			Publish(e.topic, newAgentEvent(target.agent(), Message{
 				Type:      ExecutorEventType,
 				Action:    ActionExecStepFailed,
 				StepName:  currentName,
@@ -343,7 +343,7 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 				Detail:    detail,
 			}))
 		}
-		publish(e.topic, newAgentEvent(target.agent(), Message{
+		Publish(e.topic, newAgentEvent(target.agent(), Message{
 			Type:     ExecutorEventType,
 			Action:   ActionExecFailed,
 			StepName: currentName,
@@ -356,45 +356,45 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 
 	for i, st := range plan {
 		currentIdx = i
-		currentName = st.stepName()
+		currentName = st.StepName()
 		stepStart := time.Now()
-		publish(e.topic, newAgentEvent(target.agent(), Message{
+		Publish(e.topic, newAgentEvent(target.agent(), Message{
 			Type:      ExecutorEventType,
 			Action:    ActionExecStepStarted,
-			StepName:  st.stepName(),
+			StepName:  st.StepName(),
 			StepIndex: i,
 			StepCount: len(plan),
 		}))
 		log.Info().
 			Str("event", "agent_init_step_started").
-			Str("step", st.stepName()).
+			Str("step", st.StepName()).
 			Int("step_index", i).
 			Msg("agent.init: step started")
 
 		out, err := e.runStep(ctx, stream, target.ContainerID, i, st, log)
 		dur := time.Since(stepStart)
 		if out.Failed() {
-			publish(e.topic, newAgentEvent(target.agent(), Message{
+			Publish(e.topic, newAgentEvent(target.agent(), Message{
 				Type:      ExecutorEventType,
 				Action:    ActionExecStepFailed,
-				StepName:  st.stepName(),
+				StepName:  st.StepName(),
 				StepIndex: i,
 				Duration:  dur,
 				ExitCode:  out.ExitCode,
 				Reason:    out.Reason,
 				Detail:    out.Detail,
 			}))
-			publish(e.topic, newAgentEvent(target.agent(), Message{
+			Publish(e.topic, newAgentEvent(target.agent(), Message{
 				Type:     ExecutorEventType,
 				Action:   ActionExecFailed,
-				StepName: st.stepName(),
+				StepName: st.StepName(),
 				Reason:   out.Reason,
 				Detail:   out.Detail,
 				Duration: time.Since(startedAt),
 			}))
 			log.Error().
 				Str("event", "agent_init_failed").
-				Str("step", st.stepName()).
+				Str("step", st.StepName()).
 				Int("step_index", i).
 				Int32("exit_code", out.ExitCode).
 				Str("reason", string(out.Reason)).
@@ -413,22 +413,22 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 			// with the grace-then-SIGKILL backstop. Steps carry
 			// exit_on_non_zero so a healthy clawkerd self-exits within the
 			// grace; the SIGKILL only catches a wedged one.
-			if err := e.killAfterGrace(ctx, target.ContainerID, log); err != nil {
-				return fmt.Errorf("agent.init: step %q failed: %s; additionally, failed to kill container: %v", st.stepName(), out.Detail, err)
+			if err := e.KillAfterGrace(ctx, target.ContainerID, log); err != nil {
+				return fmt.Errorf("agent.init: step %q failed: %s; additionally, failed to kill container: %v", st.StepName(), out.Detail, err)
 			}
-			return fmt.Errorf("agent.init: step %q failed: %s", st.stepName(), out.Detail)
+			return fmt.Errorf("agent.init: step %q failed: %s", st.StepName(), out.Detail)
 		}
-		publish(e.topic, newAgentEvent(target.agent(), Message{
+		Publish(e.topic, newAgentEvent(target.agent(), Message{
 			Type:      ExecutorEventType,
 			Action:    ActionExecStepCompleted,
-			StepName:  st.stepName(),
+			StepName:  st.StepName(),
 			StepIndex: i,
 			Duration:  dur,
 			ExitCode:  out.ExitCode,
 		}))
 		log.Info().
 			Str("event", "agent_init_step_completed").
-			Str("step", st.stepName()).
+			Str("step", st.StepName()).
 			Int("step_index", i).
 			Dur("duration", dur).
 			Msg("agent.init: step completed")
@@ -441,7 +441,7 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 	}
 
 	totalDur := time.Since(startedAt)
-	publish(e.topic, newAgentEvent(target.agent(), Message{
+	Publish(e.topic, newAgentEvent(target.agent(), Message{
 		Type:     ExecutorEventType,
 		Action:   ActionExecCompleted,
 		Duration: totalDur,
@@ -477,10 +477,10 @@ func captureCapped(buf *strings.Builder, truncated *int, data []byte) {
 }
 
 // stepOutcome bundles the per-step result fields runStep produces.
-// Zero value means the step succeeded; populated values are produced
+// Zero value means the Step succeeded; populated values are produced
 // only via the constructors below, which keep Reason / ExitCode /
 // Detail coherent. Run reads outcome.Failed() to decide whether to
-// publish terminal events.
+// Publish terminal events.
 type stepOutcome struct {
 	ExitCode int32
 	Reason   Reason
@@ -528,10 +528,10 @@ func stepFailedClassified(reason Reason, detail string) stepOutcome {
 	}
 }
 
-// runStep dispatches one step's wire payload and waits for its Done
+// runStep dispatches one Step's wire payload and waits for its Done
 // or Error. Returns:
 //   - outcome: zero value on success, populated with Reason/Detail/
-//     ExitCode on step failure or transport break. Run consumes this
+//     ExitCode on Step failure or transport break. Run consumes this
 //     to publish the terminal ExecStepFailed + ExecFailed events.
 //   - transport error: non-nil iff the stream is broken; the caller
 //     should bail Run after publishing terminal events. A non-nil
@@ -546,7 +546,7 @@ func stepFailedClassified(reason Reason, detail string) stepOutcome {
 // deliberately omitted — a duplicate budget here would race the
 // server-side timer and risk misclassifying a server-detected timeout
 // as a client-side break.
-// killAfterGrace ensures the agent container is torn down after a fatal
+// KillAfterGrace ensures the agent container is torn down after a fatal
 // command. A command carrying exit_on_non_zero makes a healthy clawkerd
 // echo the output and self-exit PID 1 with the mirrored code, so CP waits
 // consts.CPAgentKillGrace for that clean self-exit — keyed on real
@@ -563,7 +563,7 @@ func stepFailedClassified(reason Reason, detail string) stepOutcome {
 // context.Background(), because if ctx is what woke the wait (shutdown),
 // the moby client rejects a request on a cancelled ctx before it reaches
 // the daemon — the SIGKILL would never issue and the container would leak.
-func (e *Executor) killAfterGrace(ctx context.Context, containerID string, log *logger.Logger) error {
+func (e *Executor) KillAfterGrace(ctx context.Context, containerID string, log *logger.Logger) error {
 	waitCtx, cancel := context.WithTimeout(ctx, consts.CPAgentKillGrace)
 	defer cancel()
 	wait := e.dockerCli.APIClient.ContainerWait(waitCtx, containerID, moby.ContainerWaitOptions{
@@ -593,12 +593,12 @@ func (e *Executor) killAfterGrace(ctx context.Context, containerID string, log *
 	return nil
 }
 
-func (e *Executor) runStep(ctx context.Context, stream clawkerdv1.ClawkerdService_SessionClient, containerID string, idx int, st step, log *logger.Logger) (stepOutcome, error) {
-	commandID := buildCommandID(containerID, st.stepName(), idx)
+func (e *Executor) runStep(ctx context.Context, stream clawkerdv1.ClawkerdService_SessionClient, containerID string, idx int, st Step, log *logger.Logger) (stepOutcome, error) {
+	commandID := buildCommandID(containerID, st.StepName(), idx)
 
-	cmd, followCloseStdin := st.command(commandID)
+	cmd, followCloseStdin := st.Command(commandID)
 	if err := stream.Send(cmd); err != nil {
-		wrapped := fmt.Errorf("send %s: %w", st.stepName(), err)
+		wrapped := fmt.Errorf("send %s: %w", st.StepName(), err)
 		return stepFailedTransport(wrapped.Error()), wrapped
 	}
 
@@ -614,7 +614,7 @@ func (e *Executor) runStep(ctx context.Context, stream clawkerdv1.ClawkerdServic
 			Payload:   &clawkerdv1.Command_CloseStdin{CloseStdin: &clawkerdv1.CloseStdin{}},
 		}
 		if err := stream.Send(closeCmd); err != nil {
-			wrapped := fmt.Errorf("send %s close_stdin: %w", st.stepName(), err)
+			wrapped := fmt.Errorf("send %s close_stdin: %w", st.StepName(), err)
 			return stepFailedTransport(wrapped.Error()), wrapped
 		}
 	}
@@ -632,7 +632,7 @@ func (e *Executor) runStep(ctx context.Context, stream clawkerdv1.ClawkerdServic
 				const eofDetail = "stream EOF before terminal response"
 				return stepFailedTransport(eofDetail), errors.New(eofDetail)
 			}
-			wrapped := fmt.Errorf("recv %s: %w", st.stepName(), err)
+			wrapped := fmt.Errorf("recv %s: %w", st.StepName(), err)
 			return stepFailedTransport(wrapped.Error()), wrapped
 		}
 		if resp.GetCommandId() != commandID {
@@ -684,7 +684,7 @@ func (e *Executor) runStep(ctx context.Context, stream clawkerdv1.ClawkerdServic
 			log.Warn().
 				Str("event", "agent_init_unknown_payload").
 				Str("command_id", resp.GetCommandId()).
-				Str("step", st.stepName()).
+				Str("step", st.StepName()).
 				Str("payload_type", fmt.Sprintf("%T", resp.Payload)).
 				Msg("agent.init: ignoring unknown response payload — wire vocabulary drift")
 		}
@@ -692,7 +692,7 @@ func (e *Executor) runStep(ctx context.Context, stream clawkerdv1.ClawkerdServic
 }
 
 // classifyErrorCode maps a clawkerd ErrorCode to the typed init
-// failure classification. New codes default to Unknown so producers
+// failure classification. NewDialer codes default to Unknown so producers
 // don't drop information silently — the human-readable detail still
 // carries the ErrorCode string.
 func classifyErrorCode(code clawkerdv1.ErrorCode) Reason {
@@ -712,7 +712,7 @@ func classifyErrorCode(code clawkerdv1.ErrorCode) Reason {
 }
 
 // buildCommandID composes a stable, human-debuggable command_id for
-// one step dispatch. Prefix is bounded so log lines stay compact.
+// one Step dispatch. Prefix is bounded so log lines stay compact.
 func buildCommandID(containerID, stepName string, idx int) string {
 	prefix := containerID
 	if len(prefix) > 12 {

@@ -5,16 +5,16 @@ import (
 	"github.com/schmitthub/clawker/internal/consts"
 )
 
-var configStep shellStep = shellStep{
+var configStep ShellStep = ShellStep{
 	Name: "config",
 	Shell: &clawkerdv1.ShellCommand{
-		Stages:         []*clawkerdv1.PipeStage{userStage(configSeedScript)},
+		Stages:         []*clawkerdv1.PipeStage{userStage(ConfigSeedScript)},
 		TimeoutSeconds: execStepTimeoutDefault,
 		ExitOnNonZero:  true,
 	},
 }
 
-var gitStep shellStep = shellStep{
+var gitStep ShellStep = ShellStep{
 	Name: "git",
 	Shell: &clawkerdv1.ShellCommand{
 		Stages:         []*clawkerdv1.PipeStage{userStage(gitconfigFilterScript)},
@@ -23,41 +23,41 @@ var gitStep shellStep = shellStep{
 	},
 }
 
-var gitCredentialsStep shellStep = shellStep{
+var gitCredentialsStep ShellStep = ShellStep{
 	Name: "git-credentials",
 	Shell: &clawkerdv1.ShellCommand{
-		Stages:         []*clawkerdv1.PipeStage{userStage(gitCredentialsScript)},
+		Stages:         []*clawkerdv1.PipeStage{userStage(GitCredentialsScript)},
 		TimeoutSeconds: execStepTimeoutDefault,
 		ExitOnNonZero:  true,
 	},
 }
 
-var sshStep shellStep = shellStep{
+var sshStep ShellStep = ShellStep{
 	Name: "ssh",
 	Shell: &clawkerdv1.ShellCommand{
-		Stages:         []*clawkerdv1.PipeStage{userStage(sshKnownHostsScript)},
+		Stages:         []*clawkerdv1.PipeStage{userStage(SshKnownHostsScript)},
 		InitialStdin:   []byte(defaultKnownHosts),
 		TimeoutSeconds: execStepTimeoutDefault,
 		ExitOnNonZero:  true,
 	},
 }
 
-var postInitStep shellStep = shellStep{
+var postInitStep ShellStep = ShellStep{
 	Name: consts.HookPostInit,
 	Shell: &clawkerdv1.ShellCommand{
-		Stages:         []*clawkerdv1.PipeStage{userStage(postInitScript)},
+		Stages:         []*clawkerdv1.PipeStage{userStage(PostInitScript)},
 		TimeoutSeconds: execStepTimeoutPostInit,
 		ExitOnNonZero:  true,
 		PrintOutput:    true,
 	},
 }
 
-var initPlan = []step{
+var InitPlan = []Step{
 	dockerSocketStep,
 	configStep,
 	gitStep,
 	gitCredentialsStep,
 	sshStep,
 	postInitStep,
-	agentInitializedStep{Name: "agent-initialized"},
+	AgentInitializedStep{Name: "agent-initialized"},
 }

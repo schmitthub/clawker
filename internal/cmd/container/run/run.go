@@ -37,7 +37,7 @@ type RunOptions struct {
 	Config          func() (config.Config, error)
 	ProjectManager  func() (project.ProjectManager, error)
 	ProjectRegistry func() (*project.Registry, error)
-	HostProxy       func() hostproxy.HostProxyService
+	HostProxy       func() hostproxy.Service
 	ControlPlane    func() manager.Manager
 	AdminClient     func(context.Context) (adminv1.AdminServiceClient, error)
 	SocketBridge    func() socketbridge.SocketBridgeManager
@@ -220,9 +220,6 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 		}
 	}
 
-	// --- Phase B: Create container with spinner ---
-
-	events := make(chan shared.CreateContainerEvent, 16)
 	type outcome struct {
 		result *shared.CreateContainerResult
 		err    error
@@ -235,7 +232,6 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 	}
 
 	go func() {
-		defer close(events)
 		r, err := shared.CreateContainer(ctx, &shared.CreateContainerOptions{
 			Client:          client,
 			Config:          cfg,
@@ -249,19 +245,10 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 			Log:             log,
 			Is256Color:      ios.Is256ColorSupported(),
 			IsTrueColor:     ios.IsTrueColorSupported(),
-		}, events)
+		})
 		done <- outcome{r, err}
 	}()
 
-	var warnings []string
-	for ev := range events {
-		switch {
-		case ev.Type == shared.MessageWarning:
-			warnings = append(warnings, ev.Message)
-		case ev.Status == shared.StepRunning:
-			ios.StartSpinner(ev.Message)
-		}
-	}
 	ios.StopSpinner()
 
 	o := <-done
@@ -271,13 +258,6 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 
 	opts.AgentName = o.result.AgentName
 	opts.Project = projectName
-
-	// --- Phase C: Post-progress ---
-
-	cs := ios.ColorScheme()
-	for _, w := range warnings {
-		fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.WarningIcon(), w)
-	}
 
 	// Bootstrap host services (CP ensure, host proxy, firewall init/rules)
 	// under a spinner BEFORE attach. Doing it here — in cooked mode, before

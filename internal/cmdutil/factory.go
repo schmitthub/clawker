@@ -46,7 +46,7 @@ type Factory struct {
 	ProjectRegistry func() (*project.Registry, error)
 	ProjectManager  func() (project.ProjectManager, error)
 	GitManager      func() (*git.GitManager, error)
-	HostProxy       func() hostproxy.HostProxyService
+	HostProxy       func() hostproxy.Service
 	SocketBridge    func() socketbridge.SocketBridgeManager
 	Prompter        func() *prompter.Prompter
 	AdminClient     func(context.Context) (adminv1.AdminServiceClient, error)

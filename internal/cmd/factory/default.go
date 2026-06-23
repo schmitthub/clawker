@@ -320,12 +320,12 @@ func adminClientFunc(f *cmdutil.Factory) func(context.Context) (adminv1.AdminSer
 }
 
 // hostProxyFunc returns a lazy closure that creates a host proxy manager once.
-func hostProxyFunc(f *cmdutil.Factory) func() hostproxy.HostProxyService {
+func hostProxyFunc(f *cmdutil.Factory) func() hostproxy.Service {
 	var (
 		once    sync.Once
-		manager hostproxy.HostProxyService
+		manager hostproxy.Service
 	)
-	return func() hostproxy.HostProxyService {
+	return func() hostproxy.Service {
 		once.Do(func() {
 			cfg, err := f.Config()
 			if err != nil {

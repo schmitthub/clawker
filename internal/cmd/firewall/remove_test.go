@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
-	cpmocks "github.com/schmitthub/clawker/controlplane/mocks"
+	adminv1mocks "github.com/schmitthub/clawker/api/admin/v1/mocks"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -107,7 +107,7 @@ func TestRemoveCompletion_DeduplicatesDomains(t *testing.T) {
 // AdminServiceClientMock whose FirewallListRules returns the supplied rules.
 func mockAdminFunc(rules []*adminv1.EgressRule, listErr error) func(context.Context) (adminv1.AdminServiceClient, error) {
 	return func(_ context.Context) (adminv1.AdminServiceClient, error) {
-		return &cpmocks.AdminServiceClientMock{
+		return &adminv1mocks.AdminServiceClientMock{
 			FirewallListRulesFunc: func(_ context.Context, _ *adminv1.FirewallListRulesRequest, _ ...grpc.CallOption) (*adminv1.FirewallListRulesResult, error) {
 				if listErr != nil {
 					return nil, listErr
@@ -125,7 +125,7 @@ func TestRemoveRun_Success(t *testing.T) {
 	f := newTestFactory(t)
 	var got *adminv1.FirewallRemoveRuleRequest
 	f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
-		return &cpmocks.AdminServiceClientMock{
+		return &adminv1mocks.AdminServiceClientMock{
 			FirewallRemoveRuleFunc: func(_ context.Context, req *adminv1.FirewallRemoveRuleRequest, _ ...grpc.CallOption) (*adminv1.FirewallRemoveRuleResult, error) {
 				got = req
 				return &adminv1.FirewallRemoveRuleResult{StackRestarted: true, Status: adminv1.RemoveRuleStatus_REMOVE_RULE_STATUS_REMOVED}, nil
@@ -151,7 +151,7 @@ func TestRemoveRun_Success(t *testing.T) {
 func TestRemoveRun_NotFound(t *testing.T) {
 	f := newTestFactory(t)
 	f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
-		return &cpmocks.AdminServiceClientMock{
+		return &adminv1mocks.AdminServiceClientMock{
 			FirewallRemoveRuleFunc: func(_ context.Context, _ *adminv1.FirewallRemoveRuleRequest, _ ...grpc.CallOption) (*adminv1.FirewallRemoveRuleResult, error) {
 				return &adminv1.FirewallRemoveRuleResult{
 					Status: adminv1.RemoveRuleStatus_REMOVE_RULE_STATUS_NOT_FOUND,
@@ -174,7 +174,7 @@ func TestRemoveRun_NotFound(t *testing.T) {
 func TestRemoveRun_NotFound_WithPath(t *testing.T) {
 	f := newTestFactory(t)
 	f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
-		return &cpmocks.AdminServiceClientMock{
+		return &adminv1mocks.AdminServiceClientMock{
 			FirewallRemoveRuleFunc: func(_ context.Context, _ *adminv1.FirewallRemoveRuleRequest, _ ...grpc.CallOption) (*adminv1.FirewallRemoveRuleResult, error) {
 				return &adminv1.FirewallRemoveRuleResult{
 					Status: adminv1.RemoveRuleStatus_REMOVE_RULE_STATUS_NOT_FOUND,
@@ -198,7 +198,7 @@ func TestRemoveRun_WithPath_BuildsRequest(t *testing.T) {
 	f, out, _ := testFactoryWithStreams(t)
 	var got *adminv1.FirewallRemoveRuleRequest
 	f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
-		return &cpmocks.AdminServiceClientMock{
+		return &adminv1mocks.AdminServiceClientMock{
 			FirewallRemoveRuleFunc: func(_ context.Context, req *adminv1.FirewallRemoveRuleRequest, _ ...grpc.CallOption) (*adminv1.FirewallRemoveRuleResult, error) {
 				got = req
 				return &adminv1.FirewallRemoveRuleResult{StackRestarted: true, Status: adminv1.RemoveRuleStatus_REMOVE_RULE_STATUS_PATH_REMOVED}, nil
@@ -223,7 +223,7 @@ func TestRemoveRun_NoPath_RequestPathEmpty(t *testing.T) {
 	f := newTestFactory(t)
 	var got *adminv1.FirewallRemoveRuleRequest
 	f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
-		return &cpmocks.AdminServiceClientMock{
+		return &adminv1mocks.AdminServiceClientMock{
 			FirewallRemoveRuleFunc: func(_ context.Context, req *adminv1.FirewallRemoveRuleRequest, _ ...grpc.CallOption) (*adminv1.FirewallRemoveRuleResult, error) {
 				got = req
 				return &adminv1.FirewallRemoveRuleResult{StackRestarted: true, Status: adminv1.RemoveRuleStatus_REMOVE_RULE_STATUS_REMOVED}, nil

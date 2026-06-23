@@ -90,7 +90,7 @@ func Start(ctx context.Context, deps StartDeps) (func(), error) {
 	}
 
 	// Step 1: Reap orphan registry rows against the live docker view.
-	if _, err := reapOrphans(ctx, deps.Registry, deps.DockerLister, log); err != nil {
+	if _, err := ReapOrphans(ctx, deps.Registry, deps.DockerLister, log); err != nil {
 		// Soft-fail: the destroy subscription will catch future
 		// evictions, and the next CP restart re-runs reap. A startup-time
 		// reap failure must not block the bus from coming up — CP must
@@ -99,7 +99,7 @@ func Start(ctx context.Context, deps StartDeps) (func(), error) {
 		// may contain ghost rows for containers destroyed while CP was
 		// down.
 		log.Warn().Err(err).Msg("agent: startup reap failed; continuing without orphan cleanup")
-		publish(deps.AgentTopic, newAgentEvent(Agent{}, Message{
+		Publish(deps.AgentTopic, newAgentEvent(Agent{}, Message{
 			Type:   RegistryEventType,
 			Action: ActionReap,
 			Reason: ReasonFailed,
@@ -108,7 +108,7 @@ func Start(ctx context.Context, deps StartDeps) (func(), error) {
 	}
 
 	// Step 2: container/destroy → evict registry row.
-	subscribeEvict(ctx, deps.DockerTopic, deps.Registry, log)
+	SubscribeEvict(ctx, deps.DockerTopic, deps.Registry, log)
 
 	// Step 3: container/{die,stop,kill,oom,destroy} → cancel the
 	// in-flight CP→clawkerd Session. The docker event is the source of
@@ -118,7 +118,7 @@ func Start(ctx context.Context, deps StartDeps) (func(), error) {
 	// Independent of the evict subscriber — evict reflects row state
 	// (destroy only), cancel reflects connectivity state (any exit
 	// transition).
-	subscribeSessionCancel(ctx, deps.DockerTopic, deps.Dialer, log)
+	SubscribeSessionCancel(ctx, deps.DockerTopic, deps.Dialer, log)
 
 	// Step 4: container/start|restart|unpause → dial agent.
 	subscribeDial(ctx, deps.DockerTopic, deps.Dialer, log)
@@ -138,9 +138,9 @@ func Start(ctx context.Context, deps StartDeps) (func(), error) {
 // from that point forward).
 const reapListerMaxAttempts = 3
 
-// reapOrphans drops every registry row whose container_id is not
+// ReapOrphans drops every registry row whose container_id is not
 // present in the lister's snapshot.
-func reapOrphans(ctx context.Context, reg Registry, lister ContainerListFunc, log *logger.Logger) (int, error) {
+func ReapOrphans(ctx context.Context, reg Registry, lister ContainerListFunc, log *logger.Logger) (int, error) {
 	ids, err := listWithRetry(ctx, lister, log)
 	if err != nil {
 		return 0, fmt.Errorf("listing containers: %w", err)
@@ -242,7 +242,7 @@ type sessionCanceller interface {
 	CancelDial(containerID string)
 }
 
-// subscribeEvict wires the registry's evict path to dockerevents
+// SubscribeEvict wires the registry's evict path to dockerevents
 // container/destroy envelopes. moby fires `destroy` for every
 // `docker rm` on a container; `remove` is image-only and never fires
 // for containers.
@@ -255,7 +255,7 @@ type sessionCanceller interface {
 // failures escalate to a single Error line; the pipe's serialized,
 // single-goroutine-per-subscriber delivery makes the closure-local
 // counter safe without a mutex.
-func subscribeEvict(ctx context.Context, topic *pubsub.Topic[dockerevents.DockerEvent], reg Registry, log *logger.Logger) {
+func SubscribeEvict(ctx context.Context, topic *pubsub.Topic[dockerevents.DockerEvent], reg Registry, log *logger.Logger) {
 	consecutiveFailures := 0
 	escalated := false
 	topic.Subscribe(func(evt pubsub.Event[dockerevents.DockerEvent]) {
@@ -294,7 +294,7 @@ func subscribeEvict(ctx context.Context, topic *pubsub.Topic[dockerevents.Docker
 // start/restart/unpause; together they keep the Session connection-state
 // aligned with docker truth without going through the registry.
 //
-// Distinct from dialEvent (start/restart/unpause) and from the evict
+// Distinct from DialEvent (start/restart/unpause) and from the evict
 // predicate (destroy only, because evict semantics are tied to row
 // deletion, not connectivity).
 func sessionCancelEvent(ev dockerevents.DockerEvent) bool {
@@ -309,11 +309,11 @@ func sessionCancelEvent(ev dockerevents.DockerEvent) bool {
 	return false
 }
 
-// subscribeSessionCancel wires CancelDial to docker container lifecycle
+// SubscribeSessionCancel wires CancelDial to docker container lifecycle
 // events. The docker event is the source of truth for "clawkerd is no
 // longer serving"; canceling at this layer keeps the dialer independent
 // of registry state. A nil dialer is a no-op (no subscription).
-func subscribeSessionCancel(ctx context.Context, topic *pubsub.Topic[dockerevents.DockerEvent], dialer sessionCanceller, log *logger.Logger) {
+func SubscribeSessionCancel(ctx context.Context, topic *pubsub.Topic[dockerevents.DockerEvent], dialer sessionCanceller, log *logger.Logger) {
 	if dialer == nil {
 		return
 	}
@@ -335,13 +335,13 @@ func subscribeSessionCancel(ctx context.Context, topic *pubsub.Topic[dockerevent
 	})
 }
 
-// dialEvent reports whether a docker event should trigger a dial. Dial
+// DialEvent reports whether a docker event should trigger a dial. Dial
 // actions: Start, Restart, UnPause — every transition that takes a
 // container into running state. ActionCreate is intentionally excluded:
 // a created-but-not-started container has no clawkerd listener, so
 // dialing always fails; the next ActionStart re-fires. Scope: only
 // purpose=agent containers (CP itself, host proxy never run clawkerd).
-func dialEvent(ev dockerevents.DockerEvent) bool {
+func DialEvent(ev dockerevents.DockerEvent) bool {
 	if ev.Type != events.ContainerEventType {
 		return false
 	}
@@ -352,7 +352,7 @@ func dialEvent(ev dockerevents.DockerEvent) bool {
 	return false
 }
 
-// subscribeDial wires the Dialer to dialEvent-matching dockerevents. The
+// subscribeDial wires the Dialer to DialEvent-matching dockerevents. The
 // Dialer's internal dedup map prevents double-dial of the same
 // container_id when overlapping events deliver. The dial ctx threaded to
 // DialAgent is the orchestrator's CP-lifetime ctx passed to Start.
@@ -362,7 +362,7 @@ func subscribeDial(ctx context.Context, topic *pubsub.Topic[dockerevents.DockerE
 			return
 		}
 		ev := evt.Payload
-		if !dialEvent(ev) {
+		if !DialEvent(ev) {
 			return
 		}
 		dialer.DialAgent(ctx, ev.Actor.ID)

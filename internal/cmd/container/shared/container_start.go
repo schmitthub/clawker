@@ -20,7 +20,7 @@ import (
 type CommandOpts struct {
 	Client       func(context.Context) (*docker.Client, error)
 	Config       func() (config.Config, error)
-	HostProxy    func() hostproxy.HostProxyService
+	HostProxy    func() hostproxy.Service
 	ControlPlane func() manager.Manager
 	AdminClient  func(context.Context) (adminv1.AdminServiceClient, error)
 	SocketBridge func() socketbridge.SocketBridgeManager
@@ -89,27 +89,6 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 	// process and silently kills the audit trail. Lifecycle is owned by
 	// Factory; per-command paths must not Close.
 
-	if projectCfg != nil && projectCfg.Security.HostProxyEnabled() {
-		if cmdOpts.HostProxy == nil {
-			if log != nil {
-				log.Debug().Msg("host proxy provider is nil, skipping")
-			}
-		} else {
-			hp := cmdOpts.HostProxy()
-			if hp == nil {
-				if log != nil {
-					log.Debug().Msg("host proxy factory returned nil, skipping")
-				}
-			} else if err := hp.EnsureRunning(); err != nil {
-				return fmt.Errorf("bootstrapping services: ensuring host proxy is running: %w", err)
-			} else if log != nil {
-				log.Debug().Msg("host proxy started successfully")
-			}
-		}
-	} else if log != nil {
-		log.Debug().Msg("host proxy disabled by config")
-	}
-
 	// CP is core infrastructure — always bring it up when an agent
 	// container is starting. The firewall, future webui, and any other
 	// CP-hosted service depend on the CP being live; individual features
@@ -146,6 +125,27 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 		}); err != nil {
 			return fmt.Errorf("bootstrapping services: adding firewall rules: %w", err)
 		}
+	}
+
+	if projectCfg != nil && projectCfg.Security.HostProxyEnabled() {
+		if cmdOpts.HostProxy == nil {
+			if log != nil {
+				log.Debug().Msg("host proxy provider is nil, skipping")
+			}
+		} else {
+			hp := cmdOpts.HostProxy()
+			if hp == nil {
+				if log != nil {
+					log.Debug().Msg("host proxy factory returned nil, skipping")
+				}
+			} else if err := hp.EnsureRunning(); err != nil {
+				return fmt.Errorf("bootstrapping services: ensuring host proxy is running: %w", err)
+			} else if log != nil {
+				log.Debug().Msg("host proxy started successfully")
+			}
+		}
+	} else if log != nil {
+		log.Debug().Msg("host proxy disabled by config")
 	}
 
 	// Deliver the every-start pre_run hook to ~/.clawker/pre-run.sh. Always

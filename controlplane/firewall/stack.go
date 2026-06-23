@@ -101,7 +101,7 @@ type Stack struct {
 
 // OtelCertProvisioner is the firewall-package view of the trusted-lane
 // mTLS material provider. The concrete implementation lives in
-// `internal/controlplane/otelcerts` (CP-level, outside the firewall
+// `./controlplane/otelcerts` (CP-level, outside the firewall
 // package — see feedback_no_layering_violations.md). Tests pass a
 // tiny fake; production wiring passes `*otelcerts.Service`.
 //
@@ -563,7 +563,7 @@ func (s *Stack) ensureConfigs() (string, error) {
 // attempted.
 //
 // The mint + atomic-write + pair-check work lives in
-// `internal/controlplane/otelcerts` — this method only dispatches per
+// `./controlplane/otelcerts` — this method only dispatches per
 // sibling service and propagates the first error. File perms, layout,
 // and the CLI-root ca.pem copy are owned by the provisioner.
 func (s *Stack) ensureInfraClientCerts() error {

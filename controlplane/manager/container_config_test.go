@@ -348,7 +348,7 @@ func TestCPContainer_ExtraHostsHostGateway(t *testing.T) {
 // otlploggrpc in-process and the collector's otlp/infra receiver only
 // opens the grpc: protocol — setting them would be misleading. Client
 // cert/key/CA env vars are also absent — the CP-side exporter wires
-// its TLSConfig in-process via internal/controlplane/otelcerts.
+// its TLSConfig in-process via ./controlplane/otelcerts.
 // Reading CLI-root-direct cert paths from env would silently undo the
 // trust-anchor split (agents hold CLI-root-direct leaves and could
 // forge service.name=clawkercp).

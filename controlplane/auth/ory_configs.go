@@ -24,7 +24,7 @@ import (
 //     Safe as a static value because the in-memory store is ephemeral.
 //   - Admin on 127.0.0.1: only reachable from within the CP container.
 //   - Public on 0.0.0.0: published to host for CLI token requests.
-//   - TTLs: 1h access token (matches tokenRefreshMargin=30s in internal/controlplane/adminclient/dial.go).
+//   - TTLs: 1h access token (matches tokenRefreshMargin=30s in controlplane/adminclient/dial.go).
 //   - expose_internal_errors: true for --dev mode debugging.
 //   - TLS: uses the same self-signed cert as the gRPC admin API.
 //

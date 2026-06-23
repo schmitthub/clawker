@@ -19,7 +19,7 @@ import (
 //
 // Production wiring passes *otelcerts.Service; the actual write +
 // pair-check + perm-shape contract is unit-tested in
-// internal/controlplane/otelcerts/otelcerts_test.go. The tests in this
+// /controlplane/otelcerts/otelcerts_test.go. The tests in this
 // file only assert firewall.Stack's dispatch behavior:
 //   - dispatches once per sibling service (envoy, coredns)
 //   - flips infraCertsReady true on success
