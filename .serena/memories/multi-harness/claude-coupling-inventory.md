@@ -206,7 +206,7 @@ infrastructure** — net-new work.
 | `consts/monitoring.go:105` | `EnvClaudeCodeEnableTelemetry` | per-harness telemetry env |
 | `cmd/root/root.go:32-38` | branding: "Manage Claude Code...", "(claude + docker)", "Start Claude Code in a container" | harness-neutral |
 | `cmd/generate/generate.go:42-74` | **entire command** = fetch `@anthropic-ai/claude-code` from npm → Dockerfiles | per-harness version source |
-| `cmd/skill/shared/shared.go:16-46` | `clawker skill` shells to `claude` binary, `schmitthub/claude-plugins` marketplace | likely stays Claude-specific (it IS a Claude plugin) |
+| `cmd/skill/*` | `clawker skill` is fully claude-hardwired — **see "clawker skill command" block below** | generic agent skill + per-harness selector flag |
 | `cmd/image/build/build.go:230-249`, `cmd/monitor/monitor.go:19`, run/create examples | Claude version-resolve messaging, "telemetry for Claude Code", `--dangerously-skip-permissions` examples | harness-neutral |
 
 `clawker init` + presets (Python/Go/Rust YAML) are **harness-agnostic** — coupling is in
@@ -242,6 +242,41 @@ Distilled across all 6 areas, one `Harness` abstraction needs:
 - **Container username `claude`** (`consts.go:424`) is just a username, not a code path — low
   priority, cosmetic.
 
+### `clawker skill` command — fully claude-hardwired (MECHANIC-LEVEL)
+
+The clawker-support skill = a Claude Code plugin that gives the harness hands-on knowledge of
+clawker internals. The command wraps the `claude plugin` CLI end-to-end:
+
+- `skill.go:14-20` — parent command Short/Long: "Manage the clawker Claude Code skill plugin".
+- `shared/shared.go:16-17` — `MarketplaceSource = "schmitthub/claude-plugins"`,
+  `PluginName = "clawker-support@schmitthub-plugins"`.
+- `shared/shared.go:20-29` — `ValidScopes = {user, project, local}` — the scopes the **Claude CLI**
+  accepts for plugin ops.
+- `shared/shared.go:31-41` — `CheckClaudeCLI` = `exec.LookPath("claude")`, error points to
+  `docs.anthropic.com/.../claude-code`.
+- `shared/shared.go:43-63` — `RunClaude` = `exec.CommandContext(ctx, "claude", args...)` — every
+  install/show/remove subcommand shells out to the `claude` binary.
+- subcommands `install/` `show/` `remove/` add the marketplace + install/uninstall the plugin via
+  `claude plugin marketplace add` / `claude plugin install` / `remove`.
+
+**Direction (user):** make this a **generic agent-skill** command + a **per-harness selector flag**
+(e.g. `--claude`, later `--codex`). The harness owns its skill/extension-install mechanism — its CLI
+binary, marketplace/source format, scope vocabulary, and install commands — because each harness's
+extension system differs (Claude plugins vs whatever codex/opencode use; some have none). So
+"skill/extension install" is another **per-harness fragment** on the `Harness` interface; the command
+resolves the selector flag to a harness and calls its installer. The clawker-support skill content
+itself may need per-harness packaging.
+
+### Note on `post_init` / MCP — no clawker-owned MCP setup exists
+
+clawker does NOT ship or own any MCP setup. `agent.post_init` is **arbitrary user content** that
+*may* contain MCP setup (or anything else). That is exactly why it must be namespaced under the
+harness-keyed config map (`harnesses.<name>.agent.post_init`, see `design.md`): arbitrary
+harness-specific user commands only run in that harness's container. There is no clawker MCP code to
+generalize — the coupling is structural (where arbitrary hooks live), not a baked script.
+
+---
+
 The descriptor superset + sharp edges above feed the harness abstraction. The decided
 architecture (config model, build→runtime split, interface/registry/tiers) lives in
 `design.md` — the source of truth for decisions; this file is the coupling evidence.
@@ -250,6 +285,3 @@ architecture (config model, build→runtime split, interface/registry/tiers) liv
 
 - **Section 2** — Dockerfile install/seed steps: the real RUN/COPY/ENV mechanics.
 - **Section 5** — CP init: actual `configSeedScript` / `postInitScript` shell bodies; spawn `routeArgs`.
-- **MCP setup — NOT yet located.** Where the Claude MCP setup actually lives (project `post_init`
-  default? baked script? Dockerfile `after_claude_install`? CP dispatch?). The harness-fatal
-  coupling that triggered this thread; unmapped until traced.
