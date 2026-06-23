@@ -35,6 +35,51 @@ Where a `harness` descriptor must be born.
 
 **No `harness`/`agent-type`/`codex`/`opencode` anywhere in config or consts.** Built from scratch.
 
+### CRITICAL: `build` and `agent` blocks are INTRINSICALLY harness-coupled (not extractable)
+
+Earlier "project config stays clean, harness → settings" was **wrong**. The harness is woven into
+two project-config blocks and cannot be cleanly lifted out:
+
+- **`build` installs the harness.** The generated Dockerfile's install step (`curl claude.ai/install.sh`)
+  is the harness install; `InjectConfig.AfterClaudeInstall` (schema.go:68) is a claude-named inject
+  point ("add MCP servers, install plugins"); `AfterUserSetup`/`AfterUserSwitch` descs say "claude user".
+  Build is harness-shaped at its core, not just in a sub-block.
+- **`agent` hooks are harness setup.** `agent.post_init` (schema.go:93) desc = "install MCP servers …
+  seeding claude code config"; `pre_run` (schema.go:94) = "before the CMD (default: claude)". The
+  claude MCP setup users put in `post_init` is *harness setup misfiled as project config* — it will
+  fire claude commands inside a codex container and fail every start.
+
+**Model implication:** the selected harness must **contribute fragments** that compose with the
+project's generic config at build time:
+- build frag — install step, inject defaults, required packages
+- agent frag — its own init/MCP hooks (claude MCP belongs to the claude harness, NOT project post_init)
+- egress frag — its required floor + security path-rules (below)
+
+The refactor = **extract claude-specific bits OUT of project config + `defaults.go` INTO the claude
+harness definition**, then compose `selected-harness fragments ⊕ project generic build/agent`. Project
+config keeps only genuinely harness-agnostic parts (base image, extra packages, project-specific env,
+non-harness post_init). This is why harness defs can't simply move to settings and leave project
+"clean" — project's build/agent must still receive the harness's contributed fragments.
+
+### Required firewall floor — hardcoded Claude, always-merged, non-removable (MECHANIC-LEVEL)
+
+`config/defaults.go:15-47` — `requiredFirewallRules []EgressRule`. `Config.EgressRules()` composes
+**baseline ⊕ project `security.firewall` rules ⊕ `add_domains`** (config CLAUDE.md). The baseline is
+the egress **floor**: always present, NOT removable from project config. All 11 entries are Claude:
+- `api.anthropic.com`, `claude.com`, `platform.claude.com` (API + OAuth token exchange)
+- `.claude.ai` — host-allow for login, BUT carries **bespoke security PathRules**: deny `/public/` +
+  `/share/` so a prompt-injected agent can't pivot into fetching attacker-authored UGC from a trusted
+  origin. `PathDefault` empty → `EffectivePathDefault` = allow (denylist mode) to keep OAuth/login intact.
+- `mcp-proxy.anthropic.com` (MCP proxy)
+- `registry.npmjs.org` (npm — only because claude is npm-installed + Node baked in)
+- `sentry.io`, `statsig.anthropic.com`, `statsig.com`, `.datadoghq.com`, `.datadoghq.eu` (telemetry/flags)
+
+**Harness-fatal:** build a codex image and the floor STILL forces anthropic egress AND omits codex's
+real required egress (OpenAI endpoints) → codex can't reach its API. The floor must become the
+**selected harness's required egress** (a per-harness fragment), including that harness's own
+security path-rules. The `.claude.ai` UGC-deny is security knowledge that lives WITH the claude
+harness, not in a shared default. (`requiredFirewallDomains` at :52-59 is a derived back-compat list.)
+
 ## 2. Image build / Dockerfile — install + default CMD
 
 | file:line | thing | fix |
@@ -156,7 +201,7 @@ infrastructure** — net-new work.
 
 | file:line | thing | fix |
 |---|---|---|
-| `config/defaults.go:15-49` | `requiredFirewallRules` hardcodes `api.anthropic.com`, `claude.com`, `.claude.ai`, `mcp-proxy.anthropic.com`, `registry.npmjs.org`, statsig/sentry/datadog | per-harness required-egress set |
+| `config/defaults.go:15-47` | `requiredFirewallRules` hardcoded Claude egress floor — **see section 1 "Required firewall floor" for the mechanic-level treatment** (always-merged via `EgressRules()`, non-removable, `.claude.ai` UGC-deny, codex-fatal) | per-harness required-egress fragment |
 | `consts/consts.go:193,198` | `ClaudeDir=".claude"`, `ClaudeProjectsSubdir="projects"` | harness config-dir accessor |
 | `consts/monitoring.go:105` | `EnvClaudeCodeEnableTelemetry` | per-harness telemetry env |
 | `cmd/root/root.go:32-38` | branding: "Manage Claude Code...", "(claude + docker)", "Start Claude Code in a container" | harness-neutral |
