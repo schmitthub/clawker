@@ -35,6 +35,10 @@ if printf '%s' "$CMD" | grep -qE '\b(GIT_CONFIG_(COUNT|KEY_[0-9]+|VALUE_[0-9]+))
     block "inline GIT_CONFIG_* override can disable the pre-commit hook for this commit"
 fi
 
+if printf '%s' "$CMD" | grep -qE '(^|[[:space:]])SKIP=' && makes_commit; then
+    block "SKIP= drops one or more pre-commit hooks for this commit"
+fi
+
 if printf '%s' "$UNQUOTED" | grep -qE '\bgit\b[^|;&]*\b(commit-tree|fast-import)\b'; then
     block "git plumbing (commit-tree/fast-import) bypasses pre-commit entirely"
 fi
