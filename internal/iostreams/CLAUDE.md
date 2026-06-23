@@ -62,8 +62,10 @@ markdown string to a styled terminal string via `glamour`, using a compact
 `ansi.StyleConfig` (no document margin/padding, plain headings) for short inline
 snippets like the changelog teaser. Color profile and dark/light theme follow
 this IOStreams' own detection (honors `SetColorEnabled`/NO_COLOR); a disabled
-scheme uses the ASCII base for plain text. `WordWrap(0)` (soft-wrap) avoids
-glamour's width-padding bloat. Best-effort: returns the raw input on error.
+scheme uses the ASCII base for plain text. Output is word-wrapped to the terminal
+width, capped at a readable prose width (80 cols), via glamour's `WithWordWrap`
+(falls back to a default off-TTY); glamour right-pads wrapped lines with fill
+spaces, invisible in the terminal. Best-effort: returns the raw input on error.
 
 ### Spinners
 

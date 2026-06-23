@@ -197,7 +197,12 @@ func TestDriveRegister_ResponseErrorSurfaces(t *testing.T) {
 	require.Less(t, time.Since(start), registerRequiredTimeout/2,
 		"a typed Response_Error must short-circuit the wait — not fall through to the timeout")
 
-	require.Eventually(t, func() bool { return len(registeredEvents(rec)) == 1 }, time.Second, 10*time.Millisecond)
+	// publishRegisterFailure emits registered THEN untrusted on the same
+	// subscriber queue; await both before asserting so the second publish
+	// isn't still in-flight when the first lands.
+	require.Eventually(t, func() bool {
+		return len(registeredEvents(rec)) == 1 && len(untrustedEvents(rec)) == 1
+	}, time.Second, 10*time.Millisecond)
 	registered := registeredEvents(rec)
 	require.False(t, registered[0].Message.RegisterOk,
 		"register must fail on a typed Response_Error; downstream Detail assertions assume failure")
@@ -233,7 +238,9 @@ func TestDriveRegister_TimeoutCancelsStream(t *testing.T) {
 	// Recv goroutine exits.
 	assert.Error(t, streamCtx.Err(), "stream ctx must be cancelled on timeout to unblock inner Recv")
 
-	require.Eventually(t, func() bool { return len(registeredEvents(rec)) == 1 }, time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool {
+		return len(registeredEvents(rec)) == 1 && len(untrustedEvents(rec)) == 1
+	}, time.Second, 10*time.Millisecond)
 	registered := registeredEvents(rec)
 	assert.False(t, registered[0].Message.RegisterOk)
 	assert.Contains(t, registered[0].Message.Detail, "RegisterDone timeout")
@@ -260,7 +267,9 @@ func TestDriveRegister_RegistryLookupError_DistinguishedFromMissingRow(t *testin
 
 	d.driveRegister(t.Context(), "abc", res, logger.Nop())
 
-	require.Eventually(t, func() bool { return len(registeredEvents(rec)) == 1 }, time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool {
+		return len(registeredEvents(rec)) == 1 && len(untrustedEvents(rec)) == 1
+	}, time.Second, 10*time.Millisecond)
 	registered := registeredEvents(rec)
 	assert.False(t, registered[0].Message.RegisterOk)
 	assert.Contains(t, registered[0].Message.Detail, "registry lookup error")
@@ -284,10 +293,15 @@ func TestDriveRegister_MissingRowAfterRegisterDone(t *testing.T) {
 
 	d.driveRegister(t.Context(), "abc", res, logger.Nop())
 
-	require.Eventually(t, func() bool { return len(registeredEvents(rec)) == 1 }, time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool {
+		return len(registeredEvents(rec)) == 1 && len(untrustedEvents(rec)) == 1
+	}, time.Second, 10*time.Millisecond)
 	registered := registeredEvents(rec)
 	assert.False(t, registered[0].Message.RegisterOk)
 	assert.Contains(t, registered[0].Message.Detail, "registry row missing")
+	untrusted := untrustedEvents(rec)
+	require.Len(t, untrusted, 1)
+	assert.Equal(t, ReasonRegisterFailed, untrusted[0].Message.Reason)
 }
 
 // --- dispatchAgentEvents (load-bearing asymmetric-trust tests) -----------
