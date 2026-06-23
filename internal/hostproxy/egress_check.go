@@ -277,8 +277,10 @@ func evaluateRule(r egressRule, host, path string) error {
 }
 
 // checkPathRules evaluates path-level rules via pathRuleMatches (literal prefix,
-// or RE2 regex for "~"-marked paths), longest stored-path wins on ties — the
-// same precedence the firewall applies when it sorts Envoy routes longest-first.
+// or RE2 regex for "~"-marked paths). The longest-matching stored path wins;
+// equal-length matches resolve to the first in file order (strict > on length).
+// This mirrors the firewall side, which sorts Envoy routes longest-first with a
+// stable sort (sort.SliceStable), so ties there likewise keep original order.
 func checkPathRules(rules []pathRule, pathDefault, host, urlPath string) error {
 	bestLen := -1
 	action := ""

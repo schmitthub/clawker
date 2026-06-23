@@ -81,7 +81,10 @@ the broadest one that happens to work.
   **full-string-anchored RE2 regex** (e.g. `~/repos/(a|b)/?`) to close that gap;
   RE2 = no backreferences/lookaround. On the CLI **single-quote** regex paths:
   `--path '~/repos/(a|b)/?'`. Paths apply to http/https/ws/wss only; scope
-  ssh/tcp/udp by proto+port. `methods:` is a verb enum, never a regex.
+  ssh/tcp/udp by proto+port. `methods:` is a verb enum, never a regex. On
+  overlap the **longest rule string wins** (ties → declaration order); a regex's
+  length is char count, not match breadth — list the intended winner first or
+  lengthen it.
 - Full detail (VCS credential-exfil lockdown, method gating, monitoring-driven
   path discovery) lives in the clawker-support skill's `firewall-security.md`.
 

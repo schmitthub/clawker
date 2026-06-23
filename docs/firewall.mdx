@@ -277,9 +277,17 @@ accepts both). Rules without `~` keep prefix behavior --- nothing changes for
 existing rules.
 
 A path must start with `/` (a regex must anchor at `/` or `^/`); the firewall does
-not guess. An invalid path --- a literal missing the leading `/`, or a regex that
-won't compile --- **fails the whole add/refresh operation** with an error rather
-than silently loosening the rule.
+not guess. An invalid path --- a literal missing the leading `/`, a literal
+containing characters that can't appear in a URL path (often a regex written
+without the leading `~`), or a regex that won't compile --- **fails the whole
+add/refresh operation** with an error rather than silently loosening the rule.
+
+When several rules match the same path, the **longest rule string wins**, and
+equal-length matches fall to declaration order (first listed wins). A regex's
+"length" is its literal character count, **not** how much it matches --- so a
+short, broad regex can lose to a longer, more specific literal and vice versa.
+To force a particular winner among overlapping rules, list it first or make its
+string longer.
 
 When adding a regex path from the CLI, quote it --- the shell otherwise expands
 `~/` and treats `(`, `|`, `?` as special:

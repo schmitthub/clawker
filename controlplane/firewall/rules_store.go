@@ -191,6 +191,14 @@ func validateMethod(m string) error {
 // a path without it keeps the historical literal-prefix behavior unchanged.
 const regexPathMarker = "~"
 
+// literalPathChars matches a non-empty string composed only of RFC 3986 path
+// characters: unreserved + sub-delims + ":" "@" "/" and "%" (for percent-
+// encoding). A literal (non-regex) path rule must satisfy this — anything else
+// is not a valid request :path and is almost certainly a regex missing its
+// leading regexPathMarker. Regex paths are exempt (their metacharacters are
+// legal and checked by compilation instead).
+var literalPathChars = regexp.MustCompile(`^[A-Za-z0-9._~!$&'()*+,;=:@/%-]+$`)
+
 // validatePathRulePath enforces path-rule anchoring so a rule cannot match in
 // the middle of a request :path. A leading regexPathMarker opts the remainder
 // into an RE2 regex (compiled to Envoy safe_regex, a full-string match); any
@@ -204,6 +212,16 @@ func validatePathRulePath(path string) error {
 	if !isRegex {
 		if !strings.HasPrefix(path, "/") {
 			return fmt.Errorf("path rule %q must start with %q (no leading slash is auto-added)", path, "/")
+		}
+		// A literal path is matched verbatim against the request :path, so it
+		// must be a syntactically valid URL path (RFC 3986 pchar set + "/").
+		// Characters outside that set ("{", "|", "[", "^", "\", space, …) can
+		// never appear in a real request path, so the rule would be dead — and
+		// in practice their presence means the author wrote a regex but forgot
+		// the leading regexPathMarker. Reject loudly instead of silently never
+		// matching.
+		if !literalPathChars.MatchString(path) {
+			return fmt.Errorf("literal path rule %q contains characters not valid in a URL path; prefix the path with %q to write a regex rule", path, regexPathMarker)
 		}
 		return nil
 	}

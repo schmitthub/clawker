@@ -827,10 +827,24 @@ func TestValidateRule_PathAnchoring(t *testing.T) {
 		{"literal prefix ok", "/repos/clawker/", false},
 		{"literal root ok", "/", false},
 		{"literal missing leading slash", "repos/clawker", true},
+		// Literal sub-delims and other RFC 3986 pchars stay valid — these are
+		// legitimate (if unusual) literal paths, not regex.
+		{"literal sub-delims ok", "/p/(g)+a,b;c=1:2@x", false},
+		{"literal percent ok", "/a%20b", false},
+		{"literal tilde mid ok", "/~user/files", false},
+		// Characters outside the RFC 3986 path set are rejected — almost always
+		// a regex written without the leading "~" marker (the reported footgun).
+		{"literal illegal brace (forgot ~)", "/blog{", true},
+		{"literal illegal pipe (forgot ~)", "/u/(alice|bob)", true},
+		{"literal illegal bracket (forgot ~)", "/api/v[0-9]", true},
+		{"literal illegal caret (forgot ~)", "/blog^x", true},
+		{"literal illegal backslash", "/foo\\bar", true},
+		{"literal illegal space", "/foo bar", true},
 		{"regex anchored ok", "~/repos/clawker", false},
 		{"regex alternation ok", "~/repos/(clawker|anthropic)/?", false},
 		{"regex with caret anchor ok", "~^/repos/clawker", false},
 		{"regex subtree ok", "~/repos/clawker(/.*)?", false},
+		{"regex repetition brace ok", "~/v[0-9]{1,3}", false},
 		{"regex not anchored to slash", "~repos/clawker", true},
 		{"regex bare marker", "~", true},
 		{"regex will not compile", "~/repos/(clawker", true},

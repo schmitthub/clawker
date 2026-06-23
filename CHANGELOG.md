@@ -14,6 +14,12 @@ clawker CLI's "what's new" teaser renders the section bodies verbatim as
 markdown, and the release-notes workflow copies them into the GitHub release.
 Link to relevant docs inline in the bullets.
 
+## [0.12.9] - 2026-06-23
+
+- **Added:** Egress path rule RE2 regex support. Add `~` at the beginning of a `path` rule to match it as a full-string regex instead of a prefix — anchor exactly and use alternation.
+  - ex: Add two paths sharing a common segment, optional trailing slash: `~/repos/(clawker|anthropic)/?`
+  - ex: Add the exact path without trailing slash: `~/schmitthub/clawker$`
+
 ## [0.12.8] - 2026-06-20
 
 - **Fixed:** TypeScript preset's `pre_run` script now tolerates `npm install` failures instead of exiting the container, which could happen on transient registry errors or if the project hasn't set up its dependencies yet.

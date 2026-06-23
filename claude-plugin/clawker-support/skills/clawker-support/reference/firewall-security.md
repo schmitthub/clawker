@@ -82,9 +82,16 @@ example, battle-tested in clawker's own `.clawker.yaml`:
 - The engine is **RE2** — linear-time, no catastrophic backtracking, **no
   backreferences or lookaround**. It only protects you if your pattern is tight;
   an over-broad pattern is your own footgun.
-- An invalid path (literal not starting with `/`, regex that doesn't compile or
-  doesn't anchor at the path root) fails the whole add/refresh rather than
-  loosening the rule. Still discover any extra github.com paths the agent
+- **Precedence when rules overlap:** the **longest rule string wins**, ties fall
+  to declaration order (first listed). A regex's "length" is its literal char
+  count, **not** how much it matches — a short broad regex can lose to a longer
+  literal and vice versa. Both enforcement paths (Envoy and the host-browser
+  egress gate) use this same ordering, so they stay in lockstep. To force a
+  winner among overlapping rules, list it first or lengthen its string.
+- An invalid path (literal not starting with `/`, literal with characters that
+  can't appear in a URL path — usually a regex missing its `~`, regex that
+  doesn't compile or doesn't anchor at the path root) fails the whole
+  add/refresh rather than loosening the rule. Still discover any extra github.com paths the agent
   legitimately needs (release downloads, git deps) via the monitoring loop below.
 
 > **CLI sharp edge:** regex paths must be **single-quoted** in the shell —
