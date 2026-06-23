@@ -349,9 +349,10 @@ integrates with.
     covers **method gating** (a path rule's `methods` field, or `--methods` on
     `firewall add`) — deny mutating verbs (`POST`/`PUT`/`PATCH`/`DELETE`) to make
     a host read-only, the coarse backstop for write endpoints path rules don't
-    enumerate — and **exact path matching** (prefix a path with `~` to match it
-    as an anchored regex) to close the prefix-bypass where `/repos/x` also admits
-    `/repos/x-evil` on UGC-style hosts.
+    enumerate — and **exact path matching** (paths are open-ended literal
+    prefixes by default; prefix a path with `~` to match it as a full-string
+    anchored RE2 regex — single-quote it on the CLI) to close the prefix-bypass
+    where `/repos/x` also admits `/repos/x-evil` on UGC-style hosts.
 
 15. **Claude Code host auth (`/login` prompts in containers)** — When the user
     asks how `use_host_auth` shares their host login, or reports being prompted
@@ -454,6 +455,16 @@ These are the things users consistently get wrong. Keep them in mind always:
 - **Firewall is deny-by-default.** Everything except a small set of hardcoded
   Anthropic domains must be explicitly allowed. Fetch the current firewall
   docs if you need the exact list.
+
+- **Domain matching is exact unless you opt into a wildcard.** A bare domain
+  (`example.com`, or any `add_domains` entry) matches **only that exact host** —
+  it does NOT cover subdomains. Use a leading-dot entry (`.example.com`) for the
+  wildcard form: it matches every subdomain AND the bare apex. Matching is on
+  label boundaries (so `example.com` ≠ `example.com.evil.com`), an exact rule
+  always beats a wildcard, and within a tier deny wins. A user who writes
+  `add_domains: [example.com]` expecting `api.example.com` to work is the common
+  surprise — point them at the `.example.com` wildcard. See
+  `reference/firewall-security.md`.
 
 - **Default to the narrowest firewall scope — bare-domain allows are the #1
   over-broad mistake.** When unblocking an http/https destination, path-scope
