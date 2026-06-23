@@ -35,16 +35,18 @@ linters:
       statements: 40
 
     forbidigo:
-      # STRICT: AI loves to panic or print instead of routing errors.
       forbid:
-        - '^fmt\.Print.*$' # Forces AI to use your actual logger
-        - '^panic$'        # Forces AI to return errors up the stack
-        - '^os\.Exit$'     # Prevents abrupt process termination
-        - '^log\.Fatal.*$' # Prevents standard logger fatal calls
-
+        - pattern: '^fmt\.Print.*$'
+          msg: "AI INSTRUCTION: Do not use fmt.Print. Use the injected logger or return the value."
+        - pattern: '^panic$'
+          msg: "AI INSTRUCTION: Do not panic. Handle the error and return it up the call stack."
+        - pattern: '^os\.Exit$'
+          msg: "AI INSTRUCTION: Do not use os.Exit. Return a concrete error."
+        - pattern: '^log\.Fatal.*$'
+          msg: "AI INSTRUCTION: Do not use standard log.Fatal. Return the error."
     wrapcheck:
       # STRICT: Forces the AI to add context to errors (e.g., fmt.Errorf("doing x: %w", err))
-      ignoreSigs:
+      ignore-sigs:
         - .Errorf(
         - errors.New(
         - errors.Unwrap(
@@ -70,7 +72,6 @@ linters:
         - fieldalignment
 
 issues:
-  # STRICT: Do not hide any default errors or cap the issue count.
-  exclude-use-default: false
   max-issues-per-linter: 0
   max-same-issues: 0
+  fix: true
