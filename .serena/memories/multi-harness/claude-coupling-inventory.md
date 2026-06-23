@@ -37,8 +37,8 @@ Where a `harness` descriptor must be born.
 
 ### CRITICAL: `build` and `agent` blocks are INTRINSICALLY harness-coupled (not extractable)
 
-Earlier "project config stays clean, harness → settings" was **wrong**. The harness is woven into
-two project-config blocks and cannot be cleanly lifted out:
+The `build` and `agent` blocks are intrinsically harness-coupled — the harness is woven into both
+and cannot be cleanly lifted out:
 
 - **`build` installs the harness.** The generated Dockerfile's install step (`curl claude.ai/install.sh`)
   is the harness install; `InjectConfig.AfterClaudeInstall` (schema.go:68) is a claude-named inject
@@ -242,10 +242,14 @@ Distilled across all 6 areas, one `Harness` abstraction needs:
 - **Container username `claude`** (`consts.go:424`) is just a username, not a code path — low
   priority, cosmetic.
 
-## Next steps
+The descriptor superset + sharp edges above feed the harness abstraction. The decided
+architecture (config model, build→runtime split, interface/registry/tiers) lives in
+`design.md` — the source of truth for decisions; this file is the coupling evidence.
 
-- Draft the `Harness` config schema + Go descriptor design; check against
-  `.claude/docs/DESIGN.md` + `ARCHITECTURE.md`.
-- Phased migration plan with baked-in presets: claude-code, codex, opencode, pi.
-- Decide v1 scope: likely defer plugin/skill generalization and API-key auth may be the
-  gating new-infrastructure item for Codex.
+## Remaining recon (still file:line + summary depth, not mechanic)
+
+- **Section 2** — Dockerfile install/seed steps: the real RUN/COPY/ENV mechanics.
+- **Section 5** — CP init: actual `configSeedScript` / `postInitScript` shell bodies; spawn `routeArgs`.
+- **MCP setup — NOT yet located.** Where the Claude MCP setup actually lives (project `post_init`
+  default? baked script? Dockerfile `after_claude_install`? CP dispatch?). The harness-fatal
+  coupling that triggered this thread; unmapped until traced.
