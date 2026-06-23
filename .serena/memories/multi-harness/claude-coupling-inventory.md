@@ -69,19 +69,64 @@ This is where the **decided model** puts harness selection: `clawker build --har
 
 Note: `auth.EnsureAuthMaterial()` (build.go:131) is clawker CP/firewall CA material — **harness-agnostic**, no change. BuildKit detection, label/build-arg parsing, iidfile, progress wiring all harness-neutral.
 
-## 3. Container create — host-config staging
+## 3. Container create — host-config staging (MECHANIC-LEVEL, verified against code)
 
-`internal/containerfs/` hardcodes Claude's entire on-disk layout.
+`internal/containerfs/` is a bespoke staging pipeline with **Claude-plugin-registry-internal
+knowledge baked in**. Not "copy a config dir" — it filters JSON keys, rewrites specific JSON
+fields host→container, and skips named cache files. This is the **reference spec** the harness
+descriptor must generalize from. Every line below verified against `containerfs/containerfs.go`
++ `consts.go` (read 2026-06-23).
 
+### `ResolveHostConfigDir` (containerfs.go:31-58)
+- `$CLAUDE_CONFIG_DIR` if set → `filepath.Abs` normalize, must exist + be dir, else hard error.
+- else `~/.claude` (`consts.ClaudeDir`) if exists+dir.
+- else error "claude config dir not found on host".
+
+### `PrepareClaudeConfig` (containerfs.go:85-140) — stages into `<tmp>/.claude/`
+1. **settings.json** — `stageSettings` (253-287): read host `settings.json`, JSON-parse, extract
+   **ONLY the `enabledPlugins` key**, write `{enabledPlugins: ...}` filtered. Skip if file/key absent.
+   (Claude settings can hold secrets/host-specific junk → deliberate allowlist of one key.)
+2. **agents/ skills/ commands/** — `stageDirectory` (291-306): full recursive copy each, `EvalSymlinks`
+   on the source dir, skip-if-missing.
+3. **CLAUDE.md** — direct `copyFile` if present (user-level instructions). *(codex/opencode use a
+   different filename — `AGENTS.md` etc — and different location.)*
+4. **plugins/** — `stagePlugins` (308-379): WalkDir-copy the whole `plugins/` tree INCLUDING `cache/`,
+   but **skip top-level `install-counts-cache.json`**. Then rewrite two registry JSONs:
+   - `known_marketplaces.json`: keys `installPath` + `installLocation` → **prefix-swap**
+     `<host>/.claude/plugins` → `<containerHome>/.claude/plugins`.
+   - `installed_plugins.json`: `installPath` → **prefix-swap** (same); `projectPath` → **full replace**
+     with `containerWorkDir`.
+   - broken symlinks: warn + skip (Claude leaves dangling cache symlinks after plugin updates).
+   - rewrite engine = `pathRewriteRule{key, hostPrefix, containerPath}` + recursive `rewriteJSONPaths`
+     (382-441): `hostPrefix != ""` = prefix-swap-if-matches; `hostPrefix == ""` = replace whole value.
+
+### `PrepareCredentials` (containerfs.go:142-197) — stages `<tmp>/.claude/.credentials.json` (mode 0600)
+1. keyring `GetClaudeCodeCredentialsRaw()` → write blob **VERBATIM, never via typed struct** (a
+   round-trip fabricates a zero `organizationUuid` the refresh endpoint rejects, and drops unmodeled keys).
+2. fallback file `<hostConfigDir>/.credentials.json` byte-for-byte.
+3. neither → error "authenticate on the host first or set `agent.claude_code.use_host_auth: false`".
+
+### projects/ — NOT staged here
+Live **bind mount** in `internal/workspace` (`GetClaudeProjectsMount`, strategy.go:82-114), overlays
+the per-agent config volume at `/home/claude/.claude/projects` so auto-memory + session jsonls persist
+across runs. Distinct mechanism from the copied config volume (copy vs live-bind).
+
+### What this means for the descriptor (KEY FINDING)
+Per-harness staging needs **code, not just declarative config**. The JSON-key path-rewriting
+(`installPath`/`installLocation`/`projectPath` in named registry files) is bespoke Claude-plugin
+knowledge — no generic data schema expresses it cleanly. So the harness abstraction is likely a
+**Go interface (`HarnessStager`) with per-harness implementations**, NOT a pure-yaml descriptor.
+Declarative fields (config-dir env, dirs-to-copy, settings-key allowlist, cred source, instruction
+filename, copy-vs-bind) cover the *common* shape; an interface method covers the *bespoke* per-harness
+fixups. This directly tempers the "fully config-driven" goal — some harness logic must be baked Go.
+
+### Wiring + the rest
 | file:line | thing | fix |
 |---|---|---|
-| `containerfs/consts.go:9-27` | whole file: `CLAUDE_CONFIG_DIR`, `.credentials.json`, `settings.json`, `CLAUDE.md`, `enabledPlugins`, `agents/skills/commands/plugins` subdirs, plugin-registry files | harness config-dir layout descriptor |
-| `containerfs/containerfs.go:31-58` | `ResolveHostConfigDir` → `$CLAUDE_CONFIG_DIR` \|\| `~/.claude` | harness env + default dir |
-| `containerfs.go:85-140` | `PrepareClaudeConfig` — stages Claude subtree | harness-generic staging via manifest |
-| `containerfs.go:142-197,308-379` | `PrepareCredentials` + `stagePlugins` (rewrites `known_marketplaces.json`/`installed_plugins.json` paths) | harness credential source + plugin hooks |
-| `cmd/container/shared/containerfs.go:40-112` | `InitConfigOpts.ClaudeCode`, `ConfigStrategy()=="copy"` gate, dest `~/.claude` | harness config block + target |
-| `cmd/container/shared/container_create.go:~1599` | passes `ClaudeCode: projectCfg.Agent.ClaudeCode` into init | pass harness-selected block |
-| `workspace/strategy.go:82-114`, `setup.go:202-220` | config-volume + projects bind both land at `~/.claude/...`; gated on `MountProjectsEnabled()` | harness mount targets |
+| `containerfs/consts.go:7-28` | the layout contract: `CLAUDE_CONFIG_DIR`, `.credentials.json`, `settings.json`, `CLAUDE.md`, `enabledPlugins`, `agents/skills/commands/plugins`, `known_marketplaces.json`/`installed_plugins.json`/`install-counts-cache.json` | per-harness layout descriptor (data) + stager impl (code) |
+| `cmd/container/shared/containerfs.go:40-112` | `InitConfigOpts.ClaudeCode`, `ConfigStrategy()=="copy"` gate, dest `~/.claude` | harness config block + selected stager + target |
+| `cmd/container/shared/container_create.go:~1599` | passes `ClaudeCode: projectCfg.Agent.ClaudeCode` into init | pass harness-selected descriptor |
+| `workspace/strategy.go:82-114`, `setup.go:202-220` | config-volume + projects bind land at `~/.claude/...`; gated on `MountProjectsEnabled()` | harness mount targets + copy-vs-bind list |
 | `docker/env.go:143-148` | injects `CLAUDE_CODE_ENABLE_TELEMETRY=0` when monitoring down | harness telemetry env |
 
 ## 4. Auth / credentials — OAuth blob only, NO API-key path
