@@ -291,7 +291,7 @@ func httpRoutes(r config.EgressRule, cluster string, websocket bool) []any {
 
 // httpAllowRoute forwards a path prefix (optionally narrowed to a set of HTTP
 // methods) to the upstream cluster.
-func httpAllowRoute(prefix, cluster string, websocket bool, methods []string) map[string]any {
+func httpAllowRoute(path, cluster string, websocket bool, methods []string) map[string]any {
 	route := map[string]any{"cluster": cluster, "timeout": "0s"}
 	// ws/wss enrichment: a per-route upgrade_configs entry enables the WebSocket
 	// upgrade on THIS allow route (RFC 6455 over h1.1, RFC 8441 Extended CONNECT
@@ -301,7 +301,7 @@ func httpAllowRoute(prefix, cluster string, websocket bool, methods []string) ma
 		route["upgrade_configs"] = []any{map[string]any{"upgrade_type": "websocket"}}
 	}
 	return map[string]any{
-		"match":    routeMatch(prefix, methods),
+		"match":    routeMatch(path, methods),
 		"metadata": clawkerActionMetadata(consts.VerdictAllowed),
 		"route":    route,
 	}
@@ -309,9 +309,9 @@ func httpAllowRoute(prefix, cluster string, websocket bool, methods []string) ma
 
 // httpDenyRoute 403s a path prefix (optionally narrowed to a set of HTTP
 // methods) via direct_response.
-func httpDenyRoute(prefix string, methods []string) map[string]any {
+func httpDenyRoute(path string, methods []string) map[string]any {
 	return map[string]any{
-		"match":    routeMatch(prefix, methods),
+		"match":    routeMatch(path, methods),
 		"metadata": clawkerActionMetadata(consts.VerdictDenied),
 		"direct_response": map[string]any{
 			"status": 403,
@@ -323,12 +323,25 @@ func httpDenyRoute(prefix string, methods []string) map[string]any {
 // routeMatch builds an Envoy RouteMatch: a path prefix plus, when methods is
 // non-empty, a :method pseudo-header matcher narrowing the route to those verbs.
 // methods are pre-normalized (uppercase, deduped, sorted) by NormalizeRule.
-func routeMatch(prefix string, methods []string) map[string]any {
-	match := map[string]any{"prefix": prefix}
+func routeMatch(path string, methods []string) map[string]any {
+	match := pathSpecifier(path)
 	if h := methodHeaderMatch(methods); h != nil {
 		match["headers"] = h
 	}
 	return match
+}
+
+// pathSpecifier maps an egress path-rule path to an Envoy RouteMatch path
+// specifier. A leading regexPathMarker marks the remainder an RE2 pattern,
+// emitted as a full-string safe_regex match (the deprecated google_re2 engine
+// field is omitted, matching the :method matcher); any other path is a literal
+// prefix. ValidateRule has already guaranteed a regex compiles and anchors at
+// the path root, so generation does no re-validation here.
+func pathSpecifier(path string) map[string]any {
+	if rx, ok := strings.CutPrefix(path, regexPathMarker); ok {
+		return map[string]any{"safe_regex": map[string]any{"regex": rx}}
+	}
+	return map[string]any{"prefix": path}
 }
 
 // methodHeaderMatch returns the RouteMatch `headers` list gating on the :method

@@ -44,7 +44,13 @@ prior action for that path.
 Pass --methods to narrow a path rule to a set of HTTP request methods (e.g.
 GET,HEAD). The path rule's --action then applies only to those methods; other
 methods fall through to later rules / the path default. Empty = all methods.
-HTTP-family protos only (https/http/ws/wss).`,
+HTTP-family protos only (https/http/ws/wss).
+
+A --path is a literal prefix by default, so --path /repos/x also matches
+/repos/x-evil. Prefix the path with ~ to match it as a regex instead, which is
+anchored end-to-end for exact matching (e.g. ~/repos/(a|b)/? matches only those
+two repos, with or without a trailing slash). Quote regex paths — the shell
+expands ~/ and treats ( | ? as special.`,
 		Example: `  # Allow HTTPS traffic to a domain
   clawker firewall add registry.npmjs.org
 
@@ -61,7 +67,10 @@ HTTP-family protos only (https/http/ws/wss).`,
   clawker firewall add api.github.com --path / --action allow --methods GET,HEAD
 
   # Deny mutating methods on a path prefix (reads still fall through)
-  clawker firewall add api.github.com --path /repos/ --action deny --methods POST,PUT,PATCH,DELETE`,
+  clawker firewall add api.github.com --path /repos/ --action deny --methods POST,PUT,PATCH,DELETE
+
+  # Allow only two repos exactly (regex, anchored) — blocks /repos/clawker-evil
+  clawker firewall add api.github.com --path '~/repos/(clawker|anthropic)/?' --action allow`,
 		Args: cmdutil.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.Domain = args[0]
@@ -74,7 +83,7 @@ HTTP-family protos only (https/http/ws/wss).`,
 
 	cmd.Flags().StringVar(&opts.Proto, "proto", "https", "Protocol: https (default), http, ssh, tcp, or any opaque protocol name")
 	cmd.Flags().StringVar(&opts.Port, "port", "", "Destination port: a single port (443) or an inclusive range (9000-9100); default: protocol-specific")
-	cmd.Flags().StringVar(&opts.Path, "path", "", "URL path prefix for a path-scoped rule, matched as a prefix at request time (requires --action)")
+	cmd.Flags().StringVar(&opts.Path, "path", "", "URL path for a path-scoped rule: a literal prefix (e.g. /v1), or an RE2 regex if prefixed with ~ for exact matching (e.g. ~/repos/(a|b)/?); requires --action")
 	cmd.Flags().StringVar(&opts.Action, "action", "", "Action for the path rule: allow or deny (requires --path)")
 	cmd.Flags().StringSliceVar(&opts.Methods, "methods", nil, "HTTP methods the path rule applies to (e.g. GET,HEAD); empty = all methods. Requires --path/--action; https/http/ws/wss only")
 	cmd.MarkFlagsRequiredTogether("path", "action")

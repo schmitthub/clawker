@@ -255,7 +255,7 @@ security:
         action: <string>  # default: n/a | required: false
         # Fine-grained path filtering (only applies to http/https/ws/wss)
         path_rules:  # default: n/a | required: false
-          # URL path prefix to match (e.g. /v1/api, /repos/myorg)
+          # URL path to match: a literal prefix starting with / (e.g. /v1/api), or — when prefixed with ~ — an RE2 regex matched full-string for exact/anchored matching (e.g. ~/repos/(a|b)/?)
           - path: <string>  # default: n/a | required: false
             # Whether to allow or deny requests matching this path
             action: <string>  # default: n/a | required: false

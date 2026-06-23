@@ -134,7 +134,7 @@ type WorkspaceConfig struct {
 
 // PathRule defines an HTTP/HTTPS path-level filtering rule for MITM inspection.
 type PathRule struct {
-	Path   string `yaml:"path" label:"Path" desc:"URL path prefix to match (e.g. /v1/api, /repos/myorg)"`
+	Path   string `yaml:"path" label:"Path" desc:"URL path to match: a literal prefix starting with / (e.g. /v1/api), or — when prefixed with ~ — an RE2 regex matched full-string for exact/anchored matching (e.g. ~/repos/(a|b)/?)"`
 	Action string `yaml:"action" label:"Action" desc:"Whether to allow or deny requests matching this path"`
 	// Methods scopes this path rule's Action to a set of HTTP request methods
 	// (e.g. [GET, HEAD]). Empty or nil = all methods (the rule is

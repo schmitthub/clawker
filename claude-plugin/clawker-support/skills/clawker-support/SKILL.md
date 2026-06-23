@@ -349,7 +349,9 @@ integrates with.
     covers **method gating** (a path rule's `methods` field, or `--methods` on
     `firewall add`) — deny mutating verbs (`POST`/`PUT`/`PATCH`/`DELETE`) to make
     a host read-only, the coarse backstop for write endpoints path rules don't
-    enumerate.
+    enumerate — and **exact path matching** (prefix a path with `~` to match it
+    as an anchored regex) to close the prefix-bypass where `/repos/x` also admits
+    `/repos/x-evil` on UGC-style hosts.
 
 15. **Claude Code host auth (`/login` prompts in containers)** — When the user
     asks how `use_host_auth` shares their host login, or reports being prompted

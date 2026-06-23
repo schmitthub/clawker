@@ -290,9 +290,13 @@ func (x *EgressRule) GetPathDefault() string {
 }
 
 type PathRule struct {
-	state  protoimpl.MessageState `protogen:"open.v1"`
-	Path   string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
-	Action string                 `protobuf:"bytes,2,opt,name=action,proto3" json:"action,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Literal path prefix (must start with "/"), or, when prefixed with "~", an
+	// RE2 regex matched full-string (exact/anchored — guards the open-prefix
+	// bypass where /repos/x also permits /repos/x-evil). Validated CP-side; an
+	// invalid path fails the whole rule-update operation.
+	Path   string `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	Action string `protobuf:"bytes,2,opt,name=action,proto3" json:"action,omitempty"`
 	// HTTP methods this path rule's action applies to (e.g. ["GET", "HEAD"]).
 	// Empty = all methods. HTTP-family protos only; ignored on opaque protos.
 	Methods       []string `protobuf:"bytes,3,rep,name=methods,proto3" json:"methods,omitempty"`

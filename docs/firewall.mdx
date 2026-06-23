@@ -226,7 +226,7 @@ Each `path_rules` entry:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `path` | string | URL path prefix to match (e.g. `/v1`, `/repos/myorg`) |
+| `path` | string | URL path to match. By default a **prefix** (e.g. `/v1`). Prefix the value with `~` to match it as a **regular expression** instead, which is anchored end-to-end for exact matching (e.g. `~/repos/(myorg\|other)/?`). See [Exact and pattern matching](#exact-and-pattern-matching) below |
 | `action` | string | `allow` or `deny` for requests matching this path (and methods, if set) |
 | `methods` | list | Optional HTTP methods this rule applies to (e.g. `[GET, HEAD]`). Empty = all methods. See [Method gating](#method-gating) below |
 
@@ -251,6 +251,42 @@ For example, a `proto: ssh` rule for `github.com` on port 22 means every outboun
 Path rules give you fine-grained control over which URL paths are allowed for a domain. Envoy uses **prefix matching** --- a rule for `/api/v1` matches `/api/v1`, `/api/v1/users`, `/api/v1/models/list`, etc.
 
 When `path_rules` is specified, `path_default` controls what happens to paths that don't match any rule. It defaults to `deny`, meaning only explicitly allowed paths get through.
+
+##### Exact and pattern matching
+
+Prefix matching is open-ended, which can let more through than you intend: an
+`allow` rule for `/repos/myorg` also matches `/repos/myorg-evil`. On a host where
+the path embeds a name you don't control (`/repos/<user>`, `/u/<name>`), that gap
+is exploitable.
+
+To match exactly, prefix the `path` with `~`. The rest of the value is then a
+[regular expression](https://github.com/google/re2/wiki/Syntax) matched against
+the **whole** path, so it is anchored at both ends --- no open-ended tail:
+
+| Rule | Matches | Does **not** match |
+|------|---------|--------------------|
+| `/repos/myorg` (prefix) | `/repos/myorg`, `/repos/myorg/pulls`, `/repos/myorg-evil` | --- |
+| `~/repos/myorg` (exact) | `/repos/myorg` only | `/repos/myorg/`, `/repos/myorg-evil` |
+| `~/repos/myorg/?` | `/repos/myorg`, `/repos/myorg/` | `/repos/myorg-evil`, `/repos/myorg/pulls` |
+| `~/repos/(myorg\|other)/?` | those two repos, with or without a trailing slash | `/repos/myorg-evil` |
+| `~/repos/myorg(/.*)?` | `/repos/myorg` and everything under it | `/repos/myorg-evil` |
+
+The trailing slash is significant: `~/blog` and `~/blog/` are different rules, so
+match the form(s) your server actually serves (use the `/?` or `(/.*)?` tail if it
+accepts both). Rules without `~` keep prefix behavior --- nothing changes for
+existing rules.
+
+A path must start with `/` (a regex must anchor at `/` or `^/`); the firewall does
+not guess. An invalid path --- a literal missing the leading `/`, or a regex that
+won't compile --- **fails the whole add/refresh operation** with an error rather
+than silently loosening the rule.
+
+When adding a regex path from the CLI, quote it --- the shell otherwise expands
+`~/` and treats `(`, `|`, `?` as special:
+
+```bash
+clawker firewall add api.github.com --path '~/repos/(myorg|other)/?' --action allow
+```
 
 **Pattern 1: Allow specific paths, deny everything else** (default deny)
 
@@ -383,7 +419,7 @@ All firewall operations are available under `clawker firewall`:
 |---------|---------|
 | `clawker firewall status` | Show firewall health, running containers, rule count |
 | `clawker firewall list` | List all active egress rules |
-| `clawker firewall add DOMAIN` | Add a domain allow rule (use `--path` + `--action` to attach a path-scoped rule; `--path` is the URL path prefix the rule routes on at request time) |
+| `clawker firewall add DOMAIN` | Add a domain allow rule (use `--path` + `--action` to attach a path-scoped rule; `--path` is a URL path prefix, or a `~`-prefixed regex for exact matching — see [Exact and pattern matching](#exact-and-pattern-matching)) |
 | `clawker firewall remove DOMAIN` | Remove a domain rule (use `--path` to drop a single path entry; the lookup is exact-string against the stored `path` so a typo or sub-prefix won't match) |
 | `clawker firewall reload` | Force regenerate Envoy/CoreDNS configs from the current rule **state** (does not re-read `.clawker.yaml`) |
 | `clawker firewall refresh` | Re-read the current project's `.clawker.yaml` and sync its `add_domains`/`rules` into the store live — apply yaml edits without a container restart |
@@ -498,7 +534,7 @@ clawker firewall add api.example.com --path /v1 --action allow
 clawker firewall add api.example.com --path /v2 --action deny
 ```
 
-Path rules accumulate across calls. Each entry's `path` is treated as a prefix by Envoy at request time. Adds, updates, and removes look the entry up by exact-string match on `path`: repeating the same `--path` with a different `--action` overwrites that entry's action; a different `--path` value appends a new entry. Use `clawker firewall remove api.example.com --path /v1` to drop a single path rule without removing the whole entry.
+Path rules accumulate across calls. Each entry's `path` is matched as a prefix at request time, unless it is prefixed with `~`, which matches it as an anchored regex for exact matching (see [Exact and pattern matching](#exact-and-pattern-matching)). Adds, updates, and removes look the entry up by exact-string match on `path`: repeating the same `--path` with a different `--action` overwrites that entry's action; a different `--path` value appends a new entry. Use `clawker firewall remove api.example.com --path /v1` to drop a single path rule without removing the whole entry.
 
 ### DNS resolution failures
 

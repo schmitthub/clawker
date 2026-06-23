@@ -113,6 +113,14 @@ rules:
       - path: /repos/
         action: deny
         methods: [POST, PUT, PATCH, DELETE]
+      # regex path rule (opt-in ~): exact alternation, end-anchored by the
+      # full-string safe_regex — /users/clawker[/] and /users/anthropic[/]
+      # exactly, never /users/clawker-evil (the open-prefix bypass this guards)
+      - path: ~/users/(clawker|anthropic)/?
+        action: allow
+      # regex deny: block the settings subtree exactly via a safe_regex deny route
+      - path: ~/settings(/.*)?
+        action: deny
   - dst: raw.githubusercontent.com
     proto: https
     port: 443

@@ -152,6 +152,9 @@ func ValidateRule(r config.EgressRule) error {
 		if strings.TrimSpace(pr.Path) == "" {
 			return fmt.Errorf("path rule with empty path")
 		}
+		if err := validatePathRulePath(pr.Path); err != nil {
+			return err
+		}
 		if err := validateActionField("path rule action", pr.Action); err != nil {
 			return err
 		}
@@ -178,6 +181,41 @@ var methodTokenRe = regexp.MustCompile(`^[A-Za-z][A-Za-z-]*$`)
 func validateMethod(m string) error {
 	if !methodTokenRe.MatchString(strings.TrimSpace(m)) {
 		return fmt.Errorf("invalid HTTP method %q: must match %s", m, methodTokenRe.String())
+	}
+	return nil
+}
+
+// regexPathMarker is the opt-in leading sentinel that promotes a path rule from
+// a literal prefix match to an RE2 regex (Envoy safe_regex, full-string). It is
+// stripped before the pattern is compiled (validation) or emitted (generation);
+// a path without it keeps the historical literal-prefix behavior unchanged.
+const regexPathMarker = "~"
+
+// validatePathRulePath enforces path-rule anchoring so a rule cannot match in
+// the middle of a request :path. A leading regexPathMarker opts the remainder
+// into an RE2 regex (compiled to Envoy safe_regex, a full-string match); any
+// other path is a literal prefix. Both forms must anchor at the path root ("/");
+// no auto-prepend — a security setting must not guess. A regex must additionally
+// compile via Go's regexp engine, which is RE2 and therefore exactly compile-
+// compatible with Envoy's safe_regex, so a typo is caught here instead of
+// bricking stack bringup.
+func validatePathRulePath(path string) error {
+	rx, isRegex := strings.CutPrefix(path, regexPathMarker)
+	if !isRegex {
+		if !strings.HasPrefix(path, "/") {
+			return fmt.Errorf("path rule %q must start with %q (no leading slash is auto-added)", path, "/")
+		}
+		return nil
+	}
+	// safe_regex is already a full-string match, so a leading "^" is redundant
+	// but harmless; accept it and still require a "/" root underneath. Patterns
+	// must be shell-quoted on the CLI (~, (, |, ? are shell metacharacters).
+	anchored := strings.TrimPrefix(rx, "^")
+	if !strings.HasPrefix(anchored, "/") {
+		return fmt.Errorf("regex path rule %q must anchor at the path root (start with %q or %q)", path, regexPathMarker+"/", regexPathMarker+"^/")
+	}
+	if _, err := regexp.Compile(rx); err != nil {
+		return fmt.Errorf("regex path rule %q does not compile: %w", path, err)
 	}
 	return nil
 }
