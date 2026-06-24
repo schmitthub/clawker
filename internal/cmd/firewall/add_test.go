@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
-	cpmocks "github.com/schmitthub/clawker/controlplane/mocks"
+	adminv1mocks "github.com/schmitthub/clawker/api/admin/v1/mocks"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -37,7 +37,7 @@ func TestAddCmd_PathAlone_FailsValidation(t *testing.T) {
 	f, _, _ := testFactoryWithStreams(t)
 	called := false
 	f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
-		return &cpmocks.AdminServiceClientMock{
+		return &adminv1mocks.AdminServiceClientMock{
 			FirewallAddRulesFunc: func(_ context.Context, _ *adminv1.FirewallAddRulesRequest, _ ...grpc.CallOption) (*adminv1.FirewallAddRulesResult, error) {
 				called = true
 				return &adminv1.FirewallAddRulesResult{Statuses: []adminv1.AddRuleStatus{adminv1.AddRuleStatus_ADD_RULE_STATUS_ADDED}}, nil
@@ -57,7 +57,7 @@ func TestAddCmd_ActionAlone_FailsValidation(t *testing.T) {
 	f, _, _ := testFactoryWithStreams(t)
 	called := false
 	f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
-		return &cpmocks.AdminServiceClientMock{
+		return &adminv1mocks.AdminServiceClientMock{
 			FirewallAddRulesFunc: func(_ context.Context, _ *adminv1.FirewallAddRulesRequest, _ ...grpc.CallOption) (*adminv1.FirewallAddRulesResult, error) {
 				called = true
 				return &adminv1.FirewallAddRulesResult{Statuses: []adminv1.AddRuleStatus{adminv1.AddRuleStatus_ADD_RULE_STATUS_ADDED}}, nil
@@ -78,7 +78,7 @@ func TestAddCmd_InvalidAction_Rejected(t *testing.T) {
 	f, _, _ := testFactoryWithStreams(t)
 	called := false
 	f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
-		return &cpmocks.AdminServiceClientMock{
+		return &adminv1mocks.AdminServiceClientMock{
 			FirewallAddRulesFunc: func(_ context.Context, _ *adminv1.FirewallAddRulesRequest, _ ...grpc.CallOption) (*adminv1.FirewallAddRulesResult, error) {
 				called = true
 				return &adminv1.FirewallAddRulesResult{Statuses: []adminv1.AddRuleStatus{adminv1.AddRuleStatus_ADD_RULE_STATUS_ADDED}}, nil
@@ -101,7 +101,7 @@ func TestAddCmd_PathFlag_BuildsPathScopedRule(t *testing.T) {
 	f, _, _ := testFactoryWithStreams(t)
 	var got *adminv1.FirewallAddRulesRequest
 	f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
-		return &cpmocks.AdminServiceClientMock{
+		return &adminv1mocks.AdminServiceClientMock{
 			FirewallAddRulesFunc: func(_ context.Context, req *adminv1.FirewallAddRulesRequest, _ ...grpc.CallOption) (*adminv1.FirewallAddRulesResult, error) {
 				got = req
 				return &adminv1.FirewallAddRulesResult{Statuses: []adminv1.AddRuleStatus{adminv1.AddRuleStatus_ADD_RULE_STATUS_ADDED}}, nil
@@ -129,7 +129,7 @@ func TestAddCmd_NoPathFlag_BackwardCompatible(t *testing.T) {
 	f, _, _ := testFactoryWithStreams(t)
 	var got *adminv1.FirewallAddRulesRequest
 	f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
-		return &cpmocks.AdminServiceClientMock{
+		return &adminv1mocks.AdminServiceClientMock{
 			FirewallAddRulesFunc: func(_ context.Context, req *adminv1.FirewallAddRulesRequest, _ ...grpc.CallOption) (*adminv1.FirewallAddRulesResult, error) {
 				got = req
 				return &adminv1.FirewallAddRulesResult{Statuses: []adminv1.AddRuleStatus{adminv1.AddRuleStatus_ADD_RULE_STATUS_ADDED}}, nil
@@ -155,7 +155,7 @@ func TestAddCmd_NoPathFlag_BackwardCompatible(t *testing.T) {
 func TestAddCmd_AlreadyExists_NoPath_PrintsInfoLine(t *testing.T) {
 	f, out, _ := testFactoryWithStreams(t)
 	f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
-		return &cpmocks.AdminServiceClientMock{
+		return &adminv1mocks.AdminServiceClientMock{
 			FirewallAddRulesFunc: func(_ context.Context, _ *adminv1.FirewallAddRulesRequest, _ ...grpc.CallOption) (*adminv1.FirewallAddRulesResult, error) {
 				return &adminv1.FirewallAddRulesResult{Statuses: []adminv1.AddRuleStatus{adminv1.AddRuleStatus_ADD_RULE_STATUS_UNCHANGED}}, nil
 			},
@@ -177,7 +177,7 @@ func TestAddCmd_AlreadyExists_NoPath_PrintsInfoLine(t *testing.T) {
 func TestAddCmd_Modified_PrintsUpdatedLine(t *testing.T) {
 	f, out, _ := testFactoryWithStreams(t)
 	f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
-		return &cpmocks.AdminServiceClientMock{
+		return &adminv1mocks.AdminServiceClientMock{
 			FirewallAddRulesFunc: func(_ context.Context, _ *adminv1.FirewallAddRulesRequest, _ ...grpc.CallOption) (*adminv1.FirewallAddRulesResult, error) {
 				return &adminv1.FirewallAddRulesResult{Statuses: []adminv1.AddRuleStatus{adminv1.AddRuleStatus_ADD_RULE_STATUS_MODIFIED}}, nil
 			},
@@ -201,7 +201,7 @@ func TestAddCmd_Modified_PrintsUpdatedLine(t *testing.T) {
 func TestAddCmd_StatusesLengthMismatch_Errors(t *testing.T) {
 	f, _, _ := testFactoryWithStreams(t)
 	f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
-		return &cpmocks.AdminServiceClientMock{
+		return &adminv1mocks.AdminServiceClientMock{
 			FirewallAddRulesFunc: func(_ context.Context, _ *adminv1.FirewallAddRulesRequest, _ ...grpc.CallOption) (*adminv1.FirewallAddRulesResult, error) {
 				return &adminv1.FirewallAddRulesResult{}, nil
 			},
@@ -220,7 +220,7 @@ func TestAddCmd_StatusesLengthMismatch_Errors(t *testing.T) {
 func TestAddCmd_AlreadyExists_WithPath_PrintsInfoLine(t *testing.T) {
 	f, out, _ := testFactoryWithStreams(t)
 	f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
-		return &cpmocks.AdminServiceClientMock{
+		return &adminv1mocks.AdminServiceClientMock{
 			FirewallAddRulesFunc: func(_ context.Context, _ *adminv1.FirewallAddRulesRequest, _ ...grpc.CallOption) (*adminv1.FirewallAddRulesResult, error) {
 				return &adminv1.FirewallAddRulesResult{Statuses: []adminv1.AddRuleStatus{adminv1.AddRuleStatus_ADD_RULE_STATUS_UNCHANGED}}, nil
 			},
@@ -243,7 +243,7 @@ func TestAddCmd_Methods_AttachedToPathRule(t *testing.T) {
 	f, _, _ := testFactoryWithStreams(t)
 	var got *adminv1.FirewallAddRulesRequest
 	f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
-		return &cpmocks.AdminServiceClientMock{
+		return &adminv1mocks.AdminServiceClientMock{
 			FirewallAddRulesFunc: func(_ context.Context, req *adminv1.FirewallAddRulesRequest, _ ...grpc.CallOption) (*adminv1.FirewallAddRulesResult, error) {
 				got = req
 				return &adminv1.FirewallAddRulesResult{Statuses: []adminv1.AddRuleStatus{adminv1.AddRuleStatus_ADD_RULE_STATUS_ADDED}}, nil
@@ -266,7 +266,7 @@ func TestAddCmd_Methods_RequirePath(t *testing.T) {
 	f, _, _ := testFactoryWithStreams(t)
 	called := false
 	f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
-		return &cpmocks.AdminServiceClientMock{
+		return &adminv1mocks.AdminServiceClientMock{
 			FirewallAddRulesFunc: func(_ context.Context, _ *adminv1.FirewallAddRulesRequest, _ ...grpc.CallOption) (*adminv1.FirewallAddRulesResult, error) {
 				called = true
 				return &adminv1.FirewallAddRulesResult{}, nil
@@ -287,7 +287,7 @@ func TestAddCmd_PathOnOpaqueProto_Rejected(t *testing.T) {
 	f, _, _ := testFactoryWithStreams(t)
 	called := false
 	f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
-		return &cpmocks.AdminServiceClientMock{
+		return &adminv1mocks.AdminServiceClientMock{
 			FirewallAddRulesFunc: func(_ context.Context, _ *adminv1.FirewallAddRulesRequest, _ ...grpc.CallOption) (*adminv1.FirewallAddRulesResult, error) {
 				called = true
 				return &adminv1.FirewallAddRulesResult{}, nil
@@ -310,7 +310,7 @@ func TestAddCmd_TLSAlias_NormalizedToHTTPS(t *testing.T) {
 	f, _, _ := testFactoryWithStreams(t)
 	var got *adminv1.FirewallAddRulesRequest
 	f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
-		return &cpmocks.AdminServiceClientMock{
+		return &adminv1mocks.AdminServiceClientMock{
 			FirewallAddRulesFunc: func(_ context.Context, req *adminv1.FirewallAddRulesRequest, _ ...grpc.CallOption) (*adminv1.FirewallAddRulesResult, error) {
 				got = req
 				return &adminv1.FirewallAddRulesResult{Statuses: []adminv1.AddRuleStatus{adminv1.AddRuleStatus_ADD_RULE_STATUS_ADDED}}, nil

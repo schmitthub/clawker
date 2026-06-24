@@ -336,7 +336,7 @@ func TestAuthInterceptor_MalformedAuthHeader_Denied(t *testing.T) {
 // The old FirewallSyncRoutes tests asserted "caller-supplied routes are
 // forwarded to ebpf.SyncRoutes verbatim". That semantic is gone — the
 // RPC now goes through the queue and the closure rebuilds routes from
-// the rules store (see internal/controlplane/firewall.FirewallSyncRoutes).
+// the rules store (see controlplane/firewall.FirewallSyncRoutes).
 // Route mapping coverage moved to the firewall handler test package
 // where a store can be wired; this file retains only the auth passes.
 

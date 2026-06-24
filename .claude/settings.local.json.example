@@ -1,11 +1,66 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(go build:*)",
+      "Bash(./bin/clawker project:*)",
+      "mcp__serena__list_memories",
+      "mcp__deepwiki__read_wiki_structure",
+      "mcp__serena__initial_instructions",
+      "mcp__serena__search_for_pattern",
+      "mcp__serena__find_file",
+      "mcp__serena__get_symbols_overview",
+      "mcp__serena__find_symbol",
+      "mcp__serena__write_memory",
+      "mcp__serena__edit_memory",
+      "mcp__serena__read_memory",
+      "mcp__serena__rename_memory",
+      "mcp__serena__check_onboarding_performed",
+      "mcp__serena__list_dir",
+      "mcp__MCP_DOCKER__mcp-find",
+      "mcp__MCP_DOCKER__mcp-add",
+      "mcp__MCP_DOCKER__get_file_contents",
+      "mcp__deepwiki__ask_question",
+      "Bash(find .claude/rules .claude/docs -type f -name *.md)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "mcp__serena__find_referencing_symbols",
+      "mcp__serena__insert_before_symbol",
+      "mcp__serena__replace_symbol_body",
+      "mcp__serena__insert_after_symbol",
+      "Bash(GOLDEN_UPDATE=1 go test ./internal/firewall/... -run TestGenerate -v 2>&1)",
+      "Bash(go test:*)",
+      "Bash(go vet:*)",
+      "Bash(make test:*)",
+      "Bash(go doc:*)",
+      "mcp__context7__resolve-library-id",
+      "mcp__context7__query-docs",
+      "mcp__serena__rename_symbol",
+      "Bash(ls:*)",
+      "mcp__deepwiki__read_wiki_contents",
+      "mcp__MCP_DOCKER__search_code",
+      "mcp__MCP_DOCKER__pull_request_read",
+      "mcp__MCP_DOCKER__search_pull_requests",
+      "mcp__MCP_DOCKER__update_pull_request",
+      "Bash(find /Users/andrew/Code/clawker/scripts -type f -name *)",
+      "Bash(go get:*)",
+      "Bash(go mod:*)",
+      "WebFetch(domain:docs.clawker.dev)",
+      "WebSearch",
+      "WebFetch(domain:www.envoyproxy.io)",
+      "WebFetch(domain:docs.docker.com)",
+      "Bash(brew info:*)",
+      "Bash(make clawker:*)",
+      "Bash(curl -sL \"https://raw.githubusercontent.com/coredns/coredns/v1.14.2/go.mod\")",
+      "Bash(chmod +x /Users/andrew/Code/clawker/.claude/hooks/serena-session-start.sh)"
+    ]
+  },
   "hooks": {
     "SessionStart": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PROJECT_DIR}/.claude/hooks/serena-session-start.sh",
+            "command": "node ${CLAUDE_PROJECT_DIR}/.claude/hooks/serena-session-start.mjs",
             "timeout": 5
           }
         ]
@@ -17,8 +72,17 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PROJECT_DIR}/.claude/hooks/serena-first.sh",
+            "command": "node ${CLAUDE_PROJECT_DIR}/.claude/hooks/serena-first.mjs",
             "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/git-checks.sh"
           }
         ]
       }
@@ -29,7 +93,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PROJECT_DIR}/.claude/hooks/serena-init-marker.sh",
+            "command": "node ${CLAUDE_PROJECT_DIR}/.claude/hooks/serena-init-marker.mjs",
             "timeout": 5
           }
         ]

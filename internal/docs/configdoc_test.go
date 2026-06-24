@@ -70,7 +70,7 @@ func TestRenderYAMLSchema_DescriptionsAsComments(t *testing.T) {
 		"# Starting Docker image",
 		"# System packages",
 		"# Domain or IP the container needs to reach",
-		"# URL path prefix to match",
+		"# URL path to match",
 		"# File or directory to copy from your project",
 	}
 

@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
-	cpmocks "github.com/schmitthub/clawker/controlplane/mocks"
+	adminv1mocks "github.com/schmitthub/clawker/api/admin/v1/mocks"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
@@ -54,7 +54,7 @@ func TestRefreshCmd_SyncsProjectRules(t *testing.T) {
 	f, out, _ := refreshFactory(t, configmocks.NewBlankConfig(), twoRules, nil)
 	var got *adminv1.FirewallAddRulesRequest
 	f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
-		return &cpmocks.AdminServiceClientMock{
+		return &adminv1mocks.AdminServiceClientMock{
 			FirewallAddRulesFunc: func(_ context.Context, req *adminv1.FirewallAddRulesRequest, _ ...grpc.CallOption) (*adminv1.FirewallAddRulesResult, error) {
 				got = req
 				return &adminv1.FirewallAddRulesResult{
@@ -92,7 +92,7 @@ func TestRefreshCmd_FirewallDisabled_NoRPC(t *testing.T) {
 	f, _, _ := refreshFactory(t, disabled, twoRules, nil)
 	called := false
 	f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
-		return &cpmocks.AdminServiceClientMock{
+		return &adminv1mocks.AdminServiceClientMock{
 			FirewallAddRulesFunc: func(_ context.Context, _ *adminv1.FirewallAddRulesRequest, _ ...grpc.CallOption) (*adminv1.FirewallAddRulesResult, error) {
 				called = true
 				return &adminv1.FirewallAddRulesResult{}, nil
@@ -115,7 +115,7 @@ func TestRefreshCmd_NoProject_Errors(t *testing.T) {
 	f, _, _ := refreshFactory(t, configmocks.NewBlankConfig(), nil, errors.New("no project here"))
 	called := false
 	f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
-		return &cpmocks.AdminServiceClientMock{
+		return &adminv1mocks.AdminServiceClientMock{
 			FirewallAddRulesFunc: func(_ context.Context, _ *adminv1.FirewallAddRulesRequest, _ ...grpc.CallOption) (*adminv1.FirewallAddRulesResult, error) {
 				called = true
 				return &adminv1.FirewallAddRulesResult{}, nil
@@ -137,7 +137,7 @@ func TestRefreshCmd_NoProject_Errors(t *testing.T) {
 func TestRefreshCmd_AllUnchanged_PrintsInSyncLine(t *testing.T) {
 	f, out, errOut := refreshFactory(t, configmocks.NewBlankConfig(), twoRules, nil)
 	f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
-		return &cpmocks.AdminServiceClientMock{
+		return &adminv1mocks.AdminServiceClientMock{
 			FirewallAddRulesFunc: func(_ context.Context, _ *adminv1.FirewallAddRulesRequest, _ ...grpc.CallOption) (*adminv1.FirewallAddRulesResult, error) {
 				return &adminv1.FirewallAddRulesResult{
 					Statuses: []adminv1.AddRuleStatus{
@@ -165,7 +165,7 @@ func TestRefreshCmd_StackNotRestarted_PrintsNote(t *testing.T) {
 	oneRule := twoRules[:1]
 	f, out, errOut := refreshFactory(t, configmocks.NewBlankConfig(), oneRule, nil)
 	f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
-		return &cpmocks.AdminServiceClientMock{
+		return &adminv1mocks.AdminServiceClientMock{
 			FirewallAddRulesFunc: func(_ context.Context, _ *adminv1.FirewallAddRulesRequest, _ ...grpc.CallOption) (*adminv1.FirewallAddRulesResult, error) {
 				return &adminv1.FirewallAddRulesResult{
 					Statuses:       []adminv1.AddRuleStatus{adminv1.AddRuleStatus_ADD_RULE_STATUS_ADDED},
@@ -189,7 +189,7 @@ func TestRefreshCmd_StackNotRestarted_PrintsNote(t *testing.T) {
 func TestRefreshCmd_StatusLengthMismatch_Errors(t *testing.T) {
 	f, _, _ := refreshFactory(t, configmocks.NewBlankConfig(), twoRules, nil)
 	f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
-		return &cpmocks.AdminServiceClientMock{
+		return &adminv1mocks.AdminServiceClientMock{
 			FirewallAddRulesFunc: func(_ context.Context, _ *adminv1.FirewallAddRulesRequest, _ ...grpc.CallOption) (*adminv1.FirewallAddRulesResult, error) {
 				return &adminv1.FirewallAddRulesResult{
 					Statuses: []adminv1.AddRuleStatus{adminv1.AddRuleStatus_ADD_RULE_STATUS_ADDED},

@@ -74,6 +74,12 @@ a container.
    Check if the target domain appears. Only a small subset of Claude Code
    required domains are hardcoded — everything else must be explicitly allowed.
 
+   **Exact host vs subdomain:** an allowed bare domain (`example.com`, or an
+   `add_domains` entry) matches **only that exact host** — a blocked
+   `api.example.com` is a *separate* host even when `example.com` is allowed.
+   To cover subdomains, use the leading-dot wildcard form `.example.com` (which
+   also covers the apex). This is the #1 "but I allowed it" surprise.
+
 3. **Is it the right protocol?** Fetch `https://docs.clawker.dev/configuration`
    for the current firewall config syntax. Different protocols and ports require
    different config field types.

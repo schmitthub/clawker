@@ -1,4 +1,4 @@
-package agent
+package agent_test
 
 import (
 	"bytes"
@@ -20,6 +20,8 @@ import (
 	"time"
 
 	mobyclient "github.com/moby/moby/client"
+	"github.com/schmitthub/clawker/controlplane/agent"
+	agentmocks "github.com/schmitthub/clawker/controlplane/agent/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -110,10 +112,10 @@ func TestCapturePeer_ValidChain(t *testing.T) {
 
 	pool := x509.NewCertPool()
 	pool.AddCert(caCert)
-	d := &Dialer{caPool: pool}
+	d := &agent.Dialer{CaPool: pool}
 
-	var peer peerInfo
-	d.capturePeer([][]byte{leafDER}, &peer)
+	var peer agent.PeerInfo
+	d.CapturePeer([][]byte{leafDER}, &peer)
 
 	assert.True(t, peer.ChainVerified, "trusted-CA chain must verify")
 	// PeerAgentFullName is sourced from the URI SAN — assert the SAN
@@ -163,10 +165,10 @@ func TestCapturePeer_ChainVerifyFails(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			leafDER, pool := tc.build(t)
-			d := &Dialer{caPool: pool}
+			d := &agent.Dialer{CaPool: pool}
 
-			var peer peerInfo
-			d.capturePeer([][]byte{leafDER}, &peer)
+			var peer agent.PeerInfo
+			d.CapturePeer([][]byte{leafDER}, &peer)
 
 			assert.False(t, peer.ChainVerified, "verify failure must yield ChainVerified=false")
 			assert.Equal(t, sanFullName, peer.PeerAgentFullName, "SAN must still be captured on verify failure")
@@ -177,10 +179,10 @@ func TestCapturePeer_ChainVerifyFails(t *testing.T) {
 }
 
 func TestCapturePeer_NoCerts_SetsReason(t *testing.T) {
-	d := &Dialer{caPool: x509.NewCertPool()}
+	d := &agent.Dialer{CaPool: x509.NewCertPool()}
 
-	var peer peerInfo
-	d.capturePeer(nil, &peer)
+	var peer agent.PeerInfo
+	d.CapturePeer(nil, &peer)
 
 	assert.False(t, peer.ChainVerified)
 	assert.Empty(t, peer.PeerAgentFullName)
@@ -189,10 +191,10 @@ func TestCapturePeer_NoCerts_SetsReason(t *testing.T) {
 }
 
 func TestCapturePeer_BadCertBytes_SetsReason(t *testing.T) {
-	d := &Dialer{caPool: x509.NewCertPool()}
+	d := &agent.Dialer{CaPool: x509.NewCertPool()}
 
-	var peer peerInfo
-	d.capturePeer([][]byte{[]byte("not a cert")}, &peer)
+	var peer agent.PeerInfo
+	d.CapturePeer([][]byte{[]byte("not a cert")}, &peer)
 
 	assert.False(t, peer.ChainVerified)
 	assert.Empty(t, peer.PeerAgentFullName)
@@ -216,10 +218,10 @@ func TestCapturePeer_DistinctCNAndSAN(t *testing.T) {
 
 	pool := x509.NewCertPool()
 	pool.AddCert(caCert)
-	d := &Dialer{caPool: pool}
+	d := &agent.Dialer{CaPool: pool}
 
-	var peer peerInfo
-	d.capturePeer([][]byte{leafDER}, &peer)
+	var peer agent.PeerInfo
+	d.CapturePeer([][]byte{leafDER}, &peer)
 
 	assert.True(t, peer.ChainVerified, "trusted-CA chain must verify")
 	assert.Equal(t, sanFullName, peer.PeerAgentFullName,
@@ -230,9 +232,9 @@ func TestCapturePeer_DistinctCNAndSAN(t *testing.T) {
 
 func TestClassifyRegistry_Match(t *testing.T) {
 	thumb := sha256.Sum256([]byte("peer-cert-bytes"))
-	reg := &RegistryMock{
-		LookupByContainerIDFunc: func(id string) (*Entry, error) {
-			return &Entry{
+	reg := &agentmocks.RegistryMock{
+		LookupByContainerIDFunc: func(id string) (*agent.Entry, error) {
+			return &agent.Entry{
 				AgentName:   auth.MustAgentName("dev"),
 				Project:     auth.MustProjectSlug("myproj"),
 				ContainerID: id,
@@ -240,30 +242,30 @@ func TestClassifyRegistry_Match(t *testing.T) {
 			}, nil
 		},
 	}
-	d := &Dialer{agents: reg}
+	d := &agent.Dialer{Agents: reg}
 
-	outcome, _ := d.classifyRegistry(thumb, "ctr-1")
-	assert.Equal(t, outcomeRegistryMatch, outcome)
+	outcome, _ := d.ClassifyRegistry(thumb, "ctr-1")
+	assert.Equal(t, agent.OutcomeRegistryMatch, outcome)
 }
 
 func TestClassifyRegistry_Miss(t *testing.T) {
-	reg := &RegistryMock{
-		LookupByContainerIDFunc: func(id string) (*Entry, error) {
-			return nil, ErrUnknownAgent
+	reg := &agentmocks.RegistryMock{
+		LookupByContainerIDFunc: func(id string) (*agent.Entry, error) {
+			return nil, agent.ErrUnknownAgent
 		},
 	}
-	d := &Dialer{agents: reg}
+	d := &agent.Dialer{Agents: reg}
 
-	outcome, _ := d.classifyRegistry(sha256.Sum256([]byte("peer")), "ctr-2")
-	assert.Equal(t, outcomeRegistryMiss, outcome)
+	outcome, _ := d.ClassifyRegistry(sha256.Sum256([]byte("peer")), "ctr-2")
+	assert.Equal(t, agent.OutcomeRegistryMiss, outcome)
 }
 
 func TestClassifyRegistry_ThumbprintMismatch(t *testing.T) {
 	peerThumb := sha256.Sum256([]byte("peer"))
 	rowThumb := sha256.Sum256([]byte("registry"))
-	reg := &RegistryMock{
-		LookupByContainerIDFunc: func(id string) (*Entry, error) {
-			return &Entry{
+	reg := &agentmocks.RegistryMock{
+		LookupByContainerIDFunc: func(id string) (*agent.Entry, error) {
+			return &agent.Entry{
 				AgentName:   auth.MustAgentName("dev"),
 				Project:     auth.MustProjectSlug("myproj"),
 				ContainerID: id,
@@ -271,51 +273,51 @@ func TestClassifyRegistry_ThumbprintMismatch(t *testing.T) {
 			}, nil
 		},
 	}
-	d := &Dialer{agents: reg}
+	d := &agent.Dialer{Agents: reg}
 
-	outcome, _ := d.classifyRegistry(peerThumb, "ctr-3")
-	assert.Equal(t, outcomeRegistryThumbprintMismatch, outcome)
+	outcome, _ := d.ClassifyRegistry(peerThumb, "ctr-3")
+	assert.Equal(t, agent.OutcomeRegistryThumbprintMismatch, outcome)
 }
 
 func TestClassifyRegistry_LookupErrorReturnsNotQueried(t *testing.T) {
-	reg := &RegistryMock{
-		LookupByContainerIDFunc: func(id string) (*Entry, error) {
+	reg := &agentmocks.RegistryMock{
+		LookupByContainerIDFunc: func(id string) (*agent.Entry, error) {
 			return nil, errors.New("disk i/o failed")
 		},
 	}
-	d := &Dialer{agents: reg}
+	d := &agent.Dialer{Agents: reg}
 
-	outcome, detail := d.classifyRegistry(sha256.Sum256([]byte("p")), "ctr-5")
-	assert.Equal(t, outcomeRegistryNotQueried, outcome)
+	outcome, detail := d.ClassifyRegistry(sha256.Sum256([]byte("p")), "ctr-5")
+	assert.Equal(t, agent.OutcomeRegistryNotQueried, outcome)
 	assert.Contains(t, detail, "registry lookup error")
 }
 
 // TestClassifyRegistry_MalformedEntryReturnsMiss pins the recovery
 // contract for malformed registry rows: a hand-edited or otherwise
-// invalid row returns ErrMalformedEntry from LookupByContainerID,
+// invalid row returns agent.ErrMalformedEntry from LookupByContainerID,
 // and the dialer must classify it as Miss so the Register handshake
 // drives an evict+rewrite of the row. Treating it as
 // NotQueried would publish AgentUntrusted on every reconnect and
 // leave the row stranded forever — the dialer's path is the only
 // natural trigger for the Register-side cleanup.
 func TestClassifyRegistry_MalformedEntryReturnsMiss(t *testing.T) {
-	reg := &RegistryMock{
-		LookupByContainerIDFunc: func(id string) (*Entry, error) {
-			return nil, fmt.Errorf("scan row: %w", ErrMalformedEntry)
+	reg := &agentmocks.RegistryMock{
+		LookupByContainerIDFunc: func(id string) (*agent.Entry, error) {
+			return nil, fmt.Errorf("scan row: %w", agent.ErrMalformedEntry)
 		},
 	}
-	d := &Dialer{agents: reg}
+	d := &agent.Dialer{Agents: reg}
 
-	outcome, detail := d.classifyRegistry(sha256.Sum256([]byte("p")), "ctr-malformed")
-	assert.Equal(t, outcomeRegistryMiss, outcome)
+	outcome, detail := d.ClassifyRegistry(sha256.Sum256([]byte("p")), "ctr-malformed")
+	assert.Equal(t, agent.OutcomeRegistryMiss, outcome)
 	assert.Empty(t, detail)
 }
 
 func TestClassifyRegistry_NilRegistryReturnsNotQueried(t *testing.T) {
-	d := &Dialer{agents: nil}
+	d := &agent.Dialer{Agents: nil}
 
-	outcome, detail := d.classifyRegistry(sha256.Sum256([]byte("p")), "ctr-6")
-	assert.Equal(t, outcomeRegistryNotQueried, outcome)
+	outcome, detail := d.ClassifyRegistry(sha256.Sum256([]byte("p")), "ctr-6")
+	assert.Equal(t, agent.OutcomeRegistryNotQueried, outcome)
 	assert.Equal(t, "registry not wired", detail)
 }
 
@@ -326,26 +328,26 @@ func TestClassifyRegistry_NilRegistryReturnsNotQueried(t *testing.T) {
 // that drops a field on the wire wouldn't surface from leaf-function tests
 // alone.
 func TestPublishConnected_DeliversPeerIntact(t *testing.T) {
-	topic := newAgentTopic(t)
-	rec := recordAgent(topic)
+	topic := agentmocks.NewAgentTopic(t)
+	rec := agentmocks.RecordAgent(topic)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	d := &Dialer{topic: topic}
+	d := &agent.Dialer{Topic: topic}
 	thumb := sha256.Sum256([]byte("peer-cert-bytes"))
-	peer := peerInfo{
+	peer := agent.PeerInfo{
 		ChainVerified:     true,
 		PeerAgentFullName: "clawker.proj.dev",
 		PeerThumbprint:    thumb,
 	}
-	d.publishConnected(ctx, "ctr-prov", "dev", "proj", "10.1.1.5:7700", 3, peer)
+	d.PublishConnected(ctx, "ctr-prov", "dev", "proj", "10.1.1.5:7700", 3, peer)
 
 	require.Eventually(t, func() bool {
-		_, ok := rec.firstWith(DialerEventType, ActionConnected)
+		_, ok := rec.FirstWith(agent.DialerEventType, agent.ActionConnected)
 		return ok
 	}, 2*time.Second, 10*time.Millisecond, "timed out waiting for connected AgentEvent")
 
-	ev, _ := rec.firstWith(DialerEventType, ActionConnected)
+	ev, _ := rec.FirstWith(agent.DialerEventType, agent.ActionConnected)
 	assert.Equal(t, "ctr-prov", ev.Agent.ContainerID)
 	assert.Equal(t, "dev", ev.Agent.AgentName)
 	assert.Equal(t, "proj", ev.Agent.Project)
@@ -371,24 +373,24 @@ func (f *fakeCloser) Close() error {
 }
 
 func TestCloseAndCheckLeak_BailsAfterCeiling(t *testing.T) {
-	errs := make([]error, closeErrCeiling)
+	errs := make([]error, agent.CloseErrCeiling)
 	for i := range errs {
 		errs[i] = errors.New("transport already shut down")
 	}
 	c := &fakeCloser{errs: errs}
 	count := 0
-	d := &Dialer{}
+	d := &agent.Dialer{}
 
-	for i := 1; i <= closeErrCeiling; i++ {
-		bail := d.closeAndCheckLeak(c, &count, logger.Nop())
-		if i < closeErrCeiling {
+	for i := 1; i <= agent.CloseErrCeiling; i++ {
+		bail := d.CloseAndCheckLeak(c, &count, logger.Nop())
+		if i < agent.CloseErrCeiling {
 			assert.False(t, bail, "must not bail before ceiling (iter %d)", i)
 		} else {
 			assert.True(t, bail, "must bail at ceiling (iter %d)", i)
 		}
 	}
-	assert.Equal(t, closeErrCeiling, count)
-	assert.Equal(t, closeErrCeiling, c.calls)
+	assert.Equal(t, agent.CloseErrCeiling, count)
+	assert.Equal(t, agent.CloseErrCeiling, c.calls)
 }
 
 func TestCloseAndCheckLeak_SuccessResetsCounter(t *testing.T) {
@@ -399,17 +401,17 @@ func TestCloseAndCheckLeak_SuccessResetsCounter(t *testing.T) {
 		errors.New("hiccup"),
 	}}
 	count := 0
-	d := &Dialer{}
+	d := &agent.Dialer{}
 
-	require.False(t, d.closeAndCheckLeak(c, &count, logger.Nop()))
+	require.False(t, d.CloseAndCheckLeak(c, &count, logger.Nop()))
 	require.Equal(t, 1, count)
-	require.False(t, d.closeAndCheckLeak(c, &count, logger.Nop()))
+	require.False(t, d.CloseAndCheckLeak(c, &count, logger.Nop()))
 	require.Equal(t, 2, count)
 	// Successful close — counter resets.
-	require.False(t, d.closeAndCheckLeak(c, &count, logger.Nop()))
+	require.False(t, d.CloseAndCheckLeak(c, &count, logger.Nop()))
 	require.Equal(t, 0, count)
 	// Subsequent failure starts from 1, not from 3.
-	require.False(t, d.closeAndCheckLeak(c, &count, logger.Nop()))
+	require.False(t, d.CloseAndCheckLeak(c, &count, logger.Nop()))
 	require.Equal(t, 1, count)
 }
 
@@ -424,9 +426,9 @@ func TestCloseAndCheckLeak_LogsCloseFailure(t *testing.T) {
 	c := &fakeCloser{errs: []error{errors.New("transport already shut down")}}
 	count := 0
 	var buf bytes.Buffer
-	d := &Dialer{}
+	d := &agent.Dialer{}
 
-	d.closeAndCheckLeak(c, &count, logger.NewWriter(&buf))
+	d.CloseAndCheckLeak(c, &count, logger.NewWriter(&buf))
 
 	assert.Contains(t, buf.String(), "agentdial_conn_close_failed")
 }
@@ -446,7 +448,6 @@ func TestCloseAndCheckLeak_LogsCloseFailure(t *testing.T) {
 // (which is the desired test-fail signal).
 type fakeMobyForDialer struct {
 	mobyclient.APIClient
-	inspectErr error
 	// onInspect, when non-nil, is invoked at the start of every
 	// ContainerInspect call. The dedup test uses it as a channel gate
 	// to hold the first dial goroutine inside resolveAgent (dedup key
@@ -460,13 +461,9 @@ func (f *fakeMobyForDialer) ContainerInspect(_ context.Context, _ string, _ moby
 	if f.onInspect != nil {
 		f.onInspect()
 	}
-	if f.inspectErr != nil {
-		return mobyclient.ContainerInspectResult{}, f.inspectErr
-	}
-	// Default: surface errContainerStopped so resolveAgent's terminal
-	// "stopped container" path fires. Tests that need a transient
-	// inspect error (retry behavior) override inspectErr instead.
-	return mobyclient.ContainerInspectResult{}, errContainerStopped
+	// Default: surface agent.ErrContainerStopped so resolveAgent's terminal
+	// "stopped container" path fires.
+	return mobyclient.ContainerInspectResult{}, agent.ErrContainerStopped
 }
 
 // mintLeafKeypair mints a leaf cert + private key signed by parent;
@@ -497,7 +494,7 @@ func mintLeafKeypair(t *testing.T, cn string, parent *x509.Certificate, parentKe
 // to a fresh CA, a real agent Topic, and the supplied moby fake +
 // registry. Returns a recorder already subscribed to the topic and a ctx
 // the caller cancels to tear down.
-func newDialerForTest(t *testing.T, docker mobyclient.APIClient, agents Registry) (*Dialer, *agentRecorder, context.Context, context.CancelFunc) {
+func newDialerForTest(t *testing.T, docker mobyclient.APIClient, agents agent.Registry) (*agent.Dialer, *agentmocks.AgentRecorder, context.Context, context.CancelFunc) {
 	t.Helper()
 
 	caCert, caKey := genCA(t, "clawker-ca", 24*time.Hour)
@@ -506,11 +503,11 @@ func newDialerForTest(t *testing.T, docker mobyclient.APIClient, agents Registry
 	caPool := x509.NewCertPool()
 	caPool.AddCert(caCert)
 
-	topic := newAgentTopic(t)
-	rec := recordAgent(topic)
+	topic := agentmocks.NewAgentTopic(t)
+	rec := agentmocks.RecordAgent(topic)
 	ctx, cancel := context.WithCancel(context.Background())
 
-	d, err := New(logger.Nop(), docker, topic, agents, certPath, keyPath, caPool, nil)
+	d, err := agent.NewDialer(logger.Nop(), docker, topic, agents, certPath, keyPath, caPool, nil)
 	require.NoError(t, err)
 
 	return d, rec, ctx, cancel
@@ -518,13 +515,13 @@ func newDialerForTest(t *testing.T, docker mobyclient.APIClient, agents Registry
 
 // awaitFailed waits until at least one session-failed AgentEvent has been
 // recorded and returns the first one. Fails the test on timeout.
-func awaitFailed(t *testing.T, rec *agentRecorder) AgentEvent {
+func awaitFailed(t *testing.T, rec *agentmocks.AgentRecorder) agent.AgentEvent {
 	t.Helper()
 	require.Eventually(t, func() bool {
-		_, ok := rec.firstWith(DialerEventType, ActionFailed)
+		_, ok := rec.FirstWith(agent.DialerEventType, agent.ActionFailed)
 		return ok
 	}, 2*time.Second, 10*time.Millisecond, "timed out waiting for session-failed AgentEvent")
-	ev, _ := rec.firstWith(DialerEventType, ActionFailed)
+	ev, _ := rec.FirstWith(agent.DialerEventType, agent.ActionFailed)
 	return ev
 }
 
@@ -536,7 +533,7 @@ func TestDialAgent_DedupsConcurrentCallsForSameContainerID(t *testing.T) {
 	// when the second call arrives. onInspect parks that goroutine
 	// inside resolveAgent until the second DialAgent has been issued.
 	//
-	// Without the gate the errContainerStopped resolve path returns on
+	// Without the gate the agent.ErrContainerStopped resolve path returns on
 	// attempt 1 with no backoff, the first goroutine can run to terminal
 	// failure and clear its dedup key before the second call takes the
 	// lock, and the second call then spawns its own goroutine — turning
@@ -551,9 +548,9 @@ func TestDialAgent_DedupsConcurrentCallsForSameContainerID(t *testing.T) {
 			<-release
 		},
 	}
-	regMock := &RegistryMock{
-		LookupByContainerIDFunc: func(string) (*Entry, error) {
-			return nil, ErrUnknownAgent
+	regMock := &agentmocks.RegistryMock{
+		LookupByContainerIDFunc: func(string) (*agent.Entry, error) {
+			return nil, agent.ErrUnknownAgent
 		},
 	}
 	d, rec, ctx, cancel := newDialerForTest(t, docker, regMock)
@@ -578,78 +575,8 @@ func TestDialAgent_DedupsConcurrentCallsForSameContainerID(t *testing.T) {
 	// through the (now-closed) gate and publish a second session-failed
 	// event. Allow a beat for any erroneous second publish to land.
 	time.Sleep(200 * time.Millisecond)
-	failed := rec.withAction(DialerEventType, ActionFailed)
+	failed := rec.WithAction(agent.DialerEventType, agent.ActionFailed)
 	require.Len(t, failed, 1, "dedup violated — a second session-failed event arrived")
-}
-
-func TestDialAgent_RedialsAfterTerminalFailureClearsDedup(t *testing.T) {
-	// After a terminal SessionFailed, the dedup entry must be cleared
-	// so a subsequent DialAgent for the same containerID actually
-	// runs. Otherwise a transient docker-daemon hiccup at CP boot
-	// would permanently mark the container un-redialable.
-	docker := &fakeMobyForDialer{}
-	regMock := &RegistryMock{
-		LookupByContainerIDFunc: func(string) (*Entry, error) {
-			return nil, ErrUnknownAgent
-		},
-	}
-	d, rec, ctx, cancel := newDialerForTest(t, docker, regMock)
-	defer cancel()
-
-	d.DialAgent(ctx, "container-B")
-	awaitFailed(t, rec) // first failure event — confirms first goroutine exited
-
-	// Wait for dedup map cleanup (the deferred delete runs after runDial
-	// returns; the publishFailed path is part of runDial).
-	require.Eventually(t, func() bool {
-		d.mu.Lock()
-		_, present := d.dialing["container-B"]
-		d.mu.Unlock()
-		return !present
-	}, 1*time.Second, 10*time.Millisecond, "dedup entry must clear after terminal failure")
-
-	d.DialAgent(ctx, "container-B")
-	require.Eventually(t, func() bool {
-		return len(rec.withAction(DialerEventType, ActionFailed)) == 2
-	}, 2*time.Second, 10*time.Millisecond, "redial after terminal failure produced no second event")
-}
-
-func TestDialAgent_CtxCancelDuringResolveTearsDownCleanly(t *testing.T) {
-	// Cancelling parent ctx mid-attempt must terminate the dial
-	// goroutine without publishing SessionFailed. The runDial
-	// outcome → switch maps outcomeCtxDone to a silent return.
-	// A regression that publishes on shutdown would spam every CP
-	// shutdown with a SessionFailed event per running agent.
-	docker := &fakeMobyForDialer{
-		// resolveAgent will be called AFTER ctx is cancelled in the
-		// test body; the resolveAgent path checks ctx.Err() first
-		// and returns outcomeCtxDone before this stub is invoked.
-		inspectErr: errors.New("should not reach inspect after ctx cancel"),
-	}
-	regMock := &RegistryMock{
-		LookupByContainerIDFunc: func(string) (*Entry, error) {
-			return nil, ErrUnknownAgent
-		},
-	}
-	d, rec, ctx, cancel := newDialerForTest(t, docker, regMock)
-
-	cancel() // pre-cancel; runDial's first ctx.Err() check trips
-	d.DialAgent(ctx, "container-C")
-
-	// ctx-cancel must NOT publish a session-failed event. Allow a beat
-	// for any erroneous publish to land, then assert none did.
-	time.Sleep(500 * time.Millisecond)
-	assert.Empty(t, rec.withAction(DialerEventType, ActionFailed),
-		"ctx-cancel must NOT publish a session-failed event")
-
-	// And the dedup entry clears so a subsequent retry (with a fresh ctx)
-	// would run.
-	require.Eventually(t, func() bool {
-		d.mu.Lock()
-		_, present := d.dialing["container-C"]
-		d.mu.Unlock()
-		return !present
-	}, 1*time.Second, 10*time.Millisecond)
 }
 
 // --- shouldReconnect: post-drain decision -------------------------
@@ -673,19 +600,19 @@ func TestShouldReconnect(t *testing.T) {
 	cases := []struct {
 		name    string
 		ctxDone bool
-		drain   drainResult
+		drain   agent.DrainResult
 		want    bool
 	}{
-		{"alive+gracefulEOF reconnects", false, drainResult{Outcome: drainGracefulEOF, Reason: "peer closed"}, true},
-		{"alive+streamErr reconnects", false, drainResult{Outcome: drainStreamErr, Reason: "io: broken pipe"}, true},
+		{"alive+gracefulEOF reconnects", false, agent.DrainResult{Outcome: agent.DrainGracefulEOF, Reason: "peer closed"}, true},
+		{"alive+streamErr reconnects", false, agent.DrainResult{Outcome: agent.DrainStreamErr, Reason: "io: broken pipe"}, true},
 		// Defense in depth: drain observed ctx.Done() before the loop's
 		// own ctx.Err() check could trip — teardown regardless of ctx.
-		{"alive+drainCtxCanceled tears down", false, drainResult{Outcome: drainCtxCanceled}, false},
+		{"alive+drainCtxCanceled tears down", false, agent.DrainResult{Outcome: agent.DrainCtxCanceled}, false},
 		// A cancelled parent ctx suppresses reconnect for every drain
 		// outcome (CP shutting down).
-		{"done+gracefulEOF tears down", true, drainResult{Outcome: drainGracefulEOF, Reason: "peer closed"}, false},
-		{"done+streamErr tears down", true, drainResult{Outcome: drainStreamErr, Reason: "io: broken pipe"}, false},
-		{"done+drainCtxCanceled tears down", true, drainResult{Outcome: drainCtxCanceled}, false},
+		{"done+gracefulEOF tears down", true, agent.DrainResult{Outcome: agent.DrainGracefulEOF, Reason: "peer closed"}, false},
+		{"done+streamErr tears down", true, agent.DrainResult{Outcome: agent.DrainStreamErr, Reason: "io: broken pipe"}, false},
+		{"done+drainCtxCanceled tears down", true, agent.DrainResult{Outcome: agent.DrainCtxCanceled}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -694,53 +621,7 @@ func TestShouldReconnect(t *testing.T) {
 			if tc.ctxDone {
 				cancel()
 			}
-			assert.Equal(t, tc.want, shouldReconnect(ctx, tc.drain))
+			assert.Equal(t, tc.want, agent.ShouldReconnect(ctx, tc.drain))
 		})
 	}
-}
-
-// panickingMoby fails ContainerInspect with a panic; used by
-// TestDialAgent_PanicInRunDial.
-type panickingMoby struct {
-	mobyclient.APIClient
-}
-
-func (panickingMoby) ContainerInspect(_ context.Context, _ string, _ mobyclient.ContainerInspectOptions) (mobyclient.ContainerInspectResult, error) {
-	panic("synthetic test panic in ContainerInspect")
-}
-
-func TestDialAgent_PanicInRunDial_DoesNotCrashCP_PublishesTerminal(t *testing.T) {
-	// CP-resilience contract: a panic in the dial goroutine must NOT
-	// propagate up the goroutine stack (which would crash CP and
-	// strand eBPF programs unsupervised, silently breaking the
-	// firewall enforcement boundary). Regression catches:
-	//   1. The recover defer deleted from DialAgent.
-	//   2. The recover ordering swapped so dedup-cleanup defer runs
-	//      before recover (panic still escapes).
-	//   3. The synthetic SessionFailed publish removed (worldview
-	//      consumers see "Connecting" forever).
-	//   4. The dedup map entry not cleared after panic (re-dial
-	//      blocked permanently).
-	docker := panickingMoby{}
-	regMock := &RegistryMock{
-		LookupByContainerIDFunc: func(string) (*Entry, error) {
-			return nil, ErrUnknownAgent
-		},
-	}
-	d, rec, ctx, cancel := newDialerForTest(t, docker, regMock)
-	defer cancel()
-
-	d.DialAgent(ctx, "container-panic")
-
-	ev := awaitFailed(t, rec)
-	assert.Equal(t, "container-panic", ev.Agent.ContainerID)
-	assert.Contains(t, ev.Message.Detail, "dial_goroutine_panic",
-		"recover must publish a synthetic session-failed event with the dial_goroutine_panic detail so subscribers driving containment can branch on it")
-
-	require.Eventually(t, func() bool {
-		d.mu.Lock()
-		_, present := d.dialing["container-panic"]
-		d.mu.Unlock()
-		return !present
-	}, 1*time.Second, 10*time.Millisecond, "dedup entry must clear after panic so subsequent DialAgent calls re-dial")
 }

@@ -532,7 +532,7 @@ Key packages:
 - `controlplane/firewall/ebpf/netlogger` — userspace consumer of the BPF `events_ringbuf`. Enriches per-decision records with `{container_id, agent, project, domain}` via pub/sub enrollment events + dockerevents eviction, ships OTLP log records (`service.name=ebpf-egress`) through `otel.NewOtelLoggerProvider` to the trusted-infra OTLP receiver. See `controlplane/firewall/ebpf/netlogger/CLAUDE.md`.
 - `controlplane/firewall/ebpf/cmd` — break-glass `ebpf-manager` CLI bundled alongside `clawkercp` in the container image.
 - `controlplane/manager` — Host-side CP lifecycle: `EnsureRunning`/`Stop`/`CPRunning`, `BuildCPContainerConfig`, `Manager` interface + `NewManager`, embedded clawkercp + ebpf-manager binaries (`go:embed`). Split out so `cmd/clawkercp` can import the CP packages without dragging in embed directives for its own binary.
-- `controlplane/mocks` — moq-generated: `IntrospectorMock`, `AdminServiceClientMock`.
+- `api/admin/v1/mocks` — moq-generated `AdminServiceClientMock`; `controlplane/auth/mocks` — moq-generated `IntrospectorMock`.
 - `clawkerd/embed` — `//go:embed assets/clawkerd` (package `clawkerdembed`) exports the per-container daemon binary as `clawkerdembed.Binary`; bundler drops it into every per-project image at `/usr/local/bin/clawkerd`.
 - `clawkerd` — per-container agent daemon (package): mTLS listener on `:7700`, `ClawkerdService.Session` bidi-stream for CP command dispatch, `registerCoordinator` for one-time CP-triggered Register handshake. Boot sequence in `clawkerd/CLAUDE.md`. `cmd/clawkerd` is the thin entrypoint (`os.Exit(clawkerd.Main())`); `Main`/`run` live in `internal/clawkerd`.
 - `api/admin/v1` — AdminService proto + method-scope registration (`AdminMethodScopes`, covered by `TestAdminMethodScopes_CoversAllRPCs`).
@@ -770,7 +770,8 @@ Each package with complex dependencies provides test infrastructure:
 | `project/mocks/` | `NewMockProjectManager()`, `NewMockProject(name, repoPath)`, `NewTestProjectManager(t, gitFactory)` |
 | `git/gittest/` | `InMemoryGitManager` (memfs-backed, seeded with initial commit) |
 | `whail/whailtest/` | `FakeAPIClient` (80+ Fn fields, call recording), build scenarios, `EventRecorder` |
-| `controlplane/mocks/` | `IntrospectorMock`, `AdminServiceClientMock` (moq-generated) |
+| `api/admin/v1/mocks/` | `AdminServiceClientMock` (moq-generated) |
+| `controlplane/auth/mocks/` | `IntrospectorMock` (moq-generated) |
 | `controlplane/manager/mocks/` | `ManagerMock` (moq-generated) for host-side CP lifecycle noun |
 | `controlplane/agent/` (test-only) | `RegistryMock` (moq-generated, lives in package itself to avoid import cycle) |
 | `controlplane/firewall/ebpf/mocks/` | `EBPFManagerMock` (moq-generated) |

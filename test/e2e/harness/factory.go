@@ -9,10 +9,10 @@ import (
 	"time"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	adminv1mocks "github.com/schmitthub/clawker/api/admin/v1/mocks"
 	"github.com/schmitthub/clawker/controlplane/adminclient"
 	"github.com/schmitthub/clawker/controlplane/manager"
 	cpbootmocks "github.com/schmitthub/clawker/controlplane/manager/mocks"
-	cpmocks "github.com/schmitthub/clawker/controlplane/mocks"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
@@ -51,7 +51,7 @@ func cacheableState(s connectivity.State) bool {
 
 // FactoryOptions holds dependency constructor overrides.
 // Some nil fields use test fakes (configmocks, mocks.FakeClient,
-// hostproxytest.MockManager, cpmocks.AdminServiceClientMock). Logger always
+// hostproxytest.MockManager, adminv1mocks.AdminServiceClientMock). Logger always
 // uses logger.New (real file logger). ProjectManager, GitManager, and
 // SocketBridge default to nil. Set a field to the real constructor
 // (e.g. config.NewConfig) for integration tests.
@@ -213,7 +213,7 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 	}
 
 	// --- HostProxy ---
-	f.HostProxy = func() hostproxy.HostProxyService {
+	f.HostProxy = func() hostproxy.Service {
 		if opts.HostProxy != nil {
 			c, cErr := resolveConfig()
 			if cErr != nil {
@@ -283,7 +283,7 @@ func NewFactory(t *testing.T, opts *FactoryOptions) (*cmdutil.Factory, *bytes.Bu
 			return adminClient, nil
 		}
 	} else {
-		mockAdmin := &cpmocks.AdminServiceClientMock{}
+		mockAdmin := &adminv1mocks.AdminServiceClientMock{}
 		f.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
 			return mockAdmin, nil
 		}

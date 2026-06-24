@@ -30,11 +30,17 @@ repos:
         files: ^\.github/workflows/.*\.ya?ml$
         pass_filenames: false
 
+  - repo: https://github.com/tekwizely/pre-commit-golang
+    rev: f298c082154b2cb239fac06a4f452368e66e66dd # frozen: v1.0.0-rc.4
+    hooks:
+      - id: go-mod-tidy
+
   # ── Lint ──────────────────────────────────────────────────────────────────
   - repo: https://github.com/golangci/golangci-lint
     rev: 8f3b0c7ed018e57905fbd873c697e0b1ede605a5  # frozen: v2.11.4
     hooks:
       - id: golangci-lint-full
+        entry: golangci-lint run
         args: [--config, .golangci.yml]
 
   # ── Quality ─────────────────────────────────────────────────────────────

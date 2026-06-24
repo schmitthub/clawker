@@ -37,9 +37,9 @@ import (
 // surfaces as codes.Internal.
 type Handler struct {
 	agentv1.UnimplementedAgentServiceServer
-	registry Registry
-	log      *logger.Logger
-	clock    func() time.Time
+	Registry Registry
+	Log      *logger.Logger
+	Clock    func() time.Time
 }
 
 // NewHandler constructs a Register handler. registry MUST be non-nil
@@ -54,9 +54,9 @@ func NewHandler(registry Registry, log *logger.Logger) (*Handler, error) {
 		log = logger.Nop()
 	}
 	return &Handler{
-		registry: registry,
-		log:      log,
-		clock:    time.Now,
+		Registry: registry,
+		Log:      log,
+		Clock:    time.Now,
 	}, nil
 }
 
@@ -123,7 +123,7 @@ func (h *Handler) Register(ctx context.Context, req *agentv1.RegisterRequest) (*
 	// from "broken".
 	resolved, ok := ResolvedContainerFromContext(ctx)
 	if !ok {
-		h.log.Error().
+		h.Log.Error().
 			Str("event", "agent_register_no_resolved_container").
 			Msg("middleware did not attach ResolvedContainer to ctx — wiring bug")
 		return nil, status.Error(codes.Internal, "register: identity not resolved")
@@ -137,7 +137,7 @@ func (h *Handler) Register(ctx context.Context, req *agentv1.RegisterRequest) (*
 	// can't silently substitute the value the registry stores.
 	leaf, err := peerLeafFromContext(ctx)
 	if err != nil {
-		h.log.Warn().Err(err).
+		h.Log.Warn().Err(err).
 			Str("event", "agent_register_peer_cert_missing_post_resolve").
 			Msg("ctx carried resolved container but no peer cert — defensive reject")
 		return nil, status.Error(codes.PermissionDenied, "register: identity check failed")
@@ -154,7 +154,7 @@ func (h *Handler) Register(ctx context.Context, req *agentv1.RegisterRequest) (*
 	// daemon-attested labels, not secrets, and the timing channel
 	// reveals nothing useful.
 	if project.String() != resolved.Project.String() || agentName.String() != resolved.AgentName.String() {
-		h.log.Warn().
+		h.Log.Warn().
 			Str("event", "agent_register_request_label_mismatch").
 			Str("request_project", project.String()).
 			Str("request_agent", agentName.String()).
@@ -174,18 +174,18 @@ func (h *Handler) Register(ctx context.Context, req *agentv1.RegisterRequest) (*
 	certContainerID, sanErr := auth.ContainerIDFromCert(leaf)
 	switch {
 	case errors.Is(sanErr, auth.ErrContainerSANMissing):
-		h.log.Warn().
+		h.Log.Warn().
 			Str("event", "agent_register_no_container_san").
 			Msg("cert missing container URI SAN")
 		return nil, status.Error(codes.PermissionDenied, "register: identity check failed")
 	case errors.Is(sanErr, auth.ErrContainerSANMalformed):
-		h.log.Warn().
+		h.Log.Warn().
 			Str("event", "agent_register_malformed_container_san").
 			Msg("cert container URI SAN has empty tail")
 		return nil, status.Error(codes.PermissionDenied, "register: identity check failed")
 	}
 	if certContainerID != resolved.ContainerID {
-		h.log.Warn().
+		h.Log.Warn().
 			Str("event", "agent_register_container_id_mismatch").
 			Str("cert_container_id", certContainerID).
 			Str("resolved_container_id", resolved.ContainerID).
@@ -202,17 +202,17 @@ func (h *Handler) Register(ctx context.Context, req *agentv1.RegisterRequest) (*
 	// it so the Add below re-writes using the middleware-resolved
 	// (and freshly validated) identity. The eviction is idempotent;
 	// the subsequent Add is the normal write path.
-	existing, lookupErr := h.registry.LookupByContainerID(resolved.ContainerID)
+	existing, lookupErr := h.Registry.LookupByContainerID(resolved.ContainerID)
 	switch {
 	case lookupErr == nil && existing != nil:
 		if existing.Thumbprint == thumbprint {
-			h.log.Info().
+			h.Log.Info().
 				Str("event", "agent_register_idempotent").
 				Str("container_id", resolved.ContainerID).
 				Msg("Register call hit existing row with matching thumbprint; returning Welcome")
 			return &agentv1.Welcome{}, nil
 		}
-		h.log.Warn().
+		h.Log.Warn().
 			Str("event", "agent_register_thumbprint_replay").
 			Str("container_id", resolved.ContainerID).
 			Msg("existing row has different thumbprint; rejecting")
@@ -224,19 +224,19 @@ func (h *Handler) Register(ctx context.Context, req *agentv1.RegisterRequest) (*
 		// so the row we're about to write is more trustworthy than the
 		// malformed legacy one. Failing the evict is fatal — Add would
 		// hit the same row.
-		h.log.Warn().Err(lookupErr).
+		h.Log.Warn().Err(lookupErr).
 			Str("event", "agent_register_malformed_row_evicted").
 			Str("container_id", resolved.ContainerID).
 			Msg("registry row malformed; evicting before re-write")
-		if evictErr := h.registry.EvictByContainerID(resolved.ContainerID); evictErr != nil {
-			h.log.Error().Err(evictErr).
+		if evictErr := h.Registry.EvictByContainerID(resolved.ContainerID); evictErr != nil {
+			h.Log.Error().Err(evictErr).
 				Str("event", "agent_register_malformed_row_evict_failed").
 				Str("container_id", resolved.ContainerID).
 				Msg("evict of malformed row failed; cannot proceed with Add")
 			return nil, status.Error(codes.Internal, "register: evict malformed row failed")
 		}
 	case lookupErr != nil && !errors.Is(lookupErr, ErrUnknownAgent):
-		h.log.Warn().Err(lookupErr).
+		h.Log.Warn().Err(lookupErr).
 			Str("event", "agent_register_lookup_error").
 			Str("container_id", resolved.ContainerID).
 			Msg("registry lookup failed pre-Add")
@@ -247,8 +247,8 @@ func (h *Handler) Register(ctx context.Context, req *agentv1.RegisterRequest) (*
 	// source). Request fields were validated and confirmed to agree
 	// above; persisting `resolved.*` ensures the registry stores the
 	// daemon's view, not a client claim.
-	now := h.clock()
-	if err := h.registry.Add(Entry{
+	now := h.Clock()
+	if err := h.Registry.Add(Entry{
 		AgentName:    resolved.AgentName,
 		Project:      resolved.Project,
 		ContainerID:  resolved.ContainerID,
@@ -256,14 +256,14 @@ func (h *Handler) Register(ctx context.Context, req *agentv1.RegisterRequest) (*
 		RegisteredAt: now,
 		LastSeen:     now,
 	}); err != nil {
-		h.log.Error().Err(err).
+		h.Log.Error().Err(err).
 			Str("event", "agent_register_add_failed").
 			Str("container_id", resolved.ContainerID).
 			Msg("registry Add failed")
 		return nil, status.Error(codes.Internal, "register: persist failed")
 	}
 
-	h.log.Info().
+	h.Log.Info().
 		Str("event", "agent_registered").
 		Str("container_id", resolved.ContainerID).
 		Str("agent", resolved.AgentName.String()).

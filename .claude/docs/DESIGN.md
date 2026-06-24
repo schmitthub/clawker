@@ -30,7 +30,7 @@ CP crashing is not an availability problem — it is a security boundary integri
 
 1. **No `panic()`. No `log.Fatal()`. No `os.Exit()`.** Constructors return `(nil, error)`. main.go logs and degrades.
 2. **Long-lived goroutines must `recover()`.** Heartbeats, watchers, RPC handlers — one bad event must not silently strand eBPF.
-3. **Subsystem failures degrade, never escalate.** Broken Executor → `initExec = nil`; broken dialer → `dialer = nil`. Everything else stays up. The patterns in `cmd/clawkercp/main.go` — `wireInitExecutor` (initExec; emits `event=agent_init_executor_unavailable`) and the `agent.New(...)` block that degrades on error to `event=agent_dialer_unavailable` — are canonical.
+3. **Subsystem failures degrade, never escalate.** Broken Executor → `executor = nil`; broken dialer → `dialer = nil`. Everything else stays up. The patterns in `cmd/clawkercp/main.go` — `wireExecutor` (executor; emits `event=agent_executor_unavailable`) and the `agent.New(...)` block that degrades on error to `event=agent_dialer_unavailable` — are canonical.
 4. **Every degraded path emits a structured log line** (`event=<subsystem>_unavailable`) with component, error, and blast-radius fields. Operators will not see panic stacks; the structured log is the only surface.
 5. **The only acceptable hard-exits** are pre-`SetReady` startup gates (no agents running yet, eBPF not load-bearing) and the orchestrator's intentional drain-to-zero clean exit.
 
@@ -474,7 +474,7 @@ with all closures wired                       *cmdutil.Factory
 Factory is a pure struct with closure/value fields — no methods. 3 eager (set directly), rest lazy (closures):
 
 **Eager**: `Version` (string), `IOStreams` (`*iostreams.IOStreams`), `TUI` (`*tui.TUI`)
-**Lazy**: `Config` (`func() (config.Config, error)`), `Client` (`func(ctx) (*docker.Client, error)`), `Logger` (`func() (*logger.Logger, error)`), `ProjectManager` (`func() (project.ProjectManager, error)`), `GitManager` (`func() (*git.GitManager, error)`), `HostProxy` (`func() hostproxy.HostProxyService`), `SocketBridge` (`func() socketbridge.SocketBridgeManager`), `Prompter` (`func() *prompter.Prompter`), `AdminClient` (`func(ctx) (adminv1.AdminServiceClient, error)`), `ControlPlane` (`func() manager.Manager`), `HttpClient` (`func() *http.Client`)
+**Lazy**: `Config` (`func() (config.Config, error)`), `Client` (`func(ctx) (*docker.Client, error)`), `Logger` (`func() (*logger.Logger, error)`), `ProjectManager` (`func() (project.ProjectManager, error)`), `GitManager` (`func() (*git.GitManager, error)`), `HostProxy` (`func() hostproxy.Service`), `SocketBridge` (`func() socketbridge.SocketBridgeManager`), `Prompter` (`func() *prompter.Prompter`), `AdminClient` (`func(ctx) (adminv1.AdminServiceClient, error)`), `ControlPlane` (`func() manager.Manager`), `HttpClient` (`func() *http.Client`)
 
 The constructor in `internal/cmd/factory/default.go` wires all closures. Commands extract closures into per-command Options structs. Run functions only accept `*Options`, never `*Factory`.
 
@@ -899,10 +899,10 @@ and plugin installation on every container creation.
 
 **Init flow** (orchestrated by `shared.CreateContainer()` in `cmd/container/shared/container.go`):
 
-Progress streamed via events channel (`chan CreateContainerEvent`). Steps:
+Developer diagnostics go to zerolog; the caller owns all terminal output. Steps:
 1. **workspace** — `workspace.SetupMounts()` (internally calls `EnsureConfigVolumes()`)
 2. **config** (skipped if volume cached) — `containerfs.PrepareClaudeConfig()` + `containerfs.PrepareCredentials()` → `docker.CopyToVolume()`
-3. **environment** — `shared.ResolveAgentEnv()` merges env_file/from_env/env → runtime env vars (warnings sent as `MessageWarning` events)
+3. **environment** — `shared.ResolveAgentEnv()` merges env_file/from_env/env → runtime env vars (warnings surfaced to the caller on the result)
 4. **container** — validate flags, `BuildConfigs()`, `docker.ContainerCreate()` + `InjectPostInitScript()` (when `agent.post_init` configured). Onboarding bypass is image-level: entrypoint seeds `~/.claude/.config.json` from staged defaults
 
 **Key packages**: `internal/containerfs` (tar preparation, path rewriting),

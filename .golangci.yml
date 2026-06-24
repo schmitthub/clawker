@@ -1,71 +1,98 @@
+# $schema: https://golangci-lint.run/jsonschema/golangci.jsonschema.json
 version: "2"
 
+run:
+  issues-exit-code: 1
+  tests: true
+
 linters:
-  default: none
-  enable:
-    - asasalint # checks for pass []any as any in variadic func(...any)
-    - asciicheck # checks that your code does not contain non-ASCII identifiers
-    - bidichk # checks for dangerous unicode character sequences
-    - bodyclose # checks whether HTTP response body is closed successfully
-    - copyloopvar # detects places where loop variables are copied (Go 1.22+)
-    - durationcheck # checks for two durations multiplied together
-    - exptostd # detects functions from golang.org/x/exp/ that can be replaced by std functions
-    - fatcontext # detects nested contexts in loops
-    - gocheckcompilerdirectives # validates go compiler directive comments (//go:)
-    - gochecksumtype # checks exhaustiveness on Go "sum types"
-    - gocritic # provides diagnostics that check for bugs, performance and style issues
-    - gomoddirectives # manages the use of 'replace', 'retract', and 'excludes' directives in go.mod
-    - goprintffuncname # checks that printf-like functions are named with f at the end
-    - govet # reports suspicious constructs, such as Printf calls whose arguments do not align with the format string
-    - ineffassign # detects when assignments to existing variables are not used
-    - nilerr # finds the code that returns nil even if it checks that the error is not nil
-    - nolintlint # reports ill-formed or insufficient nolint directives
-    - nosprintfhostport # checks for misuse of Sprintf to construct a host with port in a URL
-    - reassign # checks that package variables are not reassigned
-    - unused # checks for unused constants, variables, functions and types
+  # STRICT: Enable everything by default (replaces 'enable-all')
+  default: all
 
-    # To enable later due to too many issues, and confirm we need them:
-    # - gosec
-    # - staticcheck
-    # - errcheck
-  exclusions:
-    paths:
-      - third-party
-    rules:
-      - path: _test\.go$
-        linters:
-          - bodyclose
-          - gosec
+  disable:
+    # --- IMPORT POLICING ---
+    - depguard    # Highly opinionated whitelist/blacklist that blocks valid internal imports
+
+    # --- TOKEN BURNERS (Subjective formatting rules that cause AI infinite loops) ---
+    - wsl_v5      # AI struggles endlessly with whitespace/blank line rules
+    - wsl         # AI struggles endlessly with whitespace/blank line rules
+    - nlreturn    # Too pedantic about newlines before return statements
+    - varnamelen  # AI will get stuck in a loop renaming 'i' to 'index'
+    - lll         # Line length limits often conflict with AI's generation style
+    - godox       # We don't care if the AI leaves TODOs; we want it to write code
+    - tagalign    # AI is notoriously bad at aligning struct tags visually
+    - godot
+    - funcorder
+    - noinlineerr
+    - err113
+    - exhaustruct
+    - paralleltest
+
+  # NOTE: In v2, settings are nested inside the linters block
   settings:
-    gocritic:
-      disabled-checks:
-        - appendAssign
-      disabled-tags:
-        - style
-    gosec:
-      excludes:
-        - G110
-        - G204
-        - G301
-        - G302
-        - G304
-        - G307
-        - G404
-      config:
-        G104:
-          os:
-            - Setenv
+    errcheck:
+      check-type-assertions: true
+      # STRICT: Bans `_ = err`. The AI must explicitly handle the error.
+      check-blank: true
+
+    gocognit:
+      # STRICT: AI naturally writes linear, monolithic code.
+      # This forces it to extract logic into smaller, testable functions.
+      min-complexity: 15
+
+    funlen:
+      lines: 60
+      statements: 40
+
+    forbidigo:
+      forbid:
+        - pattern: '^fmt\.Print.*$'
+          msg: "AI INSTRUCTION: Do not use fmt.Print. Use the injected logger or return the value."
+        - pattern: '^panic$'
+          msg: "AI INSTRUCTION: Do not panic. Handle the error and return it up the call stack."
+        - pattern: '^os\.Exit$'
+          msg: "AI INSTRUCTION: Do not use os.Exit. Return a concrete error."
+        - pattern: '^log\.Fatal.*$'
+          msg: "AI INSTRUCTION: Do not use standard log.Fatal. Return the error."
+    wrapcheck:
+      # STRICT: Forces the AI to add context to errors (e.g., fmt.Errorf("doing x: %w", err))
+      ignore-sigs:
+        - .Errorf(
+        - errors.New(
+        - errors.Unwrap(
+        - errors.Join(
+
+    revive:
+      severity: error
+      rules:
+        - name: unexported-return
+        - name: time-naming
+        - name: errorf
+        - name: error-naming
+        - name: error-strings
+        - name: receiver-naming
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: import-shadowing
+
     govet:
-      enable:
-        - httpresponse
+      enable-all: true
+      disable:
+        # Prevents AI from infinitely reordering struct fields to save memory
+        - fieldalignment
 
-formatters:
-  enable:
-    - gofmt
   exclusions:
-    paths:
-      - third-party
-
+    presets:
+      - common-false-positives
+    rules:
+    - path: (^|/)mocks/|.*_mock\.go|stubs\.go
+      linters:
+        - wrapcheck    
+        - ireturn      
+        - revive       
+        - containedctx 
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
+  new-from-merge-base: main
+

@@ -209,11 +209,11 @@ func CIDRToAddrMask(cidr string) (addr, mask uint32, err error) {
 // DomainHash computes the FNV-1a hash of a normalized domain name.
 //
 // Normalization is a case-insensitive lowercase fold. Both the firewall
-// route_map writer (internal/controlplane/firewall) and the dnsbpf CoreDNS
+// route_map writer (./controlplane/firewall) and the dnsbpf CoreDNS
 // plugin (internal/dnsbpf) call this single function so BPF lookups
 // succeed regardless of how the user capitalized the rule destination.
 // Callers must strip FQDN trailing dots and wildcard leading dots
-// themselves (see firewall.normalizeDomain in internal/controlplane/firewall).
+// themselves (see firewall.normalizeDomain in ./controlplane/firewall).
 func DomainHash(domain string) uint32 {
 	h := fnv.New32a()
 	h.Write([]byte(strings.ToLower(domain)))

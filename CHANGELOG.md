@@ -5,14 +5,16 @@ All notable, user-facing changes to clawker are documented here. This is the
 that change the user surface, not every tech-debt or dependency bump. The
 exhaustive per-commit list lives in each GitHub release's "Commits" section.
 
-The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and clawker adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+The format follows Keep a Changelog, and clawker adheres to Semantic Versioning.
 
 A release spans many merged PRs and may mix change kinds — Added, Fixed,
-Changed, Removed. Each release section lists those subsections directly; the
-clawker CLI's "what's new" teaser renders the section bodies verbatim as
-markdown, and the release-notes workflow copies them into the GitHub release.
-Link to relevant docs inline in the bullets.
+Changed, Removed. Each release section lists those subsections directly.
+
+## [0.12.9] - 2026-06-23
+
+- **Added:** Egress path rule RE2 regex support. Add `~` at the beginning of a `path` rule to match it as a full-string regex instead of a prefix — anchor exactly and use alternation.
+  - ex: Add two paths sharing a common segment, optional trailing slash: `~/repos/(clawker|anthropic)/?`
+  - ex: Add the exact path without trailing slash: `~/schmitthub/clawker$`
 
 ## [0.12.8] - 2026-06-20
 
@@ -50,7 +52,7 @@ Link to relevant docs inline in the bullets.
   workspaces copy the project's `.git` directory, so `git log`, `git diff`, and
   branch operations work inside the container. Creating a snapshot workspace on
   top of a git worktree is now rejected up front with a clear error instead of
-  producing a broken checkout. [Docs](https://docs.clawker.dev/worktrees)
+  producing a broken checkout.
 
 ## [0.12.0] - 2026-06-11
 
@@ -63,7 +65,7 @@ Link to relevant docs inline in the bullets.
   branch. Manage aliases with the new `clawker alias` command (`list`, `set`,
   `delete`, `export`), and define your own subcommand shortcuts under `aliases:`
   in `clawker.yaml` — with positional `$1..$N` argument substitution — invoked
-  like any built-in command. [Docs](https://docs.clawker.dev/aliases)
+  like any built-in command.
 
 ## [0.11.0] - 2026-06-10
 
@@ -74,7 +76,7 @@ Link to relevant docs inline in the bullets.
   read-only so container-side writes cannot execute code on the host. Go builds
   inside worktree containers no longer fail on VCS stamping, and starting a
   second container against an already-checked-out branch is refused instead of
-  corrupting the worktree. [Docs](https://docs.clawker.dev/worktrees)
+  corrupting the worktree.
 - **Worktrees track their upstream branch.** `clawker worktree add` now pulls
   remote-tracking branches with their upstream set, so `git pull`/`git push`
   work without manual `--set-upstream`.
@@ -86,7 +88,7 @@ Link to relevant docs inline in the bullets.
 - **Expired-but-refreshable host login is forwarded.** Claude Code credentials
   copied from the host are injected even when the host access token has expired,
   as long as it is still refreshable — the container refreshes on first use
-  instead of forcing a fresh `/login`. [Docs](https://docs.clawker.dev/credentials)
+  instead of forcing a fresh `/login`.
 
 ## [0.10.0] - 2026-06-06
 
@@ -95,7 +97,7 @@ Link to relevant docs inline in the bullets.
 - **`clawker firewall refresh`.** Live-apply egress edits made to
   `clawker.yaml` (`security.firewall.add_domains` and `security.firewall.rules`)
   into the running firewall without restarting any container. Add/update only —
-  removing a rule still uses `clawker firewall remove`. [Docs](https://docs.clawker.dev/firewall)
+  removing a rule still uses `clawker firewall remove`.
 - **Every-start container hook (`pre_run`).** The `agent.pre_run` script runs on
   every container start (not just the first), complementing the once-only
   `post_init` hook.
@@ -107,7 +109,7 @@ Link to relevant docs inline in the bullets.
 - **Monitoring stack moved to OpenSearch + Prometheus.** The bundled
   observability stack now uses OpenSearch (logs) and Prometheus (metrics) in
   place of the previous Loki/Jaeger/Grafana stack, with a preconfigured
-  OpenSearch Dashboards setup applied by `clawker monitor up`. [Docs](https://docs.clawker.dev/monitoring)
+  OpenSearch Dashboards setup applied by `clawker monitor up`.
 
 ## [0.8.0] - 2026-05-12
 
@@ -115,7 +117,7 @@ Link to relevant docs inline in the bullets.
 
 - **Looping ("ralph") mode has been retired.** The agent loop subsystem is gone;
   drive iteration through your own workflow or Claude Code directly. A
-  managed-settings `PATH` regression introduced alongside it is also fixed. [Docs](https://docs.clawker.dev/quickstart)
+  managed-settings `PATH` regression introduced alongside it is also fixed.
 
 ## [0.7.0] - 2026-04-03
 
@@ -131,7 +133,7 @@ Link to relevant docs inline in the bullets.
 
 - **Preset-based guided `init`.** `clawker init` was rewritten as a guided,
   preset-based setup flow, making first-run project configuration substantially
-  faster and less error-prone. [Docs](https://docs.clawker.dev/quickstart)
+  faster and less error-prone.
 
 ## [0.5.0] - 2026-03-20
 
@@ -140,7 +142,7 @@ Link to relevant docs inline in the bullets.
 - **Global egress firewall stack.** A shared Envoy + custom CoreDNS + eBPF
   egress-enforcement stack governs outbound traffic from every agent container,
   with per-project allow rules declared in `clawker.yaml` under
-  `security.firewall`. [Docs](https://docs.clawker.dev/firewall)
+  `security.firewall`.
 
 ## [0.3.0] - 2026-02-24
 
@@ -148,7 +150,7 @@ Link to relevant docs inline in the bullets.
 
 - **Host-path workspace mounts.** Run an agent against a live bind mount of the
   host project directory, so changes made in the container are immediately
-  visible on the host (the alternative to ephemeral snapshot workspaces). [Docs](https://docs.clawker.dev/worktrees)
+  visible on the host (the alternative to ephemeral snapshot workspaces).
 
 ## [0.1.0] - 2026-02-11
 
@@ -156,7 +158,7 @@ Link to relevant docs inline in the bullets.
 
 - **Git worktree support.** Run an agent in an isolated git worktree keyed to a
   branch, including slashed branch names, via `clawker worktree add` and
-  `clawker run --worktree`. [Docs](https://docs.clawker.dev/worktrees)
+  `clawker run --worktree`.
 - **Git credential forwarding.** SSH agent, GPG agent, and HTTPS git
   credentials are forwarded from the host through a socket bridge, so commits
   sign and private repositories clone inside the container.

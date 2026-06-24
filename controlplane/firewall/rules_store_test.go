@@ -807,6 +807,61 @@ func TestValidateRule_Methods(t *testing.T) {
 	}
 }
 
+// TestValidateRule_PathAnchoring covers path-rule anchoring: a literal path must
+// start with "/" (no auto-prepend); a "~"-marked regex path must compile and
+// anchor at the path root. ValidateRule is the single seam that guards every FW-
+// rule-update path (CLI add, yaml bootstrap, firewall refresh) via handler.go.
+func TestValidateRule_PathAnchoring(t *testing.T) {
+	t.Parallel()
+	mk := func(path string) config.EgressRule {
+		return config.EgressRule{
+			Dst: "api.example.com", Proto: "https", Port: "443",
+			PathRules: []config.PathRule{{Path: path, Action: "allow"}},
+		}
+	}
+	tests := []struct {
+		name    string
+		path    string
+		wantErr bool
+	}{
+		{"literal prefix ok", "/repos/clawker/", false},
+		{"literal root ok", "/", false},
+		{"literal missing leading slash", "repos/clawker", true},
+		// Literal sub-delims and other RFC 3986 pchars stay valid — these are
+		// legitimate (if unusual) literal paths, not regex.
+		{"literal sub-delims ok", "/p/(g)+a,b;c=1:2@x", false},
+		{"literal percent ok", "/a%20b", false},
+		{"literal tilde mid ok", "/~user/files", false},
+		// Characters outside the RFC 3986 path set are rejected — almost always
+		// a regex written without the leading "~" marker (the reported footgun).
+		{"literal illegal brace (forgot ~)", "/blog{", true},
+		{"literal illegal pipe (forgot ~)", "/u/(alice|bob)", true},
+		{"literal illegal bracket (forgot ~)", "/api/v[0-9]", true},
+		{"literal illegal caret (forgot ~)", "/blog^x", true},
+		{"literal illegal backslash", "/foo\\bar", true},
+		{"literal illegal space", "/foo bar", true},
+		{"regex anchored ok", "~/repos/clawker", false},
+		{"regex alternation ok", "~/repos/(clawker|anthropic)/?", false},
+		{"regex with caret anchor ok", "~^/repos/clawker", false},
+		{"regex subtree ok", "~/repos/clawker(/.*)?", false},
+		{"regex repetition brace ok", "~/v[0-9]{1,3}", false},
+		{"regex not anchored to slash", "~repos/clawker", true},
+		{"regex bare marker", "~", true},
+		{"regex will not compile", "~/repos/(clawker", true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := firewall.ValidateRule(mk(tc.path))
+			if tc.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
 // TestNormalizeRule_Methods confirms a path rule's method set is uppercased,
 // deduped, and sorted — and that an all-empty set collapses to nil so no
 // :method matcher is emitted for the "all methods" case.

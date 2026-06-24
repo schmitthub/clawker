@@ -63,9 +63,9 @@ func WithGracePeriod(d time.Duration) DaemonOption
 ## Interface
 
 ```go
-// HostProxyService is the interface for host proxy operations used by container commands.
+// Service is the interface for host proxy operations used by container commands.
 // Concrete implementation: Manager. Mock: hostproxytest.MockManager.
-type HostProxyService interface {
+type Service interface {
     EnsureRunning() error
     IsRunning() bool
     ProxyURL() string
@@ -114,8 +114,21 @@ The `/open/url` endpoint enforces egress rules before opening URLs in the host b
 
 **Design constraints:**
 - **Leaf package**: does NOT import `internal/controlplane/firewall` or `internal/storage`. Reads YAML directly with `os.ReadFile` + `yaml.Unmarshal`. Mirror types for `egressRulesFile`/`egressRule`/`pathRule` are unexported intentional copies.
-- **Fail-closed**: missing/unreadable rules file → block all URLs. Action validation uses `!strings.EqualFold(action, "allow")` so typos fail closed.
+- **Fail-closed, two tiers**: a *policy* deny (URL not in the allow list) → `log.Warn` + 403 `blocked by egress policy`. A *broken rules file* (missing, unreadable, unparseable, or an uncompilable `~` regex) is `errEgressRulesInvalid` — an infrastructure fault, not a policy decision → `log.Error` + 500 `egress rules unavailable`, never a silent skip. Action validation uses `!strings.EqualFold(action, "allow")` so typos fail closed.
+- **Regex lockstep**: `compilePathRegex` (shared by `pathRuleMatches` and load-time validation) compiles a `~`-path to the same full-string-anchored RE2 form Envoy's `safe_regex` uses; a pattern that fails to compile makes `readEgressRules` reject the whole file, mirroring Envoy refusing a config with a bad `safe_regex`.
 - **Userinfo rejection**: URLs with `user:pass@host` are rejected — no legitimate browser URL uses this and it enables smuggling.
+
+### Startup readiness gate
+
+The control plane and firewall stack boot **before** the host proxy in container bootstrap, so the host proxy's readiness gate (below) can assume the firewall is already coming up instead of racing it — starting the host proxy first would deadlock cold start, since its gate waits on the firewall. `Daemon.Run` binds the server **first** (`/health` answers immediately), then runs `ensureEgressRulesReady` in a background goroutine. Binding first is safe because `/open/url` is fail-closed per request regardless (see two-tier fail-closed above).
+
+`ensureEgressRulesReady` is a **three-stage sequential gate** — each stage is its own bounded loop and only starts once the prior one passes, so a later stage never races ahead of its prerequisite:
+
+1. **Firewall container running** — Docker poll on the `PurposeFirewall` label. Budget: `consts.HostProxyFirewallRunningTimeout` (= `FirewallStackBringupTimeout`).
+2. **Envoy healthy** — GET the host-published health listener (`EnvoyHealthHostPort`, reached by port — no firewall-package import). Budget: `consts.HostProxyEnvoyHealthTimeout` (= `FirewallStackHealthTimeout`).
+3. **Rules file readable + valid** — re-read `egress-rules.yaml` each tick so an in-flight atomic write settles; an unreadable/unparseable/bad-regex file is `errEgressRulesInvalid`. Budget: `consts.HostProxyRulesReadTimeout` (10s, ~"10 tries every second").
+
+All stages poll at `consts.HostProxyReadyPollInterval` (1s); budgets derive from the firewall's own bringup/health timeouts so the host proxy never gives up before the firewall could plausibly be up. On exhaustion the gate goroutine signals `Run`, which logs `Error` and shuts the daemon down — until then, request-time `/open/url` enforcement already fails closed. `firewallRunningProbe`/`envoyHealthProbe` are injectable fields for tests; `readyTimeout` overrides every stage's budget uniformly (tests only). `NewDaemon` likewise returns an error when the firewall is enabled but the egress rules path cannot be resolved — never a silently unchecked `/open/url`.
 
 **Git credential injection protection**: `handleGitCredential` rejects requests where any field (`Protocol`/`Host`/`Path`/`Username`/`Password`) contains `\n`, `\r`, or `\0` (400). `formatGitCredentialInput` sanitizes as defense-in-depth.
 
@@ -131,7 +144,7 @@ Container registers session via `/callback/register`. Server starts dynamic list
 
 ## Test Doubles (`hostproxytest/`)
 
-### MockManager (HostProxyService interface)
+### MockManager (Service interface)
 
 For unit tests — no subprocess spawning, no network I/O:
 

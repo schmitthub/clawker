@@ -4,10 +4,9 @@
 package mocks
 
 import (
-	"sync"
-
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/storage"
+	"sync"
 )
 
 // Ensure, that ConfigMock does implement config.Config.

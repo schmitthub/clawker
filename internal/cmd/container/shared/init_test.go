@@ -112,7 +112,7 @@ func testCreateConfig(fake *mocks.FakeClient, project *config.Project, container
 		ProjectRegistry: func() (*projectpkg.Registry, error) {
 			return projectpkg.NewRegistry()
 		},
-		HostProxy: func() hostproxy.HostProxyService {
+		HostProxy: func() hostproxy.Service {
 			return hostproxytest.NewMockManager()
 		},
 	}
@@ -131,7 +131,7 @@ func TestCreateContainer_HappyPath(t *testing.T) {
 	containerOpts.Agent = "test-agent"
 
 	result, err := CreateContainer(context.Background(),
-		testCreateConfig(fake, testConfig(), containerOpts, cmd), nil)
+		testCreateConfig(fake, testConfig(), containerOpts, cmd))
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -178,7 +178,7 @@ func TestCreateContainer_RejectsWorktreeInSnapshotMode(t *testing.T) {
 			containerOpts.Mode = tt.mode
 
 			_, err := CreateContainer(context.Background(),
-				testCreateConfig(fake, tt.project, containerOpts, testFlags()), nil)
+				testCreateConfig(fake, tt.project, containerOpts, testFlags()))
 
 			require.ErrorIs(t, err, workspace.ErrWorktreeSnapshot)
 			fake.AssertNotCalled(t, "ContainerCreate")
@@ -199,7 +199,7 @@ func TestCreateContainer_ContainerCreateError(t *testing.T) {
 	containerOpts.Agent = "test"
 
 	result, err := CreateContainer(context.Background(),
-		testCreateConfig(fake, testConfig(), containerOpts, cmd), nil)
+		testCreateConfig(fake, testConfig(), containerOpts, cmd))
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "creating container")
@@ -219,7 +219,7 @@ func TestCreateContainer_ConfigCached(t *testing.T) {
 	containerOpts.Image = "alpine"
 
 	result, err := CreateContainer(context.Background(),
-		testCreateConfig(fake, testConfig(), containerOpts, cmd), nil)
+		testCreateConfig(fake, testConfig(), containerOpts, cmd))
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -246,62 +246,10 @@ func TestCreateContainer_ConfigFresh(t *testing.T) {
 	containerOpts.Image = "alpine"
 
 	_, err := CreateContainer(context.Background(),
-		testCreateConfig(fake, testConfig(), containerOpts, cmd), nil)
+		testCreateConfig(fake, testConfig(), containerOpts, cmd))
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "container init")
-}
-
-func TestCreateContainer_HostProxyFailure(t *testing.T) {
-	// Host proxy enabled in config, but proxy manager fails — non-fatal, continues with warning
-	setupAuthEnv(t)
-	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
-	fake.SetupContainerCreate()
-	fake.SetupCopyToContainer()
-
-	projectCfg := testConfig()
-	hostProxyEnabled := true
-	projectCfg.Security.EnableHostProxy = &hostProxyEnabled
-
-	cmd := testFlags()
-	containerOpts := NewContainerOptions()
-	containerOpts.Image = "alpine"
-
-	ccfg := &CreateContainerOptions{
-		Client:  fake.Client,
-		Config:  testMockConfig(projectCfg),
-		Options: containerOpts,
-		Flags:   cmd.Flags(),
-		Log:     logger.Nop(),
-		ProjectManager: func() (projectpkg.ProjectManager, error) {
-			return nil, fmt.Errorf("ProjectManager not available in test")
-		},
-		ProjectRegistry: func() (*projectpkg.Registry, error) {
-			return projectpkg.NewRegistry()
-		},
-		HostProxy: func() hostproxy.HostProxyService {
-			return hostproxytest.NewFailingMockManager(fmt.Errorf("mock host proxy failure"))
-		},
-	}
-
-	// Collect events to check for warnings
-	events := make(chan CreateContainerEvent, 64)
-	eventsDone := make(chan struct{})
-	go func() {
-		defer close(eventsDone)
-		for range events {
-		}
-	}()
-
-	result, err := CreateContainer(context.Background(), ccfg, events)
-	close(events)
-	<-eventsDone
-
-	// Should succeed despite host proxy failure (non-fatal)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.False(t, result.HostProxyRunning, "host proxy should not be running")
-	require.NotEmpty(t, result.ContainerID)
 }
 
 func TestCreateContainer_PostInit(t *testing.T) {
@@ -320,7 +268,7 @@ func TestCreateContainer_PostInit(t *testing.T) {
 	containerOpts.Agent = "test-agent"
 
 	result, err := CreateContainer(context.Background(),
-		testCreateConfig(fake, cfg, containerOpts, cmd), nil)
+		testCreateConfig(fake, cfg, containerOpts, cmd))
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -354,7 +302,7 @@ func TestCreateContainer_NoPostInit(t *testing.T) {
 	containerOpts.Image = "alpine"
 
 	result, err := CreateContainer(context.Background(),
-		testCreateConfig(fake, cfg, containerOpts, cmd), nil)
+		testCreateConfig(fake, cfg, containerOpts, cmd))
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -394,7 +342,7 @@ func TestCreateContainer_PostInitInjectionError(t *testing.T) {
 	containerOpts.Agent = "test-agent"
 
 	result, err := CreateContainer(context.Background(),
-		testCreateConfig(fake, cfg, containerOpts, cmd), nil)
+		testCreateConfig(fake, cfg, containerOpts, cmd))
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "inject post-init script")
@@ -419,7 +367,7 @@ func TestCreateContainer_EmptyProject(t *testing.T) {
 	cc := testCreateConfig(fake, cfg, containerOpts, cmd)
 	cc.ProjectName = "" // empty project → 2-segment name
 
-	result, err := CreateContainer(context.Background(), cc, nil)
+	result, err := CreateContainer(context.Background(), cc)
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -442,56 +390,11 @@ func TestCreateContainer_EnvFileError(t *testing.T) {
 	containerOpts.Agent = "test-agent"
 
 	_, err := CreateContainer(context.Background(),
-		testCreateConfig(fake, cfg, containerOpts, cmd), nil)
+		testCreateConfig(fake, cfg, containerOpts, cmd))
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "agent.env_file")
 	fake.AssertNotCalled(t, "ContainerCreate")
-}
-
-func TestCreateContainer_FromEnvWarnings(t *testing.T) {
-	setupAuthEnv(t)
-	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
-	fake.SetupContainerCreate()
-	fake.SetupCopyToContainer()
-
-	cfg := testConfig()
-	cfg.Agent.FromEnv = []string{"CLAWKER_NONEXISTENT_VAR_99999"}
-
-	cmd := testFlags()
-	containerOpts := NewContainerOptions()
-	containerOpts.Image = "alpine"
-	containerOpts.Agent = "test-agent"
-
-	// Collect events to check for warnings
-	events := make(chan CreateContainerEvent, 64)
-	var warnings []string
-	eventsDone := make(chan struct{})
-	go func() {
-		defer close(eventsDone)
-		for ev := range events {
-			if ev.Type == MessageWarning {
-				warnings = append(warnings, ev.Message)
-			}
-		}
-	}()
-
-	result, err := CreateContainer(context.Background(),
-		testCreateConfig(fake, cfg, containerOpts, cmd), events)
-	close(events)
-	<-eventsDone
-
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.NotEmpty(t, warnings)
-	foundEnvWarning := false
-	for _, w := range warnings {
-		if strings.Contains(w, "CLAWKER_NONEXISTENT_VAR_99999") {
-			foundEnvWarning = true
-			break
-		}
-	}
-	require.True(t, foundEnvWarning, "expected warning about CLAWKER_NONEXISTENT_VAR_99999, got: %v", warnings)
 }
 
 func TestCreateContainer_RandomAgentName(t *testing.T) {
@@ -507,7 +410,7 @@ func TestCreateContainer_RandomAgentName(t *testing.T) {
 	// No agent or name set
 
 	result, err := CreateContainer(context.Background(),
-		testCreateConfig(fake, testConfig(), containerOpts, cmd), nil)
+		testCreateConfig(fake, testConfig(), containerOpts, cmd))
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -558,7 +461,7 @@ func TestCreateContainer_CleanupVolumesOnCreateError(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", "/tmp/nonexistent-clawker-cleanup-test-dir")
 
 	_, err := CreateContainer(context.Background(),
-		testCreateConfig(fake, testConfig(), containerOpts, cmd), nil)
+		testCreateConfig(fake, testConfig(), containerOpts, cmd))
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "container init")
@@ -584,7 +487,7 @@ func TestCreateContainer_NoCleanupForPreExistingVolumes(t *testing.T) {
 	containerOpts.Agent = "test"
 
 	_, err := CreateContainer(context.Background(),
-		testCreateConfig(fake, testConfig(), containerOpts, cmd), nil)
+		testCreateConfig(fake, testConfig(), containerOpts, cmd))
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "creating container")
@@ -631,7 +534,7 @@ func TestCreateContainer_CleanupVolumeRemoveFailure(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", "/tmp/nonexistent-clawker-cleanup-test-dir")
 
 	_, err := CreateContainer(context.Background(),
-		testCreateConfig(fake, testConfig(), containerOpts, cmd), nil)
+		testCreateConfig(fake, testConfig(), containerOpts, cmd))
 
 	// Original error is preserved (not overridden by cleanup failure)
 	require.Error(t, err)
@@ -649,7 +552,7 @@ func TestCreateContainer_InvalidAgentName(t *testing.T) {
 	containerOpts.Agent = "--rm" // Invalid: starts with hyphen
 
 	_, err := CreateContainer(context.Background(),
-		testCreateConfig(fake, testConfig(), containerOpts, cmd), nil)
+		testCreateConfig(fake, testConfig(), containerOpts, cmd))
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid agent name")
@@ -675,7 +578,7 @@ func TestCreateContainer_FirewallEnabledFromSettings(t *testing.T) {
 	cfg := testConfigWithFirewall("example.com")
 
 	result, err := CreateContainer(context.Background(),
-		testCreateConfig(fake, cfg, containerOpts, cmd), nil)
+		testCreateConfig(fake, cfg, containerOpts, cmd))
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -705,7 +608,7 @@ func TestCreateContainer_WorkingDirDefault(t *testing.T) {
 	// Workdir intentionally left empty — default behavior
 
 	result, err := CreateContainer(context.Background(),
-		testCreateConfig(fake, testConfig(), containerOpts, cmd), nil)
+		testCreateConfig(fake, testConfig(), containerOpts, cmd))
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -740,61 +643,11 @@ func TestCreateContainer_WorkingDirOverride(t *testing.T) {
 	containerOpts.Workdir = "/custom/work/dir"
 
 	result, err := CreateContainer(context.Background(),
-		testCreateConfig(fake, testConfig(), containerOpts, cmd), nil)
+		testCreateConfig(fake, testConfig(), containerOpts, cmd))
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
 	require.Equal(t, "/custom/work/dir", capturedWorkingDir,
 		"WorkingDir should match the explicit --workdir value")
-}
-
-func TestCreateContainer_EventsSequence(t *testing.T) {
-	// Verify events are sent in expected order with expected steps.
-	setupAuthEnv(t)
-	fake := mocks.NewFakeClient(configmocks.NewBlankConfig())
-	fake.SetupContainerCreate()
-	fake.SetupCopyToContainer()
-
-	cmd := testFlags()
-	containerOpts := NewContainerOptions()
-	containerOpts.Image = "alpine"
-	containerOpts.Agent = "test-agent"
-
-	events := make(chan CreateContainerEvent, 64)
-	var collected []CreateContainerEvent
-	eventsDone := make(chan struct{})
-	go func() {
-		defer close(eventsDone)
-		for ev := range events {
-			collected = append(collected, ev)
-		}
-	}()
-
-	result, err := CreateContainer(context.Background(),
-		testCreateConfig(fake, testConfig(), containerOpts, cmd), events)
-	close(events)
-	<-eventsDone
-
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	// Verify we got events for all major steps
-	steps := make(map[string]bool)
-	for _, ev := range collected {
-		steps[ev.Step] = true
-	}
-	require.True(t, steps["workspace"], "should have workspace events")
-	require.True(t, steps["config"], "should have config events")
-	require.True(t, steps["environment"], "should have environment events")
-	require.True(t, steps["container"], "should have container events")
-
-	// Verify first event is workspace running
-	require.Equal(t, "workspace", collected[0].Step)
-	require.Equal(t, StepRunning, collected[0].Status)
-
-	// Verify last event is container complete
-	last := collected[len(collected)-1]
-	require.Equal(t, "container", last.Step)
-	require.Equal(t, StepComplete, last.Status)
 }

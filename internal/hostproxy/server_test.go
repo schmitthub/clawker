@@ -273,8 +273,11 @@ func TestServerOpenURL_MissingRulesFile_FailsClosed(t *testing.T) {
 	s.handleOpenURL(w, req)
 
 	resp := w.Result()
-	if resp.StatusCode != http.StatusForbidden {
-		t.Errorf("expected 403 when rules file missing, got %d", resp.StatusCode)
+	// Firewall enabled (path set) but the rules file is gone — a broken trust
+	// boundary, not a policy deny. Loud-fail-closed: 500 + "egress rules
+	// unavailable", distinct from the 403 "blocked by egress policy" path.
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("expected 500 when rules file missing, got %d", resp.StatusCode)
 	}
 
 	var result openURLResponse
@@ -284,8 +287,49 @@ func TestServerOpenURL_MissingRulesFile_FailsClosed(t *testing.T) {
 	if result.Success {
 		t.Error("expected success to be false")
 	}
-	if result.Error != "blocked by egress policy" {
-		t.Errorf("expected 'blocked by egress policy', got %q", result.Error)
+	if result.Error != errEgressRulesUnavailable {
+		t.Errorf("expected %q, got %q", errEgressRulesUnavailable, result.Error)
+	}
+}
+
+// TestServerOpenURL_InvalidRulesFile_FailsClosedLoud verifies a present-but-
+// corrupt rules file is treated as an infrastructure failure, not a policy
+// deny: distinct status (500) and message from the 403 "blocked by egress
+// policy" path, so the real cause (corrupt rules file) is not masked.
+func TestServerOpenURL_InvalidRulesFile_FailsClosedLoud(t *testing.T) {
+	tmp := t.TempDir()
+	f := filepath.Join(tmp, "corrupt.yaml")
+	if err := os.WriteFile(f, []byte("rules:\n  - dst: github.test\n    proto: https\n    port: \"443\"\n    path_rules:\n      - action: deny\n        path: \"~/[bad(\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Server{
+		log:           logger.Nop(),
+		rulesFilePath: f,
+		browserFunc:   func(_ string) error { t.Fatal("browser should not be called"); return nil },
+	}
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/open/url",
+		bytes.NewBufferString(`{"url":"https://github.test/"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	s.handleOpenURL(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("expected 500 for invalid rules file, got %d", resp.StatusCode)
+	}
+
+	var result openURLResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if result.Success {
+		t.Error("expected success to be false")
+	}
+	if result.Error != errEgressRulesUnavailable {
+		t.Errorf("expected %q, got %q", errEgressRulesUnavailable, result.Error)
 	}
 }
 

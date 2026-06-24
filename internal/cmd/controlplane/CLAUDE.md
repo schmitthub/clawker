@@ -193,7 +193,7 @@ routed through Manager because it is not a CP lifecycle operation.
   methods panic, which is the failure signal for paths that shouldn't
   call them.
 - `status_test.go` adds a `statusHarness` that layers an
-  `AdminServiceClientMock` (from `internal/controlplane/mocks`) on top for the firewall-RPC assertions.
+  `AdminServiceClientMock` (from `api/admin/v1/mocks`) on top for the firewall-RPC assertions.
 - `agents_test.go` adds an `agentsHarness` that wires an `AdminServiceClientMock`
   directly as `f.AdminClient` (no ControlPlane mock needed — the verb uses only
   the AdminService gRPC surface).

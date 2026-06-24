@@ -136,6 +136,10 @@ message EgressRule {
 }
 
 message PathRule {
+  // Literal path prefix (must start with "/"), or, when prefixed with "~", an
+  // RE2 regex matched full-string (exact/anchored — guards the open-prefix
+  // bypass where /repos/x also permits /repos/x-evil). Validated CP-side; an
+  // invalid path fails the whole rule-update operation.
   string path = 1;
   string action = 2;
   // HTTP methods this path rule's action applies to (e.g. ["GET", "HEAD"]).

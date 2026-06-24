@@ -1,6 +1,7 @@
 package hostproxy
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -50,6 +51,36 @@ func TestCheckURLAgainstEgressRules(t *testing.T) {
 		// --- HTTP without path rules ---
 		{name: "http cdn any path", url: "http://cdn.example.test/assets/img.png", allowed: true},
 
+		// --- Regex (~) path rules: must match Envoy safe_regex exactly ---
+		{name: "regex allow exact user", url: "http://allowlist.example.test/users/clawker", allowed: true},
+		{name: "regex allow user trailing slash", url: "http://allowlist.example.test/users/anthropic/", allowed: true},
+		{name: "regex allow blocks prefix bypass", url: "http://allowlist.example.test/users/clawker-evil", allowed: false},
+		{name: "regex allow blocks other path", url: "http://allowlist.example.test/repos/clawker", allowed: false},
+		{name: "regex deny blocks subtree", url: "http://denylist.example.test/admin", allowed: false},
+		{name: "regex deny blocks subtree child", url: "http://denylist.example.test/admin/users", allowed: false},
+		{name: "regex deny allows other path", url: "http://denylist.example.test/public", allowed: true},
+
+		// --- Percent-encoding cannot evade a deny. The host browser + origin
+		//     decode the path, so the host proxy decodes too (net/url) and the
+		//     denied resource is what gets matched. Keeping %xx literal here —
+		//     as Envoy's normalize_path does — would instead let "/%61dmin"
+		//     miss the deny and fall through to default-allow, a browser-channel
+		//     bypass. Decoding is the fail-closed direction for this channel. ---
+		{name: "regex deny blocks percent-encoded admin", url: "http://denylist.example.test/%61dmin", allowed: false},
+		{name: "regex deny blocks encoded slash child", url: "http://denylist.example.test/admin%2fusers", allowed: false},
+		{name: "regex allow honors percent-encoded user", url: "http://allowlist.example.test/users/%63lawker", allowed: true},
+
+		// --- Dot-segment directory normalization vs an end-anchored allow.
+		//     "/blog/." and "/blog/x/.." resolve to the directory "/blog/"
+		//     (RFC 3986 remove_dot_segments / Envoy normalize_path), which
+		//     "~/blog$" does NOT match. The host proxy must DENY them, matching
+		//     Envoy — else the host browser fetches a denied directory. ---
+		{name: "anchored exact blog allowed", url: "http://anchored.example.test/blog", allowed: true},
+		{name: "anchored blog dir denied", url: "http://anchored.example.test/blog/", allowed: false},
+		{name: "anchored blog dot-segment dir denied", url: "http://anchored.example.test/blog/.", allowed: false},
+		{name: "anchored blog dotdot dir denied", url: "http://anchored.example.test/blog/x/..", allowed: false},
+		{name: "anchored blog parent denied", url: "http://anchored.example.test/blog/..", allowed: false},
+
 		// --- IP address rules ---
 		{name: "ip exact match", url: "https://93.184.216.34/resource", allowed: true},
 		{name: "ip wrong address", url: "https://93.184.216.35/resource", allowed: false},
@@ -93,7 +124,7 @@ func TestCheckURLAgainstEgressRules(t *testing.T) {
 }
 
 func TestCheckURLAgainstEgressRules_MissingFile(t *testing.T) {
-	err := CheckURLAgainstEgressRules("https://github.test/", "/nonexistent/egress-rules.yaml")
+	err := CheckURLAgainstEgressRules("https://github.test/", testNonexistentRulesFile)
 	if err == nil {
 		t.Fatal("expected error for missing rules file, got nil")
 	}
@@ -102,7 +133,7 @@ func TestCheckURLAgainstEgressRules_MissingFile(t *testing.T) {
 func TestCheckURLAgainstEgressRules_EmptyRulesFile(t *testing.T) {
 	tmp := t.TempDir()
 	f := filepath.Join(tmp, "empty.yaml")
-	if err := os.WriteFile(f, []byte("rules: []\n"), 0o644); err != nil {
+	if err := os.WriteFile(f, []byte("rules: []\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -159,13 +190,97 @@ func TestMatchRules_ExactAllowBeatsWildcardDeny(t *testing.T) {
 func TestCheckURLAgainstEgressRules_MalformedYAML(t *testing.T) {
 	tmp := t.TempDir()
 	f := filepath.Join(tmp, "bad.yaml")
-	if err := os.WriteFile(f, []byte("{{not yaml"), 0o644); err != nil {
+	if err := os.WriteFile(f, []byte("{{not yaml"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
 	err := CheckURLAgainstEgressRules("https://github.test/", f)
 	if err == nil {
 		t.Fatal("expected error for malformed YAML, got nil")
+	}
+}
+
+// TestCheckURLAgainstEgressRules_MalformedRegexFailsClosed verifies the host
+// proxy mirrors Envoy's own failsafe: Envoy rejects the ENTIRE config if any
+// safe_regex fails to compile, taking the whole firewall fail-closed. The host
+// proxy is a second evaluator on the same egress-rules.yaml with no such
+// intrinsic check, so a malformed "~" regex must fail the whole file closed —
+// otherwise the bad rule is silently skipped and the two enforcement paths
+// diverge. A malformed regex on one host must deny even an otherwise-allowed
+// URL on a different host.
+func TestCheckURLAgainstEgressRules_MalformedRegexFailsClosed(t *testing.T) {
+	tmp := t.TempDir()
+	f := filepath.Join(tmp, "bad-regex.yaml")
+	// github.test would be allowed in isolation; api.example.test carries an
+	// uncompilable regex path (unbalanced "(").
+	rules := "" +
+		"rules:\n" +
+		"  - action: allow\n" +
+		"    dst: github.test\n" +
+		"    port: 443\n" +
+		"    proto: https\n" +
+		"  - action: allow\n" +
+		"    dst: api.example.test\n" +
+		"    port: 80\n" +
+		"    proto: http\n" +
+		"    path_default: deny\n" +
+		"    path_rules:\n" +
+		"      - path: \"~/users/(clawker\"\n" +
+		"        action: allow\n"
+	if err := os.WriteFile(f, []byte(rules), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Even the otherwise-allowed URL on an unrelated host must be denied: a
+	// single malformed regex poisons the whole file (fail-closed), matching
+	// Envoy rejecting the entire config.
+	err := CheckURLAgainstEgressRules("https://github.test/", f)
+	if err == nil {
+		t.Fatal("expected malformed regex to fail the whole rules file closed, got nil (fail-open)")
+	}
+}
+
+// TestValidateEgressRulesFile covers the startup gate: a present-but-corrupt
+// rules file is a hard error (errEgressRulesInvalid) so the daemon can refuse
+// to start, mirroring Envoy refusing to boot on an invalid config. An empty
+// path (firewall disabled) or a not-yet-written file is not an error.
+func TestValidateEgressRulesFile(t *testing.T) {
+	tmp := t.TempDir()
+
+	corrupt := filepath.Join(tmp, "corrupt.yaml")
+	if err := os.WriteFile(corrupt, []byte("rules:\n  - dst: x.test\n    proto: http\n    port: \"80\"\n    path_rules:\n      - action: deny\n        path: \"~/[bad(\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	badYAML := filepath.Join(tmp, "bad.yaml")
+	if err := os.WriteFile(badYAML, []byte("{{not yaml"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name      string
+		path      string
+		wantError bool
+	}{
+		{name: "empty path (firewall disabled)", path: "", wantError: false},
+		{name: "missing file (firewall enabled, file gone)", path: filepath.Join(tmp, "nope.yaml"), wantError: true},
+		{name: "valid rules file", path: testRulesFile, wantError: false},
+		{name: "malformed regex", path: corrupt, wantError: true},
+		{name: "unparseable yaml", path: badYAML, wantError: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateEgressRulesFile(tc.path)
+			if tc.wantError {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				if !errors.Is(err, errEgressRulesInvalid) {
+					t.Fatalf("expected errEgressRulesInvalid, got %v", err)
+				}
+			} else if err != nil {
+				t.Fatalf("expected nil, got %v", err)
+			}
+		})
 	}
 }
 
@@ -470,6 +585,14 @@ func TestCheckURLAgainstEgressRules_PathTraversal(t *testing.T) {
 		// --- traversal that legitimately nets back to an allowed path ---
 		{"dotdot net-allowed", "/v1/admin/../things", true},
 		{"dotdot churn net-allowed", "/v1/a/../b/../things", true},
+
+		// --- dot-segment that resolves to the allowed directory "/v1/" must
+		//     stay allowed: RFC 3986 keeps the trailing slash ("/v1/." and
+		//     "/v1/x/.." -> "/v1/"), so the canonical path still matches the
+		//     "/v1/" prefix rule. path.Clean alone drops the slash, which would
+		//     mis-block these as "/v1" (the bare, denied path). ---
+		{"dot-segment to dir allowed", "/v1/.", true},
+		{"dotdot back to dir allowed", "/v1/x/..", true},
 
 		// --- double-encoding: stays literal on a single-decode server, so it
 		// remains under /v1/ and never reaches /secret. Documents the boundary:

@@ -1,4 +1,4 @@
-package agent
+package agent_test
 
 import (
 	"context"
@@ -11,6 +11,8 @@ import (
 	"time"
 
 	mobyevents "github.com/moby/moby/api/types/events"
+	"github.com/schmitthub/clawker/controlplane/agent"
+	agentmocks "github.com/schmitthub/clawker/controlplane/agent/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -22,12 +24,12 @@ import (
 )
 
 // noopPeerLookup satisfies ContainerByPeerIP for tests that don't
-// exercise the resolver path. Current Start() doesn't invoke
+// exercise the resolver path. Current agent.Start() doesn't invoke
 // LookupByIP; the dep is held for downstream consumers.
 type noopPeerLookup struct{}
 
-func (noopPeerLookup) LookupByIP(_ context.Context, _ netip.Addr) (ResolvedContainer, error) {
-	return ResolvedContainer{}, ErrNoContainerForPeerIP
+func (noopPeerLookup) LookupByIP(_ context.Context, _ netip.Addr) (agent.ResolvedContainer, error) {
+	return agent.ResolvedContainer{}, agent.ErrNoContainerForPeerIP
 }
 
 // publishDocker offers a DockerEvent onto the topic.
@@ -38,16 +40,16 @@ func publishDocker(topic *pubsub.Topic[dockerevents.DockerEvent], msg mobyevents
 // --- reapOrphans ---------------------------------------------------------
 
 func TestReapOrphans_DropsRowsForGoneContainers(t *testing.T) {
-	reg := NewRegistry(nil)
-	mustAddTestEntry(t, reg, "ctr-live", "live", "p")
-	mustAddTestEntry(t, reg, "ctr-orphan-1", "ophan1", "p")
-	mustAddTestEntry(t, reg, "ctr-orphan-2", "orphan2", "p")
+	reg := agent.NewRegistry(nil)
+	mustAddTestEntry(t, reg, "ctr-live", "live")
+	mustAddTestEntry(t, reg, "ctr-orphan-1", "ophan1")
+	mustAddTestEntry(t, reg, "ctr-orphan-2", "orphan2")
 
 	lister := func(context.Context) ([]string, error) {
 		return []string{"ctr-live"}, nil
 	}
 
-	evicted, err := reapOrphans(context.Background(), reg, lister, logger.Nop())
+	evicted, err := agent.ReapOrphans(context.Background(), reg, lister, logger.Nop())
 	require.NoError(t, err)
 	assert.Equal(t, 2, evicted)
 
@@ -58,12 +60,12 @@ func TestReapOrphans_DropsRowsForGoneContainers(t *testing.T) {
 }
 
 func TestReapOrphans_EmptyDockerListEvictsAll(t *testing.T) {
-	reg := NewRegistry(nil)
-	mustAddTestEntry(t, reg, "ctr-1", "a", "p")
-	mustAddTestEntry(t, reg, "ctr-2", "b", "p")
+	reg := agent.NewRegistry(nil)
+	mustAddTestEntry(t, reg, "ctr-1", "a")
+	mustAddTestEntry(t, reg, "ctr-2", "b")
 
 	lister := func(context.Context) ([]string, error) { return nil, nil }
-	evicted, err := reapOrphans(context.Background(), reg, lister, logger.Nop())
+	evicted, err := agent.ReapOrphans(context.Background(), reg, lister, logger.Nop())
 	require.NoError(t, err)
 	assert.Equal(t, 2, evicted)
 	snap, snapErr := reg.Snapshot()
@@ -72,8 +74,8 @@ func TestReapOrphans_EmptyDockerListEvictsAll(t *testing.T) {
 }
 
 func TestReapOrphans_RetriesTransientListerFailure(t *testing.T) {
-	reg := NewRegistry(nil)
-	mustAddTestEntry(t, reg, "ctr-orphan", "a", "p")
+	reg := agent.NewRegistry(nil)
+	mustAddTestEntry(t, reg, "ctr-orphan", "a")
 
 	var attempts int32
 	lister := func(context.Context) ([]string, error) {
@@ -83,22 +85,22 @@ func TestReapOrphans_RetriesTransientListerFailure(t *testing.T) {
 		}
 		return nil, nil // recovered → no live containers
 	}
-	evicted, err := reapOrphans(context.Background(), reg, lister, logger.Nop())
+	evicted, err := agent.ReapOrphans(context.Background(), reg, lister, logger.Nop())
 	require.NoError(t, err)
 	assert.Equal(t, 1, evicted)
 	assert.GreaterOrEqual(t, atomic.LoadInt32(&attempts), int32(2))
 }
 
 func TestReapOrphans_ReportsListerExhaustion(t *testing.T) {
-	reg := NewRegistry(nil)
-	mustAddTestEntry(t, reg, "ctr-1", "a", "p")
+	reg := agent.NewRegistry(nil)
+	mustAddTestEntry(t, reg, "ctr-1", "a")
 
 	lister := func(context.Context) ([]string, error) {
 		return nil, errors.New("daemon down")
 	}
-	_, err := reapOrphans(context.Background(), reg, lister, logger.Nop())
+	_, err := agent.ReapOrphans(context.Background(), reg, lister, logger.Nop())
 	require.Error(t, err)
-	// Registry must NOT be wiped on lister failure — orphans persist
+	// agent.Registry must NOT be wiped on lister failure — orphans persist
 	// until a future successful reap (or destroy event).
 	snap, snapErr := reg.Snapshot()
 	require.NoError(t, snapErr)
@@ -127,11 +129,11 @@ func TestSubscribeEvict_OnlyDestroyEvicts(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			reg := NewRegistry(nil)
-			mustAddTestEntry(t, reg, "ctr-target", "a", "p")
-			topic := newDockerTopic(t)
+			reg := agent.NewRegistry(nil)
+			mustAddTestEntry(t, reg, "ctr-target", "a")
+			topic := agentmocks.NewDockerTopic(t)
 
-			subscribeEvict(t.Context(), topic, reg, logger.Nop())
+			agent.SubscribeEvict(t.Context(), topic, reg, logger.Nop())
 
 			publishDocker(topic, mobyevents.Message{
 				Type:   mobyevents.ContainerEventType,
@@ -197,10 +199,10 @@ func TestSubscribeSessionCancel_CancelsOnExitTransitions(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			topic := newDockerTopic(t)
+			topic := agentmocks.NewDockerTopic(t)
 			canc := &fakeCanceller{}
 
-			subscribeSessionCancel(t.Context(), topic, canc, logger.Nop())
+			agent.SubscribeSessionCancel(t.Context(), topic, canc, logger.Nop())
 
 			publishDocker(topic, mobyevents.Message{
 				Type:   mobyevents.ContainerEventType,
@@ -224,10 +226,10 @@ func TestSubscribeSessionCancel_CancelsOnExitTransitions(t *testing.T) {
 // TestSubscribeSessionCancel_NonContainerEventsIgnored: network/volume
 // events with matching action names must not trigger CancelDial.
 func TestSubscribeSessionCancel_NonContainerEventsIgnored(t *testing.T) {
-	topic := newDockerTopic(t)
+	topic := agentmocks.NewDockerTopic(t)
 	canc := &fakeCanceller{}
 
-	subscribeSessionCancel(t.Context(), topic, canc, logger.Nop())
+	agent.SubscribeSessionCancel(t.Context(), topic, canc, logger.Nop())
 
 	publishDocker(topic, mobyevents.Message{
 		Type:   mobyevents.NetworkEventType,
@@ -242,11 +244,11 @@ func TestSubscribeSessionCancel_NonContainerEventsIgnored(t *testing.T) {
 // TestSubscribeEvict_NonContainerEventsIgnored: network/volume events
 // should never be dispatched to the evict consumer.
 func TestSubscribeEvict_NonContainerEventsIgnored(t *testing.T) {
-	reg := NewRegistry(nil)
-	mustAddTestEntry(t, reg, "ctr-1", "a", "p")
-	topic := newDockerTopic(t)
+	reg := agent.NewRegistry(nil)
+	mustAddTestEntry(t, reg, "ctr-1", "a")
+	topic := agentmocks.NewDockerTopic(t)
 
-	subscribeEvict(t.Context(), topic, reg, logger.Nop())
+	agent.SubscribeEvict(t.Context(), topic, reg, logger.Nop())
 
 	// Non-container/destroy event with the same Actor.ID — must not
 	// evict (network events use container-id-shaped IDs in some moby
@@ -331,7 +333,7 @@ func TestDialEvent_FiltersOnPurposeAgent(t *testing.T) {
 					Attributes: tc.labels,
 				},
 			}}
-			assert.Equal(t, tc.wantDial, dialEvent(ev))
+			assert.Equal(t, tc.wantDial, agent.DialEvent(ev))
 		})
 	}
 }
@@ -339,27 +341,27 @@ func TestDialEvent_FiltersOnPurposeAgent(t *testing.T) {
 // --- agent.Start: nil-deps validation -----------------------------------
 
 func TestStart_RejectsNilDeps(t *testing.T) {
-	dockerTopic := newDockerTopic(t)
-	agentTopic := newAgentTopic(t)
-	reg := NewRegistry(nil)
-	dialer := &Dialer{log: logger.Nop(), dialing: make(map[string]context.CancelFunc)}
-	lister := ContainerListFunc(func(context.Context) ([]string, error) { return nil, nil })
+	dockerTopic := agentmocks.NewDockerTopic(t)
+	agentTopic := agentmocks.NewAgentTopic(t)
+	reg := agent.NewRegistry(nil)
+	dialer := &agent.Dialer{Log: logger.Nop(), Dialing: make(map[string]context.CancelFunc)}
+	lister := agent.ContainerListFunc(func(context.Context) ([]string, error) { return nil, nil })
 	peerLookup := noopPeerLookup{}
 
 	cases := []struct {
 		name string
-		deps StartDeps
+		deps agent.StartDeps
 	}{
-		{"nil registry", StartDeps{DockerTopic: dockerTopic, AgentTopic: agentTopic, DockerLister: lister, Dialer: dialer, PeerLookup: peerLookup}},
-		{"nil docker lister", StartDeps{DockerTopic: dockerTopic, AgentTopic: agentTopic, Registry: reg, Dialer: dialer, PeerLookup: peerLookup}},
-		{"nil docker topic", StartDeps{AgentTopic: agentTopic, Registry: reg, DockerLister: lister, Dialer: dialer, PeerLookup: peerLookup}},
-		{"nil agent topic", StartDeps{DockerTopic: dockerTopic, Registry: reg, DockerLister: lister, Dialer: dialer, PeerLookup: peerLookup}},
-		{"nil dialer", StartDeps{DockerTopic: dockerTopic, AgentTopic: agentTopic, Registry: reg, DockerLister: lister, PeerLookup: peerLookup}},
-		{"nil peer lookup", StartDeps{DockerTopic: dockerTopic, AgentTopic: agentTopic, Registry: reg, DockerLister: lister, Dialer: dialer}},
+		{"nil registry", agent.StartDeps{DockerTopic: dockerTopic, AgentTopic: agentTopic, DockerLister: lister, Dialer: dialer, PeerLookup: peerLookup}},
+		{"nil docker lister", agent.StartDeps{DockerTopic: dockerTopic, AgentTopic: agentTopic, Registry: reg, Dialer: dialer, PeerLookup: peerLookup}},
+		{"nil docker topic", agent.StartDeps{AgentTopic: agentTopic, Registry: reg, DockerLister: lister, Dialer: dialer, PeerLookup: peerLookup}},
+		{"nil agent topic", agent.StartDeps{DockerTopic: dockerTopic, Registry: reg, DockerLister: lister, Dialer: dialer, PeerLookup: peerLookup}},
+		{"nil dialer", agent.StartDeps{DockerTopic: dockerTopic, AgentTopic: agentTopic, Registry: reg, DockerLister: lister, PeerLookup: peerLookup}},
+		{"nil peer lookup", agent.StartDeps{DockerTopic: dockerTopic, AgentTopic: agentTopic, Registry: reg, DockerLister: lister, Dialer: dialer}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := Start(t.Context(), tc.deps)
+			_, err := agent.Start(t.Context(), tc.deps)
 			require.Error(t, err)
 		})
 	}
@@ -367,21 +369,21 @@ func TestStart_RejectsNilDeps(t *testing.T) {
 
 // TestStart_PublishesReapDegradedOnListerFailure pins the new event
 // surface: when reap fails (lister exhausts retries), Start publishes a
-// RegistryEventType/ActionReap AgentEvent so worldview consumers know
+// agent.RegistryEventType/agent.ActionReap AgentEvent so worldview consumers know
 // orphans may persist.
 func TestStart_PublishesReapDegradedOnListerFailure(t *testing.T) {
-	dockerTopic := newDockerTopic(t)
-	agentTopic := newAgentTopic(t)
-	rec := recordAgent(agentTopic)
+	dockerTopic := agentmocks.NewDockerTopic(t)
+	agentTopic := agentmocks.NewAgentTopic(t)
+	rec := agentmocks.RecordAgent(agentTopic)
 
-	reg := NewRegistry(nil)
-	mustAddTestEntry(t, reg, "ctr-orphan", "a", "p")
-	dialer := &Dialer{log: logger.Nop(), dialing: make(map[string]context.CancelFunc)}
-	lister := ContainerListFunc(func(context.Context) ([]string, error) {
+	reg := agent.NewRegistry(nil)
+	mustAddTestEntry(t, reg, "ctr-orphan", "a")
+	dialer := &agent.Dialer{Log: logger.Nop(), Dialing: make(map[string]context.CancelFunc)}
+	lister := agent.ContainerListFunc(func(context.Context) ([]string, error) {
 		return nil, errors.New("daemon down")
 	})
 
-	cleanupStart, err := Start(t.Context(), StartDeps{
+	cleanupStart, err := agent.Start(t.Context(), agent.StartDeps{
 		Registry:     reg,
 		DockerLister: lister,
 		PeerLookup:   noopPeerLookup{},
@@ -394,18 +396,18 @@ func TestStart_PublishesReapDegradedOnListerFailure(t *testing.T) {
 	defer cleanupStart()
 
 	require.Eventually(t, func() bool {
-		ev, ok := rec.firstWith(RegistryEventType, ActionReap)
+		ev, ok := rec.FirstWith(agent.RegistryEventType, agent.ActionReap)
 		return ok && strings.Contains(ev.Message.Detail, "daemon down")
 	}, 2*time.Second, 10*time.Millisecond, "expected reap-degraded AgentEvent")
 }
 
 // --- helpers -------------------------------------------------------------
 
-func mustAddTestEntry(t *testing.T, reg Registry, containerID, agentName, project string) {
+func mustAddTestEntry(t *testing.T, reg agent.Registry, containerID, agentName string) {
 	t.Helper()
-	entry := Entry{
+	entry := agent.Entry{
 		AgentName:    auth.MustAgentName(agentName),
-		Project:      auth.MustProjectSlug(project),
+		Project:      auth.MustProjectSlug("p"),
 		ContainerID:  containerID,
 		Thumbprint:   testThumb(containerID),
 		RegisteredAt: time.Unix(1000, 0),

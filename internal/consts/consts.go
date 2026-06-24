@@ -280,7 +280,8 @@ const (
 const (
 	// Localhost is the IPv4 loopback address. Used for host-published
 	// port bindings and intra-container localhost dials.
-	Localhost = "127.0.0.1"
+	Localhost          = "127.0.0.1"
+	DockerHostInternal = "host.docker.internal"
 )
 
 // Container names.
@@ -364,6 +365,35 @@ const (
 	// value when the firewall is enabled — shrinking it shrinks that wait too
 	// and can reintroduce spurious CPHealthTimeoutErrors on first-boot pulls.
 	FirewallStackBringupRPCTimeout = FirewallStackBringupTimeout + 30*time.Second
+)
+
+// Host-proxy egress-rules readiness gate. The host-proxy daemon serves
+// /health immediately, then runs a staged wait — firewall container running →
+// Envoy health answering → egress rules file readable — before it trusts the
+// rules for /open/url enforcement. The per-stage budgets derive from the
+// firewall's own bringup/health timeouts so the host proxy never gives up
+// before the firewall could plausibly be up: the firewall boots AFTER the
+// host proxy in container bootstrap.
+const (
+	// HostProxyFirewallRunningTimeout bounds stage 1 — the wait for the
+	// firewall container to appear (created + running). The firewall's whole
+	// bringup (image pulls + container creates + health) is bounded by
+	// FirewallStackBringupTimeout, so the host proxy waits that long for the
+	// container to show up.
+	HostProxyFirewallRunningTimeout = FirewallStackBringupTimeout
+	// HostProxyEnvoyHealthTimeout bounds stage 2 — the wait for Envoy's
+	// host-published health endpoint to answer once the container is running,
+	// matching the budget the CP itself uses (FirewallStackHealthTimeout).
+	HostProxyEnvoyHealthTimeout = FirewallStackHealthTimeout
+	// HostProxyRulesReadTimeout bounds stage 3 — the final wait for
+	// egress-rules.yaml to become readable and valid once Envoy is healthy.
+	// Envoy's config is generated from the same rules, so by this stage the
+	// file is effectively already present; this is a short settle window that
+	// also re-reads across the firewall's atomic temp+rename writes.
+	HostProxyRulesReadTimeout = 10 * time.Second
+	// HostProxyReadyPollInterval is the poll cadence shared by all three
+	// readiness stages.
+	HostProxyReadyPollInterval = 1 * time.Second
 )
 
 // Control plane port defaults. These are flag defaults for the CP binary

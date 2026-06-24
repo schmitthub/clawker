@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1426,36 +1427,6 @@ func filterSocketMountsForMacOS(mounts []mount.Mount) (filteredMounts []mount.Mo
 	return filteredMounts, socketBinds
 }
 
-// -----------------------------------------------------------------------------
-// CreateContainer — channel-based container creation with event streaming
-// -----------------------------------------------------------------------------
-
-// StepStatus represents the lifecycle state of a creation step.
-type StepStatus int
-
-const (
-	StepRunning  StepStatus = iota // Step in progress
-	StepComplete                   // Step finished successfully
-	StepCached                     // Step skipped (already done)
-)
-
-// MessageType classifies the severity of a step message.
-type MessageType int
-
-const (
-	MessageInfo    MessageType = iota // Informational substep update
-	MessageWarning                    // Non-fatal issue
-)
-
-// CreateContainerEvent is sent on the events channel during CreateContainer.
-// Callers use these to drive spinners, collect warnings, etc.
-type CreateContainerEvent struct {
-	Step    string      // "workspace", "config", "environment", "container"
-	Status  StepStatus  // Step lifecycle state
-	Message string      // User-facing text
-	Type    MessageType // Info or Warning
-}
-
 // CreateContainerOptions holds all inputs for CreateContainer.
 type CreateContainerOptions struct {
 	Client         *docker.Client
@@ -1469,7 +1440,7 @@ type CreateContainerOptions struct {
 	// to resolve the registry-backed project root for the workspace mount
 	// source and ignore-file loading.
 	ProjectRegistry func() (*project.Registry, error)
-	HostProxy       func() hostproxy.HostProxyService
+	HostProxy       func() hostproxy.Service
 	Log             *logger.Logger
 	Is256Color      bool
 	IsTrueColor     bool
@@ -1488,18 +1459,12 @@ type CreateContainerResult struct {
 // run and create commands. It performs workspace setup, config initialization,
 // environment resolution, Docker container creation, and post-create injection.
 //
-// Progress is communicated via the events channel (nil for silent mode).
 // Developer diagnostics go to zerolog. Callers own all terminal output.
-//
-// Uses named return retErr so deferred volume cleanup can inspect the error.
-func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events chan<- CreateContainerEvent) (_ *CreateContainerResult, retErr error) {
-	projectCfg := opts.Config.Project()
+// On any failure past the resource-tracking point, each error return reclaims
+// the container and volumes created during the attempt; a panic does not.
+func CreateContainer(ctx context.Context, opts *CreateContainerOptions) (*CreateContainerResult, error) {
 	containerOpts := opts.Options
-	client := opts.Client
 	log := opts.Log
-
-	// --- Step 1: Prepare workspace ---
-	sendInfo(ctx, events, "workspace", "Preparing workspace")
 
 	agentName := containerOpts.GetAgentName()
 	if agentName == "" {
@@ -1510,47 +1475,7 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 		return nil, err
 	}
 
-	projectRoot, err := resolveProjectRoot(opts.ProjectRegistry, log)
-	if err != nil {
-		return nil, err
-	}
-
-	// Fail fast on worktree + snapshot before resolveWorkDir creates a git
-	// worktree we'd only reject later. workspace.SetupMounts enforces the same
-	// invariant as the load-bearing guard; this is the fail-fast UX layer.
-	if containerOpts.Worktree != "" {
-		mode, err := workspace.ResolveMode(containerOpts.Mode, projectCfg.Workspace.DefaultMode)
-		if err != nil {
-			return nil, fmt.Errorf("invalid workspace mode: %w", err)
-		}
-		if mode == config.ModeSnapshot {
-			return nil, workspace.ErrWorktreeSnapshot
-		}
-	}
-
-	wd, projectRootDir, err := resolveWorkDir(ctx, containerOpts, agentName, projectRoot, opts.ProjectManager, log)
-	if err != nil {
-		return nil, err
-	}
-
-	// Ignore file lives at the registry-resolved project root; empty root
-	// (no registered project) means no ignore patterns.
-	var ignoreFile string
-	if projectRoot != "" {
-		ignoreFile = filepath.Join(projectRoot, consts.IgnoreFile)
-	}
-
-	wsResult, err := workspace.SetupMounts(ctx, client, workspace.SetupMountsConfig{
-		ModeOverride:   containerOpts.Mode,
-		Cfg:            opts.Config,
-		ProjectName:    opts.ProjectName,
-		AgentName:      agentName,
-		WorkDir:        wd,
-		ProjectRootDir: projectRootDir,
-		ContainerPath:  wd, // Mount at host absolute path for Claude Code /resume compatibility
-		IgnoreFile:     ignoreFile,
-		Log:            log,
-	})
+	ws, err := prepareWorkspace(ctx, opts, agentName)
 	if err != nil {
 		return nil, err
 	}
@@ -1559,202 +1484,49 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 	// reclaims them atomically (see createScope.reclaim). Only volumes created
 	// during this call are tracked — pre-existing volumes (with user session
 	// data) are never touched.
-	scope := &createScope{client: client, log: log, events: events}
-	if wsResult.ConfigVolumeResult.ConfigCreated {
-		if vn, vnErr := docker.VolumeName(opts.ProjectName, agentName, docker.VolumePurposeConfig); vnErr != nil {
-			log.Error().Err(vnErr).Msg("cannot determine config volume name for cleanup tracking")
-			sendWarning(ctx, events, "workspace", fmt.Sprintf("Could not track config volume for cleanup: %v", vnErr))
-		} else {
-			scope.volumes = append(scope.volumes, vn)
-		}
-	}
-	if wsResult.ConfigVolumeResult.HistoryCreated {
-		if vn, vnErr := docker.VolumeName(opts.ProjectName, agentName, docker.VolumePurposeHistory); vnErr != nil {
-			log.Error().Err(vnErr).Msg("cannot determine history volume name for cleanup tracking")
-			sendWarning(ctx, events, "workspace", fmt.Sprintf("Could not track history volume for cleanup: %v", vnErr))
-		} else {
-			scope.volumes = append(scope.volumes, vn)
-		}
-	}
-	if wsResult.WorkspaceVolumeName != "" {
-		scope.volumes = append(scope.volumes, wsResult.WorkspaceVolumeName)
-	}
+	scope := &createScope{client: opts.Client, log: log}
+	trackCreatedVolumes(scope, ws.result, opts.ProjectName, agentName)
 
-	// On any failure past this point, reclaim created resources — container
-	// first (frees its volumes), then volumes. scope.containerID stays empty
-	// until the container is created, so pre-create failures reclaim volumes
-	// only.
+	// On any error past this point, reclaim created resources — container first
+	// (frees its volumes), then volumes. scope.containerID stays empty until the
+	// container is created, so pre-create failures reclaim volumes only. The
+	// reclaim is gated on the failed flag, which is set ONLY at the error returns
+	// below: a panic unwinding through this function leaves failed false and does
+	// NOT reclaim (the resources are left for the caller's reaper).
+	failed := false
 	defer func() {
-		if retErr != nil {
+		if failed {
 			scope.reclaim()
 		}
 	}()
 
-	workspaceMounts := wsResult.Mounts
-	sendComplete(ctx, events, "workspace", "Workspace ready")
-
 	// --- Step 2: Initialize config ---
-	if wsResult.ConfigVolumeResult.ConfigCreated {
-		sendInfo(ctx, events, "config", "Initializing config")
-		if err := InitContainerConfig(ctx, InitConfigOpts{
-			ProjectName:      opts.ProjectName,
-			AgentName:        agentName,
-			ContainerWorkDir: wsResult.ContainerPath,
-			ClaudeCode:       projectCfg.Agent.ClaudeCode,
-			CopyToVolume:     client.CopyToVolume,
-			Log:              log,
-		}); err != nil {
-			return nil, fmt.Errorf("container init: %w", err)
-		}
-		sendComplete(ctx, events, "config", "Config initialized")
-	} else {
-		sendCached(ctx, events, "config", "Config volume cached")
-	}
-
-	// --- Step 3: Setup environment ---
-	sendInfo(ctx, events, "environment", "Setting up environment")
-
-	hostProxyRunning := setupHostProxy(ctx, events, projectCfg, containerOpts, opts.HostProxy, log)
-
-	gitSetup := workspace.SetupGitCredentials(projectCfg.Security.GitCredentials, hostProxyRunning, log)
-	workspaceMounts = append(workspaceMounts, gitSetup.Mounts...)
-	containerOpts.Env = append(containerOpts.Env, gitSetup.Env...)
-
-	runtimeEnv, envWarnings, err := buildCreateTimeEnv(ctx, opts, containerOpts, agentName, wd, projectRootDir, log)
-	if err != nil {
+	if err = initConfigVolume(ctx, opts, agentName, ws); err != nil {
+		failed = true
 		return nil, err
 	}
-	containerOpts.Env = append(containerOpts.Env, runtimeEnv...)
-	for _, w := range envWarnings {
-		sendWarning(ctx, events, "environment", w)
-	}
-	sendComplete(ctx, events, "environment", "Environment ready")
 
-	// --- Step 4: Create container ---
-	sendInfo(ctx, events, "container", fmt.Sprintf("Creating container (%s)", containerName))
+	// --- Step 3: Setup environment + build Docker configs ---
+	hostProxyRunning := setupHostProxy(opts.Config.Project(), containerOpts, opts.HostProxy, log)
 
-	if err := containerOpts.ValidateFlags(); err != nil {
-		return nil, fmt.Errorf("validating container flags: %w", err)
-	}
-
-	containerConfig, hostConfig, networkConfig, err := containerOpts.BuildConfigs(
-		opts.Flags, workspaceMounts, projectCfg)
+	cfgs, err := buildContainerConfigs(ctx, opts, agentName, ws, hostProxyRunning)
 	if err != nil {
-		return nil, fmt.Errorf("invalid configuration: %w", err)
+		failed = true
+		return nil, err
 	}
 
-	// Set Cloudflare malware-blocking DNS as Docker's external forwarders.
-	// Docker's internal DNS (127.0.0.11) remains the container's nameserver and
-	// handles internal name resolution (container names, host.docker.internal).
-	// When the firewall is enabled, eBPF redirects all DNS to CoreDNS;
-	// when disabled, 127.0.0.11 forwards to these upstreams.
-	if len(hostConfig.DNS) == 0 {
-		hostConfig.DNS = []netip.Addr{
-			netip.MustParseAddr("1.1.1.2"),
-			netip.MustParseAddr("1.0.0.2"),
-		}
-	}
-
-	// Set container WorkingDir to match the workspace mount target unless
-	// the user explicitly provided --workdir.
-	if containerConfig.WorkingDir == "" {
-		containerConfig.WorkingDir = wsResult.ContainerPath
-	}
-
-	extraLabels := client.ContainerLabels(opts.ProjectName, agentName, opts.Version, containerOpts.Image, wd)
-
-	// Resolve agent bootstrap material BEFORE ContainerCreate so any failure
-	// here (path resolution, key load, user-input validation via NewProjectSlug
-	// / NewAgentName) leaves no orphan container + volumes behind. None of
-	// these calls depend on resp.ID; only bootstrapOpts (built post-create)
-	// does.
-	caCertPath, err := consts.AuthCACertPath()
+	// --- Step 4: Create the container and install per-agent bootstrap ---
+	containerID, err := createAndBootstrapContainer(ctx, opts, agentName, containerName, ws, cfgs, scope)
 	if err != nil {
-		return nil, fmt.Errorf("agent bootstrap: ca cert path: %w", err)
+		failed = true
+		return nil, err
 	}
-	caKeyPath, err := consts.AuthCAKeyPath()
-	if err != nil {
-		return nil, fmt.Errorf("agent bootstrap: ca key path: %w", err)
-	}
-	signingKey, err := auth.LoadSigningKey()
-	if err != nil {
-		return nil, fmt.Errorf("agent bootstrap: load signing key: %w", err)
-	}
-	projectSlug, err := auth.NewProjectSlug(opts.ProjectName)
-	if err != nil {
-		return nil, fmt.Errorf("agent bootstrap: invalid project: %w", err)
-	}
-	agentTyped, err := auth.NewAgentName(agentName)
-	if err != nil {
-		return nil, fmt.Errorf("agent bootstrap: invalid agent name: %w", err)
-	}
-
-	resp, err := client.ContainerCreate(ctx, docker.ContainerCreateOptions{
-		Config:           containerConfig,
-		HostConfig:       hostConfig,
-		NetworkingConfig: networkConfig,
-		Name:             containerName,
-		ExtraLabels:      docker.Labels{extraLabels},
-		EnsureNetwork: &docker.EnsureNetworkOptions{
-			Name: opts.Config.ClawkerNetwork(),
-		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("creating container: %w", err)
-	}
-
-	// Container created — register it for reclaim so any failure past this point
-	// tears down the container before its volumes.
-	scope.containerID = resp.ID
-
-	// Mint per-agent mTLS material + Hydra assertion JWT, tar into the
-	// container's BootstrapDir (writable layer survives stop/start/
-	// restart for the container's lifetime). The agentregistry row is
-	// NOT written from the host — CP is the sole sqlite writer and
-	// captures the thumbprint at Register handler entry from the live
-	// mTLS peer. Container_id is embedded as a URI SAN in the leaf cert
-	// so CP can read the binding without a CLI-pre-staged row.
-	bootstrapOpts := InstallAgentBootstrapOptions{
-		Project:            projectSlug,
-		Agent:              agentTyped,
-		ContainerID:        resp.ID,
-		HydraTokenAudience: hydraTokenAudienceFromPort(opts.Config.Settings().ControlPlane.HydraPublicPort),
-		CopyToContainer:    NewCopyToContainerFn(client),
-		Logger:             log,
-	}
-	if err := InstallAgentBootstrapMaterial(ctx, caCertPath, caKeyPath, signingKey, bootstrapOpts); err != nil {
-		return nil, fmt.Errorf("agent bootstrap: %w", err)
-	}
-
-	// Inject post-init script if configured. Last creation step; on failure the
-	// deferred reclaim tears down the container and its newly-created volumes, so
-	// no orphan remains. A blank (empty or whitespace-only) post_init is
-	// equivalent to unset — skip injection entirely rather than deliver a no-op
-	// wrapper (post_init is create-time once; there is no stale content to
-	// overwrite).
-	if strings.TrimSpace(projectCfg.Agent.PostInit) == "" {
-		log.Debug().Msg("no post_init script configured; skipping injection")
-	} else {
-		sendInfo(ctx, events, "container", "Injecting post-init script")
-		copyFn := NewCopyToContainerFn(client)
-		if err := InjectPostInitScript(ctx, InjectPostInitOpts{
-			ContainerID:     resp.ID,
-			Script:          projectCfg.Agent.PostInit,
-			Cfg:             opts.Config,
-			CopyToContainer: copyFn,
-			Log:             log,
-		}); err != nil {
-			return nil, fmt.Errorf("inject post-init script: %w", err)
-		}
-	}
-
-	sendComplete(ctx, events, "container", "Container created")
 
 	return &CreateContainerResult{
-		ContainerID:      resp.ID,
+		ContainerID:      containerID,
 		AgentName:        agentName,
 		ContainerName:    containerName,
-		WorkDir:          wd,
+		WorkDir:          ws.wd,
 		HostProxyRunning: hostProxyRunning,
 	}, nil
 }
@@ -1769,7 +1541,6 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions, events c
 type createScope struct {
 	client      *docker.Client
 	log         *logger.Logger
-	events      chan<- CreateContainerEvent
 	containerID string   // empty until the container is created
 	volumes     []string // newly-created volumes only
 }
@@ -1790,42 +1561,11 @@ func (s *createScope) reclaim() {
 		if _, err := s.client.VolumeRemove(ctx, vol, true); err != nil {
 			s.log.Warn().Str("volume", vol).Err(err).
 				Msg("failed to clean up volume after creation failure")
-			sendWarning(ctx, s.events, "cleanup", fmt.Sprintf("Failed to remove volume %s: %v", vol, err))
 		} else {
 			s.log.Debug().Str("volume", vol).Msg("cleaned up volume after creation failure")
 		}
 	}
 }
-
-// --- Event helpers ---
-
-func sendEvent(ctx context.Context, ch chan<- CreateContainerEvent, step string, status StepStatus, msgType MessageType, msg string) {
-	if ch == nil {
-		return
-	}
-	select {
-	case ch <- CreateContainerEvent{Step: step, Status: status, Type: msgType, Message: msg}:
-	case <-ctx.Done():
-	}
-}
-
-func sendInfo(ctx context.Context, ch chan<- CreateContainerEvent, step, msg string) {
-	sendEvent(ctx, ch, step, StepRunning, MessageInfo, msg)
-}
-
-func sendWarning(ctx context.Context, ch chan<- CreateContainerEvent, step, msg string) {
-	sendEvent(ctx, ch, step, StepRunning, MessageWarning, msg)
-}
-
-func sendComplete(ctx context.Context, ch chan<- CreateContainerEvent, step, msg string) {
-	sendEvent(ctx, ch, step, StepComplete, MessageInfo, msg)
-}
-
-func sendCached(ctx context.Context, ch chan<- CreateContainerEvent, step, msg string) {
-	sendEvent(ctx, ch, step, StepCached, MessageInfo, msg)
-}
-
-// --- Internal helpers (absorbed from init.go) ---
 
 // resolveWorkDir determines the working directory for the container.
 // When --worktree is set, it routes through ProjectManager to ensure the worktree
@@ -1919,7 +1659,7 @@ func resolveWorkDir(ctx context.Context, containerOpts *ContainerCreateOptions, 
 }
 
 // setupHostProxy starts the host proxy if enabled. Non-fatal — failures produce warnings.
-func setupHostProxy(ctx context.Context, events chan<- CreateContainerEvent, cfg *config.Project, containerOpts *ContainerCreateOptions, hostProxyFn func() hostproxy.HostProxyService, log *logger.Logger) bool {
+func setupHostProxy(cfg *config.Project, containerOpts *ContainerCreateOptions, hostProxyFn func() hostproxy.Service, log *logger.Logger) bool {
 	if !cfg.Security.HostProxyEnabled() {
 		log.Debug().Msg("host proxy disabled by config")
 		return false
@@ -1934,20 +1674,333 @@ func setupHostProxy(ctx context.Context, events chan<- CreateContainerEvent, cfg
 		return false
 	}
 
-	sendInfo(ctx, events, "environment", "Configuring host proxy")
-
-	if err := hp.EnsureRunning(); err != nil {
-		log.Warn().Err(err).Msg("failed to start host proxy server")
-		sendWarning(ctx, events, "environment", "Host proxy failed to start. Browser authentication may not work.")
-		sendWarning(ctx, events, "environment", "To disable: set 'security.enable_host_proxy: false' in your project config")
-		return false
-	}
-
 	envVar := consts.EnvHostProxy + "=" + hp.ProxyURL()
 	containerOpts.Env = append(containerOpts.Env, envVar)
-	log.Debug().Str("env", envVar).Msg("host proxy started, injected env var")
+	log.Debug().Str("env", envVar).Msg("appended host proxy env var")
 
 	return true
+}
+
+
+// guardWorktreeSnapshot fails fast on the worktree + snapshot combination
+// before resolveWorkDir creates a git worktree we'd only reject later.
+// workspace.SetupMounts enforces the same invariant as the load-bearing guard;
+// this is the fail-fast UX layer.
+func guardWorktreeSnapshot(containerOpts *ContainerCreateOptions, projectCfg *config.Project) error {
+	if containerOpts.Worktree == "" {
+		return nil
+	}
+	mode, err := workspace.ResolveMode(containerOpts.Mode, projectCfg.Workspace.DefaultMode)
+	if err != nil {
+		return fmt.Errorf("invalid workspace mode: %w", err)
+	}
+	if mode == config.ModeSnapshot {
+		return workspace.ErrWorktreeSnapshot
+	}
+	return nil
+}
+
+// trackCreatedVolumes registers the volumes newly created by SetupMounts on the
+// reclaim scope so a later failure tears them down. Pre-existing volumes (with
+// user session data) are never tracked. A name-resolution failure is logged and
+// the volume is skipped — cleanup is best-effort and must not abort creation.
+func trackCreatedVolumes(scope *createScope, wsResult *workspace.SetupMountsResult, projectName, agentName string) {
+	if wsResult.ConfigVolumeResult.ConfigCreated {
+		if vn, vnErr := docker.VolumeName(projectName, agentName, docker.VolumePurposeConfig); vnErr != nil {
+			scope.log.Error().Err(vnErr).Msg("cannot determine config volume name for cleanup tracking")
+		} else {
+			scope.volumes = append(scope.volumes, vn)
+		}
+	}
+	if wsResult.ConfigVolumeResult.HistoryCreated {
+		if vn, vnErr := docker.VolumeName(projectName, agentName, docker.VolumePurposeHistory); vnErr != nil {
+			scope.log.Error().Err(vnErr).Msg("cannot determine history volume name for cleanup tracking")
+		} else {
+			scope.volumes = append(scope.volumes, vn)
+		}
+	}
+	if wsResult.WorkspaceVolumeName != "" {
+		scope.volumes = append(scope.volumes, wsResult.WorkspaceVolumeName)
+	}
+}
+
+// agentBootstrapMaterial bundles the create-time inputs needed to mint and
+// install per-agent mTLS material + the Hydra assertion. Resolved before
+// ContainerCreate so any failure leaves no orphan container + volumes behind.
+type agentBootstrapMaterial struct {
+	caCertPath  string
+	caKeyPath   string
+	signingKey  *ecdsa.PrivateKey
+	projectSlug auth.ProjectSlug
+	agentName   auth.AgentName
+}
+
+// loadAgentBootstrapMaterial resolves CA paths, loads the signing key, and
+// validates the typed (project, agent) identity. None of these depend on a
+// created container, so running them first keeps create-time failures
+// orphan-free.
+func loadAgentBootstrapMaterial(projectName, agentName string) (agentBootstrapMaterial, error) {
+	caCertPath, err := consts.AuthCACertPath()
+	if err != nil {
+		return agentBootstrapMaterial{}, fmt.Errorf("agent bootstrap: ca cert path: %w", err)
+	}
+	caKeyPath, err := consts.AuthCAKeyPath()
+	if err != nil {
+		return agentBootstrapMaterial{}, fmt.Errorf("agent bootstrap: ca key path: %w", err)
+	}
+	signingKey, err := auth.LoadSigningKey()
+	if err != nil {
+		return agentBootstrapMaterial{}, fmt.Errorf("agent bootstrap: load signing key: %w", err)
+	}
+	projectSlug, err := auth.NewProjectSlug(projectName)
+	if err != nil {
+		return agentBootstrapMaterial{}, fmt.Errorf("agent bootstrap: invalid project: %w", err)
+	}
+	agentTyped, err := auth.NewAgentName(agentName)
+	if err != nil {
+		return agentBootstrapMaterial{}, fmt.Errorf("agent bootstrap: invalid agent name: %w", err)
+	}
+	return agentBootstrapMaterial{
+		caCertPath:  caCertPath,
+		caKeyPath:   caKeyPath,
+		signingKey:  signingKey,
+		projectSlug: projectSlug,
+		agentName:   agentTyped,
+	}, nil
+}
+
+// injectPostInitIfConfigured injects the post-init script into the freshly
+// created container when one is configured. Last creation step; on failure the
+// caller's deferred reclaim tears down the container and its newly-created
+// volumes, so no orphan remains. A blank (empty or whitespace-only) post_init
+// is equivalent to unset — skip injection entirely rather than deliver a no-op
+// wrapper (post_init is create-time once; there is no stale content to
+// overwrite).
+func injectPostInitIfConfigured(ctx context.Context, client *docker.Client, containerID string, projectCfg *config.Project, cfg config.Config, log *logger.Logger) error {
+	if strings.TrimSpace(projectCfg.Agent.PostInit) == "" {
+		log.Debug().Msg("no post_init script configured; skipping injection")
+		return nil
+	}
+	if err := InjectPostInitScript(ctx, InjectPostInitOpts{
+		ContainerID:     containerID,
+		Script:          projectCfg.Agent.PostInit,
+		Cfg:             cfg,
+		CopyToContainer: NewCopyToContainerFn(client),
+		Log:             log,
+	}); err != nil {
+		return fmt.Errorf("inject post-init script: %w", err)
+	}
+	return nil
+}
+
+
+// workspaceSetup bundles the resolved workspace inputs needed downstream of
+// SetupMounts: the mounts result, the host working directory, and the resolved
+// project root directory.
+type workspaceSetup struct {
+	result         *workspace.SetupMountsResult
+	wd             string
+	projectRootDir string
+}
+
+// prepareWorkspace resolves the project root, fails fast on the
+// worktree + snapshot combination, resolves the host work directory, and sets
+// up the workspace mounts (volumes, bind, config volume).
+func prepareWorkspace(ctx context.Context, opts *CreateContainerOptions, agentName string) (*workspaceSetup, error) {
+	containerOpts := opts.Options
+	projectCfg := opts.Config.Project()
+	log := opts.Log
+
+	projectRoot, err := resolveProjectRoot(opts.ProjectRegistry, log)
+	if err != nil {
+		return nil, err
+	}
+
+	if err = guardWorktreeSnapshot(containerOpts, projectCfg); err != nil {
+		return nil, err
+	}
+
+	wd, projectRootDir, err := resolveWorkDir(ctx, containerOpts, agentName, projectRoot, opts.ProjectManager, log)
+	if err != nil {
+		return nil, err
+	}
+
+	// Ignore file lives at the registry-resolved project root; empty root
+	// (no registered project) means no ignore patterns.
+	var ignoreFile string
+	if projectRoot != "" {
+		ignoreFile = filepath.Join(projectRoot, consts.IgnoreFile)
+	}
+
+	wsResult, err := workspace.SetupMounts(ctx, opts.Client, workspace.SetupMountsConfig{
+		ModeOverride:   containerOpts.Mode,
+		Cfg:            opts.Config,
+		ProjectName:    opts.ProjectName,
+		AgentName:      agentName,
+		WorkDir:        wd,
+		ProjectRootDir: projectRootDir,
+		ContainerPath:  wd, // Mount at host absolute path for Claude Code /resume compatibility
+		IgnoreFile:     ignoreFile,
+		Log:            log,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("setting up workspace mounts: %w", err)
+	}
+
+	return &workspaceSetup{result: wsResult, wd: wd, projectRootDir: projectRootDir}, nil
+}
+
+// initConfigVolume seeds the host Claude config into a freshly created config
+// volume. A no-op when the config volume already existed (preserves user
+// session data).
+func initConfigVolume(ctx context.Context, opts *CreateContainerOptions, agentName string, ws *workspaceSetup) error {
+	if !ws.result.ConfigVolumeResult.ConfigCreated {
+		return nil
+	}
+	if err := InitContainerConfig(ctx, InitConfigOpts{
+		ProjectName:      opts.ProjectName,
+		AgentName:        agentName,
+		ContainerWorkDir: ws.result.ContainerPath,
+		ClaudeCode:       opts.Config.Project().Agent.ClaudeCode,
+		CopyToVolume:     opts.Client.CopyToVolume,
+		Log:              opts.Log,
+	}); err != nil {
+		return fmt.Errorf("container init: %w", err)
+	}
+	return nil
+}
+
+// containerConfigs bundles the three Docker create configs produced by
+// buildContainerConfigs.
+type containerConfigs struct {
+	container *container.Config
+	host      *container.HostConfig
+	network   *network.NetworkingConfig
+}
+
+// buildContainerConfigs assembles the git-credential mounts and create-time
+// env, validates flags, and builds the Docker container/host/networking
+// configs (including the DNS and working-directory defaults). It mutates
+// opts.Options.Env with the resolved git + runtime env.
+func buildContainerConfigs(ctx context.Context, opts *CreateContainerOptions, agentName string, ws *workspaceSetup, hostProxyRunning bool) (*containerConfigs, error) {
+	containerOpts := opts.Options
+	projectCfg := opts.Config.Project()
+	log := opts.Log
+
+	workspaceMounts := ws.result.Mounts
+
+	gitSetup := workspace.SetupGitCredentials(projectCfg.Security.GitCredentials, hostProxyRunning, log)
+	workspaceMounts = append(workspaceMounts, gitSetup.Mounts...)
+	containerOpts.Env = append(containerOpts.Env, gitSetup.Env...)
+
+	runtimeEnv, envWarnings, err := buildCreateTimeEnv(ctx, opts, containerOpts, agentName, ws.wd, ws.projectRootDir, log)
+	if err != nil {
+		return nil, err
+	}
+	containerOpts.Env = append(containerOpts.Env, runtimeEnv...)
+	for _, w := range envWarnings {
+		log.Warn().Msg(w)
+	}
+
+	if err = containerOpts.ValidateFlags(); err != nil {
+		return nil, fmt.Errorf("validating container flags: %w", err)
+	}
+
+	containerConfig, hostConfig, networkConfig, err := containerOpts.BuildConfigs(
+		opts.Flags, workspaceMounts, projectCfg)
+	if err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
+
+	// Set Cloudflare malware-blocking DNS as Docker's external forwarders.
+	// Docker's internal DNS (127.0.0.11) remains the container's nameserver and
+	// handles internal name resolution (container names, host.docker.internal).
+	// When the firewall is enabled, eBPF redirects all DNS to CoreDNS;
+	// when disabled, 127.0.0.11 forwards to these upstreams.
+	if len(hostConfig.DNS) == 0 {
+		hostConfig.DNS = []netip.Addr{
+			netip.MustParseAddr("1.1.1.2"),
+			netip.MustParseAddr("1.0.0.2"),
+		}
+	}
+
+	// Set container WorkingDir to match the workspace mount target unless
+	// the user explicitly provided --workdir.
+	if containerConfig.WorkingDir == "" {
+		containerConfig.WorkingDir = ws.result.ContainerPath
+	}
+
+	return &containerConfigs{container: containerConfig, host: hostConfig, network: networkConfig}, nil
+}
+
+
+// finalizeCreatedContainer performs the post-create steps that depend on the
+// container ID: minting + installing the per-agent mTLS material and Hydra
+// assertion, then injecting the post-init script. On any failure the caller's
+// deferred reclaim tears down the container and its newly-created volumes.
+//
+// The agentregistry row is NOT written from the host — CP is the sole sqlite
+// writer and captures the thumbprint at Register handler entry from the live
+// mTLS peer. The container ID is embedded as a URI SAN in the leaf cert so CP
+// can read the binding without a CLI-pre-staged row.
+func finalizeCreatedContainer(ctx context.Context, opts *CreateContainerOptions, containerID string, material agentBootstrapMaterial) error {
+	client := opts.Client
+	bootstrapOpts := InstallAgentBootstrapOptions{
+		Project:            material.projectSlug,
+		Agent:              material.agentName,
+		ContainerID:        containerID,
+		HydraTokenAudience: hydraTokenAudienceFromPort(opts.Config.Settings().ControlPlane.HydraPublicPort),
+		CopyToContainer:    NewCopyToContainerFn(client),
+		Logger:             opts.Log,
+	}
+	if err := InstallAgentBootstrapMaterial(ctx, material.caCertPath, material.caKeyPath, material.signingKey, bootstrapOpts); err != nil {
+		return fmt.Errorf("agent bootstrap: %w", err)
+	}
+
+	return injectPostInitIfConfigured(ctx, client, containerID, opts.Config.Project(), opts.Config, opts.Log)
+}
+
+
+// createAndBootstrapContainer resolves the agent bootstrap material, creates the
+// Docker container, registers it on the reclaim scope, and installs the
+// post-create bootstrap material + post-init script. Returns the created
+// container ID.
+//
+// Bootstrap material is resolved BEFORE ContainerCreate so any failure there
+// (path resolution, key load, user-input validation via NewProjectSlug /
+// NewAgentName) leaves no orphan container + volumes behind.
+func createAndBootstrapContainer(ctx context.Context, opts *CreateContainerOptions, agentName, containerName string, ws *workspaceSetup, cfgs *containerConfigs, scope *createScope) (string, error) {
+	client := opts.Client
+
+	material, err := loadAgentBootstrapMaterial(opts.ProjectName, agentName)
+	if err != nil {
+		return "", err
+	}
+
+	extraLabels := client.ContainerLabels(opts.ProjectName, agentName, opts.Version, opts.Options.Image, ws.wd)
+
+	resp, err := client.ContainerCreate(ctx, docker.ContainerCreateOptions{
+		Config:           cfgs.container,
+		HostConfig:       cfgs.host,
+		NetworkingConfig: cfgs.network,
+		Name:             containerName,
+		ExtraLabels:      docker.Labels{extraLabels},
+		EnsureNetwork: &docker.EnsureNetworkOptions{
+			Name: opts.Config.ClawkerNetwork(),
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("creating container: %w", err)
+	}
+
+	// Container created — register it for reclaim so any failure past this point
+	// tears down the container before its volumes.
+	scope.containerID = resp.ID
+
+	if err := finalizeCreatedContainer(ctx, opts, resp.ID, material); err != nil {
+		return "", err
+	}
+	return resp.ID, nil
 }
 
 // buildCreateTimeEnv constructs container runtime environment variables.

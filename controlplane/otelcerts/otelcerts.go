@@ -30,7 +30,7 @@
 //     disk and rotation matches the connection lifecycle. Matches the
 //     CoreDNS plugin rotation pattern.
 //
-// Layering: this package lives outside internal/controlplane/firewall
+// Layering: this package lives outside ./controlplane/firewall
 // because the firewall is one of several consumers, not the owner.
 // See feedback_no_layering_violations.md.
 package otelcerts

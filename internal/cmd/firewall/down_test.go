@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
-	cpmocks "github.com/schmitthub/clawker/controlplane/mocks"
+	adminv1mocks "github.com/schmitthub/clawker/api/admin/v1/mocks"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/stretchr/testify/assert"
@@ -18,7 +18,7 @@ import (
 // downHarness captures buffers + the mock admin client so tests can assert
 // which RPC was invoked on downRun.
 type downHarness struct {
-	mock   *cpmocks.AdminServiceClientMock
+	mock   *adminv1mocks.AdminServiceClientMock
 	opts   *DownOptions
 	stdout *bytes.Buffer
 	stderr *bytes.Buffer
@@ -28,7 +28,7 @@ func newDownHarness(t *testing.T, rpcErr error) *downHarness {
 	t.Helper()
 	ios, _, stdout, stderr := iostreams.Test()
 
-	mock := &cpmocks.AdminServiceClientMock{
+	mock := &adminv1mocks.AdminServiceClientMock{
 		FirewallRemoveFunc: func(_ context.Context, _ *adminv1.FirewallRemoveRequest, _ ...grpc.CallOption) (*adminv1.FirewallRemoveResult, error) {
 			if rpcErr != nil {
 				return nil, rpcErr

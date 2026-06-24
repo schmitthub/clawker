@@ -21,7 +21,7 @@ import (
 // Per-step timeout defaults. post-init can install packages and warm
 // caches, hence 600s; other steps are file-IO and should complete in
 // milliseconds in steady state, 30s tolerates a slow first-boot fs.
-// CP's `runStep` ceiling is now the only init wall-clock gate —
+// CP's `runStep` ceiling is now the only step wall-clock gate —
 // clawkerd-as-PID-1 has no separate shell-script timeout to align
 // with (the legacy bash entrypoint + fifo wait was retired by the
 // PID-1 cutover; see clawkerd/CLAUDE.md).
@@ -33,7 +33,7 @@ const (
 // defaultKnownHosts is the openssh published host-key blob for the
 // common public Git forges (github.com, gitlab.com, bitbucket.org),
 // seeded into ~/.ssh/known_hosts on every init run via the ssh step's
-// ExecialStdin. Update if upstream rotates.
+// InitialStdin (the first pipe stage's stdin). Update if upstream rotates.
 //
 // Source: https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints
 //
@@ -55,7 +55,7 @@ bitbucket.org ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDQeJzhupRu0u0cdegZIa8e86EG2q
 // keep the dispatch CP-feature-flag-free: CP doesn't need to know
 // which optional features a given container has wired.
 const (
-	configSeedScript = `INIT_DIR="$HOME/.claude-init"
+	ConfigSeedScript = `INIT_DIR="$HOME/.claude-init"
 CONFIG_DIR="$HOME/.claude"
 [ -d "$INIT_DIR" ] || exit 0
 mkdir -p "$CONFIG_DIR"
@@ -74,7 +74,7 @@ else
 fi
 `
 
-	// gitconfigFilterTemplate strips [credential] sections from the
+	// GitconfigFilterTemplate strips [credential] sections from the
 	// host-mounted gitconfig before placing it under the unprivileged
 	// user's home. %q is replaced with consts.HostGitConfigStagingPath
 	// (Go-quoted so the bash literal never drifts from the workspace
@@ -86,7 +86,7 @@ fi
 	//     [credential] blocks) → discard the empty tmp; copying the
 	//     unfiltered file would leak credentials.
 	//   - awk syscall failed → discard tmp and bail; same rationale.
-	gitconfigFilterTemplate = `HOST_GITCONFIG=%q
+	GitconfigFilterTemplate = `HOST_GITCONFIG=%q
 [ -f "$HOST_GITCONFIG" ] || exit 0
 TMP="$HOME/.gitconfig.tmp"
 if awk '/^\[credential/ {in_cred=1; next} /^\[/ {in_cred=0} !in_cred {print}' "$HOST_GITCONFIG" > "$TMP" 2>/dev/null; then
@@ -100,15 +100,15 @@ else
 fi
 `
 
-	gitCredentialsScript = `[ -n "$` + consts.EnvHostProxy + `" ] || exit 0
+	GitCredentialsScript = `[ -n "$` + consts.EnvHostProxy + `" ] || exit 0
 [ "$` + consts.EnvGitHTTPS + `" = "true" ] || exit 0
 git config --global credential.helper clawker
 `
 
-	// sshKnownHostsScript reads the host blob from stdin (PipeStage's
+	// SshKnownHostsScript reads the host blob from stdin (PipeStage's
 	// initial_stdin) and appends only lines not already present.
 	// Idempotent across container restarts.
-	sshKnownHostsScript = `mkdir -p "$HOME/.ssh"
+	SshKnownHostsScript = `mkdir -p "$HOME/.ssh"
 chmod 700 "$HOME/.ssh"
 KH="$HOME/.ssh/known_hosts"
 touch "$KH"
@@ -121,14 +121,14 @@ while IFS= read -r line; do
 done
 `
 
-	// postExecScript runs the user's one-time post_init hook. Contract:
+	// PostInitScript runs the user's one-time post_init hook. Contract:
 	// attempted at most once per container lifecycle. DONE-first short
 	// circuits an already-attempted container; a missing script writes the
 	// marker and exits (nothing to do); a present script runs once. On
 	// success the marker is written so a restart never re-runs it; on
 	// failure the marker is NOT written and the exit code propagates — the
-	// step is fatal (plan halts, agent-ready never sent). A failed container
-	// is torn down rather than restarted: the step carries exit_on_non_zero
+	// Step is fatal (plan halts, agent-ready never sent). A failed container
+	// is torn down rather than restarted: the Step carries exit_on_non_zero
 	// so clawkerd self-exits with the mirrored code, and CP enforces a
 	// grace-then-SIGKILL backstop (killAfterGrace). A manually-restarted
 	// container re-runs this hook (no marker was written).
@@ -136,7 +136,7 @@ done
 	// The `[ -x … ] || { …; }` brace group is load-bearing: `|| touch && exit`
 	// without braces binds as `([ -x ] || touch) && exit`, which exits 0 when
 	// the script EXISTS and never runs it. Do not remove the braces.
-	postInitScript = `POST="$HOME/` + consts.DotClawkerDir + `/` + consts.HookPostInit + `.sh"
+	PostInitScript = `POST="$HOME/` + consts.DotClawkerDir + `/` + consts.HookPostInit + `.sh"
 DONE="$HOME/.claude/post-initialized"
 [ -f "$DONE" ] && exit 0
 [ -x "$POST" ] || { touch "$DONE"; exit 0; }
@@ -147,75 +147,77 @@ else
 fi
 `
 
-	// preRunScript runs the every-start pre_run hook. No marker (runs every
+	// PreRunScript runs the every-start pre_run hook. No marker (runs every
 	// start) and no log/ready-file. The `[ -x … ] || exit 0` guard is a
 	// defensive regression net: with always-deliver the file is present, but
-	// if it ever goes missing the step no-ops instead of failing the plan.
-	// `[ -x … ] && …` would exit 1 when absent (fail the step); `&& … || true`
+	// if it ever goes missing the Step no-ops instead of failing the plan.
+	// `[ -x … ] && …` would exit 1 when absent (fail the Step); `&& … || true`
 	// would swallow a real failure (break the fatal contract) — this two-line
 	// form no-ops when absent AND propagates the exit code when present. The
 	// file carries #!/bin/bash + set -e from PrepareHookTar.
-	preRunScript = `[ -x "$HOME/` + consts.DotClawkerDir + `/` + consts.HookPreRun + `.sh" ] || exit 0
+	PreRunScript = `[ -x "$HOME/` + consts.DotClawkerDir + `/` + consts.HookPreRun + `.sh" ] || exit 0
 "$HOME/` + consts.DotClawkerDir + `/` + consts.HookPreRun + `.sh"
 `
 )
 
-// gitconfigFilterScript is the rendered git-step body. Computed once
-// at package init; %q slot carries the workspace const.
-var gitconfigFilterScript = fmt.Sprintf(gitconfigFilterTemplate, consts.HostGitConfigStagingPath)
+// gitconfigFilterScript returns the rendered git-step body; the %q slot
+// carries the workspace const.
+func gitconfigFilterScript() string {
+	return fmt.Sprintf(GitconfigFilterTemplate, consts.HostGitConfigStagingPath)
+}
 
-// step is one entry in the init plan. Sealed sum: shellStep or
-// agentReadyStep. Adding a new step kind is a compile-time change
-// (implement step) — runStep's type switch loses its runtime
-// "unknown step kind" branch entirely.
-type step interface {
-	stepName() string
-	// command builds the wire payload for this step under commandID.
+// Step is one entry in an Executor plan (init or boot). Sealed sum:
+// ShellStep, AgentReadyStep, or AgentInitializedStep. Adding a new Step kind is a compile-time change
+// (implement Step) — runStep's type switch loses its runtime
+// "unknown Step kind" branch entirely.
+type Step interface {
+	StepName() string
+	// Command builds the wire payload for this Step under commandID.
 	// followCloseStdin reports whether runStep should follow with a
 	// CloseStdin frame (true for shell steps that don't consume
 	// stdin; false for AgentReady which has no stdin pipe).
-	command(commandID string) (cmd *clawkerdv1.Command, followCloseStdin bool)
-	// isStep is the unexported sealing marker. A third implementer
+	Command(commandID string) (cmd *clawkerdv1.Command, followCloseStdin bool)
+	// IsStep is the unexported sealing marker. A third implementer
 	// outside this package is rejected at compile time; package-
 	// internal additions still need a paired runStep / plan() update
 	// by convention.
-	isStep()
+	IsStep()
 }
 
-type shellStep struct {
+type ShellStep struct {
 	Name  string
 	Shell *clawkerdv1.ShellCommand
 }
 
-func (s shellStep) stepName() string { return s.Name }
-func (shellStep) isStep()            {}
-func (s shellStep) command(id string) (*clawkerdv1.Command, bool) {
+func (s ShellStep) StepName() string { return s.Name }
+func (ShellStep) IsStep()            {}
+func (s ShellStep) Command(id string) (*clawkerdv1.Command, bool) {
 	return &clawkerdv1.Command{
 		CommandId: id,
 		Payload:   &clawkerdv1.Command_Shell{Shell: s.Shell},
 	}, true
 }
 
-type agentReadyStep struct {
+type AgentReadyStep struct {
 	Name string
 }
 
-type agentInitializedStep struct {
+type AgentInitializedStep struct {
 	Name string
 }
 
-func (s agentReadyStep) stepName() string { return s.Name }
-func (agentReadyStep) isStep()            {}
-func (s agentReadyStep) command(id string) (*clawkerdv1.Command, bool) {
+func (s AgentReadyStep) StepName() string { return s.Name }
+func (AgentReadyStep) IsStep()            {}
+func (s AgentReadyStep) Command(id string) (*clawkerdv1.Command, bool) {
 	return &clawkerdv1.Command{
 		CommandId: id,
 		Payload:   &clawkerdv1.Command_AgentReady{AgentReady: &clawkerdv1.AgentReady{}},
 	}, false
 }
 
-func (s agentInitializedStep) stepName() string { return s.Name }
-func (agentInitializedStep) isStep()            {}
-func (s agentInitializedStep) command(id string) (*clawkerdv1.Command, bool) {
+func (s AgentInitializedStep) StepName() string { return s.Name }
+func (AgentInitializedStep) IsStep()            {}
+func (s AgentInitializedStep) Command(id string) (*clawkerdv1.Command, bool) {
 	return &clawkerdv1.Command{
 		CommandId: id,
 		Payload:   &clawkerdv1.Command_AgentInitialized{AgentInitialized: &clawkerdv1.AgentInitialized{}},
@@ -242,7 +244,7 @@ func (t ExecTarget) agent() Agent {
 	}
 }
 
-// Executor dispatches the static CP-driven init plan against an open
+// Executor dispatches a static CP-driven plan (init or boot) against an open
 // Session stream. Owns Recv during Run; the dialer's drainStream
 // takes over after Run returns.
 //
@@ -272,10 +274,10 @@ type Executor struct {
 // unconditionally, so a nil topic is a wiring bug the caller must catch
 // at construction. Returning an error lets the caller
 // (the orchestrator) log the wiring bug to the structured log surface
-// and degrade gracefully (initExec = nil → dialer logs
-// agent_init_executor_unset per dial) instead of crashing CP and
+// and degrade gracefully (executor = nil → dialer logs
+// agent_<plan>_executor_unset per dial) instead of crashing CP and
 // stranding the failure on os.Stderr where only `docker logs` sees it.
-// Matches the nil-topic contract on agent.New for the dialer.
+// Matches the nil-topic contract on agent.NewDialer for the dialer.
 func NewExecutor(topic *pubsub.Topic[AgentEvent], dockerCli *docker.Client, log *logger.Logger) (*Executor, error) {
 	if topic == nil {
 		return nil, errors.New("agent.NewExecutor: topic is required")
@@ -286,10 +288,9 @@ func NewExecutor(topic *pubsub.Topic[AgentEvent], dockerCli *docker.Client, log 
 	return &Executor{topic: topic, dockerCli: dockerCli, log: log}, nil
 }
 
-func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_SessionClient, target ExecTarget, plan []step, label string) (runErr error) {
-
+func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_SessionClient, target ExecTarget, plan []Step, label string) (runErr error) {
 	startedAt := time.Now()
-	publish(e.topic, newAgentEvent(target.agent(), Message{
+	Publish(e.topic, newAgentEvent(target.agent(), Message{
 		Type:      ExecutorEventType,
 		Action:    ActionExecStarted,
 		StepCount: len(plan),
@@ -312,126 +313,23 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 	// etc.) — only ExecFailed is synthesized in that case.
 	currentIdx, currentName := -1, ""
 	defer func() {
-		r := recover()
-		if r == nil {
-			return
+		if r := recover(); r != nil {
+			runErr = e.handleRunPanic(r, target, label, log, startedAt, currentIdx, currentName)
 		}
-		// Return the recovered value as an error so dialer.runExec
-		// hits the existing error path (Session held open per
-		// asymmetric trust). Re-panicking would land in the dial
-		// goroutine's outer recover and strand the Exec axis at
-		// Running because that recover doesn't know step state.
-		now := time.Now()
-		dur := now.Sub(startedAt)
-		detail := fmt.Sprintf("Executor.Run panicked: %v", r)
-		log.Error().
-			Interface("panic", r).
-			Bytes("stack", debug.Stack()).
-			Str("event", "agent_init_panic").
-			Int("step_index", currentIdx).
-			Str("step", currentName).
-			Msg(fmt.Sprintf("agent.%s: Executor.Run panicked; publishing synthetic terminal events; Session held open for containment", label))
-		if currentIdx >= 0 {
-			publish(e.topic, newAgentEvent(target.agent(), Message{
-				Type:      ExecutorEventType,
-				Action:    ActionExecStepFailed,
-				StepName:  currentName,
-				StepIndex: currentIdx,
-				Duration:  dur,
-				ExitCode:  -1,
-				Reason:    ReasonUnknown,
-				Detail:    detail,
-			}))
-		}
-		publish(e.topic, newAgentEvent(target.agent(), Message{
-			Type:     ExecutorEventType,
-			Action:   ActionExecFailed,
-			StepName: currentName,
-			Reason:   ReasonUnknown,
-			Detail:   detail,
-			Duration: dur,
-		}))
-		runErr = errors.New(detail)
 	}()
 
 	for i, st := range plan {
 		currentIdx = i
-		currentName = st.stepName()
+		currentName = st.StepName()
 		stepStart := time.Now()
-		publish(e.topic, newAgentEvent(target.agent(), Message{
-			Type:      ExecutorEventType,
-			Action:    ActionExecStepStarted,
-			StepName:  st.stepName(),
-			StepIndex: i,
-			StepCount: len(plan),
-		}))
-		log.Info().
-			Str("event", "agent_init_step_started").
-			Str("step", st.stepName()).
-			Int("step_index", i).
-			Msg("agent.init: step started")
+		e.announceStepStarted(target, label, log, i, len(plan), st)
 
-		out, err := e.runStep(ctx, stream, target.ContainerID, i, st, log)
+		out, err := e.runStep(ctx, stream, target.ContainerID, label, i, st, log)
 		dur := time.Since(stepStart)
 		if out.Failed() {
-			publish(e.topic, newAgentEvent(target.agent(), Message{
-				Type:      ExecutorEventType,
-				Action:    ActionExecStepFailed,
-				StepName:  st.stepName(),
-				StepIndex: i,
-				Duration:  dur,
-				ExitCode:  out.ExitCode,
-				Reason:    out.Reason,
-				Detail:    out.Detail,
-			}))
-			publish(e.topic, newAgentEvent(target.agent(), Message{
-				Type:     ExecutorEventType,
-				Action:   ActionExecFailed,
-				StepName: st.stepName(),
-				Reason:   out.Reason,
-				Detail:   out.Detail,
-				Duration: time.Since(startedAt),
-			}))
-			log.Error().
-				Str("event", "agent_init_failed").
-				Str("step", st.stepName()).
-				Int("step_index", i).
-				Int32("exit_code", out.ExitCode).
-				Str("reason", string(out.Reason)).
-				Str("detail", out.Detail).
-				Msg("agent.init: plan halted on step failure")
-			if err != nil {
-				// Transport-level failure (the stream broke): the Session
-				// is already gone and the dial loop's teardown handles the
-				// container. Don't race a kill here — a transient blip
-				// re-establishes and re-runs the plan (idempotency
-				// contract).
-				return err
-			}
-			// Command-level failure (non-zero exit / classified Error).
-			// The command definitively failed; enforce container teardown
-			// with the grace-then-SIGKILL backstop. Steps carry
-			// exit_on_non_zero so a healthy clawkerd self-exits within the
-			// grace; the SIGKILL only catches a wedged one.
-			if err := e.killAfterGrace(ctx, target.ContainerID, log); err != nil {
-				return fmt.Errorf("agent.init: step %q failed: %s; additionally, failed to kill container: %v", st.stepName(), out.Detail, err)
-			}
-			return fmt.Errorf("agent.init: step %q failed: %s", st.stepName(), out.Detail)
+			return e.reportStepFailure(ctx, target, label, log, startedAt, dur, i, st, out, err)
 		}
-		publish(e.topic, newAgentEvent(target.agent(), Message{
-			Type:      ExecutorEventType,
-			Action:    ActionExecStepCompleted,
-			StepName:  st.stepName(),
-			StepIndex: i,
-			Duration:  dur,
-			ExitCode:  out.ExitCode,
-		}))
-		log.Info().
-			Str("event", "agent_init_step_completed").
-			Str("step", st.stepName()).
-			Int("step_index", i).
-			Dur("duration", dur).
-			Msg("agent.init: step completed")
+		e.announceStepCompleted(target, label, log, i, dur, st, out)
 		// Reset between steps: a panic here (between iterations,
 		// e.g. during defer scheduling) must not be mis-attributed
 		// to the just-completed step. The recover gates synthetic
@@ -441,16 +339,146 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 	}
 
 	totalDur := time.Since(startedAt)
-	publish(e.topic, newAgentEvent(target.agent(), Message{
+	Publish(e.topic, newAgentEvent(target.agent(), Message{
 		Type:     ExecutorEventType,
 		Action:   ActionExecCompleted,
 		Duration: totalDur,
 	}))
 	log.Info().
-		Str("event", "agent_init_completed").
+		Str("event", fmt.Sprintf("agent_%s_completed", label)).
 		Dur("duration", totalDur).
-		Msg("agent.init: plan completed")
+		Msg(fmt.Sprintf("agent.%s: plan completed", label))
 	return nil
+}
+
+// announceStepStarted publishes the ExecStepStarted event and logs the start
+// of step i.
+func (e *Executor) announceStepStarted(target ExecTarget, label string, log *logger.Logger, i, stepCount int, st Step) {
+	Publish(e.topic, newAgentEvent(target.agent(), Message{
+		Type:      ExecutorEventType,
+		Action:    ActionExecStepStarted,
+		StepName:  st.StepName(),
+		StepIndex: i,
+		StepCount: stepCount,
+	}))
+	log.Info().
+		Str("event", fmt.Sprintf("agent_%s_step_started", label)).
+		Str("step", st.StepName()).
+		Int("step_index", i).
+		Msg(fmt.Sprintf("agent.%s: step started", label))
+}
+
+// announceStepCompleted publishes the ExecStepCompleted event and logs the
+// successful completion of step i.
+func (e *Executor) announceStepCompleted(target ExecTarget, label string, log *logger.Logger, i int, dur time.Duration, st Step, out stepOutcome) {
+	Publish(e.topic, newAgentEvent(target.agent(), Message{
+		Type:      ExecutorEventType,
+		Action:    ActionExecStepCompleted,
+		StepName:  st.StepName(),
+		StepIndex: i,
+		Duration:  dur,
+		ExitCode:  out.ExitCode,
+	}))
+	log.Info().
+		Str("event", fmt.Sprintf("agent_%s_step_completed", label)).
+		Str("step", st.StepName()).
+		Int("step_index", i).
+		Dur("duration", dur).
+		Msg(fmt.Sprintf("agent.%s: step completed", label))
+}
+
+// recoverRun is Run's deferred panic handler. On a recovered panic it
+// synthesizes the terminal ExecStepFailed (when a step was in flight) +
+// ExecFailed events and converts the panic into runErr so dialer.runExec hits
+// the existing error path (the Session is held open per asymmetric trust).
+// Re-panicking would land in the dial goroutine's outer recover and strand
+// the Exec axis at Running because that recover doesn't know step state. The
+// returned error is what Run's deferred recover assigns to its named return so
+// dialer.runExec hits the existing error path (the Session is held open per
+// asymmetric trust).
+func (e *Executor) handleRunPanic(r any, target ExecTarget, label string, log *logger.Logger, startedAt time.Time, currentIdx int, currentName string) error {
+	now := time.Now()
+	dur := now.Sub(startedAt)
+	detail := fmt.Sprintf("Executor.Run panicked: %v", r)
+	log.Error().
+		Interface("panic", r).
+		Bytes("stack", debug.Stack()).
+		Str("event", fmt.Sprintf("agent_%s_panic", label)).
+		Int("step_index", currentIdx).
+		Str("step", currentName).
+		Msg(fmt.Sprintf("agent.%s: Executor.Run panicked; publishing synthetic terminal events; Session held open for containment", label))
+	if currentIdx >= 0 {
+		Publish(e.topic, newAgentEvent(target.agent(), Message{
+			Type:      ExecutorEventType,
+			Action:    ActionExecStepFailed,
+			StepName:  currentName,
+			StepIndex: currentIdx,
+			Duration:  dur,
+			ExitCode:  -1,
+			Reason:    ReasonUnknown,
+			Detail:    detail,
+		}))
+	}
+	Publish(e.topic, newAgentEvent(target.agent(), Message{
+		Type:     ExecutorEventType,
+		Action:   ActionExecFailed,
+		StepName: currentName,
+		Reason:   ReasonUnknown,
+		Detail:   detail,
+		Duration: dur,
+	}))
+	return errors.New(detail)
+}
+
+// reportStepFailure publishes the terminal ExecStepFailed + ExecFailed events
+// for a failed step, logs the halt, and returns the error Run bubbles up. On a
+// transport break (err != nil) the Session is already gone and the dial loop's
+// teardown handles the container, so no kill is raced here. On a command-level
+// failure it enforces container teardown via KillAfterGrace before returning.
+func (e *Executor) reportStepFailure(ctx context.Context, target ExecTarget, label string, log *logger.Logger, startedAt time.Time, dur time.Duration, i int, st Step, out stepOutcome, err error) error {
+	Publish(e.topic, newAgentEvent(target.agent(), Message{
+		Type:      ExecutorEventType,
+		Action:    ActionExecStepFailed,
+		StepName:  st.StepName(),
+		StepIndex: i,
+		Duration:  dur,
+		ExitCode:  out.ExitCode,
+		Reason:    out.Reason,
+		Detail:    out.Detail,
+	}))
+	Publish(e.topic, newAgentEvent(target.agent(), Message{
+		Type:     ExecutorEventType,
+		Action:   ActionExecFailed,
+		StepName: st.StepName(),
+		Reason:   out.Reason,
+		Detail:   out.Detail,
+		Duration: time.Since(startedAt),
+	}))
+	log.Error().
+		Str("event", fmt.Sprintf("agent_%s_failed", label)).
+		Str("step", st.StepName()).
+		Int("step_index", i).
+		Int32("exit_code", out.ExitCode).
+		Str("reason", string(out.Reason)).
+		Str("detail", out.Detail).
+		Msg(fmt.Sprintf("agent.%s: plan halted on step failure", label))
+	if err != nil {
+		// Transport-level failure (the stream broke): the Session
+		// is already gone and the dial loop's teardown handles the
+		// container. Don't race a kill here — a transient blip
+		// re-establishes and re-runs the plan (idempotency
+		// contract).
+		return err
+	}
+	// Command-level failure (non-zero exit / classified Error).
+	// The command definitively failed; enforce container teardown
+	// with the grace-then-SIGKILL backstop. Steps carry
+	// exit_on_non_zero so a healthy clawkerd self-exits within the
+	// grace; the SIGKILL only catches a wedged one.
+	if killErr := e.KillAfterGrace(ctx, target.ContainerID, log); killErr != nil {
+		return fmt.Errorf("agent.%s: step %q failed: %s; additionally, failed to kill container: %w", label, st.StepName(), out.Detail, killErr)
+	}
+	return fmt.Errorf("agent.%s: step %q failed: %s", label, st.StepName(), out.Detail)
 }
 
 // maxOutputCapture caps how much of a command's combined output Run
@@ -477,10 +505,10 @@ func captureCapped(buf *strings.Builder, truncated *int, data []byte) {
 }
 
 // stepOutcome bundles the per-step result fields runStep produces.
-// Zero value means the step succeeded; populated values are produced
+// Zero value means the Step succeeded; populated values are produced
 // only via the constructors below, which keep Reason / ExitCode /
 // Detail coherent. Run reads outcome.Failed() to decide whether to
-// publish terminal events.
+// Publish terminal events.
 type stepOutcome struct {
 	ExitCode int32
 	Reason   Reason
@@ -528,25 +556,7 @@ func stepFailedClassified(reason Reason, detail string) stepOutcome {
 	}
 }
 
-// runStep dispatches one step's wire payload and waits for its Done
-// or Error. Returns:
-//   - outcome: zero value on success, populated with Reason/Detail/
-//     ExitCode on step failure or transport break. Run consumes this
-//     to publish the terminal ExecStepFailed + ExecFailed events.
-//   - transport error: non-nil iff the stream is broken; the caller
-//     should bail Run after publishing terminal events. A non-nil
-//     err always pairs with outcome.Failed() == true (Reason ==
-//     ExecFailureReasonTransportError) so Run branches on a single
-//     check.
-//
-// Bounding wait time: clawkerd enforces the per-stage timeout server-
-// side (ShellCommand.TimeoutSeconds → time.AfterFunc → SIGKILL +
-// ERROR_CODE_TIMEOUT response). gRPC keepalive (consts.Clawkerd*)
-// breaks a wedged transport. CP-side wall-clock deadlines are
-// deliberately omitted — a duplicate budget here would race the
-// server-side timer and risk misclassifying a server-detected timeout
-// as a client-side break.
-// killAfterGrace ensures the agent container is torn down after a fatal
+// KillAfterGrace ensures the agent container is torn down after a fatal
 // command. A command carrying exit_on_non_zero makes a healthy clawkerd
 // echo the output and self-exit PID 1 with the mirrored code, so CP waits
 // consts.CPAgentKillGrace for that clean self-exit — keyed on real
@@ -563,7 +573,7 @@ func stepFailedClassified(reason Reason, detail string) stepOutcome {
 // context.Background(), because if ctx is what woke the wait (shutdown),
 // the moby client rejects a request on a cancelled ctx before it reaches
 // the daemon — the SIGKILL would never issue and the container would leak.
-func (e *Executor) killAfterGrace(ctx context.Context, containerID string, log *logger.Logger) error {
+func (e *Executor) KillAfterGrace(ctx context.Context, containerID string, log *logger.Logger) error {
 	waitCtx, cancel := context.WithTimeout(ctx, consts.CPAgentKillGrace)
 	defer cancel()
 	wait := e.dockerCli.APIClient.ContainerWait(waitCtx, containerID, moby.ContainerWaitOptions{
@@ -593,12 +603,39 @@ func (e *Executor) killAfterGrace(ctx context.Context, containerID string, log *
 	return nil
 }
 
-func (e *Executor) runStep(ctx context.Context, stream clawkerdv1.ClawkerdService_SessionClient, containerID string, idx int, st step, log *logger.Logger) (stepOutcome, error) {
-	commandID := buildCommandID(containerID, st.stepName(), idx)
+// runStep dispatches one Step's wire payload and waits for its Done
+// or Error. Returns:
+//   - outcome: zero value on success, populated with Reason/Detail/
+//     ExitCode on Step failure or transport break. Run consumes this
+//     to publish the terminal ExecStepFailed + ExecFailed events.
+//   - transport error: non-nil iff the stream is broken; the caller
+//     should bail Run after publishing terminal events. A non-nil
+//     err always pairs with outcome.Failed() == true (Reason ==
+//     ExecFailureReasonTransportError) so Run branches on a single
+//     check.
+//
+// Bounding wait time: clawkerd enforces the per-stage timeout server-
+// side (ShellCommand.TimeoutSeconds → time.AfterFunc → SIGKILL +
+// ERROR_CODE_TIMEOUT response). gRPC keepalive (consts.Clawkerd*)
+// breaks a wedged transport. CP-side wall-clock deadlines are
+// deliberately omitted — a duplicate budget here would race the
+// server-side timer and risk misclassifying a server-detected timeout
+// as a client-side break.
+func (e *Executor) runStep(ctx context.Context, stream clawkerdv1.ClawkerdService_SessionClient, containerID, label string, idx int, st Step, log *logger.Logger) (stepOutcome, error) {
+	commandID := buildCommandID(label, containerID, st.StepName(), idx)
+	if outcome, err := sendStepCommand(stream, commandID, st); err != nil {
+		return outcome, err
+	}
+	return awaitStepResult(ctx, stream, commandID, st, label, log)
+}
 
-	cmd, followCloseStdin := st.command(commandID)
+// sendStepCommand dispatches a Step's wire payload and (when the Step requests
+// it) the trailing CloseStdin frame. On a send error it returns a transport
+// outcome paired with the wrapped error; otherwise the zero outcome and nil.
+func sendStepCommand(stream clawkerdv1.ClawkerdService_SessionClient, commandID string, st Step) (stepOutcome, error) {
+	cmd, followCloseStdin := st.Command(commandID)
 	if err := stream.Send(cmd); err != nil {
-		wrapped := fmt.Errorf("send %s: %w", st.stepName(), err)
+		wrapped := fmt.Errorf("send %s: %w", st.StepName(), err)
 		return stepFailedTransport(wrapped.Error()), wrapped
 	}
 
@@ -614,11 +651,18 @@ func (e *Executor) runStep(ctx context.Context, stream clawkerdv1.ClawkerdServic
 			Payload:   &clawkerdv1.Command_CloseStdin{CloseStdin: &clawkerdv1.CloseStdin{}},
 		}
 		if err := stream.Send(closeCmd); err != nil {
-			wrapped := fmt.Errorf("send %s close_stdin: %w", st.stepName(), err)
+			wrapped := fmt.Errorf("send %s close_stdin: %w", st.StepName(), err)
 			return stepFailedTransport(wrapped.Error()), wrapped
 		}
 	}
+	return stepOutcome{}, nil
+}
 
+// awaitStepResult reads the Session stream until the terminal Done/Error frame
+// for commandID, folding in output frames and discarding frames addressed to
+// other commands. It returns the step outcome and a non-nil transport error
+// only when the stream breaks (ctx cancel, EOF, recv error).
+func awaitStepResult(ctx context.Context, stream clawkerdv1.ClawkerdService_SessionClient, commandID string, st Step, label string, log *logger.Logger) (stepOutcome, error) {
 	var outputBuf strings.Builder
 	outputTruncated := 0
 
@@ -632,66 +676,79 @@ func (e *Executor) runStep(ctx context.Context, stream clawkerdv1.ClawkerdServic
 				const eofDetail = "stream EOF before terminal response"
 				return stepFailedTransport(eofDetail), errors.New(eofDetail)
 			}
-			wrapped := fmt.Errorf("recv %s: %w", st.stepName(), err)
+			wrapped := fmt.Errorf("recv %s: %w", st.StepName(), err)
 			return stepFailedTransport(wrapped.Error()), wrapped
 		}
 		if resp.GetCommandId() != commandID {
 			log.Debug().
-				Str("event", "agent_init_unexpected_command_id").
+				Str("event", fmt.Sprintf("agent_%s_unexpected_command_id", label)).
 				Str("got", resp.GetCommandId()).
 				Str("expected", commandID).
-				Str("payload_type", fmt.Sprintf("%T", resp.Payload)).
-				Msg("agent.init: ignoring response with non-matching command_id")
+				Str("payload_type", fmt.Sprintf("%T", resp.GetPayload())).
+				Msg(fmt.Sprintf("agent.%s: ignoring response with non-matching command_id", label))
 			continue
 		}
-		switch p := resp.Payload.(type) {
-		case *clawkerdv1.Response_Started, *clawkerdv1.Response_StageExit:
-			// Lifecycle frames — not part of the failure detail; await
-			// the terminal Done/Error.
-			continue
-		case *clawkerdv1.Response_Output:
-			// The command's combined output (the final stage's stdout and
-			// every stage's stderr, merged in write order). Capture it
-			// (capped) for the failure detail; the full stream reaches the
-			// caller regardless of this cap.
-			if p.Output != nil {
-				captureCapped(&outputBuf, &outputTruncated, p.Output.GetData())
-			}
-		case *clawkerdv1.Response_Done:
-			exit := p.Done.GetFinalExitCode()
-			if exit == 0 {
-				return stepSucceeded(), nil
-			}
-			detail := fmt.Sprintf("exit_code=%d", exit)
-			if s := strings.TrimSpace(outputBuf.String()); s != "" {
-				detail += "; output: " + s
-				if outputTruncated > 0 {
-					detail += fmt.Sprintf(" ... [%d bytes truncated]", outputTruncated)
-				}
-			}
-			return stepFailedExit(exit, detail), nil
-		case *clawkerdv1.Response_Error:
-			return stepFailedClassified(
-				classifyErrorCode(p.Error.GetCode()),
-				fmt.Sprintf("%s: %s", p.Error.GetCode().String(), p.Error.GetMessage()),
-			), nil
-		default:
-			// Warn-level: an unknown payload variant means the
-			// clawkerd-CP wire vocabulary has drifted. Production
-			// Debug logs are typically off — operators would otherwise
-			// see only the eventual server-side timeout with no hint
-			// that a new payload variant slipped past the switch.
-			log.Warn().
-				Str("event", "agent_init_unknown_payload").
-				Str("command_id", resp.GetCommandId()).
-				Str("step", st.stepName()).
-				Str("payload_type", fmt.Sprintf("%T", resp.Payload)).
-				Msg("agent.init: ignoring unknown response payload — wire vocabulary drift")
+		if outcome, terminal := classifyStepResponse(resp, st, label, &outputBuf, &outputTruncated, log); terminal {
+			return outcome, nil
 		}
 	}
 }
 
-// classifyErrorCode maps a clawkerd ErrorCode to the typed init
+// classifyStepResponse folds one matched-command_id response frame into the
+// step outcome. terminal is true iff resp is a Done/Error frame that ends the
+// step (outcome carries the result); false for lifecycle/output frames that
+// runStep keeps looping on. Output frames append to outputBuf (capped) so the
+// failure detail can carry the tail of combined output.
+func classifyStepResponse(resp *clawkerdv1.Response, st Step, label string, outputBuf *strings.Builder, outputTruncated *int, log *logger.Logger) (stepOutcome, bool) {
+	switch p := resp.GetPayload().(type) {
+	case *clawkerdv1.Response_Started, *clawkerdv1.Response_StageExit:
+		// Lifecycle frames — not part of the failure detail; await
+		// the terminal Done/Error.
+		return stepOutcome{}, false
+	case *clawkerdv1.Response_Output:
+		// The command's combined output (the final stage's stdout and
+		// every stage's stderr, merged in write order). Capture it
+		// (capped) for the failure detail; the full stream reaches the
+		// caller regardless of this cap.
+		if p.Output != nil {
+			captureCapped(outputBuf, outputTruncated, p.Output.GetData())
+		}
+		return stepOutcome{}, false
+	case *clawkerdv1.Response_Done:
+		exit := p.Done.GetFinalExitCode()
+		if exit == 0 {
+			return stepSucceeded(), true
+		}
+		detail := fmt.Sprintf("exit_code=%d", exit)
+		if s := strings.TrimSpace(outputBuf.String()); s != "" {
+			detail += "; output: " + s
+			if *outputTruncated > 0 {
+				detail += fmt.Sprintf(" ... [%d bytes truncated]", *outputTruncated)
+			}
+		}
+		return stepFailedExit(exit, detail), true
+	case *clawkerdv1.Response_Error:
+		return stepFailedClassified(
+			classifyErrorCode(p.Error.GetCode()),
+			fmt.Sprintf("%s: %s", p.Error.GetCode().String(), p.Error.GetMessage()),
+		), true
+	default:
+		// Warn-level: an unknown payload variant means the
+		// clawkerd-CP wire vocabulary has drifted. Production
+		// Debug logs are typically off — operators would otherwise
+		// see only the eventual server-side timeout with no hint
+		// that a new payload variant slipped past the switch.
+		log.Warn().
+			Str("event", fmt.Sprintf("agent_%s_unknown_payload", label)).
+			Str("command_id", resp.GetCommandId()).
+			Str("step", st.StepName()).
+			Str("payload_type", fmt.Sprintf("%T", resp.GetPayload())).
+			Msg(fmt.Sprintf("agent.%s: ignoring unknown response payload — wire vocabulary drift", label))
+		return stepOutcome{}, false
+	}
+}
+
+// classifyErrorCode maps a clawkerd ErrorCode to the typed step
 // failure classification. New codes default to Unknown so producers
 // don't drop information silently — the human-readable detail still
 // carries the ErrorCode string.
@@ -712,13 +769,13 @@ func classifyErrorCode(code clawkerdv1.ErrorCode) Reason {
 }
 
 // buildCommandID composes a stable, human-debuggable command_id for
-// one step dispatch. Prefix is bounded so log lines stay compact.
-func buildCommandID(containerID, stepName string, idx int) string {
+// one Step dispatch. Prefix is bounded so log lines stay compact.
+func buildCommandID(label, containerID, stepName string, idx int) string {
 	prefix := containerID
 	if len(prefix) > 12 {
 		prefix = prefix[:12]
 	}
-	return fmt.Sprintf("init-%s-%s-%d", prefix, stepName, idx)
+	return fmt.Sprintf("%s-%s-%s-%d", label, prefix, stepName, idx)
 }
 
 // userStage returns a fresh PipeStage running `sh -c <script>` as the

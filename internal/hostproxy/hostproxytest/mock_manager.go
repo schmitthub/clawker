@@ -3,9 +3,9 @@ package hostproxytest
 import "github.com/schmitthub/clawker/internal/hostproxy"
 
 // Compile-time interface check.
-var _ hostproxy.HostProxyService = (*MockManager)(nil)
+var _ hostproxy.Service = (*MockManager)(nil)
 
-// MockManager is a test double for hostproxy.HostProxyService.
+// MockManager is a test double for hostproxy.Service.
 // It never spawns subprocesses, making it safe for unit tests.
 type MockManager struct {
 	EnsureErr error  // Error returned by EnsureRunning

@@ -41,7 +41,7 @@ go test ./test/whail/... -v -timeout 5m          # Whail BuildKit integration
 
 ### FactoryOptions (`factory.go`)
 
-Some nil fields use test fakes (`configmocks.NewBlankConfig`, `mocks.NewFakeClient`, `hostproxytest.NewMockManager`, `cpmocks.AdminServiceClientMock`, `cpbootmocks.ManagerMock`). `Logger` always creates a real file logger via `logger.New`. `ProjectManager`, `GitManager`, and `SocketBridge` default to nil. Set a field to the real constructor for integration tests.
+Some nil fields use test fakes (`configmocks.NewBlankConfig`, `mocks.NewFakeClient`, `hostproxytest.NewMockManager`, `adminv1mocks.AdminServiceClientMock`, `cpbootmocks.ManagerMock`). `Logger` always creates a real file logger via `logger.New`. `ProjectManager`, `GitManager`, and `SocketBridge` default to nil. Set a field to the real constructor for integration tests.
 
 | Field | Signature | Default |
 |-------|-----------|---------|
@@ -51,7 +51,7 @@ Some nil fields use test fakes (`configmocks.NewBlankConfig`, `mocks.NewFakeClie
 | `GitManager` | `func(string) (*git.GitManager, error)` | nil (no-op) |
 | `HostProxy` | `func(cfg, log) (*hostproxy.Manager, error)` | `hostproxytest.NewMockManager` |
 | `SocketBridge` | `func(cfg, log) socketbridge.SocketBridgeManager` | nil (no-op) |
-| `UseRealAdminClient` | `bool` — when true, wires a production-identical pure-dial AdminClient (mirrors `adminClientFunc` in `internal/cmd/factory/default.go`: mutex-guarded cache + `cacheableState` re-dial on TransientFailure/Shutdown + keepalive params via `adminclient.Dial`). Does **not** bootstrap the CP — CP lifecycle is owned by container-start and explicit `controlplane up` (see `ControlPlane` field below). When false, `cpmocks.AdminServiceClientMock` (no-op). |
+| `UseRealAdminClient` | `bool` — when true, wires a production-identical pure-dial AdminClient (mirrors `adminClientFunc` in `internal/cmd/factory/default.go`: mutex-guarded cache + `cacheableState` re-dial on TransientFailure/Shutdown + keepalive params via `adminclient.Dial`). Does **not** bootstrap the CP — CP lifecycle is owned by container-start and explicit `controlplane up` (see `ControlPlane` field below). When false, `adminv1mocks.AdminServiceClientMock` (no-op). |
 | `ControlPlane` | `func(cfg, log) cpboot.Manager` | `cpbootmocks.ManagerMock` (every method returns zero values so tests that don't touch CP verbs never bootstrap a real CP) |
 
 ### Functions
@@ -123,4 +123,4 @@ All test resources carry `dev.clawker.test=true` + `dev.clawker.test.name=TestNa
 
 ## Dependencies
 
-Imports: `api/admin/v1`, `internal/config`, `internal/config/mocks`, `internal/docker`, `internal/docker/mocks`, `internal/controlplane/adminclient`, `internal/controlplane/mocks`, `internal/controlplane/cpboot`, `internal/controlplane/cpboot/mocks`, `internal/git`, `internal/hostproxy`, `internal/hostproxy/hostproxytest`, `internal/socketbridge`, `internal/cmdutil`, `internal/consts`, `internal/testenv`, `internal/iostreams`, `internal/logger`, `internal/project`, `internal/prompter`, `internal/tui`
+Imports: `api/admin/v1`, `internal/config`, `internal/config/mocks`, `internal/docker`, `internal/docker/mocks`, `internal/controlplane/adminclient`, `api/admin/v1/mocks`, `internal/controlplane/cpboot`, `internal/controlplane/cpboot/mocks`, `internal/git`, `internal/hostproxy`, `internal/hostproxy/hostproxytest`, `internal/socketbridge`, `internal/cmdutil`, `internal/consts`, `internal/testenv`, `internal/iostreams`, `internal/logger`, `internal/project`, `internal/prompter`, `internal/tui`

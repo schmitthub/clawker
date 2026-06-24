@@ -7,6 +7,10 @@ import (
 	"github.com/muesli/termenv"
 )
 
+// markdownWrapWidth caps rendered markdown at a readable prose width so wide
+// terminals don't wrap changelog and help text edge-to-edge.
+const markdownWrapWidth = 80
+
 // RenderMarkdown renders a markdown string to a styled, width-wrapped terminal
 // string using a compact glamour style. The compact style strips glamour's
 // default document margin and block padding so short snippets (changelog
@@ -18,16 +22,15 @@ import (
 // Rendering is best-effort: on any error the raw input is returned unchanged so
 // callers always have printable text.
 func (s *IOStreams) RenderMarkdown(body string) string {
+	width := min(s.TerminalWidth(), markdownWrapWidth)
 	r, err := glamour.NewTermRenderer(
 		glamour.WithStyles(compactMarkdownStyle(s.TerminalTheme(), s.ColorEnabled())),
 		glamour.WithColorProfile(s.markdownColorProfile()),
-		// WordWrap(0) disables glamour's hard wrap, letting the terminal soft-wrap
-		// at its own edge. Hard-wrapping (WordWrap > 0) pads every line out to the
-		// wrap width with trailing spaces (~15x the byte size) AND still does not
-		// hang-indent wrapped top-level list continuations — glamour drops those to
-		// column 0 either way — so it buys nothing here but bloat. Soft wrapping
-		// also keeps long tokens (URLs) intact instead of force-breaking them.
-		glamour.WithWordWrap(0),
+		// Wrap on word boundaries at the readable width (terminal width, capped
+		// to markdownWrapWidth) using glamour's own wrapper. glamour right-pads
+		// wrapped lines out to the wrap width with fill spaces; that fill is
+		// invisible in the terminal.
+		glamour.WithWordWrap(width),
 	)
 	if err != nil {
 		return body

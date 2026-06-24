@@ -220,15 +220,15 @@ security:
             path: /anthropics/claude-code/
           - action: allow
             path: /opensearch-project/OpenSearch-Dashboards/
+          - action: allow
+            path: /tekwizely/pre-commit-golang
       - action: allow
         dst: api.github.com
         insecure_skip_tls_verify: false
         path_default: allow
         path_rules:
           - action: allow
-            path: /repos/schmitthub/clawker
-          - action: allow
-            path: /repos/schmitthub/claude-plugins
+            path: ~/repos/schmitthub/(clawker|claude-plugins)(/.*)?
           - action: allow
             path: /repos/schmitthub/contributor-assistant
           - action: allow
@@ -247,6 +247,8 @@ security:
             path: /repos/contributor-assistant/github-action/
           - action: allow
             path: /repos/actions/checkout/
+          - action: allow
+            path: /repos/charmbracelet/
           - action: deny
             path: /gists
           - action: deny

@@ -1,11 +1,13 @@
 package hostproxy
 
 import (
+	"errors"
 	"fmt"
 	"net/netip"
 	"net/url"
 	"os"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -32,6 +34,53 @@ type egressRule struct {
 type pathRule struct {
 	Path   string `yaml:"path"`
 	Action string `yaml:"action"`
+}
+
+// regexPathMarker mirrors firewall.regexPathMarker (controlplane/firewall/
+// rules_store.go): a leading "~" promotes a path rule from a literal prefix to
+// an RE2 regex. It is re-declared here as an intentional copy because hostproxy
+// is a leaf package that must not import the firewall package — the same reason
+// egressRule/pathRule are local mirrors. It MUST stay in lockstep: the same
+// egress-rules.yaml must match identically on both enforcement paths.
+const regexPathMarker = "~"
+
+// pathRuleMatches reports whether urlPath satisfies a stored rule path under the
+// same semantics the firewall's Envoy generation uses (pathSpecifier): a
+// "~"-prefixed pattern is an RE2 regex matched full-string (the marker stripped,
+// both ends anchored — mirroring Envoy safe_regex), and any other path is an
+// open-ended literal prefix. Go's regexp engine is RE2, so a pattern that
+// compiles here matches exactly as Envoy's safe_regex does.
+// compilePathRegex maps a stored rule path to its request-time matcher. A
+// non-"~" path is a literal prefix (isRegex=false, re=nil). A "~"-prefixed path
+// is compiled to the same full-string-anchored RE2 form Envoy's safe_regex uses
+// (marker stripped, redundant leading "^" trimmed to avoid "^^"). The single
+// definition is shared by pathRuleMatches (request time) and readEgressRules
+// (load-time validation) so the two can never drift on what "compiles".
+func compilePathRegex(rulePath string) (*regexp.Regexp, bool, error) {
+	rx, isRegex := strings.CutPrefix(rulePath, regexPathMarker)
+	if !isRegex {
+		return nil, false, nil
+	}
+	re, err := regexp.Compile("^(?:" + strings.TrimPrefix(rx, "^") + ")$")
+	if err != nil {
+		return nil, true, fmt.Errorf("compile path regex: %w", err)
+	}
+	return re, true, nil
+}
+
+func pathRuleMatches(rulePath, urlPath string) bool {
+	re, isRegex, err := compilePathRegex(rulePath)
+	if !isRegex {
+		return strings.HasPrefix(urlPath, rulePath)
+	}
+	if err != nil {
+		// Unreachable for a file that passed through readEgressRules, which
+		// rejects any uncompilable regex up front (mirroring Envoy refusing
+		// the whole config). Backstop: fail closed regardless, consistent
+		// with this package's doctrine.
+		return false
+	}
+	return re.MatchString(urlPath)
 }
 
 // egressRulesFile matches the YAML structure of the egress rules file managed
@@ -106,19 +155,35 @@ func CheckURLAgainstEgressRules(targetURL, rulesFilePath string) error {
 //     intentionally stricter than a spec-compliant server (which keeps %2f
 //     literal) — the correct fail-closed direction for an allowlist.
 //
-// path.Clean strips a trailing slash, so restore it when the input had one:
-// a directory-prefix rule like "/schmitthub/" must still match a request to
-// the bare directory.
+// path.Clean strips the trailing slash that marks a directory, but RFC 3986
+// remove_dot_segments (which Envoy applies) keeps it — and the slash is
+// security-significant against an end-anchored rule like "~/blog$". So restore
+// it whenever the path resolves to a directory (see endsInDirectory), not only
+// when the literal input ended in "/": "/blog/." and "/blog/x/.." both resolve
+// to "/blog/", and a directory-prefix rule like "/schmitthub/" must still match
+// a request to the bare directory.
 func canonicalizePath(p string) string {
 	if p == "" {
 		return "/"
 	}
 	p = strings.ReplaceAll(p, "\\", "/")
 	cleaned := path.Clean(p)
-	if strings.HasSuffix(p, "/") && !strings.HasSuffix(cleaned, "/") {
+	// Restore the directory slash path.Clean drops (see func doc and endsInDirectory).
+	if endsInDirectory(p) && !strings.HasSuffix(cleaned, "/") {
 		cleaned += "/"
 	}
 	return cleaned
+}
+
+// endsInDirectory reports whether a backslash-folded path resolves to a
+// directory — it ends in "/", or in a final "." / ".." dot-segment ("/." or
+// "/.."). These are exactly the cases RFC 3986 remove_dot_segments terminates
+// with a trailing slash. A literal filename ending in a dot (e.g. "/blog...")
+// is not a dot-segment and is excluded.
+func endsInDirectory(p string) bool {
+	return strings.HasSuffix(p, "/") ||
+		strings.HasSuffix(p, "/.") ||
+		strings.HasSuffix(p, "/..")
 }
 
 // schemeToProto maps a URL scheme to the egress rule proto and its default port.
@@ -136,15 +201,61 @@ func schemeToProto(scheme string) (proto string, defaultPort int, err error) {
 // readEgressRules reads and parses the egress rules file. The firewall daemon
 // writes this file atomically (temp+fsync+rename), so concurrent reads always
 // see a complete snapshot — no locking needed.
+// errEgressRulesInvalid marks a present-but-corrupt egress rules file (a parse
+// failure or an uncompilable "~" regex) — an infrastructure/config error, not a
+// policy deny. It is the host proxy's analog of Envoy refusing to load an
+// invalid config: the daemon refuses to start on it (validateEgressRulesFile)
+// and a running daemon fails the request closed and loud (handleOpenURL).
+var errEgressRulesInvalid = errors.New("egress rules file invalid")
+
+// validateEgressRulesFile reports whether the egress rules file at path is
+// usable, for the daemon startup gate. It mirrors Envoy's config-load failsafe:
+// any unusable file — missing, unreadable, unparseable, or carrying an
+// uncompilable "~" regex — is a hard error so the host proxy refuses to start
+// (and thus fails container startup) rather than come up and silently deny
+// every /open/url while masking the cause. Only an empty path (firewall
+// genuinely disabled) is a legitimate skip; when enabled the file must exist
+// and be valid, exactly as Envoy will not boot without a valid config.
+func validateEgressRulesFile(filePath string) error {
+	if filePath == "" {
+		return nil
+	}
+	if _, err := readEgressRules(filePath); err != nil {
+		return err
+	}
+	return nil
+}
+
 func readEgressRules(path string) ([]egressRule, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		// Firewall is enabled (caller only sets a non-empty path then), so a
+		// missing or unreadable rules file is a broken trust boundary, not a
+		// policy decision — treat it as invalid like Envoy refusing to boot
+		// without a config: loud, fail-closed, refuse to start.
+		return nil, fmt.Errorf("%w: reading file: %w", errEgressRulesInvalid, err)
 	}
 
 	var f egressRulesFile
 	if err := yaml.Unmarshal(data, &f); err != nil {
-		return nil, fmt.Errorf("parsing egress rules: %w", err)
+		return nil, fmt.Errorf("%w: parsing: %w", errEgressRulesInvalid, err)
+	}
+
+	// Mirror Envoy's own failsafe. Envoy rejects the ENTIRE config if any
+	// safe_regex fails to compile, so a malformed regex takes the whole
+	// firewall fail-closed. The host proxy is a second evaluator on the same
+	// file with no such intrinsic check — without this gate a malformed "~"
+	// regex would be silently skipped at match time (pathRuleMatches), letting
+	// a path Envoy denies fall through to path_default and breaking the
+	// documented lockstep. A present-but-corrupt file is errEgressRulesInvalid:
+	// the daemon refuses to start (validateEgressRulesFile) and a running
+	// daemon fails the request closed and loud (handleOpenURL).
+	for _, r := range f.Rules {
+		for _, pr := range r.PathRules {
+			if _, _, err := compilePathRegex(pr.Path); err != nil {
+				return nil, fmt.Errorf("%w: rule %q: invalid regex path %q: %w", errEgressRulesInvalid, r.Dst, pr.Path, err)
+			}
+		}
 	}
 
 	return f.Rules, nil
@@ -227,7 +338,11 @@ func evaluateRule(r egressRule, host, path string) error {
 	return nil
 }
 
-// checkPathRules evaluates path-level rules using longest-prefix matching.
+// checkPathRules evaluates path-level rules via pathRuleMatches (literal prefix,
+// or RE2 regex for "~"-marked paths). The longest-matching stored path wins;
+// equal-length matches resolve to the first in file order (strict > on length).
+// This mirrors the firewall side, which sorts Envoy routes longest-first with a
+// stable sort (sort.SliceStable), so ties there likewise keep original order.
 func checkPathRules(rules []pathRule, pathDefault, host, urlPath string) error {
 	bestLen := -1
 	action := ""
@@ -236,7 +351,7 @@ func checkPathRules(rules []pathRule, pathDefault, host, urlPath string) error {
 		if pr.Path == "" {
 			continue
 		}
-		if strings.HasPrefix(urlPath, pr.Path) && len(pr.Path) > bestLen {
+		if pathRuleMatches(pr.Path, urlPath) && len(pr.Path) > bestLen {
 			bestLen = len(pr.Path)
 			action = pr.Action
 		}

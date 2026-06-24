@@ -69,6 +69,25 @@ to the specific URL path instead of the whole domain whenever the work only
 needs part of the host. Recommend the tightest rule that unblocks the task, not
 the broadest one that happens to work.
 
+**Rule-matching cheat sheet** (semantics the agent must get right):
+
+- **Domain:** a bare domain (`example.com`, or any `add_domains` entry) matches
+  **only that exact host** — NOT its subdomains. Use a leading-dot wildcard
+  (`.example.com`) to match every subdomain plus the apex. An exact rule beats a
+  wildcard; within a tier deny wins. So a blocked `api.example.com` while
+  `example.com` is allowed is expected — add `.example.com` or the exact host.
+- **Path:** `path:` is an open-ended **literal prefix** by default (`/api/` also
+  admits `/api/x` **and** `/api-evil`). Prefix it with `~` to make it a
+  **full-string-anchored RE2 regex** (e.g. `~/repos/(a|b)/?`) to close that gap;
+  RE2 = no backreferences/lookaround. On the CLI **single-quote** regex paths:
+  `--path '~/repos/(a|b)/?'`. Paths apply to http/https/ws/wss only; scope
+  ssh/tcp/udp by proto+port. `methods:` is a verb enum, never a regex. On
+  overlap the **longest rule string wins** (ties → declaration order); a regex's
+  length is char count, not match breadth — list the intended winner first or
+  lengthen it.
+- Full detail (VCS credential-exfil lockdown, method gating, monitoring-driven
+  path discovery) lives in the clawker-support skill's `firewall-security.md`.
+
 1. **Offer to add the rule to the project `clawker.yaml` for the user (recommended — this is the one option you can act on yourself).**
 
    The project's clawker config file lives in your mounted workspace, so you

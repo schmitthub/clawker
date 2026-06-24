@@ -411,7 +411,7 @@ agent:
 `, "")
 			return mock, nil
 		},
-		HostProxy: func() hostproxy.HostProxyService {
+		HostProxy: func() hostproxy.Service {
 			return hostproxytest.NewMockManager()
 		},
 		Prompter: func() *prompter.Prompter { return prompter.NewPrompter(tio) },
@@ -539,7 +539,7 @@ agent: { claude_code: { use_host_auth: false, mount_projects: false, config: { s
 			Config: func() (config.Config, error) {
 				return useHostAuthCfg, nil
 			},
-			HostProxy: func() hostproxy.HostProxyService {
+			HostProxy: func() hostproxy.Service {
 				return hostproxytest.NewMockManager()
 			},
 			Prompter: func() *prompter.Prompter { return prompter.NewPrompter(tio) },

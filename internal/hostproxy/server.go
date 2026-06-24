@@ -20,6 +20,11 @@ import (
 // maxRequestBodySize limits request body size to prevent DoS via memory exhaustion.
 const maxRequestBodySize = 1 << 20 // 1MB
 
+// errEgressRulesUnavailable is the client-facing error returned when the egress
+// rules file is present but corrupt/unreadable — an infrastructure fault that
+// fails closed rather than a per-request policy decision.
+const errEgressRulesUnavailable = "egress rules unavailable"
+
 // dynamicListener tracks a temporary HTTP listener for OAuth callbacks.
 type dynamicListener struct {
 	port      int
@@ -410,6 +415,19 @@ func (s *Server) handleOpenURL(w http.ResponseWriter, r *http.Request) {
 	// Enforce egress rules if configured (firewall enabled).
 	if s.rulesFilePath != "" {
 		if err := CheckURLAgainstEgressRules(req.URL, s.rulesFilePath); err != nil {
+			if errors.Is(err, errEgressRulesInvalid) {
+				// Present-but-corrupt rules file (e.g. tampered after the daemon
+				// started). Not a policy decision — log loudly with the real
+				// cause and fail closed, mirroring Envoy rejecting an invalid
+				// config rather than the soft per-request deny below.
+				s.log.Error().Err(err).Str("url", req.URL).Msg("egress rules file invalid; denying all URL opens until fixed")
+				s.writeJSON(w, http.StatusInternalServerError, openURLResponse{
+					Success: false,
+					URL:     req.URL,
+					Error:   errEgressRulesUnavailable,
+				})
+				return
+			}
 			s.log.Warn().Err(err).Str("url", req.URL).Msg("blocked by egress rules")
 			s.writeJSON(w, http.StatusForbidden, openURLResponse{
 				Success: false,

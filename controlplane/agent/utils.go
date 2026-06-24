@@ -2,7 +2,7 @@ package agent
 
 import "fmt"
 
-func shouldAgentInit(res establishResult) (bool, error) {
+func shouldAgentInit(res EstablishResult) (bool, error) {
 	if res.HelloAck == nil {
 		return false, fmt.Errorf("missing HelloAck in establishResult")
 	}
@@ -27,11 +27,11 @@ func shouldAgentInit(res establishResult) (bool, error) {
 // and stays permissive; subscribers enact policy. A nil HelloAck is the
 // shouldAgent* error case, handled upstream — here it is simply not a
 // bypass.
-func agentInitBypassed(res establishResult) bool {
+func agentInitBypassed(res EstablishResult) bool {
 	return res.HelloAck != nil && res.HelloAck.CmdRunning && !res.HelloAck.Initialized
 }
 
-func shouldAgentBoot(res establishResult) (bool, error) {
+func shouldAgentBoot(res EstablishResult) (bool, error) {
 	if res.HelloAck == nil {
 		return false, fmt.Errorf("missing HelloAck in establishResult")
 	}

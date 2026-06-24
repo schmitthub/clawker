@@ -377,7 +377,7 @@ func otelLogsEnv(cfg config.Config) []string {
 	return []string{
 		consts.EnvOTLPEndpoint + "=" + endpoint,
 		// mTLS material is NOT injected via env. The CP-side exporter
-		// is wired in-process via internal/controlplane/otelcerts —
+		// is wired in-process via ./controlplane/otelcerts —
 		// leaves are minted from the infra intermediate on every
 		// handshake and never land on disk. The otlp/infra receiver's
 		// client_ca_file is the infra intermediate (NOT the CLI root),

@@ -860,19 +860,19 @@ type agentDialerDeps struct {
 // agent. It returns a cleanup closure run() defers (no-op until agent.Start
 // succeeds, so deferring it is always safe).
 //
-// CP §3.4 degrade contract: a broken init Executor → initExec=nil (entrypoint
+// CP §3.4 degrade contract: a broken Executor → executor=nil (entrypoint
 // fifo timeout is the only user-visible effect); a broken dialer → dialer=nil
 // (CP→clawkerd dispatch disabled). Neither cascades — AdminService, firewall,
 // registry, and the AgentService listener all stay up. Every degrade emits its
-// own event=<subsystem>_unavailable line via wireInitExecutor / agent.New.
+// own event=<subsystem>_unavailable line via wireExecutor / agent.NewDialer.
 func startAgentDialer(watcherCtx context.Context, d agentDialerDeps) func() {
 	agentCleanup := func() {}
 
-	// The CP-driven init Executor runs the static init plan on each new
-	// Session; without it the entrypoint hangs on its fifo until
-	// CLAWKER_INIT_TIMEOUT. wireInitExecutor holds the degrade contract.
-	initExec := wireInitExecutor(d.agentTopic, d.dockerCli, d.log)
-	dialer, err := agent.New(
+	// The CP-driven Executor runs the init/boot plans on each new Session;
+	// without it the entrypoint hangs on its fifo until CLAWKER_INIT_TIMEOUT.
+	// wireExecutor holds the degrade contract.
+	executor := wireExecutor(d.agentTopic, d.dockerCli, d.log)
+	dialer, err := agent.NewDialer(
 		d.log.With("component", "agent"),
 		d.dockerCli.APIClient,
 		d.agentTopic,
@@ -880,7 +880,7 @@ func startAgentDialer(watcherCtx context.Context, d agentDialerDeps) func() {
 		consts.CPClientCertPath,
 		consts.CPClientKeyPath,
 		d.caCertPool,
-		initExec,
+		executor,
 	)
 	if err != nil {
 		d.log.Error().Err(err).
@@ -1129,7 +1129,7 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 		watcherDone <- watcher.Run(watcherCtx)
 	}()
 
-	// Wire the init executor, CP→clawkerd dialer, and agent-axis subscriptions
+	// Wire the executor, CP→clawkerd dialer, and agent-axis subscriptions
 	// — see startAgentDialer for the §3.4 degrade contract. agentCleanup is a
 	// no-op until agent.Start succeeds, so deferring it is always safe.
 	agentCleanup := startAgentDialer(watcherCtx, agentDialerDeps{
@@ -1215,21 +1215,21 @@ func run(caCertPath, serverCertPath, serverKeyPath, jwkPath, logDir string) (ret
 	return drainCallback(context.Background())
 }
 
-// wireInitExecutor constructs the CP-driven init Executor and applies
+// wireExecutor constructs the CP-driven Executor and applies
 // the degrade contract from /controlplane/CLAUDE.md
 // ("Resilience contract — CP crashing is a security incident"):
-// construction failure logs `agent_init_executor_unavailable` and
+// construction failure logs `agent_executor_unavailable` and
 // returns nil; CP keeps running. Extracted as its own function so the
 // degrade-not-crash invariant is unit-testable — see
-// TestWireInitExecutor_NilBus.
-func wireInitExecutor(topic *pubsub.Topic[agent.AgentEvent], dockerCli *docker.Client, log *logger.Logger) *agent.Executor {
-	exec, err := agent.NewExecutor(topic, dockerCli, log.With("component", "agent.init"))
+// TestWireExecutor_NilBus.
+func wireExecutor(topic *pubsub.Topic[agent.AgentEvent], dockerCli *docker.Client, log *logger.Logger) *agent.Executor {
+	exec, err := agent.NewExecutor(topic, dockerCli, log.With("component", "agent"))
 	if err == nil {
 		return exec
 	}
 	log.Error().Err(err).
-		Str("event", "agent_init_executor_unavailable").
-		Msg("agent.init: Executor construction failed; CP-driven init disabled — agent containers will hang on the entrypoint fifo until timeout. CP otherwise continues.")
+		Str("event", "agent_executor_unavailable").
+		Msg("agent: Executor construction failed; CP-driven init/boot plans disabled — agent containers will hang on the entrypoint fifo until timeout. CP otherwise continues.")
 	return nil
 }
 

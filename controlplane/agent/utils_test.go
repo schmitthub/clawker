@@ -31,7 +31,7 @@ func TestPlanGates_LifecycleTable(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			res := establishResult{HelloAck: &clawkerdv1.HelloAck{
+			res := EstablishResult{HelloAck: &clawkerdv1.HelloAck{
 				Initialized: tc.initialized,
 				CmdRunning:  tc.cmdRunning,
 			}}
@@ -53,7 +53,7 @@ func TestPlanGates_LifecycleTable(t *testing.T) {
 // gates (can't decide) and not a bypass (the gates already surface the
 // error upstream; agentInitBypassed must not double-report it).
 func TestPlanGates_NilHelloAck(t *testing.T) {
-	res := establishResult{HelloAck: nil}
+	res := EstablishResult{HelloAck: nil}
 
 	_, err := shouldAgentInit(res)
 	assert.Error(t, err, "shouldAgentInit must error on nil HelloAck")

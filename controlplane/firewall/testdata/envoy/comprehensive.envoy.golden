@@ -1453,6 +1453,16 @@ static_resources:
                                     value: h3=":443"; ma=86400
                               routes:
                                 - match:
+                                    safe_regex:
+                                        regex: /users/(clawker|anthropic)/?
+                                  metadata:
+                                    filter_metadata:
+                                        clawker:
+                                            action: allowed
+                                  route:
+                                    cluster: tls_api_github_com_443
+                                    timeout: 0s
+                                - match:
                                     prefix: /repos/schmitthub/clawker/
                                   metadata:
                                     filter_metadata:
@@ -1474,6 +1484,18 @@ static_resources:
                                   route:
                                     cluster: tls_api_github_com_443
                                     timeout: 0s
+                                - direct_response:
+                                    body:
+                                        inline_string: |
+                                            Forbidden
+                                    status: 403
+                                  match:
+                                    safe_regex:
+                                        regex: /settings(/.*)?
+                                  metadata:
+                                    filter_metadata:
+                                        clawker:
+                                            action: denied
                                 - direct_response:
                                     body:
                                         inline_string: |
@@ -3012,6 +3034,16 @@ static_resources:
                               name: api_github_com_443
                               routes:
                                 - match:
+                                    safe_regex:
+                                        regex: /users/(clawker|anthropic)/?
+                                  metadata:
+                                    filter_metadata:
+                                        clawker:
+                                            action: allowed
+                                  route:
+                                    cluster: tls_api_github_com_443
+                                    timeout: 0s
+                                - match:
                                     prefix: /repos/schmitthub/clawker/
                                   metadata:
                                     filter_metadata:
@@ -3033,6 +3065,18 @@ static_resources:
                                   route:
                                     cluster: tls_api_github_com_443
                                     timeout: 0s
+                                - direct_response:
+                                    body:
+                                        inline_string: |
+                                            Forbidden
+                                    status: 403
+                                  match:
+                                    safe_regex:
+                                        regex: /settings(/.*)?
+                                  metadata:
+                                    filter_metadata:
+                                        clawker:
+                                            action: denied
                                 - direct_response:
                                     body:
                                         inline_string: |

@@ -106,9 +106,9 @@ Key functions: `GetAgentName()`, `BuildConfigs(flags, mounts, cfg)`, `ValidateFl
 
 ### CreateContainer (`container_create.go`)
 
-Single entry point for container creation, shared by `run` and `create`. Performs all init steps: workspace setup, config initialization, environment resolution, Docker container creation, and post-create injection. Progress communicated via events channel (nil for silent mode).
+Single entry point for container creation, shared by `run` and `create`. Performs all init steps: workspace setup, config initialization, environment resolution, Docker container creation, and post-create injection. Signature is `(ctx, *CreateContainerOptions)`; developer diagnostics go to zerolog and the caller owns all terminal output.
 
-**Types**: `CreateContainerOptions`, `CreateContainerResult`, `CreateContainerEvent`, `StepStatus`, `MessageType`.
+**Types**: `CreateContainerOptions`, `CreateContainerResult`.
 
 **Low-level helpers**: `InitContainerConfig(ctx, opts)` copies host Claude config to volume; `InjectPostInitScript(ctx, opts)` writes post-init script. Onboarding bypass is image-level (entrypoint seeds `~/.claude/.config.json`).
 

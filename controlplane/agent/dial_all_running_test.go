@@ -23,8 +23,8 @@ import (
 // unnecessary.
 func newTestDialerForPoll() *Dialer {
 	return &Dialer{
-		log:     logger.Nop(),
-		dialing: make(map[string]context.CancelFunc),
+		Log:     logger.Nop(),
+		Dialing: make(map[string]context.CancelFunc),
 	}
 }
 

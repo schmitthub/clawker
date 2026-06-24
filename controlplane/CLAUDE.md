@@ -15,7 +15,7 @@ Store; the firewall handler; concrete RPC handlers.
 
 - It is the **agent package**, not "the agent domain". Packages are packages.
 - Wire **concrete things by their real names**: the dialer (`agent.New`), the watcher
-  (`NewAgentWatcher`), the init executor (`NewExecutor`), the registry subscriptions
+  (`NewAgentWatcher`), the executor (`NewExecutor`), the registry subscriptions
   (`agent.Start`). No `*Domain` symbol names. No `startAgentDomain`-style blobs — a
   package is not a startable vehicle.
 - The CP wires those concrete constructors inline; it is not "an orchestrator calling
@@ -50,9 +50,9 @@ A panic, `log.Fatal`, `os.Exit`, or unrecovered goroutine in CP code:
 1. **No `panic()`. No `log.Fatal()`. No `os.Exit()`** in any code reachable from `internal/controlplane/cmd.go` after `SetReady`. The only acceptable hard exits are:
    - Pre-`SetReady` startup failures (exit code 1). Any error returned from `run()` before `SetReady` is such an exit — ordinary wiring failures (Ory health, eBPF load, gRPC listen) and deliberate startup gates (state/policy checks elevated to fail startup, e.g. `CleanupStaleBypass` (INV-B2-013) and the settings-driven `firewall.enable` stack bringup) alike. These exit WITHOUT flushing eBPF, so agents enrolled by a previous CP stay fail-closed rather than fail-open.
    - The orchestrator's intentional drain-to-zero clean exit (code 0).
-2. **Constructors return `(*T, error)`.** Pattern: `agent.New`, `agent.NewExecutor`. Nil deps, cert load failures, schema errors → return error, never panic. `run()` in `internal/controlplane/cmd.go` logs structurally and degrades the subsystem (`dialer = nil`, `initExec = nil`).
+2. **Constructors return `(*T, error)`.** Pattern: `agent.New`, `agent.NewExecutor`. Nil deps, cert load failures, schema errors → return error, never panic. `run()` in `internal/controlplane/cmd.go` logs structurally and degrades the subsystem (`dialer = nil`, `executor = nil`).
 3. **Long-lived goroutines must recover.** Wrap heartbeats, watchers, dispatch handlers, RPC interceptors with `defer func() { if r := recover(); r != nil { log.Error().Interface("panic", r)... } }()`. The agent-watcher goroutine in `run()` (`internal/controlplane/cmd.go`, `event=agent_watcher_panic`) — which converts a panic into a terminal shutdown error so drain-to-zero / eBPF flush still runs — is the template. One bad event must not silently strand eBPF.
-4. **Subsystem failures degrade.** Broken Executor → `initExec = nil` → dialer logs `agent_init_executor_unset` per dial → entrypoint fifo timeout is the user-visible failure. CP itself, firewall, registry, AdminService unaffected. Broken dialer → `dialer = nil` → CP→clawkerd dispatch disabled; everything else stays up. Copy `wireInitExecutor` (initExec; emits `event=agent_init_executor_unavailable`) and the `agent.New(...)` block that degrades on error to `event=agent_dialer_unavailable` in `internal/controlplane/cmd.go` as templates for new subsystems.
+4. **Subsystem failures degrade.** Broken Executor → `executor = nil` → dialer logs `agent_<plan>_executor_unset` per dial → entrypoint fifo timeout is the user-visible failure. CP itself, firewall, registry, AdminService unaffected. Broken dialer → `dialer = nil` → CP→clawkerd dispatch disabled; everything else stays up. Copy `wireExecutor` (executor; emits `event=agent_executor_unavailable`) and the `agent.New(...)` block that degrades on error to `event=agent_dialer_unavailable` in `internal/controlplane/cmd.go` as templates for new subsystems.
 5. **Every degraded path emits a structured log line** (`event=<subsystem>_unavailable`) with enough fields for an operator to triage root cause AND blast radius. They will never see panic stacks; the structured log is the only surface.
 6. **Treat any urge to panic as a security review trigger.** Ask: "would this leave eBPF programs pinned with no supervisor?" If yes — you are about to silently break the firewall enforcement boundary the user trusts. Return an error.
 
@@ -108,7 +108,6 @@ The auth stack uses Ory Hydra as the OAuth2 provider (replaces the earlier custo
 | `adminclient/` | CLI-side AdminService dialer (`dial.go`): `Dial`, `ProbeCPTime`, `LoadClientCert`, the two TLS configs (token-endpoint plain TLS vs gRPC mTLS), token source. |
 | `infracerts/` | Trusted-infra (OTLP/monitoring) mTLS cert material. See `controlplane/infracerts/CLAUDE.md`. |
 | `otelcerts/` | OTel client cert provisioning. See `controlplane/otelcerts/CLAUDE.md`. |
-| `mocks/` | moq-generated `AdminServiceClientMock` for CLI tests speaking to the AdminService. |
 
 ## AdminService composition
 
@@ -134,7 +133,7 @@ All RPCs require the uniform `admin` scope (INV-B2-009) with one deliberate exce
 10. `startHealthz` — serves aggregate `/healthz` on `HealthPort`.
 11. `startFeeder` — the `dockerevents` feeder, sole producer of `DockerEvent` onto its typed topic.
 12. `startWorkers` — the long-lived observability workers: the `pubsub.NewStatsHeartbeat`, the `netlogger.Service` (subscribes `enrolledTopic` to hydrate its label cache; degrades to `netloggerSvc=nil` with `event=netlogger_unavailable` on any chain failure), and the `dns_cache` GC goroutine (`event=dns_gc_*`, escalates `dns_gc_degraded` after `dnsGCDegradedThreshold` consecutive reclaim-failures). All run on `watcherCtx`.
-13. Agent watcher + `startAgentDialer` — `agent.NewAgentWatcher` (drain-to-zero trigger; its goroutine recovers panics into a terminal shutdown error, `event=agent_watcher_panic`) plus the init executor, CP→clawkerd dialer, and agent-axis subscriptions (§3.4 degrade contract).
+13. Agent watcher + `startAgentDialer` — `agent.NewAgentWatcher` (drain-to-zero trigger; its goroutine recovers panics into a terminal shutdown error, `event=agent_watcher_panic`) plus the executor, CP→clawkerd dialer, and agent-axis subscriptions (§3.4 degrade contract).
 14. Serve + drain — the select waits on signal / drain-to-zero / subprocess crash / serve failure, then runs the drain callback (`actionQueue.Close()` → `grpcStack.GracefulStop()` → `handler.CancelAllBypassTimers()` → `firewall.Stack.Stop()` → `netloggerSvc.Stop` → `stopDNSGC()` → `ebpfMgr.FlushAll()`, INV-B2-007) exactly once (sync.Once), then tears the container down at exit code 0 (the `on-failure` restart policy does NOT retrigger).
 
 ## Aggregate Health (`internal/controlplane/cmd.go`)
@@ -212,9 +211,9 @@ Manages Ory service lifecycle. Crash reporting via channel. Shutdown sends SIGTE
 - `EBPFManager` interface — `controlplane/firewall/ebpf/mocks/EBPFManagerMock` for firewall handler tests.
 - `Introspector` interface — `controlplane/auth/mocks/IntrospectorMock` for authz tests (no real Hydra).
 - `manager.Manager` interface — `controlplane/manager/mocks/ManagerMock` for break-glass `controlplane up/down/status` CLI tests.
-- `adminv1.AdminServiceClient` — `controlplane/mocks/AdminServiceClientMock` for CLI tests that speak to the AdminService.
+- `adminv1.AdminServiceClient` — `api/admin/v1/mocks.AdminServiceClientMock` for CLI tests that speak to the AdminService.
 - `firewall.ContainerResolver` — handler-side injectable Docker lookup (see `controlplane/firewall/CLAUDE.md`).
-- `agent.Registry` — moq-generated `RegistryMock` (test-only file at `controlplane/agent/registry_mock_test.go`) for `IdentityInterceptor`, `ListAgents`, and the dialer-side classification tests that need a deterministic snapshot independent of dockerevents wiring.
+- `agent.Registry` — moq-generated `RegistryMock` (in `controlplane/agent/mocks/registry_mock.go`) for `IdentityInterceptor`, `ListAgents`, and the dialer-side classification tests that need a deterministic snapshot independent of dockerevents wiring.
 
 ## Test coverage
 

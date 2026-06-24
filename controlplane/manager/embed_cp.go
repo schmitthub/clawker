@@ -18,7 +18,7 @@ import _ "embed"
 // from that image. The daemon runs inside the container as PID 1.
 //
 // Lives in the manager subpackage so cmd/clawkercp can import
-// internal/controlplane without dragging in this embed directive —
+// ./controlplane without dragging in this embed directive —
 // the daemon would otherwise need to embed itself, which can't resolve
 // during its own build.
 //

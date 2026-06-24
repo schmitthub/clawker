@@ -34,7 +34,8 @@ Each package in the dependency DAG must provide test utilities so dependents can
 | `internal/project` | `mocks/` | `NewMockProjectManager()`, `NewMockProject(name, repoPath)`, `NewTestProjectManager(t, gitFactory)` |
 | `internal/git` | `gittest/` | `InMemoryGitManager` |
 | `pkg/whail` | `whailtest/` | `FakeAPIClient`, build scenarios, `EventRecorder` |
-| `internal/controlplane` | `mocks/` | `IntrospectorMock`, `AdminServiceClientMock` (moq-generated) |
+| `api/admin/v1` | `mocks/` | `AdminServiceClientMock` (moq-generated) |
+| `controlplane/auth` | `mocks/` | `IntrospectorMock` (moq-generated) |
 | `internal/controlplane/cpboot` | `mocks/` | `ManagerMock` (moq-generated) |
 | `internal/controlplane/firewall/ebpf` | `mocks/` | `EBPFManagerMock` (moq-generated) |
 | `internal/hostproxy` | `hostproxytest/` | `MockHostProxy`, `MockManager` |

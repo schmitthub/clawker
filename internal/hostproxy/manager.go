@@ -1,10 +1,12 @@
 package hostproxy
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"strconv"
@@ -17,12 +19,15 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
-// HostProxyService is the interface for host proxy operations used by container commands.
+// Service is the interface for host proxy operations used by container commands.
 // Commands interact with the host proxy through this interface, enabling test doubles
 // that don't spawn daemon subprocesses.
 //
 // Concrete implementation: Manager. Mock: hostproxytest.MockManager.
-type HostProxyService interface {
+// schemeHTTP is the URL scheme used for the host proxy's loopback HTTP endpoints.
+const schemeHTTP = "http"
+
+type Service interface {
 	// EnsureRunning ensures the host proxy is running. Spawns a daemon if needed.
 	EnsureRunning() error
 	// IsRunning returns whether the host proxy is currently running.
@@ -119,7 +124,12 @@ func (m *Manager) Port() int {
 // ProxyURL returns the URL containers should use to reach the host proxy.
 // This uses host.docker.internal which Docker automatically resolves to the host.
 func (m *Manager) ProxyURL() string {
-	return "http://" + net.JoinHostPort("host.docker.internal", strconv.Itoa(m.port))
+	host := net.JoinHostPort(consts.DockerHostInternal, strconv.Itoa(m.port))
+	u := url.URL{
+		Scheme: schemeHTTP,
+		Host:   host,
+	}
+	return u.String()
 }
 
 // isDaemonRunning checks if the daemon is running via PID file and health check.
@@ -231,7 +241,12 @@ func (m *Manager) isPortInUse() bool {
 		Timeout: 500 * time.Millisecond,
 	}
 
-	resp, err := client.Get(fmt.Sprintf("http://"+consts.Localhost+":%d/health", m.port))
+	healthURL := fmt.Sprintf(schemeHTTP+"://"+consts.Localhost+":%d/health", m.port)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, healthURL, nil)
+	if err != nil {
+		return false
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return false
 	}
@@ -256,7 +271,12 @@ func (m *Manager) healthCheck() error {
 		Timeout: 2 * time.Second,
 	}
 
-	resp, err := client.Get(fmt.Sprintf("http://"+consts.Localhost+":%d/health", m.port))
+	healthURL := fmt.Sprintf(schemeHTTP+"://"+consts.Localhost+":%d/health", m.port)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, healthURL, nil)
+	if err != nil {
+		return fmt.Errorf("build health check request: %w", err)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
