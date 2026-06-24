@@ -124,7 +124,7 @@ func TestCheckURLAgainstEgressRules(t *testing.T) {
 }
 
 func TestCheckURLAgainstEgressRules_MissingFile(t *testing.T) {
-	err := CheckURLAgainstEgressRules("https://github.test/", "/nonexistent/egress-rules.yaml")
+	err := CheckURLAgainstEgressRules("https://github.test/", testNonexistentRulesFile)
 	if err == nil {
 		t.Fatal("expected error for missing rules file, got nil")
 	}
@@ -133,7 +133,7 @@ func TestCheckURLAgainstEgressRules_MissingFile(t *testing.T) {
 func TestCheckURLAgainstEgressRules_EmptyRulesFile(t *testing.T) {
 	tmp := t.TempDir()
 	f := filepath.Join(tmp, "empty.yaml")
-	if err := os.WriteFile(f, []byte("rules: []\n"), 0o644); err != nil {
+	if err := os.WriteFile(f, []byte("rules: []\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -190,7 +190,7 @@ func TestMatchRules_ExactAllowBeatsWildcardDeny(t *testing.T) {
 func TestCheckURLAgainstEgressRules_MalformedYAML(t *testing.T) {
 	tmp := t.TempDir()
 	f := filepath.Join(tmp, "bad.yaml")
-	if err := os.WriteFile(f, []byte("{{not yaml"), 0o644); err != nil {
+	if err := os.WriteFile(f, []byte("{{not yaml"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -227,7 +227,7 @@ func TestCheckURLAgainstEgressRules_MalformedRegexFailsClosed(t *testing.T) {
 		"    path_rules:\n" +
 		"      - path: \"~/users/(clawker\"\n" +
 		"        action: allow\n"
-	if err := os.WriteFile(f, []byte(rules), 0o644); err != nil {
+	if err := os.WriteFile(f, []byte(rules), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -248,11 +248,11 @@ func TestValidateEgressRulesFile(t *testing.T) {
 	tmp := t.TempDir()
 
 	corrupt := filepath.Join(tmp, "corrupt.yaml")
-	if err := os.WriteFile(corrupt, []byte("rules:\n  - dst: x.test\n    proto: http\n    port: \"80\"\n    path_rules:\n      - action: deny\n        path: \"~/[bad(\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(corrupt, []byte("rules:\n  - dst: x.test\n    proto: http\n    port: \"80\"\n    path_rules:\n      - action: deny\n        path: \"~/[bad(\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	badYAML := filepath.Join(tmp, "bad.yaml")
-	if err := os.WriteFile(badYAML, []byte("{{not yaml"), 0o644); err != nil {
+	if err := os.WriteFile(badYAML, []byte("{{not yaml"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 

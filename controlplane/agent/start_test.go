@@ -41,9 +41,9 @@ func publishDocker(topic *pubsub.Topic[dockerevents.DockerEvent], msg mobyevents
 
 func TestReapOrphans_DropsRowsForGoneContainers(t *testing.T) {
 	reg := agent.NewRegistry(nil)
-	mustAddTestEntry(t, reg, "ctr-live", "live", "p")
-	mustAddTestEntry(t, reg, "ctr-orphan-1", "ophan1", "p")
-	mustAddTestEntry(t, reg, "ctr-orphan-2", "orphan2", "p")
+	mustAddTestEntry(t, reg, "ctr-live", "live")
+	mustAddTestEntry(t, reg, "ctr-orphan-1", "ophan1")
+	mustAddTestEntry(t, reg, "ctr-orphan-2", "orphan2")
 
 	lister := func(context.Context) ([]string, error) {
 		return []string{"ctr-live"}, nil
@@ -61,8 +61,8 @@ func TestReapOrphans_DropsRowsForGoneContainers(t *testing.T) {
 
 func TestReapOrphans_EmptyDockerListEvictsAll(t *testing.T) {
 	reg := agent.NewRegistry(nil)
-	mustAddTestEntry(t, reg, "ctr-1", "a", "p")
-	mustAddTestEntry(t, reg, "ctr-2", "b", "p")
+	mustAddTestEntry(t, reg, "ctr-1", "a")
+	mustAddTestEntry(t, reg, "ctr-2", "b")
 
 	lister := func(context.Context) ([]string, error) { return nil, nil }
 	evicted, err := agent.ReapOrphans(context.Background(), reg, lister, logger.Nop())
@@ -75,7 +75,7 @@ func TestReapOrphans_EmptyDockerListEvictsAll(t *testing.T) {
 
 func TestReapOrphans_RetriesTransientListerFailure(t *testing.T) {
 	reg := agent.NewRegistry(nil)
-	mustAddTestEntry(t, reg, "ctr-orphan", "a", "p")
+	mustAddTestEntry(t, reg, "ctr-orphan", "a")
 
 	var attempts int32
 	lister := func(context.Context) ([]string, error) {
@@ -93,7 +93,7 @@ func TestReapOrphans_RetriesTransientListerFailure(t *testing.T) {
 
 func TestReapOrphans_ReportsListerExhaustion(t *testing.T) {
 	reg := agent.NewRegistry(nil)
-	mustAddTestEntry(t, reg, "ctr-1", "a", "p")
+	mustAddTestEntry(t, reg, "ctr-1", "a")
 
 	lister := func(context.Context) ([]string, error) {
 		return nil, errors.New("daemon down")
@@ -130,7 +130,7 @@ func TestSubscribeEvict_OnlyDestroyEvicts(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			reg := agent.NewRegistry(nil)
-			mustAddTestEntry(t, reg, "ctr-target", "a", "p")
+			mustAddTestEntry(t, reg, "ctr-target", "a")
 			topic := agentmocks.NewDockerTopic(t)
 
 			agent.SubscribeEvict(t.Context(), topic, reg, logger.Nop())
@@ -245,7 +245,7 @@ func TestSubscribeSessionCancel_NonContainerEventsIgnored(t *testing.T) {
 // should never be dispatched to the evict consumer.
 func TestSubscribeEvict_NonContainerEventsIgnored(t *testing.T) {
 	reg := agent.NewRegistry(nil)
-	mustAddTestEntry(t, reg, "ctr-1", "a", "p")
+	mustAddTestEntry(t, reg, "ctr-1", "a")
 	topic := agentmocks.NewDockerTopic(t)
 
 	agent.SubscribeEvict(t.Context(), topic, reg, logger.Nop())
@@ -377,7 +377,7 @@ func TestStart_PublishesReapDegradedOnListerFailure(t *testing.T) {
 	rec := agentmocks.RecordAgent(agentTopic)
 
 	reg := agent.NewRegistry(nil)
-	mustAddTestEntry(t, reg, "ctr-orphan", "a", "p")
+	mustAddTestEntry(t, reg, "ctr-orphan", "a")
 	dialer := &agent.Dialer{Log: logger.Nop(), Dialing: make(map[string]context.CancelFunc)}
 	lister := agent.ContainerListFunc(func(context.Context) ([]string, error) {
 		return nil, errors.New("daemon down")
@@ -403,11 +403,11 @@ func TestStart_PublishesReapDegradedOnListerFailure(t *testing.T) {
 
 // --- helpers -------------------------------------------------------------
 
-func mustAddTestEntry(t *testing.T, reg agent.Registry, containerID, agentName, project string) {
+func mustAddTestEntry(t *testing.T, reg agent.Registry, containerID, agentName string) {
 	t.Helper()
 	entry := agent.Entry{
 		AgentName:    auth.MustAgentName(agentName),
-		Project:      auth.MustProjectSlug(project),
+		Project:      auth.MustProjectSlug("p"),
 		ContainerID:  containerID,
 		Thumbprint:   testThumb(containerID),
 		RegisteredAt: time.Unix(1000, 0),

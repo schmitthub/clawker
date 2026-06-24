@@ -287,8 +287,8 @@ func TestServerOpenURL_MissingRulesFile_FailsClosed(t *testing.T) {
 	if result.Success {
 		t.Error("expected success to be false")
 	}
-	if result.Error != "egress rules unavailable" {
-		t.Errorf("expected 'egress rules unavailable', got %q", result.Error)
+	if result.Error != errEgressRulesUnavailable {
+		t.Errorf("expected %q, got %q", errEgressRulesUnavailable, result.Error)
 	}
 }
 
@@ -299,7 +299,7 @@ func TestServerOpenURL_MissingRulesFile_FailsClosed(t *testing.T) {
 func TestServerOpenURL_InvalidRulesFile_FailsClosedLoud(t *testing.T) {
 	tmp := t.TempDir()
 	f := filepath.Join(tmp, "corrupt.yaml")
-	if err := os.WriteFile(f, []byte("rules:\n  - dst: github.test\n    proto: https\n    port: \"443\"\n    path_rules:\n      - action: deny\n        path: \"~/[bad(\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(f, []byte("rules:\n  - dst: github.test\n    proto: https\n    port: \"443\"\n    path_rules:\n      - action: deny\n        path: \"~/[bad(\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -309,7 +309,7 @@ func TestServerOpenURL_InvalidRulesFile_FailsClosedLoud(t *testing.T) {
 		browserFunc:   func(_ string) error { t.Fatal("browser should not be called"); return nil },
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/open/url",
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/open/url",
 		bytes.NewBufferString(`{"url":"https://github.test/"}`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -328,8 +328,8 @@ func TestServerOpenURL_InvalidRulesFile_FailsClosedLoud(t *testing.T) {
 	if result.Success {
 		t.Error("expected success to be false")
 	}
-	if result.Error != "egress rules unavailable" {
-		t.Errorf("expected 'egress rules unavailable', got %q", result.Error)
+	if result.Error != errEgressRulesUnavailable {
+		t.Errorf("expected %q, got %q", errEgressRulesUnavailable, result.Error)
 	}
 }
 

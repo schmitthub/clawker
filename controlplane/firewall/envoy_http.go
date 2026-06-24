@@ -302,7 +302,7 @@ func httpAllowRoute(path, cluster string, websocket bool, methods []string) map[
 		route["upgrade_configs"] = []any{map[string]any{"upgrade_type": "websocket"}}
 	}
 	return map[string]any{
-		"match":    routeMatch(path, methods),
+		keyMatch:   routeMatch(path, methods),
 		"metadata": clawkerActionMetadata(consts.VerdictAllowed),
 		"route":    route,
 	}
@@ -313,7 +313,7 @@ func httpAllowRoute(path, cluster string, websocket bool, methods []string) map[
 // HTTP methods, via direct_response.
 func httpDenyRoute(path string, methods []string) map[string]any {
 	return map[string]any{
-		"match":    routeMatch(path, methods),
+		keyMatch:   routeMatch(path, methods),
 		"metadata": clawkerActionMetadata(consts.VerdictDenied),
 		"direct_response": map[string]any{
 			"status": 403,

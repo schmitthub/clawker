@@ -3,6 +3,7 @@ package agent_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -78,7 +79,10 @@ func (p *panickingSendStream) Send(c *clawkerdv1.Command) error {
 	if p.sendCount == p.panicAtSend {
 		panic("synthetic Send panic for Executor.Run recover test")
 	}
-	return p.FakeSessionStream.Send(c)
+	if err := p.FakeSessionStream.Send(c); err != nil {
+		return fmt.Errorf("panickingSendStream send: %w", err)
+	}
+	return nil
 }
 
 // TestExecutor_Run_PanicInStep verifies the recover defer at the top of
@@ -95,8 +99,8 @@ func TestExecutor_Run_PanicInStep(t *testing.T) {
 		plan  []agent.Step
 		label string
 	}{
-		"boot plan": {plan: agent.BootPlan, label: "boot"},
-		"init plan": {plan: agent.InitPlan, label: "init"},
+		"boot plan": {plan: agent.BootPlan(), label: "boot"},
+		"init plan": {plan: agent.InitPlan(), label: "init"},
 	}
 
 	for name, test := range tests {
@@ -110,7 +114,7 @@ func TestExecutor_Run_PanicInStep(t *testing.T) {
 			fake := clawkerdv1mocks.NewFakeSessionStream(ctx)
 			stream := &panickingSendStream{FakeSessionStream: fake, panicAtSend: 1}
 
-			target := agent.ExecTarget{ContainerID: "c-panic-1234567890ab", AgentName: "dev", Project: "clawker"}
+			target := agent.ExecTarget{ContainerID: "c-panic-1234567890ab", AgentName: agentName, Project: projectClawker}
 
 			// The panic must NOT propagate (which would crash CP); the
 			// recover converts it to an ordinary error return so the
@@ -143,9 +147,9 @@ func TestExecutor_Run_PanicInStep(t *testing.T) {
 // project's normal log surface, not crash CP and strand the trace on
 // os.Stderr where only `docker logs <cp>` sees it.
 func TestNewExecutor_NilTopicReturnsError(t *testing.T) {
-	exec, err := agent.NewExecutor(nil, nil, logger.Nop())
+	ex, err := agent.NewExecutor(nil, nil, logger.Nop())
 	require.Error(t, err, "agent.NewExecutor must reject nil topic")
-	assert.Nil(t, exec)
+	assert.Nil(t, ex)
 	assert.Contains(t, err.Error(), "topic is required")
 }
 
@@ -156,10 +160,10 @@ func TestNewExecutor_NilTopicReturnsError(t *testing.T) {
 //  3. ssh's InitialStdin is non-empty (the host-key blob known_hosts
 //     consumes; an empty payload silently produces an empty file).
 func TestInitPlan_PrivilegeAndShape(t *testing.T) {
-	require.NotEmpty(t, agent.InitPlan)
+	require.NotEmpty(t, agent.InitPlan())
 
 	var rootSteps []string
-	for _, st := range agent.InitPlan {
+	for _, st := range agent.InitPlan() {
 		s, ok := st.(agent.ShellStep)
 		if !ok {
 			continue
@@ -170,18 +174,18 @@ func TestInitPlan_PrivilegeAndShape(t *testing.T) {
 	}
 	assert.Equal(t, []string{"docker-socket"}, rootSteps, "only docker-socket may run as root")
 
-	last := agent.InitPlan[len(agent.InitPlan)-1]
+	last := agent.InitPlan()[len(agent.InitPlan())-1]
 	_, isInitialized := last.(agent.AgentInitializedStep)
 	assert.True(t, isInitialized, "agent-initialized must be terminal (no step may follow)")
 
-	for _, st := range agent.InitPlan {
+	for _, st := range agent.InitPlan() {
 		if s, ok := st.(agent.ShellStep); ok && s.Name == "ssh" {
 			assert.NotEmpty(t, s.Shell.InitialStdin,
 				"ssh step must carry the known_hosts blob via InitialStdin")
 			return
 		}
 	}
-	t.Fatal("ssh step missing from agent.InitPlan")
+	t.Fatal("ssh step missing from agent.InitPlan()")
 }
 
 // TestBootPlan_PreRunShape pins the boot plan's pre-run step: it runs the
@@ -191,7 +195,7 @@ func TestInitPlan_PrivilegeAndShape(t *testing.T) {
 // no step races the CMD past the entrypoint fifo release).
 func TestBootPlan_PreRunShape(t *testing.T) {
 	idxPreRun, idxReady := -1, -1
-	for i, st := range agent.BootPlan {
+	for i, st := range agent.BootPlan() {
 		switch s := st.(type) {
 		case agent.ShellStep:
 			if s.Name == consts.HookPreRun {
@@ -215,8 +219,8 @@ func TestBootPlan_PreRunShape(t *testing.T) {
 	// steps prepend to the head; this pair must stay terminal, in this order
 	// (mirrors agent.BootPlanPost). Pinning both indices catches a reorder of the
 	// pair or any step wedged between them.
-	assert.Equal(t, len(agent.BootPlan)-1, idxReady, "agent-ready must be the terminal step")
-	assert.Equal(t, len(agent.BootPlan)-2, idxPreRun, "pre-run must be the second-to-last step (immediately before agent-ready)")
+	assert.Equal(t, len(agent.BootPlan())-1, idxReady, "agent-ready must be the terminal step")
+	assert.Equal(t, len(agent.BootPlan())-2, idxPreRun, "pre-run must be the second-to-last step (immediately before agent-ready)")
 }
 
 // TestPreRunScript_GuardSemantics executes agent.PreRunScript the same way the
@@ -239,7 +243,8 @@ func TestPreRunScript_GuardSemantics(t *testing.T) {
 			script := "#!/bin/bash\nset -e\n" + body
 			require.NoError(t, os.WriteFile(filepath.Join(dir, "pre-run.sh"), []byte(script), 0o755))
 		}
-		cmd := exec.Command("sh", "-c", agent.PreRunScript)
+		const preRunScript = agent.PreRunScript
+		cmd := exec.Command("sh", "-c", preRunScript)
 		cmd.Env = append(os.Environ(), "HOME="+home)
 		if err := cmd.Run(); err != nil {
 			var ee *exec.ExitError
@@ -260,7 +265,7 @@ func TestPreRunScript_GuardSemantics(t *testing.T) {
 	})
 }
 
-// TestExecutor_Run_HappyPath drives the full agent.InitPlan with Done{0} on every
+// TestExecutor_Run_HappyPath drives the full agent.InitPlan() with Done{0} on every
 // step and verifies the AgentEvent sequence subscribers see: one started,
 // N×(step_started, step_completed), one completed; no failures.
 func TestExecutor_Run_HappyPath(t *testing.T) {
@@ -271,11 +276,13 @@ func TestExecutor_Run_HappyPath(t *testing.T) {
 	defer cancel()
 
 	stream := clawkerdv1mocks.NewFakeSessionStream(ctx)
-	target := agent.ExecTarget{ContainerID: "c-happy-1234567890ab", AgentName: "dev", Project: "clawker"}
+	target := agent.ExecTarget{ContainerID: "c-happy-1234567890ab", AgentName: agentName, Project: projectClawker}
 
 	doneFeeder := stream.FeedDone()
-	err := e.Run(ctx, stream, target, agent.InitPlan, "init")
-	stream.CloseSend()
+	err := e.Run(ctx, stream, target, agent.InitPlan(), "init")
+	if cerr := stream.CloseSend(); cerr != nil {
+		t.Errorf("close send: %v", cerr)
+	}
 	<-doneFeeder
 	require.NoError(t, err)
 
@@ -317,7 +324,7 @@ func TestExecutor_Run_StepFailureHaltsAndPublishesFailed(t *testing.T) {
 	defer cancel()
 
 	stream := clawkerdv1mocks.NewFakeSessionStream(ctx)
-	target := agent.ExecTarget{ContainerID: "c-fail-9876543210ab", AgentName: "dev", Project: "clawker"}
+	target := agent.ExecTarget{ContainerID: "c-fail-9876543210ab", AgentName: agentName, Project: projectClawker}
 
 	doneFeeder := stream.FeedSteps(func(idx int, cmd *clawkerdv1.Command) []*clawkerdv1.Response {
 		if idx == failAtIdx {
@@ -329,8 +336,10 @@ func TestExecutor_Run_StepFailureHaltsAndPublishesFailed(t *testing.T) {
 		return []*clawkerdv1.Response{clawkerdv1mocks.DoneResp(cmd.GetCommandId(), 0)}
 	})
 
-	err := e.Run(ctx, stream, target, agent.InitPlan, "init")
-	stream.CloseSend()
+	err := e.Run(ctx, stream, target, agent.InitPlan(), "init")
+	if cerr := stream.CloseSend(); cerr != nil {
+		t.Errorf("close send: %v", cerr)
+	}
 	<-doneFeeder
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), initStepNames[failAtIdx])
@@ -365,14 +374,14 @@ func TestExecutor_Run_TransportError(t *testing.T) {
 	defer cancel()
 
 	stream := clawkerdv1mocks.NewFakeSessionStream(ctx)
-	target := agent.ExecTarget{ContainerID: "c-transport-1234567890ab", AgentName: "dev", Project: "clawker"}
+	target := agent.ExecTarget{ContainerID: "c-transport-1234567890ab", AgentName: agentName, Project: projectClawker}
 
 	// Push an error frame that Run will see on its first Recv.
 	go func() {
 		stream.PushRecvError(errors.New("rpc connection reset"))
 	}()
 
-	err := e.Run(ctx, stream, target, agent.InitPlan, "init")
+	err := e.Run(ctx, stream, target, agent.InitPlan(), "init")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "rpc connection reset")
 
@@ -410,7 +419,7 @@ func TestExecutor_Run_StreamErrorResponse(t *testing.T) {
 			defer cancel()
 
 			stream := clawkerdv1mocks.NewFakeSessionStream(ctx)
-			target := agent.ExecTarget{ContainerID: "c-err-1234567890ab", AgentName: "dev", Project: "clawker"}
+			target := agent.ExecTarget{ContainerID: "c-err-1234567890ab", AgentName: agentName, Project: projectClawker}
 
 			done := stream.FeedSteps(func(_ int, cmd *clawkerdv1.Command) []*clawkerdv1.Response {
 				return []*clawkerdv1.Response{{
@@ -422,8 +431,10 @@ func TestExecutor_Run_StreamErrorResponse(t *testing.T) {
 				}}
 			})
 
-			err := e.Run(ctx, stream, target, agent.InitPlan, "init")
-			stream.CloseSend()
+			err := e.Run(ctx, stream, target, agent.InitPlan(), "init")
+			if cerr := stream.CloseSend(); cerr != nil {
+				t.Errorf("close send: %v", cerr)
+			}
 			<-done
 			require.Error(t, err)
 
@@ -452,7 +463,7 @@ func TestExecutor_Run_StateProjection(t *testing.T) {
 	store.Subscribe(topic)
 	rec := agentmocks.RecordAgent(topic) // ordering anchor for the terminal events
 
-	target := agent.ExecTarget{ContainerID: "c-proj-1234567890ab", AgentName: "dev", Project: "clawker"}
+	target := agent.ExecTarget{ContainerID: "c-proj-1234567890ab", AgentName: agentName, Project: projectClawker}
 	e, err := agent.NewExecutor(topic, selfExitDocker(t), logger.Nop())
 	require.NoError(t, err)
 
@@ -470,8 +481,10 @@ func TestExecutor_Run_StateProjection(t *testing.T) {
 				Payload:   &clawkerdv1.Response_Done{Done: &clawkerdv1.Done{FinalExitCode: exit}},
 			}}
 		})
-		err := e.Run(ctx, stream, target, agent.InitPlan, "init")
-		stream.CloseSend()
+		err := e.Run(ctx, stream, target, agent.InitPlan(), "init")
+		if cerr := stream.CloseSend(); cerr != nil {
+			t.Errorf("close send: %v", cerr)
+		}
 		<-done
 		cancel()
 		require.Error(t, err)
@@ -492,8 +505,10 @@ func TestExecutor_Run_StateProjection(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		stream := clawkerdv1mocks.NewFakeSessionStream(ctx)
 		doneFeeder := stream.FeedDone()
-		err := e.Run(ctx, stream, target, agent.InitPlan, "init")
-		stream.CloseSend()
+		err := e.Run(ctx, stream, target, agent.InitPlan(), "init")
+		if cerr := stream.CloseSend(); cerr != nil {
+			t.Errorf("close send: %v", cerr)
+		}
 		<-doneFeeder
 		cancel()
 		require.NoError(t, err)
@@ -520,11 +535,13 @@ func TestExecutor_Run_CloseStdinFollowsEveryShellStep(t *testing.T) {
 	defer cancel()
 
 	stream := clawkerdv1mocks.NewFakeSessionStream(ctx)
-	target := agent.ExecTarget{ContainerID: "c-cs-1234567890ab", AgentName: "dev", Project: "clawker"}
+	target := agent.ExecTarget{ContainerID: "c-cs-1234567890ab", AgentName: agentName, Project: projectClawker}
 
 	done := stream.FeedDone()
-	require.NoError(t, e.Run(ctx, stream, target, agent.BootPlan, "boot"))
-	stream.CloseSend()
+	require.NoError(t, e.Run(ctx, stream, target, agent.BootPlan(), "boot"))
+	if cerr := stream.CloseSend(); cerr != nil {
+		t.Errorf("close send: %v", cerr)
+	}
 	<-done
 	captured := stream.SentCommands()
 
@@ -568,8 +585,10 @@ func TestExecutor_Run_ParallelStreamsBothComplete(t *testing.T) {
 	run := func(containerID string) error {
 		stream := clawkerdv1mocks.NewFakeSessionStream(ctx)
 		feederDone := stream.FeedDone()
-		err := e.Run(ctx, stream, agent.ExecTarget{ContainerID: containerID, AgentName: "dev", Project: "clawker"}, agent.InitPlan, "init")
-		stream.CloseSend()
+		err := e.Run(ctx, stream, agent.ExecTarget{ContainerID: containerID, AgentName: agentName, Project: projectClawker}, agent.InitPlan(), "init")
+		if cerr := stream.CloseSend(); cerr != nil {
+			t.Errorf("close send: %v", cerr)
+		}
 		<-feederDone
 		return err
 	}
@@ -599,16 +618,18 @@ func TestExecutor_Run_PlanIdempotent(t *testing.T) {
 	store.Subscribe(topic)
 	e, err := agent.NewExecutor(topic, selfExitDocker(t), logger.Nop())
 	require.NoError(t, err)
-	target := agent.ExecTarget{ContainerID: "c-idem-1234567890ab", AgentName: "dev", Project: "clawker"}
+	target := agent.ExecTarget{ContainerID: "c-idem-1234567890ab", AgentName: agentName, Project: projectClawker}
 
 	for cycle := 0; cycle < 2; cycle++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		stream := clawkerdv1mocks.NewFakeSessionStream(ctx)
 		feederDone := stream.FeedDone()
 
-		require.NoError(t, e.Run(ctx, stream, target, agent.InitPlan, "init"),
+		require.NoError(t, e.Run(ctx, stream, target, agent.InitPlan(), "init"),
 			"cycle %d must succeed — Executor must be reusable across Sessions", cycle)
-		stream.CloseSend()
+		if cerr := stream.CloseSend(); cerr != nil {
+			t.Errorf("close send: %v", cerr)
+		}
 		<-feederDone
 		cancel()
 
@@ -633,7 +654,7 @@ func TestExecutor_Run_IgnoresUnknownAndMismatchedFrames(t *testing.T) {
 	defer cancel()
 
 	stream := clawkerdv1mocks.NewFakeSessionStream(ctx)
-	target := agent.ExecTarget{ContainerID: "c-noise-1234567890ab", AgentName: "dev", Project: "clawker"}
+	target := agent.ExecTarget{ContainerID: "c-noise-1234567890ab", AgentName: agentName, Project: projectClawker}
 
 	doneFeeder := stream.FeedSteps(func(_ int, cmd *clawkerdv1.Command) []*clawkerdv1.Response {
 		return []*clawkerdv1.Response{
@@ -649,8 +670,10 @@ func TestExecutor_Run_IgnoresUnknownAndMismatchedFrames(t *testing.T) {
 		}
 	})
 
-	err := e.Run(ctx, stream, target, agent.InitPlan, "init")
-	stream.CloseSend()
+	err := e.Run(ctx, stream, target, agent.InitPlan(), "init")
+	if cerr := stream.CloseSend(); cerr != nil {
+		t.Errorf("close send: %v", cerr)
+	}
 	<-doneFeeder
 	require.NoError(t, err,
 		"Run must tolerate noise frames (mismatched command_id, Started, Output) and succeed when the terminal Done lands")
@@ -667,7 +690,7 @@ func TestExecutor_Run_CapturesCombinedOutputInDetail(t *testing.T) {
 	defer cancel()
 
 	stream := clawkerdv1mocks.NewFakeSessionStream(ctx)
-	target := agent.ExecTarget{ContainerID: "c-out-1234567890ab", AgentName: "dev", Project: "clawker"}
+	target := agent.ExecTarget{ContainerID: "c-out-1234567890ab", AgentName: agentName, Project: projectClawker}
 
 	doneFeeder := stream.FeedSteps(func(idx int, cmd *clawkerdv1.Command) []*clawkerdv1.Response {
 		if idx == failAtIdx {
@@ -679,8 +702,10 @@ func TestExecutor_Run_CapturesCombinedOutputInDetail(t *testing.T) {
 		return []*clawkerdv1.Response{clawkerdv1mocks.DoneResp(cmd.GetCommandId(), 0)}
 	})
 
-	err := e.Run(ctx, stream, target, agent.InitPlan, "init")
-	stream.CloseSend()
+	err := e.Run(ctx, stream, target, agent.InitPlan(), "init")
+	if cerr := stream.CloseSend(); cerr != nil {
+		t.Errorf("close send: %v", cerr)
+	}
 	<-doneFeeder
 	require.Error(t, err)
 
@@ -698,7 +723,7 @@ func TestExecutor_Run_CapturesCombinedOutputInDetail(t *testing.T) {
 // print_output. clawker's own plumbing steps stay quiet on success.
 func TestInitPlan_ShellStepsCarryFlags(t *testing.T) {
 	var sawShellStep bool
-	for _, st := range agent.InitPlan {
+	for _, st := range agent.InitPlan() {
 		sh, ok := st.(agent.ShellStep)
 		if !ok {
 			continue // agent-initialized is not a ShellCommand
@@ -716,7 +741,7 @@ func TestInitPlan_ShellStepsCarryFlags(t *testing.T) {
 		assert.Equal(t, wantPrint, shell.GetPrintOutput(),
 			"print_output must be set only for the user hook (step %q)", sh.Name)
 	}
-	require.True(t, sawShellStep, "agent.InitPlan must contain shell steps")
+	require.True(t, sawShellStep, "agent.InitPlan() must contain shell steps")
 }
 
 // TestKillAfterGrace_SelfExit: a container that reports not-running within

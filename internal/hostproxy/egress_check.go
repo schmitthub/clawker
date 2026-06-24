@@ -56,13 +56,16 @@ const regexPathMarker = "~"
 // (marker stripped, redundant leading "^" trimmed to avoid "^^"). The single
 // definition is shared by pathRuleMatches (request time) and readEgressRules
 // (load-time validation) so the two can never drift on what "compiles".
-func compilePathRegex(rulePath string) (re *regexp.Regexp, isRegex bool, err error) {
+func compilePathRegex(rulePath string) (*regexp.Regexp, bool, error) {
 	rx, isRegex := strings.CutPrefix(rulePath, regexPathMarker)
 	if !isRegex {
 		return nil, false, nil
 	}
-	re, err = regexp.Compile("^(?:" + strings.TrimPrefix(rx, "^") + ")$")
-	return re, true, err
+	re, err := regexp.Compile("^(?:" + strings.TrimPrefix(rx, "^") + ")$")
+	if err != nil {
+		return nil, true, fmt.Errorf("compile path regex: %w", err)
+	}
+	return re, true, nil
 }
 
 func pathRuleMatches(rulePath, urlPath string) bool {
@@ -213,11 +216,11 @@ var errEgressRulesInvalid = errors.New("egress rules file invalid")
 // every /open/url while masking the cause. Only an empty path (firewall
 // genuinely disabled) is a legitimate skip; when enabled the file must exist
 // and be valid, exactly as Envoy will not boot without a valid config.
-func validateEgressRulesFile(path string) error {
-	if path == "" {
+func validateEgressRulesFile(filePath string) error {
+	if filePath == "" {
 		return nil
 	}
-	if _, err := readEgressRules(path); err != nil {
+	if _, err := readEgressRules(filePath); err != nil {
 		return err
 	}
 	return nil

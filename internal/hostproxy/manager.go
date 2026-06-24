@@ -1,6 +1,7 @@
 package hostproxy
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -23,6 +24,9 @@ import (
 // that don't spawn daemon subprocesses.
 //
 // Concrete implementation: Manager. Mock: hostproxytest.MockManager.
+// schemeHTTP is the URL scheme used for the host proxy's loopback HTTP endpoints.
+const schemeHTTP = "http"
+
 type Service interface {
 	// EnsureRunning ensures the host proxy is running. Spawns a daemon if needed.
 	EnsureRunning() error
@@ -121,9 +125,8 @@ func (m *Manager) Port() int {
 // This uses host.docker.internal which Docker automatically resolves to the host.
 func (m *Manager) ProxyURL() string {
 	host := net.JoinHostPort(consts.DockerHostInternal, strconv.Itoa(m.port))
-	scheme := "http"
 	u := url.URL{
-		Scheme: scheme,
+		Scheme: schemeHTTP,
 		Host:   host,
 	}
 	return u.String()
@@ -238,7 +241,12 @@ func (m *Manager) isPortInUse() bool {
 		Timeout: 500 * time.Millisecond,
 	}
 
-	resp, err := client.Get(fmt.Sprintf("http://"+consts.Localhost+":%d/health", m.port))
+	healthURL := fmt.Sprintf(schemeHTTP+"://"+consts.Localhost+":%d/health", m.port)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, healthURL, nil)
+	if err != nil {
+		return false
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return false
 	}
@@ -263,7 +271,12 @@ func (m *Manager) healthCheck() error {
 		Timeout: 2 * time.Second,
 	}
 
-	resp, err := client.Get(fmt.Sprintf("http://"+consts.Localhost+":%d/health", m.port))
+	healthURL := fmt.Sprintf(schemeHTTP+"://"+consts.Localhost+":%d/health", m.port)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, healthURL, nil)
+	if err != nil {
+		return fmt.Errorf("build health check request: %w", err)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}

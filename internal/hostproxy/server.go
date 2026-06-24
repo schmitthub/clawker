@@ -20,6 +20,11 @@ import (
 // maxRequestBodySize limits request body size to prevent DoS via memory exhaustion.
 const maxRequestBodySize = 1 << 20 // 1MB
 
+// errEgressRulesUnavailable is the client-facing error returned when the egress
+// rules file is present but corrupt/unreadable — an infrastructure fault that
+// fails closed rather than a per-request policy decision.
+const errEgressRulesUnavailable = "egress rules unavailable"
+
 // dynamicListener tracks a temporary HTTP listener for OAuth callbacks.
 type dynamicListener struct {
 	port      int
@@ -419,7 +424,7 @@ func (s *Server) handleOpenURL(w http.ResponseWriter, r *http.Request) {
 				s.writeJSON(w, http.StatusInternalServerError, openURLResponse{
 					Success: false,
 					URL:     req.URL,
-					Error:   "egress rules unavailable",
+					Error:   errEgressRulesUnavailable,
 				})
 				return
 			}

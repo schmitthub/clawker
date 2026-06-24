@@ -160,9 +160,11 @@ fi
 `
 )
 
-// gitconfigFilterScript is the rendered git-step body. Computed once
-// at package init; %q slot carries the workspace const.
-var gitconfigFilterScript = fmt.Sprintf(GitconfigFilterTemplate, consts.HostGitConfigStagingPath)
+// gitconfigFilterScript returns the rendered git-step body; the %q slot
+// carries the workspace const.
+func gitconfigFilterScript() string {
+	return fmt.Sprintf(GitconfigFilterTemplate, consts.HostGitConfigStagingPath)
+}
 
 // Step is one entry in an Executor plan (init or boot). Sealed sum:
 // ShellStep, AgentReadyStep, or AgentInitializedStep. Adding a new Step kind is a compile-time change
@@ -311,126 +313,23 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 	// etc.) — only ExecFailed is synthesized in that case.
 	currentIdx, currentName := -1, ""
 	defer func() {
-		r := recover()
-		if r == nil {
-			return
+		if r := recover(); r != nil {
+			runErr = e.handleRunPanic(r, target, label, log, startedAt, currentIdx, currentName)
 		}
-		// Return the recovered value as an error so dialer.runExec
-		// hits the existing error path (Session held open per
-		// asymmetric trust). Re-panicking would land in the dial
-		// goroutine's outer recover and strand the Exec axis at
-		// Running because that recover doesn't know step state.
-		now := time.Now()
-		dur := now.Sub(startedAt)
-		detail := fmt.Sprintf("Executor.Run panicked: %v", r)
-		log.Error().
-			Interface("panic", r).
-			Bytes("stack", debug.Stack()).
-			Str("event", fmt.Sprintf("agent_%s_panic", label)).
-			Int("step_index", currentIdx).
-			Str("step", currentName).
-			Msg(fmt.Sprintf("agent.%s: Executor.Run panicked; publishing synthetic terminal events; Session held open for containment", label))
-		if currentIdx >= 0 {
-			Publish(e.topic, newAgentEvent(target.agent(), Message{
-				Type:      ExecutorEventType,
-				Action:    ActionExecStepFailed,
-				StepName:  currentName,
-				StepIndex: currentIdx,
-				Duration:  dur,
-				ExitCode:  -1,
-				Reason:    ReasonUnknown,
-				Detail:    detail,
-			}))
-		}
-		Publish(e.topic, newAgentEvent(target.agent(), Message{
-			Type:     ExecutorEventType,
-			Action:   ActionExecFailed,
-			StepName: currentName,
-			Reason:   ReasonUnknown,
-			Detail:   detail,
-			Duration: dur,
-		}))
-		runErr = errors.New(detail)
 	}()
 
 	for i, st := range plan {
 		currentIdx = i
 		currentName = st.StepName()
 		stepStart := time.Now()
-		Publish(e.topic, newAgentEvent(target.agent(), Message{
-			Type:      ExecutorEventType,
-			Action:    ActionExecStepStarted,
-			StepName:  st.StepName(),
-			StepIndex: i,
-			StepCount: len(plan),
-		}))
-		log.Info().
-			Str("event", fmt.Sprintf("agent_%s_step_started", label)).
-			Str("step", st.StepName()).
-			Int("step_index", i).
-			Msg(fmt.Sprintf("agent.%s: step started", label))
+		e.announceStepStarted(target, label, log, i, len(plan), st)
 
 		out, err := e.runStep(ctx, stream, target.ContainerID, label, i, st, log)
 		dur := time.Since(stepStart)
 		if out.Failed() {
-			Publish(e.topic, newAgentEvent(target.agent(), Message{
-				Type:      ExecutorEventType,
-				Action:    ActionExecStepFailed,
-				StepName:  st.StepName(),
-				StepIndex: i,
-				Duration:  dur,
-				ExitCode:  out.ExitCode,
-				Reason:    out.Reason,
-				Detail:    out.Detail,
-			}))
-			Publish(e.topic, newAgentEvent(target.agent(), Message{
-				Type:     ExecutorEventType,
-				Action:   ActionExecFailed,
-				StepName: st.StepName(),
-				Reason:   out.Reason,
-				Detail:   out.Detail,
-				Duration: time.Since(startedAt),
-			}))
-			log.Error().
-				Str("event", fmt.Sprintf("agent_%s_failed", label)).
-				Str("step", st.StepName()).
-				Int("step_index", i).
-				Int32("exit_code", out.ExitCode).
-				Str("reason", string(out.Reason)).
-				Str("detail", out.Detail).
-				Msg(fmt.Sprintf("agent.%s: plan halted on step failure", label))
-			if err != nil {
-				// Transport-level failure (the stream broke): the Session
-				// is already gone and the dial loop's teardown handles the
-				// container. Don't race a kill here — a transient blip
-				// re-establishes and re-runs the plan (idempotency
-				// contract).
-				return err
-			}
-			// Command-level failure (non-zero exit / classified Error).
-			// The command definitively failed; enforce container teardown
-			// with the grace-then-SIGKILL backstop. Steps carry
-			// exit_on_non_zero so a healthy clawkerd self-exits within the
-			// grace; the SIGKILL only catches a wedged one.
-			if err := e.KillAfterGrace(ctx, target.ContainerID, log); err != nil {
-				return fmt.Errorf("agent.%s: step %q failed: %s; additionally, failed to kill container: %w", label, st.StepName(), out.Detail, err)
-			}
-			return fmt.Errorf("agent.%s: step %q failed: %s", label, st.StepName(), out.Detail)
+			return e.reportStepFailure(ctx, target, label, log, startedAt, dur, i, st, out, err)
 		}
-		Publish(e.topic, newAgentEvent(target.agent(), Message{
-			Type:      ExecutorEventType,
-			Action:    ActionExecStepCompleted,
-			StepName:  st.StepName(),
-			StepIndex: i,
-			Duration:  dur,
-			ExitCode:  out.ExitCode,
-		}))
-		log.Info().
-			Str("event", fmt.Sprintf("agent_%s_step_completed", label)).
-			Str("step", st.StepName()).
-			Int("step_index", i).
-			Dur("duration", dur).
-			Msg(fmt.Sprintf("agent.%s: step completed", label))
+		e.announceStepCompleted(target, label, log, i, dur, st, out)
 		// Reset between steps: a panic here (between iterations,
 		// e.g. during defer scheduling) must not be mis-attributed
 		// to the just-completed step. The recover gates synthetic
@@ -450,6 +349,136 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 		Dur("duration", totalDur).
 		Msg(fmt.Sprintf("agent.%s: plan completed", label))
 	return nil
+}
+
+// announceStepStarted publishes the ExecStepStarted event and logs the start
+// of step i.
+func (e *Executor) announceStepStarted(target ExecTarget, label string, log *logger.Logger, i, stepCount int, st Step) {
+	Publish(e.topic, newAgentEvent(target.agent(), Message{
+		Type:      ExecutorEventType,
+		Action:    ActionExecStepStarted,
+		StepName:  st.StepName(),
+		StepIndex: i,
+		StepCount: stepCount,
+	}))
+	log.Info().
+		Str("event", fmt.Sprintf("agent_%s_step_started", label)).
+		Str("step", st.StepName()).
+		Int("step_index", i).
+		Msg(fmt.Sprintf("agent.%s: step started", label))
+}
+
+// announceStepCompleted publishes the ExecStepCompleted event and logs the
+// successful completion of step i.
+func (e *Executor) announceStepCompleted(target ExecTarget, label string, log *logger.Logger, i int, dur time.Duration, st Step, out stepOutcome) {
+	Publish(e.topic, newAgentEvent(target.agent(), Message{
+		Type:      ExecutorEventType,
+		Action:    ActionExecStepCompleted,
+		StepName:  st.StepName(),
+		StepIndex: i,
+		Duration:  dur,
+		ExitCode:  out.ExitCode,
+	}))
+	log.Info().
+		Str("event", fmt.Sprintf("agent_%s_step_completed", label)).
+		Str("step", st.StepName()).
+		Int("step_index", i).
+		Dur("duration", dur).
+		Msg(fmt.Sprintf("agent.%s: step completed", label))
+}
+
+// recoverRun is Run's deferred panic handler. On a recovered panic it
+// synthesizes the terminal ExecStepFailed (when a step was in flight) +
+// ExecFailed events and converts the panic into runErr so dialer.runExec hits
+// the existing error path (the Session is held open per asymmetric trust).
+// Re-panicking would land in the dial goroutine's outer recover and strand
+// the Exec axis at Running because that recover doesn't know step state. The
+// returned error is what Run's deferred recover assigns to its named return so
+// dialer.runExec hits the existing error path (the Session is held open per
+// asymmetric trust).
+func (e *Executor) handleRunPanic(r any, target ExecTarget, label string, log *logger.Logger, startedAt time.Time, currentIdx int, currentName string) error {
+	now := time.Now()
+	dur := now.Sub(startedAt)
+	detail := fmt.Sprintf("Executor.Run panicked: %v", r)
+	log.Error().
+		Interface("panic", r).
+		Bytes("stack", debug.Stack()).
+		Str("event", fmt.Sprintf("agent_%s_panic", label)).
+		Int("step_index", currentIdx).
+		Str("step", currentName).
+		Msg(fmt.Sprintf("agent.%s: Executor.Run panicked; publishing synthetic terminal events; Session held open for containment", label))
+	if currentIdx >= 0 {
+		Publish(e.topic, newAgentEvent(target.agent(), Message{
+			Type:      ExecutorEventType,
+			Action:    ActionExecStepFailed,
+			StepName:  currentName,
+			StepIndex: currentIdx,
+			Duration:  dur,
+			ExitCode:  -1,
+			Reason:    ReasonUnknown,
+			Detail:    detail,
+		}))
+	}
+	Publish(e.topic, newAgentEvent(target.agent(), Message{
+		Type:     ExecutorEventType,
+		Action:   ActionExecFailed,
+		StepName: currentName,
+		Reason:   ReasonUnknown,
+		Detail:   detail,
+		Duration: dur,
+	}))
+	return errors.New(detail)
+}
+
+// reportStepFailure publishes the terminal ExecStepFailed + ExecFailed events
+// for a failed step, logs the halt, and returns the error Run bubbles up. On a
+// transport break (err != nil) the Session is already gone and the dial loop's
+// teardown handles the container, so no kill is raced here. On a command-level
+// failure it enforces container teardown via KillAfterGrace before returning.
+func (e *Executor) reportStepFailure(ctx context.Context, target ExecTarget, label string, log *logger.Logger, startedAt time.Time, dur time.Duration, i int, st Step, out stepOutcome, err error) error {
+	Publish(e.topic, newAgentEvent(target.agent(), Message{
+		Type:      ExecutorEventType,
+		Action:    ActionExecStepFailed,
+		StepName:  st.StepName(),
+		StepIndex: i,
+		Duration:  dur,
+		ExitCode:  out.ExitCode,
+		Reason:    out.Reason,
+		Detail:    out.Detail,
+	}))
+	Publish(e.topic, newAgentEvent(target.agent(), Message{
+		Type:     ExecutorEventType,
+		Action:   ActionExecFailed,
+		StepName: st.StepName(),
+		Reason:   out.Reason,
+		Detail:   out.Detail,
+		Duration: time.Since(startedAt),
+	}))
+	log.Error().
+		Str("event", fmt.Sprintf("agent_%s_failed", label)).
+		Str("step", st.StepName()).
+		Int("step_index", i).
+		Int32("exit_code", out.ExitCode).
+		Str("reason", string(out.Reason)).
+		Str("detail", out.Detail).
+		Msg(fmt.Sprintf("agent.%s: plan halted on step failure", label))
+	if err != nil {
+		// Transport-level failure (the stream broke): the Session
+		// is already gone and the dial loop's teardown handles the
+		// container. Don't race a kill here — a transient blip
+		// re-establishes and re-runs the plan (idempotency
+		// contract).
+		return err
+	}
+	// Command-level failure (non-zero exit / classified Error).
+	// The command definitively failed; enforce container teardown
+	// with the grace-then-SIGKILL backstop. Steps carry
+	// exit_on_non_zero so a healthy clawkerd self-exits within the
+	// grace; the SIGKILL only catches a wedged one.
+	if killErr := e.KillAfterGrace(ctx, target.ContainerID, log); killErr != nil {
+		return fmt.Errorf("agent.%s: step %q failed: %s; additionally, failed to kill container: %w", label, st.StepName(), out.Detail, killErr)
+	}
+	return fmt.Errorf("agent.%s: step %q failed: %s", label, st.StepName(), out.Detail)
 }
 
 // maxOutputCapture caps how much of a command's combined output Run
@@ -527,24 +556,6 @@ func stepFailedClassified(reason Reason, detail string) stepOutcome {
 	}
 }
 
-// runStep dispatches one Step's wire payload and waits for its Done
-// or Error. Returns:
-//   - outcome: zero value on success, populated with Reason/Detail/
-//     ExitCode on Step failure or transport break. Run consumes this
-//     to publish the terminal ExecStepFailed + ExecFailed events.
-//   - transport error: non-nil iff the stream is broken; the caller
-//     should bail Run after publishing terminal events. A non-nil
-//     err always pairs with outcome.Failed() == true (Reason ==
-//     ExecFailureReasonTransportError) so Run branches on a single
-//     check.
-//
-// Bounding wait time: clawkerd enforces the per-stage timeout server-
-// side (ShellCommand.TimeoutSeconds → time.AfterFunc → SIGKILL +
-// ERROR_CODE_TIMEOUT response). gRPC keepalive (consts.Clawkerd*)
-// breaks a wedged transport. CP-side wall-clock deadlines are
-// deliberately omitted — a duplicate budget here would race the
-// server-side timer and risk misclassifying a server-detected timeout
-// as a client-side break.
 // KillAfterGrace ensures the agent container is torn down after a fatal
 // command. A command carrying exit_on_non_zero makes a healthy clawkerd
 // echo the output and self-exit PID 1 with the mirrored code, so CP waits
@@ -592,9 +603,36 @@ func (e *Executor) KillAfterGrace(ctx context.Context, containerID string, log *
 	return nil
 }
 
+// runStep dispatches one Step's wire payload and waits for its Done
+// or Error. Returns:
+//   - outcome: zero value on success, populated with Reason/Detail/
+//     ExitCode on Step failure or transport break. Run consumes this
+//     to publish the terminal ExecStepFailed + ExecFailed events.
+//   - transport error: non-nil iff the stream is broken; the caller
+//     should bail Run after publishing terminal events. A non-nil
+//     err always pairs with outcome.Failed() == true (Reason ==
+//     ExecFailureReasonTransportError) so Run branches on a single
+//     check.
+//
+// Bounding wait time: clawkerd enforces the per-stage timeout server-
+// side (ShellCommand.TimeoutSeconds → time.AfterFunc → SIGKILL +
+// ERROR_CODE_TIMEOUT response). gRPC keepalive (consts.Clawkerd*)
+// breaks a wedged transport. CP-side wall-clock deadlines are
+// deliberately omitted — a duplicate budget here would race the
+// server-side timer and risk misclassifying a server-detected timeout
+// as a client-side break.
 func (e *Executor) runStep(ctx context.Context, stream clawkerdv1.ClawkerdService_SessionClient, containerID, label string, idx int, st Step, log *logger.Logger) (stepOutcome, error) {
 	commandID := buildCommandID(label, containerID, st.StepName(), idx)
+	if outcome, err := sendStepCommand(stream, commandID, st); err != nil {
+		return outcome, err
+	}
+	return awaitStepResult(ctx, stream, commandID, st, label, log)
+}
 
+// sendStepCommand dispatches a Step's wire payload and (when the Step requests
+// it) the trailing CloseStdin frame. On a send error it returns a transport
+// outcome paired with the wrapped error; otherwise the zero outcome and nil.
+func sendStepCommand(stream clawkerdv1.ClawkerdService_SessionClient, commandID string, st Step) (stepOutcome, error) {
 	cmd, followCloseStdin := st.Command(commandID)
 	if err := stream.Send(cmd); err != nil {
 		wrapped := fmt.Errorf("send %s: %w", st.StepName(), err)
@@ -617,7 +655,14 @@ func (e *Executor) runStep(ctx context.Context, stream clawkerdv1.ClawkerdServic
 			return stepFailedTransport(wrapped.Error()), wrapped
 		}
 	}
+	return stepOutcome{}, nil
+}
 
+// awaitStepResult reads the Session stream until the terminal Done/Error frame
+// for commandID, folding in output frames and discarding frames addressed to
+// other commands. It returns the step outcome and a non-nil transport error
+// only when the stream breaks (ctx cancel, EOF, recv error).
+func awaitStepResult(ctx context.Context, stream clawkerdv1.ClawkerdService_SessionClient, commandID string, st Step, label string, log *logger.Logger) (stepOutcome, error) {
 	var outputBuf strings.Builder
 	outputTruncated := 0
 
@@ -639,54 +684,67 @@ func (e *Executor) runStep(ctx context.Context, stream clawkerdv1.ClawkerdServic
 				Str("event", fmt.Sprintf("agent_%s_unexpected_command_id", label)).
 				Str("got", resp.GetCommandId()).
 				Str("expected", commandID).
-				Str("payload_type", fmt.Sprintf("%T", resp.Payload)).
+				Str("payload_type", fmt.Sprintf("%T", resp.GetPayload())).
 				Msg(fmt.Sprintf("agent.%s: ignoring response with non-matching command_id", label))
 			continue
 		}
-		switch p := resp.Payload.(type) {
-		case *clawkerdv1.Response_Started, *clawkerdv1.Response_StageExit:
-			// Lifecycle frames — not part of the failure detail; await
-			// the terminal Done/Error.
-			continue
-		case *clawkerdv1.Response_Output:
-			// The command's combined output (the final stage's stdout and
-			// every stage's stderr, merged in write order). Capture it
-			// (capped) for the failure detail; the full stream reaches the
-			// caller regardless of this cap.
-			if p.Output != nil {
-				captureCapped(&outputBuf, &outputTruncated, p.Output.GetData())
-			}
-		case *clawkerdv1.Response_Done:
-			exit := p.Done.GetFinalExitCode()
-			if exit == 0 {
-				return stepSucceeded(), nil
-			}
-			detail := fmt.Sprintf("exit_code=%d", exit)
-			if s := strings.TrimSpace(outputBuf.String()); s != "" {
-				detail += "; output: " + s
-				if outputTruncated > 0 {
-					detail += fmt.Sprintf(" ... [%d bytes truncated]", outputTruncated)
-				}
-			}
-			return stepFailedExit(exit, detail), nil
-		case *clawkerdv1.Response_Error:
-			return stepFailedClassified(
-				classifyErrorCode(p.Error.GetCode()),
-				fmt.Sprintf("%s: %s", p.Error.GetCode().String(), p.Error.GetMessage()),
-			), nil
-		default:
-			// Warn-level: an unknown payload variant means the
-			// clawkerd-CP wire vocabulary has drifted. Production
-			// Debug logs are typically off — operators would otherwise
-			// see only the eventual server-side timeout with no hint
-			// that a new payload variant slipped past the switch.
-			log.Warn().
-				Str("event", fmt.Sprintf("agent_%s_unknown_payload", label)).
-				Str("command_id", resp.GetCommandId()).
-				Str("step", st.StepName()).
-				Str("payload_type", fmt.Sprintf("%T", resp.Payload)).
-				Msg(fmt.Sprintf("agent.%s: ignoring unknown response payload — wire vocabulary drift", label))
+		if outcome, terminal := classifyStepResponse(resp, st, label, &outputBuf, &outputTruncated, log); terminal {
+			return outcome, nil
 		}
+	}
+}
+
+// classifyStepResponse folds one matched-command_id response frame into the
+// step outcome. terminal is true iff resp is a Done/Error frame that ends the
+// step (outcome carries the result); false for lifecycle/output frames that
+// runStep keeps looping on. Output frames append to outputBuf (capped) so the
+// failure detail can carry the tail of combined output.
+func classifyStepResponse(resp *clawkerdv1.Response, st Step, label string, outputBuf *strings.Builder, outputTruncated *int, log *logger.Logger) (stepOutcome, bool) {
+	switch p := resp.GetPayload().(type) {
+	case *clawkerdv1.Response_Started, *clawkerdv1.Response_StageExit:
+		// Lifecycle frames — not part of the failure detail; await
+		// the terminal Done/Error.
+		return stepOutcome{}, false
+	case *clawkerdv1.Response_Output:
+		// The command's combined output (the final stage's stdout and
+		// every stage's stderr, merged in write order). Capture it
+		// (capped) for the failure detail; the full stream reaches the
+		// caller regardless of this cap.
+		if p.Output != nil {
+			captureCapped(outputBuf, outputTruncated, p.Output.GetData())
+		}
+		return stepOutcome{}, false
+	case *clawkerdv1.Response_Done:
+		exit := p.Done.GetFinalExitCode()
+		if exit == 0 {
+			return stepSucceeded(), true
+		}
+		detail := fmt.Sprintf("exit_code=%d", exit)
+		if s := strings.TrimSpace(outputBuf.String()); s != "" {
+			detail += "; output: " + s
+			if *outputTruncated > 0 {
+				detail += fmt.Sprintf(" ... [%d bytes truncated]", *outputTruncated)
+			}
+		}
+		return stepFailedExit(exit, detail), true
+	case *clawkerdv1.Response_Error:
+		return stepFailedClassified(
+			classifyErrorCode(p.Error.GetCode()),
+			fmt.Sprintf("%s: %s", p.Error.GetCode().String(), p.Error.GetMessage()),
+		), true
+	default:
+		// Warn-level: an unknown payload variant means the
+		// clawkerd-CP wire vocabulary has drifted. Production
+		// Debug logs are typically off — operators would otherwise
+		// see only the eventual server-side timeout with no hint
+		// that a new payload variant slipped past the switch.
+		log.Warn().
+			Str("event", fmt.Sprintf("agent_%s_unknown_payload", label)).
+			Str("command_id", resp.GetCommandId()).
+			Str("step", st.StepName()).
+			Str("payload_type", fmt.Sprintf("%T", resp.GetPayload())).
+			Msg(fmt.Sprintf("agent.%s: ignoring unknown response payload — wire vocabulary drift", label))
+		return stepOutcome{}, false
 	}
 }
 

@@ -54,8 +54,9 @@ func resolvedCtx(t *testing.T, leaf *x509.Certificate, resolved agent.ResolvedCo
 }
 
 // resolvedFor is a convenience constructor for the typical resolved
-// container test inputs (project/agent/container_id).
-func resolvedFor(t *testing.T, project, agentName, containerID string) agent.ResolvedContainer {
+// container test inputs (project/container_id). The agent name is always the
+// canonical test agentName.
+func resolvedFor(t *testing.T, project, containerID string) agent.ResolvedContainer {
 	t.Helper()
 	proj, err := auth.NewProjectSlug(project)
 	require.NoError(t, err)
@@ -155,7 +156,7 @@ func TestRegister_HappyPath(t *testing.T) {
 	}
 	h := newTestHandler(reg)
 
-	ctx := resolvedCtx(t, leaf, resolvedFor(t, project, agentName, containerID))
+	ctx := resolvedCtx(t, leaf, resolvedFor(t, project, containerID))
 	resp, err := h.Register(ctx, &agentv1.RegisterRequest{AgentName: agentName, Project: project})
 	require.NoError(t, err)
 	require.NotNil(t, resp)
@@ -199,7 +200,7 @@ func TestRegister_RequestValidation(t *testing.T) {
 // interceptor must have produced the resolved container from a cert,
 // so reaching this branch means ctx was stripped post-resolve).
 func TestRegister_CtxGates(t *testing.T) {
-	resolved := resolvedFor(t, "p", "dev", "ctr-id")
+	resolved := resolvedFor(t, "p", "ctr-id")
 	cases := []struct {
 		name     string
 		ctx      context.Context
@@ -284,7 +285,7 @@ func TestRegister_IdentityCrossChecks(t *testing.T) {
 			}
 			h := newTestHandler(reg)
 
-			ctx := resolvedCtx(t, leaf, resolvedFor(t, goodProject, goodAgent, tc.resolvedContainer))
+			ctx := resolvedCtx(t, leaf, resolvedFor(t, goodProject, tc.resolvedContainer))
 			_, err := h.Register(ctx, &agentv1.RegisterRequest{AgentName: tc.reqAgent, Project: tc.reqProject})
 			require.Error(t, err)
 			st, _ := status.FromError(err)
@@ -366,7 +367,7 @@ func TestRegister_RegistryBranches(t *testing.T) {
 			}
 			h := newTestHandler(reg)
 
-			ctx := resolvedCtx(t, leaf, resolvedFor(t, project, agentName, containerID))
+			ctx := resolvedCtx(t, leaf, resolvedFor(t, project, containerID))
 			resp, err := h.Register(ctx, &agentv1.RegisterRequest{AgentName: agentName, Project: project})
 
 			if tc.wantCode == codes.OK {
@@ -419,7 +420,7 @@ func TestRegister_MalformedRowEvictThenRewrite(t *testing.T) {
 	}
 	h := newTestHandler(reg)
 
-	ctx := resolvedCtx(t, leaf, resolvedFor(t, project, agentName, containerID))
+	ctx := resolvedCtx(t, leaf, resolvedFor(t, project, containerID))
 	resp, err := h.Register(ctx, &agentv1.RegisterRequest{AgentName: agentName, Project: project})
 	require.NoError(t, err)
 	require.NotNil(t, resp)
@@ -448,7 +449,7 @@ func TestRegister_MalformedRowEvictFailure(t *testing.T) {
 	}
 	h := newTestHandler(reg)
 
-	ctx := resolvedCtx(t, leaf, resolvedFor(t, project, agentName, containerID))
+	ctx := resolvedCtx(t, leaf, resolvedFor(t, project, containerID))
 	_, err := h.Register(ctx, &agentv1.RegisterRequest{AgentName: agentName, Project: project})
 	require.Error(t, err)
 	st, _ := status.FromError(err)

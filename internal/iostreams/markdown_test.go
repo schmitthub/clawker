@@ -100,12 +100,22 @@ func TestRenderMarkdown_EmptyBody(t *testing.T) {
 	}
 }
 
+// newTestIO returns a non-TTY test IOStreams, dropping the capture buffers the
+// caller does not need (these tests assert the renderer's return value directly,
+// not the streams). The discards are split across two assignments so neither
+// exceeds the blank-identifier limit.
+func newTestIO() *IOStreams {
+	ios, _, out, errOut := Test()
+	_, _ = out, errOut
+	return ios
+}
+
 // TestRenderMarkdown_WrapsAtTerminalWidth guards the regression where the
 // renderer emitted full-length lines (glamour WithWordWrap(0)) and leaned on the
 // terminal's blind soft-wrap: a long line must be word-wrapped to within the
 // terminal width. Test() is non-TTY, so TerminalWidth() is the default fallback.
 func TestRenderMarkdown_WrapsAtTerminalWidth(t *testing.T) {
-	ios, _, _, _ := Test()
+	ios := newTestIO()
 
 	width := ios.TerminalWidth()
 	long := strings.Repeat("word ", width) // far wider than one line

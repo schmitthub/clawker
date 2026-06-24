@@ -13,10 +13,14 @@ import (
 )
 
 // mockContainerLister implements ContainerLister for testing.
+// testNonexistentRulesFile is a rules-file path guaranteed not to exist, used to
+// drive fail-closed / unreadable-rules code paths in tests.
+const testNonexistentRulesFile = "/nonexistent/egress-rules.yaml"
+
 type mockContainerLister struct {
-	err            error
-	callCount      atomic.Int32
-	closeCalled    atomic.Bool
+	err         error
+	callCount   atomic.Int32
+	closeCalled atomic.Bool
 }
 
 func (m *mockContainerLister) ContainerList(ctx context.Context, options client.ContainerListOptions) (client.ContainerListResult, error) {
@@ -317,7 +321,7 @@ func TestEnsureEgressRulesReady_StopsAtStage1(t *testing.T) {
 func TestEnsureEgressRulesReady_StopsAtStage2(t *testing.T) {
 	d := &Daemon{
 		log:                    logger.Nop(),
-		server:                 &Server{rulesFilePath: "/nonexistent/egress-rules.yaml"},
+		server:                 &Server{rulesFilePath: testNonexistentRulesFile},
 		firewallRunningProbe:   alwaysReady(true),
 		envoyHealthProbe:       alwaysReady(false),
 		firewallRunningTimeout: 20 * time.Millisecond,
@@ -341,7 +345,7 @@ func TestEnsureEgressRulesReady_StopsAtStage2(t *testing.T) {
 func TestEnsureEgressRulesReady_RulesNeverReady_Errors(t *testing.T) {
 	d := &Daemon{
 		log:                    logger.Nop(),
-		server:                 &Server{rulesFilePath: "/nonexistent/egress-rules.yaml"},
+		server:                 &Server{rulesFilePath: testNonexistentRulesFile},
 		firewallRunningProbe:   alwaysReady(true),
 		envoyHealthProbe:       alwaysReady(true),
 		firewallRunningTimeout: 20 * time.Millisecond,
@@ -365,7 +369,7 @@ func TestEnsureEgressRulesReady_ContextCancel(t *testing.T) {
 	cancel()
 	d := &Daemon{
 		log:                    logger.Nop(),
-		server:                 &Server{rulesFilePath: "/nonexistent/egress-rules.yaml"},
+		server:                 &Server{rulesFilePath: testNonexistentRulesFile},
 		firewallRunningProbe:   alwaysReady(false),
 		firewallRunningTimeout: time.Hour,
 		readyInterval:          time.Hour,

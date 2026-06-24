@@ -19,7 +19,11 @@ func NewAgentTopic(t *testing.T) *pubsub.Topic[agent.AgentEvent] {
 	t.Helper()
 	topic, err := pubsub.NewTopic[agent.AgentEvent](logger.Nop())
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = topic.Close() })
+	t.Cleanup(func() {
+		if err := topic.Close(); err != nil {
+			t.Errorf("topic close: %v", err)
+		}
+	})
 	return topic
 }
 
@@ -29,7 +33,11 @@ func NewDockerTopic(t *testing.T) *pubsub.Topic[dockerevents.DockerEvent] {
 	t.Helper()
 	topic, err := pubsub.NewTopic[dockerevents.DockerEvent](logger.Nop())
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = topic.Close() })
+	t.Cleanup(func() {
+		if err := topic.Close(); err != nil {
+			t.Errorf("topic close: %v", err)
+		}
+	})
 	return topic
 }
 

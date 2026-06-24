@@ -419,14 +419,14 @@ func (d *Dialer) runDial(cpCtx context.Context, dialCtx context.Context, contain
 
 		// Init ran only on first start
 		if ok, err := shouldAgentInit(res); ok {
-			d.runPlan(cpCtx, containerID, res, cycleLog, InitPlan, "init")
+			d.runPlan(cpCtx, containerID, res, cycleLog, InitPlan(), "init")
 		} else if err != nil {
 			cycleLog.Error().Err(err).Msg("agentdial: failed to determine if agent should init")
 		}
 
 		// Boot ran every time
 		if ok, err := shouldAgentBoot(res); ok {
-			d.runPlan(cpCtx, containerID, res, cycleLog, BootPlan, "boot")
+			d.runPlan(cpCtx, containerID, res, cycleLog, BootPlan(), "boot")
 		} else if err != nil {
 			cycleLog.Error().Err(err).Msg("agentdial: failed to determine if agent should boot")
 		}
@@ -600,7 +600,7 @@ type EstablishResult struct {
 }
 
 // PeerInfo is the connection-time identity capture from the TLS
-// handshake. Registry-outcome state lives in the local registryOutcome
+// handshake. Registry-outcome state lives in the local RegistryOutcome
 // enum, not on this struct, since the dial flow drives event
 // publication directly off the outcome rather than threading a
 // unified payload.
@@ -621,16 +621,16 @@ type PeerInfo struct {
 	CaptureReason string
 }
 
-// registryOutcome classifies the result of cross-checking the peer
+// RegistryOutcome classifies the result of cross-checking the peer
 // cert against the agentregistry row keyed by container_id. Internal
 // to the dialer — drives event publication; not exposed on any
 // public event type.
-type registryOutcome int
+type RegistryOutcome int
 
 const (
 	// OutcomeRegistryNotQueried is the zero value. Set when the
 	// registry could not be queried at all (lookup error).
-	OutcomeRegistryNotQueried registryOutcome = iota
+	OutcomeRegistryNotQueried RegistryOutcome = iota
 	// OutcomeRegistryMatch — row exists and thumbprint agrees with
 	// the peer cert. Trusted, registered.
 	OutcomeRegistryMatch
@@ -658,6 +658,47 @@ const (
 // outcomeContainerGone, which the caller maps to a terminal
 // "container_not_running" failure rather than burning the retry
 // budget.
+// handleResolveError classifies a resolveAgent failure for one attempt of
+// establishWithRetry. retry is true iff the caller should `continue` the retry
+// loop (transient inspect error within the deadline, after backing off);
+// otherwise the returned EstablishResult is terminal. Two flavors of inspect
+// failure:
+//   - container truly gone (errdefs.IsNotFound) or stopped (ErrContainerStopped
+//     sentinel) — terminal, nothing to retry against.
+//   - generic inspect error (daemon transient, perms, network blip) — keep
+//     trying within the per-cycle retry budget; eventual deadline expiry
+//     surfaces as outcomeRetryExhausted with a transport-specific Reason rather
+//     than misclassifying as "container gone".
+func (d *Dialer) handleResolveError(ctx context.Context, err error, attempt int, deadline time.Time, backoff *time.Duration, log *logger.Logger) (EstablishResult, bool) {
+	if cerrdefs.IsNotFound(err) || errors.Is(err, ErrContainerStopped) {
+		log.With("agent", "<unknown>", "project", "<unknown>").Info().Err(err).
+			Int("attempt", attempt).
+			Str("event", "agentdial_attempt_resolve_failed").
+			Msg("container truly gone or stopped; exiting retry loop")
+		return EstablishResult{Attempt: attempt, Outcome: outcomeContainerGone}, false
+	}
+	if time.Now().After(deadline) {
+		log.With("agent", "<unknown>", "project", "<unknown>").Error().Err(err).
+			Int("attempt", attempt).
+			Str("event", "agentdial_inspect_timeout").
+			Msg("gave up on inspect after total timeout")
+		return EstablishResult{Attempt: attempt, Outcome: outcomeRetryExhausted}, false
+	}
+	sleep := backoffSleep(*backoff)
+	log.With("agent", "<unknown>", "project", "<unknown>").Warn().Err(err).
+		Int("attempt", attempt).
+		Dur("retry_in", sleep).
+		Str("event", "agentdial_inspect_retry").
+		Msg("inspect failed transiently; will retry with backoff")
+	select {
+	case <-ctx.Done():
+		return EstablishResult{Attempt: attempt, Outcome: outcomeCtxDone}, false
+	case <-time.After(sleep):
+	}
+	*backoff = nextBackoff(*backoff)
+	return EstablishResult{}, true
+}
+
 func (d *Dialer) establishWithRetry(ctx context.Context, containerID string, log *logger.Logger) EstablishResult {
 	deadline := time.Now().Add(connectTotalTimeout)
 	backoff := connectInitialBackoff
@@ -667,124 +708,110 @@ func (d *Dialer) establishWithRetry(ctx context.Context, containerID string, log
 		if ctx.Err() != nil {
 			return EstablishResult{Attempt: attempt, Outcome: outcomeCtxDone}
 		}
-
-		// Inspect at the start of every attempt — never a stale
-		// snapshot from earlier in the cycle.
-		inspect, err := d.resolveAgent(ctx, containerID)
-		if err != nil {
-			// Two flavors of inspect failure:
-			//   (a) container truly gone (errdefs.IsNotFound) or stopped
-			//       (errContainerStopped sentinel) — terminal, nothing to
-			//       retry against.
-			//   (b) generic inspect error (daemon transient, perms,
-			//       network blip) — keep trying within the per-cycle
-			//       retry budget; eventual deadline expiry surfaces as
-			//       outcomeRetryExhausted with a transport-specific
-			//       Reason rather than misclassifying as "container
-			//       gone".
-			if cerrdefs.IsNotFound(err) || errors.Is(err, ErrContainerStopped) {
-				log.With("agent", "<unknown>", "project", "<unknown>").Info().Err(err).
-					Int("attempt", attempt).
-					Str("event", "agentdial_attempt_resolve_failed").
-					Msg("container truly gone or stopped; exiting retry loop")
-				return EstablishResult{Attempt: attempt, Outcome: outcomeContainerGone}
-			}
-			if time.Now().After(deadline) {
-				log.With("agent", "<unknown>", "project", "<unknown>").Error().Err(err).
-					Int("attempt", attempt).
-					Str("event", "agentdial_inspect_timeout").
-					Msg("gave up on inspect after total timeout")
-				return EstablishResult{Attempt: attempt, Outcome: outcomeRetryExhausted}
-			}
-			sleep := backoffSleep(backoff)
-			log.With("agent", "<unknown>", "project", "<unknown>").Warn().Err(err).
-				Int("attempt", attempt).
-				Dur("retry_in", sleep).
-				Str("event", "agentdial_inspect_retry").
-				Msg("inspect failed transiently; will retry with backoff")
-			select {
-			case <-ctx.Done():
-				return EstablishResult{Attempt: attempt, Outcome: outcomeCtxDone}
-			case <-time.After(sleep):
-			}
-			backoff = nextBackoff(backoff)
+		res, retry := d.attemptEstablish(ctx, containerID, attempt, deadline, &backoff, &publishedConnecting, log)
+		if retry {
 			continue
 		}
-		agent, project := agentLabels(inspect)
-		addr, err := clawkerNetAddr(inspect)
-		if err != nil {
-			log.With("agent", agent, "project", project).Error().Err(err).
-				Int("attempt", attempt).
-				Str("event", "agentdial_attempt_addr_extract_failed").
-				Msg(consts.Network + " address extraction failed; aborting cycle")
-			return EstablishResult{Agent: agent, Project: project, Attempt: attempt, Outcome: outcomeAddrInvalid}
-		}
+		return res
+	}
+}
 
-		// Every log line from here forward carries agent + project +
-		// addr so an operator reading retry/timeout/error events in
-		// the structured log surface doesn't have to cross-reference
-		// the container_id against docker inspect to know which agent
-		// we're dialing.
-		attemptLog := log.With("agent", agent, "project", project, "addr", addr)
+// attemptEstablish runs one inspect→dial attempt for establishWithRetry. retry
+// is true iff the caller should `continue` the retry loop (transient inspect or
+// dial error within the deadline, after backing off / sleeping); otherwise the
+// returned EstablishResult is terminal (success or a non-retryable failure).
+// publishedConnecting is shared across attempts so the "connecting" event fires
+// at most once per cycle; backoff is advanced in place on a retry.
+func (d *Dialer) attemptEstablish(ctx context.Context, containerID string, attempt int, deadline time.Time, backoff *time.Duration, publishedConnecting *bool, log *logger.Logger) (EstablishResult, bool) {
+	// Inspect at the start of every attempt — never a stale
+	// snapshot from earlier in the cycle.
+	inspect, err := d.resolveAgent(ctx, containerID)
+	if err != nil {
+		return d.handleResolveError(ctx, err, attempt, deadline, backoff, log)
+	}
+	agent, project := agentLabels(inspect)
+	addr, err := clawkerNetAddr(inspect)
+	if err != nil {
+		log.With("agent", agent, "project", project).Error().Err(err).
+			Int("attempt", attempt).
+			Str("event", "agentdial_attempt_addr_extract_failed").
+			Msg(consts.Network + " address extraction failed; aborting cycle")
+		return EstablishResult{Agent: agent, Project: project, Attempt: attempt, Outcome: outcomeAddrInvalid}, false
+	}
 
-		// Publish "connecting" once per cycle, on the first
-		// successful inspect — gives consumers a useful event with
-		// the address we'll be dialing rather than emitting on
-		// every retry attempt.
-		if !publishedConnecting {
-			d.publishConnecting(ctx, containerID, agent, project, addr)
-			publishedConnecting = true
-		}
+	// Every log line from here forward carries agent + project +
+	// addr so an operator reading retry/timeout/error events in
+	// the structured log surface doesn't have to cross-reference
+	// the container_id against docker inspect to know which agent
+	// we're dialing.
+	attemptLog := log.With("agent", agent, "project", project, "addr", addr)
 
-		conn, stream, streamCancel, peer, helloAck, dialErr := d.tryEstablish(ctx, addr, attemptLog)
-		if dialErr == nil {
-			return EstablishResult{
-				Conn:         conn,
-				Stream:       stream,
-				StreamCancel: streamCancel,
-				Agent:        agent,
-				Project:      project,
-				Addr:         addr,
-				Attempt:      attempt,
-				Outcome:      OutcomeSuccess,
-				PeerInfo:     peer,
-				HelloAck:     helloAck,
-			}
-		}
+	// Publish "connecting" once per cycle, on the first
+	// successful inspect — gives consumers a useful event with
+	// the address we'll be dialing rather than emitting on
+	// every retry attempt.
+	if !*publishedConnecting {
+		d.publishConnecting(ctx, containerID, agent, project, addr)
+		*publishedConnecting = true
+	}
 
-		if time.Now().After(deadline) {
-			attemptLog.Error().
-				Str("dial_target", addr).
-				Err(dialErr).
-				Int("attempt", attempt).
-				Str("event", "agentdial_connect_timeout").
-				Msg("gave up on Session establishment after total timeout")
-			return EstablishResult{Agent: agent, Project: project, Addr: addr, Attempt: attempt, Outcome: outcomeRetryExhausted}
-		}
+	est, dialErr := d.tryEstablish(ctx, addr, attemptLog)
+	if dialErr == nil {
+		return EstablishResult{
+			Conn:         est.Conn,
+			Stream:       est.Stream,
+			StreamCancel: est.StreamCancel,
+			Agent:        agent,
+			Project:      project,
+			Addr:         addr,
+			Attempt:      attempt,
+			Outcome:      OutcomeSuccess,
+			PeerInfo:     est.Peer,
+			HelloAck:     est.HelloAck,
+		}, false
+	}
 
-		// dial_target + the unwrapped err separate "where we tried
-		// to connect" from "what surfaced when we opened the stream".
-		// grpc.NewClient is non-blocking, so the first observed
-		// transport error always lands on the Session() open path or
-		// on the Hello handshake — wrapping addr into the err string
-		// duplicated the structured field and obscured the actual
-		// cause.
-		sleep := backoffSleep(backoff)
-		attemptLog.Warn().
+	return d.handleDialError(ctx, agent, project, addr, attempt, deadline, backoff, dialErr, attemptLog)
+}
+
+// handleDialError classifies a tryEstablish failure for one attempt. retry is
+// true iff the caller should `continue` the retry loop (transient dial error
+// within the deadline, after backing off); otherwise the returned
+// EstablishResult is terminal (deadline exhausted or ctx cancelled).
+func (d *Dialer) handleDialError(ctx context.Context, agent, project, addr string, attempt int, deadline time.Time, backoff *time.Duration, dialErr error, attemptLog *logger.Logger) (EstablishResult, bool) {
+	if time.Now().After(deadline) {
+		attemptLog.Error().
 			Str("dial_target", addr).
 			Err(dialErr).
 			Int("attempt", attempt).
-			Dur("retry_in", sleep).
-			Str("event", "agentdial_connect_retry").
-			Msg("Session establishment failed; will retry with backoff")
-
-		select {
-		case <-ctx.Done():
-			return EstablishResult{Agent: agent, Project: project, Addr: addr, Attempt: attempt, Outcome: outcomeCtxDone}
-		case <-time.After(sleep):
-		}
-		backoff = nextBackoff(backoff)
+			Str("event", "agentdial_connect_timeout").
+			Msg("gave up on Session establishment after total timeout")
+		return EstablishResult{Agent: agent, Project: project, Addr: addr, Attempt: attempt, Outcome: outcomeRetryExhausted}, false
 	}
+
+	// dial_target + the unwrapped err separate "where we tried
+	// to connect" from "what surfaced when we opened the stream".
+	// grpc.NewClient is non-blocking, so the first observed
+	// transport error always lands on the Session() open path or
+	// on the Hello handshake — wrapping addr into the err string
+	// duplicated the structured field and obscured the actual
+	// cause.
+	sleep := backoffSleep(*backoff)
+	attemptLog.Warn().
+		Str("dial_target", addr).
+		Err(dialErr).
+		Int("attempt", attempt).
+		Dur("retry_in", sleep).
+		Str("event", "agentdial_connect_retry").
+		Msg("Session establishment failed; will retry with backoff")
+
+	select {
+	case <-ctx.Done():
+		return EstablishResult{Agent: agent, Project: project, Addr: addr, Attempt: attempt, Outcome: outcomeCtxDone}, false
+	case <-time.After(sleep):
+	}
+	*backoff = nextBackoff(*backoff)
+	return EstablishResult{}, true
 }
 
 // backoffSleep returns a full-jitter sleep ∈ [0, backoff). Prevents
@@ -816,11 +843,23 @@ func nextBackoff(backoff time.Duration) time.Duration {
 // always returns nil — the dialer is permissive and never aborts on
 // cert grounds. The dial flow drives registry classification +
 // event publication off the captured PeerInfo.
-func (d *Dialer) tryEstablish(ctx context.Context, addr string, log *logger.Logger) (*grpc.ClientConn, clawkerdv1.ClawkerdService_SessionClient, context.CancelFunc, PeerInfo, *clawkerdv1.HelloAck, error) {
+// establishedStream bundles the live Session resources tryEstablish hands back
+// to establishWithRetry. Returning a concrete struct (rather than the bare
+// ClawkerdService_SessionClient interface among a tuple of returns) keeps the
+// stream's interface type out of the function's return signature.
+type establishedStream struct {
+	Conn         *grpc.ClientConn
+	Stream       clawkerdv1.ClawkerdService_SessionClient
+	StreamCancel context.CancelFunc
+	HelloAck     *clawkerdv1.HelloAck
+	Peer         PeerInfo
+}
+
+func (d *Dialer) tryEstablish(ctx context.Context, addr string, log *logger.Logger) (establishedStream, error) {
 	var peer PeerInfo
 	conn, err := d.dial(ctx, addr, &peer)
 	if err != nil {
-		return nil, nil, nil, PeerInfo{}, nil, err
+		return establishedStream{}, err
 	}
 
 	// Stream-scoped ctx so driveRegister can cancel just this stream
@@ -831,16 +870,22 @@ func (d *Dialer) tryEstablish(ctx context.Context, addr string, log *logger.Logg
 	if err != nil {
 		streamCancel()
 		_ = conn.Close()
-		return nil, nil, nil, PeerInfo{}, nil, fmt.Errorf("open Session stream: %w", err)
+		return establishedStream{}, fmt.Errorf("open Session stream: %w", err)
 	}
 
 	helloAck, err := d.helloHandshake(stream, log)
 	if err != nil {
 		streamCancel()
 		_ = conn.Close()
-		return nil, nil, nil, PeerInfo{}, nil, fmt.Errorf("Hello handshake: %w", err)
+		return establishedStream{}, fmt.Errorf("hello handshake: %w", err)
 	}
-	return conn, stream, streamCancel, peer, helloAck, nil
+	return establishedStream{
+		Conn:         conn,
+		Stream:       stream,
+		StreamCancel: streamCancel,
+		HelloAck:     helloAck,
+		Peer:         peer,
+	}, nil
 }
 
 // resolveAgent inspects the container and returns the moby
@@ -921,7 +966,7 @@ func clawkerNetAddr(c mobycontainer.InspectResponse) (string, error) {
 // identity. Without this, a malformed row self-perpetuates: the
 // dialer would Publish AgentUntrusted on every reconnect and never
 // trigger the cleanup path.
-func (d *Dialer) ClassifyRegistry(peerThumbprint [sha256.Size]byte, containerID string) (registryOutcome, string) {
+func (d *Dialer) ClassifyRegistry(peerThumbprint [sha256.Size]byte, containerID string) (RegistryOutcome, string) {
 	if d.Agents == nil {
 		// Wiring bug — New rejected nil agents, so this can only
 		// happen in a test that bypassed New.
@@ -1194,8 +1239,8 @@ func (d *Dialer) DispatchAgentEvents(ctx context.Context, containerID string, re
 			log.Error().
 				Int("outcome", int(outcome)).
 				Str("event", "agent_dispatch_unknown_outcome").
-				Msg("registryOutcome added without dispatch wiring; failing closed")
-			detail = fmt.Sprintf("unknown registryOutcome %d", int(outcome))
+				Msg("RegistryOutcome added without dispatch wiring; failing closed")
+			detail = fmt.Sprintf("unknown RegistryOutcome %d", int(outcome))
 		} else {
 			log.Warn().
 				Str("event", "agent_untrusted").
@@ -1262,71 +1307,30 @@ func (d *Dialer) DriveRegister(ctx context.Context, containerID string, res Esta
 		return
 	}
 
+	if !d.awaitRegisterDone(ctx, containerID, commandID, res, log) {
+		return
+	}
+
+	d.confirmRegisterRow(containerID, res, log)
+}
+
+// awaitRegisterDone waits for the RegisterDone response to commandID with a
+// timeout. It spawns a panic-recovered Recv goroutine (the parent DialAgent
+// recover does NOT catch panics in goroutines it launches — see
+// controlplane/CLAUDE.md "Resilience contract") and returns true iff clawkerd
+// reported a successful registration. On any failure (send/recv error, timeout,
+// clawkerd-reported failure) it publishes the register failure itself and
+// returns false.
+func (d *Dialer) awaitRegisterDone(ctx context.Context, containerID, commandID string, res EstablishResult, log *logger.Logger) bool {
 	// Wait for RegisterDone with timeout. Other Response types that
 	// arrive in the interim are unexpected (clawkerd should serialize
 	// per-command Responses by command_id) — discard and keep waiting.
 	waitCtx, cancel := context.WithTimeout(ctx, RegisterRequiredTimeout)
 	defer cancel()
 
-	type recvResult struct {
-		resp *clawkerdv1.Response
-		err  error
-	}
-	ch := make(chan recvResult, 1)
+	ch := make(chan recvRegisterResult, 1)
 	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		// Recover so a panic in this spawned Recv goroutine can't crash
-		// PID 1 and strand eBPF — the parent DialAgent recover does NOT
-		// catch panics in goroutines it launches. On panic, signal the
-		// select below with a synthetic error so driveRegister unblocks
-		// (rather than waiting out the full register timeout) and the
-		// failure is classified, consistent with the package's other
-		// goroutine recovers. See controlplane/CLAUDE.md
-		// "Resilience contract".
-		defer func() {
-			if r := recover(); r != nil {
-				log.Error().
-					Interface("panic", r).
-					Bytes("stack", debug.Stack()).
-					Str("container_id", containerID).
-					Str("event", "agentdial_register_recv_panic").
-					Msg("agent.dial: RegisterRequired Recv goroutine panicked; CP otherwise unaffected")
-				// Non-blocking send: ch is buffered (cap 1) and a prior
-				// successful path may already have sent; never block the
-				// recover.
-				select {
-				case ch <- recvResult{err: fmt.Errorf("RegisterRequired Recv panicked: %v", r)}:
-				default:
-				}
-			}
-		}()
-		for {
-			r, err := res.Stream.Recv()
-			if err != nil {
-				ch <- recvResult{err: err}
-				return
-			}
-			if _, ok := r.Payload.(*clawkerdv1.Response_RegisterDone); ok && r.CommandId == commandID {
-				ch <- recvResult{resp: r}
-				return
-			}
-			// A Response_Error addressed to our register command_id is a
-			// terminal failure from clawkerd (e.g. INVALID_REQUEST). The
-			// recv loop would otherwise re-loop and time out, hiding a
-			// concrete server-side rejection behind an opaque
-			// "RegisterDone timeout" — surface it directly so the
-			// AgentUntrusted reason carries the ErrorCode + detail.
-			if errPayload, ok := r.Payload.(*clawkerdv1.Response_Error); ok && r.CommandId == commandID {
-				ch <- recvResult{err: fmt.Errorf(
-					"clawkerd rejected RegisterRequired: %s: %s",
-					errPayload.Error.GetCode().String(),
-					errPayload.Error.GetMessage(),
-				)}
-				return
-			}
-		}
-	}()
+	go d.recvRegisterDone(containerID, commandID, res, log, ch, done)
 
 	select {
 	case <-waitCtx.Done():
@@ -1337,30 +1341,101 @@ func (d *Dialer) DriveRegister(ctx context.Context, containerID string, res Esta
 		}
 		<-done
 		d.publishRegisterFailure(containerID, res, "RegisterDone timeout: "+waitCtx.Err().Error(), log)
-		return
+		return false
 	case got := <-ch:
 		<-done
-		if got.err != nil {
-			d.publishRegisterFailure(containerID, res, "Recv RegisterDone: "+got.err.Error(), log)
+		return d.handleRegisterResult(containerID, res, got, log)
+	}
+}
+
+// recvRegisterResult is the outcome the register Recv goroutine signals back to
+// awaitRegisterDone: either the RegisterDone response or a terminal error.
+type recvRegisterResult struct {
+	resp *clawkerdv1.Response
+	err  error
+}
+
+// recvRegisterDone is the panic-recovered Recv loop spawned by
+// awaitRegisterDone. It signals ch with the first RegisterDone (or a terminal
+// error / clawkerd rejection) addressed to commandID and closes done on exit.
+// The recover is required because the parent DialAgent recover does NOT catch
+// panics in goroutines it launches; on panic it signals a synthetic error so
+// the awaiting select unblocks instead of waiting out the full register
+// timeout. See controlplane/CLAUDE.md "Resilience contract".
+func (d *Dialer) recvRegisterDone(containerID, commandID string, res EstablishResult, log *logger.Logger, ch chan<- recvRegisterResult, done chan<- struct{}) {
+	defer close(done)
+	defer func() {
+		if r := recover(); r != nil {
+			log.Error().
+				Interface("panic", r).
+				Bytes("stack", debug.Stack()).
+				Str("container_id", containerID).
+				Str("event", "agentdial_register_recv_panic").
+				Msg("agent.dial: RegisterRequired Recv goroutine panicked; CP otherwise unaffected")
+			// Non-blocking send: ch is buffered (cap 1) and a prior
+			// successful path may already have sent; never block the
+			// recover.
+			select {
+			case ch <- recvRegisterResult{err: fmt.Errorf("RegisterRequired Recv panicked: %v", r)}:
+			default:
+			}
+		}
+	}()
+	for {
+		r, err := res.Stream.Recv()
+		if err != nil {
+			ch <- recvRegisterResult{err: err}
 			return
 		}
-		regDone := got.resp.GetRegisterDone()
-		if regDone == nil || !regDone.GetOk() {
-			detail := "clawkerd reported failure"
-			if regDone != nil && regDone.GetError() != "" {
-				detail = regDone.GetError()
-			}
-			d.publishRegisterFailure(containerID, res, detail, log)
+		if _, ok := r.GetPayload().(*clawkerdv1.Response_RegisterDone); ok && r.GetCommandId() == commandID {
+			ch <- recvRegisterResult{resp: r}
+			return
+		}
+		// A Response_Error addressed to our register command_id is a
+		// terminal failure from clawkerd (e.g. INVALID_REQUEST). The
+		// recv loop would otherwise re-loop and time out, hiding a
+		// concrete server-side rejection behind an opaque
+		// "RegisterDone timeout" — surface it directly so the
+		// AgentUntrusted reason carries the ErrorCode + detail.
+		if errPayload, ok := r.GetPayload().(*clawkerdv1.Response_Error); ok && r.GetCommandId() == commandID {
+			ch <- recvRegisterResult{err: fmt.Errorf(
+				"clawkerd rejected RegisterRequired: %s: %s",
+				errPayload.Error.GetCode().String(),
+				errPayload.Error.GetMessage(),
+			)}
 			return
 		}
 	}
+}
 
-	// Re-lookup to confirm the row actually landed in sqlite.
-	// Distinguish a sqlite I/O error (registry layer regression: the
-	// CP-side handler reported success but the row isn't readable)
-	// from "no row" (handler accepted Welcome but never wrote — also a
-	// regression). Both publish failure but with different reasons so
-	// containment subscribers can differentiate.
+// handleRegisterResult classifies the recv goroutine's result. It returns true
+// iff clawkerd reported a successful registration; on any failure it publishes
+// the register failure itself and returns false.
+func (d *Dialer) handleRegisterResult(containerID string, res EstablishResult, got recvRegisterResult, log *logger.Logger) bool {
+	if got.err != nil {
+		d.publishRegisterFailure(containerID, res, "Recv RegisterDone: "+got.err.Error(), log)
+		return false
+	}
+	regDone := got.resp.GetRegisterDone()
+	if regDone == nil || !regDone.GetOk() {
+		detail := "clawkerd reported failure"
+		if regDone != nil && regDone.GetError() != "" {
+			detail = regDone.GetError()
+		}
+		d.publishRegisterFailure(containerID, res, detail, log)
+		return false
+	}
+	return true
+}
+
+// confirmRegisterRow re-looks-up the registry row to confirm it actually
+// landed in sqlite after a successful RegisterDone, then publishes the
+// ActionRegistered success event. It distinguishes a sqlite I/O error
+// (registry-layer regression: the CP-side handler reported success but the row
+// isn't readable) from "no row" (handler accepted Welcome but never wrote —
+// also a regression). Both publish failure but with different reasons so
+// containment subscribers can differentiate.
+func (d *Dialer) confirmRegisterRow(containerID string, res EstablishResult, log *logger.Logger) {
 	entry, err := d.Agents.LookupByContainerID(containerID)
 	if err != nil && !errors.Is(err, ErrUnknownAgent) {
 		d.publishRegisterFailure(containerID, res, "registry lookup error after RegisterDone: "+err.Error(), log)

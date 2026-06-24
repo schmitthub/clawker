@@ -71,6 +71,7 @@ func TestAgentStore_Projection(t *testing.T) {
 				Address: "10.0.0.7:7700", Attempts: 1,
 			},
 			assert: func(t *testing.T, v agent.AgentEventState) {
+				t.Helper()
 				assert.Equal(t, agent.StatusConnecting, v.SessionStatus)
 				assert.Equal(t, "10.0.0.7:7700", v.Address)
 				assert.Equal(t, 1, v.Attempts)
@@ -83,6 +84,7 @@ func TestAgentStore_Projection(t *testing.T) {
 				Reason: agent.ReasonFailed, Detail: "dial timeout",
 			},
 			assert: func(t *testing.T, v agent.AgentEventState) {
+				t.Helper()
 				assert.Equal(t, agent.StatusFailed, v.SessionStatus)
 				assert.Equal(t, "dial timeout", v.LastError)
 			},
@@ -93,11 +95,12 @@ func TestAgentStore_Projection(t *testing.T) {
 			// cleared. A regression that forgets either ships silently.
 			msg: agent.Message{
 				Type: agent.DialerEventType, Action: agent.ActionConnected, TimeNano: mono(3),
-				PeerAgentFullName: "clawker.myapp.dev", PeerThumbprint: tp,
+				PeerAgentFullName: sanFullName, PeerThumbprint: tp,
 			},
 			assert: func(t *testing.T, v agent.AgentEventState) {
+				t.Helper()
 				assert.Equal(t, agent.StatusConnected, v.SessionStatus)
-				assert.Equal(t, "clawker.myapp.dev", v.PeerAgentFullName)
+				assert.Equal(t, sanFullName, v.PeerAgentFullName)
 				assert.Equal(t, tp, v.Thumbprint)
 				assert.Empty(t, v.LastError, "Connected must clear stale session LastError")
 			},
@@ -109,6 +112,7 @@ func TestAgentStore_Projection(t *testing.T) {
 				Reason: agent.ReasonTransportError, Detail: "stream reset",
 			},
 			assert: func(t *testing.T, v agent.AgentEventState) {
+				t.Helper()
 				assert.Equal(t, agent.StatusBroken, v.SessionStatus)
 				assert.Equal(t, "stream reset", v.LastError)
 			},
@@ -120,6 +124,7 @@ func TestAgentStore_Projection(t *testing.T) {
 				Reason: agent.ReasonThumbprintMismatch, Detail: "thumbprint mismatch",
 			},
 			assert: func(t *testing.T, v agent.AgentEventState) {
+				t.Helper()
 				assert.False(t, v.Trust.IsTrusted(), "Untrusted must flip Trust")
 				assert.Equal(t, agent.ReasonThumbprintMismatch, v.Trust.Reason())
 				assert.Equal(t, "thumbprint mismatch", v.LastError)
@@ -134,6 +139,7 @@ func TestAgentStore_Projection(t *testing.T) {
 				RegisterOk: true,
 			},
 			assert: func(t *testing.T, v agent.AgentEventState) {
+				t.Helper()
 				assert.True(t, v.Registered, "Registered{Ok} must set Registered")
 				assert.True(t, v.Trust.IsTrusted(),
 					"Registered{Ok} after Untrusted must restore trust")
@@ -147,6 +153,7 @@ func TestAgentStore_Projection(t *testing.T) {
 				Detail: "drain timeout exceeded",
 			},
 			assert: func(t *testing.T, v agent.AgentEventState) {
+				t.Helper()
 				assert.Equal(t, agent.StatusDegraded, v.SessionStatus)
 				assert.Equal(t, "drain timeout exceeded", v.LastError)
 			},
@@ -159,15 +166,15 @@ func TestAgentStore_Projection(t *testing.T) {
 
 	for _, s := range steps {
 		ev := agent.AgentEvent{
-			Agent:   agent.Agent{ContainerID: cid, AgentName: "dev", Project: "myapp"},
+			Agent:   agent.Agent{ContainerID: cid, AgentName: agentName, Project: project},
 			Message: s.msg,
 		}
 		publishAndAwait(t, topic, store, ev)
 		v, ok := store.Get(cid)
 		require.True(t, ok)
 		// Identity always refreshed from the event.
-		assert.Equal(t, "dev", v.AgentName)
-		assert.Equal(t, "myapp", v.Project)
+		assert.Equal(t, agentName, v.AgentName)
+		assert.Equal(t, project, v.Project)
 		s.assert(t, v)
 	}
 }
@@ -183,7 +190,7 @@ func TestAgentStore_RegisterFailedDoesNotMarkRegistered(t *testing.T) {
 	store.Subscribe(topic)
 
 	publishAndAwait(t, topic, store, agent.AgentEvent{
-		Agent: agent.Agent{ContainerID: cid, AgentName: "dev", Project: "myapp"},
+		Agent: agent.Agent{ContainerID: cid, AgentName: agentName, Project: project},
 		Message: agent.Message{
 			Type: agent.RegistryEventType, Action: agent.ActionRegistered, TimeNano: time.Now().UnixNano(),
 			RegisterOk: false,
@@ -219,7 +226,7 @@ func TestAgentStore_EvictsOnContainerDestroy(t *testing.T) {
 
 	// Populate the worldview with one agent.
 	publishAndAwait(t, agentTopic, store, agent.AgentEvent{
-		Agent: agent.Agent{ContainerID: cid, AgentName: "dev", Project: "myapp"},
+		Agent: agent.Agent{ContainerID: cid, AgentName: agentName, Project: project},
 		Message: agent.Message{
 			Type: agent.DialerEventType, Action: agent.ActionConnected, TimeNano: time.Now().UnixNano(),
 		},
@@ -253,7 +260,7 @@ func TestAgentStore_DoesNotEvictOnContainerDie(t *testing.T) {
 	store.SubscribeDockerEvents(dockerTopic)
 
 	publishAndAwait(t, agentTopic, store, agent.AgentEvent{
-		Agent: agent.Agent{ContainerID: cid, AgentName: "dev", Project: "myapp"},
+		Agent: agent.Agent{ContainerID: cid, AgentName: agentName, Project: project},
 		Message: agent.Message{
 			Type: agent.DialerEventType, Action: agent.ActionConnected, TimeNano: time.Now().UnixNano(),
 		},

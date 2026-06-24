@@ -28,7 +28,7 @@ type agentsHarness struct {
 	opts      *AgentsOptions
 }
 
-func newAgentsHarness(t *testing.T, mock *adminv1mocks.AdminServiceClientMock) (*agentsHarness, *iostreams.IOStreams) {
+func newAgentsHarness(t *testing.T, mock *adminv1mocks.AdminServiceClientMock) *agentsHarness {
 	t.Helper()
 	ios, _, _, _ := iostreams.Test()
 	tuiInst := tui.NewTUI(ios)
@@ -45,7 +45,7 @@ func newAgentsHarness(t *testing.T, mock *adminv1mocks.AdminServiceClientMock) (
 		},
 		Format: &cmdutil.FormatFlags{},
 	}
-	return h, ios
+	return h
 }
 
 func TestAgentsRun_EmptyResponse(t *testing.T) {
@@ -54,7 +54,7 @@ func TestAgentsRun_EmptyResponse(t *testing.T) {
 			return &adminv1.ListAgentsResult{}, nil
 		},
 	}
-	h, _ := newAgentsHarness(t, mock)
+	h := newAgentsHarness(t, mock)
 	ios, _, stdout, stderr := iostreams.Test()
 	tuiInst := tui.NewTUI(ios)
 	h.opts.IOStreams = ios
@@ -80,7 +80,7 @@ func TestAgentsRun_RendersTable(t *testing.T) {
 			}, nil
 		},
 	}
-	h, _ := newAgentsHarness(t, mock)
+	h := newAgentsHarness(t, mock)
 	ios, _, stdout, _ := iostreams.Test()
 	tuiInst := tui.NewTUI(ios)
 	h.opts.IOStreams = ios
@@ -109,7 +109,7 @@ func TestAgentsRun_JSONOutput(t *testing.T) {
 			}, nil
 		},
 	}
-	h, _ := newAgentsHarness(t, mock)
+	h := newAgentsHarness(t, mock)
 	ios, _, stdout, _ := iostreams.Test()
 	tuiInst := tui.NewTUI(ios)
 	h.opts.IOStreams = ios
@@ -129,7 +129,7 @@ func TestAgentsRun_JSONOutput(t *testing.T) {
 }
 
 func TestAgentsRun_PropagatesAdminClientError(t *testing.T) {
-	h, _ := newAgentsHarness(t, &adminv1mocks.AdminServiceClientMock{})
+	h := newAgentsHarness(t, &adminv1mocks.AdminServiceClientMock{})
 	h.opts.AdminClient = func(_ context.Context) (adminv1.AdminServiceClient, error) {
 		return nil, errors.New("dial boom")
 	}

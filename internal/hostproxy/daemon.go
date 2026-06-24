@@ -26,6 +26,10 @@ import (
 // through pkg/whail. This is intentional because the daemon runs as a standalone
 // subprocess that only needs to list containers - it doesn't need whail's jail
 // semantics or label enforcement. The interface pattern still allows for testing.
+// egressHealthTimeout bounds the HTTP request used to probe Envoy's health
+// listener during the daemon's startup readiness gate.
+const egressHealthTimeout = 2 * time.Second
+
 type ContainerLister interface {
 	ContainerList(ctx context.Context, options client.ContainerListOptions) (client.ContainerListResult, error)
 	io.Closer
@@ -110,7 +114,8 @@ func NewDaemon(cfg config.Config, log *logger.Logger, opts ...DaemonOption) (*Da
 	// /open/url preserves its documented "skip check" behavior.
 	var rulesFilePath string
 	if cfg.Settings().Firewall.FirewallEnabled() {
-		dataDir, err := cfg.FirewallDataSubdir()
+		var dataDir string
+		dataDir, err = cfg.FirewallDataSubdir()
 		if err != nil {
 			// Firewall is enabled, so /open/url egress enforcement is mandatory.
 			// If the rules path can't be resolved we cannot enforce — fail closed
@@ -363,7 +368,7 @@ func (d *Daemon) waitForCondition(ctx context.Context, budget, interval time.Dur
 			Dur("budget", budget).
 			Msgf("host proxy waiting for %s", what)
 		if !sleepCtx(ctx, interval) {
-			return ctx.Err()
+			return fmt.Errorf("context canceled while waiting for %s: %w", what, ctx.Err())
 		}
 	}
 }
@@ -396,12 +401,18 @@ func (d *Daemon) envoyHealthy(ctx context.Context) bool {
 	if err != nil {
 		return false
 	}
-	resp, err := (&http.Client{Timeout: 2 * time.Second}).Do(req)
+	resp, err := (&http.Client{Timeout: egressHealthTimeout}).Do(req)
 	if err != nil {
 		return false
 	}
-	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, resp.Body)
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			d.log.Debug().Err(cerr).Msg("host proxy: failed to close envoy health response body")
+		}
+	}()
+	if _, cerr := io.Copy(io.Discard, resp.Body); cerr != nil {
+		d.log.Debug().Err(cerr).Msg("host proxy: failed to drain envoy health response body")
+	}
 	return resp.StatusCode == http.StatusOK
 }
 

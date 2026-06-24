@@ -93,4 +93,8 @@ const (
 	// from a generic upstream "Forbidden". The verdict travels on the `action`
 	// access-log field, never the body.
 	firewallBlockedBody = "Forbidden\n"
+
+	// keyMatch is the Envoy route-config key whose value carries the route's
+	// match criteria (path + method matchers).
+	keyMatch = "match"
 )

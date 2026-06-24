@@ -53,7 +53,7 @@ func TestDriveRegister_HappyPath(t *testing.T) {
 	_, stream := clawkerdv1mocks.NewServiceClientWithStream(streamCtx)
 	stream.PushRegisterDone("register-abc", true, "")
 
-	res := happyEstablishResult(stream, "clawker.myapp.dev", thumb)
+	res := happyEstablishResult(stream, sanFullName, thumb)
 	res.StreamCancel = cancel
 
 	d.DriveRegister(t.Context(), "abc", res, logger.Nop())
@@ -79,7 +79,7 @@ func TestDriveRegister_RegisterDoneFailure_PublishesUntrusted(t *testing.T) {
 	stream := clawkerdv1mocks.NewFakeSessionStream(streamCtx)
 	stream.PushRegisterDone("register-abc", false, "Hydra rejected assertion")
 
-	res := happyEstablishResult(stream, "clawker.myapp.dev", sha256.Sum256([]byte("p")))
+	res := happyEstablishResult(stream, sanFullName, sha256.Sum256([]byte("p")))
 	res.StreamCancel = cancel
 
 	d.DriveRegister(t.Context(), "abc", res, logger.Nop())
@@ -116,7 +116,7 @@ func TestDriveRegister_DiscardsUnsolicitedFrames(t *testing.T) {
 	stream.PushUnsolicited()
 	stream.PushRegisterDone("register-abc", true, "")
 
-	res := happyEstablishResult(stream, "clawker.myapp.dev", thumb)
+	res := happyEstablishResult(stream, sanFullName, thumb)
 	res.StreamCancel = cancel
 
 	d.DriveRegister(t.Context(), "abc", res, logger.Nop())
@@ -136,7 +136,7 @@ func TestDriveRegister_SendFailure_PublishesFailure(t *testing.T) {
 	stream := clawkerdv1mocks.NewFakeSessionStream(streamCtx)
 	stream.SetSendError(errors.New("broken pipe"))
 
-	res := happyEstablishResult(stream, "clawker.myapp.dev", sha256.Sum256([]byte("p")))
+	res := happyEstablishResult(stream, sanFullName, sha256.Sum256([]byte("p")))
 	res.StreamCancel = cancel
 
 	d.DriveRegister(t.Context(), "abc", res, logger.Nop())
@@ -158,7 +158,7 @@ func TestDriveRegister_RecvError_PublishesFailure(t *testing.T) {
 	stream := clawkerdv1mocks.NewFakeSessionStream(streamCtx)
 	stream.PushRecvError(errors.New("broken pipe"))
 
-	res := happyEstablishResult(stream, "clawker.myapp.dev", sha256.Sum256([]byte("p")))
+	res := happyEstablishResult(stream, sanFullName, sha256.Sum256([]byte("p")))
 	res.StreamCancel = cancel
 
 	d.DriveRegister(t.Context(), "abc", res, logger.Nop())
@@ -191,7 +191,7 @@ func TestDriveRegister_ResponseErrorSurfaces(t *testing.T) {
 		}},
 	})
 
-	res := happyEstablishResult(stream, "clawker.myapp.dev", sha256.Sum256([]byte("p")))
+	res := happyEstablishResult(stream, sanFullName, sha256.Sum256([]byte("p")))
 	res.StreamCancel = cancel
 
 	start := time.Now()
@@ -228,7 +228,7 @@ func TestDriveRegister_TimeoutCancelsStream(t *testing.T) {
 	// Do NOT enqueue a RegisterDone — Recv blocks indefinitely until ctx
 	// fires. Pre-cancel parent ctx so waitCtx.Done fires immediately.
 
-	res := happyEstablishResult(stream, "clawker.myapp.dev", sha256.Sum256([]byte("p")))
+	res := happyEstablishResult(stream, sanFullName, sha256.Sum256([]byte("p")))
 	res.StreamCancel = streamCancel
 
 	parentCtx, parentCancel := context.WithCancel(context.Background())
@@ -264,7 +264,7 @@ func TestDriveRegister_RegistryLookupError_DistinguishedFromMissingRow(t *testin
 	stream := clawkerdv1mocks.NewFakeSessionStream(streamCtx)
 	stream.PushRegisterDone("register-abc", true, "")
 
-	res := happyEstablishResult(stream, "clawker.myapp.dev", sha256.Sum256([]byte("p")))
+	res := happyEstablishResult(stream, sanFullName, sha256.Sum256([]byte("p")))
 	res.StreamCancel = cancel
 
 	d.DriveRegister(t.Context(), "abc", res, logger.Nop())
@@ -290,7 +290,7 @@ func TestDriveRegister_MissingRowAfterRegisterDone(t *testing.T) {
 	stream := clawkerdv1mocks.NewFakeSessionStream(streamCtx)
 	stream.PushRegisterDone("register-abc", true, "")
 
-	res := happyEstablishResult(stream, "clawker.myapp.dev", sha256.Sum256([]byte("p")))
+	res := happyEstablishResult(stream, sanFullName, sha256.Sum256([]byte("p")))
 	res.StreamCancel = cancel
 
 	d.DriveRegister(t.Context(), "abc", res, logger.Nop())
@@ -363,7 +363,7 @@ func TestDispatchAgentEvents_OutcomesPinned(t *testing.T) {
 					}, nil
 				},
 			},
-			peer:       agent.PeerInfo{PeerAgentFullName: "clawker.myapp.dev", PeerThumbprint: sha256.Sum256([]byte("live-cert"))},
+			peer:       agent.PeerInfo{PeerAgentFullName: sanFullName, PeerThumbprint: sha256.Sum256([]byte("live-cert"))},
 			wantReason: agent.ReasonThumbprintMismatch,
 		},
 		{
@@ -426,7 +426,7 @@ func TestDispatchAgentEvents_AsymmetricTrust_StreamStaysOpen(t *testing.T) {
 		Agent:        "dev",
 		Project:      "myapp",
 		PeerInfo: agent.PeerInfo{
-			PeerAgentFullName: "clawker.myapp.dev",
+			PeerAgentFullName: sanFullName,
 			PeerThumbprint:    sha256.Sum256([]byte("live")),
 		},
 	}

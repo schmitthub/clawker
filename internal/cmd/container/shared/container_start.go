@@ -58,6 +58,41 @@ func NeedsSocketBridge(cfg *config.Project) bool {
 	return cfg.Security.GitCredentials.GPGEnabled() || cfg.Security.GitCredentials.GitSSHEnabled()
 }
 
+// ensureHostProxyRunning starts the host proxy when the project enables it.
+// A nil provider or a nil proxy instance is a no-op (debug-logged); only a
+// failure from EnsureRunning aborts the start. log may be nil.
+func ensureHostProxyRunning(projectCfg *config.Project, hostProxyFn func() hostproxy.Service, log *logger.Logger) error {
+	if projectCfg == nil || !projectCfg.Security.HostProxyEnabled() {
+		if log != nil {
+			log.Debug().Msg("host proxy disabled by config")
+		}
+		return nil
+	}
+
+	if hostProxyFn == nil {
+		if log != nil {
+			log.Debug().Msg("host proxy provider is nil, skipping")
+		}
+		return nil
+	}
+
+	hp := hostProxyFn()
+	if hp == nil {
+		if log != nil {
+			log.Debug().Msg("host proxy factory returned nil, skipping")
+		}
+		return nil
+	}
+
+	if err := hp.EnsureRunning(); err != nil {
+		return fmt.Errorf("bootstrapping services: ensuring host proxy is running: %w", err)
+	}
+	if log != nil {
+		log.Debug().Msg("host proxy started successfully")
+	}
+	return nil
+}
+
 func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts CommandOpts) error {
 	if cmdOpts.Config == nil {
 		return fmt.Errorf("bootstrapping services: config provider is nil")
@@ -127,25 +162,8 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 		}
 	}
 
-	if projectCfg != nil && projectCfg.Security.HostProxyEnabled() {
-		if cmdOpts.HostProxy == nil {
-			if log != nil {
-				log.Debug().Msg("host proxy provider is nil, skipping")
-			}
-		} else {
-			hp := cmdOpts.HostProxy()
-			if hp == nil {
-				if log != nil {
-					log.Debug().Msg("host proxy factory returned nil, skipping")
-				}
-			} else if err := hp.EnsureRunning(); err != nil {
-				return fmt.Errorf("bootstrapping services: ensuring host proxy is running: %w", err)
-			} else if log != nil {
-				log.Debug().Msg("host proxy started successfully")
-			}
-		}
-	} else if log != nil {
-		log.Debug().Msg("host proxy disabled by config")
+	if err = ensureHostProxyRunning(projectCfg, cmdOpts.HostProxy, log); err != nil {
+		return err
 	}
 
 	// Deliver the every-start pre_run hook to ~/.clawker/pre-run.sh. Always
