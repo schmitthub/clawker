@@ -22,16 +22,10 @@ type recvFrame struct {
 // FakeSessionStream is an in-memory fake for ClawkerdService Session streams.
 // It is safe for concurrent Send/Recv use in tests.
 type FakeSessionStream struct {
-	// ctxFn returns the stream's context, derived from the context passed to
-	// NewFakeSessionStream. It is stored as a closure rather than a bare
-	// context.Context field so the fake doesn't carry a Context on the struct
-	// (mirroring a real gRPC client stream, whose context is reachable only
-	// via Context()).
-	ctxFn func() context.Context
-	// done mirrors the stream context's Done channel; ctxErr returns its Err.
-	// These drive the Recv/Send lifecycle without storing the Context itself.
-	done   <-chan struct{}
-	ctxErr func() error
+	// ctx is the stream's context. A real gRPC client stream holds its context
+	// too — Context() takes no arguments — so a fake of it must store one as
+	// well; this drives the Done/Err lifecycle in Recv/Send.
+	ctx context.Context
 
 	mu           sync.Mutex
 	sent         []*v1.Command
@@ -74,25 +68,11 @@ var errSendAfterCloseSend = errors.New("fake session stream: Send after CloseSen
 // Ensure FakeSessionStream satisfies the generated session stream alias.
 var _ v1.ClawkerdService_SessionClient = (*FakeSessionStream)(nil)
 
-// NewFakeSessionStream returns a reusable in-memory session stream fake.
+// NewFakeSessionStream returns a reusable in-memory session stream fake bound to
+// ctx. Pass context.Background() for a stream that never cancels.
 func NewFakeSessionStream(ctx context.Context) *FakeSessionStream {
-	if ctx == nil {
-		// No parent context supplied: model a stream that never cancels.
-		// done stays nil (a nil channel blocks forever in select), ctxErr
-		// reports no error, and Context() lazily hands back a background
-		// context so the grpc.ClientStream interface is still satisfied.
-		return &FakeSessionStream{
-			ctxFn:  context.Background,
-			done:   nil,
-			ctxErr: func() error { return nil },
-			recvCh: make(chan recvFrame, fakeRecvBuffer),
-			sentCh: make(chan *v1.Command, fakeSentBuffer),
-		}
-	}
 	return &FakeSessionStream{
-		ctxFn:  func() context.Context { return ctx },
-		done:   ctx.Done(),
-		ctxErr: ctx.Err,
+		ctx:    ctx,
 		recvCh: make(chan recvFrame, fakeRecvBuffer),
 		sentCh: make(chan *v1.Command, fakeSentBuffer),
 	}
@@ -186,7 +166,7 @@ func (f *FakeSessionStream) pushFrame(frame recvFrame) {
 	}
 	select {
 	case f.recvCh <- frame:
-	case <-f.done:
+	case <-f.ctx.Done():
 	}
 }
 
@@ -274,7 +254,7 @@ func (f *FakeSessionStream) CloseSend() error {
 }
 
 func (f *FakeSessionStream) Context() context.Context {
-	return f.ctxFn()
+	return f.ctx
 }
 
 func (f *FakeSessionStream) Send(cmd *v1.Command) error {
@@ -292,15 +272,15 @@ func (f *FakeSessionStream) Send(cmd *v1.Command) error {
 	// valve if a test wires no Sent() consumer and fills the buffer.
 	select {
 	case f.sentCh <- cmd:
-	case <-f.done:
+	case <-f.ctx.Done():
 	}
 	return nil
 }
 
 func (f *FakeSessionStream) Recv() (*v1.Response, error) {
 	select {
-	case <-f.done:
-		return nil, fmt.Errorf("fake session stream: recv: %w", f.ctxErr())
+	case <-f.ctx.Done():
+		return nil, fmt.Errorf("fake session stream: recv: %w", f.ctx.Err())
 	case frame, ok := <-f.recvCh:
 		if !ok {
 			return nil, io.EOF
