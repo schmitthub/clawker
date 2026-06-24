@@ -30,7 +30,7 @@ CP crashing is not an availability problem — it is a security boundary integri
 
 1. **No `panic()`. No `log.Fatal()`. No `os.Exit()`.** Constructors return `(nil, error)`. main.go logs and degrades.
 2. **Long-lived goroutines must `recover()`.** Heartbeats, watchers, RPC handlers — one bad event must not silently strand eBPF.
-3. **Subsystem failures degrade, never escalate.** Broken Executor → `initExec = nil`; broken dialer → `dialer = nil`. Everything else stays up. The patterns in `cmd/clawkercp/main.go` — `wireInitExecutor` (initExec; emits `event=agent_init_executor_unavailable`) and the `agent.New(...)` block that degrades on error to `event=agent_dialer_unavailable` — are canonical.
+3. **Subsystem failures degrade, never escalate.** Broken Executor → `executor = nil`; broken dialer → `dialer = nil`. Everything else stays up. The patterns in `cmd/clawkercp/main.go` — `wireExecutor` (executor; emits `event=agent_executor_unavailable`) and the `agent.New(...)` block that degrades on error to `event=agent_dialer_unavailable` — are canonical.
 4. **Every degraded path emits a structured log line** (`event=<subsystem>_unavailable`) with component, error, and blast-radius fields. Operators will not see panic stacks; the structured log is the only surface.
 5. **The only acceptable hard-exits** are pre-`SetReady` startup gates (no agents running yet, eBPF not load-bearing) and the orchestrator's intentional drain-to-zero clean exit.
 

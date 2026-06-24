@@ -162,7 +162,7 @@ type Dialer struct {
 // cert against the registry row keyed by container_id and dispatches
 // the registered / untrusted AgentEvents accordingly. nil agents would
 // strand worldview consumers without a registration signal.
-func NewDialer(log *logger.Logger, docker mobyclient.APIClient, topic *pubsub.Topic[AgentEvent], agents Registry, certPath, keyPath string, caPool *x509.CertPool, initExec *Executor) (*Dialer, error) {
+func NewDialer(log *logger.Logger, docker mobyclient.APIClient, topic *pubsub.Topic[AgentEvent], agents Registry, certPath, keyPath string, caPool *x509.CertPool, executor *Executor) (*Dialer, error) {
 	if log == nil {
 		log = logger.Nop()
 	}
@@ -184,7 +184,7 @@ func NewDialer(log *logger.Logger, docker mobyclient.APIClient, topic *pubsub.To
 		Docker:       docker,
 		Topic:        topic,
 		Agents:       agents,
-		Executor:     initExec,
+		Executor:     executor,
 		CpClientCert: cert,
 		CaPool:       caPool,
 		Dialing:      make(map[string]context.CancelFunc),

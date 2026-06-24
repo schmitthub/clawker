@@ -68,6 +68,7 @@ func mustExecutor(t *testing.T, rec **agentmocks.AgentRecorder) *agent.Executor 
 // Executor.Run.
 type panickingSendStream struct {
 	*clawkerdv1mocks.FakeSessionStream
+
 	panicAtSend int
 	sendCount   int
 }
@@ -196,7 +197,7 @@ func TestBootPlan_PreRunShape(t *testing.T) {
 			if s.Name == consts.HookPreRun {
 				idxPreRun = i
 				require.Len(t, s.Shell.Stages, 1)
-				assert.Equal(t, []string{"sh", "-c", agent.PreRunScript}, s.Shell.Stages[0].Argv,
+				assert.Equal(t, []string{"sh", "-c", agent.PreRunScript}, s.Shell.GetStages()[0].GetArgv(),
 					"pre-run must run agent.PreRunScript via userStage")
 				assert.Contains(t, agent.PreRunScript, "|| exit 0", "pre-run guard net must be present")
 				assert.NotContains(t, agent.PreRunScript, "post-initialized",
@@ -321,11 +322,11 @@ func TestExecutor_Run_StepFailureHaltsAndPublishesFailed(t *testing.T) {
 	doneFeeder := stream.FeedSteps(func(idx int, cmd *clawkerdv1.Command) []*clawkerdv1.Response {
 		if idx == failAtIdx {
 			return []*clawkerdv1.Response{
-				{CommandId: cmd.CommandId, Payload: &clawkerdv1.Response_Output{Output: &clawkerdv1.OutputChunk{Data: []byte("boom")}}},
-				{CommandId: cmd.CommandId, Payload: &clawkerdv1.Response_Done{Done: &clawkerdv1.Done{FinalExitCode: 2}}},
+				{CommandId: cmd.GetCommandId(), Payload: &clawkerdv1.Response_Output{Output: &clawkerdv1.OutputChunk{Data: []byte("boom")}}},
+				{CommandId: cmd.GetCommandId(), Payload: &clawkerdv1.Response_Done{Done: &clawkerdv1.Done{FinalExitCode: 2}}},
 			}
 		}
-		return []*clawkerdv1.Response{clawkerdv1mocks.DoneResp(cmd.CommandId, 0)}
+		return []*clawkerdv1.Response{clawkerdv1mocks.DoneResp(cmd.GetCommandId(), 0)}
 	})
 
 	err := e.Run(ctx, stream, target, agent.InitPlan, "init")
@@ -413,7 +414,7 @@ func TestExecutor_Run_StreamErrorResponse(t *testing.T) {
 
 			done := stream.FeedSteps(func(_ int, cmd *clawkerdv1.Command) []*clawkerdv1.Response {
 				return []*clawkerdv1.Response{{
-					CommandId: cmd.CommandId,
+					CommandId: cmd.GetCommandId(),
 					Payload: &clawkerdv1.Response_Error{Error: &clawkerdv1.Error{
 						Code:    tc.code,
 						Message: "synthetic " + tc.name,
@@ -465,7 +466,7 @@ func TestExecutor_Run_StateProjection(t *testing.T) {
 				exit = 7
 			}
 			return []*clawkerdv1.Response{{
-				CommandId: cmd.CommandId,
+				CommandId: cmd.GetCommandId(),
 				Payload:   &clawkerdv1.Response_Done{Done: &clawkerdv1.Done{FinalExitCode: exit}},
 			}}
 		})
@@ -640,11 +641,11 @@ func TestExecutor_Run_IgnoresUnknownAndMismatchedFrames(t *testing.T) {
 			// don't address the in-flight command.
 			{CommandId: "noise-other-command", Payload: &clawkerdv1.Response_Done{Done: &clawkerdv1.Done{FinalExitCode: 99}}},
 			// Started: explicit continue arm.
-			{CommandId: cmd.CommandId, Payload: &clawkerdv1.Response_Started{Started: &clawkerdv1.Started{}}},
+			{CommandId: cmd.GetCommandId(), Payload: &clawkerdv1.Response_Started{Started: &clawkerdv1.Started{}}},
 			// Output: combined output, discarded here because the step succeeds.
-			{CommandId: cmd.CommandId, Payload: &clawkerdv1.Response_Output{Output: &clawkerdv1.OutputChunk{Data: []byte("captured output")}}},
+			{CommandId: cmd.GetCommandId(), Payload: &clawkerdv1.Response_Output{Output: &clawkerdv1.OutputChunk{Data: []byte("captured output")}}},
 			// Real terminal frame.
-			{CommandId: cmd.CommandId, Payload: &clawkerdv1.Response_Done{Done: &clawkerdv1.Done{FinalExitCode: 0}}},
+			{CommandId: cmd.GetCommandId(), Payload: &clawkerdv1.Response_Done{Done: &clawkerdv1.Done{FinalExitCode: 0}}},
 		}
 	})
 
@@ -671,11 +672,11 @@ func TestExecutor_Run_CapturesCombinedOutputInDetail(t *testing.T) {
 	doneFeeder := stream.FeedSteps(func(idx int, cmd *clawkerdv1.Command) []*clawkerdv1.Response {
 		if idx == failAtIdx {
 			return []*clawkerdv1.Response{
-				{CommandId: cmd.CommandId, Payload: &clawkerdv1.Response_Output{Output: &clawkerdv1.OutputChunk{Data: []byte("combined-output-xyz")}}},
-				{CommandId: cmd.CommandId, Payload: &clawkerdv1.Response_Done{Done: &clawkerdv1.Done{FinalExitCode: 1}}},
+				{CommandId: cmd.GetCommandId(), Payload: &clawkerdv1.Response_Output{Output: &clawkerdv1.OutputChunk{Data: []byte("combined-output-xyz")}}},
+				{CommandId: cmd.GetCommandId(), Payload: &clawkerdv1.Response_Done{Done: &clawkerdv1.Done{FinalExitCode: 1}}},
 			}
 		}
-		return []*clawkerdv1.Response{clawkerdv1mocks.DoneResp(cmd.CommandId, 0)}
+		return []*clawkerdv1.Response{clawkerdv1mocks.DoneResp(cmd.GetCommandId(), 0)}
 	})
 
 	err := e.Run(ctx, stream, target, agent.InitPlan, "init")

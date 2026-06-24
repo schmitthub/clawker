@@ -162,13 +162,16 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	defer removePIDFile(d.pidFile, d.log)
 
-	// Start the server FIRST so /health answers immediately. The firewall stack
-	// boots AFTER the host proxy in container bootstrap, and the manager gates
-	// that bootstrap on this /health; blocking the bind on firewall readiness
-	// would deadlock cold start (the firewall can't come up until /health
-	// answers). Egress enforcement on /open/url is fail-closed per request
-	// regardless — handleOpenURL rejects an unreadable/invalid rules file — so
-	// binding before the rules are confirmed never opens a hole.
+	// Start the server FIRST so /health answers immediately. In container
+	// bootstrap the CP and firewall stack boot BEFORE the host proxy, and the
+	// manager's host-proxy ensure gates on this /health — binding immediately
+	// lets that proceed while the egress-rules readiness gate (which waits on
+	// the already-running firewall + Envoy, then validates the rules file)
+	// converges in the background. If the rules never become valid the gate
+	// fails the daemon closed: Run returns and the daemon exits. Egress
+	// enforcement on /open/url is fail-closed per request regardless —
+	// handleOpenURL rejects an unreadable/invalid rules file — so binding
+	// before the rules are confirmed never opens a hole.
 	if err := d.server.Start(); err != nil {
 		return fmt.Errorf("failed to start server: %w", err)
 	}

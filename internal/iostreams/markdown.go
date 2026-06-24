@@ -22,10 +22,7 @@ const markdownWrapWidth = 80
 // Rendering is best-effort: on any error the raw input is returned unchanged so
 // callers always have printable text.
 func (s *IOStreams) RenderMarkdown(body string) string {
-	width := s.TerminalWidth()
-	if width > markdownWrapWidth {
-		width = markdownWrapWidth
-	}
+	width := min(s.TerminalWidth(), markdownWrapWidth)
 	r, err := glamour.NewTermRenderer(
 		glamour.WithStyles(compactMarkdownStyle(s.TerminalTheme(), s.ColorEnabled())),
 		glamour.WithColorProfile(s.markdownColorProfile()),

@@ -21,7 +21,7 @@ import (
 // Per-step timeout defaults. post-init can install packages and warm
 // caches, hence 600s; other steps are file-IO and should complete in
 // milliseconds in steady state, 30s tolerates a slow first-boot fs.
-// CP's `runStep` ceiling is now the only init wall-clock gate —
+// CP's `runStep` ceiling is now the only step wall-clock gate —
 // clawkerd-as-PID-1 has no separate shell-script timeout to align
 // with (the legacy bash entrypoint + fifo wait was retired by the
 // PID-1 cutover; see clawkerd/CLAUDE.md).
@@ -32,8 +32,8 @@ const (
 
 // defaultKnownHosts is the openssh published host-key blob for the
 // common public Git forges (github.com, gitlab.com, bitbucket.org),
-// seeded into ~/.ssh/known_hosts on every init run via the ssh Step's
-// ExecialStdin. Update if upstream rotates.
+// seeded into ~/.ssh/known_hosts on every init run via the ssh step's
+// InitialStdin (the first pipe stage's stdin). Update if upstream rotates.
 //
 // Source: https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints
 //
@@ -164,8 +164,8 @@ fi
 // at package init; %q slot carries the workspace const.
 var gitconfigFilterScript = fmt.Sprintf(GitconfigFilterTemplate, consts.HostGitConfigStagingPath)
 
-// Step is one entry in the init plan. Sealed sum: shellStep or
-// agentReadyStep. Adding a new Step kind is a compile-time change
+// Step is one entry in an Executor plan (init or boot). Sealed sum:
+// ShellStep, AgentReadyStep, or AgentInitializedStep. Adding a new Step kind is a compile-time change
 // (implement Step) — runStep's type switch loses its runtime
 // "unknown Step kind" branch entirely.
 type Step interface {
@@ -242,7 +242,7 @@ func (t ExecTarget) agent() Agent {
 	}
 }
 
-// Executor dispatches the static CP-driven init plan against an open
+// Executor dispatches a static CP-driven plan (init or boot) against an open
 // Session stream. Owns Recv during Run; the dialer's drainStream
 // takes over after Run returns.
 //
@@ -272,8 +272,8 @@ type Executor struct {
 // unconditionally, so a nil topic is a wiring bug the caller must catch
 // at construction. Returning an error lets the caller
 // (the orchestrator) log the wiring bug to the structured log surface
-// and degrade gracefully (initExec = nil → dialer logs
-// agent_init_executor_unset per dial) instead of crashing CP and
+// and degrade gracefully (executor = nil → dialer logs
+// agent_<plan>_executor_unset per dial) instead of crashing CP and
 // stranding the failure on os.Stderr where only `docker logs` sees it.
 // Matches the nil-topic contract on agent.NewDialer for the dialer.
 func NewExecutor(topic *pubsub.Topic[AgentEvent], dockerCli *docker.Client, log *logger.Logger) (*Executor, error) {
@@ -287,7 +287,6 @@ func NewExecutor(topic *pubsub.Topic[AgentEvent], dockerCli *docker.Client, log 
 }
 
 func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_SessionClient, target ExecTarget, plan []Step, label string) (runErr error) {
-
 	startedAt := time.Now()
 	Publish(e.topic, newAgentEvent(target.agent(), Message{
 		Type:      ExecutorEventType,
@@ -327,7 +326,7 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 		log.Error().
 			Interface("panic", r).
 			Bytes("stack", debug.Stack()).
-			Str("event", "agent_init_panic").
+			Str("event", fmt.Sprintf("agent_%s_panic", label)).
 			Int("step_index", currentIdx).
 			Str("step", currentName).
 			Msg(fmt.Sprintf("agent.%s: Executor.Run panicked; publishing synthetic terminal events; Session held open for containment", label))
@@ -366,12 +365,12 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 			StepCount: len(plan),
 		}))
 		log.Info().
-			Str("event", "agent_init_step_started").
+			Str("event", fmt.Sprintf("agent_%s_step_started", label)).
 			Str("step", st.StepName()).
 			Int("step_index", i).
-			Msg("agent.init: step started")
+			Msg(fmt.Sprintf("agent.%s: step started", label))
 
-		out, err := e.runStep(ctx, stream, target.ContainerID, i, st, log)
+		out, err := e.runStep(ctx, stream, target.ContainerID, label, i, st, log)
 		dur := time.Since(stepStart)
 		if out.Failed() {
 			Publish(e.topic, newAgentEvent(target.agent(), Message{
@@ -393,13 +392,13 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 				Duration: time.Since(startedAt),
 			}))
 			log.Error().
-				Str("event", "agent_init_failed").
+				Str("event", fmt.Sprintf("agent_%s_failed", label)).
 				Str("step", st.StepName()).
 				Int("step_index", i).
 				Int32("exit_code", out.ExitCode).
 				Str("reason", string(out.Reason)).
 				Str("detail", out.Detail).
-				Msg("agent.init: plan halted on step failure")
+				Msg(fmt.Sprintf("agent.%s: plan halted on step failure", label))
 			if err != nil {
 				// Transport-level failure (the stream broke): the Session
 				// is already gone and the dial loop's teardown handles the
@@ -414,9 +413,9 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 			// exit_on_non_zero so a healthy clawkerd self-exits within the
 			// grace; the SIGKILL only catches a wedged one.
 			if err := e.KillAfterGrace(ctx, target.ContainerID, log); err != nil {
-				return fmt.Errorf("agent.init: step %q failed: %s; additionally, failed to kill container: %v", st.StepName(), out.Detail, err)
+				return fmt.Errorf("agent.%s: step %q failed: %s; additionally, failed to kill container: %w", label, st.StepName(), out.Detail, err)
 			}
-			return fmt.Errorf("agent.init: step %q failed: %s", st.StepName(), out.Detail)
+			return fmt.Errorf("agent.%s: step %q failed: %s", label, st.StepName(), out.Detail)
 		}
 		Publish(e.topic, newAgentEvent(target.agent(), Message{
 			Type:      ExecutorEventType,
@@ -427,11 +426,11 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 			ExitCode:  out.ExitCode,
 		}))
 		log.Info().
-			Str("event", "agent_init_step_completed").
+			Str("event", fmt.Sprintf("agent_%s_step_completed", label)).
 			Str("step", st.StepName()).
 			Int("step_index", i).
 			Dur("duration", dur).
-			Msg("agent.init: step completed")
+			Msg(fmt.Sprintf("agent.%s: step completed", label))
 		// Reset between steps: a panic here (between iterations,
 		// e.g. during defer scheduling) must not be mis-attributed
 		// to the just-completed step. The recover gates synthetic
@@ -447,9 +446,9 @@ func (e *Executor) Run(ctx context.Context, stream clawkerdv1.ClawkerdService_Se
 		Duration: totalDur,
 	}))
 	log.Info().
-		Str("event", "agent_init_completed").
+		Str("event", fmt.Sprintf("agent_%s_completed", label)).
 		Dur("duration", totalDur).
-		Msg("agent.init: plan completed")
+		Msg(fmt.Sprintf("agent.%s: plan completed", label))
 	return nil
 }
 
@@ -593,8 +592,8 @@ func (e *Executor) KillAfterGrace(ctx context.Context, containerID string, log *
 	return nil
 }
 
-func (e *Executor) runStep(ctx context.Context, stream clawkerdv1.ClawkerdService_SessionClient, containerID string, idx int, st Step, log *logger.Logger) (stepOutcome, error) {
-	commandID := buildCommandID(containerID, st.StepName(), idx)
+func (e *Executor) runStep(ctx context.Context, stream clawkerdv1.ClawkerdService_SessionClient, containerID, label string, idx int, st Step, log *logger.Logger) (stepOutcome, error) {
+	commandID := buildCommandID(label, containerID, st.StepName(), idx)
 
 	cmd, followCloseStdin := st.Command(commandID)
 	if err := stream.Send(cmd); err != nil {
@@ -637,11 +636,11 @@ func (e *Executor) runStep(ctx context.Context, stream clawkerdv1.ClawkerdServic
 		}
 		if resp.GetCommandId() != commandID {
 			log.Debug().
-				Str("event", "agent_init_unexpected_command_id").
+				Str("event", fmt.Sprintf("agent_%s_unexpected_command_id", label)).
 				Str("got", resp.GetCommandId()).
 				Str("expected", commandID).
 				Str("payload_type", fmt.Sprintf("%T", resp.Payload)).
-				Msg("agent.init: ignoring response with non-matching command_id")
+				Msg(fmt.Sprintf("agent.%s: ignoring response with non-matching command_id", label))
 			continue
 		}
 		switch p := resp.Payload.(type) {
@@ -682,16 +681,16 @@ func (e *Executor) runStep(ctx context.Context, stream clawkerdv1.ClawkerdServic
 			// see only the eventual server-side timeout with no hint
 			// that a new payload variant slipped past the switch.
 			log.Warn().
-				Str("event", "agent_init_unknown_payload").
+				Str("event", fmt.Sprintf("agent_%s_unknown_payload", label)).
 				Str("command_id", resp.GetCommandId()).
 				Str("step", st.StepName()).
 				Str("payload_type", fmt.Sprintf("%T", resp.Payload)).
-				Msg("agent.init: ignoring unknown response payload — wire vocabulary drift")
+				Msg(fmt.Sprintf("agent.%s: ignoring unknown response payload — wire vocabulary drift", label))
 		}
 	}
 }
 
-// classifyErrorCode maps a clawkerd ErrorCode to the typed init
+// classifyErrorCode maps a clawkerd ErrorCode to the typed step
 // failure classification. New codes default to Unknown so producers
 // don't drop information silently — the human-readable detail still
 // carries the ErrorCode string.
@@ -713,12 +712,12 @@ func classifyErrorCode(code clawkerdv1.ErrorCode) Reason {
 
 // buildCommandID composes a stable, human-debuggable command_id for
 // one Step dispatch. Prefix is bounded so log lines stay compact.
-func buildCommandID(containerID, stepName string, idx int) string {
+func buildCommandID(label, containerID, stepName string, idx int) string {
 	prefix := containerID
 	if len(prefix) > 12 {
 		prefix = prefix[:12]
 	}
-	return fmt.Sprintf("init-%s-%s-%d", prefix, stepName, idx)
+	return fmt.Sprintf("%s-%s-%s-%d", label, prefix, stepName, idx)
 }
 
 // userStage returns a fresh PipeStage running `sh -c <script>` as the

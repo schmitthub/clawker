@@ -117,7 +117,7 @@ func (f *FakeSessionStream) FeedResponses(respond func(idx int, cmd *v1.Command)
 func (f *FakeSessionStream) FeedSteps(respond func(stepIdx int, cmd *v1.Command) []*v1.Response) <-chan struct{} {
 	stepIdx := 0
 	return f.FeedResponses(func(_ int, cmd *v1.Command) []*v1.Response {
-		if _, isClose := cmd.Payload.(*v1.Command_CloseStdin); isClose {
+		if _, isClose := cmd.GetPayload().(*v1.Command_CloseStdin); isClose {
 			return nil
 		}
 		out := respond(stepIdx, cmd)
@@ -129,7 +129,7 @@ func (f *FakeSessionStream) FeedSteps(respond func(stepIdx int, cmd *v1.Command)
 // FeedDone answers every step Command with a terminal Done{0}.
 func (f *FakeSessionStream) FeedDone() <-chan struct{} {
 	return f.FeedSteps(func(_ int, cmd *v1.Command) []*v1.Response {
-		return []*v1.Response{DoneResp(cmd.CommandId, 0)}
+		return []*v1.Response{DoneResp(cmd.GetCommandId(), 0)}
 	})
 }
 

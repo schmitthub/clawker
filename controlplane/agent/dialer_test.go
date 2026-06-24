@@ -448,7 +448,6 @@ func TestCloseAndCheckLeak_LogsCloseFailure(t *testing.T) {
 // (which is the desired test-fail signal).
 type fakeMobyForDialer struct {
 	mobyclient.APIClient
-	inspectErr error
 	// onInspect, when non-nil, is invoked at the start of every
 	// ContainerInspect call. The dedup test uses it as a channel gate
 	// to hold the first dial goroutine inside resolveAgent (dedup key
@@ -462,12 +461,8 @@ func (f *fakeMobyForDialer) ContainerInspect(_ context.Context, _ string, _ moby
 	if f.onInspect != nil {
 		f.onInspect()
 	}
-	if f.inspectErr != nil {
-		return mobyclient.ContainerInspectResult{}, f.inspectErr
-	}
 	// Default: surface agent.ErrContainerStopped so resolveAgent's terminal
-	// "stopped container" path fires. Tests that need a transient
-	// inspect error (retry behavior) override inspectErr instead.
+	// "stopped container" path fires.
 	return mobyclient.ContainerInspectResult{}, agent.ErrContainerStopped
 }
 

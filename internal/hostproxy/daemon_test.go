@@ -14,7 +14,6 @@ import (
 
 // mockContainerLister implements ContainerLister for testing.
 type mockContainerLister struct {
-	containerCount int
 	err            error
 	callCount      atomic.Int32
 	closeCalled    atomic.Bool
@@ -25,11 +24,6 @@ func (m *mockContainerLister) ContainerList(ctx context.Context, options client.
 	if m.err != nil {
 		return client.ContainerListResult{}, m.err
 	}
-	// Return mock container summaries based on count
-	items := make([]struct {
-		// Empty struct to match Items slice element type
-	}, m.containerCount)
-	_ = items // suppress unused warning
 	return client.ContainerListResult{}, nil
 }
 
@@ -90,7 +84,7 @@ func TestNewDaemon_ValidatesMaxConsecutiveErrs(t *testing.T) {
 }
 
 func TestWatchContainers_ExitsOnZeroContainers(t *testing.T) {
-	mock := &mockContainerLister{containerCount: 0}
+	mock := &mockContainerLister{}
 
 	daemon := &Daemon{
 		cfg:                configmocks.NewBlankConfig(),
@@ -157,7 +151,7 @@ func TestWatchContainers_ExitsOnConsecutiveErrors(t *testing.T) {
 }
 
 func TestWatchContainers_RespectsContextCancellation(t *testing.T) {
-	mock := &mockContainerLister{containerCount: 5} // Containers running
+	mock := &mockContainerLister{}
 
 	daemon := &Daemon{
 		cfg:                configmocks.NewBlankConfig(),
@@ -189,7 +183,7 @@ func TestWatchContainers_RespectsContextCancellation(t *testing.T) {
 }
 
 func TestWatchContainers_GracePeriod(t *testing.T) {
-	mock := &mockContainerLister{containerCount: 0}
+	mock := &mockContainerLister{}
 
 	gracePeriod := 100 * time.Millisecond
 	daemon := &Daemon{
@@ -223,48 +217,8 @@ func TestWatchContainers_GracePeriod(t *testing.T) {
 	}
 }
 
-func TestWatchContainers_ResetsErrorCountOnSuccess(t *testing.T) {
-	// Create a mock that fails twice then succeeds then returns zero containers
-	callCount := 0
-	mock := &mockContainerLister{}
-
-	// We need a more sophisticated mock for this test
-	// For now, verify the basic error threshold behavior works
-	mock.err = errors.New("temporary error")
-
-	daemon := &Daemon{
-		cfg:                configmocks.NewBlankConfig(),
-		log:                logger.Nop(),
-		docker:             mock,
-		pollInterval:       10 * time.Millisecond,
-		gracePeriod:        10 * time.Millisecond,
-		maxConsecutiveErrs: 5,
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer cancel()
-
-	done := make(chan struct{})
-	go func() {
-		daemon.watchContainers(ctx)
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		// Exited due to reaching error threshold
-		finalCount := mock.callCount.Load()
-		if finalCount < 5 {
-			t.Errorf("expected at least 5 error calls, got %d", finalCount)
-		}
-	case <-ctx.Done():
-		t.Error("watcher did not exit within timeout")
-	}
-	_ = callCount // suppress unused
-}
-
 func TestDaemon_ClosesDockerClient(t *testing.T) {
-	mock := &mockContainerLister{containerCount: 0}
+	mock := &mockContainerLister{}
 
 	daemon := &Daemon{
 		cfg:                configmocks.NewBlankConfig(),
@@ -288,32 +242,6 @@ func TestDaemon_ClosesDockerClient(t *testing.T) {
 	if !mock.closeCalled.Load() {
 		t.Error("expected Close() to be called on docker client")
 	}
-}
-
-func TestCountClawkerContainers_UsesCorrectFilter(t *testing.T) {
-	// This test verifies the filter is applied correctly by checking
-	// that ContainerList is called with the expected options
-	filterCaptured := false
-	mock := &mockContainerLister{}
-
-	daemon := &Daemon{
-		cfg:                configmocks.NewBlankConfig(),
-		log:                logger.Nop(),
-		docker:             mock,
-		maxConsecutiveErrs: 10,
-	}
-
-	ctx := context.Background()
-	_, err := daemon.countClawkerContainers(ctx)
-	if err != nil {
-		t.Fatalf("countClawkerContainers failed: %v", err)
-	}
-
-	// Verify ContainerList was called
-	if mock.callCount.Load() != 1 {
-		t.Errorf("expected 1 call to ContainerList, got %d", mock.callCount.Load())
-	}
-	_ = filterCaptured // The filter is applied inside the method
 }
 
 // alwaysReady returns a staged probe reporting a fixed readiness.

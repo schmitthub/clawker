@@ -70,7 +70,7 @@ func TestRenderMarkdown_InlineCodeNoPadding(t *testing.T) {
 	// spaces (invisible in a terminal). Strip per-line trailing space so this
 	// targets padding *around the inline `code` span*, not the line fill.
 	var sb strings.Builder
-	for _, l := range strings.Split(stripANSI(ios.RenderMarkdown("run `clawker` now")), "\n") {
+	for l := range strings.SplitSeq(stripANSI(ios.RenderMarkdown("run `clawker` now")), "\n") {
 		sb.WriteString(strings.TrimRight(l, " "))
 		sb.WriteByte('\n')
 	}
