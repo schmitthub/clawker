@@ -7,6 +7,7 @@ permissions:
   contents: read
   security-events: write
   actions: read
+  pull-requests: read
 
 jobs:
   golangci-lint:
@@ -31,6 +32,7 @@ jobs:
         uses: golangci/golangci-lint-action@82606bf257cbaff209d206a39f5134f0cfbfd2ee # v9.2.1
         with:
           version: v2.9.0
+          only-new-issues: true
           args: --output.sarif.path=golangci-lint.sarif
 
       - name: Upload golangci-lint SARIF
