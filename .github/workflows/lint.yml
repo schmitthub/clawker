@@ -5,7 +5,6 @@ on:
 
 permissions:
   contents: read
-  security-events: write
   actions: read
 
 jobs:
@@ -21,7 +20,8 @@ jobs:
       # golangci-lint's new-from-merge-base needs the `main` ref on disk, but the
       # PR checkout is a detached HEAD with no local main branch. fetch-depth: 0
       # provides the history; this maps origin's main to a local ref so the
-      # merge-base resolves.
+      # merge-base resolves. This workflow only runs on PRs (never on a push to
+      # main, where main is the checked-out branch and the fetch would refuse).
       - name: Fetch main for new-from-merge-base
         run: git fetch --no-tags origin main:main
 
@@ -38,11 +38,3 @@ jobs:
         uses: golangci/golangci-lint-action@82606bf257cbaff209d206a39f5134f0cfbfd2ee # v9.2.1
         with:
           version: v2.9.0
-          args: --output.sarif.path=golangci-lint.sarif
-
-      - name: Upload golangci-lint SARIF
-        if: always() && hashFiles('golangci-lint.sarif') != ''
-        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
-        with:
-          sarif_file: golangci-lint.sarif
-          category: golangci-lint

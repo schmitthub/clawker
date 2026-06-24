@@ -33,7 +33,6 @@ jobs:
     uses: ./.github/workflows/lint.yml
     permissions:
       contents: read
-      security-events: write
       actions: read
 
   test:
