@@ -21,6 +21,12 @@ linters:
     - lll         # Line length limits often conflict with AI's generation style
     - godox       # We don't care if the AI leaves TODOs; we want it to write code
     - tagalign    # AI is notoriously bad at aligning struct tags visually
+    - godot
+    - funcorder
+    - noinlineerr
+    - err113
+    - exhaustruct
+    - paralleltest
 
   # NOTE: In v2, settings are nested inside the linters block
   settings:
