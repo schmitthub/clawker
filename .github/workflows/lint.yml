@@ -7,7 +7,6 @@ permissions:
   contents: read
   security-events: write
   actions: read
-  pull-requests: read
 
 jobs:
   golangci-lint:
@@ -18,6 +17,13 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
+
+      # golangci-lint's new-from-merge-base needs the `main` ref on disk, but the
+      # PR checkout is a detached HEAD with no local main branch. fetch-depth: 0
+      # provides the history; this maps origin's main to a local ref so the
+      # merge-base resolves.
+      - name: Fetch main for new-from-merge-base
+        run: git fetch --no-tags origin main:main
 
       # Build the embedded control plane binaries first. internal/controlplane/manager
       # go:embed's assets/clawkercp + assets/ebpf-manager, internal/controlplane/firewall
@@ -32,7 +38,6 @@ jobs:
         uses: golangci/golangci-lint-action@82606bf257cbaff209d206a39f5134f0cfbfd2ee # v9.2.1
         with:
           version: v2.9.0
-          only-new-issues: true
           args: --output.sarif.path=golangci-lint.sarif
 
       - name: Upload golangci-lint SARIF
