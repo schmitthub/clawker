@@ -12,8 +12,9 @@ linters:
   disable:
     # --- IMPORT POLICING ---
     - depguard    # Highly opinionated whitelist/blacklist that blocks valid internal imports
-    
+
     # --- TOKEN BURNERS (Subjective formatting rules that cause AI infinite loops) ---
+    - wsl_v5      # AI struggles endlessly with whitespace/blank line rules
     - wsl         # AI struggles endlessly with whitespace/blank line rules
     - nlreturn    # Too pedantic about newlines before return statements
     - varnamelen  # AI will get stuck in a loop renaming 'i' to 'index'
