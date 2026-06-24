@@ -66,6 +66,18 @@ build:
           grep " ${SYFT_FILE}\$" "${CHECKSUMS_FILE}" | sha256sum -c - && \
           tar -C /usr/local/bin -xzf "${SYFT_FILE}" syft && \
           rm -f "${SYFT_FILE}" "${CHECKSUMS_FILE}"
+      - |-
+        YQ_VERSION=v4.53.3 && \
+          ARCH=$(dpkg --print-architecture) && \
+          case "$ARCH" in \
+            amd64) YQ_FILE="yq_linux_amd64" SHA="fa52a4e758c63d38299163fbdd1edfb4c4963247918bf9c1c5d31d84789eded4" ;; \
+            arm64) YQ_FILE="yq_linux_arm64" SHA="578648e463a11c1b6db6010cbf41eafed6bee79466fcffa1bb446672cf7945ea" ;; \
+            *) echo "Unsupported architecture for yq: $ARCH" >&2; exit 1 ;; \
+          esac && \
+          curl -fsSLO "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/${YQ_FILE}" && \
+          echo "$SHA  ${YQ_FILE}" | sha256sum -c - && \
+          install -m 755 "${YQ_FILE}" /usr/local/bin/yq && \
+          rm -f "${YQ_FILE}"
     user_run:
       - curl -LsSf https://astral.sh/uv/install.sh | sh
       - uv tool install pre-commit --with pre-commit-uv

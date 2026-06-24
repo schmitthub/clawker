@@ -18,6 +18,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      # golangci-lint's new-from-merge-base needs the `main` ref on disk, but the
+      # PR checkout is a detached HEAD with no local main branch. fetch-depth: 0
+      # provides the history; this maps origin's main to a local ref so the
+      # merge-base resolves.
+      - name: Fetch main for new-from-merge-base
+        run: git fetch --no-tags origin main:main
+
       # Build the embedded control plane binaries first. internal/controlplane/manager
       # go:embed's assets/clawkercp + assets/ebpf-manager, internal/controlplane/firewall
       # go:embed's assets/coredns-clawker, and internal/controlplane/firewall/ebpf/manager.go
