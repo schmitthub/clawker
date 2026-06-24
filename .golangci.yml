@@ -81,6 +81,16 @@ linters:
         # Prevents AI from infinitely reordering struct fields to save memory
         - fieldalignment
 
+  exclusions:
+    presets:
+      - common-false-positives
+    rules:
+    - path: (^|/)mocks/|.*_mock\.go|stubs\.go
+      linters:
+        - wrapcheck    
+        - ireturn      
+        - revive       
+        - containedctx 
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
