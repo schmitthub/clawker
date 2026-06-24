@@ -228,9 +228,7 @@ security:
         path_default: allow
         path_rules:
           - action: allow
-            path: /repos/schmitthub/clawker
-          - action: allow
-            path: /repos/schmitthub/claude-plugins
+            path: ~/repos/schmitthub/(clawker|claude-plugins)(/.*)?
           - action: allow
             path: /repos/schmitthub/contributor-assistant
           - action: allow
