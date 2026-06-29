@@ -189,6 +189,7 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 	if err := InjectHookScript(ctx, InjectHookOpts{
 		ContainerID:     container,
 		Script:          preRun,
+		Shell:           "",
 		Name:            consts.HookPreRun,
 		Cfg:             cfg,
 		CopyToContainer: NewCopyToContainerFn(client),

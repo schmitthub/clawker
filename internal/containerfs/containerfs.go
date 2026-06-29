@@ -196,13 +196,16 @@ func PrepareCredentials(log *logger.Logger, hostConfigDir string) (stagingDir st
 	)
 }
 
-// PrepareHookTar tars a bash-wrapped user hook script to .clawker/<name>.sh
+// PrepareHookTar tars a shell-wrapped user hook script to .clawker/<name>.sh
 // (mode 0755) for extraction at /home/claude. An empty script yields a valid
-// no-op wrapper ("#!/bin/bash\nset -e\n"), letting callers deliver a
+// no-op wrapper ("#!/bin/$shell\nset -e\n"), letting callers deliver a
 // guaranteed-present script even when the hook is unset (overwriting any stale
 // prior content).
-func PrepareHookTar(cfg config.Config, script, name string) (io.Reader, error) {
-	content := []byte("#!/bin/bash\nset -e\n" + script)
+func PrepareHookTar(cfg config.Config, shell, script, name string) (io.Reader, error) {
+	if shell == "" {
+		shell = "zsh"
+	}
+	content := []byte("#!/bin/" + shell + "\nset -e\n" + script)
 	now := time.Now()
 
 	var buf bytes.Buffer

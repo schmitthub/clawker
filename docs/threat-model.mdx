@@ -33,7 +33,17 @@ Instead, clawker takes the only approach that actually works: **deny the connect
 
 ## Supply Chain Security
 
-The clawker project leverages every version pinning and integrity check opportunity in CI, its infra containers, and embedded Dockerfile template. SCA and SAST scanning checks are used in CI.
+The clawker project leverages version pinning and integrity checks across CI, its infra containers, and the embedded Dockerfile template — with one deliberate, documented exception for the Node.js runtime baked into your agent images (see the note below). SCA and SAST scanning checks are used in CI.
+
+<Note>
+**Why the baked-in Node.js runtime is pinned to an LTS *line*, not an exact version.** Everywhere else clawker pins exact versions, but the Node.js runtime installed into the images clawker generates for you is pinned to the current **Long-Term Support line** (e.g. Node 24) rather than a single patch release. Each time you build an image, clawker resolves and installs the latest patch within that line.
+
+This is intentional, and it is a risk trade-off rather than a lapse. A generated image is rebuilt on your own machine, so tracking the vetted LTS line means you **automatically pick up Node security patches on every rebuild**. An exact pin would do the opposite: it would silently rot into an unpatched, vulnerable runtime — and because the underlying Node version of a dev container is easy to forget about, that rot would go unnoticed until it became an incident. Node's LTS releases are vetted and not rushed by the Node.js team, so floating *within* a line is low risk; clawker keeps control of *which* line (so there are no surprise major-version jumps), and you remain free to install or switch to any other version with `nvm` inside the container.
+
+Integrity is **not** weakened by this choice. clawker resolves the version and then **GPG-verifies the Node release against the official Node.js release signing keys** before installing it (the Debian prebuilt and the Alpine source-build paths); Alpine musl prebuilts are SHA256-verified against the upstream mirror's published checksums. The trade is *which* patch you receive (always the latest vetted LTS patch), never *whether* it is authentic.
+
+The same reasoning applies to the version manager itself. `nvm` is installed from its canonical installer and floated, **not** hard-pinned. A frozen `nvm` pin would rot exactly like a frozen Node pin, with the added blind spot that a `curl`-installed tool is invisible to dependency scanners like Dependabot. This is not hypothetical: `nvm` ≤ 0.40.4 carried [CVE-2026-10796](https://nvd.nist.gov/vuln/detail/CVE-2026-10796) (CVSS 7.5), where a malicious Node.js mirror could inject arbitrary commands through crafted version strings — a hard pin to a pre-fix `nvm` would have stranded every image on the vulnerable installer, while floating picks the fix up on the next rebuild. `nvm` is the canonical, heavily-scrutinized Node installer, and it checksums the Node tarballs it downloads.
+</Note>
 
 The release pipeline specifically:
 

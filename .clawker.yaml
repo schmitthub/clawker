@@ -201,6 +201,7 @@ security:
       - static.crates.io
       - containers.dev
       - git-scm.com
+      - nodejs.org
     rules:
       - action: allow
         dst: github.com
@@ -212,6 +213,8 @@ security:
         insecure_skip_tls_verify: false
         path_default: deny
         path_rules:
+          - action: allow
+            path: ~/nvm-sh/nvm(/.*)?
           - action: allow
             path: /schmitthub/
           - action: allow
@@ -239,6 +242,8 @@ security:
         insecure_skip_tls_verify: false
         path_default: allow
         path_rules:
+          - action: allow
+            path: ~/repos/nvm-sh/nvm(/.*)?
           - action: allow
             path: ~/repos/schmitthub/(clawker|claude-plugins)(/.*)?
           - action: allow
@@ -281,6 +286,8 @@ security:
         insecure_skip_tls_verify: false
         path_default: deny
         path_rules:
+          - action: allow
+            path: ~/nvm-sh/nvm(/.*)?
           - action: allow
             path: /anchore/syft/main/
           - action: allow

@@ -81,6 +81,19 @@ RUN apk add \
     github-cli \
     musl-locales \
     musl-locales-lang \
+    {{/* nvm source-builds Node on musl (no prebuilt) — toolchain for runtime `nvm install` */}}
+    g++ \
+    python3 \
+    linux-headers \
+    libgcc \
+    binutils \
+    coreutils \
+    util-linux \
+    findutils \
+    grep \
+    ncurses \
+    openssl \
+    ca-certificates \
     {{- range .Packages}}
     {{.}} \
     {{- end}}
@@ -155,22 +168,23 @@ RUN install -m 0755 -d /etc/apt/keyrings && \
     apt-get install -y --no-install-recommends docker-ce-cli docker-buildx-plugin docker-compose-plugin
 {{end}}
 
-# Install Node.js (required at runtime for Claude Code hooks; Claude Code's
-# own installer uses bun, but UserPromptSubmit/SessionStart hooks shell out to
-# `node`). Faithful copy of nodejs/docker-node 24/{bullseye-slim,alpine3.22}:
-#   - Debian: prebuilt tarball from nodejs.org/dist, GPG-verified via
-#     SHASUMS256.txt.asc, extracted to /usr/local.
-#   - Alpine x86_64: prebuilt musl tarball from unofficial-builds.nodejs.org,
-#     SHA256-pinned per release.
-#   - Alpine other arches: source build (./configure + make), GPG-verified
-#     against nodejs.org/dist SHASUMS256.txt.
-# `NODE_VERSION` ARG is honored on every variant/arch combination. Bumping
-# it requires updating NODE_CHECKSUM_X64_MUSL alongside (only x86_64
-# Alpine reads it). Both prebuilt and source paths land `node`/`npm` under
-# /usr/local. npm's global prefix is set per-user via .npmrc (written
-# further down) so `npm install -g` writes under
-# /home/${USERNAME}/.npm-global without root.
-ARG NODE_VERSION=24.15.0
+# Root-global Node.js on /usr/local — the baked default for clawkerd-as-PID-1,
+# any root_run / system build step, and the agent's Bash tool (all resolve it
+# from ${PATH}). nvm (installed further down) is the runtime version-switch tool
+# layered on top; this is the stable base.
+#
+# NODE_VERSION names the LTS *line* (e.g. "24"), not an exact patch; the latest
+# patch in that line is resolved per-build from nodejs.org/dist/index.json so
+# rebuilds float forward onto security patches (dep-rot rationale: see the nvm
+# block below + docs/threat-model.mdx). Integrity is verified on every path:
+#   - Debian: prebuilt tarball from nodejs.org/dist, GPG-verified via SHASUMS256.txt.asc.
+#   - Alpine x86_64: musl prebuilt from unofficial-builds.nodejs.org, sha256-verified
+#     against that mirror's SHASUMS256.txt (unofficial builds are unsigned — upstream's
+#     musl integrity level).
+#   - Alpine other arches: source build (./configure + make), GPG-verified against
+#     nodejs.org/dist SHASUMS256.txt.
+# All paths land node/npm under /usr/local.
+ARG NODE_VERSION=24
 {{if .IsAlpine -}}
 {{- if $.BuildKitEnabled}}
 RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
@@ -180,9 +194,11 @@ RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
 RUN apk add --no-cache libstdc++ && \
     apk add --no-cache --virtual .build-deps curl && \
 {{- end}}
+    NODE_LTS_VERSION=$(curl -sSfL https://nodejs.org/dist/index.json | jq -r --arg ver "$NODE_VERSION" '[.[] | select(.lts != false)] | map(select(.version | startswith("v" + $ver + "."))) | .[0].version' | sed 's/^v//') && \
+    { [ -n "$NODE_LTS_VERSION" ] && [ "$NODE_LTS_VERSION" != "null" ]; } || { echo "ERROR: could not resolve Node LTS line ${NODE_VERSION}" >&2; exit 1; } && \
     ARCH= OPENSSL_ARCH='linux*' && alpineArch="$(apk --print-arch)" && \
     case "${alpineArch##*-}" in \
-      x86_64) ARCH='x64' CHECKSUM="8b75070ed35ef8381548f4396d3cf957fd1449db063f288fe00b0cb64456477f" OPENSSL_ARCH=linux-x86_64 ;; \
+      x86_64) ARCH='x64' OPENSSL_ARCH=linux-x86_64 ;; \
       x86) OPENSSL_ARCH=linux-elf ;; \
       aarch64) OPENSSL_ARCH=linux-aarch64 ;; \
       arm*) OPENSSL_ARCH=linux-armv4 ;; \
@@ -190,12 +206,14 @@ RUN apk add --no-cache libstdc++ && \
       s390x) OPENSSL_ARCH=linux-s390x ;; \
       *) ;; \
     esac && \
-    if [ -n "${CHECKSUM}" ]; then \
+    if [ "$ARCH" = "x64" ]; then \
       set -eu; \
-      curl -fsSLO --compressed "https://unofficial-builds.nodejs.org/download/release/v$NODE_VERSION/node-v$NODE_VERSION-linux-$ARCH-musl.tar.xz"; \
-      echo "$CHECKSUM  node-v$NODE_VERSION-linux-$ARCH-musl.tar.xz" | sha256sum -c - && \
-      tar -xJf "node-v$NODE_VERSION-linux-$ARCH-musl.tar.xz" -C /usr/local --strip-components=1 --no-same-owner && \
-      ln -s /usr/local/bin/node /usr/local/bin/nodejs; \
+      curl -fsSLO --compressed "https://unofficial-builds.nodejs.org/download/release/v$NODE_LTS_VERSION/node-v$NODE_LTS_VERSION-linux-$ARCH-musl.tar.xz" && \
+      curl -fsSLO --compressed "https://unofficial-builds.nodejs.org/download/release/v$NODE_LTS_VERSION/SHASUMS256.txt" && \
+      grep " node-v$NODE_LTS_VERSION-linux-$ARCH-musl.tar.xz\$" SHASUMS256.txt | sha256sum -c - && \
+      tar -xJf "node-v$NODE_LTS_VERSION-linux-$ARCH-musl.tar.xz" -C /usr/local --strip-components=1 --no-same-owner && \
+      ln -s /usr/local/bin/node /usr/local/bin/nodejs && \
+      rm -f SHASUMS256.txt; \
     else \
       echo "Building from source" && \
       apk add --no-cache --virtual .build-deps-full \
@@ -222,23 +240,23 @@ RUN apk add --no-cache libstdc++ && \
         { gpg --batch --keyserver hkps://keys.openpgp.org --recv-keys "$key" && gpg --batch --fingerprint "$key"; } || \
         { gpg --batch --keyserver keyserver.ubuntu.com --recv-keys "$key" && gpg --batch --fingerprint "$key"; } ; \
       done && \
-      curl -fsSLO --compressed "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION.tar.xz" && \
-      curl -fsSLO --compressed "https://nodejs.org/dist/v$NODE_VERSION/SHASUMS256.txt.asc" && \
+      curl -fsSLO --compressed "https://nodejs.org/dist/v$NODE_LTS_VERSION/node-v$NODE_LTS_VERSION.tar.xz" && \
+      curl -fsSLO --compressed "https://nodejs.org/dist/v$NODE_LTS_VERSION/SHASUMS256.txt.asc" && \
       gpg --batch --decrypt --output SHASUMS256.txt SHASUMS256.txt.asc && \
       gpgconf --kill all && \
       rm -rf "$GNUPGHOME" && \
-      grep " node-v$NODE_VERSION.tar.xz\$" SHASUMS256.txt | sha256sum -c - && \
-      tar -xf "node-v$NODE_VERSION.tar.xz" && \
-      cd "node-v$NODE_VERSION" && \
+      grep " node-v$NODE_LTS_VERSION.tar.xz\$" SHASUMS256.txt | sha256sum -c - && \
+      tar -xf "node-v$NODE_LTS_VERSION.tar.xz" && \
+      cd "node-v$NODE_LTS_VERSION" && \
       ./configure && \
       make -j$(getconf _NPROCESSORS_ONLN) V= && \
       make install && \
       apk del .build-deps-full && \
       cd .. && \
-      rm -Rf "node-v$NODE_VERSION" && \
-      rm "node-v$NODE_VERSION.tar.xz" SHASUMS256.txt.asc SHASUMS256.txt; \
+      rm -Rf "node-v$NODE_LTS_VERSION" && \
+      rm "node-v$NODE_LTS_VERSION.tar.xz" SHASUMS256.txt.asc SHASUMS256.txt; \
     fi && \
-    rm -f "node-v$NODE_VERSION-linux-$ARCH-musl.tar.xz" && \
+    rm -f "node-v$NODE_LTS_VERSION-linux-$ARCH-musl.tar.xz" && \
     find /usr/local/include/node/openssl/archs -mindepth 1 -maxdepth 1 ! -name "$OPENSSL_ARCH" -exec rm -rf {} \; && \
     apk del .build-deps && \
     node --version && \
@@ -254,6 +272,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates dirmngr xz-utils libatomic1 && \
 {{- end}}
+    NODE_LTS_VERSION=$(curl -sSfL https://nodejs.org/dist/index.json | jq -r --arg ver "$NODE_VERSION" '[.[] | select(.lts != false)] | map(select(.version | startswith("v" + $ver + "."))) | .[0].version' | sed 's/^v//') && \
+    { [ -n "$NODE_LTS_VERSION" ] && [ "$NODE_LTS_VERSION" != "null" ]; } || { echo "ERROR: could not resolve Node LTS line ${NODE_VERSION}" >&2; exit 1; } && \
     ARCH= && dpkgArch="$(dpkg --print-architecture)" && \
     case "${dpkgArch##*-}" in \
       amd64) ARCH='x64' ;; \
@@ -275,14 +295,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       { gpg --batch --keyserver hkps://keys.openpgp.org --recv-keys "$key" && gpg --batch --fingerprint "$key"; } || \
       { gpg --batch --keyserver keyserver.ubuntu.com --recv-keys "$key" && gpg --batch --fingerprint "$key"; } ; \
     done && \
-    curl -fsSLO --compressed "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-linux-$ARCH.tar.xz" && \
-    curl -fsSLO --compressed "https://nodejs.org/dist/v$NODE_VERSION/SHASUMS256.txt.asc" && \
+    curl -fsSLO --compressed "https://nodejs.org/dist/v$NODE_LTS_VERSION/node-v$NODE_LTS_VERSION-linux-$ARCH.tar.xz" && \
+    curl -fsSLO --compressed "https://nodejs.org/dist/v$NODE_LTS_VERSION/SHASUMS256.txt.asc" && \
     gpg --batch --decrypt --output SHASUMS256.txt SHASUMS256.txt.asc && \
     gpgconf --kill all && \
     rm -rf "$GNUPGHOME" && \
-    grep " node-v$NODE_VERSION-linux-$ARCH.tar.xz\$" SHASUMS256.txt | sha256sum -c - && \
-    tar -xJf "node-v$NODE_VERSION-linux-$ARCH.tar.xz" -C /usr/local --strip-components=1 --no-same-owner && \
-    rm "node-v$NODE_VERSION-linux-$ARCH.tar.xz" SHASUMS256.txt.asc SHASUMS256.txt && \
+    grep " node-v$NODE_LTS_VERSION-linux-$ARCH.tar.xz\$" SHASUMS256.txt | sha256sum -c - && \
+    tar -xJf "node-v$NODE_LTS_VERSION-linux-$ARCH.tar.xz" -C /usr/local --strip-components=1 --no-same-owner && \
+    rm "node-v$NODE_LTS_VERSION-linux-$ARCH.tar.xz" SHASUMS256.txt.asc SHASUMS256.txt && \
     ln -s /usr/local/bin/node /usr/local/bin/nodejs && \
     node --version && npm --version
 {{end}}
@@ -384,30 +404,27 @@ RUN mkdir -p /tmp/downloads && \
     dpkg -i "/tmp/downloads/$DEB"
 {{end}}
 
-# Firewall: eBPF programs attach to container cgroups from outside — no in-container
-# firewall script or iptables needed. See .claude/docs/EBPF-DESIGN.md.
 
 # Managed enterprise settings (Linux managed path, highest precedence,
 # cannot be overridden by user/project settings). REQUIRED — do not
 # remove. Claude Code's Bash tool runs `/bin/zsh -c` and sources its own
 # shell snapshot AFTER zsh init files, so the snapshot's PATH overrides
-# anything `.zshenv` exports. That makes `.zshenv` insufficient on its
-# own for hooks/Bash-tool to see `.npm-global/bin` — the snapshot is
-# built from process env at session start, and managed-settings.json is
-# the only documented enterprise mechanism that injects into that env.
-# Includes `.npm-global/bin` and `.local/bin` (claude binary lives there).
+# anything `.zshenv` exports; managed-settings.json is the only documented
+# enterprise mechanism that injects into that env. Points at `.local/bin`
+# (where the claude binary lives); the inherited `${PATH}` carries the root
+# `/usr/local` Node install as the floor, so `node` resolves for build-time
+# `claude mcp add ...` (inject points, post_init) and the agent's Bash tool.
 #
 # Stays in early root scope (not the late clawker block) because any
 # `claude` invocation in `after_claude_install` / `before_entrypoint`
-# inject points reads this at session start — without it, the user's
-# build-time `claude mcp add ...` runs without `.npm-global/bin` on PATH
-# and globally-installed MCP binaries fail to resolve. The heredoc body
-# is structural (template-author-edited only), so locking it early has
-# negligible cache cost vs the asset bumps in the late block.
+# inject points reads this at session start — without `.local/bin` here, the
+# user's build-time `claude mcp add ...` cannot find the `claude` binary. The
+# heredoc body is structural (template-author-edited only), so locking it early
+# has negligible cache cost vs the asset bumps in the late block.
 RUN mkdir -p /etc/claude-code && cat > /etc/claude-code/managed-settings.json <<EOF
 {
   "env": {
-    "PATH": "/home/${USERNAME}/.local/bin:${PATH}:/home/${USERNAME}/.npm-global/bin"
+    "PATH": "/home/${USERNAME}/.local/bin:${PATH}"
   }
 }
 EOF
@@ -427,18 +444,10 @@ ENV CLAWKER_USER=${USERNAME}
 # this PATH entry the agent itself is not invokable. Side benefit: any
 # user_run installer that follows XDG (uv, pip --user, cargo, etc.) lands
 # on PATH automatically.
-ENV SHELL={{.Shell}}
-ENV PATH=/home/${USERNAME}/.local/bin:$PATH
+ENV HOME=/home/${USERNAME}
+ENV PATH=${HOME}/.local/bin:$PATH
 
-# Per-user dotfiles: .npmrc sets npm's global prefix under HOME (so
-# `npm install -g ...` works without root); .zshenv puts the resulting
-# bin dir on PATH for every zsh invocation (Claude Code's tool-use Bash
-# runs as `/bin/zsh -c` per ENV SHELL above — so .zshenv is sourced for
-# every claude tool call and every user terminal session).
-# Net: npm prefix + PATH addition are scoped to the user; root's env
-# stays clean.
-RUN echo 'prefix=${HOME}/.npm-global' > /home/${USERNAME}/.npmrc && \
-    echo 'export PATH="$PATH:$HOME/.npm-global/bin"' > /home/${USERNAME}/.zshenv
+
 # Set BROWSER so CLI tools (like Claude Code) use host-open for URLs
 ENV BROWSER=/usr/local/bin/host-open
 # Tell Claude Code where its config lives — must match the config volume mount.
@@ -482,12 +491,28 @@ ENV OTEL_LOG_TOOL_DETAILS=1
 ENV OTEL_LOG_USER_PROMPTS=1
 {{- end}}
 
+# nvm — runtime Node version-switch tool (the baked default node lives on
+# /usr/local from the root install above). zsh sources .zshenv on every
+# invocation, so nvm is available in interactive and non-interactive shells.
+SHELL ["/bin/zsh", "-o", "pipefail", "-c"]
+ARG ZSH_ENV=/home/${USERNAME}/.zshenv
+RUN touch ${ZSH_ENV}
+# Install nvm via its canonical installer (nvm-sh). Floated, not pinned: a
+# frozen tag rots into an unpatched installer Dependabot can't track (curl|bash,
+# not a package) — the failure mode CVE-2026-10796 caused for nvm <=0.40.4. nvm
+# itself checksums the Node tarballs it downloads. Rationale: docs/threat-model.mdx.
+RUN NVM_LATEST=$(curl -sSfL https://api.github.com/repos/nvm-sh/nvm/releases/latest | jq -r '.tag_name') && \
+      { [ -n "$NVM_LATEST" ] && [ "$NVM_LATEST" != "null" ]; } || { echo "ERROR: could not resolve latest nvm release tag" >&2; exit 1; } && \
+      curl -sSfL https://raw.githubusercontent.com/nvm-sh/nvm/${NVM_LATEST}/install.sh | PROFILE=${ZSH_ENV} bash
+
+ENV SHELL={{.Shell}}
 {{/* Injection point: after_user_switch */}}
 {{- if .Inject}}
 {{- range .Inject.AfterUserSwitch}}
 {{.}}
 {{- end}}
 {{- end}}
+
 
 # Use zsh-in-docker to configure plugins and theme
 ARG ZSH_IN_DOCKER_VERSION=1.2.1
@@ -513,6 +538,7 @@ RUN wget -O /tmp/zsh-in-docker.sh "https://github.com/deluan/zsh-in-docker/relea
     -t ${ZSH_THEME} \
     -p git \
     -p fzf \
+    -p nvm \
     -a "source /usr/share/doc/fzf/examples/key-bindings.zsh" \
     -a "source /usr/share/doc/fzf/examples/completion.zsh" \
     -a "export PROMPT_COMMAND='history -a' && export HISTFILE=/commandhistory/.bash_history" \

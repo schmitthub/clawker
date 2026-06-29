@@ -204,48 +204,6 @@ monitoring:
 		"per-signal traces endpoint must be absent — base-endpoint refactor relies on SDK path derivation")
 }
 
-func TestBuildContext_NodeInstall_Debian(t *testing.T) {
-	cfg := testConfig(t, minimalProjectYAML())
-	gen := newTestProjectGenerator(cfg, t.TempDir())
-	dockerfile, err := gen.Generate()
-	require.NoError(t, err)
-
-	content := string(dockerfile)
-	assert.Contains(t, content, "ARG NODE_VERSION=", "node version must be pinned via ARG")
-	assert.Contains(t, content, "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-linux-$ARCH.tar.xz",
-		"Debian path must download prebuilt node tarball from nodejs.org")
-	assert.Contains(t, content, "SHASUMS256.txt.asc", "Debian path must GPG-verify SHASUMS256")
-	assert.Contains(t, content, "sha256sum -c -", "Debian path must verify tarball checksum")
-	assert.Contains(t, content, "tar -xJf", "Debian path must extract xz tarball")
-	assert.Contains(t, content, "/usr/local/bin/node", "node must land on default PATH")
-	assert.Contains(t, content, "ENV NODE_USE_SYSTEM_CA=1",
-		"Node must be configured to trust the OS CA bundle (which holds the firewall MITM CA)")
-	assert.NotContains(t, content, "apk add nodejs", "Debian image should not use apk")
-}
-
-func TestBuildContext_NodeInstall_Alpine(t *testing.T) {
-	cfg := testConfig(t, `
-version: "1"
-build:
-  image: "alpine:3.23"
-`)
-	gen := newTestProjectGenerator(cfg, t.TempDir())
-	dockerfile, err := gen.Generate()
-	require.NoError(t, err)
-
-	content := string(dockerfile)
-	assert.Contains(t, content, `case "${alpineArch##*-}" in`,
-		"Alpine path must dispatch by alpineArch (faithful copy of nodejs/docker-node alpine3.22)")
-	assert.Contains(t, content, "unofficial-builds.nodejs.org/download/release/v$NODE_VERSION",
-		"Alpine x86_64 must fetch musl prebuilt from unofficial-builds")
-	assert.Contains(t, content, "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION.tar.xz",
-		"Alpine non-x86_64 must source-build from nodejs.org tarball")
-	assert.Contains(t, content, "ENV NODE_USE_SYSTEM_CA=1",
-		"Node must be configured to trust the OS CA bundle (which holds the firewall MITM CA)")
-	assert.NotContains(t, content, "apk add nodejs npm",
-		"Alpine path must NOT use the community apk shortcut — that ignores NODE_VERSION")
-}
-
 func TestBuildContext_DefaultMonitoring(t *testing.T) {
 	cfg := testConfig(t, minimalProjectYAML())
 	gen := newTestProjectGenerator(cfg, t.TempDir())
@@ -462,11 +420,21 @@ func TestBuildContext_LateClawkerBlock(t *testing.T) {
 	// managed-settings.json MUST land in early root scope (before the
 	// user-scope USER ${USERNAME} switch). Any `claude` invocation in
 	// after_claude_install / before_entrypoint inject points reads it at
-	// session start for the enterprise PATH override that exposes
-	// .npm-global/bin to Claude Code's Bash-tool shell snapshot —
-	// without it, build-time `claude mcp add ...` runs without the
-	// global-npm dir on PATH and globally-installed binaries fail to
-	// resolve.
+	// session start for the enterprise PATH override that exposes the `claude`
+	// binary (.local/bin) to Claude Code's Bash-tool shell snapshot — without
+	// it, build-time `claude mcp add ...` cannot find the claude binary.
+	assert.Contains(
+		t,
+		content,
+		`"PATH": "/home/${USERNAME}/.local/bin:${PATH}"`,
+		"managed-settings PATH must be .local/bin + the inherited ${PATH} only — the agent's node comes from Claude Code's own $NVM_DIR/versions/node/* enumeration (root /usr/local Node as the floor in ${PATH}), NOT a clawker current/bin entry",
+	)
+	assert.NotContains(
+		t,
+		content,
+		`.nvm/current/bin`,
+		"managed-settings must NOT route node through $NVM_DIR/current/bin — pre-creating `current` as a symlink collides with Claude Code's current/<ver> bookkeeping (self-referential loop on first Bash-tool call)",
+	)
 	managedSettingsIdx := strings.Index(content, "managed-settings.json")
 	require.Positive(t, managedSettingsIdx, "managed-settings.json heredoc must exist")
 	assert.Less(t, managedSettingsIdx, userRootIdx,

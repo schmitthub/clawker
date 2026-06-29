@@ -110,3 +110,29 @@ or pass `--worktree <new-branch>` and let clawker create and own a fresh branch
 (don't pre-create it in root). If a worktree commit already slid root's HEAD,
 `git -C <root> switch <branch>` (or `git switch -f <branch>`) re-separates them;
 no commits are lost — they live on the branch ref.
+
+## Claude Code ignores `nvm use` / `nvm alias default` / `.nvmrc`
+
+Node + npm are baked into every clawker image and the agent's Bash tool uses
+them out of the box — so this only bites once a user installs **additional**
+Node versions with `nvm` and expects the agent to switch onto one.
+
+Claude Code selects the Node for its Bash tool when it builds its shell
+snapshot, and it does **not** honor nvm's normal version-selection mechanisms:
+`nvm use <ver>`, `nvm alias default`, and a project `.nvmrc` are all ignored.
+It picks a version by scanning `~/.nvm/versions/node/*` directly, so an
+installed-but-not-selected version can win and the agent runs a different Node
+than `nvm` reports. This is an upstream Claude Code bug
+([anthropics/claude-code#54135](https://github.com/anthropics/claude-code/issues/54135)),
+not a clawker defect — until it's fixed, the nvm directives won't steer the
+agent.
+
+Until upstream fixes it, nvm's version directives won't steer the agent's Bash
+tool. The reliable fix is to bake the Node version you need as the single
+default instead of juggling versions with nvm: override the `NODE_VERSION` build
+arg to the major line you require, e.g. `clawker build --build-arg NODE_VERSION=22`.
+That major is then the only Node on `/usr/local`, so the agent always selects it
+and the selection bug never applies. `NODE_VERSION` takes a **major** line only
+(`22`, `24`, …) — the latest LTS patch of that line is resolved per build; minor
+and patch pins are not supported. Only reach for `nvm` (and hit this bug) when
+you genuinely need multiple Node versions in one image.
