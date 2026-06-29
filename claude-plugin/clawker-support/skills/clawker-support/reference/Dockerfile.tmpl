@@ -505,6 +505,7 @@ RUN NVM_LATEST=$(curl -sSfL https://api.github.com/repos/nvm-sh/nvm/releases/lat
       { [ -n "$NVM_LATEST" ] && [ "$NVM_LATEST" != "null" ]; } || { echo "ERROR: could not resolve latest nvm release tag" >&2; exit 1; } && \
       curl -sSfL https://raw.githubusercontent.com/nvm-sh/nvm/${NVM_LATEST}/install.sh | PROFILE=${ZSH_ENV} bash
 
+ENV SHELL={{.Shell}}
 {{/* Injection point: after_user_switch */}}
 {{- if .Inject}}
 {{- range .Inject.AfterUserSwitch}}
@@ -546,7 +547,6 @@ RUN wget -O /tmp/zsh-in-docker.sh "https://github.com/deluan/zsh-in-docker/relea
     rm /tmp/zsh-in-docker.sh
 {{end}}
 
-ENV SHELL={{.Shell}}
 {{/* User-mode RUN commands (as claude user) */}}
 {{- if .Instructions}}
 {{- range .Instructions.UserRun}}
