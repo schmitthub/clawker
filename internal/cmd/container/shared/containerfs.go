@@ -120,6 +120,8 @@ type InjectPostInitOpts struct {
 	ContainerID string
 	// Script is the user's post_init content from the project config.
 	Script string
+	// Shell is the shell to use for the hook script; defaults to "zsh".
+	Shell string
 	// Cfg provides config constants for containerfs.
 	Cfg config.Config
 	// CopyToContainer copies a tar archive to the container at the given destination path.
@@ -137,6 +139,7 @@ func InjectPostInitScript(ctx context.Context, opts InjectPostInitOpts) error {
 	return InjectHookScript(ctx, InjectHookOpts{
 		ContainerID:     opts.ContainerID,
 		Script:          opts.Script,
+		Shell:           opts.Shell,
 		Name:            consts.HookPostInit,
 		Cfg:             opts.Cfg,
 		CopyToContainer: opts.CopyToContainer,
@@ -150,6 +153,8 @@ type InjectHookOpts struct {
 	ContainerID string
 	// Script is the user's hook content; empty yields a no-op wrapper.
 	Script string
+	// Shell is the shell to use for the hook script; defaults to "zsh".
+	Shell string
 	// Name is the hook name; the script lands at ~/.clawker/<Name>.sh.
 	Name string
 	// Cfg provides config constants for containerfs.
@@ -161,7 +166,7 @@ type InjectHookOpts struct {
 	Log *logger.Logger
 }
 
-// InjectHookScript tars a bash-wrapped hook script to ~/.clawker/<Name>.sh in
+// InjectHookScript tars a shell-wrapped hook script to ~/.clawker/<Name>.sh in
 // the container. An empty Script writes a valid no-op wrapper, so callers can
 // deliver unconditionally — overwriting any stale prior content when the hook
 // is unset.
@@ -170,7 +175,7 @@ func InjectHookScript(ctx context.Context, opts InjectHookOpts) error {
 		return fmt.Errorf("InjectHookScript: CopyToContainerFn is required")
 	}
 
-	tar, err := containerfs.PrepareHookTar(opts.Cfg, opts.Script, opts.Name)
+	tar, err := containerfs.PrepareHookTar(opts.Cfg, opts.Shell, opts.Script, opts.Name)
 	if err != nil {
 		return fmt.Errorf("failed to prepare %s script: %w", opts.Name, err)
 	}

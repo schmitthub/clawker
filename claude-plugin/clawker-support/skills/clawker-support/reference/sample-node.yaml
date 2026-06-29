@@ -14,8 +14,6 @@ agent:
   from_env:
     - GH_TOKEN
     - CONTEXT7_API_KEY
-  env:
-    NODE_USE_SYSTEM_CA: 1
   post_init: |
     claude mcp add -s local serena -- uvx --from git+https://github.com/oraios/serena@e9d21915660a66f8532260c527ab6afae94a6bd5 serena start-mcp-server --context claude-code --project "$(pwd)" --enable-web-dashboard false
     claude mcp add -s user --header "CONTEXT7_API_KEY: $CONTEXT7_API_KEY" --transport http context7 https://mcp.context7.com/mcp
@@ -27,32 +25,24 @@ agent:
   pre_run: |
     pnpm install
 build:
-  image: node:24-bookworm
+  # Node + npm are baked into every clawker image (current LTS line) and already
+  # on PATH — you do NOT install Node yourself. nvm is also set up; to switch
+  # versions at runtime: `nvm install <ver> && nvm use <ver>`.
+  #
+  # Build-time RUN steps already have the baked node on PATH. To build against a
+  # different version, source nvm first:
+  #   . "$NVM_DIR/nvm.sh" && nvm install <ver> && nvm use <ver>
+  image: buildpack-deps:bookworm-scm
   packages:
     - ripgrep
     - ca-certificates
     - openssh-client
-  inject:
-    after_user_switch:
-      - ENV NVM_DIR="/home/${USERNAME}/.nvm"
-      - ENV NODE_VERSION="24"
   instructions:
     user_run:
       - curl -LsSf https://astral.sh/uv/install.sh | sh
       - uv tool install pre-commit --with pre-commit-uv
-      - curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
-      - |
-          . "$NVM_DIR/nvm.sh" && \
-          nvm install $NODE_VERSION && \
-          nvm use $NODE_VERSION && \
-          nvm alias default $NODE_VERSION
-      - |
-          . "$NVM_DIR/nvm.sh" && \
-          npm install -g pnpm typescript
-      - |
-          echo 'export NVM_DIR="$HOME/.nvm"' >> ~/.zshrc && \
-          echo '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"' >> ~/.zshrc && \
-          echo '[ -s "$NVM_DIR/bash_completion" ] && . "$NVM_DIR/bash_completion"' >> ~/.zshrc
+      # Global npm installs land on the agent's PATH (baked node).
+      - npm install -g pnpm typescript
 security:
   docker_socket: false
   firewall:

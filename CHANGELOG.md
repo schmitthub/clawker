@@ -10,6 +10,10 @@ The format follows Keep a Changelog, and clawker adheres to Semantic Versioning.
 A release spans many merged PRs and may mix change kinds — Added, Fixed,
 Changed, Removed. Each release section lists those subsections directly.
 
+## [0.12.10] - 2026-06-29
+
+- **Added:** `nvm` to base Dockerfile template
+
 ## [0.12.9] - 2026-06-23
 
 - **Added:** Egress path rule RE2 regex support. Add `~` at the beginning of a `path` rule to match it as a full-string regex instead of a prefix — anchor exactly and use alternation.

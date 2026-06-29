@@ -705,7 +705,7 @@ func TestPrepareHookTar(t *testing.T) {
 	}
 
 	// Named hook → .clawker/<name>.sh carrying the user body.
-	reader, err := PrepareHookTar(cfg, "npm install\n", "pre-run")
+	reader, err := PrepareHookTar(cfg, "zsh", "npm install\n", "pre-run")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -713,7 +713,7 @@ func TestPrepareHookTar(t *testing.T) {
 	if name != ".clawker/pre-run.sh" {
 		t.Errorf("file name: got %q, want .clawker/pre-run.sh", name)
 	}
-	if !strings.HasPrefix(content, "#!/bin/bash\nset -e\n") {
+	if !strings.HasPrefix(content, "#!/bin/zsh\nset -e\n") {
 		t.Errorf("missing shebang+set-e: %q", content)
 	}
 	if !strings.Contains(content, "npm install") {
@@ -722,7 +722,7 @@ func TestPrepareHookTar(t *testing.T) {
 
 	// Empty script → bare no-op wrapper, no error (lets the CLI always
 	// deliver, overwriting any stale prior script when the hook is unset).
-	reader, err = PrepareHookTar(cfg, "", "pre-run")
+	reader, err = PrepareHookTar(cfg, "zsh", "", "pre-run")
 	if err != nil {
 		t.Fatalf("empty script should not error: %v", err)
 	}
@@ -730,7 +730,7 @@ func TestPrepareHookTar(t *testing.T) {
 	if name != ".clawker/pre-run.sh" {
 		t.Errorf("file name: got %q, want .clawker/pre-run.sh", name)
 	}
-	if content != "#!/bin/bash\nset -e\n" {
+	if content != "#!/bin/zsh\nset -e\n" {
 		t.Errorf("empty hook should be a bare no-op wrapper, got: %q", content)
 	}
 }

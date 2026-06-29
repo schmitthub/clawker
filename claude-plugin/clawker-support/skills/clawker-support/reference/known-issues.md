@@ -110,3 +110,29 @@ or pass `--worktree <new-branch>` and let clawker create and own a fresh branch
 (don't pre-create it in root). If a worktree commit already slid root's HEAD,
 `git -C <root> switch <branch>` (or `git switch -f <branch>`) re-separates them;
 no commits are lost — they live on the branch ref.
+
+## Claude Code ignores `nvm use` / `nvm alias default` / `.nvmrc`
+
+Node + npm are baked into every clawker image and the agent's Bash tool uses
+them out of the box — so this only bites once a user installs **additional**
+Node versions with `nvm` and expects the agent to switch onto one.
+
+Claude Code selects the Node for its Bash tool when it builds its shell
+snapshot, and it does **not** honor nvm's normal version-selection mechanisms:
+`nvm use <ver>`, `nvm alias default`, and a project `.nvmrc` are all ignored.
+It picks a version by scanning `~/.nvm/versions/node/*` directly, so an
+installed-but-not-selected version can win and the agent runs a different Node
+than `nvm` reports. This is an upstream Claude Code bug
+([anthropics/claude-code#54135](https://github.com/anthropics/claude-code/issues/54135)),
+not a clawker defect — until it's fixed, the nvm directives won't steer the
+agent.
+
+Workaround until upstream fixes it: don't rely on `nvm use`/`.nvmrc` to steer
+the agent. Drive the agent's environment explicitly with a Claude Code
+`SessionStart` hook that exports the desired Node onto `PATH` (Claude Code
+applies a hook-written env file to every Bash command). Research the current
+hook + env-file mechanism in the Claude Code docs
+(`https://docs.claude.com/en/docs/claude-code/hooks`), since the exact env-file
+variable and hook contract are owned by Claude Code and may change. The baked
+default Node needs none of this — the workaround only matters when steering the
+agent onto a *specific* alternate version.

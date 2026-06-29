@@ -1681,7 +1681,6 @@ func setupHostProxy(cfg *config.Project, containerOpts *ContainerCreateOptions, 
 	return true
 }
 
-
 // guardWorktreeSnapshot fails fast on the worktree + snapshot combination
 // before resolveWorkDir creates a git worktree we'd only reject later.
 // workspace.SetupMounts enforces the same invariant as the load-bearing guard;
@@ -1784,6 +1783,7 @@ func injectPostInitIfConfigured(ctx context.Context, client *docker.Client, cont
 	if err := InjectPostInitScript(ctx, InjectPostInitOpts{
 		ContainerID:     containerID,
 		Script:          projectCfg.Agent.PostInit,
+		Shell:           "",
 		Cfg:             cfg,
 		CopyToContainer: NewCopyToContainerFn(client),
 		Log:             log,
@@ -1792,7 +1792,6 @@ func injectPostInitIfConfigured(ctx context.Context, client *docker.Client, cont
 	}
 	return nil
 }
-
 
 // workspaceSetup bundles the resolved workspace inputs needed downstream of
 // SetupMounts: the mounts result, the host working directory, and the resolved
@@ -1933,7 +1932,6 @@ func buildContainerConfigs(ctx context.Context, opts *CreateContainerOptions, ag
 	return &containerConfigs{container: containerConfig, host: hostConfig, network: networkConfig}, nil
 }
 
-
 // finalizeCreatedContainer performs the post-create steps that depend on the
 // container ID: minting + installing the per-agent mTLS material and Hydra
 // assertion, then injecting the post-init script. On any failure the caller's
@@ -1959,7 +1957,6 @@ func finalizeCreatedContainer(ctx context.Context, opts *CreateContainerOptions,
 
 	return injectPostInitIfConfigured(ctx, client, containerID, opts.Config.Project(), opts.Config, opts.Log)
 }
-
 
 // createAndBootstrapContainer resolves the agent bootstrap material, creates the
 // Docker container, registers it on the reclaim scope, and installs the
