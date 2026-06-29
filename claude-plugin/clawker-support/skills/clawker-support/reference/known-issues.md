@@ -127,12 +127,12 @@ than `nvm` reports. This is an upstream Claude Code bug
 not a clawker defect — until it's fixed, the nvm directives won't steer the
 agent.
 
-Workaround until upstream fixes it: don't rely on `nvm use`/`.nvmrc` to steer
-the agent. Drive the agent's environment explicitly with a Claude Code
-`SessionStart` hook that exports the desired Node onto `PATH` (Claude Code
-applies a hook-written env file to every Bash command). Research the current
-hook + env-file mechanism in the Claude Code docs
-(`https://docs.claude.com/en/docs/claude-code/hooks`), since the exact env-file
-variable and hook contract are owned by Claude Code and may change. The baked
-default Node needs none of this — the workaround only matters when steering the
-agent onto a *specific* alternate version.
+Until upstream fixes it, nvm's version directives won't steer the agent's Bash
+tool. The reliable fix is to bake the Node version you need as the single
+default instead of juggling versions with nvm: override the `NODE_VERSION` build
+arg to the major line you require, e.g. `clawker build --build-arg NODE_VERSION=22`.
+That major is then the only Node on `/usr/local`, so the agent always selects it
+and the selection bug never applies. `NODE_VERSION` takes a **major** line only
+(`22`, `24`, …) — the latest LTS patch of that line is resolved per build; minor
+and patch pins are not supported. Only reach for `nvm` (and hit this bug) when
+you genuinely need multiple Node versions in one image.

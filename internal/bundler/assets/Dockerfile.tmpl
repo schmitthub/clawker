@@ -501,8 +501,9 @@ RUN touch ${ZSH_ENV}
 # frozen tag rots into an unpatched installer Dependabot can't track (curl|bash,
 # not a package) — the failure mode CVE-2026-10796 caused for nvm <=0.40.4. nvm
 # itself checksums the Node tarballs it downloads. Rationale: docs/threat-model.mdx.
-RUN NVM_LATEST=$(curl -s https://api.github.com/repos/nvm-sh/nvm/releases | jq -r '.[0].tag_name') && \
-      curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/${NVM_LATEST}/install.sh | PROFILE=${ZSH_ENV} bash
+RUN NVM_LATEST=$(curl -sSfL https://api.github.com/repos/nvm-sh/nvm/releases/latest | jq -r '.tag_name') && \
+      { [ -n "$NVM_LATEST" ] && [ "$NVM_LATEST" != "null" ]; } || { echo "ERROR: could not resolve latest nvm release tag" >&2; exit 1; } && \
+      curl -sSfL https://raw.githubusercontent.com/nvm-sh/nvm/${NVM_LATEST}/install.sh | PROFILE=${ZSH_ENV} bash
 
 {{/* Injection point: after_user_switch */}}
 {{- if .Inject}}
