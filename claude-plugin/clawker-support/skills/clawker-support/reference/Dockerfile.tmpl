@@ -195,7 +195,7 @@ RUN apk add --no-cache libstdc++ && \
     apk add --no-cache --virtual .build-deps curl && \
 {{- end}}
     NODE_LTS_VERSION=$(curl -sSfL https://nodejs.org/dist/index.json | jq -r --arg ver "$NODE_VERSION" '[.[] | select(.lts != false)] | map(select(.version | startswith("v" + $ver + "."))) | .[0].version' | sed 's/^v//') && \
-    { [ -n "$NODE_LTS_VERSION" ]; } || { echo "ERROR: could not resolve Node LTS line ${NODE_VERSION}" >&2; exit 1; } && \
+    { [ -n "$NODE_LTS_VERSION" ] && [ "$NODE_LTS_VERSION" != "null" ]; } || { echo "ERROR: could not resolve Node LTS line ${NODE_VERSION}" >&2; exit 1; } && \
     ARCH= OPENSSL_ARCH='linux*' && alpineArch="$(apk --print-arch)" && \
     case "${alpineArch##*-}" in \
       x86_64) ARCH='x64' OPENSSL_ARCH=linux-x86_64 ;; \
@@ -273,7 +273,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates dirmngr xz-utils libatomic1 && \
 {{- end}}
     NODE_LTS_VERSION=$(curl -sSfL https://nodejs.org/dist/index.json | jq -r --arg ver "$NODE_VERSION" '[.[] | select(.lts != false)] | map(select(.version | startswith("v" + $ver + "."))) | .[0].version' | sed 's/^v//') && \
-    { [ -n "$NODE_LTS_VERSION" ]; } || { echo "ERROR: could not resolve Node LTS line ${NODE_VERSION}" >&2; exit 1; } && \
+    { [ -n "$NODE_LTS_VERSION" ] && [ "$NODE_LTS_VERSION" != "null" ]; } || { echo "ERROR: could not resolve Node LTS line ${NODE_VERSION}" >&2; exit 1; } && \
     ARCH= && dpkgArch="$(dpkg --print-architecture)" && \
     case "${dpkgArch##*-}" in \
       amd64) ARCH='x64' ;; \

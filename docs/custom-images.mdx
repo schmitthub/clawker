@@ -117,6 +117,15 @@ build:
       - "npm install -g typescript"
 ```
 
+<Note>
+  `user_run` commands execute under `/bin/zsh -o pipefail -c`, not `/bin/sh` —
+  clawker bakes zsh as the build shell so its Node/nvm tooling is available. Two
+  consequences for scripts written against POSIX `sh`: zsh does not word-split
+  unquoted variable expansions (quote your variables), and `pipefail` is active
+  (a failing command anywhere in a pipe fails the build). `root_run` runs earlier
+  in the build and is unaffected — it still uses `/bin/sh`.
+</Note>
+
 ## Injection Points
 
 For advanced use cases, the `inject` field provides raw Dockerfile injection points. Each field accepts an array of raw Dockerfile lines:
