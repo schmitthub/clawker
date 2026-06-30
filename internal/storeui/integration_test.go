@@ -5,10 +5,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/schmitthub/clawker/internal/storage"
-	"github.com/schmitthub/clawker/internal/testenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/schmitthub/clawker/internal/storage"
+	"github.com/schmitthub/clawker/internal/testenv"
 )
 
 // newTestStore creates a store backed by a real YAML file in a temp dir.
@@ -49,10 +50,8 @@ func TestSetFieldValue_RoundTrip(t *testing.T) {
 	require.Equal(t, 10, snap.Count)
 
 	// Edit through the plumbing.
-	require.NoError(t, store.Set(func(s *simpleStruct) {
-		require.NoError(t, SetFieldValue(s, "name", "newapp"))
-		require.NoError(t, SetFieldValue(s, "count", "42"))
-	}))
+	require.NoError(t, store.Set("name", "newapp"))
+	require.NoError(t, store.Set("count", 42))
 	require.NoError(t, store.Write())
 
 	// Reload from disk — independent verification, not trusting in-memory state.
@@ -71,9 +70,7 @@ func TestStringSlice_RoundTrip(t *testing.T) {
 	require.Equal(t, []string{"git", "curl"}, store.Read().Build.Packages)
 
 	// Remove curl, add ripgrep.
-	require.NoError(t, store.Set(func(s *nestedStruct) {
-		require.NoError(t, SetFieldValue(s, "build.packages", "git, ripgrep"))
-	}))
+	require.NoError(t, store.Set("build.packages", []string{"git", "ripgrep"}))
 	require.NoError(t, store.Write())
 
 	fresh := reloadStore[nestedStruct](t, dir)
@@ -91,9 +88,7 @@ func TestPtrBool_RoundTrip(t *testing.T) {
 	require.True(t, *store.Read().Enabled)
 
 	// Set to false.
-	require.NoError(t, store.Set(func(s *triStateStruct) {
-		require.NoError(t, SetFieldValue(s, "enabled", "false"))
-	}))
+	require.NoError(t, store.Set("enabled", false))
 	require.NoError(t, store.Write())
 
 	fresh := reloadStore[triStateStruct](t, dir)
@@ -101,9 +96,7 @@ func TestPtrBool_RoundTrip(t *testing.T) {
 	assert.False(t, *fresh.Read().Enabled)
 
 	// Toggle back to true.
-	require.NoError(t, store.Set(func(s *triStateStruct) {
-		require.NoError(t, SetFieldValue(s, "enabled", "true"))
-	}))
+	require.NoError(t, store.Set("enabled", true))
 	require.NoError(t, store.Write())
 
 	fresh2 := reloadStore[triStateStruct](t, dir)
@@ -121,9 +114,7 @@ func TestNilPtrStruct_RoundTrip(t *testing.T) {
 	require.Nil(t, store.Read().Loop)
 
 	// Set a field inside the nil *struct — should allocate it.
-	require.NoError(t, store.Set(func(s *nilPtrStructParent) {
-		require.NoError(t, SetFieldValue(s, "loop.max_loops", "50"))
-	}))
+	require.NoError(t, store.Set("loop.max_loops", 50))
 	require.NoError(t, store.Write())
 
 	fresh := reloadStore[nilPtrStructParent](t, dir)
@@ -171,9 +162,7 @@ func TestWriteTo_WritesExplicitPath(t *testing.T) {
 	require.NoError(t, err)
 
 	// Mutate and write to dir2 explicitly.
-	require.NoError(t, store.Set(func(s *simpleStruct) {
-		s.Name = "updated"
-	}))
+	require.NoError(t, store.Set("name", "updated"))
 	require.NoError(t, store.Write(storage.ToPath(filepath.Join(dir2, "test.yaml"))))
 
 	// Reload dir2 independently — should have the update.

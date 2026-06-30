@@ -1,13 +1,17 @@
 package state
 
-import "github.com/schmitthub/clawker/internal/storage"
+import (
+	"fmt"
+
+	"github.com/schmitthub/clawker/internal/storage"
+)
 
 // StateMigrations returns the migration functions for the CLI state store. They
 // run on the discovered state file during load and trigger an atomic re-save
 // when any returns true. The list is intentionally additive — append a
 // migration here when the schema evolves; never edit a shipped one in place.
-func StateMigrations() []storage.Migration {
-	return []storage.Migration{
+func StateMigrations() []storage.Migration[State] {
+	return []storage.Migration[State]{
 		dropLegacyUpdateKeys,
 	}
 }
@@ -20,15 +24,16 @@ func StateMigrations() []storage.Migration {
 // without this the two dead keys would linger in the file indefinitely.
 // Returning true triggers an atomic re-save of the cleaned file at load time.
 // It is idempotent: a file with neither key returns false (no re-save).
-func dropLegacyUpdateKeys(raw map[string]any) bool {
+func dropLegacyUpdateKeys(s *storage.Store[State]) (bool, error) {
 	changed := false
 	// Historical wire keys from the deleted update-checker struct — there is no
 	// live symbol to reference, so they are spelled out here intentionally.
 	for _, key := range []string{"latest_url", "current_version"} {
-		if _, ok := raw[key]; ok {
-			delete(raw, key)
-			changed = true
+		removed, err := s.Remove(key)
+		if err != nil {
+			return false, fmt.Errorf("removing %s: %w", key, err)
 		}
+		changed = changed || removed
 	}
-	return changed
+	return changed, nil
 }

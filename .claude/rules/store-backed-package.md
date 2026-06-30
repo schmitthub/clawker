@@ -35,7 +35,7 @@ A single-file store-backed package `internal/<pkg>/` has exactly these files:
 |------|----------|
 | `<pkg>.go` | The **interface** (`<X>Store`), the concrete impl embedding `*storage.Store[<Schema>]`, the `New`/`NewFromString` constructors, and the `//go:generate moq` directive. |
 | `schema.go` | The schema struct with `yaml`/`label`/`desc` tags + `Fields() storage.FieldSet`. The persisted shape, one place. See `storage-schema.md`. |
-| `migrations.go` | `<X>Migrations() []storage.Migration` — additive list; append on schema change, never edit a shipped one. |
+| `migrations.go` | `<X>Migrations() []storage.Migration[<Schema>]` — additive list of `func(*storage.Store[<Schema>]) bool`; append on schema change, never edit a shipped one. |
 | `mocks/<pkg>_mock.go` | moq-generated `<X>StoreMock`. **DO NOT EDIT.** Regenerate with `go generate ./...`. |
 | `mocks/stubs.go` | Hand-written ergonomic doubles: `NewBlank<X>()`, `NewFromString(yaml)`, `newMock()`. Mirrors `config/mocks` **structurally only** (a `mocks/` subpackage = generated `_mock.go` + hand-written `stubs.go` of variant constructors) — NOT in write-wiring; see stubs.go requirements below. |
 | `<pkg>_test.go` | Intra-package tests — real `New()` + `testenv`, file-backed. |
@@ -62,7 +62,7 @@ type <x>StoreImpl struct {
 ```
 
 - **Reads return an immutable snapshot.** `func (s *<x>StoreImpl) <Thing>() *<Schema> { return s.Read() }`.
-- **Writes are field-merge**, not whole-struct overwrite: `s.Set(func(st *<Schema>){ st.X = ... })` then `s.Write()`. Each write method touches a **disjoint** set of fields it owns, so independent writers (e.g. a background goroutine and a foreground path) cannot clobber each other. That disjoint-by-ownership invariant is the whole reason to back state with `storage.Store` instead of a raw marshal+rename.
+- **Writes are field-merge**, not whole-struct overwrite: `s.Set("x.y", v)` (or `s.Remove("x.y")`) then `s.Write()`. Typed read-modify-write needs no closure — `s.Get("rules", &rules)` decodes into a typed destination, mutate, `s.Set("rules", rules)`. Each write method touches a **disjoint** set of fields it owns, so independent writers (e.g. a background goroutine and a foreground path) cannot clobber each other. That disjoint-by-ownership invariant is the whole reason to back state with `storage.Store` instead of a raw marshal+rename.
 - **The package owns its errors.** Every storage error is wrapped `<pkg>: <verb>: %w`. Define package-local sentinels here, not in storage.
 - **No nil ceremony — this is the purity line.** The impl is unexported and handed out only as the interface, and the constructors return either a non-nil impl or an error — so a nil receiver, a nil embedded store, or a `storage.New*` returning `(nil, nil)` are all unreachable. Do **NOT** add `if s == nil` / `if s.store == nil` guards, `&<Schema>{}` read fallbacks, or `got nil store without error` checks. **Embed** `*storage.Store[<Schema>]` (named-field `store *storage.Store[<Schema>]` is the drift) and call the promoted primitives directly — `s.Read()` / `s.Set(...)` / `s.Write()`, never `s.store.Read()`. Those guards and the named field are exactly the degradation that crept into other packages; `internal/state` was scrubbed of them — keep new packages that clean.
 
@@ -258,14 +258,21 @@ docs/comments (`*<X>StoreMock`), never a copy-pasted `*ConfigMock`.
 
 ## Migrations and how to test them
 
-Storage migrations are **not** version-stamped sequential steps. `runMigrations`
-runs **every** registered migration on **every** load, and each is an
-**idempotent, precondition-guarded** transform: it inspects the raw `map[string]any`,
-transforms only if its precondition matches, and returns `true` only when it
-changed something (which triggers an atomic re-save of that file at load time).
-So a file from the oldest shipped version hits the whole set in one load and
-lands on the current schema; an already-current file matches no precondition and
-is left untouched.
+Storage migrations are **not** version-stamped sequential steps. A
+`Migration[T]` is `func(*storage.Store[T]) bool` — it mutates fields with the
+store's own `Get(path, &out)` / `Set(path, value)` / `Remove(path)` member
+functions (no separate node-func or `Doc` layer). The store runs them during
+construction (`applyMigrations`) once **against each file layer's own node** —
+not the merged tree, so a legacy key duplicated across layers is cleaned in every
+owning file, not just the one that won the merge — then rewrites only the layers
+a migration changed back to their origin files; comments on untouched fields are
+dragged along by the node tree (no preservation step). Each migration is an
+**idempotent, precondition-guarded** transform: it
+inspects the document, transforms only if its precondition matches, and returns
+`true` only when it changed something (which triggers the re-save). So a file
+from the
+oldest shipped version hits the whole set in one load and lands on the current
+schema; an already-current file matches no precondition and is left untouched.
 
 When this branch changes how a file is written (e.g. switching a hand-marshalled
 struct to a `Store[T]`), old files on disk carry keys the new schema dropped.

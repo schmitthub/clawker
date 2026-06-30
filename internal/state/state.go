@@ -87,10 +87,10 @@ func (s *stateStoreImpl) State() *State {
 // the changelog cursor is owned by SetLastSeenChangelog — so the background
 // update goroutine cannot clobber the cursor.
 func (s *stateStoreImpl) RecordUpdateCheck(checkedAt time.Time, latestVersion string) error {
-	if err := s.Set(func(st *State) {
-		st.CheckedAt = checkedAt
-		st.LatestVersion = latestVersion
-	}); err != nil {
+	if err := s.Set("checked_at", checkedAt); err != nil {
+		return fmt.Errorf("state: recording update check: %w", err)
+	}
+	if err := s.Set("latest_version", latestVersion); err != nil {
 		return fmt.Errorf("state: recording update check: %w", err)
 	}
 	if err := s.Write(); err != nil {
@@ -103,9 +103,7 @@ func (s *stateStoreImpl) RecordUpdateCheck(checkedAt time.Time, latestVersion st
 // does NOT touch the update-check fields, so it cannot clobber a concurrent
 // update-check write.
 func (s *stateStoreImpl) SetLastSeenChangelog(version string) error {
-	if err := s.Set(func(st *State) {
-		st.LastSeenChangelog = version
-	}); err != nil {
+	if err := s.Set("last_seen_changelog", version); err != nil {
 		return fmt.Errorf("state: setting changelog cursor: %w", err)
 	}
 	if err := s.Write(); err != nil {

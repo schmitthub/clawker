@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/spf13/cobra"
+
 	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/cmd/project/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
@@ -18,7 +20,6 @@ import (
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/storeui"
 	"github.com/schmitthub/clawker/internal/tui"
-	"github.com/spf13/cobra"
 )
 
 const (
@@ -201,10 +202,18 @@ Combine --yes with --preset, --vcs, --git-protocol, and --no-gpg for full contro
 				return cmdutil.FlagErrorf("--vcs, --git-protocol, and --no-gpg require --yes")
 			}
 			if opts.VCS != "" && !IsValidVCSProvider(opts.VCS) {
-				return cmdutil.FlagErrorf("invalid --vcs value %q; valid: %s", opts.VCS, strings.Join(vcsProviders(), ", "))
+				return cmdutil.FlagErrorf(
+					"invalid --vcs value %q; valid: %s",
+					opts.VCS,
+					strings.Join(vcsProviders(), ", "),
+				)
 			}
 			if opts.GitProtocol != "" && !IsValidGitProtocol(opts.GitProtocol) {
-				return cmdutil.FlagErrorf("invalid --git-protocol value %q; valid: %s", opts.GitProtocol, strings.Join(vcsProtocols(), ", "))
+				return cmdutil.FlagErrorf(
+					"invalid --git-protocol value %q; valid: %s",
+					opts.GitProtocol,
+					strings.Join(vcsProtocols(), ", "),
+				)
 			}
 			if runF != nil {
 				return runF(cmd.Context(), opts)
@@ -220,15 +229,24 @@ Combine --yes with --preset, --vcs, --git-protocol, and --no-gpg for full contro
 	cmd.Flags().StringVar(&opts.GitProtocol, "git-protocol", "", "Git protocol: https, ssh (requires --yes)")
 	cmd.Flags().BoolVar(&opts.NoGPG, "no-gpg", false, "Disable GPG agent forwarding (requires --yes)")
 
-	cmd.RegisterFlagCompletionFunc("preset", func(_ *cobra.Command, _ []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) { //nolint:errcheck // cobra registers completion internally
-		return PresetCompletions(), cobra.ShellCompDirectiveNoFileComp
-	})
-	cmd.RegisterFlagCompletionFunc("vcs", func(_ *cobra.Command, _ []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) { //nolint:errcheck
-		return VCSCompletions(), cobra.ShellCompDirectiveNoFileComp
-	})
-	cmd.RegisterFlagCompletionFunc("git-protocol", func(_ *cobra.Command, _ []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) { //nolint:errcheck
-		return GitProtocolCompletions(), cobra.ShellCompDirectiveNoFileComp
-	})
+	cmd.RegisterFlagCompletionFunc( //nolint:errcheck,gosec // only errors on a programmer mistake (flag must exist); flags are defined above
+		"preset",
+		func(_ *cobra.Command, _ []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) {
+			return PresetCompletions(), cobra.ShellCompDirectiveNoFileComp
+		},
+	)
+	cmd.RegisterFlagCompletionFunc( //nolint:errcheck,gosec // only errors on a programmer mistake (flag must exist); flags are defined above
+		"vcs",
+		func(_ *cobra.Command, _ []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) {
+			return VCSCompletions(), cobra.ShellCompDirectiveNoFileComp
+		},
+	)
+	cmd.RegisterFlagCompletionFunc( //nolint:errcheck,gosec // only errors on a programmer mistake (flag must exist); flags are defined above
+		"git-protocol",
+		func(_ *cobra.Command, _ []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) {
+			return GitProtocolCompletions(), cobra.ShellCompDirectiveNoFileComp
+		},
+	)
 
 	return cmd
 }
@@ -605,9 +623,11 @@ func performProjectSetup(ctx context.Context, in performSetupInput) error {
 	}
 
 	// Apply VCS configuration (provider domains, SSH rules, GPG settings).
-	if err := store.Set(func(p *config.Project) {
-		applyVCSToProject(p, in.vcs)
-	}); err != nil {
+	// applyVCSToProject only touches Security; start from the full preset
+	// snapshot, mutate, and write Security back by path.
+	vcsProject := *store.Read()
+	applyVCSToProject(&vcsProject, in.vcs)
+	if err = store.Set("security", vcsProject.Security); err != nil {
 		return fmt.Errorf("applying VCS config: %w", err)
 	}
 
@@ -673,7 +693,11 @@ func performProjectSetup(ctx context.Context, in performSetupInput) error {
 	case statErr != nil && !os.IsNotExist(statErr):
 		return fmt.Errorf("checking %s: %w", ignoreFileName, statErr)
 	case os.IsNotExist(statErr) || in.force:
-		if err := os.WriteFile(ignorePath, []byte(config.DefaultIgnoreFile), 0644); err != nil {
+		if err = os.WriteFile( //nolint:gosec // non-secret project ignore file; conventional world-readable perms
+			ignorePath,
+			[]byte(config.DefaultIgnoreFile),
+			0o644,
+		); err != nil {
 			return fmt.Errorf("failed to write %s: %w", ignoreFileName, err)
 		}
 		in.log.Debug().Str("file", ignorePath).Msg("created ignore file")

@@ -207,16 +207,18 @@ func BuildBrowser[T storage.Schema](store *storage.Store[T], opts ...Option) (*t
 		}
 		target := cfg.layerTargets[targetIdx]
 
-		var setFieldErr error
-		if err := store.Set(func(t *T) {
-			if err := SetFieldValue(t, fieldPath, value); err != nil {
-				setFieldErr = err
-			}
-		}); err != nil {
-			return fmt.Errorf("updating store: %w", err)
+		// Coerce the TUI string into the field's typed value (via a fresh T), then
+		// set it on the store by path.
+		var fresh T
+		if err := SetFieldValue(&fresh, fieldPath, value); err != nil {
+			return fmt.Errorf("setting field %s: %w", fieldPath, err)
 		}
-		if setFieldErr != nil {
-			return fmt.Errorf("setting field %s: %w", fieldPath, setFieldErr)
+		typed, err := GetFieldValue(&fresh, fieldPath)
+		if err != nil {
+			return fmt.Errorf("setting field %s: %w", fieldPath, err)
+		}
+		if err = store.Set(fieldPath, typed); err != nil {
+			return fmt.Errorf("updating store: %w", err)
 		}
 
 		prov, hasProv := store.Provenance(fieldPath)
@@ -239,7 +241,7 @@ func BuildBrowser[T storage.Schema](store *storage.Store[T], opts ...Option) (*t
 		}
 		target := cfg.layerTargets[targetIdx]
 
-		if _, err := store.Delete(fieldPath); err != nil {
+		if _, err := store.Remove(fieldPath); err != nil {
 			return fmt.Errorf("deleting from store: %w", err)
 		}
 
@@ -329,16 +331,18 @@ func Edit[T storage.Schema](ios *iostreams.IOStreams, store *storage.Store[T], o
 		target := cfg.layerTargets[targetIdx]
 
 		// Update in-memory store.
-		var setFieldErr error
-		if err := store.Set(func(t *T) {
-			if err := SetFieldValue(t, fieldPath, value); err != nil {
-				setFieldErr = err
-			}
-		}); err != nil {
-			return fmt.Errorf("updating store: %w", err)
+		// Coerce the TUI string into the field's typed value (via a fresh T), then
+		// set it on the store by path.
+		var fresh T
+		if err := SetFieldValue(&fresh, fieldPath, value); err != nil {
+			return fmt.Errorf("setting field %s: %w", fieldPath, err)
 		}
-		if setFieldErr != nil {
-			return fmt.Errorf("setting field %s: %w", fieldPath, setFieldErr)
+		typed, err := GetFieldValue(&fresh, fieldPath)
+		if err != nil {
+			return fmt.Errorf("setting field %s: %w", fieldPath, err)
+		}
+		if err = store.Set(fieldPath, typed); err != nil {
+			return fmt.Errorf("updating store: %w", err)
 		}
 
 		// When saving to a layer that isn't the provenance winner,
@@ -369,7 +373,7 @@ func Edit[T storage.Schema](ios *iostreams.IOStreams, store *storage.Store[T], o
 		target := cfg.layerTargets[targetIdx]
 
 		// Remove from the in-memory store tree.
-		if _, err := store.Delete(fieldPath); err != nil {
+		if _, err := store.Remove(fieldPath); err != nil {
 			return fmt.Errorf("deleting from store: %w", err)
 		}
 

@@ -12,14 +12,23 @@
 
 Generic layered YAML store engine. Leaf package — the only `internal/` import is `internal/consts` (stdlib-only, for XDG directory resolution and the dotted config-directory name). Both `internal/config` and `internal/project` compose a `Store[T]` with their own schema types.
 
-**Copy-on-write model**: node tree (`map[string]any`) is the merge/persistence layer. Immutable `*T` snapshots published via `atomic.Pointer` — readers are lock-free.
+**Node-native, copy-on-write model**: every layer and the merged tree are
+`yaml.Node` trees, so comments ride from load through merge to write. Immutable
+`*T` snapshots are decoded from the merged node and published via `atomic.Pointer`
+— readers are lock-free. `map[string]any` survives only as a transient decode
+view for the public `LayerInfo.Data` surface, never as an engine representation.
 
 ```
-Load:  file/string → node tree → merge → deserialize → immutable *T snapshot
+Load:  file/string → layer node → merge nodes → decode → immutable *T snapshot
 Read:  atomic.Load → *T                 (lock-free, zero alloc)
-Set:   deep copy → unmarshal → fn(copy) → structToMap → merge → atomic.Store
-Write: node tree → route by provenance → per-file atomic write (temp+fsync+rename, flock)
+Set:   decode copy → fn(copy) → diff → graft changed values into merged node → atomic.Store
+Write: merged-node value → graft into TARGET LAYER's own node → encode → per-file atomic write
 ```
+
+**Per-layer write isolation** (the load-bearing invariant): a write grafts the
+changed value into a copy of the *destination layer's own* node tree, so the
+target file keeps its comments and no other layer's comments leak in. Proven by
+`TestStore_CommentIsolationAcrossLayers`.
 
 **Imported by:** `internal/config`, `internal/project`, `internal/state`
 
@@ -28,12 +37,13 @@ Write: node tree → route by provenance → per-file atomic write (temp+fsync+r
 | File | Purpose |
 | --- | --- |
 | `errors.go` | Package doc + `ErrAnchorNotAncestor` sentinel (non-ancestor walk-up anchor). Storage is schema-agnostic; project-domain errors live in `internal/project` |
-| `store.go` | `Store[T]`, `NewStore[T]`, `NewFromString[T]`, `Read`, `Get` (deprecated), `Set`, `Write`, `Layers`, `LayerInfo`, `mergeIntoTree` |
-| `options.go` | `Option` type, `Migration` type, all `With*` constructors |
+| `store.go` | `Store[T]` (node-native), `NewStore[T]`, `NewFromString[T]`, `Read`, path-based `Get`/`Set`/`Remove`, `Write`, `writeLayerFile`, `applyMigrations`, `Layers`, `LayerInfo` |
+| `node.go` | Node-native core: mapping get/put/delete, `cloneNode`, `stripComments`, `nodeValueAt`, `nodeGraftValue`, `nodeDeletePath`, `mergeNodes`, `unionSeqNodes`, `nodeToMap`, `buildVirtualNode` |
+| `options.go` | `Option` type, `Migration[T]` (`= func(*Store[T]) bool`), `WithMigrations[T]`, all `With*` constructors |
 | `discover.go` | Walk-up + explicit path discovery, dual placement logic. Walk-up is bounded by a caller-supplied anchor directory — storage holds no registry/project knowledge |
-| `load.go` | Per-file YAML load, migration runner, `unmarshal[T]` |
-| `merge.go` | N-way map fold, `tagRegistry`, `fieldMeta`, `mergeTrees`, `provenance` |
-| `write.go` | `structToMap`, `encodeValue`, provenance-based routing (with ancestor walk-up), atomic I/O, flock |
+| `load.go` | Per-file node load (`loadNode`), `decodeNode[T]` (migrations run on the store, not here) |
+| `merge.go` | N-way node fold (`merge`), `tagRegistry`, `fieldMeta`, `provenance` |
+| `write.go` | `encodeNode` (header + literal style), `isOpaqueField`, provenance-based routing (with ancestor walk-up), atomic I/O, flock |
 | `resolver.go` | XDG directory resolution (`configDir`, `dataDir`, `stateDir`, `cacheDir`) — delegates to `internal/consts` |
 | `field.go` | `Field`, `FieldSet`, `Schema` interfaces, `FieldKind` constants, `NormalizeFields[T]`, `NewField`, `NewFieldSet` |
 | `defaults.go` | `GenerateDefaultsYAML[T]`, `parseDefaultValue` |
@@ -82,15 +92,17 @@ discovers an existing file and lazily creates it on first `Write`. See the
 ### Store[T] Methods
 
 ```go
-func (s *Store[T]) Read() *T                          // Lock-free atomic load — immutable snapshot
-func (s *Store[T]) Get() *T                           // Deprecated: use Read()
-func (s *Store[T]) Set(fn func(*T)) error             // COW: deep copy → mutate → sync tree → atomic swap
-func (s *Store[T]) Delete(path string) (bool, error)   // Remove dotted path from tree; re-publishes snapshot
-func (s *Store[T]) Write(opts ...WriteOption) error    // No opts = provenance routing, ToPath(p) = target file, ToLayer(i) = target layer
-func (s *Store[T]) MarkForWrite(path string)           // Force path into write set
-func (s *Store[T]) Refresh() error                     // Re-read layers from disk, re-merge, publish fresh snapshot
-func (s *Store[T]) Layers() []LayerInfo               // Discovered layers, highest→lowest priority
+func (s *Store[T]) Read() *T                             // Lock-free atomic load — immutable typed snapshot
+func (s *Store[T]) Get(path string, out any) (bool, error) // Decode in-memory value at dotted path into out (yaml.Unmarshal-style); found=false if absent; nil out = presence check
+func (s *Store[T]) Set(path string, value any) error      // Set in-memory value at dotted path; mark dirty; refresh snapshot. Schema-kind mismatch rejected; non-schema paths allowed (migrations)
+func (s *Store[T]) Remove(path string) (bool, error)      // Delete dotted path from the tree; mark dirty; refresh snapshot
+func (s *Store[T]) Write(opts ...WriteOption) error       // No opts = provenance routing, ToPath(p) = target file, ToLayer(i) = target layer
+func (s *Store[T]) MarkForWrite(path string)              // Force path into write set (persist current value, no Set)
+func (s *Store[T]) Refresh() error                        // Re-read layers from disk, re-merge, publish fresh snapshot
+func (s *Store[T]) Layers() []LayerInfo                   // Discovered layers, highest→lowest priority
 ```
+
+`Read()` is the typed snapshot; `Get(path, &dest)` decodes a single field into a typed destination (so typed read-modify-write needs no closure: `var rules []EgressRule; s.Get("rules", &rules); rules = append(rules, r); s.Set("rules", rules)`). There is no closure mutator and no `Get() *T`.
 
 ### Walk-up anchor (injected)
 
@@ -98,7 +110,9 @@ Walk-up bounding is a plain anchor directory passed to `WithWalkUp(anchorDir)`: 
 
 ### Options
 
-`WithFilenames(names...)`, `WithDefaults(yaml)`, `WithDefaultsFromStruct[T Schema]()`, `WithWalkUp(anchorDir string)`, `WithDirs(dirs...)`, `WithConfigDir()`, `WithDataDir()`, `WithStateDir()`, `WithCacheDir()`, `WithPaths(dirs...)`, `WithMigrations(fns...)`, `WithLock()`
+`WithFilenames(names...)`, `WithDefaults(yaml)`, `WithDefaultsFromStruct[T Schema]()`, `WithWalkUp(anchorDir string)`, `WithDirs(dirs...)`, `WithConfigDir()`, `WithDataDir()`, `WithStateDir()`, `WithCacheDir()`, `WithPaths(dirs...)`, `WithMigrations[T](fns ...Migration[T])`, `WithLock()`, `WithSchemaURL(url)`
+
+`WithSchemaURL(url)` stamps a `# yaml-language-server: $schema=<url>` head comment onto the file on every `Write`, so editors validate/autocomplete the YAML against the published JSON Schema. The header is re-applied (and de-duplicated) on each write — it survives field-merge mutations and a migration re-save. Empty URL disables it. `internal/config` wires `consts.ProjectSchemaURL` / `SettingsSchemaURL`; the JSON Schemas themselves are generated by `cmd/gen-docs` (`docs/GenJSONSchema`).
 
 ## Internal Architecture
 
@@ -116,11 +130,37 @@ Priority: walk-up > dirs > explicit paths. Overlapping discovery deduplicated by
 
 `tagRegistry` maps dotted field paths to `fieldMeta` structs carrying merge tag and `FieldKind`. Built once from `T`'s struct type via `walkType`. The registry is the **schema boundary** — it tells tree operations which nodes are struct nesting (recurse) vs. opaque value fields like `map[string]string` (treat as leaf).
 
-`mergeTrees()` recursively merges `map[string]any` trees. **Struct nesting**: always recursive. **Opaque maps** (`KindMap`): `merge:"union"` does key-by-key merge, untagged does last-wins. **Slices**: `merge:"union"` is additive/deduplicated, otherwise last-wins. **Scalars**: last wins. Provenance tracks which layer won each field.
+`mergeNodes()` (in `node.go`) recursively folds `yaml.Node` mapping trees lowest→highest priority. **Struct nesting**: always recursive. **Opaque maps** (`KindMap`): `merge:"union"` does key-by-key merge, untagged does last-wins. **Slices**: `merge:"union"` is additive/deduplicated (`unionSeqNodes`, by decoded value), otherwise last-wins. **Scalars**: last wins. The winning value node carries its own comments, so the top layer's comments survive into the merged tree. Provenance tracks which layer won each field.
 
 ### Write (`write.go`)
 
 Two modes: auto-route (each field → its provenance layer) or explicit (all fields → named file). Atomic write via temp+fsync+rename. Advisory flock with 10s timeout.
+
+**Comment-preserving (node-native) write.** `Store.writeLayerFile` clones the
+target layer's own node tree, grafts the dirty values into it (sourced from the
+merged node, comment-stripped so no source-layer comment rides along; the
+destination's existing field comments are carried forward by `mappingPut`), and
+encodes that one layer's node. Because each layer is a distinct node tree, a
+write to file B never touches A's node — A's comments cannot leak into B, and B's
+own comments (head + per-field) survive a field-merge mutation. `encodeNode`
+stamps the `WithSchemaURL` head comment (stripping any prior one first, so
+re-writes never duplicate it). The toolkit (`node.go`): `mergeNodes`,
+`nodeGraftValue`, `nodeDeletePath`, `nodeValueAt`, `cloneNode`, `stripComments`,
+`unionSeqNodes`.
+
+**Migrations run per file layer.** A `Migration[T]` is `func(*Store[T]) bool`; it
+mutates fields with the same `Get`/`Set`/`Remove` member functions every caller
+uses (there is no separate node-func or `Doc` layer). `applyMigrations` runs them
+during construction — once against **each file layer's own node** (the merged
+tree only carries the winning occurrence of a key, so a merged-only pass would
+miss a legacy key duplicated in a lower-priority layer and could not route the
+fix back to every owning file). Any layer a migration changed is rewritten
+straight to its origin file (with the schema header); the others are left
+byte-untouched. The virtual defaults/seed layer is never migrated. Migrations run
+before the snapshot is published and before seed/defaults are marked dirty;
+because the edits land on the layer's own node tree, comments on untouched fields
+are dragged along, and a schema-shape change is fixed before the final strict
+decode.
 
 `layerPathForKey` resolves write targets for fields that already have a layer:
 (1) exact provenance match, (2) descendant prefix match, (3) ancestor walk-up for
@@ -155,11 +195,9 @@ The engine-side rules that callers trip over:
   `os.MkdirAll(dir)`, then `atomicWrite` → `MkdirAll(parent)` + temp + rename).
   Consumers need not ensure the dir; eager ensure is allowed only as fail-fast.
 
-### `structToMap` — omitempty-Safe Serializer
+### Clearing a field
 
-Reflection-based serializer ignoring `omitempty`. Excluded at **struct-field level only**: nil pointers, nil slices, empty strings. Included: non-nil pointers to zero values (e.g. `*bool` → `false`), zero-value ints/bools.
-
-Empty strings excluded because config schemas use bare `string` (not `*string`) for optional fields — without this, `Set()` round-trips zero-value strings into the node tree, polluting it with `""` that overrides higher-priority layers. Filter applied in `structToMap` (not `encodeValue`) so empty strings inside slices/maps are preserved.
+To clear a field, call `Remove(path)` — not `Set(path, "")`. `Set` is literal: it writes exactly the value given (an empty string writes `key: ""`), whereas `Remove` deletes the key so a lower-priority layer shows through. (This replaces the old closure+`structToMap` "empty-string-as-unset" behavior.) `Set` encodes the Go value via `yaml.Node.Encode` (`encodeValueToNode`), so `omitempty` on the schema struct is irrelevant — the value handed to `Set` is what lands.
 
 ### XDG Resolution (`resolver.go`)
 
@@ -182,13 +220,14 @@ Deepest fixture level always has both `config.local.yaml` and `config.yaml` with
 
 ## Gotchas
 
-- **Use `Read()`, not `Get()`** — `Get` is deprecated, identical to `Read`.
-- **COW cost is on `Set`, not `Read`** — `Set` pays for deep copy + unmarshal + swap. `Read` is a single atomic pointer load.
-- **`omitempty` is irrelevant** — node tree is the persistence layer; `structToMap` ignores it.
+- **`Read()` vs `Get(path, out)`** — `Read()` returns the whole typed snapshot; `Get(path, &dest)` decodes one field by dotted path into a typed destination. `Set`/`Remove` mutate by path. There is no closure mutator.
+- **`Set` is unconditional** — it always marks the path dirty (no diff-based no-op). Setting a value identical to the current one still writes on the next `Write`. Use `MarkForWrite` to persist the current value without a `Set`.
+- **Cost is on `Set`/`Remove`, not `Read`** — they graft/delete on the node tree and re-decode the snapshot; `Read` is a single atomic pointer load.
+- **`omitempty` is irrelevant** — the value passed to `Set` is encoded as-is to a YAML node; the schema struct's `omitempty` tags don't gate it.
 - **Unknown keys survive** — `mergeIntoTree` preserves tree keys not in the struct schema.
 - **Walk-up is bounded** — never reaches `~/.config/clawker/`. Home-level configs added via `WithConfigDir()`.
 - **Nil vs zero** — Nil pointers/slices/empty strings = "not set". Non-nil zero values = "explicitly set".
-- **`time.Time` is a scalar leaf (`KindTime`)** — although it is a Go struct, both `NormalizeFields` and the `structToMap`/`encodeValue` write path special-case it: it is classified as a leaf and serialized as an RFC3339Nano scalar via yaml.v3, never recursed into its unexported fields. Used by `internal/state`'s `State.CheckedAt`.
+- **`time.Time` is a scalar leaf (`KindTime`)** — although it is a Go struct, `NormalizeFields` classifies it as a leaf and the node encoder serializes it as an RFC3339Nano scalar via yaml.v3, never recursing into its unexported fields. Used by `internal/state`'s `State.CheckedAt`.
 - **Dirty is store-wide** — `Set` marks entire store dirty, not individual fields.
 - **`WithFilenames` is load-bearing** — drives discovery AND the create-if-missing write gate. Omit it → existing files never found and `Write` fails `no write path available`. `WithDefaultFilename` does not substitute (inert without filenames), but pair it in as a drift-proof guard that pins the write target. See Construction Contract above.
 - **A store writes only with a dir option + `WithFilenames`** — `New`/`NewFromString` with *no path options* is an in-memory double: `Write()` errors `no write path available` by design. Add `WithStateDir()`/`WithPaths()` + `WithFilenames()` and it discovers + lazily creates the file on first `Write`.

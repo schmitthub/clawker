@@ -15,6 +15,8 @@ Two `storage.Store[T]` instances wrapped by a thin `configImpl`.
 
 Both stores use `storage.WithDefaultsFromStruct[T]()` to generate defaults from `default` struct tags on schema types, guaranteeing critical values (firewall, logging, monitoring) are always present, even with no files on disk.
 
+Both stores also pass `storage.WithSchemaURL(consts.ProjectSchemaURL / SettingsSchemaURL)`, so every write stamps a `# yaml-language-server: $schema=` header into `clawker.yaml` / `settings.yaml` for editor validation. `NewProjectStoreFromPreset` (used by `clawker init`) wires the project URL too, so the very first written file carries the header. The JSON Schemas are generated from the same struct tags by `cmd/gen-docs` (`docs/GenJSONSchema` → `docs/schemas/*.json`).
+
 **Precedence** (highest to lowest): project `clawker.yaml` (walk-up: closest to CWD wins) > user `clawker.yaml` in config dir > defaults YAML string.
 
 Config dir resolution: `CLAWKER_CONFIG_DIR` > `$XDG_CONFIG_HOME/clawker` > `$AppData/clawker` (Windows) > `~/.config/clawker`
@@ -78,7 +80,7 @@ SettingsStore() *storage.Store[Settings]   // Direct access to settings store
 
 **Settings convenience accessors** (deprecated): `LoggingConfig()`, `MonitoringConfig()`, `HostProxyConfig()` return the corresponding nested struct directly. Equivalent to `SettingsStore().Read().Logging` etc. Prefer the typed store accessor in new code. Still in use in existing callers (e.g. `internal/bundler/dockerfile.go`, `internal/hostproxy/`).
 
-**Mutation**: Use `ProjectStore().Set(fn)` / `SettingsStore().Set(fn)` (returns error). Persist with `ProjectStore().Write()` / `SettingsStore().Write()`.
+**Mutation**: Use `ProjectStore().Set(path, value)` / `SettingsStore().Set(path, value)` (and `Remove(path)`; returns error). Persist with `ProjectStore().Write()` / `SettingsStore().Write()`.
 
 **Filename accessors**: `ProjectConfigFileName()` (`"clawker.yaml"`), `SettingsFileName()` (`"settings.yaml"`). The registry filename is `consts.RegistryFile` (`"registry.yaml"`) — there is no Config accessor for it; `internal/project` owns the registry.
 
@@ -132,9 +134,9 @@ Import as `configmocks "github.com/schmitthub/clawker/internal/config/mocks"`.
 | --- | --- | --- |
 | `NewBlankConfig()` | `*ConfigMock` | Default test double with defaults; read-only |
 | `NewFromString(projectYAML, settingsYAML)` | `*ConfigMock` | Specific YAML values, NO defaults; read-only |
-| `NewIsolatedTestConfig(t)` | `Config` | File-backed; supports `ProjectStore().Set(fn)`, `Write()`, env overrides |
+| `NewIsolatedTestConfig(t)` | `Config` | File-backed; supports `ProjectStore().Set(path, value)`, `Write()`, env overrides |
 
-`NewBlankConfig`/`NewFromString` return moq `*ConfigMock` with read Func fields pre-wired. Override any Func field for partial mocking. Call `mock.ProjectCalls()` etc. for assertions. For mutation tests, use `NewIsolatedTestConfig` which returns a real file-backed `Config` with a live `storage.Store` that supports `ProjectStore().Set(fn)` / `SettingsStore().Set(fn)` and `Write()`.
+`NewBlankConfig`/`NewFromString` return moq `*ConfigMock` with read Func fields pre-wired. Override any Func field for partial mocking. Call `mock.ProjectCalls()` etc. for assertions. For mutation tests, use `NewIsolatedTestConfig` which returns a real file-backed `Config` with a live `storage.Store` that supports `ProjectStore().Set(path, value)` / `SettingsStore().Set(path, value)` and `Write()`.
 
 ## Gotchas
 

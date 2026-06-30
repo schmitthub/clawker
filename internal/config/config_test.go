@@ -5,10 +5,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/schmitthub/clawker/internal/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
+
+	"github.com/schmitthub/clawker/internal/storage"
 )
 
 func TestNewBlankConfig(t *testing.T) {
@@ -49,7 +50,11 @@ func TestNewBlankConfig_settingsDefaults(t *testing.T) {
 
 	// Shipped default aliases (tag → GenerateDefaultsYAML → merge pipeline)
 	assert.Equal(t, "run --rm -it --agent $1 @ --dangerously-skip-permissions", cfg.Project().Aliases["go"])
-	assert.Equal(t, "run --rm -it --agent $1 --worktree $2 @ --dangerously-skip-permissions", cfg.Project().Aliases["wt"])
+	assert.Equal(
+		t,
+		"run --rm -it --agent $1 --worktree $2 @ --dangerously-skip-permissions",
+		cfg.Project().Aliases["wt"],
+	)
 }
 
 func TestNewFromString_projectOnly(t *testing.T) {
@@ -127,7 +132,6 @@ func TestConstantAccessors(t *testing.T) {
 	assert.Equal(t, "clawker.dev", cfg.Domain())
 	assert.Equal(t, "dev.clawker", cfg.LabelDomain())
 	assert.Equal(t, "clawker-net", cfg.ClawkerNetwork())
-
 }
 
 func TestLabelAccessors(t *testing.T) {
@@ -165,7 +169,12 @@ func TestRequiredFirewallDomains(t *testing.T) {
 
 	domains := cfg.RequiredFirewallDomains()
 	assert.Contains(t, domains, "api.anthropic.com")
-	assert.NotContains(t, domains, "registry-1.docker.io", "Docker registry domains should not be required — image pulls go through host daemon")
+	assert.NotContains(
+		t,
+		domains,
+		"registry-1.docker.io",
+		"Docker registry domains should not be required — image pulls go through host daemon",
+	)
 
 	// Returned slice is a copy — mutations don't affect the original.
 	domains[0] = "mutated.com"
@@ -304,9 +313,7 @@ func TestSetProject_mutation(t *testing.T) {
 	require.NoError(t, err)
 
 	// Mutate build image
-	err = cfg.ProjectStore().Set(func(p *Project) {
-		p.Build.Image = "custom:latest"
-	})
+	err = cfg.ProjectStore().Set("build.image", "custom:latest")
 	require.NoError(t, err)
 
 	assert.Equal(t, "custom:latest", cfg.Project().Build.Image)
@@ -331,9 +338,7 @@ func TestSetSettings_mutation(t *testing.T) {
 	cfg, err := NewConfig()
 	require.NoError(t, err)
 
-	err = cfg.SettingsStore().Set(func(s *Settings) {
-		s.Logging.MaxSizeMB = 100
-	})
+	err = cfg.SettingsStore().Set("logging.max_size_mb", 100)
 	require.NoError(t, err)
 
 	assert.Equal(t, 100, cfg.Settings().Logging.MaxSizeMB)
@@ -359,9 +364,7 @@ func TestWriteProject_persistsToFile(t *testing.T) {
 	cfg, err := NewConfig()
 	require.NoError(t, err)
 
-	err = cfg.ProjectStore().Set(func(p *Project) {
-		p.Build.Image = "persisted:latest"
-	})
+	err = cfg.ProjectStore().Set("build.image", "persisted:latest")
 	require.NoError(t, err)
 
 	err = cfg.ProjectStore().Write()
@@ -390,9 +393,7 @@ func TestWriteSettings_persistsToFile(t *testing.T) {
 	cfg, err := NewConfig()
 	require.NoError(t, err)
 
-	err = cfg.SettingsStore().Set(func(s *Settings) {
-		s.Logging.MaxSizeMB = 200
-	})
+	err = cfg.SettingsStore().Set("logging.max_size_mb", 200)
 	require.NoError(t, err)
 
 	err = cfg.SettingsStore().Write()
@@ -533,10 +534,8 @@ agent:
 	)
 	require.NoError(t, err)
 
-	require.NoError(t, projectStore.Set(func(p *Project) {
-		p.Build.Image = "bookworm:latest"
-		p.Workspace.DefaultMode = "bind"
-	}))
+	require.NoError(t, projectStore.Set("build.image", "bookworm:latest"))
+	require.NoError(t, projectStore.Set("workspace.default_mode", "bind"))
 	projectConfigFile := filepath.Join(projectDir, ".clawker.yaml")
 	require.NoError(t, projectStore.Write(storage.ToPath(projectConfigFile)))
 

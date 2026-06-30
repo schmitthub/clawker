@@ -1,0 +1,318 @@
+{
+  "$id": "https://raw.githubusercontent.com/schmitthub/clawker/main/docs/schemas/settings.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "control_plane": {
+      "additionalProperties": false,
+      "properties": {
+        "admin_port": {
+          "default": 7443,
+          "description": "gRPC admin API port (CLI ↔ CP)",
+          "title": "Admin Port",
+          "type": "integer"
+        },
+        "agent_port": {
+          "default": 7444,
+          "description": "In-container gRPC port for clawkerd agent connections (mTLS, clawker-net only)",
+          "title": "Agent Port",
+          "type": "integer"
+        },
+        "health_port": {
+          "default": 7080,
+          "description": "Plain HTTP /healthz readiness endpoint",
+          "title": "Health Port",
+          "type": "integer"
+        },
+        "hydra_admin_port": {
+          "default": 4445,
+          "description": "Hydra admin API for introspection and client registration (HTTPS, container-internal)",
+          "title": "Hydra Admin Port",
+          "type": "integer"
+        },
+        "hydra_public_port": {
+          "default": 4444,
+          "description": "Hydra OAuth2 token endpoint (HTTPS)",
+          "title": "Hydra Public Port",
+          "type": "integer"
+        },
+        "kratos_admin_port": {
+          "default": 4434,
+          "description": "Kratos identity admin API (HTTPS, container-internal)",
+          "title": "Kratos Admin Port",
+          "type": "integer"
+        },
+        "kratos_public_port": {
+          "default": 4433,
+          "description": "Kratos identity public API (HTTPS, container-internal)",
+          "title": "Kratos Public Port",
+          "type": "integer"
+        },
+        "oathkeeper_api_port": {
+          "default": 4457,
+          "description": "Oathkeeper management API (HTTPS, container-internal)",
+          "title": "Oathkeeper API Port",
+          "type": "integer"
+        },
+        "oathkeeper_port": {
+          "default": 4456,
+          "description": "Oathkeeper HTTP auth proxy for future webui (HTTPS)",
+          "title": "Oathkeeper Port",
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "docker": {
+      "additionalProperties": false,
+      "properties": {
+        "socket": {
+          "default": "/var/run/docker.sock",
+          "description": "Host path to the Docker daemon socket",
+          "title": "Docker Socket",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "firewall": {
+      "additionalProperties": false,
+      "properties": {
+        "enable": {
+          "default": true,
+          "description": "Master switch for the Envoy firewall; when off, containers have unrestricted network access",
+          "title": "Enable Firewall",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "enable"
+      ],
+      "type": "object"
+    },
+    "host_proxy": {
+      "additionalProperties": false,
+      "properties": {
+        "daemon": {
+          "additionalProperties": false,
+          "properties": {
+            "grace_period": {
+              "default": "60s",
+              "description": "How long to keep the proxy alive after the last container stops",
+              "title": "Grace Period",
+              "type": "string"
+            },
+            "max_consecutive_errs": {
+              "default": 10,
+              "description": "Restart the proxy daemon after this many consecutive failures",
+              "title": "Max Consecutive Errors",
+              "type": "integer"
+            },
+            "poll_interval": {
+              "default": "30s",
+              "description": "How often to check if containers still need the proxy",
+              "title": "Poll Interval",
+              "type": "string"
+            },
+            "port": {
+              "default": 18374,
+              "description": "Local port the proxy daemon binds to",
+              "title": "Daemon Port",
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "manager": {
+          "additionalProperties": false,
+          "properties": {
+            "port": {
+              "default": 18374,
+              "description": "Local port the host proxy listens on (change if 18374 conflicts)",
+              "title": "Manager Port",
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "logging": {
+      "additionalProperties": false,
+      "properties": {
+        "compress": {
+          "default": true,
+          "description": "Gzip rotated logs to save disk space",
+          "title": "Compress Logs",
+          "type": "boolean"
+        },
+        "file_enabled": {
+          "default": true,
+          "description": "Write structured logs to disk for debugging and diagnostics",
+          "title": "Enable File Logging",
+          "type": "boolean"
+        },
+        "max_age_days": {
+          "default": 7,
+          "description": "Delete rotated logs older than this",
+          "title": "Max Log Age (days)",
+          "type": "integer"
+        },
+        "max_backups": {
+          "default": 3,
+          "description": "Number of rotated log files to keep",
+          "title": "Max Backups",
+          "type": "integer"
+        },
+        "max_size_mb": {
+          "default": 50,
+          "description": "Rotate the log file when it exceeds this size",
+          "title": "Max Log Size (MB)",
+          "type": "integer"
+        },
+        "otel": {
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "default": false,
+              "description": "Send logs to the OTEL collector for OpenSearch visibility (requires monitoring stack running)",
+              "title": "OTEL Logging",
+              "type": "boolean"
+            },
+            "export_interval_seconds": {
+              "default": 5,
+              "description": "How often to flush buffered logs to the collector",
+              "title": "OTEL Export Interval (sec)",
+              "type": "integer"
+            },
+            "max_queue_size": {
+              "default": 2048,
+              "description": "Buffer this many log records before dropping (increase if you see gaps)",
+              "title": "OTEL Queue Size",
+              "type": "integer"
+            },
+            "timeout_seconds": {
+              "default": 5,
+              "description": "Give up on an export batch after this long",
+              "title": "OTEL Timeout (sec)",
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "monitoring": {
+      "additionalProperties": false,
+      "properties": {
+        "opensearch_dashboards_port": {
+          "default": 5601,
+          "description": "Host port for the OpenSearch Dashboards UI",
+          "title": "OpenSearch Dashboards Port",
+          "type": "integer"
+        },
+        "opensearch_heap_mb": {
+          "default": 512,
+          "description": "JVM -Xms/-Xmx for the OpenSearch node; raise on memory-hungry workloads",
+          "title": "OpenSearch Heap (MB)",
+          "type": "integer"
+        },
+        "opensearch_port": {
+          "default": 9200,
+          "description": "Host port for the OpenSearch REST API (logs + traces backend)",
+          "title": "OpenSearch Port",
+          "type": "integer"
+        },
+        "otel_collector_host": {
+          "default": "localhost",
+          "description": "Hostname for reaching the collector from the host",
+          "title": "OTEL Collector Host",
+          "type": "string"
+        },
+        "otel_collector_port": {
+          "default": 4318,
+          "description": "Host port for the OTEL HTTP receiver",
+          "title": "OTEL Collector Port",
+          "type": "integer"
+        },
+        "otel_grpc_port": {
+          "default": 4317,
+          "description": "Host port for the OTEL gRPC receiver",
+          "title": "OTEL gRPC Port",
+          "type": "integer"
+        },
+        "otel_infra_port": {
+          "default": 4319,
+          "description": "Port the OTel collector listens on for infra service logs (CP, Envoy, CoreDNS)",
+          "title": "OTEL Infra Port",
+          "type": "integer"
+        },
+        "prometheus_metrics_port": {
+          "default": 8889,
+          "description": "In-network port the otel-collector exposes its Prometheus scrape endpoint on (Prometheus scrapes the collector over clawker-net for collector + agent metrics; not host-published — no localhost binding, no host port-conflict check needed)",
+          "title": "Prometheus Metrics Port",
+          "type": "integer"
+        },
+        "prometheus_port": {
+          "default": 9090,
+          "description": "Host port for the Prometheus UI and its native OTLP receiver (agent metrics flow through the OTEL collector, not here; this port is only used by direct OTLP pushers)",
+          "title": "Prometheus Port",
+          "type": "integer"
+        },
+        "telemetry": {
+          "additionalProperties": false,
+          "properties": {
+            "include_account_uuid": {
+              "default": true,
+              "description": "Tag telemetry with your Anthropic account ID (useful for multi-user setups)",
+              "title": "Include Account UUID",
+              "type": "boolean"
+            },
+            "include_session_id": {
+              "default": true,
+              "description": "Tag telemetry with session ID to correlate events across a single run",
+              "title": "Include Session ID",
+              "type": "boolean"
+            },
+            "log_tool_details": {
+              "default": true,
+              "description": "Capture full tool call inputs/outputs in telemetry (verbose but useful for debugging)",
+              "title": "Log Tool Details",
+              "type": "boolean"
+            },
+            "log_user_prompts": {
+              "default": true,
+              "description": "Capture user prompts in telemetry (disable for privacy)",
+              "title": "Log User Prompts",
+              "type": "boolean"
+            },
+            "logs_export_interval_ms": {
+              "default": 5000,
+              "description": "How often Claude exports logs (lower = more real-time, higher = less overhead)",
+              "title": "Logs Export Interval (ms)",
+              "type": "integer"
+            },
+            "metric_export_interval_ms": {
+              "default": 10000,
+              "description": "How often Claude exports metrics (lower = more granular, higher = less overhead)",
+              "title": "Metric Export Interval (ms)",
+              "type": "integer"
+            },
+            "prometheus_otlp_path": {
+              "default": "/api/v1/otlp/v1/metrics",
+              "description": "HTTP path on Prometheus' native OTLP receiver — available for direct OTLP/HTTP pushers that want to bypass the collector",
+              "title": "Prometheus OTLP Path",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "title": "clawker settings (settings.yaml)",
+  "type": "object"
+}

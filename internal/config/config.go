@@ -147,6 +147,7 @@ func NewConfig(opts ...NewConfigOption) (Config, error) {
 		storage.WithConfigDir(),
 		storage.WithDotDefault(),
 		storage.WithMigrations(ProjectMigrations()...),
+		storage.WithSchemaURL(consts.ProjectSchemaURL),
 	)
 	projectStore, err := storage.New[Project]("", projectOpts...)
 	if err != nil {
@@ -164,6 +165,7 @@ func NewConfig(opts ...NewConfigOption) (Config, error) {
 	settingsOpts = append(settingsOpts,
 		storage.WithConfigDir(),
 		storage.WithMigrations(SettingsMigrations()...),
+		storage.WithSchemaURL(consts.SettingsSchemaURL),
 	)
 	settingsStore, err := storage.New[Settings]("", settingsOpts...)
 	if err != nil {
@@ -209,8 +211,11 @@ func WithProjectRoot(root string) NewConfigOption {
 // should contain exactly the preset values + any Set() mutations (VCS config,
 // customize edits). User-level and parent configs are layered at runtime via
 // normal config loading, not baked into the project file.
+//
+// The schema URL is wired so the file WriteTo writes carries the
+// yaml-language-server header for editor validation.
 func NewProjectStoreFromPreset(presetYAML string) (*storage.Store[Project], error) {
-	return storage.NewFromString[Project](presetYAML)
+	return storage.NewFromString[Project](presetYAML, storage.WithSchemaURL(consts.ProjectSchemaURL))
 }
 
 // NewBlankConfig creates a Config with defaults but no file discovery.
@@ -259,7 +264,18 @@ func (c *configImpl) EgressRules() []EgressRule {
 	if projectFw != nil {
 		rules = append(rules, projectFw.Rules...)
 		for _, d := range projectFw.AddDomains {
-			rules = append(rules, EgressRule{Dst: d, Proto: EgressProtoHTTPS, Port: EgressPortHTTPS, Action: EgressActionAllow})
+			rules = append(
+				rules,
+				EgressRule{
+					Dst:                   d,
+					Proto:                 EgressProtoHTTPS,
+					Port:                  EgressPortHTTPS,
+					Action:                EgressActionAllow,
+					PathRules:             nil,
+					PathDefault:           "",
+					InsecureSkipTLSVerify: false,
+				},
+			)
 		}
 	}
 	return rules

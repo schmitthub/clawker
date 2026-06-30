@@ -3,10 +3,18 @@ package storage
 // Option configures store construction via New.
 type Option func(*options)
 
-// Migration is a caller-provided function that inspects a raw YAML map and
-// optionally transforms it. Returns true if the map was modified (triggers
-// an atomic re-save of the source file).
-type Migration func(raw map[string]any) bool
+// Migration is a caller-provided function that inspects and optionally mutates a
+// store's fields via its Get/Set/Remove member functions. It returns true if it
+// changed anything (the store then re-saves the touched fields) and an error if
+// the transform could not be applied — a non-nil error aborts construction
+// rather than silently skipping the migration. Because it edits fields on the
+// store's own node tree, comments on untouched fields are carried along by the
+// tree — they survive the re-save without any extra work.
+//
+//	func dropLegacyKey(s *storage.Store[Settings]) (bool, error) {
+//	    return s.Remove("monitoring.legacy_port")
+//	}
+type Migration[T Schema] = func(*Store[T]) (bool, error)
 
 // options holds the accumulated construction configuration.
 type options struct {
@@ -15,10 +23,11 @@ type options struct {
 	walkUpAnchor    string   // bound walk-up from CWD up to this dir (inclusive); empty disables walk-up
 	dirs            []string // directories probed with dual placement (highest priority first)
 	paths           []string // explicit directories to probe (no dual placement)
-	migrations      []Migration
+	migrations      []any    // []Migration[T] (type-erased; asserted to func(*Store[T]) bool in New)
 	lock            bool
 	dotDefault      bool   // apply dual-placement dot prefix in defaultWritePath CWD fallback
 	defaultFilename string // filename for new writes when no file layers exist; defaults to filenames[0]
+	schemaURL       string // JSON Schema URL stamped as a yaml-language-server head comment; empty disables the header
 }
 
 // WithFilenames sets the ordered list of filenames to discover.
@@ -142,9 +151,11 @@ func WithPaths(dirs ...string) Option {
 // WithMigrations registers precondition-based migration functions.
 // Each migration runs independently on every discovered file's raw map.
 // Migrations that return true trigger an atomic re-save of that file.
-func WithMigrations(fns ...Migration) Option {
+func WithMigrations[T Schema](fns ...Migration[T]) Option {
 	return func(o *options) {
-		o.migrations = append(o.migrations, fns...)
+		for _, fn := range fns {
+			o.migrations = append(o.migrations, fn)
+		}
 	}
 }
 
@@ -154,5 +165,17 @@ func WithMigrations(fns ...Migration) Option {
 func WithLock() Option {
 	return func(o *options) {
 		o.lock = true
+	}
+}
+
+// WithSchemaURL stamps a `# yaml-language-server: $schema=<url>` head comment
+// onto the file on every Write, so editors (VS Code, JetBrains via the YAML
+// language server) validate and autocomplete the persisted YAML against the
+// published JSON Schema. The header is re-applied on each write — it survives
+// field-merge mutations and is idempotent (no duplicate lines). An empty URL
+// disables the header, leaving the file comment-free.
+func WithSchemaURL(url string) Option {
+	return func(o *options) {
+		o.schemaURL = url
 	}
 }
