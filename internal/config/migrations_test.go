@@ -42,6 +42,24 @@ func instructions(t *testing.T, p *config.Project) *config.DockerInstructions {
 	return p.Build.Instructions
 }
 
+// loadProjectMigrationErr loads yamlContent through the file-backed Project
+// store with production migrations and asserts construction fails, returning the
+// error string. Used for migrations that reject a malformed legacy shape.
+func loadProjectMigrationErr(t *testing.T, yamlContent string) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "clawker.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(yamlContent), 0o644))
+
+	_, err := storage.New[config.Project]("",
+		storage.WithFilenames("clawker.yaml"),
+		storage.WithPaths(dir),
+		storage.WithMigrations(config.ProjectMigrations()...),
+	)
+	require.Error(t, err, "expected migration to reject the input")
+	return err.Error()
+}
+
 func TestMigrateRunInstructionsToStrings(t *testing.T) {
 	t.Run("converts legacy format", func(t *testing.T) {
 		const in = `build:
@@ -130,6 +148,30 @@ func TestMigrateRunInstructionsToStrings(t *testing.T) {
 		assert.Contains(t, root[1], "MESSAGE=\"hi\"")
 		assert.Contains(t, root[1], "echo \"${MESSAGE}\"")
 		assert.NotEqual(t, in, after, "migration should have rewritten the file")
+	})
+
+	t.Run("all entries dropped becomes empty list", func(t *testing.T) {
+		const in = `build:
+  instructions:
+    user_run:
+      - alpine: apk add python3
+      - cmd: ""
+`
+		snap, after := loadProjectWithMigrations(t, in)
+		assert.Empty(t, instructions(t, snap).UserRun)
+		assert.NotContains(t, after, "cmd:", "legacy maps must be gone from disk")
+		assert.NotContains(t, after, "alpine:", "dropped variant must be gone from disk")
+	})
+
+	t.Run("non-map element errors", func(t *testing.T) {
+		const in = `build:
+  instructions:
+    user_run:
+      - cmd: npm ci
+      - just-a-bare-string
+`
+		errMsg := loadProjectMigrationErr(t, in)
+		assert.Contains(t, errMsg, "unexpected type")
 	})
 }
 

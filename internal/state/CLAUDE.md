@@ -74,10 +74,11 @@ Reads go through `st.State().<Field>` (e.g. `st.State().CheckedAt`,
 `st.State().LastSeenChangelog`) — there are no per-field getters.
 
 `RecordUpdateCheck` writes only the update-check fields;
-`SetLastSeenChangelog` writes only the cursor. Each is a `store.Set(fn)` that
-mutates its fields in a deep copy, then `store.Write()`. Because the store merges
-by dirty path, neither clobbers the other — that invariant is what this package
-exists to guarantee, covered by `TestState_WritersDoNotClobber`.
+`SetLastSeenChangelog` writes only the cursor. Each runs inside a `store.Txn`
+that `Set`s its own fields by path, then `Write`s. The disjoint-ownership split
+is the design; the Txn serializes the two writers so neither flushes the other's
+half-applied dirty set (`Write` flushes the whole set). That invariant is what
+this package exists to guarantee, covered by `TestState_WritersDoNotClobber`.
 
 ## Migrations
 

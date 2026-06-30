@@ -3111,3 +3111,59 @@ func TestStore_Txn_SerializesReadModifyWrite(t *testing.T) {
 	require.NoError(t, store.Refresh())
 	assert.Len(t, store.Read().Tags, goroutines*perG)
 }
+
+func TestRootMapping_RejectsNonMappingRoot(t *testing.T) {
+	cases := []struct {
+		name      string
+		data      string
+		wantErr   bool
+		wantEmpty bool // expect an empty mapping node (only checked when !wantErr)
+	}{
+		{name: "empty bytes", data: "", wantErr: false, wantEmpty: true},
+		{name: "comments only", data: "# just a comment\n", wantErr: false, wantEmpty: true},
+		{name: "mapping root", data: "build:\n  image: x\n", wantErr: false, wantEmpty: false},
+		{name: "sequence root", data: "- one\n- two\n", wantErr: true, wantEmpty: false},
+		{name: "scalar root", data: "just-a-string\n", wantErr: true, wantEmpty: false},
+		{name: "numeric scalar root", data: "42\n", wantErr: true, wantEmpty: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			node, err := rootMapping([]byte(tc.data))
+			if tc.wantErr {
+				require.Error(t, err)
+				require.Nil(t, node)
+				require.Contains(t, err.Error(), "expected a mapping at the document root")
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, node)
+			require.Equal(t, yaml.MappingNode, node.Kind)
+			if tc.wantEmpty {
+				require.Empty(t, node.Content)
+			}
+		})
+	}
+}
+
+func TestValidatePath(t *testing.T) {
+	for _, ok := range []string{"name", "build.image", "a.b.c"} {
+		require.NoError(t, validatePath(ok), "path %q must be accepted", ok)
+	}
+	for _, bad := range []string{"", ".", "build.", ".build", "a..b"} {
+		require.Error(t, validatePath(bad), "path %q must be rejected", bad)
+	}
+}
+
+func TestStore_SetRemove_RejectMalformedPath(t *testing.T) {
+	store, err := NewFromString[testConfig](testFullData())
+	require.NoError(t, err)
+
+	for _, bad := range []string{"", "build.", "a..b"} {
+		require.Error(t, store.Set(bad, "x"), "Set(%q) must be rejected", bad)
+		_, rerr := store.Remove(bad)
+		require.Error(t, rerr, "Remove(%q) must be rejected", bad)
+	}
+
+	// A well-formed path still works — the guard rejects only malformed input.
+	require.NoError(t, store.Set("name", "ok"))
+}

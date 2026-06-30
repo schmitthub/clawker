@@ -138,8 +138,13 @@ func migrateRunInstructionsToStrings(s *storage.Store[Project]) (bool, error) {
 }
 
 // migrateRunList converts a single legacy [{cmd: "x"}, ...] run list at path to
-// a plain []string. Returns false when the key is absent, empty, or already in
-// string form.
+// a plain []string. Returns false (no change) when the key is absent, empty, or
+// already in string form. A list of legacy maps is rewritten to its cmd strings;
+// a map without a non-empty "cmd" is dropped (a legacy alpine/debian-only entry,
+// now unsupported), and a list whose entries all drop out becomes an empty list
+// rather than being left in map form (which would fail the strict typed decode
+// with an opaque error). A non-map element in an otherwise-legacy list is a
+// hand-mangled config and returns an error instead of being silently discarded.
 func migrateRunList(s *storage.Store[Project], path string) (bool, error) {
 	var items []any
 	found, err := s.Get(path, &items)
@@ -154,18 +159,21 @@ func migrateRunList(s *storage.Store[Project], path string) (bool, error) {
 		return false, nil
 	}
 	migrated := make([]string, 0, len(items))
-	for _, item := range items {
+	for i, item := range items {
 		m, isMap := item.(map[string]any)
 		if !isMap {
-			continue
+			return false, fmt.Errorf(
+				"migrating %s: element %d has unexpected type %T (want a legacy {cmd: ...} map)",
+				path, i, item,
+			)
 		}
 		if cmd, isStr := m["cmd"].(string); isStr && cmd != "" {
 			migrated = append(migrated, cmd)
 		}
 	}
-	if len(migrated) == 0 {
-		return false, nil
-	}
+	// The list was in legacy map form (first element was not a string), so it
+	// must be rewritten — even to an empty list when every entry dropped, so the
+	// un-decodable map-shaped value never survives to the strict typed decode.
 	if err = s.Set(path, migrated); err != nil {
 		return false, fmt.Errorf("setting %s: %w", path, err)
 	}

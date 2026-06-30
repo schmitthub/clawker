@@ -129,7 +129,7 @@ Priority: walk-up > dirs > explicit paths. Overlapping discovery deduplicated by
 
 ### Merge (`merge.go`)
 
-`tagRegistry` maps dotted field paths to `fieldMeta` structs carrying merge tag and `FieldKind`. Built once from `T`'s struct type via `walkType`. The registry is the **schema boundary** — it tells tree operations which nodes are struct nesting (recurse) vs. opaque value fields like `map[string]string` (treat as leaf).
+`tagRegistry` maps dotted field paths to `fieldMeta` structs carrying merge tag and `FieldKind`. Built once from `T`'s `Fields()` output by `buildTagRegistry`. The registry is the **schema boundary** — it tells tree operations which nodes are struct nesting (recurse) vs. opaque value fields like `map[string]string` (treat as leaf).
 
 `mergeNodes()` (in `node.go`) recursively folds `yaml.Node` mapping trees lowest→highest priority. **Struct nesting**: always recursive. **Opaque maps** (`KindMap`): `merge:"union"` does key-by-key merge, untagged does last-wins. **Slices**: `merge:"union"` is additive/deduplicated (`unionSeqNodes`, by decoded value), otherwise last-wins. **Scalars**: last wins. The winning value node carries its own comments, so the top layer's comments survive into the merged tree. Provenance tracks which layer won each field.
 

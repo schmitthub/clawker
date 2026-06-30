@@ -12,15 +12,40 @@ import (
 // trees, and writes graft values into a single layer's own node tree — so a
 // write to file B preserves B's comments and never leaks comments from any
 // other layer. map[string]any survives only as a transient decode view for the
-// public API (LayerInfo.Data) and the typed snapshot.
+// public API (LayerInfo.Data); the typed snapshot is decoded straight from the
+// merged node, never through a map.
 
 // newMapping returns an empty YAML mapping node.
 func newMapping() *yaml.Node {
 	return &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 }
 
+// nodeKindName returns a human-readable name for a yaml.Node kind, used in
+// error messages about an unexpected document root.
+func nodeKindName(k yaml.Kind) string {
+	switch k {
+	case yaml.DocumentNode:
+		return "document"
+	case yaml.SequenceNode:
+		return "sequence"
+	case yaml.MappingNode:
+		return "mapping"
+	case yaml.ScalarNode:
+		return "scalar"
+	case yaml.AliasNode:
+		return "alias"
+	default:
+		return "unknown"
+	}
+}
+
 // rootMapping extracts the root mapping node from raw YAML bytes, preserving
-// comments. Missing/empty/non-mapping content yields a fresh empty mapping.
+// comments. A genuinely empty input (no bytes, comments-only, or a null
+// document) yields a fresh empty mapping. A document whose root is a sequence or
+// scalar is rejected: config files are always key/value documents, so a
+// non-mapping root means the file is corrupt or hand-mangled — surface it loudly
+// instead of laundering it into an empty mapping, which would silently revert
+// every field to its default.
 func rootMapping(data []byte) (*yaml.Node, error) {
 	if len(data) == 0 {
 		return newMapping(), nil
@@ -29,8 +54,15 @@ func rootMapping(data []byte) (*yaml.Node, error) {
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return nil, fmt.Errorf("storage: parsing yaml: %w", err)
 	}
-	if doc.Kind == yaml.DocumentNode && len(doc.Content) > 0 && doc.Content[0].Kind == yaml.MappingNode {
-		return doc.Content[0], nil
+	if doc.Kind == yaml.DocumentNode && len(doc.Content) > 0 {
+		root := doc.Content[0]
+		if root.Kind != yaml.MappingNode {
+			return nil, fmt.Errorf(
+				"storage: parsing yaml: expected a mapping at the document root, got %s",
+				nodeKindName(root.Kind),
+			)
+		}
+		return root, nil
 	}
 	return newMapping(), nil
 }

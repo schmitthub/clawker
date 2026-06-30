@@ -202,12 +202,6 @@ func genConfigDoc(docPath string) error {
 	return nil
 }
 
-// genConfigSchemas writes the JSON Schema files for the project and settings
-// config types into <docPath>/schemas/. The schemas are generated from the same
-// struct tags as the configuration reference and are served as raw GitHub
-// content (consts.ProjectSchemaURL / SettingsSchemaURL) so the
-// yaml-language-server header the storage layer stamps resolves. Returns the
-// schema output directory.
 // configSchemaSpec describes one generated config JSON Schema file.
 type configSchemaSpec struct {
 	typ   reflect.Type
@@ -236,6 +230,12 @@ func configSchemaSpecs() []configSchemaSpec {
 	}
 }
 
+// genConfigSchemas writes the JSON Schema files for the project and settings
+// config types into <docPath>/schemas/. The schemas are generated from the same
+// struct tags as the configuration reference and are served as raw GitHub
+// content (consts.ProjectSchemaURL / SettingsSchemaURL) so the
+// yaml-language-server header the storage layer stamps resolves. Returns the
+// schema output directory.
 func genConfigSchemas(docPath string) (string, error) {
 	dir := filepath.Join(docPath, filepath.Base(consts.SchemaDocsDir))
 	if err := os.MkdirAll( //nolint:gosec // non-secret generated docs; conventional world-readable perms

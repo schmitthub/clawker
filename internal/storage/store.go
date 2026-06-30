@@ -1,9 +1,11 @@
 package storage
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -175,9 +177,9 @@ func (s *Store[T]) applyMigrations() error {
 	// tree only carries the winning occurrence of a key, so a legacy key in a
 	// lower-priority layer would never be seen and a mutation could not be
 	// routed back to every owning file. Encodes are STAGED here and committed
-	// only after every layer's migrations succeed, so a migration that errors on
-	// a later layer leaves earlier layers' files untouched on disk (the
-	// multi-file rewrite is otherwise non-transactional).
+	// only after every layer's migrations succeed: if a migration FUNCTION errors
+	// on any layer, nothing is written and every file is left untouched. The
+	// commit loop below is per-file, not cross-file atomic — see its note.
 	type pendingWrite struct {
 		path string
 		data []byte
@@ -202,7 +204,12 @@ func (s *Store[T]) applyMigrations() error {
 		return nil
 	}
 
-	// Every layer's migrations applied cleanly — now commit the rewrites.
+	// Every layer's migrations applied cleanly — now commit the rewrites. Each
+	// writeFile is atomic (temp + rename), but the batch is not: a write error
+	// partway through leaves earlier files migrated and later ones not. That
+	// split state self-heals — every migration is precondition-guarded and
+	// idempotent, so the next load re-migrates only the remainder — rather than
+	// corrupting anything.
 	for _, pw := range pending {
 		if err := s.writeFile(pw.path, pw.data); err != nil {
 			return fmt.Errorf("storage: writing migrated %s: %w", pw.path, err)
@@ -371,6 +378,20 @@ func (s *Store[T]) ProvenanceMap() map[string]string {
 	return result
 }
 
+// validatePath rejects an empty path or a path with an empty segment (e.g. "",
+// "build.", "a..b"). Such a path would address or graft an empty-string key,
+// silently writing a junk node to disk. Mutators guard with it before splitting;
+// reads tolerate a miss and need no guard.
+func validatePath(path string) error {
+	if path == "" {
+		return errors.New("storage: empty path")
+	}
+	if slices.Contains(strings.Split(path, "."), "") {
+		return fmt.Errorf("storage: path %q has an empty segment", path)
+	}
+	return nil
+}
+
 // Set writes value at a dotted field path (e.g. "build.image") in the in-memory
 // merged node, marks it dirty for the next Write, and refreshes the snapshot.
 // value is a Go value (string, bool, int, slice, map) encoded faithfully to a
@@ -382,6 +403,9 @@ func (s *Store[T]) Set(path string, value any) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if err := validatePath(path); err != nil {
+		return err
+	}
 	if err := s.validateKind(path, value); err != nil {
 		return err
 	}
@@ -426,6 +450,9 @@ func (s *Store[T]) Set(path string, value any) error {
 func (s *Store[T]) Remove(path string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := validatePath(path); err != nil {
+		return false, err
+	}
 	segs := strings.Split(path, ".")
 
 	if s.migrating {

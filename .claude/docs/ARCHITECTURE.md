@@ -188,13 +188,13 @@ Write:  dirty paths → route by provenance → graft into target layer node →
 
 Each file migrates independently — any file at any depth can be independently stale.
 
-**Merge with provenance**: Fold N layer maps in priority order (closest to CWD = highest). Per-field merge strategy via `merge:"union"|"overwrite"` struct tags on `T`, extracted into a `tagRegistry` at construction. Provenance map tracks which layer won each field — used for auto-scoped writes. Absent keys mean "not set" (not iterated), present keys with zero values mean "explicitly set".
+**Merge with provenance**: Fold N layer node trees in priority order (closest to CWD = highest). Per-field merge strategy via `merge:"union"|"overwrite"` struct tags on `T`, extracted into a `tagRegistry` at construction. Provenance map tracks which layer won each field — used for auto-scoped writes. Absent keys mean "not set" (not iterated), present keys with zero values mean "explicitly set".
 
 **Write model**: Targeted (`Write(ToPath(p))` / `Write(ToLayer(i))`) or auto-route (`Write()` — provenance resolves each dirty field's target). Each dirty value is grafted into a clone of the target layer's own node tree (preserving its comments), then encoded and atomically written. Node merge preserves unknown keys in the tree that aren't in the struct schema.
 
-**Testing**: `storage.NewFromString[T](yaml)` is a separate constructor that bypasses the pipeline — parses YAML string → node tree → `*T`, no store machinery. Composing packages (`config/mocks`, `project/mocks`) use it to build their test doubles and use real `Store[T]` + `t.TempDir()` for isolated FS harnesses. `Store[T]` has no mock interface; consumer interfaces are the mock boundary.
+**Testing**: `storage.NewFromString[T](yaml)` is the same call as `New` (`New` delegates to it); with no path options it discovers nothing on disk and the seed YAML is the only layer — an in-memory double, parsed through the real schema. Composing packages (`config/mocks`, `project/mocks`) use it to build their test doubles and use real `Store[T]` + `t.TempDir()` for isolated FS harnesses. `Store[T]` has no mock interface; consumer interfaces are the mock boundary.
 
-**Imported by:** `internal/config`, `internal/project`
+**Imported by:** `internal/config`, `internal/project`, `internal/state`
 
 ### internal/config - Configuration
 
