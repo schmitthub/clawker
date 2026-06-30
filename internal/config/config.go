@@ -20,11 +20,11 @@ type Config interface {
 	Settings() *Settings
 
 	// ProjectStore returns the underlying project config store.
-	// Use Store.Set(fn) to mutate and Store.Write() to persist.
+	// Use Store.Set(path, value)/Store.Remove(path) to mutate and Store.Write() to persist.
 	ProjectStore() *storage.Store[Project]
 
 	// SettingsStore returns the underlying settings store.
-	// Use Store.Set(fn) to mutate and Store.Write() to persist.
+	// Use Store.Set(path, value)/Store.Remove(path) to mutate and Store.Write() to persist.
 	SettingsStore() *storage.Store[Settings]
 
 	// Deprecated: Use SettingsStore().Read().Logging instead.

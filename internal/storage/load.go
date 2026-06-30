@@ -11,9 +11,10 @@ import (
 // a map — is the layer's representation, so a layer carries its own comments
 // and a write back to its file preserves them.
 type layer struct {
-	path     string     // absolute path to the source file ("" = virtual defaults layer)
+	path     string     // absolute path to the source file (empty for the virtual layer)
 	filename string     // which filename matched (e.g., "clawker.yaml")
 	node     *yaml.Node // root mapping node from this file only (comments intact)
+	virtual  bool       // true for the lowest-priority defaults/seed layer (no backing file)
 }
 
 // parseNodeFile reads a YAML file into its root mapping node, preserving

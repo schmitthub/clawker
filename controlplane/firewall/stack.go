@@ -469,10 +469,10 @@ func (s *Stack) ensureConfigs() (string, error) {
 			}
 		}
 		if healed {
-			if sErr := s.store.Set(rulesField, rules); sErr != nil {
+			if sErr := tx.Set(rulesField, rules); sErr != nil {
 				return fmt.Errorf("healing rules store: %w", sErr)
 			}
-			if wErr := s.store.Write(); wErr != nil {
+			if wErr := tx.Write(); wErr != nil {
 				return fmt.Errorf("writing healed rules: %w", wErr)
 			}
 			s.log.Info().Int("rules", len(rules)).Msg("healed legacy rules in store")

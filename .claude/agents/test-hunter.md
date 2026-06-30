@@ -280,17 +280,15 @@ func TestConfigName(t *testing.T) {
 
 **GOOD pattern — values flow through real code:**
 ```go
-// Values came THROUGH the Store pipeline (Set → COW → write → reload)
+// Values came THROUGH the Store pipeline (Set → graft → write → reload)
 func TestStore_Write(t *testing.T) {
     store, err := NewFromString[testConfig](testFullData())
     require.NoError(t, err)
     store.opts.paths = []string{dir}
     store.opts.filenames = []string{"config.yaml"}
 
-    store.Set(func(c *testConfig) {
-        c.Name = "updated"
-        c.Version = 99
-    })
+    require.NoError(t, store.Set("name", "updated"))
+    require.NoError(t, store.Set("version", 99))
     require.NoError(t, store.Write())
 
     result := mustReadConfig(t, writePath)

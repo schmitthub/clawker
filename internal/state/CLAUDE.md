@@ -58,7 +58,7 @@ on the interface and mock it via `internal/state/mocks` (moq-generated
 func New() (StateStore, error)                  // production: file-backed store (filenames + WithDefaultFilename guard + migrations + state dir + lock); resolves the state dir from XDG
 func NewFromString(seed string) (StateStore, error) // in-memory test seam: seed-only, NO path options → no discovery, no disk, no migrations. NOT New("") — used by mocks/stubs + intra-pkg tests that don't need an isolated FS
 
-func StateMigrations() []storage.Migration      // additive list; currently [dropLegacyUpdateKeys]
+func StateMigrations() []storage.Migration[State] // additive list; currently [dropLegacyUpdateKeys]
 
 type StateStore interface {
 	// Read: immutable snapshot of the schema struct.

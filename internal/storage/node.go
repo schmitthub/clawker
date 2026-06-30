@@ -58,7 +58,8 @@ func rootMapping(data []byte) (*yaml.Node, error) {
 		root := doc.Content[0]
 		if root.Kind != yaml.MappingNode {
 			return nil, fmt.Errorf(
-				"storage: parsing yaml: expected a mapping at the document root, got %s",
+				"storage: parsing yaml: %w, got %s",
+				ErrNonMappingRoot,
 				nodeKindName(root.Kind),
 			)
 		}

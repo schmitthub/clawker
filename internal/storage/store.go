@@ -107,6 +107,7 @@ func NewFromString[T Schema](raw string, opts ...Option) (*Store[T], error) {
 			path:     df.path,
 			filename: df.filename,
 			node:     node,
+			virtual:  false,
 		})
 	}
 
@@ -123,7 +124,7 @@ func NewFromString[T Schema](raw string, opts ...Option) (*Store[T], error) {
 	allLayers := make([]layer, 0, len(fileLayers)+1)
 	allLayers = append(allLayers, fileLayers...)
 	if virtual != nil && len(virtual.Content) > 0 {
-		allLayers = append(allLayers, layer{path: "", filename: "", node: virtual})
+		allLayers = append(allLayers, layer{path: "", filename: "", node: virtual, virtual: true})
 	}
 
 	tree, prov := merge(allLayers, tags)
@@ -188,7 +189,7 @@ func (s *Store[T]) applyMigrations() error {
 	for i := range s.layers {
 		// The virtual defaults/seed layer (no file) is code-defined and always
 		// current — never migrated, never written.
-		if s.layers[i].path == "" {
+		if s.layers[i].virtual {
 			continue
 		}
 		changed, encoded, err := s.migrateLayer(i)
@@ -241,7 +242,7 @@ func (s *Store[T]) migrateLayer(i int) (bool, []byte, error) {
 			// error (WithMigrations[T] not tied to New[T]'s T). Aborting
 			// construction is mandatory — silently skipping it would drop the
 			// legacy-key cleanup the migration exists to perform.
-			return false, nil, fmt.Errorf("migration has wrong type %T for Store[%T]", m, *new(T))
+			return false, nil, fmt.Errorf("storage: %w: got %T for Store[%T]", ErrMigrationType, m, *new(T))
 		}
 		layerChanged, err := fn(s)
 		if err != nil {
@@ -275,7 +276,7 @@ func (s *Store[T]) writeFile(dest string, data []byte) error {
 // Caller holds no lock — invoked only during construction.
 func (s *Store[T]) markSeedDirty() {
 	for path, idx := range s.prov {
-		if idx >= 0 && idx < len(s.layers) && s.layers[idx].path == "" {
+		if idx >= 0 && idx < len(s.layers) && s.layers[idx].virtual {
 			s.markDirty(path, dirtySet)
 		}
 	}
@@ -434,7 +435,7 @@ func (s *Store[T]) Set(path string, value any) error {
 	nodeGraftValue(candidate, segs, valNode)
 	decoded, derr := decodeNode[T](candidate)
 	if derr != nil {
-		return fmt.Errorf("storage: Set %q: value no longer decodes into schema: %w", path, derr)
+		return fmt.Errorf("storage: Set %q: %w: %w", path, ErrSchemaDecode, derr)
 	}
 	s.tree = candidate
 	s.markDirty(path, dirtySet)
@@ -631,7 +632,7 @@ func (s *Store[T]) Write(opts ...WriteOption) error {
 			}
 			target = s.layers[opt.layer].path
 		default:
-			return fmt.Errorf("storage: invalid WriteOption (no path or layer)")
+			return fmt.Errorf("storage: %w", ErrInvalidWriteOption)
 		}
 	}
 
@@ -802,6 +803,7 @@ func (s *Store[T]) Refresh() error {
 			path:     df.path,
 			filename: df.filename,
 			node:     node,
+			virtual:  false,
 		})
 	}
 
@@ -809,7 +811,7 @@ func (s *Store[T]) Refresh() error {
 	allLayers := make([]layer, 0, len(fileLayers)+1)
 	allLayers = append(allLayers, fileLayers...)
 	for _, l := range s.layers {
-		if l.path == "" {
+		if l.virtual {
 			allLayers = append(allLayers, l)
 			break
 		}
@@ -827,7 +829,7 @@ func (s *Store[T]) Refresh() error {
 // matching Refresh. Caller must hold s.mu.
 func (s *Store[T]) refreshLayers(written map[string]bool) error {
 	for i := range s.layers {
-		if s.layers[i].path == "" {
+		if s.layers[i].virtual {
 			continue // virtual layer — no file to read
 		}
 		node, err := loadNode(s.layers[i].path)
@@ -860,18 +862,18 @@ func (s *Store[T]) injectNewLayers(writtenPaths []string) error {
 		if err != nil {
 			return fmt.Errorf("storage: reading newly written %s: %w", filePath, err)
 		}
-		s.insertFileLayer(layer{path: filePath, filename: filepath.Base(filePath), node: node})
+		s.insertFileLayer(layer{path: filePath, filename: filepath.Base(filePath), node: node, virtual: false})
 	}
 	return nil
 }
 
-// insertFileLayer splices l in just before the virtual layer (the last element
-// with path==""), or appends it when there is no virtual layer — so a newly
+// insertFileLayer splices l in just before the virtual layer (the last element,
+// flagged virtual), or appends it when there is no virtual layer — so a newly
 // written file participates in the next remerge at the lowest file priority.
 // Caller must hold s.mu.
 func (s *Store[T]) insertFileLayer(l layer) {
 	for i, existing := range s.layers {
-		if existing.path == "" {
+		if existing.virtual {
 			s.layers = append(s.layers[:i+1], s.layers[i:]...)
 			s.layers[i] = l
 			return

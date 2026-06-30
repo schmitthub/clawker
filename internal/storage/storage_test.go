@@ -311,7 +311,7 @@ func TestStore_Merge(t *testing.T) {
 			name: "single layer overrides defaults",
 			base: defaults,
 			layers: []layer{
-				{path: fullPath, filename: "full.yaml", node: full},
+				{path: fullPath, filename: "full.yaml", node: full, virtual: false},
 			},
 			wantName:     "myproject",
 			wantVersion:  1,
@@ -326,8 +326,8 @@ func TestStore_Merge(t *testing.T) {
 			name: "higher priority layer wins scalars",
 			base: defaults,
 			layers: []layer{
-				{path: overridePath, filename: "override.yaml", node: override},
-				{path: fullPath, filename: "full.yaml", node: full},
+				{path: overridePath, filename: "override.yaml", node: override, virtual: false},
+				{path: fullPath, filename: "full.yaml", node: full, virtual: false},
 			},
 			wantName:    "override-project",
 			wantVersion: 2,
@@ -352,7 +352,7 @@ func TestStore_Merge(t *testing.T) {
 		{
 			name: "nil base with single layer",
 			layers: []layer{
-				{path: partialPath, filename: "partial.yaml", node: partial},
+				{path: partialPath, filename: "partial.yaml", node: partial, virtual: false},
 			},
 			wantName:     "myproject",
 			wantImage:    "node:20",
@@ -364,7 +364,7 @@ func TestStore_Merge(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			mergeLayers := append([]layer{}, tt.layers...)
 			if tt.base != nil {
-				mergeLayers = append(mergeLayers, layer{path: "", filename: "", node: tt.base})
+				mergeLayers = append(mergeLayers, layer{path: "", filename: "", node: tt.base, virtual: true})
 			}
 			result, prov := merge(mergeLayers, tags)
 			require.NotNil(t, result)
@@ -649,8 +649,8 @@ func TestStore_WriteProvenance(t *testing.T) {
 	require.NoError(t, err)
 
 	layers := []layer{
-		{path: localPath, filename: "local.yaml", node: localData},
-		{path: globalPath, filename: "global.yaml", node: globalData},
+		{path: localPath, filename: "local.yaml", node: localData, virtual: false},
+		{path: globalPath, filename: "global.yaml", node: globalData, virtual: false},
 	}
 
 	tags := buildTagRegistry[testConfig]()
@@ -659,7 +659,7 @@ func TestStore_WriteProvenance(t *testing.T) {
 	base, err := loadNode(basePath)
 	require.NoError(t, err)
 
-	tree, prov := merge(append(layers, layer{path: "", filename: "", node: base}), tags)
+	tree, prov := merge(append(layers, layer{path: "", filename: "", node: base, virtual: true}), tags)
 
 	// Deserialize for Set.
 	value, err := decodeNode[testConfig](tree)
@@ -710,8 +710,8 @@ version: 2
 	require.NoError(t, err)
 
 	layers := []layer{
-		{path: localPath, filename: "local.yaml", node: localData},
-		{path: globalPath, filename: "global.yaml", node: globalData},
+		{path: localPath, filename: "local.yaml", node: localData, virtual: false},
+		{path: globalPath, filename: "global.yaml", node: globalData, virtual: false},
 	}
 
 	tags := buildTagRegistry[testConfig]()
@@ -775,8 +775,8 @@ build:
 	require.NoError(t, err)
 
 	layers := []layer{
-		{path: localPath, filename: "local.yaml", node: localData},
-		{path: globalPath, filename: "global.yaml", node: globalData},
+		{path: localPath, filename: "local.yaml", node: localData, virtual: false},
+		{path: globalPath, filename: "global.yaml", node: globalData, virtual: false},
 	}
 
 	tags := buildTagRegistry[testConfig]()
@@ -826,7 +826,7 @@ func TestStore_WriteFilename(t *testing.T) {
 
 	tags := buildTagRegistry[testConfig]()
 	tree, prov := merge([]layer{
-		{path: configPath, filename: "config.yaml", node: configData},
+		{path: configPath, filename: "config.yaml", node: configData, virtual: false},
 	}, tags)
 
 	value, err := decodeNode[testConfig](tree)
@@ -835,7 +835,7 @@ func TestStore_WriteFilename(t *testing.T) {
 	store := &Store[testConfig]{
 		tree: tree,
 		layers: []layer{
-			{path: configPath, filename: "config.yaml", node: configData},
+			{path: configPath, filename: "config.yaml", node: configData, virtual: false},
 		},
 		prov: prov,
 		tags: tags,
@@ -2725,7 +2725,7 @@ func TestStore_Merge_UnionHandlesNonComparableValues(t *testing.T) {
 	}
 
 	require.NotPanics(t, func() {
-		result, _ := merge(append(layers, layer{path: "", filename: "", node: base}), tags)
+		result, _ := merge(append(layers, layer{path: "", filename: "", node: base, virtual: true}), tags)
 		items, ok := nodeToMap(result)["items"].([]any)
 		require.True(t, ok)
 		assert.Len(t, items, 2)
@@ -2748,7 +2748,7 @@ func TestStore_Merge_UnionWithImplicitYAMLFieldName(t *testing.T) {
 		},
 	}
 
-	result, _ := merge(append(layers, layer{path: "", filename: "", node: base}), tags)
+	result, _ := merge(append(layers, layer{path: "", filename: "", node: base, virtual: true}), tags)
 	cfgResult, err := decodeNode[testUnionImplicitCfg](result)
 	require.NoError(t, err)
 
@@ -2807,8 +2807,8 @@ name: base
 
 	// local.yaml is the higher-priority layer (index 0).
 	layers := []layer{
-		{path: localPath, filename: "local.yaml", node: localData},
-		{path: basePath, filename: "base.yaml", node: baseData},
+		{path: localPath, filename: "local.yaml", node: localData, virtual: false},
+		{path: basePath, filename: "base.yaml", node: baseData, virtual: false},
 	}
 	tags := buildTagRegistry[testPortRuleCfg]()
 	tree, prov := merge(layers, tags)
@@ -2867,8 +2867,8 @@ version: 2
 	require.NoError(t, err)
 
 	layers := []layer{
-		{path: localPath, filename: "local.yaml", node: localData},
-		{path: basePath, filename: "base.yaml", node: baseData},
+		{path: localPath, filename: "local.yaml", node: localData, virtual: false},
+		{path: basePath, filename: "base.yaml", node: baseData, virtual: false},
 	}
 	tags := buildTagRegistry[testConfig]()
 	tree, prov := merge(layers, tags)
@@ -2917,8 +2917,7 @@ func TestStore_Set_RejectsSchemaBreakingValue(t *testing.T) {
 	require.Equal(t, "node:20", store.Read().Build.Image)
 
 	err = store.Set("build", "oops")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no longer decodes")
+	require.ErrorIs(t, err, ErrSchemaDecode)
 
 	// Snapshot is untouched by the rejected Set.
 	assert.Equal(t, "node:20", store.Read().Build.Image)
@@ -2976,8 +2975,7 @@ func TestStore_WriteOption_ZeroValue(t *testing.T) {
 
 	var zero WriteOption
 	err = store.Write(zero)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid WriteOption")
+	require.ErrorIs(t, err, ErrInvalidWriteOption)
 
 	require.NoError(t, store.Write(ToLayer(0)))
 }
@@ -3064,8 +3062,7 @@ func TestStore_Migrations_RunOnStore(t *testing.T) {
 			WithPaths(dir),
 			WithMigrations(bad),
 		)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "wrong type")
+		require.ErrorIs(t, err, ErrMigrationType)
 	})
 }
 
@@ -3130,9 +3127,8 @@ func TestRootMapping_RejectsNonMappingRoot(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			node, err := rootMapping([]byte(tc.data))
 			if tc.wantErr {
-				require.Error(t, err)
+				require.ErrorIs(t, err, ErrNonMappingRoot)
 				require.Nil(t, node)
-				require.Contains(t, err.Error(), "expected a mapping at the document root")
 				return
 			}
 			require.NoError(t, err)
