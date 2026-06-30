@@ -514,9 +514,12 @@ func TestApplyVCSToProject(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p := &config.Project{}
-			applyVCSToProject(p, tt.vcs)
+			// Exercise the real store path: path-based Set + decode round-trip.
+			store, err := config.NewProjectStoreFromPreset("")
+			require.NoError(t, err)
+			require.NoError(t, applyVCSToProject(store, tt.vcs))
 
+			p := store.Read()
 			for _, d := range tt.wantDomains {
 				assert.Contains(t, p.Security.Firewall.AddDomains, d)
 			}

@@ -188,9 +188,8 @@ func nodeDeletePath(m *yaml.Node, segments []string) bool {
 	return false
 }
 
-// encodeValueToNode encodes a decoded Go value (scalar, []any, map[string]any)
-// into a yaml.Node. Used to turn a structToMap-derived value into a graftable
-// node.
+// encodeValueToNode encodes a Go value (scalar, slice, map) passed to Set (or a
+// migration) into a graftable yaml.Node.
 func encodeValueToNode(v any) (*yaml.Node, error) {
 	var n yaml.Node
 	if err := n.Encode(v); err != nil {
@@ -215,8 +214,8 @@ func nodeToMap(n *yaml.Node) map[string]any {
 }
 
 // decodedEqual reports whether two value nodes decode to deeply-equal Go values.
-// Used for union deduplication, matching the map engine's [reflect.DeepEqual] on
-// decoded values. A node that fails to decode is treated as not equal.
+// Used for union deduplication; compares decoded Go values with
+// [reflect.DeepEqual]. A node that fails to decode is treated as not equal.
 func decodedEqual(a, b *yaml.Node) bool {
 	var av, bv any
 	if a != nil {
@@ -233,9 +232,9 @@ func decodedEqual(a, b *yaml.Node) bool {
 }
 
 // mergeNodes folds src (the higher-priority layer) into dst, mutating dst and
-// recording provenance per dotted path. It mirrors the map engine's mergeTrees
-// semantics exactly: opaque maps replace or union per-entry, struct nesting
-// recurses, sequences union or replace, scalars last-win. Because callers fold
+// recording provenance per dotted path. Merge semantics: opaque (non-union) maps
+// replace wholesale, union maps merge per-entry, struct nesting recurses,
+// sequences union or replace, scalars last-win. Because callers fold
 // lowest→highest priority, src wins on conflict and its value node (with its
 // comments) lands in the merged tree — so the top layer's comments are the ones
 // preserved through a union merge.
@@ -311,8 +310,8 @@ func mergeMappingEntry(
 
 // unionSeqNodes merges two sequence nodes, deduplicating by decoded value.
 // Lower-priority (dst) items come first, then higher-priority (src) items not
-// already present — matching the map engine's unionAny order. The result keeps
-// src's sequence-level comments (src is the higher-priority/top layer).
+// already present. The result keeps src's sequence-level comments (src is the
+// higher-priority/top layer).
 func unionSeqNodes(dst, src *yaml.Node) *yaml.Node {
 	result := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
 	result.HeadComment = src.HeadComment

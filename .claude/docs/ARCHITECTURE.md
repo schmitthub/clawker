@@ -141,9 +141,9 @@ Three packages form the configuration subsystem. `storage` is the engine, `confi
 │  │ • Dual form │  │              │  │   tracking    │  │ • Atomic    │ │
 │  └─────────────┘  └──────────────┘  └───────────────┘  └─────────────┘ │
 │                                                                         │
-│  Node tree (map[string]any) = merge engine + persistence layer          │
-│  Typed struct *T = deserialized view (read/write API)                   │
-│  structToMap = omitempty-safe serializer (Set → tree update)            │
+│  Node tree (yaml.Node) = merge engine + persistence layer (comments ride)│
+│  Typed struct *T = immutable snapshot (lock-free Read via atomic.Pointer)│
+│  Set(path,value)/Remove(path) graft into the node tree                  │
 │  Also: flock locking (optional), atomic I/O (temp+rename)               │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
@@ -159,16 +159,14 @@ Three packages form the configuration subsystem. `storage` is the engine, `confi
 
 Generic `Store[T]` that handles the full lifecycle of layered YAML configuration. Leaf package — its only `internal/` import is `internal/consts` (itself stdlib-only), for XDG directory resolution and the dotted config-directory name. See `internal/storage/CLAUDE.md` for detailed API reference.
 
-**Node tree architecture:** The node tree (`map[string]any`) is the merge engine and persistence layer. The typed struct `*T` is a deserialized view — the read/write API. Merge operates on maps only; the struct is deserialized from the merged tree at end of construction. This avoids the `omitempty` problem (YAML marshaling drops zero-value fields like `false` or `0`).
+**Node-native architecture:** Every layer and the merged tree are `yaml.Node` trees, so comments ride from load through merge to write. The typed struct `*T` is an immutable snapshot decoded from the merged node and published via `atomic.Pointer` (lock-free `Read`). `map[string]any` survives only as a transient decode view (`LayerInfo.Data`). This avoids the `omitempty` problem — the value handed to `Set` is grafted as-is, so explicit zero values (`false`, `0`, `""`) are preserved.
 
 ```
-Load:   file → map[string]any ─┐
-                                ├→ merge maps → deserialize → *T
-        string → map[string]any ─┘
+Load:   file/string → layer node ─→ merge nodes → decode → immutable *T
 
-Set:    *T (mutated) → structToMap → merge into tree → mark dirty
+Set:    encode value → graft into merged node at path → mark dirty → re-decode
 
-Write:  tree → route by provenance → per-file atomic write
+Write:  dirty paths → route by provenance → graft into target layer node → per-file atomic write
 ```
 
 **Discovery** (how files are found — two additive modes):
@@ -184,15 +182,15 @@ Write:  tree → route by provenance → per-file atomic write
 
 **Pipeline** (per file, before merge):
 
-1. Read YAML → `map[string]any`
-2. Run caller-provided migrations (precondition-based, idempotent)
-3. Atomic re-save if any migration fired
+1. Read YAML → layer node (`loadNode`, comments intact)
+2. Run caller-provided migrations against each layer's own node (precondition-based, idempotent)
+3. Atomic re-save of any layer a migration changed
 
 Each file migrates independently — any file at any depth can be independently stale.
 
 **Merge with provenance**: Fold N layer maps in priority order (closest to CWD = highest). Per-field merge strategy via `merge:"union"|"overwrite"` struct tags on `T`, extracted into a `tagRegistry` at construction. Provenance map tracks which layer won each field — used for auto-scoped writes. Absent keys mean "not set" (not iterated), present keys with zero values mean "explicitly set".
 
-**Write model**: Explicit filename (`Write("clawker.local.yaml")`) or auto-route (`Write()` — provenance resolves each field's target). `structToMap` serializes the struct via reflection, ignoring `omitempty` tags. `mergeIntoTree` preserves unknown keys in the tree that aren't in the struct schema.
+**Write model**: Targeted (`Write(ToPath(p))` / `Write(ToLayer(i))`) or auto-route (`Write()` — provenance resolves each dirty field's target). Each dirty value is grafted into a clone of the target layer's own node tree (preserving its comments), then encoded and atomically written. Node merge preserves unknown keys in the tree that aren't in the struct schema.
 
 **Testing**: `storage.NewFromString[T](yaml)` is a separate constructor that bypasses the pipeline — parses YAML string → node tree → `*T`, no store machinery. Composing packages (`config/mocks`, `project/mocks`) use it to build their test doubles and use real `Store[T]` + `t.TempDir()` for isolated FS harnesses. `Store[T]` has no mock interface; consumer interfaces are the mock boundary.
 

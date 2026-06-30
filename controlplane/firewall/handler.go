@@ -1323,6 +1323,28 @@ func (h *Handler) cancelBypassTimer(cid string) {
 	}
 }
 
+// getRules decodes the stored egress rules into out via the transaction handle.
+// The presence bool is intentionally discarded: an absent rules key decodes to
+// an empty set, the correct starting point for a merge.
+func getRules(tx *storage.Tx[EgressRulesFile], out *[]config.EgressRule) error {
+	if _, err := tx.Get(rulesField, out); err != nil {
+		return fmt.Errorf("reading rules: %w", err)
+	}
+	return nil
+}
+
+// writeRules persists the given rule set (marks dirty + flushes to disk) via the
+// transaction handle.
+func writeRules(tx *storage.Tx[EgressRulesFile], rules []config.EgressRule) error {
+	if err := tx.Set(rulesField, rules); err != nil {
+		return fmt.Errorf("updating rules: %w", err)
+	}
+	if err := tx.Write(); err != nil {
+		return fmt.Errorf("writing rules: %w", err)
+	}
+	return nil
+}
+
 // addRulesToStore normalizes incoming rules and merges them into the
 // store via MergeRule. On RuleKey collision the existing entry is mutated
 // in place (caller wins on Action/PathDefault; PathRules union by Path
@@ -1344,56 +1366,59 @@ func (h *Handler) addRulesToStore(rules []config.EgressRule) ([]addStatus, error
 	}
 	statuses := make([]addStatus, len(rules))
 
-	var stored []config.EgressRule
-	if _, err := h.store.Get("rules", &stored); err != nil {
-		return nil, fmt.Errorf("reading rules: %w", err)
-	}
-	// Canonicalize the stored rules the same way every reader does. Indexing
-	// the RAW stored rules by RuleKey would miss carved spans: an opaque allow
-	// range overlapping a deny is split by NormalizeAndDedup into per-span
-	// rules, so a re-add of the original range matches no key and looks new.
-	existing, _ := NormalizeAndDedup(stored)
-	before := append([]config.EgressRule(nil), existing...)
-	index := make(map[string]int, len(existing))
-	for i, r := range existing {
-		index[RuleKey(r)] = i
-	}
-	for i, r := range normalized {
-		key := RuleKey(r)
-		if j, exists := index[key]; exists {
-			merged := MergeRule(existing[j], r)
-			if reflect.DeepEqual(existing[j], merged) {
-				statuses[i] = addStatusUnchanged
+	// Serialize the whole read-modify-write against other rule-store writers
+	// (concurrent FirewallAddRules/RemoveRule RPCs and the stack heal path).
+	// Without it, two interleaved Get→Set→Write sequences lose an update.
+	err := h.store.Txn(func(tx *storage.Tx[EgressRulesFile]) error {
+		var stored []config.EgressRule
+		if gErr := getRules(tx, &stored); gErr != nil {
+			return gErr
+		}
+		// Canonicalize the stored rules the same way every reader does. Indexing
+		// the RAW stored rules by RuleKey would miss carved spans: an opaque allow
+		// range overlapping a deny is split by NormalizeAndDedup into per-span
+		// rules, so a re-add of the original range matches no key and looks new.
+		existing, _ := NormalizeAndDedup(stored)
+		before := append([]config.EgressRule(nil), existing...)
+		index := make(map[string]int, len(existing))
+		for i, r := range existing {
+			index[RuleKey(r)] = i
+		}
+		for i, r := range normalized {
+			key := RuleKey(r)
+			if j, exists := index[key]; exists {
+				merged := MergeRule(existing[j], r)
+				if reflect.DeepEqual(existing[j], merged) {
+					statuses[i] = addStatusUnchanged
+					continue
+				}
+				existing[j] = merged
+				statuses[i] = addStatusModified
 				continue
 			}
-			existing[j] = merged
-			statuses[i] = addStatusModified
-			continue
+			index[key] = len(existing)
+			existing = append(existing, r)
+			statuses[i] = addStatusAdded
 		}
-		index[key] = len(existing)
-		existing = append(existing, r)
-		statuses[i] = addStatusAdded
-	}
-	// Re-canonicalize and compare against the pre-merge canonical form. A
-	// freshly-"added" opaque range can carve back to spans already present,
-	// making the operation a true no-op. The canonical before/after diff —
-	// not the per-rule RuleKey heuristic, which can't see the carve — is the
-	// authoritative write+reconcile gate.
-	after, _ := NormalizeAndDedup(existing)
-	if rulesCanonicalEqual(before, after) {
-		// Canonical state did not move: force UNCHANGED so anyAddChange is false
-		// and the caller skips the stack reconcile. Keeps a re-apply of an
-		// identical (even carved) rule batch a true no-op — no write, no reload.
-		for i := range statuses {
-			statuses[i] = addStatusUnchanged
+		// Re-canonicalize and compare against the pre-merge canonical form. A
+		// freshly-"added" opaque range can carve back to spans already present,
+		// making the operation a true no-op. The canonical before/after diff —
+		// not the per-rule RuleKey heuristic, which can't see the carve — is the
+		// authoritative write+reconcile gate.
+		after, _ := NormalizeAndDedup(existing)
+		if rulesCanonicalEqual(before, after) {
+			// Canonical state did not move: force UNCHANGED so anyAddChange is false
+			// and the caller skips the stack reconcile. Keeps a re-apply of an
+			// identical (even carved) rule batch a true no-op — no write, no reload.
+			for i := range statuses {
+				statuses[i] = addStatusUnchanged
+			}
+			return nil
 		}
-		return statuses, nil
-	}
-	if err := h.store.Set("rules", after); err != nil {
-		return nil, fmt.Errorf("updating rules: %w", err)
-	}
-	if err := h.store.Write(); err != nil {
-		return nil, fmt.Errorf("writing rules: %w", err)
+		return writeRules(tx, after)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("add rules: %w", err)
 	}
 	return statuses, nil
 }
@@ -1404,30 +1429,31 @@ func (h *Handler) addRulesToStore(rules []config.EgressRule) ([]addStatus, error
 // disk.
 func (h *Handler) removeRuleFromStore(toRemove config.EgressRule) (bool, error) {
 	targetKey := RuleKey(NormalizeRule(toRemove))
-	var stored []config.EgressRule
-	if _, err := h.store.Get("rules", &stored); err != nil {
-		return false, fmt.Errorf("reading rules: %w", err)
-	}
-	normalized, _ := NormalizeAndDedup(stored)
-	filtered := make([]config.EgressRule, 0, len(normalized))
 	matched := false
-	for _, r := range normalized {
-		if RuleKey(r) == targetKey {
-			matched = true
-			continue
+	// Serialize the read-modify-write against concurrent rule-store writers.
+	err := h.store.Txn(func(tx *storage.Tx[EgressRulesFile]) error {
+		var stored []config.EgressRule
+		if gErr := getRules(tx, &stored); gErr != nil {
+			return gErr
 		}
-		filtered = append(filtered, r)
+		normalized, _ := NormalizeAndDedup(stored)
+		filtered := make([]config.EgressRule, 0, len(normalized))
+		for _, r := range normalized {
+			if RuleKey(r) == targetKey {
+				matched = true
+				continue
+			}
+			filtered = append(filtered, r)
+		}
+		if !matched {
+			return nil
+		}
+		return writeRules(tx, filtered)
+	})
+	if err != nil {
+		return false, fmt.Errorf("remove rule: %w", err)
 	}
-	if !matched {
-		return false, nil
-	}
-	if err := h.store.Set("rules", filtered); err != nil {
-		return false, fmt.Errorf("removing rule: %w", err)
-	}
-	if err := h.store.Write(); err != nil {
-		return false, fmt.Errorf("writing rules: %w", err)
-	}
-	return true, nil
+	return matched, nil
 }
 
 // removePathRuleFromStore removes a single PathRule entry from the rule
@@ -1440,41 +1466,42 @@ func (h *Handler) removeRuleFromStore(toRemove config.EgressRule) (bool, error) 
 // rendered not-found message with the path so a typo never silently succeeds.
 func (h *Handler) removePathRuleFromStore(toRemove config.EgressRule, path string) (bool, error) {
 	targetKey := RuleKey(NormalizeRule(toRemove))
-	var stored []config.EgressRule
-	if _, err := h.store.Get("rules", &stored); err != nil {
-		return false, fmt.Errorf("reading rules: %w", err)
-	}
-	normalized, _ := NormalizeAndDedup(stored)
-	idx := -1
-	for i, r := range normalized {
-		if RuleKey(r) == targetKey {
-			idx = i
-			break
-		}
-	}
-	if idx < 0 {
-		return false, nil
-	}
-	r := normalized[idx]
-	filtered := make([]config.PathRule, 0, len(r.PathRules))
 	matched := false
-	for _, p := range r.PathRules {
-		if p.Path == path {
-			matched = true
-			continue
+	// Serialize the read-modify-write against concurrent rule-store writers.
+	err := h.store.Txn(func(tx *storage.Tx[EgressRulesFile]) error {
+		var stored []config.EgressRule
+		if gErr := getRules(tx, &stored); gErr != nil {
+			return gErr
 		}
-		filtered = append(filtered, p)
+		normalized, _ := NormalizeAndDedup(stored)
+		idx := -1
+		for i, r := range normalized {
+			if RuleKey(r) == targetKey {
+				idx = i
+				break
+			}
+		}
+		if idx < 0 {
+			return nil
+		}
+		r := normalized[idx]
+		filtered := make([]config.PathRule, 0, len(r.PathRules))
+		for _, p := range r.PathRules {
+			if p.Path == path {
+				matched = true
+				continue
+			}
+			filtered = append(filtered, p)
+		}
+		if !matched {
+			return nil
+		}
+		r.PathRules = filtered
+		normalized[idx] = r
+		return writeRules(tx, normalized)
+	})
+	if err != nil {
+		return false, fmt.Errorf("remove path rule: %w", err)
 	}
-	if !matched {
-		return false, nil
-	}
-	r.PathRules = filtered
-	normalized[idx] = r
-	if err := h.store.Set("rules", normalized); err != nil {
-		return false, fmt.Errorf("removing path rule: %w", err)
-	}
-	if err := h.store.Write(); err != nil {
-		return false, fmt.Errorf("writing rules: %w", err)
-	}
-	return true, nil
+	return matched, nil
 }

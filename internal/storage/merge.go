@@ -14,8 +14,7 @@ type provenance map[string]int
 
 // fieldMeta holds per-field schema metadata used by tree operations.
 // Merge strategy and field kind are recorded together so that
-// mergeTrees, diffTreePaths, and Write can make schema-aware decisions
-// from a single registry.
+// mergeNodes and Write can make schema-aware decisions from a single registry.
 type fieldMeta struct {
 	mergeTag string    // "union", "overwrite", or "" (empty = last-wins)
 	kind     FieldKind // Go type classification (KindMap, KindStringSlice, etc.)
@@ -26,7 +25,7 @@ type fieldMeta struct {
 type tagRegistry map[string]fieldMeta
 
 // buildTagRegistry builds the tag registry from the schema's Fields() output.
-// Used by mergeTrees (merge strategy) and diffTreePaths (opaque-value detection).
+// Used by mergeNodes (merge strategy) and isOpaqueField (opaque-value detection).
 // Routes through Fields() (not NormalizeFields directly) so consumer-registered
 // KindFunc classifiers are applied.
 func buildTagRegistry[T Schema]() tagRegistry {

@@ -15,6 +15,11 @@ import (
 	"github.com/schmitthub/clawker/internal/storage"
 )
 
+// rulesField is the dotted store path of EgressRulesFile.Rules — the key every
+// Get/Set on the rules store addresses. Kept in one place so a typo can't
+// silently address an empty set (the path is stringly-typed in the store API).
+const rulesField = "rules"
+
 // EgressRulesFile is the top-level document type for storage.Store[T].
 // It persists the active set of project-level egress rules to disk.
 type EgressRulesFile struct {

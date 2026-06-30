@@ -23,7 +23,7 @@ type options struct {
 	walkUpAnchor    string   // bound walk-up from CWD up to this dir (inclusive); empty disables walk-up
 	dirs            []string // directories probed with dual placement (highest priority first)
 	paths           []string // explicit directories to probe (no dual placement)
-	migrations      []any    // []Migration[T] (type-erased; asserted to func(*Store[T]) bool in New)
+	migrations      []any    // []Migration[T] (type-erased; asserted to func(*Store[T]) (bool, error) in migrateLayer)
 	lock            bool
 	dotDefault      bool   // apply dual-placement dot prefix in defaultWritePath CWD fallback
 	defaultFilename string // filename for new writes when no file layers exist; defaults to filenames[0]
@@ -149,8 +149,8 @@ func WithPaths(dirs ...string) Option {
 }
 
 // WithMigrations registers precondition-based migration functions.
-// Each migration runs independently on every discovered file's raw map.
-// Migrations that return true trigger an atomic re-save of that file.
+// Each migration runs independently against every discovered file layer's own
+// node tree. Migrations that return true trigger an atomic re-save of that file.
 func WithMigrations[T Schema](fns ...Migration[T]) Option {
 	return func(o *options) {
 		for _, fn := range fns {

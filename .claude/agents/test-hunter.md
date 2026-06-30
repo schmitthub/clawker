@@ -324,8 +324,8 @@ The following patterns are ALWAYS acceptable and should NOT be flagged:
 
 ### 1. Store round-trip tests (reference: `internal/storage/storage_test.go`)
 Tests that write data through `Store[T]` and read it back from disk. These
-exercise the full serialization pipeline: `Set` → COW → `structToMap` →
-provenance routing → atomic write → `loadFile` → `unmarshal`. Each step can
+exercise the full serialization pipeline: `Set(path, value)` → graft into node
+tree → provenance routing → atomic write → `loadNode` → decode. Each step can
 break independently.
 
 **What makes the reference good:**

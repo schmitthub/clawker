@@ -6,7 +6,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/schmitthub/clawker/internal/consts"
+	"github.com/schmitthub/clawker/internal/docs"
 )
 
 func TestRun(t *testing.T) {
@@ -231,4 +235,24 @@ func TestRunWebsite(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(configDoc), "### build")
 	require.Contains(t, string(configDoc), "### security")
+}
+
+// TestConfigSchemasUpToDate fails when the committed docs/schemas/*.json drift
+// from what GenJSONSchema produces for the current struct tags. Regenerate with:
+//
+//	go run ./cmd/gen-docs --doc-path docs --markdown --website
+func TestConfigSchemasUpToDate(t *testing.T) {
+	for _, spec := range configSchemaSpecs() {
+		t.Run(spec.file, func(t *testing.T) {
+			want, err := docs.GenJSONSchema(spec.typ, spec.id, spec.title)
+			require.NoError(t, err)
+
+			path := filepath.Join("..", "..", "docs", filepath.Base(consts.SchemaDocsDir), spec.file)
+			got, err := os.ReadFile(path)
+			require.NoErrorf(t, err, "reading committed schema %s", path)
+
+			assert.Equalf(t, string(want), string(got),
+				"%s is stale — regenerate: go run ./cmd/gen-docs --doc-path docs --markdown --website", spec.file)
+		})
+	}
 }

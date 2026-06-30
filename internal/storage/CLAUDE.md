@@ -21,7 +21,7 @@ view for the public `LayerInfo.Data` surface, never as an engine representation.
 ```
 Load:  file/string → layer node → merge nodes → decode → immutable *T snapshot
 Read:  atomic.Load → *T                 (lock-free, zero alloc)
-Set:   decode copy → fn(copy) → diff → graft changed values into merged node → atomic.Store
+Set:   encode value → graft into merged node at path → re-decode → atomic.Store
 Write: merged-node value → graft into TARGET LAYER's own node → encode → per-file atomic write
 ```
 
@@ -39,7 +39,7 @@ target file keeps its comments and no other layer's comments leak in. Proven by
 | `errors.go` | Package doc + `ErrAnchorNotAncestor` sentinel (non-ancestor walk-up anchor). Storage is schema-agnostic; project-domain errors live in `internal/project` |
 | `store.go` | `Store[T]` (node-native), `NewStore[T]`, `NewFromString[T]`, `Read`, path-based `Get`/`Set`/`Remove`, `Write`, `writeLayerFile`, `applyMigrations`, `Layers`, `LayerInfo` |
 | `node.go` | Node-native core: mapping get/put/delete, `cloneNode`, `stripComments`, `nodeValueAt`, `nodeGraftValue`, `nodeDeletePath`, `mergeNodes`, `unionSeqNodes`, `nodeToMap`, `buildVirtualNode` |
-| `options.go` | `Option` type, `Migration[T]` (`= func(*Store[T]) bool`), `WithMigrations[T]`, all `With*` constructors |
+| `options.go` | `Option` type, `Migration[T]` (`= func(*Store[T]) (bool, error)`), `WithMigrations[T]`, all `With*` constructors |
 | `discover.go` | Walk-up + explicit path discovery, dual placement logic. Walk-up is bounded by a caller-supplied anchor directory — storage holds no registry/project knowledge |
 | `load.go` | Per-file node load (`loadNode`), `decodeNode[T]` (migrations run on the store, not here) |
 | `merge.go` | N-way node fold (`merge`), `tagRegistry`, `fieldMeta`, `provenance` |
@@ -94,12 +94,13 @@ discovers an existing file and lazily creates it on first `Write`. See the
 ```go
 func (s *Store[T]) Read() *T                             // Lock-free atomic load — immutable typed snapshot
 func (s *Store[T]) Get(path string, out any) (bool, error) // Decode in-memory value at dotted path into out (yaml.Unmarshal-style); found=false if absent; nil out = presence check
-func (s *Store[T]) Set(path string, value any) error      // Set in-memory value at dotted path; mark dirty; refresh snapshot. Schema-kind mismatch rejected; non-schema paths allowed (migrations)
+func (s *Store[T]) Set(path string, value any) error      // Set in-memory value at dotted path; mark dirty; refresh snapshot. Schema-kind mismatch rejected; a value that breaks the typed decode is rejected (tree/snapshot left untouched); non-schema paths allowed (migrations)
 func (s *Store[T]) Remove(path string) (bool, error)      // Delete dotted path from the tree; mark dirty; refresh snapshot
 func (s *Store[T]) Write(opts ...WriteOption) error       // No opts = provenance routing, ToPath(p) = target file, ToLayer(i) = target layer
 func (s *Store[T]) MarkForWrite(path string)              // Force path into write set (persist current value, no Set)
 func (s *Store[T]) Refresh() error                        // Re-read layers from disk, re-merge, publish fresh snapshot
 func (s *Store[T]) Layers() []LayerInfo                   // Discovered layers, highest→lowest priority
+func (s *Store[T]) Txn(fn func(*Tx[T]) error) error      // Serialize a compound read-modify-write against other Txn callers; the closure mutates via the Tx handle (tx.Get/Set/Remove/Write)
 ```
 
 `Read()` is the typed snapshot; `Get(path, &dest)` decodes a single field into a typed destination (so typed read-modify-write needs no closure: `var rules []EgressRule; s.Get("rules", &rules); rules = append(rules, r); s.Set("rules", rules)`). There is no closure mutator and no `Get() *T`.
@@ -148,7 +149,7 @@ re-writes never duplicate it). The toolkit (`node.go`): `mergeNodes`,
 `nodeGraftValue`, `nodeDeletePath`, `nodeValueAt`, `cloneNode`, `stripComments`,
 `unionSeqNodes`.
 
-**Migrations run per file layer.** A `Migration[T]` is `func(*Store[T]) bool`; it
+**Migrations run per file layer.** A `Migration[T]` is `func(*Store[T]) (bool, error)`; it
 mutates fields with the same `Get`/`Set`/`Remove` member functions every caller
 uses (there is no separate node-func or `Doc` layer). `applyMigrations` runs them
 during construction — once against **each file layer's own node** (the merged
@@ -197,7 +198,7 @@ The engine-side rules that callers trip over:
 
 ### Clearing a field
 
-To clear a field, call `Remove(path)` — not `Set(path, "")`. `Set` is literal: it writes exactly the value given (an empty string writes `key: ""`), whereas `Remove` deletes the key so a lower-priority layer shows through. (This replaces the old closure+`structToMap` "empty-string-as-unset" behavior.) `Set` encodes the Go value via `yaml.Node.Encode` (`encodeValueToNode`), so `omitempty` on the schema struct is irrelevant — the value handed to `Set` is what lands.
+To clear a field, call `Remove(path)` — not `Set(path, "")`. `Set` is literal: it writes exactly the value given (an empty string writes `key: ""`), whereas `Remove` deletes the key so a lower-priority layer shows through. `Set` encodes the Go value via `yaml.Node.Encode` (`encodeValueToNode`), so `omitempty` on the schema struct is irrelevant — the value handed to `Set` is what lands.
 
 ### XDG Resolution (`resolver.go`)
 
@@ -223,12 +224,13 @@ Deepest fixture level always has both `config.local.yaml` and `config.yaml` with
 - **`Read()` vs `Get(path, out)`** — `Read()` returns the whole typed snapshot; `Get(path, &dest)` decodes one field by dotted path into a typed destination. `Set`/`Remove` mutate by path. There is no closure mutator.
 - **`Set` is unconditional** — it always marks the path dirty (no diff-based no-op). Setting a value identical to the current one still writes on the next `Write`. Use `MarkForWrite` to persist the current value without a `Set`.
 - **Cost is on `Set`/`Remove`, not `Read`** — they graft/delete on the node tree and re-decode the snapshot; `Read` is a single atomic pointer load.
+- **Compound read-modify-write isn't atomic** — `Get` → mutate → `Set` → `Write` each take the per-op lock independently; the lock is released between calls, so two concurrent callers can lose an update. Wrap the whole sequence in `Txn(func(tx *Tx[T]) error { ... })` and mutate via the `tx` handle to serialize it (used by the firewall rules store, written by concurrent RPC handlers).
 - **`omitempty` is irrelevant** — the value passed to `Set` is encoded as-is to a YAML node; the schema struct's `omitempty` tags don't gate it.
-- **Unknown keys survive** — `mergeIntoTree` preserves tree keys not in the struct schema.
+- **Unknown keys survive** — node merge preserves tree keys not in the struct schema.
 - **Walk-up is bounded** — never reaches `~/.config/clawker/`. Home-level configs added via `WithConfigDir()`.
-- **Nil vs zero** — Nil pointers/slices/empty strings = "not set". Non-nil zero values = "explicitly set".
+- **Nil vs zero (merge presence)** — an absent key = "not set" (a lower layer shows through); a present key with a zero value (`false`, `0`, `""`) = "explicitly set" and wins. `Set` is literal — it writes exactly the value given (use `Remove` to clear a key, see "Clearing a field").
 - **`time.Time` is a scalar leaf (`KindTime`)** — although it is a Go struct, `NormalizeFields` classifies it as a leaf and the node encoder serializes it as an RFC3339Nano scalar via yaml.v3, never recursing into its unexported fields. Used by `internal/state`'s `State.CheckedAt`.
-- **Dirty is store-wide** — `Set` marks entire store dirty, not individual fields.
+- **Dirty is per-path** — `Set`/`Remove` mark the single mutated path; `Write` flushes exactly the dirty paths, each routed to its provenance file.
 - **`WithFilenames` is load-bearing** — drives discovery AND the create-if-missing write gate. Omit it → existing files never found and `Write` fails `no write path available`. `WithDefaultFilename` does not substitute (inert without filenames), but pair it in as a drift-proof guard that pins the write target. See Construction Contract above.
 - **A store writes only with a dir option + `WithFilenames`** — `New`/`NewFromString` with *no path options* is an in-memory double: `Write()` errors `no write path available` by design. Add `WithStateDir()`/`WithPaths()` + `WithFilenames()` and it discovers + lazily creates the file on first `Write`.
 - **File locking is advisory** — `flock` is cooperative. Lock files (`.lock` suffix) left on disk intentionally.

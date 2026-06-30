@@ -80,6 +80,14 @@ func TestGenJSONSchema_Project(t *testing.T) {
 	req, ok := ws["required"].([]any)
 	require.True(t, ok, "workspace should carry a required array")
 	assert.Contains(t, req, "default_mode")
+
+	// default tags are coerced to typed JSON values (defaultValue family).
+	assert.Equal(t, "bind", obj(t, obj(t, ws, "properties"), "default_mode")["default"], "string default")
+	assert.Equal(t, []any{"ripgrep"}, pkgs["default"], "[]string default → JSON array")
+	aliasDefault, ok := aliases["default"].(map[string]any)
+	require.True(t, ok, "map[string]string default → JSON object")
+	assert.NotEmpty(t, aliasDefault["go"], "key=value default pairs preserved")
+	assert.NotEmpty(t, aliasDefault["wt"])
 }
 
 func TestGenJSONSchema_Settings(t *testing.T) {
@@ -104,4 +112,10 @@ func TestGenJSONSchema_Settings(t *testing.T) {
 	// time.Duration renders as a string.
 	hp := obj(t, obj(t, obj(t, props, "host_proxy"), "properties"), "daemon")
 	assert.Equal(t, "string", obj(t, obj(t, hp, "properties"), "poll_interval")["type"])
+
+	// default coercion across int, *bool, and duration.
+	assert.InDelta(t, 7443, obj(t, cp, "admin_port")["default"], 0, "int default")
+	assert.Equal(t, true, obj(t, fw, "enable")["default"], "*bool default → JSON bool")
+	pollInterval := obj(t, obj(t, hp, "properties"), "poll_interval")
+	assert.Equal(t, "30s", pollInterval["default"], "duration default stays a string")
 }

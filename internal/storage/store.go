@@ -29,13 +29,13 @@ const (
 // yaml.Node trees, so comments are carried from load through merge to write.
 // The typed struct T is decoded from the merged node and published as an
 // immutable snapshot via atomic.Pointer. Readers get the current snapshot
-// lock-free; writers decode a copy, mutate it, graft the change back into the
-// node tree, and atomically swap. A write grafts the changed value into the
-// target layer's own node tree, so the destination file keeps its comments and
-// no other layer's comments leak in.
+// lock-free; a writer encodes the new value, grafts it into the node tree at
+// the target path, and atomically swaps in the re-decoded snapshot. A write
+// grafts the changed value into the target layer's own node tree, so the
+// destination file keeps its comments and no other layer's comments leak in.
 //
 //	Load:  file → node tree → merge → decode → immutable snapshot
-//	Set:   decode copy → mutate copy → graft into merged node → atomic swap
+//	Set:   encode value → graft into merged node → re-decode → atomic swap
 //	Write: merged node value → graft into target layer node → encode → file
 type Store[T Schema] struct {
 	value      atomic.Pointer[T]  // immutable snapshot — lock-free reads
@@ -45,7 +45,9 @@ type Store[T Schema] struct {
 	prov       provenance         // field→layer mapping (internal)
 	opts       options            // construction options (internal)
 	tags       tagRegistry        // merge tags from T's struct type (internal)
-	mu         sync.Mutex         // guards tree + dirtyPaths + layers (Set/Delete/Write/MarkForWrite/Refresh)
+	migrating  bool               // true while applyMigrations rewrites a layer node in place (snapshot kept best-effort)
+	mu         sync.Mutex         // guards tree + dirtyPaths + layers + prov (Get/Set/Remove/Write/MarkForWrite/Refresh)
+	txnMu      sync.Mutex         // serializes compound Get→Set→Write sequences across callers (see Txn)
 }
 
 // LayerInfo describes a discovered file layer. Data is a decoded map view of the
@@ -172,63 +174,83 @@ func (s *Store[T]) applyMigrations() error {
 	// Run migrations against each file layer, not the merged tree. The merged
 	// tree only carries the winning occurrence of a key, so a legacy key in a
 	// lower-priority layer would never be seen and a mutation could not be
-	// routed back to every owning file. A changed layer is rewritten straight
-	// back to its origin file; then the merged tree is rebuilt from the
-	// migrated layer nodes.
-	changed := false
+	// routed back to every owning file. Encodes are STAGED here and committed
+	// only after every layer's migrations succeed, so a migration that errors on
+	// a later layer leaves earlier layers' files untouched on disk (the
+	// multi-file rewrite is otherwise non-transactional).
+	type pendingWrite struct {
+		path string
+		data []byte
+	}
+	var pending []pendingWrite
 	for i := range s.layers {
 		// The virtual defaults/seed layer (no file) is code-defined and always
 		// current — never migrated, never written.
 		if s.layers[i].path == "" {
 			continue
 		}
-		layerChanged, err := s.migrateLayer(i)
+		changed, encoded, err := s.migrateLayer(i)
 		if err != nil {
 			return fmt.Errorf("storage: applying migrations: %w", err)
 		}
-		changed = changed || layerChanged
+		if changed {
+			pending = append(pending, pendingWrite{path: s.layers[i].path, data: encoded})
+		}
 	}
 
-	if !changed {
+	if len(pending) == 0 {
 		return nil
+	}
+
+	// Every layer's migrations applied cleanly — now commit the rewrites.
+	for _, pw := range pending {
+		if err := s.writeFile(pw.path, pw.data); err != nil {
+			return fmt.Errorf("storage: writing migrated %s: %w", pw.path, err)
+		}
 	}
 	return s.remerge()
 }
 
 // migrateLayer points the store at file layer i, runs every migration against
-// that layer's own node, and — if any reported a change — encodes and writes the
-// mutated node back to its origin file. The merged tree and dirty set are
-// restored before returning, so the caller's view is unperturbed until remerge.
-func (s *Store[T]) migrateLayer(i int) (bool, error) {
+// that layer's own node, and — if any reported a change — returns the encoded
+// node bytes for the caller to commit to the origin file. The merged tree and
+// dirty set are restored before returning, so the caller's view is unperturbed
+// until remerge.
+func (s *Store[T]) migrateLayer(i int) (bool, []byte, error) {
 	merged := s.tree
 	s.tree = s.layers[i].node
 	s.dirtyPaths = nil
-	defer func() { s.tree, s.dirtyPaths = merged, nil }()
+	s.migrating = true
+	// While migrating, Set/Remove graft into the layer node in place and keep
+	// the snapshot best-effort — the layer may be a legacy shape mid-fix that
+	// does not yet decode into T; the final strict decode runs after remerge.
+	defer func() { s.tree, s.dirtyPaths, s.migrating = merged, nil, false }()
 
 	changed := false
 	for _, m := range s.opts.migrations {
 		fn, ok := m.(func(*Store[T]) (bool, error))
 		if !ok {
-			continue
+			// A migration whose store type doesn't match T is a programming
+			// error (WithMigrations[T] not tied to New[T]'s T). Aborting
+			// construction is mandatory — silently skipping it would drop the
+			// legacy-key cleanup the migration exists to perform.
+			return false, nil, fmt.Errorf("migration has wrong type %T for Store[%T]", m, *new(T))
 		}
 		layerChanged, err := fn(s)
 		if err != nil {
-			return false, err
+			return false, nil, err
 		}
 		changed = changed || layerChanged
 	}
 	if !changed {
-		return false, nil
+		return false, nil, nil
 	}
 
 	encoded, err := encodeNode(s.layers[i].node, s.opts.schemaURL)
 	if err != nil {
-		return false, fmt.Errorf("encoding %s: %w", s.layers[i].path, err)
+		return false, nil, fmt.Errorf("encoding %s: %w", s.layers[i].path, err)
 	}
-	if err = s.writeFile(s.layers[i].path, encoded); err != nil {
-		return false, err
-	}
-	return true, nil
+	return true, encoded, nil
 }
 
 // writeFile atomically writes pre-encoded bytes to dest, honoring the file lock
@@ -247,12 +269,18 @@ func (s *Store[T]) writeFile(dest string, data []byte) error {
 func (s *Store[T]) markSeedDirty() {
 	for path, idx := range s.prov {
 		if idx >= 0 && idx < len(s.layers) && s.layers[idx].path == "" {
-			if s.dirtyPaths == nil {
-				s.dirtyPaths = make(map[string]dirtyOp)
-			}
-			s.dirtyPaths[path] = dirtySet
+			s.markDirty(path, dirtySet)
 		}
 	}
+}
+
+// markDirty records op for path in the dirty set, lazily allocating it. Caller
+// must hold s.mu (or be in construction, which is single-threaded).
+func (s *Store[T]) markDirty(path string, op dirtyOp) {
+	if s.dirtyPaths == nil {
+		s.dirtyPaths = make(map[string]dirtyOp)
+	}
+	s.dirtyPaths[path] = op
 }
 
 // Read returns the current immutable snapshot. The returned pointer is
@@ -304,8 +332,9 @@ func (s *Store[T]) Has(path string) bool {
 
 // Layers returns information about the discovered file layers.
 // Layers are ordered from highest priority (index 0) to lowest.
-// No lock needed — layers are immutable after construction.
 func (s *Store[T]) Layers() []LayerInfo {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	infos := make([]LayerInfo, len(s.layers))
 	for i, l := range s.layers {
 		infos[i] = LayerInfo{Filename: l.filename, Path: l.path, Data: nodeToMap(l.node)}
@@ -317,9 +346,9 @@ func (s *Store[T]) Layers() []LayerInfo {
 // dotted field path (e.g. "build.image", "security.docker_socket").
 // Returns the LayerInfo and true if provenance is known, or zero value and
 // false for fields that came from defaults or have no provenance record.
-//
-// No lock needed — provenance is immutable after construction.
 func (s *Store[T]) Provenance(path string) (LayerInfo, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	idx, ok := s.prov[path]
 	if !ok || idx < 0 || idx >= len(s.layers) {
 		return LayerInfo{}, false
@@ -330,9 +359,9 @@ func (s *Store[T]) Provenance(path string) (LayerInfo, bool) {
 
 // ProvenanceMap returns a mapping of dotted field paths to their source layer
 // paths. Virtual layer fields (defaults) have an empty path.
-//
-// No lock needed — provenance is immutable after construction.
 func (s *Store[T]) ProvenanceMap() map[string]string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	result := make(map[string]string, len(s.prov))
 	for path, idx := range s.prov {
 		if idx >= 0 && idx < len(s.layers) {
@@ -360,13 +389,32 @@ func (s *Store[T]) Set(path string, value any) error {
 	if err != nil {
 		return fmt.Errorf("storage: Set %q: %w", path, err)
 	}
-	nodeGraftValue(s.tree, strings.Split(path, "."), valNode)
+	segs := strings.Split(path, ".")
 
-	if s.dirtyPaths == nil {
-		s.dirtyPaths = make(map[string]dirtyOp)
+	if s.migrating {
+		// Migration path: the layer node may be mid-fix to a legacy shape that
+		// does not yet decode into T. Graft in place (the layer node is rewritten
+		// to disk by migrateLayer) and keep the snapshot best-effort.
+		nodeGraftValue(s.tree, segs, valNode)
+		s.markDirty(path, dirtySet)
+		s.refreshSnapshot()
+		return nil
 	}
-	s.dirtyPaths[path] = dirtySet
-	s.refreshSnapshot()
+
+	// Normal path: graft into a clone and require the result to decode into T
+	// before committing. validateKind only guards leaf schema paths, so a value
+	// grafted at a non-leaf path (e.g. a scalar over a struct) can otherwise
+	// produce a tree that no longer decodes — and would be silently kept stale
+	// while the dirty path persists, so the next Write poisons the file on disk.
+	candidate := cloneNode(s.tree)
+	nodeGraftValue(candidate, segs, valNode)
+	decoded, derr := decodeNode[T](candidate)
+	if derr != nil {
+		return fmt.Errorf("storage: Set %q: value no longer decodes into schema: %w", path, derr)
+	}
+	s.tree = candidate
+	s.markDirty(path, dirtySet)
+	s.value.Store(decoded)
 	return nil
 }
 
@@ -378,24 +426,38 @@ func (s *Store[T]) Set(path string, value any) error {
 func (s *Store[T]) Remove(path string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	segs := strings.Split(path, ".")
 
-	if !nodeDeletePath(s.tree, strings.Split(path, ".")) {
+	if s.migrating {
+		// Migration path: best-effort in place (see Set).
+		if !nodeDeletePath(s.tree, segs) {
+			return false, nil
+		}
+		s.markDirty(path, dirtyDeleted)
+		s.refreshSnapshot()
+		return true, nil
+	}
+
+	candidate := cloneNode(s.tree)
+	if !nodeDeletePath(candidate, segs) {
 		return false, nil
 	}
-
-	if s.dirtyPaths == nil {
-		s.dirtyPaths = make(map[string]dirtyOp)
+	decoded, derr := decodeNode[T](candidate)
+	if derr != nil {
+		return false, fmt.Errorf("storage: Remove %q: result no longer decodes into schema: %w", path, derr)
 	}
-	s.dirtyPaths[path] = dirtyDeleted
-	s.refreshSnapshot()
+	s.tree = candidate
+	s.markDirty(path, dirtyDeleted)
+	s.value.Store(decoded)
 	return true, nil
 }
 
-// refreshSnapshot re-decodes the merged node tree and republishes the typed
-// snapshot. Best-effort: if the current tree does not decode (e.g. a migration
-// is mid-way through fixing a legacy shape), the previous snapshot is kept — the
-// node mutation still stands and a later decode (or the next load) refreshes it.
-// Caller must hold s.mu.
+// refreshSnapshot best-effort re-decodes the layer node and republishes the
+// typed snapshot during migration. If the node does not decode (a migration is
+// mid-fix on a legacy shape) the previous snapshot is kept — the mutation still
+// stands and the final strict decode after remerge refreshes it. The normal
+// Set/Remove path does NOT use this: it validates the decode and surfaces a
+// failure. Caller must hold s.mu (and have s.migrating set).
 func (s *Store[T]) refreshSnapshot() {
 	if value, err := decodeNode[T](s.tree); err == nil {
 		s.value.Store(value)
@@ -459,8 +521,8 @@ func kindAccepts(kind FieldKind, value any) bool {
 // should not be recursed into by tree operations. Non-union KindMap and
 // KindStructSlice are opaque. Union maps are NOT opaque — their entries
 // are individually merged and tracked. KindStructSlice is always opaque
-// regardless of merge tag — its merge semantics are handled in the []any
-// branch of mergeTrees, not the map branch.
+// regardless of merge tag — its merge semantics are handled in the sequence
+// branch of mergeNodes, not the mapping branch.
 func isOpaqueField(tags tagRegistry, path string) bool {
 	meta, ok := tags[path]
 	if !ok {
@@ -474,28 +536,29 @@ func isOpaqueField(tags tagRegistry, path string) bool {
 
 // WriteOption configures how Write persists data.
 type WriteOption struct {
-	path  string // absolute filesystem path
-	layer int    // layer index (-1 = unused)
+	path     string // absolute filesystem path
+	layer    int    // layer index (valid only when hasLayer is set)
+	hasLayer bool   // distinguishes ToLayer(0) from the zero WriteOption
 }
 
 // ToPath targets Write to an explicit absolute filesystem path.
 // Use this when writing to a new file or a known path outside the
 // discovered layer set.
 func ToPath(path string) WriteOption {
-	return WriteOption{path: path, layer: -1}
+	return WriteOption{path: path, layer: 0, hasLayer: false}
 }
 
 // ToLayer targets Write to a specific discovered layer by index.
 // Layer indices correspond to Layers() ordering (0 = highest priority).
 func ToLayer(idx int) WriteOption {
-	return WriteOption{layer: idx}
+	return WriteOption{path: "", layer: idx, hasLayer: true}
 }
 
 // Write persists dirty fields to disk, then refreshes layer data
 // from the written files so that subsequent Layers() calls return
 // current values.
 //
-// Only fields mutated since the last Write (via Set or Delete) are
+// Only fields mutated since the last Write (via Set or Remove) are
 // written. Set fields are merged into the target file; deleted fields
 // are removed from it. This ensures per-field precision in multi-layer
 // setups.
@@ -531,8 +594,8 @@ func (s *Store[T]) Write(opts ...WriteOption) error {
 				return fmt.Errorf("storage: Write(ToPath) requires an absolute path, got %q", opt.path)
 			}
 			target = opt.path
-		case opt.layer >= 0:
-			if opt.layer >= len(s.layers) {
+		case opt.hasLayer:
+			if opt.layer < 0 || opt.layer >= len(s.layers) {
 				return fmt.Errorf(
 					"storage: Write(ToLayer) index %d out of range (have %d layers)",
 					opt.layer,
@@ -593,16 +656,27 @@ func (s *Store[T]) Write(opts ...WriteOption) error {
 	}
 
 	s.dirtyPaths = nil
-	s.refreshLayers()
+
+	// The set of files this Write just created/updated. A re-read failure on one
+	// of these is surfaced (below) — Read() would otherwise silently disagree
+	// with what was just persisted to disk.
+	written := make(map[string]bool, len(grouped))
+	writtenPaths := make([]string, 0, len(grouped))
+	for p := range grouped {
+		written[p] = true
+		writtenPaths = append(writtenPaths, p)
+	}
+
+	if err := s.refreshLayers(written); err != nil {
+		return err
+	}
 
 	// Inject layers for any newly created files that weren't in the
 	// layer stack at construction time (e.g. first Write(ToPath(...))
 	// to a local override file).
-	writtenPaths := make([]string, 0, len(grouped))
-	for p := range grouped {
-		writtenPaths = append(writtenPaths, p)
+	if err := s.injectNewLayers(writtenPaths); err != nil {
+		return err
 	}
-	s.injectNewLayers(writtenPaths)
 
 	// Rebuild the merged tree, provenance, and snapshot so that
 	// Read(), ProvenanceMap(), and future Write() calls see fresh state.
@@ -719,26 +793,31 @@ func (s *Store[T]) Refresh() error {
 	return s.remerge()
 }
 
-// refreshLayers re-reads each discovered layer's data from disk.
-// Caller must hold s.mu.
-func (s *Store[T]) refreshLayers() {
+// refreshLayers re-reads each discovered layer's node from disk after a write.
+// A file in `written` (one this store just wrote) that fails to re-read is a
+// surfaced error — Read() would otherwise go stale against disk. Other,
+// externally owned layers are reloaded best-effort and skipped if unreadable,
+// matching Refresh. Caller must hold s.mu.
+func (s *Store[T]) refreshLayers(written map[string]bool) error {
 	for i := range s.layers {
 		if s.layers[i].path == "" {
 			continue // virtual layer — no file to read
 		}
 		node, err := loadNode(s.layers[i].path)
 		if err != nil {
-			continue
+			if written[s.layers[i].path] {
+				// A file we just wrote must re-read cleanly; failing to means
+				// Read() would silently disagree with disk.
+				return fmt.Errorf("storage: re-reading just-written %s: %w", s.layers[i].path, err)
+			}
+			continue // externally owned layer unreadable — skip, as Refresh does
 		}
 		s.layers[i].node = node
 	}
+	return nil
 }
 
-// injectNewLayers adds layers for files that were written but weren't in
-// the layer stack at construction time. New layers are appended just before
-// the virtual layer (lowest file priority) so they participate in the
-// next remerge. Caller must hold s.mu.
-func (s *Store[T]) injectNewLayers(writtenPaths []string) {
+func (s *Store[T]) injectNewLayers(writtenPaths []string) error {
 	known := make(map[string]bool, len(s.layers))
 	for _, l := range s.layers {
 		if l.path != "" {
@@ -752,27 +831,74 @@ func (s *Store[T]) injectNewLayers(writtenPaths []string) {
 		}
 		node, err := loadNode(filePath)
 		if err != nil {
-			continue
+			return fmt.Errorf("storage: reading newly written %s: %w", filePath, err)
 		}
-		// Derive filename from the path for layer metadata.
-		fname := filepath.Base(filePath)
+		s.insertFileLayer(layer{path: filePath, filename: filepath.Base(filePath), node: node})
+	}
+	return nil
+}
 
-		// Insert before the virtual layer (last element with path=="").
-		// If no virtual layer exists, append at the end.
-		inserted := false
-		for i, l := range s.layers {
-			if l.path == "" {
-				// Splice in before virtual layer.
-				s.layers = append(s.layers[:i+1], s.layers[i:]...)
-				s.layers[i] = layer{path: filePath, filename: fname, node: node}
-				inserted = true
-				break
-			}
-		}
-		if !inserted {
-			s.layers = append(s.layers, layer{path: filePath, filename: fname, node: node})
+// insertFileLayer splices l in just before the virtual layer (the last element
+// with path==""), or appends it when there is no virtual layer — so a newly
+// written file participates in the next remerge at the lowest file priority.
+// Caller must hold s.mu.
+func (s *Store[T]) insertFileLayer(l layer) {
+	for i, existing := range s.layers {
+		if existing.path == "" {
+			s.layers = append(s.layers[:i+1], s.layers[i:]...)
+			s.layers[i] = l
+			return
 		}
 	}
+	s.layers = append(s.layers, l)
+}
+
+// Tx is the mutation handle a Txn closure receives. Its Get/Set/Remove/Write/
+// MarkForWrite forward to the store, but because the handle is reachable ONLY
+// from inside Txn, a read-modify-write expressed as `tx.Get → tx.Set → tx.Write`
+// is visibly transactional at the call site — the transaction lock is held for
+// the whole closure. The handle holds no extra lock; each method takes s.mu
+// per-op as usual.
+type Tx[T Schema] struct{ s *Store[T] }
+
+// Get decodes the value at path into out. See Store.Get.
+func (tx *Tx[T]) Get(path string, out any) (bool, error) { return tx.s.Get(path, out) }
+
+// Has reports whether path exists. See Store.Has.
+func (tx *Tx[T]) Has(path string) bool { return tx.s.Has(path) }
+
+// Set writes value at path. See Store.Set.
+func (tx *Tx[T]) Set(path string, value any) error { return tx.s.Set(path, value) }
+
+// Remove deletes path. See Store.Remove.
+func (tx *Tx[T]) Remove(path string) (bool, error) { return tx.s.Remove(path) }
+
+// Write persists dirty fields. See Store.Write.
+func (tx *Tx[T]) Write(opts ...WriteOption) error { return tx.s.Write(opts...) }
+
+// MarkForWrite forces path into the write set. See Store.MarkForWrite.
+func (tx *Tx[T]) MarkForWrite(path string) { tx.s.MarkForWrite(path) }
+
+// Txn runs fn with a transaction handle while holding the store's transaction
+// lock, serializing the whole closure against other Txn callers. Use it to make
+// a compound read-modify-write atomic with respect to other such sequences:
+//
+//	store.Txn(func(tx *Tx[Schema]) error {
+//	    var rules []Rule
+//	    if _, err := tx.Get("rules", &rules); err != nil { return err }
+//	    rules = append(rules, r)
+//	    if err := tx.Set("rules", rules); err != nil { return err }
+//	    return tx.Write()
+//	})
+//
+// The per-op lock (s.mu) keeps each Get/Set/Write internally consistent, but it
+// is released between calls — so two interleaved Get→Set→Write sequences can lose
+// an update. Txn closes that gap. The handle's methods take s.mu per-op as usual;
+// the transaction lock is separate, so there is no re-entrancy. Do NOT nest Txn.
+func (s *Store[T]) Txn(fn func(*Tx[T]) error) error {
+	s.txnMu.Lock()
+	defer s.txnMu.Unlock()
+	return fn(&Tx[T]{s: s})
 }
 
 // remerge rebuilds the merged tree, provenance map, and typed snapshot

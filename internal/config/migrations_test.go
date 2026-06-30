@@ -247,6 +247,20 @@ func TestMigrateRemoveLegacyMonitoringKeys(t *testing.T) {
 		assert.Contains(t, after, "otel_infra_port: 5319", "value must carry forward under the new key")
 	})
 
+	t.Run("collision keeps otel_infra_port and drops otel_cp_port", func(t *testing.T) {
+		// Both keys present (a user who set otel_infra_port before upgrading still
+		// carries the legacy otel_cp_port). The legacy key is dropped; the
+		// pre-existing otel_infra_port value must survive, NOT be overwritten.
+		const in = `monitoring:
+  otel_cp_port: 5319
+  otel_infra_port: 7000
+`
+		after := loadSettingsWithMigrations(t, in)
+		assert.NotContains(t, after, "otel_cp_port", "legacy key must be dropped on collision")
+		assert.Contains(t, after, "otel_infra_port: 7000",
+			"existing otel_infra_port value must be kept, not overwritten")
+	})
+
 	t.Run("no-op without monitoring", func(t *testing.T) {
 		const in = `host_proxy:
   port: 9999

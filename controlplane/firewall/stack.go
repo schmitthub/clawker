@@ -440,35 +440,46 @@ func (s *Stack) ensureConfigs() (string, error) {
 	}
 
 	// Heal legacy/partial rule state: normalize the stored rules and re-save
-	// when the canonical form differs.
-	var stored []config.EgressRule
-	if _, err = s.store.Get("rules", &stored); err != nil {
-		return "", fmt.Errorf("reading rules store: %w", err)
-	}
-	rules, warnings := NormalizeAndDedup(stored)
-	for _, w := range warnings {
-		s.log.Warn().Msg(w)
-	}
-	healed := false
-	if len(rules) != len(stored) {
-		healed = true
-	} else {
-		for i, r := range stored {
-			n := rules[i]
-			if r.Proto != n.Proto || r.Action != n.Action || r.Port != n.Port {
-				healed = true
-				break
+	// when the canonical form differs. The read-modify-write is serialized via a
+	// store transaction so it can't interleave with a concurrent handler rule
+	// write and lose an update.
+	var rules []config.EgressRule
+	if err = s.store.Txn(func(tx *storage.Tx[EgressRulesFile]) error {
+		var stored []config.EgressRule
+		if _, gErr := tx.Get(rulesField, &stored); gErr != nil {
+			return fmt.Errorf("reading rules store: %w", gErr)
+		}
+		var warnings []string
+		rules, warnings = NormalizeAndDedup(stored)
+		// Log warnings here (not after the Txn) so they survive a heal-write
+		// failure below.
+		for _, w := range warnings {
+			s.log.Warn().Msg(w)
+		}
+		healed := false
+		if len(rules) != len(stored) {
+			healed = true
+		} else {
+			for i, r := range stored {
+				n := rules[i]
+				if r.Proto != n.Proto || r.Action != n.Action || r.Port != n.Port {
+					healed = true
+					break
+				}
 			}
 		}
-	}
-	if healed {
-		if err = s.store.Set("rules", rules); err != nil {
-			return "", fmt.Errorf("healing rules store: %w", err)
+		if healed {
+			if sErr := s.store.Set(rulesField, rules); sErr != nil {
+				return fmt.Errorf("healing rules store: %w", sErr)
+			}
+			if wErr := s.store.Write(); wErr != nil {
+				return fmt.Errorf("writing healed rules: %w", wErr)
+			}
+			s.log.Info().Int("rules", len(rules)).Msg("healed legacy rules in store")
 		}
-		if err = s.store.Write(); err != nil {
-			return "", fmt.Errorf("writing healed rules: %w", err)
-		}
-		s.log.Info().Int("rules", len(rules)).Msg("healed legacy rules in store")
+		return nil
+	}); err != nil {
+		return "", fmt.Errorf("syncing rules store: %w", err)
 	}
 
 	if err := RegenerateDomainCerts(rules, certDir, caCert, caKey); err != nil {

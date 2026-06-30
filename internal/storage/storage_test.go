@@ -11,6 +11,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -141,7 +142,6 @@ func TestStore_Load(t *testing.T) {
 	partialPath := filepath.Join(tempDir, "partial.yaml")
 	invalidPath := filepath.Join(tempDir, "invalid.yaml")
 	emptyPath := filepath.Join(tempDir, "empty.yaml")
-	migrationPath := filepath.Join(tempDir, "migration.yaml")
 
 	err := os.WriteFile(fullPath, []byte(testFullData()), 0o644)
 	require.NoError(t, err)
@@ -151,10 +151,6 @@ func TestStore_Load(t *testing.T) {
 	require.NoError(t, err)
 	err = os.WriteFile(emptyPath, []byte(""), 0o644)
 	require.NoError(t, err)
-	err = os.WriteFile(migrationPath, []byte(testFullData()), 0o644)
-	require.NoError(t, err)
-
-	_ = migrationPath // migrations are exercised by TestStore_Migrations_RunOnStore
 
 	tests := []struct {
 		name         string
@@ -2904,4 +2900,214 @@ version: 2
 
 	// The merged value must now fall through to the lower layer.
 	assert.Equal(t, "base-name", store.Read().Name)
+}
+
+// TestStore_Set_RejectsSchemaBreakingValue proves the normal Set path validates
+// the decode before committing. validateKind only guards leaf schema paths, so a
+// scalar grafted over a non-leaf struct path ("build") would otherwise produce a
+// tree that no longer decodes — and the old best-effort refreshSnapshot kept the
+// stale snapshot while leaving the path dirty, so the next Write persisted the
+// bad scalar and the next process start failed the strict load.
+func TestStore_Set_RejectsSchemaBreakingValue(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(testFullData()), 0o644))
+
+	store, err := NewStore[testConfig](WithFilenames("config.yaml"), WithPaths(dir))
+	require.NoError(t, err)
+	require.Equal(t, "node:20", store.Read().Build.Image)
+
+	err = store.Set("build", "oops")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no longer decodes")
+
+	// Snapshot is untouched by the rejected Set.
+	assert.Equal(t, "node:20", store.Read().Build.Image)
+
+	// Nothing was marked dirty: Write is a clean no-op and the file is intact.
+	require.NoError(t, store.Write())
+	reloaded, err := NewStore[testConfig](WithFilenames("config.yaml"), WithPaths(dir))
+	require.NoError(t, err)
+	assert.Equal(t, "node:20", reloaded.Read().Build.Image)
+}
+
+// TestStore_Set_KindValidation covers the validateKind/kindAccepts guard: a value
+// whose Go kind cannot satisfy the schema field is rejected, valid values pass,
+// nil clears any field, and non-schema paths bypass the check (migrations).
+func TestStore_Set_KindValidation(t *testing.T) {
+	cases := []struct {
+		name    string
+		path    string
+		value   any
+		wantErr bool
+	}{
+		{"text accepts string", "name", "ok", false},
+		{"text rejects int", "name", 5, true},
+		{"int accepts int", "version", 7, false},
+		{"int rejects string", "version", "seven", true},
+		{"slice accepts []string", "packages", []string{"a"}, false},
+		{"slice rejects string", "packages", "a", true},
+		{"map accepts map", "env", map[string]string{"A": "1"}, false},
+		{"map rejects string", "env", "A=1", true},
+		{"nil clears any field", "name", nil, false},
+		{"non-schema path passes through", "legacy_field", "anything", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store, err := NewFromString[testConfig](testFullData())
+			require.NoError(t, err)
+			err = store.Set(tc.path, tc.value)
+			if tc.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+// TestStore_WriteOption_ZeroValue proves the zero WriteOption is rejected rather
+// than silently targeting layer 0 (which ToLayer(0) must still reach).
+func TestStore_WriteOption_ZeroValue(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(testFullData()), 0o644))
+	store, err := NewStore[testConfig](WithFilenames("config.yaml"), WithPaths(dir))
+	require.NoError(t, err)
+	require.NoError(t, store.Set("name", "x"))
+
+	var zero WriteOption
+	err = store.Write(zero)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid WriteOption")
+
+	require.NoError(t, store.Write(ToLayer(0)))
+}
+
+// TestStore_GetAndHas covers the path-based read API directly (it is otherwise
+// only exercised indirectly through migrations).
+func TestStore_GetAndHas(t *testing.T) {
+	store, err := NewFromString[testConfig](testFullData())
+	require.NoError(t, err)
+
+	var image string
+	found, err := store.Get("build.image", &image)
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, "node:20", image)
+
+	// Absent path → found=false, no error, destination untouched.
+	var missing string
+	found, err = store.Get("build.nonexistent", &missing)
+	require.NoError(t, err)
+	assert.False(t, found)
+	assert.Empty(t, missing)
+
+	// nil out → presence check without decoding.
+	found, err = store.Get("name", nil)
+	require.NoError(t, err)
+	assert.True(t, found)
+
+	// Decode into a mismatched destination surfaces an error.
+	var wrong int
+	_, err = store.Get("name", &wrong)
+	require.Error(t, err)
+
+	assert.True(t, store.Has("version"))
+	assert.False(t, store.Has("does.not.exist"))
+}
+
+// TestStore_Migrations_RunOnStore covers the storage-level migration runner:
+// migrations run against each file layer's own node (legacy key stripped from
+// every owning file, not just the merge winner), and a migration whose store
+// type does not match T aborts construction instead of being silently skipped.
+func TestStore_Migrations_RunOnStore(t *testing.T) {
+	dropLegacy := func(s *Store[testConfig]) (bool, error) {
+		if s.Has("legacy_field") {
+			return s.Remove("legacy_field")
+		}
+		return false, nil
+	}
+
+	t.Run("runs per layer and rewrites each owning file", func(t *testing.T) {
+		hiDir := t.TempDir()
+		loDir := t.TempDir()
+		hi := filepath.Join(hiDir, "config.yaml")
+		lo := filepath.Join(loDir, "config.yaml")
+		require.NoError(t, os.WriteFile(hi, []byte("name: hi\nlegacy_field: gone\n"), 0o644))
+		require.NoError(t, os.WriteFile(lo, []byte("name: lo\nversion: 3\nlegacy_field: gone\n"), 0o644))
+
+		store, err := NewStore[testConfig](
+			WithFilenames("config.yaml"),
+			WithPaths(hiDir, loDir),
+			WithMigrations(dropLegacy),
+		)
+		require.NoError(t, err)
+		assert.Equal(t, "hi", store.Read().Name)
+		assert.Equal(t, 3, store.Read().Version)
+
+		hiBytes, err := os.ReadFile(hi)
+		require.NoError(t, err)
+		assert.NotContains(t, string(hiBytes), "legacy_field")
+		loBytes, err := os.ReadFile(lo)
+		require.NoError(t, err)
+		assert.NotContains(t, string(loBytes), "legacy_field")
+	})
+
+	t.Run("aborts construction on wrong migration store type", func(t *testing.T) {
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("name: x\n"), 0o644))
+
+		// WithMigrations[testUnionMapCfg] does not match Store[testConfig]; the
+		// type-erased assertion in migrateLayer must surface an error, not skip.
+		bad := func(_ *Store[testUnionMapCfg]) (bool, error) { return false, nil }
+		_, err := NewStore[testConfig](
+			WithFilenames("config.yaml"),
+			WithPaths(dir),
+			WithMigrations(bad),
+		)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "wrong type")
+	})
+}
+
+// txnAppendTag reads the tags slice, appends one entry, and writes — all inside a
+// single store transaction, so concurrent callers cannot lose an update.
+func txnAppendTag(store *Store[testConfig], tag string) error {
+	return store.Txn(func(tx *Tx[testConfig]) error {
+		tags := make([]string, 0, 1)
+		if _, e := tx.Get("tags", &tags); e != nil {
+			return e
+		}
+		tags = append(tags, tag)
+		if e := tx.Set("tags", tags); e != nil {
+			return e
+		}
+		return tx.Write()
+	})
+}
+
+// TestStore_Txn_SerializesReadModifyWrite proves Txn makes a compound
+// Get→Set→Write atomic against concurrent callers — every append lands, with no
+// lost update. Run under -race it also exercises the Layers/Provenance locking.
+func TestStore_Txn_SerializesReadModifyWrite(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("tags: []\n"), 0o644))
+	store, err := NewStore[testConfig](WithFilenames("config.yaml"), WithPaths(dir))
+	require.NoError(t, err)
+
+	const goroutines = 8
+	const perG = 5
+	var wg sync.WaitGroup
+	for g := range goroutines {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			for i := range perG {
+				assert.NoError(t, txnAppendTag(store, fmt.Sprintf("g%d-%d", g, i)))
+			}
+		}(g)
+	}
+	wg.Wait()
+
+	require.NoError(t, store.Refresh())
+	assert.Len(t, store.Read().Tags, goroutines*perG)
 }

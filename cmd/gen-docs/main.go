@@ -208,21 +208,19 @@ func genConfigDoc(docPath string) error {
 // content (consts.ProjectSchemaURL / SettingsSchemaURL) so the
 // yaml-language-server header the storage layer stamps resolves. Returns the
 // schema output directory.
-func genConfigSchemas(docPath string) (string, error) {
-	dir := filepath.Join(docPath, filepath.Base(consts.SchemaDocsDir))
-	if err := os.MkdirAll( //nolint:gosec // non-secret generated docs; conventional world-readable perms
-		dir,
-		0o755,
-	); err != nil {
-		return "", fmt.Errorf("creating schema directory: %w", err)
-	}
+// configSchemaSpec describes one generated config JSON Schema file.
+type configSchemaSpec struct {
+	typ   reflect.Type
+	id    string
+	title string
+	file  string
+}
 
-	schemas := []struct {
-		typ   reflect.Type
-		id    string
-		title string
-		file  string
-	}{
+// configSchemaSpecs is the single source for which config schemas are generated
+// and under what id/title/filename. genConfigSchemas writes them; the drift test
+// regenerates and compares against the committed files.
+func configSchemaSpecs() []configSchemaSpec {
+	return []configSchemaSpec{
 		{
 			reflect.TypeFor[config.Project](),
 			consts.ProjectSchemaURL,
@@ -236,8 +234,18 @@ func genConfigSchemas(docPath string) (string, error) {
 			consts.SettingsSchemaFile,
 		},
 	}
+}
 
-	for _, s := range schemas {
+func genConfigSchemas(docPath string) (string, error) {
+	dir := filepath.Join(docPath, filepath.Base(consts.SchemaDocsDir))
+	if err := os.MkdirAll( //nolint:gosec // non-secret generated docs; conventional world-readable perms
+		dir,
+		0o755,
+	); err != nil {
+		return "", fmt.Errorf("creating schema directory: %w", err)
+	}
+
+	for _, s := range configSchemaSpecs() {
 		data, err := docs.GenJSONSchema(s.typ, s.id, s.title)
 		if err != nil {
 			return "", fmt.Errorf("generating %s: %w", s.file, err)

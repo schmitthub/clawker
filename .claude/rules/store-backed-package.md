@@ -35,7 +35,7 @@ A single-file store-backed package `internal/<pkg>/` has exactly these files:
 |------|----------|
 | `<pkg>.go` | The **interface** (`<X>Store`), the concrete impl embedding `*storage.Store[<Schema>]`, the `New`/`NewFromString` constructors, and the `//go:generate moq` directive. |
 | `schema.go` | The schema struct with `yaml`/`label`/`desc` tags + `Fields() storage.FieldSet`. The persisted shape, one place. See `storage-schema.md`. |
-| `migrations.go` | `<X>Migrations() []storage.Migration[<Schema>]` — additive list of `func(*storage.Store[<Schema>]) bool`; append on schema change, never edit a shipped one. |
+| `migrations.go` | `<X>Migrations() []storage.Migration[<Schema>]` — additive list of `func(*storage.Store[<Schema>]) (bool, error)`; append on schema change, never edit a shipped one. |
 | `mocks/<pkg>_mock.go` | moq-generated `<X>StoreMock`. **DO NOT EDIT.** Regenerate with `go generate ./...`. |
 | `mocks/stubs.go` | Hand-written ergonomic doubles: `NewBlank<X>()`, `NewFromString(yaml)`, `newMock()`. Mirrors `config/mocks` **structurally only** (a `mocks/` subpackage = generated `_mock.go` + hand-written `stubs.go` of variant constructors) — NOT in write-wiring; see stubs.go requirements below. |
 | `<pkg>_test.go` | Intra-package tests — real `New()` + `testenv`, file-backed. |
@@ -259,7 +259,7 @@ docs/comments (`*<X>StoreMock`), never a copy-pasted `*ConfigMock`.
 ## Migrations and how to test them
 
 Storage migrations are **not** version-stamped sequential steps. A
-`Migration[T]` is `func(*storage.Store[T]) bool` — it mutates fields with the
+`Migration[T]` is `func(*storage.Store[T]) (bool, error)` — it mutates fields with the
 store's own `Get(path, &out)` / `Set(path, value)` / `Remove(path)` member
 functions (no separate node-func or `Doc` layer). The store runs them during
 construction (`applyMigrations`) once **against each file layer's own node** —
