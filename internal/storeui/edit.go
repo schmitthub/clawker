@@ -225,12 +225,14 @@ func BuildBrowser[T storage.Schema](store *storage.Store[T], opts ...Option) (*t
 		if hasProv && prov.Path != target.Path {
 			layerVal := lookupLayerFieldValue(store.Layers(), target.Path, fieldPath)
 			if normalizeLayerValue(layerVal) != value {
-				store.MarkForWrite(fieldPath)
+				if merr := store.MarkForWrite(fieldPath); merr != nil {
+					return fmt.Errorf("marking %s for write: %w", fieldPath, merr)
+				}
 			}
 		}
 
-		if err := store.Write(storage.ToPath(target.Path)); err != nil {
-			return fmt.Errorf("writing to %s: %w", ShortenHome(target.Path), err)
+		if werr := store.WriteTo(target.Path); werr != nil {
+			return fmt.Errorf("writing to %s: %w", ShortenHome(target.Path), werr)
 		}
 		return nil
 	}
@@ -245,8 +247,8 @@ func BuildBrowser[T storage.Schema](store *storage.Store[T], opts ...Option) (*t
 			return fmt.Errorf("deleting from store: %w", err)
 		}
 
-		if err := store.Write(storage.ToPath(target.Path)); err != nil {
-			return fmt.Errorf("deleting from %s: %w", ShortenHome(target.Path), err)
+		if werr := store.WriteTo(target.Path); werr != nil {
+			return fmt.Errorf("deleting from %s: %w", ShortenHome(target.Path), werr)
 		}
 		return nil
 	}
@@ -270,7 +272,7 @@ func BuildBrowser[T storage.Schema](store *storage.Store[T], opts ...Option) (*t
 //  2. WalkFields(snapshot) → fields
 //  3. Filter skip paths, ApplyOverrides
 //  4. Map storeui.Field → tui.BrowserField, run tui.FieldBrowserModel
-//  5. OnFieldSaved callback: store.Set + store.Write(storage.ToPath(target)) per field
+//  5. OnFieldSaved callback: store.Set + store.WriteTo(target) per field
 //  6. Return Result
 func Edit[T storage.Schema](ios *iostreams.IOStreams, store *storage.Store[T], opts ...Option) (Result, error) {
 	cfg := editOptions{
@@ -353,14 +355,16 @@ func Edit[T storage.Schema](ios *iostreams.IOStreams, store *storage.Store[T], o
 		if hasProv && prov.Path != target.Path {
 			layerVal := lookupLayerFieldValue(store.Layers(), target.Path, fieldPath)
 			if normalizeLayerValue(layerVal) != value {
-				store.MarkForWrite(fieldPath)
+				if merr := store.MarkForWrite(fieldPath); merr != nil {
+					return fmt.Errorf("marking %s for write: %w", fieldPath, merr)
+				}
 			}
 		}
 
 		// Persist dirty fields to the target file. Write() remerges
 		// internally, so the snapshot reflects the true merged state.
-		if err := store.Write(storage.ToPath(target.Path)); err != nil {
-			return fmt.Errorf("writing to %s: %w", ShortenHome(target.Path), err)
+		if werr := store.WriteTo(target.Path); werr != nil {
+			return fmt.Errorf("writing to %s: %w", ShortenHome(target.Path), werr)
 		}
 		return nil
 	}
@@ -379,8 +383,8 @@ func Edit[T storage.Schema](ios *iostreams.IOStreams, store *storage.Store[T], o
 
 		// Persist the deletion to the target file. Write() remerges
 		// internally, so the snapshot reflects the true merged state.
-		if err := store.Write(storage.ToPath(target.Path)); err != nil {
-			return fmt.Errorf("deleting from %s: %w", ShortenHome(target.Path), err)
+		if werr := store.WriteTo(target.Path); werr != nil {
+			return fmt.Errorf("deleting from %s: %w", ShortenHome(target.Path), werr)
 		}
 		return nil
 	}

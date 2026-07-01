@@ -19,7 +19,7 @@ func newTestStore[T storage.Schema](t *testing.T, env *testenv.Env, yaml string)
 	require.NoError(t, os.MkdirAll(dir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "test.yaml"), []byte(yaml), 0o644))
 
-	store, err := storage.NewStore[T](
+	store, err := storage.New[T]("",
 		storage.WithFilenames("test.yaml"),
 		storage.WithPaths(dir),
 	)
@@ -30,7 +30,7 @@ func newTestStore[T storage.Schema](t *testing.T, env *testenv.Env, yaml string)
 // reloadStore creates a fresh store from the same file to verify persistence.
 func reloadStore[T storage.Schema](t *testing.T, dir string) *storage.Store[T] {
 	t.Helper()
-	store, err := storage.NewStore[T](
+	store, err := storage.New[T]("",
 		storage.WithFilenames("test.yaml"),
 		storage.WithPaths(dir),
 	)
@@ -171,7 +171,7 @@ func TestWriteTo_WritesExplicitPath(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir2, "test.yaml"), []byte("name: from-dir2\n"), 0o644))
 
 	// dir1 is higher priority.
-	store, err := storage.NewStore[simpleStruct](
+	store, err := storage.New[simpleStruct]("",
 		storage.WithFilenames("test.yaml"),
 		storage.WithPaths(dir1, dir2),
 	)
@@ -179,10 +179,10 @@ func TestWriteTo_WritesExplicitPath(t *testing.T) {
 
 	// Mutate through the storeui plumbing and write to dir2 explicitly.
 	applyEdit(t, store, "name", "updated")
-	require.NoError(t, store.Write(storage.ToPath(filepath.Join(dir2, "test.yaml"))))
+	require.NoError(t, store.WriteTo(filepath.Join(dir2, "test.yaml")))
 
 	// Reload dir2 independently — should have the update.
-	store2, err := storage.NewStore[simpleStruct](
+	store2, err := storage.New[simpleStruct]("",
 		storage.WithFilenames("test.yaml"),
 		storage.WithPaths(dir2),
 	)
@@ -190,7 +190,7 @@ func TestWriteTo_WritesExplicitPath(t *testing.T) {
 	assert.Equal(t, "updated", store2.Read().Name)
 
 	// Reload dir1 independently — should be unchanged.
-	store1, err := storage.NewStore[simpleStruct](
+	store1, err := storage.New[simpleStruct]("",
 		storage.WithFilenames("test.yaml"),
 		storage.WithPaths(dir1),
 	)

@@ -116,8 +116,10 @@ const schemaHeaderPrefix = "yaml-language-server: $schema="
 // block (literal) style to multiline scalars, and encodes the node with 2-space
 // indentation. It is the single YAML emitter for the write path — both the
 // node-merge writer and the migration re-save route through it so the header is
-// emitted consistently.
+// emitted consistently. The caller's tree is never mutated — header stamping and
+// style changes land on an internal clone.
 func encodeNode(node *yaml.Node, schemaURL string) ([]byte, error) {
+	node = cloneNode(node)
 	// Strip any pre-existing schema header before re-stamping so a re-write
 	// never duplicates it. On re-parse yaml.v3 attaches a leading file comment
 	// to the first key node, so clear both the mapping node and its first key.
@@ -238,6 +240,8 @@ func withLock(path string, fn func() error) error {
 	if !locked {
 		return fmt.Errorf("storage: timed out acquiring file lock for %s", path)
 	}
+	// Unlock error is unactionable in deferred cleanup: the flock is released by
+	// the OS on process exit regardless, and the write outcome is already decided.
 	defer func() { _ = fl.Unlock() }()
 
 	return fn()

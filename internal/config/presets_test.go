@@ -111,7 +111,7 @@ func TestPresets_FieldAssertions(t *testing.T) {
 
 	for _, p := range config.Presets() {
 		t.Run(p.Name, func(t *testing.T) {
-			store, err := storage.NewFromString[config.Project](p.YAML,
+			store, err := storage.New[config.Project](p.YAML,
 				storage.WithDefaultsFromStruct[config.Project](),
 			)
 			require.NoError(t, err)
@@ -166,7 +166,7 @@ func TestPresets_AutoCustomizeContract(t *testing.T) {
 func TestPresets_SchemaDefaultsFillGaps(t *testing.T) {
 	for _, p := range config.Presets() {
 		t.Run(p.Name, func(t *testing.T) {
-			store, err := storage.NewFromString[config.Project](p.YAML,
+			store, err := storage.New[config.Project](p.YAML,
 				storage.WithDefaultsFromStruct[config.Project](),
 			)
 			require.NoError(t, err)

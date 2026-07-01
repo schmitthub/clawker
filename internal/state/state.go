@@ -51,7 +51,7 @@ type stateStoreImpl struct {
 // error if the seed fails to load. The seed is merged as the lowest-priority
 // virtual layer through the real storage pipeline.
 func NewFromString(stateStr string) (StateStore, error) {
-	store, err := storage.NewFromString[State](stateStr)
+	store, err := storage.New[State](stateStr)
 	if err != nil {
 		return nil, fmt.Errorf("state: loading CLI state from string: %w", err)
 	}
@@ -62,7 +62,7 @@ func NewFromString(stateStr string) (StateStore, error) {
 // (merge + migrations + atomic writes) — the canonical path for clawker files,
 // never a raw file read.
 func New() (StateStore, error) {
-	stateStore, err := storage.NewFromString[State]("",
+	stateStore, err := storage.New[State]("",
 		storage.WithFilenames(consts.CLIStateFile),
 		storage.WithDefaultFilename(consts.CLIStateFile),
 		storage.WithMigrations(StateMigrations()...),

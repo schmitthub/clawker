@@ -64,7 +64,7 @@ Command layer (cmd/settings/edit, cmd/project/edit)
 | `store.Read()` | Immutable `*T` snapshot |
 | `store.Set(path, value)` | Set an in-memory field by dotted path |
 | `store.Remove(path)` | Delete a dotted path from the tree |
-| `store.Write(storage.ToPath(path))` | Persist dirty fields to an explicit layer file |
+| `store.WriteTo(path)` | Persist dirty fields to an explicit layer file |
 | `store.Layers()` | Discovered layer files (for `LayerTargets`) |
 | `store.Provenance(path)` | Which layer won a specific field (for the breakdown display) |
 

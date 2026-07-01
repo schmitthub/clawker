@@ -230,7 +230,7 @@ func TestRoundTrip(t *testing.T) {
 }
 ```
 
-Use `testenv.New(t)` for isolated XDG directories. Create stores with `storage.NewStore[T]` + `WithFilenames` + `WithPaths` for filesystem-backed tests.
+Use `testenv.New(t)` for isolated XDG directories. Create stores with `storage.New[T]("", ...)` + `WithFilenames` + `WithPaths` for filesystem-backed tests.
 
 ### Testing WalkFields
 

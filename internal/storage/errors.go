@@ -4,6 +4,10 @@
 // schema types. The store handles file discovery (static paths or walk-up),
 // per-file loading with migrations, N-way merge with provenance tracking,
 // and scoped writes with atomic I/O.
+//
+// storage is low-level infrastructure: consumers compose a Store[T] behind a
+// domain interface (see .claude/rules/store-backed-package.md) rather than
+// exposing the store or constructing one at call sites.
 package storage
 
 import "errors"
@@ -21,11 +25,6 @@ var ErrAnchorNotAncestor = errors.New("walk-up anchor is not the current working
 // would poison the file on the next Write.
 var ErrSchemaDecode = errors.New("value no longer decodes into schema")
 
-// ErrInvalidWriteOption reports a WriteOption that selects neither a target path
-// nor a target layer — an unconstructable state from the public ToPath/ToLayer
-// constructors, so it signals a programming error.
-var ErrInvalidWriteOption = errors.New("invalid WriteOption (no path or layer)")
-
 // ErrMigrationType reports a migration whose store type does not match the
 // Store[T] it was wired into (WithMigrations[T] not tied to New[T]'s T).
 // Construction aborts rather than silently skipping the legacy-key cleanup.
@@ -34,3 +33,8 @@ var ErrMigrationType = errors.New("migration has wrong type for Store[T]")
 // ErrNonMappingRoot reports a YAML document whose root node is not a mapping.
 // Every layer must be a mapping so paths resolve against keyed fields.
 var ErrNonMappingRoot = errors.New("expected a mapping at the document root")
+
+// ErrMultiDocument reports a YAML file containing more than one document.
+// Config files are single-document; silently using only the first document
+// would drop the rest, so the file is rejected loudly instead.
+var ErrMultiDocument = errors.New("expected a single YAML document")

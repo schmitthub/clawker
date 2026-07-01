@@ -205,7 +205,7 @@ func WithProjectRoot(root string) NewConfigOption {
 // NewProjectStoreFromPreset creates an isolated project store from a preset
 // YAML string. Unlike NewConfig, this does NO file discovery — no walk-up,
 // no config dir, no user-level config merging. The store contains only the
-// preset values, and all fields are marked dirty so WriteTo persists them.
+// preset values, marked for write (MarkSeedForWrite) so WriteTo persists them.
 //
 // This is the correct constructor for project init: the written project file
 // should contain exactly the preset values + any Set() mutations (VCS config,
@@ -215,18 +215,23 @@ func WithProjectRoot(root string) NewConfigOption {
 // The schema URL is wired so the file WriteTo writes carries the
 // yaml-language-server header for editor validation.
 func NewProjectStoreFromPreset(presetYAML string) (*storage.Store[Project], error) {
-	return storage.NewFromString[Project](presetYAML, storage.WithSchemaURL(consts.ProjectSchemaURL))
+	store, err := storage.New[Project](presetYAML, storage.WithSchemaURL(consts.ProjectSchemaURL))
+	if err != nil {
+		return nil, err
+	}
+	store.MarkSeedForWrite()
+	return store, nil
 }
 
 // NewBlankConfig creates a Config with defaults but no file discovery.
 // Useful as the default test double for consumers that don't care about
 // specific config values.
 func NewBlankConfig() (Config, error) {
-	projectStore, err := storage.NewFromString[Project](storage.GenerateDefaultsYAML[Project]())
+	projectStore, err := storage.New[Project](storage.GenerateDefaultsYAML[Project]())
 	if err != nil {
 		return nil, fmt.Errorf("config: blank project: %w", err)
 	}
-	settingsStore, err := storage.NewFromString[Settings](storage.GenerateDefaultsYAML[Settings]())
+	settingsStore, err := storage.New[Settings](storage.GenerateDefaultsYAML[Settings]())
 	if err != nil {
 		return nil, fmt.Errorf("config: blank settings: %w", err)
 	}
@@ -240,11 +245,11 @@ func NewBlankConfig() (Config, error) {
 // Empty strings produce empty structs. Useful for test fixtures that need
 // precise control over values without defaults being merged.
 func NewFromString(projectYAML, settingsYAML string) (Config, error) {
-	projectStore, err := storage.NewFromString[Project](projectYAML)
+	projectStore, err := storage.New[Project](projectYAML)
 	if err != nil {
 		return nil, fmt.Errorf("config: parsing project YAML: %w", err)
 	}
-	settingsStore, err := storage.NewFromString[Settings](settingsYAML)
+	settingsStore, err := storage.New[Settings](settingsYAML)
 	if err != nil {
 		return nil, fmt.Errorf("config: parsing settings YAML: %w", err)
 	}

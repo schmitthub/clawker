@@ -125,7 +125,7 @@ func TestGenerateDefaultsYAML_RoundTrip(t *testing.T) {
 	out := GenerateDefaultsYAML[defaultsTestSimple]()
 	require.NotEmpty(t, out)
 
-	store, err := NewFromString[defaultsTestSimple](out)
+	store, err := New[defaultsTestSimple](out)
 	require.NoError(t, err)
 
 	snap := store.Read()
@@ -141,7 +141,7 @@ func TestGenerateDefaultsYAML_NestedRoundTrip(t *testing.T) {
 	out := GenerateDefaultsYAML[defaultsTestNested]()
 	require.NotEmpty(t, out)
 
-	store, err := NewFromString[defaultsTestNested](out)
+	store, err := New[defaultsTestNested](out)
 	require.NoError(t, err)
 
 	snap := store.Read()
@@ -157,7 +157,7 @@ func TestWithDefaultsFromStruct_ViaRealStore(t *testing.T) {
 	dir := t.TempDir()
 
 	// Build a real filesystem-backed store using WithDefaultsFromStruct.
-	store, err := NewStore[defaultsTestSimple](
+	store, err := New[defaultsTestSimple]("",
 		WithFilenames("test.yaml"),
 		WithDefaultsFromStruct[defaultsTestSimple](),
 		WithPaths(dir),
@@ -190,7 +190,7 @@ func TestGenerateDefaultsYAML_MapField(t *testing.T) {
 	assert.False(t, exists, "map fields without defaults should not appear")
 
 	// Generated defaults survive the store pipeline as the typed map.
-	store, err := NewFromString[defaultsTestMap](out)
+	store, err := New[defaultsTestMap](out)
 	require.NoError(t, err)
 	snap := store.Read()
 	assert.Equal(t, map[string]string{"go": "run --flag @ value", "ver": "version"}, snap.Aliases)

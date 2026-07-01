@@ -36,9 +36,9 @@ target file keeps its comments and no other layer's comments leak in. Proven by
 
 | File | Purpose |
 | --- | --- |
-| `errors.go` | Package doc + `ErrAnchorNotAncestor` sentinel (non-ancestor walk-up anchor). Storage is schema-agnostic; project-domain errors live in `internal/project` |
-| `store.go` | `Store[T]` (node-native), `NewStore[T]`, `NewFromString[T]`, `Read`, path-based `Get`/`Set`/`Remove`, `Write`, `writeLayerFile`, `applyMigrations`, `Layers`, `LayerInfo` |
-| `node.go` | Node-native core: mapping get/put/delete, `cloneNode`, `stripComments`, `nodeValueAt`, `nodeGraftValue`, `nodeDeletePath`, `mergeNodes`, `unionSeqNodes`, `nodeToMap`, `buildVirtualNode` |
+| `errors.go` | Package doc + sentinels: `ErrAnchorNotAncestor`, `ErrSchemaDecode`, `ErrMigrationType`, `ErrNonMappingRoot`, `ErrMultiDocument`. Storage is schema-agnostic; project-domain errors live in `internal/project` |
+| `store.go` | `Store[T]` (node-native), `New[T]` (single constructor), `Read`, path-based `Get`/`Set`/`Remove`, `Write`/`WriteTo`, `MarkSeedForWrite`, `writeLayerFile`, `applyMigrations`, `Layers`, `LayerInfo`, `Txn` |
+| `node.go` | Node-native core: mapping get/put/delete, `cloneNode` (alias-remapping deep copy), `stripComments`, `nodeValueAt`, `nodeGraftValue`, `nodeDeletePath`, `mergeNodes`, `unionSeqNodes`, `nodeToMap`, `buildVirtualNode`, `rootMapping` (rejects non-mapping roots and multi-document YAML) |
 | `options.go` | `Option` type, `Migration[T]` (`= func(*Store[T]) (bool, error)`), `WithMigrations[T]`, all `With*` constructors |
 | `discover.go` | Walk-up + explicit path discovery, dual placement logic. Walk-up is bounded by a caller-supplied anchor directory — storage holds no registry/project knowledge |
 | `load.go` | Per-file node load (`loadNode`), `decodeNode[T]` (migrations run on the store, not here) |
@@ -74,20 +74,26 @@ func NewFieldSet(fields []Field) FieldSet
 func NormalizeFields[T any](v T, opts ...NormalizeOption) FieldSet  // Reflect struct tags → FieldSet; see storage-schema.md rule
 ```
 
-### Store Constructors
+### Store Constructor
 
 ```go
-func New[T Schema](seed string, opts ...Option) (*Store[T], error)          // Primary: discover → load → migrate → merge → deserialize. seed = lowest-priority virtual layer ("" for a normal file-backed store)
-func NewFromString[T Schema](raw string, opts ...Option) (*Store[T], error)  // Identical to New (New delegates here). raw seeds the virtual layer
-func NewStore[T Schema](opts ...Option) (*Store[T], error)                   // Deprecated: alias for New[T]("", opts...)
-func GenerateDefaultsYAML[T Schema]() string                                 // YAML from `default` struct tags
+func New[T Schema](seed string, opts ...Option) (*Store[T], error)  // discover → load → migrate → merge → deserialize. seed = YAML string for the lowest-priority virtual layer ("" for none)
+func GenerateDefaultsYAML[T Schema]() string                        // YAML from `default` struct tags
 ```
 
-`New` and `NewFromString` are the same call. With **no path options** the store
-is an in-memory double (discovery finds nothing; `Write` errors by design). With
-a directory option (`WithStateDir`/`WithPaths`/…) **plus `WithFilenames`**, it
-discovers an existing file and lazily creates it on first `Write`. See the
-**Construction Contract** below.
+`New` is the only constructor (`NewFromString`/`NewStore` were folded into it).
+With **no path options** the store is an in-memory double (discovery finds
+nothing; a `Write` is a no-op until something is dirty, and dirty fields then
+error `no write path available`). With a directory option
+(`WithStateDir`/`WithPaths`/…) **plus `WithFilenames`**, it discovers an
+existing file and lazily creates it on first `Write`. See the **Construction
+Contract** below.
+
+Virtual-layer fields (seed + defaults) are **NOT dirty after construction** — a
+`Write` persists only explicit `Set`/`Remove` mutations, so schema defaults are
+never materialized into a user's file (where they would pin the current
+binary's defaults forever). A flow that wants the seed persisted (writing a
+preset to a new file) opts in with `MarkSeedForWrite()` before `Write`/`WriteTo`.
 
 ### Store[T] Methods
 
@@ -96,9 +102,11 @@ func (s *Store[T]) Read() *T                             // Lock-free atomic loa
 func (s *Store[T]) Get(path string, out any) (bool, error) // Decode in-memory value at dotted path into out (yaml.Unmarshal-style); found=false if absent; nil out = presence check
 func (s *Store[T]) Set(path string, value any) error      // Set in-memory value at dotted path; mark dirty; refresh snapshot. Schema-kind mismatch rejected; a value that breaks the typed decode is rejected (tree/snapshot left untouched); non-schema paths allowed (migrations)
 func (s *Store[T]) Remove(path string) (bool, error)      // Delete dotted path from the tree; mark dirty; refresh snapshot
-func (s *Store[T]) Write(opts ...WriteOption) error       // No opts = provenance routing, ToPath(p) = target file, ToLayer(i) = target layer
-func (s *Store[T]) MarkForWrite(path string)              // Force path into write set (persist current value, no Set)
-func (s *Store[T]) Refresh() error                        // Re-read layers from disk, re-merge, publish fresh snapshot
+func (s *Store[T]) Write() error                          // Persist dirty fields, each routed to its provenance layer
+func (s *Store[T]) WriteTo(path string) error             // Persist all dirty fields to an explicit absolute path
+func (s *Store[T]) MarkForWrite(path string) error        // Force path into write set (persist current value, no Set)
+func (s *Store[T]) MarkSeedForWrite()                     // Opt-in: mark every virtual-layer (seed/defaults) field dirty for the next Write/WriteTo (preset flow)
+func (s *Store[T]) Refresh() error                        // Re-read layers from disk, re-merge, publish fresh snapshot; discards pending mutations; errors on a corrupt layer
 func (s *Store[T]) Layers() []LayerInfo                   // Discovered layers, highest→lowest priority
 func (s *Store[T]) Txn(fn func(*Tx[T]) error) error      // Serialize a compound read-modify-write against other Txn callers; the closure mutates via the Tx handle (tx.Get/Set/Remove/Write)
 ```
@@ -135,19 +143,29 @@ Priority: walk-up > dirs > explicit paths. Overlapping discovery deduplicated by
 
 ### Write (`write.go`)
 
-Two modes: auto-route (each field → its provenance layer) or explicit (all fields → named file). Atomic write via temp+fsync+rename. Advisory flock with 10s timeout.
+Two modes: `Write()` auto-routes each field to its provenance layer; `WriteTo(path)` sends all fields to one named file. Atomic write via temp+fsync+rename. Advisory flock with 10s timeout.
 
-**Comment-preserving (node-native) write.** `Store.writeLayerFile` clones the
-target layer's own node tree, grafts the dirty values into it (sourced from the
-merged node, comment-stripped so no source-layer comment rides along; the
-destination's existing field comments are carried forward by `mappingPut`), and
-encodes that one layer's node. Because each layer is a distinct node tree, a
-write to file B never touches A's node — A's comments cannot leak into B, and B's
-own comments (head + per-field) survive a field-merge mutation. `encodeNode`
-stamps the `WithSchemaURL` head comment (stripping any prior one first, so
-re-writes never duplicate it). The toolkit (`node.go`): `mergeNodes`,
-`nodeGraftValue`, `nodeDeletePath`, `nodeValueAt`, `cloneNode`, `stripComments`,
-`unionSeqNodes`.
+**Read-modify-write against disk.** `Store.writeLayerFile` re-reads the
+destination file's **current on-disk content** (missing file → empty mapping;
+an existing file that no longer parses is a surfaced error, never overwritten),
+grafts the dirty values into that node, and encodes it. Re-reading — rather than
+trusting the layer node loaded at construction — is load-bearing twice over: a
+file another process updated since load keeps its updates (no lost writes), and
+a pre-existing file the store never discovered is merged into, not clobbered.
+With `WithLock`, the whole read-modify-write cycle per file runs **inside** the
+flock, so concurrent writers serialize on the full cycle, not just the final
+rename.
+
+**Comment-preserving (node-native) write.** The grafted values are sourced from
+the merged node and comment-stripped so no source-layer comment rides along; the
+destination's existing field comments are carried forward by `mappingPut`.
+Because the graft base is the destination file's own (re-read) node, a write to
+file B never carries A's comments — and B's own comments (head + per-field)
+survive a field-merge mutation. `encodeNode` clones internally (never mutates
+the caller's tree) and stamps the `WithSchemaURL` head comment (stripping any
+prior one first, so re-writes never duplicate it). The toolkit (`node.go`):
+`mergeNodes`, `nodeGraftValue`, `nodeDeletePath`, `nodeValueAt`, `cloneNode`,
+`stripComments`, `unionSeqNodes`.
 
 **Migrations run per file layer.** A `Migration[T]` is `func(*Store[T]) (bool, error)`; it
 mutates fields with the same `Get`/`Set`/`Remove` member functions every caller
@@ -157,11 +175,14 @@ tree only carries the winning occurrence of a key, so a merged-only pass would
 miss a legacy key duplicated in a lower-priority layer and could not route the
 fix back to every owning file). Any layer a migration changed is rewritten
 straight to its origin file (with the schema header); the others are left
-byte-untouched. The virtual defaults/seed layer is never migrated. Migrations run
-before the snapshot is published and before seed/defaults are marked dirty;
-because the edits land on the layer's own node tree, comments on untouched fields
-are dragged along, and a schema-shape change is fixed before the final strict
-decode.
+byte-untouched. The virtual defaults/seed layer is never migrated. Migration
+types are validated up front (a `Migration[U]` wired into a `Store[T]` aborts
+construction with `ErrMigrationType`, even on an in-memory store), and the
+engine trusts its own dirty tracking over a migration's returned `changed` bool
+— a migration that mutates but reports `false` is still persisted. Migrations
+run before the snapshot is published; because the edits land on the layer's own
+node tree, comments on untouched fields are dragged along, and a schema-shape
+change is fixed before the final strict decode.
 
 `layerPathForKey` resolves write targets for fields that already have a layer:
 (1) exact provenance match, (2) descendant prefix match, (3) ancestor walk-up for
@@ -210,7 +231,7 @@ Delegates to `internal/consts` — the single XDG resolver (`CLAWKER_*_DIR` > `X
 
 ## Testing
 
-`NewFromString[T](yaml)` for read-only test doubles. Real `Store[T]` + `t.TempDir()` for full FS-backed tests. Test env vars: `CLAWKER_DATA_DIR` (isolate registry), `CLAWKER_TEST_REPO_DIR` (walk-up tests).
+`New[T](yaml)` (no path options) for read-only test doubles. Real `Store[T]` + `t.TempDir()` for full FS-backed tests. Test env vars: `CLAWKER_DATA_DIR` (isolate registry), `CLAWKER_TEST_REPO_DIR` (walk-up tests). Hardening regression tests (defaults never leak, merge-into-existing-file, cross-store lost update, corrupt-layer loudness, migration self-report, anchors/aliases) live in `hardening_test.go`.
 
 ### Oracle + Golden Merge Tests
 
@@ -232,5 +253,9 @@ Deepest fixture level always has both `config.local.yaml` and `config.yaml` with
 - **`time.Time` is a scalar leaf (`KindTime`)** — although it is a Go struct, `NormalizeFields` classifies it as a leaf and the node encoder serializes it as an RFC3339Nano scalar via yaml.v3, never recursing into its unexported fields. Used by `internal/state`'s `State.CheckedAt`.
 - **Dirty is per-path** — `Set`/`Remove` mark the single mutated path; `Write` flushes exactly the dirty paths, each routed to its provenance file.
 - **`WithFilenames` is load-bearing** — drives discovery AND the create-if-missing write gate. Omit it → existing files never found and `Write` fails `no write path available`. `WithDefaultFilename` does not substitute (inert without filenames), but pair it in as a drift-proof guard that pins the write target. See Construction Contract above.
-- **A store writes only with a dir option + `WithFilenames`** — `New`/`NewFromString` with *no path options* is an in-memory double: `Write()` errors `no write path available` by design. Add `WithStateDir()`/`WithPaths()` + `WithFilenames()` and it discovers + lazily creates the file on first `Write`.
-- **File locking is advisory** — `flock` is cooperative. Lock files (`.lock` suffix) left on disk intentionally.
+- **A store writes only with a dir option + `WithFilenames`** — `New` with *no path options* is an in-memory double: `Write()` with dirty fields errors `no write path available` by design. Add `WithStateDir()`/`WithPaths()` + `WithFilenames()` and it discovers + lazily creates the file on first `Write`.
+- **Defaults never land in files** — virtual-layer (seed/defaults) fields are not dirty after construction; only explicit `Set`/`Remove` mutations are persisted. `MarkSeedForWrite()` is the opt-in for materializing the seed (preset flow).
+- **`Write` merges into the file's current on-disk state** — the write path re-reads the destination before grafting, so external updates survive and `WriteTo` against an existing undiscovered file merges rather than clobbers. A destination that exists but no longer parses is an error, never an overwrite.
+- **`Refresh` discards pending mutations** — it resets dirty tracking to fresh on-disk state; call it before mutating, not between `Set` and `Write`. It errors on a corrupt discovered layer instead of silently dropping it.
+- **File locking is advisory** — `flock` is cooperative; with `WithLock` the whole per-file read-modify-write runs inside the flock. Lock files (`.lock` suffix) left on disk intentionally.
+- **Multi-document YAML is rejected** (`ErrMultiDocument`) — config files are single-document; the second document would otherwise be silently dropped.

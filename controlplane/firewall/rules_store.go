@@ -38,7 +38,7 @@ func NewRulesStore(cfg config.Config) (*storage.Store[EgressRulesFile], error) {
 	if err != nil {
 		return nil, fmt.Errorf("firewall: resolving data dir: %w", err)
 	}
-	return storage.NewStore[EgressRulesFile](
+	return storage.New[EgressRulesFile]("",
 		storage.WithFilenames(cfg.EgressRulesFileName()),
 		storage.WithPaths(dataDir),
 		storage.WithLock(), // Cross-process flock — multiple CLI/daemon instances share this file.

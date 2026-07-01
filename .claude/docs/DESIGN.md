@@ -365,10 +365,10 @@ Storage provides mechanisms — composing packages (`config/mocks`, `project/moc
 
 | Mechanism | What it does | Owned by |
 |-----------|-------------|----------|
-| `storage.NewFromString[T](yaml)` | Separate constructor. Bypasses the entire pipeline (no discovery, no migration, no layering, no merge). Parses YAML string → node tree → `*T`. No write paths — Set+Write errors. | `storage` |
+| `storage.New[T](yaml)` (no path options) | Same constructor, no discovery options: the seed YAML is the only layer (no files, no migrations). Parses YAML string → node tree → `*T`. No write paths — Set+Write errors. | `storage` |
 | Real `Store[T]` + `t.TempDir()` | Full store pointed at a jailed temp dir. Consumer wires its own schemas/filenames/defaults. Full node tree plumbing. | Consumer (`config/mocks`, `project/mocks`) |
 
-Consumer mock APIs stay unchanged (`NewBlankConfig`, `NewFromString`, `NewIsolatedTestConfig`, etc.). Callers never see `Store[T]` or `NewFromString[T]` directly.
+Consumer mock APIs stay unchanged (`NewBlankConfig`, `NewFromString`, `NewIsolatedTestConfig`, etc.). Callers never see `Store[T]` or `storage.New[T]` directly.
 
 `Store[T]` itself has no mock interface — it's a concrete struct composed inside `configImpl` / `projectManagerImpl`. The consumer interfaces (`Config`, `ProjectManager`) are the mock boundary, generated via `go:generate moq`.
 

@@ -527,7 +527,7 @@ agent:
 `), 0o644))
 
 	// Simulate project init: create a store with defaults, set a few fields, write.
-	projectStore, err := storage.NewStore[Project](
+	projectStore, err := storage.New[Project]("",
 		storage.WithFilenames("clawker.yaml"),
 		storage.WithDefaultsFromStruct[Project](),
 		storage.WithDirs(projectDir),
@@ -537,7 +537,7 @@ agent:
 	require.NoError(t, projectStore.Set("build.image", "bookworm:latest"))
 	require.NoError(t, projectStore.Set("workspace.default_mode", "bind"))
 	projectConfigFile := filepath.Join(projectDir, ".clawker.yaml")
-	require.NoError(t, projectStore.Write(storage.ToPath(projectConfigFile)))
+	require.NoError(t, projectStore.WriteTo(projectConfigFile))
 
 	// Verify the project file does NOT contain empty agent strings.
 	raw, err := os.ReadFile(projectConfigFile)
@@ -554,7 +554,7 @@ agent:
 
 	// Now simulate production loading: project file (walk-up) + user config.
 	// Use explicit paths since we can't walk-up in a temp dir.
-	mergedStore, err := storage.NewStore[Project](
+	mergedStore, err := storage.New[Project]("",
 		storage.WithFilenames("clawker.yaml"),
 		storage.WithDefaultsFromStruct[Project](),
 		storage.WithDirs(projectDir),
@@ -591,7 +591,7 @@ monitoring:
 
 func TestGeneratedDefaults_SettingsValues(t *testing.T) {
 	generated := storage.GenerateDefaultsYAML[Settings]()
-	store, err := storage.NewFromString[Settings](generated)
+	store, err := storage.New[Settings](generated)
 	require.NoError(t, err)
 	s := store.Read()
 

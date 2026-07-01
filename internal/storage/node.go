@@ -1,7 +1,10 @@
 package storage
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"reflect"
 
 	"gopkg.in/yaml.v3"
@@ -50,9 +53,21 @@ func rootMapping(data []byte) (*yaml.Node, error) {
 	if len(data) == 0 {
 		return newMapping(), nil
 	}
+	dec := yaml.NewDecoder(bytes.NewReader(data))
 	var doc yaml.Node
-	if err := yaml.Unmarshal(data, &doc); err != nil {
+	if err := dec.Decode(&doc); err != nil {
+		if errors.Is(err, io.EOF) {
+			// Comments-only or whitespace-only input: no document at all.
+			return newMapping(), nil
+		}
 		return nil, fmt.Errorf("storage: parsing yaml: %w", err)
+	}
+	// Config files are single-document. A second document would be silently
+	// dropped by first-document-only parsing, so reject it loudly — even when
+	// the trailing document is itself malformed.
+	var extra yaml.Node
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("storage: parsing yaml: %w", ErrMultiDocument)
 	}
 	if doc.Kind == yaml.DocumentNode && len(doc.Content) > 0 {
 		root := doc.Content[0]
@@ -132,19 +147,48 @@ func mappingDelete(m *yaml.Node, key string) bool {
 }
 
 // cloneNode deep-copies a yaml.Node, including comments and style, so the copy
-// shares no mutable state with the original.
+// shares no mutable state with the original. Alias pointers are remapped to the
+// cloned anchor nodes, so an aliased tree stays self-contained — an alias in the
+// copy never points back into the original tree.
 func cloneNode(n *yaml.Node) *yaml.Node {
+	cloned := make(map[*yaml.Node]*yaml.Node)
+	cp := cloneNodeRec(n, cloned)
+	remapAliases(cp, cloned)
+	return cp
+}
+
+// cloneNodeRec copies the node tree, recording original→copy in cloned so
+// alias pointers can be remapped afterwards.
+func cloneNodeRec(n *yaml.Node, cloned map[*yaml.Node]*yaml.Node) *yaml.Node {
 	if n == nil {
 		return nil
 	}
 	cp := *n
+	cloned[n] = &cp
 	if n.Content != nil {
 		cp.Content = make([]*yaml.Node, len(n.Content))
 		for i, c := range n.Content {
-			cp.Content[i] = cloneNode(c)
+			cp.Content[i] = cloneNodeRec(c, cloned)
 		}
 	}
 	return &cp
+}
+
+// remapAliases repoints every alias node in the cloned tree at the cloned
+// anchor node. An alias whose anchor lives outside the cloned subtree keeps its
+// original pointer (nothing better exists to point at).
+func remapAliases(n *yaml.Node, cloned map[*yaml.Node]*yaml.Node) {
+	if n == nil {
+		return
+	}
+	if n.Alias != nil {
+		if nn, ok := cloned[n.Alias]; ok {
+			n.Alias = nn
+		}
+	}
+	for _, c := range n.Content {
+		remapAliases(c, cloned)
+	}
 }
 
 // stripComments recursively clears all comments from a node tree. Used on a

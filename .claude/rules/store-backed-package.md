@@ -78,7 +78,7 @@ need an isolated FS. Copy `internal/state` and rename the domain noun.
 // New is the production entry point: a file-backed store. ALL option wiring lives
 // here, once — filenames, directory, migrations, lock.
 func New() (<X>Store, error) {
-	store, err := storage.NewFromString[<Schema>]("",
+	store, err := storage.New[<Schema>]("",
 		storage.WithFilenames(consts.<X>File),        // LOAD-BEARING — see below
 		storage.WithDefaultFilename(consts.<X>File),  // drift-proof guard — see below
 		storage.WithStateDir(),                       // or WithConfigDir/WithDataDir
@@ -97,7 +97,7 @@ func New() (<X>Store, error) {
 // that is the whole point. Used by mocks/stubs and intra-package tests that need
 // a seeded store without an isolated FS env. (NOT New-with-a-seed.)
 func NewFromString(seed string) (<X>Store, error) {
-	store, err := storage.NewFromString[<Schema>](seed)
+	store, err := storage.New[<Schema>](seed)
 	if err != nil {
 		return nil, fmt.Errorf("<pkg>: loading <thing> from string: %w", err)
 	}

@@ -192,7 +192,7 @@ Each file migrates independently — any file at any depth can be independently 
 
 **Write model**: Targeted (`Write(ToPath(p))` / `Write(ToLayer(i))`) or auto-route (`Write()` — provenance resolves each dirty field's target). Each dirty value is grafted into a clone of the target layer's own node tree (preserving its comments), then encoded and atomically written. Node merge preserves unknown keys in the tree that aren't in the struct schema.
 
-**Testing**: `storage.NewFromString[T](yaml)` is the same call as `New` (`New` delegates to it); with no path options it discovers nothing on disk and the seed YAML is the only layer — an in-memory double, parsed through the real schema. Composing packages (`config/mocks`, `project/mocks`) use it to build their test doubles and use real `Store[T]` + `t.TempDir()` for isolated FS harnesses. `Store[T]` has no mock interface; consumer interfaces are the mock boundary.
+**Testing**: `storage.New[T](yaml)` with no path options it discovers nothing on disk and the seed YAML is the only layer — an in-memory double, parsed through the real schema. Composing packages (`config/mocks`, `project/mocks`) use it to build their test doubles and use real `Store[T]` + `t.TempDir()` for isolated FS harnesses. `Store[T]` has no mock interface; consumer interfaces are the mock boundary.
 
 **Imported by:** `internal/config`, `internal/project`, `internal/state`
 

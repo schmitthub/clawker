@@ -31,7 +31,7 @@ func readProjectConfig(t *testing.T, dir string) *config.Project {
 	data, err := os.ReadFile(filepath.Join(dir, ".clawker.yaml"))
 	require.NoError(t, err, "reading .clawker.yaml")
 
-	store, err := storage.NewFromString[config.Project](
+	store, err := storage.New[config.Project](
 		string(data),
 		storage.WithDefaultsFromStruct[config.Project](),
 	)
