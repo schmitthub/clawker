@@ -10,6 +10,11 @@ The format follows Keep a Changelog, and clawker adheres to Semantic Versioning.
 A release spans many merged PRs and may mix change kinds — Added, Fixed,
 Changed, Removed. Each release section lists those subsections directly.
 
+## [0.12.11] - 2026-07-02
+
+- **Added:** YAML schema definitions for `clawker.yaml` files and `settings.yaml` files, for IDEs that support JSON Schema validation.  
+- **Added:** Comment preservation to yaml backed configuration.  
+
 ## [0.12.10] - 2026-06-29
 
 - **Added:** `nvm` to base Dockerfile template
