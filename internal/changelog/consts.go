@@ -10,7 +10,7 @@ import "github.com/schmitthub/clawker/internal/consts"
 // consts rather than re-spelling the literal repo string. It is a const, not a
 // test seam: tests inject an internal/httpmock client (the transport is the
 // seam), so the production URL is never swapped.
-const ChangelogURL = consts.RawGitHubBaseURL + "/" + consts.GitHubRepo + "/main/CHANGELOG.md"
+const ChangelogURL = consts.RawGitHubBaseURL + "/" + consts.GitHubRepo + "/" + consts.GitHubRefMain + "/CHANGELOG.md"
 
 // Parsing tokens for the Keep a Changelog format. Centralized here so the
 // parser references named consts rather than scattering literals.

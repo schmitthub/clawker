@@ -229,13 +229,13 @@ func configSchemaSpecs() []configSchemaSpec {
 	return []configSchemaSpec{
 		{
 			reflect.TypeFor[config.Project](),
-			consts.ProjectSchemaURL,
+			consts.SchemaURL(consts.ProjectSchemaFile, consts.GitHubRefMain),
 			"clawker project configuration (clawker.yaml)",
 			consts.ProjectSchemaFile,
 		},
 		{
 			reflect.TypeFor[config.Settings](),
-			consts.SettingsSchemaURL,
+			consts.SchemaURL(consts.SettingsSchemaFile, consts.GitHubRefMain),
 			"clawker settings (settings.yaml)",
 			consts.SettingsSchemaFile,
 		},
@@ -245,8 +245,9 @@ func configSchemaSpecs() []configSchemaSpec {
 // genConfigSchemas writes the JSON Schema files for the project and settings
 // config types into <docPath>/schemas/. The schemas are generated from the same
 // struct tags as the configuration reference and are served as raw GitHub
-// content (consts.ProjectSchemaURL / SettingsSchemaURL) so the
-// yaml-language-server header the storage layer stamps resolves. Returns the
+// content addressed by git ref (consts.SchemaURL) so the
+// yaml-language-server header the storage layer stamps resolves — release
+// binaries pin their own version tag, dev builds follow main. Returns the
 // schema output directory.
 func genConfigSchemas(docPath string) (string, error) {
 	dir := filepath.Join(docPath, filepath.Base(consts.SchemaDocsDir))

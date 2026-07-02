@@ -6,9 +6,19 @@ package config
 import (
 	"fmt"
 
+	"github.com/schmitthub/clawker/internal/build"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/storage"
 )
+
+// schemaURL returns the published JSON Schema URL to stamp into files written
+// by a store, pinned to this binary's release tag (or the main ref for dev
+// builds). Derived here — not plumbed from the Factory — because NewConfig is
+// called directly by every binary (CLI, CP, host proxy, bridge) and all of
+// them must stamp the same header for the same build.
+func schemaURL(filename string) string {
+	return consts.SchemaURL(filename, consts.SchemaRefForVersion(build.Version))
+}
 
 // Config is the public configuration contract.
 // Add methods here as the config contract grows.
@@ -147,7 +157,7 @@ func NewConfig(opts ...NewConfigOption) (Config, error) {
 		storage.WithConfigDir(),
 		storage.WithDotDefault(),
 		storage.WithMigrations(ProjectMigrations()...),
-		storage.WithSchemaURL(consts.ProjectSchemaURL),
+		storage.WithSchemaURL(schemaURL(consts.ProjectSchemaFile)),
 	)
 	projectStore, err := storage.New[Project]("", projectOpts...)
 	if err != nil {
@@ -165,7 +175,7 @@ func NewConfig(opts ...NewConfigOption) (Config, error) {
 	settingsOpts = append(settingsOpts,
 		storage.WithConfigDir(),
 		storage.WithMigrations(SettingsMigrations()...),
-		storage.WithSchemaURL(consts.SettingsSchemaURL),
+		storage.WithSchemaURL(schemaURL(consts.SettingsSchemaFile)),
 	)
 	settingsStore, err := storage.New[Settings]("", settingsOpts...)
 	if err != nil {
@@ -215,7 +225,7 @@ func WithProjectRoot(root string) NewConfigOption {
 // The schema URL is wired so the file WriteTo writes carries the
 // yaml-language-server header for editor validation.
 func NewProjectStoreFromPreset(presetYAML string) (*storage.Store[Project], error) {
-	store, err := storage.New[Project](presetYAML, storage.WithSchemaURL(consts.ProjectSchemaURL))
+	store, err := storage.New[Project](presetYAML, storage.WithSchemaURL(schemaURL(consts.ProjectSchemaFile)))
 	if err != nil {
 		return nil, err
 	}

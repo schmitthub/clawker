@@ -27,8 +27,10 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -119,20 +121,27 @@ const (
 const (
 	// GitHubRepo is the "owner/name" slug of the clawker repository.
 	GitHubRepo = "schmitthub/clawker"
-	// RawGitHubBaseURL is the base host for raw file content on GitHub.
+	// RawGitHubHost / RawGitHubBaseURL identify raw file content on GitHub.
 	// Joined with a repo slug, ref, and path to fetch a file's raw bytes.
-	RawGitHubBaseURL = "https://raw.githubusercontent.com"
+	RawGitHubHost    = "raw.githubusercontent.com"
+	RawGitHubBaseURL = "https://" + RawGitHubHost
+	// GitHubRefMain is the repository's default branch ref.
+	GitHubRefMain = "main"
 )
 
 // JSON Schema publication. The config JSON Schemas are generated from the
 // Project / Settings struct tags (by cmd/gen-docs), committed under
-// docs/schemas/, and served as raw GitHub content on the main branch. The
-// storage layer stamps these URLs as a `# yaml-language-server: $schema=...`
-// header into clawker.yaml / settings.yaml so editors validate and autocomplete
-// the files. Build URLs from these consts rather than re-spelling the literal.
+// docs/schemas/, and served as raw GitHub content addressed by git ref. The
+// storage layer stamps a `# yaml-language-server: $schema=<url>` head comment
+// into clawker.yaml / settings.yaml so editors validate and autocomplete the
+// files. Build URLs via SchemaURL + SchemaRefForVersion rather than
+// re-spelling literals.
+//
+// Ref semantics: a release binary pins its ref to its own version tag, whose
+// tree froze the schemas matching that binary's structs the moment the tag
+// was pushed — no publication step exists to forget. Every other build shape
+// (DEV, git-describe, dirty, prerelease) follows GitHubRefMain.
 const (
-	// SchemaRef is the git ref the published $schema URLs point at.
-	SchemaRef = "main"
 	// SchemaDocsDir is the repo-relative directory holding the generated
 	// schemas, also the website output subdirectory under the docs root.
 	SchemaDocsDir = "docs/schemas"
@@ -140,11 +149,32 @@ const (
 	// filenames under SchemaDocsDir.
 	ProjectSchemaFile  = "clawker.schema.json"
 	SettingsSchemaFile = "settings.schema.json"
-	// ProjectSchemaURL / SettingsSchemaURL are the public `$schema` URLs the
-	// storage header points editors at.
-	ProjectSchemaURL  = RawGitHubBaseURL + "/" + GitHubRepo + "/" + SchemaRef + "/" + SchemaDocsDir + "/" + ProjectSchemaFile
-	SettingsSchemaURL = RawGitHubBaseURL + "/" + GitHubRepo + "/" + SchemaRef + "/" + SchemaDocsDir + "/" + SettingsSchemaFile
 )
+
+// releaseVersionRE matches an exact release version — a bare X.Y.Z core with
+// optional leading v, no prerelease or build suffix. Git-describe output,
+// -dirty markers, rc tags, and pseudo-versions all fail this and fall back
+// to GitHubRefMain.
+var releaseVersionRE = regexp.MustCompile(`^v?\d+\.\d+\.\d+$`)
+
+// SchemaRefForVersion maps a build version (build.Version shapes: "DEV",
+// GoReleaser "0.12.3", Makefile git-describe "v0.12.3[-N-gSHA][-dirty]") to
+// the git ref its schemas are served from. Only exact release versions pin
+// to their frozen tag; everything else follows GitHubRefMain so the stamped
+// URL always resolves.
+func SchemaRefForVersion(version string) string {
+	if releaseVersionRE.MatchString(version) {
+		return "v" + strings.TrimPrefix(version, "v")
+	}
+	return GitHubRefMain
+}
+
+// SchemaURL returns the raw-GitHub URL a config JSON Schema file is served
+// at for the given git ref (an exact release tag like "v0.12.3", or
+// GitHubRefMain).
+func SchemaURL(filename, ref string) string {
+	return RawGitHubBaseURL + "/" + GitHubRepo + "/" + ref + "/" + SchemaDocsDir + "/" + filename
+}
 
 // Host-side behavior override env vars.
 const (
