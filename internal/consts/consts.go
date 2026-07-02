@@ -134,13 +134,17 @@ const (
 // docs/schemas/, and served as raw GitHub content addressed by git ref. The
 // storage layer stamps a `# yaml-language-server: $schema=<url>` head comment
 // into clawker.yaml / settings.yaml so editors validate and autocomplete the
-// files. Build URLs via SchemaURL + SchemaRefForVersion rather than
+// files. Build URLs via SchemaURL + SchemaRef rather than
 // re-spelling literals.
 //
-// Ref semantics: a release binary pins its ref to its own version tag, whose
-// tree froze the schemas matching that binary's structs the moment the tag
-// was pushed — no publication step exists to forget. Every other build shape
-// (DEV, git-describe, dirty, prerelease) follows GitHubRefMain.
+// Ref semantics: the stamped ref must stay frozen under an installed binary,
+// so it is always a version tag or a commit SHA — never a branch. A release
+// binary pins its own version tag, whose tree froze the schemas matching that
+// binary's structs the moment the tag was pushed — no publication step exists
+// to forget. Dev-shaped builds derive the nearest pushed ref from their VCS
+// metadata (git-describe base tag, pseudo-version commit, or the embedded
+// revision). GitHubRefMain is a dead-last resort for builds carrying no VCS
+// metadata at all.
 const (
 	// SchemaDocsDir is the repo-relative directory holding the generated
 	// schemas, also the website output subdirectory under the docs root.
@@ -151,20 +155,49 @@ const (
 	SettingsSchemaFile = "settings.schema.json"
 )
 
-// releaseVersionRE matches an exact release version — a bare X.Y.Z core with
-// optional leading v, no prerelease or build suffix. Git-describe output,
-// -dirty markers, rc tags, and pseudo-versions all fail this and fall back
-// to GitHubRefMain.
-var releaseVersionRE = regexp.MustCompile(`^v?\d+\.\d+\.\d+$`)
+// Version-shape patterns consumed by SchemaRef. build.Version arrives in one
+// of these shapes: GoReleaser "0.12.3" / "0.13.0-rc1" (v stripped), Makefile
+// git-describe "v0.12.3[-N-gSHA][-dirty]" or a bare short SHA (--always in a
+// tagless clone), a Go pseudo-version from `go install repo@commit`, or the
+// "DEV" default when no ldflags were injected.
+var (
+	// tagVersionRE matches a version whose tag exists as a pushed git ref —
+	// an X.Y.Z core with optional leading v and optional prerelease suffix.
+	// git describe and GoReleaser only ever report real tags, so any version
+	// of this shape resolves.
+	tagVersionRE = regexp.MustCompile(`^v?\d+\.\d+\.\d+(-[0-9A-Za-z.]+)*$`)
+	// pseudoVersionRE matches a Go pseudo-version and captures its embedded
+	// commit SHA; the module proxy only serves published commits, so the SHA
+	// resolves as a ref even though no tag exists for it.
+	pseudoVersionRE = regexp.MustCompile(`^v0\.0\.0-\d{14}-([0-9a-f]{12})$`)
+	// describeSuffixRE matches the -<distance>-g<sha> suffix git describe
+	// appends when HEAD sits past the nearest tag.
+	describeSuffixRE = regexp.MustCompile(`-\d+-g[0-9a-f]{7,40}$`)
+	// commitSHARE matches a bare git commit SHA (abbreviated or full).
+	commitSHARE = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
+)
 
-// SchemaRefForVersion maps a build version (build.Version shapes: "DEV",
-// GoReleaser "0.12.3", Makefile git-describe "v0.12.3[-N-gSHA][-dirty]") to
-// the git ref its schemas are served from. Only exact release versions pin
-// to their frozen tag; everything else follows GitHubRefMain so the stamped
-// URL always resolves.
-func SchemaRefForVersion(version string) string {
-	if releaseVersionRE.MatchString(version) {
-		return "v" + strings.TrimPrefix(version, "v")
+// SchemaRef maps a binary's build metadata (build.Version, build.Revision) to
+// the git ref its schemas are served from. The ref is always frozen — a
+// version tag when one is derivable, a commit SHA otherwise — never a branch,
+// because a branch ref would drift under an installed binary. Resolution
+// order: exact tag → git-describe base tag → pseudo-version commit → bare
+// describe SHA → embedded VCS revision → GitHubRefMain (only reachable for a
+// build with no VCS metadata at all, e.g. from a source tarball).
+func SchemaRef(version, revision string) string {
+	v := strings.TrimSuffix(version, "-dirty")
+	if m := pseudoVersionRE.FindStringSubmatch(v); m != nil {
+		return m[1]
+	}
+	v = describeSuffixRE.ReplaceAllString(v, "")
+	if tagVersionRE.MatchString(v) {
+		return "v" + strings.TrimPrefix(v, "v")
+	}
+	if commitSHARE.MatchString(v) {
+		return v
+	}
+	if commitSHARE.MatchString(revision) {
+		return revision
 	}
 	return GitHubRefMain
 }

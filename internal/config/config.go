@@ -19,12 +19,12 @@ const schemaHeaderPrefix = "yaml-language-server: $schema="
 
 // schemaHeader returns the header comment to stamp into files written by a
 // store: the yaml-language-server directive pointing at the published JSON
-// Schema, pinned to this binary's release tag (or the main ref for dev
-// builds). Derived here — not plumbed from the Factory — because NewConfig is
+// Schema, pinned to the frozen git ref derived from this binary's build
+// metadata (release tag, describe base tag, or commit SHA). Derived here — not plumbed from the Factory — because NewConfig is
 // called directly by every binary (CLI, CP, host proxy, bridge) and all of
 // them must stamp the same header for the same build.
 func schemaHeader(filename string) string {
-	return schemaHeaderPrefix + consts.SchemaURL(filename, consts.SchemaRefForVersion(build.Version))
+	return schemaHeaderPrefix + consts.SchemaURL(filename, consts.SchemaRef(build.Version, build.Revision))
 }
 
 // Config is the public configuration contract.

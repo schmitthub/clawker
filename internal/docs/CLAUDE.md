@@ -67,7 +67,7 @@ Generates editor-facing JSON Schema (draft 2020-12) for the config types from th
 
 - `GenJSONSchema(t reflect.Type, id, title)` — returns the schema bytes for a config struct. Like `renderYAMLSchema` (and unlike `storage.NormalizeFields`), it recurses into struct-slice element types so array items carry full property schemas. Objects are strict (`additionalProperties:false`) so editors flag unknown keys; `required` arrays come from `required:"true"` tags; `default` tags are coerced to typed JSON values.
 
-Consumers: `cmd/gen-docs` (under `--schemas`) writes `docs/schemas/clawker.schema.json` + `settings.schema.json` (filenames from `consts.{Project,Settings}SchemaFile`; `$id` from `consts.SchemaURL` at the main ref). `internal/config` composes the matching `# yaml-language-server: $schema=` header and stamps it via `storage.WithHeader` into `clawker.yaml` / `settings.yaml` — release binaries pin the URL to their own version tag via `consts.SchemaRefForVersion`, dev builds follow main.
+Consumers: `cmd/gen-docs` (under `--schemas`) writes `docs/schemas/clawker.schema.json` + `settings.schema.json` (filenames from `consts.{Project,Settings}SchemaFile`; `$id` from `consts.SchemaURL` at the main ref). `internal/config` composes the matching `# yaml-language-server: $schema=` header and stamps it via `storage.WithHeader` into `clawker.yaml` / `settings.yaml` — the ref comes from `consts.SchemaRef` (version tag or commit SHA, never a branch).
 
 ## YAML Generation (yaml.go)
 
