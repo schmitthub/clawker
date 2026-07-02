@@ -26,11 +26,11 @@ Create a package under `internal/config/storeui/<domain>/` that exports:
 // Overrides customizes reflected fields for interactive editing.
 func Overrides() []storeui.Override
 
-// LayerTargets builds save destinations from discovered store layers.
-func LayerTargets(store *storage.Store[T], cfg config.Config) []storeui.LayerTarget
+// LayerTargets builds save destinations from the store's own write targets.
+func LayerTargets(store *storage.Store[T]) ([]storeui.LayerTarget, error)
 
 // Edit is the convenience entry point wiring overrides + targets.
-func Edit(ios *iostreams.IOStreams, store *storage.Store[T], cfg config.Config) (storeui.Result, error)
+func Edit(ios *iostreams.IOStreams, store *storage.Store[T]) (storeui.Result, error)
 ```
 
 **Override patterns:**
@@ -44,10 +44,9 @@ func Edit(ios *iostreams.IOStreams, store *storage.Store[T], cfg config.Config) 
 
 **LayerTarget patterns:**
 
-- Check for `.clawker/` directory existence to decide between dir-form and flat-form local paths
-- `BuildLayerTargets` generates "Local" (CWD dotfile or `.clawker/` subdir) and "User" (config dir) automatically; discovered store layers use their shortened paths as labels
+- `BuildLayerTargets(store)` derives all targets from `store.WriteTargets()`: the walk-up CWD candidate (dual placement, `.clawker/` dir form or flat dotfile) is labeled "Local", configured-directory candidates "User", and discovered layers use their shortened paths as labels
+- A store without walk-up (e.g. settings) gets no "Local" target — it could never rediscover a CWD file, so offering one would silently lose the saved value
 - Use `ShortenHome()` for the Description field (exported from `internal/storeui`)
-- Include `store.Layers()` entries so users can save back to the file a value came from
 
 ### Step 2: Command Integration
 

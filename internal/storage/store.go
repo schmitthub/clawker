@@ -46,7 +46,7 @@ type Store[T Schema] struct {
 	dirtyPaths map[string]dirtyOp // field paths mutated since last Write (nil = clean)
 	layers     []layer            // discovered layers (internal)
 	prov       provenance         // field→layer mapping (internal)
-	opts       options            // construction options (internal)
+	opts       Options            // construction options (see Options accessor)
 	tags       tagRegistry        // merge tags from T's struct type (internal)
 	migrating  bool               // true while applyMigrations rewrites a layer node in place (snapshot kept best-effort)
 	mu         sync.Mutex         // guards tree + dirtyPaths + layers + prov (Get/Set/Remove/Write/MarkForWrite/Refresh)
@@ -77,7 +77,7 @@ type LayerInfo struct {
 // With no options, the store has no file discovery — useful for seeding
 // a new value that will be written via WriteTo.
 func New[T Schema](seed string, opts ...Option) (*Store[T], error) {
-	o := options{}
+	var o Options
 	for _, opt := range opts {
 		opt(&o)
 	}
@@ -105,7 +105,7 @@ func New[T Schema](seed string, opts ...Option) (*Store[T], error) {
 
 	// Build the virtual layer node: defaults (safety net) + seed string on top.
 	tags := buildTagRegistry[T]()
-	virtual, err := buildVirtualNode(o.defaults, seed, tags)
+	virtual, err := buildVirtualNode(o.Defaults, seed, tags)
 	if err != nil {
 		return nil, err
 	}
@@ -270,7 +270,7 @@ func (s *Store[T]) migrateLayer(i int, fns []func(*Store[T]) (bool, error)) (boo
 		return false, nil, nil
 	}
 
-	encoded, err := encodeNode(s.layers[i].node, s.opts.schemaURL)
+	encoded, err := encodeNode(s.layers[i].node, s.opts.SchemaURL)
 	if err != nil {
 		return false, nil, fmt.Errorf("encoding %s: %w", s.layers[i].path, err)
 	}
@@ -281,7 +281,7 @@ func (s *Store[T]) migrateLayer(i int, fns []func(*Store[T]) (bool, error)) (boo
 // when enabled.
 func (s *Store[T]) writeFile(dest string, data []byte) error {
 	writeFn := func() error { return atomicWrite(dest, data, configFileMode) }
-	if s.opts.lock {
+	if s.opts.Lock {
 		return withLock(dest, writeFn)
 	}
 	return writeFn()
@@ -369,6 +369,19 @@ func (s *Store[T]) Layers() []LayerInfo {
 		infos[i] = LayerInfo{Filename: l.filename, Path: l.path, Data: nodeToMap(l.node)}
 	}
 	return infos
+}
+
+// Options returns a copy of the store's resolved construction options so
+// callers can introspect how the store discovers and writes files (e.g.
+// whether walk-up is enabled, which directories are probed). Slices are
+// cloned; mutating the returned value does not affect the store.
+func (s *Store[T]) Options() Options {
+	o := s.opts
+	o.Filenames = slices.Clone(o.Filenames)
+	o.Dirs = slices.Clone(o.Dirs)
+	o.Paths = slices.Clone(o.Paths)
+	o.migrations = nil // internal; type-erased migration funcs are not exposed
+	return o
 }
 
 // Provenance returns the layer that provided the winning value for the given
@@ -725,7 +738,7 @@ func (s *Store[T]) groupDirtyByDest(target string) (map[string]*fileOps, error) 
 // grafted values are sourced from the merged tree and comment-stripped, and the
 // destination's existing field comments are carried forward.
 func (s *Store[T]) writeLayerFile(dest string, sets, deletes []string) error {
-	if s.opts.lock {
+	if s.opts.Lock {
 		return withLock(dest, func() error {
 			return s.writeLayerFileLocked(dest, sets, deletes)
 		})
@@ -768,7 +781,7 @@ func (s *Store[T]) writeLayerFileLocked(dest string, sets, deletes []string) err
 		nodeDeletePath(node, strings.Split(p, "."))
 	}
 
-	encoded, err := encodeNode(node, s.opts.schemaURL)
+	encoded, err := encodeNode(node, s.opts.SchemaURL)
 	if err != nil {
 		return fmt.Errorf("storage: encoding %s: %w", dest, err)
 	}

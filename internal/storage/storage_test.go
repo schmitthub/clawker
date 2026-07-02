@@ -670,7 +670,7 @@ func TestStore_WriteProvenance(t *testing.T) {
 		layers: layers,
 		prov:   prov,
 		tags:   tags,
-		opts:   options{filenames: []string{"global.yaml", "local.yaml"}},
+		opts:   makeOptions(WithFilenames("global.yaml", "local.yaml")),
 	}
 	store.value.Store(value)
 
@@ -725,7 +725,7 @@ version: 2
 		layers: layers,
 		prov:   prov,
 		tags:   tags,
-		opts:   options{filenames: []string{"global.yaml", "local.yaml"}},
+		opts:   makeOptions(WithFilenames("global.yaml", "local.yaml")),
 	}
 	store.value.Store(value)
 
@@ -790,7 +790,7 @@ build:
 		layers: layers,
 		prov:   prov,
 		tags:   tags,
-		opts:   options{filenames: []string{"local.yaml", "global.yaml"}},
+		opts:   makeOptions(WithFilenames("local.yaml", "global.yaml")),
 	}
 	store.value.Store(value)
 
@@ -839,10 +839,7 @@ func TestStore_WriteFilename(t *testing.T) {
 		},
 		prov: prov,
 		tags: tags,
-		opts: options{
-			filenames: []string{"config.yaml", "config.local.yaml"},
-			paths:     []string{dir},
-		},
+		opts: makeOptions(WithFilenames("config.yaml", "config.local.yaml"), WithPaths(dir)),
 	}
 	store.value.Store(value)
 
@@ -2820,7 +2817,7 @@ name: base
 		layers: layers,
 		prov:   prov,
 		tags:   tags,
-		opts:   options{filenames: []string{"base.yaml", "local.yaml"}},
+		opts:   makeOptions(WithFilenames("base.yaml", "local.yaml")),
 	}
 	store.value.Store(value)
 
@@ -2880,7 +2877,7 @@ version: 2
 		layers: layers,
 		prov:   prov,
 		tags:   tags,
-		opts:   options{filenames: []string{"base.yaml", "local.yaml"}},
+		opts:   makeOptions(WithFilenames("base.yaml", "local.yaml")),
 	}
 	store.value.Store(value)
 
@@ -3433,4 +3430,14 @@ func TestWrite_PreservesAnchorsAndAliases(t *testing.T) {
 	require.NoError(t, yaml.Unmarshal(data, &decoded))
 	assert.Equal(t, 1, decoded.Other["x"], "aliased value corrupted")
 	assert.Equal(t, "bob", decoded.Name)
+}
+
+// makeOptions builds an Options through the public functional options,
+// for tests that construct Store values directly.
+func makeOptions(opts ...Option) Options {
+	var o Options
+	for _, opt := range opts {
+		opt(&o)
+	}
+	return o
 }

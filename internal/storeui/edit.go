@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/storage"
 	"github.com/schmitthub/clawker/internal/tui"
@@ -27,53 +26,44 @@ func ShortenHome(p string) string {
 	return p
 }
 
-// ResolveLocalPath determines the CWD dot-file path using dual-placement:
-// if .clawker/ dir exists → .clawker/{filename}, otherwise → .{filename}.
-func ResolveLocalPath(cwd, filename string) string {
-	clawkerDir := filepath.Join(cwd, consts.DotClawkerDir)
-	if info, err := os.Stat(clawkerDir); err == nil && info.IsDir() {
-		return filepath.Join(clawkerDir, filename)
+// Labels for store-derived save destinations.
+const (
+	labelLocal = "Local" // walk-up CWD candidate
+	labelUser  = "User"  // configured directory candidate (config dir etc.)
+)
+
+// BuildLayerTargets builds save destinations from the store's own write
+// targets (storage.Store.WriteTargets), so the editor only ever offers
+// locations the store can rediscover on reload — a store without walk-up
+// gets no CWD "Local" target. The walk-up CWD candidate is labeled "Local",
+// directory candidates "User", and existing layer files show their
+// shortened path. Virtual layers (defaults) are never offered.
+func BuildLayerTargets[T storage.Schema](store *storage.Store[T]) ([]LayerTarget, error) {
+	wts, err := store.WriteTargets()
+	if err != nil {
+		return nil, fmt.Errorf("resolving store write targets: %w", err)
 	}
-	return filepath.Join(cwd, "."+filename)
-}
-
-// BuildLayerTargets builds save destinations from the canonical locations
-// (Local, User) plus every discovered file layer. All targets are always
-// shown so the user can save to any layer — even ones that don't currently
-// define the field being edited.
-//
-// Virtual layers (empty path = defaults) are always excluded.
-// Duplicate paths are deduped (first occurrence wins).
-func BuildLayerTargets(filename, configDir string, layers []storage.LayerInfo) []LayerTarget {
-	var targets []LayerTarget
-	seen := make(map[string]bool)
-
-	add := func(label, path string) {
-		if path == "" || seen[path] {
-			return
+	targets := make([]LayerTarget, 0, len(wts))
+	for _, wt := range wts {
+		shortPath := ShortenHome(wt.Path)
+		var label string
+		switch wt.Source {
+		case storage.TargetWalkUp:
+			label = labelLocal
+		case storage.TargetDir, storage.TargetPath:
+			label = labelUser
+		case storage.TargetLayer:
+			label = shortPath
+		default: // future sources — show the path
+			label = shortPath
 		}
 		targets = append(targets, LayerTarget{
 			Label:       label,
-			Description: ShortenHome(path),
-			Path:        path,
+			Description: shortPath,
+			Path:        wt.Path,
 		})
-		seen[path] = true
 	}
-
-	// Local: CWD dot-file (skipped if CWD is unavailable).
-	if cwd, err := os.Getwd(); err == nil {
-		add("Local", ResolveLocalPath(cwd, filename))
-	}
-
-	// User: config dir file.
-	add("User", filepath.Join(configDir, filename))
-
-	// All discovered file layers (deduped against Local/User).
-	for _, l := range layers {
-		add(ShortenHome(l.Path), l.Path)
-	}
-
-	return targets
+	return targets, nil
 }
 
 // Ptr returns a pointer to a copy of the given value.

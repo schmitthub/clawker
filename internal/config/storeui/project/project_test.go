@@ -1,11 +1,16 @@
 package project
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/storeui"
+	"github.com/schmitthub/clawker/internal/testenv"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestOverrides_AllPathsMatchProjectFields(t *testing.T) {
@@ -66,4 +71,41 @@ func TestOverrides_SelectFields(t *testing.T) {
 			assert.Equal(t, tt.options, ov.Options)
 		})
 	}
+}
+
+// Inside a project the walk-up store offers a CWD "Local" target.
+func TestLayerTargets_InProjectOffersLocal(t *testing.T) {
+	env := testenv.New(t)
+	projectDir := filepath.Join(env.Dirs.Base, "proj")
+	require.NoError(t, os.MkdirAll(projectDir, 0o755))
+	t.Chdir(projectDir)
+
+	cfg, err := config.NewConfig(config.WithProjectRoot(projectDir))
+	require.NoError(t, err)
+
+	targets, err := LayerTargets(cfg.ProjectStore())
+	require.NoError(t, err)
+	require.NotEmpty(t, targets)
+
+	assert.Equal(t, "Local", targets[0].Label)
+	assert.Equal(t, filepath.Join(projectDir, "."+cfg.ProjectConfigFileName()), targets[0].Path)
+	assert.Equal(t, "User", targets[1].Label)
+	assert.Equal(t, filepath.Join(config.ConfigDir(), cfg.ProjectConfigFileName()), targets[1].Path)
+}
+
+// Outside a project (no walk-up anchor) the store cannot rediscover CWD
+// files, so no "Local" target may be offered.
+func TestLayerTargets_NoProjectRootExcludesLocal(t *testing.T) {
+	t.Chdir(t.TempDir())
+	cfg := configmocks.NewIsolatedTestConfig(t)
+
+	targets, err := LayerTargets(cfg.ProjectStore())
+	require.NoError(t, err)
+	require.NotEmpty(t, targets)
+
+	for _, tgt := range targets {
+		assert.NotEqual(t, "Local", tgt.Label,
+			"project editor outside a project must not offer a Local target")
+	}
+	assert.Equal(t, "User", targets[0].Label)
 }

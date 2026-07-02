@@ -19,22 +19,22 @@ type discoveredFile struct {
 // Walk-up files come first (highest priority = closest to CWD), followed
 // by dir-probe files (WithDirs), then explicit path files (lowest priority).
 // Duplicate paths from overlapping discovery are removed (first wins).
-func discover(opts *options) ([]discoveredFile, error) {
+func discover(opts *Options) ([]discoveredFile, error) {
 	var files []discoveredFile
 
-	if opts.walkUpAnchor != "" {
-		walkUpFiles, err := walkUp(opts.filenames, opts.walkUpAnchor)
+	if opts.WalkUpAnchor != "" {
+		walkUpFiles, err := walkUp(opts.Filenames, opts.WalkUpAnchor)
 		if err != nil {
 			return nil, fmt.Errorf("storage: walk-up discovery: %w", err)
 		}
 		files = append(files, walkUpFiles...)
 	}
 
-	for _, dir := range opts.dirs {
-		files = append(files, probeDir(dir, opts.filenames)...)
+	for _, dir := range opts.Dirs {
+		files = append(files, probeDir(dir, opts.Filenames)...)
 	}
 
-	files = append(files, probeExplicitDirs(opts.paths, opts.filenames)...)
+	files = append(files, probeExplicitDirs(opts.Paths, opts.Filenames)...)
 
 	return dedup(files), nil
 }

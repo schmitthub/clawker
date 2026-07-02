@@ -3,6 +3,7 @@ package storage
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,8 +12,6 @@ import (
 
 	"github.com/gofrs/flock"
 	"gopkg.in/yaml.v3"
-
-	"github.com/schmitthub/clawker/internal/consts"
 )
 
 // layerPathForKey finds the layer path that owns a field via provenance.
@@ -74,37 +73,30 @@ func (s *Store[T]) defaultWritePath() (string, error) {
 		}
 	}
 	// No file layers — use explicit paths if configured, otherwise CWD.
-	if len(s.opts.filenames) > 0 {
-		fname := s.opts.defaultFilename
-		if fname == "" {
-			fname = s.opts.filenames[0]
-		}
-		if len(s.opts.paths) > 0 {
-			// Explicit dir (e.g. config dir) — no dot prefix.
-			dir := s.opts.paths[0]
-			if err := os.MkdirAll(dir, 0o755); err != nil {
-				return "", fmt.Errorf("storage: creating directory %s: %w", dir, err)
-			}
-			return filepath.Join(dir, fname), nil
-		}
-		// CWD fallback — apply dual-placement dot prefix if configured.
-		dir, err := os.Getwd()
-		if err != nil {
-			return "", fmt.Errorf("storage: resolving CWD for default write path: %w", err)
-		}
+	if len(s.opts.Filenames) == 0 {
+		return "", errors.New("storage: no write path available (no layers or filenames)")
+	}
+	fname := s.opts.writeFilename()
+	if len(s.opts.Paths) > 0 {
+		// Explicit dir (e.g. config dir) — no dot prefix.
+		dir := s.opts.Paths[0]
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return "", fmt.Errorf("storage: creating directory %s: %w", dir, err)
 		}
-		if s.opts.dotDefault {
-			clawkerDir := filepath.Join(dir, consts.DotClawkerDir)
-			if info, statErr := os.Stat(clawkerDir); statErr == nil && info.IsDir() {
-				return filepath.Join(clawkerDir, fname), nil
-			}
-			fname = "." + fname
-		}
 		return filepath.Join(dir, fname), nil
 	}
-	return "", fmt.Errorf("storage: no write path available (no layers or filenames)")
+	// CWD fallback — apply dual-placement dot prefix if configured.
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("storage: resolving CWD for default write path: %w", err)
+	}
+	if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil { //nolint:gosec // config dirs are conventionally world-readable
+		return "", fmt.Errorf("storage: creating directory %s: %w", dir, mkErr)
+	}
+	if s.opts.DotDefault {
+		return dualPlacementPath(dir, fname), nil
+	}
+	return filepath.Join(dir, fname), nil
 }
 
 // schemaHeaderPrefix is the yaml-language-server directive prefix. Combined with

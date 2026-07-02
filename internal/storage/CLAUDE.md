@@ -39,7 +39,8 @@ target file keeps its comments and no other layer's comments leak in. Proven by
 | `errors.go` | Package doc + sentinels: `ErrAnchorNotAncestor`, `ErrSchemaDecode`, `ErrMigrationType`, `ErrNonMappingRoot`, `ErrMultiDocument`. Storage is schema-agnostic; project-domain errors live in `internal/project` |
 | `store.go` | `Store[T]` (node-native), `New[T]` (single constructor), `Read`, path-based `Get`/`Set`/`Remove`, `Write`/`WriteTo`, `MarkSeedForWrite`, `writeLayerFile`, `applyMigrations`, `Layers`, `LayerInfo`, `Txn` |
 | `node.go` | Node-native core: mapping get/put/delete, `cloneNode` (alias-remapping deep copy), `stripComments`, `nodeValueAt`, `nodeGraftValue`, `nodeDeletePath`, `mergeNodes`, `unionSeqNodes`, `nodeToMap`, `buildVirtualNode`, `rootMapping` (rejects non-mapping roots and multi-document YAML) |
-| `options.go` | `Option` type, `Migration[T]` (`= func(*Store[T]) (bool, error)`), `WithMigrations[T]`, all `With*` constructors |
+| `options.go` | Exported `Options` struct (introspectable via `Store.Options()`), `Option` type, `Migration[T]` (`= func(*Store[T]) (bool, error)`), `WithMigrations[T]`, all `With*` constructors |
+| `targets.go` | `WriteTargets()` + `WriteTarget`/`TargetSource` — candidate write locations derived from the store's own options (walk-up CWD dual placement, dirs, explicit paths, discovered layers); UIs must offer only these |
 | `discover.go` | Walk-up + explicit path discovery, dual placement logic. Walk-up is bounded by a caller-supplied anchor directory — storage holds no registry/project knowledge |
 | `load.go` | Per-file node load (`loadNode`), `decodeNode[T]` (migrations run on the store, not here) |
 | `merge.go` | N-way node fold (`merge`), `tagRegistry`, `fieldMeta`, `provenance` |
@@ -108,6 +109,8 @@ func (s *Store[T]) MarkForWrite(path string) error        // Force path into wri
 func (s *Store[T]) MarkSeedForWrite()                     // Opt-in: mark every virtual-layer (seed/defaults) field dirty for the next Write/WriteTo (preset flow)
 func (s *Store[T]) Refresh() error                        // Re-read layers from disk, re-merge, publish fresh snapshot; discards pending mutations; errors on a corrupt layer
 func (s *Store[T]) Layers() []LayerInfo                   // Discovered layers, highest→lowest priority
+func (s *Store[T]) Options() Options                      // Copy of resolved construction options (introspection; slices cloned)
+func (s *Store[T]) WriteTargets() ([]WriteTarget, error)  // Candidate write locations derived from options + layers; every target is rediscoverable on reload
 func (s *Store[T]) Txn(fn func(*Tx[T]) error) error      // Serialize a compound read-modify-write against other Txn callers; the closure mutates via the Tx handle (tx.Get/Set/Remove/Write)
 ```
 

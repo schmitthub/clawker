@@ -11,99 +11,104 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestBuildLayerTargets_VirtualLayerExcluded(t *testing.T) {
+// newWalkUpStore builds a walk-up store anchored at CWD (project shape).
+func newWalkUpStore(t *testing.T, configDir string) *storage.Store[simpleStruct] {
+	t.Helper()
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	store, err := storage.New[simpleStruct]("name: seeded\n",
+		storage.WithFilenames("clawker.yaml"),
+		storage.WithWalkUp(cwd),
+		storage.WithPaths(configDir),
+		storage.WithDotDefault(),
+	)
+	require.NoError(t, err)
+	return store
+}
+
+func TestBuildLayerTargets_WalkUpStoreOffersLocalAndUser(t *testing.T) {
 	env := testenv.New(t)
+	projDir := filepath.Join(env.Dirs.Base, "proj")
+	require.NoError(t, os.MkdirAll(projDir, 0o755))
+	t.Chdir(projDir)
 
-	layers := []storage.LayerInfo{
-		{Path: "", Filename: "", Data: map[string]any{"build": map[string]any{"image": "default"}}},
-	}
-
-	targets := BuildLayerTargets("clawker.yaml", env.Dirs.Config, layers)
+	// The seed produces only a virtual layer — it must never become a target.
+	targets, err := BuildLayerTargets(newWalkUpStore(t, env.Dirs.Config))
+	require.NoError(t, err)
 
 	assert.Equal(t, []string{"Local", "User"}, targetLabels(targets))
-	for _, tgt := range targets {
-		assert.NotEmpty(t, tgt.Path, "target %q must have a non-empty path", tgt.Label)
-	}
+	assert.Equal(t, filepath.Join(projDir, ".clawker.yaml"), targets[0].Path)
+	assert.Equal(t, filepath.Join(env.Dirs.Config, "clawker.yaml"), targets[1].Path)
 }
 
-func TestBuildLayerTargets_DiscoveredLayersAlwaysShown(t *testing.T) {
+// A store without walk-up (settings shape) must not offer a CWD "Local"
+// target: a file saved there would never be discovered on reload, so the
+// value would silently vanish.
+func TestBuildLayerTargets_NoWalkUpStoreExcludesLocal(t *testing.T) {
 	env := testenv.New(t)
+	t.Chdir(env.Dirs.Base)
 
-	thirdDir := filepath.Join(env.Dirs.Base, "other-project")
-	require.NoError(t, os.MkdirAll(thirdDir, 0o755))
-	thirdPath := filepath.Join(thirdDir, "clawker.yaml")
+	store, err := storage.New[simpleStruct]("",
+		storage.WithFilenames("settings.yaml"),
+		storage.WithPaths(env.Dirs.Config),
+	)
+	require.NoError(t, err)
 
-	layers := []storage.LayerInfo{
-		{Path: thirdPath, Filename: "clawker.yaml", Data: map[string]any{"build": map[string]any{"image": "alpine"}}},
-		{Path: "", Filename: "", Data: nil}, // virtual — excluded
-	}
+	targets, err := BuildLayerTargets(store)
+	require.NoError(t, err)
 
-	targets := BuildLayerTargets("clawker.yaml", env.Dirs.Config, layers)
-
-	// Local + User + the discovered layer.
-	require.Len(t, targets, 3)
-	assert.Equal(t, "Local", targets[0].Label)
-	assert.Equal(t, "User", targets[1].Label)
-	assert.Equal(t, thirdPath, targets[2].Path)
-	// Discovered layer label is the shortened path, not a fixed string.
-	assert.Equal(t, ShortenHome(thirdPath), targets[2].Label)
+	assert.Equal(t, []string{"User"}, targetLabels(targets))
+	assert.Equal(t, filepath.Join(env.Dirs.Config, "settings.yaml"), targets[0].Path)
 }
 
-func TestBuildLayerTargets_NoDuplicateWhenLayerMatchesLocal(t *testing.T) {
-	testenv.New(t)
+func TestBuildLayerTargets_DiscoveredLayerShownWithPathLabel(t *testing.T) {
+	env := testenv.New(t)
+	projDir := filepath.Join(env.Dirs.Base, "proj")
+	subDir := filepath.Join(projDir, "sub")
+	require.NoError(t, os.MkdirAll(subDir, 0o755))
+	parentPath := filepath.Join(projDir, ".clawker.yaml")
+	require.NoError(t, os.WriteFile(parentPath, []byte("name: parent\n"), 0o600))
+	t.Chdir(subDir)
 
 	cwd, err := os.Getwd()
 	require.NoError(t, err)
+	store, err := storage.New[simpleStruct]("",
+		storage.WithFilenames("clawker.yaml"),
+		storage.WithWalkUp(filepath.Dir(cwd)),
+		storage.WithPaths(env.Dirs.Config),
+	)
+	require.NoError(t, err)
 
-	localPath := ResolveLocalPath(cwd, "clawker.yaml")
-	layers := []storage.LayerInfo{
-		{Path: localPath, Filename: "clawker.yaml", Data: nil},
-		{Path: "", Filename: "", Data: nil},
-	}
+	targets, err := BuildLayerTargets(store)
+	require.NoError(t, err)
 
-	targets := BuildLayerTargets("clawker.yaml", filepath.Join(cwd, "config"), layers)
-
-	assert.Equal(t, []string{"Local", "User"}, targetLabels(targets))
-}
-
-func TestBuildLayerTargets_NoDuplicateWhenLayerMatchesUser(t *testing.T) {
-	env := testenv.New(t)
-
-	userPath := filepath.Join(env.Dirs.Config, "clawker.yaml")
-	layers := []storage.LayerInfo{
-		{Path: userPath, Filename: "clawker.yaml", Data: nil},
-		{Path: "", Filename: "", Data: nil},
-	}
-
-	targets := BuildLayerTargets("clawker.yaml", env.Dirs.Config, layers)
-
-	assert.Equal(t, []string{"Local", "User"}, targetLabels(targets))
-}
-
-func TestBuildLayerTargets_MultipleDiscoveredLayers(t *testing.T) {
-	env := testenv.New(t)
-
-	dir1 := filepath.Join(env.Dirs.Base, "proj1")
-	dir2 := filepath.Join(env.Dirs.Base, "proj2")
-	require.NoError(t, os.MkdirAll(dir1, 0o755))
-	require.NoError(t, os.MkdirAll(dir2, 0o755))
-
-	path1 := filepath.Join(dir1, "clawker.yaml")
-	path2 := filepath.Join(dir2, "clawker.yaml")
-
-	layers := []storage.LayerInfo{
-		{Path: path1, Filename: "clawker.yaml"},
-		{Path: path2, Filename: "clawker.yaml"},
-		{Path: "", Filename: ""},
-	}
-
-	targets := BuildLayerTargets("clawker.yaml", env.Dirs.Config, layers)
-
-	require.Len(t, targets, 4) // Local + User + 2 discovered
+	// Local (CWD candidate) + User + the parent-level discovered layer.
+	require.Len(t, targets, 3)
 	assert.Equal(t, "Local", targets[0].Label)
 	assert.Equal(t, "User", targets[1].Label)
-	assert.Equal(t, path1, targets[2].Path)
-	assert.Equal(t, path2, targets[3].Path)
+	assert.Equal(t, parentPath, targets[2].Path)
+	// Discovered layer label is the shortened path, not a fixed string.
+	assert.Equal(t, ShortenHome(parentPath), targets[2].Label)
+}
+
+// Layers that collide with the Local/User candidates collapse into the
+// candidate entry and keep its friendly label.
+func TestBuildLayerTargets_NoDuplicateWhenLayersMatchCandidates(t *testing.T) {
+	env := testenv.New(t)
+	projDir := filepath.Join(env.Dirs.Base, "proj")
+	require.NoError(t, os.MkdirAll(projDir, 0o755))
+	localPath := filepath.Join(projDir, ".clawker.yaml")
+	userPath := filepath.Join(env.Dirs.Config, "clawker.yaml")
+	require.NoError(t, os.WriteFile(localPath, []byte("name: local\n"), 0o600))
+	require.NoError(t, os.WriteFile(userPath, []byte("name: user\n"), 0o600))
+	t.Chdir(projDir)
+
+	targets, err := BuildLayerTargets(newWalkUpStore(t, env.Dirs.Config))
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"Local", "User"}, targetLabels(targets))
+	assert.Equal(t, localPath, targets[0].Path)
+	assert.Equal(t, userPath, targets[1].Path)
 }
 
 func TestLookupLayerFieldValue(t *testing.T) {
