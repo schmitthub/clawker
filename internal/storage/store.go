@@ -270,7 +270,7 @@ func (s *Store[T]) migrateLayer(i int, fns []func(*Store[T]) (bool, error)) (boo
 		return false, nil, nil
 	}
 
-	encoded, err := encodeNode(s.layers[i].node, s.opts.SchemaURL)
+	encoded, err := encodeNode(s.layers[i].node, s.opts.Header)
 	if err != nil {
 		return false, nil, fmt.Errorf("encoding %s: %w", s.layers[i].path, err)
 	}
@@ -727,7 +727,7 @@ func (s *Store[T]) groupDirtyByDest(target string) (map[string]*fileOps, error) 
 }
 
 // writeLayerFile grafts the dirty values into the destination file's CURRENT
-// on-disk node tree, encodes it (stamping the schema header when configured),
+// on-disk node tree, encodes it (stamping the header when configured),
 // and atomically writes it. Re-reading the file — rather than trusting the
 // layer node loaded at construction — is load-bearing twice over: a file
 // another process updated since load keeps its updates (no lost writes), and a
@@ -781,7 +781,7 @@ func (s *Store[T]) writeLayerFileLocked(dest string, sets, deletes []string) err
 		nodeDeletePath(node, strings.Split(p, "."))
 	}
 
-	encoded, err := encodeNode(node, s.opts.SchemaURL)
+	encoded, err := encodeNode(node, s.opts.Header)
 	if err != nil {
 		return fmt.Errorf("storage: encoding %s: %w", dest, err)
 	}

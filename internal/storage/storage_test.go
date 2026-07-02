@@ -267,10 +267,13 @@ func mustReadFile(t *testing.T, path string) string {
 	return string(raw)
 }
 
-// testSchemaURL is a stand-in JSON Schema URL for WithSchemaURL header tests.
-const testSchemaURL = "https://example.test/clawker.schema.json"
+// testHeader is a stand-in yaml-language-server directive for WithHeader tests.
+const (
+	testSchemaURL = "https://example.test/clawker.schema.json"
+	testHeader    = "yaml-language-server: $schema=" + testSchemaURL
+)
 
-func testSchemaHeader() string { return "# yaml-language-server: $schema=" + testSchemaURL }
+func testRenderedHeader() string { return "# " + testHeader }
 
 func TestStore_Merge(t *testing.T) {
 	tempDir := t.TempDir()
@@ -457,14 +460,15 @@ func TestStore_Write(t *testing.T) {
 	})
 }
 
-// TestStore_SchemaHeader covers the WithSchemaURL yaml-language-server header:
-// stamped as the first line, never duplicated on re-write, absent when no URL is
-// set, and emitted without clobbering pre-existing user comments.
-func TestStore_SchemaHeader(t *testing.T) {
-	newStore := func(dir, url string) *Store[testConfig] {
+// TestStore_Header covers the WithHeader comment block: stamped as the first
+// line(s), never duplicated on re-write, stale directive values from another
+// writer replaced, absent when no header is set, and emitted without
+// clobbering pre-existing user comments.
+func TestStore_Header(t *testing.T) {
+	newStore := func(dir, header string) *Store[testConfig] {
 		opts := []Option{WithFilenames("config.yaml"), WithPaths(dir)}
-		if url != "" {
-			opts = append(opts, WithSchemaURL(url))
+		if header != "" {
+			opts = append(opts, WithHeader(header))
 		}
 		s, err := New[testConfig]("", opts...)
 		require.NoError(t, err)
@@ -473,33 +477,33 @@ func TestStore_SchemaHeader(t *testing.T) {
 
 	t.Run("stamped as first line", func(t *testing.T) {
 		dir := t.TempDir()
-		s := newStore(dir, testSchemaURL)
+		s := newStore(dir, testHeader)
 		require.NoError(t, s.Set("name", "demo"))
 		require.NoError(t, s.Write())
 
 		got := mustReadFile(t, filepath.Join(dir, "config.yaml"))
-		assert.Equal(t, testSchemaHeader(), strings.SplitN(got, "\n", 2)[0],
-			"schema header must be the first line\nfile:\n%s", got)
+		assert.Equal(t, testRenderedHeader(), strings.SplitN(got, "\n", 2)[0],
+			"header must be the first line\nfile:\n%s", got)
 		assert.Contains(t, got, "name: demo")
 	})
 
 	t.Run("not duplicated on re-write", func(t *testing.T) {
 		dir := t.TempDir()
-		s := newStore(dir, testSchemaURL)
+		s := newStore(dir, testHeader)
 		require.NoError(t, s.Set("name", "demo"))
 		require.NoError(t, s.Write())
 
 		// Fresh store discovers + re-reads the already-stamped file.
-		s2 := newStore(dir, testSchemaURL)
+		s2 := newStore(dir, testHeader)
 		require.NoError(t, s2.Set("version", 2))
 		require.NoError(t, s2.Write())
 
 		got := mustReadFile(t, filepath.Join(dir, "config.yaml"))
-		assert.Equal(t, 1, strings.Count(got, testSchemaHeader()),
+		assert.Equal(t, 1, strings.Count(got, testRenderedHeader()),
 			"header must appear exactly once after re-write\nfile:\n%s", got)
-		assert.Equal(t, testSchemaHeader(), strings.SplitN(got, "\n", 2)[0])
+		assert.Equal(t, testRenderedHeader(), strings.SplitN(got, "\n", 2)[0])
 
-		reloaded := newStore(dir, testSchemaURL).Read()
+		reloaded := newStore(dir, testHeader).Read()
 		assert.Equal(t, "demo", reloaded.Name)
 		assert.Equal(t, 2, reloaded.Version)
 	})
@@ -509,7 +513,7 @@ func TestStore_SchemaHeader(t *testing.T) {
 		path := filepath.Join(dir, "config.yaml")
 		require.NoError(t, os.WriteFile(path, []byte("name: original # keep me\n"), 0o644))
 
-		s := newStore(dir, testSchemaURL)
+		s := newStore(dir, testHeader)
 		require.NoError(t, s.Set("version", 7))
 		require.NoError(t, s.Write())
 
@@ -517,10 +521,10 @@ func TestStore_SchemaHeader(t *testing.T) {
 		assert.Contains(t, got, "keep me",
 			"user comment on an untouched key must survive a field-merge write\nfile:\n%s", got)
 		assert.Contains(t, got, "version: 7")
-		assert.Equal(t, testSchemaHeader(), strings.SplitN(got, "\n", 2)[0])
+		assert.Equal(t, testRenderedHeader(), strings.SplitN(got, "\n", 2)[0])
 	})
 
-	t.Run("absent when no schema URL", func(t *testing.T) {
+	t.Run("absent when no header", func(t *testing.T) {
 		dir := t.TempDir()
 		s := newStore(dir, "")
 		require.NoError(t, s.Set("name", "demo"))
@@ -528,7 +532,51 @@ func TestStore_SchemaHeader(t *testing.T) {
 
 		got := mustReadFile(t, filepath.Join(dir, "config.yaml"))
 		assert.NotContains(t, got, "yaml-language-server",
-			"no header should be written when schema URL is empty")
+			"no header should be written when none is configured")
+	})
+
+	t.Run("multi-line header renders and never stacks", func(t *testing.T) {
+		dir := t.TempDir()
+		noteLine := "Managed by clawker; comments survive writes"
+		header := testHeader + "\n" + noteLine
+
+		s := newStore(dir, header)
+		require.NoError(t, s.Set("name", "demo"))
+		require.NoError(t, s.Write())
+
+		// Fresh store re-reads the stamped file and writes again.
+		s2 := newStore(dir, header)
+		require.NoError(t, s2.Set("version", 2))
+		require.NoError(t, s2.Write())
+
+		got := mustReadFile(t, filepath.Join(dir, "config.yaml"))
+		lines := strings.SplitN(got, "\n", 3)
+		require.Len(t, lines, 3, "file:\n%s", got)
+		assert.Equal(t, testRenderedHeader(), lines[0])
+		assert.Equal(t, "# "+noteLine, lines[1])
+		assert.Equal(t, 1, strings.Count(got, noteLine),
+			"colon-less header line must appear exactly once after re-write\nfile:\n%s", got)
+		assert.Equal(t, 1, strings.Count(got, "yaml-language-server"))
+	})
+
+	t.Run("replaces stale directive value from another writer", func(t *testing.T) {
+		dir := t.TempDir()
+		stale := newStore(dir, "yaml-language-server: $schema=https://example.test/old.json")
+		require.NoError(t, stale.Set("name", "demo"))
+		require.NoError(t, stale.Write())
+
+		// A store configured with a different URL (e.g. a newer release
+		// pinning its own tag) must replace the directive, not stack a
+		// second copy.
+		s := newStore(dir, testHeader)
+		require.NoError(t, s.Set("version", 2))
+		require.NoError(t, s.Write())
+
+		got := mustReadFile(t, filepath.Join(dir, "config.yaml"))
+		assert.NotContains(t, got, "old.json",
+			"stale directive value must be replaced\nfile:\n%s", got)
+		assert.Equal(t, 1, strings.Count(got, "yaml-language-server"))
+		assert.Equal(t, testRenderedHeader(), strings.SplitN(got, "\n", 2)[0])
 	})
 }
 

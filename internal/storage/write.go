@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -99,28 +100,24 @@ func (s *Store[T]) defaultWritePath() (string, error) {
 	return filepath.Join(dir, fname), nil
 }
 
-// schemaHeaderPrefix is the yaml-language-server directive prefix. Combined with
-// a JSON Schema URL it becomes the `# yaml-language-server: $schema=<url>` head
-// comment that editors read to validate and autocomplete the file.
-const schemaHeaderPrefix = "yaml-language-server: $schema="
-
-// encodeNode stamps the schema header (when schemaURL is non-empty), applies
+// encodeNode stamps the header comment (when header is non-empty), applies
 // block (literal) style to multiline scalars, and encodes the node with 2-space
 // indentation. It is the single YAML emitter for the write path — both the
 // node-merge writer and the migration re-save route through it so the header is
 // emitted consistently. The caller's tree is never mutated — header stamping and
 // style changes land on an internal clone.
-func encodeNode(node *yaml.Node, schemaURL string) ([]byte, error) {
+func encodeNode(node *yaml.Node, header string) ([]byte, error) {
 	node = cloneNode(node)
-	// Strip any pre-existing schema header before re-stamping so a re-write
-	// never duplicates it. On re-parse yaml.v3 attaches a leading file comment
-	// to the first key node, so clear both the mapping node and its first key.
-	stripSchemaHeader(node)
+	// Replace any previously-stamped header lines before re-stamping so a
+	// re-write never duplicates them. On re-parse yaml.v3 attaches a leading
+	// file comment to the first key node, so clean both the mapping node and
+	// its first key.
+	stripHeaderLines(node, header)
 	if len(node.Content) > 0 {
-		stripSchemaHeader(node.Content[0])
+		stripHeaderLines(node.Content[0], header)
 	}
-	if schemaURL != "" {
-		node.HeadComment = schemaHeaderPrefix + schemaURL
+	if header != "" {
+		node.HeadComment = header
 	}
 	setLiteralStyle(node)
 
@@ -136,23 +133,51 @@ func encodeNode(node *yaml.Node, schemaURL string) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// stripSchemaHeader removes any yaml-language-server schema-header line from a
-// node's head comment, leaving unrelated comment lines intact. Idempotent —
-// safe on nodes with no comment.
-func stripSchemaHeader(n *yaml.Node) {
-	if n == nil || n.HeadComment == "" {
+// stripHeaderLines removes comment lines superseded by the configured header
+// from a node's head comment, leaving unrelated comment lines intact. A header
+// line containing a colon claims every existing line sharing its `key:`
+// directive prefix — so a changed value (e.g. a re-pinned $schema URL written
+// by a different binary) is replaced rather than stacked; a header line
+// without a colon claims only exact matches. Idempotent — safe on nodes with
+// no comment.
+func stripHeaderLines(n *yaml.Node, header string) {
+	if n == nil || n.HeadComment == "" || header == "" {
 		return
+	}
+	var prefixes, exacts []string
+	for hl := range strings.SplitSeq(header, "\n") {
+		hl = strings.TrimSpace(hl)
+		if hl == "" {
+			continue
+		}
+		if idx := strings.Index(hl, ":"); idx >= 0 {
+			prefixes = append(prefixes, hl[:idx+1])
+		} else {
+			exacts = append(exacts, hl)
+		}
 	}
 	lines := strings.Split(n.HeadComment, "\n")
 	kept := lines[:0]
 	for _, ln := range lines {
 		trimmed := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(ln), "#"))
-		if strings.HasPrefix(trimmed, schemaHeaderPrefix) {
+		if headerClaimsLine(trimmed, prefixes, exacts) {
 			continue
 		}
 		kept = append(kept, ln)
 	}
 	n.HeadComment = strings.Join(kept, "\n")
+}
+
+// headerClaimsLine reports whether a normalized existing comment line is
+// superseded by one of the configured header's directive prefixes or exact
+// colon-less lines.
+func headerClaimsLine(line string, prefixes, exacts []string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(line, p) {
+			return true
+		}
+	}
+	return slices.Contains(exacts, line)
 }
 
 // setLiteralStyle walks a yaml.Node tree and sets LiteralStyle on string

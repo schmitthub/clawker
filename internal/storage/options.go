@@ -41,9 +41,9 @@ type Options struct {
 	// DefaultFilename is the filename used when writing to a location with
 	// no existing file; defaults to Filenames[0] (WithDefaultFilename).
 	DefaultFilename string
-	// SchemaURL is stamped as a yaml-language-server head comment on every
-	// write; empty disables the header (WithSchemaURL).
-	SchemaURL string
+	// Header is stamped as a comment block at the top of the file on every
+	// write; empty disables it (WithHeader).
+	Header string
 
 	migrations []any // []Migration[T] (type-erased; asserted to func(*Store[T]) (bool, error) in migrateLayer)
 }
@@ -200,14 +200,17 @@ func WithLock() Option {
 	}
 }
 
-// WithSchemaURL stamps a `# yaml-language-server: $schema=<url>` head comment
-// onto the file on every Write, so editors (VS Code, JetBrains via the YAML
-// language server) validate and autocomplete the persisted YAML against the
-// published JSON Schema. The header is re-applied on each write — it survives
-// field-merge mutations and is idempotent (no duplicate lines). An empty URL
-// disables the header, leaving the file comment-free.
-func WithSchemaURL(url string) Option {
+// WithHeader stamps the given text as a comment block at the top of the file
+// on every Write, one comment line per input line ("# " prefixes are added by
+// the YAML encoder — pass raw text). The header is re-applied on each write —
+// it survives field-merge mutations and is idempotent: an existing comment
+// line matching a header line's `key:` directive prefix (or the whole line,
+// for lines without a colon) is replaced rather than duplicated, so a header
+// whose value changes between writers (e.g. a version-pinned $schema URL)
+// never stacks up. Unrelated comment lines are preserved. An empty header
+// disables stamping, leaving the file comment-free.
+func WithHeader(header string) Option {
 	return func(o *Options) {
-		o.SchemaURL = url
+		o.Header = header
 	}
 }
