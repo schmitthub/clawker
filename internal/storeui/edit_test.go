@@ -61,7 +61,7 @@ func TestBuildLayerTargets_NoWalkUpStoreExcludesProject(t *testing.T) {
 	assert.Equal(t, filepath.Join(env.Dirs.Config, "settings.yaml"), targets[0].Path)
 }
 
-func TestBuildLayerTargets_DiscoveredLayerShownWithPathLabel(t *testing.T) {
+func TestBuildLayerTargets_WalkUpTargetIsInPlayLayer(t *testing.T) {
 	env := testenv.New(t)
 	projDir := filepath.Join(env.Dirs.Base, "proj")
 	subDir := filepath.Join(projDir, "sub")
@@ -82,13 +82,13 @@ func TestBuildLayerTargets_DiscoveredLayerShownWithPathLabel(t *testing.T) {
 	targets, err := BuildLayerTargets(store)
 	require.NoError(t, err)
 
-	// Project (CWD candidate) + User + the parent-level discovered layer.
-	require.Len(t, targets, 3)
+	// The parent-level discovered layer IS the walk-up target — the in-play
+	// file wins over a phantom CWD candidate — and the config-dir candidate
+	// follows.
+	require.Len(t, targets, 2)
 	assert.Equal(t, "Project", targets[0].Label)
+	assert.Equal(t, parentPath, targets[0].Path)
 	assert.Equal(t, "User", targets[1].Label)
-	assert.Equal(t, parentPath, targets[2].Path)
-	// Discovered layer label is the shortened path, not a fixed string.
-	assert.Equal(t, ShortenHome(parentPath), targets[2].Label)
 }
 
 // Layers that collide with the Project/User candidates collapse into the
@@ -111,10 +111,11 @@ func TestBuildLayerTargets_NoDuplicateWhenLayersMatchCandidates(t *testing.T) {
 	assert.Equal(t, userPath, targets[1].Path)
 }
 
-// A discovered local override variant (*.local.* filename) is labeled
-// "Local" rather than shown as a raw path — it is the conventional
-// uncommitted per-machine override sitting beside the project file.
-func TestBuildLayerTargets_LocalVariantLayerLabeledLocal(t *testing.T) {
+// A discovered layer carries the store-configured filename it matched, so a
+// domain adapter can relabel filenames it recognizes (e.g. a local override
+// file); the generic label stays the shortened path — storeui holds no
+// filename naming knowledge.
+func TestBuildLayerTargets_LayerCarriesFilename(t *testing.T) {
 	env := testenv.New(t)
 	projDir := filepath.Join(env.Dirs.Base, "proj")
 	require.NoError(t, os.MkdirAll(projDir, 0o755))
@@ -139,9 +140,11 @@ func TestBuildLayerTargets_LocalVariantLayerLabeledLocal(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, targets, 3)
-	assert.Equal(t, []string{"Project", "User", "Local"}, targetLabels(targets))
+	assert.Equal(t, []string{"Project", "User", ShortenHome(localPath)}, targetLabels(targets))
 	assert.Equal(t, projectPath, targets[0].Path)
+	assert.Equal(t, "clawker.yaml", targets[0].Filename)
 	assert.Equal(t, localPath, targets[2].Path)
+	assert.Equal(t, "clawker.local.yaml", targets[2].Filename)
 }
 
 func TestLookupLayerFieldValue(t *testing.T) {

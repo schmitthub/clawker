@@ -84,6 +84,43 @@ func TestWriteTargets_WalkUp_DotClawkerDirForm(t *testing.T) {
 	assert.Equal(t, filepath.Join(cwd, consts.DotClawkerDir, "config.yaml"), targets[0].Path)
 }
 
+// A discovered walk-up layer for the write filename IS the walk-up target —
+// a .clawker/ directory appearing beside an existing flat file must not
+// repoint the target to a phantom .clawker/ candidate the save would split
+// config into.
+func TestWriteTargets_WalkUpPrefersInPlayLayer(t *testing.T) {
+	projectDir := t.TempDir()
+	t.Chdir(projectDir)
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+
+	mainPath := filepath.Join(cwd, ".config.yaml")
+	localPath := filepath.Join(cwd, consts.DotClawkerDir, ".config.local.yaml")
+	require.NoError(t, os.WriteFile(mainPath, []byte("name: main\n"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Dir(localPath), 0o755))
+	require.NoError(t, os.WriteFile(localPath, []byte("name: local\n"), 0o644))
+
+	store, err := storage.New[targetsSchema]("",
+		storage.WithFilenames("config.local.yaml", "config.yaml"),
+		storage.WithDefaultFilename("config.yaml"),
+		storage.WithWalkUp(cwd),
+	)
+	require.NoError(t, err)
+
+	targets, err := store.WriteTargets()
+	require.NoError(t, err)
+	require.Len(t, targets, 2)
+
+	assert.Equal(t, storage.TargetWalkUp, targets[0].Source)
+	assert.Equal(t, mainPath, targets[0].Path,
+		"walk-up target must be the in-play flat file, not a %s candidate", consts.DotClawkerDir)
+	assert.Equal(t, "config.yaml", targets[0].Filename)
+
+	assert.Equal(t, storage.TargetLayer, targets[1].Source)
+	assert.Equal(t, localPath, targets[1].Path)
+	assert.Equal(t, "config.local.yaml", targets[1].Filename)
+}
+
 // WithDefaultFilename controls which filename new-location candidates use,
 // matching defaultWritePath semantics (local override variant must not win).
 func TestWriteTargets_DefaultFilenameWins(t *testing.T) {

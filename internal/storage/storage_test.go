@@ -314,7 +314,7 @@ func TestStore_Merge(t *testing.T) {
 			name: "single layer overrides defaults",
 			base: defaults,
 			layers: []layer{
-				{path: fullPath, filename: "full.yaml", node: full, virtual: false},
+				{path: fullPath, filename: "full.yaml", node: full, virtual: false, walkUp: false},
 			},
 			wantName:     "myproject",
 			wantVersion:  1,
@@ -329,8 +329,8 @@ func TestStore_Merge(t *testing.T) {
 			name: "higher priority layer wins scalars",
 			base: defaults,
 			layers: []layer{
-				{path: overridePath, filename: "override.yaml", node: override, virtual: false},
-				{path: fullPath, filename: "full.yaml", node: full, virtual: false},
+				{path: overridePath, filename: "override.yaml", node: override, virtual: false, walkUp: false},
+				{path: fullPath, filename: "full.yaml", node: full, virtual: false, walkUp: false},
 			},
 			wantName:    "override-project",
 			wantVersion: 2,
@@ -355,7 +355,7 @@ func TestStore_Merge(t *testing.T) {
 		{
 			name: "nil base with single layer",
 			layers: []layer{
-				{path: partialPath, filename: "partial.yaml", node: partial, virtual: false},
+				{path: partialPath, filename: "partial.yaml", node: partial, virtual: false, walkUp: false},
 			},
 			wantName:     "myproject",
 			wantImage:    "node:20",
@@ -367,7 +367,10 @@ func TestStore_Merge(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			mergeLayers := append([]layer{}, tt.layers...)
 			if tt.base != nil {
-				mergeLayers = append(mergeLayers, layer{path: "", filename: "", node: tt.base, virtual: true})
+				mergeLayers = append(
+					mergeLayers,
+					layer{path: "", filename: "", node: tt.base, virtual: true, walkUp: false},
+				)
 			}
 			result, prov := merge(mergeLayers, tags)
 			require.NotNil(t, result)
@@ -697,8 +700,8 @@ func TestStore_WriteProvenance(t *testing.T) {
 	require.NoError(t, err)
 
 	layers := []layer{
-		{path: localPath, filename: "local.yaml", node: localData, virtual: false},
-		{path: globalPath, filename: "global.yaml", node: globalData, virtual: false},
+		{path: localPath, filename: "local.yaml", node: localData, virtual: false, walkUp: false},
+		{path: globalPath, filename: "global.yaml", node: globalData, virtual: false, walkUp: false},
 	}
 
 	tags := buildTagRegistry[testConfig]()
@@ -707,7 +710,7 @@ func TestStore_WriteProvenance(t *testing.T) {
 	base, err := loadNode(basePath)
 	require.NoError(t, err)
 
-	tree, prov := merge(append(layers, layer{path: "", filename: "", node: base, virtual: true}), tags)
+	tree, prov := merge(append(layers, layer{path: "", filename: "", node: base, virtual: true, walkUp: false}), tags)
 
 	// Deserialize for Set.
 	value, err := decodeNode[testConfig](tree)
@@ -758,8 +761,8 @@ version: 2
 	require.NoError(t, err)
 
 	layers := []layer{
-		{path: localPath, filename: "local.yaml", node: localData, virtual: false},
-		{path: globalPath, filename: "global.yaml", node: globalData, virtual: false},
+		{path: localPath, filename: "local.yaml", node: localData, virtual: false, walkUp: false},
+		{path: globalPath, filename: "global.yaml", node: globalData, virtual: false, walkUp: false},
 	}
 
 	tags := buildTagRegistry[testConfig]()
@@ -823,8 +826,8 @@ build:
 	require.NoError(t, err)
 
 	layers := []layer{
-		{path: localPath, filename: "local.yaml", node: localData, virtual: false},
-		{path: globalPath, filename: "global.yaml", node: globalData, virtual: false},
+		{path: localPath, filename: "local.yaml", node: localData, virtual: false, walkUp: false},
+		{path: globalPath, filename: "global.yaml", node: globalData, virtual: false, walkUp: false},
 	}
 
 	tags := buildTagRegistry[testConfig]()
@@ -874,7 +877,7 @@ func TestStore_WriteFilename(t *testing.T) {
 
 	tags := buildTagRegistry[testConfig]()
 	tree, prov := merge([]layer{
-		{path: configPath, filename: "config.yaml", node: configData, virtual: false},
+		{path: configPath, filename: "config.yaml", node: configData, virtual: false, walkUp: false},
 	}, tags)
 
 	value, err := decodeNode[testConfig](tree)
@@ -883,7 +886,7 @@ func TestStore_WriteFilename(t *testing.T) {
 	store := &Store[testConfig]{
 		tree: tree,
 		layers: []layer{
-			{path: configPath, filename: "config.yaml", node: configData, virtual: false},
+			{path: configPath, filename: "config.yaml", node: configData, virtual: false, walkUp: false},
 		},
 		prov: prov,
 		tags: tags,
@@ -1048,6 +1051,87 @@ func TestStore_Dirs(t *testing.T) {
 	}
 }
 
+// TestStore_MixedPlacementDiscovery pins the dual-placement precedence
+// contract at a single level: each filename resolves independently through
+// .clawker/{f} → .clawker/.{f} → .{f}, so the dir form beats a flat duplicate
+// of the SAME filename while flat files of other filenames stay in play —
+// a .clawker/ directory must never black out sibling flat dotfiles.
+func TestStore_MixedPlacementDiscovery(t *testing.T) {
+	const mainYAML = "name: main-file\n"
+	const localYAML = "name: local-file\n"
+
+	tests := []struct {
+		name      string
+		files     map[string]string // relative path → content
+		wantPaths []string          // relative, highest priority first
+		wantName  string
+	}{
+		{
+			name: "flat main beside dir-form local",
+			files: map[string]string{
+				".config.yaml":               mainYAML,
+				".clawker/config.local.yaml": localYAML,
+			},
+			wantPaths: []string{".clawker/config.local.yaml", ".config.yaml"},
+			wantName:  "local-file",
+		},
+		{
+			name: "flat main beside dotted dir-form local",
+			files: map[string]string{
+				".config.yaml":                mainYAML,
+				".clawker/.config.local.yaml": localYAML,
+			},
+			wantPaths: []string{".clawker/.config.local.yaml", ".config.yaml"},
+			wantName:  "local-file",
+		},
+		{
+			name: "flat duplicate shadowed by dir form",
+			files: map[string]string{
+				".clawker/config.yaml": mainYAML,
+				".config.yaml":         "name: SHADOWED\n",
+			},
+			wantPaths: []string{".clawker/config.yaml"},
+			wantName:  "main-file",
+		},
+		{
+			name: "dotted dir form shadowed by canonical dir form",
+			files: map[string]string{
+				".clawker/config.yaml":  mainYAML,
+				".clawker/.config.yaml": "name: SHADOWED\n",
+			},
+			wantPaths: []string{".clawker/config.yaml"},
+			wantName:  "main-file",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			for rel, content := range tt.files {
+				path := filepath.Join(dir, rel)
+				require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+				require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+			}
+
+			store, err := New[testConfig]("",
+				WithFilenames("config.local.yaml", "config.yaml"),
+				WithDefaultFilename("config.yaml"),
+				WithDirs(dir),
+			)
+			require.NoError(t, err)
+
+			got := make([]string, 0, len(store.Layers()))
+			for _, l := range store.Layers() {
+				rel, relErr := filepath.Rel(dir, l.Path)
+				require.NoError(t, relErr)
+				got = append(got, filepath.ToSlash(rel))
+			}
+			assert.Equal(t, tt.wantPaths, got)
+			assert.Equal(t, tt.wantName, store.Read().Name)
+		})
+	}
+}
+
 // TestWalkType_RecordsFieldKinds verifies that walkType populates FieldKind
 // for all leaf fields in the registry, not just merge-tagged ones.
 func TestWalkType_RecordsFieldKinds(t *testing.T) {
@@ -1147,17 +1231,41 @@ func TestBuildTagRegistry_PointerToStruct(t *testing.T) {
 	assert.Equal(t, valFields.Len(), ptrFields.Len(), "value and pointer field sets must match")
 }
 
+// Placement forms for the walk-up fixture generators. Each file at a level
+// is placed independently — levels may mix forms (flat main beside a
+// .clawker/ local override).
+const (
+	placeFlat      = iota // .{filename} in the level dir
+	placeDir              // .clawker/{filename} (canonical dir form)
+	placeDirDotted        // .clawker/.{filename} (dotted dir form)
+)
+
+// placedPath returns the fixture path for a filename at the given placement.
+func placedPath(dir, fname string, form int) string {
+	switch form {
+	case placeDir:
+		return filepath.Join(dir, ".clawker", fname)
+	case placeDirDotted:
+		return filepath.Join(dir, ".clawker", "."+fname)
+	default:
+		return filepath.Join(dir, "."+fname)
+	}
+}
+
 func TestStore_WalkUpLayerMerge(t *testing.T) {
 	// Property-based walk-up test. Each run randomizes the placement matrix:
-	//   - Whether each level uses dir form (.clawker/) or flat dotfile form
 	//   - Which filenames (config.yaml, config.local.yaml, both, or neither) exist
-	//   - Whether decoy files exist (flat dotfiles alongside .clawker/ dir — must be ignored)
+	//   - Per-file placement: flat dotfile, .clawker/ dir form, or dotted dir form
+	//   - Whether a decoy exists (flat dotfile DUPLICATE of a dir-placed main —
+	//     shadowed by the dir form, never a layer)
 	//
 	// The seed is logged so failures are reproducible via: go test -run ... -seed=<N>
 	//
 	// Invariants asserted regardless of placement:
 	//   1. Walk-up layers are CWD-first; explicit path is last
-	//   2. Dir form (.clawker/) silences flat dotfiles at the same level
+	//   2. Dir form (.clawker/) takes precedence per filename — a flat dotfile
+	//      duplicate of a dir-form file is shadowed; other filenames at the
+	//      same level resolve independently (mixed placement is honored)
 	//   3. First filename in WithFilenames wins at same depth
 	//   4. Scalars: highest-priority discovered layer wins
 	//   5. Union slices: all discovered layers contribute
@@ -1264,9 +1372,10 @@ func TestStore_WalkUpLayerMerge(t *testing.T) {
 	type levelPlacement struct {
 		name       string
 		dir        string
-		useDirForm bool
 		hasMain    bool
 		hasLocal   bool
+		mainPlace  int
+		localPlace int
 		hasDecoy   bool
 		mainGen    genContent
 		localGen   genContent
@@ -1278,9 +1387,10 @@ func TestStore_WalkUpLayerMerge(t *testing.T) {
 		p := levelPlacement{
 			name:       levelNames[i],
 			dir:        dir,
-			useDirForm: rng.IntN(2) == 0,
 			hasMain:    rng.IntN(3) > 0, // 2/3 chance
 			hasLocal:   rng.IntN(3) > 0, // 2/3 chance
+			mainPlace:  rng.IntN(3),
+			localPlace: rng.IntN(3),
 		}
 		if isDeepest {
 			// Deepest level must have both files to exercise filename priority.
@@ -1289,7 +1399,9 @@ func TestStore_WalkUpLayerMerge(t *testing.T) {
 		} else if !p.hasMain && !p.hasLocal {
 			p.hasMain = true
 		}
-		if p.useDirForm {
+		// A decoy is a flat dotfile DUPLICATE of a dir-placed main file —
+		// the dir form shadows it, so it must never become a layer.
+		if p.hasMain && p.mainPlace != placeFlat {
 			p.hasDecoy = rng.IntN(2) == 0
 		}
 		if p.hasMain {
@@ -1316,39 +1428,34 @@ func TestStore_WalkUpLayerMerge(t *testing.T) {
 
 	var wantIgnored []string
 
+	placeLabel := func(form int) string {
+		switch form {
+		case placeDir:
+			return "dir"
+		case placeDirDotted:
+			return "dir-dotted"
+		default:
+			return "root"
+		}
+	}
+
 	for _, p := range placements {
 		require.NoError(t, os.MkdirAll(p.dir, 0o755))
 
-		if p.useDirForm {
-			clawkerDir := filepath.Join(p.dir, ".clawker")
-			require.NoError(t, os.MkdirAll(clawkerDir, 0o755))
-
-			if p.hasMain {
-				path := filepath.Join(clawkerDir, "config.yaml")
-				writeFile(path, toYAML(p.name+"-main", p.mainGen))
-				pathTag[path] = fileTag{p.name, "main", "dir"}
-			}
-			if p.hasLocal {
-				path := filepath.Join(clawkerDir, "config.local.yaml")
-				writeFile(path, toYAML(p.name+"-local", p.localGen))
-				pathTag[path] = fileTag{p.name, "local", "dir"}
-			}
-			if p.hasDecoy {
-				decoyPath := filepath.Join(p.dir, ".config.yaml")
-				writeFile(decoyPath, "name: DECOY\npackages:\n  - DECOY\n")
-				wantIgnored = append(wantIgnored, decoyPath)
-			}
-		} else {
-			if p.hasMain {
-				path := filepath.Join(p.dir, ".config.yaml")
-				writeFile(path, toYAML(p.name+"-main", p.mainGen))
-				pathTag[path] = fileTag{p.name, "main", "root"}
-			}
-			if p.hasLocal {
-				path := filepath.Join(p.dir, ".config.local.yaml")
-				writeFile(path, toYAML(p.name+"-local", p.localGen))
-				pathTag[path] = fileTag{p.name, "local", "root"}
-			}
+		if p.hasMain {
+			path := placedPath(p.dir, "config.yaml", p.mainPlace)
+			writeFile(path, toYAML(p.name+"-main", p.mainGen))
+			pathTag[path] = fileTag{p.name, "main", placeLabel(p.mainPlace)}
+		}
+		if p.hasLocal {
+			path := placedPath(p.dir, "config.local.yaml", p.localPlace)
+			writeFile(path, toYAML(p.name+"-local", p.localGen))
+			pathTag[path] = fileTag{p.name, "local", placeLabel(p.localPlace)}
+		}
+		if p.hasDecoy {
+			decoyPath := filepath.Join(p.dir, ".config.yaml")
+			writeFile(decoyPath, "name: DECOY\npackages:\n  - DECOY\n")
+			wantIgnored = append(wantIgnored, decoyPath)
 		}
 	}
 
@@ -1861,9 +1968,10 @@ func TestStore_WalkUpGolden(t *testing.T) {
 	type levelPlacement struct {
 		name       string
 		dir        string
-		useDirForm bool
 		hasMain    bool
 		hasLocal   bool
+		mainPlace  int
+		localPlace int
 		hasDecoy   bool
 		mainGen    genContent
 		localGen   genContent
@@ -1875,9 +1983,10 @@ func TestStore_WalkUpGolden(t *testing.T) {
 		p := levelPlacement{
 			name:       levelNames[i],
 			dir:        dir,
-			useDirForm: rng.IntN(2) == 0,
 			hasMain:    rng.IntN(3) > 0,
 			hasLocal:   rng.IntN(3) > 0,
+			mainPlace:  rng.IntN(3),
+			localPlace: rng.IntN(3),
 		}
 		if isDeepest {
 			p.hasMain = true
@@ -1885,7 +1994,7 @@ func TestStore_WalkUpGolden(t *testing.T) {
 		} else if !p.hasMain && !p.hasLocal {
 			p.hasMain = true
 		}
-		if p.useDirForm {
+		if p.hasMain && p.mainPlace != placeFlat {
 			p.hasDecoy = rng.IntN(2) == 0
 		}
 		if p.hasMain {
@@ -1905,25 +2014,14 @@ func TestStore_WalkUpGolden(t *testing.T) {
 
 	for _, p := range placements {
 		require.NoError(t, os.MkdirAll(p.dir, 0o755))
-		if p.useDirForm {
-			clawkerDir := filepath.Join(p.dir, ".clawker")
-			require.NoError(t, os.MkdirAll(clawkerDir, 0o755))
-			if p.hasMain {
-				writeFile(filepath.Join(clawkerDir, "config.yaml"), toYAML(p.name+"-main", p.mainGen))
-			}
-			if p.hasLocal {
-				writeFile(filepath.Join(clawkerDir, "config.local.yaml"), toYAML(p.name+"-local", p.localGen))
-			}
-			if p.hasDecoy {
-				writeFile(filepath.Join(p.dir, ".config.yaml"), "name: DECOY\npackages:\n  - DECOY\n")
-			}
-		} else {
-			if p.hasMain {
-				writeFile(filepath.Join(p.dir, ".config.yaml"), toYAML(p.name+"-main", p.mainGen))
-			}
-			if p.hasLocal {
-				writeFile(filepath.Join(p.dir, ".config.local.yaml"), toYAML(p.name+"-local", p.localGen))
-			}
+		if p.hasMain {
+			writeFile(placedPath(p.dir, "config.yaml", p.mainPlace), toYAML(p.name+"-main", p.mainGen))
+		}
+		if p.hasLocal {
+			writeFile(placedPath(p.dir, "config.local.yaml", p.localPlace), toYAML(p.name+"-local", p.localGen))
+		}
+		if p.hasDecoy {
+			writeFile(filepath.Join(p.dir, ".config.yaml"), "name: DECOY\npackages:\n  - DECOY\n")
 		}
 	}
 
@@ -1965,14 +2063,13 @@ func TestStore_WalkUpGolden(t *testing.T) {
 	// --- Golden: hardcoded values from seed=42, blessed at known-correct state ---
 	// To update: make storage-golden
 	goldenName := "level3-local"
-	goldenVersion := 710
+	goldenVersion := 876
 	goldenImage := "go:1.22"
-	goldenPackages := []string{"pkg-user", "pkg-project", "git", "vim", "pkg-level1", "pkg-level2", "jq", "pkg-level3"}
+	goldenPackages := []string{"pkg-user", "pkg-project", "git", "vim", "pkg-level2", "pkg-level3", "curl"}
 	// Map overwrite: highest-priority layer with env wins entirely.
 	// With seed 42, level1 main is the highest-priority layer that has
 	// an env section (deeper walk-up = higher priority).
 	goldenEnv := map[string]string{
-		"F":      "level1",
 		"LEVEL1": "yes",
 	}
 
@@ -2770,7 +2867,10 @@ func TestStore_Merge_UnionHandlesNonComparableValues(t *testing.T) {
 	}
 
 	require.NotPanics(t, func() {
-		result, _ := merge(append(layers, layer{path: "", filename: "", node: base, virtual: true}), tags)
+		result, _ := merge(
+			append(layers, layer{path: "", filename: "", node: base, virtual: true, walkUp: false}),
+			tags,
+		)
 		items, ok := nodeToMap(result)["items"].([]any)
 		require.True(t, ok)
 		assert.Len(t, items, 2)
@@ -2793,7 +2893,7 @@ func TestStore_Merge_UnionWithImplicitYAMLFieldName(t *testing.T) {
 		},
 	}
 
-	result, _ := merge(append(layers, layer{path: "", filename: "", node: base, virtual: true}), tags)
+	result, _ := merge(append(layers, layer{path: "", filename: "", node: base, virtual: true, walkUp: false}), tags)
 	cfgResult, err := decodeNode[testUnionImplicitCfg](result)
 	require.NoError(t, err)
 
@@ -2852,8 +2952,8 @@ name: base
 
 	// local.yaml is the higher-priority layer (index 0).
 	layers := []layer{
-		{path: localPath, filename: "local.yaml", node: localData, virtual: false},
-		{path: basePath, filename: "base.yaml", node: baseData, virtual: false},
+		{path: localPath, filename: "local.yaml", node: localData, virtual: false, walkUp: false},
+		{path: basePath, filename: "base.yaml", node: baseData, virtual: false, walkUp: false},
 	}
 	tags := buildTagRegistry[testPortRuleCfg]()
 	tree, prov := merge(layers, tags)
@@ -2912,8 +3012,8 @@ version: 2
 	require.NoError(t, err)
 
 	layers := []layer{
-		{path: localPath, filename: "local.yaml", node: localData, virtual: false},
-		{path: basePath, filename: "base.yaml", node: baseData, virtual: false},
+		{path: localPath, filename: "local.yaml", node: localData, virtual: false, walkUp: false},
+		{path: basePath, filename: "base.yaml", node: baseData, virtual: false, walkUp: false},
 	}
 	tags := buildTagRegistry[testConfig]()
 	tree, prov := merge(layers, tags)

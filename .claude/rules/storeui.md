@@ -43,7 +43,7 @@ Command layer (cmd/settings/edit, cmd/project/edit)
 
 1. **Domain adapter** under `internal/config/storeui/<domain>/` exports:
    - `Overrides() []storeui.Override` — TUI-only customizations (`Hidden`, `ReadOnly`, `Kind`, `Options`, `Order`). Labels/descriptions come from struct tags, not overrides.
-   - `LayerTargets(store) ([]storeui.LayerTarget, error)` — where the user can save each field. Delegate to `storeui.BuildLayerTargets(store)`, which derives targets from the store's own `WriteTargets()` (walk-up CWD → "Project", configured dirs → "User", local override variants → "Local", other discovered layers → shortened path). Never hardcode locations the store cannot rediscover.
+   - `LayerTargets(store) ([]storeui.LayerTarget, error)` — where the user can save each field. Delegate to `storeui.BuildLayerTargets(store)`, which derives targets from the store's own `WriteTargets()` (walk-up target → "Project", configured dirs → "User", discovered layers → shortened path; each target carries `Filename` so the adapter can relabel filenames it recognizes, e.g. the project adapter's `Local` override file). Never hardcode locations the store cannot rediscover.
    - `Edit(ios, store) (storeui.Result, error)` — convenience wrapper that wires overrides + targets into `storeui.Edit[T]`.
 2. **Cobra command** under `internal/cmd/<noun>/edit/` — thin wrapper: load config → get store → call domain `Edit` → print success/cancel. Nothing else belongs here.
 3. **Wire into parent** — add `edit.NewCmdEdit(f, nil)` to the parent command's `AddCommand` list.

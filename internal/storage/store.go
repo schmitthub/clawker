@@ -100,6 +100,7 @@ func New[T Schema](seed string, opts ...Option) (*Store[T], error) {
 			filename: df.filename,
 			node:     node,
 			virtual:  false,
+			walkUp:   df.walkUp,
 		})
 	}
 
@@ -116,7 +117,7 @@ func New[T Schema](seed string, opts ...Option) (*Store[T], error) {
 	allLayers := make([]layer, 0, len(fileLayers)+1)
 	allLayers = append(allLayers, fileLayers...)
 	if virtual != nil && len(virtual.Content) > 0 {
-		allLayers = append(allLayers, layer{path: "", filename: "", node: virtual, virtual: true})
+		allLayers = append(allLayers, layer{path: "", filename: "", node: virtual, virtual: true, walkUp: false})
 	}
 
 	tree, prov := merge(allLayers, tags)
@@ -842,6 +843,7 @@ func (s *Store[T]) Refresh() error {
 			filename: df.filename,
 			node:     node,
 			virtual:  false,
+			walkUp:   df.walkUp,
 		})
 	}
 
@@ -904,7 +906,9 @@ func (s *Store[T]) injectNewLayers(writtenPaths []string) error {
 		if err != nil {
 			return fmt.Errorf("storage: reading newly written %s: %w", filePath, err)
 		}
-		s.insertFileLayer(layer{path: filePath, filename: filepath.Base(filePath), node: node, virtual: false})
+		s.insertFileLayer(
+			layer{path: filePath, filename: filepath.Base(filePath), node: node, virtual: false, walkUp: false},
+		)
 	}
 	return nil
 }

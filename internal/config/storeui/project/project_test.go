@@ -93,6 +93,37 @@ func TestLayerTargets_InProjectOffersProject(t *testing.T) {
 	assert.Equal(t, filepath.Join(config.ConfigDir(), cfg.ProjectConfigFileName()), targets[1].Path)
 }
 
+// The user-reported regression layout: a flat .clawker.yaml main file beside
+// a .clawker/ directory holding a dotted local override. Both files are in
+// play — the flat main is the "Project" target (no phantom .clawker/
+// candidate), and the local override is discovered and relabeled "Local".
+func TestLayerTargets_MixedPlacementLocalOverride(t *testing.T) {
+	env := testenv.New(t)
+	projectDir := filepath.Join(env.Dirs.Base, "proj")
+	require.NoError(t, os.MkdirAll(filepath.Join(projectDir, ".clawker"), 0o755))
+	mainPath := filepath.Join(projectDir, ".clawker.yaml")
+	localPath := filepath.Join(projectDir, ".clawker", ".clawker.local.yaml")
+	require.NoError(t, os.WriteFile(mainPath, []byte("build:\n  image: alpine\n"), 0o600))
+	require.NoError(t, os.WriteFile(localPath, []byte("workspace:\n  default_mode: snapshot\n"), 0o600))
+	t.Chdir(projectDir)
+
+	cfg, err := config.NewConfig(config.WithProjectRoot(projectDir))
+	require.NoError(t, err)
+
+	// The local override layer must be in play (it wins the merge).
+	assert.Equal(t, "snapshot", cfg.Project().Workspace.DefaultMode)
+
+	targets, err := LayerTargets(cfg.ProjectStore())
+	require.NoError(t, err)
+	require.Len(t, targets, 3)
+
+	assert.Equal(t, storeui.LabelProject, targets[0].Label)
+	assert.Equal(t, mainPath, targets[0].Path)
+	assert.Equal(t, storeui.LabelUser, targets[1].Label)
+	assert.Equal(t, storeui.LabelLocal, targets[2].Label)
+	assert.Equal(t, localPath, targets[2].Path)
+}
+
 // Outside a project (no walk-up anchor) the store cannot rediscover CWD
 // files, so no "Project" target may be offered.
 func TestLayerTargets_NoProjectRootExcludesProject(t *testing.T) {

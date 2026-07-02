@@ -76,7 +76,7 @@ func WithLayerTargets(targets []LayerTarget) Option
 
 // Shared helpers (used by domain adapters)
 func ShortenHome(path string) string                     // Replace $HOME with ~
-func BuildLayerTargets[T storage.Schema](store *storage.Store[T]) ([]LayerTarget, error) // Save targets from store.WriteTargets(): walk-up CWD → "Project", dir candidates → "User", local override variants → "Local", other layers → shortened path
+func BuildLayerTargets[T storage.Schema](store *storage.Store[T]) ([]LayerTarget, error) // Save targets from store.WriteTargets(): walk-up target → "Project", dir candidates → "User", layers → shortened path; targets carry Filename for domain relabeling
 func Ptr[T any](v T) *T                                 // Pointer helper for Override fields
 ```
 

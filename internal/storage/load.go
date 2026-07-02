@@ -15,6 +15,7 @@ type layer struct {
 	filename string     // which filename matched (e.g., "clawker.yaml")
 	node     *yaml.Node // root mapping node from this file only (comments intact)
 	virtual  bool       // true for the lowest-priority defaults/seed layer (no backing file)
+	walkUp   bool       // discovered by walk-up (vs dir probe / explicit path / write-created)
 }
 
 // parseNodeFile reads a YAML file into its root mapping node, preserving

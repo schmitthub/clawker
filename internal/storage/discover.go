@@ -13,6 +13,7 @@ import (
 type discoveredFile struct {
 	path     string // absolute path to the file
 	filename string // which filename matched (e.g., "clawker.yaml")
+	walkUp   bool   // discovered by walk-up (vs dir probe / explicit path)
 }
 
 // discover finds all files matching the options.
@@ -26,6 +27,9 @@ func discover(opts *Options) ([]discoveredFile, error) {
 		walkUpFiles, err := walkUp(opts.Filenames, opts.WalkUpAnchor)
 		if err != nil {
 			return nil, fmt.Errorf("storage: walk-up discovery: %w", err)
+		}
+		for i := range walkUpFiles {
+			walkUpFiles[i].walkUp = true
 		}
 		files = append(files, walkUpFiles...)
 	}
@@ -85,8 +89,12 @@ func walkUp(filenames []string, anchor string) ([]discoveredFile, error) {
 }
 
 // probeDir checks a single directory for matching files using dual placement.
-// If .clawker/ directory exists, checks .clawker/{filename} (dir form).
-// Otherwise, checks .{filename} (flat dotfile form).
+// Each filename resolves independently through an ordered candidate list:
+// .clawker/{filename} (canonical dir form), .clawker/.{filename} (dotted dir
+// form), then .{filename} (flat dotfile form). The first existing candidate
+// wins, so the dir form takes precedence over a flat file of the same
+// filename without suppressing flat files of other filenames — a level may
+// mix placements (e.g. a flat main file beside a .clawker/ local override).
 // Both .yaml and .yml extensions are accepted.
 func probeDir(dir string, filenames []string) []discoveredFile {
 	var files []discoveredFile
@@ -95,23 +103,22 @@ func probeDir(dir string, filenames []string) []discoveredFile {
 	hasDirForm := isDir(clawkerDir)
 
 	for _, fname := range filenames {
+		var candidates []string
 		if hasDirForm {
-			// Dir form: .clawker/{filename}
 			for _, ext := range yamlExtensions(fname) {
-				path := filepath.Join(clawkerDir, ext)
-				if isFile(path) {
-					files = append(files, discoveredFile{path: path, filename: fname})
-					break // first extension match wins
-				}
+				candidates = append(candidates, filepath.Join(clawkerDir, ext))
 			}
-		} else {
-			// Flat form: .{filename}
 			for _, ext := range yamlExtensions("." + fname) {
-				path := filepath.Join(dir, ext)
-				if isFile(path) {
-					files = append(files, discoveredFile{path: path, filename: fname})
-					break
-				}
+				candidates = append(candidates, filepath.Join(clawkerDir, ext))
+			}
+		}
+		for _, ext := range yamlExtensions("." + fname) {
+			candidates = append(candidates, filepath.Join(dir, ext))
+		}
+		for _, path := range candidates {
+			if isFile(path) {
+				files = append(files, discoveredFile{path: path, filename: fname, walkUp: false})
+				break // first candidate match wins
 			}
 		}
 	}
@@ -128,7 +135,7 @@ func probeExplicitDirs(dirs []string, filenames []string) []discoveredFile {
 			for _, ext := range yamlExtensions(fname) {
 				path := filepath.Join(dir, ext)
 				if isFile(path) {
-					files = append(files, discoveredFile{path: path, filename: fname})
+					files = append(files, discoveredFile{path: path, filename: fname, walkUp: false})
 					break // first extension match wins
 				}
 			}

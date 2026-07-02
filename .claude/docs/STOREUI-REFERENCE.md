@@ -44,7 +44,7 @@ func Edit(ios *iostreams.IOStreams, store *storage.Store[T]) (storeui.Result, er
 
 **LayerTarget patterns:**
 
-- `BuildLayerTargets(store)` derives all targets from `store.WriteTargets()`: the walk-up CWD candidate (dual placement, `.clawker/` dir form or flat dotfile) is labeled "Project", configured-directory candidates "User", discovered local override variants (`*.local.*` files) "Local", and any other discovered layer uses its shortened path as label
+- `BuildLayerTargets(store)` derives all targets from `store.WriteTargets()`: the walk-up target (the in-play walk-up layer for the write filename, or the CWD dual-placement candidate when none is discovered) is labeled "Project", configured-directory candidates "User", and discovered layers use their shortened path as label. Each target carries the store-reported `Filename`; domain adapters relabel filenames they recognize (the project adapter labels `clawker.local.yaml` layers `storeui.LabelLocal`)
 - A store without walk-up (e.g. settings) gets no "Project" target — it could never rediscover a CWD file, so offering one would silently lose the saved value
 - Use `ShortenHome()` for the Description field (exported from `internal/storeui`)
 

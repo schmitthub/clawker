@@ -28,14 +28,17 @@ const (
 // picked up by an identically-configured store on reload. UIs offering
 // "save to..." destinations must use these rather than inventing locations.
 type WriteTarget struct {
-	Source TargetSource
-	Path   string // absolute file path
+	Source   TargetSource
+	Path     string // absolute file path
+	Filename string // which configured filename the target serves (e.g. "clawker.yaml")
 }
 
-// WriteTargets enumerates the store's valid write locations: the CWD
-// dual-placement candidate when walk-up is enabled, one candidate per
-// configured directory, and every discovered file layer. Locations the store
-// cannot rediscover (e.g. CWD for a store without walk-up) are never offered.
+// WriteTargets enumerates the store's valid write locations: the walk-up
+// target when walk-up is enabled (the closest discovered walk-up layer for
+// the write filename, or the CWD dual-placement candidate when none is in
+// play), one candidate per configured directory, and every discovered file
+// layer. Locations the store cannot rediscover (e.g. CWD for a store without
+// walk-up) are never offered.
 // Duplicates collapse into the first occurrence; order is walk-up, dirs,
 // explicit paths, then remaining layers.
 func (s *Store[T]) WriteTargets() ([]WriteTarget, error) {
@@ -48,7 +51,7 @@ func (s *Store[T]) WriteTargets() ([]WriteTarget, error) {
 	}
 	for _, l := range s.layers {
 		if l.path != "" {
-			targets = append(targets, WriteTarget{Source: TargetLayer, Path: l.path})
+			targets = append(targets, WriteTarget{Source: TargetLayer, Path: l.path, Filename: l.filename})
 		}
 	}
 	return dedupTargets(targets), nil
@@ -64,19 +67,39 @@ func (s *Store[T]) locationCandidates() ([]WriteTarget, error) {
 	}
 	var out []WriteTarget
 	if s.opts.WalkUpAnchor != "" {
-		cwd, err := os.Getwd()
+		path, err := s.walkUpTargetPath(fname)
 		if err != nil {
-			return nil, fmt.Errorf("storage: resolving CWD for write targets: %w", err)
+			return nil, err
 		}
-		out = append(out, WriteTarget{Source: TargetWalkUp, Path: dualPlacementPath(cwd, fname)})
+		out = append(out, WriteTarget{Source: TargetWalkUp, Path: path, Filename: fname})
 	}
 	for _, dir := range s.opts.Dirs {
-		out = append(out, WriteTarget{Source: TargetDir, Path: dualPlacementPath(dir, fname)})
+		out = append(out, WriteTarget{Source: TargetDir, Path: dualPlacementPath(dir, fname), Filename: fname})
 	}
 	for _, dir := range s.opts.Paths {
-		out = append(out, WriteTarget{Source: TargetPath, Path: filepath.Join(dir, fname)})
+		out = append(out, WriteTarget{Source: TargetPath, Path: filepath.Join(dir, fname), Filename: fname})
 	}
 	return out, nil
+}
+
+// walkUpTargetPath resolves the walk-up write target for the given filename.
+// A discovered walk-up layer for the write filename IS the in-play file a
+// save should land in — it is preferred over inventing a new sibling (e.g. a
+// .clawker/ candidate beside an existing flat file). Layers are ordered
+// closest-first, so the first match wins. Only when nothing is in play does
+// the CWD dual-placement candidate (a file to be created) stand in. Caller
+// must hold s.mu.
+func (s *Store[T]) walkUpTargetPath(fname string) (string, error) {
+	for _, l := range s.layers {
+		if l.walkUp && l.filename == fname {
+			return l.path, nil
+		}
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("storage: resolving CWD for write targets: %w", err)
+	}
+	return dualPlacementPath(cwd, fname), nil
 }
 
 // dedupTargets removes empty and duplicate paths, preserving order

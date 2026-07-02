@@ -26,26 +26,24 @@ func ShortenHome(p string) string {
 	return p
 }
 
-// Labels for store-derived save destinations.
+// Save-destination label vocabulary. BuildLayerTargets applies the placement
+// labels (Project, User); LabelLocal is exported for domain adapters that
+// relabel targets whose Filename they recognize as a local override —
+// which filename that is being domain knowledge storeui does not hold.
 const (
-	labelProject = "Project" // walk-up CWD candidate
-	labelUser    = "User"    // configured directory candidate (config dir etc.)
-	labelLocal   = "Local"   // discovered local override variant (*.local.* file)
+	LabelProject = "Project" // walk-up target (in-play file or CWD candidate)
+	LabelUser    = "User"    // configured directory candidate (config dir etc.)
+	LabelLocal   = "Local"   // domain-applied: discovered local override file
 )
-
-// isLocalVariant reports whether a file is a local override variant by the
-// conventional ".local." infix in its basename (e.g. .clawker.local.yaml).
-func isLocalVariant(path string) bool {
-	return strings.Contains(strings.TrimPrefix(filepath.Base(path), "."), ".local.")
-}
 
 // BuildLayerTargets builds save destinations from the store's own write
 // targets (storage.Store.WriteTargets), so the editor only ever offers
 // locations the store can rediscover on reload — a store without walk-up
-// gets no CWD "Project" target. The walk-up CWD candidate is labeled
-// "Project", directory candidates "User", discovered local override variants
-// (*.local.* files) "Local", and any other layer file shows its shortened
-// path. Virtual layers (defaults) are never offered.
+// gets no "Project" target. The walk-up target is labeled "Project",
+// directory candidates "User", and discovered layer files show their
+// shortened path; each target carries the store-reported Filename so a
+// domain adapter can relabel filenames it recognizes (e.g. a local override
+// file). Virtual layers (defaults) are never offered.
 func BuildLayerTargets[T storage.Schema](store *storage.Store[T]) ([]LayerTarget, error) {
 	wts, err := store.WriteTargets()
 	if err != nil {
@@ -57,15 +55,11 @@ func BuildLayerTargets[T storage.Schema](store *storage.Store[T]) ([]LayerTarget
 		var label string
 		switch wt.Source {
 		case storage.TargetWalkUp:
-			label = labelProject
+			label = LabelProject
 		case storage.TargetDir, storage.TargetPath:
-			label = labelUser
+			label = LabelUser
 		case storage.TargetLayer:
-			if isLocalVariant(wt.Path) {
-				label = labelLocal
-			} else {
-				label = shortPath
-			}
+			label = shortPath
 		default: // future sources — show the path
 			label = shortPath
 		}
@@ -73,6 +67,7 @@ func BuildLayerTargets[T storage.Schema](store *storage.Store[T]) ([]LayerTarget
 			Label:       label,
 			Description: shortPath,
 			Path:        wt.Path,
+			Filename:    wt.Filename,
 		})
 	}
 	return targets, nil
@@ -97,6 +92,7 @@ type LayerTarget struct {
 	Label       string // Display label (e.g. "Project", "User", "Local")
 	Description string // Shortened path for display
 	Path        string // Full absolute filesystem path
+	Filename    string // Store-configured filename this target serves (for domain relabeling)
 }
 
 // Option configures the Edit function.
