@@ -102,7 +102,7 @@ Edit[T](ios, store, opts...):
   5. fieldsToBrowserFields() → []tui.BrowserField (type mapping)
   6. tui.NewFieldBrowser(cfg) → tui.RunProgram (presentation)
   7. OnFieldSaved callback per field: store.Set(fieldPath, coercedValue) + writeFieldToFile(target)
-  7b. OnFieldDeleted callback per field: store.Remove(path) + store.Write(storage.ToPath(target.Path))
+  7b. OnFieldDeleted callback per field: store.Remove(path) + store.WriteTo(target.Path)
   8. Return Result (Saved, SavedCount)
 ```
 
