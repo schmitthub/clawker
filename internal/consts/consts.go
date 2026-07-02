@@ -124,6 +124,28 @@ const (
 	RawGitHubBaseURL = "https://raw.githubusercontent.com"
 )
 
+// JSON Schema publication. The config JSON Schemas are generated from the
+// Project / Settings struct tags (by cmd/gen-docs), committed under
+// docs/schemas/, and served as raw GitHub content on the main branch. The
+// storage layer stamps these URLs as a `# yaml-language-server: $schema=...`
+// header into clawker.yaml / settings.yaml so editors validate and autocomplete
+// the files. Build URLs from these consts rather than re-spelling the literal.
+const (
+	// SchemaRef is the git ref the published $schema URLs point at.
+	SchemaRef = "main"
+	// SchemaDocsDir is the repo-relative directory holding the generated
+	// schemas, also the website output subdirectory under the docs root.
+	SchemaDocsDir = "docs/schemas"
+	// ProjectSchemaFile / SettingsSchemaFile are the generated JSON Schema
+	// filenames under SchemaDocsDir.
+	ProjectSchemaFile  = "clawker.schema.json"
+	SettingsSchemaFile = "settings.schema.json"
+	// ProjectSchemaURL / SettingsSchemaURL are the public `$schema` URLs the
+	// storage header points editors at.
+	ProjectSchemaURL  = RawGitHubBaseURL + "/" + GitHubRepo + "/" + SchemaRef + "/" + SchemaDocsDir + "/" + ProjectSchemaFile
+	SettingsSchemaURL = RawGitHubBaseURL + "/" + GitHubRepo + "/" + SchemaRef + "/" + SchemaDocsDir + "/" + SettingsSchemaFile
+)
+
 // Host-side behavior override env vars.
 const (
 	// EnvExecutable overrides the clawker binary path used when

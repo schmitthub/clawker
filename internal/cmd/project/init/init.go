@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/spf13/cobra"
+
 	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/cmd/project/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
@@ -16,9 +18,9 @@ import (
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
+	"github.com/schmitthub/clawker/internal/storage"
 	"github.com/schmitthub/clawker/internal/storeui"
 	"github.com/schmitthub/clawker/internal/tui"
-	"github.com/spf13/cobra"
 )
 
 const (
@@ -71,46 +73,83 @@ func defaultVCSSettings() vcsSettings {
 	return vcsSettings{Provider: vcsGitHub, Protocol: protoHTTPS, ForwardGPG: true}
 }
 
-// applyVCSToProject mutates a *config.Project with VCS-derived config:
-//   - Appends provider domains to security.firewall.add_domains
-//   - If SSH: appends an EgressRule for port 22
-//   - If GPG disabled: sets security.git_credentials.forward_gpg = false
-func applyVCSToProject(p *config.Project, s vcsSettings) {
-	domains := vcsProviderDomains[s.Provider]
-	if p.Security.Firewall == nil {
-		p.Security.Firewall = &config.FirewallConfig{}
-	}
+// VCS-derived store paths and the SSH egress rule's fixed proto/port.
+const (
+	pathFirewallAddDomains = "security.firewall.add_domains"
+	pathFirewallRules      = "security.firewall.rules"
+	pathForwardGPG         = "security.git_credentials.forward_gpg"
+	vcsSSHPort             = "22"
+)
 
-	// Append provider domains (dedup).
-	existing := make(map[string]bool, len(p.Security.Firewall.AddDomains))
-	for _, d := range p.Security.Firewall.AddDomains {
+// applyVCSToProject writes the VCS provider's configuration into the project
+// store by path, the canonical Set(path, value) way — never a whole-struct
+// read-mutate-write:
+//   - merges the provider's domains into security.firewall.add_domains
+//   - if SSH: appends a port-22 EgressRule to security.firewall.rules
+//   - if GPG disabled: sets security.git_credentials.forward_gpg = false
+//
+// Each Set marks only its path dirty; the later store.WriteTo persists them.
+func applyVCSToProject(store *storage.Store[config.Project], s vcsSettings) error {
+	if err := mergeVCSDomains(store, s.Provider); err != nil {
+		return err
+	}
+	if s.Protocol == protoSSH {
+		if err := appendVCSSSHRule(store, s.Provider); err != nil {
+			return err
+		}
+	}
+	// GPG: disable forwarding when requested (the schema default is true).
+	if !s.ForwardGPG {
+		if err := store.Set(pathForwardGPG, false); err != nil {
+			return fmt.Errorf("disabling forward_gpg: %w", err)
+		}
+	}
+	return nil
+}
+
+// mergeVCSDomains merges the provider's HTTPS domains into the project's
+// security.firewall.add_domains, preserving (and deduping against) any the
+// preset already declared.
+func mergeVCSDomains(store *storage.Store[config.Project], provider string) error {
+	var domains []string
+	if _, err := store.Get(pathFirewallAddDomains, &domains); err != nil {
+		return fmt.Errorf("reading add_domains: %w", err)
+	}
+	existing := make(map[string]bool, len(domains))
+	for _, d := range domains {
 		existing[d] = true
 	}
-	for _, d := range domains {
+	for _, d := range vcsProviderDomains[provider] {
 		if !existing[d] {
-			p.Security.Firewall.AddDomains = append(p.Security.Firewall.AddDomains, d)
+			domains = append(domains, d)
 		}
 	}
-
-	// SSH: add port 22 egress rule for the provider host.
-	if s.Protocol == protoSSH {
-		host := vcsSSHHosts[s.Provider]
-		p.Security.Firewall.Rules = append(p.Security.Firewall.Rules, config.EgressRule{
-			Dst:    host,
-			Port:   "22",
-			Proto:  "ssh",
-			Action: "allow",
-		})
+	if err := store.Set(pathFirewallAddDomains, domains); err != nil {
+		return fmt.Errorf("setting add_domains: %w", err)
 	}
+	return nil
+}
 
-	// GPG: set forward_gpg to false if disabled (defaults are all true).
-	if !s.ForwardGPG {
-		if p.Security.GitCredentials == nil {
-			p.Security.GitCredentials = &config.GitCredentialsConfig{}
-		}
-		f := false
-		p.Security.GitCredentials.ForwardGPG = &f
+// appendVCSSSHRule appends a port-22 allow rule for the provider's SSH host to
+// the project's security.firewall.rules.
+func appendVCSSSHRule(store *storage.Store[config.Project], provider string) error {
+	rules := make([]config.EgressRule, 0, 1)
+	if _, err := store.Get(pathFirewallRules, &rules); err != nil {
+		return fmt.Errorf("reading firewall rules: %w", err)
 	}
+	rules = append(rules, config.EgressRule{
+		Dst:                   vcsSSHHosts[provider],
+		Port:                  vcsSSHPort,
+		Proto:                 protoSSH,
+		Action:                config.EgressActionAllow,
+		PathRules:             nil,
+		PathDefault:           "",
+		InsecureSkipTLSVerify: false,
+	})
+	if err := store.Set(pathFirewallRules, rules); err != nil {
+		return fmt.Errorf("setting firewall rules: %w", err)
+	}
+	return nil
 }
 
 // IsValidVCSProvider checks if a string is a valid --vcs value.
@@ -201,10 +240,18 @@ Combine --yes with --preset, --vcs, --git-protocol, and --no-gpg for full contro
 				return cmdutil.FlagErrorf("--vcs, --git-protocol, and --no-gpg require --yes")
 			}
 			if opts.VCS != "" && !IsValidVCSProvider(opts.VCS) {
-				return cmdutil.FlagErrorf("invalid --vcs value %q; valid: %s", opts.VCS, strings.Join(vcsProviders(), ", "))
+				return cmdutil.FlagErrorf(
+					"invalid --vcs value %q; valid: %s",
+					opts.VCS,
+					strings.Join(vcsProviders(), ", "),
+				)
 			}
 			if opts.GitProtocol != "" && !IsValidGitProtocol(opts.GitProtocol) {
-				return cmdutil.FlagErrorf("invalid --git-protocol value %q; valid: %s", opts.GitProtocol, strings.Join(vcsProtocols(), ", "))
+				return cmdutil.FlagErrorf(
+					"invalid --git-protocol value %q; valid: %s",
+					opts.GitProtocol,
+					strings.Join(vcsProtocols(), ", "),
+				)
 			}
 			if runF != nil {
 				return runF(cmd.Context(), opts)
@@ -220,15 +267,24 @@ Combine --yes with --preset, --vcs, --git-protocol, and --no-gpg for full contro
 	cmd.Flags().StringVar(&opts.GitProtocol, "git-protocol", "", "Git protocol: https, ssh (requires --yes)")
 	cmd.Flags().BoolVar(&opts.NoGPG, "no-gpg", false, "Disable GPG agent forwarding (requires --yes)")
 
-	cmd.RegisterFlagCompletionFunc("preset", func(_ *cobra.Command, _ []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) { //nolint:errcheck // cobra registers completion internally
-		return PresetCompletions(), cobra.ShellCompDirectiveNoFileComp
-	})
-	cmd.RegisterFlagCompletionFunc("vcs", func(_ *cobra.Command, _ []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) { //nolint:errcheck
-		return VCSCompletions(), cobra.ShellCompDirectiveNoFileComp
-	})
-	cmd.RegisterFlagCompletionFunc("git-protocol", func(_ *cobra.Command, _ []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) { //nolint:errcheck
-		return GitProtocolCompletions(), cobra.ShellCompDirectiveNoFileComp
-	})
+	cmd.RegisterFlagCompletionFunc( //nolint:errcheck,gosec // only errors on a programmer mistake (flag must exist); flags are defined above
+		"preset",
+		func(_ *cobra.Command, _ []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) {
+			return PresetCompletions(), cobra.ShellCompDirectiveNoFileComp
+		},
+	)
+	cmd.RegisterFlagCompletionFunc( //nolint:errcheck,gosec // only errors on a programmer mistake (flag must exist); flags are defined above
+		"vcs",
+		func(_ *cobra.Command, _ []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) {
+			return VCSCompletions(), cobra.ShellCompDirectiveNoFileComp
+		},
+	)
+	cmd.RegisterFlagCompletionFunc( //nolint:errcheck,gosec // only errors on a programmer mistake (flag must exist); flags are defined above
+		"git-protocol",
+		func(_ *cobra.Command, _ []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) {
+			return GitProtocolCompletions(), cobra.ShellCompDirectiveNoFileComp
+		},
+	)
 
 	return cmd
 }
@@ -604,10 +660,9 @@ func performProjectSetup(ctx context.Context, in performSetupInput) error {
 		return fmt.Errorf("loading preset %q: %w", in.preset.Name, err)
 	}
 
-	// Apply VCS configuration (provider domains, SSH rules, GPG settings).
-	if err := store.Set(func(p *config.Project) {
-		applyVCSToProject(p, in.vcs)
-	}); err != nil {
+	// Apply VCS configuration (provider domains, SSH rules, GPG settings) into
+	// the store by path — see applyVCSToProject.
+	if err = applyVCSToProject(store, in.vcs); err != nil {
 		return fmt.Errorf("applying VCS config: %w", err)
 	}
 
@@ -673,7 +728,11 @@ func performProjectSetup(ctx context.Context, in performSetupInput) error {
 	case statErr != nil && !os.IsNotExist(statErr):
 		return fmt.Errorf("checking %s: %w", ignoreFileName, statErr)
 	case os.IsNotExist(statErr) || in.force:
-		if err := os.WriteFile(ignorePath, []byte(config.DefaultIgnoreFile), 0644); err != nil {
+		if err = os.WriteFile( //nolint:gosec // non-secret project ignore file; conventional world-readable perms
+			ignorePath,
+			[]byte(config.DefaultIgnoreFile),
+			0o644,
+		); err != nil {
 			return fmt.Errorf("failed to write %s: %w", ignoreFileName, err)
 		}
 		in.log.Debug().Str("file", ignorePath).Msg("created ignore file")

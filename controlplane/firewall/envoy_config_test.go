@@ -12,7 +12,7 @@ import (
 
 // The ONLY firewall Envoy-generation tests. Three STRICT rules (see
 // .claude/rules/envoy.md → Testing):
-//  1. input is real egress-rules YAML parsed via storage.NewFromString — the
+//  1. input is real egress-rules YAML parsed via storage.New — the
 //     exact production read path, never structs/mocks/internals;
 //  2. every case compares the COMPLETE generated config against a committed
 //     control (the testdata/envoy/<case>.envoy.golden file), never field-level
@@ -276,7 +276,7 @@ rules:
 func TestGenerateEnvoyConfig(t *testing.T) {
 	cases := []struct {
 		name  string    // golden: testdata/envoy/<name>.envoy.golden
-		rules string    // real egress-rules YAML, parsed via storage.NewFromString
+		rules string    // real egress-rules YAML, parsed via storage.New
 		als   ALSConfig // generation-side access-log config (not part of the rules sample)
 		// wantErrContains, when set, asserts GenerateEnvoyConfig FAILS with an error
 		// containing this substring (the "control" for a fail-closed case) and skips
@@ -433,7 +433,7 @@ rules:
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			store, err := storage.NewFromString[EgressRulesFile](tc.rules)
+			store, err := storage.New[EgressRulesFile](tc.rules)
 			require.NoError(t, err, "parse rules sample via the storage engine")
 			rules, _ := NormalizeAndDedup(store.Read().Rules)
 

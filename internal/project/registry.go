@@ -113,9 +113,10 @@ func (r *Registry) projectByRoot(root string) (ProjectEntry, bool, error) {
 }
 
 func (r *Registry) setProjects(entries []ProjectEntry) error {
-	return r.store.Set(func(reg *ProjectRegistry) {
-		reg.Projects = entries
-	})
+	if err := r.store.Set("projects", entries); err != nil {
+		return fmt.Errorf("project: setting registry projects: %w", err)
+	}
+	return nil
 }
 
 func (r *Registry) removeByRoot(root string) error {

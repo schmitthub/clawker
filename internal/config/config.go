@@ -20,11 +20,11 @@ type Config interface {
 	Settings() *Settings
 
 	// ProjectStore returns the underlying project config store.
-	// Use Store.Set(fn) to mutate and Store.Write() to persist.
+	// Use Store.Set(path, value)/Store.Remove(path) to mutate and Store.Write() to persist.
 	ProjectStore() *storage.Store[Project]
 
 	// SettingsStore returns the underlying settings store.
-	// Use Store.Set(fn) to mutate and Store.Write() to persist.
+	// Use Store.Set(path, value)/Store.Remove(path) to mutate and Store.Write() to persist.
 	SettingsStore() *storage.Store[Settings]
 
 	// Deprecated: Use SettingsStore().Read().Logging instead.
@@ -147,6 +147,7 @@ func NewConfig(opts ...NewConfigOption) (Config, error) {
 		storage.WithConfigDir(),
 		storage.WithDotDefault(),
 		storage.WithMigrations(ProjectMigrations()...),
+		storage.WithSchemaURL(consts.ProjectSchemaURL),
 	)
 	projectStore, err := storage.New[Project]("", projectOpts...)
 	if err != nil {
@@ -164,6 +165,7 @@ func NewConfig(opts ...NewConfigOption) (Config, error) {
 	settingsOpts = append(settingsOpts,
 		storage.WithConfigDir(),
 		storage.WithMigrations(SettingsMigrations()...),
+		storage.WithSchemaURL(consts.SettingsSchemaURL),
 	)
 	settingsStore, err := storage.New[Settings]("", settingsOpts...)
 	if err != nil {
@@ -203,25 +205,33 @@ func WithProjectRoot(root string) NewConfigOption {
 // NewProjectStoreFromPreset creates an isolated project store from a preset
 // YAML string. Unlike NewConfig, this does NO file discovery — no walk-up,
 // no config dir, no user-level config merging. The store contains only the
-// preset values, and all fields are marked dirty so WriteTo persists them.
+// preset values, marked for write (MarkSeedForWrite) so WriteTo persists them.
 //
 // This is the correct constructor for project init: the written project file
 // should contain exactly the preset values + any Set() mutations (VCS config,
 // customize edits). User-level and parent configs are layered at runtime via
 // normal config loading, not baked into the project file.
+//
+// The schema URL is wired so the file WriteTo writes carries the
+// yaml-language-server header for editor validation.
 func NewProjectStoreFromPreset(presetYAML string) (*storage.Store[Project], error) {
-	return storage.NewFromString[Project](presetYAML)
+	store, err := storage.New[Project](presetYAML, storage.WithSchemaURL(consts.ProjectSchemaURL))
+	if err != nil {
+		return nil, err
+	}
+	store.MarkSeedForWrite()
+	return store, nil
 }
 
 // NewBlankConfig creates a Config with defaults but no file discovery.
 // Useful as the default test double for consumers that don't care about
 // specific config values.
 func NewBlankConfig() (Config, error) {
-	projectStore, err := storage.NewFromString[Project](storage.GenerateDefaultsYAML[Project]())
+	projectStore, err := storage.New[Project](storage.GenerateDefaultsYAML[Project]())
 	if err != nil {
 		return nil, fmt.Errorf("config: blank project: %w", err)
 	}
-	settingsStore, err := storage.NewFromString[Settings](storage.GenerateDefaultsYAML[Settings]())
+	settingsStore, err := storage.New[Settings](storage.GenerateDefaultsYAML[Settings]())
 	if err != nil {
 		return nil, fmt.Errorf("config: blank settings: %w", err)
 	}
@@ -235,11 +245,11 @@ func NewBlankConfig() (Config, error) {
 // Empty strings produce empty structs. Useful for test fixtures that need
 // precise control over values without defaults being merged.
 func NewFromString(projectYAML, settingsYAML string) (Config, error) {
-	projectStore, err := storage.NewFromString[Project](projectYAML)
+	projectStore, err := storage.New[Project](projectYAML)
 	if err != nil {
 		return nil, fmt.Errorf("config: parsing project YAML: %w", err)
 	}
-	settingsStore, err := storage.NewFromString[Settings](settingsYAML)
+	settingsStore, err := storage.New[Settings](settingsYAML)
 	if err != nil {
 		return nil, fmt.Errorf("config: parsing settings YAML: %w", err)
 	}
@@ -259,7 +269,18 @@ func (c *configImpl) EgressRules() []EgressRule {
 	if projectFw != nil {
 		rules = append(rules, projectFw.Rules...)
 		for _, d := range projectFw.AddDomains {
-			rules = append(rules, EgressRule{Dst: d, Proto: EgressProtoHTTPS, Port: EgressPortHTTPS, Action: EgressActionAllow})
+			rules = append(
+				rules,
+				EgressRule{
+					Dst:                   d,
+					Proto:                 EgressProtoHTTPS,
+					Port:                  EgressPortHTTPS,
+					Action:                EgressActionAllow,
+					PathRules:             nil,
+					PathDefault:           "",
+					InsecureSkipTLSVerify: false,
+				},
+			)
 		}
 	}
 	return rules

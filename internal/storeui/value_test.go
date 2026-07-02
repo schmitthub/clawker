@@ -136,3 +136,56 @@ func TestSetFieldValue_PanicsOnNonStructPointer(t *testing.T) {
 	n := 42
 	assert.Panics(t, func() { SetFieldValue(&n, "anything", "val") })
 }
+
+func TestGetFieldValue(t *testing.T) {
+	t.Run("reads a leaf value", func(t *testing.T) {
+		v, err := GetFieldValue(&simpleStruct{Name: "app", Enabled: false, Count: 7}, "name")
+		require.NoError(t, err)
+		assert.Equal(t, "app", v)
+	})
+
+	t.Run("reads a nested value", func(t *testing.T) {
+		v, err := GetFieldValue(&nestedStruct{Build: buildSection{Image: "alpine", Packages: nil}}, "build.image")
+		require.NoError(t, err)
+		assert.Equal(t, "alpine", v)
+	})
+
+	t.Run("non-nil pointer field is dereferenced", func(t *testing.T) {
+		b := true
+		v, err := GetFieldValue(&triStateStruct{Enabled: &b}, "enabled")
+		require.NoError(t, err)
+		assert.Equal(t, true, v)
+	})
+
+	t.Run("nil pointer field yields nil", func(t *testing.T) {
+		v, err := GetFieldValue(&triStateStruct{Enabled: nil}, "enabled")
+		require.NoError(t, err)
+		assert.Nil(t, v)
+	})
+
+	t.Run("nil intermediate pointer yields nil", func(t *testing.T) {
+		v, err := GetFieldValue(&nilPtrStructParent{Loop: nil}, "loop.max_loops")
+		require.NoError(t, err)
+		assert.Nil(t, v)
+	})
+
+	t.Run("missing field errors", func(t *testing.T) {
+		_, err := GetFieldValue(&simpleStruct{Name: "", Enabled: false, Count: 0}, "nope")
+		require.Error(t, err)
+	})
+
+	t.Run("non-struct intermediate errors", func(t *testing.T) {
+		_, err := GetFieldValue(&simpleStruct{Name: "", Enabled: false, Count: 0}, "name.foo")
+		require.Error(t, err)
+	})
+
+	t.Run("non-pointer input errors", func(t *testing.T) {
+		_, err := GetFieldValue(simpleStruct{Name: "", Enabled: false, Count: 0}, "name")
+		require.Error(t, err)
+	})
+
+	t.Run("empty path errors", func(t *testing.T) {
+		_, err := GetFieldValue(&simpleStruct{Name: "", Enabled: false, Count: 0}, "")
+		require.Error(t, err)
+	})
+}

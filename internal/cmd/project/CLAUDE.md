@@ -133,7 +133,7 @@ Raw user input (positional arg, `--name` flag, dirname fallback) is normalized t
 Checks whether a project config file exists in the given directory. Two-phase:
 
 1. **Fast path**: Checks the factory-constructed config's discovered layers (covers registered projects via walk-up).
-2. **Fallback**: Constructs a temporary `storage.NewStore[config.Project]` with `storage.WithDirs(dir)` to probe the directory using dual-placement discovery — works for unregistered projects where walk-up can't find the directory.
+2. **Fallback**: Constructs a temporary `storage.New[config.Project]` with `storage.WithDirs(dir)` to probe the directory using dual-placement discovery — works for unregistered projects where walk-up can't find the directory.
 
 Filenames are derived from `cfg.ProjectConfigFileName()` (main + `.local` variant). Used by both `init` and `register` to detect existing config before proceeding.
 

@@ -280,17 +280,15 @@ func TestConfigName(t *testing.T) {
 
 **GOOD pattern — values flow through real code:**
 ```go
-// Values came THROUGH the Store pipeline (Set → COW → write → reload)
+// Values came THROUGH the Store pipeline (Set → graft → write → reload)
 func TestStore_Write(t *testing.T) {
     store, err := NewFromString[testConfig](testFullData())
     require.NoError(t, err)
     store.opts.paths = []string{dir}
     store.opts.filenames = []string{"config.yaml"}
 
-    store.Set(func(c *testConfig) {
-        c.Name = "updated"
-        c.Version = 99
-    })
+    require.NoError(t, store.Set("name", "updated"))
+    require.NoError(t, store.Set("version", 99))
     require.NoError(t, store.Write())
 
     result := mustReadConfig(t, writePath)
@@ -324,8 +322,8 @@ The following patterns are ALWAYS acceptable and should NOT be flagged:
 
 ### 1. Store round-trip tests (reference: `internal/storage/storage_test.go`)
 Tests that write data through `Store[T]` and read it back from disk. These
-exercise the full serialization pipeline: `Set` → COW → `structToMap` →
-provenance routing → atomic write → `loadFile` → `unmarshal`. Each step can
+exercise the full serialization pipeline: `Set(path, value)` → graft into node
+tree → provenance routing → atomic write → `loadNode` → decode. Each step can
 break independently.
 
 **What makes the reference good:**

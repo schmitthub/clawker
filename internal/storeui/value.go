@@ -1,6 +1,7 @@
 package storeui
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -54,7 +55,11 @@ func SetFieldValue(v any, path string, val string) error {
 		}
 
 		if f.Kind() != reflect.Struct {
-			return fmt.Errorf("storeui.SetFieldValue: intermediate path segment %q is not a struct in path %q", seg, path)
+			return fmt.Errorf(
+				"storeui.SetFieldValue: intermediate path segment %q is not a struct in path %q",
+				seg,
+				path,
+			)
 		}
 		current = f
 	}
@@ -68,6 +73,75 @@ func SetFieldValue(v any, path string, val string) error {
 
 	f := current.Field(idx)
 	return setLeaf(f, val, path)
+}
+
+// GetFieldValue reads a field on a struct pointer by its dotted YAML path and
+// returns its typed value, dereferencing pointers (a nil pointer yields nil).
+// It is the read counterpart of SetFieldValue: coerce a string into a fresh T
+// with SetFieldValue, then read the typed value back out for storage.Store.Set.
+//
+// v must be a non-nil pointer to a struct, else an error is returned.
+func GetFieldValue(v any, path string) (any, error) {
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Pointer || rv.IsNil() {
+		return nil, errors.New("storeui.GetFieldValue: v must be a non-nil pointer to a struct")
+	}
+	if rv.Elem().Kind() != reflect.Struct {
+		return nil, fmt.Errorf("storeui.GetFieldValue: v must point to a struct, got *%s", rv.Elem().Kind())
+	}
+	if path == "" {
+		return nil, errors.New("storeui.GetFieldValue: path must not be empty")
+	}
+
+	segments := strings.Split(path, ".")
+	parent, ok, err := navigateToParent(rv.Elem(), segments, path)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		//nolint:nilnil // a nil intermediate pointer is a valid nil value, not an error
+		return nil, nil
+	}
+
+	leaf := segments[len(segments)-1]
+	idx, found := findFieldByYAMLTag(parent, leaf)
+	if !found {
+		return nil, fmt.Errorf("storeui.GetFieldValue: field %q not found in path %q", leaf, path)
+	}
+	f := parent.Field(idx)
+	if f.Kind() == reflect.Pointer {
+		if f.IsNil() {
+			//nolint:nilnil // a nil pointer field is a valid nil value, not an error
+			return nil, nil
+		}
+		return f.Elem().Interface(), nil
+	}
+	return f.Interface(), nil
+}
+
+// navigateToParent walks all but the last segment of path, returning the struct
+// value holding the leaf field. ok=false means an intermediate pointer was nil,
+// so the whole path resolves to a nil value.
+func navigateToParent(current reflect.Value, segments []string, path string) (reflect.Value, bool, error) {
+	for _, seg := range segments[:len(segments)-1] {
+		idx, ok := findFieldByYAMLTag(current, seg)
+		if !ok {
+			return reflect.Value{}, false, fmt.Errorf("storeui.GetFieldValue: field %q not found in path %q", seg, path)
+		}
+		f := current.Field(idx)
+		if f.Kind() == reflect.Pointer {
+			if f.IsNil() {
+				return reflect.Value{}, false, nil
+			}
+			f = f.Elem()
+		}
+		if f.Kind() != reflect.Struct {
+			return reflect.Value{}, false, fmt.Errorf(
+				"storeui.GetFieldValue: intermediate path segment %q is not a struct in path %q", seg, path)
+		}
+		current = f
+	}
+	return current, true, nil
 }
 
 // findFieldByYAMLTag finds a struct field by its yaml tag name.

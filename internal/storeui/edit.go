@@ -207,28 +207,32 @@ func BuildBrowser[T storage.Schema](store *storage.Store[T], opts ...Option) (*t
 		}
 		target := cfg.layerTargets[targetIdx]
 
-		var setFieldErr error
-		if err := store.Set(func(t *T) {
-			if err := SetFieldValue(t, fieldPath, value); err != nil {
-				setFieldErr = err
-			}
-		}); err != nil {
-			return fmt.Errorf("updating store: %w", err)
+		// Coerce the TUI string into the field's typed value (via a fresh T), then
+		// set it on the store by path.
+		var fresh T
+		if err := SetFieldValue(&fresh, fieldPath, value); err != nil {
+			return fmt.Errorf("setting field %s: %w", fieldPath, err)
 		}
-		if setFieldErr != nil {
-			return fmt.Errorf("setting field %s: %w", fieldPath, setFieldErr)
+		typed, err := GetFieldValue(&fresh, fieldPath)
+		if err != nil {
+			return fmt.Errorf("setting field %s: %w", fieldPath, err)
+		}
+		if err = store.Set(fieldPath, typed); err != nil {
+			return fmt.Errorf("updating store: %w", err)
 		}
 
 		prov, hasProv := store.Provenance(fieldPath)
 		if hasProv && prov.Path != target.Path {
 			layerVal := lookupLayerFieldValue(store.Layers(), target.Path, fieldPath)
 			if normalizeLayerValue(layerVal) != value {
-				store.MarkForWrite(fieldPath)
+				if merr := store.MarkForWrite(fieldPath); merr != nil {
+					return fmt.Errorf("marking %s for write: %w", fieldPath, merr)
+				}
 			}
 		}
 
-		if err := store.Write(storage.ToPath(target.Path)); err != nil {
-			return fmt.Errorf("writing to %s: %w", ShortenHome(target.Path), err)
+		if werr := store.WriteTo(target.Path); werr != nil {
+			return fmt.Errorf("writing to %s: %w", ShortenHome(target.Path), werr)
 		}
 		return nil
 	}
@@ -239,12 +243,12 @@ func BuildBrowser[T storage.Schema](store *storage.Store[T], opts ...Option) (*t
 		}
 		target := cfg.layerTargets[targetIdx]
 
-		if _, err := store.Delete(fieldPath); err != nil {
+		if _, err := store.Remove(fieldPath); err != nil {
 			return fmt.Errorf("deleting from store: %w", err)
 		}
 
-		if err := store.Write(storage.ToPath(target.Path)); err != nil {
-			return fmt.Errorf("deleting from %s: %w", ShortenHome(target.Path), err)
+		if werr := store.WriteTo(target.Path); werr != nil {
+			return fmt.Errorf("deleting from %s: %w", ShortenHome(target.Path), werr)
 		}
 		return nil
 	}
@@ -268,7 +272,7 @@ func BuildBrowser[T storage.Schema](store *storage.Store[T], opts ...Option) (*t
 //  2. WalkFields(snapshot) → fields
 //  3. Filter skip paths, ApplyOverrides
 //  4. Map storeui.Field → tui.BrowserField, run tui.FieldBrowserModel
-//  5. OnFieldSaved callback: store.Set + store.Write(storage.ToPath(target)) per field
+//  5. OnFieldSaved callback: store.Set + store.WriteTo(target) per field
 //  6. Return Result
 func Edit[T storage.Schema](ios *iostreams.IOStreams, store *storage.Store[T], opts ...Option) (Result, error) {
 	cfg := editOptions{
@@ -329,16 +333,18 @@ func Edit[T storage.Schema](ios *iostreams.IOStreams, store *storage.Store[T], o
 		target := cfg.layerTargets[targetIdx]
 
 		// Update in-memory store.
-		var setFieldErr error
-		if err := store.Set(func(t *T) {
-			if err := SetFieldValue(t, fieldPath, value); err != nil {
-				setFieldErr = err
-			}
-		}); err != nil {
-			return fmt.Errorf("updating store: %w", err)
+		// Coerce the TUI string into the field's typed value (via a fresh T), then
+		// set it on the store by path.
+		var fresh T
+		if err := SetFieldValue(&fresh, fieldPath, value); err != nil {
+			return fmt.Errorf("setting field %s: %w", fieldPath, err)
 		}
-		if setFieldErr != nil {
-			return fmt.Errorf("setting field %s: %w", fieldPath, setFieldErr)
+		typed, err := GetFieldValue(&fresh, fieldPath)
+		if err != nil {
+			return fmt.Errorf("setting field %s: %w", fieldPath, err)
+		}
+		if err = store.Set(fieldPath, typed); err != nil {
+			return fmt.Errorf("updating store: %w", err)
 		}
 
 		// When saving to a layer that isn't the provenance winner,
@@ -349,14 +355,16 @@ func Edit[T storage.Schema](ios *iostreams.IOStreams, store *storage.Store[T], o
 		if hasProv && prov.Path != target.Path {
 			layerVal := lookupLayerFieldValue(store.Layers(), target.Path, fieldPath)
 			if normalizeLayerValue(layerVal) != value {
-				store.MarkForWrite(fieldPath)
+				if merr := store.MarkForWrite(fieldPath); merr != nil {
+					return fmt.Errorf("marking %s for write: %w", fieldPath, merr)
+				}
 			}
 		}
 
 		// Persist dirty fields to the target file. Write() remerges
 		// internally, so the snapshot reflects the true merged state.
-		if err := store.Write(storage.ToPath(target.Path)); err != nil {
-			return fmt.Errorf("writing to %s: %w", ShortenHome(target.Path), err)
+		if werr := store.WriteTo(target.Path); werr != nil {
+			return fmt.Errorf("writing to %s: %w", ShortenHome(target.Path), werr)
 		}
 		return nil
 	}
@@ -369,14 +377,14 @@ func Edit[T storage.Schema](ios *iostreams.IOStreams, store *storage.Store[T], o
 		target := cfg.layerTargets[targetIdx]
 
 		// Remove from the in-memory store tree.
-		if _, err := store.Delete(fieldPath); err != nil {
+		if _, err := store.Remove(fieldPath); err != nil {
 			return fmt.Errorf("deleting from store: %w", err)
 		}
 
 		// Persist the deletion to the target file. Write() remerges
 		// internally, so the snapshot reflects the true merged state.
-		if err := store.Write(storage.ToPath(target.Path)); err != nil {
-			return fmt.Errorf("deleting from %s: %w", ShortenHome(target.Path), err)
+		if werr := store.WriteTo(target.Path); werr != nil {
+			return fmt.Errorf("deleting from %s: %w", ShortenHome(target.Path), werr)
 		}
 		return nil
 	}

@@ -15,6 +15,11 @@ import (
 	"github.com/schmitthub/clawker/internal/storage"
 )
 
+// rulesField is the dotted store path of EgressRulesFile.Rules — the key every
+// Get/Set on the rules store addresses. Kept in one place so a typo can't
+// silently address an empty set (the path is stringly-typed in the store API).
+const rulesField = "rules"
+
 // EgressRulesFile is the top-level document type for storage.Store[T].
 // It persists the active set of project-level egress rules to disk.
 type EgressRulesFile struct {
@@ -33,7 +38,7 @@ func NewRulesStore(cfg config.Config) (*storage.Store[EgressRulesFile], error) {
 	if err != nil {
 		return nil, fmt.Errorf("firewall: resolving data dir: %w", err)
 	}
-	return storage.NewStore[EgressRulesFile](
+	return storage.New[EgressRulesFile]("",
 		storage.WithFilenames(cfg.EgressRulesFileName()),
 		storage.WithPaths(dataDir),
 		storage.WithLock(), // Cross-process flock — multiple CLI/daemon instances share this file.

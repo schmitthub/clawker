@@ -34,7 +34,7 @@ func HasLocalProjectConfig(cfg config.Config, dir string) bool {
 	base := strings.TrimSuffix(mainFile, ext)
 	localFile := base + ".local" + ext // the gitignored local override variant
 
-	probe, err := storage.NewStore[config.Project](
+	probe, err := storage.New[config.Project]("",
 		storage.WithFilenames(mainFile, localFile),
 		storage.WithDirs(dir),
 		storage.WithMigrations(config.ProjectMigrations()...),

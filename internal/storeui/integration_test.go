@@ -5,10 +5,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/schmitthub/clawker/internal/storage"
-	"github.com/schmitthub/clawker/internal/testenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/schmitthub/clawker/internal/storage"
+	"github.com/schmitthub/clawker/internal/testenv"
 )
 
 // newTestStore creates a store backed by a real YAML file in a temp dir.
@@ -18,7 +19,7 @@ func newTestStore[T storage.Schema](t *testing.T, env *testenv.Env, yaml string)
 	require.NoError(t, os.MkdirAll(dir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "test.yaml"), []byte(yaml), 0o644))
 
-	store, err := storage.NewStore[T](
+	store, err := storage.New[T]("",
 		storage.WithFilenames("test.yaml"),
 		storage.WithPaths(dir),
 	)
@@ -29,12 +30,25 @@ func newTestStore[T storage.Schema](t *testing.T, env *testenv.Env, yaml string)
 // reloadStore creates a fresh store from the same file to verify persistence.
 func reloadStore[T storage.Schema](t *testing.T, dir string) *storage.Store[T] {
 	t.Helper()
-	store, err := storage.NewStore[T](
+	store, err := storage.New[T]("",
 		storage.WithFilenames("test.yaml"),
 		storage.WithPaths(dir),
 	)
 	require.NoError(t, err)
 	return store
+}
+
+// applyEdit mirrors storeui's per-field save path (edit.go): coerce the TUI
+// string into a typed value via SetFieldValue → GetFieldValue against a fresh T,
+// then Set it on the store. Driving store.Set with an already-typed value would
+// exercise only storage; this is the storeui plumbing these round-trips cover.
+func applyEdit[T storage.Schema](t *testing.T, store *storage.Store[T], path, value string) {
+	t.Helper()
+	var fresh T
+	require.NoError(t, SetFieldValue(&fresh, path, value))
+	typed, err := GetFieldValue(&fresh, path)
+	require.NoError(t, err)
+	require.NoError(t, store.Set(path, typed))
 }
 
 // TestSetFieldValue_RoundTrip edits fields through SetFieldValue + store.Set + store.Write,
@@ -48,11 +62,11 @@ func TestSetFieldValue_RoundTrip(t *testing.T) {
 	require.Equal(t, "myapp", snap.Name)
 	require.Equal(t, 10, snap.Count)
 
-	// Edit through the plumbing.
-	require.NoError(t, store.Set(func(s *simpleStruct) {
-		require.NoError(t, SetFieldValue(s, "name", "newapp"))
-		require.NoError(t, SetFieldValue(s, "count", "42"))
-	}))
+	// Edit through the real storeui plumbing: string input → SetFieldValue →
+	// GetFieldValue → store.Set (the edit.go per-field save path). "42" is a
+	// string here — coercion to int is what storeui owns.
+	applyEdit(t, store, "name", "newapp")
+	applyEdit(t, store, "count", "42")
 	require.NoError(t, store.Write())
 
 	// Reload from disk — independent verification, not trusting in-memory state.
@@ -70,10 +84,8 @@ func TestStringSlice_RoundTrip(t *testing.T) {
 
 	require.Equal(t, []string{"git", "curl"}, store.Read().Build.Packages)
 
-	// Remove curl, add ripgrep.
-	require.NoError(t, store.Set(func(s *nestedStruct) {
-		require.NoError(t, SetFieldValue(s, "build.packages", "git, ripgrep"))
-	}))
+	// Comma-separated string → []string coercion through the storeui plumbing.
+	applyEdit(t, store, "build.packages", "git, ripgrep")
 	require.NoError(t, store.Write())
 
 	fresh := reloadStore[nestedStruct](t, dir)
@@ -90,10 +102,8 @@ func TestPtrBool_RoundTrip(t *testing.T) {
 	require.NotNil(t, store.Read().Enabled)
 	require.True(t, *store.Read().Enabled)
 
-	// Set to false.
-	require.NoError(t, store.Set(func(s *triStateStruct) {
-		require.NoError(t, SetFieldValue(s, "enabled", "false"))
-	}))
+	// String → *bool coercion through the storeui plumbing.
+	applyEdit(t, store, "enabled", "false")
 	require.NoError(t, store.Write())
 
 	fresh := reloadStore[triStateStruct](t, dir)
@@ -101,9 +111,7 @@ func TestPtrBool_RoundTrip(t *testing.T) {
 	assert.False(t, *fresh.Read().Enabled)
 
 	// Toggle back to true.
-	require.NoError(t, store.Set(func(s *triStateStruct) {
-		require.NoError(t, SetFieldValue(s, "enabled", "true"))
-	}))
+	applyEdit(t, store, "enabled", "true")
 	require.NoError(t, store.Write())
 
 	fresh2 := reloadStore[triStateStruct](t, dir)
@@ -120,10 +128,9 @@ func TestNilPtrStruct_RoundTrip(t *testing.T) {
 
 	require.Nil(t, store.Read().Loop)
 
-	// Set a field inside the nil *struct — should allocate it.
-	require.NoError(t, store.Set(func(s *nilPtrStructParent) {
-		require.NoError(t, SetFieldValue(s, "loop.max_loops", "50"))
-	}))
+	// Set a field inside the nil *struct through the storeui plumbing:
+	// SetFieldValue allocates the parent, GetFieldValue reads the value back.
+	applyEdit(t, store, "loop.max_loops", "50")
 	require.NoError(t, store.Write())
 
 	fresh := reloadStore[nilPtrStructParent](t, dir)
@@ -164,20 +171,18 @@ func TestWriteTo_WritesExplicitPath(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir2, "test.yaml"), []byte("name: from-dir2\n"), 0o644))
 
 	// dir1 is higher priority.
-	store, err := storage.NewStore[simpleStruct](
+	store, err := storage.New[simpleStruct]("",
 		storage.WithFilenames("test.yaml"),
 		storage.WithPaths(dir1, dir2),
 	)
 	require.NoError(t, err)
 
-	// Mutate and write to dir2 explicitly.
-	require.NoError(t, store.Set(func(s *simpleStruct) {
-		s.Name = "updated"
-	}))
-	require.NoError(t, store.Write(storage.ToPath(filepath.Join(dir2, "test.yaml"))))
+	// Mutate through the storeui plumbing and write to dir2 explicitly.
+	applyEdit(t, store, "name", "updated")
+	require.NoError(t, store.WriteTo(filepath.Join(dir2, "test.yaml")))
 
 	// Reload dir2 independently — should have the update.
-	store2, err := storage.NewStore[simpleStruct](
+	store2, err := storage.New[simpleStruct]("",
 		storage.WithFilenames("test.yaml"),
 		storage.WithPaths(dir2),
 	)
@@ -185,7 +190,7 @@ func TestWriteTo_WritesExplicitPath(t *testing.T) {
 	assert.Equal(t, "updated", store2.Read().Name)
 
 	// Reload dir1 independently — should be unchanged.
-	store1, err := storage.NewStore[simpleStruct](
+	store1, err := storage.New[simpleStruct]("",
 		storage.WithFilenames("test.yaml"),
 		storage.WithPaths(dir1),
 	)

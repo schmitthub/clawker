@@ -94,11 +94,11 @@ Edit[T storage.Schema](ios, store, opts...):
 
 When a user edits a field and picks a save target:
 
-1. `store.Set(func(t *T) { SetFieldValue(t, fieldPath, value) })` — update in-memory
+1. Coerce the TUI string into the field's typed value via a fresh `T`: `SetFieldValue(&fresh, fieldPath, value)` then `GetFieldValue(&fresh, fieldPath)` — then `store.Set(fieldPath, typed)` updates in-memory
 2. (conditional) `store.MarkForWrite(fieldPath)` — force-dirty the path when saving to a non-provenance-winner layer (i.e., the merged value is unchanged but the target layer file needs updating)
 3. `store.Write(storage.ToPath(target.Path))` — persist dirty fields to the chosen layer file
 
-`Write()` internally remerges layers, so the snapshot reflects the true merged state after each save. Values are type-coerced during `Set` via `SetFieldValue`.
+`Write()` internally remerges layers, so the snapshot reflects the true merged state after each save. The TUI string is type-coerced before `Set` via `SetFieldValue`/`GetFieldValue`; deletes go through `store.Remove(path)`.
 
 ### Field Discovery (WalkFields)
 
@@ -175,8 +175,9 @@ Multiline text editor wrapping `bubbles/textarea`.
 | Method | Purpose |
 |--------|---------|
 | `store.Read()` | Get immutable `*T` snapshot |
-| `store.Set(func(*T))` | Mutate in-memory via closure |
-| `store.Delete(path)` | Remove a dotted path from tree + re-publish snapshot |
+| `store.Get(path, out)` | Decode an in-memory field by dotted path into a typed `out` |
+| `store.Set(path, value)` | Set an in-memory field by dotted path |
+| `store.Remove(path)` | Remove a dotted path from tree + re-publish snapshot |
 | `store.Layers()` | All discovered layers (for layer breakdown display) |
 | `store.Provenance(path)` | Which layer won a specific field |
 | `store.ProvenanceMap()` | All fields → source file paths |
@@ -214,10 +215,12 @@ func TestRoundTrip(t *testing.T) {
     env := testenv.New(t)
     store, dir := newTestStore[myStruct](t, env, initialYAML)
 
-    // Edit through the plumbing
-    require.NoError(t, store.Set(func(s *myStruct) {
-        require.NoError(t, storeui.SetFieldValue(s, "field.path", "new-value"))
-    }))
+    // Edit through the plumbing (coerce the string, then set by path)
+    var fresh myStruct
+    require.NoError(t, storeui.SetFieldValue(&fresh, "field.path", "new-value"))
+    typed, err := storeui.GetFieldValue(&fresh, "field.path")
+    require.NoError(t, err)
+    require.NoError(t, store.Set("field.path", typed))
     require.NoError(t, store.Write())
 
     // Reload from disk — independent verification
@@ -227,7 +230,7 @@ func TestRoundTrip(t *testing.T) {
 }
 ```
 
-Use `testenv.New(t)` for isolated XDG directories. Create stores with `storage.NewStore[T]` + `WithFilenames` + `WithPaths` for filesystem-backed tests.
+Use `testenv.New(t)` for isolated XDG directories. Create stores with `storage.New[T]("", ...)` + `WithFilenames` + `WithPaths` for filesystem-backed tests.
 
 ### Testing WalkFields
 
