@@ -26,7 +26,7 @@ func Overrides() []storeui.Override {
 
 // LayerTargets builds the per-field save destinations from the store's own
 // write targets. The settings store has no walk-up discovery, so no CWD
-// "Local" target is offered — a file saved there would never be read back.
+// "Project" target is offered — a file saved there would never be read back.
 func LayerTargets(store *storage.Store[config.Settings]) ([]storeui.LayerTarget, error) {
 	targets, err := storeui.BuildLayerTargets(store)
 	if err != nil {

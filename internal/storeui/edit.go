@@ -28,16 +28,24 @@ func ShortenHome(p string) string {
 
 // Labels for store-derived save destinations.
 const (
-	labelLocal = "Local" // walk-up CWD candidate
-	labelUser  = "User"  // configured directory candidate (config dir etc.)
+	labelProject = "Project" // walk-up CWD candidate
+	labelUser    = "User"    // configured directory candidate (config dir etc.)
+	labelLocal   = "Local"   // discovered local override variant (*.local.* file)
 )
+
+// isLocalVariant reports whether a file is a local override variant by the
+// conventional ".local." infix in its basename (e.g. .clawker.local.yaml).
+func isLocalVariant(path string) bool {
+	return strings.Contains(strings.TrimPrefix(filepath.Base(path), "."), ".local.")
+}
 
 // BuildLayerTargets builds save destinations from the store's own write
 // targets (storage.Store.WriteTargets), so the editor only ever offers
 // locations the store can rediscover on reload — a store without walk-up
-// gets no CWD "Local" target. The walk-up CWD candidate is labeled "Local",
-// directory candidates "User", and existing layer files show their
-// shortened path. Virtual layers (defaults) are never offered.
+// gets no CWD "Project" target. The walk-up CWD candidate is labeled
+// "Project", directory candidates "User", discovered local override variants
+// (*.local.* files) "Local", and any other layer file shows its shortened
+// path. Virtual layers (defaults) are never offered.
 func BuildLayerTargets[T storage.Schema](store *storage.Store[T]) ([]LayerTarget, error) {
 	wts, err := store.WriteTargets()
 	if err != nil {
@@ -49,11 +57,15 @@ func BuildLayerTargets[T storage.Schema](store *storage.Store[T]) ([]LayerTarget
 		var label string
 		switch wt.Source {
 		case storage.TargetWalkUp:
-			label = labelLocal
+			label = labelProject
 		case storage.TargetDir, storage.TargetPath:
 			label = labelUser
 		case storage.TargetLayer:
-			label = shortPath
+			if isLocalVariant(wt.Path) {
+				label = labelLocal
+			} else {
+				label = shortPath
+			}
 		default: // future sources — show the path
 			label = shortPath
 		}
@@ -82,7 +94,7 @@ type Result struct {
 // LayerTarget represents a save destination for a single field.
 // Domain adapters build these from config accessors.
 type LayerTarget struct {
-	Label       string // Display label (e.g. "Original", "Local", "User")
+	Label       string // Display label (e.g. "Project", "User", "Local")
 	Description string // Shortened path for display
 	Path        string // Full absolute filesystem path
 }

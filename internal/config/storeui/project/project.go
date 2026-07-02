@@ -29,7 +29,7 @@ func Overrides() []storeui.Override {
 }
 
 // LayerTargets builds the per-field save destinations from the store's own
-// write targets. Inside a project the walk-up store offers a CWD "Local"
+// write targets. Inside a project the walk-up store offers a CWD "Project"
 // target; outside a project (no walk-up anchor) it does not.
 func LayerTargets(store *storage.Store[config.Project]) ([]storeui.LayerTarget, error) {
 	targets, err := storeui.BuildLayerTargets(store)

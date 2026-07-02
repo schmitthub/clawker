@@ -73,8 +73,8 @@ func TestOverrides_SelectFields(t *testing.T) {
 	}
 }
 
-// Inside a project the walk-up store offers a CWD "Local" target.
-func TestLayerTargets_InProjectOffersLocal(t *testing.T) {
+// Inside a project the walk-up store offers a CWD "Project" target.
+func TestLayerTargets_InProjectOffersProject(t *testing.T) {
 	env := testenv.New(t)
 	projectDir := filepath.Join(env.Dirs.Base, "proj")
 	require.NoError(t, os.MkdirAll(projectDir, 0o755))
@@ -87,15 +87,15 @@ func TestLayerTargets_InProjectOffersLocal(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, targets)
 
-	assert.Equal(t, "Local", targets[0].Label)
+	assert.Equal(t, "Project", targets[0].Label)
 	assert.Equal(t, filepath.Join(projectDir, "."+cfg.ProjectConfigFileName()), targets[0].Path)
 	assert.Equal(t, "User", targets[1].Label)
 	assert.Equal(t, filepath.Join(config.ConfigDir(), cfg.ProjectConfigFileName()), targets[1].Path)
 }
 
 // Outside a project (no walk-up anchor) the store cannot rediscover CWD
-// files, so no "Local" target may be offered.
-func TestLayerTargets_NoProjectRootExcludesLocal(t *testing.T) {
+// files, so no "Project" target may be offered.
+func TestLayerTargets_NoProjectRootExcludesProject(t *testing.T) {
 	t.Chdir(t.TempDir())
 	cfg := configmocks.NewIsolatedTestConfig(t)
 
@@ -104,8 +104,8 @@ func TestLayerTargets_NoProjectRootExcludesLocal(t *testing.T) {
 	require.NotEmpty(t, targets)
 
 	for _, tgt := range targets {
-		assert.NotEqual(t, "Local", tgt.Label,
-			"project editor outside a project must not offer a Local target")
+		assert.NotEqual(t, "Project", tgt.Label,
+			"project editor outside a project must not offer a Project target")
 	}
 	assert.Equal(t, "User", targets[0].Label)
 }

@@ -26,7 +26,7 @@ func newWalkUpStore(t *testing.T, configDir string) *storage.Store[simpleStruct]
 	return store
 }
 
-func TestBuildLayerTargets_WalkUpStoreOffersLocalAndUser(t *testing.T) {
+func TestBuildLayerTargets_WalkUpStoreOffersProjectAndUser(t *testing.T) {
 	env := testenv.New(t)
 	projDir := filepath.Join(env.Dirs.Base, "proj")
 	require.NoError(t, os.MkdirAll(projDir, 0o755))
@@ -36,15 +36,15 @@ func TestBuildLayerTargets_WalkUpStoreOffersLocalAndUser(t *testing.T) {
 	targets, err := BuildLayerTargets(newWalkUpStore(t, env.Dirs.Config))
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{"Local", "User"}, targetLabels(targets))
+	assert.Equal(t, []string{"Project", "User"}, targetLabels(targets))
 	assert.Equal(t, filepath.Join(projDir, ".clawker.yaml"), targets[0].Path)
 	assert.Equal(t, filepath.Join(env.Dirs.Config, "clawker.yaml"), targets[1].Path)
 }
 
-// A store without walk-up (settings shape) must not offer a CWD "Local"
+// A store without walk-up (settings shape) must not offer a CWD "Project"
 // target: a file saved there would never be discovered on reload, so the
 // value would silently vanish.
-func TestBuildLayerTargets_NoWalkUpStoreExcludesLocal(t *testing.T) {
+func TestBuildLayerTargets_NoWalkUpStoreExcludesProject(t *testing.T) {
 	env := testenv.New(t)
 	t.Chdir(env.Dirs.Base)
 
@@ -82,16 +82,16 @@ func TestBuildLayerTargets_DiscoveredLayerShownWithPathLabel(t *testing.T) {
 	targets, err := BuildLayerTargets(store)
 	require.NoError(t, err)
 
-	// Local (CWD candidate) + User + the parent-level discovered layer.
+	// Project (CWD candidate) + User + the parent-level discovered layer.
 	require.Len(t, targets, 3)
-	assert.Equal(t, "Local", targets[0].Label)
+	assert.Equal(t, "Project", targets[0].Label)
 	assert.Equal(t, "User", targets[1].Label)
 	assert.Equal(t, parentPath, targets[2].Path)
 	// Discovered layer label is the shortened path, not a fixed string.
 	assert.Equal(t, ShortenHome(parentPath), targets[2].Label)
 }
 
-// Layers that collide with the Local/User candidates collapse into the
+// Layers that collide with the Project/User candidates collapse into the
 // candidate entry and keep its friendly label.
 func TestBuildLayerTargets_NoDuplicateWhenLayersMatchCandidates(t *testing.T) {
 	env := testenv.New(t)
@@ -106,9 +106,42 @@ func TestBuildLayerTargets_NoDuplicateWhenLayersMatchCandidates(t *testing.T) {
 	targets, err := BuildLayerTargets(newWalkUpStore(t, env.Dirs.Config))
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{"Local", "User"}, targetLabels(targets))
+	assert.Equal(t, []string{"Project", "User"}, targetLabels(targets))
 	assert.Equal(t, localPath, targets[0].Path)
 	assert.Equal(t, userPath, targets[1].Path)
+}
+
+// A discovered local override variant (*.local.* filename) is labeled
+// "Local" rather than shown as a raw path — it is the conventional
+// uncommitted per-machine override sitting beside the project file.
+func TestBuildLayerTargets_LocalVariantLayerLabeledLocal(t *testing.T) {
+	env := testenv.New(t)
+	projDir := filepath.Join(env.Dirs.Base, "proj")
+	require.NoError(t, os.MkdirAll(projDir, 0o755))
+	projectPath := filepath.Join(projDir, ".clawker.yaml")
+	localPath := filepath.Join(projDir, ".clawker.local.yaml")
+	require.NoError(t, os.WriteFile(projectPath, []byte("name: project\n"), 0o600))
+	require.NoError(t, os.WriteFile(localPath, []byte("name: local\n"), 0o600))
+	t.Chdir(projDir)
+
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	store, err := storage.New[simpleStruct]("",
+		storage.WithFilenames("clawker.local.yaml", "clawker.yaml"),
+		storage.WithDefaultFilename("clawker.yaml"),
+		storage.WithWalkUp(cwd),
+		storage.WithPaths(env.Dirs.Config),
+		storage.WithDotDefault(),
+	)
+	require.NoError(t, err)
+
+	targets, err := BuildLayerTargets(store)
+	require.NoError(t, err)
+
+	require.Len(t, targets, 3)
+	assert.Equal(t, []string{"Project", "User", "Local"}, targetLabels(targets))
+	assert.Equal(t, projectPath, targets[0].Path)
+	assert.Equal(t, localPath, targets[2].Path)
 }
 
 func TestLookupLayerFieldValue(t *testing.T) {

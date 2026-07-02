@@ -76,8 +76,8 @@ func TestLayerTargets_NoCWDTarget(t *testing.T) {
 	cwd, err := os.Getwd()
 	require.NoError(t, err)
 	for _, tgt := range targets {
-		assert.NotEqual(t, "Local", tgt.Label,
-			"settings editor must not offer a Local target — the settings store cannot rediscover CWD files")
+		assert.NotEqual(t, "Project", tgt.Label,
+			"settings editor must not offer a Project target — the settings store cannot rediscover CWD files")
 		assert.False(t, strings.HasPrefix(tgt.Path, cwd+string(os.PathSeparator)),
 			"settings target %q must not point under CWD", tgt.Path)
 	}

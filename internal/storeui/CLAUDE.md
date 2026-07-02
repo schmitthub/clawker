@@ -76,7 +76,7 @@ func WithLayerTargets(targets []LayerTarget) Option
 
 // Shared helpers (used by domain adapters)
 func ShortenHome(path string) string                     // Replace $HOME with ~
-func BuildLayerTargets[T storage.Schema](store *storage.Store[T]) ([]LayerTarget, error) // Save targets from store.WriteTargets(): walk-up CWD → "Local", dir candidates → "User", layers → shortened path
+func BuildLayerTargets[T storage.Schema](store *storage.Store[T]) ([]LayerTarget, error) // Save targets from store.WriteTargets(): walk-up CWD → "Project", dir candidates → "User", local override variants → "Local", other layers → shortened path
 func Ptr[T any](v T) *T                                 // Pointer helper for Override fields
 ```
 
@@ -87,7 +87,7 @@ func Ptr[T any](v T) *T                                 // Pointer helper for Ov
 | `config/storeui/settings` | `config.Settings` | host_proxy read-only |
 | `config/storeui/project` | `config.Project` | workspace mode as Select; maps use KV editor |
 
-Each adapter exports `Overrides() []storeui.Override`, `LayerTargets(store) ([]storeui.LayerTarget, error)`, and `Edit(ios, store) (storeui.Result, error)`. Targets come from the store's own `WriteTargets()` — a store without walk-up (settings) never offers a CWD "Local" target it could not read back.
+Each adapter exports `Overrides() []storeui.Override`, `LayerTargets(store) ([]storeui.LayerTarget, error)`, and `Edit(ios, store) (storeui.Result, error)`. Targets come from the store's own `WriteTargets()` — a store without walk-up (settings) never offers a CWD "Project" target it could not read back.
 
 ## Data Flow
 
