@@ -7,6 +7,7 @@ package main
 import (
 	"bytes"
 	_ "embed"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -42,6 +43,7 @@ func run(args []string) error {
 		flagYAML     bool
 		flagRST      bool
 		flagWebsite  bool
+		flagSchemas  bool
 	)
 
 	flags.StringVar(&flagDocPath, "doc-path", "", "Output directory for generated docs (required)")
@@ -54,6 +56,12 @@ func run(args []string) error {
 		"website",
 		false,
 		"Generate MDX-safe output with Mintlify front matter (requires --markdown)",
+	)
+	flags.BoolVar(
+		&flagSchemas,
+		"schemas",
+		false,
+		"Generate config JSON Schemas from struct tags (written to <doc-path>/schemas/)",
 	)
 
 	flags.Usage = func() {
@@ -69,8 +77,8 @@ func run(args []string) error {
 		return fmt.Errorf("--doc-path is required")
 	}
 
-	if !flagMarkdown && !flagManPage && !flagYAML && !flagRST {
-		return fmt.Errorf("at least one format must be specified (--markdown, --man-page, --yaml, --rst)")
+	if !flagMarkdown && !flagManPage && !flagYAML && !flagRST && !flagSchemas {
+		return errors.New("at least one output must be specified (--markdown, --man-page, --yaml, --rst, --schemas)")
 	}
 
 	if flagWebsite && !flagMarkdown {
@@ -126,13 +134,17 @@ func run(args []string) error {
 				"Generated configuration reference in %s\n",
 				filepath.Join(flagDocPath, "configuration.mdx"),
 			)
-
-			schemaDir, sErr := genConfigSchemas(flagDocPath)
-			if sErr != nil {
-				return fmt.Errorf("failed to generate config JSON schemas: %w", sErr)
-			}
-			fmt.Fprintf(os.Stderr, "Generated config JSON schemas in %s\n", schemaDir)
 		}
+	}
+
+	// JSON Schemas are standalone artifacts served raw (yaml-language-server
+	// headers point at them) — independent of every doc format above.
+	if flagSchemas {
+		schemaDir, sErr := genConfigSchemas(flagDocPath)
+		if sErr != nil {
+			return fmt.Errorf("failed to generate config JSON schemas: %w", sErr)
+		}
+		fmt.Fprintf(os.Stderr, "Generated config JSON schemas in %s\n", schemaDir)
 	}
 
 	if flagManPage {

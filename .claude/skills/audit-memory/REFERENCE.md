@@ -92,7 +92,7 @@ docs/
 ### Regeneration Command
 
 ```bash
-go run ./cmd/gen-docs --doc-path docs --markdown --website
+go run ./cmd/gen-docs --doc-path docs --markdown --website --schemas
 ```
 
 ## Context Budget Guidelines
