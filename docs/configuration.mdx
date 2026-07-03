@@ -34,15 +34,14 @@ Files found closer to CWD have **higher priority** than files found further up t
 
 ### File Placement
 
-At each directory level during walk-up, each config file resolves independently through three placement styles, in precedence order:
+At each directory level during walk-up, the engine checks two placement styles:
 
-| Style | Path |
-|-------|------|
-| **Directory form** | `.clawker/clawker.yaml` |
-| **Dotted directory form** | `.clawker/.clawker.yaml` |
-| **Flat dotfile form** | `.clawker.yaml` |
+| Style | Path | When |
+|-------|------|------|
+| **Directory form** | `.clawker/clawker.yaml` | When a `.clawker/` directory exists |
+| **Flat dotfile form** | `.clawker.yaml` | When no `.clawker/` directory exists |
 
-The first style found wins for that file. Because each file resolves independently, placements can be mixed at the same level — for example a committed flat `.clawker.yaml` beside a `.clawker/clawker.local.yaml` override. A flat file is only shadowed by a directory-form file of the same name. Both `.yaml` and `.yml` extensions are accepted.
+The directory form takes precedence. Both `.yaml` and `.yml` extensions are accepted.
 
 <Note>
 Walk-up discovery is **bounded** -- it never walks past the registered project root and never reaches `~/.config/clawker/`. Home-level configs are loaded separately via the explicit path mechanism.
@@ -62,13 +61,13 @@ At each directory level, both `clawker.yaml` and `clawker.local.yaml` are discov
 ### Precedence (Highest to Lowest)
 
 ```
-1. .clawker.local.yaml in CWD (any placement style)
-2. .clawker.yaml in CWD (any placement style)
-3. .clawker.local.yaml in parent directory
-4. .clawker.yaml in parent directory
+1. .clawker.yaml in CWD (or .clawker/clawker.yaml)
+2. .clawker.local.yaml in CWD
+3. .clawker.yaml in parent directory
+4. .clawker.local.yaml in parent directory
 5. ... (continues up to project root)
-6. .clawker.local.yaml at project root
-7. .clawker.yaml at project root
+6. .clawker.yaml at project root
+7. .clawker.local.yaml at project root
 8. ~/.config/clawker/clawker.yaml (user-level overrides)
 9. Built-in defaults
 ```
