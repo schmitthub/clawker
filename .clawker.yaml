@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=https://raw.githubusercontent.com/schmitthub/clawker/v0.12.10/docs/schemas/clawker.schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/schmitthub/clawker/v0.12.11/docs/schemas/clawker.schema.json
 agent:
   claude_code:
     config:
