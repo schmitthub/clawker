@@ -252,7 +252,7 @@ BPF_APT_DEPS := \
     clang=1:18.0-59~exp2 \
     llvm=1:18.0-59~exp2 \
     libbpf-dev=1:1.3.0-2build2 \
-    linux-libc-dev=6.8.0-124.124
+    linux-libc-dev=6.8.0-134.134
 
 # Install the pinned BPF toolchain via apt. Requires Ubuntu 24.04 (Noble)
 # and root — versions pinned above only resolve against Noble's apt repos.
@@ -735,18 +735,18 @@ licenses-check: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GEN
 # the full cobra tree, which imports controlplane/manager and
 # controlplane/firewall (both carry go:embed assets).
 docs: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENERATED)
-	@echo "Generating CLI reference + config reference docs..."
-	$(GO) run ./cmd/gen-docs --doc-path docs --markdown --website
+	@echo "Generating CLI reference + config reference docs + config JSON schemas..."
+	$(GO) run ./cmd/gen-docs --doc-path docs --markdown --website --schemas
 
 # Check all generated docs are up to date (used by CI)
 docs-check: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENERATED)
 	@echo "Checking generated docs freshness..."
-	@$(GO) run ./cmd/gen-docs --doc-path docs --markdown --website
-	@if ! git diff --quiet docs/cli-reference/ docs/configuration.mdx; then \
+	@$(GO) run ./cmd/gen-docs --doc-path docs --markdown --website --schemas
+	@if ! git diff --quiet docs/cli-reference/ docs/configuration.mdx docs/schemas/; then \
 		echo "" >&2; \
 		echo "ERROR: Generated docs are out of date. Run 'make docs' and commit." >&2; \
 		echo "" >&2; \
-		git diff --stat docs/cli-reference/ docs/configuration.mdx; \
+		git diff --stat docs/cli-reference/ docs/configuration.mdx docs/schemas/; \
 		exit 1; \
 	fi
 	@echo "Generated docs are up to date."

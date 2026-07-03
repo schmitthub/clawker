@@ -131,7 +131,13 @@ type OtelCertProvisioner interface {
 // substituted); the other dependencies are required — nil docker or cfg
 // produces a nil Stack that panics at first use, which is preferable to
 // silent no-ops. otelCerts may be nil — see OtelCertProvisioner.
-func NewStack(dc *docker.Client, cfg config.Config, log *logger.Logger, store *storage.Store[EgressRulesFile], otelCerts OtelCertProvisioner) *Stack {
+func NewStack(
+	dc *docker.Client,
+	cfg config.Config,
+	log *logger.Logger,
+	store *storage.Store[EgressRulesFile],
+	otelCerts OtelCertProvisioner,
+) *Stack {
 	if log == nil {
 		log = logger.Nop()
 	}
@@ -279,7 +285,10 @@ func (s *Stack) WaitForHealthy(ctx context.Context) error {
 
 	httpClient := &http.Client{Timeout: 2 * time.Second}
 	envoyURL := "http://" + net.JoinHostPort(netInfo.EnvoyIP, strconv.Itoa(s.cfg.EnvoyHealthPort())) + "/"
-	corednsURL := "http://" + net.JoinHostPort(netInfo.CoreDNSIP, strconv.Itoa(s.cfg.CoreDNSHealthHostPort())) + s.cfg.CoreDNSHealthPath()
+	corednsURL := "http://" + net.JoinHostPort(
+		netInfo.CoreDNSIP,
+		strconv.Itoa(s.cfg.CoreDNSHealthHostPort()),
+	) + s.cfg.CoreDNSHealthPath()
 
 	var envoyReady, corednsReady bool
 	var envoyErr, corednsErr error
@@ -430,20 +439,28 @@ func (s *Stack) ensureConfigs() (string, error) {
 		return "", fmt.Errorf("ensuring CA: %w", err)
 	}
 
-	// Heal legacy/partial rule state inside a Set closure so concurrent
-	// CLI writers see the normalized result atomically.
+	// Heal legacy/partial rule state: normalize the stored rules and re-save
+	// when the canonical form differs. The read-modify-write is serialized via a
+	// store transaction so it can't interleave with a concurrent handler rule
+	// write and lose an update.
 	var rules []config.EgressRule
-	var healed bool
-	if err := s.store.Set(func(f *EgressRulesFile) {
+	if err = s.store.Txn(func(tx *storage.Tx[EgressRulesFile]) error {
+		var stored []config.EgressRule
+		if _, gErr := tx.Get(rulesField, &stored); gErr != nil {
+			return fmt.Errorf("reading rules store: %w", gErr)
+		}
 		var warnings []string
-		rules, warnings = NormalizeAndDedup(f.Rules)
+		rules, warnings = NormalizeAndDedup(stored)
+		// Log warnings here (not after the Txn) so they survive a heal-write
+		// failure below.
 		for _, w := range warnings {
 			s.log.Warn().Msg(w)
 		}
-		if len(rules) != len(f.Rules) {
+		healed := false
+		if len(rules) != len(stored) {
 			healed = true
 		} else {
-			for i, r := range f.Rules {
+			for i, r := range stored {
 				n := rules[i]
 				if r.Proto != n.Proto || r.Action != n.Action || r.Port != n.Port {
 					healed = true
@@ -452,16 +469,17 @@ func (s *Stack) ensureConfigs() (string, error) {
 			}
 		}
 		if healed {
-			f.Rules = rules
+			if sErr := tx.Set(rulesField, rules); sErr != nil {
+				return fmt.Errorf("healing rules store: %w", sErr)
+			}
+			if wErr := tx.Write(); wErr != nil {
+				return fmt.Errorf("writing healed rules: %w", wErr)
+			}
+			s.log.Info().Int("rules", len(rules)).Msg("healed legacy rules in store")
 		}
+		return nil
 	}); err != nil {
-		return "", fmt.Errorf("healing rules store: %w", err)
-	}
-	if healed {
-		if err := s.store.Write(); err != nil {
-			return "", fmt.Errorf("writing healed rules: %w", err)
-		}
-		s.log.Info().Int("rules", len(rules)).Msg("healed legacy rules in store")
+		return "", fmt.Errorf("syncing rules store: %w", err)
 	}
 
 	if err := RegenerateDomainCerts(rules, certDir, caCert, caKey); err != nil {
@@ -819,8 +837,21 @@ func (s *Stack) ensureContainer(ctx context.Context, name string, spec container
 				s.log.Debug().Str("container", name).Msg("firewall container already running")
 				return nil
 			}
-			s.log.Debug().Str("container", name).Str("state", string(summary.State)).Msg("starting existing firewall container")
-			if _, err := s.docker.ContainerStart(ctx, whail.ContainerStartOptions{ContainerID: summary.ID}); err != nil {
+			s.log.Debug().
+				Str("container", name).
+				Str("state", string(summary.State)).
+				Msg("starting existing firewall container")
+			if _, err = s.docker.ContainerStart(
+				ctx,
+				whail.ContainerStartOptions{
+					ContainerStartOptions: whail.SDKContainerStartOptions{
+						CheckpointID:  "",
+						CheckpointDir: "",
+					},
+					ContainerID:   summary.ID,
+					EnsureNetwork: nil,
+				},
+			); err != nil {
 				return fmt.Errorf("starting existing container %s: %w", name, err)
 			}
 			return nil
@@ -1059,6 +1090,13 @@ const corednsDockerfile = "FROM alpine:3.21@sha256:a8560b36e8b8210634f77d9f7f9ef
 	"COPY coredns /usr/local/bin/coredns\n" +
 	"ENTRYPOINT [\"/usr/local/bin/coredns\"]\n"
 
+// Tar entry permission bits for the CoreDNS build context: the Dockerfile is
+// plain data, the coredns binary must be executable.
+const (
+	corednsTarFileMode = 0o644
+	corednsTarExecMode = 0o755
+)
+
 // corednsBuildContext assembles the two-file tar archive (Dockerfile +
 // coredns binary) that ImageBuild expects.
 func corednsBuildContext() (io.Reader, error) {
@@ -1067,7 +1105,7 @@ func corednsBuildContext() (io.Reader, error) {
 	if err := tw.WriteHeader(&tar.Header{
 		Name: "Dockerfile",
 		Size: int64(len(corednsDockerfile)),
-		Mode: 0644,
+		Mode: corednsTarFileMode,
 	}); err != nil {
 		return nil, err
 	}
@@ -1077,7 +1115,7 @@ func corednsBuildContext() (io.Reader, error) {
 	if err := tw.WriteHeader(&tar.Header{
 		Name: "coredns",
 		Size: int64(len(CoreDNSClawkerBinary)),
-		Mode: 0755,
+		Mode: corednsTarExecMode,
 	}); err != nil {
 		return nil, err
 	}

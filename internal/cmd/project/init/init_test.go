@@ -331,7 +331,7 @@ func TestPerformProjectSetup_PresetRoundTrip(t *testing.T) {
 			require.NoError(t, err, "config file not created")
 
 			// Reload the written file into a store to verify it's valid.
-			reloaded, err := storage.NewFromString[config.Project](
+			reloaded, err := storage.New[config.Project](
 				string(content),
 				storage.WithDefaultsFromStruct[config.Project](),
 			)
@@ -438,7 +438,7 @@ func TestRunNonInteractive_PresetFlag(t *testing.T) {
 	content, err := os.ReadFile(configPath)
 	require.NoError(t, err)
 
-	reloaded, err := storage.NewFromString[config.Project](
+	reloaded, err := storage.New[config.Project](
 		string(content),
 		storage.WithDefaultsFromStruct[config.Project](),
 	)
@@ -514,9 +514,12 @@ func TestApplyVCSToProject(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p := &config.Project{}
-			applyVCSToProject(p, tt.vcs)
+			// Exercise the real store path: path-based Set + decode round-trip.
+			store, err := config.NewProjectStoreFromPreset("")
+			require.NoError(t, err)
+			require.NoError(t, applyVCSToProject(store, tt.vcs))
 
+			p := store.Read()
 			for _, d := range tt.wantDomains {
 				assert.Contains(t, p.Security.Firewall.AddDomains, d)
 			}
@@ -605,7 +608,7 @@ func TestRunNonInteractive_VCSFlags(t *testing.T) {
 	content, err := os.ReadFile(configPath)
 	require.NoError(t, err)
 
-	reloaded, err := storage.NewFromString[config.Project](
+	reloaded, err := storage.New[config.Project](
 		string(content),
 		storage.WithDefaultsFromStruct[config.Project](),
 	)

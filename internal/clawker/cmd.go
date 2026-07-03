@@ -280,10 +280,20 @@ func printUpdateNotification(ios *iostreams.IOStreams, info *update.ReleaseInfo)
 		cs.Cyan(info.LatestVersion))
 	fmt.Fprintf(ios.ErrOut, "To upgrade:\n")
 	fmt.Fprintf(ios.ErrOut, "  %s\n", cs.Bold("brew upgrade clawker"))
-	fmt.Fprintf(ios.ErrOut, "  %s\n", cs.Bold("curl -fsSL "+consts.RawGitHubBaseURL+"/"+consts.GitHubRepo+"/main/scripts/install.sh | bash"))
+	fmt.Fprintf(
+		ios.ErrOut,
+		"  %s\n",
+		cs.Bold(
+			"curl -fsSL "+consts.RawGitHubBaseURL+"/"+consts.GitHubRepo+"/"+consts.GitHubRefMain+"/scripts/install.sh | bash",
+		),
+	)
 	fmt.Fprintf(ios.ErrOut, "%s\n", cs.Yellow(info.ReleaseURL))
-	fmt.Fprintf(ios.ErrOut, "\n%s After upgrading, run %s in each project to apply security fixes and avoid breaking changes.\n",
-		cs.WarningIcon(), cs.Bold("clawker build"))
+	fmt.Fprintf(
+		ios.ErrOut,
+		"\n%s After upgrading, run %s in each project to apply security fixes and avoid breaking changes.\n",
+		cs.WarningIcon(),
+		cs.Bold("clawker build"),
+	)
 }
 
 // printChangelogTeaser renders the entries gained since the last shown version.
@@ -356,5 +366,4 @@ func printError(out io.Writer, cs *iostreams.ColorScheme, err error, cmd *cobra.
 	default:
 		fmt.Fprintf(out, "%s %s\n", cs.FailureIcon(), err)
 	}
-
 }

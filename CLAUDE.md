@@ -91,7 +91,7 @@ Full directory tree with per-package purpose: `.claude/docs/REPO-STRUCTURE.md`. 
 go build -o bin/clawker ./cmd/clawker                        # Build CLI
 make test                                                     # Unit tests (no Docker)
 make test-all                                                 # All suites (unit + e2e + whail)
-go run ./cmd/gen-docs --doc-path docs --markdown --website    # Regenerate CLI docs for Mintlify
+go run ./cmd/gen-docs --doc-path docs --markdown --website --schemas    # Regenerate CLI docs for Mintlify + config JSON schemas
 npx mintlify dev --docs-directory docs                        # Local Mintlify preview
 
 # Golden file tests
@@ -206,6 +206,6 @@ After bug fixes or feature changes:
 
 ### Mintlify (docs.clawker.dev)
 
-Regenerate CLI reference: `go run ./cmd/gen-docs --doc-path docs --markdown --website`
+Regenerate CLI reference: `go run ./cmd/gen-docs --doc-path docs --markdown --website --schemas`
 Local preview: `npx mintlify dev --docs-directory docs`
 See `.claude/rules/mintlify-docs.md` for conventions.

@@ -27,8 +27,10 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -119,10 +121,93 @@ const (
 const (
 	// GitHubRepo is the "owner/name" slug of the clawker repository.
 	GitHubRepo = "schmitthub/clawker"
-	// RawGitHubBaseURL is the base host for raw file content on GitHub.
+	// RawGitHubHost / RawGitHubBaseURL identify raw file content on GitHub.
 	// Joined with a repo slug, ref, and path to fetch a file's raw bytes.
-	RawGitHubBaseURL = "https://raw.githubusercontent.com"
+	RawGitHubHost    = "raw.githubusercontent.com"
+	RawGitHubBaseURL = "https://" + RawGitHubHost
+	// GitHubRefMain is the repository's default branch ref.
+	GitHubRefMain = "main"
 )
+
+// JSON Schema publication. The config JSON Schemas are generated from the
+// Project / Settings struct tags (by cmd/gen-docs), committed under
+// docs/schemas/, and served as raw GitHub content addressed by git ref. The
+// storage layer stamps a `# yaml-language-server: $schema=<url>` head comment
+// into clawker.yaml / settings.yaml so editors validate and autocomplete the
+// files. Build URLs via SchemaURL + SchemaRef rather than
+// re-spelling literals.
+//
+// Ref semantics: the stamped ref must stay frozen under an installed binary,
+// so it is always a version tag or a commit SHA — never a branch. A release
+// binary pins its own version tag, whose tree froze the schemas matching that
+// binary's structs the moment the tag was pushed — no publication step exists
+// to forget. Dev-shaped builds derive the nearest pushed ref from their VCS
+// metadata (git-describe base tag, pseudo-version commit, or the embedded
+// revision). GitHubRefMain is a dead-last resort for builds carrying no VCS
+// metadata at all.
+const (
+	// SchemaDocsDir is the repo-relative directory holding the generated
+	// schemas, also the website output subdirectory under the docs root.
+	SchemaDocsDir = "docs/schemas"
+	// ProjectSchemaFile / SettingsSchemaFile are the generated JSON Schema
+	// filenames under SchemaDocsDir.
+	ProjectSchemaFile  = "clawker.schema.json"
+	SettingsSchemaFile = "settings.schema.json"
+)
+
+// Version-shape patterns consumed by SchemaRef. build.Version arrives in one
+// of these shapes: GoReleaser "0.12.3" / "0.13.0-rc1" (v stripped), Makefile
+// git-describe "v0.12.3[-N-gSHA][-dirty]" or a bare short SHA (--always in a
+// tagless clone), a Go pseudo-version from `go install repo@commit`, or the
+// "DEV" default when no ldflags were injected.
+var (
+	// tagVersionRE matches a version whose tag exists as a pushed git ref —
+	// an X.Y.Z core with optional leading v and optional prerelease suffix.
+	// git describe and GoReleaser only ever report real tags, so any version
+	// of this shape resolves.
+	tagVersionRE = regexp.MustCompile(`^v?\d+\.\d+\.\d+(-[0-9A-Za-z.]+)*$`)
+	// pseudoVersionRE matches a Go pseudo-version and captures its embedded
+	// commit SHA; the module proxy only serves published commits, so the SHA
+	// resolves as a ref even though no tag exists for it.
+	pseudoVersionRE = regexp.MustCompile(`^v0\.0\.0-\d{14}-([0-9a-f]{12})$`)
+	// describeSuffixRE matches the -<distance>-g<sha> suffix git describe
+	// appends when HEAD sits past the nearest tag.
+	describeSuffixRE = regexp.MustCompile(`-\d+-g[0-9a-f]{7,40}$`)
+	// commitSHARE matches a bare git commit SHA (abbreviated or full).
+	commitSHARE = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
+)
+
+// SchemaRef maps a binary's build metadata (build.Version, build.Revision) to
+// the git ref its schemas are served from. The ref is always frozen — a
+// version tag when one is derivable, a commit SHA otherwise — never a branch,
+// because a branch ref would drift under an installed binary. Resolution
+// order: exact tag → git-describe base tag → pseudo-version commit → bare
+// describe SHA → embedded VCS revision → GitHubRefMain (only reachable for a
+// build with no VCS metadata at all, e.g. from a source tarball).
+func SchemaRef(version, revision string) string {
+	v := strings.TrimSuffix(version, "-dirty")
+	if m := pseudoVersionRE.FindStringSubmatch(v); m != nil {
+		return m[1]
+	}
+	v = describeSuffixRE.ReplaceAllString(v, "")
+	if tagVersionRE.MatchString(v) {
+		return "v" + strings.TrimPrefix(v, "v")
+	}
+	if commitSHARE.MatchString(v) {
+		return v
+	}
+	if commitSHARE.MatchString(revision) {
+		return revision
+	}
+	return GitHubRefMain
+}
+
+// SchemaURL returns the raw-GitHub URL a config JSON Schema file is served
+// at for the given git ref (an exact release tag like "v0.12.3", or
+// GitHubRefMain).
+func SchemaURL(filename, ref string) string {
+	return RawGitHubBaseURL + "/" + GitHubRepo + "/" + ref + "/" + SchemaDocsDir + "/" + filename
+}
 
 // Host-side behavior override env vars.
 const (

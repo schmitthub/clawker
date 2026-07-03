@@ -61,6 +61,14 @@ Generates the Mintlify configuration reference page from the live `storage.Schem
 
 Consumers: `cmd/gen-docs` writes `docs/configuration.mdx` from a template pipeline that calls `GenConfigDoc`.
 
+## JSON Schema Generation (jsonschema.go)
+
+Generates editor-facing JSON Schema (draft 2020-12) for the config types from the same `yaml`/`label`/`desc`/`default`/`required` struct tags.
+
+- `GenJSONSchema(t reflect.Type, id, title)` — returns the schema bytes for a config struct. Like `renderYAMLSchema` (and unlike `storage.NormalizeFields`), it recurses into struct-slice element types so array items carry full property schemas. Objects are strict (`additionalProperties:false`) so editors flag unknown keys; `required` arrays come from `required:"true"` tags; `default` tags are coerced to typed JSON values.
+
+Consumers: `cmd/gen-docs` (under `--schemas`) writes `docs/schemas/clawker.schema.json` + `settings.schema.json` (filenames from `consts.{Project,Settings}SchemaFile`; `$id` from `consts.SchemaURL` at the main ref). `internal/config` composes the matching `# yaml-language-server: $schema=` header and stamps it via `storage.WithHeader` into `clawker.yaml` / `settings.yaml` — the ref comes from `consts.SchemaRef` (version tag or commit SHA, never a branch).
+
 ## YAML Generation (yaml.go)
 
 - `GenYamlTree(cmd, dir)` — write YAML files for cmd tree to dir
@@ -75,6 +83,7 @@ Called by `cmd/gen-docs` to regenerate CLI documentation:
 ```bash
 go run ./cmd/gen-docs --doc-path docs --markdown            # Standard markdown
 go run ./cmd/gen-docs --doc-path docs --markdown --website   # Mintlify-safe (MDX-escaped + frontmatter)
+go run ./cmd/gen-docs --doc-path docs --schemas              # Config JSON Schemas (docs/schemas/*.json)
 ```
 
 ## Tests

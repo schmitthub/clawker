@@ -219,7 +219,7 @@ type Config interface {
 }
 ```
 
-`cfg.ProjectStore().Set(fn)` / `cfg.ProjectStore().Write()` and `cfg.SettingsStore().Set(fn)` / `cfg.SettingsStore().Write()` are the mutation API — thin wrappers on `Store[T].Set` / `Store[T].Write`.
+`cfg.ProjectStore().Set(path, value)` / `cfg.ProjectStore().Write()` and `cfg.SettingsStore().Set(path, value)` / `cfg.SettingsStore().Write()` are the mutation API — thin wrappers on `Store[T].Set` / `Store[T].Write` (with `Remove(path)` for clears).
 
 **Usage:**
 - `cfg.Project().Build.Image` — from merged config walk-up
@@ -229,32 +229,30 @@ type Config interface {
 
 **No collision risk:** If both schemas grow a `Build` section, `cfg.Settings().Build` vs `cfg.Project().Build`.
 
-**No generic `Get(key)` / `Set(key, val)`.** Typed mutation via `cfg.ProjectStore().Set(fn)` / `cfg.SettingsStore().Set(fn)` only.
+**Path-based mutation.** `cfg.ProjectStore().Set(path, value)` / `Remove(path)` and `cfg.SettingsStore().Set(path, value)` mutate by dotted path; `Read()` returns the typed snapshot and `Get(path, &dest)` decodes one field. There is no closure mutator.
 
-#### Node Tree Architecture
+#### Node-Native Architecture
 
-The node tree (`map[string]any`) is the merge engine and persistence layer. The typed struct `*T` is a deserialized view — the read/write API.
+Every layer and the merged tree are `yaml.Node` trees, so comments ride from load through merge to write. The typed struct `*T` is an immutable snapshot decoded from the merged node and published via `atomic.Pointer` (lock-free `Read`).
 
 ```
-Load:   file → map[string]any ─┐
-                                ├→ merge maps → deserialize → *T
-        string → map[string]any ─┘
+Load:   file/string → layer node ─→ merge nodes → decode → immutable *T
 
-Set:    *T (mutated) → structToMap → merge into tree → mark dirty
+Set:    encode value → graft into merged node at path → mark dirty → re-decode
 
-Write:  tree → route by provenance → per-file atomic write
+Write:  dirty paths → route by provenance → graft into target layer node → per-file atomic write
 ```
 
-**Why not struct-based merge:** `yaml.Marshal` respects `omitempty` tags, silently dropping fields set to zero values (e.g., `false`, `0`, `""`). Map-based merge avoids this — absent keys mean "not set" (not iterated), present keys with zero values mean "explicitly set". `structToMap` uses reflection to serialize structs ignoring `omitempty` tags, so explicit clears survive.
+**Why node-native:** `yaml.Marshal` respects `omitempty` tags, silently dropping fields set to zero values (e.g., `false`, `0`, `""`). Grafting the encoded value straight into the node tree avoids this — the value handed to `Set` lands as-is, so explicit zero values survive and per-field comments are preserved across a merge mutation.
 
 #### Two-Phase Load
 
-1. **Phase 1 (lenient):** YAML → `map[string]any` → run precondition migrations → re-save if anything changed
-2. **Phase 2 (typed):** Merged map → typed struct via YAML round-trip. Only known keys read, unknowns silently ignored. Struct defaults fill missing keys.
+1. **Phase 1 (lenient):** YAML → layer node → run precondition migrations against each layer's own node → re-save any layer a migration changed
+2. **Phase 2 (typed):** Merged node → typed struct snapshot via `decode`. Only known keys read, unknowns silently ignored. Struct defaults fill missing keys.
 
 Unknown fields silently ignored — matches Claude Code and Serena. No `KnownFields(true)`. Typos are the user's problem.
 
-`structToMap` (used in `Set`) ignores `omitempty` and preserves unknown keys via `mergeIntoTree`. Raw YAML content that the struct doesn't model survives round-trips.
+Node merge preserves unknown keys not in the struct schema, so raw YAML content the struct doesn't model survives round-trips.
 
 #### Merge Strategy
 
@@ -287,7 +285,7 @@ Higher precedence wins silently (no warnings on override).
 | `merge:"overwrite"` | Last-wins (explicit) | Slices, maps | (none currently — all overwrite fields use implicit default) |
 | (none) | Last-wins | Scalars, slices, maps | All scalar fields, all untagged slices, `env` |
 
-**Maps** are schema-aware: `tagRegistry` carries `FieldKind` so `mergeTrees` distinguishes `map[string]string` fields (opaque values) from struct nesting. Untagged maps default to last-wins (highest-priority layer's map replaces entirely). Tagged `merge:"union"` maps do key-by-key merge across layers.
+**Maps** are schema-aware: `tagRegistry` carries `FieldKind` so `mergeNodes` distinguishes `map[string]string` fields (opaque values) from struct nesting. Untagged maps default to last-wins (highest-priority layer's map replaces entirely). Tagged `merge:"union"` maps do key-by-key merge across layers.
 
 Untagged slices default to overwrite at runtime (safe fallback). A reflection test in CI asserts every `[]T` field has an explicit `merge` tag — missing tag = test failure. Go can't enforce struct tags at compile time; test + CI gate is the standard approach.
 
@@ -300,34 +298,43 @@ Untagged slices default to overwrite at runtime (safe fallback). A reflection te
 Precondition-based idempotent functions (Claude Code + Serena pattern):
 
 ```go
-func migrateOldBuildKey(raw map[string]any) bool {
-    // Check: does old data shape exist?
-    if _, ok := raw["old_key"]; !ok {
-        return false // already current or never had old shape
+func migrateOldBuildKey(s *storage.Store[Project]) (bool, error) {
+    // Check: does the old data shape exist in this layer?
+    var v any
+    had, err := s.Get("old_key", &v)
+    if err != nil {
+        return false, err
     }
-    // Transform: old shape → new shape
-    raw["new_key"] = raw["old_key"]
-    delete(raw, "old_key")
-    return true // signal: re-save needed
+    if !had {
+        return false, nil // already current or never had old shape
+    }
+    // Transform: old shape → new shape, then drop the legacy key.
+    if err := s.Set("new_key", v); err != nil {
+        return false, err
+    }
+    if _, err := s.Remove("old_key"); err != nil {
+        return false, err
+    }
+    return true, nil // signal: re-save needed
 }
 ```
 
-- Each migration checks if old data shape exists in the raw map
+- Each migration checks if the old data shape exists via the store's `Has`/`Get`
 - If found: transform → re-save → done
 - If not found: skip (already current or never applied)
 - No version field, no migration chain, no ordering constraints
-- Runs during Phase 1 of load (on the raw map, before struct validation)
+- Runs during Phase 1 of load (against each layer's own node, before struct validation)
 - Idempotent by construction — safe for concurrent processes
 
 #### Write Model
 
-All writes go through `Set(fn)` + `Write()` on the store obtained from the `Config` interface:
+All writes go through `Set(path, value)` + `Write()` on the store obtained from the `Config` interface:
 
 ```go
-cfg.ProjectStore().Set(func(p *Project) { p.Build.Image = "ubuntu:24.04" })
-cfg.ProjectStore().Write("clawker.local.yaml")
+cfg.ProjectStore().Set("build.image", "ubuntu:24.04")
+cfg.ProjectStore().Write(storage.ToPath(localPath))
 
-cfg.SettingsStore().Set(func(s *Settings) { s.Logging.MaxSizeMB = 100 })
+cfg.SettingsStore().Set("logging.max_size_mb", 100)
 cfg.SettingsStore().Write()
 ```
 
@@ -335,10 +342,10 @@ cfg.SettingsStore().Write()
 |------|-------------|--------|------|
 | `cfg.SettingsStore().Write()` | `~/.config/clawker/settings.yaml` | `clawker project init` (bootstrap), settings commands | Settings mutation |
 | `cfg.ProjectStore().Write()` | Auto-routed by provenance | Programmatic | Project config updates |
-| `cfg.ProjectStore().Write("clawker.local.yaml")` | First layer matching filename | User/programmatic | Personal overrides |
+| `cfg.ProjectStore().Write(ToPath(p))` | Explicit absolute path | User/programmatic | Personal overrides |
 | `pm.Write()` | `~/.local/share/clawker/registry.yaml` | `internal/project` | Runtime CRUD |
 
-Write semantics: `Set(fn)` mutates in-memory struct + serializes back into node tree via `structToMap`. `Write()` persists the current tree — routes fields by provenance, read-merge-write per file with atomic I/O (temp+fsync+rename).
+Write semantics: `Set(path, value)` grafts the encoded value into the in-memory node tree and marks the path dirty. `Write()` persists dirty fields — routes each by provenance, grafts into a clone of the target layer's node, encodes, and atomically writes per file (temp+fsync+rename).
 
 Settings files do NOT need locking — per-machine, no concurrent writers. Registry uses flock (owned by `internal/project`).
 
@@ -346,7 +353,7 @@ Settings files do NOT need locking — per-machine, no concurrent writers. Regis
 
 | Package | Owns | Imports |
 |---------|------|---------|
-| `internal/storage` | Node tree engine (map-based merge, provenance), structToMap (omitempty-safe), atomic write (temp+rename), flock, YAML read/write | Leaf — only internal import is `internal/consts` (stdlib-only) |
+| `internal/storage` | Node tree engine (node-native merge, provenance), path-based Set/Remove, atomic write (temp+rename), flock, YAML read/write | Leaf — only internal import is `internal/consts` (stdlib-only) |
 | `internal/config` | `settings.yaml` + `clawker.yaml` walk-up. One `Config` interface. Two schemas. | `storage`, `logger` |
 | `internal/project` | `registry.yaml`. Project domain: registration, resolution, worktree lifecycle. | `storage`, `consts`, `git`, `logger`, `text` |
 
@@ -358,10 +365,10 @@ Storage provides mechanisms — composing packages (`config/mocks`, `project/moc
 
 | Mechanism | What it does | Owned by |
 |-----------|-------------|----------|
-| `storage.NewFromString[T](yaml)` | Separate constructor. Bypasses the entire pipeline (no discovery, no migration, no layering, no merge). Parses YAML string → node tree → `*T`. No write paths — Set+Write errors. | `storage` |
+| `storage.New[T](yaml)` (no path options) | Same constructor, no discovery options: the seed YAML is the only layer (no files, no migrations). Parses YAML string → node tree → `*T`. No write paths — Set+Write errors. | `storage` |
 | Real `Store[T]` + `t.TempDir()` | Full store pointed at a jailed temp dir. Consumer wires its own schemas/filenames/defaults. Full node tree plumbing. | Consumer (`config/mocks`, `project/mocks`) |
 
-Consumer mock APIs stay unchanged (`NewBlankConfig`, `NewFromString`, `NewIsolatedTestConfig`, etc.). Callers never see `Store[T]` or `NewFromString[T]` directly.
+Consumer mock APIs stay unchanged (`NewBlankConfig`, `NewFromString`, `NewIsolatedTestConfig`, etc.). Callers never see `Store[T]` or `storage.New[T]` directly.
 
 `Store[T]` itself has no mock interface — it's a concrete struct composed inside `configImpl` / `projectManagerImpl`. The consumer interfaces (`Config`, `ProjectManager`) are the mock boundary, generated via `go:generate moq`.
 

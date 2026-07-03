@@ -26,11 +26,11 @@ Create a package under `internal/config/storeui/<domain>/` that exports:
 // Overrides customizes reflected fields for interactive editing.
 func Overrides() []storeui.Override
 
-// LayerTargets builds save destinations from discovered store layers.
-func LayerTargets(store *storage.Store[T], cfg config.Config) []storeui.LayerTarget
+// LayerTargets builds save destinations from the store's own write targets.
+func LayerTargets(store *storage.Store[T]) ([]storeui.LayerTarget, error)
 
 // Edit is the convenience entry point wiring overrides + targets.
-func Edit(ios *iostreams.IOStreams, store *storage.Store[T], cfg config.Config) (storeui.Result, error)
+func Edit(ios *iostreams.IOStreams, store *storage.Store[T]) (storeui.Result, error)
 ```
 
 **Override patterns:**
@@ -44,10 +44,9 @@ func Edit(ios *iostreams.IOStreams, store *storage.Store[T], cfg config.Config) 
 
 **LayerTarget patterns:**
 
-- Check for `.clawker/` directory existence to decide between dir-form and flat-form local paths
-- `BuildLayerTargets` generates "Local" (CWD dotfile or `.clawker/` subdir) and "User" (config dir) automatically; discovered store layers use their shortened paths as labels
+- `BuildLayerTargets(store)` derives all targets from `store.WriteTargets()`: the walk-up target (the in-play walk-up layer for the write filename, or the CWD dual-placement candidate when none is discovered) is labeled "Project", configured-directory candidates "User", and discovered layers use their shortened path as label. Each target carries the store-reported `Filename`; domain adapters relabel filenames they recognize (the project adapter labels `clawker.local.yaml` layers `storeui.LabelLocal`)
+- A store without walk-up (e.g. settings) gets no "Project" target — it could never rediscover a CWD file, so offering one would silently lose the saved value
 - Use `ShortenHome()` for the Description field (exported from `internal/storeui`)
-- Include `store.Layers()` entries so users can save back to the file a value came from
 
 ### Step 2: Command Integration
 
@@ -94,11 +93,11 @@ Edit[T storage.Schema](ios, store, opts...):
 
 When a user edits a field and picks a save target:
 
-1. `store.Set(func(t *T) { SetFieldValue(t, fieldPath, value) })` — update in-memory
+1. Coerce the TUI string into the field's typed value via a fresh `T`: `SetFieldValue(&fresh, fieldPath, value)` then `GetFieldValue(&fresh, fieldPath)` — then `store.Set(fieldPath, typed)` updates in-memory
 2. (conditional) `store.MarkForWrite(fieldPath)` — force-dirty the path when saving to a non-provenance-winner layer (i.e., the merged value is unchanged but the target layer file needs updating)
 3. `store.Write(storage.ToPath(target.Path))` — persist dirty fields to the chosen layer file
 
-`Write()` internally remerges layers, so the snapshot reflects the true merged state after each save. Values are type-coerced during `Set` via `SetFieldValue`.
+`Write()` internally remerges layers, so the snapshot reflects the true merged state after each save. The TUI string is type-coerced before `Set` via `SetFieldValue`/`GetFieldValue`; deletes go through `store.Remove(path)`.
 
 ### Field Discovery (WalkFields)
 
@@ -175,8 +174,9 @@ Multiline text editor wrapping `bubbles/textarea`.
 | Method | Purpose |
 |--------|---------|
 | `store.Read()` | Get immutable `*T` snapshot |
-| `store.Set(func(*T))` | Mutate in-memory via closure |
-| `store.Delete(path)` | Remove a dotted path from tree + re-publish snapshot |
+| `store.Get(path, out)` | Decode an in-memory field by dotted path into a typed `out` |
+| `store.Set(path, value)` | Set an in-memory field by dotted path |
+| `store.Remove(path)` | Remove a dotted path from tree + re-publish snapshot |
 | `store.Layers()` | All discovered layers (for layer breakdown display) |
 | `store.Provenance(path)` | Which layer won a specific field |
 | `store.ProvenanceMap()` | All fields → source file paths |
@@ -214,10 +214,12 @@ func TestRoundTrip(t *testing.T) {
     env := testenv.New(t)
     store, dir := newTestStore[myStruct](t, env, initialYAML)
 
-    // Edit through the plumbing
-    require.NoError(t, store.Set(func(s *myStruct) {
-        require.NoError(t, storeui.SetFieldValue(s, "field.path", "new-value"))
-    }))
+    // Edit through the plumbing (coerce the string, then set by path)
+    var fresh myStruct
+    require.NoError(t, storeui.SetFieldValue(&fresh, "field.path", "new-value"))
+    typed, err := storeui.GetFieldValue(&fresh, "field.path")
+    require.NoError(t, err)
+    require.NoError(t, store.Set("field.path", typed))
     require.NoError(t, store.Write())
 
     // Reload from disk — independent verification
@@ -227,7 +229,7 @@ func TestRoundTrip(t *testing.T) {
 }
 ```
 
-Use `testenv.New(t)` for isolated XDG directories. Create stores with `storage.NewStore[T]` + `WithFilenames` + `WithPaths` for filesystem-backed tests.
+Use `testenv.New(t)` for isolated XDG directories. Create stores with `storage.New[T]("", ...)` + `WithFilenames` + `WithPaths` for filesystem-backed tests.
 
 ### Testing WalkFields
 

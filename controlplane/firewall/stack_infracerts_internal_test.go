@@ -7,7 +7,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/testenv"
@@ -66,9 +65,7 @@ func TestStack_ensureInfraClientCerts_DispatchesPerService(t *testing.T) {
 func TestStack_ensureConfigs_InfraCertsReadyLifecycle(t *testing.T) {
 	testenv.New(t)
 	cfg := configmocks.NewIsolatedTestConfig(t)
-	require.NoError(t, cfg.SettingsStore().Set(func(s *config.Settings) {
-		s.Monitoring.OtelInfraPort = 4319
-	}))
+	require.NoError(t, cfg.SettingsStore().Set("monitoring.otel_infra_port", 4319))
 
 	prov := &fakeOtelProvisioner{}
 	store, err := NewRulesStore(cfg)
@@ -110,15 +107,18 @@ func TestStack_ensureConfigs_InfraCertsReadyLifecycle(t *testing.T) {
 func TestStack_alsConfig_GatesOnCertsReady(t *testing.T) {
 	testenv.New(t)
 	cfg := configmocks.NewIsolatedTestConfig(t)
-	require.NoError(t, cfg.SettingsStore().Set(func(s *config.Settings) {
-		s.Monitoring.OtelInfraPort = 4319
-	}))
+	require.NoError(t, cfg.SettingsStore().Set("monitoring.otel_infra_port", 4319))
 
 	s := NewStack(nil, cfg, logger.Nop(), nil, nil)
 	assert.Equal(t, ALSConfig{}, s.alsConfig(), "infraCertsReady=false must short-circuit before returning MTLS=true")
 
 	s.infraCertsReady = true
-	assert.Equal(t, ALSConfig{Port: 4319, MTLS: true}, s.alsConfig(), "ready must yield MTLS=true with the settings-store port")
+	assert.Equal(
+		t,
+		ALSConfig{Port: 4319, MTLS: true},
+		s.alsConfig(),
+		"ready must yield MTLS=true with the settings-store port",
+	)
 }
 
 // TestStack_ensureInfraClientCerts_NilProvisioner_NoOp pins the

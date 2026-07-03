@@ -76,8 +76,7 @@ func WithLayerTargets(targets []LayerTarget) Option
 
 // Shared helpers (used by domain adapters)
 func ShortenHome(path string) string                     // Replace $HOME with ~
-func ResolveLocalPath(cwd, filename string) string       // Dual-placement CWD dot-file
-func BuildLayerTargets(filename, configDir string, layers []storage.LayerInfo) []LayerTarget // Stock Local/User/Original targets
+func BuildLayerTargets[T storage.Schema](store *storage.Store[T]) ([]LayerTarget, error) // Save targets from store.WriteTargets(): walk-up target → "Project", dir candidates → "User", layers → shortened path; targets carry Filename for domain relabeling
 func Ptr[T any](v T) *T                                 // Pointer helper for Override fields
 ```
 
@@ -88,7 +87,7 @@ func Ptr[T any](v T) *T                                 // Pointer helper for Ov
 | `config/storeui/settings` | `config.Settings` | host_proxy read-only |
 | `config/storeui/project` | `config.Project` | workspace mode as Select; maps use KV editor |
 
-Each adapter exports `Overrides() []storeui.Override`, `LayerTargets(store, cfg) []storeui.LayerTarget`, and `Edit(ios, store, cfg) (storeui.Result, error)`.
+Each adapter exports `Overrides() []storeui.Override`, `LayerTargets(store) ([]storeui.LayerTarget, error)`, and `Edit(ios, store) (storeui.Result, error)`. Targets come from the store's own `WriteTargets()` — a store without walk-up (settings) never offers a CWD "Project" target it could not read back.
 
 ## Data Flow
 
@@ -101,8 +100,8 @@ Edit[T](ios, store, opts...):
   4. Filter skip paths, ApplyOverrides (domain overrides — TUI-specific only)
   5. fieldsToBrowserFields() → []tui.BrowserField (type mapping)
   6. tui.NewFieldBrowser(cfg) → tui.RunProgram (presentation)
-  7. OnFieldSaved callback per field: store.Set(SetFieldValue...) + writeFieldToFile(target)
-  7b. OnFieldDeleted callback per field: store.Delete(path) + store.Write(storage.ToPath(target.Path))
+  7. OnFieldSaved callback per field: store.Set(fieldPath, coercedValue) + writeFieldToFile(target)
+  7b. OnFieldDeleted callback per field: store.Remove(path) + store.WriteTo(target.Path)
   8. Return Result (Saved, SavedCount)
 ```
 
@@ -116,7 +115,7 @@ Edit[T](ios, store, opts...):
 6. Type mapping between `storeui.FieldKind` and `tui.BrowserFieldKind` happens in `edit.go` — tui knows nothing about storeui types
 7. `KindMap` → `BrowserMap` → `KVEditorModel` (interactive key-value pair editor); `KindStructSlice` → `BrowserStructSlice` → `TextareaEditorModel` (raw YAML)
 8. Per-field save model: each edit is persisted immediately via layer picker → `onFieldSaved` callback. No batch save.
-9. Per-field delete: `d` key in browse state → layer picker → `onFieldDeleted` callback. Removes key from YAML file and in-memory tree via `store.Delete`. Lets lower-priority layer values show through.
+9. Per-field delete: `d` key in browse state → layer picker → `onFieldDeleted` callback. Removes key from YAML file and in-memory tree via `store.Remove`. Lets lower-priority layer values show through.
 
 ## Gotchas
 

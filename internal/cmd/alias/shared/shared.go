@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/google/shlex"
+
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/storage"
@@ -148,12 +149,15 @@ func WriteAliases(out io.Writer, path string, mutate func(map[string]string)) er
 	if err != nil {
 		return err
 	}
-	if err := store.Set(func(p *config.Project) {
-		if p.Aliases == nil {
-			p.Aliases = make(map[string]string)
-		}
-		mutate(p.Aliases)
-	}); err != nil {
+	var aliases map[string]string
+	if _, err = store.Get("aliases", &aliases); err != nil {
+		return fmt.Errorf("reading aliases from %s: %w", path, err)
+	}
+	if aliases == nil {
+		aliases = make(map[string]string)
+	}
+	mutate(aliases)
+	if err = store.Set("aliases", aliases); err != nil {
 		return fmt.Errorf("updating %s: %w", path, err)
 	}
 	if err := store.WriteTo(path); err != nil {

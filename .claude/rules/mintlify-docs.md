@@ -25,7 +25,7 @@ paths: ["./docs/**"]
 ### Regenerating CLI Reference
 
 ```bash
-go run ./cmd/gen-docs --doc-path docs --markdown --website
+go run ./cmd/gen-docs --doc-path docs --markdown --website --schemas
 ```
 
 Source: `internal/docs/markdown.go` (`GenMarkdownTreeWebsite`, `EscapeMDXProse`) + `cmd/gen-docs/main.go` (`--website` flag)

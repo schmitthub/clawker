@@ -1,0 +1,446 @@
+{
+  "$id": "https://raw.githubusercontent.com/schmitthub/clawker/main/docs/schemas/clawker.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "agent": {
+      "additionalProperties": false,
+      "properties": {
+        "claude_code": {
+          "additionalProperties": false,
+          "properties": {
+            "config": {
+              "additionalProperties": false,
+              "properties": {
+                "strategy": {
+                  "default": "copy",
+                  "description": "How to initialize Claude Code config: copy syncs host settings/plugins, fresh starts clean",
+                  "title": "Strategy",
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mount_projects": {
+              "default": true,
+              "description": "Bind mount host ~/.claude/projects/ into the container so auto-memory and sessions are shared across container runs and instances",
+              "title": "Mount Host Projects",
+              "type": "boolean"
+            },
+            "use_host_auth": {
+              "default": true,
+              "description": "Let the container use your host Claude Code credentials so you don't have to re-authenticate. The credential will be copied in at creation and persisted in the container's volume, but the container will refresh its tokens independently. If new containers keep starting unauthenticated, log in on the host to rotate the refresh token seed.",
+              "title": "Use Host Auth",
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
+        "editor": {
+          "description": "Editor for git commits and interactive editing inside the container",
+          "title": "Editor",
+          "type": "string"
+        },
+        "enable_shared_dir": {
+          "default": false,
+          "description": "Share files between host and container via ~/.clawker-share (read-only in container)",
+          "title": "Enable Shared Dir",
+          "type": "boolean"
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Set container env vars directly; use from_env to forward host values instead",
+          "title": "Env",
+          "type": "object"
+        },
+        "env_file": {
+          "description": "Load environment variables from .env-style files (e.g. .env.local)",
+          "items": {
+            "type": "string"
+          },
+          "title": "Env Files",
+          "type": "array"
+        },
+        "from_env": {
+          "description": "Pass specific host env vars into the container (e.g. AWS_PROFILE, GITHUB_TOKEN)",
+          "items": {
+            "type": "string"
+          },
+          "title": "Forward Env Vars",
+          "type": "array"
+        },
+        "post_init": {
+          "description": "Shell commands to run after container starts but before Claude Code launches (e.g. install MCP servers). Useful for seeding claude code config or running setup steps that require the container environment to be up. Runs only one time after container creation in the workdir with env vars loaded.",
+          "title": "Post-Init Script",
+          "type": "string"
+        },
+        "pre_run": {
+          "description": "Shell commands run on every container start, in the workdir, right before the CMD (default: claude) runs (e.g. npm install)",
+          "title": "Pre-Run Script",
+          "type": "string"
+        },
+        "visual": {
+          "description": "Visual editor ($VISUAL) for the container",
+          "title": "Visual Editor",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "aliases": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "default": {
+        "go": "run --rm -it --agent $1 @ --dangerously-skip-permissions",
+        "wt": "run --rm -it --agent $1 --worktree $2 @ --dangerously-skip-permissions"
+      },
+      "description": "Command aliases expanded before execution; the value is appended to 'clawker' and supports $1..$N placeholders; merged across all config layers",
+      "title": "Aliases",
+      "type": "object"
+    },
+    "build": {
+      "additionalProperties": false,
+      "properties": {
+        "context": {
+          "description": "Directory to use as Docker build context when using a custom Dockerfile (relative to project root)",
+          "title": "Build Context",
+          "type": "string"
+        },
+        "dockerfile": {
+          "description": "Use your own Dockerfile instead of clawker's generated one; ignores image, packages, and instructions",
+          "title": "Dockerfile",
+          "type": "string"
+        },
+        "image": {
+          "description": "Starting Docker image (e.g. node:20-slim, python:3.12); clawker layers tools on top",
+          "title": "Base Image",
+          "type": "string"
+        },
+        "inject": {
+          "additionalProperties": false,
+          "properties": {
+            "after_claude_install": {
+              "description": "Add Dockerfile instructions as the claude user with Claude Code available — e.g. add MCP servers, install plugins, or extensions",
+              "items": {
+                "type": "string"
+              },
+              "title": "After Claude Install",
+              "type": "array"
+            },
+            "after_from": {
+              "description": "Add Dockerfile instructions while root with only the base image — e.g. apt sources, proxy config, or CA certs that package installation depends on",
+              "items": {
+                "type": "string"
+              },
+              "title": "After FROM",
+              "type": "array"
+            },
+            "after_packages": {
+              "description": "Add Dockerfile instructions while root with system packages available — e.g. compile native libraries or install tools that need those packages",
+              "items": {
+                "type": "string"
+              },
+              "title": "After Packages",
+              "type": "array"
+            },
+            "after_user_setup": {
+              "description": "Add Dockerfile instructions while root with the claude user created — e.g. set up directories, fix permissions, or configure services",
+              "items": {
+                "type": "string"
+              },
+              "title": "After User Setup",
+              "type": "array"
+            },
+            "after_user_switch": {
+              "description": "Add Dockerfile instructions as the claude user — e.g. install dotfiles, configure your shell, or set up user-level tools",
+              "items": {
+                "type": "string"
+              },
+              "title": "After User Switch",
+              "type": "array"
+            },
+            "before_entrypoint": {
+              "description": "Add Dockerfile instructions at the very end — e.g. final environment tweaks or cleanup that must happen after everything else",
+              "items": {
+                "type": "string"
+              },
+              "title": "Before Entrypoint",
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
+        "instructions": {
+          "additionalProperties": false,
+          "properties": {
+            "args": {
+              "description": "Build-time variables resolved during docker build (ARG); not available at runtime",
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "default": {
+                    "description": "Value used when not overridden by --build-arg at build time",
+                    "title": "Default",
+                    "type": "string"
+                  },
+                  "name": {
+                    "description": "Build argument name (referenced as $NAME in Dockerfile instructions)",
+                    "title": "Name",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "title": "Args",
+              "type": "array"
+            },
+            "copy": {
+              "description": "Bake config files or credentials into the image (e.g. .npmrc, SSH config)",
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "chmod": {
+                    "description": "Set file permissions (e.g. 0644)",
+                    "title": "Chmod",
+                    "type": "string"
+                  },
+                  "chown": {
+                    "description": "Set file ownership (e.g. claude:claude)",
+                    "title": "Chown",
+                    "type": "string"
+                  },
+                  "dest": {
+                    "description": "Where to place it inside the container",
+                    "title": "Destination",
+                    "type": "string"
+                  },
+                  "src": {
+                    "description": "File or directory to copy from your project",
+                    "title": "Source",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "title": "Copy",
+              "type": "array"
+            },
+            "env": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Environment variables baked into the image; use agent.env for runtime-only vars",
+              "title": "Env",
+              "type": "object"
+            },
+            "labels": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Custom Docker labels for image metadata or tooling integration",
+              "title": "Labels",
+              "type": "object"
+            },
+            "root_run": {
+              "description": "Setup commands that need root privileges (e.g. system config, additional repos)",
+              "items": {
+                "type": "string"
+              },
+              "title": "Root Run",
+              "type": "array"
+            },
+            "user_run": {
+              "description": "Setup commands that run as the container user (e.g. npm install -g, pip install)",
+              "items": {
+                "type": "string"
+              },
+              "title": "User Run",
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
+        "packages": {
+          "default": [
+            "ripgrep"
+          ],
+          "description": "System packages (apt/apk) needed by your project that aren't in the base image",
+          "items": {
+            "type": "string"
+          },
+          "title": "Packages",
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "name": {
+      "description": "Override the project slug derived from the directory name (set this when the directory name isn't a good clawker identifier — e.g. dots, spaces, unicode)",
+      "title": "Project Name",
+      "type": "string"
+    },
+    "security": {
+      "additionalProperties": false,
+      "properties": {
+        "cap_add": {
+          "description": "Extra Linux capabilities for the agent container. Empty by default — the eBPF firewall is attached from outside, so no in-container caps are needed. Add e.g. SYS_PTRACE only if your workflow requires it.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Cap Add",
+          "type": "array"
+        },
+        "docker_socket": {
+          "default": false,
+          "description": "Mount the host Docker socket (DooD, not DinD) — lets the container manage sibling containers but is a security risk",
+          "title": "Docker Socket",
+          "type": "boolean"
+        },
+        "enable_host_proxy": {
+          "default": true,
+          "description": "Run a proxy for browser-based auth flows and credential forwarding from the host",
+          "title": "Host Proxy",
+          "type": "boolean"
+        },
+        "firewall": {
+          "additionalProperties": false,
+          "properties": {
+            "add_domains": {
+              "description": "Shorthand: domains the container can reach over HTTPS (converted to https+port-443 rules)",
+              "items": {
+                "type": "string"
+              },
+              "title": "Firewall Domains",
+              "type": "array"
+            },
+            "rules": {
+              "description": "Full egress rules with protocol, port, and path control",
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "action": {
+                    "description": "Allow or deny traffic to this destination (default: allow)",
+                    "title": "Action",
+                    "type": "string"
+                  },
+                  "dst": {
+                    "description": "Domain or IP the container needs to reach (e.g. api.github.com, registry.npmjs.org)",
+                    "title": "Destination",
+                    "type": "string"
+                  },
+                  "insecure_skip_tls_verify": {
+                    "description": "Accept a self-signed/untrusted upstream TLS cert for this destination (default: false). Use only for trusted local-dev endpoints.",
+                    "title": "Insecure Skip TLS Verify",
+                    "type": "boolean"
+                  },
+                  "path_default": {
+                    "description": "What to do with HTTP paths that don't match any path rule (allow or deny)",
+                    "title": "Path Default",
+                    "type": "string"
+                  },
+                  "path_rules": {
+                    "description": "Fine-grained path filtering (only applies to http/https/ws/wss)",
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "action": {
+                          "description": "Whether to allow or deny requests matching this path",
+                          "title": "Action",
+                          "type": "string"
+                        },
+                        "methods": {
+                          "description": "HTTP methods this path rule applies to (e.g. GET, HEAD); empty = all methods. Only meaningful for http/https/ws/wss.",
+                          "items": {
+                            "type": "string"
+                          },
+                          "title": "Methods",
+                          "type": "array"
+                        },
+                        "path": {
+                          "description": "URL path to match: a literal prefix starting with / (e.g. /v1/api), or — when prefixed with ~ — an RE2 regex matched full-string for exact/anchored matching (e.g. ~/repos/(a|b)/?)",
+                          "title": "Path",
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "title": "Path Rules",
+                    "type": "array"
+                  },
+                  "port": {
+                    "description": "Destination port: a single port (443) or an inclusive range (9000-9100); empty = protocol default",
+                    "title": "Port",
+                    "type": "string"
+                  },
+                  "proto": {
+                    "description": "L7 protocol: https (TLS-MITM, default), http (plaintext HCM), ws/wss (websocket over http/https), ssh, tcp, udp, or any opaque L7 name for TCP pass-through",
+                    "title": "Protocol",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "title": "Rules",
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
+        "git_credentials": {
+          "additionalProperties": false,
+          "properties": {
+            "copy_git_config": {
+              "default": true,
+              "description": "Sync your host .gitconfig (aliases, user.name, user.email) into the container",
+              "title": "Copy Git Config",
+              "type": "boolean"
+            },
+            "forward_gpg": {
+              "default": true,
+              "description": "Let git sign commits using your host GPG keys",
+              "title": "Forward GPG",
+              "type": "boolean"
+            },
+            "forward_https": {
+              "default": true,
+              "description": "Let git clone/push use your host HTTPS credentials (via host proxy)",
+              "title": "Forward HTTPS",
+              "type": "boolean"
+            },
+            "forward_ssh": {
+              "default": true,
+              "description": "Let git use your host SSH keys for cloning and pushing",
+              "title": "Forward SSH",
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "docker_socket"
+      ],
+      "type": "object"
+    },
+    "workspace": {
+      "additionalProperties": false,
+      "properties": {
+        "default_mode": {
+          "default": "bind",
+          "description": "bind mounts your project live (edits sync); snapshot copies it (isolated, disposable)",
+          "title": "Default Mode",
+          "type": "string"
+        }
+      },
+      "required": [
+        "default_mode"
+      ],
+      "type": "object"
+    }
+  },
+  "title": "clawker project configuration (clawker.yaml)",
+  "type": "object"
+}

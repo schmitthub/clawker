@@ -2,7 +2,10 @@
 package project
 
 import (
+	"fmt"
+
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/storage"
 	"github.com/schmitthub/clawker/internal/storeui"
@@ -26,16 +29,34 @@ func Overrides() []storeui.Override {
 	}
 }
 
-// LayerTargets builds the per-field save destinations for project config.
-func LayerTargets(store *storage.Store[config.Project], cfg config.Config) []storeui.LayerTarget {
-	return storeui.BuildLayerTargets(cfg.ProjectConfigFileName(), config.ConfigDir(), store.Layers())
+// LayerTargets builds the per-field save destinations from the store's own
+// write targets. Inside a project the walk-up store offers a "Project"
+// target; outside a project (no walk-up anchor) it does not. Discovered
+// local override files (the clawker.local.yaml filename, any placement) are
+// relabeled "Local" — filename naming is domain knowledge storeui does not
+// hold.
+func LayerTargets(store *storage.Store[config.Project]) ([]storeui.LayerTarget, error) {
+	targets, err := storeui.BuildLayerTargets(store)
+	if err != nil {
+		return nil, fmt.Errorf("building project layer targets: %w", err)
+	}
+	for i, tgt := range targets {
+		if tgt.Filename == consts.ProjectLocalConfigFile && tgt.Label != storeui.LabelProject {
+			targets[i].Label = storeui.LabelLocal
+		}
+	}
+	return targets, nil
 }
 
 // Edit runs an interactive project config editor.
-func Edit(ios *iostreams.IOStreams, store *storage.Store[config.Project], cfg config.Config) (storeui.Result, error) {
+func Edit(ios *iostreams.IOStreams, store *storage.Store[config.Project]) (storeui.Result, error) {
+	targets, err := LayerTargets(store)
+	if err != nil {
+		return storeui.Result{}, err
+	}
 	return storeui.Edit(ios, store,
 		storeui.WithTitle("Project Configuration Editor"),
 		storeui.WithOverrides(Overrides()),
-		storeui.WithLayerTargets(LayerTargets(store, cfg)),
+		storeui.WithLayerTargets(targets),
 	)
 }

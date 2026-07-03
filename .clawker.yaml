@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/schmitthub/clawker/v0.12.10/docs/schemas/clawker.schema.json
 agent:
   claude_code:
     config:
@@ -202,6 +203,7 @@ security:
       - containers.dev
       - git-scm.com
       - nodejs.org
+      - oraios-software.de
     rules:
       - action: allow
         dst: github.com

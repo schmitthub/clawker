@@ -14,6 +14,9 @@ import (
 
 	"github.com/google/uuid"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	ebpf "github.com/schmitthub/clawker/controlplane/firewall/ebpf"
 	"github.com/schmitthub/clawker/controlplane/pubsub"
@@ -21,8 +24,6 @@ import (
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/storage"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 // --- Closure Result types ---
@@ -50,10 +51,12 @@ type InitResult struct {
 
 // TeardownResult, EnableResult, DisableResult, BypassResult are empty
 // markers — their RPCs report success/failure only.
-type TeardownResult struct{}
-type EnableResult struct{}
-type DisableResult struct{}
-type BypassResult struct{}
+type (
+	TeardownResult struct{}
+	EnableResult   struct{}
+	DisableResult  struct{}
+	BypassResult   struct{}
+)
 
 // ListRulesResult carries the normalized rule snapshot.
 type ListRulesResult struct {
@@ -182,7 +185,30 @@ type HandlerDeps struct {
 // suppress enforcement. Any caller that needs a longer window must
 // repeat the call — keeps a single lost-CLI bypass from persisting for
 // days.
-const maxBypassTimeout = time.Hour
+const (
+	maxBypassTimeout = time.Hour
+	// defaultBypassTimeout applies when a request omits the timeout (0 seconds).
+	defaultBypassTimeout = 30 * time.Second
+)
+
+// bypassTimeout converts the requested bypass duration (seconds; 0 selects the
+// default) into a bounded [time.Duration], rejecting anything over
+// maxBypassTimeout.
+func bypassTimeout(seconds uint32) (time.Duration, error) {
+	timeout := time.Duration(seconds) * time.Second
+	if timeout <= 0 {
+		timeout = defaultBypassTimeout
+	}
+	if timeout > maxBypassTimeout {
+		return 0, status.Errorf(
+			codes.InvalidArgument,
+			"bypass timeout %s exceeds maximum %s",
+			timeout,
+			maxBypassTimeout,
+		)
+	}
+	return timeout, nil
+}
 
 // eventSourceFirewall names the firewall handler as the producer on every
 // pub/sub envelope it publishes. The audit hook reads Event.Source to
@@ -271,7 +297,10 @@ func resultAs[T any](val any) (T, error) {
 // (fail-open by BPF design). Re-enrollment is in-closure so it
 // serializes with concurrent Enable/Disable/Bypass through the same
 // ActionBringup work unit.
-func (h *Handler) FirewallInit(ctx context.Context, _ *adminv1.FirewallInitRequest) (*adminv1.FirewallInitResult, error) {
+func (h *Handler) FirewallInit(
+	ctx context.Context,
+	_ *adminv1.FirewallInitRequest,
+) (*adminv1.FirewallInitResult, error) {
 	val, err := h.submit(ActionBringup, func(qctx context.Context) (any, error) {
 		// Bound the whole bringup server-side. The queue ctx has no
 		// deadline (and the caller ctx is not propagated into the
@@ -381,7 +410,10 @@ func (h *Handler) reenrollAgents(ctx context.Context) {
 	for _, cid := range agents {
 		rid, cgroupPath, exists, resolveErr := h.resolve(ctx, cid)
 		if resolveErr != nil {
-			h.log.Warn().Err(resolveErr).Str("container_id", cid).Msg("firewall ebpf: re-enroll: resolve failed, skipping container")
+			h.log.Warn().
+				Err(resolveErr).
+				Str("container_id", cid).
+				Msg("firewall ebpf: re-enroll: resolve failed, skipping container")
 			failed++
 			continue
 		}
@@ -391,12 +423,18 @@ func (h *Handler) reenrollAgents(ctx context.Context) {
 		}
 		cgroupID, err := h.cgroupIDFn(cgroupPath)
 		if err != nil {
-			h.log.Warn().Err(err).Str("container_id", rid).Msg("firewall ebpf: re-enroll: cgroup id failed, skipping container")
+			h.log.Warn().
+				Err(err).
+				Str("container_id", rid).
+				Msg("firewall ebpf: re-enroll: cgroup id failed, skipping container")
 			failed++
 			continue
 		}
 		if err := h.ebpf.Install(cgroupID, cgroupPath, bpfCfg); err != nil {
-			h.log.Warn().Err(err).Str("container_id", rid).Msg("firewall ebpf: re-enroll: install failed, skipping container")
+			h.log.Warn().
+				Err(err).
+				Str("container_id", rid).
+				Msg("firewall ebpf: re-enroll: install failed, skipping container")
 			failed++
 			continue
 		}
@@ -410,10 +448,17 @@ func (h *Handler) reenrollAgents(ctx context.Context) {
 		// container_id/agent/project until the user manually rebounces
 		// the container.
 		h.publishEnrolled(rid, cgroupID)
-		h.log.Info().Str("container_id", rid).Uint64("cgroup_id", cgroupID).Msg("firewall ebpf: container re-enrolled in container_map")
+		h.log.Info().
+			Str("container_id", rid).
+			Uint64("cgroup_id", cgroupID).
+			Msg("firewall ebpf: container re-enrolled in container_map")
 		enrolled++
 	}
-	h.log.Info().Int("enrolled", enrolled).Int("failed", failed).Int("total", len(agents)).Msg("firewall ebpf: re-enroll complete")
+	h.log.Info().
+		Int("enrolled", enrolled).
+		Int("failed", failed).
+		Int("total", len(agents)).
+		Msg("firewall ebpf: re-enroll complete")
 }
 
 // FirewallRemove is global teardown. Pre-Submit: cancel pending bypass
@@ -423,7 +468,10 @@ func (h *Handler) reenrollAgents(ctx context.Context) {
 // implementation, the egress-rules file is preserved — the store is
 // authoritative across teardown so a user's removals after `firewall
 // down` apply to the next `firewall up`.
-func (h *Handler) FirewallRemove(ctx context.Context, _ *adminv1.FirewallRemoveRequest) (*adminv1.FirewallRemoveResult, error) {
+func (h *Handler) FirewallRemove(
+	ctx context.Context,
+	_ *adminv1.FirewallRemoveRequest,
+) (*adminv1.FirewallRemoveResult, error) {
 	_, err := h.submit(ActionTeardown, func(qctx context.Context) (any, error) {
 		// CancelAllBypassTimers runs inside the closure so no concurrent
 		// FirewallBypass call can install a new timer between a pre-
@@ -487,7 +535,10 @@ func removeGeneratedConfigs() error {
 // (network discovery, host-proxy resolution, egress port); the queued
 // closure installs the resulting config via ebpf.Install and cancels any
 // pending bypass timer.
-func (h *Handler) FirewallEnable(ctx context.Context, req *adminv1.FirewallEnableRequest) (*adminv1.FirewallEnableResult, error) {
+func (h *Handler) FirewallEnable(
+	ctx context.Context,
+	req *adminv1.FirewallEnableRequest,
+) (*adminv1.FirewallEnableResult, error) {
 	if req.GetContainerId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "container_id is required")
 	}
@@ -549,7 +600,10 @@ func (h *Handler) FirewallEnable(ctx context.Context, req *adminv1.FirewallEnabl
 // resolves the target cgroup_id (or falls back to the last-known value
 // when Docker says the container is gone); the queued closure performs
 // the ebpf.Disable.
-func (h *Handler) FirewallDisable(ctx context.Context, req *adminv1.FirewallDisableRequest) (*adminv1.FirewallDisableResult, error) {
+func (h *Handler) FirewallDisable(
+	ctx context.Context,
+	req *adminv1.FirewallDisableRequest,
+) (*adminv1.FirewallDisableResult, error) {
 	if req.GetContainerId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "container_id is required")
 	}
@@ -599,17 +653,17 @@ func (h *Handler) FirewallDisable(ctx context.Context, req *adminv1.FirewallDisa
 // queued Enable on expiry. The restore path reuses the same drift guard
 // as direct FirewallEnable so enforcement returns on the container's
 // current cgroup_id, not the one it had at bypass-time.
-func (h *Handler) FirewallBypass(ctx context.Context, req *adminv1.FirewallBypassRequest) (*adminv1.FirewallBypassResult, error) {
+func (h *Handler) FirewallBypass(
+	ctx context.Context,
+	req *adminv1.FirewallBypassRequest,
+) (*adminv1.FirewallBypassResult, error) {
 	if req.GetContainerId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "container_id is required")
 	}
 
-	timeout := time.Duration(req.GetTimeoutSeconds()) * time.Second
-	if timeout <= 0 {
-		timeout = 30 * time.Second
-	}
-	if timeout > maxBypassTimeout {
-		return nil, status.Errorf(codes.InvalidArgument, "bypass timeout %s exceeds maximum %s", timeout, maxBypassTimeout)
+	timeout, err := bypassTimeout(req.GetTimeoutSeconds())
+	if err != nil {
+		return nil, err
 	}
 
 	cid, cgroupPath, exists, err := h.resolve(ctx, req.GetContainerId())
@@ -669,7 +723,10 @@ func (h *Handler) FirewallBypass(ctx context.Context, req *adminv1.FirewallBypas
 // Envoy/CoreDNS config and restarts both. When the stack is down at
 // queue-time the closure short-circuits to StackReloadResult{Restarted:
 // false} — the rule is still saved, next FirewallInit picks it up.
-func (h *Handler) FirewallAddRules(ctx context.Context, req *adminv1.FirewallAddRulesRequest) (*adminv1.FirewallAddRulesResult, error) {
+func (h *Handler) FirewallAddRules(
+	ctx context.Context,
+	req *adminv1.FirewallAddRulesRequest,
+) (*adminv1.FirewallAddRulesResult, error) {
 	rules := adminv1.EgressRulesFromProto(req.GetRules())
 	// Validate every rule up front and report ALL problems at once. A bad rule
 	// from clawker.yaml (malformed port, inverted action, junk destination)
@@ -717,7 +774,10 @@ func (h *Handler) FirewallAddRules(ctx context.Context, req *adminv1.FirewallAdd
 // existing key — typo, malformed hostname, or legitimate absence —
 // collapses into the same NOT_FOUND outcome, which is exactly the
 // behavior the CLI needs to render.
-func (h *Handler) FirewallRemoveRule(ctx context.Context, req *adminv1.FirewallRemoveRuleRequest) (*adminv1.FirewallRemoveRuleResult, error) {
+func (h *Handler) FirewallRemoveRule(
+	ctx context.Context,
+	req *adminv1.FirewallRemoveRuleRequest,
+) (*adminv1.FirewallRemoveRuleResult, error) {
 	rule := config.EgressRule{
 		Dst:   req.GetDst(),
 		Proto: req.GetProto(),
@@ -761,7 +821,10 @@ func (h *Handler) FirewallRemoveRule(ctx context.Context, req *adminv1.FirewallR
 // FirewallListRules returns the current normalized+deduped rule set.
 // Routed through the queue under ActionRead so a read never races ahead
 // of pending writes (read-after-write consistency).
-func (h *Handler) FirewallListRules(ctx context.Context, _ *adminv1.FirewallListRulesRequest) (*adminv1.FirewallListRulesResult, error) {
+func (h *Handler) FirewallListRules(
+	ctx context.Context,
+	_ *adminv1.FirewallListRulesRequest,
+) (*adminv1.FirewallListRulesResult, error) {
 	val, err := h.submit(ActionRead, func(_ context.Context) (any, error) {
 		rules, warnings := NormalizeAndDedup(h.store.Read().Rules)
 		for _, w := range warnings {
@@ -866,7 +929,10 @@ func (h *Handler) ReverseDNSDomains() []string {
 // FirewallReload regenerates configs and restarts Envoy+CoreDNS without
 // mutating the rule set. No pre-Submit work — it is a pure reconcile
 // signal against the current store contents.
-func (h *Handler) FirewallReload(ctx context.Context, _ *adminv1.FirewallReloadRequest) (*adminv1.FirewallReloadResult, error) {
+func (h *Handler) FirewallReload(
+	ctx context.Context,
+	_ *adminv1.FirewallReloadRequest,
+) (*adminv1.FirewallReloadResult, error) {
 	val, err := h.submit(ActionReconcile, h.reconcileStackClosure)
 	if err != nil {
 		return nil, toStatus(err)
@@ -879,7 +945,10 @@ func (h *Handler) FirewallReload(ctx context.Context, _ *adminv1.FirewallReloadR
 }
 
 // FirewallStatus returns a health snapshot.
-func (h *Handler) FirewallStatus(ctx context.Context, _ *adminv1.FirewallStatusRequest) (*adminv1.FirewallStatusResult, error) {
+func (h *Handler) FirewallStatus(
+	ctx context.Context,
+	_ *adminv1.FirewallStatusRequest,
+) (*adminv1.FirewallStatusResult, error) {
 	val, err := h.submit(ActionRead, func(qctx context.Context) (any, error) {
 		st, err := h.stack.Status(qctx)
 		if err != nil {
@@ -909,7 +978,10 @@ func (h *Handler) FirewallStatus(ctx context.Context, _ *adminv1.FirewallStatusR
 // pre-Submit, then reconciles the stack so Envoy picks up the new chain.
 // Cert regen is synchronous so the CLI sees a clean ErrCertRegen if the
 // disk write fails, leaving the running stack on the prior certificates.
-func (h *Handler) FirewallRotateCA(ctx context.Context, _ *adminv1.FirewallRotateCARequest) (*adminv1.FirewallRotateCAResult, error) {
+func (h *Handler) FirewallRotateCA(
+	ctx context.Context,
+	_ *adminv1.FirewallRotateCARequest,
+) (*adminv1.FirewallRotateCAResult, error) {
 	certDir, err := h.certDirF()
 	if err != nil {
 		return nil, toStatus(fmt.Errorf("%w: resolve cert dir: %v", ErrCertRegen, err))
@@ -940,7 +1012,10 @@ func (h *Handler) FirewallRotateCA(ctx context.Context, _ *adminv1.FirewallRotat
 // so routing through ActionReconcile gives SyncRoutes the stronger
 // "stack and route_map are consistent with the store" guarantee at a
 // cost of one extra container restart.
-func (h *Handler) FirewallSyncRoutes(ctx context.Context, _ *adminv1.FirewallSyncRoutesRequest) (*adminv1.FirewallSyncRoutesResult, error) {
+func (h *Handler) FirewallSyncRoutes(
+	ctx context.Context,
+	_ *adminv1.FirewallSyncRoutesRequest,
+) (*adminv1.FirewallSyncRoutesResult, error) {
 	val, err := h.submit(ActionReconcile, h.reconcileStackClosure)
 	if err != nil {
 		return nil, toStatus(err)
@@ -954,7 +1029,10 @@ func (h *Handler) FirewallSyncRoutes(ctx context.Context, _ *adminv1.FirewallSyn
 // FirewallResolveHostname performs a DNS lookup from the CP's network
 // namespace — used to resolve host.docker.internal during per-container
 // enroll so the BPF container_config holds a routable address.
-func (h *Handler) FirewallResolveHostname(ctx context.Context, req *adminv1.FirewallResolveHostnameRequest) (*adminv1.FirewallResolveHostnameResult, error) {
+func (h *Handler) FirewallResolveHostname(
+	ctx context.Context,
+	req *adminv1.FirewallResolveHostnameRequest,
+) (*adminv1.FirewallResolveHostnameResult, error) {
 	if req.GetHostname() == "" {
 		return nil, status.Error(codes.InvalidArgument, "hostname is required")
 	}
@@ -1082,7 +1160,10 @@ func (h *Handler) CancelAllBypassTimers() int {
 // resolveForEnable enforces INV-B2-016 for the Enable path: fresh Docker
 // lookup, drift warning on stored-vs-fresh cgroup_id mismatch, and
 // ErrContainerGone when Docker reports the container missing.
-func (h *Handler) resolveForEnable(ctx context.Context, ref string) (cid, cgroupPath string, cgroupID uint64, err error) {
+func (h *Handler) resolveForEnable(
+	ctx context.Context,
+	ref string,
+) (string, string, uint64, error) {
 	cid, cgroupPath, exists, resolveErr := h.resolve(ctx, ref)
 	if resolveErr != nil {
 		return "", "", 0, status.Errorf(codes.Internal, "resolve container: %v", resolveErr)
@@ -1090,7 +1171,7 @@ func (h *Handler) resolveForEnable(ctx context.Context, ref string) (cid, cgroup
 	if !exists {
 		return "", "", 0, toStatus(fmt.Errorf("%w: %q", ErrContainerGone, ref))
 	}
-	cgroupID, err = h.cgroupIDFn(cgroupPath)
+	cgroupID, err := h.cgroupIDFn(cgroupPath)
 	if err != nil {
 		return "", "", 0, status.Errorf(codes.Internal, "compute cgroup id: %v", err)
 	}
@@ -1242,6 +1323,28 @@ func (h *Handler) cancelBypassTimer(cid string) {
 	}
 }
 
+// getRules decodes the stored egress rules into out via the transaction handle.
+// The presence bool is intentionally discarded: an absent rules key decodes to
+// an empty set, the correct starting point for a merge.
+func getRules(tx *storage.Tx[EgressRulesFile], out *[]config.EgressRule) error {
+	if _, err := tx.Get(rulesField, out); err != nil {
+		return fmt.Errorf("reading rules: %w", err)
+	}
+	return nil
+}
+
+// writeRules persists the given rule set (marks dirty + flushes to disk) via the
+// transaction handle.
+func writeRules(tx *storage.Tx[EgressRulesFile], rules []config.EgressRule) error {
+	if err := tx.Set(rulesField, rules); err != nil {
+		return fmt.Errorf("updating rules: %w", err)
+	}
+	if err := tx.Write(); err != nil {
+		return fmt.Errorf("writing rules: %w", err)
+	}
+	return nil
+}
+
 // addRulesToStore normalizes incoming rules and merges them into the
 // store via MergeRule. On RuleKey collision the existing entry is mutated
 // in place (caller wins on Action/PathDefault; PathRules union by Path
@@ -1262,13 +1365,20 @@ func (h *Handler) addRulesToStore(rules []config.EgressRule) ([]addStatus, error
 		normalized = append(normalized, NormalizeRule(r))
 	}
 	statuses := make([]addStatus, len(rules))
-	var mutated bool
-	if err := h.store.Set(func(f *EgressRulesFile) {
+
+	// Serialize the whole read-modify-write against other rule-store writers
+	// (concurrent FirewallAddRules/RemoveRule RPCs and the stack heal path).
+	// Without it, two interleaved Get→Set→Write sequences lose an update.
+	err := h.store.Txn(func(tx *storage.Tx[EgressRulesFile]) error {
+		var stored []config.EgressRule
+		if gErr := getRules(tx, &stored); gErr != nil {
+			return gErr
+		}
 		// Canonicalize the stored rules the same way every reader does. Indexing
 		// the RAW stored rules by RuleKey would miss carved spans: an opaque allow
 		// range overlapping a deny is split by NormalizeAndDedup into per-span
 		// rules, so a re-add of the original range matches no key and looks new.
-		existing, _ := NormalizeAndDedup(f.Rules)
+		existing, _ := NormalizeAndDedup(stored)
 		before := append([]config.EgressRule(nil), existing...)
 		index := make(map[string]int, len(existing))
 		for i, r := range existing {
@@ -1297,24 +1407,18 @@ func (h *Handler) addRulesToStore(rules []config.EgressRule) ([]addStatus, error
 		// authoritative write+reconcile gate.
 		after, _ := NormalizeAndDedup(existing)
 		if rulesCanonicalEqual(before, after) {
-			return
+			// Canonical state did not move: force UNCHANGED so anyAddChange is false
+			// and the caller skips the stack reconcile. Keeps a re-apply of an
+			// identical (even carved) rule batch a true no-op — no write, no reload.
+			for i := range statuses {
+				statuses[i] = addStatusUnchanged
+			}
+			return nil
 		}
-		f.Rules = after
-		mutated = true
-	}); err != nil {
-		return nil, fmt.Errorf("updating rules: %w", err)
-	}
-	if !mutated {
-		// Canonical state did not move: force UNCHANGED so anyAddChange is false
-		// and the caller skips the stack reconcile. Keeps a re-apply of an
-		// identical (even carved) rule batch a true no-op — no write, no reload.
-		for i := range statuses {
-			statuses[i] = addStatusUnchanged
-		}
-		return statuses, nil
-	}
-	if err := h.store.Write(); err != nil {
-		return nil, fmt.Errorf("writing rules: %w", err)
+		return writeRules(tx, after)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("add rules: %w", err)
 	}
 	return statuses, nil
 }
@@ -1325,9 +1429,14 @@ func (h *Handler) addRulesToStore(rules []config.EgressRule) ([]addStatus, error
 // disk.
 func (h *Handler) removeRuleFromStore(toRemove config.EgressRule) (bool, error) {
 	targetKey := RuleKey(NormalizeRule(toRemove))
-	var matched bool
-	if err := h.store.Set(func(f *EgressRulesFile) {
-		normalized, _ := NormalizeAndDedup(f.Rules)
+	matched := false
+	// Serialize the read-modify-write against concurrent rule-store writers.
+	err := h.store.Txn(func(tx *storage.Tx[EgressRulesFile]) error {
+		var stored []config.EgressRule
+		if gErr := getRules(tx, &stored); gErr != nil {
+			return gErr
+		}
+		normalized, _ := NormalizeAndDedup(stored)
 		filtered := make([]config.EgressRule, 0, len(normalized))
 		for _, r := range normalized {
 			if RuleKey(r) == targetKey {
@@ -1336,17 +1445,15 @@ func (h *Handler) removeRuleFromStore(toRemove config.EgressRule) (bool, error) 
 			}
 			filtered = append(filtered, r)
 		}
-		f.Rules = filtered
-	}); err != nil {
-		return false, fmt.Errorf("removing rule: %w", err)
+		if !matched {
+			return nil
+		}
+		return writeRules(tx, filtered)
+	})
+	if err != nil {
+		return false, fmt.Errorf("remove rule: %w", err)
 	}
-	if !matched {
-		return false, nil
-	}
-	if err := h.store.Write(); err != nil {
-		return false, fmt.Errorf("writing rules: %w", err)
-	}
-	return true, nil
+	return matched, nil
 }
 
 // removePathRuleFromStore removes a single PathRule entry from the rule
@@ -1359,9 +1466,14 @@ func (h *Handler) removeRuleFromStore(toRemove config.EgressRule) (bool, error) 
 // rendered not-found message with the path so a typo never silently succeeds.
 func (h *Handler) removePathRuleFromStore(toRemove config.EgressRule, path string) (bool, error) {
 	targetKey := RuleKey(NormalizeRule(toRemove))
-	var matched bool
-	if err := h.store.Set(func(f *EgressRulesFile) {
-		normalized, _ := NormalizeAndDedup(f.Rules)
+	matched := false
+	// Serialize the read-modify-write against concurrent rule-store writers.
+	err := h.store.Txn(func(tx *storage.Tx[EgressRulesFile]) error {
+		var stored []config.EgressRule
+		if gErr := getRules(tx, &stored); gErr != nil {
+			return gErr
+		}
+		normalized, _ := NormalizeAndDedup(stored)
 		idx := -1
 		for i, r := range normalized {
 			if RuleKey(r) == targetKey {
@@ -1370,7 +1482,7 @@ func (h *Handler) removePathRuleFromStore(toRemove config.EgressRule, path strin
 			}
 		}
 		if idx < 0 {
-			return
+			return nil
 		}
 		r := normalized[idx]
 		filtered := make([]config.PathRule, 0, len(r.PathRules))
@@ -1382,19 +1494,14 @@ func (h *Handler) removePathRuleFromStore(toRemove config.EgressRule, path strin
 			filtered = append(filtered, p)
 		}
 		if !matched {
-			return
+			return nil
 		}
 		r.PathRules = filtered
 		normalized[idx] = r
-		f.Rules = normalized
-	}); err != nil {
-		return false, fmt.Errorf("removing path rule: %w", err)
+		return writeRules(tx, normalized)
+	})
+	if err != nil {
+		return false, fmt.Errorf("remove path rule: %w", err)
 	}
-	if !matched {
-		return false, nil
-	}
-	if err := h.store.Write(); err != nil {
-		return false, fmt.Errorf("writing rules: %w", err)
-	}
-	return true, nil
+	return matched, nil
 }

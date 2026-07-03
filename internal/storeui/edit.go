@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/storage"
 	"github.com/schmitthub/clawker/internal/tui"
@@ -27,53 +26,51 @@ func ShortenHome(p string) string {
 	return p
 }
 
-// ResolveLocalPath determines the CWD dot-file path using dual-placement:
-// if .clawker/ dir exists → .clawker/{filename}, otherwise → .{filename}.
-func ResolveLocalPath(cwd, filename string) string {
-	clawkerDir := filepath.Join(cwd, consts.DotClawkerDir)
-	if info, err := os.Stat(clawkerDir); err == nil && info.IsDir() {
-		return filepath.Join(clawkerDir, filename)
+// Save-destination label vocabulary. BuildLayerTargets applies the placement
+// labels (Project, User); LabelLocal is exported for domain adapters that
+// relabel targets whose Filename they recognize as a local override —
+// which filename that is being domain knowledge storeui does not hold.
+const (
+	LabelProject = "Project" // walk-up target (in-play file or CWD candidate)
+	LabelUser    = "User"    // configured directory candidate (config dir etc.)
+	LabelLocal   = "Local"   // domain-applied: discovered local override file
+)
+
+// BuildLayerTargets builds save destinations from the store's own write
+// targets (storage.Store.WriteTargets), so the editor only ever offers
+// locations the store can rediscover on reload — a store without walk-up
+// gets no "Project" target. The walk-up target is labeled "Project",
+// directory candidates "User", and discovered layer files show their
+// shortened path; each target carries the store-reported Filename so a
+// domain adapter can relabel filenames it recognizes (e.g. a local override
+// file). Virtual layers (defaults) are never offered.
+func BuildLayerTargets[T storage.Schema](store *storage.Store[T]) ([]LayerTarget, error) {
+	wts, err := store.WriteTargets()
+	if err != nil {
+		return nil, fmt.Errorf("resolving store write targets: %w", err)
 	}
-	return filepath.Join(cwd, "."+filename)
-}
-
-// BuildLayerTargets builds save destinations from the canonical locations
-// (Local, User) plus every discovered file layer. All targets are always
-// shown so the user can save to any layer — even ones that don't currently
-// define the field being edited.
-//
-// Virtual layers (empty path = defaults) are always excluded.
-// Duplicate paths are deduped (first occurrence wins).
-func BuildLayerTargets(filename, configDir string, layers []storage.LayerInfo) []LayerTarget {
-	var targets []LayerTarget
-	seen := make(map[string]bool)
-
-	add := func(label, path string) {
-		if path == "" || seen[path] {
-			return
+	targets := make([]LayerTarget, 0, len(wts))
+	for _, wt := range wts {
+		shortPath := ShortenHome(wt.Path)
+		var label string
+		switch wt.Source {
+		case storage.TargetWalkUp:
+			label = LabelProject
+		case storage.TargetDir, storage.TargetPath:
+			label = LabelUser
+		case storage.TargetLayer:
+			label = shortPath
+		default: // future sources — show the path
+			label = shortPath
 		}
 		targets = append(targets, LayerTarget{
 			Label:       label,
-			Description: ShortenHome(path),
-			Path:        path,
+			Description: shortPath,
+			Path:        wt.Path,
+			Filename:    wt.Filename,
 		})
-		seen[path] = true
 	}
-
-	// Local: CWD dot-file (skipped if CWD is unavailable).
-	if cwd, err := os.Getwd(); err == nil {
-		add("Local", ResolveLocalPath(cwd, filename))
-	}
-
-	// User: config dir file.
-	add("User", filepath.Join(configDir, filename))
-
-	// All discovered file layers (deduped against Local/User).
-	for _, l := range layers {
-		add(ShortenHome(l.Path), l.Path)
-	}
-
-	return targets
+	return targets, nil
 }
 
 // Ptr returns a pointer to a copy of the given value.
@@ -92,9 +89,10 @@ type Result struct {
 // LayerTarget represents a save destination for a single field.
 // Domain adapters build these from config accessors.
 type LayerTarget struct {
-	Label       string // Display label (e.g. "Original", "Local", "User")
+	Label       string // Display label (e.g. "Project", "User", "Local")
 	Description string // Shortened path for display
 	Path        string // Full absolute filesystem path
+	Filename    string // Store-configured filename this target serves (for domain relabeling)
 }
 
 // Option configures the Edit function.
@@ -207,28 +205,32 @@ func BuildBrowser[T storage.Schema](store *storage.Store[T], opts ...Option) (*t
 		}
 		target := cfg.layerTargets[targetIdx]
 
-		var setFieldErr error
-		if err := store.Set(func(t *T) {
-			if err := SetFieldValue(t, fieldPath, value); err != nil {
-				setFieldErr = err
-			}
-		}); err != nil {
-			return fmt.Errorf("updating store: %w", err)
+		// Coerce the TUI string into the field's typed value (via a fresh T), then
+		// set it on the store by path.
+		var fresh T
+		if err := SetFieldValue(&fresh, fieldPath, value); err != nil {
+			return fmt.Errorf("setting field %s: %w", fieldPath, err)
 		}
-		if setFieldErr != nil {
-			return fmt.Errorf("setting field %s: %w", fieldPath, setFieldErr)
+		typed, err := GetFieldValue(&fresh, fieldPath)
+		if err != nil {
+			return fmt.Errorf("setting field %s: %w", fieldPath, err)
+		}
+		if err = store.Set(fieldPath, typed); err != nil {
+			return fmt.Errorf("updating store: %w", err)
 		}
 
 		prov, hasProv := store.Provenance(fieldPath)
 		if hasProv && prov.Path != target.Path {
 			layerVal := lookupLayerFieldValue(store.Layers(), target.Path, fieldPath)
 			if normalizeLayerValue(layerVal) != value {
-				store.MarkForWrite(fieldPath)
+				if merr := store.MarkForWrite(fieldPath); merr != nil {
+					return fmt.Errorf("marking %s for write: %w", fieldPath, merr)
+				}
 			}
 		}
 
-		if err := store.Write(storage.ToPath(target.Path)); err != nil {
-			return fmt.Errorf("writing to %s: %w", ShortenHome(target.Path), err)
+		if werr := store.WriteTo(target.Path); werr != nil {
+			return fmt.Errorf("writing to %s: %w", ShortenHome(target.Path), werr)
 		}
 		return nil
 	}
@@ -239,12 +241,12 @@ func BuildBrowser[T storage.Schema](store *storage.Store[T], opts ...Option) (*t
 		}
 		target := cfg.layerTargets[targetIdx]
 
-		if _, err := store.Delete(fieldPath); err != nil {
+		if _, err := store.Remove(fieldPath); err != nil {
 			return fmt.Errorf("deleting from store: %w", err)
 		}
 
-		if err := store.Write(storage.ToPath(target.Path)); err != nil {
-			return fmt.Errorf("deleting from %s: %w", ShortenHome(target.Path), err)
+		if werr := store.WriteTo(target.Path); werr != nil {
+			return fmt.Errorf("deleting from %s: %w", ShortenHome(target.Path), werr)
 		}
 		return nil
 	}
@@ -268,7 +270,7 @@ func BuildBrowser[T storage.Schema](store *storage.Store[T], opts ...Option) (*t
 //  2. WalkFields(snapshot) → fields
 //  3. Filter skip paths, ApplyOverrides
 //  4. Map storeui.Field → tui.BrowserField, run tui.FieldBrowserModel
-//  5. OnFieldSaved callback: store.Set + store.Write(storage.ToPath(target)) per field
+//  5. OnFieldSaved callback: store.Set + store.WriteTo(target) per field
 //  6. Return Result
 func Edit[T storage.Schema](ios *iostreams.IOStreams, store *storage.Store[T], opts ...Option) (Result, error) {
 	cfg := editOptions{
@@ -329,16 +331,18 @@ func Edit[T storage.Schema](ios *iostreams.IOStreams, store *storage.Store[T], o
 		target := cfg.layerTargets[targetIdx]
 
 		// Update in-memory store.
-		var setFieldErr error
-		if err := store.Set(func(t *T) {
-			if err := SetFieldValue(t, fieldPath, value); err != nil {
-				setFieldErr = err
-			}
-		}); err != nil {
-			return fmt.Errorf("updating store: %w", err)
+		// Coerce the TUI string into the field's typed value (via a fresh T), then
+		// set it on the store by path.
+		var fresh T
+		if err := SetFieldValue(&fresh, fieldPath, value); err != nil {
+			return fmt.Errorf("setting field %s: %w", fieldPath, err)
 		}
-		if setFieldErr != nil {
-			return fmt.Errorf("setting field %s: %w", fieldPath, setFieldErr)
+		typed, err := GetFieldValue(&fresh, fieldPath)
+		if err != nil {
+			return fmt.Errorf("setting field %s: %w", fieldPath, err)
+		}
+		if err = store.Set(fieldPath, typed); err != nil {
+			return fmt.Errorf("updating store: %w", err)
 		}
 
 		// When saving to a layer that isn't the provenance winner,
@@ -349,14 +353,16 @@ func Edit[T storage.Schema](ios *iostreams.IOStreams, store *storage.Store[T], o
 		if hasProv && prov.Path != target.Path {
 			layerVal := lookupLayerFieldValue(store.Layers(), target.Path, fieldPath)
 			if normalizeLayerValue(layerVal) != value {
-				store.MarkForWrite(fieldPath)
+				if merr := store.MarkForWrite(fieldPath); merr != nil {
+					return fmt.Errorf("marking %s for write: %w", fieldPath, merr)
+				}
 			}
 		}
 
 		// Persist dirty fields to the target file. Write() remerges
 		// internally, so the snapshot reflects the true merged state.
-		if err := store.Write(storage.ToPath(target.Path)); err != nil {
-			return fmt.Errorf("writing to %s: %w", ShortenHome(target.Path), err)
+		if werr := store.WriteTo(target.Path); werr != nil {
+			return fmt.Errorf("writing to %s: %w", ShortenHome(target.Path), werr)
 		}
 		return nil
 	}
@@ -369,14 +375,14 @@ func Edit[T storage.Schema](ios *iostreams.IOStreams, store *storage.Store[T], o
 		target := cfg.layerTargets[targetIdx]
 
 		// Remove from the in-memory store tree.
-		if _, err := store.Delete(fieldPath); err != nil {
+		if _, err := store.Remove(fieldPath); err != nil {
 			return fmt.Errorf("deleting from store: %w", err)
 		}
 
 		// Persist the deletion to the target file. Write() remerges
 		// internally, so the snapshot reflects the true merged state.
-		if err := store.Write(storage.ToPath(target.Path)); err != nil {
-			return fmt.Errorf("deleting from %s: %w", ShortenHome(target.Path), err)
+		if werr := store.WriteTo(target.Path); werr != nil {
+			return fmt.Errorf("deleting from %s: %w", ShortenHome(target.Path), werr)
 		}
 		return nil
 	}

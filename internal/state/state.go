@@ -51,7 +51,7 @@ type stateStoreImpl struct {
 // error if the seed fails to load. The seed is merged as the lowest-priority
 // virtual layer through the real storage pipeline.
 func NewFromString(stateStr string) (StateStore, error) {
-	store, err := storage.NewFromString[State](stateStr)
+	store, err := storage.New[State](stateStr)
 	if err != nil {
 		return nil, fmt.Errorf("state: loading CLI state from string: %w", err)
 	}
@@ -62,7 +62,7 @@ func NewFromString(stateStr string) (StateStore, error) {
 // (merge + migrations + atomic writes) — the canonical path for clawker files,
 // never a raw file read.
 func New() (StateStore, error) {
-	stateStore, err := storage.NewFromString[State]("",
+	stateStore, err := storage.New[State]("",
 		storage.WithFilenames(consts.CLIStateFile),
 		storage.WithDefaultFilename(consts.CLIStateFile),
 		storage.WithMigrations(StateMigrations()...),
@@ -82,34 +82,39 @@ func (s *stateStoreImpl) State() *State {
 	return s.Read()
 }
 
-// RecordUpdateCheck field-merges the update-check fields (checked_at,
-// latest_version) and persists them. It does NOT touch last_seen_changelog —
-// the changelog cursor is owned by SetLastSeenChangelog — so the background
-// update goroutine cannot clobber the cursor.
+// RecordUpdateCheck persists the update-check fields (checked_at,
+// latest_version) as one unit. It owns only those two fields — the changelog
+// cursor belongs to SetLastSeenChangelog — and runs inside a Txn so the two
+// writers serialize. Write flushes the whole dirty set, so without the Txn a
+// concurrent cursor write could persist a half-applied update-check (checked_at
+// set, latest_version not yet); the Txn closes that window.
 func (s *stateStoreImpl) RecordUpdateCheck(checkedAt time.Time, latestVersion string) error {
-	if err := s.Set(func(st *State) {
-		st.CheckedAt = checkedAt
-		st.LatestVersion = latestVersion
+	if err := s.Txn(func(tx *storage.Tx[State]) error {
+		if err := tx.Set("checked_at", checkedAt); err != nil {
+			return fmt.Errorf("setting checked_at: %w", err)
+		}
+		if err := tx.Set("latest_version", latestVersion); err != nil {
+			return fmt.Errorf("setting latest_version: %w", err)
+		}
+		return tx.Write()
 	}); err != nil {
 		return fmt.Errorf("state: recording update check: %w", err)
-	}
-	if err := s.Write(); err != nil {
-		return fmt.Errorf("state: writing CLI state: %w", err)
 	}
 	return nil
 }
 
-// SetLastSeenChangelog field-merges the changelog cursor and persists it. It
-// does NOT touch the update-check fields, so it cannot clobber a concurrent
-// update-check write.
+// SetLastSeenChangelog persists the changelog cursor. It owns only
+// last_seen_changelog and runs inside a Txn so it serializes against
+// RecordUpdateCheck (see that method) instead of flushing a concurrent
+// update-check's half-written fields.
 func (s *stateStoreImpl) SetLastSeenChangelog(version string) error {
-	if err := s.Set(func(st *State) {
-		st.LastSeenChangelog = version
+	if err := s.Txn(func(tx *storage.Tx[State]) error {
+		if err := tx.Set("last_seen_changelog", version); err != nil {
+			return fmt.Errorf("setting last_seen_changelog: %w", err)
+		}
+		return tx.Write()
 	}); err != nil {
 		return fmt.Errorf("state: setting changelog cursor: %w", err)
-	}
-	if err := s.Write(); err != nil {
-		return fmt.Errorf("state: writing CLI state: %w", err)
 	}
 	return nil
 }

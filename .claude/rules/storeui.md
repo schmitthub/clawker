@@ -43,8 +43,8 @@ Command layer (cmd/settings/edit, cmd/project/edit)
 
 1. **Domain adapter** under `internal/config/storeui/<domain>/` exports:
    - `Overrides() []storeui.Override` — TUI-only customizations (`Hidden`, `ReadOnly`, `Kind`, `Options`, `Order`). Labels/descriptions come from struct tags, not overrides.
-   - `LayerTargets(store, cfg) []storeui.LayerTarget` — where the user can save each field. Build from `store.Layers()`; include "Local"/"User" targets.
-   - `Edit(ios, store, cfg) (storeui.Result, error)` — convenience wrapper that wires overrides + targets into `storeui.Edit[T]`.
+   - `LayerTargets(store) ([]storeui.LayerTarget, error)` — where the user can save each field. Delegate to `storeui.BuildLayerTargets(store)`, which derives targets from the store's own `WriteTargets()` (walk-up target → "Project", configured dirs → "User", discovered layers → shortened path; each target carries `Filename` so the adapter can relabel filenames it recognizes, e.g. the project adapter's `Local` override file). Never hardcode locations the store cannot rediscover.
+   - `Edit(ios, store) (storeui.Result, error)` — convenience wrapper that wires overrides + targets into `storeui.Edit[T]`.
 2. **Cobra command** under `internal/cmd/<noun>/edit/` — thin wrapper: load config → get store → call domain `Edit` → print success/cancel. Nothing else belongs here.
 3. **Wire into parent** — add `edit.NewCmdEdit(f, nil)` to the parent command's `AddCommand` list.
 4. **Tests** — at minimum: `TestOverrides_AllPathsMatchFields` (prevents typo rot against `WalkFields(schema)`), a round-trip integration test that drives the store through `WalkFields → SetFieldValue → store.Set → store.Write → reload`, and a unit test for any non-trivial override decision.
@@ -62,9 +62,12 @@ Command layer (cmd/settings/edit, cmd/project/edit)
 | Method | Purpose |
 |--------|---------|
 | `store.Read()` | Immutable `*T` snapshot |
-| `store.Set(func(*T))` | Mutate in-memory via closure |
-| `store.Write(storage.ToPath(path))` | Persist dirty fields to an explicit layer file |
-| `store.Layers()` | Discovered layer files (for `LayerTargets`) |
+| `store.Set(path, value)` | Set an in-memory field by dotted path |
+| `store.Remove(path)` | Delete a dotted path from the tree |
+| `store.WriteTo(path)` | Persist dirty fields to an explicit layer file |
+| `store.Layers()` | Discovered layer files (for the per-layer breakdown display) |
+| `store.WriteTargets()` | Candidate save locations derived from the store's options (for `LayerTargets`) |
+| `store.Options()` | Copy of the resolved construction options (introspection) |
 | `store.Provenance(path)` | Which layer won a specific field (for the breakdown display) |
 
 Everything else — full type→kind→editor table, SetFieldValue semantics, TUI component APIs, test recipes, gotchas — is in `.claude/docs/STOREUI-REFERENCE.md`.
