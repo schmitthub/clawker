@@ -627,16 +627,14 @@ build:
 
 	got := mustReadFile(t, basePath)
 
-	// B keeps its own structure, head comment, and field comments.
-	assert.Contains(t, got, "file: base", "B's head comment must survive")
-	assert.Contains(t, got, "B name comment", "B's untouched-field comment must survive")
-	assert.Contains(t, got, "B version comment", "B's comment on the CHANGED field must survive")
-	assert.Contains(t, got, "version: 2", "B must reflect the new value")
-
-	// No comment, key, or value from the other layer (A) leaked into B.
-	assert.NotContains(t, got, "A image comment", "A's comment must NOT appear in B")
-	assert.NotContains(t, got, "file: local", "A's head comment must NOT appear in B")
-	assert.NotContains(t, got, "local-img", "A's value must NOT appear in B")
+	// Byte-exact: B is its original text with only the dirtied node's value
+	// updated — comments (head + both fields, including the changed one)
+	// intact, nothing from layer A or the virtual layer grafted in.
+	const wantBase = `# file: base (low priority)
+name: base-name # B name comment
+version: 2 # B version comment
+`
+	assert.Equal(t, wantBase, got, "routed write must be the original file with only the dirtied node updated")
 
 	// A (not a write target) is byte-for-byte untouched.
 	assert.Equal(t, localBefore, mustReadFile(t, localPath), "the non-target file must be untouched")
@@ -675,9 +673,13 @@ version: 1
 	require.NoError(t, store.Write())
 
 	got := mustReadFile(t, localPath)
-	assert.Contains(t, got, "target: prod")
-	assert.Contains(t, got, "local only", "local file's own comment preserved")
-	assert.NotContains(t, got, "keep me", "base file's comment must not leak into local")
+	// Byte-exact: local file is its original text plus only the new dirtied
+	// key — its own comment intact, nothing from the base file or defaults.
+	const wantLocal = `build:
+  image: local-img # local only
+  target: prod
+`
+	assert.Equal(t, wantLocal, got, "routed write must add only the dirtied key to the owning file")
 
 	// Base file untouched.
 	assert.Equal(t, baseBefore, mustReadFile(t, basePath), "base file must be untouched")
@@ -3347,10 +3349,9 @@ func TestWrite_DoesNotFlushDefaultsToFile(t *testing.T) {
 
 	data, err := os.ReadFile(file)
 	require.NoError(t, err)
-	got := string(data)
-	assert.Contains(t, got, "name: bob", "explicit Set not persisted")
-	assert.NotContains(t, got, "mode:", "schema defaults leaked into user file")
-	assert.NotContains(t, got, "count:", "schema defaults leaked into user file")
+	// Byte-exact: the routed file is the original with only the dirtied key
+	// updated — the entire virtual layer (mode/count defaults) stays out.
+	assert.Equal(t, "name: bob\n", string(data), "routed write must contain only dirtied keys")
 
 	// Defaults still apply through the merged view on a fresh load.
 	s2 := newHardStore(t, dir, WithDefaultsFromStruct[hardSchema]())
@@ -3371,7 +3372,7 @@ func TestWriteTargeted_DoesNotFlushDefaults(t *testing.T) {
 
 	data, err := os.ReadFile(file)
 	require.NoError(t, err)
-	assert.NotContains(t, string(data), "mode:", "targeted write leaked defaults")
+	assert.Equal(t, "name: bob\n", string(data), "targeted write must contain only dirtied keys")
 }
 
 // MarkSeedForWrite is the explicit opt-in for the preset flow: flush every
