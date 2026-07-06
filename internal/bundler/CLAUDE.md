@@ -1,12 +1,16 @@
 # Bundler Package
 
-Leaf package: Dockerfile generation, version management, and build configuration for clawker container images. Imports `internal/hostproxy/internals` for container-side scripts (embed-only leaf). **No `internal/docker` import** — building orchestration (`Builder`, `Build`) lives in `internal/docker`.
+Leaf package: Dockerfile generation, harness bundle + toolchain registries, egress composition, and harness version management for clawker container images. Imports `internal/hostproxy/internals` for container-side scripts (embed-only leaf). **No `internal/docker` import** — building orchestration (`Builder`, `Build`) lives in `internal/docker`.
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `dockerfile.go` | Dockerfile templates, context generation, project scaffolding |
+| `dockerfile.go` | Dockerfile rendering (`ProjectGenerator`), build-context generation, embedded templates/scripts |
+| `basehash.go` | Base-image freshness hash (`BaseContentHash`) |
+| `harness.go` | Shipped harness bundle embedding, registry materialization (`EnsureHarnesses`), name resolution, bundle loading |
+| `toolchain.go` | Shipped toolchain embedding, registry materialization (`EnsureToolchains`), project/harness toolchain resolution + fragment rendering |
+| `egress.go` | Effective egress rule composition (harness floor + project rules) |
 | `config.go` | Variant configuration |
 | `versions.go` | Harness version resolution (npm dist-tags / GitHub releases) |
 | `errors.go` | Error types (`NetworkError`, `RegistryError`, `ErrVersionNotFound`, etc.) |
@@ -15,14 +19,14 @@ Leaf package: Dockerfile generation, version management, and build configuration
 
 | Package | Purpose |
 |---------|---------|
-| `registry/` | npm registry client, version info types, fetcher interface |
-| `assets/` | Dockerfile templates (`Dockerfile.base.tmpl`, `Dockerfile.harness-image.tmpl`), shipped harness bundles (`harnesses/`), shipped toolchain definitions (`toolchains/`) (the clawkerd binary is imported from `clawkerd/embed`, not stored here) |
+| `registry/` | npm registry client (`NPMClient`), GitHub releases client (`GitHubReleaseClient`), version info types, fetcher interface |
+| `assets/` | Dockerfile templates (`Dockerfile.base.tmpl`, `Dockerfile.harness-image.tmpl`), shipped harness bundles (`harnesses/{claude,codex}/`), shipped toolchain definitions (`toolchains/{go,node,python,rust}/`) (the clawkerd binary is imported from `clawkerd/embed`, not stored here) |
 
 ## Build Cache Strategy
 
 Cache invalidation is delegated entirely to the builder (BuildKit's layer cache, or the classic builder's `probeCache` for legacy daemons) — both hash RUN/COPY inputs and skip identical steps automatically. The templates' layer ordering (`assets/Dockerfile.base.tmpl`, `assets/Dockerfile.harness-image.tmpl`) and ARG vs ENV choices control which layers invalidate when, but the cache mechanism itself is Docker's, not clawker's.
 
-**Host-UID is baked into the rendered Dockerfile (Linux only).** `consts.ContainerUID()` / `ContainerGID()` resolve to the CLI invoker's `os.Getuid()` / `Getgid()` on Linux, so `useradd --uid {{.UID}}` in the base template varies per host user. On macOS/Windows, `consts.resolveProcessID` returns `fallbackContainerUID`/`GID` (1001) — Docker Desktop's virtiofs / gRPC-FUSE share masks UID/GID at the boundary, so baking the host UID would offer no access benefit and risks `groupadd --gid` collisions with base-image groups (e.g. macOS staff=20 vs Debian dialout=20). Required for the Linux `~/.claude/projects` bind-mount writability contract.
+**Host-UID is baked into the rendered Dockerfile (Linux only).** `consts.ContainerUID()` / `ContainerGID()` resolve to the CLI invoker's `os.Getuid()` / `Getgid()` on Linux, so `useradd --uid {{.UID}}` in the base template varies per host user. On macOS/Windows, `consts.resolveProcessID` returns `fallbackContainerUID`/`GID` (1001) — Docker Desktop's virtiofs / gRPC-FUSE share masks UID/GID at the boundary, so baking the host UID would offer no access benefit and risks `groupadd --gid` collisions with base-image groups (e.g. macOS staff=20 vs Debian dialout=20). Required for the Linux writability contract of the harness host-state binds (`staging.mounts`, e.g. the claude bundle's `~/.claude/projects`).
 
 **BuildKit vs Legacy:** `BuildKitEnabled=true` emits `--mount=type=cache` directives in the rendered Dockerfile; legacy builder silently ignores them. The flag flows through `DockerfileContext` and `ProjectGenerator`.
 
@@ -73,6 +77,11 @@ NOT a whole-context hash — source edits outside copy srcs never rebuild
 the base. Glob semantics are Go's, not Docker's; imprecision worst-cases
 as a spurious rebuild, never a wrong image.
 
+**Substrate base:** every base Dockerfile renders `FROM` the single pinned
+`SubstrateImage` digest (Debian bookworm-slim). There is no user-selectable
+base image and no custom-Dockerfile path — project customization happens via
+`build.packages`, `build.toolchains`, `instructions`, and `inject`.
+
 **ProjectGenerator is a pure renderer** — it does not perform any network
 I/O. The harness version baked into the rendered version ARG comes from
 the `HarnessVersion` field, resolved at the command layer via
@@ -99,13 +108,13 @@ func ResolveHarnessVersion(ctx context.Context, httpClient *http.Client, b *harn
 
 **Test wiring:** bundler tests use a package-local `stubRoundTripper` (implements `http.RoundTripper`) passed to `&http.Client{Transport: stubRT}`. `http.RoundTripper` is the stdlib mock seam; no project-defined interface required. Command-layer tests (in `internal/cmd/image/build/`) wire the same pattern through `cmdutil.Factory{HttpClient: ...}`.
 
-### Claude Code Version Pinning (build-arg passthrough)
+### Harness version build-arg (claude bundle pattern)
 
-The claude harness bundle's Dockerfile fragment declares `ARG CLAUDE_CODE_VERSION=<resolved-version>` — **not** `ENV`. Three properties this gives:
+The claude bundle's fragment declares `ARG CLAUDE_CODE_VERSION={{.HarnessVersion}}` — **not** `ENV`. Three properties this gives:
 
-1. **ARG-cache mechanic:** the `ARG CLAUDE_CODE_VERSION` declaration is placed in the template **directly above its only consumer** (the Claude install RUN), NOT near the top of the final stage. Under BuildKit (Docker 23+ default) a changed ARG default busts the cache at the ARG's **declaration line**, not at first use — verified empirically, and contrary to the classic builder's documented "first usage, not definition" rule. So adjacency is load-bearing: a CC release rolls the rendered default and invalidates only the install layer + the late root block, leaving apt/apk + Node + git-delta + zsh-in-docker cached above. Hoisting the declaration upward would re-run that whole expensive chain on every CC release (which can be several a week). This applies to incremental cache reuse; `clawker build --no-cache` invalidates everything regardless of ARG positioning.
-2. **Runtime invisibility:** Claude Code does not read `CLAUDE_CODE_VERSION` at runtime (verified against the official env-var list at code.claude.com/docs/en/settings). ARG is build-only, so the env var is naturally absent from the running container.
-3. **User override:** `clawker build --build-arg CLAUDE_CODE_VERSION=2.1.4` pins the install to an explicit version, bypassing the npm resolution. Already wired through `internal/cmd/image/build/build.go`.
+1. **ARG-cache mechanic:** the ARG declaration sits **directly above its only consumer** (the install RUN in block_4), NOT near the top of the stage. Under BuildKit (Docker 23+ default) a changed ARG default busts the cache at the ARG's **declaration line**, not at first use — verified empirically, and contrary to the classic builder's documented "first usage, not definition" rule. So adjacency is load-bearing: a harness release rolls the rendered default and invalidates only the install layer + everything below it, leaving the toolchain fragments and blocks 1–3 cached above (the shared base image is a separate image and never invalidates). `clawker build --no-cache` invalidates everything regardless of ARG positioning.
+2. **Runtime invisibility:** ARG is build-only, so the version var is naturally absent from the running container (Claude Code does not read `CLAUDE_CODE_VERSION` at runtime).
+3. **User override:** `clawker build --build-arg CLAUDE_CODE_VERSION=2.1.4` pins the install to an explicit version, bypassing the npm resolution. Wired through `internal/cmd/image/build/build.go`.
 
 ### DockerfileContext -- template data
 
@@ -116,7 +125,7 @@ type DockerfileContext struct {
     HarnessSeeds []harness.Seed; UID, GID int; BuildKitEnabled bool
     Instructions *DockerfileInstructions; Inject *DockerfileInject
     // OTEL telemetry — from config.MonitoringConfig
-    OtelEndpoint string  // base URL only; SDK appends /v1/{metrics,logs,traces}. Traces ride the same base via OTEL_TRACES_EXPORTER=otlp + CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1, both hard-coded in the templates (not context fields).
+    OtelEndpoint string  // base URL only; SDK appends /v1/{metrics,logs,traces}. Traces ride the same base via OTEL_TRACES_EXPORTER=otlp + CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1, both hard-coded in the claude bundle fragment (not context fields).
     OtelLogsExportInterval, OtelMetricExportInterval int
     OtelLogToolDetails, OtelLogUserPrompts, OtelIncludeAccountUUID, OtelIncludeSessionID bool
     HasFirewallCA bool; GoBuilderImage string
@@ -125,54 +134,66 @@ type DockerfileContext struct {
 
 `GoBuilderImage` is the Go toolchain image for builder stages, pinned to exact patch version + SHA digest (default: `DefaultGoBuilderImage`). Tracks `go.mod`.
 
-### Baked-in Node.js Runtime (root `/usr/local` + user nvm)
+### Harness Bundles (`harness.go`)
 
-Node + npm are baked into every generated image (Claude Code hooks `UserPromptSubmit`/`SessionStart` shell out to `node`). One Node install plus the nvm tool:
+```go
+const DefaultHarnessName = "claude"
+func ShippedHarnessNames() []string                                    // embedded bundle names (claude, codex)
+func EnsureHarnesses(cfg config.Config) error                          // materialize shipped bundles copy-if-missing to <config-dir>/harnesses/<name>/ + seed settings `harnesses:` registry entries
+func ResolveHarnessName(cfg config.Config, name string) (string, error) // empty = registry default (exactly one entry may be default: true)
+func ValidateHarnessKey(name string) error
+func HarnessBundleDir(cfg config.Config, name string) (string, error)  // registry entry's explicit path
+func LoadHarness(cfg config.Config, name string) (*harness.Bundle, error)
+```
 
-- **Root node on `/usr/local`** (the `Install Node.js` block, before the `root_run` render): lands `node`/`npm` on `/usr/local/bin`, overriding the base image's older Node. Serves clawkerd-as-PID-1, `root_run`/system steps, and the agent's Bash tool — all resolve `node` from the inherited `${PATH}` floor.
-- **nvm** (installed after user creation): the version-switch tool. The user or `post_init` runs `nvm install`/`nvm use` to move onto another Node at runtime. On Alpine that source-compiles (no musl prebuilt), so the apk block bakes in the build toolchain (`g++`, `python3`, `linux-headers`, …).
+A bundle dir = `harness.yaml` (manifest: version spec, toolchains, volumes, seeds, staging, egress) + `Dockerfile.harness.tmpl` (block-slot fragment) + optional `assets/`. Manifest/compose types live in `internal/harness`. Registry entries are always explicit `path:` — never convention-resolved. Custom harness = author a bundle dir + add a settings registry entry.
 
-- **Channel, not exact pin.** `ARG NODE_VERSION` (default `24`) names the LTS *line*, not a patch. The root install resolves the latest patch of that line per-build from `nodejs.org/dist/index.json` (`jq --arg ver "$NODE_VERSION"` — single-quoted `$NODE_VERSION` would NOT expand and silently resolve nothing), floating onto security patches on rebuild. Rationale (justified exception to clawker's pin-everything posture) lives in `docs/threat-model.mdx`. See [[feedback_pinning_policy_scope_is_clawker_artifacts_not_user_dockerfile]].
-- **Own integrity check on Node, every path.** Not delegated to TLS alone. Debian: prebuilt tarball from nodejs.org/dist, GPG-verified via `SHASUMS256.txt.asc`. Alpine x86_64: musl prebuilt from unofficial-builds.nodejs.org, sha256-verified against that mirror's `SHASUMS256.txt` (unsigned upstream — that mirror's integrity level; do NOT hardcode a per-version checksum). Alpine other arches: source build, GPG-verified against nodejs.org `SHASUMS256.txt`. nvm itself is installed from its canonical installer and floated, not pinned — a `curl`-fetched tool is invisible to Dependabot (cf. CVE-2026-10796, nvm ≤0.40.4 RCE; a pre-fix pin would have stranded every image); nvm checksums the Node tarballs it downloads.
-- **Managed-settings PATH is `.local/bin` + `${PATH}`.** `.local/bin` holds the `claude` binary; `${PATH}`'s `/usr/local/bin` carries the root Node floor. clawker does NOT set `NVM_SYMLINK_CURRENT` or route PATH through `$NVM_DIR/current`. The old `.npmrc` `prefix=${HOME}/.npm-global` mechanism is gone.
+### Toolchains (`toolchain.go`)
 
-`ENV NODE_USE_SYSTEM_CA=1` set near the top of the final stage (before USER switch) so root and unprivileged `${USERNAME}` both trust `/etc/ssl/certs/ca-certificates.crt`. When `HasFirewallCA` is set, the firewall MITM cert is merged into that bundle via `update-ca-certificates`, transparently trusting the interception cert for `fetch()`/TLS.
+Language toolchains are file-backed definitions: `toolchain.yaml` + `Dockerfile.toolchain-root.tmpl` and/or `Dockerfile.toolchain-user.tmpl` (loaded via `internal/toolchain`). Shipped: `go` (root), `node` (root LTS + user nvm), `python` (root uv + uv-managed CPython), `rust` (user rustup).
 
-### Clawker-Assets Placement (cache-locality + inject-lifetime invariants)
+- `EnsureToolchains(cfg)` materializes shipped defs copy-if-missing to `<config-dir>/toolchains/<name>/` and seeds the settings `toolchains:` registry (name → path). One flat namespace; a name collision is an error.
+- **Declared, never installed:** project `build.toolchains: [go, node]` renders the fragments in the base image; a harness manifest's `toolchains:` renders in the harness image unless the project already declared the same name (then it lives in the shared base). `ToolchainRootSteps` render before block_1 (root), `ToolchainUserSteps` before block_3 (user).
+- Fragments are **self-guarded** — they skip when the image already provides the tool (e.g. the node fragment keeps an existing node ≥ its floor major).
+- Node specifics (node toolchain fragment): `ARG NODE_VERSION` (default `24`) names the LTS *line*, not a patch — the latest patch resolves per-build from `nodejs.org/dist/index.json`, floating onto security patches on rebuild (justified pin-policy exception; rationale in `docs/threat-model.mdx`). Tarball is GPG-verified via `SHASUMS256.txt.asc`. `ENV NODE_USE_SYSTEM_CA=1` makes node trust the OS CA bundle (and therefore the firewall MITM CA once merged).
 
-Clawker-managed assets are split across THREE positions in the final stage, dictated by USER scope, build-time read dependencies, and inject-point lifetime contracts:
+### Egress Composition (`egress.go`)
 
-**1. Early root scope (before `USER ${USERNAME}`):**
-- `mkdir /etc/claude-code` + `managed-settings.json` heredoc
+```go
+func EgressRules(cfg config.Config, name string) ([]config.EgressRule, error)
+```
 
-`managed-settings.json` is the Linux managed-settings path — highest-precedence Claude Code env override, the only documented enterprise mechanism that injects `PATH` into Claude Code's Bash-tool shell snapshot (built at session start, AFTER zsh init files, so `.zshenv` is insufficient on its own). Its PATH is `.local/bin` + the inherited `${PATH}` (whose `/usr/local/bin` carries the root Node as the floor, which is where the agent's node resolves out of the box); Claude Code separately globs `$NVM_DIR/versions/node/*` for any versions the user later `nvm install`s, so clawker does NOT add a `$NVM_DIR/current/bin` entry (pre-creating `current` as a symlink collides with Claude Code's `current/<ver>` bookkeeping → self-referential loop). Any `claude` invocation in `after_claude_install` / `before_entrypoint` inject points reads this at session start and depends on `.local/bin` to find the `claude` binary (and on `${PATH}` for `node` + the global-npm bin, e.g. `claude mcp add <package>`). Must exist BEFORE any potential build-time claude session, so it can't sit in the late block. The heredoc body is structural (template-author-edited only), so locking it early has negligible cache cost.
+Composes the effective firewall rule set: the selected harness bundle's `egress:` floor first, then the project's `security.firewall` rules/add_domains. Firewall sync paths must call this — `cfg.ProjectEgressRules()` alone is missing the floor the harness needs to function. Empty name = registry default.
 
-**2. User-scope (right after `RUN curl ... claude.ai/install.sh`, while `USER ${USERNAME}` is in effect):**
-- `statusline.sh`, `claude-settings.json`, `claude-config.json` seeds → `/home/${USERNAME}/.claude-init/`
+### Asset Placement in the Harness Image (cache-locality + inject-lifetime invariants)
 
-These stay in the user-scope section because `after_claude_install` / `before_entrypoint` inject points and user `Instructions.Copy` may reference `~/.claude-init/` contents at injection time. Burying them under the trailing `USER root` block would silently break that contract.
+The rendered harness image splits content across three scopes, dictated by USER scope, build-time read dependencies, and inject-point lifetime contracts:
 
-**3. Late root scope (between trailing `USER root` and `ENTRYPOINT`):**
-1. Agent prompt: `COPY clawker-agent-prompt.md` → `/etc/claude-code/CLAUDE.md` (Claude reads this at session start as an additional system message; not load-bearing for command execution, so safe to defer)
+**1. Early root scope (blocks 1–2, before `USER ${USERNAME}`):** bundle-fragment root steps. The claude fragment writes `/etc/claude-code/managed-settings.json` here — the highest-precedence Claude Code env override, whose PATH (`.local/bin` + inherited `${PATH}`) is what lets any build-time `claude` invocation in `after_harness_install` / `before_entrypoint` inject points find the `claude` binary and node. It must exist before any potential build-time session, so it can't sit in the late block. (Claude Code globs `$NVM_DIR/versions/node/*` itself; clawker never adds a `$NVM_DIR/current/bin` PATH entry — pre-creating `current` collides with Claude Code's `current/<ver>` bookkeeping.)
+
+**2. User scope (blocks 3–4 + generic seed staging):** the harness install (block_4) and the manifest `seeds:` staged to `/home/${USERNAME}/.clawker/seed/` plus a generated `seed-manifest` (apply tokens consumed by CP's generic first-boot seed-apply step). Seeds stay in the user-scope section because `after_harness_install` / `before_entrypoint` inject points and user `Instructions.Copy` may reference the staged contents at injection time.
+
+**3. Late root scope (trailing `USER root` → `ENTRYPOINT`), shared template:**
+1. block_5 (bundle late-root steps, e.g. the claude fragment's agent-prompt COPY to `/etc/claude-code/CLAUDE.md`)
 2. `{{if .HasFirewallCA}}` block: CA cert COPY + `update-ca-certificates` + `SSL_CERT_FILE` / `CURL_CA_BUNDLE` ENVs (runtime traffic only; `docker build` itself goes via host network, not through the in-container firewall)
 3. Host-proxy + socket-forwarder binaries (`host-open`, `git-credential-clawker`, `callback-forwarder`, `clawker-socket-server`) + single batched `chmod +x` (one layer, not four)
-4. `COPY clawkerd` (every CLI release rolls this — last so its layer's invalidation tail is just `ENTRYPOINT`)
+4. `COPY clawkerd` (every CLI release rolls this — last so its layer's invalidation tail is just `ENTRYPOINT`), then `ENTRYPOINT ["/usr/local/bin/clawkerd"]` + block_6 (CMD)
 
-**Why this works for cache:** a clawker bump that only touches late-block assets (the common case — agent prompt edit, host-proxy script edit, clawkerd binary bump) invalidates ONLY the late block. Everything above — apt/apk, Node, git-delta, zsh-in-docker, Claude Code install, the user-scope seeds, user `Instructions.Copy`, every `Inject.*` point, the early-root managed-settings heredoc — stays cached. A bump that touches user-scope seeds (rare — those files change occasionally with clawker releases) invalidates from the seed COPYs downward, still cheap.
+**Why this works for cache:** a clawker bump that only touches late-block assets (the common case — agent prompt edit, host-proxy script edit, clawkerd binary bump) invalidates ONLY the late block; the harness install, seeds, inject points, and the entire base image stay cached. A seed change invalidates from the seed COPYs downward, still cheap.
 
-**Test invariants** (`TestBuildContext_LateClawkerBlock`):
-- managed-settings.json appears BEFORE the first `USER ${USERNAME}` switch (early root scope)
-- Claude config seeds appear BEFORE the trailing `USER root` switch (user scope)
-- Agent prompt + firewall CA + host-proxy/socket binaries + clawkerd appear AFTER the trailing `USER root` (late root scope)
-- clawkerd's COPY is the last asset before `ENTRYPOINT`
+**Test invariants** (`TestBuildContext_LateClawkerBlock`, rendered against the default claude bundle):
+- managed-settings.json appears BEFORE the first `USER ${USERNAME}` switch (early root scope), with the `.local/bin:${PATH}` PATH and no `.nvm/current/bin` entry
+- seeds appear BEFORE the trailing `USER root` switch (user scope)
+- agent prompt + host-proxy/socket binaries + clawkerd appear AFTER the trailing `USER root` (late root scope)
+- clawkerd's COPY precedes `ENTRYPOINT`
 
-`TestBuildContext_CollapsedChmod` separately pins the single-chmod batching for the late root block's four `/usr/local/bin/*` binaries. Regressions that scatter the block, bury the seeds under USER root, or move managed-settings.json out of early root scope fail these tests.
+`TestBuildContext_CollapsedChmod` separately pins the single-chmod batching for the late root block's four `/usr/local/bin/*` binaries.
 
 ### Dockerfile Instruction Types
 
 ```go
 type DockerfileInstructions struct { Copy []CopyInstruction; Args []ArgInstruction; UserRun, RootRun []RunInstruction }
-type DockerfileInject struct { AfterFrom, AfterPackages, AfterUserSetup, AfterUserSwitch, AfterClaudeInstall, BeforeEntrypoint []string }
+type DockerfileInject struct { AfterFrom, AfterPackages, AfterUserSetup, AfterUserSwitch, AfterHarnessInstall, BeforeEntrypoint []string }  // yaml after_claude_install (deprecated alias) merges into AfterHarnessInstall
 type CopyInstruction struct { Src, Dest, Chown, Chmod string }
 type ArgInstruction struct { Name, Default string }
 type RunInstruction struct { Cmd, Alpine, Debian string }  // OS-variant aware RUN
@@ -185,7 +206,8 @@ Bundler does not compose OTEL URLs itself. `DockerfileContext.OtelEndpoint` is p
 ### Constants and Embedded Assets
 
 ```go
-const DefaultClaudeCodeVersion, DefaultUsername, DefaultShell = "latest", "claude", "/bin/zsh"
+const DefaultHarnessVersion, DefaultUsername, DefaultShell = "latest", "claude", "/bin/zsh"
+const SubstrateImage = "debian:bookworm-slim@sha256:..."  // single pinned base for every generated base image
 ```
 
 UID/GID come from `cfg.ContainerUID()` / `cfg.ContainerGID()` (no bundler-local constants).
@@ -236,10 +258,10 @@ type ParseError = registry.ParseError       // { URL, Snippet, Err } -- Unwrap()
 
 ## Dependencies
 
-Imports: `internal/config`, `internal/bundler/registry`, `github.com/Masterminds/semver/v3`, `internal/hostproxy/internals` (embed-only), `clawkerd/embed` (embed-only — `clawkerdembed.Binary`). **Does NOT import `internal/docker`** — this is a leaf package.
+Imports: `internal/config`, `internal/consts`, `internal/harness`, `internal/toolchain`, `internal/bundler/registry`, `github.com/Masterminds/semver/v3`, `internal/hostproxy/internals` (embed-only), `clawkerd/embed` (embed-only — `clawkerdembed.Binary`). **Does NOT import `internal/docker`** — this is a leaf package.
 
 ## Tests
 
-Unit tests: `dockerfile_test.go`, `build_test.go`, `versions_test.go`. Subpackage: `registry/npm_test.go`. Docker integration: `test/whail/`.
+Unit tests: `dockerfile_test.go`, `build_test.go`, `basehash_test.go`, `versions_test.go`, `harness_test.go`, `toolchain_test.go`, `egress_test.go`. Golden: `golden_test.go` renders base + harness Dockerfiles against `testdata/golden/` (regen: `GOLDEN_UPDATE=1 go test ./internal/bundler/ -run TestGenerate_Golden`). Subpackage: `registry/npm_test.go`, `registry/github_test.go`. Docker integration: `test/whail/`.
 
 Test helper: `testConfig(t, projectYAML) config.Config` wraps `configmocks.NewFromString(cleanedProject, settingsYAML)` with default monitoring settings — preferred test double for bundler tests. All test configs use YAML fixtures rather than mock/fake constructors.

@@ -1,6 +1,6 @@
 # Workspace Package
 
-Workspace mounting strategies for container creation. Handles bind mounts (live sync) and snapshot volumes (ephemeral copy), plus git credentials (HTTPS) and Docker socket forwarding.
+Workspace mounting strategies for container creation. Handles bind mounts (live sync) and snapshot volumes (ephemeral copy), plus harness config volumes, harness host-state binds, git credentials (HTTPS), and Docker socket forwarding.
 
 SSH and GPG agent forwarding are handled by the `internal/socketbridge` package (via `docker exec`), not by this package.
 
@@ -52,12 +52,16 @@ All constructors take a `*logger.Logger` — pass `logger.Nop()` in tests.
 type SetupMountsConfig struct {
     Log            *logger.Logger // Logger for diagnostic file logging
     ModeOverride   string        // CLI flag value (empty = use config default)
-    Cfg            config.Config // Config interface (provides project schema, ignore file, share dir)
+    Cfg            config.Config // Config interface (provides project schema, share dir)
     ProjectName    string        // Resolved project name for volume naming (empty when no project registered)
     AgentName      string
     WorkDir        string        // Host working directory (empty = os.Getwd() fallback)
     ProjectRootDir string        // Main repo root for worktree .git mounting (empty for non-worktree)
-    ContainerPath  string        // Container-side mount destination (host absolute path for /resume compatibility)
+    ContainerPath  string        // Container-side mount destination (host absolute path so in-container paths mirror the host, e.g. for the claude harness's /resume)
+    IgnoreFile     string        // Caller-resolved ignore file path (empty = no patterns)
+    Harness        harness.Staging      // Selected bundle's staging manifest (host-state mounts); resolved by the caller
+    HarnessVolumes []harness.VolumeSpec // Bundle-declared persisted dirs; each becomes a named volume under the container home
+    HarnessConfig  *config.HarnessConfig // Per-harness init config (nil = defaults); gates the host-state binds
 }
 
 type SetupMountsResult struct {
@@ -70,25 +74,26 @@ type SetupMountsResult struct {
 func ResolveMode(override, defaultMode string) (config.Mode, error)  // mode precedence: CLI --mode override wins, else config default; empty resolves to ModeBind (ParseMode default), only unrecognized non-empty errors
 var ErrWorktreeSnapshot error  // sentinel: worktree + snapshot rejected. SetupMounts keys on ProjectRootDir != ""; CreateContainer fail-fast keys on the --worktree flag — equivalent because resolveWorkDir sets ProjectRootDir iff a worktree is requested
 func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConfig) (*SetupMountsResult, error)
-func GetConfigVolumeMounts(projectName, agentName string) ([]mount.Mount, error)
-func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, agentName string) (ConfigVolumeResult, error)
+func GetConfigVolumeMounts(projectName, agentName string, volumes []harness.VolumeSpec) ([]mount.Mount, error)
+func GetHostStateMount(hostDir, dest string) (mount.Mount, error)  // bind, RW; dest is container-home-relative; errors when source not absolute
+func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, agentName string, volumes []harness.VolumeSpec) (ConfigVolumeResult, error)
 func GetShareVolumeMount(hostPath string) mount.Mount  // ReadOnly: true
-func GetClaudeProjectsMount(hostProjectsDir string) (mount.Mount, error)  // bind, RW; overlays config volume; errors when source not absolute
 ```
 
-### Host `~/.claude/projects/` bind mount
+### Harness volumes + host-state binds
 
-When `agent.claude_code.mount_projects` is true (default), `SetupMounts` appends a bind mount of `<hostConfigDir>/projects` → `/home/claude/.claude/projects` after the per-agent config volume mount. Per Linux mount-namespace semantics, the deeper bind target layers over the corresponding subdir in the volume, sharing auto-memory + session jsonls across container runs. Source dir resolved via `containerfs.ResolveHostProjectsDir`. Mount target path is `workspace.ClaudeProjectsTargetPath` (single SSoT).
+`GetConfigVolumeMounts` mounts, per selected harness bundle: one named volume per manifest `volumes:` entry (name via `docker.VolumeName(project, agent, v.Name)`, target `<home>/<v.Path>`), the history volume at `/commandhistory`, and the clawker lifecycle volume at `<home>/.clawker` (hook scripts, seed staging, post-init marker — shares the config volumes' lifetime so a recreated container doesn't re-run `post_init` against volumes it already initialized; Docker copy-on-first-use populates it from the image's staged seeds + seed-manifest).
+
+When `HarnessConfig.MountProjectsEnabled()` (default true), `SetupMounts` appends a RW bind per manifest `staging.mounts` entry (e.g. the claude bundle's `${CLAUDE_CONFIG_DIR:-~/.claude}/projects` → `<home>/.claude/projects`) after the volume mounts. Per Linux mount-namespace semantics, the deeper bind target layers over the corresponding subdir in the volume, sharing live host state (auto-memory, session jsonls) across container runs. Src is expanded + stat'd via `containerfs.ResolveHostMountSource`.
 
 Failure handling:
-- Host config dir does not exist (no `$CLAUDE_CONFIG_DIR` and no `~/.claude/`) or `$CLAUDE_CONFIG_DIR` is misconfigured — **hard error**. `SetupMounts` returns; container creation aborts. clawker is not useful without host Claude Code installed, so masking this would just produce confusing downstream failures. Users who want to run without the bind set `agent.claude_code.mount_projects: false`.
-- `<hostConfigDir>/projects` subdir does not exist under an existing host config dir — silent debug log, mount skipped (Claude Code creates it on first session).
-- Path-is-file or other stat errors on `<hostConfigDir>/projects` — hard error (same path as above; `ResolveHostProjectsDir` returns an error).
+- Src expansion or stat error (misconfigured env reference, path-is-file) — **hard error**; the message points at `mount_projects: false` for the harness as the opt-out.
+- Host dir does not exist — silent debug log, mount skipped (the harness creates it on first session).
 - UID mismatch is not surfaced. The container `claude` user's UID/GID are baked into the agent image at build time from the host invoker's `os.Getuid()` / `os.Getgid()` via `consts.ContainerUID()` / `consts.ContainerGID()`. CP-driven shell dispatch (`userStage` in `internal/controlplane/agent/init.go`) drops to the same UID via `consts.HostUID()` / `consts.HostGID()`, which the CP daemon reads from the `CLAWKER_HOST_UID` / `CLAWKER_HOST_GID` env vars the CLI sets on the CP container at boot. Host and container UIDs match by construction; bind-mount writes from inside the container land at the host invoker's UID. If the CP env vars come through invalid (unset / malformed / non-positive), the CP daemon's `logHostIdentity` emits `event=host_id_unavailable` at warn (the `env` field on the record names `CLAWKER_HOST_UID` or `CLAWKER_HOST_GID`) so an operator can correlate a downstream EACCES with the boot-time env drop.
 
-`SetupMounts` is the main entry point -- loads ignore patterns (via `docker.LoadIgnorePatterns` from the caller-resolved `IgnoreFile` path), then combines workspace, git credentials, share volume, and Docker socket mounts into a single mount list. The caller resolves the ignore-file path from the registry-backed project root and passes it as a primitive — an empty `IgnoreFile` (no registered project) means no ignore patterns (graceful degradation, not a fatal error). Share dir host path comes from `cfg.Cfg.ShareSubdir()`. Returns `*SetupMountsResult` with both the mounts and `ConfigVolumeResult` (value type) tracking which volumes were freshly created. `WorkDir` allows tests to inject a temp directory instead of relying on `os.Getwd()`.
+`SetupMounts` is the main entry point -- loads ignore patterns (via `docker.LoadIgnorePatterns` from the caller-resolved `IgnoreFile` path), then combines workspace, worktree `.git`, harness config/history/lifecycle volumes, host-state binds, share volume, and Docker socket mounts into a single mount list. (Git credential mounts are separate — `SetupGitCredentials` below, called by `CreateContainer`.) The caller resolves the ignore-file path from the registry-backed project root and passes it as a primitive — an empty `IgnoreFile` (no registered project) means no ignore patterns (graceful degradation, not a fatal error). Share dir host path comes from `cfg.Cfg.ShareSubdir()`. Returns `*SetupMountsResult` with both the mounts and `ConfigVolumeResult` (value type) tracking which volumes were freshly created. `WorkDir` allows tests to inject a temp directory instead of relying on `os.Getwd()`.
 
-`ConfigVolumeResult` tracks which config volumes were newly created vs pre-existing (`ConfigCreated`, `HistoryCreated` bool fields). Returned by `EnsureConfigVolumes` for use by container init orchestration. When `ConfigCreated` is true, callers should run `opts.InitContainerConfig` to populate the volume.
+`ConfigVolumeResult` tracks which volumes were newly created vs pre-existing: `CreatedByName` (manifest volume name → created bool) plus `HistoryCreated` / `ClawkerCreated`. Returned by `EnsureConfigVolumes` for container init orchestration — freshly created harness volumes get host config staged into them (see `internal/containerfs`).
 
 **Worktree support**: When using `--worktree`, the worktree directory is set as `WorkDir`. Additionally, `ProjectRootDir` must be set to the main repository root so that the `.git` directory can be mounted into the container. Git worktrees use a `.git` **file** (not directory) that references the main repo's `.git/worktrees/<name>/` metadata. By mounting the main `.git` directory at its original absolute path in the container, git commands work correctly inside the worktree.
 
@@ -150,4 +155,4 @@ const HostGitConfigStagingPath = "/tmp/host-gitconfig"
 
 ## Dependencies
 
-Imports: `internal/config`, `internal/docker`, `internal/logger`
+Imports: `internal/config`, `internal/consts`, `internal/containerfs`, `internal/docker`, `internal/harness`, `internal/logger`

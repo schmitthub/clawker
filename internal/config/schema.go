@@ -51,7 +51,7 @@ type DockerInstructions struct {
 type CopyInstruction struct {
 	Src   string `yaml:"src"             label:"Source"      desc:"File or directory to copy from your project"`
 	Dest  string `yaml:"dest"            label:"Destination" desc:"Where to place it inside the container"`
-	Chown string `yaml:"chown,omitempty" label:"Chown"       desc:"Set file ownership (e.g. claude:claude)"`
+	Chown string `yaml:"chown,omitempty" label:"Chown"       desc:"Set file ownership (e.g. claude:claude, the unprivileged container user)"`
 	Chmod string `yaml:"chmod,omitempty" label:"Chmod"       desc:"Set file permissions (e.g. 0644)"`
 }
 
@@ -65,8 +65,8 @@ type ArgDefinition struct {
 type InjectConfig struct {
 	AfterFrom           []string `yaml:"after_from,omitempty"            label:"After FROM"            desc:"Add Dockerfile instructions while root with only the base image — e.g. apt sources, proxy config, or CA certs that package installation depends on"`
 	AfterPackages       []string `yaml:"after_packages,omitempty"        label:"After Packages"        desc:"Add Dockerfile instructions while root with system packages available — e.g. compile native libraries or install tools that need those packages"`
-	AfterUserSetup      []string `yaml:"after_user_setup,omitempty"      label:"After User Setup"      desc:"Add Dockerfile instructions while root with the claude user created — e.g. set up directories, fix permissions, or configure services"`
-	AfterUserSwitch     []string `yaml:"after_user_switch,omitempty"     label:"After User Switch"     desc:"Add Dockerfile instructions as the claude user — e.g. install dotfiles, configure your shell, or set up user-level tools"`
+	AfterUserSetup      []string `yaml:"after_user_setup,omitempty"      label:"After User Setup"      desc:"Add Dockerfile instructions while root with the container user (claude) created — e.g. set up directories, fix permissions, or configure services"`
+	AfterUserSwitch     []string `yaml:"after_user_switch,omitempty"     label:"After User Switch"     desc:"Add Dockerfile instructions as the container user (claude) — e.g. install dotfiles, configure your shell, or set up user-level tools"`
 	AfterClaudeInstall  []string `yaml:"after_claude_install,omitempty"  label:"After Claude Install"  desc:"Deprecated: use after_harness_install"`
 	AfterHarnessInstall []string `yaml:"after_harness_install,omitempty" label:"After Harness Install" desc:"Add Dockerfile instructions as the container user with the harness CLI available — e.g. add MCP servers, install plugins, or extensions"`
 	BeforeEntrypoint    []string `yaml:"before_entrypoint,omitempty"     label:"Before Entrypoint"     desc:"Add Dockerfile instructions at the very end — e.g. final environment tweaks or cleanup that must happen after everything else"`
@@ -91,7 +91,7 @@ type HarnessConfigOptions struct {
 // as the claude entry when no map entry exists.
 type HarnessConfig struct {
 	Config        HarnessConfigOptions `yaml:"config"`
-	MountProjects *bool                `yaml:"mount_projects,omitempty" label:"Mount Host State" desc:"Bind mount the harness's host state dirs (e.g. ~/.claude/projects/) into the container so auto-memory and sessions are shared across container runs and instances" default:"true"`
+	MountProjects *bool                `yaml:"mount_projects,omitempty" label:"Mount Host State" desc:"Bind mount the harness's host state dirs (e.g. ~/.claude/projects/ for the claude harness) into the container so auto-memory and sessions are shared across container runs and instances" default:"true"`
 	EnvFile       []string             `yaml:"env_file,omitempty"       label:"Env Files"        desc:"Load extra environment variables from .env-style files when this harness is selected; layered on top of agent.env_file"`
 	FromEnv       []string             `yaml:"from_env,omitempty"       label:"Forward Env Vars" desc:"Forward specific host env vars into the container when this harness is selected; layered on top of agent.from_env"`
 	Env           map[string]string    `yaml:"env,omitempty"            label:"Env"              desc:"Set container env vars when this harness is selected; overrides agent.env on key collision"`
@@ -99,7 +99,7 @@ type HarnessConfig struct {
 	PreRun        string               `yaml:"pre_run,omitempty"        label:"Pre-Run Script"   desc:"Shell commands run on every container start when this harness is selected, appended after agent.pre_run"`
 }
 
-// AgentConfig defines Claude agent-specific settings.
+// AgentConfig defines harness-agnostic agent runtime settings.
 type AgentConfig struct {
 	EnvFile         []string          `yaml:"env_file,omitempty"          label:"Env Files"         desc:"Load environment variables from .env-style files (e.g. .env.local)"`
 	FromEnv         []string          `yaml:"from_env,omitempty"          label:"Forward Env Vars"  desc:"Pass specific host env vars into the container (e.g. AWS_PROFILE, GITHUB_TOKEN)"`
@@ -524,8 +524,8 @@ type MonitoringConfig struct {
 // listens on by default.
 type TelemetryConfig struct {
 	PrometheusOTLPPath     string `yaml:"prometheus_otlp_path,omitempty"      label:"Prometheus OTLP Path"        desc:"HTTP path on Prometheus' native OTLP receiver — available for direct OTLP/HTTP pushers that want to bypass the collector" default:"/api/v1/otlp/v1/metrics"`
-	MetricExportIntervalMs int    `yaml:"metric_export_interval_ms,omitempty" label:"Metric Export Interval (ms)" desc:"How often Claude exports metrics (lower = more granular, higher = less overhead)"                                         default:"10000"`
-	LogsExportIntervalMs   int    `yaml:"logs_export_interval_ms,omitempty"   label:"Logs Export Interval (ms)"   desc:"How often Claude exports logs (lower = more real-time, higher = less overhead)"                                           default:"5000"`
+	MetricExportIntervalMs int    `yaml:"metric_export_interval_ms,omitempty" label:"Metric Export Interval (ms)" desc:"How often the Claude Code harness exports metrics (lower = more granular, higher = less overhead)"                        default:"10000"`
+	LogsExportIntervalMs   int    `yaml:"logs_export_interval_ms,omitempty"   label:"Logs Export Interval (ms)"   desc:"How often the Claude Code harness exports logs (lower = more real-time, higher = less overhead)"                          default:"5000"`
 	LogToolDetails         *bool  `yaml:"log_tool_details,omitempty"          label:"Log Tool Details"            desc:"Capture full tool call inputs/outputs in telemetry (verbose but useful for debugging)"                                    default:"true"`
 	LogUserPrompts         *bool  `yaml:"log_user_prompts,omitempty"          label:"Log User Prompts"            desc:"Capture user prompts in telemetry (disable for privacy)"                                                                  default:"true"`
 	IncludeAccountUUID     *bool  `yaml:"include_account_uuid,omitempty"      label:"Include Account UUID"        desc:"Tag telemetry with your Anthropic account ID (useful for multi-user setups)"                                              default:"true"`

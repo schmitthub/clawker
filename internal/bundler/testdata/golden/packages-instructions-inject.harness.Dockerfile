@@ -225,8 +225,9 @@ USER root
 
 # --- Begin clawker-managed root assets (consolidated for build-cache locality) ---
 # Every COPY/RUN in this block changes with clawker release cadence
-# (embedded scripts, agent prompt, firewall CA, clawkerd binary) and writes
-# to root-owned paths (/etc/claude-code, /usr/local/bin, /usr/local/share).
+# (embedded scripts, harness block_5 assets such as a managed agent prompt,
+# firewall CA, clawkerd binary) and writes to root-owned paths
+# (/usr/local/bin, /usr/local/share, harness-managed /etc dirs).
 # Keeping them at end-of-stage means a clawker bump invalidates ONLY this
 # block — the harness install blocks and config seeds stay cached above,
 # and the shared base image's ID never changes. The seeds live in the

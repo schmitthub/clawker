@@ -1,25 +1,27 @@
 ---
 title: "Security — Sandbox for AI Coding Agents"
-description: "How clawker's self-hosted AI coding agent sandbox secures Claude Code: deny-by-default egress firewall, container isolation, unprivileged execution, Docker socket scoping, and credential forwarding — free, local, no cloud."
+description: "How clawker's self-hosted AI coding agent sandbox secures coding agents like Claude Code and Codex: deny-by-default egress firewall, container isolation, unprivileged execution, Docker socket scoping, and credential forwarding — free, local, no cloud."
 icon: "shield"
-keywords: ["AI coding agent sandbox", "Claude Code sandbox", "self-hosted", "open source", "run Claude Code in Docker", "coding agent sandbox", "container security", "egress firewall", "Linux capabilities"]
+keywords: ["AI coding agent sandbox", "coding agent sandbox", "run coding agents in Docker", "Claude Code", "Codex", "Claude Code sandbox", "self-hosted", "open source", "container security", "egress firewall", "Linux capabilities"]
 ---
 
-Clawker is a self-hosted AI coding agent sandbox: every agent runs in an isolated Docker container, unprivileged and behind a deny-by-default egress firewall. Network isolation is the foundation — prompt injection can change an agent's intent, but it cannot change the container's constraints: a coerced agent can't touch your host system, and it can't send data to any destination outside your allowlist, so exfiltration to an arbitrary attacker is denied at the network boundary. This is how you run Claude Code safely, including with `--dangerously-skip-permissions`, on your own machine — free, local, no cloud. This guide explains the container security controls and how to customize them.
+Clawker is a self-hosted AI coding agent sandbox: every agent runs in an isolated Docker container, unprivileged and behind a deny-by-default egress firewall. Network isolation is the foundation — prompt injection can change an agent's intent, but it cannot change the container's constraints: a coerced agent can't touch your host system, and it can't send data to any destination outside your allowlist, so exfiltration to an arbitrary attacker is denied at the network boundary. This is how you run coding agents like Claude Code and Codex safely, including with permission prompts disabled, on your own machine — free, local, no cloud. This guide explains the container security controls and how to customize them.
 
 ## Network Firewall
 
 The firewall is **deny-by-default**. When enabled, it blocks **all outbound traffic** — DNS queries for unlisted domains return NXDOMAIN, and TLS connections to unlisted destinations are reset. Only domains you explicitly allowlist are reachable.
 
-This is intentional. The hardcoded allowlist is kept to the bare minimum required for Claude Code itself to function. Everything else — including GitHub, npm, PyPI, or any other service your project needs — must be explicitly configured by you.
+This is intentional. The default allowlist is the selected harness's **egress floor** — each harness bundle ships the bare minimum set of domains that harness needs to function, and it is composed with your project rules. Everything else — including GitHub, npm, PyPI, or any other service your project needs — must be explicitly configured by you.
 
 Every firewall decision — including bypassed traffic during `clawker firewall bypass` windows — is recorded as a structured event in the `clawker-ebpf-egress` OpenSearch index. See [Egress Observability](/observability).
 
 See the [Firewall](/firewall) guide for the full architecture, configuration, CLI commands, and troubleshooting.
 
-### Hardcoded Allowed Domains
+### Harness Egress Floors
 
-These are the **only** domains allowed by default — they are required for Claude Code to function (API access, OAuth, telemetry):
+The only domains allowed by default come from the selected harness bundle's egress floor — the set that harness needs for API access, authentication, and telemetry.
+
+The **claude** harness floor:
 
 | Domain | Purpose |
 |--------|---------|
@@ -28,12 +30,22 @@ These are the **only** domains allowed by default — they are required for Clau
 | `platform.claude.com` | OAuth token exchange |
 | `.claude.ai` | OAuth authorization, downloads |
 | `mcp-proxy.anthropic.com` | MCP tool server proxy |
-| `registry.npmjs.org` | npm package installs (Node.js is baked into every image) |
+| `registry.npmjs.org` | npm package installs (Claude Code is npm-distributed and its hooks install global packages) |
 | `sentry.io` | Error tracking |
 | `statsig.anthropic.com` | Feature flags |
 | `statsig.com` | Feature flags |
 | `.datadoghq.com` | Telemetry (all Datadog subdomains/regions) |
 | `.datadoghq.eu` | Telemetry (Datadog EU regions) |
+
+The **codex** harness floor:
+
+| Domain | Purpose |
+|--------|---------|
+| `api.openai.com` | API-key auth inference |
+| `auth.openai.com` | Login and token exchange |
+| `chatgpt.com` | ChatGPT-account backend — path-scoped to the codex backend prefixes (`/backend-api/codex/`, `/backend-api/wham/usage`, `/backend-api/ps/`, `/backend-api/plugins/`, `/backend-api/connectors/directory/`); every other path on the host is denied because `chatgpt.com` also hosts publicly readable shared conversations, an exfiltration sink. A companion `wss` rule enables WebSocket upgrades on the same allowed paths for streaming responses |
+
+Custom harness bundles declare their own floor in the bundle manifest's `egress:` list.
 
 <Warning>
 **GitHub, npm, PyPI, and all other services are NOT hardcoded.** The generated `clawker.yaml` template includes `github.com` and `api.github.com` as a convenience starting point, but these are project-level config entries — not system defaults. If you remove them from your config or start from scratch, GitHub will be blocked.
@@ -59,7 +71,7 @@ Disabling the firewall also turns off netlogger emission — netlogger drains th
 
 ## Agent Awareness Prompt
 
-Every Clawker container image includes an agent prompt file at `/etc/claude-code/CLAUDE.md`. This file is automatically loaded by Claude Code and gives the agent awareness of its containerized environment:
+Images built for the claude harness include an agent prompt file at `/etc/claude-code/CLAUDE.md`. This file is automatically loaded by Claude Code and gives the agent awareness of its containerized environment:
 
 - What it can and cannot do (filesystem, network, Docker)
 - How to diagnose firewall blocks (NXDOMAIN, connection resets, certificate errors)
@@ -70,7 +82,7 @@ This means when the agent hits a blocked domain, it can explain the problem and 
 
 ## Container PID 1 and Privilege Drop
 
-The container's PID 1 is `clawkerd`, the per-container daemon that supervises Claude Code. clawkerd runs as root inside the container, but it never executes user-controlled code in its own process. The user CMD (Claude Code by default) is forked with kernel-side privilege drop via `SysProcAttr.Credential` — between `fork()` and `execve()` the kernel performs `setgroups → setgid → setuid` atomically, so there is no user-mode code path between root and the unprivileged `claude` user (UID baked at build time — host-derived on Linux for bind-mount writability, 1001 elsewhere).
+The container's PID 1 is `clawkerd`, the per-container daemon that supervises the harness. clawkerd runs as root inside the container, but it never executes user-controlled code in its own process. The user CMD (the harness CLI) is forked with kernel-side privilege drop via `SysProcAttr.Credential` — between `fork()` and `execve()` the kernel performs `setgroups → setgid → setuid` atomically, so there is no user-mode code path between root and the unprivileged container user (`claude`, UID baked at build time — host-derived on Linux for bind-mount writability, 1001 elsewhere).
 
 The clawker control plane talks to clawkerd over a CN-pinned mTLS Session — only a peer holding a cert with CN `clawker-controlplane` chained to the clawker CA can dispatch commands. See [Container Internals → clawkerd](/container-internals#clawkerd-the-containers-pid-1) for the full PID-1 contract.
 
@@ -112,7 +124,7 @@ Clawker's firewall is IPv4-first. There are two cases to understand:
 
 Per-domain TCP routing in eBPF uses a `dns_cache` BPF map keyed by destination IP. When a container connects to `140.82.121.4`, the cgroup hook looks up the IP in the map, recovers the domain hash, and checks the global `route_map` for a matching `{domain_hash, dst_port}` rule. This only works if the cache is kept consistent with live DNS responses.
 
-Clawker ships a **custom CoreDNS build** with an in-tree `dnsbpf` plugin (`internal/dnsbpf/`). The plugin intercepts every DNS response for an allowlisted zone, extracts the A records, and writes each `(ip → domain_hash, ttl)` entry to the pinned `dns_cache` map in real time. This replaces an earlier startup-time seeding approach that was vulnerable to DNS round-robin rotation: seeded IPs would go stale as CDNs cycled backends, silently blackholing traffic until the firewall was reloaded. The plugin-based approach tracks whatever the upstream resolver returns on every query, so any IP a container actually uses has been observed and hashed at the moment of connection.
+Clawker ships a **custom CoreDNS build** with an in-tree `dnsbpf` plugin (`internal/dnsbpf/`). The plugin intercepts every DNS response for an allowlisted zone, extracts the A records, and writes each `(ip → domain_hash, ttl)` entry to the pinned `dns_cache` map in real time. Live per-query tracking is immune to DNS round-robin rotation: startup-time seeding would go stale as CDNs cycled backends, silently blackholing traffic until a firewall reload. The plugin-based approach tracks whatever the upstream resolver returns on every query, so any IP a container actually uses has been observed and hashed at the moment of connection.
 
 The plugin only writes to the BPF map on successful A-record answers. NXDOMAIN and other non-success responses are passed through untouched, so blocked domains never leak into the cache. The custom CoreDNS image is built from a SHA-pinned `alpine:3.21` base with the CoreDNS binary copied in — no shell, no package manager, no additional utilities. Its elevated capabilities (`CAP_BPF` + `CAP_SYS_ADMIN`) are scoped to the minimum needed for `bpf(BPF_OBJ_GET)` and `bpf(BPF_MAP_UPDATE_ELEM)` on the pinned map, and the only host access is a bind mount of `/sys/fs/bpf`.
 

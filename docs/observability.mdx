@@ -2,7 +2,7 @@
 title: "Egress Observability"
 description: "Per-decision-point eBPF egress event records — what netlogger emits, where it lands, and how to use it"
 icon: "binoculars"
-keywords: ["AI coding agent sandbox", "Claude Code sandbox", "self-hosted", "open source", "run Claude Code in Docker", "coding agent sandbox", "eBPF", "OpenTelemetry", "egress audit"]
+keywords: ["AI coding agent sandbox", "coding agent sandbox", "run coding agents in Docker", "Claude Code", "Codex", "self-hosted", "open source", "eBPF", "OpenTelemetry", "egress audit"]
 ---
 
 When the firewall is enabled, clawker's control plane runs **netlogger** — a userspace pipeline that drains an eBPF ringbuf populated by the cgroup/connect/sendmsg/sock_create programs and emits one OTLP log record per egress decision. Every connect, sendmsg, and socket-create call from a managed agent container produces a record carrying the kernel's verdict (`allowed` / `denied` / `bypassed`), the container's attribution (`agent`, `project`, `container_id`), the destination 4-tuple, and the resolved domain when DNS context is available.

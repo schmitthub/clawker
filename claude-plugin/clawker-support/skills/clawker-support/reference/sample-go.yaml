@@ -1,12 +1,7 @@
-# Reference: Go project config (clawker's own .clawker.yaml)
+# Reference: Go project config (based on clawker's own .clawker.yaml)
 # Manually maintained — may lag behind schema. Fetch
 # https://docs.clawker.dev/configuration for field-level details.
 agent:
-  claude_code:
-    config:
-      strategy: copy
-    use_host_auth: true
-    mount_projects: true
   editor: nano
   enable_shared_dir: true
   env:
@@ -14,14 +9,28 @@ agent:
   from_env:
     - GH_TOKEN
     - CONTEXT7_API_KEY
-  post_init: |
-    claude mcp add -s local serena -- uvx --from git+https://github.com/oraios/serena@e9d21915660a66f8532260c527ab6afae94a6bd5 serena start-mcp-server --context claude-code --project "$(pwd)" --enable-web-dashboard false
-    claude mcp add -s user --header "CONTEXT7_API_KEY: $CONTEXT7_API_KEY" --transport http context7 https://mcp.context7.com/mcp
-    claude mcp add -s user -t http deepwiki https://mcp.deepwiki.com/mcp
   # (agent.pre_run — every-start hook — is available but unused here; see
   # sample-node.yaml for a working example and SKILL.md for when to use it.)
+# Per-harness overlay: env/hooks layered on the agent.* base when this
+# harness is selected. `claude mcp add` needs the claude CLI, so it lives in
+# the claude harness's post_init, not the harness-agnostic agent.post_init.
+harnesses:
+  claude:
+    config:
+      strategy: copy
+    mount_projects: true
+    post_init: |
+      claude mcp add -s local serena -- uvx --from git+https://github.com/oraios/serena@e9d21915660a66f8532260c527ab6afae94a6bd5 serena start-mcp-server --context claude-code --project "$(pwd)" --enable-web-dashboard false
+      claude mcp add -s user --header "CONTEXT7_API_KEY: $CONTEXT7_API_KEY" --transport http context7 https://mcp.context7.com/mcp
+      claude mcp add -s user -t http deepwiki https://mcp.deepwiki.com/mcp
 build:
-  image: golang:1.26-bookworm
+  # Language toolchains render into the shared base image. Every clawker
+  # image builds from the pinned Debian substrate — there is no base-image
+  # field; runtimes come from toolchains, tools from packages/instructions.
+  # (Node arrives via the claude harness's own node toolchain declaration —
+  # declare `node` here too only if build steps need it in the base image.)
+  toolchains:
+    - go
   instructions:
     root_run:
       - |-
@@ -46,12 +55,13 @@ build:
     user_run:
       - curl -LsSf https://astral.sh/uv/install.sh | sh
       - uv tool install pre-commit --with pre-commit-uv
-      - /usr/local/go/bin/go install golang.org/x/tools/gopls@latest
-      - /usr/local/go/bin/go install gotest.tools/gotestsum@latest
-      - /usr/local/go/bin/go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
-      - /usr/local/go/bin/go install golang.org/x/vuln/cmd/govulncheck@latest
-      - /usr/local/go/bin/go install golang.org/x/tools/cmd/goimports@latest
-      - /usr/local/go/bin/go install honnef.co/go/tools/cmd/staticcheck@latest
+      # The go toolchain puts go on PATH for build-time steps.
+      - go install golang.org/x/tools/gopls@latest
+      - go install gotest.tools/gotestsum@latest
+      - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+      - go install golang.org/x/vuln/cmd/govulncheck@latest
+      - go install golang.org/x/tools/cmd/goimports@latest
+      - go install honnef.co/go/tools/cmd/staticcheck@latest
       - uv tool install semgrep
   packages:
     - git
@@ -77,8 +87,6 @@ build:
     - locales-all
     - iputils-ping
     - shellcheck
-    - nodejs
-    - npm
 security:
   docker_socket: false
   firewall:
@@ -116,6 +124,8 @@ security:
       - production.cloudflare.docker.com
       - www.envoyproxy.io
       - goreleaser.com
+      - astral.sh
+      - nodejs.org
     rules:
       - action: allow
         dst: github.com
@@ -124,7 +134,7 @@ security:
       - action: allow
         dst: raw.githubusercontent.com
         port: 443
-        proto: tls
+        proto: https
         path_default: deny
         path_rules:
           - path: /anchore/syft/main/

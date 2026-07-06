@@ -47,26 +47,24 @@ known to **wipe its stored credential with empty data when a refresh fails**
 (upstream anthropics/claude-code behavior) — the user sees an empty
 `refreshToken` in `~/.claude/.credentials.json` and a forced `/login` at boot.
 
-Current releases inject the credential blob byte-for-byte (no re-marshal), so
-new containers are unaffected. The poisoned blob persists in existing config
-volumes, though.
+Current releases never copy host credentials into containers at all —
+authentication happens inside the container and the credential persists in the
+harness config volume — so new containers are unaffected. The poisoned blob
+persists in config volumes created by affected releases, though.
 
-Fix: upgrade clawker, then **recreate the container** (credentials are
-re-injected from the host at container create) — or run `/login` once inside
-the existing container. Re-authenticating on the host fixes only future
-containers, not existing volumes.
+Fix: run `/login` once inside the affected container — Claude Code writes a
+fresh credential into the config volume, which self-heals from there.
+Host-side re-authentication has no effect on containers (credentials are
+independent families; nothing is copied or synced).
 
-**Do not confuse this fixed bug with normal rotation.** Claude Code also blanks
-its stored `refreshToken` (same empty-on-failed-refresh behavior) for an
-entirely *expected* reason: refresh tokens are single-use, so if the host or
-another container "turns in" the shared token first, this container's copy is
-invalidated (`invalid_grant`) and a one-time `/login` follows. That is not a
-clawker defect and recreating the container does not prevent it — it is inherent
-to sharing one rotating credential across two holders. Full model and
-troubleshooting in `claude-code.md`. The struct-roundtrip bug above is
-distinguished by a zero-value `organizationUuid` in the poisoned blob and is
-fixed in current releases; rotation-induced `/login` has no such fingerprint and
-is permanent by design.
+**Also affected-releases-only:** containers whose volumes hold a host-copied
+credential can hit an *expected* one-time `/login` from refresh-token
+rotation — refresh tokens are single-use, so if the host "turned in" the
+shared token first, the container's copy is invalidated (`invalid_grant`).
+Same fix: `/login` once; the container then owns its own credential family.
+The struct-roundtrip bug above is distinguished by a zero-value
+`organizationUuid` in the poisoned blob. Current auth model and `/login`
+troubleshooting in `claude-code.md`.
 
 ## git push -u / upstream tracking in worktree containers
 
@@ -113,9 +111,11 @@ no commits are lost — they live on the branch ref.
 
 ## Claude Code ignores `nvm use` / `nvm alias default` / `.nvmrc`
 
-Node + npm are baked into every clawker image and the agent's Bash tool uses
-them out of the box — so this only bites once a user installs **additional**
-Node versions with `nvm` and expects the agent to switch onto one.
+Images built with the node toolchain (declared by the claude harness, or via
+project `build.toolchains`) carry Node + npm on PATH and the agent's Bash tool
+uses them out of the box — so this only bites once a user installs
+**additional** Node versions with `nvm` and expects the agent to switch onto
+one.
 
 Claude Code selects the Node for its Bash tool when it builds its shell
 snapshot, and it does **not** honor nvm's normal version-selection mechanisms:

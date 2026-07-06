@@ -163,7 +163,7 @@ build:
       - src: <string>  # default: n/a | required: false
         # Where to place it inside the container
         dest: <string>  # default: n/a | required: false
-        # Set file ownership (e.g. claude:claude)
+        # Set file ownership (e.g. claude:claude, the unprivileged container user)
         chown: <string>  # default: n/a | required: false
         # Set file permissions (e.g. 0644)
         chmod: <string>  # default: n/a | required: false
@@ -192,10 +192,10 @@ build:
     # Add Dockerfile instructions while root with system packages available — e.g. compile native libraries or install tools that need those packages
     after_packages:  # default: n/a | required: false
       - <string>
-    # Add Dockerfile instructions while root with the claude user created — e.g. set up directories, fix permissions, or configure services
+    # Add Dockerfile instructions while root with the container user (claude) created — e.g. set up directories, fix permissions, or configure services
     after_user_setup:  # default: n/a | required: false
       - <string>
-    # Add Dockerfile instructions as the claude user — e.g. install dotfiles, configure your shell, or set up user-level tools
+    # Add Dockerfile instructions as the container user (claude) — e.g. install dotfiles, configure your shell, or set up user-level tools
     after_user_switch:  # default: n/a | required: false
       - <string>
     # Deprecated: use after_harness_install
@@ -226,7 +226,7 @@ agent:
     config:
       # How to initialize the harness config: copy syncs host settings, fresh starts clean
       strategy: <string>  # default: copy | required: false
-    # Bind mount the harness's host state dirs (e.g. ~/.claude/projects/) into the container so auto-memory and sessions are shared across container runs and instances
+    # Bind mount the harness's host state dirs (e.g. ~/.claude/projects/ for the claude harness) into the container so auto-memory and sessions are shared across container runs and instances
     mount_projects: <boolean>  # default: true | required: false
     # Load extra environment variables from .env-style files when this harness is selected; layered on top of agent.env_file
     env_file:  # default: n/a | required: false
@@ -339,8 +339,8 @@ The following tables are auto-generated from the schema struct tags in `internal
 |-------|------|---------|-------------|
 | `after_from` | string list | — | Add Dockerfile instructions while root with only the base image — e.g. apt sources, proxy config, or CA certs that package installation depends on |
 | `after_packages` | string list | — | Add Dockerfile instructions while root with system packages available — e.g. compile native libraries or install tools that need those packages |
-| `after_user_setup` | string list | — | Add Dockerfile instructions while root with the claude user created — e.g. set up directories, fix permissions, or configure services |
-| `after_user_switch` | string list | — | Add Dockerfile instructions as the claude user — e.g. install dotfiles, configure your shell, or set up user-level tools |
+| `after_user_setup` | string list | — | Add Dockerfile instructions while root with the container user (claude) created — e.g. set up directories, fix permissions, or configure services |
+| `after_user_switch` | string list | — | Add Dockerfile instructions as the container user (claude) — e.g. install dotfiles, configure your shell, or set up user-level tools |
 | `after_claude_install` | string list | — | Deprecated: use after_harness_install |
 | `after_harness_install` | string list | — | Add Dockerfile instructions as the container user with the harness CLI available — e.g. add MCP servers, install plugins, or extensions |
 | `before_entrypoint` | string list | — | Add Dockerfile instructions at the very end — e.g. final environment tweaks or cleanup that must happen after everything else |
@@ -365,7 +365,7 @@ The following tables are auto-generated from the schema struct tags in `internal
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `strategy` | string | `copy` | How to initialize the harness config: copy syncs host settings, fresh starts clean |
-| `mount_projects` | boolean | `true` | Bind mount the harness's host state dirs (e.g. ~/.claude/projects/) into the container so auto-memory and sessions are shared across container runs and instances |
+| `mount_projects` | boolean | `true` | Bind mount the harness's host state dirs (e.g. ~/.claude/projects/ for the claude harness) into the container so auto-memory and sessions are shared across container runs and instances |
 | `env_file` | string list | — | Load extra environment variables from .env-style files when this harness is selected; layered on top of agent.env_file |
 | `from_env` | string list | — | Forward specific host env vars into the container when this harness is selected; layered on top of agent.from_env |
 | `env` | key-value map | — | Set container env vars when this harness is selected; overrides agent.env on key collision |
@@ -482,9 +482,9 @@ monitoring:
   telemetry:
     # HTTP path on Prometheus' native OTLP receiver — available for direct OTLP/HTTP pushers that want to bypass the collector
     prometheus_otlp_path: <string>  # default: /api/v1/otlp/v1/metrics | required: false
-    # How often Claude exports metrics (lower = more granular, higher = less overhead)
+    # How often the Claude Code harness exports metrics (lower = more granular, higher = less overhead)
     metric_export_interval_ms: <integer>  # default: 10000 | required: false
-    # How often Claude exports logs (lower = more real-time, higher = less overhead)
+    # How often the Claude Code harness exports logs (lower = more real-time, higher = less overhead)
     logs_export_interval_ms: <integer>  # default: 5000 | required: false
     # Capture full tool call inputs/outputs in telemetry (verbose but useful for debugging)
     log_tool_details: <boolean>  # default: true | required: false
@@ -584,8 +584,8 @@ Global settings live at `~/.config/clawker/settings.yaml`. The following tables 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `prometheus_otlp_path` | string | `/api/v1/otlp/v1/metrics` | HTTP path on Prometheus' native OTLP receiver — available for direct OTLP/HTTP pushers that want to bypass the collector |
-| `metric_export_interval_ms` | integer | `10000` | How often Claude exports metrics (lower = more granular, higher = less overhead) |
-| `logs_export_interval_ms` | integer | `5000` | How often Claude exports logs (lower = more real-time, higher = less overhead) |
+| `metric_export_interval_ms` | integer | `10000` | How often the Claude Code harness exports metrics (lower = more granular, higher = less overhead) |
+| `logs_export_interval_ms` | integer | `5000` | How often the Claude Code harness exports logs (lower = more real-time, higher = less overhead) |
 | `log_tool_details` | boolean | `true` | Capture full tool call inputs/outputs in telemetry (verbose but useful for debugging) |
 | `log_user_prompts` | boolean | `true` | Capture user prompts in telemetry (disable for privacy) |
 | `include_account_uuid` | boolean | `true` | Tag telemetry with your Anthropic account ID (useful for multi-user setups) |

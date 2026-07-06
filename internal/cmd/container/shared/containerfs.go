@@ -15,7 +15,7 @@ import (
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
-// containerHomeDir is the home directory for the claude user inside containers.
+// containerHomeDir is the home directory for the unprivileged container user.
 const containerHomeDir = consts.ContainerHomeDir
 
 // CopyToVolumeFn is the signature for copying a directory to a Docker volume.

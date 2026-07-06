@@ -311,13 +311,13 @@
             },
             "logs_export_interval_ms": {
               "default": 5000,
-              "description": "How often Claude exports logs (lower = more real-time, higher = less overhead)",
+              "description": "How often the Claude Code harness exports logs (lower = more real-time, higher = less overhead)",
               "title": "Logs Export Interval (ms)",
               "type": "integer"
             },
             "metric_export_interval_ms": {
               "default": 10000,
-              "description": "How often Claude exports metrics (lower = more granular, higher = less overhead)",
+              "description": "How often the Claude Code harness exports metrics (lower = more granular, higher = less overhead)",
               "title": "Metric Export Interval (ms)",
               "type": "integer"
             },

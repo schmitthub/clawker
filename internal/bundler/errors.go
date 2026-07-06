@@ -1,4 +1,4 @@
-// Package bundler provides Docker image generation tooling for Claude Code.
+// Package bundler provides Docker image generation tooling for coding-agent harnesses.
 package bundler
 
 import (

@@ -48,7 +48,7 @@
             },
             "mount_projects": {
               "default": true,
-              "description": "Bind mount the harness's host state dirs (e.g. ~/.claude/projects/) into the container so auto-memory and sessions are shared across container runs and instances",
+              "description": "Bind mount the harness's host state dirs (e.g. ~/.claude/projects/ for the claude harness) into the container so auto-memory and sessions are shared across container runs and instances",
               "title": "Mount Host State",
               "type": "boolean"
             },
@@ -170,7 +170,7 @@
               "type": "array"
             },
             "after_user_setup": {
-              "description": "Add Dockerfile instructions while root with the claude user created — e.g. set up directories, fix permissions, or configure services",
+              "description": "Add Dockerfile instructions while root with the container user (claude) created — e.g. set up directories, fix permissions, or configure services",
               "items": {
                 "type": "string"
               },
@@ -178,7 +178,7 @@
               "type": "array"
             },
             "after_user_switch": {
-              "description": "Add Dockerfile instructions as the claude user — e.g. install dotfiles, configure your shell, or set up user-level tools",
+              "description": "Add Dockerfile instructions as the container user (claude) — e.g. install dotfiles, configure your shell, or set up user-level tools",
               "items": {
                 "type": "string"
               },
@@ -231,7 +231,7 @@
                     "type": "string"
                   },
                   "chown": {
-                    "description": "Set file ownership (e.g. claude:claude)",
+                    "description": "Set file ownership (e.g. claude:claude, the unprivileged container user)",
                     "title": "Chown",
                     "type": "string"
                   },
@@ -350,7 +350,7 @@
           },
           "mount_projects": {
             "default": true,
-            "description": "Bind mount the harness's host state dirs (e.g. ~/.claude/projects/) into the container so auto-memory and sessions are shared across container runs and instances",
+            "description": "Bind mount the harness's host state dirs (e.g. ~/.claude/projects/ for the claude harness) into the container so auto-memory and sessions are shared across container runs and instances",
             "title": "Mount Host State",
             "type": "boolean"
           },

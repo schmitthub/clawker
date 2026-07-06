@@ -1,65 +1,28 @@
 # ContainerFS Package
 
-Prepares host Claude Code configuration for container injection. Receives `config.Config` interface for `ContainerUID()`/`ContainerGID()` methods.
+Harness config staging: interprets the selected harness bundle's staging manifest (`harness.Staging`) to prepare host state for container injection. Executes the manifest's explicit `staging.copy` directives (glob-capable src, JSON key allowlist, per-file skips, JSON path rewrites) into a temp staging mirror that callers copy into the harness config volume. Only host state OUTSIDE the workspace is staged — the workspace arrives via mount. Credentials are never copied from the host: the user authenticates inside the container and the token family persists in the config volume.
+
+Leaf package: imports `internal/config`, `internal/consts`, `internal/harness`, `internal/logger`, `doublestar` (globbing), and stdlib. No docker imports.
 
 ## Key Functions
 
 | Function | Purpose |
 |----------|---------|
-| `ResolveHostConfigDir() (string, error)` | Find host ~/.claude/ dir ($CLAUDE_CONFIG_DIR or default). Relative `$CLAUDE_CONFIG_DIR` is resolved to absolute via `filepath.Abs` (multi-account workflows set it relative to CWD). |
-| `ResolveHostProjectsDir() (string, bool, error)` | Resolve `<hostConfigDir>/projects` for the bind-mount path; returns `("", false, nil)` only when the projects dir is absent. Stat errors (EACCES, ELOOP, path-is-file) and propagated `ResolveHostConfigDir` errors come back as `(_, false, err)` with the path included. Symlinks resolve via `os.Stat`. Never creates the dir. |
-| `PrepareClaudeConfig(log *logger.Logger, hostConfigDir, containerHomeDir, containerWorkDir string) (stagingDir string, cleanup func(), err error)` | Stage host config for volume copy (settings, plugins, agents, etc.) |
-| `PrepareCredentials(log *logger.Logger, hostConfigDir string) (stagingDir string, cleanup func(), err error)` | Stage credentials from keyring or file fallback |
-| `PrepareHookTar(cfg config.Config, script, name string) (io.Reader, error)` | Create tar with .clawker/<name>.sh (bash shebang + set -e + user script); extracts at /home/claude. Empty script → bare no-op wrapper (lets callers always-deliver, overwriting stale content) |
+| `ResolveHostMountSource(src string) (string, bool, error)` | Expand a manifest `staging.mounts` src (`~`, `$VAR`, `${VAR:-fallback}` via `harness.ExpandHostPath`) and stat it. Returns `("", false, nil)` when the dir is absent (caller soft-skips the bind); expansion errors, stat errors, and path-is-file come back as errors. Symlinks resolve via `os.Stat`. Never creates the dir. |
+| `PrepareConfig(log *logger.Logger, staging harness.Staging, containerHomeDir, containerWorkDir, hostProjectRoot string) (stagingDir string, cleanup func(), err error)` | Run every `staging.copy` directive into a temp staging mirror for volume copy. |
+| `PrepareHookTar(cfg config.Config, shell, script, name string) (io.Reader, error)` | Create tar with `.clawker/<name>.sh` (shell shebang + `set -e` + user script, mode 0755); extracts at the container home. Empty script → bare no-op wrapper (lets callers always-deliver, overwriting stale content). Tar headers carry `cfg.ContainerUID()`/`cfg.ContainerGID()`. |
 
-## Dependencies
+## Copy Directive Semantics (`stageCopy`)
 
-Imports: `internal/config`, `internal/keyring`, `internal/logger`, stdlib only. No docker imports.
+Each `harness.CopySpec` is one explicit host→container copy:
 
-## Copy Logic
-
-- settings.json: Only `enabledPlugins` key extracted
-- CLAUDE.md: Direct copy if present (user-level instructions)
-- agents/, skills/, commands/: Full recursive copy, symlinks resolved
-- plugins/: Full recursive copy including cache/, minus install-counts-cache.json
-- Broken symlinks: warn-logged and skipped (Claude Code leaves dangling cache symlinks after plugin updates and ignores them itself)
-- known_marketplaces.json: `installPath` and `installLocation` values rewritten for container paths
-- installed_plugins.json: `installPath` rewritten for container paths, `projectPath` replaced with `containerWorkDir`
-- Missing files/dirs: logged and skipped (not errors)
-- projects/: NOT staged here — handled separately as a live bind mount in `internal/workspace` (see `GetClaudeProjectsMount`). Bind mount overlays the per-agent config volume on top of `/home/claude/.claude/projects` so auto-memory and session jsonls are shared across container runs.
-
-## Path Rewriting
-
-Uses `pathRewriteRule` and `rewriteJSONFile` to generalize host-to-container path rewriting:
-- **Prefix swap** (`hostPrefix != ""`): replaces host prefix with container prefix (e.g., `installPath`, `installLocation`)
-- **Full replacement** (`hostPrefix == ""`): replaces entire value (e.g., `projectPath` → container work dir)
-
-## Staging Directory Structure
-
-Each `Prepare*` function returns a temp directory with this layout:
-
-### PrepareClaudeConfig
-```
-<tmpdir>/.claude/
-  settings.json      (if existed on host)
-  CLAUDE.md          (if existed on host)
-  agents/            (if existed on host)
-  skills/            (if existed on host)
-  commands/          (if existed on host)
-  plugins/           (if existed on host, including cache/)
-```
-
-### PrepareCredentials
-```
-<tmpdir>/.claude/
-  .credentials.json
-```
-
-## Credential Resolution Order
-
-1. OS keyring via `keyring.GetClaudeCodeCredentialsRaw()` — blob written verbatim (no struct round-trip; see keyring CLAUDE.md "Typed vs Raw fetch")
-2. File fallback: `<hostConfigDir>/.credentials.json` — copied byte-for-byte
-3. Error with actionable message if neither source available
+- **Src expansion**: `~`, `$VAR`, `${VAR:-fallback}`, then glob fan-out (`doublestar`) when the pattern has glob meta; literal paths stat. No matches = debug-logged soft skip (not an error).
+- **Workspace guard**: any match inside `hostProjectRoot` is rejected — the workspace is mounted, never staged.
+- **Dest placement**: dest is container-home-relative and must fall under a bundle-declared volume. A glob, multi-match, or trailing-slash dest lands each match UNDER dest; a single literal src copies TO dest exactly.
+- **`json_keys`**: allowlist — only the listed top-level keys are extracted from the src JSON (e.g. the claude bundle stages only `enabledPlugins` from `settings.json`).
+- **`skip`**: per-file skip list applied during directory copies (e.g. `install-counts-cache.json`).
+- **`json_rewrites`**: `{file, key, rewrite}` rules applied to named JSON files in a copied tree. Rewrite tokens: `prefix-swap` (host prefix → container prefix, e.g. `installPath`) and `replace-with-workdir` (entire value → `containerWorkDir`, e.g. `projectPath`).
+- Directories copy recursively with symlinks resolved; broken symlinks are warn-logged and skipped.
 
 ## Testing
 
@@ -67,4 +30,4 @@ Each `Prepare*` function returns a temp directory with this layout:
 go test ./internal/containerfs/... -v
 ```
 
-All tests use `t.TempDir()` for isolation, `keyring.MockInit()` for keyring tests, and `configmocks.NewBlankConfig()` for Config interface stubs (`import configmocks "github.com/schmitthub/clawker/internal/config/mocks"`).
+Tests use `t.TempDir()` for isolation and `configmocks.NewBlankConfig()` for Config interface stubs (`import configmocks "github.com/schmitthub/clawker/internal/config/mocks"`).

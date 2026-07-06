@@ -138,7 +138,7 @@ ENV HOME=/home/${USERNAME}
 ENV PATH=${HOME}/.local/bin:$PATH
 
 
-# Set BROWSER so CLI tools (like Claude Code) use host-open for URLs
+# Set BROWSER so CLI tools (like the coding-agent harness) use host-open for URLs
 ENV BROWSER=/usr/local/bin/host-open
 # Terminal color defaults; RuntimeEnv may override these based on host capabilities,
 # using safe fallback values (xterm-256color, truecolor) rather than passing through host TERM.

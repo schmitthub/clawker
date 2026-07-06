@@ -2,10 +2,10 @@
 title: "Monitoring"
 description: "Set up the OpenSearch + OpenSearch Dashboards + Prometheus monitoring stack for agent observability"
 icon: "chart-mixed"
-keywords: ["AI coding agent sandbox", "Claude Code sandbox", "self-hosted", "open source", "run Claude Code in Docker", "coding agent sandbox", "OpenSearch", "Prometheus", "agent observability"]
+keywords: ["AI coding agent sandbox", "coding agent sandbox", "run coding agents in Docker", "Claude Code", "Codex", "Claude Code sandbox", "self-hosted", "open source", "OpenSearch", "Prometheus", "agent observability"]
 ---
 
-Clawker includes an optional monitoring stack that collects telemetry from Claude Code agents running in containers. It provides dashboards for logs and metrics — giving you visibility into what every agent is doing, how much it costs, what tools it's calling, and whether it's making progress.
+Clawker includes an optional monitoring stack that collects telemetry from your agents. It provides dashboards for logs and metrics — giving you visibility into what every agent is doing, how much it costs, what tools it's calling, and whether it's making progress. The firewall egress, DNS, CLI, and control-plane log streams cover every harness; agent-side session telemetry (cost, tokens, tool calls) rides Claude Code's OpenTelemetry pipeline, so it flows when running the claude harness.
 
 ## What You Get
 
@@ -55,7 +55,7 @@ Individual service hostname constants (`MonitoringServiceOtelCollector`, `Monito
 
 ### How Agents Connect
 
-OTEL endpoints are baked into every Clawker image at build time. At container creation, Clawker checks whether the monitoring stack is running and conditionally enables telemetry:
+Infrastructure telemetry (egress, DNS, CLI, control plane) is emitted host-side for every harness. Agent-session OTEL endpoints are baked into images whose harness bundle declares them — the claude bundle ships a full OTLP env block. At container creation, Clawker checks whether the monitoring stack is running and conditionally enables telemetry:
 
 - `OTEL_EXPORTER_OTLP_ENDPOINT` — single base URL pointing at the collector's OTLP/HTTP listener (baked into image). The Claude Code SDK appends `/v1/metrics`, `/v1/logs`, `/v1/traces` per signal
 - `OTEL_METRICS_EXPORTER` / `OTEL_LOGS_EXPORTER` / `OTEL_TRACES_EXPORTER` — all set to `otlp`

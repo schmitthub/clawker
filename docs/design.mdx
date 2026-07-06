@@ -1,7 +1,7 @@
 ---
 title: "Design Philosophy"
 description: "Security model, core concepts, and key design decisions"
-keywords: ["AI coding agent sandbox", "Claude Code sandbox", "self-hosted", "open source", "run Claude Code in Docker", "coding agent sandbox", "design philosophy", "secure by default"]
+keywords: ["AI coding agent sandbox", "coding agent sandbox", "run coding agents in Docker", "Claude Code", "Codex", "self-hosted", "open source", "design philosophy", "secure by default"]
 ---
 
 # Design Philosophy
@@ -66,7 +66,7 @@ An agent is a named container instance. One project can have multiple agents, ea
 
 ### Firewall
 
-The firewall is deny-by-default. Outbound TCP is redirected to an Envoy egress proxy via eBPF cgroup programs (attached to each agent container's cgroup from outside, by the clawker control plane). DNS is redirected to a custom CoreDNS that returns NXDOMAIN for any domain not in the allowlist. Allowed domains are configured per project (`security.firewall` in `.clawker.yaml`) and merged with a minimal hardcoded system list (Anthropic API, OAuth, telemetry). See the [Firewall](/firewall) guide for the full design.
+The firewall is deny-by-default. Outbound TCP is redirected to an Envoy egress proxy via eBPF cgroup programs (attached to each agent container's cgroup from outside, by the clawker control plane). DNS is redirected to a custom CoreDNS that returns NXDOMAIN for any domain not in the allowlist. Allowed domains are configured per project (`security.firewall` in `.clawker.yaml`) and composed with the selected harness's minimal egress floor (e.g. Anthropic API, OAuth, and telemetry for the claude harness; OpenAI endpoints for codex). See the [Firewall](/firewall) guide for the full design.
 
 ### Control Plane
 
@@ -104,7 +104,7 @@ Commands mirror Docker's CLI structure:
 | `clawker <verb>` | `run`, `stop`, `build` |
 | `clawker <noun> <verb>` | `container ls`, `volume rm`, `image build` |
 
-Top-level shortcuts: `init`, `build`, `run`, `start`, `generate`, `monitor *`, `version`
+Top-level shortcuts: `init`, `build`, `run`, `start`, `monitor *`, `version`
 
 Management commands: `container`, `volume`, `network`, `image`, `project`, `worktree`, `firewall`, `controlplane`, `auth`, `settings`, `skill`
 

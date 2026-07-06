@@ -1,16 +1,16 @@
 ---
 title: "Clawker — Self-Hosted AI Coding Agent Sandbox"
-description: "Free, open-source sandbox to run Claude Code in Docker on your own machine. A self-hosted AI coding agent sandbox with a deny-by-default egress firewall, prompt-injection and data-exfiltration protection, git credential forwarding, and parallel git-worktree agents — no cloud, no subscription."
-keywords: ["AI coding agent sandbox", "AI agent sandbox", "coding agent sandbox", "Claude Code sandbox", "run Claude Code in Docker", "self-hosted", "open source", "egress firewall", "prompt injection protection", "data exfiltration", "network isolation", "deny-by-default", "parallel Claude Code agents", "git worktree", "devcontainer alternative"]
+description: "Free, open-source sandbox to run coding agents — Claude Code, OpenAI Codex, and more — in Docker on your own machine. A self-hosted AI coding agent sandbox with a deny-by-default egress firewall, prompt-injection and data-exfiltration protection, git credential forwarding, and parallel git-worktree agents — no cloud, no subscription."
+keywords: ["AI coding agent sandbox", "AI agent sandbox", "coding agent sandbox", "run coding agents in Docker", "Claude Code", "Codex", "Claude Code sandbox", "Codex sandbox", "self-hosted", "open source", "egress firewall", "prompt injection protection", "data exfiltration", "network isolation", "deny-by-default", "parallel coding agents", "git worktree", "devcontainer alternative"]
 ---
 
 # Clawker
 
-**Clawker is a free, open-source, self-hosted AI coding agent sandbox.** It runs [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (and other AI coding agents) inside isolated Docker containers on your own machine — no cloud, no subscription, your repo stays on your own machine, never uploaded to a vendor sandbox.
+**Clawker is a free, open-source, self-hosted AI coding agent sandbox.** It runs coding-agent CLIs — [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [OpenAI Codex](https://github.com/openai/codex), or any harness you register — inside isolated Docker containers on your own machine — no cloud, no subscription, your repo stays on your own machine, never uploaded to a vendor sandbox.
 
 The rise of agentic AI has been meteoric, but in the rush to ship model harnesses the industry keeps skipping the risks that come with them. Letting an agent run with `--dangerously-skip-permissions` on your bare-metal machine is fast — until a prompt injection turns it into a data-exfiltration tool with full access to your credentials and network. The harness itself needs a harness.
 
-Clawker is that harness. It pairs real network isolation — a **deny-by-default egress firewall** that blocks outbound traffic except to domains you allow — with git credential forwarding and parallel git-worktree agents, so you get the convenience of local, parallel Claude Code agents *and* the network security to run them safely. It fills the gap between cloud agent sandboxes (isolated, but your code leaves your machine and you pay for it) and other local agent runners (free, but with no egress control): self-hosted agent infrastructure that is both fully local and security-deep.
+Clawker is that harness. It pairs real network isolation — a **deny-by-default egress firewall** that blocks outbound traffic except to domains you allow — with git credential forwarding and parallel git-worktree agents, so you get the convenience of local, parallel coding agents *and* the network security to run them safely. It fills the gap between cloud agent sandboxes (isolated, but your code leaves your machine and you pay for it) and other local agent runners (free, but with no egress control): self-hosted agent infrastructure that is both fully local and security-deep.
 
 <CardGroup cols={2}>
   <Card title="Quick Start" icon="terminal" href="/quickstart">
@@ -29,7 +29,7 @@ Clawker is that harness. It pairs real network isolation — a **deny-by-default
 
 ## What Is an Agent?
 
-In Clawker, an **agent** is a named container instance running Claude Code. Each agent gets its own isolated environment with its own filesystem, network, and credentials. You can run multiple agents per project (e.g., `--agent dev`, `--agent review`) and they operate independently.
+In Clawker, an **agent** is a named container instance running a coding-agent harness (Claude Code, Codex, or any harness you register). Each agent gets its own isolated environment with its own filesystem, network, and credentials. You can run multiple agents per project (e.g., `--agent dev`, `--agent review`) and they operate independently.
 
 ```bash
 clawker run -it --agent dev @     # Start a "dev" agent
@@ -38,11 +38,11 @@ clawker run -it --agent review @  # Start a "review" agent in parallel
 
 ## What Clawker Does
 
-- **Default-on firewall** -- Blocks outbound traffic except allowlisted domains (Anthropic APIs, package registries). Your agent can't phone home to unexpected endpoints.
+- **Default-on firewall** -- Blocks outbound traffic except allowlisted domains: the selected harness's minimal egress floor (e.g. Anthropic APIs for the claude harness, OpenAI endpoints for codex) plus the domains you allow. Your agent can't phone home to unexpected endpoints.
 - **Seamless credential forwarding** -- SSH agent, GPG agent, and Git HTTPS credentials forwarded from your host. No manual key copying.
-- **Isolated agent environments** -- Each Claude Code agent runs in its own Docker container with configurable security controls
+- **Isolated agent environments** -- Each agent runs in its own Docker container with configurable security controls
 - **Bind or snapshot workspaces** -- Mount your repo for live editing, or copy it for pure isolation
-- **Embedded Dockerfile template** -- Parameterized images with common dev tools preinstalled, supporting Alpine or Debian bases
+- **Harness bundles** -- Claude Code and Codex ship built in; per-project images layer your packages, language toolchains, and custom build instructions on a pinned Debian substrate, and you can author your own harness bundles
 - **Project-scoped namespacing** -- Multi-agent, multi-project isolation via Docker labels and naming conventions
 - **Git worktree integration** -- Spin up agents on separate branches with automatic worktree management and hardened unattended-session lockdown. See [Worktree Caveats](/worktrees#worktree-caveats).
 - **Command aliases** -- One-word shortcuts that expand to full invocations (`clawker go dev`), shareable with your team via project config. See [Command Aliases](/aliases).

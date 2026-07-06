@@ -71,11 +71,13 @@ project is resolved from the current directory. When --name is provided, it over
 
 If IMAGE is "@", clawker resolves the built image for the current scope: the
 project image inside a registered project, or the global image (built with
-"clawker build" outside any project) elsewhere.`,
+"clawker build" outside any project) elsewhere. "@" selects the default
+harness image; "@:<harness>" (e.g. "@:codex") selects a specific harness
+image built with "clawker build -t <harness>".`,
 		Example: `  # Create a container with a specific agent name and interactive TTY
   clawker container create -it --agent ralph @ 
 
-  # Create a container with a specific claude code entry flag and interactive TTY
+  # Create a container passing a harness entry flag with an interactive TTY
   clawker container create -it --agent myagent @ --dangerously-skip-permissions
   
   # Create a container with environment variables and ports

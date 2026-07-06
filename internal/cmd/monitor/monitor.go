@@ -16,8 +16,8 @@ func NewCmdMonitor(f *cmdutil.Factory) *cobra.Command {
 		Short: "Manage local observability stack",
 		Long: `Commands for managing the local observability stack.
 
-The monitoring stack provides local telemetry visualization for Claude Code
-sessions using OpenTelemetry Collector + OpenSearch (logs + traces) +
+The monitoring stack provides local telemetry visualization for coding-agent
+harness sessions using OpenTelemetry Collector + OpenSearch (logs + traces) +
 OpenSearch Dashboards + Prometheus (metrics).
 
 Available commands:

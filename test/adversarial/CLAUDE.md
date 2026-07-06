@@ -199,7 +199,7 @@ edge** → host `:7777`; raw UDP via an ngrok **UDP** tunnel → host `:5454`
 
 ## Scripts
 
-`scripts/` currently contains only `setup.sh`. A future automated orchestrator could use clawker CLI commands (e.g. `clawker run @ --prompt "..."`) to pass adversarial prompts to Claude Code inside a firewall-protected container — combining prompt injection with exfil testing to see if the agent acts on malicious instructions and whether the firewall catches the attempt.
+`scripts/` currently contains only `setup.sh`. A future automated orchestrator could use clawker CLI commands (e.g. `clawker run @ --prompt "..."`) to pass adversarial prompts to the agent harness inside a firewall-protected container — combining prompt injection with exfil testing to see if the agent acts on malicious instructions and whether the firewall catches the attempt.
 
 ## Files
 

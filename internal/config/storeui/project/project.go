@@ -23,7 +23,7 @@ func Overrides() []storeui.Override {
 		{Path: "workspace.default_mode",
 			Kind: storeui.Ptr(storeui.KindSelect), Options: []string{"bind", "snapshot"}},
 
-		// Agent — Claude Code config strategy select
+		// Agent — deprecated claude_code shim config strategy select
 		{Path: "agent.claude_code.config.strategy",
 			Kind: storeui.Ptr(storeui.KindSelect), Options: []string{"copy", "fresh"}},
 	}
