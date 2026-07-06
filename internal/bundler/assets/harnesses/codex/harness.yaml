@@ -1,8 +1,8 @@
-# Codex harness bundle — external UGC experiment.
-# DRAFT: install via the canonical standalone installer (verified against the
-# actual install.sh: CODEX_RELEASE pin, CODEX_NON_INTERACTIVE, sha256-verified
-# GitHub release assets); chatgpt.com https+wss observed in live traffic;
-# api/auth.openai.com not yet — re-verify before shipping.
+# Codex harness bundle — OpenAI Codex CLI (shipped).
+# Install via the canonical standalone installer (verified against the actual
+# install.sh: CODEX_RELEASE pin, CODEX_NON_INTERACTIVE, sha256-verified GitHub
+# release assets). Egress: chatgpt.com https+wss observed in live traffic;
+# api/auth.openai.com from vendor docs, not yet observed live.
 
 # Versions resolve from the authoritative source: the GitHub release tags
 # the installer itself downloads from (rust-v<x.y.z>). Codex is a standalone

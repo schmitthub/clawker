@@ -121,9 +121,11 @@ func TestEnsureHarnesses_SeedsRegistryAndBundles(t *testing.T) {
 func TestEnsureHarnesses_NeverClobbersUserEntries(t *testing.T) {
 	cfg := configmocks.NewIsolatedTestConfig(t)
 
-	// User already prefers a custom harness before the first ensure.
+	// User already prefers a custom harness before the first ensure. The
+	// name must not collide with a shipped bundle — shipped names with a
+	// registry path are "relocated shipped bundles" and get materialized.
 	require.NoError(t, cfg.SettingsStore().Set("harnesses", map[string]config.HarnessSettings{
-		"codex": {Default: true, Path: "/opt/bundles/codex"},
+		"mycustom": {Default: true, Path: "/opt/bundles/mycustom"},
 	}))
 	require.NoError(t, cfg.SettingsStore().Write())
 
@@ -131,14 +133,14 @@ func TestEnsureHarnesses_NeverClobbersUserEntries(t *testing.T) {
 
 	reg := cfg.Settings().Harnesses
 	// User entry untouched.
-	assert.Equal(t, config.HarnessSettings{Default: true, Path: "/opt/bundles/codex"}, reg["codex"])
-	// Shipped entry seeded WITHOUT the default flag — codex already holds it.
+	assert.Equal(t, config.HarnessSettings{Default: true, Path: "/opt/bundles/mycustom"}, reg["mycustom"])
+	// Shipped entry seeded WITHOUT the default flag — mycustom already holds it.
 	assert.Contains(t, reg, bundler.DefaultHarnessName)
 	assert.False(t, reg[bundler.DefaultHarnessName].Default)
 
 	name, err := bundler.ResolveHarnessName(cfg, "")
 	require.NoError(t, err)
-	assert.Equal(t, "codex", name)
+	assert.Equal(t, "mycustom", name)
 }
 
 // TestEnsureHarnesses_BackfillsMissingPath: a shipped entry that predates
