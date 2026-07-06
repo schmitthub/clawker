@@ -276,7 +276,8 @@ monitoring:
 	err := cmd.Execute()
 	require.NoError(t, err)
 
-	assert.Equal(t, 1, capture.CallCount, "BuildKit builder should be called exactly once")
+	assert.Equal(t, 2, capture.CallCount,
+		"BuildKit builder runs twice: shared base image, then harness image")
 	assert.NotEmpty(t, capture.Opts.Tags, "build should pass tags")
 	assert.NotEmpty(t, capture.Opts.ContextDir, "build should pass context dir")
 }

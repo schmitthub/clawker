@@ -1,0 +1,5 @@
+description: >-
+  The Go toolchain on /usr/local/go (official tarball, sha256-verified from
+  the go.dev download index; floats to the latest stable release unless
+  GO_VERSION pins one) with the golang-image GOPATH/PATH conventions (/go,
+  world-writable). Skips itself when the image already provides go.

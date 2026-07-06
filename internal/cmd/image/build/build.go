@@ -37,7 +37,6 @@ type BuildOptions struct {
 	ProjectRegistry func() (*project.Registry, error)
 	HttpClient      func() (*http.Client, error)
 
-	File      string   // -f, --file (Dockerfile path)
 	Tags      []string // -t, --tag (multiple allowed)
 	NoCache   bool     // --no-cache
 	Pull      bool     // --pull
@@ -70,7 +69,10 @@ func NewCmdBuild(f *cmdutil.Factory, runF func(context.Context, *BuildOptions) e
 
 Tags are harness-keyed: -t NAME builds that registered harness; -t name:NAME
 adds an extra ref (tag part must name a registered harness). No -t builds the
-default harness and adds the :default alias.`,
+default harness and adds the :default alias.
+
+A shared base image (clawker-<project>:base) holds the harness-agnostic
+layers and is built or reused automatically; harness images build FROM it.`,
 		Example: `  # Build the default harness image
   clawker image build
 
@@ -88,7 +90,6 @@ default harness and adds the :default alias.`,
 	}
 
 	// Docker CLI-compatible flags
-	cmd.Flags().StringVarP(&opts.File, "file", "f", "", "Path to Dockerfile (overrides build.dockerfile in config)")
 	cmd.Flags().
 		StringArrayVarP(&opts.Tags, "tag", "t", nil, "Registered harness to build, or an extra ref whose tag names one (format: HARNESS or name:HARNESS)")
 	cmd.Flags().BoolVar(&opts.NoCache, "no-cache", false, "Do not use cache when building the image")
@@ -167,16 +168,6 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 
 	cs := ios.ColorScheme()
 
-	// Handle Dockerfile path from -f/--file flag
-	if opts.File != "" {
-		cfg.Build.Dockerfile = opts.File
-	}
-
-	// Early guard: no build image and no custom Dockerfile means nothing to build
-	if cfg.Build.Image == "" && cfg.Build.Dockerfile == "" {
-		return fmt.Errorf("%w", bundler.ErrNoBuildImage)
-	}
-
 	log.Debug().
 		Str("project", projectName).
 		Bool("no-cache", opts.NoCache).
@@ -224,6 +215,14 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 		log.Warn().
 			Err(ensureErr).
 			Msg("harness ensure failed — falling back to embedded bundles and built-in default")
+	}
+
+	// Same contract for shipped toolchain definitions: materialize
+	// copy-if-missing + seed the settings registry.
+	if ensureErr := bundler.EnsureToolchains(cfgGateway); ensureErr != nil {
+		log.Warn().
+			Err(ensureErr).
+			Msg("toolchain ensure failed — falling back to embedded definitions")
 	}
 
 	// -t selects the harness: a bare NAME names a registered harness; a full

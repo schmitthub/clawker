@@ -29,6 +29,55 @@ volumes: [{ name: config, path: .test }]
 	}
 }
 
+func manifestFS(manifest string) fstest.MapFS {
+	return fstest.MapFS{
+		harness.ManifestFile: mapFile(manifest),
+		harness.TemplateFile: mapFile(`{{define "block_6"}}CMD ["x"]{{end}}`),
+	}
+}
+
+func TestLoad_ToolchainDeclarations(t *testing.T) {
+	b, err := harness.Load("test", manifestFS(`
+version: { resolver: none }
+toolchains: [node, nvm]
+`))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"node", "nvm"}, b.Manifest.Toolchains)
+}
+
+func TestLoad_ToolchainDeclarations_DuplicateRejected(t *testing.T) {
+	_, err := harness.Load("test", manifestFS(`
+version: { resolver: none }
+toolchains: [node, node]
+`))
+	require.ErrorContains(t, err, `duplicate toolchain declaration "node"`)
+}
+
+func TestLoad_ToolchainDeclarations_InvalidNameRejected(t *testing.T) {
+	_, err := harness.Load("test", manifestFS(`
+version: { resolver: none }
+toolchains: ["bad/name"]
+`))
+	require.ErrorContains(t, err, "bad/name")
+}
+
+func TestBundleToolchain_EmbeddedDefinition(t *testing.T) {
+	fsys := manifestFS("version: { resolver: none }\n")
+	fsys["toolchains/mytool/toolchain.yaml"] = mapFile("description: embedded tool\n")
+	fsys["toolchains/mytool/Dockerfile.toolchain-user.tmpl"] = mapFile("RUN echo embedded\n")
+
+	b, err := harness.Load("test", fsys)
+	require.NoError(t, err)
+
+	assert.True(t, b.HasToolchain("mytool"))
+	assert.False(t, b.HasToolchain("other"))
+
+	def, err := b.Toolchain("mytool")
+	require.NoError(t, err)
+	assert.Empty(t, def.RootFragment)
+	assert.Contains(t, def.UserFragment, "embedded")
+}
+
 func TestCompose_OverridesDeclaredBlock(t *testing.T) {
 	b, err := harness.Load("test", bundleFS(`{{define "block_6" -}}
 CMD ["testtool"]
@@ -247,6 +296,13 @@ staging:
 			name: "volume name reserved for infrastructure",
 			manifest: `
 volumes: [{ name: history, path: .test }]
+`,
+			wantErr: "reserved for clawker infrastructure",
+		},
+		{
+			name: "volume name reserved for clawker lifecycle volume",
+			manifest: `
+volumes: [{ name: clawker, path: .test }]
 `,
 			wantErr: "reserved for clawker infrastructure",
 		},

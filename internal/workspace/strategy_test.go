@@ -29,6 +29,43 @@ func TestGetShareVolumeMount(t *testing.T) {
 	}
 }
 
+// TestGetConfigVolumeMounts_InfraVolumes pins the clawker infra mounts: the
+// history volume at /commandhistory and the lifecycle volume at
+// $HOME/.clawker — the latter is what keeps the post-init marker alive
+// across container recreation (marker lifetime must match the config
+// volumes post_init mutates).
+func TestGetConfigVolumeMounts_InfraVolumes(t *testing.T) {
+	mounts, err := GetConfigVolumeMounts("proj", "agent", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	byTarget := map[string]mount.Mount{}
+	for _, m := range mounts {
+		byTarget[m.Target] = m
+	}
+
+	clawkerTarget := consts.ContainerHomeDir + "/" + consts.DotClawkerDir
+	cm, ok := byTarget[clawkerTarget]
+	if !ok {
+		t.Fatalf("no mount at %s — post-init marker would die with the container", clawkerTarget)
+	}
+	if cm.Type != mount.TypeVolume {
+		t.Errorf("clawker mount Type = %v, want volume", cm.Type)
+	}
+	if !strings.HasSuffix(cm.Source, "-"+consts.VolumePurposeClawker) {
+		t.Errorf("clawker mount Source = %q, want -%s suffix", cm.Source, consts.VolumePurposeClawker)
+	}
+
+	hm, ok := byTarget["/commandhistory"]
+	if !ok {
+		t.Fatal("no history mount at /commandhistory")
+	}
+	if !strings.HasSuffix(hm.Source, "-"+consts.VolumePurposeHistory) {
+		t.Errorf("history mount Source = %q, want -%s suffix", hm.Source, consts.VolumePurposeHistory)
+	}
+}
+
 func TestGetHostStateMount(t *testing.T) {
 	hostPath := "/home/alice/.claude/projects"
 	m, err := GetHostStateMount(hostPath, ".claude/projects")

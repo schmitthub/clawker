@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/bundler/registry"
+	"github.com/schmitthub/clawker/internal/harness"
 )
 
 // stubRoundTripper services a single npm `@anthropic-ai/claude-code` lookup
@@ -155,4 +156,85 @@ func TestResolveVersions_PartialPicksHighestPatch(t *testing.T) {
 	if len(*vf) != 1 {
 		t.Fatalf("want exactly one resolved version (2.1.11), got %v", vf.Keys())
 	}
+}
+
+// ResolveHarnessVersion github-release path: the manifest's tag prefix is
+// stripped from the latest release tag; a resolution failure degrades to the
+// DefaultHarnessVersion literal plus the error (build proceeds floating).
+func TestResolveHarnessVersion_GitHubRelease(t *testing.T) {
+	var stub ghAnyStub
+	stub.body = []byte(`{"tag_name": "rust-v0.50.0"}`)
+	client := newStubClient(stub)
+	var b harness.Bundle
+	b.Name = "codex"
+	b.Manifest.Version = harness.VersionSpec{
+		Resolver:  harness.ResolverGitHubRelease,
+		Package:   "openai/codex",
+		TagPrefix: "rust-v",
+	}
+
+	got, err := ResolveHarnessVersion(context.Background(), client, &b)
+	if err != nil {
+		t.Fatalf("ResolveHarnessVersion: %v", err)
+	}
+	if got != "0.50.0" {
+		t.Fatalf("version = %q, want %q", got, "0.50.0")
+	}
+}
+
+func TestResolveHarnessVersion_GitHubRelease_FailureDegradesToLatest(t *testing.T) {
+	var stub ghAnyStub
+	stub.err = errors.New("connection refused")
+	client := newStubClient(stub)
+	var b harness.Bundle
+	b.Name = "codex"
+	b.Manifest.Version = harness.VersionSpec{
+		Resolver:  harness.ResolverGitHubRelease,
+		Package:   "openai/codex",
+		TagPrefix: "",
+	}
+
+	got, err := ResolveHarnessVersion(context.Background(), client, &b)
+	if err == nil {
+		t.Fatal("want resolution error, got nil")
+	}
+	if got != DefaultHarnessVersion {
+		t.Fatalf("version = %q, want DefaultHarnessVersion %q", got, DefaultHarnessVersion)
+	}
+}
+
+func TestResolveHarnessVersion_GitHubRelease_MissingPackage(t *testing.T) {
+	var b harness.Bundle
+	b.Name = "codex"
+	b.Manifest.Version = harness.VersionSpec{
+		Resolver:  harness.ResolverGitHubRelease,
+		Package:   "",
+		TagPrefix: "",
+	}
+
+	got, err := ResolveHarnessVersion(context.Background(), http.DefaultClient, &b)
+	if err == nil {
+		t.Fatal("want error for missing package, got nil")
+	}
+	if got != DefaultHarnessVersion {
+		t.Fatalf("version = %q, want DefaultHarnessVersion %q", got, DefaultHarnessVersion)
+	}
+}
+
+// ghAnyStub answers any request with the canned body/error (no URL routing —
+// ResolveHarnessVersion owns the URL; registry/github_test.go pins it).
+type ghAnyStub struct {
+	body []byte
+	err  error
+}
+
+func (s ghAnyStub) RoundTrip(*http.Request) (*http.Response, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(bytes.NewReader(s.body)),
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+	}, nil
 }

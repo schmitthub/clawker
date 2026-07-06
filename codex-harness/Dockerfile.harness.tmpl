@@ -2,16 +2,6 @@
   Codex harness — fills the master Dockerfile.tmpl block slots.
 */}}
 
-{{define "block_1" -}}
-# Node.js for the npm-distributed codex CLI.
-ARG NODE_VERSION=24
-{{if .IsAlpine -}}
-RUN apk add --no-cache nodejs npm
-{{else -}}
-RUN apt-get update && apt-get install -y --no-install-recommends nodejs npm && rm -rf /var/lib/apt/lists/*
-{{end}}
-{{- end}}
-
 {{define "block_3" -}}
 # Tell codex where its config lives — must match the config volume mount.
 ENV CODEX_HOME=/home/${USERNAME}/.codex
@@ -19,9 +9,17 @@ ENV CODEX_HOME=/home/${USERNAME}/.codex
 
 {{define "block_4" -}}
 ARG CODEX_VERSION={{.HarnessVersion}}
-# Install into the user prefix — block_4 runs as ${USERNAME}, and
-# ~/.local/bin is already on PATH.
-RUN npm config set prefix /home/${USERNAME}/.local &&     npm install -g @openai/codex@${CODEX_VERSION}
+# Canonical standalone installer: sha256-verified GitHub release binary,
+# command lands in ~/.local/bin (already on the image ENV PATH — same
+# destination as the claude harness's native installer). The payload lives
+# under $CODEX_HOME/packages/standalone with ~/.local/bin/codex symlinked
+# into it, so install-time CODEX_HOME is redirected off ~/.codex: that dir
+# is a named volume at runtime, and an existing volume would shadow the
+# image payload and dangle the symlink. Runtime CODEX_HOME (block_3) still
+# points at the volume for codex state.
+RUN curl -fsSL https://chatgpt.com/codex/install.sh | \
+      CODEX_NON_INTERACTIVE=1 CODEX_RELEASE=${CODEX_VERSION} \
+      CODEX_HOME=/home/${USERNAME}/.local/share/codex-install sh
 {{- end}}
 
 {{define "block_6" -}}

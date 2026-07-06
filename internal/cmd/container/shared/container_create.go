@@ -1742,6 +1742,13 @@ func trackCreatedVolumes(scope *createScope, wsResult *workspace.SetupMountsResu
 			scope.volumes = append(scope.volumes, vn)
 		}
 	}
+	if wsResult.ConfigVolumeResult.ClawkerCreated {
+		if vn, vnErr := docker.VolumeName(projectName, agentName, docker.VolumePurposeClawker); vnErr != nil {
+			scope.log.Error().Err(vnErr).Msg("cannot determine clawker volume name for cleanup tracking")
+		} else {
+			scope.volumes = append(scope.volumes, vn)
+		}
+	}
 	if wsResult.WorkspaceVolumeName != "" {
 		scope.volumes = append(scope.volumes, wsResult.WorkspaceVolumeName)
 	}

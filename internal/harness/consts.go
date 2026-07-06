@@ -24,6 +24,16 @@ const HarnessesSubdir = "harnesses"
 // and seeds[].file entries reference assets/-relative paths.
 const AssetsDir = "assets"
 
+// Version resolvers — the closed vocabulary a manifest's version.resolver
+// accepts. npm resolves the package's latest dist-tag from the npm
+// registry; github-release resolves the repo's latest release tag via the
+// GitHub API (tag_prefix stripped); none renders the floating default.
+const (
+	ResolverNPM           = "npm"
+	ResolverGitHubRelease = "github-release"
+	ResolverNone          = "none"
+)
+
 // Seed apply strategies — the closed vocabulary a manifest's seeds[].apply
 // accepts. The master Dockerfile template writes these tokens into the
 // image's seed manifest and CP's generic seed-apply script switches on

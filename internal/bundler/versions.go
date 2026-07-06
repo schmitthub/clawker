@@ -97,41 +97,25 @@ func ResolveLatestHarnessVersion(ctx context.Context, httpClient *http.Client) (
 //
 //   - npm: the package's "latest" dist-tag, resolved through the supplied
 //     [http.Client] (same contract as ResolveLatestHarnessVersion).
+//   - github-release: the repo's latest release tag via the GitHub API,
+//     with the manifest's tag prefix stripped (e.g. rust-v0.50.0 → 0.50.0).
 //   - none: the literal DefaultHarnessVersion tag — the harness template
 //     either ignores the value or treats it as a floating tag.
 //
 // On resolution failure returns the "latest" literal plus the underlying
 // error so callers can warn; the build still works with a floating tag.
 func ResolveHarnessVersion(ctx context.Context, httpClient *http.Client, b *harness.Bundle) (string, error) {
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
 	spec := b.Manifest.Version
 	switch spec.Resolver {
-	case "", "none":
+	case "", harness.ResolverNone:
 		return DefaultHarnessVersion, nil
-	case "npm":
-		if httpClient == nil {
-			httpClient = http.DefaultClient
-		}
-		fetcher := registry.NewNPMClient(registry.WithHTTPClient(httpClient))
-		mgr := NewVersionsManagerWithFetcher(fetcher, nil)
-		vf, err := mgr.ResolveVersions(
-			ctx,
-			[]string{DefaultHarnessVersion},
-			ResolveOptions{Package: spec.Package, Debug: false, Output: nil},
-		)
-		if err != nil {
-			return DefaultHarnessVersion, err
-		}
-		if len(*vf) != 1 {
-			return DefaultHarnessVersion, fmt.Errorf(
-				"expected 1 resolved version for %q, got %d",
-				spec.Package,
-				len(*vf),
-			)
-		}
-		for v := range *vf {
-			return v, nil
-		}
-		return DefaultHarnessVersion, ErrNoVersions
+	case harness.ResolverNPM:
+		return resolveNPMLatest(ctx, httpClient, spec.Package)
+	case harness.ResolverGitHubRelease:
+		return resolveGitHubLatest(ctx, httpClient, b.Name, spec)
 	default:
 		return DefaultHarnessVersion, fmt.Errorf(
 			"harness %q: unsupported version resolver %q",
@@ -139,6 +123,56 @@ func ResolveHarnessVersion(ctx context.Context, httpClient *http.Client, b *harn
 			spec.Resolver,
 		)
 	}
+}
+
+// resolveNPMLatest resolves pkg's "latest" dist-tag from the npm registry.
+func resolveNPMLatest(ctx context.Context, httpClient *http.Client, pkg string) (string, error) {
+	fetcher := registry.NewNPMClient(registry.WithHTTPClient(httpClient))
+	mgr := NewVersionsManagerWithFetcher(fetcher, nil)
+	vf, err := mgr.ResolveVersions(
+		ctx,
+		[]string{DefaultHarnessVersion},
+		ResolveOptions{Package: pkg, Debug: false, Output: nil},
+	)
+	if err != nil {
+		return DefaultHarnessVersion, err
+	}
+	if len(*vf) != 1 {
+		return DefaultHarnessVersion, fmt.Errorf(
+			"expected 1 resolved version for %q, got %d",
+			pkg,
+			len(*vf),
+		)
+	}
+	for v := range *vf {
+		return v, nil
+	}
+	return DefaultHarnessVersion, ErrNoVersions
+}
+
+// resolveGitHubLatest resolves the repo's latest release tag via the GitHub
+// API, stripping the manifest's tag prefix.
+func resolveGitHubLatest(
+	ctx context.Context,
+	httpClient *http.Client,
+	name string,
+	spec harness.VersionSpec,
+) (string, error) {
+	if spec.Package == "" {
+		return DefaultHarnessVersion, fmt.Errorf(
+			"harness %q: github-release resolver requires package (owner/repo)",
+			name,
+		)
+	}
+	client := registry.NewGitHubReleaseClient(registry.WithGitHubHTTPClient(httpClient))
+	v, err := client.LatestVersion(ctx, spec.Package, spec.TagPrefix)
+	if err != nil {
+		return DefaultHarnessVersion, fmt.Errorf(
+			"harness %q: resolve github release for %q: %w",
+			name, spec.Package, err,
+		)
+	}
+	return v, nil
 }
 
 // ResolveOptions configures version resolution behavior.

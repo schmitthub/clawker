@@ -57,6 +57,29 @@ harnesses:
 	})
 }
 
+func TestValidateHarnessKey_ReservedTags(t *testing.T) {
+	for _, reserved := range []string{
+		consts.ImageTagDefaultAlias,
+		consts.ImageTagLatest,
+		consts.ImageTagBase,
+	} {
+		t.Run(reserved, func(t *testing.T) {
+			require.ErrorContains(t, bundler.ValidateHarnessKey(reserved), "reserved")
+		})
+	}
+}
+
+func TestResolveHarnessName_RejectsReservedBase(t *testing.T) {
+	// Even a hostile registry entry literally named "base" must be
+	// unreachable — the key is reserved for the shared base image tag.
+	cfg := configmocks.NewFromString("", `
+harnesses:
+  base: { path: /opt/bundles/base }
+`)
+	_, err := bundler.ResolveHarnessName(cfg, consts.ImageTagBase)
+	require.ErrorContains(t, err, "reserved")
+}
+
 func TestEnsureHarnesses_SeedsRegistryAndBundles(t *testing.T) {
 	cfg := configmocks.NewIsolatedTestConfig(t)
 

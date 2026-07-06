@@ -96,6 +96,24 @@ func GetConfigVolumeMounts(projectName, agentName string, volumes []harness.Volu
 			Target: "/commandhistory",
 		},
 	)
+	// The clawker lifecycle volume backs $HOME/.clawker (hook scripts, seed
+	// staging, post-init marker) so lifecycle state shares the config
+	// volumes' lifetime — a recreated container must not re-run post_init
+	// against config volumes it already initialized. On first use Docker
+	// copies the image's staged content (seeds, seed-manifest) into the
+	// fresh volume.
+	clawkerVol, err := docker.VolumeName(projectName, agentName, docker.VolumePurposeClawker)
+	if err != nil {
+		return nil, fmt.Errorf("clawker volume name: %w", err)
+	}
+	mounts = append(
+		mounts,
+		mount.Mount{ //nolint:exhaustruct // mount options beyond type/source/target intentionally zero
+			Type:   mount.TypeVolume,
+			Source: clawkerVol,
+			Target: consts.ContainerHomeDir + "/" + consts.DotClawkerDir,
+		},
+	)
 	return mounts, nil
 }
 
@@ -122,6 +140,7 @@ type ConfigVolumeResult struct {
 	// to whether this setup created it (vs it pre-existing with user data).
 	CreatedByName  map[string]bool
 	HistoryCreated bool
+	ClawkerCreated bool
 }
 
 // EnsureConfigVolumes creates the harness-declared volumes and the history
@@ -134,7 +153,7 @@ func EnsureConfigVolumes(
 	projectName, agentName string,
 	volumes []harness.VolumeSpec,
 ) (ConfigVolumeResult, error) {
-	result := ConfigVolumeResult{CreatedByName: make(map[string]bool), HistoryCreated: false}
+	result := ConfigVolumeResult{CreatedByName: make(map[string]bool), HistoryCreated: false, ClawkerCreated: false}
 	labels := cli.AgentVolumeLabels(projectName, agentName)
 
 	for _, v := range volumes {
@@ -158,6 +177,16 @@ func EnsureConfigVolumes(
 		return result, err
 	}
 	result.HistoryCreated = created
+
+	clawkerVolume, err := docker.VolumeName(projectName, agentName, docker.VolumePurposeClawker)
+	if err != nil {
+		return result, err
+	}
+	created, err = cli.EnsureVolume(ctx, clawkerVolume, labels)
+	if err != nil {
+		return result, err
+	}
+	result.ClawkerCreated = created
 
 	return result, nil
 }

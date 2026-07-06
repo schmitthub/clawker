@@ -134,21 +134,6 @@
     "build": {
       "additionalProperties": false,
       "properties": {
-        "context": {
-          "description": "Directory to use as Docker build context when using a custom Dockerfile (relative to project root)",
-          "title": "Build Context",
-          "type": "string"
-        },
-        "dockerfile": {
-          "description": "Use your own Dockerfile instead of clawker's generated one; ignores image, packages, and instructions",
-          "title": "Dockerfile",
-          "type": "string"
-        },
-        "image": {
-          "description": "Starting Docker image (e.g. node:20-slim, python:3.12); clawker layers tools on top",
-          "title": "Base Image",
-          "type": "string"
-        },
         "inject": {
           "additionalProperties": false,
           "properties": {
@@ -305,11 +290,19 @@
           "default": [
             "ripgrep"
           ],
-          "description": "System packages (apt/apk) needed by your project that aren't in the base image",
+          "description": "System packages (apt) needed by your project that the clawker base doesn't already install",
           "items": {
             "type": "string"
           },
           "title": "Packages",
+          "type": "array"
+        },
+        "toolchains": {
+          "description": "Toolchain definitions your root_run/user_run steps need (e.g. node, go); installed in the shared base image before your instructions run",
+          "items": {
+            "type": "string"
+          },
+          "title": "Toolchains",
           "type": "array"
         }
       },

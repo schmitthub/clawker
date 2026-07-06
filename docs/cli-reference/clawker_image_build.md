@@ -14,6 +14,9 @@ Tags are harness-keyed: -t NAME builds that registered harness; -t name:NAME
 adds an extra ref (tag part must name a registered harness). No -t builds the
 default harness and adds the :default alias.
 
+A shared base image (clawker-`<project>`:base) holds the harness-agnostic
+layers and is built or reused automatically; harness images build FROM it.
+
 ```
 clawker image build [flags]
 ```
@@ -35,7 +38,6 @@ clawker image build [flags]
 
 ```
       --build-arg stringArray   Set build-time variables (format: KEY=VALUE)
-  -f, --file string             Path to Dockerfile (overrides build.dockerfile in config)
   -h, --help                    help for build
       --iidfile string          Write the built image's ID/digest to this file (docker buildx --iidfile shape)
       --label stringArray       Set metadata for the image (format: KEY=VALUE)

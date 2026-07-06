@@ -27,6 +27,14 @@ type Manifest struct {
 	Seeds   []Seed       `yaml:"seeds,omitempty"`
 	Staging Staging      `yaml:"staging,omitempty"`
 	Egress  []EgressRule `yaml:"egress,omitempty"`
+
+	// Toolchains declares the toolchain definitions this harness's blocks
+	// require, by name. Names resolve against the flat per-build namespace
+	// (shipped ∪ settings registry ∪ this bundle's toolchains/ subdir) at
+	// generation time; the resolved fragments render in the harness image
+	// unless the project also declares them (then they live in the shared
+	// base, built first).
+	Toolchains []string `yaml:"toolchains,omitempty"`
 }
 
 // VolumeSpec declares one persisted directory: a named volume
@@ -46,6 +54,10 @@ type VersionSpec struct {
 	Resolver string `yaml:"resolver"`
 	// Package is the npm package name or GitHub owner/repo, per resolver.
 	Package string `yaml:"package,omitempty"`
+	// TagPrefix (github-release only) is the release-tag prefix stripped
+	// to obtain the bare version (e.g. "rust-v" turns tag rust-v0.50.0
+	// into 0.50.0). A latest tag missing the prefix fails resolution.
+	TagPrefix string `yaml:"tag_prefix,omitempty"`
 }
 
 // Seed is one entry of the runtime volume seed manifest, applied by the

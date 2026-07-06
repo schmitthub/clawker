@@ -34,7 +34,6 @@ func TestCmd_Flags(t *testing.T) {
 		shorthand string
 		defValue  string
 	}{
-		{"file flag", "file", "f", ""},
 		{"tag flag", "tag", "t", "[]"},
 		{"no-cache flag", "no-cache", "", "false"},
 		{"pull flag", "pull", "", "false"},
@@ -200,14 +199,6 @@ func TestCmd_FlagParsing(t *testing.T) {
 			args: []string{},
 		},
 		{
-			name: "file short flag",
-			args: []string{"-f", "Dockerfile.dev"},
-		},
-		{
-			name: "file long flag",
-			args: []string{"--file", "Dockerfile.dev"},
-		},
-		{
 			name: "tag short flag",
 			args: []string{"-t", "myimage:latest"},
 		},
@@ -253,7 +244,7 @@ func TestCmd_FlagParsing(t *testing.T) {
 		},
 		{
 			name: "combined flags",
-			args: []string{"-f", "Dockerfile", "-t", "myapp:latest", "--no-cache", "--pull", "-q"},
+			args: []string{"-t", "myapp:latest", "--no-cache", "--pull", "-q"},
 		},
 	}
 
@@ -293,13 +284,6 @@ func TestCmd_FlagValuePropagation(t *testing.T) {
 		args   []string
 		verify func(t *testing.T, opts *BuildOptions)
 	}{
-		{
-			name: "file flag value",
-			args: []string{"-f", "Dockerfile.dev"},
-			verify: func(t *testing.T, opts *BuildOptions) {
-				require.Equal(t, "Dockerfile.dev", opts.File)
-			},
-		},
 		{
 			name: "single tag",
 			args: []string{"-t", "myimage:v1"},
@@ -380,8 +364,6 @@ func TestCmd_FlagValuePropagation(t *testing.T) {
 		{
 			name: "combined flags preserve all values",
 			args: []string{
-				"-f",
-				"Custom.dockerfile",
 				"-t",
 				"app:v1",
 				"-t",
@@ -393,7 +375,6 @@ func TestCmd_FlagValuePropagation(t *testing.T) {
 				"prod",
 			},
 			verify: func(t *testing.T, opts *BuildOptions) {
-				require.Equal(t, "Custom.dockerfile", opts.File)
 				require.Equal(t, []string{"app:v1", "app:latest"}, opts.Tags)
 				require.True(t, opts.NoCache)
 				require.True(t, opts.Pull)
@@ -474,6 +455,14 @@ harnesses:
 		require.ErrorContains(t, err, "does not name a registered harness")
 
 		_, _, err = harnessSelectorFromTags(cfg, []string{"myrepo/img:v1.2.3"})
+		require.ErrorContains(t, err, "does not name a registered harness")
+	})
+
+	t.Run("reserved base tag is a flag error", func(t *testing.T) {
+		_, _, err := harnessSelectorFromTags(cfg, []string{"base"})
+		require.ErrorContains(t, err, "does not name a registered harness")
+
+		_, _, err = harnessSelectorFromTags(cfg, []string{"myrepo/img:base"})
 		require.ErrorContains(t, err, "does not name a registered harness")
 	})
 

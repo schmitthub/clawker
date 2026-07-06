@@ -144,8 +144,10 @@ type InjectPostInitOpts struct {
 // Must be called after ContainerCreate and before ContainerStart.
 // The control plane is responsible for attempting to run this script if it exists during first start after initial creation.
 // If the script succeeds, or doesn't exist during first start, a
-// ~/.clawker/post-initialized marker is created to prevent re-runs on
-// restart as per the contract.
+// ~/.clawker/post-initialized marker is created to prevent re-runs as per
+// the contract. ~/.clawker is backed by the dedicated clawker volume, so
+// the marker's lifetime matches the config volumes post_init mutates —
+// recreating a container against existing volumes skips post_init.
 func InjectPostInitScript(ctx context.Context, opts InjectPostInitOpts) error {
 	return InjectHookScript(ctx, InjectHookOpts{
 		ContainerID:     opts.ContainerID,

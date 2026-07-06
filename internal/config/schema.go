@@ -31,10 +31,8 @@ func (p Project) Fields() storage.FieldSet {
 
 // BuildConfig defines the container build configuration
 type BuildConfig struct {
-	Image        string              `yaml:"image"                  label:"Base Image"    desc:"Starting Docker image (e.g. node:20-slim, python:3.12); clawker layers tools on top"`
-	Dockerfile   string              `yaml:"dockerfile,omitempty"   label:"Dockerfile"    desc:"Use your own Dockerfile instead of clawker's generated one; ignores image, packages, and instructions"`
-	Packages     []string            `yaml:"packages,omitempty"     label:"Packages"      desc:"System packages (apt/apk) needed by your project that aren't in the base image"                        default:"ripgrep"`
-	Context      string              `yaml:"context,omitempty"      label:"Build Context" desc:"Directory to use as Docker build context when using a custom Dockerfile (relative to project root)"`
+	Packages     []string            `yaml:"packages,omitempty"     label:"Packages"   desc:"System packages (apt) needed by your project that the clawker base doesn't already install"                                               default:"ripgrep"`
+	Toolchains   []string            `yaml:"toolchains,omitempty"   label:"Toolchains" desc:"Toolchain definitions your root_run/user_run steps need (e.g. node, go); installed in the shared base image before your instructions run"`
 	Instructions *DockerInstructions `yaml:"instructions,omitempty"`
 	Inject       *InjectConfig       `yaml:"inject,omitempty"`
 }
@@ -376,6 +374,21 @@ type Settings struct {
 	// there implicitly; entries are only needed to relocate a bundle,
 	// register a custom one, or mark the default.
 	Harnesses map[string]HarnessSettings `yaml:"harnesses,omitempty" label:"Harnesses" desc:"Harness registry mapping a harness name to its bundle location and default flag"`
+
+	// Toolchains is the toolchain registry: name → entry. Shipped
+	// definitions are materialized under the config dir and registered
+	// here; entries are only needed to relocate a definition or register
+	// a custom one. Harness bundles may additionally embed their own
+	// definitions; all sources share one flat namespace per build.
+	Toolchains map[string]ToolchainSettings `yaml:"toolchains,omitempty" label:"Toolchains" desc:"Toolchain registry mapping a toolchain name to its definition directory"`
+}
+
+// ToolchainSettings is one toolchain registry entry.
+type ToolchainSettings struct {
+	// Path is the definition directory (toolchain.yaml +
+	// Dockerfile.toolchain.tmpl). Empty means the conventional location
+	// under the config dir.
+	Path string `yaml:"path,omitempty" label:"Path" desc:"Toolchain definition directory (toolchain.yaml + Dockerfile.toolchain.tmpl); empty = config-dir default"`
 }
 
 // HarnessSettings is one harness registry entry.

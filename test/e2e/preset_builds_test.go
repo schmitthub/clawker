@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/logger"
 
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/storage"
@@ -76,14 +78,39 @@ func TestPresetBuilds_E2E(t *testing.T) {
 				"preset %s: config should contain github.com from --vcs", preset.Name)
 			assert.Contains(t, snap.Security.Firewall.AddDomains, "api.github.com",
 				"preset %s: config should contain api.github.com from --vcs", preset.Name)
-			assert.NotEmpty(t, snap.Build.Image,
-				"preset %s: config should have build.image set", preset.Name)
+			assert.NotEmpty(t, snap.Build.Packages,
+				"preset %s: config should have build.packages set", preset.Name)
 
 			// Build the image (suppress progress output for clean test logs).
 			buildRes := h.Run("build", "--progress=none")
 			require.NoError(t, buildRes.Err,
 				"build %s preset failed\nstdout: %s\nstderr: %s",
 				preset.Name, buildRes.Stdout, buildRes.Stderr)
+
+			// The two-image split must produce both the shared base and the
+			// harness image (tagged with the :default alias).
+			ctx := context.Background()
+			dc, err := docker.NewClient(ctx, nil, logger.Nop())
+			require.NoError(t, err, "docker client for image assertions")
+			t.Cleanup(func() { _ = dc.Close() })
+
+			baseRef := docker.BaseImageTag(projectName)
+			baseInspect, err := dc.ImageInspect(ctx, baseRef)
+			require.NoError(t, err, "shared base image %s must exist after build", baseRef)
+
+			_, err = dc.ImageInspect(ctx, docker.DefaultAliasImageTag(projectName))
+			require.NoError(t, err, "harness image with :default alias must exist after build")
+
+			// A second build must skip the fresh base (content hash
+			// unchanged) — the base image ID stays stable.
+			buildRes2 := h.Run("build", "--progress=none")
+			require.NoError(t, buildRes2.Err,
+				"second build %s failed\nstdout: %s\nstderr: %s",
+				preset.Name, buildRes2.Stdout, buildRes2.Stderr)
+			baseInspect2, err := dc.ImageInspect(ctx, baseRef)
+			require.NoError(t, err)
+			assert.Equal(t, baseInspect.ID, baseInspect2.ID,
+				"second build must reuse the fresh base image, not rebuild it")
 		})
 	}
 }
@@ -355,8 +382,8 @@ func TestPresetInit_UserConfigIsolation(t *testing.T) {
 	snap := readProjectConfig(t, setup.ProjectDir)
 
 	// Preset build settings should be written, not user-level ones.
-	assert.Equal(t, "golang:1.25-bookworm", snap.Build.Image,
-		"should have Go preset image, not user-level buildpack-deps")
+	assert.Equal(t, []string{"go"}, snap.Build.Toolchains,
+		"should have Go preset toolchain, not user-level toolchains")
 	assert.Equal(t, []string{"ripgrep"}, snap.Build.Packages,
 		"should have Go preset packages, not user-level nodejs/npm/gh")
 

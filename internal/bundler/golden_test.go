@@ -8,10 +8,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestGenerate_Golden locks the rendered Dockerfile output byte-for-byte.
-// The multi-harness template refactor (master {{block}} slots + harness
-// {{define}} overrides) must not change a single byte of the claude
-// output — these goldens are the gate.
+// TestGenerate_Golden locks the rendered Dockerfile output byte-for-byte,
+// per image of the base/harness split: <name>.base.Dockerfile from
+// GenerateBase and <name>.harness.Dockerfile from GenerateHarness.
 //
 // Regenerate: GOLDEN_UPDATE=1 go test ./internal/bundler/ -run TestGenerate_Golden
 func TestGenerate_Golden(t *testing.T) {
@@ -31,20 +30,10 @@ func TestGenerate_Golden(t *testing.T) {
 			buildKit:    true,
 		},
 		{
-			name: "alpine",
-			projectYAML: `
-version: "1"
-build:
-  image: "alpine:3.20"
-`,
-			buildKit: false,
-		},
-		{
 			name: "packages-instructions-inject",
 			projectYAML: `
 version: "1"
 build:
-  image: "buildpack-deps:bookworm-scm"
   packages: ["ripgrep", "jq"]
   instructions:
     copy:
@@ -93,19 +82,30 @@ monitoring:
 			gen := newTestProjectGenerator(cfg, t.TempDir())
 			gen.BuildKitEnabled = tc.buildKit
 
-			got, err := gen.Generate()
+			base, err := gen.GenerateBase()
+			require.NoError(t, err)
+			harnessImg, err := gen.GenerateHarness()
 			require.NoError(t, err)
 
-			goldenPath := filepath.Join("testdata", "golden", tc.name+".Dockerfile")
-			if os.Getenv("GOLDEN_UPDATE") == "1" {
-				require.NoError(t, os.MkdirAll(filepath.Dir(goldenPath), 0o755))
-				require.NoError(t, os.WriteFile(goldenPath, got, 0o644))
-				return
+			renders := []struct {
+				suffix string
+				got    []byte
+			}{
+				{".base.Dockerfile", base},
+				{".harness.Dockerfile", harnessImg},
 			}
+			for _, r := range renders {
+				goldenPath := filepath.Join("testdata", "golden", tc.name+r.suffix)
+				if os.Getenv("GOLDEN_UPDATE") == "1" {
+					require.NoError(t, os.MkdirAll(filepath.Dir(goldenPath), 0o755))
+					require.NoError(t, os.WriteFile(goldenPath, r.got, 0o644))
+					continue
+				}
 
-			want, err := os.ReadFile(goldenPath)
-			require.NoError(t, err, "golden file missing — run with GOLDEN_UPDATE=1")
-			require.Equal(t, string(want), string(got))
+				want, readErr := os.ReadFile(goldenPath)
+				require.NoError(t, readErr, "golden file missing — run with GOLDEN_UPDATE=1")
+				require.Equal(t, string(want), string(r.got))
+			}
 		})
 	}
 }

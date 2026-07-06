@@ -42,16 +42,13 @@ func TestGenJSONSchema_Project(t *testing.T) {
 
 	props := obj(t, doc, "properties")
 
-	// Scalar leaf with metadata.
-	image := obj(t, props, "build")
-	imageProps := obj(t, image, "properties")
-	img := obj(t, imageProps, "image")
-	assert.Equal(t, "string", img["type"])
-	assert.NotEmpty(t, img["description"], "desc tag should populate description")
-	assert.NotEmpty(t, img["title"], "label tag should populate title")
+	build := obj(t, props, "build")
+	buildProps := obj(t, build, "properties")
 
-	// String slice.
-	pkgs := obj(t, imageProps, "packages")
+	// String slice leaf with metadata.
+	pkgs := obj(t, buildProps, "packages")
+	assert.NotEmpty(t, pkgs["description"], "desc tag should populate description")
+	assert.NotEmpty(t, pkgs["title"], "label tag should populate title")
 	assert.Equal(t, "array", pkgs["type"])
 	assert.Equal(t, "string", obj(t, pkgs, "items")["type"])
 

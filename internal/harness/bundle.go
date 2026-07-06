@@ -4,12 +4,14 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"path"
 	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/schmitthub/clawker/internal/consts"
+	"github.com/schmitthub/clawker/internal/toolchain"
 )
 
 // Bundle is a loaded harness bundle: manifest, template fragment, and a
@@ -49,6 +51,9 @@ func Load(name string, fsys fs.FS) (*Bundle, error) {
 	if stagingErr := validateStaging(name, m.Volumes, m.Staging); stagingErr != nil {
 		return nil, stagingErr
 	}
+	if tcErr := validateToolchainDecls(name, m.Toolchains); tcErr != nil {
+		return nil, tcErr
+	}
 
 	rawTmpl, readErr := fs.ReadFile(fsys, TemplateFile)
 	if readErr != nil {
@@ -76,6 +81,24 @@ func validateStaging(name string, volumes []VolumeSpec, st Staging) error {
 		if err := validateMountSpec(name, volumes, m); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// validateToolchainDecls checks the manifest's toolchain declaration list
+// at the load front door: valid names, no duplicates. Whether each name
+// resolves to a definition is a generation-time concern (the namespace
+// includes the settings registry, which a bundle cannot see).
+func validateToolchainDecls(name string, decls []string) error {
+	seen := map[string]bool{}
+	for _, tc := range decls {
+		if err := toolchain.ValidateName(tc); err != nil {
+			return fmt.Errorf("harness %q: %w", name, err)
+		}
+		if seen[tc] {
+			return fmt.Errorf("harness %q: duplicate toolchain declaration %q", name, tc)
+		}
+		seen[tc] = true
 	}
 	return nil
 }
@@ -110,7 +133,8 @@ func validateVolumeSpec(name string, v VolumeSpec) error {
 	if !volumeNameRe.MatchString(v.Name) {
 		return fmt.Errorf("harness %q: volume name %q must match %s", name, v.Name, volumeNameRe)
 	}
-	if v.Name == consts.VolumePurposeHistory || v.Name == consts.VolumePurposeWorkspace {
+	switch v.Name {
+	case consts.VolumePurposeHistory, consts.VolumePurposeWorkspace, consts.VolumePurposeClawker:
 		return fmt.Errorf("harness %q: volume name %q is reserved for clawker infrastructure", name, v.Name)
 	}
 	p := NormalizeContainerPath(v.Path)
@@ -230,6 +254,26 @@ func validateSeeds(name string, fsys fs.FS, volumes []VolumeSpec, seeds []Seed) 
 		}
 	}
 	return nil
+}
+
+// HasToolchain reports whether the bundle embeds a toolchain definition
+// directory for name under its toolchains/ subdirectory.
+func (b *Bundle) HasToolchain(name string) bool {
+	_, err := fs.Stat(b.fsys, path.Join(toolchain.ToolchainsSubdir, name, toolchain.ManifestFile))
+	return err == nil
+}
+
+// Toolchain loads a bundle-embedded toolchain definition.
+func (b *Bundle) Toolchain(name string) (*toolchain.Definition, error) {
+	sub, err := fs.Sub(b.fsys, path.Join(toolchain.ToolchainsSubdir, name))
+	if err != nil {
+		return nil, fmt.Errorf("harness %q: toolchain %q: %w", b.Name, name, err)
+	}
+	def, loadErr := toolchain.Load(name, sub)
+	if loadErr != nil {
+		return nil, fmt.Errorf("harness %q: %w", b.Name, loadErr)
+	}
+	return def, nil
 }
 
 // WalkAssets calls fn for every file under the bundle's assets/ tree with

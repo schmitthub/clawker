@@ -118,8 +118,6 @@ func TestPresets_FieldAssertions(t *testing.T) {
 
 			snap := store.Read()
 
-			assert.NotEmpty(t, snap.Build.Image,
-				"preset %q: build.image must not be empty", p.Name)
 			assert.NotEmpty(t, snap.Build.Packages,
 				"preset %q: build.packages must not be empty", p.Name)
 

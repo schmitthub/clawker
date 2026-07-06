@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/prompter"
@@ -117,4 +119,13 @@ func TestProgressStatus(t *testing.T) {
 	for _, tt := range tests {
 		assert.Equal(t, tt.want, progressStatus(tt.input))
 	}
+}
+
+func TestValidatePlaceholderHarness_RejectsReservedBase(t *testing.T) {
+	cfg := configmocks.NewFromString("", `
+harnesses:
+  claude: { default: true, path: /bundles/claude }
+`)
+	err := validatePlaceholderHarness(cfg, consts.ImageTagBase)
+	require.ErrorContains(t, err, "reserved")
 }

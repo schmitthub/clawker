@@ -332,6 +332,22 @@
         }
       },
       "type": "object"
+    },
+    "toolchains": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "description": "Toolchain definition directory (toolchain.yaml + Dockerfile.toolchain.tmpl); empty = config-dir default",
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "description": "Toolchain registry mapping a toolchain name to its definition directory",
+      "title": "Toolchains",
+      "type": "object"
     }
   },
   "title": "clawker settings (settings.yaml)",

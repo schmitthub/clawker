@@ -7,8 +7,13 @@ import (
 	"github.com/schmitthub/clawker/internal/bundler/registry"
 )
 
-// ErrNoBuildImage is returned when no build image is configured and no custom Dockerfile is specified.
-var ErrNoBuildImage = errors.New("no build image configured: run 'clawker project init' or 'clawker init' to set up")
+// ErrNoBaseImageRef is returned by GenerateHarness when the generator's
+// BaseImageRef field was not set by the caller.
+var ErrNoBaseImageRef = errors.New("harness image generation requires BaseImageRef (the shared base image tag)")
+
+// ErrUnknownToolchain is returned when a declared toolchain name resolves to
+// no definition in any source (shipped, settings registry, bundle-embedded).
+var ErrUnknownToolchain = errors.New("unknown toolchain")
 
 // Re-export error types from registry for convenience.
 var (

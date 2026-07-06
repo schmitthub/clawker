@@ -19,7 +19,7 @@ func TestNewBlankConfig(t *testing.T) {
 	p := cfg.Project()
 	require.NotNil(t, p)
 
-	assert.Empty(t, p.Build.Image)
+	assert.Equal(t, []string{"ripgrep"}, p.Build.Packages)
 	assert.Equal(t, "bind", p.Workspace.DefaultMode)
 	assert.False(t, p.Security.DockerSocket)
 }
@@ -60,14 +60,14 @@ func TestNewBlankConfig_settingsDefaults(t *testing.T) {
 func TestNewFromString_projectOnly(t *testing.T) {
 	cfg, err := NewFromString(`
 build:
-  image: "ubuntu:22.04"
+  packages: ["cowsay"]
 workspace:
   default_mode: "snapshot"
 `, "")
 	require.NoError(t, err)
 
 	p := cfg.Project()
-	assert.Equal(t, "ubuntu:22.04", p.Build.Image)
+	assert.Equal(t, []string{"cowsay"}, p.Build.Packages)
 	assert.Equal(t, "snapshot", p.Workspace.DefaultMode)
 }
 
@@ -90,7 +90,7 @@ func TestNewFromString_emptyStrings(t *testing.T) {
 
 	// Empty project — all zero values
 	p := cfg.Project()
-	assert.Empty(t, p.Build.Image)
+	assert.Empty(t, p.Build.Packages)
 	assert.Empty(t, p.Agent.Env)
 
 	// Empty settings — zero values
@@ -113,11 +113,11 @@ func TestNewFromString_invalidSettingsYAML(t *testing.T) {
 func TestNewFromString_noDefaults(t *testing.T) {
 	// NewFromString provides NO defaults — only caller-provided values.
 	cfg, err := NewFromString(`build:
-  image: "node:20"`, "")
+  packages: ["cowsay"]`, "")
 	require.NoError(t, err)
 
 	p := cfg.Project()
-	assert.Equal(t, "node:20", p.Build.Image)
+	assert.Equal(t, []string{"cowsay"}, p.Build.Packages)
 	// Workspace is empty because no defaults are applied
 	assert.Equal(t, "", p.Workspace.DefaultMode)
 }
@@ -261,8 +261,8 @@ func TestNewConfig_projectFileOverridesDefaults(t *testing.T) {
 	// Write a project config that overrides the build image
 	require.NoError(t, os.WriteFile(
 		filepath.Join(configDir, "clawker.yaml"),
-		[]byte(`build:
-  image: "ubuntu:24.04"
+		[]byte(`agent:
+  editor: "emacs"
 `),
 		0o644,
 	))
@@ -272,7 +272,7 @@ func TestNewConfig_projectFileOverridesDefaults(t *testing.T) {
 
 	// The file value should override the default
 	p := cfg.Project()
-	assert.Equal(t, "ubuntu:24.04", p.Build.Image)
+	assert.Equal(t, "emacs", p.Agent.Editor)
 
 	// Defaults for unset values should still be present
 	assert.Equal(t, "bind", p.Workspace.DefaultMode)
@@ -294,11 +294,11 @@ func TestSetProject_mutation(t *testing.T) {
 	cfg, err := NewConfig()
 	require.NoError(t, err)
 
-	// Mutate build image
-	err = cfg.ProjectStore().Set("build.image", "custom:latest")
+	// Mutate agent editor
+	err = cfg.ProjectStore().Set("agent.editor", "emacs")
 	require.NoError(t, err)
 
-	assert.Equal(t, "custom:latest", cfg.Project().Build.Image)
+	assert.Equal(t, "emacs", cfg.Project().Agent.Editor)
 
 	// Other values should be preserved
 	assert.Equal(t, "bind", cfg.Project().Workspace.DefaultMode)
@@ -346,7 +346,7 @@ func TestWriteProject_persistsToFile(t *testing.T) {
 	cfg, err := NewConfig()
 	require.NoError(t, err)
 
-	err = cfg.ProjectStore().Set("build.image", "persisted:latest")
+	err = cfg.ProjectStore().Set("agent.editor", "persisted-editor")
 	require.NoError(t, err)
 
 	err = cfg.ProjectStore().Write()
@@ -355,7 +355,7 @@ func TestWriteProject_persistsToFile(t *testing.T) {
 	// Re-read and verify persistence
 	cfg2, err := NewConfig()
 	require.NoError(t, err)
-	assert.Equal(t, "persisted:latest", cfg2.Project().Build.Image)
+	assert.Equal(t, "persisted-editor", cfg2.Project().Agent.Editor)
 }
 
 func TestWriteSettings_persistsToFile(t *testing.T) {
@@ -471,7 +471,7 @@ agent:
 	)
 	require.NoError(t, err)
 
-	require.NoError(t, projectStore.Set("build.image", "bookworm:latest"))
+	require.NoError(t, projectStore.Set("agent.post_init", "echo project-init"))
 	require.NoError(t, projectStore.Set("workspace.default_mode", "bind"))
 	projectConfigFile := filepath.Join(projectDir, ".clawker.yaml")
 	require.NoError(t, projectStore.WriteTo(projectConfigFile))
@@ -500,8 +500,8 @@ agent:
 	require.NoError(t, err)
 
 	snap := mergedStore.Read()
-	assert.Equal(t, "bookworm:latest", snap.Build.Image,
-		"project-level build.image should win")
+	assert.Equal(t, "echo project-init", snap.Agent.PostInit,
+		"project-level agent.post_init should win")
 	assert.Equal(t, "vim", snap.Agent.Editor,
 		"user-level agent.editor should survive — not overridden by empty string")
 	assert.Equal(t, "vim", snap.Agent.Visual,

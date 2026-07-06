@@ -52,29 +52,66 @@ func (m *DockerfileManager) DockerfilesDir() (string, error)  // delegates to cf
 
 ### ProjectGenerator -- single project builds from clawker.yaml
 
+Renders the **two-image split**: a per-project shared base image
+(`clawker-<project>:base`, harness-agnostic layers — packages, user setup,
+project `instructions`, zsh tooling, HEALTHCHECK) and a thin harness image
+that builds `FROM` it (template blocks, harness volume dirs, config seeds,
+clawker root assets, ENTRYPOINT/CMD). Templates:
+`assets/Dockerfile.base.tmpl` (no block slots, plain `template.Parse`) and
+`assets/Dockerfile.harness-image.tmpl` (block slots, composed with the
+bundle fragment via `harness.Compose`). The single-file master
+`assets/Dockerfile.tmpl` still serves the legacy `DockerfileManager` path —
+keep shared sections of the three templates in sync.
+
 ```go
 func NewProjectGenerator(cfg config.Config, workDir string) *ProjectGenerator
-func (g *ProjectGenerator) Generate() ([]byte, error)                                  // Render Dockerfile
-func (g *ProjectGenerator) GenerateBuildContext() (io.Reader, error)                   // Tar archive (legacy)
-func (g *ProjectGenerator) GenerateBuildContextFromDockerfile(dockerfile []byte) (io.Reader, error)
-func (g *ProjectGenerator) WriteBuildContextToDir(dir string, dockerfile []byte) error // Filesystem (BuildKit)
+func (g *ProjectGenerator) GenerateBase() ([]byte, error)                              // Render base-image Dockerfile
+func (g *ProjectGenerator) GenerateHarness() ([]byte, error)                           // Render harness-image Dockerfile (needs BaseImageRef)
+func (g *ProjectGenerator) BaseContentHash(baseDockerfile []byte) (string, error)      // Freshness key (basehash.go)
+func (g *ProjectGenerator) GenerateBaseBuildContext(dockerfile []byte) (io.Reader, error)      // Tar: project ctx + Dockerfile under BaseDockerfileName (legacy)
+func (g *ProjectGenerator) GenerateHarnessBuildContext(dockerfile []byte) (io.Reader, error)   // Tar: bundle assets + CA + clawker binaries (legacy)
+func (g *ProjectGenerator) WriteHarnessBuildContextToDir(dir string, dockerfile []byte) error  // Filesystem (BuildKit)
 func (g *ProjectGenerator) UseCustomDockerfile() bool
 func (g *ProjectGenerator) GetCustomDockerfilePath() string
 func (g *ProjectGenerator) GetBuildContext() string
 func CreateBuildContextFromDir(dir, dockerfilePath string) (io.Reader, error)  // Tar from directory
 ```
 
-`cfg config.Config` (interface). `BuildKitEnabled` field mirrors DockerfileManager. `WriteBuildContextToDir` for BuildKit's fsutil mount; `GenerateBuildContextFromDockerfile` for legacy tar stream.
+Fields: `BuildKitEnabled`, `HarnessVersion` (resolved npm version for the
+harness ARG), `Harness` (bundle selector; empty = registry default),
+`BaseImageRef` (FROM ref for the harness image, set by the docker Builder —
+bundler never derives project names; `GenerateHarness` errors
+`ErrNoBaseImageRef` without it).
 
-**ProjectGenerator is a pure renderer** — it does not perform any network I/O. The Claude Code version that gets baked into the rendered `ARG CLAUDE_CODE_VERSION=<value>` default comes from the `ClaudeCodeVersion string` field on the generator. Callers (the build command) resolve via the command-layer factory and set the field before calling `Generate()`. Empty falls back to the literal `DefaultClaudeCodeVersion`:
+**Context ownership:** the base image's build context is the PROJECT
+build-context directory (`GetBuildContext()`) because user
+`instructions.copy` srcs live there and render base-side; the harness
+context stages only bundle assets + firewall CA + clawker-owned
+scripts/binaries. `BaseDockerfileName` (`Dockerfile.clawker-base`) is the
+reserved tar entry name so a user's own `Dockerfile` is never clobbered.
 
-```go
-gen := bundler.NewProjectGenerator(cfg, workDir)
-gen.ClaudeCodeVersion = "2.1.5"  // resolved by caller via bundler.ResolveLatestClaudeCodeVersion
-df, _ := gen.Generate()
-```
+**Freshness (`basehash.go`):** `BaseContentHash` = SHA-256 of the rendered
+base Dockerfile bytes + contents of files matched by `instructions.copy`
+srcs (sorted; `.git`/symlinks skipped; missing srcs hash a stable marker).
+The docker Builder compares it against the `:base` image's
+`consts.LabelBaseContentHash` label to decide base rebuilds. Deliberately
+NOT a whole-context hash — source edits outside copy srcs never rebuild
+the base. Glob semantics are Go's, not Docker's; imprecision worst-cases
+as a spurious rebuild, never a wrong image.
 
-This separation keeps bundler hermetic in tests (no HTTP traffic on `Generate()`) and aligns with the repo's factory-DI pattern: HTTP-using dependencies live on the Factory (`f.HttpClient`), not buried inside leaf packages.
+**ProjectGenerator is a pure renderer** — it does not perform any network
+I/O. The harness version baked into the rendered version ARG comes from
+the `HarnessVersion` field, resolved at the command layer via
+`bundler.ResolveHarnessVersion` (Factory `f.HttpClient`); empty falls back
+to `DefaultHarnessVersion`. This keeps bundler hermetic in tests and
+aligns with the repo's factory-DI pattern.
+
+**FROM-boundary invariants (harness-image template):** ARGs don't survive
+FROM — the final stage re-declares `ARG USERNAME` and `ARG ZSH_ENV`; SHELL
+carries over via image config, so the template resets `SHELL ["/bin/sh"]`
+after FROM (blocks 1–3 run under sh) and restores zsh before block_4.
+**block_1 contract change:** block_1 is the first root step of the harness
+image and runs AFTER user creation (which lives in the base image).
 
 ### Claude Code Version Resolution
 

@@ -238,3 +238,22 @@ func TestImageTag(t *testing.T) {
 		})
 	}
 }
+
+func TestBaseImageTag(t *testing.T) {
+	tests := []struct {
+		project string
+		want    string
+	}{
+		{"myproject", "clawker-myproject:base"},
+		{"", "clawker:base"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.project, func(t *testing.T) {
+			got := BaseImageTag(tt.project)
+			if got != tt.want {
+				t.Errorf("BaseImageTag(%q) = %q, want %q", tt.project, got, tt.want)
+			}
+		})
+	}
+}

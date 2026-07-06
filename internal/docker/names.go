@@ -183,6 +183,7 @@ func ContainerNamePrefix(project string) string {
 const (
 	VolumePurposeHistory   = consts.VolumePurposeHistory
 	VolumePurposeWorkspace = consts.VolumePurposeWorkspace
+	VolumePurposeClawker   = consts.VolumePurposeClawker
 	// legacyVolumePurposeConfig is the pre-multi-harness config volume
 	// suffix, retained for cleanup of volumes created by older versions.
 	legacyVolumePurposeConfig = "config"
@@ -192,6 +193,7 @@ var VolumePurposes = []string{
 	legacyVolumePurposeConfig,
 	VolumePurposeHistory,
 	VolumePurposeWorkspace,
+	VolumePurposeClawker,
 }
 
 func VolumeName(project, agent, purpose string) (string, error) {
@@ -225,6 +227,13 @@ func HarnessImageTag(project, harnessName string) string {
 // explicit tag is selected.
 func DefaultAliasImageTag(project string) string {
 	return imageRef(project, consts.ImageTagDefaultAlias)
+}
+
+// BaseImageTag is the per-project shared base image tag:
+// clawker-<project>:base. Harness images build FROM it; it is never
+// runnable and never a harness selector.
+func BaseImageTag(project string) string {
+	return imageRef(project, consts.ImageTagBase)
 }
 
 func imageRef(project, tag string) string {

@@ -69,7 +69,8 @@ func Presets() []Preset {
 }
 
 const pythonPreset = `build:
-  image: "python:3.12-bookworm"
+  toolchains:
+    - python
   packages:
     - ripgrep
     - build-essential
@@ -81,7 +82,8 @@ security:
 `
 
 const goPreset = `build:
-  image: "golang:1.25-bookworm"
+  toolchains:
+    - go
   packages:
     - ripgrep
 security:
@@ -93,7 +95,8 @@ security:
 `
 
 const rustPreset = `build:
-  image: "rust:1-bookworm"
+  toolchains:
+    - rust
   packages:
     - ripgrep
     - build-essential
@@ -106,9 +109,8 @@ security:
       - index.crates.io
 `
 
-// Node + npm are baked into every agent image by the default Dockerfile
-// template (see internal/bundler/assets/Dockerfile.tmpl) and NODE_USE_SYSTEM_CA
-// is set globally there. registry.npmjs.org is in the required firewall set
+// The node toolchain declaration provides node + npm before the project's
+// build instructions run. registry.npmjs.org is in the required firewall set
 // (see internal/config/defaults.go). TypeScript-specific tooling (pnpm, tsc)
 // layers on top.
 const typescriptPreset = `agent:
@@ -117,7 +119,8 @@ const typescriptPreset = `agent:
       npm install || echo "warning: npm install failed; continuing"
     fi
 build:
-  image: "buildpack-deps:bookworm-scm"
+  toolchains:
+    - node
   packages:
     - ripgrep
   instructions:
@@ -126,9 +129,9 @@ build:
 `
 
 const javaPreset = `build:
-  image: "eclipse-temurin:21-jdk-alpine"
   packages:
     - ripgrep
+    - default-jdk
     - maven
 security:
   firewall:
@@ -138,9 +141,9 @@ security:
 `
 
 const rubyPreset = `build:
-  image: "ruby:3.3-bookworm"
   packages:
     - ripgrep
+    - ruby-full
     - build-essential
 security:
   firewall:
@@ -150,7 +153,6 @@ security:
 `
 
 const cppPreset = `build:
-  image: "buildpack-deps:bookworm"
   packages:
     - ripgrep
     - cmake
@@ -158,7 +160,6 @@ const cppPreset = `build:
 `
 
 const dotnetPreset = `build:
-  image: "mcr.microsoft.com/dotnet/sdk:9.0-bookworm-slim"
   packages:
     - ripgrep
 security:
@@ -168,7 +169,6 @@ security:
 `
 
 const barePreset = `build:
-  image: "buildpack-deps:bookworm-scm"
   packages:
     - ripgrep
 `

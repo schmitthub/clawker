@@ -33,7 +33,6 @@ type BuilderOptions struct {
 	NetworkMode     string                  // Network mode for build
 	BuildArgs       map[string]*string      // Build-time variables
 	Tags            []string                // Additional tags for the image (merged with imageTag)
-	Dockerfile      []byte                  // Pre-rendered Dockerfile bytes (avoids re-generation)
 	BuildKitEnabled bool                    // Use BuildKit builder for cache mount support
 	OnProgress      whail.BuildProgressFunc // Progress callback for build events
 	OnComplete      whail.BuildCompleteFunc // Fires once with the built image digest/ID
@@ -80,7 +79,11 @@ func NewBuilder(cli *Client, cfg *config.Project, workDir, projectName string) *
 	}
 }
 
-// Build unconditionally builds the Docker image.
+// Build builds the project's harness image, first ensuring the per-project
+// shared base image (clawker-<project>:base) exists and is fresh. The base
+// carries the harness-agnostic layers (packages, user setup, project
+// instructions); freshness is keyed by a content hash stamped as an image
+// label. The custom-Dockerfile path bypasses the split entirely.
 func (b *Builder) Build(ctx context.Context, imageTag string, opts BuilderOptions) error {
 	gen := bundler.NewProjectGenerator(b.client.cfg, b.workDir)
 	gen.BuildKitEnabled = opts.BuildKitEnabled
@@ -96,35 +99,42 @@ func (b *Builder) Build(ctx context.Context, imageTag string, opts BuilderOption
 	// Merge tags: primary tag + any additional tags from options
 	tags := mergeTags(imageTag, opts.Tags)
 
-	// Check if we should use a custom Dockerfile
-	if gen.UseCustomDockerfile() {
-		b.log.Debug().
-			Str("dockerfile", b.config.Build.Dockerfile).
-			Msg("building from custom Dockerfile")
+	baseTag := BaseImageTag(b.projectName)
+	gen.BaseImageRef = baseTag
 
-		buildCtx, err := bundler.CreateBuildContextFromDir(
-			gen.GetBuildContext(),
-			gen.GetCustomDockerfilePath(),
-		)
-		if err != nil {
-			return fmt.Errorf("failed to create build context: %w", err)
-		}
-
-		return b.client.BuildImage(ctx, buildCtx, opts.toBuildImageOpts(tags, filepath.Base(gen.GetCustomDockerfilePath()), gen.GetBuildContext()))
+	baseDockerfile, err := gen.GenerateBase()
+	if err != nil {
+		return fmt.Errorf("failed to generate base Dockerfile: %w", err)
+	}
+	baseHash, err := gen.BaseContentHash(baseDockerfile)
+	if err != nil {
+		return fmt.Errorf("failed to hash base image inputs: %w", err)
 	}
 
-	b.log.Debug().Str("image", imageTag).Msg("building container image")
-
-	// Generate Dockerfile bytes if not already provided
-	var dockerfile []byte
-	if len(opts.Dockerfile) > 0 {
-		dockerfile = opts.Dockerfile
-	} else {
-		var err error
-		dockerfile, err = gen.Generate()
-		if err != nil {
-			return fmt.Errorf("failed to generate Dockerfile: %w", err)
+	stale, err := b.baseImageStale(ctx, baseTag, baseHash)
+	if err != nil {
+		return fmt.Errorf("failed to check base image freshness: %w", err)
+	}
+	if opts.NoCache || stale {
+		b.log.Debug().Str("image", baseTag).Str("hash", baseHash).Bool("no_cache", opts.NoCache).
+			Msg("building shared base image")
+		if buildErr := b.buildBase(ctx, gen, baseTag, baseHash, baseDockerfile, opts); buildErr != nil {
+			return fmt.Errorf("building base image %s: %w", baseTag, buildErr)
 		}
+	}
+
+	// Stamp the harness image with the base generation it was cut from.
+	opts.Labels[consts.LabelBaseContentHash] = baseHash
+	// The harness build's parent is the local-only :base tag — a pull
+	// attempt would fail against any registry. --pull applies to the base
+	// build, where the registry-backed parent lives.
+	opts.Pull = false
+
+	b.log.Debug().Str("image", imageTag).Msg("building harness image")
+
+	dockerfile, err := gen.GenerateHarness()
+	if err != nil {
+		return fmt.Errorf("failed to generate Dockerfile: %w", err)
 	}
 
 	// BuildKit reads from the filesystem, not a tar stream.
@@ -140,20 +150,117 @@ func (b *Builder) Build(ctx context.Context, imageTag string, opts BuilderOption
 			}
 		}()
 
-		if err := gen.WriteBuildContextToDir(tempDir, dockerfile); err != nil {
-			return fmt.Errorf("failed to write build context: %w", err)
+		if writeErr := gen.WriteHarnessBuildContextToDir(tempDir, dockerfile); writeErr != nil {
+			return fmt.Errorf("failed to write build context: %w", writeErr)
 		}
 
 		return b.client.BuildImage(ctx, nil, opts.toBuildImageOpts(tags, "Dockerfile", tempDir))
 	}
 
 	// Legacy path: tar stream build context
-	buildCtx, err := gen.GenerateBuildContextFromDockerfile(dockerfile)
+	buildCtx, err := gen.GenerateHarnessBuildContext(dockerfile)
 	if err != nil {
 		return fmt.Errorf("failed to generate build context: %w", err)
 	}
 
 	return b.client.BuildImage(ctx, buildCtx, opts.toBuildImageOpts(tags, "Dockerfile", gen.GetBuildContext()))
+}
+
+// baseImageStale reports whether the shared base image must be (re)built:
+// true when no managed image exists at baseTag, or when its content-hash
+// label differs from wantHash. Non-NotFound inspect errors propagate.
+func (b *Builder) baseImageStale(ctx context.Context, baseTag, wantHash string) (bool, error) {
+	result, err := b.client.ImageInspect(ctx, baseTag)
+	if err != nil {
+		if isNotFoundError(err) {
+			return true, nil
+		}
+		return false, fmt.Errorf("inspecting base image %s: %w", baseTag, err)
+	}
+	if result.Config == nil {
+		return true, nil
+	}
+	return result.Config.Labels[consts.LabelBaseContentHash] != wantHash, nil
+}
+
+// buildBase builds the shared base image. Its context is the project
+// build-context directory (user copy srcs live there); the rendered
+// Dockerfile is supplied out-of-band. Base labels are clawker's own plus
+// the content hash and purpose — never user labels or the harness label,
+// which describe the runnable harness image.
+func (b *Builder) buildBase(
+	ctx context.Context,
+	gen *bundler.ProjectGenerator,
+	baseTag, baseHash string,
+	dockerfile []byte,
+	opts BuilderOptions,
+) error {
+	baseOpts := opts
+	baseOpts.Labels = b.client.ImageLabels(b.projectName, build.Version)
+	baseOpts.Labels[consts.LabelBaseContentHash] = baseHash
+	baseOpts.Labels[consts.LabelPurpose] = consts.PurposeBaseImage
+	baseOpts.Target = ""
+	baseOpts.OnComplete = nil // the caller's --iidfile wants the runnable harness image
+	baseOpts.OnProgress = phaseProgress(opts.OnProgress, basePhasePrefix)
+
+	if opts.BuildKitEnabled {
+		tempDir, err := os.MkdirTemp("", "clawker-basectx-*")
+		if err != nil {
+			return fmt.Errorf("failed to create base Dockerfile temp dir: %w", err)
+		}
+		defer func() {
+			if rmErr := os.RemoveAll(tempDir); rmErr != nil {
+				b.log.Debug().Err(rmErr).Str("dir", tempDir).Msg("failed to clean up base Dockerfile temp dir")
+			}
+		}()
+
+		dockerfilePath := filepath.Join(tempDir, "Dockerfile")
+		//nolint:gosec // generated Dockerfile, not a secret
+		if writeErr := os.WriteFile(dockerfilePath, dockerfile, 0o644); writeErr != nil {
+			return fmt.Errorf("failed to write base Dockerfile: %w", writeErr)
+		}
+
+		// Absolute Dockerfile path + the project dir as context: BuildKit
+		// mounts them as separate locals, so the rendered Dockerfile never
+		// touches the user's project directory.
+		return b.client.BuildImage(
+			ctx,
+			nil,
+			baseOpts.toBuildImageOpts([]string{baseTag}, dockerfilePath, gen.GetBuildContext()),
+		)
+	}
+
+	buildCtx, err := gen.GenerateBaseBuildContext(dockerfile)
+	if err != nil {
+		return fmt.Errorf("failed to generate base build context: %w", err)
+	}
+
+	return b.client.BuildImage(
+		ctx,
+		buildCtx,
+		baseOpts.toBuildImageOpts([]string{baseTag}, bundler.BaseDockerfileName, gen.GetBuildContext()),
+	)
+}
+
+// basePhasePrefix namespaces the base build's progress events.
+const basePhasePrefix = "base"
+
+// phaseProgress decorates a progress callback with a phase namespace so
+// two sequential builds' step IDs can't collide (the legacy stream emits
+// bare "step-N" IDs per build). Nil-safe: nil in, nil out.
+func phaseProgress(fn whail.BuildProgressFunc, phase string) whail.BuildProgressFunc {
+	if fn == nil {
+		return nil
+	}
+	return func(event whail.BuildProgressEvent) {
+		event.StepID = phase + ":" + event.StepID
+		// Internal housekeeping vertices keep their "[internal]" prefix
+		// intact — downstream displays filter on it.
+		if !whail.IsInternalStep(event.StepName) {
+			event.StepName = "[" + phase + "] " + event.StepName
+		}
+		fn(event)
+	}
 }
 
 // mergeImageLabels combines clawker internal labels and user-defined labels into opts.Labels.

@@ -21,21 +21,25 @@ import (
 // round-trip lives at the command layer in production.
 const testHarnessVersion = "2.99.99-test"
 
+// testBaseImageRef is the shared-base FROM ref rendered into harness image
+// Dockerfiles by test generators (production sets clawker-<project>:base).
+const testBaseImageRef = "clawker-test:base"
+
 // newTestProjectGenerator builds a ProjectGenerator with the test version
-// pre-set so Generate() produces a deterministic ARG CLAUDE_CODE_VERSION
-// without any HTTP traffic. Mirrors the way production callers (the build
-// command) set HarnessVersion after resolving via Factory.HttpClient.
+// and base image ref pre-set so GenerateBase/GenerateHarness produce
+// deterministic output without any HTTP traffic. Mirrors the way production
+// callers (the docker Builder) set HarnessVersion after resolving via
+// Factory.HttpClient and BaseImageRef from the project name.
 func newTestProjectGenerator(cfg config.Config, workDir string) *ProjectGenerator {
 	gen := NewProjectGenerator(cfg, workDir)
 	gen.HarnessVersion = testHarnessVersion
+	gen.BaseImageRef = testBaseImageRef
 	return gen
 }
 
 func minimalProjectYAML() string {
 	return `
 version: "1"
-build:
-  image: "buildpack-deps:bookworm-scm"
 `
 }
 
@@ -185,13 +189,11 @@ func TestBuildContext_CustomMonitoringEndpoints(t *testing.T) {
 	// cfg.OtelCollectorURL() back to itself.
 	cfg := testConfig(t, `
 version: "1"
-build:
-  image: "buildpack-deps:bookworm-scm"
 monitoring:
   otel_collector_port: 9999
 `)
 	gen := newTestProjectGenerator(cfg, t.TempDir())
-	dockerfile, err := gen.Generate()
+	dockerfile, err := gen.GenerateHarness()
 	require.NoError(t, err)
 
 	content := string(dockerfile)
@@ -215,7 +217,7 @@ monitoring:
 func TestBuildContext_DefaultMonitoring(t *testing.T) {
 	cfg := testConfig(t, minimalProjectYAML())
 	gen := newTestProjectGenerator(cfg, t.TempDir())
-	dockerfile, err := gen.Generate()
+	dockerfile, err := gen.GenerateHarness()
 	require.NoError(t, err)
 
 	content := string(dockerfile)
@@ -250,7 +252,7 @@ func TestBuildContext_DefaultMonitoring(t *testing.T) {
 func TestBuildContext_ClaudeConfigDir(t *testing.T) {
 	cfg := testConfig(t, minimalProjectYAML())
 	gen := newTestProjectGenerator(cfg, t.TempDir())
-	dockerfile, err := gen.Generate()
+	dockerfile, err := gen.GenerateHarness()
 	require.NoError(t, err)
 
 	content := string(dockerfile)
@@ -283,8 +285,6 @@ func TestBuildContext_ClaudeConfigDir(t *testing.T) {
 func TestBuildContext_TelemetryConfig(t *testing.T) {
 	cfg := testConfig(t, `
 version: "1"
-build:
-  image: "buildpack-deps:bookworm-scm"
 monitoring:
   otel_collector_port: 4318
   telemetry:
@@ -296,7 +296,7 @@ monitoring:
     include_session_id: false
 `)
 	gen := newTestProjectGenerator(cfg, t.TempDir())
-	dockerfile, err := gen.Generate()
+	dockerfile, err := gen.GenerateHarness()
 	require.NoError(t, err)
 
 	content := string(dockerfile)
@@ -316,7 +316,7 @@ func TestBuildContext_TelemetryConfig_DefaultsEnabled(t *testing.T) {
 	// With default config (all telemetry enabled), all OTEL env vars should be present
 	cfg := testConfig(t, minimalProjectYAML())
 	gen := newTestProjectGenerator(cfg, t.TempDir())
-	dockerfile, err := gen.Generate()
+	dockerfile, err := gen.GenerateHarness()
 	require.NoError(t, err)
 
 	content := string(dockerfile)
@@ -352,7 +352,7 @@ func TestDockerfilesDir_DelegatesToConfig(t *testing.T) {
 func TestBuildContext_ClawkerdIsPID1(t *testing.T) {
 	cfg := testConfig(t, minimalProjectYAML())
 	gen := newTestProjectGenerator(cfg, t.TempDir())
-	dockerfile, err := gen.Generate()
+	dockerfile, err := gen.GenerateHarness()
 	require.NoError(t, err)
 	content := string(dockerfile)
 
@@ -375,7 +375,7 @@ func TestBuildContext_ClawkerdIsPID1(t *testing.T) {
 func TestBuildContext_HarnessVersionIsARG(t *testing.T) {
 	cfg := testConfig(t, minimalProjectYAML())
 	gen := newTestProjectGenerator(cfg, t.TempDir())
-	dockerfile, err := gen.Generate()
+	dockerfile, err := gen.GenerateHarness()
 	require.NoError(t, err)
 	content := string(dockerfile)
 
@@ -391,15 +391,16 @@ func TestBuildContext_HarnessVersionIsARG(t *testing.T) {
 	// layer downward — never the Node/git-delta/zsh-in-docker chain. Hoisting
 	// the declaration up the stage reintroduces a full rebuild on every release.
 	argIdx := strings.Index(content, "ARG CLAUDE_CODE_VERSION=")
-	zshIdx := strings.Index(content, "zsh-in-docker")
+	nvmIdx := strings.Index(content, "raw.githubusercontent.com/nvm-sh/nvm")
 	installIdx := strings.Index(content, "claude.ai/install.sh")
-	require.NotEqual(t, -1, zshIdx, "expected zsh-in-docker step as an upstream-layer marker")
+	require.NotEqual(t, -1, nvmIdx,
+		"expected the nvm toolchain fragment (harness-declared) as an upstream-layer marker")
 	require.NotEqual(t, -1, installIdx, "expected Claude install RUN as the ARG consumer marker")
 	assert.Greater(
 		t,
 		argIdx,
-		zshIdx,
-		"ARG CLAUDE_CODE_VERSION must be declared AFTER zsh-in-docker — declaring it earlier busts every cached layer below it on every CC release (BuildKit invalidates at the ARG declaration line)",
+		nvmIdx,
+		"ARG CLAUDE_CODE_VERSION must be declared AFTER the nvm install — declaring it earlier busts every cached layer below it on every CC release (BuildKit invalidates at the ARG declaration line)",
 	)
 	assert.Less(t, argIdx, installIdx,
 		"ARG CLAUDE_CODE_VERSION must be declared BEFORE the install RUN that consumes it")
@@ -414,8 +415,9 @@ func TestBuildContext_HarnessVersionIsARG(t *testing.T) {
 func TestBuildContext_FallsBackOnEmptyHarnessVersion(t *testing.T) {
 	cfg := testConfig(t, minimalProjectYAML())
 	gen := NewProjectGenerator(cfg, t.TempDir())
+	gen.BaseImageRef = testBaseImageRef
 	// HarnessVersion intentionally unset.
-	dockerfile, err := gen.Generate()
+	dockerfile, err := gen.GenerateHarness()
 	require.NoError(
 		t,
 		err,
@@ -440,7 +442,7 @@ func TestBuildContext_FallsBackOnEmptyHarnessVersion(t *testing.T) {
 func TestBuildContext_LateClawkerBlock(t *testing.T) {
 	cfg := testConfig(t, minimalProjectYAML())
 	gen := newTestProjectGenerator(cfg, t.TempDir())
-	dockerfile, err := gen.Generate()
+	dockerfile, err := gen.GenerateHarness()
 	require.NoError(t, err)
 	content := string(dockerfile)
 
@@ -532,7 +534,7 @@ func TestBuildContext_LateClawkerBlock(t *testing.T) {
 func TestBuildContext_CollapsedChmod(t *testing.T) {
 	cfg := testConfig(t, minimalProjectYAML())
 	gen := newTestProjectGenerator(cfg, t.TempDir())
-	dockerfile, err := gen.Generate()
+	dockerfile, err := gen.GenerateHarness()
 	require.NoError(t, err)
 	content := string(dockerfile)
 
@@ -556,4 +558,103 @@ func TestDockerfilesDir_PropagatesError(t *testing.T) {
 	assert.Error(t, err)
 	assert.Empty(t, dir)
 	assert.Contains(t, err.Error(), "permission denied")
+}
+
+// TestGenerateBase_ExcludesHarnessSurface pins the image split: the base
+// image carries only harness-agnostic layers. Any harness content leaking
+// into the base render would rebuild every harness's shared layers on a
+// harness change and duplicate harness layers across projects.
+func TestGenerateBase_ExcludesHarnessSurface(t *testing.T) {
+	cfg := testConfig(t, minimalProjectYAML())
+	gen := newTestProjectGenerator(cfg, t.TempDir())
+	dockerfile, err := gen.GenerateBase()
+	require.NoError(t, err)
+	content := string(dockerfile)
+
+	for _, marker := range []string{
+		"CLAUDE_CODE_VERSION",                 // harness version ARG (block_4)
+		"/usr/local/bin/clawkerd",             // clawker root assets live harness-side
+		"ENTRYPOINT",                          // harness image owns the entrypoint
+		"CMD [",                               // block_6
+		"/.clawker/seed",                      // harness config seeds
+		"mkdir -p /home/${USERNAME}/.claude ", // harness volume dirs
+		"callback-forwarder-builder",          // builder stages
+		"clawker-ca.crt",                      // firewall CA is harness-side
+		"nodejs.org/dist",                     // harness-declared toolchain (node) renders harness-side
+		"nvm-sh/nvm",                          // harness-declared toolchain (nvm) renders harness-side
+	} {
+		assert.NotContains(t, content, marker,
+			"base image must not carry harness surface %q", marker)
+	}
+
+	for _, marker := range []string{
+		"apt-get update",
+		"useradd",
+		"zsh-in-docker",
+		"HEALTHCHECK",
+		"/var/run/clawker",
+		"WORKDIR /workspace",
+	} {
+		assert.Contains(t, content, marker,
+			"base image must carry harness-agnostic layer %q", marker)
+	}
+}
+
+// TestGenerateHarness_FromBaseBoundary pins FROM-boundary correctness:
+// the harness image builds FROM the shared base ref, re-declares the ARGs
+// that don't survive FROM (USERNAME, ZSH_ENV), and restores the master
+// template's per-block SHELL semantics (blocks 1-3 under sh, 4-6 under
+// zsh — the base image's config ends at SHELL zsh).
+func TestGenerateHarness_FromBaseBoundary(t *testing.T) {
+	cfg := testConfig(t, minimalProjectYAML())
+	gen := newTestProjectGenerator(cfg, t.TempDir())
+	dockerfile, err := gen.GenerateHarness()
+	require.NoError(t, err)
+	content := string(dockerfile)
+
+	fromIdx := strings.Index(content, "FROM "+testBaseImageRef+" AS final")
+	require.Positive(t, fromIdx, "harness image must build FROM the shared base ref")
+
+	usernameArgIdx := strings.Index(content, "ARG USERNAME=")
+	require.Positive(t, usernameArgIdx, "ARG USERNAME must be re-declared (ARGs don't survive FROM)")
+	assert.Greater(t, usernameArgIdx, fromIdx,
+		"ARG USERNAME re-declaration must sit in the final stage")
+
+	zshEnvArgIdx := strings.Index(content, "ARG ZSH_ENV=")
+	require.Positive(t, zshEnvArgIdx,
+		"ARG ZSH_ENV must be re-declared (user-scope toolchain fragments reference it)")
+
+	shResetIdx := strings.Index(content, `SHELL ["/bin/sh", "-c"]`)
+	require.Positive(t, shResetIdx, "sh SHELL reset must exist — base image config ends at zsh")
+	assert.Greater(t, shResetIdx, fromIdx, "sh reset belongs to the final stage")
+
+	zshRestoreIdx := strings.Index(content, `SHELL ["/bin/zsh", "-o", "pipefail", "-c"]`)
+	require.Positive(t, zshRestoreIdx, "zsh SHELL restore must exist for blocks 4-6")
+
+	// sh reset → root toolchain fragments (node, harness-declared) → zsh
+	// restore → block_4 content (claude install).
+	nodeIdx := strings.Index(content, "nodejs.org/dist")
+	installIdx := strings.Index(content, "claude.ai/install.sh")
+	require.Positive(t, nodeIdx)
+	require.Positive(t, installIdx)
+	assert.Less(t, shResetIdx, nodeIdx, "block_1 must run under sh")
+	assert.Less(t, nodeIdx, zshRestoreIdx, "zsh restore comes after the root blocks")
+	assert.Less(t, zshRestoreIdx, installIdx, "block_4 must run under zsh")
+
+	// Harness volume dirs are created harness-side, in root scope before
+	// the USER switch.
+	mkdirIdx := strings.Index(content, "mkdir -p /home/${USERNAME}/.claude ")
+	userSwitchIdx := strings.Index(content, "USER ${USERNAME}")
+	require.Positive(t, mkdirIdx, "harness volume dirs must be created in the harness image")
+	require.Positive(t, userSwitchIdx)
+	assert.Less(t, mkdirIdx, userSwitchIdx, "volume dirs are root-scope, before USER switch")
+}
+
+func TestGenerateHarness_RequiresBaseImageRef(t *testing.T) {
+	cfg := testConfig(t, minimalProjectYAML())
+	gen := NewProjectGenerator(cfg, t.TempDir())
+	gen.HarnessVersion = testHarnessVersion
+	// BaseImageRef intentionally unset.
+	_, err := gen.GenerateHarness()
+	require.ErrorIs(t, err, ErrNoBaseImageRef)
 }

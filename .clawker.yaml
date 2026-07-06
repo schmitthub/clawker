@@ -17,7 +17,10 @@ harnesses:
       claude mcp add --scope local context7 -- npx -y @upstash/context7-mcp --api-key "$CONTEXT7_API_KEY"
   codex: {}
 build:
-  image: golang:1.26-bookworm
+  toolchains:
+    - go
+    - node
+    - python
   instructions:
     root_run:
       - npm install -g wscat

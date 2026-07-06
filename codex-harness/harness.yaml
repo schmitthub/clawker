@@ -1,11 +1,16 @@
 # Codex harness bundle — external UGC experiment.
-# DRAFT: config dir, config.toml, auth.json, AGENTS.md, npm install verified
-# against developers.openai.com/codex docs; egress domains not yet verified
-# against live traffic — re-verify before shipping.
+# DRAFT: install via the canonical standalone installer (verified against the
+# actual install.sh: CODEX_RELEASE pin, CODEX_NON_INTERACTIVE, sha256-verified
+# GitHub release assets); chatgpt.com https+wss observed in live traffic;
+# api/auth.openai.com not yet — re-verify before shipping.
 
+# Versions resolve from the authoritative source: the GitHub release tags
+# the installer itself downloads from (rust-v<x.y.z>). Codex is a standalone
+# binary bundling its own helpers; no toolchain requirements.
 version:
-  resolver: npm
-  package: "@openai/codex"
+  resolver: github-release
+  package: openai/codex
+  tag_prefix: rust-v
 
 # Persisted dir: codex keeps all state under $CODEX_HOME (default ~/.codex).
 volumes:
@@ -31,5 +36,28 @@ staging:
 egress:
   - dst: api.openai.com     # API-key auth inference
   - dst: auth.openai.com    # login/token exchange
+  # chatgpt.com also hosts publicly readable UGC (shared conversations) — an
+  # exfiltration sink if the whole domain is open. Both rules are therefore
+  # path-scoped to the codex backend prefix; the allow rule with no
+  # path_default puts the host in allowlist mode (every other path denied).
+  # Widen only from observed blocked traffic, never preemptively.
   - dst: chatgpt.com        # ChatGPT-account backend
+    path_rules:
+      - path: /backend-api/codex/          # inference + analytics-events (observed live)
+        action: allow
+      - path: /backend-api/wham/usage      # usage/rate-limit check (observed live)
+        action: allow
+      - path: /backend-api/ps/             # mcp + plugins/installed lookups (observed live)
+        action: allow
+      - path: /backend-api/plugins/        # featured/curated plugin directory (observed live)
+        action: allow
+      - path: /backend-api/connectors/directory/  # connector directory list (observed live)
+        action: allow
+  # WebSocket upgrade intent for the same origin (streaming responses,
+  # observed live at wss://chatgpt.com/backend-api/codex/responses). Not its
+  # own route set: the generator absorbs ws/wss into the https rule above,
+  # which owns the path structure — this entry contributes only the upgrade
+  # capability on those allowed paths.
+  - dst: chatgpt.com
+    proto: wss
 

@@ -150,15 +150,12 @@ The complete `.clawker.yaml` schema with all fields and nested object structures
 # Override the project slug derived from the directory name (set this when the directory name isn't a good clawker identifier — e.g. dots, spaces, unicode)
 name: <string>  # default: n/a | required: false
 build:
-  # Starting Docker image (e.g. node:20-slim, python:3.12); clawker layers tools on top
-  image: <string>  # default: n/a | required: false
-  # Use your own Dockerfile instead of clawker's generated one; ignores image, packages, and instructions
-  dockerfile: <string>  # default: n/a | required: false
-  # System packages (apt/apk) needed by your project that aren't in the base image
+  # System packages (apt) needed by your project that the clawker base doesn't already install
   packages:  # default: ripgrep | required: false
     - <string>
-  # Directory to use as Docker build context when using a custom Dockerfile (relative to project root)
-  context: <string>  # default: n/a | required: false
+  # Toolchain definitions your root_run/user_run steps need (e.g. node, go); installed in the shared base image before your instructions run
+  toolchains:  # default: n/a | required: false
+    - <string>
   instructions:
     # Bake config files or credentials into the image (e.g. .npmrc, SSH config)
     copy:
@@ -320,10 +317,8 @@ The following tables are auto-generated from the schema struct tags in `internal
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `image` | string | — | Starting Docker image (e.g. node:20-slim, python:3.12); clawker layers tools on top |
-| `dockerfile` | string | — | Use your own Dockerfile instead of clawker's generated one; ignores image, packages, and instructions |
-| `packages` | string list | `ripgrep` | System packages (apt/apk) needed by your project that aren't in the base image |
-| `context` | string | — | Directory to use as Docker build context when using a custom Dockerfile (relative to project root) |
+| `packages` | string list | `ripgrep` | System packages (apt) needed by your project that the clawker base doesn't already install |
+| `toolchains` | string list | — | Toolchain definitions your root_run/user_run steps need (e.g. node, go); installed in the shared base image before your instructions run |
 
 
 #### instructions
@@ -539,6 +534,8 @@ docker:
   socket: <string>  # default: /var/run/docker.sock | required: false
 # Harness registry mapping a harness name to its bundle location and default flag
 harnesses: <value>  # default: n/a | required: false
+# Toolchain registry mapping a toolchain name to its definition directory
+toolchains: <value>  # default: n/a | required: false
 
 ```
 
@@ -650,6 +647,13 @@ Global settings live at `~/.config/clawker/settings.yaml`. The following tables 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `harnesses` | object map | — | Harness registry mapping a harness name to its bundle location and default flag |
+
+
+### toolchains
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `toolchains` | object map | — | Toolchain registry mapping a toolchain name to its definition directory |
 
 
 You can also place a `clawker.yaml` in `~/.config/clawker/` to set user-level project config defaults. This file is merged as the lowest-priority project config layer (just above built-in defaults), so any project-level `.clawker.yaml` overrides it.

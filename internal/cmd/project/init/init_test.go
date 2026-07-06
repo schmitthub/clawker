@@ -338,7 +338,6 @@ func TestPerformProjectSetup_PresetRoundTrip(t *testing.T) {
 			require.NoError(t, err, "written config is invalid YAML")
 
 			snap := reloaded.Read()
-			assert.NotEmpty(t, snap.Build.Image, "preset %s should set build.image", preset.Name)
 			assert.NotEmpty(t, snap.Build.Packages, "preset %s should set build.packages", preset.Name)
 
 			// Verify ignore file was created.
@@ -445,7 +444,7 @@ func TestRunNonInteractive_PresetFlag(t *testing.T) {
 	require.NoError(t, err)
 
 	snap := reloaded.Read()
-	assert.Equal(t, "golang:1.25-bookworm", snap.Build.Image)
+	assert.Contains(t, snap.Build.Packages, "ripgrep")
 	assert.Contains(t, out.String(), "Go")
 }
 

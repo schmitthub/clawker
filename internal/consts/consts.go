@@ -56,10 +56,10 @@ const (
 
 // Docker/OCI label keys.
 const (
-	LabelManaged   = LabelPrefix + "managed"
-	LabelProject   = LabelPrefix + "project"
-	LabelAgent     = LabelPrefix + "agent"
-	LabelHarness   = LabelPrefix + "harness"
+	LabelManaged = LabelPrefix + "managed"
+	LabelProject = LabelPrefix + "project"
+	LabelAgent   = LabelPrefix + "agent"
+	LabelHarness = LabelPrefix + "harness"
 )
 
 // Infrastructure volume-name purpose suffixes. Volume names compose as
@@ -68,6 +68,12 @@ const (
 const (
 	VolumePurposeHistory   = "history"
 	VolumePurposeWorkspace = "workspace"
+	// VolumePurposeClawker backs the in-container $HOME/.clawker directory
+	// (hook scripts, seed staging, lifecycle markers). Named so lifecycle
+	// state — above all the post-init marker — survives container
+	// recreation alongside the harness config volumes whose contents
+	// post_init mutates.
+	VolumePurposeClawker = "clawker"
 )
 
 // Image tag aliases reserved by the harness-keyed tag scheme. Harness
@@ -78,6 +84,9 @@ const (
 	// ImageTagLatest is the legacy pre-harness tag; resolution accepts it
 	// as a fallback for images built before harness tags existed.
 	ImageTagLatest = "latest"
+	// ImageTagBase tags the per-project shared base image that harness
+	// images build FROM. Never runnable, never a harness selector.
+	ImageTagBase   = "base"
 	LabelVersion   = LabelPrefix + "version"
 	LabelImage     = LabelPrefix + "image"
 	LabelCreated   = LabelPrefix + "created"
@@ -93,6 +102,12 @@ const (
 	// EnsureRunning compares the running container's label against the
 	// host clawker binary's embedded hash to detect drift.
 	LabelCPBinarySHA = LabelPrefix + "cp.binary_sha256"
+	// LabelBaseContentHash stamps the SHA-256 of the base image's inputs
+	// (rendered base Dockerfile + user copy sources) onto the per-project
+	// base image. The builder compares it against the freshly computed
+	// hash to decide whether the base must be rebuilt before a harness
+	// image build. Also stamped on harness images for provenance.
+	LabelBaseContentHash = LabelPrefix + "base.content_sha256"
 )
 
 // OCI standard label keys (not under LabelPrefix — defined by the
@@ -113,6 +128,7 @@ const (
 	ManagedLabelValue = "true"
 
 	PurposeAgent        = "agent"
+	PurposeBaseImage    = "base"
 	PurposeMonitoring   = "monitoring"
 	PurposeFirewall     = "firewall"
 	PurposeControlPlane = "controlplane"
@@ -323,9 +339,11 @@ const (
 	SeedManifestFile = "seed-manifest"
 )
 
-// PostInitMarkerFile marks a container whose post_init hook already ran
-// (or was absent) — written under DotClawkerDir so the once-per-container
-// contract holds across restarts without touching harness config paths.
+// PostInitMarkerFile marks an agent whose post_init hook already ran (or
+// was absent) — written under DotClawkerDir, which is backed by the
+// dedicated clawker volume, so the once-per-agent contract holds across
+// container recreation exactly as long as the harness config volumes that
+// post_init mutates.
 const PostInitMarkerFile = "post-initialized"
 
 // Lifecycle hook names. The CLI delivers <name>.sh scripts under the

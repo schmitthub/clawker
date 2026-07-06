@@ -105,7 +105,7 @@ var harnessKeyRe = regexp.MustCompile(`^[a-zA-Z0-9_][a-zA-Z0-9._-]{0,127}$`)
 // or that collide with the reserved tag aliases.
 func ValidateHarnessKey(name string) error {
 	switch name {
-	case consts.ImageTagDefaultAlias, consts.ImageTagLatest:
+	case consts.ImageTagDefaultAlias, consts.ImageTagLatest, consts.ImageTagBase:
 		return fmt.Errorf("harness name %q is reserved as an image tag alias", name)
 	}
 	if !harnessKeyRe.MatchString(name) {
