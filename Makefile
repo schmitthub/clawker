@@ -1,5 +1,5 @@
 .PHONY: help \
-        clawker clawker-generate clawker-lint clawker-staticcheck clawker-install clawker-clean \
+        clawker clawker-lint clawker-staticcheck clawker-install clawker-clean \
         bpf-deps ebpf ebpf-binary coredns-binary cp-binary \
         release-embeds verify-release-embeds stage-embeds-amd64 stage-embeds-arm64 \
         test test-unit test-ci test-commands test-whail test-internals test-agents test-acceptance test-all test-coverage test-clean test-e2e \
@@ -66,7 +66,6 @@ help:
 	@echo ""
 	@echo "Clawker targets:"
 	@echo "  clawker                 Build the clawker Clawker binary"
-	@echo "  clawker-generate        Build the standalone clawker-generate binary"
 	@echo "  clawker-lint            Run golangci-lint on Clawker code"
 	@echo "  clawker-staticcheck     Run staticcheck on Clawker code"
 	@echo "  clawker-install         Install Clawker to GOPATH/bin"
@@ -427,12 +426,6 @@ $(CLAWKERD_BINARY): $(PROTO_GENERATED) $(wildcard cmd/clawkerd/*.go) $(wildcard 
 	@echo "Building clawkerd for linux/$(BUILDX_TARGETARCH)..."
 	@mkdir -p $(@D)
 	@GOOS=linux GOARCH=$(BUILDX_TARGETARCH) CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o $@ ./cmd/clawkerd
-
-# Build the standalone generate binary
-clawker-generate: ebpf-binary coredns-binary cp-binary clawkerd-binary $(PROTO_GENERATED)
-	@echo "Building clawker-generate $(CLAWKER_VERSION)..."
-	@mkdir -p $(BIN_DIR)
-	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/clawker-generate ./cmd/clawker-generate
 
 # ============================================================================
 # Release pipeline support

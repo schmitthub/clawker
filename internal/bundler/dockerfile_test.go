@@ -1,7 +1,6 @@
 package bundler
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 
@@ -329,20 +328,6 @@ func TestBuildContext_TelemetryConfig_DefaultsEnabled(t *testing.T) {
 	assert.Contains(t, content, "OTEL_LOGS_EXPORT_INTERVAL=5000")
 }
 
-func TestDockerfilesDir_DelegatesToConfig(t *testing.T) {
-	cfg := configmocks.NewIsolatedTestConfig(t)
-	mgr := NewDockerfileManager(cfg, &DockerFileManagerOptions{})
-
-	expected, err := cfg.DockerfilesSubdir()
-	require.NoError(t, err)
-
-	got, err := mgr.DockerfilesDir()
-	require.NoError(t, err)
-	assert.Equal(t, expected, got)
-	assert.Contains(t, got, "build/dockerfiles",
-		"DockerfilesDir must nest under build/dockerfiles")
-}
-
 // TestBuildContext_ClawkerdIsPID1 pins the security-relevant
 // invariant: clawkerd is the container's ENTRYPOINT and no userspace
 // privilege-drop wrapper (gosu) or shell shim (entrypoint.sh) is
@@ -545,19 +530,6 @@ func TestBuildContext_CollapsedChmod(t *testing.T) {
 		chmodCount,
 		"all clawker-installed /usr/local/bin/* binaries must be chmod'd in a single RUN to minimise layer count and keep cache invalidation contiguous",
 	)
-}
-
-func TestDockerfilesDir_PropagatesError(t *testing.T) {
-	mock := configmocks.NewBlankConfig()
-	mock.DockerfilesSubdirFunc = func() (string, error) {
-		return "", fmt.Errorf("permission denied")
-	}
-	mgr := NewDockerfileManager(mock, &DockerFileManagerOptions{})
-
-	dir, err := mgr.DockerfilesDir()
-	assert.Error(t, err)
-	assert.Empty(t, dir)
-	assert.Contains(t, err.Error(), "permission denied")
 }
 
 // TestGenerateBase_ExcludesHarnessSurface pins the image split: the base

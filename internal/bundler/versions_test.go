@@ -17,7 +17,7 @@ import (
 // stubRoundTripper services a single npm `@anthropic-ai/claude-code` lookup
 // with either a canned response or an injected error. The build command's
 // httpstub_test.go has its own copy scoped to that package; this one stays
-// in the bundler tests so ResolveLatestHarnessVersion is testable
+// in the bundler tests so version resolution is testable
 // without dragging in the command-layer test helpers.
 type stubRoundTripper struct {
 	body []byte
@@ -45,84 +45,13 @@ func newStubClient(rt http.RoundTripper) *http.Client {
 	return &http.Client{Transport: rt}
 }
 
-func TestResolveLatestHarnessVersion_Success(t *testing.T) {
-	body, _ := json.Marshal(map[string]any{
-		"name": ClaudeCodePackage,
-		"dist-tags": map[string]string{
-			"latest": "2.99.99",
-		},
-		"versions": map[string]any{
-			"2.99.99": map[string]any{"version": "2.99.99"},
-		},
-	})
-	client := newStubClient(stubRoundTripper{body: body})
 
-	got, err := ResolveLatestHarnessVersion(context.Background(), client)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got != "2.99.99" {
-		t.Fatalf("got %q, want %q", got, "2.99.99")
-	}
-}
 
-func TestResolveLatestHarnessVersion_NetworkError(t *testing.T) {
-	netErr := errors.New("dial tcp: connection refused")
-	client := newStubClient(stubRoundTripper{err: netErr})
 
-	got, err := ResolveLatestHarnessVersion(context.Background(), client)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if got != DefaultHarnessVersion {
-		t.Fatalf("on failure want fallback %q, got %q", DefaultHarnessVersion, got)
-	}
-	// Underlying *NetworkError must remain unwrappable so callers can
-	// distinguish offline from registry errors.
-	var nerr *NetworkError
-	if !errors.As(err, &nerr) {
-		t.Fatalf("expected NetworkError, got %T: %v", err, err)
-	}
-}
 
-func TestResolveLatestHarnessVersion_MissingLatestDistTag(t *testing.T) {
-	// Registry returns a well-formed payload that omits the "latest"
-	// dist-tag — resolvePattern fails per-pattern, ResolveVersions returns
-	// ErrNoVersions, and the wrapper hands back the default literal.
-	body, _ := json.Marshal(map[string]any{
-		"name":      ClaudeCodePackage,
-		"dist-tags": map[string]string{},
-		"versions":  map[string]any{},
-	})
-	client := newStubClient(stubRoundTripper{body: body})
 
-	got, err := ResolveLatestHarnessVersion(context.Background(), client)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if got != DefaultHarnessVersion {
-		t.Fatalf("on empty resolution want fallback %q, got %q", DefaultHarnessVersion, got)
-	}
-	if !errors.Is(err, registry.ErrNoVersions) {
-		t.Fatalf("expected ErrNoVersions, got %v", err)
-	}
-}
 
-func TestResolveLatestHarnessVersion_NilClient(t *testing.T) {
-	// nil http.Client must not panic — it falls back to http.DefaultClient.
-	// We don't actually fire a request: a context that's already canceled
-	// short-circuits before any DNS lookup.
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
 
-	got, err := ResolveLatestHarnessVersion(ctx, nil)
-	if err == nil {
-		t.Fatal("expected error (canceled context), got nil")
-	}
-	if got != DefaultHarnessVersion {
-		t.Fatalf("on failure want fallback %q, got %q", DefaultHarnessVersion, got)
-	}
-}
 
 // TestResolveVersions_PartialPicksHighestPatch pins the partial-match contract:
 // "2.1" must resolve to the highest 2.1.x release (2.1.11) — not 2.1.0, and not

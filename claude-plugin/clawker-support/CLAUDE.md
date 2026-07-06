@@ -57,7 +57,6 @@ claude-plugin/clawker-support/
 └── skills/clawker-support/
     ├── SKILL.md                  # Main skill definition and workflow
     └── reference/
-        ├── Dockerfile.tmpl       # Actual Go template (source of truth)
         ├── project-config.md     # Project config discovery, layering, troubleshooting
         ├── sample-go.yaml        # Reference config: Go project (clawker's own)
         ├── sample-node.yaml      # Reference config: Node.js project
@@ -110,12 +109,12 @@ After making changes to the plugin:
 3. Bump the patch version in `plugin.json` (see Versioning — the release
    pipeline requires an increment per change)
 
-## Dockerfile Template Sync
+## Dockerfile Templates
 
-The `Dockerfile.tmpl` in `reference/` is a copy of the actual template from
-`internal/bundler/assets/Dockerfile.tmpl`. If clawker's template changes, this
-copy must be updated to match. A pre-commit hook (`Plugin Dockerfile.tmpl drift
-check`) catches drift when both files are in the same commit.
+The skill does not bundle a copy of clawker's Dockerfile templates. When the
+skill needs to map config sections to generated Dockerfile steps, it fetches
+the current templates (`Dockerfile.base.tmpl`, `Dockerfile.harness-image.tmpl`)
+straight from the repo (see SKILL.md research steps).
 
-When updating the template, never hardcode new field names into the skill —
-update methodology and docs URLs instead.
+Never hardcode template field names into the skill — update methodology and
+docs URLs instead.

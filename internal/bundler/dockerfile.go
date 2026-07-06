@@ -8,7 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"embed"
+	_ "embed"
 	"encoding/pem"
 	"fmt"
 	"io"
@@ -21,19 +21,12 @@ import (
 	"time"
 
 	clawkerdembed "github.com/schmitthub/clawker/clawkerd/embed"
-	"github.com/schmitthub/clawker/internal/bundler/registry"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/harness"
 	"github.com/schmitthub/clawker/internal/hostproxy/internals"
 )
 
 // Embedded assets for Dockerfile generation
-
-//go:embed assets/Dockerfile.tmpl
-var dockerfileFS embed.FS
-
-//go:embed assets/Dockerfile.tmpl
-var DockerfileTemplate string
 
 // DockerfileBaseTemplate renders the per-project shared base image
 // (harness-agnostic layers). Harness images build FROM its output.
@@ -49,7 +42,7 @@ var DockerfileBaseTemplate string
 var DockerfileHarnessImageTemplate string
 
 // Build-context filenames for clawker-owned assets, referenced by COPY
-// instructions in the master Dockerfile template.
+// instructions in the harness-image template.
 const (
 	ctxFileHostOpen = "host-open.sh"
 	// BaseDockerfileName is the reserved name the rendered base Dockerfile
@@ -100,13 +93,6 @@ const (
 	DefaultGoBuilderImage = "golang:1.25.10-alpine@sha256:8d22e29d960bc50cd025d93d5b7c7d220b1ee9aa7a239b3c8f55a57e987e8d45"
 )
 
-// DockerfileManager generates and persists Dockerfiles for each version/variant combination.
-type DockerfileManager struct {
-	cfg             config.Config
-	variantConfig   *VariantConfig
-	BuildKitEnabled bool // Enables --mount=type=cache directives in generated Dockerfiles
-}
-
 // DockerfileContext contains the template data for generating a Dockerfile.
 // Only structural fields that affect the image filesystem are included here.
 // Config-dependent values (env vars, labels, EXPOSE, VOLUME, HEALTHCHECK, SHELL)
@@ -127,10 +113,10 @@ type DockerfileContext struct {
 	// Only the harness-image template references it.
 	HarnessBaseImage string
 	// HarnessVolumeDirs are the harness's declared persisted-dir paths
-	// (home-relative), pre-created by the master template's runtime-dirs
-	// RUN so the volume mounts inherit correct ownership.
+	// (home-relative), pre-created by the harness-image template's
+	// runtime-dirs RUN so the volume mounts inherit correct ownership.
 	HarnessVolumeDirs []string
-	// HarnessSeeds drive the master template's generic seed-staging section:
+	// HarnessSeeds drive the harness-image template's generic seed-staging section:
 	// each seed file is COPY'd into the image's seed dir and listed in the
 	// baked seed manifest that CP's generic seed-apply step interprets on
 	// first boot.
@@ -142,7 +128,6 @@ type DockerfileContext struct {
 	// them at static anchors. Nothing declared → empty → zero bytes.
 	ToolchainRootSteps []string
 	ToolchainUserSteps []string
-	IsAlpine           bool
 	BuildKitEnabled    bool
 	Instructions       *DockerfileInstructions
 	Inject             *DockerfileInject
@@ -202,172 +187,15 @@ type ArgInstruction struct {
 	Default string
 }
 
-type DockerFileManagerOptions struct {
-	VariantCfg *VariantConfig
-}
-
-// NewDockerfileManager creates a new DockerfileManager.
-func NewDockerfileManager(cfg config.Config, opts *DockerFileManagerOptions) *DockerfileManager {
-	if opts.VariantCfg == nil {
-		opts.VariantCfg = DefaultVariantConfig()
-	}
-
-	return &DockerfileManager{
-		cfg:           cfg,
-		variantConfig: opts.VariantCfg,
-	}
-}
-
-// GenerateDockerfiles generates Dockerfiles for all version/variant combinations.
-func (m *DockerfileManager) GenerateDockerfiles(versions *registry.VersionsFile) error {
-	dockerfilesDir, err := m.cfg.DockerfilesSubdir()
-	if err != nil {
-		return fmt.Errorf("failed to resolve dockerfiles directory: %w", err)
-	}
-
-	// Parse the template, composing the selected harness bundle's blocks
-	// onto the master's declared slots.
-	tmplContent, err := dockerfileFS.ReadFile("assets/Dockerfile.tmpl")
-	if err != nil {
-		return fmt.Errorf("failed to read Dockerfile template: %w", err)
-	}
-
-	harnessName, err := ResolveHarnessName(m.cfg, "")
-	if err != nil {
-		return err
-	}
-	bundle, err := LoadHarness(m.cfg, harnessName)
-	if err != nil {
-		return err
-	}
-
-	tmpl, err := harness.Compose(string(tmplContent), bundle)
-	if err != nil {
-		return fmt.Errorf("failed to parse Dockerfile template: %w", err)
-	}
-
-	// Write the harness bundle's assets/ tree to the dockerfiles directory.
-	if assetsErr := writeBundleAssetsToDir(bundle, dockerfilesDir); assetsErr != nil {
-		return assetsErr
-	}
-
-	// Write all required scripts to the dockerfiles directory (only once).
-	// content is []byte so the multi-MB clawkerdembed.Binary passes through
-	// without a string<->[]byte round-trip copy at WriteFile.
-	scripts := []struct {
-		name    string
-		content []byte
-		mode    os.FileMode
-	}{
-		{ctxFileHostOpen, []byte(HostOpenScript), 0o755},
-		{ctxFileCallbackFwd, []byte(CallbackForwarderSource), 0o644},
-		{ctxFileGitCredential, []byte(GitCredentialScript), 0o755},
-		{ctxFileSocketServer, []byte(SocketForwarderSource), 0o644},
-		{ctxFileClawkerd, clawkerdembed.Binary, 0o755},
-	}
-
-	for _, script := range scripts {
-		scriptPath := filepath.Join(dockerfilesDir, script.name)
-		if err := os.WriteFile(scriptPath, script.content, script.mode); err != nil {
-			return fmt.Errorf("failed to write %s: %w", script.name, err)
-		}
-	}
-
-	// Generate Dockerfile for each version/variant combination
-	for _, key := range versions.SortedKeys() {
-		info := (*versions)[key]
-		for variant := range info.Variants {
-			filename := fmt.Sprintf("%s-%s.dockerfile", info.FullVersion, variant)
-			path := filepath.Join(dockerfilesDir, filename)
-
-			ctx, err := m.createContext(info.FullVersion, variant)
-			if err != nil {
-				return fmt.Errorf("failed to create context for %s-%s: %w", info.FullVersion, variant, err)
-			}
-			ctx.HarnessVolumeDirs = harnessVolumeDirs(bundle)
-			ctx.HarnessSeeds = bundle.Manifest.Seeds
-			content, err := m.renderDockerfile(tmpl, ctx)
-			if err != nil {
-				return fmt.Errorf("failed to render Dockerfile for %s-%s: %w", info.FullVersion, variant, err)
-			}
-
-			//nolint:gosec // generated Dockerfile, not a secret
-			if writeErr := os.WriteFile(path, content, 0o644); writeErr != nil {
-				return fmt.Errorf("failed to write Dockerfile %s: %w", path, writeErr)
-			}
-		}
-	}
-
-	return nil
-}
-
-// createContext creates a DockerfileContext for a given version and variant.
-func (m *DockerfileManager) createContext(version, variant string) (*DockerfileContext, error) {
-	isAlpine := m.variantConfig.IsAlpine(variant)
-	baseImage := m.variantToBaseImage(variant)
-
-	// OTEL telemetry from monitoring config
-	mon := m.cfg.MonitoringConfig()
-
-	return &DockerfileContext{
-		BaseImage:                baseImage,
-		Packages:                 []string{}, // Base packages are in template
-		Username:                 DefaultUsername,
-		UID:                      m.cfg.ContainerUID(),
-		GID:                      m.cfg.ContainerGID(),
-		Shell:                    "/bin/zsh",
-		WorkspacePath:            "/workspace",
-		HarnessVersion:           version,
-		IsAlpine:                 isAlpine,
-		BuildKitEnabled:          m.BuildKitEnabled,
-		Instructions:             nil,
-		Inject:                   nil,
-		OtelEndpoint:             m.cfg.OtelCollectorURL(),
-		OtelLogsExportInterval:   mon.Telemetry.LogsExportIntervalMs,
-		OtelMetricExportInterval: mon.Telemetry.MetricExportIntervalMs,
-		OtelLogToolDetails:       *mon.Telemetry.LogToolDetails,
-		OtelLogUserPrompts:       *mon.Telemetry.LogUserPrompts,
-		OtelIncludeAccountUUID:   *mon.Telemetry.IncludeAccountUUID,
-		OtelIncludeSessionID:     *mon.Telemetry.IncludeSessionID,
-		GoBuilderImage:           DefaultGoBuilderImage,
-	}, nil
-}
-
-// variantToBaseImage converts a variant name to a Docker base image.
-func (m *DockerfileManager) variantToBaseImage(variant string) string {
-	if m.variantConfig.IsAlpine(variant) {
-		// Convert "alpine3.23" to "alpine:3.23"
-		alpineVersion := strings.TrimPrefix(variant, "alpine")
-		return fmt.Sprintf("alpine:%s", alpineVersion)
-	}
-	// Debian variants use buildpack-deps
-	return fmt.Sprintf("buildpack-deps:%s-scm", variant)
-}
-
-// renderDockerfile renders the Dockerfile template with the given context.
-func (m *DockerfileManager) renderDockerfile(tmpl *template.Template, ctx *DockerfileContext) ([]byte, error) {
-	var buf strings.Builder
-	if err := tmpl.Execute(&buf, ctx); err != nil {
-		return nil, err
-	}
-	return []byte(buf.String()), nil
-}
-
-// DockerfilesDir returns the path to the dockerfiles directory.
-// Delegates to cfg.DockerfilesSubdir() as the single source of truth.
-func (m *DockerfileManager) DockerfilesDir() (string, error) {
-	return m.cfg.DockerfilesSubdir()
-}
-
 // ProjectGenerator creates Dockerfiles dynamically from project configuration (clawker.yaml).
 type ProjectGenerator struct {
 	cfg             config.Config
 	workDir         string
 	BuildKitEnabled bool // Enables --mount=type=cache directives in generated Dockerfiles
 	// HarnessVersion is the concrete version string baked into the rendered
-	// ARG default (e.g. "2.1.5"). The npm-registry resolution that turns the
-	// "latest" dist-tag into a concrete version happens at the command layer
-	// via bundler.ResolveLatestHarnessVersion — bundler itself doesn't fetch.
+	// ARG default (e.g. "2.1.5"). The registry resolution that turns the
+	// manifest's version spec into a concrete version happens at the command
+	// layer via bundler.ResolveHarnessVersion — bundler itself doesn't fetch.
 	// Empty means use DefaultHarnessVersion ("latest") as a literal.
 	HarnessVersion string
 	// Harness selects the harness bundle whose template blocks and context
@@ -625,10 +453,6 @@ func (g *ProjectGenerator) WriteHarnessBuildContextToDir(dir string, dockerfile 
 	return nil
 }
 
-// UseCustomDockerfile checks if a custom Dockerfile should be used.
-
-// GetCustomDockerfilePath returns the path to the custom Dockerfile.
-
 // GetBuildContext returns the build context path (the project root — the
 // base image's build context, home of copy-instruction srcs).
 func (g *ProjectGenerator) GetBuildContext() string {
@@ -873,7 +697,7 @@ func addFileToTar(tw *tar.Writer, name string, content []byte) error {
 }
 
 // harnessVolumeDirs returns the bundle's declared persisted-dir paths,
-// normalized home-relative, for the master template's runtime-dirs RUN.
+// normalized home-relative, for the harness-image template's runtime-dirs RUN.
 func harnessVolumeDirs(bundle *harness.Bundle) []string {
 	dirs := make([]string, 0, len(bundle.Manifest.Volumes))
 	for _, v := range bundle.Manifest.Volumes {
@@ -900,22 +724,6 @@ func writeBundleAssetsToDir(bundle *harness.Bundle, dir string) error {
 		return fmt.Errorf("stage harness assets: %w", err)
 	}
 	return nil
-}
-
-// CreateBuildContextFromDir creates a tar archive from a directory for custom Dockerfiles.
-func CreateBuildContextFromDir(dir string, dockerfilePath string) (io.Reader, error) {
-	buf := new(bytes.Buffer)
-	tw := tar.NewWriter(buf)
-
-	if err := tarDirInto(tw, dir); err != nil {
-		return nil, err
-	}
-
-	if err := tw.Close(); err != nil {
-		return nil, fmt.Errorf("close build context tar: %w", err)
-	}
-
-	return buf, nil
 }
 
 // GenerateBaseBuildContext builds a tar archive build context for the base

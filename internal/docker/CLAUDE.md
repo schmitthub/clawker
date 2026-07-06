@@ -43,7 +43,7 @@ func NewClientFromEngine(engine *whail.Engine, cfg config.Config, log *logger.Lo
 type ClientOption func(*clientOptions)    // WithLabels(whail.LabelConfig)
 ```
 
-`Client` embeds `*whail.Engine`. Fields: `cfg config.Config` (interface, always set), `BuildDefaultImageFunc BuildDefaultImageFn`, `ChownImage string`.
+`Client` embeds `*whail.Engine`. Fields: `cfg config.Config` (interface, always set), `ChownImage string`.
 
 **Image methods**: `Close()`, `ResolveImageWithSource(ctx, projectName)`, `BuildImage(ctx, reader, opts)`, `ImageExists(ctx, ref)`.
 
@@ -69,11 +69,11 @@ type Container struct {
 
 ## Builder (`builder.go`)
 
-`NewBuilder(cli *Client, cfg *config.Project, workDir, projectName string)`. `Build(ctx, tag, opts)` is **two-phase**: it first ensures the per-project shared base image (`BaseImageTag(project)` = `clawker-<project>:base`) exists and is fresh — comparing `bundler.BaseContentHash` against the image's `consts.LabelBaseContentHash` label, rebuilding on miss/drift or `--no-cache` — then builds the harness image `FROM` it. Base failure aborts before the harness build. `--pull` applies to the base build only (the harness parent is the local-only `:base` tag). `OnComplete` fires only for the harness build (`--iidfile` = runnable image). Base labels: `ImageLabels` + content hash + `LabelPurpose=PurposeBaseImage`, never user labels or `LabelHarness`; the harness image also records the base content hash. Legacy-stream progress events from the base build are namespaced via `phaseProgress` (`base:` StepID prefix, `[base]` StepName prefix; `[internal]` steps left intact for downstream filtering). The custom-Dockerfile path bypasses the split entirely. In-image layer cache invalidation stays delegated to the daemon-side builder (BuildKit layer cache or classic `probeCache`). `BuilderOptions`: `NoCache/Pull/SuppressOutput/BuildKitEnabled`, `Labels/Target/NetworkMode/BuildArgs/Tags/OnProgress/OnComplete/HarnessVersion/HarnessName`.
+`NewBuilder(cli *Client, cfg *config.Project, workDir, projectName string)`. `Build(ctx, tag, opts)` is **two-phase**: it first ensures the per-project shared base image (`BaseImageTag(project)` = `clawker-<project>:base`) exists and is fresh — comparing `bundler.BaseContentHash` against the image's `consts.LabelBaseContentHash` label, rebuilding on miss/drift or `--no-cache` — then builds the harness image `FROM` it. Base failure aborts before the harness build. `--pull` applies to the base build only (the harness parent is the local-only `:base` tag). `OnComplete` fires only for the harness build (`--iidfile` = runnable image). Base labels: `ImageLabels` + content hash + `LabelPurpose=PurposeBaseImage`, never user labels or `LabelHarness`; the harness image also records the base content hash. Legacy-stream progress events from the base build are namespaced via `phaseProgress` (`base:` StepID prefix, `[base]` StepName prefix; `[internal]` steps left intact for downstream filtering). In-image layer cache invalidation stays delegated to the daemon-side builder (BuildKit layer cache or classic `probeCache`). `BuilderOptions`: `NoCache/Pull/SuppressOutput/BuildKitEnabled`, `Labels/Target/NetworkMode/BuildArgs/Tags/OnProgress/OnComplete/HarnessVersion/HarnessName`.
 
-## Default Image (`defaults.go`)
+## Test Labels (`defaults.go`)
 
-`DefaultImageTag = "clawker-default:latest"`. `(*Client).BuildDefaultImage(ctx, flavor, onProgress)`. `TestLabelConfig(cfg config.Config, testName ...string) whail.LabelConfig`.
+`TestLabelConfig(cfg config.Config, testName ...string) whail.LabelConfig` — test label set for `WithLabels` in test code so `CleanupTestResources` can find test-created resources.
 
 ## BuildKit (`buildkit.go`)
 

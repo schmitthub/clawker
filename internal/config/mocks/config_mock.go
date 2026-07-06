@@ -58,9 +58,6 @@ var _ config.Config = &ConfigMock{}
 //			DataDirEnvVarFunc: func() string {
 //				panic("mock out the DataDirEnvVar method")
 //			},
-//			DockerfilesSubdirFunc: func() (string, error) {
-//				panic("mock out the DockerfilesSubdir method")
-//			},
 //			DomainFunc: func() string {
 //				panic("mock out the Domain method")
 //			},
@@ -109,9 +106,6 @@ var _ config.Config = &ConfigMock{}
 //			LabelAgentFunc: func() string {
 //				panic("mock out the LabelAgent method")
 //			},
-//			LabelBaseImageFunc: func() string {
-//				panic("mock out the LabelBaseImage method")
-//			},
 //			LabelCreatedFunc: func() string {
 //				panic("mock out the LabelCreated method")
 //			},
@@ -120,9 +114,6 @@ var _ config.Config = &ConfigMock{}
 //			},
 //			LabelE2ETestFunc: func() string {
 //				panic("mock out the LabelE2ETest method")
-//			},
-//			LabelFlavorFunc: func() string {
-//				panic("mock out the LabelFlavor method")
 //			},
 //			LabelImageFunc: func() string {
 //				panic("mock out the LabelImage method")
@@ -266,9 +257,6 @@ type ConfigMock struct {
 	// DataDirEnvVarFunc mocks the DataDirEnvVar method.
 	DataDirEnvVarFunc func() string
 
-	// DockerfilesSubdirFunc mocks the DockerfilesSubdir method.
-	DockerfilesSubdirFunc func() (string, error)
-
 	// DomainFunc mocks the Domain method.
 	DomainFunc func() string
 
@@ -317,9 +305,6 @@ type ConfigMock struct {
 	// LabelAgentFunc mocks the LabelAgent method.
 	LabelAgentFunc func() string
 
-	// LabelBaseImageFunc mocks the LabelBaseImage method.
-	LabelBaseImageFunc func() string
-
 	// LabelCreatedFunc mocks the LabelCreated method.
 	LabelCreatedFunc func() string
 
@@ -328,9 +313,6 @@ type ConfigMock struct {
 
 	// LabelE2ETestFunc mocks the LabelE2ETest method.
 	LabelE2ETestFunc func() string
-
-	// LabelFlavorFunc mocks the LabelFlavor method.
-	LabelFlavorFunc func() string
 
 	// LabelImageFunc mocks the LabelImage method.
 	LabelImageFunc func() string
@@ -471,9 +453,6 @@ type ConfigMock struct {
 		// DataDirEnvVar holds details about calls to the DataDirEnvVar method.
 		DataDirEnvVar []struct {
 		}
-		// DockerfilesSubdir holds details about calls to the DockerfilesSubdir method.
-		DockerfilesSubdir []struct {
-		}
 		// Domain holds details about calls to the Domain method.
 		Domain []struct {
 		}
@@ -522,9 +501,6 @@ type ConfigMock struct {
 		// LabelAgent holds details about calls to the LabelAgent method.
 		LabelAgent []struct {
 		}
-		// LabelBaseImage holds details about calls to the LabelBaseImage method.
-		LabelBaseImage []struct {
-		}
 		// LabelCreated holds details about calls to the LabelCreated method.
 		LabelCreated []struct {
 		}
@@ -533,9 +509,6 @@ type ConfigMock struct {
 		}
 		// LabelE2ETest holds details about calls to the LabelE2ETest method.
 		LabelE2ETest []struct {
-		}
-		// LabelFlavor holds details about calls to the LabelFlavor method.
-		LabelFlavor []struct {
 		}
 		// LabelImage holds details about calls to the LabelImage method.
 		LabelImage []struct {
@@ -647,7 +620,6 @@ type ConfigMock struct {
 	lockCoreDNSHealthPath       sync.RWMutex
 	lockCoreDNSIPLastOctet      sync.RWMutex
 	lockDataDirEnvVar           sync.RWMutex
-	lockDockerfilesSubdir       sync.RWMutex
 	lockDomain                  sync.RWMutex
 	lockEgressRulesFileName     sync.RWMutex
 	lockEngineLabelPrefix       sync.RWMutex
@@ -664,11 +636,9 @@ type ConfigMock struct {
 	lockHostProxyLogFilePath    sync.RWMutex
 	lockHostProxyPIDFilePath    sync.RWMutex
 	lockLabelAgent              sync.RWMutex
-	lockLabelBaseImage          sync.RWMutex
 	lockLabelCreated            sync.RWMutex
 	lockLabelDomain             sync.RWMutex
 	lockLabelE2ETest            sync.RWMutex
-	lockLabelFlavor             sync.RWMutex
 	lockLabelImage              sync.RWMutex
 	lockLabelManaged            sync.RWMutex
 	lockLabelPrefix             sync.RWMutex
@@ -1056,33 +1026,6 @@ func (mock *ConfigMock) DataDirEnvVarCalls() []struct {
 	mock.lockDataDirEnvVar.RLock()
 	calls = mock.calls.DataDirEnvVar
 	mock.lockDataDirEnvVar.RUnlock()
-	return calls
-}
-
-// DockerfilesSubdir calls DockerfilesSubdirFunc.
-func (mock *ConfigMock) DockerfilesSubdir() (string, error) {
-	if mock.DockerfilesSubdirFunc == nil {
-		panic("ConfigMock.DockerfilesSubdirFunc: method is nil but Config.DockerfilesSubdir was just called")
-	}
-	callInfo := struct {
-	}{}
-	mock.lockDockerfilesSubdir.Lock()
-	mock.calls.DockerfilesSubdir = append(mock.calls.DockerfilesSubdir, callInfo)
-	mock.lockDockerfilesSubdir.Unlock()
-	return mock.DockerfilesSubdirFunc()
-}
-
-// DockerfilesSubdirCalls gets all the calls that were made to DockerfilesSubdir.
-// Check the length with:
-//
-//	len(mockedConfig.DockerfilesSubdirCalls())
-func (mock *ConfigMock) DockerfilesSubdirCalls() []struct {
-} {
-	var calls []struct {
-	}
-	mock.lockDockerfilesSubdir.RLock()
-	calls = mock.calls.DockerfilesSubdir
-	mock.lockDockerfilesSubdir.RUnlock()
 	return calls
 }
 
@@ -1518,33 +1461,6 @@ func (mock *ConfigMock) LabelAgentCalls() []struct {
 	return calls
 }
 
-// LabelBaseImage calls LabelBaseImageFunc.
-func (mock *ConfigMock) LabelBaseImage() string {
-	if mock.LabelBaseImageFunc == nil {
-		panic("ConfigMock.LabelBaseImageFunc: method is nil but Config.LabelBaseImage was just called")
-	}
-	callInfo := struct {
-	}{}
-	mock.lockLabelBaseImage.Lock()
-	mock.calls.LabelBaseImage = append(mock.calls.LabelBaseImage, callInfo)
-	mock.lockLabelBaseImage.Unlock()
-	return mock.LabelBaseImageFunc()
-}
-
-// LabelBaseImageCalls gets all the calls that were made to LabelBaseImage.
-// Check the length with:
-//
-//	len(mockedConfig.LabelBaseImageCalls())
-func (mock *ConfigMock) LabelBaseImageCalls() []struct {
-} {
-	var calls []struct {
-	}
-	mock.lockLabelBaseImage.RLock()
-	calls = mock.calls.LabelBaseImage
-	mock.lockLabelBaseImage.RUnlock()
-	return calls
-}
-
 // LabelCreated calls LabelCreatedFunc.
 func (mock *ConfigMock) LabelCreated() string {
 	if mock.LabelCreatedFunc == nil {
@@ -1623,33 +1539,6 @@ func (mock *ConfigMock) LabelE2ETestCalls() []struct {
 	mock.lockLabelE2ETest.RLock()
 	calls = mock.calls.LabelE2ETest
 	mock.lockLabelE2ETest.RUnlock()
-	return calls
-}
-
-// LabelFlavor calls LabelFlavorFunc.
-func (mock *ConfigMock) LabelFlavor() string {
-	if mock.LabelFlavorFunc == nil {
-		panic("ConfigMock.LabelFlavorFunc: method is nil but Config.LabelFlavor was just called")
-	}
-	callInfo := struct {
-	}{}
-	mock.lockLabelFlavor.Lock()
-	mock.calls.LabelFlavor = append(mock.calls.LabelFlavor, callInfo)
-	mock.lockLabelFlavor.Unlock()
-	return mock.LabelFlavorFunc()
-}
-
-// LabelFlavorCalls gets all the calls that were made to LabelFlavor.
-// Check the length with:
-//
-//	len(mockedConfig.LabelFlavorCalls())
-func (mock *ConfigMock) LabelFlavorCalls() []struct {
-} {
-	var calls []struct {
-	}
-	mock.lockLabelFlavor.RLock()
-	calls = mock.calls.LabelFlavor
-	mock.lockLabelFlavor.RUnlock()
 	return calls
 }
 

@@ -36,11 +36,11 @@ type BuilderOptions struct {
 	BuildKitEnabled bool                    // Use BuildKit builder for cache mount support
 	OnProgress      whail.BuildProgressFunc // Progress callback for build events
 	OnComplete      whail.BuildCompleteFunc // Fires once with the built image digest/ID
-	// HarnessVersion is the concrete npm version baked into the rendered
-	// Dockerfile's ARG CLAUDE_CODE_VERSION default. Resolved upstream at the
-	// command layer via bundler.ResolveLatestHarnessVersion (using
-	// Factory.HttpClient). Empty string falls back to bundler's
-	// DefaultHarnessVersion literal — preserves offline-build behaviour.
+	// HarnessVersion is the concrete harness version baked into the rendered
+	// Dockerfile's version ARG default. Resolved upstream at the command
+	// layer via bundler.ResolveHarnessVersion (using Factory.HttpClient).
+	// Empty string falls back to bundler's DefaultHarnessVersion literal —
+	// preserves offline-build behaviour.
 	HarnessVersion string
 	// HarnessName is the selected harness registry key; stamped onto the
 	// image as the harness label (the build→runtime join key).
@@ -83,7 +83,7 @@ func NewBuilder(cli *Client, cfg *config.Project, workDir, projectName string) *
 // shared base image (clawker-<project>:base) exists and is fresh. The base
 // carries the harness-agnostic layers (packages, user setup, project
 // instructions); freshness is keyed by a content hash stamped as an image
-// label. The custom-Dockerfile path bypasses the split entirely.
+// label.
 func (b *Builder) Build(ctx context.Context, imageTag string, opts BuilderOptions) error {
 	gen := bundler.NewProjectGenerator(b.client.cfg, b.workDir)
 	gen.BuildKitEnabled = opts.BuildKitEnabled

@@ -122,7 +122,6 @@
               "cli-reference/clawker_build",
               "cli-reference/clawker_run",
               "cli-reference/clawker_start",
-              "cli-reference/clawker_generate",
               "cli-reference/clawker_ps",
               "cli-reference/clawker_attach",
               "cli-reference/clawker_exec",

@@ -122,9 +122,9 @@ triggers a build).
    where they belong, or remove them from user-level config entirely.
 
 2. **Identify which layer failed**: The build output shows which Dockerfile
-   step failed. Read the Dockerfile template (`reference/Dockerfile.tmpl`) to
-   map the failing step to the config section that produced it. Look at
-   execution order and root vs user context.
+   step failed. Fetch the Dockerfile templates (see the SKILL.md research
+   steps for the raw URLs) to map the failing step to the config section
+   that produced it. Look at execution order and root vs user context.
 
 3. **Package not found**: Different base images use different package managers
    with different package names. Check the project's base image, then research

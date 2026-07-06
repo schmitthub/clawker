@@ -2,10 +2,8 @@
 #
 # Harness-agnostic half of the image split: system packages, user setup,
 # project instructions (root_run/user_run/copy), and shell tooling. Harness
-# images build FROM this image (see Dockerfile.harness-image.tmpl). The
-# legacy single-file master (Dockerfile.tmpl) still serves the global
-# default-image path — keep the shared sections of the three templates in
-# sync when editing.
+# images build FROM this image (see Dockerfile.harness-image.tmpl) — keep
+# the shared sections of the two templates in sync when editing.
 
 FROM debian:bookworm-slim@sha256:60eac759739651111db372c07be67863818726f754804b8707c90979bda511df
 

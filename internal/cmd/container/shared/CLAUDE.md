@@ -70,22 +70,9 @@ err := shared.InitContainerConfig(ctx, shared.InitConfigOpts{
 
 Onboarding bypass is image-level -- CP's generic seed-apply step places the harness's `.config.json` seed from the image's `~/.clawker/seed/` staging dir on first boot.
 
-### Image Rebuild (`image.go`)
+### Image Placeholder Resolution (`image.go`)
 
-Interactive rebuild flow for missing default images.
-
-```go
-err := shared.RebuildMissingDefaultImage(ctx, shared.RebuildMissingImageOpts{
-    ImageRef:    resolvedImage.Reference,
-    IOStreams:   ios,
-    TUI:        opts.TUI,
-    Prompter:   opts.Prompter,
-    BuildImage: client.BuildDefaultImage,
-    CommandVerb: "run",
-})
-```
-
-Non-interactive: prints instructions, returns error. Interactive: prompts for rebuild + flavor, builds with TUI progress (spinner fallback when TUI nil).
+`ParseImagePlaceholder(image)` splits the `@` / `@:tag` image placeholder (ok=false for literal references). `ResolvePlaceholderImage(ctx, client, cfg, ios, projectName, harnessTag, commandVerb)` resolves the placeholder to a built image reference via `client.ResolveImageWithSource` — an explicit tag must name a registered harness; no built image prints next-steps guidance (`clawker build`) and returns `cmdutil.SilentError`.
 
 ### Container Start Orchestration (`container_start.go`)
 
@@ -126,7 +113,6 @@ Nil providers safely skipped (debug logged). `Config` is the only required provi
 | `InitConfigOpts` | Project/agent names, ContainerWorkDir, ClaudeCodeConfig, CopyToVolumeFn, Log |
 | `InjectPostInitOpts` | Container ID, Script, Cfg, CopyToContainerFn, Log |
 | `InjectHookOpts` | Container ID, Script, Name, Cfg, CopyToContainerFn, Log |
-| `RebuildMissingImageOpts` | Image ref, IOStreams, TUI, Prompter, BuildImage fn, CommandVerb |
 | `AgentBootstrap` | CertPEM, KeyPEM, CACertPEM, Assertion |
 
 ### Functions
@@ -142,7 +128,6 @@ Nil providers safely skipped (debug logged). `Config` is the only required provi
 | `InjectHookScript(ctx, opts)` | Tar a bash-wrapped hook to `~/.clawker/<Name>.sh`; empty `Script` → no-op wrapper (always-deliver overwrites stale content) |
 | `InjectPostInitScript(ctx, opts)` | Thin wrapper over `InjectHookScript` pinned to the `post-init` hook; used by the create path |
 | `ResolveAgentEnv(agent, projectDir, log)` | Merge env_file + from_env + env. Precedence: env_file < from_env < env |
-| `RebuildMissingDefaultImage(ctx, opts)` | Interactive rebuild flow with TUI progress |
 | `GenerateAgentBootstrap(...)` | Mint mTLS cert + JWT assertion for agent |
 | `WriteAgentBootstrapToContainer(...)` | Tar bootstrap files into container |
 | `InstallAgentBootstrapMaterial(...)` | Create-time install of agent bootstrap material |
@@ -174,7 +159,7 @@ Imports: `internal/cmdutil`, `internal/config`, `internal/containerfs`, `interna
 - `shared/container_create_test.go` -- Flag parsing, BuildConfigs, ValidateFlags, pflag.Value types
 - `shared/container_start_test.go` -- `BootstrapServicesPreStart`/`PostStart` nil-safety, pre-run delivery, `ContainerStart` client validation
 - `shared/agent_bootstrap_test.go` -- `GenerateAgentBootstrap`, `WriteAgentBootstrapToContainer` tar shape, `InstallAgentBootstrapMaterial`
-- `shared/image_test.go` -- `RebuildMissingDefaultImage` interactive flow, `progressStatus` mapping
+- `shared/image_test.go` -- `validatePlaceholderHarness` reserved-tag rejection
 - `shared/containerfs_test.go` -- Mock CopyToVolume/CopyToContainer trackers
 - `shared/workdir_test.go` -- `resolveWorkDir` worktree idempotent reuse
 - `shared/safety_test.go` -- `IsOutsideHome` boundary cases

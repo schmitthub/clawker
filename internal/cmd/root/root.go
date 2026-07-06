@@ -7,7 +7,6 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/container"
 	controlplanecmd "github.com/schmitthub/clawker/internal/cmd/controlplane"
 	firewallcmd "github.com/schmitthub/clawker/internal/cmd/firewall"
-	"github.com/schmitthub/clawker/internal/cmd/generate"
 	hostproxycmd "github.com/schmitthub/clawker/internal/cmd/hostproxy"
 	"github.com/schmitthub/clawker/internal/cmd/image"
 	initcmd "github.com/schmitthub/clawker/internal/cmd/init"
@@ -67,7 +66,6 @@ Workspace modes:
 	cmd.AddCommand(settings.NewCmdSettings(f))
 	cmd.AddCommand(skill.NewCmdSkill(f))
 	cmd.AddCommand(monitor.NewCmdMonitor(f))
-	cmd.AddCommand(generate.NewCmdGenerate(f, nil))
 
 	// Add management commands
 	cmd.AddCommand(aliascmd.NewCmdAlias(f, func(name string) bool { return builtinCommandExists(cmd, name) }))

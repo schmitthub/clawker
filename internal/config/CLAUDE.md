@@ -86,13 +86,13 @@ SettingsStore() *storage.Store[Settings]   // Direct access to settings store
 
 **Path resolution**: `ConfigDirEnvVar()`, `StateDirEnvVar()`, `DataDirEnvVar()`, `TestRepoDirEnvVar()` (project-root / ignore-file resolution lives in `internal/project`)
 
-**Subdir helpers** (ensure + return path): `MonitorSubdir()`, `BuildSubdir()`, `DockerfilesSubdir()`, `LogsSubdir()`, `PidsSubdir()`, `BridgesSubdir()`, `ShareSubdir()`, `FirewallDataSubdir()`, `FirewallCertSubdir()`
+**Subdir helpers** (ensure + return path): `MonitorSubdir()`, `BuildSubdir()`, `LogsSubdir()`, `PidsSubdir()`, `BridgesSubdir()`, `ShareSubdir()`, `FirewallDataSubdir()`, `FirewallCertSubdir()`
 
 **PID/log file helpers**: `BridgePIDFilePath(containerID)`, `HostProxyPIDFilePath()`, `HostProxyLogFilePath()`
 
 **Domain/network**: `Domain()` (the clawker domain), `LabelDomain()` (the label domain), `ClawkerNetwork()` (the clawker network name)
 
-**Label keys**: `LabelPrefix()`, `LabelManaged()`, `LabelProject()`, `LabelAgent()`, `LabelVersion()`, `LabelImage()`, `LabelCreated()`, `LabelWorkdir()`, `LabelPurpose()`, `PurposeAgent()`, `PurposeMonitoring()`, `PurposeFirewall()`, `LabelTestName()`, `LabelBaseImage()`, `LabelFlavor()`, `LabelTest()`, `LabelE2ETest()`, `ManagedLabelValue()`, `EngineLabelPrefix()`, `EngineManagedLabel()`
+**Label keys**: `LabelPrefix()`, `LabelManaged()`, `LabelProject()`, `LabelAgent()`, `LabelVersion()`, `LabelImage()`, `LabelCreated()`, `LabelWorkdir()`, `LabelPurpose()`, `PurposeAgent()`, `PurposeMonitoring()`, `PurposeFirewall()`, `LabelTestName()`, `LabelTest()`, `LabelE2ETest()`, `ManagedLabelValue()`, `EngineLabelPrefix()`, `EngineManagedLabel()`
 
 **Container constants**: `ContainerUID()` / `ContainerGID()` — deprecated delegates to `consts.ContainerUID()` / `consts.ContainerGID()`. The underlying consts resolve once at package init: on Linux hosts from `os.Getuid()` / `os.Getgid()` (the CLI invoker), falling back to 1001 when the kernel returns 0 (sudo) or -1; on non-Linux hosts (macOS, Windows) the fallback 1001 is taken unconditionally because Docker Desktop's virtiofs / gRPC-FUSE share masks container UID/GID at the boundary and baking the host's numeric IDs would also risk `groupadd --gid` collisions with low base-image GIDs (e.g. macOS staff=20 vs Debian dialout=20). CP-side code must use `consts.HostUID()` / `consts.HostGID()` instead — inside the CP container `os.Getuid()` is the CP image's UID, not the host's. See `internal/consts/controlplane.go`.
 

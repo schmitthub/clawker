@@ -87,7 +87,6 @@ func newMockFrom(cfg config.Config) *ConfigMock {
 	// Path helpers
 	mock.MonitorSubdirFunc = cfg.MonitorSubdir
 	mock.BuildSubdirFunc = cfg.BuildSubdir
-	mock.DockerfilesSubdirFunc = cfg.DockerfilesSubdir
 	mock.LogsSubdirFunc = cfg.LogsSubdir
 	mock.BridgesSubdirFunc = cfg.BridgesSubdir
 	mock.PidsSubdirFunc = cfg.PidsSubdir
@@ -112,8 +111,6 @@ func newMockFrom(cfg config.Config) *ConfigMock {
 	mock.PurposeMonitoringFunc = cfg.PurposeMonitoring
 	mock.PurposeFirewallFunc = cfg.PurposeFirewall
 	mock.LabelTestNameFunc = cfg.LabelTestName
-	mock.LabelBaseImageFunc = cfg.LabelBaseImage
-	mock.LabelFlavorFunc = cfg.LabelFlavor
 	mock.LabelTestFunc = cfg.LabelTest
 	mock.LabelE2ETestFunc = cfg.LabelE2ETest
 

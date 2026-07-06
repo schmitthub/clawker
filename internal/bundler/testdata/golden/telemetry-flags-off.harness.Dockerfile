@@ -2,10 +2,8 @@
 #
 # Harness half of the image split: template blocks, harness volume dirs,
 # config seeds, and the clawker-managed root assets. Builds FROM the
-# per-project shared base image (see Dockerfile.base.tmpl). The legacy
-# single-file master (Dockerfile.tmpl) still serves the global
-# default-image path — keep the shared sections of the three templates in
-# sync when editing.
+# per-project shared base image (see Dockerfile.base.tmpl) — keep the
+# shared sections of the two templates in sync when editing.
 
 # Builder stage for callback-forwarder
 FROM golang:1.25.10-alpine@sha256:8d22e29d960bc50cd025d93d5b7c7d220b1ee9aa7a239b3c8f55a57e987e8d45 AS callback-forwarder-builder
@@ -22,7 +20,7 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o clawker-socket-server clawker-soc
 FROM clawker-test:base AS final
 
 # The base image's config ends at the zsh SHELL with the unprivileged user
-# active; ARGs do not survive FROM. Restore the master template's per-block
+# active; ARGs do not survive FROM. Restore the standard per-block
 # semantics: blocks 1-3 run under /bin/sh, blocks 4-6 under zsh; blocks 1-2
 # run as root.
 SHELL ["/bin/sh", "-c"]

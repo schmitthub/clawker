@@ -291,10 +291,14 @@ integrates with.
    `https://docs.clawker.dev/configuration#user-settings-reference` for the
    current settings fields. See `reference/settings.md`.
 
-5. **Dockerfile template** — Read `reference/Dockerfile.tmpl` (bundled with
-   this skill). This is the actual Go template that generates the Dockerfile.
-   It shows you exactly what each config section produces and in what order.
-   Look for execution order, root vs user context, and injection points.
+5. **Dockerfile templates** — Fetch the current Go templates that generate
+   the image Dockerfiles:
+   `https://raw.githubusercontent.com/schmitthub/clawker/refs/heads/main/internal/bundler/assets/Dockerfile.base.tmpl`
+   (shared base image: packages, user setup, toolchains, project instructions) and
+   `https://raw.githubusercontent.com/schmitthub/clawker/refs/heads/main/internal/bundler/assets/Dockerfile.harness-image.tmpl`
+   (harness image built FROM the base). They show exactly what each config
+   section produces and in what order. Look for execution order, root vs
+   user context, and injection points.
 
 6. **Project config** — If the user's question involves project config
    discovery, layering, or build behavior, read `reference/project-config.md`.

@@ -86,17 +86,15 @@ const (
 	ImageTagLatest = "latest"
 	// ImageTagBase tags the per-project shared base image that harness
 	// images build FROM. Never runnable, never a harness selector.
-	ImageTagBase   = "base"
-	LabelVersion   = LabelPrefix + "version"
-	LabelImage     = LabelPrefix + "image"
-	LabelCreated   = LabelPrefix + "created"
-	LabelWorkdir   = LabelPrefix + "workdir"
-	LabelPurpose   = LabelPrefix + "purpose"
-	LabelTestName  = LabelPrefix + "test.name"
-	LabelBaseImage = LabelPrefix + "base-image"
-	LabelFlavor    = LabelPrefix + "flavor"
-	LabelTest      = LabelPrefix + "test"
-	LabelE2ETest   = LabelPrefix + "e2e-test"
+	ImageTagBase  = "base"
+	LabelVersion  = LabelPrefix + "version"
+	LabelImage    = LabelPrefix + "image"
+	LabelCreated  = LabelPrefix + "created"
+	LabelWorkdir  = LabelPrefix + "workdir"
+	LabelPurpose  = LabelPrefix + "purpose"
+	LabelTestName = LabelPrefix + "test.name"
+	LabelTest     = LabelPrefix + "test"
+	LabelE2ETest  = LabelPrefix + "e2e-test"
 	// LabelCPBinarySHA stamps the SHA-256 of the embedded clawkercp +
 	// ebpf-manager bytes onto the built CP image and running container.
 	// EnsureRunning compares the running container's label against the
@@ -302,7 +300,6 @@ const (
 	OtelClientsDirName = "otel-clients"
 	authDir            = "auth"
 	buildDir           = "build"
-	dockerfilesDir     = "dockerfiles"
 	worktreesDir       = "worktrees"
 	logsDir            = "logs"
 	pidsDir            = "pids"
@@ -987,15 +984,6 @@ func WorktreesSubdir() (string, error) { return subdirPath(worktreesDir, DataDir
 
 // ShareSubdir ensures and returns the shared directory path under DataDir.
 func ShareSubdir() (string, error) { return subdirPath(shareDir, DataDir) }
-
-// DockerfilesSubdir ensures and returns the generated Dockerfiles subdirectory path under BuildSubdir.
-func DockerfilesSubdir() (string, error) {
-	buildSub, err := BuildSubdir()
-	if err != nil {
-		return "", err
-	}
-	return subdirPathUnder(dockerfilesDir, buildSub)
-}
 
 // --- Auth material paths (under DataDir) ---
 // Layout: auth/ca/ for CA material, auth/cli/ for CLI signing material,

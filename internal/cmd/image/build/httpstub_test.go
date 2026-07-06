@@ -8,8 +8,8 @@ import (
 
 // stubHTTPClient returns an *http.Client backed by an internal/httpmock registry
 // that serves a single canned npm response for @anthropic-ai/claude-code, keeping
-// the build command's Claude Code version resolution
-// (bundler.ResolveLatestHarnessVersion) hermetic — no live npm registry call
+// the build command's harness version resolution
+// (bundler.ResolveHarnessVersion) hermetic — no live npm registry call
 // during unit tests. Passed via Factory.HttpClient. The (error) return matches
 // the Factory's HttpClient noun signature; this stub never fails.
 func stubHTTPClient(version string) (*http.Client, error) {

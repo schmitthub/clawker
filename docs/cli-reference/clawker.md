@@ -32,7 +32,6 @@ Workspace modes:
 * [clawker create](clawker_create) - Create a new container
 * [clawker exec](clawker_exec) - Execute a command in a running container
 * [clawker firewall](clawker_firewall) - Manage the egress firewall
-* [clawker generate](clawker_generate) - Generate Dockerfiles for Claude Code releases
 * [clawker image](clawker_image) - Manage images
 * [clawker init](clawker_init) - Initialize a new clawker project (alias for 'project init')
 * [clawker kill](clawker_kill) - Kill one or more running containers

@@ -6,10 +6,9 @@ Leaf package: Dockerfile generation, version management, and build configuration
 
 | File | Purpose |
 |------|---------|
-| `defaults.go` | Flavor selection (`FlavorOption`, `DefaultFlavorOptions`, `FlavorToImage`) |
 | `dockerfile.go` | Dockerfile templates, context generation, project scaffolding |
-| `config.go` | Variant configuration (Debian/Alpine) |
-| `versions.go` | Claude Code version resolution via npm registry |
+| `config.go` | Variant configuration |
+| `versions.go` | Harness version resolution (npm dist-tags / GitHub releases) |
 | `errors.go` | Error types (`NetworkError`, `RegistryError`, `ErrVersionNotFound`, etc.) |
 
 ## Subpackages
@@ -17,38 +16,17 @@ Leaf package: Dockerfile generation, version management, and build configuration
 | Package | Purpose |
 |---------|---------|
 | `registry/` | npm registry client, version info types, fetcher interface |
-| `assets/` | Dockerfile template, statusline script, claude config seeds, agent prompt (the clawkerd binary is imported from `clawkerd/embed`, not stored here) |
+| `assets/` | Dockerfile templates (`Dockerfile.base.tmpl`, `Dockerfile.harness-image.tmpl`), shipped harness bundles (`harnesses/`), shipped toolchain definitions (`toolchains/`) (the clawkerd binary is imported from `clawkerd/embed`, not stored here) |
 
 ## Build Cache Strategy
 
-Cache invalidation is delegated entirely to the builder (BuildKit's layer cache, or the classic builder's `probeCache` for legacy daemons) — both hash RUN/COPY inputs and skip identical steps automatically. The Dockerfile template's layer ordering (`internal/bundler/assets/Dockerfile.tmpl`) and ARG vs ENV choices control which layers invalidate when, but the cache mechanism itself is Docker's, not clawker's.
+Cache invalidation is delegated entirely to the builder (BuildKit's layer cache, or the classic builder's `probeCache` for legacy daemons) — both hash RUN/COPY inputs and skip identical steps automatically. The templates' layer ordering (`assets/Dockerfile.base.tmpl`, `assets/Dockerfile.harness-image.tmpl`) and ARG vs ENV choices control which layers invalidate when, but the cache mechanism itself is Docker's, not clawker's.
 
-**Host-UID is baked into the rendered Dockerfile (Linux only).** `consts.ContainerUID()` / `ContainerGID()` resolve to the CLI invoker's `os.Getuid()` / `Getgid()` on Linux, so `useradd --uid {{.UID}}` in `Dockerfile.tmpl` varies per host user. On macOS/Windows, `consts.resolveProcessID` returns `fallbackContainerUID`/`GID` (1001) — Docker Desktop's virtiofs / gRPC-FUSE share masks UID/GID at the boundary, so baking the host UID would offer no access benefit and risks `groupadd --gid` collisions with base-image groups (e.g. macOS staff=20 vs Debian dialout=20). Required for the Linux `~/.claude/projects` bind-mount writability contract.
+**Host-UID is baked into the rendered Dockerfile (Linux only).** `consts.ContainerUID()` / `ContainerGID()` resolve to the CLI invoker's `os.Getuid()` / `Getgid()` on Linux, so `useradd --uid {{.UID}}` in the base template varies per host user. On macOS/Windows, `consts.resolveProcessID` returns `fallbackContainerUID`/`GID` (1001) — Docker Desktop's virtiofs / gRPC-FUSE share masks UID/GID at the boundary, so baking the host UID would offer no access benefit and risks `groupadd --gid` collisions with base-image groups (e.g. macOS staff=20 vs Debian dialout=20). Required for the Linux `~/.claude/projects` bind-mount writability contract.
 
-**BuildKit vs Legacy:** `BuildKitEnabled=true` emits `--mount=type=cache` directives in the rendered Dockerfile; legacy builder silently ignores them. The flag flows through `DockerfileContext`, `ProjectGenerator`, and `DockerfileManager`.
-
-## Flavor Utilities (`defaults.go`)
-
-```go
-type FlavorOption struct { Name, Description string }
-func DefaultFlavorOptions() []FlavorOption  // bookworm, trixie, alpine3.22, alpine3.23
-func FlavorToImage(flavor string) string    // Maps flavor to base image; unknown pass through
-```
-
-`DefaultImageTag` constant and `BuildDefaultImage` function live in `internal/docker/defaults.go`, not here.
+**BuildKit vs Legacy:** `BuildKitEnabled=true` emits `--mount=type=cache` directives in the rendered Dockerfile; legacy builder silently ignores them. The flag flows through `DockerfileContext` and `ProjectGenerator`.
 
 ## Dockerfile Generation (`dockerfile.go`)
-
-### DockerfileManager -- multi-version/variant matrix builds
-
-```go
-type DockerFileManagerOptions struct { VariantCfg *VariantConfig }
-func NewDockerfileManager(cfg config.Config, opts *DockerFileManagerOptions) *DockerfileManager
-func (m *DockerfileManager) GenerateDockerfiles(versions *registry.VersionsFile) error
-func (m *DockerfileManager) DockerfilesDir() (string, error)  // delegates to cfg.DockerfilesSubdir()
-```
-
-`cfg config.Config` (interface) provides `DockerfilesSubdir()`, `MonitoringConfig()`, `ContainerUID()`, `ContainerGID()`. `BuildKitEnabled` field controls cache mount emission. Writes scripts once, renders Dockerfile per version/variant.
 
 ### ProjectGenerator -- single project builds from clawker.yaml
 
@@ -59,9 +37,8 @@ that builds `FROM` it (template blocks, harness volume dirs, config seeds,
 clawker root assets, ENTRYPOINT/CMD). Templates:
 `assets/Dockerfile.base.tmpl` (no block slots, plain `template.Parse`) and
 `assets/Dockerfile.harness-image.tmpl` (block slots, composed with the
-bundle fragment via `harness.Compose`). The single-file master
-`assets/Dockerfile.tmpl` still serves the legacy `DockerfileManager` path —
-keep shared sections of the three templates in sync.
+bundle fragment via `harness.Compose`). Keep shared sections of the two
+templates in sync.
 
 ```go
 func NewProjectGenerator(cfg config.Config, workDir string) *ProjectGenerator
@@ -71,10 +48,7 @@ func (g *ProjectGenerator) BaseContentHash(baseDockerfile []byte) (string, error
 func (g *ProjectGenerator) GenerateBaseBuildContext(dockerfile []byte) (io.Reader, error)      // Tar: project ctx + Dockerfile under BaseDockerfileName (legacy)
 func (g *ProjectGenerator) GenerateHarnessBuildContext(dockerfile []byte) (io.Reader, error)   // Tar: bundle assets + CA + clawker binaries (legacy)
 func (g *ProjectGenerator) WriteHarnessBuildContextToDir(dir string, dockerfile []byte) error  // Filesystem (BuildKit)
-func (g *ProjectGenerator) UseCustomDockerfile() bool
-func (g *ProjectGenerator) GetCustomDockerfilePath() string
 func (g *ProjectGenerator) GetBuildContext() string
-func CreateBuildContextFromDir(dir, dockerfilePath string) (io.Reader, error)  // Tar from directory
 ```
 
 Fields: `BuildKitEnabled`, `HarnessVersion` (resolved npm version for the
@@ -113,21 +87,21 @@ after FROM (blocks 1–3 run under sh) and restores zsh before block_4.
 **block_1 contract change:** block_1 is the first root step of the harness
 image and runs AFTER user creation (which lives in the base image).
 
-### Claude Code Version Resolution
+### Harness Version Resolution
 
 ```go
-func ResolveLatestClaudeCodeVersion(ctx context.Context, httpClient *http.Client) (string, error)
+func ResolveHarnessVersion(ctx context.Context, httpClient *http.Client, b *harness.Bundle) (string, error)
 ```
 
-Wraps `NewVersionsManagerWithFetcher` + `registry.NewNPMClient(registry.WithHTTPClient(httpClient))` + `ResolveVersions("latest")`. On resolution failure returns `(DefaultClaudeCodeVersion, err)` so callers can warn the user while still producing a usable rendered Dockerfile (the install RUN downloads npm-latest at build time when given the `"latest"` literal).
+`ResolveHarnessVersion` dispatches on the bundle manifest's version spec: `npm` (package's "latest" dist-tag), `github-release` (latest release tag via `registry.GitHubReleaseClient`, manifest tag prefix stripped), or `none` (the `DefaultHarnessVersion` literal). On resolution failure returns `(DefaultHarnessVersion, err)` so callers can warn the user while still producing a usable rendered Dockerfile (the install RUN downloads whatever "latest" is at build time).
 
-**Production wiring:** `internal/cmd/image/build/build.go` calls this once per build, passing `f.HttpClient()` from the Factory.
+**Production wiring:** `internal/cmd/image/build/build.go` calls `ResolveHarnessVersion` once per build, passing `f.HttpClient()` from the Factory.
 
 **Test wiring:** bundler tests use a package-local `stubRoundTripper` (implements `http.RoundTripper`) passed to `&http.Client{Transport: stubRT}`. `http.RoundTripper` is the stdlib mock seam; no project-defined interface required. Command-layer tests (in `internal/cmd/image/build/`) wire the same pattern through `cmdutil.Factory{HttpClient: ...}`.
 
 ### Claude Code Version Pinning (build-arg passthrough)
 
-`Dockerfile.tmpl` declares `ARG CLAUDE_CODE_VERSION=<resolved-version>` — **not** `ENV`. Three properties this gives:
+The claude harness bundle's Dockerfile fragment declares `ARG CLAUDE_CODE_VERSION=<resolved-version>` — **not** `ENV`. Three properties this gives:
 
 1. **ARG-cache mechanic:** the `ARG CLAUDE_CODE_VERSION` declaration is placed in the template **directly above its only consumer** (the Claude install RUN), NOT near the top of the final stage. Under BuildKit (Docker 23+ default) a changed ARG default busts the cache at the ARG's **declaration line**, not at first use — verified empirically, and contrary to the classic builder's documented "first usage, not definition" rule. So adjacency is load-bearing: a CC release rolls the rendered default and invalidates only the install layer + the late root block, leaving apt/apk + Node + git-delta + zsh-in-docker cached above. Hoisting the declaration upward would re-run that whole expensive chain on every CC release (which can be several a week). This applies to incremental cache reuse; `clawker build --no-cache` invalidates everything regardless of ARG positioning.
 2. **Runtime invisibility:** Claude Code does not read `CLAUDE_CODE_VERSION` at runtime (verified against the official env-var list at code.claude.com/docs/en/settings). ARG is build-only, so the env var is naturally absent from the running container.
@@ -137,11 +111,12 @@ Wraps `NewVersionsManagerWithFetcher` + `registry.NewNPMClient(registry.WithHTTP
 
 ```go
 type DockerfileContext struct {
-    BaseImage, Username, Shell, WorkspacePath, ClaudeVersion string
-    Packages []string; UID, GID int; IsAlpine, BuildKitEnabled bool
+    BaseImage, Username, Shell, WorkspacePath, HarnessVersion, HarnessBaseImage string
+    Packages, HarnessVolumeDirs, ToolchainRootSteps, ToolchainUserSteps []string
+    HarnessSeeds []harness.Seed; UID, GID int; BuildKitEnabled bool
     Instructions *DockerfileInstructions; Inject *DockerfileInject
     // OTEL telemetry — from config.MonitoringConfig
-    OtelEndpoint string  // base URL only; SDK appends /v1/{metrics,logs,traces}. Traces ride the same base via OTEL_TRACES_EXPORTER=otlp + CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1, both hard-coded in Dockerfile.tmpl (not context fields).
+    OtelEndpoint string  // base URL only; SDK appends /v1/{metrics,logs,traces}. Traces ride the same base via OTEL_TRACES_EXPORTER=otlp + CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1, both hard-coded in the templates (not context fields).
     OtelLogsExportInterval, OtelMetricExportInterval int
     OtelLogToolDetails, OtelLogUserPrompts, OtelIncludeAccountUUID, OtelIncludeSessionID bool
     HasFirewallCA bool; GoBuilderImage string
@@ -215,18 +190,15 @@ const DefaultClaudeCodeVersion, DefaultUsername, DefaultShell = "latest", "claud
 
 UID/GID come from `cfg.ContainerUID()` / `cfg.ContainerGID()` (no bundler-local constants).
 
-Embedded: `DockerfileTemplate`, `StatuslineScript`, `SettingsFile`, `ConfigFile`, `AgentPromptFile`, `HostOpenScript`, `CallbackForwarderSource`, `GitCredentialScript`, `SocketForwarderSource`. The pre-compiled clawkerd binary (`clawkerdembed.Binary`, from `clawkerd/embed`) flows through `COPY clawkerd` as the last layer in the late root block — a clawkerd version bump invalidates only that layer via BuildKit/legacy content-keyed cache.
+Embedded: `DockerfileBaseTemplate`, `DockerfileHarnessImageTemplate`, `HostOpenScript`, `CallbackForwarderSource`, `GitCredentialScript`, `SocketForwarderSource`. The pre-compiled clawkerd binary (`clawkerdembed.Binary`, from `clawkerd/embed`) flows through `COPY clawkerd` as the last layer in the late root block — a clawkerd version bump invalidates only that layer via BuildKit/legacy content-keyed cache.
 
 ## Version Management (`versions.go`)
 
 ```go
 const ClaudeCodePackage = "@anthropic-ai/claude-code"
-type ResolveOptions struct { Debug bool; Output io.Writer }
-func NewVersionsManager() *VersionsManager
+type ResolveOptions struct { Debug bool; Output io.Writer; Package string }  // empty Package = ClaudeCodePackage
 func NewVersionsManagerWithFetcher(fetcher registry.Fetcher, cfg *VariantConfig) *VersionsManager
 func (m *VersionsManager) ResolveVersions(ctx, patterns, opts) (*registry.VersionsFile, error)
-func LoadVersionsFile(path) (*registry.VersionsFile, error)
-func SaveVersionsFile(path, vf) error
 ```
 
 Patterns: `"latest"`, `"stable"`, `"next"` via dist-tags. `"2.1"` partial-matches highest `2.1.x`. `"2.1.2"` exact.
@@ -236,8 +208,6 @@ Patterns: `"latest"`, `"stable"`, `"next"` via dist-tags. `"2.1"` partial-matche
 ```go
 type VariantConfig struct { DebianDefault, AlpineDefault string; Variants map[string][]string; Arches []string }
 func DefaultVariantConfig() *VariantConfig   // trixie/alpine3.23, amd64+arm64v8
-func (c *VariantConfig) IsAlpine(variant string) bool
-func (c *VariantConfig) VariantNames() []string
 ```
 
 Semver parsing/comparison uses `github.com/Masterminds/semver/v3` directly (`semver.NewConstraint` + `Constraint.Check` for partial-match resolution in `versions.go`; `semver.NewVersion` / `*semver.Version` accessors elsewhere).
@@ -258,7 +228,6 @@ func NewVersionInfo(v *semver.Version, debianDefault, alpineDefault string, vari
 ## Error Types (`errors.go`)
 
 ```go
-var ErrNoBuildImage error                                        // No build.image configured — returned by ProjectGenerator.buildContext()
 var ErrVersionNotFound, ErrInvalidVersion, ErrNoVersions error  // Re-exported from registry/
 type NetworkError = registry.NetworkError   // { URL, Message, Err } -- Unwrap() supported
 type RegistryError = registry.RegistryError // { Package, StatusCode, Message } -- IsNotFound() bool
@@ -271,6 +240,6 @@ Imports: `internal/config`, `internal/bundler/registry`, `github.com/Masterminds
 
 ## Tests
 
-Unit tests: `dockerfile_test.go`, `build_test.go`, `defaults_test.go`, `versions_test.go`. Subpackage: `registry/npm_test.go`. Docker integration: `test/whail/`.
+Unit tests: `dockerfile_test.go`, `build_test.go`, `versions_test.go`. Subpackage: `registry/npm_test.go`. Docker integration: `test/whail/`.
 
 Test helper: `testConfig(t, projectYAML) config.Config` wraps `configmocks.NewFromString(cleanedProject, settingsYAML)` with default monitoring settings — preferred test double for bundler tests. All test configs use YAML fixtures rather than mock/fake constructors.

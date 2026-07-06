@@ -114,9 +114,6 @@ func (c *configImpl) CoreDNSHealthPath() string { return consts.CoreDNSHealthPat
 // Deprecated: use consts.BuildSubdir.
 func (c *configImpl) BuildSubdir() (string, error) { return consts.BuildSubdir() }
 
-// Deprecated: use consts.DockerfilesSubdir.
-func (c *configImpl) DockerfilesSubdir() (string, error) { return consts.DockerfilesSubdir() }
-
 // Deprecated: use consts.Network.
 func (c *configImpl) ClawkerNetwork() string { return consts.Network }
 
@@ -181,12 +178,6 @@ func (c *configImpl) LabelPurpose() string { return consts.LabelPurpose }
 
 // Deprecated: use consts.LabelTestName.
 func (c *configImpl) LabelTestName() string { return consts.LabelTestName }
-
-// Deprecated: use consts.LabelBaseImage.
-func (c *configImpl) LabelBaseImage() string { return consts.LabelBaseImage }
-
-// Deprecated: use consts.LabelFlavor.
-func (c *configImpl) LabelFlavor() string { return consts.LabelFlavor }
 
 // Deprecated: use consts.LabelTest.
 func (c *configImpl) LabelTest() string { return consts.LabelTest }

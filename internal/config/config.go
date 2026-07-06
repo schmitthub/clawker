@@ -62,7 +62,6 @@ type Config interface {
 	TestRepoDirEnvVar() string
 	MonitorSubdir() (string, error)
 	BuildSubdir() (string, error)
-	DockerfilesSubdir() (string, error)
 	ClawkerNetwork() string
 	LogsSubdir() (string, error)
 	BridgesSubdir() (string, error)
@@ -84,8 +83,6 @@ type Config interface {
 	PurposeMonitoring() string
 	PurposeFirewall() string
 	LabelTestName() string
-	LabelBaseImage() string
-	LabelFlavor() string
 	LabelTest() string
 	LabelE2ETest() string
 	ManagedLabelValue() string
