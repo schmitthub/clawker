@@ -39,7 +39,7 @@ func NewFromString(projectYAML, settingsYAML string) *ConfigMock {
 func newMockFrom(cfg config.Config) *ConfigMock {
 	mock := &ConfigMock{}
 
-	mock.EgressRulesFunc = cfg.EgressRules
+	mock.ProjectEgressRulesFunc = cfg.ProjectEgressRules
 
 	// Store accessors
 	mock.ProjectStoreFunc = cfg.ProjectStore
@@ -51,9 +51,7 @@ func newMockFrom(cfg config.Config) *ConfigMock {
 	mock.LoggingConfigFunc = cfg.LoggingConfig
 	mock.MonitoringConfigFunc = cfg.MonitoringConfig
 	mock.HostProxyConfigFunc = cfg.HostProxyConfig
-	mock.RequiredFirewallDomainsFunc = cfg.RequiredFirewallDomains
 	mock.EgressRulesFileNameFunc = cfg.EgressRulesFileName
-	mock.RequiredFirewallRulesFunc = cfg.RequiredFirewallRules
 
 	// Constants
 	mock.ClawkerIgnoreNameFunc = cfg.ClawkerIgnoreName

@@ -1,0 +1,97 @@
+# Claude Code harness manifest.
+#
+# Data consumed by clawker's Go engine outside template rendering. All build
+# surface (install steps, env, seeds staging, CMD) lives in
+# Dockerfile.harness.tmpl, composed into the master Dockerfile template.
+
+# Version resolver feeds {{.HarnessVersion}} at template render time.
+version:
+  resolver: npm
+  package: "@anthropic-ai/claude-code"
+
+# Persisted dirs: each becomes a named volume mounted at path under the
+# container home. Every staged/seeded dest must fall under one of these.
+volumes:
+  - name: config
+    path: .claude
+
+# Runtime volume seed manifest, applied by the generic CP init script on
+# first boot. Sources live under assets/ (staged verbatim into the build
+# context); dests are container-home-relative.
+seeds:
+  - file: assets/statusline.sh
+    dest: .claude/statusline.sh
+    apply: copy-if-missing
+  - file: assets/claude-config.json
+    dest: .claude/.config.json
+    apply: copy-if-missing-or-empty
+  - file: assets/claude-settings.json
+    dest: .claude/settings.json
+    apply: json-merge
+
+# Create-time host→container state staging. Src expands ~, $VAR, and
+# shell-style ${VAR:-fallback}; only host state OUTSIDE the workspace is
+# staged — the workspace itself arrives via mount. Dests are
+# container-home-relative and land in the declared volumes.
+staging:
+  copy:
+    # settings.json can hold secrets and host-specific state — deliberate
+    # allowlist of the one portable key.
+    - src: ${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json
+      dest: .claude/settings.json
+      json_keys: [enabledPlugins]
+    - src: ${CLAUDE_CONFIG_DIR:-~/.claude}/CLAUDE.md
+      dest: .claude/CLAUDE.md
+    - src: ${CLAUDE_CONFIG_DIR:-~/.claude}/agents
+      dest: .claude/agents
+    - src: ${CLAUDE_CONFIG_DIR:-~/.claude}/skills
+      dest: .claude/skills
+    - src: ${CLAUDE_CONFIG_DIR:-~/.claude}/commands
+      dest: .claude/commands
+    # Plugin registry JSONs embed host paths — rewritten to container paths.
+    - src: ${CLAUDE_CONFIG_DIR:-~/.claude}/plugins
+      dest: .claude/plugins
+      skip: [install-counts-cache.json]
+      json_rewrites:
+        - { file: known_marketplaces.json, key: installPath, rewrite: prefix-swap }
+        - { file: known_marketplaces.json, key: installLocation, rewrite: prefix-swap }
+        - { file: installed_plugins.json, key: installPath, rewrite: prefix-swap }
+        - { file: installed_plugins.json, key: projectPath, rewrite: replace-with-workdir }
+  mounts:
+    - src: ${CLAUDE_CONFIG_DIR:-~/.claude}/projects
+      dest: .claude/projects
+
+# Egress floor required for the harness to function; composed with project
+# firewall rules. Docker registry domains are NOT needed here — image pulls
+# run on the host daemon, outside the container's network namespace. OAuth
+# needs platform.claude.com (token exchange) and claude.ai (authorization);
+# SNI matching selects per-domain TLS filter chains, so each domain must be
+# listed explicitly even when domains share IPs.
+egress:
+  # API and OAuth
+  - dst: api.anthropic.com
+  - dst: claude.com
+  - dst: platform.claude.com
+  # .claude.ai serves both OAuth and Anthropic-hosted UGC. The host allow is
+  # required for login; the deny path rules scope out documented UGC surfaces
+  # so an injected prompt can't pivot the agent into fetching
+  # attacker-authored content from a trusted origin (public artifacts render
+  # HTML/JS; shared chats are UGC by definition). No path_default → denylist
+  # mode, keeping OAuth/login flows under / and /login intact.
+  - dst: .claude.ai
+    path_rules:
+      - { path: /public/, action: deny }
+      - { path: /share/, action: deny }
+  # MCP proxy
+  - dst: mcp-proxy.anthropic.com
+  # npm registry — claude is npm-distributed and its runtime hooks install
+  # global packages; without registry access the unprivileged user cannot
+  # npm install.
+  - dst: registry.npmjs.org
+  # Telemetry / feature flags
+  - dst: sentry.io
+  - dst: statsig.anthropic.com
+  - dst: statsig.com
+  - dst: .datadoghq.com
+  - dst: .datadoghq.eu
+

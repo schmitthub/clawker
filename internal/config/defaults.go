@@ -1,62 +1,9 @@
 package config
 
-// requiredFirewallRules is the canonical list of required egress rules.
-// These are essential for Claude Code operation inside the container.
-//
-// Docker registry domains (docker.io, registry-1.docker.io, etc.) are NOT
-// included because image pulls are performed by the host-side Docker daemon,
-// outside the container's network namespace — container egress rules do not
-// apply to them.
-//
-// Claude Code OAuth requires platform.claude.com (token exchange) and
-// claude.ai (authorization/downloads). SNI matching selects per-domain TLS
-// filter chains in Envoy, so each domain must be listed explicitly even if
-// they share IPs with api.anthropic.com.
-var requiredFirewallRules = []EgressRule{
-	// Claude Code — API and OAuth
-	{Dst: "api.anthropic.com", Proto: EgressProtoHTTPS, Port: EgressPortHTTPS, Action: EgressActionAllow},
-	{Dst: "claude.com", Proto: EgressProtoHTTPS, Port: EgressPortHTTPS, Action: EgressActionAllow},
-	{Dst: "platform.claude.com", Proto: EgressProtoHTTPS, Port: EgressPortHTTPS, Action: EgressActionAllow},
-	// .claude.ai serves both Claude Code OAuth + Anthropic-hosted UGC. The
-	// host-scope allow is required for login; the explicit deny PathRules
-	// scope out documented UGC surfaces so an injected prompt can't pivot
-	// an agent into fetching attacker-authored content from a trusted
-	// origin (public artifacts render HTML/JS; shared chats are UGC by
-	// definition). PathDefault is left empty so EffectivePathDefault
-	// returns the allow action — denylist mode keeps OAuth/login flows intact under
-	// `/` and `/login` (the only Allow patterns in claude.ai's robots.txt).
-	{
-		Dst: ".claude.ai", Proto: EgressProtoHTTPS, Port: EgressPortHTTPS, Action: EgressActionAllow,
-		PathRules: []PathRule{
-			{Path: "/public/", Action: EgressActionDeny},
-			{Path: "/share/", Action: EgressActionDeny},
-		},
-	},
-	// Claude Code — MCP proxy
-	{Dst: "mcp-proxy.anthropic.com", Proto: EgressProtoHTTPS, Port: EgressPortHTTPS, Action: EgressActionAllow},
-	// Node.js / npm — registry for `npm install -g` (presets + user_run) and
-	// runtime hook deps. Node is baked into every image; without registry
-	// access the unprivileged user cannot install global packages.
-	{Dst: "registry.npmjs.org", Proto: EgressProtoHTTPS, Port: EgressPortHTTPS, Action: EgressActionAllow},
-	// Claude Code — telemetry
-	{Dst: "sentry.io", Proto: EgressProtoHTTPS, Port: EgressPortHTTPS, Action: EgressActionAllow},
-	{Dst: "statsig.anthropic.com", Proto: EgressProtoHTTPS, Port: EgressPortHTTPS, Action: EgressActionAllow},
-	{Dst: "statsig.com", Proto: EgressProtoHTTPS, Port: EgressPortHTTPS, Action: EgressActionAllow},
-	{Dst: ".datadoghq.com", Proto: EgressProtoHTTPS, Port: EgressPortHTTPS, Action: EgressActionAllow},
-	{Dst: ".datadoghq.eu", Proto: EgressProtoHTTPS, Port: EgressPortHTTPS, Action: EgressActionAllow},
-}
-
-// requiredFirewallDomains is derived from requiredFirewallRules for backwards compatibility.
-//
-// Deprecated: Use RequiredFirewallRules() instead.
-var requiredFirewallDomains []string
-
-func init() {
-	requiredFirewallDomains = make([]string, len(requiredFirewallRules))
-	for i, r := range requiredFirewallRules {
-		requiredFirewallDomains[i] = r.Dst
-	}
-}
+// The required egress floor is no longer defined here: each harness bundle
+// declares its own floor in harness.yaml (egress:), composed with the
+// project's security.firewall rules by bundler.EgressRules. Security
+// knowledge like the .claude.ai UGC path denies travels WITH the harness.
 
 // Programmatic base-layer defaults for project and settings configuration are
 // generated from `default` struct tags on schema types via

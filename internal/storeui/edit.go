@@ -579,6 +579,10 @@ func fieldKindToBrowserKind(k FieldKind) tui.BrowserFieldKind {
 		return tui.BrowserMap
 	case KindStructSlice:
 		return tui.BrowserStructSlice
+	case KindStructMap:
+		// Edited as a YAML mapping blob — same editor surface as struct
+		// slices (no dedicated struct-map widget).
+		return tui.BrowserStructSlice
 	default:
 		// Consumer-defined kinds (> KindLast) degrade to read-only display.
 		// No panic — the kind is known to storage, we just don't have an editor.

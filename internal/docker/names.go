@@ -175,18 +175,21 @@ func ContainerNamePrefix(project string) string {
 // The purpose parameter is not validated as it is always a hardcoded internal string.
 //
 // Volume-name purpose suffixes. VolumeName composes volume names as
-// "clawker.<project>.<agent>-<purpose>". When adding a new volume
-// purpose: declare it as a const here AND append to VolumePurposes so
-// any future caller can reference the typed name instead of a stringly
-// literal.
+// "clawker.<project>.<agent>-<purpose>". History and workspace are clawker
+// infrastructure; harness-declared volumes use the bundle's volumes[].name
+// as the purpose. VolumePurposes drives the removal fallback for unlabeled
+// volumes and keeps the legacy pre-multi-harness "config" purpose so old
+// agents still clean up fully.
 const (
-	VolumePurposeConfig    = "config"
-	VolumePurposeHistory   = "history"
-	VolumePurposeWorkspace = "workspace"
+	VolumePurposeHistory   = consts.VolumePurposeHistory
+	VolumePurposeWorkspace = consts.VolumePurposeWorkspace
+	// legacyVolumePurposeConfig is the pre-multi-harness config volume
+	// suffix, retained for cleanup of volumes created by older versions.
+	legacyVolumePurposeConfig = "config"
 )
 
 var VolumePurposes = []string{
-	VolumePurposeConfig,
+	legacyVolumePurposeConfig,
 	VolumePurposeHistory,
 	VolumePurposeWorkspace,
 }
@@ -204,10 +207,29 @@ func VolumeName(project, agent, purpose string) (string, error) {
 	return fmt.Sprintf("%s.%s-%s", NamePrefix, agent, purpose), nil
 }
 
-// ImageTag generates image tag: clawker-project:latest
+// ImageTag generates the legacy image tag: clawker-project:latest. New
+// builds tag by harness (HarnessImageTag); resolution still accepts :latest
+// as the legacy fallback for images built before harness tags existed.
 func ImageTag(project string) string {
+	return imageRef(project, consts.ImageTagLatest)
+}
+
+// HarnessImageTag generates the harness-keyed image tag:
+// clawker-<project>:<harness>. The tag IS the harness registry key.
+func HarnessImageTag(project, harnessName string) string {
+	return imageRef(project, harnessName)
+}
+
+// DefaultAliasImageTag is the alias tag applied to the registry-default
+// harness's image: clawker-<project>:default. Run/create resolve it when no
+// explicit tag is selected.
+func DefaultAliasImageTag(project string) string {
+	return imageRef(project, consts.ImageTagDefaultAlias)
+}
+
+func imageRef(project, tag string) string {
 	if project == "" {
-		return NamePrefix + ":latest"
+		return NamePrefix + ":" + tag
 	}
-	return fmt.Sprintf("%s-%s:latest", NamePrefix, project)
+	return fmt.Sprintf("%s-%s:%s", NamePrefix, project, tag)
 }

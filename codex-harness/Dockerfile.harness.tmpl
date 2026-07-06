@@ -1,0 +1,29 @@
+{{/*
+  Codex harness — fills the master Dockerfile.tmpl block slots.
+*/}}
+
+{{define "block_1" -}}
+# Node.js for the npm-distributed codex CLI.
+ARG NODE_VERSION=24
+{{if .IsAlpine -}}
+RUN apk add --no-cache nodejs npm
+{{else -}}
+RUN apt-get update && apt-get install -y --no-install-recommends nodejs npm && rm -rf /var/lib/apt/lists/*
+{{end}}
+{{- end}}
+
+{{define "block_3" -}}
+# Tell codex where its config lives — must match the config volume mount.
+ENV CODEX_HOME=/home/${USERNAME}/.codex
+{{- end}}
+
+{{define "block_4" -}}
+ARG CODEX_VERSION={{.HarnessVersion}}
+# Install into the user prefix — block_4 runs as ${USERNAME}, and
+# ~/.local/bin is already on PATH.
+RUN npm config set prefix /home/${USERNAME}/.local &&     npm install -g @openai/codex@${CODEX_VERSION}
+{{- end}}
+
+{{define "block_6" -}}
+CMD ["codex"]
+{{- end}}

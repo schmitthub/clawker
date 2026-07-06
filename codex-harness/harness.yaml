@@ -1,0 +1,35 @@
+# Codex harness bundle — external UGC experiment.
+# DRAFT: config dir, config.toml, auth.json, AGENTS.md, npm install verified
+# against developers.openai.com/codex docs; egress domains not yet verified
+# against live traffic — re-verify before shipping.
+
+version:
+  resolver: npm
+  package: "@openai/codex"
+
+# Persisted dir: codex keeps all state under $CODEX_HOME (default ~/.codex).
+volumes:
+  - name: config
+    path: .codex
+
+staging:
+  # config.toml deliberately NOT copied: it embeds host-path-keyed state
+  # (projects trust table, mcp_servers command paths) and TOML has no
+  # key-filter equivalent to json_keys — codex regenerates it on first run.
+  # Explicit host→container copies of state OUTSIDE the workspace. The
+  # user's GLOBAL instructions (~/.codex/AGENTS.md), not the repo file —
+  # repo AGENTS.md arrives via the workspace mount untouched.
+  copy:
+    - src: ${CODEX_HOME:-~/.codex}/AGENTS.md
+      dest: .codex/AGENTS.md
+    - src: ${CODEX_HOME:-~/.codex}/prompts
+      dest: .codex/prompts
+
+# Runtime floor only. npm registry NOT needed: install runs at image build
+# time on the host daemon, outside the agent network namespace, and the
+# installed CLI is a self-contained binary with no runtime npm use.
+egress:
+  - dst: api.openai.com     # API-key auth inference
+  - dst: auth.openai.com    # login/token exchange
+  - dst: chatgpt.com        # ChatGPT-account backend
+

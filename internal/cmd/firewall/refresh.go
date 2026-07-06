@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
+	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
@@ -79,7 +80,11 @@ func refreshRun(ctx context.Context, opts *RefreshOptions) error {
 		return fmt.Errorf("resolving current project: %w", err)
 	}
 
-	rules := adminv1.EgressRulesToProto(cfg.EgressRules())
+	egressRules, err := bundler.EgressRules(cfg, "")
+	if err != nil {
+		return fmt.Errorf("composing egress rules: %w", err)
+	}
+	rules := adminv1.EgressRulesToProto(egressRules)
 
 	client, err := opts.AdminClient(ctx)
 	if err != nil {

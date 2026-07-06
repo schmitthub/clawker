@@ -1,16 +1,25 @@
 package docker
 
 import (
+	"archive/tar"
+	"context"
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/moby/moby/client"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/pkg/whail"
 	"github.com/schmitthub/clawker/pkg/whail/whailtest"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // testConfig creates a config.Config from a YAML string for tests.
@@ -104,7 +113,8 @@ func removeMonitoringFromProject(yaml string) (string, string) {
 
 		if skipMonitoring {
 			// Check if we've moved to a different section
-			if len(trimmed) > 0 && !strings.HasPrefix(line, monitoringIndent+" ") && !strings.HasPrefix(line, monitoringIndent+"\t") {
+			if len(trimmed) > 0 && !strings.HasPrefix(line, monitoringIndent+" ") &&
+				!strings.HasPrefix(line, monitoringIndent+"\t") {
 				skipMonitoring = false
 			}
 		}
@@ -133,6 +143,60 @@ func newTestClientWithConfig(cfg config.Config) (*Client, *whailtest.FakeAPIClie
 		ManagedLabel: cfg.EngineManagedLabel(),
 	})
 	return &Client{Engine: engine, cfg: cfg, log: logger.Nop()}, fakeAPI
+}
+
+// TestBuild_SelectsHarnessFromOptions proves the harness selected at the
+// command layer (BuilderOptions.HarnessName) is the one whose template
+// blocks render into the generated Dockerfile — not the registry default.
+func TestBuild_SelectsHarnessFromOptions(t *testing.T) {
+	bundleDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(bundleDir, "harness.yaml"), []byte("{}\n"), 0o644))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(bundleDir, "Dockerfile.harness.tmpl"),
+		[]byte(`{{define "block_4"}}RUN echo other-harness-marker{{end}}`),
+		0o644,
+	))
+
+	settingsYAML := `
+monitoring:
+  telemetry:
+    metric_export_interval_ms: 10000
+    logs_export_interval_ms: 5000
+    log_tool_details: true
+    log_user_prompts: true
+    include_account_uuid: true
+    include_session_id: true
+harnesses:
+  other:
+    path: ` + bundleDir + "\n"
+	cfg := configmocks.NewFromString("build:\n  image: alpine:3.20\n", settingsYAML)
+	cli, fakeAPI := newTestClientWithConfig(cfg)
+
+	var dockerfile string
+	fakeAPI.ImageBuildFn = func(_ context.Context, buildContext io.Reader, _ client.ImageBuildOptions) (client.ImageBuildResult, error) {
+		tr := tar.NewReader(buildContext)
+		for {
+			hdr, err := tr.Next()
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			require.NoError(t, err)
+			if hdr.Name == "Dockerfile" {
+				data, readErr := io.ReadAll(tr)
+				require.NoError(t, readErr)
+				dockerfile = string(data)
+			}
+		}
+		return client.ImageBuildResult{Body: io.NopCloser(strings.NewReader(""))}, nil
+	}
+
+	b := NewBuilder(cli, cfg.Project(), t.TempDir(), "proj")
+	var buildOpts BuilderOptions
+	buildOpts.HarnessName = "other"
+	buildOpts.SuppressOutput = true
+	err := b.Build(context.Background(), "clawker-proj:other", buildOpts)
+	require.NoError(t, err)
+	assert.Contains(t, dockerfile, "other-harness-marker")
 }
 
 func TestMergeTags(t *testing.T) {

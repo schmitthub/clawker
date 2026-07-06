@@ -29,13 +29,13 @@ func NewCmdRoot(f *cmdutil.Factory, version, buildDate string) (*cobra.Command, 
 
 	cmd := &cobra.Command{
 		Use:   "clawker",
-		Short: "Manage Claude Code in secure Docker containers with clawker",
-		Long: `Clawker (claude + docker) wraps Claude Code in safe, reproducible, monitored, isolated Docker containers.
+		Short: "Run coding agents in secure Docker containers with clawker",
+		Long: `Clawker wraps coding agent harnesses (Claude Code and others) in safe, reproducible, monitored, isolated Docker containers.
 
 Quick start:
   clawker init           # Initialize project in current directory
   clawker build          # Build the container image
-  clawker run            # Start Claude Code in a container
+  clawker run            # Start the agent in a container
   clawker stop           # Stop the container
 
 Workspace modes:

@@ -442,8 +442,10 @@ func TestRuntimeEnv_TelemetryDisabledWhenMonitoringInactive(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	assert.Contains(t, env, "CLAUDE_CODE_ENABLE_TELEMETRY=0",
-		"telemetry should be disabled when monitoring stack is not running")
+	for _, v := range []string{"OTEL_METRICS_EXPORTER", "OTEL_LOGS_EXPORTER", "OTEL_TRACES_EXPORTER"} {
+		assert.Contains(t, env, v+"=none",
+			"every OTel signal exporter should be disabled when monitoring stack is not running")
+	}
 }
 
 func TestRuntimeEnv_TelemetryEnabledWhenMonitoringActive(t *testing.T) {
@@ -453,7 +455,9 @@ func TestRuntimeEnv_TelemetryEnabledWhenMonitoringActive(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, e := range env {
-		assert.False(t, strings.HasPrefix(e, "CLAUDE_CODE_ENABLE_TELEMETRY="),
-			"should not set CLAUDE_CODE_ENABLE_TELEMETRY when monitoring is active (Dockerfile default applies)")
+		for _, v := range []string{"OTEL_METRICS_EXPORTER=", "OTEL_LOGS_EXPORTER=", "OTEL_TRACES_EXPORTER="} {
+			assert.False(t, strings.HasPrefix(e, v),
+				"should not override exporter selection when monitoring is active (image default applies)")
+		}
 	}
 }

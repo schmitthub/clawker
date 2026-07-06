@@ -96,7 +96,7 @@ func cliStateFunc() func() (state.StateStore, error) {
 
 // httpClientFunc returns a lazy closure that yields a shared *http.Client
 // for outbound HTTP from the CLI. First consumer:
-// bundler.ResolveLatestClaudeCodeVersion for npm registry lookups during
+// bundler.ResolveLatestHarnessVersion for npm registry lookups during
 // Claude Code version resolution. Matches cli/cli's HttpClient factory
 // shape — *http.Client is the noun, http.RoundTripper is the stdlib mock
 // seam.

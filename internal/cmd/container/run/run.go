@@ -9,6 +9,9 @@ import (
 
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/controlplane/manager"
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
@@ -23,8 +26,6 @@ import (
 	"github.com/schmitthub/clawker/internal/signals"
 	"github.com/schmitthub/clawker/internal/socketbridge"
 	"github.com/schmitthub/clawker/internal/tui"
-	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 )
 
 // RunOptions holds options for the run command.
@@ -189,21 +190,13 @@ func runRun(ctx context.Context, opts *RunOptions) error {
 		}
 	}
 
-	if containerOpts.Image == "@" {
-		resolvedImage, err := client.ResolveImageWithSource(ctx, projectName)
-		if err != nil {
-			return fmt.Errorf("resolving image: %w", err)
+	if harnessTag, isPlaceholder := shared.ParseImagePlaceholder(containerOpts.Image); isPlaceholder {
+		ref, resolveErr := shared.ResolvePlaceholderImage(
+			ctx, client, cfg, ios, projectName, harnessTag, "run")
+		if resolveErr != nil {
+			return fmt.Errorf("resolving image: %w", resolveErr)
 		}
-		if resolvedImage == nil {
-			cs := ios.ColorScheme()
-			fmt.Fprintf(ios.ErrOut, "%s No built image found for \"@\"\n", cs.FailureIcon())
-			fmt.Fprintf(ios.ErrOut, "\n%s Next steps:\n", cs.InfoIcon())
-			fmt.Fprintln(ios.ErrOut, "  1. Build an image first: clawker build")
-			fmt.Fprintln(ios.ErrOut, "  2. Or specify an image: clawker container run IMAGE")
-			return cmdutil.SilentError
-		}
-
-		containerOpts.Image = resolvedImage.Reference
+		containerOpts.Image = ref
 	}
 
 	// Warn if workspace mount would include the home directory or higher

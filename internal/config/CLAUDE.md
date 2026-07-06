@@ -74,9 +74,9 @@ ProjectStore() *storage.Store[Project]     // Direct access to project config st
 SettingsStore() *storage.Store[Settings]   // Direct access to settings store
 ```
 
-**Schema accessors**: `Project()`, `Settings()`, `ClawkerIgnoreName()`, `RequiredFirewallDomains()`, `RequiredFirewallRules()`, `EgressRules()`, `EgressRulesFileName()`
+**Schema accessors**: `Project()`, `Settings()`, `ClawkerIgnoreName()`, `ProjectEgressRules()`, `EgressRulesFileName()`
 
-`EgressRules()` returns the full egress rule set as `[]EgressRule`: the required baseline (`RequiredFirewallRules()`) plus the project's `security.firewall` rules and `add_domains` shorthand.
+`ProjectEgressRules()` returns the project's `security.firewall` contribution as `[]EgressRule`: explicit rules verbatim, then `add_domains` shorthand expansions. It deliberately excludes the harness's required egress floor — that lives in the harness bundle's `harness.yaml` and is composed in by `bundler.EgressRules(cfg, name)`, which is what firewall sync paths call.
 
 **Settings convenience accessors** (deprecated): `LoggingConfig()`, `MonitoringConfig()`, `HostProxyConfig()` return the corresponding nested struct directly. Equivalent to `SettingsStore().Read().Logging` etc. Prefer the typed store accessor in new code. Still in use in existing callers (e.g. `internal/bundler/dockerfile.go`, `internal/hostproxy/`).
 
@@ -120,7 +120,7 @@ const ModeSnapshot Mode = "snapshot"
 
 **Workspace/Security**: `WorkspaceConfig` (`DefaultMode`), `SecurityConfig`, `FirewallConfig`, `GitCredentialsConfig`
 
-**Egress vocabulary constants** (schema.go, next to `EgressRule` — the single home for these tokens): `EgressProtoHTTPS`, `EgressPortHTTPS`, `EgressActionAllow`, `EgressActionDeny`. Used by `EgressRules()` add_domains expansion and the required baseline in `defaults.go`; reference these instead of spelling the literals.
+**Egress vocabulary constants** (schema.go, next to `EgressRule` — the single home for these tokens): `EgressProtoHTTPS`, `EgressPortHTTPS`, `EgressActionAllow`, `EgressActionDeny`. Used by `ProjectEgressRules()` add_domains expansion and the harness floor conversion in `bundler`; reference these instead of spelling the literals.
 
 **Registry**: the registry schema (`ProjectRegistry`, `ProjectEntry`, `WorktreeEntry`) lives in `internal/project` — its sole owner. `config` has no registry surface.
 

@@ -82,6 +82,31 @@ harness, not in a shared default. (`requiredFirewallDomains` at :52-59 is a deri
 
 ## 2. Image build / Dockerfile — install + default CMD
 
+> RECON COMPLETE (2026-07-03, full template read at HEAD). Mechanics:
+> - **Install**: `ARG CLAUDE_CODE_VERSION={{.ClaudeVersion}}` sits DIRECTLY above its
+>   consumer RUN — BuildKit invalidates at ARG DECLARATION line; hoisting re-runs every
+>   layer below (comment documents this). Install = `curl claude.ai/install.sh | bash -s
+>   ${VER}` + optional BuildKit cache mount `~/.npm` (cache-mount path is harness-specific).
+> - **Seeds**: 3 COPYs (statusline.sh, claude-settings.json→settings.json,
+>   claude-config.json→.config.json) → `~/.claude-init/`, deliberately in USER scope
+>   BEFORE `USER root` so after_claude_install/before_entrypoint injects + user Copy can
+>   reference them.
+> - **Env**: `CLAUDE_CONFIG_DIR` + telemetry block (`CLAUDE_CODE_ENABLE_TELEMETRY`,
+>   `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA`, OTEL_* fed by template params) = claude;
+>   PATH/.local/bin, BROWSER=host-open, TERM/LANG = generic.
+> - **managed-settings.json** heredoc in EARLY root scope — claude enterprise mechanism
+>   (PATH into CC shell snapshot); position load-bearing for build-time `claude` calls
+>   in inject points.
+> - **Prompt asset**: `COPY clawker-agent-prompt.md /etc/claude-code/CLAUDE.md` in late
+>   root block (clawker-release cache block). `CMD ["claude"]` last; ENTRYPOINT clawkerd
+>   generic.
+> - **KEY STRUCTURAL FINDING**: template is cache-locality-ARCHITECTED (early-root /
+>   user-scope / late-root blocks, ARG adjacency, seed placement). Harness content must
+>   fill FIXED SLOTS in the master template (managed-config slot, env slot, install
+>   ARG+RUN slot, seed slot, prompt-asset slot, CMD) — NOT free-form fragment
+>   concatenation. Descriptor supplies slot contents; template owns ordering + cache
+>   strategy. Naive per-harness template assembly would destroy the cache design.
+
 | file:line | thing | fix |
 |---|---|---|
 | `internal/bundler/assets/Dockerfile.tmpl:638` | **`CMD ["claude"]`** — single most load-bearing default | harness-defined entrypoint command |
@@ -188,6 +213,15 @@ infrastructure** — net-new work.
 | `cmd/auth/` + `internal/auth/` | **OUT OF SCOPE** — that's CP mTLS/cert auth, not harness auth | — |
 
 ## 5. In-container init / dispatch (CP → clawkerd)
+
+> PATH CORRECTION + recon COMPLETE (2026-07-03): package is `controlplane/agent/`
+> (top-level, not `internal/controlplane/agent/`). Step audit at HEAD: init plan =
+> config/git/git-credentials/ssh/post_init/agent-initialized; boot plan =
+> docker-socket/pre_run/agent-ready. ALL generic except `ConfigSeedScript` body
+> (`~/.claude-init`→`~/.claude`, statusline+.config.json+settings jq-merge) and
+> post-init marker `$HOME/.claude/post-initialized`. Scripts are self-gating by
+> design (CP feature-flag-free). Resolution in migration.md 3e: build-time seeds +
+> generic apply script + marker→DotClawkerDir + routeArgs cmd from image Config.Cmd.
 
 | file:line | thing | fix |
 |---|---|---|

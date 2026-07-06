@@ -8,32 +8,62 @@
       "properties": {
         "claude_code": {
           "additionalProperties": false,
+          "description": "Deprecated: use the project-root harnesses map keyed by harness name instead",
           "properties": {
             "config": {
               "additionalProperties": false,
               "properties": {
                 "strategy": {
                   "default": "copy",
-                  "description": "How to initialize Claude Code config: copy syncs host settings/plugins, fresh starts clean",
+                  "description": "How to initialize the harness config: copy syncs host settings, fresh starts clean",
                   "title": "Strategy",
                   "type": "string"
                 }
               },
               "type": "object"
             },
+            "env": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Set container env vars when this harness is selected; overrides agent.env on key collision",
+              "title": "Env",
+              "type": "object"
+            },
+            "env_file": {
+              "description": "Load extra environment variables from .env-style files when this harness is selected; layered on top of agent.env_file",
+              "items": {
+                "type": "string"
+              },
+              "title": "Env Files",
+              "type": "array"
+            },
+            "from_env": {
+              "description": "Forward specific host env vars into the container when this harness is selected; layered on top of agent.from_env",
+              "items": {
+                "type": "string"
+              },
+              "title": "Forward Env Vars",
+              "type": "array"
+            },
             "mount_projects": {
               "default": true,
-              "description": "Bind mount host ~/.claude/projects/ into the container so auto-memory and sessions are shared across container runs and instances",
-              "title": "Mount Host Projects",
+              "description": "Bind mount the harness's host state dirs (e.g. ~/.claude/projects/) into the container so auto-memory and sessions are shared across container runs and instances",
+              "title": "Mount Host State",
               "type": "boolean"
             },
-            "use_host_auth": {
-              "default": true,
-              "description": "Let the container use your host Claude Code credentials so you don't have to re-authenticate. The credential will be copied in at creation and persisted in the container's volume, but the container will refresh its tokens independently. If new containers keep starting unauthenticated, log in on the host to rotate the refresh token seed.",
-              "title": "Use Host Auth",
-              "type": "boolean"
+            "post_init": {
+              "description": "Shell commands run once after container creation when this harness is selected, appended after agent.post_init (e.g. install this harness's MCP servers)",
+              "title": "Post-Init Script",
+              "type": "string"
+            },
+            "pre_run": {
+              "description": "Shell commands run on every container start when this harness is selected, appended after agent.pre_run",
+              "title": "Pre-Run Script",
+              "type": "string"
             }
           },
+          "title": "Claude Code",
           "type": "object"
         },
         "editor": {
@@ -72,12 +102,12 @@
           "type": "array"
         },
         "post_init": {
-          "description": "Shell commands to run after container starts but before Claude Code launches (e.g. install MCP servers). Useful for seeding claude code config or running setup steps that require the container environment to be up. Runs only one time after container creation in the workdir with env vars loaded.",
+          "description": "Shell commands to run after container starts but before the harness launches (e.g. install MCP servers). Useful for seeding harness config or running setup steps that require the container environment to be up. Runs only one time after container creation in the workdir with env vars loaded.",
           "title": "Post-Init Script",
           "type": "string"
         },
         "pre_run": {
-          "description": "Shell commands run on every container start, in the workdir, right before the CMD (default: claude) runs (e.g. npm install)",
+          "description": "Shell commands run on every container start, in the workdir, right before the harness CMD runs (e.g. npm install)",
           "title": "Pre-Run Script",
           "type": "string"
         },
@@ -123,7 +153,7 @@
           "additionalProperties": false,
           "properties": {
             "after_claude_install": {
-              "description": "Add Dockerfile instructions as the claude user with Claude Code available — e.g. add MCP servers, install plugins, or extensions",
+              "description": "Deprecated: use after_harness_install",
               "items": {
                 "type": "string"
               },
@@ -136,6 +166,14 @@
                 "type": "string"
               },
               "title": "After FROM",
+              "type": "array"
+            },
+            "after_harness_install": {
+              "description": "Add Dockerfile instructions as the container user with the harness CLI available — e.g. add MCP servers, install plugins, or extensions",
+              "items": {
+                "type": "string"
+              },
+              "title": "After Harness Install",
               "type": "array"
             },
             "after_packages": {
@@ -275,6 +313,69 @@
           "type": "array"
         }
       },
+      "type": "object"
+    },
+    "harnesses": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "config": {
+            "additionalProperties": false,
+            "properties": {
+              "strategy": {
+                "default": "copy",
+                "description": "How to initialize the harness config: copy syncs host settings, fresh starts clean",
+                "title": "Strategy",
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "env": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Set container env vars when this harness is selected; overrides agent.env on key collision",
+            "title": "Env",
+            "type": "object"
+          },
+          "env_file": {
+            "description": "Load extra environment variables from .env-style files when this harness is selected; layered on top of agent.env_file",
+            "items": {
+              "type": "string"
+            },
+            "title": "Env Files",
+            "type": "array"
+          },
+          "from_env": {
+            "description": "Forward specific host env vars into the container when this harness is selected; layered on top of agent.from_env",
+            "items": {
+              "type": "string"
+            },
+            "title": "Forward Env Vars",
+            "type": "array"
+          },
+          "mount_projects": {
+            "default": true,
+            "description": "Bind mount the harness's host state dirs (e.g. ~/.claude/projects/) into the container so auto-memory and sessions are shared across container runs and instances",
+            "title": "Mount Host State",
+            "type": "boolean"
+          },
+          "post_init": {
+            "description": "Shell commands run once after container creation when this harness is selected, appended after agent.post_init (e.g. install this harness's MCP servers)",
+            "title": "Post-Init Script",
+            "type": "string"
+          },
+          "pre_run": {
+            "description": "Shell commands run on every container start when this harness is selected, appended after agent.pre_run",
+            "title": "Pre-Run Script",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "description": "Per-harness container initialization settings, keyed by harness name",
+      "title": "Harnesses",
       "type": "object"
     },
     "name": {

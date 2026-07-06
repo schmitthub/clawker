@@ -34,7 +34,7 @@ image management commands.
 
 ### Subcommands
 
-* [clawker image build](clawker_image_build) - Build an image from a clawker project
+* [clawker image build](clawker_image_build) - Build the project image
 * [clawker image inspect](clawker_image_inspect) - Display detailed information on one or more images
 * [clawker image list](clawker_image_list) - List images
 * [clawker image prune](clawker_image_prune) - Remove unused images
@@ -54,4 +54,4 @@ image management commands.
 
 ### See also
 
-* [clawker](clawker) - Manage Claude Code in secure Docker containers with clawker
+* [clawker](clawker) - Run coding agents in secure Docker containers with clawker

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/moby/moby/api/types/mount"
+	"github.com/schmitthub/clawker/internal/consts"
 )
 
 func TestGetShareVolumeMount(t *testing.T) {
@@ -28,9 +29,9 @@ func TestGetShareVolumeMount(t *testing.T) {
 	}
 }
 
-func TestGetClaudeProjectsMount(t *testing.T) {
+func TestGetHostStateMount(t *testing.T) {
 	hostPath := "/home/alice/.claude/projects"
-	m, err := GetClaudeProjectsMount(hostPath)
+	m, err := GetHostStateMount(hostPath, ".claude/projects")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -41,8 +42,9 @@ func TestGetClaudeProjectsMount(t *testing.T) {
 	if m.Source != hostPath {
 		t.Errorf("Source = %q, want %q", m.Source, hostPath)
 	}
-	if m.Target != ClaudeProjectsTargetPath {
-		t.Errorf("Target = %q, want %q", m.Target, ClaudeProjectsTargetPath)
+	want := consts.ContainerHomeDir + "/.claude/projects"
+	if m.Target != want {
+		t.Errorf("Target = %q, want %q", m.Target, want)
 	}
 	// RW is intentional — auto-memory and session jsonls are written from inside the container.
 	if m.ReadOnly {
@@ -50,20 +52,20 @@ func TestGetClaudeProjectsMount(t *testing.T) {
 	}
 }
 
-func TestGetClaudeProjectsMount_RejectsRelativePath(t *testing.T) {
-	_, err := GetClaudeProjectsMount("relative/path")
+func TestGetHostStateMount_RejectsRelativePath(t *testing.T) {
+	_, err := GetHostStateMount("relative/path", ".claude/projects")
 	if err == nil {
-		t.Fatal("GetClaudeProjectsMount() error = nil, want error about absolute path")
+		t.Fatal("GetHostStateMount() error = nil, want error about absolute path")
 	}
 	if !strings.Contains(err.Error(), "must be absolute") {
 		t.Errorf("error message = %q, should mention 'must be absolute'", err.Error())
 	}
 }
 
-func TestGetClaudeProjectsMount_RejectsEmptyPath(t *testing.T) {
-	_, err := GetClaudeProjectsMount("")
+func TestGetHostStateMount_RejectsEmptyPath(t *testing.T) {
+	_, err := GetHostStateMount("", ".claude/projects")
 	if err == nil {
-		t.Fatal("GetClaudeProjectsMount() error = nil, want error about absolute path")
+		t.Fatal("GetHostStateMount() error = nil, want error about absolute path")
 	}
 }
 
@@ -78,24 +80,12 @@ func TestShareConstants(t *testing.T) {
 }
 
 func TestConfigVolumeResult(t *testing.T) {
-	// ConfigVolumeResult should exist as a struct with ConfigCreated and HistoryCreated fields.
+	// Zero value: nothing created.
 	var result ConfigVolumeResult
-
-	// Zero value should be false for both fields.
-	if result.ConfigCreated {
-		t.Error("ConfigCreated zero value should be false")
+	if result.CreatedByName["config"] {
+		t.Error("CreatedByName zero value should report false")
 	}
 	if result.HistoryCreated {
 		t.Error("HistoryCreated zero value should be false")
-	}
-
-	// Set fields and verify.
-	result.ConfigCreated = true
-	result.HistoryCreated = true
-	if !result.ConfigCreated {
-		t.Error("ConfigCreated should be true after setting")
-	}
-	if !result.HistoryCreated {
-		t.Error("HistoryCreated should be true after setting")
 	}
 }

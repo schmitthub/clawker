@@ -163,24 +163,6 @@ func TestEnvVarAccessors(t *testing.T) {
 	assert.Equal(t, "CLAWKER_TEST_REPO_DIR", cfg.TestRepoDirEnvVar())
 }
 
-func TestRequiredFirewallDomains(t *testing.T) {
-	cfg, err := NewBlankConfig()
-	require.NoError(t, err)
-
-	domains := cfg.RequiredFirewallDomains()
-	assert.Contains(t, domains, "api.anthropic.com")
-	assert.NotContains(
-		t,
-		domains,
-		"registry-1.docker.io",
-		"Docker registry domains should not be required — image pulls go through host daemon",
-	)
-
-	// Returned slice is a copy — mutations don't affect the original.
-	domains[0] = "mutated.com"
-	assert.Contains(t, cfg.RequiredFirewallDomains(), "api.anthropic.com")
-}
-
 func TestConfigDir_envOverride(t *testing.T) {
 	t.Setenv("CLAWKER_CONFIG_DIR", "/custom/config")
 	assert.Equal(t, "/custom/config", ConfigDir())
@@ -447,51 +429,6 @@ func TestFirewallEnabled_NilMeansEnabled(t *testing.T) {
 		"nil FirewallSettings should default to enabled")
 }
 
-func TestRequiredFirewallRules(t *testing.T) {
-	cfg, err := NewBlankConfig()
-	require.NoError(t, err)
-
-	rules := cfg.RequiredFirewallRules()
-	assert.GreaterOrEqual(t, len(rules), 9)
-
-	// Verify all required rules have proper proto and action
-	for _, r := range rules {
-		assert.NotEmpty(t, r.Dst)
-		assert.Equal(t, "https", r.Proto)
-		assert.Equal(t, "allow", r.Action)
-	}
-
-	// Verify OAuth domains are included (SNI filtering requires each domain explicitly)
-	domains := cfg.RequiredFirewallDomains()
-	assert.Contains(t, domains, "api.anthropic.com")
-	assert.Contains(t, domains, "platform.claude.com")
-	assert.Contains(t, domains, ".claude.ai")
-	assert.Contains(t, domains, "mcp-proxy.anthropic.com")
-	assert.Contains(t, domains, ".datadoghq.com", "Datadog wildcard should use leading-dot convention")
-	assert.Contains(t, domains, ".datadoghq.eu", "Datadog EU wildcard should use leading-dot convention")
-
-	// Returned slice is a copy
-	rules[0].Dst = "mutated.com"
-	assert.Equal(t, "api.anthropic.com", cfg.RequiredFirewallRules()[0].Dst)
-
-	// Nested PathRules are deep-copied: mutating a returned rule's PathRules
-	// must not corrupt the package-level defaults (these are load-bearing
-	// security denies, e.g. .claude.ai /public/ + /share/ UGC paths).
-	idx := -1
-	for i := range rules {
-		if len(rules[i].PathRules) > 0 {
-			idx = i
-			break
-		}
-	}
-	require.GreaterOrEqual(t, idx, 0, "expected at least one default rule with PathRules")
-	rules[idx].PathRules[0].Action = "allow"
-	rules[idx].PathRules = append(rules[idx].PathRules, PathRule{Path: "/injected/", Action: "allow"})
-
-	fresh := cfg.RequiredFirewallRules()[idx]
-	assert.Equal(t, "deny", fresh.PathRules[0].Action, "PathRules must be deep-copied; mutation leaked into defaults")
-	assert.Len(t, fresh.PathRules, 2, "appending to returned PathRules must not grow the defaults")
-}
 
 // --- Generated defaults validation ---
 

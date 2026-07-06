@@ -63,9 +63,6 @@ func newFirewallHarness(t *testing.T, requiredServices ...string) *harness.Harne
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
 build:
   image: "buildpack-deps:bookworm-scm"
-agent:
-  claude_code:
-    use_host_auth: false
 `)
 
 	regRes := h.Run("project", "register", "testproject")
@@ -131,9 +128,6 @@ build:
   image: "buildpack-deps:bookworm-scm"
   packages:
     - iputils-ping
-agent:
-  claude_code:
-    use_host_auth: false
 `)
 
 	regRes := h.Run("project", "register", "testproject")
@@ -285,9 +279,6 @@ func TestFirewall_ConfigRules(t *testing.T) {
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
 build:
   image: "buildpack-deps:bookworm-scm"
-agent:
-  claude_code:
-    use_host_auth: false
 security:
   firewall:
     rules:
@@ -487,9 +478,6 @@ func TestFirewall_HostProxyReachable(t *testing.T) {
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
 build:
   image: "buildpack-deps:bookworm-scm"
-agent:
-  claude_code:
-    use_host_auth: false
 `)
 
 	regRes := h.Run("project", "register", "testproject")
@@ -544,9 +532,6 @@ func TestFirewall_SSHTCPMapping(t *testing.T) {
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
 build:
   image: "buildpack-deps:bookworm-scm"
-agent:
-  claude_code:
-    use_host_auth: false
 security:
   firewall:
     rules:
@@ -695,9 +680,6 @@ func TestFirewall_DenySubdomainUnderWildcard(t *testing.T) {
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
 build:
   image: "buildpack-deps:bookworm-scm"
-agent:
-  claude_code:
-    use_host_auth: false
 security:
   firewall:
     rules:
@@ -758,9 +740,6 @@ func TestFirewall_HTTPDomainDetection(t *testing.T) {
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
 build:
   image: "buildpack-deps:bookworm-scm"
-agent:
-  claude_code:
-    use_host_auth: false
 security:
   firewall:
     rules:
@@ -840,9 +819,6 @@ func TestFirewall_FirewallDisabled(t *testing.T) {
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
 build:
   image: "buildpack-deps:bookworm-scm"
-agent:
-  claude_code:
-    use_host_auth: false
 `)
 	setup.WriteYAML(t, testenv.Settings, setup.Dirs.Config, `
 firewall:
@@ -902,9 +878,6 @@ func TestFirewall_PathRulesDefaultDeny(t *testing.T) {
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
 build:
   image: "buildpack-deps:bookworm-scm"
-agent:
-  claude_code:
-    use_host_auth: false
 security:
   firewall:
     rules:
@@ -1000,9 +973,6 @@ func TestFirewall_PathRulesExplicitDeny(t *testing.T) {
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
 build:
   image: "buildpack-deps:bookworm-scm"
-agent:
-  claude_code:
-    use_host_auth: false
 security:
   firewall:
     rules:
@@ -1097,9 +1067,6 @@ func TestFirewall_TLSPathRulesDefaultDeny(t *testing.T) {
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
 build:
   image: "buildpack-deps:bookworm-scm"
-agent:
-  claude_code:
-    use_host_auth: false
 security:
   firewall:
     rules:
@@ -1204,9 +1171,6 @@ func TestFirewall_PathRuleNormalizationDefeatsSmuggling(t *testing.T) {
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
 build:
   image: "buildpack-deps:bookworm-scm"
-agent:
-  claude_code:
-    use_host_auth: false
 security:
   firewall:
     rules:
@@ -1305,9 +1269,6 @@ func TestFirewall_TLSPathRulesExplicitDeny(t *testing.T) {
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
 build:
   image: "buildpack-deps:bookworm-scm"
-agent:
-  claude_code:
-    use_host_auth: false
 security:
   firewall:
     rules:
@@ -1407,9 +1368,6 @@ func TestFirewall_WildcardAndExactCoexist(t *testing.T) {
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
 build:
   image: "buildpack-deps:bookworm-scm"
-agent:
-  claude_code:
-    use_host_auth: false
 workspace:
   default_mode: "snapshot"
 security:

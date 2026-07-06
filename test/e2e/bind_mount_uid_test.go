@@ -16,7 +16,6 @@ import (
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
-	"github.com/schmitthub/clawker/internal/testenv"
 	"github.com/schmitthub/clawker/test/e2e/harness"
 )
 
@@ -65,20 +64,11 @@ func TestBindMountUID_E2E(t *testing.T) {
 			UseRealAdminClient: true,
 		},
 	}
-	setup := h.NewIsolatedFS(&harness.FSOptions{ProjectDir: "uid-bind"})
+	h.NewIsolatedFS(&harness.FSOptions{ProjectDir: "uid-bind"})
 
 	initRes := h.Run("project", "init", "uid-bind", "--yes", "--preset", "Bare")
 	require.NoError(t, initRes.Err, "init failed\nstdout: %s\nstderr: %s",
 		initRes.Stdout, initRes.Stderr)
-
-	// use_host_auth: false because the test env has no Claude credentials
-	// to forward; mount_projects: true is the default and the very thing
-	// we're asserting on.
-	setup.WriteYAML(t, testenv.ProjectConfigLocal, setup.ProjectDir, `
-agent:
-  claude_code:
-    use_host_auth: false
-`)
 
 	buildRes := h.Run("build", "--progress=none")
 	require.NoError(t, buildRes.Err, "build failed\nstdout: %s\nstderr: %s",

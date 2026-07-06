@@ -59,6 +59,25 @@ const (
 	LabelManaged   = LabelPrefix + "managed"
 	LabelProject   = LabelPrefix + "project"
 	LabelAgent     = LabelPrefix + "agent"
+	LabelHarness   = LabelPrefix + "harness"
+)
+
+// Infrastructure volume-name purpose suffixes. Volume names compose as
+// "clawker.<project>.<agent>-<purpose>". Harness bundles declare their own
+// persisted-dir volumes whose names may not collide with these.
+const (
+	VolumePurposeHistory   = "history"
+	VolumePurposeWorkspace = "workspace"
+)
+
+// Image tag aliases reserved by the harness-keyed tag scheme. Harness
+// registry keys may not collide with them.
+const (
+	// ImageTagDefaultAlias tags the registry-default harness's image.
+	ImageTagDefaultAlias = "default"
+	// ImageTagLatest is the legacy pre-harness tag; resolution accepts it
+	// as a fallback for images built before harness tags existed.
+	ImageTagLatest = "latest"
 	LabelVersion   = LabelPrefix + "version"
 	LabelImage     = LabelPrefix + "image"
 	LabelCreated   = LabelPrefix + "created"
@@ -222,6 +241,11 @@ const (
 )
 
 // File names (not paths — paths are runtime-resolved via accessor funcs below).
+// DefaultHarnessName is the built-in harness slug: the shipped bundle
+// selected when no settings registry entry is marked default. Cross-cutting —
+// bundler resolves with it, config's settings migration seeds it.
+const DefaultHarnessName = "claude"
+
 const (
 	ProjectConfigFile = "clawker.yaml"
 	// ProjectLocalConfigFile is the gitignored per-developer override that
@@ -286,6 +310,23 @@ const ClaudeProjectsSubdir = "projects"
 // project-config directory variant in a repo root, and the in-container
 // $HOME/.clawker directory where hook scripts land.
 const DotClawkerDir = "." + NamePrefix
+
+// Harness seed staging contract between the generated image and CP's
+// generic seed-apply init step. The master Dockerfile template stages each
+// harness seed file under $HOME/DotClawkerDir/SeedSubdir and writes
+// SeedManifestFile beside it (one `<apply> <dest>` line per seed, dest a
+// container-home-relative path); the CP config step interprets that
+// manifest on first boot. The template spells these values as literals —
+// keep them in sync with the master template when changing.
+const (
+	SeedSubdir       = "seed"
+	SeedManifestFile = "seed-manifest"
+)
+
+// PostInitMarkerFile marks a container whose post_init hook already ran
+// (or was absent) — written under DotClawkerDir so the once-per-container
+// contract holds across restarts without touching harness config paths.
+const PostInitMarkerFile = "post-initialized"
 
 // Lifecycle hook names. The CLI delivers <name>.sh scripts under the
 // in-container DotClawkerDir; clawkerd's init plan runs the matching

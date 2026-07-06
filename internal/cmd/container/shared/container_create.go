@@ -26,11 +26,13 @@ import (
 	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/api/types/network"
 	"github.com/schmitthub/clawker/internal/auth"
+	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/git"
+	"github.com/schmitthub/clawker/internal/harness"
 
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -1444,6 +1446,13 @@ type CreateContainerOptions struct {
 	Log             *logger.Logger
 	Is256Color      bool
 	IsTrueColor     bool
+
+	// harnessBundle is the container's harness identity, resolved once at
+	// the top of CreateContainer from the image's harness label (registry
+	// default for pre-label images). Internal — populated by
+	// CreateContainer, read by the create-path steps so staging, hooks,
+	// env, and the container label all agree.
+	harnessBundle *harness.Bundle
 }
 
 // CreateContainerResult holds the outputs of CreateContainer.
@@ -1473,6 +1482,18 @@ func CreateContainer(ctx context.Context, opts *CreateContainerOptions) (*Create
 	containerName, err := docker.ContainerName(opts.ProjectName, agentName)
 	if err != nil {
 		return nil, err
+	}
+
+	// Resolve the container's harness identity ONCE, from the image's
+	// harness label — staging, hooks, env, egress, and the container label
+	// must all agree on it regardless of what the registry default is today.
+	harnessName, err := harnessForImage(ctx, opts.Client, opts.Config, opts.Options.Image)
+	if err != nil {
+		return nil, fmt.Errorf("resolving container harness identity: %w", err)
+	}
+	opts.harnessBundle, err = bundler.LoadHarness(opts.Config, harnessName)
+	if err != nil {
+		return nil, fmt.Errorf("loading harness %q: %w", harnessName, err)
 	}
 
 	ws, err := prepareWorkspace(ctx, opts, agentName)
@@ -1704,9 +1725,12 @@ func guardWorktreeSnapshot(containerOpts *ContainerCreateOptions, projectCfg *co
 // user session data) are never tracked. A name-resolution failure is logged and
 // the volume is skipped — cleanup is best-effort and must not abort creation.
 func trackCreatedVolumes(scope *createScope, wsResult *workspace.SetupMountsResult, projectName, agentName string) {
-	if wsResult.ConfigVolumeResult.ConfigCreated {
-		if vn, vnErr := docker.VolumeName(projectName, agentName, docker.VolumePurposeConfig); vnErr != nil {
-			scope.log.Error().Err(vnErr).Msg("cannot determine config volume name for cleanup tracking")
+	for volName, created := range wsResult.ConfigVolumeResult.CreatedByName {
+		if !created {
+			continue
+		}
+		if vn, vnErr := docker.VolumeName(projectName, agentName, volName); vnErr != nil {
+			scope.log.Error().Err(vnErr).Str("volume", volName).Msg("cannot determine volume name for cleanup tracking")
 		} else {
 			scope.volumes = append(scope.volumes, vn)
 		}
@@ -1769,20 +1793,29 @@ func loadAgentBootstrapMaterial(projectName, agentName string) (agentBootstrapMa
 }
 
 // injectPostInitIfConfigured injects the post-init script into the freshly
-// created container when one is configured. Last creation step; on failure the
-// caller's deferred reclaim tears down the container and its newly-created
-// volumes, so no orphan remains. A blank (empty or whitespace-only) post_init
-// is equivalent to unset — skip injection entirely rather than deliver a no-op
-// wrapper (post_init is create-time once; there is no stale content to
-// overwrite).
-func injectPostInitIfConfigured(ctx context.Context, client *docker.Client, containerID string, projectCfg *config.Project, cfg config.Config, log *logger.Logger) error {
-	if strings.TrimSpace(projectCfg.Agent.PostInit) == "" {
+// created container when one is configured: the shared agent.post_init base
+// composed with the selected harness's post_init. Last creation step; on
+// failure the caller's deferred reclaim tears down the container and its
+// newly-created volumes, so no orphan remains. A blank (empty or
+// whitespace-only) composed post_init is equivalent to unset — skip injection
+// entirely rather than deliver a no-op wrapper (post_init is create-time
+// once; there is no stale content to overwrite).
+func injectPostInitIfConfigured(
+	ctx context.Context,
+	client *docker.Client,
+	containerID, harnessName string,
+	projectCfg *config.Project,
+	cfg config.Config,
+	log *logger.Logger,
+) error {
+	script := projectCfg.PostInitFor(harnessName)
+	if script == "" {
 		log.Debug().Msg("no post_init script configured; skipping injection")
 		return nil
 	}
 	if err := InjectPostInitScript(ctx, InjectPostInitOpts{
 		ContainerID:     containerID,
-		Script:          projectCfg.Agent.PostInit,
+		Script:          script,
 		Shell:           "",
 		Cfg:             cfg,
 		CopyToContainer: NewCopyToContainerFn(client),
@@ -1831,6 +1864,10 @@ func prepareWorkspace(ctx context.Context, opts *CreateContainerOptions, agentNa
 		ignoreFile = filepath.Join(projectRoot, consts.IgnoreFile)
 	}
 
+	// The staging manifest drives the config-volume target and host-state
+	// binds; the same bundle feeds config-volume init downstream.
+	bundle := opts.harnessBundle
+
 	wsResult, err := workspace.SetupMounts(ctx, opts.Client, workspace.SetupMountsConfig{
 		ModeOverride:   containerOpts.Mode,
 		Cfg:            opts.Config,
@@ -1838,8 +1875,11 @@ func prepareWorkspace(ctx context.Context, opts *CreateContainerOptions, agentNa
 		AgentName:      agentName,
 		WorkDir:        wd,
 		ProjectRootDir: projectRootDir,
-		ContainerPath:  wd, // Mount at host absolute path for Claude Code /resume compatibility
+		ContainerPath:  wd, // Mount at host absolute path for harness session /resume compatibility
 		IgnoreFile:     ignoreFile,
+		Harness:        bundle.Manifest.Staging,
+		HarnessVolumes: bundle.Manifest.Volumes,
+		HarnessConfig:  opts.Config.Project().HarnessConfigFor(bundle.Name),
 		Log:            log,
 	})
 	if err != nil {
@@ -1849,24 +1889,49 @@ func prepareWorkspace(ctx context.Context, opts *CreateContainerOptions, agentNa
 	return &workspaceSetup{result: wsResult, wd: wd, projectRootDir: projectRootDir}, nil
 }
 
-// initConfigVolume seeds the host Claude config into a freshly created config
-// volume. A no-op when the config volume already existed (preserves user
-// session data).
+// initConfigVolume seeds host harness state into the freshly created
+// harness volumes. Pre-existing volumes (user session data) are never
+// re-seeded — InitContainerConfig no-ops when nothing is fresh.
 func initConfigVolume(ctx context.Context, opts *CreateContainerOptions, agentName string, ws *workspaceSetup) error {
-	if !ws.result.ConfigVolumeResult.ConfigCreated {
-		return nil
-	}
+	bundle := opts.harnessBundle
 	if err := InitContainerConfig(ctx, InitConfigOpts{
 		ProjectName:      opts.ProjectName,
 		AgentName:        agentName,
 		ContainerWorkDir: ws.result.ContainerPath,
-		ClaudeCode:       opts.Config.Project().Agent.ClaudeCode,
+		Harness:          opts.Config.Project().HarnessConfigFor(bundle.Name),
+		Staging:          bundle.Manifest.Staging,
+		Volumes:          bundle.Manifest.Volumes,
+		FreshVolumes:     ws.result.ConfigVolumeResult.CreatedByName,
+		HostProjectRoot:  ws.projectRootDir,
 		CopyToVolume:     opts.Client.CopyToVolume,
 		Log:              opts.Log,
 	}); err != nil {
 		return fmt.Errorf("container init: %w", err)
 	}
 	return nil
+}
+
+// harnessForImage derives the container's harness identity from the image's
+// harness label — the image IS the built harness. Images built before
+// harness labels existed fall back to the registry default.
+func harnessForImage(
+	ctx context.Context,
+	client *docker.Client,
+	cfg config.Config,
+	imageRef string,
+) (string, error) {
+	if inspect, err := client.ImageInspect(ctx, imageRef); err == nil {
+		if inspect.Config != nil {
+			if name := inspect.Config.Labels[consts.LabelHarness]; name != "" {
+				return name, nil
+			}
+		}
+	}
+	name, err := bundler.ResolveHarnessName(cfg, "")
+	if err != nil {
+		return "", fmt.Errorf("image %s carries no harness label and default resolution failed: %w", imageRef, err)
+	}
+	return name, nil
 }
 
 // containerConfigs bundles the three Docker create configs produced by
@@ -1955,7 +2020,8 @@ func finalizeCreatedContainer(ctx context.Context, opts *CreateContainerOptions,
 		return fmt.Errorf("agent bootstrap: %w", err)
 	}
 
-	return injectPostInitIfConfigured(ctx, client, containerID, opts.Config.Project(), opts.Config, opts.Log)
+	return injectPostInitIfConfigured(
+		ctx, client, containerID, opts.harnessBundle.Name, opts.Config.Project(), opts.Config, opts.Log)
 }
 
 // createAndBootstrapContainer resolves the agent bootstrap material, creates the
@@ -1975,6 +2041,11 @@ func createAndBootstrapContainer(ctx context.Context, opts *CreateContainerOptio
 	}
 
 	extraLabels := client.ContainerLabels(opts.ProjectName, agentName, opts.Version, opts.Options.Image, ws.wd)
+
+	// Stamp the harness identity onto the container — the runtime join key
+	// start-time consumers (pre_run composition, egress refresh) read back
+	// instead of re-resolving the registry default.
+	extraLabels[consts.LabelHarness] = opts.harnessBundle.Name
 
 	resp, err := client.ContainerCreate(ctx, docker.ContainerCreateOptions{
 		Config:           cfgs.container,
@@ -2011,7 +2082,9 @@ func buildCreateTimeEnv(ctx context.Context, opts *CreateContainerOptions, conta
 		workspaceMode = projectCfg.Workspace.DefaultMode
 	}
 
-	agentEnv, warnings, err := ResolveAgentEnv(projectCfg.Agent, wd, log)
+	harnessName := opts.harnessBundle.Name
+	agentEnv, warnings, err := ResolveAgentEnv(
+		projectCfg.Agent, projectCfg.HarnessConfigFor(harnessName), harnessName, wd, log)
 	if err != nil {
 		return nil, nil, fmt.Errorf("resolving agent environment: %w", err)
 	}

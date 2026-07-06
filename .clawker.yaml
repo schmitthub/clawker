@@ -1,9 +1,5 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/schmitthub/clawker/v0.12.11/docs/schemas/clawker.schema.json
 agent:
-  claude_code:
-    config:
-      strategy: copy
-    use_host_auth: true
   editor: nano
   enable_shared_dir: true
   env:
@@ -11,10 +7,15 @@ agent:
   from_env:
     - GH_TOKEN
     - CONTEXT7_API_KEY
-  post_init: |
-    claude mcp add -s local serena -- uvx --from git+https://github.com/oraios/serena@ad7cf51ec3cd69f4e1cc6d2eab679f8876897b7a serena start-mcp-server --context claude-code --project "$(pwd)" --enable-web-dashboard false
-    claude mcp add -s local -t http deepwiki https://mcp.deepwiki.com/mcp
-    claude mcp add --scope local context7 -- npx -y @upstash/context7-mcp --api-key "$CONTEXT7_API_KEY"
+harnesses:
+  claude:
+    config:
+      strategy: copy
+    post_init: |
+      claude mcp add -s local serena -- uvx --from git+https://github.com/oraios/serena@ad7cf51ec3cd69f4e1cc6d2eab679f8876897b7a serena start-mcp-server --context claude-code --project "$(pwd)" --enable-web-dashboard false
+      claude mcp add -s local -t http deepwiki https://mcp.deepwiki.com/mcp
+      claude mcp add --scope local context7 -- npx -y @upstash/context7-mcp --api-key "$CONTEXT7_API_KEY"
+  codex: {}
 build:
   image: golang:1.26-bookworm
   instructions:

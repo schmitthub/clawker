@@ -4,16 +4,16 @@ title: "clawker"
 
 ## clawker
 
-Manage Claude Code in secure Docker containers with clawker
+Run coding agents in secure Docker containers with clawker
 
 ### Synopsis
 
-Clawker (claude + docker) wraps Claude Code in safe, reproducible, monitored, isolated Docker containers.
+Clawker wraps coding agent harnesses (Claude Code and others) in safe, reproducible, monitored, isolated Docker containers.
 
 Quick start:
   clawker init           # Initialize project in current directory
   clawker build          # Build the container image
-  clawker run            # Start Claude Code in a container
+  clawker run            # Start the agent in a container
   clawker stop           # Stop the container
 
 Workspace modes:
@@ -25,7 +25,7 @@ Workspace modes:
 * [clawker alias](clawker_alias) - Manage command aliases
 * [clawker attach](clawker_attach) - Attach local standard input, output, and error streams to a running container
 * [clawker auth](clawker_auth) - Manage control plane authentication material
-* [clawker build](clawker_build) - Build an image from a clawker project
+* [clawker build](clawker_build) - Build the project image
 * [clawker container](clawker_container) - Manage containers
 * [clawker controlplane](clawker_controlplane) - Break-glass control plane lifecycle
 * [clawker cp](clawker_cp) - Copy files/folders between a container and the local filesystem

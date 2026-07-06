@@ -69,7 +69,15 @@ message RegisterRequired {}
 // reader → no-op success). Reply: Done{exit_code:0} on release or
 // reconnect-replay; Error{NOT_FOUND} if the fifo is missing entirely
 // (build drift); Error{IO_ERROR} on syscall-level failure.
-message AgentReady {}
+message AgentReady {
+  // default_cmd is the image's default CMD binary (Config.Cmd[0], resolved
+  // by CP via image inspect). clawkerd's spawn path uses it for the
+  // docker-image "--help routing" convention: when argv[0] is a flag or is
+  // not on PATH, default_cmd is prepended so `docker run <image> --help`
+  // invokes the harness CLI. Empty disables routing — argv runs (and
+  // fails) as-is.
+  string default_cmd = 1;
+}
 
 // AgentInitialized signals that the agent has completed its initialization sequence.
 message AgentInitialized {}

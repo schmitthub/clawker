@@ -23,6 +23,7 @@ import (
 	clawkerdembed "github.com/schmitthub/clawker/clawkerd/embed"
 	"github.com/schmitthub/clawker/internal/bundler/registry"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/harness"
 	"github.com/schmitthub/clawker/internal/hostproxy/internals"
 )
 
@@ -34,17 +35,19 @@ var dockerfileFS embed.FS
 //go:embed assets/Dockerfile.tmpl
 var DockerfileTemplate string
 
-//go:embed assets/statusline.sh
-var StatuslineScript string
+// Build-context filenames for clawker-owned assets, referenced by COPY
+// instructions in the master Dockerfile template.
+const (
+	ctxFileHostOpen      = "host-open.sh"
+	ctxFileCallbackFwd   = "callback-forwarder.go"
+	ctxFileGitCredential = "git-credential-clawker.sh" //nolint:gosec // filename, not a credential
+	ctxFileSocketServer  = "clawker-socket-server.go"
+	ctxFileClawkerd      = "clawkerd"
+)
 
-//go:embed assets/claude-settings.json
-var SettingsFile string
-
-//go:embed assets/claude-config.json
-var ConfigFile string
-
-//go:embed assets/clawker-agent-prompt.md
-var AgentPromptFile string
+// tarFileMode is the mode recorded for files streamed into the build-context
+// tar archive.
+const tarFileMode = 0o644
 
 // Re-exported from internal/hostproxy/internals so the bundler hashes
 // them with its own assets.
@@ -57,7 +60,7 @@ var (
 
 // Default values for container configuration
 const (
-	DefaultClaudeCodeVersion = "latest"
+	DefaultHarnessVersion = "latest"
 	DefaultUsername          = "claude"
 	DefaultShell             = "/bin/zsh"
 	// DefaultGoBuilderImage is the Go toolchain image used for builder stages.
@@ -84,14 +87,25 @@ type DockerfileManager struct {
 // Config-dependent values (env vars, labels, EXPOSE, VOLUME, HEALTHCHECK, SHELL)
 // are injected at container creation time or via the Docker build API.
 type DockerfileContext struct {
-	BaseImage       string
-	Packages        []string
-	Username        string
-	UID             int
-	GID             int
-	Shell           string
-	WorkspacePath   string
-	ClaudeVersion   string
+	BaseImage     string
+	Packages      []string
+	Username      string
+	UID           int
+	GID           int
+	Shell         string
+	WorkspacePath string
+	// HarnessVersion is the concrete harness tool version rendered into the
+	// harness template's version ARG (e.g. ARG CLAUDE_CODE_VERSION=2.1.5).
+	HarnessVersion string
+	// HarnessVolumeDirs are the harness's declared persisted-dir paths
+	// (home-relative), pre-created by the master template's runtime-dirs
+	// RUN so the volume mounts inherit correct ownership.
+	HarnessVolumeDirs []string
+	// HarnessSeeds drive the master template's generic seed-staging section:
+	// each seed file is COPY'd into the image's seed dir and listed in the
+	// baked seed manifest that CP's generic seed-apply step interprets on
+	// first boot.
+	HarnessSeeds    []harness.Seed
 	IsAlpine        bool
 	BuildKitEnabled bool
 	Instructions    *DockerfileInstructions
@@ -134,7 +148,7 @@ type DockerfileInject struct {
 	AfterPackages      []string
 	AfterUserSetup     []string
 	AfterUserSwitch    []string
-	AfterClaudeInstall []string
+	AfterHarnessInstall []string
 	BeforeEntrypoint   []string
 }
 
@@ -175,15 +189,30 @@ func (m *DockerfileManager) GenerateDockerfiles(versions *registry.VersionsFile)
 		return fmt.Errorf("failed to resolve dockerfiles directory: %w", err)
 	}
 
-	// Parse the template
+	// Parse the template, composing the selected harness bundle's blocks
+	// onto the master's declared slots.
 	tmplContent, err := dockerfileFS.ReadFile("assets/Dockerfile.tmpl")
 	if err != nil {
 		return fmt.Errorf("failed to read Dockerfile template: %w", err)
 	}
 
-	tmpl, err := template.New("Dockerfile").Parse(string(tmplContent))
+	harnessName, err := ResolveHarnessName(m.cfg, "")
+	if err != nil {
+		return err
+	}
+	bundle, err := LoadHarness(m.cfg, harnessName)
+	if err != nil {
+		return err
+	}
+
+	tmpl, err := harness.Compose(string(tmplContent), bundle)
 	if err != nil {
 		return fmt.Errorf("failed to parse Dockerfile template: %w", err)
+	}
+
+	// Write the harness bundle's assets/ tree to the dockerfiles directory.
+	if assetsErr := writeBundleAssetsToDir(bundle, dockerfilesDir); assetsErr != nil {
+		return assetsErr
 	}
 
 	// Write all required scripts to the dockerfiles directory (only once).
@@ -194,15 +223,11 @@ func (m *DockerfileManager) GenerateDockerfiles(versions *registry.VersionsFile)
 		content []byte
 		mode    os.FileMode
 	}{
-		{"clawker-agent-prompt.md", []byte(AgentPromptFile), 0644},
-		{"statusline.sh", []byte(StatuslineScript), 0755},
-		{"claude-settings.json", []byte(SettingsFile), 0644},
-		{"claude-config.json", []byte(ConfigFile), 0644},
-		{"host-open.sh", []byte(HostOpenScript), 0755},
-		{"callback-forwarder.go", []byte(CallbackForwarderSource), 0644},
-		{"git-credential-clawker.sh", []byte(GitCredentialScript), 0755},
-		{"clawker-socket-server.go", []byte(SocketForwarderSource), 0644},
-		{"clawkerd", clawkerdembed.Binary, 0755},
+		{ctxFileHostOpen, []byte(HostOpenScript), 0o755},
+		{ctxFileCallbackFwd, []byte(CallbackForwarderSource), 0o644},
+		{ctxFileGitCredential, []byte(GitCredentialScript), 0o755},
+		{ctxFileSocketServer, []byte(SocketForwarderSource), 0o644},
+		{ctxFileClawkerd, clawkerdembed.Binary, 0o755},
 	}
 
 	for _, script := range scripts {
@@ -223,13 +248,16 @@ func (m *DockerfileManager) GenerateDockerfiles(versions *registry.VersionsFile)
 			if err != nil {
 				return fmt.Errorf("failed to create context for %s-%s: %w", info.FullVersion, variant, err)
 			}
+			ctx.HarnessVolumeDirs = harnessVolumeDirs(bundle)
+			ctx.HarnessSeeds = bundle.Manifest.Seeds
 			content, err := m.renderDockerfile(tmpl, ctx)
 			if err != nil {
 				return fmt.Errorf("failed to render Dockerfile for %s-%s: %w", info.FullVersion, variant, err)
 			}
 
-			if err := os.WriteFile(path, content, 0644); err != nil {
-				return fmt.Errorf("failed to write Dockerfile %s: %w", path, err)
+			//nolint:gosec // generated Dockerfile, not a secret
+			if writeErr := os.WriteFile(path, content, 0o644); writeErr != nil {
+				return fmt.Errorf("failed to write Dockerfile %s: %w", path, writeErr)
 			}
 		}
 	}
@@ -253,7 +281,7 @@ func (m *DockerfileManager) createContext(version, variant string) (*DockerfileC
 		GID:                      m.cfg.ContainerGID(),
 		Shell:                    "/bin/zsh",
 		WorkspacePath:            "/workspace",
-		ClaudeVersion:            version,
+		HarnessVersion:           version,
 		IsAlpine:                 isAlpine,
 		BuildKitEnabled:          m.BuildKitEnabled,
 		Instructions:             nil,
@@ -300,12 +328,35 @@ type ProjectGenerator struct {
 	cfg             config.Config
 	workDir         string
 	BuildKitEnabled bool // Enables --mount=type=cache directives in generated Dockerfiles
-	// ClaudeCodeVersion is the concrete version string baked into the rendered
+	// HarnessVersion is the concrete version string baked into the rendered
 	// ARG default (e.g. "2.1.5"). The npm-registry resolution that turns the
 	// "latest" dist-tag into a concrete version happens at the command layer
-	// via bundler.ResolveLatestClaudeCodeVersion — bundler itself doesn't fetch.
-	// Empty means use DefaultClaudeCodeVersion ("latest") as a literal.
-	ClaudeCodeVersion string
+	// via bundler.ResolveLatestHarnessVersion — bundler itself doesn't fetch.
+	// Empty means use DefaultHarnessVersion ("latest") as a literal.
+	HarnessVersion string
+	// Harness selects the harness bundle whose template blocks and context
+	// files compose the rendered Dockerfile. Empty means the registry entry
+	// marked default (falling back to DefaultHarnessName).
+	Harness string
+
+	bundle *harness.Bundle // lazily loaded via harnessBundle()
+}
+
+// harnessBundle resolves and caches the selected harness bundle.
+func (g *ProjectGenerator) harnessBundle() (*harness.Bundle, error) {
+	if g.bundle != nil {
+		return g.bundle, nil
+	}
+	name, err := ResolveHarnessName(g.cfg, g.Harness)
+	if err != nil {
+		return nil, err
+	}
+	b, err := LoadHarness(g.cfg, name)
+	if err != nil {
+		return nil, err
+	}
+	g.bundle = b
+	return b, nil
 }
 
 // NewProjectGenerator creates a new project Dockerfile generator.
@@ -317,16 +368,21 @@ func NewProjectGenerator(cfg config.Config, workDir string) *ProjectGenerator {
 }
 
 // Generate creates a Dockerfile based on the project configuration. The
-// ClaudeCodeVersion baked into the rendered ARG default comes from the
-// generator's ClaudeCodeVersion field (set by callers from the resolved
-// npm version) — empty falls back to DefaultClaudeCodeVersion literal.
+// HarnessVersion baked into the rendered ARG default comes from the
+// generator's HarnessVersion field (set by callers from the resolved
+// npm version) — empty falls back to DefaultHarnessVersion literal.
 func (g *ProjectGenerator) Generate() ([]byte, error) {
 	tctx, err := g.buildContext()
 	if err != nil {
 		return nil, fmt.Errorf("failed to build context: %w", err)
 	}
 
-	tmpl, err := template.New("Dockerfile").Parse(DockerfileTemplate)
+	bundle, err := g.harnessBundle()
+	if err != nil {
+		return nil, err
+	}
+
+	tmpl, err := harness.Compose(DockerfileTemplate, bundle)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse Dockerfile template: %w", err)
 	}
@@ -360,24 +416,17 @@ func (g *ProjectGenerator) GenerateBuildContextFromDockerfile(dockerfile []byte)
 		return nil, err
 	}
 
-	// Add statusline script
-	if err := addFileToTar(tw, "statusline.sh", []byte(StatuslineScript)); err != nil {
-		return nil, err
+	// Add the harness bundle's assets/ tree (config seeds, scripts,
+	// instruction files — referenced by COPY instructions in the harness
+	// template blocks and seeds[].file entries).
+	bundle, bundleErr := g.harnessBundle()
+	if bundleErr != nil {
+		return nil, bundleErr
 	}
-
-	// Add settings file json
-	if err := addFileToTar(tw, "claude-settings.json", []byte(SettingsFile)); err != nil {
-		return nil, err
-	}
-
-	// Add claude config seed (onboarding bypass + session pointer persistence)
-	if err := addFileToTar(tw, "claude-config.json", []byte(ConfigFile)); err != nil {
-		return nil, err
-	}
-
-	// Add agent prompt file for in-container agent awareness
-	if err := addFileToTar(tw, "clawker-agent-prompt.md", []byte(AgentPromptFile)); err != nil {
-		return nil, err
+	if walkErr := bundle.WalkAssets(func(relPath string, content []byte) error {
+		return addFileToTar(tw, relPath, content)
+	}); walkErr != nil {
+		return nil, fmt.Errorf("stage harness assets: %w", walkErr)
 	}
 
 	// Conditionally add firewall CA cert for MITM inspection
@@ -392,29 +441,29 @@ func (g *ProjectGenerator) GenerateBuildContextFromDockerfile(dockerfile []byte)
 	}
 
 	// Add host-open script for opening URLs on host machine
-	if err := addFileToTar(tw, "host-open.sh", []byte(HostOpenScript)); err != nil {
+	if err := addFileToTar(tw, ctxFileHostOpen, []byte(HostOpenScript)); err != nil {
 		return nil, err
 	}
 
 	// Add callback-forwarder Go source for compilation in multi-stage build
-	if err := addFileToTar(tw, "callback-forwarder.go", []byte(CallbackForwarderSource)); err != nil {
+	if err := addFileToTar(tw, ctxFileCallbackFwd, []byte(CallbackForwarderSource)); err != nil {
 		return nil, err
 	}
 
 	// Add git-credential-clawker script for git credential forwarding
-	if err := addFileToTar(tw, "git-credential-clawker.sh", []byte(GitCredentialScript)); err != nil {
+	if err := addFileToTar(tw, ctxFileGitCredential, []byte(GitCredentialScript)); err != nil {
 		return nil, err
 	}
 
 	// Add clawker-socket-server source for compilation in multi-stage build
-	if err := addFileToTar(tw, "clawker-socket-server.go", []byte(SocketForwarderSource)); err != nil {
+	if err := addFileToTar(tw, ctxFileSocketServer, []byte(SocketForwarderSource)); err != nil {
 		return nil, err
 	}
 
 	// Add the clawkerd binary itself — it's pre-compiled in the
 	// clawker CLI release and dropped into every per-project image
 	// at /usr/local/bin/clawkerd by the Dockerfile.
-	if err := addFileToTar(tw, "clawkerd", clawkerdembed.Binary); err != nil {
+	if err := addFileToTar(tw, ctxFileClawkerd, clawkerdembed.Binary); err != nil {
 		return nil, err
 	}
 
@@ -430,8 +479,18 @@ func (g *ProjectGenerator) GenerateBuildContextFromDockerfile(dockerfile []byte)
 // because it creates fsutil.FS mounts from directory paths.
 func (g *ProjectGenerator) WriteBuildContextToDir(dir string, dockerfile []byte) error {
 	// Write Dockerfile
-	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), dockerfile, 0644); err != nil {
+	//nolint:gosec // generated Dockerfile, not a secret
+	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), dockerfile, 0o644); err != nil {
 		return fmt.Errorf("failed to write Dockerfile: %w", err)
+	}
+
+	// Write the harness bundle's assets/ tree (mirrors GenerateBuildContextFromDockerfile).
+	bundle, err := g.harnessBundle()
+	if err != nil {
+		return err
+	}
+	if walkErr := writeBundleAssetsToDir(bundle, dir); walkErr != nil {
+		return walkErr
 	}
 
 	// Write all supporting scripts (mirrors GenerateBuildContextFromDockerfile).
@@ -442,15 +501,11 @@ func (g *ProjectGenerator) WriteBuildContextToDir(dir string, dockerfile []byte)
 		content []byte
 		mode    os.FileMode
 	}{
-		{"clawker-agent-prompt.md", []byte(AgentPromptFile), 0644},
-		{"statusline.sh", []byte(StatuslineScript), 0755},
-		{"claude-settings.json", []byte(SettingsFile), 0644},
-		{"claude-config.json", []byte(ConfigFile), 0644},
-		{"host-open.sh", []byte(HostOpenScript), 0755},
-		{"callback-forwarder.go", []byte(CallbackForwarderSource), 0644},
-		{"git-credential-clawker.sh", []byte(GitCredentialScript), 0755},
-		{"clawker-socket-server.go", []byte(SocketForwarderSource), 0644},
-		{"clawkerd", clawkerdembed.Binary, 0755},
+		{ctxFileHostOpen, []byte(HostOpenScript), 0o755},
+		{ctxFileCallbackFwd, []byte(CallbackForwarderSource), 0o644},
+		{ctxFileGitCredential, []byte(GitCredentialScript), 0o755},
+		{ctxFileSocketServer, []byte(SocketForwarderSource), 0o644},
+		{ctxFileClawkerd, clawkerdembed.Binary, 0o755},
 	}
 
 	for _, s := range scripts {
@@ -465,8 +520,11 @@ func (g *ProjectGenerator) WriteBuildContextToDir(dir string, dockerfile []byte)
 		if err != nil {
 			return fmt.Errorf("failed to read firewall CA cert: %w", err)
 		}
-		if err := os.WriteFile(filepath.Join(dir, "clawker-ca.crt"), content, 0644); err != nil {
-			return fmt.Errorf("failed to write clawker-ca.crt: %w", err)
+		// The CA cert is COPY'd into the image and must stay world-readable
+		// there — it is the public half only, not a secret.
+		//nolint:gosec // public cert half only — must stay world-readable in-image
+		if writeErr := os.WriteFile(filepath.Join(dir, "clawker-ca.crt"), content, 0o644); writeErr != nil {
+			return fmt.Errorf("failed to write clawker-ca.crt: %w", writeErr)
 		}
 	}
 
@@ -552,9 +610,14 @@ func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
 		hasFirewallCA = true
 	}
 
-	claudeVersion := g.ClaudeCodeVersion
-	if claudeVersion == "" {
-		claudeVersion = DefaultClaudeCodeVersion
+	harnessVersion := g.HarnessVersion
+	if harnessVersion == "" {
+		harnessVersion = DefaultHarnessVersion
+	}
+
+	bundle, err := g.harnessBundle()
+	if err != nil {
+		return nil, err
 	}
 
 	tctx := &DockerfileContext{
@@ -565,7 +628,9 @@ func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
 		GID:                      g.cfg.ContainerGID(),
 		Shell:                    DefaultShell,
 		WorkspacePath:            "/workspace",
-		ClaudeVersion:            claudeVersion,
+		HarnessVersion:           harnessVersion,
+		HarnessVolumeDirs:        harnessVolumeDirs(bundle),
+		HarnessSeeds:             bundle.Manifest.Seeds,
 		IsAlpine:                 isAlpine,
 		BuildKitEnabled:          g.BuildKitEnabled,
 		HasFirewallCA:            hasFirewallCA,
@@ -598,7 +663,9 @@ func (g *ProjectGenerator) buildContext() (*DockerfileContext, error) {
 			AfterPackages:      inj.AfterPackages,
 			AfterUserSetup:     inj.AfterUserSetup,
 			AfterUserSwitch:    inj.AfterUserSwitch,
-			AfterClaudeInstall: inj.AfterClaudeInstall,
+			// Legacy after_claude_install entries render first, at the same
+			// position — the key is deprecated, not moved.
+			AfterHarnessInstall: append(append([]string{}, inj.AfterClaudeInstall...), inj.AfterHarnessInstall...),
 			BeforeEntrypoint:   inj.BeforeEntrypoint,
 		}
 	}
@@ -721,13 +788,13 @@ func generateCA(certPath, keyPath string) error {
 func addFileToTar(tw *tar.Writer, name string, content []byte) error {
 	header := &tar.Header{
 		Name: name,
-		Mode: 0644,
+		Mode: tarFileMode,
 		Size: int64(len(content)),
 	}
 
 	// Make scripts executable
 	if strings.HasSuffix(name, ".sh") {
-		header.Mode = 0755
+		header.Mode = 0o755
 	}
 
 	if err := tw.WriteHeader(header); err != nil {
@@ -738,6 +805,36 @@ func addFileToTar(tw *tar.Writer, name string, content []byte) error {
 		return fmt.Errorf("failed to write tar content for %s: %w", name, err)
 	}
 
+	return nil
+}
+
+// harnessVolumeDirs returns the bundle's declared persisted-dir paths,
+// normalized home-relative, for the master template's runtime-dirs RUN.
+func harnessVolumeDirs(bundle *harness.Bundle) []string {
+	dirs := make([]string, 0, len(bundle.Manifest.Volumes))
+	for _, v := range bundle.Manifest.Volumes {
+		dirs = append(dirs, harness.NormalizeContainerPath(v.Path))
+	}
+	return dirs
+}
+
+// writeBundleAssetsToDir writes a harness bundle's assets/ tree into dir,
+// preserving the assets/-prefixed layout the template's COPY instructions
+// reference.
+func writeBundleAssetsToDir(bundle *harness.Bundle, dir string) error {
+	err := bundle.WalkAssets(func(relPath string, content []byte) error {
+		dest := filepath.Join(dir, filepath.FromSlash(relPath))
+		if err := os.MkdirAll(filepath.Dir(dest), 0o750); err != nil {
+			return fmt.Errorf("create asset dir for %s: %w", relPath, err)
+		}
+		if err := os.WriteFile(dest, content, harness.FileMode(relPath)); err != nil {
+			return fmt.Errorf("failed to write %s: %w", relPath, err)
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("stage harness assets: %w", err)
+	}
 	return nil
 }
 
@@ -807,7 +904,6 @@ func CreateBuildContextFromDir(dir string, dockerfilePath string) (io.Reader, er
 
 		return nil
 	})
-
 	if err != nil {
 		return nil, err
 	}

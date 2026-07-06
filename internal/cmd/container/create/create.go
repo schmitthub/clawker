@@ -10,14 +10,15 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
 
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/prompter"
 	"github.com/schmitthub/clawker/internal/tui"
-	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 )
 
 // CreateOptions holds options for the create command.
@@ -133,21 +134,13 @@ func createRun(ctx context.Context, opts *CreateOptions) error {
 		}
 	}
 
-	if containerOpts.Image == "@" {
-		resolvedImage, err := client.ResolveImageWithSource(ctx, projectName)
-		if err != nil {
-			return fmt.Errorf("resolving image: %w", err)
+	if harnessTag, isPlaceholder := shared.ParseImagePlaceholder(containerOpts.Image); isPlaceholder {
+		ref, resolveErr := shared.ResolvePlaceholderImage(
+			ctx, client, cfg, ios, projectName, harnessTag, "create")
+		if resolveErr != nil {
+			return fmt.Errorf("resolving image: %w", resolveErr)
 		}
-		if resolvedImage == nil {
-			cs := ios.ColorScheme()
-			fmt.Fprintf(ios.ErrOut, "%s No built image found for \"@\"\n", cs.FailureIcon())
-			fmt.Fprintf(ios.ErrOut, "\n%s Next steps:\n", cs.InfoIcon())
-			fmt.Fprintln(ios.ErrOut, "  1. Build an image first: clawker build")
-			fmt.Fprintln(ios.ErrOut, "  2. Or specify an image: clawker container create IMAGE")
-			return cmdutil.SilentError
-		}
-
-		containerOpts.Image = resolvedImage.Reference
+		containerOpts.Image = ref
 	}
 
 	// Defensive check: --name and --agent should not both be set

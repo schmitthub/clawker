@@ -4,76 +4,88 @@ import (
 	"context"
 	"io"
 	"os"
-	"os/user"
 	"path/filepath"
 	"sync"
 	"testing"
 
-	"github.com/schmitthub/clawker/internal/config"
-	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
-	"github.com/schmitthub/clawker/internal/keyring"
-	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/harness"
+	"github.com/schmitthub/clawker/internal/logger"
 )
 
-func boolPtr(b bool) *bool { return &b }
+// testClaudeStaging mirrors the claude bundle's staging manifest — the
+// shape InitContainerConfig consumed implicitly before staging went
+// manifest-driven.
+func testClaudeStaging() harness.Staging {
+	return harness.Staging{
+		Copy: []harness.CopySpec{
+			{
+				Src: "${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json", Dest: ".claude/settings.json",
+				JSONKeys: []string{"enabledPlugins"}, Skip: nil, JSONRewrites: nil,
+			},
+			{
+				Src: "${CLAUDE_CONFIG_DIR:-~/.claude}/CLAUDE.md", Dest: ".claude/CLAUDE.md",
+				JSONKeys: nil, Skip: nil, JSONRewrites: nil,
+			},
+			{
+				Src: "${CLAUDE_CONFIG_DIR:-~/.claude}/agents", Dest: ".claude/agents",
+				JSONKeys: nil, Skip: nil, JSONRewrites: nil,
+			},
+			{
+				Src: "${CLAUDE_CONFIG_DIR:-~/.claude}/skills", Dest: ".claude/skills",
+				JSONKeys: nil, Skip: nil, JSONRewrites: nil,
+			},
+			{
+				Src: "${CLAUDE_CONFIG_DIR:-~/.claude}/commands", Dest: ".claude/commands",
+				JSONKeys: nil, Skip: nil, JSONRewrites: nil,
+			},
+		},
+		Mounts: nil,
+	}
+}
+
+// testHarnessCfg builds a fully-specified HarnessConfig for init tests; the
+// per-harness env/hook fields are irrelevant to config-volume init.
+func testHarnessCfg(strategy string) *config.HarnessConfig {
+	return &config.HarnessConfig{
+		Config:        config.HarnessConfigOptions{Strategy: strategy},
+		MountProjects: nil,
+		EnvFile:       nil,
+		FromEnv:       nil,
+		Env:           nil,
+		PostInit:      "",
+		PreRun:        "",
+	}
+}
 
 // ---------------------------------------------------------------------------
 // InitContainerConfig tests
 // ---------------------------------------------------------------------------
 
-func TestInitContainerConfig_FreshStrategy_NoHostAuth(t *testing.T) {
+func TestInitContainerConfig_FreshStrategy_NoCopy(t *testing.T) {
 	tracker := &copyTracker{}
 	opts := InitConfigOpts{
 		ProjectName:      "myapp",
 		AgentName:        "dev",
 		ContainerWorkDir: "/workspace",
-		ClaudeCode: &config.ClaudeCodeConfig{
-			Config:      config.ClaudeCodeConfigOptions{Strategy: "fresh"},
-			UseHostAuth: boolPtr(false),
-		},
-		CopyToVolume: tracker.copyToVolumeFn(),
-		Log:          logger.Nop(),
+		Harness:          testHarnessCfg("fresh"),
+		Staging:          testClaudeStaging(),
+		Volumes:          []harness.VolumeSpec{{Name: "config", Path: ".claude"}},
+		FreshVolumes:     map[string]bool{"config": true},
+		CopyToVolume:     tracker.copyToVolumeFn(),
+		Log:              logger.Nop(),
 	}
 
 	err := InitContainerConfig(context.Background(), opts)
 	require.NoError(t, err)
-	assert.Equal(t, 0, tracker.callCount(), "should not call CopyToVolume for fresh+no-auth")
+	assert.Equal(t, 0, tracker.callCount(), "fresh strategy must not copy anything to the volume")
 }
 
-func TestInitContainerConfig_FreshStrategy_WithHostAuth(t *testing.T) {
-	keyring.MockInit()
-	seedTestCredentials(t)
-
-	hostDir := t.TempDir()
-	t.Setenv("CLAUDE_CONFIG_DIR", hostDir)
-
-	tracker := &copyTracker{}
-	opts := InitConfigOpts{
-		ProjectName:      "myapp",
-		AgentName:        "dev",
-		ContainerWorkDir: "/workspace",
-		ClaudeCode: &config.ClaudeCodeConfig{
-			Config:      config.ClaudeCodeConfigOptions{Strategy: "fresh"},
-			UseHostAuth: boolPtr(true),
-		},
-		CopyToVolume: tracker.copyToVolumeFn(),
-		Log:          logger.Nop(),
-	}
-
-	err := InitContainerConfig(context.Background(), opts)
-	require.NoError(t, err)
-
-	// Should call CopyToVolume once for credentials
-	require.Equal(t, 1, tracker.callCount(), "should call CopyToVolume once for credentials")
-
-	call := tracker.calls()[0]
-	assert.Equal(t, "clawker.myapp.dev-config", call.volumeName)
-	assert.Equal(t, "/home/claude/.claude", call.destPath)
-}
-
-func TestInitContainerConfig_CopyStrategy_NoHostAuth(t *testing.T) {
+func TestInitContainerConfig_CopyStrategy(t *testing.T) {
 	hostDir := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", hostDir)
 	seedHostConfigDir(t, hostDir)
@@ -83,18 +95,18 @@ func TestInitContainerConfig_CopyStrategy_NoHostAuth(t *testing.T) {
 		ProjectName:      "myapp",
 		AgentName:        "dev",
 		ContainerWorkDir: "/workspace",
-		ClaudeCode: &config.ClaudeCodeConfig{
-			Config:      config.ClaudeCodeConfigOptions{Strategy: "copy"},
-			UseHostAuth: boolPtr(false),
-		},
-		CopyToVolume: tracker.copyToVolumeFn(),
-		Log:          logger.Nop(),
+		Harness:          testHarnessCfg("copy"),
+		Staging:          testClaudeStaging(),
+		Volumes:          []harness.VolumeSpec{{Name: "config", Path: ".claude"}},
+		FreshVolumes:     map[string]bool{"config": true},
+		CopyToVolume:     tracker.copyToVolumeFn(),
+		Log:              logger.Nop(),
 	}
 
 	err := InitContainerConfig(context.Background(), opts)
 	require.NoError(t, err)
 
-	// Should call CopyToVolume once for config copy
+	// Should call CopyToVolume once for config copy — never for credentials.
 	require.Equal(t, 1, tracker.callCount(), "should call CopyToVolume once for config")
 
 	call := tracker.calls()[0]
@@ -105,10 +117,8 @@ func TestInitContainerConfig_CopyStrategy_NoHostAuth(t *testing.T) {
 	assert.NotEmpty(t, call.srcDirEntries, "staged .claude dir should have had content at copy time")
 }
 
-func TestInitContainerConfig_CopyStrategy_WithHostAuth(t *testing.T) {
-	keyring.MockInit()
-	seedTestCredentials(t)
-
+func TestInitContainerConfig_NilHarnessCfg_Defaults(t *testing.T) {
+	// nil harness config should use defaults: copy strategy.
 	hostDir := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", hostDir)
 	seedHostConfigDir(t, hostDir)
@@ -118,43 +128,33 @@ func TestInitContainerConfig_CopyStrategy_WithHostAuth(t *testing.T) {
 		ProjectName:      "myapp",
 		AgentName:        "dev",
 		ContainerWorkDir: "/workspace",
-		ClaudeCode: &config.ClaudeCodeConfig{
-			Config:      config.ClaudeCodeConfigOptions{Strategy: "copy"},
-			UseHostAuth: boolPtr(true),
-		},
-		CopyToVolume: tracker.copyToVolumeFn(),
-		Log:          logger.Nop(),
+		Harness:          nil, // defaults: copy strategy
+		Staging:          testClaudeStaging(),
+		Volumes:          []harness.VolumeSpec{{Name: "config", Path: ".claude"}},
+		FreshVolumes:     map[string]bool{"config": true},
+		CopyToVolume:     tracker.copyToVolumeFn(),
+		Log:              logger.Nop(),
 	}
 
 	err := InitContainerConfig(context.Background(), opts)
 	require.NoError(t, err)
-
-	// Should call CopyToVolume twice: once for config, once for credentials
-	require.Equal(t, 2, tracker.callCount(), "should call CopyToVolume for config and credentials")
-
-	// First call: config copy
-	configCall := tracker.calls()[0]
-	assert.Equal(t, "clawker.myapp.dev-config", configCall.volumeName)
-
-	// Second call: credentials copy
-	credsCall := tracker.calls()[1]
-	assert.Equal(t, "clawker.myapp.dev-config", credsCall.volumeName)
+	require.Equal(t, 1, tracker.callCount(), "nil harness config should default to copy strategy")
 }
 
-func TestInitContainerConfig_NilClaudeCode_Defaults(t *testing.T) {
-	// nil ClaudeCode should use defaults: copy strategy + host auth enabled
-	keyring.MockInit()
-	seedTestCredentials(t)
-
+func TestInitContainerConfig_EmptyProject_VolumeNaming(t *testing.T) {
 	hostDir := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", hostDir)
+	seedHostConfigDir(t, hostDir)
 
 	tracker := &copyTracker{}
 	opts := InitConfigOpts{
-		ProjectName:      "myapp",
+		ProjectName:      "", // empty project
 		AgentName:        "dev",
 		ContainerWorkDir: "/workspace",
-		ClaudeCode:       nil, // defaults: copy strategy, use_host_auth true
+		Harness:          testHarnessCfg(""),
+		Staging:          testClaudeStaging(),
+		Volumes:          []harness.VolumeSpec{{Name: "config", Path: ".claude"}},
+		FreshVolumes:     map[string]bool{"config": true},
 		CopyToVolume:     tracker.copyToVolumeFn(),
 		Log:              logger.Nop(),
 	}
@@ -162,53 +162,24 @@ func TestInitContainerConfig_NilClaudeCode_Defaults(t *testing.T) {
 	err := InitContainerConfig(context.Background(), opts)
 	require.NoError(t, err)
 
-	// Default is copy + use_host_auth=true, so should copy config + credentials
-	require.Equal(t, 2, tracker.callCount(), "nil ClaudeCode should use defaults (copy + host auth)")
-}
-
-func TestInitContainerConfig_EmptyProject_VolumeNaming(t *testing.T) {
-	keyring.MockInit()
-	seedTestCredentials(t)
-
-	hostDir := t.TempDir()
-	t.Setenv("CLAUDE_CONFIG_DIR", hostDir)
-
-	tracker := &copyTracker{}
-	opts := InitConfigOpts{
-		ProjectName:      "", // empty project
-		AgentName:        "dev",
-		ContainerWorkDir: "/workspace",
-		ClaudeCode: &config.ClaudeCodeConfig{
-			UseHostAuth: boolPtr(true),
-		},
-		CopyToVolume: tracker.copyToVolumeFn(),
-		Log:          logger.Nop(),
-	}
-
-	err := InitContainerConfig(context.Background(), opts)
-	require.NoError(t, err)
-
-	// Default copy strategy + host auth = 2 calls (config + credentials)
-	require.Equal(t, 2, tracker.callCount())
+	require.Equal(t, 1, tracker.callCount())
 	// 2-segment: clawker.dev-config (no project segment)
 	assert.Equal(t, "clawker.dev-config", tracker.calls()[0].volumeName)
-	assert.Equal(t, "clawker.dev-config", tracker.calls()[1].volumeName)
 }
 
 func TestInitContainerConfig_CopyToVolumeError(t *testing.T) {
-	keyring.MockInit()
-	seedTestCredentials(t)
-
 	hostDir := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", hostDir)
+	seedHostConfigDir(t, hostDir)
 
 	opts := InitConfigOpts{
 		ProjectName:      "myapp",
 		AgentName:        "dev",
 		ContainerWorkDir: "/workspace",
-		ClaudeCode: &config.ClaudeCodeConfig{
-			UseHostAuth: boolPtr(true),
-		},
+		Harness:          testHarnessCfg(""),
+		Staging:          testClaudeStaging(),
+		Volumes:          []harness.VolumeSpec{{Name: "config", Path: ".claude"}},
+		FreshVolumes:     map[string]bool{"config": true},
 		CopyToVolume: func(_ context.Context, _, _, _ string, _ []string) error {
 			return assert.AnError
 		},
@@ -217,12 +188,12 @@ func TestInitContainerConfig_CopyToVolumeError(t *testing.T) {
 
 	err := InitContainerConfig(context.Background(), opts)
 	require.Error(t, err)
-	// Default copy strategy means config copy fails first
-	assert.Contains(t, err.Error(), "failed to copy claude config to volume")
+	assert.Contains(t, err.Error(), "failed to copy harness config to volume")
 }
 
 func TestInitContainerConfig_HostConfigDirNotFound(t *testing.T) {
-	// When strategy is "copy" but host config dir doesn't exist
+	// Missing host state is a soft skip: nothing stages, nothing copies —
+	// same semantics as any other missing copy source.
 	t.Setenv("CLAUDE_CONFIG_DIR", "/no/such/dir-init-test")
 	t.Setenv("HOME", t.TempDir()) // no ~/.claude either
 
@@ -231,17 +202,17 @@ func TestInitContainerConfig_HostConfigDirNotFound(t *testing.T) {
 		ProjectName:      "myapp",
 		AgentName:        "dev",
 		ContainerWorkDir: "/workspace",
-		ClaudeCode: &config.ClaudeCodeConfig{
-			Config:      config.ClaudeCodeConfigOptions{Strategy: "copy"},
-			UseHostAuth: boolPtr(false),
-		},
-		CopyToVolume: tracker.copyToVolumeFn(),
-		Log:          logger.Nop(),
+		Harness:          testHarnessCfg("copy"),
+		Staging:          testClaudeStaging(),
+		Volumes:          []harness.VolumeSpec{{Name: "config", Path: ".claude"}},
+		FreshVolumes:     map[string]bool{"config": true},
+		CopyToVolume:     tracker.copyToVolumeFn(),
+		Log:              logger.Nop(),
 	}
 
 	err := InitContainerConfig(context.Background(), opts)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "cannot copy claude config")
+	require.NoError(t, err)
+	assert.Equal(t, 0, tracker.callCount(), "nothing staged → nothing copied")
 }
 
 // ---------------------------------------------------------------------------
@@ -385,28 +356,6 @@ func (ct *containerCopyTracker) calls() []containerCopyCall {
 	result := make([]containerCopyCall, len(ct.recorded))
 	copy(result, ct.recorded)
 	return result
-}
-
-// seedTestCredentials sets up mock keyring with valid claude code credentials.
-func seedTestCredentials(t *testing.T) {
-	t.Helper()
-
-	u, err := user.Current()
-	require.NoError(t, err)
-
-	validJSON := `{
-		"claudeAiOauth": {
-			"accessToken":      "test-access",
-			"refreshToken":     "test-refresh",
-			"expiresAt":        4102444800000,
-			"scopes":           ["scope1"],
-			"subscriptionType": "pro",
-			"rateLimitTier":    "tier1"
-		},
-		"organizationUuid": "550e8400-e29b-41d4-a716-446655440000"
-	}`
-
-	require.NoError(t, keyring.Set("Claude Code-credentials", u.Username, validJSON))
 }
 
 // seedHostConfigDir creates minimal test data in a host config dir.

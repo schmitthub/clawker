@@ -176,16 +176,26 @@ func TestWalkFields_PanicsOnNonStructInput(t *testing.T) {
 	assert.Panics(t, func() { WalkFields("hello") })
 }
 
-func TestWalkFields_NonStringMap_FallsBackToStructSlice(t *testing.T) {
+func TestWalkFields_StructMap_ClassifiedNatively(t *testing.T) {
 	type entry struct {
 		Path string `yaml:"path"`
 	}
 	type withStructMap struct {
 		Items map[string]entry `yaml:"items"`
 	}
+	fields := WalkFields(withStructMap{Items: nil})
+	require.Len(t, fields, 1)
+	assert.Equal(t, "items", fields[0].Path)
+	assert.Equal(t, KindStructMap, fields[0].Kind)
+}
+
+func TestWalkFields_NonStringMap_FallsBackToStructSlice(t *testing.T) {
+	type withSliceMap struct {
+		Items map[string][]string `yaml:"items"`
+	}
 	// classifyAndFormat falls back to KindStructSlice for unrecognized types.
 	// enrichWithSchema overwrites the kind from schema metadata afterward.
-	fields := WalkFields(withStructMap{})
+	fields := WalkFields(withSliceMap{Items: nil})
 	require.Len(t, fields, 1)
 	assert.Equal(t, "items", fields[0].Path)
 	assert.Equal(t, KindStructSlice, fields[0].Kind)

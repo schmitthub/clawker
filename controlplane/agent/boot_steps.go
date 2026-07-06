@@ -38,17 +38,19 @@ func preRunStep() ShellStep {
 // BootPlan's head; this pair stays last, in this order. Split out and named
 // so the ordering invariant survives future edits. Pinned by
 // TestBootPlan_PreRunShape.
-func bootPlanPost() []Step {
+func bootPlanPost(defaultCmd string) []Step {
 	return []Step{
 		preRunStep(),
-		AgentReadyStep{Name: "agent-ready"},
+		AgentReadyStep{Name: "agent-ready", DefaultCmd: defaultCmd},
 	}
 }
 
 // BootPlan returns the every-start boot step list the Executor runs on each
-// start of a container.
-func BootPlan() []Step {
+// start of a container. defaultCmd is the image's default CMD binary,
+// shipped to clawkerd on the agent-ready step for --help argv routing
+// (empty = routing disabled).
+func BootPlan(defaultCmd string) []Step {
 	return append([]Step{
 		dockerSocketStep(),
-	}, bootPlanPost()...)
+	}, bootPlanPost(defaultCmd)...)
 }

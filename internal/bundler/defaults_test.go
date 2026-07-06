@@ -43,7 +43,11 @@ func TestDefaultFlavorOptions(t *testing.T) {
 
 	// Verify bookworm is first (recommended)
 	if options[0].Name != "bookworm" {
-		t.Errorf("DefaultFlavorOptions()[0].Name = %q, want %q (should be first/recommended)", options[0].Name, "bookworm")
+		t.Errorf(
+			"DefaultFlavorOptions()[0].Name = %q, want %q (should be first/recommended)",
+			options[0].Name,
+			"bookworm",
+		)
 	}
 }
 

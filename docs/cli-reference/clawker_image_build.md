@@ -4,18 +4,15 @@ title: "clawker image build"
 
 ## clawker image build
 
-Build an image from a clawker project
+Build the project image
 
 ### Synopsis
 
-Builds a container image from a clawker project configuration.
+Build the project image from its clawker configuration.
 
-The image is built from the project's configuration, generating a
-Dockerfile and building the image. Alternatively, use -f/--file to
-specify a custom Dockerfile.
-
-Multiple tags can be applied to the built image using -t/--tag.
-Build-time variables can be passed using --build-arg.
+Tags are harness-keyed: -t NAME builds that registered harness; -t name:NAME
+adds an extra ref (tag part must name a registered harness). No -t builds the
+default harness and adds the :default alias.
 
 ```
 clawker image build [flags]
@@ -24,29 +21,14 @@ clawker image build [flags]
 ### Examples
 
 ```
-  # Build the project image
+  # Build the default harness image
   clawker image build
 
-  # Build without Docker cache
+  # Build a specific registered harness
+  clawker image build -t codex
+
+  # Rebuild from scratch
   clawker image build --no-cache
-
-  # Build using a custom Dockerfile
-  clawker image build -f ./Dockerfile.dev
-
-  # Build with multiple tags
-  clawker image build -t myapp:latest -t myapp:v1.0
-
-  # Build with build arguments
-  clawker image build --build-arg NODE_VERSION=20
-
-  # Build a specific target stage
-  clawker image build --target builder
-
-  # Build quietly (suppress output)
-  clawker image build -q
-
-  # Always pull base image
-  clawker image build --pull
 ```
 
 ### Options
@@ -62,7 +44,7 @@ clawker image build [flags]
       --progress string         Set type of progress output (auto, plain, tty, none) (default "auto")
       --pull                    Always attempt to pull a newer version of the base image
   -q, --quiet                   Suppress the build output
-  -t, --tag stringArray         Name and optionally a tag (format: name:tag)
+  -t, --tag stringArray         Registered harness to build, or an extra ref whose tag names one (format: HARNESS or name:HARNESS)
       --target string           Set the target build stage to build
 ```
 

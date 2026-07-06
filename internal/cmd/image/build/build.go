@@ -7,7 +7,11 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
+	"sort"
 	"strings"
+
+	"github.com/spf13/cobra"
 
 	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/bundler"
@@ -20,7 +24,6 @@ import (
 	"github.com/schmitthub/clawker/internal/signals"
 	"github.com/schmitthub/clawker/internal/tui"
 	"github.com/schmitthub/clawker/pkg/whail"
-	"github.com/spf13/cobra"
 )
 
 // BuildOptions contains the options for the build command.
@@ -62,38 +65,20 @@ func NewCmdBuild(f *cmdutil.Factory, runF func(context.Context, *BuildOptions) e
 
 	cmd := &cobra.Command{
 		Use:   "build",
-		Short: "Build an image from a clawker project",
-		Long: `Builds a container image from a clawker project configuration.
+		Short: "Build the project image",
+		Long: `Build the project image from its clawker configuration.
 
-The image is built from the project's configuration, generating a
-Dockerfile and building the image. Alternatively, use -f/--file to
-specify a custom Dockerfile.
-
-Multiple tags can be applied to the built image using -t/--tag.
-Build-time variables can be passed using --build-arg.`,
-		Example: `  # Build the project image
+Tags are harness-keyed: -t NAME builds that registered harness; -t name:NAME
+adds an extra ref (tag part must name a registered harness). No -t builds the
+default harness and adds the :default alias.`,
+		Example: `  # Build the default harness image
   clawker image build
 
-  # Build without Docker cache
-  clawker image build --no-cache
+  # Build a specific registered harness
+  clawker image build -t codex
 
-  # Build using a custom Dockerfile
-  clawker image build -f ./Dockerfile.dev
-
-  # Build with multiple tags
-  clawker image build -t myapp:latest -t myapp:v1.0
-
-  # Build with build arguments
-  clawker image build --build-arg NODE_VERSION=20
-
-  # Build a specific target stage
-  clawker image build --target builder
-
-  # Build quietly (suppress output)
-  clawker image build -q
-
-  # Always pull base image
-  clawker image build --pull`,
+  # Rebuild from scratch
+  clawker image build --no-cache`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if runF != nil {
 				return runF(cmd.Context(), opts)
@@ -104,7 +89,8 @@ Build-time variables can be passed using --build-arg.`,
 
 	// Docker CLI-compatible flags
 	cmd.Flags().StringVarP(&opts.File, "file", "f", "", "Path to Dockerfile (overrides build.dockerfile in config)")
-	cmd.Flags().StringArrayVarP(&opts.Tags, "tag", "t", nil, "Name and optionally a tag (format: name:tag)")
+	cmd.Flags().
+		StringArrayVarP(&opts.Tags, "tag", "t", nil, "Registered harness to build, or an extra ref whose tag names one (format: HARNESS or name:HARNESS)")
 	cmd.Flags().BoolVar(&opts.NoCache, "no-cache", false, "Do not use cache when building the image")
 	cmd.Flags().BoolVar(&opts.Pull, "pull", false, "Always attempt to pull a newer version of the base image")
 	cmd.Flags().StringArrayVar(&opts.BuildArgs, "build-arg", nil, "Set build-time variables (format: KEY=VALUE)")
@@ -113,7 +99,8 @@ Build-time variables can be passed using --build-arg.`,
 	cmd.Flags().BoolVarP(&opts.Quiet, "quiet", "q", false, "Suppress the build output")
 	cmd.Flags().StringVar(&opts.Progress, "progress", "auto", "Set type of progress output (auto, plain, tty, none)")
 	cmd.Flags().StringVar(&opts.Network, "network", "", "Set the networking mode for the RUN instructions during build")
-	cmd.Flags().StringVar(&opts.IIDFile, "iidfile", "", "Write the built image's ID/digest to this file (docker buildx --iidfile shape)")
+	cmd.Flags().
+		StringVar(&opts.IIDFile, "iidfile", "", "Write the built image's ID/digest to this file (docker buildx --iidfile shape)")
 
 	return cmd
 }
@@ -210,11 +197,12 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 		log.Warn().Err(bkErr).Msg("BuildKit detection failed")
 		fmt.Fprintf(ios.ErrOut, "%s BuildKit detection failed — falling back to legacy builder\n", cs.WarningIcon())
 	} else if !buildkitEnabled {
-		fmt.Fprintf(ios.ErrOut, "%s BuildKit is not available — cache mount directives will be ignored and builds may be slower\n", cs.WarningIcon())
+		fmt.Fprintf(
+			ios.ErrOut,
+			"%s BuildKit is not available — cache mount directives will be ignored and builds may be slower\n",
+			cs.WarningIcon(),
+		)
 	}
-
-	// Determine image tag(s)
-	imageTag := docker.ImageTag(projectName)
 
 	// Parse build args
 	buildArgs := parseBuildArgs(opts.BuildArgs)
@@ -227,26 +215,73 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 
 	builder := docker.NewBuilder(client, cfg, wd, projectName)
 
-	// Resolve Claude Code's "latest" dist-tag to a concrete npm version
-	// once per build. The resolved value flows into the rendered
-	// Dockerfile's `ARG CLAUDE_CODE_VERSION=<value>` default so the
-	// install layer's cache busts iff npm has published a new release.
-	// Resolution failure (offline, registry down) is non-fatal: warn and
-	// fall back to the literal "latest" — install RUN still works, cache
-	// just doesn't auto-bust until the next online build.
-	claudeCodeVersion := bundler.DefaultClaudeCodeVersion
+	// Ensure shipped harness bundles exist on disk and in the settings
+	// registry (both copy-if-missing — user edits win), then load the
+	// selected bundle. The bundle's template blocks and context files
+	// compose the rendered Dockerfile; its manifest drives version
+	// resolution below.
+	if ensureErr := bundler.EnsureHarnesses(cfgGateway); ensureErr != nil {
+		log.Warn().
+			Err(ensureErr).
+			Msg("harness ensure failed — falling back to embedded bundles and built-in default")
+	}
+
+	// -t selects the harness: a bare NAME names a registered harness; a full
+	// REF's tag part must equal one (strict tag=harness). No -t builds the
+	// registry default.
+	selector, extraTags, err := harnessSelectorFromTags(cfgGateway, opts.Tags)
+	if err != nil {
+		return err
+	}
+	harnessName, err := bundler.ResolveHarnessName(cfgGateway, selector)
+	if err != nil {
+		return fmt.Errorf("resolving harness: %w", err)
+	}
+	bundle, err := bundler.LoadHarness(cfgGateway, harnessName)
+	if err != nil {
+		return fmt.Errorf("loading harness %q: %w", harnessName, err)
+	}
+
+	// The canonical tag is harness-keyed; the registry default also gets the
+	// :default alias so run/create resolve it without naming a harness.
+	imageTag := docker.HarnessImageTag(projectName, harnessName)
+	if isDefaultHarness(cfgGateway, harnessName) {
+		extraTags = append(extraTags, docker.DefaultAliasImageTag(projectName))
+	}
+
+	// Resolve the harness's floating version to a concrete one once per
+	// build, per the bundle manifest's version spec (e.g. the npm "latest"
+	// dist-tag). The resolved value flows into the rendered Dockerfile's
+	// version ARG default so the install layer's cache busts iff a new
+	// release is published. Resolution failure (offline, registry down) is
+	// non-fatal: warn and fall back to the floating literal — install RUN
+	// still works, cache just doesn't auto-bust until the next online build.
+	harnessVersion := bundler.DefaultHarnessVersion
 	httpClient, err := opts.HttpClient()
 	if err != nil {
-		log.Warn().Err(err).Msg("HTTP client initialization failed — cannot resolve latest Claude Code version, install layer cache will not bust until next online build")
-	} else if resolved, resErr := bundler.ResolveLatestClaudeCodeVersion(ctx, httpClient); resErr != nil {
-		log.Warn().Err(resErr).Msg("npm version resolution failed — install layer cache will not bust until next online build")
-		fmt.Fprintf(ios.ErrOut, "%s Could not resolve latest Claude Code version (%v) — using %q literal; cache will not bust on a new release until network returns\n",
-			cs.WarningIcon(), resErr, bundler.DefaultClaudeCodeVersion)
+		log.Warn().
+			Err(err).
+			Msg("HTTP client initialization failed — cannot resolve latest harness version, install layer cache will not bust until next online build")
+	} else if resolved, resErr := bundler.ResolveHarnessVersion(ctx, httpClient, bundle); resErr != nil {
+		log.Warn().
+			Err(resErr).
+			Msg("harness version resolution failed — install layer cache will not bust until next online build")
+		fmt.Fprintf(
+			ios.ErrOut,
+			"%s Could not resolve latest %s version (%v) — using %q literal; cache will not bust on a new release until network returns\n",
+			cs.WarningIcon(),
+			harnessName,
+			resErr,
+			bundler.DefaultHarnessVersion,
+		)
 	} else {
 		// Assign to the outer var so the resolved version actually reaches the
 		// build ARG below — a `:=` here would shadow and silently drop it.
-		claudeCodeVersion = resolved
-		log.Debug().Str("claude_code_version", claudeCodeVersion).Msg("resolved Claude Code version for ARG default")
+		harnessVersion = resolved
+		log.Debug().
+			Str("harness", harnessName).
+			Str("harness_version", harnessVersion).
+			Msg("resolved harness version for ARG default")
 	}
 	// Build options. OnComplete stashes the digest into a closure variable;
 	// post-build handling (success log, --iidfile write) runs in the main
@@ -259,16 +294,17 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 		Str("image", imageTag).
 		Msg("building container image")
 	buildOpts := docker.BuilderOptions{
-		NoCache:           opts.NoCache,
-		Labels:            userLabels,
-		Target:            opts.Target,
-		Pull:              opts.Pull,
-		SuppressOutput:    suppressed,
-		NetworkMode:       opts.Network,
-		BuildArgs:         buildArgs,
-		Tags:              opts.Tags,
-		BuildKitEnabled:   buildkitEnabled,
-		ClaudeCodeVersion: claudeCodeVersion,
+		NoCache:         opts.NoCache,
+		Labels:          userLabels,
+		Target:          opts.Target,
+		Pull:            opts.Pull,
+		SuppressOutput:  suppressed,
+		NetworkMode:     opts.Network,
+		BuildArgs:       buildArgs,
+		Tags:            extraTags,
+		BuildKitEnabled: buildkitEnabled,
+		HarnessVersion:  harnessVersion,
+		HarnessName:     harnessName,
 		OnComplete: func(res whail.BuildResult) {
 			imageDigest = res.ImageID
 		},
@@ -426,4 +462,67 @@ func printBuildNextSteps(ios *iostreams.IOStreams, cs *iostreams.ColorScheme) {
 	fmt.Fprintln(ios.ErrOut, "  2. Ensure the base image exists and is accessible")
 	fmt.Fprintln(ios.ErrOut, "  3. Run 'clawker build --no-cache' to rebuild from scratch")
 	fmt.Fprintln(ios.ErrOut, "  4. Use '--progress=plain' for detailed build output")
+}
+
+// harnessSelectorFromTags interprets -t entries under the strict
+// tag=harness scheme. A bare NAME selects that harness; a full REF (has a
+// colon) keeps riding as an additional image tag, but its tag part must
+// name a registered harness. All entries must agree on one harness.
+func harnessSelectorFromTags(cfg config.Config, tags []string) (string, []string, error) {
+	var selector string
+	var extraTags []string
+	for _, entry := range tags {
+		candidate := entry
+		fullRef := false
+		if idx := strings.LastIndex(entry, ":"); idx >= 0 {
+			candidate = entry[idx+1:]
+			fullRef = true
+		}
+		if !isKnownHarness(cfg, candidate) {
+			//nolint:wrapcheck // FlagError reaches cobra typed for usage display, never wrapped (repo convention)
+			return "", nil, cmdutil.FlagErrorf(
+				"--tag %q does not name a registered harness (tags are harness-keyed; registered: %s)",
+				entry, strings.Join(registeredHarnessNames(cfg), ", "),
+			)
+		}
+		if selector != "" && selector != candidate {
+			//nolint:wrapcheck // FlagError reaches cobra typed for usage display, never wrapped (repo convention)
+			return "", nil, cmdutil.FlagErrorf(
+				"--tag entries select conflicting harnesses (%s vs %s) — one harness per build",
+				selector, candidate,
+			)
+		}
+		selector = candidate
+		if fullRef {
+			extraTags = append(extraTags, entry)
+		}
+	}
+	return selector, extraTags, nil
+}
+
+// registeredHarnessNames lists registry keys, falling back to the shipped
+// set when no registry exists yet (bootstrap).
+func registeredHarnessNames(cfg config.Config) []string {
+	if s := cfg.Settings(); s != nil && len(s.Harnesses) > 0 {
+		names := make([]string, 0, len(s.Harnesses))
+		for name := range s.Harnesses {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		return names
+	}
+	return bundler.ShippedHarnessNames()
+}
+
+// isKnownHarness reports whether name is a registry key (or a shipped name
+// during bootstrap, before any registry exists).
+func isKnownHarness(cfg config.Config, name string) bool {
+	return slices.Contains(registeredHarnessNames(cfg), name)
+}
+
+// isDefaultHarness reports whether name is the registry-default harness —
+// the one whose image carries the :default alias tag.
+func isDefaultHarness(cfg config.Config, name string) bool {
+	resolved, err := bundler.ResolveHarnessName(cfg, "")
+	return err == nil && resolved == name
 }

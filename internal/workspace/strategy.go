@@ -6,9 +6,11 @@ import (
 	"path/filepath"
 
 	"github.com/moby/moby/api/types/mount"
+
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/docker"
+	"github.com/schmitthub/clawker/internal/harness"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -64,84 +66,94 @@ func NewStrategy(mode config.Mode, cfg Config, log *logger.Logger) (Strategy, er
 	}
 }
 
-// GetConfigVolumeMounts returns mounts for persistent config volumes.
-// These are used for both bind and snapshot modes to preserve Claude config.
-func GetConfigVolumeMounts(projectName, agentName string) ([]mount.Mount, error) {
-	configVol, err := docker.VolumeName(projectName, agentName, docker.VolumePurposeConfig)
-	if err != nil {
-		return nil, err
+// GetConfigVolumeMounts returns mounts for the harness's declared persisted
+// dirs plus the history volume. Used for both bind and snapshot modes.
+func GetConfigVolumeMounts(projectName, agentName string, volumes []harness.VolumeSpec) ([]mount.Mount, error) {
+	var mounts []mount.Mount
+	for _, v := range volumes {
+		vol, err := docker.VolumeName(projectName, agentName, v.Name)
+		if err != nil {
+			return nil, fmt.Errorf("volume name for %q: %w", v.Name, err)
+		}
+		mounts = append(
+			mounts,
+			mount.Mount{ //nolint:exhaustruct // mount options beyond type/source/target intentionally zero
+				Type:   mount.TypeVolume,
+				Source: vol,
+				Target: consts.ContainerHomeDir + "/" + harness.NormalizeContainerPath(v.Path),
+			},
+		)
 	}
 	historyVol, err := docker.VolumeName(projectName, agentName, docker.VolumePurposeHistory)
 	if err != nil {
 		return nil, err
 	}
-	return []mount.Mount{
-		{
-			Type:   mount.TypeVolume,
-			Source: configVol,
-			Target: consts.ContainerHomeDir + "/" + consts.ClaudeDir,
-		},
-		{
+	mounts = append(
+		mounts,
+		mount.Mount{ //nolint:exhaustruct // mount options beyond type/source/target intentionally zero
 			Type:   mount.TypeVolume,
 			Source: historyVol,
 			Target: "/commandhistory",
 		},
-	}, nil
+	)
+	return mounts, nil
 }
 
-// ClaudeProjectsTargetPath is the in-container destination for the host
-// ~/.claude/projects/ bind mount. Composed from the same consts as the
-// per-agent config volume target in GetConfigVolumeMounts, so the two
-// paths cannot drift.
-const ClaudeProjectsTargetPath = consts.ContainerHomeDir + "/" + consts.ClaudeDir + "/" + consts.ClaudeProjectsSubdir
-
-// GetClaudeProjectsMount returns a bind mount sharing the host's
-// ~/.claude/projects/ into /home/claude/.claude/projects. Per Linux
-// mount-namespace semantics, the deeper bind target layers over the
-// corresponding subdir of the per-agent config volume mount, sharing
-// auto-memory and session jsonls across container runs and instances.
-// hostProjectsDir must be an absolute path; the path is typically
-// obtained from containerfs.ResolveHostProjectsDir.
-func GetClaudeProjectsMount(hostProjectsDir string) (mount.Mount, error) {
-	if !filepath.IsAbs(hostProjectsDir) {
-		return mount.Mount{}, fmt.Errorf("claude projects mount source must be absolute, got %q", hostProjectsDir)
+// GetHostStateMount returns a bind mount sharing a host harness state dir
+// (e.g. claude's ~/.claude/projects/) into the container home. Per Linux
+// mount-namespace semantics, a deeper bind target layers over the
+// corresponding subdir of a harness volume mount, sharing live state
+// across container runs and instances. hostDir must be an absolute path,
+// typically obtained from containerfs.ResolveHostMountSource.
+func GetHostStateMount(hostDir, dest string) (mount.Mount, error) {
+	if !filepath.IsAbs(hostDir) {
+		return mount.Mount{}, fmt.Errorf("host-state mount source must be absolute, got %q", hostDir)
 	}
 	return mount.Mount{
 		Type:   mount.TypeBind,
-		Source: hostProjectsDir,
-		Target: ClaudeProjectsTargetPath,
+		Source: hostDir,
+		Target: consts.ContainerHomeDir + "/" + harness.NormalizeContainerPath(dest),
 	}, nil
 }
 
-// ConfigVolumeResult tracks which config volumes were newly created vs pre-existing.
+// ConfigVolumeResult tracks which volumes were newly created vs pre-existing.
 type ConfigVolumeResult struct {
-	ConfigCreated  bool
+	// CreatedByName maps a harness volume name (the manifest volumes[].name)
+	// to whether this setup created it (vs it pre-existing with user data).
+	CreatedByName  map[string]bool
 	HistoryCreated bool
 }
 
-// EnsureConfigVolumes creates config and history volumes with proper labels.
-// Should be called before container creation to ensure volumes have clawker labels.
-// This enables proper cleanup via label-based filtering in RemoveContainerWithVolumes.
-func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, agentName string) (ConfigVolumeResult, error) {
-	var result ConfigVolumeResult
+// EnsureConfigVolumes creates the harness-declared volumes and the history
+// volume with proper labels. Should be called before container creation so
+// volumes carry clawker labels — that enables label-based cleanup in
+// RemoveContainerWithVolumes.
+func EnsureConfigVolumes(
+	ctx context.Context,
+	cli *docker.Client,
+	projectName, agentName string,
+	volumes []harness.VolumeSpec,
+) (ConfigVolumeResult, error) {
+	result := ConfigVolumeResult{CreatedByName: make(map[string]bool), HistoryCreated: false}
+	labels := cli.AgentVolumeLabels(projectName, agentName)
 
-	configVolume, err := docker.VolumeName(projectName, agentName, docker.VolumePurposeConfig)
-	if err != nil {
-		return result, err
+	for _, v := range volumes {
+		volName, err := docker.VolumeName(projectName, agentName, v.Name)
+		if err != nil {
+			return result, fmt.Errorf("volume name for %q: %w", v.Name, err)
+		}
+		created, err := cli.EnsureVolume(ctx, volName, labels)
+		if err != nil {
+			return result, fmt.Errorf("ensure volume %s: %w", volName, err)
+		}
+		result.CreatedByName[v.Name] = created
 	}
-	configLabels := cli.AgentVolumeLabels(projectName, agentName)
-	created, err := cli.EnsureVolume(ctx, configVolume, configLabels)
-	if err != nil {
-		return result, err
-	}
-	result.ConfigCreated = created
 
 	historyVolume, err := docker.VolumeName(projectName, agentName, docker.VolumePurposeHistory)
 	if err != nil {
 		return result, err
 	}
-	historyLabels := cli.AgentVolumeLabels(projectName, agentName)
-	created, err = cli.EnsureVolume(ctx, historyVolume, historyLabels)
+	created, err := cli.EnsureVolume(ctx, historyVolume, labels)
 	if err != nil {
 		return result, err
 	}

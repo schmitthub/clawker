@@ -149,26 +149,11 @@ func registerBuiltinAliases(root *cobra.Command, f *cmdutil.Factory) {
 	}
 }
 
-const buildExample = `  # Build the project image
+const buildExample = `  # Build the default harness image
   clawker build
 
-  # Build without Docker cache
-  clawker build --no-cache
+  # Build a specific registered harness
+  clawker build -t codex
 
-  # Build using a custom Dockerfile
-  clawker build -f ./Dockerfile.dev
-
-  # Build with multiple tags
-  clawker build -t myapp:latest -t myapp:v1.0
-
-  # Build with build arguments
-  clawker build --build-arg NODE_VERSION=20
-
-  # Build a specific target stage
-  clawker build --target builder
-
-  # Build quietly (suppress output)
-  clawker build -q
-
-  # Always pull base image
-  clawker build --pull`
+  # Rebuild from scratch
+  clawker build --no-cache`

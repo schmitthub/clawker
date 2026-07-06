@@ -9,6 +9,7 @@ import (
 	"github.com/schmitthub/clawker/internal/build"
 	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/pkg/whail"
 )
@@ -36,12 +37,15 @@ type BuilderOptions struct {
 	BuildKitEnabled bool                    // Use BuildKit builder for cache mount support
 	OnProgress      whail.BuildProgressFunc // Progress callback for build events
 	OnComplete      whail.BuildCompleteFunc // Fires once with the built image digest/ID
-	// ClaudeCodeVersion is the concrete npm version baked into the rendered
+	// HarnessVersion is the concrete npm version baked into the rendered
 	// Dockerfile's ARG CLAUDE_CODE_VERSION default. Resolved upstream at the
-	// command layer via bundler.ResolveLatestClaudeCodeVersion (using
+	// command layer via bundler.ResolveLatestHarnessVersion (using
 	// Factory.HttpClient). Empty string falls back to bundler's
-	// DefaultClaudeCodeVersion literal — preserves offline-build behaviour.
-	ClaudeCodeVersion string
+	// DefaultHarnessVersion literal — preserves offline-build behaviour.
+	HarnessVersion string
+	// HarnessName is the selected harness registry key; stamped onto the
+	// image as the harness label (the build→runtime join key).
+	HarnessName string
 }
 
 // toBuildImageOpts maps BuilderOptions to BuildImageOpts with the given per-call parameters.
@@ -80,10 +84,14 @@ func NewBuilder(cli *Client, cfg *config.Project, workDir, projectName string) *
 func (b *Builder) Build(ctx context.Context, imageTag string, opts BuilderOptions) error {
 	gen := bundler.NewProjectGenerator(b.client.cfg, b.workDir)
 	gen.BuildKitEnabled = opts.BuildKitEnabled
-	gen.ClaudeCodeVersion = opts.ClaudeCodeVersion
+	gen.HarnessVersion = opts.HarnessVersion
+	gen.Harness = opts.HarnessName
 
 	// Merge image labels into build options (applied via Docker API, not in Dockerfile)
 	opts.Labels = b.mergeImageLabels(opts.Labels)
+	if opts.HarnessName != "" {
+		opts.Labels[consts.LabelHarness] = opts.HarnessName
+	}
 
 	// Merge tags: primary tag + any additional tags from options
 	tags := mergeTags(imageTag, opts.Tags)

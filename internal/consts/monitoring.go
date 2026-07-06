@@ -99,10 +99,17 @@ const (
 	// EnvOTelResourceAttributes carries comma-joined resource attributes
 	// (project/agent segmentation) per the OTel SDK spec.
 	EnvOTelResourceAttributes = "OTEL_RESOURCE_ATTRIBUTES"
-	// EnvClaudeCodeEnableTelemetry toggles Claude Code's telemetry export;
-	// the env builder overrides the image-baked default to 0 when the
-	// monitoring stack is down.
-	EnvClaudeCodeEnableTelemetry = "CLAUDE_CODE_ENABLE_TELEMETRY"
+	// EnvOTelMetricsExporter (with EnvOTelLogsExporter and
+	// EnvOTelTracesExporter) are the standard OTel SDK exporter-selection
+	// vars. The env builder overrides the image-baked otlp defaults to
+	// "none" when the monitoring stack is down — harness-blind: every
+	// OTel-instrumented harness honors these, so no per-harness telemetry
+	// toggle is needed.
+	EnvOTelMetricsExporter = "OTEL_METRICS_EXPORTER"
+	EnvOTelLogsExporter    = "OTEL_LOGS_EXPORTER"
+	EnvOTelTracesExporter  = "OTEL_TRACES_EXPORTER"
+	// OTelExporterNone is the OTel SDK token for a disabled signal exporter.
+	OTelExporterNone = "none"
 )
 
 // Per-record firewall verdict values for the `action` log attribute,

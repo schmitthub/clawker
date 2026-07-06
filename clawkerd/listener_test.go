@@ -182,7 +182,7 @@ func startListenerOnBufconn(t *testing.T, stack bufconnTLSStack, logBuf *bytes.B
 	// + audit logs, not the AgentReady handler.
 	clawkerdv1.RegisterClawkerdServiceServer(srv, &clawkerdServer{
 		log:        logger.NewWriter(logBuf),
-		spawnEntry: func() error { return nil },
+		spawnEntry: func(string) error { return nil },
 	})
 
 	lis := bufconn.Listen(1 << 20)

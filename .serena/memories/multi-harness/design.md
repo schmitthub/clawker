@@ -91,16 +91,13 @@ JSON-key rewriting in `internal/containerfs`) cannot be expressed as pure data.
   - skill/extension install — how the clawker-support skill installs into this harness (CLI binary,
     marketplace/source format, scope vocabulary, install commands), or a declaration that it has none
 
-## Extensibility tiers
+## Extensibility — SUPERSEDED by migration.md (2026-07-03)
 
-| tier | defined by | covers |
-|---|---|---|
-| baked-in | Go interface impl (full power) | claude_code, codex, opencode, pi — bespoke install, JSON rewrites, custom egress |
-| declarative + scripts | yaml descriptor + hook scripts (`install.sh`, `stage.sh`, `seed.sh`) interpreted by one generic impl | user-custom harnesses that fit data + shell |
-| full custom Go | compiled-in / plugin | anything the script tier can't express |
-
-The big-4 are Go impls. Open extensibility is the declarative+script tier (a `stage.sh`
-can `jq`-rewrite, an `install.sh` can do anything). Full-custom-Go is a later plugin story.
+DECIDED: yaml-backed descriptors from the start, NO hardcoded-Go harness tier.
+Shipped harnesses = embedded yaml interpreted by one generic engine; user-custom
+= same schema. One-commit-harness holds while composing existing engine
+primitives; novel primitive (new auth scheme / installer type) = Go engine work.
+See `multi-harness/migration.md` — source of truth for execution.
 
 ## What the harness interface/descriptor must carry (superset)
 
@@ -132,7 +129,17 @@ Note: clawker ships no MCP setup of its own. `agent.post_init` is arbitrary user
 MCP setup or anything); the harness-keyed config map namespaces it so it only runs in its harness's
 container. The coupling is structural (where arbitrary hooks live), not a baked script to generalize.
 
-## Open questions (undecided)
+## Open questions — RESOLVED 2026-07-03, see migration.md "Locked decisions"
+
+- naming/@-resolution: image tag = harness (`clawker-<proj>:<harness>`), names stay
+  3-seg, label authoritative, chain = flag > default_harness > sole-built > error
+- descriptor form: yaml-backed only (no Go-impl tier)
+- scope: yaml tier ships WITH the feature (no phased "baked-in first")
+- API-key auth: NOT greenfield — existing `agent.from_env`/`env` plumbing + file copy
+- harness #2: codex
+- plugin/skill: manifest json_rewrites + `clawker skill` per-harness selector
+
+Original questions kept below for context:
 
 - **Container naming shape** — `clawker.project.harness.agent` (4-seg) vs harness in the leaf
   vs label-only; how global-scope (`clawker.agent`, no project) absorbs the harness segment.

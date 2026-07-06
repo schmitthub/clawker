@@ -193,7 +193,7 @@ var configFiles = map[ConfigFile]configFileInfo{
 // the project directory where the dotfile will be created. For all other file
 // types, dir is ignored and the appropriate XDG directory is used.
 //
-//	env.WriteYAML(t, testenv.ProjectConfig, projectDir, `agent: { claude_code: { use_host_auth: false } }`)
+//	env.WriteYAML(t, testenv.ProjectConfig, projectDir, `agent: { claude_code: { config: { strategy: fresh } } }`)
 //	env.WriteYAML(t, testenv.Settings, "", `firewall: { enable: false }`)
 func (e *Env) WriteYAML(t *testing.T, file ConfigFile, dir string, content string) {
 	t.Helper()

@@ -8,7 +8,6 @@
 // should import internal/consts directly.
 //
 // What stays here (genuinely config-backed):
-//   - RequiredFirewallRules() — backed by requiredFirewallRules in defaults.go
 //   - OpenSearchURL/OpenSearchDashboardsURL/PrometheusURL/OtelCollectorURL — read MonitoringConfig() ports
 //   - The Mode type and ModeBind/ModeSnapshot values (config-domain enum;
 //     ParseMode lives in schema.go)
@@ -111,22 +110,6 @@ func (c *configImpl) CoreDNSHealthHostPort() int { return consts.CoreDNSHealthHo
 
 // Deprecated: use consts.CoreDNSHealthPath.
 func (c *configImpl) CoreDNSHealthPath() string { return consts.CoreDNSHealthPath }
-
-// RequiredFirewallRules returns a copy of the required firewall egress rules.
-// The rule set is domain logic backed by requiredFirewallRules in defaults.go.
-func (c *configImpl) RequiredFirewallRules() []EgressRule {
-	result := make([]EgressRule, len(requiredFirewallRules))
-	copy(result, requiredFirewallRules)
-	// Deep-copy PathRules so callers can't mutate the package-level defaults.
-	for i := range result {
-		if len(result[i].PathRules) > 0 {
-			pr := make([]PathRule, len(result[i].PathRules))
-			copy(pr, result[i].PathRules)
-			result[i].PathRules = pr
-		}
-	}
-	return result
-}
 
 // Deprecated: use consts.BuildSubdir.
 func (c *configImpl) BuildSubdir() (string, error) { return consts.BuildSubdir() }

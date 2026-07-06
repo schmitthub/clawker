@@ -11,9 +11,12 @@ import (
 )
 
 func TestConfigFile_ValidJSON(t *testing.T) {
+	raw, err := harnessesFS.ReadFile(harnessAssetsRoot + "/claude/assets/claude-config.json")
+	require.NoError(t, err)
+
 	var content map[string]any
-	require.NoError(t, json.Unmarshal([]byte(ConfigFile), &content),
-		"ConfigFile must be valid JSON")
+	require.NoError(t, json.Unmarshal(raw, &content),
+		"claude-config.json must be valid JSON")
 
 	val, ok := content["hasCompletedOnboarding"]
 	require.True(t, ok, "ConfigFile must contain hasCompletedOnboarding key")
@@ -46,9 +49,10 @@ security:
 	// Verify all expected scripts exist.
 	expectedFiles := []string{
 		"clawkerd",
-		"statusline.sh",
-		"claude-settings.json",
-		"claude-config.json",
+		"assets/statusline.sh",
+		"assets/claude-settings.json",
+		"assets/claude-config.json",
+		"assets/clawker-agent-prompt.md",
 		"host-open.sh",
 		"callback-forwarder.go",
 		"git-credential-clawker.sh",
@@ -63,7 +67,7 @@ security:
 	for _, name := range []string{"clawkerd", "host-open.sh"} {
 		info, err := os.Stat(filepath.Join(dir, name))
 		require.NoError(t, err)
-		assert.NotZero(t, info.Mode()&0111, "%s should be executable", name)
+		assert.NotZero(t, info.Mode()&0o111, "%s should be executable", name)
 	}
 }
 

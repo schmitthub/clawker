@@ -7,8 +7,10 @@ import (
 
 	cerrdefs "github.com/containerd/errdefs"
 	mobyClient "github.com/moby/moby/client"
+
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/controlplane/manager"
+	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/docker"
@@ -61,7 +63,11 @@ func NeedsSocketBridge(cfg *config.Project) bool {
 // ensureHostProxyRunning starts the host proxy when the project enables it.
 // A nil provider or a nil proxy instance is a no-op (debug-logged); only a
 // failure from EnsureRunning aborts the start. log may be nil.
-func ensureHostProxyRunning(projectCfg *config.Project, hostProxyFn func() hostproxy.Service, log *logger.Logger) error {
+func ensureHostProxyRunning(
+	projectCfg *config.Project,
+	hostProxyFn func() hostproxy.Service,
+	log *logger.Logger,
+) error {
 	if projectCfg == nil || !projectCfg.Security.HostProxyEnabled() {
 		if log != nil {
 			log.Debug().Msg("host proxy disabled by config")
@@ -137,6 +143,25 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 		return fmt.Errorf("bootstrapping services: ensuring control plane is running: %w", err)
 	}
 
+	if cmdOpts.Client == nil {
+		return errors.New("bootstrapping services: docker client provider is nil")
+	}
+	client, err := cmdOpts.Client(ctx)
+	if err != nil {
+		return fmt.Errorf("bootstrapping services: creating docker client: %w", err)
+	}
+	if client == nil {
+		return errors.New("bootstrapping services: docker client is nil")
+	}
+
+	// The container's harness label (stamped at create from the image) is
+	// the runtime identity — egress floor and pre_run compose against it,
+	// not against whatever the registry default happens to be today.
+	harnessName, err := containerHarnessName(ctx, client, cfg, container)
+	if err != nil {
+		return fmt.Errorf("bootstrapping services: resolving container harness: %w", err)
+	}
+
 	// Firewall is one feature hosted by the CP. Bring the stack up and
 	// sync project rules only when firewall.enable (settings.yaml) is
 	// true. Per-container FirewallEnable runs post-start because the
@@ -155,8 +180,12 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 			return fmt.Errorf("bootstrapping services: firewall init: %w", err)
 		}
 
+		egressRules, egressErr := bundler.EgressRules(cfg, harnessName)
+		if egressErr != nil {
+			return fmt.Errorf("bootstrapping services: composing egress rules: %w", egressErr)
+		}
 		if _, err := adminClient.FirewallAddRules(ctx, &adminv1.FirewallAddRulesRequest{
-			Rules: adminv1.EgressRulesToProto(cfg.EgressRules()),
+			Rules: adminv1.EgressRulesToProto(egressRules),
 		}); err != nil {
 			return fmt.Errorf("bootstrapping services: adding firewall rules: %w", err)
 		}
@@ -172,19 +201,9 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 	// removal are both handled with no staleness. CP runs it (pre-run
 	// step) right before the CMD. Not firewall-gated; a copy failure aborts
 	// the start.
-	if cmdOpts.Client == nil {
-		return fmt.Errorf("bootstrapping services: docker client provider is nil")
-	}
-	client, err := cmdOpts.Client(ctx)
-	if err != nil {
-		return fmt.Errorf("bootstrapping services: creating docker client: %w", err)
-	}
-	if client == nil {
-		return fmt.Errorf("bootstrapping services: docker client is nil")
-	}
 	var preRun string
 	if projectCfg != nil {
-		preRun = projectCfg.Agent.PreRun
+		preRun = projectCfg.PreRunFor(harnessName)
 	}
 	if err := InjectHookScript(ctx, InjectHookOpts{
 		ContainerID:     container,
@@ -199,6 +218,33 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 	}
 
 	return nil
+}
+
+// containerHarnessName reads the container's harness label — the identity
+// stamped at create from the image — falling back to the registry default
+// for containers created before the label existed.
+func containerHarnessName(
+	ctx context.Context,
+	client *docker.Client,
+	cfg config.Config,
+	container string,
+) (string, error) {
+	if inspect, err := client.ContainerInspect(
+		ctx,
+		container,
+		docker.ContainerInspectOptions{Size: false},
+	); err == nil {
+		if inspect.Container.Config != nil {
+			if name := inspect.Container.Config.Labels[consts.LabelHarness]; name != "" {
+				return name, nil
+			}
+		}
+	}
+	name, err := bundler.ResolveHarnessName(cfg, "")
+	if err != nil {
+		return "", fmt.Errorf("container %s carries no harness label and default resolution failed: %w", container, err)
+	}
+	return name, nil
 }
 
 func BootstrapServicesPostStart(ctx context.Context, container string, cmdOpts CommandOpts) error {
@@ -265,7 +311,8 @@ func BootstrapServicesPostStart(ctx context.Context, container string, cmdOpts C
 					log.Debug().Msg("socket bridge manager is nil, skipping")
 				}
 			} else {
-				gpgEnabled := projectCfg.Security.GitCredentials != nil && projectCfg.Security.GitCredentials.GPGEnabled()
+				gpgEnabled := projectCfg.Security.GitCredentials != nil &&
+					projectCfg.Security.GitCredentials.GPGEnabled()
 				if err := sb.EnsureBridge(container, gpgEnabled); err != nil {
 					if log != nil {
 						log.Error().Err(err).Msg("failed to start socket bridge")
@@ -332,7 +379,11 @@ func reapTargetGone(err error) bool {
 // start call was never reached (this function NEVER fabricates an SDK result
 // value; moby reserves the right to add fields to ContainerStartResult, and
 // an invented zero value would silently misrepresent them).
-func ContainerStart(ctx context.Context, cmdOpts CommandOpts, startOpts docker.ContainerStartOptions) (*mobyClient.ContainerStartResult, error) {
+func ContainerStart(
+	ctx context.Context,
+	cmdOpts CommandOpts,
+	startOpts docker.ContainerStartOptions,
+) (*mobyClient.ContainerStartResult, error) {
 	if cmdOpts.Client == nil {
 		return nil, fmt.Errorf("starting container: docker client provider is nil")
 	}
@@ -345,7 +396,12 @@ func ContainerStart(ctx context.Context, cmdOpts CommandOpts, startOpts docker.C
 	}
 
 	if err := BootstrapServicesPreStart(ctx, startOpts.ContainerID, cmdOpts); err != nil {
-		return nil, ReapFailedStart(client, startOpts.ContainerID, fmt.Errorf("pre-start bootstrapping failed: %w", err))
+		//nolint:contextcheck // reap is cleanup — it must run on Background even when ctx is dead
+		return nil, ReapFailedStart(
+			client,
+			startOpts.ContainerID,
+			fmt.Errorf("pre-start bootstrapping failed: %w", err),
+		)
 	}
 	result, err := client.ContainerStart(ctx, startOpts)
 	if err != nil {

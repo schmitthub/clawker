@@ -206,6 +206,12 @@ linters:
         - -ST1000
         - -ST1016
         - -QF1008
+    tagliatelle:
+      case:
+        rules:
+          json: camel
+          toml: snake
+          yaml: snake
     usetesting:
       os-temp-dir: true
     wrapcheck:

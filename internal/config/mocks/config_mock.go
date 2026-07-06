@@ -64,9 +64,6 @@ var _ config.Config = &ConfigMock{}
 //			DomainFunc: func() string {
 //				panic("mock out the Domain method")
 //			},
-//			EgressRulesFunc: func() []config.EgressRule {
-//				panic("mock out the EgressRules method")
-//			},
 //			EgressRulesFileNameFunc: func() string {
 //				panic("mock out the EgressRulesFileName method")
 //			},
@@ -187,6 +184,9 @@ var _ config.Config = &ConfigMock{}
 //			ProjectConfigFileNameFunc: func() string {
 //				panic("mock out the ProjectConfigFileName method")
 //			},
+//			ProjectEgressRulesFunc: func() []config.EgressRule {
+//				panic("mock out the ProjectEgressRules method")
+//			},
 //			ProjectStoreFunc: func() *storage.Store[config.Project] {
 //				panic("mock out the ProjectStore method")
 //			},
@@ -201,12 +201,6 @@ var _ config.Config = &ConfigMock{}
 //			},
 //			PurposeMonitoringFunc: func() string {
 //				panic("mock out the PurposeMonitoring method")
-//			},
-//			RequiredFirewallDomainsFunc: func() []string {
-//				panic("mock out the RequiredFirewallDomains method")
-//			},
-//			RequiredFirewallRulesFunc: func() []config.EgressRule {
-//				panic("mock out the RequiredFirewallRules method")
 //			},
 //			SettingsFunc: func() *config.Settings {
 //				panic("mock out the Settings method")
@@ -277,9 +271,6 @@ type ConfigMock struct {
 
 	// DomainFunc mocks the Domain method.
 	DomainFunc func() string
-
-	// EgressRulesFunc mocks the EgressRules method.
-	EgressRulesFunc func() []config.EgressRule
 
 	// EgressRulesFileNameFunc mocks the EgressRulesFileName method.
 	EgressRulesFileNameFunc func() string
@@ -401,6 +392,9 @@ type ConfigMock struct {
 	// ProjectConfigFileNameFunc mocks the ProjectConfigFileName method.
 	ProjectConfigFileNameFunc func() string
 
+	// ProjectEgressRulesFunc mocks the ProjectEgressRules method.
+	ProjectEgressRulesFunc func() []config.EgressRule
+
 	// ProjectStoreFunc mocks the ProjectStore method.
 	ProjectStoreFunc func() *storage.Store[config.Project]
 
@@ -415,12 +409,6 @@ type ConfigMock struct {
 
 	// PurposeMonitoringFunc mocks the PurposeMonitoring method.
 	PurposeMonitoringFunc func() string
-
-	// RequiredFirewallDomainsFunc mocks the RequiredFirewallDomains method.
-	RequiredFirewallDomainsFunc func() []string
-
-	// RequiredFirewallRulesFunc mocks the RequiredFirewallRules method.
-	RequiredFirewallRulesFunc func() []config.EgressRule
 
 	// SettingsFunc mocks the Settings method.
 	SettingsFunc func() *config.Settings
@@ -488,9 +476,6 @@ type ConfigMock struct {
 		}
 		// Domain holds details about calls to the Domain method.
 		Domain []struct {
-		}
-		// EgressRules holds details about calls to the EgressRules method.
-		EgressRules []struct {
 		}
 		// EgressRulesFileName holds details about calls to the EgressRulesFileName method.
 		EgressRulesFileName []struct {
@@ -612,6 +597,9 @@ type ConfigMock struct {
 		// ProjectConfigFileName holds details about calls to the ProjectConfigFileName method.
 		ProjectConfigFileName []struct {
 		}
+		// ProjectEgressRules holds details about calls to the ProjectEgressRules method.
+		ProjectEgressRules []struct {
+		}
 		// ProjectStore holds details about calls to the ProjectStore method.
 		ProjectStore []struct {
 		}
@@ -626,12 +614,6 @@ type ConfigMock struct {
 		}
 		// PurposeMonitoring holds details about calls to the PurposeMonitoring method.
 		PurposeMonitoring []struct {
-		}
-		// RequiredFirewallDomains holds details about calls to the RequiredFirewallDomains method.
-		RequiredFirewallDomains []struct {
-		}
-		// RequiredFirewallRules holds details about calls to the RequiredFirewallRules method.
-		RequiredFirewallRules []struct {
 		}
 		// Settings holds details about calls to the Settings method.
 		Settings []struct {
@@ -667,7 +649,6 @@ type ConfigMock struct {
 	lockDataDirEnvVar           sync.RWMutex
 	lockDockerfilesSubdir       sync.RWMutex
 	lockDomain                  sync.RWMutex
-	lockEgressRules             sync.RWMutex
 	lockEgressRulesFileName     sync.RWMutex
 	lockEngineLabelPrefix       sync.RWMutex
 	lockEngineManagedLabel      sync.RWMutex
@@ -708,13 +689,12 @@ type ConfigMock struct {
 	lockPidsSubdir              sync.RWMutex
 	lockProject                 sync.RWMutex
 	lockProjectConfigFileName   sync.RWMutex
+	lockProjectEgressRules      sync.RWMutex
 	lockProjectStore            sync.RWMutex
 	lockPrometheusURL           sync.RWMutex
 	lockPurposeAgent            sync.RWMutex
 	lockPurposeFirewall         sync.RWMutex
 	lockPurposeMonitoring       sync.RWMutex
-	lockRequiredFirewallDomains sync.RWMutex
-	lockRequiredFirewallRules   sync.RWMutex
 	lockSettings                sync.RWMutex
 	lockSettingsFileName        sync.RWMutex
 	lockSettingsStore           sync.RWMutex
@@ -1130,33 +1110,6 @@ func (mock *ConfigMock) DomainCalls() []struct {
 	mock.lockDomain.RLock()
 	calls = mock.calls.Domain
 	mock.lockDomain.RUnlock()
-	return calls
-}
-
-// EgressRules calls EgressRulesFunc.
-func (mock *ConfigMock) EgressRules() []config.EgressRule {
-	if mock.EgressRulesFunc == nil {
-		panic("ConfigMock.EgressRulesFunc: method is nil but Config.EgressRules was just called")
-	}
-	callInfo := struct {
-	}{}
-	mock.lockEgressRules.Lock()
-	mock.calls.EgressRules = append(mock.calls.EgressRules, callInfo)
-	mock.lockEgressRules.Unlock()
-	return mock.EgressRulesFunc()
-}
-
-// EgressRulesCalls gets all the calls that were made to EgressRules.
-// Check the length with:
-//
-//	len(mockedConfig.EgressRulesCalls())
-func (mock *ConfigMock) EgressRulesCalls() []struct {
-} {
-	var calls []struct {
-	}
-	mock.lockEgressRules.RLock()
-	calls = mock.calls.EgressRules
-	mock.lockEgressRules.RUnlock()
 	return calls
 }
 
@@ -2240,6 +2193,33 @@ func (mock *ConfigMock) ProjectConfigFileNameCalls() []struct {
 	return calls
 }
 
+// ProjectEgressRules calls ProjectEgressRulesFunc.
+func (mock *ConfigMock) ProjectEgressRules() []config.EgressRule {
+	if mock.ProjectEgressRulesFunc == nil {
+		panic("ConfigMock.ProjectEgressRulesFunc: method is nil but Config.ProjectEgressRules was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockProjectEgressRules.Lock()
+	mock.calls.ProjectEgressRules = append(mock.calls.ProjectEgressRules, callInfo)
+	mock.lockProjectEgressRules.Unlock()
+	return mock.ProjectEgressRulesFunc()
+}
+
+// ProjectEgressRulesCalls gets all the calls that were made to ProjectEgressRules.
+// Check the length with:
+//
+//	len(mockedConfig.ProjectEgressRulesCalls())
+func (mock *ConfigMock) ProjectEgressRulesCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockProjectEgressRules.RLock()
+	calls = mock.calls.ProjectEgressRules
+	mock.lockProjectEgressRules.RUnlock()
+	return calls
+}
+
 // ProjectStore calls ProjectStoreFunc.
 func (mock *ConfigMock) ProjectStore() *storage.Store[config.Project] {
 	if mock.ProjectStoreFunc == nil {
@@ -2372,60 +2352,6 @@ func (mock *ConfigMock) PurposeMonitoringCalls() []struct {
 	mock.lockPurposeMonitoring.RLock()
 	calls = mock.calls.PurposeMonitoring
 	mock.lockPurposeMonitoring.RUnlock()
-	return calls
-}
-
-// RequiredFirewallDomains calls RequiredFirewallDomainsFunc.
-func (mock *ConfigMock) RequiredFirewallDomains() []string {
-	if mock.RequiredFirewallDomainsFunc == nil {
-		panic("ConfigMock.RequiredFirewallDomainsFunc: method is nil but Config.RequiredFirewallDomains was just called")
-	}
-	callInfo := struct {
-	}{}
-	mock.lockRequiredFirewallDomains.Lock()
-	mock.calls.RequiredFirewallDomains = append(mock.calls.RequiredFirewallDomains, callInfo)
-	mock.lockRequiredFirewallDomains.Unlock()
-	return mock.RequiredFirewallDomainsFunc()
-}
-
-// RequiredFirewallDomainsCalls gets all the calls that were made to RequiredFirewallDomains.
-// Check the length with:
-//
-//	len(mockedConfig.RequiredFirewallDomainsCalls())
-func (mock *ConfigMock) RequiredFirewallDomainsCalls() []struct {
-} {
-	var calls []struct {
-	}
-	mock.lockRequiredFirewallDomains.RLock()
-	calls = mock.calls.RequiredFirewallDomains
-	mock.lockRequiredFirewallDomains.RUnlock()
-	return calls
-}
-
-// RequiredFirewallRules calls RequiredFirewallRulesFunc.
-func (mock *ConfigMock) RequiredFirewallRules() []config.EgressRule {
-	if mock.RequiredFirewallRulesFunc == nil {
-		panic("ConfigMock.RequiredFirewallRulesFunc: method is nil but Config.RequiredFirewallRules was just called")
-	}
-	callInfo := struct {
-	}{}
-	mock.lockRequiredFirewallRules.Lock()
-	mock.calls.RequiredFirewallRules = append(mock.calls.RequiredFirewallRules, callInfo)
-	mock.lockRequiredFirewallRules.Unlock()
-	return mock.RequiredFirewallRulesFunc()
-}
-
-// RequiredFirewallRulesCalls gets all the calls that were made to RequiredFirewallRules.
-// Check the length with:
-//
-//	len(mockedConfig.RequiredFirewallRulesCalls())
-func (mock *ConfigMock) RequiredFirewallRulesCalls() []struct {
-} {
-	var calls []struct {
-	}
-	mock.lockRequiredFirewallRules.RLock()
-	calls = mock.calls.RequiredFirewallRules
-	mock.lockRequiredFirewallRules.RUnlock()
 	return calls
 }
 

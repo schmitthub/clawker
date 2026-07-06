@@ -11,6 +11,7 @@ import (
 	"github.com/Masterminds/semver/v3"
 
 	"github.com/schmitthub/clawker/internal/bundler/registry"
+	"github.com/schmitthub/clawker/internal/harness"
 )
 
 const (
@@ -44,46 +45,100 @@ func NewVersionsManagerWithFetcher(fetcher registry.Fetcher, config *VariantConf
 	}
 }
 
-// ResolveLatestClaudeCodeVersion calls the npm registry through the supplied
-// http.Client and returns the concrete version that the "latest" dist-tag
+// ResolveLatestHarnessVersion calls the npm registry through the supplied
+// [http.Client] and returns the concrete version that the "latest" dist-tag
 // currently points at (e.g. "2.1.5"). Resolution happens once per build at
 // the command layer; the result is then baked into the rendered Dockerfile
-// via ProjectGenerator.ClaudeCodeVersion / BuilderOptions.ClaudeCodeVersion
+// via ProjectGenerator.HarnessVersion / BuilderOptions.HarnessVersion
 // so the install layer's ARG cache busts only when npm publishes a new
 // release.
 //
 // On resolution failure (offline, registry 5xx, empty response) returns
-// DefaultClaudeCodeVersion ("latest" literal) + the underlying error so
+// DefaultHarnessVersion ("latest" literal) + the underlying error so
 // callers can warn the user. Build still works in that path — the install
 // RUN at the end of the Dockerfile downloads whatever npm latest is at
 // build time — but the cache won't bust on a new release until network
 // returns.
 //
-// Pass a stdlib *http.Client; in production the Factory's HttpClient
+// Pass a stdlib [http.Client]; in production the Factory's HttpClient
 // closure supplies it, in tests a client with a stubbed RoundTripper
 // substitutes the registry. The npm-specific knowledge (URL, parsing) is
 // encapsulated in registry.NPMClient via WithHTTPClient.
-func ResolveLatestClaudeCodeVersion(ctx context.Context, httpClient *http.Client) (string, error) {
+func ResolveLatestHarnessVersion(ctx context.Context, httpClient *http.Client) (string, error) {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
 	fetcher := registry.NewNPMClient(registry.WithHTTPClient(httpClient))
 	mgr := NewVersionsManagerWithFetcher(fetcher, nil)
-	vf, err := mgr.ResolveVersions(ctx, []string{DefaultClaudeCodeVersion}, ResolveOptions{})
+	vf, err := mgr.ResolveVersions(ctx, []string{DefaultHarnessVersion},
+		ResolveOptions{Debug: false, Output: nil, Package: ""})
 	if err != nil {
-		return DefaultClaudeCodeVersion, err
+		return DefaultHarnessVersion, err
 	}
 	// Single-pattern call: ResolveVersions returns at most one entry, keyed
 	// by the resolved version string. Take that single key explicitly
 	// rather than picking via non-deterministic map iteration so the
 	// contract is obvious if a future caller threads more patterns through.
 	if len(*vf) != 1 {
-		return DefaultClaudeCodeVersion, fmt.Errorf("expected 1 resolved version for %q, got %d", DefaultClaudeCodeVersion, len(*vf))
+		return DefaultHarnessVersion, fmt.Errorf(
+			"expected 1 resolved version for %q, got %d",
+			DefaultHarnessVersion,
+			len(*vf),
+		)
 	}
 	for v := range *vf {
 		return v, nil
 	}
-	return DefaultClaudeCodeVersion, ErrNoVersions
+	return DefaultHarnessVersion, ErrNoVersions
+}
+
+// ResolveHarnessVersion resolves the concrete version rendered into the
+// harness template's version ARG, per the bundle manifest's version spec:
+//
+//   - npm: the package's "latest" dist-tag, resolved through the supplied
+//     [http.Client] (same contract as ResolveLatestHarnessVersion).
+//   - none: the literal DefaultHarnessVersion tag — the harness template
+//     either ignores the value or treats it as a floating tag.
+//
+// On resolution failure returns the "latest" literal plus the underlying
+// error so callers can warn; the build still works with a floating tag.
+func ResolveHarnessVersion(ctx context.Context, httpClient *http.Client, b *harness.Bundle) (string, error) {
+	spec := b.Manifest.Version
+	switch spec.Resolver {
+	case "", "none":
+		return DefaultHarnessVersion, nil
+	case "npm":
+		if httpClient == nil {
+			httpClient = http.DefaultClient
+		}
+		fetcher := registry.NewNPMClient(registry.WithHTTPClient(httpClient))
+		mgr := NewVersionsManagerWithFetcher(fetcher, nil)
+		vf, err := mgr.ResolveVersions(
+			ctx,
+			[]string{DefaultHarnessVersion},
+			ResolveOptions{Package: spec.Package, Debug: false, Output: nil},
+		)
+		if err != nil {
+			return DefaultHarnessVersion, err
+		}
+		if len(*vf) != 1 {
+			return DefaultHarnessVersion, fmt.Errorf(
+				"expected 1 resolved version for %q, got %d",
+				spec.Package,
+				len(*vf),
+			)
+		}
+		for v := range *vf {
+			return v, nil
+		}
+		return DefaultHarnessVersion, ErrNoVersions
+	default:
+		return DefaultHarnessVersion, fmt.Errorf(
+			"harness %q: unsupported version resolver %q",
+			b.Name,
+			spec.Resolver,
+		)
+	}
 }
 
 // ResolveOptions configures version resolution behavior.
@@ -92,6 +147,17 @@ type ResolveOptions struct {
 	Debug bool
 	// Output is the writer for informational messages. Defaults to io.Discard if nil.
 	Output io.Writer
+	// Package is the npm package whose versions are resolved. Empty means
+	// ClaudeCodePackage.
+	Package string
+}
+
+// pkg returns the configured package, defaulting to ClaudeCodePackage.
+func (o ResolveOptions) pkg() string {
+	if o.Package != "" {
+		return o.Package
+	}
+	return ClaudeCodePackage
 }
 
 // output returns the configured output writer, defaulting to io.Discard.
@@ -107,14 +173,18 @@ func (o ResolveOptions) output() io.Writer {
 //   - "latest", "stable", "next" - resolved via npm dist-tags
 //   - "2.1" - partial match to highest 2.1.x release
 //   - "2.1.2" - exact version match
-func (m *VersionsManager) ResolveVersions(ctx context.Context, patterns []string, opts ResolveOptions) (*registry.VersionsFile, error) {
+func (m *VersionsManager) ResolveVersions(
+	ctx context.Context,
+	patterns []string,
+	opts ResolveOptions,
+) (*registry.VersionsFile, error) {
 	// Fetch all available versions and dist-tags
-	allVersions, err := m.fetcher.FetchVersions(ctx, ClaudeCodePackage)
+	allVersions, err := m.fetcher.FetchVersions(ctx, opts.pkg())
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch versions: %w", err)
 	}
 
-	distTags, err := m.fetcher.FetchDistTags(ctx, ClaudeCodePackage)
+	distTags, err := m.fetcher.FetchDistTags(ctx, opts.pkg())
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch dist-tags: %w", err)
 	}
@@ -128,9 +198,9 @@ func (m *VersionsManager) ResolveVersions(ctx context.Context, patterns []string
 	result := make(registry.VersionsFile)
 
 	for _, pattern := range patterns {
-		fullVersion, err := m.resolvePattern(ctx, pattern, allVersions, distTags, opts)
-		if err != nil {
-			fmt.Fprintf(out, "warning: %v\n", err)
+		fullVersion, resolveErr := m.resolvePattern(pattern, allVersions, distTags)
+		if resolveErr != nil {
+			fmt.Fprintf(out, "warning: %v\n", resolveErr)
 			continue
 		}
 
@@ -159,7 +229,13 @@ func (m *VersionsManager) ResolveVersions(ctx context.Context, patterns []string
 }
 
 // resolvePattern resolves a single version pattern to a full version string.
-func (m *VersionsManager) resolvePattern(ctx context.Context, pattern string, versions []string, distTags registry.DistTags, opts ResolveOptions) (string, error) {
+//
+//nolint:gocognit
+func (m *VersionsManager) resolvePattern(
+	pattern string,
+	versions []string,
+	distTags registry.DistTags,
+) (string, error) {
 	// Check if pattern is a dist-tag
 	switch pattern {
 	case "latest", "stable", "next":

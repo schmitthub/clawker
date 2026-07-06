@@ -84,7 +84,6 @@ BSD-2-Clause
 ================================================================================
 
 github.com/emirpasic/gods                                                      BSD-2-Clause
-github.com/godbus/dbus/v5                                                      BSD-2-Clause
 github.com/pkg/errors                                                          BSD-2-Clause
 github.com/russross/blackfriday/v2                                             BSD-2-Clause
 
@@ -156,6 +155,7 @@ github.com/apparentlymart/go-cidr/cidr                                         M
 github.com/aymanbagabas/go-osc52/v2                                            MIT
 github.com/aymerick/douceur                                                    MIT
 github.com/beorn7/perks/quantile                                               MIT
+github.com/bmatcuk/doublestar/v4                                               MIT
 github.com/cenkalti/backoff/v5                                                 MIT
 github.com/cespare/xxhash/v2                                                   MIT
 github.com/charmbracelet/bubbles                                               MIT
@@ -205,8 +205,6 @@ github.com/tonistiigi/fsutil                                                   M
 github.com/xo/terminfo                                                         MIT
 github.com/yuin/goldmark                                                       MIT
 github.com/yuin/goldmark-emoji                                                 MIT
-github.com/zalando/go-keyring                                                  MIT
-github.com/zalando/go-keyring/internal/shellescape                             MIT
 go.uber.org/automaxprocs                                                       MIT
 go.uber.org/multierr                                                           MIT
 gopkg.in/natefinch/lumberjack.v2                                               MIT

@@ -14,7 +14,6 @@ import (
 
 	"github.com/schmitthub/clawker/internal/project"
 	"github.com/schmitthub/clawker/internal/storage"
-	"github.com/schmitthub/clawker/internal/testenv"
 	"github.com/schmitthub/clawker/test/e2e/harness"
 )
 
@@ -231,13 +230,6 @@ func TestPresetInit_SSHConnectivity(t *testing.T) {
 	initRes := h.Run("project", "init", "ssh-connectivity", "--yes", "--preset", "Bare", "--vcs", "github", "--git-protocol", "ssh")
 	require.NoError(t, initRes.Err,
 		"init failed\nstdout: %s\nstderr: %s", initRes.Stdout, initRes.Stderr)
-
-	// Disable host auth requirement (test env has no Claude credentials).
-	setup.WriteYAML(t, testenv.ProjectConfigLocal, setup.ProjectDir, `
-agent:
-  claude_code:
-    use_host_auth: false
-`)
 
 	// Build the image.
 	buildRes := h.Run("build", "--progress=none")

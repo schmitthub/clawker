@@ -16,7 +16,7 @@ import (
 // stubRoundTripper services a single npm `@anthropic-ai/claude-code` lookup
 // with either a canned response or an injected error. The build command's
 // httpstub_test.go has its own copy scoped to that package; this one stays
-// in the bundler tests so ResolveLatestClaudeCodeVersion is testable
+// in the bundler tests so ResolveLatestHarnessVersion is testable
 // without dragging in the command-layer test helpers.
 type stubRoundTripper struct {
 	body []byte
@@ -44,7 +44,7 @@ func newStubClient(rt http.RoundTripper) *http.Client {
 	return &http.Client{Transport: rt}
 }
 
-func TestResolveLatestClaudeCodeVersion_Success(t *testing.T) {
+func TestResolveLatestHarnessVersion_Success(t *testing.T) {
 	body, _ := json.Marshal(map[string]any{
 		"name": ClaudeCodePackage,
 		"dist-tags": map[string]string{
@@ -56,7 +56,7 @@ func TestResolveLatestClaudeCodeVersion_Success(t *testing.T) {
 	})
 	client := newStubClient(stubRoundTripper{body: body})
 
-	got, err := ResolveLatestClaudeCodeVersion(context.Background(), client)
+	got, err := ResolveLatestHarnessVersion(context.Background(), client)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -65,16 +65,16 @@ func TestResolveLatestClaudeCodeVersion_Success(t *testing.T) {
 	}
 }
 
-func TestResolveLatestClaudeCodeVersion_NetworkError(t *testing.T) {
+func TestResolveLatestHarnessVersion_NetworkError(t *testing.T) {
 	netErr := errors.New("dial tcp: connection refused")
 	client := newStubClient(stubRoundTripper{err: netErr})
 
-	got, err := ResolveLatestClaudeCodeVersion(context.Background(), client)
+	got, err := ResolveLatestHarnessVersion(context.Background(), client)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if got != DefaultClaudeCodeVersion {
-		t.Fatalf("on failure want fallback %q, got %q", DefaultClaudeCodeVersion, got)
+	if got != DefaultHarnessVersion {
+		t.Fatalf("on failure want fallback %q, got %q", DefaultHarnessVersion, got)
 	}
 	// Underlying *NetworkError must remain unwrappable so callers can
 	// distinguish offline from registry errors.
@@ -84,7 +84,7 @@ func TestResolveLatestClaudeCodeVersion_NetworkError(t *testing.T) {
 	}
 }
 
-func TestResolveLatestClaudeCodeVersion_MissingLatestDistTag(t *testing.T) {
+func TestResolveLatestHarnessVersion_MissingLatestDistTag(t *testing.T) {
 	// Registry returns a well-formed payload that omits the "latest"
 	// dist-tag — resolvePattern fails per-pattern, ResolveVersions returns
 	// ErrNoVersions, and the wrapper hands back the default literal.
@@ -95,31 +95,31 @@ func TestResolveLatestClaudeCodeVersion_MissingLatestDistTag(t *testing.T) {
 	})
 	client := newStubClient(stubRoundTripper{body: body})
 
-	got, err := ResolveLatestClaudeCodeVersion(context.Background(), client)
+	got, err := ResolveLatestHarnessVersion(context.Background(), client)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if got != DefaultClaudeCodeVersion {
-		t.Fatalf("on empty resolution want fallback %q, got %q", DefaultClaudeCodeVersion, got)
+	if got != DefaultHarnessVersion {
+		t.Fatalf("on empty resolution want fallback %q, got %q", DefaultHarnessVersion, got)
 	}
 	if !errors.Is(err, registry.ErrNoVersions) {
 		t.Fatalf("expected ErrNoVersions, got %v", err)
 	}
 }
 
-func TestResolveLatestClaudeCodeVersion_NilClient(t *testing.T) {
+func TestResolveLatestHarnessVersion_NilClient(t *testing.T) {
 	// nil http.Client must not panic — it falls back to http.DefaultClient.
 	// We don't actually fire a request: a context that's already canceled
 	// short-circuits before any DNS lookup.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	got, err := ResolveLatestClaudeCodeVersion(ctx, nil)
+	got, err := ResolveLatestHarnessVersion(ctx, nil)
 	if err == nil {
 		t.Fatal("expected error (canceled context), got nil")
 	}
-	if got != DefaultClaudeCodeVersion {
-		t.Fatalf("on failure want fallback %q, got %q", DefaultClaudeCodeVersion, got)
+	if got != DefaultHarnessVersion {
+		t.Fatalf("on failure want fallback %q, got %q", DefaultHarnessVersion, got)
 	}
 }
 

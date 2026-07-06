@@ -68,7 +68,7 @@ err := shared.InitContainerConfig(ctx, shared.InitConfigOpts{
 })
 ```
 
-Onboarding bypass is image-level -- entrypoint seeds `~/.claude/.config.json` from `~/.claude-init/.config.json`.
+Onboarding bypass is image-level -- CP's generic seed-apply step places the harness's `.config.json` seed from the image's `~/.clawker/seed/` staging dir on first boot.
 
 ### Image Rebuild (`image.go`)
 

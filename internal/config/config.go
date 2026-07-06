@@ -53,7 +53,7 @@ type Config interface {
 	// Deprecated: Use SettingsStore().Read().HostProxy instead.
 	HostProxyConfig() HostProxyConfig
 
-	EgressRules() []EgressRule
+	ProjectEgressRules() []EgressRule
 	Domain() string
 	LabelDomain() string
 	ConfigDirEnvVar() string
@@ -109,11 +109,9 @@ type Config interface {
 	// collector so Prometheus retains metric metadata (its
 	// /api/v1/metadata excludes OTLP-ingested series).
 	OtelCollectorURL() string
-	RequiredFirewallDomains() []string
 	EgressRulesFileName() string
 	FirewallDataSubdir() (string, error)
 	FirewallCertSubdir() (string, error)
-	RequiredFirewallRules() []EgressRule
 	EnvoyIPLastOctet() byte
 	CoreDNSIPLastOctet() byte
 	CPIPLastOctet() byte
@@ -276,12 +274,13 @@ func NewFromString(projectYAML, settingsYAML string) (Config, error) {
 	}, nil
 }
 
-// EgressRules returns the full egress rule set for this project:
-// required baseline + anything configured under security.firewall
-// (explicit rules + add_domains shorthand).
-func (c *configImpl) EgressRules() []EgressRule {
+// ProjectEgressRules returns the egress rules configured under the
+// project's security.firewall: explicit rules verbatim, then add_domains
+// shorthand expansions. This is the project's contribution only — the
+// selected harness's required egress floor is composed in by
+// bundler.EgressRules, which is what firewall sync paths must call.
+func (c *configImpl) ProjectEgressRules() []EgressRule {
 	var rules []EgressRule
-	rules = append(rules, c.RequiredFirewallRules()...)
 	projectFw := c.Project().Security.Firewall
 	if projectFw != nil {
 		rules = append(rules, projectFw.Rules...)
@@ -314,10 +313,6 @@ func (c *configImpl) SettingsStore() *storage.Store[Settings] {
 }
 
 // --- Schema accessors ---
-
-func (c *configImpl) RequiredFirewallDomains() []string {
-	return append([]string(nil), requiredFirewallDomains...)
-}
 
 func (c *configImpl) Project() *Project {
 	return c.project.Read()

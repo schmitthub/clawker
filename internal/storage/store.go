@@ -573,7 +573,7 @@ func kindAccepts(kind FieldKind, value any) bool {
 		}
 	case KindStringSlice, KindStructSlice:
 		return reflect.TypeOf(value).Kind() == reflect.Slice
-	case KindMap:
+	case KindMap, KindStructMap:
 		return reflect.TypeOf(value).Kind() == reflect.Map
 	case KindLast:
 		return true // boundary sentinel, not a real field kind
@@ -583,11 +583,11 @@ func kindAccepts(kind FieldKind, value any) bool {
 }
 
 // isOpaqueField returns true if the path is a schema-level value field that
-// should not be recursed into by tree operations. Non-union KindMap and
-// KindStructSlice are opaque. Union maps are NOT opaque — their entries
-// are individually merged and tracked. KindStructSlice is always opaque
-// regardless of merge tag — its merge semantics are handled in the sequence
-// branch of mergeNodes, not the mapping branch.
+// should not be recursed into by tree operations. Non-union KindMap,
+// KindStructMap, and KindStructSlice are opaque. Union maps are NOT opaque —
+// their entries are individually merged and tracked. KindStructSlice is
+// always opaque regardless of merge tag — its merge semantics are handled in
+// the sequence branch of mergeNodes, not the mapping branch.
 func isOpaqueField(tags tagRegistry, path string) bool {
 	meta, ok := tags[path]
 	if !ok {
@@ -596,7 +596,7 @@ func isOpaqueField(tags tagRegistry, path string) bool {
 	if meta.kind == KindMap && meta.mergeTag == mergeUnion {
 		return false // union maps recurse per-entry
 	}
-	return meta.kind == KindMap || meta.kind == KindStructSlice
+	return meta.kind == KindMap || meta.kind == KindStructMap || meta.kind == KindStructSlice
 }
 
 // Write persists dirty fields to disk, then refreshes layer data

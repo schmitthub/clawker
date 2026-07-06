@@ -3,8 +3,11 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 
+	"github.com/schmitthub/clawker/internal/consts"
+	"github.com/schmitthub/clawker/internal/harness"
 	"github.com/schmitthub/clawker/internal/storage"
 )
 
@@ -24,7 +27,32 @@ func ProjectMigrations() []storage.Migration[Project] {
 func SettingsMigrations() []storage.Migration[Settings] {
 	return []storage.Migration[Settings]{
 		migrateRemoveLegacyMonitoringKeys,
+		migrateSeedHarnessRegistry,
 	}
+}
+
+// migrateSeedHarnessRegistry adds the harness registry to a settings.yaml
+// that predates the harnesses key, seeding the built-in harness as the
+// default so the registry — the harness customization surface — is visible
+// and editable in the file. A file that already has the key (including an
+// explicitly emptied one) is untouched; new shipped harnesses are registered
+// by the build-time ensure, not by this migration.
+func migrateSeedHarnessRegistry(s *storage.Store[Settings]) (bool, error) {
+	if s.Has("harnesses") {
+		return false, nil
+	}
+	seed := map[string]HarnessSettings{
+		consts.DefaultHarnessName: {
+			Default: true,
+			// Every registry entry carries an explicit bundle path — no
+			// name-keyed fallback resolution exists.
+			Path: filepath.Join(consts.ConfigDir(), harness.HarnessesSubdir, consts.DefaultHarnessName),
+		},
+	}
+	if err := s.Set("harnesses", seed); err != nil {
+		return false, fmt.Errorf("seeding harness registry: %w", err)
+	}
+	return true, nil
 }
 
 // legacyMonitoringKeys is the set of monitoring.* keys removed in the

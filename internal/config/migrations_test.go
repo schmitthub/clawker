@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/internal/config"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/storage"
 )
 
@@ -272,6 +273,58 @@ func loadSettingsWithMigrations(t *testing.T, yamlContent string) string {
 	return string(data)
 }
 
+// TestMigrateSeedHarnessRegistry covers seeding the harness registry into a
+// pre-harnesses settings.yaml: absent key → seeded with the built-in default;
+// any existing harnesses key — populated or explicitly emptied — is
+// untouched.
+func TestMigrateSeedHarnessRegistry(t *testing.T) {
+	t.Run("seeds registry with builtin default when key absent", func(t *testing.T) {
+		const in = `host_proxy:
+  port: 9999
+`
+		after := loadSettingsWithMigrations(t, in)
+		assert.Contains(t, after, "harnesses:")
+		assert.Contains(t, after, consts.DefaultHarnessName+":")
+		assert.Contains(t, after, "default: true")
+	})
+
+	t.Run("existing registry untouched", func(t *testing.T) {
+		const in = `harnesses:
+  codex:
+    default: true
+    path: /opt/bundles/codex
+`
+		after := loadSettingsWithMigrations(t, in)
+		assert.Equal(t, in, after, "populated registry must not be reseeded")
+	})
+
+	t.Run("explicitly emptied registry untouched", func(t *testing.T) {
+		const in = `harnesses: {}
+`
+		after := loadSettingsWithMigrations(t, in)
+		assert.Equal(t, in, after, "emptied registry is a user choice, not a missing key")
+	})
+
+	t.Run("idempotent across reloads", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "settings.yaml")
+		require.NoError(t, os.WriteFile(path, []byte("host_proxy:\n  port: 9999\n"), 0o644))
+
+		load := func() {
+			_, err := storage.New[config.Settings]("",
+				storage.WithFilenames("settings.yaml"),
+				storage.WithPaths(dir),
+				storage.WithMigrations(config.SettingsMigrations()...),
+			)
+			require.NoError(t, err)
+		}
+		load()
+		first := readFile(t, path)
+		load()
+		assert.Equal(t, first, readFile(t, path), "second load must be byte-stable")
+	})
+}
+
 // TestMigrateRemoveLegacyMonitoringKeys covers the settings migration's two
 // shapes — renaming otel_cp_port → otel_infra_port and removing the dropped
 // Loki/Jaeger/Grafana keys.
@@ -304,8 +357,11 @@ func TestMigrateRemoveLegacyMonitoringKeys(t *testing.T) {
 	})
 
 	t.Run("no-op without monitoring", func(t *testing.T) {
+		// harnesses key present so the registry-seed migration also no-ops —
+		// this subtest isolates the monitoring migration's absent-key path.
 		const in = `host_proxy:
   port: 9999
+harnesses: {}
 `
 		after := loadSettingsWithMigrations(t, in)
 		assert.Equal(t, in, after, "file without monitoring must be untouched")

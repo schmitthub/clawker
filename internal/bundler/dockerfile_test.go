@@ -5,26 +5,29 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/schmitthub/clawker/internal/config"
-	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/consts"
+	"github.com/schmitthub/clawker/internal/harness"
 )
 
-// testClaudeCodeVersion is the version baked into rendered Dockerfiles when
+// testHarnessVersion is the version baked into rendered Dockerfiles when
 // tests construct generators via newTestProjectGenerator. Setting the field
 // directly (rather than going through any resolver) keeps bundler unit tests
 // hermetic — bundler is a pure renderer that doesn't touch npm; the npm
 // round-trip lives at the command layer in production.
-const testClaudeCodeVersion = "2.99.99-test"
+const testHarnessVersion = "2.99.99-test"
 
 // newTestProjectGenerator builds a ProjectGenerator with the test version
 // pre-set so Generate() produces a deterministic ARG CLAUDE_CODE_VERSION
 // without any HTTP traffic. Mirrors the way production callers (the build
-// command) set ClaudeCodeVersion after resolving via Factory.HttpClient.
+// command) set HarnessVersion after resolving via Factory.HttpClient.
 func newTestProjectGenerator(cfg config.Config, workDir string) *ProjectGenerator {
 	gen := NewProjectGenerator(cfg, workDir)
-	gen.ClaudeCodeVersion = testClaudeCodeVersion
+	gen.HarnessVersion = testHarnessVersion
 	return gen
 }
 
@@ -150,7 +153,8 @@ func removeMonitoringFromProject(yaml string) (string, string) {
 
 		if skipMonitoring {
 			// Check if we've moved to a different section
-			if len(trimmed) > 0 && !strings.HasPrefix(line, monitoringIndent+" ") && !strings.HasPrefix(line, monitoringIndent+"\t") {
+			if len(trimmed) > 0 && !strings.HasPrefix(line, monitoringIndent+" ") &&
+				!strings.HasPrefix(line, monitoringIndent+"\t") {
 				skipMonitoring = false
 			}
 		}
@@ -192,8 +196,12 @@ monitoring:
 
 	content := string(dockerfile)
 	endpoint := cfg.OtelCollectorURL()
-	assert.Contains(t, content, "OTEL_EXPORTER_OTLP_ENDPOINT="+endpoint,
-		"otel base endpoint env var must render with the cfg-resolved otel-collector URL — OTel SDK derives /v1/{metrics,logs,traces} from this base per signal")
+	assert.Contains(
+		t,
+		content,
+		"OTEL_EXPORTER_OTLP_ENDPOINT="+endpoint,
+		"otel base endpoint env var must render with the cfg-resolved otel-collector URL — OTel SDK derives /v1/{metrics,logs,traces} from this base per signal",
+	)
 	assert.Contains(t, endpoint, ":9999",
 		"otel endpoint must carry the overridden otel_collector_port — proves the port override reaches the renderer")
 	assert.NotContains(t, content, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
@@ -211,14 +219,30 @@ func TestBuildContext_DefaultMonitoring(t *testing.T) {
 	require.NoError(t, err)
 
 	content := string(dockerfile)
-	assert.Contains(t, content, "OTEL_EXPORTER_OTLP_ENDPOINT="+cfg.OtelCollectorURL(),
-		"otel base endpoint env var must render with cfg.OtelCollectorURL() — OTel SDK derives /v1/{metrics,logs,traces} per signal")
-	assert.Contains(t, content, "OTEL_EXPORTER_OTLP_ENDPOINT=http://",
-		"otel endpoint must carry an http:// prefix — anchors the URL shape independently of cfg accessor (kills the self-validating assertion above)")
-	assert.Contains(t, content, "OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf",
-		"OTLP protocol must be pinned to http/protobuf — if dropped, traces silently fall back to gRPC against an HTTP-only receiver and disappear")
-	assert.Contains(t, content, "OTEL_TRACES_EXPORTER=otlp",
-		"traces exporter must be enabled — paired with CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1 gates the Claude Code beta trace path")
+	assert.Contains(
+		t,
+		content,
+		"OTEL_EXPORTER_OTLP_ENDPOINT="+cfg.OtelCollectorURL(),
+		"otel base endpoint env var must render with cfg.OtelCollectorURL() — OTel SDK derives /v1/{metrics,logs,traces} per signal",
+	)
+	assert.Contains(
+		t,
+		content,
+		"OTEL_EXPORTER_OTLP_ENDPOINT=http://",
+		"otel endpoint must carry an http:// prefix — anchors the URL shape independently of cfg accessor (kills the self-validating assertion above)",
+	)
+	assert.Contains(
+		t,
+		content,
+		"OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf",
+		"OTLP protocol must be pinned to http/protobuf — if dropped, traces silently fall back to gRPC against an HTTP-only receiver and disappear",
+	)
+	assert.Contains(
+		t,
+		content,
+		"OTEL_TRACES_EXPORTER=otlp",
+		"traces exporter must be enabled — paired with CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1 gates the Claude Code beta trace path",
+	)
 	assert.Contains(t, content, "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1",
 		"Claude Code beta tracing gate must be set — without this OTEL_TRACES_EXPORTER is ignored")
 }
@@ -235,11 +259,25 @@ func TestBuildContext_ClaudeConfigDir(t *testing.T) {
 	assert.Contains(t, content, "ENV CLAUDE_CONFIG_DIR=/home/${USERNAME}/.claude",
 		"Dockerfile must set CLAUDE_CONFIG_DIR to the config volume mount point")
 
-	// claude-config.json must be staged to .claude-init for CP-driven init seeding
-	assert.Contains(t, content, "claude-config.json",
-		"Dockerfile must COPY claude-config.json into build context")
-	assert.Contains(t, content, ".claude-init/.config.json",
-		"Dockerfile must stage claude-config.json to .claude-init/.config.json")
+	// claude-config.json must be staged into the generic seed dir and the
+	// baked seed manifest must tell CP how to apply it — this is the
+	// image-side half of the CP seed contract. Paths are composed from the
+	// same consts the CP seed-apply script uses, so template↔script drift
+	// fails here.
+	seedDir := "/home/${USERNAME}/" + consts.DotClawkerDir + "/" + consts.SeedSubdir
+	assert.Contains(t, content,
+		"COPY --chown=${USERNAME}:${USERNAME} assets/claude-config.json "+seedDir+"/.claude/.config.json",
+		"Dockerfile must stage claude-config.json into the generic seed dir at its home-relative dest")
+	assert.Contains(t, content, "/home/${USERNAME}/"+consts.DotClawkerDir+"/"+consts.SeedManifestFile,
+		"Dockerfile must bake the seed manifest for CP's generic apply step")
+	assert.NotContains(t, content, "config_dir=",
+		"seed manifest carries no config-dir header — dests are home-relative paths")
+	assert.Contains(t, content, harness.SeedApplyCopyIfMissingOrEmpty+" .claude/.config.json",
+		"seed manifest must carry the apply strategy per seed")
+	assert.Contains(t, content, harness.SeedApplyJSONMerge+" .claude/settings.json",
+		"seed manifest must carry the json-merge strategy for settings")
+	assert.Contains(t, content, "mkdir -p /home/${USERNAME}/.claude ",
+		"runtime-dirs RUN must pre-create declared volume dirs for mount ownership")
 }
 
 func TestBuildContext_TelemetryConfig(t *testing.T) {
@@ -328,20 +366,20 @@ func TestBuildContext_ClawkerdIsPID1(t *testing.T) {
 		"no shell entrypoint shim allowed; clawkerd owns the spawn directly")
 }
 
-// TestBuildContext_ClaudeCodeVersionIsARG pins the ENV→ARG conversion. ARG
+// TestBuildContext_HarnessVersionIsARG pins the ENV→ARG conversion. ARG
 // (not ENV) is required so the ARG-cache behaviour applies: a changed value
 // busts cache at the ARG's declaration line (BuildKit) — so the declaration
 // is placed directly above its only consumer, keeping apt/Node/git-delta/
 // zsh-in-docker cached above. ENV would create a layer whose hash propagates
 // downward and bust every layer below.
-func TestBuildContext_ClaudeCodeVersionIsARG(t *testing.T) {
+func TestBuildContext_HarnessVersionIsARG(t *testing.T) {
 	cfg := testConfig(t, minimalProjectYAML())
 	gen := newTestProjectGenerator(cfg, t.TempDir())
 	dockerfile, err := gen.Generate()
 	require.NoError(t, err)
 	content := string(dockerfile)
 
-	assert.Contains(t, content, "ARG CLAUDE_CODE_VERSION="+testClaudeCodeVersion,
+	assert.Contains(t, content, "ARG CLAUDE_CODE_VERSION="+testHarnessVersion,
 		"Claude Code version must be declared as ARG with the npm-resolved concrete version baked in")
 	assert.NotContains(t, content, "ENV CLAUDE_CODE_VERSION=",
 		"ENV form would persist into the running container; ARG is build-only and CC's runtime does not read it")
@@ -357,37 +395,45 @@ func TestBuildContext_ClaudeCodeVersionIsARG(t *testing.T) {
 	installIdx := strings.Index(content, "claude.ai/install.sh")
 	require.NotEqual(t, -1, zshIdx, "expected zsh-in-docker step as an upstream-layer marker")
 	require.NotEqual(t, -1, installIdx, "expected Claude install RUN as the ARG consumer marker")
-	assert.Greater(t, argIdx, zshIdx,
-		"ARG CLAUDE_CODE_VERSION must be declared AFTER zsh-in-docker — declaring it earlier busts every cached layer below it on every CC release (BuildKit invalidates at the ARG declaration line)")
+	assert.Greater(
+		t,
+		argIdx,
+		zshIdx,
+		"ARG CLAUDE_CODE_VERSION must be declared AFTER zsh-in-docker — declaring it earlier busts every cached layer below it on every CC release (BuildKit invalidates at the ARG declaration line)",
+	)
 	assert.Less(t, argIdx, installIdx,
 		"ARG CLAUDE_CODE_VERSION must be declared BEFORE the install RUN that consumes it")
 }
 
-// TestBuildContext_FallsBackOnEmptyClaudeCodeVersion verifies offline-build
-// resilience: when no ClaudeCodeVersion is set on the generator (resolver
+// TestBuildContext_FallsBackOnEmptyHarnessVersion verifies offline-build
+// resilience: when no HarnessVersion is set on the generator (resolver
 // failure handled by the caller / offline build), the renderer falls back
-// to the literal DefaultClaudeCodeVersion ("latest"). Build still works in
+// to the literal DefaultHarnessVersion ("latest"). Build still works in
 // that path; the cache just won't bust on a new release until network
 // returns and the command-layer resolver succeeds.
-func TestBuildContext_FallsBackOnEmptyClaudeCodeVersion(t *testing.T) {
+func TestBuildContext_FallsBackOnEmptyHarnessVersion(t *testing.T) {
 	cfg := testConfig(t, minimalProjectYAML())
 	gen := NewProjectGenerator(cfg, t.TempDir())
-	// ClaudeCodeVersion intentionally unset.
+	// HarnessVersion intentionally unset.
 	dockerfile, err := gen.Generate()
-	require.NoError(t, err, "empty ClaudeCodeVersion must not fail the build — fallback path keeps offline builds working")
+	require.NoError(
+		t,
+		err,
+		"empty HarnessVersion must not fail the build — fallback path keeps offline builds working",
+	)
 
-	assert.Contains(t, string(dockerfile), "ARG CLAUDE_CODE_VERSION="+DefaultClaudeCodeVersion,
+	assert.Contains(t, string(dockerfile), "ARG CLAUDE_CODE_VERSION="+DefaultHarnessVersion,
 		"fallback must render the literal default so the install RUN still works (downloads npm-latest at build time)")
 }
 
 // TestBuildContext_LateClawkerBlock pins the post-reorder layer ordering.
 // Root-scoped clawker assets (agent prompt, managed-settings heredoc,
 // firewall CA, host-proxy + socket-server binaries, clawkerd) land AFTER
-// the trailing `USER root` switch and BEFORE ENTRYPOINT. The Claude config
-// seeds (.claude-init/) stay in the user-scope section — alongside Claude
-// Code itself — because the after_claude_install / before_entrypoint
+// the trailing `USER root` switch and BEFORE ENTRYPOINT. The harness config
+// seeds (~/.clawker/seed/) stay in the user-scope section — alongside the
+// harness install — because the after_claude_install / before_entrypoint
 // inject points and user Instructions.Copy must be able to reference
-// ~/.claude-init/ contents at injection time. A regression that scatters
+// staged seed contents at injection time. A regression that scatters
 // the root block across the file, or that buries the seeds below
 // after_claude_install, would silently break either cache locality or the
 // inject-point lifetime contract.
@@ -437,17 +483,21 @@ func TestBuildContext_LateClawkerBlock(t *testing.T) {
 	)
 	managedSettingsIdx := strings.Index(content, "managed-settings.json")
 	require.Positive(t, managedSettingsIdx, "managed-settings.json heredoc must exist")
-	assert.Less(t, managedSettingsIdx, userRootIdx,
-		"managed-settings.json must appear BEFORE the trailing 'USER root' (early root scope) so any build-time claude invocation in user inject points sees its PATH augmentation")
+	assert.Less(
+		t,
+		managedSettingsIdx,
+		userRootIdx,
+		"managed-settings.json must appear BEFORE the trailing 'USER root' (early root scope) so any build-time claude invocation in user inject points sees its PATH augmentation",
+	)
 	firstUserSwitchIdx := strings.Index(content, "USER ${USERNAME}")
 	require.Positive(t, firstUserSwitchIdx, "USER ${USERNAME} switch must exist")
 	assert.Less(t, managedSettingsIdx, firstUserSwitchIdx,
 		"managed-settings.json must be created in early root scope, before the USER ${USERNAME} switch")
 
-	// Claude config seeds belong BEFORE the trailing USER root — they're
+	// Harness config seeds belong BEFORE the trailing USER root — they're
 	// user-owned writes that production user inject points expect to
 	// reference (e.g. after_claude_install dropping additional config
-	// into ~/.claude-init/). Burying them under USER root and below the
+	// into ~/.clawker/seed/). Burying them under USER root and below the
 	// inject points would silently break that contract.
 	for _, seed := range []string{
 		"statusline.sh",
@@ -456,8 +506,13 @@ func TestBuildContext_LateClawkerBlock(t *testing.T) {
 	} {
 		idx := strings.Index(content, seed)
 		require.Positive(t, idx, "seed %q must appear in rendered Dockerfile", seed)
-		assert.Less(t, idx, userRootIdx,
-			"Claude config seed %q must appear BEFORE the trailing 'USER root' switch so user inject points can reference ~/.claude-init/", seed)
+		assert.Less(
+			t,
+			idx,
+			userRootIdx,
+			"Harness config seed %q must appear BEFORE the trailing 'USER root' switch so user inject points can reference ~/.clawker/seed/",
+			seed,
+		)
 	}
 
 	// clawkerd COPY must be the very last asset before ENTRYPOINT (so a
@@ -482,8 +537,12 @@ func TestBuildContext_CollapsedChmod(t *testing.T) {
 	content := string(dockerfile)
 
 	chmodCount := strings.Count(content, "chmod +x /usr/local/bin/")
-	assert.Equal(t, 1, chmodCount,
-		"all clawker-installed /usr/local/bin/* binaries must be chmod'd in a single RUN to minimise layer count and keep cache invalidation contiguous")
+	assert.Equal(
+		t,
+		1,
+		chmodCount,
+		"all clawker-installed /usr/local/bin/* binaries must be chmod'd in a single RUN to minimise layer count and keep cache invalidation contiguous",
+	)
 }
 
 func TestDockerfilesDir_PropagatesError(t *testing.T) {

@@ -1,5 +1,6 @@
 // External test package: configmocks imports config, so exercising the real
-// EgressRules() composition through configmocks requires package config_test.
+// ProjectEgressRules() composition through configmocks requires package
+// config_test.
 package config_test
 
 import (
@@ -21,16 +22,16 @@ func httpsAllow(dst string) config.EgressRule {
 	}
 }
 
-// TestEgressRules_Composition proves how EgressRules() composes the required
-// baseline with project firewall config: baseline first, then explicit rules
-// verbatim (no Port/Action defaulting), then add_domains expansions — order
-// asserted. The baseline's own content is taken from RequiredFirewallRules()
-// at runtime; its semantic security properties are guarded separately by
-// TestRequiredFirewallRules in config_test.go.
-func TestEgressRules_Composition(t *testing.T) {
+// TestProjectEgressRules_Composition proves ProjectEgressRules() returns the
+// project's security.firewall contribution only — explicit rules verbatim
+// (no Port/Action defaulting), then add_domains expansions, order asserted.
+// The harness egress floor is deliberately absent: bundler.EgressRules
+// composes it, and its content is guarded by the bundler egress tests.
+func TestProjectEgressRules_Composition(t *testing.T) {
 	// Explicit rules used by the pass-through case. Port/Action are NOT
-	// defaulted by EgressRules() — explicit rules pass through verbatim,
-	// proven by the port-less deny rule and the action-less tcp range rule.
+	// defaulted by ProjectEgressRules() — explicit rules pass through
+	// verbatim, proven by the port-less deny rule and the action-less tcp
+	// range rule.
 	sshRule := config.EgressRule{Dst: "internal.corp", Proto: "ssh", Port: "22", Action: config.EgressActionAllow}
 	denyRule := config.EgressRule{Dst: "evil.example", Proto: config.EgressProtoHTTPS, Action: config.EgressActionDeny}
 
@@ -50,16 +51,14 @@ security:
 	tests := []struct {
 		name        string
 		projectYAML string
-		// additions is what EgressRules() must append after the baseline:
-		// explicit rules first, then add_domains expansions — order asserted.
-		additions []config.EgressRule
+		want        []config.EgressRule
 	}{
 		{
-			name:        "no firewall section yields baseline only",
+			name:        "no firewall section yields nothing",
 			projectYAML: "",
 		},
 		{
-			name: "empty firewall section yields baseline only",
+			name: "empty firewall section yields nothing",
 			projectYAML: `
 security:
   firewall: {}
@@ -74,20 +73,20 @@ security:
       - example.com
       - registry.example.dev
 `,
-			additions: []config.EgressRule{
+			want: []config.EgressRule{
 				httpsAllow("example.com"),
 				httpsAllow("registry.example.dev"),
 			},
 		},
 		{
-			name: "rules and add_domains combine as baseline then rules then domains",
+			name: "rules and add_domains combine as rules then domains",
 			projectYAML: explicitRulesYAML + `      - dst: 10.0.0.5
         proto: tcp
         port: 9000-9100
     add_domains:
       - example.com
 `,
-			additions: []config.EgressRule{
+			want: []config.EgressRule{
 				sshRule,
 				denyRule,
 				{Dst: "10.0.0.5", Proto: "tcp", Port: "9000-9100"},
@@ -99,10 +98,7 @@ security:
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := configmocks.NewFromString(tt.projectYAML, "")
-
-			baseline := cfg.RequiredFirewallRules()
-			want := append(append([]config.EgressRule{}, baseline...), tt.additions...)
-			assert.Equal(t, want, cfg.EgressRules())
+			assert.Equal(t, tt.want, cfg.ProjectEgressRules())
 		})
 	}
 }
