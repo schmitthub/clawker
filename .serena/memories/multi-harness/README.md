@@ -2,7 +2,7 @@
 
 The multi-harness feature is IMPLEMENTED and committed. Planning artifacts (design/migration/coupling-inventory/descriptor-schema/template-refactor/substrate-toolchains/upgrade-guide) were pruned 2026-07-07 — code + shipped docs are the source of truth now:
 
-- User docs: `docs/harness-bundles.mdx`, `docs/toolchains.mdx`, `docs/custom-images.mdx`, `docs/upgrading.mdx`, CHANGELOG `[0.13.0]`
+- User docs: `docs/harness-bundles.mdx`, `docs/toolchains.mdx`, `docs/custom-images.mdx`, `docs/upgrading/v0.13.mdx` (version-scoped upgrade guides — one page per breaking release, never an evergreen "Upgrading" page), CHANGELOG `[0.13.0]`
 - Author skill: `claude-plugin/clawker-support/skills/harness-toolchain-dev/` (bundle/toolchain authoring reference — second skill in the clawker-support plugin)
 - Code: `internal/harness/` (bundle types/load/compose/materialize + staleness stamps), `internal/toolchain/`, `internal/bundler/` (harness.go, toolchain.go, egress.go, assets/harnesses/{claude,codex}, assets/toolchains/{go,node,python,rust}), `internal/config/migrations.go` (legacy-key strip + agent.claude_code→harnesses.claude rewrite)
 

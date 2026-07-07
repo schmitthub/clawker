@@ -85,8 +85,13 @@
         "pages": [
           "index",
           "quickstart",
-          "installation",
-          "upgrading"
+          "installation"
+        ]
+      },
+      {
+        "group": "Upgrading",
+        "pages": [
+          "upgrading/v0.13"
         ]
       },
       {

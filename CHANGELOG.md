@@ -18,7 +18,7 @@ Changed, Removed. Each release section lists those subsections directly.
 > containers with fresh volumes (`clawker rm --volumes`), and restart the
 > control plane (`clawker controlplane down && clawker controlplane up`).
 > Legacy config keys are migrated automatically with a printed notice on first
-> load. Step-by-step instructions: <https://docs.clawker.dev/upgrading>.
+> load. Step-by-step instructions: <https://docs.clawker.dev/upgrading/v0.13>.
 
 - **Added:** Multi-harness support. Coding-agent CLIs are pluggable **harness bundles** — a manifest, a Dockerfile template fragment, and assets — registered in `settings.yaml` under `harnesses:` and materialized to `~/.config/clawker/harnesses/` for editing. OpenAI **Codex** ships alongside Claude Code; add your own by authoring a bundle (see the harness-bundles docs page). Per-harness config lives in `clawker.yaml` under `harnesses.<name>:` (env, `post_init`/`pre_run`, managed-config strategy).
 - **Added:** Harness-keyed images. Builds tag `clawker-<project>:<harness>` (the default harness also gets a `:default` alias); `clawker build -t codex` builds a specific harness, `clawker run @:codex` selects its image, and bare `@` resolves the default. Containers and images carry a harness label.
