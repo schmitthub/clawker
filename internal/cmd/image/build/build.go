@@ -210,19 +210,37 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 	// registry (both copy-if-missing — user edits win), then load the
 	// selected bundle. The bundle's template blocks and context files
 	// compose the rendered Dockerfile; its manifest drives version
-	// resolution below.
-	if ensureErr := bundler.EnsureHarnesses(cfgGateway); ensureErr != nil {
-		log.Warn().
-			Err(ensureErr).
-			Msg("harness ensure failed — falling back to embedded bundles and built-in default")
+	// resolution below. Once a registry exists, harness resolution is
+	// registry-only (no embedded fallback), so an ensure failure means the
+	// build continues on whatever is already materialized and registered —
+	// and LoadHarness below hard-errors if the selected bundle never made
+	// it to disk. Surface the failure so the user can connect that error
+	// back to its cause.
+	harnessWarnings, harnessEnsureErr := bundler.EnsureHarnesses(cfgGateway)
+	printEnsureWarnings(ios, cs, harnessWarnings)
+	if harnessEnsureErr != nil {
+		log.Warn().Err(harnessEnsureErr).Msg("harness ensure failed")
+		fmt.Fprintf(
+			ios.ErrOut,
+			"%s Could not materialize/register shipped harness bundles: %v — continuing with already-materialized bundles; loading fails below if the selected harness is missing\n",
+			cs.WarningIcon(),
+			harnessEnsureErr,
+		)
 	}
 
 	// Same contract for shipped toolchain definitions: materialize
-	// copy-if-missing + seed the settings registry.
-	if ensureErr := bundler.EnsureToolchains(cfgGateway); ensureErr != nil {
-		log.Warn().
-			Err(ensureErr).
-			Msg("toolchain ensure failed — falling back to embedded definitions")
+	// copy-if-missing + seed the settings registry; declared toolchains
+	// that never made it to disk fail at Dockerfile generation.
+	toolchainWarnings, toolchainEnsureErr := bundler.EnsureToolchains(cfgGateway)
+	printEnsureWarnings(ios, cs, toolchainWarnings)
+	if toolchainEnsureErr != nil {
+		log.Warn().Err(toolchainEnsureErr).Msg("toolchain ensure failed")
+		fmt.Fprintf(
+			ios.ErrOut,
+			"%s Could not materialize/register shipped toolchain definitions: %v — continuing with already-materialized definitions; generation fails below if a declared toolchain is missing\n",
+			cs.WarningIcon(),
+			toolchainEnsureErr,
+		)
 	}
 
 	// -t selects the harness: a bare NAME names a registered harness; a full
@@ -461,6 +479,15 @@ func printBuildNextSteps(ios *iostreams.IOStreams, cs *iostreams.ColorScheme) {
 	fmt.Fprintln(ios.ErrOut, "  2. Ensure the base image exists and is accessible")
 	fmt.Fprintln(ios.ErrOut, "  3. Run 'clawker build --no-cache' to rebuild from scratch")
 	fmt.Fprintln(ios.ErrOut, "  4. Use '--progress=plain' for detailed build output")
+}
+
+// printEnsureWarnings surfaces bundle/toolchain staleness warnings from the
+// build-time ensure on stderr — the materialized copy is user-owned and never
+// auto-refreshed, so the user must be told when the shipped source moved on.
+func printEnsureWarnings(ios *iostreams.IOStreams, cs *iostreams.ColorScheme, warnings []string) {
+	for _, w := range warnings {
+		fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.WarningIcon(), w)
+	}
 }
 
 // harnessSelectorFromTags interprets -t entries under the strict

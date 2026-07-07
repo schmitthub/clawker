@@ -31,7 +31,11 @@ func TestControlPlanePortDefaultsMatchConsts(t *testing.T) {
 
 	typ := reflect.TypeFor[ControlPlaneSettings]()
 	if typ.NumField() != len(want) {
-		t.Errorf("ControlPlaneSettings has %d fields, parity table has %d — add the new port to both the consts and this test", typ.NumField(), len(want))
+		t.Errorf(
+			"ControlPlaneSettings has %d fields, parity table has %d — add the new port to both the consts and this test",
+			typ.NumField(),
+			len(want),
+		)
 	}
 	for name, wantPort := range want {
 		field, ok := typ.FieldByName(name)

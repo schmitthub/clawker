@@ -5,12 +5,13 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/storeui"
 	"github.com/schmitthub/clawker/internal/testenv"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestOverrides_AllPathsMatchProjectFields(t *testing.T) {
@@ -57,7 +58,6 @@ func TestOverrides_SelectFields(t *testing.T) {
 		options []string
 	}{
 		{"workspace.default_mode", []string{"bind", "snapshot"}},
-		{"agent.claude_code.config.strategy", []string{"copy", "fresh"}},
 	}
 
 	for _, tt := range tests {
@@ -70,6 +70,29 @@ func TestOverrides_SelectFields(t *testing.T) {
 			assert.Equal(t, storeui.KindSelect, *ov.Kind)
 			assert.Equal(t, tt.options, ov.Options)
 		})
+	}
+}
+
+// The harnesses map replaced the deprecated agent.claude_code block as the
+// per-harness init surface. The generic struct-map editor handles it natively
+// (YAML mapping blob), so the editor exposes it with no override — and no
+// override may target the deprecated agent.claude_code paths anymore.
+func TestHarnessesMapEditableNatively(t *testing.T) {
+	var proj config.Project
+	fields := storeui.WalkFields(proj)
+	var harnessesField *storeui.Field
+	for i := range fields {
+		if fields[i].Path == "harnesses" {
+			harnessesField = &fields[i]
+			break
+		}
+	}
+	require.NotNil(t, harnessesField, "harnesses map must walk as an editable field")
+	assert.Equal(t, storeui.KindStructMap, harnessesField.Kind)
+
+	for _, ov := range Overrides() {
+		assert.NotContains(t, ov.Path, "agent.claude_code",
+			"deprecated agent.claude_code paths must not carry editor overrides")
 	}
 }
 
@@ -103,7 +126,7 @@ func TestLayerTargets_MixedPlacementLocalOverride(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(projectDir, ".clawker"), 0o755))
 	mainPath := filepath.Join(projectDir, ".clawker.yaml")
 	localPath := filepath.Join(projectDir, ".clawker", ".clawker.local.yaml")
-	require.NoError(t, os.WriteFile(mainPath, []byte("build:\n  image: alpine\n"), 0o600))
+	require.NoError(t, os.WriteFile(mainPath, []byte("build:\n  packages: [git]\n"), 0o600))
 	require.NoError(t, os.WriteFile(localPath, []byte("workspace:\n  default_mode: snapshot\n"), 0o600))
 	t.Chdir(projectDir)
 

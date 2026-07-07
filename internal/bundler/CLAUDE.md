@@ -139,7 +139,7 @@ type DockerfileContext struct {
 ```go
 const DefaultHarnessName = "claude"
 func ShippedHarnessNames() []string                                    // embedded bundle names (claude, codex)
-func EnsureHarnesses(cfg config.Config) error                          // materialize shipped bundles copy-if-missing to <config-dir>/harnesses/<name>/ + seed settings `harnesses:` registry entries
+func EnsureHarnesses(cfg config.Config) ([]string, error)              // materialize shipped bundles copy-if-missing to <config-dir>/harnesses/<name>/ + seed settings `harnesses:` registry entries; returns a staleness warning per copy whose shipped-stamp mismatches the embedded tree (never auto-overwrites)
 func ResolveHarnessName(cfg config.Config, name string) (string, error) // empty = registry default (exactly one entry may be default: true)
 func ValidateHarnessKey(name string) error
 func HarnessBundleDir(cfg config.Config, name string) (string, error)  // registry entry's explicit path
@@ -148,11 +148,13 @@ func LoadHarness(cfg config.Config, name string) (*harness.Bundle, error)
 
 A bundle dir = `harness.yaml` (manifest: version spec, toolchains, volumes, seeds, staging, egress) + `Dockerfile.harness.tmpl` (block-slot fragment) + optional `assets/`. Manifest/compose types live in `internal/harness`. Registry entries are always explicit `path:` — never convention-resolved. Custom harness = author a bundle dir + add a settings registry entry.
 
+**Shipped-copy staleness stamp:** a fresh materialize writes `harness.ShippedStampFile` (`.clawker-shipped-hash`, the embedded tree's `harness.ContentHash`) at the copy's root. `EnsureHarnesses`/`EnsureToolchains` compare it against the current embedded tree and return a warning per mismatch (or missing stamp on a pre-existing copy) — surfaced on stderr by `clawker build`. Copies are user-owned: never auto-overwritten, never retro-stamped; the user deletes the directory to refresh. Only SHIPPED names are stamped/checked — custom registry entries have no shipped counterpart. The stamp is invisible to bundle/toolchain loading and to build-context staging (staging walks `assets/` only).
+
 ### Toolchains (`toolchain.go`)
 
 Language toolchains are file-backed definitions: `toolchain.yaml` + `Dockerfile.toolchain-root.tmpl` and/or `Dockerfile.toolchain-user.tmpl` (loaded via `internal/toolchain`). Shipped: `go` (root), `node` (root LTS + user nvm), `python` (root uv + uv-managed CPython), `rust` (user rustup).
 
-- `EnsureToolchains(cfg)` materializes shipped defs copy-if-missing to `<config-dir>/toolchains/<name>/` and seeds the settings `toolchains:` registry (name → path). One flat namespace; a name collision is an error.
+- `EnsureToolchains(cfg) ([]string, error)` materializes shipped defs copy-if-missing to `<config-dir>/toolchains/<name>/` and seeds the settings `toolchains:` registry (name → path); returns shipped-stamp staleness warnings (same contract as `EnsureHarnesses`). One flat namespace; a name collision is an error.
 - **Declared, never installed:** project `build.toolchains: [go, node]` renders the fragments in the base image; a harness manifest's `toolchains:` renders in the harness image unless the project already declared the same name (then it lives in the shared base). `ToolchainRootSteps` render before block_1 (root), `ToolchainUserSteps` before block_3 (user).
 - Fragments are **self-guarded** — they skip when the image already provides the tool (e.g. the node fragment keeps an existing node ≥ its floor major).
 - Node specifics (node toolchain fragment): `ARG NODE_VERSION` (default `24`) names the LTS *line*, not a patch — the latest patch resolves per-build from `nodejs.org/dist/index.json`, floating onto security patches on rebuild (justified pin-policy exception; rationale in `docs/threat-model.mdx`). Tarball is GPG-verified via `SHASUMS256.txt.asc`. `ENV NODE_USE_SYSTEM_CA=1` makes node trust the OS CA bundle (and therefore the firewall MITM CA once merged).

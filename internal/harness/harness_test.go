@@ -127,6 +127,60 @@ func TestMaterialize_NeverClobbersUserEdits(t *testing.T) {
 	assert.Equal(t, os.FileMode(0o755), restored.Mode().Perm(), "restored script keeps exec mode")
 }
 
+// TestMaterialize_ShippedStamp: a fresh materialize stamps the copy with the
+// shipped tree's content hash; a pre-existing (non-empty) copy is never
+// stamped — its provenance is unknown, and stamping it with the current hash
+// would mask exactly the staleness the stamp exists to catch.
+func TestMaterialize_ShippedStamp(t *testing.T) {
+	src := bundleFS(`{{define "block_6"}}CMD ["testtool"]{{end}}`)
+
+	fresh := t.TempDir() // exists but empty → fresh
+	require.NoError(t, harness.Materialize(src, fresh))
+	want, err := harness.ContentHash(src)
+	require.NoError(t, err)
+	raw, err := os.ReadFile(filepath.Join(fresh, harness.ShippedStampFile))
+	require.NoError(t, err)
+	assert.Equal(t, want+"\n", string(raw))
+	stale, err := harness.MaterializedStale(src, fresh)
+	require.NoError(t, err)
+	assert.False(t, stale, "freshly stamped copy is not stale")
+
+	pre := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(pre, "user.txt"), []byte("x"), 0o644))
+	require.NoError(t, harness.Materialize(src, pre))
+	assert.NoFileExists(t, filepath.Join(pre, harness.ShippedStampFile),
+		"pre-existing copy must not be retroactively stamped")
+	stale, err = harness.MaterializedStale(src, pre)
+	require.NoError(t, err)
+	assert.True(t, stale, "unstamped copy has unknown provenance")
+}
+
+// TestContentHash_Sensitivity: stable across calls, flips on both content and
+// path changes, and excludes the stamp file itself.
+func TestContentHash_Sensitivity(t *testing.T) {
+	base := fstest.MapFS{"a.txt": mapFile("one"), "b/c.txt": mapFile("two")}
+	h1, err := harness.ContentHash(base)
+	require.NoError(t, err)
+	h2, err := harness.ContentHash(base)
+	require.NoError(t, err)
+	assert.Equal(t, h1, h2, "hash must be deterministic")
+
+	hContent, err := harness.ContentHash(fstest.MapFS{"a.txt": mapFile("ONE"), "b/c.txt": mapFile("two")})
+	require.NoError(t, err)
+	assert.NotEqual(t, h1, hContent, "content change must flip the hash")
+
+	hPath, err := harness.ContentHash(fstest.MapFS{"a2.txt": mapFile("one"), "b/c.txt": mapFile("two")})
+	require.NoError(t, err)
+	assert.NotEqual(t, h1, hPath, "path change must flip the hash")
+
+	hStamp, err := harness.ContentHash(fstest.MapFS{
+		"a.txt": mapFile("one"), "b/c.txt": mapFile("two"),
+		harness.ShippedStampFile: mapFile("junk"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, h1, hStamp, "the stamp file must not influence the hash")
+}
+
 // seedBundleFS builds a loadable bundle whose manifest is supplied verbatim.
 func seedBundleFS(manifest string) fstest.MapFS {
 	return fstest.MapFS{

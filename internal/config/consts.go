@@ -215,7 +215,11 @@ func (c *configImpl) OpenSearchURL() string {
 // the clawker network. **In-cluster only** — see [OpenSearchURL] for the host
 // access pattern.
 func (c *configImpl) OpenSearchDashboardsURL() string {
-	return consts.ServiceURL(consts.MonitoringServiceOpenSearchDashboards, c.MonitoringConfig().OpenSearchDashboardsPort, false)
+	return consts.ServiceURL(
+		consts.MonitoringServiceOpenSearchDashboards,
+		c.MonitoringConfig().OpenSearchDashboardsPort,
+		false,
+	)
 }
 
 // PrometheusURL returns the Prometheus UI URL on the clawker network.

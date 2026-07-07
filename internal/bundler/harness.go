@@ -127,8 +127,17 @@ func HarnessBundleDir(cfg config.Config, name string) (string, error) {
 	}
 	h, ok := s.Harnesses[name]
 	if !ok {
+		// Shipped bundles are registered automatically by the build-time
+		// ensure — the remedy is a build, never hand-editing settings.
+		if isShippedHarness(name) {
+			return "", fmt.Errorf(
+				"harness %q is not registered yet: run `clawker build -t %s` to materialize and register the shipped bundle",
+				name,
+				name,
+			)
+		}
 		return "", fmt.Errorf(
-			"harness %q is not registered: add a settings entry harnesses.%s with an explicit path to its bundle directory",
+			"harness %q is not registered: for a custom harness, add a settings entry harnesses.%s with an explicit path to its bundle directory (shipped harnesses are registered automatically by `clawker build -t <name>`)",
 			name,
 			name,
 		)
@@ -156,26 +165,77 @@ func ShippedBundleDefaultDir(name string) string {
 // elsewhere land there instead) and the settings registry gains an entry per
 // shipped harness. The registry is the customization surface — seeding it is
 // what makes the shipped set discoverable and editable.
-func EnsureHarnesses(cfg config.Config) error {
-	for _, name := range ShippedHarnessNames() {
-		src, err := fs.Sub(harnessesFS, harnessAssetsRoot+"/"+name)
-		if err != nil {
-			return fmt.Errorf("shipped harness %q: %w", name, err)
-		}
-		// Materialize where the registry points when the user relocated the
-		// bundle; the seeded default otherwise. Registry seeding below
-		// records the explicit path either way.
-		dir := ShippedBundleDefaultDir(name)
-		if s := cfg.Settings(); s != nil {
-			if h, ok := s.Harnesses[name]; ok && h.Path != "" {
-				dir = h.Path
+//
+// The returned warnings name every materialized copy of a shipped bundle
+// whose stamp no longer matches the embedded tree (or that predates the
+// stamp): the shipped bundle moved on while the user-owned copy stayed
+// behind. Nothing is ever auto-overwritten — callers surface the warnings and
+// the user decides whether to delete the directory for a fresh copy.
+func EnsureHarnesses(cfg config.Config) ([]string, error) {
+	warnings, err := ensureShippedCopies(
+		shippedKindHarness,
+		ShippedHarnessNames(),
+		func(name string) (fs.FS, error) {
+			return fs.Sub(harnessesFS, harnessAssetsRoot+"/"+name)
+		},
+		func(name string) string {
+			// Materialize where the registry points when the user relocated
+			// the bundle; the seeded default otherwise. Registry seeding
+			// below records the explicit path either way.
+			if s := cfg.Settings(); s != nil {
+				if h, ok := s.Harnesses[name]; ok && h.Path != "" {
+					return h.Path
+				}
 			}
+			return ShippedBundleDefaultDir(name)
+		},
+	)
+	if err != nil {
+		return warnings, err
+	}
+	return warnings, ensureHarnessRegistry(cfg)
+}
+
+// Shipped-copy kind labels for ensureShippedCopies error/warning text.
+const (
+	shippedKindHarness   = "harness bundle"
+	shippedKindToolchain = "toolchain"
+)
+
+// ensureShippedCopies materializes every shipped tree copy-if-missing into
+// its resolved directory and collects a staleness warning for each copy
+// whose stamp no longer matches the embedded tree (or that predates the
+// stamp). Nothing is ever auto-overwritten.
+func ensureShippedCopies(
+	kind string,
+	names []string,
+	src func(name string) (fs.FS, error),
+	dirFor func(name string) string,
+) ([]string, error) {
+	var warnings []string
+	for _, name := range names {
+		fsys, err := src(name)
+		if err != nil {
+			return warnings, fmt.Errorf("shipped %s %q: %w", kind, name, err)
 		}
-		if matErr := harness.Materialize(src, dir); matErr != nil {
-			return fmt.Errorf("materialize harness %q: %w", name, matErr)
+		dir := dirFor(name)
+		if matErr := harness.Materialize(fsys, dir); matErr != nil {
+			return warnings, fmt.Errorf("materialize %s %q: %w", kind, name, matErr)
+		}
+		stale, staleErr := harness.MaterializedStale(fsys, dir)
+		if staleErr != nil {
+			return warnings, fmt.Errorf("%s %q: check shipped stamp: %w", kind, name, staleErr)
+		}
+		if stale {
+			warnings = append(warnings, fmt.Sprintf(
+				"shipped %s %q has changed since its copy was materialized at %s — delete that directory and rebuild to refresh it (leaving it in place keeps your copy, including any edits, as-is)",
+				kind,
+				name,
+				dir,
+			))
 		}
 	}
-	return ensureHarnessRegistry(cfg)
+	return warnings, nil
 }
 
 // ensureHarnessRegistry seeds a settings registry entry for every shipped

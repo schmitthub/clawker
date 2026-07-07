@@ -45,14 +45,6 @@ func newStubClient(rt http.RoundTripper) *http.Client {
 	return &http.Client{Transport: rt}
 }
 
-
-
-
-
-
-
-
-
 // TestResolveVersions_PartialPicksHighestPatch pins the partial-match contract:
 // "2.1" must resolve to the highest 2.1.x release (2.1.11) — not 2.1.0, and not
 // the lexically-largest string ("2.1.9"). resolvePattern routes a partial

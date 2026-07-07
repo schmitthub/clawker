@@ -20,7 +20,8 @@ import (
 )
 
 // Shipped toolchain definitions. Each subdirectory of assets/toolchains is a
-// complete definition (toolchain.yaml + Dockerfile.toolchain.tmpl) that is
+// complete definition (toolchain.yaml + root and/or user Dockerfile
+// fragments) that is
 // materialized into the user config dir, where it is user-owned and
 // editable. The embedded copy is only a seed and a hermetic fallback — the
 // materialized definition always wins when present.
@@ -60,23 +61,31 @@ func ShippedToolchainDefaultDir(name string) string {
 // registry gains an entry per shipped toolchain. The registry is the
 // customization surface — seeding it is what makes the shipped set
 // discoverable and editable.
-func EnsureToolchains(cfg config.Config) error {
-	for _, name := range ShippedToolchainNames() {
-		src, err := fs.Sub(toolchainsFS, toolchainAssetsRoot+"/"+name)
-		if err != nil {
-			return fmt.Errorf("shipped toolchain %q: %w", name, err)
-		}
-		dir := ShippedToolchainDefaultDir(name)
-		if s := cfg.Settings(); s != nil {
-			if tc, ok := s.Toolchains[name]; ok && tc.Path != "" {
-				dir = tc.Path
+//
+// The returned warnings name every materialized copy of a shipped definition
+// whose stamp no longer matches the embedded tree (or that predates the
+// stamp) — same contract as EnsureHarnesses: never auto-overwritten, the user
+// deletes the directory to refresh.
+func EnsureToolchains(cfg config.Config) ([]string, error) {
+	warnings, err := ensureShippedCopies(
+		shippedKindToolchain,
+		ShippedToolchainNames(),
+		func(name string) (fs.FS, error) {
+			return fs.Sub(toolchainsFS, toolchainAssetsRoot+"/"+name)
+		},
+		func(name string) string {
+			if s := cfg.Settings(); s != nil {
+				if tc, ok := s.Toolchains[name]; ok && tc.Path != "" {
+					return tc.Path
+				}
 			}
-		}
-		if matErr := harness.Materialize(src, dir); matErr != nil {
-			return fmt.Errorf("materialize toolchain %q: %w", name, matErr)
-		}
+			return ShippedToolchainDefaultDir(name)
+		},
+	)
+	if err != nil {
+		return warnings, err
 	}
-	return ensureToolchainRegistry(cfg)
+	return warnings, ensureToolchainRegistry(cfg)
 }
 
 // ensureToolchainRegistry seeds a settings registry entry for every shipped

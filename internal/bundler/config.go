@@ -32,4 +32,3 @@ func DefaultVariantConfig() *VariantConfig {
 		},
 	}
 }
-

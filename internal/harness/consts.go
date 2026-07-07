@@ -54,6 +54,14 @@ const (
 	RewriteReplaceWithWorkdir = "replace-with-workdir"
 )
 
+// ShippedStampFile is written at the root of a freshly materialized copy of a
+// shipped bundle/toolchain and records the content hash of the embedded source
+// tree it was seeded from. Ensure paths compare it against the current shipped
+// hash to detect a copy that has fallen behind the binary's embedded assets.
+// It is bookkeeping only: bundle loading, validation, and build-context
+// staging never read it (loaders read named files; staging walks assets/).
+const ShippedStampFile = ".clawker-shipped-hash"
+
 // File modes for materialized bundle files and staged build-context files.
 const (
 	bundleDirMode  = fs.FileMode(0o750)

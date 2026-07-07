@@ -6,9 +6,10 @@ package config_test
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
-	"github.com/stretchr/testify/assert"
 )
 
 // httpsAllow is the shape every add_domains shorthand entry expands to — the

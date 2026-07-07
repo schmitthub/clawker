@@ -371,7 +371,9 @@ build:
 func TestEnsureToolchains_SeedsRegistryAndDefinitions(t *testing.T) {
 	cfg := configmocks.NewIsolatedTestConfig(t)
 
-	require.NoError(t, EnsureToolchains(cfg))
+	warnings, err := EnsureToolchains(cfg)
+	require.NoError(t, err)
+	assert.Empty(t, warnings, "fresh materialize must not report staleness")
 
 	// Definition files materialized to the seeded default location, and the
 	// registry entry records that path explicitly.
@@ -390,11 +392,44 @@ func TestEnsureToolchains_SeedsRegistryAndDefinitions(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, def.RootFragment, "nodejs.org/dist")
 
-	// User edit to the materialized copy is never clobbered.
+	// User edit to the materialized copy is never clobbered — and an edit is
+	// NOT staleness (the stamp tracks the shipped tree, not the user copy).
 	fragPath := filepath.Join(ShippedToolchainDefaultDir("rust"), toolchain.UserFragmentFile)
 	require.NoError(t, os.WriteFile(fragPath, []byte("RUN echo user-edited\n"), 0o644))
-	require.NoError(t, EnsureToolchains(cfg))
+	warnings, err = EnsureToolchains(cfg)
+	require.NoError(t, err)
+	assert.Empty(t, warnings, "a user edit must not trip the shipped-stamp check")
 	edited, err := os.ReadFile(fragPath)
 	require.NoError(t, err)
 	assert.Equal(t, "RUN echo user-edited\n", string(edited))
+}
+
+// TestEnsureToolchains_ShippedStampStaleness mirrors the harness contract: a
+// mismatched (or missing) stamp on a materialized shipped definition warns
+// and never overwrites the user-owned copy.
+func TestEnsureToolchains_ShippedStampStaleness(t *testing.T) {
+	cfg := configmocks.NewIsolatedTestConfig(t)
+
+	warnings, err := EnsureToolchains(cfg)
+	require.NoError(t, err)
+	require.Empty(t, warnings)
+
+	dir := ShippedToolchainDefaultDir("go")
+	stampPath := filepath.Join(dir, harness.ShippedStampFile)
+	require.FileExists(t, stampPath, "fresh materialize must stamp the copy")
+
+	require.NoError(t, os.WriteFile(stampPath, []byte("stale-hash\n"), 0o644))
+	warnings, err = EnsureToolchains(cfg)
+	require.NoError(t, err)
+	require.Len(t, warnings, 1, "exactly the stale definition warns")
+	assert.Contains(t, warnings[0], `"go"`)
+	assert.Contains(t, warnings[0], dir)
+
+	// The stale copy still loads — the stamp is invisible to definition
+	// loading — and is never auto-refreshed.
+	_, err = resolveToolchain(cfg, nil, "go")
+	require.NoError(t, err)
+	stamp, err := os.ReadFile(stampPath)
+	require.NoError(t, err)
+	assert.Equal(t, "stale-hash\n", string(stamp))
 }

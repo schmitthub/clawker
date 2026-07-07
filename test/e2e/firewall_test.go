@@ -61,8 +61,6 @@ func newFirewallHarness(t *testing.T, requiredServices ...string) *harness.Harne
 	setup := h.NewIsolatedFS(nil)
 
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
-build:
-  image: "buildpack-deps:bookworm-scm"
 `)
 
 	regRes := h.Run("project", "register", "testproject")
@@ -125,7 +123,6 @@ func TestFirewall_ICMPBlocked(t *testing.T) {
 
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
 build:
-  image: "buildpack-deps:bookworm-scm"
   packages:
     - iputils-ping
 `)
@@ -278,7 +275,6 @@ func TestFirewall_ConfigRules(t *testing.T) {
 	// Use security.firewall.rules (explicit EgressRule list) instead of add_domains.
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
 build:
-  image: "buildpack-deps:bookworm-scm"
 security:
   firewall:
     rules:
@@ -476,8 +472,6 @@ func TestFirewall_HostProxyReachable(t *testing.T) {
 	setup := h.NewIsolatedFS(nil)
 
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
-build:
-  image: "buildpack-deps:bookworm-scm"
 `)
 
 	regRes := h.Run("project", "register", "testproject")
@@ -531,7 +525,6 @@ func TestFirewall_SSHTCPMapping(t *testing.T) {
 	// eBPF --dport 22 → DNAT envoy:10001 → LOGICAL_DNS cluster github.com:22
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
 build:
-  image: "buildpack-deps:bookworm-scm"
 security:
   firewall:
     rules:
@@ -679,7 +672,6 @@ func TestFirewall_DenySubdomainUnderWildcard(t *testing.T) {
 	setup := h.NewIsolatedFS(nil)
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
 build:
-  image: "buildpack-deps:bookworm-scm"
 security:
   firewall:
     rules:
@@ -739,7 +731,6 @@ func TestFirewall_HTTPDomainDetection(t *testing.T) {
 	// eBPF --dport 80 → DNAT envoy:10000 → tls_inspector → raw_buffer filter chain → Host header → domain match
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
 build:
-  image: "buildpack-deps:bookworm-scm"
 security:
   firewall:
     rules:
@@ -817,8 +808,6 @@ func TestFirewall_FirewallDisabled(t *testing.T) {
 	setup := h.NewIsolatedFS(nil)
 
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
-build:
-  image: "buildpack-deps:bookworm-scm"
 `)
 	setup.WriteYAML(t, testenv.Settings, setup.Dirs.Config, `
 firewall:
@@ -877,7 +866,6 @@ func TestFirewall_PathRulesDefaultDeny(t *testing.T) {
 	// /test → LOGICAL_DNS cluster → upstream; anything else → 403 (path_default: deny)
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
 build:
-  image: "buildpack-deps:bookworm-scm"
 security:
   firewall:
     rules:
@@ -972,7 +960,6 @@ func TestFirewall_PathRulesExplicitDeny(t *testing.T) {
 	// /evil → 403; anything else → LOGICAL_DNS cluster → upstream (path_default: allow)
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
 build:
-  image: "buildpack-deps:bookworm-scm"
 security:
   firewall:
     rules:
@@ -1066,7 +1053,6 @@ func TestFirewall_TLSPathRulesDefaultDeny(t *testing.T) {
 	// → http_connection_manager → path prefix match → allow or 403
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
 build:
-  image: "buildpack-deps:bookworm-scm"
 security:
   firewall:
     rules:
@@ -1170,7 +1156,6 @@ func TestFirewall_PathRuleNormalizationDefeatsSmuggling(t *testing.T) {
 	// to paths outside the allow prefix and hit the deny default.
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
 build:
-  image: "buildpack-deps:bookworm-scm"
 security:
   firewall:
     rules:
@@ -1268,7 +1253,6 @@ func TestFirewall_TLSPathRulesExplicitDeny(t *testing.T) {
 	// TLS rule with MITM: /evil explicitly denied, default allow.
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
 build:
-  image: "buildpack-deps:bookworm-scm"
 security:
   firewall:
     rules:
@@ -1367,7 +1351,6 @@ func TestFirewall_WildcardAndExactCoexist(t *testing.T) {
 	// proving wildcard and exact rules coexist without Envoy SNI collisions.
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
 build:
-  image: "buildpack-deps:bookworm-scm"
 workspace:
   default_mode: "snapshot"
 security:

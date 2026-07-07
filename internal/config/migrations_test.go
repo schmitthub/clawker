@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -115,7 +116,8 @@ func TestMigrateRunInstructionsToStrings(t *testing.T) {
 
 	t.Run("no-op without instructions", func(t *testing.T) {
 		const in = `build:
-  image: alpine
+  packages:
+    - git
 `
 		_, after := loadProjectWithMigrations(t, in)
 		assert.Equal(t, in, after, "file without instructions must be untouched")
@@ -202,7 +204,7 @@ build:
 `
 	const cleanYAML = `# clean layer
 build:
-  image: alpine # nothing to migrate
+  packages: [git] # nothing to migrate
 `
 	hiPath := filepath.Join(hiDir, "clawker.yaml")
 	loPath := filepath.Join(loDir, "clawker.yaml")
@@ -412,4 +414,293 @@ func readFile(t *testing.T, path string) string {
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
 	return string(data)
+}
+
+// captureStderr redirects [os.Stderr] for the duration of fn and returns what
+// was written — the migration notice channel (the monitoring-keys precedent
+// prints straight to [os.Stderr]; the project migrations follow it).
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stderr = w                      //nolint:reassign // swap stderr to capture the migration notice; restored below
+	defer func() { os.Stderr = old }() //nolint:reassign // restore the real stderr after fn
+	fn()
+	require.NoError(t, w.Close())
+	data, err := io.ReadAll(r)
+	require.NoError(t, err)
+	return string(data)
+}
+
+// TestMigrateRemoveLegacyBuildKeys covers the strip of project keys deleted in
+// the multi-harness refactor: build.image/dockerfile/context (substrate base
+// replaced user base images) and agent.claude_code.use_host_auth (host
+// credential copying removed).
+func TestMigrateRemoveLegacyBuildKeys(t *testing.T) {
+	t.Run("strips keys with value-preserving notice", func(t *testing.T) {
+		const in = `build:
+  image: golang:1.25
+  dockerfile: ./Dockerfile.dev
+  context: ./docker
+  packages:
+    - git
+agent:
+  claude_code:
+    use_host_auth: true
+    mount_projects: false
+`
+		var snap *config.Project
+		var after string
+		notice := captureStderr(t, func() {
+			snap, after = loadProjectWithMigrations(t, in)
+		})
+
+		// Legacy keys gone from disk; surviving siblings intact.
+		assert.NotContains(t, after, "image:")
+		assert.NotContains(t, after, "dockerfile:")
+		assert.NotContains(t, after, "context:")
+		assert.NotContains(t, after, "use_host_auth:")
+		assert.Contains(t, after, "git")
+
+		// Notice names each removed key WITH the value the user had set,
+		// plus the replacement guidance for both key families.
+		assert.Contains(t, notice, "build.image = golang:1.25")
+		assert.Contains(t, notice, "build.dockerfile = ./Dockerfile.dev")
+		assert.Contains(t, notice, "build.context = ./docker")
+		assert.Contains(t, notice, "agent.claude_code.use_host_auth = true")
+		assert.Contains(t, notice, "build.toolchains")
+		assert.Contains(t, notice, "config volume")
+
+		// The surviving claude_code field rides the rewrite migration into
+		// the harnesses map — WITHOUT the stripped use_host_auth key.
+		require.Contains(t, snap.Harnesses, consts.DefaultHarnessName)
+		hcMoved := snap.Harnesses[consts.DefaultHarnessName]
+		assert.False(t, hcMoved.MountProjectsEnabled())
+		assert.Contains(t, after, "harnesses:")
+		assert.NotContains(t, after, "claude_code:")
+	})
+
+	t.Run("prunes parents the strip emptied", func(t *testing.T) {
+		const in = `build:
+  image: golang:1.25
+agent:
+  claude_code:
+    use_host_auth: false
+`
+		var after string
+		_ = captureStderr(t, func() {
+			_, after = loadProjectWithMigrations(t, in)
+		})
+		assert.NotContains(t, after, "build:", "emptied build block must be pruned, not left as {}")
+		assert.NotContains(t, after, "agent:", "emptied agent block must be pruned, not left as {}")
+	})
+
+	t.Run("keys absent is a true no-op", func(t *testing.T) {
+		const in = `build:
+  packages:
+    - git
+`
+		var after string
+		notice := captureStderr(t, func() {
+			_, after = loadProjectWithMigrations(t, in)
+		})
+		assert.Equal(t, in, after, "file without legacy keys must not be rewritten")
+		assert.Empty(t, notice, "no notice without legacy keys")
+	})
+
+	t.Run("byte-stable and silent on reload", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "clawker.yaml")
+		require.NoError(t, os.WriteFile(path, []byte("build:\n  image: golang:1.25\n  packages: [git]\n"), 0o644))
+
+		load := func() {
+			_, err := storage.New[config.Project]("",
+				storage.WithFilenames("clawker.yaml"),
+				storage.WithPaths(dir),
+				storage.WithMigrations(config.ProjectMigrations()...),
+			)
+			require.NoError(t, err)
+		}
+		_ = captureStderr(t, load)
+		first := readFile(t, path)
+		notice := captureStderr(t, load)
+		assert.Equal(t, first, readFile(t, path), "second load must be byte-stable")
+		assert.Empty(t, notice, "second load must not re-notice")
+	})
+}
+
+// TestMigrateClaudeCodeToHarnesses covers the deprecated agent.claude_code →
+// harnesses.claude rewrite: field-for-field move when no map entry exists,
+// legacy drop when the (higher-precedence) map entry is already present.
+func TestMigrateClaudeCodeToHarnesses(t *testing.T) {
+	t.Run("moves block field-for-field", func(t *testing.T) {
+		const in = `# my project
+agent:
+  # keep your editor
+  editor: vim
+  claude_code:
+    config:
+      strategy: fresh
+    mount_projects: false
+    post_init: echo hi
+`
+		var snap *config.Project
+		var after string
+		notice := captureStderr(t, func() {
+			snap, after = loadProjectWithMigrations(t, in)
+		})
+
+		// Every legacy field lands on the map entry (same HarnessConfig shape).
+		hc := snap.HarnessConfigFor(consts.DefaultHarnessName)
+		require.NotNil(t, hc)
+		assert.Equal(t, config.ConfigStrategyFresh, hc.ConfigStrategy())
+		assert.False(t, hc.MountProjectsEnabled())
+		assert.Equal(t, "echo hi", hc.PostInit)
+		assert.Nil(t, snap.Agent.ClaudeCode, "legacy shim must be empty after the move")
+
+		// On disk: legacy key gone, map entry present, comments elsewhere
+		// preserved (node-native rewrite drags untouched comments along).
+		assert.NotContains(t, after, "claude_code:")
+		assert.Contains(t, after, "harnesses:")
+		assert.Contains(t, after, "strategy: fresh")
+		assert.Contains(t, after, "editor: vim")
+		assert.Contains(t, after, "# my project")
+		assert.Contains(t, after, "# keep your editor")
+
+		assert.Contains(t, notice, "moved project config agent.claude_code to harnesses.claude")
+	})
+
+	t.Run("existing harnesses entry out-ranks legacy block", func(t *testing.T) {
+		// Project.HarnessConfigFor consults the harnesses map before the
+		// legacy shim, so when both exist the legacy block was already dead —
+		// it is dropped, never merged over the map entry.
+		const in = `harnesses:
+  claude:
+    mount_projects: false
+agent:
+  claude_code:
+    mount_projects: true
+    post_init: legacy-only
+`
+		var snap *config.Project
+		var after string
+		notice := captureStderr(t, func() {
+			snap, after = loadProjectWithMigrations(t, in)
+		})
+
+		hc := snap.HarnessConfigFor(consts.DefaultHarnessName)
+		require.NotNil(t, hc)
+		assert.False(t, hc.MountProjectsEnabled(), "map entry value must survive untouched")
+		assert.Empty(t, hc.PostInit, "legacy-only value must NOT be merged into the map entry")
+		assert.NotContains(t, after, "claude_code:")
+		assert.NotContains(t, after, "legacy-only")
+		assert.Contains(t, notice, "already overrides it")
+	})
+
+	t.Run("empty legacy block is removed without creating an entry", func(t *testing.T) {
+		const in = `agent:
+  claude_code: {}
+`
+		var after string
+		notice := captureStderr(t, func() {
+			_, after = loadProjectWithMigrations(t, in)
+		})
+		assert.NotContains(t, after, "claude_code:")
+		assert.NotContains(t, after, "harnesses:", "an empty legacy block must not spawn a map entry")
+		assert.NotContains(t, after, "agent:", "emptied agent block must be pruned")
+		assert.Contains(t, notice, "empty deprecated agent.claude_code")
+	})
+
+	t.Run("no-op without legacy key", func(t *testing.T) {
+		const in = `agent:
+  editor: vim
+harnesses:
+  claude:
+    mount_projects: false
+`
+		var after string
+		notice := captureStderr(t, func() {
+			_, after = loadProjectWithMigrations(t, in)
+		})
+		assert.Equal(t, in, after, "file without the legacy key must not be rewritten")
+		assert.Empty(t, notice)
+	})
+
+	t.Run("idempotent across reloads", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "clawker.yaml")
+		require.NoError(t, os.WriteFile(path, []byte("agent:\n  claude_code:\n    mount_projects: false\n"), 0o644))
+
+		load := func() {
+			_, err := storage.New[config.Project]("",
+				storage.WithFilenames("clawker.yaml"),
+				storage.WithPaths(dir),
+				storage.WithMigrations(config.ProjectMigrations()...),
+			)
+			require.NoError(t, err)
+		}
+		_ = captureStderr(t, load)
+		first := readFile(t, path)
+		notice := captureStderr(t, load)
+		assert.Equal(t, first, readFile(t, path), "second load must be byte-stable")
+		assert.Empty(t, notice, "second load must not re-notice")
+	})
+}
+
+// TestLegacyKeyMigrations_LayeredRouting proves the new project migrations run
+// against every file layer — a legacy key duplicated in a local override (or
+// the user config-dir clawker.yaml) is cleaned in each owning file, exactly
+// like the run-instructions precedent.
+func TestLegacyKeyMigrations_LayeredRouting(t *testing.T) {
+	hiDir := t.TempDir()
+	loDir := t.TempDir()
+
+	const hiYAML = `# hi layer
+build:
+  image: hi-image
+  packages: [git]
+`
+	// The head comment anchors to a SURVIVING key — a yaml.Node comment is
+	// attached to its key, so removing that key legitimately removes the
+	// comment with it.
+	const loYAML = `# lo layer
+workspace:
+  default_mode: snapshot
+build:
+  image: lo-image
+agent:
+  claude_code:
+    mount_projects: false
+`
+	hiPath := filepath.Join(hiDir, "clawker.yaml")
+	loPath := filepath.Join(loDir, "clawker.yaml")
+	require.NoError(t, os.WriteFile(hiPath, []byte(hiYAML), 0o644))
+	require.NoError(t, os.WriteFile(loPath, []byte(loYAML), 0o644))
+
+	notice := captureStderr(t, func() {
+		_, err := storage.New[config.Project]("",
+			storage.WithFilenames("clawker.yaml"),
+			storage.WithPaths(hiDir, loDir),
+			storage.WithMigrations(config.ProjectMigrations()...),
+		)
+		require.NoError(t, err)
+	})
+
+	hiAfter := readFile(t, hiPath)
+	loAfter := readFile(t, loPath)
+
+	assert.NotContains(t, hiAfter, "image:")
+	assert.Contains(t, hiAfter, "git")
+	assert.Contains(t, hiAfter, "# hi layer")
+
+	assert.NotContains(t, loAfter, "image:")
+	assert.NotContains(t, loAfter, "claude_code:")
+	assert.Contains(t, loAfter, "harnesses:")
+	assert.Contains(t, loAfter, "default_mode: snapshot")
+	assert.Contains(t, loAfter, "# lo layer")
+
+	// Both layers' values named in the one-shot notice.
+	assert.Contains(t, notice, "build.image = hi-image")
+	assert.Contains(t, notice, "build.image = lo-image")
 }

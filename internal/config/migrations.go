@@ -18,6 +18,12 @@ import (
 func ProjectMigrations() []storage.Migration[Project] {
 	return []storage.Migration[Project]{
 		migrateRunInstructionsToStrings,
+		// Order matters: the legacy-key strip runs before the claude_code →
+		// harnesses rewrite so agent.claude_code.use_host_auth (a deleted
+		// field) is removed with its own notice instead of riding the block
+		// move into harnesses.claude as a dead key.
+		migrateRemoveLegacyBuildKeys,
+		migrateClaudeCodeToHarnesses,
 	}
 }
 
@@ -144,6 +150,198 @@ func migrateOtelCPPort(s *storage.Store[Settings]) (bool, error) {
 	fmt.Fprintf(os.Stderr,
 		"notice: monitoring.otel_cp_port renamed to monitoring.otel_infra_port; carried value %v forward\n", old)
 	return true, nil
+}
+
+// legacyUseHostAuthKey is the deleted host-credential-copy toggle: host
+// credentials are no longer copied into containers at all, so the key's
+// removal doubles as the user's notice that the auth model changed.
+const legacyUseHostAuthKey = "agent.claude_code.use_host_auth"
+
+// migrateRemoveLegacyBuildKeys strips project keys deleted in the
+// multi-harness refactor — build.image/build.dockerfile/build.context (images
+// now build from the pinned clawker substrate; a user-selected base image and
+// the custom-Dockerfile path are gone) and agent.claude_code.use_host_auth —
+// and warns the user on stderr, naming each removed key with the value it
+// carried and pointing at the replacement surface. Without the migration the
+// keys would be silently ignored (and preserved on re-save) while the build
+// produced something entirely different from what the user configured.
+// Mirrors migrateRemoveLegacyMonitoringKeys: one-shot notice, file rewritten
+// clean by the migration framework's auto-save, per file layer (a legacy key
+// duplicated in clawker.local.yaml or the user config-dir clawker.yaml is
+// cleaned in each owning file).
+func migrateRemoveLegacyBuildKeys(s *storage.Store[Project]) (bool, error) {
+	buildRemoved, removed, err := stripLegacyKeys(s, []string{
+		"build.image",
+		"build.dockerfile",
+		"build.context",
+	})
+	if err != nil {
+		return false, err
+	}
+	hostAuthRemoved, hostAuthLines, err := stripLegacyKeys(s, []string{legacyUseHostAuthKey})
+	if err != nil {
+		return false, err
+	}
+	removed = append(removed, hostAuthLines...)
+	if len(removed) == 0 {
+		return false, nil
+	}
+	if pruneErr := pruneStrippedParents(s, buildRemoved, hostAuthRemoved); pruneErr != nil {
+		return false, pruneErr
+	}
+	printLegacyKeyNotice(removed, buildRemoved, hostAuthRemoved)
+	return true, nil
+}
+
+// stripLegacyKeys removes each present key, returning whether anything was
+// removed plus a "  key = value" notice line per removal.
+func stripLegacyKeys(s *storage.Store[Project], keys []string) (bool, []string, error) {
+	var removed []string
+	for _, key := range keys {
+		var v any
+		exists, gErr := s.Get(key, &v)
+		if gErr != nil {
+			return false, nil, fmt.Errorf("reading %s: %w", key, gErr)
+		}
+		if !exists {
+			continue
+		}
+		removed = append(removed, fmt.Sprintf("  %s = %v", key, v))
+		if _, rErr := s.Remove(key); rErr != nil {
+			return false, nil, fmt.Errorf("removing %s: %w", key, rErr)
+		}
+	}
+	return len(removed) > 0, removed, nil
+}
+
+// pruneStrippedParents removes the parent blocks the legacy-key strip may
+// have hollowed out (a file that only pinned build.image, or a claude_code
+// block that only set use_host_auth), so `build: {}` noise never lands on
+// disk. Only parents actually stripped from are considered.
+func pruneStrippedParents(s *storage.Store[Project], buildRemoved, hostAuthRemoved bool) error {
+	var parents []string
+	if buildRemoved {
+		parents = append(parents, "build")
+	}
+	if hostAuthRemoved {
+		parents = append(parents, "agent.claude_code", "agent")
+	}
+	for _, parent := range parents {
+		if err := removeEmptyMapping(s, parent); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// printLegacyKeyNotice emits the one-shot stderr notice for the legacy-key
+// strip: each removed key with its value, then the replacement guidance for
+// whichever key families were hit.
+func printLegacyKeyNotice(removed []string, buildRemoved, hostAuthRemoved bool) {
+	sort.Strings(removed)
+	fmt.Fprintln(os.Stderr, "warning: legacy project config keys removed in this clawker version:")
+	for _, line := range removed {
+		fmt.Fprintln(os.Stderr, line)
+	}
+	if buildRemoved {
+		fmt.Fprintln(
+			os.Stderr,
+			"Images now build from the pinned clawker substrate; build.image, build.dockerfile, and",
+		)
+		fmt.Fprintln(
+			os.Stderr,
+			"build.context no longer apply. Declare languages with build.toolchains and customize",
+		)
+		fmt.Fprintln(os.Stderr, "the image with build.packages, build.instructions, and build.inject.")
+	}
+	if hostAuthRemoved {
+		fmt.Fprintln(
+			os.Stderr,
+			"Host credentials are no longer copied into containers; harness auth happens in-container.",
+		)
+		fmt.Fprintln(os.Stderr, "Authenticate once on first run — the login persists in the harness config volume.")
+	}
+}
+
+// migrateClaudeCodeToHarnesses moves the deprecated agent.claude_code block
+// to harnesses.claude, the project-root map entry that replaced it. The move
+// is field-for-field — the legacy key decodes into the same HarnessConfig
+// shape as a harnesses map entry — via a raw mapping so any unknown keys ride
+// along instead of being silently dropped. When a harnesses.claude entry
+// already exists, it out-ranks the legacy block (Project.HarnessConfigFor
+// consults the map before the shim), so the legacy key is dropped with a
+// notice instead of moved. The read shim in schema.go stays as a safety net
+// for layers loaded without migrations (read-only contexts).
+//
+// Migrations run per file layer, and layers merge the harnesses map
+// whole-map last-wins — a moved entry in a lower-priority layer can be masked
+// by a higher layer's harnesses map, the same clobber semantics any two
+// layered harnesses maps already have.
+func migrateClaudeCodeToHarnesses(s *storage.Store[Project]) (bool, error) {
+	const legacyKey = "agent.claude_code"
+	newKey := "harnesses." + consts.DefaultHarnessName
+
+	var v any
+	exists, err := s.Get(legacyKey, &v)
+	if err != nil {
+		return false, fmt.Errorf("reading %s: %w", legacyKey, err)
+	}
+	if !exists {
+		return false, nil
+	}
+	block, isMap := v.(map[string]any)
+	if !isMap {
+		return false, fmt.Errorf(
+			"migrating %s: unexpected type %T (want a mapping)", legacyKey, v,
+		)
+	}
+
+	switch {
+	case len(block) == 0:
+		fmt.Fprintf(os.Stderr,
+			"notice: removed empty deprecated %s block from project config (its replacement is the %s map entry)\n",
+			legacyKey, newKey)
+	case s.Has(newKey):
+		fmt.Fprintf(os.Stderr,
+			"warning: dropped deprecated %s from project config — the existing %s entry already overrides it\n",
+			legacyKey, newKey)
+	default:
+		if sErr := s.Set(newKey, block); sErr != nil {
+			return false, fmt.Errorf("setting %s: %w", newKey, sErr)
+		}
+		fmt.Fprintf(os.Stderr,
+			"notice: moved project config %s to %s (its replacement)\n",
+			legacyKey, newKey)
+	}
+	if _, rErr := s.Remove(legacyKey); rErr != nil {
+		return false, fmt.Errorf("removing %s: %w", legacyKey, rErr)
+	}
+	if pruneErr := removeEmptyMapping(s, "agent"); pruneErr != nil {
+		return false, pruneErr
+	}
+	return true, nil
+}
+
+// removeEmptyMapping deletes path when it currently holds an empty mapping —
+// the residue a legacy-key strip leaves behind. Absent keys, non-mapping
+// values, and non-empty mappings are left untouched.
+func removeEmptyMapping(s *storage.Store[Project], path string) error {
+	var v any
+	exists, err := s.Get(path, &v)
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", path, err)
+	}
+	if !exists {
+		return nil
+	}
+	m, isMap := v.(map[string]any)
+	if !isMap || len(m) != 0 {
+		return nil
+	}
+	if _, rErr := s.Remove(path); rErr != nil {
+		return fmt.Errorf("removing emptied %s: %w", path, rErr)
+	}
+	return nil
 }
 
 // migrateRunInstructionsToStrings converts the legacy []RunInstruction format

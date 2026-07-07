@@ -27,7 +27,6 @@ func TestMigrateRunInstructions_CobraTriggered(t *testing.T) {
 	// Write legacy YAML with old - cmd: "..." format.
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
 build:
-  image: buildpack-deps:bookworm-scm
   instructions:
     root_run:
       - cmd: |
@@ -69,10 +68,10 @@ func TestMigrateRunInstructions_AlreadyMigratedNoRewrite(t *testing.T) {
 	}
 	setup := h.NewIsolatedFS(nil)
 
-	// Already-migrated format — plain strings.
+	// Already-migrated format — plain strings (and no legacy keys, so the
+	// legacy-key strip migration stays a no-op too).
 	setup.WriteYAML(t, testenv.ProjectConfig, setup.ProjectDir, `
 build:
-  image: alpine
   instructions:
     user_run:
       - npm ci

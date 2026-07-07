@@ -16,16 +16,18 @@ import (
 // Overrides here are limited to TUI-specific concerns: Kind and Options for constrained fields.
 //
 // Every field in the schema is editable — no fields are hidden.
-// Maps (map[string]string) use the built-in KV editor; struct slices use the YAML textarea editor.
+// Maps (map[string]string) use the built-in KV editor; struct slices and the
+// harnesses struct-map (per-harness init config, keyed by harness name) use
+// the YAML textarea editor natively — no per-entry override is possible or
+// needed for map keys the schema cannot enumerate.
 func Overrides() []storeui.Override {
 	return []storeui.Override{
 		// Workspace — select widget
-		{Path: "workspace.default_mode",
-			Kind: storeui.Ptr(storeui.KindSelect), Options: []string{"bind", "snapshot"}},
-
-		// Agent — deprecated claude_code shim config strategy select
-		{Path: "agent.claude_code.config.strategy",
-			Kind: storeui.Ptr(storeui.KindSelect), Options: []string{"copy", "fresh"}},
+		//nolint:exhaustruct // overrides are sparse by design — an unset field means "no override"
+		{
+			Path: "workspace.default_mode",
+			Kind: storeui.Ptr(storeui.KindSelect), Options: []string{"bind", "snapshot"},
+		},
 	}
 }
 

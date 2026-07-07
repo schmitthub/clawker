@@ -305,7 +305,6 @@ func TestPresetInit_SSHConnectivity(t *testing.T) {
 // userLevelConfigForIsolationTest simulates a user-level ~/.config/clawker/clawker.yaml
 // with build, agent, and firewall settings that should NOT bleed into project init.
 const userLevelConfigForIsolationTest = `build:
-  image: "buildpack-deps:bookworm-scm"
   instructions:
     user_run:
       - curl -LsSf https://astral.sh/uv/install.sh | sh

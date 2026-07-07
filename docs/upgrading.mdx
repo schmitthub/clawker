@@ -1,0 +1,117 @@
+---
+title: "Upgrading"
+description: "Upgrade an existing clawker installation across the multi-harness release: rebuild images, recreate containers, and review what migrated automatically."
+icon: "circle-arrow-up"
+keywords: ["upgrade clawker", "migration", "multi-harness", "AI coding agent sandbox", "Claude Code", "Codex", "run coding agents in Docker", "self-hosted", "open source"]
+---
+
+The multi-harness release changes how images are built, how harnesses authenticate, and how project config is shaped. Most config changes migrate automatically: the first time the new CLI reads your files it rewrites them and prints a notice for every key it moved or removed — you don't need to edit anything it mentions. The checklist below covers the parts that can't be automated.
+
+## Upgrade checklist
+
+<Steps>
+<Step title="Update clawker">
+
+```bash
+brew upgrade schmitthub/tap/clawker
+```
+
+Or re-run the [install script](/installation#install-script). Watch stderr on your first command — the one-shot migration notices print there.
+</Step>
+
+<Step title="Rebuild every project image">
+
+```bash
+cd your-project
+clawker build --no-cache
+```
+
+The first build materializes the shipped harness bundles and toolchain definitions into `~/.config/clawker/harnesses/` and `~/.config/clawker/toolchains/`, registers them in `settings.yaml`, and tags the image per harness (`clawker-<project>:<harness>` plus a `:default` alias for the default harness).
+
+`--no-cache` matters: images now bake a harness seed directory, and cached layers from a pre-upgrade build skip that step silently — the container comes up without its harness seeds and nothing errors.
+</Step>
+
+<Step title="Recreate containers with fresh volumes">
+
+```bash
+clawker rm --volumes --agent dev
+clawker run -it --agent dev @
+```
+
+Old config volumes carry pre-upgrade state. If you reuse one, the container's first-boot marker is missing from its new location, so the control plane re-runs seed apply and your `post_init` hook once against the existing volume — seeds skip files that already exist, but a non-idempotent `post_init` re-fires. Fresh volumes avoid all of it.
+
+Deleting a harness config volume also deletes the harness login stored in it — expect to authenticate again on first run (see [auth changes](#harness-auth-happens-in-container) below).
+</Step>
+
+<Step title="Restart the control plane">
+
+```bash
+clawker controlplane down
+clawker controlplane up
+```
+
+Routing the harness command into new containers requires the new control-plane binary; an old control plane leaves newly created containers without their harness CMD.
+</Step>
+
+<Step title="Re-initialize the monitoring stack (if you run it)">
+
+With the control plane down, cycle the stack:
+
+```bash
+clawker monitor down --volumes
+clawker monitor init --force
+clawker monitor up
+clawker controlplane up
+```
+
+A pre-upgrade monitoring stack can leave the new control plane's network logger unable to reach the collector (TLS verification failure); the full cycle regenerates the stack configuration. `--volumes` drops the OpenSearch data volume, so telemetry history resets.
+</Step>
+</Steps>
+
+## What migrates automatically
+
+Migrations run once per config file the first time the new CLI loads it — the project `.clawker.yaml`, a `.clawker.local.yaml` overlay, and the global `~/.config/clawker/clawker.yaml` are each rewritten independently, with a stderr notice naming every key and the value it carried:
+
+- `build.image`, `build.dockerfile`, `build.context` — removed. Images build from clawker's pinned base; see [build changes](#custom-base-images-and-dockerfiles-are-unsupported).
+- `agent.claude_code.use_host_auth` — removed. Host credentials are no longer copied; see [auth changes](#harness-auth-happens-in-container).
+- `agent.claude_code` — moved field-for-field to `harnesses.claude`. If a `harnesses.claude` entry already exists, the legacy block is dropped with a warning instead (the map entry already overrides it).
+- `settings.yaml` gains the `harnesses:` registry, seeded with the claude harness as default. A file that already has the key — including an explicitly emptied one — is left untouched.
+
+`build.inject.after_claude_install` is not rewritten: it still works as a deprecated alias of `after_harness_install`. Rename it when convenient.
+
+## Behavior changes
+
+### Harness auth happens in-container
+
+Host Claude Code (or any harness) credentials are no longer copied into containers. Instead you authenticate once inside the container on first run — browser OAuth flows are proxied to your host browser automatically — and the login persists in the harness config volume across restarts and recreates that reuse the volume. Managed configuration (settings, plugins, skills) is still staged from the host at container create. See [Credential Forwarding](/credentials#harness-authentication).
+
+### Custom base images and Dockerfiles are unsupported
+
+Every image builds from clawker's pinned Debian base. Declare language stacks with `build.toolchains` (`go`, `node`, `python`, `rust`, or your own definitions), and customize the image with `build.packages`, `build.instructions`, and `build.inject`. See [Custom Images](/custom-images) and [Toolchains](/toolchains).
+
+### Image tags are harness-keyed
+
+Builds produce `clawker-<project>:<harness>` and no longer produce `:latest`. A leftover `:latest` image still resolves as a legacy fallback (with a warning telling you to rebuild). After rebuilding and recreating containers, remove it:
+
+```bash
+clawker rmi clawker-<project>:latest
+# or sweep all unused clawker images
+clawker image prune --all
+```
+
+## Review hooks across all config layers
+
+The migration moves the `agent.claude_code` block, but it can't know that a generic `agent.post_init` or `agent.pre_run` contains harness-specific commands. `agent.*` hooks and env apply to **every** harness — a `claude mcp add` line in `agent.post_init` fails inside a codex container. Move harness-specific commands to `harnesses.claude.post_init` / `harnesses.claude.pre_run`.
+
+Check every layer — `.clawker.yaml`, `.clawker.local.yaml`, and the global `~/.config/clawker/clawker.yaml` merge independently, and a forgotten global-layer hook keeps injecting claude commands into every container. Hooks are baked in at container create, so recreate containers after moving them.
+
+## Alpha builds: refresh materialized copies
+
+If you ran pre-release builds of this branch (released versions never materialized bundles), the copies under `~/.config/clawker/harnesses/` and `~/.config/clawker/toolchains/` predate the final bundle layout. Materialized copies are user-owned and never auto-updated — a stale one stages nothing or fails bundle validation. Delete them and rebuild:
+
+```bash
+rm -rf ~/.config/clawker/harnesses ~/.config/clawker/toolchains
+clawker build
+```
+
+`clawker build` also warns whenever a shipped bundle or toolchain has changed since your copy was materialized, naming the exact directory to delete.

@@ -423,7 +423,6 @@ func TestFirewallEnabled_NilMeansEnabled(t *testing.T) {
 		"nil FirewallSettings should default to enabled")
 }
 
-
 // --- Generated defaults validation ---
 
 // TestSetProject_EmptyStringsDontOverrideUserConfig reproduces the bug where

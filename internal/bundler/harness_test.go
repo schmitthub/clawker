@@ -83,7 +83,9 @@ harnesses:
 func TestEnsureHarnesses_SeedsRegistryAndBundles(t *testing.T) {
 	cfg := configmocks.NewIsolatedTestConfig(t)
 
-	require.NoError(t, bundler.EnsureHarnesses(cfg))
+	warnings, err := bundler.EnsureHarnesses(cfg)
+	require.NoError(t, err)
+	assert.Empty(t, warnings, "fresh materialize must not report staleness")
 
 	// Bundle files materialized to the seeded default location, and the
 	// registry entry records that path explicitly.
@@ -112,7 +114,9 @@ func TestEnsureHarnesses_SeedsRegistryAndBundles(t *testing.T) {
 	require.NoError(t, err)
 	before, err := os.ReadFile(settingsPath)
 	require.NoError(t, err)
-	require.NoError(t, bundler.EnsureHarnesses(cfg))
+	warnings, err = bundler.EnsureHarnesses(cfg)
+	require.NoError(t, err)
+	assert.Empty(t, warnings, "matching stamp must stay silent")
 	after, err := os.ReadFile(settingsPath)
 	require.NoError(t, err)
 	assert.Equal(t, string(before), string(after))
@@ -129,7 +133,9 @@ func TestEnsureHarnesses_NeverClobbersUserEntries(t *testing.T) {
 	}))
 	require.NoError(t, cfg.SettingsStore().Write())
 
-	require.NoError(t, bundler.EnsureHarnesses(cfg))
+	warnings, err := bundler.EnsureHarnesses(cfg)
+	require.NoError(t, err)
+	assert.Empty(t, warnings, "custom registry entries have no shipped counterpart and never warn")
 
 	reg := cfg.Settings().Harnesses
 	// User entry untouched.
@@ -154,7 +160,8 @@ func TestEnsureHarnesses_BackfillsMissingPath(t *testing.T) {
 	}))
 	require.NoError(t, cfg.SettingsStore().Write())
 
-	require.NoError(t, bundler.EnsureHarnesses(cfg))
+	_, err := bundler.EnsureHarnesses(cfg)
+	require.NoError(t, err)
 
 	reg := cfg.Settings().Harnesses
 	assert.Equal(t,
@@ -162,6 +169,76 @@ func TestEnsureHarnesses_BackfillsMissingPath(t *testing.T) {
 		reg[bundler.DefaultHarnessName].Path,
 		"empty path on a shipped entry is backfilled")
 	assert.True(t, reg[bundler.DefaultHarnessName].Default, "flag preserved through backfill")
+}
+
+// TestEnsureHarnesses_ShippedStampStaleness: a fresh materialize stamps the
+// copy with the shipped tree's content hash; a matching stamp stays silent; a
+// mismatched stamp warns (naming the bundle and its directory) without ever
+// touching the user-owned copy.
+func TestEnsureHarnesses_ShippedStampStaleness(t *testing.T) {
+	cfg := configmocks.NewIsolatedTestConfig(t)
+
+	// Fresh materialize writes the stamp and reports nothing.
+	warnings, err := bundler.EnsureHarnesses(cfg)
+	require.NoError(t, err)
+	require.Empty(t, warnings)
+	dir, err := bundler.HarnessBundleDir(cfg, bundler.DefaultHarnessName)
+	require.NoError(t, err)
+	stampPath := filepath.Join(dir, harness.ShippedStampFile)
+	require.FileExists(t, stampPath, "fresh materialize must stamp the copy")
+
+	// The stamp is bookkeeping only — the materialized bundle still loads.
+	_, err = bundler.LoadHarness(cfg, bundler.DefaultHarnessName)
+	require.NoError(t, err, "stamp file must be invisible to bundle loading")
+
+	// A stamp from a different shipped tree warns once for that bundle...
+	require.NoError(t, os.WriteFile(stampPath, []byte("stale-hash\n"), 0o644))
+	manifestPath := filepath.Join(dir, harness.ManifestFile)
+	before, err := os.ReadFile(manifestPath)
+	require.NoError(t, err)
+
+	warnings, err = bundler.EnsureHarnesses(cfg)
+	require.NoError(t, err)
+	require.Len(t, warnings, 1, "exactly the stale bundle warns")
+	assert.Contains(t, warnings[0], bundler.DefaultHarnessName)
+	assert.Contains(t, warnings[0], dir)
+
+	// ...and never auto-overwrites the user copy or the stamp.
+	after, err := os.ReadFile(manifestPath)
+	require.NoError(t, err)
+	assert.Equal(t, string(before), string(after), "user copy must not be refreshed")
+	stamp, err := os.ReadFile(stampPath)
+	require.NoError(t, err)
+	assert.Equal(t, "stale-hash\n", string(stamp), "stamp must not be silently healed")
+}
+
+// TestEnsureHarnesses_PreexistingCopyWithoutStampWarns: a materialized dir
+// that predates the stamp (branch-track users) has unknown provenance — it
+// warns and is never retroactively stamped (that would silence real
+// staleness).
+func TestEnsureHarnesses_PreexistingCopyWithoutStampWarns(t *testing.T) {
+	cfg := configmocks.NewIsolatedTestConfig(t)
+
+	dir := bundler.ShippedBundleDefaultDir(bundler.DefaultHarnessName)
+	require.NoError(t, os.MkdirAll(dir, 0o750))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, harness.ManifestFile),
+		[]byte("version:\n  resolver: none\n"),
+		0o644,
+	))
+
+	warnings, err := bundler.EnsureHarnesses(cfg)
+	require.NoError(t, err)
+	require.Len(t, warnings, 1, "only the pre-existing unstamped copy warns")
+	assert.Contains(t, warnings[0], bundler.DefaultHarnessName)
+	assert.Contains(t, warnings[0], dir)
+	assert.NoFileExists(t, filepath.Join(dir, harness.ShippedStampFile),
+		"a pre-existing copy must not be retroactively stamped")
+
+	// The user's file wins copy-if-missing.
+	content, err := os.ReadFile(filepath.Join(dir, harness.ManifestFile))
+	require.NoError(t, err)
+	assert.Equal(t, "version:\n  resolver: none\n", string(content))
 }
 
 // TestLoadHarness_RegistryOnly: once ANY registry exists, resolution is
@@ -210,6 +287,14 @@ harnesses:
 	// unregistered name are both hard errors, never fallback resolution.
 	_, err = bundler.HarnessBundleDir(cfg, "relocated")
 	require.ErrorContains(t, err, "has no bundle path")
+
+	// The remedy differs by provenance: a truly-custom name needs a settings
+	// entry; an unregistered SHIPPED name is auto-registered by the build, so
+	// the error points there instead of at hand-editing settings.
 	_, err = bundler.HarnessBundleDir(cfg, "unregistered")
 	require.ErrorContains(t, err, "is not registered")
+	require.ErrorContains(t, err, "add a settings entry harnesses.unregistered")
+	_, err = bundler.HarnessBundleDir(cfg, bundler.DefaultHarnessName)
+	require.ErrorContains(t, err, "is not registered yet")
+	require.ErrorContains(t, err, "clawker build -t "+bundler.DefaultHarnessName)
 }
