@@ -18,7 +18,7 @@ Assessed 2026-07-06 against actual load paths (`internal/storage/store.go`, `int
 | 4 | `agent.claude_code.use_host_auth` | deleted — whole host-credential-copy feature gone | Silently ignored; fresh containers demand login. Discovery = first run | none | **SILENT-BREAK** (behavior removal) |
 | 5 | `build.inject.after_claude_install` | → `after_harness_install` | Works: legacy alias concatenated (dockerfile.go:732); no warning | alias | AUTO |
 | 6 | legacy run-list `[{cmd:...}]` | `[]string` | rewritten in place | `migrateRunInstructionsToStrings` | AUTO-MIGRATED |
-| 7 | settings missing `harnesses:` | registry required | Load-time seed `harnesses.claude` default+path, auto-saves, silent; `harnesses: {}` respected | `migrateSeedHarnessRegistry` (migrations.go:40) | AUTO-MIGRATED |
+| 7 | settings missing `harnesses:` | registry required | Build-time ensure seeds ALL shipped harnesses+toolchains when it materializes their dirs; config load never writes registry state (load-time claude-only seed removed — it dangled paths and fired on any command incl. --version) | `ensureHarnessRegistry` (bundler/harness.go) | BUILD-SEEDED |
 | 8 | registry entry empty `path` | explicit path required | shipped: healed at build (`seedShippedEntries` harness.go:225); custom: hard error naming key (harness.go:136-142) | build-time heal | HARD-ERROR / AUTO |
 | 9 | multiple `default: true` | one max | hard error listing offenders (harness.go:87-93) | n/a | HARD-ERROR |
 | 10 | `default_harness` key | never shipped (git log -S empty) | non-issue | — | — |

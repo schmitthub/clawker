@@ -275,56 +275,30 @@ func loadSettingsWithMigrations(t *testing.T, yamlContent string) string {
 	return string(data)
 }
 
-// TestMigrateSeedHarnessRegistry covers seeding the harness registry into a
-// pre-harnesses settings.yaml: absent key → seeded with the built-in default;
-// any existing harnesses key — populated or explicitly emptied — is
-// untouched.
-func TestMigrateSeedHarnessRegistry(t *testing.T) {
-	t.Run("seeds registry with builtin default when key absent", func(t *testing.T) {
-		const in = `host_proxy:
-  port: 9999
-`
-		after := loadSettingsWithMigrations(t, in)
-		assert.Contains(t, after, "harnesses:")
-		assert.Contains(t, after, consts.DefaultHarnessName+":")
-		assert.Contains(t, after, "default: true")
-	})
+// TestSettingsLoadDoesNotSeedRegistries pins the registry-write ownership
+// contract: config load never invents harness/toolchain registry state — a
+// settings.yaml without those keys stays byte-identical across loads. The
+// build-time ensure paths, which materialize the bundle directories the
+// entries point at, own all registry writes.
+func TestSettingsLoadDoesNotSeedRegistries(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.yaml")
+	const in = "host_proxy:\n  port: 9999\n"
+	require.NoError(t, os.WriteFile(path, []byte(in), 0o644))
 
-	t.Run("existing registry untouched", func(t *testing.T) {
-		const in = `harnesses:
-  codex:
-    default: true
-    path: /opt/bundles/codex
-`
-		after := loadSettingsWithMigrations(t, in)
-		assert.Equal(t, in, after, "populated registry must not be reseeded")
-	})
-
-	t.Run("explicitly emptied registry untouched", func(t *testing.T) {
-		const in = `harnesses: {}
-`
-		after := loadSettingsWithMigrations(t, in)
-		assert.Equal(t, in, after, "emptied registry is a user choice, not a missing key")
-	})
-
-	t.Run("idempotent across reloads", func(t *testing.T) {
-		dir := t.TempDir()
-		path := filepath.Join(dir, "settings.yaml")
-		require.NoError(t, os.WriteFile(path, []byte("host_proxy:\n  port: 9999\n"), 0o644))
-
-		load := func() {
-			_, err := storage.New[config.Settings]("",
-				storage.WithFilenames("settings.yaml"),
-				storage.WithPaths(dir),
-				storage.WithMigrations(config.SettingsMigrations()...),
-			)
-			require.NoError(t, err)
-		}
-		load()
-		first := readFile(t, path)
-		load()
-		assert.Equal(t, first, readFile(t, path), "second load must be byte-stable")
-	})
+	load := func() {
+		_, err := storage.New[config.Settings]("",
+			storage.WithFilenames("settings.yaml"),
+			storage.WithPaths(dir),
+			storage.WithMigrations(config.SettingsMigrations()...),
+		)
+		require.NoError(t, err)
+	}
+	load()
+	after := readFile(t, path)
+	assert.Equal(t, in, after, "settings load must not write registry keys")
+	assert.NotContains(t, after, "harnesses:")
+	assert.NotContains(t, after, "toolchains:")
 }
 
 // TestMigrateRemoveLegacyMonitoringKeys covers the settings migration's two

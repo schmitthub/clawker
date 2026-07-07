@@ -75,7 +75,8 @@ Migrations run once per config file the first time the new CLI loads it — the 
 - `build.image`, `build.dockerfile`, `build.context` — removed. Images build from clawker's pinned base; see [build changes](#custom-base-images-and-dockerfiles-are-unsupported).
 - `agent.claude_code.use_host_auth` — removed. Host credentials are no longer copied; see [auth changes](#harness-auth-happens-in-container).
 - `agent.claude_code` — moved field-for-field to `harnesses.claude`. If a `harnesses.claude` entry already exists, the legacy block is dropped with a warning instead (the map entry already overrides it).
-- `settings.yaml` gains the `harnesses:` registry, seeded with the claude harness as default. A file that already has the key — including an explicitly emptied one — is left untouched.
+
+The `harnesses:` and `toolchains:` registries in `settings.yaml` are not a migration: your first `clawker build` seeds them with every shipped harness and toolchain as it materializes their bundle directories. Config loading never writes registry entries, and existing entries are never touched.
 
 `build.inject.after_claude_install` is not rewritten: it still works as a deprecated alias of `after_harness_install`. Rename it when convenient.
 
