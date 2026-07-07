@@ -19,6 +19,8 @@ Harness = file-backed bundle (harness.yaml + Dockerfile.harness.tmpl + assets/) 
 
 ## Open items (post-branch / host-side)
 
+- **BLOCKS MERGE (user 2026-07-07):** the skills plugin goes multi-agent — no longer Claude Code-only packaging; use established all-in-one multi-agent harness plugin approaches (research first). User docs already say "agent skills plugin" (never "Claude Code plugin", no future-tense framing); dev CLAUDE.mds still describe the Claude Code plugin spec and get updated when the packaging lands.
+
 - Host-side UAT of migrations + staleness warnings on a real pre-upgrade config; host e2e run (`go test ./test/e2e/...` — never in-container)
 - Block names still placeholder `block_1..6` (`harness.DeclaredBlocks` — final event-centric names TBD by user; renaming ripples docs + skill + bundles)
 - opencode/pi bundles via harness-toolchain-dev skill UAT (research memo ready)
