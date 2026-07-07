@@ -105,6 +105,8 @@
           "control-plane",
           "credentials",
           "custom-images",
+          "harness-bundles",
+          "toolchains",
           "container-internals",
           "worktrees",
           "monitoring",
