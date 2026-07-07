@@ -10,6 +10,25 @@ The format follows Keep a Changelog, and clawker adheres to Semantic Versioning.
 A release spans many merged PRs and may mix change kinds — Added, Fixed,
 Changed, Removed. Each release section lists those subsections directly.
 
+## [0.13.0] - Unreleased
+
+### **⚠ ACTION REQUIRED — rebuild images, recreate containers with fresh volumes, restart the control plane**
+
+> Run `clawker build --no-cache` in every project after updating, recreate
+> containers with fresh volumes (`clawker rm --volumes`), and restart the
+> control plane (`clawker controlplane down && clawker controlplane up`).
+> Legacy config keys are migrated automatically with a printed notice on first
+> load. Step-by-step instructions: <https://docs.clawker.dev/upgrading>.
+
+- **Added:** Multi-harness support. Coding-agent CLIs are pluggable **harness bundles** — a manifest, a Dockerfile template fragment, and assets — registered in `settings.yaml` under `harnesses:` and materialized to `~/.config/clawker/harnesses/` for editing. OpenAI **Codex** ships alongside Claude Code; add your own by authoring a bundle. Per-harness config lives in `clawker.yaml` under `harnesses.<name>:` (env, `post_init`/`pre_run`, managed-config strategy).
+- **Added:** Harness-keyed images. Builds tag `clawker-<project>:<harness>` (the default harness also gets a `:default` alias); `clawker build -t codex` builds a specific harness, `clawker run @:codex` selects its image, and bare `@` resolves the default. Containers and images carry a harness label.
+- **Added:** Language **toolchains** (`build.toolchains: [go, node, python, rust]`) — file-backed, user-editable install definitions registered in `settings.yaml` and materialized to `~/.config/clawker/toolchains/`; harness bundles declare the toolchains they need and projects add their own.
+- **Added:** Docs: [Harness Bundles](https://docs.clawker.dev/harness-bundles), [Toolchains](https://docs.clawker.dev/toolchains), and [Upgrading](https://docs.clawker.dev/upgrading) guides, plus the `clawker-harness-dev` Claude Code plugin for authoring bundles and toolchains.
+- **Changed:** Images build from clawker's pinned Debian base. `build.image`, `build.dockerfile`, and `build.context` are removed (auto-stripped from config with a notice); custom base images and Dockerfiles are unsupported — customize with `build.toolchains`, `build.packages`, `build.instructions`, and `build.inject`.
+- **Changed:** Harness auth happens in-container. Host credentials are no longer copied into containers (`agent.claude_code.use_host_auth` removed); authenticate once on first run — browser flows are proxied to the host — and the login persists in the harness config volume. Managed config (settings, plugins, skills) is still staged from the host.
+- **Changed:** `agent.claude_code` config moved to `harnesses.claude` (migrated automatically with a notice); `build.inject.after_claude_install` is now `after_harness_install` (the old name still works as a deprecated alias).
+- **Removed:** `clawker generate` — the Claude-Code-release Dockerfiles it generated no longer exist in the bundle-composed build model.
+
 ## [0.12.11] - 2026-07-02
 
 - **Added:** YAML schema definitions for `clawker.yaml` files and `settings.yaml` files, for IDEs that support JSON Schema validation.  
