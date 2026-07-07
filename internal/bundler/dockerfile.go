@@ -464,7 +464,7 @@ func (g *ProjectGenerator) GetBuildContext() string {
 func isBasePackage(pkg string) bool {
 	switch pkg {
 	case "less", "git", "procps", "sudo", "fzf",
-		"zsh", "man-db", "unzip", "gnupg2",
+		"zsh", "man-db", "unzip", "gnupg2", "openssh-client",
 		"gcc", "libc6-dev", "make",
 		"iproute2", "dnsutils",
 		"aggregate", "jq", "nano", "vim", "wget",
