@@ -1,6 +1,6 @@
 # Skill Command Package
 
-Manage the clawker-support Claude Code skill plugin. Wraps the `claude plugin` CLI.
+Manage the clawker-support agent skills plugin. Wraps the `claude plugin` CLI.
 
 ## Files
 

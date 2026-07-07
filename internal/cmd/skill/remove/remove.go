@@ -27,8 +27,8 @@ func NewCmdRemove(f *cmdutil.Factory, runF func(context.Context, *RemoveOptions)
 	cmd := &cobra.Command{
 		Use:     "remove",
 		Aliases: []string{"uninstall", "rm"},
-		Short:   "Remove the clawker skill plugin from Claude Code",
-		Long: `Remove the clawker-support skill plugin from Claude Code.
+		Short:   "Remove the clawker agent skills plugin",
+		Long: `Remove the clawker-support agent skills plugin.
 
 This uninstalls the plugin from the specified scope. The marketplace
 registration is left in place.`,

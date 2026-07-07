@@ -26,11 +26,11 @@ func NewCmdInstall(f *cmdutil.Factory, runF func(context.Context, *InstallOption
 
 	cmd := &cobra.Command{
 		Use:   "install",
-		Short: "Install the clawker skill plugin for Claude Code",
-		Long: `Install the clawker-support skill plugin for Claude Code.
+		Short: "Install the clawker agent skills plugin",
+		Long: `Install the clawker-support agent skills plugin.
 
 This adds the schmitthub/claude-plugins marketplace (if not already present)
-and installs the clawker-support plugin. The plugin gives Claude Code
+and installs the clawker-support plugin. The plugin gives your coding agent
 hands-on knowledge of clawker configuration, troubleshooting, and internals,
 plus harness bundle and toolchain authoring.`,
 		Example: `  # Install with default user scope

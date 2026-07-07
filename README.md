@@ -380,7 +380,7 @@ clawker project edit                    # Interactive TUI editor for .clawker.ya
 clawker settings edit                   # Interactive TUI editor for settings.yaml
 
 # Skill plugin management
-clawker skill install                   # Install the clawker-support Claude Code plugin
+clawker skill install                   # Install the clawker-support agent skills plugin
 clawker skill install --scope project   # Install with project scope
 clawker skill show                      # Show manual install commands
 clawker skill remove                    # Remove the clawker-support plugin

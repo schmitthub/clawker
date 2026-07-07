@@ -11,10 +11,10 @@ import (
 func NewCmdSkill(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "skill",
-		Short: "Manage the clawker Claude Code skill plugin",
-		Long: `Manage the clawker-support Claude Code skill plugin.
+		Short: "Manage the clawker agent skills plugin",
+		Long: `Manage the clawker-support agent skills plugin.
 
-The plugin ships two skills: clawker-support gives Claude Code hands-on
+The plugin ships two skills: clawker-support gives your coding agent hands-on
 knowledge of clawker internals — configuration, Dockerfile generation,
 firewall rules, MCP wiring, and troubleshooting — and harness-toolchain-dev
 covers authoring harness bundles and toolchain definitions. Both read the

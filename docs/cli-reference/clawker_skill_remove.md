@@ -4,11 +4,11 @@ title: "clawker skill remove"
 
 ## clawker skill remove
 
-Remove the clawker skill plugin from Claude Code
+Remove the clawker agent skills plugin
 
 ### Synopsis
 
-Remove the clawker-support skill plugin from Claude Code.
+Remove the clawker-support agent skills plugin.
 
 This uninstalls the plugin from the specified scope. The marketplace
 registration is left in place.
@@ -46,4 +46,4 @@ clawker skill remove [flags]
 
 ### See also
 
-* [clawker skill](clawker_skill) - Manage the clawker Claude Code skill plugin
+* [clawker skill](clawker_skill) - Manage the clawker agent skills plugin

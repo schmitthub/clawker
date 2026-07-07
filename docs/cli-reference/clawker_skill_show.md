@@ -35,4 +35,4 @@ clawker skill show [flags]
 
 ### See also
 
-* [clawker skill](clawker_skill) - Manage the clawker Claude Code skill plugin
+* [clawker skill](clawker_skill) - Manage the clawker agent skills plugin
