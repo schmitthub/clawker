@@ -67,9 +67,12 @@ jobs:
     name: Plugin Release
     needs: [plugin-check]
     if: needs.plugin-check.outputs.changed == 'true'
+    strategy:
+      matrix:
+        plugin: [clawker-support, clawker-harness-dev]
     uses: schmitthub/claude-plugins/.github/workflows/update-plugin.yml@10a280d6fe399d2ee26b3a2c84e8b6f095083a1f # main
     with:
-      plugin-name: clawker-support
+      plugin-name: ${{ matrix.plugin }}
       sha: ${{ github.sha }}
     secrets:
       marketplace-token: ${{ secrets.MARKETPLACE_TOKEN }}

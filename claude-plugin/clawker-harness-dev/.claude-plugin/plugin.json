@@ -1,0 +1,11 @@
+{
+  "name": "clawker-harness-dev",
+  "description": "Harness bundle and toolchain authoring expert for extending clawker with new coding agents",
+  "version": "1.0.0",
+  "author": {
+    "name": "schmitthub"
+  },
+  "license": "MIT",
+  "repository": "https://github.com/schmitthub/clawker",
+  "homepage": "https://docs.clawker.dev"
+}
