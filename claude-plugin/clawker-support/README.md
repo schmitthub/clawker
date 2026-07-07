@@ -16,13 +16,13 @@ When you invoke `/clawker-support`, your agent becomes a clawker configuration s
 
 It understands the full clawker system: Dockerfile generation, config layering, firewall architecture, injection points, build-time vs runtime, and common gotchas.
 
-### harness-toolchain-dev
+### harness-stack-dev
 
-When you invoke `/harness-toolchain-dev`, your agent becomes a clawker extension-authoring specialist for building harness bundles (packaging a new coding-agent CLI) and toolchain definitions (reusable language-toolchain install fragments):
+When you invoke `/harness-stack-dev`, your agent becomes a clawker extension-authoring specialist for building harness bundles (packaging a new coding-agent CLI) and stack definitions (reusable language-stack install fragments):
 
 - **Knows the bundle format** — `harness.yaml` field-by-field (version resolvers, volumes, seeds, staging, egress floors), verified against clawker's validators
 - **Knows the template contract** — the six block slots of `Dockerfile.harness.tmpl`, their user/shell context, cache rules, and the runtime PATH gotcha
-- **Knows toolchain authoring** — definition format, placement semantics, the self-guarding idiom, and namespace collision rules
+- **Knows stack authoring** — definition format, placement semantics, the self-guarding idiom, and namespace collision rules
 - **Designs egress floors adversarially** — minimal floors, path-scoped UGC-sink denial, in-container auth posture
 
 ## Install
@@ -59,14 +59,14 @@ In your agent session:
 ```
 
 ```
-/harness-toolchain-dev help me package the opencode CLI as a clawker harness
+/harness-stack-dev help me package the opencode CLI as a clawker harness
 ```
 
 ```
-/harness-toolchain-dev write a toolchain definition for deno
+/harness-stack-dev write a stack definition for deno
 ```
 
-Or just ask about clawker — the skills trigger automatically: clawker-support on clawker-related questions, harness-toolchain-dev on harness/toolchain authoring tasks.
+Or just ask about clawker — the skills trigger automatically: clawker-support on clawker-related questions, harness-stack-dev on harness/stack authoring tasks.
 
 ## Documentation
 

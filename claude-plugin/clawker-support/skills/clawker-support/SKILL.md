@@ -133,7 +133,7 @@ Built-in defaults                 ← Lowest priority
 | `~/.config/clawker/clawker.yaml` (user) | Only config that genuinely applies to ALL projects across every distro |
 
 User-level project config is dangerous because build config (packages,
-toolchains, run steps) is almost always project-specific. Fetch
+stacks, run steps) is almost always project-specific. Fetch
 `https://docs.clawker.dev/configuration` to see the current schema before
 recommending what goes where.
 
@@ -328,7 +328,7 @@ integrates with.
 5. **Dockerfile templates** — Fetch the current Go templates that generate
    the image Dockerfiles:
    `https://raw.githubusercontent.com/schmitthub/clawker/refs/heads/main/internal/bundler/assets/Dockerfile.base.tmpl`
-   (shared base image: packages, user setup, toolchains, project instructions) and
+   (shared base image: packages, user setup, stacks, project instructions) and
    `https://raw.githubusercontent.com/schmitthub/clawker/refs/heads/main/internal/bundler/assets/Dockerfile.harness-image.tmpl`
    (harness image built FROM the base). They show exactly what each config
    section produces and in what order. Look for execution order, root vs

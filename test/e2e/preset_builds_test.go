@@ -381,8 +381,8 @@ func TestPresetInit_UserConfigIsolation(t *testing.T) {
 	snap := readProjectConfig(t, setup.ProjectDir)
 
 	// Preset build settings should be written, not user-level ones.
-	assert.Equal(t, []string{"go"}, snap.Build.Toolchains,
-		"should have Go preset toolchain, not user-level toolchains")
+	assert.Equal(t, []string{"go"}, snap.Build.Stacks,
+		"should have Go preset stack, not user-level stacks")
 	assert.Equal(t, []string{"ripgrep"}, snap.Build.Packages,
 		"should have Go preset packages, not user-level nodejs/npm/gh")
 

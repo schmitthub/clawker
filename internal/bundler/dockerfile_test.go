@@ -379,7 +379,7 @@ func TestBuildContext_HarnessVersionIsARG(t *testing.T) {
 	nvmIdx := strings.Index(content, "raw.githubusercontent.com/nvm-sh/nvm")
 	installIdx := strings.Index(content, "claude.ai/install.sh")
 	require.NotEqual(t, -1, nvmIdx,
-		"expected the nvm toolchain fragment (harness-declared) as an upstream-layer marker")
+		"expected the nvm stack fragment (harness-declared) as an upstream-layer marker")
 	require.NotEqual(t, -1, installIdx, "expected Claude install RUN as the ARG consumer marker")
 	assert.Greater(
 		t,
@@ -552,8 +552,8 @@ func TestGenerateBase_ExcludesHarnessSurface(t *testing.T) {
 		"mkdir -p /home/${USERNAME}/.claude ", // harness volume dirs
 		"callback-forwarder-builder",          // builder stages
 		"clawker-ca.crt",                      // firewall CA is harness-side
-		"nodejs.org/dist",                     // harness-declared toolchain (node) renders harness-side
-		"nvm-sh/nvm",                          // harness-declared toolchain (nvm) renders harness-side
+		"nodejs.org/dist",                     // harness-declared stack (node) renders harness-side
+		"nvm-sh/nvm",                          // harness-declared stack (nvm) renders harness-side
 	} {
 		assert.NotContains(t, content, marker,
 			"base image must not carry harness surface %q", marker)
@@ -594,7 +594,7 @@ func TestGenerateHarness_FromBaseBoundary(t *testing.T) {
 
 	zshEnvArgIdx := strings.Index(content, "ARG ZSH_ENV=")
 	require.Positive(t, zshEnvArgIdx,
-		"ARG ZSH_ENV must be re-declared (user-scope toolchain fragments reference it)")
+		"ARG ZSH_ENV must be re-declared (user-scope stack fragments reference it)")
 
 	shResetIdx := strings.Index(content, `SHELL ["/bin/sh", "-c"]`)
 	require.Positive(t, shResetIdx, "sh SHELL reset must exist — base image config ends at zsh")
@@ -603,7 +603,7 @@ func TestGenerateHarness_FromBaseBoundary(t *testing.T) {
 	zshRestoreIdx := strings.Index(content, `SHELL ["/bin/zsh", "-o", "pipefail", "-c"]`)
 	require.Positive(t, zshRestoreIdx, "zsh SHELL restore must exist for blocks 4-6")
 
-	// sh reset → root toolchain fragments (node, harness-declared) → zsh
+	// sh reset → root stack fragments (node, harness-declared) → zsh
 	// restore → block_4 content (claude install).
 	nodeIdx := strings.Index(content, "nodejs.org/dist")
 	installIdx := strings.Index(content, "claude.ai/install.sh")

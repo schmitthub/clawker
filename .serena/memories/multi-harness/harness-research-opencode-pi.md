@@ -16,7 +16,7 @@ Web recon for the two next shipped harness bundles. Verified against npm packume
 ## pi
 
 - **Package identity critical:** **`@earendil-works/pi-coding-agent`** (latest 0.80.3, 2026-06-30). `@mariozechner/pi` = old vLLM pods tool (WRONG). `@mariozechner/pi-coding-agent` deprecated at 0.73.1 → earendil scope (Mario Zechner joined Earendil/Armin Ronacher PBC; repo github.com/earendil-works/pi). Unscoped `pi-coding-agent` = squat.
-- **Install:** npm only; plain-JS dist/cli.js, **requires node ≥ 22.19** (engines; `legacy-node20` dist-tag lags — use latest + node toolchain; baked NODE_VERSION=24 line satisfies). Resolver: npm.
+- **Install:** npm only; plain-JS dist/cli.js, **requires node ≥ 22.19** (engines; `legacy-node20` dist-tag lags — use latest + node stack; baked NODE_VERSION=24 line satisfies). Resolver: npm.
 - **CMD:** `pi` (TUI); headless `pi -p "prompt"`, `--mode json`, `--mode rpc`. **No permission model by design** ("Run in a container") — ideal dumb-sandbox tenant. `pi update --self` self-updates via npm (pin at build).
 - **Config:** `~/.pi/agent/` (override PI_CODING_AGENT_DIR): settings.json, auth.json (0600), models.json, keybindings.json, sessions/, extensions/, skills/, prompts/, themes/, git/ (PI_PACKAGE_DIR), AGENTS.md, SYSTEM.md. Project `.pi/`. Instructions: AGENTS.md/CLAUDE.md walk-up + `~/.agents/skills/` (Agent Skills standard). **Single volume: `.pi`.**
 - **Auth:** env keys (full documented table) or `/login` OAuth: Claude Pro/Max (claude.ai/oauth/authorize + platform.claude.com/v1/oauth/token — VERIFIED in pi-ai 0.80.3 dist), ChatGPT (auth.openai.com/oauth/* + chatgpt.com/backend-api), Copilot (github.com device + api.individual.githubcopilot.com). Tokens in ~/.pi/agent/auth.json.

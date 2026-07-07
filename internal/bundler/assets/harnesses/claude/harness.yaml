@@ -9,12 +9,12 @@ version:
   resolver: npm
   package: "@anthropic-ai/claude-code"
 
-# Toolchain requirement: Claude Code is npm-distributed and runs on node
-# (node also serves its hooks/MCP tooling). The node toolchain provisions
+# Stack requirement: Claude Code is npm-distributed and runs on node
+# (node also serves its hooks/MCP tooling). The node stack provisions
 # the baked LTS install plus nvm. Declared, never installed here — the
 # fragments render in the harness image unless the project also declares
 # it (then they live in the shared base).
-toolchains:
+stacks:
   - node
 
 # Persisted dirs: each becomes a named volume mounted at path under the

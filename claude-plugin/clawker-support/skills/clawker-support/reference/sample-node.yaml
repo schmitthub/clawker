@@ -27,14 +27,14 @@ harnesses:
       claude mcp add -s user --header "CONTEXT7_API_KEY: $CONTEXT7_API_KEY" --transport http context7 https://mcp.context7.com/mcp
       claude mcp add -s user -t http deepwiki https://mcp.deepwiki.com/mcp
 build:
-  # The node toolchain provisions Node + npm on PATH (latest LTS line) plus
+  # The node stack provisions Node + npm on PATH (latest LTS line) plus
   # nvm for switching versions at runtime (`nvm install <ver> && nvm use <ver>`).
   # Declaring it here renders it in the shared base image so build-time steps
   # (user_run below) have node available; the claude harness declares node
   # too, so omitting this only moves the install into the harness image.
   # Every clawker image builds from the pinned Debian substrate — there is no
   # base-image field.
-  toolchains:
+  stacks:
     - node
   packages:
     - ripgrep
@@ -44,7 +44,7 @@ build:
     user_run:
       - curl -LsSf https://astral.sh/uv/install.sh | sh
       - uv tool install pre-commit --with pre-commit-uv
-      # Global npm installs land on the agent's PATH (toolchain node).
+      # Global npm installs land on the agent's PATH (stack node).
       - npm install -g pnpm typescript
 security:
   docker_socket: false

@@ -333,20 +333,20 @@
       },
       "type": "object"
     },
-    "toolchains": {
+    "stacks": {
       "additionalProperties": {
         "additionalProperties": false,
         "properties": {
           "path": {
-            "description": "Toolchain definition directory (toolchain.yaml + Dockerfile.toolchain.tmpl); empty = config-dir default",
+            "description": "Stack definition directory (stack.yaml + Dockerfile.stack.tmpl); empty = config-dir default",
             "title": "Path",
             "type": "string"
           }
         },
         "type": "object"
       },
-      "description": "Toolchain registry mapping a toolchain name to its definition directory",
-      "title": "Toolchains",
+      "description": "Stack registry mapping a stack name to its definition directory",
+      "title": "Stacks",
       "type": "object"
     }
   },

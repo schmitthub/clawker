@@ -12,8 +12,8 @@ Manage the clawker-support agent skills plugin.
 
 The plugin ships two skills: clawker-support gives your coding agent hands-on
 knowledge of clawker internals — configuration, Dockerfile generation,
-firewall rules, MCP wiring, and troubleshooting — and harness-toolchain-dev
-covers authoring harness bundles and toolchain definitions. Both read the
+firewall rules, MCP wiring, and troubleshooting — and harness-stack-dev
+covers authoring harness bundles and stack definitions. Both read the
 real config schema and templates so the advice they give is always accurate.
 
 ### Examples

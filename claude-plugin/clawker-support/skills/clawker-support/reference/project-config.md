@@ -53,8 +53,8 @@ reference when loaded into context.
 
 | File | Stack | Notes |
 |------|-------|-------|
-| `reference/sample-go.yaml` | Go (based on clawker's own config) | `build.toolchains`, root_run checksum-verified installer, harnesses map, extensive firewall rules, path-level rules |
-| `reference/sample-node.yaml` | Node.js | node toolchain, pnpm/typescript, env_file usage, pre_run, leaner firewall |
+| `reference/sample-go.yaml` | Go (based on clawker's own config) | `build.stacks`, root_run checksum-verified installer, harnesses map, extensive firewall rules, path-level rules |
+| `reference/sample-node.yaml` | Node.js | node stack, pnpm/typescript, env_file usage, pre_run, leaner firewall |
 
 **Read both samples** when helping a user — even if their stack doesn't match
 either one exactly. Together they demonstrate the full range of config
@@ -125,14 +125,14 @@ triggers a build).
    steps for the raw URLs) to map the failing step to the config section
    that produced it. Look at execution order and root vs user context.
    Note there are two images: a shared per-project base image (packages,
-   project toolchains, instructions/inject) and a per-harness image layered
-   on top (harness install, harness-declared toolchains).
+   project stacks, instructions/inject) and a per-harness image layered
+   on top (harness install, harness-declared stacks).
 
 3. **Package not found**: Every clawker image builds from a pinned Debian
    base, so `build.packages` entries are apt package names. Research the
    correct Debian package name — do not guess. Language runtimes should come
-   from `build.toolchains` (e.g. `go`, `node`, `python`, `rust`) rather than
-   apt packages when a shipped toolchain exists.
+   from `build.stacks` (e.g. `go`, `node`, `python`, `rust`) rather than
+   apt packages when a shipped stack exists.
 
 4. **Network error during build**: `clawker build` is a host process that
    asks the Docker daemon to build the agent image. Image pulls and

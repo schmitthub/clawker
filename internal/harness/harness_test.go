@@ -36,43 +36,43 @@ func manifestFS(manifest string) fstest.MapFS {
 	}
 }
 
-func TestLoad_ToolchainDeclarations(t *testing.T) {
+func TestLoad_StackDeclarations(t *testing.T) {
 	b, err := harness.Load("test", manifestFS(`
 version: { resolver: none }
-toolchains: [node, nvm]
+stacks: [node, nvm]
 `))
 	require.NoError(t, err)
-	assert.Equal(t, []string{"node", "nvm"}, b.Manifest.Toolchains)
+	assert.Equal(t, []string{"node", "nvm"}, b.Manifest.Stacks)
 }
 
-func TestLoad_ToolchainDeclarations_DuplicateRejected(t *testing.T) {
+func TestLoad_StackDeclarations_DuplicateRejected(t *testing.T) {
 	_, err := harness.Load("test", manifestFS(`
 version: { resolver: none }
-toolchains: [node, node]
+stacks: [node, node]
 `))
-	require.ErrorContains(t, err, `duplicate toolchain declaration "node"`)
+	require.ErrorContains(t, err, `duplicate stack declaration "node"`)
 }
 
-func TestLoad_ToolchainDeclarations_InvalidNameRejected(t *testing.T) {
+func TestLoad_StackDeclarations_InvalidNameRejected(t *testing.T) {
 	_, err := harness.Load("test", manifestFS(`
 version: { resolver: none }
-toolchains: ["bad/name"]
+stacks: ["bad/name"]
 `))
 	require.ErrorContains(t, err, "bad/name")
 }
 
-func TestBundleToolchain_EmbeddedDefinition(t *testing.T) {
+func TestBundleStack_EmbeddedDefinition(t *testing.T) {
 	fsys := manifestFS("version: { resolver: none }\n")
-	fsys["toolchains/mytool/toolchain.yaml"] = mapFile("description: embedded tool\n")
-	fsys["toolchains/mytool/Dockerfile.toolchain-user.tmpl"] = mapFile("RUN echo embedded\n")
+	fsys["stacks/mytool/stack.yaml"] = mapFile("description: embedded tool\n")
+	fsys["stacks/mytool/Dockerfile.stack-user.tmpl"] = mapFile("RUN echo embedded\n")
 
 	b, err := harness.Load("test", fsys)
 	require.NoError(t, err)
 
-	assert.True(t, b.HasToolchain("mytool"))
-	assert.False(t, b.HasToolchain("other"))
+	assert.True(t, b.HasStack("mytool"))
+	assert.False(t, b.HasStack("other"))
 
-	def, err := b.Toolchain("mytool")
+	def, err := b.Stack("mytool")
 	require.NoError(t, err)
 	assert.Empty(t, def.RootFragment)
 	assert.Contains(t, def.UserFragment, "embedded")

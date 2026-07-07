@@ -18,7 +18,7 @@ This page is about **authoring and selecting harnesses**. For how the two-stage 
 A harness bundle is a directory with three parts:
 
 <Card title="harness.yaml" icon="file-lines">
-The **manifest** — the data Clawker's engine consumes outside template rendering: the version resolver, declared toolchains, persisted volumes, first-boot config seeds, create-time host→container staging, and the egress floor.
+The **manifest** — the data Clawker's engine consumes outside template rendering: the version resolver, declared stacks, persisted volumes, first-boot config seeds, create-time host→container staging, and the egress floor.
 </Card>
 
 <Card title="Dockerfile.harness.tmpl" icon="docker">
@@ -106,16 +106,16 @@ version:
 
 Resolution runs once per build at the command layer. On failure Clawker warns and falls back to the floating default, so a transient registry outage still produces a usable image (the install step downloads whatever "latest" is at build time).
 
-### `toolchains`
+### `stacks`
 
-Names the language toolchains the bundle's build blocks require:
+Names the language stacks the bundle's build blocks require:
 
 ```yaml
-toolchains:
+stacks:
   - node
 ```
 
-Declared, never installed here — the resolved fragments render in the harness image, unless your project already declared the same toolchain in `build.toolchains` (then it lives in the shared base, built first, and every harness image gets it for free). Names resolve against the flat per-build namespace (shipped ∪ settings registry ∪ this bundle's own `toolchains/` subdirectory). See [Toolchains](/toolchains) for the definition format.
+Declared, never installed here — the resolved fragments render in the harness image, unless your project already declared the same stack in `build.stacks` (then it lives in the shared base, built first, and every harness image gets it for free). Names resolve against the flat per-build namespace (shipped ∪ settings registry ∪ this bundle's own `stacks/` subdirectory). See [Stacks](/stacks) for the definition format.
 
 ### `volumes`
 
@@ -248,9 +248,9 @@ The bundle template fills named block slots in Clawker's master harness Dockerfi
 | `block_5` | root | `/bin/zsh` | After the trailing switch back to root, before Clawker's runtime assets. |
 | `block_6` | — | — | The final instruction — the `CMD` position. |
 
-Blocks 1–3 run under `/bin/sh`; the master resets `SHELL` to zsh before block_4, so blocks 4–6 run under `/bin/zsh -o pipefail -c`. Toolchain fragments (when the harness declares them and the project didn't) render **before** block_1 for root-scope fragments and **before** block_3 for user-scope fragments, so every block can rely on them. The manifest `seeds:` stage after block_4. Harness volume directories are pre-created after block_2.
+Blocks 1–3 run under `/bin/sh`; the master resets `SHELL` to zsh before block_4, so blocks 4–6 run under `/bin/zsh -o pipefail -c`. Stack fragments (when the harness declares them and the project didn't) render **before** block_1 for root-scope fragments and **before** block_3 for user-scope fragments, so every block can rely on them. The manifest `seeds:` stage after block_4. Harness volume directories are pre-created after block_2.
 
-Available in template bodies: `{{.HarnessVersion}}` (resolved version), `${USERNAME}` (the unprivileged container user, re-declared as an ARG after the `FROM`), and `${ZSH_ENV}` (the user's `.zshenv` path, declared before the user-scope toolchain anchor, so in scope from block_3 on). The reserved names — `Dockerfile` (the composed template itself) plus the project-config inject-point keys (`after_from`, `after_packages`, `after_user_setup`, `after_user_switch`, `after_harness_install` and its deprecated alias `after_claude_install`, `before_entrypoint`) — can never be defined by a bundle.
+Available in template bodies: `{{.HarnessVersion}}` (resolved version), `${USERNAME}` (the unprivileged container user, re-declared as an ARG after the `FROM`), and `${ZSH_ENV}` (the user's `.zshenv` path, declared before the user-scope stack anchor, so in scope from block_3 on). The reserved names — `Dockerfile` (the composed template itself) plus the project-config inject-point keys (`after_from`, `after_packages`, `after_user_setup`, `after_user_switch`, `after_harness_install` and its deprecated alias `after_claude_install`, `before_entrypoint`) — can never be defined by a bundle.
 
 ### Worked example: codex
 
@@ -321,7 +321,7 @@ Put it wherever you like — the conventional place is `<config-dir>/harnesses/<
 </Step>
 
 <Step title="Write the manifest">
-Declare the version resolver, any toolchains your install steps need, the volume(s) your agent keeps state in, first-boot seeds, create-time staging, and the egress floor. Keep the floor **minimal** — start with just the API and auth endpoints your agent actually needs.
+Declare the version resolver, any stacks your install steps need, the volume(s) your agent keeps state in, first-boot seeds, create-time staging, and the egress floor. Keep the floor **minimal** — start with just the API and auth endpoints your agent actually needs.
 </Step>
 
 <Step title="Write the template">

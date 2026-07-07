@@ -12,7 +12,7 @@
 # anything `.zshenv` exports; managed-settings.json is the only documented
 # enterprise mechanism that injects into that env. Points at `.local/bin`
 # (where the claude binary lives); the inherited `${PATH}` carries the node
-# toolchain's `/usr/local` install as the floor (declared in harness.yaml),
+# stack's `/usr/local` install as the floor (declared in harness.yaml),
 # so `node` resolves for build-time `claude mcp add ...` (inject points,
 # post_init) and the agent's Bash tool.
 #
@@ -79,7 +79,7 @@ ENV OTEL_LOG_USER_PROMPTS=1
 # cache at an ARG's DECLARATION line, not at first use — that "first use, not
 # definition" rule is the classic (pre-BuildKit) builder's, and Docker 23+
 # builds with BuildKit by default. Hoisting this declaration up the stage would
-# re-run every layer below it (toolchains, git-delta, zsh-in-docker, ...) on
+# re-run every layer below it (stacks, git-delta, zsh-in-docker, ...) on
 # every CC release. Adjacent placement scopes the CC-version cache miss to the
 # install layer + the late root block alone.
 # Override: clawker build --build-arg CLAUDE_CODE_VERSION=<version>

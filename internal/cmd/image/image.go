@@ -2,13 +2,14 @@
 package image
 
 import (
+	"github.com/spf13/cobra"
+
 	"github.com/schmitthub/clawker/internal/cmd/image/build"
 	"github.com/schmitthub/clawker/internal/cmd/image/inspect"
 	"github.com/schmitthub/clawker/internal/cmd/image/list"
 	"github.com/schmitthub/clawker/internal/cmd/image/prune"
 	"github.com/schmitthub/clawker/internal/cmd/image/remove"
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/spf13/cobra"
 )
 
 // NewCmdImage creates the image management command.

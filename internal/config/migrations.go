@@ -29,7 +29,7 @@ func ProjectMigrations() []storage.Migration[Project] {
 // shape as ProjectMigrations — runs on the settings store during construction,
 // re-saving when any returns true.
 //
-// The harness/toolchain registries are deliberately NOT seeded here: registry
+// The harness/stack registries are deliberately NOT seeded here: registry
 // entries point at materialized bundle directories, so the build-time ensure
 // paths (which materialize those directories) own all registry writes. Config
 // load never invents registry state.
@@ -228,7 +228,7 @@ func printLegacyKeyNotice(removed []string, buildRemoved, hostAuthRemoved bool) 
 		)
 		fmt.Fprintln(
 			os.Stderr,
-			"build.context no longer apply. Declare languages with build.toolchains and customize",
+			"build.context no longer apply. Declare languages with build.stacks and customize",
 		)
 		fmt.Fprintln(os.Stderr, "the image with build.packages, build.instructions, and build.inject.")
 	}

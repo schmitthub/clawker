@@ -23,12 +23,12 @@ stage renders, in order:
 | Position | USER | SHELL | Notes |
 |---|---|---|---|
 | `SHELL ["/bin/sh"]`, `ARG USERNAME`, `USER root` | — | — | ARGs do not survive FROM; the master re-declares `USERNAME` here and `ZSH_ENV` later. SHELL *does* carry over via image config, so the master resets it to sh. |
-| toolchain **root** fragments | root | sh | Harness-declared toolchains not already in the base — rendered before block_1 so every block can rely on them. |
+| stack **root** fragments | root | sh | Harness-declared stacks not already in the base — rendered before block_1 so every block can rely on them. |
 | **block_1** | root | sh | First root step of the harness image. Heavy root-scope installs. |
 | **block_2** | root | sh | Late root scope before the user switch. The claude bundle writes `/etc/claude-code/managed-settings.json` here — root-owned config that must exist before any build-time harness invocation. |
 | volume-dir `mkdir -p` + `chown` | root | sh | Auto-generated from the manifest `volumes:` list. |
 | `USER ${USERNAME}`, `ARG ZSH_ENV=/home/${USERNAME}/.zshenv` | — | — | `ZSH_ENV` is declared above the user-scope anchors because ARGs scope lexically downward and fragments may reference it (e.g. nvm's `PROFILE=${ZSH_ENV}`). |
-| toolchain **user** fragments | user | sh | Harness-declared, not already in base. |
+| stack **user** fragments | user | sh | Harness-declared, not already in base. |
 | **block_3** | user | sh | Static env. `ENV` your harness's config-dir variable here, pointing at the declared volume path (codex: `ENV CODEX_HOME=/home/${USERNAME}/.codex`). |
 | `SHELL ["/bin/zsh", "-o", "pipefail", "-c"]` | — | — | Blocks 4–6 run under zsh. |
 | **block_4** | user | zsh | The harness install. `{{.HarnessVersion}}` is available (as in every block). See the ARG cache rule below. |
@@ -84,7 +84,7 @@ RUN curl -fsSL https://example.com/install.sh | sh -s ${MYCLI_VERSION}
 Under BuildKit (Docker 23+ default) a changed ARG default busts the cache
 at the ARG's **declaration line**, not at first use. A harness release rolls
 the rendered default; adjacent placement scopes the invalidation to the
-install layer + everything below it, leaving toolchain fragments and blocks
+install layer + everything below it, leaving stack fragments and blocks
 1–3 cached. Three properties of ARG (vs ENV): declaration-line cache
 scoping, build-only (absent from the running container), and user override
 via `clawker build --build-arg MYCLI_VERSION=<v>`.

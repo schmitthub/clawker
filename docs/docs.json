@@ -112,7 +112,7 @@
           "credentials",
           "custom-images",
           "harness-bundles",
-          "toolchains",
+          "stacks",
           "container-internals",
           "worktrees",
           "monitoring",

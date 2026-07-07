@@ -89,9 +89,9 @@ RUN install -m 0755 -d /etc/apt/keyrings && \
 # Setup locale
 RUN locale-gen en_US.UTF-8
 
-{{/* Toolchain fragments (root scope) — project-declared, rendered before
+{{/* Stack fragments (root scope) — project-declared, rendered before
      root_run so project instructions can rely on them */}}
-{{- range .ToolchainRootSteps}}
+{{- range .StackRootSteps}}
 {{.}}
 {{- end}}
 
@@ -211,9 +211,9 @@ ENV SHELL={{.Shell}}
 {{- end}}
 {{- end}}
 
-{{/* Toolchain fragments (user scope) — project-declared, rendered before
+{{/* Stack fragments (user scope) — project-declared, rendered before
      user_run so project instructions can rely on them */}}
-{{- range .ToolchainUserSteps}}
+{{- range .StackUserSteps}}
 {{.}}
 {{- end}}
 

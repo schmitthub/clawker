@@ -182,7 +182,7 @@ All resources are tagged with labels (`dev.clawker.project`, `dev.clawker.agent`
 Clawker builds per-project images tailored to your project: a shared base image plus one image per harness. The harness image a container runs includes:
 
 - A pinned Debian substrate plus Clawker's baseline development tooling (git, zsh, gh, editors, Docker CLI)
-- System packages you've specified (`build.packages`) and any declared language toolchains
+- System packages you've specified (`build.packages`) and any declared language stacks
 - The selected harness CLI, installed by its bundle (e.g. Claude Code via its native installer, Codex via its standalone installer), with the bundle's config seeds staged for first boot
 - A baked-in copy of `clawkerd` at `/usr/local/bin/clawkerd` — the per-container daemon that runs as PID 1
 - Credential helper binaries (`git-credential-clawker`, socket-bridge server)

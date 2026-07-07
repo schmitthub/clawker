@@ -55,7 +55,7 @@ const (
 )
 
 // ShippedStampFile is written at the root of a freshly materialized copy of a
-// shipped bundle/toolchain and records the content hash of the embedded source
+// shipped bundle/stack and records the content hash of the embedded source
 // tree it was seeded from. Ensure paths compare it against the current shipped
 // hash to detect a copy that has fallen behind the binary's embedded assets.
 // It is bookkeeping only: bundle loading, validation, and build-context
@@ -86,7 +86,7 @@ func FileMode(name string) fs.FileMode {
 // NOTE: placeholder generic names — final event-centric names TBD.
 func DeclaredBlocks() []string {
 	return []string{
-		"block_1", // root scope, after system packages + Docker CLI, before user context — heavy toolchain installs
+		"block_1", // root scope, after system packages + Docker CLI, before user context — heavy stack installs
 		"block_2", // root scope, after base tooling, before USER ${USERNAME}
 		"block_3", // user scope, after the master's static-env section
 		"block_4", // user scope, after user_run renders — version-ARG cache zone

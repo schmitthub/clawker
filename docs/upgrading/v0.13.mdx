@@ -26,7 +26,7 @@ cd your-project
 clawker build --no-cache
 ```
 
-The first build materializes the shipped harness bundles and toolchain definitions into `~/.config/clawker/harnesses/` and `~/.config/clawker/toolchains/`, registers them in `settings.yaml`, and tags the image per harness (`clawker-<project>:<harness>` plus a `:default` alias for the default harness).
+The first build materializes the shipped harness bundles and stack definitions into `~/.config/clawker/harnesses/` and `~/.config/clawker/stacks/`, registers them in `settings.yaml`, and tags the image per harness (`clawker-<project>:<harness>` plus a `:default` alias for the default harness).
 
 `--no-cache` matters: images now bake a harness seed directory, and cached layers from a pre-upgrade build skip that step silently — the container comes up without its harness seeds and nothing errors.
 </Step>
@@ -76,7 +76,7 @@ Migrations run once per config file the first time the new CLI loads it — the 
 - `agent.claude_code.use_host_auth` — removed. Host credentials are no longer copied; see [auth changes](#harness-auth-happens-in-container).
 - `agent.claude_code` — moved field-for-field to `harnesses.claude`. If a `harnesses.claude` entry already exists, the legacy block is dropped with a warning instead (the map entry already overrides it).
 
-The `harnesses:` and `toolchains:` registries in `settings.yaml` are not a migration: your first `clawker build` seeds them with every shipped harness and toolchain as it materializes their bundle directories. Config loading never writes registry entries, and existing entries are never touched.
+The `harnesses:` and `stacks:` registries in `settings.yaml` are not a migration: your first `clawker build` seeds them with every shipped harness and stack as it materializes their bundle directories. Config loading never writes registry entries, and existing entries are never touched.
 
 `build.inject.after_claude_install` is not rewritten: it still works as a deprecated alias of `after_harness_install`. Rename it when convenient.
 
@@ -88,7 +88,7 @@ Host Claude Code (or any harness) credentials are no longer copied into containe
 
 ### Custom base images and Dockerfiles are unsupported
 
-Every image builds from clawker's pinned Debian base. Declare language stacks with `build.toolchains` (`go`, `node`, `python`, `rust`, or your own definitions), and customize the image with `build.packages`, `build.instructions`, and `build.inject`. See [Custom Images](/custom-images) and [Toolchains](/toolchains).
+Every image builds from clawker's pinned Debian base. Declare language stacks with `build.stacks` (`go`, `node`, `python`, `rust`, or your own definitions), and customize the image with `build.packages`, `build.instructions`, and `build.inject`. See [Custom Images](/custom-images) and [Stacks](/stacks).
 
 ### Image tags are harness-keyed
 
@@ -108,11 +108,11 @@ Check every layer — `.clawker.yaml`, `.clawker.local.yaml`, and the global `~/
 
 ## Alpha builds: refresh materialized copies
 
-If you ran pre-release builds of this branch (released versions never materialized bundles), the copies under `~/.config/clawker/harnesses/` and `~/.config/clawker/toolchains/` predate the final bundle layout. Materialized copies are user-owned and never auto-updated — a stale one stages nothing or fails bundle validation. Delete them and rebuild:
+If you ran pre-release builds of this branch (released versions never materialized bundles), the copies under `~/.config/clawker/harnesses/` and `~/.config/clawker/stacks/` predate the final bundle layout. Materialized copies are user-owned and never auto-updated — a stale one stages nothing or fails bundle validation. Delete them and rebuild:
 
 ```bash
-rm -rf ~/.config/clawker/harnesses ~/.config/clawker/toolchains
+rm -rf ~/.config/clawker/harnesses ~/.config/clawker/stacks
 clawker build
 ```
 
-`clawker build` also warns whenever a shipped bundle or toolchain has changed since your copy was materialized, naming the exact directory to delete.
+`clawker build` also warns whenever a shipped bundle or stack has changed since your copy was materialized, naming the exact directory to delete.

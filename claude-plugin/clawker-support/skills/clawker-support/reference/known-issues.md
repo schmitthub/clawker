@@ -111,8 +111,8 @@ no commits are lost — they live on the branch ref.
 
 ## Claude Code ignores `nvm use` / `nvm alias default` / `.nvmrc`
 
-Images built with the node toolchain (declared by the claude harness, or via
-project `build.toolchains`) carry Node + npm on PATH and the agent's Bash tool
+Images built with the node stack (declared by the claude harness, or via
+project `build.stacks`) carry Node + npm on PATH and the agent's Bash tool
 uses them out of the box — so this only bites once a user installs
 **additional** Node versions with `nvm` and expects the agent to switch onto
 one.

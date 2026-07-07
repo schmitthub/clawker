@@ -6,10 +6,11 @@ import (
 	"testing"
 
 	"github.com/google/shlex"
+	"github.com/stretchr/testify/require"
+
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
-	"github.com/stretchr/testify/require"
 )
 
 func TestNewCmdInspect(t *testing.T) {

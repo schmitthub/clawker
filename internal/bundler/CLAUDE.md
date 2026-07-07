@@ -1,6 +1,6 @@
 # Bundler Package
 
-Leaf package: Dockerfile generation, harness bundle + toolchain registries, egress composition, and harness version management for clawker container images. Imports `internal/hostproxy/internals` for container-side scripts (embed-only leaf). **No `internal/docker` import** — building orchestration (`Builder`, `Build`) lives in `internal/docker`.
+Leaf package: Dockerfile generation, harness bundle + stack registries, egress composition, and harness version management for clawker container images. Imports `internal/hostproxy/internals` for container-side scripts (embed-only leaf). **No `internal/docker` import** — building orchestration (`Builder`, `Build`) lives in `internal/docker`.
 
 ## Key Files
 
@@ -9,7 +9,7 @@ Leaf package: Dockerfile generation, harness bundle + toolchain registries, egre
 | `dockerfile.go` | Dockerfile rendering (`ProjectGenerator`), build-context generation, embedded templates/scripts |
 | `basehash.go` | Base-image freshness hash (`BaseContentHash`) |
 | `harness.go` | Shipped harness bundle embedding, registry materialization (`EnsureHarnesses`), name resolution, bundle loading |
-| `toolchain.go` | Shipped toolchain embedding, registry materialization (`EnsureToolchains`), project/harness toolchain resolution + fragment rendering |
+| `stack.go` | Shipped stack embedding, registry materialization (`EnsureStacks`), project/harness stack resolution + fragment rendering |
 | `egress.go` | Effective egress rule composition (harness floor + project rules) |
 | `config.go` | Variant configuration |
 | `versions.go` | Harness version resolution (npm dist-tags / GitHub releases) |
@@ -20,7 +20,7 @@ Leaf package: Dockerfile generation, harness bundle + toolchain registries, egre
 | Package | Purpose |
 |---------|---------|
 | `registry/` | npm registry client (`NPMClient`), GitHub releases client (`GitHubReleaseClient`), version info types, fetcher interface |
-| `assets/` | Dockerfile templates (`Dockerfile.base.tmpl`, `Dockerfile.harness-image.tmpl`), shipped harness bundles (`harnesses/{claude,codex}/`), shipped toolchain definitions (`toolchains/{go,node,python,rust}/`) (the clawkerd binary is imported from `clawkerd/embed`, not stored here) |
+| `assets/` | Dockerfile templates (`Dockerfile.base.tmpl`, `Dockerfile.harness-image.tmpl`), shipped harness bundles (`harnesses/{claude,codex}/`), shipped stack definitions (`stacks/{go,node,python,rust}/`) (the clawkerd binary is imported from `clawkerd/embed`, not stored here) |
 
 ## Build Cache Strategy
 
@@ -80,7 +80,7 @@ as a spurious rebuild, never a wrong image.
 **Substrate base:** every base Dockerfile renders `FROM` the single pinned
 `SubstrateImage` digest (Debian bookworm-slim). There is no user-selectable
 base image and no custom-Dockerfile path — project customization happens via
-`build.packages`, `build.toolchains`, `instructions`, and `inject`.
+`build.packages`, `build.stacks`, `instructions`, and `inject`.
 
 **ProjectGenerator is a pure renderer** — it does not perform any network
 I/O. The harness version baked into the rendered version ARG comes from
@@ -112,7 +112,7 @@ func ResolveHarnessVersion(ctx context.Context, httpClient *http.Client, b *harn
 
 The claude bundle's fragment declares `ARG CLAUDE_CODE_VERSION={{.HarnessVersion}}` — **not** `ENV`. Three properties this gives:
 
-1. **ARG-cache mechanic:** the ARG declaration sits **directly above its only consumer** (the install RUN in block_4), NOT near the top of the stage. Under BuildKit (Docker 23+ default) a changed ARG default busts the cache at the ARG's **declaration line**, not at first use — verified empirically, and contrary to the classic builder's documented "first usage, not definition" rule. So adjacency is load-bearing: a harness release rolls the rendered default and invalidates only the install layer + everything below it, leaving the toolchain fragments and blocks 1–3 cached above (the shared base image is a separate image and never invalidates). `clawker build --no-cache` invalidates everything regardless of ARG positioning.
+1. **ARG-cache mechanic:** the ARG declaration sits **directly above its only consumer** (the install RUN in block_4), NOT near the top of the stage. Under BuildKit (Docker 23+ default) a changed ARG default busts the cache at the ARG's **declaration line**, not at first use — verified empirically, and contrary to the classic builder's documented "first usage, not definition" rule. So adjacency is load-bearing: a harness release rolls the rendered default and invalidates only the install layer + everything below it, leaving the stack fragments and blocks 1–3 cached above (the shared base image is a separate image and never invalidates). `clawker build --no-cache` invalidates everything regardless of ARG positioning.
 2. **Runtime invisibility:** ARG is build-only, so the version var is naturally absent from the running container (Claude Code does not read `CLAUDE_CODE_VERSION` at runtime).
 3. **User override:** `clawker build --build-arg CLAUDE_CODE_VERSION=2.1.4` pins the install to an explicit version, bypassing the npm resolution. Wired through `internal/cmd/image/build/build.go`.
 
@@ -121,7 +121,7 @@ The claude bundle's fragment declares `ARG CLAUDE_CODE_VERSION={{.HarnessVersion
 ```go
 type DockerfileContext struct {
     BaseImage, Username, Shell, WorkspacePath, HarnessVersion, HarnessBaseImage string
-    Packages, HarnessVolumeDirs, ToolchainRootSteps, ToolchainUserSteps []string
+    Packages, HarnessVolumeDirs, StackRootSteps, StackUserSteps []string
     HarnessSeeds []harness.Seed; UID, GID int; BuildKitEnabled bool
     Instructions *DockerfileInstructions; Inject *DockerfileInject
     // OTEL telemetry — from config.MonitoringConfig
@@ -132,7 +132,7 @@ type DockerfileContext struct {
 }
 ```
 
-`GoBuilderImage` is the Go toolchain image for builder stages, pinned to exact patch version + SHA digest (default: `DefaultGoBuilderImage`). Tracks `go.mod`.
+`GoBuilderImage` is the Go stack image for builder stages, pinned to exact patch version + SHA digest (default: `DefaultGoBuilderImage`). Tracks `go.mod`.
 
 ### Harness Bundles (`harness.go`)
 
@@ -146,18 +146,18 @@ func HarnessBundleDir(cfg config.Config, name string) (string, error)  // regist
 func LoadHarness(cfg config.Config, name string) (*harness.Bundle, error)
 ```
 
-A bundle dir = `harness.yaml` (manifest: version spec, toolchains, volumes, seeds, staging, egress) + `Dockerfile.harness.tmpl` (block-slot fragment) + optional `assets/`. Manifest/compose types live in `internal/harness`. Registry entries are always explicit `path:` — never convention-resolved. Custom harness = author a bundle dir + add a settings registry entry.
+A bundle dir = `harness.yaml` (manifest: version spec, stacks, volumes, seeds, staging, egress) + `Dockerfile.harness.tmpl` (block-slot fragment) + optional `assets/`. Manifest/compose types live in `internal/harness`. Registry entries are always explicit `path:` — never convention-resolved. Custom harness = author a bundle dir + add a settings registry entry.
 
-**Shipped-copy staleness stamp:** a fresh materialize writes `harness.ShippedStampFile` (`.clawker-shipped-hash`, the embedded tree's `harness.ContentHash`) at the copy's root. `EnsureHarnesses`/`EnsureToolchains` compare it against the current embedded tree and return a warning per mismatch (or missing stamp on a pre-existing copy) — surfaced on stderr by `clawker build`. Copies are user-owned: never auto-overwritten, never retro-stamped; the user deletes the directory to refresh. Only SHIPPED names are stamped/checked — custom registry entries have no shipped counterpart. The stamp is invisible to bundle/toolchain loading and to build-context staging (staging walks `assets/` only).
+**Shipped-copy staleness stamp:** a fresh materialize writes `harness.ShippedStampFile` (`.clawker-shipped-hash`, the embedded tree's `harness.ContentHash`) at the copy's root. `EnsureHarnesses`/`EnsureStacks` compare it against the current embedded tree and return a warning per mismatch (or missing stamp on a pre-existing copy) — surfaced on stderr by `clawker build`. Copies are user-owned: never auto-overwritten, never retro-stamped; the user deletes the directory to refresh. Only SHIPPED names are stamped/checked — custom registry entries have no shipped counterpart. The stamp is invisible to bundle/stack loading and to build-context staging (staging walks `assets/` only).
 
-### Toolchains (`toolchain.go`)
+### Stacks (`stack.go`)
 
-Language toolchains are file-backed definitions: `toolchain.yaml` + `Dockerfile.toolchain-root.tmpl` and/or `Dockerfile.toolchain-user.tmpl` (loaded via `internal/toolchain`). Shipped: `go` (root), `node` (root LTS + user nvm), `python` (root uv + uv-managed CPython), `rust` (user rustup).
+Language stacks are file-backed definitions: `stack.yaml` + `Dockerfile.stack-root.tmpl` and/or `Dockerfile.stack-user.tmpl` (loaded via `internal/stack`). Shipped: `go` (root), `node` (root LTS + user nvm), `python` (root uv + uv-managed CPython), `rust` (user rustup).
 
-- `EnsureToolchains(cfg) ([]string, error)` materializes shipped defs copy-if-missing to `<config-dir>/toolchains/<name>/` and seeds the settings `toolchains:` registry (name → path); returns shipped-stamp staleness warnings (same contract as `EnsureHarnesses`). One flat namespace; a name collision is an error.
-- **Declared, never installed:** project `build.toolchains: [go, node]` renders the fragments in the base image; a harness manifest's `toolchains:` renders in the harness image unless the project already declared the same name (then it lives in the shared base). `ToolchainRootSteps` render before block_1 (root), `ToolchainUserSteps` before block_3 (user).
+- `EnsureStacks(cfg) ([]string, error)` materializes shipped defs copy-if-missing to `<config-dir>/stacks/<name>/` and seeds the settings `stacks:` registry (name → path); returns shipped-stamp staleness warnings (same contract as `EnsureHarnesses`). One flat namespace; a name collision is an error.
+- **Declared, never installed:** project `build.stacks: [go, node]` renders the fragments in the base image; a harness manifest's `stacks:` renders in the harness image unless the project already declared the same name (then it lives in the shared base). `StackRootSteps` render before block_1 (root), `StackUserSteps` before block_3 (user).
 - Fragments are **self-guarded** — they skip when the image already provides the tool (e.g. the node fragment keeps an existing node ≥ its floor major).
-- Node specifics (node toolchain fragment): `ARG NODE_VERSION` (default `24`) names the LTS *line*, not a patch — the latest patch resolves per-build from `nodejs.org/dist/index.json`, floating onto security patches on rebuild (justified pin-policy exception; rationale in `docs/threat-model.mdx`). Tarball is GPG-verified via `SHASUMS256.txt.asc`. `ENV NODE_USE_SYSTEM_CA=1` makes node trust the OS CA bundle (and therefore the firewall MITM CA once merged).
+- Node specifics (node stack fragment): `ARG NODE_VERSION` (default `24`) names the LTS *line*, not a patch — the latest patch resolves per-build from `nodejs.org/dist/index.json`, floating onto security patches on rebuild (justified pin-policy exception; rationale in `docs/threat-model.mdx`). Tarball is GPG-verified via `SHASUMS256.txt.asc`. `ENV NODE_USE_SYSTEM_CA=1` makes node trust the OS CA bundle (and therefore the firewall MITM CA once merged).
 
 ### Egress Composition (`egress.go`)
 
@@ -260,10 +260,10 @@ type ParseError = registry.ParseError       // { URL, Snippet, Err } -- Unwrap()
 
 ## Dependencies
 
-Imports: `internal/config`, `internal/consts`, `internal/harness`, `internal/toolchain`, `internal/bundler/registry`, `github.com/Masterminds/semver/v3`, `internal/hostproxy/internals` (embed-only), `clawkerd/embed` (embed-only — `clawkerdembed.Binary`). **Does NOT import `internal/docker`** — this is a leaf package.
+Imports: `internal/config`, `internal/consts`, `internal/harness`, `internal/stack`, `internal/bundler/registry`, `github.com/Masterminds/semver/v3`, `internal/hostproxy/internals` (embed-only), `clawkerd/embed` (embed-only — `clawkerdembed.Binary`). **Does NOT import `internal/docker`** — this is a leaf package.
 
 ## Tests
 
-Unit tests: `dockerfile_test.go`, `build_test.go`, `basehash_test.go`, `versions_test.go`, `harness_test.go`, `toolchain_test.go`, `egress_test.go`. Golden: `golden_test.go` renders base + harness Dockerfiles against `testdata/golden/` (regen: `GOLDEN_UPDATE=1 go test ./internal/bundler/ -run TestGenerate_Golden`). Subpackage: `registry/npm_test.go`, `registry/github_test.go`. Docker integration: `test/whail/`.
+Unit tests: `dockerfile_test.go`, `build_test.go`, `basehash_test.go`, `versions_test.go`, `harness_test.go`, `stack_test.go`, `egress_test.go`. Golden: `golden_test.go` renders base + harness Dockerfiles against `testdata/golden/` (regen: `GOLDEN_UPDATE=1 go test ./internal/bundler/ -run TestGenerate_Golden`). Subpackage: `registry/npm_test.go`, `registry/github_test.go`. Docker integration: `test/whail/`.
 
 Test helper: `testConfig(t, projectYAML) config.Config` wraps `configmocks.NewFromString(cleanedProject, settingsYAML)` with default monitoring settings — preferred test double for bundler tests. All test configs use YAML fixtures rather than mock/fake constructors.

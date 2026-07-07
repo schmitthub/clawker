@@ -1,5 +1,5 @@
 description: >-
-  The modern Node.js toolchain: root-global Node LTS on /usr/local
+  The modern Node.js stack: root-global Node LTS on /usr/local
   (GPG-verified prebuilt, floating patch within the NODE_VERSION line,
   NODE_USE_SYSTEM_CA trust of the OS CA bundle) plus nvm as the per-user
   runtime version switcher. The baked install skips itself when the image

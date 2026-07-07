@@ -24,12 +24,12 @@ harnesses:
       claude mcp add -s user --header "CONTEXT7_API_KEY: $CONTEXT7_API_KEY" --transport http context7 https://mcp.context7.com/mcp
       claude mcp add -s user -t http deepwiki https://mcp.deepwiki.com/mcp
 build:
-  # Language toolchains render into the shared base image. Every clawker
+  # Language stacks render into the shared base image. Every clawker
   # image builds from the pinned Debian substrate — there is no base-image
-  # field; runtimes come from toolchains, tools from packages/instructions.
-  # (Node arrives via the claude harness's own node toolchain declaration —
+  # field; runtimes come from stacks, tools from packages/instructions.
+  # (Node arrives via the claude harness's own node stack declaration —
   # declare `node` here too only if build steps need it in the base image.)
-  toolchains:
+  stacks:
     - go
   instructions:
     root_run:
@@ -55,7 +55,7 @@ build:
     user_run:
       - curl -LsSf https://astral.sh/uv/install.sh | sh
       - uv tool install pre-commit --with pre-commit-uv
-      # The go toolchain puts go on PATH for build-time steps.
+      # The go stack puts go on PATH for build-time steps.
       - go install golang.org/x/tools/gopls@latest
       - go install gotest.tools/gotestsum@latest
       - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest

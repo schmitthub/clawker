@@ -153,8 +153,8 @@ build:
   # System packages (apt) needed by your project that the clawker base doesn't already install
   packages:  # default: ripgrep | required: false
     - <string>
-  # Toolchain definitions your root_run/user_run steps need (e.g. node, go); installed in the shared base image before your instructions run
-  toolchains:  # default: n/a | required: false
+  # Stack definitions your root_run/user_run steps need (e.g. node, go); installed in the shared base image before your instructions run
+  stacks:  # default: n/a | required: false
     - <string>
   instructions:
     # Bake config files or credentials into the image (e.g. .npmrc, SSH config)
@@ -318,7 +318,7 @@ The following tables are auto-generated from the schema struct tags in `internal
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `packages` | string list | `ripgrep` | System packages (apt) needed by your project that the clawker base doesn't already install |
-| `toolchains` | string list | — | Toolchain definitions your root_run/user_run steps need (e.g. node, go); installed in the shared base image before your instructions run |
+| `stacks` | string list | — | Stack definitions your root_run/user_run steps need (e.g. node, go); installed in the shared base image before your instructions run |
 
 
 #### instructions
@@ -534,8 +534,8 @@ docker:
   socket: <string>  # default: /var/run/docker.sock | required: false
 # Harness registry mapping a harness name to its bundle location and default flag
 harnesses: <value>  # default: n/a | required: false
-# Toolchain registry mapping a toolchain name to its definition directory
-toolchains: <value>  # default: n/a | required: false
+# Stack registry mapping a stack name to its definition directory
+stacks: <value>  # default: n/a | required: false
 
 ```
 
@@ -649,11 +649,11 @@ Global settings live at `~/.config/clawker/settings.yaml`. The following tables 
 | `harnesses` | object map | — | Harness registry mapping a harness name to its bundle location and default flag |
 
 
-### toolchains
+### stacks
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `toolchains` | object map | — | Toolchain registry mapping a toolchain name to its definition directory |
+| `stacks` | object map | — | Stack registry mapping a stack name to its definition directory |
 
 
 You can also place a `clawker.yaml` in `~/.config/clawker/` to set user-level project config defaults. This file is merged as the lowest-priority project config layer (just above built-in defaults), so any project-level `.clawker.yaml` overrides it.

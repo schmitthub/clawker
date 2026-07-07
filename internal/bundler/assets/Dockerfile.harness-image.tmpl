@@ -37,10 +37,10 @@ SHELL ["/bin/sh", "-c"]
 ARG USERNAME={{.Username}}
 USER root
 
-{{/* Toolchain fragments (root scope) — harness-declared and not already in
+{{/* Stack fragments (root scope) — harness-declared and not already in
      the shared base, rendered before block_1 so every harness block can
      rely on them */}}
-{{- range .ToolchainRootSteps}}
+{{- range .StackRootSteps}}
 {{.}}
 {{- end}}
 
@@ -58,10 +58,10 @@ RUN mkdir -p {{range .HarnessVolumeDirs}}/home/${USERNAME}/{{.}} {{end}}&& \
 USER ${USERNAME}
 ARG ZSH_ENV=/home/${USERNAME}/.zshenv
 
-{{/* Toolchain fragments (user scope) — harness-declared and not already in
+{{/* Stack fragments (user scope) — harness-declared and not already in
      the shared base. ARG ZSH_ENV is declared above the anchor because ARGs
      scope lexically downward and user-scope fragments may reference it. */}}
-{{- range .ToolchainUserSteps}}
+{{- range .StackUserSteps}}
 {{.}}
 {{- end}}
 

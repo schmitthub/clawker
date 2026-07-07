@@ -11,9 +11,9 @@ import (
 // BaseImageRef field was not set by the caller.
 var ErrNoBaseImageRef = errors.New("harness image generation requires BaseImageRef (the shared base image tag)")
 
-// ErrUnknownToolchain is returned when a declared toolchain name resolves to
+// ErrUnknownStack is returned when a declared stack name resolves to
 // no definition in any source (shipped, settings registry, bundle-embedded).
-var ErrUnknownToolchain = errors.New("unknown toolchain")
+var ErrUnknownStack = errors.New("unknown stack")
 
 // Re-export error types from registry for convenience.
 var (

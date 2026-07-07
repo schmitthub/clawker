@@ -31,8 +31,8 @@ func (p Project) Fields() storage.FieldSet {
 
 // BuildConfig defines the container build configuration
 type BuildConfig struct {
-	Packages     []string            `yaml:"packages,omitempty"     label:"Packages"   desc:"System packages (apt) needed by your project that the clawker base doesn't already install"                                               default:"ripgrep"`
-	Toolchains   []string            `yaml:"toolchains,omitempty"   label:"Toolchains" desc:"Toolchain definitions your root_run/user_run steps need (e.g. node, go); installed in the shared base image before your instructions run"`
+	Packages     []string            `yaml:"packages,omitempty"     label:"Packages" desc:"System packages (apt) needed by your project that the clawker base doesn't already install"                                           default:"ripgrep"`
+	Stacks       []string            `yaml:"stacks,omitempty"       label:"Stacks"   desc:"Stack definitions your root_run/user_run steps need (e.g. node, go); installed in the shared base image before your instructions run"`
 	Instructions *DockerInstructions `yaml:"instructions,omitempty"`
 	Inject       *InjectConfig       `yaml:"inject,omitempty"`
 }
@@ -375,20 +375,20 @@ type Settings struct {
 	// register a custom one, or mark the default.
 	Harnesses map[string]HarnessSettings `yaml:"harnesses,omitempty" label:"Harnesses" desc:"Harness registry mapping a harness name to its bundle location and default flag"`
 
-	// Toolchains is the toolchain registry: name → entry. Shipped
+	// Stacks is the stack registry: name → entry. Shipped
 	// definitions are materialized under the config dir and registered
 	// here; entries are only needed to relocate a definition or register
 	// a custom one. Harness bundles may additionally embed their own
 	// definitions; all sources share one flat namespace per build.
-	Toolchains map[string]ToolchainSettings `yaml:"toolchains,omitempty" label:"Toolchains" desc:"Toolchain registry mapping a toolchain name to its definition directory"`
+	Stacks map[string]StackSettings `yaml:"stacks,omitempty" label:"Stacks" desc:"Stack registry mapping a stack name to its definition directory"`
 }
 
-// ToolchainSettings is one toolchain registry entry.
-type ToolchainSettings struct {
-	// Path is the definition directory (toolchain.yaml +
-	// Dockerfile.toolchain.tmpl). Empty means the conventional location
+// StackSettings is one stack registry entry.
+type StackSettings struct {
+	// Path is the definition directory (stack.yaml +
+	// Dockerfile.stack.tmpl). Empty means the conventional location
 	// under the config dir.
-	Path string `yaml:"path,omitempty" label:"Path" desc:"Toolchain definition directory (toolchain.yaml + Dockerfile.toolchain.tmpl); empty = config-dir default"`
+	Path string `yaml:"path,omitempty" label:"Path" desc:"Stack definition directory (stack.yaml + Dockerfile.stack.tmpl); empty = config-dir default"`
 }
 
 // HarnessSettings is one harness registry entry.

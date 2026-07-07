@@ -1,11 +1,11 @@
 ---
 title: "Image Customization"
-description: "How Clawker builds per-project images — the substrate base, system packages, language toolchains, build instructions, and injection points"
+description: "How Clawker builds per-project images — the substrate base, system packages, language stacks, build instructions, and injection points"
 icon: "layer-group"
-keywords: ["AI coding agent sandbox", "run coding agents in Docker", "Claude Code", "Codex", "coding agent sandbox", "self-hosted", "open source", "Docker image", "toolchains", "build customization"]
+keywords: ["AI coding agent sandbox", "run coding agents in Docker", "Claude Code", "Codex", "coding agent sandbox", "self-hosted", "open source", "Docker image", "stacks", "build customization"]
 ---
 
-Clawker generates and builds your project's Docker images itself. There is no user-supplied base image and no custom Dockerfile — every image starts from a pinned Debian substrate, and all customization flows through the `build` block of `.clawker.yaml`: system packages, language toolchains, typed build instructions, and raw Dockerfile injection points.
+Clawker generates and builds your project's Docker images itself. There is no user-supplied base image and no custom Dockerfile — every image starts from a pinned Debian substrate, and all customization flows through the `build` block of `.clawker.yaml`: system packages, language stacks, typed build instructions, and raw Dockerfile injection points.
 
 ## The Two-Stage Build
 
@@ -13,12 +13,12 @@ Each project gets a shared **base image** plus one **harness image** per coding-
 
 | Image | Tag | Contents |
 |-------|-----|----------|
-| Base image | `clawker-<project>:base` | Harness-agnostic layers: the substrate, Clawker's tooling floor, your `build.packages`, project-declared toolchains, your `instructions` and base-stage `inject` points, the unprivileged container user (`claude`) |
-| Harness image | `clawker-<project>:<harness>` | Built `FROM` the base: the harness's own toolchains, the bundle's install steps, config seeds, harness-stage `inject` points, and Clawker's runtime assets (`clawkerd`, credential helpers, firewall CA) |
+| Base image | `clawker-<project>:base` | Harness-agnostic layers: the substrate, Clawker's tooling floor, your `build.packages`, project-declared stacks, your `instructions` and base-stage `inject` points, the unprivileged container user (`claude`) |
+| Harness image | `clawker-<project>:<harness>` | Built `FROM` the base: the harness's own stacks, the bundle's install steps, config seeds, harness-stage `inject` points, and Clawker's runtime assets (`clawkerd`, credential helpers, firewall CA) |
 
 The base image starts from a pinned `debian:bookworm-slim` digest and layers in the development floor every container gets: `git`, `zsh`, `sudo`, `gh`, `curl`, `wget`, `jq`, `fzf`, `make`, `gcc`, editors (`nano`, `vim`), locales, the Docker CLI (for socket-mount workflows), and `git-delta`. Your `build.packages` install into the same apt layer.
 
-The harness image adds whatever the selected harness bundle declares — for example, the `claude` bundle installs Claude Code (plus the `node` toolchain it runs on), while the `codex` bundle installs the standalone Codex binary — and ends with `ENTRYPOINT ["clawkerd"]` and the harness's `CMD`.
+The harness image adds whatever the selected harness bundle declares — for example, the `claude` bundle installs Claude Code (plus the `node` stack it runs on), while the `codex` bundle installs the standalone Codex binary — and ends with `ENTRYPOINT ["clawkerd"]` and the harness's `CMD`.
 
 ### Caching
 
@@ -56,29 +56,29 @@ build:
     - libpq-dev
 ```
 
-## Toolchains
+## Stacks
 
-Toolchains are reusable language-runtime definitions. Declaring one installs it in the shared base image, before your `root_run`/`user_run` instructions execute — so your instructions can rely on it:
+Stacks are reusable language-runtime definitions. Declaring one installs it in the shared base image, before your `root_run`/`user_run` instructions execute — so your instructions can rely on it:
 
 ```yaml
 build:
-  toolchains:
+  stacks:
     - go
     - python
 ```
 
-Shipped toolchain definitions:
+Shipped stack definitions:
 
-| Toolchain | What it installs |
+| Stack | What it installs |
 |-----------|------------------|
 | `go` | The Go toolchain on `/usr/local/go` (official tarball, checksum-verified) with the standard `GOPATH` conventions |
 | `node` | Node.js LTS installed root-global on `/usr/local` (GPG-verified), plus `nvm` as the per-user version switcher |
 | `python` | `uv` (Astral's package/project manager) system-wide, plus a uv-managed CPython with `python3`/`python` on `PATH` |
 | `rust` | The Rust toolchain via `rustup` (stable channel) into the user's `~/.cargo` and `~/.rustup` |
 
-Toolchains are self-guarding — each skips itself when the image already provides the runtime. Harness bundles declare their own toolchain requirements (for example, the `claude` bundle declares `node`); a harness-declared toolchain installs in the harness image unless your project already declared it, in which case it lives in the shared base and every harness image gets it for free.
+Stacks are self-guarding — each skips itself when the image already provides the runtime. Harness bundles declare their own stack requirements (for example, the `claude` bundle declares `node`); a harness-declared stack installs in the harness image unless your project already declared it, in which case it lives in the shared base and every harness image gets it for free.
 
-Toolchain definitions are file-backed (`toolchain.yaml` plus root- and/or user-scope Dockerfile fragments). Shipped definitions are materialized under your config directory and registered in `settings.yaml` under `toolchains:`; you can register custom definitions there too. All sources share one flat namespace — a name collision is an error.
+Stack definitions are file-backed (`stack.yaml` plus root- and/or user-scope Dockerfile fragments). Shipped definitions are materialized under your config directory and registered in `settings.yaml` under `stacks:`; you can register custom definitions there too. All sources share one flat namespace — a name collision is an error.
 
 ## Build Instructions
 
@@ -141,7 +141,7 @@ build:
 
 ### root_run and user_run
 
-Run commands during the build. `root_run` executes as root, before the container user is created; `user_run` executes as the container user, after the user switch. Both run after any project-declared toolchains, so `go`, `node`, `python`, etc. are available:
+Run commands during the build. `root_run` executes as root, before the container user is created; `user_run` executes as the container user, after the user switch. Both run after any project-declared stacks, so `go`, `node`, `python`, etc. are available:
 
 ```yaml
 build:
@@ -192,16 +192,16 @@ build:
 2. `after_from` — apt sources, proxy config, CA certs that package installation depends on
 3. Package installation (Clawker's floor + your `build.packages`)
 4. `after_packages` — post-install configuration as root
-5. Project-declared toolchains (root scope), then your `root_run`
+5. Project-declared stacks (root scope), then your `root_run`
 6. Container user creation
 7. `after_user_setup` — directories, permissions, services (still root)
 8. `USER` switch to the unprivileged container user (`claude`)
 9. `after_user_switch` — dotfiles, shell config
-10. Project-declared toolchains (user scope), then your `user_run`, then `copy`
+10. Project-declared stacks (user scope), then your `user_run`, then `copy`
 
 *Harness image (`clawker-<project>:<harness>`, built `FROM` the base):*
 
-11. Harness-declared toolchains + the bundle's install steps (e.g. the harness CLI)
+11. Harness-declared stacks + the bundle's install steps (e.g. the harness CLI)
 12. `after_harness_install` — runs as the container user with the harness CLI available: add MCP servers, install plugins or extensions
 13. `before_entrypoint` — final tweaks before Clawker's runtime assets and `ENTRYPOINT`
 
@@ -214,7 +214,7 @@ build:
   packages:
     - ripgrep
     - python3
-  toolchains:
+  stacks:
     - node
   instructions:
     env:

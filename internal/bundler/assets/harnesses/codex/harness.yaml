@@ -6,7 +6,7 @@
 
 # Versions resolve from the authoritative source: the GitHub release tags
 # the installer itself downloads from (rust-v<x.y.z>). Codex is a standalone
-# binary bundling its own helpers; no toolchain requirements.
+# binary bundling its own helpers; no stack requirements.
 version:
   resolver: github-release
   package: openai/codex

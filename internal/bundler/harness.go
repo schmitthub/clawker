@@ -198,8 +198,8 @@ func EnsureHarnesses(cfg config.Config) ([]string, error) {
 
 // Shipped-copy kind labels for ensureShippedCopies error/warning text.
 const (
-	shippedKindHarness   = "harness bundle"
-	shippedKindToolchain = "toolchain"
+	shippedKindHarness = "harness bundle"
+	shippedKindStack   = "stack"
 )
 
 // ensureShippedCopies materializes every shipped tree copy-if-missing into

@@ -28,13 +28,13 @@ type Manifest struct {
 	Staging Staging      `yaml:"staging,omitempty"`
 	Egress  []EgressRule `yaml:"egress,omitempty"`
 
-	// Toolchains declares the toolchain definitions this harness's blocks
+	// Stacks declares the stack definitions this harness's blocks
 	// require, by name. Names resolve against the flat per-build namespace
-	// (shipped ∪ settings registry ∪ this bundle's toolchains/ subdir) at
+	// (shipped ∪ settings registry ∪ this bundle's stacks/ subdir) at
 	// generation time; the resolved fragments render in the harness image
 	// unless the project also declares them (then they live in the shared
 	// base, built first).
-	Toolchains []string `yaml:"toolchains,omitempty"`
+	Stacks []string `yaml:"stacks,omitempty"`
 }
 
 // VolumeSpec declares one persisted directory: a named volume

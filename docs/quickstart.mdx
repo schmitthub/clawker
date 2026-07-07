@@ -64,7 +64,7 @@ A guided setup walks you through:
 3. **Save or customize** — accept the preset as-is, or step through each field to tailor it
 
 This creates:
-- A `.clawker.yaml` config file pre-filled with the right packages, language toolchains, and firewall domains for your language
+- A `.clawker.yaml` config file pre-filled with the right packages, language stacks, and firewall domains for your language
 - A `.clawkerignore` file (`.gitignore`-style syntax) that controls which files and directories are excluded from the container workspace — in snapshot mode, matching paths are excluded from the copy; in bind mode, matching directories are masked with empty tmpfs overlays. Useful for platform-specific build artifacts (e.g., `dist/`, `build/`, `node_modules/`) that can cause issues when switching between macOS and Linux
 - A project entry in Clawker's registry so it always knows the project root
 
@@ -101,7 +101,7 @@ See the [Configuration](/configuration) guide for the full reference.
 clawker build
 ```
 
-This builds the image for your default harness. Two stages come out of it: a shared base image (`clawker-<project>:base`) holding the harness-agnostic layers from your `.clawker.yaml` — system packages, language toolchains, custom instructions — and a harness image layered on top, tagged with the harness name (e.g. `clawker-<project>:claude`). The default harness image also gets the `:default` alias. To build a specific registered harness instead, pass its name: `clawker build -t codex`. Docker's layer cache is used, so unchanged layers are skipped; use `--no-cache` to force a full rebuild.
+This builds the image for your default harness. Two stages come out of it: a shared base image (`clawker-<project>:base`) holding the harness-agnostic layers from your `.clawker.yaml` — system packages, language stacks, custom instructions — and a harness image layered on top, tagged with the harness name (e.g. `clawker-<project>:claude`). The default harness image also gets the `:default` alias. To build a specific registered harness instead, pass its name: `clawker build -t codex`. Docker's layer cache is used, so unchanged layers are skipped; use `--no-cache` to force a full rebuild.
 
 ## 4. Run Your First Agent
 
@@ -214,7 +214,7 @@ clawker firewall bypass 5m --agent dev  # Temporary unrestricted access
     Understand the deny-by-default firewall and how to configure domain access
   </Card>
   <Card title="Custom Images" icon="layer-group" href="/custom-images">
-    Packages, language toolchains, Dockerfile instructions, and injection points
+    Packages, language stacks, Dockerfile instructions, and injection points
   </Card>
   <Card title="Credential Forwarding" icon="key" href="/credentials">
     SSH, GPG, and Git HTTPS forwarding, plus in-container harness authentication

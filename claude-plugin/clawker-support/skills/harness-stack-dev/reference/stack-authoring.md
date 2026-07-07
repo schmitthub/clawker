@@ -1,28 +1,28 @@
-# Toolchain Authoring Reference
+# Stack Authoring Reference
 
-A toolchain definition is a named, self-guarded Dockerfile install fragment
+A stack definition is a named, self-guarded Dockerfile install fragment
 that projects and harness bundles **declare** instead of hand-writing. One
-declaration can provision a full language toolchain because a definition
+declaration can provision a full language stack because a definition
 ships up to two fragments — one per Dockerfile USER scope.
 
 ## Definition format
 
 ```
 <definition>/
-├── toolchain.yaml                    # description only
-├── Dockerfile.toolchain-root.tmpl    # optional: renders in a root-USER region
-└── Dockerfile.toolchain-user.tmpl    # optional: renders in the unprivileged-USER region
+├── stack.yaml                    # description only
+├── Dockerfile.stack-root.tmpl    # optional: renders in a root-USER region
+└── Dockerfile.stack-user.tmpl    # optional: renders in the unprivileged-USER region
 ```
 
-- `toolchain.yaml` has exactly one field: `description:` (human summary,
+- `stack.yaml` has exactly one field: `description:` (human summary,
   shown in listings).
 - At least one fragment must be present; each present fragment must be
   non-empty and parse as a Go template. Errors are named at load:
-  `toolchain "<name>": no fragment found — a definition ships
-  Dockerfile.toolchain-root.tmpl, Dockerfile.toolchain-user.tmpl, or both`
+  `stack "<name>": no fragment found — a definition ships
+  Dockerfile.stack-root.tmpl, Dockerfile.stack-user.tmpl, or both`
   / `... is empty` / `... parse ...`.
 - Name grammar: `[a-zA-Z0-9][a-zA-Z0-9._-]{0,40}` — it is a registry key, a
-  directory name, and a token in `build.toolchains` lists.
+  directory name, and a token in `build.stacks` lists.
 
 Fragments render against the same Dockerfile context as harness blocks —
 `{{.BuildKitEnabled}}` for cache-mount gating is the one field shipped
@@ -34,21 +34,21 @@ anchor.
 Per build, definitions resolve from:
 
 1. **Shipped** — embedded in clawker (`go`, `node`, `python`, `rust`),
-   materialized copy-if-missing to `<config-dir>/toolchains/<name>/`.
-2. **Settings registry** — `toolchains: {<name>: {path: <dir>}}` in
+   materialized copy-if-missing to `<config-dir>/stacks/<name>/`.
+2. **Settings registry** — `stacks: {<name>: {path: <dir>}}` in
    settings.yaml. Every entry carries an explicit path; the shipped set is
    auto-seeded into the registry, so overriding a shipped definition =
    editing the materialized copy (or pointing its registry entry elsewhere).
-3. **Bundle-embedded** — a harness bundle's `toolchains/<name>/` subdir,
+3. **Bundle-embedded** — a harness bundle's `stacks/<name>/` subdir,
    for definitions bespoke to that harness.
 
 A name claimable from the bundle AND from the registry/shipped set is a
-**collision error** (`toolchain "<name>" is defined both by harness bundle
-... and by ... — toolchain names share one namespace; rename the
+**collision error** (`stack "<name>" is defined both by harness bundle
+... and by ... — stack names share one namespace; rename the
 bundle-embedded definition`). Bundle authors prefix bespoke definitions
 (e.g. `myharness-runtime`), never squat generic names. An undeclarable name
-errors: `unknown toolchain "<name>" (known: shipped [...], settings
-toolchains registry, or a definition embedded in the selected harness
+errors: `unknown stack "<name>" (known: shipped [...], settings
+stacks registry, or a definition embedded in the selected harness
 bundle)`.
 
 ## Placement semantics: who declares, where it renders
@@ -58,8 +58,8 @@ anchors; earliest stage wins:
 
 | Declaration | Renders in | Anchors |
 |---|---|---|
-| Project `build.toolchains: [name]` (clawker.yaml) | **Shared base image** | root fragments before the project's `root_run`; user fragments before `user_run` — so project instructions can rely on them |
-| Harness manifest `toolchains: [name]` | **Harness image** — unless the project already declared the same name (then it is already in the base the harness image builds FROM, and the harness declaration is skipped) | root fragments before `block_1`; user fragments before `block_3` |
+| Project `build.stacks: [name]` (clawker.yaml) | **Shared base image** | root fragments before the project's `root_run`; user fragments before `user_run` — so project instructions can rely on them |
+| Harness manifest `stacks: [name]` | **Harness image** — unless the project already declared the same name (then it is already in the base the harness image builds FROM, and the harness declaration is skipped) | root fragments before `block_1`; user fragments before `block_3` |
 
 Two extra rules:
 
@@ -70,7 +70,7 @@ Two extra rules:
   same collision error (shadow check) — a bundle must never silently swap
   the definition the base actually used.
 - Duplicate names within one declaration list error
-  (`build.toolchains: duplicate toolchain declaration`); a harness
+  (`build.stacks: duplicate stack declaration`); a harness
   declaration duplicating a project one is silently skipped (already in
   base), not an error.
 
@@ -82,7 +82,7 @@ bases safe. The shipped convention:
 
 ```dockerfile
 RUN if command -v <tool> >/dev/null 2>&1; then \
-      echo "clawker toolchain <name>: existing $(<tool> --version) — skipping install"; \
+      echo "clawker stack <name>: existing $(<tool> --version) — skipping install"; \
     else \
       <install> ; \
     fi
@@ -99,7 +99,7 @@ Variants in the shipped set worth copying:
 - **Two independent guards in one RUN** (python: uv and python3 guarded
   separately).
 
-Keep the `clawker toolchain <name>: ... — skipping install` echo — it is
+Keep the `clawker stack <name>: ... — skipping install` echo — it is
 the build-log signal that the guard fired.
 
 ## Root vs user fragment: choosing the scope
@@ -126,12 +126,12 @@ they download, or delegate to an installer that verifies its own artifacts
 
 - The **base image** is content-keyed: a hash of the rendered base
   Dockerfile decides base rebuilds. Editing a **project-declared**
-  toolchain's fragment changes the base render → full base rebuild for
+  stack's fragment changes the base render → full base rebuild for
   affected projects.
-- Editing a **harness-declared** toolchain rebuilds only harness images
+- Editing a **harness-declared** stack rebuilds only harness images
   (the base is untouched).
-- Within the harness image, toolchain fragments render above block_4's
-  version ARG — a harness version roll does NOT re-run toolchain installs.
+- Within the harness image, stack fragments render above block_4's
+  version ARG — a harness version roll does NOT re-run stack installs.
 - Prefer `ARG`-parameterized versions inside the fragment (node's
   `NODE_VERSION`, go's `GO_VERSION`) so users can pin via
   `clawker build --build-arg` without editing the definition.
@@ -148,17 +148,17 @@ they download, or delegate to an installer that verifies its own artifacts
 ## Authoring workflow
 
 1. Create the definition dir (conventional:
-   `<config-dir>/toolchains/<name>/`; bespoke-to-a-harness:
-   `<bundle>/toolchains/<name>/`).
-2. Write `toolchain.yaml` (`description:`) + fragment(s) with the
+   `<config-dir>/stacks/<name>/`; bespoke-to-a-harness:
+   `<bundle>/stacks/<name>/`).
+2. Write `stack.yaml` (`description:`) + fragment(s) with the
    self-guard idiom.
 3. Register (skip for bundle-embedded):
    ```yaml
    # In: <config-dir>/settings.yaml (user settings)
-   toolchains:
+   stacks:
      myname:
        path: /absolute/path/to/definition
    ```
-4. Declare it from a project (`build.toolchains: [myname]`) or a harness
-   manifest (`toolchains: [myname]`) and build. Load errors name the file
+4. Declare it from a project (`build.stacks: [myname]`) or a harness
+   manifest (`stacks: [myname]`) and build. Load errors name the file
    and rule; resolution errors name the namespace searched.

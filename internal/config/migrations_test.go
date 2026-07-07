@@ -276,7 +276,7 @@ func loadSettingsWithMigrations(t *testing.T, yamlContent string) string {
 }
 
 // TestSettingsLoadDoesNotSeedRegistries pins the registry-write ownership
-// contract: config load never invents harness/toolchain registry state — a
+// contract: config load never invents harness/stack registry state — a
 // settings.yaml without those keys stays byte-identical across loads. The
 // build-time ensure paths, which materialize the bundle directories the
 // entries point at, own all registry writes.
@@ -298,7 +298,7 @@ func TestSettingsLoadDoesNotSeedRegistries(t *testing.T) {
 	after := readFile(t, path)
 	assert.Equal(t, in, after, "settings load must not write registry keys")
 	assert.NotContains(t, after, "harnesses:")
-	assert.NotContains(t, after, "toolchains:")
+	assert.NotContains(t, after, "stacks:")
 }
 
 // TestMigrateRemoveLegacyMonitoringKeys covers the settings migration's two
@@ -443,7 +443,7 @@ agent:
 		assert.Contains(t, notice, "build.dockerfile = ./Dockerfile.dev")
 		assert.Contains(t, notice, "build.context = ./docker")
 		assert.Contains(t, notice, "agent.claude_code.use_host_auth = true")
-		assert.Contains(t, notice, "build.toolchains")
+		assert.Contains(t, notice, "build.stacks")
 		assert.Contains(t, notice, "config volume")
 
 		// The surviving claude_code field rides the rewrite migration into

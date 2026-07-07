@@ -8,7 +8,7 @@ philosophies. Keep their trigger descriptions disjoint:
 | Skill | Audience | Philosophy |
 |---|---|---|
 | `skills/clawker-support` | End users — setup, config, troubleshooting | Minimal concrete details; point at live docs |
-| `skills/harness-toolchain-dev` | Extension authors — harness bundles + toolchain definitions | Verified concrete reference; every claim checked against clawker source |
+| `skills/harness-stack-dev` | Extension authors — harness bundles + stack definitions | Verified concrete reference; every claim checked against clawker source |
 
 ## Plugin Structure
 
@@ -31,12 +31,12 @@ claude-plugin/clawker-support/
 │       ├── firewall-security.md  # Proactive VCS egress lockdown — git credential-exfil defense (HTTPS path-scoping, GitHub write surface, monitoring-discovery loop)
 │       ├── claude-code.md        # Claude Code integration — auth section: in-container auth model, managed-config staging, /login troubleshooting
 │       └── known-issues.md       # Active bugs and workarounds
-└── skills/harness-toolchain-dev/
+└── skills/harness-stack-dev/
     ├── SKILL.md                  # Skill definition: orientation, authoring workflows, iteration loop
     └── reference/
         ├── harness-manifest.md   # harness.yaml field + validation reference
         ├── template-blocks.md    # Block slot semantics, PATH gotcha, cache rules, worked fragments
-        ├── toolchain-authoring.md # Definition format, placement, self-guarding, collisions
+        ├── stack-authoring.md    # Definition format, placement, self-guarding, collisions
         ├── security-egress.md    # Egress floor design rules + shipped patterns (quoted verbatim)
         └── worked-example.md     # Complete minimal fictional bundle to adapt
 ```
@@ -112,7 +112,7 @@ straight from the repo (see SKILL.md research steps).
 Never hardcode template field names into the skill — update methodology and
 docs URLs instead.
 
-## harness-toolchain-dev skill
+## harness-stack-dev skill
 
 ### Core Principle: Verified Concrete Reference (opposite of clawker-support)
 
@@ -136,9 +136,9 @@ ground-truth files are:
 | Block slots, reserved defines | `internal/harness/consts.go` (DeclaredBlocks, isReservedDefine), `internal/harness/compose.go` |
 | Master template render order | `internal/bundler/assets/Dockerfile.harness-image.tmpl`, `Dockerfile.base.tmpl` |
 | Registry resolution, name grammar, materialization | `internal/bundler/harness.go`, `internal/harness/materialize.go` |
-| Toolchain format + placement | `internal/toolchain/`, `internal/bundler/toolchain.go` |
+| Stack format + placement | `internal/stack/`, `internal/bundler/stack.go` |
 | Egress composition | `internal/bundler/egress.go` |
-| Shipped bundle/toolchain examples | `internal/bundler/assets/harnesses/{claude,codex}/`, `internal/bundler/assets/toolchains/*/` |
+| Shipped bundle/stack examples | `internal/bundler/assets/harnesses/{claude,codex}/`, `internal/bundler/assets/stacks/*/` |
 
 ### Drift Gate
 
@@ -150,7 +150,7 @@ manifests — re-quote them when the manifests change.
 
 ### Audience Boundary
 
-This skill is for people BUILDING bundles/toolchains. End-user questions
+This skill is for people BUILDING bundles/stacks. End-user questions
 (project config, firewall unblocking, MCP setup, container troubleshooting)
 belong to the clawker-support skill — keep the trigger descriptions disjoint.
 It is fine for this skill to name clawker source paths: its audience is
@@ -178,7 +178,7 @@ After making changes to the plugin:
 1. clawker-support: check that `known-issues.md` is still accurate — remove
    entries for fixed bugs; verify reference cross-references are consistent
    (troubleshooting routing table, SKILL.md research step references)
-2. harness-toolchain-dev: re-verify changed reference claims against the
+2. harness-stack-dev: re-verify changed reference claims against the
    source files in the drift-gate table — never update from memory; check the
    verbatim egress excerpts still match the shipped manifests; verify
    SKILL.md ↔ reference cross-references

@@ -7,7 +7,7 @@ a useful bundle almost always has `version` and `volumes`.
 
 ```yaml
 version:      # how {{.HarnessVersion}} is resolved
-toolchains:   # toolchain definitions this harness's blocks require
+stacks:   # stack definitions this harness's blocks require
 volumes:      # persisted dirs (each becomes a named volume)
 seeds:        # first-boot files applied into volumes by CP's init step
 staging:      # create-time host→container copies + live bind mounts
@@ -39,21 +39,21 @@ Resolution failure is a **warning, not fatal** — the build proceeds with the
 literal `latest`, so templates should treat the value as either a concrete
 version or a floating tag (both shipped installers accept either).
 
-## toolchains
+## stacks
 
 ```yaml
-toolchains:
+stacks:
   - node
 ```
 
-A list of toolchain definition names this harness's blocks require. Names
+A list of stack definition names this harness's blocks require. Names
 must match `[a-zA-Z0-9][a-zA-Z0-9._-]{0,40}`; duplicates error at load
-(`duplicate toolchain declaration`). Whether a name *resolves* is checked at
+(`duplicate stack declaration`). Whether a name *resolves* is checked at
 generation time (the namespace includes the settings registry, which a
 bundle cannot see). Resolved fragments render in the **harness image**
 before your blocks — unless the project also declared the same name, in
 which case they already live in the shared base. See
-`toolchain-authoring.md`.
+`stack-authoring.md`.
 
 ## volumes
 

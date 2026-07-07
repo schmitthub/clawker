@@ -297,12 +297,12 @@
           "title": "Packages",
           "type": "array"
         },
-        "toolchains": {
-          "description": "Toolchain definitions your root_run/user_run steps need (e.g. node, go); installed in the shared base image before your instructions run",
+        "stacks": {
+          "description": "Stack definitions your root_run/user_run steps need (e.g. node, go); installed in the shared base image before your instructions run",
           "items": {
             "type": "string"
           },
-          "title": "Toolchains",
+          "title": "Stacks",
           "type": "array"
         }
       },

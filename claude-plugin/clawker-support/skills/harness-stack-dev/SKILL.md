@@ -1,12 +1,12 @@
 ---
-name: harness-toolchain-dev
+name: harness-stack-dev
 description: >
   Use when the user is authoring, extending, or debugging a clawker harness
-  bundle or toolchain definition — adding a new coding-agent CLI to clawker,
-  writing or editing harness.yaml, Dockerfile.harness.tmpl, toolchain.yaml,
-  Dockerfile.toolchain-root.tmpl / Dockerfile.toolchain-user.tmpl, designing
+  bundle or stack definition — adding a new coding-agent CLI to clawker,
+  writing or editing harness.yaml, Dockerfile.harness.tmpl, stack.yaml,
+  Dockerfile.stack-root.tmpl / Dockerfile.stack-user.tmpl, designing
   an egress floor, declaring volumes/seeds/staging, filling template block
-  slots, or registering a bundle in the settings harnesses/toolchains
+  slots, or registering a bundle in the settings harnesses/stacks
   registries. Distinct from the clawker-support skill (end-user config and
   troubleshooting): this skill is for extension AUTHORS building the bundles
   themselves.
@@ -18,11 +18,11 @@ compatibility: >
 allowed-tools: Bash(clawker *), Bash(which clawker), Bash(ls *), Bash(cat *), Read, Write, Edit, Glob, Grep, WebFetch, WebSearch
 ---
 
-# Clawker Harness & Toolchain Development
+# Clawker Harness & Stack Development
 
 You are an expert in clawker's extension model. You help developers author
 **harness bundles** (packaging a coding-agent CLI so clawker can build, run,
-and firewall it) and **toolchain definitions** (reusable language-toolchain
+and firewall it) and **stack definitions** (reusable language-stack
 install fragments). You know the manifest vocabulary, the template block
 contract, the validation front doors, and the security posture a bundle must
 uphold.
@@ -45,11 +45,11 @@ a **bundle directory**:
 ├── harness.yaml              # manifest: data the Go engine consumes
 ├── Dockerfile.harness.tmpl   # {{define}} overrides for the master template's block slots
 ├── assets/                   # optional: every file the bundle adds to the build context
-└── toolchains/<name>/        # optional: bundle-embedded toolchain definitions
+└── stacks/<name>/        # optional: bundle-embedded stack definitions
 ```
 
 - `harness.yaml` holds everything consumed *outside* template rendering:
-  version resolver, toolchain declarations, persisted volumes, first-boot
+  version resolver, stack declarations, persisted volumes, first-boot
   seeds, create-time host staging, and the firewall egress floor. Full field
   reference: `reference/harness-manifest.md`.
 - `Dockerfile.harness.tmpl` holds ALL build surface (env, install steps,
@@ -78,17 +78,17 @@ a **bundle directory**:
   place — upgrades only add files the user does not have; existing files are
   never overwritten. **Editing a materialized shipped bundle is the fastest
   way to learn the format and a legitimate customization path.**
-- Toolchain definitions have the parallel registry `toolchains:` (name →
-  `{path}`) and materialize to `<config-dir>/toolchains/<name>/`. Shipped:
+- Stack definitions have the parallel registry `stacks:` (name →
+  `{path}`) and materialize to `<config-dir>/stacks/<name>/`. Shipped:
   `go`, `node`, `python`, `rust`. Reference:
-  `reference/toolchain-authoring.md`.
+  `reference/stack-authoring.md`.
 
 ### Image identity and the two-image split
 
 Every project builds **two images**: a harness-agnostic shared base
 (`clawker-<project>:base` — substrate + system packages + user setup +
-project-declared toolchains + project instructions) and a thin **harness
-image** built FROM it (harness-declared toolchains + bundle blocks + seeds +
+project-declared stacks + project instructions) and a thin **harness
+image** built FROM it (harness-declared stacks + bundle blocks + seeds +
 clawker runtime assets). The harness image is tagged with the harness name
 (`clawker-<project>:<harness>`); the default harness's build also stamps a
 `:default` alias. Containers and images carry the `dev.clawker.harness`
@@ -129,7 +129,7 @@ label (authoritative for filtering).
 
 3. **Write `harness.yaml`.** Work through the sections in order — version
    resolver, volumes (declare every persisted dir; nothing is assumed),
-   seeds, staging, toolchains, egress floor. Field-by-field rules and
+   seeds, staging, stacks, egress floor. Field-by-field rules and
    validation error meanings: `reference/harness-manifest.md`. Egress design
    rules: `reference/security-egress.md`.
 
@@ -165,22 +165,22 @@ label (authoritative for filtering).
    floor suffices (watch for blocked-connection errors; widen only from
    observed traffic — `reference/security-egress.md`).
 
-## Workflow: author a new toolchain
+## Workflow: author a new stack
 
-1. Create `<config-dir>/toolchains/<name>/` with `toolchain.yaml`
-   (description only) plus `Dockerfile.toolchain-root.tmpl` and/or
-   `Dockerfile.toolchain-user.tmpl` — at least one, each non-empty.
+1. Create `<config-dir>/stacks/<name>/` with `stack.yaml`
+   (description only) plus `Dockerfile.stack-root.tmpl` and/or
+   `Dockerfile.stack-user.tmpl` — at least one, each non-empty.
 2. Make every fragment **self-guarding**: skip the install when the tool is
-   already present, with a `clawker toolchain <name>: ... — skipping
+   already present, with a `clawker stack <name>: ... — skipping
    install` echo. This is what lets project and harness declarations
    coexist. Idiom and placement semantics:
-   `reference/toolchain-authoring.md`.
-3. Register in settings.yaml under `toolchains: {<name>: {path: ...}}` —
-   or embed under a harness bundle's `toolchains/<name>/` subdir if it is
+   `reference/stack-authoring.md`.
+3. Register in settings.yaml under `stacks: {<name>: {path: ...}}` —
+   or embed under a harness bundle's `stacks/<name>/` subdir if it is
    bespoke to that harness (then prefix the name; the namespace is flat and
    collisions are errors).
-4. Declare it: project `build.toolchains: [<name>]` (renders in the base
-   image) or harness manifest `toolchains: [<name>]` (renders in the
+4. Declare it: project `build.stacks: [<name>]` (renders in the base
+   image) or harness manifest `stacks: [<name>]` (renders in the
    harness image unless the project also declared it).
 
 ## Iteration loop and where errors surface
@@ -193,9 +193,9 @@ blocks) in sync.
 
 | Failure | When it surfaces | Looks like |
 |---|---|---|
-| Manifest field/vocabulary errors (bad volume name, seed outside assets/, dest not under a volume, unknown apply/rewrite token, duplicate toolchain decl) | Bundle load — first command that loads the bundle (build, create, firewall sync) | `harness "<name>": <specific rule>` — see the validation table in `reference/harness-manifest.md` |
+| Manifest field/vocabulary errors (bad volume name, seed outside assets/, dest not under a volume, unknown apply/rewrite token, duplicate stack decl) | Bundle load — first command that loads the bundle (build, create, firewall sync) | `harness "<name>": <specific rule>` — see the validation table in `reference/harness-manifest.md` |
 | Template defines an unknown or reserved name | Compose (build) | `defines unknown block ... declared blocks: [block_1 ... block_6]` / `defines reserved name` |
-| Toolchain name unresolvable or collides | Dockerfile generation (build) | `unknown toolchain` / `defined both by harness bundle ... and by ...` |
+| Stack name unresolvable or collides | Dockerfile generation (build) | `unknown stack` / `defined both by harness bundle ... and by ...` |
 | Version resolution failure (registry unreachable, tag missing prefix) | Build — **warning, not fatal** | Build proceeds with the floating `latest` default |
 | Registered path has no bundle | Any bundle load | `no bundle at registered path ... fix harnesses.<name>.path in settings or rebuild to re-materialize` |
 | Install RUN failures | Docker build | Normal build error; build-time network is the host daemon's — NOT the firewall (never add egress rules to fix a build) |
@@ -207,7 +207,7 @@ blocks) in sync.
 |---|---|
 | `reference/harness-manifest.md` | Writing or debugging any `harness.yaml` field — full verified field + validation reference |
 | `reference/template-blocks.md` | Writing `Dockerfile.harness.tmpl` — block slot semantics, shell/user context, cache rules, PATH gotcha, worked examples |
-| `reference/toolchain-authoring.md` | Writing a toolchain definition — format, placement, self-guarding, collisions, cache implications |
+| `reference/stack-authoring.md` | Writing a stack definition — format, placement, self-guarding, collisions, cache implications |
 | `reference/security-egress.md` | Designing a bundle's `egress:` floor — minimal-floor rules, path scoping, UGC-sink denial, MITM/SNI notes |
 | `reference/worked-example.md` | Starting a new bundle — complete minimal fictional harness to adapt |
 

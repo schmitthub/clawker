@@ -53,7 +53,7 @@ ARG NODE_MIN_MAJOR=22
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     if command -v node >/dev/null 2>&1 && [ "$(node -e 'console.log(process.versions.node.split(".")[0])')" -ge "${NODE_MIN_MAJOR}" ]; then \
-      echo "clawker toolchain node: existing $(node --version) satisfies floor ${NODE_MIN_MAJOR} — skipping install"; \
+      echo "clawker stack node: existing $(node --version) satisfies floor ${NODE_MIN_MAJOR} — skipping install"; \
     else \
     apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates dirmngr xz-utils libatomic1 && \
@@ -101,7 +101,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # anything `.zshenv` exports; managed-settings.json is the only documented
 # enterprise mechanism that injects into that env. Points at `.local/bin`
 # (where the claude binary lives); the inherited `${PATH}` carries the node
-# toolchain's `/usr/local` install as the floor (declared in harness.yaml),
+# stack's `/usr/local` install as the floor (declared in harness.yaml),
 # so `node` resolves for build-time `claude mcp add ...` (inject points,
 # post_init) and the agent's Bash tool.
 #
@@ -141,7 +141,7 @@ ARG ZSH_ENV=/home/${USERNAME}/.zshenv
 # making unprivileged `npm install -g` work with no system-prefix games.
 # Guarded: an existing ~/.nvm (image- or user-provided) is left untouched.
 RUN if [ -s "$HOME/.nvm/nvm.sh" ]; then \
-      echo "clawker toolchain nvm: $HOME/.nvm already present — skipping install"; \
+      echo "clawker stack nvm: $HOME/.nvm already present — skipping install"; \
     else \
       NVM_LATEST=$(curl -sSfL https://api.github.com/repos/nvm-sh/nvm/releases/latest | jq -r '.tag_name') && \
       { [ -n "$NVM_LATEST" ] && [ "$NVM_LATEST" != "null" ]; } || { echo "ERROR: could not resolve latest nvm release tag" >&2; exit 1; } && \
@@ -187,7 +187,7 @@ SHELL ["/bin/zsh", "-o", "pipefail", "-c"]
 # cache at an ARG's DECLARATION line, not at first use — that "first use, not
 # definition" rule is the classic (pre-BuildKit) builder's, and Docker 23+
 # builds with BuildKit by default. Hoisting this declaration up the stage would
-# re-run every layer below it (toolchains, git-delta, zsh-in-docker, ...) on
+# re-run every layer below it (stacks, git-delta, zsh-in-docker, ...) on
 # every CC release. Adjacent placement scopes the CC-version cache miss to the
 # install layer + the late root block alone.
 # Override: clawker build --build-arg CLAUDE_CODE_VERSION=<version>

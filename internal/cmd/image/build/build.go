@@ -228,18 +228,18 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 		)
 	}
 
-	// Same contract for shipped toolchain definitions: materialize
-	// copy-if-missing + seed the settings registry; declared toolchains
+	// Same contract for shipped stack definitions: materialize
+	// copy-if-missing + seed the settings registry; declared stacks
 	// that never made it to disk fail at Dockerfile generation.
-	toolchainWarnings, toolchainEnsureErr := bundler.EnsureToolchains(cfgGateway)
-	printEnsureWarnings(ios, cs, toolchainWarnings)
-	if toolchainEnsureErr != nil {
-		log.Warn().Err(toolchainEnsureErr).Msg("toolchain ensure failed")
+	stackWarnings, stackEnsureErr := bundler.EnsureStacks(cfgGateway)
+	printEnsureWarnings(ios, cs, stackWarnings)
+	if stackEnsureErr != nil {
+		log.Warn().Err(stackEnsureErr).Msg("stack ensure failed")
 		fmt.Fprintf(
 			ios.ErrOut,
-			"%s Could not materialize/register shipped toolchain definitions: %v — continuing with already-materialized definitions; generation fails below if a declared toolchain is missing\n",
+			"%s Could not materialize/register shipped stack definitions: %v — continuing with already-materialized definitions; generation fails below if a declared stack is missing\n",
 			cs.WarningIcon(),
-			toolchainEnsureErr,
+			stackEnsureErr,
 		)
 	}
 
@@ -481,7 +481,7 @@ func printBuildNextSteps(ios *iostreams.IOStreams, cs *iostreams.ColorScheme) {
 	fmt.Fprintln(ios.ErrOut, "  4. Use '--progress=plain' for detailed build output")
 }
 
-// printEnsureWarnings surfaces bundle/toolchain staleness warnings from the
+// printEnsureWarnings surfaces bundle/stack staleness warnings from the
 // build-time ensure on stderr — the materialized copy is user-owned and never
 // auto-refreshed, so the user must be told when the shipped source moved on.
 func printEnsureWarnings(ios *iostreams.IOStreams, cs *iostreams.ColorScheme, warnings []string) {

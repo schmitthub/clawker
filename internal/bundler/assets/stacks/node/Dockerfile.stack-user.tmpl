@@ -11,7 +11,7 @@
 # making unprivileged `npm install -g` work with no system-prefix games.
 # Guarded: an existing ~/.nvm (image- or user-provided) is left untouched.
 RUN if [ -s "$HOME/.nvm/nvm.sh" ]; then \
-      echo "clawker toolchain nvm: $HOME/.nvm already present — skipping install"; \
+      echo "clawker stack nvm: $HOME/.nvm already present — skipping install"; \
     else \
       NVM_LATEST=$(curl -sSfL https://api.github.com/repos/nvm-sh/nvm/releases/latest | jq -r '.tag_name') && \
       { [ -n "$NVM_LATEST" ] && [ "$NVM_LATEST" != "null" ]; } || { echo "ERROR: could not resolve latest nvm release tag" >&2; exit 1; } && \

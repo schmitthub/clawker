@@ -69,7 +69,7 @@ func Presets() []Preset {
 }
 
 const pythonPreset = `build:
-  toolchains:
+  stacks:
     - python
   packages:
     - ripgrep
@@ -82,7 +82,7 @@ security:
 `
 
 const goPreset = `build:
-  toolchains:
+  stacks:
     - go
   packages:
     - ripgrep
@@ -95,7 +95,7 @@ security:
 `
 
 const rustPreset = `build:
-  toolchains:
+  stacks:
     - rust
   packages:
     - ripgrep
@@ -109,7 +109,7 @@ security:
       - index.crates.io
 `
 
-// The node toolchain declaration provides node + npm before the project's
+// The node stack declaration provides node + npm before the project's
 // build instructions run. registry.npmjs.org is in the required firewall set
 // (see internal/config/defaults.go). TypeScript-specific tooling (pnpm, tsc)
 // layers on top.
@@ -119,7 +119,7 @@ const typescriptPreset = `agent:
       npm install || echo "warning: npm install failed; continuing"
     fi
 build:
-  toolchains:
+  stacks:
     - node
   packages:
     - ripgrep

@@ -104,7 +104,7 @@ apex covers subdomains, and do not use a wildcard where the exact host is
 known — the tightest form that matches the observed traffic.
 
 MITM also means the harness's runtime must trust the injected CA. The base
-image sets `SSL_CERT_FILE`/`CURL_CA_BUNDLE`, and the node toolchain sets
+image sets `SSL_CERT_FILE`/`CURL_CA_BUNDLE`, and the node stack sets
 `NODE_USE_SYSTEM_CA=1`. If the CLI you package pins certificates or reads
 a private CA store, it will fail TLS against every allowed domain — that
 is a bundle-level integration problem to solve (a tool-specific CA env

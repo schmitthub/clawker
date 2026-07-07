@@ -11,13 +11,13 @@ import (
 
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/harness"
-	"github.com/schmitthub/clawker/internal/toolchain"
+	"github.com/schmitthub/clawker/internal/stack"
 )
 
-func TestShippedToolchains_LoadAndFragments(t *testing.T) {
-	assert.Equal(t, []string{"go", "node", "python", "rust"}, ShippedToolchainNames())
+func TestShippedStacks_LoadAndFragments(t *testing.T) {
+	assert.Equal(t, []string{"go", "node", "python", "rust"}, ShippedStackNames())
 
-	// Which scopes each language toolchain provisions, with the guard
+	// Which scopes each language stack provisions, with the guard
 	// marker proving each fragment self-guards against an existing install.
 	wantRootGuard := map[string]string{
 		"go":     "command -v go",
@@ -28,8 +28,8 @@ func TestShippedToolchains_LoadAndFragments(t *testing.T) {
 		"node": ".nvm/nvm.sh",
 		"rust": ".cargo/bin/cargo",
 	}
-	for _, name := range ShippedToolchainNames() {
-		def, err := loadEmbeddedToolchain(name)
+	for _, name := range ShippedStackNames() {
+		def, err := loadEmbeddedStack(name)
 		require.NoError(t, err, "shipped definition %s must load", name)
 		if marker, ok := wantRootGuard[name]; ok {
 			assert.Contains(t, def.RootFragment, marker,
@@ -46,17 +46,17 @@ func TestShippedToolchains_LoadAndFragments(t *testing.T) {
 	}
 }
 
-func TestShippedToolchains_RenderBothBuildKitModes(t *testing.T) {
-	for _, name := range ShippedToolchainNames() {
-		def, err := loadEmbeddedToolchain(name)
+func TestShippedStacks_RenderBothBuildKitModes(t *testing.T) {
+	for _, name := range ShippedStackNames() {
+		def, err := loadEmbeddedStack(name)
 		require.NoError(t, err)
-		root, user := splitFragments([]*toolchain.Definition{def})
+		root, user := splitFragments([]*stack.Definition{def})
 		for _, buildKit := range []bool{false, true} {
 			// Fragment renders touch only BuildKitEnabled.
 			var tctx DockerfileContext
 			tctx.BuildKitEnabled = buildKit
 			for _, fragments := range [][]namedFragment{root, user} {
-				steps, renderErr := renderToolchainSteps(fragments, &tctx)
+				steps, renderErr := renderStackSteps(fragments, &tctx)
 				require.NoError(t, renderErr, "%s buildkit=%v", name, buildKit)
 				for _, step := range steps {
 					assert.Contains(t, step, "RUN", "%s must emit at least one RUN", name)
@@ -66,19 +66,19 @@ func TestShippedToolchains_RenderBothBuildKitModes(t *testing.T) {
 	}
 }
 
-// writeToolchainDef writes a minimal definition dir (one fragment at the
+// writeStackDef writes a minimal definition dir (one fragment at the
 // given scope file) and returns its path.
-func writeToolchainDef(t *testing.T, fragmentFile, fragment string) string {
+func writeStackDef(t *testing.T, fragmentFile, fragment string) string {
 	t.Helper()
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, toolchain.ManifestFile), []byte("description: test\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, stack.ManifestFile), []byte("description: test\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, fragmentFile), []byte(fragment), 0o644))
 	return dir
 }
 
-// bundleWithToolchain builds a loaded harness bundle embedding one
-// toolchain definition.
-func bundleWithToolchain(t *testing.T, tcName string) *harness.Bundle {
+// bundleWithStack builds a loaded harness bundle embedding one
+// stack definition.
+func bundleWithStack(t *testing.T, tcName string) *harness.Bundle {
 	t.Helper()
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, harness.ManifestFile), []byte("{}\n"), 0o644))
@@ -86,14 +86,14 @@ func bundleWithToolchain(t *testing.T, tcName string) *harness.Bundle {
 		t,
 		os.WriteFile(filepath.Join(dir, harness.TemplateFile), []byte(`{{define "block_4"}}RUN echo hi{{end}}`), 0o644),
 	)
-	tcDir := filepath.Join(dir, toolchain.ToolchainsSubdir, tcName)
+	tcDir := filepath.Join(dir, stack.StacksSubdir, tcName)
 	require.NoError(t, os.MkdirAll(tcDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(tcDir, toolchain.ManifestFile), []byte("description: test\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(tcDir, stack.ManifestFile), []byte("description: test\n"), 0o644))
 	require.NoError(
 		t,
 		os.WriteFile(
-			filepath.Join(tcDir, toolchain.RootFragmentFile),
-			[]byte("RUN echo bundle-toolchain-"+tcName+"\n"),
+			filepath.Join(tcDir, stack.RootFragmentFile),
+			[]byte("RUN echo bundle-stack-"+tcName+"\n"),
 			0o644,
 		),
 	)
@@ -102,82 +102,82 @@ func bundleWithToolchain(t *testing.T, tcName string) *harness.Bundle {
 	return b
 }
 
-func TestResolveToolchain_ShippedEmbeddedBootstrap(t *testing.T) {
+func TestResolveStack_ShippedEmbeddedBootstrap(t *testing.T) {
 	// No registry at all → shipped definitions load from the embedded copy.
 	cfg := configmocks.NewFromString("", "")
 
-	def, err := resolveToolchain(cfg, nil, "node")
+	def, err := resolveStack(cfg, nil, "node")
 	require.NoError(t, err)
 	assert.Contains(t, def.RootFragment, "nodejs.org/dist")
 	assert.Contains(t, def.UserFragment, "nvm-sh/nvm",
-		"the node toolchain provisions nvm in user scope")
+		"the node stack provisions nvm in user scope")
 }
 
-func TestResolveToolchain_RegistryPathWins(t *testing.T) {
-	dir := writeToolchainDef(t, toolchain.UserFragmentFile, "RUN echo custom-def\n")
+func TestResolveStack_RegistryPathWins(t *testing.T) {
+	dir := writeStackDef(t, stack.UserFragmentFile, "RUN echo custom-def\n")
 	cfg := configmocks.NewFromString("", `
-toolchains:
+stacks:
   mytool:
     path: `+dir+`
 `)
 
-	def, err := resolveToolchain(cfg, nil, "mytool")
+	def, err := resolveStack(cfg, nil, "mytool")
 	require.NoError(t, err)
 	assert.Empty(t, def.RootFragment)
 	assert.Contains(t, def.UserFragment, "custom-def")
 }
 
-func TestResolveToolchain_RegistryPathMissing(t *testing.T) {
+func TestResolveStack_RegistryPathMissing(t *testing.T) {
 	cfg := configmocks.NewFromString("", `
-toolchains:
+stacks:
   mytool:
     path: /nonexistent/definitely/missing
 `)
 
-	_, err := resolveToolchain(cfg, nil, "mytool")
+	_, err := resolveStack(cfg, nil, "mytool")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "toolchains.mytool.path")
+	assert.Contains(t, err.Error(), "stacks.mytool.path")
 }
 
-func TestResolveToolchain_BundleEmbedded(t *testing.T) {
+func TestResolveStack_BundleEmbedded(t *testing.T) {
 	cfg := configmocks.NewFromString("", "")
-	b := bundleWithToolchain(t, "codex-special")
+	b := bundleWithStack(t, "codex-special")
 
-	def, err := resolveToolchain(cfg, b, "codex-special")
+	def, err := resolveStack(cfg, b, "codex-special")
 	require.NoError(t, err)
-	assert.Contains(t, def.RootFragment, "bundle-toolchain-codex-special")
+	assert.Contains(t, def.RootFragment, "bundle-stack-codex-special")
 }
 
-func TestResolveToolchain_BundleShippedCollision(t *testing.T) {
+func TestResolveStack_BundleShippedCollision(t *testing.T) {
 	// A bundle embedding a definition named like a shipped one is a
 	// flat-namespace collision — loud error, not silent precedence.
 	cfg := configmocks.NewFromString("", "")
-	b := bundleWithToolchain(t, "node")
+	b := bundleWithStack(t, "node")
 
-	_, err := resolveToolchain(cfg, b, "node")
+	_, err := resolveStack(cfg, b, "node")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "one namespace")
 }
 
-func TestResolveToolchain_BundleRegistryCollision(t *testing.T) {
-	dir := writeToolchainDef(t, toolchain.RootFragmentFile, "RUN echo registered\n")
+func TestResolveStack_BundleRegistryCollision(t *testing.T) {
+	dir := writeStackDef(t, stack.RootFragmentFile, "RUN echo registered\n")
 	cfg := configmocks.NewFromString("", `
-toolchains:
+stacks:
   mytool:
     path: `+dir+`
 `)
-	b := bundleWithToolchain(t, "mytool")
+	b := bundleWithStack(t, "mytool")
 
-	_, err := resolveToolchain(cfg, b, "mytool")
+	_, err := resolveStack(cfg, b, "mytool")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), dir)
 }
 
-func TestResolveToolchain_Unknown(t *testing.T) {
+func TestResolveStack_Unknown(t *testing.T) {
 	cfg := configmocks.NewFromString("", "")
 
-	_, err := resolveToolchain(cfg, nil, "no-such-toolchain")
-	require.ErrorIs(t, err, ErrUnknownToolchain)
+	_, err := resolveStack(cfg, nil, "no-such-stack")
+	require.ErrorIs(t, err, ErrUnknownStack)
 }
 
 // tcSettingsYAML returns settings with full telemetry defaults plus a
@@ -231,10 +231,10 @@ const (
 	nvmMarker  = "nvm-sh/nvm"
 )
 
-func TestGenerateBase_ProjectDeclaredToolchains(t *testing.T) {
+func TestGenerateBase_ProjectDeclaredStacks(t *testing.T) {
 	gen := tcGenerator(t, `
 build:
-  toolchains: [node]
+  stacks: [node]
   instructions:
     root_run: ["echo ROOTMARK"]
     user_run: ["echo USERMARK"]
@@ -257,7 +257,7 @@ build:
 	require.GreaterOrEqual(t, userRunIdx, 0)
 	assert.Less(t, nvmIdx, userRunIdx, "user fragment must precede user_run")
 
-	// Project-declared toolchains live in the base ONLY — the harness image
+	// Project-declared stacks live in the base ONLY — the harness image
 	// builds FROM it and must not re-render them.
 	harnessImg, err := gen.GenerateHarness()
 	require.NoError(t, err)
@@ -265,13 +265,13 @@ build:
 	assert.NotContains(t, string(harnessImg), nvmMarker)
 }
 
-func TestGenerateHarness_HarnessDeclaredToolchains(t *testing.T) {
+func TestGenerateHarness_HarnessDeclaredStacks(t *testing.T) {
 	gen := tcGenerator(t, "version: \"1\"\n", `
 version: { resolver: none }
-toolchains: [node]
+stacks: [node]
 `)
 
-	// Nothing project-declared → base carries no toolchain bytes.
+	// Nothing project-declared → base carries no stack bytes.
 	base, err := gen.GenerateBase()
 	require.NoError(t, err)
 	assert.NotContains(t, string(base), nodeMarker)
@@ -287,8 +287,8 @@ toolchains: [node]
 	userRootIdx := strings.Index(content, "USER root")
 	require.GreaterOrEqual(t, nodeIdx, 0)
 	require.GreaterOrEqual(t, b1Idx, 0)
-	assert.Less(t, userRootIdx, nodeIdx, "root toolchain anchors after USER root")
-	assert.Less(t, nodeIdx, b1Idx, "root toolchain must precede block_1")
+	assert.Less(t, userRootIdx, nodeIdx, "root stack anchors after USER root")
+	assert.Less(t, nodeIdx, b1Idx, "root stack must precede block_1")
 
 	// User-scope fragment renders after the USER switch + ARG ZSH_ENV
 	// (fragments may reference ${ZSH_ENV}), before block_3.
@@ -299,16 +299,16 @@ toolchains: [node]
 	require.GreaterOrEqual(t, b3Idx, 0)
 	require.GreaterOrEqual(t, zshEnvIdx, 0)
 	assert.Less(t, zshEnvIdx, nvmIdx, "ARG ZSH_ENV must be in scope for user fragments")
-	assert.Less(t, nvmIdx, b3Idx, "user toolchain must precede block_3")
+	assert.Less(t, nvmIdx, b3Idx, "user stack must precede block_3")
 }
 
 func TestGenerate_BothDeclared_BaseWins(t *testing.T) {
 	gen := tcGenerator(t, `
 build:
-  toolchains: [node]
+  stacks: [node]
 `, `
 version: { resolver: none }
-toolchains: [node]
+stacks: [node]
 `)
 
 	base, err := gen.GenerateBase()
@@ -318,45 +318,45 @@ toolchains: [node]
 	harnessImg, err := gen.GenerateHarness()
 	require.NoError(t, err)
 	assert.NotContains(t, string(harnessImg), nodeMarker,
-		"a project-declared toolchain renders once, in the base — never again in the harness image")
+		"a project-declared stack renders once, in the base — never again in the harness image")
 }
 
-func TestGenerateBase_UnknownToolchain(t *testing.T) {
+func TestGenerateBase_UnknownStack(t *testing.T) {
 	gen := tcGenerator(t, `
 build:
-  toolchains: [definitely-not-a-toolchain]
+  stacks: [definitely-not-a-stack]
 `, "version: { resolver: none }\n")
 
 	_, err := gen.GenerateBase()
-	require.ErrorIs(t, err, ErrUnknownToolchain)
+	require.ErrorIs(t, err, ErrUnknownStack)
 }
 
 func TestGenerateBase_DuplicateDeclaration(t *testing.T) {
 	gen := tcGenerator(t, `
 build:
-  toolchains: [node, node]
+  stacks: [node, node]
 `, "version: { resolver: none }\n")
 
 	_, err := gen.GenerateBase()
-	require.ErrorContains(t, err, "duplicate toolchain declaration")
+	require.ErrorContains(t, err, "duplicate stack declaration")
 }
 
 func TestGenerateHarness_ProjectDeclCollidesWithBundleEmbedded(t *testing.T) {
 	bundleDir := tcBundleDir(t, "version: { resolver: none }\n")
-	tcDir := filepath.Join(bundleDir, toolchain.ToolchainsSubdir, "node")
+	tcDir := filepath.Join(bundleDir, stack.StacksSubdir, "node")
 	require.NoError(t, os.MkdirAll(tcDir, 0o755))
 	require.NoError(
 		t,
-		os.WriteFile(filepath.Join(tcDir, toolchain.ManifestFile), []byte("description: shadow\n"), 0o644),
+		os.WriteFile(filepath.Join(tcDir, stack.ManifestFile), []byte("description: shadow\n"), 0o644),
 	)
 	require.NoError(
 		t,
-		os.WriteFile(filepath.Join(tcDir, toolchain.RootFragmentFile), []byte("RUN echo shadow\n"), 0o644),
+		os.WriteFile(filepath.Join(tcDir, stack.RootFragmentFile), []byte("RUN echo shadow\n"), 0o644),
 	)
 
 	cfg := configmocks.NewFromString(`
 build:
-  toolchains: [node]
+  stacks: [node]
 `, tcSettingsYAML(bundleDir))
 	gen := NewProjectGenerator(cfg, t.TempDir())
 	gen.Harness = "other"
@@ -368,35 +368,35 @@ build:
 		"a bundle must never silently shadow the definition the base used")
 }
 
-func TestEnsureToolchains_SeedsRegistryAndDefinitions(t *testing.T) {
+func TestEnsureStacks_SeedsRegistryAndDefinitions(t *testing.T) {
 	cfg := configmocks.NewIsolatedTestConfig(t)
 
-	warnings, err := EnsureToolchains(cfg)
+	warnings, err := EnsureStacks(cfg)
 	require.NoError(t, err)
 	assert.Empty(t, warnings, "fresh materialize must not report staleness")
 
 	// Definition files materialized to the seeded default location, and the
 	// registry entry records that path explicitly.
-	for _, name := range ShippedToolchainNames() {
-		dir := ShippedToolchainDefaultDir(name)
-		assert.FileExists(t, filepath.Join(dir, toolchain.ManifestFile))
-		entry, ok := cfg.Settings().Toolchains[name]
+	for _, name := range ShippedStackNames() {
+		dir := ShippedStackDefaultDir(name)
+		assert.FileExists(t, filepath.Join(dir, stack.ManifestFile))
+		entry, ok := cfg.Settings().Stacks[name]
 		require.True(t, ok, "registry entry seeded for %s", name)
 		assert.Equal(t, dir, entry.Path)
-		_, loadErr := resolveToolchain(cfg, nil, name)
+		_, loadErr := resolveStack(cfg, nil, name)
 		require.NoError(t, loadErr, "materialized %s must load through the registry", name)
 	}
 
 	// Resolution now reads through the registry (materialized copy wins).
-	def, err := resolveToolchain(cfg, nil, "node")
+	def, err := resolveStack(cfg, nil, "node")
 	require.NoError(t, err)
 	assert.Contains(t, def.RootFragment, "nodejs.org/dist")
 
 	// User edit to the materialized copy is never clobbered — and an edit is
 	// NOT staleness (the stamp tracks the shipped tree, not the user copy).
-	fragPath := filepath.Join(ShippedToolchainDefaultDir("rust"), toolchain.UserFragmentFile)
+	fragPath := filepath.Join(ShippedStackDefaultDir("rust"), stack.UserFragmentFile)
 	require.NoError(t, os.WriteFile(fragPath, []byte("RUN echo user-edited\n"), 0o644))
-	warnings, err = EnsureToolchains(cfg)
+	warnings, err = EnsureStacks(cfg)
 	require.NoError(t, err)
 	assert.Empty(t, warnings, "a user edit must not trip the shipped-stamp check")
 	edited, err := os.ReadFile(fragPath)
@@ -404,22 +404,22 @@ func TestEnsureToolchains_SeedsRegistryAndDefinitions(t *testing.T) {
 	assert.Equal(t, "RUN echo user-edited\n", string(edited))
 }
 
-// TestEnsureToolchains_ShippedStampStaleness mirrors the harness contract: a
+// TestEnsureStacks_ShippedStampStaleness mirrors the harness contract: a
 // mismatched (or missing) stamp on a materialized shipped definition warns
 // and never overwrites the user-owned copy.
-func TestEnsureToolchains_ShippedStampStaleness(t *testing.T) {
+func TestEnsureStacks_ShippedStampStaleness(t *testing.T) {
 	cfg := configmocks.NewIsolatedTestConfig(t)
 
-	warnings, err := EnsureToolchains(cfg)
+	warnings, err := EnsureStacks(cfg)
 	require.NoError(t, err)
 	require.Empty(t, warnings)
 
-	dir := ShippedToolchainDefaultDir("go")
+	dir := ShippedStackDefaultDir("go")
 	stampPath := filepath.Join(dir, harness.ShippedStampFile)
 	require.FileExists(t, stampPath, "fresh materialize must stamp the copy")
 
 	require.NoError(t, os.WriteFile(stampPath, []byte("stale-hash\n"), 0o644))
-	warnings, err = EnsureToolchains(cfg)
+	warnings, err = EnsureStacks(cfg)
 	require.NoError(t, err)
 	require.Len(t, warnings, 1, "exactly the stale definition warns")
 	assert.Contains(t, warnings[0], `"go"`)
@@ -427,7 +427,7 @@ func TestEnsureToolchains_ShippedStampStaleness(t *testing.T) {
 
 	// The stale copy still loads — the stamp is invisible to definition
 	// loading — and is never auto-refreshed.
-	_, err = resolveToolchain(cfg, nil, "go")
+	_, err = resolveStack(cfg, nil, "go")
 	require.NoError(t, err)
 	stamp, err := os.ReadFile(stampPath)
 	require.NoError(t, err)

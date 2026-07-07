@@ -75,7 +75,7 @@ const (
 	DefaultShell          = "/bin/zsh"
 	// SubstrateImage is the single base image every generated base Dockerfile
 	// builds FROM. Clawker owns the substrate: users extend it with packages,
-	// toolchains, and run instructions — never by swapping the image. Pinned
+	// stacks, and run instructions — never by swapping the image. Pinned
 	// by digest per the version-pinning policy; the digest MUST reference a
 	// multi-arch OCI image index (verify with `docker buildx imagetools
 	// inspect`).
@@ -121,16 +121,16 @@ type DockerfileContext struct {
 	// baked seed manifest that CP's generic seed-apply step interprets on
 	// first boot.
 	HarnessSeeds []harness.Seed
-	// ToolchainRootSteps / ToolchainUserSteps are pre-rendered toolchain
+	// StackRootSteps / StackUserSteps are pre-rendered stack
 	// fragments for THIS render's root/user anchor. The generator computes
 	// stage placement (project-declared → base image, harness-declared-only
 	// → harness image) and fills them per render; the templates just emit
 	// them at static anchors. Nothing declared → empty → zero bytes.
-	ToolchainRootSteps []string
-	ToolchainUserSteps []string
-	BuildKitEnabled    bool
-	Instructions       *DockerfileInstructions
-	Inject             *DockerfileInject
+	StackRootSteps  []string
+	StackUserSteps  []string
+	BuildKitEnabled bool
+	Instructions    *DockerfileInstructions
+	Inject          *DockerfileInject
 
 	// OTEL telemetry endpoint — populated from cfg.OtelCollectorURL().
 	// Wired into the container as OTEL_EXPORTER_OTLP_ENDPOINT (base URL,
@@ -245,17 +245,17 @@ func (g *ProjectGenerator) GenerateBase() ([]byte, error) {
 		return nil, fmt.Errorf("failed to build context: %w", err)
 	}
 
-	// Project-declared toolchains render in the base, before the project's
+	// Project-declared stacks render in the base, before the project's
 	// own instructions. Resolution deliberately excludes the harness bundle
-	// (resolveProjectToolchains) — the shared base stays harness-agnostic.
-	root, user, err := resolveProjectToolchains(g.cfg, g.cfg.Project().Build.Toolchains)
+	// (resolveProjectStacks) — the shared base stays harness-agnostic.
+	root, user, err := resolveProjectStacks(g.cfg, g.cfg.Project().Build.Stacks)
 	if err != nil {
 		return nil, err
 	}
-	if tctx.ToolchainRootSteps, err = renderToolchainSteps(root, tctx); err != nil {
+	if tctx.StackRootSteps, err = renderStackSteps(root, tctx); err != nil {
 		return nil, err
 	}
-	if tctx.ToolchainUserSteps, err = renderToolchainSteps(user, tctx); err != nil {
+	if tctx.StackUserSteps, err = renderStackSteps(user, tctx); err != nil {
 		return nil, err
 	}
 
@@ -294,18 +294,18 @@ func (g *ProjectGenerator) GenerateHarness() ([]byte, error) {
 		return nil, err
 	}
 
-	// Harness-declared toolchains render here unless the project already
+	// Harness-declared stacks render here unless the project already
 	// declared them (then they live in the shared base this image builds
 	// FROM — earliest stage wins, rendered exactly once).
-	root, user, err := resolveHarnessToolchains(
-		g.cfg, bundle, g.cfg.Project().Build.Toolchains, bundle.Manifest.Toolchains)
+	root, user, err := resolveHarnessStacks(
+		g.cfg, bundle, g.cfg.Project().Build.Stacks, bundle.Manifest.Stacks)
 	if err != nil {
 		return nil, err
 	}
-	if tctx.ToolchainRootSteps, err = renderToolchainSteps(root, tctx); err != nil {
+	if tctx.StackRootSteps, err = renderStackSteps(root, tctx); err != nil {
 		return nil, err
 	}
-	if tctx.ToolchainUserSteps, err = renderToolchainSteps(user, tctx); err != nil {
+	if tctx.StackUserSteps, err = renderStackSteps(user, tctx); err != nil {
 		return nil, err
 	}
 

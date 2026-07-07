@@ -87,7 +87,7 @@ CMD ["pilot"]
 ```
 
 (A real bundle should verify the download — a sha256 check against a
-published checksum file, as the shipped toolchains do.)
+published checksum file, as the shipped stacks do.)
 
 ## assets/pilot-config.json
 
@@ -118,9 +118,9 @@ proxies to the host); the token persists in the `config` volume.
 
 | Need | Change |
 |---|---|
-| npm-distributed CLI | `version: {resolver: npm, package: "@acme/pilot"}`; declare `toolchains: [node]`; install in block_4 via the vendor installer or `npm install -g @acme/pilot@${PILOT_VERSION}` (nvm-owned npm prefix puts the binary on a shell-init path — verify the entry point lands in `~/.local/bin` or symlink it there; see the PATH gotcha) |
+| npm-distributed CLI | `version: {resolver: npm, package: "@acme/pilot"}`; declare `stacks: [node]`; install in block_4 via the vendor installer or `npm install -g @acme/pilot@${PILOT_VERSION}` (nvm-owned npm prefix puts the binary on a shell-init path — verify the entry point lands in `~/.local/bin` or symlink it there; see the PATH gotcha) |
 | No upstream versioning | `version: {resolver: none}` and ignore `{{.HarnessVersion}}` or treat it as a floating tag |
 | Root-scope install | Put the install in block_1 or block_2 (root, /bin/sh) targeting `/usr/local/bin` |
 | Installer writes into the volume path | Redirect the install-time home off the volume path (codex pattern in `template-blocks.md`) |
 | Backend host also serves UGC | Path-scope the egress rule — allowlist or denylist mode per `security-egress.md` |
-| Bespoke language runtime | Embed `toolchains/pilot-runtime/` in the bundle (prefixed name; flat namespace) and declare it in the manifest |
+| Bespoke language runtime | Embed `stacks/pilot-runtime/` in the bundle (prefixed name; flat namespace) and declare it in the manifest |
