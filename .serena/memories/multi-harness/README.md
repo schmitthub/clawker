@@ -19,6 +19,8 @@ Harness = file-backed bundle (harness.yaml + Dockerfile.harness.tmpl + assets/) 
 
 ## Open items (post-branch / host-side)
 
+- **BLOCKS MERGE (user 2026-07-07): stack unit-contract redesign.** The shipped unit model (flat name-string dedup, declaration-order rendering, no unit-to-unit requires, no version/capability constraints, conflicts undetected below the name) is not acceptable to merge — it forces strata violations for any non-leaf need (e.g. typescript-requires-node) and has no enforceable cross-stratum standard. Placement topology stays (project→base, harness→harness image, earliest-stage-wins). Direction: provides/requires + version constraints, resolver closure, conflict-with-provenance errors; prior art CNB build-plan + devcontainer Features (possible distribution adapter). Design doc in this folder for user teardown before any code. Renamed toolchains→stacks (`cd72803b`).
+
 - **BLOCKS MERGE (user 2026-07-07):** the skills plugin goes multi-agent — no longer Claude Code-only packaging; use established all-in-one multi-agent harness plugin approaches (research first). User docs already say "agent skills plugin" (never "Claude Code plugin", no future-tense framing); dev CLAUDE.mds still describe the Claude Code plugin spec and get updated when the packaging lands.
 
 - Host-side UAT of migrations + staleness warnings on a real pre-upgrade config; host e2e run (`go test ./test/e2e/...` — never in-container)
