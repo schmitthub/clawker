@@ -17,7 +17,7 @@ harnesses:
       claude mcp add --scope local context7 -- npx -y @upstash/context7-mcp --api-key "$CONTEXT7_API_KEY"
   codex: {}
 build:
-  toolchains:
+  stacks:
     - go
     - node
     - python
@@ -208,6 +208,7 @@ security:
       - git-scm.com
       - nodejs.org
       - oraios-software.de
+      - nix.dev
     rules:
       - action: allow
         dst: github.com
@@ -312,6 +313,26 @@ security:
             path: /opensearch-project/OpenSearch-Dashboards/
           - action: allow
             path: /contributor-assistant/github-action/
+          - action: allow
+            path: /buildpacks/spec/
+        port: 443
+        proto: https
+      - action: allow
+        dst: buildpacks.io
+        insecure_skip_tls_verify: false
+        path_default: deny
+        path_rules:
+          - action: allow
+            path: /docs/
+        port: 443
+        proto: https
+      - action: allow
+        dst: nixos.org
+        insecure_skip_tls_verify: false
+        path_default: deny
+        path_rules:
+          - action: allow
+            path: /manual/
         port: 443
         proto: https
   git_credentials:

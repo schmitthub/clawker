@@ -15,6 +15,8 @@ Harness = file-backed bundle (harness.yaml + Dockerfile.harness.tmpl + assets/) 
 | file | purpose |
 |---|---|
 | `blast-radius.md` | Schema-migration blast radius assessment + gap fixes (all gaps CLOSED on branch 2026-07-07 except noted UAT items) |
+| `stack-unit-contract-model.md` | THE design model (brainstorm 2026-07-07, r9): engine sovereignty, roles, authority map, clause register, opaque-token graph, per-lineage binding, composition rules, user stories, open leaf decisions |
+| `stack-unit-contract-design.md` | Brainstorm log: prior art (CNB/devcontainer/nix, live-fetched), design axes, revision history r1–r6 |
 | `harness-research-opencode-pi.md` | Live-verified recon for opencode + pi bundles — DEFERRED by user 2026-07-07: adding them is the planned UAT exercise for the harness-stack-dev skill |
 
 ## Open items (post-branch / host-side)
