@@ -10,10 +10,11 @@ Manage the clawker Claude Code skill plugin
 
 Manage the clawker-support Claude Code skill plugin.
 
-The clawker-support skill gives Claude Code hands-on knowledge of clawker
-internals — configuration, Dockerfile generation, firewall rules, MCP wiring,
-and troubleshooting. It reads the real config schema and template so the
-advice it gives is always accurate.
+The plugin ships two skills: clawker-support gives Claude Code hands-on
+knowledge of clawker internals — configuration, Dockerfile generation,
+firewall rules, MCP wiring, and troubleshooting — and harness-toolchain-dev
+covers authoring harness bundles and toolchain definitions. Both read the
+real config schema and templates so the advice they give is always accurate.
 
 ### Examples
 

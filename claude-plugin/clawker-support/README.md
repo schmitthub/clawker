@@ -1,8 +1,12 @@
 # Clawker Support Plugin
 
-A Claude Code plugin that acts as a clawker internals expert — helping you set up, configure, and troubleshoot [clawker](https://github.com/schmitthub/clawker) environments.
+A Claude Code plugin that acts as a clawker internals expert — helping you set up, configure, troubleshoot, and extend [clawker](https://github.com/schmitthub/clawker) environments.
 
 ## What it does
+
+The plugin ships two skills:
+
+### clawker-support
 
 When you invoke `/clawker-support`, Claude becomes a clawker configuration specialist that:
 
@@ -11,6 +15,15 @@ When you invoke `/clawker-support`, Claude becomes a clawker configuration speci
 - **Synthesizes** the exact YAML config you need, with firewall rules and all
 
 It understands the full clawker system: Dockerfile generation, config layering, firewall architecture, injection points, build-time vs runtime, and common gotchas.
+
+### harness-toolchain-dev
+
+When you invoke `/harness-toolchain-dev`, Claude becomes a clawker extension-authoring specialist for building harness bundles (packaging a new coding-agent CLI) and toolchain definitions (reusable language-toolchain install fragments):
+
+- **Knows the bundle format** — `harness.yaml` field-by-field (version resolvers, volumes, seeds, staging, egress floors), verified against clawker's validators
+- **Knows the template contract** — the six block slots of `Dockerfile.harness.tmpl`, their user/shell context, cache rules, and the runtime PATH gotcha
+- **Knows toolchain authoring** — definition format, placement semantics, the self-guarding idiom, and namespace collision rules
+- **Designs egress floors adversarially** — minimal floors, path-scoped UGC-sink denial, in-container auth posture
 
 ## Install
 
@@ -45,7 +58,15 @@ In any Claude Code session:
 /clawker-support help me set up a Rust project with clawker
 ```
 
-Or just ask about clawker — the skill triggers automatically when it detects clawker-related questions.
+```
+/harness-toolchain-dev help me package the opencode CLI as a clawker harness
+```
+
+```
+/harness-toolchain-dev write a toolchain definition for deno
+```
+
+Or just ask about clawker — the skills trigger automatically: clawker-support on clawker-related questions, harness-toolchain-dev on harness/toolchain authoring tasks.
 
 ## Documentation
 

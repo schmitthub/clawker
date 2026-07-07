@@ -1,5 +1,5 @@
 ---
-name: clawker-harness-dev
+name: harness-toolchain-dev
 description: >
   Use when the user is authoring, extending, or debugging a clawker harness
   bundle or toolchain definition — adding a new coding-agent CLI to clawker,
@@ -7,7 +7,7 @@ description: >
   Dockerfile.toolchain-root.tmpl / Dockerfile.toolchain-user.tmpl, designing
   an egress floor, declaring volumes/seeds/staging, filling template block
   slots, or registering a bundle in the settings harnesses/toolchains
-  registries. Distinct from clawker-support (end-user config and
+  registries. Distinct from the clawker-support skill (end-user config and
   troubleshooting): this skill is for extension AUTHORS building the bundles
   themselves.
 license: MIT

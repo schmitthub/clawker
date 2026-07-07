@@ -12,7 +12,8 @@ Install the clawker-support skill plugin for Claude Code.
 
 This adds the schmitthub/claude-plugins marketplace (if not already present)
 and installs the clawker-support plugin. The plugin gives Claude Code
-hands-on knowledge of clawker configuration, troubleshooting, and internals.
+hands-on knowledge of clawker configuration, troubleshooting, and internals,
+plus harness bundle and toolchain authoring.
 
 ```
 clawker skill install [flags]
