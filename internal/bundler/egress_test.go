@@ -135,12 +135,12 @@ egress:
     port: "22"
 `)
 
-	cfg := configmocks.NewFromString("", fmt.Sprintf(`
+	cfg := configmocks.NewFromString(fmt.Sprintf(`
 harnesses:
-  codex: { default: true, path: %s }
-`, dir))
+  codex: { path: %s }
+`, dir), "")
 
-	rules, err := bundler.EgressRules(cfg, "")
+	rules, err := bundler.EgressRules(cfg, "codex")
 	require.NoError(t, err)
 
 	byDst := dstSet(rules)
@@ -153,27 +153,14 @@ harnesses:
 		byDst["auth.openai.com"].PathRules[0])
 }
 
-// TestEgressRules_ResolutionErrorsPropagate: a broken registry (two defaults)
-// or an unknown explicit harness must fail the sync loudly, never fall back
-// to a silently wrong floor.
+// TestEgressRules_ResolutionErrorsPropagate: an unknown explicit harness must
+// fail the sync loudly, never fall back to a silently wrong floor.
 func TestEgressRules_ResolutionErrorsPropagate(t *testing.T) {
 	isolateConfigDir(t)
 
-	t.Run("multiple defaults", func(t *testing.T) {
-		cfg := configmocks.NewFromString("", `
-harnesses:
-  a: { default: true }
-  b: { default: true }
-`)
-		_, err := bundler.EgressRules(cfg, "")
-		require.ErrorContains(t, err, "multiple harnesses marked default")
-	})
-
-	t.Run("unknown explicit harness", func(t *testing.T) {
-		cfg := configmocks.NewBlankConfig()
-		_, err := bundler.EgressRules(cfg, "nonexistent")
-		require.ErrorContains(t, err, "is not registered")
-	})
+	cfg := configmocks.NewBlankConfig()
+	_, err := bundler.EgressRules(cfg, "nonexistent")
+	require.ErrorContains(t, err, "is not registered")
 }
 
 // writeBundle writes a minimal loadable bundle (manifest + template) to dir.

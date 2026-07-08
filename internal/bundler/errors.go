@@ -11,8 +11,8 @@ import (
 // BaseImageRef field was not set by the caller.
 var ErrNoBaseImageRef = errors.New("harness image generation requires BaseImageRef (the shared base image tag)")
 
-// ErrUnknownStack is returned when a declared stack name resolves to
-// no definition in any source (shipped, settings registry, bundle-embedded).
+// ErrUnknownStack is returned when a declared stack name resolves to no
+// definition in any layer (project stacks: registry, bundle-embedded, shipped).
 var ErrUnknownStack = errors.New("unknown stack")
 
 // Re-export error types from registry for convenience.

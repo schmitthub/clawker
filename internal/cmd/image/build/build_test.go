@@ -452,18 +452,18 @@ harnesses:
 
 	t.Run("unregistered harness is a flag error", func(t *testing.T) {
 		_, _, err := harnessSelectorFromTags(cfg, []string{"opencode"})
-		require.ErrorContains(t, err, "does not name a registered harness")
+		require.ErrorContains(t, err, "does not name a known harness")
 
 		_, _, err = harnessSelectorFromTags(cfg, []string{"myrepo/img:v1.2.3"})
-		require.ErrorContains(t, err, "does not name a registered harness")
+		require.ErrorContains(t, err, "does not name a known harness")
 	})
 
 	t.Run("reserved base tag is a flag error", func(t *testing.T) {
 		_, _, err := harnessSelectorFromTags(cfg, []string{"base"})
-		require.ErrorContains(t, err, "does not name a registered harness")
+		require.ErrorContains(t, err, "does not name a known harness")
 
 		_, _, err = harnessSelectorFromTags(cfg, []string{"myrepo/img:base"})
-		require.ErrorContains(t, err, "does not name a registered harness")
+		require.ErrorContains(t, err, "does not name a known harness")
 	})
 
 	t.Run("conflicting selections error", func(t *testing.T) {

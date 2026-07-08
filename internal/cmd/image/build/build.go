@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"slices"
-	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -206,46 +204,11 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 
 	builder := docker.NewBuilder(client, cfg, wd, projectName)
 
-	// Ensure shipped harness bundles exist on disk and in the settings
-	// registry (both copy-if-missing — user edits win), then load the
-	// selected bundle. The bundle's template blocks and context files
-	// compose the rendered Dockerfile; its manifest drives version
-	// resolution below. Once a registry exists, harness resolution is
-	// registry-only (no embedded fallback), so an ensure failure means the
-	// build continues on whatever is already materialized and registered —
-	// and LoadHarness below hard-errors if the selected bundle never made
-	// it to disk. Surface the failure so the user can connect that error
-	// back to its cause.
-	harnessWarnings, harnessEnsureErr := bundler.EnsureHarnesses(cfgGateway)
-	printEnsureWarnings(ios, cs, harnessWarnings)
-	if harnessEnsureErr != nil {
-		log.Warn().Err(harnessEnsureErr).Msg("harness ensure failed")
-		fmt.Fprintf(
-			ios.ErrOut,
-			"%s Could not materialize/register shipped harness bundles: %v — continuing with already-materialized bundles; loading fails below if the selected harness is missing\n",
-			cs.WarningIcon(),
-			harnessEnsureErr,
-		)
-	}
-
-	// Same contract for shipped stack definitions: materialize
-	// copy-if-missing + seed the settings registry; declared stacks
-	// that never made it to disk fail at Dockerfile generation.
-	stackWarnings, stackEnsureErr := bundler.EnsureStacks(cfgGateway)
-	printEnsureWarnings(ios, cs, stackWarnings)
-	if stackEnsureErr != nil {
-		log.Warn().Err(stackEnsureErr).Msg("stack ensure failed")
-		fmt.Fprintf(
-			ios.ErrOut,
-			"%s Could not materialize/register shipped stack definitions: %v — continuing with already-materialized definitions; generation fails below if a declared stack is missing\n",
-			cs.WarningIcon(),
-			stackEnsureErr,
-		)
-	}
-
-	// -t selects the harness: a bare NAME names a registered harness; a full
+	// -t selects the harness: a bare NAME names a known harness; a full
 	// REF's tag part must equal one (strict tag=harness). No -t builds the
-	// registry default.
+	// default harness. Shipped bundles and project-registered ones resolve
+	// straight from the embedded FS / clawker.yaml registry — no build-time
+	// materialization step.
 	selector, extraTags, err := harnessSelectorFromTags(cfgGateway, opts.Tags)
 	if err != nil {
 		return err
@@ -259,7 +222,7 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 		return fmt.Errorf("loading harness %q: %w", harnessName, err)
 	}
 
-	// The canonical tag is harness-keyed; the registry default also gets the
+	// The canonical tag is harness-keyed; the default harness also gets the
 	// :default alias so run/create resolve it without naming a harness.
 	imageTag := docker.HarnessImageTag(projectName, harnessName)
 	if isDefaultHarness(cfgGateway, harnessName) {
@@ -374,6 +337,9 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 		// failure (e.g. both triggered by ctx cancel).
 		buildErr := <-buildErrCh
 
+		// The progress display has torn down; surface resolution provenance now.
+		printProvenance(ios, cs, builder.Provenance())
+
 		if buildErr != nil {
 			if result.Err != nil {
 				log.Warn().Err(result.Err).Msg("progress display error masked by build error")
@@ -389,9 +355,11 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 	}
 
 	// Suppressed output — build synchronously without progress display.
-	if err := builder.Build(ctx, imageTag, buildOpts); err != nil {
+	buildErr := builder.Build(ctx, imageTag, buildOpts)
+	printProvenance(ios, cs, builder.Provenance())
+	if buildErr != nil {
 		printBuildNextSteps(ios, cs)
-		return err
+		return fmt.Errorf("building %s: %w", imageTag, buildErr)
 	}
 	return finishBuild(log, imageTag, imageDigest, opts.IIDFile)
 }
@@ -481,19 +449,19 @@ func printBuildNextSteps(ios *iostreams.IOStreams, cs *iostreams.ColorScheme) {
 	fmt.Fprintln(ios.ErrOut, "  4. Use '--progress=plain' for detailed build output")
 }
 
-// printEnsureWarnings surfaces bundle/stack staleness warnings from the
-// build-time ensure on stderr — the materialized copy is user-owned and never
-// auto-refreshed, so the user must be told when the shipped source moved on.
-func printEnsureWarnings(ios *iostreams.IOStreams, cs *iostreams.ColorScheme, warnings []string) {
-	for _, w := range warnings {
-		fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.WarningIcon(), w)
+// printProvenance surfaces stack/harness resolution provenance on stderr —
+// every line where a closer layer shadowed a farther one, plus the harness
+// bundle's source. Emitted after the build display tears down.
+func printProvenance(ios *iostreams.IOStreams, cs *iostreams.ColorScheme, lines []string) {
+	for _, l := range lines {
+		fmt.Fprintf(ios.ErrOut, "%s %s\n", cs.InfoIcon(), l)
 	}
 }
 
 // harnessSelectorFromTags interprets -t entries under the strict
 // tag=harness scheme. A bare NAME selects that harness; a full REF (has a
 // colon) keeps riding as an additional image tag, but its tag part must
-// name a registered harness. All entries must agree on one harness.
+// name a known harness. All entries must agree on one harness.
 func harnessSelectorFromTags(cfg config.Config, tags []string) (string, []string, error) {
 	var selector string
 	var extraTags []string
@@ -504,11 +472,11 @@ func harnessSelectorFromTags(cfg config.Config, tags []string) (string, []string
 			candidate = entry[idx+1:]
 			fullRef = true
 		}
-		if !isKnownHarness(cfg, candidate) {
+		if !bundler.IsKnownHarness(cfg, candidate) {
 			//nolint:wrapcheck // FlagError reaches cobra typed for usage display, never wrapped (repo convention)
 			return "", nil, cmdutil.FlagErrorf(
-				"--tag %q does not name a registered harness (tags are harness-keyed; registered: %s)",
-				entry, strings.Join(registeredHarnessNames(cfg), ", "),
+				"--tag %q does not name a known harness (tags are harness-keyed; known: %s)",
+				entry, strings.Join(bundler.KnownHarnessNames(cfg), ", "),
 			)
 		}
 		if selector != "" && selector != candidate {
@@ -526,28 +494,8 @@ func harnessSelectorFromTags(cfg config.Config, tags []string) (string, []string
 	return selector, extraTags, nil
 }
 
-// registeredHarnessNames lists registry keys, falling back to the shipped
-// set when no registry exists yet (bootstrap).
-func registeredHarnessNames(cfg config.Config) []string {
-	if s := cfg.Settings(); s != nil && len(s.Harnesses) > 0 {
-		names := make([]string, 0, len(s.Harnesses))
-		for name := range s.Harnesses {
-			names = append(names, name)
-		}
-		sort.Strings(names)
-		return names
-	}
-	return bundler.ShippedHarnessNames()
-}
-
-// isKnownHarness reports whether name is a registry key (or a shipped name
-// during bootstrap, before any registry exists).
-func isKnownHarness(cfg config.Config, name string) bool {
-	return slices.Contains(registeredHarnessNames(cfg), name)
-}
-
-// isDefaultHarness reports whether name is the registry-default harness —
-// the one whose image carries the :default alias tag.
+// isDefaultHarness reports whether name is the default harness — the one
+// whose image carries the :default alias tag.
 func isDefaultHarness(cfg config.Config, name string) bool {
 	resolved, err := bundler.ResolveHarnessName(cfg, "")
 	return err == nil && resolved == name

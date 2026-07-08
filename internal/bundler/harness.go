@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
-	"strings"
 
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
@@ -16,18 +15,17 @@ import (
 )
 
 // Shipped harness bundles. Each subdirectory of assets/harnesses is a
-// complete bundle (harness.yaml + Dockerfile.harness.tmpl + assets) that is
-// materialized into the user config dir, where it is user-owned and
-// editable. The embedded copy is only a seed and a hermetic fallback — the
-// materialized bundle always wins when present.
+// complete bundle (harness.yaml + Dockerfile.harness.tmpl + assets) embedded
+// in the binary. Shipped bundles are the virtual base layer of harness
+// resolution: they load straight from this embedded FS and are shadowed only
+// by a project harnesses: registry entry naming the same key.
 //
 //go:embed all:assets/harnesses
 var harnessesFS embed.FS
 
 const harnessAssetsRoot = "assets/harnesses"
 
-// DefaultHarnessName is the harness used when no settings registry entry
-// sets default: true.
+// DefaultHarnessName is the harness used when a command selects none.
 const DefaultHarnessName = consts.DefaultHarnessName
 
 // ShippedHarnessNames lists the bundles embedded in this build.
@@ -47,53 +45,17 @@ func ShippedHarnessNames() []string {
 }
 
 // ResolveHarnessName returns the effective harness name: the explicit name
-// when non-empty, else the single registry entry marked default: true, else
-// DefaultHarnessName. More than one entry marked default is a configuration
-// error.
-func ResolveHarnessName(cfg config.Config, explicit string) (string, error) {
+// when non-empty (validated), else the built-in DefaultHarnessName. Harness
+// selection is explicit — a build with no -t builds the default; there is no
+// registry default flag.
+func ResolveHarnessName(_ config.Config, explicit string) (string, error) {
 	if explicit != "" {
 		if err := ValidateHarnessKey(explicit); err != nil {
 			return "", err
 		}
 		return explicit, nil
 	}
-	name, err := registryDefaultHarness(cfg)
-	if err != nil {
-		return "", err
-	}
-	if name == "" {
-		return DefaultHarnessName, nil
-	}
-	if keyErr := ValidateHarnessKey(name); keyErr != nil {
-		return "", keyErr
-	}
-	return name, nil
-}
-
-// registryDefaultHarness returns the single registry entry flagged default,
-// empty when none is flagged, and an error when more than one is.
-func registryDefaultHarness(cfg config.Config) (string, error) {
-	s := cfg.Settings()
-	if s == nil {
-		return "", nil
-	}
-	names := make([]string, 0, len(s.Harnesses))
-	for name, h := range s.Harnesses {
-		if h.Default {
-			names = append(names, name)
-		}
-	}
-	if len(names) > 1 {
-		sort.Strings(names)
-		return "", fmt.Errorf(
-			"multiple harnesses marked default in settings: %s — set default: true on exactly one",
-			strings.Join(names, ", "),
-		)
-	}
-	if len(names) == 0 {
-		return "", nil
-	}
-	return names[0], nil
+	return DefaultHarnessName, nil
 }
 
 // ValidateHarnessKey rejects registry keys that cannot serve as harness
@@ -107,221 +69,120 @@ func ValidateHarnessKey(name string) error {
 	return nil
 }
 
-// HarnessBundleDir returns the on-disk bundle directory for name: the
-// registry entry's path when configured, else the conventional
-// <config-dir>/harnesses/<name>.
-func HarnessBundleDir(cfg config.Config, name string) (string, error) {
-	s := cfg.Settings()
-	if s == nil {
-		return "", fmt.Errorf("harness %q: settings unavailable, cannot resolve bundle path", name)
+// KnownHarnessNames lists every harness a build can select: the shipped
+// bundles plus any project-registered harness (a harnesses.<name>.path entry
+// in clawker.yaml), sorted and deduplicated.
+func KnownHarnessNames(cfg config.Config) []string {
+	set := map[string]struct{}{}
+	for _, n := range ShippedHarnessNames() {
+		set[n] = struct{}{}
 	}
-	h, ok := s.Harnesses[name]
-	if !ok {
-		// Shipped bundles are registered automatically by the build-time
-		// ensure — the remedy is a build, never hand-editing settings.
-		if isShippedHarness(name) {
-			return "", fmt.Errorf(
-				"harness %q is not registered yet: run `clawker build -t %s` to materialize and register the shipped bundle",
-				name,
-				name,
+	if p := cfg.Project(); p != nil {
+		for name, h := range p.Harnesses {
+			if h.Path != "" {
+				set[name] = struct{}{}
+			}
+		}
+	}
+	names := make([]string, 0, len(set))
+	for n := range set {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// IsKnownHarness reports whether name resolves to a shipped bundle or a
+// project-registered harness.
+func IsKnownHarness(cfg config.Config, name string) bool {
+	return isShippedHarness(name) || projectHarnessPath(cfg, name) != ""
+}
+
+// harnessProvenance records where a harness bundle resolved from and whether
+// it shadowed the shipped bundle of the same name. Unlike stack provenance it
+// is ALWAYS surfaced in build output — every harness resolution names its
+// source.
+type harnessProvenance struct {
+	name    string
+	source  string // "<path> (project registry)" or "shipped"
+	shadows bool   // a project entry shadowing a shipped bundle of the same name
+}
+
+// line renders the provenance as a single build-output line.
+func (p harnessProvenance) line() string {
+	if p.shadows {
+		return fmt.Sprintf("harness %s ← %s shadows shipped", p.name, p.source)
+	}
+	return fmt.Sprintf("harness %s ← %s", p.name, p.source)
+}
+
+// projectHarnessPath returns the project harnesses: registry path for name,
+// or "" when the project registers no bundle path for it. An empty path on an
+// existing entry means the entry only carries per-harness init config, not a
+// registration (the config front-door separately rejects an explicitly-empty
+// path value).
+func projectHarnessPath(cfg config.Config, name string) string {
+	if p := cfg.Project(); p != nil {
+		return p.Harnesses[name].Path
+	}
+	return ""
+}
+
+// LoadHarness resolves and loads the named harness bundle from its closest
+// layer (project registry > shipped embedded).
+func LoadHarness(cfg config.Config, name string) (*harness.Bundle, error) {
+	b, _, err := loadHarnessResolved(cfg, name)
+	return b, err
+}
+
+// loadHarnessResolved loads the named harness bundle from the closest layer
+// that defines it — project harnesses: registry entry > shipped embedded —
+// and returns its provenance (which layer it came from, whether it shadowed a
+// shipped bundle) for build-output reporting. An unresolvable name is a hard
+// error naming the registration remedy.
+func loadHarnessResolved(cfg config.Config, name string) (*harness.Bundle, harnessProvenance, error) {
+	if err := ValidateHarnessKey(name); err != nil {
+		return nil, harnessProvenance{}, err
+	}
+	path := projectHarnessPath(cfg, name)
+	shipped := isShippedHarness(name)
+	switch {
+	case path != "":
+		dir, err := resolveRegistryPath(cfg, fmt.Sprintf("harness %q", name), path)
+		if err != nil {
+			return nil, harnessProvenance{}, err
+		}
+		if _, statErr := os.Stat(filepath.Join(dir, harness.ManifestFile)); statErr != nil {
+			return nil, harnessProvenance{}, fmt.Errorf(
+				"harness %q: no bundle at registered path %s (%w) — fix harnesses.%s.path in clawker.yaml",
+				name, dir, statErr, name,
 			)
 		}
-		return "", fmt.Errorf(
-			"harness %q is not registered: for a custom harness, add a settings entry harnesses.%s with an explicit path to its bundle directory (shipped harnesses are registered automatically by `clawker build -t <name>`)",
+		b, loadErr := harness.Load(name, os.DirFS(dir))
+		if loadErr != nil {
+			return nil, harnessProvenance{}, fmt.Errorf("load harness %q from %s: %w", name, dir, loadErr)
+		}
+		prov := harnessProvenance{
+			name:    name,
+			source:  fmt.Sprintf("%s (project registry)", path),
+			shadows: shipped,
+		}
+		return b, prov, nil
+	case shipped:
+		b, loadErr := loadEmbeddedHarness(name)
+		if loadErr != nil {
+			return nil, harnessProvenance{}, loadErr
+		}
+		return b, harnessProvenance{name: name, source: sourceShipped, shadows: false}, nil
+	default:
+		return nil, harnessProvenance{}, fmt.Errorf(
+			"harness %q is not registered — register its bundle with `clawker harness register <path> --name %s` (or add harnesses.%s.path to clawker.yaml); shipped harnesses: %v",
 			name,
 			name,
+			name,
+			ShippedHarnessNames(),
 		)
 	}
-	if h.Path == "" {
-		return "", fmt.Errorf(
-			"harness %q registry entry has no bundle path: every harness entry carries an explicit path (settings harnesses.%s.path)",
-			name,
-			name,
-		)
-	}
-	return h.Path, nil
-}
-
-// ShippedBundleDefaultDir is the materialization destination seeded into the
-// registry for a shipped harness. It is NOT a resolution fallback — lookup
-// always goes through the registry entry's explicit path.
-func ShippedBundleDefaultDir(name string) string {
-	return filepath.Join(consts.ConfigDir(), harness.HarnessesSubdir, name)
-}
-
-// EnsureHarnesses makes the shipped harnesses usable and visible: every
-// shipped bundle is materialized into the user config dir (copy-if-missing —
-// user edits are never clobbered; bundles whose registry entry points
-// elsewhere land there instead) and the settings registry gains an entry per
-// shipped harness. The registry is the customization surface — seeding it is
-// what makes the shipped set discoverable and editable.
-//
-// The returned warnings name every materialized copy of a shipped bundle
-// whose stamp no longer matches the embedded tree (or that predates the
-// stamp): the shipped bundle moved on while the user-owned copy stayed
-// behind. Nothing is ever auto-overwritten — callers surface the warnings and
-// the user decides whether to delete the directory for a fresh copy.
-func EnsureHarnesses(cfg config.Config) ([]string, error) {
-	warnings, err := ensureShippedCopies(
-		shippedKindHarness,
-		ShippedHarnessNames(),
-		func(name string) (fs.FS, error) {
-			return fs.Sub(harnessesFS, harnessAssetsRoot+"/"+name)
-		},
-		func(name string) string {
-			// Materialize where the registry points when the user relocated
-			// the bundle; the seeded default otherwise. Registry seeding
-			// below records the explicit path either way.
-			if s := cfg.Settings(); s != nil {
-				if h, ok := s.Harnesses[name]; ok && h.Path != "" {
-					return h.Path
-				}
-			}
-			return ShippedBundleDefaultDir(name)
-		},
-	)
-	if err != nil {
-		return warnings, err
-	}
-	return warnings, ensureHarnessRegistry(cfg)
-}
-
-// Shipped-copy kind labels for ensureShippedCopies error/warning text.
-const (
-	shippedKindHarness = "harness bundle"
-	shippedKindStack   = "stack"
-)
-
-// ensureShippedCopies materializes every shipped tree copy-if-missing into
-// its resolved directory and collects a staleness warning for each copy
-// whose stamp no longer matches the embedded tree (or that predates the
-// stamp). Nothing is ever auto-overwritten.
-func ensureShippedCopies(
-	kind string,
-	names []string,
-	src func(name string) (fs.FS, error),
-	dirFor func(name string) string,
-) ([]string, error) {
-	var warnings []string
-	for _, name := range names {
-		fsys, err := src(name)
-		if err != nil {
-			return warnings, fmt.Errorf("shipped %s %q: %w", kind, name, err)
-		}
-		dir := dirFor(name)
-		if matErr := harness.Materialize(fsys, dir); matErr != nil {
-			return warnings, fmt.Errorf("materialize %s %q: %w", kind, name, matErr)
-		}
-		stale, staleErr := harness.MaterializedStale(fsys, dir)
-		if staleErr != nil {
-			return warnings, fmt.Errorf("%s %q: check shipped stamp: %w", kind, name, staleErr)
-		}
-		if stale {
-			warnings = append(warnings, fmt.Sprintf(
-				"shipped %s %q has changed since its copy was materialized at %s — delete that directory and rebuild to refresh it (leaving it in place keeps your copy, including any edits, as-is)",
-				kind,
-				name,
-				dir,
-			))
-		}
-	}
-	return warnings, nil
-}
-
-// ensureHarnessRegistry seeds a settings registry entry for every shipped
-// harness that has none, with the same copy-if-missing contract as bundle
-// files: an existing entry is never touched, so a user who unset a default
-// flag or relocated a path keeps that edit. The built-in default harness is
-// marked default: true only when its entry is being created and no other
-// entry already holds the flag. No-op when nothing is missing.
-func ensureHarnessRegistry(cfg config.Config) error {
-	s := cfg.Settings()
-	if s == nil {
-		return nil
-	}
-	reg, changed := seedShippedEntries(s.Harnesses)
-	if !changed {
-		return nil
-	}
-	store := cfg.SettingsStore()
-	if err := store.Set("harnesses", reg); err != nil {
-		return fmt.Errorf("registering shipped harnesses in settings: %w", err)
-	}
-	if err := store.Write(); err != nil {
-		return fmt.Errorf("writing settings harness registry: %w", err)
-	}
-	return nil
-}
-
-// seedShippedEntries returns a copy of existing with an entry added for each
-// shipped harness that lacks one, and whether anything was added. The
-// built-in default harness takes default: true only when created fresh with
-// no other entry holding the flag.
-func seedShippedEntries(existing map[string]config.HarnessSettings) (map[string]config.HarnessSettings, bool) {
-	reg := make(map[string]config.HarnessSettings, len(existing))
-	hasDefault := false
-	for name, h := range existing {
-		reg[name] = h
-		if h.Default {
-			hasDefault = true
-		}
-	}
-	changed := false
-	for _, name := range ShippedHarnessNames() {
-		if h, ok := reg[name]; ok {
-			// Every entry carries an explicit bundle path; heal a shipped
-			// entry that predates the requirement. Non-empty paths (user
-			// relocations) are never touched.
-			if h.Path == "" {
-				h.Path = ShippedBundleDefaultDir(name)
-				reg[name] = h
-				changed = true
-			}
-			continue
-		}
-		entry := config.HarnessSettings{Default: false, Path: ShippedBundleDefaultDir(name)}
-		if !hasDefault && name == DefaultHarnessName {
-			entry.Default = true
-			hasDefault = true
-		}
-		reg[name] = entry
-		changed = true
-	}
-	return reg, changed
-}
-
-// LoadHarness resolves and loads the named harness bundle. The materialized
-// (user-owned) bundle directory wins when present; a shipped bundle that has
-// not been materialized yet falls back to the embedded copy so rendering
-// works without touching the filesystem (tests, fresh installs).
-func LoadHarness(cfg config.Config, name string) (*harness.Bundle, error) {
-	// Bootstrap seam: with NO registry at all (fresh boot before the settings
-	// migration/build-time ensure has seeded it, or a hermetic test config),
-	// shipped bundles load from the embedded copy. Once any registry exists,
-	// resolution is registry-only — every entry carries an explicit path.
-	s := cfg.Settings()
-	if (s == nil || len(s.Harnesses) == 0) && isShippedHarness(name) {
-		return loadEmbeddedHarness(name)
-	}
-
-	dir, err := HarnessBundleDir(cfg, name)
-	if err != nil {
-		return nil, err
-	}
-	if _, statErr := os.Stat(filepath.Join(dir, harness.ManifestFile)); statErr != nil {
-		return nil, fmt.Errorf(
-			"harness %q: no bundle at registered path %s (%w) — fix harnesses.%s.path in settings or rebuild to re-materialize",
-			name,
-			dir,
-			statErr,
-			name,
-		)
-	}
-	b, loadErr := harness.Load(name, os.DirFS(dir))
-	if loadErr != nil {
-		return nil, fmt.Errorf("load harness %q from %s: %w", name, dir, loadErr)
-	}
-	return b, nil
 }
 
 // isShippedHarness reports whether name is one of the embedded bundles.
@@ -330,7 +191,7 @@ func isShippedHarness(name string) bool {
 }
 
 // loadEmbeddedHarness loads a shipped bundle straight from the embedded
-// assets.
+// assets (the virtual base layer).
 func loadEmbeddedHarness(name string) (*harness.Bundle, error) {
 	src, err := fs.Sub(harnessesFS, harnessAssetsRoot+"/"+name)
 	if err != nil {

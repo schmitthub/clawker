@@ -90,27 +90,6 @@
       ],
       "type": "object"
     },
-    "harnesses": {
-      "additionalProperties": {
-        "additionalProperties": false,
-        "properties": {
-          "default": {
-            "description": "Use this harness when a command does not select one",
-            "title": "Default",
-            "type": "boolean"
-          },
-          "path": {
-            "description": "Bundle directory (harness.yaml + Dockerfile.harness.tmpl + assets); empty = config-dir default",
-            "title": "Path",
-            "type": "string"
-          }
-        },
-        "type": "object"
-      },
-      "description": "Harness registry mapping a harness name to its bundle location and default flag",
-      "title": "Harnesses",
-      "type": "object"
-    },
     "host_proxy": {
       "additionalProperties": false,
       "properties": {
@@ -331,22 +310,6 @@
           "type": "object"
         }
       },
-      "type": "object"
-    },
-    "stacks": {
-      "additionalProperties": {
-        "additionalProperties": false,
-        "properties": {
-          "path": {
-            "description": "Stack definition directory (stack.yaml + Dockerfile.stack.tmpl); empty = config-dir default",
-            "title": "Path",
-            "type": "string"
-          }
-        },
-        "type": "object"
-      },
-      "description": "Stack registry mapping a stack name to its definition directory",
-      "title": "Stacks",
       "type": "object"
     }
   },

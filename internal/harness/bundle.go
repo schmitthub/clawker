@@ -29,8 +29,8 @@ type Bundle struct {
 
 // Load reads a bundle from fsys, whose root must be the bundle directory
 // (containing harness.yaml and Dockerfile.harness.tmpl). Use [os.DirFS] for
-// materialized user-owned bundles and a sub-FS of the embedded assets for
-// shipped bundles.
+// on-disk (project-registered) bundles and a sub-FS of the embedded assets
+// for shipped bundles.
 func Load(name string, fsys fs.FS) (*Bundle, error) {
 	rawManifest, err := fs.ReadFile(fsys, ManifestFile)
 	if err != nil {
@@ -87,8 +87,8 @@ func validateStaging(name string, volumes []VolumeSpec, st Staging) error {
 
 // validateStackDecls checks the manifest's stack declaration list
 // at the load front door: valid names, no duplicates. Whether each name
-// resolves to a definition is a generation-time concern (the namespace
-// includes the settings registry, which a bundle cannot see).
+// resolves to a definition is a generation-time concern (the lookup chain
+// includes the project stacks: registry, which a bundle cannot see).
 func validateStackDecls(name string, decls []string) error {
 	seen := map[string]bool{}
 	for _, tc := range decls {

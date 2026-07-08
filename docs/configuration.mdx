@@ -547,10 +547,6 @@ control_plane:
 docker:
   # Host path to the Docker daemon socket
   socket: <string>  # default: /var/run/docker.sock | required: false
-# Harness registry mapping a harness name to its bundle location and default flag
-harnesses: <value>  # default: n/a | required: false
-# Stack registry mapping a stack name to its definition directory
-stacks: <value>  # default: n/a | required: false
 
 ```
 
@@ -655,20 +651,6 @@ Global settings live at `~/.config/clawker/settings.yaml`. The following tables 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `socket` | string | `/var/run/docker.sock` | Host path to the Docker daemon socket |
-
-
-### harnesses
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `harnesses` | object map | — | Harness registry mapping a harness name to its bundle location and default flag |
-
-
-### stacks
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `stacks` | object map | — | Stack registry mapping a stack name to its definition directory |
 
 
 You can also place a `clawker.yaml` in `~/.config/clawker/` to set user-level project config defaults. This file is merged as the lowest-priority project config layer (just above built-in defaults), so any project-level `.clawker.yaml` overrides it.

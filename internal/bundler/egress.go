@@ -11,9 +11,9 @@ import (
 // expansions). Firewall sync paths must call this — cfg.ProjectEgressRules()
 // alone is missing the floor the harness needs to function.
 //
-// An empty name selects the settings registry default (ResolveHarnessName).
+// An empty name selects the built-in default harness (ResolveHarnessName).
 // Until per-container harness identity lands (image label threading), every
-// sync uses the registry default's floor.
+// sync uses the default harness's floor.
 func EgressRules(cfg config.Config, name string) ([]config.EgressRule, error) {
 	resolved, err := ResolveHarnessName(cfg, name)
 	if err != nil {

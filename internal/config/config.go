@@ -44,6 +44,13 @@ type Config interface {
 	// Use Store.Set(path, value)/Store.Remove(path) to mutate and Store.Write() to persist.
 	SettingsStore() *storage.Store[Settings]
 
+	// ProjectRoot returns the resolved project root the config was loaded
+	// against (the WithProjectRoot anchor), or "" when none was set (config-dir
+	// only loads: CP/host-proxy/bridge daemons, and the in-memory test doubles).
+	// It is the base directory relative registry paths (stacks:/harnesses:
+	// path entries) resolve against.
+	ProjectRoot() string
+
 	// Deprecated: Use SettingsStore().Read().Logging instead.
 	LoggingConfig() LoggingConfig
 
@@ -124,8 +131,16 @@ type Config interface {
 }
 
 type configImpl struct {
-	project  *storage.Store[Project]
-	settings *storage.Store[Settings]
+	project     *storage.Store[Project]
+	settings    *storage.Store[Settings]
+	projectRoot string
+}
+
+// ProjectRoot returns the resolved project root anchor the config was loaded
+// against (empty when walk-up was disabled). Relative registry paths resolve
+// against it.
+func (c *configImpl) ProjectRoot() string {
+	return c.projectRoot
 }
 
 type NewConfigOption func(*newConfigOptions)
@@ -188,8 +203,9 @@ func NewConfig(opts ...NewConfigOption) (Config, error) {
 	}
 
 	return &configImpl{
-		project:  projectStore,
-		settings: settingsStore,
+		project:     projectStore,
+		settings:    settingsStore,
+		projectRoot: options.projectRoot,
 	}, nil
 }
 

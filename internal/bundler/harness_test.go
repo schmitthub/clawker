@@ -1,59 +1,34 @@
 package bundler_test
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/internal/bundler"
-	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/consts"
-	"github.com/schmitthub/clawker/internal/harness"
 )
 
 func TestResolveHarnessName(t *testing.T) {
-	t.Run("explicit wins over registry default", func(t *testing.T) {
-		cfg := configmocks.NewFromString("", `
-harnesses:
-  codex: { default: true }
-`)
-		name, err := bundler.ResolveHarnessName(cfg, "claude")
-		require.NoError(t, err)
-		assert.Equal(t, "claude", name)
-	})
+	cfg := configmocks.NewFromString("", "")
 
-	t.Run("registry default flag wins over builtin", func(t *testing.T) {
-		cfg := configmocks.NewFromString("", `
-harnesses:
-  codex: { default: true }
-`)
-		name, err := bundler.ResolveHarnessName(cfg, "")
+	t.Run("explicit wins", func(t *testing.T) {
+		name, err := bundler.ResolveHarnessName(cfg, "codex")
 		require.NoError(t, err)
 		assert.Equal(t, "codex", name)
 	})
 
-	t.Run("multiple defaults is a configuration error", func(t *testing.T) {
-		cfg := configmocks.NewFromString("", `
-harnesses:
-  zeta: { default: true }
-  alpha: { default: true }
-`)
-		_, err := bundler.ResolveHarnessName(cfg, "")
-		require.ErrorContains(t, err, "multiple harnesses marked default in settings: alpha, zeta")
-	})
-
-	t.Run("no default flag falls back to builtin", func(t *testing.T) {
-		cfg := configmocks.NewFromString("", `
-harnesses:
-  codex: { path: /opt/bundles/codex }
-`)
+	t.Run("no selection falls back to the built-in default", func(t *testing.T) {
 		name, err := bundler.ResolveHarnessName(cfg, "")
 		require.NoError(t, err)
 		assert.Equal(t, bundler.DefaultHarnessName, name)
+	})
+
+	t.Run("explicit reserved alias is rejected", func(t *testing.T) {
+		_, err := bundler.ResolveHarnessName(cfg, consts.ImageTagBase)
+		require.ErrorContains(t, err, "reserved")
 	})
 }
 
@@ -69,232 +44,78 @@ func TestValidateHarnessKey_ReservedTags(t *testing.T) {
 	}
 }
 
-func TestResolveHarnessName_RejectsReservedBase(t *testing.T) {
-	// Even a hostile registry entry literally named "base" must be
-	// unreachable — the key is reserved for the shared base image tag.
-	cfg := configmocks.NewFromString("", `
+func TestKnownHarnessNames(t *testing.T) {
+	cfg := configmocks.NewFromString(`
 harnesses:
-  base: { path: /opt/bundles/base }
-`)
-	_, err := bundler.ResolveHarnessName(cfg, consts.ImageTagBase)
-	require.ErrorContains(t, err, "reserved")
-}
+  mycustom:
+    path: /opt/bundles/mycustom
+`, "")
 
-func TestEnsureHarnesses_SeedsRegistryAndBundles(t *testing.T) {
-	cfg := configmocks.NewIsolatedTestConfig(t)
-
-	warnings, err := bundler.EnsureHarnesses(cfg)
-	require.NoError(t, err)
-	assert.Empty(t, warnings, "fresh materialize must not report staleness")
-
-	// Bundle files materialized to the seeded default location, and the
-	// registry entry records that path explicitly.
-	bundleDir, err := bundler.HarnessBundleDir(cfg, bundler.DefaultHarnessName)
-	require.NoError(t, err)
-	assert.Equal(t, bundler.ShippedBundleDefaultDir(bundler.DefaultHarnessName), bundleDir)
-	assert.FileExists(t, filepath.Join(bundleDir, harness.ManifestFile))
-	assert.FileExists(t, filepath.Join(bundleDir, harness.TemplateFile))
-
-	// Registry seeded: every shipped harness has an entry WITH an explicit
-	// path, the built-in default carries the flag, and resolution now reads
-	// it from settings.
-	reg := cfg.Settings().Harnesses
-	for _, name := range bundler.ShippedHarnessNames() {
-		assert.Contains(t, reg, name)
-		assert.NotEmpty(t, reg[name].Path, "every seeded entry carries an explicit bundle path")
+	names := bundler.KnownHarnessNames(cfg)
+	// Shipped bundles are always known...
+	for _, shipped := range bundler.ShippedHarnessNames() {
+		assert.Contains(t, names, shipped)
 	}
-	assert.True(t, reg[bundler.DefaultHarnessName].Default)
-
-	name, err := bundler.ResolveHarnessName(cfg, "")
-	require.NoError(t, err)
-	assert.Equal(t, bundler.DefaultHarnessName, name)
-
-	// Idempotent: a second ensure rewrites nothing.
-	settingsPath, err := consts.SettingsFilePath()
-	require.NoError(t, err)
-	before, err := os.ReadFile(settingsPath)
-	require.NoError(t, err)
-	warnings, err = bundler.EnsureHarnesses(cfg)
-	require.NoError(t, err)
-	assert.Empty(t, warnings, "matching stamp must stay silent")
-	after, err := os.ReadFile(settingsPath)
-	require.NoError(t, err)
-	assert.Equal(t, string(before), string(after))
+	// ...plus the project-registered one.
+	assert.Contains(t, names, "mycustom")
+	assert.True(t, bundler.IsKnownHarness(cfg, "mycustom"))
+	assert.False(t, bundler.IsKnownHarness(cfg, "nope"))
 }
 
-func TestEnsureHarnesses_NeverClobbersUserEntries(t *testing.T) {
-	cfg := configmocks.NewIsolatedTestConfig(t)
-
-	// User already prefers a custom harness before the first ensure. The
-	// name must not collide with a shipped bundle — shipped names with a
-	// registry path are "relocated shipped bundles" and get materialized.
-	require.NoError(t, cfg.SettingsStore().Set("harnesses", map[string]config.HarnessSettings{
-		"mycustom": {Default: true, Path: "/opt/bundles/mycustom"},
-	}))
-	require.NoError(t, cfg.SettingsStore().Write())
-
-	warnings, err := bundler.EnsureHarnesses(cfg)
-	require.NoError(t, err)
-	assert.Empty(t, warnings, "custom registry entries have no shipped counterpart and never warn")
-
-	reg := cfg.Settings().Harnesses
-	// User entry untouched.
-	assert.Equal(t, config.HarnessSettings{Default: true, Path: "/opt/bundles/mycustom"}, reg["mycustom"])
-	// Shipped entry seeded WITHOUT the default flag — mycustom already holds it.
-	assert.Contains(t, reg, bundler.DefaultHarnessName)
-	assert.False(t, reg[bundler.DefaultHarnessName].Default)
-
-	name, err := bundler.ResolveHarnessName(cfg, "")
-	require.NoError(t, err)
-	assert.Equal(t, "mycustom", name)
-}
-
-// TestEnsureHarnesses_BackfillsMissingPath: a shipped entry that predates
-// the explicit-path requirement (path: "") is healed to the seeded default
-// dir; a user-relocated path is never touched.
-func TestEnsureHarnesses_BackfillsMissingPath(t *testing.T) {
-	cfg := configmocks.NewIsolatedTestConfig(t)
-
-	require.NoError(t, cfg.SettingsStore().Set("harnesses", map[string]config.HarnessSettings{
-		bundler.DefaultHarnessName: {Default: true, Path: ""},
-	}))
-	require.NoError(t, cfg.SettingsStore().Write())
-
-	_, err := bundler.EnsureHarnesses(cfg)
-	require.NoError(t, err)
-
-	reg := cfg.Settings().Harnesses
-	assert.Equal(t,
-		bundler.ShippedBundleDefaultDir(bundler.DefaultHarnessName),
-		reg[bundler.DefaultHarnessName].Path,
-		"empty path on a shipped entry is backfilled")
-	assert.True(t, reg[bundler.DefaultHarnessName].Default, "flag preserved through backfill")
-}
-
-// TestEnsureHarnesses_ShippedStampStaleness: a fresh materialize stamps the
-// copy with the shipped tree's content hash; a matching stamp stays silent; a
-// mismatched stamp warns (naming the bundle and its directory) without ever
-// touching the user-owned copy.
-func TestEnsureHarnesses_ShippedStampStaleness(t *testing.T) {
-	cfg := configmocks.NewIsolatedTestConfig(t)
-
-	// Fresh materialize writes the stamp and reports nothing.
-	warnings, err := bundler.EnsureHarnesses(cfg)
-	require.NoError(t, err)
-	require.Empty(t, warnings)
-	dir, err := bundler.HarnessBundleDir(cfg, bundler.DefaultHarnessName)
-	require.NoError(t, err)
-	stampPath := filepath.Join(dir, harness.ShippedStampFile)
-	require.FileExists(t, stampPath, "fresh materialize must stamp the copy")
-
-	// The stamp is bookkeeping only — the materialized bundle still loads.
-	_, err = bundler.LoadHarness(cfg, bundler.DefaultHarnessName)
-	require.NoError(t, err, "stamp file must be invisible to bundle loading")
-
-	// A stamp from a different shipped tree warns once for that bundle...
-	require.NoError(t, os.WriteFile(stampPath, []byte("stale-hash\n"), 0o644))
-	manifestPath := filepath.Join(dir, harness.ManifestFile)
-	before, err := os.ReadFile(manifestPath)
-	require.NoError(t, err)
-
-	warnings, err = bundler.EnsureHarnesses(cfg)
-	require.NoError(t, err)
-	require.Len(t, warnings, 1, "exactly the stale bundle warns")
-	assert.Contains(t, warnings[0], bundler.DefaultHarnessName)
-	assert.Contains(t, warnings[0], dir)
-
-	// ...and never auto-overwrites the user copy or the stamp.
-	after, err := os.ReadFile(manifestPath)
-	require.NoError(t, err)
-	assert.Equal(t, string(before), string(after), "user copy must not be refreshed")
-	stamp, err := os.ReadFile(stampPath)
-	require.NoError(t, err)
-	assert.Equal(t, "stale-hash\n", string(stamp), "stamp must not be silently healed")
-}
-
-// TestEnsureHarnesses_PreexistingCopyWithoutStampWarns: a materialized dir
-// that predates the stamp (branch-track users) has unknown provenance — it
-// warns and is never retroactively stamped (that would silence real
-// staleness).
-func TestEnsureHarnesses_PreexistingCopyWithoutStampWarns(t *testing.T) {
-	cfg := configmocks.NewIsolatedTestConfig(t)
-
-	dir := bundler.ShippedBundleDefaultDir(bundler.DefaultHarnessName)
-	require.NoError(t, os.MkdirAll(dir, 0o750))
-	require.NoError(t, os.WriteFile(
-		filepath.Join(dir, harness.ManifestFile),
-		[]byte("version:\n  resolver: none\n"),
-		0o644,
-	))
-
-	warnings, err := bundler.EnsureHarnesses(cfg)
-	require.NoError(t, err)
-	require.Len(t, warnings, 1, "only the pre-existing unstamped copy warns")
-	assert.Contains(t, warnings[0], bundler.DefaultHarnessName)
-	assert.Contains(t, warnings[0], dir)
-	assert.NoFileExists(t, filepath.Join(dir, harness.ShippedStampFile),
-		"a pre-existing copy must not be retroactively stamped")
-
-	// The user's file wins copy-if-missing.
-	content, err := os.ReadFile(filepath.Join(dir, harness.ManifestFile))
-	require.NoError(t, err)
-	assert.Equal(t, "version:\n  resolver: none\n", string(content))
-}
-
-// TestLoadHarness_RegistryOnly: once ANY registry exists, resolution is
-// registry-only — an unregistered shipped name is an error, never an
-// embedded-fallback load; with no registry at all the bootstrap seam loads
-// shipped bundles from the embedded assets.
-func TestLoadHarness_RegistryOnly(t *testing.T) {
-	t.Run("registry present, shipped name unregistered", func(t *testing.T) {
-		cfg := configmocks.NewFromString("", `
+func TestKnownHarnessNames_InitConfigWithoutPathIsNotRegistered(t *testing.T) {
+	// A project harnesses.<name> entry that only carries per-harness init
+	// config (no path) is NOT a bundle registration: a NON-shipped name with
+	// such an entry stays unknown. This is the path-guard's load-bearing case —
+	// without the Path check, "mystery" would wrongly become a known harness.
+	cfg := configmocks.NewFromString(`
 harnesses:
-  other: { default: true, path: /opt/bundles/other }
-`)
-		_, err := bundler.LoadHarness(cfg, bundler.DefaultHarnessName)
-		require.ErrorContains(t, err, "is not registered")
-	})
-
-	t.Run("no registry, shipped name loads embedded", func(t *testing.T) {
-		cfg := configmocks.NewBlankConfig()
-		b, err := bundler.LoadHarness(cfg, bundler.DefaultHarnessName)
-		require.NoError(t, err)
-		assert.Equal(t, bundler.DefaultHarnessName, b.Name)
-	})
-
-	t.Run("registered path without a bundle errors actionably", func(t *testing.T) {
-		cfg := configmocks.NewFromString("", `
-harnesses:
-  claude: { default: true, path: /nonexistent/bundle-dir }
-`)
-		_, err := bundler.LoadHarness(cfg, "claude")
-		require.ErrorContains(t, err, "no bundle at registered path")
-	})
+  mystery:
+    mount_projects: false
+`, "")
+	assert.False(t, bundler.IsKnownHarness(cfg, "mystery"),
+		"an init-config-only entry must not register a harness")
+	assert.NotContains(t, bundler.KnownHarnessNames(cfg), "mystery")
+	// A shipped name with the same shape stays known — via the shipped set.
+	assert.True(t, bundler.IsKnownHarness(cfg, "claude"))
 }
 
-func TestHarnessBundleDir(t *testing.T) {
-	cfg := configmocks.NewFromString("", `
-harnesses:
-  custom: { path: /opt/bundles/custom }
-  relocated: { default: true }
-`)
-
-	dir, err := bundler.HarnessBundleDir(cfg, "custom")
+func TestLoadHarness_ShippedVirtualBase(t *testing.T) {
+	// No project registry entry → shipped bundles load straight from embedded.
+	cfg := configmocks.NewFromString("", "")
+	b, err := bundler.LoadHarness(cfg, bundler.DefaultHarnessName)
 	require.NoError(t, err)
-	assert.Equal(t, "/opt/bundles/custom", dir)
+	assert.Equal(t, bundler.DefaultHarnessName, b.Name)
+}
 
-	// Every entry carries an explicit path — a path-less entry and an
-	// unregistered name are both hard errors, never fallback resolution.
-	_, err = bundler.HarnessBundleDir(cfg, "relocated")
-	require.ErrorContains(t, err, "has no bundle path")
+func TestLoadHarness_ProjectRegistered(t *testing.T) {
+	dir := t.TempDir()
+	writeBundle(t, dir, "version:\n  resolver: none\n")
+	cfg := configmocks.NewFromString(`
+harnesses:
+  mytool:
+    path: `+dir+`
+`, "")
 
-	// The remedy differs by provenance: a truly-custom name needs a settings
-	// entry; an unregistered SHIPPED name is auto-registered by the build, so
-	// the error points there instead of at hand-editing settings.
-	_, err = bundler.HarnessBundleDir(cfg, "unregistered")
+	b, err := bundler.LoadHarness(cfg, "mytool")
+	require.NoError(t, err)
+	assert.Equal(t, "mytool", b.Name)
+}
+
+func TestLoadHarness_RegisteredPathWithoutBundle(t *testing.T) {
+	cfg := configmocks.NewFromString(`
+harnesses:
+  claude:
+    path: /nonexistent/bundle-dir
+`, "")
+	_, err := bundler.LoadHarness(cfg, "claude")
+	require.ErrorContains(t, err, "no bundle at registered path")
+}
+
+func TestLoadHarness_Unregistered(t *testing.T) {
+	// A name that is neither shipped nor project-registered is a hard error
+	// naming the registration remedy.
+	cfg := configmocks.NewFromString("", "")
+	_, err := bundler.LoadHarness(cfg, "no-such-harness")
 	require.ErrorContains(t, err, "is not registered")
-	require.ErrorContains(t, err, "add a settings entry harnesses.unregistered")
-	_, err = bundler.HarnessBundleDir(cfg, bundler.DefaultHarnessName)
-	require.ErrorContains(t, err, "is not registered yet")
-	require.ErrorContains(t, err, "clawker build -t "+bundler.DefaultHarnessName)
+	require.ErrorContains(t, err, "clawker harness register")
 }

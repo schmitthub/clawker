@@ -14,10 +14,10 @@
 //     entries) reference assets/-prefixed paths and alone decide what lands
 //     in the image and where.
 //
-// Shipped bundles are embedded in internal/bundler assets and materialized
-// into the user config directory, where they are user-owned and editable.
-// Custom harnesses are the same shape: a bundle directory plus a registry
-// entry in settings.
+// Shipped bundles are embedded in internal/bundler assets and load straight
+// from the embedded FS. Custom harnesses are the same shape: a bundle
+// directory registered via a harnesses.<name>.path entry in the project's
+// clawker.yaml.
 package harness
 
 // Manifest is the parsed harness.yaml.
@@ -29,11 +29,11 @@ type Manifest struct {
 	Egress  []EgressRule `yaml:"egress,omitempty"`
 
 	// Stacks declares the stack definitions this harness's blocks
-	// require, by name. Names resolve against the flat per-build namespace
-	// (shipped ∪ settings registry ∪ this bundle's stacks/ subdir) at
-	// generation time; the resolved fragments render in the harness image
-	// unless the project also declares them (then they live in the shared
-	// base, built first).
+	// require, by name. Names resolve per lineage at generation time —
+	// project stacks: registry > this bundle's stacks/ subdir > shipped —
+	// and the resolved fragments always render in the harness image, even
+	// when the project also declares the same name in the shared base
+	// (fragment self-guards own any interaction).
 	Stacks []string `yaml:"stacks,omitempty"`
 }
 

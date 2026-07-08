@@ -199,8 +199,9 @@ type ProjectGenerator struct {
 	// Empty means use DefaultHarnessVersion ("latest") as a literal.
 	HarnessVersion string
 	// Harness selects the harness bundle whose template blocks and context
-	// files compose the rendered Dockerfile. Empty means the registry entry
-	// marked default (falling back to DefaultHarnessName).
+	// files compose the rendered Dockerfile. Empty means the built-in
+	// DefaultHarnessName — harness selection is explicit; there is no
+	// registry default.
 	Harness string
 	// BaseImageRef is the per-project shared base image reference the
 	// harness image builds FROM (clawker-<project>:base). Set by the
@@ -209,9 +210,40 @@ type ProjectGenerator struct {
 	BaseImageRef string
 
 	bundle *harness.Bundle // lazily loaded via harnessBundle()
+
+	// provenance accumulates build-output lines describing which layer each
+	// stack and the harness bundle resolved from when a closer layer shadowed
+	// a farther one (and, for the harness, always). Read via Provenance()
+	// after GenerateBase/GenerateHarness; the docker Builder forwards it to
+	// clawker build stderr.
+	provenance []string
 }
 
-// harnessBundle resolves and caches the selected harness bundle.
+// Provenance returns the accumulated resolution provenance lines, deduplicated
+// and in insertion order. It is populated by GenerateBase/GenerateHarness.
+func (g *ProjectGenerator) Provenance() []string {
+	seen := make(map[string]struct{}, len(g.provenance))
+	out := make([]string, 0, len(g.provenance))
+	for _, line := range g.provenance {
+		if _, ok := seen[line]; ok {
+			continue
+		}
+		seen[line] = struct{}{}
+		out = append(out, line)
+	}
+	return out
+}
+
+// recordStackProvenance appends the build-output lines for a batch of stack
+// resolutions that shadowed a farther layer.
+func (g *ProjectGenerator) recordStackProvenance(prov []stackProvenance) {
+	for _, p := range prov {
+		g.provenance = append(g.provenance, p.line())
+	}
+}
+
+// harnessBundle resolves and caches the selected harness bundle, recording
+// its resolution provenance on first load.
 func (g *ProjectGenerator) harnessBundle() (*harness.Bundle, error) {
 	if g.bundle != nil {
 		return g.bundle, nil
@@ -220,10 +252,11 @@ func (g *ProjectGenerator) harnessBundle() (*harness.Bundle, error) {
 	if err != nil {
 		return nil, err
 	}
-	b, err := LoadHarness(g.cfg, name)
+	b, prov, err := loadHarnessResolved(g.cfg, name)
 	if err != nil {
 		return nil, err
 	}
+	g.provenance = append(g.provenance, prov.line())
 	g.bundle = b
 	return b, nil
 }
@@ -248,10 +281,11 @@ func (g *ProjectGenerator) GenerateBase() ([]byte, error) {
 	// Project-declared stacks render in the base, before the project's
 	// own instructions. Resolution deliberately excludes the harness bundle
 	// (resolveProjectStacks) — the shared base stays harness-agnostic.
-	root, user, err := resolveProjectStacks(g.cfg, g.cfg.Project().Build.Stacks)
+	root, user, prov, err := resolveProjectStacks(g.cfg, g.cfg.Project().Build.Stacks)
 	if err != nil {
 		return nil, err
 	}
+	g.recordStackProvenance(prov)
 	if tctx.StackRootSteps, err = renderStackSteps(root, tctx); err != nil {
 		return nil, err
 	}
@@ -294,14 +328,15 @@ func (g *ProjectGenerator) GenerateHarness() ([]byte, error) {
 		return nil, err
 	}
 
-	// Harness-declared stacks render here unless the project already
-	// declared them (then they live in the shared base this image builds
-	// FROM — earliest stage wins, rendered exactly once).
-	root, user, err := resolveHarnessStacks(
-		g.cfg, bundle, g.cfg.Project().Build.Stacks, bundle.Manifest.Stacks)
+	// Harness-declared stacks ALWAYS render here with their lineage-resolved
+	// definition — no cross-stratum dedup against project-declared base
+	// stacks (design §2). A name the project also declares in build.stacks
+	// renders in both images; fragment self-guards own any interaction.
+	root, user, prov, err := resolveHarnessStacks(g.cfg, bundle, bundle.Manifest.Stacks)
 	if err != nil {
 		return nil, err
 	}
+	g.recordStackProvenance(prov)
 	if tctx.StackRootSteps, err = renderStackSteps(root, tctx); err != nil {
 		return nil, err
 	}

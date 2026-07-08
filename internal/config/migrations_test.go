@@ -333,15 +333,41 @@ func TestMigrateRemoveLegacyMonitoringKeys(t *testing.T) {
 	})
 
 	t.Run("no-op without monitoring", func(t *testing.T) {
-		// harnesses key present so the registry-seed migration also no-ops —
-		// this subtest isolates the monitoring migration's absent-key path.
+		// No monitoring and no legacy registry keys → the whole settings
+		// migration chain no-ops and the file is left byte-for-byte untouched.
 		const in = `host_proxy:
   port: 9999
-harnesses: {}
 `
 		after := loadSettingsWithMigrations(t, in)
 		assert.Equal(t, in, after, "file without monitoring must be untouched")
 	})
+}
+
+// TestMigrateRemoveLegacyRegistryKeys proves the retired settings-side
+// stacks:/harnesses: registry blocks are stripped on load, while unrelated
+// keys survive.
+func TestMigrateRemoveLegacyRegistryKeys(t *testing.T) {
+	const in = `host_proxy:
+  port: 9999
+stacks:
+  go:
+    path: /some/where
+harnesses:
+  claude:
+    default: true
+    path: /some/bundle
+`
+	var after string
+	notice := captureStderr(t, func() {
+		after = loadSettingsWithMigrations(t, in)
+	})
+	assert.NotContains(t, after, "stacks:", "settings stacks: registry must be stripped")
+	assert.NotContains(t, after, "harnesses:", "settings harnesses: registry must be stripped")
+	assert.Contains(t, after, "port: 9999", "unrelated keys survive the strip")
+	assert.Contains(t, notice, "settings-side stack/harness registry was removed",
+		"the strip must print a one-shot notice")
+	assert.Contains(t, notice, "settings stacks:")
+	assert.Contains(t, notice, "settings harnesses:")
 }
 
 // TestSettingsMigration_LayeredRouting proves the remove+rename settings

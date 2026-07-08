@@ -14,8 +14,8 @@ const NameMaxLength = 32
 // keys that key them (a stacks:/harnesses: registry entry, or a
 // build.harnesses.<name> overlay key). One rule everywhere a name becomes a
 // directory name, a registry key, and — for harnesses — a Docker image tag
-// segment: lowercase letters, digits, and single internal hyphens, no
-// leading or trailing hyphen.
+// segment: lowercase letters, digits, and internal hyphens (consecutive
+// hyphens allowed), no leading or trailing hyphen.
 var nameRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 
 // ValidateName rejects a name that does not match the unified naming rule
@@ -28,7 +28,7 @@ func ValidateName(name string) error {
 	}
 	if !nameRe.MatchString(name) {
 		return fmt.Errorf(
-			"name %q is invalid: must match %s (lowercase letters, digits, and single hyphens; no leading or trailing hyphen)",
+			"name %q is invalid: must match %s (lowercase letters, digits, and internal hyphens; no leading or trailing hyphen)",
 			name,
 			nameRe.String(),
 		)

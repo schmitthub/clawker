@@ -102,87 +102,139 @@ func bundleWithStack(t *testing.T, tcName string) *harness.Bundle {
 	return b
 }
 
-func TestResolveStack_ShippedEmbeddedBootstrap(t *testing.T) {
-	// No registry at all → shipped definitions load from the embedded copy.
+func TestResolveStack_ShippedVirtualBase(t *testing.T) {
+	// No project registry entry → shipped definitions resolve straight from
+	// the embedded FS (the virtual base layer), with no shadow provenance.
 	cfg := configmocks.NewFromString("", "")
 
-	def, err := resolveStack(cfg, nil, "node")
+	def, prov, err := resolveStack(cfg, nil, "node")
 	require.NoError(t, err)
 	assert.Contains(t, def.RootFragment, "nodejs.org/dist")
 	assert.Contains(t, def.UserFragment, "nvm-sh/nvm",
 		"the node stack provisions nvm in user scope")
+	assert.Equal(t, "shipped", prov.source)
+	assert.Empty(t, prov.shadows, "an unshadowed shipped resolution has no provenance line")
 }
 
-func TestResolveStack_RegistryPathWins(t *testing.T) {
+func TestResolveStack_ProjectRegistryWins(t *testing.T) {
 	dir := writeStackDef(t, stack.UserFragmentFile, "RUN echo custom-def\n")
-	cfg := configmocks.NewFromString("", `
+	cfg := configmocks.NewFromString(`
 stacks:
   mytool:
     path: `+dir+`
-`)
+`, "")
 
-	def, err := resolveStack(cfg, nil, "mytool")
+	def, prov, err := resolveStack(cfg, nil, "mytool")
 	require.NoError(t, err)
 	assert.Empty(t, def.RootFragment)
 	assert.Contains(t, def.UserFragment, "custom-def")
+	assert.Contains(t, prov.source, "project (")
+	assert.Empty(t, prov.shadows, "no shipped/bundle definition named mytool → nothing shadowed")
 }
 
-func TestResolveStack_RegistryPathMissing(t *testing.T) {
-	cfg := configmocks.NewFromString("", `
+func TestResolveStack_ProjectRegistryMissing(t *testing.T) {
+	cfg := configmocks.NewFromString(`
 stacks:
   mytool:
     path: /nonexistent/definitely/missing
-`)
+`, "")
 
-	_, err := resolveStack(cfg, nil, "mytool")
+	_, _, err := resolveStack(cfg, nil, "mytool")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "stacks.mytool.path")
+}
+
+func TestResolveStack_RelativeRegistryPathResolvesAgainstProjectRoot(t *testing.T) {
+	root := t.TempDir()
+	stackDir := filepath.Join(root, "stacks", "mytool")
+	require.NoError(t, os.MkdirAll(stackDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(stackDir, stack.ManifestFile), []byte("description: rel\n"), 0o644))
+	require.NoError(
+		t,
+		os.WriteFile(filepath.Join(stackDir, stack.RootFragmentFile), []byte("RUN echo rel-def\n"), 0o644),
+	)
+
+	cfg := configmocks.NewFromString(`
+stacks:
+  mytool:
+    path: ./stacks/mytool
+`, "")
+	cfg.ProjectRootFunc = func() string { return root }
+
+	def, _, err := resolveStack(cfg, nil, "mytool")
+	require.NoError(t, err)
+	assert.Contains(t, def.RootFragment, "rel-def")
+}
+
+func TestResolveStack_RelativeRegistryPathWithoutRootErrors(t *testing.T) {
+	// A relative registry path with no resolved project root must hard-error —
+	// resolving it against the process CWD could silently load whatever
+	// happens to live there.
+	cfg := configmocks.NewFromString(`
+stacks:
+  mytool:
+    path: ./stacks/mytool
+`, "")
+
+	_, _, err := resolveStack(cfg, nil, "mytool")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no project root is resolved")
 }
 
 func TestResolveStack_BundleEmbedded(t *testing.T) {
 	cfg := configmocks.NewFromString("", "")
 	b := bundleWithStack(t, "codex-special")
 
-	def, err := resolveStack(cfg, b, "codex-special")
+	def, prov, err := resolveStack(cfg, b, "codex-special")
 	require.NoError(t, err)
 	assert.Contains(t, def.RootFragment, "bundle-stack-codex-special")
+	assert.Equal(t, "bundletest bundle", prov.source)
+	assert.Empty(t, prov.shadows)
 }
 
-func TestResolveStack_BundleShippedCollision(t *testing.T) {
-	// A bundle embedding a definition named like a shipped one is a
-	// flat-namespace collision — loud error, not silent precedence.
+func TestResolveStack_BundleShadowsShipped(t *testing.T) {
+	// A bundle embedding a definition named like a shipped one WINS wholesale
+	// (matching key at a closer layer), and the provenance records the shadow —
+	// no error, no silent skip.
 	cfg := configmocks.NewFromString("", "")
 	b := bundleWithStack(t, "node")
 
-	_, err := resolveStack(cfg, b, "node")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "one namespace")
+	def, prov, err := resolveStack(cfg, b, "node")
+	require.NoError(t, err)
+	assert.Contains(t, def.RootFragment, "bundle-stack-node")
+	assert.Equal(t, "bundletest bundle", prov.source)
+	assert.Equal(t, []string{"shipped"}, prov.shadows)
+	assert.Contains(t, prov.line(), "shadows shipped")
 }
 
-func TestResolveStack_BundleRegistryCollision(t *testing.T) {
+func TestResolveStack_ProjectShadowsBundle(t *testing.T) {
 	dir := writeStackDef(t, stack.RootFragmentFile, "RUN echo registered\n")
-	cfg := configmocks.NewFromString("", `
+	cfg := configmocks.NewFromString(`
 stacks:
   mytool:
     path: `+dir+`
-`)
+`, "")
 	b := bundleWithStack(t, "mytool")
 
-	_, err := resolveStack(cfg, b, "mytool")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), dir)
+	def, prov, err := resolveStack(cfg, b, "mytool")
+	require.NoError(t, err)
+	assert.Contains(t, def.RootFragment, "registered", "the project registry wins wholesale")
+	assert.Contains(t, prov.source, "project (")
+	assert.Equal(t, []string{"bundletest bundle"}, prov.shadows)
 }
 
 func TestResolveStack_Unknown(t *testing.T) {
 	cfg := configmocks.NewFromString("", "")
 
-	_, err := resolveStack(cfg, nil, "no-such-stack")
+	_, _, err := resolveStack(cfg, nil, "no-such-stack")
 	require.ErrorIs(t, err, ErrUnknownStack)
+	assert.Contains(t, err.Error(), "clawker stack register")
 }
 
-// tcSettingsYAML returns settings with full telemetry defaults plus a
-// registered harness bundle "other" at dir.
-func tcSettingsYAML(dir string) string {
+// tcSettingsYAML returns settings with full telemetry defaults (monitoring is
+// the only settings surface these generator tests need — harness/stack
+// registration lives in the project config).
+func tcSettingsYAML() string {
 	return `
 monitoring:
   otel_collector_port: 4318
@@ -194,10 +246,7 @@ monitoring:
     log_user_prompts: true
     include_account_uuid: true
     include_session_id: true
-harnesses:
-  other:
-    default: true
-    path: ` + dir + "\n"
+`
 }
 
 // tcBundleDir writes a harness bundle whose manifest is given verbatim and
@@ -215,10 +264,18 @@ func tcBundleDir(t *testing.T, manifest string) string {
 	return dir
 }
 
-// tcGenerator builds a ProjectGenerator selecting the "other" bundle.
-func tcGenerator(t *testing.T, projectYAML, bundleManifest string) *ProjectGenerator {
+// projectYAMLWithHarness appends a project-side harness registry entry naming
+// the "other" bundle at dir to a project config body.
+func projectYAMLWithHarness(body, dir string) string {
+	return body + "\nharnesses:\n  other:\n    path: " + dir + "\n"
+}
+
+// tcGenerator builds a ProjectGenerator selecting the project-registered
+// "other" bundle whose manifest is bundleManifest.
+func tcGenerator(t *testing.T, projectBody, bundleManifest string) *ProjectGenerator {
 	t.Helper()
-	cfg := configmocks.NewFromString(projectYAML, tcSettingsYAML(tcBundleDir(t, bundleManifest)))
+	dir := tcBundleDir(t, bundleManifest)
+	cfg := configmocks.NewFromString(projectYAMLWithHarness(projectBody, dir), tcSettingsYAML())
 	gen := NewProjectGenerator(cfg, t.TempDir())
 	gen.Harness = "other"
 	gen.HarnessVersion = testHarnessVersion
@@ -257,8 +314,9 @@ build:
 	require.GreaterOrEqual(t, userRunIdx, 0)
 	assert.Less(t, nvmIdx, userRunIdx, "user fragment must precede user_run")
 
-	// Project-declared stacks live in the base ONLY — the harness image
-	// builds FROM it and must not re-render them.
+	// The bundle declares no stacks, so the harness image carries none — this
+	// asserts the base's project stacks don't leak into the harness image, not
+	// cross-stratum dedup (which is dead).
 	harnessImg, err := gen.GenerateHarness()
 	require.NoError(t, err)
 	assert.NotContains(t, string(harnessImg), nodeMarker)
@@ -302,7 +360,11 @@ stacks: [node]
 	assert.Less(t, nvmIdx, b3Idx, "user stack must precede block_3")
 }
 
-func TestGenerate_BothDeclared_BaseWins(t *testing.T) {
+// TestGenerate_BothDeclared_BothRender proves cross-stratum dedup is dead: a
+// name declared in both build.stacks and the harness manifest renders in BOTH
+// the base and the harness image (design §2 — fragment self-guards own any
+// interaction, the engine never judges satisfaction).
+func TestGenerate_BothDeclared_BothRender(t *testing.T) {
 	gen := tcGenerator(t, `
 build:
   stacks: [node]
@@ -313,12 +375,85 @@ stacks: [node]
 
 	base, err := gen.GenerateBase()
 	require.NoError(t, err)
-	assert.Contains(t, string(base), nodeMarker)
+	assert.Contains(t, string(base), nodeMarker, "project-declared node renders in the base")
 
 	harnessImg, err := gen.GenerateHarness()
 	require.NoError(t, err)
-	assert.NotContains(t, string(harnessImg), nodeMarker,
-		"a project-declared stack renders once, in the base — never again in the harness image")
+	assert.Contains(t, string(harnessImg), nodeMarker,
+		"harness-declared node ALSO renders in the harness image — no cross-stratum dedup")
+}
+
+// TestGenerateHarness_BundleShadowsShipped: a harness manifest declaring a name
+// its bundle also embeds renders the bundle's definition (closer layer wins)
+// and records shadow provenance surfaced via the generator.
+func TestGenerateHarness_BundleShadowsShipped(t *testing.T) {
+	bundleDir := tcBundleDir(t, "version: { resolver: none }\nstacks: [node]\n")
+	tcDir := filepath.Join(bundleDir, stack.StacksSubdir, "node")
+	require.NoError(t, os.MkdirAll(tcDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(tcDir, stack.ManifestFile), []byte("description: shadow\n"), 0o644))
+	require.NoError(
+		t,
+		os.WriteFile(filepath.Join(tcDir, stack.RootFragmentFile), []byte("RUN echo bundle-node-shadow\n"), 0o644),
+	)
+
+	cfg := configmocks.NewFromString(projectYAMLWithHarness("version: \"1\"\n", bundleDir), tcSettingsYAML())
+	gen := NewProjectGenerator(cfg, t.TempDir())
+	gen.Harness = "other"
+	gen.HarnessVersion = testHarnessVersion
+	gen.BaseImageRef = testBaseImageRef
+
+	harnessImg, err := gen.GenerateHarness()
+	require.NoError(t, err)
+	assert.Contains(t, string(harnessImg), "bundle-node-shadow", "the bundle's node definition wins over shipped")
+	assert.NotContains(t, string(harnessImg), nodeMarker, "shipped node is shadowed, not rendered")
+
+	prov := gen.Provenance()
+	require.NotEmpty(t, prov)
+	joined := strings.Join(prov, "\n")
+	assert.Contains(t, joined, "stack node ← other bundle shadows shipped")
+	assert.Contains(t, joined, "harness other ← ")
+}
+
+// writeBundleDir writes a minimal loadable harness bundle into dir.
+func writeBundleDir(t *testing.T, dir string) {
+	t.Helper()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, harness.ManifestFile), []byte("version:\n  resolver: none\n"), 0o644))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, harness.TemplateFile), []byte(`{{define "block_6"}}CMD ["x"]{{end}}`), 0o644))
+}
+
+// TestLoadHarnessResolved_Provenance exercises the harness-bundle provenance
+// line (in-package so the unexported provenance type is reachable).
+func TestLoadHarnessResolved_Provenance(t *testing.T) {
+	t.Run("shipped names its source, no shadow", func(t *testing.T) {
+		cfg := configmocks.NewFromString("", "")
+		_, prov, err := loadHarnessResolved(cfg, DefaultHarnessName)
+		require.NoError(t, err)
+		assert.Equal(t, "shipped", prov.source)
+		assert.False(t, prov.shadows)
+		assert.Equal(t, "harness "+DefaultHarnessName+" ← shipped", prov.line())
+	})
+
+	t.Run("project entry shadowing a shipped bundle", func(t *testing.T) {
+		dir := t.TempDir()
+		writeBundleDir(t, dir)
+		cfg := configmocks.NewFromString("harnesses:\n  "+DefaultHarnessName+":\n    path: "+dir+"\n", "")
+		_, prov, err := loadHarnessResolved(cfg, DefaultHarnessName)
+		require.NoError(t, err)
+		assert.True(t, prov.shadows, "a project entry named like a shipped bundle shadows it")
+		assert.Contains(t, prov.line(), "shadows shipped")
+	})
+
+	t.Run("custom project entry, no shadow", func(t *testing.T) {
+		dir := t.TempDir()
+		writeBundleDir(t, dir)
+		cfg := configmocks.NewFromString("harnesses:\n  custom:\n    path: "+dir+"\n", "")
+		_, prov, err := loadHarnessResolved(cfg, "custom")
+		require.NoError(t, err)
+		assert.False(t, prov.shadows, "custom is not shipped → nothing shadowed")
+		assert.Contains(t, prov.line(), "(project registry)")
+	})
 }
 
 func TestGenerateBase_UnknownStack(t *testing.T) {
@@ -339,97 +474,4 @@ build:
 
 	_, err := gen.GenerateBase()
 	require.ErrorContains(t, err, "duplicate stack declaration")
-}
-
-func TestGenerateHarness_ProjectDeclCollidesWithBundleEmbedded(t *testing.T) {
-	bundleDir := tcBundleDir(t, "version: { resolver: none }\n")
-	tcDir := filepath.Join(bundleDir, stack.StacksSubdir, "node")
-	require.NoError(t, os.MkdirAll(tcDir, 0o755))
-	require.NoError(
-		t,
-		os.WriteFile(filepath.Join(tcDir, stack.ManifestFile), []byte("description: shadow\n"), 0o644),
-	)
-	require.NoError(
-		t,
-		os.WriteFile(filepath.Join(tcDir, stack.RootFragmentFile), []byte("RUN echo shadow\n"), 0o644),
-	)
-
-	cfg := configmocks.NewFromString(`
-build:
-  stacks: [node]
-`, tcSettingsYAML(bundleDir))
-	gen := NewProjectGenerator(cfg, t.TempDir())
-	gen.Harness = "other"
-	gen.HarnessVersion = testHarnessVersion
-	gen.BaseImageRef = testBaseImageRef
-
-	_, err := gen.GenerateHarness()
-	require.ErrorContains(t, err, "one namespace",
-		"a bundle must never silently shadow the definition the base used")
-}
-
-func TestEnsureStacks_SeedsRegistryAndDefinitions(t *testing.T) {
-	cfg := configmocks.NewIsolatedTestConfig(t)
-
-	warnings, err := EnsureStacks(cfg)
-	require.NoError(t, err)
-	assert.Empty(t, warnings, "fresh materialize must not report staleness")
-
-	// Definition files materialized to the seeded default location, and the
-	// registry entry records that path explicitly.
-	for _, name := range ShippedStackNames() {
-		dir := ShippedStackDefaultDir(name)
-		assert.FileExists(t, filepath.Join(dir, stack.ManifestFile))
-		entry, ok := cfg.Settings().Stacks[name]
-		require.True(t, ok, "registry entry seeded for %s", name)
-		assert.Equal(t, dir, entry.Path)
-		_, loadErr := resolveStack(cfg, nil, name)
-		require.NoError(t, loadErr, "materialized %s must load through the registry", name)
-	}
-
-	// Resolution now reads through the registry (materialized copy wins).
-	def, err := resolveStack(cfg, nil, "node")
-	require.NoError(t, err)
-	assert.Contains(t, def.RootFragment, "nodejs.org/dist")
-
-	// User edit to the materialized copy is never clobbered — and an edit is
-	// NOT staleness (the stamp tracks the shipped tree, not the user copy).
-	fragPath := filepath.Join(ShippedStackDefaultDir("rust"), stack.UserFragmentFile)
-	require.NoError(t, os.WriteFile(fragPath, []byte("RUN echo user-edited\n"), 0o644))
-	warnings, err = EnsureStacks(cfg)
-	require.NoError(t, err)
-	assert.Empty(t, warnings, "a user edit must not trip the shipped-stamp check")
-	edited, err := os.ReadFile(fragPath)
-	require.NoError(t, err)
-	assert.Equal(t, "RUN echo user-edited\n", string(edited))
-}
-
-// TestEnsureStacks_ShippedStampStaleness mirrors the harness contract: a
-// mismatched (or missing) stamp on a materialized shipped definition warns
-// and never overwrites the user-owned copy.
-func TestEnsureStacks_ShippedStampStaleness(t *testing.T) {
-	cfg := configmocks.NewIsolatedTestConfig(t)
-
-	warnings, err := EnsureStacks(cfg)
-	require.NoError(t, err)
-	require.Empty(t, warnings)
-
-	dir := ShippedStackDefaultDir("go")
-	stampPath := filepath.Join(dir, harness.ShippedStampFile)
-	require.FileExists(t, stampPath, "fresh materialize must stamp the copy")
-
-	require.NoError(t, os.WriteFile(stampPath, []byte("stale-hash\n"), 0o644))
-	warnings, err = EnsureStacks(cfg)
-	require.NoError(t, err)
-	require.Len(t, warnings, 1, "exactly the stale definition warns")
-	assert.Contains(t, warnings[0], `"go"`)
-	assert.Contains(t, warnings[0], dir)
-
-	// The stale copy still loads — the stamp is invisible to definition
-	// loading — and is never auto-refreshed.
-	_, err = resolveStack(cfg, nil, "go")
-	require.NoError(t, err)
-	stamp, err := os.ReadFile(stampPath)
-	require.NoError(t, err)
-	assert.Equal(t, "stale-hash\n", string(stamp))
 }

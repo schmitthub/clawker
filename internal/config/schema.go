@@ -408,6 +408,11 @@ type KeyNotFoundError struct {
 func (e *KeyNotFoundError) Error() string { return "key not found: " + e.Key }
 
 // Settings represents user-level configuration stored in ~/.config/clawker/settings.yaml.
+// Settings does NOT carry a stack/harness registry: registration lives in the
+// project's clawker.yaml (Project.Stacks / Project.Harnesses), and shipped
+// definitions resolve straight from the binary's embedded assets. The
+// former settings-side stacks:/harnesses: registry was retired in the
+// stack-contract redesign (a load-time migration strips any leftover keys).
 type Settings struct {
 	Logging      LoggingConfig        `yaml:"logging,omitempty"`
 	Monitoring   MonitoringConfig     `yaml:"monitoring,omitempty"`
@@ -415,41 +420,6 @@ type Settings struct {
 	Firewall     FirewallSettings     `yaml:"firewall,omitempty"`
 	ControlPlane ControlPlaneSettings `yaml:"control_plane,omitempty"`
 	Docker       DockerSettings       `yaml:"docker,omitempty"`
-
-	// Harnesses is the harness registry: slug → entry. The slug set drives
-	// harness-name validation, image-tag completion, and bundle resolution.
-	// Shipped bundles are materialized under the config dir and resolved
-	// there implicitly; entries are only needed to relocate a bundle,
-	// register a custom one, or mark the default.
-	Harnesses map[string]HarnessSettings `yaml:"harnesses,omitempty" label:"Harnesses" desc:"Harness registry mapping a harness name to its bundle location and default flag"`
-
-	// Stacks is the stack registry: name → entry. Shipped
-	// definitions are materialized under the config dir and registered
-	// here; entries are only needed to relocate a definition or register
-	// a custom one. Harness bundles may additionally embed their own
-	// definitions; all sources share one flat namespace per build.
-	Stacks map[string]StackSettings `yaml:"stacks,omitempty" label:"Stacks" desc:"Stack registry mapping a stack name to its definition directory"`
-}
-
-// StackSettings is one stack registry entry.
-type StackSettings struct {
-	// Path is the definition directory (stack.yaml +
-	// Dockerfile.stack.tmpl). Empty means the conventional location
-	// under the config dir.
-	Path string `yaml:"path,omitempty" label:"Path" desc:"Stack definition directory (stack.yaml + Dockerfile.stack.tmpl); empty = config-dir default"`
-}
-
-// HarnessSettings is one harness registry entry.
-type HarnessSettings struct {
-	// Default marks this harness as the one used when a command does not
-	// select one (bare `@` ref, `build` without --tag). At most one entry
-	// may set it — resolution rejects settings with several defaults; when
-	// none does, the built-in default applies.
-	Default bool `yaml:"default,omitempty" label:"Default" desc:"Use this harness when a command does not select one"`
-	// Path is the bundle directory (harness.yaml + Dockerfile.harness.tmpl
-	// + assets). Empty means the conventional location under the config
-	// dir.
-	Path string `yaml:"path,omitempty" label:"Path" desc:"Bundle directory (harness.yaml + Dockerfile.harness.tmpl + assets); empty = config-dir default"`
 }
 
 // DockerSettings configures host Docker access. Per-project Docker

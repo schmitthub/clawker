@@ -21,6 +21,15 @@ type Builder struct {
 	log         *logger.Logger
 	workDir     string
 	projectName string
+	provenance  []string
+}
+
+// Provenance returns the stack/harness resolution provenance recorded during
+// the last Build — the lines describing which layer each stack and the harness
+// bundle resolved from when a closer layer shadowed a farther one. Callers
+// surface these on stderr after the build display tears down.
+func (b *Builder) Provenance() []string {
+	return b.provenance
 }
 
 // BuilderOptions contains options for build operations.
@@ -106,6 +115,10 @@ func (b *Builder) Build(ctx context.Context, imageTag string, opts BuilderOption
 	if err != nil {
 		return fmt.Errorf("failed to generate base Dockerfile: %w", err)
 	}
+	// Capture base-image resolution provenance now so it survives a later
+	// base-build or harness-generation failure; the harness render appends to
+	// it below.
+	b.provenance = gen.Provenance()
 	baseHash, err := gen.BaseContentHash(baseDockerfile)
 	if err != nil {
 		return fmt.Errorf("failed to hash base image inputs: %w", err)
@@ -136,6 +149,10 @@ func (b *Builder) Build(ctx context.Context, imageTag string, opts BuilderOption
 	if err != nil {
 		return fmt.Errorf("failed to generate Dockerfile: %w", err)
 	}
+
+	// Capture resolution provenance (base + harness) after both renders so the
+	// command layer can report which layer each stack/harness resolved from.
+	b.provenance = gen.Provenance()
 
 	// BuildKit reads from the filesystem, not a tar stream.
 	// Write the generated Dockerfile + scripts to a temp dir for BuildKit to mount.

@@ -44,6 +44,7 @@ func newMockFrom(cfg config.Config) *ConfigMock {
 	// Store accessors
 	mock.ProjectStoreFunc = cfg.ProjectStore
 	mock.SettingsStoreFunc = cfg.SettingsStore
+	mock.ProjectRootFunc = cfg.ProjectRoot
 
 	// Schema accessors
 	mock.ProjectFunc = cfg.Project

@@ -62,7 +62,7 @@ func ResolvePlaceholderImage(
 }
 
 // validatePlaceholderHarness rejects @:tag selections that don't name a
-// registered harness.
+// known harness (a shipped bundle or a project-registered one).
 func validatePlaceholderHarness(cfg config.Config, harnessTag string) error {
 	if harnessTag == "" {
 		return nil
@@ -70,11 +70,9 @@ func validatePlaceholderHarness(cfg config.Config, harnessTag string) error {
 	if _, err := intbuild.ResolveHarnessName(cfg, harnessTag); err != nil {
 		return fmt.Errorf("resolving harness for @:%s: %w", harnessTag, err)
 	}
-	if s := cfg.Settings(); s != nil && len(s.Harnesses) > 0 {
-		if _, registered := s.Harnesses[harnessTag]; !registered {
-			return fmt.Errorf(
-				"@:%s does not name a registered harness (see settings harnesses)", harnessTag)
-		}
+	if !intbuild.IsKnownHarness(cfg, harnessTag) {
+		return fmt.Errorf(
+			"@:%s does not name a known harness (shipped, or registered in clawker.yaml harnesses:)", harnessTag)
 	}
 	return nil
 }

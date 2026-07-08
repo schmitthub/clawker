@@ -8,8 +8,8 @@ Leaf package: Dockerfile generation, harness bundle + stack registries, egress c
 |------|---------|
 | `dockerfile.go` | Dockerfile rendering (`ProjectGenerator`), build-context generation, embedded templates/scripts |
 | `basehash.go` | Base-image freshness hash (`BaseContentHash`) |
-| `harness.go` | Shipped harness bundle embedding, registry materialization (`EnsureHarnesses`), name resolution, bundle loading |
-| `stack.go` | Shipped stack embedding, registry materialization (`EnsureStacks`), project/harness stack resolution + fragment rendering |
+| `harness.go` | Shipped harness bundle embedding, lineage resolution (project `harnesses:` registry > shipped embedded), name resolution, bundle loading + provenance |
+| `stack.go` | Shipped stack embedding, lineage resolution (project `stacks:` registry > bundle `stacks/` > shipped embedded), project/harness stack resolution + fragment rendering + provenance |
 | `egress.go` | Effective egress rule composition (harness floor + project rules) |
 | `config.go` | Variant configuration |
 | `versions.go` | Harness version resolution (npm dist-tags / GitHub releases) |
@@ -56,7 +56,7 @@ func (g *ProjectGenerator) GetBuildContext() string
 ```
 
 Fields: `BuildKitEnabled`, `HarnessVersion` (resolved npm version for the
-harness ARG), `Harness` (bundle selector; empty = registry default),
+harness ARG), `Harness` (bundle selector; empty = the built-in default harness),
 `BaseImageRef` (FROM ref for the harness image, set by the docker Builder —
 bundler never derives project names; `GenerateHarness` errors
 `ErrNoBaseImageRef` without it).
@@ -139,23 +139,33 @@ type DockerfileContext struct {
 ```go
 const DefaultHarnessName = "claude"
 func ShippedHarnessNames() []string                                    // embedded bundle names (claude, codex)
-func EnsureHarnesses(cfg config.Config) ([]string, error)              // materialize shipped bundles copy-if-missing to <config-dir>/harnesses/<name>/ + seed settings `harnesses:` registry entries; returns a staleness warning per copy whose shipped-stamp mismatches the embedded tree (never auto-overwrites)
-func ResolveHarnessName(cfg config.Config, name string) (string, error) // empty = registry default (exactly one entry may be default: true)
+func ResolveHarnessName(cfg config.Config, explicit string) (string, error) // explicit name (validated) else DefaultHarnessName — no registry default flag
 func ValidateHarnessKey(name string) error
-func HarnessBundleDir(cfg config.Config, name string) (string, error)  // registry entry's explicit path
+func KnownHarnessNames(cfg config.Config) []string                     // shipped ∪ project-registered (harnesses.<name>.path); IsKnownHarness(cfg, name) bool
 func LoadHarness(cfg config.Config, name string) (*harness.Bundle, error)
 ```
 
-A bundle dir = `harness.yaml` (manifest: version spec, stacks, volumes, seeds, staging, egress) + `Dockerfile.harness.tmpl` (block-slot fragment) + optional `assets/`. Manifest/compose types live in `internal/harness`. Registry entries are always explicit `path:` — never convention-resolved. Custom harness = author a bundle dir + add a settings registry entry.
+A bundle dir = `harness.yaml` (manifest: version spec, stacks, volumes, seeds, staging, egress) + `Dockerfile.harness.tmpl` (block-slot fragment) + optional `assets/`. Manifest/compose types live in `internal/harness`.
 
-**Shipped-copy staleness stamp:** a fresh materialize writes `harness.ShippedStampFile` (`.clawker-shipped-hash`, the embedded tree's `harness.ContentHash`) at the copy's root. `EnsureHarnesses`/`EnsureStacks` compare it against the current embedded tree and return a warning per mismatch (or missing stamp on a pre-existing copy) — surfaced on stderr by `clawker build`. Copies are user-owned: never auto-overwritten, never retro-stamped; the user deletes the directory to refresh. Only SHIPPED names are stamped/checked — custom registry entries have no shipped counterpart. The stamp is invisible to bundle/stack loading and to build-context staging (staging walks `assets/` only).
+**Lineage resolution:** a harness name resolves from the closest layer that
+defines it — project `harnesses:` registry (a `harnesses.<name>.path` entry in
+`clawker.yaml`, relative paths against the project root) > shipped embedded FS.
+Shipped bundles are the virtual base layer: they load straight from the binary,
+no materialization step. A project entry named like a shipped bundle shadows it
+(reported in build output). Custom harness = author a bundle dir + register its
+path in `clawker.yaml` `harnesses:`. Unresolvable name = hard error naming the
+`clawker harness register` remedy.
+
+Harness selection is explicit: `ResolveHarnessName(cfg, "")` returns the
+built-in `DefaultHarnessName` — there is no registry default flag.
 
 ### Stacks (`stack.go`)
 
 Language stacks are file-backed definitions: `stack.yaml` + `Dockerfile.stack-root.tmpl` and/or `Dockerfile.stack-user.tmpl` (loaded via `internal/stack`). Shipped: `go` (root), `node` (root LTS + user nvm), `python` (root uv + uv-managed CPython), `rust` (user rustup).
 
-- `EnsureStacks(cfg) ([]string, error)` materializes shipped defs copy-if-missing to `<config-dir>/stacks/<name>/` and seeds the settings `stacks:` registry (name → path); returns shipped-stamp staleness warnings (same contract as `EnsureHarnesses`). One flat namespace; a name collision is an error.
-- **Declared, never installed:** project `build.stacks: [go, node]` renders the fragments in the base image; a harness manifest's `stacks:` renders in the harness image unless the project already declared the same name (then it lives in the shared base). `StackRootSteps` render before block_1 (root), `StackUserSteps` before block_3 (user).
+- **Lineage resolution** (`resolveStack`): a declared name resolves from the closest layer that defines it. Base image: project `stacks:` registry > shipped embedded. Harness image: project `stacks:` registry > the selected bundle's `stacks/<name>/` dir > shipped embedded. A matching key at a closer layer wins **wholesale** — never merged. Shipped definitions load straight from the embedded FS (the virtual base layer); there is no config-dir materialization. Unresolvable name = hard error naming the `clawker stack register` remedy.
+- **Both strata always render (no cross-stratum dedup):** project `build.stacks: [go, node]` renders in the base image; a harness manifest's `stacks:` ALWAYS renders in the harness image with its lineage-resolved definition — even when the project also declared the same name in the base. Both render; fragment self-guards / apt idempotence / PATH shadowing own any interaction (design §2). `StackRootSteps` render before block_1 (root), `StackUserSteps` before block_3 (user).
+- **Provenance:** when a closer layer shadows a farther one, resolution records a build-output line (`stack node ← project (./stacks/node) shadows shipped`); the harness bundle's own resolution always names its source. The docker `Builder` collects `ProjectGenerator.Provenance()` and `clawker build` prints it to stderr.
 - Fragments are **self-guarded** — they skip when the image already provides the tool (e.g. the node fragment keeps an existing node ≥ its floor major).
 - Node specifics (node stack fragment): `ARG NODE_VERSION` (default `24`) names the LTS *line*, not a patch — the latest patch resolves per-build from `nodejs.org/dist/index.json`, floating onto security patches on rebuild (justified pin-policy exception; rationale in `docs/threat-model.mdx`). Tarball is GPG-verified via `SHASUMS256.txt.asc`. `ENV NODE_USE_SYSTEM_CA=1` makes node trust the OS CA bundle (and therefore the firewall MITM CA once merged).
 
@@ -165,7 +175,7 @@ Language stacks are file-backed definitions: `stack.yaml` + `Dockerfile.stack-ro
 func EgressRules(cfg config.Config, name string) ([]config.EgressRule, error)
 ```
 
-Composes the effective firewall rule set: the selected harness bundle's `egress:` floor first, then the project's `security.firewall` rules/add_domains. Firewall sync paths must call this — `cfg.ProjectEgressRules()` alone is missing the floor the harness needs to function. Empty name = registry default.
+Composes the effective firewall rule set: the selected harness bundle's `egress:` floor first, then the project's `security.firewall` rules/add_domains. Firewall sync paths must call this — `cfg.ProjectEgressRules()` alone is missing the floor the harness needs to function. Empty name = the built-in default harness.
 
 ### Asset Placement in the Harness Image (cache-locality + inject-lifetime invariants)
 

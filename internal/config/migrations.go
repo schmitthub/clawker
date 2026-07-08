@@ -29,14 +29,51 @@ func ProjectMigrations() []storage.Migration[Project] {
 // shape as ProjectMigrations — runs on the settings store during construction,
 // re-saving when any returns true.
 //
-// The harness/stack registries are deliberately NOT seeded here: registry
-// entries point at materialized bundle directories, so the build-time ensure
-// paths (which materialize those directories) own all registry writes. Config
-// load never invents registry state.
+// The settings-side harness/stack registry was retired in the stack-contract
+// redesign: registration now lives in the project's clawker.yaml and shipped
+// definitions resolve from the binary's embedded assets. The registry-key
+// migration strips any leftover settings-side stacks:/harnesses: keys so
+// storage's preserve-unknown-keys behaviour doesn't keep them on disk forever.
 func SettingsMigrations() []storage.Migration[Settings] {
 	return []storage.Migration[Settings]{
 		migrateRemoveLegacyMonitoringKeys,
+		migrateRemoveLegacyRegistryKeys,
 	}
+}
+
+// legacySettingsRegistryKeys returns the settings-side registry nodes removed
+// in the stack-contract redesign (registration moved to project clawker.yaml).
+func legacySettingsRegistryKeys() []string {
+	return []string{"stacks", "harnesses"}
+}
+
+// migrateRemoveLegacyRegistryKeys strips the retired settings-side stacks:/
+// harnesses: registry blocks from a user's settings.yaml on first load
+// post-upgrade and prints a one-shot stderr notice. Without it the keys would
+// linger (storage preserves unknown keys on re-save) and read as still-live
+// configuration when they no longer do anything.
+func migrateRemoveLegacyRegistryKeys(s *storage.Store[Settings]) (bool, error) {
+	var removed []string
+	for _, key := range legacySettingsRegistryKeys() {
+		if !s.Has(key) {
+			continue
+		}
+		removed = append(removed, key)
+		if _, rErr := s.Remove(key); rErr != nil {
+			return false, fmt.Errorf("removing settings %s: %w", key, rErr)
+		}
+	}
+	if len(removed) == 0 {
+		return false, nil
+	}
+	sort.Strings(removed)
+	fmt.Fprintln(os.Stderr, "warning: the settings-side stack/harness registry was removed in this clawker version:")
+	for _, key := range removed {
+		fmt.Fprintf(os.Stderr, "  settings %s: (dropped)\n", key)
+	}
+	fmt.Fprintln(os.Stderr, "Register stacks and harnesses per-project in clawker.yaml with `clawker stack register`")
+	fmt.Fprintln(os.Stderr, "and `clawker harness register`; shipped definitions need no registration.")
+	return true, nil
 }
 
 // legacyMonitoringKeys is the set of monitoring.* keys removed in the

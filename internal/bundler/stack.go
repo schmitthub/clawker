@@ -5,7 +5,6 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
-	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -14,22 +13,25 @@ import (
 	"text/template"
 
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/harness"
 	"github.com/schmitthub/clawker/internal/stack"
 )
 
 // Shipped stack definitions. Each subdirectory of assets/stacks is a
-// complete definition (stack.yaml + root and/or user Dockerfile
-// fragments) that is
-// materialized into the user config dir, where it is user-owned and
-// editable. The embedded copy is only a seed and a hermetic fallback — the
-// materialized definition always wins when present.
+// complete definition (stack.yaml + root and/or user Dockerfile fragments)
+// embedded in the binary. Shipped definitions are the virtual base layer of
+// stack resolution: they resolve straight from this embedded FS, always, and
+// are shadowed only by a matching key at a closer layer (a project stacks:
+// registry entry, or a harness bundle's own stacks/ directory).
 //
 //go:embed all:assets/stacks
 var stacksFS embed.FS
 
 const stackAssetsRoot = "assets/stacks"
+
+// sourceShipped is the provenance label for the shipped embedded layer (the
+// virtual base of both the stack and harness lookup chains).
+const sourceShipped = "shipped"
 
 // ShippedStackNames lists the definitions embedded in this build.
 func ShippedStackNames() []string {
@@ -47,93 +49,13 @@ func ShippedStackNames() []string {
 	return names
 }
 
-// ShippedStackDefaultDir is the materialization destination seeded into
-// the registry for a shipped stack. It is NOT a resolution fallback —
-// lookup always goes through the registry entry's explicit path.
-func ShippedStackDefaultDir(name string) string {
-	return filepath.Join(consts.ConfigDir(), stack.StacksSubdir, name)
-}
-
-// EnsureStacks makes the shipped stacks usable and visible: every
-// shipped definition is materialized into the user config dir
-// (copy-if-missing — user edits are never clobbered; definitions whose
-// registry entry points elsewhere land there instead) and the settings
-// registry gains an entry per shipped stack. The registry is the
-// customization surface — seeding it is what makes the shipped set
-// discoverable and editable.
-//
-// The returned warnings name every materialized copy of a shipped definition
-// whose stamp no longer matches the embedded tree (or that predates the
-// stamp) — same contract as EnsureHarnesses: never auto-overwritten, the user
-// deletes the directory to refresh.
-func EnsureStacks(cfg config.Config) ([]string, error) {
-	warnings, err := ensureShippedCopies(
-		shippedKindStack,
-		ShippedStackNames(),
-		func(name string) (fs.FS, error) {
-			return fs.Sub(stacksFS, stackAssetsRoot+"/"+name)
-		},
-		func(name string) string {
-			if s := cfg.Settings(); s != nil {
-				if tc, ok := s.Stacks[name]; ok && tc.Path != "" {
-					return tc.Path
-				}
-			}
-			return ShippedStackDefaultDir(name)
-		},
-	)
-	if err != nil {
-		return warnings, err
-	}
-	return warnings, ensureStackRegistry(cfg)
-}
-
-// ensureStackRegistry seeds a settings registry entry for every shipped
-// stack that has none, with the same copy-if-missing contract as the
-// files: an existing entry is never touched. No-op when nothing is missing.
-func ensureStackRegistry(cfg config.Config) error {
-	s := cfg.Settings()
-	if s == nil {
-		return nil
-	}
-	reg := make(map[string]config.StackSettings, len(s.Stacks))
-	maps.Copy(reg, s.Stacks)
-	changed := false
-	for _, name := range ShippedStackNames() {
-		if tc, ok := reg[name]; ok {
-			// Every entry carries an explicit definition path; heal an entry
-			// that predates the requirement. Non-empty paths (user
-			// relocations) are never touched.
-			if tc.Path == "" {
-				tc.Path = ShippedStackDefaultDir(name)
-				reg[name] = tc
-				changed = true
-			}
-			continue
-		}
-		reg[name] = config.StackSettings{Path: ShippedStackDefaultDir(name)}
-		changed = true
-	}
-	if !changed {
-		return nil
-	}
-	store := cfg.SettingsStore()
-	if err := store.Set("stacks", reg); err != nil {
-		return fmt.Errorf("registering shipped stacks in settings: %w", err)
-	}
-	if err := store.Write(); err != nil {
-		return fmt.Errorf("writing settings stack registry: %w", err)
-	}
-	return nil
-}
-
 // isShippedStack reports whether name is one of the embedded definitions.
 func isShippedStack(name string) bool {
 	return slices.Contains(ShippedStackNames(), name)
 }
 
-// loadEmbeddedStack loads a shipped definition straight from the
-// embedded assets.
+// loadEmbeddedStack loads a shipped definition straight from the embedded
+// assets (the virtual base layer).
 func loadEmbeddedStack(name string) (*stack.Definition, error) {
 	src, err := fs.Sub(stacksFS, stackAssetsRoot+"/"+name)
 	if err != nil {
@@ -146,89 +68,186 @@ func loadEmbeddedStack(name string) (*stack.Definition, error) {
 	return def, nil
 }
 
-// resolveStack loads one declared stack name from its unique source.
-// All sources share one flat namespace: a name available both from the
-// selected harness bundle AND from the registry/shipped set is a collision
-// error — explicit over clever; bundle authors prefix bespoke definitions.
-func resolveStack(cfg config.Config, bundle *harness.Bundle, name string) (*stack.Definition, error) {
+// stackProvenance records where a declared stack name resolved from and which
+// farther layers it shadowed. Emitted in build output only when a closer layer
+// shadows a farther one (len(shadows) > 0) — an unshadowed resolution is not
+// noteworthy.
+type stackProvenance struct {
+	name    string   // the declared stack name
+	source  string   // the layer it resolved from (e.g. "project (./stacks/node)")
+	shadows []string // farther layers that also define name, closest first
+}
+
+// line renders the provenance as a single build-output line.
+func (p stackProvenance) line() string {
+	return fmt.Sprintf("stack %s ← %s shadows %s", p.name, p.source, strings.Join(p.shadows, ", "))
+}
+
+// noteworthy reports whether the resolution is worth a build-output line: a
+// closer layer shadowed a farther one. Unshadowed resolutions stay silent.
+func (p stackProvenance) noteworthy() bool {
+	return len(p.shadows) > 0
+}
+
+// resolveStack loads one declared stack name from the closest layer that
+// defines it. Lineage is scoped by whether a harness bundle is in play:
+//
+//	base image    (bundle == nil): project stacks: registry > shipped
+//	harness image (bundle != nil): project stacks: registry > bundle stacks/ > shipped
+//
+// A matching key at a closer layer wins WHOLESALE — never merged. When a closer
+// layer shadows a farther one, the returned provenance names both; the caller
+// decides whether to surface it. An unresolvable name is a hard error naming the
+// registration remedy — never a silent skip.
+func resolveStack(cfg config.Config, bundle *harness.Bundle, name string) (*stack.Definition, stackProvenance, error) {
 	if err := stack.ValidateName(name); err != nil {
-		return nil, fmt.Errorf("resolve stack: %w", err)
+		return nil, stackProvenance{}, fmt.Errorf("resolve stack: %w", err)
 	}
 
+	projEntry, projHas := projectStackEntry(cfg, name)
 	bundleHas := bundle != nil && bundle.HasStack(name)
-	var regEntry config.StackSettings
-	regHas := false
-	if s := cfg.Settings(); s != nil {
-		regEntry, regHas = s.Stacks[name]
-	}
+	shippedHas := isShippedStack(name)
 
-	if bundleHas {
-		if regHas || isShippedStack(name) {
-			return nil, stackCollisionError(bundle.Name, name, regEntry, regHas)
+	switch {
+	case projHas:
+		def, err := loadProjectStack(cfg, name, projEntry)
+		if err != nil {
+			return nil, stackProvenance{}, err
 		}
+		prov := stackProvenance{
+			name:    name,
+			source:  fmt.Sprintf("project (%s)", projEntry.Path),
+			shadows: fartherStackLayers(bundle, bundleHas, shippedHas),
+		}
+		return def, prov, nil
+	case bundleHas:
 		def, err := bundle.Stack(name)
 		if err != nil {
-			return nil, fmt.Errorf("resolve stack: %w", err)
+			return nil, stackProvenance{}, fmt.Errorf("resolve stack: %w", err)
 		}
-		return def, nil
+		prov := stackProvenance{
+			name:    name,
+			source:  bundleLabel(bundle),
+			shadows: fartherStackLayers(nil, false, shippedHas),
+		}
+		return def, prov, nil
+	case shippedHas:
+		def, err := loadEmbeddedStack(name)
+		if err != nil {
+			return nil, stackProvenance{}, err
+		}
+		return def, stackProvenance{name: name, source: sourceShipped, shadows: nil}, nil
+	default:
+		return nil, stackProvenance{}, fmt.Errorf(
+			"%w: %q is declared in clawker.yaml but resolves nowhere — register a definition with `clawker stack register <path> --name %s`, or declare a shipped stack (%v)",
+			ErrUnknownStack,
+			name,
+			name,
+			ShippedStackNames(),
+		)
 	}
-	if regHas {
-		return loadRegisteredStack(name, regEntry)
-	}
-	// Bootstrap seam: no registry entry yet (fresh boot before the
-	// build-time ensure has seeded it, or a hermetic test config) — shipped
-	// definitions load from the embedded copy.
-	if isShippedStack(name) {
-		return loadEmbeddedStack(name)
-	}
-	return nil, fmt.Errorf(
-		"%w: %q (known: shipped %v, settings stacks registry, or a definition embedded in the selected harness bundle)",
-		ErrUnknownStack,
-		name,
-		ShippedStackNames(),
-	)
 }
 
-// stackCollisionError names both definitions claiming a flat-namespace
-// stack name.
-func stackCollisionError(bundleName, name string, regEntry config.StackSettings, regHas bool) error {
-	other := "the shipped clawker definition"
-	if regHas {
-		other = fmt.Sprintf("the registered definition at %s (settings stacks.%s.path)", regEntry.Path, name)
+// fartherStackLayers lists the farther lookup layers that also define a
+// declared name — closest first — for shadow provenance. bundle may be nil
+// only when bundleHas is false.
+func fartherStackLayers(bundle *harness.Bundle, bundleHas, shippedHas bool) []string {
+	var layers []string
+	if bundleHas {
+		layers = append(layers, bundleLabel(bundle))
 	}
-	return fmt.Errorf(
-		"stack %q is defined both by harness bundle %q and by %s — stack names share one namespace; rename the bundle-embedded definition",
-		name,
-		bundleName,
-		other,
-	)
+	if shippedHas {
+		layers = append(layers, sourceShipped)
+	}
+	return layers
 }
 
-// resolveProjectStacks resolves the project's build.stacks
-// declarations for the BASE image. The bundle is deliberately absent: the
-// shared base is harness-agnostic, so project declarations resolve from the
-// shipped set and the settings registry only — a bundle-embedded definition
-// can never leak into the base. Returns root-scope and user-scope
-// fragment lists in declaration order.
+// bundleLabel is the provenance phrase for a bundle-embedded stack layer.
+func bundleLabel(bundle *harness.Bundle) string {
+	return fmt.Sprintf("%s bundle", bundle.Name)
+}
+
+// projectStackEntry returns the project stacks: registry entry for name, and
+// whether one with a non-empty path exists. An empty path is rejected at the
+// config front-door (internal/config validate.go); it is treated as absent
+// here only defensively, never as a silent skip of a valid registration.
+func projectStackEntry(cfg config.Config, name string) (config.StackRegistryEntry, bool) {
+	p := cfg.Project()
+	if p == nil {
+		return config.StackRegistryEntry{}, false
+	}
+	entry, ok := p.Stacks[name]
+	if !ok || entry.Path == "" {
+		return config.StackRegistryEntry{}, false
+	}
+	return entry, true
+}
+
+// loadProjectStack loads a definition through its project stacks: registry
+// entry, resolving a relative path against the project root.
+func loadProjectStack(cfg config.Config, name string, entry config.StackRegistryEntry) (*stack.Definition, error) {
+	dir, err := resolveRegistryPath(cfg, fmt.Sprintf("stack %q", name), entry.Path)
+	if err != nil {
+		return nil, err
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, stack.ManifestFile)); statErr != nil {
+		return nil, fmt.Errorf(
+			"stack %q: no definition at registered path %s (%w) — fix stacks.%s.path in clawker.yaml",
+			name, dir, statErr, name,
+		)
+	}
+	def, loadErr := stack.Load(name, os.DirFS(dir))
+	if loadErr != nil {
+		return nil, fmt.Errorf("load stack %q from %s: %w", name, dir, loadErr)
+	}
+	return def, nil
+}
+
+// resolveStackDecls resolves a declaration list against the given bundle
+// (nil = base-image lineage), accumulating fragments in declaration order and
+// shadow provenance. dupIsError controls duplicate handling: build.stacks
+// rejects a repeated name; a harness manifest silently renders it once.
+func resolveStackDecls(
+	cfg config.Config,
+	bundle *harness.Bundle,
+	decls []string,
+	dupIsError bool,
+) ([]namedFragment, []namedFragment, []stackProvenance, error) {
+	seen := map[string]bool{}
+	var defs []*stack.Definition
+	var prov []stackProvenance
+	for _, name := range decls {
+		if seen[name] {
+			if dupIsError {
+				return nil, nil, nil, fmt.Errorf("build.stacks: duplicate stack declaration %q", name)
+			}
+			continue
+		}
+		seen[name] = true
+		def, p, resolveErr := resolveStack(cfg, bundle, name)
+		if resolveErr != nil {
+			return nil, nil, nil, resolveErr
+		}
+		defs = append(defs, def)
+		if p.noteworthy() {
+			prov = append(prov, p)
+		}
+	}
+	root, user := splitFragments(defs)
+	return root, user, prov, nil
+}
+
+// resolveProjectStacks resolves the project's build.stacks declarations for
+// the BASE image. The bundle is deliberately absent: the shared base is
+// harness-agnostic, so project declarations resolve from the project registry
+// and the shipped set only — a bundle-embedded definition can never leak into
+// the base. Returns root-scope and user-scope fragment lists in declaration
+// order, plus the provenance of any resolution that shadowed a farther layer.
 func resolveProjectStacks(
 	cfg config.Config,
 	decls []string,
-) ([]namedFragment, []namedFragment, error) {
-	seen := map[string]bool{}
-	var defs []*stack.Definition
-	for _, name := range decls {
-		if seen[name] {
-			return nil, nil, fmt.Errorf("build.stacks: duplicate stack declaration %q", name)
-		}
-		seen[name] = true
-		def, resolveErr := resolveStack(cfg, nil, name)
-		if resolveErr != nil {
-			return nil, nil, resolveErr
-		}
-		defs = append(defs, def)
-	}
-	root, user := splitFragments(defs)
-	return root, user, nil
+) ([]namedFragment, []namedFragment, []stackProvenance, error) {
+	return resolveStackDecls(cfg, nil, decls, true)
 }
 
 // namedFragment is one fragment of a definition, tagged with the
@@ -254,54 +273,20 @@ func splitFragments(defs []*stack.Definition) ([]namedFragment, []namedFragment)
 	return root, user
 }
 
-// resolveHarnessStacks resolves the bundle manifest's declarations for
-// the HARNESS image: every harness-declared name the project did not
-// already declare (earliest stage wins — a project-declared stack is in
-// the base the harness image builds FROM). Project-declared names are still
-// collision-checked against the bundle's embedded definitions so a bundle
-// can never silently shadow the definition the base actually used.
+// resolveHarnessStacks resolves the harness declarations for the HARNESS
+// image. Every declared name ALWAYS renders here with its lineage-resolved
+// definition (project registry > bundle stacks/ > shipped) — there is no
+// cross-stratum dedup against project-declared base stacks. A project that
+// also declares the same name in build.stacks gets it in the base too; both
+// render, and fragment self-guards / apt idempotence / PATH shadowing own any
+// interaction (design §2). Returns root- and user-scope fragments in
+// declaration order plus shadow provenance.
 func resolveHarnessStacks(
 	cfg config.Config,
 	bundle *harness.Bundle,
-	projectDecls, harnessDecls []string,
-) ([]namedFragment, []namedFragment, error) {
-	projectSet := map[string]bool{}
-	for _, name := range projectDecls {
-		projectSet[name] = true
-		if err := checkBundleShadow(cfg, bundle, name); err != nil {
-			return nil, nil, err
-		}
-	}
-	seen := map[string]bool{}
-	var defs []*stack.Definition
-	for _, name := range harnessDecls {
-		if projectSet[name] || seen[name] {
-			continue
-		}
-		seen[name] = true
-		def, resolveErr := resolveStack(cfg, bundle, name)
-		if resolveErr != nil {
-			return nil, nil, resolveErr
-		}
-		defs = append(defs, def)
-	}
-	root, user := splitFragments(defs)
-	return root, user, nil
-}
-
-// checkBundleShadow errors when the selected bundle embeds a definition for
-// a project-declared name — the base already resolved that name from the
-// shipped/registry set, and a bundle must never silently shadow it.
-func checkBundleShadow(cfg config.Config, bundle *harness.Bundle, name string) error {
-	if bundle == nil || !bundle.HasStack(name) {
-		return nil
-	}
-	var regEntry config.StackSettings
-	regHas := false
-	if s := cfg.Settings(); s != nil {
-		regEntry, regHas = s.Stacks[name]
-	}
-	return stackCollisionError(bundle.Name, name, regEntry, regHas)
+	harnessDecls []string,
+) ([]namedFragment, []namedFragment, []stackProvenance, error) {
+	return resolveStackDecls(cfg, bundle, harnessDecls, false)
 }
 
 // renderStackSteps executes each fragment against the Dockerfile
@@ -322,27 +307,22 @@ func renderStackSteps(fragments []namedFragment, tctx *DockerfileContext) ([]str
 	return steps, nil
 }
 
-// loadRegisteredStack loads a definition through its settings registry
-// entry's explicit path.
-func loadRegisteredStack(name string, regEntry config.StackSettings) (*stack.Definition, error) {
-	if regEntry.Path == "" {
-		return nil, fmt.Errorf(
-			"stack %q registry entry has no path (settings stacks.%s.path)",
-			name, name,
+// resolveRegistryPath resolves a registry path entry to an absolute path: an
+// absolute entry as-is, a relative entry against the project root. A relative
+// entry with no project root set (config-dir-only loads) is a hard error —
+// resolving it against the process CWD would silently load whatever happens to
+// live there.
+func resolveRegistryPath(cfg config.Config, key, p string) (string, error) {
+	if p == "" || filepath.IsAbs(p) {
+		return p, nil
+	}
+	root := cfg.ProjectRoot()
+	if root == "" {
+		return "", fmt.Errorf(
+			"%s: registry path %q is relative but no project root is resolved — use an absolute path or run inside the project",
+			key,
+			p,
 		)
 	}
-	if _, statErr := os.Stat(filepath.Join(regEntry.Path, stack.ManifestFile)); statErr != nil {
-		return nil, fmt.Errorf(
-			"stack %q: no definition at registered path %s (%w) — fix stacks.%s.path in settings or rebuild to re-materialize",
-			name,
-			regEntry.Path,
-			statErr,
-			name,
-		)
-	}
-	def, loadErr := stack.Load(name, os.DirFS(regEntry.Path))
-	if loadErr != nil {
-		return nil, fmt.Errorf("load stack %q from %s: %w", name, regEntry.Path, loadErr)
-	}
-	return def, nil
+	return filepath.Join(root, p), nil
 }

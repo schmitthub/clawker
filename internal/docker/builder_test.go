@@ -155,7 +155,6 @@ func newTestClientWithConfig(cfg config.Config) (*Client, *whailtest.FakeAPIClie
 // returns a config with it plus default monitoring settings.
 func testHarnessCfg(t *testing.T) *configmocks.ConfigMock {
 	t.Helper()
-	projectYAML := "agent:\n  editor: nano\n"
 	bundleDir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(bundleDir, "harness.yaml"), []byte("{}\n"), 0o644))
 	require.NoError(t, os.WriteFile(
@@ -164,6 +163,9 @@ func testHarnessCfg(t *testing.T) *configmocks.ConfigMock {
 		0o644,
 	))
 
+	// The "other" harness is registered project-side (clawker.yaml harnesses:),
+	// which is where harness registration lives.
+	projectYAML := "agent:\n  editor: nano\nharnesses:\n  other:\n    path: " + bundleDir + "\n"
 	settingsYAML := `
 monitoring:
   telemetry:
@@ -173,9 +175,7 @@ monitoring:
     log_user_prompts: true
     include_account_uuid: true
     include_session_id: true
-harnesses:
-  other:
-    path: ` + bundleDir + "\n"
+`
 	return configmocks.NewFromString(projectYAML, settingsYAML)
 }
 

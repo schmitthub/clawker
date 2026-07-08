@@ -14,10 +14,6 @@ const ManifestFile = "harness.yaml"
 // slots.
 const TemplateFile = "Dockerfile.harness.tmpl"
 
-// HarnessesSubdir is the directory under the user config dir where shipped
-// bundles are materialized and custom bundles live by convention.
-const HarnessesSubdir = "harnesses"
-
 // AssetsDir is the bundle subdirectory holding every file the bundle
 // contributes to the docker build context. The whole tree is staged
 // verbatim under the same assets/ prefix; the template's COPY instructions
@@ -54,23 +50,14 @@ const (
 	RewriteReplaceWithWorkdir = "replace-with-workdir"
 )
 
-// ShippedStampFile is written at the root of a freshly materialized copy of a
-// shipped bundle/stack and records the content hash of the embedded source
-// tree it was seeded from. Ensure paths compare it against the current shipped
-// hash to detect a copy that has fallen behind the binary's embedded assets.
-// It is bookkeeping only: bundle loading, validation, and build-context
-// staging never read it (loaders read named files; staging walks assets/).
-const ShippedStampFile = ".clawker-shipped-hash"
-
-// File modes for materialized bundle files and staged build-context files.
+// File modes for staged build-context files.
 const (
-	bundleDirMode  = fs.FileMode(0o750)
 	plainFileMode  = fs.FileMode(0o644)
 	scriptFileMode = fs.FileMode(0o755)
 )
 
 // FileMode returns the on-disk mode for a bundle file written outside the
-// bundle (build context dirs, materialized copies): scripts stay executable.
+// bundle (build-context staging dirs): scripts stay executable.
 func FileMode(name string) fs.FileMode {
 	if filepath.Ext(name) == ".sh" {
 		return scriptFileMode

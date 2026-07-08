@@ -178,6 +178,9 @@ var _ config.Config = &ConfigMock{}
 //			ProjectEgressRulesFunc: func() []config.EgressRule {
 //				panic("mock out the ProjectEgressRules method")
 //			},
+//			ProjectRootFunc: func() string {
+//				panic("mock out the ProjectRoot method")
+//			},
 //			ProjectStoreFunc: func() *storage.Store[config.Project] {
 //				panic("mock out the ProjectStore method")
 //			},
@@ -377,6 +380,9 @@ type ConfigMock struct {
 	// ProjectEgressRulesFunc mocks the ProjectEgressRules method.
 	ProjectEgressRulesFunc func() []config.EgressRule
 
+	// ProjectRootFunc mocks the ProjectRoot method.
+	ProjectRootFunc func() string
+
 	// ProjectStoreFunc mocks the ProjectStore method.
 	ProjectStoreFunc func() *storage.Store[config.Project]
 
@@ -573,6 +579,9 @@ type ConfigMock struct {
 		// ProjectEgressRules holds details about calls to the ProjectEgressRules method.
 		ProjectEgressRules []struct {
 		}
+		// ProjectRoot holds details about calls to the ProjectRoot method.
+		ProjectRoot []struct {
+		}
 		// ProjectStore holds details about calls to the ProjectStore method.
 		ProjectStore []struct {
 		}
@@ -660,6 +669,7 @@ type ConfigMock struct {
 	lockProject                 sync.RWMutex
 	lockProjectConfigFileName   sync.RWMutex
 	lockProjectEgressRules      sync.RWMutex
+	lockProjectRoot             sync.RWMutex
 	lockProjectStore            sync.RWMutex
 	lockPrometheusURL           sync.RWMutex
 	lockPurposeAgent            sync.RWMutex
@@ -2106,6 +2116,33 @@ func (mock *ConfigMock) ProjectEgressRulesCalls() []struct {
 	mock.lockProjectEgressRules.RLock()
 	calls = mock.calls.ProjectEgressRules
 	mock.lockProjectEgressRules.RUnlock()
+	return calls
+}
+
+// ProjectRoot calls ProjectRootFunc.
+func (mock *ConfigMock) ProjectRoot() string {
+	if mock.ProjectRootFunc == nil {
+		panic("ConfigMock.ProjectRootFunc: method is nil but Config.ProjectRoot was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockProjectRoot.Lock()
+	mock.calls.ProjectRoot = append(mock.calls.ProjectRoot, callInfo)
+	mock.lockProjectRoot.Unlock()
+	return mock.ProjectRootFunc()
+}
+
+// ProjectRootCalls gets all the calls that were made to ProjectRoot.
+// Check the length with:
+//
+//	len(mockedConfig.ProjectRootCalls())
+func (mock *ConfigMock) ProjectRootCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockProjectRoot.RLock()
+	calls = mock.calls.ProjectRoot
+	mock.lockProjectRoot.RUnlock()
 	return calls
 }
 
