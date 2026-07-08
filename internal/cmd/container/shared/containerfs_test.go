@@ -13,16 +13,15 @@ import (
 
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
-	"github.com/schmitthub/clawker/internal/harness"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
 // testClaudeStaging mirrors the claude bundle's staging manifest — the
 // shape InitContainerConfig consumed implicitly before staging went
 // manifest-driven.
-func testClaudeStaging() harness.Staging {
-	return harness.Staging{
-		Copy: []harness.CopySpec{
+func testClaudeStaging() config.Staging {
+	return config.Staging{
+		Copy: []config.CopySpec{
 			{
 				Src: "${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json", Dest: ".claude/settings.json",
 				JSONKeys: []string{"enabledPlugins"}, Skip: nil, JSONRewrites: nil,
@@ -75,7 +74,7 @@ func TestInitContainerConfig_FreshStrategy_NoCopy(t *testing.T) {
 		ContainerWorkDir: "/workspace",
 		Harness:          testHarnessCfg("fresh"),
 		Staging:          testClaudeStaging(),
-		Volumes:          []harness.VolumeSpec{{Name: "config", Path: ".claude"}},
+		Volumes:          []config.VolumeSpec{{Name: "config", Path: ".claude"}},
 		FreshVolumes:     map[string]bool{"config": true},
 		CopyToVolume:     tracker.copyToVolumeFn(),
 		Log:              logger.Nop(),
@@ -98,7 +97,7 @@ func TestInitContainerConfig_CopyStrategy(t *testing.T) {
 		ContainerWorkDir: "/workspace",
 		Harness:          testHarnessCfg("copy"),
 		Staging:          testClaudeStaging(),
-		Volumes:          []harness.VolumeSpec{{Name: "config", Path: ".claude"}},
+		Volumes:          []config.VolumeSpec{{Name: "config", Path: ".claude"}},
 		FreshVolumes:     map[string]bool{"config": true},
 		CopyToVolume:     tracker.copyToVolumeFn(),
 		Log:              logger.Nop(),
@@ -131,7 +130,7 @@ func TestInitContainerConfig_NilHarnessCfg_Defaults(t *testing.T) {
 		ContainerWorkDir: "/workspace",
 		Harness:          nil, // defaults: copy strategy
 		Staging:          testClaudeStaging(),
-		Volumes:          []harness.VolumeSpec{{Name: "config", Path: ".claude"}},
+		Volumes:          []config.VolumeSpec{{Name: "config", Path: ".claude"}},
 		FreshVolumes:     map[string]bool{"config": true},
 		CopyToVolume:     tracker.copyToVolumeFn(),
 		Log:              logger.Nop(),
@@ -154,7 +153,7 @@ func TestInitContainerConfig_EmptyProject_VolumeNaming(t *testing.T) {
 		ContainerWorkDir: "/workspace",
 		Harness:          testHarnessCfg(""),
 		Staging:          testClaudeStaging(),
-		Volumes:          []harness.VolumeSpec{{Name: "config", Path: ".claude"}},
+		Volumes:          []config.VolumeSpec{{Name: "config", Path: ".claude"}},
 		FreshVolumes:     map[string]bool{"config": true},
 		CopyToVolume:     tracker.copyToVolumeFn(),
 		Log:              logger.Nop(),
@@ -179,7 +178,7 @@ func TestInitContainerConfig_CopyToVolumeError(t *testing.T) {
 		ContainerWorkDir: "/workspace",
 		Harness:          testHarnessCfg(""),
 		Staging:          testClaudeStaging(),
-		Volumes:          []harness.VolumeSpec{{Name: "config", Path: ".claude"}},
+		Volumes:          []config.VolumeSpec{{Name: "config", Path: ".claude"}},
 		FreshVolumes:     map[string]bool{"config": true},
 		CopyToVolume: func(_ context.Context, _, _, _ string, _ []string) error {
 			return assert.AnError
@@ -205,7 +204,7 @@ func TestInitContainerConfig_HostConfigDirNotFound(t *testing.T) {
 		ContainerWorkDir: "/workspace",
 		Harness:          testHarnessCfg("copy"),
 		Staging:          testClaudeStaging(),
-		Volumes:          []harness.VolumeSpec{{Name: "config", Path: ".claude"}},
+		Volumes:          []config.VolumeSpec{{Name: "config", Path: ".claude"}},
 		FreshVolumes:     map[string]bool{"config": true},
 		CopyToVolume:     tracker.copyToVolumeFn(),
 		Log:              logger.Nop(),

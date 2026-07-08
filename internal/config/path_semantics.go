@@ -1,4 +1,4 @@
-package harness
+package config
 
 import (
 	"fmt"
@@ -11,6 +11,10 @@ import (
 // envDefaultRe matches shell-style ${VAR:-fallback} references. Plain $VAR
 // and ${VAR} go through [os.ExpandEnv] afterwards.
 var envDefaultRe = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*):-([^}]*)\}`)
+
+// envRefRe matches ${VAR} / ${VAR:-fallback} env references so [HasGlobMeta]
+// can strip them before scanning for glob metacharacters.
+var envRefRe = regexp.MustCompile(`\$\{[^}]*\}`)
 
 // ExpandHostPath expands a staging directive's host-side path vocabulary:
 // shell-style ${VAR:-fallback} defaults, a leading ~, and $VAR / ${VAR}
@@ -53,8 +57,6 @@ func NormalizeContainerPath(p string) string {
 // HasGlobMeta reports whether p contains doublestar glob metacharacters.
 // ${VAR} / ${VAR:-fallback} env references are vocabulary, not globs — they
 // are ignored.
-var envRefRe = regexp.MustCompile(`\$\{[^}]*\}`)
-
 func HasGlobMeta(p string) bool {
 	return strings.ContainsAny(envRefRe.ReplaceAllString(p, ""), "*?[{")
 }

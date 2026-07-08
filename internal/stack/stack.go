@@ -20,6 +20,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 )
 
@@ -37,11 +38,6 @@ type Definition struct {
 	// unprivileged-USER region; empty when the definition ships no user
 	// fragment.
 	UserFragment string
-}
-
-// manifest is the parsed stack.yaml.
-type manifest struct {
-	Description string `yaml:"description"`
 }
 
 // ValidateName rejects names that cannot serve as stack registry keys — a
@@ -70,7 +66,7 @@ func Load(name string, fsys fs.FS) (*Definition, error) {
 	if err != nil {
 		return nil, fmt.Errorf("stack %q: read %s: %w", name, ManifestFile, err)
 	}
-	var m manifest
+	var m config.StackManifest
 	if unmarshalErr := yaml.Unmarshal(rawManifest, &m); unmarshalErr != nil {
 		return nil, fmt.Errorf("stack %q: parse %s: %w", name, ManifestFile, unmarshalErr)
 	}

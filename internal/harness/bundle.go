@@ -11,6 +11,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/stack"
 )
@@ -21,7 +22,7 @@ type Bundle struct {
 	// Name is the registry slug (also the image tag and label value).
 	Name string
 	// Manifest is the parsed harness.yaml.
-	Manifest Manifest
+	Manifest config.Manifest
 	// Template is the raw Dockerfile.harness.tmpl content.
 	Template string
 
@@ -38,7 +39,7 @@ func Load(name string, fsys fs.FS) (*Bundle, error) {
 		return nil, fmt.Errorf("harness %q: read %s: %w", name, ManifestFile, err)
 	}
 
-	var m Manifest
+	var m config.Manifest
 	if unmarshalErr := yaml.Unmarshal(rawManifest, &m); unmarshalErr != nil {
 		return nil, fmt.Errorf("harness %q: parse %s: %w", name, ManifestFile, unmarshalErr)
 	}
@@ -72,7 +73,7 @@ func Load(name string, fsys fs.FS) (*Bundle, error) {
 // validateStaging checks the staging vocabulary at the load front door so a
 // UGC bundle author gets an immediate, named error instead of a silent
 // create-time skip.
-func validateStaging(name string, volumes []VolumeSpec, st Staging) error {
+func validateStaging(name string, volumes []config.VolumeSpec, st config.Staging) error {
 	for _, c := range st.Copy {
 		if err := validateCopySpec(name, volumes, c); err != nil {
 			return err
@@ -110,14 +111,14 @@ var volumeNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,40}$`)
 
 // validateVolumes checks the declared persisted-dir list: docker-safe
 // unique names (infra suffixes reserved), valid unique home-relative paths.
-func validateVolumes(name string, volumes []VolumeSpec) error {
+func validateVolumes(name string, volumes []config.VolumeSpec) error {
 	seenNames := map[string]bool{}
 	seenPaths := map[string]bool{}
 	for _, v := range volumes {
 		if err := validateVolumeSpec(name, v); err != nil {
 			return err
 		}
-		p := NormalizeContainerPath(v.Path)
+		p := config.NormalizeContainerPath(v.Path)
 		if seenNames[v.Name] {
 			return fmt.Errorf("harness %q: duplicate volume name %q", name, v.Name)
 		}
@@ -130,7 +131,7 @@ func validateVolumes(name string, volumes []VolumeSpec) error {
 	return nil
 }
 
-func validateVolumeSpec(name string, v VolumeSpec) error {
+func validateVolumeSpec(name string, v config.VolumeSpec) error {
 	if !volumeNameRe.MatchString(v.Name) {
 		return fmt.Errorf("harness %q: volume name %q must match %s", name, v.Name, volumeNameRe)
 	}
@@ -138,7 +139,7 @@ func validateVolumeSpec(name string, v VolumeSpec) error {
 	case consts.VolumePurposeHistory, consts.VolumePurposeWorkspace, consts.VolumePurposeClawker:
 		return fmt.Errorf("harness %q: volume name %q is reserved for clawker infrastructure", name, v.Name)
 	}
-	p := NormalizeContainerPath(v.Path)
+	p := config.NormalizeContainerPath(v.Path)
 	if v.Path == "" || p == "" || p == "." || !fs.ValidPath(p) {
 		return fmt.Errorf(
 			"harness %q: volume %q: path %q must be a container-home-relative directory",
@@ -148,7 +149,7 @@ func validateVolumeSpec(name string, v VolumeSpec) error {
 	return nil
 }
 
-func validateCopySpec(name string, volumes []VolumeSpec, c CopySpec) error {
+func validateCopySpec(name string, volumes []config.VolumeSpec, c config.CopySpec) error {
 	if c.Src == "" || c.Dest == "" {
 		return fmt.Errorf(
 			"harness %q: staging copy entries require explicit src and dest (got src=%q dest=%q)",
@@ -158,7 +159,7 @@ func validateCopySpec(name string, volumes []VolumeSpec, c CopySpec) error {
 	if err := validateStagingDest(name, "copy", c.Src, c.Dest, volumes); err != nil {
 		return err
 	}
-	if len(c.JSONKeys) > 0 && HasGlobMeta(c.Src) {
+	if len(c.JSONKeys) > 0 && config.HasGlobMeta(c.Src) {
 		return fmt.Errorf(
 			"harness %q: copy %q: json_keys requires a single-file src, not a glob",
 			name, c.Src,
@@ -166,48 +167,48 @@ func validateCopySpec(name string, volumes []VolumeSpec, c CopySpec) error {
 	}
 	for _, rw := range c.JSONRewrites {
 		switch rw.Rewrite {
-		case RewritePrefixSwap, RewriteReplaceWithWorkdir:
+		case config.RewritePrefixSwap, config.RewriteReplaceWithWorkdir:
 		default:
 			return fmt.Errorf(
 				"harness %q: copy %q: unknown json rewrite %q (want %s or %s)",
-				name, c.Src, rw.Rewrite, RewritePrefixSwap, RewriteReplaceWithWorkdir,
+				name, c.Src, rw.Rewrite, config.RewritePrefixSwap, config.RewriteReplaceWithWorkdir,
 			)
 		}
 	}
 	return nil
 }
 
-func validateMountSpec(name string, volumes []VolumeSpec, m MountSpec) error {
+func validateMountSpec(name string, volumes []config.VolumeSpec, m config.MountSpec) error {
 	if m.Src == "" || m.Dest == "" {
 		return fmt.Errorf(
 			"harness %q: staging mounts require explicit src and dest (got src=%q dest=%q)",
 			name, m.Src, m.Dest,
 		)
 	}
-	if HasGlobMeta(m.Src) {
+	if config.HasGlobMeta(m.Src) {
 		return fmt.Errorf("harness %q: mount src %q must be a literal path, not a glob", name, m.Src)
 	}
 	return validateStagingDest(name, "mount", m.Src, m.Dest, volumes)
 }
 
 // destVolume returns the declared volume whose path covers dest, if any.
-func destVolume(dest string, volumes []VolumeSpec) (VolumeSpec, bool) {
-	d := NormalizeContainerPath(dest)
+func destVolume(dest string, volumes []config.VolumeSpec) (config.VolumeSpec, bool) {
+	d := config.NormalizeContainerPath(dest)
 	for _, v := range volumes {
-		p := NormalizeContainerPath(v.Path)
+		p := config.NormalizeContainerPath(v.Path)
 		if d == p || strings.HasPrefix(d, p+"/") {
 			return v, true
 		}
 	}
-	return VolumeSpec{}, false
+	return config.VolumeSpec{}, false
 }
 
 // validateStagingDest enforces that a directive's container dest falls
 // under a declared volume — the only persistence targets. Copies land in
 // volumes at create time, so a dest outside every volume is a config
 // error, caught loud at the load front door.
-func validateStagingDest(name, kind, id, dest string, volumes []VolumeSpec) error {
-	d := NormalizeContainerPath(dest)
+func validateStagingDest(name, kind, id, dest string, volumes []config.VolumeSpec) error {
+	d := config.NormalizeContainerPath(dest)
 	if dest == "" || d == "" || d == "." || !fs.ValidPath(d) {
 		return fmt.Errorf("harness %q: %s %q: dest %q must be a container-home-relative path", name, kind, id, dest)
 	}
@@ -228,7 +229,7 @@ func validateStagingDest(name, kind, id, dest string, volumes []VolumeSpec) erro
 // gets staged into the build context), the dest a home-relative path under
 // a declared volume, and the
 // apply strategy a known token.
-func validateSeeds(name string, fsys fs.FS, volumes []VolumeSpec, seeds []Seed) error {
+func validateSeeds(name string, fsys fs.FS, volumes []config.VolumeSpec, seeds []config.Seed) error {
 	for _, s := range seeds {
 		if !fs.ValidPath(s.File) || !strings.HasPrefix(s.File, AssetsDir+"/") {
 			return fmt.Errorf(
@@ -245,12 +246,12 @@ func validateSeeds(name string, fsys fs.FS, volumes []VolumeSpec, seeds []Seed) 
 			return destErr
 		}
 		switch s.Apply {
-		case SeedApplyCopyIfMissing, SeedApplyCopyIfMissingOrEmpty, SeedApplyJSONMerge:
+		case config.SeedApplyCopyIfMissing, config.SeedApplyCopyIfMissingOrEmpty, config.SeedApplyJSONMerge:
 		default:
 			return fmt.Errorf(
 				"harness %q: seed %q: unknown apply strategy %q (want %s, %s, or %s)",
 				name, s.File, s.Apply,
-				SeedApplyCopyIfMissing, SeedApplyCopyIfMissingOrEmpty, SeedApplyJSONMerge,
+				config.SeedApplyCopyIfMissing, config.SeedApplyCopyIfMissingOrEmpty, config.SeedApplyJSONMerge,
 			)
 		}
 	}

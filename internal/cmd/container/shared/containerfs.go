@@ -11,7 +11,6 @@ import (
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/containerfs"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/harness"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -45,10 +44,10 @@ type InitConfigOpts struct {
 	Harness *config.HarnessConfig
 	// Staging is the selected harness bundle's create-time staging manifest:
 	// explicit host→container copy directives.
-	Staging harness.Staging
+	Staging config.Staging
 	// Volumes are the bundle's declared persisted dirs; each staged dest
 	// falls under one of them (validated at bundle load).
-	Volumes []harness.VolumeSpec
+	Volumes []config.VolumeSpec
 	// FreshVolumes maps a harness volume name to whether this create made
 	// it. Staged subtrees are copied only into fresh volumes — pre-existing
 	// volumes carry user state and are never re-seeded.
@@ -99,7 +98,7 @@ func InitContainerConfig(ctx context.Context, opts InitConfigOpts) error {
 		if err != nil {
 			return fmt.Errorf("volume name for %q: %w", v.Name, err)
 		}
-		rel := harness.NormalizeContainerPath(v.Path)
+		rel := config.NormalizeContainerPath(v.Path)
 		srcDir := filepath.Join(stagingDir, filepath.FromSlash(rel))
 		if _, statErr := os.Stat(srcDir); statErr != nil {
 			continue // nothing staged for this volume
@@ -114,7 +113,7 @@ func InitContainerConfig(ctx context.Context, opts InitConfigOpts) error {
 }
 
 // anyFresh reports whether any declared volume was created by this setup.
-func anyFresh(volumes []harness.VolumeSpec, fresh map[string]bool) bool {
+func anyFresh(volumes []config.VolumeSpec, fresh map[string]bool) bool {
 	for _, v := range volumes {
 		if fresh[v.Name] {
 			return true

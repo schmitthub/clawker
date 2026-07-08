@@ -9,6 +9,7 @@ import (
 	"github.com/Masterminds/semver/v3"
 
 	"github.com/schmitthub/clawker/internal/bundler/registry"
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/harness"
 )
 
@@ -53,11 +54,11 @@ func ResolveHarnessVersion(ctx context.Context, httpClient *http.Client, b *harn
 	}
 	spec := b.Manifest.Version
 	switch spec.Resolver {
-	case "", harness.ResolverNone:
+	case "", config.ResolverNone:
 		return DefaultHarnessVersion, nil
-	case harness.ResolverNPM:
+	case config.ResolverNPM:
 		return resolveNPMLatest(ctx, httpClient, spec.Package)
-	case harness.ResolverGitHubRelease:
+	case config.ResolverGitHubRelease:
 		return resolveGitHubLatest(ctx, httpClient, b.Name, spec)
 	default:
 		return DefaultHarnessVersion, fmt.Errorf(
@@ -99,7 +100,7 @@ func resolveGitHubLatest(
 	ctx context.Context,
 	httpClient *http.Client,
 	name string,
-	spec harness.VersionSpec,
+	spec config.VersionSpec,
 ) (string, error) {
 	if spec.Package == "" {
 		return DefaultHarnessVersion, fmt.Errorf(

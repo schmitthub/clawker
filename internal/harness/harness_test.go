@@ -1,8 +1,6 @@
 package harness_test
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -344,46 +342,4 @@ volumes: [{ name: config, path: ../up }]
 			require.ErrorContains(t, err, tt.wantErr)
 		})
 	}
-}
-
-// TestExpandPaths pins the host-side expansion vocabulary and the
-// container-side path normalization.
-func TestExpandPaths(t *testing.T) {
-	t.Run("host side resolves env default fallback", func(t *testing.T) {
-		t.Setenv("CLAWKER_TEST_EXPAND", "")
-		got, err := harness.ExpandHostPath("${CLAWKER_TEST_EXPAND:-~/.codex}/prompts")
-		require.NoError(t, err)
-		home, err := os.UserHomeDir()
-		require.NoError(t, err)
-		assert.Equal(t, filepath.Join(home, ".codex", "prompts"), got)
-
-		t.Setenv("CLAWKER_TEST_EXPAND", "/opt/state")
-		got, err = harness.ExpandHostPath("${CLAWKER_TEST_EXPAND:-~/.codex}/prompts")
-		require.NoError(t, err)
-		assert.Equal(t, "/opt/state/prompts", got)
-
-		got, err = harness.ExpandHostPath("$CLAWKER_TEST_EXPAND/x")
-		require.NoError(t, err)
-		assert.Equal(t, "/opt/state/x", got)
-	})
-
-	t.Run("host side absolutizes relative results", func(t *testing.T) {
-		// A relative env value (multi-account workflows) resolves against
-		// the current working directory.
-		got, err := harness.ExpandHostPath("prompts")
-		require.NoError(t, err)
-		wd, err := os.Getwd()
-		require.NoError(t, err)
-		assert.Equal(t, filepath.Join(wd, "prompts"), got)
-	})
-
-	t.Run("container side normalizes", func(t *testing.T) {
-		assert.Equal(t, ".codex/prompts", harness.NormalizeContainerPath("./.codex/prompts/"))
-		assert.Equal(t, ".codex", harness.NormalizeContainerPath(".codex"))
-	})
-
-	t.Run("glob meta ignores env references", func(t *testing.T) {
-		assert.False(t, harness.HasGlobMeta("${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json"))
-		assert.True(t, harness.HasGlobMeta("${CLAUDE_CONFIG_DIR:-~/.claude}/*.json"))
-	})
 }

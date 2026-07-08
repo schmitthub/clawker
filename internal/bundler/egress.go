@@ -2,7 +2,6 @@ package bundler
 
 import (
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/harness"
 )
 
 // EgressRules composes the effective firewall egress rule set: the selected
@@ -14,6 +13,11 @@ import (
 // An empty name selects the built-in default harness (ResolveHarnessName).
 // Until per-container harness identity lands (image label threading), every
 // sync uses the default harness's floor.
+//
+// The manifest floor decodes directly as [config.EgressRule] — it shares the
+// project-config egress shape, so no conversion is needed. Empty
+// Proto/Port/Action pass through untouched; firewall.NormalizeRule applies
+// protocol defaults server-side, exactly as it does for project rules.
 func EgressRules(cfg config.Config, name string) ([]config.EgressRule, error) {
 	resolved, err := ResolveHarnessName(cfg, name)
 	if err != nil {
@@ -23,32 +27,10 @@ func EgressRules(cfg config.Config, name string) ([]config.EgressRule, error) {
 	if err != nil {
 		return nil, err
 	}
-	rules := egressFloor(b.Manifest.Egress)
-	return append(rules, cfg.ProjectEgressRules()...), nil
-}
-
-// egressFloor converts manifest egress entries to config rules field-for-field.
-// Empty Proto/Port/Action pass through untouched — firewall.NormalizeRule
-// applies protocol defaults server-side, exactly as it does for project rules.
-func egressFloor(in []harness.EgressRule) []config.EgressRule {
-	rules := make([]config.EgressRule, 0, len(in))
-	for _, r := range in {
-		paths := make([]config.PathRule, 0, len(r.PathRules))
-		for _, p := range r.PathRules {
-			paths = append(paths, config.PathRule{Path: p.Path, Action: p.Action, Methods: p.Methods})
-		}
-		if len(paths) == 0 {
-			paths = nil
-		}
-		rules = append(rules, config.EgressRule{
-			Dst:                   r.Dst,
-			Proto:                 r.Proto,
-			Port:                  r.Port,
-			Action:                r.Action,
-			PathRules:             paths,
-			PathDefault:           r.PathDefault,
-			InsecureSkipTLSVerify: false,
-		})
-	}
-	return rules
+	floor := b.Manifest.Egress
+	project := cfg.ProjectEgressRules()
+	rules := make([]config.EgressRule, 0, len(floor)+len(project))
+	rules = append(rules, floor...)
+	rules = append(rules, project...)
+	return rules, nil
 }

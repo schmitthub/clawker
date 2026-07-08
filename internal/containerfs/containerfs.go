@@ -1,14 +1,14 @@
 // Package containerfs prepares host harness configuration for container
 // injection, driven by the selected harness bundle's staging manifest
-// (harness.Staging) — explicit host→container copy directives (glob-capable
+// (config.Staging) — explicit host→container copy directives (glob-capable
 // src, optional JSON key allowlist, per-file skips, JSON path rewrites
 // host→container). Only host state OUTSIDE the workspace is staged; the
 // workspace arrives via mount. Credentials are never copied from the host —
 // the user authenticates in the container and the token family persists in
 // the config volume.
 //
-// This is a leaf package: it imports internal/config, internal/harness,
-// internal/logger, and stdlib only. No docker imports allowed.
+// This is a leaf package: it imports internal/config, internal/logger, and
+// stdlib only. No docker imports allowed.
 package containerfs
 
 import (
@@ -29,7 +29,6 @@ import (
 
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
-	"github.com/schmitthub/clawker/internal/harness"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -40,7 +39,7 @@ import (
 // symlink at the path resolves to its target. Never creates the directory;
 // that is the harness's responsibility.
 func ResolveHostMountSource(src string) (string, bool, error) {
-	dir, err := harness.ExpandHostPath(src)
+	dir, err := config.ExpandHostPath(src)
 	if err != nil {
 		return "", false, err
 	}
@@ -64,7 +63,7 @@ func ResolveHostMountSource(src string) (string, bool, error) {
 // lands at <stagingDir>/<dest>.
 func PrepareConfig(
 	log *logger.Logger,
-	staging harness.Staging,
+	staging config.Staging,
 	containerHomeDir, containerWorkDir, hostProjectRoot string,
 ) (string, func(), error) {
 	tmpDir, err := os.MkdirTemp("", "clawker-config-*")
@@ -94,10 +93,10 @@ func PrepareConfig(
 // project workspace are rejected — the workspace is mounted, never staged.
 func stageCopy(
 	log *logger.Logger,
-	c harness.CopySpec,
+	c config.CopySpec,
 	tmpRoot, containerHomeDir, containerWorkDir, hostProjectRoot string,
 ) error {
-	pattern, err := harness.ExpandHostPath(c.Src)
+	pattern, err := config.ExpandHostPath(c.Src)
 	if err != nil {
 		return fmt.Errorf("expand src %q: %w", c.Src, err)
 	}
@@ -113,7 +112,7 @@ func stageCopy(
 
 	// A glob, a multi-match, or a trailing-slash dest lands each match
 	// UNDER dest; a single literal src copies TO dest exactly.
-	destRel := harness.NormalizeContainerPath(c.Dest)
+	destRel := config.NormalizeContainerPath(c.Dest)
 	destIsDir := globbed || len(matches) > 1 || strings.HasSuffix(c.Dest, "/")
 
 	for _, match := range matches {
@@ -139,7 +138,7 @@ func stageCopy(
 // host paths: glob patterns fan out, literal paths stat (missing = no
 // matches, a soft skip for the caller).
 func expandCopyMatches(pattern string) ([]string, bool, error) {
-	if harness.HasGlobMeta(pattern) {
+	if config.HasGlobMeta(pattern) {
 		matches, err := doublestar.FilepathGlob(pattern)
 		if err != nil {
 			return nil, true, fmt.Errorf("glob %s: %w", pattern, err)
@@ -159,7 +158,7 @@ func expandCopyMatches(pattern string) ([]string, bool, error) {
 // dispatching on file-vs-directory.
 func stageMatch(
 	log *logger.Logger,
-	c harness.CopySpec,
+	c config.CopySpec,
 	match, dst, containerDest, containerWorkDir string,
 ) error {
 	resolved, err := filepath.EvalSymlinks(match)
@@ -205,7 +204,7 @@ func guardWorkspaceSrc(src, hostProjectRoot string) error {
 
 // stageCopyFile copies a single matched file, applying the directive's
 // optional JSON key allowlist.
-func stageCopyFile(log *logger.Logger, c harness.CopySpec, src, dst string) error {
+func stageCopyFile(log *logger.Logger, c config.CopySpec, src, dst string) error {
 	if mkErr := os.MkdirAll(filepath.Dir(dst), 0o750); mkErr != nil {
 		return fmt.Errorf("create staging dir for %s: %w", dst, mkErr)
 	}
@@ -237,7 +236,7 @@ func stageCopyFile(log *logger.Logger, c harness.CopySpec, src, dst string) erro
 // its JSON path rewrites (host paths → container paths).
 func stageCopyDir(
 	log *logger.Logger,
-	c harness.CopySpec,
+	c config.CopySpec,
 	match, resolved, dst, containerDest, containerWorkDir string,
 ) error {
 	if mkErr := os.MkdirAll(dst, 0o750); mkErr != nil {
@@ -380,16 +379,16 @@ func copyTreeContents(log *logger.Logger, skip []string, resolved, dst string) e
 // treeRewriteRules groups the tree's manifest rewrites into per-file
 // pathRewriteRule sets.
 func copyRewriteRules(
-	c harness.CopySpec,
+	c config.CopySpec,
 	hostTreePrefix, containerTreePrefix, containerWorkDir string,
 ) (map[string][]pathRewriteRule, error) {
 	rulesByFile := make(map[string][]pathRewriteRule)
 	for _, rw := range c.JSONRewrites {
 		switch rw.Rewrite {
-		case harness.RewritePrefixSwap:
+		case config.RewritePrefixSwap:
 			rulesByFile[rw.File] = append(rulesByFile[rw.File],
 				pathRewriteRule{key: rw.Key, hostPrefix: hostTreePrefix, containerPath: containerTreePrefix})
-		case harness.RewriteReplaceWithWorkdir:
+		case config.RewriteReplaceWithWorkdir:
 			rulesByFile[rw.File] = append(rulesByFile[rw.File],
 				pathRewriteRule{key: rw.Key, hostPrefix: "", containerPath: containerWorkDir})
 		default:

@@ -20,36 +20,6 @@ const TemplateFile = "Dockerfile.harness.tmpl"
 // and seeds[].file entries reference assets/-relative paths.
 const AssetsDir = "assets"
 
-// Version resolvers — the closed vocabulary a manifest's version.resolver
-// accepts. npm resolves the package's latest dist-tag from the npm
-// registry; github-release resolves the repo's latest release tag via the
-// GitHub API (tag_prefix stripped); none renders the floating default.
-const (
-	ResolverNPM           = "npm"
-	ResolverGitHubRelease = "github-release"
-	ResolverNone          = "none"
-)
-
-// Seed apply strategies — the closed vocabulary a manifest's seeds[].apply
-// accepts. The master Dockerfile template writes these tokens into the
-// image's seed manifest and CP's generic seed-apply script switches on
-// them at first boot.
-const (
-	SeedApplyCopyIfMissing        = "copy-if-missing"
-	SeedApplyCopyIfMissingOrEmpty = "copy-if-missing-or-empty"
-	SeedApplyJSONMerge            = "json-merge"
-)
-
-// JSON rewrite kinds — the closed vocabulary a manifest's
-// staging.copy[].json_rewrites[].rewrite accepts. prefix-swap maps the
-// host tree prefix onto the in-container config-dir tree prefix;
-// replace-with-workdir substitutes the whole value with the container
-// workspace path.
-const (
-	RewritePrefixSwap         = "prefix-swap"
-	RewriteReplaceWithWorkdir = "replace-with-workdir"
-)
-
 // File modes for staged build-context files.
 const (
 	plainFileMode  = fs.FileMode(0o644)

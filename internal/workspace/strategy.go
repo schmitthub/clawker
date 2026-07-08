@@ -10,7 +10,6 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/harness"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -68,7 +67,7 @@ func NewStrategy(mode config.Mode, cfg Config, log *logger.Logger) (Strategy, er
 
 // GetConfigVolumeMounts returns mounts for the harness's declared persisted
 // dirs plus the history volume. Used for both bind and snapshot modes.
-func GetConfigVolumeMounts(projectName, agentName string, volumes []harness.VolumeSpec) ([]mount.Mount, error) {
+func GetConfigVolumeMounts(projectName, agentName string, volumes []config.VolumeSpec) ([]mount.Mount, error) {
 	var mounts []mount.Mount
 	for _, v := range volumes {
 		vol, err := docker.VolumeName(projectName, agentName, v.Name)
@@ -80,7 +79,7 @@ func GetConfigVolumeMounts(projectName, agentName string, volumes []harness.Volu
 			mount.Mount{ //nolint:exhaustruct // mount options beyond type/source/target intentionally zero
 				Type:   mount.TypeVolume,
 				Source: vol,
-				Target: consts.ContainerHomeDir + "/" + harness.NormalizeContainerPath(v.Path),
+				Target: consts.ContainerHomeDir + "/" + config.NormalizeContainerPath(v.Path),
 			},
 		)
 	}
@@ -130,7 +129,7 @@ func GetHostStateMount(hostDir, dest string) (mount.Mount, error) {
 	return mount.Mount{
 		Type:   mount.TypeBind,
 		Source: hostDir,
-		Target: consts.ContainerHomeDir + "/" + harness.NormalizeContainerPath(dest),
+		Target: consts.ContainerHomeDir + "/" + config.NormalizeContainerPath(dest),
 	}, nil
 }
 
@@ -151,7 +150,7 @@ func EnsureConfigVolumes(
 	ctx context.Context,
 	cli *docker.Client,
 	projectName, agentName string,
-	volumes []harness.VolumeSpec,
+	volumes []config.VolumeSpec,
 ) (ConfigVolumeResult, error) {
 	result := ConfigVolumeResult{CreatedByName: make(map[string]bool), HistoryCreated: false, ClawkerCreated: false}
 	labels := cli.AgentVolumeLabels(projectName, agentName)

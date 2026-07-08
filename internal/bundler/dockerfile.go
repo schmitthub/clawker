@@ -121,7 +121,7 @@ type DockerfileContext struct {
 	// each seed file is COPY'd into the image's seed dir and listed in the
 	// baked seed manifest that CP's generic seed-apply step interprets on
 	// first boot.
-	HarnessSeeds []harness.Seed
+	HarnessSeeds []config.Seed
 	// StackRootSteps / StackUserSteps are pre-rendered stack
 	// fragments for THIS render's root/user anchor. The generator computes
 	// stage placement (project-declared → base image, harness-declared-only
@@ -792,7 +792,7 @@ func addFileToTar(tw *tar.Writer, name string, content []byte) error {
 func harnessVolumeDirs(bundle *harness.Bundle) []string {
 	dirs := make([]string, 0, len(bundle.Manifest.Volumes))
 	for _, v := range bundle.Manifest.Volumes {
-		dirs = append(dirs, harness.NormalizeContainerPath(v.Path))
+		dirs = append(dirs, config.NormalizeContainerPath(v.Path))
 	}
 	return dirs
 }

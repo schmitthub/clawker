@@ -10,7 +10,6 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/consts"
-	"github.com/schmitthub/clawker/internal/harness"
 )
 
 // testHarnessVersion is the version baked into rendered Dockerfiles when
@@ -273,9 +272,9 @@ func TestBuildContext_ClaudeConfigDir(t *testing.T) {
 		"Dockerfile must bake the seed manifest for CP's generic apply step")
 	assert.NotContains(t, content, "config_dir=",
 		"seed manifest carries no config-dir header — dests are home-relative paths")
-	assert.Contains(t, content, harness.SeedApplyCopyIfMissingOrEmpty+" .claude/.config.json",
+	assert.Contains(t, content, config.SeedApplyCopyIfMissingOrEmpty+" .claude/.config.json",
 		"seed manifest must carry the apply strategy per seed")
-	assert.Contains(t, content, harness.SeedApplyJSONMerge+" .claude/settings.json",
+	assert.Contains(t, content, config.SeedApplyJSONMerge+" .claude/settings.json",
 		"seed manifest must carry the json-merge strategy for settings")
 	assert.Contains(t, content, "mkdir -p /home/${USERNAME}/.claude ",
 		"runtime-dirs RUN must pre-create declared volume dirs for mount ownership")

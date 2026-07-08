@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
-	"github.com/schmitthub/clawker/internal/harness"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -28,9 +28,9 @@ func claudeSrc(rel string) string {
 // claudeStaging mirrors the claude bundle's staging manifest — the shape
 // these tests originally hardcoded. Keeping the fixture in claude's shape
 // proves the manifest interpreter reproduces the legacy behavior.
-func claudeStaging() harness.Staging {
-	return harness.Staging{
-		Copy: []harness.CopySpec{
+func claudeStaging() config.Staging {
+	return config.Staging{
+		Copy: []config.CopySpec{
 			{
 				Src: claudeSrc("settings.json"), Dest: ".claude/settings.json",
 				JSONKeys: []string{"enabledPlugins"}, Skip: nil, JSONRewrites: nil,
@@ -55,15 +55,15 @@ func claudeStaging() harness.Staging {
 				Src: claudeSrc("plugins"), Dest: ".claude/plugins",
 				JSONKeys: nil,
 				Skip:     []string{"install-counts-cache.json"},
-				JSONRewrites: []harness.JSONRewrite{
-					{File: "known_marketplaces.json", Key: "installPath", Rewrite: harness.RewritePrefixSwap},
-					{File: "known_marketplaces.json", Key: "installLocation", Rewrite: harness.RewritePrefixSwap},
-					{File: "installed_plugins.json", Key: "installPath", Rewrite: harness.RewritePrefixSwap},
-					{File: "installed_plugins.json", Key: "projectPath", Rewrite: harness.RewriteReplaceWithWorkdir},
+				JSONRewrites: []config.JSONRewrite{
+					{File: "known_marketplaces.json", Key: "installPath", Rewrite: config.RewritePrefixSwap},
+					{File: "known_marketplaces.json", Key: "installLocation", Rewrite: config.RewritePrefixSwap},
+					{File: "installed_plugins.json", Key: "installPath", Rewrite: config.RewritePrefixSwap},
+					{File: "installed_plugins.json", Key: "projectPath", Rewrite: config.RewriteReplaceWithWorkdir},
 				},
 			},
 		},
-		Mounts: []harness.MountSpec{{Src: claudeSrc("projects"), Dest: ".claude/projects"}},
+		Mounts: []config.MountSpec{{Src: claudeSrc("projects"), Dest: ".claude/projects"}},
 	}
 }
 
@@ -749,9 +749,9 @@ func TestPrepareClaudeConfig_KnownMarketplacesNonStringInstallPath(t *testing.T)
 // ---------------------------------------------------------------------------
 
 // copyOnly builds a staging manifest holding exactly one copy directive.
-func copyOnly(c harness.CopySpec) harness.Staging {
-	return harness.Staging{
-		Copy:   []harness.CopySpec{c},
+func copyOnly(c config.CopySpec) config.Staging {
+	return config.Staging{
+		Copy:   []config.CopySpec{c},
 		Mounts: nil,
 	}
 }
@@ -764,7 +764,7 @@ func TestStageCopy_GlobFansOutUnderDest(t *testing.T) {
 		}
 	}
 
-	staging := copyOnly(harness.CopySpec{
+	staging := copyOnly(config.CopySpec{
 		Src: claudeSrc("*.md"), Dest: ".claude/notes",
 		JSONKeys: nil, Skip: nil, JSONRewrites: nil,
 	})
@@ -792,7 +792,7 @@ func TestStageCopy_SingleLiteralSrcCopiesToExactDest(t *testing.T) {
 	}
 
 	// Rename in flight: dest basename differs from src basename.
-	staging := copyOnly(harness.CopySpec{
+	staging := copyOnly(config.CopySpec{
 		Src: claudeSrc("AGENTS.md"), Dest: ".claude/instructions.md",
 		JSONKeys: nil, Skip: nil, JSONRewrites: nil,
 	})
@@ -823,7 +823,7 @@ func TestStageCopy_WorkspaceSrcRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	staging := copyOnly(harness.CopySpec{
+	staging := copyOnly(config.CopySpec{
 		Src: inside, Dest: ".claude/AGENTS.md",
 		JSONKeys: nil, Skip: nil, JSONRewrites: nil,
 	})

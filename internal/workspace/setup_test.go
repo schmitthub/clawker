@@ -12,7 +12,6 @@ import (
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/docker/mocks"
-	"github.com/schmitthub/clawker/internal/harness"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -28,10 +27,10 @@ func findMountByTarget(mounts []mount.Mount, target string) *mount.Mount {
 
 // claudeTestStaging mirrors the claude bundle's staging manifest subset the
 // mount path needs: config dir + the projects host-state mount.
-func claudeTestStaging() harness.Staging {
-	return harness.Staging{
+func claudeTestStaging() config.Staging {
+	return config.Staging{
 		Copy:   nil,
-		Mounts: []harness.MountSpec{{Src: "${CLAUDE_CONFIG_DIR:-~/.claude}/projects", Dest: ".claude/projects"}},
+		Mounts: []config.MountSpec{{Src: "${CLAUDE_CONFIG_DIR:-~/.claude}/projects", Dest: ".claude/projects"}},
 	}
 }
 
@@ -382,13 +381,13 @@ func setupMountsForBindBranch(t *testing.T, projectYAML string) (cfg SetupMounts
 
 	wd := t.TempDir()
 	cfg = SetupMountsConfig{
-		Log:           logger.Nop(),
-		Cfg:           mockCfg,
-		AgentName:     "test-agent",
-		WorkDir:       wd,
-		ContainerPath: wd,
+		Log:            logger.Nop(),
+		Cfg:            mockCfg,
+		AgentName:      "test-agent",
+		WorkDir:        wd,
+		ContainerPath:  wd,
 		Harness:        claudeTestStaging(),
-		HarnessVolumes: []harness.VolumeSpec{{Name: "config", Path: ".claude"}},
+		HarnessVolumes: []config.VolumeSpec{{Name: "config", Path: ".claude"}},
 		// Resolved the way the command layer does — exercises the legacy
 		// agent.claude_code shim for the built-in default harness.
 		HarnessConfig: mockCfg.Project().HarnessConfigFor(consts.DefaultHarnessName),

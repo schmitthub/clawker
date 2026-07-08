@@ -12,7 +12,6 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/containerfs"
 	"github.com/schmitthub/clawker/internal/docker"
-	"github.com/schmitthub/clawker/internal/harness"
 	"github.com/schmitthub/clawker/internal/logger"
 )
 
@@ -71,10 +70,10 @@ type SetupMountsConfig struct {
 	// mounts, live binds layered over the harness volumes). Resolved by the
 	// caller — workspace receives the data and never resolves the harness
 	// itself.
-	Harness harness.Staging
+	Harness config.Staging
 	// HarnessVolumes are the bundle's declared persisted dirs; each becomes
 	// a named volume mounted under the container home.
-	HarnessVolumes []harness.VolumeSpec
+	HarnessVolumes []config.VolumeSpec
 	// HarnessConfig is the per-harness initialization config resolved for
 	// the selected harness (nil = defaults). Gates the host-state binds.
 	HarnessConfig *config.HarnessConfig

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/schmitthub/clawker/internal/bundler/registry"
+	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/harness"
 )
 
@@ -88,8 +89,8 @@ func TestResolveHarnessVersion_GitHubRelease(t *testing.T) {
 	client := newStubClient(stub)
 	var b harness.Bundle
 	b.Name = "codex"
-	b.Manifest.Version = harness.VersionSpec{
-		Resolver:  harness.ResolverGitHubRelease,
+	b.Manifest.Version = config.VersionSpec{
+		Resolver:  config.ResolverGitHubRelease,
 		Package:   "openai/codex",
 		TagPrefix: "rust-v",
 	}
@@ -109,8 +110,8 @@ func TestResolveHarnessVersion_GitHubRelease_FailureDegradesToLatest(t *testing.
 	client := newStubClient(stub)
 	var b harness.Bundle
 	b.Name = "codex"
-	b.Manifest.Version = harness.VersionSpec{
-		Resolver:  harness.ResolverGitHubRelease,
+	b.Manifest.Version = config.VersionSpec{
+		Resolver:  config.ResolverGitHubRelease,
 		Package:   "openai/codex",
 		TagPrefix: "",
 	}
@@ -127,8 +128,8 @@ func TestResolveHarnessVersion_GitHubRelease_FailureDegradesToLatest(t *testing.
 func TestResolveHarnessVersion_GitHubRelease_MissingPackage(t *testing.T) {
 	var b harness.Bundle
 	b.Name = "codex"
-	b.Manifest.Version = harness.VersionSpec{
-		Resolver:  harness.ResolverGitHubRelease,
+	b.Manifest.Version = config.VersionSpec{
+		Resolver:  config.ResolverGitHubRelease,
 		Package:   "",
 		TagPrefix: "",
 	}
