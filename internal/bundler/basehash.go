@@ -14,9 +14,19 @@ import (
 )
 
 // BaseContentHash computes the SHA-256 freshness key for the per-project
-// base image: the rendered base Dockerfile bytes plus the contents of every
+// base image: the rendered base Dockerfile bytes, the contents of every
 // file referenced by the project's copy instructions (their srcs live in
-// the project build context, which is the base image's build context).
+// the project build context, which is the base image's build context), and
+// the effective values of any user --build-arg entries that the rendered
+// base Dockerfile actually declares.
+//
+// Folding the base-relevant build-args in is what keeps clawker honest to
+// Docker: BuildKit cache-keys an image on its arg values, so a bare
+// `docker build --build-arg TZ=…` produces a different image. The base
+// freshness gate skips `docker build` entirely on a hash match, so without
+// this the flag would be silently eaten. Args the base does not declare
+// (harness-only or unknown) stay out so they never force a spurious base
+// rebuild.
 //
 // Deliberately NOT a hash of the whole context directory — that would
 // rebuild the base on every source edit. Glob expansion here is Go's
@@ -24,7 +34,7 @@ import (
 // semantics; the imprecision can only cause a spurious base rebuild or a
 // stale-skip whose COPY layers Docker itself still cache-validates — never
 // a wrong image.
-func (g *ProjectGenerator) BaseContentHash(baseDockerfile []byte) (string, error) {
+func (g *ProjectGenerator) BaseContentHash(baseDockerfile []byte, buildArgs map[string]*string) (string, error) {
 	h := sha256.New()
 	h.Write(baseDockerfile)
 
@@ -32,7 +42,90 @@ func (g *ProjectGenerator) BaseContentHash(baseDockerfile []byte) (string, error
 		return "", err
 	}
 
+	hashBaseBuildArgs(h, baseDockerfile, buildArgs)
+
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// hashBaseBuildArgs folds the effective values of the user --build-arg
+// entries that the rendered base Dockerfile declares (via ARG) into h.
+// Entries the base does not declare are skipped. When no supplied arg
+// targets a base-declared ARG, nothing is written and the resulting hash is
+// byte-identical to the arg-free hash — an existing base image is never
+// rebuilt merely because the caller passed a harness-only arg.
+func hashBaseBuildArgs(h hash.Hash, baseDockerfile []byte, buildArgs map[string]*string) {
+	if len(buildArgs) == 0 {
+		return
+	}
+	declared := baseDeclaredArgNames(baseDockerfile)
+
+	relevant := make([]string, 0, len(buildArgs))
+	for name := range buildArgs {
+		if _, ok := declared[name]; ok {
+			relevant = append(relevant, name)
+		}
+	}
+	if len(relevant) == 0 {
+		return
+	}
+	sort.Strings(relevant)
+
+	for _, name := range relevant {
+		var effective string
+		if value := buildArgs[name]; value != nil {
+			effective = *value
+		} else {
+			// A nil value is `--build-arg NAME` with no `=value`; Docker takes
+			// the value from the client environment, so that is the effective
+			// value the build would see.
+			effective = os.Getenv(name)
+		}
+		fmt.Fprintf(h, "arg:%s=%s\x00", name, effective)
+	}
+}
+
+// baseDeclaredArgNames returns the set of ARG names declared anywhere in the
+// rendered base Dockerfile. Every stage's ARGs are collected: a --build-arg
+// targeting an ARG in any stage can change what the base image builds, so all
+// declarations count. ARG names are case-sensitive (BuildKit keys on the
+// value under the exact name); the instruction keyword is not, matching
+// Dockerfile parsing.
+//
+// This is a line-oriented parser over clawker's OWN rendered base template (a
+// controlled input space), not arbitrary user Dockerfiles. Backslash line
+// continuations are joined first so a wrapped `ARG \<newline>NAME` is seen as
+// one instruction; heredoc bodies are not special-cased (no rendered template
+// puts an ARG-shaped line in one). A misparse is fail-safe by the hash's own
+// contract — at worst a spurious rebuild, never a wrong image.
+func baseDeclaredArgNames(baseDockerfile []byte) map[string]struct{} {
+	joined := strings.ReplaceAll(string(baseDockerfile), "\\\n", " ")
+	names := make(map[string]struct{})
+	for line := range strings.SplitSeq(joined, "\n") {
+		if name, ok := argInstructionName(line); ok {
+			names[name] = struct{}{}
+		}
+	}
+	return names
+}
+
+// argInstructionName extracts the variable name from a single Dockerfile line
+// when it is an ARG instruction, else reports false. Handles `ARG NAME`,
+// `ARG NAME=default`, and `ARG NAME="default"` (quoted defaults may contain
+// spaces — only the name, which never does, is returned). The keyword match
+// is case-insensitive; the returned name is verbatim.
+func argInstructionName(line string) (string, bool) {
+	fields := strings.Fields(line)
+	if len(fields) < 2 || !strings.EqualFold(fields[0], "ARG") {
+		return "", false
+	}
+	name := fields[1]
+	if i := strings.IndexByte(name, '='); i >= 0 {
+		name = name[:i]
+	}
+	if name == "" {
+		return "", false
+	}
+	return name, true
 }
 
 // hashCopySources feeds the contents of every copy-instruction src (files,

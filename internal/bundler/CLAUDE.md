@@ -48,7 +48,7 @@ templates in sync.
 func NewProjectGenerator(cfg config.Config, workDir string) *ProjectGenerator
 func (g *ProjectGenerator) GenerateBase() ([]byte, error)                              // Render base-image Dockerfile
 func (g *ProjectGenerator) GenerateHarness() ([]byte, error)                           // Render harness-image Dockerfile (needs BaseImageRef)
-func (g *ProjectGenerator) BaseContentHash(baseDockerfile []byte) (string, error)      // Freshness key (basehash.go)
+func (g *ProjectGenerator) BaseContentHash(baseDockerfile []byte, buildArgs map[string]*string) (string, error) // Freshness key (basehash.go)
 func (g *ProjectGenerator) GenerateBaseBuildContext(dockerfile []byte) (io.Reader, error)      // Tar: project ctx + Dockerfile under BaseDockerfileName (legacy)
 func (g *ProjectGenerator) GenerateHarnessBuildContext(dockerfile []byte) (io.Reader, error)   // Tar: bundle assets + CA + clawker binaries (legacy)
 func (g *ProjectGenerator) WriteHarnessBuildContextToDir(dir string, dockerfile []byte) error  // Filesystem (BuildKit)
@@ -70,12 +70,23 @@ reserved tar entry name so a user's own `Dockerfile` is never clobbered.
 
 **Freshness (`basehash.go`):** `BaseContentHash` = SHA-256 of the rendered
 base Dockerfile bytes + contents of files matched by `instructions.copy`
-srcs (sorted; `.git`/symlinks skipped; missing srcs hash a stable marker).
-The docker Builder compares it against the `:base` image's
-`consts.LabelBaseContentHash` label to decide base rebuilds. Deliberately
-NOT a whole-context hash — source edits outside copy srcs never rebuild
-the base. Glob semantics are Go's, not Docker's; imprecision worst-cases
-as a spurious rebuild, never a wrong image.
+srcs (sorted; `.git`/symlinks skipped; missing srcs hash a stable marker),
+plus the effective values of any `--build-arg` entries the rendered base
+Dockerfile actually declares (parsed from its `ARG` lines; a nil value =
+`--build-arg NAME` pass-through resolves to `os.Getenv(NAME)`). The docker
+Builder passes `BuilderOptions.BuildArgs` in and compares the result against
+the `:base` image's `consts.LabelBaseContentHash` label to decide base
+rebuilds. Folding base-relevant args in keeps clawker faithful to BuildKit
+(which cache-keys images on arg values) — the base skip would otherwise
+silently eat a `--build-arg` that targets a base ARG. Args the base does not
+declare (harness-only or unknown) are excluded, so they never force a base
+rebuild: with no base-relevant args the hash equals the Dockerfile+copy-srcs
+hash exactly (no arg bytes appended), so an existing base is never rebuilt
+merely by the engine gaining arg-awareness. Deliberately NOT a whole-context
+hash —
+source edits outside copy srcs never rebuild the base. Glob semantics are
+Go's, not Docker's; imprecision worst-cases as a spurious rebuild, never a
+wrong image.
 
 **Substrate base:** every base Dockerfile renders `FROM` the single pinned
 `SubstrateImage` digest (Debian bookworm-slim). There is no user-selectable

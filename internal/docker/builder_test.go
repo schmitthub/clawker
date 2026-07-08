@@ -241,6 +241,8 @@ func setupInspectNotFound(fakeAPI *whailtest.FakeAPIClient) {
 // setupInspectBaseWithHash makes ImageInspect return a managed base image
 // carrying the given content hash for baseRef, and miss for everything else.
 // The managed key composes prefix+suffix exactly as whail's Engine does.
+//
+//nolint:unparam // baseRef is a fixture knob kept explicit for readability
 func setupInspectBaseWithHash(cfg config.Config, fakeAPI *whailtest.FakeAPIClient, baseRef, hash string) {
 	fakeAPI.ImageInspectFn = func(_ context.Context, image string, _ ...client.ImageInspectOption) (client.ImageInspectResult, error) {
 		if image != baseRef {
@@ -261,15 +263,19 @@ func setupInspectBaseWithHash(cfg config.Config, fakeAPI *whailtest.FakeAPIClien
 	}
 }
 
-// expectedBaseHash computes the same base content hash the builder will,
-// via an identically configured generator.
+// expectedBaseHash computes the same base content hash the builder will for an
+// arg-free base, via an identically configured generator. The build-arg tests
+// set up an existing base built without any --build-arg (nil), then assert the
+// Build call's arg folds (or does not) into the freshness decision.
+//
+//nolint:unparam // harnessName is a fixture knob kept explicit for readability
 func expectedBaseHash(t *testing.T, cfg config.Config, workDir, harnessName string) string {
 	t.Helper()
 	gen := bundler.NewProjectGenerator(cfg, workDir)
 	gen.Harness = harnessName
 	baseDF, err := gen.GenerateBase()
 	require.NoError(t, err)
-	hash, err := gen.BaseContentHash(baseDF)
+	hash, err := gen.BaseContentHash(baseDF, nil)
 	require.NoError(t, err)
 	return hash
 }
@@ -368,6 +374,53 @@ func TestBuild_NoCacheRebuildsBase(t *testing.T) {
 	require.NoError(t, b.Build(context.Background(), "clawker-proj:other", buildOpts))
 
 	require.Len(t, *builds, 2, "--no-cache must rebuild the base too")
+}
+
+// TestBuild_RelevantBuildArgRebuildsBase: a --build-arg targeting an ARG the
+// base Dockerfile declares (TZ, from the base template's `ARG TZ=UTC`) folds
+// into the base content hash, so a base image built without that arg value is
+// stale and rebuilt end-to-end — matching BuildKit, which cache-keys on arg
+// values. Proves the builder threads BuilderOptions.BuildArgs into the hash.
+func TestBuild_RelevantBuildArgRebuildsBase(t *testing.T) {
+	cfg := testHarnessCfg(t)
+	cli, fakeAPI := newTestClientWithConfig(cfg)
+	workDir := t.TempDir()
+	// The existing base carries the arg-free hash.
+	hash := expectedBaseHash(t, cfg, workDir, "other")
+	setupInspectBaseWithHash(cfg, fakeAPI, "clawker-proj:base", hash)
+	builds := captureImageBuilds(t, fakeAPI)
+
+	b := NewBuilder(cli, cfg.Project(), workDir, "proj")
+	var buildOpts BuilderOptions
+	buildOpts.HarnessName = "other"
+	buildOpts.SuppressOutput = true
+	tz := "America/New_York"
+	buildOpts.BuildArgs = map[string]*string{"TZ": &tz}
+	require.NoError(t, b.Build(context.Background(), "clawker-proj:other", buildOpts))
+
+	require.Len(t, *builds, 2, "a base-relevant build-arg must rebuild the stale base")
+}
+
+// TestBuild_HarnessOnlyBuildArgSkipsBase is the inverse: a build-arg the base
+// never declares (CLAUDE_CODE_VERSION is a harness-image ARG) must not perturb
+// the base hash, so the fresh base is still skipped — no gratuitous rebuild.
+func TestBuild_HarnessOnlyBuildArgSkipsBase(t *testing.T) {
+	cfg := testHarnessCfg(t)
+	cli, fakeAPI := newTestClientWithConfig(cfg)
+	workDir := t.TempDir()
+	hash := expectedBaseHash(t, cfg, workDir, "other")
+	setupInspectBaseWithHash(cfg, fakeAPI, "clawker-proj:base", hash)
+	builds := captureImageBuilds(t, fakeAPI)
+
+	b := NewBuilder(cli, cfg.Project(), workDir, "proj")
+	var buildOpts BuilderOptions
+	buildOpts.HarnessName = "other"
+	buildOpts.SuppressOutput = true
+	v := "2.1.4"
+	buildOpts.BuildArgs = map[string]*string{"CLAUDE_CODE_VERSION": &v}
+	require.NoError(t, b.Build(context.Background(), "clawker-proj:other", buildOpts))
+
+	require.Len(t, *builds, 1, "a harness-only build-arg must not rebuild the fresh base")
 }
 
 // TestBuild_BaseFailureAborts: a failed base build aborts before the

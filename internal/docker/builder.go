@@ -119,7 +119,7 @@ func (b *Builder) Build(ctx context.Context, imageTag string, opts BuilderOption
 	// base-build or harness-generation failure; the harness render appends to
 	// it below.
 	b.provenance = gen.Provenance()
-	baseHash, err := gen.BaseContentHash(baseDockerfile)
+	baseHash, err := gen.BaseContentHash(baseDockerfile, opts.BuildArgs)
 	if err != nil {
 		return fmt.Errorf("failed to hash base image inputs: %w", err)
 	}
