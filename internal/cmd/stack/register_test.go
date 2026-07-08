@@ -106,7 +106,7 @@ func TestStackRegister_ForceReplaces(t *testing.T) {
 	require.NoError(t, second.Execute())
 
 	assert.Equal(t, dir2, cfg.Project().Stacks["rust"].Path)
-	assert.Contains(t, out.String(), "replaced")
+	assert.Contains(t, out.String(), "was")
 	assert.Contains(t, out.String(), dir1)
 }
 

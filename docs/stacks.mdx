@@ -146,7 +146,7 @@ clawker stack register ./stacks/my-rust
 # Register under an explicit name
 clawker stack register ./vendor/rustup --name rust
 
-# Replace an existing registration (reports the shadowed path)
+# Replace an existing project registration (reports the prior path)
 clawker stack register ./stacks/my-rust --force
 
 # List project-registered and built-in stacks (SHADOWS flags overrides)
@@ -239,7 +239,7 @@ Load-time validation checks the name, the manifest, and each fragment (a fragmen
 Register your own definition under a shipped name (`go`, `node`, `python`, `rust`) and it shadows the shipped one wholesale in every lineage that resolves it — the build output reports the shadow. Shipped definitions themselves are never removed and never edited in place (there is no materialized copy); you override by registering your own:
 
 ```bash
-clawker stack register ./stacks/node --name node --force
+clawker stack register ./stacks/node
 ```
 
-To go back to the shipped definition, `clawker stack remove node`.
+Shadowing a shipped name is an ordinary registration — `--force` is only needed to replace a name your project has already registered. To go back to the shipped definition, `clawker stack remove node`.

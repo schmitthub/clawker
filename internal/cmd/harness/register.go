@@ -147,13 +147,14 @@ type registerReport struct {
 	writtenTo string
 }
 
-// reportRegistered prints the success line, the replaced path when the
-// registration overwrote an existing one, the config file it landed in, and
-// any stacks the bundle embeds.
+// reportRegistered prints the success line, the prior path when the
+// registration overrode an existing entry (a parent-layer entry stays in its
+// own file and is merely shadowed, so the old path is reported as "was", not
+// "replaced"), the config file it landed in, and any stacks the bundle embeds.
 func reportRegistered(ios *iostreams.IOStreams, r registerReport) {
 	cs := ios.ColorScheme()
-	if r.replaced {
-		fmt.Fprintf(ios.Out, "%s Registered harness '%s' → %s (replaced %s)\n",
+	if r.replaced && r.oldPath != r.stored {
+		fmt.Fprintf(ios.Out, "%s Registered harness '%s' → %s (was %s)\n",
 			cs.SuccessIcon(), r.name, r.stored, r.oldPath)
 	} else {
 		fmt.Fprintf(ios.Out, "%s Registered harness '%s' → %s\n", cs.SuccessIcon(), r.name, r.stored)

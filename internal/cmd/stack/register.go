@@ -122,12 +122,14 @@ func registerRun(_ context.Context, opts *RegisterOptions) error {
 	return nil
 }
 
-// reportRegistered prints the success line, the replaced path when the
-// registration overwrote an existing one, and the config file it landed in.
+// reportRegistered prints the success line, the prior path when the
+// registration overrode an existing entry (a parent-layer entry stays in its
+// own file and is merely shadowed, so the old path is reported as "was", not
+// "replaced"), and the config file it landed in.
 func reportRegistered(ios *iostreams.IOStreams, name, stored, oldPath string, replaced bool, writtenTo string) {
 	cs := ios.ColorScheme()
-	if replaced {
-		fmt.Fprintf(ios.Out, "%s Registered stack '%s' → %s (replaced %s)\n",
+	if replaced && oldPath != stored {
+		fmt.Fprintf(ios.Out, "%s Registered stack '%s' → %s (was %s)\n",
 			cs.SuccessIcon(), name, stored, oldPath)
 	} else {
 		fmt.Fprintf(ios.Out, "%s Registered stack '%s' → %s\n", cs.SuccessIcon(), name, stored)

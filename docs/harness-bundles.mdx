@@ -373,10 +373,10 @@ Edit the bundle directory and rebuild. The base image is unaffected by bundle ch
 Shipped bundles load from the binary and are never edited in place. To change how a shipped harness is built, author your own bundle and register it under the shipped name:
 
 ```bash
-clawker harness register ./tools/my-claude --name claude --force
+clawker harness register ./tools/my-claude --name claude
 ```
 
-It shadows the shipped `claude` in that project's lineage (the build output reports the shadow). To go back to the shipped bundle, `clawker harness remove claude`.
+Shadowing a shipped name is an ordinary registration — `--force` is only needed to replace a bundle path your project has already registered. It shadows the shipped `claude` in that project's lineage (the build output reports the shadow). To go back to the shipped bundle, `clawker harness remove claude`.
 
 ### Extending a harness without a fork
 
