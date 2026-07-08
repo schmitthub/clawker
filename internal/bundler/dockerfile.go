@@ -16,6 +16,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"text/template"
 	"time"
@@ -126,8 +127,14 @@ type DockerfileContext struct {
 	// stage placement (project-declared → base image, harness-declared-only
 	// → harness image) and fills them per render; the templates just emit
 	// them at static anchors. Nothing declared → empty → zero bytes.
-	StackRootSteps  []string
-	StackUserSteps  []string
+	StackRootSteps []string
+	StackUserSteps []string
+	// HarnessPackages are extra apt packages for THIS harness image only,
+	// from the per-harness build overlay (build.harnesses.<name>.packages).
+	// Rendered by the harness-image template's early-root apt slot; never
+	// deduped against Packages (apt install is idempotent). Empty for the
+	// base render — the field only carries overlay content in GenerateHarness.
+	HarnessPackages []string
 	BuildKitEnabled bool
 	Instructions    *DockerfileInstructions
 	Inject          *DockerfileInject
@@ -328,11 +335,27 @@ func (g *ProjectGenerator) GenerateHarness() ([]byte, error) {
 		return nil, err
 	}
 
+	// An overlay keyed to a harness that resolves nowhere (typo, or a bundle
+	// the user never registered) would otherwise be dead config that silently
+	// drops its packages/stacks/inject from every image — surface it loudly.
+	if overlayErr := validateOverlayKeys(g.cfg); overlayErr != nil {
+		return nil, overlayErr
+	}
+
+	// The per-harness build overlay (build.harnesses.<name>) is scoped to this
+	// one harness's image, keyed by the resolved harness name the bundle
+	// carries.
+	overlay := g.cfg.Project().Build.Harnesses[bundle.Name]
+
 	// Harness-declared stacks ALWAYS render here with their lineage-resolved
 	// definition — no cross-stratum dedup against project-declared base
 	// stacks (design §2). A name the project also declares in build.stacks
-	// renders in both images; fragment self-guards own any interaction.
-	root, user, prov, err := resolveHarnessStacks(g.cfg, bundle, bundle.Manifest.Stacks)
+	// renders in both images; fragment self-guards own any interaction. The
+	// project's per-harness overlay stacks render AFTER the bundle's own
+	// installer stacks (installer → overlay), sharing one lineage lookup so
+	// a name repeated across the two sources still renders once.
+	decls := slices.Concat(bundle.Manifest.Stacks, overlay.Stacks)
+	root, user, prov, err := resolveHarnessStacks(g.cfg, bundle, decls)
 	if err != nil {
 		return nil, err
 	}
@@ -343,6 +366,8 @@ func (g *ProjectGenerator) GenerateHarness() ([]byte, error) {
 	if tctx.StackUserSteps, err = renderStackSteps(user, tctx); err != nil {
 		return nil, err
 	}
+
+	applyHarnessOverlay(tctx, overlay)
 
 	tmpl, err := harness.Compose(DockerfileHarnessImageTemplate, bundle)
 	if err != nil {
@@ -355,6 +380,37 @@ func (g *ProjectGenerator) GenerateHarness() ([]byte, error) {
 	}
 
 	return buf.Bytes(), nil
+}
+
+// applyHarnessOverlay applies the per-harness build overlay's packages and
+// inject points to the harness-image template context. Overlay stacks are
+// handled separately — they join the bundle's installer declarations before
+// lineage resolution in GenerateHarness.
+func applyHarnessOverlay(tctx *DockerfileContext, overlay config.HarnessBuildOverlay) {
+	// Overlay apt packages render in this harness image's early-root slot,
+	// as declared — no dedupe against the base package list.
+	tctx.HarnessPackages = overlay.Packages
+
+	// Overlay inject points render ONLY in this harness's image, appended
+	// after any global project inject at the same points (declaration order).
+	if overlay.Inject == nil {
+		return
+	}
+	if tctx.Inject == nil {
+		tctx.Inject = &DockerfileInject{
+			AfterFrom:           nil,
+			AfterPackages:       nil,
+			AfterUserSetup:      nil,
+			AfterUserSwitch:     nil,
+			AfterHarnessInstall: nil,
+			BeforeEntrypoint:    nil,
+		}
+	}
+	// slices.Concat allocates fresh so the append never writes into a
+	// config-owned backing array (the global BeforeEntrypoint slice
+	// aliases the store).
+	tctx.Inject.AfterHarnessInstall = slices.Concat(tctx.Inject.AfterHarnessInstall, overlay.Inject.AfterHarnessInstall)
+	tctx.Inject.BeforeEntrypoint = slices.Concat(tctx.Inject.BeforeEntrypoint, overlay.Inject.BeforeEntrypoint)
 }
 
 // GenerateHarnessBuildContext builds a tar archive build context for the

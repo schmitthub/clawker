@@ -63,6 +63,27 @@ build:
 			buildKit: true,
 		},
 		{
+			// Per-harness overlay trio (stacks/packages/inject) scoped to the
+			// default claude harness: overlay content lands in the harness
+			// image (go stack after the bundle's node installer, libnss3 apt
+			// RUN, harness-scoped inject), never in the shared base.
+			name: "harness-overlay",
+			projectYAML: `
+version: "1"
+build:
+  harnesses:
+    claude:
+      stacks: [go]
+      packages: ["libnss3"]
+      inject:
+        after_harness_install:
+          - "RUN echo overlay-after-harness-install"
+        before_entrypoint:
+          - "RUN echo overlay-before-entrypoint"
+`,
+			buildKit: true,
+		},
+		{
 			name: "telemetry-flags-off",
 			projectYAML: minimalProjectYAML() + `
 monitoring:

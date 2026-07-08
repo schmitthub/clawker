@@ -36,6 +36,24 @@ FROM {{.HarnessBaseImage}} AS final
 SHELL ["/bin/sh", "-c"]
 ARG USERNAME={{.Username}}
 USER root
+{{- if .HarnessPackages}}
+
+# Per-harness overlay apt packages (build.harnesses.<name>.packages), scoped
+# to THIS harness image and rendered before the stack fragments so
+# harness-scoped stacks/blocks can rely on them. Not deduped against the base
+# image's package list — apt install is idempotent.
+{{- if $.BuildKitEnabled}}
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+{{- else}}
+RUN apt-get update && apt-get install -y --no-install-recommends \
+{{- end}}
+    {{- range .HarnessPackages}}
+    {{.}} \
+    {{- end}}
+    && true
+{{- end}}
 
 {{/* Stack fragments (root scope) — harness-declared and not already in
      the shared base, rendered before block_1 so every harness block can

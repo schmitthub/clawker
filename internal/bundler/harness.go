@@ -98,6 +98,31 @@ func IsKnownHarness(cfg config.Config, name string) bool {
 	return isShippedHarness(name) || projectHarnessPath(cfg, name) != ""
 }
 
+// validateOverlayKeys rejects any build.harnesses.<name> overlay whose key
+// names no known harness (shipped or project-registered). Such an overlay is
+// dead config — no build could ever select it, so its packages/stacks/inject
+// would silently never render into any image. Keys are checked in sorted
+// order so the error is deterministic.
+func validateOverlayKeys(cfg config.Config) error {
+	overlays := cfg.Project().Build.Harnesses
+	keys := make([]string, 0, len(overlays))
+	for key := range overlays {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if !IsKnownHarness(cfg, key) {
+			return fmt.Errorf(
+				"build.harnesses.%s: unknown harness %q — register its bundle with"+
+					" `clawker harness register <path> --name %s`"+
+					" (or add harnesses.%s.path to clawker.yaml); known harnesses: %v",
+				key, key, key, key, KnownHarnessNames(cfg),
+			)
+		}
+	}
+	return nil
+}
+
 // harnessProvenance records where a harness bundle resolved from and whether
 // it shadowed the shipped bundle of the same name. Unlike stack provenance it
 // is ALWAYS surfaced in build output — every harness resolution names its
