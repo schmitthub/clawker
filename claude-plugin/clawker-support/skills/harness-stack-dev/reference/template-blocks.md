@@ -127,8 +127,8 @@ CMD ["codex"]
 
 ## Claude fragment highlights (the full-featured example)
 
-Read the materialized claude bundle for the complete text; what it
-demonstrates beyond codex:
+Read the claude bundle source in the clawker repo for the complete text;
+what it demonstrates beyond codex:
 
 - **block_2 (root, pre-user-switch):** writes
   `/etc/claude-code/managed-settings.json` injecting

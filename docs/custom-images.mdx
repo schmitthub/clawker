@@ -42,7 +42,7 @@ clawker run -it --agent dev @:codex   # Selects the codex harness image
 
 Images and containers carry the `dev.clawker.harness` label identifying which harness they were built for.
 
-Build-time variables can be overridden with `--build-arg` on `clawker build` — for example `--build-arg CLAUDE_CODE_VERSION=2.1.4` pins the claude harness's install to an exact version.
+Build-time variables can be overridden with `--build-arg` on `clawker build` — for example `--build-arg CLAUDE_CODE_VERSION=2.1.4` pins the claude harness's install to an exact version, or `--build-arg NODE_VERSION=22` pins a stack's runtime line. When a `--build-arg` targets an ARG the **base** image declares, Clawker folds the value into the base freshness key so changing it rebuilds the base (a build arg the base doesn't declare — harness-only or unknown — never triggers a base rebuild).
 
 ## System Packages
 
@@ -76,9 +76,9 @@ Shipped stack definitions:
 | `python` | `uv` (Astral's package/project manager) system-wide, plus a uv-managed CPython with `python3`/`python` on `PATH` |
 | `rust` | The Rust toolchain via `rustup` (stable channel) into the user's `~/.cargo` and `~/.rustup` |
 
-Stacks are self-guarding — each skips itself when the image already provides the runtime. Harness bundles declare their own stack requirements (for example, the `claude` bundle declares `node`); a harness-declared stack installs in the harness image unless your project already declared it, in which case it lives in the shared base and every harness image gets it for free.
+Stacks are self-guarding — each skips itself when the image already provides the runtime. Harness bundles declare their own stack requirements (for example, the `claude` bundle declares `node`); a harness-declared stack renders in the harness image with its own lineage-resolved definition, always — even when your project also declared the same name in the base. Both strata render; the fragment self-guards handle any overlap.
 
-Stack definitions are file-backed (`stack.yaml` plus root- and/or user-scope Dockerfile fragments). Shipped definitions are materialized under your config directory and registered in `settings.yaml` under `stacks:`; you can register custom definitions there too. All sources share one flat namespace — a name collision is an error.
+Stack definitions are file-backed (`stack.yaml` plus root- and/or user-scope Dockerfile fragments). Shipped definitions resolve straight from the clawker binary; register your own per-project in `clawker.yaml` under `stacks:` (or with `clawker stack register`). A closer layer — the project registry, then a harness bundle's own `stacks/` dir — shadows a shipped definition of the same name, reported in the build output. See [Stacks](/stacks) for the full definition format and lookup chain.
 
 ## Build Instructions
 
@@ -205,7 +205,34 @@ build:
 12. `after_harness_install` — runs as the container user with the harness CLI available: add MCP servers, install plugins or extensions
 13. `before_entrypoint` — final tweaks before Clawker's runtime assets and `ENTRYPOINT`
 
-Because `after_harness_install` and `before_entrypoint` live in the harness image, they run once per harness you build — a step that registers an MCP server with `claude` applies to the claude harness image only.
+Because `after_harness_install` and `before_entrypoint` live in the harness image, they run once per harness you build — but the same `build.inject` applies project-wide, so a step that registers an MCP server with `claude` runs in **every** harness image you build. To scope an inject step to a single harness, use a per-harness overlay (below).
+
+## Per-Harness Overlays
+
+The base `build` block applies to every image you build. To layer extra stacks, packages, or inject steps onto **one** harness's image without touching the bundle or the base, declare them under `build.harnesses.<name>` — the same `stacks`, `packages`, and `inject` primitives, scoped to that harness's lineage:
+
+```yaml
+build:
+  stacks:
+    - go                      # base image, every harness
+  harnesses:
+    claude:
+      stacks:
+        - bun                 # claude image only, after the bundle's own stacks
+      packages:
+        - libnss3             # apt install in the claude image only
+      inject:
+        after_harness_install:
+          - "RUN claude mcp add context7 -- npx -y @upstash/context7-mcp"
+        before_entrypoint:
+          - "RUN echo 'claude-only tweak'"
+```
+
+- **`stacks`** render in that harness's image **after** the bundle's own stacks (installer → overlay, declaration order). A name that appears in both the bundle and the overlay renders once, at its installer position.
+- **`packages`** install as an apt step in that harness's image. They are **not** deduplicated against `build.packages` — apt idempotence handles any overlap.
+- **`inject`** exposes only the two harness-image points, `after_harness_install` and `before_entrypoint`. Overlay inject renders after any global `build.inject` at the same anchor, and **only** in that harness's image — this is how you scope a `claude mcp add` to the claude container instead of every harness.
+
+An overlay keyed to a harness that resolves nowhere (not shipped, not registered) is a build error naming the `clawker harness register` remedy — a typo'd overlay never silently does nothing.
 
 ## Complete Example
 

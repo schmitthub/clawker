@@ -47,12 +47,14 @@ stacks:
 ```
 
 A list of stack definition names this harness's blocks require. Names
-must match `[a-zA-Z0-9][a-zA-Z0-9._-]{0,40}`; duplicates error at load
-(`duplicate stack declaration`). Whether a name *resolves* is checked at
-generation time (the namespace includes the settings registry, which a
-bundle cannot see). Resolved fragments render in the **harness image**
-before your blocks — unless the project also declared the same name, in
-which case they already live in the shared base. See
+must match the unified rule `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$` (max 32);
+duplicates error at load (`duplicate stack declaration`). Whether a name
+*resolves* is checked at generation time against the harness lineage
+(project `stacks:` registry → this bundle's `stacks/<name>/` → shipped),
+which the bundle can't fully see at load. Resolved fragments render in the
+**harness image** before your blocks — always, with their lineage-resolved
+definition, even when the project also declared the same name in the base
+(both strata render; the fragment self-guard owns the overlap). See
 `stack-authoring.md`.
 
 ## volumes
@@ -187,24 +189,35 @@ Design guidance — minimal floor, path scoping, UGC-sink denial, MITM/SNI
 implications — lives in `security-egress.md`. Read it before writing any
 `egress:` section.
 
-## Registration (settings.yaml)
+## Registration (project clawker.yaml)
 
-Not part of the manifest, but the bundle is inert without it:
+Not part of the manifest, but a custom bundle is inert without it. Shipped
+bundles (`claude`, `codex`) need no registration — they resolve from the
+binary. Register a custom bundle per-project:
 
-```yaml
-# In: <config-dir>/settings.yaml (user settings)
-harnesses:
-  myharness:
-    path: /absolute/path/to/bundle   # required — resolution is registry-only
-    default: false                   # at most ONE entry may be true
+```bash
+clawker harness register /path/to/bundle --name myharness
 ```
 
-- Missing entry: `harness "<name>" is not registered: add a settings entry
-  harnesses.<name> with an explicit path`.
-- Empty path: `registry entry has no bundle path`.
-- Path without a manifest: `no bundle at registered path ... — fix
-  harnesses.<name>.path in settings or rebuild to re-materialize`.
-- Two defaults: `multiple harnesses marked default in settings ... — set
-  default: true on exactly one`.
-- Name grammar: docker image tag (`[a-zA-Z0-9_][a-zA-Z0-9._-]{0,127}`);
-  `default`, `latest`, and `base` are reserved tag aliases.
+which writes:
+
+```yaml
+# In: the project's clawker.yaml
+harnesses:
+  myharness:
+    path: ./relative/or/absolute/bundle   # required — resolution is registry-only
+```
+
+Resolution is a per-lineage chain — project `harnesses:` registry → shipped —
+where the closest layer wins wholesale; a project entry under a shipped name
+shadows it (reported in build output). The same `harnesses.<name>` entry may
+also carry per-harness init config (`env`, `post_init`, `pre_run`, config
+strategy); an entry with init config but no `path` is NOT a registration.
+
+- Missing/unresolvable: `harness "<name>" is not registered` — names the
+  `clawker harness register` remedy.
+- Path without a manifest: `no bundle at registered path ...` — fix
+  `harnesses.<name>.path` in `clawker.yaml`.
+- Name grammar: unified rule `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$` (max 32); the
+  name is also the image tag, so `default`, `latest`, and `base` are reserved
+  aliases.

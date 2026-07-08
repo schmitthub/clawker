@@ -1,13 +1,13 @@
 ---
 title: "Harness Bundles"
-description: "What a harness is, how Clawker ships and materializes the claude and codex bundles, and how to author your own bundle for any coding-agent CLI"
+description: "What a harness is, how Clawker ships the claude and codex bundles, and how to author and register your own bundle for any coding-agent CLI"
 icon: "cube"
 keywords: ["AI coding agent sandbox", "run coding agents in Docker", "Claude Code", "Codex", "harness bundle", "coding agent CLI", "custom harness", "self-hosted", "open source"]
 ---
 
 A **harness** is the coding-agent CLI a container runs — Claude Code, Codex, or one you bring yourself. Clawker is harness-agnostic: nothing about a harness is hardcoded. Everything a harness needs — how to install it, where it keeps state, what network floor it requires, which files to seed on first boot — lives in a **bundle**, a directory Clawker reads at build time.
 
-Two bundles ship in the binary today, `claude` and `codex`. Both are materialized into your config directory as ordinary, editable files, and both are registered in `settings.yaml`. Authoring a harness for an agent Clawker doesn't ship is the same shape: write a bundle directory, add a registry entry.
+Two bundles ship in the binary today, `claude` and `codex`, and resolve without any registration. Authoring a harness for an agent Clawker doesn't ship is the same shape: write a bundle directory, then register its path per-project with `clawker harness register`.
 
 <Note>
 This page is about **authoring and selecting harnesses**. For how the two-stage image is built around a bundle (the substrate base, packages, injection points), see [Image Customization](/custom-images). For how a bundle's egress floor composes with your firewall rules, see [Egress Firewall](/firewall).
@@ -29,37 +29,53 @@ The **build fragment** — a set of `{{define}}` blocks that fill named slots in
 Every file the bundle contributes to the Docker build context — config seeds, scripts, prompt files. The whole tree is staged verbatim under an `assets/` prefix; the template's `COPY` instructions and the manifest's `seeds[].file` entries reference `assets/`-relative paths.
 </Card>
 
-## Shipped bundles and materialization
+## Shipped bundles
 
-The `claude` and `codex` bundles are embedded in the Clawker binary. On first use, Clawker **materializes** them — copying each into `<config-dir>/harnesses/<name>/` (for example `~/.config/clawker/harnesses/claude/`) — and seeds a registry entry for each in `settings.yaml`.
+The `claude` and `codex` bundles are embedded in the Clawker binary and load straight from it — there is no materialization step and no config-directory copies. To customize how a shipped harness is built, author your own bundle and register it under the same name (it shadows the shipped one, reported in the build output); see [Overriding a shipped harness](#overriding-a-shipped-harness).
 
-Materialization is **copy-if-missing**: a file that already exists on disk is never overwritten. The materialized copy is yours to edit, and your edits always win. To pull a fresh copy of a shipped bundle back, delete the directory (or the individual file) and rebuild — Clawker re-materializes what's missing.
+## The registry and lineage lookup
 
-<Info>
-The embedded copy is only a seed and a hermetic fallback. Once a bundle is materialized, that directory is the source of truth — edit it directly to customize how a shipped harness is built.
-</Info>
-
-## The registry
-
-Harnesses are registered in `settings.yaml` under `harnesses:`, a map of name → entry:
+Registration makes a bundle **available**; selecting it at build/run time renders it. Register a harness in your project's `clawker.yaml` under the top-level `harnesses:` map — name → path:
 
 ```yaml
+# clawker.yaml
 harnesses:
-  claude:
-    path: /home/you/.config/clawker/harnesses/claude
-    default: true
   codex:
-    path: /home/you/.config/clawker/harnesses/codex
+    path: ./tools/codex-bundle
 ```
 
-Each entry carries an explicit `path:` to its bundle directory — resolution is never by convention, always by the registered path. Two fields:
+The [`clawker harness register`](/cli-reference/clawker_harness_register) command writes these entries for you. Paths are **relative to the project root** or **absolute** — no `~` or `$VAR` expansion.
 
-| Field | Meaning |
-|-------|---------|
-| `path` | The bundle directory (`harness.yaml` + `Dockerfile.harness.tmpl` + `assets/`). Always explicit. |
-| `default` | Marks the harness used when a command selects none (a bare `@` ref, `clawker build` with no `--tag`). **At most one** entry may set it — more than one is a configuration error. When none does, the built-in default (`claude`) applies. |
+A harness name resolves through a **per-lineage lookup chain** — the project `harnesses:` registry, then the shipped embedded bundles as the floor. The closest layer that defines the name wins **wholesale**. A project registration under a shipped name (`claude`, `codex`) **shadows** it, and the build output prints a provenance line so the substitution is never silent:
 
-The registry key **is** the image tag, so it must be a valid Docker tag: `[a-zA-Z0-9_]` followed by up to 127 of `[a-zA-Z0-9._-]`. The names `default`, `latest`, and `base` are reserved tag aliases and rejected.
+```
+harness codex ← ./tools/codex-bundle (project registry) shadows shipped
+```
+
+<Note>
+The `harnesses:` map does double duty: an entry's `path:` registers the bundle, and the same `harnesses.<name>` entry also holds that harness's [per-harness init config](/configuration) (`env`, `post_init`, `pre_run`, managed-config strategy). An entry with init config but no `path:` is not a registration — it configures a harness that resolves elsewhere.
+</Note>
+
+<Note>
+Registration writes to the project's `clawker.yaml`, so run it from inside an initialized project (`clawker init`). Run from an unregistered directory, the entry lands in your user-level `clawker.yaml` instead — the command prints the file it wrote to.
+</Note>
+
+The registry key **is** the image tag, so it follows the shared [naming rule](/stacks#naming): lowercase kebab-case, up to 32 characters (`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`), directory name unless `--name` overrides. The names `default`, `latest`, and `base` are reserved tag aliases and rejected.
+
+### Registering, listing, and removing
+
+```bash
+# Register a bundle directory (name = directory base name); bundled stacks are reported
+clawker harness register ./tools/codex-bundle --name codex
+
+# List project-registered and built-in harnesses (SHADOWS flags overrides)
+clawker harness list
+
+# Remove a project registration (built-in harnesses can only be shadowed, not removed)
+clawker harness remove codex
+```
+
+`clawker harness remove` drops the registration path; if the same entry also carries per-harness init config, only the `path` is removed and the init config stays in place.
 
 ### Selecting a harness
 
@@ -115,7 +131,7 @@ stacks:
   - node
 ```
 
-Declared, never installed here — the resolved fragments render in the harness image, unless your project already declared the same stack in `build.stacks` (then it lives in the shared base, built first, and every harness image gets it for free). Names resolve against the flat per-build namespace (shipped ∪ settings registry ∪ this bundle's own `stacks/` subdirectory). See [Stacks](/stacks) for the definition format.
+Declared, never installed here — the resolved fragments render in the harness image, always with their lineage-resolved definition (even when your project declared the same name in `build.stacks`; both strata render and the fragment self-guards handle any overlap). Names resolve through the harness lineage: your project's `stacks:` registry, then this bundle's own `stacks/<name>/` subdirectory, then shipped. A bundle embeds a bespoke definition by dropping it under `stacks/<name>/` (the directory name is the stack name) or, to reuse a shared definition, names it without embedding and lets the chain resolve it. See [Stacks](/stacks) for the definition format and lookup chain.
 
 ### `volumes`
 
@@ -317,7 +333,7 @@ CMD ["claude"]
 
 <Steps>
 <Step title="Create the bundle directory">
-Put it wherever you like — the conventional place is `<config-dir>/harnesses/<name>/`, alongside the shipped bundles. It needs `harness.yaml` and `Dockerfile.harness.tmpl` at minimum, plus an `assets/` tree if you seed or copy files.
+Put it wherever you like; keeping it inside the project (e.g. `./tools/<name>/`) keeps the registry path project-relative. It needs `harness.yaml` and `Dockerfile.harness.tmpl` at minimum, plus an `assets/` tree if you seed or copy files.
 </Step>
 
 <Step title="Write the manifest">
@@ -328,14 +344,14 @@ Declare the version resolver, any stacks your install steps need, the volume(s) 
 Fill the block slots. At a minimum you'll want block_4 (install the CLI, using `{{.HarnessVersion}}`) and block_6 (`CMD`). Set your config-dir env var (block_3) to match the config volume path.
 </Step>
 
-<Step title="Register it in settings">
-Add an entry under `harnesses:` in `settings.yaml` with an explicit `path:` to the bundle directory. Add `default: true` if you want it selected by a bare `@` (remember: at most one default across the whole registry).
+<Step title="Register it">
+Register the bundle directory in your project's `clawker.yaml`:
 
-```yaml
-harnesses:
-  mytool:
-    path: /home/you/.config/clawker/harnesses/mytool
+```bash
+clawker harness register ./tools/mytool
 ```
+
+This writes a `harnesses.mytool.path` entry and reports any stack definitions the bundle embeds under `stacks/`. To register under a different name, pass `--name`.
 </Step>
 
 <Step title="Build and run">
@@ -351,6 +367,20 @@ Load-time validation runs first: an invalid manifest, a template that defines an
 ### Iterating
 
 Edit the bundle directory and rebuild. The base image is unaffected by bundle changes (it's harness-agnostic), so harness-image rebuilds are fast; Docker's layer cache skips unchanged steps. A version bump or an install-step edit invalidates only the install layer and below.
+
+### Overriding a shipped harness
+
+Shipped bundles load from the binary and are never edited in place. To change how a shipped harness is built, author your own bundle and register it under the shipped name:
+
+```bash
+clawker harness register ./tools/my-claude --name claude --force
+```
+
+It shadows the shipped `claude` in that project's lineage (the build output reports the shadow). To go back to the shipped bundle, `clawker harness remove claude`.
+
+### Extending a harness without a fork
+
+If you only need to add a stack, a package, or an inject step to a shipped harness — not replace its whole bundle — use the project's [per-harness build overlay](/custom-images#per-harness-overlays) (`build.harnesses.<name>`) instead. It layers onto the bundle's own build without touching it.
 
 ### Designing the egress floor
 

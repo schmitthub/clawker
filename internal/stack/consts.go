@@ -15,8 +15,6 @@ const (
 	UserFragmentFile = "Dockerfile.stack-user.tmpl"
 )
 
-// StacksSubdir is the directory under the user config dir where shipped
-// definitions are materialized and user definitions live by convention. It
-// is also the subdirectory of a harness bundle holding bundle-embedded
-// definitions.
+// StacksSubdir is the subdirectory of a harness bundle holding
+// bundle-embedded stack definitions.
 const StacksSubdir = "stacks"

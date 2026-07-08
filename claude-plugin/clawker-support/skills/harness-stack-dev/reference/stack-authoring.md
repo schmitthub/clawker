@@ -21,35 +21,42 @@ ships up to two fragments — one per Dockerfile USER scope.
   `stack "<name>": no fragment found — a definition ships
   Dockerfile.stack-root.tmpl, Dockerfile.stack-user.tmpl, or both`
   / `... is empty` / `... parse ...`.
-- Name grammar: `[a-zA-Z0-9][a-zA-Z0-9._-]{0,40}` — it is a registry key, a
-  directory name, and a token in `build.stacks` lists.
+- Name grammar (unified rule, shared with harnesses): `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`,
+  max 32 chars — lowercase letters, digits, internal hyphens, no leading/trailing
+  hyphen. It is a registry key, a directory name (the dir base name IS the name
+  unless `--name` overrides at register time), and a token in `build.stacks` lists.
 
 Fragments render against the same Dockerfile context as harness blocks —
 `{{.BuildKitEnabled}}` for cache-mount gating is the one field shipped
 fragments use; `${USERNAME}`, `${ZSH_ENV}` ARGs are in scope at the user
 anchor.
 
-## Three sources, one flat namespace
+## Per-lineage lookup chain
 
-Per build, definitions resolve from:
+A declared name resolves through a **lineage lookup chain** — the closest
+layer that defines it wins **wholesale** (never merged). There is no global
+namespace; the chain depends on where the name renders:
 
-1. **Shipped** — embedded in clawker (`go`, `node`, `python`, `rust`),
-   materialized copy-if-missing to `<config-dir>/stacks/<name>/`.
-2. **Settings registry** — `stacks: {<name>: {path: <dir>}}` in
-   settings.yaml. Every entry carries an explicit path; the shipped set is
-   auto-seeded into the registry, so overriding a shipped definition =
-   editing the materialized copy (or pointing its registry entry elsewhere).
-3. **Bundle-embedded** — a harness bundle's `stacks/<name>/` subdir,
-   for definitions bespoke to that harness.
+| Renders in | Lookup chain |
+|---|---|
+| Base image (project `build.stacks`) | project `stacks:` registry → shipped |
+| Harness image (bundle `stacks:` or `build.harnesses.<h>.stacks`) | project `stacks:` registry → the selected bundle's `stacks/<name>/` dir → shipped |
 
-A name claimable from the bundle AND from the registry/shipped set is a
-**collision error** (`stack "<name>" is defined both by harness bundle
-... and by ... — stack names share one namespace; rename the
-bundle-embedded definition`). Bundle authors prefix bespoke definitions
-(e.g. `myharness-runtime`), never squat generic names. An undeclarable name
-errors: `unknown stack "<name>" (known: shipped [...], settings
-stacks registry, or a definition embedded in the selected harness
-bundle)`.
+- **Shipped** definitions (`go`, `node`, `python`, `rust`) are embedded in the
+  clawker binary and load straight from it — no materialization, no config-dir
+  copies. They are the floor of every chain.
+- **Project registry** — `stacks: {<name>: {path: <dir>}}` in the project's
+  `clawker.yaml`, written by `clawker stack register`. Paths are project-root-
+  relative or absolute (no `~`/`$VAR`). A project entry under a shipped name
+  shadows shipped everywhere.
+- **Bundle-embedded** — a harness bundle's `stacks/<name>/` subdir, resolved
+  only in that harness's lineage. Because sibling harness images don't share a
+  chain, two bundles embedding the same name never collide.
+
+When a closer layer shadows a farther one, the build output prints a
+provenance line (`stack node ← project (./stacks/node) shadows shipped`) — the
+substitution is never silent. An unresolvable name errors, naming the searched
+lineage and the `clawker stack register <path>` remedy.
 
 ## Placement semantics: who declares, where it renders
 
@@ -59,20 +66,22 @@ anchors; earliest stage wins:
 | Declaration | Renders in | Anchors |
 |---|---|---|
 | Project `build.stacks: [name]` (clawker.yaml) | **Shared base image** | root fragments before the project's `root_run`; user fragments before `user_run` — so project instructions can rely on them |
-| Harness manifest `stacks: [name]` | **Harness image** — unless the project already declared the same name (then it is already in the base the harness image builds FROM, and the harness declaration is skipped) | root fragments before `block_1`; user fragments before `block_3` |
+| Harness manifest `stacks: [name]` (+ project overlay `build.harnesses.<h>.stacks`) | **Harness image** — always, with its lineage-resolved definition, even when the project declared the same name in the base | root fragments before `block_1`; user fragments before `block_3` |
 
-Two extra rules:
+The two strata **never interact** (there is no cross-stratum dedup): project
+`node` renders in the base, a harness's `node` renders ADDITIONALLY in the
+harness image. The engine never judges whether the base render "satisfies"
+the harness declaration — that would be an implicit taxonomy. Satisfaction is
+the fragment's job (self-guard skips when the runtime is already present, apt
+idempotence, PATH shadowing by later layers). Extra rules:
 
-- Project declarations resolve from the shipped set + registry **only** —
-  a bundle-embedded definition can never leak into the harness-agnostic
-  base.
-- A bundle embedding a definition for a name the project declared is the
-  same collision error (shadow check) — a bundle must never silently swap
-  the definition the base actually used.
+- Project declarations resolve from the project registry + shipped **only** —
+  a bundle-embedded definition can never leak into the harness-agnostic base.
+- Overlay stacks (`build.harnesses.<h>.stacks`) render AFTER the bundle's own
+  installer stacks (installer → overlay). A name repeated across the two
+  sources renders once, at its installer position.
 - Duplicate names within one declaration list error
-  (`build.stacks: duplicate stack declaration`); a harness
-  declaration duplicating a project one is silently skipped (already in
-  base), not an error.
+  (`build.stacks: duplicate stack declaration`).
 
 ## The self-guarding idiom
 
@@ -147,18 +156,19 @@ they download, or delegate to an installer that verifies its own artifacts
 
 ## Authoring workflow
 
-1. Create the definition dir (conventional:
-   `<config-dir>/stacks/<name>/`; bespoke-to-a-harness:
+1. Create the definition dir (e.g. `./stacks/<name>/`; bespoke-to-a-harness:
    `<bundle>/stacks/<name>/`).
 2. Write `stack.yaml` (`description:`) + fragment(s) with the
    self-guard idiom.
-3. Register (skip for bundle-embedded):
-   ```yaml
-   # In: <config-dir>/settings.yaml (user settings)
-   stacks:
-     myname:
-       path: /absolute/path/to/definition
+3. Register per-project (skip for bundle-embedded):
+   ```bash
+   clawker stack register ./stacks/myname          # name = dir base name
+   clawker stack register ./vendor/foo --name myname
    ```
-4. Declare it from a project (`build.stacks: [myname]`) or a harness
-   manifest (`stacks: [myname]`) and build. Load errors name the file
-   and rule; resolution errors name the namespace searched.
+   Writes `stacks.myname.path` in the project's `clawker.yaml`. Run it inside
+   an initialized project; from an unregistered dir it writes to the user-level
+   `clawker.yaml` and prints where it wrote.
+4. Declare it from a project (`build.stacks: [myname]`), a harness manifest
+   (`stacks: [myname]`), or a project overlay (`build.harnesses.<h>.stacks`)
+   and build. Load errors name the file and rule; resolution errors name the
+   searched lineage.

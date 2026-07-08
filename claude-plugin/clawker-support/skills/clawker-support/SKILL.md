@@ -30,12 +30,12 @@ Clawker runs coding-agent CLIs — "harnesses" — in hardened Docker containers
 Claude Code and OpenAI Codex ship built-in; users can register their own.
 The model, in brief:
 
-- **A harness is a bundle** (manifest + Dockerfile fragment + assets)
-  registered in `settings.yaml` under `harnesses:` (name → bundle path +
-  default flag); exactly one entry is the default. Shipped bundles are
-  materialized under the clawker config dir and are user-editable.
+- **A harness is a bundle** (manifest + Dockerfile fragment + assets).
+  Shipped bundles (`claude`, `codex`) resolve from the clawker binary and
+  need no registration; register a custom bundle per-project in `clawker.yaml`
+  under `harnesses:` (name → bundle path) via `clawker harness register`.
 - **Images are per-project AND per-harness.** The image tag is the harness
-  name; the default harness's build also gets a `:default` alias.
+  name; the built-in default harness (`claude`) also gets a `:default` alias.
   `clawker build -t <harness>` selects the harness at build time;
   `clawker run @` resolves the default, and `@:<harness>` selects one
   explicitly. So "how do I run codex" is: `clawker build -t codex`, then

@@ -3,12 +3,12 @@
 // bundles DECLARE instead of hand-writing. A definition provisions a full
 // language stack (e.g. node = baked LTS install in root scope + nvm
 // setup in user scope) via up to two fragments, one per Dockerfile USER
-// scope. Definitions come from three sources sharing one flat namespace
-// per build: shipped (embedded in internal/bundler, materialized to the
-// user config dir), user-registered (settings stacks registry), and
-// harness-bundle-embedded. Resolution and stage placement live in
-// internal/bundler; this package owns the definition format and its
-// load-time validation.
+// scope. Definitions resolve through a per-lineage lookup chain: a
+// project stacks: registry entry in clawker.yaml, then (in a harness
+// image) the selected bundle's stacks/ dir, then the definitions shipped
+// embedded in internal/bundler as the virtual base layer — a closer layer
+// wins wholesale. Resolution and stage placement live in internal/bundler;
+// this package owns the definition format and its load-time validation.
 package stack
 
 import (
@@ -25,7 +25,7 @@ import (
 
 // Definition is a loaded stack definition.
 type Definition struct {
-	// Name is the flat-namespace key requirers declare.
+	// Name is the lookup key requirers declare.
 	Name string
 	// Description is the manifest's human summary of what the stack
 	// provisions.
@@ -58,8 +58,8 @@ func ValidateName(name string) error {
 
 // Load reads a definition from fsys, whose root must be the definition
 // directory (stack.yaml plus at least one fragment file). Use
-// [os.DirFS] for materialized/user-owned definitions and a sub-FS of
-// embedded assets for shipped ones. Every validation failure is a named
+// [os.DirFS] for on-disk registered or bundle-embedded definitions and a
+// sub-FS of embedded assets for shipped ones. Every validation failure is a named
 // error at this front door — never a silent render-time skip.
 func Load(name string, fsys fs.FS) (*Definition, error) {
 	if err := ValidateName(name); err != nil {

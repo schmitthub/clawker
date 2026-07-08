@@ -135,7 +135,9 @@ ground-truth files are:
 | Version resolvers | `internal/harness/harness.go` (VersionSpec), `internal/bundler/versions.go` (ResolveHarnessVersion) |
 | Block slots, reserved defines | `internal/harness/consts.go` (DeclaredBlocks, isReservedDefine), `internal/harness/compose.go` |
 | Master template render order | `internal/bundler/assets/Dockerfile.harness-image.tmpl`, `Dockerfile.base.tmpl` |
-| Registry resolution, name grammar, materialization | `internal/bundler/harness.go`, `internal/harness/materialize.go` |
+| Registry resolution (project `clawker.yaml` lineage), provenance | `internal/bundler/harness.go`, `internal/bundler/stack.go`, `internal/config/schema.go` |
+| Name grammar (unified rule) | `internal/consts/name.go` |
+| Register/list/remove CLI | `internal/cmd/stack/`, `internal/cmd/harness/`, `internal/cmdutil/registry.go` |
 | Stack format + placement | `internal/stack/`, `internal/bundler/stack.go` |
 | Egress composition | `internal/bundler/egress.go` |
 | Shipped bundle/stack examples | `internal/bundler/assets/harnesses/{claude,codex}/`, `internal/bundler/assets/stacks/*/` |

@@ -8,7 +8,7 @@ the validated vocabulary (`harness-manifest.md`, `template-blocks.md`).
 ## Layout
 
 ```
-~/.config/clawker/harnesses/pilot/
+tools/pilot/                 # anywhere on disk; inside the project keeps the registry path relative
 ├── harness.yaml
 ├── Dockerfile.harness.tmpl
 └── assets/
@@ -99,14 +99,11 @@ published checksum file, as the shipped stacks do.)
 
 ## Registration, build, run
 
-```yaml
-# In: <config-dir>/settings.yaml (user settings)
-harnesses:
-  pilot:
-    path: /home/me/.config/clawker/harnesses/pilot
-```
+Register the bundle per-project (writes `harnesses.pilot.path` in the
+project's `clawker.yaml`, relative to the project root when inside it):
 
 ```bash
+clawker harness register ./tools/pilot          # or --name pilot
 clawker build -t pilot
 clawker run @:pilot
 ```
@@ -123,4 +120,4 @@ proxies to the host); the token persists in the `config` volume.
 | Root-scope install | Put the install in block_1 or block_2 (root, /bin/sh) targeting `/usr/local/bin` |
 | Installer writes into the volume path | Redirect the install-time home off the volume path (codex pattern in `template-blocks.md`) |
 | Backend host also serves UGC | Path-scope the egress rule — allowlist or denylist mode per `security-egress.md` |
-| Bespoke language runtime | Embed `stacks/pilot-runtime/` in the bundle (prefixed name; flat namespace) and declare it in the manifest |
+| Bespoke language runtime | Embed `stacks/pilot-runtime/` in the bundle (resolved in this harness's lineage) and declare it in the manifest |

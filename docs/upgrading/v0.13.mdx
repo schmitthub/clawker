@@ -26,7 +26,7 @@ cd your-project
 clawker build --no-cache
 ```
 
-The first build materializes the shipped harness bundles and stack definitions into `~/.config/clawker/harnesses/` and `~/.config/clawker/stacks/`, registers them in `settings.yaml`, and tags the image per harness (`clawker-<project>:<harness>` plus a `:default` alias for the default harness).
+The shipped harness bundles (`claude`, `codex`) and stack definitions (`go`, `node`, `python`, `rust`) resolve straight from the clawker binary — no registration and no config-directory copies. The build tags the image per harness (`clawker-<project>:<harness>` plus a `:default` alias for the default harness).
 
 `--no-cache` matters: images now bake a harness seed directory, and cached layers from a pre-upgrade build skip that step silently — the container comes up without its harness seeds and nothing errors.
 </Step>
@@ -75,8 +75,7 @@ Migrations run once per config file the first time the new CLI loads it — the 
 - `build.image`, `build.dockerfile`, `build.context` — removed. Images build from clawker's pinned base; see [build changes](#custom-base-images-and-dockerfiles-are-unsupported).
 - `agent.claude_code.use_host_auth` — removed. Host credentials are no longer copied; see [auth changes](#harness-auth-happens-in-container).
 - `agent.claude_code` — moved field-for-field to `harnesses.claude`. If a `harnesses.claude` entry already exists, the legacy block is dropped with a warning instead (the map entry already overrides it).
-
-The `harnesses:` and `stacks:` registries in `settings.yaml` are not a migration: your first `clawker build` seeds them with every shipped harness and stack as it materializes their bundle directories. Config loading never writes registry entries, and existing entries are never touched.
+- Settings-side `stacks:` / `harnesses:` registries — stripped from `settings.yaml` on load with a notice. Registration is now per-project in `clawker.yaml`; shipped harnesses and stacks resolve from the binary and need no registry entry. Register your own with `clawker stack register` / `clawker harness register` (see [Stacks](/stacks) and [Harness Bundles](/harness-bundles)).
 
 `build.inject.after_claude_install` is not rewritten: it still works as a deprecated alias of `after_harness_install`. Rename it when convenient.
 
@@ -106,13 +105,12 @@ The migration moves the `agent.claude_code` block, but it can't know that a gene
 
 Check every layer — `.clawker.yaml`, `.clawker.local.yaml`, and the global `~/.config/clawker/clawker.yaml` merge independently, and a forgotten global-layer hook keeps injecting claude commands into every container. Hooks are baked in at container create, so recreate containers after moving them.
 
-## Alpha builds: refresh materialized copies
+## Alpha builds: drop stale config-dir copies
 
-If you ran pre-release builds of this branch (released versions never materialized bundles), the copies under `~/.config/clawker/harnesses/` and `~/.config/clawker/stacks/` predate the final bundle layout. Materialized copies are user-owned and never auto-updated — a stale one stages nothing or fails bundle validation. Delete them and rebuild:
+If you ran earlier pre-release builds of this branch, they may have left harness and stack copies under `~/.config/clawker/harnesses/` and `~/.config/clawker/stacks/`. Shipped harnesses and stacks now resolve from the binary, so those directories are no longer read — delete them:
 
 ```bash
 rm -rf ~/.config/clawker/harnesses ~/.config/clawker/stacks
-clawker build
 ```
 
-`clawker build` also warns whenever a shipped bundle or stack has changed since your copy was materialized, naming the exact directory to delete.
+Any custom bundles or stacks you want to keep, register per-project with `clawker harness register` / `clawker stack register` pointing at wherever you keep them on disk.
