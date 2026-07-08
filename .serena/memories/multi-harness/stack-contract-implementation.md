@@ -388,3 +388,8 @@ make pre-commit
 3. Run review subagents (same set), fix all findings.
 4. Commit.
 5. **STOP.** Initiative complete — inform the user. Remaining OUT-OF-SCOPE follow-ups: monitoring breakout (`clawker monitor install` ledger — own design pass, see model doc §7 item 7), apt-into-stacks fold (carried, low), host UAT of the full flow.
+
+## Post-review follow-up (2026-07-08, after compaction)
+
+- `ada1a5fe` — DELETED `migrateRemoveLegacyRegistryKeys` settings migration + test + stderr notice. Rationale: settings-side `stacks:`/`harnesses:` registry NEVER shipped (`StackSettings` exists only on this branch — `git log main -S StackSettings` empty, no tag contains it). Migration was speculative history addressing nobody. CHANGELOG entry, v0.13 upgrade bullet, config CLAUDE.md row, schema.go comment all cleaned.
+- `2c639803` — fabricated-history sweep (4 Opus subagents, disjoint areas: docs/, config+bundler Go, cmd/docker/pkg Go, CLAUDE.md/.claude/plugin). Rule: docs/comments describe current state; historical framing legit ONLY when referenced past shipped on main. Found+fixed: v0.13.mdx "Alpha builds: drop stale config-dir copies" section (pure intra-branch churn, deleted); basehash_test.go + bundler CLAUDE.md "engine gaining arg-awareness"/"legacy format" framing (BaseContentHash is branch-new — no legacy exists); test renamed `TestBaseContentHash_NoBuildArgsMatchesLegacyFormat` → `TestBaseContentHash_NoBuildArgsIsDockerfileOnly`. Everything else (build.image, agent.claude_code, :latest tag, monitoring keys, `proto: tls`) verified shipped-on-main → kept.
