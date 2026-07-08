@@ -44,7 +44,7 @@ func TestStackList_JSON(t *testing.T) {
 	goRow, ok := byName["go"]
 	require.True(t, ok)
 	assert.Equal(t, "project", goRow.Source)
-	assert.Equal(t, "shipped", goRow.Shadows)
+	assert.Equal(t, "built", goRow.Shadows)
 	assert.Equal(t, "./stacks/go", goRow.Path)
 
 	// A project-only registration (no shipped shadow).
@@ -56,7 +56,7 @@ func TestStackList_JSON(t *testing.T) {
 	// A shipped stack with no project registration.
 	nodeRow, ok := byName["node"]
 	require.True(t, ok)
-	assert.Equal(t, "shipped", nodeRow.Source)
+	assert.Equal(t, "built", nodeRow.Source)
 	assert.Equal(t, "(built-in)", nodeRow.Path)
 }
 

@@ -12,11 +12,11 @@ import (
 	"github.com/schmitthub/clawker/internal/tui"
 )
 
-// Registry row source labels and the placeholder path shown for a shipped
-// (built-in) definition, which has no on-disk registry path.
+// Registry row source labels and the placeholder path shown for a definition
+// built into the binary, which has no on-disk registry path.
 const (
 	RegistrySourceProject = "project"
-	RegistrySourceShipped = "shipped"
+	RegistrySourceBuilt   = "built"
 	RegistryBuiltinPath   = "(built-in)"
 )
 
@@ -32,7 +32,7 @@ type RegistryRow struct {
 // MergeRegistryRows merges a project registry (name→path) with the shipped
 // (built-in) names into a sorted row set. A project entry that reuses a shipped
 // name shadows the built-in definition — its Shadows field is set to
-// RegistrySourceShipped; a shipped name with no project entry is a plain
+// RegistrySourceBuilt; a shipped name with no project entry is a plain
 // built-in row.
 func MergeRegistryRows(shipped []string, registered map[string]string) []RegistryRow {
 	shippedSet := make(map[string]bool, len(shipped))
@@ -71,11 +71,11 @@ func MergeRegistryRows(shipped []string, registered map[string]string) []Registr
 func registryRow(name string, registered map[string]string, shippedSet map[string]bool) RegistryRow {
 	path, isProject := registered[name]
 	if !isProject || path == "" {
-		return RegistryRow{Name: name, Path: RegistryBuiltinPath, Source: RegistrySourceShipped, Shadows: ""}
+		return RegistryRow{Name: name, Path: RegistryBuiltinPath, Source: RegistrySourceBuilt, Shadows: ""}
 	}
 	shadows := ""
 	if shippedSet[name] {
-		shadows = RegistrySourceShipped
+		shadows = RegistrySourceBuilt
 	}
 	return RegistryRow{Name: name, Path: path, Source: RegistrySourceProject, Shadows: shadows}
 }

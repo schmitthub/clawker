@@ -45,14 +45,14 @@ func TestHarnessList_JSON(t *testing.T) {
 	codexRow, ok := byName["codex"]
 	require.True(t, ok)
 	assert.Equal(t, "project", codexRow.Source)
-	assert.Equal(t, "shipped", codexRow.Shadows)
+	assert.Equal(t, "built", codexRow.Shadows)
 	assert.Equal(t, "./tools/codex", codexRow.Path)
 
 	// claude has an init-config-only entry (no path) → shown as shipped, not
 	// as a project registration.
 	claudeRow, ok := byName["claude"]
 	require.True(t, ok)
-	assert.Equal(t, "shipped", claudeRow.Source)
+	assert.Equal(t, "built", claudeRow.Source)
 	assert.Equal(t, "(built-in)", claudeRow.Path)
 	assert.Empty(t, claudeRow.Shadows)
 }

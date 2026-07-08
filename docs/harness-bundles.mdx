@@ -49,7 +49,7 @@ The [`clawker harness register`](/cli-reference/clawker_harness_register) comman
 A harness name resolves through a **per-lineage lookup chain** — the project `harnesses:` registry, then the shipped embedded bundles as the floor. The closest layer that defines the name wins **wholesale**. A project registration under a shipped name (`claude`, `codex`) **shadows** it, and the build output prints a provenance line so the substitution is never silent:
 
 ```
-harness codex ← ./tools/codex-bundle (project registry) shadows shipped
+harness codex ← ./tools/codex-bundle (project registry) shadows built
 ```
 
 <Note>

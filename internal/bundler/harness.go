@@ -129,14 +129,14 @@ func validateOverlayKeys(cfg config.Config) error {
 // source.
 type harnessProvenance struct {
 	name    string
-	source  string // "<path> (project registry)" or "shipped"
+	source  string // "<path> (project registry)" or the built-in label
 	shadows bool   // a project entry shadowing a shipped bundle of the same name
 }
 
 // line renders the provenance as a single build-output line.
 func (p harnessProvenance) line() string {
 	if p.shadows {
-		return fmt.Sprintf("harness %s ← %s shadows shipped", p.name, p.source)
+		return fmt.Sprintf("harness %s ← %s shadows %s", p.name, p.source, sourceBuilt)
 	}
 	return fmt.Sprintf("harness %s ← %s", p.name, p.source)
 }
@@ -198,7 +198,7 @@ func loadHarnessResolved(cfg config.Config, name string) (*harness.Bundle, harne
 		if loadErr != nil {
 			return nil, harnessProvenance{}, loadErr
 		}
-		return b, harnessProvenance{name: name, source: sourceShipped, shadows: false}, nil
+		return b, harnessProvenance{name: name, source: sourceBuilt, shadows: false}, nil
 	default:
 		return nil, harnessProvenance{}, fmt.Errorf(
 			"harness %q is not registered — register its bundle with `clawker harness register <path> --name %s` (or add harnesses.%s.path to clawker.yaml); shipped harnesses: %v",

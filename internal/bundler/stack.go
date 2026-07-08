@@ -29,9 +29,9 @@ var stacksFS embed.FS
 
 const stackAssetsRoot = "assets/stacks"
 
-// sourceShipped is the provenance label for the shipped embedded layer (the
-// virtual base of both the stack and harness lookup chains).
-const sourceShipped = "shipped"
+// sourceBuilt is the provenance label for the embedded layer compiled into
+// the binary (the virtual base of both the stack and harness lookup chains).
+const sourceBuilt = "built"
 
 // ShippedStackNames lists the definitions embedded in this build.
 func ShippedStackNames() []string {
@@ -136,7 +136,7 @@ func resolveStack(cfg config.Config, bundle *harness.Bundle, name string) (*stac
 		if err != nil {
 			return nil, stackProvenance{}, err
 		}
-		return def, stackProvenance{name: name, source: sourceShipped, shadows: nil}, nil
+		return def, stackProvenance{name: name, source: sourceBuilt, shadows: nil}, nil
 	default:
 		return nil, stackProvenance{}, fmt.Errorf(
 			"%w: %q is declared in clawker.yaml but resolves nowhere — register a definition with `clawker stack register <path> --name %s`, or declare a shipped stack (%v)",
@@ -157,7 +157,7 @@ func fartherStackLayers(bundle *harness.Bundle, bundleHas, shippedHas bool) []st
 		layers = append(layers, bundleLabel(bundle))
 	}
 	if shippedHas {
-		layers = append(layers, sourceShipped)
+		layers = append(layers, sourceBuilt)
 	}
 	return layers
 }

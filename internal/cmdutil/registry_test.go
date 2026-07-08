@@ -93,10 +93,10 @@ func TestMergeRegistryRows(t *testing.T) {
 	assert.False(t, hasEmpty, "empty-path entry is not a registration")
 
 	assert.Equal(t, cmdutil.RegistrySourceProject, byName["go"].Source)
-	assert.Equal(t, cmdutil.RegistrySourceShipped, byName["go"].Shadows)
+	assert.Equal(t, cmdutil.RegistrySourceBuilt, byName["go"].Shadows)
 	assert.Equal(t, cmdutil.RegistrySourceProject, byName["my-rust"].Source)
 	assert.Empty(t, byName["my-rust"].Shadows)
-	assert.Equal(t, cmdutil.RegistrySourceShipped, byName["node"].Source)
+	assert.Equal(t, cmdutil.RegistrySourceBuilt, byName["node"].Source)
 	assert.Equal(t, cmdutil.RegistryBuiltinPath, byName["node"].Path)
 
 	// Rows are sorted by name.

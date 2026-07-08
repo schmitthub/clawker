@@ -112,7 +112,7 @@ func TestResolveStack_ShippedVirtualBase(t *testing.T) {
 	assert.Contains(t, def.RootFragment, "nodejs.org/dist")
 	assert.Contains(t, def.UserFragment, "nvm-sh/nvm",
 		"the node stack provisions nvm in user scope")
-	assert.Equal(t, "shipped", prov.source)
+	assert.Equal(t, "built", prov.source)
 	assert.Empty(t, prov.shadows, "an unshadowed shipped resolution has no provenance line")
 }
 
@@ -203,8 +203,8 @@ func TestResolveStack_BundleShadowsShipped(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, def.RootFragment, "bundle-stack-node")
 	assert.Equal(t, "bundletest bundle", prov.source)
-	assert.Equal(t, []string{"shipped"}, prov.shadows)
-	assert.Contains(t, prov.line(), "shadows shipped")
+	assert.Equal(t, []string{"built"}, prov.shadows)
+	assert.Contains(t, prov.line(), "shadows built")
 }
 
 func TestResolveStack_ProjectShadowsBundle(t *testing.T) {
@@ -410,7 +410,7 @@ func TestGenerateHarness_BundleShadowsShipped(t *testing.T) {
 	prov := gen.Provenance()
 	require.NotEmpty(t, prov)
 	joined := strings.Join(prov, "\n")
-	assert.Contains(t, joined, "stack node ← other bundle shadows shipped")
+	assert.Contains(t, joined, "stack node ← other bundle shadows built")
 	assert.Contains(t, joined, "harness other ← ")
 }
 
@@ -430,9 +430,9 @@ func TestLoadHarnessResolved_Provenance(t *testing.T) {
 		cfg := configmocks.NewFromString("", "")
 		_, prov, err := loadHarnessResolved(cfg, DefaultHarnessName)
 		require.NoError(t, err)
-		assert.Equal(t, "shipped", prov.source)
+		assert.Equal(t, "built", prov.source)
 		assert.False(t, prov.shadows)
-		assert.Equal(t, "harness "+DefaultHarnessName+" ← shipped", prov.line())
+		assert.Equal(t, "harness "+DefaultHarnessName+" ← built", prov.line())
 	})
 
 	t.Run("project entry shadowing a shipped bundle", func(t *testing.T) {
@@ -442,7 +442,7 @@ func TestLoadHarnessResolved_Provenance(t *testing.T) {
 		_, prov, err := loadHarnessResolved(cfg, DefaultHarnessName)
 		require.NoError(t, err)
 		assert.True(t, prov.shadows, "a project entry named like a shipped bundle shadows it")
-		assert.Contains(t, prov.line(), "shadows shipped")
+		assert.Contains(t, prov.line(), "shadows built")
 	})
 
 	t.Run("custom project entry, no shadow", func(t *testing.T) {
