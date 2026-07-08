@@ -14,6 +14,7 @@ import (
 	"github.com/schmitthub/clawker/internal/storage"
 )
 
+// Conformance: E21 — validation walks each layer so the error names the real file, not the merged tree.
 // TestValidateProjectRegistries_FileProvenance proves the per-layer walk
 // names the actual offending file, not just the virtual/seed layer.
 func TestValidateProjectRegistries_FileProvenance(t *testing.T) {

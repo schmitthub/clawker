@@ -14,6 +14,7 @@ import (
 	"github.com/schmitthub/clawker/internal/stack"
 )
 
+// Conformance: E2 — engine never inspects fragment content; a fragment is an opaque template.
 func TestShippedStacks_LoadAndFragments(t *testing.T) {
 	assert.Equal(t, []string{"go", "node", "python", "rust"}, ShippedStackNames())
 
@@ -46,6 +47,7 @@ func TestShippedStacks_LoadAndFragments(t *testing.T) {
 	}
 }
 
+// Conformance: E2 — engine never inspects fragment content; a fragment is an opaque template.
 func TestShippedStacks_RenderBothBuildKitModes(t *testing.T) {
 	for _, name := range ShippedStackNames() {
 		def, err := loadEmbeddedStack(name)
@@ -102,6 +104,7 @@ func bundleWithStack(t *testing.T, tcName string) *harness.Bundle {
 	return b
 }
 
+// Conformance: E3 — a declared name resolves from the closest layer, winning wholesale, never merged.
 func TestResolveStack_ShippedVirtualBase(t *testing.T) {
 	// No project registry entry → shipped definitions resolve straight from
 	// the embedded FS (the virtual base layer), with no shadow provenance.
@@ -116,6 +119,7 @@ func TestResolveStack_ShippedVirtualBase(t *testing.T) {
 	assert.Empty(t, prov.shadows, "an unshadowed shipped resolution has no provenance line")
 }
 
+// Conformance: E3 — a declared name resolves from the closest layer, winning wholesale, never merged.
 func TestResolveStack_ProjectRegistryWins(t *testing.T) {
 	dir := writeStackDef(t, stack.UserFragmentFile, "RUN echo custom-def\n")
 	cfg := configmocks.NewFromString(`
@@ -144,6 +148,7 @@ stacks:
 	assert.Contains(t, err.Error(), "stacks.mytool.path")
 }
 
+// Conformance: E10 — registry paths accept only relative or absolute; no ~ or $VAR expansion.
 func TestResolveStack_RelativeRegistryPathResolvesAgainstProjectRoot(t *testing.T) {
 	root := t.TempDir()
 	stackDir := filepath.Join(root, "stacks", "mytool")
@@ -166,6 +171,7 @@ stacks:
 	assert.Contains(t, def.RootFragment, "rel-def")
 }
 
+// Conformance: E10 — registry paths accept only relative or absolute; no ~ or $VAR expansion.
 func TestResolveStack_RelativeRegistryPathWithoutRootErrors(t *testing.T) {
 	// A relative registry path with no resolved project root must hard-error —
 	// resolving it against the process CWD could silently load whatever
@@ -181,6 +187,7 @@ stacks:
 	assert.Contains(t, err.Error(), "no project root is resolved")
 }
 
+// Conformance: E3 — a declared name resolves from the closest layer, winning wholesale, never merged.
 func TestResolveStack_BundleEmbedded(t *testing.T) {
 	cfg := configmocks.NewFromString("", "")
 	b := bundleWithStack(t, "codex-special")
@@ -192,6 +199,7 @@ func TestResolveStack_BundleEmbedded(t *testing.T) {
 	assert.Empty(t, prov.shadows)
 }
 
+// Conformance: E3 — closest layer wins wholesale, never merged. E8 — every shadow emits a provenance line naming its source.
 func TestResolveStack_BundleShadowsShipped(t *testing.T) {
 	// A bundle embedding a definition named like a shipped one WINS wholesale
 	// (matching key at a closer layer), and the provenance records the shadow —
@@ -207,6 +215,7 @@ func TestResolveStack_BundleShadowsShipped(t *testing.T) {
 	assert.Contains(t, prov.line(), "shadows built")
 }
 
+// Conformance: E3 — closest layer wins wholesale, never merged. E8 — every shadow emits a provenance line naming its source.
 func TestResolveStack_ProjectShadowsBundle(t *testing.T) {
 	dir := writeStackDef(t, stack.RootFragmentFile, "RUN echo registered\n")
 	cfg := configmocks.NewFromString(`
@@ -223,6 +232,7 @@ stacks:
 	assert.Equal(t, []string{"bundletest bundle"}, prov.shadows)
 }
 
+// Conformance: E9 — a name resolving nowhere is a hard, loud error naming the register remedy.
 func TestResolveStack_Unknown(t *testing.T) {
 	cfg := configmocks.NewFromString("", "")
 
@@ -284,10 +294,12 @@ func tcGenerator(t *testing.T, projectBody, bundleManifest string) *ProjectGener
 }
 
 const (
-	nodeMarker = "nodejs.org/dist"
-	nvmMarker  = "nvm-sh/nvm"
+	nodeMarker   = "nodejs.org/dist"
+	nvmMarker    = "nvm-sh/nvm"
+	pythonMarker = "astral.sh" // python (uv installer) root fragment
 )
 
+// Conformance: E1 — declaration order preserved. E4 — base is harness-agnostic; no bundle stack leaks in. E13 — build.stacks places stacks in the base image.
 func TestGenerateBase_ProjectDeclaredStacks(t *testing.T) {
 	gen := tcGenerator(t, `
 build:
@@ -323,6 +335,7 @@ build:
 	assert.NotContains(t, string(harnessImg), nvmMarker)
 }
 
+// Conformance: E1 — declaration order preserved. E13 — manifest stacks place stacks in that harness image only.
 func TestGenerateHarness_HarnessDeclaredStacks(t *testing.T) {
 	gen := tcGenerator(t, "version: \"1\"\n", `
 version: { resolver: none }
@@ -360,6 +373,7 @@ stacks: [node]
 	assert.Less(t, nvmIdx, b3Idx, "user stack must precede block_3")
 }
 
+// Conformance: E5 — project + harness declaring the same name both render; no cross-stratum dedup.
 // TestGenerate_BothDeclared_BothRender proves cross-stratum dedup is dead: a
 // name declared in both build.stacks and the harness manifest renders in BOTH
 // the base and the harness image (design §2 — fragment self-guards own any
@@ -383,6 +397,7 @@ stacks: [node]
 		"harness-declared node ALSO renders in the harness image — no cross-stratum dedup")
 }
 
+// Conformance: E8 — shadowing is never silent; every shadow emits a provenance line naming its source.
 // TestGenerateHarness_BundleShadowsShipped: a harness manifest declaring a name
 // its bundle also embeds renders the bundle's definition (closer layer wins)
 // and records shadow provenance surfaced via the generator.
@@ -423,6 +438,7 @@ func writeBundleDir(t *testing.T, dir string) {
 		filepath.Join(dir, harness.TemplateFile), []byte(`{{define "block_6"}}CMD ["x"]{{end}}`), 0o644))
 }
 
+// Conformance: E8 — shadowing is never silent; a harness bundle always names its source.
 // TestLoadHarnessResolved_Provenance exercises the harness-bundle provenance
 // line (in-package so the unexported provenance type is reachable).
 func TestLoadHarnessResolved_Provenance(t *testing.T) {
@@ -456,6 +472,7 @@ func TestLoadHarnessResolved_Provenance(t *testing.T) {
 	})
 }
 
+// Conformance: E9 — a name resolving nowhere is a hard, loud error naming the register remedy.
 func TestGenerateBase_UnknownStack(t *testing.T) {
 	gen := tcGenerator(t, `
 build:
@@ -466,6 +483,7 @@ build:
 	require.ErrorIs(t, err, ErrUnknownStack)
 }
 
+// Conformance: E18 — build.stacks rejects a repeated name (a harness installer+overlay list renders a repeat once).
 func TestGenerateBase_DuplicateDeclaration(t *testing.T) {
 	gen := tcGenerator(t, `
 build:
@@ -474,4 +492,34 @@ build:
 
 	_, err := gen.GenerateBase()
 	require.ErrorContains(t, err, "duplicate stack declaration")
+}
+
+// Conformance: E1 — stacks render top-to-bottom in declaration order; the engine never reorders.
+// TestGenerateBase_StacksRenderInDeclarationOrder is the dedicated ordering
+// assertion: a ≥3-stack base list whose fragments each carry a unique marker
+// must land in the rendered Dockerfile in exact declaration order. It goes red
+// if resolveStackDecls or splitFragments ever sorts or reorders the list —
+// position here is asserted directly, not incidentally as in the both-render /
+// overlay-position tests.
+func TestGenerateBase_StacksRenderInDeclarationOrder(t *testing.T) {
+	// python, go, node all ship root fragments carrying a distinct upstream
+	// marker; declaring them out of alphabetical order proves no sort sneaks in.
+	gen := tcGenerator(t, `
+build:
+  stacks: [python, go, node]
+`, "version: { resolver: none }\n")
+
+	base, err := gen.GenerateBase()
+	require.NoError(t, err)
+	content := string(base)
+
+	pythonIdx := strings.Index(content, pythonMarker)
+	goIdx := strings.Index(content, goStackMarker)
+	nodeIdx := strings.Index(content, nodeMarker)
+	require.GreaterOrEqual(t, pythonIdx, 0, "python root fragment must render")
+	require.GreaterOrEqual(t, goIdx, 0, "go root fragment must render")
+	require.GreaterOrEqual(t, nodeIdx, 0, "node root fragment must render")
+
+	assert.Less(t, pythonIdx, goIdx, "python (declared 1st) must precede go (declared 2nd)")
+	assert.Less(t, goIdx, nodeIdx, "go (declared 2nd) must precede node (declared 3rd)")
 }

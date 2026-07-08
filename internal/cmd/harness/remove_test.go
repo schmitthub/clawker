@@ -10,6 +10,7 @@ import (
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 )
 
+// Conformance: E17 — remove only deletes entries present in a writable project layer.
 func TestHarnessRemove_Registered(t *testing.T) {
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	dir := writeHarnessDir(t, t.TempDir(), "codex")
@@ -49,6 +50,7 @@ func TestHarnessRemove_PreservesInitConfig(t *testing.T) {
 	assert.Equal(t, "echo hi", entry.PostInit, "init config preserved")
 }
 
+// Conformance: E17 — shipped harnesses are an immutable virtual base layer; remove rejects a shipped name.
 func TestHarnessRemove_ShippedRejected(t *testing.T) {
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	f, _ := newTestFactory(t, cfg)

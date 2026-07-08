@@ -20,6 +20,7 @@ const (
 	nodeArgLine = "ARG NODE_VERSION=24"
 )
 
+// Conformance: E1 — declaration order preserved (installer→overlay). E18 — a name across installer+overlay renders once.
 // TestGenerateHarness_OverlayStackRepeatedAcrossSources: a stack name declared
 // by BOTH the bundle's installer list and the project overlay renders exactly
 // once, at its first (installer) position; a distinct overlay-only stack still
@@ -48,6 +49,7 @@ build:
 	assert.Less(t, nodeIdx, goIdx, "the repeated name keeps its installer position, before overlay stacks")
 }
 
+// Conformance: E19 — overlay is scoped to one harness image. E22 — overlay packages render as-declared, no dedup.
 // TestGenerateHarness_OverlayPackagesLegacyBuilder: with BuildKit off, the
 // overlay apt RUN renders without cache-mount directives (parity with the base
 // template's legacy branch). The BuildKit-on branch is byte-locked by the
@@ -72,6 +74,7 @@ build:
 	assert.NotContains(t, content, aptCacheTarget, "legacy builder must not emit apt cache mounts")
 }
 
+// Conformance: E19 — the per-harness build overlay is scoped to exactly one harness image.
 // TestGenerateHarness_OverlayInjectAfterGlobal: overlay inject points render in
 // the harness image after the global project inject at the same anchors
 // (declaration order: global first, overlay appended).
@@ -110,6 +113,7 @@ build:
 	assert.Less(t, globalEntry, overlayEntry, "overlay before_entrypoint renders after the global one")
 }
 
+// Conformance: E19 — the per-harness build overlay is scoped to exactly one harness image.
 // TestGenerateHarness_OverlayScopedToNamedHarness: an overlay keyed to one
 // harness renders only in that harness's image — a sibling harness built from
 // the same project config stays clean.
@@ -145,6 +149,7 @@ build:
 		"sibling harness must not carry another harness's overlay inject")
 }
 
+// Conformance: E19 — a dead overlay key (naming no known harness) is a loud GenerateHarness error.
 // TestGenerateHarness_OverlayUnknownHarnessKey: an overlay keyed to a harness
 // that resolves nowhere (typo or unregistered bundle) is dead config that
 // would silently drop its content from every image — GenerateHarness must

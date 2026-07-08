@@ -9,6 +9,7 @@ import (
 	"github.com/schmitthub/clawker/internal/consts"
 )
 
+// Conformance: E21 — the shared name rule that fails a bad registered/declared name at config load.
 func TestValidateName(t *testing.T) {
 	valid := []string{"go", "node", "my-rust", "a", "a1", "claude-code", strings.Repeat("a", 32)}
 	for _, name := range valid {
@@ -36,6 +37,7 @@ func TestValidateName(t *testing.T) {
 	}
 }
 
+// Conformance: E21 — the harness name rule (reserved aliases + slug) enforced at config load.
 func TestValidateHarnessName(t *testing.T) {
 	for _, reserved := range []string{consts.ImageTagDefaultAlias, consts.ImageTagLatest, consts.ImageTagBase} {
 		t.Run(reserved, func(t *testing.T) {

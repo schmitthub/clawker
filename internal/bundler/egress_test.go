@@ -31,6 +31,7 @@ func dstSet(rules []config.EgressRule) map[string]config.EgressRule {
 	return m
 }
 
+// Conformance: E6 — the harness egress floor is always composed; the floor is never dropped.
 // TestEgressRules_ClaudeFloor guards the semantic security properties of the
 // claude harness's required egress floor (formerly requiredFirewallRules in
 // config/defaults.go — the guards moved here with the data).
@@ -80,6 +81,7 @@ func TestEgressRules_ClaudeFloor(t *testing.T) {
 	}
 }
 
+// Conformance: E6 — floor composed first, ahead of project rules. E7 — floor rules force InsecureSkipTLSVerify=false (field is unsayable in a manifest).
 // TestEgressRules_ComposesProjectRules proves composition order: harness
 // floor first, then the project's explicit rules, then add_domains
 // expansions.
@@ -116,6 +118,7 @@ security:
 	}, rules[len(floor)+1])
 }
 
+// Conformance: E6 — the selected harness's egress floor is always composed first.
 // TestEgressRules_ExternalBundle proves a user-authored bundle wired in via
 // a registry path entry supplies the floor — the harness swap swaps the
 // floor, with no anthropic egress forced on a non-claude harness.
@@ -153,6 +156,7 @@ harnesses:
 		byDst["auth.openai.com"].PathRules[0])
 }
 
+// Conformance: E6 — the floor is never dropped; a resolution error never falls back to a silently wrong floor.
 // TestEgressRules_ResolutionErrorsPropagate: an unknown explicit harness must
 // fail the sync loudly, never fall back to a silently wrong floor.
 func TestEgressRules_ResolutionErrorsPropagate(t *testing.T) {

@@ -45,6 +45,7 @@ stacks: [node, nvm]
 	assert.Equal(t, []string{"node", "nvm"}, b.Manifest.Stacks)
 }
 
+// Conformance: E18 — intra-manifest duplicate stack declarations are rejected at harness.Load.
 func TestLoad_StackDeclarations_DuplicateRejected(t *testing.T) {
 	_, err := harness.Load("test", manifestFS(`
 version: { resolver: none }
@@ -97,6 +98,7 @@ func TestBundledStacks_None(t *testing.T) {
 	assert.Empty(t, bundled)
 }
 
+// Conformance: E14 — block slots are stable reserved surfaces. E20 — a bundle fragment fills declared slots without disturbing master ordering.
 func TestCompose_OverridesDeclaredBlock(t *testing.T) {
 	b, err := harness.Load("test", bundleFS(`{{define "block_6" -}}
 CMD ["testtool"]
@@ -111,6 +113,7 @@ CMD ["testtool"]
 	assert.Equal(t, "FROM scratch\nCMD [\"testtool\"]\n", out.String())
 }
 
+// Conformance: E14 — defining a master/inject-point name is a hard error. E20 — the master owns ordering; a fragment may only fill declared slots.
 func TestCompose_RejectsUnknownAndReservedDefines(t *testing.T) {
 	unknown, err := harness.Load("test", bundleFS(`{{define "not_a_block"}}RUN true{{end}}`))
 	require.NoError(t, err)

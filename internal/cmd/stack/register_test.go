@@ -42,6 +42,7 @@ func newTestFactory(t *testing.T, cfg config.Config) (*cmdutil.Factory, *bytes.B
 	return f, out
 }
 
+// Conformance: E15 — registration is validated at the write front-door before mutating clawker.yaml.
 func TestStackRegister_NewEntry(t *testing.T) {
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	dir := writeStackDir(t, t.TempDir(), "my-rust")
@@ -58,6 +59,7 @@ func TestStackRegister_NewEntry(t *testing.T) {
 	assert.Contains(t, out.String(), "Written to")
 }
 
+// Conformance: E15 — registration is validated at the write front-door before mutating clawker.yaml.
 func TestStackRegister_NameOverride(t *testing.T) {
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	dir := writeStackDir(t, t.TempDir(), "rustup-dir")
@@ -73,6 +75,7 @@ func TestStackRegister_NameOverride(t *testing.T) {
 	assert.False(t, shouldNotExist)
 }
 
+// Conformance: E16 — a same-name registration collides loudly (unless --force).
 func TestStackRegister_ExistingWithoutForce(t *testing.T) {
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	dir := writeStackDir(t, t.TempDir(), "my-rust")
@@ -90,6 +93,7 @@ func TestStackRegister_ExistingWithoutForce(t *testing.T) {
 	assert.Contains(t, err.Error(), "--force")
 }
 
+// Conformance: E16 — --force replaces a same-name registration and reports the prior path as provenance.
 func TestStackRegister_ForceReplaces(t *testing.T) {
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	base := t.TempDir()
@@ -110,6 +114,7 @@ func TestStackRegister_ForceReplaces(t *testing.T) {
 	assert.Contains(t, out.String(), dir1)
 }
 
+// Conformance: E15 — the CLI proves the directory is a real definition before any store mutation.
 func TestStackRegister_InvalidDir(t *testing.T) {
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	empty := filepath.Join(t.TempDir(), "empty")

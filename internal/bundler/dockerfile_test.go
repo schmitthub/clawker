@@ -536,6 +536,7 @@ func TestBuildContext_CollapsedChmod(t *testing.T) {
 // image carries only harness-agnostic layers. Any harness content leaking
 // into the base render would rebuild every harness's shared layers on a
 // harness change and duplicate harness layers across projects.
+// Conformance: E4 — the shared base image is harness-agnostic; no bundle stack or harness surface enters base resolution.
 func TestGenerateBase_ExcludesHarnessSurface(t *testing.T) {
 	cfg := testConfig(t, minimalProjectYAML())
 	gen := newTestProjectGenerator(cfg, t.TempDir())
@@ -629,4 +630,26 @@ func TestGenerateHarness_RequiresBaseImageRef(t *testing.T) {
 	// BaseImageRef intentionally unset.
 	_, err := gen.GenerateHarness()
 	require.ErrorIs(t, err, ErrNoBaseImageRef)
+}
+
+// Conformance: E22 — base build.packages are filtered against the substrate floor; non-floor packages pass through, order preserved.
+// TestFilterBasePackages isolates the filter directly (the golden render only
+// exercises it incidentally): floor packages the base template already installs
+// are dropped, everything else survives in declaration order. It goes red if the
+// floor stops filtering (a floor package leaks through) or the order is disturbed.
+func TestFilterBasePackages(t *testing.T) {
+	// Floor entries (git, curl, jq, zsh) interleaved with non-floor ones must be
+	// dropped, leaving the survivors in their original declaration order.
+	got := filterBasePackages([]string{"git", "ripgrep", "curl", "libpq-dev", "jq", "zsh", "postgresql-client"})
+	assert.Equal(t, []string{"ripgrep", "libpq-dev", "postgresql-client"}, got,
+		"floor packages dropped; non-floor survivors keep declaration order")
+
+	// An all-floor list filters down to nothing.
+	assert.Empty(t, filterBasePackages([]string{"less", "procps", "sudo"}),
+		"a list of only floor packages filters to empty")
+
+	// An all-non-floor list passes through unchanged, order preserved.
+	assert.Equal(t, []string{"ripgrep", "bat", "fd-find"},
+		filterBasePackages([]string{"ripgrep", "bat", "fd-find"}),
+		"non-floor packages pass through verbatim, in order")
 }

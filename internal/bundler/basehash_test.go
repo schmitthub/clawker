@@ -116,6 +116,7 @@ func TestBaseContentHash_MissingSrcStableMarker(t *testing.T) {
 	assert.NotEqual(t, h1, h3)
 }
 
+// Conformance: E11 — with no base-relevant build-args the hash is byte-identical to the arg-free hash.
 // TestBaseContentHash_NoBuildArgsIsDockerfileOnly pins the byte-format
 // invariant: with no build-args (or only irrelevant ones) the hash is exactly
 // sha256 of the rendered bytes — the arg-free path appends no arg bytes, so a
@@ -144,6 +145,7 @@ func TestBaseContentHash_NoBuildArgsIsDockerfileOnly(t *testing.T) {
 	assert.Equal(t, want, hIrrelevant, "an undeclared build-arg must not touch the hash")
 }
 
+// Conformance: E11 — a --build-arg targeting a base-declared ARG folds into the freshness hash.
 // TestBaseContentHash_RelevantBuildArgChangesHash: a --build-arg targeting an
 // ARG the base declares folds into the hash, and different values differ —
 // this is what forces the base rebuild BuildKit would otherwise do itself.
@@ -162,6 +164,7 @@ func TestBaseContentHash_RelevantBuildArgChangesHash(t *testing.T) {
 	assert.NotEqual(t, h20, h22, "differing values of a base-relevant arg must differ")
 }
 
+// Conformance: E11 — harness-only args never force a base rebuild (excluded from the base hash).
 // TestBaseContentHash_IrrelevantBuildArgKeepsHash: harness-only and unknown
 // build-args must not perturb the base hash even when other, relevant args are
 // also present.
@@ -181,6 +184,7 @@ func TestBaseContentHash_IrrelevantBuildArgKeepsHash(t *testing.T) {
 	assert.Equal(t, base, withExtra, "undeclared args must not affect the hash")
 }
 
+// Conformance: E11 — a nil (pass-through) base-declared build-arg resolves its effective value via [os.Getenv].
 // TestBaseContentHash_NilBuildArgUsesEnv: `--build-arg NAME` with no value is
 // a pass-through — Docker reads the value from the client environment, so the
 // hash must reflect the current env value.
@@ -199,6 +203,7 @@ func TestBaseContentHash_NilBuildArgUsesEnv(t *testing.T) {
 	assert.NotEqual(t, h1, h2, "a pass-through build-arg must reflect the env value")
 }
 
+// Conformance: E11 — the freshness hash folds only the base Dockerfile's actually-declared ARG names.
 // TestBaseDeclaredArgNames pins the ARG parser's edge cases: multi-stage
 // scoping (every stage's ARGs count), quoted defaults with spaces, indentation
 // and lowercase keyword, no-default form, backslash line continuation, and

@@ -68,6 +68,7 @@ build:
 
 // --- Front-door validation: name rule, path shape, unknown fields. ---
 
+// Conformance: E21 — a bad registered/declared name fails the whole config load.
 func TestValidateProjectRegistries_StackName(t *testing.T) {
 	_, err := config.NewFromString(`
 stacks:
@@ -78,6 +79,7 @@ stacks:
 	assert.Contains(t, err.Error(), "stacks.My_Rust")
 }
 
+// Conformance: E21 — a bad registered name fails the whole config load.
 func TestValidateProjectRegistries_HarnessName(t *testing.T) {
 	_, err := config.NewFromString(`
 harnesses:
@@ -88,6 +90,7 @@ harnesses:
 	assert.Contains(t, err.Error(), "harnesses.Claude_Code")
 }
 
+// Conformance: E21 — a reserved harness name fails the whole config load.
 func TestValidateProjectRegistries_HarnessReservedName(t *testing.T) {
 	_, err := config.NewFromString(`
 harnesses:
@@ -109,6 +112,7 @@ build:
 	assert.Contains(t, err.Error(), "build.harnesses.Claude")
 }
 
+// Conformance: E21 — a bad build.stacks declared name fails the whole config load.
 func TestValidateProjectRegistries_BuildStacksName(t *testing.T) {
 	_, err := config.NewFromString(`
 build:
@@ -118,6 +122,7 @@ build:
 	assert.Contains(t, err.Error(), "build.stacks")
 }
 
+// Conformance: E21 — a bad overlay declared name fails the whole config load.
 func TestValidateProjectRegistries_OverlayStacksName(t *testing.T) {
 	_, err := config.NewFromString(`
 build:
@@ -139,6 +144,7 @@ stacks:
 	assert.Contains(t, err.Error(), "path")
 }
 
+// Conformance: E10 — registry paths reject ~ home expansion at the load front-door.
 func TestValidateProjectRegistries_PathRejectsTilde(t *testing.T) {
 	_, err := config.NewFromString(`
 stacks:
@@ -150,6 +156,7 @@ stacks:
 	assert.Contains(t, err.Error(), "~")
 }
 
+// Conformance: E10 — registry paths reject $VAR expansion at the load front-door.
 func TestValidateProjectRegistries_PathRejectsEnvVar(t *testing.T) {
 	_, err := config.NewFromString(`
 harnesses:
@@ -160,6 +167,7 @@ harnesses:
 	assert.Contains(t, err.Error(), "harnesses.codex.path")
 }
 
+// Conformance: E10 — registry paths accept absolute (and relative) paths.
 func TestValidateProjectRegistries_PathAcceptsAbsolute(t *testing.T) {
 	_, err := config.NewFromString(`
 stacks:
@@ -169,6 +177,7 @@ stacks:
 	require.NoError(t, err)
 }
 
+// Conformance: E21 — an unknown field under a registry node is rejected at load.
 func TestValidateProjectRegistries_UnknownFieldInStackEntry(t *testing.T) {
 	_, err := config.NewFromString(`
 stacks:
@@ -181,6 +190,7 @@ stacks:
 	assert.Contains(t, err.Error(), "unknown field")
 }
 
+// Conformance: E21 — an unknown field under the overlay node is rejected at load.
 func TestValidateProjectRegistries_UnknownFieldInHarnessOverlay(t *testing.T) {
 	_, err := config.NewFromString(`
 build:
@@ -193,6 +203,7 @@ build:
 	assert.Contains(t, err.Error(), "unknown field")
 }
 
+// Conformance: E21 — an unknown field under the overlay inject node is rejected at load.
 func TestValidateProjectRegistries_UnknownFieldInOverlayInject(t *testing.T) {
 	_, err := config.NewFromString(`
 build:
@@ -206,6 +217,7 @@ build:
 	assert.Contains(t, err.Error(), "unknown field")
 }
 
+// Conformance: E21 — an unknown field under the harness registry node is rejected at load.
 func TestValidateProjectRegistries_UnknownFieldInHarnessEntry(t *testing.T) {
 	_, err := config.NewFromString(`
 harnesses:
@@ -269,6 +281,7 @@ func TestValidateProjectRegistries_NullNodesAccepted(t *testing.T) {
 	})
 }
 
+// Conformance: E21 — a bad config.strategy (and unknown field under it) is rejected at load.
 func TestValidateProjectRegistries_HarnessConfigStrategy(t *testing.T) {
 	t.Run("unknown strategy rejected", func(t *testing.T) {
 		_, err := config.NewFromString(`

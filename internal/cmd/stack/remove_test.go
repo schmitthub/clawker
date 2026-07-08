@@ -10,6 +10,7 @@ import (
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 )
 
+// Conformance: E17 — remove only deletes entries present in a writable project layer.
 func TestStackRemove_Registered(t *testing.T) {
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	dir := writeStackDir(t, t.TempDir(), "my-rust")
@@ -28,6 +29,7 @@ func TestStackRemove_Registered(t *testing.T) {
 	assert.False(t, stillThere, "registration should be removed")
 }
 
+// Conformance: E17 — shipped stacks are an immutable virtual base layer; remove rejects a shipped name.
 func TestStackRemove_ShippedRejected(t *testing.T) {
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	f, _ := newTestFactory(t, cfg)
@@ -39,6 +41,7 @@ func TestStackRemove_ShippedRejected(t *testing.T) {
 	assert.Contains(t, err.Error(), "built-in")
 }
 
+// Conformance: E17 — removing a non-registered name is a loud error, never a silent no-op.
 func TestStackRemove_Unknown(t *testing.T) {
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	f, _ := newTestFactory(t, cfg)

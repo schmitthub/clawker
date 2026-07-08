@@ -51,6 +51,7 @@ func newTestFactory(t *testing.T, cfg config.Config) (*cmdutil.Factory, *bytes.B
 	return f, out
 }
 
+// Conformance: E15 — registration is validated at the write front-door before mutating clawker.yaml.
 func TestHarnessRegister_NewEntry(t *testing.T) {
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	dir := writeHarnessDir(t, t.TempDir(), "codex-bundle")
@@ -96,6 +97,7 @@ func TestHarnessRegister_PreservesInitConfig(t *testing.T) {
 	assert.Equal(t, "echo hello", entry.PostInit, "init config preserved")
 }
 
+// Conformance: E16 — a same-name registration collides loudly (unless --force).
 func TestHarnessRegister_ExistingWithoutForce(t *testing.T) {
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	dir := writeHarnessDir(t, t.TempDir(), "codex")
@@ -112,6 +114,7 @@ func TestHarnessRegister_ExistingWithoutForce(t *testing.T) {
 	assert.Contains(t, err.Error(), "already registered")
 }
 
+// Conformance: E15 — the name is validated (reserved alias rejected) before any store mutation.
 func TestHarnessRegister_ReservedName(t *testing.T) {
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	dir := writeHarnessDir(t, t.TempDir(), "some-bundle")
@@ -124,6 +127,7 @@ func TestHarnessRegister_ReservedName(t *testing.T) {
 	assert.Contains(t, err.Error(), "reserved")
 }
 
+// Conformance: E15 — the CLI proves the directory is a real bundle before any store mutation.
 func TestHarnessRegister_InvalidBundle(t *testing.T) {
 	cfg := configmocks.NewIsolatedTestConfig(t)
 	empty := filepath.Join(t.TempDir(), "empty")

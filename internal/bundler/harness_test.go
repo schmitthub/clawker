@@ -11,6 +11,7 @@ import (
 	"github.com/schmitthub/clawker/internal/consts"
 )
 
+// Conformance: E12 — harness selection is explicit; an empty selector resolves to the built-in default (claude).
 func TestResolveHarnessName(t *testing.T) {
 	cfg := configmocks.NewFromString("", "")
 
@@ -79,6 +80,7 @@ harnesses:
 	assert.True(t, bundler.IsKnownHarness(cfg, "claude"))
 }
 
+// Conformance: E3 — a declared name resolves from the closest layer, winning wholesale, never merged.
 func TestLoadHarness_ShippedVirtualBase(t *testing.T) {
 	// No project registry entry → shipped bundles load straight from embedded.
 	cfg := configmocks.NewFromString("", "")
@@ -87,6 +89,7 @@ func TestLoadHarness_ShippedVirtualBase(t *testing.T) {
 	assert.Equal(t, bundler.DefaultHarnessName, b.Name)
 }
 
+// Conformance: E3 — a declared name resolves from the closest layer, winning wholesale, never merged.
 func TestLoadHarness_ProjectRegistered(t *testing.T) {
 	dir := t.TempDir()
 	writeBundle(t, dir, "version:\n  resolver: none\n")
@@ -111,6 +114,7 @@ harnesses:
 	require.ErrorContains(t, err, "no bundle at registered path")
 }
 
+// Conformance: E9 — a name resolving nowhere is a hard, loud error naming the register remedy.
 func TestLoadHarness_Unregistered(t *testing.T) {
 	// A name that is neither shipped nor project-registered is a hard error
 	// naming the registration remedy.
