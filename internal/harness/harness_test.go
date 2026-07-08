@@ -76,6 +76,25 @@ func TestBundleStack_EmbeddedDefinition(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, def.RootFragment)
 	assert.Contains(t, def.UserFragment, "embedded")
+
+	// A second embedded definition + a stray manifest-less dir: BundledStacks
+	// returns only real definitions, sorted, ignoring the incomplete dir.
+	fsys["stacks/atool/stack.yaml"] = mapFile("description: another\n")
+	fsys["stacks/atool/Dockerfile.stack-root.tmpl"] = mapFile("RUN echo a\n")
+	fsys["stacks/incomplete/README.md"] = mapFile("no manifest here\n")
+	b2, err := harness.Load("test", fsys)
+	require.NoError(t, err)
+	bundled, err := b2.BundledStacks()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"atool", "mytool"}, bundled)
+}
+
+func TestBundledStacks_None(t *testing.T) {
+	b, err := harness.Load("test", manifestFS("version: { resolver: none }\n"))
+	require.NoError(t, err)
+	bundled, err := b.BundledStacks()
+	require.NoError(t, err)
+	assert.Empty(t, bundled)
 }
 
 func TestCompose_OverridesDeclaredBlock(t *testing.T) {

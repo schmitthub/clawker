@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"path"
 	"regexp"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -274,6 +275,29 @@ func (b *Bundle) Stack(name string) (*stack.Definition, error) {
 		return nil, fmt.Errorf("harness %q: %w", b.Name, loadErr)
 	}
 	return def, nil
+}
+
+// BundledStacks returns the names of stack definitions the bundle embeds
+// under its stacks/ subdirectory, sorted. A bundle with no stacks/ directory
+// (or none that carry a manifest) has none. The dir name IS the stack name.
+// A missing stacks/ directory is not an error (returns nil); any other read
+// error is surfaced rather than silently collapsed to "no stacks".
+func (b *Bundle) BundledStacks() ([]string, error) {
+	entries, err := fs.ReadDir(b.fsys, stack.StacksSubdir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("harness %q: read %s/: %w", b.Name, stack.StacksSubdir, err)
+	}
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() && b.HasStack(e.Name()) {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names)
+	return names, nil
 }
 
 // WalkAssets calls fn for every file under the bundle's assets/ tree with
