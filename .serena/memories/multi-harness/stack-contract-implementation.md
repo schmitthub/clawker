@@ -17,6 +17,10 @@
 | Task 5: BaseContentHash build-arg fix | `complete` (2026-07-08) | subagent |
 | Task 6: Docs + contract surface | `complete` (2026-07-08) | subagent |
 
+## Post-initiative review (orchestrator, 2026-07-08)
+
+Whole-initiative review of `889d561d..025ca272` completed after Task 6: every task independently gate-verified (full diff read + full suite in an isolated worktree at each task's commit + live CLI smoke for Task 4/6), goldens stable under regen at final HEAD, docs claims cross-checked against observed CLI behavior. Fixes landed as `ac59e0ed`: register commands print "(was <old>)" only when the path actually changed (old "(replaced)" wording was wrong for parent-layer shadowing and noisy for same-path --force); stacks/harness-bundles docs dropped the spurious `--force` from the override-a-shipped-name examples (shadowing shipped is an ordinary registration). Known accepted wart (documented in docs Note + Task 4 learnings): registering from an unregistered directory writes to the user-level clawker.yaml — surfaced via the "Written to" line; a parent-layer registration also blocks same-name project register without --force.
+
 ## Key Learnings
 
 ### Task 1 (2026-07-08)
