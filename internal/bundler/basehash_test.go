@@ -116,12 +116,12 @@ func TestBaseContentHash_MissingSrcStableMarker(t *testing.T) {
 	assert.NotEqual(t, h1, h3)
 }
 
-// TestBaseContentHash_NoBuildArgsMatchesLegacyFormat pins the byte-format
+// TestBaseContentHash_NoBuildArgsIsDockerfileOnly pins the byte-format
 // invariant: with no build-args (or only irrelevant ones) the hash is exactly
-// sha256 of the rendered bytes — no arg bytes are ever appended in the
-// arg-free path, so an existing base is never rebuilt merely by the engine
-// gaining arg-awareness. The literal sha256 catches any stray byte written.
-func TestBaseContentHash_NoBuildArgsMatchesLegacyFormat(t *testing.T) {
+// sha256 of the rendered bytes — the arg-free path appends no arg bytes, so a
+// base's identity depends only on its rendered Dockerfile and is independent of
+// the arg-folding path. The literal sha256 catches any stray byte written.
+func TestBaseContentHash_NoBuildArgsIsDockerfileOnly(t *testing.T) {
 	// minimalProjectYAML declares no copy instructions, so the only hashed
 	// input is the Dockerfile bytes themselves.
 	gen := newTestProjectGenerator(testConfig(t, minimalProjectYAML()), t.TempDir())

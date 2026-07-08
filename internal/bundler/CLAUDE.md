@@ -81,9 +81,9 @@ rebuilds. Folding base-relevant args in keeps clawker faithful to BuildKit
 silently eat a `--build-arg` that targets a base ARG. Args the base does not
 declare (harness-only or unknown) are excluded, so they never force a base
 rebuild: with no base-relevant args the hash equals the Dockerfile+copy-srcs
-hash exactly (no arg bytes appended), so an existing base is never rebuilt
-merely by the engine gaining arg-awareness. Deliberately NOT a whole-context
-hash —
+hash exactly (no arg bytes appended) — a base's identity depends only on its
+rendered inputs, independent of the arg-folding path. Deliberately NOT a
+whole-context hash —
 source edits outside copy srcs never rebuild the base. Glob semantics are
 Go's, not Docker's; imprecision worst-cases as a spurious rebuild, never a
 wrong image.

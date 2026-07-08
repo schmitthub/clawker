@@ -103,13 +103,3 @@ clawker image prune --all
 The migration moves the `agent.claude_code` block, but it can't know that a generic `agent.post_init` or `agent.pre_run` contains harness-specific commands. `agent.*` hooks and env apply to **every** harness — a `claude mcp add` line in `agent.post_init` fails inside a codex container. Move harness-specific commands to `harnesses.claude.post_init` / `harnesses.claude.pre_run`.
 
 Check every layer — `.clawker.yaml`, `.clawker.local.yaml`, and the global `~/.config/clawker/clawker.yaml` merge independently, and a forgotten global-layer hook keeps injecting claude commands into every container. Hooks are baked in at container create, so recreate containers after moving them.
-
-## Alpha builds: drop stale config-dir copies
-
-If you ran earlier pre-release builds of this branch, they may have left harness and stack copies under `~/.config/clawker/harnesses/` and `~/.config/clawker/stacks/`. Shipped harnesses and stacks now resolve from the binary, so those directories are no longer read — delete them:
-
-```bash
-rm -rf ~/.config/clawker/harnesses ~/.config/clawker/stacks
-```
-
-Any custom bundles or stacks you want to keep, register per-project with `clawker harness register` / `clawker stack register` pointing at wherever you keep them on disk.
