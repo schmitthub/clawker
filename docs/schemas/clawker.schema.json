@@ -52,6 +52,11 @@
               "title": "Mount Host State",
               "type": "boolean"
             },
+            "path": {
+              "description": "Bundle directory (harness.yaml + Dockerfile.harness.tmpl + assets), relative to the project root or absolute — no ~ or $VAR expansion; empty = built-in/shipped resolution",
+              "title": "Path",
+              "type": "string"
+            },
             "post_init": {
               "description": "Shell commands run once after container creation when this harness is selected, appended after agent.post_init (e.g. install this harness's MCP servers)",
               "title": "Post-Init Script",
@@ -134,6 +139,55 @@
     "build": {
       "additionalProperties": false,
       "properties": {
+        "harnesses": {
+          "additionalProperties": {
+            "additionalProperties": false,
+            "properties": {
+              "inject": {
+                "additionalProperties": false,
+                "properties": {
+                  "after_harness_install": {
+                    "description": "Add Dockerfile instructions as the container user with the harness CLI available, for this harness's image only",
+                    "items": {
+                      "type": "string"
+                    },
+                    "title": "After Harness Install",
+                    "type": "array"
+                  },
+                  "before_entrypoint": {
+                    "description": "Add Dockerfile instructions at the very end, for this harness's image only",
+                    "items": {
+                      "type": "string"
+                    },
+                    "title": "Before Entrypoint",
+                    "type": "array"
+                  }
+                },
+                "type": "object"
+              },
+              "packages": {
+                "description": "Extra apt packages to install in this harness's image; not deduped against build.packages (apt install is idempotent)",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Packages",
+                "type": "array"
+              },
+              "stacks": {
+                "description": "Extra stack definitions to render in this harness's image, after the bundle's own installer stacks",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Stacks",
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "description": "Per-harness build additions (stacks, packages, inject), keyed by harness name",
+          "title": "Harness Build Overlay",
+          "type": "object"
+        },
         "inject": {
           "additionalProperties": false,
           "properties": {
@@ -354,6 +408,11 @@
             "title": "Mount Host State",
             "type": "boolean"
           },
+          "path": {
+            "description": "Bundle directory (harness.yaml + Dockerfile.harness.tmpl + assets), relative to the project root or absolute — no ~ or $VAR expansion; empty = built-in/shipped resolution",
+            "title": "Path",
+            "type": "string"
+          },
           "post_init": {
             "description": "Shell commands run once after container creation when this harness is selected, appended after agent.post_init (e.g. install this harness's MCP servers)",
             "title": "Post-Init Script",
@@ -367,7 +426,7 @@
         },
         "type": "object"
       },
-      "description": "Per-harness container initialization settings, keyed by harness name",
+      "description": "Per-harness container initialization settings and bundle registration, keyed by harness name",
       "title": "Harnesses",
       "type": "object"
     },
@@ -517,6 +576,25 @@
       "required": [
         "docker_socket"
       ],
+      "type": "object"
+    },
+    "stacks": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "description": "Stack definition directory (stack.yaml plus Dockerfile.stack-root.tmpl and/or Dockerfile.stack-user.tmpl), relative to the project root or absolute — no ~ or $VAR expansion",
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "description": "Stack registry mapping a stack name to its definition directory",
+      "title": "Stacks",
       "type": "object"
     },
     "workspace": {

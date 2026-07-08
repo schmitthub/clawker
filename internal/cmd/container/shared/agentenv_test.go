@@ -38,6 +38,7 @@ func envHarnessCfg(envFile, fromEnv []string, env map[string]string) *config.Har
 		Env:           env,
 		PostInit:      "",
 		PreRun:        "",
+		Path:          "",
 	}
 }
 

@@ -15,11 +15,12 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"regexp"
 	"strings"
 	"text/template"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/schmitthub/clawker/internal/consts"
 )
 
 // Definition is a loaded stack definition.
@@ -43,14 +44,14 @@ type manifest struct {
 	Description string `yaml:"description"`
 }
 
-// nameRe constrains a definition name: it is a registry key, a directory
-// name, and a token in build.stacks lists.
-var nameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,40}$`)
-
-// ValidateName rejects names that cannot serve as stack registry keys.
+// ValidateName rejects names that cannot serve as stack registry keys — a
+// definition name is also a registry key, a directory name, and a token in
+// build.stacks lists. Delegates to the unified naming rule shared by
+// stacks, harnesses, and their registry/overlay keys (see
+// consts.ValidateName).
 func ValidateName(name string) error {
-	if !nameRe.MatchString(name) {
-		return fmt.Errorf("stack name %q is invalid (must match %s)", name, nameRe.String())
+	if err := consts.ValidateName(name); err != nil {
+		return fmt.Errorf("stack %w", err)
 	}
 	return nil
 }

@@ -165,6 +165,9 @@ func NewConfig(opts ...NewConfigOption) (Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("config: loading project config: %w", err)
 	}
+	if vErr := validateProjectRegistries(projectStore); vErr != nil {
+		return nil, fmt.Errorf("config: validating project config: %w", vErr)
+	}
 
 	settingsOpts := []storage.Option{
 		storage.WithFilenames(consts.SettingsFile),
@@ -231,6 +234,9 @@ func NewProjectStoreFromPreset(presetYAML string) (*storage.Store[Project], erro
 	if err != nil {
 		return nil, err
 	}
+	if vErr := validateProjectRegistries(store); vErr != nil {
+		return nil, fmt.Errorf("config: validating preset project config: %w", vErr)
+	}
 	store.MarkSeedForWrite()
 	return store, nil
 }
@@ -242,6 +248,9 @@ func NewBlankConfig() (Config, error) {
 	projectStore, err := storage.New[Project](storage.GenerateDefaultsYAML[Project]())
 	if err != nil {
 		return nil, fmt.Errorf("config: blank project: %w", err)
+	}
+	if vErr := validateProjectRegistries(projectStore); vErr != nil {
+		return nil, fmt.Errorf("config: validating project config: %w", vErr)
 	}
 	settingsStore, err := storage.New[Settings](storage.GenerateDefaultsYAML[Settings]())
 	if err != nil {
@@ -260,6 +269,9 @@ func NewFromString(projectYAML, settingsYAML string) (Config, error) {
 	projectStore, err := storage.New[Project](projectYAML)
 	if err != nil {
 		return nil, fmt.Errorf("config: parsing project YAML: %w", err)
+	}
+	if vErr := validateProjectRegistries(projectStore); vErr != nil {
+		return nil, fmt.Errorf("config: validating project config: %w", vErr)
 	}
 	settingsStore, err := storage.New[Settings](settingsYAML)
 	if err != nil {

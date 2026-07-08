@@ -6,7 +6,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -97,22 +96,13 @@ func registryDefaultHarness(cfg config.Config) (string, error) {
 	return names[0], nil
 }
 
-// harnessKeyRe is the docker image tag grammar — the registry key IS the
-// image tag, so keys are validated against it.
-var harnessKeyRe = regexp.MustCompile(`^[a-zA-Z0-9_][a-zA-Z0-9._-]{0,127}$`)
-
-// ValidateHarnessKey rejects registry keys that cannot serve as image tags
-// or that collide with the reserved tag aliases.
+// ValidateHarnessKey rejects registry keys that cannot serve as harness
+// names — delegates to the unified naming rule shared by stacks, harnesses,
+// and their registry/overlay keys, plus the harness-specific reserved-tag-
+// alias check (see consts.ValidateHarnessName).
 func ValidateHarnessKey(name string) error {
-	switch name {
-	case consts.ImageTagDefaultAlias, consts.ImageTagLatest, consts.ImageTagBase:
-		return fmt.Errorf("harness name %q is reserved as an image tag alias", name)
-	}
-	if !harnessKeyRe.MatchString(name) {
-		return fmt.Errorf(
-			"harness name %q is not a valid image tag (must match %s)",
-			name, harnessKeyRe.String(),
-		)
+	if err := consts.ValidateHarnessName(name); err != nil {
+		return fmt.Errorf("harness %w", err)
 	}
 	return nil
 }
