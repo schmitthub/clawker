@@ -1,6 +1,8 @@
 # Stack Contract — Design Model (r10)
 
-Implementation plan: `multi-harness/stack-contract-implementation` (6-task initiative, 2026-07-08). Companion: `multi-harness/stack-unit-contract-design` (brainstorm log r1–r9 + prior art; its token/provider vocabulary is SUPERSEDED by r10 below — read for rationale history only). Nothing implemented; design phase.
+**STATUS: IMPLEMENTED (2026-07-08) on `feat/multi-harness-support`.** All 6 tasks of `multi-harness/stack-contract-implementation` are complete (commits e0bfd3f4 → Task 6). §1–§6c below shipped as designed; the only material deviations recorded in the implementation memory: harness registration folded into the pre-existing `harnesses.<name>` map (adds `path:`, not a second node); config-dir materialization DROPPED entirely (shipped resolve from the embedded FS, no fork-convenience copy); no registry `default` flag (built-in default = `claude`); the shared naming validator lives in `internal/consts`. §7 phase-2 items still open (clause-register re-enum, apt-into-stacks fold, monitoring breakout). Docs shipped: `docs/{stacks,harness-bundles,custom-images}.mdx`, `docs/upgrading/v0.13.mdx`, CLI reference, `claude-plugin/clawker-support/skills/{clawker-support,harness-stack-dev}`.
+
+Implementation plan: `multi-harness/stack-contract-implementation` (6-task initiative, 2026-07-08). Companion: `multi-harness/stack-unit-contract-design` (brainstorm log r1–r9 + prior art; its token/provider vocabulary is SUPERSEDED by r10 below — read for rationale history only).
 
 ## 0. Why nothing off the shelf fits (user, r9 — still true)
 
