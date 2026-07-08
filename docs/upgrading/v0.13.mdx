@@ -75,7 +75,6 @@ Migrations run once per config file the first time the new CLI loads it — the 
 - `build.image`, `build.dockerfile`, `build.context` — removed. Images build from clawker's pinned base; see [build changes](#custom-base-images-and-dockerfiles-are-unsupported).
 - `agent.claude_code.use_host_auth` — removed. Host credentials are no longer copied; see [auth changes](#harness-auth-happens-in-container).
 - `agent.claude_code` — moved field-for-field to `harnesses.claude`. If a `harnesses.claude` entry already exists, the legacy block is dropped with a warning instead (the map entry already overrides it).
-- Settings-side `stacks:` / `harnesses:` registries — stripped from `settings.yaml` on load with a notice. Registration is now per-project in `clawker.yaml`; shipped harnesses and stacks resolve from the binary and need no registry entry. Register your own with `clawker stack register` / `clawker harness register` (see [Stacks](/stacks) and [Harness Bundles](/harness-bundles)).
 
 `build.inject.after_claude_install` is not rewritten: it still works as a deprecated alias of `after_harness_install`. Rename it when convenient.
 

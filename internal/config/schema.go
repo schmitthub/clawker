@@ -410,9 +410,7 @@ func (e *KeyNotFoundError) Error() string { return "key not found: " + e.Key }
 // Settings represents user-level configuration stored in ~/.config/clawker/settings.yaml.
 // Settings does NOT carry a stack/harness registry: registration lives in the
 // project's clawker.yaml (Project.Stacks / Project.Harnesses), and shipped
-// definitions resolve straight from the binary's embedded assets. The
-// former settings-side stacks:/harnesses: registry was retired in the
-// stack-contract redesign (a load-time migration strips any leftover keys).
+// definitions resolve straight from the binary's embedded assets.
 type Settings struct {
 	Logging      LoggingConfig        `yaml:"logging,omitempty"`
 	Monitoring   MonitoringConfig     `yaml:"monitoring,omitempty"`
