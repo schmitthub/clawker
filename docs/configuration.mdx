@@ -509,6 +509,8 @@ monitoring:
     include_account_uuid: <boolean>  # default: true | required: false
     # Tag telemetry with session ID to correlate events across a single run
     include_session_id: <boolean>  # default: true | required: false
+  # Host-global monitoring unit registry keyed by unit name; registered path and activation state
+  units: <value>  # default: n/a | required: false
 host_proxy:
   manager:
     # Local port the host proxy listens on (change if 18374 conflicts)
@@ -588,6 +590,7 @@ Global settings live at `~/.config/clawker/settings.yaml`. The following tables 
 | `opensearch_heap_mb` | integer | `512` | JVM -Xms/-Xmx for the OpenSearch node; raise on memory-hungry workloads |
 | `prometheus_port` | integer | `9090` | Host port for the Prometheus UI and its native OTLP receiver (agent metrics flow through the OTEL collector, not here; this port is only used by direct OTLP pushers) |
 | `prometheus_metrics_port` | integer | `8889` | In-network port the otel-collector exposes its Prometheus scrape endpoint on (Prometheus scrapes the collector over clawker-net for collector + agent metrics; not host-published — no localhost binding, no host port-conflict check needed) |
+| `units` | object map | — | Host-global monitoring unit registry keyed by unit name; registered path and activation state |
 
 
 #### telemetry

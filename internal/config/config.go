@@ -201,6 +201,9 @@ func NewConfig(opts ...NewConfigOption) (Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("config: loading settings: %w", err)
 	}
+	if vErr := validateSettingsRegistries(settingsStore); vErr != nil {
+		return nil, fmt.Errorf("config: validating settings: %w", vErr)
+	}
 
 	return &configImpl{
 		project:     projectStore,
@@ -272,6 +275,9 @@ func NewBlankConfig() (Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("config: blank settings: %w", err)
 	}
+	if vErr := validateSettingsRegistries(settingsStore); vErr != nil {
+		return nil, fmt.Errorf("config: validating settings: %w", vErr)
+	}
 	return &configImpl{
 		project:  projectStore,
 		settings: settingsStore,
@@ -292,6 +298,9 @@ func NewFromString(projectYAML, settingsYAML string) (Config, error) {
 	settingsStore, err := storage.New[Settings](settingsYAML)
 	if err != nil {
 		return nil, fmt.Errorf("config: parsing settings YAML: %w", err)
+	}
+	if vErr := validateSettingsRegistries(settingsStore); vErr != nil {
+		return nil, fmt.Errorf("config: validating settings: %w", vErr)
 	}
 	return &configImpl{
 		project:  projectStore,

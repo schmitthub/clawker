@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -38,6 +39,10 @@ func knownHarnessOverlayInjectFields() map[string]bool {
 
 func knownHarnessConfigOptionsFields() map[string]bool { return map[string]bool{"strategy": true} }
 
+func knownMonitoringUnitFields() map[string]bool {
+	return map[string]bool{"path": true, "active": true}
+}
+
 // validateProjectRegistries walks every discovered clawker.yaml layer —
 // never the merged tree, so an error names the actual offending file — and
 // validates the stacks:, harnesses:, and build.harnesses: nodes: every
@@ -60,6 +65,76 @@ func validateProjectRegistries(store *storage.Store[Project]) error {
 		}
 	}
 	return nil
+}
+
+// validateSettingsRegistries walks every discovered settings.yaml layer —
+// never the merged tree, so an error names the actual offending file — and
+// validates the monitoring.units registry node: every registered name must
+// satisfy the shared naming rule (consts.ValidateName), every entry's
+// fields must be a known subset, a path (when present) must be a
+// non-empty absolute string without ~/$VAR expansion (the registry is
+// host-global — a relative path would be cwd-dependent), and active
+// (when present) must be a boolean.
+func validateSettingsRegistries(store *storage.Store[Settings]) error {
+	for _, layer := range store.Layers() {
+		label := settingsLayerLabel(layer)
+		if err := validateMonitoringUnitsNode(label, layer.Data); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// settingsLayerLabel names a settings layer for error messages, mirroring
+// layerLabel's placeholder handling for the virtual defaults layer.
+func settingsLayerLabel(l storage.LayerInfo) string {
+	if l.Filename == "" {
+		return "clawker settings"
+	}
+	return l.Filename
+}
+
+func validateMonitoringUnitsNode(label string, data map[string]any) error {
+	rawMon, ok := data["monitoring"]
+	if !ok {
+		return nil
+	}
+	mon, isMap := nodeMapping(rawMon)
+	if !isMap {
+		// Not this validator's node to police: the typed decode of the
+		// merged tree owns the monitoring block's general shape.
+		return nil
+	}
+	raw, ok := mon["units"]
+	if !ok {
+		return nil
+	}
+	m, isMap := nodeMapping(raw)
+	if !isMap {
+		return fmt.Errorf("%s: monitoring.units: must be a mapping of name to {path, active}", label)
+	}
+	return validateEntryMap(label, "monitoring.units", m, consts.ValidateName,
+		"must be a mapping with path and/or active keys", knownMonitoringUnitFields(),
+		validateMonitoringUnitEntry(label))
+}
+
+// validateMonitoringUnitEntry checks one monitoring.units entry: path
+// (when present) absolute without expansion, active (when present) a
+// boolean.
+func validateMonitoringUnitEntry(label string) func(keyPath string, entry map[string]any) error {
+	return func(keyPath string, entry map[string]any) error {
+		if p, hasPath := entry["path"]; hasPath {
+			if err := validateAbsolutePathValue(label, keyPath+".path", p); err != nil {
+				return err
+			}
+		}
+		if a, hasActive := entry["active"]; hasActive {
+			if _, isBool := a.(bool); !isBool {
+				return fmt.Errorf("%s: %s.active: must be a boolean", label, keyPath)
+			}
+		}
+		return nil
+	}
 }
 
 // layerLabel names a layer for error messages: its filename, or a
@@ -283,6 +358,24 @@ func validatePathValue(label, keyPath string, raw any) error {
 			keyPath,
 			p,
 		)
+	}
+	return nil
+}
+
+// validateAbsolutePathValue applies validatePathValue and additionally
+// requires an absolute path — for host-global registries whose entries
+// must not depend on the invoking working directory.
+func validateAbsolutePathValue(label, keyPath string, raw any) error {
+	if err := validatePathValue(label, keyPath, raw); err != nil {
+		return err
+	}
+	p, isString := raw.(string)
+	if !isString {
+		// Unreachable: validatePathValue already rejected non-strings.
+		return fmt.Errorf("%s: %s: must be a string", label, keyPath)
+	}
+	if !filepath.IsAbs(p) {
+		return fmt.Errorf("%s: %s: %q must be an absolute path — the registry is host-global", label, keyPath, p)
 	}
 	return nil
 }

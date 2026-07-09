@@ -134,6 +134,106 @@ build:
 	}
 }
 
+// TestValidateSettingsRegistries_FileProvenance proves the settings-side
+// per-layer walk names the actual offending file for a bad monitoring.units
+// registry name.
+func TestValidateSettingsRegistries_FileProvenance(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, consts.SettingsFile), []byte(`
+monitoring:
+  units:
+    Bad_Name:
+      path: /abs/x
+`), 0o644))
+
+	store, err := storage.New[Settings]("",
+		storage.WithFilenames(consts.SettingsFile),
+		storage.WithPaths(dir),
+	)
+	require.NoError(t, err)
+
+	err = validateSettingsRegistries(store)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), consts.SettingsFile)
+	assert.Contains(t, err.Error(), "monitoring.units.Bad_Name")
+}
+
+// TestValidateSettingsRegistries_Table drives the monitoring.units front
+// door: name rule, known-field rejection, absolute-path requirement,
+// ~/$VAR rejection, and active type check. Malformed-shape rows pair the
+// bad losing layer with a valid winning layer (mirroring
+// TestValidateProjectRegistries_MalformedShapes): the winner's shape wins
+// the merge so store construction succeeds and only the per-layer walk
+// can surface the losing file's mistake.
+func TestValidateSettingsRegistries_Table(t *testing.T) {
+	const winning = `
+monitoring:
+  units:
+    x: { path: /abs/units/x, active: true }
+`
+	cases := []struct {
+		name    string
+		yaml    string
+		wantErr string // empty = valid
+	}{
+		{
+			"valid path entry",
+			"monitoring:\n  units:\n    codex-usage:\n      path: /abs/units/codex-usage\n",
+			"",
+		},
+		{"valid flag-only entry", "monitoring:\n  units:\n    claude-code:\n      active: true\n", ""},
+		{"absent node", "monitoring: {}\n", ""},
+		{"units node is a scalar", "monitoring:\n  units: foo\n", "monitoring.units: must be a mapping"},
+		{"entry is a scalar", "monitoring:\n  units:\n    x: nope\n", "monitoring.units.x: must be a mapping"},
+		{"bad name", "monitoring:\n  units:\n    Bad_Name: {path: /a}\n", "monitoring.units.Bad_Name"},
+		{
+			"unknown field",
+			"monitoring:\n  units:\n    x:\n      pth: /a\n",
+			"monitoring.units.x.pth: unknown field",
+		},
+		{
+			"path not a string",
+			"monitoring:\n  units:\n    x:\n      path: 5\n",
+			"monitoring.units.x.path: must be a string",
+		},
+		{
+			"path empty",
+			"monitoring:\n  units:\n    x:\n      path: \"\"\n",
+			"monitoring.units.x.path: must not be empty",
+		},
+		{"path relative", "monitoring:\n  units:\n    x:\n      path: ./units/x\n", "must be an absolute path"},
+		{"path tilde", "monitoring:\n  units:\n    x:\n      path: ~/units/x\n", "must not use ~"},
+		{"path env var", "monitoring:\n  units:\n    x:\n      path: $HOME/units/x\n", "must not use $VAR"},
+		{
+			"active not a bool",
+			"monitoring:\n  units:\n    x:\n      active: yes please\n",
+			"monitoring.units.x.active: must be a boolean",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			winDir, loseDir := t.TempDir(), t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(winDir, consts.SettingsFile), []byte(winning), 0o644))
+			require.NoError(t, os.WriteFile(filepath.Join(loseDir, consts.SettingsFile), []byte(tc.yaml), 0o644))
+			store, err := storage.New[Settings]("",
+				storage.WithFilenames(consts.SettingsFile),
+				storage.WithPaths(winDir, loseDir),
+			)
+			require.NoError(t, err,
+				"malformed losing layer must not break store construction — that is the silent-shadow hazard")
+
+			err = validateSettingsRegistries(store)
+			if tc.wantErr == "" {
+				assert.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErr)
+			assert.Contains(t, err.Error(), consts.SettingsFile)
+		})
+	}
+}
+
 // TestKnownFieldSets_MatchSchemaTags guards the hand-maintained known-field
 // allowlists in validate.go against drift from the schema structs' yaml
 // tags: a field added to a struct without updating its allowlist would make
@@ -149,6 +249,7 @@ func TestKnownFieldSets_MatchSchemaTags(t *testing.T) {
 		{"harness build overlay", reflect.TypeFor[HarnessBuildOverlay](), knownHarnessOverlayFields()},
 		{"harness overlay inject", reflect.TypeFor[HarnessOverlayInject](), knownHarnessOverlayInjectFields()},
 		{"harness config options", reflect.TypeFor[HarnessConfigOptions](), knownHarnessConfigOptionsFields()},
+		{"monitoring unit entry", reflect.TypeFor[MonitoringUnitEntry](), knownMonitoringUnitFields()},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -530,6 +530,18 @@ type MonitoringConfig struct {
 	PrometheusPort           int             `yaml:"prometheus_port,omitempty"            label:"Prometheus Port"            desc:"Host port for the Prometheus UI and its native OTLP receiver (agent metrics flow through the OTEL collector, not here; this port is only used by direct OTLP pushers)"                                                                         default:"9090"`
 	PrometheusMetricsPort    int             `yaml:"prometheus_metrics_port,omitempty"    label:"Prometheus Metrics Port"    desc:"In-network port the otel-collector exposes its Prometheus scrape endpoint on (Prometheus scrapes the collector over clawker-net for collector + agent metrics; not host-published — no localhost binding, no host port-conflict check needed)" default:"8889"`
 	Telemetry                TelemetryConfig `yaml:"telemetry,omitempty"`
+
+	// Units is the host-global monitoring unit registry: unit name →
+	// registration. Built-in units (shipped inside embedded harness
+	// bundles) need no entry — an entry with only `active` toggles a
+	// built-in unit's activation state.
+	Units map[string]MonitoringUnitEntry `yaml:"units,omitempty" label:"Monitoring Units" desc:"Host-global monitoring unit registry keyed by unit name; registered path and activation state"`
+}
+
+// MonitoringUnitEntry is one monitoring.units registry entry.
+type MonitoringUnitEntry struct {
+	Path   string `yaml:"path,omitempty"   label:"Path"   desc:"Absolute path to the monitoring unit directory (monitoring.yaml plus artifact subdirs); empty on an entry that only toggles a built-in unit's activation — no ~ or $VAR expansion"`
+	Active *bool  `yaml:"active,omitempty" label:"Active" desc:"Whether the unit is materialized and seeded into the monitoring stack; defaults to false"`
 }
 
 // TelemetryConfig configures telemetry export intervals and signal
