@@ -1,6 +1,7 @@
 package bundler_test
 
 import (
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -9,6 +10,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 )
 
 // validUnitFS is a minimal valid monitoring unit: one lane, its index
@@ -243,6 +245,41 @@ func TestLoadMonitoringUnit_Table(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, config.MonitoringRetentionCustom, u.Manifest.Logs[0].Retention)
 	})
+}
+
+// TestShippedClaudeBundle_MonitoringUnit pins the embedded claude bundle's
+// monitoring contribution: it declares (and fully loads) the claude-code
+// unit with the claude-code index routed from service.name=claude-code,
+// carrying the migrated bootstrap artifacts.
+func TestShippedClaudeBundle_MonitoringUnit(t *testing.T) {
+	cfg := configmocks.NewBlankConfig()
+	b, err := bundler.LoadHarness(cfg, "claude")
+	require.NoError(t, err)
+	require.Equal(t, []string{"claude-code"}, b.DeclaredMonitoringUnits())
+
+	u, err := b.MonitoringUnit("claude-code")
+	require.NoError(t, err)
+	require.Len(t, u.Manifest.Logs, 1)
+	assert.Equal(t, "claude-code", u.Manifest.Logs[0].Index)
+	assert.Equal(t, []string{"claude-code"}, u.Manifest.Logs[0].ServiceNames)
+	assert.Empty(t, u.Manifest.Logs[0].Retention, "claude-code joins the shared retention policy")
+	assert.Nil(t, u.Manifest.Metrics, "type→kind stays generic core, not a unit rename")
+
+	var paths []string
+	require.NoError(t, u.WalkArtifacts(func(relPath string, _ []byte) error {
+		paths = append(paths, relPath)
+		return nil
+	}))
+	assert.Contains(t, paths, "index-templates/claude-code.json")
+	assert.Contains(t, paths, "ingest-pipelines/claude-code-prompt-nest.json")
+	assert.Contains(t, paths, "saved-objects/claude-code.ndjson")
+	exploreCount := 0
+	for _, p := range paths {
+		if strings.HasPrefix(p, "saved-objects/explore/") {
+			exploreCount++
+		}
+	}
+	assert.Equal(t, 19, exploreCount, "all Explore PROMQL panels ride the unit")
 }
 
 // unitBundleFS wraps a valid unit into a harness bundle declaring it.

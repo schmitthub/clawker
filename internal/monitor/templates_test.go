@@ -318,7 +318,7 @@ monitoring:
 	for _, want := range []string{
 		"bootstrap.sh",
 		filepath.Join("saved-objects", "clawker.ndjson"),
-		filepath.Join("saved-objects", "explore", "clawker-claude-code-model-usage.json"),
+		filepath.Join("index-templates", "clawker-envoy.json"),
 	} {
 		if _, err := os.Stat(filepath.Join(destDir, want)); err != nil {
 			t.Errorf("expected %s after render: %v", want, err)

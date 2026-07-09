@@ -1,0 +1,5 @@
+description: Claude Code telemetry — index, ingest pipeline, dashboards, and Explore metric panels
+
+logs:
+  - index: claude-code
+    service_names: [claude-code]
