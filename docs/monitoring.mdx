@@ -91,7 +91,25 @@ This scaffolds configuration files in your data directory (`~/.local/share/clawk
 
 Use `--force` to regenerate files if they already exist.
 
-### 2. Start the Stack
+### 2. Enable Monitoring Units
+
+Agent-side telemetry loadouts are **monitoring units** — self-contained
+bundles of an OpenSearch index, ingest pipelines, dashboards, and collector
+routing, shipped by harness bundles or registered by path. Every unit is
+inactive until you enable it; a fresh stack seeds only the generic
+infrastructure lanes (firewall, DNS, CLI, control plane).
+
+To get the Claude Code index and dashboards, enable the built-in unit:
+
+```bash
+clawker monitor enable claude-code
+```
+
+See units, their sources, and activation state with `clawker monitor list`.
+Re-run `clawker monitor init` after changing the active set — the collector
+config and bootstrap tree are rendered from it.
+
+### 3. Start the Stack
 
 ```bash
 clawker monitor up
@@ -105,7 +123,7 @@ OpenSearch API:        http://localhost:9200
 Prometheus:            http://localhost:9090
 ```
 
-### 3. Run Agents
+### 4. Run Agents
 
 Start agents as usual — telemetry flows automatically:
 
@@ -113,13 +131,13 @@ Start agents as usual — telemetry flows automatically:
 clawker run -it --agent dev @
 ```
 
-### 4. Explore in OpenSearch Dashboards
+### 5. Explore in OpenSearch Dashboards
 
 Open OpenSearch Dashboards at `http://localhost:5601`. From the splash / welcome screen, under the **Analytics** panel on the far right, click **Clawker** to enter the auto-created workspace.
 
-Inside the workspace, the left navbar has an **Explore** section — click **Logs** or **Metrics** to browse. The preconfigured index patterns (`claude-code`, `clawker-cli`, `clawkercp`, `clawker-envoy`, `clawker-coredns`, `clawker-ebpf-egress`) and the `clawker_prometheus` direct-query datasource are already wired, so logs and Prometheus metrics are both reachable from inside OSD. Raw Prometheus is also still available at `http://localhost:9090` if you prefer it.
+Inside the workspace, the left navbar has an **Explore** section — click **Logs** or **Metrics** to browse. The preconfigured index patterns (`clawker-cli`, `clawkercp`, `clawker-envoy`, `clawker-coredns`, `clawker-ebpf-egress`, plus one per active monitoring unit — `claude-code` when its unit is enabled) and the `clawker_prometheus` direct-query datasource are already wired, so logs and Prometheus metrics are both reachable from inside OSD. Raw Prometheus is also still available at `http://localhost:9090` if you prefer it.
 
-**Dashboards.** Three are preinstalled under the workspace's **Dashboards** view:
+**Dashboards.** The Clawker Networking dashboard is always preinstalled; the two Claude Code dashboards ride the `claude-code` monitoring unit and appear once it's enabled:
 
 - **Claude Code Cost & Usage** — KPI strip over Claude Code sessions, cost, input/output/cache tokens. Sourced from Prometheus counters.
 - **Claude Code Activity** — Claude Code security activity audit: prompts, tooling, code editing, permissions, hooks, MCP, plugins — totals, distributions, and full event tables.
@@ -142,14 +160,52 @@ When writing your own PromQL or saved searches against these metrics, query with
 The stack is preconfigured every `monitor up`. A one-shot `clawker-opensearch-bootstrap` compose service runs after OpenSearch reports healthy, applies:
 
 - **Component templates** with shared mappings (`@timestamp` as date, `service.name` / `ingest_source` / `project` / `agent` as keyword)
-- **Index templates** with per-source field mappings for each log index plus the SS4O `traces` mapping (so dynamic mapping never locks the wrong type at first ingest). The `claude-code` template carries the full Claude Code log + span field set.
-- **ISM retention policy** (7-day rollover-to-delete, auto-attached to all indices via `ism_template.index_patterns`)
+- **Index templates** with per-source field mappings for each log index plus the SS4O `traces` mapping (so dynamic mapping never locks the wrong type at first ingest). Active monitoring units' templates land in the same pass — the `claude-code` template (full Claude Code log + span field set) ships inside the claude harness bundle's unit.
+- **ISM retention policy** (7-day rollover-to-delete, auto-attached via `ism_template.index_patterns` to the infrastructure indices plus every active unit's default-retention indices; a unit may ship its own policy scoped to its indices instead)
 - **Empty index pre-creation** for the log indices so OSD Discover and dashboards don't error on initial load before the first record arrives
 - **`clawker_prometheus` direct-query datasource** registered via the OpenSearch SQL plugin so OSD can read Prometheus metrics without a federated proxy
 - **OSD `Clawker` workspace** with `features: ["use-case-all"]` so the explore-flavor `metrics` / `logs` / `traces` nav groups all mount
-- **Saved objects** imported INTO the Clawker workspace — index patterns for every log index, the `Claude Code Cost & Usage` KPI dashboard (sessions, cost, input/output/cache tokens), the `Claude Code Activity` dashboard (prompts, tooling, code editing, permissions, hooks), and the `Clawker Networking` dashboard (Envoy / CoreDNS / eBPF event streams + verdict pies). Build additional dashboards off the index patterns + Prometheus datasource as needed.
+- **Saved objects** imported INTO the Clawker workspace — index patterns for every log index and the `Clawker Networking` dashboard (Envoy / CoreDNS / eBPF event streams + verdict pies), plus each active unit's dashboards (the claude-code unit carries `Claude Code Cost & Usage` and `Claude Code Activity`). Build additional dashboards off the index patterns + Prometheus datasource as needed.
 
 `otel-collector` gates on bootstrap completing successfully — it never starts until the cluster is preconfigured. Prometheus starts in parallel; bootstrap depends on Prometheus being up so the `clawker_prometheus` datasource registration can validate the configured URI. Bootstrap failure surfaces in `docker logs clawker-opensearch-bootstrap` and leaves the stack half-up by design (so wrong-mapped indices can't be silently created). The throwaway-stack model means picking up template/policy edits requires `monitor down --volumes && monitor up`; templates only apply at index creation.
+
+## Monitoring Units
+
+Agent-side observability is packaged as **monitoring units**: a directory
+with a `monitoring.yaml` manifest (the index it owns and the `service.name`
+values the collector routes into it) plus artifact files mirroring the
+bootstrap tree — index templates, ingest pipelines, dashboards, Explore
+panels. The generic infrastructure lanes (firewall, DNS, CLI, control
+plane) are built in and always seeded; units are opt-in.
+
+| Command | Purpose |
+|---------|---------|
+| `clawker monitor list` | Show built-in, registered, and discoverable units with activation state |
+| `clawker monitor register <path>` | Register a unit directory in the host-global registry (`--name`, `--force`) |
+| `clawker monitor remove <name>` | Remove a registration (and its activation state) |
+| `clawker monitor enable <name>` | Activate a unit — seeded on the next `monitor init && monitor up` |
+| `clawker monitor disable <name>` | Deactivate a unit |
+
+Sources of units:
+
+- **Built-in** — shipped inside clawker's embedded harness bundles (the claude
+  bundle ships `claude-code`). Available on every host, no registration needed.
+- **Registered** — any unit directory registered by absolute path. Harness
+  bundles may ship units under `monitoring/<name>/`; registering such a bundle
+  prints the exact `clawker monitor register` command to promote its units.
+
+Names are a flat namespace with no overrides: a built-in name can't be
+registered — pick another with `--name`. Real exclusivity is enforced on
+resources at `enable` time: two active units may never claim the same index
+or route the same `service.name`; swapping loadouts is an explicit
+`disable` + `enable`.
+
+Activation changes only take effect after `clawker monitor init && clawker
+monitor up` (the collector doesn't hot-reload); `monitor up` warns when the
+active set drifted since the last `init`. Deactivating a unit stops new
+records from indexing, but already-applied templates, indices, and
+dashboards persist until `clawker monitor down --volumes && clawker monitor
+up` — consistent with the throwaway-stack model.
 
 ## Telemetry Controls
 

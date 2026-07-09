@@ -138,6 +138,53 @@ The rule shape (`dst`, `proto`, `port`, `action`, `path_rules`, `path_default`, 
 Never frame a harness floor as "the system-required rules." Each floor belongs to its harness — the Anthropic domains are the **claude** harness's floor, the OpenAI domains are the **codex** harness's floor. Your custom bundle declares its own ([A10](/stack-contract#author-obligations)).
 </Note>
 
+### `monitoring`
+
+The monitoring units this bundle ships, by name — each lives under a
+`monitoring/<name>/` subdirectory (the directory name IS the unit name):
+
+```yaml
+monitoring:
+  - codex-usage
+```
+
+A unit is a self-contained observability loadout for the monitoring stack:
+
+```
+monitoring/codex-usage/
+  monitoring.yaml                      # manifest: owned index + service.name routes
+  index-templates/codex-usage.json     # REQUIRED per declared lane; basename == index name
+  ingest-pipelines/codex-usage-*.json  # optional; basenames must be "<unit>-"-prefixed
+  saved-objects/codex-usage.ndjson     # optional dashboards / index patterns
+  saved-objects/explore/*.json         # optional Explore PROMQL panels
+  ism-policies/*.json                  # only with a `retention: custom` lane
+```
+
+The unit manifest declares what the engine must know — everything else is
+file-discovered:
+
+```yaml
+# monitoring/codex-usage/monitoring.yaml
+description: Codex usage telemetry
+logs:
+  - index: codex-usage            # index the unit owns (unit name or "<name>-"-prefixed)
+    service_names: [codex]        # untrusted-lane service.name values routed to it
+```
+
+Every declared unit is fully validated at bundle load (register and build
+front doors): reserved infrastructure indices and `service.name` values are
+rejected, each lane must ship its index template with `index_patterns`
+exactly matching the basename, and unknown files or directories are hard
+errors. Unit artifacts may reference exactly three core names —
+`envelope-normalize` (final pipeline), `clawker-common` (component
+template), and the `clawker_prometheus` datasource for Explore panels;
+everything else must be unit-owned.
+
+Shipping a unit never activates anything: registering the bundle prints the
+`clawker monitor register` command that promotes each unit into the
+host-global monitoring registry, and seeding stays behind an explicit
+`clawker monitor enable`. See [Monitoring — Monitoring Units](/monitoring#monitoring-units).
+
 ## Template reference
 
 The bundle template fills named block slots in Clawker's master harness Dockerfile. Each `{{define "block_N"}}...{{end}}` body is emitted verbatim at that block's position; you may define any subset of the blocks, and defining anything else is a validation error ([E20](/stack-contract#engine-guarantees), [A7](/stack-contract#author-obligations)).

@@ -53,8 +53,10 @@ and no cross-stratum dedup.
 
 ## Open work (also tracked in the model doc §7)
 
-- Monitoring stack breakout — own design pass (explicit `clawker monitor install
-  <bundle>` + host-global ledger).
+- ~~Monitoring stack breakout~~ DONE 2026-07-09 — monitoring units (see model
+  doc §7.1): claude-code unit in the claude bundle, host-global settings
+  registry, opt-in activation, deep collector extraction. Host UAT of
+  enable → init → up still pending.
 - Host UAT of the full register → build → run flow (not drivable in-container).
 - Harness template block names still placeholder `block_1..6`
   (`bundler.DeclaredBlocks`) — final event-centric names undecided.

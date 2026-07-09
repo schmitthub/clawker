@@ -232,18 +232,28 @@ Root-before-user and base-before-harness hold as Docker physics.
 
 ## Open items (phase 2)
 
-1. **Monitoring stack breakout** (major, own design pass needed). Harness-specific
-   telemetry artifacts (claude-code index template, ISM policy, index patterns,
-   CC dashboards) are hardcoded in the monitoring package / opensearch-bootstrap
-   today. Direction: they become bundle content (e.g. a `monitoring/` dir in the
-   bundle), applied via explicit `clawker monitor install <bundle>` commands plus
-   a monitor-owned host-global install ledger with enable/disable/remove — NOT
-   path-aware discovery from project registries (explicit install gives an
-   uninstall path and user control). `monitor up` bootstrap iterates the ledger's
-   installed+enabled entries instead of a hardcoded list; generic infra indexes
-   (envoy/coredns/cli/clawkercp) stay built into the monitoring package. Still
-   undecided: ledger schema/home, dashboard lifecycle on bundle update,
-   install-time vs up-time artifact application.
+1. ~~Monitoring stack breakout~~ — **DONE 2026-07-09** as MONITORING UNITS.
+   A unit = dir (`monitoring.yaml` + artifact subdirs mirroring the bootstrap
+   tree). Claude Code artifacts migrated into the claude bundle's
+   `monitoring/claude-code/`; `internal/monitor` keeps only generic infra
+   (grep-guard test pins it). Registry is HOST-GLOBAL in settings.yaml
+   (`monitoring.units.<name>.{path,active}` — monitoring is one-per-host;
+   project scope was explicitly rejected). NO auto-add and NO shadow
+   semantics (unlike stacks: a unit is an additive presence, not an
+   alternative definition) — flat name namespace, register errors on any
+   taken name, resource exclusivity (index + service.name) enforced on the
+   ACTIVE set at `monitor enable`. Everything opt-in incl. built-in
+   claude-code (user decision — CC dashboards now need
+   `clawker monitor enable claude-code`). CLI: `clawker monitor
+   register|remove|list|enable|disable`; harness register/remove only print
+   hints. Deep collector extraction: otel-config template ranges over
+   active-unit routings (generated exporters/pipelines/routes + scoped OTTL
+   renames); `type→kind` + deltatocumulative stay generic core (OS 3.6.0
+   pin-coupled workarounds, user-approved deviation). bootstrap.sh
+   pre-create derives from index-template basenames (basename == index law;
+   clawker-cp.json → clawkercp.json), ndjson import is a glob, shared ISM
+   policy patterns are generated. Goldens: otel-config + bootstrap tree +
+   retention for no-units/claude/claude+synthetic-codex.
 2. **Host UAT of the full register → build → run flow** — cannot be driven
    in-container.
 3. **Harness template block names are still placeholders** (`block_1..6`,

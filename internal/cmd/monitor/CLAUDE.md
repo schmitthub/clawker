@@ -7,10 +7,11 @@ Manage local observability stack (OpenTelemetry Collector + OpenSearch / OpenSea
 | File | Purpose |
 |------|---------|
 | `monitor.go` | `NewCmdMonitor(f)` — parent command |
-| `init/init.go` | `NewCmdInit(f, runF)` — scaffold monitoring config files |
-| `up/up.go` | `NewCmdUp(f, runF)` — start observability stack |
+| `init/init.go` | `NewCmdInit(f, runF)` — scaffold monitoring config files (resolves units, prints per-unit provenance, renders active set) |
+| `up/up.go` | `NewCmdUp(f, runF)` — start observability stack (warns on active-unit drift vs the rendered `.clawker-units` marker) |
 | `down/down.go` | `NewCmdDown(f, runF)` — stop observability stack |
 | `status/status.go` | `NewCmdStatus(f, runF)` — show stack status |
+| `units/` | `NewCmdRegister/Remove/List/Enable/Disable(f, runF)` — host-global monitoring unit registry front doors (settings.yaml `monitoring.units`) |
 
 ## Key Symbols
 
@@ -64,6 +65,21 @@ func NewCmdDown(f *cmdutil.Factory, runF func(context.Context, *DownOptions) err
 ```
 
 Stops monitoring stack via Docker Compose. Flags: `--volumes/-v` (remove named volumes).
+
+### monitor register / remove / list / enable / disable (`units/`)
+
+The monitoring unit registry commands. `register <path> [--name] [--force]`
+validates the unit directory via `bundler.LoadMonitoringUnit` BEFORE any
+write, refuses built-in names outright (flat namespace, no shadowing;
+`--force` only updates your own entry's path), and stores an absolute path
+via `SettingsStore().Set("monitoring.units.<name>.path", …)`. `enable`
+runs the resource-exclusivity front door (`monitor.ActiveFromResolved`
+over the would-be active set) so an index/service.name collision errors at
+enable time; `disable` flips the flag and prints the volume-cycle
+persistence hint. `list` renders NAME/PATH/SOURCE/ACTIVE (+ `-q`/`--json`/
+`--format`) over built-in ∪ registered ∪ discoverable (project bundles')
+units, marking dead paths `(missing)`. Activation changes never touch
+compose — every command prints the `monitor init && monitor up` recipe.
 
 ### monitor status
 
