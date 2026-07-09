@@ -1,0 +1,35 @@
+{
+  "policy": {
+    "description": "Default retention for clawker observability indices. Throwaway monitoring stack — short retention by design.",
+    "default_state": "hot",
+    "states": [
+      {
+        "name": "hot",
+        "actions": [],
+        "transitions": [
+          {
+            "state_name": "delete",
+            "conditions": {
+              "min_index_age": "7d"
+            }
+          }
+        ]
+      },
+      {
+        "name": "delete",
+        "actions": [
+          {
+            "delete": {}
+          }
+        ],
+        "transitions": []
+      }
+    ],
+    "ism_template": [
+      {
+        "index_patterns": {{.ISMIndexPatternsJSON}},
+        "priority": 100
+      }
+    ]
+  }
+}

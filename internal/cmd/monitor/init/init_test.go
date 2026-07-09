@@ -121,10 +121,17 @@ func TestInitRun_OtelInfraReceiverRequiresClientCert(t *testing.T) {
 
 	tls := otelInfraGRPCTLS(t, otelCfg)
 	caFile, ok := tls["client_ca_file"].(string)
-	require.True(t, ok && caFile != "",
-		"otlp/infra grpc.tls must declare client_ca_file — removing it leaves server-auth TLS only, accepting any client peer")
-	require.Equal(t, "/etc/otel/tls/ca.pem", caFile,
-		"client_ca_file path must match the bind-mount target in compose.yaml — drift would break the handshake or silently load the wrong anchor")
+	require.True(
+		t,
+		ok && caFile != "",
+		"otlp/infra grpc.tls must declare client_ca_file — removing it leaves server-auth TLS only, accepting any client peer",
+	)
+	require.Equal(
+		t,
+		"/etc/otel/tls/ca.pem",
+		caFile,
+		"client_ca_file path must match the bind-mount target in compose.yaml — drift would break the handshake or silently load the wrong anchor",
+	)
 }
 
 // TestInitRun_OtelInfraTrustedPipelineIsolated pins the receivers list
@@ -143,18 +150,23 @@ func TestInitRun_OtelInfraTrustedPipelineIsolated(t *testing.T) {
 
 	receivers, ok := trusted["receivers"].([]any)
 	require.True(t, ok, "logs/in_trusted.receivers must be a list")
-	require.Equal(t, []any{"otlp/infra"}, receivers,
-		"logs/in_trusted must receive only from otlp/infra — adding the unauth otlp receiver routes spoofed records into routing/trusted")
+	require.Equal(
+		t,
+		[]any{"otlp/infra"},
+		receivers,
+		"logs/in_trusted must receive only from otlp/infra — adding the unauth otlp receiver routes spoofed records into routing/trusted",
+	)
 }
 
 // TestInitRun_OtelUntrustedRoutingAllowlist pins the `routing/untrusted`
-// connector's table to exactly the two `service.name` values that may
-// legitimately push from the unauth lane: `claude-code` and
-// `clawker-cli`. Adding `clawkercp`, `envoy`, or `coredns` to this
-// table would let an agent container forge a trusted identity from
-// the plaintext OTLP port — the trusted indices (clawkercp,
-// clawker-envoy, clawker-coredns) must remain reachable only via
-// `routing/trusted` behind the mTLS gate.
+// connector's table: with no active monitoring units, the only
+// `service.name` that may legitimately push from the unauth lane is
+// `clawker-cli` (unit lanes are rendered per activation, and unit
+// validation rejects the reserved infra identities). Adding `clawkercp`,
+// `envoy`, or `coredns` to this table would let an agent container
+// forge a trusted identity from the plaintext OTLP port — the trusted
+// indices must remain reachable only via `routing/trusted` behind the
+// mTLS gate.
 func TestInitRun_OtelUntrustedRoutingAllowlist(t *testing.T) {
 	_, otelCfg := renderMonitorConfigs(t)
 
@@ -169,13 +181,20 @@ func TestInitRun_OtelUntrustedRoutingAllowlist(t *testing.T) {
 		cond, _ := e["condition"].(string)
 		conditions = append(conditions, cond)
 	}
-	require.ElementsMatch(t,
+	require.ElementsMatch(
+		t,
 		[]string{
-			`attributes["service.name"] == "claude-code"`,
 			`attributes["service.name"] == "clawker-cli"`,
 		},
 		conditions,
-		"routing/untrusted must allow ONLY claude-code and clawker-cli — adding clawkercp/envoy/coredns conditions opens spoofed trusted identities from the unauth lane")
+		"routing/untrusted with no active units must allow ONLY clawker-cli — adding clawkercp/envoy/coredns conditions opens spoofed trusted identities from the unauth lane",
+	)
+	for _, cond := range conditions {
+		for _, reserved := range []string{"clawkercp", `"envoy"`, `"coredns"`, "ebpf-egress"} {
+			require.NotContains(t, cond, reserved,
+				"a trusted infra identity must never be routable from the unauth lane")
+		}
+	}
 }
 
 // otelMap parses otel-config.yaml and walks the given key path into a

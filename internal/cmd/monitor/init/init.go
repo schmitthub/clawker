@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/spf13/cobra"
+
 	"github.com/schmitthub/clawker/internal/auth"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
@@ -13,7 +15,6 @@ import (
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	"github.com/schmitthub/clawker/internal/monitor"
-	"github.com/spf13/cobra"
 )
 
 type InitOptions struct {
@@ -86,9 +87,36 @@ func initRun(_ context.Context, opts *InitOptions) error {
 
 	log.Debug().Str("monitor_dir", monitorDir).Msg("initializing monitor stack")
 
-	// Build template data from full settings (Monitoring + Docker).
+	// Resolve the monitoring unit set: built-ins from shipped harness
+	// bundles ∪ the host-global settings registry. Only ACTIVE units are
+	// rendered into the collector config + bootstrap tree; provenance is
+	// printed for every unit so the effective set is never invisible.
+	units, err := monitor.ResolveUnits(cfg)
+	if err != nil {
+		return fmt.Errorf("resolve monitoring units: %w", err)
+	}
+	activeUnits, err := monitor.ActiveFromResolved(units)
+	if err != nil {
+		return fmt.Errorf("validate active monitoring units: %w", err)
+	}
+	for _, u := range units {
+		state := "inactive — skipped"
+		if u.Active {
+			state = "active"
+		}
+		if u.LoadErr != nil {
+			state = "broken — " + u.LoadErr.Error()
+		}
+		fmt.Fprintf(ios.ErrOut, "%s unit %s ← %s [%s]\n", cs.InfoIcon(), u.Name, u.Source, state)
+	}
+
+	// Build template data from full settings (Monitoring + Docker) plus
+	// the active unit routing.
 	settings := cfg.SettingsStore().Read()
-	tmplData := monitor.NewMonitorTemplateData(settings)
+	tmplData, err := monitor.NewMonitorTemplateData(settings, activeUnits)
+	if err != nil {
+		return fmt.Errorf("build monitor template data: %w", err)
+	}
 
 	// Bake the CLI-issued OTEL mTLS material on demand. EnsureAuthMaterial
 	// is idempotent — if the certs are already present from a previous
@@ -145,7 +173,12 @@ func initRun(_ context.Context, opts *InitOptions) error {
 
 		// Check if file exists
 		if _, err := os.Stat(filePath); err == nil && !opts.Force {
-			fmt.Fprintf(ios.ErrOut, "%s %s already exists (use --force to overwrite)\n", cs.Muted("Skipped:"), file.name)
+			fmt.Fprintf(
+				ios.ErrOut,
+				"%s %s already exists (use --force to overwrite)\n",
+				cs.Muted("Skipped:"),
+				file.name,
+			)
 			continue
 		}
 
@@ -158,8 +191,9 @@ func initRun(_ context.Context, opts *InitOptions) error {
 			content = rendered
 		}
 
-		if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
-			return fmt.Errorf("failed to write %s: %w", file.name, err)
+		//nolint:gosec // generated, non-secret monitoring config; conventional world-readable perms
+		if writeErr := os.WriteFile(filePath, []byte(content), 0o644); writeErr != nil {
+			return fmt.Errorf("failed to write %s: %w", file.name, writeErr)
 		}
 		fmt.Fprintf(ios.ErrOut, "%s Generated %s\n", cs.InfoIcon(), file.name)
 	}
@@ -174,8 +208,8 @@ func initRun(_ context.Context, opts *InitOptions) error {
 	// is the embedded assets in the binary, not anything the user might
 	// have hand-edited under monitorDir.
 	bootstrapDir := filepath.Join(monitorDir, monitor.OpenSearchBootstrapDirName)
-	if err := monitor.WriteOpenSearchBootstrap(bootstrapDir, tmplData); err != nil {
-		return fmt.Errorf("write opensearch bootstrap dir: %w", err)
+	if writeErr := monitor.WriteOpenSearchBootstrap(bootstrapDir, tmplData, activeUnits); writeErr != nil {
+		return fmt.Errorf("write opensearch bootstrap dir: %w", writeErr)
 	}
 	fmt.Fprintf(ios.ErrOut, "%s Generated %s/\n", cs.InfoIcon(), monitor.OpenSearchBootstrapDirName)
 

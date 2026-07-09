@@ -13,9 +13,9 @@ receivers:
   otlp:
     protocols:
       grpc:
-        endpoint: 0.0.0.0:{{.OtelGRPCPort}}
+        endpoint: 0.0.0.0:4317
       http:
-        endpoint: 0.0.0.0:{{.OtelCollectorPort}}
+        endpoint: 0.0.0.0:4318
   # Trusted OTLP ingress, gated by mTLS. Listens on 0.0.0.0:<port>
   # inside the container; the published mapping in compose.yaml binds
   # the host port to 127.0.0.1 only. Agents on clawker-net can reach
@@ -38,7 +38,7 @@ receivers:
   otlp/infra:
     protocols:
       grpc:
-        endpoint: 0.0.0.0:{{.OtelInfraPort}}
+        endpoint: 0.0.0.0:4319
         tls:
           cert_file: /etc/otel/tls/server.pem
           key_file: /etc/otel/tls/server.key
@@ -131,11 +131,8 @@ processors:
           - set(attributes["agent"], resource.attributes["agent"]) where resource.attributes["agent"] != nil
           - set(attributes["kind"], attributes["type"]) where attributes["type"] != nil
           - delete_key(attributes, "type") where attributes["type"] != nil
-{{- range .Units}}
-{{- range .MetricRenameStatements}}
-          - {{.}}
-{{- end}}
-{{- end}}
+          - set(attributes["kind"], attributes["type"]) where resource.attributes["service.name"] == "synthetic-codex" and attributes["type"] != nil
+          - delete_key(attributes, "type") where resource.attributes["service.name"] == "synthetic-codex" and attributes["type"] != nil
   # Convert delta-temporality Sum metrics into cumulative before they hit
   # the Prometheus exporter. Coding-agent SDKs commonly emit counters
   # with AggregationTemporality=Delta — each export is the increment
@@ -268,7 +265,7 @@ exporters:
   # isn't dropped silently.
   opensearch/traces:
     http:
-      endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"
+      endpoint: "http://opensearch-node:9200"
     dataset: traces
     namespace: clawker
     sending_queue:
@@ -294,7 +291,7 @@ exporters:
   # dropping forensic records would be the worst time.
   opensearch/logs_cp:
     http:
-      endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"
+      endpoint: "http://opensearch-node:9200"
     logs_index: clawkercp
     sending_queue:
       enabled: true
@@ -302,25 +299,33 @@ exporters:
       enabled: true
       initial_interval: 5s
       max_elapsed_time: 5m
-{{- range .Units}}
-{{- range .Lanes}}
   # Active monitoring unit lane — declared by the unit's monitoring.yaml
   # and rendered per `clawker monitor enable`.
-  {{.ExporterName}}:
+  opensearch/logs_unit_claude_code:
     http:
-      endpoint: "http://{{$.OpenSearchNodeService}}:{{$.OpenSearchPort}}"
-    logs_index: {{.Index}}
+      endpoint: "http://opensearch-node:9200"
+    logs_index: claude-code
     sending_queue:
       enabled: true
     retry_on_failure:
       enabled: true
       initial_interval: 5s
       max_elapsed_time: 5m
-{{- end}}
-{{- end}}
+  # Active monitoring unit lane — declared by the unit's monitoring.yaml
+  # and rendered per `clawker monitor enable`.
+  opensearch/logs_unit_synthetic_codex:
+    http:
+      endpoint: "http://opensearch-node:9200"
+    logs_index: synthetic-codex
+    sending_queue:
+      enabled: true
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_elapsed_time: 5m
   opensearch/logs_clawker_cli:
     http:
-      endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"
+      endpoint: "http://opensearch-node:9200"
     logs_index: clawker-cli
     sending_queue:
       enabled: true
@@ -330,7 +335,7 @@ exporters:
       max_elapsed_time: 5m
   opensearch/logs_envoy:
     http:
-      endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"
+      endpoint: "http://opensearch-node:9200"
     logs_index: clawker-envoy
     sending_queue:
       enabled: true
@@ -340,7 +345,7 @@ exporters:
       max_elapsed_time: 5m
   opensearch/logs_coredns:
     http:
-      endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"
+      endpoint: "http://opensearch-node:9200"
     logs_index: clawker-coredns
     sending_queue:
       enabled: true
@@ -355,7 +360,7 @@ exporters:
   # operator-facing daemon-health stream on clawkercp.
   opensearch/logs_netlogger:
     http:
-      endpoint: "http://{{.OpenSearchNodeService}}:{{.OpenSearchPort}}"
+      endpoint: "http://opensearch-node:9200"
     logs_index: clawker-ebpf-egress
     sending_queue:
       enabled: true
@@ -377,7 +382,7 @@ exporters:
   # stack is throwaway (`monitor down --volumes` is the reset), so
   # one year is "effectively never."
   prometheus:
-    endpoint: "0.0.0.0:{{.PrometheusMetricsPort}}"
+    endpoint: "0.0.0.0:8889"
     metric_expiration: 8760h
 
 connectors:
@@ -402,15 +407,12 @@ connectors:
       - context: resource
         condition: attributes["service.name"] == "clawker-cli"
         pipelines: [logs/clawker-cli]
-{{- range .Units}}
-{{- range $lane := .Lanes}}
-{{- range $svc := $lane.ServiceNames}}
       - context: resource
-        condition: attributes["service.name"] == "{{$svc}}"
-        pipelines: [{{$lane.PipelineName}}]
-{{- end}}
-{{- end}}
-{{- end}}
+        condition: attributes["service.name"] == "claude-code"
+        pipelines: [logs/unit_claude_code]
+      - context: resource
+        condition: attributes["service.name"] == "synthetic-codex"
+        pipelines: [logs/unit_synthetic_codex]
   # Route trusted (mTLS-gated) records by sender-declared service.name.
   # Reachable only by peers whose client cert chains through the infra
   # intermediate CA. error_mode: propagate so OTTL evaluation errors
@@ -475,14 +477,14 @@ service:
       receivers: [routing/untrusted]
       processors: [memory_limiter]
       exporters: [opensearch/logs_clawker_cli, debug]
-{{- range .Units}}
-{{- range .Lanes}}
-    {{.PipelineName}}:
+    logs/unit_claude_code:
       receivers: [routing/untrusted]
       processors: [memory_limiter]
-      exporters: [{{.ExporterName}}, debug]
-{{- end}}
-{{- end}}
+      exporters: [opensearch/logs_unit_claude_code, debug]
+    logs/unit_synthetic_codex:
+      receivers: [routing/untrusted]
+      processors: [memory_limiter]
+      exporters: [opensearch/logs_unit_synthetic_codex, debug]
     # Quarantine for untrusted records whose service.name matches no
     # route (no active unit claims it, not clawker-cli). Stdout-only
     # (debug); never indexed

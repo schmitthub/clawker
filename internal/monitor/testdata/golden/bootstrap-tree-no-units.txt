@@ -1,0 +1,15 @@
+.clawker-units
+bootstrap.sh
+component-templates/clawker-common.json
+datasources/clawker_prometheus.json
+index-templates/clawker-cli.json
+index-templates/clawker-coredns.json
+index-templates/clawker-ebpf-egress.json
+index-templates/clawker-envoy.json
+index-templates/clawkercp.json
+ingest-pipelines/cp-actor-attr-nest.json
+ingest-pipelines/envelope-normalize.json
+ingest-pipelines/envoy-normalize.json
+ingest-pipelines/netlogger-normalize.json
+ism-policies/clawker-retention.json
+saved-objects/clawker.ndjson

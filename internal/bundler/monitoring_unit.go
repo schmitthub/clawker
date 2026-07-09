@@ -512,6 +512,48 @@ func jsonBasenames(name string, fsys fs.FS, dir string) ([]string, error) {
 	return names, nil
 }
 
+// ShippedMonitoringUnit is a monitoring unit declared by a shipped
+// embedded harness bundle, with its declaring harness for provenance.
+type ShippedMonitoringUnit struct {
+	Unit    *MonitoringUnit
+	Harness string
+}
+
+// ShippedMonitoringUnits returns every monitoring unit declared by the
+// shipped embedded harness bundles, sorted by unit name. These are the
+// built-in rows of the host-global monitoring registry — they resolve
+// straight from the binary and need no registration. Two shipped bundles
+// declaring the same unit name is a hard error (a packaging bug, caught
+// by any test loading the shipped set).
+func ShippedMonitoringUnits() ([]ShippedMonitoringUnit, error) {
+	var units []ShippedMonitoringUnit
+	byName := map[string]string{}
+	for _, harness := range ShippedHarnessNames() {
+		b, err := loadEmbeddedHarness(harness)
+		if err != nil {
+			return nil, err
+		}
+		for _, unitName := range b.DeclaredMonitoringUnits() {
+			if prev, dup := byName[unitName]; dup {
+				return nil, fmt.Errorf(
+					"shipped harnesses %q and %q both declare monitoring unit %q",
+					prev, harness, unitName,
+				)
+			}
+			byName[unitName] = harness
+			unit, unitErr := b.MonitoringUnit(unitName)
+			if unitErr != nil {
+				return nil, unitErr
+			}
+			units = append(units, ShippedMonitoringUnit{Unit: unit, Harness: harness})
+		}
+	}
+	slices.SortFunc(units, func(a, b ShippedMonitoringUnit) int {
+		return strings.Compare(a.Unit.Name, b.Unit.Name)
+	})
+	return units, nil
+}
+
 // WalkArtifacts calls fn for every artifact file in the unit with its
 // unit-relative slash path (e.g. "index-templates/codex.json") and
 // content, skipping the manifest. Paths mirror the bootstrap tree so a
