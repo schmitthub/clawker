@@ -189,6 +189,57 @@ Design guidance — minimal floor, path scoping, UGC-sink denial, MITM/SNI
 implications — lives in `security-egress.md`. Read it before writing any
 `egress:` section.
 
+## monitoring
+
+The monitoring units this bundle ships, by name — each lives under a
+`monitoring/<name>/` subdirectory (dir name IS the unit name):
+
+```yaml
+monitoring:
+  - codex-usage
+```
+
+A unit is a self-contained observability loadout for clawker's monitoring
+stack — an OpenSearch index the unit owns, the untrusted-lane
+`service.name` values routed into it, and the artifact files bootstrap
+applies:
+
+```
+monitoring/codex-usage/
+  monitoring.yaml                      # manifest: description + logs lanes (+ optional metrics renames)
+  index-templates/codex-usage.json     # REQUIRED per lane; basename == index name, index_patterns == [basename]
+  ingest-pipelines/codex-usage-*.json  # optional; basenames "<unit>-"-prefixed (cluster-level names)
+  saved-objects/codex-usage.ndjson     # optional dashboards / index patterns / visualizations
+  saved-objects/explore/*.json         # optional Explore PROMQL panels (filename = saved-object id)
+  ism-policies/*.json                  # only with a `retention: custom` lane; patterns must exactly
+                                       # equal a custom-retention lane index (no globs)
+```
+
+```yaml
+# monitoring/codex-usage/monitoring.yaml
+description: Codex usage telemetry
+logs:
+  - index: codex-usage           # unit name or "<name>-"-prefixed; reserved infra indices rejected
+    service_names: [codex]       # OTTL-safe charset; reserved infra identities rejected
+    # retention: default|custom  # default joins the shared 7d policy
+metrics:                         # optional collector-side shaping
+  datapoint_renames:
+    - { from: type, to: kind }
+```
+
+Everything is validated at bundle load (register AND build front doors) —
+unknown dirs/files are hard errors, since bootstrap's glob loops would
+silently skip them. Unit artifacts may reference exactly three core names:
+`envelope-normalize` (final pipeline), `clawker-common` (component
+template), and the `clawker_prometheus` datasource in Explore panels.
+
+Shipping a unit never registers or activates it: users promote it with
+`clawker monitor register <bundle>/monitoring/<name>` (host-global
+settings registry) and opt in with `clawker monitor enable <name>`. Your
+harness's telemetry ENV vars (the OTLP endpoint block in the template
+fragment) are independent of this — the unit only controls what the
+monitoring stack does with the records once they arrive.
+
 ## Registration (project clawker.yaml)
 
 Not part of the manifest, but a custom bundle is inert without it. Shipped
