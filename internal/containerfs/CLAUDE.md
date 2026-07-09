@@ -1,20 +1,20 @@
 # ContainerFS Package
 
-Harness config staging: interprets the selected harness bundle's staging manifest (`harness.Staging`) to prepare host state for container injection. Executes the manifest's explicit `staging.copy` directives (glob-capable src, JSON key allowlist, per-file skips, JSON path rewrites) into a temp staging mirror that callers copy into the harness config volume. Only host state OUTSIDE the workspace is staged — the workspace arrives via mount. Credentials are never copied from the host: the user authenticates inside the container and the token family persists in the config volume.
+Harness config staging: interprets the selected harness bundle's staging manifest (`config.Staging`) to prepare host state for container injection. Executes the manifest's explicit `staging.copy` directives (glob-capable src, JSON key allowlist, per-file skips, JSON path rewrites) into a temp staging mirror that callers copy into the harness config volume. Only host state OUTSIDE the workspace is staged — the workspace arrives via mount. Credentials are never copied from the host: the user authenticates inside the container and the token family persists in the config volume.
 
-Leaf package: imports `internal/config`, `internal/consts`, `internal/harness`, `internal/logger`, `doublestar` (globbing), and stdlib. No docker imports.
+Leaf package: imports `internal/config`, `internal/consts`, `internal/logger`, `doublestar` (globbing), and stdlib. No docker imports.
 
 ## Key Functions
 
 | Function | Purpose |
 |----------|---------|
-| `ResolveHostMountSource(src string) (string, bool, error)` | Expand a manifest `staging.mounts` src (`~`, `$VAR`, `${VAR:-fallback}` via `harness.ExpandHostPath`) and stat it. Returns `("", false, nil)` when the dir is absent (caller soft-skips the bind); expansion errors, stat errors, and path-is-file come back as errors. Symlinks resolve via `os.Stat`. Never creates the dir. |
-| `PrepareConfig(log *logger.Logger, staging harness.Staging, containerHomeDir, containerWorkDir, hostProjectRoot string) (stagingDir string, cleanup func(), err error)` | Run every `staging.copy` directive into a temp staging mirror for volume copy. |
+| `ResolveHostMountSource(src string) (string, bool, error)` | Expand a manifest `staging.mounts` src (`~`, `$VAR`, `${VAR:-fallback}` via `config.ExpandHostPath`) and stat it. Returns `("", false, nil)` when the dir is absent (caller soft-skips the bind); expansion errors, stat errors, and path-is-file come back as errors. Symlinks resolve via `os.Stat`. Never creates the dir. |
+| `PrepareConfig(log *logger.Logger, staging config.Staging, containerHomeDir, containerWorkDir, hostProjectRoot string) (stagingDir string, cleanup func(), err error)` | Run every `staging.copy` directive into a temp staging mirror for volume copy. |
 | `PrepareHookTar(cfg config.Config, shell, script, name string) (io.Reader, error)` | Create tar with `.clawker/<name>.sh` (shell shebang + `set -e` + user script, mode 0755); extracts at the container home. Empty script → bare no-op wrapper (lets callers always-deliver, overwriting stale content). Tar headers carry `cfg.ContainerUID()`/`cfg.ContainerGID()`. |
 
 ## Copy Directive Semantics (`stageCopy`)
 
-Each `harness.CopySpec` is one explicit host→container copy:
+Each `config.CopySpec` is one explicit host→container copy:
 
 - **Src expansion**: `~`, `$VAR`, `${VAR:-fallback}`, then glob fan-out (`doublestar`) when the pattern has glob meta; literal paths stat. No matches = debug-logged soft skip (not an error).
 - **Workspace guard**: any match inside `hostProjectRoot` is rejected — the workspace is mounted, never staged.

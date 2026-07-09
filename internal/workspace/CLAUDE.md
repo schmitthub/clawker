@@ -59,8 +59,8 @@ type SetupMountsConfig struct {
     ProjectRootDir string        // Main repo root for worktree .git mounting (empty for non-worktree)
     ContainerPath  string        // Container-side mount destination (host absolute path so in-container paths mirror the host, e.g. for the claude harness's /resume)
     IgnoreFile     string        // Caller-resolved ignore file path (empty = no patterns)
-    Harness        harness.Staging      // Selected bundle's staging manifest (host-state mounts); resolved by the caller
-    HarnessVolumes []harness.VolumeSpec // Bundle-declared persisted dirs; each becomes a named volume under the container home
+    Harness        config.Staging      // Selected bundle's staging manifest (host-state mounts); resolved by the caller
+    HarnessVolumes []config.VolumeSpec // Bundle-declared persisted dirs; each becomes a named volume under the container home
     HarnessConfig  *config.HarnessConfig // Per-harness init config (nil = defaults); gates the host-state binds
 }
 
@@ -74,9 +74,9 @@ type SetupMountsResult struct {
 func ResolveMode(override, defaultMode string) (config.Mode, error)  // mode precedence: CLI --mode override wins, else config default; empty resolves to ModeBind (ParseMode default), only unrecognized non-empty errors
 var ErrWorktreeSnapshot error  // sentinel: worktree + snapshot rejected. SetupMounts keys on ProjectRootDir != ""; CreateContainer fail-fast keys on the --worktree flag — equivalent because resolveWorkDir sets ProjectRootDir iff a worktree is requested
 func SetupMounts(ctx context.Context, client *docker.Client, cfg SetupMountsConfig) (*SetupMountsResult, error)
-func GetConfigVolumeMounts(projectName, agentName string, volumes []harness.VolumeSpec) ([]mount.Mount, error)
+func GetConfigVolumeMounts(projectName, agentName string, volumes []config.VolumeSpec) ([]mount.Mount, error)
 func GetHostStateMount(hostDir, dest string) (mount.Mount, error)  // bind, RW; dest is container-home-relative; errors when source not absolute
-func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, agentName string, volumes []harness.VolumeSpec) (ConfigVolumeResult, error)
+func EnsureConfigVolumes(ctx context.Context, cli *docker.Client, projectName, agentName string, volumes []config.VolumeSpec) (ConfigVolumeResult, error)
 func GetShareVolumeMount(hostPath string) mount.Mount  // ReadOnly: true
 ```
 
@@ -155,4 +155,4 @@ const HostGitConfigStagingPath = "/tmp/host-gitconfig"
 
 ## Dependencies
 
-Imports: `internal/config`, `internal/consts`, `internal/containerfs`, `internal/docker`, `internal/harness`, `internal/logger`
+Imports: `internal/config`, `internal/consts`, `internal/containerfs`, `internal/docker`, `internal/logger`

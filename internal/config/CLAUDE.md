@@ -34,7 +34,10 @@ State dir: `CLAWKER_STATE_DIR` > `$XDG_STATE_HOME/clawker` > `~/.local/state/cla
 | --- | --- |
 | `config.go` | `Config` interface, `configImpl` struct, constructors (`NewConfig`, `NewBlankConfig`, `NewFromString`), store accessors, schema accessors |
 | `consts.go` | Deprecated Config interface wrappers + config-backed accessors. Only non-deprecated exports: `Mode` type (`ModeBind`/`ModeSnapshot`). String constants and path helpers live in `internal/consts`. |
-| `schema.go` | All persisted schema structs + `ParseMode()` + convenience methods |
+| `schema.go` | All persisted schema structs + `ParseMode()` + convenience methods; `EgressRule` + egress vocabulary consts |
+| `harness_schema.go` | Harness `harness.yaml` manifest shape (`Manifest`, `VolumeSpec`, `VersionSpec`, `Seed`, `Staging`, `CopySpec`, `JSONRewrite`, `MountSpec`) + closed-vocabulary consts (resolvers, seed-apply tokens, JSON-rewrite kinds). Parsed here; loaded/validated/rendered by `internal/bundler` |
+| `stack_schema.go` | Stack `stack.yaml` manifest shape (`StackManifest` — the metadata half; fragments are loaded by `internal/bundler`) |
+| `path_semantics.go` | Manifest path helpers: `ExpandHostPath` (`~`/`$VAR`/`${VAR:-fallback}` expansion), `NormalizeContainerPath`, `HasGlobMeta` |
 | `defaults.go` | Firewall rules (`requiredFirewallDomains`, `requiredFirewallRules`), `DefaultIgnoreFile` |
 | `presets.go` | Language preset definitions (`Preset` type, `Presets()` function) for project init |
 | `resolve.go` | `ConfigDir()`/`DataDir()`/`StateDir()` package-level delegates to `internal/consts` |
@@ -109,7 +112,7 @@ const ModeSnapshot Mode = "snapshot"
 
 `ParseMode(s string) (Mode, error)` lives in `schema.go`. Empty string defaults to `ModeBind`.
 
-### Schema Types (schema.go)
+### Schema Types (schema.go, harness_schema.go, stack_schema.go)
 
 `Project` and `Settings` implement `storage.Schema` via `Fields() FieldSet`. All exported leaf fields carry `desc`, `label`, and `default` struct tags — the single source of truth for field metadata. Critical fields also carry `required:"true"`. CI enforces non-empty descriptions via `TestProjectFields_AllFieldsHaveDescriptions` and `TestSettingsFields_AllFieldsHaveDescriptions`. When adding a new field, always include `desc`, `label`, and `default` tags (and `required:"true"` if the field must always have a value).
 
@@ -119,11 +122,13 @@ const ModeSnapshot Mode = "snapshot"
 
 **Stacks/Harnesses registries** (project-side, `clawker.yaml` top-level): `Project.Stacks map[string]StackRegistryEntry` (`stacks:` — name → path) and `Project.Harnesses map[string]HarnessConfig` (`harnesses:` — doubles as the harness registry via `HarnessConfig.Path` AND the per-harness init-config block below, since both are scoped by the same harness name in the same file). `Project.Build.Harnesses map[string]HarnessBuildOverlay` (`build.harnesses:`) is the per-harness build overlay — the same packages/stacks/inject primitives as the base `BuildConfig` fields, scoped to one harness's image; `HarnessOverlayInject` only exposes `after_harness_install`/`before_entrypoint` (harness-image inject points), never the base-image ones. Registered/overlay names, and every stack-name reference (`build.stacks`, `build.harnesses.<name>.stacks`), share one naming rule (`internal/consts.ValidateName`/`ValidateHarnessName`), enforced at load by `validate.go`. There is NO settings-side stack/harness registry — `Settings` carries no `stacks:`/`harnesses:`; the project `clawker.yaml` registries above are the only registration surface, and shipped definitions resolve from the binary's embedded assets.
 
+**Harness/stack manifest shapes** (harness_schema.go, stack_schema.go — the persisted `harness.yaml`/`stack.yaml` file shapes, NOT `storage.Schema` implementers): `Manifest` (`version`, `volumes`, `seeds`, `staging`, `egress`, `stacks`) with nested `VolumeSpec`, `VersionSpec`, `Seed`, `Staging`, `CopySpec`, `JSONRewrite`, `MountSpec`; and `StackManifest` (`description` only). Their closed vocabularies are consts alongside them: version resolvers (`ResolverNPM`/`ResolverGitHubRelease`/`ResolverNone`), seed-apply tokens (`SeedApplyCopyIfMissing`/`SeedApplyCopyIfMissingOrEmpty`/`SeedApplyJSONMerge`), and JSON-rewrite kinds (`RewritePrefixSwap`/`RewriteReplaceWithWorkdir`). `config` owns only these shapes + vocab; `internal/bundler` loads, validates, resolves lineage, and renders them. Manifest path helpers (`ExpandHostPath`, `NormalizeContainerPath`, `HasGlobMeta`) live in `path_semantics.go`.
+
 **Agent**: `AgentConfig`, `ClaudeCodeConfig`, `ClaudeCodeConfigOptions`
 
 **Workspace/Security**: `WorkspaceConfig` (`DefaultMode`), `SecurityConfig`, `FirewallConfig`, `GitCredentialsConfig`
 
-**Egress vocabulary constants** (schema.go, next to `EgressRule` — the single home for these tokens): `EgressProtoHTTPS`, `EgressPortHTTPS`, `EgressActionAllow`, `EgressActionDeny`. Used by `ProjectEgressRules()` add_domains expansion and the harness floor conversion in `bundler`; reference these instead of spelling the literals.
+**Egress vocabulary constants** (schema.go, next to `EgressRule` — the single home for these tokens): `EgressProtoHTTPS`, `EgressPortHTTPS`, `EgressActionAllow`, `EgressActionDeny`. Used by `ProjectEgressRules()` add_domains expansion and the built-in firewall defaults (`defaults.go`); reference these instead of spelling the literals. The harness egress floor is a `harness.yaml` `egress:` list that decodes directly as `[]EgressRule` (`config.Manifest.Egress`) — no conversion layer — and `bundler.EgressRules` composes it ahead of the project rules.
 
 **Registry**: the registry schema (`ProjectRegistry`, `ProjectEntry`, `WorktreeEntry`) lives in `internal/project` — its sole owner. `config` has no registry surface.
 

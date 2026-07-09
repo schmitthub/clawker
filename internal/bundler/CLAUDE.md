@@ -1,6 +1,6 @@
 # Bundler Package
 
-Leaf package: Dockerfile generation, harness bundle + stack registries, egress composition, and harness version management for clawker container images. Imports `internal/hostproxy/internals` for container-side scripts (embed-only leaf). **No `internal/docker` import** — building orchestration (`Builder`, `Build`) lives in `internal/docker`.
+Leaf package: Dockerfile generation, harness bundle + stack registries, bundle/stack loading + validation, template composition, egress composition, and harness version management for clawker container images. Manifest/schema types live in `internal/config`; this package loads, validates, resolves, and renders them. Imports `internal/hostproxy/internals` for container-side scripts (embed-only leaf). **No `internal/docker` import** — building orchestration (`Builder`, `Build`) lives in `internal/docker`.
 
 ## Key Files
 
@@ -8,7 +8,10 @@ Leaf package: Dockerfile generation, harness bundle + stack registries, egress c
 |------|---------|
 | `dockerfile.go` | Dockerfile rendering (`ProjectGenerator`), build-context generation, embedded templates/scripts |
 | `basehash.go` | Base-image freshness hash (`BaseContentHash`) |
-| `harness.go` | Shipped harness bundle embedding, lineage resolution (project `harnesses:` registry > shipped embedded), name resolution, bundle loading + provenance |
+| `bundle.go` | Bundle loading + validation (`LoadBundle`, staging/volume/seed/egress-floor validators), `Bundle` type + accessors (`HasStack`, `Stack`, `BundledStacks`, `WalkAssets`), harness-format filename consts (`HarnessManifestFile`, `HarnessTemplateFile`, `AssetsDir`) |
+| `compose.go` | Master-template composition (`Compose`, `DeclaredBlocks`), block-slot + reserved-define validation |
+| `stack_load.go` | Stack definition loading (`LoadStackDefinition`, `StackDefinition`, `ValidateStackName`), stack-format filename consts (`StackManifestFile`, `StackRootFragmentFile`, `StackUserFragmentFile`, `StacksSubdir`) |
+| `harness.go` | Shipped harness bundle embedding, lineage resolution (project `harnesses:` registry > shipped embedded), name resolution, provenance (`LoadHarness`, `ResolveHarnessName`, `ShippedHarnessNames`, `KnownHarnessNames`) |
 | `stack.go` | Shipped stack embedding, lineage resolution (project `stacks:` registry > bundle `stacks/` > shipped embedded), project/harness stack resolution + fragment rendering + provenance |
 | `egress.go` | Effective egress rule composition (harness floor + project rules) |
 | `config.go` | Variant configuration |
@@ -41,8 +44,8 @@ that builds `FROM` it (template blocks, harness volume dirs, config seeds,
 clawker root assets, ENTRYPOINT/CMD). Templates:
 `assets/Dockerfile.base.tmpl` (no block slots, plain `template.Parse`) and
 `assets/Dockerfile.harness-image.tmpl` (block slots, composed with the
-bundle fragment via `harness.Compose`). Keep shared sections of the two
-templates in sync.
+bundle fragment via `Compose` — `compose.go`). Keep shared sections of the
+two templates in sync.
 
 ```go
 func NewProjectGenerator(cfg config.Config, workDir string) *ProjectGenerator
@@ -110,7 +113,7 @@ image and runs AFTER user creation (which lives in the base image).
 ### Harness Version Resolution
 
 ```go
-func ResolveHarnessVersion(ctx context.Context, httpClient *http.Client, b *harness.Bundle) (string, error)
+func ResolveHarnessVersion(ctx context.Context, httpClient *http.Client, b *Bundle) (string, error)
 ```
 
 `ResolveHarnessVersion` dispatches on the bundle manifest's version spec: `npm` (package's "latest" dist-tag), `github-release` (latest release tag via `registry.GitHubReleaseClient`, manifest tag prefix stripped), or `none` (the `DefaultHarnessVersion` literal). On resolution failure returns `(DefaultHarnessVersion, err)` so callers can warn the user while still producing a usable rendered Dockerfile (the install RUN downloads whatever "latest" is at build time).
@@ -134,7 +137,7 @@ type DockerfileContext struct {
     BaseImage, Username, Shell, WorkspacePath, HarnessVersion, HarnessBaseImage string
     Packages, HarnessVolumeDirs, StackRootSteps, StackUserSteps []string
     HarnessPackages []string  // per-harness overlay apt packages (build.harnesses.<name>.packages); harness image only, no dedupe vs Packages
-    HarnessSeeds []harness.Seed; UID, GID int; BuildKitEnabled bool
+    HarnessSeeds []config.Seed; UID, GID int; BuildKitEnabled bool
     Instructions *DockerfileInstructions; Inject *DockerfileInject
     // OTEL telemetry — from config.MonitoringConfig
     OtelEndpoint string  // base URL only; SDK appends /v1/{metrics,logs,traces}. Traces ride the same base via OTEL_TRACES_EXPORTER=otlp + CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1, both hard-coded in the claude bundle fragment (not context fields).
@@ -154,10 +157,10 @@ func ShippedHarnessNames() []string                                    // embedd
 func ResolveHarnessName(cfg config.Config, explicit string) (string, error) // explicit name (validated) else DefaultHarnessName — no registry default flag
 func ValidateHarnessKey(name string) error
 func KnownHarnessNames(cfg config.Config) []string                     // shipped ∪ project-registered (harnesses.<name>.path); IsKnownHarness(cfg, name) bool
-func LoadHarness(cfg config.Config, name string) (*harness.Bundle, error)
+func LoadHarness(cfg config.Config, name string) (*Bundle, error)
 ```
 
-A bundle dir = `harness.yaml` (manifest: version spec, stacks, volumes, seeds, staging, egress) + `Dockerfile.harness.tmpl` (block-slot fragment) + optional `assets/`. Manifest/compose types live in `internal/harness`.
+A bundle dir = `harness.yaml` (manifest: version spec, stacks, volumes, seeds, staging, egress) + `Dockerfile.harness.tmpl` (block-slot fragment) + optional `assets/`. The parsed manifest (`config.Manifest` and its nested schema types) lives in `internal/config`; `LoadBundle` (`bundle.go`) reads + validates it, and `Compose` (`compose.go`) renders the fragment against the master template.
 
 **Lineage resolution:** a harness name resolves from the closest layer that
 defines it — project `harnesses:` registry (a `harnesses.<name>.path` entry in
@@ -173,7 +176,7 @@ built-in `DefaultHarnessName` — there is no registry default flag.
 
 ### Stacks (`stack.go`)
 
-Language stacks are file-backed definitions: `stack.yaml` + `Dockerfile.stack-root.tmpl` and/or `Dockerfile.stack-user.tmpl` (loaded via `internal/stack`). Shipped: `go` (root), `node` (root LTS + user nvm), `python` (root uv + uv-managed CPython), `rust` (user rustup).
+Language stacks are file-backed definitions: `stack.yaml` + `Dockerfile.stack-root.tmpl` and/or `Dockerfile.stack-user.tmpl` (loaded via `LoadStackDefinition` into a `StackDefinition` — `stack_load.go`; the `stack.yaml` shape is `config.StackManifest`). Shipped: `go` (root), `node` (root LTS + user nvm), `python` (root uv + uv-managed CPython), `rust` (user rustup).
 
 - **Lineage resolution** (`resolveStack`): a declared name resolves from the closest layer that defines it. Base image: project `stacks:` registry > shipped embedded. Harness image: project `stacks:` registry > the selected bundle's `stacks/<name>/` dir > shipped embedded. A matching key at a closer layer wins **wholesale** — never merged. Shipped definitions load straight from the embedded FS (the virtual base layer); there is no config-dir materialization. Unresolvable name = hard error naming the `clawker stack register` remedy.
 - **Both strata always render (no cross-stratum dedup):** project `build.stacks: [go, node]` renders in the base image; a harness manifest's `stacks:` ALWAYS renders in the harness image with its lineage-resolved definition — even when the project also declared the same name in the base. Both render; fragment self-guards / apt idempotence / PATH shadowing own any interaction (design §2). `StackRootSteps` render before block_1 (root), `StackUserSteps` before block_3 (user).
@@ -283,10 +286,10 @@ type ParseError = registry.ParseError       // { URL, Snippet, Err } -- Unwrap()
 
 ## Dependencies
 
-Imports: `internal/config`, `internal/consts`, `internal/harness`, `internal/stack`, `internal/bundler/registry`, `github.com/Masterminds/semver/v3`, `internal/hostproxy/internals` (embed-only), `clawkerd/embed` (embed-only — `clawkerdembed.Binary`). **Does NOT import `internal/docker`** — this is a leaf package.
+Imports: `internal/config` (manifest/schema types), `internal/consts`, `internal/bundler/registry`, `github.com/Masterminds/semver/v3`, `internal/hostproxy/internals` (embed-only), `clawkerd/embed` (embed-only — `clawkerdembed.Binary`). **Does NOT import `internal/docker`** — this is a leaf package.
 
 ## Tests
 
-Unit tests: `dockerfile_test.go`, `build_test.go`, `basehash_test.go`, `versions_test.go`, `harness_test.go`, `stack_test.go`, `egress_test.go`. Golden: `golden_test.go` renders base + harness Dockerfiles against `testdata/golden/` (regen: `GOLDEN_UPDATE=1 go test ./internal/bundler/ -run TestGenerate_Golden`). Subpackage: `registry/npm_test.go`, `registry/github_test.go`. Docker integration: `test/whail/`.
+Unit tests: `dockerfile_test.go`, `build_test.go`, `basehash_test.go`, `versions_test.go`, `bundle_test.go`, `stack_load_test.go`, `harness_test.go`, `stack_test.go`, `overlay_test.go`, `egress_test.go`. Golden: `golden_test.go` renders base + harness Dockerfiles against `testdata/golden/` (regen: `GOLDEN_UPDATE=1 go test ./internal/bundler/ -run TestGenerate_Golden`). Subpackage: `registry/npm_test.go`, `registry/github_test.go`. Docker integration: `test/whail/`.
 
 Test helper: `testConfig(t, projectYAML) config.Config` wraps `configmocks.NewFromString(cleanedProject, settingsYAML)` with default monitoring settings — preferred test double for bundler tests. All test configs use YAML fixtures rather than mock/fake constructors.

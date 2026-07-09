@@ -33,7 +33,7 @@ Reference map of the clawker repo. Lazy-loaded from root `CLAUDE.md`.
 ├── internal/
 │   ├── auth/                  # CLI-side auth material + CP dial helpers
 │   ├── build/                 # Build-time metadata (leaf, stdlib only)
-│   ├── bundler/               # Dockerfile generation, semver resolution, npm registry
+│   ├── bundler/               # Dockerfile generation, harness bundle + stack loading/validation/composition, egress composition, semver resolution, npm registry (manifest schema types live in internal/config)
 │   ├── clawker/               # Main application lifecycle
 │   ├── clawkerd/              # clawkerd daemon entrypoint package (Main/run in cmd.go); embed lives at top-level clawkerd/embed
 │   ├── cmd/                   # Cobra commands

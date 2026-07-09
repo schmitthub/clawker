@@ -131,14 +131,15 @@ ground-truth files are:
 
 | Skill content | Source of truth |
 |---|---|
-| `harness.yaml` fields + validation errors | `internal/harness/harness.go`, `internal/harness/bundle.go`, `internal/harness/consts.go` |
-| Version resolvers | `internal/harness/harness.go` (VersionSpec), `internal/bundler/versions.go` (ResolveHarnessVersion) |
-| Block slots, reserved defines | `internal/harness/consts.go` (DeclaredBlocks, isReservedDefine), `internal/harness/compose.go` |
+| `harness.yaml` manifest shape | `internal/config/harness_schema.go` (`Manifest` + nested types + vocab consts) |
+| `harness.yaml` loading + validation errors | `internal/bundler/bundle.go` (`LoadBundle`, validators) |
+| Version resolvers | `internal/config/harness_schema.go` (`VersionSpec`), `internal/bundler/versions.go` (ResolveHarnessVersion) |
+| Block slots, reserved defines | `internal/bundler/compose.go` (DeclaredBlocks, isReservedDefine, Compose) |
 | Master template render order | `internal/bundler/assets/Dockerfile.harness-image.tmpl`, `Dockerfile.base.tmpl` |
 | Registry resolution (project `clawker.yaml` lineage), provenance | `internal/bundler/harness.go`, `internal/bundler/stack.go`, `internal/config/schema.go` |
 | Name grammar (unified rule) | `internal/consts/name.go` |
 | Register/list/remove CLI | `internal/cmd/stack/`, `internal/cmd/harness/`, `internal/cmdutil/registry.go` |
-| Stack format + placement | `internal/stack/`, `internal/bundler/stack.go` |
+| Stack format + placement | `internal/config/stack_schema.go` (`StackManifest`), `internal/bundler/stack_load.go` (`LoadStackDefinition`), `internal/bundler/stack.go` |
 | Egress composition | `internal/bundler/egress.go` |
 | Shipped bundle/stack examples | `internal/bundler/assets/harnesses/{claude,codex}/`, `internal/bundler/assets/stacks/*/` |
 
