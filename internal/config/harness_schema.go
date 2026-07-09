@@ -23,6 +23,14 @@ type Manifest struct {
 	// when the project also declares the same name in the shared base
 	// (fragment self-guards own any interaction).
 	Stacks []string `yaml:"stacks,omitempty"`
+
+	// Monitoring declares the monitoring units this bundle ships under
+	// its monitoring/<name>/ subdirectories, by name (dir name = unit
+	// name). Declared units are loaded and validated at the bundle load
+	// front door; whether one is registered/active in the host-global
+	// monitoring registry is the user's explicit choice — a bundle never
+	// writes registry state.
+	Monitoring []string `yaml:"monitoring,omitempty"`
 }
 
 // VolumeSpec declares one persisted directory: a named volume

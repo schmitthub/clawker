@@ -71,6 +71,12 @@
       },
       "type": "array"
     },
+    "monitoring": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
     "seeds": {
       "items": {
         "additionalProperties": false,
