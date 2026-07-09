@@ -1,66 +1,171 @@
-# Stack Contract — Design Model (r10)
+# Stack Contract — Design Model
 
-**STATUS: IMPLEMENTED (2026-07-08) on `feat/multi-harness-support`.** All 6 tasks of `multi-harness/stack-contract-implementation` are complete (commits e0bfd3f4 → Task 6). §1–§6c below shipped as designed; the only material deviations recorded in the implementation memory: harness registration folded into the pre-existing `harnesses.<name>` map (adds `path:`, not a second node); config-dir materialization DROPPED entirely (shipped resolve from the embedded FS, no fork-convenience copy); no registry `default` flag (built-in default = `claude`); the shared naming validator lives in `internal/consts`. §7 phase-2 items still open (clause-register re-enum, apt-into-stacks fold, monitoring breakout). Docs shipped: `docs/{stacks,harness-bundles,custom-images}.mdx`, `docs/upgrading/v0.13.mdx`, CLI reference, `claude-plugin/clawker-support/skills/{clawker-support,harness-stack-dev}`.
+The design and current state of the stack/harness composition contract on
+`feat/multi-harness-support`. The versioned public surface is
+`docs/stack-contract.mdx` (engine guarantees E1–E22, author obligations A1–A11,
+permanent citation anchors) with a conformance suite of `// Conformance: <ID>`
+badges on covering tests.
 
-Implementation plan: `multi-harness/stack-contract-implementation` (6-task initiative, 2026-07-08). Companion: `multi-harness/stack-unit-contract-design` (brainstorm log r1–r9 + prior art; its token/provider vocabulary is SUPERSEDED by r10 below — read for rationale history only).
+## Why nothing off the shelf fits
 
-## 0. Why nothing off the shelf fits (user, r9 — still true)
+Novel intersection: a plugin/extension system FOR building dev containers FOR
+coding-agent runtimes — plugin engine + build composition + dev-environment
+variance + security supervision. Prior art each solves one slice: systemd (data
+plugins, no build), CNB (build composition but author code runs at plan time),
+devcontainer Features (dev variance, no dep semantics or supervision), nix (owns
+every package — incompatible with degenerate dev envs), vendor sandboxes (no
+composition). The disciplined line that holds all three layers is the moat: WHEN
+code runs is contractual — never in the engine, always in the build, supervised
+at runtime.
 
-Novel intersection: plugin/extension system FOR building dev containers FOR coding-agent runtimes — plugin engine + build composition + dev-environment variance + security supervision. Prior art each solves one slice: systemd (data plugins, no build), CNB (build composition, but author code at plan time), devcontainer Features (dev variance, no dep semantics/supervision), nix (owns every package — incompatible with degenerate dev envs), vendor sandboxes (no composition). Disciplined line: WHEN code runs is contractual — never in the engine, always in the build, supervised at runtime. Holding all three layers = the moat.
+## Terminology
 
-## 1. Terminology (r10 — LOCKED, do not mince)
+- **Stack** — a robust collection of Dockerfile instruction injections that
+  perform complex dev-stack setup conveniently, with dedup guaranteed. A
+  collection (nvm + typescript + node; uv + python), not an atom. Stacks NEVER
+  replace the existing template injection points — `inject` / `root_run` /
+  `user_run` remain the bespoke hand-roll escape hatch, always available.
+- The composition primitive is **named keys + layered store + topology
+  precedence**. The stack name IS the key. Deps are direct stack names. Override
+  = matching key at a closer layer, wholesale replace, NEVER merge.
 
-- **Stack** — robust collection of Dockerfile instruction injections doing complex dev-stack setup conveniently, dedup guaranteed. A collection (nvm+typescript+node; uv+python), not an atom. NEVER replaces existing template injection points — `inject`/`root_run`/`user_run` remain the bespoke hand-roll escape hatch, always available.
-- **DEAD vocabulary** (r9 tokens model scrapped by user): "unit", "token", "provides/requires capability", "provider", "binding", "auto-pull", "self-sourced flag", machine-wide default bindings, settings-layer registry. Rationale: capability tokens make clawker arbiter of dep naming — violates no-taxonomy ("node" means different things to different people); conflict resolution would need relationship mappings/prefixes/db.
-- Replacement primitive: **named keys + layered store + topology precedence**. Stack name IS the key. Deps are direct stack names. Override = matching key at closer layer, wholesale replace, NEVER merge (selection-not-synthesis survives in stronger form).
+There is no capability-token / provides-requires / provider-binding / auto-pull
+algebra, and no settings-layer registry. Capability tokens would make clawker
+the arbiter of dependency naming, which violates no-taxonomy ("node" means
+different things to different people); conflict resolution under that model would
+need relationship mappings / prefixes / a database. The contract deliberately
+carries none of that.
 
-## 2. Resolution: layered keyed store, per-lineage scope
+## Resolution: layered keyed store, per-lineage scope
 
-**No global namespace. No db. Scope = lineage.** Bundled stacks have no global identity; two harness bundles never conflict because sibling images never share a namespace.
+No global namespace, no database. Scope is the lineage. Bundled stacks have no
+global identity; two harness bundles never conflict because sibling images never
+share a namespace.
 
 | lineage | lookup chain for key K |
 |---|---|
 | base | project > shipped |
-| base+harness X | project (incl. `harnesses.X` overlay) > X bundle's `stacks/` > shipped |
+| base+harness X | project (incl. `build.harnesses.X` overlay) > X bundle's `stacks/` > shipped |
 
-- Settings layer SCRAPPED from this subsystem (user, r10). One registry home: `clawker.yaml`; store walk-up = the resolution mechanism. Clawker-shipped stacks/harnesses = **virtual base layer of the backing store object** (floor; overridable by matching key, per engine/store design — ties into node-native Store API v2 work).
-- Same-layer collision impossible by construction: registry = keyed map; register front-door errors on existing key; `--force` replaces with provenance output (what was shadowed, old vs new path).
-- **Names are local bindings chosen by the registrar** (docker-tag model): bundle manifest suggests default, `--name` overrides at register time. Bundle content carries no global identity claim. Want official codex + fork simultaneously → register under distinct names.
-- Provenance ALWAYS printed in build output: `harness codex ← ~/tools/codex-bundle (project registry) shadows built`. (Arrow-label for the embedded layer is `built` — renamed from "shipped" 2026-07-08, commit 9371e634.)
-- Portability caveat (accepted): `harnesses.<name>` resolves against local registry → same clawker.yaml on two machines may resolve differently. Feature (corp drop-in) and footgun; provenance output is the mitigation.
+- One registry home: `clawker.yaml`; the store walk-up IS the resolution
+  mechanism. Clawker-shipped stacks/harnesses are the **virtual base layer of
+  the backing store** (floor; overridable by a matching key). There is no
+  settings-layer registry and no config-dir materialization: shipped definitions
+  resolve straight from the embedded FS.
+- Same-layer collision is impossible by construction: the registry is a keyed
+  map; the register front-door errors on an existing key, and `--force` replaces
+  with provenance output (what was shadowed, old vs new path).
+- **Names are local bindings chosen by the registrar** (docker-tag model): the
+  bundle manifest suggests a default name, `--name` overrides at register time.
+  Bundle content carries no global identity claim. To run the official codex and
+  a fork simultaneously, register under distinct names.
+- Provenance is ALWAYS printed in build output when a closer layer shadows a
+  farther one, e.g. `harness codex ← ~/tools/codex-bundle (project registry)
+  shadows built`. The arrow-label for the embedded layer is `built`.
+- Portability caveat (accepted): `harnesses.<name>` resolves against the local
+  registry, so the same `clawker.yaml` on two machines may resolve differently.
+  This is both a feature (corp drop-in) and a footgun; provenance output is the
+  mitigation.
+- There is no registry `default` flag. The built-in default harness is `claude`;
+  a project-selectable default would be a new design decision.
 
-### Placement (RESOLVED r10.1, user 2026-07-08 — option B, cross-stratum dedup KILLED)
-- Project-declared stack → base image. Harness-installer stack → that harness image only. **No cross-stratum interaction, ever**: project and harness both declare `node` → base renders project's, harness image ADDITIONALLY renders its lineage-resolved definition on top. Engine NEVER judges whether a base render "satisfies" a harness declaration (name-match-satisfaction = implicit taxonomy, rejected). Satisfaction logic lives INSIDE fragments: self-guards are author-owned (node fragment's "keep existing node ≥ floor" pattern), apt idempotence, PATH shadowing by later layers (Docker physics). Bundle author deals with isolation or documents conflicting-stack combos. IMPL CONSEQUENCE: remove `resolveHarnessStacks`' project-declared skip.
-- Shipped stack from a bundle: installer names it WITHOUT bundling → lookup chain bottoms out at shipped (project overlay > bundle stacks/ > shipped). Bundling only means "I want MY definition". Error only when a name resolves nowhere.
-- Base harness-agnostic **by construction**: no bundle in base scope, bundled stacks structurally cannot enter base lookup.
-- nvm war story (claude ok nvm-node, codex not): project sets `harnesses.codex` stack override — per-harness project overlay. No harness self-source flag needed; nuance lives closest to workload.
-- Two harnesses vendor same community stack → each renders in own lineage. Redundancy-over-reconciliation stands (orphaned/duplicate layers = accepted cost, stated in output).
+### Placement (cross-stratum dedup does not exist)
 
-## 3. Registration & distribution
+- A project-declared stack renders in the base image. A harness-installer stack
+  renders in that harness's image only. There is NO cross-stratum interaction:
+  if project and harness both declare `node`, the base renders the project's and
+  the harness image ADDITIONALLY renders its lineage-resolved definition on top.
+  The engine never judges whether a base render "satisfies" a harness
+  declaration (name-match-satisfaction would be an implicit taxonomy).
+  Satisfaction logic lives INSIDE fragments: author-owned self-guards (a node
+  fragment's "keep existing node ≥ floor" pattern), apt idempotence, and PATH
+  shadowing by later layers (Docker physics). A bundle author deals with
+  isolation or documents conflicting-stack combos.
+- A shipped stack referenced from a bundle: the installer names it without
+  bundling → the lookup chain bottoms out at shipped (project overlay > bundle
+  `stacks/` > shipped). Bundling only means "I want MY definition". A name that
+  resolves nowhere is the only error.
+- The base is harness-agnostic **by construction**: no bundle enters base scope,
+  and bundled stacks structurally cannot enter the base lookup.
+- Per-harness nuance lives closest to the workload: e.g. claude works with an
+  nvm-node stack but codex does not → the project sets a `harnesses.codex` stack
+  override (per-harness project overlay). No harness self-source flag is needed.
+- Two harnesses vendoring the same community stack each render it in their own
+  lineage. Redundancy-over-reconciliation stands: orphaned/duplicate layers are
+  an accepted cost, stated in build output. There is no reconciliation machinery.
 
-- **CLI command set (new work): `clawker harness register|list|remove`, `clawker stack register|list|remove`.** Registration = deliberate host-side human action, auditable.
-- **Path reference (LOCKED r10, user: "it has to be path reference")**: registry entries in clawker.yaml point at bundle/stack dirs on disk. No materialize-into-project copy. Yaml not self-contained across machines — accepted.
-- **Harness bundle `installer` section**: declares the bundle's stack deps by name. Bundled stacks live in `stacks/<name>/` inside the bundle, discovered by dir name (dir name IS the name).
-- **External stack use by a harness bundle** — two paths, no new vocabulary:
-  1. Vendor: copy into bundle's `stacks/rust/` (bundling IS vendoring; author controls version, offline, staleness theirs).
-  2. Reference by name: installer names `rust` without bundling; unresolved → build error with guidance (`clawker stack register <path> --name rust`).
-- **NO remote fetch** (locked): no auto-clone of stacks at build time — supply-chain surface (unpinned third-party fragments) + engine-sovereignty violation. Engine consumes locally registered data only. Revisit only with full SHA-pinning machinery, separate decision.
+## Registration & distribution
 
-## 4. Versioning & parameters (r10)
+- CLI command set: `clawker harness register|list|remove`, `clawker stack
+  register|list|remove`. Registration is a deliberate host-side human action,
+  auditable.
+- **Registration is by path reference**: registry entries in `clawker.yaml`
+  point at bundle/stack dirs on disk. No materialize-into-project copy. The yaml
+  is not self-contained across machines — accepted.
+- A harness bundle's manifest declares its stack deps by name; bundled stacks
+  live in `stacks/<name>/` inside the bundle, discovered by dir name (dir name
+  IS the name).
+- External stack use by a harness bundle, two paths, no new vocabulary:
+  1. Vendor — copy into the bundle's `stacks/<name>/` (bundling IS vendoring;
+     the author controls version, offline behavior, and staleness).
+  2. Reference by name — the installer names `rust` without bundling; unresolved
+     → a build error with guidance (`clawker stack register <path> --name rust`).
+- **No remote fetch**: the engine never auto-clones stacks at build time. That
+  would add a supply-chain surface (unpinned third-party fragments) and violate
+  engine sovereignty. The engine consumes only locally registered data. Revisit
+  only with full SHA-pinning machinery as a separate decision.
 
-No version-constraint algebra (locked). A stack cannot carry A version — it's a collection of things (user, 2026-07-08: singular version on a stack is nonsensical). **Parameterization: RESOLVED (user, 2026-07-08): build command args, nothing else.** A stack has NO version — it's a collection of N tools × N versions (python = uv + CPython; node = nvm + node); interiors are unaccountable by nature, no vocabulary can enumerate them. Mechanism: stack author declares Docker `ARG`s per member at their discretion (node stack's `ARG NODE_VERSION=24` is the canonical pattern), user overrides via `clawker build --build-arg` — native Docker, author-documented, zero clawker vocabulary, OUT of config schema. `build.stacks` stays a bare string list. Deeper variance: fork the stack (own every interior choice) or hand-roll via injection points. Clawker composes opaque wholes, never reaches inside (selection-not-synthesis).
+## Versioning & parameters
 
-## 5. Authority map (r10 updates)
+There is no version-constraint algebra. A stack cannot carry A version — it is a
+collection of N tools × N versions (python = uv + CPython; node = nvm + node);
+the interiors are unaccountable by nature and no vocabulary can enumerate them.
+Parameterization is Docker build args and nothing else: a stack author declares
+Docker `ARG`s per member at their discretion (the node stack's `ARG
+NODE_VERSION=24` is the canonical pattern), and the user overrides via `clawker
+build --build-arg` — native Docker, author-documented, zero clawker vocabulary,
+out of the config schema. `build.stacks` stays a bare string list. Deeper
+variance: fork the stack (own every interior choice) or hand-roll via injection
+points. Clawker composes opaque wholes and never reaches inside
+(selection-not-synthesis).
 
-- Egress floor (harness bundle): **immutable, never removable** — locked.
-- apt packages: EXTEND surface for **both** harness bundles and project (both user types get install options) — locked.
-- Substrate deps: outside stack system; bare minimum for clawker to work + secure-by-default contract (ssh etc.) — locked. Reserved SURFACES still enter contract as validated declarations (r9 §1b holds).
-- General precedence law: arbitrary keys, precedence by topology; shipped clawker harnesses+stacks = floor; user overrides with matching key; never merge.
-- Unchanged from r9: FIXED clawker invariants (substrate image, clawkerd PID-1, CP enrollment, mTLS, CA trust, reserved surfaces, resolver semantics); FORK = universal escape hatch; engine sovereignty (bundles/stacks pure data, code runs only inside Docker build, no plugin surface into engine); dogfood (shipped = canonical consumers, zero privileged paths); bilateral clause register + conformance suite (§1d of r9 — clause seeds still valid, re-express in r10 vocab during phase 2); ordering contract (now §6c: declaration order only, no topo — root-before-user + base-before-harness stand as Docker physics); prefer UNSAYABLE > VALIDATED > DOCUMENTED.
+Note: `--build-arg` targeting an ARG the rendered base Dockerfile declares is
+folded into `BaseContentHash`, so the base freshness gate honors it (harness-side
+ARGs stay out of the base hash so they don't force base rebuilds). Without the
+fold the builder would skip the base build on a hash match and silently eat the
+flag.
 
-## 6. Config schema (RESOLVED shape, 2026-07-08)
+## Authority map
 
-Registration vs declaration are orthogonal, for both kinds. Registries top-level, declarations under `build:`:
+- **Egress floor** (harness bundle `egress:`) — immutable, never removable. The
+  floor decodes directly as `config.EgressRule` (shared with project
+  `security.firewall.rules`). E7 (a floor rule cannot request TLS-skip) is
+  VALIDATED, not structural: `bundler.LoadBundle` rejects a floor rule with
+  `insecure_skip_tls_verify: true` at both register and build front doors, and
+  `harness register` additionally runs `firewall.ValidateRule` over floors; CP
+  ingestion validation is the second net.
+- **apt packages** — an extend surface for BOTH harness bundles and projects.
+  Bundles apt-install inside their own Dockerfile fragment blocks (nothing added
+  to the manifest). Projects get `build.packages` (base image) and
+  `build.harnesses.<name>.packages` (per-harness image) because project configs
+  are YAML-only.
+- **Substrate deps** — outside the stack system: the bare minimum for clawker to
+  work plus the secure-by-default contract (ssh etc.). Reserved surfaces still
+  enter the contract as validated declarations.
+- General precedence law: arbitrary keys, precedence by topology; shipped clawker
+  harnesses+stacks = floor; the user overrides with a matching key; never merge.
+- Fixed clawker invariants: substrate image, clawkerd PID-1, CP enrollment,
+  mTLS, CA trust, reserved surfaces, resolver semantics. FORK is the universal
+  escape hatch. Engine sovereignty: bundles/stacks are pure data, code runs only
+  inside the Docker build, no plugin surface reaches into the engine. Dogfood:
+  shipped bundles/stacks are canonical consumers with zero privileged paths.
+- Design preference order for expressing a constraint: UNSAYABLE > VALIDATED >
+  DOCUMENTED.
+
+## Config schema
+
+Registration and declaration are orthogonal for both kinds. Registries are
+top-level; declarations live under `build:`:
 
 ```yaml
 # clawker.yaml
@@ -73,47 +178,81 @@ build:
   stacks: [go, my-rust]          # base declaration, renders in this order
   harnesses:                     # per-harness overlay: same primitive trio, one lineage
     claude:
-      stacks: [bun]              # after bundle's installer stacks
+      stacks: [bun]              # after the bundle's installer stacks
       packages: [libnss3]
       inject: { after_harness_install: [...], before_entrypoint: [...] }
 ```
 
-- Registered-not-declared = available, inert. Declared-not-registered = front-door error unless bundled/shipped name resolves.
-- Paths: relative (from project root) + absolute; no env/~ expansion.
-- Every stratum gets the same primitives (packages/stacks/inject); placement = where you declare.
-- Registries migrate OUT of settings.yaml (store walk-up finds project entries; shipped = virtual base layer).
-- **Manifest minimalism principle (user, 2026-07-08): harness bundle config stays MINIMAL — the Dockerfile fragment is the mechanism, the manifest only declares what the engine must know (stacks, egress, volumes, seeds, version). Do not add abstractions/options for things that can just BE Dockerfile content.** Litmus for any proposed manifest key: could the author write it in the fragment instead? Then no key.
+- Registered-not-declared = available, inert. Declared-not-registered = a
+  front-door error unless a bundled/shipped name resolves.
+- Paths: relative (from project root) or absolute; no env/`~` expansion —
+  parsing stays dumb.
+- Every stratum gets the same primitives (packages/stacks/inject); placement is
+  where you declare.
+- Per-harness overlay stacks render AFTER the bundle's installer stacks
+  (installer → overlay; the project extends the bundle's floor). Per-harness
+  inject is scoped to that one harness's image and appends after any global
+  project inject at the same points. Overlay packages become an apt RUN in that
+  harness image with NO dedupe vs the base list — render as declared, apt
+  idempotence is the mechanism (set-subtraction was rejected: it buys nothing
+  and adds base-freshness coupling).
+- **Manifest minimalism**: harness bundle config stays minimal — the Dockerfile
+  fragment is the mechanism, the manifest only declares what the engine must
+  know (stacks, egress, volumes, seeds, version). Litmus for any proposed
+  manifest key: could the author write it in the fragment instead? Then no key.
 
-## 6b. Gap list — r10 vs implementation (2026-07-08 audit)
+Manifest schema types are owned by `internal/config` (`config.Manifest`,
+`config.StackManifest`, `config.EgressRule`); loaders and resolution live in
+`internal/bundler` (`LoadBundle`, `LoadStackDefinition`, `LoadHarness`). The
+`internal/harness` and `internal/stack` packages no longer exist — both folded
+into `internal/bundler`. The shared naming validator lives in `internal/consts`
+(`ValidateName` / `ValidateHarnessName`, `NameMaxLength = 32`, rule
+`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`, one rule for stacks + harnesses, dir name IS
+the name).
 
-EXISTS, codify only: declaration-order rendering + root/user slots; project-declared skips harness-declared (stacks); fragments render as Go templates w/ DockerfileContext (params ride this); path-based registry entries; filterBasePackages (project vs floor); staleness stamps + materialize-copy-if-missing.
+## Ordering
 
-BUILD LIST (dependency order 1→2→3; 4/5/6 parallel after 2):
-1. Registry home migration settings.yaml → clawker.yaml (store walk-up = resolution; shipped defs = virtual base layer of backing store, not Ensure*-seeded settings entries; ties into node-native Store API v2 / feat/schema-docs).
-2. Override semantics: kill `stackCollisionError` flat-namespace error + `checkBundleShadow` error → matching key closer layer wins wholesale + provenance line in build output (provenance printing doesn't exist at all today). ALSO remove `resolveHarnessStacks`' project-declared skip (cross-stratum dedup killed — placement §2).
-3. CLI: `clawker harness|stack register/list/remove` (validate dir + write path entry to clawker.yaml; `--name` local binding; same-layer collision error + `--force`).
-4. Bundled `stacks/<name>/` dir discovery (bundles cannot carry stack defs today); lineage lookup gains bundle layer. NO new manifest section — existing flat `stacks:` key is the declaration.
-5. Per-harness project overlay surfaces (user, 2026-07-08): `build.harnesses.<name>.{stacks,packages,inject}` — same primitive trio as base, scoped to one lineage. Overlay stacks render AFTER bundle's installer stacks (installer → overlay; project extends bundle's floor). Per-harness inject = harness-image points scoped to ONE harness (today's after_harness_install/before_entrypoint inject hits ALL harness images — new scoping). Overlay packages → apt RUN in that harness image; **NO dedupe vs base list: render as declared, apt idempotence is the whole mechanism** (set-subtraction rejected — buys nothing, adds base-freshness coupling). **Harness BUNDLES get NO packages manifest key (user correction, 2026-07-08): bundles apt-install inside their own Dockerfile fragment blocks — already possible, nothing added.** Manifest stays flat; existing `stacks:` key IS the installer declaration, no `installer:` nesting.
-6. Stack parameterization — RESOLVED out of config schema (see §4); nothing to build.
-7. Naming convention unification (ValidateHarnessKey exists; stacks separate; one slug rule pending confirm).
-8. Contract docs: injection points + stack slots + ordering law as versioned public surface.
-9. **BaseContentHash must include base-declared build-arg values** — CRITICAL to this feature, not a follow-up: `--build-arg` per-member ARG override IS the stack parameterization mechanism (§4), and today the base freshness gate silently eats it (skips docker build on hash match; flag never reaches Docker — vanilla BuildKit would honor it). Fix: fold effective values of args the rendered base Dockerfile declares into the hash (harness-side args stay out so they don't force base rebuilds). GH #413 filed then closed 2026-07-08 — belongs in this plan.
+No dep graph, no topo sort. Stacks are Dockerfile snippets; declared keys in the
+merged config become paths in the build context, rendered top to bottom in
+declaration order. To extend another stack, declare after it; the extending
+author documents the requirement. There is no stack-to-stack dep machinery.
+Root-before-user and base-before-harness hold as Docker physics.
 
-## 6c. Ordering (RESOLVED, user 2026-07-08 — replaces r9 topo contract)
+## Current-state gotchas
 
-**No dep graph, no topo sort.** Stacks = Dockerfile snippets; declared keys in merged config → paths included in build context, rendered **top to bottom in declaration order** (matches existing impl: `resolveProjectStacks` walks build.stacks in yaml order, `splitFragments` preserves it, zero sorting). Extend-another-stack = declare after it; extending author documents the requirement. Stack-to-stack dep machinery: NONE.
+- `validateProjectRegistries` runs at load, not on `Set`/`Write`. The register
+  commands self-validate before writing; a future non-command write path would
+  be unguarded until the next load.
+- `ProjectRoot()` is registry-anchored: it is `""` for a project that has a
+  `clawker.yaml` on disk but was never registered (`clawker init` /
+  `project register` not run). When empty, register writes ABSOLUTE paths and
+  `store.Write()` lands in the USER config-dir `clawker.yaml`, not the local
+  project file. Register prints `Written to <path>` so the destination is never
+  invisible. Registration is meant to run inside an initialized project.
 
-## 7. Open items (phase 2)
+## Open items (phase 2)
 
-1. ~~Naming~~ CONFIRMED (user, 2026-07-08): lowercase kebab `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`, max 32, dir name IS the name, one rule for stacks + harnesses.
-2. ~~Placement~~ RESOLVED (user, 2026-07-08): option B, see §2 — cross-stratum dedup killed, always render, fragment self-guards own satisfaction.
-3. ~~Path ergonomics~~ CONFIRMED (user, 2026-07-08): relative (from project root) + absolute; NO env/~ expansion — parsing stays dumb.
-4. ~~Schema sketches~~ RESOLVED (2026-07-08): full shape in §6 — registries top-level, declarations under build:, per-harness overlay trio, manifest unchanged.
-5. ~~Clause register re-enumeration~~ DONE (2026-07-08): published as `docs/stack-contract.mdx` — 22 engine guarantees (E1–E22, six theme groups) + 11 author obligations (A1–A11, validated/structural/convention tiers). IDs are permanent citation anchors. Conformance suite = 71 `// Conformance: <ID>` badges on covering tests + 2 gap-fills (E1 dedicated declaration-order test, E22 direct filterBasePackages test). E7 (floor rules cannot request TLS-skip — manifest field structurally absent) surfaced during enumeration and included as a blessed clause. Known seam recorded: validateProjectRegistries runs at load, not on Set/Write — register commands self-validate; a future non-command write path is unguarded until next load.
-6. ~~apt `packages:` fold into stacks~~ RESOLVED (user, 2026-07-08): NOT needed. Stacks apt-install directly inside their own Dockerfile fragments — no manifest key required. `packages:` exists precisely for project configs because they are YAML-only: `build.packages` (base image) + `build.harnesses.<name>.packages` (per-harness image), both shipped. Two primitives stay; no fold.
-8. ~~Stack parameterization~~ RESOLVED (user, 2026-07-08): build command args only, like nvm/node stack does today (see §4). SEPARATE general gotcha (not stack-specific): `--build-arg` targeting any ARG in the BASE Dockerfile is silently ignored when BaseContentHash matches (builder skips base build; flag doesn't change rendered bytes). Harness-side ARGs unaffected. NOT normal docker behavior (BuildKit honors --build-arg via arg-value cache keys) — clawker-side bug, user confirmed 2026-07-08. IN the build list (§6b item 9), critical to feature since --build-arg IS the parameterization mechanism; #413 closed as misfiled.
-7. **Monitoring stack breakout (major, undecided — own design pass needed).** Harness-specific telemetry artifacts (claude-code index template, ISM policy, index patterns, CC dashboards) hardcoded in monitoring package / opensearch-bootstrap today. Direction: become bundle content (e.g. `monitoring/` dir in bundle), `monitor up` bootstrap discovers from registered bundles. DIRECTION (user, 2026-07-08): explicit `clawker monitor install <bundle>` commands + monitor-owned host-global install ledger with enable/disable/remove — NOT path-aware discovery from project registries (can't un-discover; explicit install gives uninstall + user control). `monitor up` bootstrap iterates ledger's installed+enabled entries instead of hardcoded list. Generic infra indexes (envoy/coredns/cli/clawkercp) stay built into monitoring package. Still undecided: ledger schema/home, dashboard lifecycle on bundle update, install-time vs up-time artifact application.
-
-## 8. Revision log
-- v0/r1–r9 (2026-07-07): token/provider capability model drafted from brainstorm; 7 principles locked.
-- **r10 (2026-07-07): user teardown of token layer.** Tokens/providers/bindings/auto-pull/settings-registry DEAD → named keys + layered store + per-lineage scope. Path-reference registration locked. No remote fetch locked. No version algebra; stack parameterization = open unheld conversation (flagged 2026-07-08). CLI register command set + installer section + clawker.yaml registry migration = new work items. Principles surviving: dogfood, no-taxonomy (strengthened: position decides, not meaning), engine sovereignty, redundancy>reconciliation, selection-not-synthesis (as wholesale key override), clause register, ordering contract, loud provenance errors.
+1. **Monitoring stack breakout** (major, own design pass needed). Harness-specific
+   telemetry artifacts (claude-code index template, ISM policy, index patterns,
+   CC dashboards) are hardcoded in the monitoring package / opensearch-bootstrap
+   today. Direction: they become bundle content (e.g. a `monitoring/` dir in the
+   bundle), applied via explicit `clawker monitor install <bundle>` commands plus
+   a monitor-owned host-global install ledger with enable/disable/remove — NOT
+   path-aware discovery from project registries (explicit install gives an
+   uninstall path and user control). `monitor up` bootstrap iterates the ledger's
+   installed+enabled entries instead of a hardcoded list; generic infra indexes
+   (envoy/coredns/cli/clawkercp) stay built into the monitoring package. Still
+   undecided: ledger schema/home, dashboard lifecycle on bundle update,
+   install-time vs up-time artifact application.
+2. **Host UAT of the full register → build → run flow** — cannot be driven
+   in-container.
+3. **Harness template block names are still placeholders** (`block_1..6`,
+   `bundler.DeclaredBlocks`) — final event-centric names are undecided; renaming
+   ripples docs + skill + bundles.
+4. **Skills-plugin multi-agent packaging** (merge blocker for the branch) — the
+   skills plugin goes multi-agent, no longer Claude Code-only packaging; adopt an
+   established all-in-one multi-agent harness plugin approach. User docs already
+   say "agent skills plugin"; dev CLAUDE.md files still describe the Claude Code
+   plugin spec and get updated when the packaging lands.
+5. **opencode/pi bundles** authored via the harness-stack-dev skill — the planned
+   UAT exercise for that skill (research memo: `harness-research-opencode-pi`).
