@@ -1,15 +1,4 @@
-// Package stack loads file-backed stack definitions — named,
-// self-guarded Dockerfile install fragments that projects and harness
-// bundles DECLARE instead of hand-writing. A definition provisions a full
-// language stack (e.g. node = baked LTS install in root scope + nvm
-// setup in user scope) via up to two fragments, one per Dockerfile USER
-// scope. Definitions resolve through a per-lineage lookup chain: a
-// project stacks: registry entry in clawker.yaml, then (in a harness
-// image) the selected bundle's stacks/ dir, then the definitions shipped
-// embedded in internal/bundler as the virtual base layer — a closer layer
-// wins wholesale. Resolution and stage placement live in internal/bundler;
-// this package owns the definition format and its load-time validation.
-package stack
+package bundler
 
 import (
 	"errors"
@@ -24,8 +13,27 @@ import (
 	"github.com/schmitthub/clawker/internal/consts"
 )
 
-// Definition is a loaded stack definition.
-type Definition struct {
+// StackManifestFile is the manifest filename inside a stack definition
+// directory.
+const StackManifestFile = "stack.yaml"
+
+// Fragment filenames inside a stack definition directory. A definition
+// ships either or both; at least one must be present. The root fragment
+// renders in a root-USER region of the generated Dockerfile, the user
+// fragment in the unprivileged-USER region — one declaration can therefore
+// provision a full language stack (e.g. node = root LTS install + user
+// nvm setup).
+const (
+	StackRootFragmentFile = "Dockerfile.stack-root.tmpl"
+	StackUserFragmentFile = "Dockerfile.stack-user.tmpl"
+)
+
+// StacksSubdir is the subdirectory of a harness bundle holding
+// bundle-embedded stack definitions.
+const StacksSubdir = "stacks"
+
+// StackDefinition is a loaded stack definition.
+type StackDefinition struct {
 	// Name is the lookup key requirers declare.
 	Name string
 	// Description is the manifest's human summary of what the stack
@@ -40,53 +48,53 @@ type Definition struct {
 	UserFragment string
 }
 
-// ValidateName rejects names that cannot serve as stack registry keys — a
+// ValidateStackName rejects names that cannot serve as stack registry keys — a
 // definition name is also a registry key, a directory name, and a token in
 // build.stacks lists. Delegates to the unified naming rule shared by
 // stacks, harnesses, and their registry/overlay keys (see
 // consts.ValidateName).
-func ValidateName(name string) error {
+func ValidateStackName(name string) error {
 	if err := consts.ValidateName(name); err != nil {
 		return fmt.Errorf("stack %w", err)
 	}
 	return nil
 }
 
-// Load reads a definition from fsys, whose root must be the definition
-// directory (stack.yaml plus at least one fragment file). Use
+// LoadStackDefinition reads a definition from fsys, whose root must be the
+// definition directory (stack.yaml plus at least one fragment file). Use
 // [os.DirFS] for on-disk registered or bundle-embedded definitions and a
-// sub-FS of embedded assets for shipped ones. Every validation failure is a named
-// error at this front door — never a silent render-time skip.
-func Load(name string, fsys fs.FS) (*Definition, error) {
-	if err := ValidateName(name); err != nil {
+// sub-FS of embedded assets for shipped ones. Every validation failure is a
+// named error at this front door — never a silent render-time skip.
+func LoadStackDefinition(name string, fsys fs.FS) (*StackDefinition, error) {
+	if err := ValidateStackName(name); err != nil {
 		return nil, err
 	}
 
-	rawManifest, err := fs.ReadFile(fsys, ManifestFile)
+	rawManifest, err := fs.ReadFile(fsys, StackManifestFile)
 	if err != nil {
-		return nil, fmt.Errorf("stack %q: read %s: %w", name, ManifestFile, err)
+		return nil, fmt.Errorf("stack %q: read %s: %w", name, StackManifestFile, err)
 	}
 	var m config.StackManifest
 	if unmarshalErr := yaml.Unmarshal(rawManifest, &m); unmarshalErr != nil {
-		return nil, fmt.Errorf("stack %q: parse %s: %w", name, ManifestFile, unmarshalErr)
+		return nil, fmt.Errorf("stack %q: parse %s: %w", name, StackManifestFile, unmarshalErr)
 	}
 
-	rootFragment, err := loadFragment(name, fsys, RootFragmentFile)
+	rootFragment, err := loadFragment(name, fsys, StackRootFragmentFile)
 	if err != nil {
 		return nil, err
 	}
-	userFragment, err := loadFragment(name, fsys, UserFragmentFile)
+	userFragment, err := loadFragment(name, fsys, StackUserFragmentFile)
 	if err != nil {
 		return nil, err
 	}
 	if rootFragment == "" && userFragment == "" {
 		return nil, fmt.Errorf(
 			"stack %q: no fragment found — a definition ships %s, %s, or both",
-			name, RootFragmentFile, UserFragmentFile,
+			name, StackRootFragmentFile, StackUserFragmentFile,
 		)
 	}
 
-	return &Definition{
+	return &StackDefinition{
 		Name:         name,
 		Description:  m.Description,
 		RootFragment: rootFragment,

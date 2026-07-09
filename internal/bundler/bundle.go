@@ -1,10 +1,11 @@
-package harness
+package bundler
 
 import (
 	"errors"
 	"fmt"
 	"io/fs"
 	"path"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -13,8 +14,37 @@ import (
 
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
-	"github.com/schmitthub/clawker/internal/stack"
 )
+
+// HarnessManifestFile is the manifest filename inside a harness bundle
+// directory.
+const HarnessManifestFile = "harness.yaml"
+
+// HarnessTemplateFile is the Dockerfile fragment filename inside a harness
+// bundle directory. Its {{define}} bodies override the master template's block
+// slots.
+const HarnessTemplateFile = "Dockerfile.harness.tmpl"
+
+// AssetsDir is the bundle subdirectory holding every file the bundle
+// contributes to the docker build context. The whole tree is staged
+// verbatim under the same assets/ prefix; the template's COPY instructions
+// and seeds[].file entries reference assets/-relative paths.
+const AssetsDir = "assets"
+
+// File modes for staged build-context files.
+const (
+	plainFileMode  = fs.FileMode(0o644)
+	scriptFileMode = fs.FileMode(0o755)
+)
+
+// FileMode returns the on-disk mode for a bundle file written outside the
+// bundle (build-context staging dirs): scripts stay executable.
+func FileMode(name string) fs.FileMode {
+	if filepath.Ext(name) == ".sh" {
+		return scriptFileMode
+	}
+	return plainFileMode
+}
 
 // Bundle is a loaded harness bundle: manifest, template fragment, and a
 // handle to the bundle directory for reading asset files.
@@ -29,19 +59,19 @@ type Bundle struct {
 	fsys fs.FS
 }
 
-// Load reads a bundle from fsys, whose root must be the bundle directory
+// LoadBundle reads a bundle from fsys, whose root must be the bundle directory
 // (containing harness.yaml and Dockerfile.harness.tmpl). Use [os.DirFS] for
 // on-disk (project-registered) bundles and a sub-FS of the embedded assets
 // for shipped bundles.
-func Load(name string, fsys fs.FS) (*Bundle, error) {
-	rawManifest, err := fs.ReadFile(fsys, ManifestFile)
+func LoadBundle(name string, fsys fs.FS) (*Bundle, error) {
+	rawManifest, err := fs.ReadFile(fsys, HarnessManifestFile)
 	if err != nil {
-		return nil, fmt.Errorf("harness %q: read %s: %w", name, ManifestFile, err)
+		return nil, fmt.Errorf("harness %q: read %s: %w", name, HarnessManifestFile, err)
 	}
 
 	var m config.Manifest
 	if unmarshalErr := yaml.Unmarshal(rawManifest, &m); unmarshalErr != nil {
-		return nil, fmt.Errorf("harness %q: parse %s: %w", name, ManifestFile, unmarshalErr)
+		return nil, fmt.Errorf("harness %q: parse %s: %w", name, HarnessManifestFile, unmarshalErr)
 	}
 
 	if volErr := validateVolumes(name, m.Volumes); volErr != nil {
@@ -57,9 +87,9 @@ func Load(name string, fsys fs.FS) (*Bundle, error) {
 		return nil, tcErr
 	}
 
-	rawTmpl, readErr := fs.ReadFile(fsys, TemplateFile)
+	rawTmpl, readErr := fs.ReadFile(fsys, HarnessTemplateFile)
 	if readErr != nil {
-		return nil, fmt.Errorf("harness %q: read %s: %w", name, TemplateFile, readErr)
+		return nil, fmt.Errorf("harness %q: read %s: %w", name, HarnessTemplateFile, readErr)
 	}
 
 	return &Bundle{
@@ -94,7 +124,7 @@ func validateStaging(name string, volumes []config.VolumeSpec, st config.Staging
 func validateStackDecls(name string, decls []string) error {
 	seen := map[string]bool{}
 	for _, tc := range decls {
-		if err := stack.ValidateName(tc); err != nil {
+		if err := ValidateStackName(tc); err != nil {
 			return fmt.Errorf("harness %q: %w", name, err)
 		}
 		if seen[tc] {
@@ -261,17 +291,17 @@ func validateSeeds(name string, fsys fs.FS, volumes []config.VolumeSpec, seeds [
 // HasStack reports whether the bundle embeds a stack definition
 // directory for name under its stacks/ subdirectory.
 func (b *Bundle) HasStack(name string) bool {
-	_, err := fs.Stat(b.fsys, path.Join(stack.StacksSubdir, name, stack.ManifestFile))
+	_, err := fs.Stat(b.fsys, path.Join(StacksSubdir, name, StackManifestFile))
 	return err == nil
 }
 
 // Stack loads a bundle-embedded stack definition.
-func (b *Bundle) Stack(name string) (*stack.Definition, error) {
-	sub, err := fs.Sub(b.fsys, path.Join(stack.StacksSubdir, name))
+func (b *Bundle) Stack(name string) (*StackDefinition, error) {
+	sub, err := fs.Sub(b.fsys, path.Join(StacksSubdir, name))
 	if err != nil {
 		return nil, fmt.Errorf("harness %q: stack %q: %w", b.Name, name, err)
 	}
-	def, loadErr := stack.Load(name, sub)
+	def, loadErr := LoadStackDefinition(name, sub)
 	if loadErr != nil {
 		return nil, fmt.Errorf("harness %q: %w", b.Name, loadErr)
 	}
@@ -284,12 +314,12 @@ func (b *Bundle) Stack(name string) (*stack.Definition, error) {
 // A missing stacks/ directory is not an error (returns nil); any other read
 // error is surfaced rather than silently collapsed to "no stacks".
 func (b *Bundle) BundledStacks() ([]string, error) {
-	entries, err := fs.ReadDir(b.fsys, stack.StacksSubdir)
+	entries, err := fs.ReadDir(b.fsys, StacksSubdir)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("harness %q: read %s/: %w", b.Name, stack.StacksSubdir, err)
+		return nil, fmt.Errorf("harness %q: read %s/: %w", b.Name, StacksSubdir, err)
 	}
 	var names []string
 	for _, e := range entries {

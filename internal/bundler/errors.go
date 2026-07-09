@@ -1,4 +1,13 @@
-// Package bundler provides Docker image generation tooling for coding-agent harnesses.
+// Package bundler owns the composition of clawker container images from
+// file-backed harness bundles and stack definitions. It loads and validates
+// those formats (harness.yaml bundles and stack.yaml definitions, whose schema
+// types live in [github.com/schmitthub/clawker/internal/config]), resolves each
+// through its per-layer lookup chain (project registry, harness-embedded,
+// shipped-embedded), composes the master Dockerfile template with a bundle's
+// block-slot fragment, and renders the two-image base/harness Dockerfile split
+// plus its build context. It also resolves harness install versions from
+// upstream registries. Leaf package: no Docker client import — build
+// orchestration lives in [github.com/schmitthub/clawker/internal/docker].
 package bundler
 
 import (

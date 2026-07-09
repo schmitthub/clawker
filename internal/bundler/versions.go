@@ -10,7 +10,6 @@ import (
 
 	"github.com/schmitthub/clawker/internal/bundler/registry"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/harness"
 )
 
 const (
@@ -48,7 +47,7 @@ func NewVersionsManagerWithFetcher(fetcher registry.Fetcher, config *VariantConf
 //
 // On resolution failure returns the "latest" literal plus the underlying
 // error so callers can warn; the build still works with a floating tag.
-func ResolveHarnessVersion(ctx context.Context, httpClient *http.Client, b *harness.Bundle) (string, error) {
+func ResolveHarnessVersion(ctx context.Context, httpClient *http.Client, b *Bundle) (string, error) {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}

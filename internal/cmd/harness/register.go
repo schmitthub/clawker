@@ -8,10 +8,10 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
-	"github.com/schmitthub/clawker/internal/harness"
 	"github.com/schmitthub/clawker/internal/iostreams"
 )
 
@@ -101,7 +101,7 @@ func registerRun(_ context.Context, opts *RegisterOptions) error {
 
 	// Validate the directory is a real harness bundle (harness.yaml +
 	// Dockerfile.harness.tmpl + valid manifest) before touching the config.
-	bundle, err := harness.Load(name, os.DirFS(resolved.Abs))
+	bundle, err := bundler.LoadBundle(name, os.DirFS(resolved.Abs))
 	if err != nil {
 		return fmt.Errorf("invalid harness bundle %s: %w", resolved.Abs, err)
 	}

@@ -10,8 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
-	"github.com/schmitthub/clawker/internal/harness"
-	"github.com/schmitthub/clawker/internal/stack"
 )
 
 // Conformance: E2 — engine never inspects fragment content; a fragment is an opaque template.
@@ -52,7 +50,7 @@ func TestShippedStacks_RenderBothBuildKitModes(t *testing.T) {
 	for _, name := range ShippedStackNames() {
 		def, err := loadEmbeddedStack(name)
 		require.NoError(t, err)
-		root, user := splitFragments([]*stack.Definition{def})
+		root, user := splitFragments([]*StackDefinition{def})
 		for _, buildKit := range []bool{false, true} {
 			// Fragment renders touch only BuildKitEnabled.
 			var tctx DockerfileContext
@@ -73,33 +71,33 @@ func TestShippedStacks_RenderBothBuildKitModes(t *testing.T) {
 func writeStackDef(t *testing.T, fragmentFile, fragment string) string {
 	t.Helper()
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, stack.ManifestFile), []byte("description: test\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, StackManifestFile), []byte("description: test\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, fragmentFile), []byte(fragment), 0o644))
 	return dir
 }
 
 // bundleWithStack builds a loaded harness bundle embedding one
 // stack definition.
-func bundleWithStack(t *testing.T, tcName string) *harness.Bundle {
+func bundleWithStack(t *testing.T, tcName string) *Bundle {
 	t.Helper()
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, harness.ManifestFile), []byte("{}\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, HarnessManifestFile), []byte("{}\n"), 0o644))
 	require.NoError(
 		t,
-		os.WriteFile(filepath.Join(dir, harness.TemplateFile), []byte(`{{define "block_4"}}RUN echo hi{{end}}`), 0o644),
+		os.WriteFile(filepath.Join(dir, HarnessTemplateFile), []byte(`{{define "block_4"}}RUN echo hi{{end}}`), 0o644),
 	)
-	tcDir := filepath.Join(dir, stack.StacksSubdir, tcName)
+	tcDir := filepath.Join(dir, StacksSubdir, tcName)
 	require.NoError(t, os.MkdirAll(tcDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(tcDir, stack.ManifestFile), []byte("description: test\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(tcDir, StackManifestFile), []byte("description: test\n"), 0o644))
 	require.NoError(
 		t,
 		os.WriteFile(
-			filepath.Join(tcDir, stack.RootFragmentFile),
+			filepath.Join(tcDir, StackRootFragmentFile),
 			[]byte("RUN echo bundle-stack-"+tcName+"\n"),
 			0o644,
 		),
 	)
-	b, err := harness.Load("bundletest", os.DirFS(dir))
+	b, err := LoadBundle("bundletest", os.DirFS(dir))
 	require.NoError(t, err)
 	return b
 }
@@ -121,7 +119,7 @@ func TestResolveStack_ShippedVirtualBase(t *testing.T) {
 
 // Conformance: E3 — a declared name resolves from the closest layer, winning wholesale, never merged.
 func TestResolveStack_ProjectRegistryWins(t *testing.T) {
-	dir := writeStackDef(t, stack.UserFragmentFile, "RUN echo custom-def\n")
+	dir := writeStackDef(t, StackUserFragmentFile, "RUN echo custom-def\n")
 	cfg := configmocks.NewFromString(`
 stacks:
   mytool:
@@ -153,10 +151,10 @@ func TestResolveStack_RelativeRegistryPathResolvesAgainstProjectRoot(t *testing.
 	root := t.TempDir()
 	stackDir := filepath.Join(root, "stacks", "mytool")
 	require.NoError(t, os.MkdirAll(stackDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(stackDir, stack.ManifestFile), []byte("description: rel\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(stackDir, StackManifestFile), []byte("description: rel\n"), 0o644))
 	require.NoError(
 		t,
-		os.WriteFile(filepath.Join(stackDir, stack.RootFragmentFile), []byte("RUN echo rel-def\n"), 0o644),
+		os.WriteFile(filepath.Join(stackDir, StackRootFragmentFile), []byte("RUN echo rel-def\n"), 0o644),
 	)
 
 	cfg := configmocks.NewFromString(`
@@ -217,7 +215,7 @@ func TestResolveStack_BundleShadowsShipped(t *testing.T) {
 
 // Conformance: E3 — closest layer wins wholesale, never merged. E8 — every shadow emits a provenance line naming its source.
 func TestResolveStack_ProjectShadowsBundle(t *testing.T) {
-	dir := writeStackDef(t, stack.RootFragmentFile, "RUN echo registered\n")
+	dir := writeStackDef(t, StackRootFragmentFile, "RUN echo registered\n")
 	cfg := configmocks.NewFromString(`
 stacks:
   mytool:
@@ -264,9 +262,9 @@ monitoring:
 func tcBundleDir(t *testing.T, manifest string) string {
 	t.Helper()
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, harness.ManifestFile), []byte(manifest), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, HarnessManifestFile), []byte(manifest), 0o644))
 	require.NoError(t, os.WriteFile(
-		filepath.Join(dir, harness.TemplateFile),
+		filepath.Join(dir, HarnessTemplateFile),
 		[]byte(`{{define "block_1"}}RUN echo B1MARK{{end}}
 {{define "block_3"}}RUN echo B3MARK{{end}}`),
 		0o644,
@@ -403,12 +401,12 @@ stacks: [node]
 // and records shadow provenance surfaced via the generator.
 func TestGenerateHarness_BundleShadowsShipped(t *testing.T) {
 	bundleDir := tcBundleDir(t, "version: { resolver: none }\nstacks: [node]\n")
-	tcDir := filepath.Join(bundleDir, stack.StacksSubdir, "node")
+	tcDir := filepath.Join(bundleDir, StacksSubdir, "node")
 	require.NoError(t, os.MkdirAll(tcDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(tcDir, stack.ManifestFile), []byte("description: shadow\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(tcDir, StackManifestFile), []byte("description: shadow\n"), 0o644))
 	require.NoError(
 		t,
-		os.WriteFile(filepath.Join(tcDir, stack.RootFragmentFile), []byte("RUN echo bundle-node-shadow\n"), 0o644),
+		os.WriteFile(filepath.Join(tcDir, StackRootFragmentFile), []byte("RUN echo bundle-node-shadow\n"), 0o644),
 	)
 
 	cfg := configmocks.NewFromString(projectYAMLWithHarness("version: \"1\"\n", bundleDir), tcSettingsYAML())
@@ -433,9 +431,9 @@ func TestGenerateHarness_BundleShadowsShipped(t *testing.T) {
 func writeBundleDir(t *testing.T, dir string) {
 	t.Helper()
 	require.NoError(t, os.WriteFile(
-		filepath.Join(dir, harness.ManifestFile), []byte("version:\n  resolver: none\n"), 0o644))
+		filepath.Join(dir, HarnessManifestFile), []byte("version:\n  resolver: none\n"), 0o644))
 	require.NoError(t, os.WriteFile(
-		filepath.Join(dir, harness.TemplateFile), []byte(`{{define "block_6"}}CMD ["x"]{{end}}`), 0o644))
+		filepath.Join(dir, HarnessTemplateFile), []byte(`{{define "block_6"}}CMD ["x"]{{end}}`), 0o644))
 }
 
 // Conformance: E8 — shadowing is never silent; a harness bundle always names its source.

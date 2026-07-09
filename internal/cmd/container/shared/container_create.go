@@ -32,7 +32,6 @@ import (
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/git"
-	"github.com/schmitthub/clawker/internal/harness"
 
 	"github.com/schmitthub/clawker/internal/hostproxy"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -1452,7 +1451,7 @@ type CreateContainerOptions struct {
 	// default for pre-label images). Internal — populated by
 	// CreateContainer, read by the create-path steps so staging, hooks,
 	// env, and the container label all agree.
-	harnessBundle *harness.Bundle
+	harnessBundle *bundler.Bundle
 }
 
 // CreateContainerResult holds the outputs of CreateContainer.

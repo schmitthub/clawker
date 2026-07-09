@@ -11,7 +11,6 @@ import (
 
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
-	"github.com/schmitthub/clawker/internal/harness"
 )
 
 // Shipped harness bundles. Each subdirectory of assets/harnesses is a
@@ -155,7 +154,7 @@ func projectHarnessPath(cfg config.Config, name string) string {
 
 // LoadHarness resolves and loads the named harness bundle from its closest
 // layer (project registry > shipped embedded).
-func LoadHarness(cfg config.Config, name string) (*harness.Bundle, error) {
+func LoadHarness(cfg config.Config, name string) (*Bundle, error) {
 	b, _, err := loadHarnessResolved(cfg, name)
 	return b, err
 }
@@ -165,7 +164,7 @@ func LoadHarness(cfg config.Config, name string) (*harness.Bundle, error) {
 // and returns its provenance (which layer it came from, whether it shadowed a
 // shipped bundle) for build-output reporting. An unresolvable name is a hard
 // error naming the registration remedy.
-func loadHarnessResolved(cfg config.Config, name string) (*harness.Bundle, harnessProvenance, error) {
+func loadHarnessResolved(cfg config.Config, name string) (*Bundle, harnessProvenance, error) {
 	if err := ValidateHarnessKey(name); err != nil {
 		return nil, harnessProvenance{}, err
 	}
@@ -177,13 +176,13 @@ func loadHarnessResolved(cfg config.Config, name string) (*harness.Bundle, harne
 		if err != nil {
 			return nil, harnessProvenance{}, err
 		}
-		if _, statErr := os.Stat(filepath.Join(dir, harness.ManifestFile)); statErr != nil {
+		if _, statErr := os.Stat(filepath.Join(dir, HarnessManifestFile)); statErr != nil {
 			return nil, harnessProvenance{}, fmt.Errorf(
 				"harness %q: no bundle at registered path %s (%w) — fix harnesses.%s.path in clawker.yaml",
 				name, dir, statErr, name,
 			)
 		}
-		b, loadErr := harness.Load(name, os.DirFS(dir))
+		b, loadErr := LoadBundle(name, os.DirFS(dir))
 		if loadErr != nil {
 			return nil, harnessProvenance{}, fmt.Errorf("load harness %q from %s: %w", name, dir, loadErr)
 		}
@@ -217,12 +216,12 @@ func isShippedHarness(name string) bool {
 
 // loadEmbeddedHarness loads a shipped bundle straight from the embedded
 // assets (the virtual base layer).
-func loadEmbeddedHarness(name string) (*harness.Bundle, error) {
+func loadEmbeddedHarness(name string) (*Bundle, error) {
 	src, err := fs.Sub(harnessesFS, harnessAssetsRoot+"/"+name)
 	if err != nil {
 		return nil, fmt.Errorf("shipped harness %q: %w", name, err)
 	}
-	b, loadErr := harness.Load(name, src)
+	b, loadErr := LoadBundle(name, src)
 	if loadErr != nil {
 		return nil, fmt.Errorf("load shipped harness %q: %w", name, loadErr)
 	}

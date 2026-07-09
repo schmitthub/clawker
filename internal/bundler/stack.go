@@ -13,8 +13,6 @@ import (
 	"text/template"
 
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/harness"
-	"github.com/schmitthub/clawker/internal/stack"
 )
 
 // Shipped stack definitions. Each subdirectory of assets/stacks is a
@@ -56,12 +54,12 @@ func isShippedStack(name string) bool {
 
 // loadEmbeddedStack loads a shipped definition straight from the embedded
 // assets (the virtual base layer).
-func loadEmbeddedStack(name string) (*stack.Definition, error) {
+func loadEmbeddedStack(name string) (*StackDefinition, error) {
 	src, err := fs.Sub(stacksFS, stackAssetsRoot+"/"+name)
 	if err != nil {
 		return nil, fmt.Errorf("shipped stack %q: %w", name, err)
 	}
-	def, loadErr := stack.Load(name, src)
+	def, loadErr := LoadStackDefinition(name, src)
 	if loadErr != nil {
 		return nil, fmt.Errorf("load shipped stack %q: %w", name, loadErr)
 	}
@@ -99,8 +97,8 @@ func (p stackProvenance) noteworthy() bool {
 // layer shadows a farther one, the returned provenance names both; the caller
 // decides whether to surface it. An unresolvable name is a hard error naming the
 // registration remedy — never a silent skip.
-func resolveStack(cfg config.Config, bundle *harness.Bundle, name string) (*stack.Definition, stackProvenance, error) {
-	if err := stack.ValidateName(name); err != nil {
+func resolveStack(cfg config.Config, bundle *Bundle, name string) (*StackDefinition, stackProvenance, error) {
+	if err := ValidateStackName(name); err != nil {
 		return nil, stackProvenance{}, fmt.Errorf("resolve stack: %w", err)
 	}
 
@@ -151,7 +149,7 @@ func resolveStack(cfg config.Config, bundle *harness.Bundle, name string) (*stac
 // fartherStackLayers lists the farther lookup layers that also define a
 // declared name — closest first — for shadow provenance. bundle may be nil
 // only when bundleHas is false.
-func fartherStackLayers(bundle *harness.Bundle, bundleHas, shippedHas bool) []string {
+func fartherStackLayers(bundle *Bundle, bundleHas, shippedHas bool) []string {
 	var layers []string
 	if bundleHas {
 		layers = append(layers, bundleLabel(bundle))
@@ -163,7 +161,7 @@ func fartherStackLayers(bundle *harness.Bundle, bundleHas, shippedHas bool) []st
 }
 
 // bundleLabel is the provenance phrase for a bundle-embedded stack layer.
-func bundleLabel(bundle *harness.Bundle) string {
+func bundleLabel(bundle *Bundle) string {
 	return fmt.Sprintf("%s bundle", bundle.Name)
 }
 
@@ -185,18 +183,18 @@ func projectStackEntry(cfg config.Config, name string) (config.StackRegistryEntr
 
 // loadProjectStack loads a definition through its project stacks: registry
 // entry, resolving a relative path against the project root.
-func loadProjectStack(cfg config.Config, name string, entry config.StackRegistryEntry) (*stack.Definition, error) {
+func loadProjectStack(cfg config.Config, name string, entry config.StackRegistryEntry) (*StackDefinition, error) {
 	dir, err := resolveRegistryPath(cfg, fmt.Sprintf("stack %q", name), entry.Path)
 	if err != nil {
 		return nil, err
 	}
-	if _, statErr := os.Stat(filepath.Join(dir, stack.ManifestFile)); statErr != nil {
+	if _, statErr := os.Stat(filepath.Join(dir, StackManifestFile)); statErr != nil {
 		return nil, fmt.Errorf(
 			"stack %q: no definition at registered path %s (%w) — fix stacks.%s.path in clawker.yaml",
 			name, dir, statErr, name,
 		)
 	}
-	def, loadErr := stack.Load(name, os.DirFS(dir))
+	def, loadErr := LoadStackDefinition(name, os.DirFS(dir))
 	if loadErr != nil {
 		return nil, fmt.Errorf("load stack %q from %s: %w", name, dir, loadErr)
 	}
@@ -209,12 +207,12 @@ func loadProjectStack(cfg config.Config, name string, entry config.StackRegistry
 // rejects a repeated name; a harness manifest silently renders it once.
 func resolveStackDecls(
 	cfg config.Config,
-	bundle *harness.Bundle,
+	bundle *Bundle,
 	decls []string,
 	dupIsError bool,
 ) ([]namedFragment, []namedFragment, []stackProvenance, error) {
 	seen := map[string]bool{}
-	var defs []*stack.Definition
+	var defs []*StackDefinition
 	var prov []stackProvenance
 	for _, name := range decls {
 		if seen[name] {
@@ -260,7 +258,7 @@ type namedFragment struct {
 // splitFragments partitions definitions' fragments into root- and
 // user-scope lists, preserving declaration order. A definition contributes
 // to either or both lists depending on which fragments it ships.
-func splitFragments(defs []*stack.Definition) ([]namedFragment, []namedFragment) {
+func splitFragments(defs []*StackDefinition) ([]namedFragment, []namedFragment) {
 	var root, user []namedFragment
 	for _, def := range defs {
 		if def.RootFragment != "" {
@@ -283,7 +281,7 @@ func splitFragments(defs []*stack.Definition) ([]namedFragment, []namedFragment)
 // declaration order plus shadow provenance.
 func resolveHarnessStacks(
 	cfg config.Config,
-	bundle *harness.Bundle,
+	bundle *Bundle,
 	harnessDecls []string,
 ) ([]namedFragment, []namedFragment, []stackProvenance, error) {
 	return resolveStackDecls(cfg, bundle, harnessDecls, false)

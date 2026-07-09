@@ -23,7 +23,6 @@ import (
 
 	clawkerdembed "github.com/schmitthub/clawker/clawkerd/embed"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/harness"
 	"github.com/schmitthub/clawker/internal/hostproxy/internals"
 )
 
@@ -216,7 +215,7 @@ type ProjectGenerator struct {
 	// Required by GenerateHarness.
 	BaseImageRef string
 
-	bundle *harness.Bundle // lazily loaded via harnessBundle()
+	bundle *Bundle // lazily loaded via harnessBundle()
 
 	// provenance accumulates build-output lines describing which layer each
 	// stack and the harness bundle resolved from when a closer layer shadowed
@@ -251,7 +250,7 @@ func (g *ProjectGenerator) recordStackProvenance(prov []stackProvenance) {
 
 // harnessBundle resolves and caches the selected harness bundle, recording
 // its resolution provenance on first load.
-func (g *ProjectGenerator) harnessBundle() (*harness.Bundle, error) {
+func (g *ProjectGenerator) harnessBundle() (*Bundle, error) {
 	if g.bundle != nil {
 		return g.bundle, nil
 	}
@@ -369,7 +368,7 @@ func (g *ProjectGenerator) GenerateHarness() ([]byte, error) {
 
 	applyHarnessOverlay(tctx, overlay)
 
-	tmpl, err := harness.Compose(DockerfileHarnessImageTemplate, bundle)
+	tmpl, err := Compose(DockerfileHarnessImageTemplate, bundle)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse harness Dockerfile template: %w", err)
 	}
@@ -789,7 +788,7 @@ func addFileToTar(tw *tar.Writer, name string, content []byte) error {
 
 // harnessVolumeDirs returns the bundle's declared persisted-dir paths,
 // normalized home-relative, for the harness-image template's runtime-dirs RUN.
-func harnessVolumeDirs(bundle *harness.Bundle) []string {
+func harnessVolumeDirs(bundle *Bundle) []string {
 	dirs := make([]string, 0, len(bundle.Manifest.Volumes))
 	for _, v := range bundle.Manifest.Volumes {
 		dirs = append(dirs, config.NormalizeContainerPath(v.Path))
@@ -800,13 +799,13 @@ func harnessVolumeDirs(bundle *harness.Bundle) []string {
 // writeBundleAssetsToDir writes a harness bundle's assets/ tree into dir,
 // preserving the assets/-prefixed layout the template's COPY instructions
 // reference.
-func writeBundleAssetsToDir(bundle *harness.Bundle, dir string) error {
+func writeBundleAssetsToDir(bundle *Bundle, dir string) error {
 	err := bundle.WalkAssets(func(relPath string, content []byte) error {
 		dest := filepath.Join(dir, filepath.FromSlash(relPath))
 		if err := os.MkdirAll(filepath.Dir(dest), 0o750); err != nil {
 			return fmt.Errorf("create asset dir for %s: %w", relPath, err)
 		}
-		if err := os.WriteFile(dest, content, harness.FileMode(relPath)); err != nil {
+		if err := os.WriteFile(dest, content, FileMode(relPath)); err != nil {
 			return fmt.Errorf("failed to write %s: %w", relPath, err)
 		}
 		return nil

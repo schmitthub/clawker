@@ -4,7 +4,7 @@ package config
 // data a harness bundle declares for the Go engine to consume outside
 // template rendering (version resolver, volumes, seeds, staging, egress
 // floor, stack declarations). The loader that reads and validates a bundle
-// lives in internal/harness; config owns only the persisted shape, keeping
+// lives in internal/bundler; config owns only the persisted shape, keeping
 // the manifest vocabulary in the same package as the project-config egress
 // and path-semantics types it composes with.
 

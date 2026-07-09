@@ -1,4 +1,4 @@
-package harness_test
+package bundler_test
 
 import (
 	"strings"
@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/schmitthub/clawker/internal/harness"
+	"github.com/schmitthub/clawker/internal/bundler"
 )
 
 func mapFile(data string) *fstest.MapFile {
@@ -18,24 +18,24 @@ func mapFile(data string) *fstest.MapFile {
 
 func bundleFS(tmpl string) fstest.MapFS {
 	return fstest.MapFS{
-		harness.ManifestFile: mapFile(`
+		bundler.HarnessManifestFile: mapFile(`
 version: { resolver: none }
 volumes: [{ name: config, path: .test }]
 `),
-		harness.TemplateFile: mapFile(tmpl),
-		"assets/seed.sh":     mapFile("#!/bin/sh\n"),
+		bundler.HarnessTemplateFile: mapFile(tmpl),
+		"assets/seed.sh":            mapFile("#!/bin/sh\n"),
 	}
 }
 
 func manifestFS(manifest string) fstest.MapFS {
 	return fstest.MapFS{
-		harness.ManifestFile: mapFile(manifest),
-		harness.TemplateFile: mapFile(`{{define "block_6"}}CMD ["x"]{{end}}`),
+		bundler.HarnessManifestFile: mapFile(manifest),
+		bundler.HarnessTemplateFile: mapFile(`{{define "block_6"}}CMD ["x"]{{end}}`),
 	}
 }
 
-func TestLoad_StackDeclarations(t *testing.T) {
-	b, err := harness.Load("test", manifestFS(`
+func TestLoadBundle_StackDeclarations(t *testing.T) {
+	b, err := bundler.LoadBundle("test", manifestFS(`
 version: { resolver: none }
 stacks: [node, nvm]
 `))
@@ -43,17 +43,17 @@ stacks: [node, nvm]
 	assert.Equal(t, []string{"node", "nvm"}, b.Manifest.Stacks)
 }
 
-// Conformance: E18 — intra-manifest duplicate stack declarations are rejected at harness.Load.
-func TestLoad_StackDeclarations_DuplicateRejected(t *testing.T) {
-	_, err := harness.Load("test", manifestFS(`
+// Conformance: E18 — intra-manifest duplicate stack declarations are rejected at bundle load.
+func TestLoadBundle_StackDeclarations_DuplicateRejected(t *testing.T) {
+	_, err := bundler.LoadBundle("test", manifestFS(`
 version: { resolver: none }
 stacks: [node, node]
 `))
 	require.ErrorContains(t, err, `duplicate stack declaration "node"`)
 }
 
-func TestLoad_StackDeclarations_InvalidNameRejected(t *testing.T) {
-	_, err := harness.Load("test", manifestFS(`
+func TestLoadBundle_StackDeclarations_InvalidNameRejected(t *testing.T) {
+	_, err := bundler.LoadBundle("test", manifestFS(`
 version: { resolver: none }
 stacks: ["bad/name"]
 `))
@@ -65,7 +65,7 @@ func TestBundleStack_EmbeddedDefinition(t *testing.T) {
 	fsys["stacks/mytool/stack.yaml"] = mapFile("description: embedded tool\n")
 	fsys["stacks/mytool/Dockerfile.stack-user.tmpl"] = mapFile("RUN echo embedded\n")
 
-	b, err := harness.Load("test", fsys)
+	b, err := bundler.LoadBundle("test", fsys)
 	require.NoError(t, err)
 
 	assert.True(t, b.HasStack("mytool"))
@@ -81,7 +81,7 @@ func TestBundleStack_EmbeddedDefinition(t *testing.T) {
 	fsys["stacks/atool/stack.yaml"] = mapFile("description: another\n")
 	fsys["stacks/atool/Dockerfile.stack-root.tmpl"] = mapFile("RUN echo a\n")
 	fsys["stacks/incomplete/README.md"] = mapFile("no manifest here\n")
-	b2, err := harness.Load("test", fsys)
+	b2, err := bundler.LoadBundle("test", fsys)
 	require.NoError(t, err)
 	bundled, err := b2.BundledStacks()
 	require.NoError(t, err)
@@ -89,7 +89,7 @@ func TestBundleStack_EmbeddedDefinition(t *testing.T) {
 }
 
 func TestBundledStacks_None(t *testing.T) {
-	b, err := harness.Load("test", manifestFS("version: { resolver: none }\n"))
+	b, err := bundler.LoadBundle("test", manifestFS("version: { resolver: none }\n"))
 	require.NoError(t, err)
 	bundled, err := b.BundledStacks()
 	require.NoError(t, err)
@@ -98,12 +98,12 @@ func TestBundledStacks_None(t *testing.T) {
 
 // Conformance: E14 — block slots are stable reserved surfaces. E20 — a bundle fragment fills declared slots without disturbing master ordering.
 func TestCompose_OverridesDeclaredBlock(t *testing.T) {
-	b, err := harness.Load("test", bundleFS(`{{define "block_6" -}}
+	b, err := bundler.LoadBundle("test", bundleFS(`{{define "block_6" -}}
 CMD ["testtool"]
 {{- end}}`))
 	require.NoError(t, err)
 
-	tmpl, err := harness.Compose("FROM scratch\n{{block \"block_6\" .}}{{end}}\n", b)
+	tmpl, err := bundler.Compose("FROM scratch\n{{block \"block_6\" .}}{{end}}\n", b)
 	require.NoError(t, err)
 
 	var out strings.Builder
@@ -113,32 +113,32 @@ CMD ["testtool"]
 
 // Conformance: E14 — defining a master/inject-point name is a hard error. E20 — the master owns ordering; a fragment may only fill declared slots.
 func TestCompose_RejectsUnknownAndReservedDefines(t *testing.T) {
-	unknown, err := harness.Load("test", bundleFS(`{{define "not_a_block"}}RUN true{{end}}`))
+	unknown, err := bundler.LoadBundle("test", bundleFS(`{{define "not_a_block"}}RUN true{{end}}`))
 	require.NoError(t, err)
-	_, err = harness.Compose("FROM scratch\n", unknown)
+	_, err = bundler.Compose("FROM scratch\n", unknown)
 	require.ErrorContains(t, err, `unknown block "not_a_block"`)
 
-	reserved, err := harness.Load("test", bundleFS(`{{define "after_packages"}}RUN true{{end}}`))
+	reserved, err := bundler.LoadBundle("test", bundleFS(`{{define "after_packages"}}RUN true{{end}}`))
 	require.NoError(t, err)
-	_, err = harness.Compose("FROM scratch\n", reserved)
+	_, err = bundler.Compose("FROM scratch\n", reserved)
 	require.ErrorContains(t, err, `reserved name "after_packages"`)
 }
 
 // seedBundleFS builds a loadable bundle whose manifest is supplied verbatim.
 func seedBundleFS(manifest string) fstest.MapFS {
 	return fstest.MapFS{
-		harness.ManifestFile:    mapFile(manifest),
-		harness.TemplateFile:    mapFile(`{{define "block_6"}}CMD ["x"]{{end}}`),
-		"assets/statusline.sh":  mapFile("#!/bin/sh\n"),
-		"assets/cfg.json":       mapFile("{}\n"),
-		"assets/sub/nested.txt": mapFile("n\n"),
+		bundler.HarnessManifestFile: mapFile(manifest),
+		bundler.HarnessTemplateFile: mapFile(`{{define "block_6"}}CMD ["x"]{{end}}`),
+		"assets/statusline.sh":      mapFile("#!/bin/sh\n"),
+		"assets/cfg.json":           mapFile("{}\n"),
+		"assets/sub/nested.txt":     mapFile("n\n"),
 	}
 }
 
-// TestLoad_SeedsReferenceAssets: seed sources must be declared as explicit
+// TestLoadBundle_SeedsReferenceAssets: seed sources must be declared as explicit
 // assets/-relative paths — the assets/ tree is what rides the build context.
-func TestLoad_SeedsReferenceAssets(t *testing.T) {
-	b, err := harness.Load("t", seedBundleFS(`
+func TestLoadBundle_SeedsReferenceAssets(t *testing.T) {
+	b, err := bundler.LoadBundle("t", seedBundleFS(`
 version: { resolver: none }
 volumes: [{ name: config, path: .test }]
 seeds:
@@ -153,7 +153,7 @@ seeds:
 // assets/ is visited with its assets/-prefixed path, and a bundle without
 // an assets/ dir is a valid no-op.
 func TestWalkAssets(t *testing.T) {
-	b, err := harness.Load("t", seedBundleFS("version: { resolver: none }\n"))
+	b, err := bundler.LoadBundle("t", seedBundleFS("version: { resolver: none }\n"))
 	require.NoError(t, err)
 
 	var got []string
@@ -164,9 +164,9 @@ func TestWalkAssets(t *testing.T) {
 	}))
 	assert.ElementsMatch(t, []string{"assets/statusline.sh", "assets/cfg.json", "assets/sub/nested.txt"}, got)
 
-	noAssets, err := harness.Load("t", fstest.MapFS{
-		harness.ManifestFile: mapFile("version: { resolver: none }\n"),
-		harness.TemplateFile: mapFile(`{{define "block_6"}}CMD ["x"]{{end}}`),
+	noAssets, err := bundler.LoadBundle("t", fstest.MapFS{
+		bundler.HarnessManifestFile: mapFile("version: { resolver: none }\n"),
+		bundler.HarnessTemplateFile: mapFile(`{{define "block_6"}}CMD ["x"]{{end}}`),
 	})
 	require.NoError(t, err)
 	require.NoError(t, noAssets.WalkAssets(func(string, []byte) error {
@@ -175,7 +175,7 @@ func TestWalkAssets(t *testing.T) {
 	}))
 }
 
-func TestLoad_SeedValidationErrors(t *testing.T) {
+func TestLoadBundle_SeedValidationErrors(t *testing.T) {
 	tests := []struct {
 		name     string
 		manifest string
@@ -224,17 +224,17 @@ seeds:
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := harness.Load("t", seedBundleFS("volumes: [{ name: config, path: .test }]\n"+tt.manifest))
+			_, err := bundler.LoadBundle("t", seedBundleFS("volumes: [{ name: config, path: .test }]\n"+tt.manifest))
 			require.ErrorContains(t, err, tt.wantErr)
 		})
 	}
 }
 
-// TestLoad_StagingValidationErrors pins the load front door: volumes are
+// TestLoadBundle_StagingValidationErrors pins the load front door: volumes are
 // explicit and well-formed, every directive names src and dest
 // deliberately, dests fall under a declared volume, and filter verbs match
 // their shapes.
-func TestLoad_StagingValidationErrors(t *testing.T) {
+func TestLoadBundle_StagingValidationErrors(t *testing.T) {
 	tests := []struct {
 		name     string
 		manifest string
@@ -338,7 +338,7 @@ volumes: [{ name: config, path: ../up }]
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := harness.Load("t", seedBundleFS("version: { resolver: none }\n"+tt.manifest))
+			_, err := bundler.LoadBundle("t", seedBundleFS("version: { resolver: none }\n"+tt.manifest))
 			require.ErrorContains(t, err, tt.wantErr)
 		})
 	}

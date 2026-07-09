@@ -12,7 +12,6 @@ import (
 	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
-	"github.com/schmitthub/clawker/internal/harness"
 )
 
 // isolateConfigDir points the conventional bundle location at an empty temp
@@ -170,7 +169,7 @@ func TestEgressRules_ResolutionErrorsPropagate(t *testing.T) {
 // writeBundle writes a minimal loadable bundle (manifest + template) to dir.
 func writeBundle(t *testing.T, dir, manifestYAML string) {
 	t.Helper()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, harness.ManifestFile), []byte(manifestYAML), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, harness.TemplateFile),
+	require.NoError(t, os.WriteFile(filepath.Join(dir, bundler.HarnessManifestFile), []byte(manifestYAML), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, bundler.HarnessTemplateFile),
 		[]byte("{{define \"block_5\"}}CMD [\"codex\"]\n{{end}}\n"), 0o644))
 }

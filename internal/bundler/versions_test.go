@@ -12,7 +12,6 @@ import (
 
 	"github.com/schmitthub/clawker/internal/bundler/registry"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/harness"
 )
 
 // stubRoundTripper services a single npm `@anthropic-ai/claude-code` lookup
@@ -87,7 +86,7 @@ func TestResolveHarnessVersion_GitHubRelease(t *testing.T) {
 	var stub ghAnyStub
 	stub.body = []byte(`{"tag_name": "rust-v0.50.0"}`)
 	client := newStubClient(stub)
-	var b harness.Bundle
+	var b Bundle
 	b.Name = "codex"
 	b.Manifest.Version = config.VersionSpec{
 		Resolver:  config.ResolverGitHubRelease,
@@ -108,7 +107,7 @@ func TestResolveHarnessVersion_GitHubRelease_FailureDegradesToLatest(t *testing.
 	var stub ghAnyStub
 	stub.err = errors.New("connection refused")
 	client := newStubClient(stub)
-	var b harness.Bundle
+	var b Bundle
 	b.Name = "codex"
 	b.Manifest.Version = config.VersionSpec{
 		Resolver:  config.ResolverGitHubRelease,
@@ -126,7 +125,7 @@ func TestResolveHarnessVersion_GitHubRelease_FailureDegradesToLatest(t *testing.
 }
 
 func TestResolveHarnessVersion_GitHubRelease_MissingPackage(t *testing.T) {
-	var b harness.Bundle
+	var b Bundle
 	b.Name = "codex"
 	b.Manifest.Version = config.VersionSpec{
 		Resolver:  config.ResolverGitHubRelease,

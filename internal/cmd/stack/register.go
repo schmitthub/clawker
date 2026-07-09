@@ -7,11 +7,11 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/iostreams"
-	"github.com/schmitthub/clawker/internal/stack"
 )
 
 // RegisterOptions holds the inputs for `clawker stack register`.
@@ -99,7 +99,7 @@ func registerRun(_ context.Context, opts *RegisterOptions) error {
 
 	// Validate the directory is a real stack definition (stack.yaml + >=1
 	// fragment) before touching the config file.
-	if _, err = stack.Load(name, os.DirFS(resolved.Abs)); err != nil {
+	if _, err = bundler.LoadStackDefinition(name, os.DirFS(resolved.Abs)); err != nil {
 		return fmt.Errorf("invalid stack directory %s: %w", resolved.Abs, err)
 	}
 
