@@ -105,6 +105,9 @@ RALPH-TEST.md
 controlplane/manager/assets/ebpf-manager
 controlplane/manager/assets/clawkercp
 controlplane/firewall/assets/coredns-clawker
+internal/controlplane/cpboot/assets/ebpf-manager
+internal/controlplane/cpboot/assets/clawker-cp
+internal/controlplane/firewall/assets/coredns-clawker
 # clawkerd is pure Go (no BPF deps); built by `make clawkerd-binary`.
 clawkerd/embed/assets/clawkerd
 
@@ -125,11 +128,16 @@ controlplane/firewall/ebpf/clawker_arm64_bpfel.o
 # Transient bpf2go bindings-extraction scratch dir (any location). Generated
 # during the build and never committed.
 .bpf-bindings-extract/
+internal/controlplane/firewall/ebpf/clawker_x86_bpfel.go
+internal/controlplane/firewall/ebpf/clawker_x86_bpfel.o
+internal/controlplane/firewall/ebpf/clawker_arm64_bpfel.go
+internal/controlplane/firewall/ebpf/clawker_arm64_bpfel.o
 
 # BPF kernel BTF dump — clawker does not use CO-RE and does not consume
 # vmlinux.h. Historical developer workflows may still generate it via
 # bpftool; this guard prevents it from sneaking back into the tree.
 controlplane/firewall/ebpf/bpf/vmlinux.h
+internal/controlplane/firewall/ebpf/bpf/vmlinux.h
 
 # Adversarial test artifacts
 test/adversarial/report.html
