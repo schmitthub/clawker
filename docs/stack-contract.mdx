@@ -61,7 +61,7 @@ stack node ← project (./stacks/node) shadows built
 
 **E6 — The selected harness's egress floor is always composed first, ahead of your project firewall rules, and the floor is never dropped.** The build composes the harness floor, then appends your project's `security.firewall` rules after it. Nothing in that path removes or overrides a floor rule; your rules can only add to what the floor already permits. See [harness floor vs project rules](/firewall#harness-floor-vs-project-rules).
 
-**E7 — A floor rule cannot weaken upstream TLS verification.** A harness floor rule has no way to say "accept an untrusted upstream certificate" — the engine forces safe-by-default verification on every floor rule. The certificate-skip knob exists only on your project's own `security.firewall.rules`, never in a bundle's floor. A floor can widen *which* destinations are reachable, but never lower the trust bar on reaching them. See [Egress Firewall](/firewall).
+**E7 — A floor rule cannot weaken upstream TLS verification.** A harness bundle shares the same egress rule schema as your project firewall rules, so a floor rule *can* spell the "accept an untrusted upstream certificate" option — but the engine rejects any floor rule that sets it, as a hard error both when the bundle is registered and when it is built. That certificate-skip knob is honored only on your project's own `security.firewall.rules`, never in a bundle's floor. A floor can widen *which* destinations are reachable, but never lower the trust bar on reaching them. See [Egress Firewall](/firewall).
 
 ### Registration & validation
 

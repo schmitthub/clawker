@@ -86,6 +86,9 @@ func LoadBundle(name string, fsys fs.FS) (*Bundle, error) {
 	if tcErr := validateStackDecls(name, m.Stacks); tcErr != nil {
 		return nil, tcErr
 	}
+	if egressErr := validateEgressFloor(name, m.Egress); egressErr != nil {
+		return nil, egressErr
+	}
 
 	rawTmpl, readErr := fs.ReadFile(fsys, HarnessTemplateFile)
 	if readErr != nil {
@@ -131,6 +134,28 @@ func validateStackDecls(name string, decls []string) error {
 			return fmt.Errorf("harness %q: duplicate stack declaration %q", name, tc)
 		}
 		seen[tc] = true
+	}
+	return nil
+}
+
+// validateEgressFloor rejects a harness floor rule that tries to weaken upstream
+// TLS verification. A harness bundle is third-party-authored content and shares
+// the project egress rule schema, so a manifest can now spell the
+// insecure_skip_tls_verify field — but that knob is reserved for the machine
+// owner's own project security.firewall.rules. A floor may widen which
+// destinations are reachable; it may never lower the TLS trust bar on reaching
+// them. Setting it is a hard load error at the register and build front doors
+// (both load through here).
+func validateEgressFloor(name string, rules []config.EgressRule) error {
+	for _, r := range rules {
+		if r.InsecureSkipTLSVerify {
+			return fmt.Errorf(
+				"harness %q: egress floor rule %q must not set insecure_skip_tls_verify — "+
+					"that knob is reserved for a project's own security.firewall.rules; "+
+					"a bundle floor may not lower the TLS trust bar",
+				name, r.Dst,
+			)
+		}
 	}
 	return nil
 }

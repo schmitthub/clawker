@@ -80,7 +80,7 @@ func TestEgressRules_ClaudeFloor(t *testing.T) {
 	}
 }
 
-// Conformance: E6 — floor composed first, ahead of project rules. E7 — floor rules force InsecureSkipTLSVerify=false (field is unsayable in a manifest).
+// Conformance: E6 — floor composed first, ahead of project rules.
 // TestEgressRules_ComposesProjectRules proves composition order: harness
 // floor first, then the project's explicit rules, then add_domains
 // expansions.

@@ -97,6 +97,35 @@ func TestHarnessRegister_PreservesInitConfig(t *testing.T) {
 	assert.Equal(t, "echo hello", entry.PostInit, "init config preserved")
 }
 
+// TestHarnessRegister_InvalidFloorRule proves the register front door validates
+// the egress floor: a malformed floor rule (here a non-numeric port spec) fails
+// registration before mutating clawker.yaml, instead of surfacing only at
+// firewall sync during a later build/run.
+func TestHarnessRegister_InvalidFloorRule(t *testing.T) {
+	cfg := configmocks.NewIsolatedTestConfig(t)
+	dir := filepath.Join(t.TempDir(), "codex")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "harness.yaml"), []byte(`
+version: { resolver: none }
+egress:
+  - dst: git.example.com
+    proto: ssh
+    port: "not-a-port"
+`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "Dockerfile.harness.tmpl"),
+		[]byte("{{define \"block_1\"}}RUN echo test{{end}}\n"), 0o644))
+
+	f, _ := newTestFactory(t, cfg)
+	cmd := harnesscmd.NewCmdHarnessRegister(f, nil)
+	cmd.SetArgs([]string{dir})
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "git.example.com")
+
+	_, ok := cfg.Project().Harnesses["codex"]
+	assert.False(t, ok, "registration must not persist when a floor rule is invalid")
+}
+
 // Conformance: E16 — a same-name registration collides loudly (unless --force).
 func TestHarnessRegister_ExistingWithoutForce(t *testing.T) {
 	cfg := configmocks.NewIsolatedTestConfig(t)

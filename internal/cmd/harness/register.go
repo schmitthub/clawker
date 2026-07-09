@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/schmitthub/clawker/controlplane/firewall"
 	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
@@ -99,15 +100,11 @@ func registerRun(_ context.Context, opts *RegisterOptions) error {
 		return fmt.Errorf("harness name: %w", err)
 	}
 
-	// Validate the directory is a real harness bundle (harness.yaml +
-	// Dockerfile.harness.tmpl + valid manifest) before touching the config.
-	bundle, err := bundler.LoadBundle(name, os.DirFS(resolved.Abs))
+	// Validate the directory is a real harness bundle (valid manifest +
+	// fragment + egress floor) before touching the config.
+	bundledStacks, err := loadBundleForRegister(name, resolved.Abs)
 	if err != nil {
-		return fmt.Errorf("invalid harness bundle %s: %w", resolved.Abs, err)
-	}
-	bundledStacks, err := bundle.BundledStacks()
-	if err != nil {
-		return fmt.Errorf("invalid harness bundle %s: %w", resolved.Abs, err)
+		return err
 	}
 
 	existing := cfg.Project().Harnesses[name]
@@ -134,6 +131,41 @@ func registerRun(_ context.Context, opts *RegisterOptions) error {
 		stacks:    bundledStacks,
 		writtenTo: cmdutil.PrimaryWritePath(store),
 	})
+	return nil
+}
+
+// loadBundleForRegister loads the bundle at absPath and runs the full
+// register-time validation: manifest + fragment parse ([bundler.LoadBundle],
+// which also rejects a floor rule that lowers the TLS trust bar), embedded-stack
+// discovery, and per-rule egress-floor validation. It returns the bundle's
+// embedded stack names.
+func loadBundleForRegister(name, absPath string) ([]string, error) {
+	bundle, err := bundler.LoadBundle(name, os.DirFS(absPath))
+	if err != nil {
+		return nil, fmt.Errorf("invalid harness bundle %s: %w", absPath, err)
+	}
+	bundledStacks, err := bundle.BundledStacks()
+	if err != nil {
+		return nil, fmt.Errorf("invalid harness bundle %s: %w", absPath, err)
+	}
+	if err = validateFloorRules(absPath, bundle.Manifest.Egress); err != nil {
+		return nil, err
+	}
+	return bundledStacks, nil
+}
+
+// validateFloorRules checks the bundle's egress floor exactly as firewall sync
+// will at container create, so a malformed floor rule (bad port spec, invalid
+// path) fails registration here instead of silently passing until the first
+// build or run. [firewall.ValidateRule] is the same validator the launch path
+// applies. The TLS-verification-skip guard is enforced earlier, at bundle load
+// ([bundler.LoadBundle]).
+func validateFloorRules(absPath string, rules []config.EgressRule) error {
+	for _, r := range rules {
+		if err := firewall.ValidateRule(r); err != nil {
+			return fmt.Errorf("invalid harness bundle %s: egress floor rule %q: %w", absPath, r.Dst, err)
+		}
+	}
 	return nil
 }
 

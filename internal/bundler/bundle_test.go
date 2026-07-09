@@ -34,6 +34,32 @@ func manifestFS(manifest string) fstest.MapFS {
 	}
 }
 
+// Conformance: E7 — a floor rule requesting TLS-verification-skip is rejected at bundle load.
+// A harness bundle is third-party content; the insecure_skip_tls_verify knob is
+// reserved for the machine owner's own project security.firewall.rules, so a floor
+// rule that sets it is a hard load error — the same manifest loads cleanly with the
+// field absent.
+func TestLoadBundle_EgressFloorRejectsTLSSkip(t *testing.T) {
+	_, err := bundler.LoadBundle("codex", manifestFS(`
+version: { resolver: none }
+egress:
+  - dst: api.example.com
+    insecure_skip_tls_verify: true
+`))
+	require.ErrorContains(t, err, "codex")
+	require.ErrorContains(t, err, "api.example.com")
+	require.ErrorContains(t, err, "insecure_skip_tls_verify")
+
+	b, err := bundler.LoadBundle("codex", manifestFS(`
+version: { resolver: none }
+egress:
+  - dst: api.example.com
+`))
+	require.NoError(t, err)
+	require.Len(t, b.Manifest.Egress, 1)
+	assert.False(t, b.Manifest.Egress[0].InsecureSkipTLSVerify)
+}
+
 func TestLoadBundle_StackDeclarations(t *testing.T) {
 	b, err := bundler.LoadBundle("test", manifestFS(`
 version: { resolver: none }
