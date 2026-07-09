@@ -2,7 +2,7 @@
 title: "Configuration"
 description: "Reference for .clawker.yaml project configuration"
 icon: "gear"
-keywords: ["mythos-class", "security", "AI container sandbox", "Claude Code", "Fable 5", "Anthropic", "clawker.yaml", "agent configuration"]
+keywords: ["security", "AI container sandbox", "Claude Code", "Anthropic", "clawker.yaml", "agent configuration"]
 ---
 
 {/* AUTO-GENERATED from cmd/gen-docs/configuration.mdx.tmpl + schema struct tags. Do not edit directly. Run: make docs */}
@@ -53,14 +53,14 @@ Clawker also discovers `clawker.local.yaml` (or `.clawker.local.yaml` / `.clawke
 
 At each directory level, both `clawker.yaml` and `clawker.local.yaml` are discovered. The local file merges at the same priority level but is loaded after the main file, so its values win.
 
-```
+```text
 .clawker.yaml              # Committed to git
 .clawker.local.yaml        # In .gitignore -- personal overrides
 ```
 
 ### Precedence (Highest to Lowest)
 
-```
+```text
 1. .clawker.yaml in CWD (or .clawker/clawker.yaml)
 2. .clawker.local.yaml in CWD
 3. .clawker.yaml in parent directory
@@ -112,7 +112,7 @@ projects:
 
 The layered merge system enables monorepo workflows. Place a shared `.clawker.yaml` at the repo root with common settings, then add per-service overrides in subdirectories:
 
-```
+```text
 monorepo/
 ├── .clawker.yaml           # Shared: base image, firewall rules, common packages
 ├── services/
@@ -210,15 +210,7 @@ You can also place a `clawker.yaml` in `~/.config/clawker/` to set user-level pr
 
 ## Command Aliases
 
-The `aliases` key in the project config defines command shortcuts that are expanded before execution, merged across every config layer like any other project config key:
-
-```yaml
-aliases:
-  go: run --rm -it --agent $1 @ --dangerously-skip-permissions
-  lg: logs $1 --tail $2
-```
-
-Manage them with the `clawker alias` command group (`set`, `list`, `export`, `delete`). See the [Command Aliases](/aliases) guide for expansion semantics, shipped defaults, team sharing, and the full rules.
+The `aliases` key defines command shortcuts that expand before execution, merged across config layers like any other project key. See the [Command Aliases](/aliases) guide for the alias syntax, shipped defaults, team sharing, and management with the `clawker alias` command group.
 
 ## Directory Structure
 

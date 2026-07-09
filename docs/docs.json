@@ -78,10 +78,20 @@
       "measurementId": "G-TM021J82T6"
     }
   },
+  "redirects": [
+    {
+      "source": "/harness-bundles",
+      "destination": "/harnesses"
+    },
+    {
+      "source": "/upgrading/v0.13",
+      "destination": "/announcements/multi-harness-support"
+    }
+  ],
   "navigation": {
     "groups": [
       {
-        "group": "Quickstart",
+        "group": "Get started",
         "pages": [
           "index",
           "quickstart",
@@ -89,35 +99,75 @@
         ]
       },
       {
-        "group": "Upgrading",
+        "group": "Announcements",
         "pages": [
-          "upgrading/v0.13"
+          "announcements/multi-harness-support"
+        ]
+      },
+      {
+        "group": "Configuration",
+        "pages": [
+          "configuration"
+        ]
+      },
+      {
+        "group": "Running Agents",
+        "pages": [
+          "worktrees",
+          "aliases"
         ]
       },
       {
         "group": "Security",
         "pages": [
-          "threat-model"
+          "threat-model",
+          "security",
+          "firewall",
+          "credentials",
+          "observability"
         ]
       },
       {
-        "group": "Guides",
+        "group": "Building images",
         "pages": [
-          "configuration",
-          "aliases",
-          "security",
-          "firewall",
-          "observability",
-          "control-plane",
-          "credentials",
           "custom-images",
-          "harness-bundles",
           "stacks",
-          "stack-contract",
-          "container-internals",
-          "worktrees",
+          "harnesses"
+        ]
+      },
+      {
+        "group": "Operations",
+        "pages": [
           "monitoring",
           "docker-hygiene"
+        ]
+      },
+      {
+        "group": "Under the hood",
+        "pages": [
+          "container-internals",
+          "control-plane"
+        ]
+      },
+      {
+        "group": "Developer guide",
+        "pages": [
+          {
+            "group": "Extending clawker",
+            "pages": [
+              "authoring-stacks",
+              "authoring-harnesses",
+              "stack-contract"
+            ]
+          },
+          {
+            "group": "Contributing",
+            "pages": [
+              "architecture",
+              "design",
+              "testing"
+            ]
+          }
         ]
       },
       {
@@ -320,14 +370,6 @@
               "cli-reference/clawker_skill_remove"
             ]
           }
-        ]
-      },
-      {
-        "group": "Developer Guide",
-        "pages": [
-          "architecture",
-          "design",
-          "testing"
         ]
       }
     ]

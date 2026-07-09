@@ -8,8 +8,14 @@ implemented on this branch. Code and shipped docs are the source of truth:
 - **Public contract surface**: `docs/stack-contract.mdx` — engine guarantees
   (E1–E22), author obligations (A1–A11), permanent citation anchors, backed by a
   `// Conformance: <ID>` badge suite.
-- **User docs**: `docs/{harness-bundles,stacks,custom-images}.mdx`,
-  `docs/upgrading/v0.13.mdx`, CHANGELOG `[0.13.0]`.
+- **User docs** (restructured 2026-07-09, uncommitted): use/author split —
+  `docs/{stacks,harnesses,custom-images}.mdx` (USER) +
+  `docs/{authoring-stacks,authoring-harnesses}.mdx` (AUTHOR, Developer guide nav);
+  `harness-bundles.mdx` deleted (docs.json redirect → /harnesses);
+  `docs/upgrading/v0.13.mdx` (now incl. build.image→stacks migration recipe),
+  CHANGELOG `[0.13.0]`. Manifest schemas generated: `docs/schemas/{harness,stack}.schema.json`
+  from `config.Manifest`/`config.StackManifest` via gen-docs `configSchemaSpecs()`.
+  Nav: 10 sentence-grouped sidebar sections, CLI reference last.
 - **Author skill**: `claude-plugin/clawker-support/skills/harness-stack-dev/`
   (bundle/stack authoring reference within the clawker-support plugin).
 - **Code**: `internal/bundler/` (bundle/stack/harness types, loaders

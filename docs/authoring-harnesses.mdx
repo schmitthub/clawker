@@ -1,0 +1,275 @@
+---
+title: "Authoring Harnesses"
+description: "Write a harness bundle for any coding-agent CLI — the harness.yaml manifest, the Dockerfile.harness.tmpl block slots, staging and seeds, and how to design the egress floor"
+icon: "cubes"
+keywords: ["AI coding agent sandbox", "custom harness", "harness bundle", "harness.yaml", "Dockerfile template", "egress floor", "coding agent CLI", "self-hosted", "open source"]
+---
+
+Authoring a harness means writing a **bundle** — a directory Clawker reads at build time that describes how to install a coding-agent CLI, where it keeps state, and what network it needs. Authoring a bundle for an agent Clawker doesn't ship is the same shape as the two it does: write the directory, then register its path with [`clawker harness register`](/harnesses#registering-a-third-party-bundle).
+
+This page is the authoring reference. For running, selecting, and registering harnesses from the consumer side, see [Harnesses](/harnesses). For the formal author/engine contract these mechanics implement, see [Stacks & Harnesses Contract](/stack-contract).
+
+## Bundle anatomy
+
+A harness bundle is a directory with three parts:
+
+<Columns cols={3}>
+<Card title="harness.yaml" icon="file-lines">
+The **manifest** — the data Clawker's engine consumes outside template rendering: the version resolver, declared stacks, persisted volumes, first-boot config seeds, create-time host→container staging, and the egress floor.
+</Card>
+
+<Card title="Dockerfile.harness.tmpl" icon="docker">
+The **build fragment** — a set of `{{define}}` blocks that fill named slots in Clawker's master harness Dockerfile. This is where the harness CLI is installed and its `CMD` is set. The master owns instruction ordering and cache architecture; a bundle can only fill the declared slots.
+</Card>
+
+<Card title="assets/ (optional)" icon="folder">
+Every file the bundle contributes to the Docker build context — config seeds, scripts, prompt files. The whole tree is staged verbatim under an `assets/` prefix; the template's `COPY` instructions and the manifest's `seeds[].file` entries reference `assets/`-relative paths.
+</Card>
+</Columns>
+
+## Manifest reference
+
+The sections below describe the **intent** of each `harness.yaml` field with a single illustrative example. Every field is validated at load time — an invalid manifest fails the build with a named error, never a silent skip.
+
+<Note>
+For the exhaustive, authoritative field list — every key, type, default, and constraint — see the generated [`harness.schema.json`](/schemas/harness.schema.json). This page teaches what each field is *for*; the schema is the source of truth for its exact shape.
+</Note>
+
+### `version`
+
+Declares how the harness version rendered into the build template (`{{.HarnessVersion}}`) is resolved. The `npm` resolver reads a package's `latest` dist-tag, `github-release` reads a repo's latest release tag (with an optional `tag_prefix` stripped to get the bare version), and `none` renders the floating default with no network call.
+
+```yaml
+version:
+  resolver: github-release
+  package: openai/codex
+  tag_prefix: rust-v      # tag rust-v0.50.0 → version 0.50.0
+```
+
+Resolution runs once per build at the command layer. On failure Clawker warns and falls back to the floating default, so a transient registry outage still produces a usable image.
+
+### `stacks`
+
+Names the language stacks the bundle's build blocks require. Declared, never installed here — the resolved fragments render in the harness image, always with their lineage-resolved definition. A bundle vendors a bespoke definition under `stacks/<name>/`, or names one without embedding and lets the chain resolve it from the project registry or the shipped stacks.
+
+```yaml
+stacks:
+  - node
+```
+
+See [Stacks](/stacks) for the definition format and [Authoring Stacks](/authoring-stacks) for how to write one.
+
+### `volumes`
+
+Each entry declares one persisted directory — a named Docker volume mounted under the container home. Clawker assumes nothing about where a harness keeps state; every persisted directory is an explicit declaration.
+
+```yaml
+volumes:
+  - name: config
+    path: .codex
+```
+
+The volume is named `clawker.<project>.<agent>-<name>` and mounted at `~/<path>`. `name` must match `[a-zA-Z0-9][a-zA-Z0-9_.-]{0,40}` and be unique; the names `history`, `workspace`, and `clawker` are **reserved** for Clawker infrastructure. `path` is container-home-relative and unique across the bundle. **Every `seeds` and `staging` destination must fall under a declared volume path** — that's the only place state persists, and a dest outside every volume is a config error caught at load.
+
+### `seeds`
+
+Files staged into a volume and applied by Clawker's generic init step on **first boot**, so a harness comes up preconfigured while a returning container keeps whatever the user changed. Each entry names a bundle-relative `file` (which must live under `assets/`), a container-home-relative `dest` under a declared volume, and an `apply` strategy.
+
+```yaml
+seeds:
+  - file: assets/claude-settings.json
+    dest: .claude/settings.json
+    apply: json-merge
+```
+
+Apply strategies:
+
+- **`copy-if-missing`** — write the seed only when the destination does not exist. First boot places it; later boots leave the user's file alone.
+- **`copy-if-missing-or-empty`** — also write when the destination exists but is empty.
+- **`json-merge`** — deep-merge the seed's JSON into the existing destination JSON, so the seed contributes keys without clobbering user edits.
+
+### `staging`
+
+Create-time host→container copies for harness state that lives **outside** the workspace. The workspace itself arrives via bind mount or snapshot and is never staged. Every entry is an explicit, deliberate directive — nothing is copied by naming convention.
+
+```yaml
+staging:
+  copy:
+    - src: ${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json
+      dest: .claude/settings.json
+      json_keys: [enabledPlugins]
+    - src: ${CLAUDE_CONFIG_DIR:-~/.claude}/plugins
+      dest: .claude/plugins
+      skip: [install-counts-cache.json]
+      json_rewrites:
+        - { file: known_marketplaces.json, key: installPath, rewrite: prefix-swap }
+        - { file: installed_plugins.json, key: projectPath, rewrite: replace-with-workdir }
+  mounts:
+    - src: ${CLAUDE_CONFIG_DIR:-~/.claude}/projects
+      dest: .claude/projects
+```
+
+**`copy`** entries are one-time copies into the volume at create time. `src` is a host path or [doublestar](https://github.com/bmatcuk/doublestar) glob — `~`, `$VAR`/`${VAR}`, and shell-style `${VAR:-fallback}` defaults expand before matching; a directory src copies recursively, a glob matching multiple entries lands each under `dest`, and missing sources skip silently. `dest` is container-home-relative and must fall under a declared volume. The **JSON-only** filter verbs narrow what lands: `json_keys` allowlists top-level keys (single-file `src` only), `skip` omits filenames from a directory src, and `json_rewrites` rewrites one JSON key's value so host-specific paths become valid container paths — `prefix-swap` maps the host config-dir tree prefix onto the in-container one, `replace-with-workdir` substitutes the container workspace path.
+
+**`mounts`** are live host→container bind mounts instead of copies. `src` must be a **literal** path (no globs) and expands the same vocabulary as `copy` src; `dest` is container-home-relative. Use a mount when host and container should share the directory live (e.g. the claude harness mounts `~/.claude/projects` so session history stays shared across container runs).
+
+<Warning>
+A src resolving inside the project workspace is **rejected** at stage time — the workspace is mounted, never staged. Point staging at host state that lives outside the repo (a global config dir, a home-relative path).
+</Warning>
+
+### `egress`
+
+The harness's required firewall **floor** — the bare-minimum domains the harness needs to function (API, auth, telemetry). Clawker composes this ahead of your project's `security.firewall` rules at create time, and the floor is never dropped.
+
+```yaml
+egress:
+  - dst: api.openai.com
+  - dst: chatgpt.com
+    path_rules:
+      - path: /backend-api/codex/
+        action: allow
+  - dst: chatgpt.com
+    proto: wss
+```
+
+The rule shape (`dst`, `proto`, `port`, `action`, `path_rules`, `path_default`, and each path rule's `path`/`action`/`methods`) is identical to project `security.firewall.rules`. See the [Egress Firewall reference](/firewall#configuration) for how domains, path prefixes, protocols, and allowlist vs denylist mode work, and [Harness Floor vs Project Rules](/firewall#harness-floor-vs-project-rules) for how a floor composes with your project rules. A floor can widen *which* destinations are reachable but can never weaken upstream TLS verification — the "accept an untrusted upstream certificate" knob is rejected in a floor, both at registration and at build, per contract clause [E7](/stack-contract#engine-guarantees).
+
+<Note>
+Never frame a harness floor as "the system-required rules." Each floor belongs to its harness — the Anthropic domains are the **claude** harness's floor, the OpenAI domains are the **codex** harness's floor. Your custom bundle declares its own ([A10](/stack-contract#author-obligations)).
+</Note>
+
+## Template reference
+
+The bundle template fills named block slots in Clawker's master harness Dockerfile. Each `{{define "block_N"}}...{{end}}` body is emitted verbatim at that block's position; you may define any subset of the blocks, and defining anything else is a validation error ([E20](/stack-contract#engine-guarantees), [A7](/stack-contract#author-obligations)).
+
+### Block slots
+
+| Block | Scope | Shell | Position |
+|-------|-------|-------|----------|
+| `block_1` | root | `/bin/sh` | First root step of the harness image (after user creation, which lives in the base). Heavy root installs. |
+| `block_2` | root | `/bin/sh` | After base tooling, before the switch to the unprivileged user. |
+| `block_3` | user | `/bin/sh` | After the master's static-env section. Environment setup. |
+| `block_4` | user | `/bin/zsh` | After block_3, once the master switches `SHELL` to zsh — the version-ARG cache zone. `{{.HarnessVersion}}` is available here. Install the harness CLI here. |
+| `block_5` | root | `/bin/zsh` | After the trailing switch back to root, before Clawker's runtime assets. |
+| `block_6` | — | — | The final instruction — the `CMD` position. |
+
+Blocks 1–3 run under `/bin/sh`; the master resets `SHELL` to zsh before block_4, so blocks 4–6 run under `/bin/zsh -o pipefail -c`. Stack fragments the harness declares render **before** block_1 for root-scope fragments and **before** block_3 for user-scope fragments, so every block can rely on them. The manifest `seeds:` stage after block_4. Harness volume directories are pre-created after block_2.
+
+Available in template bodies: `{{.HarnessVersion}}` (resolved version), `${USERNAME}` (the unprivileged container user, re-declared as an ARG after the `FROM`), and `${ZSH_ENV}` (the user's `.zshenv` path, declared before the user-scope stack anchor, so in scope from block_3 on). The reserved names — `Dockerfile` (the composed template itself) plus the project-config inject-point keys (`after_from`, `after_packages`, `after_user_setup`, `after_user_switch`, `after_harness_install` and its deprecated alias `after_claude_install`, `before_entrypoint`) — can never be defined by a bundle ([E14](/stack-contract#engine-guarantees)).
+
+### Worked example: codex
+
+The codex fragment is small — it sets `CODEX_HOME`, installs the CLI, and sets `CMD`:
+
+```docker
+{{define "block_3" -}}
+# Tell codex where its config lives — must match the config volume mount.
+ENV CODEX_HOME=/home/${USERNAME}/.codex
+{{- end}}
+
+{{define "block_4" -}}
+ARG CODEX_VERSION={{.HarnessVersion}}
+RUN curl -fsSL https://chatgpt.com/codex/install.sh | \
+      CODEX_NON_INTERACTIVE=1 CODEX_RELEASE=${CODEX_VERSION} \
+      CODEX_HOME=/home/${USERNAME}/.local/share/codex-install sh
+{{- end}}
+
+{{define "block_6" -}}
+CMD ["codex"]
+{{- end}}
+```
+
+Note that block_3 points `CODEX_HOME` at `~/.codex` — the declared config volume — while the install (block_4) redirects `CODEX_HOME` to a non-volume path so the image payload isn't shadowed by the runtime volume mount. The version ARG sits directly above its only consumer so a version bump invalidates just the install layer.
+
+### Worked example: claude
+
+The claude fragment uses more of the surface. Block_2 (root scope) writes Claude Code's managed-settings file so any build-time `claude` invocation can find the binary:
+
+```docker
+{{define "block_2" -}}
+RUN mkdir -p /etc/claude-code && cat > /etc/claude-code/managed-settings.json <<EOF
+{
+  "env": {
+    "PATH": "/home/${USERNAME}/.local/bin:${PATH}"
+  }
+}
+EOF
+{{- end}}
+```
+
+Block_4 declares the version ARG and installs Claude Code via its official installer — build-only ARG (not ENV), placed directly above the install RUN so a fresh release rolls only the install layer:
+
+```docker
+{{define "block_4" -}}
+ARG CLAUDE_CODE_VERSION={{.HarnessVersion}}
+RUN curl -fsSL "https://claude.ai/install.sh" | bash -s ${CLAUDE_CODE_VERSION}
+{{- end}}
+```
+
+Block_5 (late root scope) copies a managed agent prompt from the bundle's `assets/`, and block_6 sets the `CMD`:
+
+```docker
+{{define "block_5" -}}
+COPY assets/clawker-agent-prompt.md /etc/claude-code/CLAUDE.md
+{{- end}}
+
+{{define "block_6" -}}
+CMD ["claude"]
+{{- end}}
+```
+
+## Authoring a harness
+
+<Steps>
+<Step title="Create the bundle directory">
+Put it wherever you like; keeping it inside the project (e.g. `./tools/<name>/`) keeps the registry path project-relative. It needs `harness.yaml` and `Dockerfile.harness.tmpl` at minimum, plus an `assets/` tree if you seed or copy files.
+</Step>
+
+<Step title="Write the manifest">
+Declare the version resolver, any stacks your install steps need, the volume(s) your agent keeps state in, first-boot seeds, create-time staging, and the egress floor. Keep the floor **minimal** — start with just the API and auth endpoints your agent actually needs.
+</Step>
+
+<Step title="Write the template">
+Fill the block slots. At a minimum you'll want block_4 (install the CLI, using `{{.HarnessVersion}}`) and block_6 (`CMD`). Set your config-dir env var (block_3) to match the config volume path.
+</Step>
+
+<Step title="Register it">
+Register the bundle directory in your project's `clawker.yaml`:
+
+```bash
+clawker harness register ./tools/mytool
+```
+
+This writes a `harnesses.mytool.path` entry and reports any stack definitions the bundle embeds under `stacks/`. To register under a different name, pass `--name`.
+</Step>
+
+<Step title="Build and run">
+```bash
+clawker build -t mytool
+clawker run -it --agent dev @:mytool
+```
+
+Load-time validation runs first: an invalid manifest, a template that defines an unknown block, a seed pointing outside `assets/`, or a staging dest outside every declared volume all fail the build with a named error naming exactly what's wrong. Fix it, rebuild.
+</Step>
+</Steps>
+
+### Iterating
+
+Edit the bundle directory and rebuild. The base image is unaffected by bundle changes (it's harness-agnostic), so harness-image rebuilds are fast; Docker's layer cache skips unchanged steps. A version bump or an install-step edit invalidates only the install layer and below.
+
+## Designing the egress floor
+
+Keep the floor as small as the harness needs to work, and **scope user-generated-content sinks by path**. Both shipped bundles model this:
+
+- The **codex** bundle allows `chatgpt.com` only under the codex backend prefixes (`/backend-api/codex/`, `/backend-api/wham/usage`, and a few others), with no `path_default` — putting the host in allowlist mode so every other path is denied. `chatgpt.com` also hosts publicly readable shared conversations, an exfiltration sink if the whole domain were open.
+- The **claude** bundle allows `.claude.ai` broadly (OAuth and login live under `/` and `/login`) but adds `/public/` and `/share/` **deny** path rules so an injected prompt can't pivot the agent into fetching attacker-authored UGC from a trusted origin.
+
+Widen a floor only from **observed** blocked traffic, never preemptively. The floor is always composed ahead of your project rules and never dropped ([E6](/stack-contract#engine-guarantees)); it cannot lower the TLS trust bar ([E7](/stack-contract#engine-guarantees)). See the [firewall rule reference](/firewall#configuration) for path-rule semantics.
+
+## What the engine does not do
+
+A bundle is a declarative manifest plus a template — deliberately a "dumb sandbox." There are no arbitrary hooks: the engine reads the manifest fields and fills the template slots, and that's the whole surface. If you need setup that isn't expressible as a build step, seed, or stage, that's what the project's `agent.post_init` / `agent.pre_run` and per-harness overlays are for (see [Configuration](/configuration)).
+
+The staging filter verbs (`json_keys`, `json_rewrites`, `skip`) are **JSON-only**. There is no equivalent for other formats — you cannot key-filter a TOML or INI file. This is why the codex bundle deliberately does **not** copy `config.toml`: it embeds host-path-keyed state (a projects trust table, MCP server command paths) and TOML has no `json_keys` equivalent, so codex regenerates it on first run rather than importing a host-specific file wholesale.
+
+For the reserved surfaces and author obligations these mechanics rest on — block-slot stability ([E20](/stack-contract#engine-guarantees), [E14](/stack-contract#engine-guarantees), [A7](/stack-contract#author-obligations)), volume/seed/staging destination rules ([A8](/stack-contract#author-obligations)), stack resolution ([E9](/stack-contract#engine-guarantees), [E13](/stack-contract#engine-guarantees)), and reserved tag aliases ([A5](/stack-contract#author-obligations)) — see the [Stacks & Harnesses Contract](/stack-contract).

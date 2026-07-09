@@ -1,11 +1,11 @@
 ---
-title: "Upgrade to 0.13"
-description: "Upgrade an existing clawker installation across the 0.13 multi-harness release: rebuild images, recreate containers, and review what migrated automatically."
-icon: "circle-arrow-up"
-keywords: ["upgrade clawker", "migration", "multi-harness", "AI coding agent sandbox", "Claude Code", "Codex", "run coding agents in Docker", "self-hosted", "open source"]
+title: "Multi-Harness Support"
+description: "Clawker now runs multiple coding-agent harnesses side by side. What changed, how images are built and authenticated, and how to migrate an existing installation."
+icon: "megaphone"
+keywords: ["multi-harness", "migration", "upgrade clawker", "AI coding agent sandbox", "Claude Code", "Codex", "run coding agents in Docker", "self-hosted", "open source"]
 ---
 
-The 0.13 multi-harness release changes how images are built, how harnesses authenticate, and how project config is shaped. Most config changes migrate automatically: the first time the new CLI reads your files it rewrites them and prints a notice for every key it moved or removed — you don't need to edit anything it mentions. The checklist below covers the parts that can't be automated.
+The multi-harness release changes how images are built, how harnesses authenticate, and how project config is shaped. Most config changes migrate automatically: the first time the new CLI reads your files it rewrites them and prints a notice for every key it moved or removed — you don't need to edit anything it mentions. The checklist below covers the parts that can't be automated.
 
 ## Upgrade checklist
 
@@ -86,7 +86,93 @@ Host Claude Code (or any harness) credentials are no longer copied into containe
 
 ### Custom base images and Dockerfiles are unsupported
 
-Every image builds from clawker's pinned Debian base. Declare language stacks with `build.stacks` (`go`, `node`, `python`, `rust`, or your own definitions), and customize the image with `build.packages`, `build.instructions`, and `build.inject`. See [Custom Images](/custom-images) and [Stacks](/stacks).
+`build.image`, `build.dockerfile`, and `build.context` are gone. Every image now builds from clawker's pinned Debian substrate, so a config that pointed at a custom base image is left with nothing installing its runtime once those keys are stripped. The migration removes the keys but can't translate what they carried — walk your old base image and re-express each piece through the `build` block.
+
+<Steps>
+<Step title="Replace the base image's runtime with a stack">
+
+Start by listing what clawker can install for you:
+
+```bash
+clawker stack list
+```
+
+This shows the shipped `go`, `node`, `python`, and `rust` stacks plus any your project has registered. Declare the runtimes your old base image carried under `build.stacks` — they render into the shared base image before your build instructions run, so later steps can rely on them:
+
+```yaml
+build:
+  stacks:
+    - node
+    - python
+```
+
+If your base provided a runtime clawker doesn't ship, author a stack definition and register it, then declare it by name:
+
+```bash
+clawker stack register ./stacks/<name>
+```
+
+See [Stacks](/stacks) for the definition format and the registry lookup chain.
+</Step>
+
+<Step title="Pin interior versions with build args">
+
+A declared stack floats to a current release by default. To reproduce a base image that pinned a version (`node:20-bookworm`, a fixed Go line), pass the stack's version arg at build time:
+
+```bash
+clawker build --build-arg NODE_VERSION=20
+clawker build --build-arg GO_VERSION=1.24
+```
+
+`NODE_VERSION` and `GO_VERSION` name the runtime *line*, not an exact patch — the latest patch on that line resolves per build, so rebuilds float onto security fixes. A build arg that a base-declared stack defines folds into the base freshness hash, so changing it rebuilds the base image.
+</Step>
+
+<Step title="Move system packages to build.packages">
+
+apt packages your old Dockerfile installed with `apt-get install` move to `build.packages`. They install into the same apt layer as clawker's tooling floor:
+
+```yaml
+build:
+  packages:
+    - ripgrep
+    - libpq-dev
+```
+</Step>
+
+<Step title="Move everything else to instructions and inject">
+
+Remaining Dockerfile directives map to typed [build instructions](/custom-images#build-instructions): `ENV` becomes `instructions.env`, `COPY` becomes `instructions.copy`, a root-scope `RUN` becomes `instructions.root_run`, and a user-scope `RUN` becomes `instructions.user_run`. Anything with no typed equivalent goes into a raw [injection point](/custom-images#injection-points) — `inject.after_from`, `inject.after_packages`, and the rest.
+
+A step that belongs to only one harness's image — not the shared base — goes in that harness's [build overlay](/custom-images#per-harness-overlays) under `build.harnesses.<name>`, which layers extra stacks, packages, or inject lines onto a single harness without touching the base or the bundle.
+</Step>
+</Steps>
+
+#### Worked example
+
+**Before** — a custom base image supplied Node and you added one package on top:
+
+```yaml
+build:
+  image: node:20-bookworm
+  packages:
+    - ripgrep
+```
+
+**After** — declare the `node` stack, keep the package, and pin the line with a build arg:
+
+```yaml
+build:
+  stacks:
+    - node
+  packages:
+    - ripgrep
+```
+
+```bash
+clawker build --no-cache --build-arg NODE_VERSION=20
+```
+
+See [Image Customization](/custom-images) for the full build block and [Harnesses](/harnesses) for harness-scoped builds.
 
 ### Image tags are harness-keyed
 

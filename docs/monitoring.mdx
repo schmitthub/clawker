@@ -49,9 +49,9 @@ Claude Code emits logs, metrics, AND traces. Span export gates on the `CLAUDE_CO
 
 All containers are pre-configured with labels (`dev.clawker.purpose=monitoring`) and attached to the `clawker-net` network. The OpenSearch security plugin is disabled by default for local development — Dashboards is reachable at `http://localhost:5601` with no login required. Set `OPENSEARCH_JAVA_OPTS` via the `opensearch_heap_mb` setting if you need more heap.
 
-### Service Hostnames Are Constants
+### Service Hostnames
 
-Individual service hostname constants (`MonitoringServiceOtelCollector`, `MonitoringServicePrometheus`, `MonitoringServiceOpenSearchNode`, `MonitoringServiceOpenSearchDashboards`) are defined in `internal/consts/monitoring.go`. The `MonitoringServiceHostnames` slice — consumed by CoreDNS `internalHosts` forward zones — intentionally contains only `otel-collector` and `prometheus`: agents push telemetry through the collector and never query OpenSearch directly, so `opensearch-node` and `opensearch-dashboards` are excluded from the forwarded set (containers on `clawker-net` that do need those reach them via Docker's embedded resolver).
+The monitoring services have fixed, stable hostnames on `clawker-net`. Agent containers resolve `otel-collector` and `prometheus` through the firewall's DNS, since agents push telemetry through the collector and never query OpenSearch directly. `opensearch-node` and `opensearch-dashboards` are deliberately left out of that forwarded set — other containers on `clawker-net` that do need them reach them via Docker's embedded resolver.
 
 ### How Agents Connect
 
@@ -73,7 +73,7 @@ When the firewall is enabled, Envoy and CoreDNS access logs flow into OpenSearch
 
 - **Envoy access logs** (`clawker-envoy`) — `server.address` (host the client asked for), `network.peer.address`/`network.peer.port` (post-resolution upstream), `network.transport`/`network.protocol.name`/`network.protocol.version`, `tls.established`/`tls.protocol.version`/`tls.cipher`, `action` (clawker firewall verdict: `allowed`/`denied`), `response_code`/`response_code_details` (distinguishes Envoy `direct_response` from upstream `via_upstream`), duration breakdown (`req_duration_ms`/`resp_duration_ms`/`resp_tx_duration_ms`/`duration_ms`), and byte counters. Query `action:denied` for clawker firewall blocks; `response_code:>=400 AND action:allowed` for upstream errors.
 - **CoreDNS query logs** (`clawker-coredns`) — queried `domain`, `qtype` (A/AAAA), `rcode` (NOERROR / NXDOMAIN), resolution `duration`. `rcode:NXDOMAIN` is **ambiguous**: it covers both DNS-layer firewall blocks (non-allowlisted host) and legitimate misses inside allowed zones (typo, missing record). CoreDNS makes no per-query allow/deny decision — correlate `domain` against the allowlist, or use the eBPF egress stream below (explicit `action:denied`) for the authoritative block signal.
-- **eBPF egress events** (`clawker-ebpf-egress`) — one record per connect/sendmsg/sock_create decision carrying `action` (`allowed` / `denied` / `bypassed`), attribution (`agent`, `project`, `container_id`), the 4-tuple, and the resolved domain. The bypass case is the headline: bypassed traffic skips Envoy and CoreDNS entirely but still produces a netlogger record, so bypass windows leave a complete audit trail. See [Egress Observability](/observability) for the record shape and per-attribute reference.
+- **eBPF egress events** (`clawker-ebpf-egress`) — one record per firewall decision, including bypass-mode traffic that skips Envoy and CoreDNS entirely, so bypass windows still leave a complete audit trail. See [Egress Observability](/observability) for the full record shape and per-attribute reference.
 
 ## Setup
 

@@ -1,10 +1,9 @@
 ---
 title: "Clawker — Self-Hosted AI Coding Agent Sandbox"
+sidebarTitle: "Overview"
 description: "Free, open-source sandbox to run coding agents — Claude Code, OpenAI Codex, and more — in Docker on your own machine. A self-hosted AI coding agent sandbox with a deny-by-default egress firewall, prompt-injection and data-exfiltration protection, git credential forwarding, and parallel git-worktree agents — no cloud, no subscription."
 keywords: ["AI coding agent sandbox", "AI agent sandbox", "coding agent sandbox", "run coding agents in Docker", "Claude Code", "Codex", "Claude Code sandbox", "Codex sandbox", "self-hosted", "open source", "egress firewall", "prompt injection protection", "data exfiltration", "network isolation", "deny-by-default", "parallel coding agents", "git worktree", "devcontainer alternative"]
 ---
-
-# Clawker
 
 **Clawker is a free, open-source, self-hosted AI coding agent sandbox.** It runs coding-agent CLIs — [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [OpenAI Codex](https://github.com/openai/codex), or any harness you register — inside isolated Docker containers on your own machine — no cloud, no subscription, your repo stays on your own machine, never uploaded to a vendor sandbox.
 
@@ -38,16 +37,16 @@ clawker run -it --agent review @  # Start a "review" agent in parallel
 
 ## What Clawker Does
 
-- **Default-on firewall** -- Blocks outbound traffic except allowlisted domains: the selected harness's minimal egress floor (e.g. Anthropic APIs for the claude harness, OpenAI endpoints for codex) plus the domains you allow. Your agent can't phone home to unexpected endpoints.
-- **Seamless credential forwarding** -- SSH agent, GPG agent, and Git HTTPS credentials forwarded from your host. No manual key copying.
-- **Isolated agent environments** -- Each agent runs in its own Docker container with configurable security controls
-- **Bind or snapshot workspaces** -- Mount your repo for live editing, or copy it for pure isolation
-- **Harness bundles** -- Claude Code and Codex ship built in; per-project images layer your packages, language stacks, and custom build instructions on a pinned Debian substrate, and you can author your own harness bundles
-- **Project-scoped namespacing** -- Multi-agent, multi-project isolation via Docker labels and naming conventions
-- **Git worktree integration** -- Spin up agents on separate branches with automatic worktree management and hardened unattended-session lockdown. See [Worktree Caveats](/worktrees#worktree-caveats).
-- **Command aliases** -- One-word shortcuts that expand to full invocations (`clawker go dev`), shareable with your team via project config. See [Command Aliases](/aliases).
-- **Monitoring stack** -- Optional OpenTelemetry Collector + OpenSearch + OpenSearch Dashboards + Prometheus for agent observability
-- **Per-decision egress observability** -- eBPF event stream (`allowed` / `denied` / `bypassed`) flows to OpenSearch alongside Envoy and CoreDNS access logs, so bypass windows leave a full audit trail. See [Egress Observability](/observability).
+- **Default-on firewall** — Blocks outbound traffic except allowlisted domains: the selected harness's minimal egress floor (e.g. Anthropic APIs for the claude harness, OpenAI endpoints for codex) plus the domains you allow. Your agent can't phone home to unexpected endpoints.
+- **Seamless credential forwarding** — SSH agent, GPG agent, and Git HTTPS credentials forwarded from your host. No manual key copying.
+- **Isolated agent environments** — Each agent runs in its own Docker container with configurable security controls
+- **Bind or snapshot workspaces** — Mount your repo for live editing, or copy it for pure isolation
+- **Harness bundles** — Claude Code and Codex ship built in; per-project images layer your packages, language stacks, and custom build instructions on a pinned Debian substrate, and you can author your own harness bundles
+- **Project-scoped namespacing** — Multi-agent, multi-project isolation via Docker labels and naming conventions
+- **Git worktree integration** — Spin up agents on separate branches with automatic worktree management and hardened unattended-session lockdown. See [Worktree Caveats](/worktrees#worktree-caveats).
+- **Command aliases** — One-word shortcuts that expand to full invocations (`clawker go dev`), shareable with your team via project config. See [Command Aliases](/aliases).
+- **Monitoring stack** — Optional OpenTelemetry Collector + OpenSearch + OpenSearch Dashboards + Prometheus for agent observability
+- **Per-decision egress observability** — eBPF event stream (`allowed` / `denied` / `bypassed`) flows to OpenSearch alongside Envoy and CoreDNS access logs, so bypass windows leave a full audit trail. See [Egress Observability](/observability).
 
 ## How It Works
 

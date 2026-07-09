@@ -1,16 +1,16 @@
 ---
 title: "Stacks"
-description: "Declared, self-guarded language-runtime definitions — the shipped go, node, python, and rust stacks, the per-project registry, lineage lookup, and how to author or override your own"
+description: "Declare self-guarded language runtimes — the shipped go, node, python, and rust stacks, the per-project registry and lineage lookup, and how to parameterize a stack at build time"
 icon: "wrench"
 keywords: ["AI coding agent sandbox", "run coding agents in Docker", "Claude Code", "Codex", "language stack", "Go", "Node.js", "Python", "Rust", "Docker image", "self-hosted", "open source"]
 ---
 
-A **stack** is a reusable, named language-runtime definition — the file-backed recipe that installs Go, Node.js, Python, Rust, or a runtime you define. Instead of hand-writing install steps in your Dockerfile, you **declare** a stack by name and Clawker renders its install fragment into the right place, in the right USER scope, self-guarded so it skips itself when the runtime is already present.
+A **stack** is a reusable, named language-runtime definition — the file-backed recipe that installs Go, Node.js, Python, Rust, or a runtime someone defines. Instead of hand-writing install steps in your Dockerfile, you **declare** a stack by name and Clawker renders its install fragment into the right place, in the right USER scope, self-guarded so it skips itself when the runtime is already present.
 
 Stacks are the layer beneath both project and harness images. A project declares them in `build.stacks`; a harness bundle declares them in its manifest's `stacks:`. Same definition format, resolved through a per-lineage lookup chain.
 
 <Note>
-For where stacks sit in the overall build (the substrate base, packages, injection points), see [Image Customization](/custom-images). This page is the definition-authoring and registry reference.
+For where stacks sit in the overall build (the substrate base, packages, injection points), see [Image Customization](/custom-images). To write or override a stack definition — the manifest format, the self-guard convention, the naming rule — see [Authoring Stacks](/authoring-stacks). This page covers using stacks someone else already wrote.
 </Note>
 
 ## Declared, never installed
@@ -36,57 +36,7 @@ stacks:
 - A **project** declaration (`build.stacks`) renders in the shared **base image**, before your `root_run`/`user_run` instructions — so your build commands can rely on the runtime being present.
 - A **harness** declaration (manifest `stacks:`) renders in the **harness image**, *always* with its own lineage-resolved definition — even when the project declared the same name in the base. Both render; nothing is deduplicated across the two strata.
 
-Each definition is **self-sufficient** — there are no dependency chains between stacks. If a build needs two runtimes, declare both. When a runtime is already present (because another stack, the base image, or a farther layer provisioned it), the fragment's self-guard skips its own install — that is how the base-and-harness-both-declare-node case stays safe.
-
-## Definition format
-
-A stack definition is a directory with a manifest and at least one Dockerfile fragment:
-
-<Card title="stack.yaml" icon="file-lines">
-A one-field manifest: a human-readable `description`. That's the entire schema.
-</Card>
-
-<Card title="Dockerfile.stack-root.tmpl" icon="user-shield">
-The **root-scope** fragment — rendered in a root-USER region of the generated Dockerfile. For system-wide installs (a runtime on `/usr/local`, a system package manager).
-</Card>
-
-<Card title="Dockerfile.stack-user.tmpl" icon="user">
-The **user-scope** fragment — rendered in the unprivileged-USER region. For per-user installs (a version manager in `$HOME`, a user-owned stack dir).
-</Card>
-
-A definition ships **either or both** fragments; at least one is required. One definition can therefore provision a full stack across both scopes — the shipped `node` definition installs a root-global Node LTS in its root fragment and sets up `nvm` per-user in its user fragment.
-
-```yaml
-# stack.yaml
-description: >-
-  The Rust toolchain via rustup (official installer, stable channel) into
-  the user's ~/.cargo and ~/.rustup. Skips itself when cargo is already
-  present for the user.
-```
-
-Fragments are Go templates rendered against the build context, so they can branch on `{{.BuildKitEnabled}}` (to emit `--mount=type=cache` directives) and reference the same build ARGs the surrounding Dockerfile defines (`${USERNAME}`, `${ZSH_ENV}`, `${PATH}`).
-
-### Self-guarding convention
-
-Every fragment **guards its own install** — it checks whether the runtime already exists and skips if so. This is what makes a stack safe to declare even when a base image or another layer already provides it: a deliberate user choice is never overwritten, and the "project and harness both declared `node`" case resolves cleanly. The `go` root fragment:
-
-```docker
-RUN if command -v go >/dev/null 2>&1; then \
-      echo "clawker stack go: existing $(go version) — skipping install"; \
-    else \
-    ... install ... ; \
-    fi
-```
-
-The `node` fragment guards on a version floor (keeps an existing node at major ≥ `NODE_MIN_MAJOR`, otherwise installs its own on `/usr/local` and wins `PATH`); `nvm`, `python`/`uv`, and `rust` guard on the presence of `~/.nvm`, `python3`/`uv`, and `cargo` respectively. Follow this pattern in your own definitions — probe first, skip with a message, install in the `else`. The engine never judges whether one stack "satisfies" another; satisfaction lives entirely inside the fragment's guard.
-
-## Naming
-
-Stacks and harnesses share one naming rule:
-
-- Lowercase letters, digits, and internal hyphens: `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$` (no leading or trailing hyphen).
-- Up to 32 characters.
-- **The directory name is the registered name** unless you override it with `--name` at register time.
+Each definition is **self-sufficient** — there are no dependency chains between stacks. If a build needs two runtimes, declare both. When a runtime is already present (because another stack, the base image, or a farther layer provisioned it), the fragment's self-guard skips its own install — that is how the base-and-harness-both-declare-`node` case stays safe. See the [self-guarding convention](/authoring-stacks#self-guarding-convention) for how a fragment probes and skips.
 
 ## Shipped definitions
 
@@ -131,7 +81,7 @@ Shipped definitions are the floor of every chain — they load straight from the
 
 When a closer layer shadows a farther one, the build output prints a **provenance line** so the substitution is never silent:
 
-```
+```text
 stack node ← project (./stacks/node) shadows built
 ```
 
@@ -160,6 +110,8 @@ clawker stack remove my-rust
 Registration writes to the project's `clawker.yaml`, so run it from inside an initialized project (`clawker init`). Run from an unregistered directory, the entry lands in your user-level `clawker.yaml` instead — the command prints the file it wrote to, so you always see where it went.
 </Note>
 
+Registering your own definition under a shipped name (`go`, `node`, `python`, `rust`) shadows the shipped one; see [overriding a shipped stack](/authoring-stacks#overriding-a-shipped-stack) for the full semantics.
+
 ### Cache implications of editing a definition
 
 A project-declared stack's fragments render **into the base Dockerfile**, and the base image's freshness key is a content hash of the rendered base Dockerfile bytes (plus your `instructions.copy` sources). So **editing a declared stack definition changes the rendered base and triggers a base rebuild** on the next build — which is what you want: the new install steps take effect. Editing a definition your project doesn't declare has no effect on the base. Use `clawker build --no-cache` to force a full rebuild regardless.
@@ -174,72 +126,4 @@ clawker build --build-arg NODE_VERSION=22
 
 The shipped `node`, `go`, and other stacks follow this pattern (`NODE_VERSION`, `GO_VERSION`). This is native Docker — nothing in the config schema. When a `--build-arg` targets an ARG the rendered **base** image declares, Clawker folds the value into the base freshness hash so the base rebuilds when you change it. For variance a single ARG can't express, fork the definition (own every interior choice) or hand-roll via [injection points](/custom-images#injection-points).
 
-## Authoring a custom stack
-
-<Steps>
-<Step title="Create the definition directory">
-Put it inside your project (e.g. `./stacks/<name>/`) so the registry entry stays project-relative, or anywhere on disk. The name must match `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$` (up to 32 chars); the directory base name becomes the registered name unless you pass `--name`.
-</Step>
-
-<Step title="Write stack.yaml">
-Just a description:
-
-```yaml
-description: >-
-  Bun (the JavaScript runtime + package manager) installed per-user via the
-  official installer. Skips itself when bun is already on PATH.
-```
-</Step>
-
-<Step title="Write at least one fragment">
-Pick the scope. A per-user runtime that installs into `$HOME` goes in `Dockerfile.stack-user.tmpl`; a system-wide install goes in `Dockerfile.stack-root.tmpl`. Guard the install:
-
-```docker
-# Dockerfile.stack-user.tmpl — Bun via the official installer, user-owned.
-# Guarded: an existing bun install is left untouched.
-RUN if command -v bun >/dev/null 2>&1; then \
-      echo "clawker stack bun: existing $(bun --version) — skipping install"; \
-    else \
-      curl -fsSL https://bun.sh/install | bash && \
-      echo 'export PATH="$HOME/.bun/bin:$PATH"' >> ${ZSH_ENV} ; \
-    fi
-```
-
-The `${ZSH_ENV}` ARG is in scope in the user region — appending a `PATH` export there makes the tool resolve in every shell (zsh sources `.zshenv` on every invocation, interactive and not).
-</Step>
-
-<Step title="Register it">
-```bash
-clawker stack register ./stacks/bun
-```
-
-This writes a `stacks.bun` entry to your project's `clawker.yaml`.
-</Step>
-
-<Step title="Declare and build">
-Declare it in a project or a harness:
-
-```yaml
-# clawker.yaml
-build:
-  stacks:
-    - bun
-```
-
-```bash
-clawker build
-```
-
-Load-time validation checks the name, the manifest, and each fragment (a fragment that's empty or has a template syntax error is a named error, not a silent skip). A definition with neither fragment is rejected.
-</Step>
-</Steps>
-
-### Overriding a shipped stack
-
-Register your own definition under a shipped name (`go`, `node`, `python`, `rust`) and it shadows the shipped one wholesale in every lineage that resolves it — the build output reports the shadow. Shipped definitions themselves are never removed and never edited in place (there is no materialized copy); you override by registering your own:
-
-```bash
-clawker stack register ./stacks/node
-```
-
-Shadowing a shipped name is an ordinary registration — `--force` is only needed to replace a name your project has already registered. To go back to the shipped definition, `clawker stack remove node`.
+Ready to write your own runtime definition or override a shipped one? See [Authoring Stacks](/authoring-stacks).

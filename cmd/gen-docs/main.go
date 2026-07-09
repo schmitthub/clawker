@@ -239,6 +239,18 @@ func configSchemaSpecs() []configSchemaSpec {
 			"clawker settings (settings.yaml)",
 			consts.SettingsSchemaFile,
 		},
+		{
+			reflect.TypeFor[config.Manifest](),
+			consts.SchemaURL(consts.HarnessSchemaFile, consts.GitHubRefMain),
+			"clawker harness bundle manifest (harness.yaml)",
+			consts.HarnessSchemaFile,
+		},
+		{
+			reflect.TypeFor[config.StackManifest](),
+			consts.SchemaURL(consts.StackSchemaFile, consts.GitHubRefMain),
+			"clawker stack definition manifest (stack.yaml)",
+			consts.StackSchemaFile,
+		},
 	}
 }
 

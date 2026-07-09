@@ -7,12 +7,16 @@ keywords: ["AI coding agent sandbox", "coding agent sandbox", "run coding agents
 
 Clawker ships a **deny-by-default egress firewall** — the network isolation layer that makes it a sandbox for AI coding agents. It restricts all container egress to explicitly allowed domains, so a prompt-injected agent cannot exfiltrate your code or credentials to any destination outside your allowlist — egress to everything you haven't approved is denied at the kernel. The firewall runs as a shared stack — an Envoy egress proxy, a custom CoreDNS resolver with a `dnsbpf` plugin, and a set of eBPF cgroup programs that enforce egress at the kernel — managed automatically by clawker on an isolated Docker bridge network. One firewall stack serves all clawker-managed containers on the host (1:N). It provides DNS-level blocking, per-domain TCP routing, and TLS-level inspection without granting your agent containers any special privileges.
 
+<Note>
+This page is the reference for the firewall itself — architecture, configuration, and CLI commands. For *why* the firewall is the center of clawker's defenses and the specific attacks it neutralizes (prompt injection, data exfiltration, DNS tunneling), see the [Threat Model](/threat-model).
+</Note>
+
 ## Architecture
 
 The firewall is composed of two managed Docker containers plus a set of eBPF programs attached from outside each agent container:
 
 - **Envoy** (`envoyproxy/envoy`, TLS listener `10000`, sequential TCP listeners from `10001`) — TLS termination with per-domain certificates for all allowed domains. Envoy terminates TLS, inspects HTTP traffic (paths, methods, response codes visible), then re-encrypts upstream. Default deny (connection reset) for unrecognized SNI.
-- **CoreDNS** (`clawker-coredns:latest`, port `53`) — a *custom* CoreDNS build from `cmd/coredns-clawker`. Provides deny-by-default DNS filtering (NXDOMAIN for anything not in the allowlist, Cloudflare malware-blocking upstream `1.1.1.2` / `1.0.0.2`) and embeds the first-party `dnsbpf` plugin that writes every resolved IP to the BPF `dns_cache` map in real time — this is what lets the BPF `connect4/connect6` programs do per-domain TCP routing. Runs with `CAP_BPF + CAP_SYS_ADMIN` and a `/sys/fs/bpf` bind mount, the minimum required to update the pinned cache map.
+- **CoreDNS** (`clawker-coredns:latest`, port `53`) — a *custom* CoreDNS build from `cmd/coredns-clawker`. Provides deny-by-default DNS filtering (NXDOMAIN for anything not in the allowlist, Cloudflare malware-blocking upstream `1.1.1.2` / `1.0.0.2`) and embeds the first-party `dnsbpf` plugin that writes every resolved IP to the BPF `dns_cache` map in real time — this is what lets the BPF `connect4/connect6` programs do per-domain TCP routing. Its host access is scoped to the minimum needed to update that pinned cache map — see [DNS cache population](#dns-cache-population).
 - **eBPF cgroup programs** (`connect4`, `sendmsg4`, `recvmsg4`, `connect6`, `sendmsg6`, `recvmsg6`, `sock_create`) — loaded and attached **from outside the agent container** by the clawker control plane. Owns the pinned BPF maps under `/sys/fs/bpf/clawker/`: `container_map`, `route_map`, `dns_cache`, `bypass_map`, `metrics_map`, plus the netlogger telemetry maps `events_ringbuf` (decision-point event channel), `events_drops` (kernel-fault drop counter), `ratelimit_state` (per-cgroup token bucket), `ratelimit_drops` (per-cgroup throttled-event counter). The agent container itself runs fully unprivileged — no Linux capabilities, no firewall scripts, no init-time network gymnastics. The control plane container that owns the load step runs with `CAP_BPF + CAP_SYS_ADMIN`, a `/sys/fs/bpf` RW bind mount, a `/sys/fs/cgroup` RO bind mount, the Docker socket, and `apparmor=unconfined` — see [Control Plane → Container Privileges](/control-plane#container-privileges) for the full set and why each is required.
 
 Both managed containers run on the `clawker-net` bridge network with deterministic static IPs computed from the network gateway by replacing its last octet: Envoy at `<network>.200`, CoreDNS at `<network>.201` (so e.g. `192.168.215.200` / `.201` on a default Docker bridge with gateway `192.168.215.1`). Agent containers join the same network with `--dns` pointed at CoreDNS, and the eBPF `connect4/connect6` programs redirect all outbound TCP to Envoy. CoreDNS forwards Docker internal names (`host.docker.internal`, monitoring stack containers) back to Docker's embedded DNS at `127.0.0.11` so internal networking keeps working.
@@ -55,6 +59,12 @@ The BPF `connect6` program applies the full `connect4` routing logic to **IPv4-m
 <Warning>
 **Native IPv6 is denied.** The firewall does not currently route native IPv6 egress (only loopback `::1` and IPv4-mapped addresses pass through). If your agent truly needs native IPv6 to reach a service, it will fail with a connection reset. In practice this is rare because dual-stack clients fall back to IPv4-mapped automatically.
 </Warning>
+
+### DNS cache population
+
+Per-domain TCP routing depends on the `dns_cache` map staying consistent with the IPs a container actually dials, and the `dnsbpf` plugin keeps it consistent by tracking every query **live** rather than seeding the cache once at startup. A one-time seed would go stale as CDNs rotate backends behind a domain — silently blackholing traffic to an allowlisted domain until the next firewall reload. Because the plugin observes whatever the upstream resolver returns on each query, any IP a container ends up using has already been observed and hashed at the moment of connection.
+
+The plugin only writes on successful A-record answers. NXDOMAIN and other non-success responses pass through untouched, so a blocked domain can never smuggle an attacker-controlled IP into the route table. The custom CoreDNS image is a small single-purpose build — the CoreDNS binary copied onto a SHA-pinned `alpine:3.21` base, with no application dependencies beyond that single binary — and its host access is deliberately narrow: `CAP_BPF` + `CAP_SYS_ADMIN` scoped to the minimum needed for `bpf(BPF_OBJ_GET)` and `bpf(BPF_MAP_UPDATE_ELEM)` on the pinned map, with a `/sys/fs/bpf` bind mount as its only host access.
 
 ## Default Allowed Domains (Harness Floors)
 
@@ -514,6 +524,8 @@ firewall:
 <Warning>
 Disabling the firewall removes **all** outbound network restrictions. The agent can reach any endpoint on the internet. Only do this in trusted environments where you accept the risk of unrestricted egress.
 </Warning>
+
+Disabling the firewall also stops netlogger emission. The eBPF cgroup programs that produce egress decision records only run while the firewall is enabled, so the `clawker-ebpf-egress` OpenSearch index receives no new records while the firewall is off. See [Egress Observability](/observability) for the record shape.
 
 ## Troubleshooting
 

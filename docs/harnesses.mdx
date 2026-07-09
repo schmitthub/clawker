@@ -1,0 +1,90 @@
+---
+title: "Harnesses"
+description: "What a harness is, how Clawker ships the claude and codex bundles, and how to select, register, and authenticate a coding-agent CLI in a container"
+icon: "cube"
+keywords: ["AI coding agent sandbox", "run coding agents in Docker", "Claude Code", "Codex", "harness bundle", "coding agent CLI", "select harness", "self-hosted", "open source"]
+---
+
+A **harness** is the coding-agent CLI a container runs — Claude Code, Codex, or one you bring yourself. Clawker is harness-agnostic: nothing about a harness is hardcoded into the engine. Everything a harness needs — how to install it, where it keeps state, what network floor it requires, which files to seed on first boot — lives in a **bundle**, a directory Clawker reads at build time.
+
+Two bundles ship in the binary today, `claude` and `codex`, and resolve without any registration. This page is about **running** a harness: which ones ship, how to select one at build and run time, how to register a third-party bundle, and how authentication works inside a container. To write your own bundle — the manifest, template, and egress floor that make up its anatomy — see [Authoring Harnesses](/authoring-harnesses).
+
+<Note>
+For how the two-stage image is built around a bundle (the substrate base, packages, injection points), see [Image Customization](/custom-images). For how a bundle's egress floor composes with your firewall rules, see [Egress Firewall](/firewall).
+</Note>
+
+## Shipped bundles
+
+The `claude` and `codex` bundles are embedded in the Clawker binary and load straight from it — there is no materialization step and no config-directory copies.
+
+- **`claude`** runs Claude Code. Its egress floor covers the Anthropic API, auth, and telemetry endpoints; it seeds managed Claude config and stages your `agents/`, `skills/`, `commands/`, and `plugins/` trees on first run.
+- **`codex`** runs OpenAI Codex. Its floor covers the OpenAI API, auth, and the codex backend prefixes on `chatgpt.com`.
+
+Neither needs registration — name either one at build time and it resolves from the binary.
+
+## Selecting a harness
+
+A build produces one image per harness you build; the resulting image tag **is** the harness name. The `@` shortcut in run and create commands resolves against these tags:
+
+```bash
+clawker build              # Builds the default harness → clawker-myapp:<harness> + :default alias
+clawker build -t codex     # Builds the codex harness  → clawker-myapp:codex
+
+clawker run -it --agent dev @          # Resolves the :default alias
+clawker run -it --agent dev @:codex    # Selects the codex harness image
+```
+
+`@` alone resolves the `:default` alias (the harness a bare `clawker build` produced); `@:name` selects a specific harness image by name. Images and containers carry the `dev.clawker.harness` label identifying which harness they were built for — authoritative for filtering.
+
+## Registering a third-party bundle
+
+A bundle for an agent Clawker doesn't ship — or a customized version of one it does — becomes available by **registering** its directory per-project. Registration writes an entry to your project's `clawker.yaml` under the top-level `harnesses:` map; the [`clawker harness register`](/cli-reference/clawker_harness_register) command writes it for you:
+
+```bash
+# Register a bundle directory (name = directory base name); bundled stacks are reported
+clawker harness register ./tools/codex-bundle --name codex
+
+# List project-registered and built-in harnesses (SHADOWS flags overrides)
+clawker harness list
+
+# Remove a project registration (built-in harnesses can only be shadowed, not removed)
+clawker harness remove codex
+```
+
+Paths are **relative to the project root** or **absolute** — no `~` or `$VAR` expansion. `clawker harness remove` drops the registration path; if the same entry also carries per-harness init config, only the `path` is removed and the init config stays in place.
+
+<Note>
+The `harnesses:` map does double duty: an entry's `path:` registers the bundle, and the same `harnesses.<name>` entry also holds that harness's [per-harness init config](/configuration) (`env`, `post_init`, `pre_run`, managed-config strategy). An entry with init config but no `path:` is not a registration — it configures a harness that resolves elsewhere.
+</Note>
+
+<Note>
+Registration writes to the project's `clawker.yaml`, so run it from inside an initialized project (`clawker init`). Run from an unregistered directory, the entry lands in your user-level `clawker.yaml` instead — the command prints the file it wrote to.
+</Note>
+
+The registry key is the image tag, so it follows the shared [naming rule](/authoring-stacks#naming): lowercase kebab-case, up to 32 characters (`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`), directory name unless `--name` overrides. The names `default`, `latest`, and `base` are reserved tag aliases and rejected. For how names resolve through the lineage chain and everything a bundle contains, see [Authoring Harnesses](/authoring-harnesses).
+
+## Authentication
+
+Harness bundles stage **managed config, never credentials**. Host credentials are never copied into a container. The model is: **authenticate once inside the container on first run** — browser OAuth flows are proxied to your host browser automatically — and the token family persists in the harness's config volume across restarts and recreates that reuse the volume.
+
+What the shipped **claude** bundle stages is managed config: an allowlisted `enabledPlugins` key from `settings.json`, `CLAUDE.md`, and the `agents/`, `skills/`, `commands/`, and `plugins/` trees (with host→container path rewrites). None of that is a credential. Git credentials are handled separately and unchanged — SSH/GPG agent socket forwarding plus HTTPS credential proxying from the host. See [Credential Forwarding](/credentials) for the full picture.
+
+## Extending a shipped harness without a fork
+
+If you only need to add a stack, a package, or an inject step to a shipped harness — not replace its whole bundle — use the project's [per-harness build overlay](/custom-images#per-harness-overlays) (`build.harnesses.<name>`). It layers onto the bundle's own build without touching it, so you don't author or register anything.
+
+## Overriding a shipped harness
+
+To change how a shipped harness is built from the ground up, author your own bundle and register it under the shipped name:
+
+```bash
+clawker harness register ./tools/my-claude --name claude
+```
+
+Shadowing a shipped name is an ordinary registration — `--force` is only needed to replace a bundle path your project has already registered. It shadows the shipped `claude` in that project's lineage, and the build output prints a provenance line so the substitution is never silent:
+
+```text
+harness claude ← ./tools/my-claude (project registry) shadows built
+```
+
+To go back to the shipped bundle, `clawker harness remove claude`. For how to write the replacement bundle, see [Authoring Harnesses](/authoring-harnesses).

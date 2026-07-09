@@ -5,12 +5,12 @@ icon: "file-contract"
 keywords: ["AI coding agent sandbox", "run coding agents in Docker", "Claude Code", "Codex", "language stack", "harness bundle", "build engine contract", "self-hosted", "open source"]
 ---
 
-This page is the **contract** between the Clawker build engine and the people who author [stacks](/stacks) and [harness bundles](/harness-bundles). It states what the engine promises — the behaviors an author may build on — and what the engine relies on the author to hold up in return. [Stacks](/stacks) and [Harness Bundles](/harness-bundles) teach *how* to write a definition; this page states *what is promised*.
+This page is the **contract** between the Clawker build engine and the people who author [stacks](/stacks) and [harness bundles](/harnesses). It states what the engine promises — the behaviors an author may build on — and what the engine relies on the author to hold up in return. [Stacks](/stacks) and [Harness Bundles](/harnesses) teach *how* to write a definition; this page states *what is promised*.
 
 The clauses below are versioned and stable. Each carries an ID (`E1`…`E22` for engine guarantees, `A1`…`A11` for author obligations) that a conformance suite cites. **Changing the behavior a clause describes is a breaking change.** IDs are permanent citation anchors — they are never renumbered or reused, so an ID may appear out of numeric sequence within a themed group.
 
 <Note>
-This is a reference, not a tutorial. If you are writing your first definition, start with [Stacks](/stacks) or [Harness Bundles](/harness-bundles) and come back here when you need to know exactly what you can depend on.
+This is a reference, not a tutorial. If you are writing your first definition, start with [Stacks](/stacks) or [Harness Bundles](/harnesses) and come back here when you need to know exactly what you can depend on.
 </Note>
 
 ## Engine guarantees
@@ -21,13 +21,13 @@ What the engine promises to every author.
 
 **E3 — A declared name resolves from the closest layer that defines it, and that layer wins wholesale.** Resolution walks a fixed precedence — project registry, then a selected bundle's embedded definitions, then the definitions shipped in the binary — and the first layer that defines the name returns its definition entire. Layers are never field-merged; a closer definition replaces a farther one completely rather than patching it. See [lineage lookup](/stacks#the-registry-and-lineage-lookup).
 
-**E12 — Harness selection is always explicit; an empty selector resolves to the built-in default `claude` harness.** There is no registry flag or config key that changes which harness is the default. When you don't name a harness, you get `claude`; to get another, name it. See [selecting a harness](/harness-bundles#selecting-a-harness).
+**E12 — Harness selection is always explicit; an empty selector resolves to the built-in default `claude` harness.** There is no registry flag or config key that changes which harness is the default. When you don't name a harness, you get `claude`; to get another, name it. See [selecting a harness](/harnesses#selecting-a-harness).
 
-**E17 — Shipped stacks and harnesses are an immutable floor: they can be shadowed by a matching name at a closer layer, but never removed or edited in place.** The shipped definitions load directly from the binary — there is no materialized copy on disk to change. Registering your own definition under a shipped name shadows it in that project's lineage; removing that registration restores the shipped one. A remove command targeting a shipped name is refused with guidance to shadow it instead. See [overriding a shipped stack](/stacks#overriding-a-shipped-stack).
+**E17 — Shipped stacks and harnesses are an immutable floor: they can be shadowed by a matching name at a closer layer, but never removed or edited in place.** The shipped definitions load directly from the binary — there is no materialized copy on disk to change. Registering your own definition under a shipped name shadows it in that project's lineage; removing that registration restores the shipped one. A remove command targeting a shipped name is refused with guidance to shadow it instead. See [overriding a shipped stack](/authoring-stacks#overriding-a-shipped-stack).
 
 **E8 — Shadowing is never silent.** Whenever a closer layer shadows a farther one, the build output prints a provenance line naming the winner, its source, and what it shadowed; a resolved harness bundle always names its source. A resolution that shadows nothing stays quiet. The line reads like:
 
-```
+```text
 stack node ← project (./stacks/node) shadows built
 ```
 
@@ -41,7 +41,7 @@ stack node ← project (./stacks/node) shadows built
 
 **E18 — Duplicate handling is asymmetric by design.** A name repeated in a project's `build.stacks` is an error — likely a mistake. A name that appears in both a harness bundle's declared stacks and a per-harness overlay renders once, at its first position — the overlay is meant to extend the bundle, so the overlap is expected rather than an error. Duplicates *within* a single bundle manifest remain an error.
 
-**E20 — The master harness Dockerfile owns instruction ordering and cache layering; a bundle fragment can only fill declared slots.** A bundle supplies block bodies that drop into named positions the master reserves. It cannot inject instructions outside a slot, reorder the master's steps, or restructure the cache layering. This is what keeps every harness image's layer architecture predictable. See [block slots](/harness-bundles#block-slots).
+**E20 — The master harness Dockerfile owns instruction ordering and cache layering; a bundle fragment can only fill declared slots.** A bundle supplies block bodies that drop into named positions the master reserves. It cannot inject instructions outside a slot, reorder the master's steps, or restructure the cache layering. This is what keeps every harness image's layer architecture predictable. See [block slots](/authoring-harnesses#block-slots).
 
 **E14 — Registration and declaration are orthogonal, and the named injection points and block slots are stable, reserved surfaces.** The six project injection points (`after_from`, `after_packages`, `after_user_setup`, `after_user_switch`, `after_harness_install`, `before_entrypoint`) render at fixed positions; a deprecated older alias folds into `after_harness_install` at the same position. The six harness block slots (`block_1`…`block_6`) are equally fixed. A bundle fragment may fill a declared block slot but may never redefine the composed Dockerfile itself or an injection-point name — doing so is a hard error. See [injection points](/custom-images#injection-points).
 
@@ -91,10 +91,10 @@ What the engine relies on you to hold up. Each obligation is enforced at one of 
 **A3 — A stack definition directory must contain its manifest plus at least one fragment.** A definition with no fragment contributes nothing, so it is treated as a configuration error rather than an empty no-op.
 *Validated — a hard error at load and register.*
 
-**A2 — A stack fragment must guard its own install — skip when the runtime is already present — because the engine never judges cross-stack or cross-stratum satisfaction.** Since both strata render unconditionally ([E5](#engine-guarantees)) and the engine does no name-match satisfaction, a fragment that doesn't probe-and-skip could double-install or clobber an existing runtime's `PATH`. The satisfaction logic lives entirely inside your fragment. See the [self-guarding convention](/stacks#self-guarding-convention).
+**A2 — A stack fragment must guard its own install — skip when the runtime is already present — because the engine never judges cross-stack or cross-stratum satisfaction.** Since both strata render unconditionally ([E5](#engine-guarantees)) and the engine does no name-match satisfaction, a fragment that doesn't probe-and-skip could double-install or clobber an existing runtime's `PATH`. The satisfaction logic lives entirely inside your fragment. See the [self-guarding convention](/authoring-stacks#self-guarding-convention).
 *Convention — the engine cannot and does not verify that a fragment guards.*
 
-**A4 — Every stack and harness name must be lowercase kebab-case, 1–32 characters, with no leading or trailing hyphen.** The name becomes a directory name, a registry key, and — for a harness — a segment of a Docker image tag; one rule keeps all three safe. See [naming](/stacks#naming).
+**A4 — Every stack and harness name must be lowercase kebab-case, 1–32 characters, with no leading or trailing hyphen.** The name becomes a directory name, a registry key, and — for a harness — a segment of a Docker image tag; one rule keeps all three safe. See [naming](/authoring-stacks#naming).
 *Validated — at register and at every config load.*
 
 **A5 — A harness name must not collide with a reserved image-tag alias (`default`, `latest`, `base`).** A harness name doubles as its built image's tag, so a reserved alias would clash with the tag scheme and the per-project base image.
@@ -103,16 +103,16 @@ What the engine relies on you to hold up. Each obligation is enforced at one of 
 **A6 — A harness bundle that names an external stack must make sure it resolves — vendor it under `stacks/<name>/` or register it in the project `stacks:` map — or the build fails.** A bundle can only check that the names it declares are legal and non-duplicate; whether a name actually resolves depends on the project registry, which the bundle can't see. An unresolved name is a hard build error that names the register remedy. See [E9](#engine-guarantees).
 *Validated — the bundle's names are checked at load; resolvability is checked at build.*
 
-**A7 — A harness bundle's template may only fill declared block slots — never a reserved name.** The master Dockerfile owns instruction ordering and cache layering ([E20](#engine-guarantees)); allowing an arbitrary block name would let a bundle disturb ordering or shadow an injection point. Defining anything but a declared slot is rejected. See [block slots](/harness-bundles#block-slots).
+**A7 — A harness bundle's template may only fill declared block slots — never a reserved name.** The master Dockerfile owns instruction ordering and cache layering ([E20](#engine-guarantees)); allowing an arbitrary block name would let a bundle disturb ordering or shadow an injection point. Defining anything but a declared slot is rejected. See [block slots](/authoring-harnesses#block-slots).
 *Validated — a hard error when the harness image is composed.*
 
-**A8 — Every harness volume, seed, and staging destination must fall under a declared volume, and volume names must be Docker-safe and not reserved for Clawker infrastructure.** Seeds and staged copies land in named volumes at create time; a destination outside every declared volume would silently fail to persist, and a reserved volume name would collide with Clawker's own volumes. See [volumes](/harness-bundles#volumes).
+**A8 — Every harness volume, seed, and staging destination must fall under a declared volume, and volume names must be Docker-safe and not reserved for Clawker infrastructure.** Seeds and staged copies land in named volumes at create time; a destination outside every declared volume would silently fail to persist, and a reserved volume name would collide with Clawker's own volumes. See [volumes](/authoring-harnesses#volumes).
 *Validated — hard errors at load.*
 
 **A9 — Parameterize a stack with a Docker build argument, not a config key.** A stack is a collection of tools rather than a single versioned thing, so there is no "stack version" to model — the manifest stays a bare name list. To pin an interior version, the definition's author declares a build argument (as the shipped `node` and `go` stacks do), overridden natively at build time with `--build-arg`. Base-declared arguments fold into the base freshness key ([E11](#engine-guarantees)); harness-declared ones are deliberately excluded so they don't force base rebuilds. See [parameterizing a stack](/stacks#parameterizing-a-stack).
 *Structural — there is no stack-version config key to misuse; the build-argument mechanism is Docker's own.*
 
-**A10 — A harness bundle declares its own egress floor — the floor belongs to the harness, not to "the system."** The engine composes whatever floor each selected harness declares; it can't know the "right" floor for an agent it doesn't ship. A custom bundle that omits the domains its CLI needs will be firewalled off from them. The Anthropic domains are the `claude` harness's floor, the OpenAI domains the `codex` harness's — yours declares its own. See the [`egress` manifest reference](/harness-bundles#egress).
+**A10 — A harness bundle declares its own egress floor — the floor belongs to the harness, not to "the system."** The engine composes whatever floor each selected harness declares; it can't know the "right" floor for an agent it doesn't ship. A custom bundle that omits the domains its CLI needs will be firewalled off from them. The Anthropic domains are the `claude` harness's floor, the OpenAI domains the `codex` harness's — yours declares its own. See the [`egress` manifest reference](/authoring-harnesses#egress).
 *Convention — the engine composes whatever floor is declared; it can't judge completeness.*
 
 **A11 — A registry path must be relative or absolute, with no `~` or `$VAR` — write a plain path.** Path handling is deliberately literal ([E10](#engine-guarantees)), so a `~` or `$VAR` path would be taken verbatim and fail to resolve; the front door rejects it instead.

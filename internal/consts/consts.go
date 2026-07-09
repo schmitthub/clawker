@@ -182,10 +182,13 @@ const (
 	// SchemaDocsDir is the repo-relative directory holding the generated
 	// schemas, also the website output subdirectory under the docs root.
 	SchemaDocsDir = "docs/schemas"
-	// ProjectSchemaFile / SettingsSchemaFile are the generated JSON Schema
-	// filenames under SchemaDocsDir.
+	// ProjectSchemaFile / SettingsSchemaFile / HarnessSchemaFile /
+	// StackSchemaFile are the generated JSON Schema filenames under
+	// SchemaDocsDir.
 	ProjectSchemaFile  = "clawker.schema.json"
 	SettingsSchemaFile = "settings.schema.json"
+	HarnessSchemaFile  = "harness.schema.json"
+	StackSchemaFile    = "stack.schema.json"
 )
 
 // Version-shape patterns consumed by SchemaRef. build.Version arrives in one

@@ -5,5 +5,5 @@ package config
 // are loaded and rendered by internal/bundler; config owns only the
 // persisted manifest shape.
 type StackManifest struct {
-	Description string `yaml:"description"`
+	Description string `yaml:"description" label:"Description" desc:"Human-readable description of what the stack provisions."`
 }

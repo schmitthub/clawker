@@ -18,7 +18,7 @@ Each project gets a shared **base image** plus one **harness image** per coding-
 
 The base image starts from a pinned `debian:bookworm-slim` digest and layers in the development floor every container gets: `git`, `zsh`, `sudo`, `gh`, `curl`, `wget`, `jq`, `fzf`, `make`, `gcc`, editors (`nano`, `vim`), locales, the Docker CLI (for socket-mount workflows), and `git-delta`. Your `build.packages` install into the same apt layer.
 
-The harness image adds whatever the selected harness bundle declares — for example, the `claude` bundle installs Claude Code (plus the `node` stack it runs on), while the `codex` bundle installs the standalone Codex binary — and ends with `ENTRYPOINT ["clawkerd"]` and the harness's `CMD`.
+The harness image adds whatever the selected harness bundle declares — for example, the `claude` bundle installs Claude Code (plus the `node` stack it runs on), while the `codex` bundle installs the standalone Codex binary — and ends with `ENTRYPOINT ["clawkerd"]` and the harness's `CMD`. See [Harnesses](/harnesses) for selecting and registering harnesses, and [Authoring Harnesses](/authoring-harnesses) to write your own bundle.
 
 ### Caching
 
@@ -67,18 +67,11 @@ build:
     - python
 ```
 
-Shipped stack definitions:
+Clawker ships `go`, `node`, `python`, and `rust` stack definitions. See [Stacks](/stacks) for what each installs.
 
-| Stack | What it installs |
-|-----------|------------------|
-| `go` | The Go toolchain on `/usr/local/go` (official tarball, checksum-verified) with the standard `GOPATH` conventions |
-| `node` | Node.js LTS installed root-global on `/usr/local` (GPG-verified), plus `nvm` as the per-user version switcher |
-| `python` | `uv` (Astral's package/project manager) system-wide, plus a uv-managed CPython with `python3`/`python` on `PATH` |
-| `rust` | The Rust toolchain via `rustup` (stable channel) into the user's `~/.cargo` and `~/.rustup` |
+Stacks are self-guarding — each skips itself when the image already provides the runtime. A project-declared stack renders in the shared base before your `root_run`/`user_run`; a harness-declared stack (for example, the `claude` bundle declares `node`) renders in the harness image. Both strata render even when they share a name — the fragment self-guards handle any overlap.
 
-Stacks are self-guarding — each skips itself when the image already provides the runtime. Harness bundles declare their own stack requirements (for example, the `claude` bundle declares `node`); a harness-declared stack renders in the harness image with its own lineage-resolved definition, always — even when your project also declared the same name in the base. Both strata render; the fragment self-guards handle any overlap.
-
-Stack definitions are file-backed (`stack.yaml` plus root- and/or user-scope Dockerfile fragments). Shipped definitions resolve straight from the clawker binary; register your own per-project in `clawker.yaml` under `stacks:` (or with `clawker stack register`). A closer layer — the project registry, then a harness bundle's own `stacks/` dir — shadows a shipped definition of the same name, reported in the build output. See [Stacks](/stacks) for the full definition format and lookup chain.
+See [Stacks](/stacks) for the full definition format and lookup chain.
 
 ## Build Instructions
 
