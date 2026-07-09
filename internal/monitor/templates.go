@@ -310,8 +310,11 @@ func writeCoreFile(destDir, srcPath, rel string, data MonitorTemplateData, writt
 		raw = []byte(rendered)
 		outPath = strings.TrimSuffix(outPath, ".tmpl")
 		rel = strings.TrimSuffix(rel, ".tmpl")
-		// bootstrap.sh runs as the container entrypoint — needs +x.
-		mode = bootstrapScriptMode
+		if strings.HasSuffix(outPath, ".sh") {
+			// bootstrap.sh runs as the container entrypoint — needs +x.
+			// Rendered JSON templates (the datasource) stay plain files.
+			mode = bootstrapScriptMode
+		}
 	}
 
 	if writeErr := os.WriteFile(outPath, raw, mode); writeErr != nil {

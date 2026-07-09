@@ -121,12 +121,20 @@ func TestRegister(t *testing.T) {
 	t.Run("--name overrides the dir-derived name", func(t *testing.T) {
 		env := testFactory(t)
 		f, cfg := env.f, env.cfg
-		// Dir is named codex-usage; the unit's index must match the
-		// REGISTERED name, so build the fixture under the target name.
-		dir := makeUnitDir(t, "codex")
+		// Dir basename ("my-fork") differs from the registered name so a
+		// command that ignored --name would register the wrong key. The
+		// unit's index must match the REGISTERED name, so the manifest
+		// declares index codex.
+		dir := filepath.Join(t.TempDir(), "my-fork")
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, "index-templates"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "monitoring.yaml"),
+			[]byte("logs:\n  - index: codex\n    service_names: [codex]\n"), 0o644))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "index-templates", "codex.json"),
+			[]byte(`{"index_patterns": ["codex"]}`), 0o644))
 
 		require.NoError(t, runCmd(t, units.NewCmdRegister(f, nil), dir, "--name", "codex"))
 		assert.Contains(t, cfg.Settings().Monitoring.Units, "codex")
+		assert.NotContains(t, cfg.Settings().Monitoring.Units, "my-fork")
 	})
 }
 

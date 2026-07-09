@@ -353,15 +353,21 @@ func validateUnitPrefixedJSONDir(name string, fsys fs.FS, dir string) error {
 
 // validateUnitISMPolicies enforces the custom-retention contract: policy
 // files present iff some lane declares custom retention, and every
-// policy's ism_template index patterns are prefixed by a unit-owned index
-// name so two policies can never fight over the same indices on priority.
+// policy's ism_template index patterns EXACTLY equal a custom-retention
+// lane index. Exact-match only — patterns are deliberately not globs:
+// a default-retention lane index also joins the generated shared policy
+// (a custom pattern covering it would fight that policy on priority),
+// and a trailing glob like "codex*" would cross into a sibling unit's
+// namespace ("codex-x" is independently registrable). Unit indices are
+// pre-created under their exact names and never roll, so exact patterns
+// lose nothing.
 func validateUnitISMPolicies(name string, fsys fs.FS, lanes []config.MonitoringLogLane) error {
 	custom := false
-	ownIndices := make([]string, 0, len(lanes))
+	customIndices := make([]string, 0, len(lanes))
 	for _, lane := range lanes {
-		ownIndices = append(ownIndices, lane.Index)
 		if lane.Retention == config.MonitoringRetentionCustom {
 			custom = true
+			customIndices = append(customIndices, lane.Index)
 		}
 	}
 	names, err := jsonBasenames(name, fsys, MonitoringDirISMPolicies)
@@ -385,14 +391,14 @@ func validateUnitISMPolicies(name string, fsys fs.FS, lanes []config.MonitoringL
 	}
 	for _, n := range names {
 		file := path.Join(MonitoringDirISMPolicies, n+".json")
-		if scopeErr := validateISMPolicyScope(name, fsys, file, ownIndices); scopeErr != nil {
+		if scopeErr := validateISMPolicyScope(name, fsys, file, customIndices); scopeErr != nil {
 			return scopeErr
 		}
 	}
 	return nil
 }
 
-func validateISMPolicyScope(name string, fsys fs.FS, file string, ownIndices []string) error {
+func validateISMPolicyScope(name string, fsys fs.FS, file string, customIndices []string) error {
 	raw, err := fs.ReadFile(fsys, file)
 	if err != nil {
 		return fmt.Errorf("monitoring unit %q: read %s: %w", name, file, err)
@@ -418,27 +424,15 @@ func validateISMPolicyScope(name string, fsys fs.FS, file string, ownIndices []s
 		)
 	}
 	for _, p := range patterns {
-		if !patternScopedToIndices(p, ownIndices) {
+		if !slices.Contains(customIndices, p) {
 			return fmt.Errorf(
-				"monitoring unit %q: %s: index pattern %q is not scoped to a unit-owned index (%s) — "+
-					"an unscoped pattern fights other retention policies on priority",
-				name, file, p, strings.Join(ownIndices, ", "),
+				"monitoring unit %q: %s: index pattern %q must exactly equal a custom-retention lane index (%s) — "+
+					"globs or default-retention indices would fight another retention policy on priority",
+				name, file, p, strings.Join(customIndices, ", "),
 			)
 		}
 	}
 	return nil
-}
-
-// patternScopedToIndices reports whether an ISM index pattern targets only
-// a unit-owned index: the exact index name, or the index name followed by
-// a glob/suffix (e.g. "codex-usage*", "codex-usage-*").
-func patternScopedToIndices(pattern string, indices []string) bool {
-	for _, idx := range indices {
-		if pattern == idx || strings.HasPrefix(pattern, idx+"-") || strings.HasPrefix(pattern, idx+"*") {
-			return true
-		}
-	}
-	return false
 }
 
 // validateUnitSavedObjects checks saved-objects/ holds only .ndjson import

@@ -207,7 +207,35 @@ func TestLoadMonitoringUnit_Table(t *testing.T) {
 				f["ism-policies/codex-keep.json"] = mapFile(
 					`{"policy":{"ism_template":[{"index_patterns":["clawker-*"]}]}}`)
 			}),
-			"not scoped to a unit-owned index",
+			"must exactly equal a custom-retention lane index",
+		},
+		{
+			// A trailing glob would cross into a sibling unit's namespace
+			// ("codex-x" is independently registrable) — exact match only.
+			"custom policy glob pattern rejected",
+			mutate(func(f fstest.MapFS) {
+				f[bundler.MonitoringUnitManifestFile] = mapFile(
+					"logs:\n  - index: codex\n    service_names: [codex]\n    retention: custom\n")
+				f["ism-policies/codex-keep.json"] = mapFile(
+					`{"policy":{"ism_template":[{"index_patterns":["codex*"]}]}}`)
+			}),
+			"must exactly equal a custom-retention lane index",
+		},
+		{
+			// A default-retention lane index also joins the generated shared
+			// policy — a custom pattern covering it would fight that policy
+			// on priority, silently overriding the lane's declared retention.
+			"custom policy covering a default-retention lane rejected",
+			mutate(func(f fstest.MapFS) {
+				f[bundler.MonitoringUnitManifestFile] = mapFile(
+					"logs:\n" +
+						"  - index: codex\n    service_names: [codex]\n    retention: custom\n" +
+						"  - index: codex-usage\n    service_names: [codex-usage]\n")
+				f["index-templates/codex-usage.json"] = mapFile(`{"index_patterns": ["codex-usage"]}`)
+				f["ism-policies/codex-keep.json"] = mapFile(
+					`{"policy":{"ism_template":[{"index_patterns":["codex","codex-usage"]}]}}`)
+			}),
+			"must exactly equal a custom-retention lane index",
 		},
 		{
 			"bad rename key",
