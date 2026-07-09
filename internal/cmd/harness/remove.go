@@ -3,7 +3,9 @@ package harness
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -101,7 +103,33 @@ func removeRun(_ context.Context, opts *RemoveOptions) error {
 	if keptInitConfig {
 		fmt.Fprintf(ios.ErrOut, "%s Kept per-harness init config for '%s'\n", cs.InfoIcon(), opts.Name)
 	}
+	hintMonitoringUnits(ios, cfg, entry.Path)
 	return nil
+}
+
+// hintMonitoringUnits names any host-global monitoring registry entry
+// whose registered path lives under the removed bundle's directory. The
+// monitoring registry is deliberately untouched — another project may
+// register the same bundle — so removal there stays an explicit
+// `clawker monitor remove`.
+func hintMonitoringUnits(ios *iostreams.IOStreams, cfg config.Config, registeredPath string) {
+	cs := ios.ColorScheme()
+	bundleAbs := registeredPath
+	if !filepath.IsAbs(bundleAbs) {
+		root := cfg.ProjectRoot()
+		if root == "" {
+			return
+		}
+		bundleAbs = filepath.Join(root, bundleAbs)
+	}
+	prefix := bundleAbs + string(filepath.Separator)
+	for unitName, entry := range cfg.Settings().Monitoring.Units {
+		if entry.Path != "" && strings.HasPrefix(entry.Path, prefix) {
+			fmt.Fprintf(ios.ErrOut,
+				"%s Monitoring unit '%s' (%s) remains registered — remove with 'clawker monitor remove %s'\n",
+				cs.InfoIcon(), unitName, entry.Path, unitName)
+		}
+	}
 }
 
 // isShippedHarness reports whether name is a built-in harness.

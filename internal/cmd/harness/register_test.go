@@ -2,6 +2,7 @@ package harness_test
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -168,4 +169,39 @@ func TestHarnessRegister_InvalidBundle(t *testing.T) {
 	err := cmd.Execute()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid harness bundle")
+}
+
+// writeMonitoringUnit embeds a minimal monitoring unit named unitName in
+// the bundle dir and declares it in harness.yaml.
+func writeMonitoringUnit(t *testing.T, bundleDir, unitName string) {
+	t.Helper()
+	udir := filepath.Join(bundleDir, "monitoring", unitName)
+	require.NoError(t, os.MkdirAll(filepath.Join(udir, "index-templates"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(udir, "monitoring.yaml"),
+		fmt.Appendf(nil, "logs:\n  - index: %s\n    service_names: [%s]\n", unitName, unitName), 0o644))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(udir, "index-templates", unitName+".json"),
+		fmt.Appendf(nil, `{"index_patterns": [%q]}`, unitName), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(bundleDir, "harness.yaml"),
+		fmt.Appendf(nil, "monitoring: [%s]\n", unitName), 0o644))
+}
+
+// TestHarnessRegister_MonitoringUnitsHint pins the no-auto-add contract:
+// registering a bundle that ships monitoring units surfaces them with the
+// explicit `clawker monitor register` promotion path, and writes NOTHING
+// to the host-global monitoring registry.
+func TestHarnessRegister_MonitoringUnitsHint(t *testing.T) {
+	cfg := configmocks.NewIsolatedTestConfig(t)
+	dir := writeHarnessDir(t, t.TempDir(), "codex")
+	writeMonitoringUnit(t, dir, "codex-usage")
+
+	f, out := newTestFactory(t, cfg)
+	cmd := harnesscmd.NewCmdHarnessRegister(f, nil)
+	cmd.SetArgs([]string{dir, "--name", "codex"})
+	require.NoError(t, cmd.Execute())
+
+	assert.Contains(t, out.String(), "Monitoring units: codex-usage")
+	assert.Contains(t, out.String(), "clawker monitor register")
+	assert.Empty(t, cfg.Settings().Monitoring.Units,
+		"harness register must never write the host-global monitoring registry")
 }

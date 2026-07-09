@@ -102,7 +102,7 @@ func registerRun(_ context.Context, opts *RegisterOptions) error {
 
 	// Validate the directory is a real harness bundle (valid manifest +
 	// fragment + egress floor) before touching the config.
-	bundledStacks, err := loadBundleForRegister(name, resolved.Abs)
+	bundledStacks, monitoringUnits, err := loadBundleForRegister(name, resolved.Abs)
 	if err != nil {
 		return err
 	}
@@ -124,34 +124,37 @@ func registerRun(_ context.Context, opts *RegisterOptions) error {
 	}
 
 	reportRegistered(ios, registerReport{
-		name:      name,
-		stored:    resolved.Stored,
-		oldPath:   existing.Path,
-		replaced:  alreadyRegistered,
-		stacks:    bundledStacks,
-		writtenTo: cmdutil.PrimaryWritePath(store),
+		name:       name,
+		stored:     resolved.Stored,
+		oldPath:    existing.Path,
+		replaced:   alreadyRegistered,
+		stacks:     bundledStacks,
+		monitoring: monitoringUnits,
+		bundleAbs:  resolved.Abs,
+		writtenTo:  cmdutil.PrimaryWritePath(store),
 	})
 	return nil
 }
 
 // loadBundleForRegister loads the bundle at absPath and runs the full
 // register-time validation: manifest + fragment parse ([bundler.LoadBundle],
-// which also rejects a floor rule that lowers the TLS trust bar), embedded-stack
-// discovery, and per-rule egress-floor validation. It returns the bundle's
-// embedded stack names.
-func loadBundleForRegister(name, absPath string) ([]string, error) {
+// which also rejects a floor rule that lowers the TLS trust bar and loads
+// every declared monitoring unit), embedded-stack discovery, and per-rule
+// egress-floor validation. It returns the bundle's embedded stack names
+// and declared monitoring units.
+func loadBundleForRegister(name, absPath string) ([]string, []string, error) {
 	bundle, err := bundler.LoadBundle(name, os.DirFS(absPath))
 	if err != nil {
-		return nil, fmt.Errorf("invalid harness bundle %s: %w", absPath, err)
+		return nil, nil, fmt.Errorf("invalid harness bundle %s: %w", absPath, err)
 	}
 	bundledStacks, err := bundle.BundledStacks()
 	if err != nil {
-		return nil, fmt.Errorf("invalid harness bundle %s: %w", absPath, err)
+		return nil, nil, fmt.Errorf("invalid harness bundle %s: %w", absPath, err)
 	}
 	if err = validateFloorRules(absPath, bundle.Manifest.Egress); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return bundledStacks, nil
+	return bundledStacks, bundle.DeclaredMonitoringUnits(), nil
 }
 
 // validateFloorRules checks the bundle's egress floor exactly as firewall sync
@@ -171,12 +174,14 @@ func validateFloorRules(absPath string, rules []config.EgressRule) error {
 
 // registerReport carries the fields reportRegistered prints.
 type registerReport struct {
-	name      string
-	stored    string
-	oldPath   string
-	replaced  bool
-	stacks    []string
-	writtenTo string
+	name       string
+	stored     string
+	oldPath    string
+	replaced   bool
+	stacks     []string
+	monitoring []string
+	bundleAbs  string
+	writtenTo  string
 }
 
 // reportRegistered prints the success line, the prior path when the
@@ -196,5 +201,13 @@ func reportRegistered(ios *iostreams.IOStreams, r registerReport) {
 	}
 	if len(r.stacks) > 0 {
 		fmt.Fprintf(ios.Out, "  Bundled stacks: %s\n", strings.Join(r.stacks, ", "))
+	}
+	// Shipping a monitoring unit never writes the host-global monitoring
+	// registry (auto-add would collide with no registrar to resolve it) —
+	// surface the units and the explicit promotion path instead.
+	if len(r.monitoring) > 0 {
+		fmt.Fprintf(ios.Out, "  Monitoring units: %s — register with "+
+			"'clawker monitor register %s/%s/<name>'\n",
+			strings.Join(r.monitoring, ", "), r.bundleAbs, bundler.MonitoringUnitsSubdir)
 	}
 }
