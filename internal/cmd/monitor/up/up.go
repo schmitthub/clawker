@@ -5,6 +5,12 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"slices"
+	"sort"
+	"strings"
+
+	"github.com/spf13/cobra"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
@@ -12,7 +18,6 @@ import (
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	internalmonitor "github.com/schmitthub/clawker/internal/monitor"
-	"github.com/spf13/cobra"
 )
 
 type UpOptions struct {
@@ -96,6 +101,11 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 		return fmt.Errorf("failed to access compose.yaml at %s: %w", composePath, err)
 	}
 
+	// Warn (never block) when the active monitoring unit set changed
+	// since the last init — the rendered collector config + bootstrap
+	// tree are stale until re-rendered.
+	warnOnUnitDrift(ios, cfg, monitorDir)
+
 	// Ensure the clawker network exists (creates with managed labels if needed)
 	client, err := opts.Client(ctx)
 	if err != nil {
@@ -146,12 +156,55 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 		fmt.Fprintln(ios.ErrOut)
 		mc := cfg.SettingsStore().Read().Monitoring
 		fmt.Fprintln(ios.ErrOut, "Service URLs:")
-		fmt.Fprintf(ios.ErrOut, "  OpenSearch Dashboards: %s\n", cs.Cyan(fmt.Sprintf("http://localhost:%d", mc.OpenSearchDashboardsPort)))
-		fmt.Fprintf(ios.ErrOut, "  OpenSearch API:        %s\n", cs.Cyan(fmt.Sprintf("http://localhost:%d", mc.OpenSearchPort)))
-		fmt.Fprintf(ios.ErrOut, "  Prometheus:            %s\n", cs.Cyan(fmt.Sprintf("http://localhost:%d", mc.PrometheusPort)))
+		fmt.Fprintf(
+			ios.ErrOut,
+			"  OpenSearch Dashboards: %s\n",
+			cs.Cyan(fmt.Sprintf("http://localhost:%d", mc.OpenSearchDashboardsPort)),
+		)
+		fmt.Fprintf(
+			ios.ErrOut,
+			"  OpenSearch API:        %s\n",
+			cs.Cyan(fmt.Sprintf("http://localhost:%d", mc.OpenSearchPort)),
+		)
+		fmt.Fprintf(
+			ios.ErrOut,
+			"  Prometheus:            %s\n",
+			cs.Cyan(fmt.Sprintf("http://localhost:%d", mc.PrometheusPort)),
+		)
 		fmt.Fprintln(ios.ErrOut)
 		fmt.Fprintln(ios.ErrOut, "To stop the stack: clawker monitor down")
 	}
 
 	return nil
+}
+
+// warnOnUnitDrift compares the active monitoring unit set against the
+// .clawker-units marker the bootstrap dir was rendered with, and warns
+// when they differ — the running/rendered config predates the change.
+// Never blocks: a stale stack is the operator's call.
+func warnOnUnitDrift(ios *iostreams.IOStreams, cfg config.Config, monitorDir string) {
+	cs := ios.ColorScheme()
+	bootstrapDir := filepath.Join(monitorDir, internalmonitor.OpenSearchBootstrapDirName)
+	rendered, err := internalmonitor.ReadUnitsMarker(bootstrapDir)
+	if err != nil {
+		return
+	}
+	active, err := internalmonitor.ActiveUnits(cfg)
+	if err != nil {
+		return
+	}
+	current := make([]string, 0, len(active))
+	for _, u := range active {
+		current = append(current, u.Name)
+	}
+	sort.Strings(current)
+	if !slices.Equal(rendered, current) {
+		fmt.Fprintf(
+			ios.ErrOut,
+			"%s Active monitoring units changed since last init (rendered: [%s], now: [%s]) — run 'clawker monitor init'\n",
+			cs.WarningIcon(),
+			strings.Join(rendered, ", "),
+			strings.Join(current, ", "),
+		)
+	}
 }
