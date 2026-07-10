@@ -6,7 +6,7 @@
 <meta name="brainstorm:status" content="Active">
 <meta name="brainstorm:created" content="2026-07-10">
 <meta name="brainstorm:updated" content="2026-07-10">
-<title>Brainstorm: Clawker Package / Install Model</title>
+<title>Brainstorm: Clawker Bundle Install Model</title>
 <style>
   :root { --bg:#ffffff; --fg:#1a1a1a; --fg-soft:#2e2e2e; --muted:#555555;
           --accent:#BF5700; --accent-soft:#d97a30;
@@ -43,7 +43,7 @@
 <article itemscope itemtype="https://schema.org/TechArticle">
 
 <header class="doc-header">
-  <h1 itemprop="headline">Brainstorm: Clawker Package / Install Model</h1>
+  <h1 itemprop="headline">Brainstorm: Clawker Bundle Install Model</h1>
   <dl class="metadata">
     <dt>Status</dt><dd><strong>Active</strong></dd>
     <dt>Created</dt><dd><time itemprop="dateCreated" datetime="2026-07-10">2026-07-10</time></dd>
@@ -55,6 +55,7 @@
   <strong>Sections</strong>
   <ol>
     <li><a href="#problem">Problem &amp; Topic</a></li>
+    <li><a href="#design">The Design (current state)</a></li>
     <li><a href="#open-questions">Open Items &amp; Questions</a></li>
     <li><a href="#decisions">Decisions Made</a></li>
     <li><a href="#conclusions">Conclusions &amp; Insights</a></li>
@@ -90,26 +91,118 @@
   experimental code exists on this branch, it proved ineffective, and a full overhaul is planned.</p>
   <p>Proposed pivot: adopt an <strong>install-by-copy plugin model</strong> like agent harnesses use today
   (Claude Code plugins: one package ships skills + MCPs + commands; install once into an
-  engine-owned store; list = installed). A clawker package = 1+ of {harness, stacks, monitoring
-  extensions}. Sources = local path or git; marketplace is a deferrable resolver layer on top.
-  This brainstorm works out the model: shipped-defaults handling, store layout, naming collisions,
-  versioning/updates, dev loop, and how far this reverses the shipped stack-contract
+  engine-owned store; list = installed). A clawker bundle = 1+ of {harnesses, stacks, monitoring
+  extensions} — peers, no hierarchy. Sources = local path or git. There is no marketplace concept in
+  this model. This brainstorm works out the model: shipped-defaults handling, store layout, naming
+  collisions, versioning/updates, dev loop, and how far this reverses the shipped stack-contract
   (<code>docs/stack-contract.mdx</code>).</p>
+</section>
+
+<section id="design" aria-labelledby="design-h">
+  <h2 id="design-h">The Design (current state)</h2>
+
+  <p><strong>A bundle is how third parties ship 1 or more of {harnesses, stacks, monitoring extensions}.</strong>
+  The three component types are peers inside a bundle — a stack never lives inside a harness; a bundle
+  needs no harness at all. Bundles exist ONLY for distribution. Everything else resolves from two
+  non-bundle tiers. Three tiers total:</p>
+
+  <table>
+    <tr><th>Tier</th><th>What</th><th>Names</th><th>Lifecycle</th></tr>
+    <tr><td><strong>Embedded floor</strong></td><td>Shipped harnesses (<code>claude</code>, <code>codex</code>), stacks (<code>node</code>, <code>go</code>, …), monitoring extensions (<code>claude-code</code>) baked into the binary as standalone things — no bundle wrapper, no disk materialization</td><td>Bare, reserved, unclaimable</td><td>Updates atomically with binary upgrade</td></tr>
+    <tr><td><strong>Loose local</strong></td><td>Hand-rolled component dirs dropped into convention dirs; zero ceremony — no install, no registry write, no wrapper manifest</td><td>Bare</td><td>Exists while the dir exists</td></tr>
+    <tr><td><strong>Installed bundles</strong></td><td>Distributed content declared in <code>bundles:</code>, fetched to host cache</td><td>Qualified <code>namespace.bundle.component</code></td><td>Explicit install/update/remove</td></tr>
+  </table>
+
+  <h3>Bundle directory layout (dir convention, no path fields)</h3>
+  <pre>my-bundle/
+├── .clawker-bundle/
+│   └── bundle.yaml            # bundle manifest — pure metadata, nothing else
+├── harnesses/
+│   └── &lt;name&gt;/                # dir name IS the component name
+│       └── harness.yaml       # component manifest (+ whatever the component ships)
+├── stacks/
+│   └── &lt;name&gt;/
+│       └── stack.yaml
+└── monitoring/
+    └── &lt;name&gt;/
+        └── monitoring.yaml</pre>
+  <ul>
+    <li>Components discovered purely by convention dir; unknown top-level dirs → advisory warning, not error.</li>
+    <li>Any subset of the three dirs; 1+ components total.</li>
+    <li><strong>Standalone-thing special case:</strong> bare <code>stack.yaml</code> / <code>harness.yaml</code> / <code>monitoring.yaml</code> at dir root, no marker dir → implicit single-thing bundle (CC single-skill precedent).</li>
+    <li><code>harness.yaml</code> is a component manifest only — it no longer doubles as a bundle manifest.</li>
+  </ul>
+
+  <h3>Bundle manifest schema (<code>.clawker-bundle/bundle.yaml</code>)</h3>
+  <pre>namespace: acme         # REQUIRED (distributed). Maintainer branding — org/handle/umbrella, whatever they prefer. charset a-z0-9-. NOT a marketplace — pure manifest metadata, no listing concept.
+name: acme-tools        # REQUIRED. charset a-z0-9- (no _). Never derived from source coordinate.
+version: 1.2.0          # optional; absent → resolved source sha IS the version
+description: …          # optional
+author: …               # optional
+repository: …           # optional
+license: …              # optional</pre>
+  <p>No component path fields — enumeration is the dir convention above. Bundle identity =
+  <strong>(namespace, name) pair</strong> + convention dir names for components, exclusively;
+  owner/repo/URL segments are never identity-bearing. Namespace is self-declared (no central
+  registry enforces scope ownership — npm-scope-shaped without the registry); two strangers
+  claiming the same (namespace, name) = hard error at fetch/resolve, accepted as rare residual.</p>
+
+  <h3>Loose-tier convention dirs</h3>
+  <pre>project:  .clawker/{harnesses,stacks,monitoring}/&lt;name&gt;/
+user:     &lt;config-dir&gt;/{harnesses,stacks,monitoring}/&lt;name&gt;/</pre>
+  <p>Component's own manifest is the only requirement (the SKILL.md analog). Drop dir → exists, bare-named.</p>
+
+  <h3>Declaration &amp; content flow</h3>
+  <pre>bundles:                                      # clawker.yaml key, ANY layer (user base / project / .local), union-merged
+  - url: https://git.example.com/acme/tools.git
+    ref: v1.2.0                               # ref or sha REQUIRED on remote sources
+  - url: git@github.com:acme/mono.git
+    path: bundles/tools                       # subdir of a repo (monorepo case)
+    sha: 4f2a…40-char                         # sha beats ref when both set
+  - path: ./vendor/my-bundle                  # local: loads IN PLACE, no cache copy = the dev loop</pre>
+  <ul>
+    <li>Sources are <strong>git-generic</strong>: any host, https or ssh honored as provided. Provider shorthands (<code>owner/repo</code>) = optional sugar expanding to a clone URL, never canonical, never identity.</li>
+    <li>Remote content fetches into host-global cache <code>&lt;data&gt;/bundles/&lt;name&gt;/&lt;version&gt;/</code> — versions coexist (project A pins v1, project B v2). Project root never holds fetched content.</li>
+    <li><strong>Fetch = explicit user intent only.</strong> Declared-but-missing → prompt/error naming the command; never silent. <code>clawker bundle install &lt;src&gt;</code> = sugar: writes the yaml entry + pre-fetches.</li>
+    <li>Ref drift accepted (CC model): no lockfile, no sha write-back; branch/tag entries move only at explicit <code>bundle update</code>; reproducibility = pin <code>sha</code>.</li>
+    <li>Auto-update: opt-in per entry, OFF by default; check fires at start of bundle-consuming commands (<code>build</code>/<code>run</code>/<code>monitor up</code>), CC compare-then-refetch on version change only.</li>
+  </ul>
+
+  <h3>Naming &amp; addressing</h3>
+  <ul>
+    <li>Name charset <code>a-z0-9-</code> (no underscore) for bundle and component names.</li>
+    <li>Bare name (<code>node</code>) = embedded floor or loose local. Qualified = installed-bundle content, ALWAYS 3 dot-separated segments: <code>namespace.bundle.component</code> (<code>acme.tools.node</code>). Globally unique by construction — no declared-set uniqueness rules, no addressing collisions possible. Dot outside name charset → bijective splits.</li>
+    <li>ONE spelling everywhere: yaml selection keys, CLI args, <code>@:</code> selector, image tags, volume names, index names. No alternate colon form, no mapping layers.</li>
+    <li>Bundle identity = (namespace, name); same pair from two sources = hard error at fetch/resolve (C1 resolved). C2–C4 resolved; C5 open.</li>
+  </ul>
+
+  <h3>Selection (what survives in config)</h3>
+  <ul>
+    <li>Config holds SELECTION only, by possibly-qualified name — zero paths, zero registries: <code>build.stacks: [node, acme.tools.node]</code>, per-project harness pick, monitoring selection in clawker.yaml layers.</li>
+    <li>Enable/disable = selection itself (CC <code>enabledPlugins</code> / codex <code>enabled</code> analog). No <code>enabled:</code> flag; bundles never activate as a unit. Deselect = disable (cache persists); delete <code>bundles:</code> entry = unavailable; <code>bundle remove</code> = purge.</li>
+    <li>Monitoring consumption = option D: <code>monitor up</code> idempotently seeds the host stack from the cwd-resolved projection (layers + loose dirs + floor); collector regen uses the all-ever-seeded ledger union; removal = volume prune.</li>
+  </ul>
+
+  <h3>Commands</h3>
+  <p><code>clawker bundle install | list | remove | update | validate [--strict]</code> — replaces all register-era commands. <code>eject</code> (fork embedded content out to an editable dir) TBD. Validation split: hard-fail = unreachable source, malformed/missing <code>bundle.yaml</code>, missing required fields, type mismatch; warn = unknown dirs/fields (typo suggestions), empty component dirs.</p>
 </section>
 
 <section id="open-questions" aria-labelledby="oq-h">
   <h2 id="oq-h">Open Items &amp; Questions</h2>
   <ul>
-    <li><strong>Bundle-name collision (grounded, recommendation ready):</strong> CC facts — within one marketplace duplicate names = hard validation error; across marketplaces they coexist keyed <code>name@marketplace</code> (disambiguator = declaring context); two same-named plugins BOTH enabled = <code>/name:</code> prefix collision, docs silent/undefined (design hole); marketplace entry <code>name</code> OVERRIDES plugin.json name for keys/UI/invocation (declaration site renames). Clawker translation: <code>bundles:</code> entry = our declaration site; resolved config = "one marketplace". Recommendation (revised — user rejected bare hard-error as horrific UX): <strong>prompt-to-alias at the introduction front door.</strong> Collisions enter config only via interactive acts (<code>bundle install</code> / new declaration); at that moment clawker prompts with a suggested alias and writes <code>name:</code> into the entry — committed config stays collision-free, teammates never encounter it. Per-entry alias <code>{url: …, name: alias}</code> = CC's declaration-site rename. Validation failure survives ONLY as the non-interactive backstop (hand-edited yaml in CI), message carries the exact fix. Derivation: collisions enter config only through interactive acts, so the interactive moment is where resolution belongs; declaration-site rename is CC-grounded (marketplace entry name override). Awaiting lock.</li>
-    <li><strong>Source spec shape:</strong> CC uses a discriminated union — string shorthand OR object with <code>source</code> type field (<code>{source: github, repo, ref?, sha?}</code> / <code>{source: url, url, …}</code> / <code>{source: git-subdir, url, path, …}</code>) because field names overlap across shapes (<code>path</code> = repo-subdir there, local-dir elsewhere). Clawker options: (a) CC-mirror discriminator <code>{source: git|path, …}</code>; (b) distinct self-discriminating keys — <code>{url, subdir?, ref?, sha?}</code> vs <code>{path: ./dir}</code> (renaming repo-subdir to <code>subdir</code> removes the ambiguity). Leaning (b); awaiting lock.</li>
-    <li><strong>Pin/lock + update semantics (merged item):</strong> bare branch refs drift — record resolved sha (lockfile? settings?) or accept drift like opencode <code>latest</code>? <code>bundle update</code> refreshes unpinned refs. RELATED (CC correction 2026-07-10): CC auto-INSTALL never happens, but auto-UPDATE of already-installed plugins is real — per-marketplace toggle, default ON for official Anthropic marketplaces, <code>autoUpdate: true</code> managed setting, fires on version change. Clawker refinement: opt-in auto-update per <code>bundles:</code> entry vs <code>bundle update</code> as only refresh path. Auto-update only meaningful on ref/branch entries (sha-pinned never moves) — decide together with pin/lock.</li>
-    <li><strong>Local-dir bare names vs shipped bare names:</strong> project dir has <code>stacks/node/</code>, shipped floor has <code>node</code> — proposed: local wins, provenance printed (single fixed rule, not an algebra). Awaiting confirm; alternative = hard error.</li>
-    <li><strong>What survives in yaml:</strong> selection surfaces only (<code>build.stacks</code>, harness choice per project; monitoring enabled set in settings — qualified names). Registry maps (<code>stacks:</code>, <code>harnesses.&lt;n&gt;.path</code>, <code>monitoring.units</code>) all die. Confirm nothing else needs a path.</li>
-    <li><strong>Verb set:</strong> <code>clawker bundle install|list|remove|update</code> replaces <code>harness register</code> / <code>stack register</code> / <code>monitor register|add</code>? Does <code>monitor add</code>/enable survive as monitoring-set selection (host-global) distinct from bundle install?</li>
-    <li><strong>Fork/eject path for embedded shipped content:</strong> embedded bundles have no dir to copy — need an export/eject verb so forking stays one command.</li>
-    <li><strong>Dev loop:</strong> local convention dirs cover most iteration; is <code>install --link</code> still needed for authoring a distributable bundle in place?</li>
-    <li><strong>Versioning metadata:</strong> bundle manifest version / min-clawker compat — how little can we ship?</li>
-    <li><strong>Update semantics:</strong> <code>bundle update</code> re-fetches from recorded source (git) / re-copies (path); pinned refs stay pinned (opencode/pi law). Source moved/gone = ?</li>
+    <li><strong>COLLISION HANDLING — resolved same-day in stages (C1–C4 + separator locked; C5 open).</strong> Bundle components are PEERS ({harnesses, stacks, monitoring} — stacks do NOT live inside harnesses); every answer covers all three types. Sub-questions:
+      <ul>
+        <li><strong>(C1, C1a–C1c — RESOLVED, see Decisions)</strong> Identity (namespace, name) + hard fail; addressing = 3-segment namespace+bundle+component, globally unique by construction; namespace required; <code>clawker</code> reserved.</li>
+        <li><strong>(SEPARATOR — RESOLVED, see Decisions.)</strong> Dot: <code>namespace.bundle.component</code>, live-verified docker-legal.</li>
+        <li><strong>(C2) Same name across component TYPES.</strong> Bundle shipping <code>stacks/node/</code> + <code>harnesses/node/</code> → both <code>acme.mybundle.node</code>; likewise bare names across floor/loose tiers. CC grounding (2026-07-10): skills/commands invoke as <code>/plugin:name</code>, agents as <code>@agent-plugin:name</code> — different invocation surfaces per type, so same-name pairs coexist by design; but NO documented validation for cross-type duplicates, and unqualified surfaces (MCP server names) can collide — CC's separation is a property of its surfaces, not a stated namespace rule. codex grounding (2026-07-10, real codex-rs source this time): NO cross-type collision check anywhere — <code>validate_plugin.py</code> checks manifest shape/semver/paths only; types load into separate surfaces (TUI has distinct Command/Skill/File popups, no merged list where a collision could manifest) — tolerated by construction, not stated policy. Both prior arts therefore: separate-surfaces, zero validation. <strong>RESOLVED via meta-rule — see Decisions (cross-type coexistence).</strong></li>
+        <li><strong>(C3 — RESOLVED via meta-rule, see Decisions.)</strong> Local wins over embedded floor, provenance printed (CC "plain skills override bundled skills").</li>
+        <li><strong>(C4 — RESOLVED via meta-rule, see Decisions.)</strong> User loose dir beats project loose dir (CC-literal, verified quote skills.md: "enterprise overrides personal, and personal overrides project"). codex unusable here (dedup by PATH only, same-name duplicates all kept — no single-resolution rule).</li>
+        <li><strong>(C5 — PROVISIONALLY RESOLVED, see Decisions.)</strong> Current-project-wins (last <code>monitor up</code> re-seeds from its cwd, warning on overwrite). User explicitly unsure ("for now i don't know what to do in this case"); revisit candidates preserved in the decision entry.</li>
+      </ul>
+    </li>
+    <li><strong>Fork/eject path for embedded shipped content:</strong> embedded things have no dir to copy — need an export/eject verb (<code>bundle eject claude</code>?) so forking stays one command. Also the final verb-set confirmation: <code>bundle install|list|remove|update|validate</code> locked piecemeal; eject TBD.</li>
+    <li><strong>Versioning metadata:</strong> <code>bundle.yaml version</code> optional with sha fallback (locked); does clawker need a min-clawker-compat field at v0, or defer?</li>
+    <li><strong>Update failure semantics:</strong> recorded source moved/gone at <code>bundle update</code> — error shape? cache keeps serving last-fetched version?</li>
     <li><strong>Stack-contract rewrite scope:</strong> which of E1–E22/A1–A11 survive (lineage rendering, vendored stacks, per-harness overlays, egress floors — likely intact INSIDE bundles) vs die (path-reference registration, walkup-as-resolution)?</li>
   </ul>
 </section>
@@ -120,11 +213,9 @@
     <li><span class="tag tag-decision">Shipped = embedded</span> Shipped harnesses/stacks/monitoring extensions stay <strong>embedded in the binary</strong> — no materialization to disk, no fetch-from-repo. They are the virtual pre-installed floor: name-addressable, listed with source <code>built-in</code>, updated atomically with binary upgrades.
         <span class="why">Why: with install-by-copy there is no strict pathing contract left to satisfy — nothing needs shipped content to exist at a disk path. Embed keeps out-of-box offline guarantee, kills the entire materialize/overwrite/self-heal debate (binary upgrade IS the update), avoids repo-fetch pinning/network/version-skew machinery, and matches existing stack-contract law ("shipped definitions resolve straight from the embedded FS").</span>
         <span class="how">How to apply: front doors accept names for shipped things (not just paths); resolution = install store &gt; embed floor.</span></li>
-    <li><span class="tag tag-decision">Namespaced identity (Docker convention)</span> Package identity = origin-qualified name. <strong>Bare name = shipped/embedded</strong> (<code>claude</code>, <code>codex</code>, <code>node</code> — reserved, unclaimable, like Docker official images). <strong><code>owner/name</code> = everything installed</strong> (git source → repo owner; local-path install → user names the namespace once). References are explicit everywhere: <code>build.stacks: [node, andrew/node]</code>.
-        <span class="why">Why: the universal plugin-system pattern (npm scopes, GitHub Actions owner/repo, Homebrew taps, VS Code publisher.ext, Claude Code plugin:component prefixes). Collisions dissolve by qualification instead of prompts/IDs/shadow semantics — forks coexist, selection is explicit, re-install into your own namespace = update not conflict.</span>
-        <span class="how">How to apply: shadowing question is CLOSED (no shadowing — qualify instead). Yesterday's ID/prompt machinery is dead. Superseded in shape by the codex-route decision below: qualification is <code>bundle:component</code>, not <code>owner/name</code>.</span></li>
-    <li><span class="tag tag-decision">Codex / Claude Code route</span> Collision model = <strong>qualification, not precedence tiers</strong>. Components inside an installed bundle are addressed as <code>bundle:component</code> (codex's <code>plugin_name:skill_name</code> pattern); bare names reserved for the shipped/embedded floor. pi-style precedence algebra explicitly rejected — precedence-resolution across installed content is the same walkup implicitness this pivot kills.
-        <span class="why">Why: grounded in real prior art (codex plugins cache <code>{marketplace}/{name}/{version}</code> + qualified skill names; Claude Code plugin:component prefixes). Explicit beats terse for debuggability.</span></li>
+    <li><span class="tag tag-decision">Addressing = qualification (codex / Claude Code route)</span> Components inside an installed bundle are ADDRESSED as qualified names (spelling = <code>namespace.bundle.component</code> per the C1a + separator locks below); bare names reserved for the shipped/embedded floor and loose local tier. pi-style precedence algebra rejected — precedence-resolution across installed content is the same walkup implicitness this pivot kills.
+        <span class="why">Why: grounded in real prior art (codex plugins cache <code>{marketplace}/{name}/{version}</code> + qualified skill names; Claude Code plugin:component prefixes). Explicit beats terse for debuggability.</span>
+        <span class="how">How to apply: this is an ADDRESSING decision only. It does NOT decide collision handling — no collision-handling decision has been made anywhere in this brainstorm (user, 2026-07-10); all collision questions live in Open Items. An earlier Docker-convention <code>owner/name</code> identity scheme was superseded by this entry and is dead.</span></li>
     <li><span class="tag tag-decision">Terminology: BUNDLE</span> Clawker's unit is a <strong>bundle</strong>, not a plugin — bundles add material (build inputs, observability assets), they do not extend clawker CLI execution. A bundle contains any mix of {harness, stacks, monitoring extensions}. The existing harness-bundle concept EXPANDS to this — a bundle no longer requires a harness.
         <span class="why">Why: honest naming — no code runs in the engine (engine-sovereignty law preserved); "plugin" would overpromise execution hooks.</span></li>
     <li><span class="tag tag-decision">Local convention-dir tier</span> Alongside installed bundles, loose local resources auto-load from convention dirs at <strong>project level and user level</strong> (codex skills model: <code>.codex/skills</code> project / <code>~/.agents/skills</code> user). No install step, no registry entry — drop a stack/extension dir in the right place and it exists. This REPLACES register-by-path entirely.
@@ -155,8 +246,30 @@
     <li><span class="tag tag-decision">Bundle sources: git-generic, CC-shaped (LOCKED 2026-07-10)</span> Canonical source = a git clone URL, any host, any protocol: <code>{url: https://…|git@…, ref?, sha?}</code> — https and ssh honored exactly as provided; <code>{url, path: sub/dir, ref?, sha?}</code> for a subdir of a repo (monorepo case); <code>{path: ./dir}</code> for local in-place. <code>sha</code> = full 40-char commit and beats <code>ref</code> (branch/tag) when both set. Provider shorthands (e.g. <code>owner/repo</code>) are OPTIONAL sugar that expands to a clone URL — never the canonical form, never identity-bearing, and docs/examples lead with the generic URL form.
         <span class="why">Why: user rulings 2026-07-10 — clawker supports <em>git</em>, not providers; CC's source-spec shapes (plugin-marketplaces.md "Plugin sources") adopted for field semantics (ref/sha precedence, subdir, local path), minus provider-centrism.</span>
         <span class="how">How to apply: validation mirrors CC split at the write front-door: hard-fail = unreachable source, malformed/missing bundle.yaml, missing required fields, type mismatches; warn = unknown dirs/fields (typo suggestions), empty component dirs; <code>clawker bundle validate ./dir [--strict]</code> for authors.</span></li>
-    <li><span class="tag tag-decision">Namespace separator = <code>__</code> (LOCKED 2026-07-10)</span> Qualified name = <code>bundle__component</code> — <code>schmitt__codex</code> — and that is the ONLY spelling on every surface: yaml selection keys, CLI args, <code>@:schmitt__codex</code> selector, image tags (<code>clawker-proj:schmitt__codex</code>), volume names, index names. No colon form exists; translation/mapping layers between spellings are banned. Bijective by construction: name charset (<code>a-z0-9-</code>) contains no <code>_</code>, so the first <code>__</code> always splits bundle from component.
-        <span class="why">Why: user lock 2026-07-10 — double underscore makes the namespace prefix visually unmistakable vs any single-char separator; docker-tag-legal; <code>@:tag</code>-parse-safe.</span></li>
+    <li><span class="tag tag-decision">Ref drift accepted, no lockfile (LOCKED 2026-07-10)</span> No resolved-sha recording anywhere — not in yaml, not in a lockfile. CC model verbatim: cache is version-keyed; a branch/tag ref drifts only at explicit <code>bundle update</code>; teammates on a ref entry may hold different commits until their next update; anyone needing reproducibility pins <code>sha</code> in the entry (already first-class).
+        <span class="why">Why: user lock 2026-07-10 — accept drift like CC; no second committed artifact, no yaml rewriting behind the user's back.</span></li>
+    <li><span class="tag tag-decision">Meta-rule: tension → defer to CC/codex (LOCKED 2026-07-10)</span> When a design tension arises in this model, the resolution is CC's or codex's approach, literally — do not invent a novel mechanism. Applied immediately to the auto-update trigger: the OPEN "startup analog" resolves to the literal mapping of CC session-startup / codex startup-sync — the check fires at start of bundle-consuming commands (<code>build</code>/<code>run</code>/<code>monitor up</code>), opt-in entries only, CC's compare-then-refetch flow (version change only), never mid-operation, no invented TTL layer. <code>bundle update</code> always available.
+        <span class="why">Why: user ruling 2026-07-10 — "literally do what CC or codex does… that's basically your only options when hitting tension." They solved these problems already; novel mechanisms were rebuked earlier in this brainstorm too.</span></li>
+    <li><span class="tag tag-decision">C1 resolved: two-dimension identity + hard fail (LOCKED 2026-07-10)</span> <code>bundle.yaml</code> gains a REQUIRED <code>namespace</code> field: maintainer-entered branding (org, handle, umbrella — "whatever branding they prefer"), same <code>a-z0-9-</code> charset. It is NOT a marketplace — no listing/distribution concept attaches to it; pure manifest metadata, self-declared by the same maintainer in the same file. Bundle identity = the <strong>(namespace, name) pair</strong>. Two different sources resolving to the same (namespace, name) = <strong>hard error</strong> at fetch/resolve time (declare-time impossible — yaml layers union-merge lazily), error names both sources + remedy; no user alias; same-source re-declare idempotent.
+        <span class="why">Why: user ruling 2026-07-10 — earlier hard-fail rejection targeted single-dimension declared names, where "codex"/"go"-style names guarantee collisions; a second self-branded dimension is the due diligence that makes hard-fail residual-rare (npm scopes / CC's arbitrary-branding marketplace names, minus the registry). Grounding: CC has no defined non-reserved duplicate behavior (open bug #45266, broken qualifier #20593 — uncopyable); codex hard-errors duplicate marketplace names at add with no alias (validate_marketplace_name_for_add) — the one defined prior-art answer, mirrored here at clawker's detection point.</span>
+        <span class="how">How to apply: collision check compares source coordinates of all declared bundles whose manifests resolve to the same (namespace, name); differing sources → error listing both yaml entries (layer + source) and telling the user to drop one. Sub-questions C1a–C1c resolved in the entries below.</span></li>
+    <li><span class="tag tag-decision">C1a resolved: addressing = namespace+bundle+component, 3 segments (LOCKED 2026-07-10, supersedes same-day 2-segment ruling)</span> Qualified address carries ALL THREE: namespace, bundle name, component name (e.g. <code>acme.tools.codex</code> modulo separator, below). Globally unique by construction: (namespace, bundle) is identity-unique (C1) and component names are unique within a bundle per type dir. This DELETES the interim "declared bundle names unique per resolved set" hard error — <code>acme/codex</code> and <code>zorg/codex</code> coexist declared and addressable. Namespace additionally keys identity surfaces: cache <code>&lt;data&gt;/bundles/&lt;namespace&gt;/&lt;name&gt;/&lt;version&gt;/</code>, collision detection, errors, update matching.
+        <span class="why">Why: user ruling 2026-07-10. Component-to-namespace is NOT 1:1 — one maintainer's bundles routinely ship same-named components (<code>acme/codex-tools</code> + <code>acme/codex-extras</code> both shipping harness <code>codex</code> is the normal case), so dropping bundle from the address (2-segment <code>namespace__component</code>) is guaranteed to fail; and bundle-name-only addressing (CC/codex-literal <code>plugin:skill</code>) is those systems' documented open hole (#45266 — bundle names cluster on obvious words like "codex", collision constant not rare; CC's own proposed fix is scoped addressing). Meta-rule inapplicable: prior art broken here, its own issue tracker points at this shape.</span>
+        <span class="how">How to apply: bare name = floor/loose; presence of separator = installed-bundle content, always exactly 3 segments; malformed segment counts = front-door validation error.</span></li>
+    <li><span class="tag tag-decision">C1b + C1c resolved: namespace required; <code>clawker</code> reserved (LOCKED 2026-07-10)</span> <code>namespace</code> REQUIRED in every <code>bundle.yaml</code> (CC and codex both require marketplace name; implicit single-thing bundles carry it in the component manifest or are not distributable). Reserved namespaces: <code>clawker</code> + obvious impersonation combos rejected at validate front door (CC-literal, #18329; codex reserves nothing — CC's is the one defined answer).</li>
+    <li><span class="tag tag-decision">Enable/disable = selection keys, no flag (LOCKED 2026-07-10)</span> CC <code>enabledPlugins</code> / codex <code>[plugins."x@y"] enabled</code> ARE those systems' selection surfaces; clawker's existing selection keys (<code>build.stacks</code>, harness pick, monitoring selection in clawker.yaml layers) are the literal analog — components activate by being named, full stop. No <code>enabled:</code> flag on <code>bundles:</code> entries; bundles never enable/disable as a unit (distribution truck only). Deselect = disable (cache persists, CC disable-keeps-cache analog); delete <code>bundles:</code> entry = unavailable; <code>bundle remove</code> = purge cache.</li>
+    <li><span class="tag tag-decision">C2 resolved: cross-type same names coexist, zero validation (LOCKED 2026-07-10, meta-rule)</span> CC and codex both perform NO cross-type duplicate check; types are separated by their consumption surfaces. Clawker mirror: a bundle may ship <code>stacks/node/</code> AND <code>harnesses/node/</code>; loose/floor tiers likewise. Legal because every clawker surface is type-scoped by construction: <code>build.stacks</code> accepts only stacks, harness pick only harnesses, <code>monitor up</code> projection only monitoring; docker artifacts inherit type context from the surface that produced them. <code>bundle validate</code> checks nothing cross-type.
+        <span class="why">Why: meta-rule — both prior arts tolerate by construction; inventing a uniqueness rule neither has = novel mechanism, banned.</span>
+        <span class="how">How to apply: standing invariant — any FUTURE surface that merges component types in one namespace (a combined list, a shared index) MUST carry type context in its naming; that is the property both prior arts rely on.</span></li>
+    <li><span class="tag tag-decision">C3 resolved: loose local shadows embedded floor (LOCKED 2026-07-10, meta-rule)</span> Same bare name in a loose convention dir and on the embedded floor → loose wins. CC-literal: "plain skills override bundled skills". Shadowing is visible, not silent: list output prints provenance per name (<code>source: local (.clawker/stacks/node) shadows built-in</code>), answering the implicitness concern the CC way — override + visibility, not error.
+        <span class="why">Why: meta-rule; CC is the defined prior art (codex keeps duplicates unresolved, unusable for single-resolution selection keys).</span></li>
+    <li><span class="tag tag-decision">C4 resolved: user loose dir beats project loose dir (LOCKED 2026-07-10, meta-rule; user confirmed — "6 one half dozen the other")</span> Same bare name in user convention dir (<code>&lt;config-dir&gt;/stacks/node</code>) and project convention dir (<code>.clawker/stacks/node</code>) → USER wins. CC-literal, verified 2026-07-10 (skills.md "Where skills live"): "enterprise overrides personal, and personal overrides project" — full chain enterprise &gt; personal &gt; project &gt; bundled. Clawker has no enterprise tier, so: user &gt; project &gt; embedded floor (composing with C3: any loose tier &gt; floor — same as CC "a skill at any of these levels also overrides a bundled skill"). Provenance printed on shadow, same as C3.
+        <span class="why">Why: meta-rule literal application; trade-off (personal dir can shadow a repo's own build inputs on that machine) surfaced to user and accepted 2026-07-10.</span></li>
+    <li><span class="tag tag-decision">C5 PROVISIONAL: current-project-wins on monitoring bare-name clobber (2026-07-10 — explicitly revisitable)</span> Projects A+B with different loose <code>monitoring/acme/</code>: whichever project runs <code>monitor up</code> seeds ITS cwd version onto the shared host stack, overwriting the other's same-named artifacts; overwrite prints a warning naming both (visible, never silent). Ledger union still governs collector regen per option D. Only applies to bare-named LOOSE monitoring — bundled monitoring is collision-proof via <code>namespace.bundle.component</code> keys.
+        <span class="why">Why: user provisional ruling 2026-07-10 ("project wins for now — i don't know what to do in this case, monitoring is such a headache"). Low confidence, no prior art exists.</span>
+        <span class="how">How to apply: implement as documented accept-clobber + warning. Revisit candidates preserved: (1) project-qualified seeded artifact keys (no clobber, verbose names, N-way duplicate seeding of genuinely-shared extensions); (2) content-hash mismatch → hard error at <code>monitor up</code> (identical content = idempotent no-op; consistent with C1 hard-fail posture, but blocks B on A's unrelated state).</span></li>
+    <li><span class="tag tag-decision">Separator = <code>.</code> dot (LOCKED 2026-07-10, supersedes same-day <code>__</code> lock)</span> Qualified name = <code>namespace.bundle.component</code> — <code>acme.tools.codex</code> — ONE spelling on every surface: yaml selection keys, CLI args, <code>@:acme.tools.codex</code> selector, image tags (<code>clawker-proj:acme.tools.codex</code>), volume names, index names. No colon form, no translation/mapping layers. Bijective: name charset (<code>a-z0-9-</code>) contains no dot, so splits are unambiguous; always exactly 3 segments when qualified.
+        <span class="why">Why: user pick 2026-07-10 ("dots are better") — <code>__</code> twice per name rejected; dot matches clawker's existing <code>clawker.project.agent</code> hierarchy grammar. Legality: OCI tag regex <code>[a-zA-Z0-9_][a-zA-Z0-9._-]{0,127}</code> permits dots (non-leading; our names start a-z0-9); LIVE-VERIFIED 2026-07-10 — <code>docker volume create clawker-septest-acme.tools.codex-config</code> and <code>docker tag … clawker-septest:acme.tools.codex</code> both accepted; OpenSearch index names allow mid-name dots (logstash-date convention).</span></li>
   </ul>
 </section>
 
@@ -164,15 +277,15 @@
   <h2 id="conclusions-h">Conclusions &amp; Insights</h2>
   <ul>
     <li><span class="tag tag-insight">Root cause</span> The convolution fault line is <strong>reference vs install</strong>, not the number of artifact types. Reference-in-place forces dynamic conditional discovery (cwd-dependent visibility), N collision front doors, portability caveats, and the materialization fight. Install-by-copy makes <code>list</code> = installed, period.</li>
-    <li><span class="tag tag-insight">Marketplace separable</span> A marketplace is only a source resolver (name → git URL) in front of <code>install</code>. Local-path + git sources deliver the full model; marketplace defers indefinitely.</li>
     <li><span class="tag tag-insight">Update problem dissolves</span> The "must always overwrite or we can't update" problem was an artifact of reference/materialize semantics. Embedded shipped content updates with the binary; installed copies update by explicit re-install from recorded source; user edits belong in the source (or a fork), never in the store.</li>
     <li><span class="tag tag-insight">Prior-art convergence (codex / opencode / pi, researched 2026-07-10)</span> All three open harnesses: install-by-copy into tool-owned store keyed by SOURCE identity (marketplace/npm/git); manifest declares contents by relative path with convention-dir fallback; multi-resource packages are normal; bare spec tracks latest, pinned stays pinned; local convention dirs coexist with installed packages. None uses live path-reference registries resolved by config walkup. codex: <code>plugins/cache/{marketplace}/{name}/{version}</code>, <code>plugin:skill</code> qualification, <code>name@marketplace</code> config refs. opencode: npm packages, <code>--ignore-scripts</code> (no install-time code exec — matches engine sovereignty). pi: npm/git/local sources, <code>pi</code> manifest key declaring resource paths, precedence tiers (rejected for clawker).</li>
     <li><span class="tag tag-insight">Registry era ends</span> Local convention dirs + installed bundles + embedded floor replace ALL yaml registries. Project/settings yaml keeps only SELECTION (which stacks/harness/extensions to use, by possibly-qualified name) — zero paths in config.</li>
-    <li><span class="tag tag-insight">Config-surface law (user, 2026-07-10)</span> <code>clawker.yaml</code> = the layered cross-project config surface (user-level config-dir file is the BASE layer, project overlays, .local on top — CC settings-scope model). <code>settings.yaml</code> = pinned host storage struct for things that must NOT be influenced per project. Consequence: <code>bundles:</code> (availability) lives in clawker.yaml layers; monitoring extension SELECTION (host-stack seeding) lives in settings.yaml; build/harness selection lives in project clawker.yaml. Every surface justified by scope.</li>
+    <li><span class="tag tag-insight">Config-surface law (user, 2026-07-10)</span> <code>clawker.yaml</code> = the layered cross-project config surface (user-level config-dir file is the BASE layer, project overlays, .local on top — CC settings-scope model). <code>settings.yaml</code> = pinned host storage struct for things that must NOT be influenced per project. Consequence: <code>bundles:</code> (availability) lives in clawker.yaml layers; build/harness selection lives in project clawker.yaml; monitoring selection ALSO lives in clawker.yaml layers per the later option-D lock (settings.yaml exits the monitoring story entirely). Every surface justified by scope.</li>
     <li><span class="tag tag-insight">Install/enable semantics researched (CC docs + codex source, 2026-07-10)</span> CC: fetch ONLY at explicit <code>plugin install</code>/<code>update</code>; cache keyed by version — explicit semver refetches only on version bump (new commits without bump = no update), omitted version → git SHA becomes the version → every commit is a new version; <code>disable</code> keeps cache (writes <code>false</code>), <code>uninstall</code> deletes cache + settings entry; auto-UPDATE is real and distinct from auto-install: per-marketplace toggle, DEFAULT ON for official Anthropic marketplaces, <code>autoUpdate: true</code> managed setting — refetches already-installed plugins on version change; auto-INSTALL of never-installed plugins never happens. codex: explicit install PLUS startup-sync reconcile (downloads missing/version-changed bundles for configured plugins); <code>enabled=false</code> in config.toml keeps cache. Both: enable state is config, content is cache — orthogonal.</li>
     <li><span class="tag tag-insight">Local-fs resolution researched (CC docs + codex, 2026-07-10)</span> CC loose tier: <code>SKILL.md</code> in convention dir = whole contract, no manifest, in-place, bare name; scope precedence for same-named loose skills = enterprise &gt; personal &gt; project, and within a tier "plain skills override bundled skills" — LOCAL-WINS precedent for our local-vs-shipped question. CC local plugin install: <code>--plugin-dir</code> = in-place dev loop (no cache, session-scoped); marketplace relative-path source = copy-to-cache. codex: no in-place flag at all — even <code>plugin install ./dir</code> copies to cache. Skills-dir plugin (<code>.claude-plugin/plugin.json</code> inside a loose skill dir) upgrades a loose dir to bundle more component types while staying in-place — precedent for a loose dir graduating to a bundle without moving.</li>
     <li><span class="tag tag-insight">CC name-collision mechanics (2026-07-10)</span> Plugin identity keys are <code>name@marketplace</code> — collision resolution rides the DECLARING CONTEXT, never the source repo. Within one marketplace duplicates hard-fail validation; across marketplaces coexistence is free; the one unhandled case (two same-named plugins enabled → shared <code>/name:</code> prefix) is undefined behavior — a hole clawker's flat-namespace + declare-time hard error structurally avoids. Marketplace entry <code>name</code> overrides the plugin's own manifest name (docs: "the marketplace entry name is what enabledPlugins keys and /plugin use") — declaration-site rename is a first-class CC pattern.</li>
     <li><span class="tag tag-insight">Live-stack seeding is real (2026-07-10)</span> Everything a monitoring extension ships except collector routing is an idempotent REST apply against a running OpenSearch/OSD (templates, pipelines, ISM, saved objects). Collector routing = regen + one-container recreate. Means monitoring consumption does NOT require stack-teardown or a host-pinned enable registry — it can be an at-up-time projection of resolved project config.</li>
+    <li><span class="tag tag-insight">Collision prior-art deep dive (2026-07-10)</span> CC marketplace layer: name = arbitrary maintainer branding in <code>marketplace.json</code>, no rename/alias flag, keyed by name in <code>extraKnownMarketplaces</code>/<code>known_marketplaces.json</code>; ONLY defined collision error = reserved-name validator (#18329 blocks official/anthropic/claude combos; #46786 reserved list undocumented); non-reserved duplicate marketplace names UNDOCUMENTED (inferred first-registered-wins, open design gap #45266 proposing npm scopes); qualified <code>name@marketplace</code> install broken (#20593 qualifier ignored, first match wins, wrong-marketplace error text); same-source re-add idempotent. codex: duplicate marketplace name from different source = hard error at add (<code>validate_marketplace_name_for_add</code>), no alias anywhere; within-marketplace duplicate plugin names = first-wins + logged warning (not rejection); cross-marketplace = <code>name@marketplace</code> compound ID everywhere (config.toml keys, cache <code>plugins/cache/{marketplace}/{name}/{version}</code>), bare ambiguous install → prompt; plugin.json name must match requested name at install or error. Philosophy: codex solves collisions structurally (compound IDs, per-source cache dirs), hard-errors only at the flat layer (marketplace names); CC left its flat layer undefined and is paying in open bugs.</li>
     <li><span class="tag tag-insight">Manifest specs researched (CC docs + codex source, 2026-07-10)</span> Claude Code (<code>.claude-plugin/plugin.json</code>) and codex (<code>.codex-plugin/plugin.json</code>) converge: hidden marker dir holds the manifest; fields = name (kebab, = folder), optional semver version (git-SHA fallback), description/author/homepage/repository/license/keywords + component path fields (string|array, <code>./</code>-relative) with convention-dir auto-discovery fallback; CC single-skill special case (SKILL.md at root = whole dir is one skill); versioned install cache <code>plugins/cache/{marketplace}/{plugin}/{version}/</code>; CC source shapes incl. github{repo,ref,sha}, git-subdir sparse clone, npm — sha pinning native; enable state in scoped settings keyed <code>name@marketplace</code>; marketplace.json = thin {name, source} listing. Refs: code.claude.com/docs/en/plugins-reference.md, plugin-marketplaces.md; codex plugin-json-spec.md.</li>
   </ul>
 </section>
@@ -195,9 +308,7 @@
 <section id="next-steps" aria-labelledby="next-h">
   <h2 id="next-h">Next Steps</h2>
   <ol>
-    <li>Decide: shipped components bare vs qualified; local-dir vs shipped bare-name collision rule.</li>
-    <li>Fix convention-dir layout (project + user levels) and the verb set (bundle install/list/remove/update; monitor add as SELECTION).</li>
-    <li>Sketch bundle manifest (mix of harness/stacks/extensions declared by relative path) + store layout.</li>
+    <li>Decide fork/eject verb for embedded content; finalize full verb set incl. <code>validate</code>/<code>eject</code>.</li>
     <li>Map which stack-contract laws survive / rewrite / die; then size the implementation delta.</li>
   </ol>
 </section>
