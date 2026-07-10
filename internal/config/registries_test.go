@@ -9,21 +9,8 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 )
 
-// --- Schema round-trip: the new registry/overlay nodes parse into typed
+// --- Schema round-trip: the registry/overlay nodes parse into typed
 // fields exactly as declared. ---
-
-func TestProjectSchema_StackRegistry(t *testing.T) {
-	cfg, err := config.NewFromString(`
-stacks:
-  my-rust:
-    path: ./stacks/my-rust
-`, "")
-	require.NoError(t, err)
-
-	entry, ok := cfg.Project().Stacks["my-rust"]
-	require.True(t, ok)
-	assert.Equal(t, "./stacks/my-rust", entry.Path)
-}
 
 func TestProjectSchema_HarnessRegistryPath(t *testing.T) {
 	cfg, err := config.NewFromString(`
@@ -67,17 +54,6 @@ build:
 }
 
 // --- Front-door validation: name rule, path shape, unknown fields. ---
-
-// Conformance: E21 — a bad registered/declared name fails the whole config load.
-func TestValidateProjectRegistries_StackName(t *testing.T) {
-	_, err := config.NewFromString(`
-stacks:
-  My_Rust:
-    path: ./stacks/my-rust
-`, "")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "stacks.My_Rust")
-}
 
 // Conformance: E21 — a bad registered name fails the whole config load.
 func TestValidateProjectRegistries_HarnessName(t *testing.T) {
@@ -134,29 +110,60 @@ build:
 	assert.Contains(t, err.Error(), "build.harnesses.claude.stacks")
 }
 
-func TestValidateProjectRegistries_StackMissingPath(t *testing.T) {
-	_, err := config.NewFromString(`
-stacks:
-  my-rust: {}
+// TestValidateProjectRegistries_QualifiedSelectionKeys proves the front door
+// accepts qualified namespace.bundle.component spellings everywhere a
+// selection key appears — build.stacks entries, overlay stacks, harnesses:
+// init-config keys, and build.harnesses: overlay keys — while still rejecting
+// malformed dotted forms and reserved bare aliases. Under the old bare-only
+// ValidateName/ValidateHarnessName rules every qualified case here failed
+// config load, making bundled components unselectable end to end.
+func TestValidateProjectRegistries_QualifiedSelectionKeys(t *testing.T) {
+	t.Run("qualified keys accepted", func(t *testing.T) {
+		_, err := config.NewFromString(`
+harnesses:
+  acme.tools.codex:
+    env: {FOO: bar}
+build:
+  stacks: [node, acme.tools.rust]
+  harnesses:
+    acme.tools.codex:
+      packages: [jq]
+      stacks: [acme.tools.rust]
 `, "")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "stacks.my-rust")
-	assert.Contains(t, err.Error(), "path")
+		require.NoError(t, err)
+	})
+
+	t.Run("two-segment address rejected", func(t *testing.T) {
+		_, err := config.NewFromString("build:\n  stacks: [acme.rust]\n", "")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "build.stacks")
+	})
+
+	t.Run("reserved bare alias overlay key still rejected", func(t *testing.T) {
+		_, err := config.NewFromString(`
+build:
+  harnesses:
+    latest:
+      packages: [jq]
+`, "")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "reserved")
+	})
 }
 
-// Conformance: E10 — registry paths reject ~ home expansion at the load front-door.
+// Conformance: E10 — a harness registry path rejects ~ home expansion at the load front-door.
 func TestValidateProjectRegistries_PathRejectsTilde(t *testing.T) {
 	_, err := config.NewFromString(`
-stacks:
-  my-rust:
-    path: ~/stacks/my-rust
+harnesses:
+  codex:
+    path: ~/tools/codex
 `, "")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "stacks.my-rust.path")
+	assert.Contains(t, err.Error(), "harnesses.codex.path")
 	assert.Contains(t, err.Error(), "~")
 }
 
-// Conformance: E10 — registry paths reject $VAR expansion at the load front-door.
+// Conformance: E10 — a harness registry path rejects $VAR expansion at the load front-door.
 func TestValidateProjectRegistries_PathRejectsEnvVar(t *testing.T) {
 	_, err := config.NewFromString(`
 harnesses:
@@ -167,27 +174,14 @@ harnesses:
 	assert.Contains(t, err.Error(), "harnesses.codex.path")
 }
 
-// Conformance: E10 — registry paths accept absolute (and relative) paths.
+// Conformance: E10 — a harness registry path accepts absolute (and relative) paths.
 func TestValidateProjectRegistries_PathAcceptsAbsolute(t *testing.T) {
 	_, err := config.NewFromString(`
-stacks:
-  my-rust:
-    path: /opt/stacks/my-rust
+harnesses:
+  codex:
+    path: /opt/tools/codex
 `, "")
 	require.NoError(t, err)
-}
-
-// Conformance: E21 — an unknown field under a registry node is rejected at load.
-func TestValidateProjectRegistries_UnknownFieldInStackEntry(t *testing.T) {
-	_, err := config.NewFromString(`
-stacks:
-  my-rust:
-    path: ./stacks/my-rust
-    version: "1.2.3"
-`, "")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "stacks.my-rust.version")
-	assert.Contains(t, err.Error(), "unknown field")
 }
 
 // Conformance: E21 — an unknown field under the overlay node is rejected at load.
@@ -231,9 +225,6 @@ harnesses:
 
 func TestValidateProjectRegistries_ValidConfigPasses(t *testing.T) {
 	_, err := config.NewFromString(`
-stacks:
-  my-rust:
-    path: ./stacks/my-rust
 harnesses:
   codex:
     path: ./tools/codex-bundle
@@ -256,7 +247,6 @@ build:
 func TestValidateProjectRegistries_NullNodesAccepted(t *testing.T) {
 	for name, yaml := range map[string]string{
 		"bare build key":       "build:\n",
-		"bare stacks key":      "stacks:\n",
 		"bare harnesses key":   "harnesses:\n",
 		"null harness entry":   "harnesses:\n  claude:\n",
 		"null harness config":  "harnesses:\n  claude:\n    config:\n",
@@ -272,13 +262,6 @@ func TestValidateProjectRegistries_NullNodesAccepted(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
-
-	t.Run("null stack entry still requires path", func(t *testing.T) {
-		_, err := config.NewFromString("stacks:\n  my-rust:\n", "")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "stacks.my-rust")
-		assert.Contains(t, err.Error(), "path")
-	})
 }
 
 // Conformance: E21 — a bad config.strategy (and unknown field under it) is rejected at load.
@@ -317,10 +300,10 @@ harnesses:
 
 func TestNewProjectStoreFromPreset_ValidatesRegistries(t *testing.T) {
 	_, err := config.NewProjectStoreFromPreset(`
-stacks:
+harnesses:
   Bad_Name:
     path: ./x
 `)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "stacks.Bad_Name")
+	assert.Contains(t, err.Error(), "harnesses.Bad_Name")
 }

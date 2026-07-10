@@ -53,7 +53,7 @@
               "type": "boolean"
             },
             "path": {
-              "description": "Bundle directory (harness.yaml + Dockerfile.harness.tmpl + assets), relative to the project root or absolute — no ~ or $VAR expansion; empty = built-in/shipped resolution",
+              "description": "Harness bundle directory (harness.yaml + Dockerfile.harness.tmpl + assets), relative to the project root or absolute — no ~ or $VAR expansion; empty = built-in/shipped resolution",
               "title": "Path",
               "type": "string"
             },
@@ -445,7 +445,7 @@
             "type": "boolean"
           },
           "path": {
-            "description": "Bundle directory (harness.yaml + Dockerfile.harness.tmpl + assets), relative to the project root or absolute — no ~ or $VAR expansion; empty = built-in/shipped resolution",
+            "description": "Harness bundle directory (harness.yaml + Dockerfile.harness.tmpl + assets), relative to the project root or absolute — no ~ or $VAR expansion; empty = built-in/shipped resolution",
             "title": "Path",
             "type": "string"
           },
@@ -462,7 +462,7 @@
         },
         "type": "object"
       },
-      "description": "Per-harness container initialization settings and bundle registration, keyed by harness name",
+      "description": "Per-harness container initialization settings, keyed by harness name",
       "title": "Harnesses",
       "type": "object"
     },
@@ -629,25 +629,6 @@
       "required": [
         "docker_socket"
       ],
-      "type": "object"
-    },
-    "stacks": {
-      "additionalProperties": {
-        "additionalProperties": false,
-        "properties": {
-          "path": {
-            "description": "Stack definition directory (stack.yaml plus Dockerfile.stack-root.tmpl and/or Dockerfile.stack-user.tmpl), relative to the project root or absolute — no ~ or $VAR expansion",
-            "title": "Path",
-            "type": "string"
-          }
-        },
-        "required": [
-          "path"
-        ],
-        "type": "object"
-      },
-      "description": "Stack registry mapping a stack name to its definition directory",
-      "title": "Stacks",
       "type": "object"
     },
     "workspace": {

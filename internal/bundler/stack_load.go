@@ -28,10 +28,6 @@ const (
 	StackUserFragmentFile = "Dockerfile.stack-user.tmpl"
 )
 
-// StacksSubdir is the subdirectory of a harness bundle holding
-// bundle-embedded stack definitions.
-const StacksSubdir = "stacks"
-
 // StackDefinition is a loaded stack definition.
 type StackDefinition struct {
 	// Name is the lookup key requirers declare.
@@ -48,13 +44,14 @@ type StackDefinition struct {
 	UserFragment string
 }
 
-// ValidateStackName rejects names that cannot serve as stack registry keys — a
-// definition name is also a registry key, a directory name, and a token in
-// build.stacks lists. Delegates to the unified naming rule shared by
-// stacks, harnesses, and their registry/overlay keys (see
-// consts.ValidateName).
+// ValidateStackName validates a stack selection address: a bare name (embedded
+// floor or a loose convention dir) or a qualified namespace.bundle.component
+// address (installed bundle). It delegates to consts.ValidateComponentRef, the
+// shared selection-key rule — a stack address appears in build.stacks lists, a
+// harness manifest's stacks: dependency list, and as a loaded definition's
+// name.
 func ValidateStackName(name string) error {
-	if err := consts.ValidateName(name); err != nil {
+	if err := consts.ValidateComponentRef(name); err != nil {
 		return fmt.Errorf("stack %w", err)
 	}
 	return nil

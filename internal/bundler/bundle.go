@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -124,20 +123,23 @@ func validateStaging(name string, volumes []config.VolumeSpec, st config.Staging
 	return nil
 }
 
-// validateStackDecls checks the manifest's stack declaration list
-// at the load front door: valid names, no duplicates. Whether each name
-// resolves to a definition is a generation-time concern (the lookup chain
-// includes the project stacks: registry, which a bundle cannot see).
+// validateStackDecls checks a harness manifest's stacks: dependency list at the
+// load front door: every entry is a valid possibly-qualified stack address and
+// no address repeats. Whether each address resolves to a definition is a
+// generation-time concern handled by the single resolution algorithm
+// (bundle.Resolver) — a bare name hits the loose/floor tiers, a qualified
+// namespace.bundle.component address hits the installed bundle set (a bundled
+// harness references its shipped sibling stack by its qualified self-address).
 func validateStackDecls(name string, decls []string) error {
 	seen := map[string]bool{}
-	for _, tc := range decls {
-		if err := ValidateStackName(tc); err != nil {
+	for _, dep := range decls {
+		if err := ValidateStackName(dep); err != nil {
 			return fmt.Errorf("harness %q: %w", name, err)
 		}
-		if seen[tc] {
-			return fmt.Errorf("harness %q: duplicate stack declaration %q", name, tc)
+		if seen[dep] {
+			return fmt.Errorf("harness %q: duplicate stack declaration %q", name, dep)
 		}
-		seen[tc] = true
+		seen[dep] = true
 	}
 	return nil
 }
@@ -379,49 +381,6 @@ func validateSeeds(name string, fsys fs.FS, volumes []config.VolumeSpec, seeds [
 		}
 	}
 	return nil
-}
-
-// HasStack reports whether the bundle embeds a stack definition
-// directory for name under its stacks/ subdirectory.
-func (b *Bundle) HasStack(name string) bool {
-	_, err := fs.Stat(b.fsys, path.Join(StacksSubdir, name, StackManifestFile))
-	return err == nil
-}
-
-// Stack loads a bundle-embedded stack definition.
-func (b *Bundle) Stack(name string) (*StackDefinition, error) {
-	sub, err := fs.Sub(b.fsys, path.Join(StacksSubdir, name))
-	if err != nil {
-		return nil, fmt.Errorf("harness %q: stack %q: %w", b.Name, name, err)
-	}
-	def, loadErr := LoadStackDefinition(name, sub)
-	if loadErr != nil {
-		return nil, fmt.Errorf("harness %q: %w", b.Name, loadErr)
-	}
-	return def, nil
-}
-
-// BundledStacks returns the names of stack definitions the bundle embeds
-// under its stacks/ subdirectory, sorted. A bundle with no stacks/ directory
-// (or none that carry a manifest) has none. The dir name IS the stack name.
-// A missing stacks/ directory is not an error (returns nil); any other read
-// error is surfaced rather than silently collapsed to "no stacks".
-func (b *Bundle) BundledStacks() ([]string, error) {
-	entries, err := fs.ReadDir(b.fsys, StacksSubdir)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("harness %q: read %s/: %w", b.Name, StacksSubdir, err)
-	}
-	var names []string
-	for _, e := range entries {
-		if e.IsDir() && b.HasStack(e.Name()) {
-			names = append(names, e.Name())
-		}
-	}
-	sort.Strings(names)
-	return names, nil
 }
 
 // DeclaredMonitoringUnits returns the monitoring unit names the bundle's

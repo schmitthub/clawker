@@ -3,192 +3,70 @@ package bundler
 import (
 	"bytes"
 	"fmt"
-	"os"
-	"path/filepath"
-	"slices"
 	"strings"
 	"text/template"
 
 	"github.com/schmitthub/clawker/internal/bundle"
-	"github.com/schmitthub/clawker/internal/config"
 )
-
-// sourceBuilt is the provenance label for the embedded layer compiled into
-// the binary (the virtual base of both the stack and harness lookup chains).
-const sourceBuilt = "built"
 
 // ShippedStackNames lists the stack components on the embedded floor.
 func ShippedStackNames() []string {
 	return bundle.FloorNames(bundle.ComponentStack)
 }
 
-// isShippedStack reports whether name is one of the embedded definitions.
-func isShippedStack(name string) bool {
-	return slices.Contains(ShippedStackNames(), name)
+// provenanceLine renders one resolved component's build-output provenance line,
+// prefixed with the component type — e.g. "stack node ← project (…)",
+// "harness claude ← built-in", or "stack acme.tools.node ← bundle acme.tools".
+// The tier vocabulary comes from bundle.Provenance; the type prefix and the
+// component's own address spelling (bare or dotted) frame it. A single Resolve
+// reports only the resolved source, not the shadowed farther tiers, so this
+// line names where the component came from without a "shadows …" clause.
+func provenanceLine(comp bundle.Component) string {
+	return comp.Type.String() + " " + comp.Provenance.Line(comp.Address.String())
 }
 
-// loadEmbeddedStack loads a shipped definition straight from the embedded floor
-// (the virtual base layer).
-func loadEmbeddedStack(name string) (*StackDefinition, error) {
-	src, err := bundle.FloorFS(bundle.ComponentStack, name)
+// resolveStack resolves one declared stack address through the single
+// resolution algorithm and loads its definition. A bare name resolves user
+// loose > project loose > embedded floor; a qualified
+// namespace.bundle.component address resolves from the installed/in-place
+// bundle set. There is no bundle-embedded sibling lane and no project-registry
+// lane — a harness's shipped sibling stack is referenced by its qualified
+// self-address like any other bundle stack. An unresolvable address is a hard
+// error, never a silent skip.
+func resolveStack(r *bundle.Resolver, name string) (*StackDefinition, bundle.Component, error) {
+	comp, err := r.Resolve(bundle.ComponentStack, name)
 	if err != nil {
-		return nil, fmt.Errorf("shipped stack %q: %w", name, err)
+		return nil, bundle.Component{}, fmt.Errorf("resolve stack %q: %w", name, err)
 	}
-	def, loadErr := LoadStackDefinition(name, src)
+	def, loadErr := LoadStackDefinition(comp.Address.String(), comp.FS)
 	if loadErr != nil {
-		return nil, fmt.Errorf("load shipped stack %q: %w", name, loadErr)
+		return nil, bundle.Component{}, loadErr
 	}
-	return def, nil
+	return def, comp, nil
 }
 
-// stackProvenance records where a declared stack name resolved from and which
-// farther layers it shadowed. Emitted in build output only when a closer layer
-// shadows a farther one (len(shadows) > 0) — an unshadowed resolution is not
-// noteworthy.
-type stackProvenance struct {
-	name    string   // the declared stack name
-	source  string   // the layer it resolved from (e.g. "project (./stacks/node)")
-	shadows []string // farther layers that also define name, closest first
-}
-
-// line renders the provenance as a single build-output line.
-func (p stackProvenance) line() string {
-	return fmt.Sprintf("stack %s ← %s shadows %s", p.name, p.source, strings.Join(p.shadows, ", "))
-}
-
-// noteworthy reports whether the resolution is worth a build-output line: a
-// closer layer shadowed a farther one. Unshadowed resolutions stay silent.
-func (p stackProvenance) noteworthy() bool {
-	return len(p.shadows) > 0
-}
-
-// resolveStack loads one declared stack name from the closest layer that
-// defines it. Lineage is scoped by whether a harness bundle is in play:
+// resolveStackDecls resolves a declaration list through the resolver,
+// accumulating fragments in declaration order and one provenance line per
+// non-floor resolution — a stack drawn from a loose convention dir or an
+// installed bundle rather than the embedded floor is the notable case worth
+// surfacing (it overrides or supplements what a plain build would use). The
+// floor is the silent common case. dupIsError controls duplicate handling:
+// build.stacks rejects a repeated address; a harness manifest renders it once,
+// silently.
 //
-//	base image    (bundle == nil): project stacks: registry > shipped
-//	harness image (bundle != nil): project stacks: registry > bundle stacks/ > shipped
-//
-// A matching key at a closer layer wins WHOLESALE — never merged. When a closer
-// layer shadows a farther one, the returned provenance names both; the caller
-// decides whether to surface it. An unresolvable name is a hard error naming the
-// registration remedy — never a silent skip.
-func resolveStack(cfg config.Config, hb *Bundle, name string) (*StackDefinition, stackProvenance, error) {
-	if err := ValidateStackName(name); err != nil {
-		return nil, stackProvenance{}, fmt.Errorf("resolve stack: %w", err)
-	}
-
-	projEntry, projHas := projectStackEntry(cfg, name)
-	bundleHas := hb != nil && hb.HasStack(name)
-	shippedHas := isShippedStack(name)
-
-	switch {
-	case projHas:
-		def, err := loadProjectStack(cfg, name, projEntry)
-		if err != nil {
-			return nil, stackProvenance{}, err
-		}
-		prov := stackProvenance{
-			name:    name,
-			source:  fmt.Sprintf("project (%s)", projEntry.Path),
-			shadows: fartherStackLayers(hb, bundleHas, shippedHas),
-		}
-		return def, prov, nil
-	case bundleHas:
-		def, err := hb.Stack(name)
-		if err != nil {
-			return nil, stackProvenance{}, fmt.Errorf("resolve stack: %w", err)
-		}
-		prov := stackProvenance{
-			name:    name,
-			source:  bundleLabel(hb),
-			shadows: fartherStackLayers(nil, false, shippedHas),
-		}
-		return def, prov, nil
-	case shippedHas:
-		def, err := loadEmbeddedStack(name)
-		if err != nil {
-			return nil, stackProvenance{}, err
-		}
-		return def, stackProvenance{name: name, source: sourceBuilt, shadows: nil}, nil
-	default:
-		return nil, stackProvenance{}, fmt.Errorf(
-			"%w: %q is declared in clawker.yaml but resolves nowhere — register a definition with `clawker stack register <path> --name %s`, or declare a shipped stack (%v)",
-			ErrUnknownStack,
-			name,
-			name,
-			ShippedStackNames(),
-		)
-	}
-}
-
-// fartherStackLayers lists the farther lookup layers that also define a
-// declared name — closest first — for shadow provenance. bundle may be nil
-// only when bundleHas is false.
-func fartherStackLayers(hb *Bundle, bundleHas, shippedHas bool) []string {
-	var layers []string
-	if bundleHas {
-		layers = append(layers, bundleLabel(hb))
-	}
-	if shippedHas {
-		layers = append(layers, sourceBuilt)
-	}
-	return layers
-}
-
-// bundleLabel is the provenance phrase for a bundle-embedded stack layer.
-func bundleLabel(hb *Bundle) string {
-	return fmt.Sprintf("%s bundle", hb.Name)
-}
-
-// projectStackEntry returns the project stacks: registry entry for name, and
-// whether one with a non-empty path exists. An empty path is rejected at the
-// config front-door (internal/config validate.go); it is treated as absent
-// here only defensively, never as a silent skip of a valid registration.
-func projectStackEntry(cfg config.Config, name string) (config.StackRegistryEntry, bool) {
-	p := cfg.Project()
-	if p == nil {
-		return config.StackRegistryEntry{}, false
-	}
-	entry, ok := p.Stacks[name]
-	if !ok || entry.Path == "" {
-		return config.StackRegistryEntry{}, false
-	}
-	return entry, true
-}
-
-// loadProjectStack loads a definition through its project stacks: registry
-// entry, resolving a relative path against the project root.
-func loadProjectStack(cfg config.Config, name string, entry config.StackRegistryEntry) (*StackDefinition, error) {
-	dir, err := resolveRegistryPath(cfg, fmt.Sprintf("stack %q", name), entry.Path)
-	if err != nil {
-		return nil, err
-	}
-	if _, statErr := os.Stat(filepath.Join(dir, StackManifestFile)); statErr != nil {
-		return nil, fmt.Errorf(
-			"stack %q: no definition at registered path %s (%w) — fix stacks.%s.path in clawker.yaml",
-			name, dir, statErr, name,
-		)
-	}
-	def, loadErr := LoadStackDefinition(name, os.DirFS(dir))
-	if loadErr != nil {
-		return nil, fmt.Errorf("load stack %q from %s: %w", name, dir, loadErr)
-	}
-	return def, nil
-}
-
-// resolveStackDecls resolves a declaration list against the given bundle
-// (nil = base-image lineage), accumulating fragments in declaration order and
-// shadow provenance. dupIsError controls duplicate handling: build.stacks
-// rejects a repeated name; a harness manifest silently renders it once.
+// Resolve reports only the winning tier, not the shadowed farther tiers (that
+// full shadow listing is a bundle-list concern, and computing it here would
+// require scanning the installed-bundle set — which must never block a
+// floor-only build); so the line names the resolved source, e.g.
+// "stack node ← project (…)" or "stack acme.tools.node ← bundle acme.tools".
 func resolveStackDecls(
-	cfg config.Config,
-	hb *Bundle,
+	r *bundle.Resolver,
 	decls []string,
 	dupIsError bool,
-) ([]namedFragment, []namedFragment, []stackProvenance, error) {
+) ([]namedFragment, []namedFragment, []string, error) {
 	seen := map[string]bool{}
 	var defs []*StackDefinition
-	var prov []stackProvenance
+	var prov []string
 	for _, name := range decls {
 		if seen[name] {
 			if dupIsError {
@@ -197,30 +75,43 @@ func resolveStackDecls(
 			continue
 		}
 		seen[name] = true
-		def, p, resolveErr := resolveStack(cfg, hb, name)
+		def, comp, resolveErr := resolveStack(r, name)
 		if resolveErr != nil {
 			return nil, nil, nil, resolveErr
 		}
 		defs = append(defs, def)
-		if p.noteworthy() {
-			prov = append(prov, p)
+		if comp.Provenance.Tier != bundle.TierFloor {
+			prov = append(prov, provenanceLine(comp))
 		}
 	}
 	root, user := splitFragments(defs)
 	return root, user, prov, nil
 }
 
-// resolveProjectStacks resolves the project's build.stacks declarations for
-// the BASE image. The bundle is deliberately absent: the shared base is
-// harness-agnostic, so project declarations resolve from the project registry
-// and the shipped set only — a bundle-embedded definition can never leak into
-// the base. Returns root-scope and user-scope fragment lists in declaration
-// order, plus the provenance of any resolution that shadowed a farther layer.
+// resolveProjectStacks resolves the project's build.stacks declarations for the
+// BASE image. Every name resolves through the one algorithm (loose > floor for
+// bare, installed for qualified); a repeated declaration is an error. Returns
+// root- and user-scope fragment lists in declaration order plus the provenance
+// lines of any resolution that shadowed a farther tier.
 func resolveProjectStacks(
-	cfg config.Config,
+	r *bundle.Resolver,
 	decls []string,
-) ([]namedFragment, []namedFragment, []stackProvenance, error) {
-	return resolveStackDecls(cfg, nil, decls, true)
+) ([]namedFragment, []namedFragment, []string, error) {
+	return resolveStackDecls(r, decls, true)
+}
+
+// resolveHarnessStacks resolves a harness's stack dependencies for the HARNESS
+// image through the same one algorithm as every other surface. Every declared
+// address ALWAYS renders here with its resolved definition — there is no
+// cross-stratum dedup against project-declared base stacks; a name the project
+// also declares in build.stacks renders in both images, and fragment
+// self-guards / apt idempotence / PATH shadowing own any interaction. A
+// duplicate within the manifest list renders once, silently.
+func resolveHarnessStacks(
+	r *bundle.Resolver,
+	harnessDecls []string,
+) ([]namedFragment, []namedFragment, []string, error) {
+	return resolveStackDecls(r, harnessDecls, false)
 }
 
 // namedFragment is one fragment of a definition, tagged with the
@@ -246,22 +137,6 @@ func splitFragments(defs []*StackDefinition) ([]namedFragment, []namedFragment) 
 	return root, user
 }
 
-// resolveHarnessStacks resolves the harness declarations for the HARNESS
-// image. Every declared name ALWAYS renders here with its lineage-resolved
-// definition (project registry > bundle stacks/ > shipped) — there is no
-// cross-stratum dedup against project-declared base stacks. A project that
-// also declares the same name in build.stacks gets it in the base too; both
-// render, and fragment self-guards / apt idempotence / PATH shadowing own any
-// interaction (design §2). Returns root- and user-scope fragments in
-// declaration order plus shadow provenance.
-func resolveHarnessStacks(
-	cfg config.Config,
-	hb *Bundle,
-	harnessDecls []string,
-) ([]namedFragment, []namedFragment, []stackProvenance, error) {
-	return resolveStackDecls(cfg, hb, harnessDecls, false)
-}
-
 // renderStackSteps executes each fragment against the Dockerfile
 // context, yielding the strings the template anchors splice in.
 func renderStackSteps(fragments []namedFragment, tctx *DockerfileContext) ([]string, error) {
@@ -278,24 +153,4 @@ func renderStackSteps(fragments []namedFragment, tctx *DockerfileContext) ([]str
 		steps = append(steps, strings.TrimRight(buf.String(), "\n"))
 	}
 	return steps, nil
-}
-
-// resolveRegistryPath resolves a registry path entry to an absolute path: an
-// absolute entry as-is, a relative entry against the project root. A relative
-// entry with no project root set (config-dir-only loads) is a hard error —
-// resolving it against the process CWD would silently load whatever happens to
-// live there.
-func resolveRegistryPath(cfg config.Config, key, p string) (string, error) {
-	if p == "" || filepath.IsAbs(p) {
-		return p, nil
-	}
-	root := cfg.ProjectRoot()
-	if root == "" {
-		return "", fmt.Errorf(
-			"%s: registry path %q is relative but no project root is resolved — use an absolute path or run inside the project",
-			key,
-			p,
-		)
-	}
-	return filepath.Join(root, p), nil
 }

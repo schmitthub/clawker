@@ -22,6 +22,10 @@ import (
 	"time"
 
 	clawkerdembed "github.com/schmitthub/clawker/clawkerd/embed"
+	// Aliased: this file already uses "bundle" as a local variable/parameter
+	// name for a loaded *Bundle in several functions, so the package is aliased
+	// to avoid shadowing it.
+	bundlepkg "github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/hostproxy/internals"
 )
@@ -217,12 +221,24 @@ type ProjectGenerator struct {
 
 	bundle *Bundle // lazily loaded via harnessBundle()
 
-	// provenance accumulates build-output lines describing which layer each
-	// stack and the harness bundle resolved from when a closer layer shadowed
-	// a farther one (and, for the harness, always). Read via Provenance()
-	// after GenerateBase/GenerateHarness; the docker Builder forwards it to
-	// clawker build stderr.
+	res *bundlepkg.Resolver // lazily constructed via resolver()
+
+	// provenance accumulates build-output lines naming which tier each stack
+	// and the harness bundle resolved from: every non-floor stack resolution
+	// (a loose or bundled override) and always the harness. Read via
+	// Provenance() after GenerateBase/GenerateHarness; the docker Builder
+	// forwards it to clawker build stderr.
 	provenance []string
+}
+
+// resolver returns the generator's shared component resolver, constructing it
+// on first use. One resolver per generation memoizes a single installed-bundle
+// scan across the base and harness stack resolutions plus the harness lookup.
+func (g *ProjectGenerator) resolver() *bundlepkg.Resolver {
+	if g.res == nil {
+		g.res = bundlepkg.NewResolver(g.cfg)
+	}
+	return g.res
 }
 
 // Provenance returns the accumulated resolution provenance lines, deduplicated
@@ -240,12 +256,10 @@ func (g *ProjectGenerator) Provenance() []string {
 	return out
 }
 
-// recordStackProvenance appends the build-output lines for a batch of stack
-// resolutions that shadowed a farther layer.
-func (g *ProjectGenerator) recordStackProvenance(prov []stackProvenance) {
-	for _, p := range prov {
-		g.provenance = append(g.provenance, p.line())
-	}
+// recordStackProvenance appends the build-output provenance lines for a batch
+// of non-floor stack resolutions.
+func (g *ProjectGenerator) recordStackProvenance(prov []string) {
+	g.provenance = append(g.provenance, prov...)
 }
 
 // harnessBundle resolves and caches the selected harness bundle, recording
@@ -258,11 +272,11 @@ func (g *ProjectGenerator) harnessBundle() (*Bundle, error) {
 	if err != nil {
 		return nil, err
 	}
-	b, prov, err := loadHarnessResolved(g.cfg, name)
+	b, comp, err := loadHarnessResolved(g.resolver(), name)
 	if err != nil {
 		return nil, err
 	}
-	g.provenance = append(g.provenance, prov.line())
+	g.provenance = append(g.provenance, provenanceLine(comp))
 	g.bundle = b
 	return b, nil
 }
@@ -284,10 +298,10 @@ func (g *ProjectGenerator) GenerateBase() ([]byte, error) {
 		return nil, fmt.Errorf("failed to build context: %w", err)
 	}
 
-	// Project-declared stacks render in the base, before the project's
-	// own instructions. Resolution deliberately excludes the harness bundle
-	// (resolveProjectStacks) — the shared base stays harness-agnostic.
-	root, user, prov, err := resolveProjectStacks(g.cfg, g.cfg.Project().Build.Stacks)
+	// Project-declared stacks render in the base, before the project's own
+	// instructions. Resolution is the one algorithm — loose > floor for bare
+	// names, installed bundles for qualified ones.
+	root, user, prov, err := resolveProjectStacks(g.resolver(), g.cfg.Project().Build.Stacks)
 	if err != nil {
 		return nil, err
 	}
@@ -329,32 +343,32 @@ func (g *ProjectGenerator) GenerateHarness() ([]byte, error) {
 	}
 	tctx.HarnessBaseImage = g.BaseImageRef
 
-	bundle, err := g.harnessBundle()
+	hb, err := g.harnessBundle()
 	if err != nil {
 		return nil, err
 	}
 
 	// An overlay keyed to a harness that resolves nowhere (typo, or a bundle
-	// the user never registered) would otherwise be dead config that silently
+	// the user never installed) would otherwise be dead config that silently
 	// drops its packages/stacks/inject from every image — surface it loudly.
-	if overlayErr := validateOverlayKeys(g.cfg); overlayErr != nil {
+	if overlayErr := validateOverlayKeys(g.cfg, g.resolver()); overlayErr != nil {
 		return nil, overlayErr
 	}
 
 	// The per-harness build overlay (build.harnesses.<name>) is scoped to this
-	// one harness's image, keyed by the resolved harness name the bundle
-	// carries.
-	overlay := g.cfg.Project().Build.Harnesses[bundle.Name]
+	// one harness's image, keyed by the harness's exact selection spelling
+	// (bare or qualified) the bundle carries as its Name.
+	overlay := g.cfg.Project().Build.Harnesses[hb.Name]
 
-	// Harness-declared stacks ALWAYS render here with their lineage-resolved
+	// Harness-declared stacks ALWAYS render here with their resolved
 	// definition — no cross-stratum dedup against project-declared base
 	// stacks (design §2). A name the project also declares in build.stacks
 	// renders in both images; fragment self-guards own any interaction. The
 	// project's per-harness overlay stacks render AFTER the bundle's own
-	// installer stacks (installer → overlay), sharing one lineage lookup so
-	// a name repeated across the two sources still renders once.
-	decls := slices.Concat(bundle.Manifest.Stacks, overlay.Stacks)
-	root, user, prov, err := resolveHarnessStacks(g.cfg, bundle, decls)
+	// installer stacks (installer → overlay), sharing one resolution so a
+	// name repeated across the two sources still renders once.
+	decls := slices.Concat(hb.Manifest.Stacks, overlay.Stacks)
+	root, user, prov, err := resolveHarnessStacks(g.resolver(), decls)
 	if err != nil {
 		return nil, err
 	}
@@ -368,7 +382,7 @@ func (g *ProjectGenerator) GenerateHarness() ([]byte, error) {
 
 	applyHarnessOverlay(tctx, overlay)
 
-	tmpl, err := Compose(DockerfileHarnessImageTemplate, bundle)
+	tmpl, err := Compose(DockerfileHarnessImageTemplate, hb)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse harness Dockerfile template: %w", err)
 	}

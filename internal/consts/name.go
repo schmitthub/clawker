@@ -163,6 +163,22 @@ func ValidateComponentRef(ref string) error {
 	return err
 }
 
+// ValidateHarnessRef validates a harness selection key — a -t tag segment, a
+// harnesses: init-config key, or a build.harnesses: overlay key. A qualified
+// key is checked structurally like any component ref; a bare key must
+// additionally avoid the reserved image-tag aliases (default/latest/base),
+// which can never collide with a dotted qualified spelling.
+func ValidateHarnessRef(ref string) error {
+	a, err := parseAddress(ref)
+	if err != nil {
+		return err
+	}
+	if a.qualified {
+		return nil
+	}
+	return ValidateHarnessName(ref)
+}
+
 // ValidateNamespace validates a bundle namespace: the shared name rule plus a
 // reserved set that a self-declared namespace may not claim — the clawker name
 // exactly, any clawker-prefixed or -clawker-suffixed name, and the

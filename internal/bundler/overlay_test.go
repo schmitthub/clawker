@@ -153,7 +153,7 @@ build:
 // TestGenerateHarness_OverlayUnknownHarnessKey: an overlay keyed to a harness
 // that resolves nowhere (typo or unregistered bundle) is dead config that
 // would silently drop its content from every image — GenerateHarness must
-// error, naming the key and the register remedy.
+// error, naming the key and the known harnesses.
 func TestGenerateHarness_OverlayUnknownHarnessKey(t *testing.T) {
 	cfg := testConfig(t, `
 version: "1"
@@ -167,5 +167,6 @@ build:
 	_, err := gen.GenerateHarness()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "build.harnesses.claud")
-	assert.Contains(t, err.Error(), "clawker harness register")
+	assert.Contains(t, err.Error(), "unknown harness")
+	assert.Contains(t, err.Error(), "known harnesses")
 }

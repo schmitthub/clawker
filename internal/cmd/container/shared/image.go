@@ -72,7 +72,7 @@ func validatePlaceholderHarness(cfg config.Config, harnessTag string) error {
 	}
 	if !intbuild.IsKnownHarness(cfg, harnessTag) {
 		return fmt.Errorf(
-			"@:%s does not name a known harness (shipped, or registered in clawker.yaml harnesses:)", harnessTag)
+			"@:%s does not name a known harness (a built-in, a loose harness dir, or an installed bundle)", harnessTag)
 	}
 	return nil
 }

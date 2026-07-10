@@ -20,7 +20,7 @@ import (
 func TestValidateProjectRegistries_FileProvenance(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, consts.ProjectConfigFile), []byte(`
-stacks:
+harnesses:
   Bad_Name:
     path: ./x
 `), 0o644))
@@ -34,7 +34,7 @@ stacks:
 	err = validateProjectRegistries(store)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), consts.ProjectConfigFile)
-	assert.Contains(t, err.Error(), "stacks.Bad_Name")
+	assert.Contains(t, err.Error(), "harnesses.Bad_Name")
 }
 
 // TestValidateProjectRegistries_MalformedShapes drives every "must be a
@@ -48,8 +48,6 @@ func TestValidateProjectRegistries_MalformedShapes(t *testing.T) {
 	// A fully valid winning layer that shadows every key the malformed
 	// losing layers below misuse, so the merged tree always decodes.
 	const winning = `
-stacks:
-  my-rust: { path: ./stacks/my-rust }
 harnesses:
   codex: { path: ./tools/codex }
   claude:
@@ -67,13 +65,6 @@ build:
 		losing  string
 		wantErr string
 	}{
-		{"stacks node is a scalar", "stacks: foo\n", "stacks: must be a mapping"},
-		{"stack entry is a scalar", "stacks:\n  my-rust: not-a-map\n", "stacks.my-rust: must be a mapping"},
-		{
-			"stack path is not a string",
-			"stacks:\n  my-rust:\n    path: 123\n",
-			"stacks.my-rust.path: must be a string",
-		},
 		{"harnesses node is a scalar", "harnesses: foo\n", "harnesses: must be a mapping"},
 		{"harness entry is a scalar", "harnesses:\n  codex: nope\n", "harnesses.codex: must be a mapping"},
 		{"build node is a scalar", "build: some-typo\n", "build: must be a mapping"},
@@ -244,7 +235,6 @@ func TestKnownFieldSets_MatchSchemaTags(t *testing.T) {
 		schema reflect.Type
 		known  map[string]bool
 	}{
-		{"stack registry entry", reflect.TypeFor[StackRegistryEntry](), knownStackRegistryFields()},
 		{"harness registry entry", reflect.TypeFor[HarnessConfig](), knownHarnessRegistryFields()},
 		{"harness build overlay", reflect.TypeFor[HarnessBuildOverlay](), knownHarnessOverlayFields()},
 		{"harness overlay inject", reflect.TypeFor[HarnessOverlayInject](), knownHarnessOverlayInjectFields()},

@@ -1,4 +1,4 @@
-package bundler //nolint:testpackage // shares in-package test helpers (testConfig, newTestProjectGenerator)
+package bundler //nolint:testpackage // shares in-package helpers (testConfig, newTestProjectGenerator, provenanceLine)
 
 import (
 	"os"
@@ -9,10 +9,22 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/schmitthub/clawker/internal/bundle"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/consts"
+	"github.com/schmitthub/clawker/internal/testenv"
 )
 
-// Conformance: E2 — engine never inspects fragment content; a fragment is an opaque template.
+// loadFloorStack loads a shipped stack straight from the embedded floor.
+func loadFloorStack(t *testing.T, name string) *StackDefinition {
+	t.Helper()
+	fsys, err := bundle.FloorFS(bundle.ComponentStack, name)
+	require.NoError(t, err)
+	def, err := LoadStackDefinition(name, fsys)
+	require.NoError(t, err)
+	return def
+}
+
 func TestShippedStacks_LoadAndFragments(t *testing.T) {
 	assert.Equal(t, []string{"go", "node", "python", "rust"}, ShippedStackNames())
 
@@ -28,8 +40,7 @@ func TestShippedStacks_LoadAndFragments(t *testing.T) {
 		"rust": ".cargo/bin/cargo",
 	}
 	for _, name := range ShippedStackNames() {
-		def, err := loadEmbeddedStack(name)
-		require.NoError(t, err, "shipped definition %s must load", name)
+		def := loadFloorStack(t, name)
 		if marker, ok := wantRootGuard[name]; ok {
 			assert.Contains(t, def.RootFragment, marker,
 				"%s root fragment must self-guard", name)
@@ -45,11 +56,9 @@ func TestShippedStacks_LoadAndFragments(t *testing.T) {
 	}
 }
 
-// Conformance: E2 — engine never inspects fragment content; a fragment is an opaque template.
 func TestShippedStacks_RenderBothBuildKitModes(t *testing.T) {
 	for _, name := range ShippedStackNames() {
-		def, err := loadEmbeddedStack(name)
-		require.NoError(t, err)
+		def := loadFloorStack(t, name)
 		root, user := splitFragments([]*StackDefinition{def})
 		for _, buildKit := range []bool{false, true} {
 			// Fragment renders touch only BuildKitEnabled.
@@ -66,182 +75,93 @@ func TestShippedStacks_RenderBothBuildKitModes(t *testing.T) {
 	}
 }
 
-// writeStackDef writes a minimal definition dir (one fragment at the
-// given scope file) and returns its path.
-func writeStackDef(t *testing.T, fragmentFile, fragment string) string {
+// looseResolver isolates the XDG dirs, anchors a temp project root, and returns
+// a resolver over the real filesystem tiers plus that project root. Loose and
+// installed fixtures are written under it with the write* helpers.
+func looseResolver(t *testing.T) (*bundle.Resolver, string) {
 	t.Helper()
-	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, StackManifestFile), []byte("description: test\n"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, fragmentFile), []byte(fragment), 0o644))
-	return dir
-}
-
-// bundleWithStack builds a loaded harness bundle embedding one
-// stack definition.
-func bundleWithStack(t *testing.T, tcName string) *Bundle {
-	t.Helper()
-	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, HarnessManifestFile), []byte("{}\n"), 0o644))
-	require.NoError(
-		t,
-		os.WriteFile(filepath.Join(dir, HarnessTemplateFile), []byte(`{{define "block_4"}}RUN echo hi{{end}}`), 0o644),
-	)
-	tcDir := filepath.Join(dir, StacksSubdir, tcName)
-	require.NoError(t, os.MkdirAll(tcDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(tcDir, StackManifestFile), []byte("description: test\n"), 0o644))
-	require.NoError(
-		t,
-		os.WriteFile(
-			filepath.Join(tcDir, StackRootFragmentFile),
-			[]byte("RUN echo bundle-stack-"+tcName+"\n"),
-			0o644,
-		),
-	)
-	b, err := LoadBundle("bundletest", os.DirFS(dir))
-	require.NoError(t, err)
-	return b
-}
-
-// Conformance: E3 — a declared name resolves from the closest layer, winning wholesale, never merged.
-func TestResolveStack_ShippedVirtualBase(t *testing.T) {
-	// No project registry entry → shipped definitions resolve straight from
-	// the embedded FS (the virtual base layer), with no shadow provenance.
+	env := testenv.New(t)
+	root := filepath.Join(env.Dirs.Base, "project")
+	require.NoError(t, os.MkdirAll(root, 0o755))
 	cfg := configmocks.NewFromString("", "")
+	cfg.ProjectRootFunc = func() string { return root }
+	return bundle.NewResolver(cfg), root
+}
 
-	def, prov, err := resolveStack(cfg, nil, "node")
+// writeLooseStack writes a loose project-tier stack component (one root
+// fragment) under root/.clawker/stacks/<name>/.
+func writeLooseStack(t *testing.T, root, name, rootFragment string) {
+	t.Helper()
+	dir := filepath.Join(root, consts.DotClawkerDir, bundle.ComponentStack.Dir(), name)
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, StackManifestFile), []byte("description: "+name+"\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, StackRootFragmentFile), []byte(rootFragment), 0o644))
+}
+
+// writeInstalledStack writes a cached bundle shipping one stack component into
+// the isolated bundle cache, so a qualified address resolves to it.
+func writeInstalledStack(t *testing.T, ns, name, version, stack, rootFragment string) {
+	t.Helper()
+	cacheRoot, err := consts.BundlesSubdir()
+	require.NoError(t, err)
+	verRoot := filepath.Join(cacheRoot, ns, name, version)
+	marker := filepath.Join(verRoot, bundle.MarkerDir)
+	require.NoError(t, os.MkdirAll(marker, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(marker, bundle.ManifestFile),
+		[]byte("namespace: "+ns+"\nname: "+name+"\nversion: "+version+"\n"), 0o644))
+	sdir := filepath.Join(verRoot, bundle.ComponentStack.Dir(), stack)
+	require.NoError(t, os.MkdirAll(sdir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(sdir, StackManifestFile), []byte("description: "+stack+"\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(sdir, StackRootFragmentFile), []byte(rootFragment), 0o644))
+}
+
+// A bare stack with no loose override resolves straight from the embedded
+// floor (the virtual base), unshadowed.
+func TestResolveStack_Floor(t *testing.T) {
+	r, _ := looseResolver(t)
+	def, comp, err := resolveStack(r, "node")
 	require.NoError(t, err)
 	assert.Contains(t, def.RootFragment, "nodejs.org/dist")
-	assert.Contains(t, def.UserFragment, "nvm-sh/nvm",
-		"the node stack provisions nvm in user scope")
-	assert.Equal(t, "built", prov.source)
-	assert.Empty(t, prov.shadows, "an unshadowed shipped resolution has no provenance line")
+	assert.Contains(t, def.UserFragment, "nvm-sh/nvm", "the node stack provisions nvm in user scope")
+	assert.Equal(t, bundle.TierFloor, comp.Provenance.Tier)
 }
 
-// Conformance: E3 — a declared name resolves from the closest layer, winning wholesale, never merged.
-func TestResolveStack_ProjectRegistryWins(t *testing.T) {
-	dir := writeStackDef(t, StackUserFragmentFile, "RUN echo custom-def\n")
-	cfg := configmocks.NewFromString(`
-stacks:
-  mytool:
-    path: `+dir+`
-`, "")
-
-	def, prov, err := resolveStack(cfg, nil, "mytool")
+// A loose project stack wins over the floor stack of the same name, wholesale;
+// the build records where it resolved from.
+func TestResolveStack_LooseShadowsFloor(t *testing.T) {
+	r, root := looseResolver(t)
+	writeLooseStack(t, root, "node", "RUN echo loose-node\n")
+	def, comp, err := resolveStack(r, "node")
 	require.NoError(t, err)
-	assert.Empty(t, def.RootFragment)
-	assert.Contains(t, def.UserFragment, "custom-def")
-	assert.Contains(t, prov.source, "project (")
-	assert.Empty(t, prov.shadows, "no shipped/bundle definition named mytool → nothing shadowed")
+	assert.Contains(t, def.RootFragment, "loose-node", "the loose project stack wins wholesale")
+	assert.Empty(t, def.UserFragment, "a wholesale win never merges the floor's user fragment")
+	assert.Equal(t, bundle.TierLooseProject, comp.Provenance.Tier)
+	assert.Contains(t, provenanceLine(comp), "stack node ← project (")
 }
 
-func TestResolveStack_ProjectRegistryMissing(t *testing.T) {
-	cfg := configmocks.NewFromString(`
-stacks:
-  mytool:
-    path: /nonexistent/definitely/missing
-`, "")
-
-	_, _, err := resolveStack(cfg, nil, "mytool")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "stacks.mytool.path")
-}
-
-// Conformance: E10 — registry paths accept only relative or absolute; no ~ or $VAR expansion.
-func TestResolveStack_RelativeRegistryPathResolvesAgainstProjectRoot(t *testing.T) {
-	root := t.TempDir()
-	stackDir := filepath.Join(root, "stacks", "mytool")
-	require.NoError(t, os.MkdirAll(stackDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(stackDir, StackManifestFile), []byte("description: rel\n"), 0o644))
-	require.NoError(
-		t,
-		os.WriteFile(filepath.Join(stackDir, StackRootFragmentFile), []byte("RUN echo rel-def\n"), 0o644),
-	)
-
-	cfg := configmocks.NewFromString(`
-stacks:
-  mytool:
-    path: ./stacks/mytool
-`, "")
-	cfg.ProjectRootFunc = func() string { return root }
-
-	def, _, err := resolveStack(cfg, nil, "mytool")
+// A qualified address resolves from the installed bundle set only.
+func TestResolveStack_QualifiedInstalled(t *testing.T) {
+	r, _ := looseResolver(t)
+	writeInstalledStack(t, "acme", "tools", "1.0.0", "special", "RUN echo installed-special\n")
+	def, comp, err := resolveStack(r, "acme.tools.special")
 	require.NoError(t, err)
-	assert.Contains(t, def.RootFragment, "rel-def")
+	assert.Contains(t, def.RootFragment, "installed-special")
+	assert.Equal(t, bundle.TierInstalled, comp.Provenance.Tier)
+	assert.Equal(t, "acme.tools.special", comp.Address.String())
+	assert.Contains(t, provenanceLine(comp), "stack acme.tools.special ← bundle acme.tools")
 }
 
-// Conformance: E10 — registry paths accept only relative or absolute; no ~ or $VAR expansion.
-func TestResolveStack_RelativeRegistryPathWithoutRootErrors(t *testing.T) {
-	// A relative registry path with no resolved project root must hard-error —
-	// resolving it against the process CWD could silently load whatever
-	// happens to live there.
-	cfg := configmocks.NewFromString(`
-stacks:
-  mytool:
-    path: ./stacks/mytool
-`, "")
-
-	_, _, err := resolveStack(cfg, nil, "mytool")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no project root is resolved")
-}
-
-// Conformance: E3 — a declared name resolves from the closest layer, winning wholesale, never merged.
-func TestResolveStack_BundleEmbedded(t *testing.T) {
-	cfg := configmocks.NewFromString("", "")
-	b := bundleWithStack(t, "codex-special")
-
-	def, prov, err := resolveStack(cfg, b, "codex-special")
-	require.NoError(t, err)
-	assert.Contains(t, def.RootFragment, "bundle-stack-codex-special")
-	assert.Equal(t, "bundletest bundle", prov.source)
-	assert.Empty(t, prov.shadows)
-}
-
-// Conformance: E3 — closest layer wins wholesale, never merged. E8 — every shadow emits a provenance line naming its source.
-func TestResolveStack_BundleShadowsShipped(t *testing.T) {
-	// A bundle embedding a definition named like a shipped one WINS wholesale
-	// (matching key at a closer layer), and the provenance records the shadow —
-	// no error, no silent skip.
-	cfg := configmocks.NewFromString("", "")
-	b := bundleWithStack(t, "node")
-
-	def, prov, err := resolveStack(cfg, b, "node")
-	require.NoError(t, err)
-	assert.Contains(t, def.RootFragment, "bundle-stack-node")
-	assert.Equal(t, "bundletest bundle", prov.source)
-	assert.Equal(t, []string{"built"}, prov.shadows)
-	assert.Contains(t, prov.line(), "shadows built")
-}
-
-// Conformance: E3 — closest layer wins wholesale, never merged. E8 — every shadow emits a provenance line naming its source.
-func TestResolveStack_ProjectShadowsBundle(t *testing.T) {
-	dir := writeStackDef(t, StackRootFragmentFile, "RUN echo registered\n")
-	cfg := configmocks.NewFromString(`
-stacks:
-  mytool:
-    path: `+dir+`
-`, "")
-	b := bundleWithStack(t, "mytool")
-
-	def, prov, err := resolveStack(cfg, b, "mytool")
-	require.NoError(t, err)
-	assert.Contains(t, def.RootFragment, "registered", "the project registry wins wholesale")
-	assert.Contains(t, prov.source, "project (")
-	assert.Equal(t, []string{"bundletest bundle"}, prov.shadows)
-}
-
-// Conformance: E9 — a name resolving nowhere is a hard, loud error naming the register remedy.
+// A name that resolves on no tier is a hard, loud error — never a silent skip.
 func TestResolveStack_Unknown(t *testing.T) {
-	cfg := configmocks.NewFromString("", "")
-
-	_, _, err := resolveStack(cfg, nil, "no-such-stack")
-	require.ErrorIs(t, err, ErrUnknownStack)
-	assert.Contains(t, err.Error(), "clawker stack register")
+	r, _ := looseResolver(t)
+	_, _, err := resolveStack(r, "no-such-stack")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
 }
 
 // tcSettingsYAML returns settings with full telemetry defaults (monitoring is
-// the only settings surface these generator tests need — harness/stack
-// registration lives in the project config).
+// the only settings surface these generator tests need — component selection
+// lives in the project config, resolution in the filesystem tiers).
 func tcSettingsYAML() string {
 	return `
 monitoring:
@@ -257,11 +177,13 @@ monitoring:
 `
 }
 
-// tcBundleDir writes a harness bundle whose manifest is given verbatim and
-// whose template carries position markers for block_1 and block_3.
-func tcBundleDir(t *testing.T, manifest string) string {
+// writeLooseHarness writes a loose project harness named "other" under
+// root/.clawker/harnesses/other/, with the given manifest verbatim and a
+// template carrying position markers for block_1 and block_3.
+func writeLooseHarness(t *testing.T, root, manifest string) {
 	t.Helper()
-	dir := t.TempDir()
+	dir := filepath.Join(root, consts.DotClawkerDir, bundle.ComponentHarness.Dir(), "other")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, HarnessManifestFile), []byte(manifest), 0o644))
 	require.NoError(t, os.WriteFile(
 		filepath.Join(dir, HarnessTemplateFile),
@@ -269,21 +191,18 @@ func tcBundleDir(t *testing.T, manifest string) string {
 {{define "block_3"}}RUN echo B3MARK{{end}}`),
 		0o644,
 	))
-	return dir
 }
 
-// projectYAMLWithHarness appends a project-side harness registry entry naming
-// the "other" bundle at dir to a project config body.
-func projectYAMLWithHarness(body, dir string) string {
-	return body + "\nharnesses:\n  other:\n    path: " + dir + "\n"
-}
-
-// tcGenerator builds a ProjectGenerator selecting the project-registered
-// "other" bundle whose manifest is bundleManifest.
+// tcGenerator builds a ProjectGenerator selecting a loose project harness
+// "other" whose manifest is bundleManifest, over an isolated filesystem.
 func tcGenerator(t *testing.T, projectBody, bundleManifest string) *ProjectGenerator {
 	t.Helper()
-	dir := tcBundleDir(t, bundleManifest)
-	cfg := configmocks.NewFromString(projectYAMLWithHarness(projectBody, dir), tcSettingsYAML())
+	env := testenv.New(t)
+	root := filepath.Join(env.Dirs.Base, "project")
+	require.NoError(t, os.MkdirAll(root, 0o755))
+	writeLooseHarness(t, root, bundleManifest)
+	cfg := configmocks.NewFromString(projectBody, tcSettingsYAML())
+	cfg.ProjectRootFunc = func() string { return root }
 	gen := NewProjectGenerator(cfg, t.TempDir())
 	gen.Harness = "other"
 	gen.HarnessVersion = testHarnessVersion
@@ -297,7 +216,8 @@ const (
 	pythonMarker = "astral.sh" // python (uv installer) root fragment
 )
 
-// Conformance: E1 — declaration order preserved. E4 — base is harness-agnostic; no bundle stack leaks in. E13 — build.stacks places stacks in the base image.
+// build.stacks places project-declared stacks in the BASE image; the base is
+// harness-agnostic, so the harness image carries none of them.
 func TestGenerateBase_ProjectDeclaredStacks(t *testing.T) {
 	gen := tcGenerator(t, `
 build:
@@ -324,16 +244,15 @@ build:
 	require.GreaterOrEqual(t, userRunIdx, 0)
 	assert.Less(t, nvmIdx, userRunIdx, "user fragment must precede user_run")
 
-	// The bundle declares no stacks, so the harness image carries none — this
-	// asserts the base's project stacks don't leak into the harness image, not
-	// cross-stratum dedup (which is dead).
+	// The harness declares no stacks, so its image carries none — the base's
+	// project stacks don't leak into the harness image.
 	harnessImg, err := gen.GenerateHarness()
 	require.NoError(t, err)
 	assert.NotContains(t, string(harnessImg), nodeMarker)
 	assert.NotContains(t, string(harnessImg), nvmMarker)
 }
 
-// Conformance: E1 — declaration order preserved. E13 — manifest stacks place stacks in that harness image only.
+// A harness's stacks: dependency places stacks in that harness image only.
 func TestGenerateHarness_HarnessDeclaredStacks(t *testing.T) {
 	gen := tcGenerator(t, "version: \"1\"\n", `
 version: { resolver: none }
@@ -371,11 +290,9 @@ stacks: [node]
 	assert.Less(t, nvmIdx, b3Idx, "user stack must precede block_3")
 }
 
-// Conformance: E5 — project + harness declaring the same name both render; no cross-stratum dedup.
-// TestGenerate_BothDeclared_BothRender proves cross-stratum dedup is dead: a
-// name declared in both build.stacks and the harness manifest renders in BOTH
-// the base and the harness image (design §2 — fragment self-guards own any
-// interaction, the engine never judges satisfaction).
+// A name declared in both build.stacks and the harness manifest renders in BOTH
+// the base and the harness image — no cross-stratum dedup; fragment self-guards
+// own any interaction (design §2).
 func TestGenerate_BothDeclared_BothRender(t *testing.T) {
 	gen := tcGenerator(t, `
 build:
@@ -395,21 +312,18 @@ stacks: [node]
 		"harness-declared node ALSO renders in the harness image — no cross-stratum dedup")
 }
 
-// Conformance: E8 — shadowing is never silent; every shadow emits a provenance line naming its source.
-// TestGenerateHarness_BundleShadowsShipped: a harness manifest declaring a name
-// its bundle also embeds renders the bundle's definition (closer layer wins)
-// and records shadow provenance surfaced via the generator.
-func TestGenerateHarness_BundleShadowsShipped(t *testing.T) {
-	bundleDir := tcBundleDir(t, "version: { resolver: none }\nstacks: [node]\n")
-	tcDir := filepath.Join(bundleDir, StacksSubdir, "node")
-	require.NoError(t, os.MkdirAll(tcDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(tcDir, StackManifestFile), []byte("description: shadow\n"), 0o644))
-	require.NoError(
-		t,
-		os.WriteFile(filepath.Join(tcDir, StackRootFragmentFile), []byte("RUN echo bundle-node-shadow\n"), 0o644),
-	)
+// A harness declaring a bare stack whose name a loose project dir also defines
+// renders the loose definition (it wins wholesale over the floor) and the
+// generator surfaces where each component resolved from.
+func TestGenerateHarness_LooseStackShadowsFloor(t *testing.T) {
+	env := testenv.New(t)
+	root := filepath.Join(env.Dirs.Base, "project")
+	require.NoError(t, os.MkdirAll(root, 0o755))
+	writeLooseHarness(t, root, "version: { resolver: none }\nstacks: [node]\n")
+	writeLooseStack(t, root, "node", "RUN echo loose-node-shadow\n")
 
-	cfg := configmocks.NewFromString(projectYAMLWithHarness("version: \"1\"\n", bundleDir), tcSettingsYAML())
+	cfg := configmocks.NewFromString("version: \"1\"\n", tcSettingsYAML())
+	cfg.ProjectRootFunc = func() string { return root }
 	gen := NewProjectGenerator(cfg, t.TempDir())
 	gen.Harness = "other"
 	gen.HarnessVersion = testHarnessVersion
@@ -417,60 +331,37 @@ func TestGenerateHarness_BundleShadowsShipped(t *testing.T) {
 
 	harnessImg, err := gen.GenerateHarness()
 	require.NoError(t, err)
-	assert.Contains(t, string(harnessImg), "bundle-node-shadow", "the bundle's node definition wins over shipped")
-	assert.NotContains(t, string(harnessImg), nodeMarker, "shipped node is shadowed, not rendered")
+	assert.Contains(t, string(harnessImg), "loose-node-shadow", "the loose node definition wins over the floor")
+	assert.NotContains(t, string(harnessImg), nodeMarker, "floor node is shadowed, not rendered")
 
 	prov := gen.Provenance()
 	require.NotEmpty(t, prov)
 	joined := strings.Join(prov, "\n")
-	assert.Contains(t, joined, "stack node ← other bundle shadows built")
-	assert.Contains(t, joined, "harness other ← ")
+	assert.Contains(t, joined, "stack node ← project (", "the loose stack resolution is surfaced")
+	assert.Contains(t, joined, "harness other ← project (", "the loose harness names its source")
 }
 
-// writeBundleDir writes a minimal loadable harness bundle into dir.
-func writeBundleDir(t *testing.T, dir string) {
-	t.Helper()
-	require.NoError(t, os.WriteFile(
-		filepath.Join(dir, HarnessManifestFile), []byte("version:\n  resolver: none\n"), 0o644))
-	require.NoError(t, os.WriteFile(
-		filepath.Join(dir, HarnessTemplateFile), []byte(`{{define "block_6"}}CMD ["x"]{{end}}`), 0o644))
-}
-
-// Conformance: E8 — shadowing is never silent; a harness bundle always names its source.
-// TestLoadHarnessResolved_Provenance exercises the harness-bundle provenance
-// line (in-package so the unexported provenance type is reachable).
+// The harness bundle always names its resolved source, floor included.
 func TestLoadHarnessResolved_Provenance(t *testing.T) {
-	t.Run("shipped names its source, no shadow", func(t *testing.T) {
-		cfg := configmocks.NewFromString("", "")
-		_, prov, err := loadHarnessResolved(cfg, DefaultHarnessName)
+	t.Run("floor names its source", func(t *testing.T) {
+		r, _ := looseResolver(t)
+		_, comp, err := loadHarnessResolved(r, DefaultHarnessName)
 		require.NoError(t, err)
-		assert.Equal(t, "built", prov.source)
-		assert.False(t, prov.shadows)
-		assert.Equal(t, "harness "+DefaultHarnessName+" ← built", prov.line())
+		assert.Equal(t, bundle.TierFloor, comp.Provenance.Tier)
+		assert.Equal(t, "harness "+DefaultHarnessName+" ← built-in", provenanceLine(comp))
 	})
 
-	t.Run("project entry shadowing a shipped bundle", func(t *testing.T) {
-		dir := t.TempDir()
-		writeBundleDir(t, dir)
-		cfg := configmocks.NewFromString("harnesses:\n  "+DefaultHarnessName+":\n    path: "+dir+"\n", "")
-		_, prov, err := loadHarnessResolved(cfg, DefaultHarnessName)
+	t.Run("loose harness names its dir", func(t *testing.T) {
+		r, root := looseResolver(t)
+		writeLooseHarness(t, root, "version: { resolver: none }\n")
+		_, comp, err := loadHarnessResolved(r, "other")
 		require.NoError(t, err)
-		assert.True(t, prov.shadows, "a project entry named like a shipped bundle shadows it")
-		assert.Contains(t, prov.line(), "shadows built")
-	})
-
-	t.Run("custom project entry, no shadow", func(t *testing.T) {
-		dir := t.TempDir()
-		writeBundleDir(t, dir)
-		cfg := configmocks.NewFromString("harnesses:\n  custom:\n    path: "+dir+"\n", "")
-		_, prov, err := loadHarnessResolved(cfg, "custom")
-		require.NoError(t, err)
-		assert.False(t, prov.shadows, "custom is not shipped → nothing shadowed")
-		assert.Contains(t, prov.line(), "(project registry)")
+		assert.Equal(t, bundle.TierLooseProject, comp.Provenance.Tier)
+		assert.Contains(t, provenanceLine(comp), "harness other ← project (")
 	})
 }
 
-// Conformance: E9 — a name resolving nowhere is a hard, loud error naming the register remedy.
+// A build.stacks entry resolving nowhere is a hard, loud error.
 func TestGenerateBase_UnknownStack(t *testing.T) {
 	gen := tcGenerator(t, `
 build:
@@ -478,10 +369,12 @@ build:
 `, "version: { resolver: none }\n")
 
 	_, err := gen.GenerateBase()
-	require.ErrorIs(t, err, ErrUnknownStack)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
 }
 
-// Conformance: E18 — build.stacks rejects a repeated name (a harness installer+overlay list renders a repeat once).
+// build.stacks rejects a repeated name (a harness installer+overlay list
+// renders a repeat once).
 func TestGenerateBase_DuplicateDeclaration(t *testing.T) {
 	gen := tcGenerator(t, `
 build:
@@ -492,13 +385,10 @@ build:
 	require.ErrorContains(t, err, "duplicate stack declaration")
 }
 
-// Conformance: E1 — stacks render top-to-bottom in declaration order; the engine never reorders.
-// TestGenerateBase_StacksRenderInDeclarationOrder is the dedicated ordering
-// assertion: a ≥3-stack base list whose fragments each carry a unique marker
-// must land in the rendered Dockerfile in exact declaration order. It goes red
-// if resolveStackDecls or splitFragments ever sorts or reorders the list —
-// position here is asserted directly, not incidentally as in the both-render /
-// overlay-position tests.
+// Stacks render top-to-bottom in declaration order; the engine never reorders.
+// A ≥3-stack base list whose fragments each carry a unique marker must land in
+// the rendered Dockerfile in exact declaration order — red if resolveStackDecls
+// or splitFragments ever sorts.
 func TestGenerateBase_StacksRenderInDeclarationOrder(t *testing.T) {
 	// python, go, node all ship root fragments carrying a distinct upstream
 	// marker; declaring them out of alphabetical order proves no sort sneaks in.

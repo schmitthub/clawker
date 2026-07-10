@@ -11,21 +11,20 @@ import (
 	"github.com/schmitthub/clawker/internal/storage"
 )
 
-// Known YAML field sets for the stack/harness registry nodes and the
-// per-harness build overlay. storage's generic node merge intentionally
-// lets unknown keys survive elsewhere — comments and forward/backward
-// compatibility depend on it (see internal/storage: "Unknown keys
-// survive") — so these schema nodes get an explicit front-door check
-// instead: a typo'd field here is a load error naming its exact file and
-// key path, rather than a silently ignored key.
+// Known YAML field sets for the harnesses: node, the per-harness build
+// overlay, the monitoring.units settings node, and the bundles: source
+// node. storage's generic node merge intentionally lets unknown keys
+// survive elsewhere — comments and forward/backward compatibility depend
+// on it (see internal/storage: "Unknown keys survive") — so these schema
+// nodes get an explicit front-door check instead: a typo'd field here is a
+// load error naming its exact file and key path, rather than a silently
+// ignored key.
 // TestKnownFieldSets_MatchSchemaTags guards each set against drift from
 // its schema struct's yaml tags.
 
 // fieldPath is the shared registry/source field name for a filesystem (or
 // repo-subdir) path.
 const fieldPath = "path"
-
-func knownStackRegistryFields() map[string]bool { return map[string]bool{fieldPath: true} }
 
 func knownHarnessRegistryFields() map[string]bool {
 	return map[string]bool{
@@ -55,18 +54,14 @@ func knownBundleSourceFields() map[string]bool {
 
 // validateProjectRegistries walks every discovered clawker.yaml layer —
 // never the merged tree, so an error names the actual offending file — and
-// validates the stacks:, harnesses:, and build.harnesses: nodes: every
-// registered/overlay name must satisfy the shared naming rule
-// (consts.ValidateName / consts.ValidateHarnessName), every stack-name
-// reference (build.stacks, build.harnesses.<name>.stacks) must too, a
-// stack registry entry must carry a path, and every entry's fields must be
-// a known subset.
+// validates the harnesses:, build:, and bundles: nodes: every harness and
+// overlay name must satisfy the shared naming rule (consts.ValidateName /
+// consts.ValidateHarnessName), every stack-name reference (build.stacks,
+// build.harnesses.<name>.stacks) must too, and every entry's fields must
+// be a known subset.
 func validateProjectRegistries(store *storage.Store[Project]) error {
 	for _, layer := range store.Layers() {
 		label := layerLabel(layer)
-		if err := validateStacksNode(label, layer.Data); err != nil {
-			return err
-		}
 		if err := validateHarnessesNode(label, layer.Data); err != nil {
 			return err
 		}
@@ -161,26 +156,6 @@ func layerLabel(l storage.LayerInfo) string {
 	return l.Filename
 }
 
-func validateStacksNode(label string, data map[string]any) error {
-	raw, ok := data["stacks"]
-	if !ok {
-		return nil
-	}
-	m, isMap := nodeMapping(raw)
-	if !isMap {
-		return fmt.Errorf("%s: stacks: must be a mapping of name to {path}", label)
-	}
-	return validateEntryMap(label, "stacks", m, consts.ValidateName,
-		"must be a mapping with a path key", knownStackRegistryFields(),
-		func(keyPath string, entry map[string]any) error {
-			p, hasPath := entry[fieldPath]
-			if !hasPath {
-				return fmt.Errorf("%s: %s: missing required path", label, keyPath)
-			}
-			return validatePathValue(label, keyPath+".path", p)
-		})
-}
-
 func validateHarnessesNode(label string, data map[string]any) error {
 	raw, ok := data["harnesses"]
 	if !ok {
@@ -190,7 +165,7 @@ func validateHarnessesNode(label string, data map[string]any) error {
 	if !isMap {
 		return fmt.Errorf("%s: harnesses: must be a mapping of name to config", label)
 	}
-	return validateEntryMap(label, "harnesses", m, consts.ValidateHarnessName,
+	return validateEntryMap(label, "harnesses", m, consts.ValidateHarnessRef,
 		"must be a mapping", knownHarnessRegistryFields(),
 		func(keyPath string, entry map[string]any) error {
 			if c, hasConfig := entry["config"]; hasConfig {
@@ -228,7 +203,7 @@ func validateBuildNode(label string, data map[string]any) error {
 	if !isMap {
 		return fmt.Errorf("%s: build.harnesses: must be a mapping of name to overlay", label)
 	}
-	return validateEntryMap(label, "build.harnesses", harnesses, consts.ValidateHarnessName,
+	return validateEntryMap(label, "build.harnesses", harnesses, consts.ValidateHarnessRef,
 		"must be a mapping", knownHarnessOverlayFields(), validateOverlayEntry(label))
 }
 
@@ -446,7 +421,8 @@ func validateEntryMap(
 }
 
 // validateStackNameList validates a build.stacks-shaped node: a list of
-// stack-name strings, each checked against the shared naming rule.
+// possibly-qualified stack selection keys — a bare name per the shared naming
+// rule, or a namespace.bundle.component address for an installed-bundle stack.
 func validateStackNameList(label, keyPath string, raw any) error {
 	list, ok := raw.([]any)
 	if !ok {
@@ -457,7 +433,7 @@ func validateStackNameList(label, keyPath string, raw any) error {
 		if !isString {
 			return fmt.Errorf("%s: %s[%d]: must be a string", label, keyPath, i)
 		}
-		if err := consts.ValidateName(name); err != nil {
+		if err := consts.ValidateComponentRef(name); err != nil {
 			return fmt.Errorf("%s: %s[%d]: %w", label, keyPath, i, err)
 		}
 	}

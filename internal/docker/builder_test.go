@@ -19,6 +19,7 @@ import (
 
 	dockerimage "github.com/moby/moby/api/types/image"
 
+	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
@@ -151,11 +152,18 @@ func newTestClientWithConfig(cfg config.Config) (*Client, *whailtest.FakeAPIClie
 	return &Client{Engine: engine, cfg: cfg, log: logger.Nop()}, fakeAPI
 }
 
-// testHarnessCfg registers a temp bundle under harness key "other" and
-// returns a config with it plus default monitoring settings.
+// testHarnessCfg drops a loose "other" harness into the project's convention
+// dir and returns a config anchored at that project root, plus default
+// monitoring settings. A loose harness resolves by its bare name through the
+// single resolution algorithm — no registration.
 func testHarnessCfg(t *testing.T) *configmocks.ConfigMock {
 	t.Helper()
-	bundleDir := t.TempDir()
+	// Isolate the user-loose config dir so "other" resolves only from the
+	// project loose dir below, never the host's real config dir.
+	t.Setenv(consts.EnvConfigDir, t.TempDir())
+	root := t.TempDir()
+	bundleDir := filepath.Join(root, consts.DotClawkerDir, bundle.ComponentHarness.Dir(), "other")
+	require.NoError(t, os.MkdirAll(bundleDir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(bundleDir, "harness.yaml"), []byte("{}\n"), 0o644))
 	require.NoError(t, os.WriteFile(
 		filepath.Join(bundleDir, "Dockerfile.harness.tmpl"),
@@ -163,9 +171,7 @@ func testHarnessCfg(t *testing.T) *configmocks.ConfigMock {
 		0o644,
 	))
 
-	// The "other" harness is registered project-side (clawker.yaml harnesses:),
-	// which is where harness registration lives.
-	projectYAML := "agent:\n  editor: nano\nharnesses:\n  other:\n    path: " + bundleDir + "\n"
+	projectYAML := "agent:\n  editor: nano\n"
 	settingsYAML := `
 monitoring:
   telemetry:
@@ -176,7 +182,9 @@ monitoring:
     include_account_uuid: true
     include_session_id: true
 `
-	return configmocks.NewFromString(projectYAML, settingsYAML)
+	cfg := configmocks.NewFromString(projectYAML, settingsYAML)
+	cfg.ProjectRootFunc = func() string { return root }
+	return cfg
 }
 
 // capturedBuild records one ImageBuild call seen by the fake API.

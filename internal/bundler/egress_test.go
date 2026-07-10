@@ -1,7 +1,6 @@
 package bundler_test
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -9,14 +8,17 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/consts"
 )
 
-// isolateConfigDir points the conventional bundle location at an empty temp
-// dir so floor resolution deterministically falls back to the embedded
-// bundle, regardless of what the developer machine has materialized.
+// isolateConfigDir points the user-loose convention location at an empty temp
+// dir so a bare-name resolution deterministically falls through to the embedded
+// floor, regardless of what the developer machine has under its real config
+// dir.
 func isolateConfigDir(t *testing.T) {
 	t.Helper()
 	t.Setenv("CLAWKER_CONFIG_DIR", t.TempDir())
@@ -118,13 +120,13 @@ security:
 }
 
 // Conformance: E6 — the selected harness's egress floor is always composed first.
-// TestEgressRules_ExternalBundle proves a user-authored bundle wired in via
-// a registry path entry supplies the floor — the harness swap swaps the
-// floor, with no anthropic egress forced on a non-claude harness.
-func TestEgressRules_ExternalBundle(t *testing.T) {
+// TestEgressRules_LooseHarness proves a user-authored harness dropped into the
+// project's loose convention dir supplies the floor — the harness swap swaps
+// the floor, with no anthropic egress forced on a non-claude harness.
+func TestEgressRules_LooseHarness(t *testing.T) {
 	isolateConfigDir(t)
-	dir := t.TempDir()
-	writeBundle(t, dir, `
+	root := t.TempDir()
+	writeLooseHarness(t, root, "codex", `
 version:
   resolver: none
 egress:
@@ -137,10 +139,8 @@ egress:
     port: "22"
 `)
 
-	cfg := configmocks.NewFromString(fmt.Sprintf(`
-harnesses:
-  codex: { path: %s }
-`, dir), "")
+	cfg := configmocks.NewFromString("", "")
+	cfg.ProjectRootFunc = func() string { return root }
 
 	rules, err := bundler.EgressRules(cfg, "codex")
 	require.NoError(t, err)
@@ -163,12 +163,17 @@ func TestEgressRules_ResolutionErrorsPropagate(t *testing.T) {
 
 	cfg := configmocks.NewBlankConfig()
 	_, err := bundler.EgressRules(cfg, "nonexistent")
-	require.ErrorContains(t, err, "is not registered")
+	require.ErrorContains(t, err, "not found")
 }
 
-// writeBundle writes a minimal loadable bundle (manifest + template) to dir.
-func writeBundle(t *testing.T, dir, manifestYAML string) {
+// writeLooseHarness writes a minimal loadable harness (manifest + template)
+// into the project's loose convention dir root/.clawker/harnesses/<name>/ —
+// the zero-ceremony way a user-authored harness becomes resolvable by its bare
+// name.
+func writeLooseHarness(t *testing.T, root, name, manifestYAML string) {
 	t.Helper()
+	dir := filepath.Join(root, consts.DotClawkerDir, bundle.ComponentHarness.Dir(), name)
+	require.NoError(t, os.MkdirAll(dir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, bundler.HarnessManifestFile), []byte(manifestYAML), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, bundler.HarnessTemplateFile),
 		[]byte("{{define \"block_5\"}}CMD [\"codex\"]\n{{end}}\n"), 0o644))

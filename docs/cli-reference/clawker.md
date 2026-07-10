@@ -32,7 +32,6 @@ Workspace modes:
 * [clawker create](clawker_create) - Create a new container
 * [clawker exec](clawker_exec) - Execute a command in a running container
 * [clawker firewall](clawker_firewall) - Manage the egress firewall
-* [clawker harness](clawker_harness) - Manage harness bundles
 * [clawker image](clawker_image) - Manage images
 * [clawker init](clawker_init) - Initialize a new clawker project (alias for 'project init')
 * [clawker kill](clawker_kill) - Kill one or more running containers
@@ -49,7 +48,6 @@ Workspace modes:
 * [clawker run](clawker_run) - Create and run a new container
 * [clawker settings](clawker_settings) - Manage clawker user settings
 * [clawker skill](clawker_skill) - Manage the clawker agent skills plugin
-* [clawker stack](clawker_stack) - Manage stack definitions
 * [clawker start](clawker_start) - Start one or more stopped containers
 * [clawker stats](clawker_stats) - Display a live stream of container resource usage statistics
 * [clawker stop](clawker_stop) - Stop one or more running containers

@@ -2,9 +2,6 @@ package bundler
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
-	"slices"
 	"sort"
 
 	"github.com/schmitthub/clawker/internal/bundle"
@@ -20,13 +17,13 @@ func ShippedHarnessNames() []string {
 	return bundle.FloorNames(bundle.ComponentHarness)
 }
 
-// ResolveHarnessName returns the effective harness name: the explicit name
-// when non-empty (validated), else the built-in DefaultHarnessName. Harness
-// selection is explicit — a build with no -t builds the default; there is no
-// registry default flag.
+// ResolveHarnessName returns the effective harness selection: the explicit
+// name when non-empty (validated), else the built-in DefaultHarnessName.
+// Harness selection is explicit — a build with no -t builds the default; there
+// is no registry default flag.
 func ResolveHarnessName(_ config.Config, explicit string) (string, error) {
 	if explicit != "" {
-		if err := ValidateHarnessKey(explicit); err != nil {
+		if err := ValidateHarnessSelector(explicit); err != nil {
 			return "", err
 		}
 		return explicit, nil
@@ -34,52 +31,55 @@ func ResolveHarnessName(_ config.Config, explicit string) (string, error) {
 	return DefaultHarnessName, nil
 }
 
-// ValidateHarnessKey rejects registry keys that cannot serve as harness
-// names — delegates to the unified naming rule shared by stacks, harnesses,
-// and their registry/overlay keys, plus the harness-specific reserved-tag-
-// alias check (see consts.ValidateHarnessName).
-func ValidateHarnessKey(name string) error {
-	if err := consts.ValidateHarnessName(name); err != nil {
+// ValidateHarnessSelector validates a harness selection key. It accepts a bare
+// name (embedded floor or a loose convention dir) or a qualified
+// namespace.bundle.component address (installed bundle). For a bare name it
+// additionally enforces the reserved image-tag alias rule, since a bare harness
+// name doubles as its built image's tag; a qualified dotted address can never
+// collide with a bare alias, so that check does not apply to it.
+func ValidateHarnessSelector(name string) error {
+	if err := consts.ValidateHarnessRef(name); err != nil {
 		return fmt.Errorf("harness %w", err)
 	}
 	return nil
 }
 
-// KnownHarnessNames lists every harness a build can select: the shipped
-// bundles plus any project-registered harness (a harnesses.<name>.path entry
-// in clawker.yaml), sorted and deduplicated.
+// KnownHarnessNames lists every harness a build can select: floor, loose
+// convention dirs, and installed/in-place bundle harnesses, by their selection
+// spelling (bare or dotted), sorted.
 func KnownHarnessNames(cfg config.Config) []string {
-	set := map[string]struct{}{}
-	for _, n := range ShippedHarnessNames() {
-		set[n] = struct{}{}
+	comps, _, err := bundle.NewResolver(cfg).List(bundle.ComponentHarness)
+	if err != nil {
+		// List errors only on a C1 identity collision in the declared bundle
+		// set; that error is surfaced on the primary resolve path the caller
+		// already hit. This is a best-effort "known harnesses" hint for an error
+		// message, so degrade to the always-available floor names rather than
+		// emit a second copy of the collision error from a hint helper.
+		return ShippedHarnessNames()
 	}
-	if p := cfg.Project(); p != nil {
-		for name, h := range p.Harnesses {
-			if h.Path != "" {
-				set[name] = struct{}{}
-			}
-		}
-	}
-	names := make([]string, 0, len(set))
-	for n := range set {
-		names = append(names, n)
+	names := make([]string, 0, len(comps))
+	for _, c := range comps {
+		names = append(names, c.Address.String())
 	}
 	sort.Strings(names)
 	return names
 }
 
-// IsKnownHarness reports whether name resolves to a shipped bundle or a
-// project-registered harness.
+// IsKnownHarness reports whether name resolves to a harness on any tier — the
+// embedded floor, a loose convention dir, or an installed/in-place bundle.
 func IsKnownHarness(cfg config.Config, name string) bool {
-	return isShippedHarness(name) || projectHarnessPath(cfg, name) != ""
+	_, err := bundle.NewResolver(cfg).Resolve(bundle.ComponentHarness, name)
+	return err == nil
 }
 
 // validateOverlayKeys rejects any build.harnesses.<name> overlay whose key
-// names no known harness (shipped or project-registered). Such an overlay is
-// dead config — no build could ever select it, so its packages/stacks/inject
-// would silently never render into any image. Keys are checked in sorted
-// order so the error is deterministic.
-func validateOverlayKeys(cfg config.Config) error {
+// names no known harness. Such an overlay is dead config — no build could ever
+// select it, so its packages/stacks/inject would silently never render into
+// any image. Keys (exact selection spelling, bare or qualified) are checked in
+// sorted order so the error is deterministic. It resolves through the caller's
+// resolver so a generation performs one memoized installed-bundle scan, not
+// one per key.
+func validateOverlayKeys(cfg config.Config, r *bundle.Resolver) error {
 	overlays := cfg.Project().Build.Harnesses
 	keys := make([]string, 0, len(overlays))
 	for key := range overlays {
@@ -87,120 +87,37 @@ func validateOverlayKeys(cfg config.Config) error {
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		if !IsKnownHarness(cfg, key) {
+		if _, err := r.Resolve(bundle.ComponentHarness, key); err != nil {
 			return fmt.Errorf(
-				"build.harnesses.%s: unknown harness %q — register its bundle with"+
-					" `clawker harness register <path> --name %s`"+
-					" (or add harnesses.%s.path to clawker.yaml); known harnesses: %v",
-				key, key, key, key, KnownHarnessNames(cfg),
+				"build.harnesses.%s: unknown harness %q — no floor, loose, or installed-bundle"+
+					" harness resolves to it; known harnesses: %v",
+				key, key, KnownHarnessNames(cfg),
 			)
 		}
 	}
 	return nil
 }
 
-// harnessProvenance records where a harness bundle resolved from and whether
-// it shadowed the shipped bundle of the same name. Unlike stack provenance it
-// is ALWAYS surfaced in build output — every harness resolution names its
-// source.
-type harnessProvenance struct {
-	name    string
-	source  string // "<path> (project registry)" or the built-in label
-	shadows bool   // a project entry shadowing a shipped bundle of the same name
-}
-
-// line renders the provenance as a single build-output line.
-func (p harnessProvenance) line() string {
-	if p.shadows {
-		return fmt.Sprintf("harness %s ← %s shadows %s", p.name, p.source, sourceBuilt)
-	}
-	return fmt.Sprintf("harness %s ← %s", p.name, p.source)
-}
-
-// projectHarnessPath returns the project harnesses: registry path for name,
-// or "" when the project registers no bundle path for it. An empty path on an
-// existing entry means the entry only carries per-harness init config, not a
-// registration (the config front-door separately rejects an explicitly-empty
-// path value).
-func projectHarnessPath(cfg config.Config, name string) string {
-	if p := cfg.Project(); p != nil {
-		return p.Harnesses[name].Path
-	}
-	return ""
-}
-
-// LoadHarness resolves and loads the named harness bundle from its closest
-// layer (project registry > shipped embedded).
+// LoadHarness resolves and loads the named harness bundle through the single
+// resolution algorithm (bare = floor/loose, qualified = installed/in-place).
 func LoadHarness(cfg config.Config, name string) (*Bundle, error) {
-	b, _, err := loadHarnessResolved(cfg, name)
+	b, _, err := loadHarnessResolved(bundle.NewResolver(cfg), name)
 	return b, err
 }
 
-// loadHarnessResolved loads the named harness bundle from the closest layer
-// that defines it — project harnesses: registry entry > shipped embedded —
-// and returns its provenance (which layer it came from, whether it shadowed a
-// shipped bundle) for build-output reporting. An unresolvable name is a hard
-// error naming the registration remedy.
-func loadHarnessResolved(cfg config.Config, name string) (*Bundle, harnessProvenance, error) {
-	if err := ValidateHarnessKey(name); err != nil {
-		return nil, harnessProvenance{}, err
-	}
-	path := projectHarnessPath(cfg, name)
-	shipped := isShippedHarness(name)
-	switch {
-	case path != "":
-		dir, err := resolveRegistryPath(cfg, fmt.Sprintf("harness %q", name), path)
-		if err != nil {
-			return nil, harnessProvenance{}, err
-		}
-		if _, statErr := os.Stat(filepath.Join(dir, HarnessManifestFile)); statErr != nil {
-			return nil, harnessProvenance{}, fmt.Errorf(
-				"harness %q: no bundle at registered path %s (%w) — fix harnesses.%s.path in clawker.yaml",
-				name, dir, statErr, name,
-			)
-		}
-		b, loadErr := LoadBundle(name, os.DirFS(dir))
-		if loadErr != nil {
-			return nil, harnessProvenance{}, fmt.Errorf("load harness %q from %s: %w", name, dir, loadErr)
-		}
-		prov := harnessProvenance{
-			name:    name,
-			source:  fmt.Sprintf("%s (project registry)", path),
-			shadows: shipped,
-		}
-		return b, prov, nil
-	case shipped:
-		b, loadErr := loadEmbeddedHarness(name)
-		if loadErr != nil {
-			return nil, harnessProvenance{}, loadErr
-		}
-		return b, harnessProvenance{name: name, source: sourceBuilt, shadows: false}, nil
-	default:
-		return nil, harnessProvenance{}, fmt.Errorf(
-			"harness %q is not registered — register its bundle with `clawker harness register <path> --name %s` (or add harnesses.%s.path to clawker.yaml); shipped harnesses: %v",
-			name,
-			name,
-			name,
-			ShippedHarnessNames(),
-		)
-	}
-}
-
-// isShippedHarness reports whether name is one of the embedded bundles.
-func isShippedHarness(name string) bool {
-	return slices.Contains(ShippedHarnessNames(), name)
-}
-
-// loadEmbeddedHarness loads a shipped harness straight from the embedded floor
-// (the virtual base layer).
-func loadEmbeddedHarness(name string) (*Bundle, error) {
-	src, err := bundle.FloorFS(bundle.ComponentHarness, name)
+// loadHarnessResolved resolves name to a harness Component through the resolver
+// and loads its bundle, returning the component's provenance for build-output
+// reporting. The Bundle's Name is the exact selection spelling (bare or dotted
+// qualified), which downstream becomes the image tag, the harness label, and
+// the per-harness overlay key.
+func loadHarnessResolved(r *bundle.Resolver, name string) (*Bundle, bundle.Component, error) {
+	comp, err := r.Resolve(bundle.ComponentHarness, name)
 	if err != nil {
-		return nil, fmt.Errorf("shipped harness %q: %w", name, err)
+		return nil, bundle.Component{}, fmt.Errorf("resolve harness %q: %w", name, err)
 	}
-	b, loadErr := LoadBundle(name, src)
+	b, loadErr := LoadBundle(name, comp.FS)
 	if loadErr != nil {
-		return nil, fmt.Errorf("load shipped harness %q: %w", name, loadErr)
+		return nil, bundle.Component{}, loadErr
 	}
-	return b, nil
+	return b, comp, nil
 }

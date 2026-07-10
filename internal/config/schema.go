@@ -19,16 +19,9 @@ type Project struct {
 	Workspace WorkspaceConfig `yaml:"workspace"`
 	Security  SecurityConfig  `yaml:"security"`
 	// Harnesses holds per-harness container initialization settings; the
-	// entry matching the selected harness applies. Doubles as the
-	// project-side harness registry (path field) — see HarnessConfig.
-	Harnesses map[string]HarnessConfig `yaml:"harnesses,omitempty" label:"Harnesses" desc:"Per-harness container initialization settings and bundle registration, keyed by harness name"`
-	// Stacks is the project-side stack registry: name → path. A
-	// registered stack becomes resolvable by name from build.stacks and
-	// any build.harnesses.<name>.stacks overlay entry; registration and
-	// declaration are orthogonal — a registered-but-undeclared stack is
-	// simply available, unused.
-	Stacks  map[string]StackRegistryEntry `yaml:"stacks,omitempty"  label:"Stacks"  desc:"Stack registry mapping a stack name to its definition directory"`
-	Aliases map[string]string             `yaml:"aliases,omitempty" label:"Aliases" desc:"Command aliases expanded before execution; the value is appended to 'clawker' and supports $1..$N placeholders; merged across all config layers" merge:"union" default:"go=run --rm -it --agent $1 @ --dangerously-skip-permissions,wt=run --rm -it --agent $1 --worktree $2 @ --dangerously-skip-permissions"`
+	// entry matching the selected harness applies.
+	Harnesses map[string]HarnessConfig `yaml:"harnesses,omitempty" label:"Harnesses" desc:"Per-harness container initialization settings, keyed by harness name"`
+	Aliases   map[string]string        `yaml:"aliases,omitempty"   label:"Aliases"   desc:"Command aliases expanded before execution; the value is appended to 'clawker' and supports $1..$N placeholders; merged across all config layers" merge:"union" default:"go=run --rm -it --agent $1 @ --dangerously-skip-permissions,wt=run --rm -it --agent $1 --worktree $2 @ --dangerously-skip-permissions"`
 	// Bundles declares the installed-bundle sources this project draws
 	// extension components (harnesses, stacks, monitoring extensions) from.
 	// Each entry is a git-generic source; identity comes from the fetched
@@ -156,20 +149,13 @@ type HarnessConfig struct {
 	Env           map[string]string    `yaml:"env,omitempty"            label:"Env"              desc:"Set container env vars when this harness is selected; overrides agent.env on key collision"`
 	PostInit      string               `yaml:"post_init,omitempty"      label:"Post-Init Script" desc:"Shell commands run once after container creation when this harness is selected, appended after agent.post_init (e.g. install this harness's MCP servers)"`
 	PreRun        string               `yaml:"pre_run,omitempty"        label:"Pre-Run Script"   desc:"Shell commands run on every container start when this harness is selected, appended after agent.pre_run"`
-	// Path registers this harness's bundle directory (harness.yaml +
+	// Path is the harness bundle directory (harness.yaml +
 	// Dockerfile.harness.tmpl + assets), relative to the project root or
-	// absolute — no ~ or $VAR expansion. Empty means built-in/shipped
-	// resolution applies. Registration and the per-harness init settings
-	// above share this map because both are scoped by the same harness
-	// name in the same file — this map IS the project-side harness
-	// registry as well as the per-harness init config.
-	Path string `yaml:"path,omitempty" label:"Path" desc:"Bundle directory (harness.yaml + Dockerfile.harness.tmpl + assets), relative to the project root or absolute — no ~ or $VAR expansion; empty = built-in/shipped resolution"`
-}
-
-// StackRegistryEntry is one project stack registry entry (the value side
-// of Project.Stacks).
-type StackRegistryEntry struct {
-	Path string `yaml:"path" label:"Path" desc:"Stack definition directory (stack.yaml plus Dockerfile.stack-root.tmpl and/or Dockerfile.stack-user.tmpl), relative to the project root or absolute — no ~ or $VAR expansion" required:"true"`
+	// absolute — no ~ or $VAR expansion. Consumed only by the monitoring
+	// unit discovery path (internal/monitor); build-time harness
+	// resolution goes through internal/bundle's three-tier resolver, not
+	// this field. Slated for removal with the Phase 5 monitor re-couple.
+	Path string `yaml:"path,omitempty" label:"Path" desc:"Harness bundle directory (harness.yaml + Dockerfile.harness.tmpl + assets), relative to the project root or absolute — no ~ or $VAR expansion; empty = built-in/shipped resolution"`
 }
 
 // AgentConfig defines harness-agnostic agent runtime settings.
@@ -433,9 +419,6 @@ type KeyNotFoundError struct {
 func (e *KeyNotFoundError) Error() string { return "key not found: " + e.Key }
 
 // Settings represents user-level configuration stored in ~/.config/clawker/settings.yaml.
-// Settings does NOT carry a stack/harness registry: registration lives in the
-// project's clawker.yaml (Project.Stacks / Project.Harnesses), and shipped
-// definitions resolve straight from the binary's embedded assets.
 type Settings struct {
 	Logging      LoggingConfig        `yaml:"logging,omitempty"`
 	Monitoring   MonitoringConfig     `yaml:"monitoring,omitempty"`

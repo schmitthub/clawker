@@ -7,7 +7,6 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/container"
 	controlplanecmd "github.com/schmitthub/clawker/internal/cmd/controlplane"
 	firewallcmd "github.com/schmitthub/clawker/internal/cmd/firewall"
-	harnesscmd "github.com/schmitthub/clawker/internal/cmd/harness"
 	hostproxycmd "github.com/schmitthub/clawker/internal/cmd/hostproxy"
 	"github.com/schmitthub/clawker/internal/cmd/image"
 	initcmd "github.com/schmitthub/clawker/internal/cmd/init"
@@ -16,7 +15,6 @@ import (
 	"github.com/schmitthub/clawker/internal/cmd/project"
 	"github.com/schmitthub/clawker/internal/cmd/settings"
 	"github.com/schmitthub/clawker/internal/cmd/skill"
-	stackcmd "github.com/schmitthub/clawker/internal/cmd/stack"
 	versioncmd "github.com/schmitthub/clawker/internal/cmd/version"
 	"github.com/schmitthub/clawker/internal/cmd/volume"
 	"github.com/schmitthub/clawker/internal/cmd/worktree"
@@ -65,8 +63,6 @@ Workspace modes:
 	// Add non-alias top-level commands
 	cmd.AddCommand(initcmd.NewCmdInit(f, nil))
 	cmd.AddCommand(project.NewCmdProject(f))
-	cmd.AddCommand(stackcmd.NewCmdStack(f))
-	cmd.AddCommand(harnesscmd.NewCmdHarness(f))
 	cmd.AddCommand(settings.NewCmdSettings(f))
 	cmd.AddCommand(skill.NewCmdSkill(f))
 	cmd.AddCommand(monitor.NewCmdMonitor(f))

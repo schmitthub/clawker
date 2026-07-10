@@ -86,40 +86,16 @@ stacks: ["bad/name"]
 	require.ErrorContains(t, err, "bad/name")
 }
 
-func TestBundleStack_EmbeddedDefinition(t *testing.T) {
-	fsys := manifestFS("version: { resolver: none }\n")
-	fsys["stacks/mytool/stack.yaml"] = mapFile("description: embedded tool\n")
-	fsys["stacks/mytool/Dockerfile.stack-user.tmpl"] = mapFile("RUN echo embedded\n")
-
-	b, err := bundler.LoadBundle("test", fsys)
+// A qualified stack dependency (a bundled harness referencing its shipped
+// sibling stack by its self-address) is a valid stacks: entry at load; whether
+// it resolves is a generation-time concern for the resolver.
+func TestLoadBundle_StackDeclarations_QualifiedAccepted(t *testing.T) {
+	b, err := bundler.LoadBundle("test", manifestFS(`
+version: { resolver: none }
+stacks: [node, acme.tools.node]
+`))
 	require.NoError(t, err)
-
-	assert.True(t, b.HasStack("mytool"))
-	assert.False(t, b.HasStack("other"))
-
-	def, err := b.Stack("mytool")
-	require.NoError(t, err)
-	assert.Empty(t, def.RootFragment)
-	assert.Contains(t, def.UserFragment, "embedded")
-
-	// A second embedded definition + a stray manifest-less dir: BundledStacks
-	// returns only real definitions, sorted, ignoring the incomplete dir.
-	fsys["stacks/atool/stack.yaml"] = mapFile("description: another\n")
-	fsys["stacks/atool/Dockerfile.stack-root.tmpl"] = mapFile("RUN echo a\n")
-	fsys["stacks/incomplete/README.md"] = mapFile("no manifest here\n")
-	b2, err := bundler.LoadBundle("test", fsys)
-	require.NoError(t, err)
-	bundled, err := b2.BundledStacks()
-	require.NoError(t, err)
-	assert.Equal(t, []string{"atool", "mytool"}, bundled)
-}
-
-func TestBundledStacks_None(t *testing.T) {
-	b, err := bundler.LoadBundle("test", manifestFS("version: { resolver: none }\n"))
-	require.NoError(t, err)
-	bundled, err := b.BundledStacks()
-	require.NoError(t, err)
-	assert.Empty(t, bundled)
+	assert.Equal(t, []string{"node", "acme.tools.node"}, b.Manifest.Stacks)
 }
 
 // Conformance: E14 — block slots are stable reserved surfaces. E20 — a bundle fragment fills declared slots without disturbing master ordering.

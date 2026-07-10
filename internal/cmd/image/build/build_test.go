@@ -11,6 +11,7 @@ import (
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/logger"
+	"github.com/schmitthub/clawker/internal/testenv"
 )
 
 func TestNewCmdBuild(t *testing.T) {
@@ -423,11 +424,10 @@ func strPtr(s string) *string {
 // select a registered harness, full refs must end in one (and keep riding as
 // extra image tags), anything else is a flag error.
 func TestHarnessSelectorFromTags(t *testing.T) {
-	cfg := configmocks.NewFromString("", `
-harnesses:
-  claude: { default: true, path: /bundles/claude }
-  codex: { path: /bundles/codex }
-`)
+	// Isolate the XDG dirs so IsKnownHarness resolves claude/codex from the
+	// embedded floor, never a loose harness dir on the host.
+	testenv.New(t)
+	cfg := configmocks.NewFromString("", "")
 
 	t.Run("no tags selects nothing", func(t *testing.T) {
 		selector, extra, err := harnessSelectorFromTags(cfg, nil)

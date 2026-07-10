@@ -10,6 +10,7 @@ import (
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/consts"
+	"github.com/schmitthub/clawker/internal/testenv"
 )
 
 // testHarnessVersion is the version baked into rendered Dockerfiles when
@@ -43,6 +44,12 @@ version: "1"
 
 func testConfig(t *testing.T, projectYAML string) config.Config {
 	t.Helper()
+
+	// Isolate the XDG config/data/state dirs so the component resolver's
+	// user-loose convention-dir and installed-bundle cache scans hit empty
+	// temp dirs, never the host's real dirs — a build with no loose dirs or
+	// bundles resolves everything from the embedded floor, hermetically.
+	testenv.New(t)
 
 	// Default settings YAML with proper monitoring defaults
 	defaultMonitoringYAML := `
