@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/schmitthub/clawker/internal/auth"
+	bundlepkg "github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
@@ -34,6 +35,7 @@ type BuildOptions struct {
 	ProjectManager  func() (project.ProjectManager, error)
 	ProjectRegistry func() (*project.Registry, error)
 	HttpClient      func() (*http.Client, error)
+	BundleManager   func() (*bundlepkg.Manager, error)
 
 	Tags      []string // -t, --tag (multiple allowed)
 	NoCache   bool     // --no-cache
@@ -58,6 +60,7 @@ func NewCmdBuild(f *cmdutil.Factory, runF func(context.Context, *BuildOptions) e
 		ProjectManager:  f.ProjectManager,
 		ProjectRegistry: f.ProjectRegistry,
 		HttpClient:      f.HttpClient,
+		BundleManager:   f.BundleManager,
 	}
 
 	cmd := &cobra.Command{
@@ -109,6 +112,11 @@ func buildRun(ctx context.Context, opts *BuildOptions) error {
 	defer cancel()
 
 	ios := opts.IOStreams
+
+	// Opt-in bundle auto-update: refetch ref-tracking bundles whose source
+	// moved, before the build resolves harnesses/stacks against them. Warn and
+	// proceed — never block the build on a bundle source.
+	cmdutil.RunBundleAutoUpdate(ctx, opts.BundleManager, ios)
 
 	// Ensure CLI auth material on disk. The CLI is root of trust for its
 	// own crypto (CA, signing key, server cert, client cert); the firewall

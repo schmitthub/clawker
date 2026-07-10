@@ -1,34 +1,31 @@
 package bundle
 
 import (
-	"errors"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 
+	"github.com/schmitthub/clawker/internal/bundle/fetch"
 	"github.com/schmitthub/clawker/internal/config"
 )
 
-// ErrNotWired is returned by the fetch-backed Manager operations (Install,
-// Update) until the fetch/cache subsystem is built in a later phase. It is a
-// typed sentinel so the command layer can present a clear "not yet available"
-// message rather than a generic failure; callers match it with [errors.Is].
-var ErrNotWired = errors.New("bundle fetch is not yet available in this build")
-
 // Manager is the command-facing facade over the bundle model: it owns a
-// Resolver bound to one loaded config and adds the cache-mutating and
-// validation operations the `clawker bundle` verbs need. Resolution and
-// listing delegate to the Resolver; Remove purges a cached bundle; Install and
-// Update are the fetch-backed operations, stubbed until the fetch subsystem
-// lands (they return ErrNotWired).
+// Resolver bound to one loaded config plus the git Fetcher, and adds the
+// cache-mutating and validation operations the `clawker bundle` verbs and the
+// bundle-consuming front doors (build/run/monitor up) need. Resolution and
+// listing delegate to the Resolver; Install/Update/AutoUpdateCheck drive the
+// fetch/cache pipeline; Remove purges a cached bundle; Validate is a local
+// manifest check.
 type Manager struct {
 	cfg      config.Config
 	resolver *Resolver
+	fetcher  fetch.Fetcher
 }
 
-// NewManager constructs a Manager bound to cfg.
+// NewManager constructs a Manager bound to cfg with the production git fetcher.
 func NewManager(cfg config.Config) *Manager {
-	return &Manager{cfg: cfg, resolver: NewResolver(cfg)}
+	return &Manager{cfg: cfg, resolver: NewResolver(cfg), fetcher: fetch.NewFetcher()}
 }
 
 // Resolver returns the manager's component resolver, used by listing surfaces
@@ -103,13 +100,39 @@ func (m *Manager) Remove(id BundleID) (bool, error) {
 	return true, nil
 }
 
-// Install fetches a declared bundle source into the host cache. The fetch/cache
-// subsystem is built in a later phase; until then it returns ErrNotWired so the
-// install command can report that the declaration was written but content
-// fetching is not yet available.
-func (*Manager) Install(config.BundleSource) error { return ErrNotWired }
+// Install fetches a declared bundle source into the host cache. A local in-place
+// (path-only) source is loaded directly from disk and never cached, so Install
+// is a no-op for it. A remote source is cloned, its manifest validated, and its
+// content committed atomically under <cacheRoot>/<namespace>/<name>/<version>/.
+// A fetch or validation failure leaves any previously cached version untouched.
+func (m *Manager) Install(ctx context.Context, src config.BundleSource) error {
+	s := SourceFromConfig(src)
+	if s.IsLocal() {
+		return nil
+	}
+	_, _, err := m.fetchIntoCache(ctx, s)
+	return err
+}
 
-// Update re-fetches a cached bundle when its source version changed. Like
-// Install it depends on the fetch subsystem and returns ErrNotWired until that
-// lands.
-func (*Manager) Update(BundleID) error { return ErrNotWired }
+// InstallDeclared fetches every declared-but-uncached remote bundle. It returns
+// the identities freshly installed and the first error encountered (a failed
+// source leaves earlier successes in place).
+func (m *Manager) InstallDeclared(ctx context.Context) ([]BundleID, error) {
+	cached, err := cachedCanonicals()
+	if err != nil {
+		return nil, err
+	}
+	var installed []BundleID
+	for _, decl := range m.cfg.BundleDeclarations() {
+		src := SourceFromConfig(decl.Source)
+		if src.IsLocal() || cached[src.Canonical()] {
+			continue
+		}
+		id, _, fetchErr := m.fetchIntoCache(ctx, src)
+		if fetchErr != nil {
+			return installed, fetchErr
+		}
+		installed = append(installed, id)
+	}
+	return installed, nil
+}

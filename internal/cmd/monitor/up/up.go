@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
@@ -19,21 +20,23 @@ import (
 )
 
 type UpOptions struct {
-	IOStreams *iostreams.IOStreams
-	Client    func(context.Context) (*docker.Client, error)
-	Config    func() (config.Config, error)
-	Logger    func() (*logger.Logger, error)
+	IOStreams     *iostreams.IOStreams
+	Client        func(context.Context) (*docker.Client, error)
+	Config        func() (config.Config, error)
+	Logger        func() (*logger.Logger, error)
+	BundleManager func() (*bundle.Manager, error)
 
 	Detach bool
 }
 
 func NewCmdUp(f *cmdutil.Factory, runF func(context.Context, *UpOptions) error) *cobra.Command {
 	opts := &UpOptions{
-		IOStreams: f.IOStreams,
-		Client:    f.Client,
-		Config:    f.Config,
-		Logger:    f.Logger,
-		Detach:    true,
+		IOStreams:     f.IOStreams,
+		Client:        f.Client,
+		Config:        f.Config,
+		Logger:        f.Logger,
+		BundleManager: f.BundleManager,
+		Detach:        true,
 	}
 
 	cmd := &cobra.Command{
@@ -74,6 +77,10 @@ telemetry to the stack automatically.`,
 
 func upRun(ctx context.Context, opts *UpOptions) error {
 	ios := opts.IOStreams
+
+	// Opt-in bundle auto-update before the monitoring projection resolves its
+	// extensions against the cached bundle set. Warn and proceed.
+	cmdutil.RunBundleAutoUpdate(ctx, opts.BundleManager, ios)
 
 	log, err := opts.Logger()
 	if err != nil {

@@ -96,7 +96,7 @@ writes the project clawker.yaml and --local the uncommitted project override.`,
 	return cmd
 }
 
-func installRun(_ context.Context, opts *InstallOptions) error {
+func installRun(ctx context.Context, opts *InstallOptions) error {
 	ios := opts.IOStreams
 
 	cfg, err := opts.Config()
@@ -105,7 +105,7 @@ func installRun(_ context.Context, opts *InstallOptions) error {
 	}
 
 	if opts.Source == "" {
-		return installDeclared(opts)
+		return installDeclared(ctx, opts)
 	}
 
 	targetPath, configDirLayer, err := resolveTarget(cfg, opts)
@@ -138,32 +138,47 @@ func installRun(_ context.Context, opts *InstallOptions) error {
 		fmt.Fprintf(ios.ErrOut, "%s bundle source already declared in %s\n", ios.ColorScheme().InfoIcon(), targetPath)
 	}
 
-	prefetch(opts, src)
+	prefetch(ctx, opts, src)
 	return nil
 }
 
-// installDeclared handles the no-source form (fetch declared-but-missing). The
-// fetch subsystem is not yet wired, so it reports that rather than silently
-// doing nothing.
-func installDeclared(opts *InstallOptions) error {
-	fmt.Fprintf(opts.IOStreams.ErrOut, "%s %v\n", opts.IOStreams.ColorScheme().InfoIcon(), bundle.ErrNotWired)
-	return cmdutil.SilentError
-}
-
-// prefetch attempts to fetch the just-declared source. The fetch subsystem is
-// stubbed (ErrNotWired); a fetch failure never undoes the successful
-// declaration write — it is reported so the user knows content is not yet
-// present.
-func prefetch(opts *InstallOptions, src config.BundleSource) {
+// installDeclared handles the no-source form: fetch every declared-but-uncached
+// remote bundle into the host cache.
+func installDeclared(ctx context.Context, opts *InstallOptions) error {
+	ios := opts.IOStreams
 	mgr, err := opts.BundleManager()
 	if err != nil {
-		fmt.Fprintf(opts.IOStreams.ErrOut, "%s loading bundle manager: %v\n",
-			opts.IOStreams.ColorScheme().WarningIcon(), err)
+		return fmt.Errorf("loading bundle manager: %w", err)
+	}
+	installed, err := mgr.InstallDeclared(ctx)
+	for _, id := range installed {
+		fmt.Fprintf(ios.Out, "Installed %s\n", id)
+	}
+	if err != nil {
+		return fmt.Errorf("installing declared bundles: %w", err)
+	}
+	if len(installed) == 0 {
+		fmt.Fprintf(ios.ErrOut, "%s all declared bundles are already installed\n", ios.ColorScheme().InfoIcon())
+	}
+	return nil
+}
+
+// prefetch fetches the just-declared source into the cache. A fetch failure
+// never undoes the successful declaration write — it is reported so the user
+// knows to retry the fetch (the yaml entry stands).
+func prefetch(ctx context.Context, opts *InstallOptions, src config.BundleSource) {
+	ios := opts.IOStreams
+	mgr, err := opts.BundleManager()
+	if err != nil {
+		fmt.Fprintf(ios.ErrOut, "%s loading bundle manager: %v\n", ios.ColorScheme().WarningIcon(), err)
 		return
 	}
-	if fetchErr := mgr.Install(src); fetchErr != nil {
-		fmt.Fprintf(opts.IOStreams.ErrOut, "%s %v\n",
-			opts.IOStreams.ColorScheme().InfoIcon(), fetchErr)
+	if fetchErr := mgr.Install(ctx, src); fetchErr != nil {
+		fmt.Fprintf(ios.ErrOut, "%s declared, but fetch failed: %v\n", ios.ColorScheme().WarningIcon(), fetchErr)
+		return
+	}
+	if !bundle.SourceFromConfig(src).IsLocal() {
+		fmt.Fprintf(ios.Out, "Fetched bundle content into the cache\n")
 	}
 }
 

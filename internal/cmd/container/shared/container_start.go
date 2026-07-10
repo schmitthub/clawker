@@ -10,6 +10,7 @@ import (
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/controlplane/manager"
+	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
@@ -162,6 +163,16 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 		return fmt.Errorf("bootstrapping services: resolving container harness: %w", err)
 	}
 
+	// A container must never start with a weaker egress floor than it was built
+	// for: if its harness label no longer resolves (a removed/uninstalled
+	// bundle, a deleted loose dir), refuse the start with the label and the
+	// remedy. This is checked unconditionally, before the firewall gate below,
+	// because the harness egress floor is load-bearing whether or not the
+	// project firewall is enabled.
+	if resolveErr := assertHarnessResolvable(cfg, harnessName); resolveErr != nil {
+		return resolveErr
+	}
+
 	// Firewall is one feature hosted by the CP. Bring the stack up and
 	// sync project rules only when firewall.enable (settings.yaml) is
 	// true. Per-container FirewallEnable runs post-start because the
@@ -217,6 +228,23 @@ func BootstrapServicesPreStart(ctx context.Context, container string, cmdOpts Co
 		return fmt.Errorf("bootstrapping services: injecting pre-run script: %w", err)
 	}
 
+	return nil
+}
+
+// assertHarnessResolvable refuses to start a container whose harness label no
+// longer resolves across the three tiers (floor, loose, installed/in-place
+// bundle). A bare floor harness always resolves; a qualified bundle harness that
+// was removed or a loose dir that was deleted fails here with the label and the
+// remedy, so a container never runs against an egress floor it was not built
+// for.
+func assertHarnessResolvable(cfg config.Config, harnessName string) error {
+	if _, err := bundle.NewResolver(cfg).Resolve(bundle.ComponentHarness, harnessName); err != nil {
+		return fmt.Errorf(
+			"container's harness %q no longer resolves (%w); it may name a bundle that was removed or"+
+				" is not installed — reinstall it with `clawker bundle install` or rebuild the image with"+
+				" `clawker build`",
+			harnessName, err)
+	}
 	return nil
 }
 

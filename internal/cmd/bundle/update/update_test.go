@@ -12,10 +12,12 @@ import (
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/iostreams"
+	"github.com/schmitthub/clawker/internal/testenv"
 )
 
 func newFactory(t *testing.T) (*cmdutil.Factory, *bytes.Buffer) {
 	t.Helper()
+	testenv.New(t)
 	ios, _, _, errOut := iostreams.Test()
 	mgr := bundle.NewManager(configmocks.NewBlankConfig())
 	f := &cmdutil.Factory{
@@ -47,19 +49,20 @@ func run(t *testing.T, f *cmdutil.Factory, args ...string) error {
 	return cmd.Execute()
 }
 
-func TestUpdate_NotWired(t *testing.T) {
-	cases := map[string][]string{
-		"no arg":         nil,
-		"named identity": {"acme.tools"},
-	}
-	for name, args := range cases {
-		t.Run(name, func(t *testing.T) {
-			f, errOut := newFactory(t)
-			err := run(t, f, args...)
-			require.ErrorIs(t, err, cmdutil.SilentError)
-			assert.Contains(t, errOut.String(), "not yet available")
-		})
-	}
+func TestUpdate_NoBundlesIsANoOp(t *testing.T) {
+	// No declared or cached bundles: the update pass finds nothing and succeeds
+	// without error (the real refetch pipeline is covered in the bundle package
+	// integration tests).
+	f, errOut := newFactory(t)
+	require.NoError(t, run(t, f))
+	assert.Empty(t, errOut.String())
+}
+
+func TestUpdate_NamedNotCachedErrors(t *testing.T) {
+	f, _ := newFactory(t)
+	err := run(t, f, "acme.tools")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, bundle.ErrNotCached)
 }
 
 func TestUpdate_InvalidIdentity(t *testing.T) {

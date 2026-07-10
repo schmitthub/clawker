@@ -3,12 +3,14 @@ package install_test
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/internal/bundle"
+	"github.com/schmitthub/clawker/internal/bundle/bundletest"
 	installcmd "github.com/schmitthub/clawker/internal/cmd/bundle/install"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
@@ -18,7 +20,18 @@ import (
 	"github.com/schmitthub/clawker/internal/tui"
 )
 
-const testSHA = "0123456789abcdef0123456789abcdef01234567"
+// seedBundle authors a minimal single-stack bundle in the fixture and returns
+// its http clone URL.
+func seedBundle(t *testing.T, srv *bundletest.Server, name string) string {
+	t.Helper()
+	repo := srv.InitRepo(t, name)
+	repo.Commit(t, "init", map[string]string{
+		".clawker-bundle/bundle.yaml": "namespace: acme\nname: " + name + "\nversion: 1.0.0\n",
+		"stacks/node/stack.yaml":      "description: node\n",
+	})
+	repo.Tag(t, "v1.0.0")
+	return srv.HTTPURL(name)
+}
 
 // newFactory builds a Factory whose Config and BundleManager load a fresh
 // config each call — mirroring one CLI invocation per Execute, so a file
@@ -63,42 +76,39 @@ func run(t *testing.T, f *cmdutil.Factory, args ...string) error {
 	return cmd.Execute()
 }
 
-func TestInstall_WritesUserLayer(t *testing.T) {
+func TestInstall_WritesUserLayerAndFetches(t *testing.T) {
 	testenv.New(t)
+	srv := bundletest.New(t)
+	url := seedBundle(t, srv, "tools")
 	f, out, _ := newFactory(t)
 
-	require.NoError(t, run(t, f, "https://github.com/acme/tools.git", "--ref", "v1.2.0"))
+	require.NoError(t, run(t, f, url, "--ref", "v1.0.0"))
 
 	assert.Contains(t, out.String(), "Declared bundle source")
+	assert.Contains(t, out.String(), "Fetched bundle content")
 
 	path, err := consts.UserProjectConfigFilePath()
 	require.NoError(t, err)
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
 	body := string(data)
-	assert.Contains(t, body, "https://github.com/acme/tools.git")
-	assert.Contains(t, body, "v1.2.0")
-}
+	assert.Contains(t, body, url)
+	assert.Contains(t, body, "v1.0.0")
 
-func TestInstall_OwnerRepoExpands(t *testing.T) {
-	testenv.New(t)
-	f, _, _ := newFactory(t)
-
-	require.NoError(t, run(t, f, "acme/tools", "--sha", testSHA))
-
-	path, err := consts.UserProjectConfigFilePath()
+	// The prefetch populated the cache.
+	cacheRoot, err := consts.BundlesSubdir()
 	require.NoError(t, err)
-	data, err := os.ReadFile(path)
-	require.NoError(t, err)
-	assert.Contains(t, string(data), "https://github.com/acme/tools.git")
+	assert.FileExists(t, filepath.Join(cacheRoot, "acme", "tools", "1.0.0", "stacks", "node", "stack.yaml"))
 }
 
 func TestInstall_Idempotent(t *testing.T) {
 	testenv.New(t)
+	srv := bundletest.New(t)
+	url := seedBundle(t, srv, "tools")
 	f, _, errOut := newFactory(t)
 
-	require.NoError(t, run(t, f, "https://github.com/acme/tools.git", "--ref", "v1"))
-	require.NoError(t, run(t, f, "https://github.com/acme/tools.git", "--ref", "v1"))
+	require.NoError(t, run(t, f, url, "--ref", "v1.0.0"))
+	require.NoError(t, run(t, f, url, "--ref", "v1.0.0"))
 
 	assert.Contains(t, errOut.String(), "already declared")
 
@@ -107,7 +117,7 @@ func TestInstall_Idempotent(t *testing.T) {
 	require.NoError(t, err)
 	count := 0
 	for _, d := range cfg.BundleDeclarations() {
-		if d.Source.URL == "https://github.com/acme/tools.git" {
+		if d.Source.URL == url {
 			count++
 		}
 	}

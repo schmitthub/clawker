@@ -14,6 +14,7 @@ import (
 
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/controlplane/manager"
+	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/cmd/container/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
@@ -44,6 +45,7 @@ type RunOptions struct {
 	SocketBridge    func() socketbridge.SocketBridgeManager
 	Prompter        func() *prompter.Prompter
 	Logger          func() (*logger.Logger, error)
+	BundleManager   func() (*bundle.Manager, error)
 	Version         string
 
 	// Run-specific options
@@ -74,6 +76,7 @@ func NewCmdRun(f *cmdutil.Factory, runF func(context.Context, *RunOptions) error
 		SocketBridge:           f.SocketBridge,
 		Prompter:               f.Prompter,
 		Logger:                 f.Logger,
+		BundleManager:          f.BundleManager,
 		Version:                f.Version,
 	}
 
@@ -154,6 +157,11 @@ image built with "clawker build -t <harness>".`,
 func runRun(ctx context.Context, opts *RunOptions) error {
 	ios := opts.IOStreams
 	containerOpts := opts.ContainerCreateOptions
+
+	// Opt-in bundle auto-update before the container resolves its harness/egress
+	// floor against the cached bundle set. Warn and proceed.
+	cmdutil.RunBundleAutoUpdate(ctx, opts.BundleManager, ios)
+
 	cfg, err := opts.Config()
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)

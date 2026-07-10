@@ -3,7 +3,6 @@ package update
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -58,9 +57,8 @@ failed refetch leaves the cached version serving.`,
 	return cmd
 }
 
-func updateRun(_ context.Context, opts *UpdateOptions) error {
+func updateRun(ctx context.Context, opts *UpdateOptions) error {
 	ios := opts.IOStreams
-	cs := ios.ColorScheme()
 
 	var id bundle.BundleID
 	if opts.Identity != "" {
@@ -76,13 +74,30 @@ func updateRun(_ context.Context, opts *UpdateOptions) error {
 		return fmt.Errorf("loading bundle manager: %w", err)
 	}
 
-	updateErr := mgr.Update(id)
-	if errors.Is(updateErr, bundle.ErrNotWired) {
-		fmt.Fprintf(ios.ErrOut, "%s %v\n", cs.InfoIcon(), updateErr)
-		return cmdutil.SilentError
+	results, err := mgr.Update(ctx, id)
+	if err != nil {
+		return fmt.Errorf("updating bundle: %w", err)
 	}
-	if updateErr != nil {
-		return fmt.Errorf("updating bundle: %w", updateErr)
-	}
+	printUpdateResults(ios, results)
 	return nil
+}
+
+// printUpdateResults renders one line per bundle considered: refetches and
+// failures go to the appropriate stream, no-ops are noted informationally.
+func printUpdateResults(ios *iostreams.IOStreams, results []bundle.UpdateResult) {
+	cs := ios.ColorScheme()
+	for _, r := range results {
+		switch r.Outcome {
+		case bundle.UpdateRefetched:
+			fmt.Fprintf(ios.Out, "%s %s updated to version %s\n", cs.SuccessIcon(), r.ID, r.NewVersion)
+		case bundle.UpdateUnchanged:
+			fmt.Fprintf(ios.ErrOut, "%s %s is up to date\n", cs.InfoIcon(), r.ID)
+		case bundle.UpdateSkippedPinned:
+			fmt.Fprintf(ios.ErrOut, "%s %s is sha-pinned; not updated\n", cs.InfoIcon(), r.ID)
+		case bundle.UpdateSkippedUnmanaged:
+			fmt.Fprintf(ios.ErrOut, "%s %s has no updatable source metadata; skipped\n", cs.InfoIcon(), r.ID)
+		case bundle.UpdateFailed:
+			fmt.Fprintf(ios.ErrOut, "%s %s update failed: %v (cached version kept)\n", cs.WarningIcon(), r.ID, r.Err)
+		}
+	}
 }

@@ -25,6 +25,12 @@ func (id BundleID) String() string {
 	return consts.JoinIdentity(id.Namespace, id.Name)
 }
 
+// zero reports whether the identity is unset — the "update all" sentinel for a
+// no-argument bundle update.
+func (id BundleID) zero() bool {
+	return id.Namespace == "" && id.Name == ""
+}
+
 // Address is a resolved component address. A bare address (Namespace == "")
 // names a floor or loose-tier component by its lone name; a qualified address
 // carries all three segments (namespace.bundle.component) and names an
