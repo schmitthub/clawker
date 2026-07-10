@@ -61,6 +61,15 @@ type Config interface {
 	HostProxyConfig() HostProxyConfig
 
 	ProjectEgressRules() []EgressRule
+
+	// BundleDeclarations returns every declared bundle source paired with the
+	// clawker.yaml layer that declared it, highest-priority layer first. The
+	// union-merged Project().Bundles slice loses per-entry provenance; the
+	// bundle resolver needs the declaring file so an identity-collision error
+	// (two sources resolving to the same namespace.name) can name both
+	// offending files.
+	BundleDeclarations() []BundleDeclaration
+
 	Domain() string
 	LabelDomain() string
 	ConfigDirEnvVar() string
@@ -334,6 +343,68 @@ func (c *configImpl) ProjectEgressRules() []EgressRule {
 		}
 	}
 	return rules
+}
+
+// BundleDeclarations walks the project store's discovered layers (highest to
+// lowest priority) and returns each layer's declared bundle sources paired
+// with that layer's file path. It projects each source from the layer's
+// decoded map view — a total projection over BundleSource's scalar fields,
+// valid because validateBundlesNode already rejected any malformed source at
+// load, so no per-layer decode can fail here. The union-merged
+// Project().Bundles snapshot cannot carry this per-entry file provenance.
+func (c *configImpl) BundleDeclarations() []BundleDeclaration {
+	var decls []BundleDeclaration
+	for _, layer := range c.project.Layers() {
+		raw, ok := layer.Data["bundles"]
+		if !ok || raw == nil {
+			continue
+		}
+		list, isList := raw.([]any)
+		if !isList {
+			continue
+		}
+		for _, item := range list {
+			entry, isMap := item.(map[string]any)
+			if !isMap {
+				continue
+			}
+			decls = append(decls, BundleDeclaration{
+				Source: bundleSourceFromMap(entry),
+				File:   layer.Path,
+			})
+		}
+	}
+	return decls
+}
+
+// bundleSourceFromMap projects a decoded bundles[] map entry into a typed
+// BundleSource. It is total: each field coerces to its zero value when absent
+// or the wrong type. Load-time validateBundlesNode guarantees the shape, so
+// the zero-fallback branches are unreachable in practice — they keep the
+// projection total without an error return. Extend this when BundleSource
+// gains a field.
+func bundleSourceFromMap(entry map[string]any) BundleSource {
+	return BundleSource{
+		URL:        stringFromMap(entry, "url"),
+		Ref:        stringFromMap(entry, "ref"),
+		SHA:        stringFromMap(entry, "sha"),
+		Path:       stringFromMap(entry, "path"),
+		AutoUpdate: boolFromMap(entry, "auto_update"),
+	}
+}
+
+func stringFromMap(entry map[string]any, key string) string {
+	if s, ok := entry[key].(string); ok {
+		return s
+	}
+	return ""
+}
+
+func boolFromMap(entry map[string]any, key string) bool {
+	if b, ok := entry[key].(bool); ok {
+		return b
+	}
+	return false
 }
 
 // --- Store accessors ---

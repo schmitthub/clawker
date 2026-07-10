@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -19,13 +20,18 @@ import (
 // key path, rather than a silently ignored key.
 // TestKnownFieldSets_MatchSchemaTags guards each set against drift from
 // its schema struct's yaml tags.
-func knownStackRegistryFields() map[string]bool { return map[string]bool{"path": true} }
+
+// fieldPath is the shared registry/source field name for a filesystem (or
+// repo-subdir) path.
+const fieldPath = "path"
+
+func knownStackRegistryFields() map[string]bool { return map[string]bool{fieldPath: true} }
 
 func knownHarnessRegistryFields() map[string]bool {
 	return map[string]bool{
 		"config": true, "mount_projects": true, "env_file": true,
 		"from_env": true, "env": true, "post_init": true, "pre_run": true,
-		"path": true,
+		fieldPath: true,
 	}
 }
 
@@ -40,7 +46,11 @@ func knownHarnessOverlayInjectFields() map[string]bool {
 func knownHarnessConfigOptionsFields() map[string]bool { return map[string]bool{"strategy": true} }
 
 func knownMonitoringUnitFields() map[string]bool {
-	return map[string]bool{"path": true, "active": true}
+	return map[string]bool{fieldPath: true, "active": true}
+}
+
+func knownBundleSourceFields() map[string]bool {
+	return map[string]bool{"url": true, "ref": true, "sha": true, fieldPath: true, "auto_update": true}
 }
 
 // validateProjectRegistries walks every discovered clawker.yaml layer —
@@ -61,6 +71,9 @@ func validateProjectRegistries(store *storage.Store[Project]) error {
 			return err
 		}
 		if err := validateBuildNode(label, layer.Data); err != nil {
+			return err
+		}
+		if err := validateBundlesNode(layer); err != nil {
 			return err
 		}
 	}
@@ -123,7 +136,7 @@ func validateMonitoringUnitsNode(label string, data map[string]any) error {
 // boolean.
 func validateMonitoringUnitEntry(label string) func(keyPath string, entry map[string]any) error {
 	return func(keyPath string, entry map[string]any) error {
-		if p, hasPath := entry["path"]; hasPath {
+		if p, hasPath := entry[fieldPath]; hasPath {
 			if err := validateAbsolutePathValue(label, keyPath+".path", p); err != nil {
 				return err
 			}
@@ -160,7 +173,7 @@ func validateStacksNode(label string, data map[string]any) error {
 	return validateEntryMap(label, "stacks", m, consts.ValidateName,
 		"must be a mapping with a path key", knownStackRegistryFields(),
 		func(keyPath string, entry map[string]any) error {
-			p, hasPath := entry["path"]
+			p, hasPath := entry[fieldPath]
 			if !hasPath {
 				return fmt.Errorf("%s: %s: missing required path", label, keyPath)
 			}
@@ -185,7 +198,7 @@ func validateHarnessesNode(label string, data map[string]any) error {
 					return err
 				}
 			}
-			p, hasPath := entry["path"]
+			p, hasPath := entry[fieldPath]
 			if !hasPath {
 				return nil
 			}
@@ -238,6 +251,165 @@ func validateOverlayEntry(label string) func(keyPath string, overlay map[string]
 		}
 		return validateKnownFields(label, keyPath+".inject", inject, knownHarnessOverlayInjectFields())
 	}
+}
+
+// shaRe matches a full 40-character lowercase-hex git commit SHA — the only
+// shape a bundle source's sha: field may take (an abbreviated or upper-case
+// SHA is rejected so the resolver never has to canonicalize it).
+var shaRe = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+// validateBundlesNode validates one clawker.yaml layer's bundles: node. It
+// takes the whole LayerInfo (not just the decoded data) because the
+// config-dir-layer absolute-path rule is layer-position-dependent: a local
+// path-only source in the user config-dir clawker.yaml has no project root to
+// resolve a relative path against, so it must be absolute — a project-layer
+// file resolves relative paths against its own project root and is fine. The
+// bundles: list is union-merged across layers, so this per-layer walk (never
+// the merged tree) is what surfaces a malformed source hidden in a
+// lower-priority file behind a valid winning layer.
+func validateBundlesNode(layer storage.LayerInfo) error {
+	label := layerLabel(layer)
+	raw, ok := layer.Data["bundles"]
+	if !ok || raw == nil {
+		return nil
+	}
+	list, isList := raw.([]any)
+	if !isList {
+		return fmt.Errorf("%s: bundles: must be a list of bundle sources", label)
+	}
+	configDirLayer := isConfigDirLayer(layer)
+	for i, item := range list {
+		keyPath := fmt.Sprintf("bundles[%d]", i)
+		entry, isMap := nodeMapping(item)
+		if !isMap {
+			return fmt.Errorf("%s: %s: must be a mapping", label, keyPath)
+		}
+		if err := validateKnownFields(label, keyPath, entry, knownBundleSourceFields()); err != nil {
+			return err
+		}
+		if err := validateBundleSourceEntry(label, keyPath, entry, configDirLayer); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateBundleSourceEntry checks one bundle source: exactly one of a remote
+// url (optionally with a subdir path + at least one of ref/sha) or a local
+// path-alone source (no url, no ref/sha). A sha must be a full 40-hex commit
+// id; a config-dir-layer path source must be absolute.
+func validateBundleSourceEntry(label, keyPath string, entry map[string]any, configDirLayer bool) error {
+	src, err := decodeBundleSourceFields(label, keyPath, entry)
+	if err != nil {
+		return err
+	}
+	if src.hasURL {
+		return validateRemoteBundleSource(label, keyPath, src)
+	}
+	return validateLocalBundleSource(label, keyPath, src, configDirLayer)
+}
+
+// bundleSourceFields is the type-checked field view of one bundles[] entry,
+// shared by the remote/local validators.
+type bundleSourceFields struct {
+	url, ref, sha, path             string
+	hasURL, hasRef, hasSHA, hasPath bool
+}
+
+func decodeBundleSourceFields(label, keyPath string, entry map[string]any) (bundleSourceFields, error) {
+	var src bundleSourceFields
+	var err error
+	if src.url, src.hasURL, err = optionalStringField(label, keyPath, "url", entry); err != nil {
+		return src, err
+	}
+	if src.ref, src.hasRef, err = optionalStringField(label, keyPath, "ref", entry); err != nil {
+		return src, err
+	}
+	if src.sha, src.hasSHA, err = optionalStringField(label, keyPath, "sha", entry); err != nil {
+		return src, err
+	}
+	if src.path, src.hasPath, err = optionalStringField(label, keyPath, fieldPath, entry); err != nil {
+		return src, err
+	}
+	if a, hasAuto := entry["auto_update"]; hasAuto && a != nil {
+		if _, isBool := a.(bool); !isBool {
+			return src, fmt.Errorf("%s: %s.auto_update: must be a boolean", label, keyPath)
+		}
+	}
+	return src, nil
+}
+
+// validateRemoteBundleSource checks a url-bearing source: non-empty url, at
+// least one usable ref/sha, and a full 40-hex sha when given. A path alongside
+// a url is a repository subdirectory (monorepo case), not a host path — no
+// absolute/relative rule applies to it.
+func validateRemoteBundleSource(label, keyPath string, src bundleSourceFields) error {
+	if src.url == "" {
+		return fmt.Errorf("%s: %s.url: must not be empty", label, keyPath)
+	}
+	if src.hasRef && src.ref == "" {
+		return fmt.Errorf("%s: %s.ref: must not be empty", label, keyPath)
+	}
+	if !src.hasRef && !src.hasSHA {
+		return fmt.Errorf("%s: %s: a remote url source requires ref or sha", label, keyPath)
+	}
+	if src.hasSHA && !shaRe.MatchString(src.sha) {
+		return fmt.Errorf("%s: %s.sha: %q is not a 40-character hex commit SHA", label, keyPath, src.sha)
+	}
+	return nil
+}
+
+// validateLocalBundleSource checks a path-alone source (the dev loop): ref/sha
+// are meaningless without something to fetch, and a config-dir-layer path must
+// be absolute because that layer has no project root to resolve against.
+func validateLocalBundleSource(label, keyPath string, src bundleSourceFields, configDirLayer bool) error {
+	if src.hasRef || src.hasSHA {
+		return fmt.Errorf("%s: %s: ref and sha require a url", label, keyPath)
+	}
+	if !src.hasPath {
+		return fmt.Errorf("%s: %s: must set url or path", label, keyPath)
+	}
+	if err := validatePathValue(label, keyPath+".path", src.path); err != nil {
+		return err
+	}
+	if configDirLayer && !filepath.IsAbs(src.path) {
+		return fmt.Errorf(
+			"%s: %s.path: %q must be an absolute path in the user config-dir layer (a relative path there has no project root to resolve against)",
+			label,
+			keyPath,
+			src.path,
+		)
+	}
+	return nil
+}
+
+// optionalStringField reads an optional string-valued key from a decoded map
+// entry: present=false when the key is absent or explicitly null; present=true
+// with a "must be a string" error when the value is a non-string scalar; the
+// decoded string otherwise. The map view is what yaml.v3 produced, so an int
+// or bool never silently coerces here — it surfaces as a type error naming the
+// exact file and key path.
+func optionalStringField(label, keyPath, field string, entry map[string]any) (string, bool, error) {
+	raw, ok := entry[field]
+	if !ok || raw == nil {
+		return "", false, nil
+	}
+	s, isString := raw.(string)
+	if !isString {
+		return "", true, fmt.Errorf("%s: %s.%s: must be a string", label, keyPath, field)
+	}
+	return s, true, nil
+}
+
+// isConfigDirLayer reports whether a discovered layer is the user config-dir
+// clawker.yaml (as opposed to a project walk-up layer). It compares the
+// layer's directory against consts.ConfigDir(); a virtual/in-memory layer
+// (empty Path) is never the config-dir layer.
+func isConfigDirLayer(layer storage.LayerInfo) bool {
+	if layer.Path == "" {
+		return false
+	}
+	return filepath.Clean(filepath.Dir(layer.Path)) == filepath.Clean(consts.ConfigDir())
 }
 
 // validateEntryMap iterates a name→entry mapping (stacks:, harnesses:,

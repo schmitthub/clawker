@@ -362,6 +362,42 @@
       },
       "type": "object"
     },
+    "bundles": {
+      "description": "Installed-bundle sources (git url or local path) providing extension harnesses, stacks, and monitoring extensions; merged across all config layers",
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "auto_update": {
+            "description": "Refetch this remote bundle when its source version changes, checked at the start of bundle-consuming commands (build, run, monitor up); off by default. No effect on sha-pinned or local sources.",
+            "title": "Auto Update",
+            "type": "boolean"
+          },
+          "path": {
+            "description": "With url: a subdirectory of the repository to load the bundle from (monorepo case). Without url: a local directory loaded in place with no cache copy (the dev loop).",
+            "title": "Path",
+            "type": "string"
+          },
+          "ref": {
+            "description": "Branch or tag to fetch from a remote url; at least one of ref or sha is required on a remote source, and sha takes precedence when both are set. Ignored for a local path source.",
+            "title": "Ref",
+            "type": "string"
+          },
+          "sha": {
+            "description": "Full 40-character commit SHA pinning a remote url for a reproducible fetch; takes precedence over ref when both are set. Ignored for a local path source.",
+            "title": "SHA",
+            "type": "string"
+          },
+          "url": {
+            "description": "Git clone URL (https or ssh) of the bundle's source repository; set for a remote bundle. Mutually exclusive with a path-only local source.",
+            "title": "URL",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "title": "Bundles",
+      "type": "array"
+    },
     "harnesses": {
       "additionalProperties": {
         "additionalProperties": false,
@@ -428,6 +464,23 @@
       },
       "description": "Per-harness container initialization settings and bundle registration, keyed by harness name",
       "title": "Harnesses",
+      "type": "object"
+    },
+    "monitor": {
+      "additionalProperties": false,
+      "properties": {
+        "extensions": {
+          "default": [
+            "claude-code"
+          ],
+          "description": "Monitoring extensions this project contributes to the monitoring stack, by name or qualified namespace.bundle.component address; merged across all config layers",
+          "items": {
+            "type": "string"
+          },
+          "title": "Monitoring Extensions",
+          "type": "array"
+        }
+      },
       "type": "object"
     },
     "name": {

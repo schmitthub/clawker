@@ -29,6 +29,31 @@ type Project struct {
 	// simply available, unused.
 	Stacks  map[string]StackRegistryEntry `yaml:"stacks,omitempty"  label:"Stacks"  desc:"Stack registry mapping a stack name to its definition directory"`
 	Aliases map[string]string             `yaml:"aliases,omitempty" label:"Aliases" desc:"Command aliases expanded before execution; the value is appended to 'clawker' and supports $1..$N placeholders; merged across all config layers" merge:"union" default:"go=run --rm -it --agent $1 @ --dangerously-skip-permissions,wt=run --rm -it --agent $1 --worktree $2 @ --dangerously-skip-permissions"`
+	// Bundles declares the installed-bundle sources this project draws
+	// extension components (harnesses, stacks, monitoring extensions) from.
+	// Each entry is a git-generic source; identity comes from the fetched
+	// bundle's manifest, never from the source URL. Union-merged across every
+	// config layer, so a user config-dir declaration and a project declaration
+	// both apply; the fetch/resolution engine (internal/bundle) consumes them.
+	Bundles []BundleSource `yaml:"bundles,omitempty" label:"Bundles" desc:"Installed-bundle sources (git url or local path) providing extension harnesses, stacks, and monitoring extensions; merged across all config layers" merge:"union"`
+	// Monitor holds project-scoped monitoring selection (which monitoring
+	// extensions this project projects into the host monitoring stack).
+	Monitor MonitorConfig `yaml:"monitor,omitempty"`
+}
+
+// MonitorConfig is the project-scoped monitoring selection block
+// (clawker.yaml `monitor:`). It selects which monitoring extensions this
+// project contributes to the host-global monitoring stack; the stack's own
+// ports and endpoints live in the host settings (Settings.Monitoring), a
+// separate concern.
+type MonitorConfig struct {
+	// Extensions selects the monitoring extensions this project projects into
+	// the monitoring stack, by component reference (bare name for a
+	// floor/loose extension, or a qualified namespace.bundle.component address
+	// for a bundled one). Union-merged across all config layers; the defaults
+	// layer ships the built-in claude-code extension so a fresh project keeps
+	// monitoring the claude harness out of the box.
+	Extensions []string `yaml:"extensions,omitempty" label:"Monitoring Extensions" desc:"Monitoring extensions this project contributes to the monitoring stack, by name or qualified namespace.bundle.component address; merged across all config layers" merge:"union" default:"claude-code"`
 }
 
 // Fields implements [storage.Schema] for Project.

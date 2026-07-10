@@ -251,6 +251,12 @@ func configSchemaSpecs() []configSchemaSpec {
 			"clawker stack definition manifest (stack.yaml)",
 			consts.StackSchemaFile,
 		},
+		{
+			reflect.TypeFor[config.BundleManifest](),
+			consts.SchemaURL(consts.BundleSchemaFile, consts.GitHubRefMain),
+			"clawker bundle manifest (bundle.yaml)",
+			consts.BundleSchemaFile,
+		},
 	}
 }
 

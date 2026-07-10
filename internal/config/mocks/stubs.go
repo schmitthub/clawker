@@ -40,6 +40,7 @@ func newMockFrom(cfg config.Config) *ConfigMock {
 	mock := &ConfigMock{}
 
 	mock.ProjectEgressRulesFunc = cfg.ProjectEgressRules
+	mock.BundleDeclarationsFunc = cfg.BundleDeclarations
 
 	// Store accessors
 	mock.ProjectStoreFunc = cfg.ProjectStore

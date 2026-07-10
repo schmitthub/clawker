@@ -1,0 +1,203 @@
+{
+  "$id": "https://raw.githubusercontent.com/schmitthub/clawker/main/docs/schemas/harness.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "egress": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "description": "Allow or deny traffic to this destination (default: allow)",
+            "title": "Action",
+            "type": "string"
+          },
+          "dst": {
+            "description": "Domain or IP the container needs to reach (e.g. api.github.com, registry.npmjs.org)",
+            "title": "Destination",
+            "type": "string"
+          },
+          "insecure_skip_tls_verify": {
+            "description": "Accept a self-signed/untrusted upstream TLS cert for this destination (default: false). Use only for trusted local-dev endpoints.",
+            "title": "Insecure Skip TLS Verify",
+            "type": "boolean"
+          },
+          "path_default": {
+            "description": "What to do with HTTP paths that don't match any path rule (allow or deny)",
+            "title": "Path Default",
+            "type": "string"
+          },
+          "path_rules": {
+            "description": "Fine-grained path filtering (only applies to http/https/ws/wss)",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "action": {
+                  "description": "Whether to allow or deny requests matching this path",
+                  "title": "Action",
+                  "type": "string"
+                },
+                "methods": {
+                  "description": "HTTP methods this path rule applies to (e.g. GET, HEAD); empty = all methods. Only meaningful for http/https/ws/wss.",
+                  "items": {
+                    "type": "string"
+                  },
+                  "title": "Methods",
+                  "type": "array"
+                },
+                "path": {
+                  "description": "URL path to match: a literal prefix starting with / (e.g. /v1/api), or — when prefixed with ~ — an RE2 regex matched full-string for exact/anchored matching (e.g. ~/repos/(a|b)/?)",
+                  "title": "Path",
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "title": "Path Rules",
+            "type": "array"
+          },
+          "port": {
+            "description": "Destination port: a single port (443) or an inclusive range (9000-9100); empty = protocol default",
+            "title": "Port",
+            "type": "string"
+          },
+          "proto": {
+            "description": "L7 protocol: https (TLS-MITM, default), http (plaintext HCM), ws/wss (websocket over http/https), ssh, tcp, udp, or any opaque L7 name for TCP pass-through",
+            "title": "Protocol",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "monitoring": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "seeds": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "apply": {
+            "type": "string"
+          },
+          "dest": {
+            "type": "string"
+          },
+          "file": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "stacks": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "staging": {
+      "additionalProperties": false,
+      "properties": {
+        "copy": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "dest": {
+                "type": "string"
+              },
+              "json_keys": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "json_rewrites": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "file": {
+                      "type": "string"
+                    },
+                    "key": {
+                      "type": "string"
+                    },
+                    "rewrite": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "skip": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "src": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "mounts": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "dest": {
+                "type": "string"
+              },
+              "src": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "version": {
+      "additionalProperties": false,
+      "properties": {
+        "package": {
+          "type": "string"
+        },
+        "resolver": {
+          "type": "string"
+        },
+        "tag_prefix": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "volumes": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "type": "array"
+    }
+  },
+  "title": "clawker harness bundle manifest (harness.yaml)",
+  "type": "object"
+}

@@ -305,6 +305,22 @@ stacks: <value>  # default: n/a | required: false
 # Command aliases expanded before execution; the value is appended to 'clawker' and supports $1..$N placeholders; merged across all config layers
 aliases:  # default: go=run --rm -it --agent $1 @ --dangerously-skip-permissions,wt=run --rm -it --agent $1 --worktree $2 @ --dangerously-skip-permissions | required: false
   <key>: <value>
+# Installed-bundle sources (git url or local path) providing extension harnesses, stacks, and monitoring extensions; merged across all config layers
+bundles:
+  # Git clone URL (https or ssh) of the bundle's source repository; set for a remote bundle. Mutually exclusive with a path-only local source.
+  - url: <string>  # default: n/a | required: false
+    # Branch or tag to fetch from a remote url; at least one of ref or sha is required on a remote source, and sha takes precedence when both are set. Ignored for a local path source.
+    ref: <string>  # default: n/a | required: false
+    # Full 40-character commit SHA pinning a remote url for a reproducible fetch; takes precedence over ref when both are set. Ignored for a local path source.
+    sha: <string>  # default: n/a | required: false
+    # With url: a subdirectory of the repository to load the bundle from (monorepo case). Without url: a local directory loaded in place with no cache copy (the dev loop).
+    path: <string>  # default: n/a | required: false
+    # Refetch this remote bundle when its source version changes, checked at the start of bundle-consuming commands (build, run, monitor up); off by default. No effect on sha-pinned or local sources.
+    auto_update: <boolean>  # default: n/a | required: false
+monitor:
+  # Monitoring extensions this project contributes to the monitoring stack, by name or qualified namespace.bundle.component address; merged across all config layers
+  extensions:  # default: claude-code | required: false
+    - <string>
 
 ```
 
@@ -434,6 +450,20 @@ The following tables are auto-generated from the schema struct tags in `internal
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `aliases` | key-value map | `go=run --rm -it --agent $1 @ --dangerously-skip-permissions,wt=run --rm -it --agent $1 --worktree $2 @ --dangerously-skip-permissions` | Command aliases expanded before execution; the value is appended to 'clawker' and supports $1..$N placeholders; merged across all config layers |
+
+
+### bundles
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `bundles` | object list | — | Installed-bundle sources (git url or local path) providing extension harnesses, stacks, and monitoring extensions; merged across all config layers |
+
+
+### monitor
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `extensions` | string list | `claude-code` | Monitoring extensions this project contributes to the monitoring stack, by name or qualified namespace.bundle.component address; merged across all config layers |
 
 
 ## Interactive Editing

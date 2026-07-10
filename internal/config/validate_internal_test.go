@@ -250,6 +250,7 @@ func TestKnownFieldSets_MatchSchemaTags(t *testing.T) {
 		{"harness overlay inject", reflect.TypeFor[HarnessOverlayInject](), knownHarnessOverlayInjectFields()},
 		{"harness config options", reflect.TypeFor[HarnessConfigOptions](), knownHarnessConfigOptionsFields()},
 		{"monitoring unit entry", reflect.TypeFor[MonitoringUnitEntry](), knownMonitoringUnitFields()},
+		{"bundle source", reflect.TypeFor[BundleSource](), knownBundleSourceFields()},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

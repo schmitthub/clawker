@@ -28,6 +28,9 @@ var _ config.Config = &ConfigMock{}
 //			BuildSubdirFunc: func() (string, error) {
 //				panic("mock out the BuildSubdir method")
 //			},
+//			BundleDeclarationsFunc: func() []config.BundleDeclaration {
+//				panic("mock out the BundleDeclarations method")
+//			},
 //			CPIPLastOctetFunc: func() byte {
 //				panic("mock out the CPIPLastOctet method")
 //			},
@@ -230,6 +233,9 @@ type ConfigMock struct {
 	// BuildSubdirFunc mocks the BuildSubdir method.
 	BuildSubdirFunc func() (string, error)
 
+	// BundleDeclarationsFunc mocks the BundleDeclarations method.
+	BundleDeclarationsFunc func() []config.BundleDeclaration
+
 	// CPIPLastOctetFunc mocks the CPIPLastOctet method.
 	CPIPLastOctetFunc func() byte
 
@@ -429,6 +435,9 @@ type ConfigMock struct {
 		// BuildSubdir holds details about calls to the BuildSubdir method.
 		BuildSubdir []struct {
 		}
+		// BundleDeclarations holds details about calls to the BundleDeclarations method.
+		BundleDeclarations []struct {
+		}
 		// CPIPLastOctet holds details about calls to the CPIPLastOctet method.
 		CPIPLastOctet []struct {
 		}
@@ -619,6 +628,7 @@ type ConfigMock struct {
 	lockBridgePIDFilePath       sync.RWMutex
 	lockBridgesSubdir           sync.RWMutex
 	lockBuildSubdir             sync.RWMutex
+	lockBundleDeclarations      sync.RWMutex
 	lockCPIPLastOctet           sync.RWMutex
 	lockClawkerIgnoreName       sync.RWMutex
 	lockClawkerNetwork          sync.RWMutex
@@ -766,6 +776,33 @@ func (mock *ConfigMock) BuildSubdirCalls() []struct {
 	mock.lockBuildSubdir.RLock()
 	calls = mock.calls.BuildSubdir
 	mock.lockBuildSubdir.RUnlock()
+	return calls
+}
+
+// BundleDeclarations calls BundleDeclarationsFunc.
+func (mock *ConfigMock) BundleDeclarations() []config.BundleDeclaration {
+	if mock.BundleDeclarationsFunc == nil {
+		panic("ConfigMock.BundleDeclarationsFunc: method is nil but Config.BundleDeclarations was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockBundleDeclarations.Lock()
+	mock.calls.BundleDeclarations = append(mock.calls.BundleDeclarations, callInfo)
+	mock.lockBundleDeclarations.Unlock()
+	return mock.BundleDeclarationsFunc()
+}
+
+// BundleDeclarationsCalls gets all the calls that were made to BundleDeclarations.
+// Check the length with:
+//
+//	len(mockedConfig.BundleDeclarationsCalls())
+func (mock *ConfigMock) BundleDeclarationsCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockBundleDeclarations.RLock()
+	calls = mock.calls.BundleDeclarations
+	mock.lockBundleDeclarations.RUnlock()
 	return calls
 }
 
