@@ -189,6 +189,9 @@ const (
 	SettingsSchemaFile = "settings.schema.json"
 	HarnessSchemaFile  = "harness.schema.json"
 	StackSchemaFile    = "stack.schema.json"
+	// BundleSchemaFile is the generated JSON Schema filename for a bundle
+	// manifest (.clawker-bundle/bundle.yaml) under SchemaDocsDir.
+	BundleSchemaFile = "bundle.schema.json"
 )
 
 // Version-shape patterns consumed by SchemaRef. build.Version arrives in one
@@ -303,6 +306,7 @@ const (
 	OtelClientsDirName = "otel-clients"
 	authDir            = "auth"
 	buildDir           = "build"
+	bundlesDir         = "bundles"
 	worktreesDir       = "worktrees"
 	logsDir            = "logs"
 	pidsDir            = "pids"
@@ -981,6 +985,10 @@ func ControlPlaneDBPath() (string, error) {
 
 // BuildSubdir ensures and returns the build subdirectory path under DataDir.
 func BuildSubdir() (string, error) { return subdirPath(buildDir, DataDir) }
+
+// BundlesSubdir ensures and returns the installed-bundle cache directory under
+// DataDir. Fetched bundles land at <BundlesSubdir>/<namespace>/<name>/<version>/.
+func BundlesSubdir() (string, error) { return subdirPath(bundlesDir, DataDir) }
 
 // WorktreesSubdir ensures and returns the worktrees subdirectory path under DataDir.
 func WorktreesSubdir() (string, error) { return subdirPath(worktreesDir, DataDir) }
