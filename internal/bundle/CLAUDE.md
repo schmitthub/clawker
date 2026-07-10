@@ -39,6 +39,7 @@ name IS the component name. There is NO bare-manifest-at-root special case.
 | `provenance.go` | `Tier` + `Provenance` (source clause + shadow rendering) |
 | `warnings.go` | `Warning` + levenshtein typo suggestions for unknown convention dirs |
 | `errors.go` | `ErrNotCached`, `CollisionError` (C1), `SourceError`, `ManifestError` |
+| `manager.go` | `Manager` — the command-facing facade over the model: wraps a `Resolver` (bound to one config) and adds `Validate(dir) Report` (local hard-fail/warn split), `Remove(id)` (purge a cached bundle's entire entry), `Declarations()`, and `Install`/`Update` (fetch-backed, stubbed with `ErrNotWired` until the fetch subsystem lands). Constructed via `NewManager(cfg)`; exposed on the Factory as `BundleManager` |
 
 ## Resolution semantics
 

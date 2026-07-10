@@ -4,6 +4,7 @@ import (
 	aliascmd "github.com/schmitthub/clawker/internal/cmd/alias"
 	authcmd "github.com/schmitthub/clawker/internal/cmd/auth"
 	bridgecmd "github.com/schmitthub/clawker/internal/cmd/bridge"
+	bundlecmd "github.com/schmitthub/clawker/internal/cmd/bundle"
 	"github.com/schmitthub/clawker/internal/cmd/container"
 	controlplanecmd "github.com/schmitthub/clawker/internal/cmd/controlplane"
 	firewallcmd "github.com/schmitthub/clawker/internal/cmd/firewall"
@@ -70,6 +71,7 @@ Workspace modes:
 	// Add management commands
 	cmd.AddCommand(aliascmd.NewCmdAlias(f, func(name string) bool { return builtinCommandExists(cmd, name) }))
 	cmd.AddCommand(authcmd.NewCmdAuth(f))
+	cmd.AddCommand(bundlecmd.NewCmdBundle(f))
 	cmd.AddCommand(container.NewCmdContainer(f))
 	cmd.AddCommand(controlplanecmd.NewCmdControlPlane(f))
 	cmd.AddCommand(firewallcmd.NewCmdFirewall(f))

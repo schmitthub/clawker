@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -353,6 +354,57 @@ func validateLocalBundleSource(label, keyPath string, src bundleSourceFields, co
 			label,
 			keyPath,
 			src.path,
+		)
+	}
+	return nil
+}
+
+// ValidateBundleSource validates a typed bundle source before it is written to
+// a clawker.yaml layer — the write front door for the `clawker bundle install`
+// command, which constructs a BundleSource from CLI flags rather than parsing a
+// file. It enforces the same invariants as the per-layer load validator
+// (validateBundlesNode) over a typed value: a remote source (url set) requires
+// ref or sha and a full 40-hex sha when given; a local path-alone source
+// (no url) forbids ref/sha and, in the user config-dir layer, requires an
+// absolute path. configDirLayer reports whether the write target is that
+// config-dir clawker.yaml (which has no project root to anchor a relative
+// path). The two front doors guard the same invariant at their respective entry
+// points — a value authored in a file, and a value constructed at the CLI.
+func ValidateBundleSource(src BundleSource, configDirLayer bool) error {
+	if src.URL != "" {
+		return validateRemoteBundleSourceTyped(src)
+	}
+	return validateLocalBundleSourceTyped(src, configDirLayer)
+}
+
+// validateRemoteBundleSourceTyped checks a url-bearing typed source: at least
+// one of ref/sha, and a full 40-hex sha when given.
+func validateRemoteBundleSourceTyped(src BundleSource) error {
+	if src.Ref == "" && src.SHA == "" {
+		return errors.New("a remote url bundle source requires ref or sha")
+	}
+	if src.SHA != "" && !shaRe.MatchString(src.SHA) {
+		return fmt.Errorf("bundle source sha %q is not a 40-character hex commit SHA", src.SHA)
+	}
+	return nil
+}
+
+// validateLocalBundleSourceTyped checks a path-alone typed source: no ref/sha, a
+// non-empty path, and (in the config-dir layer) an absolute path.
+func validateLocalBundleSourceTyped(src BundleSource, configDirLayer bool) error {
+	if src.Ref != "" || src.SHA != "" {
+		return errors.New("bundle source ref and sha require a url")
+	}
+	if src.Path == "" {
+		return errors.New("bundle source must set url or path")
+	}
+	if err := validatePathValue("bundle source", "path", src.Path); err != nil {
+		return err
+	}
+	if configDirLayer && !filepath.IsAbs(src.Path) {
+		return fmt.Errorf(
+			"bundle source path %q must be absolute in the user config-dir layer (a relative path there has no project root to resolve against)",
+			src.Path,
 		)
 	}
 	return nil

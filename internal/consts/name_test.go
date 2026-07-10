@@ -183,3 +183,34 @@ func TestValidateNamespace(t *testing.T) {
 		assert.Error(t, consts.ValidateNamespace(""))
 	})
 }
+
+func TestSplitIdentity(t *testing.T) {
+	t.Run("valid pair", func(t *testing.T) {
+		ns, name, err := consts.SplitIdentity("acme.tools")
+		require.NoError(t, err)
+		assert.Equal(t, "acme", ns)
+		assert.Equal(t, "tools", name)
+	})
+
+	t.Run("round-trips JoinIdentity", func(t *testing.T) {
+		ns, name, err := consts.SplitIdentity(consts.JoinIdentity("acme", "tools"))
+		require.NoError(t, err)
+		assert.Equal(t, "acme", ns)
+		assert.Equal(t, "tools", name)
+	})
+
+	rejects := []string{
+		"tools",           // one segment (bare name)
+		"acme.tools.node", // three segments (a component address)
+		"acme.",           // empty second segment
+		".tools",          // empty first segment
+		"Acme.tools",      // invalid segment charset
+		"",                // empty
+	}
+	for _, in := range rejects {
+		t.Run("rejects/"+in, func(t *testing.T) {
+			_, _, err := consts.SplitIdentity(in)
+			assert.Error(t, err)
+		})
+	}
+}

@@ -134,6 +134,33 @@ func JoinIdentity(namespace, name string) string {
 	return namespace + addressSeparator + name
 }
 
+// identitySegments is the exact segment count of a bundle identity — the
+// (namespace, name) pair, the first two segments of the address grammar.
+const identitySegments = 2
+
+// SplitIdentity parses a bundle identity — the dotted namespace.name spelling
+// that bundle-level surfaces accept (clawker bundle remove/update arguments) —
+// into its namespace and name, validating each segment against the shared name
+// rule. It is the inverse of JoinIdentity. Exactly two dot-separated segments
+// are required; any other count, or a non-conformant segment, is an error. Like
+// SplitAddress it is structural only — the reserved-namespace rule is applied
+// at the bundle manifest front door, not to a remove/update argument naming an
+// already-cached bundle.
+func SplitIdentity(s string) (string, string, error) {
+	segs := strings.Split(s, addressSeparator)
+	if len(segs) != identitySegments {
+		return "", "", fmt.Errorf(
+			"bundle identity %q is invalid: must be a namespace%sname pair", s, addressSeparator,
+		)
+	}
+	for _, seg := range segs {
+		if err := ValidateName(seg); err != nil {
+			return "", "", fmt.Errorf("bundle identity %q is invalid: %w", s, err)
+		}
+	}
+	return segs[0], segs[1], nil
+}
+
 // ValidateAddress validates s as either a bare name or a fully-qualified
 // namespace.bundle.component address, additionally rejecting a qualified
 // address whose namespace segment is reserved (see ValidateNamespace). This is

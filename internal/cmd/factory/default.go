@@ -11,6 +11,7 @@ import (
 	adminv1 "github.com/schmitthub/clawker/api/admin/v1"
 	"github.com/schmitthub/clawker/controlplane/adminclient"
 	"github.com/schmitthub/clawker/controlplane/manager"
+	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/docker"
@@ -69,11 +70,36 @@ func New(version string) *cmdutil.Factory {
 	f.Client = clientFunc(f)                 // depends on Config
 	f.GitManager = gitManagerFunc(f)         // anchors at the registry-resolved project root, no Config dependency
 	f.Prompter = prompterFunc(f)
-	f.AdminClient = adminClientFunc(f)   // depends on Config
-	f.ControlPlane = controlPlaneFunc(f) // depends on Config, Logger, Client
-	f.HttpClient = httpClientFunc()      // stdlib *http.Client; tests substitute via custom RoundTripper
+	f.AdminClient = adminClientFunc(f)     // depends on Config
+	f.ControlPlane = controlPlaneFunc(f)   // depends on Config, Logger, Client
+	f.HttpClient = httpClientFunc()        // stdlib *http.Client; tests substitute via custom RoundTripper
+	f.BundleManager = bundleManagerFunc(f) // depends on Config
 
 	return f
+}
+
+// bundleManagerFunc returns a lazy constructor for the bundle-model facade. It
+// resolves the loaded config once (sync.Once-cached) and binds a Manager to it;
+// the Manager's resolver reads the embedded floor, the loose convention dirs,
+// and the host bundle cache on demand. Depends only on Config.
+func bundleManagerFunc(f *cmdutil.Factory) func() (*bundle.Manager, error) {
+	var (
+		once sync.Once
+		mgr  *bundle.Manager
+		err  error
+	)
+	return func() (*bundle.Manager, error) {
+		once.Do(func() {
+			var cfg config.Config
+			cfg, err = f.Config()
+			if err != nil {
+				err = fmt.Errorf("bundle manager: loading config: %w", err)
+				return
+			}
+			mgr = bundle.NewManager(cfg)
+		})
+		return mgr, err
+	}
 }
 
 // cliStateFunc returns a sync.Once-cached lazy closure that yields the CLI

@@ -1,0 +1,87 @@
+package install
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/schmitthub/clawker/internal/config"
+)
+
+// srcOpts builds a fully-populated InstallOptions for classifySource tests
+// (only the source-shaping fields vary).
+func srcOpts(source, ref string) *InstallOptions {
+	return &InstallOptions{
+		IOStreams:     nil,
+		Config:        nil,
+		BundleManager: nil,
+		Source:        source,
+		Ref:           ref,
+		SHA:           "",
+		Subdir:        "",
+		AutoUpdate:    false,
+		User:          false,
+		Project:       false,
+		Local:         false,
+	}
+}
+
+func TestClassifySource_GitURL(t *testing.T) {
+	got, err := classifySource(srcOpts("https://example.com/x.git", "v1.0.0"))
+	require.NoError(t, err)
+	assert.Equal(t, config.BundleSource{
+		URL: "https://example.com/x.git", Ref: "v1.0.0", SHA: "", Path: "", AutoUpdate: false,
+	}, got)
+}
+
+func TestClassifySource_SSHURL(t *testing.T) {
+	got, err := classifySource(srcOpts("git@github.com:acme/x.git", "main"))
+	require.NoError(t, err)
+	assert.Equal(t, config.BundleSource{
+		URL: "git@github.com:acme/x.git", Ref: "main", SHA: "", Path: "", AutoUpdate: false,
+	}, got)
+}
+
+func TestClassifySource_OwnerRepoExpands(t *testing.T) {
+	// A shorthand already carrying the .git suffix must not double it; a repo
+	// name merely containing a dot still gets the suffix appended.
+	for arg, wantURL := range map[string]string{
+		"acme/tools":        "https://github.com/acme/tools.git",
+		"acme/tools.git":    "https://github.com/acme/tools.git",
+		"acme/my.tools":     "https://github.com/acme/my.tools.git",
+		"acme/my.tools.git": "https://github.com/acme/my.tools.git",
+	} {
+		got, err := classifySource(srcOpts(arg, "v1.0.0"))
+		require.NoError(t, err)
+		assert.Equal(t, config.BundleSource{
+			URL: wantURL, Ref: "v1.0.0", SHA: "", Path: "", AutoUpdate: false,
+		}, got, "arg %q", arg)
+	}
+}
+
+func TestClassifySource_LocalPath(t *testing.T) {
+	got, err := classifySource(srcOpts("./vendor/x", ""))
+	require.NoError(t, err)
+	assert.Equal(t, config.BundleSource{
+		URL: "", Ref: "", SHA: "", Path: "./vendor/x", AutoUpdate: false,
+	}, got)
+}
+
+func TestClassifySource_Errors(t *testing.T) {
+	bad := []*InstallOptions{
+		srcOpts("./vendor/x", "v1"), // local path with ref
+		srcOpts("node", ""),         // bare word, not a source
+		srcOpts("a/b/c", ""),        // three segments, not owner/repo
+	}
+	for _, o := range bad {
+		_, err := classifySource(o)
+		assert.Error(t, err, "source %q should be rejected", o.Source)
+	}
+}
+
+func TestUnderRoot(t *testing.T) {
+	assert.True(t, underRoot("/root/sub/x", "/root"))
+	assert.True(t, underRoot("/root", "/root"))
+	assert.False(t, underRoot("/other/x", "/root"))
+}

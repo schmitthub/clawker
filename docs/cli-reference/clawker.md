@@ -26,6 +26,7 @@ Workspace modes:
 * [clawker attach](clawker_attach) - Attach local standard input, output, and error streams to a running container
 * [clawker auth](clawker_auth) - Manage control plane authentication material
 * [clawker build](clawker_build) - Build the project image
+* [clawker bundle](clawker_bundle) - Manage distributed bundles of harnesses, stacks, and monitoring extensions
 * [clawker container](clawker_container) - Manage containers
 * [clawker controlplane](clawker_controlplane) - Break-glass control plane lifecycle
 * [clawker cp](clawker_cp) - Copy files/folders between a container and the local filesystem
