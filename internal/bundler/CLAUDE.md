@@ -24,7 +24,7 @@ Leaf package: Dockerfile generation, harness bundle + stack registries, bundle/s
 | Package | Purpose |
 |---------|---------|
 | `registry/` | npm registry client (`NPMClient`), GitHub releases client (`GitHubReleaseClient`), version info types, fetcher interface |
-| `assets/` | Dockerfile templates (`Dockerfile.base.tmpl`, `Dockerfile.harness-image.tmpl`), shipped harness bundles (`harnesses/{claude,codex}/`), shipped stack definitions (`stacks/{go,node,python,rust}/`) (the clawkerd binary is imported from `clawkerd/embed`, not stored here) |
+| `assets/` | Master Dockerfile templates ONLY (`Dockerfile.base.tmpl`, `Dockerfile.harness-image.tmpl`). The shipped floor — harnesses (`claude`, `codex`), stacks (`go`, `node`, `python`, `rust`), and the `claude-code` monitoring extension — relocated to `internal/bundle/assets/{harnesses,stacks,monitoring}/` and is loaded through `bundle.FloorNames`/`bundle.FloorFS`; `ShippedHarnessNames`/`ShippedStackNames`/`ShippedMonitoringUnits` shim onto that floor API. The clawkerd binary is imported from `clawkerd/embed`, not stored here. |
 
 ## Build Cache Strategy
 

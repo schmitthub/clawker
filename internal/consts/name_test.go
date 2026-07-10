@@ -104,6 +104,8 @@ func TestSplitAddress(t *testing.T) {
 	}
 }
 
+// JoinAddress is the inverse of SplitAddress: it spells the dotted
+// three-segment address and round-trips through the splitter.
 // ValidateAddress is the reserved-aware form validator: it rejects a
 // qualified address whose namespace segment is reserved.
 func TestValidateAddress(t *testing.T) {

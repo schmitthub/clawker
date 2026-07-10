@@ -50,8 +50,8 @@ func TestResolveUnits(t *testing.T) {
 		u := units[0]
 		assert.Equal(t, "claude-code", u.Name)
 		assert.False(t, u.Active, "everything is opt-in — first monitor up seeds infra only")
-		assert.Contains(t, u.Source, monitor.UnitSourceBuiltIn)
-		assert.Contains(t, u.Source, "claude")
+		assert.Equal(t, monitor.UnitSourceBuiltIn, u.Source,
+			"floor monitoring units ship as bare peers, not via a harness")
 		assert.NotNil(t, u.Unit)
 	})
 

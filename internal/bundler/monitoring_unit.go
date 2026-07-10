@@ -12,6 +12,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 )
@@ -506,41 +507,27 @@ func jsonBasenames(name string, fsys fs.FS, dir string) ([]string, error) {
 	return names, nil
 }
 
-// ShippedMonitoringUnit is a monitoring unit declared by a shipped
-// embedded harness bundle, with its declaring harness for provenance.
+// ShippedMonitoringUnit is a monitoring unit shipped on the embedded floor
+// (a bare-named peer component under the floor monitoring/ dir).
 type ShippedMonitoringUnit struct {
-	Unit    *MonitoringUnit
-	Harness string
+	Unit *MonitoringUnit
 }
 
-// ShippedMonitoringUnits returns every monitoring unit declared by the
-// shipped embedded harness bundles, sorted by unit name. These are the
-// built-in rows of the host-global monitoring registry — they resolve
-// straight from the binary and need no registration. Two shipped bundles
-// declaring the same unit name is a hard error (a packaging bug, caught
-// by any test loading the shipped set).
+// ShippedMonitoringUnits returns every monitoring unit shipped on the embedded
+// floor, sorted by unit name. They resolve straight from the binary and need no
+// registration; uniqueness is structural (one floor directory per unit name).
 func ShippedMonitoringUnits() ([]ShippedMonitoringUnit, error) {
 	var units []ShippedMonitoringUnit
-	byName := map[string]string{}
-	for _, harness := range ShippedHarnessNames() {
-		b, err := loadEmbeddedHarness(harness)
+	for _, name := range bundle.FloorNames(bundle.ComponentMonitoring) {
+		src, err := bundle.FloorFS(bundle.ComponentMonitoring, name)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("shipped monitoring unit %q: %w", name, err)
 		}
-		for _, unitName := range b.DeclaredMonitoringUnits() {
-			if prev, dup := byName[unitName]; dup {
-				return nil, fmt.Errorf(
-					"shipped harnesses %q and %q both declare monitoring unit %q",
-					prev, harness, unitName,
-				)
-			}
-			byName[unitName] = harness
-			unit, unitErr := b.MonitoringUnit(unitName)
-			if unitErr != nil {
-				return nil, unitErr
-			}
-			units = append(units, ShippedMonitoringUnit{Unit: unit, Harness: harness})
+		unit, loadErr := LoadMonitoringUnit(name, src)
+		if loadErr != nil {
+			return nil, loadErr
 		}
+		units = append(units, ShippedMonitoringUnit{Unit: unit})
 	}
 	slices.SortFunc(units, func(a, b ShippedMonitoringUnit) int {
 		return strings.Compare(a.Unit.Name, b.Unit.Name)

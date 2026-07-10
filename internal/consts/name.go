@@ -114,6 +114,26 @@ func SplitAddress(s string) (string, string, string, bool, error) {
 	return a.namespace, a.bundle, a.name, a.qualified, err
 }
 
+// JoinAddress spells a fully-qualified component address from its three
+// segments, joined by the address separator — namespace.bundle.component. It is
+// the inverse of SplitAddress and the single formatting helper every surface
+// that emits a qualified name uses (yaml keys, CLI selectors, image tags,
+// volume names, index names), so the dotted spelling is never hardcoded. It
+// does not validate; callers that accept untrusted segments validate them with
+// ValidateName / ValidateAddress first.
+func JoinAddress(namespace, bundle, name string) string {
+	return namespace + addressSeparator + bundle + addressSeparator + name
+}
+
+// JoinIdentity spells a bundle identity — the (namespace, bundle-name) pair,
+// the first two segments of the address grammar — as namespace.name. It is the
+// spelling bundle-level surfaces use (clawker bundle remove/update arguments,
+// collision errors, listings); like JoinAddress it exists so the dotted
+// spelling is never hardcoded. It does not validate.
+func JoinIdentity(namespace, name string) string {
+	return namespace + addressSeparator + name
+}
+
 // ValidateAddress validates s as either a bare name or a fully-qualified
 // namespace.bundle.component address, additionally rejecting a qualified
 // address whose namespace segment is reserved (see ValidateNamespace). This is

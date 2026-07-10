@@ -5,16 +5,21 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/schmitthub/clawker/internal/bundle"
 )
 
 func TestConfigFile_ValidJSON(t *testing.T) {
-	raw, err := harnessesFS.ReadFile(harnessAssetsRoot + "/claude/assets/claude-config.json")
+	src, err := bundle.FloorFS(bundle.ComponentHarness, "claude")
+	require.NoError(t, err)
+	raw, err := fs.ReadFile(src, "assets/claude-config.json")
 	require.NoError(t, err)
 
 	var content map[string]any

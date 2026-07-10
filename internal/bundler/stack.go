@@ -2,49 +2,24 @@ package bundler
 
 import (
 	"bytes"
-	"embed"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 	"text/template"
 
+	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/config"
 )
-
-// Shipped stack definitions. Each subdirectory of assets/stacks is a
-// complete definition (stack.yaml + root and/or user Dockerfile fragments)
-// embedded in the binary. Shipped definitions are the virtual base layer of
-// stack resolution: they resolve straight from this embedded FS, always, and
-// are shadowed only by a matching key at a closer layer (a project stacks:
-// registry entry, or a harness bundle's own stacks/ directory).
-//
-//go:embed all:assets/stacks
-var stacksFS embed.FS
-
-const stackAssetsRoot = "assets/stacks"
 
 // sourceBuilt is the provenance label for the embedded layer compiled into
 // the binary (the virtual base of both the stack and harness lookup chains).
 const sourceBuilt = "built"
 
-// ShippedStackNames lists the definitions embedded in this build.
+// ShippedStackNames lists the stack components on the embedded floor.
 func ShippedStackNames() []string {
-	entries, err := stacksFS.ReadDir(stackAssetsRoot)
-	if err != nil {
-		return nil
-	}
-	var names []string
-	for _, e := range entries {
-		if e.IsDir() {
-			names = append(names, e.Name())
-		}
-	}
-	sort.Strings(names)
-	return names
+	return bundle.FloorNames(bundle.ComponentStack)
 }
 
 // isShippedStack reports whether name is one of the embedded definitions.
@@ -52,10 +27,10 @@ func isShippedStack(name string) bool {
 	return slices.Contains(ShippedStackNames(), name)
 }
 
-// loadEmbeddedStack loads a shipped definition straight from the embedded
-// assets (the virtual base layer).
+// loadEmbeddedStack loads a shipped definition straight from the embedded floor
+// (the virtual base layer).
 func loadEmbeddedStack(name string) (*StackDefinition, error) {
-	src, err := fs.Sub(stacksFS, stackAssetsRoot+"/"+name)
+	src, err := bundle.FloorFS(bundle.ComponentStack, name)
 	if err != nil {
 		return nil, fmt.Errorf("shipped stack %q: %w", name, err)
 	}
@@ -97,13 +72,13 @@ func (p stackProvenance) noteworthy() bool {
 // layer shadows a farther one, the returned provenance names both; the caller
 // decides whether to surface it. An unresolvable name is a hard error naming the
 // registration remedy — never a silent skip.
-func resolveStack(cfg config.Config, bundle *Bundle, name string) (*StackDefinition, stackProvenance, error) {
+func resolveStack(cfg config.Config, hb *Bundle, name string) (*StackDefinition, stackProvenance, error) {
 	if err := ValidateStackName(name); err != nil {
 		return nil, stackProvenance{}, fmt.Errorf("resolve stack: %w", err)
 	}
 
 	projEntry, projHas := projectStackEntry(cfg, name)
-	bundleHas := bundle != nil && bundle.HasStack(name)
+	bundleHas := hb != nil && hb.HasStack(name)
 	shippedHas := isShippedStack(name)
 
 	switch {
@@ -115,17 +90,17 @@ func resolveStack(cfg config.Config, bundle *Bundle, name string) (*StackDefinit
 		prov := stackProvenance{
 			name:    name,
 			source:  fmt.Sprintf("project (%s)", projEntry.Path),
-			shadows: fartherStackLayers(bundle, bundleHas, shippedHas),
+			shadows: fartherStackLayers(hb, bundleHas, shippedHas),
 		}
 		return def, prov, nil
 	case bundleHas:
-		def, err := bundle.Stack(name)
+		def, err := hb.Stack(name)
 		if err != nil {
 			return nil, stackProvenance{}, fmt.Errorf("resolve stack: %w", err)
 		}
 		prov := stackProvenance{
 			name:    name,
-			source:  bundleLabel(bundle),
+			source:  bundleLabel(hb),
 			shadows: fartherStackLayers(nil, false, shippedHas),
 		}
 		return def, prov, nil
@@ -149,10 +124,10 @@ func resolveStack(cfg config.Config, bundle *Bundle, name string) (*StackDefinit
 // fartherStackLayers lists the farther lookup layers that also define a
 // declared name — closest first — for shadow provenance. bundle may be nil
 // only when bundleHas is false.
-func fartherStackLayers(bundle *Bundle, bundleHas, shippedHas bool) []string {
+func fartherStackLayers(hb *Bundle, bundleHas, shippedHas bool) []string {
 	var layers []string
 	if bundleHas {
-		layers = append(layers, bundleLabel(bundle))
+		layers = append(layers, bundleLabel(hb))
 	}
 	if shippedHas {
 		layers = append(layers, sourceBuilt)
@@ -161,8 +136,8 @@ func fartherStackLayers(bundle *Bundle, bundleHas, shippedHas bool) []string {
 }
 
 // bundleLabel is the provenance phrase for a bundle-embedded stack layer.
-func bundleLabel(bundle *Bundle) string {
-	return fmt.Sprintf("%s bundle", bundle.Name)
+func bundleLabel(hb *Bundle) string {
+	return fmt.Sprintf("%s bundle", hb.Name)
 }
 
 // projectStackEntry returns the project stacks: registry entry for name, and
@@ -207,7 +182,7 @@ func loadProjectStack(cfg config.Config, name string, entry config.StackRegistry
 // rejects a repeated name; a harness manifest silently renders it once.
 func resolveStackDecls(
 	cfg config.Config,
-	bundle *Bundle,
+	hb *Bundle,
 	decls []string,
 	dupIsError bool,
 ) ([]namedFragment, []namedFragment, []stackProvenance, error) {
@@ -222,7 +197,7 @@ func resolveStackDecls(
 			continue
 		}
 		seen[name] = true
-		def, p, resolveErr := resolveStack(cfg, bundle, name)
+		def, p, resolveErr := resolveStack(cfg, hb, name)
 		if resolveErr != nil {
 			return nil, nil, nil, resolveErr
 		}
@@ -281,10 +256,10 @@ func splitFragments(defs []*StackDefinition) ([]namedFragment, []namedFragment) 
 // declaration order plus shadow provenance.
 func resolveHarnessStacks(
 	cfg config.Config,
-	bundle *Bundle,
+	hb *Bundle,
 	harnessDecls []string,
 ) ([]namedFragment, []namedFragment, []stackProvenance, error) {
-	return resolveStackDecls(cfg, bundle, harnessDecls, false)
+	return resolveStackDecls(cfg, hb, harnessDecls, false)
 }
 
 // renderStackSteps executes each fragment against the Dockerfile

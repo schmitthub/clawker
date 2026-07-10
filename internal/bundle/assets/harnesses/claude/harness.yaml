@@ -17,13 +17,6 @@ version:
 stacks:
   - node
 
-# Monitoring units shipped under monitoring/<name>/ — observability
-# loadouts (OpenSearch index + ingest pipeline + dashboards + collector
-# routing) a user activates with `clawker monitor enable <name>`. Shipping
-# a unit never registers or activates it.
-monitoring:
-  - claude-code
-
 # Persisted dirs: each becomes a named volume mounted at path under the
 # container home. Every staged/seeded dest must fall under one of these.
 volumes:

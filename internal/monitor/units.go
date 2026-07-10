@@ -101,7 +101,7 @@ func resolveBuiltInUnits(
 		units = append(units, ResolvedUnit{
 			Name:    s.Unit.Name,
 			Unit:    s.Unit,
-			Source:  UnitSourceBuiltIn + " via harness " + s.Harness,
+			Source:  UnitSourceBuiltIn,
 			Path:    "",
 			Active:  entry.Active != nil && *entry.Active,
 			LoadErr: nil,

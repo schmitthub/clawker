@@ -136,7 +136,7 @@ templates/opensearch-bootstrap/
     clawker.ndjson                     # Generic saved objects (infra index patterns + Clawker Networking dashboard); one workspace-scoped _import per *.ndjson file
 ```
 
-Claude Code artifacts (claude-code index template, claude-code-prompt-nest pipeline, both CC dashboards, all Explore PROMQL panels) live in the claude harness bundle's monitoring unit (`internal/bundler/assets/harnesses/claude/monitoring/claude-code/`) and are overlaid into this tree only when the unit is active. Index-template basenames MUST equal their index name (`index_patterns` = exactly the basename) — bootstrap.sh derives its index pre-create list from the basenames.
+Claude Code artifacts (claude-code index template, claude-code-prompt-nest pipeline, both CC dashboards, all Explore PROMQL panels) live in the embedded floor's `claude-code` monitoring unit (`internal/bundle/assets/monitoring/claude-code/` — a peer of the harnesses/stacks floor dirs, not nested inside the claude harness) and are overlaid into this tree only when the unit is active. Index-template basenames MUST equal their index name (`index_patterns` = exactly the basename) — bootstrap.sh derives its index pre-create list from the basenames.
 
 `monitor init` walks this tree via `WriteOpenSearchBootstrap`, renders `bootstrap.sh.tmpl` against `MonitorTemplateData` (only OpenSearch / Dashboards hostnames + ports), and copies the rest verbatim into `<monitorDir>/opensearch-bootstrap/`. That directory is bind-mounted RO into the bootstrap container at `/opensearch-bootstrap`.
 

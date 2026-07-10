@@ -1,46 +1,23 @@
 package bundler
 
 import (
-	"embed"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
 	"sort"
 
+	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 )
 
-// Shipped harness bundles. Each subdirectory of assets/harnesses is a
-// complete bundle (harness.yaml + Dockerfile.harness.tmpl + assets) embedded
-// in the binary. Shipped bundles are the virtual base layer of harness
-// resolution: they load straight from this embedded FS and are shadowed only
-// by a project harnesses: registry entry naming the same key.
-//
-//go:embed all:assets/harnesses
-var harnessesFS embed.FS
-
-const harnessAssetsRoot = "assets/harnesses"
-
 // DefaultHarnessName is the harness used when a command selects none.
 const DefaultHarnessName = consts.DefaultHarnessName
 
-// ShippedHarnessNames lists the bundles embedded in this build.
+// ShippedHarnessNames lists the harness components on the embedded floor.
 func ShippedHarnessNames() []string {
-	entries, err := harnessesFS.ReadDir(harnessAssetsRoot)
-	if err != nil {
-		return nil
-	}
-	var names []string
-	for _, e := range entries {
-		if e.IsDir() {
-			names = append(names, e.Name())
-		}
-	}
-	sort.Strings(names)
-	return names
+	return bundle.FloorNames(bundle.ComponentHarness)
 }
 
 // ResolveHarnessName returns the effective harness name: the explicit name
@@ -214,10 +191,10 @@ func isShippedHarness(name string) bool {
 	return slices.Contains(ShippedHarnessNames(), name)
 }
 
-// loadEmbeddedHarness loads a shipped bundle straight from the embedded
-// assets (the virtual base layer).
+// loadEmbeddedHarness loads a shipped harness straight from the embedded floor
+// (the virtual base layer).
 func loadEmbeddedHarness(name string) (*Bundle, error) {
-	src, err := fs.Sub(harnessesFS, harnessAssetsRoot+"/"+name)
+	src, err := bundle.FloorFS(bundle.ComponentHarness, name)
 	if err != nil {
 		return nil, fmt.Errorf("shipped harness %q: %w", name, err)
 	}

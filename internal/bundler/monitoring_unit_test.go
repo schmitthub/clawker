@@ -275,18 +275,28 @@ func TestLoadMonitoringUnit_Table(t *testing.T) {
 	})
 }
 
-// TestShippedClaudeBundle_MonitoringUnit pins the embedded claude bundle's
-// monitoring contribution: it declares (and fully loads) the claude-code
-// unit with the claude-code index routed from service.name=claude-code,
-// carrying the migrated bootstrap artifacts.
-func TestShippedClaudeBundle_MonitoringUnit(t *testing.T) {
+// TestShippedFloor_MonitoringUnit pins the embedded floor's monitoring
+// contribution: monitoring units are peers of harnesses now (not declared
+// inside a harness), so the claude harness declares none, and the claude-code
+// unit ships as a bare floor component — fully loaded with the claude-code
+// index routed from service.name=claude-code, carrying the migrated bootstrap
+// artifacts.
+func TestShippedFloor_MonitoringUnit(t *testing.T) {
 	cfg := configmocks.NewBlankConfig()
 	b, err := bundler.LoadHarness(cfg, "claude")
 	require.NoError(t, err)
-	require.Equal(t, []string{"claude-code"}, b.DeclaredMonitoringUnits())
+	require.Empty(t, b.DeclaredMonitoringUnits(),
+		"monitoring is a floor peer now, never declared inside a harness")
 
-	u, err := b.MonitoringUnit("claude-code")
+	shipped, err := bundler.ShippedMonitoringUnits()
 	require.NoError(t, err)
+	var u *bundler.MonitoringUnit
+	for _, s := range shipped {
+		if s.Unit.Name == "claude-code" {
+			u = s.Unit
+		}
+	}
+	require.NotNil(t, u, "claude-code ships as a floor monitoring unit")
 	require.Len(t, u.Manifest.Logs, 1)
 	assert.Equal(t, "claude-code", u.Manifest.Logs[0].Index)
 	assert.Equal(t, []string{"claude-code"}, u.Manifest.Logs[0].ServiceNames)
