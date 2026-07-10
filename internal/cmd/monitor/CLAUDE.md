@@ -8,10 +8,9 @@ Manage local observability stack (OpenTelemetry Collector + OpenSearch / OpenSea
 |------|---------|
 | `monitor.go` | `NewCmdMonitor(f)` — parent command |
 | `init/init.go` | `NewCmdInit(f, runF)` — scaffold monitoring config files (resolves units, prints per-unit provenance, renders active set) |
-| `up/up.go` | `NewCmdUp(f, runF)` — start observability stack (warns on active-unit drift vs the rendered `.clawker-units` marker) |
+| `up/up.go` | `NewCmdUp(f, runF)` — render + start observability stack (option-D: merges cwd projection into the host ledger, renders collector config over the seeded union, force-recreates the collector only when otel-config bytes changed) |
 | `down/down.go` | `NewCmdDown(f, runF)` — stop observability stack |
 | `status/status.go` | `NewCmdStatus(f, runF)` — show stack status |
-| `units/` | `NewCmdRegister/Remove/List/Enable/Disable(f, runF)` — host-global monitoring unit registry front doors (settings.yaml `monitoring.units`) |
 
 ## Key Symbols
 
@@ -64,22 +63,9 @@ type DownOptions struct {
 func NewCmdDown(f *cmdutil.Factory, runF func(context.Context, *DownOptions) error) *cobra.Command
 ```
 
-Stops monitoring stack via Docker Compose. Flags: `--volumes/-v` (remove named volumes).
+Stops monitoring stack via Docker Compose. Flags: `--volumes/-v` (remove named volumes). With `--volumes` it also deletes the seeded-unit ledger (`units-ledger.yaml`), since the REST state it tracked is wiped.
 
-### monitor register / remove / list / enable / disable (`units/`)
-
-The monitoring unit registry commands. `register <path> [--name] [--force]`
-validates the unit directory via `bundler.LoadMonitoringUnit` BEFORE any
-write, refuses built-in names outright (flat namespace, no shadowing;
-`--force` only updates your own entry's path), and stores an absolute path
-via `SettingsStore().Set("monitoring.units.<name>.path", …)`. `enable`
-runs the resource-exclusivity front door (`monitor.ActiveFromResolved`
-over the would-be active set) so an index/service.name collision errors at
-enable time; `disable` flips the flag and prints the volume-cycle
-persistence hint. `list` renders NAME/PATH/SOURCE/ACTIVE (+ `-q`/`--json`/
-`--format`) over built-in ∪ registered ∪ discoverable (project bundles')
-units, marking dead paths `(missing)`. Activation changes never touch
-compose — every command prints the `monitor init && monitor up` recipe.
+Monitoring-unit selection has no dedicated commands: a project selects extensions by name in `monitor.extensions` (clawker.yaml), and `monitor up` seeds them. The register-era `units/` commands (register/remove/list/enable/disable + the `settings.yaml monitoring.units` registry) are gone; `bundle list` shows monitoring-component provenance.
 
 ### monitor status
 

@@ -9,11 +9,9 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"sort"
 	"strings"
 	"text/template"
 
-	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 )
@@ -132,27 +130,27 @@ type MonitorTemplateData struct {
 	// volume mount and the on-disk layout stay in sync from one constant.
 	OpenSearchBootstrapDirName string
 
-	// Units is the collector routing data for every ACTIVE monitoring
-	// unit: otel-config.yaml.tmpl ranges over it to emit per-lane
-	// exporters, routing-table entries, pipelines, and metric rename
-	// statements. Inactive units contribute nothing — their records fall
-	// to the untrusted_unrouted debug pipeline.
+	// Units is the collector routing data for every seeded monitoring unit
+	// in the ledger union: otel-config.yaml.tmpl ranges over it to emit
+	// per-lane exporters, routing-table entries, pipelines, and metric
+	// rename statements. An unselected extension contributes nothing — a
+	// record whose service.name matches no seeded lane falls to the
+	// untrusted_unrouted debug pipeline.
 	Units []UnitRouting
 
 	// ISMIndexPatternsJSON is the shared retention policy's
 	// ism_template.index_patterns value: the infra indices plus every
-	// active default-retention unit lane index, JSON-encoded Go-side so
+	// seeded default-retention unit lane index, JSON-encoded Go-side so
 	// the template never hand-quotes.
 	ISMIndexPatternsJSON string
 }
 
-// NewMonitorTemplateData constructs template data from Settings and the
-// active monitoring unit set. Service hostnames are populated from
-// [consts.MonitoringService*] — changing a hostname in consts propagates
-// here without further edits. Settings.Monitoring drives ports/heap;
-// units drive collector routing and the shared retention policy's index
-// patterns.
-func NewMonitorTemplateData(s *config.Settings, units []ResolvedUnit) (MonitorTemplateData, error) {
+// NewMonitorTemplateData constructs template data from Settings and the seeded
+// unit union. Service hostnames are populated from [consts.MonitoringService*] —
+// changing a hostname in consts propagates here without further edits.
+// Settings.Monitoring drives ports/heap; the union drives collector routing and
+// the shared retention policy's index patterns.
+func NewMonitorTemplateData(s *config.Settings, units []SeededUnit) (MonitorTemplateData, error) {
 	routings, err := BuildUnitRoutings(units)
 	if err != nil {
 		return MonitorTemplateData{}, err
@@ -190,10 +188,10 @@ func NewMonitorTemplateData(s *config.Settings, units []ResolvedUnit) (MonitorTe
 // pattern list: the reserved infra indices plus every active unit lane
 // that participates in default retention. Custom-retention lanes ship
 // their own unit policies instead.
-func ismIndexPatternsJSON(units []ResolvedUnit) (string, error) {
+func ismIndexPatternsJSON(units []SeededUnit) (string, error) {
 	patterns := consts.ReservedMonitoringIndices()
 	for _, u := range units {
-		for _, lane := range u.Manifest().Logs {
+		for _, lane := range u.Manifest.Logs {
 			if lane.Retention == "" || lane.Retention == config.MonitoringRetentionDefault {
 				patterns = append(patterns, lane.Index)
 			}
@@ -222,29 +220,34 @@ func RenderTemplate(name, tmplContent string, data MonitorTemplateData) (string,
 }
 
 // WriteOpenSearchBootstrap mirrors [OpenSearchBootstrapFS] into destDir,
-// preserving directory structure, then overlays every ACTIVE monitoring
-// unit's artifacts into the same category dirs. Files ending in `.tmpl`
-// are rendered with [MonitorTemplateData] and written with the `.tmpl`
-// suffix stripped; everything else (JSON, NDJSON) is copied verbatim.
-// Unit files are always verbatim — units carry no templates.
+// preserving directory structure, then overlays every currently-resolvable
+// monitoring unit's artifacts into the same category dirs. Files ending in
+// `.tmpl` are rendered with [MonitorTemplateData] and written with the `.tmpl`
+// suffix stripped; everything else (JSON, NDJSON) is copied verbatim. Unit files
+// are always verbatim — units carry no templates.
 //
-// A unit artifact whose path collides with a core file or another unit's
-// is a hard error naming both provenances: PUT names are
-// basename-derived and index templates reference pipelines by name, so a
-// silent overwrite would rewrite cluster behavior. Saved-object IDs are
-// collision-checked across every ndjson line and explore panel filename
-// for the same reason (`_import?overwrite=true` is last-write-wins).
+// The overlaid units are the current project's projection (the option-D "seed
+// from cwd" set), NOT the full ledger union: a foreign project's REST artifacts
+// were applied by its own `monitor up` and persist in the OpenSearch volume, so
+// re-materializing them here is unnecessary and their on-disk trees may not even
+// be resolvable from this project. The collector config, by contrast, is
+// rendered over the whole union so foreign routings survive.
+//
+// A unit artifact whose path collides with a core file or another unit's is a
+// hard error naming both provenances: PUT names are basename-derived and index
+// templates reference pipelines by name, so a silent overwrite would rewrite
+// cluster behavior. Saved-object IDs are collision-checked across every ndjson
+// line and explore panel filename for the same reason
+// (`_import?overwrite=true` is last-write-wins).
 //
 // The destination is the workdir subdir bind-mounted into the
-// clawker-opensearch-bootstrap container at /opensearch-bootstrap, so
-// the on-disk layout mirrors what the script reads at runtime. Callers
-// (monitor init) should pass `<monitorDir>/<OpenSearchBootstrapDirName>`.
+// clawker-opensearch-bootstrap container at /opensearch-bootstrap, so the
+// on-disk layout mirrors what the script reads at runtime. Callers should pass
+// `<monitorDir>/<OpenSearchBootstrapDirName>`.
 //
-// Idempotent: destDir holds only generated content and is wiped first,
-// so files removed from the embedded tree — or belonging to a
-// deactivated unit — don't linger and get re-imported by bootstrap.sh's
-// directory loops. A [UnitsMarkerFile] records the active set for
-// `monitor up`'s drift warning.
+// Idempotent: destDir holds only generated content and is wiped first, so files
+// removed from the embedded tree — or belonging to a deselected unit — don't
+// linger and get re-imported by bootstrap.sh's directory loops.
 func WriteOpenSearchBootstrap(destDir string, data MonitorTemplateData, units []ResolvedUnit) error {
 	if err := os.RemoveAll(destDir); err != nil {
 		return fmt.Errorf("clear bootstrap dir %s: %w", destDir, err)
@@ -259,10 +262,7 @@ func WriteOpenSearchBootstrap(destDir string, data MonitorTemplateData, units []
 			return err
 		}
 	}
-	if err := validateSavedObjectIDs(destDir, written); err != nil {
-		return err
-	}
-	return writeUnitsMarker(destDir, units)
+	return validateSavedObjectIDs(destDir, written)
 }
 
 // writeBootstrapCore mirrors the embedded core tree into destDir,
@@ -328,7 +328,7 @@ func writeCoreFile(destDir, srcPath, rel string, data MonitorTemplateData, writt
 // rendered tree, erroring on any path collision.
 func overlayUnitArtifacts(destDir string, u ResolvedUnit, written map[string]string) error {
 	if u.Unit == nil {
-		return fmt.Errorf("monitor: unit %q has no loaded artifacts (load error: %w)", u.Name, u.LoadErr)
+		return fmt.Errorf("monitor: unit %q has no loaded artifacts", u.Name)
 	}
 	provenance := fmt.Sprintf("unit %q (%s)", u.Name, u.Source)
 	err := u.Unit.WalkArtifacts(func(relPath string, content []byte) error {
@@ -365,11 +365,11 @@ func validateSavedObjectIDs(destDir string, written map[string]string) error {
 	for rel, provenance := range written {
 		dir := path.Dir(rel)
 		switch {
-		case dir == bundler.MonitoringDirSavedObjects && strings.HasSuffix(rel, ".ndjson"):
+		case dir == MonitoringDirSavedObjects && strings.HasSuffix(rel, ".ndjson"):
 			if err := scanNDJSONIDs(destDir, rel, provenance, claim); err != nil {
 				return err
 			}
-		case dir == path.Join(bundler.MonitoringDirSavedObjects, bundler.MonitoringDirExplore):
+		case dir == path.Join(MonitoringDirSavedObjects, MonitoringDirExplore):
 			id := strings.TrimSuffix(path.Base(rel), ".json")
 			if err := claim("explore", id, provenance); err != nil {
 				return err
@@ -420,42 +420,4 @@ func scanNDJSONIDs(destDir, rel, provenance string, claim func(typ, id, provenan
 		}
 	}
 	return nil
-}
-
-// writeUnitsMarker records the sorted active unit names the tree was
-// rendered with.
-func writeUnitsMarker(destDir string, units []ResolvedUnit) error {
-	names := make([]string, 0, len(units))
-	for _, u := range units {
-		names = append(names, u.Name)
-	}
-	sort.Strings(names)
-	content := strings.Join(names, "\n")
-	if content != "" {
-		content += "\n"
-	}
-	marker := filepath.Join(destDir, UnitsMarkerFile)
-	if err := os.WriteFile(marker, []byte(content), bootstrapFileMode); err != nil {
-		return fmt.Errorf("write units marker %s: %w", marker, err)
-	}
-	return nil
-}
-
-// ReadUnitsMarker returns the active unit names a rendered bootstrap dir
-// was generated with, or nil when no marker exists (pre-units render).
-func ReadUnitsMarker(destDir string) ([]string, error) {
-	raw, err := os.ReadFile(filepath.Join(destDir, UnitsMarkerFile))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read units marker: %w", err)
-	}
-	var names []string
-	for line := range strings.SplitSeq(string(raw), "\n") {
-		if line = strings.TrimSpace(line); line != "" {
-			names = append(names, line)
-		}
-	}
-	return names, nil
 }

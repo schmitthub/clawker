@@ -1,4 +1,3 @@
-.clawker-units
 bootstrap.sh
 component-templates/clawker-common.json
 datasources/clawker_prometheus.json

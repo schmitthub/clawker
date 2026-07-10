@@ -1,215 +1,170 @@
 package monitor_test
 
 import (
-	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/schmitthub/clawker/internal/bundler"
+	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/monitor"
+	"github.com/schmitthub/clawker/internal/testenv"
 )
 
-// withManifest fabricates a manifest-only monitor.ResolvedUnit for pure-function
-// tests (no backing directory; WalkArtifacts is never called on these).
-func withManifest(r monitor.ResolvedUnit, m config.MonitoringUnitManifest) monitor.ResolvedUnit {
-	u := bundler.MonitoringUnit{Name: r.Name, Manifest: m}
-	r.Unit = &u
-	return r
+// lane builds one log lane fixture.
+func lane(index, svc string) config.MonitoringLogLane {
+	return config.MonitoringLogLane{Index: index, ServiceNames: []string{svc}, Retention: ""}
 }
 
-func withManifestLanes(r monitor.ResolvedUnit, index, svc string) monitor.ResolvedUnit {
-	m := r.Manifest()
-	m.Logs = append(m.Logs, config.MonitoringLogLane{Index: index, ServiceNames: []string{svc}, Retention: ""})
-	return withManifest(r, m)
+// seeded builds a SeededUnit fixture for the pure-function collector-routing
+// tests (ValidateSeededSet, BuildUnitRoutings), which range over the ledger
+// union and need only a name plus a manifest.
+func seeded(name string, lanes []config.MonitoringLogLane, metrics *config.MonitoringUnitMetrics) monitor.SeededUnit {
+	return monitor.SeededUnit{
+		Name:        name,
+		Source:      "test",
+		ProjectRoot: "",
+		ContentHash: "",
+		Manifest:    config.MonitoringUnitManifest{Description: "", Logs: lanes, Metrics: metrics},
+		SeededAt:    time.Time{},
+	}
 }
 
-// syntheticUnitPath returns the absolute path of the synthetic-codex
-// fixture unit.
-func syntheticUnitPath(t *testing.T) string {
+// copyTree mirrors a directory tree from src into dst.
+func copyTree(t *testing.T, src, dst string) {
 	t.Helper()
-	abs, err := filepath.Abs(filepath.Join("testdata", "units", "synthetic-codex"))
-	require.NoError(t, err)
-	return abs
+	require.NoError(t, filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
+		require.NoError(t, err)
+		rel, relErr := filepath.Rel(src, p)
+		require.NoError(t, relErr)
+		target := filepath.Join(dst, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		content, readErr := os.ReadFile(p)
+		require.NoError(t, readErr)
+		require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o755))
+		return os.WriteFile(target, content, 0o644)
+	}))
+}
+
+// projectConfig builds an isolated config selecting the given monitoring
+// extensions, with any named loose units copied into the project's
+// .clawker/monitoring/ convention dir so the resolver finds them.
+func projectConfig(
+	t *testing.T,
+	settingsYAML string,
+	extensions []string,
+	looseUnits ...string,
+) *configmocks.ConfigMock {
+	t.Helper()
+	env := testenv.New(t)
+	projectDir := filepath.Join(env.Dirs.Base, "project")
+	require.NoError(t, os.MkdirAll(projectDir, 0o755))
+	for _, name := range looseUnits {
+		copyTree(t,
+			filepath.Join("testdata", "units", name),
+			filepath.Join(projectDir, consts.DotClawkerDir, bundle.ComponentMonitoring.Dir(), name),
+		)
+	}
+	projectYAML := "monitor:\n  extensions: [" + strings.Join(extensions, ", ") + "]\n"
+	cfg := configmocks.NewFromString(projectYAML, settingsYAML)
+	cfg.ProjectRootFunc = func() string { return projectDir }
+	return cfg
 }
 
 func TestResolveUnits(t *testing.T) {
-	t.Run("built-in claude-code defaults inactive", func(t *testing.T) {
-		cfg := configmocks.NewFromString("", "")
+	t.Run("empty selection resolves nothing", func(t *testing.T) {
+		cfg := projectConfig(t, "", []string{})
 		units, err := monitor.ResolveUnits(cfg)
 		require.NoError(t, err)
-		require.Len(t, units, 1, "shipped set is exactly the claude bundle's unit today")
-		u := units[0]
-		assert.Equal(t, "claude-code", u.Name)
-		assert.False(t, u.Active, "everything is opt-in — first monitor up seeds infra only")
-		assert.Equal(t, monitor.UnitSourceBuiltIn, u.Source,
-			"floor monitoring units ship as bare peers, not via a harness")
-		assert.NotNil(t, u.Unit)
+		assert.Empty(t, units)
 	})
 
-	t.Run("flag-only entry toggles a built-in", func(t *testing.T) {
-		cfg := configmocks.NewFromString("", `
-monitoring:
-  units:
-    claude-code:
-      active: true
-`)
+	t.Run("floor claude-code", func(t *testing.T) {
+		cfg := projectConfig(t, "", []string{"claude-code"})
 		units, err := monitor.ResolveUnits(cfg)
 		require.NoError(t, err)
 		require.Len(t, units, 1)
-		assert.True(t, units[0].Active)
+		assert.Equal(t, "claude-code", units[0].Name)
+		assert.Equal(t, "built-in", units[0].Source)
+		assert.False(t, units[0].Qualified)
+		assert.NotEmpty(t, units[0].ContentHash)
 	})
 
-	t.Run("registered unit defaults inactive", func(t *testing.T) {
-		cfg := configmocks.NewFromString("", fmt.Sprintf(`
-monitoring:
-  units:
-    synthetic-codex:
-      path: %s
-`, syntheticUnitPath(t)))
+	t.Run("loose project unit resolves and shadows the floor", func(t *testing.T) {
+		// A loose monitoring dir named like a floor unit wins over the floor.
+		cfg := projectConfig(t, "", []string{"synthetic-codex"}, "synthetic-codex")
 		units, err := monitor.ResolveUnits(cfg)
 		require.NoError(t, err)
-		require.Len(t, units, 2)
-		var syn monitor.ResolvedUnit
-		for _, u := range units {
-			if u.Name == "synthetic-codex" {
-				syn = u
-			}
-		}
-		assert.False(t, syn.Active)
-		require.NoError(t, syn.LoadErr)
-		assert.Equal(t, syntheticUnitPath(t), syn.Path)
+		require.Len(t, units, 1)
+		assert.Equal(t, "synthetic-codex", units[0].Name)
+		assert.Contains(t, units[0].Source, "project", "provenance names the loose project tier")
 	})
 
-	t.Run("registered path under a built-in name is a hard error", func(t *testing.T) {
-		cfg := configmocks.NewFromString("", fmt.Sprintf(`
-monitoring:
-  units:
-    claude-code:
-      path: %s
-`, syntheticUnitPath(t)))
+	t.Run("unselectable name is a hard error", func(t *testing.T) {
+		cfg := projectConfig(t, "", []string{"nonexistent-unit"})
 		_, err := monitor.ResolveUnits(cfg)
-		require.ErrorContains(t, err, "built-in unit")
+		require.ErrorContains(t, err, "nonexistent-unit")
 	})
 
-	t.Run("path-less entry matching nothing is an error", func(t *testing.T) {
-		cfg := configmocks.NewFromString("", `
-monitoring:
-  units:
-    ghost:
-      active: true
-`)
-		_, err := monitor.ResolveUnits(cfg)
-		require.ErrorContains(t, err, "matches no built-in unit")
-	})
-
-	t.Run("missing path surfaces as LoadErr, not resolve failure", func(t *testing.T) {
-		cfg := configmocks.NewFromString("", `
-monitoring:
-  units:
-    gone:
-      path: /nonexistent/units/gone
-`)
+	t.Run("duplicate selection is deduped", func(t *testing.T) {
+		cfg := projectConfig(t, "", []string{"claude-code", "claude-code"})
 		units, err := monitor.ResolveUnits(cfg)
 		require.NoError(t, err)
-		var gone monitor.ResolvedUnit
-		for _, u := range units {
-			if u.Name == "gone" {
-				gone = u
-			}
-		}
-		require.Error(t, gone.LoadErr)
-
-		// Inactive broken entry: fine for the active set.
-		_, err = monitor.ActiveFromResolved(units)
-		require.NoError(t, err)
-	})
-
-	t.Run("active broken entry fails the active set", func(t *testing.T) {
-		cfg := configmocks.NewFromString("", `
-monitoring:
-  units:
-    gone:
-      path: /nonexistent/units/gone
-      active: true
-`)
-		units, err := monitor.ResolveUnits(cfg)
-		require.NoError(t, err)
-		_, err = monitor.ActiveFromResolved(units)
-		require.ErrorContains(t, err, "gone")
-		require.ErrorContains(t, err, "disable")
+		require.Len(t, units, 1)
 	})
 }
 
-func TestValidateActiveSet(t *testing.T) {
-	unit := func(name, index, svc string) monitor.ResolvedUnit {
-		return withManifestLanes(monitor.ResolvedUnit{
-			Name: name, Unit: nil, Source: "", Path: "", Active: true, LoadErr: nil,
-		}, index, svc)
-	}
+func TestValidateSeededSet(t *testing.T) {
 	t.Run("index collision", func(t *testing.T) {
-		err := monitor.ValidateActiveSet([]monitor.ResolvedUnit{
-			unit("a", "shared-idx", "svc-a"),
-			unit("b", "shared-idx", "svc-b"),
+		err := monitor.ValidateSeededSet([]monitor.SeededUnit{
+			seeded("a", []config.MonitoringLogLane{lane("shared-idx", "svc-a")}, nil),
+			seeded("b", []config.MonitoringLogLane{lane("shared-idx", "svc-b")}, nil),
 		})
 		require.ErrorContains(t, err, `index "shared-idx"`)
-		require.ErrorContains(t, err, "disable one first")
+		require.ErrorContains(t, err, "deselect one")
 	})
 	t.Run("service collision", func(t *testing.T) {
-		err := monitor.ValidateActiveSet([]monitor.ResolvedUnit{
-			unit("a", "idx-a", "shared-svc"),
-			unit("b", "idx-b", "shared-svc"),
+		err := monitor.ValidateSeededSet([]monitor.SeededUnit{
+			seeded("a", []config.MonitoringLogLane{lane("idx-a", "shared-svc")}, nil),
+			seeded("b", []config.MonitoringLogLane{lane("idx-b", "shared-svc")}, nil),
 		})
 		require.ErrorContains(t, err, `service name "shared-svc"`)
 	})
 	t.Run("disjoint set passes", func(t *testing.T) {
-		require.NoError(t, monitor.ValidateActiveSet([]monitor.ResolvedUnit{
-			unit("a", "idx-a", "svc-a"),
-			unit("b", "idx-b", "svc-b"),
+		require.NoError(t, monitor.ValidateSeededSet([]monitor.SeededUnit{
+			seeded("a", []config.MonitoringLogLane{lane("idx-a", "svc-a")}, nil),
+			seeded("b", []config.MonitoringLogLane{lane("idx-b", "svc-b")}, nil),
 		}))
 	})
 }
 
 func TestBuildUnitRoutings(t *testing.T) {
 	t.Run("sanitized identifier collision is a hard error", func(t *testing.T) {
-		_, err := monitor.BuildUnitRoutings([]monitor.ResolvedUnit{
-			withManifestLanes(
-				monitor.ResolvedUnit{Name: "a", Unit: nil, Source: "", Path: "", Active: false, LoadErr: nil},
-				"a-b",
-				"svc-a",
-			),
-			withManifestLanes(
-				monitor.ResolvedUnit{Name: "a-b", Unit: nil, Source: "", Path: "", Active: false, LoadErr: nil},
-				"a_b",
-				"svc-b",
-			),
-		})
 		// "a-b" and "a_b" both sanitize to "a_b".
-		require.Error(t, err)
+		_, err := monitor.BuildUnitRoutings([]monitor.SeededUnit{
+			seeded("a", []config.MonitoringLogLane{lane("a-b", "svc-a")}, nil),
+			seeded("a-b", []config.MonitoringLogLane{lane("a_b", "svc-b")}, nil),
+		})
 		require.ErrorContains(t, err, "collides")
 	})
 
 	t.Run("rename statements scoped to service names", func(t *testing.T) {
-		u := withManifestLanes(
-			monitor.ResolvedUnit{Name: "codex", Unit: nil, Source: "", Path: "", Active: false, LoadErr: nil},
-			"codex",
-			"codex",
-		)
-		m := u.Manifest()
-		m.Metrics = &config.MonitoringUnitMetrics{
+		u := seeded("codex", []config.MonitoringLogLane{lane("codex", "codex")}, &config.MonitoringUnitMetrics{
 			ServiceNames:     nil,
 			DatapointRenames: []config.MetricRename{{From: "type", To: "kind"}},
-		}
-		u = withManifest(u, m)
-		routings, err := monitor.BuildUnitRoutings([]monitor.ResolvedUnit{u})
+		})
+		routings, err := monitor.BuildUnitRoutings([]monitor.SeededUnit{u})
 		require.NoError(t, err)
 		require.Len(t, routings, 1)
 		require.Len(t, routings[0].MetricRenameStatements, 2, "one set + one delete per rename per service")
@@ -220,15 +175,14 @@ func TestBuildUnitRoutings(t *testing.T) {
 	})
 }
 
-// TestGeneration_Golden locks the rendered otel-config plus the bootstrap
-// tree manifest for three unit sets: none, the real shipped claude-code
-// unit, and claude-code + the synthetic-codex fixture (datapoint rename +
-// custom retention).
+// TestGeneration_Golden locks the rendered otel-config plus the bootstrap tree
+// manifest for three seeded unit sets: none, the shipped claude-code floor unit,
+// and claude-code + a loose synthetic-codex unit (datapoint rename + custom
+// retention).
 //
 // Regenerate: GOLDEN_UPDATE=1 go test ./internal/monitor/ -run TestGeneration_Golden
 func TestGeneration_Golden(t *testing.T) {
-	settingsFor := func(extra string) string {
-		return `
+	settingsYAML := `
 monitoring:
   otel_collector_port: 4318
   otel_grpc_port: 4317
@@ -238,33 +192,28 @@ monitoring:
   opensearch_port: 9200
   opensearch_dashboards_port: 5601
   opensearch_heap_mb: 512
-` + extra
-	}
+`
 	scenarios := []struct {
-		name     string
-		settings string
+		name       string
+		extensions []string
+		looseUnits []string
 	}{
-		{"no-units", settingsFor("")},
-		{"claude", settingsFor(`  units:
-    claude-code:
-      active: true
-`)},
-		{"claude-codex", settingsFor(fmt.Sprintf(`  units:
-    claude-code:
-      active: true
-    synthetic-codex:
-      path: %s
-      active: true
-`, syntheticUnitPath(t)))},
+		{"no-units", []string{}, nil},
+		{"claude", []string{"claude-code"}, nil},
+		{"claude-codex", []string{"claude-code", "synthetic-codex"}, []string{"synthetic-codex"}},
 	}
 
 	for _, sc := range scenarios {
 		t.Run(sc.name, func(t *testing.T) {
-			cfg := configmocks.NewFromString("", sc.settings)
-			active, err := monitor.ActiveUnits(cfg)
+			cfg := projectConfig(t, settingsYAML, sc.extensions, sc.looseUnits...)
+			units, err := monitor.ResolveUnits(cfg)
 			require.NoError(t, err)
 
-			data, err := monitor.NewMonitorTemplateData(cfg.SettingsStore().Read(), active)
+			ledger := monitor.NewLedger()
+			ledger.Merge(units, time.Unix(0, 0).UTC())
+			union := ledger.Union()
+
+			data, err := monitor.NewMonitorTemplateData(cfg.SettingsStore().Read(), union)
 			require.NoError(t, err)
 
 			otel, err := monitor.RenderTemplate("otel-config.yaml", monitor.OtelConfigTemplate, data)
@@ -272,14 +221,12 @@ monitoring:
 			assertGolden(t, filepath.Join("testdata", "golden", "otel-config-"+sc.name+".yaml"), []byte(otel))
 
 			destDir := filepath.Join(t.TempDir(), monitor.OpenSearchBootstrapDirName)
-			require.NoError(t, monitor.WriteOpenSearchBootstrap(destDir, data, active))
+			require.NoError(t, monitor.WriteOpenSearchBootstrap(destDir, data, units))
 			manifest := treeManifest(t, destDir)
 			assertGolden(t,
 				filepath.Join("testdata", "golden", "bootstrap-tree-"+sc.name+".txt"),
 				[]byte(strings.Join(manifest, "\n")+"\n"))
 
-			// The generated retention policy is content-golden'd too — it
-			// carries the unit-driven index patterns.
 			retention, err := os.ReadFile(filepath.Join(destDir, "ism-policies", "clawker-retention.json"))
 			require.NoError(t, err)
 			assertGolden(t,
@@ -289,9 +236,9 @@ monitoring:
 }
 
 // TestNoClaudeCodeInMonitorPackage is the deep-extraction grep guard: the
-// monitoring core (embedded bootstrap tree + the three stack templates)
-// carries zero claude-code-specific bytes. Claude Code observability
-// lives entirely in the claude harness bundle's monitoring unit.
+// monitoring core (embedded bootstrap tree + the three stack templates) carries
+// zero claude-code-specific bytes. Claude Code observability lives entirely in the
+// floor claude-code monitoring unit.
 func TestNoClaudeCodeInMonitorPackage(t *testing.T) {
 	check := func(name string, content []byte) {
 		lower := strings.ToLower(string(content))
@@ -322,46 +269,21 @@ func TestNoClaudeCodeInMonitorPackage(t *testing.T) {
 }
 
 func TestWriteOpenSearchBootstrap_UnitCollisions(t *testing.T) {
-	cfg := configmocks.NewFromString("", fmt.Sprintf(`
-monitoring:
-  units:
-    synthetic-codex:
-      path: %s
-      active: true
-`, syntheticUnitPath(t)))
-	active, err := monitor.ActiveUnits(cfg)
+	cfg := projectConfig(t, "", []string{"synthetic-codex"}, "synthetic-codex")
+	units, err := monitor.ResolveUnits(cfg)
 	require.NoError(t, err)
-	data, err := monitor.NewMonitorTemplateData(cfg.SettingsStore().Read(), active)
+	data, err := monitor.NewMonitorTemplateData(cfg.SettingsStore().Read(), nil)
 	require.NoError(t, err)
 
-	t.Run("overlay lands and marker written", func(t *testing.T) {
-		destDir := filepath.Join(t.TempDir(), monitor.OpenSearchBootstrapDirName)
-		require.NoError(t, monitor.WriteOpenSearchBootstrap(destDir, data, active))
-		for _, want := range []string{
-			filepath.Join("index-templates", "synthetic-codex.json"),
-			filepath.Join("ingest-pipelines", "synthetic-codex-nest.json"),
-			filepath.Join("ism-policies", "synthetic-codex-retention.json"),
-			filepath.Join("saved-objects", "synthetic-codex.ndjson"),
-			filepath.Join("saved-objects", "explore", "synthetic-codex-tokens.json"),
-		} {
-			_, statErr := os.Stat(filepath.Join(destDir, want))
-			require.NoError(t, statErr, want)
-		}
-		names, markerErr := monitor.ReadUnitsMarker(destDir)
-		require.NoError(t, markerErr)
-		assert.Equal(t, []string{"synthetic-codex"}, names)
-	})
-
-	t.Run("duplicate unit artifact path collides", func(t *testing.T) {
-		destDir := filepath.Join(t.TempDir(), monitor.OpenSearchBootstrapDirName)
-		writeErr := monitor.WriteOpenSearchBootstrap(destDir, data, append(active, active...))
-		require.ErrorContains(t, writeErr, "collides")
-	})
+	// Successful overlay content is locked by the bootstrap-tree golden
+	// manifests via TestGeneration_Golden; only the collision branch needs a
+	// dedicated test.
+	destDir := filepath.Join(t.TempDir(), monitor.OpenSearchBootstrapDirName)
+	writeErr := monitor.WriteOpenSearchBootstrap(destDir, data, append(units, units...))
+	require.ErrorContains(t, writeErr, "collides")
 }
 
-// withManifestLanes and withManifest fabricate manifest-only ResolvedUnits
-// for pure-function tests (monitor.ValidateActiveSet, monitor.BuildUnitRoutings) without a
-// backing directory.
+// treeManifest lists every file under destDir as a sorted slash-path manifest.
 func treeManifest(t *testing.T, destDir string) []string {
 	t.Helper()
 	var paths []string

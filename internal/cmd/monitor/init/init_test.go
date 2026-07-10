@@ -28,6 +28,14 @@ func renderMonitorConfigs(t *testing.T) (compose, otelCfg string) {
 	testenv.New(t)
 	require.NoError(t, auth.EnsureAuthMaterial())
 
+	// Render the clean baseline: no monitoring extensions selected, so the
+	// untrusted routing table stays at its clawker-cli-only floor. The defaults
+	// layer selects claude-code; an empty override in the user config-dir
+	// clawker.yaml deselects it (monitor.extensions is an override-merge key).
+	cfgFile := filepath.Join(consts.ConfigDir(), consts.ProjectConfigFile)
+	require.NoError(t, os.MkdirAll(consts.ConfigDir(), 0o755))
+	require.NoError(t, os.WriteFile(cfgFile, []byte("monitor:\n  extensions: []\n"), 0o644))
+
 	cfg, err := config.NewConfig()
 	require.NoError(t, err)
 

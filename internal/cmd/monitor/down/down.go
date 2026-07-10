@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
@@ -117,7 +118,17 @@ func downRun(ctx context.Context, opts *DownOptions) error {
 	fmt.Fprintf(ios.ErrOut, "%s Monitoring stack stopped.\n", cs.SuccessIcon())
 	if !opts.Volumes {
 		fmt.Fprintf(ios.ErrOut, "%s Volumes preserved (OpenSearch data + bootstrap-applied config survive). Use --volumes to wipe; bootstrap re-applies on next 'monitor up'.\n", cs.InfoIcon())
+		return nil
 	}
+
+	// With the seeded REST state wiped, the units ledger that tracked it is
+	// stale — delete it so the next 'monitor up' rebuilds the seeded union from
+	// scratch rather than rendering routings for indices that no longer exist.
+	ledgerPath := filepath.Join(monitorDir, internalmonitor.UnitsLedgerFile)
+	if rmErr := os.Remove(ledgerPath); rmErr != nil && !os.IsNotExist(rmErr) {
+		return fmt.Errorf("remove units ledger: %w", rmErr)
+	}
+	fmt.Fprintf(ios.ErrOut, "%s Volumes removed; seeded-unit ledger reset.\n", cs.InfoIcon())
 
 	return nil
 }

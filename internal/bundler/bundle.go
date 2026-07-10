@@ -4,10 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"path"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -89,9 +87,6 @@ func LoadBundle(name string, fsys fs.FS) (*Bundle, error) {
 	if egressErr := validateEgressFloor(name, m.Egress); egressErr != nil {
 		return nil, egressErr
 	}
-	if monErr := validateMonitoringDecls(name, fsys, m.Monitoring); monErr != nil {
-		return nil, monErr
-	}
 
 	rawTmpl, readErr := fs.ReadFile(fsys, HarnessTemplateFile)
 	if readErr != nil {
@@ -140,70 +135,6 @@ func validateStackDecls(name string, decls []string) error {
 			return fmt.Errorf("harness %q: duplicate stack declaration %q", name, dep)
 		}
 		seen[dep] = true
-	}
-	return nil
-}
-
-// validateMonitoringDecls checks the manifest's monitoring unit
-// declarations at the load front door: valid names, no duplicates, every
-// declared unit fully loads from its monitoring/<name>/ dir, and every
-// monitoring/ dir is declared — an undeclared unit dir would otherwise
-// ship invisibly, and a declared-but-missing one would surface only when a
-// user tried to activate it.
-func validateMonitoringDecls(name string, fsys fs.FS, decls []string) error {
-	declared, err := validateDeclaredMonitoringUnits(name, fsys, decls)
-	if err != nil {
-		return err
-	}
-	return validateMonitoringUnitDirs(name, fsys, declared)
-}
-
-// validateDeclaredMonitoringUnits loads every declared unit, returning the
-// declared-name set for the dir sweep.
-func validateDeclaredMonitoringUnits(name string, fsys fs.FS, decls []string) (map[string]bool, error) {
-	declared := map[string]bool{}
-	for _, unit := range decls {
-		if err := ValidateMonitoringUnitName(unit); err != nil {
-			return nil, fmt.Errorf("harness %q: %w", name, err)
-		}
-		if declared[unit] {
-			return nil, fmt.Errorf("harness %q: duplicate monitoring unit declaration %q", name, unit)
-		}
-		declared[unit] = true
-		sub, subErr := fs.Sub(fsys, path.Join(MonitoringUnitsSubdir, unit))
-		if subErr != nil {
-			return nil, fmt.Errorf("harness %q: monitoring unit %q: %w", name, unit, subErr)
-		}
-		if _, loadErr := LoadMonitoringUnit(unit, sub); loadErr != nil {
-			return nil, fmt.Errorf("harness %q: %w", name, loadErr)
-		}
-	}
-	return declared, nil
-}
-
-// validateMonitoringUnitDirs sweeps the bundle's monitoring/ dir: every
-// entry must be a declared unit directory.
-func validateMonitoringUnitDirs(name string, fsys fs.FS, declared map[string]bool) error {
-	entries, err := fs.ReadDir(fsys, MonitoringUnitsSubdir)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil
-		}
-		return fmt.Errorf("harness %q: read %s/: %w", name, MonitoringUnitsSubdir, err)
-	}
-	for _, e := range entries {
-		if !e.IsDir() {
-			return fmt.Errorf(
-				"harness %q: %s/%s: only unit directories belong here",
-				name, MonitoringUnitsSubdir, e.Name(),
-			)
-		}
-		if !declared[e.Name()] {
-			return fmt.Errorf(
-				"harness %q: %s/%s is not declared in %s monitoring: — it would ship invisibly",
-				name, MonitoringUnitsSubdir, e.Name(), HarnessManifestFile,
-			)
-		}
 	}
 	return nil
 }
@@ -381,25 +312,6 @@ func validateSeeds(name string, fsys fs.FS, volumes []config.VolumeSpec, seeds [
 		}
 	}
 	return nil
-}
-
-// DeclaredMonitoringUnits returns the monitoring unit names the bundle's
-// manifest declares, in declaration order.
-func (b *Bundle) DeclaredMonitoringUnits() []string {
-	return slices.Clone(b.Manifest.Monitoring)
-}
-
-// MonitoringUnit loads a bundle-shipped monitoring unit by name.
-func (b *Bundle) MonitoringUnit(name string) (*MonitoringUnit, error) {
-	sub, err := fs.Sub(b.fsys, path.Join(MonitoringUnitsSubdir, name))
-	if err != nil {
-		return nil, fmt.Errorf("harness %q: monitoring unit %q: %w", b.Name, name, err)
-	}
-	unit, loadErr := LoadMonitoringUnit(name, sub)
-	if loadErr != nil {
-		return nil, fmt.Errorf("harness %q: %w", b.Name, loadErr)
-	}
-	return unit, nil
 }
 
 // WalkAssets calls fn for every file under the bundle's assets/ tree with

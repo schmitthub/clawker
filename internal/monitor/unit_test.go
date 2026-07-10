@@ -1,23 +1,28 @@
-package bundler_test
+package monitor_test
 
 import (
-	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/schmitthub/clawker/internal/bundler"
 	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/monitor"
 )
 
-// validUnitFS is a minimal valid monitoring unit: one lane, its index
-// template, a prefixed pipeline, saved objects, and an explore panel.
+// mapFile builds an in-memory fstest file with conventional perms.
+func mapFile(content string) *fstest.MapFile {
+	return &fstest.MapFile{Data: []byte(content), Mode: 0o644, ModTime: time.Time{}, Sys: nil}
+}
+
+// validUnitFS is a minimal valid monitoring unit: one lane, its index template,
+// a prefixed pipeline, saved objects, and an explore panel.
 func validUnitFS() fstest.MapFS {
 	return fstest.MapFS{
-		bundler.MonitoringUnitManifestFile: mapFile(`
+		monitor.MonitoringUnitManifestFile: mapFile(`
 description: Codex telemetry
 logs:
   - index: codex
@@ -31,7 +36,7 @@ logs:
 }
 
 func TestLoadMonitoringUnit_Valid(t *testing.T) {
-	u, err := bundler.LoadMonitoringUnit("codex", validUnitFS())
+	u, err := monitor.LoadMonitoringUnit("codex", validUnitFS())
 	require.NoError(t, err)
 	assert.Equal(t, "codex", u.Name)
 	require.Len(t, u.Manifest.Logs, 1)
@@ -64,26 +69,21 @@ func TestLoadMonitoringUnit_Table(t *testing.T) {
 		wantErr string
 	}{
 		{
-			"bad unit name is rejected before reads",
-			validUnitFS(), // loaded under a bad name below
-			"",            // handled separately
-		},
-		{
 			"missing manifest",
-			mutate(func(f fstest.MapFS) { delete(f, bundler.MonitoringUnitManifestFile) }),
+			mutate(func(f fstest.MapFS) { delete(f, monitor.MonitoringUnitManifestFile) }),
 			"read monitoring.yaml",
 		},
 		{
 			"no lanes",
 			mutate(func(f fstest.MapFS) {
-				f[bundler.MonitoringUnitManifestFile] = mapFile("description: empty\n")
+				f[monitor.MonitoringUnitManifestFile] = mapFile("description: empty\n")
 			}),
 			"logs must declare at least one lane",
 		},
 		{
 			"reserved index",
 			mutate(func(f fstest.MapFS) {
-				f[bundler.MonitoringUnitManifestFile] = mapFile(
+				f[monitor.MonitoringUnitManifestFile] = mapFile(
 					"logs:\n  - index: clawker-envoy\n    service_names: [codex]\n")
 			}),
 			"reserved for clawker infra",
@@ -91,7 +91,7 @@ func TestLoadMonitoringUnit_Table(t *testing.T) {
 		{
 			"index not unit-prefixed",
 			mutate(func(f fstest.MapFS) {
-				f[bundler.MonitoringUnitManifestFile] = mapFile(
+				f[monitor.MonitoringUnitManifestFile] = mapFile(
 					"logs:\n  - index: other-index\n    service_names: [codex]\n")
 			}),
 			"must equal the unit name or be",
@@ -99,7 +99,7 @@ func TestLoadMonitoringUnit_Table(t *testing.T) {
 		{
 			"index charset violation",
 			mutate(func(f fstest.MapFS) {
-				f[bundler.MonitoringUnitManifestFile] = mapFile(
+				f[monitor.MonitoringUnitManifestFile] = mapFile(
 					"logs:\n  - index: \"codex_UP\"\n    service_names: [codex]\n")
 			}),
 			"is invalid",
@@ -107,7 +107,7 @@ func TestLoadMonitoringUnit_Table(t *testing.T) {
 		{
 			"lane without service names",
 			mutate(func(f fstest.MapFS) {
-				f[bundler.MonitoringUnitManifestFile] = mapFile(
+				f[monitor.MonitoringUnitManifestFile] = mapFile(
 					"logs:\n  - index: codex\n    service_names: []\n")
 			}),
 			"service_names must declare at least one value",
@@ -115,7 +115,7 @@ func TestLoadMonitoringUnit_Table(t *testing.T) {
 		{
 			"reserved service name",
 			mutate(func(f fstest.MapFS) {
-				f[bundler.MonitoringUnitManifestFile] = mapFile(
+				f[monitor.MonitoringUnitManifestFile] = mapFile(
 					"logs:\n  - index: codex\n    service_names: [clawkercp]\n")
 			}),
 			"reserved for clawker infra telemetry",
@@ -123,7 +123,7 @@ func TestLoadMonitoringUnit_Table(t *testing.T) {
 		{
 			"OTTL-injection charset in service name",
 			mutate(func(f fstest.MapFS) {
-				f[bundler.MonitoringUnitManifestFile] = mapFile(
+				f[monitor.MonitoringUnitManifestFile] = mapFile(
 					"logs:\n  - index: codex\n    service_names: ['codex\" == \"x']\n")
 			}),
 			"is invalid",
@@ -131,7 +131,7 @@ func TestLoadMonitoringUnit_Table(t *testing.T) {
 		{
 			"unknown retention token",
 			mutate(func(f fstest.MapFS) {
-				f[bundler.MonitoringUnitManifestFile] = mapFile(
+				f[monitor.MonitoringUnitManifestFile] = mapFile(
 					"logs:\n  - index: codex\n    service_names: [codex]\n    retention: forever\n")
 			}),
 			"unknown retention",
@@ -194,7 +194,7 @@ func TestLoadMonitoringUnit_Table(t *testing.T) {
 		{
 			"custom retention without policy files",
 			mutate(func(f fstest.MapFS) {
-				f[bundler.MonitoringUnitManifestFile] = mapFile(
+				f[monitor.MonitoringUnitManifestFile] = mapFile(
 					"logs:\n  - index: codex\n    service_names: [codex]\n    retention: custom\n")
 			}),
 			"ships no policy",
@@ -202,7 +202,7 @@ func TestLoadMonitoringUnit_Table(t *testing.T) {
 		{
 			"custom policy pattern not unit-scoped",
 			mutate(func(f fstest.MapFS) {
-				f[bundler.MonitoringUnitManifestFile] = mapFile(
+				f[monitor.MonitoringUnitManifestFile] = mapFile(
 					"logs:\n  - index: codex\n    service_names: [codex]\n    retention: custom\n")
 				f["ism-policies/codex-keep.json"] = mapFile(
 					`{"policy":{"ism_template":[{"index_patterns":["clawker-*"]}]}}`)
@@ -210,11 +210,9 @@ func TestLoadMonitoringUnit_Table(t *testing.T) {
 			"must exactly equal a custom-retention lane index",
 		},
 		{
-			// A trailing glob would cross into a sibling unit's namespace
-			// ("codex-x" is independently registrable) — exact match only.
 			"custom policy glob pattern rejected",
 			mutate(func(f fstest.MapFS) {
-				f[bundler.MonitoringUnitManifestFile] = mapFile(
+				f[monitor.MonitoringUnitManifestFile] = mapFile(
 					"logs:\n  - index: codex\n    service_names: [codex]\n    retention: custom\n")
 				f["ism-policies/codex-keep.json"] = mapFile(
 					`{"policy":{"ism_template":[{"index_patterns":["codex*"]}]}}`)
@@ -222,12 +220,9 @@ func TestLoadMonitoringUnit_Table(t *testing.T) {
 			"must exactly equal a custom-retention lane index",
 		},
 		{
-			// A default-retention lane index also joins the generated shared
-			// policy — a custom pattern covering it would fight that policy
-			// on priority, silently overriding the lane's declared retention.
 			"custom policy covering a default-retention lane rejected",
 			mutate(func(f fstest.MapFS) {
-				f[bundler.MonitoringUnitManifestFile] = mapFile(
+				f[monitor.MonitoringUnitManifestFile] = mapFile(
 					"logs:\n" +
 						"  - index: codex\n    service_names: [codex]\n    retention: custom\n" +
 						"  - index: codex-usage\n    service_names: [codex-usage]\n")
@@ -240,7 +235,7 @@ func TestLoadMonitoringUnit_Table(t *testing.T) {
 		{
 			"bad rename key",
 			mutate(func(f fstest.MapFS) {
-				f[bundler.MonitoringUnitManifestFile] = mapFile(
+				f[monitor.MonitoringUnitManifestFile] = mapFile(
 					"logs:\n  - index: codex\n    service_names: [codex]\n" +
 						"metrics:\n  datapoint_renames:\n    - { from: 'ty pe', to: kind }\n")
 			}),
@@ -248,132 +243,49 @@ func TestLoadMonitoringUnit_Table(t *testing.T) {
 		},
 	}
 	for _, tc := range cases {
-		if tc.wantErr == "" {
-			continue
-		}
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := bundler.LoadMonitoringUnit("codex", tc.fsys)
+			_, err := monitor.LoadMonitoringUnit("codex", tc.fsys)
 			require.ErrorContains(t, err, tc.wantErr)
 			assert.ErrorContains(t, err, "codex", "error names the unit")
 		})
 	}
 
 	t.Run("bad unit name", func(t *testing.T) {
-		_, err := bundler.LoadMonitoringUnit("Bad_Name", validUnitFS())
+		_, err := monitor.LoadMonitoringUnit("Bad_Name", validUnitFS())
 		require.ErrorContains(t, err, "Bad_Name")
 	})
 
 	t.Run("valid custom retention", func(t *testing.T) {
 		fsys := validUnitFS()
-		fsys[bundler.MonitoringUnitManifestFile] = mapFile(
+		fsys[monitor.MonitoringUnitManifestFile] = mapFile(
 			"logs:\n  - index: codex\n    service_names: [codex]\n    retention: custom\n")
 		fsys["ism-policies/codex-keep.json"] = mapFile(
 			`{"policy":{"ism_template":[{"index_patterns":["codex"]}]}}`)
-		u, err := bundler.LoadMonitoringUnit("codex", fsys)
+		u, err := monitor.LoadMonitoringUnit("codex", fsys)
 		require.NoError(t, err)
 		assert.Equal(t, config.MonitoringRetentionCustom, u.Manifest.Logs[0].Retention)
 	})
 }
 
-// TestShippedFloor_MonitoringUnit pins the embedded floor's monitoring
-// contribution: monitoring units are peers of harnesses now (not declared
-// inside a harness), so the claude harness declares none, and the claude-code
-// unit ships as a bare floor component — fully loaded with the claude-code
-// index routed from service.name=claude-code, carrying the migrated bootstrap
-// artifacts.
-func TestShippedFloor_MonitoringUnit(t *testing.T) {
-	cfg := configmocks.NewBlankConfig()
-	b, err := bundler.LoadHarness(cfg, "claude")
+// TestFloorMonitoringUnit pins the embedded floor's monitoring contribution: the
+// claude-code unit ships as a bare floor component (a peer of the harness/stack
+// floor dirs) that the default `monitor.extensions` selection resolves and loads
+// with its migrated bootstrap artifacts.
+func TestFloorMonitoringUnit(t *testing.T) {
+	units, err := monitor.ResolveUnits(configmocks.NewBlankConfig())
 	require.NoError(t, err)
-	require.Empty(t, b.DeclaredMonitoringUnits(),
-		"monitoring is a floor peer now, never declared inside a harness")
+	require.Len(t, units, 1, "the defaults layer ships monitor.extensions: [claude-code]")
 
-	shipped, err := bundler.ShippedMonitoringUnits()
-	require.NoError(t, err)
-	var u *bundler.MonitoringUnit
-	for _, s := range shipped {
-		if s.Unit.Name == "claude-code" {
-			u = s.Unit
-		}
-	}
-	require.NotNil(t, u, "claude-code ships as a floor monitoring unit")
-	require.Len(t, u.Manifest.Logs, 1)
-	assert.Equal(t, "claude-code", u.Manifest.Logs[0].Index)
-	assert.Equal(t, []string{"claude-code"}, u.Manifest.Logs[0].ServiceNames)
-	assert.Empty(t, u.Manifest.Logs[0].Retention, "claude-code joins the shared retention policy")
-	assert.Nil(t, u.Manifest.Metrics, "type→kind stays generic core, not a unit rename")
-
-	var paths []string
-	require.NoError(t, u.WalkArtifacts(func(relPath string, _ []byte) error {
-		paths = append(paths, relPath)
-		return nil
-	}))
-	assert.Contains(t, paths, "index-templates/claude-code.json")
-	assert.Contains(t, paths, "ingest-pipelines/claude-code-prompt-nest.json")
-	assert.Contains(t, paths, "saved-objects/claude-code.ndjson")
-	exploreCount := 0
-	for _, p := range paths {
-		if strings.HasPrefix(p, "saved-objects/explore/") {
-			exploreCount++
-		}
-	}
-	assert.Equal(t, 19, exploreCount, "all Explore PROMQL panels ride the unit")
-}
-
-// unitBundleFS wraps a valid unit into a harness bundle declaring it.
-func unitBundleFS(monitoringDecl string, unitFiles map[string]string) fstest.MapFS {
-	fsys := fstest.MapFS{
-		bundler.HarnessManifestFile: mapFile(`
-version: { resolver: none }
-` + monitoringDecl),
-		bundler.HarnessTemplateFile: mapFile(`{{define "block_6"}}CMD ["x"]{{end}}`),
-	}
-	for p, data := range unitFiles {
-		fsys[p] = mapFile(data)
-	}
-	return fsys
-}
-
-func validUnitFiles() map[string]string {
-	return map[string]string{
-		"monitoring/codex/monitoring.yaml":            "logs:\n  - index: codex\n    service_names: [codex]\n",
-		"monitoring/codex/index-templates/codex.json": `{"index_patterns": ["codex"]}`,
-	}
-}
-
-func TestLoadBundle_MonitoringDecls(t *testing.T) {
-	t.Run("declared unit loads", func(t *testing.T) {
-		b, err := bundler.LoadBundle("codex", unitBundleFS(
-			"monitoring: [codex]\n", validUnitFiles()))
-		require.NoError(t, err)
-		assert.Equal(t, []string{"codex"}, b.DeclaredMonitoringUnits())
-
-		u, err := b.MonitoringUnit("codex")
-		require.NoError(t, err)
-		assert.Equal(t, "codex", u.Manifest.Logs[0].Index)
-	})
-
-	t.Run("declared unit missing", func(t *testing.T) {
-		_, err := bundler.LoadBundle("codex", unitBundleFS("monitoring: [codex]\n", nil))
-		require.ErrorContains(t, err, "codex")
-		require.ErrorContains(t, err, "monitoring.yaml")
-	})
-
-	t.Run("undeclared unit dir", func(t *testing.T) {
-		_, err := bundler.LoadBundle("codex", unitBundleFS("", validUnitFiles()))
-		require.ErrorContains(t, err, "not declared")
-	})
-
-	t.Run("duplicate declaration", func(t *testing.T) {
-		_, err := bundler.LoadBundle("codex", unitBundleFS(
-			"monitoring: [codex, codex]\n", validUnitFiles()))
-		require.ErrorContains(t, err, "duplicate monitoring unit declaration")
-	})
-
-	t.Run("broken declared unit fails bundle load", func(t *testing.T) {
-		files := validUnitFiles()
-		delete(files, "monitoring/codex/index-templates/codex.json")
-		_, err := bundler.LoadBundle("codex", unitBundleFS("monitoring: [codex]\n", files))
-		require.ErrorContains(t, err, "every declared lane ships its index template")
-	})
+	u := units[0]
+	assert.Equal(t, "claude-code", u.Name)
+	assert.Equal(t, "built-in", u.Source, "the floor unit resolves as built-in")
+	require.NotNil(t, u.Unit)
+	require.Len(t, u.Unit.Manifest.Logs, 1)
+	assert.Equal(t, "claude-code", u.Unit.Manifest.Logs[0].Index)
+	assert.Equal(t, []string{"claude-code"}, u.Unit.Manifest.Logs[0].ServiceNames)
+	assert.Empty(t, u.Unit.Manifest.Logs[0].Retention, "claude-code joins the shared retention policy")
+	assert.Nil(t, u.Unit.Manifest.Metrics, "type→kind stays generic core, not a unit rename")
+	// The unit's full artifact tree is locked by the bootstrap-tree golden
+	// manifests (TestGeneration_Golden); this test's unique value is the
+	// defaults-layer selection + built-in provenance above.
 }

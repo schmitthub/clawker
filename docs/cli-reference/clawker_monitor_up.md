@@ -17,7 +17,12 @@ This launches the following services:
   - OpenTelemetry Collector (ports 4317, 4318)
   - Prometheus (port 9090)
 
-Agent containers send telemetry to the stack automatically.
+'monitor up' renders the stack config from this project's selected monitoring
+extensions before starting, and idempotently seeds them onto the running stack:
+the collector config is regenerated over every extension ever seeded (across all
+projects) so a teammate's routings survive, while this project's OpenSearch
+artifacts are (re)applied by the bootstrap container. Agent containers send
+telemetry to the stack automatically.
 
 ```
 clawker monitor up [flags]

@@ -1,4 +1,4 @@
-package bundler
+package monitor
 
 import (
 	"encoding/json"
@@ -12,7 +12,6 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
 )
@@ -20,10 +19,6 @@ import (
 // MonitoringUnitManifestFile is the manifest filename inside a monitoring
 // unit directory.
 const MonitoringUnitManifestFile = "monitoring.yaml"
-
-// MonitoringUnitsSubdir is the subdirectory of a harness bundle holding
-// bundle-shipped monitoring units.
-const MonitoringUnitsSubdir = "monitoring"
 
 // Monitoring unit artifact subdirectories. They mirror the
 // opensearch-bootstrap tree so materialization is a plain overlay copy and
@@ -505,34 +500,6 @@ func jsonBasenames(name string, fsys fs.FS, dir string) ([]string, error) {
 	}
 	slices.Sort(names)
 	return names, nil
-}
-
-// ShippedMonitoringUnit is a monitoring unit shipped on the embedded floor
-// (a bare-named peer component under the floor monitoring/ dir).
-type ShippedMonitoringUnit struct {
-	Unit *MonitoringUnit
-}
-
-// ShippedMonitoringUnits returns every monitoring unit shipped on the embedded
-// floor, sorted by unit name. They resolve straight from the binary and need no
-// registration; uniqueness is structural (one floor directory per unit name).
-func ShippedMonitoringUnits() ([]ShippedMonitoringUnit, error) {
-	var units []ShippedMonitoringUnit
-	for _, name := range bundle.FloorNames(bundle.ComponentMonitoring) {
-		src, err := bundle.FloorFS(bundle.ComponentMonitoring, name)
-		if err != nil {
-			return nil, fmt.Errorf("shipped monitoring unit %q: %w", name, err)
-		}
-		unit, loadErr := LoadMonitoringUnit(name, src)
-		if loadErr != nil {
-			return nil, loadErr
-		}
-		units = append(units, ShippedMonitoringUnit{Unit: unit})
-	}
-	slices.SortFunc(units, func(a, b ShippedMonitoringUnit) int {
-		return strings.Compare(a.Unit.Name, b.Unit.Name)
-	})
-	return units, nil
 }
 
 // WalkArtifacts calls fn for every artifact file in the unit with its

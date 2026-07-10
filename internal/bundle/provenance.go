@@ -69,7 +69,7 @@ func (p Provenance) Shadowed() bool {
 
 // Source returns the provenance source clause for one tier — its label plus, for
 // bundle tiers, the owning identity, and for loose tiers, the directory.
-func (p Provenance) source() string {
+func (p Provenance) Source() string {
 	switch p.Tier {
 	case TierInstalled, TierInPlace:
 		return fmt.Sprintf("%s %s", p.Tier.Label(), p.Bundle)
@@ -86,11 +86,11 @@ func (p Provenance) source() string {
 // source and, when it shadowed farther tiers, the shadowed sources.
 func (p Provenance) Line(name string) string {
 	if !p.Shadowed() {
-		return fmt.Sprintf("%s ← %s", name, p.source())
+		return fmt.Sprintf("%s ← %s", name, p.Source())
 	}
 	sources := make([]string, 0, len(p.Shadows))
 	for _, s := range p.Shadows {
-		sources = append(sources, s.source())
+		sources = append(sources, s.Source())
 	}
-	return fmt.Sprintf("%s ← %s shadows %s", name, p.source(), strings.Join(sources, ", "))
+	return fmt.Sprintf("%s ← %s shadows %s", name, p.Source(), strings.Join(sources, ", "))
 }

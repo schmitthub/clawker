@@ -19,15 +19,12 @@ Available commands:
   up        Start the monitoring stack
   down      Stop the monitoring stack
   status    Show monitoring stack status
-  register  Register a monitoring unit directory
-  remove    Remove a monitoring unit registration
-  list      List monitoring units
-  enable    Activate a monitoring unit
-  disable   Deactivate a monitoring unit
 
-Monitoring units are observability loadouts (OpenSearch index + ingest
-pipelines + dashboards + collector routing) shipped by harness bundles or
-registered by path. Only enabled units are seeded into the stack.
+Monitoring extensions are observability loadouts (OpenSearch index + ingest
+pipelines + dashboards + collector routing). A project selects them by name in
+its clawker.yaml (`monitor.extensions`); they resolve from the embedded
+floor, a loose .clawker/monitoring/`<name>`/ directory, or an installed bundle, and
+are seeded onto the stack by 'monitor up'.
 
 ### Examples
 
@@ -35,12 +32,8 @@ registered by path. Only enabled units are seeded into the stack.
   # Initialize monitoring configuration
   clawker monitor init
 
-  # Start the monitoring stack
+  # Start the monitoring stack (seeds this project's selected extensions)
   clawker monitor up
-
-  # Seed Claude Code telemetry (opt-in)
-  clawker monitor enable claude-code
-  clawker monitor init && clawker monitor up
 
   # Check stack status
   clawker monitor status
@@ -51,13 +44,8 @@ registered by path. Only enabled units are seeded into the stack.
 
 ### Subcommands
 
-* [clawker monitor disable](clawker_monitor_disable) - Deactivate a monitoring unit
 * [clawker monitor down](clawker_monitor_down) - Stop the monitoring stack
-* [clawker monitor enable](clawker_monitor_enable) - Activate a monitoring unit
 * [clawker monitor init](clawker_monitor_init) - Scaffold monitoring configuration files
-* [clawker monitor list](clawker_monitor_list) - List monitoring units
-* [clawker monitor register](clawker_monitor_register) - Register a monitoring unit directory
-* [clawker monitor remove](clawker_monitor_remove) - Remove a monitoring unit registration
 * [clawker monitor status](clawker_monitor_status) - Show monitoring stack status
 * [clawker monitor up](clawker_monitor_up) - Start the monitoring stack
 

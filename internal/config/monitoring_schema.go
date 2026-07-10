@@ -2,11 +2,11 @@ package config
 
 // This file owns the monitoring unit manifest schema (monitoring.yaml) — a
 // self-contained observability contribution (OpenSearch indices, ingest
-// pipelines, dashboards, collector routing) a harness bundle ships or a
-// user registers into the host-global monitoring stack. The loader that
-// reads and validates a unit directory lives in internal/bundler; config
-// owns only the persisted shape, mirroring the harness/stack manifest
-// split.
+// pipelines, dashboards, collector routing) shipped as a monitoring component
+// on the embedded floor, a loose convention dir, or an installed bundle. The
+// loader that reads and validates a unit directory lives in internal/monitor
+// (its sole consumer); config owns only the persisted shape, mirroring the
+// harness/stack manifest split.
 
 // MonitoringUnitManifest is the parsed monitoring.yaml.
 type MonitoringUnitManifest struct {

@@ -2,25 +2,35 @@
 
 Templates + generation for the monitoring stack (Docker Compose + OTEL Collector pipeline + Prometheus). Backed by OpenSearch (logs + traces) and Prometheus (metrics). OpenSearch Dashboards is the UI for logs/traces; Prometheus has its own UI for metrics.
 
-The package carries ONLY generic infrastructure config (envoy/coredns/cli/clawkercp/ebpf-egress lanes, compose, prometheus, bootstrap machinery) — agent-side observability is delivered by **monitoring units** resolved at render time (`units.go`), and a grep-guard test (`TestNoClaudeCodeInMonitorPackage`) pins the zero-claude-code invariant. The otel-config template ranges over the ACTIVE unit set to emit per-lane exporters, routing entries, pipelines, and service-scoped OTTL datapoint renames.
+The package carries ONLY generic infrastructure config (envoy/coredns/cli/clawkercp/ebpf-egress lanes, compose, prometheus, bootstrap machinery) — agent-side observability is delivered by **monitoring units** resolved at render time (`units.go`), and a grep-guard test (`TestNoClaudeCodeInMonitorPackage`) pins the zero-claude-code invariant. The otel-config template ranges over the seeded unit union to emit per-lane exporters, routing entries, pipelines, and service-scoped OTTL datapoint renames.
 
-## Monitoring units (`units.go`)
+## Monitoring units (`unit.go`, `units.go`, `ledger.go`)
+
+The unit loader lives here now (`unit.go`, relocated from `internal/bundler`): `LoadMonitoringUnit`, `MonitoringUnit`, `WalkArtifacts`, front-door validation, and the artifact-dir consts. `internal/monitor` is its sole consumer.
 
 ```go
-const UnitSourceBuiltIn = "(built-in)"
-const UnitsMarkerFile   = ".clawker-units"
-type ResolvedUnit struct { Name string; Unit *bundler.MonitoringUnit; Source, Path string; Active bool; LoadErr error }
-func ResolveUnits(cfg config.Config) ([]ResolvedUnit, error)      // built-ins (shipped bundles) ∪ settings monitoring.units; flat namespace; all default inactive
-func ActiveUnits(cfg config.Config) ([]ResolvedUnit, error)       // active subset; broken active entry = error
-func ActiveFromResolved(units []ResolvedUnit) ([]ResolvedUnit, error)
-func ValidateActiveSet(active []ResolvedUnit) error               // index + service.name exclusivity across the active set
-func DiscoverableUnits(cfg config.Config) []DiscoverableUnit      // project-registered bundles' declared units not yet registered (list-only)
+// unit.go — loader
+func LoadMonitoringUnit(name string, fsys fs.FS) (*MonitoringUnit, error)
+type MonitoringUnit struct { Name string; Manifest config.MonitoringUnitManifest; /* unexported fsys */ }
+func (u *MonitoringUnit) WalkArtifacts(fn func(relPath string, content []byte) error) error
+
+// units.go — projection over the resolver + collector routing
+type ResolvedUnit struct { Name string; Qualified bool; Unit *MonitoringUnit; Source, ProjectRoot, ContentHash string }
+func ResolveUnits(cfg config.Config) ([]ResolvedUnit, error)     // projects monitor.extensions onto internal/bundle's three-tier resolver; selection IS enablement — no activation flag, no registry
+func ValidateSeededSet(units []SeededUnit) error                 // index + service.name exclusivity across the seeded union
 type UnitRouting struct { Name string; Lanes []UnitLogLane; MetricRenameStatements []string }
-func BuildUnitRoutings(active []ResolvedUnit) ([]UnitRouting, error) // logs/unit_<id> + opensearch/logs_unit_<id>; sanitized-ID collision = error
-func ReadUnitsMarker(destDir string) ([]string, error)            // active set the bootstrap dir was rendered with (up's drift warning)
+func BuildUnitRoutings(units []SeededUnit) ([]UnitRouting, error) // logs/unit_<id> + opensearch/logs_unit_<id>; sanitized-ID collision = error
+
+// ledger.go — option-D seeded-set ledger (<monitorDir>/units-ledger.yaml)
+type SeededUnit struct { Name, Source, ProjectRoot, ContentHash string; Manifest config.MonitoringUnitManifest; SeededAt time.Time }
+type Ledger struct { /* keyed by selection spelling */ }
+func NewLedger() *Ledger; func LoadLedger(monitorDir string) (*Ledger, error)
+func (l *Ledger) Merge(units []ResolvedUnit, now time.Time) []ClobberWarning // same-hash no-op; bare diff-hash diff-root = C5 clobber warning + overwrite
+func (l *Ledger) Union() []SeededUnit; func (l *Ledger) Save(monitorDir string) error
+func SeedLedger(ctx context.Context, monitorDir string, units []ResolvedUnit, now time.Time) error // flock-guarded load-merge-save; how `monitor up` persists — concurrent ups can't lost-update each other
 ```
 
-Everything is opt-in: built-in AND registered units default inactive; `clawker monitor enable` is the only activation path (commands live in `internal/cmd/monitor/units/`). Inactive units' records fall to the debug-only `logs/untrusted_unrouted` pipeline — never indexed, so a later activation can't fight a pre-existing dynamically-mapped index.
+Enablement is **selection**, not a flag: a project's `monitor.extensions` (override-merge, defaults `[claude-code]`) names the units it seeds; there is no host registry and no per-unit active toggle. `monitor up` merges the cwd projection into the host ledger and renders the collector config over the **all-ever-seeded union** (option D) so a teammate's routings survive; `monitor down --volumes` deletes the ledger. A record whose `service.name` matches no seeded lane falls to the debug-only `logs/untrusted_unrouted` pipeline — never indexed.
 
 > Confirming live ingest/routing/rendering is **not** unit-testable — see `.claude/rules/monitoring.md` → "Runtime UAT" for the curl-container working-session loop (ask the user to `clawker monitor up`; you can't from inside a container).
 
@@ -86,9 +96,9 @@ Each port field drives **both** sides of the host:container publish mapping AND 
 | `OtelCollectorImage` / `PrometheusImage` / `OpenSearchImage` / `OpenSearchDashboardsImage` / `CurlImage` | `string` | Pinned image refs |
 | `OpenSearchBootstrapDirName` | `string` | Workdir subdir holding bootstrap.sh + JSON/NDJSON assets; bind-mounted into the bootstrap container |
 
-### NewMonitorTemplateData(s *config.Settings, units []ResolvedUnit) (MonitorTemplateData, error)
+### NewMonitorTemplateData(s *config.Settings, units []SeededUnit) (MonitorTemplateData, error)
 
-Constructor that populates `MonitorTemplateData` from full `config.Settings` plus the ACTIVE unit set. Service hostnames come from the consts package; ports + heap come from `s.Monitoring`; `Units []UnitRouting` and `ISMIndexPatternsJSON` (infra indices + active default-retention lane indices, JSON-encoded Go-side) come from the units.
+Constructor that populates `MonitorTemplateData` from full `config.Settings` plus the seeded unit union. Service hostnames come from the consts package; ports + heap come from `s.Monitoring`; `Units []UnitRouting` and `ISMIndexPatternsJSON` (infra indices + seeded default-retention lane indices, JSON-encoded Go-side) come from the union. `PrepareTemplateData` (`render.go`) wraps this and additionally mints + populates the OTEL mTLS cert host paths; `RenderStack` renders the three stack files (force-gated) plus the bootstrap tree and reports whether otel-config bytes changed.
 
 ### RenderTemplate(name, tmplContent string, data MonitorTemplateData) (string, error)
 
@@ -96,11 +106,11 @@ Renders a Go `text/template` string with the given `MonitorTemplateData`. Return
 
 ### WriteOpenSearchBootstrap(destDir string, data MonitorTemplateData, units []ResolvedUnit) error
 
-Wipes `destDir` (it holds only generated content), mirrors `OpenSearchBootstrapFS` into it, then overlays every ACTIVE unit's artifacts into the same category dirs. `.tmpl` core files are rendered with `MonitorTemplateData` and written with the suffix stripped (`0755` so `bootstrap.sh` is executable); JSON/NDJSON files — core and unit — are copied verbatim (`0644`). A unit artifact path colliding with a core file or another unit is a hard error naming both provenances (PUT names are basename-derived), and saved-object IDs are collision-checked across every ndjson line + explore filename (`_import?overwrite=true` would otherwise be silent last-write-wins). Writes a `.clawker-units` marker (sorted active names) that `monitor up` compares for its drift warning. The wipe-first mirror means files removed from the embedded tree — or belonging to a deactivated unit — disappear from the rendered dir too. `monitor init` always re-renders this dir (no `--force` needed).
+Wipes `destDir` (it holds only generated content), mirrors `OpenSearchBootstrapFS` into it, then overlays the current project's resolvable units' artifacts into the same category dirs — NOT the full ledger union: a foreign project's REST artifacts were applied by its own `monitor up` and persist in the volume, and the collector config (rendered over the union) is what carries their routing. `.tmpl` core files are rendered with `MonitorTemplateData` and written with the suffix stripped (`0755` so `bootstrap.sh` is executable); JSON/NDJSON files — core and unit — are copied verbatim (`0644`). A unit artifact path colliding with a core file or another unit is a hard error naming both provenances (PUT names are basename-derived), and saved-object IDs are collision-checked across every ndjson line + explore filename (`_import?overwrite=true` would otherwise be silent last-write-wins). The wipe-first mirror means files removed from the embedded tree — or belonging to a deselected unit — disappear from the rendered dir too. Both `monitor init` and `monitor up` re-render this dir on every run.
 
 ## Usage
 
-The `monitor init` command constructs `MonitorTemplateData` via `NewMonitorTemplateData`, calls `RenderTemplate` for each `.tmpl` template, writes them to disk, then calls `WriteOpenSearchBootstrap` to materialize the bootstrap asset tree under `<monitorDir>/opensearch-bootstrap/`.
+Both `monitor init` and `monitor up` build `MonitorTemplateData` via `PrepareTemplateData` and render the stack via `RenderStack` (which calls `RenderTemplate` per `.tmpl` and `WriteOpenSearchBootstrap` for the bootstrap tree under `<monitorDir>/opensearch-bootstrap/`). `init` renders from the cwd projection only (empty pre-render ledger); `up` merges the projection into the host ledger and renders the collector config over the all-ever-seeded union.
 
 Stack template symbols are in `templates.go`; unit resolution + routing in `units.go`.
 
@@ -195,7 +205,7 @@ Every pipeline runs `memory_limiter` as its first processor — the collector co
 | `traces` | `otlp` (untrusted; `resource/untrusted_otlp` stamps `ingest_source=untrusted_otlp` so forgeable spans are distinguishable) | `opensearch/traces` (SS4O — dataset=traces, namespace=clawker), `spanmetrics` (→ metrics pipelines), `debug` |
 | `metrics/untrusted` | `otlp` (default path for Claude Code + agent metrics push; direct Prometheus OTLP push is the documented alternate). `resource/untrusted_otlp` stamps `ingest_source` before `transform/metrics` copies project/agent resource attrs to datapoint labels so the forgeable labels are always paired with the provenance marker | `prometheus` (scrape endpoint on `PrometheusMetricsPort` — Prometheus scrapes this), `debug` |
 | `metrics/trusted` | `prometheus/self` (collector self-scrape on :8888), `spanmetrics` (RED from traces) — all locally sourced, no sender-declared attrs to defend | `prometheus` (shared with `metrics/untrusted`), `debug` |
-| `logs/in_untrusted` | `otlp` (no client auth) | `routing/untrusted` connector — only `service.name=clawker-cli` plus ACTIVE monitoring units' declared service names route downstream; everything else falls to `default_pipelines: [logs/untrusted_unrouted]` (debug-only, never indexed) |
+| `logs/in_untrusted` | `otlp` (no client auth) | `routing/untrusted` connector — only `service.name=clawker-cli` plus seeded monitoring units' declared service names route downstream; everything else falls to `default_pipelines: [logs/untrusted_unrouted]` (debug-only, never indexed) |
 | `logs/clawker-cli` | `routing/untrusted` (when `service.name=clawker-cli` — stamped by `internal/logger.newOtelProvider` Resource when called with `OtelOptions.ServiceName="clawker-cli"`; wired in `internal/cmd/factory/default.go`) | `opensearch/logs_clawker_cli` (index `clawker-cli`), `debug` |
 | `logs/unit_<id>` (generated per active unit lane) | `routing/untrusted` (when `service.name` matches the lane's declared values) | `opensearch/logs_unit_<id>` (the lane's index), `debug` |
 | `logs/in_trusted` *(trusted block, see note)* | `otlp/infra` (mTLS-gated; infra intermediate CA is `client_ca_file` — agent leaves chained to the CLI root cannot complete the handshake) | `routing/trusted` connector — `error_mode: propagate` (OTTL errors surface in collector stdout), `default_pipelines: [logs/trusted_unrouted]` catches unmapped `service.name` values |
