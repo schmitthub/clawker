@@ -78,16 +78,7 @@
       "measurementId": "G-TM021J82T6"
     }
   },
-  "redirects": [
-    {
-      "source": "/harness-bundles",
-      "destination": "/harnesses"
-    },
-    {
-      "source": "/upgrading/v0.13",
-      "destination": "/announcements/multi-harness-support"
-    }
-  ],
+  "redirects": [],
   "navigation": {
     "groups": [
       {
@@ -96,12 +87,6 @@
           "index",
           "quickstart",
           "installation"
-        ]
-      },
-      {
-        "group": "Announcements",
-        "pages": [
-          "announcements/multi-harness-support"
         ]
       },
       {
@@ -130,9 +115,7 @@
       {
         "group": "Building images",
         "pages": [
-          "custom-images",
-          "stacks",
-          "harnesses"
+          "custom-images"
         ]
       },
       {
@@ -152,14 +135,6 @@
       {
         "group": "Developer guide",
         "pages": [
-          {
-            "group": "Extending clawker",
-            "pages": [
-              "authoring-stacks",
-              "authoring-harnesses",
-              "stack-contract"
-            ]
-          },
           {
             "group": "Contributing",
             "pages": [
@@ -306,24 +281,6 @@
               "cli-reference/clawker_project_info",
               "cli-reference/clawker_project_remove",
               "cli-reference/clawker_project_edit"
-            ]
-          },
-          {
-            "group": "Stack",
-            "pages": [
-              "cli-reference/clawker_stack",
-              "cli-reference/clawker_stack_register",
-              "cli-reference/clawker_stack_list",
-              "cli-reference/clawker_stack_remove"
-            ]
-          },
-          {
-            "group": "Harness",
-            "pages": [
-              "cli-reference/clawker_harness",
-              "cli-reference/clawker_harness_register",
-              "cli-reference/clawker_harness_list",
-              "cli-reference/clawker_harness_remove"
             ]
           },
           {

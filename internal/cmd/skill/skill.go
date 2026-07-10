@@ -14,11 +14,10 @@ func NewCmdSkill(f *cmdutil.Factory) *cobra.Command {
 		Short: "Manage the clawker agent skills plugin",
 		Long: `Manage the clawker-support agent skills plugin.
 
-The plugin ships two skills: clawker-support gives your coding agent hands-on
-knowledge of clawker internals — configuration, Dockerfile generation,
-firewall rules, MCP wiring, and troubleshooting — and harness-stack-dev
-covers authoring harness bundles and stack definitions. Both read the
-real config schema and templates so the advice they give is always accurate.`,
+The clawker-support skill gives your coding agent hands-on knowledge of
+clawker internals — configuration, Dockerfile generation, firewall rules,
+MCP wiring, and troubleshooting. It reads the real config schema and
+templates so the advice it gives is always accurate.`,
 		Example: `  # Install the clawker skill plugin
   clawker skill install
 

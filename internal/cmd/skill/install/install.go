@@ -31,8 +31,7 @@ func NewCmdInstall(f *cmdutil.Factory, runF func(context.Context, *InstallOption
 
 This adds the schmitthub/claude-plugins marketplace (if not already present)
 and installs the clawker-support plugin. The plugin gives your coding agent
-hands-on knowledge of clawker configuration, troubleshooting, and internals,
-plus harness bundle and stack authoring.`,
+hands-on knowledge of clawker configuration, troubleshooting, and internals.`,
 		Example: `  # Install with default user scope
   clawker skill install
 

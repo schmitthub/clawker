@@ -1,64 +1,44 @@
 # Multi-Harness — Current State (branch feat/multi-harness-support)
 
-The multi-harness feature and the stack/harness composition contract are
-implemented on this branch. Code and shipped docs are the source of truth:
+**2026-07-10: the extensibility DESIGN was rejected and is being redesigned from
+scratch.** The active design lives in serena `brainstorm_clawker-package-install-model`
+(bundle/install-model pivot). Its GOVERNING MANDATE applies here: the former
+registry/walkup/materialize design was branch-only experimentation — never
+shipped, no user ever saw it. It is not precedent for anything. Do NOT cite its
+decisions, mirror its schemas, or reuse its plumbing as a shortest path. The old
+design-model memory (`stack-unit-contract-model`) was deliberately deleted so it
+cannot bias future sessions.
 
-- **Design model**: serena `multi-harness/stack-unit-contract-model` (this
-  folder) — the contract's design and current state.
-- **Public contract surface**: `docs/stack-contract.mdx` — engine guarantees
-  (E1–E22), author obligations (A1–A11), permanent citation anchors, backed by a
-  `// Conformance: <ID>` badge suite.
-- **User docs** (restructured 2026-07-09, uncommitted): use/author split —
-  `docs/{stacks,harnesses,custom-images}.mdx` (USER) +
-  `docs/{authoring-stacks,authoring-harnesses}.mdx` (AUTHOR, Developer guide nav);
-  `harness-bundles.mdx` deleted (docs.json redirect → /harnesses);
-  `docs/upgrading/v0.13.mdx` (now incl. build.image→stacks migration recipe),
-  CHANGELOG `[0.13.0]`. Manifest schemas generated: `docs/schemas/{harness,stack}.schema.json`
-  from `config.Manifest`/`config.StackManifest` via gen-docs `configSchemaSpecs()`.
-  Nav: 10 sentence-grouped sidebar sections, CLI reference last.
-- **Author skill**: `claude-plugin/clawker-support/skills/harness-stack-dev/`
-  (bundle/stack authoring reference within the clawker-support plugin).
-- **Code**: `internal/bundler/` (bundle/stack/harness types, loaders
-  `LoadBundle`/`LoadStackDefinition`/`LoadHarness`, resolution, egress floor,
-  basehash, embedded `assets/harnesses/{claude,codex}` + `assets/stacks/{go,node,python,rust}`),
-  `internal/config/` (manifest schemas `Manifest`/`StackManifest`/`EgressRule`,
-  project `stacks:`/`harnesses:`/`build.harnesses:` registries, front-door
-  validation), `internal/consts/name.go` (unified naming rule),
-  `internal/cmd/{stack,harness}/` (register/list/remove front-door). The former
-  `internal/harness` and `internal/stack` packages folded into `internal/bundler`.
+## What exists (facts about code, not design law)
 
-## Model in one paragraph
+Branch code implements the now-rejected experiment. Treat it as inventory for
+the rewrite — things to delete, gut, or (only after first-principles
+re-justification against the new model) keep:
 
-A harness is a file-backed bundle (harness.yaml + Dockerfile fragment + assets/)
-embedded for claude + codex, resolving straight from the binary (no
-materialization). Custom bundles register per-project in `clawker.yaml`
-`harnesses:` (name → path); the built-in default is claude (no registry default
-flag). Images: pinned Debian substrate → shared base (packages + project stacks +
-instructions/inject) → per-harness image. Language stacks are file-backed
-(stack.yaml + root/user fragments), declared never installed, registered
-per-project in `clawker.yaml` `stacks:`; per-lineage lookup (project registry →
-bundle `stacks/` → shipped), closer layer wins wholesale, provenance printed.
-Registration is a path reference (no copy, no remote fetch). Parameterization is
-Docker `--build-arg` against author-declared ARGs, folded into the base freshness
-hash. Egress floor composes from the selected bundle's `egress:` and is
-immutable. There is no capability-token algebra, no version-constraint algebra,
-and no cross-stratum dedup.
+- `internal/bundler/` — bundle/stack/harness types, loaders, resolution, egress
+  floor, basehash, embedded `assets/harnesses/{claude,codex}` +
+  `assets/stacks/{go,node,python,rust}`, monitoring unit loading/validation.
+- `internal/config/` — manifest schemas (`Manifest`/`StackManifest`/`EgressRule`,
+  `MonitoringUnitManifest`), project `stacks:`/`harnesses:` registries (DEAD in
+  the new model), front-door validation.
+- `internal/cmd/{stack,harness}/` register/list/remove front doors (DEAD shape —
+  new model replaces with bundle verbs + convention dirs).
+- `internal/monitor/` units resolution/routing/seeding (`UnitsMarkerFile` ledger
+  survives conceptually as the seeded-set union ledger in the new model).
+- `internal/consts/name.go` — unified naming rule.
+- `docs/stack-contract.mdx` (E1–E22/A1–A11 + conformance badges) and user docs —
+  will be rewritten during implementation of the new model; do not treat as law.
 
 ## Files in this folder
 
 | file | purpose |
 |---|---|
-| `stack-unit-contract-model.md` | THE design model: engine sovereignty, per-lineage resolution, placement, registration, config schema, authority map, ordering, and open (phase-2) work. |
-| `harness-research-opencode-pi.md` | Live-verified recon for the next two harness bundles (opencode, pi). Authoring them via the harness-stack-dev skill is the planned UAT exercise. Items marked UNVERIFIED need firewall-live confirmation. |
+| `harness-research-opencode-pi.md` | Live-verified recon for opencode + pi harness bundles (research facts — still valid). |
 
-## Open work (also tracked in the model doc §7)
+## Open work
 
-- ~~Monitoring stack breakout~~ DONE 2026-07-09 — monitoring units (see model
-  doc §7.1): claude-code unit in the claude bundle, host-global settings
-  registry, opt-in activation, deep collector extraction. Host UAT of
-  enable → init → up still pending.
-- Host UAT of the full register → build → run flow (not drivable in-container).
-- Harness template block names still placeholder `block_1..6`
-  (`bundler.DeclaredBlocks`) — final event-centric names undecided.
+- Implement the new bundle/install model (see the brainstorm memory — decisions,
+  testing mandate, open items).
 - Skills-plugin multi-agent packaging — merge blocker for the branch.
-- opencode/pi bundles via the harness-stack-dev skill (research memo ready).
+- Harness template block names still placeholder `block_1..6` — final names undecided (user's call).
+- opencode/pi bundles (research memo ready) — after the new model lands.

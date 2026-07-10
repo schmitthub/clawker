@@ -4,10 +4,6 @@ An agent skills plugin that acts as a clawker internals expert — helping you s
 
 ## What it does
 
-The plugin ships two skills:
-
-### clawker-support
-
 When you invoke `/clawker-support`, your agent becomes a clawker configuration specialist that:
 
 - **Researches** what you're trying to add (packages, MCP servers, tools, runtimes)
@@ -15,15 +11,6 @@ When you invoke `/clawker-support`, your agent becomes a clawker configuration s
 - **Synthesizes** the exact YAML config you need, with firewall rules and all
 
 It understands the full clawker system: Dockerfile generation, config layering, firewall architecture, injection points, build-time vs runtime, and common gotchas.
-
-### harness-stack-dev
-
-When you invoke `/harness-stack-dev`, your agent becomes a clawker extension-authoring specialist for building harness bundles (packaging a new coding-agent CLI) and stack definitions (reusable language-stack install fragments):
-
-- **Knows the bundle format** — `harness.yaml` field-by-field (version resolvers, volumes, seeds, staging, egress floors), verified against clawker's validators
-- **Knows the template contract** — the six block slots of `Dockerfile.harness.tmpl`, their user/shell context, cache rules, and the runtime PATH gotcha
-- **Knows stack authoring** — definition format, placement semantics, the self-guarding idiom, and namespace collision rules
-- **Designs egress floors adversarially** — minimal floors, path-scoped UGC-sink denial, in-container auth posture
 
 ## Install
 
@@ -58,15 +45,7 @@ In your agent session:
 /clawker-support help me set up a Rust project with clawker
 ```
 
-```
-/harness-stack-dev help me package the opencode CLI as a clawker harness
-```
-
-```
-/harness-stack-dev write a stack definition for deno
-```
-
-Or just ask about clawker — the skills trigger automatically: clawker-support on clawker-related questions, harness-stack-dev on harness/stack authoring tasks.
+Or just ask about clawker — the skill triggers automatically on clawker-related questions.
 
 ## Documentation
 

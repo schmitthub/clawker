@@ -12,28 +12,7 @@ Changed, Removed. Each release section lists those subsections directly.
 
 ## [0.13.0] - Unreleased
 
-### **⚠ ACTION REQUIRED — rebuild images, recreate containers with fresh volumes, restart the control plane**
-
-> Run `clawker build --no-cache` in every project after updating, recreate
-> containers with fresh volumes (`clawker rm --volumes`), and restart the
-> control plane (`clawker controlplane down && clawker controlplane up`).
-> Legacy config keys are migrated automatically with a printed notice on first
-> load. Step-by-step instructions: <https://docs.clawker.dev/upgrading/v0.13>.
-
-- **Added:** Multi-harness support. Coding-agent CLIs are pluggable **harness bundles** — a manifest, a Dockerfile template fragment, and assets. Shipped bundles resolve straight from the clawker binary; register your own per-project in `clawker.yaml` under `harnesses:` (name → bundle path). OpenAI **Codex** ships alongside Claude Code; add your own by authoring a bundle (see the harness-bundles docs page). Per-harness config lives in `clawker.yaml` under `harnesses.<name>:` (env, `post_init`/`pre_run`, managed-config strategy).
-- **Added:** Harness-keyed images. Builds tag `clawker-<project>:<harness>` (the default harness also gets a `:default` alias); `clawker build -t codex` builds a specific harness, `clawker run @:codex` selects its image, and bare `@` resolves the default. Containers and images carry a harness label.
-- **Added:** Language **stacks** (`build.stacks: [go, node, python, rust]`) — file-backed install definitions. Shipped stacks resolve from the clawker binary; register your own per-project in `clawker.yaml` under `stacks:` (name → definition path). Harness bundles declare the stacks they need and projects add their own; a closer layer (project registry, then bundle) shadows a shipped definition of the same name, reported in the build output.
-- **Added:** `clawker stack` and `clawker harness` commands to register, list, and remove definitions in the project's `clawker.yaml` — `register <path> [--name <n>] [--force]`, `list` (with `-q`/`--json`/`--format`), and `remove <name>`. Registration points a name at a stack or bundle directory on disk; `list` shows project-registered alongside built-in entries and flags which shadow a shipped name.
-- **Added:** Per-harness build overlay. `build.harnesses.<name>` takes the same `stacks`, `packages`, and `inject` primitives as the base `build` block, scoped to one harness's image — overlay stacks render after the bundle's own stacks, overlay packages install in that harness image, and overlay `inject.after_harness_install`/`before_entrypoint` apply to that harness only.
-- **Added:** Monitoring units — agent observability loadouts (OpenSearch index, ingest pipelines, dashboards, collector routing) shipped inside harness bundles under `monitoring/<name>/` or registered by path. Manage them with `clawker monitor register|remove|list|enable|disable`; only enabled units are seeded into the monitoring stack, and enabling checks that no two active units claim the same index or `service.name` route.
-- **Changed:** Claude Code monitoring is now the built-in `claude-code` monitoring unit (shipped in the claude harness bundle) and is **opt-in**: a fresh `clawker monitor init && up` seeds only the infrastructure lanes (firewall, DNS, CLI, control plane). Run `clawker monitor enable claude-code` then `clawker monitor init && clawker monitor up` to get the Claude Code index and dashboards back.
-- **Changed:** Stack and harness registration is per-project in `clawker.yaml` (`stacks:` / `harnesses:`).
-- **Changed:** Stack and harness names use one rule — lowercase kebab-case, up to 32 characters (`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`), and the directory name is the registered name unless `--name` overrides it.
-- **Changed:** Images build from clawker's pinned Debian base. `build.image`, `build.dockerfile`, and `build.context` are removed (auto-stripped from config with a notice); custom base images and Dockerfiles are unsupported — customize with `build.stacks`, `build.packages`, `build.instructions`, and `build.inject`.
-- **Changed:** Harness auth happens in-container. Host credentials are no longer copied into containers (`agent.claude_code.use_host_auth` removed); authenticate once on first run — browser flows are proxied to the host — and the login persists in the harness config volume. Managed config (settings, plugins, skills) is still staged from the host.
-- **Changed:** `agent.claude_code` config moved to `harnesses.claude` (migrated automatically with a notice); `build.inject.after_claude_install` is now `after_harness_install` (the old name still works as a deprecated alias).
 - **Fixed:** `clawker build --build-arg` targeting a base-image build ARG now rebuilds the base when the value changes, instead of being silently dropped when the rest of the base was unchanged. Build args the base image doesn't declare (harness-only or unknown) never trigger a base rebuild.
-- **Removed:** `clawker generate` — the Claude-Code-release Dockerfiles it generated no longer exist in the bundle-composed build model.
 
 ## [0.12.11] - 2026-07-02
 
