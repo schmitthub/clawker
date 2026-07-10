@@ -52,11 +52,6 @@
               "title": "Mount Host State",
               "type": "boolean"
             },
-            "path": {
-              "description": "Harness bundle directory (harness.yaml + Dockerfile.harness.tmpl + assets), relative to the project root or absolute — no ~ or $VAR expansion; empty = built-in/shipped resolution",
-              "title": "Path",
-              "type": "string"
-            },
             "post_init": {
               "description": "Shell commands run once after container creation when this harness is selected, appended after agent.post_init (e.g. install this harness's MCP servers)",
               "title": "Post-Init Script",
@@ -443,11 +438,6 @@
             "description": "Bind mount the harness's host state dirs (e.g. ~/.claude/projects/ for the claude harness) into the container so auto-memory and sessions are shared across container runs and instances",
             "title": "Mount Host State",
             "type": "boolean"
-          },
-          "path": {
-            "description": "Harness bundle directory (harness.yaml + Dockerfile.harness.tmpl + assets), relative to the project root or absolute — no ~ or $VAR expansion; empty = built-in/shipped resolution",
-            "title": "Path",
-            "type": "string"
           },
           "post_init": {
             "description": "Shell commands run once after container creation when this harness is selected, appended after agent.post_init (e.g. install this harness's MCP servers)",

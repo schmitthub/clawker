@@ -15,14 +15,14 @@ import (
 )
 
 // Conformance: E21 — validation walks each layer so the error names the real file, not the merged tree.
-// TestValidateProjectRegistries_FileProvenance proves the per-layer walk
+// TestValidateProjectNodes_FileProvenance proves the per-layer walk
 // names the actual offending file, not just the virtual/seed layer.
-func TestValidateProjectRegistries_FileProvenance(t *testing.T) {
+func TestValidateProjectNodes_FileProvenance(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, consts.ProjectConfigFile), []byte(`
 harnesses:
   Bad_Name:
-    path: ./x
+    mount_projects: false
 `), 0o644))
 
 	store, err := storage.New[Project]("",
@@ -31,25 +31,25 @@ harnesses:
 	)
 	require.NoError(t, err)
 
-	err = validateProjectRegistries(store)
+	err = validateProjectNodes(store)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), consts.ProjectConfigFile)
 	assert.Contains(t, err.Error(), "harnesses.Bad_Name")
 }
 
-// TestValidateProjectRegistries_MalformedShapes drives every "must be a
+// TestValidateProjectNodes_MalformedShapes drives every "must be a
 // mapping / list / string" type-assertion branch in validate.go through the
 // scenario that makes the per-layer walk load-bearing: a malformed value in
 // a LOSING layer shadowed by a well-formed value in the winning layer. The
 // merged tree then decodes cleanly (the winner's shape wins the merge), so
 // the typed decode never sees the mistake — only the per-layer validation
 // can surface it instead of silently ignoring that file's node.
-func TestValidateProjectRegistries_MalformedShapes(t *testing.T) {
+func TestValidateProjectNodes_MalformedShapes(t *testing.T) {
 	// A fully valid winning layer that shadows every key the malformed
 	// losing layers below misuse, so the merged tree always decodes.
 	const winning = `
 harnesses:
-  codex: { path: ./tools/codex }
+  codex: { mount_projects: true }
   claude:
     config: { strategy: copy }
 build:
@@ -117,110 +117,10 @@ build:
 				"malformed losing layer must not break store construction — that is the silent-shadow hazard",
 			)
 
-			err = validateProjectRegistries(store)
+			err = validateProjectNodes(store)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tc.wantErr)
 			assert.Contains(t, err.Error(), consts.ProjectConfigFile)
-		})
-	}
-}
-
-// TestValidateSettingsRegistries_FileProvenance proves the settings-side
-// per-layer walk names the actual offending file for a bad monitoring.units
-// registry name.
-func TestValidateSettingsRegistries_FileProvenance(t *testing.T) {
-	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, consts.SettingsFile), []byte(`
-monitoring:
-  units:
-    Bad_Name:
-      path: /abs/x
-`), 0o644))
-
-	store, err := storage.New[Settings]("",
-		storage.WithFilenames(consts.SettingsFile),
-		storage.WithPaths(dir),
-	)
-	require.NoError(t, err)
-
-	err = validateSettingsRegistries(store)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), consts.SettingsFile)
-	assert.Contains(t, err.Error(), "monitoring.units.Bad_Name")
-}
-
-// TestValidateSettingsRegistries_Table drives the monitoring.units front
-// door: name rule, known-field rejection, absolute-path requirement,
-// ~/$VAR rejection, and active type check. Malformed-shape rows pair the
-// bad losing layer with a valid winning layer (mirroring
-// TestValidateProjectRegistries_MalformedShapes): the winner's shape wins
-// the merge so store construction succeeds and only the per-layer walk
-// can surface the losing file's mistake.
-func TestValidateSettingsRegistries_Table(t *testing.T) {
-	const winning = `
-monitoring:
-  units:
-    x: { path: /abs/units/x, active: true }
-`
-	cases := []struct {
-		name    string
-		yaml    string
-		wantErr string // empty = valid
-	}{
-		{
-			"valid path entry",
-			"monitoring:\n  units:\n    codex-usage:\n      path: /abs/units/codex-usage\n",
-			"",
-		},
-		{"valid flag-only entry", "monitoring:\n  units:\n    claude-code:\n      active: true\n", ""},
-		{"absent node", "monitoring: {}\n", ""},
-		{"units node is a scalar", "monitoring:\n  units: foo\n", "monitoring.units: must be a mapping"},
-		{"entry is a scalar", "monitoring:\n  units:\n    x: nope\n", "monitoring.units.x: must be a mapping"},
-		{"bad name", "monitoring:\n  units:\n    Bad_Name: {path: /a}\n", "monitoring.units.Bad_Name"},
-		{
-			"unknown field",
-			"monitoring:\n  units:\n    x:\n      pth: /a\n",
-			"monitoring.units.x.pth: unknown field",
-		},
-		{
-			"path not a string",
-			"monitoring:\n  units:\n    x:\n      path: 5\n",
-			"monitoring.units.x.path: must be a string",
-		},
-		{
-			"path empty",
-			"monitoring:\n  units:\n    x:\n      path: \"\"\n",
-			"monitoring.units.x.path: must not be empty",
-		},
-		{"path relative", "monitoring:\n  units:\n    x:\n      path: ./units/x\n", "must be an absolute path"},
-		{"path tilde", "monitoring:\n  units:\n    x:\n      path: ~/units/x\n", "must not use ~"},
-		{"path env var", "monitoring:\n  units:\n    x:\n      path: $HOME/units/x\n", "must not use $VAR"},
-		{
-			"active not a bool",
-			"monitoring:\n  units:\n    x:\n      active: yes please\n",
-			"monitoring.units.x.active: must be a boolean",
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			winDir, loseDir := t.TempDir(), t.TempDir()
-			require.NoError(t, os.WriteFile(filepath.Join(winDir, consts.SettingsFile), []byte(winning), 0o644))
-			require.NoError(t, os.WriteFile(filepath.Join(loseDir, consts.SettingsFile), []byte(tc.yaml), 0o644))
-			store, err := storage.New[Settings]("",
-				storage.WithFilenames(consts.SettingsFile),
-				storage.WithPaths(winDir, loseDir),
-			)
-			require.NoError(t, err,
-				"malformed losing layer must not break store construction — that is the silent-shadow hazard")
-
-			err = validateSettingsRegistries(store)
-			if tc.wantErr == "" {
-				assert.NoError(t, err)
-				return
-			}
-			require.Error(t, err)
-			assert.Contains(t, err.Error(), tc.wantErr)
-			assert.Contains(t, err.Error(), consts.SettingsFile)
 		})
 	}
 }
@@ -235,11 +135,10 @@ func TestKnownFieldSets_MatchSchemaTags(t *testing.T) {
 		schema reflect.Type
 		known  map[string]bool
 	}{
-		{"harness registry entry", reflect.TypeFor[HarnessConfig](), knownHarnessRegistryFields()},
+		{"harness registry entry", reflect.TypeFor[HarnessConfig](), knownHarnessConfigFields()},
 		{"harness build overlay", reflect.TypeFor[HarnessBuildOverlay](), knownHarnessOverlayFields()},
 		{"harness overlay inject", reflect.TypeFor[HarnessOverlayInject](), knownHarnessOverlayInjectFields()},
 		{"harness config options", reflect.TypeFor[HarnessConfigOptions](), knownHarnessConfigOptionsFields()},
-		{"monitoring unit entry", reflect.TypeFor[MonitoringUnitEntry](), knownMonitoringUnitFields()},
 		{"bundle source", reflect.TypeFor[BundleSource](), knownBundleSourceFields()},
 	}
 	for _, tc := range cases {

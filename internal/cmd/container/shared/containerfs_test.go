@@ -58,7 +58,6 @@ func testHarnessCfg(strategy string) *config.HarnessConfig {
 		Env:           nil,
 		PostInit:      "",
 		PreRun:        "",
-		Path:          "",
 	}
 }
 

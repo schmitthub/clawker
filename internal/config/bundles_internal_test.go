@@ -51,7 +51,7 @@ func TestValidateBundles_ConfigDirAbsolutePath(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		err = validateProjectRegistries(store)
+		err = validateProjectNodes(store)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "bundles[0].path")
 		assert.Contains(t, err.Error(), "must be an absolute path")
@@ -70,7 +70,7 @@ func TestValidateBundles_ConfigDirAbsolutePath(t *testing.T) {
 			storage.WithConfigDir(),
 		)
 		require.NoError(t, err)
-		require.NoError(t, validateProjectRegistries(store))
+		require.NoError(t, validateProjectNodes(store))
 	})
 
 	t.Run("relative path in a project layer passes", func(t *testing.T) {
@@ -84,7 +84,7 @@ func TestValidateBundles_ConfigDirAbsolutePath(t *testing.T) {
 			storage.WithPaths(projectDir),
 		)
 		require.NoError(t, err)
-		require.NoError(t, validateProjectRegistries(store))
+		require.NoError(t, validateProjectNodes(store))
 	})
 }
 
@@ -107,7 +107,7 @@ func TestValidateBundles_MalformedShadow(t *testing.T) {
 	require.NoError(t, err,
 		"malformed losing layer must not break store construction — that is the silent-shadow hazard")
 
-	err = validateProjectRegistries(store)
+	err = validateProjectNodes(store)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "bundles: must be a list")
 	assert.Contains(t, err.Error(), consts.ProjectConfigFile)

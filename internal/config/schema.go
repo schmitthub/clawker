@@ -149,13 +149,6 @@ type HarnessConfig struct {
 	Env           map[string]string    `yaml:"env,omitempty"            label:"Env"              desc:"Set container env vars when this harness is selected; overrides agent.env on key collision"`
 	PostInit      string               `yaml:"post_init,omitempty"      label:"Post-Init Script" desc:"Shell commands run once after container creation when this harness is selected, appended after agent.post_init (e.g. install this harness's MCP servers)"`
 	PreRun        string               `yaml:"pre_run,omitempty"        label:"Pre-Run Script"   desc:"Shell commands run on every container start when this harness is selected, appended after agent.pre_run"`
-	// Path is the harness bundle directory (harness.yaml +
-	// Dockerfile.harness.tmpl + assets), relative to the project root or
-	// absolute — no ~ or $VAR expansion. Consumed only by the monitoring
-	// unit discovery path (internal/monitor); build-time harness
-	// resolution goes through internal/bundle's three-tier resolver, not
-	// this field. Slated for removal with the Phase 5 monitor re-couple.
-	Path string `yaml:"path,omitempty" label:"Path" desc:"Harness bundle directory (harness.yaml + Dockerfile.harness.tmpl + assets), relative to the project root or absolute — no ~ or $VAR expansion; empty = built-in/shipped resolution"`
 }
 
 // AgentConfig defines harness-agnostic agent runtime settings.
@@ -538,18 +531,6 @@ type MonitoringConfig struct {
 	PrometheusPort           int             `yaml:"prometheus_port,omitempty"            label:"Prometheus Port"            desc:"Host port for the Prometheus UI and its native OTLP receiver (agent metrics flow through the OTEL collector, not here; this port is only used by direct OTLP pushers)"                                                                         default:"9090"`
 	PrometheusMetricsPort    int             `yaml:"prometheus_metrics_port,omitempty"    label:"Prometheus Metrics Port"    desc:"In-network port the otel-collector exposes its Prometheus scrape endpoint on (Prometheus scrapes the collector over clawker-net for collector + agent metrics; not host-published — no localhost binding, no host port-conflict check needed)" default:"8889"`
 	Telemetry                TelemetryConfig `yaml:"telemetry,omitempty"`
-
-	// Units is the host-global monitoring unit registry: unit name →
-	// registration. Built-in units (shipped inside embedded harness
-	// bundles) need no entry — an entry with only `active` toggles a
-	// built-in unit's activation state.
-	Units map[string]MonitoringUnitEntry `yaml:"units,omitempty" label:"Monitoring Units" desc:"Host-global monitoring unit registry keyed by unit name; registered path and activation state"`
-}
-
-// MonitoringUnitEntry is one monitoring.units registry entry.
-type MonitoringUnitEntry struct {
-	Path   string `yaml:"path,omitempty"   label:"Path"   desc:"Absolute path to the monitoring unit directory (monitoring.yaml plus artifact subdirs); empty on an entry that only toggles a built-in unit's activation — no ~ or $VAR expansion"`
-	Active *bool  `yaml:"active,omitempty" label:"Active" desc:"Whether the unit is materialized and seeded into the monitoring stack; defaults to false"`
 }
 
 // TelemetryConfig configures telemetry export intervals and signal

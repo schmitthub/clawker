@@ -189,7 +189,7 @@ func NewConfig(opts ...NewConfigOption) (Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("config: loading project config: %w", err)
 	}
-	if vErr := validateProjectRegistries(projectStore); vErr != nil {
+	if vErr := validateProjectNodes(projectStore); vErr != nil {
 		return nil, fmt.Errorf("config: validating project config: %w", vErr)
 	}
 
@@ -209,9 +209,6 @@ func NewConfig(opts ...NewConfigOption) (Config, error) {
 	settingsStore, err := storage.New[Settings]("", settingsOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("config: loading settings: %w", err)
-	}
-	if vErr := validateSettingsRegistries(settingsStore); vErr != nil {
-		return nil, fmt.Errorf("config: validating settings: %w", vErr)
 	}
 
 	return &configImpl{
@@ -262,7 +259,7 @@ func NewProjectStoreFromPreset(presetYAML string) (*storage.Store[Project], erro
 	if err != nil {
 		return nil, err
 	}
-	if vErr := validateProjectRegistries(store); vErr != nil {
+	if vErr := validateProjectNodes(store); vErr != nil {
 		return nil, fmt.Errorf("config: validating preset project config: %w", vErr)
 	}
 	store.MarkSeedForWrite()
@@ -277,15 +274,12 @@ func NewBlankConfig() (Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("config: blank project: %w", err)
 	}
-	if vErr := validateProjectRegistries(projectStore); vErr != nil {
+	if vErr := validateProjectNodes(projectStore); vErr != nil {
 		return nil, fmt.Errorf("config: validating project config: %w", vErr)
 	}
 	settingsStore, err := storage.New[Settings](storage.GenerateDefaultsYAML[Settings]())
 	if err != nil {
 		return nil, fmt.Errorf("config: blank settings: %w", err)
-	}
-	if vErr := validateSettingsRegistries(settingsStore); vErr != nil {
-		return nil, fmt.Errorf("config: validating settings: %w", vErr)
 	}
 	return &configImpl{
 		project:  projectStore,
@@ -301,15 +295,12 @@ func NewFromString(projectYAML, settingsYAML string) (Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("config: parsing project YAML: %w", err)
 	}
-	if vErr := validateProjectRegistries(projectStore); vErr != nil {
+	if vErr := validateProjectNodes(projectStore); vErr != nil {
 		return nil, fmt.Errorf("config: validating project config: %w", vErr)
 	}
 	settingsStore, err := storage.New[Settings](settingsYAML)
 	if err != nil {
 		return nil, fmt.Errorf("config: parsing settings YAML: %w", err)
-	}
-	if vErr := validateSettingsRegistries(settingsStore); vErr != nil {
-		return nil, fmt.Errorf("config: validating settings: %w", vErr)
 	}
 	return &configImpl{
 		project:  projectStore,

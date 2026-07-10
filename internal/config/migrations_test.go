@@ -275,12 +275,10 @@ func loadSettingsWithMigrations(t *testing.T, yamlContent string) string {
 	return string(data)
 }
 
-// TestSettingsLoadDoesNotSeedRegistries pins the registry-write ownership
-// contract: config load never invents harness/stack registry state — a
-// settings.yaml without those keys stays byte-identical across loads. The
-// build-time ensure paths, which materialize the bundle directories the
-// entries point at, own all registry writes.
-func TestSettingsLoadDoesNotSeedRegistries(t *testing.T) {
+// TestSettingsLoadDoesNotWriteKeys pins the write-ownership contract:
+// config load never invents state — a settings.yaml without a key stays
+// byte-identical across loads (migrations rewrite only what they match).
+func TestSettingsLoadDoesNotWriteKeys(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "settings.yaml")
 	const in = "host_proxy:\n  port: 9999\n"
@@ -296,7 +294,7 @@ func TestSettingsLoadDoesNotSeedRegistries(t *testing.T) {
 	}
 	load()
 	after := readFile(t, path)
-	assert.Equal(t, in, after, "settings load must not write registry keys")
+	assert.Equal(t, in, after, "settings load must not write keys")
 	assert.NotContains(t, after, "harnesses:")
 	assert.NotContains(t, after, "stacks:")
 }
@@ -333,7 +331,7 @@ func TestMigrateRemoveLegacyMonitoringKeys(t *testing.T) {
 	})
 
 	t.Run("no-op without monitoring", func(t *testing.T) {
-		// No monitoring and no legacy registry keys → the whole settings
+		// No monitoring and no legacy keys → the whole settings
 		// migration chain no-ops and the file is left byte-for-byte untouched.
 		const in = `host_proxy:
   port: 9999

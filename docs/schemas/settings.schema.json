@@ -308,27 +308,6 @@
             }
           },
           "type": "object"
-        },
-        "units": {
-          "additionalProperties": {
-            "additionalProperties": false,
-            "properties": {
-              "active": {
-                "description": "Whether the unit is materialized and seeded into the monitoring stack; defaults to false",
-                "title": "Active",
-                "type": "boolean"
-              },
-              "path": {
-                "description": "Absolute path to the monitoring unit directory (monitoring.yaml plus artifact subdirs); empty on an entry that only toggles a built-in unit's activation — no ~ or $VAR expansion",
-                "title": "Path",
-                "type": "string"
-              }
-            },
-            "type": "object"
-          },
-          "description": "Host-global monitoring unit registry keyed by unit name; registered path and activation state",
-          "title": "Monitoring Units",
-          "type": "object"
         }
       },
       "type": "object"
