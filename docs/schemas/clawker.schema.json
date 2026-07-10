@@ -473,7 +473,7 @@
           "default": [
             "claude-code"
           ],
-          "description": "Monitoring extensions this project contributes to the monitoring stack, by name or qualified namespace.bundle.component address; merged across all config layers",
+          "description": "Monitoring extensions this project contributes to the monitoring stack, by name or qualified namespace.bundle.component address; the highest config layer that sets this wins",
           "items": {
             "type": "string"
           },

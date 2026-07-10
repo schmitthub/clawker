@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/internal/config"
+	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 )
 
 // TestBundleSource_YamlTagDecode pins the yaml tag ↔ struct field mapping for
@@ -43,6 +44,17 @@ func TestProjectDefaults_MonitorExtensions(t *testing.T) {
 	cfg, err := config.NewBlankConfig()
 	require.NoError(t, err)
 	assert.Equal(t, []string{"claude-code"}, cfg.Project().Monitor.Extensions)
+}
+
+// TestMonitorExtensions_OverridesDefault proves monitor.extensions is a
+// selection key with override merge (like build.stacks), NOT a union: a layer
+// that sets it wins wholesale, so a project can deselect the claude-code
+// default. Under a union merge this would resolve to
+// [claude-code, prometheus] and fail.
+func TestMonitorExtensions_OverridesDefault(t *testing.T) {
+	cfg := configmocks.NewIsolatedTestConfig(t)
+	require.NoError(t, cfg.ProjectStore().Set("monitor.extensions", []string{"prometheus"}))
+	assert.Equal(t, []string{"prometheus"}, cfg.Project().Monitor.Extensions)
 }
 
 // --- Front-door validation of the bundles: list. ---

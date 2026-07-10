@@ -50,10 +50,10 @@ type MonitorConfig struct {
 	// Extensions selects the monitoring extensions this project projects into
 	// the monitoring stack, by component reference (bare name for a
 	// floor/loose extension, or a qualified namespace.bundle.component address
-	// for a bundled one). Union-merged across all config layers; the defaults
-	// layer ships the built-in claude-code extension so a fresh project keeps
-	// monitoring the claude harness out of the box.
-	Extensions []string `yaml:"extensions,omitempty" label:"Monitoring Extensions" desc:"Monitoring extensions this project contributes to the monitoring stack, by name or qualified namespace.bundle.component address; merged across all config layers" merge:"union" default:"claude-code"`
+	// for a bundled one). A selection key like build.stacks: the highest
+	// config layer that sets it wins wholesale (no union), so a project can
+	// deselect the claude-code default the defaults layer ships.
+	Extensions []string `yaml:"extensions,omitempty" label:"Monitoring Extensions" desc:"Monitoring extensions this project contributes to the monitoring stack, by name or qualified namespace.bundle.component address; the highest config layer that sets this wins" default:"claude-code"`
 }
 
 // Fields implements [storage.Schema] for Project.

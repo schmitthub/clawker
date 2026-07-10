@@ -318,7 +318,7 @@ bundles:
     # Refetch this remote bundle when its source version changes, checked at the start of bundle-consuming commands (build, run, monitor up); off by default. No effect on sha-pinned or local sources.
     auto_update: <boolean>  # default: n/a | required: false
 monitor:
-  # Monitoring extensions this project contributes to the monitoring stack, by name or qualified namespace.bundle.component address; merged across all config layers
+  # Monitoring extensions this project contributes to the monitoring stack, by name or qualified namespace.bundle.component address; the highest config layer that sets this wins
   extensions:  # default: claude-code | required: false
     - <string>
 
@@ -463,7 +463,7 @@ The following tables are auto-generated from the schema struct tags in `internal
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `extensions` | string list | `claude-code` | Monitoring extensions this project contributes to the monitoring stack, by name or qualified namespace.bundle.component address; merged across all config layers |
+| `extensions` | string list | `claude-code` | Monitoring extensions this project contributes to the monitoring stack, by name or qualified namespace.bundle.component address; the highest config layer that sets this wins |
 
 
 ## Interactive Editing
