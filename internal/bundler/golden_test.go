@@ -116,17 +116,47 @@ monitoring:
 				{".harness.Dockerfile", harnessImg},
 			}
 			for _, r := range renders {
-				goldenPath := filepath.Join("testdata", "golden", tc.name+r.suffix)
-				if os.Getenv("GOLDEN_UPDATE") == "1" {
-					require.NoError(t, os.MkdirAll(filepath.Dir(goldenPath), 0o755))
-					require.NoError(t, os.WriteFile(goldenPath, r.got, 0o644))
-					continue
-				}
-
-				want, readErr := os.ReadFile(goldenPath)
-				require.NoError(t, readErr, "golden file missing — run with GOLDEN_UPDATE=1")
-				require.Equal(t, string(want), string(r.got))
+				checkGolden(t, filepath.Join("testdata", "golden", tc.name+r.suffix), r.got)
 			}
 		})
 	}
+}
+
+// checkGolden compares got against the golden file at goldenPath, or rewrites
+// the golden when GOLDEN_UPDATE=1.
+func checkGolden(t *testing.T, goldenPath string, got []byte) {
+	t.Helper()
+	if os.Getenv("GOLDEN_UPDATE") == "1" {
+		require.NoError(t, os.MkdirAll(filepath.Dir(goldenPath), 0o755))
+		require.NoError(t, os.WriteFile(goldenPath, got, 0o644))
+		return
+	}
+	want, readErr := os.ReadFile(goldenPath)
+	require.NoError(t, readErr, "golden file missing — run with GOLDEN_UPDATE=1")
+	require.Equal(t, string(want), string(got))
+}
+
+// TestGenerate_QualifiedStackGolden locks the base render byte-for-byte when a
+// build.stacks entry names a qualified installed bundle stack: the stack is
+// resolved out of the host cache and its root fragment composed into the base,
+// exactly as the shipped-floor scenarios above but through the installed tier.
+//
+// Regenerate: GOLDEN_UPDATE=1 go test ./internal/bundler/ -run TestGenerate_QualifiedStackGolden
+func TestGenerate_QualifiedStackGolden(t *testing.T) {
+	cfg := testConfig(t, `
+version: "1"
+build:
+  stacks: [acme.tools.node]
+`)
+	// A cached bundle shipping one stack under the qualified address the project
+	// selects. testConfig isolated the XDG cache; this plants content into it.
+	writeInstalledStack(t, "acme", "tools", "1.0.0", "node", "RUN echo installed-acme-node\n")
+
+	gen := newTestProjectGenerator(cfg, t.TempDir())
+	gen.BuildKitEnabled = true
+
+	base, err := gen.GenerateBase()
+	require.NoError(t, err)
+
+	checkGolden(t, filepath.Join("testdata", "golden", "qualified-stack.base.Dockerfile"), base)
 }

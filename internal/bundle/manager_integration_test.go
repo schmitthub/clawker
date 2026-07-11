@@ -263,25 +263,96 @@ func TestManager_InstallDeclared_FetchesMissing(t *testing.T) {
 	assert.Empty(t, installed)
 }
 
-func TestManager_Install_MalformedManifestNoCommit(t *testing.T) {
+// TestManager_Install_InvalidManifestNoCommit drives the distinct hard-fail
+// manifest branches through a real fetch and pins the atomic-commit contract:
+// validation happens BEFORE the rename, so a rejected bundle leaves no trace in
+// the cache.
+func TestManager_Install_InvalidManifestNoCommit(t *testing.T) {
+	cases := map[string]struct {
+		manifest  string
+		absentDir string // cache namespace dir that must not exist afterwards
+	}{
+		"reserved namespace": {
+			manifest:  "namespace: clawker\nname: tools\n",
+			absentDir: "clawker",
+		},
+		"missing namespace": {
+			manifest:  "name: tools\n",
+			absentDir: "acme",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			srv := bundletest.New(t)
+			repo := srv.InitRepo(t, "bad")
+			repo.Commit(t, "v1", map[string]string{
+				filepath.Join(bundle.MarkerDir, bundle.ManifestFile): tc.manifest,
+				"stacks/node/stack.yaml":                             "description: node\n",
+			})
+			repo.Tag(t, "v1.0.0")
+
+			mgr := newManager(t, nil)
+			err := mgr.Install(context.Background(), config.BundleSource{
+				URL: srv.HTTPURL("bad"), Ref: "v1.0.0", SHA: "", Path: "", AutoUpdate: false,
+			})
+			var manifestErr *bundle.ManifestError
+			require.ErrorAs(t, err, &manifestErr)
+
+			cacheRoot, rootErr := consts.BundlesSubdir()
+			require.NoError(t, rootErr)
+			assert.NoDirExists(t, filepath.Join(cacheRoot, tc.absentDir))
+		})
+	}
+}
+
+func TestManager_Update_SHAPinStays(t *testing.T) {
 	srv := bundletest.New(t)
-	repo := srv.InitRepo(t, "bad")
-	repo.Commit(t, "v1", map[string]string{
-		".clawker-bundle/bundle.yaml": "namespace: clawker\nname: tools\n", // reserved namespace
-		"stacks/node/stack.yaml":      "description: node\n",
-	})
-	repo.Tag(t, "v1.0.0")
+	repo := srv.InitRepo(t, "tools")
+	sha := repo.Commit(t, "v1", bundleFiles(""))
 
 	mgr := newManager(t, nil)
-	err := mgr.Install(context.Background(), config.BundleSource{
-		URL: srv.HTTPURL("bad"), Ref: "v1.0.0", SHA: "", Path: "", AutoUpdate: false,
-	})
-	var manifestErr *bundle.ManifestError
-	require.ErrorAs(t, err, &manifestErr)
+	ctx := context.Background()
+	require.NoError(t, mgr.Install(ctx, config.BundleSource{
+		URL: srv.HTTPURL("tools"), Ref: "", SHA: sha, Path: "", AutoUpdate: false,
+	}))
 
-	cacheRoot, err2 := consts.BundlesSubdir()
-	require.NoError(t, err2)
-	assert.NoDirExists(t, filepath.Join(cacheRoot, "clawker"))
+	// The upstream moves on, but a sha-pinned source is reproducible: update
+	// leaves the pin untouched and fetches nothing new.
+	repo.Commit(t, "v2", bundleFiles("2.0.0"))
+
+	results, err := mgr.Update(ctx, bundle.BundleID{Namespace: "acme", Name: "tools"})
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, bundle.UpdateSkippedPinned, results[0].Outcome)
+
+	cacheRoot, err := consts.BundlesSubdir()
+	require.NoError(t, err)
+	// The pinned sha version is the only version dir — no drift was pulled in.
+	entries, err := os.ReadDir(filepath.Join(cacheRoot, "acme", "tools"))
+	require.NoError(t, err)
+	var versions []string
+	for _, e := range entries {
+		if e.IsDir() {
+			versions = append(versions, e.Name())
+		}
+	}
+	assert.Equal(t, []string{sha}, versions)
+}
+
+func TestManager_Install_UnreachableSource(t *testing.T) {
+	srv := bundletest.New(t)
+	// A repository that was never initialized on the server: the clone fails.
+	mgr := newManager(t, nil)
+	err := mgr.Install(context.Background(), config.BundleSource{
+		URL: srv.HTTPURL("nonexistent"), Ref: "v1.0.0", SHA: "", Path: "", AutoUpdate: false,
+	})
+	var srcErr *bundle.SourceError
+	require.ErrorAs(t, err, &srcErr)
+
+	// A failed fetch commits nothing: the cache has no bundle namespace.
+	cacheRoot, err := consts.BundlesSubdir()
+	require.NoError(t, err)
+	assert.NoDirExists(t, filepath.Join(cacheRoot, "acme"))
 }
 
 // repointSource rewrites the cached source.yaml URL so an update targets an

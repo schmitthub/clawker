@@ -55,6 +55,24 @@ func (f *resolverFixture) looseProjectStack(t *testing.T, name string) {
 	writeFile(t, dir, "stack.yaml", "description: project "+name+"\n")
 }
 
+// looseUserComponent writes a loose user-tier component of any type; the
+// resolver keys off the convention directory's existence, so the manifest
+// filename is immaterial here (a bare placeholder keeps the dir non-empty).
+func (f *resolverFixture) looseUserComponent(t *testing.T, ct ComponentType, name string) string {
+	t.Helper()
+	dir := filepath.Join(consts.ConfigDir(), ct.Dir(), name)
+	writeFile(t, dir, "manifest.yaml", "description: user "+name+"\n")
+	return dir
+}
+
+// looseProjectComponent writes a loose project-tier component of any type.
+func (f *resolverFixture) looseProjectComponent(t *testing.T, ct ComponentType, name string) string {
+	t.Helper()
+	dir := filepath.Join(f.projectDir, consts.DotClawkerDir, ct.Dir(), name)
+	writeFile(t, dir, "manifest.yaml", "description: project "+name+"\n")
+	return dir
+}
+
 // cacheBundleStack writes a cached bundle shipping one stack component.
 func (f *resolverFixture) cacheBundleStack(t *testing.T, ns, name, version, stack string) {
 	t.Helper()
@@ -71,24 +89,6 @@ func TestResolve_BareFloor(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, TierFloor, c.Provenance.Tier)
 	assert.Equal(t, "node", c.Address.String())
-}
-
-func TestResolve_LooseShadowsFloor_C3(t *testing.T) {
-	f := newResolverFixture(t)
-	f.looseProjectStack(t, "node")
-	c, err := f.r.Resolve(ComponentStack, "node")
-	require.NoError(t, err)
-	assert.Equal(t, TierLooseProject, c.Provenance.Tier, "loose project shadows the floor")
-}
-
-func TestResolve_UserShadowsProject_C4(t *testing.T) {
-	f := newResolverFixture(t)
-	f.looseProjectStack(t, "node")
-	userDir := f.looseUserStack(t, "node")
-	c, err := f.r.Resolve(ComponentStack, "node")
-	require.NoError(t, err)
-	assert.Equal(t, TierLooseUser, c.Provenance.Tier, "user loose beats project loose")
-	assert.Equal(t, userDir, c.Provenance.Dir)
 }
 
 // A bare resolution must never scan the bundle set, so a broken bundle
@@ -109,6 +109,43 @@ func TestResolve_BareIgnoresBrokenBundleDecl(t *testing.T) {
 	c, err := f.r.Resolve(ComponentStack, "node")
 	require.NoError(t, err)
 	assert.Equal(t, TierFloor, c.Provenance.Tier)
+}
+
+// The loose-shadow precedence (C3: loose over floor; C4: user over project over
+// floor) is the ONE algorithm for every component type, not a stack quirk. Each
+// floor name below ships in the embedded floor, so a same-named loose dir is a
+// genuine shadow of a real floor component.
+func TestResolve_ShadowingAcrossComponentTypes_C3C4(t *testing.T) {
+	cases := []struct {
+		ct        ComponentType
+		floorName string
+	}{
+		{ComponentHarness, "claude"},
+		{ComponentStack, "node"},
+		{ComponentMonitoring, "claude-code"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.ct.String(), func(t *testing.T) {
+			t.Run("C3 loose project shadows floor", func(t *testing.T) {
+				f := newResolverFixture(t)
+				projectDir := f.looseProjectComponent(t, tc.ct, tc.floorName)
+				c, err := f.r.Resolve(tc.ct, tc.floorName)
+				require.NoError(t, err)
+				assert.Equal(t, TierLooseProject, c.Provenance.Tier)
+				assert.Equal(t, projectDir, c.Provenance.Dir)
+			})
+
+			t.Run("C4 user shadows project shadows floor", func(t *testing.T) {
+				f := newResolverFixture(t)
+				f.looseProjectComponent(t, tc.ct, tc.floorName)
+				userDir := f.looseUserComponent(t, tc.ct, tc.floorName)
+				c, err := f.r.Resolve(tc.ct, tc.floorName)
+				require.NoError(t, err)
+				assert.Equal(t, TierLooseUser, c.Provenance.Tier, "user loose beats project loose and floor")
+				assert.Equal(t, userDir, c.Provenance.Dir)
+			})
+		})
+	}
 }
 
 func TestResolve_QualifiedInstalled(t *testing.T) {
