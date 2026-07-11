@@ -1,0 +1,106 @@
+---
+title: "Harnesses"
+description: "Select and run coding-agent harnesses — the built-in claude and codex, loose local harnesses, and bundled harnesses"
+icon: "cubes"
+keywords: ["AI coding agent sandbox", "run coding agents in Docker", "Claude Code", "Codex", "coding agent sandbox", "self-hosted", "open source", "harness", "multi-agent"]
+---
+
+A **harness** is the coding-agent CLI clawker runs inside a container — Claude
+Code, OpenAI Codex, or one you supply. A harness definition carries everything
+clawker needs to build and run that agent: the install steps, the persisted
+volumes it keeps state in, the host state it stages at container creation, and
+the **egress floor** the firewall must allow for the agent to function.
+
+## Selecting a harness
+
+Images are per-project **and** per-harness. You choose the harness at build
+time, and the image tag *is* the harness name:
+
+```bash
+clawker build             # builds your default harness → clawker-<project>:<harness>
+clawker build -t codex    # builds the codex harness    → clawker-<project>:codex
+```
+
+The default harness image also gets a `:default` alias. At run time the `@`
+shortcut resolves against these tags:
+
+```bash
+clawker run -it --agent dev @          # the :default alias
+clawker run -it --agent dev @:codex    # the codex harness image
+```
+
+The harness name accepts a bare name (a built-in or loose harness) or a
+qualified `namespace.bundle.component` address (a bundled harness):
+
+```bash
+clawker build -t acme.tools.codex
+clawker run -it --agent dev @:acme.tools.codex
+```
+
+Images and containers carry a harness label recording exactly which harness they
+were built for — the same spelling you selected.
+
+<Note>
+  A container refuses to start if its harness label names a harness that is no
+  longer declared or cached. This is deliberate: a container never starts with a
+  weaker egress floor than it was built for. The error names the label and the
+  remedy.
+</Note>
+
+## Where harnesses come from
+
+Harness names resolve across the same three tiers as every component. A bare
+name resolves **user convention directory, then project convention directory,
+then the built-in floor**; a qualified name resolves from an installed bundle.
+See [where components come from](/bundles#where-components-come-from) for the
+canonical resolution model.
+
+### Built-in harnesses
+
+Clawker ships `claude` and `codex`. They resolve by bare name and update with
+the clawker binary. Each declares its own egress floor — the claude harness's
+floor covers Anthropic domains, codex's covers OpenAI domains — composed with
+your project's `security.firewall` rules.
+
+### Loose local harnesses
+
+Drop a harness directory into a convention directory and it exists immediately,
+bare-named:
+
+```
+project:  .clawker/harnesses/<name>/
+user:     ~/.config/clawker/harnesses/<name>/
+```
+
+A user harness shadows a project one of the same name, which shadows a built-in;
+shadows are visible in `clawker bundle list`.
+
+### Bundled harnesses
+
+A harness shipped in a bundle is addressed by its qualified name and becomes
+available once the bundle is declared and installed. See [Bundles](/bundles).
+
+## Per-harness project configuration
+
+Container-initialization settings for a harness live under a `harnesses.<name>`
+map in `clawker.yaml` — environment overlays, `post_init`/`pre_run` hooks
+(appended after the harness-agnostic `agent.*` hooks), and host-state staging.
+The key is the harness name you build and run.
+
+To add **build** steps to a single harness's image — extra stacks, packages, or
+Dockerfile injection — use the per-harness build overlay under
+`build.harnesses.<name>`, covered in [Image Customization](/custom-images).
+
+## Authenticating
+
+Host credentials are never copied into a container. You authenticate once inside
+the container — browser OAuth flows are proxied to your host browser
+automatically — and the token persists in the harness's config volume, so
+restarts and recreates that reuse the volume stay logged in. See
+[Credential Forwarding](/credentials).
+
+## Authoring a harness
+
+Writing your own harness — the `harness.yaml` manifest, its Dockerfile fragment,
+and its stack dependencies — is covered in
+[Authoring harnesses](/authoring-harnesses).

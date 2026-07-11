@@ -1,0 +1,102 @@
+---
+title: "Monitoring Extensions"
+description: "Select the monitoring extensions your project contributes to the observability stack — the built-in claude-code extension, loose local extensions, and bundled extensions"
+icon: "gauge-high"
+keywords: ["AI coding agent sandbox", "run coding agents in Docker", "Claude Code", "Codex", "coding agent sandbox", "self-hosted", "open source", "monitoring", "observability", "OpenSearch", "extensions"]
+---
+
+A **monitoring extension** is a self-contained observability contribution — the
+OpenSearch indices, ingest pipelines, dashboards, and collector routing that
+turn a stream of telemetry into something you can query. Clawker's monitoring
+stack is preconfigured from the monitoring extensions your project selects.
+
+This page covers selecting and consuming extensions. For the stack itself
+(OpenSearch, Dashboards, Prometheus, the collector, and the bootstrap
+pipeline), see [Monitoring](/monitoring).
+
+## Selecting extensions
+
+List the extensions your project contributes under `monitor.extensions`:
+
+```yaml
+# clawker.yaml
+monitor:
+  extensions:
+    - claude-code
+    - acme.tools.postgres
+```
+
+`monitor.extensions` is a whole-value selection: the highest config layer that
+sets it wins, so a project can replace — or deselect — what a user-level config
+provides. Fresh projects default to `[claude-code]`, so Claude Code telemetry is
+captured out of the box; a project that wants no monitoring extensions sets an
+empty list.
+
+Each entry is a component name — bare for a built-in or loose extension, or a
+qualified `namespace.bundle.component` address for a bundled extension.
+
+## How consumption works
+
+Monitoring is seeded, not registered. Each `clawker monitor up` reads the
+extensions your **current project** selects and idempotently applies them to the
+running stack — creating any missing indices, pipelines, and dashboards. Nothing
+is pinned in a host-side registry; the active set is simply a projection of the
+project you ran `up` from.
+
+- If the stack is down, `monitor up` starts it and seeds your selection.
+- If the stack is already running, `monitor up` seeds any extensions it is
+  missing.
+- Seeded artifacts persist in the stack's volumes until you prune them.
+- Collector routing is regenerated from the union of every extension ever seeded
+  into the stack, so running `up` from one project never drops another project's
+  routing.
+
+To reset the monitoring stack — clearing all seeded extensions along with the
+telemetry data — tear it down with its volumes:
+
+```bash
+clawker monitor down --volumes
+```
+
+<Note>
+  When two projects each ship a **loose** monitoring extension of the same bare
+  name with different content, the project that runs `monitor up` most recently
+  seeds its version onto the shared stack, and the overwrite prints a warning
+  naming both. Bundled extensions carry qualified names and never collide this
+  way.
+</Note>
+
+## Where extensions come from
+
+Extension names resolve across the same three tiers as every component. A bare
+name resolves **user convention directory, then project convention directory,
+then the built-in floor**; a qualified name resolves from an installed bundle.
+See [where components come from](/bundles#where-components-come-from) for the
+canonical resolution model.
+
+### Built-in extension
+
+Clawker ships `claude-code`, which lands Claude Code session telemetry (cost,
+tokens, tool calls) and its dashboards. It resolves by bare name and updates
+with the clawker binary.
+
+### Loose local extensions
+
+Drop a monitoring extension directory into a convention directory and it exists
+immediately, bare-named:
+
+```
+project:  .clawker/monitoring/<name>/
+user:     ~/.config/clawker/monitoring/<name>/
+```
+
+### Bundled extensions
+
+An extension shipped in a bundle is addressed by its qualified name and becomes
+available once the bundle is declared and installed. See [Bundles](/bundles).
+
+## Authoring an extension
+
+Writing your own monitoring extension — the `monitoring.yaml` manifest, its log
+lanes, index templates, ingest pipelines, and saved objects — is covered in
+[Authoring monitoring extensions](/authoring-monitoring).

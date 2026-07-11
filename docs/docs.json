@@ -119,6 +119,15 @@
         ]
       },
       {
+        "group": "Bundles & extensions",
+        "pages": [
+          "bundles",
+          "harnesses",
+          "stacks",
+          "monitoring-extensions"
+        ]
+      },
+      {
         "group": "Operations",
         "pages": [
           "monitoring",
@@ -135,6 +144,15 @@
       {
         "group": "Developer guide",
         "pages": [
+          {
+            "group": "Authoring",
+            "pages": [
+              "authoring-bundles",
+              "authoring-harnesses",
+              "authoring-stacks",
+              "authoring-monitoring"
+            ]
+          },
           {
             "group": "Contributing",
             "pages": [

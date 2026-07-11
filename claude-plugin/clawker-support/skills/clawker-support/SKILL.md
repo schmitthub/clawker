@@ -27,13 +27,21 @@ docs — you understand the system deeply enough to figure out novel problems.
 ## Orientation: What Clawker Is (Multi-Harness)
 
 Clawker runs coding-agent CLIs — "harnesses" — in hardened Docker containers.
-Claude Code and OpenAI Codex ship built-in; users can register their own.
-The model, in brief:
+Claude Code and OpenAI Codex ship built-in; users add their own. The model,
+in brief:
 
-- **A harness is a bundle** (manifest + Dockerfile fragment + assets).
-  Shipped bundles (`claude`, `codex`) resolve from the clawker binary and
-  need no registration; register a custom bundle per-project in `clawker.yaml`
-  under `harnesses:` (name → bundle path) via `clawker harness register`.
+- **Extensions come in three types: harnesses, stacks, and monitoring
+  extensions** — peers, all resolved the same way. Each resolves across three
+  tiers: the **built-in floor** baked into the clawker binary (bare names like
+  `claude`, `node`, `claude-code`); **loose local** component directories
+  dropped into convention dirs (`.clawker/{harnesses,stacks,monitoring}/<name>/`
+  in a project, `~/.config/clawker/{harnesses,stacks,monitoring}/<name>/` for
+  the user — bare names, zero install); and **installed bundles** declared under
+  a `bundles:` key in `clawker.yaml` and fetched to a host cache (qualified
+  `namespace.bundle.component` names like `acme.tools.node`). There is no path
+  registry and no `register` command — a component is available because it is on
+  the floor, in a convention dir, or in a declared+installed bundle. Manage
+  bundles with `clawker bundle install | list | remove | update | validate`.
 - **Images are per-project AND per-harness.** The image tag is the harness
   name; the built-in default harness (`claude`) also gets a `:default` alias.
   `clawker build -t <harness>` selects the harness at build time;
@@ -372,11 +380,22 @@ integrates with.
     first. Fetch `https://docs.clawker.dev/monitoring` for field
     schemas and OTel attribute conventions.
 
-13. **Other topics** — For worktrees or other features, fetch
+13. **Bundles and extensions** — When the user asks about installing, sharing,
+    or authoring harnesses, stacks, or monitoring extensions — or about the
+    `bundles:` config key, the `clawker bundle *` commands, `build.stacks`,
+    `monitor.extensions`, loose convention directories, or qualified
+    `namespace.bundle.component` names — fetch the relevant page:
+    `https://docs.clawker.dev/bundles` (install/list/update/remove),
+    `https://docs.clawker.dev/harnesses`, `https://docs.clawker.dev/stacks`,
+    `https://docs.clawker.dev/monitoring-extensions` (consume/select), and the
+    `authoring-*` pages for writing them. Never guess a command or field — read
+    the page.
+
+14. **Other topics** — For worktrees or other features, fetch
     `https://docs.clawker.dev/llms.txt` for the docs index, then fetch
     the relevant page.
 
-14. **VCS egress security (git credential-exfil defense)** — When the task
+15. **VCS egress security (git credential-exfil defense)** — When the task
     involves firewall rules, git credentials, securing the agent's network, or
     "can the agent push to other repos / leak my token", read
     `reference/firewall-security.md`. It covers path-scoping `github.com` /
@@ -392,7 +411,7 @@ integrates with.
     anchored RE2 regex — single-quote it on the CLI) to close the prefix-bypass
     where `/repos/x` also admits `/repos/x-evil` on UGC-style hosts.
 
-15. **In-container authentication (`/login` prompts in containers)** — When the
+16. **In-container authentication (`/login` prompts in containers)** — When the
     user asks how container auth works, whether their host login is shared, or
     why a container asked them to log in, read `reference/claude-code.md`
     (Authentication section). The model: host credentials are never copied

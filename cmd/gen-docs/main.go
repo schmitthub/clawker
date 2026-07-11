@@ -257,6 +257,12 @@ func configSchemaSpecs() []configSchemaSpec {
 			"clawker bundle manifest (bundle.yaml)",
 			consts.BundleSchemaFile,
 		},
+		{
+			reflect.TypeFor[config.MonitoringUnitManifest](),
+			consts.SchemaURL(consts.MonitoringSchemaFile, consts.GitHubRefMain),
+			"clawker monitoring extension manifest (monitoring.yaml)",
+			consts.MonitoringSchemaFile,
+		},
 	}
 }
 

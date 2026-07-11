@@ -12,6 +12,9 @@ Changed, Removed. Each release section lists those subsections directly.
 
 ## [0.13.0] - Unreleased
 
+- **Added:** Bundles — install harnesses, stacks, and monitoring extensions distributed as a git repository or a local directory. Declare sources under a `bundles:` key in `clawker.yaml` (any config layer) and manage them with `clawker bundle install | list | remove | update | validate`. Bundled components are addressed by their qualified `namespace.bundle.component` name.
+- **Added:** Loose local extensions — drop a harness, stack, or monitoring-extension directory into `.clawker/{harnesses,stacks,monitoring}/<name>/` in a project (or the same path under your user config directory) and it is available immediately by name, with no install step. The built-in `claude`, `codex`, `node`, `go`, `python`, `rust`, and `claude-code` components remain available by bare name.
+- **Added:** `monitor.extensions` — select which monitoring extensions a project contributes to the observability stack. `clawker monitor up` seeds the selected extensions onto the running stack; the default is `[claude-code]`.
 - **Fixed:** `clawker build --build-arg` targeting a base-image build ARG now rebuilds the base when the value changes, instead of being silently dropped when the rest of the base was unchanged. Build args the base image doesn't declare (harness-only or unknown) never trigger a base rebuild.
 
 ## [0.12.11] - 2026-07-02

@@ -1,0 +1,124 @@
+---
+title: "Authoring Monitoring Extensions"
+description: "Write a monitoring extension — the monitoring.yaml manifest (log lanes, metrics) plus the index templates, ingest pipelines, and saved objects it ships"
+icon: "chart-line"
+keywords: ["AI coding agent sandbox", "run coding agents in Docker", "Claude Code", "Codex", "coding agent sandbox", "self-hosted", "open source", "monitoring", "observability", "OpenSearch", "authoring"]
+---
+
+A **monitoring extension** contributes observability assets to clawker's stack —
+the OpenSearch indices a telemetry stream lands in, the collector routing that
+sends the right records there, ingest pipelines, and dashboards. Authoring one
+means writing a manifest that declares your log lanes and metric shaping, plus
+the OpenSearch and OpenSearch Dashboards artifacts you ship. This page covers the
+extension directory; see [Monitoring Extensions](/monitoring-extensions) for
+selecting and consuming them, [Monitoring](/monitoring) for the stack itself, and
+[Authoring bundles](/authoring-bundles) for packaging.
+
+## Directory layout
+
+An extension is a directory whose name is the extension's component name:
+
+```
+<name>/
+├── monitoring.yaml            # manifest
+├── index-templates/           # OpenSearch index templates (JSON)
+├── ingest-pipelines/          # OpenSearch ingest pipelines (JSON)
+├── saved-objects/             # OpenSearch Dashboards objects (NDJSON)
+└── ism-policies/              # custom retention policies (only for custom retention)
+```
+
+Place it in a loose convention directory to use it immediately, or inside a
+bundle's `monitoring/` directory to distribute it:
+
+```
+loose (project):  .clawker/monitoring/<name>/
+loose (user):     ~/.config/clawker/monitoring/<name>/
+bundle:           <bundle>/monitoring/<name>/
+```
+
+The `claude-code` extension shipped with clawker is the best working reference
+for the full directory — its index template, ingest pipeline, and dashboard
+saved objects.
+
+## The manifest
+
+`monitoring.yaml` declares the log lanes the extension owns and any collector-side
+metric shaping:
+
+```yaml
+# monitoring.yaml
+description: Postgres query and connection telemetry.
+
+logs:
+  - index: acme-postgres
+    service_names:
+      - acme-postgres
+    retention: default
+
+metrics:
+  service_names:
+    - acme-postgres
+  datapoint_renames:
+    - from: type
+      to: kind
+```
+
+### `logs`
+
+The OpenSearch log lanes this extension owns — at least one is required, since
+an extension exists to land telemetry somewhere. Each lane declares:
+
+| Field | Purpose |
+|-------|---------|
+| `index` | The OpenSearch index this lane writes into. |
+| `service_names` | The `service.name` values the collector routes into this lane's index. |
+| `retention` | `default` (or omitted) joins the shared clawker retention policy; `custom` means the extension ships its own policy files under `ism-policies/`, scoped to its own indices. |
+
+### `metrics`
+
+Optional collector-side shaping for the extension's metrics on the shared
+metrics pipeline. Omit it entirely when your metrics need no reshaping.
+
+| Field | Purpose |
+|-------|---------|
+| `service_names` | The metric `service.name` values the renames apply to; empty defaults to the union of the log lanes' service names. |
+| `datapoint_renames` | Datapoint attribute copies — each `from`/`to` pair copies a datapoint attribute to a new key. |
+
+<Note>
+  The OpenSearch SQL plugin's direct-query Prometheus connector errors on any
+  metric series carrying a label literally named `type`. If your metrics use a
+  `type` label, rename it (for example `from: type`, `to: kind`) so the
+  Dashboards Metrics UI can read it. See [Monitoring](/monitoring) for the full
+  note.
+</Note>
+
+## The OpenSearch and Dashboards artifacts
+
+The directories alongside the manifest are applied idempotently to the running
+stack each `clawker monitor up`:
+
+- **`index-templates/`** — index templates so the extension's indices get the
+  right field mappings at first ingest.
+- **`ingest-pipelines/`** — ingest pipelines the extension needs.
+- **`saved-objects/`** — OpenSearch Dashboards index patterns, visualizations,
+  and dashboards, imported into the `Clawker` workspace.
+- **`ism-policies/`** — only when a lane declares `retention: custom`: the
+  extension's own retention policy files, scoped to its indices.
+
+## How consumption works
+
+Everything an extension ships except collector routing is applied as an
+idempotent update against the running stack; collector routing is regenerated and
+the collector recreated only when the rendered configuration changes. A project
+selects the extension in `monitor.extensions`, and `clawker monitor up` seeds it.
+There is no host-side registry — the active set is a projection of the project
+you ran `up` from, and the collector routes from the union of every extension
+ever seeded. See [Monitoring Extensions](/monitoring-extensions).
+
+## Validating
+
+Bundle an extension and validate it before publishing:
+
+```bash
+clawker bundle validate ./my-bundle --strict
+```

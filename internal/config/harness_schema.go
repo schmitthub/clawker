@@ -16,12 +16,14 @@ type Manifest struct {
 	Staging Staging      `yaml:"staging,omitempty"`
 	Egress  []EgressRule `yaml:"egress,omitempty"`
 
-	// Stacks declares the stack definitions this harness's blocks
-	// require, by name. Names resolve per lineage at generation time —
-	// project stacks: registry > this bundle's stacks/ subdir > shipped —
-	// and the resolved fragments always render in the harness image, even
-	// when the project also declares the same name in the shared base
-	// (fragment self-guards own any interaction).
+	// Stacks declares the stack definitions this harness's blocks require,
+	// as possibly-qualified addresses resolved by the one algorithm at
+	// generation time — bare: user loose > project loose > floor; qualified
+	// namespace.bundle.component: installed/in-place bundle (a bundled
+	// harness names its shipped sibling stack by its qualified
+	// self-address). The resolved fragments always render in the harness
+	// image, even when the project also declares the same name in the
+	// shared base (fragment self-guards own any interaction).
 	Stacks []string `yaml:"stacks,omitempty"`
 }
 

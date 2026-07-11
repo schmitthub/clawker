@@ -1,7 +1,7 @@
 {
   "name": "clawker-support",
-  "description": "Clawker expert skills: setup, configuration, and troubleshooting support, plus harness bundle and stack authoring",
-  "version": "1.0.22",
+  "description": "Clawker expert skills: setup, configuration, and troubleshooting support, plus bundle, harness, stack, and monitoring-extension authoring",
+  "version": "1.0.23",
   "author": {
     "name": "schmitthub"
   },

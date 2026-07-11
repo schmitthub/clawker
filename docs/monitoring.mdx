@@ -75,6 +75,31 @@ When the firewall is enabled, Envoy and CoreDNS access logs flow into OpenSearch
 - **CoreDNS query logs** (`clawker-coredns`) — queried `domain`, `qtype` (A/AAAA), `rcode` (NOERROR / NXDOMAIN), resolution `duration`. `rcode:NXDOMAIN` is **ambiguous**: it covers both DNS-layer firewall blocks (non-allowlisted host) and legitimate misses inside allowed zones (typo, missing record). CoreDNS makes no per-query allow/deny decision — correlate `domain` against the allowlist, or use the eBPF egress stream below (explicit `action:denied`) for the authoritative block signal.
 - **eBPF egress events** (`clawker-ebpf-egress`) — one record per firewall decision, including bypass-mode traffic that skips Envoy and CoreDNS entirely, so bypass windows still leave a complete audit trail. See [Egress Observability](/observability) for the full record shape and per-attribute reference.
 
+## Monitoring Extensions
+
+What the stack observes beyond the core firewall and control-plane telemetry is
+contributed by **monitoring extensions** your project selects. An extension ships
+the OpenSearch indices, ingest pipelines, and dashboards for one telemetry
+stream; clawker's built-in `claude-code` extension is what lands Claude Code
+session telemetry (cost, tokens, tool calls) and its two dashboards.
+
+Select the extensions a project contributes under `monitor.extensions` in
+`clawker.yaml`:
+
+```yaml
+# clawker.yaml
+monitor:
+  extensions:
+    - claude-code
+```
+
+Fresh projects default to `[claude-code]`, so Claude Code telemetry is captured
+out of the box. Each `clawker monitor up` idempotently seeds the extensions the
+current project selects onto the running stack — there is no host-side registry,
+and the collector routes from the union of every extension ever seeded. See
+[Monitoring Extensions](/monitoring-extensions) for selection semantics and
+[Authoring monitoring extensions](/authoring-monitoring) for writing your own.
+
 ## Setup
 
 ### 1. Initialize Configuration
@@ -119,13 +144,16 @@ Open OpenSearch Dashboards at `http://localhost:5601`. From the splash / welcome
 
 Inside the workspace, the left navbar has an **Explore** section — click **Logs** or **Metrics** to browse. The preconfigured index patterns (`claude-code`, `clawker-cli`, `clawkercp`, `clawker-envoy`, `clawker-coredns`, `clawker-ebpf-egress`) and the `clawker_prometheus` direct-query datasource are already wired, so logs and Prometheus metrics are both reachable from inside OSD. Raw Prometheus is also still available at `http://localhost:9090` if you prefer it.
 
-**Dashboards.** Three dashboards are preinstalled:
+**Dashboards.** Which dashboards are preinstalled depends on the monitoring
+extensions your project selects. **Clawker Networking** is core firewall
+telemetry and is always present; the two Claude Code dashboards come from the
+built-in `claude-code` extension (selected by default):
 
-- **Claude Code Cost & Usage** — KPI strip over Claude Code sessions, cost, input/output/cache tokens. Sourced from Prometheus counters.
-- **Claude Code Activity** — Claude Code security activity audit: prompts, tooling, code editing, permissions, hooks, MCP, plugins — totals, distributions, and full event tables.
+- **Claude Code Cost & Usage** — KPI strip over Claude Code sessions, cost, input/output/cache tokens. Sourced from Prometheus counters. (From the `claude-code` extension.)
+- **Claude Code Activity** — Claude Code security activity audit: prompts, tooling, code editing, permissions, hooks, MCP, plugins — totals, distributions, and full event tables. (From the `claude-code` extension.)
 - **Clawker Networking** — per-source firewall telemetry: three event-stream panels (Envoy access logs, CoreDNS query log, eBPF egress decisions) plus three verdict pies (Envoy `action`, CoreDNS `rcode`, eBPF `action`). Verdict pies use each source's own field — values not normalized so each component's truth stays visible (e.g. CoreDNS denies show as `NXDOMAIN`, not collapsed into `denied`). Red slices = denials. Sourced from OS log indices; no Prometheus counters for network telemetry today.
 
-Build your own off the index patterns + Prometheus datasource for anything not covered.
+Build your own off the index patterns + Prometheus datasource for anything not covered, or ship them as a [monitoring extension](/authoring-monitoring).
 
 <Warning>
 **Prometheus label naming: use `kind` instead of `type`**
@@ -147,7 +175,7 @@ The stack is preconfigured every `monitor up`. A one-shot `clawker-opensearch-bo
 - **Empty index pre-creation** for the log indices so OSD Discover and dashboards don't error on initial load before the first record arrives
 - **`clawker_prometheus` direct-query datasource** registered via the OpenSearch SQL plugin so OSD can read Prometheus metrics without a federated proxy
 - **OSD `Clawker` workspace** with `features: ["use-case-all"]` so the explore-flavor `metrics` / `logs` / `traces` nav groups all mount
-- **Saved objects** imported INTO the Clawker workspace — index patterns for every log index and the three dashboards (`Clawker Networking`, `Claude Code Cost & Usage`, `Claude Code Activity`). Build additional dashboards off the index patterns + Prometheus datasource as needed.
+- **Saved objects** imported INTO the Clawker workspace — the core index patterns and the `Clawker Networking` dashboard, plus the index patterns, ingest pipelines, and dashboards contributed by every monitoring extension seeded into the stack (the `claude-code` extension adds the `Claude Code Cost & Usage` and `Claude Code Activity` dashboards). Build additional dashboards off the index patterns + Prometheus datasource, or ship them as a monitoring extension.
 
 `otel-collector` gates on bootstrap completing successfully — it never starts until the cluster is preconfigured. Prometheus starts in parallel; bootstrap depends on Prometheus being up so the `clawker_prometheus` datasource registration can validate the configured URI. Bootstrap failure surfaces in `docker logs clawker-opensearch-bootstrap` and leaves the stack half-up by design (so wrong-mapped indices can't be silently created). The throwaway-stack model means picking up template/policy edits requires `monitor down --volumes && monitor up`; templates only apply at index creation.
 
@@ -205,4 +233,4 @@ clawker monitor down
 clawker monitor down --volumes
 ```
 
-Without `--volumes`, monitoring data persists across restarts (named volume `clawker-opensearch` for indices, `clawker-prometheus` for TSDB). The `clawker-net` network is preserved for other Clawker services (firewall, agents).
+Without `--volumes`, monitoring data persists across restarts (named volume `clawker-opensearch` for indices, `clawker-prometheus` for TSDB) — as do the monitoring extensions seeded into the stack, so subsequent `monitor up` runs from any project keep them. `--volumes` clears both the telemetry data and the seeded extensions, resetting the stack. The `clawker-net` network is preserved for other Clawker services (firewall, agents).

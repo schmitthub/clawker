@@ -192,6 +192,9 @@ const (
 	// BundleSchemaFile is the generated JSON Schema filename for a bundle
 	// manifest (.clawker-bundle/bundle.yaml) under SchemaDocsDir.
 	BundleSchemaFile = "bundle.schema.json"
+	// MonitoringSchemaFile is the generated JSON Schema filename for a
+	// monitoring unit manifest (monitoring.yaml) under SchemaDocsDir.
+	MonitoringSchemaFile = "monitoring.schema.json"
 )
 
 // Version-shape patterns consumed by SchemaRef. build.Version arrives in one

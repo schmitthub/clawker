@@ -70,7 +70,17 @@ func New(t *testing.T) *Server {
 	}
 	t.Cleanup(srv.httpSrv.Close)
 
-	hostSigner, hostPub := newSSHKey(t)
+	// Generate the ed25519 host key inline: ssh.NewSignerFromKey returns the
+	// x/crypto Signer interface, so a helper returning it would fight ireturn.
+	_, hostPriv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate host key: %v", err)
+	}
+	hostSigner, err := ssh.NewSignerFromKey(hostPriv)
+	if err != nil {
+		t.Fatalf("host signer: %v", err)
+	}
+	hostPub := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(hostSigner.PublicKey())))
 	srv.startSSH(t, hostSigner)
 	isolateSSHEnv(t, srv.sshHost, srv.sshPort, hostPub)
 
@@ -243,24 +253,6 @@ func fixtureSignature() *object.Signature {
 	}
 }
 
-// newSSHKey generates an ed25519 host key, returning an ssh signer and the
-// authorized-key line for its public half.
-//
-//nolint:ireturn // ssh.Signer is the x/crypto host-key interface AddHostKey requires.
-func newSSHKey(t *testing.T) (ssh.Signer, string) {
-	t.Helper()
-	_, priv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatalf("generate host key: %v", err)
-	}
-	signer, err := ssh.NewSignerFromKey(priv)
-	if err != nil {
-		t.Fatalf("host signer: %v", err)
-	}
-	authorized := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(signer.PublicKey())))
-	return signer, authorized
-}
-
 // isolateSSHEnv publishes a known_hosts entry for the fixture ssh host via
 // SSH_KNOWN_HOSTS and starts a keyring-backed ssh-agent published via
 // SSH_AUTH_SOCK — so the fetcher's default env-driven ssh auth trusts and
@@ -284,7 +276,10 @@ func isolateSSHEnv(t *testing.T, host, port, hostAuthorizedKey string) {
 // socket, and exports SSH_AUTH_SOCK for the test process.
 func startAgent(t *testing.T) {
 	t.Helper()
-	keyring := newAgentKeyring(t)
+	// agent.NewKeyring returns the x/crypto Agent interface; keeping it a
+	// local (not a helper return) sidesteps ireturn.
+	keyring := agent.NewKeyring()
+	addFixtureKey(t, keyring)
 	sock := agentSocketPath(t)
 
 	//nolint:noctx // fixture agent-socket bind; lifecycle bound to t.Cleanup
@@ -302,16 +297,13 @@ func startAgent(t *testing.T) {
 	go serveAgentLoop(ln, keyring)
 }
 
-// newAgentKeyring builds an ssh-agent keyring holding a fresh client key.
-//
-//nolint:ireturn // agent.Agent is the x/crypto keyring interface ServeAgent requires.
-func newAgentKeyring(t *testing.T) agent.Agent {
+// addFixtureKey generates a fresh client key and adds it to the keyring.
+func addFixtureKey(t *testing.T, keyring agent.Agent) {
 	t.Helper()
 	_, clientPriv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("generate client key: %v", err)
 	}
-	keyring := agent.NewKeyring()
 	if addErr := keyring.Add(agent.AddedKey{
 		PrivateKey:           clientPriv,
 		Certificate:          nil,
@@ -322,7 +314,6 @@ func newAgentKeyring(t *testing.T) agent.Agent {
 	}); addErr != nil {
 		t.Fatalf("agent add key: %v", addErr)
 	}
-	return keyring
 }
 
 // agentSocketPath returns a short unix-socket path (the system temp dir keeps

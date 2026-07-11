@@ -55,16 +55,15 @@ type Fetcher interface {
 	Clone(ctx context.Context, opts CloneOptions) (string, error)
 }
 
-// NewFetcher returns the production go-git-backed Fetcher.
-//
-//nolint:ireturn // Fetcher is the deliberate swap seam (go-git vs a future shell-out); returning the interface is the point.
-func NewFetcher() Fetcher { return gitFetcher{} }
+// NewFetcher returns the production go-git-backed fetcher. It satisfies
+// [Fetcher], the swap seam a future shell-out implementation would fill.
+func NewFetcher() GitFetcher { return GitFetcher{} }
 
-// gitFetcher is the go-git-backed Fetcher.
-type gitFetcher struct{}
+// GitFetcher is the go-git-backed Fetcher.
+type GitFetcher struct{}
 
 // ResolveRef resolves ref to a commit SHA via a remote ref listing.
-func (f gitFetcher) ResolveRef(ctx context.Context, url, ref string) (string, error) {
+func (f GitFetcher) ResolveRef(ctx context.Context, url, ref string) (string, error) {
 	hash, _, err := f.resolveRefFull(ctx, url, ref)
 	if err != nil {
 		return "", err
@@ -75,7 +74,7 @@ func (f gitFetcher) ResolveRef(ctx context.Context, url, ref string) (string, er
 // resolveRefFull lists the remote's refs and matches ref against heads then
 // tags (peeled), returning the commit hash and the full reference name a
 // single-branch clone can check out.
-func (f gitFetcher) resolveRefFull(
+func (f GitFetcher) resolveRefFull(
 	ctx context.Context, url, ref string,
 ) (plumbing.Hash, plumbing.ReferenceName, error) {
 	var refs []*plumbing.Reference
@@ -130,7 +129,7 @@ func present(byName map[string]plumbing.Hash, name string) bool {
 }
 
 // Clone dispatches to the sha-pinned or ref-tracking clone path.
-func (f gitFetcher) Clone(ctx context.Context, opts CloneOptions) (string, error) {
+func (f GitFetcher) Clone(ctx context.Context, opts CloneOptions) (string, error) {
 	if opts.SHA != "" {
 		return f.cloneSHA(ctx, opts)
 	}
@@ -139,7 +138,7 @@ func (f gitFetcher) Clone(ctx context.Context, opts CloneOptions) (string, error
 
 // cloneRef resolves the ref, then performs a single-branch shallow clone of it
 // with no tags, returning the commit the ref pointed at.
-func (f gitFetcher) cloneRef(ctx context.Context, opts CloneOptions) (string, error) {
+func (f GitFetcher) cloneRef(ctx context.Context, opts CloneOptions) (string, error) {
 	hash, refName, err := f.resolveRefFull(ctx, opts.URL, opts.Ref)
 	if err != nil {
 		return "", err
@@ -177,7 +176,7 @@ func (f gitFetcher) cloneRef(ctx context.Context, opts CloneOptions) (string, er
 // cloneSHA fetches a single commit by SHA into a fresh repository, falling back
 // to a full fetch when the server rejects a want-by-SHA request, then checks the
 // commit out into the worktree.
-func (f gitFetcher) cloneSHA(ctx context.Context, opts CloneOptions) (string, error) {
+func (f GitFetcher) cloneSHA(ctx context.Context, opts CloneOptions) (string, error) {
 	repo, err := gogit.PlainInit(opts.Dir, false)
 	if err != nil {
 		return "", fmt.Errorf("init %s: %w", opts.Dir, err)

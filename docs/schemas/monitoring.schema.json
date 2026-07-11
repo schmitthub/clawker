@@ -1,0 +1,80 @@
+{
+  "$id": "https://raw.githubusercontent.com/schmitthub/clawker/main/docs/schemas/monitoring.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "description": {
+      "description": "Human-readable summary of what this monitoring extension observes.",
+      "title": "Description",
+      "type": "string"
+    },
+    "logs": {
+      "description": "OpenSearch log lanes this extension owns; each lane names the index it writes and the untrusted-lane service.name values the collector routes into it. At least one lane is required.",
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "index": {
+            "description": "OpenSearch index this lane writes telemetry into.",
+            "title": "Index",
+            "type": "string"
+          },
+          "retention": {
+            "description": "ISM participation for the lane: 'default' (or empty) joins the shared clawker retention policy; 'custom' means the extension ships its own ism-policies/ files scoped to its indices.",
+            "title": "Retention",
+            "type": "string"
+          },
+          "service_names": {
+            "description": "Untrusted-lane service.name values the collector routes into this lane's index.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Service Names",
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "title": "Logs",
+      "type": "array"
+    },
+    "metrics": {
+      "additionalProperties": false,
+      "description": "Optional collector-side shaping for this extension's metrics on the shared untrusted metrics pipeline; omit when no reshaping is needed.",
+      "properties": {
+        "datapoint_renames": {
+          "description": "Datapoint attribute copies applied to this extension's metrics, scoped to its service names.",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "from": {
+                "description": "Source datapoint attribute key to copy.",
+                "title": "From",
+                "type": "string"
+              },
+              "to": {
+                "description": "Destination datapoint attribute key the source value lands on.",
+                "title": "To",
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "title": "Datapoint Renames",
+          "type": "array"
+        },
+        "service_names": {
+          "description": "Metric service.name values the renames below apply to; empty defaults to the union of the extension's log-lane service names.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Service Names",
+          "type": "array"
+        }
+      },
+      "title": "Metrics",
+      "type": "object"
+    }
+  },
+  "title": "clawker monitoring extension manifest (monitoring.yaml)",
+  "type": "object"
+}

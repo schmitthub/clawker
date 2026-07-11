@@ -1,0 +1,81 @@
+---
+title: "Stacks"
+description: "Language-runtime definitions you layer into an image — the built-in stacks, loose local stacks, and bundled stacks"
+icon: "cube"
+keywords: ["AI coding agent sandbox", "run coding agents in Docker", "Claude Code", "Codex", "coding agent sandbox", "self-hosted", "open source", "stacks", "language runtime", "node", "go", "python", "rust"]
+---
+
+A **stack** is a reusable language-runtime definition — the Dockerfile steps
+that provision a toolchain like Node.js, Go, Python, or Rust. Declaring a stack
+installs it in your project's shared base image, before your own build
+instructions run, so `root_run`/`user_run` steps can rely on it.
+
+## Selecting stacks
+
+List the stacks your build needs under `build.stacks`:
+
+```yaml
+# clawker.yaml
+build:
+  stacks:
+    - go
+    - python
+```
+
+`build.stacks` is a whole-value selection: the highest config layer that sets it
+wins, so a project can replace the list a user-level config provides. Each entry
+is a component name — bare for a built-in or loose stack, or a qualified
+`namespace.bundle.component` address for a bundled stack:
+
+```yaml
+build:
+  stacks:
+    - node                # built-in or loose
+    - acme.tools.rust     # from the acme/tools bundle
+```
+
+Stacks are self-guarding — each skips itself when the image already provides its
+runtime — so declaring one is always safe. See
+[Image Customization](/custom-images) for how stacks fit into the two-stage
+build, per-harness stack overlays, and build ordering.
+
+## Where stacks come from
+
+A stack name resolves across the same three tiers as every component. A bare
+name resolves in precedence order — **your user convention directory, then the
+project convention directory, then the built-in floor** — stopping at the first
+match. A qualified name resolves from an installed bundle. See
+[where components come from](/bundles#where-components-come-from) for the
+canonical resolution model.
+
+### Built-in stacks
+
+Clawker ships `node`, `go`, `python`, and `rust`. They resolve by bare name with
+no declaration beyond listing them in `build.stacks`, and update with the
+clawker binary.
+
+### Loose local stacks
+
+Drop a stack directory into a convention directory and it exists immediately —
+no install, no manifest wrapper, bare-named:
+
+```
+project:  .clawker/stacks/<name>/
+user:     ~/.config/clawker/stacks/<name>/
+```
+
+A loose stack in the user directory shadows a project one of the same name,
+which shadows a built-in — and a shadow is always visible in `clawker bundle
+list`. This is how you customize a built-in stack: copy its source into a
+convention directory and edit it there.
+
+### Bundled stacks
+
+A stack shipped in a bundle is addressed by its qualified name
+(`namespace.bundle.component`) and becomes available once the bundle is
+declared and installed. See [Bundles](/bundles).
+
+## Authoring a stack
+
+Writing your own stack — the `stack.yaml` manifest and the Dockerfile fragments
+that accompany it — is covered in [Authoring stacks](/authoring-stacks).

@@ -1,0 +1,180 @@
+---
+title: "Bundles"
+description: "Install, list, update, and remove distributed bundles — the packaging unit that ships harnesses, stacks, and monitoring extensions"
+icon: "box"
+keywords: ["AI coding agent sandbox", "run coding agents in Docker", "Claude Code", "Codex", "coding agent sandbox", "self-hosted", "open source", "bundle", "extensions", "install"]
+---
+
+A **bundle** is how clawker distributes extensions. One bundle ships any mix of
+**harnesses**, **stacks**, and **monitoring extensions** — they are peers inside
+a bundle, with no hierarchy. Bundles exist only to package and share content;
+everything a bundle ships resolves the same way whether it came from a bundle,
+a local directory, or the clawker binary itself.
+
+## Where components come from
+
+Every harness, stack, and monitoring extension clawker resolves comes from one
+of three tiers:
+
+| Tier | What it is | Names | How it updates |
+|------|-----------|-------|----------------|
+| **Built-in floor** | Harnesses (`claude`, `codex`), stacks (`node`, `go`, `python`, `rust`), and the `claude-code` monitoring extension baked into the clawker binary | Bare (`node`) | With each clawker upgrade |
+| **Loose local** | Component directories you drop into a convention directory — zero install, no manifest wrapper | Bare (`mystack`) | While the directory exists |
+| **Installed bundles** | Content declared in a `bundles:` entry and fetched into a host-global cache | Qualified (`acme.tools.node`) | `clawker bundle install` / `update` |
+
+The floor and loose tiers use **bare names**. Installed-bundle content uses a
+**qualified name** — `namespace.bundle.component`, three dot-separated segments
+(for example `acme.tools.node`: namespace `acme`, bundle `tools`, component
+`node`). Because qualified names carry the bundle's identity, they never collide
+with a bare floor or loose name, and two different bundles can each ship a
+component called `node` without ambiguity.
+
+## Declaring a bundle
+
+Bundles are declared under a `bundles:` key in `clawker.yaml`. The key is valid
+in any config layer — your user config-dir file (personal, cross-project), the
+project file (shared with your team), or the uncommitted local override — and
+declarations from every layer are merged together, so a bundle available at any
+layer is available to the project.
+
+```yaml
+# clawker.yaml
+bundles:
+  # A git source pinned to a tag
+  - url: https://github.com/acme/tools.git
+    ref: v1.2.0
+
+  # A subdirectory of a monorepo, pinned to a commit
+  - url: git@github.com:acme/mono.git
+    path: bundles/tools
+    sha: 4f2a0c9e1b7d3a5f6082c4e9d1a7b3f0c8e2d6a4
+
+  # A local directory, loaded in place (the dev loop — no cache copy)
+  - path: ./vendor/my-bundle
+```
+
+Sources are **git-generic** — any host, over HTTPS or SSH, exactly as you write
+the URL. A remote source requires either `ref` (a branch or tag) or `sha` (a
+full 40-character commit); when both are set, `sha` wins and pins a reproducible
+fetch. A `path:`-only entry loads a local directory in place with no cache copy,
+which is how you iterate on a bundle you are authoring.
+
+<Note>
+  Declaring a bundle makes it **available**, but never fetches it on its own.
+  Clawker downloads content only when you ask. A bundle that is declared but not
+  yet cached surfaces an error naming the command to run — clawker never reaches
+  out to the network behind your back.
+</Note>
+
+## Installing
+
+`clawker bundle install` declares a source and fetches it in one step:
+
+```bash
+# From a git URL pinned to a tag
+clawker bundle install https://github.com/acme/tools.git --ref v1.2.0
+
+# GitHub owner/repo shorthand (expands to a URL before it is written)
+clawker bundle install acme/tools --sha 4f2a0c9e1b7d3a5f6082c4e9d1a7b3f0c8e2d6a4
+
+# A local directory (the dev loop)
+clawker bundle install ./vendor/my-bundle --project
+```
+
+By default the entry is written to your **user config-dir** `clawker.yaml`, so
+the bundle is available across every project. Target a different layer with a
+flag:
+
+| Flag | Writes to |
+|------|-----------|
+| `--user` | User config-dir `clawker.yaml` (default) |
+| `--project` | The project `clawker.yaml` (commit and share with your team) |
+| `--local` | The uncommitted `clawker.local.yaml` override |
+
+`--auto-update` marks the entry so clawker refetches it when its source version
+changes. Run `clawker bundle install` with no source to fetch any bundle that is
+declared but not yet cached.
+
+## Listing
+
+`clawker bundle list` shows every resolvable component across all three tiers,
+with its address, type, version, and where it resolved from. A component that
+**shadows** a farther tier (a loose directory overriding a built-in of the same
+name) is marked, and the shadowed source is shown so overrides are never
+silent:
+
+```bash
+clawker bundle list          # every component and its provenance
+clawker bundle ls            # short form
+clawker bundle list --json   # machine-readable
+```
+
+## Updating
+
+A `ref` (branch or tag) source drifts only when you ask it to. `clawker bundle
+update` compares the declared source against its current tip and refetches only
+on a change:
+
+```bash
+clawker bundle update acme.tools   # check and update one bundle
+clawker bundle update              # check every declared bundle
+```
+
+A `sha`-pinned or local `path:` source never moves. If a refetch fails — the
+source is unreachable, moved, or deleted — the already-cached version keeps
+serving; a failed fetch never purges your cache.
+
+<Note>
+  Clawker keeps no lockfile and never rewrites your `clawker.yaml`. A `ref`
+  entry can hold different commits on different machines until each runs
+  `update`. For a reproducible fetch, pin a `sha`.
+</Note>
+
+### Auto-update
+
+Auto-update is opt-in per entry (`auto_update: true`, or `--auto-update` on
+install) and **off by default**. When enabled, the check runs at the start of
+bundle-consuming commands — `clawker build`, `clawker run`, and `clawker monitor
+up` — and only for entries that opted in. It compares the source version and
+refetches on a change; a failed check warns and proceeds with the cached
+version, never blocking the command.
+
+## Removing
+
+`clawker bundle remove <namespace.name>` purges a bundle's cached content:
+
+```bash
+clawker bundle remove acme.tools
+clawker bundle rm acme.tools      # short form
+```
+
+Removal only purges the cache — it does not edit any `clawker.yaml`. A bundle
+that is still declared refetches on the next `clawker bundle install`; remove
+tells you when that is the case. To make a bundle unavailable entirely, delete
+its `bundles:` entry as well.
+
+## Enabling and disabling
+
+There is no separate enable flag. A component is active when a selection surface
+names it:
+
+- **Stacks** — `build.stacks` in `clawker.yaml`
+- **Harnesses** — the harness you build (`clawker build -t <harness>`) and run
+  (`clawker run @:<harness>`)
+- **Monitoring extensions** — `monitor.extensions` in `clawker.yaml`
+
+Deselecting a component (removing its name from a selection surface) leaves the
+bundle cached and available — it is simply not used. See
+[Stacks](/stacks), [Harnesses](/harnesses), and
+[Monitoring Extensions](/monitoring-extensions) for each surface.
+
+## Reserved namespaces
+
+The `clawker` namespace, and namespaces that impersonate it, are reserved — a
+bundle cannot claim them. This keeps the built-in floor unambiguous and prevents
+a third-party bundle from masquerading as first-party content.
+
+## Authoring a bundle
+
+Publishing your own harnesses, stacks, or monitoring extensions as a bundle is
+covered in [Authoring bundles](/authoring-bundles).

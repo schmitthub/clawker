@@ -5,7 +5,7 @@ icon: "rocket"
 keywords: ["AI agent sandbox", "AI coding agent sandbox", "coding agent sandbox", "run coding agents in Docker", "Claude Code", "Codex", "Claude Code sandbox", "self-hosted AI coding agent", "local AI coding agent", "open-source agent sandbox", "devcontainer alternative", "parallel coding agents", "git worktree agents", "egress firewall", "Anthropic", "OpenAI", "Docker"]
 ---
 
-Clawker is a free, open-source, self-hosted AI coding agent sandbox. It runs coding agents — Claude Code, OpenAI Codex, and any harness you register — inside isolated Docker containers on your own machine — no cloud, no subscription, your repo stays on your own machine, never uploaded to a vendor sandbox. Each agent runs in its own container behind a deny-by-default egress firewall and full host isolation, so you can hand agents `--dangerously-skip-permissions` knowing they can't touch your host or phone home to anywhere you haven't allowed. This guide takes you from install to your first sandboxed agent, then on to parallel agents with Git worktrees.
+Clawker is a free, open-source, self-hosted AI coding agent sandbox. It runs coding agents — Claude Code, OpenAI Codex, and harnesses you add yourself — inside isolated Docker containers on your own machine — no cloud, no subscription, your repo stays on your own machine, never uploaded to a vendor sandbox. Each agent runs in its own container behind a deny-by-default egress firewall and full host isolation, so you can hand agents `--dangerously-skip-permissions` knowing they can't touch your host or phone home to anywhere you haven't allowed. This guide takes you from install to your first sandboxed agent, then on to parallel agents with Git worktrees.
 
 ## Prerequisites
 
@@ -97,7 +97,7 @@ See the [Configuration](/configuration) guide for the full reference.
 clawker build
 ```
 
-This builds the image for your default harness. Two stages come out of it: a shared base image (`clawker-<project>:base`) holding the harness-agnostic layers from your `.clawker.yaml` — system packages, language stacks, custom instructions — and a harness image layered on top, tagged with the harness name (e.g. `clawker-<project>:claude`). The default harness image also gets the `:default` alias. To build a specific registered harness instead, pass its name: `clawker build -t codex`. Docker's layer cache is used, so unchanged layers are skipped; use `--no-cache` to force a full rebuild.
+This builds the image for your default harness. Two stages come out of it: a shared base image (`clawker-<project>:base`) holding the harness-agnostic layers from your `.clawker.yaml` — system packages, language stacks, custom instructions — and a harness image layered on top, tagged with the harness name (e.g. `clawker-<project>:claude`). The default harness image also gets the `:default` alias. To build a specific harness instead, pass its name: `clawker build -t codex`. Docker's layer cache is used, so unchanged layers are skipped; use `--no-cache` to force a full rebuild.
 
 ## 4. Run Your First Agent
 
@@ -213,10 +213,13 @@ clawker firewall bypass 5m --agent dev  # Temporary unrestricted access
     Packages, language stacks, Dockerfile instructions, and injection points
   </Card>
   <Card title="Harnesses" icon="cubes" href="/harnesses">
-    Select, register, and run coding-agent harnesses beyond the built-in claude and codex
+    Select and run coding-agent harnesses beyond the built-in claude and codex
   </Card>
   <Card title="Stacks" icon="cube" href="/stacks">
-    Language toolchains you layer into an image — the shipped stacks and how to register your own
+    Language toolchains you layer into an image — the built-in stacks and how to author your own
+  </Card>
+  <Card title="Bundles" icon="box" href="/bundles">
+    Install distributed bundles of harnesses, stacks, and monitoring extensions
   </Card>
   <Card title="Credential Forwarding" icon="key" href="/credentials">
     SSH, GPG, and Git HTTPS forwarding, plus in-container harness authentication
