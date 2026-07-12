@@ -13,7 +13,9 @@ content into the host cache.
 
 The source is a git clone URL (https or ssh), an owner/repo GitHub shorthand
 (expanded to a URL before writing), or a local directory path (loaded in place,
-the dev loop). With no source, declared-but-uncached bundles are fetched.
+the dev loop). A remote source may pin --ref or --sha; unpinned tracks the
+repository's default branch. With no source, declared-but-uncached bundles are
+fetched.
 
 By default the entry is written to the user config-dir clawker.yaml; --project
 writes the project clawker.yaml and --local the uncommitted project override.
@@ -27,6 +29,9 @@ clawker bundle install [source] [flags]
 ```
   # Install from a git URL pinned to a tag
   clawker bundle install https://github.com/acme/tools.git --ref v1.2.0
+
+  # Unpinned — tracks the repository's default branch
+  clawker bundle install https://github.com/acme/extras.git
 
   # GitHub owner/repo shorthand, into the project config
   clawker bundle install acme/tools --sha <40-hex> --project

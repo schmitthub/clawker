@@ -30,10 +30,11 @@ const remoteName = "origin"
 // shaFetchRef is the local ref a sha-pinned fetch writes the wanted commit to.
 const shaFetchRef = "refs/bundle/fetch-head"
 
-// CloneOptions parameterizes a single bundle fetch. Exactly one of Ref or SHA
-// pins the source: SHA takes precedence when both are set (the caller resolves
-// that precedence and passes only the winner). Dir is an empty target directory
-// the content is cloned into.
+// CloneOptions parameterizes a single bundle fetch. SHA pins an exact commit
+// and takes precedence when both pins are set (the caller resolves that
+// precedence and passes only the winner); Ref pins a branch or tag; neither
+// set means the source is unpinned and the remote's default branch (HEAD) is
+// fetched. Dir is an empty target directory the content is cloned into.
 type CloneOptions struct {
 	URL string
 	Ref string
@@ -46,7 +47,8 @@ type CloneOptions struct {
 // same interface.
 type Fetcher interface {
 	// ResolveRef resolves a branch or tag name on a remote to its commit SHA,
-	// dereferencing annotated tags to the commit they point at. It performs a
+	// dereferencing annotated tags to the commit they point at; an empty ref
+	// resolves the remote's HEAD (the default branch tip). It performs a
 	// remote ref listing only — no clone, no local writes.
 	ResolveRef(ctx context.Context, url, ref string) (string, error)
 	// Clone fetches the pinned source into opts.Dir and returns the resolved
@@ -99,11 +101,16 @@ func (f GitFetcher) resolveRefFull(
 
 // matchRef selects the commit a ref resolves to from a remote ref listing,
 // preferring a branch head, then an annotated tag's peeled commit, then a
-// lightweight tag, then a fully-qualified ref given verbatim.
+// lightweight tag, then a fully-qualified ref given verbatim. An empty ref
+// resolves the remote's HEAD — the default branch tip an unpinned source
+// tracks.
 func matchRef(refs []*plumbing.Reference, ref string) (plumbing.Hash, plumbing.ReferenceName, error) {
 	byName := make(map[string]plumbing.Hash, len(refs))
 	for _, r := range refs {
 		byName[r.Name().String()] = r.Hash()
+	}
+	if ref == "" {
+		return matchHEAD(refs, byName)
 	}
 	head := plumbing.NewBranchReferenceName(ref).String()
 	tag := plumbing.NewTagReferenceName(ref).String()
@@ -122,6 +129,28 @@ func matchRef(refs []*plumbing.Reference, ref string) (plumbing.Hash, plumbing.R
 	}
 }
 
+// matchHEAD resolves the remote's default branch from the advertised HEAD: the
+// symbolic HEAD's target branch when advertised (so the clone can check that
+// branch out by name), else HEAD's own advertised commit.
+func matchHEAD(refs []*plumbing.Reference, byName map[string]plumbing.Hash) (
+	plumbing.Hash, plumbing.ReferenceName, error,
+) {
+	for _, r := range refs {
+		if r.Name() != plumbing.HEAD {
+			continue
+		}
+		if r.Type() == plumbing.SymbolicReference && present(byName, r.Target().String()) {
+			return byName[r.Target().String()], r.Target(), nil
+		}
+		if !r.Hash().IsZero() {
+			return r.Hash(), plumbing.HEAD, nil
+		}
+	}
+	return plumbing.ZeroHash, "", errors.New(
+		"remote advertises no HEAD — cannot resolve a default branch for an unpinned source",
+	)
+}
+
 // present reports whether name is a non-zero entry in the ref map.
 func present(byName map[string]plumbing.Hash, name string) bool {
 	h, ok := byName[name]
@@ -136,12 +165,17 @@ func (f GitFetcher) Clone(ctx context.Context, opts CloneOptions) (string, error
 	return f.cloneRef(ctx, opts)
 }
 
-// cloneRef resolves the ref, then performs a single-branch shallow clone of it
-// with no tags, returning the commit the ref pointed at.
+// cloneRef resolves the ref (the remote's default branch for an unpinned
+// source), then performs a single-branch shallow clone of it with no tags,
+// returning the commit the ref pointed at.
 func (f GitFetcher) cloneRef(ctx context.Context, opts CloneOptions) (string, error) {
 	hash, refName, err := f.resolveRefFull(ctx, opts.URL, opts.Ref)
 	if err != nil {
 		return "", err
+	}
+	displayRef := opts.Ref
+	if displayRef == "" {
+		displayRef = refName.String()
 	}
 	cloneErr := withHTTPAuthRetry(ctx, opts.URL, func(copts []client.Option) error {
 		_, e := gogit.PlainCloneContext(ctx, opts.Dir, &gogit.CloneOptions{
@@ -163,7 +197,7 @@ func (f GitFetcher) cloneRef(ctx context.Context, opts CloneOptions) (string, er
 			AllowEmptyRepo:    false,
 		})
 		if e != nil {
-			return fmt.Errorf("clone %s@%s: %w", opts.URL, opts.Ref, e)
+			return fmt.Errorf("clone %s@%s: %w", opts.URL, displayRef, e)
 		}
 		return nil
 	})

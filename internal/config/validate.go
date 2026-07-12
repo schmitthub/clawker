@@ -185,9 +185,9 @@ func validateBundlesNode(layer storage.LayerInfo) error {
 }
 
 // validateBundleSourceEntry checks one bundle source: exactly one of a remote
-// url (optionally with a subdir path + at least one of ref/sha) or a local
-// path-alone source (no url, no ref/sha). A sha must be a full 40-hex commit
-// id.
+// url (optionally with a subdir path and an optional ref/sha pin — unpinned
+// tracks the repository's default branch) or a local path-alone source (no
+// url, no ref/sha). A sha must be a full 40-hex commit id.
 func validateBundleSourceEntry(label, keyPath string, entry map[string]any) error {
 	src, err := decodeBundleSourceFields(label, keyPath, entry)
 	if err != nil {
@@ -229,19 +229,17 @@ func decodeBundleSourceFields(label, keyPath string, entry map[string]any) (bund
 	return src, nil
 }
 
-// validateRemoteBundleSource checks a url-bearing source: non-empty url, at
-// least one usable ref/sha, and a full 40-hex sha when given. A path alongside
-// a url is a repository subdirectory (monorepo case), not a host path — no
-// absolute/relative rule applies to it.
+// validateRemoteBundleSource checks a url-bearing source: non-empty url, a
+// non-empty ref when the key is present, and a full 40-hex sha when given.
+// ref/sha are optional — an unpinned source tracks the repository's default
+// branch. A path alongside a url is a repository subdirectory (monorepo case),
+// not a host path — no absolute/relative rule applies to it.
 func validateRemoteBundleSource(label, keyPath string, src bundleSourceFields) error {
 	if src.url == "" {
 		return fmt.Errorf("%s: %s.url: must not be empty", label, keyPath)
 	}
 	if src.hasRef && src.ref == "" {
 		return fmt.Errorf("%s: %s.ref: must not be empty", label, keyPath)
-	}
-	if !src.hasRef && !src.hasSHA {
-		return fmt.Errorf("%s: %s: a remote url source requires ref or sha", label, keyPath)
 	}
 	if src.hasSHA && !shaRe.MatchString(src.sha) {
 		return fmt.Errorf("%s: %s.sha: %q is not a 40-character hex commit SHA", label, keyPath, src.sha)
@@ -266,11 +264,11 @@ func validateLocalBundleSource(label, keyPath string, src bundleSourceFields) er
 // a clawker.yaml layer — the write front door for the `clawker bundle install`
 // command, which constructs a BundleSource from CLI flags rather than parsing a
 // file. It enforces the same invariants as the per-layer load validator
-// (validateBundlesNode) over a typed value: a remote source (url set) requires
-// ref or sha and a full 40-hex sha when given; a local path-alone source
-// (no url) forbids ref/sha. The two front doors guard the same invariant at
-// their respective entry points — a value authored in a file, and a value
-// constructed at the CLI.
+// (validateBundlesNode) over a typed value: a remote source (url set) may pin
+// a ref or a full 40-hex sha, or neither — unpinned tracks the repository's
+// default branch; a local path-alone source (no url) forbids ref/sha. The two
+// front doors guard the same invariant at their respective entry points — a
+// value authored in a file, and a value constructed at the CLI.
 func ValidateBundleSource(src BundleSource) error {
 	if src.URL != "" {
 		return validateRemoteBundleSourceTyped(src)
@@ -278,12 +276,10 @@ func ValidateBundleSource(src BundleSource) error {
 	return validateLocalBundleSourceTyped(src)
 }
 
-// validateRemoteBundleSourceTyped checks a url-bearing typed source: at least
-// one of ref/sha, and a full 40-hex sha when given.
+// validateRemoteBundleSourceTyped checks a url-bearing typed source: a full
+// 40-hex sha when given (ref/sha optional — unpinned tracks the default
+// branch).
 func validateRemoteBundleSourceTyped(src BundleSource) error {
-	if src.Ref == "" && src.SHA == "" {
-		return errors.New("a remote url bundle source requires ref or sha")
-	}
 	if src.SHA != "" && !shaRe.MatchString(src.SHA) {
 		return fmt.Errorf("bundle source sha %q is not a 40-character hex commit SHA", src.SHA)
 	}

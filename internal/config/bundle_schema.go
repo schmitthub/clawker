@@ -13,13 +13,14 @@ package config
 // git-generic source spec for a distributed bundle. A source is one of two
 // shapes: a remote clone spec (url set, with a subdir path optional) or a
 // local in-place spec (path alone, no url — loaded from disk with no cache
-// copy, which is the dev loop). A remote source requires ref or sha — at least
-// one, both is legal; sha takes precedence over ref when both are given and
-// pins a reproducible fetch. Nothing here is identity-bearing — a bundle's identity
-// comes only from its manifest (namespace, name).
+// copy, which is the dev loop). A remote source may pin a ref or a sha (sha
+// takes precedence when both are given and pins a reproducible fetch); with
+// neither, the source is unpinned and tracks the repository's default branch.
+// Nothing here is identity-bearing — a bundle's identity comes only from its
+// manifest (namespace, name).
 type BundleSource struct {
 	URL        string `yaml:"url,omitempty"         label:"URL"         desc:"Git clone URL (https or ssh) of the bundle's source repository; set for a remote bundle. Mutually exclusive with a path-only local source."`
-	Ref        string `yaml:"ref,omitempty"         label:"Ref"         desc:"Branch or tag to fetch from a remote url; at least one of ref or sha is required on a remote source, and sha takes precedence when both are set. Ignored for a local path source."`
+	Ref        string `yaml:"ref,omitempty"         label:"Ref"         desc:"Branch or tag to fetch from a remote url; sha takes precedence when both are set. Omitting both ref and sha tracks the repository's default branch. Ignored for a local path source."`
 	SHA        string `yaml:"sha,omitempty"         label:"SHA"         desc:"Full 40-character commit SHA pinning a remote url for a reproducible fetch; takes precedence over ref when both are set. Ignored for a local path source."`
 	Path       string `yaml:"path,omitempty"        label:"Path"        desc:"With url: a subdirectory of the repository to load the bundle from (monorepo case). Without url: a local directory loaded in place with no cache copy (the dev loop); a relative path resolves against the directory of the file declaring it."`
 	AutoUpdate bool   `yaml:"auto_update,omitempty" label:"Auto Update" desc:"Refetch this remote bundle when its source version changes, checked at the start of bundle-consuming commands (build, run, monitor up); off by default. No effect on sha-pinned or local sources."`

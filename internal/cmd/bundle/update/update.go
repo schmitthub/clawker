@@ -35,8 +35,9 @@ func NewCmdUpdate(f *cmdutil.Factory, runF func(context.Context, *UpdateOptions)
 		Long: `Refetches a cached bundle when its declared source version changed. With a
 namespace.name argument, only that bundle is checked; with no argument, every
 declared bundle is checked. A sha-pinned source never moves; a ref (branch/tag)
-source is compared against its current tip and refetched only on a change. A
-failed refetch leaves the cached version serving.`,
+source is compared against its current tip, and an unpinned source against the
+repository's default branch, refetched only on a change. A failed refetch
+leaves the cached version serving.`,
 		Example: `  # Check and update one bundle
   clawker bundle update acme.tools
 

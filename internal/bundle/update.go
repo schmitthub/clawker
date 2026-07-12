@@ -12,7 +12,7 @@ const (
 	// UpdateSkippedPinned means a sha-pinned source was left untouched.
 	UpdateSkippedPinned UpdateOutcome = iota
 	// UpdateSkippedUnmanaged means the cached bundle carries no source metadata
-	// or no movable ref (a hand-placed cache entry), so there is nothing to
+	// or no remote url (a hand-placed cache entry), so there is nothing to
 	// compare an update against.
 	UpdateSkippedUnmanaged
 	// UpdateUnchanged means the ref still resolves to the cached commit.
@@ -31,7 +31,8 @@ type UpdateResult struct {
 	Err        error
 }
 
-// Update refetches cached bundles whose ref-based source has moved. A non-zero
+// Update refetches cached bundles whose tracked source — a ref, or the
+// remote's default branch for an unpinned source — has moved. A non-zero
 // id updates only that bundle; a zero id updates every cached bundle. A
 // sha-pinned source is skipped; a resolve/refetch failure is reported per bundle
 // and never purges the cache. It returns one result per bundle considered; the
@@ -63,8 +64,9 @@ func (m *Manager) Update(ctx context.Context, id BundleID) ([]UpdateResult, erro
 	return results, nil
 }
 
-// updateOne resolves a cached bundle's ref and refetches it when the ref has
-// moved since the last fetch. A sha-pinned source is a skip; a resolve or fetch
+// updateOne resolves a cached bundle's tracked tip — its ref, or the remote's
+// default branch for an unpinned source — and refetches when it has moved
+// since the last fetch. A sha-pinned source is a skip; a resolve or fetch
 // error is captured on the result, leaving the cache intact.
 func (m *Manager) updateOne(ctx context.Context, ib InstalledBundle) UpdateResult {
 	meta, ok, err := readSourceMeta(ib.Root)
@@ -75,7 +77,7 @@ func (m *Manager) updateOne(ctx context.Context, ib InstalledBundle) UpdateResul
 	switch {
 	case meta.pinned():
 		return UpdateResult{ID: ib.ID, Outcome: UpdateSkippedPinned, NewVersion: "", Err: nil}
-	case !ok || src.Ref == "":
+	case !ok || src.URL == "":
 		return UpdateResult{ID: ib.ID, Outcome: UpdateSkippedUnmanaged, NewVersion: "", Err: nil}
 	}
 
@@ -97,11 +99,13 @@ func (m *Manager) updateOne(ctx context.Context, ib InstalledBundle) UpdateResul
 	return UpdateResult{ID: ib.ID, Outcome: UpdateRefetched, NewVersion: version, Err: nil}
 }
 
-// AutoUpdateCheck refetches opt-in ref-based bundles whose source has moved,
-// fired at the start of bundle-consuming commands. It NEVER errors and NEVER
-// blocks: every problem (a resolve failure, a refetch failure) becomes a Warning
-// and the cached version keeps serving. Only bundles whose declaration opted in
-// (auto_update: true) and whose source is a movable ref are considered.
+// AutoUpdateCheck refetches opt-in bundles whose tracked source has moved —
+// a ref, or the remote's default branch for an unpinned source — fired at the
+// start of bundle-consuming commands. It NEVER errors and NEVER blocks: every
+// problem (a resolve failure, a refetch failure) becomes a Warning and the
+// cached version keeps serving. Only bundles whose declaration opted in
+// (auto_update: true) and whose source is movable (not sha-pinned, not local)
+// are considered.
 func (m *Manager) AutoUpdateCheck(ctx context.Context) []Warning {
 	optedIn := m.autoUpdateCanonicals()
 	if len(optedIn) == 0 {
@@ -130,8 +134,8 @@ func (m *Manager) AutoUpdateCheck(ctx context.Context) []Warning {
 }
 
 // autoUpdateCanonicals collects the canonical source keys of every declared
-// bundle that opted into auto-update and is a movable ref (not sha-pinned, not
-// local).
+// bundle that opted into auto-update and is movable — a ref or an unpinned
+// default-branch source (not sha-pinned, not local).
 func (m *Manager) autoUpdateCanonicals() map[string]bool {
 	optedIn := map[string]bool{}
 	for _, decl := range m.cfg.BundleDeclarations() {
@@ -139,7 +143,7 @@ func (m *Manager) autoUpdateCanonicals() map[string]bool {
 			continue
 		}
 		src := SourceFromConfig(decl.Source)
-		if src.IsLocal() || src.SHA != "" || src.Ref == "" {
+		if src.IsLocal() || src.SHA != "" {
 			continue
 		}
 		optedIn[src.Canonical()] = true

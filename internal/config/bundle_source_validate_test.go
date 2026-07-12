@@ -16,6 +16,8 @@ func TestValidateBundleSource_Valid(t *testing.T) {
 		{URL: "https://example.com/x.git", Ref: "v1.0.0", SHA: "", Path: "", AutoUpdate: false},
 		{URL: "https://example.com/x.git", Ref: "", SHA: validSHA, Path: "", AutoUpdate: false},
 		{URL: "https://example.com/x.git", Ref: "main", SHA: "", Path: "sub/dir", AutoUpdate: true},
+		// Unpinned: tracks the repository's default branch.
+		{URL: "https://example.com/x.git", Ref: "", SHA: "", Path: "", AutoUpdate: true},
 		{
 			URL:        "",
 			Ref:        "",
@@ -32,8 +34,6 @@ func TestValidateBundleSource_Valid(t *testing.T) {
 
 func TestValidateBundleSource_Invalid(t *testing.T) {
 	invalid := []config.BundleSource{
-		// remote missing ref/sha
-		{URL: "https://example.com/x.git", Ref: "", SHA: "", Path: "", AutoUpdate: false},
 		// remote with an abbreviated (non-40-hex) sha
 		{URL: "https://example.com/x.git", Ref: "", SHA: "0123abc", Path: "", AutoUpdate: false},
 		// ref without a url

@@ -373,7 +373,7 @@
             "type": "string"
           },
           "ref": {
-            "description": "Branch or tag to fetch from a remote url; at least one of ref or sha is required on a remote source, and sha takes precedence when both are set. Ignored for a local path source.",
+            "description": "Branch or tag to fetch from a remote url; sha takes precedence when both are set. Omitting both ref and sha tracks the repository's default branch. Ignored for a local path source.",
             "title": "Ref",
             "type": "string"
           },

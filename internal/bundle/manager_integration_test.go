@@ -365,3 +365,55 @@ func repointSource(t *testing.T, path, from, to string) {
 	require.NotEqual(t, string(raw), updated, "source url not found in %s", path)
 	require.NoError(t, os.WriteFile(path, []byte(updated), 0o600))
 }
+
+// An unpinned source (url with no ref/sha) tracks the repository's default
+// branch: install clones its tip, resolution passes the declaration gate, and
+// update/auto-update refetch when the branch moves — the CC-literal
+// unpinned-plugin behavior.
+func TestManager_UnpinnedTracksDefaultBranch(t *testing.T) {
+	srv := bundletest.New(t)
+	repo := srv.InitRepo(t, "tools")
+	repo.Commit(t, "v1", bundleFiles("1.0.0"))
+
+	src := config.BundleSource{URL: srv.HTTPURL("tools"), Ref: "", SHA: "", Path: "", AutoUpdate: true}
+	mgr := newManager(t, []config.BundleSource{src})
+	ctx := context.Background()
+	id := bundle.BundleID{Namespace: "acme", Name: "tools"}
+
+	require.NoError(t, mgr.Install(ctx, src))
+
+	cacheRoot, err := consts.BundlesSubdir()
+	require.NoError(t, err)
+	assert.FileExists(t, filepath.Join(cacheRoot, "acme", "tools", "1.0.0", "stacks", "node", "stack.yaml"))
+
+	comp, err := mgr.Resolver().Resolve(bundle.ComponentStack, "acme.tools.node")
+	require.NoError(t, err, "an unpinned declaration gates its cache entry like any other")
+	assert.Equal(t, "acme.tools.node", comp.Address.String())
+
+	t.Run("update is a no-op while the branch has not moved", func(t *testing.T) {
+		results, uErr := mgr.Update(ctx, id)
+		require.NoError(t, uErr)
+		require.Len(t, results, 1)
+		assert.Equal(t, bundle.UpdateUnchanged, results[0].Outcome)
+	})
+
+	// The default branch moves on.
+	repo.Commit(t, "v2", bundleFiles("2.0.0"))
+
+	t.Run("update refetches the moved default branch", func(t *testing.T) {
+		results, uErr := mgr.Update(ctx, id)
+		require.NoError(t, uErr)
+		require.Len(t, results, 1)
+		assert.Equal(t, bundle.UpdateRefetched, results[0].Outcome)
+		assert.FileExists(t, filepath.Join(cacheRoot, "acme", "tools", "2.0.0", "stacks", "node", "stack.yaml"))
+	})
+
+	repo.Commit(t, "v3", bundleFiles("3.0.0"))
+
+	t.Run("auto-update covers an opted-in unpinned source", func(t *testing.T) {
+		warnings := mgr.AutoUpdateCheck(ctx)
+		require.Len(t, warnings, 1)
+		assert.Contains(t, warnings[0].Message, "auto-updated")
+		assert.FileExists(t, filepath.Join(cacheRoot, "acme", "tools", "3.0.0", "stacks", "node", "stack.yaml"))
+	})
+}

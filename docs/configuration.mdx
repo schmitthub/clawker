@@ -305,7 +305,7 @@ aliases:  # default: go=run --rm -it --agent $1 @ --dangerously-skip-permissions
 bundles:
   # Git clone URL (https or ssh) of the bundle's source repository; set for a remote bundle. Mutually exclusive with a path-only local source.
   - url: <string>  # default: n/a | required: false
-    # Branch or tag to fetch from a remote url; at least one of ref or sha is required on a remote source, and sha takes precedence when both are set. Ignored for a local path source.
+    # Branch or tag to fetch from a remote url; sha takes precedence when both are set. Omitting both ref and sha tracks the repository's default branch. Ignored for a local path source.
     ref: <string>  # default: n/a | required: false
     # Full 40-character commit SHA pinning a remote url for a reproducible fetch; takes precedence over ref when both are set. Ignored for a local path source.
     sha: <string>  # default: n/a | required: false

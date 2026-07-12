@@ -98,13 +98,14 @@ func TestValidateBundles_Table(t *testing.T) {
 			"",
 		},
 		{
+			// Unpinned remote source: tracks the repository's default branch.
 			"url with neither ref nor sha",
 			"bundles:\n  - url: https://x/y.git\n",
-			"requires ref or sha",
+			"",
 		},
 		{
-			// An explicit empty ref must not satisfy the ref-or-sha
-			// requirement — it is unusable at fetch.
+			// An explicit empty ref is not an unpinned source — the key is
+			// present but unusable at fetch.
 			"url with empty ref",
 			"bundles:\n  - url: https://x/y.git\n    ref: \"\"\n",
 			"bundles[0].ref: must not be empty",

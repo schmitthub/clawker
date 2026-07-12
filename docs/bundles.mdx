@@ -44,6 +44,9 @@ bundles:
   - url: https://github.com/acme/tools.git
     ref: v1.2.0
 
+  # Unpinned — tracks the repository's default branch
+  - url: https://github.com/acme/extras.git
+
   # A subdirectory of a monorepo, pinned to a commit
   - url: git@github.com:acme/mono.git
     path: bundles/tools
@@ -54,9 +57,11 @@ bundles:
 ```
 
 Sources are **git-generic** — any host, over HTTPS or SSH, exactly as you write
-the URL. A remote source requires either `ref` (a branch or tag) or `sha` (a
-full 40-character commit); when both are set, `sha` wins and pins a reproducible
-fetch. A `path:`-only entry loads a local directory in place with no cache copy,
+the URL. A remote source may pin `ref` (a branch or tag) or `sha` (a full
+40-character commit); when both are set, `sha` wins and pins a reproducible
+fetch. With neither, the source is unpinned and tracks the repository's
+**default branch** — install fetches its tip, and update refetches when it
+moves. A `path:`-only entry loads a local directory in place with no cache copy,
 which is how you iterate on a bundle you are authoring. A relative `path`
 resolves against the directory of the file that declares it — the same rule in
 every layer, so committed project files stay portable across machines.
@@ -75,6 +80,9 @@ every layer, so committed project files stay portable across machines.
 ```bash
 # From a git URL pinned to a tag
 clawker bundle install https://github.com/acme/tools.git --ref v1.2.0
+
+# Unpinned — tracks the repository's default branch
+clawker bundle install https://github.com/acme/extras.git
 
 # GitHub owner/repo shorthand (expands to a URL before it is written)
 clawker bundle install acme/tools --sha 4f2a0c9e1b7d3a5f6082c4e9d1a7b3f0c8e2d6a4
@@ -119,9 +127,9 @@ their remedy.
 
 ## Updating
 
-A `ref` (branch or tag) source drifts only when you ask it to. `clawker bundle
-update` compares the declared source against its current tip and refetches only
-on a change:
+A `ref` (branch or tag) or unpinned (default branch) source drifts only when
+you ask it to. `clawker bundle update` compares the declared source against its
+current tip and refetches only on a change:
 
 ```bash
 clawker bundle update acme.tools   # check and update one bundle

@@ -124,16 +124,33 @@ func TestInstall_Idempotent(t *testing.T) {
 	assert.Equal(t, 1, count)
 }
 
-func TestInstall_RemoteWithoutRefOrSHA_Errors(t *testing.T) {
+// An unpinned remote source (no --ref/--sha) is legal: the entry is written
+// url-only and the prefetch clones the repository's default branch tip.
+func TestInstall_RemoteUnpinned_TracksDefaultBranch(t *testing.T) {
 	testenv.New(t)
-	f, _, _ := newFactory(t)
+	srv := bundletest.New(t)
+	url := seedBundle(t, srv, "tools")
+	f, out, _ := newFactory(t)
 
-	err := run(t, f, "https://github.com/acme/tools.git")
-	require.Error(t, err)
+	require.NoError(t, run(t, f, url))
+	assert.Contains(t, out.String(), "Declared bundle source")
+	assert.Contains(t, out.String(), "Fetched bundle content")
 
-	// Nothing was written.
-	path, pErr := consts.UserProjectConfigFilePath()
-	require.NoError(t, pErr)
-	_, statErr := os.Stat(path)
-	assert.True(t, os.IsNotExist(statErr))
+	// The written entry carries the url and no pin.
+	cfg, err := config.NewConfig()
+	require.NoError(t, err)
+	found := false
+	for _, d := range cfg.BundleDeclarations() {
+		if d.Source.URL == url {
+			found = true
+			assert.Empty(t, d.Source.Ref)
+			assert.Empty(t, d.Source.SHA)
+		}
+	}
+	assert.True(t, found, "the unpinned source is declared")
+
+	// The prefetch populated the cache from the default branch tip.
+	cacheRoot, err := consts.BundlesSubdir()
+	require.NoError(t, err)
+	assert.FileExists(t, filepath.Join(cacheRoot, "acme", "tools", "1.0.0", "stacks", "node", "stack.yaml"))
 }
