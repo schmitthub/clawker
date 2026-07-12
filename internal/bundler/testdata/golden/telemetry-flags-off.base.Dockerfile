@@ -21,6 +21,13 @@ ENV TZ="$TZ"
 # openssh-client is floor, not option: clawker forwards the host SSH agent
 # through the socketbridge — a forwarded socket without a client is a broken
 # promise.
+#
+# The slim substrate ships a dpkg filter (/etc/dpkg/dpkg.cfg.d/docker) that
+# drops /usr/share/doc/* at unpack, which would strip the fzf example
+# scripts the zsh setup below sources. Re-include them; the drop-in must
+# sort after "docker" because dpkg applies filters in read order and the
+# last match wins.
+RUN printf 'path-include /usr/share/doc/fzf/*\n' > /etc/dpkg/dpkg.cfg.d/zz-clawker-fzf
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     less \
