@@ -16,8 +16,8 @@ Four containers brought up by `clawker monitor up`:
   `clawkercp`, `clawker-envoy`, `clawker-coredns`, `clawker-ebpf-egress`)
   are always present; the `claude-code` index and its dashboards are
   contributed by the built-in `claude-code` monitoring extension, which a
-  project selects (default) via `monitor.extensions`. Other extensions add
-  their own indices.
+  project opts into via `monitor.extensions` (no default selection). Other
+  extensions add their own indices.
 - **OpenSearch Dashboards (OSD)** — UI at `http://localhost:5601`.
 - **Prometheus** — metrics scrape + UI at `http://localhost:9090`.
 
@@ -36,11 +36,13 @@ bootstrap fails, the collector does not start.
 Beyond the core firewall/control-plane telemetry, what the stack observes is
 contributed by **monitoring extensions** a project selects under
 `monitor.extensions` in `clawker.yaml` (a whole-value selection — the highest
-config layer that sets it wins; default `[claude-code]`). Each `clawker monitor
-up` idempotently seeds the selected extensions (indices, ingest pipelines,
-dashboards) onto the running stack from the current project; there is no
-host-side enable registry, and the collector routes from the union of every
-extension ever seeded. An extension is a `harnesses`/`stacks`-peer component
+config layer that sets it wins; empty by default, every extension is an
+explicit opt-in). Each `clawker monitor up` idempotently seeds the selected
+extensions (indices, ingest pipelines, dashboards) onto the running stack from
+the current project; there is no host-side enable registry, and the collector
+routes from the union of every extension ever seeded. `up` never restarts a
+running collector — apply a selection edit to a running stack with
+`clawker monitor reload` (re-renders the config and recreates the collector). An extension is a `harnesses`/`stacks`-peer component
 resolved across the same three tiers (built-in floor, loose
 `.clawker/monitoring/<name>/`, installed bundle `namespace.bundle.component`).
 Fetch `https://docs.clawker.dev/monitoring-extensions` (consume/select) and

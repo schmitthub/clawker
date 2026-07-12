@@ -3,6 +3,7 @@ package e2e_test
 import (
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -33,11 +34,13 @@ func TestMonitorOptionD_SeedUnionAndC5_E2E(t *testing.T) {
 		Opts:    bundleHarnessOpts(),
 		Cleanup: nil,
 	}
-	// Project A: default selection (the floor claude-code extension).
+	// Project A: explicitly selects the floor claude-code extension (there is
+	// no default selection — extensions are opt-in).
 	setup := h.NewIsolatedFS(&harness.FSOptions{ProjectDir: "monitor-proj-a"})
 
 	initA := h.Run("project", "init", "monitor-proj-a", "--yes", "--preset", "Bare", "--vcs", "github")
 	require.NoError(t, initA.Err, "init A failed\nstdout: %s\nstderr: %s", initA.Stdout, initA.Stderr)
+	selectClaudeCodeExtension(t, filepath.Join(setup.Env.Dirs.Base, "monitor-proj-a"))
 
 	upA := h.Run("monitor", "up")
 	require.NoError(t, upA.Err, "monitor up (A) failed\nstdout: %s\nstderr: %s", upA.Stdout, upA.Stderr)
@@ -53,6 +56,7 @@ func TestMonitorOptionD_SeedUnionAndC5_E2E(t *testing.T) {
 
 	initB := h.Run("project", "init", "monitor-proj-b", "--yes", "--preset", "Bare", "--vcs", "github")
 	require.NoError(t, initB.Err, "init B failed\nstdout: %s\nstderr: %s", initB.Stdout, initB.Stderr)
+	selectClaudeCodeExtension(t, projB)
 
 	upB := h.Run("monitor", "up")
 	require.NoError(t, upB.Err, "monitor up (B) failed\nstdout: %s\nstderr: %s", upB.Stdout, upB.Stderr)
@@ -70,6 +74,17 @@ func TestMonitorOptionD_SeedUnionAndC5_E2E(t *testing.T) {
 	require.NoError(t, err, "rendered collector config must exist after monitor up")
 	assert.Contains(t, string(otelCfg), "claude-code",
 		"the collector config must route the seeded claude-code extension")
+
+	// reload: the explicit disruptive apply — recreates the collector against
+	// the re-rendered config while the rest of the stack stays up.
+	beforeID := collectorContainerID(t)
+	require.NotEmpty(t, beforeID, "collector must be running before reload")
+	reloadRes := h.Run("monitor", "reload")
+	require.NoError(t, reloadRes.Err, "monitor reload failed\nstdout: %s\nstderr: %s",
+		reloadRes.Stdout, reloadRes.Stderr)
+	afterID := collectorContainerID(t)
+	require.NotEmpty(t, afterID, "collector must be running after reload")
+	assert.NotEqual(t, beforeID, afterID, "reload must recreate the collector container")
 
 	// down --volumes resets the seeded-unit ledger.
 	downRes := h.Run("monitor", "down", "--volumes")
@@ -111,4 +126,31 @@ func materializeTweakedClaudeCodeExtension(t *testing.T, projectDir string) {
 		return os.WriteFile(target, content, 0o600)
 	})
 	require.NoError(t, walkErr, "materializing loose claude-code extension")
+}
+
+// selectClaudeCodeExtension appends the opt-in claude-code selection to the
+// project's .clawker.yaml — extensions have no default selection, so each
+// project under test declares its own.
+func selectClaudeCodeExtension(t *testing.T, projectDir string) {
+	t.Helper()
+	path := filepath.Join(projectDir, "."+consts.ProjectConfigFile)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	require.NoError(t, err, "open project config for extension selection")
+	defer func() {
+		require.NoError(t, f.Close())
+	}()
+	_, err = f.WriteString("monitor:\n  extensions: [claude-code]\n")
+	require.NoError(t, err, "append monitor.extensions selection")
+}
+
+// collectorContainerID returns the running otel-collector container's ID —
+// the discriminator for "reload recreated the collector" (new ID) vs "it kept
+// the old container" (same ID).
+func collectorContainerID(t *testing.T) string {
+	t.Helper()
+	out, err := exec.Command(
+		"docker", "ps", "-q", "--filter", "name="+consts.MonitoringServiceOtelCollector,
+	).Output()
+	require.NoError(t, err, "docker ps for otel-collector")
+	return strings.TrimSpace(string(out))
 }

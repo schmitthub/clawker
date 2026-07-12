@@ -220,7 +220,7 @@ func classifySource(opts *InstallOptions) (config.BundleSource, error) {
 	case isURLArg(arg):
 		return remoteSource(arg, opts), nil
 	case isOwnerRepoArg(arg):
-		return remoteSource(githubHost+strings.TrimSuffix(arg, ".git")+".git", opts), nil
+		return remoteSource(githubHost+arg+".git", opts), nil
 	default:
 		return config.BundleSource{}, fmt.Errorf(
 			"unrecognized bundle source %q — expected a git URL, an owner/repo shorthand, or a local path", arg)

@@ -315,7 +315,7 @@ bundles:
     auto_update: <boolean>  # default: n/a | required: false
 monitor:
   # Monitoring extensions this project contributes to the monitoring stack, by name or qualified namespace.bundle.component address; the highest config layer that sets this wins
-  extensions:  # default: claude-code | required: false
+  extensions:  # default: n/a | required: false
     - <string>
 
 ```
@@ -451,7 +451,7 @@ The following tables are auto-generated from the schema struct tags in `internal
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `extensions` | string list | `claude-code` | Monitoring extensions this project contributes to the monitoring stack, by name or qualified namespace.bundle.component address; the highest config layer that sets this wins |
+| `extensions` | string list | — | Monitoring extensions this project contributes to the monitoring stack, by name or qualified namespace.bundle.component address; the highest config layer that sets this wins |
 
 
 ## Interactive Editing

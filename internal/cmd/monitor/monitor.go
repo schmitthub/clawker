@@ -1,12 +1,14 @@
 package monitor
 
 import (
+	"github.com/spf13/cobra"
+
 	"github.com/schmitthub/clawker/internal/cmd/monitor/down"
 	monitorinit "github.com/schmitthub/clawker/internal/cmd/monitor/init"
+	"github.com/schmitthub/clawker/internal/cmd/monitor/reload"
 	"github.com/schmitthub/clawker/internal/cmd/monitor/status"
 	"github.com/schmitthub/clawker/internal/cmd/monitor/up"
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/spf13/cobra"
 )
 
 // NewCmdMonitor creates the monitor parent command.
@@ -23,6 +25,7 @@ OpenSearch Dashboards + Prometheus (metrics).
 Available commands:
   init      Scaffold monitoring configuration files
   up        Start the monitoring stack
+  reload    Apply this project's monitoring extensions to the running stack
   down      Stop the monitoring stack
   status    Show monitoring stack status
 
@@ -30,7 +33,8 @@ Monitoring extensions are observability loadouts (OpenSearch index + ingest
 pipelines + dashboards + collector routing). A project selects them by name in
 its clawker.yaml (` + "`monitor.extensions`" + `); they resolve from the embedded
 floor, a loose .clawker/monitoring/<name>/ directory, or an installed bundle, and
-are seeded onto the stack by 'monitor up'.`,
+are seeded onto the stack by 'monitor up' (or applied to a running stack by
+'monitor reload').`,
 		Example: `  # Initialize monitoring configuration
   clawker monitor init
 
@@ -47,6 +51,7 @@ are seeded onto the stack by 'monitor up'.`,
 	// TODO: resources need clawker management labels
 	cmd.AddCommand(monitorinit.NewCmdInit(f, nil))
 	cmd.AddCommand(up.NewCmdUp(f, nil))
+	cmd.AddCommand(reload.NewCmdReload(f, nil))
 	cmd.AddCommand(down.NewCmdDown(f, nil))
 	cmd.AddCommand(status.NewCmdStatus(f, nil))
 

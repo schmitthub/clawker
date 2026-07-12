@@ -1,13 +1,16 @@
 package config_test
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/internal/config"
-	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
+	"github.com/schmitthub/clawker/internal/consts"
+	"github.com/schmitthub/clawker/internal/testenv"
 )
 
 // TestBundleSource_YamlTagDecode pins the yaml tag ↔ struct field mapping for
@@ -37,24 +40,38 @@ bundles:
 	}, bundles[0])
 }
 
-// TestProjectDefaults_MonitorExtensions proves the defaults layer ships
-// monitor.extensions: [claude-code] so a fresh project keeps monitoring
-// selecting the built-in claude-code extension.
+// TestProjectDefaults_MonitorExtensions proves the defaults layer ships NO
+// monitoring extensions — every extension, including shipped ones like
+// claude-code, is an explicit opt-in.
 func TestProjectDefaults_MonitorExtensions(t *testing.T) {
 	cfg, err := config.NewBlankConfig()
 	require.NoError(t, err)
-	assert.Equal(t, []string{"claude-code"}, cfg.Project().Monitor.Extensions)
+	assert.Empty(t, cfg.Project().Monitor.Extensions)
 }
 
-// TestMonitorExtensions_OverridesDefault proves monitor.extensions is a
-// selection key with override merge (like build.stacks), NOT a union: a layer
-// that sets it wins wholesale, so a project can deselect the claude-code
-// default. Under a union merge this would resolve to
-// [claude-code, prometheus] and fail.
-func TestMonitorExtensions_OverridesDefault(t *testing.T) {
-	cfg := configmocks.NewIsolatedTestConfig(t)
-	require.NoError(t, cfg.ProjectStore().Set("monitor.extensions", []string{"prometheus"}))
-	assert.Equal(t, []string{"prometheus"}, cfg.Project().Monitor.Extensions)
+// TestMonitorExtensions_OverrideMergeNotUnion proves monitor.extensions is a
+// selection key with override merge (like build.stacks), NOT a union: two
+// layers set it — the user config-dir layer and the project layer — and the
+// project layer wins WHOLESALE. Under a union-merge mutation on the field's
+// tag this resolves to both entries and fails.
+func TestMonitorExtensions_OverrideMergeNotUnion(t *testing.T) {
+	env := testenv.New(t)
+	require.NoError(t, os.MkdirAll(consts.ConfigDir(), 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(consts.ConfigDir(), consts.ProjectConfigFile),
+		[]byte("monitor:\n  extensions: [claude-code]\n"), 0o644))
+
+	projDir := filepath.Join(env.Dirs.Base, "proj")
+	require.NoError(t, os.MkdirAll(projDir, 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(projDir, "."+consts.ProjectConfigFile),
+		[]byte("monitor:\n  extensions: [prometheus]\n"), 0o644))
+
+	t.Chdir(projDir)
+	cfg, err := config.NewConfig(config.WithProjectRoot(projDir))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"prometheus"}, cfg.Project().Monitor.Extensions,
+		"the highest layer that sets the selection wins wholesale")
 }
 
 // --- Front-door validation of the bundles: list. ---

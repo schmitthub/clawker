@@ -3,7 +3,6 @@ package init
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -41,8 +40,9 @@ This command generates:
   - prometheus.yaml     Prometheus scrape configuration
   - opensearch-bootstrap/  index templates, ISM policies, and saved objects
 
-The rendered collector config and bootstrap tree reflect this project's
-selected monitoring extensions (` + "`monitor.extensions`" + `). 'monitor init' is
+'monitor init' scaffolds the base stack only — no monitoring extensions.
+Extensions selected via ` + "`monitor.extensions`" + ` are projected in by
+'monitor up' (and applied to a running stack by 'monitor reload'). init is
 optional — 'monitor up' renders the same files itself — but it lets you inspect
 or pre-generate the config without starting the stack.`,
 		Example: `  # Initialize monitoring configuration
@@ -83,34 +83,17 @@ func initRun(_ context.Context, opts *InitOptions) error {
 	}
 	log.Debug().Str("monitor_dir", monitorDir).Msg("initializing monitor stack")
 
-	// Resolve this project's selected monitoring extensions through the one
-	// three-tier resolution algorithm. Every selected extension is rendered;
-	// provenance is printed so the effective set is never invisible.
-	units, err := monitor.ResolveUnits(cfg)
-	if err != nil {
-		return fmt.Errorf("resolve monitoring extensions: %w", err)
-	}
-	for _, u := range units {
-		fmt.Fprintf(ios.ErrOut, "%s extension %s ← %s\n", cs.InfoIcon(), u.Name, u.Source)
-	}
-
-	// Pre-render union = the current projection (init does not touch the host
-	// ledger; 'monitor up' performs the real all-ever-seeded merge).
-	ledger := monitor.NewLedger()
-	ledger.Merge(units, time.Now())
-	union := ledger.Union()
-	if validateErr := monitor.ValidateSeededSet(union); validateErr != nil {
-		return fmt.Errorf("validate monitoring extensions: %w", validateErr)
-	}
-
+	// init scaffolds the floor: the base stack only, zero extensions. Extension
+	// projection (monitor.extensions → seeded units) is 'monitor up' / 'monitor
+	// reload' territory — a scaffold never carries seeds.
 	settings := cfg.SettingsStore().Read()
-	data, err := monitor.PrepareTemplateData(settings, union)
+	data, err := monitor.PrepareTemplateData(settings, nil)
 	if err != nil {
 		return fmt.Errorf("build monitor template data: %w", err)
 	}
 
 	fmt.Fprintf(ios.ErrOut, "%s Configuration directory: %s\n", cs.InfoIcon(), monitorDir)
-	render, err := monitor.RenderStack(monitorDir, data, units, opts.Force)
+	render, err := monitor.RenderStack(monitorDir, data, nil, opts.Force)
 	if err != nil {
 		return fmt.Errorf("render monitoring stack config: %w", err)
 	}

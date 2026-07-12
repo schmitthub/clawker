@@ -24,6 +24,10 @@ projects) so a teammate's routings survive, while this project's OpenSearch
 artifacts are (re)applied by the bootstrap container. Agent containers send
 telemetry to the stack automatically.
 
+'up' never restarts an already-running collector — when the rendered collector
+config differs from what a running collector loaded, it warns and points at
+'monitor reload', the explicit disruptive apply.
+
 ```
 clawker monitor up [flags]
 ```

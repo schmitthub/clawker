@@ -7,8 +7,10 @@ Manage local observability stack (OpenTelemetry Collector + OpenSearch / OpenSea
 | File | Purpose |
 |------|---------|
 | `monitor.go` | `NewCmdMonitor(f)` — parent command |
-| `init/init.go` | `NewCmdInit(f, runF)` — scaffold monitoring config files (resolves units, prints per-unit provenance, renders active set) |
-| `up/up.go` | `NewCmdUp(f, runF)` — render + start observability stack (option-D: merges cwd projection into the host ledger, renders collector config over the seeded union, force-recreates the collector only when otel-config bytes changed) |
+| `init/init.go` | `NewCmdInit(f, runF)` — scaffold the base stack config files (floor only — zero extensions; projection is up/reload territory) |
+| `up/up.go` | `NewCmdUp(f, runF)` — render + start observability stack (option-D: merges cwd projection into the host ledger, renders collector config over the seeded union; never restarts a running collector — warns and points at `monitor reload` when the rendered otel-config bytes changed) |
+| `reload/reload.go` | `NewCmdReload(f, runF)` — explicit disruptive apply: re-render over the seeded union + this project's projection, stop+remove the collector, compose up, seed ledger |
+| `shared/stack.go` | `PrepareStack`, `ComposeUp`, `RemoveCollector`, `CollectorRunning`, `RunComposeCmd` — stack plumbing shared by up/reload |
 | `down/down.go` | `NewCmdDown(f, runF)` — stop observability stack |
 | `status/status.go` | `NewCmdStatus(f, runF)` — show stack status |
 
@@ -34,7 +36,7 @@ type InitOptions struct {
 func NewCmdInit(f *cmdutil.Factory, runF func(context.Context, *InitOptions) error) *cobra.Command
 ```
 
-Scaffolds monitoring stack config files (`compose.yaml`, `otel-config.yaml`, `prometheus.yaml`) plus the `opensearch-bootstrap/` asset tree (bootstrap.sh, component templates, ingest pipelines, index templates, ISM policies, datasources, Dashboards saved objects) in `cfg.MonitorSubdir()` via `monitor.WriteOpenSearchBootstrap`. Flags: `--force/-f` (overwrite existing).
+Scaffolds the BASE stack config files (`compose.yaml`, `otel-config.yaml`, `prometheus.yaml`) plus the `opensearch-bootstrap/` asset tree in `cfg.MonitorSubdir()` — floor only, zero monitoring extensions (init never resolves `monitor.extensions` and never touches the units ledger; projection is `monitor up`/`monitor reload` territory). Flags: `--force/-f` (overwrite existing).
 
 ### monitor up
 
@@ -49,7 +51,22 @@ type UpOptions struct {
 func NewCmdUp(f *cmdutil.Factory, runF func(context.Context, *UpOptions) error) *cobra.Command
 ```
 
-Starts monitoring stack via Docker Compose. Ensures the clawker network exists. The one-shot `clawker-opensearch-bootstrap` service runs first (after OpenSearch reaches `service_healthy`) and applies index templates / ISM policies / Dashboards saved objects; `otel-collector` and `prometheus` gate on its `service_completed_successfully` so they never start against an unprovisioned cluster. Flags: `--detach` (default: true).
+Starts monitoring stack via Docker Compose. Ensures the clawker network exists. The one-shot `clawker-opensearch-bootstrap` service runs first (after OpenSearch reaches `service_healthy`) and applies index templates / ISM policies / Dashboards saved objects; `otel-collector` and `prometheus` gate on its `service_completed_successfully` so they never start against an unprovisioned cluster. `up` NEVER restarts a running collector — when the rendered otel-config bytes changed and the collector was already running, it warns and points at `monitor reload`. Flags: `--detach` (default: true).
+
+### monitor reload
+
+```go
+type ReloadOptions struct {
+    IOStreams     *iostreams.IOStreams
+    Client        func(context.Context) (*docker.Client, error)
+    Config        func() (config.Config, error)
+    Logger        func() (*logger.Logger, error)
+    BundleManager func() (*bundle.Manager, error)
+}
+func NewCmdReload(f *cmdutil.Factory, runF func(context.Context, *ReloadOptions) error) *cobra.Command
+```
+
+The explicit disruptive apply: re-renders the stack config over the seeded union + this project's projection, unconditionally stops and removes `otel-collector` (compose never recreates on bind-mount content change), composes the stack back up detached, then seeds the ledger. Use after editing `monitor.extensions` while the stack is running. No flags.
 
 ### monitor down
 
@@ -65,7 +82,7 @@ func NewCmdDown(f *cmdutil.Factory, runF func(context.Context, *DownOptions) err
 
 Stops monitoring stack via Docker Compose. Flags: `--volumes/-v` (remove named volumes). With `--volumes` it also deletes the seeded-unit ledger (`units-ledger.yaml`), since the REST state it tracked is wiped.
 
-Monitoring-unit selection has no dedicated commands: a project selects extensions by name in `monitor.extensions` (clawker.yaml), and `monitor up` seeds them. The register-era `units/` commands (register/remove/list/enable/disable + the `settings.yaml monitoring.units` registry) are gone; `bundle list` shows monitoring-component provenance.
+Monitoring-unit selection has no dedicated commands: a project selects extensions by name in `monitor.extensions` (clawker.yaml; NO default selection — every extension, including the floor claude-code unit, is an explicit opt-in), and `monitor up` seeds them (`monitor reload` applies an edit to a running stack). The register-era `units/` commands (register/remove/list/enable/disable + the `settings.yaml monitoring.units` registry) are gone; `bundle list` shows monitoring-component provenance.
 
 ### monitor status
 

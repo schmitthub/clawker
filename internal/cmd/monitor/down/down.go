@@ -7,12 +7,13 @@ import (
 	"os/exec"
 	"path/filepath"
 
+	"github.com/spf13/cobra"
+
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
 	internalmonitor "github.com/schmitthub/clawker/internal/monitor"
-	"github.com/spf13/cobra"
 )
 
 type DownOptions struct {
@@ -57,7 +58,8 @@ since OpenSearch index templates only take effect at index creation.`,
 		},
 	}
 
-	cmd.Flags().BoolVarP(&opts.Volumes, "volumes", "v", false, "Remove named volumes (next 'monitor up' re-runs bootstrap to reapply index templates, ISM policies, and Dashboards saved objects)")
+	cmd.Flags().
+		BoolVarP(&opts.Volumes, "volumes", "v", false, "Remove named volumes (next 'monitor up' re-runs bootstrap to reapply index templates, ISM policies, and Dashboards saved objects)")
 
 	return cmd
 }
@@ -117,7 +119,11 @@ func downRun(ctx context.Context, opts *DownOptions) error {
 	fmt.Fprintln(ios.ErrOut)
 	fmt.Fprintf(ios.ErrOut, "%s Monitoring stack stopped.\n", cs.SuccessIcon())
 	if !opts.Volumes {
-		fmt.Fprintf(ios.ErrOut, "%s Volumes preserved (OpenSearch data + bootstrap-applied config survive). Use --volumes to wipe; bootstrap re-applies on next 'monitor up'.\n", cs.InfoIcon())
+		fmt.Fprintf(
+			ios.ErrOut,
+			"%s Volumes preserved (OpenSearch data + bootstrap-applied config survive). Use --volumes to wipe; bootstrap re-applies on next 'monitor up'.\n",
+			cs.InfoIcon(),
+		)
 		return nil
 	}
 

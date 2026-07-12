@@ -3,16 +3,15 @@ package up
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/schmitthub/clawker/internal/bundle"
+	"github.com/schmitthub/clawker/internal/cmd/monitor/shared"
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/config"
-	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/docker"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
@@ -56,7 +55,11 @@ extensions before starting, and idempotently seeds them onto the running stack:
 the collector config is regenerated over every extension ever seeded (across all
 projects) so a teammate's routings survive, while this project's OpenSearch
 artifacts are (re)applied by the bootstrap container. Agent containers send
-telemetry to the stack automatically.`,
+telemetry to the stack automatically.
+
+'up' never restarts an already-running collector — when the rendered collector
+config differs from what a running collector loaded, it warns and points at
+'monitor reload', the explicit disruptive apply.`,
 		Example: `  # Start the monitoring stack (detached)
   clawker monitor up
 
@@ -77,6 +80,7 @@ telemetry to the stack automatically.`,
 
 func upRun(ctx context.Context, opts *UpOptions) error {
 	ios := opts.IOStreams
+	cs := ios.ColorScheme()
 
 	// Opt-in bundle auto-update before the monitoring projection resolves its
 	// extensions against the cached bundle set. Warn and proceed.
@@ -103,9 +107,11 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 	// render the stack config over the ledger union. The projection is persisted
 	// only after a successful compose up, so a failed bring-up never records a
 	// seed that did not apply.
-	cwdUnits, render, err := prepareStack(ios, cfg, monitorDir)
+	composePath := filepath.Join(monitorDir, internalmonitor.ComposeFileName)
+	collectorWasRunning := shared.CollectorRunning(ctx, composePath)
+	cwdUnits, render, err := shared.PrepareStack(ios, cfg, monitorDir)
 	if err != nil {
-		return err
+		return fmt.Errorf("prepare monitoring stack: %w", err)
 	}
 
 	client, err := opts.Client(ctx)
@@ -118,9 +124,8 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 	}
 	log.Debug().Str("network", networkName).Msg("network ready")
 
-	composePath := filepath.Join(monitorDir, internalmonitor.ComposeFileName)
-	if composeErr := runCompose(ctx, ios, log, composePath, opts.Detach, render.OtelConfigChanged); composeErr != nil {
-		return composeErr
+	if composeErr := shared.ComposeUp(ctx, ios, log, composePath, opts.Detach); composeErr != nil {
+		return fmt.Errorf("failed to start monitoring stack: %w", composeErr)
 	}
 
 	// Record the seeded projection now that the bootstrap container has applied
@@ -131,104 +136,23 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 		return fmt.Errorf("record seeded monitoring units: %w", saveErr)
 	}
 
+	// A collector that was already running keeps the config it loaded at start;
+	// up is bring-up only and never bounces it. Point at the explicit apply.
+	// One-shot by design: the signal compares this render against the previous
+	// on-disk render, not against what the running collector loaded — a second
+	// up before the reload re-renders identical bytes and stays quiet.
+	if render.OtelConfigChanged && collectorWasRunning {
+		fmt.Fprintf(
+			ios.ErrOut,
+			"%s Collector config changed, but the running collector keeps its loaded config — run 'clawker monitor reload' to apply it.\n",
+			cs.WarningIcon(),
+		)
+	}
+
 	if opts.Detach {
 		printServiceURLs(ios, cfg)
 	}
 	return nil
-}
-
-// prepareStack resolves the current projection, merges it into an in-memory
-// view of the host ledger (printing C5 clobber warnings), validates the union,
-// and renders the stack config over it. It returns the projection's units —
-// the set `upRun` persists via SeedLedger after a successful compose up — and
-// the render result. The in-memory merge here is render-only; the
-// authoritative persisted merge happens under SeedLedger's file lock.
-func prepareStack(
-	ios *iostreams.IOStreams,
-	cfg config.Config,
-	monitorDir string,
-) ([]internalmonitor.ResolvedUnit, internalmonitor.StackRender, error) {
-	cs := ios.ColorScheme()
-
-	cwdUnits, err := internalmonitor.ResolveUnits(cfg)
-	if err != nil {
-		return nil, internalmonitor.StackRender{}, fmt.Errorf("resolve monitoring extensions: %w", err)
-	}
-
-	ledger, err := internalmonitor.LoadLedger(monitorDir)
-	if err != nil {
-		return nil, internalmonitor.StackRender{}, fmt.Errorf("load monitoring units ledger: %w", err)
-	}
-	for _, w := range ledger.Merge(cwdUnits, time.Now()) {
-		fmt.Fprintf(
-			ios.ErrOut,
-			"%s monitoring extension %q from %s overwrites the same-named unit seeded from %s\n",
-			cs.WarningIcon(), w.Name, w.NewRoot, w.PrevRoot,
-		)
-	}
-	union := ledger.Union()
-	if validateErr := internalmonitor.ValidateSeededSet(union); validateErr != nil {
-		return nil, internalmonitor.StackRender{}, fmt.Errorf("validate seeded monitoring units: %w", validateErr)
-	}
-
-	data, err := internalmonitor.PrepareTemplateData(cfg.SettingsStore().Read(), union)
-	if err != nil {
-		return nil, internalmonitor.StackRender{}, fmt.Errorf("build monitor template data: %w", err)
-	}
-	render, err := internalmonitor.RenderStack(monitorDir, data, cwdUnits, true)
-	if err != nil {
-		return nil, internalmonitor.StackRender{}, fmt.Errorf("render monitoring stack config: %w", err)
-	}
-	return cwdUnits, render, nil
-}
-
-// runCompose brings the stack up. Compose never recreates a container because
-// a bind-mounted file's CONTENT changed, so when the rendered otel-config
-// differs from the previous render the running collector is stopped and
-// removed first — the subsequent `up` then creates it fresh (reading the new
-// config) while honoring depends_on ordering, in detached and foreground modes
-// alike.
-func runCompose(
-	ctx context.Context,
-	ios *iostreams.IOStreams,
-	log *logger.Logger,
-	composePath string,
-	detach, otelChanged bool,
-) error {
-	if otelChanged {
-		rmArgs := []string{
-			"compose", "-f", composePath, "rm", "--stop", "--force",
-			consts.MonitoringServiceOtelCollector,
-		}
-		log.Debug().Strs("args", rmArgs).Msg("removing otel-collector so up recreates it with the changed config")
-		if err := runComposeCmd(ctx, ios, rmArgs, "Applying updated collector config..."); err != nil {
-			return fmt.Errorf("failed to remove otel-collector for config reload: %w", err)
-		}
-	}
-
-	upArgs := []string{"compose", "-f", composePath, "up", "--remove-orphans"}
-	if detach {
-		upArgs = append(upArgs, "-d")
-	}
-	log.Debug().Strs("args", upArgs).Msg("running docker compose up")
-	if err := runComposeCmd(ctx, ios, upArgs, "Starting monitoring stack..."); err != nil {
-		return fmt.Errorf("failed to start monitoring stack: %w", err)
-	}
-	return nil
-}
-
-// runComposeCmd runs one docker compose invocation under a spinner. Errors are
-// returned raw — docker's own stderr already streamed to the user, and the
-// caller adds the one contextual wrap.
-func runComposeCmd(ctx context.Context, ios *iostreams.IOStreams, args []string, label string) error {
-	cmd := exec.CommandContext(ctx, "docker", args...)
-	cmd.Stdout = ios.Out
-	cmd.Stderr = ios.ErrOut
-	ios.StartSpinner(label)
-	err := cmd.Run()
-	ios.StopSpinner()
-	//nolint:wrapcheck // raw by design: docker's stderr already streamed; caller adds the single contextual wrap
-	return err
 }
 
 // printServiceURLs prints the host-facing stack URLs after a detached up.

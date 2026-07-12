@@ -269,12 +269,14 @@ func TestLoadMonitoringUnit_Table(t *testing.T) {
 
 // TestFloorMonitoringUnit pins the embedded floor's monitoring contribution: the
 // claude-code unit ships as a bare floor component (a peer of the harness/stack
-// floor dirs) that the default `monitor.extensions` selection resolves and loads
-// with its migrated bootstrap artifacts.
+// floor dirs) that an explicit `monitor.extensions` selection resolves and loads
+// with its migrated bootstrap artifacts. There is no default selection — the
+// floor unit is opt-in like every other extension.
 func TestFloorMonitoringUnit(t *testing.T) {
-	units, err := monitor.ResolveUnits(configmocks.NewBlankConfig())
+	cfg := configmocks.NewFromString("monitor:\n  extensions: [claude-code]\n", "")
+	units, err := monitor.ResolveUnits(cfg)
 	require.NoError(t, err)
-	require.Len(t, units, 1, "the defaults layer ships monitor.extensions: [claude-code]")
+	require.Len(t, units, 1)
 
 	u := units[0]
 	assert.Equal(t, "claude-code", u.Name)

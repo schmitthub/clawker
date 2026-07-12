@@ -3,10 +3,11 @@ package monitor
 import (
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"github.com/schmitthub/clawker/internal/cmdutil"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/logger"
-	"github.com/spf13/cobra"
 )
 
 func TestNewCmdMonitor(t *testing.T) {

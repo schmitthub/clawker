@@ -46,13 +46,12 @@ func TestClassifySource_SSHURL(t *testing.T) {
 }
 
 func TestClassifySource_OwnerRepoExpands(t *testing.T) {
-	// A shorthand already carrying the .git suffix must not double it; a repo
-	// name merely containing a dot still gets the suffix appended.
+	// The repo segment is taken verbatim — no suffix normalization — so a repo
+	// literally named "tools.git" stays addressable.
 	for arg, wantURL := range map[string]string{
-		"acme/tools":        "https://github.com/acme/tools.git",
-		"acme/tools.git":    "https://github.com/acme/tools.git",
-		"acme/my.tools":     "https://github.com/acme/my.tools.git",
-		"acme/my.tools.git": "https://github.com/acme/my.tools.git",
+		"acme/tools":     "https://github.com/acme/tools.git",
+		"acme/my.tools":  "https://github.com/acme/my.tools.git",
+		"acme/tools.git": "https://github.com/acme/tools.git.git",
 	} {
 		got, err := classifySource(srcOpts(arg, "v1.0.0"))
 		require.NoError(t, err)

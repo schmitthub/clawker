@@ -93,10 +93,13 @@ monitor:
     - claude-code
 ```
 
-Fresh projects default to `[claude-code]`, so Claude Code telemetry is captured
-out of the box. Each `clawker monitor up` idempotently seeds the extensions the
+Extensions are opt-in — there is no default selection; select `claude-code` to
+capture Claude Code telemetry. Each `clawker monitor up` idempotently seeds the extensions the
 current project selects onto the running stack — there is no host-side registry,
-and the collector routes from the union of every extension ever seeded. See
+and the collector routes from the union of every extension ever seeded. `up`
+never restarts a running collector; to apply an extension edit to a running
+stack, run `clawker monitor reload` (re-renders the config and recreates the
+collector). See
 [Monitoring Extensions](/monitoring-extensions) for selection semantics and
 [Authoring monitoring extensions](/authoring-monitoring) for writing your own.
 
@@ -147,7 +150,7 @@ Inside the workspace, the left navbar has an **Explore** section — click **Log
 **Dashboards.** Which dashboards are preinstalled depends on the monitoring
 extensions your project selects. **Clawker Networking** is core firewall
 telemetry and is always present; the two Claude Code dashboards come from the
-built-in `claude-code` extension (selected by default):
+built-in `claude-code` extension (when selected):
 
 - **Claude Code Cost & Usage** — KPI strip over Claude Code sessions, cost, input/output/cache tokens. Sourced from Prometheus counters. (From the `claude-code` extension.)
 - **Claude Code Activity** — Claude Code security activity audit: prompts, tooling, code editing, permissions, hooks, MCP, plugins — totals, distributions, and full event tables. (From the `claude-code` extension.)

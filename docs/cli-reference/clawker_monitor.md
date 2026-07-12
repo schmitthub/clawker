@@ -17,6 +17,7 @@ OpenSearch Dashboards + Prometheus (metrics).
 Available commands:
   init      Scaffold monitoring configuration files
   up        Start the monitoring stack
+  reload    Apply this project's monitoring extensions to the running stack
   down      Stop the monitoring stack
   status    Show monitoring stack status
 
@@ -24,7 +25,8 @@ Monitoring extensions are observability loadouts (OpenSearch index + ingest
 pipelines + dashboards + collector routing). A project selects them by name in
 its clawker.yaml (`monitor.extensions`); they resolve from the embedded
 floor, a loose .clawker/monitoring/`<name>`/ directory, or an installed bundle, and
-are seeded onto the stack by 'monitor up'.
+are seeded onto the stack by 'monitor up' (or applied to a running stack by
+'monitor reload').
 
 ### Examples
 
@@ -46,6 +48,7 @@ are seeded onto the stack by 'monitor up'.
 
 * [clawker monitor down](clawker_monitor_down) - Stop the monitoring stack
 * [clawker monitor init](clawker_monitor_init) - Scaffold monitoring configuration files
+* [clawker monitor reload](clawker_monitor_reload) - Apply this project's monitoring extensions to the running stack
 * [clawker monitor status](clawker_monitor_status) - Show monitoring stack status
 * [clawker monitor up](clawker_monitor_up) - Start the monitoring stack
 

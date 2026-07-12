@@ -28,9 +28,8 @@ monitor:
 
 `monitor.extensions` is a whole-value selection: the highest config layer that
 sets it wins, so a project can replace — or deselect — what a user-level config
-provides. Fresh projects default to `[claude-code]`, so Claude Code telemetry is
-captured out of the box; a project that wants no monitoring extensions sets an
-empty list.
+provides. There is no default selection — every extension, including the
+built-in `claude-code` one, is an explicit opt-in.
 
 Each entry is a component name — bare for a built-in or loose extension, or a
 qualified `namespace.bundle.component` address for a bundled extension.
@@ -45,7 +44,11 @@ project you ran `up` from.
 
 - If the stack is down, `monitor up` starts it and seeds your selection.
 - If the stack is already running, `monitor up` seeds any extensions it is
-  missing.
+  missing — but it never restarts the running collector. When the regenerated
+  collector config differs from what the collector loaded, `up` warns and
+  points at `clawker monitor reload`, the explicit disruptive apply: it
+  re-renders the config and recreates the collector so the new routing takes
+  effect (briefly interrupting telemetry ingestion).
 - Seeded artifacts persist in the stack's volumes until you prune them.
 - Collector routing is regenerated from the union of every extension ever seeded
   into the stack, so running `up` from one project never drops another project's
