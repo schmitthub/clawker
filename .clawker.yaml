@@ -280,6 +280,15 @@ security:
         port: 443
         proto: https
       - action: allow
+        dst: opencode.ai
+        insecure_skip_tls_verify: false
+        path_default: deny
+        path_rules:
+          - action: allow
+            path: /docs/
+        port: 443
+        proto: https
+      - action: allow
         dst: toolbox-data.anchore.io
         insecure_skip_tls_verify: false
         path_default: deny
