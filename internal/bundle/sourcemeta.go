@@ -39,6 +39,11 @@ type sourceMeta struct {
 type versionMeta struct {
 	SHA       string    `yaml:"sha"`
 	FetchedAt time.Time `yaml:"fetched_at"`
+	// Pin is the declared pin segment of the source that fetched this version
+	// ("ref:<ref>", "sha:<sha>", or "" for unpinned). It scopes resolution
+	// per declaration: projects pinning the same repository differently each
+	// resolve the versions fetched under their own pin.
+	Pin string `yaml:"pin,omitempty"`
 }
 
 // newSourceMeta seeds a metadata record from a declared source.

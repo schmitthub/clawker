@@ -90,7 +90,7 @@ func reloadRun(ctx context.Context, opts *ReloadOptions) error {
 	}
 	log.Debug().Str("monitor_dir", monitorDir).Msg("reloading monitor stack")
 
-	cwdUnits, _, err := shared.PrepareStack(ios, cfg, monitorDir)
+	cwdUnits, _, err := shared.PrepareStack(cfg, monitorDir)
 	if err != nil {
 		return fmt.Errorf("prepare monitoring stack: %w", err)
 	}

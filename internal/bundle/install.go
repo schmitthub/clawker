@@ -132,20 +132,32 @@ func commitLocked(c commitInputs) error {
 		if collErr := checkCacheCollision(c.id, c.bundleDir, meta, c.source); collErr != nil {
 			return collErr
 		}
+		// Same repository, possibly a new pin: adopt the requested ref/sha so
+		// the cache entry tracks the live declaration (re-pinning updates in
+		// place, no purge ceremony).
+		meta.Ref = c.source.Ref
+		meta.SHA = c.source.SHA
 	} else {
 		meta = newSourceMeta(c.source)
 	}
 	if ccErr := commitContent(c.stageBase, c.bundleRoot, filepath.Join(c.bundleDir, c.version)); ccErr != nil {
 		return ccErr
 	}
-	meta.Versions[c.version] = versionMeta{SHA: c.resolvedSHA, FetchedAt: time.Now().UTC()}
+	meta.Versions[c.version] = versionMeta{
+		SHA:       c.resolvedSHA,
+		FetchedAt: time.Now().UTC(),
+		Pin:       c.source.pin(),
+	}
 	return writeSourceMeta(c.bundleDir, meta)
 }
 
 // checkCacheCollision is the C1 identity collision at the cache: a previously
-// cached bundle of the same identity fetched from a different source coordinate.
+// cached bundle of the same identity fetched from a different repository.
+// The comparison is pin-stripped (Repository, not Canonical): the same
+// url+subdir under a different ref/sha is the same source being re-pinned,
+// not a collision.
 func checkCacheCollision(id BundleID, bundleDir string, meta sourceMeta, s Source) error {
-	if meta.source().Canonical() == s.Canonical() {
+	if meta.source().Repository() == s.Repository() {
 		return nil
 	}
 	return &CollisionError{

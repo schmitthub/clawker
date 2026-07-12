@@ -94,7 +94,7 @@ func (f *resolverFixture) cacheSourceMeta(t *testing.T, ns, name, url, ref strin
 	require.NoError(t, err)
 	versions := map[string]versionMeta{}
 	for v, at := range fetched {
-		versions[v] = versionMeta{SHA: "", FetchedAt: at}
+		versions[v] = versionMeta{SHA: "", FetchedAt: at, Pin: "ref:" + ref}
 	}
 	require.NoError(t, writeSourceMeta(filepath.Join(root, ns, name), sourceMeta{
 		URL: url, Ref: ref, SHA: "", Subdir: "", Versions: versions,
@@ -520,7 +520,9 @@ func TestSelectVersion(t *testing.T) {
 	meta := func(fetched map[string]time.Time) sourceMeta {
 		versions := map[string]versionMeta{}
 		for v, at := range fetched {
-			versions[v] = versionMeta{SHA: "", FetchedAt: at}
+			// Legacy shape: no per-version pin recorded (selectVersion is the
+			// fallback path for exactly these entries).
+			versions[v] = versionMeta{SHA: "", FetchedAt: at, Pin: ""}
 		}
 		return sourceMeta{URL: "https://example.com/x.git", Ref: "master", SHA: "", Subdir: "", Versions: versions}
 	}

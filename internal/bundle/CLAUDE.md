@@ -30,7 +30,7 @@ name IS the component name. There is NO bare-manifest-at-root special case.
 |------|---------|
 | `component.go` | `ComponentType` enum (`ComponentHarness`/`Stack`/`Monitoring`) + `Dir()`/`String()`; convention-dir ↔ type mapping |
 | `address.go` | `Address` (bare or qualified `namespace.bundle.name`), `BundleID` (identity pair; `String()` = dotted `namespace.name` via `consts.JoinIdentity`, the bundle-CLI spelling), `ParseAddress` (via `consts.SplitAddress`) |
-| `source.go` | `Source` (git-generic) + `Canonical()` — the syntactic C1 dedup key (sha beats ref; subdir distinguishes monorepo siblings) |
+| `source.go` | `Source` (git-generic) + `Canonical()` — the syntactic C1 dedup key (sha beats ref; subdir distinguishes monorepo siblings) — and `Repository()`, the pin-stripped identity install uses so a re-pinned declaration updates its cache entry in place |
 | `bundle.go` | `Component`, `Bundle`, `LoadBundleDir` — parses `.clawker-bundle/bundle.yaml` and enumerates components by convention dir ONLY (does not parse component manifests). Hard-fail (`ManifestError`) vs advisory-warn split |
 | `floor.go` | Embedded floor: `FloorNames(t)`, `FloorFS(t, name)`, `floorComponent` |
 | `loose.go` | Loose-tier resolution under a project/user base |
@@ -56,15 +56,22 @@ name IS the component name. There is NO bare-manifest-at-root special case.
   declared-but-uncached bundle yields `ErrNotCached`.
 - **Declaration-gating**: everything resolvable traces to an explicit
   declaration. An in-place `path:` declaration loads directly from disk. A
-  cached bundle resolves ONLY while a live remote declaration's `Canonical()`
-  matches the source recorded in its `source.yaml` — deleting the `bundles:`
-  entry makes the cached copy inert (it stays on disk until
+  cached bundle resolves ONLY while a live remote declaration matches it
+  (`matchVersion`): the declaration must share the entry's pin-stripped
+  `Repository()` AND have a recorded version fetched under its exact pin
+  (`versions.*.pin` in `source.yaml`); a legacy entry with no per-version pin
+  records falls back to an exact entry-level `Canonical()` match. Deleting the
+  `bundles:` entry makes the cached copy inert (it stays on disk until
   `clawker bundle remove`; re-declaring the same source reactivates it
   instantly, no refetch). A cache entry with no `source.yaml` (hand-placed)
   never resolves — no ghost sources.
-- **Version selection**: the resolving content root is the matched source's
-  most recently fetched version (`source.yaml` `versions.*.fetched_at`), not
-  directory sort order; a metadata gap falls back to the last-sorted directory.
+- **Version selection**: per-pin — the matched declaration resolves the most
+  recently fetched version recorded under ITS pin, so two projects declaring
+  the same repository at different pins each resolve their own version from
+  the shared host cache (the locked-spec "project A pins v1, project B v2"
+  promise); when several declarations match one entry, the latest-fetched
+  match wins. Legacy fallback: most recently fetched overall, then last-sorted
+  directory on a metadata gap.
 - **C1** (`Bundles()`): two sources whose manifests resolve to the same
   `(namespace, name)` from different `Canonical()` coordinates → `CollisionError`
   naming both declaring files and the remedies. This applies to two in-place
@@ -79,8 +86,13 @@ name IS the component name. There is NO bare-manifest-at-root special case.
 
 The fetch/cache WRITE side lives in `install.go` + `update.go` + `sourcemeta.go`
 + `fetch/`. Cache-side C1 (a second source fetched to the same identity) is
-enforced against `source.yaml` at install; `AutoUpdateCheck` matches declared
-opt-in sources to cached identities by `source.yaml` canonical.
+enforced against `source.yaml` at install using the PIN-STRIPPED
+`Source.Repository()` (url + subdir, no ref/sha): the same repository under a
+different pin is the SAME source being re-pinned — the cache entry adopts the
+new ref/sha in place (CC-literal "replaces the first", no purge ceremony) and
+prior version dirs coexist. Only a genuinely different repository claiming the
+same identity is a `CollisionError`. `AutoUpdateCheck` matches declared opt-in
+sources to cached identities by `source.yaml` canonical.
 
 ## Tests
 

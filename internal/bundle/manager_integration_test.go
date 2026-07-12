@@ -36,16 +36,7 @@ func bundleFiles(version string) map[string]string {
 func newManager(t *testing.T, decls []config.BundleSource) *bundle.Manager {
 	t.Helper()
 	testenv.New(t)
-	cfg := configmocks.NewBlankConfig()
-	cfg.BundleDeclarationsFunc = func() []config.BundleDeclaration {
-		out := make([]config.BundleDeclaration, 0, len(decls))
-		for _, s := range decls {
-			out = append(out, config.BundleDeclaration{Source: s, File: "clawker.yaml"})
-		}
-		return out
-	}
-	cfg.ProjectRootFunc = func() string { return "" }
-	return bundle.NewManager(cfg)
+	return managerForDecls(decls...)
 }
 
 func TestManager_Install_HTTPJourney(t *testing.T) {
@@ -134,6 +125,123 @@ func TestManager_Install_C1Collision(t *testing.T) {
 	var collision *bundle.CollisionError
 	require.ErrorAs(t, err, &collision)
 	assert.Equal(t, "acme.tools", collision.Identity.String())
+}
+
+// TestManager_Install_RepinSameURLUpdatesInPlace pins the CC-mirrored re-pin
+// flow: editing a declaration's ref (v1→v2) and installing again is the SAME
+// source — the cache entry adopts the new pin in place, no purge ceremony.
+func TestManager_Install_RepinSameURLUpdatesInPlace(t *testing.T) {
+	srv := bundletest.New(t)
+	repo := srv.InitRepo(t, "tools")
+	repo.Commit(t, "v1", bundleFiles("1.0.0"))
+	repo.Tag(t, "v1.0.0")
+	repo.Commit(t, "v2", bundleFiles("2.0.0"))
+	repo.Tag(t, "v2.0.0")
+
+	url := srv.HTTPURL("tools")
+	v2 := config.BundleSource{URL: url, Ref: "v2.0.0", SHA: "", Path: "", AutoUpdate: false}
+	mgr := newManager(t, []config.BundleSource{v2})
+	ctx := context.Background()
+
+	require.NoError(t, mgr.Install(ctx, config.BundleSource{
+		URL: url, Ref: "v1.0.0", SHA: "", Path: "", AutoUpdate: false,
+	}))
+	require.NoError(t, mgr.Install(ctx, v2), "same url under a new ref must not collide")
+
+	// Both versions coexist in the cache; the entry's pin now tracks v2, so the
+	// live v2 declaration gates the bundle back in and resolves the new version.
+	cacheRoot, err := consts.BundlesSubdir()
+	require.NoError(t, err)
+	assert.FileExists(t, filepath.Join(cacheRoot, "acme", "tools", "1.0.0", "stacks", "node", "stack.yaml"))
+	assert.FileExists(t, filepath.Join(cacheRoot, "acme", "tools", "2.0.0", "stacks", "node", "stack.yaml"))
+
+	bundles, _, err := mgr.Resolver().Bundles()
+	require.NoError(t, err)
+	rb, ok := bundles[bundle.BundleID{Namespace: "acme", Name: "tools"}]
+	require.True(t, ok, "the re-pinned declaration must resolve the cached bundle")
+	assert.Equal(t, "2.0.0", rb.Version)
+}
+
+// TestManager_MultiPinCoexistence pins the locked-spec promise "versions
+// coexist; project A pins v1, project B v2": two projects sharing one host
+// cache, each declaring the same repository at a different pin, BOTH resolve —
+// each to the version fetched under its own pin. One project's install never
+// unresolves the other's declaration.
+func TestManager_MultiPinCoexistence(t *testing.T) {
+	srv := bundletest.New(t)
+	repo := srv.InitRepo(t, "tools")
+	repo.Commit(t, "v1", bundleFiles("1.0.0"))
+	repo.Tag(t, "v1.0.0")
+	repo.Commit(t, "v2", bundleFiles("2.0.0"))
+	repo.Tag(t, "v2.0.0")
+
+	testenv.New(t) // ONE shared host cache for both "projects"
+	url := srv.HTTPURL("tools")
+	v1 := config.BundleSource{URL: url, Ref: "v1.0.0", SHA: "", Path: "", AutoUpdate: false}
+	v2 := config.BundleSource{URL: url, Ref: "v2.0.0", SHA: "", Path: "", AutoUpdate: false}
+	projectA := managerForDecls(v1)
+	projectB := managerForDecls(v2)
+	ctx := context.Background()
+
+	require.NoError(t, projectA.Install(ctx, v1))
+	require.NoError(t, projectB.Install(ctx, v2), "B's re-pin of the shared entry must not collide")
+
+	id := bundle.BundleID{Namespace: "acme", Name: "tools"}
+	bundlesA, _, err := projectA.Resolver().Bundles()
+	require.NoError(t, err)
+	rbA, ok := bundlesA[id]
+	require.True(t, ok, "A's v1 declaration must keep resolving after B re-pinned the shared cache entry")
+	assert.Equal(t, "1.0.0", rbA.Version, "A resolves the version fetched under ITS pin")
+
+	bundlesB, _, err := projectB.Resolver().Bundles()
+	require.NoError(t, err)
+	rbB, ok := bundlesB[id]
+	require.True(t, ok)
+	assert.Equal(t, "2.0.0", rbB.Version, "B resolves the version fetched under ITS pin")
+}
+
+// TestManager_Install_SubdirsAreDistinctSources: two subdirs of one repository
+// shipping the same identity are DIFFERENT sources — the pin-stripped install
+// key includes the subdir, so this stays a C1 collision, not a re-pin.
+func TestManager_Install_SubdirsAreDistinctSources(t *testing.T) {
+	srv := bundletest.New(t)
+	repo := srv.InitRepo(t, "mono")
+	files := map[string]string{}
+	for path, content := range bundleFiles("1.0.0") {
+		files["bundles/one/"+path] = content
+		files["bundles/two/"+path] = content
+	}
+	repo.Commit(t, "v1", files)
+	repo.Tag(t, "v1.0.0")
+
+	mgr := newManager(t, nil)
+	ctx := context.Background()
+	url := srv.HTTPURL("mono")
+	require.NoError(t, mgr.Install(ctx, config.BundleSource{
+		URL: url, Ref: "v1.0.0", SHA: "", Path: "bundles/one", AutoUpdate: false,
+	}))
+
+	err := mgr.Install(ctx, config.BundleSource{
+		URL: url, Ref: "v1.0.0", SHA: "", Path: "bundles/two", AutoUpdate: false,
+	})
+	var collision *bundle.CollisionError
+	require.ErrorAs(t, err, &collision, "a different subdir claiming the same identity must collide")
+}
+
+// managerForDecls wires a Manager over the CURRENT testenv (callers own the
+// isolation), so several managers — several "projects" — can share one host
+// cache.
+func managerForDecls(decls ...config.BundleSource) *bundle.Manager {
+	cfg := configmocks.NewBlankConfig()
+	cfg.BundleDeclarationsFunc = func() []config.BundleDeclaration {
+		out := make([]config.BundleDeclaration, 0, len(decls))
+		for _, s := range decls {
+			out = append(out, config.BundleDeclaration{Source: s, File: "clawker.yaml"})
+		}
+		return out
+	}
+	cfg.ProjectRootFunc = func() string { return "" }
+	return bundle.NewManager(cfg)
 }
 
 func TestManager_Update_RefetchesOnDrift(t *testing.T) {

@@ -109,7 +109,7 @@ func upRun(ctx context.Context, opts *UpOptions) error {
 	// seed that did not apply.
 	composePath := filepath.Join(monitorDir, internalmonitor.ComposeFileName)
 	collectorWasRunning := shared.CollectorRunning(ctx, composePath)
-	cwdUnits, render, err := shared.PrepareStack(ios, cfg, monitorDir)
+	cwdUnits, render, err := shared.PrepareStack(cfg, monitorDir)
 	if err != nil {
 		return fmt.Errorf("prepare monitoring stack: %w", err)
 	}

@@ -20,9 +20,10 @@ import (
 // TestMonitorOptionD_SeedUnionAndC5_E2E proves the monitoring seed model across
 // two projects sharing one host: `monitor up` idempotently seeds each cwd's
 // projection into the host units ledger and regenerates the collector config
-// over the ledger union, and a second project selecting a same-named bare
-// extension with different content C5-clobbers it (current-project-wins) with a
-// user-visible warning. `monitor down --volumes` resets the ledger.
+// over the ledger union; a second project selecting a same-named bare extension
+// with DIFFERENT content is a C5 hard error (the seed is refused), while an
+// identical-content re-seed from another project is a no-op. `monitor down
+// --volumes` resets the ledger.
 //
 // The two projects deliberately share ONE isolated data dir (the host ledger and
 // rendered collector config are host-global, not per-project) — that shared
@@ -58,13 +59,21 @@ func TestMonitorOptionD_SeedUnionAndC5_E2E(t *testing.T) {
 	require.NoError(t, initB.Err, "init B failed\nstdout: %s\nstderr: %s", initB.Stdout, initB.Stderr)
 	selectClaudeCodeExtension(t, projB)
 
+	// C5: B's same-named, different-content claude-code refuses to seed — hard
+	// error naming both project roots, stack state untouched.
 	upB := h.Run("monitor", "up")
-	require.NoError(t, upB.Err, "monitor up (B) failed\nstdout: %s\nstderr: %s", upB.Stdout, upB.Stderr)
+	require.Error(t, upB.Err, "monitor up (B) must refuse a C5 collision")
+	assert.Contains(t, upB.Stderr, "collides with the same-named extension",
+		"the collision error must be user-visible")
 
-	// C5: B's up warns that its claude-code overwrites the same-named unit A
-	// seeded, and proceeds (current-project-wins).
-	assert.Contains(t, upB.Stderr, "overwrites the same-named unit",
-		"a same-named bare extension from another project must C5-warn")
+	// Recovery: drop B's divergent loose copy — the selection falls back to the
+	// floor claude-code, whose content hash matches A's seed, so the re-seed
+	// from a different project root is an identical-content no-op.
+	require.NoError(t, os.RemoveAll(
+		filepath.Join(projB, consts.DotClawkerDir, bundle.ComponentMonitoring.Dir(), "claude-code")))
+	upB = h.Run("monitor", "up")
+	require.NoError(t, upB.Err, "monitor up (B) after removing the divergent copy failed\nstdout: %s\nstderr: %s",
+		upB.Stdout, upB.Stderr)
 
 	// Union: the host collector config is regenerated over the ledger union and
 	// still serves the claude-code routing.

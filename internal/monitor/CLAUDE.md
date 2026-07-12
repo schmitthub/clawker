@@ -25,12 +25,12 @@ func BuildUnitRoutings(units []SeededUnit) ([]UnitRouting, error) // logs/unit_<
 type SeededUnit struct { Name, Source, ProjectRoot, ContentHash string; Manifest config.MonitoringUnitManifest; SeededAt time.Time }
 type Ledger struct { /* keyed by selection spelling */ }
 func NewLedger() *Ledger; func LoadLedger(monitorDir string) (*Ledger, error)
-func (l *Ledger) Merge(units []ResolvedUnit, now time.Time) []ClobberWarning // same-hash no-op; bare diff-hash diff-root = C5 clobber warning + overwrite
+func (l *Ledger) Merge(units []ResolvedUnit, now time.Time) error // same-hash no-op; same-root diff-hash = in-place update; bare diff-hash diff-root = C5 *SeedCollisionError, batch refused atomically
 func (l *Ledger) Union() []SeededUnit; func (l *Ledger) Save(monitorDir string) error
 func SeedLedger(ctx context.Context, monitorDir string, units []ResolvedUnit, now time.Time) error // flock-guarded load-merge-save; how `monitor up` persists — concurrent ups can't lost-update each other
 ```
 
-Enablement is **selection**, not a flag: a project's `monitor.extensions` (override-merge, defaults `[claude-code]`) names the units it seeds; there is no host registry and no per-unit active toggle. `monitor up` merges the cwd projection into the host ledger and renders the collector config over the **all-ever-seeded union** (option D) so a teammate's routings survive; `monitor down --volumes` deletes the ledger. A record whose `service.name` matches no seeded lane falls to the debug-only `logs/untrusted_unrouted` pipeline — never indexed.
+Enablement is **selection**, not a flag: a project's `monitor.extensions` (override-merge, EMPTY by default — every extension is an explicit opt-in) names the units it seeds; there is no host registry and no per-unit active toggle. `monitor up` merges the cwd projection into the host ledger and renders the collector config over the **all-ever-seeded union** (option D) so a teammate's routings survive; `monitor reload` applies a selection edit to a running stack (collector recreate); `monitor down --volumes` deletes the ledger. A record whose `service.name` matches no seeded lane falls to the debug-only `logs/untrusted_unrouted` pipeline — never indexed.
 
 > Confirming live ingest/routing/rendering is **not** unit-testable — see `.claude/rules/monitoring.md` → "Runtime UAT" for the curl-container working-session loop (ask the user to `clawker monitor up`; you can't from inside a container).
 
@@ -110,7 +110,7 @@ Wipes `destDir` (it holds only generated content), mirrors `OpenSearchBootstrapF
 
 ## Usage
 
-Both `monitor init` and `monitor up` build `MonitorTemplateData` via `PrepareTemplateData` and render the stack via `RenderStack` (which calls `RenderTemplate` per `.tmpl` and `WriteOpenSearchBootstrap` for the bootstrap tree under `<monitorDir>/opensearch-bootstrap/`). `init` renders from the cwd projection only (empty pre-render ledger); `up` merges the projection into the host ledger and renders the collector config over the all-ever-seeded union.
+`monitor init`, `monitor up`, and `monitor reload` build `MonitorTemplateData` via `PrepareTemplateData` and render the stack via `RenderStack` (which calls `RenderTemplate` per `.tmpl` and `WriteOpenSearchBootstrap` for the bootstrap tree under `<monitorDir>/opensearch-bootstrap/`). `init` renders the floor only (no extensions, no ledger access); `up` and `reload` merge the projection into the host ledger and render the collector config over the all-ever-seeded union.
 
 Stack template symbols are in `templates.go`; unit resolution + routing in `units.go`.
 

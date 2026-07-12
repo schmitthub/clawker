@@ -21,8 +21,8 @@ type ResolvedUnit struct {
 	// ledger key and the collision key.
 	Name string
 	// Qualified reports whether Name is a bundled (qualified) address. Bare
-	// extensions can C5-clobber across projects; qualified ones are
-	// collision-proof by construction.
+	// extensions can C5-collide across projects (refused at seed); qualified
+	// ones are collision-proof by construction.
 	Qualified bool
 	// Unit carries the loaded manifest and artifact filesystem.
 	Unit *MonitoringUnit

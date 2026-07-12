@@ -36,62 +36,76 @@ func TestLedger_MergeAddsAndNoOps(t *testing.T) {
 	l := monitor.NewLedger()
 	now := time.Unix(1, 0).UTC()
 
-	warns := l.Merge([]monitor.ResolvedUnit{resolved("claude-code", "/proj/a", "h1", false)}, now)
-	assert.Empty(t, warns)
+	require.NoError(t, l.Merge([]monitor.ResolvedUnit{resolved("claude-code", "/proj/a", "h1", false)}, now))
 	require.Len(t, l.Union(), 1)
 
-	// Same content hash re-seed is a no-op (no warning, no duplicate).
-	warns = l.Merge([]monitor.ResolvedUnit{resolved("claude-code", "/proj/a", "h1", false)}, now)
-	assert.Empty(t, warns)
+	// Same content hash re-seed is a no-op (no error, no duplicate).
+	require.NoError(t, l.Merge([]monitor.ResolvedUnit{resolved("claude-code", "/proj/a", "h1", false)}, now))
 	require.Len(t, l.Union(), 1)
 }
 
 func TestLedger_SameRootDifferentHashUpdatesSilently(t *testing.T) {
 	l := monitor.NewLedger()
 	now := time.Unix(1, 0).UTC()
-	l.Merge([]monitor.ResolvedUnit{resolved("acme", "/proj/a", "h1", false)}, now)
+	require.NoError(t, l.Merge([]monitor.ResolvedUnit{resolved("acme", "/proj/a", "h1", false)}, now))
 
 	// Same project edits its own loose unit: different hash, same root → update,
-	// no clobber warning.
-	warns := l.Merge([]monitor.ResolvedUnit{resolved("acme", "/proj/a", "h2", false)}, now)
-	assert.Empty(t, warns)
+	// no collision.
+	require.NoError(t, l.Merge([]monitor.ResolvedUnit{resolved("acme", "/proj/a", "h2", false)}, now))
 	require.Len(t, l.Union(), 1)
 	assert.Equal(t, "h2", l.Union()[0].ContentHash)
 }
 
-func TestLedger_C5ClobberWarnsAcrossProjects(t *testing.T) {
+func TestLedger_C5CollisionRefusesSeedAcrossProjects(t *testing.T) {
 	l := monitor.NewLedger()
 	now := time.Unix(1, 0).UTC()
-	l.Merge([]monitor.ResolvedUnit{resolved("acme", "/proj/a", "h1", false)}, now)
+	require.NoError(t, l.Merge([]monitor.ResolvedUnit{resolved("acme", "/proj/a", "h1", false)}, now))
 
-	// A different project ships a different-content bare unit of the same name.
-	warns := l.Merge([]monitor.ResolvedUnit{resolved("acme", "/proj/b", "h2", false)}, now)
-	require.Len(t, warns, 1)
-	assert.Equal(t, "acme", warns[0].Name)
-	assert.Equal(t, "/proj/a", warns[0].PrevRoot)
-	assert.Equal(t, "/proj/b", warns[0].NewRoot)
-	// Overwrite proceeds (current-project-wins).
-	assert.Equal(t, "/proj/b", l.Union()[0].ProjectRoot)
+	// A different project ships a different-content bare unit of the same name:
+	// C5 is a hard error and the ledger keeps the prior seed untouched.
+	err := l.Merge([]monitor.ResolvedUnit{resolved("acme", "/proj/b", "h2", false)}, now)
+	var collision *monitor.SeedCollisionError
+	require.ErrorAs(t, err, &collision)
+	assert.Equal(t, "acme", collision.Name)
+	assert.Equal(t, "/proj/a", collision.PrevRoot)
+	assert.Equal(t, "/proj/b", collision.NewRoot)
+	assert.Equal(t, "/proj/a", l.Union()[0].ProjectRoot, "the refused seed must not land")
+	assert.Equal(t, "h1", l.Union()[0].ContentHash)
 }
 
-func TestLedger_QualifiedNeverClobbers(t *testing.T) {
+func TestLedger_CollisionLeavesWholeBatchUnapplied(t *testing.T) {
 	l := monitor.NewLedger()
 	now := time.Unix(1, 0).UTC()
-	l.Merge([]monitor.ResolvedUnit{resolved("acme.tools.foo", "/proj/a", "h1", true)}, now)
+	require.NoError(t, l.Merge([]monitor.ResolvedUnit{resolved("acme", "/proj/a", "h1", false)}, now))
+
+	// A batch mixing a fresh unit with a colliding one is refused atomically —
+	// the fresh unit must not be half-applied before the collision is noticed.
+	err := l.Merge([]monitor.ResolvedUnit{
+		resolved("fresh", "/proj/b", "h9", false),
+		resolved("acme", "/proj/b", "h2", false),
+	}, now)
+	var collision *monitor.SeedCollisionError
+	require.ErrorAs(t, err, &collision)
+	require.Len(t, l.Union(), 1, "no unit from the refused batch may land")
+}
+
+func TestLedger_QualifiedNeverCollides(t *testing.T) {
+	l := monitor.NewLedger()
+	now := time.Unix(1, 0).UTC()
+	require.NoError(t, l.Merge([]monitor.ResolvedUnit{resolved("acme.tools.foo", "/proj/a", "h1", true)}, now))
 
 	// A qualified (bundled) address is collision-proof by construction — even a
-	// different-root different-hash re-seed does not warn.
-	warns := l.Merge([]monitor.ResolvedUnit{resolved("acme.tools.foo", "/proj/b", "h2", true)}, now)
-	assert.Empty(t, warns)
+	// different-root different-hash re-seed does not error.
+	require.NoError(t, l.Merge([]monitor.ResolvedUnit{resolved("acme.tools.foo", "/proj/b", "h2", true)}, now))
 }
 
 func TestLedger_SaveLoadRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	l := monitor.NewLedger()
-	l.Merge([]monitor.ResolvedUnit{
+	require.NoError(t, l.Merge([]monitor.ResolvedUnit{
 		resolved("claude-code", "/proj/a", "h1", false),
 		resolved("acme.tools.foo", "/proj/a", "h2", true),
-	}, time.Unix(42, 0).UTC())
+	}, time.Unix(42, 0).UTC()))
 	require.NoError(t, l.Save(dir))
 
 	reloaded, err := monitor.LoadLedger(dir)

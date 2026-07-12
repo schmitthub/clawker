@@ -60,12 +60,12 @@ func (m *Manager) Statuses() ([]Status, error) {
 	remote := m.resolver.remoteDeclarations()
 
 	rows := resolvingStatuses(bundles)
-	cachedRows, cachedCanonicals, err := unresolvableCacheStatuses(installed, remote)
+	cachedRows, matchedCanonicals, err := unresolvableCacheStatuses(installed, remote)
 	if err != nil {
 		return nil, err
 	}
 	rows = append(rows, cachedRows...)
-	rows = append(rows, uninstalledSourceStatuses(remote, cachedCanonicals)...)
+	rows = append(rows, uninstalledSourceStatuses(remote, matchedCanonicals)...)
 
 	sort.Slice(rows, func(i, j int) bool {
 		if rows[i].ID.String() != rows[j].ID.String() {
@@ -94,14 +94,15 @@ func resolvingStatuses(bundles map[BundleID]*ResolvedBundle) []Status {
 }
 
 // unresolvableCacheStatuses rows the cache entries that do NOT resolve —
-// undeclared and hand-placed (unmanaged) — and reports every cached source
-// canonical so declared-but-uncached sources can be derived by exclusion.
+// undeclared and hand-placed (unmanaged) — and reports which declaration
+// canonicals matched a cache entry so declared-but-uncached sources can be
+// derived by exclusion.
 func unresolvableCacheStatuses(
 	installed []InstalledBundle,
-	remote map[string]string,
+	remote []remoteDecl,
 ) ([]Status, map[string]bool, error) {
 	var rows []Status
-	cachedCanonicals := map[string]bool{}
+	matchedCanonicals := map[string]bool{}
 	for _, ib := range installed {
 		meta, ok, err := readSourceMeta(ib.Root)
 		if err != nil {
@@ -113,27 +114,34 @@ func unresolvableCacheStatuses(
 			})
 			continue
 		}
-		canonical := meta.source().Canonical()
-		cachedCanonicals[canonical] = true
-		if _, declared := remote[canonical]; !declared {
+		declared := false
+		for _, d := range remote {
+			if _, matched := matchVersion(ib, meta, d.src); matched {
+				matchedCanonicals[d.src.Canonical()] = true
+				declared = true
+			}
+		}
+		if !declared {
 			rows = append(rows, Status{
-				ID: ib.ID, Source: canonical, File: "", Tier: TierInstalled, Version: "", State: StatusUndeclared,
+				ID: ib.ID, Source: meta.source().Canonical(), File: "",
+				Tier: TierInstalled, Version: "", State: StatusUndeclared,
 			})
 		}
 	}
-	return rows, cachedCanonicals, nil
+	return rows, matchedCanonicals, nil
 }
 
-// uninstalledSourceStatuses rows the declared remote sources with no cache
+// uninstalledSourceStatuses rows the declared remote sources matching no cache
 // entry — installable, identity unknown until fetched.
-func uninstalledSourceStatuses(remote map[string]string, cachedCanonicals map[string]bool) []Status {
+func uninstalledSourceStatuses(remote []remoteDecl, matchedCanonicals map[string]bool) []Status {
 	var rows []Status
-	for canonical, file := range remote {
-		if cachedCanonicals[canonical] {
+	for _, d := range remote {
+		canonical := d.src.Canonical()
+		if matchedCanonicals[canonical] {
 			continue
 		}
 		rows = append(rows, Status{
-			ID: BundleID{Namespace: "", Name: ""}, Source: canonical, File: file,
+			ID: BundleID{Namespace: "", Name: ""}, Source: canonical, File: d.file,
 			Tier: TierInstalled, Version: "", State: StatusNotInstalled,
 		})
 	}

@@ -49,12 +49,33 @@ func (s Source) Canonical() string {
 	if s.IsLocal() {
 		return "path:" + filepath.Clean(s.Path)
 	}
-	pin := ""
+	return "git:" + s.URL + "//" + s.Path + "@" + s.pin()
+}
+
+// pin returns the declared pin segment: "sha:<sha>" (sha beats ref),
+// "ref:<ref>", or "" for an unpinned source tracking the default branch. It is
+// the per-version fetch key recorded in source.yaml, so different projects
+// declaring the same repository at different pins each resolve the versions
+// fetched under THEIR pin.
+func (s Source) pin() string {
 	switch {
 	case s.SHA != "":
-		pin = "sha:" + s.SHA
+		return "sha:" + s.SHA
 	case s.Ref != "":
-		pin = "ref:" + s.Ref
+		return "ref:" + s.Ref
 	}
-	return "git:" + s.URL + "//" + s.Path + "@" + pin
+	return ""
+}
+
+// Repository returns the pin-stripped source identity: the clone URL plus the
+// subdir Path, without ref/sha. Two remote sources sharing it are the SAME
+// source at install time — re-declaring a different pin (ref edit, sha bump)
+// updates the cache entry in place rather than colliding, mirroring Claude
+// Code's "adding a second marketplace with the same name replaces the first".
+// Distinct subdirs of one repository remain distinct sources.
+func (s Source) Repository() string {
+	if s.IsLocal() {
+		return "path:" + filepath.Clean(s.Path)
+	}
+	return "git:" + s.URL + "//" + s.Path
 }

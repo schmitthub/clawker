@@ -19,18 +19,16 @@ import (
 )
 
 // PrepareStack resolves the current projection, merges it into an in-memory
-// view of the host ledger (printing C5 clobber warnings), validates the union,
-// and renders the stack config over it. It returns the projection's units —
-// the set the caller persists via SeedLedger after a successful compose up —
-// and the render result. The in-memory merge here is render-only; the
-// authoritative persisted merge happens under SeedLedger's file lock.
+// view of the host ledger (a C5 collision is a hard error), validates the
+// union, and renders the stack config over it. It returns the projection's
+// units — the set the caller persists via SeedLedger after a successful
+// compose up — and the render result. The in-memory merge here is
+// render-only; the authoritative persisted merge happens under SeedLedger's
+// file lock.
 func PrepareStack(
-	ios *iostreams.IOStreams,
 	cfg config.Config,
 	monitorDir string,
 ) ([]internalmonitor.ResolvedUnit, internalmonitor.StackRender, error) {
-	cs := ios.ColorScheme()
-
 	cwdUnits, err := internalmonitor.ResolveUnits(cfg)
 	if err != nil {
 		return nil, internalmonitor.StackRender{}, fmt.Errorf("resolve monitoring extensions: %w", err)
@@ -40,12 +38,10 @@ func PrepareStack(
 	if err != nil {
 		return nil, internalmonitor.StackRender{}, fmt.Errorf("load monitoring units ledger: %w", err)
 	}
-	for _, w := range ledger.Merge(cwdUnits, time.Now()) {
-		fmt.Fprintf(
-			ios.ErrOut,
-			"%s monitoring extension %q from %s overwrites the same-named unit seeded from %s\n",
-			cs.WarningIcon(), w.Name, w.NewRoot, w.PrevRoot,
-		)
+	// C5 is a hard error: a same-named loose extension with different content
+	// from another project refuses to seed rather than clobbering the stack.
+	if mergeErr := ledger.Merge(cwdUnits, time.Now()); mergeErr != nil {
+		return nil, internalmonitor.StackRender{}, fmt.Errorf("seed monitoring extensions: %w", mergeErr)
 	}
 	union := ledger.Union()
 	if validateErr := internalmonitor.ValidateSeededSet(union); validateErr != nil {

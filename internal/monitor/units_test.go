@@ -210,7 +210,7 @@ monitoring:
 			require.NoError(t, err)
 
 			ledger := monitor.NewLedger()
-			ledger.Merge(units, time.Unix(0, 0).UTC())
+			require.NoError(t, ledger.Merge(units, time.Unix(0, 0).UTC()))
 			union := ledger.Union()
 
 			data, err := monitor.NewMonitorTemplateData(cfg.SettingsStore().Read(), union)

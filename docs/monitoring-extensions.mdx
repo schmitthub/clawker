@@ -63,10 +63,11 @@ clawker monitor down --volumes
 
 <Note>
   When two projects each ship a **loose** monitoring extension of the same bare
-  name with different content, the project that runs `monitor up` most recently
-  seeds its version onto the shared stack, and the overwrite prints a warning
-  naming both. Bundled extensions carry qualified names and never collide this
-  way.
+  name with different content, the seed is refused — `monitor up` fails with an
+  error naming both project roots. Rename one of the extensions, or reset the
+  seeded stack with `clawker monitor down --volumes`. An identical-content
+  re-seed from another project is a harmless no-op, and bundled extensions
+  carry qualified names and never collide this way.
 </Note>
 
 ## Where extensions come from

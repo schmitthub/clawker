@@ -53,21 +53,26 @@ type Ledger struct {
 	units map[string]SeededUnit
 }
 
-// ClobberWarning reports a C5 monitoring clobber: a bare-named loose unit
-// already seeded by one project is being overwritten by a different-content
-// same-named unit from another project. The overwrite proceeds
-// (current-project-wins, provisional per the locked spec); the warning makes it
-// visible rather than silent.
-type ClobberWarning struct {
+// SeedCollisionError reports a C5 monitoring collision: a bare-named loose
+// unit already seeded by one project is being re-seeded with different content
+// from another project. The seed is refused — a silent (or warned-but-taken)
+// overwrite would let one project's stack artifacts clobber another's.
+type SeedCollisionError struct {
 	Name     string
 	PrevRoot string
 	NewRoot  string
 }
 
-// NewLedger returns an empty in-memory ledger. `monitor init` uses one as a
-// pre-render scratchpad: merging the current projection into an empty ledger and
-// rendering its union yields config for the cwd's selected extensions without
-// touching the persisted host ledger.
+func (e *SeedCollisionError) Error() string {
+	return fmt.Sprintf(
+		"monitoring extension %q from %s collides with the same-named extension already seeded from %s — rename one of the extensions, or reset the seeded stack with 'clawker monitor down --volumes'",
+		e.Name,
+		e.NewRoot,
+		e.PrevRoot,
+	)
+}
+
+// NewLedger returns an empty in-memory ledger.
 func NewLedger() *Ledger {
 	return &Ledger{units: map[string]SeededUnit{}}
 }
@@ -136,27 +141,31 @@ func (l *Ledger) Union() []SeededUnit {
 	return out
 }
 
-// Merge folds the current project's resolved projection into the ledger,
-// returning any C5 clobber warnings. Merge semantics per the locked option-D
-// spec: an identical-content re-seed (same content hash) is a no-op; a
-// different-content re-seed from the SAME project root is an in-place update (a
-// project editing its own loose unit); a different-content re-seed of a
-// bare-named unit from a DIFFERENT project root is a C5 clobber — the overwrite
-// proceeds (current-project-wins) and a warning is returned. Qualified
-// (bundled) units are collision-proof by construction, so they never warn.
-func (l *Ledger) Merge(units []ResolvedUnit, now time.Time) []ClobberWarning {
-	var warnings []ClobberWarning
+// Merge folds the current project's resolved projection into the ledger.
+// Merge semantics: an identical-content re-seed (same content hash) is a
+// no-op; a different-content re-seed from the SAME project root is an in-place
+// update (a project editing its own loose unit); a different-content re-seed
+// of a bare-named unit from a DIFFERENT project root is a C5 collision — the
+// seed is REFUSED with a *SeedCollisionError and the ledger is left
+// unmodified. Qualified (bundled) units are collision-proof by construction,
+// so they never collide.
+func (l *Ledger) Merge(units []ResolvedUnit, now time.Time) error {
 	for _, u := range units {
 		prev, seen := l.units[u.Name]
 		if seen && prev.ContentHash == u.ContentHash {
 			continue
 		}
 		if seen && !u.Qualified && prev.ProjectRoot != u.ProjectRoot {
-			warnings = append(warnings, ClobberWarning{
+			return &SeedCollisionError{
 				Name:     u.Name,
 				PrevRoot: prev.ProjectRoot,
 				NewRoot:  u.ProjectRoot,
-			})
+			}
+		}
+	}
+	for _, u := range units {
+		if prev, seen := l.units[u.Name]; seen && prev.ContentHash == u.ContentHash {
+			continue
 		}
 		l.units[u.Name] = SeededUnit{
 			Name:        u.Name,
@@ -167,7 +176,7 @@ func (l *Ledger) Merge(units []ResolvedUnit, now time.Time) []ClobberWarning {
 			SeededAt:    now,
 		}
 	}
-	return warnings
+	return nil
 }
 
 // Advisory-lock acquisition bounds for the units ledger: give up after
@@ -181,9 +190,9 @@ const (
 // load-merge-save critical section. `monitor up` persists through this — not
 // through an in-memory Ledger held across the compose bring-up — so two
 // concurrent ups from different projects cannot lost-update each other's seeds
-// out of the union. Clobber warnings from this authoritative merge are
-// discarded: the caller already printed them from its pre-render merge, and
-// re-printing near-identical warnings post-compose would only confuse.
+// out of the union. A C5 collision from this authoritative merge (possible
+// when a concurrent up seeded between the caller's pre-render check and here)
+// refuses the seed and surfaces as an error.
 func SeedLedger(ctx context.Context, monitorDir string, units []ResolvedUnit, now time.Time) error {
 	fl := flock.New(filepath.Join(monitorDir, UnitsLedgerFile) + ".lock")
 	lockCtx, cancel := context.WithTimeout(ctx, ledgerLockTimeout)
@@ -203,7 +212,9 @@ func SeedLedger(ctx context.Context, monitorDir string, units []ResolvedUnit, no
 	if err != nil {
 		return err
 	}
-	ledger.Merge(units, now)
+	if mergeErr := ledger.Merge(units, now); mergeErr != nil {
+		return mergeErr
+	}
 	return ledger.Save(monitorDir)
 }
 
