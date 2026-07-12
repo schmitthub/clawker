@@ -124,6 +124,24 @@ func TestInstall_Idempotent(t *testing.T) {
 	assert.Equal(t, 1, count)
 }
 
+// --project outside any project dir is a hard error naming the fix; the
+// default --user target needs no project and must keep working anywhere.
+func TestInstall_ProjectFlagOutsideProject_Errors(t *testing.T) {
+	testenv.New(t)
+	f, _, _ := newFactory(t)
+
+	err := run(t, f, "https://example.com/acme/tools.git", "--ref", "v1.0.0", "--project")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not inside a project")
+	assert.Contains(t, err.Error(), "--user")
+
+	// Nothing was declared anywhere: the user-layer config was not created.
+	path, pathErr := consts.UserProjectConfigFilePath()
+	require.NoError(t, pathErr)
+	assert.NoFileExists(t, path)
+}
+
 // An unpinned remote source (no --ref/--sha) is legal: the entry is written
 // url-only and the prefetch clones the repository's default branch tip.
 func TestInstall_RemoteUnpinned_TracksDefaultBranch(t *testing.T) {
