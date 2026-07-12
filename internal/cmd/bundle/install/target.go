@@ -12,11 +12,10 @@ import (
 	"github.com/schmitthub/clawker/internal/storage"
 )
 
-// resolveTarget determines the clawker.yaml layer the declaration is written to
-// and whether that layer is the user config-dir layer (which has no project
-// root and so requires an absolute local path). The layer is selected by the
-// mutually exclusive --user/--project/--local flags, defaulting to --user.
-func resolveTarget(cfg config.Config, opts *InstallOptions) (string, bool, error) {
+// resolveTarget determines the clawker.yaml layer the declaration is written
+// to. The layer is selected by the mutually exclusive --user/--project/--local
+// flags, defaulting to --user.
+func resolveTarget(cfg config.Config, opts *InstallOptions) (string, error) {
 	set := 0
 	for _, b := range []bool{opts.User, opts.Project, opts.Local} {
 		if b {
@@ -24,20 +23,19 @@ func resolveTarget(cfg config.Config, opts *InstallOptions) (string, bool, error
 		}
 	}
 	if set > 1 {
-		return "", false, errors.New("--user, --project, and --local are mutually exclusive")
+		return "", errors.New("--user, --project, and --local are mutually exclusive")
 	}
 	switch {
 	case opts.Project:
-		path, projErr := projectTarget(cfg, consts.ProjectConfigFile)
-		return path, false, projErr
+		return projectTarget(cfg, consts.ProjectConfigFile)
 	case opts.Local:
 		return localTarget(cfg)
 	default:
 		path, pathErr := consts.UserProjectConfigFilePath()
 		if pathErr != nil {
-			return "", false, fmt.Errorf("resolving user config path: %w", pathErr)
+			return "", fmt.Errorf("resolving user config path: %w", pathErr)
 		}
-		return path, true, nil
+		return path, nil
 	}
 }
 
@@ -64,29 +62,29 @@ func projectTarget(cfg config.Config, filename string) (string, error) {
 // localTarget resolves the uncommitted project override layer
 // (clawker.local.yaml): a discovered layer of that filename, else the path
 // beside the project clawker.yaml target using the same placement convention.
-func localTarget(cfg config.Config) (string, bool, error) {
+func localTarget(cfg config.Config) (string, error) {
 	root := cfg.ProjectRoot()
 	if root == "" {
-		return "", false, errors.New("not inside a project — use --user (the default) or run inside a project")
+		return "", errors.New("not inside a project — use --user (the default) or run inside a project")
 	}
 	targets, err := cfg.ProjectStore().WriteTargets()
 	if err != nil {
-		return "", false, fmt.Errorf("resolving local write target: %w", err)
+		return "", fmt.Errorf("resolving local write target: %w", err)
 	}
 	for _, t := range targets {
 		if t.Filename == consts.ProjectLocalConfigFile && underRoot(t.Path, root) {
-			return t.Path, false, nil
+			return t.Path, nil
 		}
 	}
 	projPath, projErr := projectTarget(cfg, consts.ProjectConfigFile)
 	if projErr != nil {
-		return "", false, projErr
+		return "", projErr
 	}
 	// Place the override beside the resolved project clawker.yaml in its own
 	// placement form. storage owns the dual-placement dot-form convention;
 	// consuming its helper keeps this write target from drifting out of sync
 	// with discovery.
-	return storage.SiblingTarget(projPath, consts.ProjectLocalConfigFile), false, nil
+	return storage.SiblingTarget(projPath, consts.ProjectLocalConfigFile), nil
 }
 
 // underRoot reports whether path lies within root.

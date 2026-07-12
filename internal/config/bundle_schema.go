@@ -21,7 +21,7 @@ type BundleSource struct {
 	URL        string `yaml:"url,omitempty"         label:"URL"         desc:"Git clone URL (https or ssh) of the bundle's source repository; set for a remote bundle. Mutually exclusive with a path-only local source."`
 	Ref        string `yaml:"ref,omitempty"         label:"Ref"         desc:"Branch or tag to fetch from a remote url; at least one of ref or sha is required on a remote source, and sha takes precedence when both are set. Ignored for a local path source."`
 	SHA        string `yaml:"sha,omitempty"         label:"SHA"         desc:"Full 40-character commit SHA pinning a remote url for a reproducible fetch; takes precedence over ref when both are set. Ignored for a local path source."`
-	Path       string `yaml:"path,omitempty"        label:"Path"        desc:"With url: a subdirectory of the repository to load the bundle from (monorepo case). Without url: a local directory loaded in place with no cache copy (the dev loop)."`
+	Path       string `yaml:"path,omitempty"        label:"Path"        desc:"With url: a subdirectory of the repository to load the bundle from (monorepo case). Without url: a local directory loaded in place with no cache copy (the dev loop); a relative path resolves against the directory of the file declaring it."`
 	AutoUpdate bool   `yaml:"auto_update,omitempty" label:"Auto Update" desc:"Refetch this remote bundle when its source version changes, checked at the start of bundle-consuming commands (build, run, monitor up); off by default. No effect on sha-pinned or local sources."`
 }
 

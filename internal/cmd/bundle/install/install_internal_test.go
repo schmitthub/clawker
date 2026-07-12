@@ -1,6 +1,8 @@
 package install
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -84,4 +86,34 @@ func TestUnderRoot(t *testing.T) {
 	assert.True(t, underRoot("/root/sub/x", "/root"))
 	assert.True(t, underRoot("/root", "/root"))
 	assert.False(t, underRoot("/other/x", "/root"))
+}
+
+// rewriteLocalPath re-anchors the cwd-relative CLI argument to the directory of
+// the yaml file it lands in, since a stored relative path resolves against its
+// declaring file. Committed layers keep a portable relative spelling; an
+// absolute argument round-trips through Rel and back to the same directory.
+func TestRewriteLocalPath(t *testing.T) {
+	base := t.TempDir()
+	target := filepath.Join(base, "proj", "clawker.yaml")
+	require.NoError(t, os.MkdirAll(filepath.Join(base, "proj", "sub"), 0o755))
+
+	t.Run("cwd inside the target's directory", func(t *testing.T) {
+		t.Chdir(filepath.Join(base, "proj", "sub"))
+		got, err := rewriteLocalPath("./vendor/x", target)
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join("sub", "vendor", "x"), got)
+	})
+
+	t.Run("cwd outside the target's directory climbs out", func(t *testing.T) {
+		t.Chdir(base)
+		got, err := rewriteLocalPath("./elsewhere/x", target)
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join("..", "elsewhere", "x"), got)
+	})
+
+	t.Run("absolute argument becomes relative to the target file", func(t *testing.T) {
+		got, err := rewriteLocalPath(filepath.Join(base, "proj", "vendor", "x"), target)
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join("vendor", "x"), got)
+	})
 }

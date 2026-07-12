@@ -57,7 +57,9 @@ Sources are **git-generic** — any host, over HTTPS or SSH, exactly as you writ
 the URL. A remote source requires either `ref` (a branch or tag) or `sha` (a
 full 40-character commit); when both are set, `sha` wins and pins a reproducible
 fetch. A `path:`-only entry loads a local directory in place with no cache copy,
-which is how you iterate on a bundle you are authoring.
+which is how you iterate on a bundle you are authoring. A relative `path`
+resolves against the directory of the file that declares it — the same rule in
+every layer, so committed project files stay portable across machines.
 
 <Note>
   Declaring a bundle makes it **available**, but never fetches it on its own.

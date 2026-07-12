@@ -16,10 +16,17 @@ func TestValidateBundleSource_Valid(t *testing.T) {
 		{URL: "https://example.com/x.git", Ref: "v1.0.0", SHA: "", Path: "", AutoUpdate: false},
 		{URL: "https://example.com/x.git", Ref: "", SHA: validSHA, Path: "", AutoUpdate: false},
 		{URL: "https://example.com/x.git", Ref: "main", SHA: "", Path: "sub/dir", AutoUpdate: true},
-		{URL: "", Ref: "", SHA: "", Path: "./vendor/x", AutoUpdate: false}, // project-layer relative
+		{
+			URL:        "",
+			Ref:        "",
+			SHA:        "",
+			Path:       "./vendor/x",
+			AutoUpdate: false,
+		}, // relative — anchors to the declaring file
+		{URL: "", Ref: "", SHA: "", Path: "/opt/bundles/x", AutoUpdate: false}, // absolute
 	}
 	for _, src := range valid {
-		require.NoError(t, config.ValidateBundleSource(src, false), "src=%+v", src)
+		require.NoError(t, config.ValidateBundleSource(src), "src=%+v", src)
 	}
 }
 
@@ -35,14 +42,6 @@ func TestValidateBundleSource_Invalid(t *testing.T) {
 		{URL: "", Ref: "", SHA: "", Path: "", AutoUpdate: false},
 	}
 	for _, src := range invalid {
-		assert.Error(t, config.ValidateBundleSource(src, false), "src=%+v", src)
+		assert.Error(t, config.ValidateBundleSource(src), "src=%+v", src)
 	}
-}
-
-func TestValidateBundleSource_ConfigDirLayerRequiresAbsolutePath(t *testing.T) {
-	relative := config.BundleSource{URL: "", Ref: "", SHA: "", Path: "./vendor/x", AutoUpdate: false}
-	require.Error(t, config.ValidateBundleSource(relative, true))
-
-	absolute := config.BundleSource{URL: "", Ref: "", SHA: "", Path: "/opt/bundles/x", AutoUpdate: false}
-	require.NoError(t, config.ValidateBundleSource(absolute, true))
 }

@@ -3,7 +3,6 @@ package config
 import (
 	"errors"
 	"fmt"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -155,12 +154,7 @@ func validateOverlayEntry(label string) func(keyPath string, overlay map[string]
 // SHA is rejected so the resolver never has to canonicalize it).
 var shaRe = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
-// validateBundlesNode validates one clawker.yaml layer's bundles: node. It
-// takes the whole LayerInfo (not just the decoded data) because the
-// config-dir-layer absolute-path rule is layer-position-dependent: a local
-// path-only source in the user config-dir clawker.yaml has no project root to
-// resolve a relative path against, so it must be absolute — a project-layer
-// file resolves relative paths against its own project root and is fine. The
+// validateBundlesNode validates one clawker.yaml layer's bundles: node. The
 // bundles: list is union-merged across layers, so this per-layer walk (never
 // the merged tree) is what surfaces a malformed source hidden in a
 // lower-priority file behind a valid winning layer.
@@ -174,7 +168,6 @@ func validateBundlesNode(layer storage.LayerInfo) error {
 	if !isList {
 		return fmt.Errorf("%s: bundles: must be a list of bundle sources", label)
 	}
-	configDirLayer := isConfigDirLayer(layer)
 	for i, item := range list {
 		keyPath := fmt.Sprintf("bundles[%d]", i)
 		entry, isMap := nodeMapping(item)
@@ -184,7 +177,7 @@ func validateBundlesNode(layer storage.LayerInfo) error {
 		if err := validateKnownFields(label, keyPath, entry, knownBundleSourceFields()); err != nil {
 			return err
 		}
-		if err := validateBundleSourceEntry(label, keyPath, entry, configDirLayer); err != nil {
+		if err := validateBundleSourceEntry(label, keyPath, entry); err != nil {
 			return err
 		}
 	}
@@ -194,8 +187,8 @@ func validateBundlesNode(layer storage.LayerInfo) error {
 // validateBundleSourceEntry checks one bundle source: exactly one of a remote
 // url (optionally with a subdir path + at least one of ref/sha) or a local
 // path-alone source (no url, no ref/sha). A sha must be a full 40-hex commit
-// id; a config-dir-layer path source must be absolute.
-func validateBundleSourceEntry(label, keyPath string, entry map[string]any, configDirLayer bool) error {
+// id.
+func validateBundleSourceEntry(label, keyPath string, entry map[string]any) error {
 	src, err := decodeBundleSourceFields(label, keyPath, entry)
 	if err != nil {
 		return err
@@ -203,7 +196,7 @@ func validateBundleSourceEntry(label, keyPath string, entry map[string]any, conf
 	if src.hasURL {
 		return validateRemoteBundleSource(label, keyPath, src)
 	}
-	return validateLocalBundleSource(label, keyPath, src, configDirLayer)
+	return validateLocalBundleSource(label, keyPath, src)
 }
 
 // bundleSourceFields is the type-checked field view of one bundles[] entry,
@@ -257,27 +250,16 @@ func validateRemoteBundleSource(label, keyPath string, src bundleSourceFields) e
 }
 
 // validateLocalBundleSource checks a path-alone source (the dev loop): ref/sha
-// are meaningless without something to fetch, and a config-dir-layer path must
-// be absolute because that layer has no project root to resolve against.
-func validateLocalBundleSource(label, keyPath string, src bundleSourceFields, configDirLayer bool) error {
+// are meaningless without something to fetch. A relative path is legal in any
+// layer — it resolves against the declaring file's directory.
+func validateLocalBundleSource(label, keyPath string, src bundleSourceFields) error {
 	if src.hasRef || src.hasSHA {
 		return fmt.Errorf("%s: %s: ref and sha require a url", label, keyPath)
 	}
 	if !src.hasPath {
 		return fmt.Errorf("%s: %s: must set url or path", label, keyPath)
 	}
-	if err := validatePathValue(label, keyPath+".path", src.path); err != nil {
-		return err
-	}
-	if configDirLayer && !filepath.IsAbs(src.path) {
-		return fmt.Errorf(
-			"%s: %s.path: %q must be an absolute path in the user config-dir layer (a relative path there has no project root to resolve against)",
-			label,
-			keyPath,
-			src.path,
-		)
-	}
-	return nil
+	return validatePathValue(label, keyPath+".path", src.path)
 }
 
 // ValidateBundleSource validates a typed bundle source before it is written to
@@ -286,16 +268,14 @@ func validateLocalBundleSource(label, keyPath string, src bundleSourceFields, co
 // file. It enforces the same invariants as the per-layer load validator
 // (validateBundlesNode) over a typed value: a remote source (url set) requires
 // ref or sha and a full 40-hex sha when given; a local path-alone source
-// (no url) forbids ref/sha and, in the user config-dir layer, requires an
-// absolute path. configDirLayer reports whether the write target is that
-// config-dir clawker.yaml (which has no project root to anchor a relative
-// path). The two front doors guard the same invariant at their respective entry
-// points — a value authored in a file, and a value constructed at the CLI.
-func ValidateBundleSource(src BundleSource, configDirLayer bool) error {
+// (no url) forbids ref/sha. The two front doors guard the same invariant at
+// their respective entry points — a value authored in a file, and a value
+// constructed at the CLI.
+func ValidateBundleSource(src BundleSource) error {
 	if src.URL != "" {
 		return validateRemoteBundleSourceTyped(src)
 	}
-	return validateLocalBundleSourceTyped(src, configDirLayer)
+	return validateLocalBundleSourceTyped(src)
 }
 
 // validateRemoteBundleSourceTyped checks a url-bearing typed source: at least
@@ -310,25 +290,16 @@ func validateRemoteBundleSourceTyped(src BundleSource) error {
 	return nil
 }
 
-// validateLocalBundleSourceTyped checks a path-alone typed source: no ref/sha, a
-// non-empty path, and (in the config-dir layer) an absolute path.
-func validateLocalBundleSourceTyped(src BundleSource, configDirLayer bool) error {
+// validateLocalBundleSourceTyped checks a path-alone typed source: no ref/sha
+// and a non-empty path.
+func validateLocalBundleSourceTyped(src BundleSource) error {
 	if src.Ref != "" || src.SHA != "" {
 		return errors.New("bundle source ref and sha require a url")
 	}
 	if src.Path == "" {
 		return errors.New("bundle source must set url or path")
 	}
-	if err := validatePathValue("bundle source", "path", src.Path); err != nil {
-		return err
-	}
-	if configDirLayer && !filepath.IsAbs(src.Path) {
-		return fmt.Errorf(
-			"bundle source path %q must be absolute in the user config-dir layer (a relative path there has no project root to resolve against)",
-			src.Path,
-		)
-	}
-	return nil
+	return validatePathValue("bundle source", "path", src.Path)
 }
 
 // optionalStringField reads an optional string-valued key from a decoded map
@@ -347,17 +318,6 @@ func optionalStringField(label, keyPath, field string, entry map[string]any) (st
 		return "", true, fmt.Errorf("%s: %s.%s: must be a string", label, keyPath, field)
 	}
 	return s, true, nil
-}
-
-// isConfigDirLayer reports whether a discovered layer is the user config-dir
-// clawker.yaml (as opposed to a project walk-up layer). It compares the
-// layer's directory against consts.ConfigDir(); a virtual/in-memory layer
-// (empty Path) is never the config-dir layer.
-func isConfigDirLayer(layer storage.LayerInfo) bool {
-	if layer.Path == "" {
-		return false
-	}
-	return filepath.Clean(filepath.Dir(layer.Path)) == filepath.Clean(consts.ConfigDir())
 }
 
 // validateEntryMap iterates a name→entry mapping (stacks:, harnesses:,
@@ -466,7 +426,7 @@ func validatePathValue(label, keyPath string, raw any) error {
 	}
 	if strings.Contains(p, "~") {
 		return fmt.Errorf(
-			"%s: %s: %q must not use ~ home-dir expansion — register a relative (from the project root) or absolute path",
+			"%s: %s: %q must not use ~ home-dir expansion — declare a relative (from the declaring file's directory) or absolute path",
 			label,
 			keyPath,
 			p,
@@ -474,7 +434,7 @@ func validatePathValue(label, keyPath string, raw any) error {
 	}
 	if strings.Contains(p, "$") {
 		return fmt.Errorf(
-			"%s: %s: %q must not use $VAR environment-variable expansion — register a relative (from the project root) or absolute path",
+			"%s: %s: %q must not use $VAR environment-variable expansion — declare a relative (from the declaring file's directory) or absolute path",
 			label,
 			keyPath,
 			p,

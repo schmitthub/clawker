@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -108,17 +109,14 @@ func installRun(ctx context.Context, opts *InstallOptions) error {
 		return installDeclared(ctx, opts)
 	}
 
-	targetPath, configDirLayer, err := resolveTarget(cfg, opts)
+	targetPath, err := resolveTarget(cfg, opts)
 	if err != nil {
 		return err
 	}
 
-	src, err := classifySource(opts)
+	src, err := prepareSource(opts, targetPath)
 	if err != nil {
 		return err
-	}
-	if valErr := config.ValidateBundleSource(src, configDirLayer); valErr != nil {
-		return fmt.Errorf("invalid bundle source: %w", valErr)
 	}
 
 	updated, alreadyDeclared := planSource(cfg, targetPath, src)
@@ -182,6 +180,25 @@ func prefetch(ctx context.Context, opts *InstallOptions, src config.BundleSource
 	}
 }
 
+// prepareSource classifies the source argument, re-anchors a local path to the
+// target file's directory (a stored relative path resolves against its
+// declaring file), and validates the result at the write front door.
+func prepareSource(opts *InstallOptions, targetPath string) (config.BundleSource, error) {
+	src, err := classifySource(opts)
+	if err != nil {
+		return config.BundleSource{}, err
+	}
+	if src.URL == "" {
+		if src.Path, err = rewriteLocalPath(src.Path, targetPath); err != nil {
+			return config.BundleSource{}, err
+		}
+	}
+	if valErr := config.ValidateBundleSource(src); valErr != nil {
+		return config.BundleSource{}, fmt.Errorf("invalid bundle source: %w", valErr)
+	}
+	return src, nil
+}
+
 // classifySource turns the source argument and flags into a typed BundleSource:
 // a local directory path (loaded in place), a git clone URL, or an owner/repo
 // GitHub shorthand expanded to a URL. ref/sha/subdir are meaningful only for a
@@ -214,6 +231,28 @@ func remoteSource(url string, opts *InstallOptions) config.BundleSource {
 		Path:       opts.Subdir,
 		AutoUpdate: opts.AutoUpdate,
 	}
+}
+
+// rewriteLocalPath re-anchors a local path argument (cwd-relative from the
+// user's shell) to the config file it is written into: a stored relative path
+// resolves against the declaring file's directory, so the entry is rewritten
+// relative to that directory — committed project files stay portable. When no
+// relative form exists (e.g. across volumes) the absolute path is written
+// instead. ~ and $VAR spellings expand first.
+func rewriteLocalPath(arg, targetPath string) (string, error) {
+	expanded, err := config.ExpandHostPath(arg)
+	if err != nil {
+		return "", fmt.Errorf("expanding path %q: %w", arg, err)
+	}
+	abs, err := filepath.Abs(expanded)
+	if err != nil {
+		return "", fmt.Errorf("resolving path %q: %w", arg, err)
+	}
+	rel, relErr := filepath.Rel(filepath.Dir(targetPath), abs)
+	if relErr != nil {
+		return abs, nil //nolint:nilerr // an inexpressible relative form falls back to the absolute path by design
+	}
+	return rel, nil
 }
 
 // isLocalPathArg reports whether the argument is a local directory path — an

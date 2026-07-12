@@ -368,7 +368,7 @@
             "type": "boolean"
           },
           "path": {
-            "description": "With url: a subdirectory of the repository to load the bundle from (monorepo case). Without url: a local directory loaded in place with no cache copy (the dev loop).",
+            "description": "With url: a subdirectory of the repository to load the bundle from (monorepo case). Without url: a local directory loaded in place with no cache copy (the dev loop); a relative path resolves against the directory of the file declaring it.",
             "title": "Path",
             "type": "string"
           },

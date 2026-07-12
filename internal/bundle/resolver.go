@@ -170,7 +170,7 @@ func (r *Resolver) claimInPlaceBundles(out map[BundleID]*ResolvedBundle) ([]Warn
 		if !src.IsLocal() {
 			continue
 		}
-		dir, err := r.resolveLocalPath(src)
+		dir, err := resolveLocalPath(src, decl.File)
 		if err != nil {
 			return nil, err
 		}
@@ -244,22 +244,23 @@ func selectVersion(versions []string) string {
 }
 
 // resolveLocalPath resolves a local in-place source path to an absolute
-// directory: an absolute path verbatim, a relative path against the project
-// root. A relative path with no anchored project root is a hard error (the
-// config front door rejects a relative path in the config-dir layer, but the
-// resolver defends against it too).
-func (r *Resolver) resolveLocalPath(src Source) (string, error) {
+// directory: an absolute path verbatim, a relative path against the directory
+// of the file that declared it — one rule for every layer (a project-layer
+// clawker.yaml sits at the project root, so the historical relative-to-root
+// behavior is unchanged there). A relative path from a declaration with no
+// file of origin is a hard error; declarations always carry their layer file,
+// so this only defends against a malformed caller.
+func resolveLocalPath(src Source, declFile string) (string, error) {
 	if filepath.IsAbs(src.Path) {
 		return filepath.Clean(src.Path), nil
 	}
-	root := r.cfg.ProjectRoot()
-	if root == "" {
+	if declFile == "" {
 		return "", &SourceError{
 			Source: src,
-			Err:    fmt.Errorf("relative bundle path %q has no project root to resolve against", src.Path),
+			Err:    fmt.Errorf("relative bundle path %q has no declaring file to resolve against", src.Path),
 		}
 	}
-	return filepath.Join(root, src.Path), nil
+	return filepath.Join(filepath.Dir(declFile), src.Path), nil
 }
 
 // List enumerates every resolvable component of the given type across all tiers,

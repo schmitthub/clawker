@@ -98,7 +98,7 @@ func TestResolve_BareIgnoresBrokenBundleDecl(t *testing.T) {
 	f.decls = []config.BundleDeclaration{
 		{
 			Source: config.BundleSource{URL: "", Ref: "", SHA: "", AutoUpdate: false, Path: "./vendor/broken"},
-			File:   "clawker.yaml",
+			File:   filepath.Join(f.projectDir, "clawker.yaml"),
 		},
 	}
 	// The declared path does not exist; Bundles() would fail.
@@ -174,7 +174,7 @@ func TestResolve_QualifiedInPlaceOverridesCache(t *testing.T) {
 	f.decls = []config.BundleDeclaration{
 		{
 			Source: config.BundleSource{URL: "", Ref: "", SHA: "", AutoUpdate: false, Path: "./vendor/tools"},
-			File:   "clawker.yaml",
+			File:   filepath.Join(f.projectDir, "clawker.yaml"),
 		},
 	}
 
@@ -203,11 +203,11 @@ func TestBundles_C1Collision(t *testing.T) {
 	f.decls = []config.BundleDeclaration{
 		{
 			Source: config.BundleSource{URL: "", Ref: "", SHA: "", AutoUpdate: false, Path: "./vendor/a"},
-			File:   "project.clawker.yaml",
+			File:   filepath.Join(f.projectDir, "project.clawker.yaml"),
 		},
 		{
 			Source: config.BundleSource{URL: "", Ref: "", SHA: "", AutoUpdate: false, Path: "./vendor/b"},
-			File:   "user.clawker.yaml",
+			File:   filepath.Join(f.projectDir, "user.clawker.yaml"),
 		},
 	}
 
@@ -228,32 +228,59 @@ func TestBundles_C1IdempotentSameSource(t *testing.T) {
 
 	// The same source declared twice (e.g. project + .local) is idempotent —
 	// including under cosmetically different spellings of the same directory
-	// (relative vs absolute vs unclean): the claim key is the resolved
-	// absolute path, so no false C1.
+	// (relative vs absolute vs unclean, anchored at each declaring file's own
+	// directory): the claim key is the resolved absolute path, so no false C1.
 	f.decls = []config.BundleDeclaration{
 		{
 			Source: config.BundleSource{URL: "", Ref: "", SHA: "", AutoUpdate: false, Path: "./vendor/tools"},
-			File:   "a.yaml",
+			File:   filepath.Join(f.projectDir, "a.yaml"),
 		},
 		{
 			Source: config.BundleSource{URL: "", Ref: "", SHA: "", AutoUpdate: false, Path: "vendor/tools"},
-			File:   "b.yaml",
+			File:   filepath.Join(f.projectDir, "b.yaml"),
 		},
-		{Source: config.BundleSource{URL: "", Ref: "", SHA: "", AutoUpdate: false, Path: dir}, File: "c.yaml"},
+		{
+			Source: config.BundleSource{URL: "", Ref: "", SHA: "", AutoUpdate: false, Path: dir},
+			File:   filepath.Join(f.projectDir, "sub", "c.yaml"), // absolute path — anchor immaterial
+		},
 		{
 			Source: config.BundleSource{
 				URL:        "",
 				Ref:        "",
 				SHA:        "",
 				AutoUpdate: false,
-				Path:       "./vendor/../vendor/tools/",
+				Path:       "../project/vendor/../vendor/tools/",
 			},
-			File: "d.yaml",
+			File: filepath.Join(f.projectDir, "d.yaml"),
 		},
 	}
 	bundles, _, err := f.r.Bundles()
 	require.NoError(t, err)
 	require.Len(t, bundles, 1)
+}
+
+// A declaration in the user config-dir clawker.yaml anchors its relative path
+// at the config dir — the same one rule as every other layer, no project root
+// involved.
+func TestBundles_ConfigDirLayerRelativePath(t *testing.T) {
+	f := newResolverFixture(t)
+	f.cfg.ProjectRootFunc = func() string { return "" } // no project in sight
+	dir := filepath.Join(consts.ConfigDir(), "vendor", "tools")
+	writeManifest(t, dir, "namespace: acme\nname: tools\n")
+	writeFile(t, dir, "stacks/node/stack.yaml", "description: x\n")
+	f.decls = []config.BundleDeclaration{
+		{
+			Source: config.BundleSource{URL: "", Ref: "", SHA: "", AutoUpdate: false, Path: "./vendor/tools"},
+			File:   filepath.Join(consts.ConfigDir(), "clawker.yaml"),
+		},
+	}
+
+	bundles, _, err := f.r.Bundles()
+	require.NoError(t, err)
+	require.Len(t, bundles, 1)
+	b, ok := bundles[BundleID{Namespace: "acme", Name: "tools"}]
+	require.True(t, ok)
+	assert.Equal(t, TierInPlace, b.Tier)
 }
 
 func TestList_BareShadowRows(t *testing.T) {
@@ -309,7 +336,7 @@ func TestBundles_SurfacesWarnings(t *testing.T) {
 	f.decls = []config.BundleDeclaration{
 		{
 			Source: config.BundleSource{URL: "", Ref: "", SHA: "", AutoUpdate: false, Path: "./vendor/tools"},
-			File:   "clawker.yaml",
+			File:   filepath.Join(f.projectDir, "clawker.yaml"),
 		},
 	}
 
@@ -319,12 +346,27 @@ func TestBundles_SurfacesWarnings(t *testing.T) {
 	assert.Contains(t, warnings[0].Message, "unknown top-level directory")
 }
 
-func TestResolveLocalPath_RelativeNeedsProjectRoot(t *testing.T) {
-	f := newResolverFixture(t)
-	f.cfg.ProjectRootFunc = func() string { return "" }
-	_, err := f.r.resolveLocalPath(Source{URL: "", Ref: "", SHA: "", Path: "./rel"})
-	var se *SourceError
-	require.ErrorAs(t, err, &se)
+func TestResolveLocalPath(t *testing.T) {
+	t.Run("relative anchors to the declaring file's directory", func(t *testing.T) {
+		got, err := resolveLocalPath(
+			Source{URL: "", Ref: "", SHA: "", Path: "./vendor/b"},
+			filepath.Join("/cfg", "home", "clawker.yaml"),
+		)
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join("/cfg", "home", "vendor", "b"), got)
+	})
+
+	t.Run("absolute path ignores the declaring file", func(t *testing.T) {
+		got, err := resolveLocalPath(Source{URL: "", Ref: "", SHA: "", Path: "/opt/b/"}, "")
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Clean("/opt/b"), got)
+	})
+
+	t.Run("relative with no declaring file is a SourceError", func(t *testing.T) {
+		_, err := resolveLocalPath(Source{URL: "", Ref: "", SHA: "", Path: "./rel"}, "")
+		var se *SourceError
+		require.ErrorAs(t, err, &se)
+	})
 }
 
 func TestSelectVersion(t *testing.T) {

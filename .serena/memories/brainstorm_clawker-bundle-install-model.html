@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="brainstorm:status" content="Active">
 <meta name="brainstorm:created" content="2026-07-10">
-<meta name="brainstorm:updated" content="2026-07-10">
+<meta name="brainstorm:updated" content="2026-07-12">
 <title>Brainstorm: Clawker Bundle Install Model</title>
 <style>
   :root { --bg:#ffffff; --fg:#1a1a1a; --fg-soft:#2e2e2e; --muted:#555555;
@@ -47,7 +47,7 @@
   <dl class="metadata">
     <dt>Status</dt><dd><strong>Active</strong></dd>
     <dt>Created</dt><dd><time itemprop="dateCreated" datetime="2026-07-10">2026-07-10</time></dd>
-    <dt>Last Updated</dt><dd><time itemprop="dateModified" datetime="2026-07-10">2026-07-10</time></dd>
+    <dt>Last Updated</dt><dd><time itemprop="dateModified" datetime="2026-07-12">2026-07-12</time></dd>
   </dl>
 </header>
 
@@ -279,8 +279,9 @@ user:     &lt;config-dir&gt;/{harnesses,stacks,monitoring}/&lt;name&gt;/</pre>
     <li><span class="tag tag-decision">Stale harness label at container start = hard error (LOCKED 2026-07-10)</span> Container whose harness label names a bundle no longer declared/cached refuses to start; error names the label and the remedy. A container never starts with a weaker egress floor than it was built for.</li>
     <li><span class="tag tag-decision">Separator = <code>.</code> dot (LOCKED 2026-07-10, supersedes same-day <code>__</code> lock)</span> Qualified name = <code>namespace.bundle.component</code> — <code>acme.tools.codex</code> — ONE spelling on every surface: yaml selection keys, CLI args, <code>@:acme.tools.codex</code> selector, image tags (<code>clawker-proj:acme.tools.codex</code>), volume names, index names. No colon form, no translation/mapping layers. Bijective: name charset (<code>a-z0-9-</code>) contains no dot, so splits are unambiguous; always exactly 3 segments when qualified.
         <span class="why">Why: user pick 2026-07-10 ("dots are better") — <code>__</code> twice per name rejected; dot matches clawker's existing <code>clawker.project.agent</code> hierarchy grammar. Legality: OCI tag regex <code>[a-zA-Z0-9_][a-zA-Z0-9._-]{0,127}</code> permits dots (non-leading; our names start a-z0-9); LIVE-VERIFIED 2026-07-10 — <code>docker volume create clawker-septest-acme.tools.codex-config</code> and <code>docker tag … clawker-septest:acme.tools.codex</code> both accepted; OpenSearch index names allow mid-name dots (logstash-date convention).</span></li>
-    <li><span class="tag tag-decision">Config-dir-layer local path source must be absolute (PROVISIONAL 2026-07-10, implementation fill — flagged for user ratification)</span> A <code>path</code>-only bundle source declared in the user config-dir clawker.yaml must be an absolute path; a relative path there is a load error. Project-layer files keep relative paths (resolved against the project root).
-        <span class="why">Why: the config-dir layer has no project root to anchor a relative path against — accepting one would make resolution depend on whatever CWD the command ran from. Spec was silent; this is a first-principles fill made during P2 implementation, not a legacy carry-over. Reversible: relaxing a validation rule later breaks nothing.</span></li>
+    <li><span class="tag tag-decision">Relative path source = relative to the DECLARING FILE's directory, every layer (RATIFIED 2026-07-12, supersedes the provisional config-dir-absolute rule)</span> One uniform rule: an absolute <code>path:</code> is used verbatim; a relative one resolves against the directory of the clawker.yaml layer that declared it — project layer, local overlay, and user config-dir alike. No layer special case, no validation ban, <code>isConfigDirLayer</code> deleted. The CLI (<code>bundle install ./dir</code>) re-anchors its cwd-relative argument at write time: <code>filepath.Abs</code> from cwd, then <code>filepath.Rel</code> against the target file's directory (absolute fallback when no relative form exists), so committed project files stay portable and a user-layer entry round-trips regardless of invocation cwd.
+        <span class="why">Why: user ruled the provisional layer special case "adding complexity" — and the uniform rule is the meta-rule answer verbatim: codex marketplace.json resolves relative sources "against the root directory of the marketplace.json file itself", and codex's CLI canonicalizes relative→absolute at config-write time (deepwiki-grounded 2026-07-12). Project clawker.yaml sits at the project root, so the old relative-to-project-root behavior is unchanged where it mattered.</span>
+        <span class="how">How: resolver <code>resolveLocalPath(src, decl.File)</code> anchors at <code>filepath.Dir(File)</code>; <code>rewriteLocalPath</code> in cmd/bundle/install does the CLI re-anchor (with ~/$VAR expansion).</span></li>
     <li><span class="tag tag-decision">Bundle source <code>sha</code> = full 40-char lowercase hex, rejected otherwise (PROVISIONAL 2026-07-10, implementation fill — flagged for user ratification)</span> Abbreviated or uppercase SHAs are load errors, not normalized.
         <span class="why">Why: rejecting at the front door means the fetch engine and cache paths never canonicalize; git emits lowercase, so the rule costs users nothing. Spec locked only "full 40-character sha"; the reject-don't-normalize stance is an implementation fill.</span></li>
     <li><span class="tag tag-decision">In-place path source wins over a cached bundle of the same identity (PROVISIONAL 2026-07-10, P3 implementation fill — flagged for user ratification)</span> When a declared <code>path:</code> source and the host cache both hold the same (namespace, name), the in-place directory is used.

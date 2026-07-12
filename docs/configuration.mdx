@@ -309,7 +309,7 @@ bundles:
     ref: <string>  # default: n/a | required: false
     # Full 40-character commit SHA pinning a remote url for a reproducible fetch; takes precedence over ref when both are set. Ignored for a local path source.
     sha: <string>  # default: n/a | required: false
-    # With url: a subdirectory of the repository to load the bundle from (monorepo case). Without url: a local directory loaded in place with no cache copy (the dev loop).
+    # With url: a subdirectory of the repository to load the bundle from (monorepo case). Without url: a local directory loaded in place with no cache copy (the dev loop); a relative path resolves against the directory of the file declaring it.
     path: <string>  # default: n/a | required: false
     # Refetch this remote bundle when its source version changes, checked at the start of bundle-consuming commands (build, run, monitor up); off by default. No effect on sha-pinned or local sources.
     auto_update: <boolean>  # default: n/a | required: false

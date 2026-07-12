@@ -33,37 +33,17 @@ func TestBundleSchemaFields_AllTagged(t *testing.T) {
 	}
 }
 
-// TestValidateBundles_ConfigDirAbsolutePath proves the config-dir-layer rule:
-// a local path-only source declared in the user config-dir clawker.yaml must
-// be absolute (a relative path has no project root to resolve against there),
-// while the same relative path in a project-layer file is fine.
-func TestValidateBundles_ConfigDirAbsolutePath(t *testing.T) {
-	t.Run("relative path in config-dir layer is rejected", func(t *testing.T) {
+// TestValidateBundles_RelativePathAnyLayer proves a local path-only source is
+// layer-agnostic: a relative path is legal in the user config-dir clawker.yaml
+// exactly as in a project-layer file (it resolves against the declaring file's
+// directory at resolution time — one rule, no layer special case).
+func TestValidateBundles_RelativePathAnyLayer(t *testing.T) {
+	t.Run("relative path in config-dir layer passes", func(t *testing.T) {
 		configDir := t.TempDir()
 		t.Setenv(consts.EnvConfigDir, configDir)
 		require.NoError(t, os.WriteFile(
 			filepath.Join(configDir, consts.ProjectConfigFile),
 			[]byte("bundles:\n  - path: ./vendor/b\n"), 0o644))
-
-		store, err := storage.New[Project]("",
-			storage.WithFilenames(consts.ProjectConfigFile),
-			storage.WithConfigDir(),
-		)
-		require.NoError(t, err)
-
-		err = validateProjectNodes(store)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "bundles[0].path")
-		assert.Contains(t, err.Error(), "must be an absolute path")
-		assert.Contains(t, err.Error(), consts.ProjectConfigFile)
-	})
-
-	t.Run("absolute path in config-dir layer passes", func(t *testing.T) {
-		configDir := t.TempDir()
-		t.Setenv(consts.EnvConfigDir, configDir)
-		require.NoError(t, os.WriteFile(
-			filepath.Join(configDir, consts.ProjectConfigFile),
-			[]byte("bundles:\n  - path: /opt/vendor/b\n"), 0o644))
 
 		store, err := storage.New[Project]("",
 			storage.WithFilenames(consts.ProjectConfigFile),
