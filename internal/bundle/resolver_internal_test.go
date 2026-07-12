@@ -164,7 +164,11 @@ func TestResolve_QualifiedInstalled(t *testing.T) {
 	assert.NotErrorIs(t, err, ErrNotCached)
 }
 
-func TestResolve_QualifiedInPlaceOverridesCache(t *testing.T) {
+// An in-place declaration and a cached bundle claiming the same identity is a
+// C1 collision — the resolver has no way to know they are the same bundle, and
+// silently preferring the local dir would let any directory hijack a trusted
+// installed identity. Hard error naming both sources, never a silent winner.
+func TestResolve_QualifiedInPlaceVsCacheCollides(t *testing.T) {
 	f := newResolverFixture(t)
 	// A cached bundle and an in-place declaration both claim acme/tools.
 	f.cacheBundleStack(t, "acme", "tools", "1.0.0", "node")
@@ -178,10 +182,12 @@ func TestResolve_QualifiedInPlaceOverridesCache(t *testing.T) {
 		},
 	}
 
-	c, err := f.r.Resolve(ComponentStack, "acme.tools.node")
-	require.NoError(t, err)
-	assert.Equal(t, TierInPlace, c.Provenance.Tier, "the in-place dev loop overrides the cache")
-	assert.Equal(t, filepath.Join(inPlace, "stacks", "node"), c.Provenance.Dir)
+	_, err := f.r.Resolve(ComponentStack, "acme.tools.node")
+	var ce *CollisionError
+	require.ErrorAs(t, err, &ce)
+	assert.Equal(t, BundleID{Namespace: "acme", Name: "tools"}, ce.Identity)
+	assert.Contains(t, err.Error(), "path:"+inPlace, "the in-place side is named")
+	assert.Contains(t, err.Error(), "bundle remove acme.tools", "the purge remedy is named")
 }
 
 func TestResolve_QualifiedNotCached(t *testing.T) {

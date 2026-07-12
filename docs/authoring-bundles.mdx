@@ -131,5 +131,12 @@ bundles:
   - path: ./my-bundle
 ```
 
+An identity is claimed by exactly one source at a time. If a bundle with the
+same `namespace` and `name` is already installed in the cache — say you
+previously installed your own published release — clawker refuses to resolve
+until you purge it (`clawker bundle remove <namespace>.<name>`) or drop one of
+the declarations. A local directory never silently stands in for an installed
+bundle.
+
 Consumers reproduce an exact build by pinning a `sha` instead of a `ref`. See
 [Bundles](/bundles) for the full install / update / remove flow.

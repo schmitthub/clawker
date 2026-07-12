@@ -117,9 +117,11 @@ func (r *Resolver) resolveQualified(t ComponentType, addr Address) (Component, e
 
 // Bundles resolves and memoizes the full installed/in-place bundle set keyed by
 // identity, returning any C1 identity collisions as a hard error and any
-// bundle-load warnings for the command layer to print. In-place local sources
-// take precedence over a cached bundle of the same identity (the dev loop
-// overrides the cache).
+// bundle-load warnings for the command layer to print. An in-place local source
+// and a cached bundle claiming the same identity are a C1 collision like any
+// other two-source clash — hard error naming both, never a silent winner (the
+// author remedies it: drop one declaration, `clawker bundle remove` the cached
+// copy, or change the namespace).
 //
 // This phase resolves in-place (local path) declarations and structurally-cached
 // bundles. Linking a declared REMOTE source to its cache entry — which is what
@@ -137,11 +139,11 @@ func (r *Resolver) Bundles() (map[BundleID]*ResolvedBundle, []Warning, error) {
 // checked) and the on-disk cache.
 func (r *Resolver) scanBundles() (map[BundleID]*ResolvedBundle, []Warning, error) {
 	out := map[BundleID]*ResolvedBundle{}
-	warnings, err := r.claimInPlaceBundles(out)
+	claims, warnings, err := r.claimInPlaceBundles(out)
 	if err != nil {
 		return nil, nil, err
 	}
-	cacheWarnings, err := r.mergeCachedBundles(out)
+	cacheWarnings, err := mergeCachedBundles(out, claims)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -162,7 +164,9 @@ type bundleClaim struct {
 // out, C1-checking identities as it goes. Remote declarations are skipped here —
 // they resolve via the cache scan by identity; their declaration→cache linkage
 // (and thus remote C1) is deferred to the fetch phase.
-func (r *Resolver) claimInPlaceBundles(out map[BundleID]*ResolvedBundle) ([]Warning, error) {
+func (r *Resolver) claimInPlaceBundles(
+	out map[BundleID]*ResolvedBundle,
+) (map[BundleID]bundleClaim, []Warning, error) {
 	claims := map[BundleID]bundleClaim{}
 	var warnings []Warning
 	for _, decl := range r.cfg.BundleDeclarations() {
@@ -172,7 +176,7 @@ func (r *Resolver) claimInPlaceBundles(out map[BundleID]*ResolvedBundle) ([]Warn
 		}
 		dir, err := resolveLocalPath(src, decl.File)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		// The claim key is the RESOLVED absolute directory, not the declared
 		// spelling — "./vendor/x" in a project layer and the equivalent
@@ -181,11 +185,11 @@ func (r *Resolver) claimInPlaceBundles(out map[BundleID]*ResolvedBundle) ([]Warn
 		canonical := "path:" + dir
 		b, loadErr := LoadBundleDir(os.DirFS(dir), dir)
 		if loadErr != nil {
-			return nil, loadErr
+			return nil, nil, loadErr
 		}
 		prev, seen := claims[b.ID]
 		if seen && prev.canonical != canonical {
-			return nil, &CollisionError{
+			return nil, nil, &CollisionError{
 				Identity:   b.ID,
 				AFile:      prev.file,
 				BFile:      decl.File,
@@ -200,13 +204,19 @@ func (r *Resolver) claimInPlaceBundles(out map[BundleID]*ResolvedBundle) ([]Warn
 		out[b.ID] = &ResolvedBundle{Bundle: b, Tier: TierInPlace}
 		warnings = append(warnings, b.Warnings...)
 	}
-	return warnings, nil
+	return claims, warnings, nil
 }
 
-// mergeCachedBundles folds cached bundles into the identity map. An in-place
-// declaration of the same identity already present wins (the dev loop overrides
-// the cache), so a cached entry is added only for an unclaimed identity.
-func (r *Resolver) mergeCachedBundles(out map[BundleID]*ResolvedBundle) ([]Warning, error) {
+// mergeCachedBundles folds cached bundles into the identity map. A cached
+// bundle whose identity is already claimed by an in-place declaration is a C1
+// collision like any other two-source clash — the resolver cannot know the two
+// are the same bundle, so it hard-errors naming both instead of silently
+// picking a winner. The remedy is the author's: drop the path declaration,
+// `clawker bundle remove` the cached copy, or change the namespace.
+func mergeCachedBundles(
+	out map[BundleID]*ResolvedBundle,
+	claims map[BundleID]bundleClaim,
+) ([]Warning, error) {
 	root, err := cacheRoot()
 	if err != nil {
 		return nil, err
@@ -217,8 +227,14 @@ func (r *Resolver) mergeCachedBundles(out map[BundleID]*ResolvedBundle) ([]Warni
 	}
 	var warnings []Warning
 	for _, ib := range installed {
-		if _, claimed := out[ib.ID]; claimed {
-			continue
+		if claim, claimed := claims[ib.ID]; claimed {
+			return nil, &CollisionError{
+				Identity:   ib.ID,
+				AFile:      claim.file,
+				BFile:      ib.Root,
+				ACanonical: claim.canonical,
+				BCanonical: cachedCanonical(ib.Root),
+			}
 		}
 		version := selectVersion(ib.Versions)
 		versionRoot := ib.versionRoot(version)
@@ -230,6 +246,18 @@ func (r *Resolver) mergeCachedBundles(out map[BundleID]*ResolvedBundle) ([]Warni
 		warnings = append(warnings, b.Warnings...)
 	}
 	return warnings, nil
+}
+
+// cachedCanonical derives the display source coordinate of a cached bundle from
+// its source.yaml, falling back to the cache directory itself for a hand-placed
+// entry with no metadata — this feeds a collision error message, so a readable
+// coordinate matters more than a rederivable one.
+func cachedCanonical(bundleDir string) string {
+	meta, ok, err := readSourceMeta(bundleDir)
+	if err != nil || !ok {
+		return "cache:" + bundleDir
+	}
+	return meta.source().Canonical()
 }
 
 // selectVersion picks a content root among a cached bundle's versions. Version

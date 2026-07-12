@@ -51,12 +51,15 @@ name IS the component name. There is NO bare-manifest-at-root special case.
 - **Bare** resolves user loose > project loose > floor, stopping at the first
   hit — it NEVER scans the bundle set, so a broken bundle declaration cannot
   block a floor-only build (C3/C4 shadowing).
-- **Qualified** resolves from the declared/cached bundle set only. An
-  in-place `path:` source overrides a cached bundle of the same identity (the
-  dev loop). A declared-but-uncached bundle yields `ErrNotCached`.
-- **C1** (`Bundles()`): two declared sources whose manifests resolve to the same
+- **Qualified** resolves from the declared/cached bundle set only. A
+  declared-but-uncached bundle yields `ErrNotCached`.
+- **C1** (`Bundles()`): two sources whose manifests resolve to the same
   `(namespace, name)` from different `Canonical()` coordinates → `CollisionError`
-  naming both declaring files. Same coordinate = idempotent re-declaration.
+  naming both sides and the remedies. This applies uniformly: two in-place
+  declarations, AND an in-place declaration vs an installed cache entry — there
+  is never a silent winner (a local dir silently overriding a cached identity
+  would let any directory hijack a trusted installed bundle). Same coordinate =
+  idempotent re-declaration.
 
 ## Fetch/cache write side (implemented)
 

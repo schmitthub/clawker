@@ -11,14 +11,18 @@ import (
 // [errors.Is].
 var ErrNotCached = errors.New("bundle not cached — run `clawker bundle install`")
 
-// CollisionError is the C1 identity collision: two declared bundle sources whose
+// CollisionError is the C1 identity collision: two bundle sources whose
 // manifests resolve to the same (namespace, name) identity from different
-// sources. It names both offending declarations — source coordinate and the
-// exact clawker.yaml layer each lives in — so the user can drop one.
+// source coordinates — two declarations, or a declaration and an installed
+// cache entry. It names both offending sides — source coordinate and where
+// each lives (a clawker.yaml layer, or the cache directory) — plus the
+// remedies, because the resolver cannot know whether the two are the same
+// bundle and never silently picks a winner.
 type CollisionError struct {
 	Identity BundleID
-	// AFile / BFile are the resolved clawker.yaml layer paths that declared the
-	// two colliding sources.
+	// AFile / BFile locate the two colliding sides: the resolved clawker.yaml
+	// layer path that declared a source, or the cache directory of an
+	// installed bundle.
 	AFile string
 	BFile string
 	// ACanonical / BCanonical are the two differing source coordinates.
@@ -28,8 +32,9 @@ type CollisionError struct {
 
 func (e *CollisionError) Error() string {
 	return fmt.Sprintf(
-		"bundle identity %s is declared by two different sources — %s (in %s) and %s (in %s); drop one",
-		e.Identity, e.ACanonical, e.AFile, e.BCanonical, e.BFile,
+		"bundle identity %s is claimed by two different sources — %s (in %s) and %s (in %s); "+
+			"remove one of them (`clawker bundle remove %s` purges a cached copy) or change one bundle's namespace",
+		e.Identity, e.ACanonical, e.AFile, e.BCanonical, e.BFile, e.Identity,
 	)
 }
 
