@@ -592,9 +592,13 @@ clawker-install-global: clawker
 	sudo cp $(BIN_DIR)/$(BINARY_NAME) /usr/local/bin/$(BINARY_NAME)
 
 # Clean Clawker build artifacts
+# bin/ and dist/ are cleaned by contents, never removed: they are
+# tmpfs-masked inside running clawker bind containers, and deleting the
+# host dir detaches the mask (kernel drops submounts on the invalidated
+# dentry), leaking container writes to the host until a recreate.
 clawker-clean:
 	@echo "Cleaning Clawker build artifacts..."
-	rm -rf $(BIN_DIR) $(DIST_DIR) $(RELEASE_EMBED_STAGE)
+	rm -rf $(BIN_DIR)/* $(DIST_DIR)/* $(RELEASE_EMBED_STAGE)
 	rm -f $(EBPF_BINARY) $(COREDNS_BINARY) $(CP_BINARY) $(CLAWKERD_BINARY) coverage.out coverage.html
 	rm -f $(BPF_BINDINGS)
 
