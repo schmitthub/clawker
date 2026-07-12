@@ -15,11 +15,14 @@ import (
 // cached bundle's version content roots (<cacheRoot>/<ns>/<name>/source.yaml).
 const sourceMetaFile = "source.yaml"
 
-// sourceMeta is the cache-internal record of how a cached bundle was fetched. It
-// is engine-owned derived metadata, NOT a lockfile: it links a cached identity
-// back to its declared source (for update-compare and the C1 collision key) and
-// records each fetched version's resolved commit. It is never read by the
-// component resolver — the cached content is authoritative for resolution.
+// sourceMeta is the cache-internal record of how a cached bundle was fetched.
+// It is engine-owned derived metadata, NOT a lockfile: it links a cached
+// identity back to its declared source and records each fetched version's
+// resolved commit. That linkage is load-bearing for resolution — the resolver
+// gates a cached bundle on a live declaration matching this record's canonical
+// source and selects the most recently fetched version from it — as well as
+// for update-compare and the C1 collision key. An entry without this file
+// (hand-placed) never resolves.
 type sourceMeta struct {
 	// URL/Ref/SHA/Subdir mirror the declared bundle source that produced this
 	// cache entry: a ref source has Ref set, a sha-pinned source has SHA set.

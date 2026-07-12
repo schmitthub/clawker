@@ -21,7 +21,7 @@ internal/cmd/bundle/
 
 | Command | Purpose |
 |---------|---------|
-| `bundle list` / `ls` | Every resolvable component (all three types) across floor/loose/bundle tiers: `ADDRESS/TYPE/VERSION/SOURCE/PROVENANCE`, `!`-marked shadow rows, `--json`. This is where monitoring-extension provenance is listed (the register-era `monitor units list` is gone). |
+| `bundle list` / `ls` | Every resolvable component (all three types) across floor/loose/bundle tiers: `ADDRESS/TYPE/VERSION/SOURCE/PROVENANCE`, `!`-marked shadow rows, `--json`. This is where monitoring-extension provenance is listed (the register-era `monitor units list` is gone). Below the component table, one honest per-identity bundle row (`BUNDLE/VERSION/SOURCE/STATUS` via `Manager.Statuses`): resolving (installed/in-place), declared-but-not-installed, cached-but-not-declared, and hand-placed (unmanaged) — the actionable states repeat as stderr hints in every output mode. |
 | `bundle install [source]` | Declare a source (`bundles:` entry) + prefetch into the host cache. Source = git URL, `owner/repo` shorthand (expands to a URL), or local dir. Flags `--ref/--sha/--subdir/--auto-update` + target `--user` (default, config-dir), `--project`, `--local`. No-arg form fetches every declared-but-uncached bundle. A prefetch failure leaves the yaml write in place (reported, not rolled back). |
 | `bundle remove <namespace.name>` / `rm` | Purge a cached bundle (all versions + metadata); warns when still declared. |
 | `bundle update [namespace.name]` | Refetch on version change: ref sources compare their tip and refetch on drift, sha-pinned sources are skipped, a failed refetch keeps the cached version. Prints one line per bundle considered. |

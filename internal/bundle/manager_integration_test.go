@@ -54,9 +54,9 @@ func TestManager_Install_HTTPJourney(t *testing.T) {
 	repo.Commit(t, "v1", bundleFiles("1.0.0"))
 	repo.Tag(t, "v1.0.0")
 
-	mgr := newManager(t, nil)
-	ctx := context.Background()
 	src := config.BundleSource{URL: srv.HTTPURL("tools"), Ref: "v1.0.0", SHA: "", Path: "", AutoUpdate: false}
+	mgr := newManager(t, []config.BundleSource{src})
+	ctx := context.Background()
 
 	require.NoError(t, mgr.Install(ctx, src))
 
@@ -87,10 +87,10 @@ func TestManager_Install_Subdir(t *testing.T) {
 	})
 	repo.Tag(t, "v1.0.0")
 
-	mgr := newManager(t, nil)
 	src := config.BundleSource{
 		URL: srv.HTTPURL("mono"), Ref: "v1.0.0", SHA: "", Path: "bundles/tools", AutoUpdate: false,
 	}
+	mgr := newManager(t, []config.BundleSource{src})
 	require.NoError(t, mgr.Install(context.Background(), src))
 
 	comp, err := mgr.Resolver().Resolve(bundle.ComponentStack, "acme.tools.node")

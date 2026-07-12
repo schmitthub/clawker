@@ -52,12 +52,15 @@ monitoring:
 }
 
 // journeyConfig wires one config over the isolated tiers: a project whose
-// build.stacks selects the qualified installed stack, anchored at projectRoot.
-// The same config drives the Manager (install into the XDG cache) and the
-// ProjectGenerator (resolve that cache at render time).
-func journeyConfig(t *testing.T, projectRoot string) *configmocks.ConfigMock {
+// build.stacks selects the qualified installed stack and whose bundles: entry
+// declares its source (a cached bundle resolves only while declared), anchored
+// at projectRoot. The same config drives the Manager (install into the XDG
+// cache) and the ProjectGenerator (resolve that cache at render time).
+func journeyConfig(t *testing.T, projectRoot, url, ref string) *configmocks.ConfigMock {
 	t.Helper()
-	cfg := configmocks.NewFromString("version: \"1\"\nbuild:\n  stacks: [acme.tools.node]\n", journeySettingsYAML())
+	projectYAML := "version: \"1\"\nbuild:\n  stacks: [acme.tools.node]\n" +
+		"bundles:\n  - url: " + url + "\n    ref: " + ref + "\n"
+	cfg := configmocks.NewFromString(projectYAML, journeySettingsYAML())
 	cfg.ProjectRootFunc = func() string { return projectRoot }
 	return cfg
 }
@@ -98,7 +101,7 @@ func TestBundleJourney_InstallToRender(t *testing.T) {
 			projectRoot := filepath.Join(env.Dirs.Base, "project")
 			require.NoError(t, os.MkdirAll(projectRoot, 0o755))
 
-			cfg := journeyConfig(t, projectRoot)
+			cfg := journeyConfig(t, projectRoot, tp.url(srv), "v1.0.0")
 			mgr := bundle.NewManager(cfg)
 			ctx := context.Background()
 
@@ -145,7 +148,10 @@ func TestBundleJourney_FailedUpdateStillBuilds(t *testing.T) {
 	projectRoot := filepath.Join(env.Dirs.Base, "project")
 	require.NoError(t, os.MkdirAll(projectRoot, 0o755))
 
-	cfg := journeyConfig(t, projectRoot)
+	// The declaration tracks the URL the cached source.yaml is repointed to
+	// below, so the cached bundle stays declared (and resolvable) while its
+	// upstream is unreachable — the exact keeps-serving scenario.
+	cfg := journeyConfig(t, projectRoot, srv.HTTPURL("gone"), "master")
 	mgr := bundle.NewManager(cfg)
 	ctx := context.Background()
 

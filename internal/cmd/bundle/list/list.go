@@ -10,7 +10,6 @@ import (
 
 	"github.com/schmitthub/clawker/internal/bundle"
 	"github.com/schmitthub/clawker/internal/cmdutil"
-	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/iostreams"
 	"github.com/schmitthub/clawker/internal/tui"
 )
@@ -121,7 +120,23 @@ func listRun(_ context.Context, opts *ListOptions) error {
 		return rErr
 	}
 	printWarnings(ios, warnings)
-	printDeclaredSourceHint(ios, mgr.Declarations())
+	return renderStatuses(opts, mgr)
+}
+
+// renderStatuses writes the per-identity declaration↔cache rows: a second
+// table in the default human output, plus stderr hints for the actionable
+// states in every output mode.
+func renderStatuses(opts *ListOptions, mgr *bundle.Manager) error {
+	statuses, err := mgr.Statuses()
+	if err != nil {
+		return fmt.Errorf("linking bundle declarations to the cache: %w", err)
+	}
+	if opts.Format.IsDefault() && !opts.Format.Quiet && len(statuses) > 0 {
+		if tErr := renderStatusTable(opts, statuses); tErr != nil {
+			return tErr
+		}
+	}
+	printStatusHints(opts.IOStreams, statuses)
 	return nil
 }
 
@@ -152,17 +167,21 @@ func shadowClause(p bundle.Provenance) string {
 	return "shadows " + strings.Join(sources, ", ")
 }
 
-// componentVersion returns the owning bundle's manifest version for a qualified
-// component, or "-" for a bare component or a bundle without a declared version
-// (the source-sha fallback is a fetch-phase concern, not yet available).
+// componentVersion returns the owning bundle's version for a qualified
+// component — the manifest version, falling back to the selected cache version
+// (the resolved sha for an unversioned bundle) — or "-" for a bare component.
 func componentVersion(c bundle.Component, bundles map[bundle.BundleID]*bundle.ResolvedBundle) string {
 	if !c.Address.Qualified() {
 		return "-"
 	}
-	if rb, ok := bundles[c.Provenance.Bundle]; ok && rb.Bundle.Manifest.Version != "" {
+	rb, ok := bundles[c.Provenance.Bundle]
+	if !ok {
+		return "-"
+	}
+	if rb.Bundle.Manifest.Version != "" {
 		return rb.Bundle.Manifest.Version
 	}
-	return "-"
+	return orDash(rb.Version)
 }
 
 // renderRows writes the component rows in the format the flags select.
@@ -212,22 +231,90 @@ func printWarnings(ios *iostreams.IOStreams, warnings []bundle.Warning) {
 	}
 }
 
-// printDeclaredSourceHint notes declared remote bundle sources whose cache
-// status this listing cannot yet confirm — linking a remote declaration to its
-// cache entry is a fetch-phase concern. Local (in-place) sources always resolve
-// into the listing above, so only remote declarations warrant the hint.
-func printDeclaredSourceHint(ios *iostreams.IOStreams, decls []config.BundleDeclaration) {
-	remote := 0
-	for _, d := range decls {
-		if d.Source.URL != "" {
-			remote++
+// renderStatusTable writes the per-identity bundle rows — the declaration↔cache
+// linkage — under the component table in the default human output.
+func renderStatusTable(opts *ListOptions, statuses []bundle.Status) error {
+	ios := opts.IOStreams
+	fmt.Fprintln(ios.Out)
+	table := opts.TUI.NewTable("BUNDLE", "VERSION", "SOURCE", "STATUS")
+	for _, s := range statuses {
+		table.AddRow(statusIdentity(s), orDash(s.Version), orDash(s.Source), statusText(s))
+	}
+	if err := table.Render(); err != nil {
+		return fmt.Errorf("rendering bundle table: %w", err)
+	}
+	return nil
+}
+
+// statusIdentity renders a status row's identity, or a dash for a declared
+// source that was never fetched (its identity lives in the not-yet-cached
+// manifest).
+func statusIdentity(s bundle.Status) string {
+	if s.ID.Namespace == "" && s.ID.Name == "" {
+		return "-"
+	}
+	return s.ID.String()
+}
+
+// statusText renders a status row's state clause.
+func statusText(s bundle.Status) string {
+	switch s.State {
+	case bundle.StatusResolving:
+		if s.Tier == bundle.TierInPlace {
+			return "in-place (" + s.File + ")"
+		}
+		return "installed (" + s.File + ")"
+	case bundle.StatusNotInstalled:
+		return "declared, not installed"
+	case bundle.StatusUndeclared:
+		return "cached, not declared"
+	case bundle.StatusUnmanaged:
+		return "cached, unmanaged (no source metadata)"
+	default:
+		return ""
+	}
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}
+
+// printStatusHints writes the actionable declaration↔cache states to stderr in
+// every output mode: a declared-but-uncached source (install it), a cached
+// bundle with no live declaration (re-declare or purge), and a hand-placed
+// cache entry that can never resolve (purge).
+func printStatusHints(ios *iostreams.IOStreams, statuses []bundle.Status) {
+	cs := ios.ColorScheme()
+	for _, s := range statuses {
+		switch s.State {
+		case bundle.StatusNotInstalled:
+			fmt.Fprintf(
+				ios.ErrOut,
+				"%s bundle source %s (declared in %s) is not installed — run `clawker bundle install`\n",
+				cs.InfoIcon(),
+				s.Source,
+				s.File,
+			)
+		case bundle.StatusUndeclared:
+			fmt.Fprintf(
+				ios.ErrOut,
+				"%s bundle %s is cached but no longer declared — re-declare it to reactivate, or `clawker bundle remove %s`\n",
+				cs.WarningIcon(),
+				s.ID,
+				s.ID,
+			)
+		case bundle.StatusUnmanaged:
+			fmt.Fprintf(
+				ios.ErrOut,
+				"%s bundle %s is cached without source metadata and never resolves — `clawker bundle remove %s`\n",
+				cs.WarningIcon(),
+				s.ID,
+				s.ID,
+			)
+		case bundle.StatusResolving:
 		}
 	}
-	if remote == 0 {
-		return
-	}
-	cs := ios.ColorScheme()
-	fmt.Fprintf(ios.ErrOut,
-		"%s %d remote bundle source(s) declared — run `clawker bundle install` to fetch any not yet cached.\n",
-		cs.InfoIcon(), remote)
 }

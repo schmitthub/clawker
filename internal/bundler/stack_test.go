@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/schmitthub/clawker/internal/bundle"
+	"github.com/schmitthub/clawker/internal/config"
 	configmocks "github.com/schmitthub/clawker/internal/config/mocks"
 	"github.com/schmitthub/clawker/internal/consts"
 	"github.com/schmitthub/clawker/internal/testenv"
@@ -98,8 +99,33 @@ func writeLooseStack(t *testing.T, root, name, rootFragment string) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, StackRootFragmentFile), []byte(rootFragment), 0o644))
 }
 
+// installedBundleURL is the remote source coordinate writeInstalledStack
+// records in the planted cache entry's source.yaml; a declaration of the same
+// url+ref (declareInstalledBundle, or a matching bundles: yaml entry) is what
+// makes the cached bundle resolvable.
+func installedBundleURL(ns, name string) string {
+	return "https://example.com/" + ns + "/" + name + ".git"
+}
+
+// declareInstalledBundle wires a live declaration matching a planted cache
+// entry onto the config mock — the resolver gates cached bundles on it.
+func declareInstalledBundle(cfg *configmocks.ConfigMock, ns, name string) {
+	cfg.BundleDeclarationsFunc = func() []config.BundleDeclaration {
+		return []config.BundleDeclaration{
+			{
+				Source: config.BundleSource{
+					URL: installedBundleURL(ns, name), Ref: "v1", SHA: "", Path: "", AutoUpdate: false,
+				},
+				File: "clawker.yaml",
+			},
+		}
+	}
+}
+
 // writeInstalledStack writes a cached bundle shipping one stack component into
-// the isolated bundle cache, so a qualified address resolves to it.
+// the isolated bundle cache, with the source.yaml linking it to
+// installedBundleURL — a matching declaration makes the qualified address
+// resolve to it.
 func writeInstalledStack(t *testing.T, ns, name, version, stack, rootFragment string) {
 	t.Helper()
 	cacheRoot, err := consts.BundlesSubdir()
@@ -113,6 +139,9 @@ func writeInstalledStack(t *testing.T, ns, name, version, stack, rootFragment st
 	require.NoError(t, os.MkdirAll(sdir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(sdir, StackManifestFile), []byte("description: "+stack+"\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(sdir, StackRootFragmentFile), []byte(rootFragment), 0o644))
+	srcYAML := "url: " + installedBundleURL(ns, name) + "\nref: v1\nversions:\n" +
+		"  \"" + version + "\":\n    sha: \"\"\n    fetched_at: 2026-01-01T00:00:00Z\n"
+	require.NoError(t, os.WriteFile(filepath.Join(cacheRoot, ns, name, "source.yaml"), []byte(srcYAML), 0o644))
 }
 
 // A bare stack with no loose override resolves straight from the embedded
@@ -139,9 +168,13 @@ func TestResolveStack_LooseShadowsFloor(t *testing.T) {
 	assert.Contains(t, provenanceLine(comp), "stack node ← project (")
 }
 
-// A qualified address resolves from the installed bundle set only.
+// A qualified address resolves from the installed bundle set only — and only
+// while its source is declared.
 func TestResolveStack_QualifiedInstalled(t *testing.T) {
-	r, _ := looseResolver(t)
+	testenv.New(t)
+	cfg := configmocks.NewFromString("", "")
+	declareInstalledBundle(cfg, "acme", "tools")
+	r := bundle.NewResolver(cfg)
 	writeInstalledStack(t, "acme", "tools", "1.0.0", "special", "RUN echo installed-special\n")
 	def, comp, err := resolveStack(r, "acme.tools.special")
 	require.NoError(t, err)

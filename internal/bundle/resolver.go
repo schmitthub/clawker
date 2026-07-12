@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/schmitthub/clawker/internal/config"
 	"github.com/schmitthub/clawker/internal/consts"
@@ -28,10 +29,17 @@ type Resolver struct {
 }
 
 // ResolvedBundle is a bundle placed on a tier (in-place or installed) with the
-// selected content root already loaded.
+// selected content root already loaded, carrying the declaration that made it
+// resolvable.
 type ResolvedBundle struct {
 	Bundle *Bundle
 	Tier   Tier
+	// Source is the canonical source coordinate of the declaration.
+	Source string
+	// File is the config file whose declaration made this bundle resolvable.
+	File string
+	// Version is the selected cache version directory (empty for in-place).
+	Version string
 }
 
 // errInvalidComponentType guards the Resolver entry points against a
@@ -117,17 +125,17 @@ func (r *Resolver) resolveQualified(t ComponentType, addr Address) (Component, e
 
 // Bundles resolves and memoizes the full installed/in-place bundle set keyed by
 // identity, returning any C1 identity collisions as a hard error and any
-// bundle-load warnings for the command layer to print. An in-place local source
-// and a cached bundle claiming the same identity are a C1 collision like any
-// other two-source clash — hard error naming both, never a silent winner (the
-// author remedies it: drop one declaration, `clawker bundle remove` the cached
-// copy, or change the namespace).
+// bundle-load warnings for the command layer to print.
 //
-// This phase resolves in-place (local path) declarations and structurally-cached
-// bundles. Linking a declared REMOTE source to its cache entry — which is what
-// declaration-gates a cached bundle, pins the resolved version, and enables
-// remote-source C1 — requires the fetch/cache source metadata built in a later
-// phase; see the package tests and the phase report.
+// Everything resolvable traces to an explicit declaration. An in-place (local
+// path) declaration loads directly from disk; a cached bundle resolves only
+// while a live remote declaration matches the source recorded in its
+// source.yaml — deleting the `bundles:` entry makes the cached copy inert until
+// it is re-declared (no refetch) or purged with `clawker bundle remove`. Two
+// sources claiming one identity from different coordinates are a C1 collision —
+// hard error naming both, never a silent winner (the author remedies it: drop
+// one declaration, `clawker bundle remove` the cached copy, or change the
+// namespace).
 func (r *Resolver) Bundles() (map[BundleID]*ResolvedBundle, []Warning, error) {
 	r.bundlesOnce.Do(func() {
 		r.bundles, r.bundlesWarnings, r.bundlesErr = r.scanBundles()
@@ -136,14 +144,14 @@ func (r *Resolver) Bundles() (map[BundleID]*ResolvedBundle, []Warning, error) {
 }
 
 // scanBundles builds the identity→bundle map from in-place declarations (C1
-// checked) and the on-disk cache.
+// checked) and the declared subset of the on-disk cache.
 func (r *Resolver) scanBundles() (map[BundleID]*ResolvedBundle, []Warning, error) {
 	out := map[BundleID]*ResolvedBundle{}
 	claims, warnings, err := r.claimInPlaceBundles(out)
 	if err != nil {
 		return nil, nil, err
 	}
-	cacheWarnings, err := mergeCachedBundles(out, claims)
+	cacheWarnings, err := mergeCachedBundles(out, claims, r.remoteDeclarations())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -162,8 +170,8 @@ type bundleClaim struct {
 
 // claimInPlaceBundles loads every declared LOCAL (in-place) bundle source into
 // out, C1-checking identities as it goes. Remote declarations are skipped here —
-// they resolve via the cache scan by identity; their declaration→cache linkage
-// (and thus remote C1) is deferred to the fetch phase.
+// they resolve via the cache scan, gated on their declaration matching the
+// cache entry's source.yaml (mergeCachedBundles).
 func (r *Resolver) claimInPlaceBundles(
 	out map[BundleID]*ResolvedBundle,
 ) (map[BundleID]bundleClaim, []Warning, error) {
@@ -201,21 +209,46 @@ func (r *Resolver) claimInPlaceBundles(
 			continue // idempotent re-declaration
 		}
 		claims[b.ID] = bundleClaim{canonical: canonical, file: decl.File}
-		out[b.ID] = &ResolvedBundle{Bundle: b, Tier: TierInPlace}
+		out[b.ID] = &ResolvedBundle{
+			Bundle: b, Tier: TierInPlace, Source: canonical, File: decl.File, Version: "",
+		}
 		warnings = append(warnings, b.Warnings...)
 	}
 	return claims, warnings, nil
 }
 
-// mergeCachedBundles folds cached bundles into the identity map. A cached
-// bundle whose identity is already claimed by an in-place declaration is a C1
-// collision like any other two-source clash — the resolver cannot know the two
-// are the same bundle, so it hard-errors naming both instead of silently
-// picking a winner. The remedy is the author's: drop the path declaration,
-// `clawker bundle remove` the cached copy, or change the namespace.
+// remoteDeclarations indexes the live REMOTE bundle declarations by canonical
+// source coordinate → declaring file (the highest-priority declaring layer
+// wins for display). This is the declaration side of the cache gate: a cached
+// bundle resolves only while its source.yaml canonical appears here.
+func (r *Resolver) remoteDeclarations() map[string]string {
+	decls := map[string]string{}
+	for _, decl := range r.cfg.BundleDeclarations() {
+		src := SourceFromConfig(decl.Source)
+		if src.IsLocal() {
+			continue
+		}
+		if _, seen := decls[src.Canonical()]; !seen {
+			decls[src.Canonical()] = decl.File
+		}
+	}
+	return decls
+}
+
+// mergeCachedBundles folds the DECLARED subset of the on-disk cache into the
+// identity map. A cached bundle resolves only while a live declaration matches
+// the source recorded in its source.yaml; an undeclared entry is inert (it
+// stays on disk until `clawker bundle remove`, and re-declaring the same
+// source reactivates it instantly, no refetch). An entry with no source.yaml
+// at all (hand-placed) never resolves — there is no declared source it could
+// trace to. A declared cache entry whose identity is also claimed by an
+// in-place declaration is a C1 collision naming both declaring files — the
+// resolver cannot know the two are the same bundle and never silently picks a
+// winner.
 func mergeCachedBundles(
 	out map[BundleID]*ResolvedBundle,
 	claims map[BundleID]bundleClaim,
+	remoteDecls map[string]string,
 ) ([]Warning, error) {
 	root, err := cacheRoot()
 	if err != nil {
@@ -227,48 +260,84 @@ func mergeCachedBundles(
 	}
 	var warnings []Warning
 	for _, ib := range installed {
-		if claim, claimed := claims[ib.ID]; claimed {
-			return nil, &CollisionError{
-				Identity:   ib.ID,
-				AFile:      claim.file,
-				BFile:      ib.Root,
-				ACanonical: claim.canonical,
-				BCanonical: cachedCanonical(ib.Root),
-			}
+		rb, resolvable, entryErr := resolveCachedBundle(ib, claims, remoteDecls)
+		if entryErr != nil {
+			return nil, entryErr
 		}
-		version := selectVersion(ib.Versions)
-		versionRoot := ib.versionRoot(version)
-		b, loadErr := LoadBundleDir(os.DirFS(versionRoot), versionRoot)
-		if loadErr != nil {
-			return nil, loadErr
+		if !resolvable {
+			continue
 		}
-		out[ib.ID] = &ResolvedBundle{Bundle: b, Tier: TierInstalled}
-		warnings = append(warnings, b.Warnings...)
+		out[ib.ID] = rb
+		warnings = append(warnings, rb.Bundle.Warnings...)
 	}
 	return warnings, nil
 }
 
-// cachedCanonical derives the display source coordinate of a cached bundle from
-// its source.yaml, falling back to the cache directory itself for a hand-placed
-// entry with no metadata — this feeds a collision error message, so a readable
-// coordinate matters more than a rederivable one.
-func cachedCanonical(bundleDir string) string {
-	meta, ok, err := readSourceMeta(bundleDir)
-	if err != nil || !ok {
-		return "cache:" + bundleDir
+// resolveCachedBundle applies the declaration gate to one cache entry: a
+// hand-placed entry (no source.yaml) or an undeclared source reports
+// resolvable=false; a declared entry whose identity an in-place declaration
+// already claims is a C1 collision; otherwise the matched source's most
+// recently fetched version is loaded.
+func resolveCachedBundle(
+	ib InstalledBundle,
+	claims map[BundleID]bundleClaim,
+	remoteDecls map[string]string,
+) (*ResolvedBundle, bool, error) {
+	meta, ok, err := readSourceMeta(ib.Root)
+	if err != nil {
+		return nil, false, err
 	}
-	return meta.source().Canonical()
+	if !ok {
+		return nil, false, nil // hand-placed: no source record to trace to a declaration
+	}
+	canonical := meta.source().Canonical()
+	declFile, declared := remoteDecls[canonical]
+	if !declared {
+		return nil, false, nil // undeclared: the cached copy is inert until re-declared
+	}
+	if claim, claimed := claims[ib.ID]; claimed {
+		return nil, false, &CollisionError{
+			Identity:   ib.ID,
+			AFile:      claim.file,
+			BFile:      declFile,
+			ACanonical: claim.canonical,
+			BCanonical: canonical,
+		}
+	}
+	version := selectVersion(ib, meta)
+	versionRoot := ib.versionRoot(version)
+	b, loadErr := LoadBundleDir(os.DirFS(versionRoot), versionRoot)
+	if loadErr != nil {
+		return nil, false, loadErr
+	}
+	return &ResolvedBundle{
+		Bundle: b, Tier: TierInstalled, Source: canonical, File: declFile, Version: version,
+	}, true, nil
 }
 
-// selectVersion picks a content root among a cached bundle's versions. Version
-// pinning from the declaring source is a fetch-phase concern; until then a
-// single version is used directly and multiple versions resolve to the last in
-// sorted order, deterministically.
-func selectVersion(versions []string) string {
-	if len(versions) == 0 {
-		return ""
+// selectVersion picks the content root to resolve for a declared cached
+// bundle: the most recently fetched version per source.yaml. ib.Versions is
+// sorted, so a FetchedAt tie settles deterministically on the later directory
+// name; an on-disk version the metadata does not record cannot win, but when
+// NO version is recorded the last-sorted directory serves as a fallback so a
+// metadata gap never makes a cached bundle unresolvable.
+func selectVersion(ib InstalledBundle, meta sourceMeta) string {
+	selected := ""
+	var newest time.Time
+	for _, v := range ib.Versions {
+		vm, recorded := meta.Versions[v]
+		if !recorded {
+			continue
+		}
+		if selected == "" || !vm.FetchedAt.Before(newest) {
+			newest = vm.FetchedAt
+			selected = v
+		}
 	}
-	return versions[len(versions)-1]
+	if selected == "" {
+		return ib.Versions[len(ib.Versions)-1]
+	}
+	return selected
 }
 
 // resolveLocalPath resolves a local in-place source path to an absolute

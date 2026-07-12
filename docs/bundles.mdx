@@ -111,6 +111,12 @@ clawker bundle ls            # short form
 clawker bundle list --json   # machine-readable
 ```
 
+Below the component table, each bundle gets an honest status row linking your
+declarations to the cache: installed (resolving), declared but not installed
+yet, cached but no longer declared, or a hand-placed cache entry without source
+metadata (which never resolves). The actionable states also print as hints with
+their remedy.
+
 ## Updating
 
 A `ref` (branch or tag) source drifts only when you ask it to. `clawker bundle
@@ -143,7 +149,12 @@ version, never blocking the command.
 
 ## Removing
 
-`clawker bundle remove <namespace.name>` purges a bundle's cached content:
+Availability follows the declaration: delete a bundle's `bundles:` entry and
+its components stop resolving immediately — the cached content stays on disk
+but is inert. Re-declare the same source later and the bundle reactivates
+instantly; nothing is refetched.
+
+`clawker bundle remove <namespace.name>` purges the cached content itself:
 
 ```bash
 clawker bundle remove acme.tools
@@ -152,8 +163,7 @@ clawker bundle rm acme.tools      # short form
 
 Removal only purges the cache — it does not edit any `clawker.yaml`. A bundle
 that is still declared refetches on the next `clawker bundle install`; remove
-tells you when that is the case. To make a bundle unavailable entirely, delete
-its `bundles:` entry as well.
+tells you when that is the case.
 
 ## Enabling and disabling
 

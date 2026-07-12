@@ -147,6 +147,9 @@ func TestGenerate_QualifiedStackGolden(t *testing.T) {
 version: "1"
 build:
   stacks: [acme.tools.node]
+bundles:
+  - url: https://example.com/acme/tools.git
+    ref: v1
 `)
 	// A cached bundle shipping one stack under the qualified address the project
 	// selects. testConfig isolated the XDG cache; this plants content into it.

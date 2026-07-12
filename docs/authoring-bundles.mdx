@@ -131,12 +131,16 @@ bundles:
   - path: ./my-bundle
 ```
 
-An identity is claimed by exactly one source at a time. If a bundle with the
-same `namespace` and `name` is already installed in the cache — say you
-previously installed your own published release — clawker refuses to resolve
-until you purge it (`clawker bundle remove <namespace>.<name>`) or drop one of
-the declarations. A local directory never silently stands in for an installed
-bundle.
+An identity is claimed by exactly one source at a time, and a cached bundle
+resolves only while its `bundles:` declaration is live. Switching into the dev
+loop is just swapping declarations: replace the `url:` entry with the `path:`
+entry and the cached copy of your published release goes inert — no purge
+needed. Restore the `url:` declaration when you are done and the installed
+release is active again instantly; nothing is refetched. Declaring both at once
+is an identity collision: clawker refuses to resolve until you drop one of the
+two declarations (or purge the cached copy with
+`clawker bundle remove <namespace>.<name>`). A local directory never silently
+stands in for an installed bundle.
 
 Consumers reproduce an exact build by pinning a `sha` instead of a `ref`. See
 [Bundles](/bundles) for the full install / update / remove flow.
