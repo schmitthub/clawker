@@ -990,7 +990,7 @@ func ControlPlaneDBPath() (string, error) {
 func BuildSubdir() (string, error) { return subdirPath(buildDir, DataDir) }
 
 // BundlesSubdir ensures and returns the installed-bundle cache directory under
-// DataDir. Fetched bundles land at <BundlesSubdir>/<namespace>/<name>/<version>/.
+// DataDir. Fetched bundles land at <BundlesSubdir>/<namespace>/<name>/<sourceKey>/.
 func BundlesSubdir() (string, error) { return subdirPath(bundlesDir, DataDir) }
 
 // WorktreesSubdir ensures and returns the worktrees subdirectory path under DataDir.

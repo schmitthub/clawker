@@ -15,9 +15,9 @@ import (
 
 // seedRepo authors a repo with an initial commit tagged v0.1.0 and a later
 // drift commit, returning the tagged SHA and the branch-tip SHA.
-func seedRepo(t *testing.T, srv *bundletest.Server, name string) (string, string) {
+func seedRepo(t *testing.T, srv *bundletest.Server) (string, string) {
 	t.Helper()
-	repo := srv.InitRepo(t, name)
+	repo := srv.InitRepo(t, "tools")
 	taggedSHA := repo.Commit(t, "initial", map[string]string{
 		".clawker-bundle/bundle.yaml": "namespace: acme\nname: tools\nversion: 0.1.0\n",
 		"README.md":                   "hello\n",
@@ -29,7 +29,7 @@ func seedRepo(t *testing.T, srv *bundletest.Server, name string) (string, string
 
 func TestFetcher_HTTP(t *testing.T) {
 	srv := bundletest.New(t)
-	taggedSHA, tipSHA := seedRepo(t, srv, "tools")
+	taggedSHA, tipSHA := seedRepo(t, srv)
 	f := fetch.NewFetcher()
 	ctx := context.Background()
 	url := srv.HTTPURL("tools")
@@ -86,7 +86,7 @@ func TestFetcher_HTTP(t *testing.T) {
 
 func TestFetcher_SSH(t *testing.T) {
 	srv := bundletest.New(t)
-	taggedSHA, tipSHA := seedRepo(t, srv, "tools")
+	taggedSHA, tipSHA := seedRepo(t, srv)
 	f := fetch.NewFetcher()
 	ctx := context.Background()
 	url := srv.SSHURL("tools")
@@ -114,10 +114,42 @@ func TestFetcher_SSH(t *testing.T) {
 	})
 }
 
+// A malformed known_hosts line (real-world truncation damage) must not take
+// down ssh fetches for hosts whose entries are intact — OpenSSH skips bad
+// lines, and the fetcher mirrors that tolerance.
+func TestFetcher_SSHToleratesMalformedKnownHosts(t *testing.T) {
+	srv := bundletest.New(t)
+	taggedSHA, _ := seedRepo(t, srv)
+	khPath := os.Getenv("SSH_KNOWN_HOSTS")
+	intact, err := os.ReadFile(khPath)
+	require.NoError(t, err)
+	corrupt := []byte("example.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNx\n")
+	require.NoError(t, os.WriteFile(khPath, append(corrupt, intact...), 0o600))
+
+	f := fetch.NewFetcher()
+	got, err := f.ResolveRef(context.Background(), srv.SSHURL("tools"), "v0.1.0")
+	require.NoError(t, err)
+	assert.Equal(t, taggedSHA, got)
+}
+
+// Tolerance never weakens verification: a known_hosts with no valid entry for
+// the fixture host (only a malformed line) must still refuse the connection.
+func TestFetcher_SSHUnknownHostStillFails(t *testing.T) {
+	srv := bundletest.New(t)
+	seedRepo(t, srv)
+	khPath := os.Getenv("SSH_KNOWN_HOSTS")
+	corrupt := []byte("example.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNx\n")
+	require.NoError(t, os.WriteFile(khPath, corrupt, 0o600))
+
+	f := fetch.NewFetcher()
+	_, err := f.ResolveRef(context.Background(), srv.SSHURL("tools"), "v0.1.0")
+	require.Error(t, err)
+}
+
 // TestFetcher_CloneRejectsExistingDir guards the empty-dir precondition.
 func TestFetcher_CloneRejectsExistingContent(t *testing.T) {
 	srv := bundletest.New(t)
-	seedRepo(t, srv, "tools")
+	seedRepo(t, srv)
 	f := fetch.NewFetcher()
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "occupied"), []byte("x"), 0o600))

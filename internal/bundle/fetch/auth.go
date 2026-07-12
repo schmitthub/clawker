@@ -19,12 +19,12 @@ import (
 // answers "authentication required", shells out to the host's `git credential
 // fill` (which inherits the user's configured credential helper chain) and
 // retries once with HTTP basic auth. It approves the credential on success and
-// rejects it on failure so the helper's cache stays accurate. ssh sources take
-// the anonymous path here — go-git's default ssh transport handles agent auth
-// and known-hosts from the environment, so no ClientOptions are injected. No
-// credential ever leaves this process boundary or lands in the cache.
+// rejects it on failure so the helper's cache stays accurate. ssh sources get
+// agent auth plus the malformed-line-tolerant known_hosts verifier from
+// sshClientOptions and never take the retry branch. No credential ever leaves
+// this process boundary or lands in the cache.
 func withHTTPAuthRetry(ctx context.Context, gitURL string, op func([]client.Option) error) error {
-	err := op(nil)
+	err := op(sshClientOptions(gitURL))
 	if err == nil || !isHTTPURL(gitURL) || !errors.Is(err, transport.ErrAuthenticationRequired) {
 		return err
 	}
